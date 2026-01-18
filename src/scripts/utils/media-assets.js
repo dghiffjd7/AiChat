@@ -14,6 +14,15 @@ const STATE = {
     },
     urlMap: new Map(),
     fileMap: new Map(),
+    custom: {
+        maps: {
+            image: new Map(),
+            audio: new Map(),
+            sticker: new Map(),
+        },
+        urlMap: new Map(),
+        fileMap: new Map(),
+    },
 };
 
 const normalizeKey = (value) => String(value || '').trim().toLowerCase();
@@ -129,6 +138,14 @@ const resetIndexes = () => {
     STATE.fileMap.clear();
 };
 
+const resetCustomIndexes = () => {
+    STATE.custom.maps.image.clear();
+    STATE.custom.maps.audio.clear();
+    STATE.custom.maps.sticker.clear();
+    STATE.custom.urlMap.clear();
+    STATE.custom.fileMap.clear();
+};
+
 const addAlias = (kind, alias, item) => {
     const k = normalizeKind(kind);
     const key = normalizeKey(alias);
@@ -140,6 +157,16 @@ const addAlias = (kind, alias, item) => {
     }
 };
 
+const addCustomAlias = (kind, alias, item) => {
+    const k = normalizeKind(kind);
+    const key = normalizeKey(alias);
+    if (!k || !key) return;
+    STATE.custom.maps[k].set(key, item);
+    if (k === 'sticker') {
+        STATE.custom.maps.image.set(key, item);
+    }
+};
+
 const addUrlMapping = (url, item) => {
     const u = normalizeUrl(url);
     if (!u) return;
@@ -148,6 +175,16 @@ const addUrlMapping = (url, item) => {
     if (stripped) STATE.urlMap.set(stripped, item);
     const filename = normalizeKey(getFileNameFromUrl(u));
     if (filename) STATE.fileMap.set(filename, item);
+};
+
+const addCustomUrlMapping = (url, item) => {
+    const u = normalizeUrl(url);
+    if (!u) return;
+    STATE.custom.urlMap.set(u, item);
+    const stripped = normalizeUrl(stripQuery(u));
+    if (stripped) STATE.custom.urlMap.set(stripped, item);
+    const filename = normalizeKey(getFileNameFromUrl(u));
+    if (filename) STATE.custom.fileMap.set(filename, item);
 };
 
 const normalizeManifestItems = (manifest) => {
@@ -244,6 +281,36 @@ const indexManifest = (manifest) => {
     });
 };
 
+const indexCustomItems = (items = []) => {
+    resetCustomIndexes();
+    const list = Array.isArray(items) ? items : [];
+    list.forEach((raw) => {
+        if (!raw || typeof raw !== 'object') return;
+        const kind = normalizeKind(raw.kind);
+        if (!kind) return;
+        const idRaw = raw.id || raw.key || raw.name || raw.label || raw.file || raw.path || '';
+        const id = normalizeKey(idRaw);
+        const file = String(raw.file || raw.path || '').trim();
+        if (!id && !file) return;
+        const item = {
+            kind,
+            id: id || normalizeKey(file),
+            file,
+            label: String(raw.label || raw.name || raw.id || raw.key || '').trim(),
+            aliases: Array.isArray(raw.aliases) ? raw.aliases.slice() : [],
+            sources: Array.isArray(raw.sources) ? raw.sources.slice() : Array.isArray(raw.urls) ? raw.urls.slice() : [],
+        };
+        addCustomAlias(kind, item.id, item);
+        if (item.label) addCustomAlias(kind, item.label, item);
+        item.aliases.forEach(a => addCustomAlias(kind, a, item));
+        if (file) {
+            const filename = normalizeKey(file.split(/[\\/]/).pop());
+            if (filename) STATE.custom.fileMap.set(filename, item);
+        }
+        item.sources.forEach(url => addCustomUrlMapping(url, item));
+    });
+};
+
 const resolveItemUrl = (item) => {
     if (!item || typeof item !== 'object') return '';
     const rawFile = String(item.file || item.path || '').trim();
@@ -322,7 +389,7 @@ export const resolveMediaAsset = (kind, value) => {
     }
     const ref = parseAssetRef(input, k);
     if (ref) {
-        const hit = STATE.maps[ref.kind || k]?.get(ref.key);
+        const hit = STATE.custom.maps[ref.kind || k]?.get(ref.key) || STATE.maps[ref.kind || k]?.get(ref.key);
         if (hit) {
             const url = resolveItemUrl(hit);
             return { url, item: hit, fallbacks: buildFallbackUrls(url, hit) };
@@ -331,13 +398,19 @@ export const resolveMediaAsset = (kind, value) => {
     }
     if (isLikelyUrl(input)) {
         const norm = normalizeUrl(input);
-        const hit = STATE.urlMap.get(norm) || STATE.urlMap.get(normalizeUrl(stripQuery(norm)));
+        const hit =
+            STATE.custom.urlMap.get(norm)
+            || STATE.custom.urlMap.get(normalizeUrl(stripQuery(norm)))
+            || STATE.urlMap.get(norm)
+            || STATE.urlMap.get(normalizeUrl(stripQuery(norm)));
         if (hit) {
             const url = resolveItemUrl(hit);
             return { url, item: hit, fallbacks: buildFallbackUrls(url, hit) };
         }
         const filename = normalizeKey(getFileNameFromUrl(norm));
-        const byFile = filename ? STATE.fileMap.get(filename) : null;
+        const byFile = filename
+            ? (STATE.custom.fileMap.get(filename) || STATE.fileMap.get(filename))
+            : null;
         if (byFile) {
             const url = resolveItemUrl(byFile);
             return { url, item: byFile, fallbacks: buildFallbackUrls(url, byFile) };
@@ -346,13 +419,13 @@ export const resolveMediaAsset = (kind, value) => {
     }
     const key = normalizeKey(input);
     const map = STATE.maps[k];
-    const hit = map.get(key);
+    const hit = STATE.custom.maps[k].get(key) || map.get(key);
     if (hit) {
         const url = resolveItemUrl(hit);
         return { url, item: hit, fallbacks: buildFallbackUrls(url, hit) };
     }
     if (k === 'sticker') {
-        const fallback = STATE.maps.image.get(key);
+        const fallback = STATE.custom.maps.image.get(key) || STATE.maps.image.get(key);
         if (fallback) {
             const url = resolveItemUrl(fallback);
             return { url, item: fallback, fallbacks: buildFallbackUrls(url, fallback) };
@@ -381,6 +454,10 @@ export const listMediaAssets = (kind) => {
         };
         return { ...item, url: resolveItemUrl(item) };
     });
+};
+
+export const setCustomMediaItems = (items = []) => {
+    indexCustomItems(items);
 };
 
 export { isLikelyUrl, isAssetRef };

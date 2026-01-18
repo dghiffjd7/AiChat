@@ -10,9 +10,17 @@ import { ConfigManager } from '../storage/config.js';
 import { appSettings } from '../storage/app-settings.js';
 import { normalizeScopeId } from '../storage/store-scope.js';
 import { logger } from '../utils/logger.js';
-import { initMediaAssets, listMediaAssets, resolveMediaAsset, isAssetRef, isLikelyUrl } from '../utils/media-assets.js';
-import { compressImageDataUrl } from '../utils/image.js';
+import {
+  initMediaAssets,
+  listMediaAssets,
+  resolveMediaAsset,
+  setCustomMediaItems,
+  isAssetRef,
+  isLikelyUrl,
+} from '../utils/media-assets.js';
+import { avatarDataUrlFromFile, compressImageDataUrl, isGifFile } from '../utils/image.js';
 import { safeInvoke } from '../utils/tauri.js';
+import { stickerPackStore } from '../storage/sticker-pack-store.js';
 import './bridge.js';
 import { LLMClient } from '../api/client.js';
 import { ChatUI } from './chat/chat-ui.js';
@@ -1521,6 +1529,307 @@ ${listPart || '-（无）'}
     } catch {}
   };
 
+  const STICKER_PACK_TAB_PREFIX = 'pack:';
+  const STICKER_PACK_ASSET_SESSION = 'sticker_pack_assets';
+  const STICKER_ICON_SESSION = 'sticker_pack_icons';
+  const STICKER_SOFT_IMAGE_BYTES = 600_000;
+  const STICKER_SOFT_GIF_BYTES = 2_000_000;
+  const STICKER_SOFT_PACK_LIMIT = 72;
+  const STICKER_SOFT_TOTAL_LIMIT = 400;
+  let stickerPackState = stickerPackStore.getState();
+
+  const createFilePicker = (accept, { multiple = false } = {}) => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = accept;
+    input.multiple = Boolean(multiple);
+    input.style.display = 'none';
+    document.body.appendChild(input);
+    return input;
+  };
+
+  const stickerFilePicker = createFilePicker('image/*', { multiple: true });
+  const stickerIconPicker = createFilePicker('image/*', { multiple: false });
+
+  const readFileAsDataUrl = (file) => {
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ''));
+      reader.onerror = () => resolve('');
+      reader.readAsDataURL(file);
+    });
+  };
+
+  const resolveLocalStickerUrl = (value) => {
+    const raw = String(value || '').trim();
+    if (!raw) return '';
+    try {
+      const g = typeof globalThis !== 'undefined' ? globalThis : window;
+      const convert =
+        g?.__TAURI__?.core?.convertFileSrc ||
+        g?.__TAURI__?.convertFileSrc ||
+        g?.__TAURI_INTERNALS__?.convertFileSrc;
+      if (typeof convert === 'function') {
+        const converted = convert(raw);
+        if (converted) return converted;
+      }
+    } catch {}
+    if (/^(file|asset|tauri|app|https?|data|blob):/i.test(raw)) return raw;
+    if (/^[a-zA-Z]:[\\/]/.test(raw)) return `file:///${raw.replace(/\\/g, '/')}`;
+    if (raw.startsWith('/')) return `file://${raw}`;
+    return raw;
+  };
+
+  const buildCustomStickerAssets = (state) => {
+    const items = [];
+    const packs = Array.isArray(state?.packs) ? state.packs : [];
+    packs.forEach((pack) => {
+      const stickers = Array.isArray(pack?.stickers) ? pack.stickers : [];
+      stickers.forEach((sticker) => {
+        const id = String(sticker?.id || '').trim();
+        const file = String(sticker?.path || sticker?.dataUrl || '').trim();
+        if (!id || !file) return;
+        const keyword = String(sticker?.keyword || '').trim();
+        const aliases = [];
+        if (keyword && keyword !== id) aliases.push(keyword);
+        const name = String(sticker?.name || '').trim();
+        if (name) aliases.push(name);
+        items.push({
+          kind: 'sticker',
+          id,
+          label: keyword,
+          file,
+          aliases,
+        });
+      });
+    });
+    return items;
+  };
+
+  const syncStickerPackState = (nextState = null) => {
+    stickerPackState = nextState || stickerPackStore.getState();
+    setCustomMediaItems(buildCustomStickerAssets(stickerPackState));
+    return stickerPackState;
+  };
+  syncStickerPackState();
+
+  const createStickerPack = () => {
+    const id = (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function')
+      ? crypto.randomUUID()
+      : `pack_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`;
+    const nextIndex = Array.isArray(stickerPackState?.packs) ? stickerPackState.packs.length : 0;
+    const colorIndex = STICKER_PACK_COLORS.length ? (nextIndex % STICKER_PACK_COLORS.length) : 0;
+    const pack = {
+      id,
+      colorIndex,
+      iconPath: '',
+      iconDataUrl: '',
+      aiEnabled: false,
+      stickers: [],
+    };
+    const nextState = stickerPackStore.upsertPack(pack);
+    syncStickerPackState(nextState);
+    return pack;
+  };
+
+  const getStickerPackIdFromTab = (tab) => {
+    const raw = String(tab || '').trim();
+    if (!raw.startsWith(STICKER_PACK_TAB_PREFIX)) return '';
+    return raw.slice(STICKER_PACK_TAB_PREFIX.length);
+  };
+
+  const getStickerPackById = (id) => {
+    const key = String(id || '').trim();
+    if (!key) return null;
+    return (stickerPackState?.packs || []).find(p => p.id === key) || null;
+  };
+
+  const resolveStickerMediaUrl = (item) => {
+    if (!item || typeof item !== 'object') return '';
+    if (item.dataUrl) return String(item.dataUrl || '').trim();
+    if (item.path) return resolveLocalStickerUrl(item.path);
+    return '';
+  };
+
+  const formatStickerNameSuggestion = (name, index) => {
+    const raw = String(name || '').trim();
+    if (raw) return raw.replace(/\.[a-z0-9]+$/i, '');
+    return `贴图${index + 1}`;
+  };
+  const formatStickerFileSize = (bytes) => {
+    const size = Number(bytes || 0);
+    if (!Number.isFinite(size) || size <= 0) return '';
+    if (size < 1024) return `${Math.round(size)} B`;
+    const kb = size / 1024;
+    if (kb < 1024) return `${kb.toFixed(kb < 10 ? 1 : 0)} KB`;
+    const mb = kb / 1024;
+    return `${mb.toFixed(mb < 10 ? 1 : 0)} MB`;
+  };
+  const estimateDataUrlBytes = (dataUrl) => {
+    const raw = String(dataUrl || '').trim();
+    if (!raw.startsWith('data:')) return raw.length;
+    const comma = raw.indexOf(',');
+    if (comma < 0) return raw.length;
+    const base64 = raw.slice(comma + 1);
+    const padding = (base64.match(/=+$/) || [''])[0].length;
+    return Math.max(0, Math.floor((base64.length * 3) / 4) - padding);
+  };
+
+  const saveStickerAsset = async (dataUrl, fileName, sessionId) => {
+    const payload = String(dataUrl || '').trim();
+    if (!payload.startsWith('data:image/')) return '';
+    try {
+      const resp = await safeInvoke('save_attachment', {
+        sessionId: String(sessionId || STICKER_PACK_ASSET_SESSION),
+        dataUrl: payload,
+        fileName: fileName || '',
+      });
+      return String(resp?.path || '').trim();
+    } catch {
+      return '';
+    }
+  };
+
+  const pickFilesFromInput = (input) => {
+    return new Promise((resolve) => {
+      input.onchange = () => {
+        const files = Array.from(input.files || []).filter(Boolean);
+        input.value = '';
+        resolve(files);
+      };
+      input.click();
+    });
+  };
+
+  const ensureStickerKeywords = (pack) => {
+    const next = { ...pack };
+    const stickers = Array.isArray(pack?.stickers) ? pack.stickers.map(s => ({ ...s })) : [];
+    for (let i = 0; i < stickers.length; i++) {
+      const sticker = stickers[i];
+      if (String(sticker.keyword || '').trim()) continue;
+      const suggestion = formatStickerNameSuggestion(sticker.name, i);
+      const raw = prompt(`请输入贴图关键词（用于 AI 调用）`, suggestion);
+      if (raw === null) return { ok: false, pack };
+      const keyword = String(raw || '').trim();
+      if (!keyword) return { ok: false, pack };
+      sticker.keyword = keyword;
+      stickers[i] = sticker;
+    }
+    next.stickers = stickers;
+    return { ok: true, pack: next };
+  };
+
+  const updateStickerKeyword = (pack, stickerId) => {
+    if (!pack || !stickerId) return pack;
+    const stickers = Array.isArray(pack.stickers) ? pack.stickers.map(s => ({ ...s })) : [];
+    const idx = stickers.findIndex(s => s.id === stickerId);
+    if (idx < 0) return pack;
+    const current = stickers[idx];
+    const suggestion = String(current.keyword || '').trim() || formatStickerNameSuggestion(current.name, idx);
+    const raw = prompt(`编辑贴图关键词（用于 AI 调用）`, suggestion);
+    if (raw === null) return pack;
+    const keyword = String(raw || '').trim();
+    if (!keyword) {
+      window.toastr?.warning?.('关键词不能为空');
+      return pack;
+    }
+    stickers[idx] = { ...current, keyword };
+    return { ...pack, stickers };
+  };
+
+  const addStickersToPack = async (packId) => {
+    const pack = getStickerPackById(packId);
+    if (!pack) return;
+    const files = await pickFilesFromInput(stickerFilePicker);
+    if (!files.length) return;
+    const stickers = Array.isArray(pack.stickers) ? pack.stickers.slice() : [];
+    const warnings = new Set();
+    const addWarning = (msg) => {
+      const text = String(msg || '').trim();
+      if (text) warnings.add(text);
+    };
+    const existingPackCount = stickers.length;
+    const existingTotal = (stickerPackState?.packs || []).reduce(
+      (sum, p) => sum + (Array.isArray(p?.stickers) ? p.stickers.length : 0),
+      0,
+    );
+    let addedCount = 0;
+    for (const file of files) {
+      const rawDataUrl = await readFileAsDataUrl(file);
+      if (!rawDataUrl) continue;
+      const fileSize = Number(file?.size || 0);
+      const isGif = isGifFile(file);
+      if (isGif && fileSize > STICKER_SOFT_GIF_BYTES) {
+        addWarning(`贴图 ${file?.name || ''} 体积较大（${formatStickerFileSize(fileSize)}），建议压缩或裁切（GIF 建议 <= 2MB）`);
+      } else if (!isGif && fileSize > STICKER_SOFT_IMAGE_BYTES) {
+        addWarning(`贴图 ${file?.name || ''} 体积较大（${formatStickerFileSize(fileSize)}），建议压缩或裁切（建议 <= 600KB/640px）`);
+      }
+      let dataUrl = rawDataUrl;
+      if (!isGif) {
+        try {
+          dataUrl = await compressImageDataUrl(rawDataUrl, { maxDim: 640, quality: 0.86, maxBytes: 600_000 });
+        } catch {
+          dataUrl = rawDataUrl;
+        }
+      }
+      const dataBytes = estimateDataUrlBytes(dataUrl);
+      if (isGif && dataBytes > STICKER_SOFT_GIF_BYTES) {
+        addWarning(`贴图 ${file?.name || ''} 压缩后仍较大（${formatStickerFileSize(dataBytes)}），建议进一步压缩`);
+      } else if (!isGif && dataBytes > STICKER_SOFT_IMAGE_BYTES) {
+        addWarning(`贴图 ${file?.name || ''} 压缩后仍较大（${formatStickerFileSize(dataBytes)}），建议进一步压缩`);
+      }
+      const path = await saveStickerAsset(dataUrl, file?.name || 'sticker', STICKER_PACK_ASSET_SESSION);
+      stickers.push({
+        id: String(Date.now()) + Math.random().toString(16).slice(2, 8),
+        name: String(file?.name || '').trim(),
+        keyword: '',
+        path: path || '',
+        dataUrl: path ? '' : dataUrl,
+      });
+      addedCount += 1;
+    }
+    if (addedCount > 0) {
+      const packAfter = existingPackCount + addedCount;
+      const totalAfter = existingTotal + addedCount;
+      if (packAfter > STICKER_SOFT_PACK_LIMIT) {
+        addWarning(`该贴图包已超过建议上限（${STICKER_SOFT_PACK_LIMIT} 张），建议分包或清理以避免卡顿`);
+      }
+      if (totalAfter > STICKER_SOFT_TOTAL_LIMIT) {
+        addWarning(`自定义贴图总量已超过建议上限（${STICKER_SOFT_TOTAL_LIMIT} 张），建议清理或分包以避免崩溃`);
+      }
+    }
+    if (warnings.size) {
+      warnings.forEach((msg) => window.toastr?.warning?.(msg));
+    }
+    let nextPack = { ...pack, stickers };
+    if (nextPack.aiEnabled) {
+      const ensured = ensureStickerKeywords(nextPack);
+      nextPack = ensured.ok ? ensured.pack : nextPack;
+    }
+    const nextState = stickerPackStore.updatePack(packId, nextPack);
+    syncStickerPackState(nextState);
+    renderStickerPanel();
+  };
+
+  const updateStickerPackIcon = async (packId) => {
+    const pack = getStickerPackById(packId);
+    if (!pack) return;
+    const files = await pickFilesFromInput(stickerIconPicker);
+    const file = files[0];
+    if (!file) return;
+    const dataUrl = await avatarDataUrlFromFile(file, { maxDim: 64, quality: 0.88, maxBytes: 160_000 });
+    if (!dataUrl) return;
+    const path = await saveStickerAsset(dataUrl, file?.name || 'sticker_icon', STICKER_ICON_SESSION);
+    const nextPack = {
+      ...pack,
+      iconPath: path || '',
+      iconDataUrl: path ? '' : dataUrl,
+    };
+    const nextState = stickerPackStore.updatePack(packId, nextPack);
+    syncStickerPackState(nextState);
+    renderStickerPanel();
+  };
+
   const resolveStickerItems = (keywords) => {
     const items = [];
     (keywords || []).forEach((keyword) => {
@@ -1560,10 +1869,27 @@ ${listPart || '-（无）'}
         url: String(item?.url || ''),
       })).filter(item => item.keyword);
     }
+    const packId = getStickerPackIdFromTab(tab);
+    if (packId) {
+      const pack = getStickerPackById(packId);
+      const stickers = Array.isArray(pack?.stickers) ? pack.stickers : [];
+      const items = stickers.map((sticker, idx) => {
+        const keyword = String(sticker?.keyword || sticker?.id || '').trim();
+        return {
+          keyword,
+          label: String(sticker?.keyword || formatStickerNameSuggestion(sticker?.name, idx) || keyword).trim(),
+          url: resolveStickerMediaUrl(sticker),
+          missingKeyword: !String(sticker?.keyword || '').trim(),
+          stickerId: String(sticker?.id || '').trim(),
+          packId,
+        };
+      }).filter(item => item.keyword);
+      items.unshift({ action: 'add', label: '添加', packId });
+      return items;
+    }
     return [];
   };
   const getStickerTotalPages = () => {
-    if (stickerPanelTab === 'add') return 1;
     const items = getStickerItemsForTab(stickerPanelTab);
     return Math.max(1, Math.ceil(items.length / STICKER_PAGE_SIZE));
   };
@@ -1610,12 +1936,29 @@ ${listPart || '-（无）'}
     container.innerHTML = '';
     if (!pageItems.length) return;
     pageItems.forEach(item => {
+      if (item?.action === 'add') {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'sticker-item sticker-item-add';
+        btn.textContent = item?.label || '＋';
+        btn.setAttribute('aria-label', '新增贴图');
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const packId = String(item?.packId || '').trim();
+          if (packId) addStickersToPack(packId);
+        });
+        container.appendChild(btn);
+        return;
+      }
       const keyword = String(item?.keyword || '').trim();
       if (!keyword) return;
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'sticker-item';
+      if (item?.missingKeyword) btn.classList.add('is-missing');
       btn.dataset.keyword = keyword;
+      btn.dataset.stickerId = String(item?.stickerId || '').trim();
+      btn.dataset.packId = String(item?.packId || '').trim();
       btn.setAttribute('aria-label', item?.label || keyword);
       if (item?.url) {
         const img = document.createElement('img');
@@ -1625,8 +1968,39 @@ ${listPart || '-（无）'}
       } else {
         btn.textContent = item?.label || keyword;
       }
+      let suppressClick = false;
+      let pressTimer = null;
+      const clearPress = () => {
+        if (pressTimer) {
+          clearTimeout(pressTimer);
+          pressTimer = null;
+        }
+      };
+      btn.addEventListener('pointerdown', (event) => {
+        if (!item?.packId) return;
+        clearPress();
+        pressTimer = setTimeout(() => {
+          suppressClick = true;
+          const packId = String(item?.packId || '').trim();
+          const stickerId = String(item?.stickerId || '').trim();
+          const pack = getStickerPackById(packId);
+          const nextPack = updateStickerKeyword(pack, stickerId);
+          if (nextPack && nextPack !== pack) {
+            const nextState = stickerPackStore.updatePack(packId, nextPack);
+            syncStickerPackState(nextState);
+            renderStickerPanel();
+          }
+        }, 520);
+      });
+      ['pointerup', 'pointercancel', 'pointerleave'].forEach(evt => {
+        btn.addEventListener(evt, () => clearPress());
+      });
       btn.addEventListener('click', e => {
         e.stopPropagation();
+        if (suppressClick) {
+          suppressClick = false;
+          return;
+        }
         bumpStickerUsage(keyword);
         insertStickerToken(keyword);
         if (stickerPanelTab === 'recent') renderStickerPanel();
@@ -1643,22 +2017,169 @@ ${listPart || '-（无）'}
     renderStickerItems(pageItems, page);
     return page;
   };
+  const bindStickerTabLongPress = (btn, packId) => {
+    if (!btn || !packId) return;
+    let pressTimer = null;
+    let triggered = false;
+    const clearPress = () => {
+      if (pressTimer) {
+        clearTimeout(pressTimer);
+        pressTimer = null;
+      }
+    };
+    btn.addEventListener('pointerdown', () => {
+      triggered = false;
+      clearPress();
+      pressTimer = setTimeout(() => {
+        triggered = true;
+        btn.dataset.longpress = '1';
+        updateStickerPackIcon(packId);
+      }, 520);
+    });
+    ['pointerup', 'pointercancel', 'pointerleave'].forEach(evt => {
+      btn.addEventListener(evt, () => clearPress());
+    });
+    btn.addEventListener('click', () => {
+      if (!triggered) return;
+      triggered = false;
+    });
+  };
+  const renderStickerTabs = () => {
+    if (!stickerPanel?.tabWrap) return;
+    const tabWrap = stickerPanel.tabWrap;
+    tabWrap.innerHTML = '';
+    const tabs = [];
+    const addTab = (btn) => {
+      tabWrap.appendChild(btn);
+      tabs.push(btn);
+    };
+    const recent = document.createElement('button');
+    recent.type = 'button';
+    recent.className = 'sticker-tab';
+    recent.dataset.tab = 'recent';
+    recent.title = '常用';
+    recent.textContent = '🕛';
+    addTab(recent);
+
+    const def = document.createElement('button');
+    def.type = 'button';
+    def.className = 'sticker-tab';
+    def.dataset.tab = 'default';
+    def.title = '默认贴图';
+    const defIcon = document.createElement('img');
+    defIcon.className = 'sticker-tab-icon';
+    defIcon.src = './assets/external/feather-default.png';
+    defIcon.alt = '默认贴图';
+    def.appendChild(defIcon);
+    addTab(def);
+
+    const packs = Array.isArray(stickerPackState?.packs) ? stickerPackState.packs : [];
+    packs.forEach((pack, idx) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'sticker-tab sticker-tab-pack';
+      btn.dataset.tab = `${STICKER_PACK_TAB_PREFIX}${pack.id}`;
+      btn.title = '自定义贴图';
+      const color = STICKER_PACK_COLORS[pack.colorIndex % STICKER_PACK_COLORS.length];
+      if (color) {
+        btn.style.background = color;
+        btn.style.borderColor = color;
+        btn.style.color = '#fff';
+      }
+      const iconUrl = resolveStickerMediaUrl({ dataUrl: pack.iconDataUrl, path: pack.iconPath });
+      const showNumber = idx >= STICKER_PACK_COLORS.length;
+      if (iconUrl) {
+        const img = document.createElement('img');
+        img.className = 'sticker-tab-icon';
+        img.src = iconUrl;
+        img.alt = '贴图包';
+        btn.appendChild(img);
+      } else {
+        btn.textContent = showNumber ? String(idx + 1) : '';
+      }
+      bindStickerTabLongPress(btn, pack.id);
+      addTab(btn);
+    });
+
+    const addBtn = document.createElement('button');
+    addBtn.type = 'button';
+    addBtn.className = 'sticker-tab sticker-tab-add';
+    addBtn.dataset.action = 'add-pack';
+    addBtn.title = '新增';
+    addBtn.textContent = '＋';
+    addTab(addBtn);
+    stickerPanel.tabs = tabs;
+  };
+  const updateStickerToggleUI = () => {
+    if (!stickerPanel?.toggle || !stickerPanel?.el) return;
+    const packId = getStickerPackIdFromTab(stickerPanelTab);
+    let canToggle = true;
+    let enabled = true;
+    if (stickerPanelTab === 'recent') {
+      canToggle = false;
+      enabled = false;
+    } else if (stickerPanelTab === 'default') {
+      enabled = stickerPackState?.defaultEnabled !== false;
+    } else if (packId) {
+      const pack = getStickerPackById(packId);
+      enabled = Boolean(pack?.aiEnabled);
+    } else {
+      canToggle = false;
+      enabled = false;
+    }
+    stickerPanel.toggle.disabled = !canToggle;
+    stickerPanel.toggle.classList.toggle('is-enabled', canToggle && enabled);
+    stickerPanel.toggle.classList.toggle('is-disabled', canToggle && !enabled);
+    stickerPanel.toggle.classList.toggle('is-hidden', !canToggle);
+    stickerPanel.toggle.setAttribute('aria-pressed', enabled ? 'true' : 'false');
+    stickerPanel.toggle.title = canToggle
+      ? (enabled ? 'AI 可使用此贴图包' : 'AI 不可使用此贴图包')
+      : 'AI 贴图开关不可用';
+    stickerPanel.el.classList.toggle('sticker-ai-disabled', canToggle && !enabled);
+  };
+  const handleStickerToggle = () => {
+    const packId = getStickerPackIdFromTab(stickerPanelTab);
+    if (stickerPanelTab === 'recent') return;
+    if (stickerPanelTab === 'default') {
+      const nextEnabled = !(stickerPackState?.defaultEnabled !== false);
+      const nextState = stickerPackStore.setDefaultEnabled(nextEnabled);
+      syncStickerPackState(nextState);
+      updateStickerToggleUI();
+      return;
+    }
+    if (!packId) return;
+    const pack = getStickerPackById(packId);
+    if (!pack) return;
+    const enable = !pack.aiEnabled;
+    let nextPack = { ...pack, aiEnabled: enable };
+    if (enable) {
+      const ensured = ensureStickerKeywords(nextPack);
+      if (!ensured.ok) {
+        window.toastr?.warning?.('请先为贴图填写关键词');
+        return;
+      }
+      nextPack = { ...ensured.pack, aiEnabled: true };
+    }
+    const nextState = stickerPackStore.updatePack(packId, nextPack);
+    syncStickerPackState(nextState);
+    renderStickerPanel();
+  };
   const renderStickerPanel = () => {
     if (!stickerPanel?.grid) return;
+    if (getStickerPackIdFromTab(stickerPanelTab) && !getStickerPackById(getStickerPackIdFromTab(stickerPanelTab))) {
+      stickerPanelTab = 'default';
+    }
+    renderStickerTabs();
     const tabs = Array.isArray(stickerPanel?.tabs) ? stickerPanel.tabs : [];
     tabs.forEach(tab => {
       const target = String(tab?.dataset?.tab || '').trim();
       tab.classList.toggle('is-active', target === stickerPanelTab);
     });
+    updateStickerToggleUI();
     const grid = stickerPanel.grid;
     grid.classList.remove('sticker-pages');
     grid.style.transition = 'none';
     grid.style.transform = 'translateX(0px)';
-    if (stickerPanelTab === 'add') {
-      grid.innerHTML = '<div class="sticker-empty">新增贴图包（占位）</div>';
-      if (stickerPanel?.dots) stickerPanel.dots.innerHTML = '';
-      return;
-    }
     const items = getStickerItemsForTab(stickerPanelTab);
     const totalPages = Math.max(1, Math.ceil(items.length / STICKER_PAGE_SIZE));
     if (stickerPanelPage >= totalPages) stickerPanelPage = totalPages - 1;
@@ -2480,6 +3001,15 @@ ${listPart || '-（无）'}
   let stickerPanelTab = 'default';
   let stickerPanelPage = 0;
   const STICKER_PAGE_SIZE = 8;
+  const STICKER_PACK_COLORS = [
+    '#ff6b6b',
+    '#ff9f43',
+    '#ffd93d',
+    '#6bcb77',
+    '#4dd0e1',
+    '#5c7cfa',
+    '#b197fc',
+  ];
   const STICKER_USAGE_KEY = 'sticker_usage_v1';
   const STICKER_RECENT_KEY = 'sticker_recents';
   let stickerUsage = {};
@@ -2556,26 +3086,33 @@ ${listPart || '-（无）'}
     panel.className = 'sticker-panel';
     panel.innerHTML = `
       <div class="sticker-tabbar">
-        <button type="button" class="sticker-tab" data-tab="recent" title="常用">🕛</button>
-        <button type="button" class="sticker-tab" data-tab="default" title="默认贴图">
-          <img class="sticker-tab-icon" src="./assets/external/feather-default.png" alt="默认贴图">
+        <div class="sticker-tabs"></div>
+        <button type="button" class="sticker-ai-toggle" aria-label="AI 贴图开关" title="AI 可用贴图">
+          <span class="sticker-ai-label">AI</span>
+          <span class="sticker-ai-dot"></span>
         </button>
-        <button type="button" class="sticker-tab" data-tab="add" title="新增">＋</button>
       </div>
       <div class="sticker-grid"></div>
       <div class="sticker-dots"></div>
     `;
     panel.addEventListener('click', event => {
       const tabBtn = event?.target?.closest ? event.target.closest('button.sticker-tab') : null;
+      const action = tabBtn?.dataset?.action || '';
       const tab = tabBtn?.dataset?.tab || '';
-      if (!tab) return;
+      if (!action && !tab) return;
       event.preventDefault();
       event.stopPropagation();
-      if (tab === 'add') {
-        stickerPanelTab = 'add';
-        stickerPanelPage = 0;
-        renderStickerPanel();
-        window.toastr?.info?.('新增贴图包功能待完成');
+      if (tabBtn?.dataset?.longpress === '1') {
+        tabBtn.dataset.longpress = '';
+        return;
+      }
+      if (action === 'add-pack') {
+        const pack = createStickerPack();
+        if (pack?.id) {
+          stickerPanelTab = `${STICKER_PACK_TAB_PREFIX}${pack.id}`;
+          stickerPanelPage = 0;
+          renderStickerPanel();
+        }
         return;
       }
       if (tab !== stickerPanelTab) {
@@ -2589,9 +3126,17 @@ ${listPart || '-（无）'}
       el: panel,
       grid: panel.querySelector('.sticker-grid'),
       dots: panel.querySelector('.sticker-dots'),
-      tabs: Array.from(panel.querySelectorAll('.sticker-tab')),
+      tabWrap: panel.querySelector('.sticker-tabs'),
+      toggle: panel.querySelector('.sticker-ai-toggle'),
     };
   })();
+  if (stickerPanel?.toggle) {
+    stickerPanel.toggle.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      handleStickerToggle();
+    });
+  }
   if (stickerPanel?.grid) {
     const grid = stickerPanel.grid;
     let raf = null;

@@ -836,7 +836,23 @@ body[data-creative-wide='on'] .QQ_chat_charmsg[data-creative='1'] .QQ_chat_msgdi
   display: flex;
   align-items: center;
   gap: 8px;
+  justify-content: space-between;
   margin-bottom: 6px;
+}
+
+.sticker-tabs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+.sticker-tabs::-webkit-scrollbar {
+  display: none;
 }
 
 .sticker-tab {
@@ -854,6 +870,10 @@ body[data-creative-wide='on'] .QQ_chat_charmsg[data-creative='1'] .QQ_chat_msgdi
   cursor: pointer;
 }
 
+.sticker-tab-add {
+  font-weight: 700;
+}
+
 .sticker-tab.is-active {
   background: #ffffff;
   border-color: rgba(25, 154, 255, 0.4);
@@ -865,6 +885,56 @@ body[data-creative-wide='on'] .QQ_chat_charmsg[data-creative='1'] .QQ_chat_msgdi
   height: 20px;
   object-fit: contain;
   display: block;
+}
+
+.sticker-ai-toggle {
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  background: rgba(255, 255, 255, 0.9);
+  border-radius: 999px;
+  padding: 4px 10px 4px 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: #1f2937;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.sticker-ai-toggle.is-hidden {
+  display: none;
+}
+
+.sticker-ai-toggle.is-enabled {
+  background: rgba(25, 154, 255, 0.12);
+  border-color: rgba(25, 154, 255, 0.35);
+  color: #0b66c2;
+}
+
+.sticker-ai-toggle.is-disabled {
+  background: rgba(226, 232, 240, 0.9);
+  border-color: rgba(148, 163, 184, 0.5);
+  color: #64748b;
+}
+
+.sticker-ai-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: rgba(148, 163, 184, 0.9);
+}
+
+.sticker-ai-toggle.is-enabled .sticker-ai-dot {
+  background: rgba(25, 154, 255, 0.9);
+}
+
+.sticker-panel.sticker-ai-disabled {
+  background: rgba(228, 228, 228, 0.98);
+}
+
+.sticker-panel.sticker-ai-disabled .sticker-grid {
+  background: rgba(220, 220, 220, 0.9);
+  border-radius: 12px;
 }
 
 .sticker-grid {
@@ -976,12 +1046,36 @@ body[data-creative-wide='on'] .QQ_chat_charmsg[data-creative='1'] .QQ_chat_msgdi
   background: #fff;
   border-radius: 12px;
   padding: 6px;
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
   width: 100%;
   aspect-ratio: 1 / 1;
   cursor: pointer;
+}
+
+.sticker-item.is-missing::after {
+  content: '!';
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: rgba(239, 68, 68, 0.92);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.sticker-item-add {
+  border-style: dashed;
+  font-weight: 700;
+  color: #475569;
 }
 
 .sticker-item img {

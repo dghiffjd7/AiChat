@@ -9,6 +9,7 @@ import { ConfigManager } from '../storage/config.js';
 import { PresetStore } from '../storage/preset-store.js';
 import { RegexStore, regex_placement } from '../storage/regex-store.js';
 import { WorldInfoStore, convertSTWorld } from '../storage/worldinfo.js';
+import { stickerPackStore } from '../storage/sticker-pack-store.js';
 import { makeScopedKey, normalizeScopeId } from '../storage/store-scope.js';
 import { appSettings } from '../storage/app-settings.js';
 import {
@@ -24,6 +25,7 @@ import {
 } from '../memory/memory-prompt-utils.js';
 import { logger } from '../utils/logger.js';
 import { MacroEngine } from '../utils/macro-engine.js';
+import { listMediaAssets } from '../utils/media-assets.js';
 import { isRetryableError, retryWithBackoff } from '../utils/retry.js';
 import { safeInvoke } from '../utils/tauri.js';
 
@@ -1992,9 +1994,39 @@ class AppBridge {
         }
 
         const roleMap = { 0: 'system', 1: 'user', 2: 'assistant' };
+        const buildStickerListBlock = () => {
+          const state = stickerPackStore.getState();
+          const keywords = [];
+          const seen = new Set();
+          const addKeyword = (value) => {
+            const key = String(value || '').trim();
+            if (!key || seen.has(key)) return;
+            seen.add(key);
+            keywords.push(key);
+          };
+          if (state.defaultEnabled !== false) {
+            listMediaAssets('sticker').forEach((item) => {
+              addKeyword(item?.label || item?.id || '');
+            });
+          }
+          (state.packs || []).forEach((pack) => {
+            if (!pack?.aiEnabled) return;
+            (pack.stickers || []).forEach((sticker) => {
+              addKeyword(sticker?.keyword || '');
+            });
+          });
+          return `<表情包列表>\n${keywords.join('\n')}\n</表情包列表>`;
+        };
+        const stickerListBlock = buildStickerListBlock();
+        const injectStickerList = (text) => {
+          const raw = String(text || '');
+          if (!raw.includes('<表情包列表>')) return raw;
+          return raw.replace(/<表情包列表>[\s\S]*?<\/表情包列表>/g, stickerListBlock);
+        };
         const formatWorldEntryContent = (entry, { applyRegex = true } = {}) => {
           const raw = processTextMacrosWithPendingFlag(entry?.content || '', macroContext);
-          const trimmed = trimEdgeBlankLines(raw);
+          const injected = injectStickerList(raw);
+          const trimmed = trimEdgeBlankLines(injected);
           if (!trimmed) return '';
           if (!applyRegex) return trimmed;
           return this.regex.apply(trimmed, this.getRegexContext(), regex_placement.WORLD_INFO, {
