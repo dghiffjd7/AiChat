@@ -5,6 +5,7 @@
 import { ConfigManager } from '../storage/config.js';
 import { LLMClient } from '../api/client.js';
 import { logger } from '../utils/logger.js';
+import { logStickerDebugInfo } from '../utils/sticker-debug.js';
 
 const canInitClient = (cfg) => {
     const c = cfg || {};
@@ -12,6 +13,7 @@ const canInitClient = (cfg) => {
     const hasVertexSa = c.provider === 'vertexai' && typeof c.vertexaiServiceAccount === 'string' && c.vertexaiServiceAccount.trim().length > 0;
     return hasKey || hasVertexSa;
 };
+
 
 export class ConfigPanel {
     constructor() {
@@ -1101,6 +1103,10 @@ export class ConfigPanel {
         try {
             const { getDebugPanel } = await import('./debug-panel.js');
             const panel = getDebugPanel();
+            const runId = Math.random().toString(36).slice(2, 6);
+            panel.filterText = '';
+            if (panel.filterInput) panel.filterInput.value = '';
+            panel.render?.();
 
             panel.log('=== 配置调试信息 ===');
             panel.showConfigStatus(this.configManager);
@@ -1118,6 +1124,8 @@ export class ConfigPanel {
                 panel.log(`localStorage 读取失败: ${err.message}`, 'error');
             }
 
+            await logStickerDebugInfo(panel, runId);
+
             panel.log('=== 调试面板已打开 ===');
             panel.toggle(); // 确保面板显示
 
@@ -1127,6 +1135,7 @@ export class ConfigPanel {
             logger.error('显示调试信息失败:', err);
         }
     }
+
 
     setLoading(isLoading) {
         if (!this.saveButton) return;

@@ -21,6 +21,7 @@ export class DebugPanel {
         this.smokeRunId = 0;
         this.memoryModeBtn = null;
         this.memoryInspectBtn = null;
+        this.stickerDebugBtn = null;
         this.filterInput = null;
         this.filterClearBtn = null;
         this.filterText = '';
@@ -116,6 +117,23 @@ export class DebugPanel {
         memoryModeBtn.onclick = () => this.toggleMemoryMode();
         this.memoryModeBtn = memoryModeBtn;
         this.controls.appendChild(memoryModeBtn);
+
+        const stickerDebugBtn = document.createElement('button');
+        stickerDebugBtn.type = 'button';
+        stickerDebugBtn.textContent = '贴图调试';
+        stickerDebugBtn.style.cssText = `
+            padding: 2px 6px;
+            background: rgba(0, 0, 0, 0.8);
+            color: #00ff00;
+            border: 1px solid #00ff00;
+            border-radius: 4px;
+            font-size: 10px;
+            font-family: monospace;
+            cursor: pointer;
+        `;
+        stickerDebugBtn.onclick = () => this.runStickerDebug();
+        this.stickerDebugBtn = stickerDebugBtn;
+        this.controls.appendChild(stickerDebugBtn);
 
         const filterWrap = document.createElement('div');
         filterWrap.style.cssText = `
@@ -278,6 +296,19 @@ export class DebugPanel {
         window.dispatchEvent(new CustomEvent('app-settings-changed', { detail: { key: 'memoryStorageMode', value: next } }));
         this.updateMemoryModeButton();
         this.log(`[记忆模式] 已切换为 ${next === 'table' ? '表格' : '摘要'}`);
+    }
+
+    async runStickerDebug() {
+        const runId = Math.random().toString(36).slice(2, 6);
+        this.filterText = '';
+        if (this.filterInput) this.filterInput.value = '';
+        this.render();
+        try {
+            const { logStickerDebugInfo } = await import('../utils/sticker-debug.js');
+            await logStickerDebugInfo(this, runId);
+        } catch (err) {
+            this.log(`[#${runId}] 贴图调试失败: ${err.message}`, 'error');
+        }
     }
 
     toggle() {

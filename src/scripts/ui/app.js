@@ -1447,6 +1447,22 @@ ${listPart || '-（无）'}
     return tokens;
   };
 
+  const extractStickerTokenMatches = (text = '') => {
+    const matches = [];
+    const re = /\[bqb-([\s\S]+?)\]/gi;
+    let match = null;
+    while ((match = re.exec(String(text || '')))) {
+      const key = String(match[1] || '').trim();
+      if (!key) continue;
+      matches.push({
+        key,
+        start: match.index,
+        end: match.index + match[0].length,
+      });
+    }
+    return matches;
+  };
+
   const resolveStickerKeywordFromText = (value, { allowLabel = false } = {}) => {
     const raw = String(value || '').trim();
     if (!raw) return '';
@@ -1529,6 +1545,28 @@ ${listPart || '-（无）'}
     } catch {}
   };
 
+  const removeStickerTokenByIndex = (tokenIndex) => {
+    if (!composerInput) return;
+    const value = String(composerInput.value || '');
+    const matches = extractStickerTokenMatches(value);
+    const target = matches[tokenIndex];
+    if (!target) return;
+    const before = value.slice(0, target.start);
+    const after = value.slice(target.end);
+    const beforeTrim = before.replace(/\s*$/, '');
+    const afterTrim = after.replace(/^\s*/, '');
+    const needsSpace = /\S$/.test(beforeTrim) && /^\S/.test(afterTrim);
+    const next = `${beforeTrim}${needsSpace ? ' ' : ''}${afterTrim}`;
+    composerInput.value = next;
+    const caret = beforeTrim.length + (needsSpace ? 1 : 0);
+    try {
+      composerInput.selectionStart = composerInput.selectionEnd = caret;
+    } catch {}
+    try {
+      composerInput.dispatchEvent(new Event('input', { bubbles: true }));
+    } catch {}
+  };
+
   const STICKER_PACK_TAB_PREFIX = 'pack:';
   const STICKER_PACK_ASSET_SESSION = 'sticker_pack_assets';
   const STICKER_ICON_SESSION = 'sticker_pack_icons';
@@ -1537,6 +1575,43 @@ ${listPart || '-（无）'}
   const STICKER_SOFT_PACK_LIMIT = 72;
   const STICKER_SOFT_TOTAL_LIMIT = 400;
   let stickerPackState = stickerPackStore.getState();
+  let stickerPackDeleteMode = false;
+  let stickerPackDeleteTarget = '';
+  let activeStickerEditor = null;
+  const stickerLoadErrorKeys = new Set();
+
+  const getStickerLoadErrors = () => {
+    const g = typeof globalThis !== 'undefined' ? globalThis : window;
+    if (!g.__stickerLoadErrors) g.__stickerLoadErrors = [];
+    return g.__stickerLoadErrors;
+  };
+
+  const formatStickerDebugValue = (value, maxLen = 160) => {
+    const raw = String(value || '');
+    if (!raw) return '';
+    if (raw.startsWith('data:')) {
+      return `data:${raw.slice(0, 24)}...(${raw.length})`;
+    }
+    if (raw.length > maxLen) return `${raw.slice(0, maxLen)}...`;
+    return raw;
+  };
+
+  const recordStickerLoadError = (detail = {}) => {
+    const payload = {
+      time: new Date().toISOString(),
+      packId: String(detail.packId || '').trim(),
+      stickerId: String(detail.stickerId || '').trim(),
+      keyword: String(detail.keyword || '').trim(),
+      url: formatStickerDebugValue(detail.url),
+    };
+    const key = `${payload.packId}|${payload.stickerId}|${payload.url}`;
+    if (stickerLoadErrorKeys.has(key)) return;
+    stickerLoadErrorKeys.add(key);
+    const errors = getStickerLoadErrors();
+    errors.push(payload);
+    if (errors.length > 50) errors.shift();
+    logger.warn(`贴图加载失败 pack=${payload.packId || '无'} sticker=${payload.stickerId || '无'} key=${payload.keyword || '空'} url=${payload.url || '空'}`);
+  };
 
   const createFilePicker = (accept, { multiple = false } = {}) => {
     const input = document.createElement('input');
@@ -1719,6 +1794,119 @@ ${listPart || '-（无）'}
     return { ok: true, pack: next };
   };
 
+  const removeStickerFromPack = async (packId, stickerId) => {
+    const pack = getStickerPackById(packId);
+    if (!pack || !stickerId) return;
+    const stickers = Array.isArray(pack.stickers) ? pack.stickers.slice() : [];
+    const target = stickers.find(s => s.id === stickerId);
+    if (!target) return;
+    const ok = confirm('删除该贴图？');
+    if (!ok) return;
+    if (target.path) {
+      safeInvoke('delete_attachment', { sessionId: STICKER_PACK_ASSET_SESSION, path: target.path }).catch(() => {});
+    }
+    const nextPack = { ...pack, stickers: stickers.filter(s => s.id !== stickerId) };
+    const nextState = stickerPackStore.updatePack(packId, nextPack);
+    syncStickerPackState(nextState);
+    renderStickerPanel();
+  };
+
+  const removeStickerPack = async (packId) => {
+    const pack = getStickerPackById(packId);
+    if (!pack) return;
+    const count = Array.isArray(pack.stickers) ? pack.stickers.length : 0;
+    if (count > 0) {
+      const ok = confirm(`该贴图包包含 ${count} 张贴图，是否一并删除？`);
+      if (!ok) return;
+    }
+    (pack.stickers || []).forEach((sticker) => {
+      const path = String(sticker?.path || '').trim();
+      if (path) {
+        safeInvoke('delete_attachment', { sessionId: STICKER_PACK_ASSET_SESSION, path }).catch(() => {});
+      }
+    });
+    if (pack.iconPath) {
+      safeInvoke('delete_attachment', { sessionId: STICKER_ICON_SESSION, path: pack.iconPath }).catch(() => {});
+    }
+    const nextState = stickerPackStore.removePack(packId);
+    syncStickerPackState(nextState);
+    stickerPackDeleteMode = false;
+    stickerPackDeleteTarget = '';
+    if (stickerPanelTab === `${STICKER_PACK_TAB_PREFIX}${packId}`) {
+      stickerPanelTab = 'default';
+      stickerPanelPage = 0;
+    }
+    renderStickerPanel();
+  };
+
+  const getStickerFromPack = (packId, stickerId) => {
+    const pack = getStickerPackById(packId);
+    if (!pack || !stickerId) return null;
+    return (pack.stickers || []).find(s => s.id === stickerId) || null;
+  };
+
+  const isStickerKeywordMissing = (packId, stickerId) => {
+    const pack = getStickerPackById(packId);
+    if (!pack) return false;
+    const sticker = getStickerFromPack(packId, stickerId);
+    if (!sticker) return false;
+    return !String(sticker.keyword || '').trim();
+  };
+
+  const updateStickerKeywordInline = (packId, stickerId, keyword) => {
+    const pack = getStickerPackById(packId);
+    if (!pack || !stickerId) return;
+    const nextKeyword = String(keyword || '').trim();
+    let changed = false;
+    const stickers = (pack.stickers || []).map((s) => {
+      if (s.id !== stickerId) return s;
+      if (String(s.keyword || '').trim() === nextKeyword) return s;
+      changed = true;
+      return { ...s, keyword: nextKeyword };
+    });
+    if (!changed) return;
+    const nextPack = { ...pack, stickers };
+    const nextState = stickerPackStore.updatePack(packId, nextPack);
+    syncStickerPackState(nextState);
+  };
+
+  const openStickerEditor = (btn, item) => {
+    if (!btn || !item) return;
+    if (activeStickerEditor?.btn === btn) return;
+    if (activeStickerEditor) closeStickerEditor();
+    const packId = String(item?.packId || '').trim();
+    const stickerId = String(item?.stickerId || '').trim();
+    if (!packId || !stickerId) return;
+    const input = btn.querySelector('.sticker-item-input');
+    const indicator = btn.querySelector('.sticker-item-indicator');
+    btn.classList.add('is-editing');
+    if (indicator) {
+      indicator.textContent = '×';
+      indicator.disabled = false;
+    }
+    if (input) {
+      const sticker = getStickerFromPack(packId, stickerId);
+      input.value = String(sticker?.keyword || '').trim();
+      setTimeout(() => input.focus(), 0);
+    }
+    activeStickerEditor = { btn, packId, stickerId };
+  };
+
+  const closeStickerEditor = () => {
+    const current = activeStickerEditor;
+    if (!current?.btn) return;
+    const { btn, packId, stickerId } = current;
+    const indicator = btn.querySelector('.sticker-item-indicator');
+    btn.classList.remove('is-editing');
+    const missing = isStickerKeywordMissing(packId, stickerId);
+    btn.classList.toggle('has-indicator', missing);
+    if (indicator) {
+      indicator.textContent = missing ? '!' : '';
+      indicator.disabled = true;
+    }
+    activeStickerEditor = null;
+  };
+
   const updateStickerKeyword = (pack, stickerId) => {
     if (!pack || !stickerId) return pack;
     const stickers = Array.isArray(pack.stickers) ? pack.stickers.map(s => ({ ...s })) : [];
@@ -1875,11 +2063,12 @@ ${listPart || '-（无）'}
       const stickers = Array.isArray(pack?.stickers) ? pack.stickers : [];
       const items = stickers.map((sticker, idx) => {
         const keyword = String(sticker?.keyword || sticker?.id || '').trim();
+        const missingKeyword = !String(sticker?.keyword || '').trim();
         return {
           keyword,
           label: String(sticker?.keyword || formatStickerNameSuggestion(sticker?.name, idx) || keyword).trim(),
           url: resolveStickerMediaUrl(sticker),
-          missingKeyword: !String(sticker?.keyword || '').trim(),
+          missingKeyword,
           stickerId: String(sticker?.id || '').trim(),
           packId,
         };
@@ -1955,18 +2144,79 @@ ${listPart || '-（无）'}
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'sticker-item';
-      if (item?.missingKeyword) btn.classList.add('is-missing');
+      if (item?.missingKeyword) btn.classList.add('has-indicator');
       btn.dataset.keyword = keyword;
       btn.dataset.stickerId = String(item?.stickerId || '').trim();
       btn.dataset.packId = String(item?.packId || '').trim();
       btn.setAttribute('aria-label', item?.label || keyword);
+      const content = document.createElement('div');
+      content.className = 'sticker-item-content';
       if (item?.url) {
         const img = document.createElement('img');
         img.src = item.url;
         img.alt = item?.label || keyword;
-        btn.appendChild(img);
+        img.addEventListener('error', () => {
+          recordStickerLoadError({
+            packId: item?.packId,
+            stickerId: item?.stickerId,
+            keyword,
+            url: item?.url,
+          });
+        });
+        content.appendChild(img);
       } else {
-        btn.textContent = item?.label || keyword;
+        const label = document.createElement('span');
+        label.className = 'sticker-item-text';
+        label.textContent = item?.label || keyword;
+        content.appendChild(label);
+      }
+      btn.appendChild(content);
+      if (item?.packId) {
+        const indicator = document.createElement('button');
+        indicator.type = 'button';
+        indicator.className = 'sticker-item-indicator';
+        indicator.textContent = item?.missingKeyword ? '!' : '';
+        indicator.disabled = true;
+        indicator.setAttribute('aria-label', '贴图状态');
+        indicator.addEventListener('click', (event) => {
+          event.stopPropagation();
+          if (!btn.classList.contains('is-editing')) return;
+          const packId = String(item?.packId || '').trim();
+          const stickerId = String(item?.stickerId || '').trim();
+          if (packId && stickerId) {
+            removeStickerFromPack(packId, stickerId);
+          }
+        });
+        btn.appendChild(indicator);
+
+        const editor = document.createElement('div');
+        editor.className = 'sticker-item-editor';
+        editor.innerHTML = '<input type="text" class="sticker-item-input" placeholder="输入关键词">';
+        editor.addEventListener('click', e => e.stopPropagation());
+        editor.addEventListener('pointerdown', e => e.stopPropagation());
+        const input = editor.querySelector('.sticker-item-input');
+        const packId = String(item?.packId || '').trim();
+        const stickerId = String(item?.stickerId || '').trim();
+        const applyKeywordUpdate = (rawValue) => {
+          if (!packId || !stickerId) return;
+          const nextKeyword = String(rawValue || '').trim();
+          updateStickerKeywordInline(packId, stickerId, nextKeyword);
+          item.keyword = nextKeyword;
+          const fallbackKey = nextKeyword || stickerId;
+          btn.dataset.keyword = fallbackKey;
+          const nextLabel = nextKeyword || item?.label || fallbackKey;
+          btn.setAttribute('aria-label', nextLabel);
+        };
+        input?.addEventListener('input', (event) => {
+          applyKeywordUpdate(event?.target?.value);
+        });
+        input?.addEventListener('keydown', (event) => {
+          if (event.key === 'Enter' || event.key === 'Escape') {
+            event.preventDefault();
+            closeStickerEditor();
+          }
+        });
+        btn.appendChild(editor);
       }
       let suppressClick = false;
       let pressTimer = null;
@@ -1981,15 +2231,7 @@ ${listPart || '-（无）'}
         clearPress();
         pressTimer = setTimeout(() => {
           suppressClick = true;
-          const packId = String(item?.packId || '').trim();
-          const stickerId = String(item?.stickerId || '').trim();
-          const pack = getStickerPackById(packId);
-          const nextPack = updateStickerKeyword(pack, stickerId);
-          if (nextPack && nextPack !== pack) {
-            const nextState = stickerPackStore.updatePack(packId, nextPack);
-            syncStickerPackState(nextState);
-            renderStickerPanel();
-          }
+          openStickerEditor(btn, item);
         }, 520);
       });
       ['pointerup', 'pointercancel', 'pointerleave'].forEach(evt => {
@@ -2001,8 +2243,21 @@ ${listPart || '-（无）'}
           suppressClick = false;
           return;
         }
-        bumpStickerUsage(keyword);
-        insertStickerToken(keyword);
+        if (btn.classList.contains('is-editing')) {
+          closeStickerEditor();
+          return;
+        }
+        const packId = String(btn.dataset.packId || '').trim();
+        const stickerId = String(btn.dataset.stickerId || '').trim();
+        if (packId && stickerId && isStickerKeywordMissing(packId, stickerId)) {
+          window.toastr?.warning?.('请先填写关键词');
+          openStickerEditor(btn, item);
+          return;
+        }
+        const key = String(btn.dataset.keyword || '').trim();
+        if (!key) return;
+        bumpStickerUsage(key);
+        insertStickerToken(key);
         if (stickerPanelTab === 'recent') renderStickerPanel();
       });
       container.appendChild(btn);
@@ -2137,6 +2392,13 @@ ${listPart || '-（无）'}
       : 'AI 贴图开关不可用';
     stickerPanel.el.classList.toggle('sticker-ai-disabled', canToggle && !enabled);
   };
+  const updateStickerDeleteUI = () => {
+    if (!stickerPanel?.deleteBtn) return;
+    const packId = getStickerPackIdFromTab(stickerPanelTab);
+    const show = Boolean(packId && stickerPackDeleteMode && stickerPackDeleteTarget === packId);
+    stickerPanel.deleteBtn.classList.toggle('is-active', show);
+    stickerPanel.deleteBtn.classList.toggle('is-hidden', !packId);
+  };
   const handleStickerToggle = () => {
     const packId = getStickerPackIdFromTab(stickerPanelTab);
     if (stickerPanelTab === 'recent') return;
@@ -2151,15 +2413,7 @@ ${listPart || '-（无）'}
     const pack = getStickerPackById(packId);
     if (!pack) return;
     const enable = !pack.aiEnabled;
-    let nextPack = { ...pack, aiEnabled: enable };
-    if (enable) {
-      const ensured = ensureStickerKeywords(nextPack);
-      if (!ensured.ok) {
-        window.toastr?.warning?.('请先为贴图填写关键词');
-        return;
-      }
-      nextPack = { ...ensured.pack, aiEnabled: true };
-    }
+    const nextPack = { ...pack, aiEnabled: enable };
     const nextState = stickerPackStore.updatePack(packId, nextPack);
     syncStickerPackState(nextState);
     renderStickerPanel();
@@ -2169,6 +2423,12 @@ ${listPart || '-（无）'}
     if (getStickerPackIdFromTab(stickerPanelTab) && !getStickerPackById(getStickerPackIdFromTab(stickerPanelTab))) {
       stickerPanelTab = 'default';
     }
+    if (activeStickerEditor) closeStickerEditor();
+    const activePackId = getStickerPackIdFromTab(stickerPanelTab);
+    if (!activePackId || activePackId !== stickerPackDeleteTarget) {
+      stickerPackDeleteMode = false;
+      stickerPackDeleteTarget = '';
+    }
     renderStickerTabs();
     const tabs = Array.isArray(stickerPanel?.tabs) ? stickerPanel.tabs : [];
     tabs.forEach(tab => {
@@ -2176,6 +2436,7 @@ ${listPart || '-（无）'}
       tab.classList.toggle('is-active', target === stickerPanelTab);
     });
     updateStickerToggleUI();
+    updateStickerDeleteUI();
     const grid = stickerPanel.grid;
     grid.classList.remove('sticker-pages');
     grid.style.transition = 'none';
@@ -2206,18 +2467,29 @@ ${listPart || '-（无）'}
 
   updateStickerPreview = (text = '') => {
     if (!stickerPreview?.el || !stickerPreview.list) return;
-    const tokens = extractStickerTokens(text || composerInput?.value || '');
-    if (!tokens.length) {
+    const matches = extractStickerTokenMatches(text || composerInput?.value || '');
+    if (!matches.length) {
       stickerPreview.el.classList.remove('is-active');
       chatRoom?.classList.remove('sticker-preview-active');
       stickerPreview.list.innerHTML = '';
       return;
     }
     stickerPreview.list.innerHTML = '';
-    tokens.forEach((keyword, idx) => {
+    matches.forEach((match, idx) => {
+      const keyword = match.key;
       const resolved = resolveMediaAsset('sticker', keyword) || resolveMediaAsset('image', keyword);
       const item = document.createElement('div');
       item.className = 'sticker-preview-item';
+      const removeBtn = document.createElement('button');
+      removeBtn.type = 'button';
+      removeBtn.className = 'sticker-preview-remove';
+      removeBtn.textContent = '×';
+      removeBtn.setAttribute('aria-label', '删除贴图');
+      removeBtn.addEventListener('click', (event) => {
+        event.stopPropagation();
+        removeStickerTokenByIndex(idx);
+      });
+      item.appendChild(removeBtn);
       if (resolved?.url) {
         const img = document.createElement('img');
         img.src = resolved.url;
@@ -2261,6 +2533,10 @@ ${listPart || '-（无）'}
     } else {
       stickerPanel.el.classList.remove('is-active');
       chatRoom.classList.remove('sticker-panel-open');
+      if (activeStickerEditor) closeStickerEditor();
+      stickerPackDeleteMode = false;
+      stickerPackDeleteTarget = '';
+      updateStickerDeleteUI();
     }
     updateStickerPreview(composerInput?.value || '');
     syncChatInputOffset();
@@ -3087,10 +3363,13 @@ ${listPart || '-（无）'}
     panel.innerHTML = `
       <div class="sticker-tabbar">
         <div class="sticker-tabs"></div>
-        <button type="button" class="sticker-ai-toggle" aria-label="AI 贴图开关" title="AI 可用贴图">
-          <span class="sticker-ai-label">AI</span>
-          <span class="sticker-ai-dot"></span>
-        </button>
+        <div class="sticker-tab-actions">
+          <button type="button" class="sticker-ai-toggle" aria-label="AI 贴图开关" title="AI 可用贴图">
+            <span class="sticker-ai-label">AI</span>
+            <span class="sticker-ai-dot"></span>
+          </button>
+          <button type="button" class="sticker-pack-delete" aria-label="删除贴图包" title="删除贴图包">×</button>
+        </div>
       </div>
       <div class="sticker-grid"></div>
       <div class="sticker-dots"></div>
@@ -3128,13 +3407,53 @@ ${listPart || '-（无）'}
       dots: panel.querySelector('.sticker-dots'),
       tabWrap: panel.querySelector('.sticker-tabs'),
       toggle: panel.querySelector('.sticker-ai-toggle'),
+      deleteBtn: panel.querySelector('.sticker-pack-delete'),
     };
   })();
   if (stickerPanel?.toggle) {
+    let deletePressTimer = null;
+    let deletePressTriggered = false;
+    let suppressToggle = false;
+    const clearDeletePress = () => {
+      if (deletePressTimer) {
+        clearTimeout(deletePressTimer);
+        deletePressTimer = null;
+      }
+    };
+    stickerPanel.toggle.addEventListener('pointerdown', () => {
+      deletePressTriggered = false;
+      clearDeletePress();
+      deletePressTimer = setTimeout(() => {
+        const packId = getStickerPackIdFromTab(stickerPanelTab);
+        if (!packId) return;
+        deletePressTriggered = true;
+        suppressToggle = true;
+        stickerPackDeleteMode = true;
+        stickerPackDeleteTarget = packId;
+        updateStickerDeleteUI();
+      }, 520);
+    });
+    ['pointerup', 'pointerleave', 'pointercancel'].forEach((evt) => {
+      stickerPanel.toggle.addEventListener(evt, () => clearDeletePress());
+    });
     stickerPanel.toggle.addEventListener('click', (event) => {
       event.preventDefault();
       event.stopPropagation();
+      if (suppressToggle || deletePressTriggered) {
+        suppressToggle = false;
+        deletePressTriggered = false;
+        return;
+      }
       handleStickerToggle();
+    });
+  }
+  if (stickerPanel?.deleteBtn) {
+    stickerPanel.deleteBtn.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const packId = getStickerPackIdFromTab(stickerPanelTab);
+      if (!packId) return;
+      removeStickerPack(packId);
     });
   }
   if (stickerPanel?.grid) {

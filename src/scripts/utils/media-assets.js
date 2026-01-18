@@ -64,6 +64,15 @@ const isAbsolutePath = (value) => {
     const raw = String(value || '').trim();
     return isWindowsPath(raw) || isUncPath(raw) || raw.startsWith('/');
 };
+const isLikelyFsPath = (value) => {
+    const raw = String(value || '').trim().replace(/\\/g, '/');
+    if (!raw) return false;
+    if (isWindowsPath(raw) || isUncPath(raw)) return true;
+    if (raw.startsWith('/data/') || raw.startsWith('/storage/') || raw.startsWith('/sdcard/') || raw.startsWith('/mnt/')) {
+        return true;
+    }
+    return false;
+};
 
 const toFileUrl = (value) => {
     const raw = String(value || '').trim();
@@ -223,9 +232,17 @@ const buildFallbackUrls = (resolvedUrl, item) => {
         const rawFile = String(item.file || item.path || '').trim();
         if (rawFile) {
             const isAbs = isAbsolutePath(rawFile);
-            if (STATE.baseType === 'tauri') {
+            const convert = getConvertFileSrc();
+            if (STATE.baseType !== 'tauri' && typeof convert === 'function' && isAbs && isLikelyFsPath(rawFile)) {
+                try {
+                    const converted = convert(rawFile);
+                    if (converted) urls.push(converted);
+                } catch {}
+                const fileUrl = toFileUrl(rawFile);
+                if (fileUrl) urls.push(fileUrl);
+                urls.push(rawFile);
+            } else if (STATE.baseType === 'tauri') {
                 const full = isAbs ? rawFile : joinPath(STATE.baseDir, rawFile);
-                const convert = getConvertFileSrc();
                 if (typeof convert === 'function') {
                     try {
                         const converted = convert(full);
@@ -315,10 +332,29 @@ const resolveItemUrl = (item) => {
     if (!item || typeof item !== 'object') return '';
     const rawFile = String(item.file || item.path || '').trim();
     if (!rawFile) return '';
-    if (isLikelyUrl(rawFile) && !isWindowsPath(rawFile) && !isUncPath(rawFile)) return rawFile;
+    const convert = getConvertFileSrc();
+    if (typeof convert === 'function' && isAbsolutePath(rawFile) && isLikelyFsPath(rawFile)) {
+        try {
+            const converted = convert(rawFile);
+            if (converted) return converted;
+        } catch {}
+        const fileUrl = toFileUrl(rawFile);
+        if (fileUrl) return fileUrl;
+    }
+    if (isLikelyUrl(rawFile) && !isWindowsPath(rawFile) && !isUncPath(rawFile)) {
+        if (STATE.baseType === 'tauri' && isAbsolutePath(rawFile)) {
+            if (typeof convert === 'function') {
+                try {
+                    const converted = convert(rawFile);
+                    if (converted) return converted;
+                } catch {}
+            }
+            return toFileUrl(rawFile) || rawFile;
+        }
+        return rawFile;
+    }
     if (STATE.baseType === 'tauri' && STATE.baseDir) {
         const full = isAbsolutePath(rawFile) ? rawFile : joinPath(STATE.baseDir, rawFile);
-        const convert = getConvertFileSrc();
         if (typeof convert === 'function') {
             try {
                 return convert(full);
