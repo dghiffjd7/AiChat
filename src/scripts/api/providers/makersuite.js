@@ -375,9 +375,9 @@ export class MakersuiteProvider {
       candidates.forEach((candidate) => {
         const parts = Array.isArray(candidate?.content?.parts) ? candidate.content.parts : [];
         parts.forEach((part) => {
-          const inline = part?.inlineData;
+          const inline = part?.inlineData || part?.inline_data;
           if (inline?.data) {
-            const mime = inline?.mimeType || 'image/png';
+            const mime = inline?.mimeType || inline?.mime_type || 'image/png';
             images.push({ dataUrl: `data:${mime};base64,${inline.data}`, index: images.length });
             return;
           }
@@ -461,7 +461,15 @@ export class MakersuiteProvider {
 
     const requestGenerateContent = async () => {
       const url = this.buildUrl(false);
-      const messages = [{ role: 'user', content: String(prompt ?? '') }];
+      const referenceImages = Array.isArray(payloadOptions.referenceImages) ? payloadOptions.referenceImages : [];
+      const parts = [{ type: 'text', text: String(prompt ?? '') }];
+      referenceImages.forEach((src) => {
+        const url = String(src || '').trim();
+        if (!url) return;
+        parts.push({ type: 'image_url', image_url: { url } });
+      });
+      const content = referenceImages.length ? parts : String(prompt ?? '');
+      const messages = [{ role: 'user', content }];
       const body = this.buildRequestBody(messages, payloadOptions);
       body.generationConfig = { ...(body.generationConfig || {}) };
       const responseModalities = payloadOptions.responseModalities || payloadOptions.response_modalities;
@@ -478,22 +486,22 @@ export class MakersuiteProvider {
         body.generationConfig.candidateCount = count;
       }
 
-      const response = await fetch(url, {
+      const res = await this.request({
+        url,
         method: 'POST',
         headers: this.getHeaders(),
         signal: controller.signal,
         body: JSON.stringify(body),
       });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        const error = new Error(`Gemini API Error: ${response.status} ${response.statusText}`);
-        error.status = response.status;
-        error.response = errorText;
+      if (!res.ok) {
+        const detail = extractErrorDetail(res.body);
+        const error = new Error(`Gemini API Error: ${res.status}${detail ? ` - ${detail}` : ''}`);
+        error.status = res.status;
+        error.response = res.body;
         throw error;
       }
 
-      const data = await response.json();
+      const data = JSON.parse(res.body || '{}');
       const images = toImageResults(data);
       if (!images.length) {
         throw new Error('未返回可用图片');

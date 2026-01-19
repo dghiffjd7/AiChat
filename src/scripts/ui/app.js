@@ -1704,6 +1704,7 @@ Atmosphere: pink, bubbly, extremely girly.
 
   const stickerFilePicker = createFilePicker('image/*', { multiple: true });
   const stickerIconPicker = createFilePicker('image/*', { multiple: false });
+  const stickerAiReferencePicker = createFilePicker('image/*', { multiple: true });
 
   const readFileAsDataUrl = file => {
     return new Promise(resolve => {
@@ -3549,6 +3550,13 @@ Atmosphere: pink, bubbly, extremely girly.
           <button type="button" class="sticker-ai-btn ghost" id="sticker-ai-reset">重置模板</button>
         </div>
 
+        <label class="sticker-ai-label">参考图片（可选）</label>
+        <div class="sticker-ai-ref">
+          <button type="button" class="sticker-ai-btn" id="sticker-ai-ref-add">添加参考图片</button>
+          <small class="sticker-ai-hint">参考图片仅在支持图像输入的模型中生效。</small>
+          <div class="sticker-ai-ref-list" id="sticker-ai-ref-list"></div>
+        </div>
+
         <label class="sticker-ai-label" for="sticker-ai-final">完整提示词（可编辑）</label>
         <textarea id="sticker-ai-final" class="sticker-ai-textarea" placeholder="这里会显示生成后的完整提示词"></textarea>
 
@@ -3558,6 +3566,29 @@ Atmosphere: pink, bubbly, extremely girly.
 
         <div class="sticker-ai-status" id="sticker-ai-status"></div>
         <div class="sticker-ai-preview" id="sticker-ai-preview"></div>
+
+        <label class="sticker-ai-label">切割设置</label>
+        <div class="sticker-ai-slice-settings">
+          <label>行数<input type="number" id="sticker-ai-rows" min="1" value="4"></label>
+          <label>列数<input type="number" id="sticker-ai-cols" min="1" value="6"></label>
+          <label>外边距<input type="number" id="sticker-ai-margin" min="0" value="16"></label>
+          <label>内间距<input type="number" id="sticker-ai-gap" min="0" value="8"></label>
+          <label>容差<input type="number" id="sticker-ai-tolerance" min="5" max="80" value="28"></label>
+          <label>去白边<input type="number" id="sticker-ai-shrink" min="0" max="4" value="1"></label>
+          <label>羽化<input type="number" id="sticker-ai-feather" min="0" max="6" value="2"></label>
+        </div>
+        <div class="sticker-ai-actions">
+          <button type="button" class="sticker-ai-btn" id="sticker-ai-slice">去背并切割</button>
+        </div>
+
+        <label class="sticker-ai-label">切割结果</label>
+        <div class="sticker-ai-slice-actions">
+          <button type="button" class="sticker-ai-btn ghost" id="sticker-ai-select-all">全选</button>
+          <button type="button" class="sticker-ai-btn ghost" id="sticker-ai-select-none">全不选</button>
+          <select id="sticker-ai-pack"></select>
+          <button type="button" class="sticker-ai-btn primary" id="sticker-ai-save">保存到贴图包</button>
+        </div>
+        <div class="sticker-ai-slice-list" id="sticker-ai-slice-list"></div>
       </div>
     `;
 
@@ -3566,10 +3597,33 @@ Atmosphere: pink, bubbly, extremely girly.
     const finalInput = modal.querySelector('#sticker-ai-final');
     const statusEl = modal.querySelector('#sticker-ai-status');
     const previewEl = modal.querySelector('#sticker-ai-preview');
+    const refAddBtn = modal.querySelector('#sticker-ai-ref-add');
+    const refListEl = modal.querySelector('#sticker-ai-ref-list');
+    const sliceBtn = modal.querySelector('#sticker-ai-slice');
+    const sliceListEl = modal.querySelector('#sticker-ai-slice-list');
+    const selectAllBtn = modal.querySelector('#sticker-ai-select-all');
+    const selectNoneBtn = modal.querySelector('#sticker-ai-select-none');
+    const packSelectEl = modal.querySelector('#sticker-ai-pack');
+    const saveBtn = modal.querySelector('#sticker-ai-save');
+    const rowsInput = modal.querySelector('#sticker-ai-rows');
+    const colsInput = modal.querySelector('#sticker-ai-cols');
+    const marginInput = modal.querySelector('#sticker-ai-margin');
+    const gapInput = modal.querySelector('#sticker-ai-gap');
+    const toleranceInput = modal.querySelector('#sticker-ai-tolerance');
+    const shrinkInput = modal.querySelector('#sticker-ai-shrink');
+    const featherInput = modal.querySelector('#sticker-ai-feather');
     const buildBtn = modal.querySelector('#sticker-ai-build');
     const resetBtn = modal.querySelector('#sticker-ai-reset');
     const renderBtn = modal.querySelector('#sticker-ai-render');
     const closeBtn = modal.querySelector('.sticker-ai-close');
+
+    let referenceImages = [];
+    let generatedImages = [];
+    let selectedGeneratedIndex = 0;
+    let sliceItems = [];
+    let slicePreviewTimer = null;
+    let sliceInProgress = false;
+    let slicePending = null;
 
     const setStatus = (text, tone = '') => {
       if (!statusEl) return;
@@ -3581,20 +3635,451 @@ Atmosphere: pink, bubbly, extremely girly.
       if (buildBtn) buildBtn.disabled = busy;
       if (renderBtn) renderBtn.disabled = busy;
       if (resetBtn) resetBtn.disabled = busy;
+      if (sliceBtn) sliceBtn.disabled = busy;
+      if (saveBtn) saveBtn.disabled = busy;
     };
 
-    const renderPreview = (items = []) => {
+    const scheduleSlicePreview = (options = {}) => {
+      if (!generatedImages.length) return;
+      if (slicePreviewTimer) {
+        clearTimeout(slicePreviewTimer);
+        slicePreviewTimer = null;
+      }
+      const delay = options.immediate ? 0 : 220;
+      slicePreviewTimer = setTimeout(() => {
+        slicePreviewTimer = null;
+        handleSliceSheet({ silent: true });
+      }, delay);
+    };
+
+    const renderPreview = (items = null) => {
       if (!previewEl) return;
+      if (Array.isArray(items)) {
+        generatedImages = items.slice();
+        selectedGeneratedIndex = 0;
+        sliceItems = [];
+        renderSliceList();
+      }
       previewEl.innerHTML = '';
-      if (!items.length) return;
-      items.forEach(item => {
+      if (!generatedImages.length) return;
+      generatedImages.forEach((item, idx) => {
         const src = String(item?.dataUrl || item?.url || '').trim();
         if (!src) return;
         const img = document.createElement('img');
         img.src = src;
         img.alt = 'AI 贴图源图';
+        if (idx === selectedGeneratedIndex) img.classList.add('is-selected');
+        img.addEventListener('click', () => {
+          selectedGeneratedIndex = idx;
+          renderPreview();
+          scheduleSlicePreview({ immediate: true });
+        });
         previewEl.appendChild(img);
       });
+      if (Array.isArray(items) && generatedImages.length) {
+        scheduleSlicePreview({ immediate: true });
+      }
+    };
+
+    const renderReferenceList = () => {
+      if (!refListEl) return;
+      refListEl.innerHTML = '';
+      if (!referenceImages.length) return;
+      referenceImages.forEach((item, idx) => {
+        const wrap = document.createElement('div');
+        wrap.className = 'sticker-ai-ref-item';
+        const img = document.createElement('img');
+        img.src = item.dataUrl;
+        img.alt = item.name || '参考图片';
+        const remove = document.createElement('button');
+        remove.type = 'button';
+        remove.className = 'sticker-ai-ref-remove';
+        remove.textContent = '×';
+        remove.dataset.index = String(idx);
+        wrap.appendChild(img);
+        wrap.appendChild(remove);
+        refListEl.appendChild(wrap);
+      });
+    };
+
+    const renderPackOptions = () => {
+      if (!packSelectEl) return;
+      packSelectEl.innerHTML = '';
+      const createOption = document.createElement('option');
+      createOption.value = '__new__';
+      createOption.textContent = '新建贴图包';
+      packSelectEl.appendChild(createOption);
+      const packs = Array.isArray(stickerPackState?.packs) ? stickerPackState.packs : [];
+      packs.forEach((pack, idx) => {
+        const option = document.createElement('option');
+        option.value = String(pack?.id || '');
+        option.textContent = `贴图包 ${idx + 1}`;
+        packSelectEl.appendChild(option);
+      });
+    };
+
+    const renderSliceList = () => {
+      if (!sliceListEl) return;
+      sliceListEl.innerHTML = '';
+      if (!sliceItems.length) return;
+      sliceItems.forEach((item, idx) => {
+        const card = document.createElement('div');
+        card.className = 'sticker-ai-slice-item';
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.checked = item.selected !== false;
+        checkbox.dataset.index = String(idx);
+        const img = document.createElement('img');
+        img.src = item.dataUrl;
+        img.alt = item.name || item.defaultName || `贴图${idx + 1}`;
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.value = item.name || '';
+        input.placeholder = item.defaultName || `贴图${idx + 1}`;
+        input.dataset.index = String(idx);
+        card.appendChild(checkbox);
+        card.appendChild(img);
+        card.appendChild(input);
+        sliceListEl.appendChild(card);
+      });
+    };
+
+    const clampNumber = (value, min, max, fallback) => {
+      const num = Number(value);
+      if (!Number.isFinite(num)) return fallback;
+      return Math.min(max, Math.max(min, Math.trunc(num)));
+    };
+
+    const loadImageElement = (src) => new Promise((resolve, reject) => {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = () => resolve(img);
+      img.onerror = () => reject(new Error('load image failed'));
+      img.src = src;
+    });
+
+    const sampleCornerColor = (data, width, height, size) => {
+      const clamp = (v, max) => Math.min(max, Math.max(0, v));
+      const points = [
+        { x: 0, y: 0 },
+        { x: width - size, y: 0 },
+        { x: 0, y: height - size },
+        { x: width - size, y: height - size },
+      ];
+      let totalR = 0;
+      let totalG = 0;
+      let totalB = 0;
+      let count = 0;
+      points.forEach((pt) => {
+        const startX = clamp(pt.x, width - 1);
+        const startY = clamp(pt.y, height - 1);
+        for (let y = startY; y < startY + size && y < height; y++) {
+          for (let x = startX; x < startX + size && x < width; x++) {
+            const idx = (y * width + x) * 4;
+            totalR += data[idx];
+            totalG += data[idx + 1];
+            totalB += data[idx + 2];
+            count += 1;
+          }
+        }
+      });
+      return {
+        r: Math.round(totalR / count),
+        g: Math.round(totalG / count),
+        b: Math.round(totalB / count),
+      };
+    };
+
+    const buildBackgroundMask = (data, width, height, baseColor, tolerance) => {
+      const mask = new Uint8Array(width * height);
+      const stack = [];
+      const isBg = (x, y) => {
+        const idx = (y * width + x) * 4;
+        const dr = Math.abs(data[idx] - baseColor.r);
+        const dg = Math.abs(data[idx + 1] - baseColor.g);
+        const db = Math.abs(data[idx + 2] - baseColor.b);
+        return Math.max(dr, dg, db) <= tolerance;
+      };
+      const pushIf = (x, y) => {
+        const idx = y * width + x;
+        if (mask[idx]) return;
+        if (!isBg(x, y)) return;
+        mask[idx] = 1;
+        stack.push([x, y]);
+      };
+      for (let x = 0; x < width; x++) {
+        pushIf(x, 0);
+        pushIf(x, height - 1);
+      }
+      for (let y = 0; y < height; y++) {
+        pushIf(0, y);
+        pushIf(width - 1, y);
+      }
+      while (stack.length) {
+        const [x, y] = stack.pop();
+        if (x > 0) pushIf(x - 1, y);
+        if (x < width - 1) pushIf(x + 1, y);
+        if (y > 0) pushIf(x, y - 1);
+        if (y < height - 1) pushIf(x, y + 1);
+      }
+      return mask;
+    };
+
+    const dilateMask = (mask, width, height, iterations) => {
+      if (iterations <= 0) return mask;
+      let current = mask;
+      for (let i = 0; i < iterations; i++) {
+        const next = current.slice();
+        for (let y = 0; y < height; y++) {
+          for (let x = 0; x < width; x++) {
+            const idx = y * width + x;
+            if (current[idx]) continue;
+            const left = x > 0 ? current[idx - 1] : 0;
+            const right = x < width - 1 ? current[idx + 1] : 0;
+            const up = y > 0 ? current[idx - width] : 0;
+            const down = y < height - 1 ? current[idx + width] : 0;
+            if (left || right || up || down) next[idx] = 1;
+          }
+        }
+        current = next;
+      }
+      return current;
+    };
+
+    const applyMaskToImage = (imageData, mask, width, height, featherRadius) => {
+      const data = imageData.data;
+      if (featherRadius <= 0) {
+        for (let i = 0; i < mask.length; i++) {
+          if (mask[i]) data[i * 4 + 3] = 0;
+        }
+        return imageData;
+      }
+      const radius = Math.max(1, Math.trunc(featherRadius));
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+          const idx = y * width + x;
+          if (mask[idx]) {
+            data[idx * 4 + 3] = 0;
+            continue;
+          }
+          let minDist = null;
+          for (let dy = -radius; dy <= radius; dy++) {
+            for (let dx = -radius; dx <= radius; dx++) {
+              const nx = x + dx;
+              const ny = y + dy;
+              if (nx < 0 || nx >= width || ny < 0 || ny >= height) continue;
+              const nidx = ny * width + nx;
+              if (!mask[nidx]) continue;
+              const dist = Math.sqrt(dx * dx + dy * dy);
+              if (minDist === null || dist < minDist) minDist = dist;
+            }
+          }
+          if (minDist !== null) {
+            const alphaScale = Math.min(1, Math.max(0, minDist / (radius + 0.5)));
+            const baseAlpha = data[idx * 4 + 3] / 255;
+            data[idx * 4 + 3] = Math.round(255 * Math.min(baseAlpha, alphaScale));
+          }
+        }
+      }
+      return imageData;
+    };
+
+    const sliceStickerSheet = (canvas, settings) => {
+      const { rows, cols, margin, gap, alphaThreshold } = settings;
+      const width = canvas.width;
+      const height = canvas.height;
+      const cellWidth = Math.floor((width - margin * 2 - gap * (cols - 1)) / cols);
+      const cellHeight = Math.floor((height - margin * 2 - gap * (rows - 1)) / rows);
+      if (cellWidth <= 0 || cellHeight <= 0) {
+        throw new Error('切割参数不合法，请检查行列与间距');
+      }
+      const ctx = canvas.getContext('2d');
+      const slices = [];
+      for (let row = 0; row < rows; row++) {
+        for (let col = 0; col < cols; col++) {
+          const x = margin + col * (cellWidth + gap);
+          const y = margin + row * (cellHeight + gap);
+          const cellData = ctx.getImageData(x, y, cellWidth, cellHeight);
+          let minX = cellWidth;
+          let minY = cellHeight;
+          let maxX = -1;
+          let maxY = -1;
+          for (let cy = 0; cy < cellHeight; cy++) {
+            for (let cx = 0; cx < cellWidth; cx++) {
+              const idx = (cy * cellWidth + cx) * 4 + 3;
+              if (cellData.data[idx] > alphaThreshold) {
+                if (cx < minX) minX = cx;
+                if (cy < minY) minY = cy;
+                if (cx > maxX) maxX = cx;
+                if (cy > maxY) maxY = cy;
+              }
+            }
+          }
+          if (maxX < 0) continue;
+          const trimW = maxX - minX + 1;
+          const trimH = maxY - minY + 1;
+          const cellCanvas = document.createElement('canvas');
+          cellCanvas.width = cellWidth;
+          cellCanvas.height = cellHeight;
+          const cellCtx = cellCanvas.getContext('2d');
+          cellCtx.putImageData(cellData, 0, 0);
+          const outCanvas = document.createElement('canvas');
+          outCanvas.width = trimW;
+          outCanvas.height = trimH;
+          const outCtx = outCanvas.getContext('2d');
+          outCtx.drawImage(cellCanvas, minX, minY, trimW, trimH, 0, 0, trimW, trimH);
+          slices.push({
+            dataUrl: outCanvas.toDataURL('image/png'),
+            name: '',
+            defaultName: `贴图${slices.length + 1}`,
+            selected: true,
+          });
+        }
+      }
+      return slices;
+    };
+
+    const handleSliceSheet = async (options = {}) => {
+      const silent = Boolean(options.silent);
+      if (sliceInProgress) {
+        slicePending = { silent };
+        return;
+      }
+      const current = generatedImages[selectedGeneratedIndex];
+      const source = String(current?.dataUrl || current?.url || '').trim();
+      if (!source) {
+        if (!silent) window.toastr?.warning?.('请先生成贴图原图');
+        return;
+      }
+      const rows = clampNumber(rowsInput?.value, 1, 20, 4);
+      const cols = clampNumber(colsInput?.value, 1, 20, 6);
+      const margin = clampNumber(marginInput?.value, 0, 200, 16);
+      const gap = clampNumber(gapInput?.value, 0, 200, 8);
+      const tolerance = clampNumber(toleranceInput?.value, 5, 80, 28);
+      const shrink = clampNumber(shrinkInput?.value, 0, 6, 1);
+      const feather = clampNumber(featherInput?.value, 0, 8, 2);
+      sliceInProgress = true;
+      if (!silent) setBusy(true);
+      setStatus('正在去背并切割...', 'loading');
+      try {
+        const img = await loadImageElement(source);
+        const canvas = document.createElement('canvas');
+        canvas.width = img.width;
+        canvas.height = img.height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0);
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const baseColor = sampleCornerColor(imageData.data, canvas.width, canvas.height, 6);
+        const mask = buildBackgroundMask(imageData.data, canvas.width, canvas.height, baseColor, tolerance);
+        const refinedMask = dilateMask(mask, canvas.width, canvas.height, shrink);
+        const processed = applyMaskToImage(imageData, refinedMask, canvas.width, canvas.height, feather);
+        ctx.putImageData(processed, 0, 0);
+        sliceItems = sliceStickerSheet(canvas, {
+          rows,
+          cols,
+          margin,
+          gap,
+          alphaThreshold: 5,
+        });
+        renderSliceList();
+        setStatus(`切割完成：${sliceItems.length} 张`, 'success');
+      } catch (err) {
+        setStatus(`切割失败：${err?.message || '未知错误'}`, 'error');
+      } finally {
+        if (!silent) setBusy(false);
+        sliceInProgress = false;
+        if (slicePending) {
+          const next = slicePending;
+          slicePending = null;
+          if (next.silent) {
+            scheduleSlicePreview({ immediate: true });
+          } else {
+            handleSliceSheet(next);
+          }
+        }
+      }
+    };
+
+    const handleAddReference = async () => {
+      const files = await pickFilesFromInput(stickerAiReferencePicker);
+      if (!files.length) return;
+      for (const file of files) {
+        const rawDataUrl = await readFileAsDataUrl(file);
+        if (!rawDataUrl) continue;
+        let dataUrl = rawDataUrl;
+        if (!isGifFile(file)) {
+          try {
+            dataUrl = await compressImageDataUrl(rawDataUrl, {
+              maxDim: 1024,
+              quality: 0.9,
+              maxBytes: 1_500_000,
+            });
+          } catch {
+            dataUrl = rawDataUrl;
+          }
+        }
+        referenceImages.push({
+          dataUrl,
+          name: String(file?.name || '').trim(),
+        });
+      }
+      renderReferenceList();
+    };
+
+    const handleSaveSlices = async () => {
+      if (!sliceItems.length) {
+        window.toastr?.warning?.('暂无切割结果');
+        return;
+      }
+      const selected = sliceItems.filter(item => item.selected !== false);
+      if (!selected.length) {
+        window.toastr?.warning?.('请先选择要保存的贴图');
+        return;
+      }
+      let packId = String(packSelectEl?.value || '').trim();
+      if (!packId || packId === '__new__') {
+        const pack = createStickerPack();
+        packId = pack?.id || '';
+        renderPackOptions();
+        if (packSelectEl) packSelectEl.value = packId;
+      }
+      if (!packId) {
+        window.toastr?.warning?.('未找到贴图包');
+        return;
+      }
+      const pack = getStickerPackById(packId);
+      if (!pack) {
+        window.toastr?.warning?.('贴图包不存在');
+        return;
+      }
+      setBusy(true);
+      try {
+        const stickers = Array.isArray(pack.stickers) ? pack.stickers.slice() : [];
+        for (let i = 0; i < selected.length; i++) {
+          const item = selected[i];
+          const name = String(item.name || item.defaultName || `贴图${i + 1}`).trim();
+          const fileName = name ? `${name}.png` : 'sticker.png';
+          const path = await saveStickerAsset(item.dataUrl, fileName, STICKER_PACK_ASSET_SESSION);
+          stickers.push({
+            id: String(Date.now()) + Math.random().toString(16).slice(2, 8),
+            name,
+            keyword: '',
+            path: path || '',
+            dataUrl: path ? '' : item.dataUrl,
+          });
+        }
+        const nextPack = { ...pack, stickers };
+        const nextState = stickerPackStore.updatePack(packId, nextPack);
+        syncStickerPackState(nextState);
+        stickerPanelTab = `${STICKER_PACK_TAB_PREFIX}${packId}`;
+        stickerPanelPage = 0;
+        renderStickerPanel();
+        setStatus(`已保存 ${selected.length} 张贴图`, 'success');
+      } catch (err) {
+        setStatus(`保存失败：${err?.message || '未知错误'}`, 'error');
+      } finally {
+        setBusy(false);
+      }
     };
 
     const buildPromptMessages = (template, style) => {
@@ -3645,7 +4130,11 @@ Atmosphere: pink, bubbly, extremely girly.
       setStatus('正在生成图片...', 'loading');
       try {
         const client = new LLMClient(config);
-        const images = await client.generateImage(prompt, { responseFormat: 'b64_json' });
+        const options = { responseFormat: 'b64_json' };
+        if (referenceImages.length) {
+          options.referenceImages = referenceImages.map(item => item.dataUrl).filter(Boolean);
+        }
+        const images = await client.generateImage(prompt, options);
         renderPreview(images);
         if (!images.length) {
           setStatus('生成完成，但未返回图片结果', 'error');
@@ -3670,6 +4159,9 @@ Atmosphere: pink, bubbly, extremely girly.
       }
       setStatus('');
       renderPreview([]);
+      renderReferenceList();
+      renderPackOptions();
+      renderSliceList();
       overlay.classList.add('is-active');
       modal.classList.add('is-active');
     };
@@ -3686,7 +4178,54 @@ Atmosphere: pink, bubbly, extremely girly.
     resetBtn?.addEventListener('click', () => {
       templateInput.value = STICKER_AI_TEMPLATE;
     });
+    refAddBtn?.addEventListener('click', () => handleAddReference());
+    refListEl?.addEventListener('click', (event) => {
+      const btn = event?.target?.closest ? event.target.closest('button.sticker-ai-ref-remove') : null;
+      const idxRaw = btn?.dataset?.index;
+      if (!idxRaw) return;
+      const idx = Number(idxRaw);
+      if (!Number.isFinite(idx)) return;
+      referenceImages.splice(idx, 1);
+      renderReferenceList();
+    });
+    sliceBtn?.addEventListener('click', () => handleSliceSheet());
+    selectAllBtn?.addEventListener('click', () => {
+      sliceItems = sliceItems.map(item => ({ ...item, selected: true }));
+      renderSliceList();
+    });
+    selectNoneBtn?.addEventListener('click', () => {
+      sliceItems = sliceItems.map(item => ({ ...item, selected: false }));
+      renderSliceList();
+    });
+    const handleSliceListInput = (event) => {
+      const target = event?.target;
+      if (!target || !target.dataset) return;
+      const idx = Number(target.dataset.index);
+      if (!Number.isFinite(idx) || !sliceItems[idx]) return;
+      if (target.type === 'checkbox') {
+        sliceItems[idx].selected = Boolean(target.checked);
+      } else if (target.type === 'text') {
+        sliceItems[idx].name = String(target.value || '');
+      }
+    };
+    sliceListEl?.addEventListener('input', handleSliceListInput);
+    sliceListEl?.addEventListener('change', handleSliceListInput);
+    saveBtn?.addEventListener('click', () => handleSaveSlices());
     closeBtn?.addEventListener('click', () => hide());
+
+    const handleSliceSettingsInput = () => scheduleSlicePreview();
+    [
+      rowsInput,
+      colsInput,
+      marginInput,
+      gapInput,
+      toleranceInput,
+      shrinkInput,
+      featherInput,
+    ].filter(Boolean).forEach(input => {
+      input.addEventListener('input', handleSliceSettingsInput);
+      input.addEventListener('change', handleSliceSettingsInput);
+    });
 
     document.body.appendChild(overlay);
     document.body.appendChild(modal);
