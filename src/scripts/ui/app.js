@@ -1,28 +1,30 @@
+import { LLMClient } from '../api/client.js';
+import { extractTableEditBlocks, stripTableEditBlocks } from '../memory/memory-edit-parser.js';
+import { isSummaryTableId, normalizeMemoryUpdateMode } from '../memory/memory-prompt-utils.js';
+import { appSettings } from '../storage/app-settings.js';
 import { ChatStore } from '../storage/chat-store.js';
+import { ConfigManager } from '../storage/config.js';
 import { ContactsStore } from '../storage/contacts-store.js';
 import { GroupStore } from '../storage/group-store.js';
-import { MomentsStore } from '../storage/moments-store.js';
-import { MomentSummaryStore } from '../storage/moment-summary-store.js';
 import { MemoryTableStore } from '../storage/memory-table-store.js';
 import { MemoryTemplateStore } from '../storage/memory-template-store.js';
+import { MomentSummaryStore } from '../storage/moment-summary-store.js';
+import { MomentsStore } from '../storage/moments-store.js';
 import { PersonaStore } from '../storage/persona-store.js';
-import { ConfigManager } from '../storage/config.js';
-import { appSettings } from '../storage/app-settings.js';
+import { stickerPackStore } from '../storage/sticker-pack-store.js';
 import { normalizeScopeId } from '../storage/store-scope.js';
+import { avatarDataUrlFromFile, compressImageDataUrl, isGifFile } from '../utils/image.js';
 import { logger } from '../utils/logger.js';
 import {
   initMediaAssets,
+  isAssetRef,
+  isLikelyUrl,
   listMediaAssets,
   resolveMediaAsset,
   setCustomMediaItems,
-  isAssetRef,
-  isLikelyUrl,
 } from '../utils/media-assets.js';
-import { avatarDataUrlFromFile, compressImageDataUrl, isGifFile } from '../utils/image.js';
 import { safeInvoke } from '../utils/tauri.js';
-import { stickerPackStore } from '../storage/sticker-pack-store.js';
 import './bridge.js';
-import { LLMClient } from '../api/client.js';
 import { ChatUI } from './chat/chat-ui.js';
 import { DialogueStreamParser } from './chat/dialogue-stream-parser.js';
 import { parseSpecialMessage } from './chat/message-parser.js';
@@ -36,8 +38,8 @@ import { GroupCreatePanel, GroupSettingsPanel } from './group-chat-panels.js';
 import { GroupPanel } from './group-panel.js';
 import { MediaPicker } from './media-picker.js';
 import { MemoryTemplatePanel } from './memory-template-panel.js';
-import { MomentsPanel } from './moments-panel.js';
 import { MomentSummaryPanel } from './moment-summary-panel.js';
+import { MomentsPanel } from './moments-panel.js';
 import { PersonaPanel } from './persona-panel.js';
 import { PresetPanel } from './preset-panel.js';
 import { RegexPanel } from './regex-panel.js';
@@ -47,8 +49,6 @@ import { StickerPicker } from './sticker-picker.js';
 import { VariablePanel } from './variable-panel.js';
 import { WorldPanel } from './world-panel.js';
 import { WorldInfoIndicator } from './worldinfo-indicator.js';
-import { extractTableEditBlocks, stripTableEditBlocks } from '../memory/memory-edit-parser.js';
-import { isSummaryTableId, normalizeMemoryUpdateMode } from '../memory/memory-prompt-utils.js';
 
 const initApp = async () => {
   const ui = new ChatUI();
@@ -89,7 +89,7 @@ const initApp = async () => {
   const isMemoryAutoExtractSeparate = () => isMemoryAutoExtractEnabled() && getMemoryAutoExtractMode() === 'separate';
   let updateStickerPreview = () => {};
   const originalSetInputText = ui.setInputText.bind(ui);
-  ui.setInputText = (val) => {
+  ui.setInputText = val => {
     originalSetInputText(val);
     updateStickerPreview(val);
   };
@@ -126,11 +126,14 @@ const initApp = async () => {
   try {
     window.appBridge.setMemoryTemplateStore?.(memoryTemplateStore);
   } catch {}
-  const memoryTemplatePanel = new MemoryTemplatePanel({ templateStore: memoryTemplateStore, memoryStore: memoryTableStore });
+  const memoryTemplatePanel = new MemoryTemplatePanel({
+    templateStore: memoryTemplateStore,
+    memoryStore: memoryTableStore,
+  });
   const personaStore = new PersonaStore();
   let activePersonaScopeKey = '';
   let chatRoom = null;
-  const getPersonaScopeKey = (personaId) => {
+  const getPersonaScopeKey = personaId => {
     const settings = appSettings.get();
     if (settings.personaBindContacts === false) return '';
     const raw = personaId || personaStore.getActive?.()?.id || 'default';
@@ -155,7 +158,10 @@ const initApp = async () => {
     ]);
     const failed = results.filter(item => item?.status === 'rejected');
     if (failed.length) {
-      logger.warn('memory store scope init failed', failed.map(item => item.reason));
+      logger.warn(
+        'memory store scope init failed',
+        failed.map(item => item.reason),
+      );
     }
     try {
       await memoryTemplateStore.ensureDefaultTemplate?.();
@@ -280,8 +286,7 @@ const initApp = async () => {
 
   const avatars = {
     user: './assets/external/feather-default.png',
-    assistant:
-      './assets/external/feather-default.png',
+    assistant: './assets/external/feather-default.png',
   };
 
   const SEND_MODE_KEY = 'chat_send_mode_v1';
@@ -415,7 +420,7 @@ const initApp = async () => {
   // Initial sync
   syncUserPersonaUI(chatStore.getCurrent());
 
-  window.addEventListener('app-settings-changed', async (ev) => {
+  window.addEventListener('app-settings-changed', async ev => {
     const key = String(ev?.detail?.key || '').trim();
     if (!key) return;
     if (key === 'personaBindContacts') {
@@ -691,8 +696,7 @@ ${listPart || '-（无）'}
                 const author = String(c.author || '').trim();
                 const hasReplyTo = String(c.replyTo || '').trim().length > 0;
                 const isPrimaryReplier =
-                  author &&
-                  (author === normalizeName(replyTo?.author) || author === normalizeName(target?.name));
+                  author && (author === normalizeName(replyTo?.author) || author === normalizeName(target?.name));
                 if (hasReplyTo || !isPrimaryReplier) return c;
                 return { ...c, replyTo: String(replyTo.id || ''), replyToAuthor: String(replyTo.author || '') };
               });
@@ -732,7 +736,9 @@ ${listPart || '-（无）'}
                   userKey &&
                   (speakerKey === userKey || normalizeLooseName(speakerKey) === normalizeLooseName(userKey)),
               );
-              const time = String(payload?.time || '').trim() || new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+              const time =
+                String(payload?.time || '').trim() ||
+                new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
               if (isMe) {
                 const parsed = parseSpecialMessage(content);
                 const meta = { ...(parsed.meta || {}), generatedByAssistant: true };
@@ -876,7 +882,7 @@ ${listPart || '-（无）'}
 
         if (!sawMomentReply && fullRaw) {
           try {
-            const sanitizeThinkingForMoment = (text) => {
+            const sanitizeThinkingForMoment = text => {
               const raw = String(text ?? '');
               const lower = raw.toLowerCase();
               const closeThinking = '</thinking>';
@@ -888,7 +894,7 @@ ${listPart || '-（无）'}
               const cut = idx + (idx === i1 ? closeThinking.length : closeThink.length);
               return raw.slice(cut);
             };
-            const parseMomentReplyFrom = (text) => {
+            const parseMomentReplyFrom = text => {
               if (!text) return false;
               const retryParser = new DialogueStreamParser({ userName: '我' });
               const retryEvents = retryParser.push(text);
@@ -917,8 +923,12 @@ ${listPart || '-（无）'}
                   'moment_reply retry: extracted segments',
                   JSON.stringify({
                     extractedLen: String(extracted || '').length,
-                    hasStart: String((retryText || fullRaw) || '').toLowerCase().includes('moment_reply_start'),
-                    hasEnd: String((retryText || fullRaw) || '').toLowerCase().includes('moment_reply_end'),
+                    hasStart: String(retryText || fullRaw || '')
+                      .toLowerCase()
+                      .includes('moment_reply_start'),
+                    hasEnd: String(retryText || fullRaw || '')
+                      .toLowerCase()
+                      .includes('moment_reply_end'),
                   }),
                 );
               } catch {}
@@ -939,8 +949,12 @@ ${listPart || '-（无）'}
               'moment_reply parse failed',
               JSON.stringify({
                 momentId: id,
-                hasStart: String(fullRaw || '').toLowerCase().includes('moment_reply_start'),
-                hasEnd: String(fullRaw || '').toLowerCase().includes('moment_reply_end'),
+                hasStart: String(fullRaw || '')
+                  .toLowerCase()
+                  .includes('moment_reply_start'),
+                hasEnd: String(fullRaw || '')
+                  .toLowerCase()
+                  .includes('moment_reply_end'),
                 rawLen: String(fullRaw || '').length,
               }),
             );
@@ -961,7 +975,7 @@ ${listPart || '-（无）'}
 
   const momentSummaryPanel = new MomentSummaryPanel({
     store: momentSummaryStore,
-    onRunCompaction: (opts) => requestMomentSummaryCompaction(opts),
+    onRunCompaction: opts => requestMomentSummaryCompaction(opts),
   });
 
   const formatTime = ts => {
@@ -975,7 +989,7 @@ ${listPart || '-（无）'}
   const isConversationMessage = m => m && (m.role === 'user' || m.role === 'assistant' || m.role === 'system');
 
   const sanitizeAssistantReplyText = (text, userName) => {
-    const stripXmlBlocks = (src) => {
+    const stripXmlBlocks = src => {
       let out = String(src ?? '');
       const paired = /<([A-Za-z][\w:-]*)(?:\s[^>]*)?>[\s\S]*?<\/\1\s*>/g;
       for (let i = 0; i < 20; i++) {
@@ -1011,7 +1025,7 @@ ${listPart || '-（无）'}
       return lines.slice(i).join('\n').replace(/^\s+/, '');
     };
 
-    const stripTrailingLineTimes = (src) => {
+    const stripTrailingLineTimes = src => {
       const lines = String(src ?? '').split(/\r?\n/);
       return lines
         .map(line => {
@@ -1030,19 +1044,21 @@ ${listPart || '-（无）'}
     return out.trimStart();
   };
 
-  const normalizeCreativeLineBreaks = text => (
+  const normalizeCreativeLineBreaks = text =>
     String(text ?? '')
       .replace(/&lt;br\s*\/?&gt;/gi, '\n')
       .replace(/<br\s*\/?>/gi, '\n')
       .replace(/\r\n/g, '\n')
-      .replace(/\r/g, '\n')
-  );
+      .replace(/\r/g, '\n');
 
-  const stripSimpleHtml = text => String(text ?? '').replace(/<!--[\s\S]*?-->/g, '').replace(/<[^>]+>/g, '');
+  const stripSimpleHtml = text =>
+    String(text ?? '')
+      .replace(/<!--[\s\S]*?-->/g, '')
+      .replace(/<[^>]+>/g, '');
 
   const normalizePlainText = text => normalizeCreativeLineBreaks(String(text ?? ''));
 
-  const escapeRegex = (input) => String(input ?? '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const escapeRegex = input => String(input ?? '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const getReasoningPreset = () => {
     try {
       return window.appBridge?.presets?.getActive?.('reasoning') || {};
@@ -1102,9 +1118,11 @@ ${listPart || '-（无）'}
         typeof message.rawSource === 'string'
           ? message.rawSource
           : typeof message.raw_source === 'string'
-            ? message.raw_source
-            : '';
-      const filteredRawSource = rawSource ? (extractReasoningFromContent(rawSource, { depth, strict: true }).content || rawSource) : '';
+          ? message.raw_source
+          : '';
+      const filteredRawSource = rawSource
+        ? extractReasoningFromContent(rawSource, { depth, strict: true }).content || rawSource
+        : '';
       if (preferRawSource && rawSource) {
         try {
           const picked = pick(window.appBridge.applyOutputStoredRegex(filteredRawSource || rawSource, { depth }));
@@ -1127,10 +1145,12 @@ ${listPart || '-（无）'}
       const rawOriginal = typeof message.rawOriginal === 'string' ? message.rawOriginal : '';
       if (rawOriginal) {
         try {
-          const filteredOriginal = extractReasoningFromContent(rawOriginal, { depth, strict: true }).content || rawOriginal;
+          const filteredOriginal =
+            extractReasoningFromContent(rawOriginal, { depth, strict: true }).content || rawOriginal;
           return pick(window.appBridge.applyOutputStoredRegex(filteredOriginal, { depth }));
         } catch {
-          const filteredOriginal = extractReasoningFromContent(rawOriginal, { depth, strict: true }).content || rawOriginal;
+          const filteredOriginal =
+            extractReasoningFromContent(rawOriginal, { depth, strict: true }).content || rawOriginal;
           return pick(filteredOriginal);
         }
       }
@@ -1163,21 +1183,26 @@ ${listPart || '-（无）'}
       .trim();
   };
 
-    const createUserEchoGuard = (sentText, userName) => {
-      const sentNorm = normalizeEchoText(sentText);
-      const sentLoose = sentNorm.replace(/\s+/g, '');
-      const parts = sentNorm.split('\n').map(s => s.trim()).filter(Boolean);
-      const partLoose = new Set(parts.map(s => s.replace(/\s+/g, '')));
-      let seenNonEcho = false;
+  const createUserEchoGuard = (sentText, userName) => {
+    const sentNorm = normalizeEchoText(sentText);
+    const sentLoose = sentNorm.replace(/\s+/g, '');
+    const parts = sentNorm
+      .split('\n')
+      .map(s => s.trim())
+      .filter(Boolean);
+    const partLoose = new Set(parts.map(s => s.replace(/\s+/g, '')));
+    let seenNonEcho = false;
 
-      const isUserSpeaker = (speaker) => {
-        const raw = String(speaker || '').trim().replace(/[：:]/g, '');
-        if (!raw) return false;
-        const user = String(userName || '').trim();
-        if (!user) return false;
-        if (raw === user) return true;
-        return normalizeLooseName(raw) === normalizeLooseName(user);
-      };
+    const isUserSpeaker = speaker => {
+      const raw = String(speaker || '')
+        .trim()
+        .replace(/[：:]/g, '');
+      if (!raw) return false;
+      const user = String(userName || '').trim();
+      if (!user) return false;
+      if (raw === user) return true;
+      return normalizeLooseName(raw) === normalizeLooseName(user);
+    };
 
     return {
       shouldDrop: (content, speaker = '') => {
@@ -1185,7 +1210,7 @@ ${listPart || '-（无）'}
         const text = normalizeEchoText(content);
         const loose = text.replace(/\s+/g, '');
         if (!text) return true;
-        const matchesFull = (sentNorm && (text === sentNorm || loose === sentLoose));
+        const matchesFull = sentNorm && (text === sentNorm || loose === sentLoose);
         const matchesPart = partLoose.size && partLoose.has(loose);
         const speakerOk = speaker ? isUserSpeaker(speaker) : true;
         if (speakerOk && (matchesFull || matchesPart)) return true;
@@ -1195,12 +1220,15 @@ ${listPart || '-（无）'}
     };
   };
 
-  const normalizeLooseName = (s) => {
-    const raw = String(s || '').trim().toLowerCase().replace(/\s+/g, '');
+  const normalizeLooseName = s => {
+    const raw = String(s || '')
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, '');
     return raw.replace(/[^a-z0-9\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]/g, '');
   };
 
-  const resolveContactByDisplayName = (displayName) => {
+  const resolveContactByDisplayName = displayName => {
     const raw = String(displayName || '').trim();
     if (!raw) return null;
     const key = normalizeLooseName(raw);
@@ -1247,15 +1275,13 @@ ${listPart || '-（无）'}
       if (m && (m.role === 'user' || m.role === 'assistant')) convPos.set(i, convPos.size);
     });
     const total = convPos.size;
-    const resolveLocalAttachmentUrl = (value) => {
+    const resolveLocalAttachmentUrl = value => {
       const raw = String(value || '').trim();
       if (!raw) return '';
       try {
         const g = typeof globalThis !== 'undefined' ? globalThis : window;
         const convert =
-          g?.__TAURI__?.core?.convertFileSrc ||
-          g?.__TAURI__?.convertFileSrc ||
-          g?.__TAURI_INTERNALS__?.convertFileSrc;
+          g?.__TAURI__?.core?.convertFileSrc || g?.__TAURI__?.convertFileSrc || g?.__TAURI_INTERNALS__?.convertFileSrc;
         if (typeof convert === 'function') {
           const converted = convert(raw);
           if (converted) return converted;
@@ -1275,14 +1301,10 @@ ${listPart || '-（无）'}
       const j = convPos.has(i) ? convPos.get(i) : null;
       const depth = j === null ? undefined : total - 1 - j;
       const rawSource =
-        typeof m.rawSource === 'string'
-          ? m.rawSource
-          : typeof m.raw_source === 'string'
-            ? m.raw_source
-            : '';
+        typeof m.rawSource === 'string' ? m.rawSource : typeof m.raw_source === 'string' ? m.raw_source : '';
       const creativeSource = rawSource ? normalizeCreativeLineBreaks(rawSource) : '';
       const creativeBase = creativeSource || base;
-      const meta = (m?.meta && typeof m.meta === 'object') ? { ...m.meta } : m?.meta;
+      const meta = m?.meta && typeof m.meta === 'object' ? { ...m.meta } : m?.meta;
       if (meta && typeof meta.reasoning === 'string') {
         try {
           meta.reasoningDisplay = window.appBridge.applyReasoningDisplayRegex(meta.reasoning, { depth });
@@ -1322,14 +1344,20 @@ ${listPart || '-（无）'}
         return { ...m, avatar, content: base, status: m.status, meta }; // 保留 status 字段
       }
       if (m.role === 'user' && (m.type === 'text' || !m.type)) {
-        return { ...m, avatar, content: window.appBridge.applyInputDisplayRegex(base, { depth }), status: m.status, meta }; // 保留 status 字段
+        return {
+          ...m,
+          avatar,
+          content: window.appBridge.applyInputDisplayRegex(base, { depth }),
+          status: m.status,
+          meta,
+        }; // 保留 status 字段
       }
       if (m.type === 'image') {
         const content = typeof m.content === 'string' ? m.content : '';
         const localPath = String(meta?.localPath || '').trim();
         if (isAttachmentExpired(meta)) {
           if (localPath) queueAttachmentCleanup(localPath, sessionId);
-          const expiredMeta = (meta && typeof meta === 'object') ? { ...meta, expired: true } : { expired: true };
+          const expiredMeta = meta && typeof meta === 'object' ? { ...meta, expired: true } : { expired: true };
           return {
             ...m,
             type: 'text',
@@ -1386,7 +1414,9 @@ ${listPart || '-（无）'}
   const snippetFromMessage = msg => {
     if (!msg) return '尚无聊天';
     if (msg.role === 'assistant' && (msg.type === 'text' || !msg.type)) {
-      const summary = String(msg?.meta?.summary || '').replace(/\s+/g, ' ').trim();
+      const summary = String(msg?.meta?.summary || '')
+        .replace(/\s+/g, ' ')
+        .trim();
       if (summary) return summary.slice(0, 32);
     }
     switch (msg.type) {
@@ -1470,11 +1500,7 @@ ${listPart || '-（无）'}
     if (!raw) return '';
     const tokenKey = parseStickerToken(raw);
     if (tokenKey) return tokenKey;
-    const assetish =
-      isLikelyUrl(raw) ||
-      isAssetRef(raw) ||
-      /[\\/]/.test(raw) ||
-      /\.(png|jpe?g|webp|gif)$/i.test(raw);
+    const assetish = isLikelyUrl(raw) || isAssetRef(raw) || /[\\/]/.test(raw) || /\.(png|jpe?g|webp|gif)$/i.test(raw);
     if (!allowLabel && !assetish) return '';
     const resolved = resolveMediaAsset('sticker', raw);
     if (resolved?.item && resolved.item.kind !== 'sticker') return '';
@@ -1493,7 +1519,7 @@ ${listPart || '-（无）'}
     const raw = typeof message.raw === 'string' ? message.raw.trim() : '';
     const rawKey = parseStickerToken(raw);
     if (rawKey) return rawKey;
-    const meta = (message.meta && typeof message.meta === 'object') ? message.meta : null;
+    const meta = message.meta && typeof message.meta === 'object' ? message.meta : null;
     const metaLabel = String(meta?.assetLabel || '').trim();
     if (metaLabel) return metaLabel;
     const metaId = String(meta?.assetId || '').trim();
@@ -1511,7 +1537,7 @@ ${listPart || '-（无）'}
 
   const getMessageSendText = message => {
     if (!message || typeof message !== 'object') return '';
-    const meta = (message.meta && typeof message.meta === 'object') ? message.meta : null;
+    const meta = message.meta && typeof message.meta === 'object' ? message.meta : null;
     if (meta?.attachmentsOnly) return '';
     const raw = typeof message.raw === 'string' ? message.raw.trim() : '';
     if (raw) return raw;
@@ -1530,7 +1556,9 @@ ${listPart || '-（无）'}
     const key = String(keyword || '').trim();
     if (!key) return;
     const token = buildStickerToken(key);
-    const start = Number.isFinite(composerInput.selectionStart) ? composerInput.selectionStart : composerInput.value.length;
+    const start = Number.isFinite(composerInput.selectionStart)
+      ? composerInput.selectionStart
+      : composerInput.value.length;
     const end = Number.isFinite(composerInput.selectionEnd) ? composerInput.selectionEnd : composerInput.value.length;
     const before = composerInput.value.slice(0, start);
     const after = composerInput.value.slice(end);
@@ -1547,7 +1575,7 @@ ${listPart || '-（无）'}
     } catch {}
   };
 
-  const removeStickerTokenByIndex = (tokenIndex) => {
+  const removeStickerTokenByIndex = tokenIndex => {
     if (!composerInput) return;
     const value = String(composerInput.value || '');
     const matches = extractStickerTokenMatches(value);
@@ -1570,8 +1598,7 @@ ${listPart || '-（无）'}
   };
 
   const STICKER_PACK_TAB_PREFIX = 'pack:';
-  const STICKER_AI_PACK_ID = 'ai_generated';
-  const STICKER_AI_PACK_LABEL = 'AI';
+  const STICKER_PACK_COLORS = ['#ff6b6b', '#ff9f43', '#ffd93d', '#6bcb77', '#4dd0e1', '#5c7cfa', '#b197fc'];
   const STICKER_PACK_ASSET_SESSION = 'sticker_pack_assets';
   const STICKER_ICON_SESSION = 'sticker_pack_icons';
   const STICKER_SOFT_IMAGE_BYTES = 600_000;
@@ -1583,7 +1610,7 @@ ${listPart || '-（无）'}
   let stickerPackDeleteTarget = '';
   let activeStickerEditor = null;
   const stickerLoadErrorKeys = new Set();
-  const STICKER_AI_TEMPLATE = `<prompt>
+  const STICKER_AI_TEMPLATE = `
 A 4K resolution, 16:9 image featuring a character sheet with a 4x6 grid layout.
 Style: cute Q-version (Chibi) anime art, resembling LINE stickers, full-body portraits.
 Background: solid white. Split by clean lines between each block.
@@ -1593,13 +1620,14 @@ No text. Clean outlines, flat colors typical of sticker packs.
 Atmosphere: pink, bubbly, extremely girly.
 第一排（日常互动与可爱系）：...
 第二排（打工/学习/生活状态）：...
-</prompt>`;
-  const canUseApiConfig = (config) => {
+`;
+  const canUseApiConfig = config => {
     const cfg = config || {};
     const hasKey = typeof cfg.apiKey === 'string' && cfg.apiKey.trim().length > 0;
-    const hasVertexSa = cfg.provider === 'vertexai'
-      && typeof cfg.vertexaiServiceAccount === 'string'
-      && cfg.vertexaiServiceAccount.trim().length > 0;
+    const hasVertexSa =
+      cfg.provider === 'vertexai' &&
+      typeof cfg.vertexaiServiceAccount === 'string' &&
+      cfg.vertexaiServiceAccount.trim().length > 0;
     return hasKey || hasVertexSa;
   };
   const ensureChatConfigReady = async () => {
@@ -1657,7 +1685,11 @@ Atmosphere: pink, bubbly, extremely girly.
     const errors = getStickerLoadErrors();
     errors.push(payload);
     if (errors.length > 50) errors.shift();
-    logger.warn(`贴图加载失败 pack=${payload.packId || '无'} sticker=${payload.stickerId || '无'} key=${payload.keyword || '空'} url=${payload.url || '空'}`);
+    logger.warn(
+      `贴图加载失败 pack=${payload.packId || '无'} sticker=${payload.stickerId || '无'} key=${
+        payload.keyword || '空'
+      } url=${payload.url || '空'}`,
+    );
   };
 
   const createFilePicker = (accept, { multiple = false } = {}) => {
@@ -1673,8 +1705,8 @@ Atmosphere: pink, bubbly, extremely girly.
   const stickerFilePicker = createFilePicker('image/*', { multiple: true });
   const stickerIconPicker = createFilePicker('image/*', { multiple: false });
 
-  const readFileAsDataUrl = (file) => {
-    return new Promise((resolve) => {
+  const readFileAsDataUrl = file => {
+    return new Promise(resolve => {
       const reader = new FileReader();
       reader.onload = () => resolve(String(reader.result || ''));
       reader.onerror = () => resolve('');
@@ -1682,15 +1714,13 @@ Atmosphere: pink, bubbly, extremely girly.
     });
   };
 
-  const resolveLocalStickerUrl = (value) => {
+  const resolveLocalStickerUrl = value => {
     const raw = String(value || '').trim();
     if (!raw) return '';
     try {
       const g = typeof globalThis !== 'undefined' ? globalThis : window;
       const convert =
-        g?.__TAURI__?.core?.convertFileSrc ||
-        g?.__TAURI__?.convertFileSrc ||
-        g?.__TAURI_INTERNALS__?.convertFileSrc;
+        g?.__TAURI__?.core?.convertFileSrc || g?.__TAURI__?.convertFileSrc || g?.__TAURI_INTERNALS__?.convertFileSrc;
       if (typeof convert === 'function') {
         const converted = convert(raw);
         if (converted) return converted;
@@ -1702,12 +1732,12 @@ Atmosphere: pink, bubbly, extremely girly.
     return raw;
   };
 
-  const buildCustomStickerAssets = (state) => {
+  const buildCustomStickerAssets = state => {
     const items = [];
     const packs = Array.isArray(state?.packs) ? state.packs : [];
-    packs.forEach((pack) => {
+    packs.forEach(pack => {
       const stickers = Array.isArray(pack?.stickers) ? pack.stickers : [];
-      stickers.forEach((sticker) => {
+      stickers.forEach(sticker => {
         const id = String(sticker?.id || '').trim();
         const file = String(sticker?.path || sticker?.dataUrl || '').trim();
         if (!id || !file) return;
@@ -1728,38 +1758,21 @@ Atmosphere: pink, bubbly, extremely girly.
     return items;
   };
 
-  const ensureAiStickerPack = () => {
-    const state = stickerPackStore.getState();
-    const packs = Array.isArray(state?.packs) ? state.packs : [];
-    if (packs.some(p => p.id === STICKER_AI_PACK_ID)) return state;
-    const colorIndex = STICKER_PACK_COLORS.length ? 0 : 0;
-    const pack = {
-      id: STICKER_AI_PACK_ID,
-      colorIndex,
-      iconPath: '',
-      iconDataUrl: '',
-      aiEnabled: false,
-      stickers: [],
-    };
-    return stickerPackStore.upsertPack(pack);
-  };
-
   const syncStickerPackState = (nextState = null) => {
     stickerPackState = nextState || stickerPackStore.getState();
     setCustomMediaItems(buildCustomStickerAssets(stickerPackState));
     return stickerPackState;
   };
-  syncStickerPackState(ensureAiStickerPack());
+  syncStickerPackState();
 
   const createStickerPack = () => {
-    const id = (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function')
-      ? crypto.randomUUID()
-      : `pack_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`;
-    const packCount = Array.isArray(stickerPackState?.packs)
-      ? stickerPackState.packs.filter(p => p.id !== STICKER_AI_PACK_ID).length
-      : 0;
+    const id =
+      typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+        ? crypto.randomUUID()
+        : `pack_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`;
+    const packCount = Array.isArray(stickerPackState?.packs) ? stickerPackState.packs.length : 0;
     const nextIndex = packCount;
-    const colorIndex = STICKER_PACK_COLORS.length ? (nextIndex % STICKER_PACK_COLORS.length) : 0;
+    const colorIndex = STICKER_PACK_COLORS.length ? nextIndex % STICKER_PACK_COLORS.length : 0;
     const pack = {
       id,
       colorIndex,
@@ -1773,19 +1786,19 @@ Atmosphere: pink, bubbly, extremely girly.
     return pack;
   };
 
-  const getStickerPackIdFromTab = (tab) => {
+  const getStickerPackIdFromTab = tab => {
     const raw = String(tab || '').trim();
     if (!raw.startsWith(STICKER_PACK_TAB_PREFIX)) return '';
     return raw.slice(STICKER_PACK_TAB_PREFIX.length);
   };
 
-  const getStickerPackById = (id) => {
+  const getStickerPackById = id => {
     const key = String(id || '').trim();
     if (!key) return null;
     return (stickerPackState?.packs || []).find(p => p.id === key) || null;
   };
 
-  const resolveStickerMediaUrl = (item) => {
+  const resolveStickerMediaUrl = item => {
     if (!item || typeof item !== 'object') return '';
     if (item.dataUrl) return String(item.dataUrl || '').trim();
     if (item.path) return resolveLocalStickerUrl(item.path);
@@ -1797,7 +1810,7 @@ Atmosphere: pink, bubbly, extremely girly.
     if (raw) return raw.replace(/\.[a-z0-9]+$/i, '');
     return `贴图${index + 1}`;
   };
-  const formatStickerFileSize = (bytes) => {
+  const formatStickerFileSize = bytes => {
     const size = Number(bytes || 0);
     if (!Number.isFinite(size) || size <= 0) return '';
     if (size < 1024) return `${Math.round(size)} B`;
@@ -1806,7 +1819,7 @@ Atmosphere: pink, bubbly, extremely girly.
     const mb = kb / 1024;
     return `${mb.toFixed(mb < 10 ? 1 : 0)} MB`;
   };
-  const estimateDataUrlBytes = (dataUrl) => {
+  const estimateDataUrlBytes = dataUrl => {
     const raw = String(dataUrl || '').trim();
     if (!raw.startsWith('data:')) return raw.length;
     const comma = raw.indexOf(',');
@@ -1831,8 +1844,8 @@ Atmosphere: pink, bubbly, extremely girly.
     }
   };
 
-  const pickFilesFromInput = (input) => {
-    return new Promise((resolve) => {
+  const pickFilesFromInput = input => {
+    return new Promise(resolve => {
       input.onchange = () => {
         const files = Array.from(input.files || []).filter(Boolean);
         input.value = '';
@@ -1842,7 +1855,7 @@ Atmosphere: pink, bubbly, extremely girly.
     });
   };
 
-  const ensureStickerKeywords = (pack) => {
+  const ensureStickerKeywords = pack => {
     const next = { ...pack };
     const stickers = Array.isArray(pack?.stickers) ? pack.stickers.map(s => ({ ...s })) : [];
     for (let i = 0; i < stickers.length; i++) {
@@ -1877,11 +1890,7 @@ Atmosphere: pink, bubbly, extremely girly.
     renderStickerPanel();
   };
 
-  const removeStickerPack = async (packId) => {
-    if (packId === STICKER_AI_PACK_ID) {
-      window.toastr?.warning?.('AI 贴图区不可删除');
-      return;
-    }
+  const removeStickerPack = async packId => {
     const pack = getStickerPackById(packId);
     if (!pack) return;
     const count = Array.isArray(pack.stickers) ? pack.stickers.length : 0;
@@ -1889,7 +1898,7 @@ Atmosphere: pink, bubbly, extremely girly.
       const ok = confirm(`该贴图包包含 ${count} 张贴图，是否一并删除？`);
       if (!ok) return;
     }
-    (pack.stickers || []).forEach((sticker) => {
+    (pack.stickers || []).forEach(sticker => {
       const path = String(sticker?.path || '').trim();
       if (path) {
         safeInvoke('delete_attachment', { sessionId: STICKER_PACK_ASSET_SESSION, path }).catch(() => {});
@@ -1928,7 +1937,7 @@ Atmosphere: pink, bubbly, extremely girly.
     if (!pack || !stickerId) return;
     const nextKeyword = String(keyword || '').trim();
     let changed = false;
-    const stickers = (pack.stickers || []).map((s) => {
+    const stickers = (pack.stickers || []).map(s => {
       if (s.id !== stickerId) return s;
       if (String(s.keyword || '').trim() === nextKeyword) return s;
       changed = true;
@@ -1995,14 +2004,14 @@ Atmosphere: pink, bubbly, extremely girly.
     return { ...pack, stickers };
   };
 
-  const addStickersToPack = async (packId) => {
+  const addStickersToPack = async packId => {
     const pack = getStickerPackById(packId);
     if (!pack) return;
     const files = await pickFilesFromInput(stickerFilePicker);
     if (!files.length) return;
     const stickers = Array.isArray(pack.stickers) ? pack.stickers.slice() : [];
     const warnings = new Set();
-    const addWarning = (msg) => {
+    const addWarning = msg => {
       const text = String(msg || '').trim();
       if (text) warnings.add(text);
     };
@@ -2018,9 +2027,15 @@ Atmosphere: pink, bubbly, extremely girly.
       const fileSize = Number(file?.size || 0);
       const isGif = isGifFile(file);
       if (isGif && fileSize > STICKER_SOFT_GIF_BYTES) {
-        addWarning(`贴图 ${file?.name || ''} 体积较大（${formatStickerFileSize(fileSize)}），建议压缩或裁切（GIF 建议 <= 2MB）`);
+        addWarning(
+          `贴图 ${file?.name || ''} 体积较大（${formatStickerFileSize(fileSize)}），建议压缩或裁切（GIF 建议 <= 2MB）`,
+        );
       } else if (!isGif && fileSize > STICKER_SOFT_IMAGE_BYTES) {
-        addWarning(`贴图 ${file?.name || ''} 体积较大（${formatStickerFileSize(fileSize)}），建议压缩或裁切（建议 <= 600KB/640px）`);
+        addWarning(
+          `贴图 ${file?.name || ''} 体积较大（${formatStickerFileSize(
+            fileSize,
+          )}），建议压缩或裁切（建议 <= 600KB/640px）`,
+        );
       }
       let dataUrl = rawDataUrl;
       if (!isGif) {
@@ -2057,7 +2072,7 @@ Atmosphere: pink, bubbly, extremely girly.
       }
     }
     if (warnings.size) {
-      warnings.forEach((msg) => window.toastr?.warning?.(msg));
+      warnings.forEach(msg => window.toastr?.warning?.(msg));
     }
     let nextPack = { ...pack, stickers };
     if (nextPack.aiEnabled) {
@@ -2069,7 +2084,7 @@ Atmosphere: pink, bubbly, extremely girly.
     renderStickerPanel();
   };
 
-  const updateStickerPackIcon = async (packId) => {
+  const updateStickerPackIcon = async packId => {
     const pack = getStickerPackById(packId);
     if (!pack) return;
     const files = await pickFilesFromInput(stickerIconPicker);
@@ -2088,9 +2103,9 @@ Atmosphere: pink, bubbly, extremely girly.
     renderStickerPanel();
   };
 
-  const resolveStickerItems = (keywords) => {
+  const resolveStickerItems = keywords => {
     const items = [];
-    (keywords || []).forEach((keyword) => {
+    (keywords || []).forEach(keyword => {
       const key = String(keyword || '').trim();
       if (!key) return;
       const resolved = resolveMediaAsset('sticker', key) || resolveMediaAsset('image', key);
@@ -2116,33 +2131,37 @@ Atmosphere: pink, bubbly, extremely girly.
     } catch {}
     return [];
   };
-  const getStickerItemsForTab = (tab) => {
+  const getStickerItemsForTab = tab => {
     if (tab === 'recent') {
       return resolveStickerItems(getMostUsedStickerKeys());
     }
     if (tab === 'default') {
-      return listMediaAssets('sticker').map(item => ({
-        keyword: String(item?.id || item?.label || '').trim(),
-        label: String(item?.label || item?.id || '').trim(),
-        url: String(item?.url || ''),
-      })).filter(item => item.keyword);
+      return listMediaAssets('sticker')
+        .map(item => ({
+          keyword: String(item?.id || item?.label || '').trim(),
+          label: String(item?.label || item?.id || '').trim(),
+          url: String(item?.url || ''),
+        }))
+        .filter(item => item.keyword);
     }
     const packId = getStickerPackIdFromTab(tab);
     if (packId) {
       const pack = getStickerPackById(packId);
       const stickers = Array.isArray(pack?.stickers) ? pack.stickers : [];
-      const items = stickers.map((sticker, idx) => {
-        const keyword = String(sticker?.keyword || sticker?.id || '').trim();
-        const missingKeyword = !String(sticker?.keyword || '').trim();
-        return {
-          keyword,
-          label: String(sticker?.keyword || formatStickerNameSuggestion(sticker?.name, idx) || keyword).trim(),
-          url: resolveStickerMediaUrl(sticker),
-          missingKeyword,
-          stickerId: String(sticker?.id || '').trim(),
-          packId,
-        };
-      }).filter(item => item.keyword);
+      const items = stickers
+        .map((sticker, idx) => {
+          const keyword = String(sticker?.keyword || sticker?.id || '').trim();
+          const missingKeyword = !String(sticker?.keyword || '').trim();
+          return {
+            keyword,
+            label: String(sticker?.keyword || formatStickerNameSuggestion(sticker?.name, idx) || keyword).trim(),
+            url: resolveStickerMediaUrl(sticker),
+            missingKeyword,
+            stickerId: String(sticker?.id || '').trim(),
+            packId,
+          };
+        })
+        .filter(item => item.keyword);
       items.unshift({ action: 'add', label: '添加', packId });
       return items;
     }
@@ -2171,7 +2190,7 @@ Atmosphere: pink, bubbly, extremely girly.
       grid.scrollLeft = left;
     }
   };
-  const renderStickerDots = (totalPages) => {
+  const renderStickerDots = totalPages => {
     if (!stickerPanel?.dots) return;
     stickerPanel.dots.innerHTML = '';
     if (totalPages <= 1) return;
@@ -2181,7 +2200,7 @@ Atmosphere: pink, bubbly, extremely girly.
       dot.className = `sticker-dot${i === stickerPanelPage ? ' is-active' : ''}`;
       dot.dataset.page = String(i);
       dot.setAttribute('aria-label', `第${i + 1}页`);
-      dot.addEventListener('click', (event) => {
+      dot.addEventListener('click', event => {
         event.stopPropagation();
         stickerPanelPage = i;
         updateStickerDotsActive(stickerPanelPage, totalPages);
@@ -2201,7 +2220,7 @@ Atmosphere: pink, bubbly, extremely girly.
         btn.className = 'sticker-item sticker-item-add';
         btn.textContent = item?.label || '＋';
         btn.setAttribute('aria-label', '新增贴图');
-        btn.addEventListener('click', (e) => {
+        btn.addEventListener('click', e => {
           e.stopPropagation();
           const packId = String(item?.packId || '').trim();
           if (packId) addStickersToPack(packId);
@@ -2248,7 +2267,7 @@ Atmosphere: pink, bubbly, extremely girly.
         indicator.textContent = item?.missingKeyword ? '!' : '';
         indicator.disabled = true;
         indicator.setAttribute('aria-label', '贴图状态');
-        indicator.addEventListener('click', (event) => {
+        indicator.addEventListener('click', event => {
           event.stopPropagation();
           if (!btn.classList.contains('is-editing')) return;
           const packId = String(item?.packId || '').trim();
@@ -2267,7 +2286,7 @@ Atmosphere: pink, bubbly, extremely girly.
         const input = editor.querySelector('.sticker-item-input');
         const packId = String(item?.packId || '').trim();
         const stickerId = String(item?.stickerId || '').trim();
-        const applyKeywordUpdate = (rawValue) => {
+        const applyKeywordUpdate = rawValue => {
           if (!packId || !stickerId) return;
           const nextKeyword = String(rawValue || '').trim();
           updateStickerKeywordInline(packId, stickerId, nextKeyword);
@@ -2277,10 +2296,10 @@ Atmosphere: pink, bubbly, extremely girly.
           const nextLabel = nextKeyword || item?.label || fallbackKey;
           btn.setAttribute('aria-label', nextLabel);
         };
-        input?.addEventListener('input', (event) => {
+        input?.addEventListener('input', event => {
           applyKeywordUpdate(event?.target?.value);
         });
-        input?.addEventListener('keydown', (event) => {
+        input?.addEventListener('keydown', event => {
           if (event.key === 'Enter' || event.key === 'Escape') {
             event.preventDefault();
             closeStickerEditor();
@@ -2296,7 +2315,7 @@ Atmosphere: pink, bubbly, extremely girly.
           pressTimer = null;
         }
       };
-      btn.addEventListener('pointerdown', (event) => {
+      btn.addEventListener('pointerdown', event => {
         if (!item?.packId) return;
         clearPress();
         pressTimer = setTimeout(() => {
@@ -2374,7 +2393,7 @@ Atmosphere: pink, bubbly, extremely girly.
     const tabWrap = stickerPanel.tabWrap;
     tabWrap.innerHTML = '';
     const tabs = [];
-    const addTab = (btn) => {
+    const addTab = btn => {
       tabWrap.appendChild(btn);
       tabs.push(btn);
     };
@@ -2399,20 +2418,7 @@ Atmosphere: pink, bubbly, extremely girly.
     addTab(def);
 
     const packs = Array.isArray(stickerPackState?.packs) ? stickerPackState.packs : [];
-    const aiPack = packs.find(p => p.id === STICKER_AI_PACK_ID) || null;
-    const customPacks = packs.filter(p => p.id !== STICKER_AI_PACK_ID);
-
-    if (aiPack) {
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'sticker-tab sticker-tab-pack sticker-tab-ai';
-      btn.dataset.tab = `${STICKER_PACK_TAB_PREFIX}${aiPack.id}`;
-      btn.title = 'AI 生成贴图';
-      btn.textContent = STICKER_AI_PACK_LABEL;
-      addTab(btn);
-    }
-
-    customPacks.forEach((pack, idx) => {
+    packs.forEach((pack, idx) => {
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'sticker-tab sticker-tab-pack';
@@ -2471,14 +2477,16 @@ Atmosphere: pink, bubbly, extremely girly.
     stickerPanel.toggle.classList.toggle('is-hidden', !canToggle);
     stickerPanel.toggle.setAttribute('aria-pressed', enabled ? 'true' : 'false');
     stickerPanel.toggle.title = canToggle
-      ? (enabled ? 'AI 可使用此贴图包' : 'AI 不可使用此贴图包')
+      ? enabled
+        ? 'AI 可使用此贴图包'
+        : 'AI 不可使用此贴图包'
       : 'AI 贴图开关不可用';
     stickerPanel.el.classList.toggle('sticker-ai-disabled', canToggle && !enabled);
   };
   const updateStickerDeleteUI = () => {
     if (!stickerPanel?.deleteBtn) return;
     const packId = getStickerPackIdFromTab(stickerPanelTab);
-    const deletable = Boolean(packId && packId !== STICKER_AI_PACK_ID);
+    const deletable = Boolean(packId);
     const show = Boolean(deletable && stickerPackDeleteMode && stickerPackDeleteTarget === packId);
     stickerPanel.deleteBtn.classList.toggle('is-active', show);
     stickerPanel.deleteBtn.classList.toggle('is-hidden', !deletable);
@@ -2486,7 +2494,7 @@ Atmosphere: pink, bubbly, extremely girly.
   const updateStickerGenerateUI = () => {
     if (!stickerPanel?.generateBtn) return;
     const packId = getStickerPackIdFromTab(stickerPanelTab);
-    const show = packId === STICKER_AI_PACK_ID;
+    const show = Boolean(packId);
     stickerPanel.generateBtn.classList.toggle('is-hidden', !show);
   };
   const handleStickerToggle = () => {
@@ -2576,7 +2584,7 @@ Atmosphere: pink, bubbly, extremely girly.
       removeBtn.className = 'sticker-preview-remove';
       removeBtn.textContent = '×';
       removeBtn.setAttribute('aria-label', '删除贴图');
-      removeBtn.addEventListener('click', (event) => {
+      removeBtn.addEventListener('click', event => {
         event.stopPropagation();
         removeStickerTokenByIndex(idx);
       });
@@ -3010,9 +3018,13 @@ Atmosphere: pink, bubbly, extremely girly.
     requestAnimationFrame(syncChatInputOffset);
     requestAnimationFrame(syncChatBottomGap);
   });
-  chatScroll?.addEventListener('scroll', () => {
-    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(syncChatBottomGap);
-  }, { passive: true });
+  chatScroll?.addEventListener(
+    'scroll',
+    () => {
+      if (typeof requestAnimationFrame === 'function') requestAnimationFrame(syncChatBottomGap);
+    },
+    { passive: true },
+  );
   if (chatScroll && typeof MutationObserver !== 'undefined') {
     const observer = new MutationObserver(() => {
       if (typeof requestAnimationFrame === 'function') requestAnimationFrame(syncChatBottomGap);
@@ -3030,7 +3042,7 @@ Atmosphere: pink, bubbly, extremely girly.
     if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
     return `att_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`;
   };
-  const formatFileSize = (bytes) => {
+  const formatFileSize = bytes => {
     const size = Number(bytes || 0);
     if (!Number.isFinite(size) || size <= 0) return '';
     if (size < 1024) return `${size} B`;
@@ -3039,7 +3051,7 @@ Atmosphere: pink, bubbly, extremely girly.
     const mb = kb / 1024;
     return `${mb.toFixed(mb < 10 ? 1 : 0)} MB`;
   };
-  const isAttachmentExpired = (meta) => {
+  const isAttachmentExpired = meta => {
     const expiresAt = Number(meta?.expiresAt || 0);
     return Number.isFinite(expiresAt) && expiresAt > 0 && Date.now() > expiresAt;
   };
@@ -3049,17 +3061,31 @@ Atmosphere: pink, bubbly, extremely girly.
     expiredAttachmentCleanup.add(target);
     safeInvoke('delete_attachment', { sessionId, path: target }).catch(() => {});
   };
-  const isTextDocumentFile = (file) => {
+  const isTextDocumentFile = file => {
     if (!file) return false;
     const type = String(file.type || '').toLowerCase();
     if (type.startsWith('text/')) return true;
     if (/(json|xml|csv|yaml|markdown)/.test(type)) return true;
     const name = String(file.name || '').toLowerCase();
     const ext = name.includes('.') ? name.split('.').pop() : '';
-    const textExts = new Set(['txt', 'md', 'markdown', 'json', 'csv', 'tsv', 'log', 'xml', 'yaml', 'yml', 'ini', 'cfg', 'conf']);
+    const textExts = new Set([
+      'txt',
+      'md',
+      'markdown',
+      'json',
+      'csv',
+      'tsv',
+      'log',
+      'xml',
+      'yaml',
+      'yml',
+      'ini',
+      'cfg',
+      'conf',
+    ]);
     return textExts.has(ext);
   };
-  const readBlobText = async (blob) => {
+  const readBlobText = async blob => {
     if (!blob) return '';
     if (typeof blob.text === 'function') return blob.text();
     return new Promise((resolve, reject) => {
@@ -3069,7 +3095,7 @@ Atmosphere: pink, bubbly, extremely girly.
       reader.readAsText(blob);
     });
   };
-  const extractDocumentText = async (file) => {
+  const extractDocumentText = async file => {
     if (!file || !isTextDocumentFile(file)) return { text: '', truncated: false, supported: false };
     const total = Number(file.size || 0);
     const slice = total > MAX_DOC_BYTES ? file.slice(0, MAX_DOC_BYTES) : file;
@@ -3104,7 +3130,7 @@ Atmosphere: pink, bubbly, extremely girly.
       return;
     }
     composerAttachmentsEl.classList.add('is-active');
-    composerAttachments.forEach((attachment) => {
+    composerAttachments.forEach(attachment => {
       if (!attachment || typeof attachment !== 'object') return;
       const item = document.createElement('div');
       item.className = 'chat-attachment-item';
@@ -3153,7 +3179,7 @@ Atmosphere: pink, bubbly, extremely girly.
       syncChatBottomGap();
     }
   };
-  const addComposerAttachment = (attachment) => {
+  const addComposerAttachment = attachment => {
     if (!attachment || typeof attachment !== 'object') return false;
     const item = { ...attachment };
     if (!item.id) item.id = createAttachmentId();
@@ -3173,7 +3199,7 @@ Atmosphere: pink, bubbly, extremely girly.
     renderComposerAttachments();
     return true;
   };
-  const removeComposerAttachment = (id) => {
+  const removeComposerAttachment = id => {
     const targetId = String(id || '');
     if (!targetId) return;
     const idx = composerAttachments.findIndex(a => String(a?.id || '') === targetId);
@@ -3186,7 +3212,7 @@ Atmosphere: pink, bubbly, extremely girly.
     composerAttachments = [];
     renderComposerAttachments();
   };
-  const buildDocumentPromptText = (attachment) => {
+  const buildDocumentPromptText = attachment => {
     const name = String(attachment?.name || '文件').trim() || '文件';
     const meta = [];
     if (attachment?.mime) meta.push(String(attachment.mime));
@@ -3197,9 +3223,9 @@ Atmosphere: pink, bubbly, extremely girly.
     const suffix = attachment?.textTruncated ? '\n[内容已截断]' : '';
     return `${header}\n${body}${suffix}`;
   };
-  const buildAttachmentParts = (attachments) => {
+  const buildAttachmentParts = attachments => {
     const parts = [];
-    (attachments || []).forEach((attachment) => {
+    (attachments || []).forEach(attachment => {
       if (!attachment || typeof attachment !== 'object') return;
       if (attachment.kind === 'image' && attachment.url) {
         parts.push({ type: 'image_url', image_url: { url: attachment.url } });
@@ -3214,7 +3240,7 @@ Atmosphere: pink, bubbly, extremely girly.
   };
   const buildAttachmentMessages = (attachments, { name, avatar } = {}) => {
     const list = [];
-    (attachments || []).forEach((attachment) => {
+    (attachments || []).forEach(attachment => {
       if (!attachment || typeof attachment !== 'object') return;
       if (attachment.kind === 'image' && attachment.url) {
         const expiresAt = Date.now() + ATTACHMENT_TTL_MS;
@@ -3278,7 +3304,7 @@ Atmosphere: pink, bubbly, extremely girly.
     }
   };
   if (composerAttachmentsEl) {
-    composerAttachmentsEl.addEventListener('click', (event) => {
+    composerAttachmentsEl.addEventListener('click', event => {
       const btn = event?.target?.closest ? event.target.closest('.chat-attachment-remove') : null;
       if (!btn) return;
       event.preventDefault();
@@ -3291,11 +3317,11 @@ Atmosphere: pink, bubbly, extremely girly.
     if (!sessions || !sessions.length) return;
     const queue = sessions.map(sid => String(sid || '').trim()).filter(Boolean);
     const currentId = String(chatStore.getCurrent() || '');
-    const runSessionScan = (sessionId) => {
+    const runSessionScan = sessionId => {
       const messages = chatStore.getMessages(sessionId) || [];
-      messages.forEach((message) => {
+      messages.forEach(message => {
         if (!message || message.type !== 'image') return;
-        const meta = (message.meta && typeof message.meta === 'object') ? message.meta : {};
+        const meta = message.meta && typeof message.meta === 'object' ? message.meta : {};
         if (!isAttachmentExpired(meta)) return;
         const localPath = String(meta.localPath || '').trim();
         if (localPath) queueAttachmentCleanup(localPath, sessionId);
@@ -3305,7 +3331,7 @@ Atmosphere: pink, bubbly, extremely girly.
         if (sessionId === currentId && updated) ui.updateMessage(message.id, updated);
       });
     };
-    const work = (deadline) => {
+    const work = deadline => {
       const getRemaining = () => (typeof deadline?.timeRemaining === 'function' ? deadline.timeRemaining() : 0);
       while (queue.length && (getRemaining() > 6 || deadline?.didTimeout)) {
         const sessionId = queue.shift();
@@ -3368,15 +3394,6 @@ Atmosphere: pink, bubbly, extremely girly.
   let stickerPanelTab = 'default';
   let stickerPanelPage = 0;
   const STICKER_PAGE_SIZE = 8;
-  const STICKER_PACK_COLORS = [
-    '#ff6b6b',
-    '#ff9f43',
-    '#ffd93d',
-    '#6bcb77',
-    '#4dd0e1',
-    '#5c7cfa',
-    '#b197fc',
-  ];
   const STICKER_USAGE_KEY = 'sticker_usage_v1';
   const STICKER_RECENT_KEY = 'sticker_recents';
   let stickerUsage = {};
@@ -3394,7 +3411,7 @@ Atmosphere: pink, bubbly, extremely girly.
       localStorage.setItem(STICKER_USAGE_KEY, JSON.stringify(stickerUsage));
     } catch {}
   };
-  const updateStickerRecents = (keyword) => {
+  const updateStickerRecents = keyword => {
     const key = String(keyword || '').trim();
     if (!key) return;
     try {
@@ -3405,7 +3422,7 @@ Atmosphere: pink, bubbly, extremely girly.
       localStorage.setItem(STICKER_RECENT_KEY, JSON.stringify(next));
     } catch {}
   };
-  const bumpStickerUsage = (keyword) => {
+  const bumpStickerUsage = keyword => {
     const key = String(keyword || '').trim();
     if (!key) return;
     const next = Number(stickerUsage[key] || 0) + 1;
@@ -3560,7 +3577,7 @@ Atmosphere: pink, bubbly, extremely girly.
       statusEl.dataset.tone = tone;
     };
 
-    const setBusy = (busy) => {
+    const setBusy = busy => {
       if (buildBtn) buildBtn.disabled = busy;
       if (renderBtn) renderBtn.disabled = busy;
       if (resetBtn) resetBtn.disabled = busy;
@@ -3570,7 +3587,7 @@ Atmosphere: pink, bubbly, extremely girly.
       if (!previewEl) return;
       previewEl.innerHTML = '';
       if (!items.length) return;
-      items.forEach((item) => {
+      items.forEach(item => {
         const src = String(item?.dataUrl || item?.url || '').trim();
         if (!src) return;
         const img = document.createElement('img');
@@ -3584,18 +3601,12 @@ Atmosphere: pink, bubbly, extremely girly.
       const trimmedTemplate = String(template || '').trim();
       const trimmedStyle = String(style || '').trim();
       const userContent = [
-        '你是图片提示词生成助手，只输出最终提示词，不要解释，不要 Markdown。',
-        '',
-        `模板：\n${trimmedTemplate || '(空模板)'}`,
-        '',
-        `用户补充：\n${trimmedStyle || '(未提供)'}`,
-        '',
-        '请输出最终提示词：'
+        '请参考模板（包裹在<prompt>当中）和用户对贴图的需求（包裹在<input>中）：',
+        `<prompt>${trimmedTemplate || '(空模板)'}</prompt>`,
+        `<input>${trimmedStyle || '(未提供)'}</input>`,
+        '请直接生成由<prompt>表情包裹的完整提示词，不要生成图片：',
       ].join('\n');
-      return [
-        { role: 'system', content: '你负责将模板与用户风格描述整合为完整图片提示词。' },
-        { role: 'user', content: userContent },
-      ];
+      return [{ role: 'user', content: userContent }];
     };
 
     const handleBuildPrompt = async () => {
@@ -3642,7 +3653,11 @@ Atmosphere: pink, bubbly, extremely girly.
         }
         setStatus('生成完成，下一步可进行去背与切割', 'success');
       } catch (err) {
-        setStatus(`生成图片失败：${err?.message || '未知错误'}`, 'error');
+        const detailRaw = String(err?.response || '').trim();
+        const detail = detailRaw.length > 600 ? `${detailRaw.slice(0, 600)}...` : detailRaw;
+        const baseMsg = detail ? `${err?.message || '未知错误'}\n${detail}` : (err?.message || '未知错误');
+        const meta = `provider=${config?.provider || 'unknown'} model=${config?.model || 'unknown'}`;
+        setStatus(`生成图片失败：${baseMsg}\n${meta}`, 'error');
         window.toastr?.error?.('生成图片失败');
       } finally {
         setBusy(false);
@@ -3665,7 +3680,7 @@ Atmosphere: pink, bubbly, extremely girly.
     };
 
     overlay.addEventListener('click', () => hide());
-    modal.addEventListener('click', (event) => event.stopPropagation());
+    modal.addEventListener('click', event => event.stopPropagation());
     buildBtn?.addEventListener('click', () => handleBuildPrompt());
     renderBtn?.addEventListener('click', () => handleGenerateImage());
     resetBtn?.addEventListener('click', () => {
@@ -3693,7 +3708,7 @@ Atmosphere: pink, bubbly, extremely girly.
       clearDeletePress();
       deletePressTimer = setTimeout(() => {
         const packId = getStickerPackIdFromTab(stickerPanelTab);
-        if (!packId || packId === STICKER_AI_PACK_ID) return;
+        if (!packId) return;
         deletePressTriggered = true;
         suppressToggle = true;
         stickerPackDeleteMode = true;
@@ -3701,10 +3716,10 @@ Atmosphere: pink, bubbly, extremely girly.
         updateStickerDeleteUI();
       }, 520);
     });
-    ['pointerup', 'pointerleave', 'pointercancel'].forEach((evt) => {
+    ['pointerup', 'pointerleave', 'pointercancel'].forEach(evt => {
       stickerPanel.toggle.addEventListener(evt, () => clearDeletePress());
     });
-    stickerPanel.toggle.addEventListener('click', (event) => {
+    stickerPanel.toggle.addEventListener('click', event => {
       event.preventDefault();
       event.stopPropagation();
       if (suppressToggle || deletePressTriggered) {
@@ -3716,14 +3731,14 @@ Atmosphere: pink, bubbly, extremely girly.
     });
   }
   if (stickerPanel?.generateBtn) {
-    stickerPanel.generateBtn.addEventListener('click', (event) => {
+    stickerPanel.generateBtn.addEventListener('click', event => {
       event.preventDefault();
       event.stopPropagation();
       stickerAiModal.show();
     });
   }
   if (stickerPanel?.deleteBtn) {
-    stickerPanel.deleteBtn.addEventListener('click', (event) => {
+    stickerPanel.deleteBtn.addEventListener('click', event => {
       event.preventDefault();
       event.stopPropagation();
       const packId = getStickerPackIdFromTab(stickerPanelTab);
@@ -3734,21 +3749,25 @@ Atmosphere: pink, bubbly, extremely girly.
   if (stickerPanel?.grid) {
     const grid = stickerPanel.grid;
     let raf = null;
-    grid.addEventListener('scroll', () => {
-      if (raf) return;
-      raf = requestAnimationFrame(() => {
-        raf = null;
-        const width = grid.clientWidth || 0;
-        if (!width) return;
-        const nextPage = Math.round(grid.scrollLeft / width);
-        const total = getStickerTotalPages();
-        const clamped = Math.max(0, Math.min(total - 1, nextPage));
-        if (clamped !== stickerPanelPage) {
-          stickerPanelPage = clamped;
-          updateStickerDotsActive(stickerPanelPage, total);
-        }
-      });
-    }, { passive: true });
+    grid.addEventListener(
+      'scroll',
+      () => {
+        if (raf) return;
+        raf = requestAnimationFrame(() => {
+          raf = null;
+          const width = grid.clientWidth || 0;
+          if (!width) return;
+          const nextPage = Math.round(grid.scrollLeft / width);
+          const total = getStickerTotalPages();
+          const clamped = Math.max(0, Math.min(total - 1, nextPage));
+          if (clamped !== stickerPanelPage) {
+            stickerPanelPage = clamped;
+            updateStickerDotsActive(stickerPanelPage, total);
+          }
+        });
+      },
+      { passive: true },
+    );
   }
   const stickerPreview = (() => {
     if (!chatRoom) return null;
@@ -4037,7 +4056,7 @@ Atmosphere: pink, bubbly, extremely girly.
       });
     };
 
-  const show = (text, meta) => {
+    const show = (text, meta) => {
       ensure();
       if (metaEl) metaEl.textContent = meta || '';
       if (textarea) {
@@ -4264,7 +4283,13 @@ Atmosphere: pink, bubbly, extremely girly.
     if (!menuEl || !anchorEl) return;
     const isVisible = !menuEl.classList.contains('hidden');
     const lastAnchor =
-      kind === 'settings' ? lastSettingsAnchor : kind === 'quick' ? lastQuickAnchor : kind === 'moments' ? lastMomentsAnchor : null;
+      kind === 'settings'
+        ? lastSettingsAnchor
+        : kind === 'quick'
+        ? lastQuickAnchor
+        : kind === 'moments'
+        ? lastMomentsAnchor
+        : null;
     const sameAnchor = lastAnchor === anchorEl;
     hideMenus();
     positionSheet(menuEl, anchorEl, 0, 4, alignRight);
@@ -4360,9 +4385,13 @@ Atmosphere: pink, bubbly, extremely girly.
               .filter(Boolean)
               .join('\n');
             // Display only: show prompt text content for easier reading (no JSON, no numbering).
-            const body = (typeof buildRequestPromptText === 'function')
-              ? buildRequestPromptText(msgs)
-              : msgs.map(m => String(m?.content ?? '')).filter(t => t.trim().length > 0).join('\n\n');
+            const body =
+              typeof buildRequestPromptText === 'function'
+                ? buildRequestPromptText(msgs)
+                : msgs
+                    .map(m => String(m?.content ?? ''))
+                    .filter(t => t.trim().length > 0)
+                    .join('\n\n');
             const meta = `${name}${at ? ` · ${at}` : ''}`;
             promptPreviewModal.show(`${head}\n\n${body}`.trim(), meta);
           }
@@ -4518,8 +4547,10 @@ Atmosphere: pink, bubbly, extremely girly.
       item.type = 'button';
       item.className = 'pending-float-item';
       item.dataset.msgId = String(m?.id || '');
-      const raw = String(m?.content ?? '').replace(/\s+/g, ' ').trim();
-      item.textContent = raw.length > 40 ? `${raw.slice(0, 40)}…` : (raw || '(空)');
+      const raw = String(m?.content ?? '')
+        .replace(/\s+/g, ' ')
+        .trim();
+      item.textContent = raw.length > 40 ? `${raw.slice(0, 40)}…` : raw || '(空)';
       pendingFloat.listEl.appendChild(item);
     });
     if (pending.length > maxItems) {
@@ -4607,7 +4638,7 @@ Atmosphere: pink, bubbly, extremely girly.
       chatStore.markRead(sid, messageId);
     } catch {}
   };
-  const isSessionActive = (sessionId) => {
+  const isSessionActive = sessionId => {
     const sid = String(sessionId || '').trim();
     if (!sid) return false;
     if (!isChatRoomVisible()) return false;
@@ -4849,7 +4880,7 @@ Atmosphere: pink, bubbly, extremely girly.
       await mediaPicker.pickFile('document');
     },
   };
-  const runQuickAction = (action) => {
+  const runQuickAction = action => {
     const handler = actionHandlers[action];
     if (handler) {
       setActionPanelOpen(false);
@@ -4917,39 +4948,45 @@ Atmosphere: pink, bubbly, extremely girly.
     if (!ui?.scrollEl || ui.__chatappLazyBound) return;
     ui.__chatappLazyBound = true;
     let loading = false;
-    ui.scrollEl.addEventListener('scroll', async () => {
-      if (loading) return;
-      if (ui.scrollEl.scrollTop > 18) return;
-      const sid = String(chatStore.getCurrent() || '').trim();
-      if (!sid) return;
-      const st = chatRenderState.get(sid);
-      if (!st || !Number.isFinite(st.start)) return;
-      loading = true;
-      try {
-        const all = chatStore.getMessages(sid) || [];
-        const PAGE = 90;
-        if (st.start > 0) {
-          const nextStart = Math.max(0, st.start - PAGE);
-          const chunk = all.slice(nextStart, st.start);
-          if (chunk.length) {
-            ui.prependHistory(decorateMessagesForDisplay(chunk, { sessionId: sid }));
-            chatRenderState.set(sid, { start: nextStart });
-            chatStore.prefetchRawOriginalsForMessages?.(chunk, sid).catch(() => {});
-            return;
+    ui.scrollEl.addEventListener(
+      'scroll',
+      async () => {
+        if (loading) return;
+        if (ui.scrollEl.scrollTop > 18) return;
+        const sid = String(chatStore.getCurrent() || '').trim();
+        if (!sid) return;
+        const st = chatRenderState.get(sid);
+        if (!st || !Number.isFinite(st.start)) return;
+        loading = true;
+        try {
+          const all = chatStore.getMessages(sid) || [];
+          const PAGE = 90;
+          if (st.start > 0) {
+            const nextStart = Math.max(0, st.start - PAGE);
+            const chunk = all.slice(nextStart, st.start);
+            if (chunk.length) {
+              ui.prependHistory(decorateMessagesForDisplay(chunk, { sessionId: sid }));
+              chatRenderState.set(sid, { start: nextStart });
+              chatStore.prefetchRawOriginalsForMessages?.(chunk, sid).catch(() => {});
+              return;
+            }
+            chatRenderState.set(sid, { start: 0 });
           }
-          chatRenderState.set(sid, { start: 0 });
+          if (!chatStore.hasOlderMessages?.(sid)) return;
+          const older = await chatStore.loadOlderMessages(sid, { partCount: 1 });
+          if (older.length) {
+            ui.prependHistory(decorateMessagesForDisplay(older, { sessionId: sid }));
+            chatRenderState.set(sid, { start: 0 });
+            chatStore.prefetchRawOriginalsForMessages?.(older, sid).catch(() => {});
+          }
+        } finally {
+          setTimeout(() => {
+            loading = false;
+          }, 0);
         }
-        if (!chatStore.hasOlderMessages?.(sid)) return;
-        const older = await chatStore.loadOlderMessages(sid, { partCount: 1 });
-        if (older.length) {
-          ui.prependHistory(decorateMessagesForDisplay(older, { sessionId: sid }));
-          chatRenderState.set(sid, { start: 0 });
-          chatStore.prefetchRawOriginalsForMessages?.(older, sid).catch(() => {});
-        }
-      } finally {
-        setTimeout(() => { loading = false; }, 0);
-      }
-    }, { passive: true });
+      },
+      { passive: true },
+    );
   };
   bindChatScrollLazyLoad();
 
@@ -5033,16 +5070,16 @@ Atmosphere: pink, bubbly, extremely girly.
           const activePersona = getEffectivePersona?.(chatStore.getCurrent?.()) || getEffectivePersona?.() || {};
           const userName = activePersona?.name || '我';
           const charName = String(contact?.name || sessionId.replace(/^group:/, '') || sessionId) || 'assistant';
-	          const ctx = {
-	            user: {
-	              name: userName,
-	              persona: String(activePersona?.description || ''),
-	              personaPosition: activePersona?.position,
-	              personaDepth: activePersona?.depth,
-	              personaRole: activePersona?.role,
-	            },
-	            character: { name: charName },
-	            session: { id: sessionId, isGroup },
+          const ctx = {
+            user: {
+              name: userName,
+              persona: String(activePersona?.description || ''),
+              personaPosition: activePersona?.position,
+              personaDepth: activePersona?.depth,
+              personaRole: activePersona?.role,
+            },
+            character: { name: charName },
+            session: { id: sessionId, isGroup },
             group: isGroup
               ? {
                   id: sessionId,
@@ -5053,17 +5090,17 @@ Atmosphere: pink, bubbly, extremely girly.
                   ),
                 }
               : null,
-	            history: [],
-	            meta: {
-	              disableChatGuide: true,
-	              disableScenarioHint: true,
-	              disableSummary: true,
-	              disableMomentSummary: true,
-	              overrideLastUserMessage: '开始总结，勿输出聊天格式',
-	              skipInputRegex: true,
-	            },
-	          };
-	          const built = window.appBridge.buildMessages(prompt, ctx);
+            history: [],
+            meta: {
+              disableChatGuide: true,
+              disableScenarioHint: true,
+              disableSummary: true,
+              disableMomentSummary: true,
+              overrideLastUserMessage: '开始总结，勿输出聊天格式',
+              skipInputRegex: true,
+            },
+          };
+          const built = window.appBridge.buildMessages(prompt, ctx);
           const out = await window.appBridge.backgroundChat(built, { temperature: 0.2, maxTokens: 800 });
           const raw = String(out || '').trim();
           if (!raw) return resolve(false);
@@ -5361,7 +5398,8 @@ Atmosphere: pink, bubbly, extremely girly.
     const overrideText = overrideTextRaw.trim() ? overrideTextRaw : '';
     const ignorePending = Boolean(options.ignorePending);
     const suppressUserMessage = Boolean(options.suppressUserMessage);
-    const existingUserMessageId = typeof options.existingUserMessageId === 'string' ? options.existingUserMessageId : '';
+    const existingUserMessageId =
+      typeof options.existingUserMessageId === 'string' ? options.existingUserMessageId : '';
     const skipInputRegex = Boolean(options.skipInputRegex);
     const creativeMode = sendMode === 'creative';
     const includeAttachments = options.includeAttachments !== false;
@@ -5372,7 +5410,7 @@ Atmosphere: pink, bubbly, extremely girly.
 
     // 找到所有 pending 消息
     const pendingMessages = ignorePending ? [] : allMessages.filter(m => m.status === 'pending');
-    const pendingQueue = (!ignorePending && !targetMessageId) ? (chatStore.getPendingMessages(sessionId) || []) : [];
+    const pendingQueue = !ignorePending && !targetMessageId ? chatStore.getPendingMessages(sessionId) || [] : [];
     if (pendingQueue.length) {
       const historyIds = new Set(allMessages.map(m => String(m?.id || '')).filter(Boolean));
       const restored = [];
@@ -5471,7 +5509,14 @@ Atmosphere: pink, bubbly, extremely girly.
       if (!raw) return false;
       const key = normalizeLoose(raw);
       const lower = key.toLowerCase();
-      return key === '系统' || key === '系统消息' || key === '系统提示' || lower === 'system' || lower === 'systemmessage' || lower === 'systemmsg';
+      return (
+        key === '系统' ||
+        key === '系统消息' ||
+        key === '系统提示' ||
+        lower === 'system' ||
+        lower === 'systemmessage' ||
+        lower === 'systemmsg'
+      );
     };
     const isUserSpeakerName = speakerName => {
       const raw = normalizeName(speakerName).replace(/[：:]/g, '').trim();
@@ -5482,14 +5527,15 @@ Atmosphere: pink, bubbly, extremely girly.
       if (userName && (raw === userName || (userKey && key === userKey))) return true;
       return false;
     };
-    const normalizeDialogueMessage = (msg) => {
-      const payload = msg && typeof msg === 'object'
-        ? {
-            speaker: String(msg?.speaker || '').trim(),
-            content: String(msg?.content || '').trim(),
-            time: String(msg?.time || '').trim(),
-          }
-        : { speaker: '', content: String(msg || '').trim(), time: '' };
+    const normalizeDialogueMessage = msg => {
+      const payload =
+        msg && typeof msg === 'object'
+          ? {
+              speaker: String(msg?.speaker || '').trim(),
+              content: String(msg?.content || '').trim(),
+              time: String(msg?.time || '').trim(),
+            }
+          : { speaker: '', content: String(msg || '').trim(), time: '' };
       if (!payload.speaker && payload.content) {
         const m = payload.content.match(/^([^\s:：]{1,12})[:：]\s*(.+)$/);
         if (m && isUserSpeakerName(m[1])) {
@@ -5512,12 +5558,16 @@ Atmosphere: pink, bubbly, extremely girly.
         meta,
       };
     };
-    const isSyntheticUserMessage = (msg) => msg?.role === 'user' && msg?.meta?.generatedByAssistant === true;
+    const isSyntheticUserMessage = msg => msg?.role === 'user' && msg?.meta?.generatedByAssistant === true;
     const stripSystemMessagePrefix = content => {
-      return String(content || '').replace(/^系统消息[:：]?\s*/i, '').trim();
+      return String(content || '')
+        .replace(/^系统消息[:：]?\s*/i, '')
+        .trim();
     };
     const splitSystemNames = (segment = '') => {
-      const cleaned = String(segment || '').replace(/[。.!！？]+/g, '').trim();
+      const cleaned = String(segment || '')
+        .replace(/[。.!！？]+/g, '')
+        .trim();
       if (!cleaned) return [];
       return cleaned
         .split(/[、，,]+/)
@@ -5599,7 +5649,7 @@ Atmosphere: pink, bubbly, extremely girly.
       if (pendingGroupJoins.has(key)) return;
       pendingGroupJoins.add(key);
       const delay =
-        Number.isFinite(delayMs) && delayMs >= 0 ? Math.trunc(delayMs) : (1200 + Math.floor(Math.random() * 2200));
+        Number.isFinite(delayMs) && delayMs >= 0 ? Math.trunc(delayMs) : 1200 + Math.floor(Math.random() * 2200);
       setTimeout(() => {
         pendingGroupJoins.delete(key);
         const g = contactsStore.getContact(gid);
@@ -5889,7 +5939,7 @@ Atmosphere: pink, bubbly, extremely girly.
       lines.push('继续执行这些写表指令吗？');
       return lines.join('\n');
     };
-    const confirmMemoryEditsIfNeeded = async (actions) => {
+    const confirmMemoryEditsIfNeeded = async actions => {
       const settings = appSettings.get();
       const confirmBefore = settings.memoryAutoConfirm === true;
       const stepByStep = settings.memoryAutoStepByStep === true;
@@ -5898,7 +5948,7 @@ Atmosphere: pink, bubbly, extremely girly.
       try {
         const templateInfo = await loadTemplateDefinition();
         const tables = Array.isArray(templateInfo?.template?.tables) ? templateInfo.template.tables : [];
-        tables.forEach((table) => {
+        tables.forEach(table => {
           const id = String(table?.id || '').trim();
           if (!id) return;
           tableById.set(id, table);
@@ -5939,7 +5989,7 @@ Atmosphere: pink, bubbly, extremely girly.
       }
       return actions;
     };
-    const normalizeMemoryCellValue = (value) => {
+    const normalizeMemoryCellValue = value => {
       if (value === null || value === undefined) return '';
       if (typeof value === 'string') return value.trim();
       if (typeof value === 'number' || typeof value === 'boolean') return value;
@@ -5990,11 +6040,11 @@ Atmosphere: pink, bubbly, extremely girly.
       const schema = memoryTemplateStore?.toTemplateDefinition?.(record) || record?.schema || {};
       return { record, template: schema };
     };
-    const buildTableMaps = (template) => {
+    const buildTableMaps = template => {
       const tableById = new Map();
       const tableNameMap = new Map();
       const tableOrder = [];
-      (template?.tables || []).forEach((table) => {
+      (template?.tables || []).forEach(table => {
         const id = String(table?.id || '').trim();
         if (!id) return;
         tableById.set(id, table);
@@ -6041,7 +6091,10 @@ Atmosphere: pink, bubbly, extremely girly.
         ? await memoryTableStore.getMemories({ scope: 'group', group_id: sessionId, template_id: templateId })
         : await memoryTableStore.getMemories({ scope: 'contact', contact_id: sessionId, template_id: templateId });
       const globalRows = await memoryTableStore.getMemories({ scope: 'global', template_id: templateId });
-      const allRows = [...(Array.isArray(globalRows) ? globalRows : []), ...(Array.isArray(scopedRows) ? scopedRows : [])];
+      const allRows = [
+        ...(Array.isArray(globalRows) ? globalRows : []),
+        ...(Array.isArray(scopedRows) ? scopedRows : []),
+      ];
       const rowsById = new Map();
       const rowsByTableScope = new Map();
       for (const row of allRows) {
@@ -6056,10 +6109,12 @@ Atmosphere: pink, bubbly, extremely girly.
         rowsByTableScope.get(key).push(row);
       }
 
-      const resolveTableId = (action) => {
+      const resolveTableId = action => {
         const rawId = String(action?.tableId || '').trim();
         if (rawId && tableById.has(rawId)) return rawId;
-        const rawName = String(action?.tableName || '').trim().toLowerCase();
+        const rawName = String(action?.tableName || '')
+          .trim()
+          .toLowerCase();
         if (rawName && tableNameMap.has(rawName)) return tableNameMap.get(rawName);
         const idxRaw = action?.tableIndex;
         const idx = Number.isFinite(Number(idxRaw)) ? Math.trunc(Number(idxRaw)) : null;
@@ -6069,46 +6124,50 @@ Atmosphere: pink, bubbly, extremely girly.
         }
         return '';
       };
-    const resolveRowId = (action, tableId) => {
-      const rowId = String(action?.rowId || '').trim();
-      if (rowId) return rowId;
-      const rowIndexRaw = action?.rowIndex;
-      const rowIndex = Number.isFinite(Number(rowIndexRaw)) ? Math.trunc(Number(rowIndexRaw)) : null;
-      if (rowIndex === null || rowIndex < 0) return '';
-      const map = rowIndexMap?.[tableId];
-      if (Array.isArray(map) && rowIndex < map.length) return String(map[rowIndex] || '').trim();
-      return '';
-    };
-    const resolveRowIdByData = (tableId, scopeKey, data, table) => {
-      if (!data || typeof data !== 'object') return '';
-      const rows = rowsByTableScope.get(`${tableId}:${scopeKey}`) || [];
-      if (!rows.length) return '';
-      const normalize = (value) => String(normalizeMemoryCellValue(value ?? '')).trim();
-      const candidates = [];
-      const preferredKeys = ['name', 'time', 'title', 'id'];
-      preferredKeys.forEach((key) => {
-        const v = normalize(data[key]);
-        if (v) candidates.push({ key, value: v });
-      });
-      if (!candidates.length) {
-        const firstColId = String(table?.columns?.[0]?.id || '').trim();
-        const v = normalize(firstColId ? data[firstColId] : '');
-        if (firstColId && v) candidates.push({ key: firstColId, value: v });
-      }
-      for (const candidate of candidates) {
-        const matches = rows.filter((row) => normalize(row?.row_data?.[candidate.key]) === candidate.value);
-        if (matches.length === 1) return String(matches[0]?.id || '').trim();
-        if (matches.length > 1) return '';
-      }
-      if (rows.length === 1) return String(rows[0]?.id || '').trim();
-      return '';
-    };
-      const resolveScopeForTable = (table) => {
-        const scope = String(table?.scope || '').trim().toLowerCase();
+      const resolveRowId = (action, tableId) => {
+        const rowId = String(action?.rowId || '').trim();
+        if (rowId) return rowId;
+        const rowIndexRaw = action?.rowIndex;
+        const rowIndex = Number.isFinite(Number(rowIndexRaw)) ? Math.trunc(Number(rowIndexRaw)) : null;
+        if (rowIndex === null || rowIndex < 0) return '';
+        const map = rowIndexMap?.[tableId];
+        if (Array.isArray(map) && rowIndex < map.length) return String(map[rowIndex] || '').trim();
+        return '';
+      };
+      const resolveRowIdByData = (tableId, scopeKey, data, table) => {
+        if (!data || typeof data !== 'object') return '';
+        const rows = rowsByTableScope.get(`${tableId}:${scopeKey}`) || [];
+        if (!rows.length) return '';
+        const normalize = value => String(normalizeMemoryCellValue(value ?? '')).trim();
+        const candidates = [];
+        const preferredKeys = ['name', 'time', 'title', 'id'];
+        preferredKeys.forEach(key => {
+          const v = normalize(data[key]);
+          if (v) candidates.push({ key, value: v });
+        });
+        if (!candidates.length) {
+          const firstColId = String(table?.columns?.[0]?.id || '').trim();
+          const v = normalize(firstColId ? data[firstColId] : '');
+          if (firstColId && v) candidates.push({ key: firstColId, value: v });
+        }
+        for (const candidate of candidates) {
+          const matches = rows.filter(row => normalize(row?.row_data?.[candidate.key]) === candidate.value);
+          if (matches.length === 1) return String(matches[0]?.id || '').trim();
+          if (matches.length > 1) return '';
+        }
+        if (rows.length === 1) return String(rows[0]?.id || '').trim();
+        return '';
+      };
+      const resolveScopeForTable = table => {
+        const scope = String(table?.scope || '')
+          .trim()
+          .toLowerCase();
         if (scope === 'global') return { key: 'global', contactId: null, groupId: null };
         if (scope === 'group') return { key: 'group', contactId: null, groupId: sessionId };
         if (scope === 'contact') return { key: 'contact', contactId: sessionId, groupId: null };
-        return isGroup ? { key: 'group', contactId: null, groupId: sessionId } : { key: 'contact', contactId: sessionId, groupId: null };
+        return isGroup
+          ? { key: 'group', contactId: null, groupId: sessionId }
+          : { key: 'contact', contactId: sessionId, groupId: null };
       };
 
       const createInputs = [];
@@ -6158,25 +6217,29 @@ Atmosphere: pink, bubbly, extremely girly.
           tables.push({
             table_id: tableId,
             scope: scopeKey,
-            rows: rows.map(row => ({
-              id: String(row?.id || '').trim(),
-              table_id: String(row?.table_id || '').trim(),
-              template_id: row?.template_id || templateId,
-              contact_id: row?.contact_id ?? null,
-              group_id: row?.group_id ?? null,
-              row_data: row?.row_data || {},
-              is_active: Boolean(row?.is_active),
-              is_pinned: Boolean(row?.is_pinned),
-              priority: Number.isFinite(Number(row?.priority)) ? Number(row.priority) : 0,
-            })).filter(row => row.id),
+            rows: rows
+              .map(row => ({
+                id: String(row?.id || '').trim(),
+                table_id: String(row?.table_id || '').trim(),
+                template_id: row?.template_id || templateId,
+                contact_id: row?.contact_id ?? null,
+                group_id: row?.group_id ?? null,
+                row_data: row?.row_data || {},
+                is_active: Boolean(row?.is_active),
+                is_pinned: Boolean(row?.is_pinned),
+                priority: Number.isFinite(Number(row?.priority)) ? Number(row.priority) : 0,
+              }))
+              .filter(row => row.id),
           });
         };
-        actions.forEach((action) => {
+        actions.forEach(action => {
           const tableId = resolveTableId(action);
           if (!tableId) return;
           const table = tableById.get(tableId);
           if (!table) return;
-          const tableScope = String(table?.scope || '').trim().toLowerCase();
+          const tableScope = String(table?.scope || '')
+            .trim()
+            .toLowerCase();
           const effectiveScope = tableScope || (isGroup ? 'group' : 'contact');
           if ((effectiveScope === 'group' && !isGroup) || (effectiveScope === 'contact' && isGroup)) return;
           const isSummaryTable = isSummaryTableId(tableId);
@@ -6198,7 +6261,9 @@ Atmosphere: pink, bubbly, extremely girly.
           skipped += 1;
           continue;
         }
-        const tableScope = String(table?.scope || '').trim().toLowerCase();
+        const tableScope = String(table?.scope || '')
+          .trim()
+          .toLowerCase();
         const effectiveScope = tableScope || (isGroup ? 'group' : 'contact');
         if ((effectiveScope === 'group' && !isGroup) || (effectiveScope === 'contact' && isGroup)) {
           skipped += 1;
@@ -6297,7 +6362,10 @@ Atmosphere: pink, bubbly, extremely girly.
             const rowScopeKey = row?.contact_id ? 'contact' : row?.group_id ? 'group' : 'global';
             const key = `${tableId}:${rowScopeKey}`;
             const list = rowsByTableScope.get(key) || [];
-            rowsByTableScope.set(key, list.filter(item => String(item?.id || '') !== rowId));
+            rowsByTableScope.set(
+              key,
+              list.filter(item => String(item?.id || '') !== rowId),
+            );
           }
           deleted += 1;
         }
@@ -6354,10 +6422,12 @@ Atmosphere: pink, bubbly, extremely girly.
       if (!templateId) return false;
       const template = templateInfo.template || {};
       const { tableById, tableNameMap, tableOrder } = buildTableMaps(template);
-      const resolveTableId = (action) => {
+      const resolveTableId = action => {
         const rawId = String(action?.tableId || '').trim();
         if (rawId && tableById.has(rawId)) return rawId;
-        const rawName = String(action?.tableName || '').trim().toLowerCase();
+        const rawName = String(action?.tableName || '')
+          .trim()
+          .toLowerCase();
         if (rawName && tableNameMap.has(rawName)) return tableNameMap.get(rawName);
         const idxRaw = action?.tableIndex;
         const idx = Number.isFinite(Number(idxRaw)) ? Math.trunc(Number(idxRaw)) : null;
@@ -6367,15 +6437,17 @@ Atmosphere: pink, bubbly, extremely girly.
         }
         return '';
       };
-      const resolveScopeKey = (table) => {
-        const scope = String(table?.scope || '').trim().toLowerCase();
+      const resolveScopeKey = table => {
+        const scope = String(table?.scope || '')
+          .trim()
+          .toLowerCase();
         if (scope === 'global') return 'global';
         if (scope === 'group') return 'group';
         if (scope === 'contact') return 'contact';
         return '';
       };
       const scopeRowsCache = new Map();
-      const getScopedRows = async (scopeKey) => {
+      const getScopedRows = async scopeKey => {
         if (scopeRowsCache.has(scopeKey)) return scopeRowsCache.get(scopeKey);
         let rows = [];
         try {
@@ -6384,7 +6456,11 @@ Atmosphere: pink, bubbly, extremely girly.
           } else if (scopeKey === 'group') {
             rows = await memoryTableStore.getMemories({ scope: 'group', group_id: sessionId, template_id: templateId });
           } else {
-            rows = await memoryTableStore.getMemories({ scope: 'contact', contact_id: sessionId, template_id: templateId });
+            rows = await memoryTableStore.getMemories({
+              scope: 'contact',
+              contact_id: sessionId,
+              template_id: templateId,
+            });
           }
         } catch {
           rows = [];
@@ -6398,7 +6474,7 @@ Atmosphere: pink, bubbly, extremely girly.
           const ts = Number(row?.updated_at || row?.created_at || 0);
           return { row, ts: Number.isFinite(ts) ? ts : 0, idx };
         });
-        scored.sort((a, b) => (b.ts - a.ts) || (b.idx - a.idx));
+        scored.sort((a, b) => b.ts - a.ts || b.idx - a.idx);
         return scored[0]?.row || null;
       };
       let changed = 0;
@@ -6409,8 +6485,9 @@ Atmosphere: pink, bubbly, extremely girly.
         if (!table) continue;
         const scopeKey = resolveScopeKey(table) || (String(sessionId || '').startsWith('group:') ? 'group' : 'contact');
         const currentRows = await getScopedRows(scopeKey);
-        const scopedRows = (Array.isArray(currentRows) ? currentRows : [])
-          .filter(row => String(row?.table_id || '').trim() === tableId);
+        const scopedRows = (Array.isArray(currentRows) ? currentRows : []).filter(
+          row => String(row?.table_id || '').trim() === tableId,
+        );
         const data = normalizeTableRowData(action?.data || {}, table.columns || []);
         if (!Object.keys(data).length) continue;
         const isSummaryTable = isSummaryTableId(tableId);
@@ -6431,7 +6508,7 @@ Atmosphere: pink, bubbly, extremely girly.
       }
       return changed > 0;
     };
-    const rollbackLastMemoryUpdate = async (sessionId) => {
+    const rollbackLastMemoryUpdate = async sessionId => {
       if (!memoryTableStore || !memoryTemplateStore) return false;
       const entry = window.appBridge?.getLastMemoryUpdate?.(sessionId);
       const rollback = entry?.rollback;
@@ -6456,15 +6533,24 @@ Atmosphere: pink, bubbly, extremely girly.
           if (scopeKey === 'global') {
             currentRows = await memoryTableStore.getMemories({ scope: 'global', template_id: templateId });
           } else if (scopeKey === 'group') {
-            currentRows = await memoryTableStore.getMemories({ scope: 'group', group_id: sessionId, template_id: templateId });
+            currentRows = await memoryTableStore.getMemories({
+              scope: 'group',
+              group_id: sessionId,
+              template_id: templateId,
+            });
           } else {
-            currentRows = await memoryTableStore.getMemories({ scope: 'contact', contact_id: sessionId, template_id: templateId });
+            currentRows = await memoryTableStore.getMemories({
+              scope: 'contact',
+              contact_id: sessionId,
+              template_id: templateId,
+            });
           }
         } catch {
           currentRows = [];
         }
-        const scopedCurrent = (Array.isArray(currentRows) ? currentRows : [])
-          .filter(row => String(row?.table_id || '').trim() === tableId);
+        const scopedCurrent = (Array.isArray(currentRows) ? currentRows : []).filter(
+          row => String(row?.table_id || '').trim() === tableId,
+        );
         const snapshotRows = Array.isArray(tableSnap?.rows) ? tableSnap.rows : [];
         const snapshotById = new Map(snapshotRows.map(row => [String(row?.id || '').trim(), row]));
         const currentById = new Map(scopedCurrent.map(row => [String(row?.id || '').trim(), row]));
@@ -6524,9 +6610,9 @@ Atmosphere: pink, bubbly, extremely girly.
     if (window.appBridge) {
       window.appBridge.rollbackLastMemoryUpdate = rollbackLastMemoryUpdate;
     }
-    const buildRequestPromptText = (messages) => {
+    const buildRequestPromptText = messages => {
       if (!Array.isArray(messages)) return '';
-      const describeMediaToken = (raw) => {
+      const describeMediaToken = raw => {
         const text = String(raw || '').trim();
         if (!text) return '';
         if (text.startsWith('data:image/')) {
@@ -6537,9 +6623,9 @@ Atmosphere: pink, bubbly, extremely girly.
         if (text.startsWith('data:audio/')) return '[语音]';
         return '';
       };
-      const stringifyContent = (content) => {
+      const stringifyContent = content => {
         if (Array.isArray(content)) {
-          const parts = content.map((part) => {
+          const parts = content.map(part => {
             if (!part || typeof part !== 'object') return '';
             if (part.type === 'text') return String(part.text || '');
             if (part.type === 'image_url') {
@@ -6556,7 +6642,7 @@ Atmosphere: pink, bubbly, extremely girly.
         return describeMediaToken(raw) || raw;
       };
       const parts = messages
-        .map((m) => {
+        .map(m => {
           const role = String(m?.role || 'message');
           const content = stringifyContent(m?.content).trim();
           if (!content) return '';
@@ -6603,7 +6689,7 @@ Atmosphere: pink, bubbly, extremely girly.
       }
       return parsed;
     };
-    const canInitClient = (cfg) => {
+    const canInitClient = cfg => {
       const c = cfg || {};
       const hasKey = typeof c.apiKey === 'string' && c.apiKey.trim().length > 0;
       const hasVertexSa =
@@ -6612,7 +6698,7 @@ Atmosphere: pink, bubbly, extremely girly.
         c.vertexaiServiceAccount.trim().length > 0;
       return hasKey || hasVertexSa;
     };
-    const buildMemoryUpdateHistoryText = (sessionId) => {
+    const buildMemoryUpdateHistoryText = sessionId => {
       const messages = chatStore.getMessages(sessionId) || [];
       const lines = [];
       const usable = messages.filter(m => m && (m.role === 'user' || m.role === 'assistant' || m.role === 'system'));
@@ -6622,7 +6708,7 @@ Atmosphere: pink, bubbly, extremely girly.
       if (limit <= 0) return '';
       const rounds = [];
       let current = null;
-      usable.forEach((m) => {
+      usable.forEach(m => {
         if (m?.status === 'pending' || m?.status === 'sending') return;
         if (m?.role === 'user') {
           current = { messages: [m] };
@@ -6643,8 +6729,8 @@ Atmosphere: pink, bubbly, extremely girly.
         }
       });
       const selected = rounds.slice(-limit);
-      selected.forEach((round) => {
-        (round.messages || []).forEach((m) => {
+      selected.forEach(round => {
+        (round.messages || []).forEach(m => {
           const name = String(m?.name || (m?.role === 'assistant' ? '助手' : m?.role === 'user' ? '用户' : '系统'));
           const rawText = String(m?.rawOriginal || m?.raw || m?.content || '');
           let clean = m?.role === 'assistant' ? stripTableEditBlocks(rawText) : rawText;
@@ -6758,13 +6844,13 @@ Atmosphere: pink, bubbly, extremely girly.
       const cut = idx + (idx === i1 ? closeThinking.length : closeThink.length);
       return raw.slice(cut);
     };
-  const normalizeMiPhoneMarkers = text => {
-    const raw = String(text ?? '');
-    if (!raw) return raw;
-    return raw
-      .replace(/&lt;\s*\/?\s*MiPhone_(start|end)\s*\/?\s*&gt;/gi, (_, token) => `MiPhone_${token}`)
-      .replace(/<\s*\/?\s*MiPhone_(start|end)\s*\/?\s*>/gi, (_, token) => `MiPhone_${token}`);
-  };
+    const normalizeMiPhoneMarkers = text => {
+      const raw = String(text ?? '');
+      if (!raw) return raw;
+      return raw
+        .replace(/&lt;\s*\/?\s*MiPhone_(start|end)\s*\/?\s*&gt;/gi, (_, token) => `MiPhone_${token}`)
+        .replace(/<\s*\/?\s*MiPhone_(start|end)\s*\/?\s*>/gi, (_, token) => `MiPhone_${token}`);
+    };
     const extractMiPhoneBlock = text => {
       const raw = String(text ?? '');
       const startRe = /<\s*MiPhone_start\s*>|MiPhone_start/i;
@@ -6786,14 +6872,14 @@ Atmosphere: pink, bubbly, extremely girly.
       });
       const total = convPos.size;
       const getDepthForIndex = idx => (convPos.has(idx) ? total - 1 - convPos.get(idx) : undefined);
-      const isPromptImageUrl = (value) => {
+      const isPromptImageUrl = value => {
         const raw = String(value || '').trim();
         if (!raw) return false;
         if (raw.startsWith('data:image/')) return true;
         if (/^https?:\/\//i.test(raw)) return true;
         return false;
       };
-      const resolveImageAttachment = (msg) => {
+      const resolveImageAttachment = msg => {
         if (!msg || typeof msg !== 'object') return '';
         if (isAttachmentExpired(msg.meta)) return '';
         if (msg.type === 'image' && typeof msg.content === 'string') {
@@ -6805,7 +6891,7 @@ Atmosphere: pink, bubbly, extremely girly.
         if (isPromptImageUrl(raw)) return raw;
         return '';
       };
-      const resolveCreativeHistorySummary = (msg) => {
+      const resolveCreativeHistorySummary = msg => {
         const direct = String(msg?.meta?.summary || '').trim();
         if (direct) return direct;
         try {
@@ -6816,7 +6902,7 @@ Atmosphere: pink, bubbly, extremely girly.
         try {
           const list = chatStore.getSummaries?.(sessionId) || [];
           const last = list[list.length - 1];
-          return String((typeof last === 'string') ? last : last?.text || '').trim();
+          return String(typeof last === 'string' ? last : last?.text || '').trim();
         } catch {}
         return '';
       };
@@ -6843,8 +6929,7 @@ Atmosphere: pink, bubbly, extremely girly.
             };
           }
           let content = typeof m.raw === 'string' ? m.raw : m.content;
-          const reasoning =
-            m.role === 'assistant' && typeof m?.meta?.reasoning === 'string' ? m.meta.reasoning : '';
+          const reasoning = m.role === 'assistant' && typeof m?.meta?.reasoning === 'string' ? m.meta.reasoning : '';
           const imageUrl = resolveImageAttachment(m);
           if (imageUrl) {
             const out = {
@@ -6913,10 +6998,10 @@ Atmosphere: pink, bubbly, extremely girly.
           };
         })
         .filter(Boolean);
-	      const last = history[history.length - 1];
-	      if (
-	        pendingUserText &&
-	        last?.role === 'user' &&
+      const last = history[history.length - 1];
+      if (
+        pendingUserText &&
+        last?.role === 'user' &&
         String(last.content || '').trim() === String(pendingUserText).trim()
       ) {
         history.pop();
@@ -6931,7 +7016,7 @@ Atmosphere: pink, bubbly, extremely girly.
         const maxOut = Number(openaiPreset?.openai_max_tokens);
         const ctxTokens = Number.isFinite(maxContext) ? Math.max(0, Math.trunc(maxContext)) : 0;
         const outTokens = Number.isFinite(maxOut) ? Math.max(0, Math.trunc(maxOut)) : 0;
-        const inputBudgetTokens = Math.max(2000, ctxTokens ? (ctxTokens - outTokens - 512) : 8000);
+        const inputBudgetTokens = Math.max(2000, ctxTokens ? ctxTokens - outTokens - 512 : 8000);
         const maxChars = Math.min(140_000, Math.max(30_000, inputBudgetTokens * 4));
 
         const capPerMessage = 40_000;
@@ -6942,10 +7027,10 @@ Atmosphere: pink, bubbly, extremely girly.
         }
 
         let total = 0;
-        for (const m of history) total += (typeof m?.content === 'string' ? m.content.length : 0);
+        for (const m of history) total += typeof m?.content === 'string' ? m.content.length : 0;
         while (history.length > 1 && total > maxChars) {
           const dropped = history.shift();
-          total -= (typeof dropped?.content === 'string' ? dropped.content.length : 0);
+          total -= typeof dropped?.content === 'string' ? dropped.content.length : 0;
         }
       } catch {}
       if (creativeMode) {
@@ -6974,7 +7059,7 @@ Atmosphere: pink, bubbly, extremely girly.
             ? Math.max(0, Math.trunc(Number(settings.reasoningMaxAdditions)))
             : 1;
           if (maxAdditions > 0) {
-            const applyMacros = (val) => {
+            const applyMacros = val => {
               try {
                 return window.appBridge.processTextMacros(String(val ?? ''), { sessionId });
               } catch {
@@ -7008,7 +7093,7 @@ Atmosphere: pink, bubbly, extremely girly.
     };
     let disableSummaryForThis = false;
     const attachmentParts = hasAttachments ? buildAttachmentParts(attachmentQueue) : [];
-    const llmContext = (pendingUserText) => {
+    const llmContext = pendingUserText => {
       const settings = appSettings.get();
       const memoryInjectPosition = String(settings.memoryInjectPosition || 'template').toLowerCase();
       const memoryInjectDepthRaw = Math.trunc(Number(settings.memoryInjectDepth));
@@ -7079,17 +7164,15 @@ Atmosphere: pink, bubbly, extremely girly.
     if (hasAttachments) {
       attachmentMessages = buildAttachmentMessages(attachmentQueue, { name: userName, avatar: avatars.user });
       clearComposerAttachments();
-      attachmentMessages.forEach((msg) => {
+      attachmentMessages.forEach(msg => {
         ui.addMessage(msg);
         chatStore.appendMessage(msg, sessionId);
       });
       attachmentPrimaryId = attachmentMessages[0]?.id || '';
       const attachmentById = new Map(
-        attachmentQueue
-          .filter(item => item && typeof item === 'object')
-          .map(item => [String(item.id || ''), item]),
+        attachmentQueue.filter(item => item && typeof item === 'object').map(item => [String(item.id || ''), item]),
       );
-      attachmentMessages.forEach((msg) => {
+      attachmentMessages.forEach(msg => {
         if (msg?.type !== 'image') return;
         const attachment = attachmentById.get(String(msg?.meta?.attachmentId || ''));
         if (!attachment) return;
@@ -7183,7 +7266,8 @@ Atmosphere: pink, bubbly, extremely girly.
                   time: formatNowTime(),
                   typing: false,
                 });
-                if (activeGeneration && activeGeneration.sessionId === sessionId) activeGeneration.streamCtrl = streamCtrl;
+                if (activeGeneration && activeGeneration.sessionId === sessionId)
+                  activeGeneration.streamCtrl = streamCtrl;
               }
             }
             const streamText = isMemoryAutoExtractInline() ? stripTableEditBlocks(full) : full;
@@ -7321,16 +7405,17 @@ Atmosphere: pink, bubbly, extremely girly.
                   if (isMe && userEchoGuard.shouldDrop(content, speaker)) return;
                   const role = isMe ? 'user' : 'assistant';
                   const c = isMe ? null : resolveContactByDisplayName(speaker);
-                  const parsed = role === 'assistant'
-                    ? buildAssistantMessageFromText(content, {
-                        sessionId: targetGroupId,
-                        time: m?.time || formatNowTime(),
-                        name: speaker || '成员',
-                        avatar: c?.avatar || avatars.assistant,
-                        showName: true,
-                        depth: 0,
-                      })
-                    : buildUserMessageFromAI(content, m?.time || formatNowTime());
+                  const parsed =
+                    role === 'assistant'
+                      ? buildAssistantMessageFromText(content, {
+                          sessionId: targetGroupId,
+                          time: m?.time || formatNowTime(),
+                          name: speaker || '成员',
+                          avatar: c?.avatar || avatars.assistant,
+                          showName: true,
+                          depth: 0,
+                        })
+                      : buildUserMessageFromAI(content, m?.time || formatNowTime());
                   if (isSessionActive(targetGroupId)) ui.addMessage(parsed);
                   const saved = chatStore.appendMessage(parsed, targetGroupId);
                   if (role === 'assistant') autoMarkReadIfActive(targetGroupId, saved?.id || parsed?.id || '');
@@ -7450,16 +7535,17 @@ Atmosphere: pink, bubbly, extremely girly.
                       if (isMe && userEchoGuard.shouldDrop(content, speaker)) return;
                       const role = isMe ? 'user' : 'assistant';
                       const c = isMe ? null : resolveContactByDisplayName(speaker);
-                      const parsed = role === 'assistant'
-                        ? buildAssistantMessageFromText(content, {
-                            sessionId: targetGroupId,
-                            time: m?.time || formatNowTime(),
-                            name: speaker || '成员',
-                            avatar: c?.avatar || avatars.assistant,
-                            showName: true,
-                            depth: 0,
-                          })
-                        : buildUserMessageFromAI(content, m?.time || formatNowTime());
+                      const parsed =
+                        role === 'assistant'
+                          ? buildAssistantMessageFromText(content, {
+                              sessionId: targetGroupId,
+                              time: m?.time || formatNowTime(),
+                              name: speaker || '成员',
+                              avatar: c?.avatar || avatars.assistant,
+                              showName: true,
+                              depth: 0,
+                            })
+                          : buildUserMessageFromAI(content, m?.time || formatNowTime());
                       if (isSessionActive(targetGroupId)) ui.addMessage(parsed);
                       const saved = chatStore.appendMessage(parsed, targetGroupId);
                       if (role === 'assistant') autoMarkReadIfActive(targetGroupId, saved?.id || parsed?.id || '');
@@ -7553,16 +7639,17 @@ Atmosphere: pink, bubbly, extremely girly.
                         if (isMe && userEchoGuard.shouldDrop(content, speaker)) return;
                         const role = isMe ? 'user' : 'assistant';
                         const c = isMe ? null : resolveContactByDisplayName(speaker);
-                        const parsed = role === 'assistant'
-                          ? buildAssistantMessageFromText(content, {
-                              sessionId: targetGroupId,
-                              time: m?.time || formatNowTime(),
-                              name: speaker || '成员',
-                              avatar: c?.avatar || avatars.assistant,
-                              showName: true,
-                              depth: 0,
-                            })
-                          : buildUserMessageFromAI(content, m?.time || formatNowTime());
+                        const parsed =
+                          role === 'assistant'
+                            ? buildAssistantMessageFromText(content, {
+                                sessionId: targetGroupId,
+                                time: m?.time || formatNowTime(),
+                                name: speaker || '成员',
+                                avatar: c?.avatar || avatars.assistant,
+                                showName: true,
+                                depth: 0,
+                              })
+                            : buildUserMessageFromAI(content, m?.time || formatNowTime());
                         if (isSessionActive(targetGroupId)) ui.addMessage(parsed);
                         const saved = chatStore.appendMessage(parsed, targetGroupId);
                         if (role === 'assistant') autoMarkReadIfActive(targetGroupId, saved?.id || parsed?.id || '');
@@ -7802,16 +7889,17 @@ Atmosphere: pink, bubbly, extremely girly.
                 if (isMe && userEchoGuard.shouldDrop(content, speaker)) return;
                 const role = isMe ? 'user' : 'assistant';
                 const c = isMe ? null : resolveContactByDisplayName(speaker);
-                const parsed = role === 'assistant'
-                  ? buildAssistantMessageFromText(content, {
-                      sessionId: targetGroupId,
-                      time: m?.time || formatNowTime(),
-                      name: speaker || '成员',
-                      avatar: c?.avatar || avatars.assistant,
-                      showName: true,
-                      depth: 0,
-                    })
-                  : buildUserMessageFromAI(content, m?.time || formatNowTime());
+                const parsed =
+                  role === 'assistant'
+                    ? buildAssistantMessageFromText(content, {
+                        sessionId: targetGroupId,
+                        time: m?.time || formatNowTime(),
+                        name: speaker || '成员',
+                        avatar: c?.avatar || avatars.assistant,
+                        showName: true,
+                        depth: 0,
+                      })
+                    : buildUserMessageFromAI(content, m?.time || formatNowTime());
                 if (isSessionActive(targetGroupId)) ui.addMessage(parsed);
                 const saved = chatStore.appendMessage(parsed, targetGroupId);
                 if (role === 'assistant') autoMarkReadIfActive(targetGroupId, saved?.id || parsed?.id || '');
@@ -7909,15 +7997,16 @@ Atmosphere: pink, bubbly, extremely girly.
                     if (isMe && userEchoGuard.shouldDrop(content, speaker)) return;
                     const role = isMe ? 'user' : 'assistant';
                     const c = isMe ? null : resolveContactByDisplayName(speaker);
-                    const parsed = role === 'assistant'
-                      ? buildAssistantMessageFromText(content, {
-                          sessionId: targetGroupId,
-                          time: m?.time || formatNowTime(),
-                          name: speaker || '成员',
-                          avatar: c?.avatar || avatars.assistant,
-                          showName: true,
-                          depth: 0,
-                        })
+                    const parsed =
+                      role === 'assistant'
+                        ? buildAssistantMessageFromText(content, {
+                            sessionId: targetGroupId,
+                            time: m?.time || formatNowTime(),
+                            name: speaker || '成员',
+                            avatar: c?.avatar || avatars.assistant,
+                            showName: true,
+                            depth: 0,
+                          })
                         : buildUserMessageFromAI(content, m?.time || formatNowTime());
                     if (isSessionActive(targetGroupId)) ui.addMessage(parsed);
                     const saved = chatStore.appendMessage(parsed, targetGroupId);
@@ -7999,16 +8088,17 @@ Atmosphere: pink, bubbly, extremely girly.
                       if (isMe && userEchoGuard.shouldDrop(content, speaker)) return;
                       const role = isMe ? 'user' : 'assistant';
                       const c = isMe ? null : resolveContactByDisplayName(speaker);
-                      const parsed = role === 'assistant'
-                        ? buildAssistantMessageFromText(content, {
-                            sessionId: targetGroupId,
-                            time: m?.time || formatNowTime(),
-                            name: speaker || '成员',
-                            avatar: c?.avatar || avatars.assistant,
-                            showName: true,
-                            depth: 0,
-                          })
-                        : buildUserMessageFromAI(content, m?.time || formatNowTime());
+                      const parsed =
+                        role === 'assistant'
+                          ? buildAssistantMessageFromText(content, {
+                              sessionId: targetGroupId,
+                              time: m?.time || formatNowTime(),
+                              name: speaker || '成员',
+                              avatar: c?.avatar || avatars.assistant,
+                              showName: true,
+                              depth: 0,
+                            })
+                          : buildUserMessageFromAI(content, m?.time || formatNowTime());
                       if (isSessionActive(targetGroupId)) ui.addMessage(parsed);
                       const saved = chatStore.appendMessage(parsed, targetGroupId);
                       if (role === 'assistant') autoMarkReadIfActive(targetGroupId, saved?.id || parsed?.id || '');
@@ -8142,7 +8232,7 @@ Atmosphere: pink, bubbly, extremely girly.
   // 使用新的分离模式：Enter 缓存，发送按钮真正发送
   ui.onSendWithMode({
     onEnter: handleEnter,
-    onSendButton: handleSend
+    onSendButton: handleSend,
   });
 
   // Long-press send button to switch mode
@@ -8178,7 +8268,7 @@ Atmosphere: pink, bubbly, extremely girly.
       popover.style.visibility = 'visible';
     };
 
-    popover.addEventListener('click', (e) => {
+    popover.addEventListener('click', e => {
       e.preventDefault();
       e.stopPropagation();
       const next = sendMode === 'creative' ? 'chat' : 'creative';
@@ -8193,7 +8283,7 @@ Atmosphere: pink, bubbly, extremely girly.
       }
     };
 
-    sendBtn.addEventListener('pointerdown', (e) => {
+    sendBtn.addEventListener('pointerdown', e => {
       if (e.button !== 0) return;
       pressTriggered = false;
       clearTimer();
@@ -8210,7 +8300,7 @@ Atmosphere: pink, bubbly, extremely girly.
     sendBtn.addEventListener('pointerleave', clearTimer);
     sendBtn.addEventListener('pointercancel', clearTimer);
 
-    document.addEventListener('pointerdown', (e) => {
+    document.addEventListener('pointerdown', e => {
       if (popover.style.display === 'none') return;
       if (popover.contains(e.target) || sendBtn.contains(e.target)) return;
       hidePopover();
@@ -8231,7 +8321,7 @@ Atmosphere: pink, bubbly, extremely girly.
   });
   ui.onMessageAction(async (action, message, payload) => {
     const sessionId = chatStore.getCurrent();
-    const isSyntheticUser = (m) => m?.role === 'user' && m?.meta?.generatedByAssistant === true;
+    const isSyntheticUser = m => m?.role === 'user' && m?.meta?.generatedByAssistant === true;
     const regenerateFromUserIndex = async (userIdx, { allowEmpty = false } = {}) => {
       const msgs = chatStore.getMessages(sessionId);
       const prevUser = msgs[userIdx];
@@ -8242,7 +8332,12 @@ Atmosphere: pink, bubbly, extremely girly.
       }
       let nextUserIdx = -1;
       for (let i = userIdx + 1; i < msgs.length; i++) {
-        if (msgs[i]?.role === 'user' && !isSyntheticUser(msgs[i]) && msgs[i]?.status !== 'pending' && msgs[i]?.status !== 'sending') {
+        if (
+          msgs[i]?.role === 'user' &&
+          !isSyntheticUser(msgs[i]) &&
+          msgs[i]?.status !== 'pending' &&
+          msgs[i]?.status !== 'sending'
+        ) {
           nextUserIdx = i;
           break;
         }
@@ -8434,7 +8529,12 @@ Atmosphere: pink, bubbly, extremely girly.
       if (idx === -1) return;
       let prevUserIdx = -1;
       for (let i = idx - 1; i >= 0; i--) {
-        if (msgs[i]?.role === 'user' && !isSyntheticUser(msgs[i]) && msgs[i]?.status !== 'pending' && msgs[i]?.status !== 'sending') {
+        if (
+          msgs[i]?.role === 'user' &&
+          !isSyntheticUser(msgs[i]) &&
+          msgs[i]?.status !== 'pending' &&
+          msgs[i]?.status !== 'sending'
+        ) {
           prevUserIdx = i;
           break;
         }
@@ -8471,7 +8571,7 @@ Atmosphere: pink, bubbly, extremely girly.
     updateWorldIndicator();
     rerenderCurrentSession();
   });
-  window.addEventListener('memory-table-push', (ev) => {
+  window.addEventListener('memory-table-push', ev => {
     const detail = ev?.detail || {};
     const sessionId = String(detail.sessionId || '').trim();
     const content = String(detail.content || '').trim();
@@ -8715,12 +8815,10 @@ Atmosphere: pink, bubbly, extremely girly.
 
   const getConvertFileSrc = () => {
     const g = typeof globalThis !== 'undefined' ? globalThis : window;
-    return g?.__TAURI__?.core?.convertFileSrc
-      || g?.__TAURI__?.convertFileSrc
-      || g?.__TAURI_INTERNALS__?.convertFileSrc;
+    return g?.__TAURI__?.core?.convertFileSrc || g?.__TAURI__?.convertFileSrc || g?.__TAURI_INTERNALS__?.convertFileSrc;
   };
 
-  const resolveWallpaperUrl = (wallpaper) => {
+  const resolveWallpaperUrl = wallpaper => {
     if (!wallpaper) return '';
     if (wallpaper.url) return String(wallpaper.url || '').trim();
     if (wallpaper.dataUrl) return String(wallpaper.dataUrl || '').trim();
@@ -8798,10 +8896,12 @@ Atmosphere: pink, bubbly, extremely girly.
     const rotate = Number(meta.rotate || 0);
     const offsetX = Number(meta.offsetX || 0) * cw;
     const offsetY = Number(meta.offsetY || 0) * ch;
-    imgEl.style.transform = `translate(-50%, -50%) translate(${offsetX}px, ${offsetY}px) rotate(${rotate}deg) scale(${baseScale * zoom})`;
+    imgEl.style.transform = `translate(-50%, -50%) translate(${offsetX}px, ${offsetY}px) rotate(${rotate}deg) scale(${
+      baseScale * zoom
+    })`;
   };
 
-  const applyWallpaperToChatRoom = (settings) => {
+  const applyWallpaperToChatRoom = settings => {
     if (!chatRoom) return;
     const layerInfo = ensureChatWallpaperLayer();
     if (!layerInfo) return;
@@ -8833,7 +8933,7 @@ Atmosphere: pink, bubbly, extremely girly.
     applyWallpaperTransform(layerInfo.img, chatRoom, activeWallpaperMeta);
   });
 
-  const normalizeChatSettings = (raw) => {
+  const normalizeChatSettings = raw => {
     const base = { ...getChatSettingDefaults(), ...(raw || {}) };
     if (raw?.wallpaper && typeof raw.wallpaper === 'object') {
       base.wallpaper = { ...raw.wallpaper };
@@ -8862,7 +8962,7 @@ Atmosphere: pink, bubbly, extremely girly.
     wallpaperPreview.style.setProperty('--wallpaper-aspect', `${w} / ${h}`);
   };
 
-  const updateWallpaperStatus = (text) => {
+  const updateWallpaperStatus = text => {
     if (!chatWallpaperStatus) return;
     chatWallpaperStatus.textContent = text || '未设置壁纸';
   };
@@ -8889,7 +8989,7 @@ Atmosphere: pink, bubbly, extremely girly.
     wallpaperPreviewImage.src = url || '';
     wallpaperPreviewImage.style.opacity = url ? '1' : '0';
     wallpaperPreview?.classList.toggle('has-image', Boolean(url));
-    updateWallpaperStatus(url ? (name || '已设置壁纸') : '未设置壁纸');
+    updateWallpaperStatus(url ? name || '已设置壁纸' : '未设置壁纸');
     if (!url) {
       wallpaperPreviewImage.style.transform = 'translate(-50%, -50%)';
       wallpaperState.width = 0;
@@ -8957,7 +9057,7 @@ Atmosphere: pink, bubbly, extremely girly.
     wallpaperState.dirtyTransform = true;
   };
 
-  const handleWallpaperDragStart = (event) => {
+  const handleWallpaperDragStart = event => {
     if (!wallpaperPreview || !wallpaperPreviewImage || !wallpaperState.previewUrl) return;
     wallpaperState.dragging = true;
     wallpaperState.dragStart = {
@@ -8970,7 +9070,7 @@ Atmosphere: pink, bubbly, extremely girly.
     wallpaperPreview.setPointerCapture?.(event.pointerId);
   };
 
-  const handleWallpaperDragMove = (event) => {
+  const handleWallpaperDragMove = event => {
     if (!wallpaperState.dragging || !wallpaperPreview) return;
     const rect = wallpaperPreview.getBoundingClientRect();
     if (!rect.width || !rect.height) return;
@@ -8982,19 +9082,20 @@ Atmosphere: pink, bubbly, extremely girly.
     applyWallpaperPreviewTransform();
   };
 
-  const handleWallpaperDragEnd = (event) => {
+  const handleWallpaperDragEnd = event => {
     if (!wallpaperState.dragging) return;
     wallpaperState.dragging = false;
     wallpaperPreview?.classList.remove('is-dragging');
     wallpaperPreview?.releasePointerCapture?.(event.pointerId);
   };
 
-  const loadImageFromDataUrl = (dataUrl) => new Promise((resolve, reject) => {
-    const img = new Image();
-    img.onload = () => resolve(img);
-    img.onerror = () => reject(new Error('wallpaper image load failed'));
-    img.src = dataUrl;
-  });
+  const loadImageFromDataUrl = dataUrl =>
+    new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = () => reject(new Error('wallpaper image load failed'));
+      img.src = dataUrl;
+    });
 
   const shrinkWallpaperDataUrl = async (dataUrl, { maxSize = 2048, quality = 0.85 } = {}) => {
     if (!dataUrl || !String(dataUrl).startsWith('data:')) return { dataUrl, width: 0, height: 0 };
@@ -9014,7 +9115,7 @@ Atmosphere: pink, bubbly, extremely girly.
     return { dataUrl: output, width: canvas.width, height: canvas.height };
   };
 
-  const pickWallpaperFile = async (file) => {
+  const pickWallpaperFile = async file => {
     if (!file) return;
     const reader = new FileReader();
     reader.onload = async () => {
@@ -9140,24 +9241,19 @@ Atmosphere: pink, bubbly, extremely girly.
     });
   };
 
-  const readFileChunkAsBase64 = (file, start, end) => new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = String(reader.result || '');
-      const idx = result.indexOf(',');
-      resolve(idx >= 0 ? result.slice(idx + 1) : result);
-    };
-    reader.onerror = () => reject(reader.error || new Error('read chunk failed'));
-    reader.readAsDataURL(file.slice(start, end));
-  });
+  const readFileChunkAsBase64 = (file, start, end) =>
+    new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = String(reader.result || '');
+        const idx = result.indexOf(',');
+        resolve(idx >= 0 ? result.slice(idx + 1) : result);
+      };
+      reader.onerror = () => reject(reader.error || new Error('read chunk failed'));
+      reader.readAsDataURL(file.slice(start, end));
+    });
 
-  const saveWallpaperStreamed = async ({
-    sessionId,
-    file,
-    fileName,
-    mimeType,
-    previousPath,
-  }) => {
+  const saveWallpaperStreamed = async ({ sessionId, file, fileName, mimeType, previousPath }) => {
     if (!file) throw new Error('wallpaper file missing');
     const startResp = await safeInvoke('save_wallpaper_stream_start', {
       sessionId,
@@ -9217,7 +9313,7 @@ Atmosphere: pink, bubbly, extremely girly.
             sessionId,
             wallpaperState.fileDataUrl,
             wallpaperState.fileName || '',
-            existing?.path || ''
+            existing?.path || '',
           );
         } else {
           if (wallpaperState.saveOriginal && !useStream) {
@@ -9355,7 +9451,7 @@ Atmosphere: pink, bubbly, extremely girly.
         chatDefaultTextColor: settings.textColor,
       });
       const sessionIds = chatStore.listSessions();
-      sessionIds.forEach((sid) => {
+      sessionIds.forEach(sid => {
         if (sid === sessionId) return;
         const existing = normalizeChatSettings(chatStore.getSessionSettings(sid) || {});
         const next = {

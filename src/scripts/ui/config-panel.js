@@ -1251,6 +1251,25 @@ export class ConfigPanel {
             // 获取模型列表
             logger.info(`正在获取 ${formData.provider} 的模型列表...`);
             const models = await tempClient.listModels();
+            const needsGoogleImageModels = this.activeTab === 'image'
+                && (formData.provider === 'makersuite' || formData.provider === 'vertexai');
+            if (needsGoogleImageModels) {
+                const googleImageModels = [
+                    'imagen-4.0-generate-preview-06-06',
+                    'imagen-4.0-fast-generate-preview-06-06',
+                    'imagen-4.0-ultra-generate-preview-06-06',
+                    'imagen-3.0-generate-002',
+                    'imagen-3.0-generate-001',
+                    'imagen-3.0-fast-generate-001',
+                    'imagen-3.0-capability-001',
+                    'imagegeneration@006',
+                    'imagegeneration@005',
+                    'imagegeneration@002',
+                ];
+                const merged = Array.from(new Set([...(models || []), ...googleImageModels]));
+                models.length = 0;
+                merged.forEach(model => models.push(model));
+            }
 
             if (!models || models.length === 0) {
                 throw new Error('未获取到模型列表');
