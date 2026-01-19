@@ -1601,6 +1601,8 @@ ${listPart || '-（无）'}
   const STICKER_PACK_COLORS = ['#ff6b6b', '#ff9f43', '#ffd93d', '#6bcb77', '#4dd0e1', '#5c7cfa', '#b197fc'];
   const STICKER_PACK_ASSET_SESSION = 'sticker_pack_assets';
   const STICKER_ICON_SESSION = 'sticker_pack_icons';
+  const STICKER_AI_ASSET_SESSION = 'sticker_ai_assets';
+  const STICKER_AI_STATE_KEY = 'sticker_ai_state_v1';
   const STICKER_SOFT_IMAGE_BYTES = 600_000;
   const STICKER_SOFT_GIF_BYTES = 2_000_000;
   const STICKER_SOFT_PACK_LIMIT = 72;
@@ -3625,6 +3627,223 @@ Atmosphere: pink, bubbly, extremely girly.
     let sliceInProgress = false;
     let slicePending = null;
 
+    const loadStickerAiState = () => {
+      try {
+        const raw = localStorage.getItem(STICKER_AI_STATE_KEY);
+        if (!raw) return null;
+        const parsed = JSON.parse(raw);
+        return parsed && typeof parsed === 'object' ? parsed : null;
+      } catch {
+        return null;
+      }
+    };
+
+    const persistStickerAiState = state => {
+      try {
+        localStorage.setItem(STICKER_AI_STATE_KEY, JSON.stringify(state || {}));
+      } catch {}
+    };
+
+    const normalizeStickerAiImage = item => {
+      const dataUrl = typeof item?.dataUrl === 'string' ? item.dataUrl.trim() : '';
+      const url = typeof item?.url === 'string' ? item.url.trim() : '';
+      const path = typeof item?.path === 'string' ? item.path.trim() : '';
+      return { dataUrl, url, path };
+    };
+
+    const normalizeStickerAiSlice = item => {
+      const base = normalizeStickerAiImage(item);
+      return {
+        ...base,
+        keyword: String(item?.keyword || '').trim(),
+        name: String(item?.name || '').trim(),
+        defaultName: String(item?.defaultName || '').trim(),
+        selected: item?.selected !== false,
+      };
+    };
+
+    const serializeStickerAiImage = item => {
+      const base = normalizeStickerAiImage(item);
+      if (base.path) return { path: base.path };
+      if (base.url) return { url: base.url };
+      if (base.dataUrl) return { dataUrl: base.dataUrl };
+      return {};
+    };
+
+    const serializeStickerAiSlice = item => {
+      const base = normalizeStickerAiSlice(item);
+      return {
+        ...serializeStickerAiImage(base),
+        keyword: base.keyword,
+        name: base.name,
+        defaultName: base.defaultName,
+        selected: base.selected,
+      };
+    };
+
+    const collectStickerAiPaths = state => {
+      const paths = new Set();
+      const list = []
+        .concat(Array.isArray(state?.generated) ? state.generated : [])
+        .concat(Array.isArray(state?.slices) ? state.slices : []);
+      list.forEach(item => {
+        const path = String(item?.path || '').trim();
+        if (path) paths.add(path);
+      });
+      return Array.from(paths);
+    };
+
+    const clearStickerAiAssets = state => {
+      const paths = collectStickerAiPaths(state);
+      if (!paths.length) return;
+      paths.forEach(path => {
+        safeInvoke('delete_attachment', { sessionId: STICKER_AI_ASSET_SESSION, path }).catch(() => {});
+      });
+    };
+
+    const getStickerAiImageSource = item => {
+      const base = normalizeStickerAiImage(item);
+      if (base.dataUrl) return base.dataUrl;
+      if (base.url) return base.url;
+      if (base.path) return resolveLocalStickerUrl(base.path);
+      return '';
+    };
+
+    const readImageSourceAsDataUrl = async source => {
+      const src = String(source || '').trim();
+      if (!src) return '';
+      if (src.startsWith('data:image/')) return src;
+      try {
+        const resp = await fetch(src);
+        if (!resp.ok) return '';
+        const blob = await resp.blob();
+        return await new Promise(resolve => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(String(reader.result || ''));
+          reader.onerror = () => resolve('');
+          reader.readAsDataURL(blob);
+        });
+      } catch {
+        try {
+          const img = await loadImageElement(src);
+          const canvas = document.createElement('canvas');
+          canvas.width = img.width;
+          canvas.height = img.height;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) return '';
+          ctx.drawImage(img, 0, 0);
+          return canvas.toDataURL('image/png');
+        } catch {
+          return '';
+        }
+      }
+    };
+
+    const applyStickerAiState = state => {
+      const images = Array.isArray(state?.generated) ? state.generated.map(normalizeStickerAiImage) : [];
+      const slices = Array.isArray(state?.slices) ? state.slices.map(normalizeStickerAiSlice) : [];
+      generatedImages = images.filter(item => item.dataUrl || item.url || item.path);
+      sliceItems = slices.filter(item => item.dataUrl || item.url || item.path);
+      const maxIndex = generatedImages.length ? generatedImages.length - 1 : 0;
+      const rawIndex = Number(state?.selectedIndex ?? 0);
+      const nextIndex = Number.isFinite(rawIndex) ? Math.trunc(rawIndex) : 0;
+      selectedGeneratedIndex = Math.max(0, Math.min(maxIndex, nextIndex));
+    };
+
+    const persistStickerAiMeta = () => {
+      const state = loadStickerAiState() || {};
+      const nextState = {
+        generated: Array.isArray(state.generated) && state.generated.length
+          ? state.generated
+          : generatedImages.map(serializeStickerAiImage),
+        slices: sliceItems.map(serializeStickerAiSlice),
+        selectedIndex: selectedGeneratedIndex,
+      };
+      persistStickerAiState(nextState);
+    };
+
+    const persistStickerAiSelection = () => {
+      const state = loadStickerAiState();
+      if (state && typeof state === 'object') {
+        state.selectedIndex = selectedGeneratedIndex;
+        persistStickerAiState(state);
+        return;
+      }
+      persistStickerAiMeta();
+    };
+
+    const persistStickerAiGenerated = async images => {
+      const previous = loadStickerAiState();
+      if (previous) clearStickerAiAssets(previous);
+      const now = Date.now();
+      const stored = [];
+      for (let i = 0; i < images.length; i++) {
+        const item = normalizeStickerAiImage(images[i]);
+        if (item.dataUrl && item.dataUrl.startsWith('data:image/')) {
+          const match = item.dataUrl.match(/^data:image\/([a-z0-9+.-]+);/i);
+          const ext = match ? match[1].replace('jpeg', 'jpg') : 'png';
+          const fileName = `sticker_ai_${now}_${i + 1}.${ext}`;
+          const path = await saveStickerAsset(item.dataUrl, fileName, STICKER_AI_ASSET_SESSION);
+          if (path) {
+            stored.push({ path });
+          } else {
+            stored.push({ dataUrl: item.dataUrl });
+          }
+          continue;
+        }
+        if (item.url) {
+          stored.push({ url: item.url });
+        }
+      }
+      const nextState = { generated: stored, slices: [], selectedIndex: 0 };
+      persistStickerAiState(nextState);
+      return stored;
+    };
+
+    const persistStickerAiSlices = async items => {
+      const state = loadStickerAiState() || {};
+      const prevSlices = Array.isArray(state.slices) ? state.slices : [];
+      if (prevSlices.length) {
+        prevSlices.forEach(item => {
+          const path = String(item?.path || '').trim();
+          if (!path) return;
+          safeInvoke('delete_attachment', { sessionId: STICKER_AI_ASSET_SESSION, path }).catch(() => {});
+        });
+      }
+      const now = Date.now();
+      const stored = [];
+      for (let i = 0; i < items.length; i++) {
+        const current = normalizeStickerAiSlice(items[i]);
+        let path = current.path;
+        if (!path && current.dataUrl && current.dataUrl.startsWith('data:image/')) {
+          const match = current.dataUrl.match(/^data:image\/([a-z0-9+.-]+);/i);
+          const ext = match ? match[1].replace('jpeg', 'jpg') : 'png';
+          const fileName = `sticker_ai_slice_${now}_${i + 1}.${ext}`;
+          path = await saveStickerAsset(current.dataUrl, fileName, STICKER_AI_ASSET_SESSION);
+        }
+        if (path) items[i].path = path;
+        stored.push({
+          ...serializeStickerAiImage({ ...current, path }),
+          keyword: current.keyword,
+          name: current.name,
+          defaultName: current.defaultName,
+          selected: current.selected,
+        });
+      }
+      const nextState = {
+        generated: Array.isArray(state.generated) && state.generated.length
+          ? state.generated
+          : generatedImages.map(serializeStickerAiImage),
+        slices: stored,
+        selectedIndex: selectedGeneratedIndex,
+      };
+      persistStickerAiState(nextState);
+      return stored;
+    };
+
+    const initialState = loadStickerAiState();
+    if (initialState) applyStickerAiState(initialState);
+
     const setStatus = (text, tone = '') => {
       if (!statusEl) return;
       statusEl.textContent = String(text || '');
@@ -3663,7 +3882,7 @@ Atmosphere: pink, bubbly, extremely girly.
       previewEl.innerHTML = '';
       if (!generatedImages.length) return;
       generatedImages.forEach((item, idx) => {
-        const src = String(item?.dataUrl || item?.url || '').trim();
+        const src = getStickerAiImageSource(item);
         if (!src) return;
         const img = document.createElement('img');
         img.src = src;
@@ -3672,6 +3891,7 @@ Atmosphere: pink, bubbly, extremely girly.
         img.addEventListener('click', () => {
           selectedGeneratedIndex = idx;
           renderPreview();
+          persistStickerAiSelection();
           scheduleSlicePreview({ immediate: true });
         });
         previewEl.appendChild(img);
@@ -3730,7 +3950,7 @@ Atmosphere: pink, bubbly, extremely girly.
         checkbox.checked = item.selected !== false;
         checkbox.dataset.index = String(idx);
         const img = document.createElement('img');
-        img.src = item.dataUrl;
+        img.src = getStickerAiImageSource(item);
         img.alt = item.keyword || item.name || item.defaultName || `贴图${idx + 1}`;
         const input = document.createElement('input');
         input.type = 'text';
@@ -3947,7 +4167,7 @@ Atmosphere: pink, bubbly, extremely girly.
         return;
       }
       const current = generatedImages[selectedGeneratedIndex];
-      const source = String(current?.dataUrl || current?.url || '').trim();
+      const source = getStickerAiImageSource(current);
       if (!source) {
         if (!silent) window.toastr?.warning?.('请先生成贴图原图');
         return;
@@ -3983,6 +4203,7 @@ Atmosphere: pink, bubbly, extremely girly.
           alphaThreshold: 5,
         });
         renderSliceList();
+        await persistStickerAiSlices(sliceItems);
         setStatus(`切割完成：${sliceItems.length} 张`, 'success');
       } catch (err) {
         setStatus(`切割失败：${err?.message || '未知错误'}`, 'error');
@@ -4061,13 +4282,21 @@ Atmosphere: pink, bubbly, extremely girly.
           const keyword = String(item.keyword || item.name || '').trim();
           const name = String(item.name || keyword || item.defaultName || `贴图${i + 1}`).trim();
           const fileName = name ? `${name}.png` : 'sticker.png';
-          const path = await saveStickerAsset(item.dataUrl, fileName, STICKER_PACK_ASSET_SESSION);
+          let dataUrl = String(item.dataUrl || '').trim();
+          if (!dataUrl) {
+            const source = getStickerAiImageSource(item);
+            dataUrl = await readImageSourceAsDataUrl(source);
+          }
+          if (!dataUrl) {
+            throw new Error('读取贴图失败，请重新切割');
+          }
+          const path = await saveStickerAsset(dataUrl, fileName, STICKER_PACK_ASSET_SESSION);
           stickers.push({
             id: String(Date.now()) + Math.random().toString(16).slice(2, 8),
             name,
             keyword,
             path: path || '',
-            dataUrl: path ? '' : item.dataUrl,
+            dataUrl: path ? '' : dataUrl,
           });
         }
         const nextPack = { ...pack, stickers };
@@ -4137,11 +4366,12 @@ Atmosphere: pink, bubbly, extremely girly.
           options.referenceImages = referenceImages.map(item => item.dataUrl).filter(Boolean);
         }
         const images = await client.generateImage(prompt, options);
-        renderPreview(images);
         if (!images.length) {
           setStatus('生成完成，但未返回图片结果', 'error');
           return;
         }
+        const stored = await persistStickerAiGenerated(images);
+        renderPreview(stored.length ? stored : images);
         setStatus('生成完成，下一步可进行去背与切割', 'success');
       } catch (err) {
         const detailRaw = String(err?.response || '').trim();
@@ -4194,10 +4424,12 @@ Atmosphere: pink, bubbly, extremely girly.
     selectAllBtn?.addEventListener('click', () => {
       sliceItems = sliceItems.map(item => ({ ...item, selected: true }));
       renderSliceList();
+      persistStickerAiMeta();
     });
     selectNoneBtn?.addEventListener('click', () => {
       sliceItems = sliceItems.map(item => ({ ...item, selected: false }));
       renderSliceList();
+      persistStickerAiMeta();
     });
     const handleSliceListInput = (event) => {
       const target = event?.target;
@@ -4211,6 +4443,7 @@ Atmosphere: pink, bubbly, extremely girly.
         sliceItems[idx].keyword = value;
         sliceItems[idx].name = value;
       }
+      persistStickerAiMeta();
     };
     sliceListEl?.addEventListener('input', handleSliceListInput);
     sliceListEl?.addEventListener('change', handleSliceListInput);
