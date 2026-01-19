@@ -3731,11 +3731,11 @@ Atmosphere: pink, bubbly, extremely girly.
         checkbox.dataset.index = String(idx);
         const img = document.createElement('img');
         img.src = item.dataUrl;
-        img.alt = item.name || item.defaultName || `贴图${idx + 1}`;
+        img.alt = item.keyword || item.name || item.defaultName || `贴图${idx + 1}`;
         const input = document.createElement('input');
         input.type = 'text';
-        input.value = item.name || '';
-        input.placeholder = item.defaultName || `贴图${idx + 1}`;
+        input.value = item.keyword || item.name || '';
+        input.placeholder = '关键词';
         input.dataset.index = String(idx);
         card.appendChild(checkbox);
         card.appendChild(img);
@@ -3931,6 +3931,7 @@ Atmosphere: pink, bubbly, extremely girly.
           slices.push({
             dataUrl: outCanvas.toDataURL('image/png'),
             name: '',
+            keyword: '',
             defaultName: `贴图${slices.length + 1}`,
             selected: true,
           });
@@ -4057,13 +4058,14 @@ Atmosphere: pink, bubbly, extremely girly.
         const stickers = Array.isArray(pack.stickers) ? pack.stickers.slice() : [];
         for (let i = 0; i < selected.length; i++) {
           const item = selected[i];
-          const name = String(item.name || item.defaultName || `贴图${i + 1}`).trim();
+          const keyword = String(item.keyword || item.name || '').trim();
+          const name = String(item.name || keyword || item.defaultName || `贴图${i + 1}`).trim();
           const fileName = name ? `${name}.png` : 'sticker.png';
           const path = await saveStickerAsset(item.dataUrl, fileName, STICKER_PACK_ASSET_SESSION);
           stickers.push({
             id: String(Date.now()) + Math.random().toString(16).slice(2, 8),
             name,
-            keyword: '',
+            keyword,
             path: path || '',
             dataUrl: path ? '' : item.dataUrl,
           });
@@ -4158,7 +4160,7 @@ Atmosphere: pink, bubbly, extremely girly.
         templateInput.value = STICKER_AI_TEMPLATE;
       }
       setStatus('');
-      renderPreview([]);
+      renderPreview();
       renderReferenceList();
       renderPackOptions();
       renderSliceList();
@@ -4205,7 +4207,9 @@ Atmosphere: pink, bubbly, extremely girly.
       if (target.type === 'checkbox') {
         sliceItems[idx].selected = Boolean(target.checked);
       } else if (target.type === 'text') {
-        sliceItems[idx].name = String(target.value || '');
+        const value = String(target.value || '');
+        sliceItems[idx].keyword = value;
+        sliceItems[idx].name = value;
       }
     };
     sliceListEl?.addEventListener('input', handleSliceListInput);
