@@ -75,6 +75,19 @@ export class LLMClient {
     }
 
     /**
+     * 生成图片（非流式）
+     * @param {string} prompt
+     * @param {Object} options
+     * @returns {Promise<Array<{dataUrl?: string, url?: string, index: number}>>}
+     */
+    async generateImage(prompt, options = {}) {
+        if (typeof this.provider.generateImage !== 'function') {
+            throw new Error(`当前 provider 不支持图片生成: ${this.config.provider}`);
+        }
+        return this.provider.generateImage(prompt, options);
+    }
+
+    /**
      * 重新配置客户端
      * @param {Object} newConfig - 新的配置
      */

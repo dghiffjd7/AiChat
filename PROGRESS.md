@@ -1,5 +1,21 @@
 # 開發進度追蹤（必更新）(必须使用当下时间记录)
 
+## 2026-01-19 09:18
+- 贴图包自定义：新增贴图包存储、分页/图标上传、删除贴图/贴图包、AI 可用开关、关键词编辑与缺失提示逻辑调整。
+- 贴图交互：缺失关键词点击会提示补全并阻止发送；输入框贴图预览支持删除并同步移除 token。
+- 贴图加载修复：自定义贴图本地路径统一 convertFileSrc 解析，补充 fallback；贴图加载失败记录与调试输出。
+- Debug 增强：通用调试面板新增“贴图调试”按钮并输出贴图状态与路径。
+- 贴图提示词注入：AI 注入仅包含启用贴图包关键词（默认/自定义）。
+- 修改：
+  - `src/scripts/storage/sticker-pack-store.js`
+  - `src/scripts/utils/media-assets.js`
+  - `src/scripts/utils/sticker-debug.js`
+  - `src/scripts/ui/app.js`
+  - `src/scripts/ui/bridge.js`
+  - `src/scripts/ui/config-panel.js`
+  - `src/scripts/ui/debug-panel.js`
+  - `src/assets/css/qq-legacy.css`
+
 ## 2026-01-17 15:44
 - Android 资料包导出：补强 MediaStore 导出后回传实际下载路径并触发媒体扫描，避免导出后找不到文件。
 - 修改：

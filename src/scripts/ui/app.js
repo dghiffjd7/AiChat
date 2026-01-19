@@ -99,6 +99,8 @@ const initApp = async () => {
     updateStickerPreview('');
   };
   const configPanel = new ConfigPanel();
+  const chatConfigManager = new ConfigManager();
+  const imageConfigManager = new ConfigManager({ scope: 'image' });
   const memoryUpdateConfigManager = new ConfigManager();
   const memoryUpdateRunning = new Set();
   const generalSettingsPanel = new GeneralSettingsPanel();
@@ -1568,6 +1570,8 @@ ${listPart || '-（无）'}
   };
 
   const STICKER_PACK_TAB_PREFIX = 'pack:';
+  const STICKER_AI_PACK_ID = 'ai_generated';
+  const STICKER_AI_PACK_LABEL = 'AI';
   const STICKER_PACK_ASSET_SESSION = 'sticker_pack_assets';
   const STICKER_ICON_SESSION = 'sticker_pack_icons';
   const STICKER_SOFT_IMAGE_BYTES = 600_000;
@@ -1579,6 +1583,49 @@ ${listPart || '-（无）'}
   let stickerPackDeleteTarget = '';
   let activeStickerEditor = null;
   const stickerLoadErrorKeys = new Set();
+  const STICKER_AI_TEMPLATE = `<prompt>
+A 4K resolution, 16:9 image featuring a character sheet with a 4x6 grid layout.
+Style: cute Q-version (Chibi) anime art, resembling LINE stickers, full-body portraits.
+Background: solid white. Split by clean lines between each block.
+Subject: the character from the reference image. Redesign the poses creatively.
+Crucial: ensure headwear/accessories are drawn correctly and consistently.
+No text. Clean outlines, flat colors typical of sticker packs.
+Atmosphere: pink, bubbly, extremely girly.
+第一排（日常互动与可爱系）：...
+第二排（打工/学习/生活状态）：...
+</prompt>`;
+  const canUseApiConfig = (config) => {
+    const cfg = config || {};
+    const hasKey = typeof cfg.apiKey === 'string' && cfg.apiKey.trim().length > 0;
+    const hasVertexSa = cfg.provider === 'vertexai'
+      && typeof cfg.vertexaiServiceAccount === 'string'
+      && cfg.vertexaiServiceAccount.trim().length > 0;
+    return hasKey || hasVertexSa;
+  };
+  const ensureChatConfigReady = async () => {
+    const config = await chatConfigManager.load();
+    if (!canUseApiConfig(config)) {
+      window.toastr?.warning?.('请先配置聊天模型 API');
+      try {
+        stickerAiModal?.hide?.();
+      } catch {}
+      configPanel.show({ tab: 'chat' });
+      return null;
+    }
+    return config;
+  };
+  const ensureImageConfigReady = async () => {
+    const config = await imageConfigManager.load();
+    if (!canUseApiConfig(config)) {
+      window.toastr?.warning?.('请先配置图片生成 API');
+      try {
+        stickerAiModal?.hide?.();
+      } catch {}
+      configPanel.show({ tab: 'image' });
+      return null;
+    }
+    return config;
+  };
 
   const getStickerLoadErrors = () => {
     const g = typeof globalThis !== 'undefined' ? globalThis : window;
@@ -1681,18 +1728,37 @@ ${listPart || '-（无）'}
     return items;
   };
 
+  const ensureAiStickerPack = () => {
+    const state = stickerPackStore.getState();
+    const packs = Array.isArray(state?.packs) ? state.packs : [];
+    if (packs.some(p => p.id === STICKER_AI_PACK_ID)) return state;
+    const colorIndex = STICKER_PACK_COLORS.length ? 0 : 0;
+    const pack = {
+      id: STICKER_AI_PACK_ID,
+      colorIndex,
+      iconPath: '',
+      iconDataUrl: '',
+      aiEnabled: false,
+      stickers: [],
+    };
+    return stickerPackStore.upsertPack(pack);
+  };
+
   const syncStickerPackState = (nextState = null) => {
     stickerPackState = nextState || stickerPackStore.getState();
     setCustomMediaItems(buildCustomStickerAssets(stickerPackState));
     return stickerPackState;
   };
-  syncStickerPackState();
+  syncStickerPackState(ensureAiStickerPack());
 
   const createStickerPack = () => {
     const id = (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function')
       ? crypto.randomUUID()
       : `pack_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`;
-    const nextIndex = Array.isArray(stickerPackState?.packs) ? stickerPackState.packs.length : 0;
+    const packCount = Array.isArray(stickerPackState?.packs)
+      ? stickerPackState.packs.filter(p => p.id !== STICKER_AI_PACK_ID).length
+      : 0;
+    const nextIndex = packCount;
     const colorIndex = STICKER_PACK_COLORS.length ? (nextIndex % STICKER_PACK_COLORS.length) : 0;
     const pack = {
       id,
@@ -1812,6 +1878,10 @@ ${listPart || '-（无）'}
   };
 
   const removeStickerPack = async (packId) => {
+    if (packId === STICKER_AI_PACK_ID) {
+      window.toastr?.warning?.('AI 贴图区不可删除');
+      return;
+    }
     const pack = getStickerPackById(packId);
     if (!pack) return;
     const count = Array.isArray(pack.stickers) ? pack.stickers.length : 0;
@@ -2329,7 +2399,20 @@ ${listPart || '-（无）'}
     addTab(def);
 
     const packs = Array.isArray(stickerPackState?.packs) ? stickerPackState.packs : [];
-    packs.forEach((pack, idx) => {
+    const aiPack = packs.find(p => p.id === STICKER_AI_PACK_ID) || null;
+    const customPacks = packs.filter(p => p.id !== STICKER_AI_PACK_ID);
+
+    if (aiPack) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'sticker-tab sticker-tab-pack sticker-tab-ai';
+      btn.dataset.tab = `${STICKER_PACK_TAB_PREFIX}${aiPack.id}`;
+      btn.title = 'AI 生成贴图';
+      btn.textContent = STICKER_AI_PACK_LABEL;
+      addTab(btn);
+    }
+
+    customPacks.forEach((pack, idx) => {
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'sticker-tab sticker-tab-pack';
@@ -2395,9 +2478,16 @@ ${listPart || '-（无）'}
   const updateStickerDeleteUI = () => {
     if (!stickerPanel?.deleteBtn) return;
     const packId = getStickerPackIdFromTab(stickerPanelTab);
-    const show = Boolean(packId && stickerPackDeleteMode && stickerPackDeleteTarget === packId);
+    const deletable = Boolean(packId && packId !== STICKER_AI_PACK_ID);
+    const show = Boolean(deletable && stickerPackDeleteMode && stickerPackDeleteTarget === packId);
     stickerPanel.deleteBtn.classList.toggle('is-active', show);
-    stickerPanel.deleteBtn.classList.toggle('is-hidden', !packId);
+    stickerPanel.deleteBtn.classList.toggle('is-hidden', !deletable);
+  };
+  const updateStickerGenerateUI = () => {
+    if (!stickerPanel?.generateBtn) return;
+    const packId = getStickerPackIdFromTab(stickerPanelTab);
+    const show = packId === STICKER_AI_PACK_ID;
+    stickerPanel.generateBtn.classList.toggle('is-hidden', !show);
   };
   const handleStickerToggle = () => {
     const packId = getStickerPackIdFromTab(stickerPanelTab);
@@ -2437,6 +2527,7 @@ ${listPart || '-（无）'}
     });
     updateStickerToggleUI();
     updateStickerDeleteUI();
+    updateStickerGenerateUI();
     const grid = stickerPanel.grid;
     grid.classList.remove('sticker-pages');
     grid.style.transition = 'none';
@@ -3368,6 +3459,10 @@ ${listPart || '-（无）'}
             <span class="sticker-ai-label">AI</span>
             <span class="sticker-ai-dot"></span>
           </button>
+          <button type="button" class="sticker-ai-generate" aria-label="生成贴图" title="AI 生成贴图">
+            <span class="sticker-ai-generate-icon">✨</span>
+            <span>生成</span>
+          </button>
           <button type="button" class="sticker-pack-delete" aria-label="删除贴图包" title="删除贴图包">×</button>
         </div>
       </div>
@@ -3407,8 +3502,181 @@ ${listPart || '-（无）'}
       dots: panel.querySelector('.sticker-dots'),
       tabWrap: panel.querySelector('.sticker-tabs'),
       toggle: panel.querySelector('.sticker-ai-toggle'),
+      generateBtn: panel.querySelector('.sticker-ai-generate'),
       deleteBtn: panel.querySelector('.sticker-pack-delete'),
     };
+  })();
+  const stickerAiModal = (() => {
+    const overlay = document.createElement('div');
+    overlay.className = 'sticker-ai-overlay';
+    const modal = document.createElement('div');
+    modal.className = 'sticker-ai-modal';
+    modal.innerHTML = `
+      <div class="sticker-ai-header">
+        <div>
+          <div class="sticker-ai-title">AI 生成贴图</div>
+          <div class="sticker-ai-subtitle">先生成完整提示词，再调用图片模型出图</div>
+        </div>
+        <button type="button" class="sticker-ai-close" aria-label="关闭">×</button>
+      </div>
+      <div class="sticker-ai-body">
+        <label class="sticker-ai-label" for="sticker-ai-style">风格描述</label>
+        <textarea id="sticker-ai-style" class="sticker-ai-textarea" placeholder="描述想要的风格、角色、动作与情绪（可简短）"></textarea>
+
+        <label class="sticker-ai-label" for="sticker-ai-template">提示词模板</label>
+        <textarea id="sticker-ai-template" class="sticker-ai-textarea sticker-ai-template"></textarea>
+        <div class="sticker-ai-hint">模板会与风格描述一起发送给主模型，自动生成完整提示词。</div>
+
+        <div class="sticker-ai-actions">
+          <button type="button" class="sticker-ai-btn" id="sticker-ai-build">生成完整提示词</button>
+          <button type="button" class="sticker-ai-btn ghost" id="sticker-ai-reset">重置模板</button>
+        </div>
+
+        <label class="sticker-ai-label" for="sticker-ai-final">完整提示词（可编辑）</label>
+        <textarea id="sticker-ai-final" class="sticker-ai-textarea" placeholder="这里会显示生成后的完整提示词"></textarea>
+
+        <div class="sticker-ai-actions">
+          <button type="button" class="sticker-ai-btn primary" id="sticker-ai-render">开始生成贴图</button>
+        </div>
+
+        <div class="sticker-ai-status" id="sticker-ai-status"></div>
+        <div class="sticker-ai-preview" id="sticker-ai-preview"></div>
+      </div>
+    `;
+
+    const styleInput = modal.querySelector('#sticker-ai-style');
+    const templateInput = modal.querySelector('#sticker-ai-template');
+    const finalInput = modal.querySelector('#sticker-ai-final');
+    const statusEl = modal.querySelector('#sticker-ai-status');
+    const previewEl = modal.querySelector('#sticker-ai-preview');
+    const buildBtn = modal.querySelector('#sticker-ai-build');
+    const resetBtn = modal.querySelector('#sticker-ai-reset');
+    const renderBtn = modal.querySelector('#sticker-ai-render');
+    const closeBtn = modal.querySelector('.sticker-ai-close');
+
+    const setStatus = (text, tone = '') => {
+      if (!statusEl) return;
+      statusEl.textContent = String(text || '');
+      statusEl.dataset.tone = tone;
+    };
+
+    const setBusy = (busy) => {
+      if (buildBtn) buildBtn.disabled = busy;
+      if (renderBtn) renderBtn.disabled = busy;
+      if (resetBtn) resetBtn.disabled = busy;
+    };
+
+    const renderPreview = (items = []) => {
+      if (!previewEl) return;
+      previewEl.innerHTML = '';
+      if (!items.length) return;
+      items.forEach((item) => {
+        const src = String(item?.dataUrl || item?.url || '').trim();
+        if (!src) return;
+        const img = document.createElement('img');
+        img.src = src;
+        img.alt = 'AI 贴图源图';
+        previewEl.appendChild(img);
+      });
+    };
+
+    const buildPromptMessages = (template, style) => {
+      const trimmedTemplate = String(template || '').trim();
+      const trimmedStyle = String(style || '').trim();
+      const userContent = [
+        '你是图片提示词生成助手，只输出最终提示词，不要解释，不要 Markdown。',
+        '',
+        `模板：\n${trimmedTemplate || '(空模板)'}`,
+        '',
+        `用户补充：\n${trimmedStyle || '(未提供)'}`,
+        '',
+        '请输出最终提示词：'
+      ].join('\n');
+      return [
+        { role: 'system', content: '你负责将模板与用户风格描述整合为完整图片提示词。' },
+        { role: 'user', content: userContent },
+      ];
+    };
+
+    const handleBuildPrompt = async () => {
+      const template = String(templateInput?.value || '').trim();
+      if (!template) {
+        window.toastr?.warning?.('请先填写提示词模板');
+        return;
+      }
+      const config = await ensureChatConfigReady();
+      if (!config) return;
+      setBusy(true);
+      setStatus('正在生成提示词...', 'loading');
+      try {
+        const client = new LLMClient(config);
+        const messages = buildPromptMessages(template, styleInput?.value || '');
+        const output = await client.chat(messages, { temperature: 0.6 });
+        finalInput.value = String(output || '').trim();
+        setStatus('提示词已生成，可继续编辑或直接生成贴图', 'success');
+      } catch (err) {
+        setStatus(`生成提示词失败：${err?.message || '未知错误'}`, 'error');
+        window.toastr?.error?.('生成提示词失败');
+      } finally {
+        setBusy(false);
+      }
+    };
+
+    const handleGenerateImage = async () => {
+      const prompt = String(finalInput?.value || '').trim();
+      if (!prompt) {
+        window.toastr?.warning?.('请先生成或填写完整提示词');
+        return;
+      }
+      const config = await ensureImageConfigReady();
+      if (!config) return;
+      setBusy(true);
+      setStatus('正在生成图片...', 'loading');
+      try {
+        const client = new LLMClient(config);
+        const images = await client.generateImage(prompt, { responseFormat: 'b64_json' });
+        renderPreview(images);
+        if (!images.length) {
+          setStatus('生成完成，但未返回图片结果', 'error');
+          return;
+        }
+        setStatus('生成完成，下一步可进行去背与切割', 'success');
+      } catch (err) {
+        setStatus(`生成图片失败：${err?.message || '未知错误'}`, 'error');
+        window.toastr?.error?.('生成图片失败');
+      } finally {
+        setBusy(false);
+      }
+    };
+
+    const show = () => {
+      if (!templateInput?.value) {
+        templateInput.value = STICKER_AI_TEMPLATE;
+      }
+      setStatus('');
+      renderPreview([]);
+      overlay.classList.add('is-active');
+      modal.classList.add('is-active');
+    };
+
+    const hide = () => {
+      overlay.classList.remove('is-active');
+      modal.classList.remove('is-active');
+    };
+
+    overlay.addEventListener('click', () => hide());
+    modal.addEventListener('click', (event) => event.stopPropagation());
+    buildBtn?.addEventListener('click', () => handleBuildPrompt());
+    renderBtn?.addEventListener('click', () => handleGenerateImage());
+    resetBtn?.addEventListener('click', () => {
+      templateInput.value = STICKER_AI_TEMPLATE;
+    });
+    closeBtn?.addEventListener('click', () => hide());
+
+    document.body.appendChild(overlay);
+    document.body.appendChild(modal);
+
+    return { show, hide };
   })();
   if (stickerPanel?.toggle) {
     let deletePressTimer = null;
@@ -3425,7 +3693,7 @@ ${listPart || '-（无）'}
       clearDeletePress();
       deletePressTimer = setTimeout(() => {
         const packId = getStickerPackIdFromTab(stickerPanelTab);
-        if (!packId) return;
+        if (!packId || packId === STICKER_AI_PACK_ID) return;
         deletePressTriggered = true;
         suppressToggle = true;
         stickerPackDeleteMode = true;
@@ -3445,6 +3713,13 @@ ${listPart || '-（无）'}
         return;
       }
       handleStickerToggle();
+    });
+  }
+  if (stickerPanel?.generateBtn) {
+    stickerPanel.generateBtn.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      stickerAiModal.show();
     });
   }
   if (stickerPanel?.deleteBtn) {

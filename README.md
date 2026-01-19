@@ -7,11 +7,9 @@
 ## 下载与安装（Android）
 
 1. 打开 GitHub Pages 下载页（示例）：
-   - `https://dghiffjd7.github.io/AiChat/`
-2. 下载最新版 APK：
-   - `https://github.com/dghiffjd7/AiChat/releases/latest/download/app-universal-release.apk`
-3. 在手机系统中允许“安装未知来源应用”。
-4. 点击 APK 完成安装。
+   - `https://github.com/dghiffjd7/AiChat/releases`
+2. 下载最新版 APK 或 setup.exe（桌面版本）
+3. 安装
 
 ## 功能简介
 

@@ -17,7 +17,10 @@ const canInitClient = (cfg) => {
 
 export class ConfigPanel {
     constructor() {
-        this.configManager = new ConfigManager();
+        this.chatConfigManager = new ConfigManager();
+        this.imageConfigManager = new ConfigManager({ scope: 'image' });
+        this.activeTab = 'chat';
+        this.configManager = this.chatConfigManager;
         this.element = null;
         this.overlayElement = null;
         this.saveButton = null;
@@ -31,10 +34,15 @@ export class ConfigPanel {
     /**
      * 初始化并显示配置面板
      */
-    async show() {
+    async show(options = {}) {
         if (!this.element) {
             this.createUI();
         }
+
+        if (options?.tab) {
+            await this.setActiveTab(options.tab, { skipLoad: true });
+        }
+        this.updateTabUI();
 
         // 加载当前配置到表单
         let config = await this.configManager.load();
@@ -57,6 +65,41 @@ export class ConfigPanel {
             this.element.style.display = 'none';
             this.overlayElement.style.display = 'none';
         }
+    }
+
+    async setActiveTab(tab, { skipLoad = false } = {}) {
+        const next = tab === 'image' ? 'image' : 'chat';
+        this.activeTab = next;
+        this.configManager = next === 'image' ? this.imageConfigManager : this.chatConfigManager;
+        this.updateTabUI();
+        this.clearModelOptions();
+        if (skipLoad) return;
+        let config = await this.configManager.load();
+        if (!config) config = this.configManager.getDefault();
+        this.refreshProfileOptions();
+        this.populateForm(config);
+    }
+
+    updateTabUI() {
+        if (!this.element) return;
+        const title = this.element.querySelector('#config-title');
+        if (title) {
+            title.textContent = this.activeTab === 'image' ? '图片模型配置' : '聊天模型配置';
+        }
+        const tabs = Array.from(this.element.querySelectorAll('.config-tab'));
+        tabs.forEach(btn => {
+            const tab = btn?.dataset?.tab || '';
+            btn.classList.toggle('is-active', tab === this.activeTab);
+            if (tab === this.activeTab) {
+                btn.style.background = '#e0f2fe';
+                btn.style.borderColor = '#38bdf8';
+                btn.style.color = '#0369a1';
+            } else {
+                btn.style.background = '#fff';
+                btn.style.borderColor = '#e2e8f0';
+                btn.style.color = '#1f2937';
+            }
+        });
     }
 
     /**
@@ -85,8 +128,18 @@ export class ConfigPanel {
             <div style="padding: 20px; background: white; border-radius: 10px; box-shadow: 0 4px 20px rgba(0,0,0,0.3);
                         width: 96vw; max-width: 760px; max-height: calc(100vh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - 20px); overflow-y: auto;">
                 <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:6px;">
-                    <h2 style="margin: 0; color: #0f172a;">API 配置</h2>
+                    <h2 id="config-title" style="margin: 0; color: #0f172a;">聊天模型配置</h2>
                     <span style="color:#64748b; font-size:12px;">(保存后立即生效)</span>
+                </div>
+                <div style="display:flex; gap:8px; margin: 8px 0 16px;">
+                    <button type="button" class="config-tab is-active" data-tab="chat"
+                            style="border:1px solid #e2e8f0; background:#fff; padding:6px 12px; border-radius:999px; font-size:12px; cursor:pointer;">
+                        聊天模型
+                    </button>
+                    <button type="button" class="config-tab" data-tab="image"
+                            style="border:1px solid #e2e8f0; background:#fff; padding:6px 12px; border-radius:999px; font-size:12px; cursor:pointer;">
+                        图片模型
+                    </button>
                 </div>
 
                 <div style="margin-bottom: 15px;">
@@ -232,6 +285,15 @@ export class ConfigPanel {
         // 阻止点击面板时关闭
         this.element.onclick = (e) => e.stopPropagation();
 
+        const tabButtons = Array.from(this.element.querySelectorAll('.config-tab'));
+        tabButtons.forEach((btn) => {
+            btn.addEventListener('click', async () => {
+                const tab = btn?.dataset?.tab || 'chat';
+                await this.setActiveTab(tab);
+            });
+        });
+        this.updateTabUI();
+
         // 绑定事件
         this.saveButton = this.element.querySelector('#config-save');
         this.testButton = this.element.querySelector('#config-test');
@@ -261,7 +323,7 @@ export class ConfigPanel {
             await this.configManager.setActiveProfile(profileId);
             const config = await this.configManager.load();
             this.populateForm(config);
-            if (window.appBridge) {
+            if (window.appBridge && this.activeTab === 'chat') {
                 window.appBridge.config.set(config);
                 window.appBridge.client = canInitClient(config) ? new LLMClient(config) : null;
             }
@@ -282,10 +344,11 @@ export class ConfigPanel {
      * 获取指定 provider 的默认配置
      */
     getProviderDefaults(provider) {
+        const isImage = this.activeTab === 'image';
         const defaults = {
             openai: {
                 baseUrl: 'https://api.openai.com/v1',
-                model: 'gpt-3.5-turbo',
+                model: isImage ? 'gpt-image-1' : 'gpt-3.5-turbo',
                 urlHelp: 'OpenAI API 基础 URL'
             },
             makersuite: {
@@ -310,7 +373,7 @@ export class ConfigPanel {
             },
             custom: {
                 baseUrl: 'http://localhost:8000/v1',
-                model: 'default',
+                model: isImage ? 'image-model' : 'default',
                 urlHelp: '自定义 API 的基础 URL'
             }
         };
@@ -905,6 +968,7 @@ export class ConfigPanel {
     }
 
     async syncRuntimeToAppBridge() {
+        if (this.activeTab !== 'chat') return;
         const runtime = await this.configManager.load();
         if (window.appBridge) {
             window.appBridge.config.set(runtime);
@@ -1020,8 +1084,8 @@ export class ConfigPanel {
             // 保存
             await this.configManager.save(formData);
 
-            // 重新初始化客户端
-            if (window.appBridge) {
+            // 重新初始化客户端（仅聊天配置）
+            if (window.appBridge && this.activeTab === 'chat') {
                 const runtime = await this.configManager.load();
                 window.appBridge.client = canInitClient(runtime) ? new LLMClient(runtime) : null;
                 window.appBridge.config.set(runtime);
@@ -1113,12 +1177,13 @@ export class ConfigPanel {
 
             // 显示 localStorage 和 Tauri KV 的状态
             try {
-                const lsData = localStorage.getItem('llm_profiles_v1');
+                const storeKey = this.configManager.profileStoreKey || 'llm_profiles_v1';
+                const lsData = localStorage.getItem(storeKey);
                 if (lsData) {
                     const parsed = JSON.parse(lsData);
-                    panel.log(`localStorage activeProfileId: ${parsed.activeProfileId || '无'}`);
+                    panel.log(`localStorage ${storeKey} activeProfileId: ${parsed.activeProfileId || '无'}`);
                 } else {
-                    panel.log('localStorage: 无数据', 'warn');
+                    panel.log(`localStorage ${storeKey}: 无数据`, 'warn');
                 }
             } catch (err) {
                 panel.log(`localStorage 读取失败: ${err.message}`, 'error');

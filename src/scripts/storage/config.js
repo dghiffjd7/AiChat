@@ -11,6 +11,23 @@ const PROFILE_STORE_KEY = 'llm_profiles_v1';
 const KEYRING_STORE_KEY = 'llm_keyring_v1';
 const KEYRING_MASTER_KEY = 'llm_keyring_master_v1';
 
+const resolveStoreKeys = (scope) => {
+    const raw = String(scope || '').trim().toLowerCase();
+    if (!raw || raw === 'chat') {
+        return {
+            profile: PROFILE_STORE_KEY,
+            keyring: KEYRING_STORE_KEY,
+            master: KEYRING_MASTER_KEY,
+        };
+    }
+    const safe = raw.replace(/[^a-z0-9_-]/g, '_');
+    return {
+        profile: `llm_profiles_${safe}_v1`,
+        keyring: `llm_keyring_${safe}_v1`,
+        master: `llm_keyring_master_${safe}_v1`,
+    };
+};
+
 const genId = (prefix) => `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
 
 const encodeB64 = (buf) => {
@@ -64,7 +81,13 @@ const normalizeProfile = (p = {}) => ({
 });
 
 export class ConfigManager {
-    constructor() {
+    constructor(options = {}) {
+        const scope = String(options.scope || 'chat').trim().toLowerCase();
+        const keys = resolveStoreKeys(scope);
+        this.scope = scope || 'chat';
+        this.profileStoreKey = keys.profile;
+        this.keyringStoreKey = keys.keyring;
+        this.keyringMasterKey = keys.master;
         this.config = null;
         this.isLoaded = false;
         this.profileStore = null;
@@ -161,11 +184,12 @@ export class ConfigManager {
      * 获取默认配置
      */
     getDefault() {
+        const isImage = this.scope === 'image';
         return {
             provider: 'openai',
             apiKey: '',
             baseUrl: 'https://api.openai.com/v1',
-            model: 'gpt-3.5-turbo',
+            model: isImage ? 'gpt-image-1' : 'gpt-3.5-turbo',
             stream: true,
             timeout: 60000,
             maxRetries: 3
@@ -178,7 +202,7 @@ export class ConfigManager {
         // profiles
         let profiles = null;
         try {
-            profiles = await safeInvoke('load_kv', { name: PROFILE_STORE_KEY });
+            profiles = await safeInvoke('load_kv', { name: this.profileStoreKey });
             if (profiles) {
                 logger.info(`load_kv profiles 成功 (Tauri): activeProfileId=${profiles.activeProfileId}, profiles数量=${Object.keys(profiles.profiles || {}).length}`);
             }
@@ -190,7 +214,7 @@ export class ConfigManager {
         // keyring
         let keyring = null;
         try {
-            keyring = await safeInvoke('load_kv', { name: KEYRING_STORE_KEY });
+            keyring = await safeInvoke('load_kv', { name: this.keyringStoreKey });
             if (keyring) {
                 logger.info('load_kv keyring 成功 (Tauri)');
             }
@@ -204,15 +228,15 @@ export class ConfigManager {
             if (crypto?.subtle?.importKey && crypto?.getRandomValues) {
                 let masterB64 = null;
                 try {
-                    const mk = await safeInvoke('load_kv', { name: KEYRING_MASTER_KEY });
+                    const mk = await safeInvoke('load_kv', { name: this.keyringMasterKey });
                     if (mk && typeof mk === 'object' && mk.master) masterB64 = mk.master;
                 } catch (err) {
                     logger.debug('load_kv master key failed (可能非 Tauri)', err);
                 }
-                // browser fallback (dev mode): KEYRING_MASTER_KEY 可能直接存 string
+                // browser fallback (dev mode): keyring master 可能直接存 string
                 if (!masterB64) {
                     try {
-                        const raw = localStorage.getItem(KEYRING_MASTER_KEY);
+                        const raw = localStorage.getItem(this.keyringMasterKey);
                         if (raw) masterB64 = raw;
                     } catch {}
                 }
@@ -220,11 +244,11 @@ export class ConfigManager {
                     const bytes = crypto.getRandomValues(new Uint8Array(32));
                     masterB64 = encodeB64(bytes);
                     try {
-                        await safeInvoke('save_kv', { name: KEYRING_MASTER_KEY, data: { master: masterB64 } });
+                        await safeInvoke('save_kv', { name: this.keyringMasterKey, data: { master: masterB64 } });
                     } catch (err) {
                         logger.warn('save_kv master key failed (可能非 Tauri)', err);
                         try {
-                            localStorage.setItem(KEYRING_MASTER_KEY, masterB64);
+                            localStorage.setItem(this.keyringMasterKey, masterB64);
                         } catch {}
                     }
                 }
@@ -242,7 +266,7 @@ export class ConfigManager {
         // fallback localStorage for non-tauri
         if (!profiles) {
             try {
-                const raw = localStorage.getItem(PROFILE_STORE_KEY);
+                const raw = localStorage.getItem(this.profileStoreKey);
                 if (raw) {
                     profiles = JSON.parse(raw);
                     logger.info(`localStorage profiles 加载成功（备份）: activeProfileId=${profiles.activeProfileId}, profiles数量=${Object.keys(profiles.profiles || {}).length}`);
@@ -253,7 +277,7 @@ export class ConfigManager {
         }
         if (!keyring) {
             try {
-                const raw = localStorage.getItem(KEYRING_STORE_KEY);
+                const raw = localStorage.getItem(this.keyringStoreKey);
                 if (raw) {
                     keyring = JSON.parse(raw);
                     logger.info('localStorage keyring 加载成功（备份）');
@@ -350,7 +374,7 @@ export class ConfigManager {
         logger.info(`持久化配置: activeProfileId=${toSave.activeProfileId}, profiles数量=${Object.keys(toSave.profiles || {}).length}`);
 
         try {
-            await safeInvoke('save_kv', { name: PROFILE_STORE_KEY, data: toSave });
+            await safeInvoke('save_kv', { name: this.profileStoreKey, data: toSave });
             logger.info('save_kv profiles 成功 (Tauri)');
         } catch (err) {
             logger.warn('save_kv profiles failed (可能非 Tauri)，回退 localStorage', err);
@@ -358,7 +382,7 @@ export class ConfigManager {
 
         // 同时保存到 localStorage 作为备份
         try {
-            localStorage.setItem(PROFILE_STORE_KEY, JSON.stringify(toSave));
+            localStorage.setItem(this.profileStoreKey, JSON.stringify(toSave));
             logger.info('localStorage profiles 保存成功（备份）');
         } catch (localErr) {
             logger.error('localStorage profiles 保存失败', localErr);
@@ -368,10 +392,10 @@ export class ConfigManager {
     async persistKeyring(next = this.keyringStore) {
         this.keyringStore = next;
         try {
-            await safeInvoke('save_kv', { name: KEYRING_STORE_KEY, data: this.keyringStore });
+            await safeInvoke('save_kv', { name: this.keyringStoreKey, data: this.keyringStore });
         } catch (err) {
             logger.warn('save_kv keyring failed (可能非 Tauri)，回退 localStorage', err);
-            localStorage.setItem(KEYRING_STORE_KEY, JSON.stringify(this.keyringStore));
+            localStorage.setItem(this.keyringStoreKey, JSON.stringify(this.keyringStore));
         }
     }
 

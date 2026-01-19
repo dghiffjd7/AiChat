@@ -238,6 +238,39 @@ export class CustomProvider {
     }
 
     /**
+     * 生成图片（OpenAI 兼容 /images/generations）
+     */
+    async generateImage(prompt, options = {}) {
+        const payload = {
+            model: this.model,
+            prompt: String(prompt || '').trim(),
+            n: Number.isFinite(options.n) ? Math.trunc(options.n) : 1,
+        };
+        const responseFormat = options.responseFormat || options.response_format || 'b64_json';
+        if (responseFormat) payload.response_format = responseFormat;
+        if (options.size) payload.size = options.size;
+        if (options.quality) payload.quality = options.quality;
+        if (options.style) payload.style = options.style;
+
+        const data = await this.requestJson({
+            url: `${this.baseUrl}/images/generations`,
+            method: 'POST',
+            headers: this.getHeaders(),
+            body: JSON.stringify(payload),
+        });
+
+        const list = Array.isArray(data?.data) ? data.data : [];
+        return list.map((item, index) => {
+            const b64 = item?.b64_json || item?.b64 || '';
+            if (b64) {
+                return { dataUrl: `data:image/png;base64,${b64}`, index };
+            }
+            const url = String(item?.url || '').trim();
+            return { url, index };
+        });
+    }
+
+    /**
      * 获取可用模型列表
      */
     async listModels() {
