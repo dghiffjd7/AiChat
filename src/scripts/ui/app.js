@@ -3540,10 +3540,16 @@ Atmosphere: pink, bubbly, extremely girly.
         <button type="button" class="sticker-ai-close" aria-label="关闭">×</button>
       </div>
       <div class="sticker-ai-body">
-        <label class="sticker-ai-label" for="sticker-ai-style">风格描述</label>
+        <div class="sticker-ai-label-row">
+          <label class="sticker-ai-label" for="sticker-ai-style">风格描述</label>
+          <button type="button" class="sticker-ai-zoom" data-target="style" aria-label="放大编辑">⤢</button>
+        </div>
         <textarea id="sticker-ai-style" class="sticker-ai-textarea" placeholder="描述想要的风格、角色、动作与情绪（可简短）"></textarea>
 
-        <label class="sticker-ai-label" for="sticker-ai-template">提示词模板</label>
+        <div class="sticker-ai-label-row">
+          <label class="sticker-ai-label" for="sticker-ai-template">提示词模板</label>
+          <button type="button" class="sticker-ai-zoom" data-target="template" aria-label="放大编辑">⤢</button>
+        </div>
         <textarea id="sticker-ai-template" class="sticker-ai-textarea sticker-ai-template"></textarea>
         <div class="sticker-ai-hint">模板会与风格描述一起发送给主模型，自动生成完整提示词。</div>
 
@@ -3559,7 +3565,10 @@ Atmosphere: pink, bubbly, extremely girly.
           <div class="sticker-ai-ref-list" id="sticker-ai-ref-list"></div>
         </div>
 
-        <label class="sticker-ai-label" for="sticker-ai-final">完整提示词（可编辑）</label>
+        <div class="sticker-ai-label-row">
+          <label class="sticker-ai-label" for="sticker-ai-final">完整提示词（可编辑）</label>
+          <button type="button" class="sticker-ai-zoom" data-target="final" aria-label="放大编辑">⤢</button>
+        </div>
         <textarea id="sticker-ai-final" class="sticker-ai-textarea" placeholder="这里会显示生成后的完整提示词"></textarea>
 
         <div class="sticker-ai-actions">
@@ -3573,14 +3582,15 @@ Atmosphere: pink, bubbly, extremely girly.
         <div class="sticker-ai-slice-settings">
           <label>行数<input type="number" id="sticker-ai-rows" min="1" value="4"></label>
           <label>列数<input type="number" id="sticker-ai-cols" min="1" value="6"></label>
-          <label>外边距<input type="number" id="sticker-ai-margin" min="0" value="16"></label>
-          <label>内间距<input type="number" id="sticker-ai-gap" min="0" value="8"></label>
-          <label>容差<input type="number" id="sticker-ai-tolerance" min="5" max="80" value="28"></label>
-          <label>去白边<input type="number" id="sticker-ai-shrink" min="0" max="4" value="1"></label>
-          <label>羽化<input type="number" id="sticker-ai-feather" min="0" max="6" value="2"></label>
+          <label>外边距<input type="number" id="sticker-ai-margin" min="0" value="16"><span class="sticker-ai-slice-hint">四周留白</span></label>
+          <label>内间距<input type="number" id="sticker-ai-gap" min="0" value="8"><span class="sticker-ai-slice-hint">格子间距</span></label>
+          <label>容差<input type="number" id="sticker-ai-tolerance" min="5" max="80" value="28"><span class="sticker-ai-slice-hint">背景相近范围</span></label>
+          <label>去白边<input type="number" id="sticker-ai-shrink" min="0" max="4" value="1"><span class="sticker-ai-slice-hint">向内收缩</span></label>
+          <label>羽化<input type="number" id="sticker-ai-feather" min="0" max="6" value="2"><span class="sticker-ai-slice-hint">边缘柔化</span></label>
         </div>
         <div class="sticker-ai-actions">
           <button type="button" class="sticker-ai-btn" id="sticker-ai-slice">去背并切割</button>
+          <button type="button" class="sticker-ai-btn ghost" id="sticker-ai-auto">自动推断</button>
         </div>
 
         <label class="sticker-ai-label">切割结果</label>
@@ -3602,6 +3612,7 @@ Atmosphere: pink, bubbly, extremely girly.
     const refAddBtn = modal.querySelector('#sticker-ai-ref-add');
     const refListEl = modal.querySelector('#sticker-ai-ref-list');
     const sliceBtn = modal.querySelector('#sticker-ai-slice');
+    const autoSliceBtn = modal.querySelector('#sticker-ai-auto');
     const sliceListEl = modal.querySelector('#sticker-ai-slice-list');
     const selectAllBtn = modal.querySelector('#sticker-ai-select-all');
     const selectNoneBtn = modal.querySelector('#sticker-ai-select-none');
@@ -3624,8 +3635,16 @@ Atmosphere: pink, bubbly, extremely girly.
     let selectedGeneratedIndex = 0;
     let sliceItems = [];
     let slicePreviewTimer = null;
+    let slicePreviewIdle = null;
+    let sliceSettingsSaveTimer = null;
     let sliceInProgress = false;
     let slicePending = null;
+    let textSaveTimer = null;
+    let sliceSettingsTouched = false;
+    let suppressSliceSettingsTouch = false;
+    let lastSlicePreviewKey = '';
+    let sliceSettingsCache = new Map();
+    const autoSliceCache = new Map();
 
     const loadStickerAiState = () => {
       try {
@@ -3709,6 +3728,77 @@ Atmosphere: pink, bubbly, extremely girly.
       return '';
     };
 
+    const getStickerAiImageKey = (item, idx) => {
+      const base = normalizeStickerAiImage(item);
+      if (base.path) return `path:${base.path}`;
+      if (base.url) return `url:${base.url}`;
+      if (base.dataUrl) return `data:${base.dataUrl.length}:${idx}`;
+      return `idx:${idx}`;
+    };
+
+    const clampNumber = (value, min, max, fallback) => {
+      const num = Number(value);
+      if (!Number.isFinite(num)) return fallback;
+      return Math.min(max, Math.max(min, Math.trunc(num)));
+    };
+
+    const normalizeSliceSettings = (settings) => {
+      if (!settings || typeof settings !== 'object') return null;
+      return {
+        rows: clampNumber(settings.rows, 1, 20, 4),
+        cols: clampNumber(settings.cols, 1, 20, 6),
+        margin: clampNumber(settings.margin, 0, 200, 16),
+        gap: clampNumber(settings.gap, 0, 200, 8),
+        tolerance: clampNumber(settings.tolerance, 5, 80, 28),
+        shrink: clampNumber(settings.shrink, 0, 6, 1),
+        feather: clampNumber(settings.feather, 0, 8, 2),
+      };
+    };
+
+    const restoreSliceSettingsCache = (state) => {
+      sliceSettingsCache = new Map();
+      const raw = state?.sliceSettings;
+      if (!raw || typeof raw !== 'object') return;
+      Object.entries(raw).forEach(([key, value]) => {
+        const normalized = normalizeSliceSettings(value);
+        if (normalized) sliceSettingsCache.set(key, normalized);
+      });
+    };
+
+    const serializeSliceSettingsCache = () => {
+      const payload = {};
+      sliceSettingsCache.forEach((value, key) => {
+        const normalized = normalizeSliceSettings(value);
+        if (normalized) payload[key] = normalized;
+      });
+      return payload;
+    };
+
+    const pruneSliceSettingsCache = (images = []) => {
+      const keys = new Set();
+      images.forEach((item, idx) => {
+        keys.add(getStickerAiImageKey(item, idx));
+      });
+      sliceSettingsCache.forEach((_, key) => {
+        if (!keys.has(key)) sliceSettingsCache.delete(key);
+      });
+    };
+
+    const getCurrentStickerAiImageKey = () => {
+      if (!generatedImages.length) return '';
+      const current = generatedImages[selectedGeneratedIndex] || generatedImages[0];
+      if (!current) return '';
+      return getStickerAiImageKey(current, selectedGeneratedIndex);
+    };
+
+    const rememberSliceSettings = (settings) => {
+      const key = getCurrentStickerAiImageKey();
+      if (!key) return;
+      const normalized = normalizeSliceSettings(settings);
+      if (!normalized) return;
+      sliceSettingsCache.set(key, normalized);
+    };
+
     const readImageSourceAsDataUrl = async source => {
       const src = String(source || '').trim();
       if (!src) return '';
@@ -3744,10 +3834,24 @@ Atmosphere: pink, bubbly, extremely girly.
       const slices = Array.isArray(state?.slices) ? state.slices.map(normalizeStickerAiSlice) : [];
       generatedImages = images.filter(item => item.dataUrl || item.url || item.path);
       sliceItems = slices.filter(item => item.dataUrl || item.url || item.path);
+      restoreSliceSettingsCache(state);
+      pruneSliceSettingsCache(generatedImages);
       const maxIndex = generatedImages.length ? generatedImages.length - 1 : 0;
       const rawIndex = Number(state?.selectedIndex ?? 0);
       const nextIndex = Number.isFinite(rawIndex) ? Math.trunc(rawIndex) : 0;
       selectedGeneratedIndex = Math.max(0, Math.min(maxIndex, nextIndex));
+      sliceSettingsTouched = false;
+      if (styleInput && typeof state?.styleText === 'string') {
+        styleInput.value = state.styleText;
+      }
+      if (templateInput) {
+        if (typeof state?.templateText === 'string' && state.templateText.trim()) {
+          templateInput.value = state.templateText;
+        }
+      }
+      if (finalInput && typeof state?.finalText === 'string') {
+        finalInput.value = state.finalText;
+      }
     };
 
     const persistStickerAiMeta = () => {
@@ -3758,6 +3862,7 @@ Atmosphere: pink, bubbly, extremely girly.
           : generatedImages.map(serializeStickerAiImage),
         slices: sliceItems.map(serializeStickerAiSlice),
         selectedIndex: selectedGeneratedIndex,
+        sliceSettings: serializeSliceSettingsCache(),
       };
       persistStickerAiState(nextState);
     };
@@ -3795,7 +3900,11 @@ Atmosphere: pink, bubbly, extremely girly.
           stored.push({ url: item.url });
         }
       }
-      const nextState = { generated: stored, slices: [], selectedIndex: 0 };
+      sliceSettingsCache = new Map();
+      autoSliceCache.clear();
+      lastSlicePreviewKey = '';
+      sliceSettingsTouched = false;
+      const nextState = { generated: stored, slices: [], selectedIndex: 0, sliceSettings: {} };
       persistStickerAiState(nextState);
       return stored;
     };
@@ -3836,6 +3945,7 @@ Atmosphere: pink, bubbly, extremely girly.
           : generatedImages.map(serializeStickerAiImage),
         slices: stored,
         selectedIndex: selectedGeneratedIndex,
+        sliceSettings: serializeSliceSettingsCache(),
       };
       persistStickerAiState(nextState);
       return stored;
@@ -3843,6 +3953,50 @@ Atmosphere: pink, bubbly, extremely girly.
 
     const initialState = loadStickerAiState();
     if (initialState) applyStickerAiState(initialState);
+
+    const zoomOverlay = document.createElement('div');
+    zoomOverlay.className = 'sticker-ai-zoom-overlay';
+    const zoomModal = document.createElement('div');
+    zoomModal.className = 'sticker-ai-zoom-modal';
+    zoomModal.innerHTML = `
+      <div class="sticker-ai-zoom-header">
+        <div class="sticker-ai-zoom-title">放大编辑</div>
+        <button type="button" class="sticker-ai-zoom-close" aria-label="关闭">×</button>
+      </div>
+      <textarea class="sticker-ai-zoom-textarea" placeholder="输入内容"></textarea>
+    `;
+    let zoomTarget = null;
+    const zoomTitle = zoomModal.querySelector('.sticker-ai-zoom-title');
+    const zoomTextarea = zoomModal.querySelector('.sticker-ai-zoom-textarea');
+    const zoomClose = zoomModal.querySelector('.sticker-ai-zoom-close');
+    const zoomTargets = {
+      style: { input: styleInput, label: '风格描述' },
+      template: { input: templateInput, label: '提示词模板' },
+      final: { input: finalInput, label: '完整提示词' },
+    };
+    const openZoom = (key) => {
+      const target = zoomTargets[key];
+      if (!target?.input) return;
+      zoomTarget = target.input;
+      if (zoomTitle) zoomTitle.textContent = target.label || '放大编辑';
+      if (zoomTextarea) zoomTextarea.value = String(zoomTarget.value || '');
+      zoomOverlay.classList.add('is-active');
+      zoomModal.classList.add('is-active');
+      zoomTextarea?.focus();
+    };
+    const closeZoom = () => {
+      zoomOverlay.classList.remove('is-active');
+      zoomModal.classList.remove('is-active');
+      zoomTarget = null;
+    };
+    zoomOverlay.addEventListener('click', closeZoom);
+    zoomModal.addEventListener('click', event => event.stopPropagation());
+    zoomClose?.addEventListener('click', closeZoom);
+    zoomTextarea?.addEventListener('input', () => {
+      if (!zoomTarget) return;
+      zoomTarget.value = zoomTextarea.value;
+      zoomTarget.dispatchEvent(new Event('input', { bubbles: true }));
+    });
 
     const setStatus = (text, tone = '') => {
       if (!statusEl) return;
@@ -3855,7 +4009,43 @@ Atmosphere: pink, bubbly, extremely girly.
       if (renderBtn) renderBtn.disabled = busy;
       if (resetBtn) resetBtn.disabled = busy;
       if (sliceBtn) sliceBtn.disabled = busy;
+      if (autoSliceBtn) autoSliceBtn.disabled = busy;
       if (saveBtn) saveBtn.disabled = busy;
+    };
+
+    const scheduleTextSave = (immediate = false) => {
+      if (!styleInput || !templateInput || !finalInput) return;
+      if (textSaveTimer) {
+        clearTimeout(textSaveTimer);
+        textSaveTimer = null;
+      }
+      const delay = immediate ? 0 : 360;
+      textSaveTimer = setTimeout(() => {
+        textSaveTimer = null;
+        const state = loadStickerAiState() || {};
+        state.styleText = String(styleInput.value || '');
+        state.templateText = String(templateInput.value || '');
+        state.finalText = String(finalInput.value || '');
+        persistStickerAiState(state);
+      }, delay);
+    };
+
+    const scheduleSliceSettingsSave = (immediate = false) => {
+      if (sliceSettingsSaveTimer) {
+        clearTimeout(sliceSettingsSaveTimer);
+        sliceSettingsSaveTimer = null;
+      }
+      const delay = immediate ? 0 : 240;
+      sliceSettingsSaveTimer = setTimeout(() => {
+        sliceSettingsSaveTimer = null;
+        const state = loadStickerAiState() || {};
+        state.sliceSettings = serializeSliceSettingsCache();
+        state.selectedIndex = selectedGeneratedIndex;
+        if (!Array.isArray(state.generated) || !state.generated.length) {
+          state.generated = generatedImages.map(serializeStickerAiImage);
+        }
+        persistStickerAiState(state);
+      }, delay);
     };
 
     const scheduleSlicePreview = (options = {}) => {
@@ -3864,10 +4054,28 @@ Atmosphere: pink, bubbly, extremely girly.
         clearTimeout(slicePreviewTimer);
         slicePreviewTimer = null;
       }
-      const delay = options.immediate ? 0 : 220;
+      if (slicePreviewIdle) {
+        if (typeof cancelIdleCallback === 'function') {
+          cancelIdleCallback(slicePreviewIdle);
+        }
+        slicePreviewIdle = null;
+      }
+      const delay = options.immediate ? 0 : 360;
+      const auto = Boolean(options.auto);
       slicePreviewTimer = setTimeout(() => {
         slicePreviewTimer = null;
-        handleSliceSheet({ silent: true });
+        const run = () => handleSliceSheet({ silent: true, auto });
+        if (typeof requestIdleCallback === 'function') {
+          slicePreviewIdle = requestIdleCallback(
+            () => {
+              slicePreviewIdle = null;
+              run();
+            },
+            { timeout: 1200 },
+          );
+        } else {
+          run();
+        }
       }, delay);
     };
 
@@ -3877,6 +4085,10 @@ Atmosphere: pink, bubbly, extremely girly.
         generatedImages = items.slice();
         selectedGeneratedIndex = 0;
         sliceItems = [];
+        sliceSettingsTouched = false;
+        lastSlicePreviewKey = '';
+        sliceSettingsCache = new Map();
+        autoSliceCache.clear();
         renderSliceList();
       }
       previewEl.innerHTML = '';
@@ -3890,14 +4102,23 @@ Atmosphere: pink, bubbly, extremely girly.
         if (idx === selectedGeneratedIndex) img.classList.add('is-selected');
         img.addEventListener('click', () => {
           selectedGeneratedIndex = idx;
+          const imageKey = getStickerAiImageKey(item, idx);
+          const cached = sliceSettingsCache.get(imageKey);
+          if (cached) {
+            applySliceSettings(cached);
+            sliceSettingsTouched = true;
+          } else {
+            sliceSettingsTouched = false;
+          }
+          lastSlicePreviewKey = '';
           renderPreview();
           persistStickerAiSelection();
-          scheduleSlicePreview({ immediate: true });
+          scheduleSlicePreview({ immediate: true, auto: !cached });
         });
         previewEl.appendChild(img);
       });
       if (Array.isArray(items) && generatedImages.length) {
-        scheduleSlicePreview({ immediate: true });
+        scheduleSlicePreview({ immediate: true, auto: true });
       }
     };
 
@@ -3964,10 +4185,36 @@ Atmosphere: pink, bubbly, extremely girly.
       });
     };
 
-    const clampNumber = (value, min, max, fallback) => {
-      const num = Number(value);
-      if (!Number.isFinite(num)) return fallback;
-      return Math.min(max, Math.max(min, Math.trunc(num)));
+    const readSliceSettings = () => ({
+      rows: clampNumber(rowsInput?.value, 1, 20, 4),
+      cols: clampNumber(colsInput?.value, 1, 20, 6),
+      margin: clampNumber(marginInput?.value, 0, 200, 16),
+      gap: clampNumber(gapInput?.value, 0, 200, 8),
+      tolerance: clampNumber(toleranceInput?.value, 5, 80, 28),
+      shrink: clampNumber(shrinkInput?.value, 0, 6, 1),
+      feather: clampNumber(featherInput?.value, 0, 8, 2),
+    });
+
+    const applySliceSettings = (settings = {}) => {
+      suppressSliceSettingsTouch = true;
+      if (rowsInput && Number.isFinite(settings.rows)) rowsInput.value = String(settings.rows);
+      if (colsInput && Number.isFinite(settings.cols)) colsInput.value = String(settings.cols);
+      if (marginInput && Number.isFinite(settings.margin)) marginInput.value = String(settings.margin);
+      if (gapInput && Number.isFinite(settings.gap)) gapInput.value = String(settings.gap);
+      if (toleranceInput && Number.isFinite(settings.tolerance)) toleranceInput.value = String(settings.tolerance);
+      if (shrinkInput && Number.isFinite(settings.shrink)) shrinkInput.value = String(settings.shrink);
+      if (featherInput && Number.isFinite(settings.feather)) featherInput.value = String(settings.feather);
+      suppressSliceSettingsTouch = false;
+    };
+
+    const applyCachedSliceSettingsForSelection = () => {
+      const key = getCurrentStickerAiImageKey();
+      if (!key) return false;
+      const cached = sliceSettingsCache.get(key);
+      if (!cached) return false;
+      applySliceSettings(cached);
+      sliceSettingsTouched = true;
+      return true;
     };
 
     const loadImageElement = (src) => new Promise((resolve, reject) => {
@@ -3978,7 +4225,7 @@ Atmosphere: pink, bubbly, extremely girly.
       img.src = src;
     });
 
-    const sampleCornerColor = (data, width, height, size) => {
+    const sampleCornerStats = (data, width, height, size) => {
       const clamp = (v, max) => Math.min(max, Math.max(0, v));
       const points = [
         { x: 0, y: 0 },
@@ -3989,6 +4236,9 @@ Atmosphere: pink, bubbly, extremely girly.
       let totalR = 0;
       let totalG = 0;
       let totalB = 0;
+      let totalR2 = 0;
+      let totalG2 = 0;
+      let totalB2 = 0;
       let count = 0;
       points.forEach((pt) => {
         const startX = clamp(pt.x, width - 1);
@@ -3996,19 +4246,216 @@ Atmosphere: pink, bubbly, extremely girly.
         for (let y = startY; y < startY + size && y < height; y++) {
           for (let x = startX; x < startX + size && x < width; x++) {
             const idx = (y * width + x) * 4;
-            totalR += data[idx];
-            totalG += data[idx + 1];
-            totalB += data[idx + 2];
+            const r = data[idx];
+            const g = data[idx + 1];
+            const b = data[idx + 2];
+            totalR += r;
+            totalG += g;
+            totalB += b;
+            totalR2 += r * r;
+            totalG2 += g * g;
+            totalB2 += b * b;
             count += 1;
           }
         }
       });
+      if (!count) {
+        return { r: 255, g: 255, b: 255, dev: 0, count: 0 };
+      }
+      const meanR = totalR / count;
+      const meanG = totalG / count;
+      const meanB = totalB / count;
+      const varR = totalR2 / count - meanR * meanR;
+      const varG = totalG2 / count - meanG * meanG;
+      const varB = totalB2 / count - meanB * meanB;
       return {
-        r: Math.round(totalR / count),
-        g: Math.round(totalG / count),
-        b: Math.round(totalB / count),
+        r: Math.round(meanR),
+        g: Math.round(meanG),
+        b: Math.round(meanB),
+        dev: Math.sqrt(Math.max(0, varR, varG, varB)),
+        count,
       };
     };
+
+    const sampleCornerColor = (data, width, height, size) => {
+      const stats = sampleCornerStats(data, width, height, size);
+      return {
+        r: stats.r,
+        g: stats.g,
+        b: stats.b,
+      };
+    };
+
+    const computeAutoTolerance = stats => {
+      if (!stats || !Number.isFinite(stats.dev)) return null;
+      const suggested = Math.round(stats.dev * 2.2 + 6);
+      return clampNumber(suggested, 10, 50, 28);
+    };
+
+    const computeMedian = (values = []) => {
+      const list = values.filter(v => Number.isFinite(v)).sort((a, b) => a - b);
+      const len = list.length;
+      if (!len) return 0;
+      const mid = Math.floor(len / 2);
+      if (len % 2) return list[mid];
+      return Math.round((list[mid - 1] + list[mid]) / 2);
+    };
+
+    const extractBands = (flags, minSize = 1) => {
+      const bands = [];
+      let start = null;
+      for (let i = 0; i < flags.length; i++) {
+        if (flags[i]) {
+          if (start === null) start = i;
+        } else if (start !== null) {
+          if (i - start >= minSize) bands.push({ start, end: i });
+          start = null;
+        }
+      }
+      if (start !== null && flags.length - start >= minSize) {
+        bands.push({ start, end: flags.length });
+      }
+      if (bands.length < 2) return bands;
+      const merged = [bands[0]];
+      for (let i = 1; i < bands.length; i++) {
+        const last = merged[merged.length - 1];
+        const next = bands[i];
+        if (next.start - last.end <= 1) {
+          last.end = next.end;
+        } else {
+          merged.push(next);
+        }
+      }
+      return merged;
+    };
+
+    const buildCellRanges = (bands, length) => {
+      const ranges = [];
+      let cursor = 0;
+      bands.forEach(band => {
+        if (band.start > cursor) {
+          ranges.push({ start: cursor, end: band.start });
+        }
+        cursor = Math.max(cursor, band.end);
+      });
+      if (cursor < length) {
+        ranges.push({ start: cursor, end: length });
+      }
+      return ranges;
+    };
+
+    const filterCellRanges = (ranges) => {
+      if (!ranges.length) return { ranges: [], median: 0 };
+      const sizes = ranges.map(r => r.end - r.start).filter(s => s > 0);
+      if (!sizes.length) return { ranges: [], median: 0 };
+      const median = computeMedian(sizes);
+      if (sizes.length < 2) return { ranges, median };
+      const minCell = Math.max(2, Math.round(median * 0.5));
+      const filtered = ranges.filter(r => (r.end - r.start) >= minCell);
+      return { ranges: filtered.length ? filtered : ranges, median };
+    };
+
+    const computeMedianGap = (ranges) => {
+      if (ranges.length < 2) return 0;
+      const gaps = [];
+      for (let i = 0; i < ranges.length - 1; i++) {
+        gaps.push(ranges[i + 1].start - ranges[i].end);
+      }
+      return computeMedian(gaps);
+    };
+
+    const detectAutoSliceSettings = (img) => {
+      if (!img?.width || !img?.height) return null;
+      const maxDim = 420;
+      const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+      const sw = Math.max(1, Math.round(img.width * scale));
+      const sh = Math.max(1, Math.round(img.height * scale));
+      const canvas = document.createElement('canvas');
+      canvas.width = sw;
+      canvas.height = sh;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return null;
+      ctx.drawImage(img, 0, 0, sw, sh);
+      const imageData = ctx.getImageData(0, 0, sw, sh);
+      const sampleSize = Math.max(2, Math.round(Math.min(sw, sh) * 0.02));
+      const cornerStats = sampleCornerStats(imageData.data, sw, sh, sampleSize);
+      const baseColor = { r: cornerStats.r, g: cornerStats.g, b: cornerStats.b };
+      const bgTolerance = computeAutoTolerance(cornerStats);
+      const rowBg = new Uint16Array(sh);
+      const rowDark = new Uint16Array(sh);
+      const colBg = new Uint16Array(sw);
+      const colDark = new Uint16Array(sw);
+      const darkThreshold = 60;
+      for (let y = 0; y < sh; y++) {
+        for (let x = 0; x < sw; x++) {
+          const idx = (y * sw + x) * 4;
+          const r = imageData.data[idx];
+          const g = imageData.data[idx + 1];
+          const b = imageData.data[idx + 2];
+          const dr = Math.abs(r - baseColor.r);
+          const dg = Math.abs(g - baseColor.g);
+          const db = Math.abs(b - baseColor.b);
+          const isBg = bgTolerance !== null ? Math.max(dr, dg, db) <= bgTolerance : false;
+          if (isBg) {
+            rowBg[y] += 1;
+            colBg[x] += 1;
+          }
+          const luma = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+          if (luma <= darkThreshold) {
+            rowDark[y] += 1;
+            colDark[x] += 1;
+          }
+        }
+      }
+      const rowSep = new Array(sh).fill(false);
+      const colSep = new Array(sw).fill(false);
+      const bgRatio = 0.92;
+      const darkRatio = 0.86;
+      for (let y = 0; y < sh; y++) {
+        const bgHit = rowBg[y] / sw;
+        const darkHit = rowDark[y] / sw;
+        rowSep[y] = bgHit >= bgRatio || darkHit >= darkRatio;
+      }
+      for (let x = 0; x < sw; x++) {
+        const bgHit = colBg[x] / sh;
+        const darkHit = colDark[x] / sh;
+        colSep[x] = bgHit >= bgRatio || darkHit >= darkRatio;
+      }
+      const rowBands = extractBands(rowSep, 1);
+      const colBands = extractBands(colSep, 1);
+      const rowRangesInfo = filterCellRanges(buildCellRanges(rowBands, sh));
+      const colRangesInfo = filterCellRanges(buildCellRanges(colBands, sw));
+      const result = {};
+      if (bgTolerance !== null) result.tolerance = bgTolerance;
+      if (rowRangesInfo.ranges.length >= 2 && colRangesInfo.ranges.length >= 2) {
+        const rows = clampNumber(rowRangesInfo.ranges.length, 1, 20, rowRangesInfo.ranges.length);
+        const cols = clampNumber(colRangesInfo.ranges.length, 1, 20, colRangesInfo.ranges.length);
+        const rowMargin = rowRangesInfo.ranges[0].start;
+        const colMargin = colRangesInfo.ranges[0].start;
+        const rowGap = computeMedianGap(rowRangesInfo.ranges);
+        const colGap = computeMedianGap(colRangesInfo.ranges);
+        const scaleX = img.width / sw;
+        const scaleY = img.height / sh;
+        const margin = Math.round((rowMargin * scaleY + colMargin * scaleX) / 2);
+        const gap = Math.round((rowGap * scaleY + colGap * scaleX) / 2);
+        result.rows = rows;
+        result.cols = cols;
+        result.margin = clampNumber(margin, 0, 200, margin);
+        result.gap = clampNumber(gap, 0, 200, gap);
+      }
+      return Object.keys(result).length ? result : null;
+    };
+
+    const buildSlicePreviewKey = (imageKey, settings) => [
+      imageKey,
+      settings.rows,
+      settings.cols,
+      settings.margin,
+      settings.gap,
+      settings.tolerance,
+      settings.shrink,
+      settings.feather,
+    ].join('|');
 
     const buildBackgroundMask = (data, width, height, baseColor, tolerance) => {
       const mask = new Uint8Array(width * height);
@@ -4162,8 +4609,9 @@ Atmosphere: pink, bubbly, extremely girly.
 
     const handleSliceSheet = async (options = {}) => {
       const silent = Boolean(options.silent);
+      const auto = Boolean(options.auto);
       if (sliceInProgress) {
-        slicePending = { silent };
+        slicePending = { silent, auto };
         return;
       }
       const current = generatedImages[selectedGeneratedIndex];
@@ -4172,18 +4620,26 @@ Atmosphere: pink, bubbly, extremely girly.
         if (!silent) window.toastr?.warning?.('请先生成贴图原图');
         return;
       }
-      const rows = clampNumber(rowsInput?.value, 1, 20, 4);
-      const cols = clampNumber(colsInput?.value, 1, 20, 6);
-      const margin = clampNumber(marginInput?.value, 0, 200, 16);
-      const gap = clampNumber(gapInput?.value, 0, 200, 8);
-      const tolerance = clampNumber(toleranceInput?.value, 5, 80, 28);
-      const shrink = clampNumber(shrinkInput?.value, 0, 6, 1);
-      const feather = clampNumber(featherInput?.value, 0, 8, 2);
+      const imageKey = getStickerAiImageKey(current, selectedGeneratedIndex);
       sliceInProgress = true;
       if (!silent) setBusy(true);
-      setStatus('正在去背并切割...', 'loading');
+      if (!silent) setStatus('正在去背并切割...', 'loading');
       try {
         const img = await loadImageElement(source);
+        if (auto && !sliceSettingsTouched) {
+          const cacheKey = imageKey;
+          let autoSettings = autoSliceCache.get(cacheKey);
+          if (!autoSettings) {
+            autoSettings = detectAutoSliceSettings(img);
+            if (autoSettings) autoSliceCache.set(cacheKey, autoSettings);
+          }
+          if (autoSettings) applySliceSettings(autoSettings);
+        }
+        const settings = readSliceSettings();
+        rememberSliceSettings(settings);
+        scheduleSliceSettingsSave(true);
+        const previewKey = buildSlicePreviewKey(imageKey, settings);
+        if (silent && previewKey === lastSlicePreviewKey) return;
         const canvas = document.createElement('canvas');
         canvas.width = img.width;
         canvas.height = img.height;
@@ -4191,22 +4647,23 @@ Atmosphere: pink, bubbly, extremely girly.
         ctx.drawImage(img, 0, 0);
         const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
         const baseColor = sampleCornerColor(imageData.data, canvas.width, canvas.height, 6);
-        const mask = buildBackgroundMask(imageData.data, canvas.width, canvas.height, baseColor, tolerance);
-        const refinedMask = dilateMask(mask, canvas.width, canvas.height, shrink);
-        const processed = applyMaskToImage(imageData, refinedMask, canvas.width, canvas.height, feather);
+        const mask = buildBackgroundMask(imageData.data, canvas.width, canvas.height, baseColor, settings.tolerance);
+        const refinedMask = dilateMask(mask, canvas.width, canvas.height, settings.shrink);
+        const processed = applyMaskToImage(imageData, refinedMask, canvas.width, canvas.height, settings.feather);
         ctx.putImageData(processed, 0, 0);
         sliceItems = sliceStickerSheet(canvas, {
-          rows,
-          cols,
-          margin,
-          gap,
+          rows: settings.rows,
+          cols: settings.cols,
+          margin: settings.margin,
+          gap: settings.gap,
           alphaThreshold: 5,
         });
         renderSliceList();
         await persistStickerAiSlices(sliceItems);
-        setStatus(`切割完成：${sliceItems.length} 张`, 'success');
+        if (!silent) setStatus(`切割完成：${sliceItems.length} 张`, 'success');
+        lastSlicePreviewKey = previewKey;
       } catch (err) {
-        setStatus(`切割失败：${err?.message || '未知错误'}`, 'error');
+        if (!silent) setStatus(`切割失败：${err?.message || '未知错误'}`, 'error');
       } finally {
         if (!silent) setBusy(false);
         sliceInProgress = false;
@@ -4214,11 +4671,47 @@ Atmosphere: pink, bubbly, extremely girly.
           const next = slicePending;
           slicePending = null;
           if (next.silent) {
-            scheduleSlicePreview({ immediate: true });
+            scheduleSlicePreview({ immediate: true, auto: next.auto });
           } else {
             handleSliceSheet(next);
           }
         }
+      }
+    };
+
+    const handleAutoInfer = async () => {
+      if (sliceInProgress) {
+        window.toastr?.warning?.('正在切割中，请稍候');
+        return;
+      }
+      const current = generatedImages[selectedGeneratedIndex];
+      const source = getStickerAiImageSource(current);
+      if (!source) {
+        window.toastr?.warning?.('请先生成贴图原图');
+        return;
+      }
+      setBusy(true);
+      setStatus('正在自动推断...', 'loading');
+      try {
+        const img = await loadImageElement(source);
+        const autoSettings = detectAutoSliceSettings(img);
+        if (!autoSettings) {
+          setStatus('自动推断失败，请手动调整', 'error');
+          return;
+        }
+        const imageKey = getStickerAiImageKey(current, selectedGeneratedIndex);
+        autoSliceCache.set(imageKey, autoSettings);
+        applySliceSettings(autoSettings);
+        sliceSettingsTouched = true;
+        rememberSliceSettings(readSliceSettings());
+        scheduleSliceSettingsSave(true);
+        lastSlicePreviewKey = '';
+        setStatus('自动推断完成，可继续调整', 'success');
+        scheduleSlicePreview({ immediate: true, auto: false });
+      } catch (err) {
+        setStatus(`自动推断失败：${err?.message || '未知错误'}`, 'error');
+      } finally {
+        setBusy(false);
       }
     };
 
@@ -4340,6 +4833,7 @@ Atmosphere: pink, bubbly, extremely girly.
         const messages = buildPromptMessages(template, styleInput?.value || '');
         const output = await client.chat(messages, { temperature: 0.6 });
         finalInput.value = String(output || '').trim();
+        scheduleTextSave(true);
         setStatus('提示词已生成，可继续编辑或直接生成贴图', 'success');
       } catch (err) {
         setStatus(`生成提示词失败：${err?.message || '未知错误'}`, 'error');
@@ -4389,8 +4883,13 @@ Atmosphere: pink, bubbly, extremely girly.
       if (!templateInput?.value) {
         templateInput.value = STICKER_AI_TEMPLATE;
       }
+      scheduleTextSave(true);
       setStatus('');
       renderPreview();
+      pruneSliceSettingsCache(generatedImages);
+      if (!applyCachedSliceSettingsForSelection()) {
+        sliceSettingsTouched = false;
+      }
       renderReferenceList();
       renderPackOptions();
       renderSliceList();
@@ -4407,8 +4906,12 @@ Atmosphere: pink, bubbly, extremely girly.
     modal.addEventListener('click', event => event.stopPropagation());
     buildBtn?.addEventListener('click', () => handleBuildPrompt());
     renderBtn?.addEventListener('click', () => handleGenerateImage());
+    styleInput?.addEventListener('input', () => scheduleTextSave());
+    templateInput?.addEventListener('input', () => scheduleTextSave());
+    finalInput?.addEventListener('input', () => scheduleTextSave());
     resetBtn?.addEventListener('click', () => {
       templateInput.value = STICKER_AI_TEMPLATE;
+      scheduleTextSave(true);
     });
     refAddBtn?.addEventListener('click', () => handleAddReference());
     refListEl?.addEventListener('click', (event) => {
@@ -4420,7 +4923,8 @@ Atmosphere: pink, bubbly, extremely girly.
       referenceImages.splice(idx, 1);
       renderReferenceList();
     });
-    sliceBtn?.addEventListener('click', () => handleSliceSheet());
+    sliceBtn?.addEventListener('click', () => handleSliceSheet({ auto: !sliceSettingsTouched }));
+    autoSliceBtn?.addEventListener('click', () => handleAutoInfer());
     selectAllBtn?.addEventListener('click', () => {
       sliceItems = sliceItems.map(item => ({ ...item, selected: true }));
       renderSliceList();
@@ -4450,7 +4954,13 @@ Atmosphere: pink, bubbly, extremely girly.
     saveBtn?.addEventListener('click', () => handleSaveSlices());
     closeBtn?.addEventListener('click', () => hide());
 
-    const handleSliceSettingsInput = () => scheduleSlicePreview();
+    const handleSliceSettingsInput = () => {
+      if (!suppressSliceSettingsTouch) sliceSettingsTouched = true;
+      const settings = readSliceSettings();
+      rememberSliceSettings(settings);
+      scheduleSliceSettingsSave();
+      scheduleSlicePreview({ auto: false });
+    };
     [
       rowsInput,
       colsInput,
@@ -4464,8 +4974,18 @@ Atmosphere: pink, bubbly, extremely girly.
       input.addEventListener('change', handleSliceSettingsInput);
     });
 
+    const zoomButtons = Array.from(modal.querySelectorAll('.sticker-ai-zoom'));
+    zoomButtons.forEach(btn => {
+      btn.addEventListener('click', () => {
+        const target = String(btn.dataset.target || '');
+        openZoom(target);
+      });
+    });
+
     document.body.appendChild(overlay);
     document.body.appendChild(modal);
+    document.body.appendChild(zoomOverlay);
+    document.body.appendChild(zoomModal);
 
     return { show, hide };
   })();
