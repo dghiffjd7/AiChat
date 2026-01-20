@@ -1207,6 +1207,29 @@ body[data-creative-wide='on'] .QQ_chat_charmsg[data-creative='1'] .QQ_chat_msgdi
   gap: 8px;
 }
 
+.sticker-ai-label-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sticker-ai-continue {
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  background: #f8fafc;
+  color: #334155;
+  border-radius: 8px;
+  height: 24px;
+  padding: 0 8px;
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.sticker-ai-continue:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .sticker-ai-zoom {
   border: 1px solid rgba(0, 0, 0, 0.12);
   background: #f8fafc;

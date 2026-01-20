@@ -3567,7 +3567,10 @@ Atmosphere: pink, bubbly, extremely girly.
 
         <div class="sticker-ai-label-row">
           <label class="sticker-ai-label" for="sticker-ai-final">完整提示词（可编辑）</label>
-          <button type="button" class="sticker-ai-zoom" data-target="final" aria-label="放大编辑">⤢</button>
+          <div class="sticker-ai-label-actions">
+            <button type="button" class="sticker-ai-continue" id="sticker-ai-continue">继续</button>
+            <button type="button" class="sticker-ai-zoom" data-target="final" aria-label="放大编辑">⤢</button>
+          </div>
         </div>
         <textarea id="sticker-ai-final" class="sticker-ai-textarea" placeholder="这里会显示生成后的完整提示词"></textarea>
 
@@ -3609,6 +3612,7 @@ Atmosphere: pink, bubbly, extremely girly.
     const finalInput = modal.querySelector('#sticker-ai-final');
     const statusEl = modal.querySelector('#sticker-ai-status');
     const previewEl = modal.querySelector('#sticker-ai-preview');
+    const continueBtn = modal.querySelector('#sticker-ai-continue');
     const refAddBtn = modal.querySelector('#sticker-ai-ref-add');
     const refListEl = modal.querySelector('#sticker-ai-ref-list');
     const sliceBtn = modal.querySelector('#sticker-ai-slice');
@@ -4008,6 +4012,7 @@ Atmosphere: pink, bubbly, extremely girly.
       if (buildBtn) buildBtn.disabled = busy;
       if (renderBtn) renderBtn.disabled = busy;
       if (resetBtn) resetBtn.disabled = busy;
+      if (continueBtn) continueBtn.disabled = busy;
       if (sliceBtn) sliceBtn.disabled = busy;
       if (autoSliceBtn) autoSliceBtn.disabled = busy;
       if (saveBtn) saveBtn.disabled = busy;
@@ -4364,9 +4369,122 @@ Atmosphere: pink, bubbly, extremely girly.
       return computeMedian(gaps);
     };
 
-    const detectAutoSliceSettings = (img) => {
+    const computeAdaptiveThreshold = (scores, fallback = 0.9) => {
+      if (!scores?.length) return fallback;
+      const sorted = Array.from(scores).sort((a, b) => a - b);
+      const pick = (p) => sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * p))] || 0;
+      const p90 = pick(0.9);
+      const p95 = pick(0.95);
+      return Math.max(0.7, Math.min(0.98, p90 + (p95 - p90) * 0.5));
+    };
+
+    const computeLineScores = (data, width, height, baseColor, tolerance) => {
+      const stepX = clampNumber(Math.round(width / 900), 1, 8, 3);
+      const stepY = clampNumber(Math.round(height / 900), 1, 8, 3);
+      const darkThreshold = 60;
+      const tol = Number.isFinite(tolerance) ? tolerance : 28;
+      const rowScore = new Float32Array(height);
+      for (let y = 0; y < height; y++) {
+        let total = 0;
+        let bg = 0;
+        let dark = 0;
+        const rowOffset = y * width * 4;
+        for (let x = 0; x < width; x += stepX) {
+          const idx = rowOffset + x * 4;
+          const r = data[idx];
+          const g = data[idx + 1];
+          const b = data[idx + 2];
+          const dr = Math.abs(r - baseColor.r);
+          const dg = Math.abs(g - baseColor.g);
+          const db = Math.abs(b - baseColor.b);
+          if (Math.max(dr, dg, db) <= tol) bg += 1;
+          const luma = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+          if (luma <= darkThreshold) dark += 1;
+          total += 1;
+        }
+        rowScore[y] = total ? Math.max(bg / total, dark / total) : 0;
+      }
+      const colScore = new Float32Array(width);
+      for (let x = 0; x < width; x++) {
+        let total = 0;
+        let bg = 0;
+        let dark = 0;
+        for (let y = 0; y < height; y += stepY) {
+          const idx = (y * width + x) * 4;
+          const r = data[idx];
+          const g = data[idx + 1];
+          const b = data[idx + 2];
+          const dr = Math.abs(r - baseColor.r);
+          const dg = Math.abs(g - baseColor.g);
+          const db = Math.abs(b - baseColor.b);
+          if (Math.max(dr, dg, db) <= tol) bg += 1;
+          const luma = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+          if (luma <= darkThreshold) dark += 1;
+          total += 1;
+        }
+        colScore[x] = total ? Math.max(bg / total, dark / total) : 0;
+      }
+      return { rowScore, colScore };
+    };
+
+    const scoreAt = (scores, pos, radius = 1) => {
+      if (!scores?.length) return 0;
+      const start = Math.max(0, Math.round(pos - radius));
+      const end = Math.min(scores.length - 1, Math.round(pos + radius));
+      let total = 0;
+      let count = 0;
+      for (let i = start; i <= end; i++) {
+        total += scores[i];
+        count += 1;
+      }
+      return count ? total / count : 0;
+    };
+
+    const refineGridWithScores = (rowScore, colScore, width, height, settings) => {
+      const rows = settings.rows;
+      const cols = settings.cols;
+      let baseMargin = clampNumber(settings.margin, 0, 200, 16);
+      let baseGap = clampNumber(settings.gap, 0, 200, 8);
+      const marginRange = clampNumber(Math.round(Math.min(width, height) * 0.02), 6, 28, 16);
+      const gapRange = clampNumber(Math.round(Math.min(width, height) * 0.01), 4, 24, 10);
+      let bestScore = -1;
+      let bestMargin = baseMargin;
+      let bestGap = baseGap;
+      const scoreGrid = (margin, gap) => {
+        const cellH = (height - margin * 2 - gap * (rows - 1)) / rows;
+        const cellW = (width - margin * 2 - gap * (cols - 1)) / cols;
+        if (!Number.isFinite(cellH) || !Number.isFinite(cellW)) return -1;
+        if (cellH <= 2 || cellW <= 2) return -1;
+        let total = 0;
+        const lineRadius = 1;
+        for (let r = 0; r < rows - 1; r++) {
+          const pos = margin + (r + 1) * cellH + r * gap + gap / 2;
+          total += scoreAt(rowScore, pos, lineRadius);
+        }
+        for (let c = 0; c < cols - 1; c++) {
+          const pos = margin + (c + 1) * cellW + c * gap + gap / 2;
+          total += scoreAt(colScore, pos, lineRadius);
+        }
+        return total;
+      };
+      for (let margin = baseMargin - marginRange; margin <= baseMargin + marginRange; margin++) {
+        const clampedMargin = clampNumber(margin, 0, 200, margin);
+        for (let gap = baseGap - gapRange; gap <= baseGap + gapRange; gap++) {
+          const clampedGap = clampNumber(gap, 0, 200, gap);
+          const score = scoreGrid(clampedMargin, clampedGap);
+          if (score > bestScore) {
+            bestScore = score;
+            bestMargin = clampedMargin;
+            bestGap = clampedGap;
+          }
+        }
+      }
+      return { margin: bestMargin, gap: bestGap };
+    };
+
+    const detectAutoSliceSettings = (img, options = {}) => {
       if (!img?.width || !img?.height) return null;
-      const maxDim = 420;
+      const maxDim = Number.isFinite(options.maxDim) ? options.maxDim : 960;
       const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
       const sw = Math.max(1, Math.round(img.width * scale));
       const sh = Math.max(1, Math.round(img.height * scale));
@@ -4407,19 +4525,23 @@ Atmosphere: pink, bubbly, extremely girly.
           }
         }
       }
-      const rowSep = new Array(sh).fill(false);
-      const colSep = new Array(sw).fill(false);
-      const bgRatio = 0.92;
-      const darkRatio = 0.86;
+      const rowScore = new Float32Array(sh);
+      const colScore = new Float32Array(sw);
       for (let y = 0; y < sh; y++) {
-        const bgHit = rowBg[y] / sw;
-        const darkHit = rowDark[y] / sw;
-        rowSep[y] = bgHit >= bgRatio || darkHit >= darkRatio;
+        rowScore[y] = Math.max(rowBg[y] / sw, rowDark[y] / sw);
       }
       for (let x = 0; x < sw; x++) {
-        const bgHit = colBg[x] / sh;
-        const darkHit = colDark[x] / sh;
-        colSep[x] = bgHit >= bgRatio || darkHit >= darkRatio;
+        colScore[x] = Math.max(colBg[x] / sh, colDark[x] / sh);
+      }
+      const rowSep = new Array(sh).fill(false);
+      const colSep = new Array(sw).fill(false);
+      const rowThreshold = computeAdaptiveThreshold(rowScore);
+      const colThreshold = computeAdaptiveThreshold(colScore);
+      for (let y = 0; y < sh; y++) {
+        rowSep[y] = rowScore[y] >= rowThreshold;
+      }
+      for (let x = 0; x < sw; x++) {
+        colSep[x] = colScore[x] >= colThreshold;
       }
       const rowBands = extractBands(rowSep, 1);
       const colBands = extractBands(colSep, 1);
@@ -4442,6 +4564,22 @@ Atmosphere: pink, bubbly, extremely girly.
         result.cols = cols;
         result.margin = clampNumber(margin, 0, 200, margin);
         result.gap = clampNumber(gap, 0, 200, gap);
+      }
+      const sourceData = options.sourceData;
+      const sourceWidth = options.sourceWidth || img.width;
+      const sourceHeight = options.sourceHeight || img.height;
+      if (sourceData && result.rows && result.cols) {
+        const sourceSample = Math.max(2, Math.round(Math.min(sourceWidth, sourceHeight) * 0.01));
+        const sourceStats = sampleCornerStats(sourceData.data, sourceWidth, sourceHeight, sourceSample);
+        const sourceTolerance = computeAutoTolerance(sourceStats);
+        if (Number.isFinite(sourceTolerance)) {
+          result.tolerance = sourceTolerance;
+        }
+        const base = { r: sourceStats.r, g: sourceStats.g, b: sourceStats.b };
+        const scores = computeLineScores(sourceData.data, sourceWidth, sourceHeight, base, result.tolerance);
+        const refined = refineGridWithScores(scores.rowScore, scores.colScore, sourceWidth, sourceHeight, result);
+        result.margin = refined.margin;
+        result.gap = refined.gap;
       }
       return Object.keys(result).length ? result : null;
     };
@@ -4626,11 +4764,22 @@ Atmosphere: pink, bubbly, extremely girly.
       if (!silent) setStatus('正在去背并切割...', 'loading');
       try {
         const img = await loadImageElement(source);
+        const canvas = document.createElement('canvas');
+        canvas.width = img.width;
+        canvas.height = img.height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0);
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
         if (auto && !sliceSettingsTouched) {
           const cacheKey = imageKey;
           let autoSettings = autoSliceCache.get(cacheKey);
           if (!autoSettings) {
-            autoSettings = detectAutoSliceSettings(img);
+            autoSettings = detectAutoSliceSettings(img, {
+              maxDim: 960,
+              sourceData: imageData,
+              sourceWidth: canvas.width,
+              sourceHeight: canvas.height,
+            });
             if (autoSettings) autoSliceCache.set(cacheKey, autoSettings);
           }
           if (autoSettings) applySliceSettings(autoSettings);
@@ -4640,12 +4789,6 @@ Atmosphere: pink, bubbly, extremely girly.
         scheduleSliceSettingsSave(true);
         const previewKey = buildSlicePreviewKey(imageKey, settings);
         if (silent && previewKey === lastSlicePreviewKey) return;
-        const canvas = document.createElement('canvas');
-        canvas.width = img.width;
-        canvas.height = img.height;
-        const ctx = canvas.getContext('2d');
-        ctx.drawImage(img, 0, 0);
-        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
         const baseColor = sampleCornerColor(imageData.data, canvas.width, canvas.height, 6);
         const mask = buildBackgroundMask(imageData.data, canvas.width, canvas.height, baseColor, settings.tolerance);
         const refinedMask = dilateMask(mask, canvas.width, canvas.height, settings.shrink);
@@ -4694,7 +4837,18 @@ Atmosphere: pink, bubbly, extremely girly.
       setStatus('正在自动推断...', 'loading');
       try {
         const img = await loadImageElement(source);
-        const autoSettings = detectAutoSliceSettings(img);
+        const canvas = document.createElement('canvas');
+        canvas.width = img.width;
+        canvas.height = img.height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0);
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const autoSettings = detectAutoSliceSettings(img, {
+          maxDim: 960,
+          sourceData: imageData,
+          sourceWidth: canvas.width,
+          sourceHeight: canvas.height,
+        });
         if (!autoSettings) {
           setStatus('自动推断失败，请手动调整', 'error');
           return;
@@ -4741,6 +4895,47 @@ Atmosphere: pink, bubbly, extremely girly.
       renderReferenceList();
     };
 
+    const normalizeKeywordKey = (value) => String(value || '').trim().toLowerCase();
+
+    const collectExistingStickerKeywords = () => {
+      const used = new Set();
+      const add = (value) => {
+        const key = normalizeKeywordKey(value);
+        if (key) used.add(key);
+      };
+      listMediaAssets('sticker').forEach((item) => {
+        add(item?.id);
+        add(item?.label);
+        const aliases = Array.isArray(item?.aliases) ? item.aliases : [];
+        aliases.forEach(alias => add(alias));
+      });
+      const packs = Array.isArray(stickerPackState?.packs) ? stickerPackState.packs : [];
+      packs.forEach((pack) => {
+        (pack?.stickers || []).forEach((sticker) => {
+          add(sticker?.keyword);
+        });
+      });
+      return used;
+    };
+
+    const makeUniqueKeyword = (base, used) => {
+      const raw = String(base || '').trim();
+      if (!raw) return '';
+      const normalized = normalizeKeywordKey(raw);
+      if (!used.has(normalized)) {
+        used.add(normalized);
+        return raw;
+      }
+      let idx = 1;
+      let next = `${raw}${idx}`;
+      while (used.has(normalizeKeywordKey(next))) {
+        idx += 1;
+        next = `${raw}${idx}`;
+      }
+      used.add(normalizeKeywordKey(next));
+      return next;
+    };
+
     const handleSaveSlices = async () => {
       if (!sliceItems.length) {
         window.toastr?.warning?.('暂无切割结果');
@@ -4770,10 +4965,17 @@ Atmosphere: pink, bubbly, extremely girly.
       setBusy(true);
       try {
         const stickers = Array.isArray(pack.stickers) ? pack.stickers.slice() : [];
+        const usedKeywords = collectExistingStickerKeywords();
+        const updatedIndexes = new Set();
         for (let i = 0; i < selected.length; i++) {
           const item = selected[i];
-          const keyword = String(item.keyword || item.name || '').trim();
-          const name = String(item.name || keyword || item.defaultName || `贴图${i + 1}`).trim();
+          const baseKeyword = String(item.keyword || item.name || item.defaultName || `贴图${i + 1}`).trim();
+          const keyword = makeUniqueKeyword(baseKeyword, usedKeywords);
+          const name = keyword || String(item.name || item.defaultName || `贴图${i + 1}`).trim();
+          item.keyword = keyword;
+          item.name = name;
+          const idx = sliceItems.indexOf(item);
+          if (idx >= 0) updatedIndexes.add(idx);
           const fileName = name ? `${name}.png` : 'sticker.png';
           let dataUrl = String(item.dataUrl || '').trim();
           if (!dataUrl) {
@@ -4791,6 +4993,10 @@ Atmosphere: pink, bubbly, extremely girly.
             path: path || '',
             dataUrl: path ? '' : dataUrl,
           });
+        }
+        if (updatedIndexes.size) {
+          renderSliceList();
+          persistStickerAiMeta();
         }
         const nextPack = { ...pack, stickers };
         const nextState = stickerPackStore.updatePack(packId, nextPack);
@@ -4818,6 +5024,20 @@ Atmosphere: pink, bubbly, extremely girly.
       return [{ role: 'user', content: userContent }];
     };
 
+    const buildPromptContinueMessages = (template, style, draft) => {
+      const trimmedTemplate = String(template || '').trim();
+      const trimmedStyle = String(style || '').trim();
+      const trimmedDraft = String(draft || '').trim();
+      const userContent = [
+        '请参考模板（包裹在<prompt>当中）和用户对贴图的需求（包裹在<input>中），并补全已生成的提示词草稿（包裹在<draft>中）：',
+        `<prompt>${trimmedTemplate || '(空模板)'}</prompt>`,
+        `<input>${trimmedStyle || '(未提供)'}</input>`,
+        `<draft>${trimmedDraft || '(空草稿)'}</draft>`,
+        '请输出完整且自洽的提示词，只返回一个<prompt>...</prompt>，不要附加解释：',
+      ].join('\n');
+      return [{ role: 'user', content: userContent }];
+    };
+
     const handleBuildPrompt = async () => {
       const template = String(templateInput?.value || '').trim();
       if (!template) {
@@ -4838,6 +5058,36 @@ Atmosphere: pink, bubbly, extremely girly.
       } catch (err) {
         setStatus(`生成提示词失败：${err?.message || '未知错误'}`, 'error');
         window.toastr?.error?.('生成提示词失败');
+      } finally {
+        setBusy(false);
+      }
+    };
+
+    const handleContinuePrompt = async () => {
+      const template = String(templateInput?.value || '').trim();
+      if (!template) {
+        window.toastr?.warning?.('请先填写提示词模板');
+        return;
+      }
+      const draft = String(finalInput?.value || '').trim();
+      if (!draft) {
+        window.toastr?.warning?.('暂无可补全的提示词草稿');
+        return;
+      }
+      const config = await ensureChatConfigReady();
+      if (!config) return;
+      setBusy(true);
+      setStatus('正在补全提示词...', 'loading');
+      try {
+        const client = new LLMClient(config);
+        const messages = buildPromptContinueMessages(template, styleInput?.value || '', draft);
+        const output = await client.chat(messages, { temperature: 0.6 });
+        finalInput.value = String(output || '').trim();
+        scheduleTextSave(true);
+        setStatus('提示词已补全，可继续编辑或直接生成贴图', 'success');
+      } catch (err) {
+        setStatus(`补全提示词失败：${err?.message || '未知错误'}`, 'error');
+        window.toastr?.error?.('补全提示词失败');
       } finally {
         setBusy(false);
       }
@@ -4905,6 +5155,7 @@ Atmosphere: pink, bubbly, extremely girly.
     overlay.addEventListener('click', () => hide());
     modal.addEventListener('click', event => event.stopPropagation());
     buildBtn?.addEventListener('click', () => handleBuildPrompt());
+    continueBtn?.addEventListener('click', () => handleContinuePrompt());
     renderBtn?.addEventListener('click', () => handleGenerateImage());
     styleInput?.addEventListener('input', () => scheduleTextSave());
     templateInput?.addEventListener('input', () => scheduleTextSave());
