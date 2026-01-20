@@ -1194,6 +1194,75 @@ body[data-creative-wide='on'] .QQ_chat_charmsg[data-creative='1'] .QQ_chat_msgdi
   gap: 10px;
 }
 
+.sticker-ai-tabs {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.sticker-ai-tab {
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  background: #fff;
+  color: #1f2937;
+  border-radius: 999px;
+  padding: 6px 14px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.sticker-ai-tab.is-active {
+  background: #e0f2fe;
+  border-color: #38bdf8;
+  color: #0369a1;
+  font-weight: 700;
+}
+
+.sticker-ai-mode {
+  display: none;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sticker-ai-mode.is-active {
+  display: flex;
+}
+
+.sticker-ai-form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 8px;
+}
+
+.sticker-ai-form-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11px;
+  color: #475569;
+}
+
+.sticker-ai-form-grid input,
+.sticker-ai-form-grid select {
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  border-radius: 8px;
+  padding: 6px 8px;
+  font-size: 12px;
+  box-sizing: border-box;
+}
+
+.sticker-ai-checkbox {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 0;
+}
+
+.sticker-ai-checkbox input[type='checkbox'] {
+  width: 18px;
+  height: 18px;
+}
+
 .sticker-ai-label {
   font-size: 12px;
   font-weight: 700;

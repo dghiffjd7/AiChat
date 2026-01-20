@@ -1623,6 +1623,49 @@ Atmosphere: pink, bubbly, extremely girly.
 第一排（日常互动与可爱系）：...
 第二排（打工/学习/生活状态）：...
 `;
+  const STICKER_AI_SPRITE_TEMPLATE = `
+任务：
+根据用户输入，生成一份完整、可直接丢给生图模型的专业提示词，用<prompt>...</prompt>包裹。
+
+---
+
+## 固定画面结构（不可更改）
+- 画布：正方形
+- 布局：6×6 = 36 格 Sprite Sheet
+- 播放顺序：从左上 → 右下
+- 风格：像素风（或用户选择风格）
+- 背景：纯白
+- 每一格之间：必须有 1px 细线分隔，方便切割
+- 主体与特效：不可出界
+- 动作连贯性：每一格必须与上一格自然衔接
+- 结尾必须能无缝回到第 1 格
+- 不要文字、水印或多余标记
+
+---
+
+## 7 阶段结构（可根据用户输入调整）
+Phase A（Frames 1–4）：基准姿态
+Phase B（Frames 5–10）：张力积累
+Phase C（Frames 11–17）：能量/动态汇聚
+Phase D（Frames 18–25）：高潮爆发
+Phase E（Frames 26–31）：余波扩散
+Phase F（Frames 32–35）：回归平衡
+Phase G（Frame 36）：循环衔接
+
+---
+
+## 视觉风格补充
+- 像素等级：按用户输入
+- 色彩基调：按用户输入
+- 视觉特效：按主题设计但不得遮挡主体
+
+---
+
+## 输出要求
+- 只输出完整提示词，用<prompt>...</prompt>包裹，不要解释
+- 结尾必须包含：
+"Output as one single 6×6 sprite sheet image with thin grid lines."
+`;
   const canUseApiConfig = config => {
     const cfg = config || {};
     const hasKey = typeof cfg.apiKey === 'string' && cfg.apiKey.trim().length > 0;
@@ -3534,17 +3577,132 @@ Atmosphere: pink, bubbly, extremely girly.
     modal.innerHTML = `
       <div class="sticker-ai-header">
         <div>
-          <div class="sticker-ai-title">AI 生成贴图</div>
-          <div class="sticker-ai-subtitle">先生成完整提示词，再调用图片模型出图</div>
+          <div class="sticker-ai-title" id="sticker-ai-title">AI 生成贴图</div>
+          <div class="sticker-ai-subtitle" id="sticker-ai-subtitle">先生成完整提示词，再调用图片模型出图</div>
         </div>
         <button type="button" class="sticker-ai-close" aria-label="关闭">×</button>
       </div>
       <div class="sticker-ai-body">
-        <div class="sticker-ai-label-row">
-          <label class="sticker-ai-label" for="sticker-ai-style">风格描述</label>
-          <button type="button" class="sticker-ai-zoom" data-target="style" aria-label="放大编辑">⤢</button>
+        <div class="sticker-ai-tabs">
+          <button type="button" class="sticker-ai-tab is-active" data-mode="sticker">贴图模式</button>
+          <button type="button" class="sticker-ai-tab" data-mode="sprite">精灵图/动图</button>
         </div>
-        <textarea id="sticker-ai-style" class="sticker-ai-textarea" placeholder="描述想要的风格、角色、动作与情绪（可简短）"></textarea>
+
+        <div class="sticker-ai-mode sticker-ai-mode-sticker is-active" data-mode="sticker">
+          <div class="sticker-ai-label-row">
+            <label class="sticker-ai-label" for="sticker-ai-style">风格描述</label>
+            <button type="button" class="sticker-ai-zoom" data-target="style" aria-label="放大编辑">⤢</button>
+          </div>
+          <textarea id="sticker-ai-style" class="sticker-ai-textarea" placeholder="描述想要的风格、角色、动作与情绪（可简短）"></textarea>
+        </div>
+
+        <div class="sticker-ai-mode sticker-ai-mode-sprite" data-mode="sprite">
+          <div class="sticker-ai-form-grid">
+            <label>主题类型
+              <select id="sprite-theme">
+                <option value="">不指定</option>
+                <option value="角色动画">角色动画</option>
+                <option value="物体动画">物体动画</option>
+                <option value="场景循环">场景循环</option>
+                <option value="抽象视觉">抽象视觉</option>
+                <option value="UI 动画">UI 动画</option>
+                <option value="其他">其他</option>
+              </select>
+            </label>
+            <label>主题类型补充
+              <input type="text" id="sprite-theme-custom" placeholder="自填（可选）">
+            </label>
+            <label>叙事感
+              <select id="sprite-narrative">
+                <option value="">不指定</option>
+                <option value="强">强</option>
+                <option value="中">中</option>
+                <option value="弱">弱</option>
+              </select>
+            </label>
+          </div>
+          <div class="sticker-ai-form-grid">
+            <label>主体是什么
+              <input type="text" id="sprite-subject" placeholder="例如：猫、机器人、角色">
+            </label>
+            <label>外观/风格
+              <input type="text" id="sprite-look" placeholder="例如：像素风、赛博、可爱">
+            </label>
+            <label>情绪氛围
+              <input type="text" id="sprite-mood" placeholder="例如：轻快、紧张、治愈">
+            </label>
+          </div>
+          <div class="sticker-ai-form-grid">
+            <label>表现关键词
+              <select id="sprite-expression">
+                <option value="">不指定</option>
+                <option value="力量">力量</option>
+                <option value="速度">速度</option>
+                <option value="优雅">优雅</option>
+                <option value="恐惧">恐惧</option>
+                <option value="可爱">可爱</option>
+                <option value="混乱">混乱</option>
+                <option value="神圣">神圣</option>
+                <option value="科幻">科幻</option>
+                <option value="奇幻">奇幻</option>
+                <option value="机械感">机械感</option>
+                <option value="治愈感">治愈感</option>
+                <option value="自订">自订</option>
+              </select>
+            </label>
+            <label>表现自订
+              <input type="text" id="sprite-expression-custom" placeholder="可自填">
+            </label>
+            <label>色彩基调
+              <select id="sprite-tone">
+                <option value="">不指定</option>
+                <option value="鲜艳">鲜艳</option>
+                <option value="冷色">冷色</option>
+                <option value="暖色">暖色</option>
+                <option value="霓虹">霓虹</option>
+                <option value="高饱和">高饱和</option>
+              </select>
+            </label>
+          </div>
+          <div class="sticker-ai-form-grid">
+            <label>像素等级
+              <select id="sprite-pixel">
+                <option value="">不指定</option>
+                <option value="16px">16px</option>
+                <option value="32px" selected>32px</option>
+                <option value="48px">48px</option>
+                <option value="64px">64px</option>
+              </select>
+            </label>
+            <label>背景
+              <select id="sprite-bg">
+                <option value="纯白" selected>纯白</option>
+                <option value="自订">自订</option>
+              </select>
+            </label>
+            <label>动画结构
+              <select id="sprite-structure">
+                <option value="7 阶段" selected>7 阶段结构</option>
+                <option value="简化">简化结构</option>
+              </select>
+            </label>
+          </div>
+          <div class="sticker-ai-form-grid">
+            <label>帧速（fps）
+              <input type="number" id="sprite-fps" min="1" max="60" value="12">
+            </label>
+            <label class="sticker-ai-checkbox">
+              <span>透明背景（去背）</span>
+              <input type="checkbox" id="sprite-transparent" checked>
+            </label>
+          </div>
+          <div class="sticker-ai-label-row">
+            <label class="sticker-ai-label" for="sticker-ai-sprite-extra">补充描述</label>
+            <button type="button" class="sticker-ai-zoom" data-target="sprite-extra" aria-label="放大编辑">⤢</button>
+          </div>
+          <textarea id="sticker-ai-sprite-extra" class="sticker-ai-textarea" placeholder="补充任何想强调的细节（可选）"></textarea>
+          <div class="sticker-ai-hint">表单内容会自动合并为用户输入，用于生成完整提示词。</div>
+        </div>
 
         <div class="sticker-ai-label-row">
           <label class="sticker-ai-label" for="sticker-ai-template">提示词模板</label>
@@ -3607,7 +3765,26 @@ Atmosphere: pink, bubbly, extremely girly.
       </div>
     `;
 
+    const titleEl = modal.querySelector('#sticker-ai-title');
+    const subtitleEl = modal.querySelector('#sticker-ai-subtitle');
+    const modeTabs = Array.from(modal.querySelectorAll('.sticker-ai-tab'));
+    const modePanels = Array.from(modal.querySelectorAll('.sticker-ai-mode'));
     const styleInput = modal.querySelector('#sticker-ai-style');
+    const spriteThemeInput = modal.querySelector('#sprite-theme');
+    const spriteThemeCustomInput = modal.querySelector('#sprite-theme-custom');
+    const spriteNarrativeInput = modal.querySelector('#sprite-narrative');
+    const spriteSubjectInput = modal.querySelector('#sprite-subject');
+    const spriteLookInput = modal.querySelector('#sprite-look');
+    const spriteMoodInput = modal.querySelector('#sprite-mood');
+    const spriteExpressionInput = modal.querySelector('#sprite-expression');
+    const spriteExpressionCustomInput = modal.querySelector('#sprite-expression-custom');
+    const spriteToneInput = modal.querySelector('#sprite-tone');
+    const spritePixelInput = modal.querySelector('#sprite-pixel');
+    const spriteBgInput = modal.querySelector('#sprite-bg');
+    const spriteStructureInput = modal.querySelector('#sprite-structure');
+    const spriteFpsInput = modal.querySelector('#sprite-fps');
+    const spriteTransparentInput = modal.querySelector('#sprite-transparent');
+    const spriteExtraInput = modal.querySelector('#sticker-ai-sprite-extra');
     const templateInput = modal.querySelector('#sticker-ai-template');
     const finalInput = modal.querySelector('#sticker-ai-final');
     const statusEl = modal.querySelector('#sticker-ai-status');
@@ -3647,8 +3824,10 @@ Atmosphere: pink, bubbly, extremely girly.
     let sliceSettingsTouched = false;
     let suppressSliceSettingsTouch = false;
     let lastSlicePreviewKey = '';
-    let sliceSettingsCache = new Map();
-    const autoSliceCache = new Map();
+    const sliceSettingsCacheByMode = { sticker: new Map(), sprite: new Map() };
+    const autoSliceCacheByMode = { sticker: new Map(), sprite: new Map() };
+    let sliceSettingsCache = sliceSettingsCacheByMode.sticker;
+    let autoSliceCache = autoSliceCacheByMode.sticker;
 
     const loadStickerAiState = () => {
       try {
@@ -3745,6 +3924,133 @@ Atmosphere: pink, bubbly, extremely girly.
       if (!Number.isFinite(num)) return fallback;
       return Math.min(max, Math.max(min, Math.trunc(num)));
     };
+    const STICKER_SLICE_DEFAULTS = {
+      rows: 4,
+      cols: 6,
+      margin: 16,
+      gap: 8,
+      tolerance: 28,
+      shrink: 1,
+      feather: 2,
+    };
+    const SPRITE_SLICE_DEFAULTS = {
+      rows: 6,
+      cols: 6,
+      margin: 0,
+      gap: 1,
+      tolerance: 28,
+      shrink: 1,
+      feather: 2,
+    };
+    const SPRITE_FORM_DEFAULTS = {
+      theme: '',
+      themeCustom: '',
+      narrative: '',
+      subject: '',
+      look: '',
+      mood: '',
+      expression: '',
+      expressionCustom: '',
+      tone: '',
+      pixel: '32px',
+      background: '纯白',
+      structure: '7 阶段',
+      fps: '12',
+      transparent: true,
+      extraText: '',
+    };
+    let stickerAiMode = 'sticker';
+
+    const normalizeSpriteText = value => String(value || '').trim();
+    const normalizeSpriteFormState = (state = {}) => ({
+      theme: normalizeSpriteText(state.theme),
+      themeCustom: normalizeSpriteText(state.themeCustom),
+      narrative: normalizeSpriteText(state.narrative),
+      subject: normalizeSpriteText(state.subject),
+      look: normalizeSpriteText(state.look),
+      mood: normalizeSpriteText(state.mood),
+      expression: normalizeSpriteText(state.expression),
+      expressionCustom: normalizeSpriteText(state.expressionCustom),
+      tone: normalizeSpriteText(state.tone),
+      pixel: normalizeSpriteText(state.pixel) || SPRITE_FORM_DEFAULTS.pixel,
+      background: normalizeSpriteText(state.background) || SPRITE_FORM_DEFAULTS.background,
+      structure: normalizeSpriteText(state.structure) || SPRITE_FORM_DEFAULTS.structure,
+      fps: normalizeSpriteText(state.fps) || SPRITE_FORM_DEFAULTS.fps,
+      transparent: typeof state.transparent === 'boolean' ? state.transparent : SPRITE_FORM_DEFAULTS.transparent,
+      extraText: normalizeSpriteText(state.extraText),
+    });
+    const readSpriteFormState = () => ({
+      theme: normalizeSpriteText(spriteThemeInput?.value),
+      themeCustom: normalizeSpriteText(spriteThemeCustomInput?.value),
+      narrative: normalizeSpriteText(spriteNarrativeInput?.value),
+      subject: normalizeSpriteText(spriteSubjectInput?.value),
+      look: normalizeSpriteText(spriteLookInput?.value),
+      mood: normalizeSpriteText(spriteMoodInput?.value),
+      expression: normalizeSpriteText(spriteExpressionInput?.value),
+      expressionCustom: normalizeSpriteText(spriteExpressionCustomInput?.value),
+      tone: normalizeSpriteText(spriteToneInput?.value),
+      pixel: normalizeSpriteText(spritePixelInput?.value),
+      background: normalizeSpriteText(spriteBgInput?.value) || SPRITE_FORM_DEFAULTS.background,
+      structure: normalizeSpriteText(spriteStructureInput?.value) || SPRITE_FORM_DEFAULTS.structure,
+      fps: normalizeSpriteText(spriteFpsInput?.value) || '',
+      transparent: spriteTransparentInput ? Boolean(spriteTransparentInput.checked) : SPRITE_FORM_DEFAULTS.transparent,
+      extraText: normalizeSpriteText(spriteExtraInput?.value),
+    });
+    const applySpriteFormState = (state = {}) => {
+      const normalized = normalizeSpriteFormState(state);
+      if (spriteThemeInput) spriteThemeInput.value = normalized.theme;
+      if (spriteThemeCustomInput) spriteThemeCustomInput.value = normalized.themeCustom;
+      if (spriteNarrativeInput) spriteNarrativeInput.value = normalized.narrative;
+      if (spriteSubjectInput) spriteSubjectInput.value = normalized.subject;
+      if (spriteLookInput) spriteLookInput.value = normalized.look;
+      if (spriteMoodInput) spriteMoodInput.value = normalized.mood;
+      if (spriteExpressionInput) spriteExpressionInput.value = normalized.expression;
+      if (spriteExpressionCustomInput) spriteExpressionCustomInput.value = normalized.expressionCustom;
+      if (spriteToneInput) spriteToneInput.value = normalized.tone;
+      if (spritePixelInput) spritePixelInput.value = normalized.pixel;
+      if (spriteBgInput) spriteBgInput.value = normalized.background;
+      if (spriteStructureInput) spriteStructureInput.value = normalized.structure;
+      if (spriteFpsInput) spriteFpsInput.value = normalized.fps;
+      if (spriteTransparentInput) spriteTransparentInput.checked = normalized.transparent;
+      if (spriteExtraInput) spriteExtraInput.value = normalized.extraText;
+    };
+    const resolveSpriteOption = (value, custom) => {
+      const raw = normalizeSpriteText(value);
+      const extra = normalizeSpriteText(custom);
+      if (raw === '其他' || raw === '自订') {
+        return extra || '';
+      }
+      if (!raw && extra) return extra;
+      return raw;
+    };
+    const buildSpriteInputSummary = () => {
+      const form = readSpriteFormState();
+      const lines = [];
+      const theme = resolveSpriteOption(form.theme, form.themeCustom);
+      const expression = resolveSpriteOption(form.expression, form.expressionCustom);
+      const background = form.background === '自订' ? '' : form.background;
+      if (theme) lines.push(`主题类型: ${theme}`);
+      if (form.subject) lines.push(`主体: ${form.subject}`);
+      if (form.look) lines.push(`外观/风格: ${form.look}`);
+      if (form.mood) lines.push(`情绪氛围: ${form.mood}`);
+      if (expression) lines.push(`表现: ${expression}`);
+      if (form.narrative) lines.push(`叙事感: ${form.narrative}`);
+      if (form.pixel) lines.push(`像素等级: ${form.pixel}`);
+      if (form.tone) lines.push(`色彩基调: ${form.tone}`);
+      if (background) {
+        const bgLine = form.transparent && background === '纯白' ? '背景: 纯白（后处理透明）' : `背景: ${background}`;
+        lines.push(bgLine);
+      }
+      if (form.structure) lines.push(`动画结构: ${form.structure}`);
+      if (form.fps) lines.push(`帧速: ${form.fps}fps`);
+      if (form.extraText) lines.push(`补充: ${form.extraText}`);
+      return lines.join('\n').trim();
+    };
+    const getPromptInputText = () => {
+      if (stickerAiMode === 'sprite') return buildSpriteInputSummary();
+      return String(styleInput?.value || '').trim();
+    };
+    const getDefaultTemplateForMode = mode => (mode === 'sprite' ? STICKER_AI_SPRITE_TEMPLATE : STICKER_AI_TEMPLATE);
 
     const normalizeSliceSettings = (settings) => {
       if (!settings || typeof settings !== 'object') return null;
@@ -3759,14 +4065,25 @@ Atmosphere: pink, bubbly, extremely girly.
       };
     };
 
-    const restoreSliceSettingsCache = (state) => {
-      sliceSettingsCache = new Map();
-      const raw = state?.sliceSettings;
-      if (!raw || typeof raw !== 'object') return;
-      Object.entries(raw).forEach(([key, value]) => {
-        const normalized = normalizeSliceSettings(value);
-        if (normalized) sliceSettingsCache.set(key, normalized);
-      });
+    const setModeCaches = (mode) => {
+      const key = mode === 'sprite' ? 'sprite' : 'sticker';
+      if (!sliceSettingsCacheByMode[key]) sliceSettingsCacheByMode[key] = new Map();
+      if (!autoSliceCacheByMode[key]) autoSliceCacheByMode[key] = new Map();
+      sliceSettingsCache = sliceSettingsCacheByMode[key];
+      autoSliceCache = autoSliceCacheByMode[key];
+    };
+
+    const restoreSliceSettingsCache = (sliceSettings, mode = stickerAiMode) => {
+      const target = new Map();
+      const raw = sliceSettings && typeof sliceSettings === 'object' ? sliceSettings : null;
+      if (raw) {
+        Object.entries(raw).forEach(([key, value]) => {
+          const normalized = normalizeSliceSettings(value);
+          if (normalized) target.set(key, normalized);
+        });
+      }
+      sliceSettingsCacheByMode[mode] = target;
+      if (mode === stickerAiMode) sliceSettingsCache = target;
     };
 
     const serializeSliceSettingsCache = () => {
@@ -3803,6 +4120,70 @@ Atmosphere: pink, bubbly, extremely girly.
       sliceSettingsCache.set(key, normalized);
     };
 
+    const normalizeAssetState = (asset) => {
+      const normalized = asset && typeof asset === 'object' ? asset : {};
+      const images = Array.isArray(normalized.generated) ? normalized.generated.map(normalizeStickerAiImage) : [];
+      const slices = Array.isArray(normalized.slices) ? normalized.slices.map(normalizeStickerAiSlice) : [];
+      const filteredImages = images.filter(item => item.dataUrl || item.url || item.path);
+      const filteredSlices = slices.filter(item => item.dataUrl || item.url || item.path);
+      const maxIndex = filteredImages.length ? filteredImages.length - 1 : 0;
+      const rawIndex = Number(normalized.selectedIndex ?? 0);
+      const nextIndex = Number.isFinite(rawIndex) ? Math.trunc(rawIndex) : 0;
+      return {
+        generated: filteredImages,
+        slices: filteredSlices,
+        selectedIndex: Math.max(0, Math.min(maxIndex, nextIndex)),
+        sliceSettings: normalized.sliceSettings && typeof normalized.sliceSettings === 'object' ? normalized.sliceSettings : {},
+      };
+    };
+    const getAssetStateFromState = (state, mode) => {
+      const assets = state?.assets;
+      if (assets && typeof assets === 'object' && assets[mode]) return assets[mode];
+      if (mode === 'sticker') {
+        const fallback = {
+          generated: state?.generated,
+          slices: state?.slices,
+          selectedIndex: state?.selectedIndex,
+          sliceSettings: state?.sliceSettings,
+        };
+        const hasFallback = Object.values(fallback).some(value => value !== undefined);
+        return hasFallback ? fallback : null;
+      }
+      return null;
+    };
+    const buildAssetStateFromMemory = () => ({
+      generated: generatedImages.map(serializeStickerAiImage),
+      slices: sliceItems.map(serializeStickerAiSlice),
+      selectedIndex: selectedGeneratedIndex,
+      sliceSettings: serializeSliceSettingsCache(),
+    });
+    const writeAssetStateForMode = (state, mode, assetState) => {
+      if (!state || typeof state !== 'object') return;
+      if (!state.assets || typeof state.assets !== 'object') state.assets = {};
+      state.assets[mode] = assetState;
+      if (mode === 'sticker') {
+        state.generated = assetState.generated;
+        state.slices = assetState.slices;
+        state.selectedIndex = assetState.selectedIndex;
+        state.sliceSettings = assetState.sliceSettings;
+      }
+    };
+    const applyAssetState = (assetState, mode) => {
+      setModeCaches(mode);
+      const normalized = normalizeAssetState(assetState);
+      generatedImages = normalized.generated;
+      sliceItems = normalized.slices;
+      selectedGeneratedIndex = normalized.selectedIndex;
+      restoreSliceSettingsCache(normalized.sliceSettings, mode);
+      pruneSliceSettingsCache(generatedImages);
+      sliceSettingsTouched = false;
+      lastSlicePreviewKey = '';
+    };
+    const applyAssetStateFromStore = (state, mode) => {
+      const assetState = getAssetStateFromState(state, mode) || {};
+      applyAssetState(assetState, mode);
+    };
+
     const readImageSourceAsDataUrl = async source => {
       const src = String(source || '').trim();
       if (!src) return '';
@@ -3833,48 +4214,77 @@ Atmosphere: pink, bubbly, extremely girly.
       }
     };
 
-    const applyStickerAiState = state => {
-      const images = Array.isArray(state?.generated) ? state.generated.map(normalizeStickerAiImage) : [];
-      const slices = Array.isArray(state?.slices) ? state.slices.map(normalizeStickerAiSlice) : [];
-      generatedImages = images.filter(item => item.dataUrl || item.url || item.path);
-      sliceItems = slices.filter(item => item.dataUrl || item.url || item.path);
-      restoreSliceSettingsCache(state);
-      pruneSliceSettingsCache(generatedImages);
-      const maxIndex = generatedImages.length ? generatedImages.length - 1 : 0;
-      const rawIndex = Number(state?.selectedIndex ?? 0);
-      const nextIndex = Number.isFinite(rawIndex) ? Math.trunc(rawIndex) : 0;
-      selectedGeneratedIndex = Math.max(0, Math.min(maxIndex, nextIndex));
+    const getModeTemplateText = (state, mode) => {
+      if (mode === 'sprite') {
+        return typeof state?.sprite?.templateText === 'string' ? state.sprite.templateText : '';
+      }
+      return typeof state?.templateText === 'string' ? state.templateText : '';
+    };
+    const getModeFinalText = (state, mode) => {
+      if (mode === 'sprite') {
+        return typeof state?.sprite?.finalText === 'string' ? state.sprite.finalText : '';
+      }
+      return typeof state?.finalText === 'string' ? state.finalText : '';
+    };
+    const applyModeTexts = (state, mode) => {
+      if (!templateInput || !finalInput) return;
+      templateInput.value = getModeTemplateText(state, mode) || '';
+      finalInput.value = getModeFinalText(state, mode) || '';
+    };
+    const applySliceDefaultsForMode = (mode) => {
+      if (!rowsInput || !colsInput) return;
+      if (applyCachedSliceSettingsForSelection()) return;
+      const defaults = mode === 'sprite' ? SPRITE_SLICE_DEFAULTS : STICKER_SLICE_DEFAULTS;
+      applySliceSettings(defaults);
       sliceSettingsTouched = false;
+    };
+    const updateStickerAiModeUI = () => {
+      const next = stickerAiMode === 'sprite' ? 'sprite' : 'sticker';
+      modeTabs.forEach(btn => {
+        const mode = btn?.dataset?.mode || '';
+        const isActive = mode === next;
+        btn.classList.toggle('is-active', isActive);
+      });
+      modePanels.forEach(panel => {
+        const mode = panel?.dataset?.mode || '';
+        panel.classList.toggle('is-active', mode === next);
+      });
+      if (titleEl) titleEl.textContent = next === 'sprite' ? 'AI 生成精灵图' : 'AI 生成贴图';
+      if (subtitleEl) {
+        subtitleEl.textContent =
+          next === 'sprite' ? '先生成完整提示词，再调用图片模型出图（6×6 精灵图）' : '先生成完整提示词，再调用图片模型出图';
+      }
+      if (renderBtn) renderBtn.textContent = next === 'sprite' ? '开始生成精灵图' : '开始生成贴图';
+    };
+
+    const applyStickerAiState = state => {
+      stickerAiMode = state?.mode === 'sprite' ? 'sprite' : 'sticker';
       if (styleInput && typeof state?.styleText === 'string') {
         styleInput.value = state.styleText;
       }
-      if (templateInput) {
-        if (typeof state?.templateText === 'string' && state.templateText.trim()) {
-          templateInput.value = state.templateText;
-        }
-      }
-      if (finalInput && typeof state?.finalText === 'string') {
-        finalInput.value = state.finalText;
-      }
+      const spriteState = state?.sprite && typeof state.sprite === 'object' ? state.sprite : {};
+      const spriteForm = spriteState?.form && typeof spriteState.form === 'object' ? spriteState.form : spriteState;
+      applySpriteFormState(spriteForm);
+      applyModeTexts(state, stickerAiMode);
+      applyAssetStateFromStore(state, stickerAiMode);
+      updateStickerAiModeUI();
     };
 
     const persistStickerAiMeta = () => {
       const state = loadStickerAiState() || {};
-      const nextState = {
-        generated: Array.isArray(state.generated) && state.generated.length
-          ? state.generated
-          : generatedImages.map(serializeStickerAiImage),
-        slices: sliceItems.map(serializeStickerAiSlice),
-        selectedIndex: selectedGeneratedIndex,
-        sliceSettings: serializeSliceSettingsCache(),
-      };
-      persistStickerAiState(nextState);
+      const assetState = buildAssetStateFromMemory();
+      writeAssetStateForMode(state, stickerAiMode, assetState);
+      state.mode = stickerAiMode;
+      persistStickerAiState(state);
     };
 
     const persistStickerAiSelection = () => {
       const state = loadStickerAiState();
       if (state && typeof state === 'object') {
-        state.selectedIndex = selectedGeneratedIndex;
+        const assetState = normalizeAssetState(getAssetStateFromState(state, stickerAiMode) || {});
+        assetState.selectedIndex = selectedGeneratedIndex;
+        writeAssetStateForMode(state, stickerAiMode, assetState);
+        state.mode = stickerAiMode;
         persistStickerAiState(state);
         return;
       }
@@ -3883,7 +4293,10 @@ Atmosphere: pink, bubbly, extremely girly.
 
     const persistStickerAiGenerated = async images => {
       const previous = loadStickerAiState();
-      if (previous) clearStickerAiAssets(previous);
+      if (previous) {
+        const prevAsset = getAssetStateFromState(previous, stickerAiMode);
+        if (prevAsset) clearStickerAiAssets(prevAsset);
+      }
       const now = Date.now();
       const stored = [];
       for (let i = 0; i < images.length; i++) {
@@ -3904,18 +4317,28 @@ Atmosphere: pink, bubbly, extremely girly.
           stored.push({ url: item.url });
         }
       }
-      sliceSettingsCache = new Map();
+      setModeCaches(stickerAiMode);
+      sliceSettingsCache.clear();
       autoSliceCache.clear();
       lastSlicePreviewKey = '';
       sliceSettingsTouched = false;
-      const nextState = { generated: stored, slices: [], selectedIndex: 0, sliceSettings: {} };
-      persistStickerAiState(nextState);
+      const prevState = loadStickerAiState() || {};
+      const assetState = {
+        generated: stored,
+        slices: [],
+        selectedIndex: 0,
+        sliceSettings: {},
+      };
+      writeAssetStateForMode(prevState, stickerAiMode, assetState);
+      prevState.mode = stickerAiMode;
+      persistStickerAiState(prevState);
       return stored;
     };
 
     const persistStickerAiSlices = async items => {
       const state = loadStickerAiState() || {};
-      const prevSlices = Array.isArray(state.slices) ? state.slices : [];
+      const assetState = normalizeAssetState(getAssetStateFromState(state, stickerAiMode) || {});
+      const prevSlices = Array.isArray(assetState.slices) ? assetState.slices : [];
       if (prevSlices.length) {
         prevSlices.forEach(item => {
           const path = String(item?.path || '').trim();
@@ -3943,15 +4366,15 @@ Atmosphere: pink, bubbly, extremely girly.
           selected: current.selected,
         });
       }
-      const nextState = {
-        generated: Array.isArray(state.generated) && state.generated.length
-          ? state.generated
-          : generatedImages.map(serializeStickerAiImage),
+      const nextAssetState = {
+        generated: assetState.generated.length ? assetState.generated : generatedImages.map(serializeStickerAiImage),
         slices: stored,
         selectedIndex: selectedGeneratedIndex,
         sliceSettings: serializeSliceSettingsCache(),
       };
-      persistStickerAiState(nextState);
+      writeAssetStateForMode(state, stickerAiMode, nextAssetState);
+      state.mode = stickerAiMode;
+      persistStickerAiState(state);
       return stored;
     };
 
@@ -3975,6 +4398,7 @@ Atmosphere: pink, bubbly, extremely girly.
     const zoomClose = zoomModal.querySelector('.sticker-ai-zoom-close');
     const zoomTargets = {
       style: { input: styleInput, label: '风格描述' },
+      'sprite-extra': { input: spriteExtraInput, label: '补充描述' },
       template: { input: templateInput, label: '提示词模板' },
       final: { input: finalInput, label: '完整提示词' },
     };
@@ -4018,8 +4442,55 @@ Atmosphere: pink, bubbly, extremely girly.
       if (saveBtn) saveBtn.disabled = busy;
     };
 
+    const updateStateFromStickerInputs = state => {
+      state.styleText = String(styleInput?.value || '');
+      state.templateText = String(templateInput?.value || '');
+      state.finalText = String(finalInput?.value || '');
+    };
+    const updateStateFromSpriteInputs = state => {
+      const spriteState = state.sprite && typeof state.sprite === 'object' ? state.sprite : {};
+      spriteState.form = readSpriteFormState();
+      spriteState.templateText = String(templateInput?.value || '');
+      spriteState.finalText = String(finalInput?.value || '');
+      state.sprite = spriteState;
+    };
+    const applyModeInputsFromState = (state, mode) => {
+      if (mode === 'sprite') {
+        const spriteState = state?.sprite && typeof state.sprite === 'object' ? state.sprite : {};
+        const spriteForm = spriteState?.form && typeof spriteState.form === 'object' ? spriteState.form : spriteState;
+        applySpriteFormState(spriteForm);
+      } else if (styleInput) {
+        styleInput.value = typeof state?.styleText === 'string' ? state.styleText : '';
+      }
+      applyModeTexts(state, mode);
+      if (templateInput && !String(templateInput.value || '').trim()) {
+        templateInput.value = getDefaultTemplateForMode(mode);
+      }
+    };
+    const setStickerAiMode = (mode, { persist = true } = {}) => {
+      const next = mode === 'sprite' ? 'sprite' : 'sticker';
+      if (next === stickerAiMode) return;
+      const state = loadStickerAiState() || {};
+      const currentAssetState = buildAssetStateFromMemory();
+      writeAssetStateForMode(state, stickerAiMode, currentAssetState);
+      if (stickerAiMode === 'sprite') {
+        updateStateFromSpriteInputs(state);
+      } else {
+        updateStateFromStickerInputs(state);
+      }
+      stickerAiMode = next;
+      state.mode = next;
+      applyModeInputsFromState(state, next);
+      applyAssetStateFromStore(state, next);
+      updateStickerAiModeUI();
+      applySliceDefaultsForMode(next);
+      renderPreview();
+      renderSliceList();
+      if (persist) persistStickerAiState(state);
+    };
+
     const scheduleTextSave = (immediate = false) => {
-      if (!styleInput || !templateInput || !finalInput) return;
+      if (!templateInput || !finalInput) return;
       if (textSaveTimer) {
         clearTimeout(textSaveTimer);
         textSaveTimer = null;
@@ -4028,9 +4499,12 @@ Atmosphere: pink, bubbly, extremely girly.
       textSaveTimer = setTimeout(() => {
         textSaveTimer = null;
         const state = loadStickerAiState() || {};
-        state.styleText = String(styleInput.value || '');
-        state.templateText = String(templateInput.value || '');
-        state.finalText = String(finalInput.value || '');
+        if (stickerAiMode === 'sprite') {
+          updateStateFromSpriteInputs(state);
+        } else {
+          updateStateFromStickerInputs(state);
+        }
+        state.mode = stickerAiMode;
         persistStickerAiState(state);
       }, delay);
     };
@@ -4044,11 +4518,9 @@ Atmosphere: pink, bubbly, extremely girly.
       sliceSettingsSaveTimer = setTimeout(() => {
         sliceSettingsSaveTimer = null;
         const state = loadStickerAiState() || {};
-        state.sliceSettings = serializeSliceSettingsCache();
-        state.selectedIndex = selectedGeneratedIndex;
-        if (!Array.isArray(state.generated) || !state.generated.length) {
-          state.generated = generatedImages.map(serializeStickerAiImage);
-        }
+        const assetState = buildAssetStateFromMemory();
+        writeAssetStateForMode(state, stickerAiMode, assetState);
+        state.mode = stickerAiMode;
         persistStickerAiState(state);
       }, delay);
     };
@@ -4092,8 +4564,10 @@ Atmosphere: pink, bubbly, extremely girly.
         sliceItems = [];
         sliceSettingsTouched = false;
         lastSlicePreviewKey = '';
-        sliceSettingsCache = new Map();
+        setModeCaches(stickerAiMode);
+        sliceSettingsCache.clear();
         autoSliceCache.clear();
+        applySliceDefaultsForMode(stickerAiMode);
         renderSliceList();
       }
       previewEl.innerHTML = '';
@@ -4191,13 +4665,13 @@ Atmosphere: pink, bubbly, extremely girly.
     };
 
     const readSliceSettings = () => ({
-      rows: clampNumber(rowsInput?.value, 1, 20, 4),
-      cols: clampNumber(colsInput?.value, 1, 20, 6),
-      margin: clampNumber(marginInput?.value, 0, 200, 16),
-      gap: clampNumber(gapInput?.value, 0, 200, 8),
-      tolerance: clampNumber(toleranceInput?.value, 5, 80, 28),
-      shrink: clampNumber(shrinkInput?.value, 0, 6, 1),
-      feather: clampNumber(featherInput?.value, 0, 8, 2),
+      rows: clampNumber(rowsInput?.value, 1, 20, STICKER_SLICE_DEFAULTS.rows),
+      cols: clampNumber(colsInput?.value, 1, 20, STICKER_SLICE_DEFAULTS.cols),
+      margin: clampNumber(marginInput?.value, 0, 200, STICKER_SLICE_DEFAULTS.margin),
+      gap: clampNumber(gapInput?.value, 0, 200, STICKER_SLICE_DEFAULTS.gap),
+      tolerance: clampNumber(toleranceInput?.value, 5, 80, STICKER_SLICE_DEFAULTS.tolerance),
+      shrink: clampNumber(shrinkInput?.value, 0, 6, STICKER_SLICE_DEFAULTS.shrink),
+      feather: clampNumber(featherInput?.value, 0, 8, STICKER_SLICE_DEFAULTS.feather),
     });
 
     const applySliceSettings = (settings = {}) => {
@@ -5012,26 +5486,26 @@ Atmosphere: pink, bubbly, extremely girly.
       }
     };
 
-    const buildPromptMessages = (template, style) => {
+    const buildPromptMessages = (template, inputText) => {
       const trimmedTemplate = String(template || '').trim();
-      const trimmedStyle = String(style || '').trim();
+      const trimmedInput = String(inputText || '').trim();
       const userContent = [
-        '请参考模板（包裹在<prompt>当中）和用户对贴图的需求（包裹在<input>中）：',
+        '请参考模板（包裹在<prompt>当中）和用户输入（包裹在<input>中）：',
         `<prompt>${trimmedTemplate || '(空模板)'}</prompt>`,
-        `<input>${trimmedStyle || '(未提供)'}</input>`,
+        `<input>${trimmedInput || '(未提供)'}</input>`,
         '请直接生成由<prompt>表情包裹的完整提示词，不要生成图片：',
       ].join('\n');
       return [{ role: 'user', content: userContent }];
     };
 
-    const buildPromptContinueMessages = (template, style, draft) => {
+    const buildPromptContinueMessages = (template, inputText, draft) => {
       const trimmedTemplate = String(template || '').trim();
-      const trimmedStyle = String(style || '').trim();
+      const trimmedInput = String(inputText || '').trim();
       const trimmedDraft = String(draft || '').trim();
       const userContent = [
-        '请参考模板（包裹在<prompt>当中）和用户对贴图的需求（包裹在<input>中），并补全已生成的提示词草稿（包裹在<draft>中）：',
+        '请参考模板（包裹在<prompt>当中）和用户输入（包裹在<input>中），并补全已生成的提示词草稿（包裹在<draft>中）：',
         `<prompt>${trimmedTemplate || '(空模板)'}</prompt>`,
-        `<input>${trimmedStyle || '(未提供)'}</input>`,
+        `<input>${trimmedInput || '(未提供)'}</input>`,
         `<draft>${trimmedDraft || '(空草稿)'}</draft>`,
         '请输出完整且自洽的提示词，只返回一个<prompt>...</prompt>，不要附加解释：',
       ].join('\n');
@@ -5050,11 +5524,12 @@ Atmosphere: pink, bubbly, extremely girly.
       setStatus('正在生成提示词...', 'loading');
       try {
         const client = new LLMClient(config);
-        const messages = buildPromptMessages(template, styleInput?.value || '');
+        const messages = buildPromptMessages(template, getPromptInputText());
         const output = await client.chat(messages, { temperature: 0.6 });
         finalInput.value = String(output || '').trim();
         scheduleTextSave(true);
-        setStatus('提示词已生成，可继续编辑或直接生成贴图', 'success');
+        const modeLabel = stickerAiMode === 'sprite' ? '精灵图' : '贴图';
+        setStatus(`提示词已生成，可继续编辑或直接生成${modeLabel}`, 'success');
       } catch (err) {
         setStatus(`生成提示词失败：${err?.message || '未知错误'}`, 'error');
         window.toastr?.error?.('生成提示词失败');
@@ -5080,11 +5555,12 @@ Atmosphere: pink, bubbly, extremely girly.
       setStatus('正在补全提示词...', 'loading');
       try {
         const client = new LLMClient(config);
-        const messages = buildPromptContinueMessages(template, styleInput?.value || '', draft);
+        const messages = buildPromptContinueMessages(template, getPromptInputText(), draft);
         const output = await client.chat(messages, { temperature: 0.6 });
         finalInput.value = String(output || '').trim();
         scheduleTextSave(true);
-        setStatus('提示词已补全，可继续编辑或直接生成贴图', 'success');
+        const modeLabel = stickerAiMode === 'sprite' ? '精灵图' : '贴图';
+        setStatus(`提示词已补全，可继续编辑或直接生成${modeLabel}`, 'success');
       } catch (err) {
         setStatus(`补全提示词失败：${err?.message || '未知错误'}`, 'error');
         window.toastr?.error?.('补全提示词失败');
@@ -5131,15 +5607,14 @@ Atmosphere: pink, bubbly, extremely girly.
 
     const show = () => {
       if (!templateInput?.value) {
-        templateInput.value = STICKER_AI_TEMPLATE;
+        templateInput.value = getDefaultTemplateForMode(stickerAiMode);
       }
       scheduleTextSave(true);
       setStatus('');
       renderPreview();
       pruneSliceSettingsCache(generatedImages);
-      if (!applyCachedSliceSettingsForSelection()) {
-        sliceSettingsTouched = false;
-      }
+      updateStickerAiModeUI();
+      applySliceDefaultsForMode(stickerAiMode);
       renderReferenceList();
       renderPackOptions();
       renderSliceList();
@@ -5154,14 +5629,41 @@ Atmosphere: pink, bubbly, extremely girly.
 
     overlay.addEventListener('click', () => hide());
     modal.addEventListener('click', event => event.stopPropagation());
+    modeTabs.forEach(btn => {
+      btn.addEventListener('click', () => {
+        const mode = btn?.dataset?.mode || 'sticker';
+        setStickerAiMode(mode);
+      });
+    });
     buildBtn?.addEventListener('click', () => handleBuildPrompt());
     continueBtn?.addEventListener('click', () => handleContinuePrompt());
     renderBtn?.addEventListener('click', () => handleGenerateImage());
     styleInput?.addEventListener('input', () => scheduleTextSave());
     templateInput?.addEventListener('input', () => scheduleTextSave());
     finalInput?.addEventListener('input', () => scheduleTextSave());
+    [
+      spriteThemeInput,
+      spriteThemeCustomInput,
+      spriteNarrativeInput,
+      spriteSubjectInput,
+      spriteLookInput,
+      spriteMoodInput,
+      spriteExpressionInput,
+      spriteExpressionCustomInput,
+      spriteToneInput,
+      spritePixelInput,
+      spriteBgInput,
+      spriteStructureInput,
+      spriteFpsInput,
+      spriteTransparentInput,
+      spriteExtraInput,
+    ].forEach(input => {
+      if (!input) return;
+      input.addEventListener('input', () => scheduleTextSave());
+      input.addEventListener('change', () => scheduleTextSave());
+    });
     resetBtn?.addEventListener('click', () => {
-      templateInput.value = STICKER_AI_TEMPLATE;
+      templateInput.value = getDefaultTemplateForMode(stickerAiMode);
       scheduleTextSave(true);
     });
     refAddBtn?.addEventListener('click', () => handleAddReference());
