@@ -217,8 +217,23 @@ struct WallpaperStreamEntry {
     previous_path: Option<String>,
 }
 
+#[derive(Default)]
+pub struct AttachmentStreamState {
+    inner: Mutex<HashMap<String, AttachmentStreamEntry>>,
+}
+
+struct AttachmentStreamEntry {
+    path: PathBuf,
+}
+
 #[derive(serde::Serialize)]
 pub struct WallpaperStreamStartResult {
+    pub upload_id: String,
+    pub path: String,
+}
+
+#[derive(serde::Serialize)]
+pub struct AttachmentStreamStartResult {
     pub upload_id: String,
     pub path: String,
 }
@@ -1020,6 +1035,87 @@ pub async fn save_attachment(
     Ok(AttachmentSaveResult {
         path: file.to_string_lossy().to_string(),
         bytes: bytes.len(),
+    })
+}
+
+/// 保存附件（流式分块，避免超大 payload）
+#[tauri::command]
+pub async fn save_attachment_stream_start(
+    app: AppHandle,
+    session_id: String,
+    file_name: Option<String>,
+    mime_type: Option<String>,
+    state: State<'_, AttachmentStreamState>,
+) -> Result<AttachmentStreamStartResult, String> {
+    let data_dir = get_data_dir(&app)?;
+    fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
+    let safe_sid = sanitize_segment(&session_id);
+    let attach_root = data_dir.join("attachments").join(&safe_sid);
+    fs::create_dir_all(&attach_root).map_err(|e| e.to_string())?;
+
+    let ext_from_mime = mime_type.as_deref().and_then(|m| match m {
+        "image/png" => Some("png".to_string()),
+        "image/jpeg" | "image/jpg" => Some("jpg".to_string()),
+        "image/webp" => Some("webp".to_string()),
+        "image/gif" => Some("gif".to_string()),
+        _ => None,
+    });
+    let ext_from_name = file_name.as_deref().and_then(extension_from_name);
+    let ext = ext_from_mime.or(ext_from_name).unwrap_or_else(|| "png".to_string());
+    let stem = sanitize_segment(file_name.as_deref().unwrap_or("attachment"));
+    let ts = chrono::Utc::now().timestamp_millis();
+    let file = attach_root.join(format!("attachment_{safe_sid}_{stem}_{ts}.{ext}"));
+
+    fs::write(&file, &[]).map_err(|e| e.to_string())?;
+
+    let upload_id = format!("{safe_sid}_{ts}");
+    let entry = AttachmentStreamEntry { path: file.clone() };
+    let mut map = state.inner.lock().map_err(|_| "stream state lock poisoned".to_string())?;
+    map.insert(upload_id.clone(), entry);
+
+    Ok(AttachmentStreamStartResult {
+        upload_id,
+        path: file.to_string_lossy().to_string(),
+    })
+}
+
+/// 追加附件分块
+#[tauri::command]
+pub async fn save_attachment_stream_chunk(
+    upload_id: String,
+    chunk: String,
+    state: State<'_, AttachmentStreamState>,
+) -> Result<(), String> {
+    let path = {
+        let map = state.inner.lock().map_err(|_| "stream state lock poisoned".to_string())?;
+        let entry = map.get(upload_id.trim()).ok_or("invalid upload id".to_string())?;
+        entry.path.clone()
+    };
+
+    let bytes = decode_base64_payload(&chunk)?;
+    let mut file = OpenOptions::new().append(true).open(&path).map_err(|e| e.to_string())?;
+    file.write_all(&bytes).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// 完成附件分块保存
+#[tauri::command]
+pub async fn save_attachment_stream_finish(
+    upload_id: String,
+    state: State<'_, AttachmentStreamState>,
+) -> Result<AttachmentSaveResult, String> {
+    let entry = {
+        let mut map = state.inner.lock().map_err(|_| "stream state lock poisoned".to_string())?;
+        map.remove(upload_id.trim()).ok_or("invalid upload id".to_string())?
+    };
+
+    let bytes = fs::metadata(&entry.path)
+        .map_err(|e| e.to_string())?
+        .len() as usize;
+
+    Ok(AttachmentSaveResult {
+        path: entry.path.to_string_lossy().to_string(),
+        bytes,
     })
 }
 

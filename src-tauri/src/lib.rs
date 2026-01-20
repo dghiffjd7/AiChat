@@ -5,7 +5,7 @@ mod memory_db;
 mod storage;
 
 use tauri::Manager;
-use commands::WallpaperStreamState;
+use commands::{AttachmentStreamState, WallpaperStreamState};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -41,6 +41,9 @@ pub fn run() {
             commands::delete_wallpaper,
             commands::cleanup_wallpapers,
             commands::save_attachment,
+            commands::save_attachment_stream_start,
+            commands::save_attachment_stream_chunk,
+            commands::save_attachment_stream_finish,
             commands::delete_attachment,
             commands::export_data_bundle,
             commands::import_data_bundle,
@@ -67,6 +70,7 @@ pub fn run() {
                 .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
             _app.manage(memory_db);
             _app.manage(WallpaperStreamState::default());
+            _app.manage(AttachmentStreamState::default());
             #[cfg(all(debug_assertions, not(any(target_os = "android", target_os = "ios"))))]
             {
                 use tauri::Manager;

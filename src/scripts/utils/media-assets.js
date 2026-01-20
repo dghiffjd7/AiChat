@@ -287,6 +287,12 @@ const indexManifest = (manifest) => {
             aliases: Array.isArray(raw.aliases) ? raw.aliases.slice() : [],
             sources: Array.isArray(raw.sources) ? raw.sources.slice() : Array.isArray(raw.urls) ? raw.urls.slice() : [],
         };
+        const frames = Array.isArray(raw.frames)
+            ? raw.frames.map(value => String(value || '').trim()).filter(Boolean)
+            : [];
+        if (frames.length) item.frames = frames;
+        const fps = Number(raw.fps);
+        if (Number.isFinite(fps) && fps > 0) item.fps = fps;
         addAlias(kind, item.id, item);
         if (item.label) addAlias(kind, item.label, item);
         item.aliases.forEach(a => addAlias(kind, a, item));

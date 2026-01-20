@@ -1607,6 +1607,12 @@ ${listPart || '-（无）'}
   const STICKER_SOFT_GIF_BYTES = 2_000_000;
   const STICKER_SOFT_PACK_LIMIT = 72;
   const STICKER_SOFT_TOTAL_LIMIT = 400;
+  const STICKER_ANIM_DEFAULT_FPS = 12;
+  const clampStickerFps = (value, fallback = STICKER_ANIM_DEFAULT_FPS) => {
+    const num = Number(value);
+    if (!Number.isFinite(num)) return fallback;
+    return Math.min(60, Math.max(1, Math.trunc(num)));
+  };
   let stickerPackState = stickerPackStore.getState();
   let stickerPackDeleteMode = false;
   let stickerPackDeleteTarget = '';
@@ -1619,6 +1625,7 @@ Background: solid white. Split by clean lines between each block.
 Subject: the character from the reference image. Redesign the poses creatively.
 Crucial: ensure headwear/accessories are drawn correctly and consistently.
 No text. Clean outlines, flat colors typical of sticker packs.
+No numbers, no labels, no index markers.
 Atmosphere: pink, bubbly, extremely girly.
 第一排（日常互动与可爱系）：...
 第二排（打工/学习/生活状态）：...
@@ -1639,7 +1646,7 @@ Atmosphere: pink, bubbly, extremely girly.
 - 主体与特效：不可出界
 - 动作连贯性：每一格必须与上一格自然衔接
 - 结尾必须能无缝回到第 1 格
-- 不要文字、水印或多余标记
+- 不要文字、水印、数字、序号或多余标记
 
 ---
 
@@ -1785,19 +1792,25 @@ Phase G（Frame 36）：循环衔接
       const stickers = Array.isArray(pack?.stickers) ? pack.stickers : [];
       stickers.forEach(sticker => {
         const id = String(sticker?.id || '').trim();
-        const file = String(sticker?.path || sticker?.dataUrl || '').trim();
+        const frames = Array.isArray(sticker?.frames)
+          ? sticker.frames.map(frame => String(frame || '').trim()).filter(Boolean)
+          : [];
+        const file = String(sticker?.path || sticker?.dataUrl || frames[0] || '').trim();
         if (!id || !file) return;
         const keyword = String(sticker?.keyword || '').trim();
         const aliases = [];
         if (keyword && keyword !== id) aliases.push(keyword);
         const name = String(sticker?.name || '').trim();
         if (name) aliases.push(name);
+        const fps = Number(sticker?.fps);
         items.push({
           kind: 'sticker',
           id,
           label: keyword,
           file,
           aliases,
+          frames,
+          fps: Number.isFinite(fps) ? fps : 0,
         });
       });
     });
@@ -1848,7 +1861,33 @@ Phase G（Frame 36）：循环衔接
     if (!item || typeof item !== 'object') return '';
     if (item.dataUrl) return String(item.dataUrl || '').trim();
     if (item.path) return resolveLocalStickerUrl(item.path);
+    const frames = Array.isArray(item.frames) ? item.frames : [];
+    if (frames.length) return resolveLocalStickerUrl(frames[0]);
     return '';
+  };
+  const resolveStickerFrameSources = item => {
+    const frames = Array.isArray(item?.frames) ? item.frames : [];
+    return frames.map(frame => resolveLocalStickerUrl(frame)).filter(Boolean);
+  };
+  const startStickerFrameAnimation = (img, frames, fps) => {
+    if (!img) return false;
+    const list = Array.isArray(frames) ? frames.filter(Boolean) : [];
+    if (list.length < 2) {
+      if (list.length) img.src = list[0];
+      return false;
+    }
+    let index = 0;
+    img.src = list[0];
+    const interval = Math.max(16, Math.round(1000 / Math.max(1, Number(fps) || 1)));
+    const timer = setInterval(() => {
+      if (!img.isConnected) {
+        clearInterval(timer);
+        return;
+      }
+      index = (index + 1) % list.length;
+      img.src = list[index];
+    }, interval);
+    return true;
   };
 
   const formatStickerNameSuggestion = (name, index) => {
@@ -1874,17 +1913,69 @@ Phase G（Frame 36）：循环衔接
     const padding = (base64.match(/=+$/) || [''])[0].length;
     return Math.max(0, Math.floor((base64.length * 3) / 4) - padding);
   };
+  const STICKER_STREAM_THRESHOLD_BYTES = 800_000;
+  const STICKER_STREAM_CHUNK_SIZE = 64 * 1024;
 
-  const saveStickerAsset = async (dataUrl, fileName, sessionId) => {
+  const parseDataUrlPayload = dataUrl => {
+    const raw = String(dataUrl || '').trim();
+    const comma = raw.indexOf(',');
+    if (comma < 0) return { mime: '', base64: '' };
+    const meta = raw.slice(5, comma);
+    const mime = meta.split(';')[0] || '';
+    return { mime, base64: raw.slice(comma + 1) };
+  };
+
+  const saveStickerAssetStreamed = async (dataUrl, fileName, sessionId) => {
+    const { mime, base64 } = parseDataUrlPayload(dataUrl);
+    if (!base64) return '';
+    const startResp = await safeInvoke('save_attachment_stream_start', {
+      sessionId: String(sessionId || STICKER_PACK_ASSET_SESSION),
+      fileName: fileName || '',
+      mimeType: mime || '',
+    });
+    const uploadId = startResp?.upload_id || startResp?.uploadId;
+    if (!uploadId) throw new Error('invalid attachment upload id');
+    const chunkSize = Math.max(4, STICKER_STREAM_CHUNK_SIZE - (STICKER_STREAM_CHUNK_SIZE % 4));
+    for (let offset = 0; offset < base64.length; offset += chunkSize) {
+      const chunk = base64.slice(offset, offset + chunkSize);
+      await safeInvoke('save_attachment_stream_chunk', { uploadId, chunk });
+    }
+    const finishResp = await safeInvoke('save_attachment_stream_finish', { uploadId });
+    return String(finishResp?.path || startResp?.path || '').trim();
+  };
+
+  const saveStickerAsset = async (dataUrl, fileName, sessionId, options = {}) => {
     const payload = String(dataUrl || '').trim();
     if (!payload.startsWith('data:image/')) return '';
+    const fileLower = String(fileName || '').trim().toLowerCase();
+    const { mime } = parseDataUrlPayload(payload);
+    const bytes = estimateDataUrlBytes(payload);
+    const forceStream = Boolean(options?.forceStream) || mime === 'image/gif' || fileLower.endsWith('.gif');
     try {
+      if (forceStream || bytes > STICKER_STREAM_THRESHOLD_BYTES) {
+        try {
+          const streamedPath = await saveStickerAssetStreamed(payload, fileName, sessionId);
+          if (streamedPath) return streamedPath;
+        } catch (err) {
+          logger.warn('附件流式保存失败，回退普通保存', err);
+        }
+      }
       const resp = await safeInvoke('save_attachment', {
         sessionId: String(sessionId || STICKER_PACK_ASSET_SESSION),
         dataUrl: payload,
         fileName: fileName || '',
       });
-      return String(resp?.path || '').trim();
+      const savedPath = String(resp?.path || '').trim();
+      const savedBytes = Number(resp?.bytes || 0);
+      if (forceStream && savedPath && bytes && savedBytes && savedBytes < bytes) {
+        try {
+          const streamedPath = await saveStickerAssetStreamed(payload, fileName, sessionId);
+          return streamedPath || savedPath;
+        } catch (err) {
+          logger.warn('附件流式保存补救失败', err);
+        }
+      }
+      return savedPath;
     } catch {
       return '';
     }
@@ -1930,6 +2021,12 @@ Phase G（Frame 36）：循环衔接
     if (target.path) {
       safeInvoke('delete_attachment', { sessionId: STICKER_PACK_ASSET_SESSION, path: target.path }).catch(() => {});
     }
+    const frames = Array.isArray(target.frames) ? target.frames : [];
+    frames.forEach(frame => {
+      const path = String(frame || '').trim();
+      if (!path || path.startsWith('data:')) return;
+      safeInvoke('delete_attachment', { sessionId: STICKER_PACK_ASSET_SESSION, path }).catch(() => {});
+    });
     const nextPack = { ...pack, stickers: stickers.filter(s => s.id !== stickerId) };
     const nextState = stickerPackStore.updatePack(packId, nextPack);
     syncStickerPackState(nextState);
@@ -1949,6 +2046,12 @@ Phase G（Frame 36）：循环衔接
       if (path) {
         safeInvoke('delete_attachment', { sessionId: STICKER_PACK_ASSET_SESSION, path }).catch(() => {});
       }
+      const frames = Array.isArray(sticker?.frames) ? sticker.frames : [];
+      frames.forEach(frame => {
+        const framePath = String(frame || '').trim();
+        if (!framePath || framePath.startsWith('data:')) return;
+        safeInvoke('delete_attachment', { sessionId: STICKER_PACK_ASSET_SESSION, path: framePath }).catch(() => {});
+      });
     });
     if (pack.iconPath) {
       safeInvoke('delete_attachment', { sessionId: STICKER_ICON_SESSION, path: pack.iconPath }).catch(() => {});
@@ -2155,10 +2258,14 @@ Phase G（Frame 36）：循环衔接
       const key = String(keyword || '').trim();
       if (!key) return;
       const resolved = resolveMediaAsset('sticker', key) || resolveMediaAsset('image', key);
+      const frames = resolveStickerFrameSources(resolved?.item);
+      const fps = clampStickerFps(resolved?.item?.fps);
       items.push({
         keyword: key,
         label: key,
         url: resolved?.url || '',
+        frames,
+        fps,
       });
     });
     return items;
@@ -2198,6 +2305,8 @@ Phase G（Frame 36）：循环衔接
         .map((sticker, idx) => {
           const keyword = String(sticker?.keyword || sticker?.id || '').trim();
           const missingKeyword = !String(sticker?.keyword || '').trim();
+          const frames = resolveStickerFrameSources(sticker);
+          const fps = clampStickerFps(sticker?.fps);
           return {
             keyword,
             label: String(sticker?.keyword || formatStickerNameSuggestion(sticker?.name, idx) || keyword).trim(),
@@ -2205,6 +2314,8 @@ Phase G（Frame 36）：循环衔接
             missingKeyword,
             stickerId: String(sticker?.id || '').trim(),
             packId,
+            frames,
+            fps,
           };
         })
         .filter(item => item.keyword);
@@ -2298,6 +2409,9 @@ Phase G（Frame 36）：循环衔接
             url: item?.url,
           });
         });
+        if (Array.isArray(item?.frames) && item.frames.length > 1) {
+          startStickerFrameAnimation(img, item.frames, item.fps);
+        }
         content.appendChild(img);
       } else {
         const label = document.createElement('span');
@@ -2639,6 +2753,11 @@ Phase G（Frame 36）：循环衔接
         const img = document.createElement('img');
         img.src = resolved.url;
         img.alt = keyword;
+        const frames = resolveStickerFrameSources(resolved?.item);
+        if (frames.length > 1) {
+          const fps = clampStickerFps(resolved?.item?.fps);
+          startStickerFrameAnimation(img, frames, fps);
+        }
         item.appendChild(img);
       } else {
         item.textContent = keyword || `贴图${idx + 1}`;
@@ -3754,6 +3873,23 @@ Phase G（Frame 36）：循环衔接
           <button type="button" class="sticker-ai-btn ghost" id="sticker-ai-auto">自动推断</button>
         </div>
 
+        <label class="sticker-ai-label">动图预览</label>
+        <div class="sticker-ai-anim">
+          <div class="sticker-ai-anim-preview">
+            <img id="sticker-ai-anim-image" alt="动图预览" />
+            <div class="sticker-ai-anim-placeholder" id="sticker-ai-anim-placeholder">暂无切割结果</div>
+          </div>
+          <div class="sticker-ai-anim-controls">
+            <label>预览帧速
+              <input type="number" id="sticker-ai-preview-fps" min="1" max="60" value="12">
+            </label>
+            <label class="sticker-ai-checkbox">
+              <span>仅预览已选</span>
+              <input type="checkbox" id="sticker-ai-preview-selected" checked>
+            </label>
+          </div>
+        </div>
+
         <label class="sticker-ai-label">切割结果</label>
         <div class="sticker-ai-slice-actions">
           <button type="button" class="sticker-ai-btn ghost" id="sticker-ai-select-all">全选</button>
@@ -3794,6 +3930,10 @@ Phase G（Frame 36）：循环衔接
     const refListEl = modal.querySelector('#sticker-ai-ref-list');
     const sliceBtn = modal.querySelector('#sticker-ai-slice');
     const autoSliceBtn = modal.querySelector('#sticker-ai-auto');
+    const animPreviewImg = modal.querySelector('#sticker-ai-anim-image');
+    const animPreviewPlaceholder = modal.querySelector('#sticker-ai-anim-placeholder');
+    const animPreviewFpsInput = modal.querySelector('#sticker-ai-preview-fps');
+    const animPreviewSelectedInput = modal.querySelector('#sticker-ai-preview-selected');
     const sliceListEl = modal.querySelector('#sticker-ai-slice-list');
     const selectAllBtn = modal.querySelector('#sticker-ai-select-all');
     const selectNoneBtn = modal.querySelector('#sticker-ai-select-none');
@@ -3818,12 +3958,15 @@ Phase G（Frame 36）：循环衔接
     let slicePreviewTimer = null;
     let slicePreviewIdle = null;
     let sliceSettingsSaveTimer = null;
+    let previewSettingsSaveTimer = null;
     let sliceInProgress = false;
     let slicePending = null;
     let textSaveTimer = null;
     let sliceSettingsTouched = false;
     let suppressSliceSettingsTouch = false;
     let lastSlicePreviewKey = '';
+    let animPreviewTimer = null;
+    let animPreviewFrameIndex = 0;
     const sliceSettingsCacheByMode = { sticker: new Map(), sprite: new Map() };
     const autoSliceCacheByMode = { sticker: new Map(), sprite: new Map() };
     let sliceSettingsCache = sliceSettingsCacheByMode.sticker;
@@ -3857,6 +4000,8 @@ Phase G（Frame 36）：循环衔接
       const base = normalizeStickerAiImage(item);
       return {
         ...base,
+        fullDataUrl: typeof item?.fullDataUrl === 'string' ? item.fullDataUrl.trim() : '',
+        fullPath: typeof item?.fullPath === 'string' ? item.fullPath.trim() : '',
         keyword: String(item?.keyword || '').trim(),
         name: String(item?.name || '').trim(),
         defaultName: String(item?.defaultName || '').trim(),
@@ -3876,6 +4021,8 @@ Phase G（Frame 36）：循环衔接
       const base = normalizeStickerAiSlice(item);
       return {
         ...serializeStickerAiImage(base),
+        fullPath: base.fullPath || '',
+        fullDataUrl: base.fullPath ? '' : base.fullDataUrl,
         keyword: base.keyword,
         name: base.name,
         defaultName: base.defaultName,
@@ -3891,6 +4038,8 @@ Phase G（Frame 36）：循环衔接
       list.forEach(item => {
         const path = String(item?.path || '').trim();
         if (path) paths.add(path);
+        const fullPath = String(item?.fullPath || '').trim();
+        if (fullPath) paths.add(fullPath);
       });
       return Array.from(paths);
     };
@@ -3909,6 +4058,16 @@ Phase G（Frame 36）：循环衔接
       if (base.url) return base.url;
       if (base.path) return resolveLocalStickerUrl(base.path);
       return '';
+    };
+    const getStickerAiFrameSource = (item, { full = false } = {}) => {
+      if (!item || typeof item !== 'object') return '';
+      if (full) {
+        const fullPath = String(item.fullPath || '').trim();
+        if (fullPath) return resolveLocalStickerUrl(fullPath);
+        const fullDataUrl = String(item.fullDataUrl || '').trim();
+        if (fullDataUrl) return fullDataUrl;
+      }
+      return getStickerAiImageSource(item);
     };
 
     const getStickerAiImageKey = (item, idx) => {
@@ -3958,6 +4117,10 @@ Phase G（Frame 36）：循环衔接
       fps: '12',
       transparent: true,
       extraText: '',
+    };
+    const PREVIEW_SETTINGS_DEFAULTS = {
+      fps: 12,
+      selectedOnly: true,
     };
     let stickerAiMode = 'sticker';
 
@@ -4051,6 +4214,275 @@ Phase G（Frame 36）：循环衔接
       return String(styleInput?.value || '').trim();
     };
     const getDefaultTemplateForMode = mode => (mode === 'sprite' ? STICKER_AI_SPRITE_TEMPLATE : STICKER_AI_TEMPLATE);
+    const normalizePreviewSettings = (settings = {}) => {
+      const raw = settings && typeof settings === 'object' ? settings : {};
+      return {
+        fps: clampNumber(raw.fps, 1, 60, PREVIEW_SETTINGS_DEFAULTS.fps),
+        selectedOnly: raw.selectedOnly !== false,
+      };
+    };
+    const readPreviewSettings = () => ({
+      fps: clampNumber(animPreviewFpsInput?.value, 1, 60, PREVIEW_SETTINGS_DEFAULTS.fps),
+      selectedOnly: animPreviewSelectedInput ? Boolean(animPreviewSelectedInput.checked) : PREVIEW_SETTINGS_DEFAULTS.selectedOnly,
+    });
+    const applyPreviewSettings = (settings = {}) => {
+      const normalized = normalizePreviewSettings(settings);
+      if (animPreviewFpsInput) animPreviewFpsInput.value = String(normalized.fps);
+      if (animPreviewSelectedInput) animPreviewSelectedInput.checked = normalized.selectedOnly;
+    };
+    const getPreviewSettingsFromState = (state, mode) => {
+      const legacy = state?.previewSettings;
+      const modes = state?.preview && typeof state.preview === 'object' ? state.preview : {};
+      const value = modes[mode] || (mode === 'sticker' ? legacy : null);
+      return normalizePreviewSettings(value);
+    };
+    const writePreviewSettingsToState = (state, mode, settings) => {
+      if (!state || typeof state !== 'object') return;
+      if (!state.preview || typeof state.preview !== 'object') state.preview = {};
+      state.preview[mode] = normalizePreviewSettings(settings);
+      if (mode === 'sticker') {
+        state.previewSettings = state.preview[mode];
+      }
+    };
+
+    const GIF_TRANSPARENT_INDEX = 255;
+    const GIF_ALPHA_THRESHOLD = 1;
+    const GIF_MIN_CODE_SIZE = 8;
+    const buildGifPalette = () => {
+      const palette = new Uint8Array(256 * 3);
+      let idx = 0;
+      for (let r = 0; r < 6; r++) {
+        for (let g = 0; g < 6; g++) {
+          for (let b = 0; b < 6; b++) {
+            const offset = idx * 3;
+            palette[offset] = r * 51;
+            palette[offset + 1] = g * 51;
+            palette[offset + 2] = b * 51;
+            idx += 1;
+          }
+        }
+      }
+      for (let i = idx; i < 256; i++) {
+        const offset = i * 3;
+        palette[offset] = 0;
+        palette[offset + 1] = 0;
+        palette[offset + 2] = 0;
+      }
+      return palette;
+    };
+    const quantizeToPalette = (imageData, width, height) => {
+      const total = width * height;
+      const indices = new Uint8Array(total);
+      const data = imageData.data;
+      for (let i = 0; i < total; i++) {
+        const offset = i * 4;
+        const alpha = data[offset + 3];
+        if (alpha < GIF_ALPHA_THRESHOLD) {
+          indices[i] = GIF_TRANSPARENT_INDEX;
+          continue;
+        }
+        const r = Math.round(data[offset] / 51);
+        const g = Math.round(data[offset + 1] / 51);
+        const b = Math.round(data[offset + 2] / 51);
+        indices[i] = r * 36 + g * 6 + b;
+      }
+      return indices;
+    };
+    const lzwEncode = (indices, minCodeSize) => {
+      if (!indices.length) return new Uint8Array();
+      const clearCode = 1 << minCodeSize;
+      const endCode = clearCode + 1;
+      let codeSize = minCodeSize + 1;
+      let nextCode = endCode + 1;
+      const dict = new Map();
+      const out = [];
+      let cur = 0;
+      let bits = 0;
+      const pushCode = code => {
+        cur |= code << bits;
+        bits += codeSize;
+        while (bits >= 8) {
+          out.push(cur & 0xff);
+          cur >>= 8;
+          bits -= 8;
+        }
+      };
+      pushCode(clearCode);
+      let prefix = indices[0];
+      for (let i = 1; i < indices.length; i++) {
+        const next = indices[i];
+        const key = `${prefix},${next}`;
+        const found = dict.get(key);
+        if (found !== undefined) {
+          prefix = found;
+          continue;
+        }
+        pushCode(prefix);
+        if (nextCode < 4096) {
+          dict.set(key, nextCode++);
+          if (nextCode === (1 << codeSize) && codeSize < 12) {
+            codeSize += 1;
+          }
+        } else {
+          pushCode(clearCode);
+          dict.clear();
+          nextCode = endCode + 1;
+          codeSize = minCodeSize + 1;
+        }
+        prefix = next;
+      }
+      pushCode(prefix);
+      pushCode(endCode);
+      if (bits > 0) out.push(cur & 0xff);
+      return new Uint8Array(out);
+    };
+    const bytesToBase64 = bytes => {
+      let binary = '';
+      const chunkSize = 0x8000;
+      for (let i = 0; i < bytes.length; i += chunkSize) {
+        binary += String.fromCharCode(...bytes.slice(i, i + chunkSize));
+      }
+      return btoa(binary);
+    };
+    const encodeGifFrames = (frames, width, height, fps) => {
+      const palette = buildGifPalette();
+      const bytes = [];
+      const pushByte = val => bytes.push(val & 0xff);
+      const pushString = str => {
+        for (let i = 0; i < str.length; i++) pushByte(str.charCodeAt(i));
+      };
+      const pushUint16 = val => {
+        pushByte(val & 0xff);
+        pushByte((val >> 8) & 0xff);
+      };
+      const pushSubBlocks = data => {
+        let offset = 0;
+        while (offset < data.length) {
+          const size = Math.min(255, data.length - offset);
+          pushByte(size);
+          for (let i = 0; i < size; i++) pushByte(data[offset + i]);
+          offset += size;
+        }
+        pushByte(0);
+      };
+      const delay = Math.max(1, Math.round(100 / Math.max(1, fps)));
+      pushString('GIF89a');
+      pushUint16(width);
+      pushUint16(height);
+      pushByte(0xf7);
+      pushByte(0);
+      pushByte(0);
+      for (let i = 0; i < palette.length; i++) pushByte(palette[i]);
+      pushByte(0x21);
+      pushByte(0xff);
+      pushByte(0x0b);
+      pushString('NETSCAPE2.0');
+      pushByte(0x03);
+      pushByte(0x01);
+      pushByte(0x00);
+      pushByte(0x00);
+      pushByte(0x00);
+      frames.forEach(frame => {
+        const indices = quantizeToPalette(frame, width, height);
+        const lzw = lzwEncode(indices, GIF_MIN_CODE_SIZE);
+        pushByte(0x21);
+        pushByte(0xf9);
+        pushByte(0x04);
+        pushByte(0x09);
+        pushUint16(delay);
+        pushByte(GIF_TRANSPARENT_INDEX);
+        pushByte(0x00);
+        pushByte(0x2c);
+        pushUint16(0);
+        pushUint16(0);
+        pushUint16(width);
+        pushUint16(height);
+        pushByte(0x00);
+        pushByte(GIF_MIN_CODE_SIZE);
+        pushSubBlocks(lzw);
+      });
+      pushByte(0x3b);
+      return new Uint8Array(bytes);
+    };
+    const buildAnimationFrames = async items => {
+      const sources = items
+        .map(item => getStickerAiFrameSource(item, { full: false }))
+        .map(src => src || '')
+        .filter(Boolean);
+      if (!sources.length) return null;
+      const images = [];
+      let maxW = 0;
+      let maxH = 0;
+      for (const src of sources) {
+        const img = await loadImageElement(src);
+        const width = img.naturalWidth || img.width || 0;
+        const height = img.naturalHeight || img.height || 0;
+        images.push({ img, width, height });
+        maxW = Math.max(maxW, width);
+        maxH = Math.max(maxH, height);
+      }
+      if (!maxW || !maxH) return null;
+      const canvas = document.createElement('canvas');
+      canvas.width = maxW;
+      canvas.height = maxH;
+      const ctx = canvas.getContext('2d');
+      const frames = [];
+      images.forEach(({ img, width, height }) => {
+        ctx.clearRect(0, 0, maxW, maxH);
+        const x = Math.floor((maxW - width) / 2);
+        const y = Math.floor((maxH - height) / 2);
+        if (width && height) {
+          ctx.drawImage(img, x, y, width, height);
+        } else {
+          ctx.drawImage(img, x, y);
+        }
+        frames.push(ctx.getImageData(0, 0, maxW, maxH));
+      });
+      return { frames, width: maxW, height: maxH };
+    };
+    const buildGifDataUrl = async (items, fps) => {
+      const frameData = await buildAnimationFrames(items);
+      if (!frameData) throw new Error('无法生成动图帧');
+      const bytes = encodeGifFrames(frameData.frames, frameData.width, frameData.height, fps);
+      const base64 = bytesToBase64(bytes);
+      return {
+        dataUrl: `data:image/gif;base64,${base64}`,
+        bytes: bytes.length,
+        frameCount: frameData.frames.length,
+        width: frameData.width,
+        height: frameData.height,
+      };
+    };
+    const saveAnimationFrames = async (items) => {
+      const frames = [];
+      const now = Date.now();
+      for (let i = 0; i < items.length; i++) {
+        const source = getStickerAiImageSource(items[i]);
+        if (!source) continue;
+        let dataUrl = '';
+        if (source.startsWith('data:image/')) {
+          dataUrl = source;
+        } else {
+          try {
+            const img = await loadImageElement(source);
+            const width = img.naturalWidth || img.width || 0;
+            const height = img.naturalHeight || img.height || 0;
+            if (!width || !height) continue;
+            const canvas = document.createElement('canvas');
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(img, 0, 0, width, height);
+            dataUrl = canvas.toDataURL('image/png');
+          } catch {}
+        }
+        if (!dataUrl) continue;
+        const fileName = `sticker_anim_${now}_${i + 1}.png`;
+        const path = await saveStickerAsset(dataUrl, fileName, STICKER_PACK_ASSET_SESSION);
+        frames.push(path || dataUrl);
+      }
+      return frames;
+    };
 
     const normalizeSliceSettings = (settings) => {
       if (!settings || typeof settings !== 'object') return null;
@@ -4255,6 +4687,7 @@ Phase G（Frame 36）：循环衔接
           next === 'sprite' ? '先生成完整提示词，再调用图片模型出图（6×6 精灵图）' : '先生成完整提示词，再调用图片模型出图';
       }
       if (renderBtn) renderBtn.textContent = next === 'sprite' ? '开始生成精灵图' : '开始生成贴图';
+      if (saveBtn) saveBtn.textContent = next === 'sprite' ? '保存动图' : '保存到贴图包';
     };
 
     const applyStickerAiState = state => {
@@ -4267,6 +4700,7 @@ Phase G（Frame 36）：循环衔接
       applySpriteFormState(spriteForm);
       applyModeTexts(state, stickerAiMode);
       applyAssetStateFromStore(state, stickerAiMode);
+      applyPreviewSettings(getPreviewSettingsFromState(state, stickerAiMode));
       updateStickerAiModeUI();
     };
 
@@ -4351,15 +4785,25 @@ Phase G（Frame 36）：循环衔接
       for (let i = 0; i < items.length; i++) {
         const current = normalizeStickerAiSlice(items[i]);
         let path = current.path;
+        let fullPath = current.fullPath;
         if (!path && current.dataUrl && current.dataUrl.startsWith('data:image/')) {
           const match = current.dataUrl.match(/^data:image\/([a-z0-9+.-]+);/i);
           const ext = match ? match[1].replace('jpeg', 'jpg') : 'png';
           const fileName = `sticker_ai_slice_${now}_${i + 1}.${ext}`;
           path = await saveStickerAsset(current.dataUrl, fileName, STICKER_AI_ASSET_SESSION);
         }
+        if (!fullPath && current.fullDataUrl && current.fullDataUrl.startsWith('data:image/')) {
+          const match = current.fullDataUrl.match(/^data:image\/([a-z0-9+.-]+);/i);
+          const ext = match ? match[1].replace('jpeg', 'jpg') : 'png';
+          const fileName = `sticker_ai_frame_${now}_${i + 1}.${ext}`;
+          fullPath = await saveStickerAsset(current.fullDataUrl, fileName, STICKER_AI_ASSET_SESSION);
+        }
         if (path) items[i].path = path;
+        if (fullPath) items[i].fullPath = fullPath;
         stored.push({
           ...serializeStickerAiImage({ ...current, path }),
+          fullPath: fullPath || '',
+          fullDataUrl: fullPath ? '' : current.fullDataUrl,
           keyword: current.keyword,
           name: current.name,
           defaultName: current.defaultName,
@@ -4473,6 +4917,7 @@ Phase G（Frame 36）：循环衔接
       const state = loadStickerAiState() || {};
       const currentAssetState = buildAssetStateFromMemory();
       writeAssetStateForMode(state, stickerAiMode, currentAssetState);
+      writePreviewSettingsToState(state, stickerAiMode, readPreviewSettings());
       if (stickerAiMode === 'sprite') {
         updateStateFromSpriteInputs(state);
       } else {
@@ -4482,10 +4927,12 @@ Phase G（Frame 36）：循环衔接
       state.mode = next;
       applyModeInputsFromState(state, next);
       applyAssetStateFromStore(state, next);
+      applyPreviewSettings(getPreviewSettingsFromState(state, next));
       updateStickerAiModeUI();
       applySliceDefaultsForMode(next);
       renderPreview();
       renderSliceList();
+      updateAnimationPreview();
       if (persist) persistStickerAiState(state);
     };
 
@@ -4504,6 +4951,21 @@ Phase G（Frame 36）：循环衔接
         } else {
           updateStateFromStickerInputs(state);
         }
+        state.mode = stickerAiMode;
+        persistStickerAiState(state);
+      }, delay);
+    };
+
+    const schedulePreviewSettingsSave = (immediate = false) => {
+      if (previewSettingsSaveTimer) {
+        clearTimeout(previewSettingsSaveTimer);
+        previewSettingsSaveTimer = null;
+      }
+      const delay = immediate ? 0 : 240;
+      previewSettingsSaveTimer = setTimeout(() => {
+        previewSettingsSaveTimer = null;
+        const state = loadStickerAiState() || {};
+        writePreviewSettingsToState(state, stickerAiMode, readPreviewSettings());
         state.mode = stickerAiMode;
         persistStickerAiState(state);
       }, delay);
@@ -4638,10 +5100,51 @@ Phase G（Frame 36）：循环衔接
       });
     };
 
+    const stopAnimationPreview = () => {
+      if (animPreviewTimer) {
+        clearInterval(animPreviewTimer);
+        animPreviewTimer = null;
+      }
+      animPreviewFrameIndex = 0;
+    };
+
+    const getAnimationFrames = () => {
+      const all = sliceItems
+        .map(item => ({ item, src: getStickerAiImageSource(item) }))
+        .filter(entry => entry.src);
+      const selected = all.filter(entry => entry.item.selected !== false);
+      const useSelected = animPreviewSelectedInput ? Boolean(animPreviewSelectedInput.checked) : PREVIEW_SETTINGS_DEFAULTS.selectedOnly;
+      return (useSelected ? selected : all).map(entry => entry.src);
+    };
+
+    const updateAnimationPreview = () => {
+      if (!animPreviewImg || !animPreviewPlaceholder) return;
+      stopAnimationPreview();
+      const frames = getAnimationFrames();
+      if (!frames.length) {
+        animPreviewImg.style.display = 'none';
+        animPreviewPlaceholder.style.display = 'flex';
+        animPreviewPlaceholder.textContent = sliceItems.length ? '未选择任何帧' : '暂无切割结果';
+        return;
+      }
+      animPreviewPlaceholder.style.display = 'none';
+      animPreviewImg.style.display = 'block';
+      animPreviewImg.src = frames[0];
+      const settings = readPreviewSettings();
+      const interval = Math.max(16, Math.round(1000 / settings.fps));
+      animPreviewTimer = setInterval(() => {
+        animPreviewFrameIndex = (animPreviewFrameIndex + 1) % frames.length;
+        animPreviewImg.src = frames[animPreviewFrameIndex];
+      }, interval);
+    };
+
     const renderSliceList = () => {
       if (!sliceListEl) return;
       sliceListEl.innerHTML = '';
-      if (!sliceItems.length) return;
+      if (!sliceItems.length) {
+        updateAnimationPreview();
+        return;
+      }
       sliceItems.forEach((item, idx) => {
         const card = document.createElement('div');
         card.className = 'sticker-ai-slice-item';
@@ -4662,6 +5165,7 @@ Phase G（Frame 36）：循环衔接
         card.appendChild(input);
         sliceListEl.appendChild(card);
       });
+      updateAnimationPreview();
     };
 
     const readSliceSettings = () => ({
@@ -5163,8 +5667,9 @@ Phase G（Frame 36）：循环衔接
       return imageData;
     };
 
-    const sliceStickerSheet = (canvas, settings) => {
+    const sliceStickerSheet = (canvas, settings, options = {}) => {
       const { rows, cols, margin, gap, alphaThreshold } = settings;
+      const keepFullFrame = Boolean(options.keepFullFrame);
       const width = canvas.width;
       const height = canvas.height;
       const cellWidth = Math.floor((width - margin * 2 - gap * (cols - 1)) / cols);
@@ -5209,6 +5714,7 @@ Phase G（Frame 36）：循环衔接
           outCtx.drawImage(cellCanvas, minX, minY, trimW, trimH, 0, 0, trimW, trimH);
           slices.push({
             dataUrl: outCanvas.toDataURL('image/png'),
+            fullDataUrl: keepFullFrame ? cellCanvas.toDataURL('image/png') : '',
             name: '',
             keyword: '',
             defaultName: `贴图${slices.length + 1}`,
@@ -5268,13 +5774,19 @@ Phase G（Frame 36）：循环衔接
         const refinedMask = dilateMask(mask, canvas.width, canvas.height, settings.shrink);
         const processed = applyMaskToImage(imageData, refinedMask, canvas.width, canvas.height, settings.feather);
         ctx.putImageData(processed, 0, 0);
-        sliceItems = sliceStickerSheet(canvas, {
-          rows: settings.rows,
-          cols: settings.cols,
-          margin: settings.margin,
-          gap: settings.gap,
-          alphaThreshold: 5,
-        });
+        sliceItems = sliceStickerSheet(
+          canvas,
+          {
+            rows: settings.rows,
+            cols: settings.cols,
+            margin: settings.margin,
+            gap: settings.gap,
+            alphaThreshold: 5,
+          },
+          {
+            keepFullFrame: stickerAiMode === 'sprite',
+          },
+        );
         renderSliceList();
         await persistStickerAiSlices(sliceItems);
         if (!silent) setStatus(`切割完成：${sliceItems.length} 张`, 'success');
@@ -5410,7 +5922,79 @@ Phase G（Frame 36）：循环衔接
       return next;
     };
 
+    const handleSaveAnimation = async () => {
+      if (!sliceItems.length) {
+        window.toastr?.warning?.('暂无切割结果');
+        return;
+      }
+      const selected = sliceItems.filter(item => item.selected !== false);
+      if (!selected.length) {
+        window.toastr?.warning?.('请先选择要保存的帧');
+        return;
+      }
+      let packId = String(packSelectEl?.value || '').trim();
+      if (!packId || packId === '__new__') {
+        const pack = createStickerPack();
+        packId = pack?.id || '';
+        renderPackOptions();
+        if (packSelectEl) packSelectEl.value = packId;
+      }
+      if (!packId) {
+        window.toastr?.warning?.('未找到贴图包');
+        return;
+      }
+      const pack = getStickerPackById(packId);
+      if (!pack) {
+        window.toastr?.warning?.('贴图包不存在');
+        return;
+      }
+      setBusy(true);
+      setStatus('正在保存动图...', 'loading');
+      try {
+        const fps = readPreviewSettings().fps;
+        const frames = await saveAnimationFrames(selected);
+        if (!frames.length) {
+          throw new Error('未能保存动图帧');
+        }
+        if (frames.length < selected.length) {
+          window.toastr?.warning?.(`动图帧保存不完整（${frames.length}/${selected.length}）`);
+        }
+        const usedKeywords = collectExistingStickerKeywords();
+        const count = Array.isArray(pack.stickers) ? pack.stickers.length : 0;
+        const fallbackName = `动图${count + 1}`;
+        const suggested = String(selected[0]?.keyword || selected[0]?.name || selected[0]?.defaultName || '').trim();
+        const baseName = suggested && !/^贴图\d+$/i.test(suggested) ? suggested : fallbackName;
+        const keyword = makeUniqueKeyword(baseName, usedKeywords);
+        const name = keyword || baseName || fallbackName;
+        const stickers = Array.isArray(pack.stickers) ? pack.stickers.slice() : [];
+        stickers.push({
+          id: String(Date.now()) + Math.random().toString(16).slice(2, 8),
+          name,
+          keyword,
+          frames,
+          fps,
+          path: '',
+          dataUrl: '',
+        });
+        const nextPack = { ...pack, stickers };
+        const nextState = stickerPackStore.updatePack(packId, nextPack);
+        syncStickerPackState(nextState);
+        stickerPanelTab = `${STICKER_PACK_TAB_PREFIX}${packId}`;
+        stickerPanelPage = 0;
+        renderStickerPanel();
+        setStatus(`已保存动图（${frames.length} 帧）`, 'success');
+      } catch (err) {
+        setStatus(`保存动图失败：${err?.message || '未知错误'}`, 'error');
+      } finally {
+        setBusy(false);
+      }
+    };
+
     const handleSaveSlices = async () => {
+      if (stickerAiMode === 'sprite') {
+        await handleSaveAnimation();
+        return;
+      }
       if (!sliceItems.length) {
         window.toastr?.warning?.('暂无切割结果');
         return;
@@ -5609,6 +6193,8 @@ Phase G（Frame 36）：循环衔接
       if (!templateInput?.value) {
         templateInput.value = getDefaultTemplateForMode(stickerAiMode);
       }
+      const stored = loadStickerAiState() || {};
+      applyPreviewSettings(getPreviewSettingsFromState(stored, stickerAiMode));
       scheduleTextSave(true);
       setStatus('');
       renderPreview();
@@ -5625,6 +6211,7 @@ Phase G（Frame 36）：循环衔接
     const hide = () => {
       overlay.classList.remove('is-active');
       modal.classList.remove('is-active');
+      stopAnimationPreview();
     };
 
     overlay.addEventListener('click', () => hide());
@@ -5662,6 +6249,19 @@ Phase G（Frame 36）：循环衔接
       input.addEventListener('input', () => scheduleTextSave());
       input.addEventListener('change', () => scheduleTextSave());
     });
+    if (animPreviewFpsInput) {
+      animPreviewFpsInput.addEventListener('input', () => {
+        updateAnimationPreview();
+        schedulePreviewSettingsSave();
+      });
+      animPreviewFpsInput.addEventListener('change', () => schedulePreviewSettingsSave(true));
+    }
+    if (animPreviewSelectedInput) {
+      animPreviewSelectedInput.addEventListener('change', () => {
+        updateAnimationPreview();
+        schedulePreviewSettingsSave(true);
+      });
+    }
     resetBtn?.addEventListener('click', () => {
       templateInput.value = getDefaultTemplateForMode(stickerAiMode);
       scheduleTextSave(true);
@@ -5682,11 +6282,13 @@ Phase G（Frame 36）：循环衔接
       sliceItems = sliceItems.map(item => ({ ...item, selected: true }));
       renderSliceList();
       persistStickerAiMeta();
+      updateAnimationPreview();
     });
     selectNoneBtn?.addEventListener('click', () => {
       sliceItems = sliceItems.map(item => ({ ...item, selected: false }));
       renderSliceList();
       persistStickerAiMeta();
+      updateAnimationPreview();
     });
     const handleSliceListInput = (event) => {
       const target = event?.target;
@@ -5701,6 +6303,7 @@ Phase G（Frame 36）：循环衔接
         sliceItems[idx].name = value;
       }
       persistStickerAiMeta();
+      updateAnimationPreview();
     };
     sliceListEl?.addEventListener('input', handleSliceListInput);
     sliceListEl?.addEventListener('change', handleSliceListInput);

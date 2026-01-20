@@ -17,12 +17,18 @@ const safeParse = (raw) => {
 
 const normalizeSticker = (sticker) => {
   const raw = sticker && typeof sticker === 'object' ? sticker : {};
+  const frames = Array.isArray(raw.frames)
+    ? raw.frames.map(item => String(item || '').trim()).filter(Boolean)
+    : [];
+  const fps = Number(raw.fps);
   return {
     id: String(raw.id || '').trim(),
     name: String(raw.name || '').trim(),
     keyword: String(raw.keyword || '').trim(),
     path: String(raw.path || '').trim(),
     dataUrl: String(raw.dataUrl || '').trim(),
+    frames,
+    fps: Number.isFinite(fps) ? fps : 0,
   };
 };
 

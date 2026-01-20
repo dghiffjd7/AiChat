@@ -33,6 +33,47 @@ const applyImageFallback = (img, resolved, { onFail } = {}) => {
   img.src = urls[0];
   return true;
 };
+const resolveLocalMediaUrl = (value) => {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  try {
+    const g = typeof globalThis !== 'undefined' ? globalThis : window;
+    const convert =
+      g?.__TAURI__?.core?.convertFileSrc || g?.__TAURI__?.convertFileSrc || g?.__TAURI_INTERNALS__?.convertFileSrc;
+    if (typeof convert === 'function') {
+      const converted = convert(raw);
+      if (converted) return converted;
+    }
+  } catch {}
+  if (/^(file|asset|tauri|app|https?|data|blob):/i.test(raw)) return raw;
+  if (/^[a-zA-Z]:[\\/]/.test(raw)) return `file:///${raw.replace(/\\/g, '/')}`;
+  if (raw.startsWith('/')) return `file://${raw}`;
+  return raw;
+};
+const resolveStickerFrames = (resolved) => {
+  const frames = Array.isArray(resolved?.item?.frames) ? resolved.item.frames : [];
+  return frames.map(frame => resolveLocalMediaUrl(frame)).filter(Boolean);
+};
+const startStickerAnimation = (img, frames, fps) => {
+  if (!img) return false;
+  const list = Array.isArray(frames) ? frames.filter(Boolean) : [];
+  if (list.length < 2) {
+    if (list.length) img.src = list[0];
+    return false;
+  }
+  let index = 0;
+  img.src = list[0];
+  const interval = Math.max(16, Math.round(1000 / Math.max(1, Number(fps) || 1)));
+  const timer = setInterval(() => {
+    if (!img.isConnected) {
+      clearInterval(timer);
+      return;
+    }
+    index = (index + 1) % list.length;
+    img.src = list[index];
+  }, interval);
+  return true;
+};
 
 const toastOnce = (message, level = 'warning', ttl = 8000) => {
   const text = String(message || '').trim();
@@ -193,6 +234,7 @@ export class ChatUI {
         const img = document.createElement('img');
         img.alt = keyword || 'sticker';
         img.className = 'previewable sticker-image sticker-inline';
+        const frames = resolveStickerFrames(resolved);
         const loaded = applyImageFallback(img, resolved, {
           onFail: () => {
             img.classList.add('broken');
@@ -201,6 +243,7 @@ export class ChatUI {
           },
         });
         if (loaded) {
+          if (frames.length > 1) startStickerAnimation(img, frames, resolved?.item?.fps);
           img.addEventListener('click', () => this.openLightbox(img.currentSrc || img.src));
           frag.appendChild(img);
         } else {
@@ -740,6 +783,7 @@ export class ChatUI {
           const stickerImg = document.createElement('img');
           stickerImg.alt = 'sticker';
           stickerImg.className = 'previewable sticker-image';
+          const frames = resolveStickerFrames(stickerResolved);
           const loaded = applyImageFallback(stickerImg, stickerResolved, {
             onFail: () => {
               stickerImg.classList.add('broken');
@@ -748,6 +792,7 @@ export class ChatUI {
             },
           });
           if (loaded) {
+            if (frames.length > 1) startStickerAnimation(stickerImg, frames, stickerResolved?.item?.fps);
             stickerImg.addEventListener('click', () => this.openLightbox(stickerImg.currentSrc || stickerImg.src));
             bubble.innerHTML = '';
             bubble.appendChild(stickerImg);
