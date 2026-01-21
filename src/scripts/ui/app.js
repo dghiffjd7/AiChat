@@ -1602,6 +1602,7 @@ ${listPart || '-（无）'}
   const STICKER_PACK_ASSET_SESSION = 'sticker_pack_assets';
   const STICKER_ICON_SESSION = 'sticker_pack_icons';
   const STICKER_AI_ASSET_SESSION = 'sticker_ai_assets';
+  const STICKER_EXPORT_SESSION = 'sticker_export';
   const STICKER_AI_STATE_KEY = 'sticker_ai_state_v1';
   const STICKER_SOFT_IMAGE_BYTES = 600_000;
   const STICKER_SOFT_GIF_BYTES = 2_000_000;
@@ -1757,6 +1758,7 @@ Phase G（Frame 36）：循环衔接
   const stickerFilePicker = createFilePicker('image/*', { multiple: true });
   const stickerIconPicker = createFilePicker('image/*', { multiple: false });
   const stickerAiReferencePicker = createFilePicker('image/*', { multiple: true });
+  const stickerAiUploadPicker = createFilePicker('image/*', { multiple: true });
 
   const readFileAsDataUrl = file => {
     return new Promise(resolve => {
@@ -1765,6 +1767,542 @@ Phase G（Frame 36）：循环衔接
       reader.onerror = () => resolve('');
       reader.readAsDataURL(file);
     });
+  };
+
+  const readFileAsBase64 = file => {
+    return new Promise(resolve => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = reader.result;
+        if (!result) {
+          resolve('');
+          return;
+        }
+        const bytes = new Uint8Array(result);
+        let binary = '';
+        const chunkSize = 0x8000;
+        for (let i = 0; i < bytes.length; i += chunkSize) {
+          const slice = bytes.subarray(i, i + chunkSize);
+          binary += String.fromCharCode(...slice);
+        }
+        resolve(btoa(binary));
+      };
+      reader.onerror = () => resolve('');
+      reader.readAsArrayBuffer(file);
+    });
+  };
+
+  const hasTauriRuntime = () => {
+    const g = typeof globalThis !== 'undefined' ? globalThis : window;
+    return Boolean(g?.__TAURI__ || g?.__TAURI_INTERNALS__ || g?.__TAURI_INVOKE__);
+  };
+
+  const sanitizeExportName = (value, fallback = 'download') => {
+    const raw = String(value || '').trim();
+    const cleaned = raw.replace(/[\\/:*?"<>|]+/g, '_');
+    return cleaned || fallback;
+  };
+
+  const pickSavePath = async ({ defaultName, filters }) => {
+    try {
+      const { save } = await import('@tauri-apps/plugin-dialog');
+      const result = await save({ defaultPath: defaultName, filters });
+      if (!result) return { path: '', cancelled: true };
+      return { path: result, cancelled: false };
+    } catch {
+      return { path: '', cancelled: false };
+    }
+  };
+
+  const exportAttachmentFile = async ({
+    dataUrl = '',
+    sourcePath = '',
+    fileName = '',
+    filters = [],
+    bytes = null,
+    mimeType = '',
+    skipStream = false,
+  } = {}) => {
+    if (!hasTauriRuntime()) {
+      window.toastr?.warning?.('当前环境不支持下载');
+      return '';
+    }
+    const safeName = sanitizeExportName(fileName, 'download');
+    const pick = await pickSavePath({ defaultName: safeName, filters });
+    if (pick.cancelled) return '';
+    let tempPath = '';
+    try {
+      let resolvedDataUrl = dataUrl || '';
+      let resolvedSourcePath = sourcePath || '';
+      const rawBytes = bytes ? (bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)) : null;
+      if (!resolvedSourcePath && rawBytes && rawBytes.length) {
+        try {
+          tempPath = await saveStickerAssetBytesStreamed(rawBytes, safeName, STICKER_EXPORT_SESSION, mimeType);
+          if (tempPath) {
+            resolvedSourcePath = tempPath;
+            resolvedDataUrl = '';
+          }
+        } catch (err) {
+          logger.warn('附件导出字节流写入失败', err);
+          window.toastr?.error?.('附件写入失败');
+          return '';
+        }
+      }
+      if (resolvedDataUrl && !resolvedSourcePath) {
+        const { mime } = parseDataUrlPayload(resolvedDataUrl);
+        const bytes = estimateDataUrlBytes(resolvedDataUrl);
+        const shouldStream = !skipStream && (mime === 'image/gif' || bytes > STICKER_STREAM_THRESHOLD_BYTES);
+        if (shouldStream) {
+          try {
+            tempPath = await saveStickerAssetStreamed(resolvedDataUrl, safeName, STICKER_EXPORT_SESSION);
+            if (tempPath) {
+              resolvedSourcePath = tempPath;
+              resolvedDataUrl = '';
+            }
+          } catch (err) {
+            logger.warn('附件导出流式写入失败，回退普通导出', err);
+          }
+        }
+      }
+      const resp = await safeInvoke('export_attachment', {
+        dataUrl: resolvedDataUrl,
+        sourcePath: resolvedSourcePath,
+        fileName: safeName,
+        path: pick.path || '',
+      });
+      const savedPath = String(resp?.path || '').trim();
+      if (savedPath) window.toastr?.success?.(`已下载：${savedPath}`);
+      return savedPath;
+    } catch (err) {
+      window.toastr?.error?.(`下载失败：${err?.message || '未知错误'}`);
+      return '';
+    } finally {
+      if (tempPath) {
+        safeInvoke('delete_attachment', { sessionId: STICKER_EXPORT_SESSION, path: tempPath }).catch(() => {});
+      }
+    }
+  };
+
+  const exportStickerGifFile = async ({ frames = [], fps = STICKER_ANIM_DEFAULT_FPS, fileName = '' } = {}) => {
+    if (!hasTauriRuntime()) {
+      window.toastr?.warning?.('当前环境不支持下载');
+      return '';
+    }
+    const list = Array.isArray(frames) ? frames.map(item => String(item || '').trim()).filter(Boolean) : [];
+    if (list.length < 2) {
+      window.toastr?.warning?.('动图帧不足，无法下载');
+      return '';
+    }
+    const safeName = sanitizeExportName(fileName, 'sticker.gif');
+    const pick = await pickSavePath({ defaultName: safeName, filters: [{ name: 'GIF', extensions: ['gif'] }] });
+    if (pick.cancelled) return '';
+    try {
+      const resp = await safeInvoke('export_sticker_gif', {
+        frames: list,
+        fps: clampStickerFps(fps),
+        fileName: safeName,
+        path: pick.path || '',
+      });
+      const savedPath = String(resp?.path || '').trim();
+      if (savedPath) window.toastr?.success?.(`已下载：${savedPath}`);
+      return savedPath;
+    } catch (err) {
+      window.toastr?.error?.(`下载动图失败：${err?.message || '未知错误'}`);
+      return '';
+    }
+  };
+
+  const exportStickerZip = async ({ entries = [], fileName = '' } = {}) => {
+    if (!hasTauriRuntime()) {
+      window.toastr?.warning?.('当前环境不支持下载');
+      return '';
+    }
+    if (!entries.length) {
+      window.toastr?.warning?.('暂无可下载的切割结果');
+      return '';
+    }
+    const safeName = sanitizeExportName(fileName, 'sticker_slices.zip');
+    const pick = await pickSavePath({ defaultName: safeName, filters: [{ name: 'ZIP', extensions: ['zip'] }] });
+    if (pick.cancelled) return '';
+    try {
+      const resp = await safeInvoke('export_sticker_zip', {
+        entries,
+        fileName: safeName,
+        path: pick.path || '',
+      });
+      const savedPath = String(resp?.path || '').trim();
+      if (savedPath) window.toastr?.success?.(`已下载：${savedPath}`);
+      return savedPath;
+    } catch (err) {
+      window.toastr?.error?.(`下载失败：${err?.message || '未知错误'}`);
+      return '';
+    }
+  };
+
+  const ensureFileExtension = (name, ext) => {
+    const raw = String(name || '').trim();
+    if (!raw) return ext ? `download.${ext}` : 'download';
+    if (!ext) return raw;
+    if (/\.[a-z0-9]+$/i.test(raw)) return raw;
+    return `${raw}.${ext}`;
+  };
+
+  const inferImageExtension = (dataUrl, fallback = 'png') => {
+    const raw = String(dataUrl || '').trim();
+    if (!raw.startsWith('data:')) return fallback;
+    const { mime } = parseDataUrlPayload(raw);
+    if (mime === 'image/jpeg' || mime === 'image/jpg') return 'jpg';
+    if (mime === 'image/webp') return 'webp';
+    if (mime === 'image/gif') return 'gif';
+    if (mime === 'image/png') return 'png';
+    return fallback;
+  };
+
+  const readUrlAsDataUrl = async (url) => {
+    const src = String(url || '').trim();
+    if (!src) return '';
+    if (src.startsWith('data:')) return src;
+    try {
+      const resp = await fetch(src);
+      if (!resp.ok) return '';
+      const blob = await resp.blob();
+      return await new Promise(resolve => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ''));
+        reader.onerror = () => resolve('');
+        reader.readAsDataURL(blob);
+      });
+    } catch {
+      return '';
+    }
+  };
+
+  const loadImageElement = (src) => new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error('load image failed'));
+    img.src = src;
+  });
+
+  const GIF_TRANSPARENT_INDEX = 255;
+  const GIF_ALPHA_THRESHOLD = 1;
+  const GIF_MIN_CODE_SIZE = 8;
+  const buildGifPalette = () => {
+    const palette = new Uint8Array(256 * 3);
+    let idx = 0;
+    for (let r = 0; r < 6; r++) {
+      for (let g = 0; g < 6; g++) {
+        for (let b = 0; b < 6; b++) {
+          const offset = idx * 3;
+          palette[offset] = r * 51;
+          palette[offset + 1] = g * 51;
+          palette[offset + 2] = b * 51;
+          idx += 1;
+        }
+      }
+    }
+    for (let i = idx; i < 256; i++) {
+      const offset = i * 3;
+      palette[offset] = 0;
+      palette[offset + 1] = 0;
+      palette[offset + 2] = 0;
+    }
+    return palette;
+  };
+  const quantizeToPalette = (imageData, width, height) => {
+    const total = width * height;
+    const indices = new Uint8Array(total);
+    const data = imageData.data;
+    for (let i = 0; i < total; i++) {
+      const offset = i * 4;
+      const alpha = data[offset + 3];
+      if (alpha < GIF_ALPHA_THRESHOLD) {
+        indices[i] = GIF_TRANSPARENT_INDEX;
+        continue;
+      }
+      const r = Math.round(data[offset] / 51);
+      const g = Math.round(data[offset + 1] / 51);
+      const b = Math.round(data[offset + 2] / 51);
+      indices[i] = r * 36 + g * 6 + b;
+    }
+    return indices;
+  };
+  const lzwEncode = (indices, minCodeSize) => {
+    if (!indices.length) return new Uint8Array();
+    const clearCode = 1 << minCodeSize;
+    const endCode = clearCode + 1;
+    let codeSize = minCodeSize + 1;
+    let nextCode = endCode + 1;
+    const dict = new Map();
+    const out = [];
+    let cur = 0;
+    let bits = 0;
+    const pushCode = code => {
+      cur |= code << bits;
+      bits += codeSize;
+      while (bits >= 8) {
+        out.push(cur & 0xff);
+        cur >>= 8;
+        bits -= 8;
+      }
+    };
+    pushCode(clearCode);
+    let prefix = indices[0];
+    for (let i = 1; i < indices.length; i++) {
+      const next = indices[i];
+      const key = `${prefix},${next}`;
+      const found = dict.get(key);
+      if (found !== undefined) {
+        prefix = found;
+        continue;
+      }
+      pushCode(prefix);
+      if (nextCode < 4096) {
+        dict.set(key, nextCode++);
+        if (nextCode === (1 << codeSize) && codeSize < 12) {
+          codeSize += 1;
+        }
+      } else {
+        pushCode(clearCode);
+        dict.clear();
+        nextCode = endCode + 1;
+        codeSize = minCodeSize + 1;
+      }
+      prefix = next;
+    }
+    pushCode(prefix);
+    pushCode(endCode);
+    if (bits > 0) out.push(cur & 0xff);
+    return new Uint8Array(out);
+  };
+  const bytesToBase64 = bytes => {
+    let binary = '';
+    const chunkSize = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunkSize) {
+      binary += String.fromCharCode(...bytes.slice(i, i + chunkSize));
+    }
+    return btoa(binary);
+  };
+  const encodeGifFrames = (frames, width, height, fps) => {
+    const palette = buildGifPalette();
+    const bytes = [];
+    const pushByte = val => bytes.push(val & 0xff);
+    const pushString = str => {
+      for (let i = 0; i < str.length; i++) pushByte(str.charCodeAt(i));
+    };
+    const pushUint16 = val => {
+      pushByte(val & 0xff);
+      pushByte((val >> 8) & 0xff);
+    };
+    const pushSubBlocks = data => {
+      let offset = 0;
+      while (offset < data.length) {
+        const size = Math.min(255, data.length - offset);
+        pushByte(size);
+        for (let i = 0; i < size; i++) pushByte(data[offset + i]);
+        offset += size;
+      }
+      pushByte(0);
+    };
+    const delay = Math.max(1, Math.round(100 / Math.max(1, fps)));
+    pushString('GIF89a');
+    pushUint16(width);
+    pushUint16(height);
+    pushByte(0xf7);
+    pushByte(0);
+    pushByte(0);
+    for (let i = 0; i < palette.length; i++) pushByte(palette[i]);
+    pushByte(0x21);
+    pushByte(0xff);
+    pushByte(0x0b);
+    pushString('NETSCAPE2.0');
+    pushByte(0x03);
+    pushByte(0x01);
+    pushByte(0x00);
+    pushByte(0x00);
+    pushByte(0x00);
+    frames.forEach(frame => {
+      const indices = quantizeToPalette(frame, width, height);
+      const lzw = lzwEncode(indices, GIF_MIN_CODE_SIZE);
+      pushByte(0x21);
+      pushByte(0xf9);
+      pushByte(0x04);
+      pushByte(0x09);
+      pushUint16(delay);
+      pushByte(GIF_TRANSPARENT_INDEX);
+      pushByte(0x00);
+      pushByte(0x2c);
+      pushUint16(0);
+      pushUint16(0);
+      pushUint16(width);
+      pushUint16(height);
+      pushByte(0x00);
+      pushByte(GIF_MIN_CODE_SIZE);
+      pushSubBlocks(lzw);
+    });
+    pushByte(0x3b);
+    return new Uint8Array(bytes);
+  };
+
+
+
+  const buildGifFramesFromSources = async (sources) => {
+    const list = (sources || []).filter(Boolean);
+    if (!list.length) return null;
+    const images = [];
+    for (const src of list) {
+      let resolved = src;
+      if (!String(src || '').startsWith('data:')) {
+        const dataUrl = await readUrlAsDataUrl(src);
+        if (dataUrl) resolved = dataUrl;
+      }
+      try {
+        const img = await loadImageElement(resolved);
+        images.push(img);
+      } catch {
+        return null;
+      }
+    }
+    const maxW = Math.max(...images.map(img => img.naturalWidth || img.width || 0));
+    const maxH = Math.max(...images.map(img => img.naturalHeight || img.height || 0));
+    if (!maxW || !maxH) return null;
+    const canvas = document.createElement('canvas');
+    canvas.width = maxW;
+    canvas.height = maxH;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+    const frames = [];
+    for (const img of images) {
+      try {
+        ctx.clearRect(0, 0, maxW, maxH);
+        const width = img.naturalWidth || img.width || 0;
+        const height = img.naturalHeight || img.height || 0;
+        const x = Math.floor((maxW - width) / 2);
+        const y = Math.floor((maxH - height) / 2);
+        if (width && height) {
+          ctx.drawImage(img, x, y, width, height);
+        } else {
+          ctx.drawImage(img, x, y);
+        }
+        frames.push(ctx.getImageData(0, 0, maxW, maxH));
+      } catch {
+        return null;
+      }
+    }
+    if (!frames.length) return null;
+    return { frames, width: maxW, height: maxH };
+  };
+
+  const buildGifBytesFromSources = async (sources, fps) => {
+    const frameData = await buildGifFramesFromSources(sources);
+    if (!frameData) return null;
+    const bytes = encodeGifFrames(frameData.frames, frameData.width, frameData.height, fps);
+    return {
+      bytes,
+      frameCount: frameData.frames.length,
+      width: frameData.width,
+      height: frameData.height,
+    };
+  };
+
+  const buildGifDataUrlFromSources = async (sources, fps) => {
+    const frameData = await buildGifFramesFromSources(sources);
+    if (!frameData) return null;
+    const bytes = encodeGifFrames(frameData.frames, frameData.width, frameData.height, fps);
+    const base64 = bytesToBase64(bytes);
+    return {
+      dataUrl: `data:image/gif;base64,${base64}`,
+      byteLength: bytes.length,
+      frameCount: frameData.frames.length,
+      width: frameData.width,
+      height: frameData.height,
+    };
+  };
+
+  const downloadChatAttachment = async (message) => {
+    if (!message || typeof message !== 'object') return;
+    const type = String(message.type || '').trim();
+    const meta = message.meta && typeof message.meta === 'object' ? message.meta : {};
+    if (type === 'image') {
+      const localPath = String(meta.localPath || '').trim();
+      const baseName = sanitizeExportName(meta.originalName || message.content || 'image', 'image');
+      if (localPath) {
+        await exportAttachmentFile({
+          sourcePath: localPath,
+          fileName: ensureFileExtension(baseName, 'png'),
+          filters: [{ name: 'Image', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif'] }],
+        });
+        return;
+      }
+      const dataUrl = await readUrlAsDataUrl(message.content || '');
+      if (!dataUrl) {
+        window.toastr?.warning?.('无法读取图片内容');
+        return;
+      }
+      const ext = inferImageExtension(dataUrl, 'png');
+      await exportAttachmentFile({
+        dataUrl,
+        fileName: ensureFileExtension(baseName, ext),
+        filters: [{ name: 'Image', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif'] }],
+      });
+      return;
+    }
+    if (type === 'sticker') {
+      try {
+        const keyword = resolveStickerKeywordForMessage(message) || String(message.content || '').trim();
+        const lookupKey = keyword || String(message.content || '').trim();
+        const resolved = resolveMediaAsset('sticker', lookupKey) || resolveMediaAsset('image', lookupKey);
+        const frames = resolveStickerFramesByKeyword(lookupKey, resolved?.item).filter(Boolean);
+        const fps = resolveStickerFpsByKeyword(lookupKey, resolved?.item) || STICKER_ANIM_DEFAULT_FPS;
+        if (frames.length > 1) {
+          const framePaths = resolveStickerFramePathsByKeyword(lookupKey, resolved?.item).filter(Boolean);
+          if (framePaths.length < 2) {
+            window.toastr?.warning?.('动图资源不可下载');
+            return;
+          }
+          const baseName = sanitizeExportName(keyword || 'sticker', 'sticker').replace(/\.[a-z0-9]+$/i, '') || 'sticker';
+          await exportStickerGifFile({
+            frames: framePaths,
+            fps,
+            fileName: ensureFileExtension(baseName, 'gif'),
+          });
+          return;
+        }
+        const src = resolved?.url || frames[0] || '';
+        if (!src) {
+          window.toastr?.warning?.('未找到贴图资源');
+          return;
+        }
+        const dataUrl = await readUrlAsDataUrl(src);
+        if (!dataUrl) {
+          window.toastr?.warning?.('无法读取贴图内容');
+          return;
+        }
+        const ext = inferImageExtension(dataUrl, 'png');
+        await exportAttachmentFile({
+          dataUrl,
+          fileName: ensureFileExtension(sanitizeExportName(keyword || 'sticker', 'sticker'), ext),
+          filters: [{ name: 'Image', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif'] }],
+        });
+        return;
+      } catch (err) {
+        window.toastr?.error?.(`下载动图失败：${err?.message || '未知错误'}`);
+        return;
+      }
+    }
+    if (type === 'document') {
+      const localPath = String(meta.localPath || '').trim();
+      if (!localPath) {
+        window.toastr?.warning?.('未找到附件文件');
+        return;
+      }
+      const name = meta.originalName || message.content || 'document';
+      await exportAttachmentFile({
+        sourcePath: localPath,
+        fileName: sanitizeExportName(name, 'document'),
+      });
+    }
   };
 
   const resolveLocalStickerUrl = value => {
@@ -1869,6 +2407,10 @@ Phase G（Frame 36）：循环衔接
     const frames = Array.isArray(item?.frames) ? item.frames : [];
     return frames.map(frame => resolveLocalStickerUrl(frame)).filter(Boolean);
   };
+  const resolveStickerFramePaths = item => {
+    const frames = Array.isArray(item?.frames) ? item.frames : [];
+    return frames.map(frame => String(frame || '').trim()).filter(Boolean);
+  };
   const normalizeStickerKeywordKey = value => String(value || '').trim().toLowerCase();
   const findStickerByKeyword = keyword => {
     const key = normalizeStickerKeywordKey(keyword);
@@ -1889,6 +2431,14 @@ Phase G（Frame 36）：循环衔接
     const fallback = findStickerByKeyword(keyword);
     if (!fallback) return primary;
     const next = resolveStickerFrameSources(fallback);
+    return next.length ? next : primary;
+  };
+  const resolveStickerFramePathsByKeyword = (keyword, resolvedItem) => {
+    const primary = resolveStickerFramePaths(resolvedItem);
+    if (primary.length > 1) return primary;
+    const fallback = findStickerByKeyword(keyword);
+    if (!fallback) return primary;
+    const next = resolveStickerFramePaths(fallback);
     return next.length ? next : primary;
   };
   const resolveStickerFpsByKeyword = (keyword, resolvedItem) => {
@@ -1966,6 +2516,26 @@ Phase G（Frame 36）：循环衔接
     const chunkSize = Math.max(4, STICKER_STREAM_CHUNK_SIZE - (STICKER_STREAM_CHUNK_SIZE % 4));
     for (let offset = 0; offset < base64.length; offset += chunkSize) {
       const chunk = base64.slice(offset, offset + chunkSize);
+      await safeInvoke('save_attachment_stream_chunk', { uploadId, chunk });
+    }
+    const finishResp = await safeInvoke('save_attachment_stream_finish', { uploadId });
+    return String(finishResp?.path || startResp?.path || '').trim();
+  };
+
+  const saveStickerAssetBytesStreamed = async (bytes, fileName, sessionId, mimeType = '') => {
+    const raw = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes || []);
+    if (!raw.length) return '';
+    const startResp = await safeInvoke('save_attachment_stream_start', {
+      sessionId: String(sessionId || STICKER_PACK_ASSET_SESSION),
+      fileName: fileName || '',
+      mimeType: mimeType || '',
+    });
+    const uploadId = startResp?.upload_id || startResp?.uploadId;
+    if (!uploadId) throw new Error('invalid attachment upload id');
+    const chunkSize = Math.max(3, STICKER_STREAM_CHUNK_SIZE - (STICKER_STREAM_CHUNK_SIZE % 3));
+    for (let offset = 0; offset < raw.length; offset += chunkSize) {
+      const chunkBytes = raw.subarray(offset, offset + chunkSize);
+      const chunk = bytesToBase64(chunkBytes);
       await safeInvoke('save_attachment_stream_chunk', { uploadId, chunk });
     }
     const finishResp = await safeInvoke('save_attachment_stream_finish', { uploadId });
@@ -3466,6 +4036,9 @@ Phase G（Frame 36）：循环衔接
             size: Number(attachment.size || 0),
             sizeLabel: attachment.sizeLabel || '',
             textTruncated: Boolean(attachment.textTruncated),
+            localPath: attachment.localPath || '',
+            localBytes: Number(attachment.localBytes || 0) || 0,
+            originalName: attachment.originalName || attachment.name || '',
           },
         });
       }
@@ -3881,6 +4454,7 @@ Phase G（Frame 36）：循环衔接
 
         <div class="sticker-ai-actions">
           <button type="button" class="sticker-ai-btn primary" id="sticker-ai-render">开始生成贴图</button>
+          <button type="button" class="sticker-ai-btn ghost" id="sticker-ai-upload">上传生成图</button>
         </div>
 
         <div class="sticker-ai-status" id="sticker-ai-status"></div>
@@ -3924,6 +4498,7 @@ Phase G（Frame 36）：循环衔接
           <button type="button" class="sticker-ai-btn ghost" id="sticker-ai-select-none">全不选</button>
           <select id="sticker-ai-pack"></select>
           <button type="button" class="sticker-ai-btn primary" id="sticker-ai-save">保存到贴图包</button>
+          <button type="button" class="sticker-ai-btn" id="sticker-ai-download-zip">下载ZIP</button>
         </div>
         <div class="sticker-ai-slice-list" id="sticker-ai-slice-list"></div>
       </div>
@@ -3977,7 +4552,9 @@ Phase G（Frame 36）：循环衔接
     const buildBtn = modal.querySelector('#sticker-ai-build');
     const resetBtn = modal.querySelector('#sticker-ai-reset');
     const renderBtn = modal.querySelector('#sticker-ai-render');
+    const uploadBtn = modal.querySelector('#sticker-ai-upload');
     const closeBtn = modal.querySelector('.sticker-ai-close');
+    const downloadZipBtn = modal.querySelector('#sticker-ai-download-zip');
 
     let referenceImages = [];
     let generatedImages = [];
@@ -4104,6 +4681,20 @@ Phase G（Frame 36）：循环衔接
       if (base.url) return `url:${base.url}`;
       if (base.dataUrl) return `data:${base.dataUrl.length}:${idx}`;
       return `idx:${idx}`;
+    };
+
+    const inferStickerAiExtension = (item, fallback = 'png') => {
+      const base = normalizeStickerAiImage(item);
+      if (base.dataUrl && base.dataUrl.startsWith('data:')) {
+        const { mime } = parseDataUrlPayload(base.dataUrl);
+        if (mime === 'image/jpeg' || mime === 'image/jpg') return 'jpg';
+        if (mime === 'image/webp') return 'webp';
+        if (mime === 'image/gif') return 'gif';
+        if (mime === 'image/png') return 'png';
+      }
+      const hint = base.path || base.url || '';
+      const match = hint.match(/\.([a-z0-9]+)(?:[?#].*)?$/i);
+      return match ? match[1].toLowerCase() : fallback;
     };
 
     const clampNumber = (value, min, max, fallback) => {
@@ -4273,165 +4864,6 @@ Phase G（Frame 36）：循环衔接
       }
     };
 
-    const GIF_TRANSPARENT_INDEX = 255;
-    const GIF_ALPHA_THRESHOLD = 1;
-    const GIF_MIN_CODE_SIZE = 8;
-    const buildGifPalette = () => {
-      const palette = new Uint8Array(256 * 3);
-      let idx = 0;
-      for (let r = 0; r < 6; r++) {
-        for (let g = 0; g < 6; g++) {
-          for (let b = 0; b < 6; b++) {
-            const offset = idx * 3;
-            palette[offset] = r * 51;
-            palette[offset + 1] = g * 51;
-            palette[offset + 2] = b * 51;
-            idx += 1;
-          }
-        }
-      }
-      for (let i = idx; i < 256; i++) {
-        const offset = i * 3;
-        palette[offset] = 0;
-        palette[offset + 1] = 0;
-        palette[offset + 2] = 0;
-      }
-      return palette;
-    };
-    const quantizeToPalette = (imageData, width, height) => {
-      const total = width * height;
-      const indices = new Uint8Array(total);
-      const data = imageData.data;
-      for (let i = 0; i < total; i++) {
-        const offset = i * 4;
-        const alpha = data[offset + 3];
-        if (alpha < GIF_ALPHA_THRESHOLD) {
-          indices[i] = GIF_TRANSPARENT_INDEX;
-          continue;
-        }
-        const r = Math.round(data[offset] / 51);
-        const g = Math.round(data[offset + 1] / 51);
-        const b = Math.round(data[offset + 2] / 51);
-        indices[i] = r * 36 + g * 6 + b;
-      }
-      return indices;
-    };
-    const lzwEncode = (indices, minCodeSize) => {
-      if (!indices.length) return new Uint8Array();
-      const clearCode = 1 << minCodeSize;
-      const endCode = clearCode + 1;
-      let codeSize = minCodeSize + 1;
-      let nextCode = endCode + 1;
-      const dict = new Map();
-      const out = [];
-      let cur = 0;
-      let bits = 0;
-      const pushCode = code => {
-        cur |= code << bits;
-        bits += codeSize;
-        while (bits >= 8) {
-          out.push(cur & 0xff);
-          cur >>= 8;
-          bits -= 8;
-        }
-      };
-      pushCode(clearCode);
-      let prefix = indices[0];
-      for (let i = 1; i < indices.length; i++) {
-        const next = indices[i];
-        const key = `${prefix},${next}`;
-        const found = dict.get(key);
-        if (found !== undefined) {
-          prefix = found;
-          continue;
-        }
-        pushCode(prefix);
-        if (nextCode < 4096) {
-          dict.set(key, nextCode++);
-          if (nextCode === (1 << codeSize) && codeSize < 12) {
-            codeSize += 1;
-          }
-        } else {
-          pushCode(clearCode);
-          dict.clear();
-          nextCode = endCode + 1;
-          codeSize = minCodeSize + 1;
-        }
-        prefix = next;
-      }
-      pushCode(prefix);
-      pushCode(endCode);
-      if (bits > 0) out.push(cur & 0xff);
-      return new Uint8Array(out);
-    };
-    const bytesToBase64 = bytes => {
-      let binary = '';
-      const chunkSize = 0x8000;
-      for (let i = 0; i < bytes.length; i += chunkSize) {
-        binary += String.fromCharCode(...bytes.slice(i, i + chunkSize));
-      }
-      return btoa(binary);
-    };
-    const encodeGifFrames = (frames, width, height, fps) => {
-      const palette = buildGifPalette();
-      const bytes = [];
-      const pushByte = val => bytes.push(val & 0xff);
-      const pushString = str => {
-        for (let i = 0; i < str.length; i++) pushByte(str.charCodeAt(i));
-      };
-      const pushUint16 = val => {
-        pushByte(val & 0xff);
-        pushByte((val >> 8) & 0xff);
-      };
-      const pushSubBlocks = data => {
-        let offset = 0;
-        while (offset < data.length) {
-          const size = Math.min(255, data.length - offset);
-          pushByte(size);
-          for (let i = 0; i < size; i++) pushByte(data[offset + i]);
-          offset += size;
-        }
-        pushByte(0);
-      };
-      const delay = Math.max(1, Math.round(100 / Math.max(1, fps)));
-      pushString('GIF89a');
-      pushUint16(width);
-      pushUint16(height);
-      pushByte(0xf7);
-      pushByte(0);
-      pushByte(0);
-      for (let i = 0; i < palette.length; i++) pushByte(palette[i]);
-      pushByte(0x21);
-      pushByte(0xff);
-      pushByte(0x0b);
-      pushString('NETSCAPE2.0');
-      pushByte(0x03);
-      pushByte(0x01);
-      pushByte(0x00);
-      pushByte(0x00);
-      pushByte(0x00);
-      frames.forEach(frame => {
-        const indices = quantizeToPalette(frame, width, height);
-        const lzw = lzwEncode(indices, GIF_MIN_CODE_SIZE);
-        pushByte(0x21);
-        pushByte(0xf9);
-        pushByte(0x04);
-        pushByte(0x09);
-        pushUint16(delay);
-        pushByte(GIF_TRANSPARENT_INDEX);
-        pushByte(0x00);
-        pushByte(0x2c);
-        pushUint16(0);
-        pushUint16(0);
-        pushUint16(width);
-        pushUint16(height);
-        pushByte(0x00);
-        pushByte(GIF_MIN_CODE_SIZE);
-        pushSubBlocks(lzw);
-      });
-      pushByte(0x3b);
-      return new Uint8Array(bytes);
-    };
     const buildAnimationFrames = async items => {
       const sources = items
         .map(item => getStickerAiFrameSource(item, { full: false }))
@@ -4715,6 +5147,7 @@ Phase G（Frame 36）：循环衔接
           next === 'sprite' ? '先生成完整提示词，再调用图片模型出图（6×6 精灵图）' : '先生成完整提示词，再调用图片模型出图';
       }
       if (renderBtn) renderBtn.textContent = next === 'sprite' ? '开始生成精灵图' : '开始生成贴图';
+      if (uploadBtn) uploadBtn.textContent = next === 'sprite' ? '上传精灵图' : '上传贴图';
       if (saveBtn) saveBtn.textContent = next === 'sprite' ? '保存动图' : '保存到贴图包';
     };
 
@@ -4907,11 +5340,13 @@ Phase G（Frame 36）：循环衔接
     const setBusy = busy => {
       if (buildBtn) buildBtn.disabled = busy;
       if (renderBtn) renderBtn.disabled = busy;
+      if (uploadBtn) uploadBtn.disabled = busy;
       if (resetBtn) resetBtn.disabled = busy;
       if (continueBtn) continueBtn.disabled = busy;
       if (sliceBtn) sliceBtn.disabled = busy;
       if (autoSliceBtn) autoSliceBtn.disabled = busy;
       if (saveBtn) saveBtn.disabled = busy;
+      if (downloadZipBtn) downloadZipBtn.disabled = busy;
     };
 
     const updateStateFromStickerInputs = state => {
@@ -5046,6 +5481,106 @@ Phase G（Frame 36）：循环衔接
       }, delay);
     };
 
+    const createStickerAiDownloadMenu = () => {
+      const menu = document.createElement('div');
+      menu.className = 'sticker-ai-download-menu';
+      menu.style.cssText = `
+        position: fixed;
+        background: #fff;
+        border: 1px solid rgba(0,0,0,0.08);
+        border-radius: 10px;
+        box-shadow: 0 10px 28px rgba(0,0,0,0.16);
+        padding: 6px;
+        display: none;
+        z-index: 22000;
+        min-width: 120px;
+      `;
+      document.body.appendChild(menu);
+      document.addEventListener(
+        'pointerdown',
+        e => {
+          if (menu.style.display === 'none') return;
+          if (menu.contains(e.target)) return;
+          menu.style.display = 'none';
+        },
+        { passive: true },
+      );
+      return menu;
+    };
+
+    const stickerAiDownloadMenu = createStickerAiDownloadMenu();
+    const openStickerAiDownloadMenu = (point, onDownload) => {
+      if (!stickerAiDownloadMenu) return;
+      stickerAiDownloadMenu.innerHTML = '';
+      const btn = document.createElement('button');
+      btn.textContent = '下载';
+      btn.style.cssText = `
+        width: 100%;
+        padding: 10px 12px;
+        border: none;
+        background: transparent;
+        text-align: left;
+        border-radius: 8px;
+        cursor: pointer;
+        font-size: 14px;
+      `;
+      btn.onmouseenter = () => (btn.style.background = '#f1f5f9');
+      btn.onmouseleave = () => (btn.style.background = 'transparent');
+      btn.onclick = e => {
+        e.stopPropagation();
+        stickerAiDownloadMenu.style.display = 'none';
+        onDownload?.();
+      };
+      stickerAiDownloadMenu.appendChild(btn);
+      stickerAiDownloadMenu.style.visibility = 'hidden';
+      stickerAiDownloadMenu.style.display = 'block';
+      const menuW = stickerAiDownloadMenu.offsetWidth || 160;
+      const menuH = stickerAiDownloadMenu.offsetHeight || 44;
+      const left = Math.min(Math.max(12, point.x), window.innerWidth - menuW - 12);
+      const top = Math.min(Math.max(12, point.y), window.innerHeight - menuH - 12);
+      stickerAiDownloadMenu.style.left = `${left}px`;
+      stickerAiDownloadMenu.style.top = `${top}px`;
+      stickerAiDownloadMenu.style.visibility = 'visible';
+    };
+
+    const bindPreviewDownload = (img, item, idx) => {
+      if (!img) return;
+      let timer = null;
+      let triggered = false;
+      const clear = () => {
+        if (timer) clearTimeout(timer);
+        timer = null;
+      };
+      const showMenu = (event) => {
+        const point = getPoint(event);
+        openStickerAiDownloadMenu(point, () => handleDownloadCurrentPreview(item, idx));
+      };
+      img.addEventListener('contextmenu', event => {
+        event.preventDefault();
+        triggered = true;
+        clear();
+        showMenu(event);
+      });
+      img.addEventListener('pointerdown', event => {
+        if (event.button && event.button !== 0) return;
+        triggered = false;
+        clear();
+        timer = setTimeout(() => {
+          triggered = true;
+          showMenu(event);
+        }, 520);
+      });
+      ['pointerup', 'pointerleave', 'pointercancel'].forEach(type => {
+        img.addEventListener(type, () => clear());
+      });
+      img.addEventListener('click', event => {
+        if (!triggered) return;
+        event.preventDefault();
+        event.stopPropagation();
+        triggered = false;
+      });
+    };
+
     const renderPreview = (items = null) => {
       if (!previewEl) return;
       if (Array.isArray(items)) {
@@ -5084,6 +5619,7 @@ Phase G（Frame 36）：循环衔接
           persistStickerAiSelection();
           scheduleSlicePreview({ immediate: true, auto: !cached });
         });
+        bindPreviewDownload(img, item, idx);
         previewEl.appendChild(img);
       });
       if (Array.isArray(items) && generatedImages.length) {
@@ -5228,13 +5764,6 @@ Phase G（Frame 36）：循环衔接
       return true;
     };
 
-    const loadImageElement = (src) => new Promise((resolve, reject) => {
-      const img = new Image();
-      img.crossOrigin = 'anonymous';
-      img.onload = () => resolve(img);
-      img.onerror = () => reject(new Error('load image failed'));
-      img.src = src;
-    });
 
     const sampleCornerStats = (data, width, height, size) => {
       const clamp = (v, max) => Math.min(max, Math.max(0, v));
@@ -6019,6 +6548,78 @@ Phase G（Frame 36）：循环衔接
       }
     };
 
+    const handleUploadGenerated = async () => {
+      const files = await pickFilesFromInput(stickerAiUploadPicker);
+      if (!files.length) return;
+      const images = [];
+      for (const file of files) {
+        const dataUrl = await readFileAsDataUrl(file);
+        if (!dataUrl) continue;
+        images.push({ dataUrl });
+      }
+      if (!images.length) {
+        window.toastr?.warning?.('未读取到可用图片');
+        return;
+      }
+      setBusy(true);
+      setStatus('正在导入图片...', 'loading');
+      try {
+        const stored = await persistStickerAiGenerated(images);
+        renderPreview(stored.length ? stored : images);
+        setStatus('导入完成，可继续去背与切割', 'success');
+      } catch (err) {
+        setStatus(`导入失败：${err?.message || '未知错误'}`, 'error');
+      } finally {
+        setBusy(false);
+      }
+    };
+
+    const handleDownloadCurrentPreview = async (item, idx) => {
+      if (!item) return;
+      const ext = inferStickerAiExtension(item);
+      const modeLabel = stickerAiMode === 'sprite' ? 'sprite' : 'sticker';
+      const fileName = `${modeLabel}_source_${idx + 1}.${ext}`;
+      const base = normalizeStickerAiImage(item);
+      let dataUrl = base.dataUrl;
+      if (!dataUrl && !base.path && base.url) {
+        dataUrl = await readUrlAsDataUrl(base.url);
+      }
+      await exportAttachmentFile({
+        dataUrl,
+        sourcePath: base.path,
+        fileName,
+        filters: [{ name: 'Image', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif'] }],
+      });
+    };
+
+    const handleDownloadSlicesZip = async () => {
+      if (!sliceItems.length) {
+        window.toastr?.warning?.('暂无切割结果');
+        return;
+      }
+      const selected = sliceItems.filter(item => item.selected !== false);
+      if (!selected.length) {
+        window.toastr?.warning?.('请先选择要下载的贴图');
+        return;
+      }
+      const stamp = new Date();
+      const pad = value => String(value).padStart(2, '0');
+      const ts = `${stamp.getFullYear()}${pad(stamp.getMonth() + 1)}${pad(stamp.getDate())}_${pad(stamp.getHours())}${pad(
+        stamp.getMinutes(),
+      )}${pad(stamp.getSeconds())}`;
+      const fileName = stickerAiMode === 'sprite' ? `sprite_slices_${ts}.zip` : `sticker_slices_${ts}.zip`;
+      const entries = selected.map((item, index) => {
+        const baseName = String(item.keyword || item.name || item.defaultName || `slice_${index + 1}`).trim();
+        const safeName = sanitizeExportName(baseName, `slice_${index + 1}`);
+        return {
+          name: `${safeName}.png`,
+          path: String(item.path || '').trim(),
+          dataUrl: String(item.dataUrl || '').trim(),
+        };
+      });
+      await exportStickerZip({ entries, fileName });
+    };
+
     const handleSaveSlices = async () => {
       if (stickerAiMode === 'sprite') {
         await handleSaveAnimation();
@@ -6254,6 +6855,7 @@ Phase G（Frame 36）：循环衔接
     buildBtn?.addEventListener('click', () => handleBuildPrompt());
     continueBtn?.addEventListener('click', () => handleContinuePrompt());
     renderBtn?.addEventListener('click', () => handleGenerateImage());
+    uploadBtn?.addEventListener('click', () => handleUploadGenerated());
     styleInput?.addEventListener('input', () => scheduleTextSave());
     templateInput?.addEventListener('input', () => scheduleTextSave());
     finalInput?.addEventListener('input', () => scheduleTextSave());
@@ -6319,6 +6921,7 @@ Phase G（Frame 36）：循环衔接
       persistStickerAiMeta();
       updateAnimationPreview();
     });
+    downloadZipBtn?.addEventListener('click', () => handleDownloadSlicesZip());
     const handleSliceListInput = (event) => {
       const target = event?.target;
       if (!target || !target.dataset) return;
@@ -11120,6 +11723,10 @@ Phase G（Frame 36）：循环衔接
       ok ? window.toastr?.success?.('已复制') : window.toastr?.warning?.('复制失败');
       return true;
     }
+    if (action === 'download') {
+      await downloadChatAttachment(message);
+      return true;
+    }
 
     if (action === 'delete-selected') {
       const ids = Array.isArray(payload?.ids) ? payload.ids.map(String).filter(Boolean) : [];
@@ -11392,6 +11999,8 @@ Phase G（Frame 36）：循环衔接
     let text = '';
     let textTruncated = false;
     let supported = false;
+    let localPath = '';
+    let localBytes = 0;
     try {
       const extracted = await extractDocumentText(file);
       text = extracted.text || '';
@@ -11401,6 +12010,19 @@ Phase G（Frame 36）：循环衔接
     if (!supported && mime) {
       window.toastr?.info?.('该文件类型暂不支持解析，将仅发送文件信息');
     }
+    try {
+      const sessionId = String(chatStore.getCurrent() || '').trim();
+      const base64 = await readFileAsBase64(file);
+      if (sessionId && base64) {
+        const resp = await safeInvoke('save_attachment_bytes', {
+          sessionId,
+          base64,
+          fileName: name,
+        });
+        localPath = String(resp?.path || '').trim();
+        localBytes = Number(resp?.bytes || 0) || 0;
+      }
+    } catch {}
     addComposerAttachment({
       kind: 'document',
       name,
@@ -11409,6 +12031,9 @@ Phase G（Frame 36）：循环衔接
       sizeLabel,
       text,
       textTruncated,
+      localPath,
+      localBytes,
+      originalName: name,
     });
   }
 

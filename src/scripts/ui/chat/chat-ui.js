@@ -1656,6 +1656,10 @@ export class ChatUI {
     if (hasCode) {
       actions.push({ key: 'view-code', label: '✏' });
     }
+    const canDownload = ['image', 'document', 'sticker'].includes(String(msg?.type || ''));
+    if (canDownload) {
+      actions.push({ key: 'download', label: '下载' });
+    }
     if (msg.role === 'assistant') {
       actions.push({ key: 'copy-text', label: '复制' });
       actions.push({ key: 'regenerate', label: '重新生成' });
@@ -1672,7 +1676,6 @@ export class ChatUI {
       if (msg.status !== 'pending' && msg.status !== 'sending') {
         // 已发送的消息才能编辑/收回
         actions.push({ key: 'edit', label: '编辑' });
-        actions.push({ key: 'retract', label: '收回' });
       }
       actions.push({ key: 'delete', label: '删除' });
     }

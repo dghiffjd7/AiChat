@@ -17,6 +17,9 @@ use std::fs::OpenOptions;
 use std::io::{Read, Seek, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use gif::{Encoder as GifEncoder, Frame as GifFrame, Repeat as GifRepeat};
+use image::RgbaImage;
+use image::imageops::overlay;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64_ENGINE;
 use zip::write::FileOptions;
@@ -119,6 +122,22 @@ fn write_json_file(path: &Path, data: &Value) -> Result<(), String> {
     Ok(())
 }
 
+fn write_bytes_file(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    fs::write(path, bytes).map_err(|e| e.to_string())?;
+    #[cfg(target_os = "android")]
+    {
+        if let Ok(f) = fs::File::open(path) {
+            unsafe {
+                libc::fsync(f.as_raw_fd());
+            }
+        }
+    }
+    Ok(())
+}
+
 fn decode_data_url(data_url: &str) -> Result<(Vec<u8>, Option<String>), String> {
     let raw = data_url.trim();
     if !raw.starts_with("data:") {
@@ -155,6 +174,48 @@ fn extension_from_name(name: &str) -> Option<String> {
         None
     } else {
         Some(ext)
+    }
+}
+
+fn mime_from_extension(ext: &str) -> Option<String> {
+    match ext.to_lowercase().as_str() {
+        "png" => Some("image/png".to_string()),
+        "jpg" | "jpeg" => Some("image/jpeg".to_string()),
+        "webp" => Some("image/webp".to_string()),
+        "gif" => Some("image/gif".to_string()),
+        "zip" => Some("application/zip".to_string()),
+        "bmp" => Some("image/bmp".to_string()),
+        "svg" => Some("image/svg+xml".to_string()),
+        _ => None,
+    }
+}
+
+fn is_image_mime(mime: &str) -> bool {
+    mime.starts_with("image/")
+}
+
+fn mime_from_data_url(data_url: &str) -> Option<String> {
+    let raw = data_url.trim();
+    if !raw.starts_with("data:") {
+        return None;
+    }
+    let mut parts = raw.splitn(2, ',');
+    let meta = parts.next().unwrap_or("");
+    let mime = meta.strip_prefix("data:").unwrap_or("").split(';').next().unwrap_or("");
+    if mime.is_empty() {
+        None
+    } else {
+        Some(mime.to_string())
+    }
+}
+
+fn ensure_extension(name: &str, ext: Option<&str>) -> String {
+    if extension_from_name(name).is_some() {
+        name.to_string()
+    } else if let Some(ext) = ext {
+        format!("{name}.{ext}")
+    } else {
+        name.to_string()
     }
 }
 
@@ -205,6 +266,15 @@ pub struct WallpaperSaveResult {
 pub struct AttachmentSaveResult {
     pub path: String,
     pub bytes: usize,
+}
+
+#[derive(serde::Deserialize)]
+pub struct StickerZipEntry {
+    pub name: String,
+    #[serde(rename = "path")]
+    pub path: Option<String>,
+    #[serde(rename = "dataUrl")]
+    pub data_url: Option<String>,
 }
 
 #[derive(Default)]
@@ -439,8 +509,11 @@ fn publish_bundle_mediastore(
         ],
     )
     .map_err(|e| e.to_string())?;
+    let mime_guess = extension_from_name(file_name)
+        .and_then(|ext| mime_from_extension(&ext))
+        .unwrap_or_else(|| "application/octet-stream".to_string());
     let mime_value = env
-        .new_string("application/zip")
+        .new_string(mime_guess)
         .map_err(|e| e.to_string())?;
     let mime_value_obj = JObject::from(mime_value);
     env.call_method(
@@ -599,6 +672,184 @@ fn publish_bundle_to_downloads(
     }
     publish_bundle_mediastore(&mut env, context, source_path, file_name)
         .or_else(|_| publish_bundle_legacy(app, source_path, file_name))
+}
+
+#[cfg(target_os = "android")]
+fn publish_image_to_gallery_bytes(
+    bytes: &[u8],
+    file_name: &str,
+    mime_type: &str,
+) -> Result<String, String> {
+    let ctx = android_context();
+    let vm = unsafe { JavaVM::from_raw(ctx.vm().cast()) }.map_err(|e| e.to_string())?;
+    let mut env = vm.attach_current_thread().map_err(|e| e.to_string())?;
+    let context = unsafe { JObject::from_raw(ctx.context().cast()) };
+    let resolver = env
+        .call_method(&context, "getContentResolver", "()Landroid/content/ContentResolver;", &[])
+        .and_then(|value| value.l())
+        .map_err(|e| e.to_string())?;
+    let values = env
+        .new_object("android/content/ContentValues", "()V", &[])
+        .map_err(|e| e.to_string())?;
+    let media_columns = env
+        .find_class("android/provider/MediaStore$MediaColumns")
+        .map_err(|e| e.to_string())?;
+    let display_key = env
+        .get_static_field(&media_columns, "DISPLAY_NAME", "Ljava/lang/String;")
+        .and_then(|value| value.l())
+        .map_err(|e| e.to_string())?;
+    let mime_key = env
+        .get_static_field(&media_columns, "MIME_TYPE", "Ljava/lang/String;")
+        .and_then(|value| value.l())
+        .map_err(|e| e.to_string())?;
+    let display_value = env.new_string(file_name).map_err(|e| e.to_string())?;
+    let display_value_obj = JObject::from(display_value);
+    env.call_method(
+        &values,
+        "put",
+        "(Ljava/lang/String;Ljava/lang/String;)V",
+        &[
+            JValue::Object(&display_key),
+            JValue::Object(&display_value_obj),
+        ],
+    )
+    .map_err(|e| e.to_string())?;
+    let mime_value = env
+        .new_string(mime_type)
+        .map_err(|e| e.to_string())?;
+    let mime_value_obj = JObject::from(mime_value);
+    env.call_method(
+        &values,
+        "put",
+        "(Ljava/lang/String;Ljava/lang/String;)V",
+        &[
+            JValue::Object(&mime_key),
+            JValue::Object(&mime_value_obj),
+        ],
+    )
+    .map_err(|e| e.to_string())?;
+    if let Ok(relative_key) = env
+        .get_static_field(&media_columns, "RELATIVE_PATH", "Ljava/lang/String;")
+        .and_then(|value| value.l())
+    {
+        if let Ok(relative_value) = env.new_string("Pictures/") {
+            let relative_value_obj = JObject::from(relative_value);
+            let _ = env.call_method(
+                &values,
+                "put",
+                "(Ljava/lang/String;Ljava/lang/String;)V",
+                &[
+                    JValue::Object(&relative_key),
+                    JValue::Object(&relative_value_obj),
+                ],
+            );
+        }
+    }
+    if let Ok(pending_key) = env
+        .get_static_field(&media_columns, "IS_PENDING", "Ljava/lang/String;")
+        .and_then(|value| value.l())
+    {
+        if let Ok(int_class) = env.find_class("java/lang/Integer") {
+            if let Ok(pending_value) =
+                env.call_static_method(int_class, "valueOf", "(I)Ljava/lang/Integer;", &[JValue::from(1)])
+                    .and_then(|value| value.l())
+            {
+                let _ = env.call_method(
+                    &values,
+                    "put",
+                    "(Ljava/lang/String;Ljava/lang/Integer;)V",
+                    &[
+                        JValue::Object(&pending_key),
+                        JValue::Object(&pending_value),
+                    ],
+                );
+            }
+        }
+    }
+    let images_class = env
+        .find_class("android/provider/MediaStore$Images$Media")
+        .map_err(|e| e.to_string())?;
+    let base_uri = env
+        .get_static_field(images_class, "EXTERNAL_CONTENT_URI", "Landroid/net/Uri;")
+        .and_then(|value| value.l())
+        .map_err(|e| e.to_string())?;
+    let inserted = env
+        .call_method(
+            &resolver,
+            "insert",
+            "(Landroid/net/Uri;Landroid/content/ContentValues;)Landroid/net/Uri;",
+            &[JValue::Object(&base_uri), JValue::Object(&values)],
+        )
+        .and_then(|value| value.l())
+        .map_err(|e| e.to_string())?;
+    if inserted.is_null() {
+        return Err("无法写入相簿".to_string());
+    }
+    let mode = env.new_string("w").map_err(|e| e.to_string())?;
+    let mode_obj = JObject::from(mode);
+    let pfd = env
+        .call_method(
+            &resolver,
+            "openFileDescriptor",
+            "(Landroid/net/Uri;Ljava/lang/String;)Landroid/os/ParcelFileDescriptor;",
+            &[
+                JValue::Object(&inserted),
+                JValue::Object(&mode_obj),
+            ],
+        )
+        .and_then(|value| value.l())
+        .map_err(|e| e.to_string())?;
+    if pfd.is_null() {
+        return Err("无法打开相簿文件".to_string());
+    }
+    let fd = env
+        .call_method(&pfd, "detachFd", "()I", &[])
+        .and_then(|value| value.i())
+        .map_err(|e| e.to_string())?;
+    if fd < 0 {
+        return Err("无法创建相簿文件".to_string());
+    }
+    {
+        let mut output = unsafe { fs::File::from_raw_fd(fd) };
+        output.write_all(bytes).map_err(|e| e.to_string())?;
+        output.sync_all().map_err(|e| e.to_string())?;
+    }
+    let _ = env.call_method(&pfd, "close", "()V", &[]);
+    if let Ok(pending_key) = env
+        .get_static_field(&media_columns, "IS_PENDING", "Ljava/lang/String;")
+        .and_then(|value| value.l())
+    {
+        if let Ok(values) = env.new_object("android/content/ContentValues", "()V", &[]) {
+            if let Ok(int_class) = env.find_class("java/lang/Integer") {
+                if let Ok(pending_value) =
+                    env.call_static_method(int_class, "valueOf", "(I)Ljava/lang/Integer;", &[JValue::from(0)])
+                        .and_then(|value| value.l())
+                {
+                    let _ = env.call_method(
+                        &values,
+                        "put",
+                        "(Ljava/lang/String;Ljava/lang/Integer;)V",
+                        &[
+                            JValue::Object(&pending_key),
+                            JValue::Object(&pending_value),
+                        ],
+                    );
+                    let _ = env.call_method(
+                        &resolver,
+                        "update",
+                        "(Landroid/net/Uri;Landroid/content/ContentValues;Ljava/lang/String;[Ljava/lang/String;)I",
+                        &[
+                            JValue::Object(&inserted),
+                            JValue::Object(&values),
+                            JValue::Object(&JObject::null()),
+                            JValue::Object(&JObject::null()),
+                        ],
+                    );
+                }
+            }
+        }
+    }
+    Ok(format!("Pictures/{}", file_name))
 }
 
 fn clear_data_dir(dir: &Path) -> Result<(), String> {
@@ -1038,6 +1289,34 @@ pub async fn save_attachment(
     })
 }
 
+/// 保存附件（base64 字节，用于非图片文件）
+#[tauri::command]
+pub async fn save_attachment_bytes(
+    app: AppHandle,
+    session_id: String,
+    base64: String,
+    file_name: Option<String>,
+) -> Result<AttachmentSaveResult, String> {
+    let data_dir = get_data_dir(&app)?;
+    fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
+    let safe_sid = sanitize_segment(&session_id);
+    let attach_root = data_dir.join("attachments").join(&safe_sid);
+    fs::create_dir_all(&attach_root).map_err(|e| e.to_string())?;
+
+    let bytes = decode_base64_payload(&base64)?;
+    let ext_from_name = file_name.as_deref().and_then(extension_from_name);
+    let ext = ext_from_name.unwrap_or_else(|| "bin".to_string());
+    let stem = sanitize_segment(file_name.as_deref().unwrap_or("attachment"));
+    let ts = chrono::Utc::now().timestamp_millis();
+    let file = attach_root.join(format!("attachment_{safe_sid}_{stem}_{ts}.{ext}"));
+    write_bytes_file(&file, &bytes)?;
+
+    Ok(AttachmentSaveResult {
+        path: file.to_string_lossy().to_string(),
+        bytes: bytes.len(),
+    })
+}
+
 /// 保存附件（流式分块，避免超大 payload）
 #[tauri::command]
 pub async fn save_attachment_stream_start(
@@ -1142,6 +1421,260 @@ pub async fn delete_attachment(
         return Ok(true);
     }
     Ok(false)
+}
+
+/// 导出附件到下载目录或指定路径
+#[tauri::command]
+pub async fn export_attachment(
+    app: AppHandle,
+    source_path: Option<String>,
+    data_url: Option<String>,
+    file_name: Option<String>,
+    path: Option<String>,
+) -> Result<AttachmentSaveResult, String> {
+    let raw_name = file_name.as_deref().unwrap_or("download");
+    let name_with_ext = ensure_extension(raw_name, None);
+    let mut safe_name = sanitize_segment(&name_with_ext);
+    let target_path = path.unwrap_or_default();
+    let source = source_path.unwrap_or_default();
+    let data = data_url.unwrap_or_default();
+
+    if !source.trim().is_empty() {
+        let src_path = PathBuf::from(source.trim());
+        if !src_path.exists() {
+            return Err("source file missing".to_string());
+        }
+        let ext = extension_from_name(raw_name)
+            .or_else(|| src_path.extension().map(|v| v.to_string_lossy().to_string()));
+        let mime = ext
+            .as_ref()
+            .and_then(|v| mime_from_extension(v));
+        if let Some(mime) = &mime {
+            if is_image_mime(mime) && target_path.trim().is_empty() && mime != "image/gif" {
+                safe_name = sanitize_segment(&ensure_extension(raw_name, ext.as_deref()));
+                #[cfg(target_os = "android")]
+                {
+                    let bytes = fs::read(&src_path).map_err(|e| e.to_string())?;
+                    let published = publish_image_to_gallery_bytes(&bytes, &safe_name, mime)?;
+                    return Ok(AttachmentSaveResult { path: published, bytes: bytes.len() });
+                }
+            }
+        }
+        let bytes = fs::metadata(&src_path).map_err(|e| e.to_string())?.len() as usize;
+        if !target_path.trim().is_empty() {
+            let dst = PathBuf::from(target_path.trim());
+            if let Some(parent) = dst.parent() {
+                fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            }
+            if src_path != dst {
+                fs::copy(&src_path, &dst).map_err(|e| e.to_string())?;
+            }
+            return Ok(AttachmentSaveResult {
+                path: dst.to_string_lossy().to_string(),
+                bytes,
+            });
+        }
+        let published = publish_bundle_to_downloads(&app, &src_path, &safe_name)?;
+        return Ok(AttachmentSaveResult { path: published, bytes });
+    }
+
+    if data.trim().is_empty() {
+        return Err("missing export data".to_string());
+    }
+    let (bytes, ext_from_mime) = decode_data_url(&data)?;
+    let data_mime = mime_from_data_url(&data).or_else(|| ext_from_mime.as_ref().and_then(|v| mime_from_extension(v)));
+    if let Some(mime) = data_mime {
+        if is_image_mime(&mime) && target_path.trim().is_empty() && mime != "image/gif" {
+            safe_name = sanitize_segment(&ensure_extension(raw_name, ext_from_mime.as_deref()));
+            #[cfg(target_os = "android")]
+            {
+                let published = publish_image_to_gallery_bytes(&bytes, &safe_name, &mime)?;
+                return Ok(AttachmentSaveResult { path: published, bytes: bytes.len() });
+            }
+        }
+    }
+    if !target_path.trim().is_empty() {
+        let dst = PathBuf::from(target_path.trim());
+        write_bytes_file(&dst, &bytes)?;
+        return Ok(AttachmentSaveResult {
+            path: dst.to_string_lossy().to_string(),
+            bytes: bytes.len(),
+        });
+    }
+    let data_dir = get_data_dir(&app)?;
+    let temp_dir = data_dir.join("exports_tmp");
+    fs::create_dir_all(&temp_dir).map_err(|e| e.to_string())?;
+    let temp_name = if ext_from_mime.is_some() {
+        sanitize_segment(&ensure_extension(raw_name, ext_from_mime.as_deref()))
+    } else {
+        safe_name
+    };
+    let temp_path = temp_dir.join(&temp_name);
+    write_bytes_file(&temp_path, &bytes)?;
+    let published = publish_bundle_to_downloads(&app, &temp_path, &temp_name)?;
+    Ok(AttachmentSaveResult { path: published, bytes: bytes.len() })
+}
+
+/// 导出贴图帧序列为 GIF
+#[tauri::command]
+pub async fn export_sticker_gif(
+    app: AppHandle,
+    frames: Vec<String>,
+    fps: Option<u16>,
+    file_name: Option<String>,
+    path: Option<String>,
+) -> Result<AttachmentSaveResult, String> {
+    if frames.is_empty() {
+        return Err("no sticker frames".to_string());
+    }
+    let fps = fps.unwrap_or(12).clamp(1, 60);
+    let delay = ((100.0 / fps as f32).round() as u16).max(1);
+    let mut images: Vec<RgbaImage> = Vec::new();
+    let mut max_w = 0u32;
+    let mut max_h = 0u32;
+    for frame in frames.iter() {
+        let raw = frame.trim();
+        if raw.is_empty() {
+            continue;
+        }
+        let img = if raw.starts_with("data:") {
+            let (bytes, _ext) = decode_data_url(raw)?;
+            image::load_from_memory(&bytes).map_err(|e| e.to_string())?
+        } else {
+            let mut normalized = raw.to_string();
+            if let Some(stripped) = normalized.strip_prefix("file:///") {
+                normalized = stripped.to_string();
+            } else if let Some(stripped) = normalized.strip_prefix("file://") {
+                normalized = stripped.to_string();
+            }
+            let candidate = PathBuf::from(normalized);
+            if !candidate.exists() {
+                return Err(format!("frame missing: {}", raw));
+            }
+            image::open(&candidate).map_err(|e| e.to_string())?
+        };
+        let rgba = img.to_rgba8();
+        max_w = max_w.max(rgba.width());
+        max_h = max_h.max(rgba.height());
+        images.push(rgba);
+    }
+    if images.is_empty() || max_w == 0 || max_h == 0 {
+        return Err("invalid sticker frames".to_string());
+    }
+
+    let raw_name = file_name.unwrap_or_else(|| "sticker.gif".to_string());
+    let safe_name = sanitize_segment(&ensure_extension(&raw_name, Some("gif")));
+    let target_path = path.unwrap_or_default();
+    let mut publish_download = false;
+    let output_path = if target_path.trim().is_empty() {
+        let data_dir = get_data_dir(&app)?;
+        let temp_dir = data_dir.join("exports_tmp");
+        fs::create_dir_all(&temp_dir).map_err(|e| e.to_string())?;
+        publish_download = true;
+        temp_dir.join(&safe_name)
+    } else {
+        PathBuf::from(target_path.trim())
+    };
+    if let Some(parent) = output_path.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+
+    let mut file = fs::File::create(&output_path).map_err(|e| e.to_string())?;
+    {
+        let mut encoder =
+            GifEncoder::new(&mut file, max_w as u16, max_h as u16, &[]).map_err(|e| e.to_string())?;
+        encoder.set_repeat(GifRepeat::Infinite).map_err(|e| e.to_string())?;
+        for rgba in images {
+            let canvas = if rgba.width() == max_w && rgba.height() == max_h {
+                rgba
+            } else {
+                let mut base = RgbaImage::from_pixel(max_w, max_h, image::Rgba([0, 0, 0, 0]));
+                let x = ((max_w - rgba.width()) / 2) as i64;
+                let y = ((max_h - rgba.height()) / 2) as i64;
+                overlay(&mut base, &rgba, x, y);
+                base
+            };
+            let mut raw = canvas.into_raw();
+            let mut frame = GifFrame::from_rgba_speed(max_w as u16, max_h as u16, &mut raw, 10);
+            frame.delay = delay;
+            encoder.write_frame(&frame).map_err(|e| e.to_string())?;
+        }
+    }
+    file.flush().map_err(|e| e.to_string())?;
+    let bytes = fs::metadata(&output_path).map_err(|e| e.to_string())?.len() as usize;
+    if publish_download {
+        let published = publish_bundle_to_downloads(&app, &output_path, &safe_name)?;
+        return Ok(AttachmentSaveResult { path: published, bytes });
+    }
+    Ok(AttachmentSaveResult {
+        path: output_path.to_string_lossy().to_string(),
+        bytes,
+    })
+}
+
+/// 导出切割结果为 ZIP
+#[tauri::command]
+pub async fn export_sticker_zip(
+    app: AppHandle,
+    entries: Vec<StickerZipEntry>,
+    file_name: Option<String>,
+    path: Option<String>,
+) -> Result<AttachmentSaveResult, String> {
+    if entries.is_empty() {
+        return Err("no zip entries".to_string());
+    }
+    let safe_name = sanitize_segment(file_name.as_deref().unwrap_or("sticker_slices.zip"));
+    let target_path = path.unwrap_or_default();
+    let data_dir = get_data_dir(&app)?;
+    let mut publish_download = false;
+    let output_path = if target_path.trim().is_empty() {
+        let temp_dir = data_dir.join("exports_tmp");
+        fs::create_dir_all(&temp_dir).map_err(|e| e.to_string())?;
+        publish_download = true;
+        temp_dir.join(&safe_name)
+    } else {
+        PathBuf::from(target_path.trim())
+    };
+
+    if let Some(parent) = output_path.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let file = fs::File::create(&output_path).map_err(|e| e.to_string())?;
+    let mut writer = ZipWriter::new(file);
+    let options = FileOptions::default().compression_method(CompressionMethod::Deflated);
+    for (idx, entry) in entries.iter().enumerate() {
+        let name_raw = if entry.name.trim().is_empty() {
+            format!("slice_{}.png", idx + 1)
+        } else {
+            entry.name.trim().to_string()
+        };
+        let entry_name = sanitize_segment(&name_raw);
+        let payload = if let Some(path) = &entry.path {
+            let src = PathBuf::from(path.trim());
+            if !src.exists() {
+                continue;
+            }
+            fs::read(&src).map_err(|e| e.to_string())?
+        } else if let Some(data_url) = &entry.data_url {
+            let (bytes, _ext) = decode_data_url(data_url)?;
+            bytes
+        } else {
+            continue;
+        };
+        writer.start_file(entry_name, options).map_err(|e| e.to_string())?;
+        writer.write_all(&payload).map_err(|e| e.to_string())?;
+    }
+    writer.finish().map_err(|e| e.to_string())?;
+    let bytes = fs::metadata(&output_path).map_err(|e| e.to_string())?.len() as usize;
+
+    if publish_download {
+        let published = publish_bundle_to_downloads(&app, &output_path, &safe_name)?;
+        return Ok(AttachmentSaveResult { path: published, bytes });
+    }
+    Ok(AttachmentSaveResult {
+        path: output_path.to_string_lossy().to_string(),
+        bytes,
+    })
 }
 
 /// 清理未引用的壁纸文件

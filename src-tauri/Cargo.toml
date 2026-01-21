@@ -26,6 +26,8 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 libc = "0.2"
 rusqlite = { version = "0.31", features = ["bundled"] }
 zip = "0.6"
+gif = "0.12"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
 
 [target.'cfg(target_os = "android")'.dependencies]
 jni = "0.21"
