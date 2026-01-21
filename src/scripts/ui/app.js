@@ -5962,10 +5962,11 @@ Phase G（Frame 36）：循环衔接
         const usedKeywords = collectExistingStickerKeywords();
         const count = Array.isArray(pack.stickers) ? pack.stickers.length : 0;
         const fallbackName = `动图${count + 1}`;
-        const suggested = String(selected[0]?.keyword || selected[0]?.name || selected[0]?.defaultName || '').trim();
-        const baseName = suggested && !/^贴图\d+$/i.test(suggested) ? suggested : fallbackName;
-        const keyword = makeUniqueKeyword(baseName, usedKeywords);
-        const name = keyword || baseName || fallbackName;
+        const rawKeyword = String(selected[0]?.keyword || '').trim();
+        const nameCandidate = String(selected[0]?.name || selected[0]?.defaultName || '').trim();
+        const baseName = nameCandidate || rawKeyword || fallbackName;
+        const keyword = rawKeyword ? makeUniqueKeyword(rawKeyword, usedKeywords) : '';
+        const name = baseName || fallbackName;
         const stickers = Array.isArray(pack.stickers) ? pack.stickers.slice() : [];
         stickers.push({
           id: String(Date.now()) + Math.random().toString(16).slice(2, 8),
