@@ -1869,6 +1869,34 @@ Phase G（Frame 36）：循环衔接
     const frames = Array.isArray(item?.frames) ? item.frames : [];
     return frames.map(frame => resolveLocalStickerUrl(frame)).filter(Boolean);
   };
+  const normalizeStickerKeywordKey = value => String(value || '').trim().toLowerCase();
+  const findStickerByKeyword = keyword => {
+    const key = normalizeStickerKeywordKey(keyword);
+    if (!key) return null;
+    const packs = Array.isArray(stickerPackState?.packs) ? stickerPackState.packs : [];
+    for (const pack of packs) {
+      const stickers = Array.isArray(pack?.stickers) ? pack.stickers : [];
+      for (const sticker of stickers) {
+        const stickerKey = normalizeStickerKeywordKey(sticker?.keyword || sticker?.id);
+        if (stickerKey && stickerKey === key) return sticker;
+      }
+    }
+    return null;
+  };
+  const resolveStickerFramesByKeyword = (keyword, resolvedItem) => {
+    const primary = resolveStickerFrameSources(resolvedItem);
+    if (primary.length > 1) return primary;
+    const fallback = findStickerByKeyword(keyword);
+    if (!fallback) return primary;
+    const next = resolveStickerFrameSources(fallback);
+    return next.length ? next : primary;
+  };
+  const resolveStickerFpsByKeyword = (keyword, resolvedItem) => {
+    const primary = clampStickerFps(resolvedItem?.fps);
+    if (primary) return primary;
+    const fallback = findStickerByKeyword(keyword);
+    return clampStickerFps(fallback?.fps);
+  };
   const startStickerFrameAnimation = (img, frames, fps) => {
     if (!img) return false;
     const list = Array.isArray(frames) ? frames.filter(Boolean) : [];
@@ -2258,8 +2286,8 @@ Phase G（Frame 36）：循环衔接
       const key = String(keyword || '').trim();
       if (!key) return;
       const resolved = resolveMediaAsset('sticker', key) || resolveMediaAsset('image', key);
-      const frames = resolveStickerFrameSources(resolved?.item);
-      const fps = clampStickerFps(resolved?.item?.fps);
+      const frames = resolveStickerFramesByKeyword(key, resolved?.item);
+      const fps = resolveStickerFpsByKeyword(key, resolved?.item);
       items.push({
         keyword: key,
         label: key,
@@ -2753,9 +2781,9 @@ Phase G（Frame 36）：循环衔接
         const img = document.createElement('img');
         img.src = resolved.url;
         img.alt = keyword;
-        const frames = resolveStickerFrameSources(resolved?.item);
+        const frames = resolveStickerFramesByKeyword(keyword, resolved?.item);
         if (frames.length > 1) {
-          const fps = clampStickerFps(resolved?.item?.fps);
+          const fps = resolveStickerFpsByKeyword(keyword, resolved?.item);
           startStickerFrameAnimation(img, frames, fps);
         }
         item.appendChild(img);
@@ -7302,6 +7330,8 @@ Phase G（Frame 36）：循环衔接
     chatOriginPage = originPage || 'chat';
     chatList?.classList.add('hidden');
     chatRoom?.classList.remove('hidden');
+    pages.chat?.classList.add('chat-room-active');
+    document.body?.classList.add('chat-room-active');
     chatInputGapTweak = 0;
     setStickerPanelOpen(false);
     if (typeof requestAnimationFrame === 'function') {
@@ -7417,6 +7447,8 @@ Phase G（Frame 36）：循环衔接
   const exitChatRoom = () => {
     chatRoom?.classList.add('hidden');
     chatList?.classList.remove('hidden');
+    pages.chat?.classList.remove('chat-room-active');
+    document.body?.classList.remove('chat-room-active');
     setStickerPanelOpen(false);
     setActionPanelOpen(false);
     scheduleWallpaperIdle();

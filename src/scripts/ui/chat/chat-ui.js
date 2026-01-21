@@ -3,6 +3,7 @@
  */
 
 import { resolveMediaAsset } from '../../utils/media-assets.js';
+import { stickerPackStore } from '../../storage/sticker-pack-store.js';
 import { renderRichText, setupIframeResizeListener } from './rich-text-renderer.js';
 import { appSettings } from '../../storage/app-settings.js';
 
@@ -33,6 +34,12 @@ const applyImageFallback = (img, resolved, { onFail } = {}) => {
   img.src = urls[0];
   return true;
 };
+const STICKER_ANIM_DEFAULT_FPS = 12;
+const clampStickerFps = (value) => {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return STICKER_ANIM_DEFAULT_FPS;
+  return Math.min(60, Math.max(1, Math.trunc(num)));
+};
 const resolveLocalMediaUrl = (value) => {
   const raw = String(value || '').trim();
   if (!raw) return '';
@@ -50,27 +57,94 @@ const resolveLocalMediaUrl = (value) => {
   if (raw.startsWith('/')) return `file://${raw}`;
   return raw;
 };
-const resolveStickerFrames = (resolved) => {
-  const frames = Array.isArray(resolved?.item?.frames) ? resolved.item.frames : [];
-  return frames.map(frame => resolveLocalMediaUrl(frame)).filter(Boolean);
+const normalizeStickerKey = (value) => String(value || '').trim().toLowerCase();
+const findStickerByKeyword = (keyword) => {
+  const key = normalizeStickerKey(keyword);
+  if (!key) return null;
+  const packs = stickerPackStore.getPacks?.() || [];
+  for (const pack of packs) {
+    const stickers = Array.isArray(pack?.stickers) ? pack.stickers : [];
+    for (const sticker of stickers) {
+      const stickerKey = normalizeStickerKey(sticker?.keyword || sticker?.id);
+      if (stickerKey && stickerKey === key) return sticker;
+    }
+  }
+  return null;
 };
-const startStickerAnimation = (img, frames, fps) => {
+const resolveStickerFrames = (resolved, keyword) => {
+  const frames = Array.isArray(resolved?.item?.frames) ? resolved.item.frames : [];
+  if (frames.length > 1) return frames.map(frame => resolveLocalMediaUrl(frame)).filter(Boolean);
+  const fallback = findStickerByKeyword(keyword);
+  const next = Array.isArray(fallback?.frames) ? fallback.frames : [];
+  return next.map(frame => resolveLocalMediaUrl(frame)).filter(Boolean);
+};
+const resolveStickerFps = (resolved, keyword) => {
+  const primary = clampStickerFps(resolved?.item?.fps);
+  if (primary) return primary;
+  const fallback = findStickerByKeyword(keyword);
+  return clampStickerFps(fallback?.fps);
+};
+const stickerAnimEntries = new WeakMap();
+let stickerAnimObserver = null;
+const ensureStickerAnimObserver = () => {
+  if (stickerAnimObserver) return stickerAnimObserver;
+  if (typeof IntersectionObserver === 'undefined') return null;
+  stickerAnimObserver = new IntersectionObserver((entries) => {
+    entries.forEach((entry) => {
+      const data = stickerAnimEntries.get(entry.target);
+      if (!data) return;
+      if (entry.isIntersecting) {
+        if (data.timer) return;
+        data.index = 0;
+        data.target.src = data.frames[0];
+        const interval = Math.max(16, Math.round(1000 / clampStickerFps(data.fps)));
+        data.timer = setInterval(() => {
+          if (!data.target.isConnected) {
+            clearInterval(data.timer);
+            data.timer = null;
+            stickerAnimObserver?.unobserve?.(data.target);
+            stickerAnimEntries.delete(data.target);
+            return;
+          }
+          data.index = (data.index + 1) % data.frames.length;
+          data.target.src = data.frames[data.index];
+        }, interval);
+        return;
+      }
+      if (data.timer) {
+        clearInterval(data.timer);
+        data.timer = null;
+      }
+    });
+  });
+  return stickerAnimObserver;
+};
+const registerStickerAnimation = (img, frames, fps) => {
   if (!img) return false;
   const list = Array.isArray(frames) ? frames.filter(Boolean) : [];
   if (list.length < 2) {
     if (list.length) img.src = list[0];
     return false;
   }
-  let index = 0;
-  img.src = list[0];
-  const interval = Math.max(16, Math.round(1000 / Math.max(1, Number(fps) || 1)));
-  const timer = setInterval(() => {
-    if (!img.isConnected) {
-      clearInterval(timer);
+  const data = { target: img, frames: list, fps: clampStickerFps(fps), timer: null, index: 0 };
+  stickerAnimEntries.set(img, data);
+  const observer = ensureStickerAnimObserver();
+  if (observer) {
+    observer.observe(img);
+    return true;
+  }
+  data.target.src = list[0];
+  const interval = Math.max(16, Math.round(1000 / clampStickerFps(data.fps)));
+  data.timer = setInterval(() => {
+    if (!data.target.isConnected) {
+      clearInterval(data.timer);
+      data.timer = null;
+      stickerAnimObserver?.unobserve?.(data.target);
+      stickerAnimEntries.delete(data.target);
       return;
     }
-    index = (index + 1) % list.length;
-    img.src = list[index];
+    data.index = (data.index + 1) % data.frames.length;
+    data.target.src = data.frames[data.index];
   }, interval);
   return true;
 };
@@ -234,7 +308,8 @@ export class ChatUI {
         const img = document.createElement('img');
         img.alt = keyword || 'sticker';
         img.className = 'previewable sticker-image sticker-inline';
-        const frames = resolveStickerFrames(resolved);
+        const frames = resolveStickerFrames(resolved, keyword);
+        const fps = resolveStickerFps(resolved, keyword);
         const loaded = applyImageFallback(img, resolved, {
           onFail: () => {
             img.classList.add('broken');
@@ -243,7 +318,7 @@ export class ChatUI {
           },
         });
         if (loaded) {
-          if (frames.length > 1) startStickerAnimation(img, frames, resolved?.item?.fps);
+          if (frames.length > 1) registerStickerAnimation(img, frames, fps);
           img.addEventListener('click', () => this.openLightbox(img.currentSrc || img.src));
           frag.appendChild(img);
         } else {
@@ -783,7 +858,8 @@ export class ChatUI {
           const stickerImg = document.createElement('img');
           stickerImg.alt = 'sticker';
           stickerImg.className = 'previewable sticker-image';
-          const frames = resolveStickerFrames(stickerResolved);
+          const frames = resolveStickerFrames(stickerResolved, message.content);
+          const fps = resolveStickerFps(stickerResolved, message.content);
           const loaded = applyImageFallback(stickerImg, stickerResolved, {
             onFail: () => {
               stickerImg.classList.add('broken');
@@ -792,7 +868,7 @@ export class ChatUI {
             },
           });
           if (loaded) {
-            if (frames.length > 1) startStickerAnimation(stickerImg, frames, stickerResolved?.item?.fps);
+            if (frames.length > 1) registerStickerAnimation(stickerImg, frames, fps);
             stickerImg.addEventListener('click', () => this.openLightbox(stickerImg.currentSrc || stickerImg.src));
             bubble.innerHTML = '';
             bubble.appendChild(stickerImg);

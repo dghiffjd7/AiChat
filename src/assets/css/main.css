@@ -170,6 +170,14 @@ body[data-typing-dots="off"] [data-typing-placeholder="1"] {
     flex-direction: column;
 }
 
+#chat-page.chat-room-active #message-topbar {
+    display: none;
+}
+
+body.chat-room-active .bottom-nav {
+    display: none;
+}
+
 .app-header.slim {
   padding: 8px 12px;
   background: rgba(255, 255, 255, 0.85);
