@@ -1453,6 +1453,10 @@ body[data-creative-wide='on'] .QQ_chat_charmsg[data-creative='1'] .QQ_chat_msgdi
   gap: 8px;
 }
 
+.sticker-ai-preview-item {
+  position: relative;
+}
+
 .sticker-ai-preview img {
   width: 100%;
   border-radius: 12px;
@@ -1465,6 +1469,29 @@ body[data-creative-wide='on'] .QQ_chat_charmsg[data-creative='1'] .QQ_chat_msgdi
 .sticker-ai-preview img.is-selected {
   border-color: #199aff;
   box-shadow: 0 0 0 2px rgba(25, 154, 255, 0.2);
+}
+
+.sticker-ai-preview-download {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  background: rgba(255, 255, 255, 0.92);
+  color: #0f172a;
+  font-size: 14px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+}
+
+.sticker-ai-preview-download:hover {
+  background: #ffffff;
 }
 
 .sticker-ai-ref {

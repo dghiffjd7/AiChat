@@ -60,6 +60,25 @@ fn sanitize_segment(input: &str) -> String {
     cleaned
 }
 
+fn sanitize_download_name(input: &str) -> String {
+    let raw = input.trim();
+    let mut out = String::with_capacity(raw.len());
+    for ch in raw.chars() {
+        if matches!(ch, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' | '\0') {
+            out.push('_');
+        } else {
+            out.push(ch);
+        }
+    }
+    let trimmed = out.trim_matches('_');
+    let mut cleaned = if trimmed.is_empty() { "download".to_string() } else { out };
+    const MAX_LEN: usize = 80;
+    if cleaned.len() > MAX_LEN {
+        cleaned = cleaned.chars().take(MAX_LEN).collect();
+    }
+    cleaned
+}
+
 fn validate_safe_key(raw: &str, label: &str) -> Result<String, String> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
@@ -1563,7 +1582,7 @@ pub async fn export_sticker_gif(
     }
 
     let raw_name = file_name.unwrap_or_else(|| "sticker.gif".to_string());
-    let safe_name = sanitize_segment(&ensure_extension(&raw_name, Some("gif")));
+    let safe_name = sanitize_download_name(&ensure_extension(&raw_name, Some("gif")));
     let target_path = path.unwrap_or_default();
     let mut publish_download = false;
     let output_path = if target_path.trim().is_empty() {

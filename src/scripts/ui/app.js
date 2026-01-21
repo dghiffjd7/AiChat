@@ -5481,106 +5481,6 @@ Phase G（Frame 36）：循环衔接
       }, delay);
     };
 
-    const createStickerAiDownloadMenu = () => {
-      const menu = document.createElement('div');
-      menu.className = 'sticker-ai-download-menu';
-      menu.style.cssText = `
-        position: fixed;
-        background: #fff;
-        border: 1px solid rgba(0,0,0,0.08);
-        border-radius: 10px;
-        box-shadow: 0 10px 28px rgba(0,0,0,0.16);
-        padding: 6px;
-        display: none;
-        z-index: 22000;
-        min-width: 120px;
-      `;
-      document.body.appendChild(menu);
-      document.addEventListener(
-        'pointerdown',
-        e => {
-          if (menu.style.display === 'none') return;
-          if (menu.contains(e.target)) return;
-          menu.style.display = 'none';
-        },
-        { passive: true },
-      );
-      return menu;
-    };
-
-    const stickerAiDownloadMenu = createStickerAiDownloadMenu();
-    const openStickerAiDownloadMenu = (point, onDownload) => {
-      if (!stickerAiDownloadMenu) return;
-      stickerAiDownloadMenu.innerHTML = '';
-      const btn = document.createElement('button');
-      btn.textContent = '下载';
-      btn.style.cssText = `
-        width: 100%;
-        padding: 10px 12px;
-        border: none;
-        background: transparent;
-        text-align: left;
-        border-radius: 8px;
-        cursor: pointer;
-        font-size: 14px;
-      `;
-      btn.onmouseenter = () => (btn.style.background = '#f1f5f9');
-      btn.onmouseleave = () => (btn.style.background = 'transparent');
-      btn.onclick = e => {
-        e.stopPropagation();
-        stickerAiDownloadMenu.style.display = 'none';
-        onDownload?.();
-      };
-      stickerAiDownloadMenu.appendChild(btn);
-      stickerAiDownloadMenu.style.visibility = 'hidden';
-      stickerAiDownloadMenu.style.display = 'block';
-      const menuW = stickerAiDownloadMenu.offsetWidth || 160;
-      const menuH = stickerAiDownloadMenu.offsetHeight || 44;
-      const left = Math.min(Math.max(12, point.x), window.innerWidth - menuW - 12);
-      const top = Math.min(Math.max(12, point.y), window.innerHeight - menuH - 12);
-      stickerAiDownloadMenu.style.left = `${left}px`;
-      stickerAiDownloadMenu.style.top = `${top}px`;
-      stickerAiDownloadMenu.style.visibility = 'visible';
-    };
-
-    const bindPreviewDownload = (img, item, idx) => {
-      if (!img) return;
-      let timer = null;
-      let triggered = false;
-      const clear = () => {
-        if (timer) clearTimeout(timer);
-        timer = null;
-      };
-      const showMenu = (event) => {
-        const point = getPoint(event);
-        openStickerAiDownloadMenu(point, () => handleDownloadCurrentPreview(item, idx));
-      };
-      img.addEventListener('contextmenu', event => {
-        event.preventDefault();
-        triggered = true;
-        clear();
-        showMenu(event);
-      });
-      img.addEventListener('pointerdown', event => {
-        if (event.button && event.button !== 0) return;
-        triggered = false;
-        clear();
-        timer = setTimeout(() => {
-          triggered = true;
-          showMenu(event);
-        }, 520);
-      });
-      ['pointerup', 'pointerleave', 'pointercancel'].forEach(type => {
-        img.addEventListener(type, () => clear());
-      });
-      img.addEventListener('click', event => {
-        if (!triggered) return;
-        event.preventDefault();
-        event.stopPropagation();
-        triggered = false;
-      });
-    };
-
     const renderPreview = (items = null) => {
       if (!previewEl) return;
       if (Array.isArray(items)) {
@@ -5600,6 +5500,8 @@ Phase G（Frame 36）：循环衔接
       generatedImages.forEach((item, idx) => {
         const src = getStickerAiImageSource(item);
         if (!src) return;
+        const wrap = document.createElement('div');
+        wrap.className = 'sticker-ai-preview-item';
         const img = document.createElement('img');
         img.src = src;
         img.alt = 'AI 贴图源图';
@@ -5619,8 +5521,20 @@ Phase G（Frame 36）：循环衔接
           persistStickerAiSelection();
           scheduleSlicePreview({ immediate: true, auto: !cached });
         });
-        bindPreviewDownload(img, item, idx);
-        previewEl.appendChild(img);
+        const downloadBtn = document.createElement('button');
+        downloadBtn.type = 'button';
+        downloadBtn.className = 'sticker-ai-preview-download';
+        downloadBtn.setAttribute('aria-label', '下载贴图');
+        downloadBtn.title = '下载贴图';
+        downloadBtn.textContent = '↓';
+        downloadBtn.addEventListener('click', event => {
+          event.preventDefault();
+          event.stopPropagation();
+          handleDownloadCurrentPreview(item, idx);
+        });
+        wrap.appendChild(img);
+        wrap.appendChild(downloadBtn);
+        previewEl.appendChild(wrap);
       });
       if (Array.isArray(items) && generatedImages.length) {
         scheduleSlicePreview({ immediate: true, auto: true });
