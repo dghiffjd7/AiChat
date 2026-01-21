@@ -598,6 +598,7 @@ class AppBridge {
         if (!table) return '';
         return formatMemoryRowText(row?.row_data || {}, table?.columns || []);
       };
+      const normalizeId = (cid) => String(cid || '').trim();
       const resolveContactName = (cid) => {
         const c = this.contactsStore?.getContact?.(cid);
         return String(c?.name || cid || '').trim();
@@ -637,8 +638,11 @@ class AppBridge {
       } else {
         const groupContact = this.contactsStore?.getContact?.(sessionId);
         const members = Array.isArray(groupContact?.members)
-          ? groupContact.members.map(item => String(item || '').trim()).filter(Boolean)
+          ? groupContact.members.map(item => normalizeId(item)).filter(Boolean)
           : [];
+        const memberSet = new Set(members);
+        const outlineTableId = 'chat_outline';
+        const outlineTable = tableByIdAll.get(outlineTableId);
         if (members.length) {
           if (!pushLine('【跨会话参考｜成员私聊记忆】')) return { text: '', tokens: used };
           pushLine('（以下为用户与各成员的私聊关系记忆，群内其他人不应知道；仅供模型掌握，勿在群聊中泄露）');
@@ -648,16 +652,22 @@ class AppBridge {
               contact_id: memberId,
               template_id: templateId,
             }).catch(() => []);
-            const filteredRows = (Array.isArray(memberRows) ? memberRows : [])
-              .filter(row => row && row.is_active !== false)
-              .filter(row => !isSummaryTableId(String(row?.table_id || '').trim()));
-            if (!filteredRows.length) continue;
+            const activeRows = (Array.isArray(memberRows) ? memberRows : [])
+              .filter(row => row && row.is_active !== false);
+            const filteredRows = activeRows.filter(row => {
+              const tableId = normalizeId(row?.table_id);
+              return tableId && !isSummaryTableId(tableId);
+            });
+            const outlineRows = outlineTable
+              ? activeRows.filter(row => normalizeId(row?.table_id) === outlineTableId)
+              : [];
+            if (!filteredRows.length && !outlineRows.length) continue;
             const memberName = resolveContactName(memberId);
             pushSpacer();
             if (!pushLine(`【成员：${memberName || memberId}】`)) break;
             const rowsByTable = new Map();
             filteredRows.forEach((row) => {
-              const tableId = String(row?.table_id || '').trim();
+              const tableId = normalizeId(row?.table_id);
               if (!tableId) return;
               if (!rowsByTable.has(tableId)) rowsByTable.set(tableId, []);
               rowsByTable.get(tableId).push(row);
@@ -673,6 +683,61 @@ class AppBridge {
                 const rowText = getRowText(row, table);
                 if (!rowText) continue;
                 if (!pushLine(`- ${rowText}`)) return { text: parts.join('\n').trim(), tokens: used };
+              }
+            }
+            if (outlineTable && outlineRows.length) {
+              const outlineLabel = String(outlineTable?.name || outlineTableId).trim() || outlineTableId;
+              const header = autoExtract ? `【${outlineLabel}｜${outlineTableId}】` : `【${outlineLabel}】`;
+              if (!pushLine(header)) return { text: parts.join('\n').trim(), tokens: used };
+              outlineRows.sort((a, b) => resolveRowSortKey(a, 0) - resolveRowSortKey(b, 0));
+              for (const row of outlineRows) {
+                const rowText = getRowText(row, outlineTable);
+                if (!rowText) continue;
+                if (!pushLine(`- ${rowText}`)) return { text: parts.join('\n').trim(), tokens: used };
+              }
+            }
+          }
+        }
+        const groupOutlineTable = tableByIdAll.get('group_outline');
+        if (groupOutlineTable && members.length) {
+          const groups = this.contactsStore?.listGroups?.() || [];
+          const relatedGroups = groups
+            .map(group => {
+              const gid = normalizeId(group?.id);
+              const groupMembers = Array.isArray(group?.members)
+                ? group.members.map(item => normalizeId(item)).filter(Boolean)
+                : [];
+              return { group, gid, groupMembers };
+            })
+            .filter(item => item.gid && item.gid !== normalizeId(sessionId))
+            .filter(item => item.groupMembers.some(memberId => memberSet.has(memberId)));
+          if (relatedGroups.length) {
+            if (!pushLine('【跨群聊参考｜相关群聊大纲】')) return { text: '', tokens: used };
+            pushLine('（以下为与当前群成员重叠的群聊大纲，仅共享成员知情）');
+            for (const item of relatedGroups) {
+              const groupId = item.gid;
+              const groupName = String(item.group?.name || groupId).trim() || groupId;
+              const groupRows = await this.memoryTableStore.getMemories({
+                scope: 'group',
+                group_id: groupId,
+                template_id: templateId,
+              }).catch(() => []);
+              const outlineRows = (Array.isArray(groupRows) ? groupRows : [])
+                .filter(row => row && row.is_active !== false)
+                .filter(row => normalizeId(row?.table_id) === 'group_outline')
+                .sort((a, b) => resolveRowSortKey(a, 0) - resolveRowSortKey(b, 0));
+              if (!outlineRows.length) continue;
+              const unknownMembers = members.filter(memberId => !item.groupMembers.includes(memberId));
+              const unknownNames = unknownMembers.map(memberId => resolveContactName(memberId) || memberId).filter(Boolean);
+              pushSpacer();
+              if (!pushLine(`【${groupName}】`)) break;
+              if (unknownNames.length) {
+                if (!pushLine(`（提示：本群聊中成员${unknownNames.join('、')}未参与该群聊，不知道以下内容）`)) break;
+              }
+              for (const row of outlineRows) {
+                const rowText = getRowText(row, groupOutlineTable);
+                if (!rowText) continue;
+                if (!pushLine(`- ${rowText}`)) break;
               }
             }
           }

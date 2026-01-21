@@ -93,11 +93,6 @@ const initApp = async () => {
     originalSetInputText(val);
     updateStickerPreview(val);
   };
-  const originalClearInput = ui.clearInput.bind(ui);
-  ui.clearInput = () => {
-    originalClearInput();
-    updateStickerPreview('');
-  };
   const configPanel = new ConfigPanel();
   const chatConfigManager = new ConfigManager();
   const imageConfigManager = new ConfigManager({ scope: 'image' });
@@ -108,6 +103,21 @@ const initApp = async () => {
   const regexPanel = new RegexPanel();
   const chatStore = new ChatStore();
   window.appBridge.setChatStore(chatStore);
+  const clearDraftMirror = sessionId => {
+    const sid = String(sessionId || '').trim();
+    if (!sid) return;
+    chatStore.setDraft('', sid);
+    try {
+      sessionStorage.removeItem(`phone_draft_${sid}`);
+    } catch {}
+  };
+  const originalClearInput = ui.clearInput.bind(ui);
+  ui.clearInput = () => {
+    originalClearInput();
+    updateStickerPreview('');
+    const sid = chatStore.getCurrent();
+    if (sid) clearDraftMirror(sid);
+  };
   const contactsStore = new ContactsStore();
   try {
     window.appBridge.setContactsStore?.(contactsStore);
@@ -12076,7 +12086,12 @@ Phase G（Frame 36）：循环衔接
   let wallpaperIdleTimer = null;
   let lastWallpaperActivityAt = 0;
 
-  const hasActiveWallpaper = () => Boolean(activeWallpaperUrl);
+  const hasActiveWallpaper = () => {
+    if (!activeWallpaperUrl || !chatRoom) return false;
+    const layer = chatRoom.querySelector('.chat-wallpaper-layer');
+    if (!layer || layer.classList.contains('is-hidden')) return false;
+    return true;
+  };
 
   const clearWallpaperIdle = () => {
     if (!chatRoom) return;
