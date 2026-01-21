@@ -68,8 +68,15 @@
           <div class="chat-input-container">
             <div id="composer-attachments" class="chat-attachment-preview"></div>
             <div class="chat-input-row">
-              <button class="voice-btn">+</button>
-              <textarea id="composer-input" class="chat-input" placeholder="" rows="1"></textarea>
+              <button class="voice-btn" aria-label="更多操作">+</button>
+              <div class="chat-action-inline" aria-hidden="true">
+                <button type="button" class="chat-action-btn" data-action="image" aria-label="发送图片"></button>
+                <button type="button" class="chat-action-btn" data-action="document" aria-label="发送附件"></button>
+              </div>
+              <div class="chat-input-wrap">
+                <textarea id="composer-input" class="chat-input" placeholder="" rows="1"></textarea>
+                <button type="button" class="chat-sticker-btn" aria-label="贴图"></button>
+              </div>
               <button id="send-button" class="chat-send-btn" aria-label="发送">
                 <img src="./assets/external/send-icon.png" alt="" class="chat-send-icon" />
               </button>

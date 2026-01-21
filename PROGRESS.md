@@ -1,5 +1,34 @@
 # 開發進度追蹤（必更新）(必须使用当下时间记录)
 
+## 2026-01-21 18:45
+- 聊天输入区交互调整：贴图按钮移入输入框右侧（素描笑脸）；“+”展开改为左侧图片/附件快捷入口，输入框随展开收缩；底部快捷面板隐藏。
+- 图片发送：移除 URL 模式，仅支持本地图片选择。
+- 修改/新增：
+  - `src/index.html`
+  - `src/assets/css/qq-legacy.css`
+  - `src/scripts/ui/app.js`
+  - `src/assets/external/sticker-smile.svg`
+  - `src/assets/external/action-image.svg`
+  - `src/assets/external/action-attach.svg`
+
+## 2026-01-21 19:10
+- 贴图图标替换为截图样式。
+- 贴图生成：分页文字改为“动图模式”，动图预览仅在动图模式显示。
+- 修改：
+  - `src/assets/external/sticker-smile.svg`
+  - `src/scripts/ui/app.js`
+
+## 2026-01-21 19:18
+- 贴图生成：动图预览位置调整到“去背并切割”与“切割结果”之间。
+- 修改：
+  - `src/scripts/ui/app.js`
+
+## 2026-01-21 19:32
+- 贴图生成：默认保存贴图包对齐当前打开的贴图包。
+- 动图播放：输入框/聊天预览优先使用贴图包自带 fps，不再回退到默认 12fps。
+- 修改：
+  - `src/scripts/ui/app.js`
+
 ## 2026-01-21 14:10
 - 贴图下载：动图下载改为使用 GIF dataUrl 流式导出，避免导出字节流导致动图损毁。
 - 修改：

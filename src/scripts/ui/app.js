@@ -2452,8 +2452,8 @@ Phase G（Frame 36）：循环衔接
     return next.length ? next : primary;
   };
   const resolveStickerFpsByKeyword = (keyword, resolvedItem) => {
-    const primary = clampStickerFps(resolvedItem?.fps);
-    if (primary) return primary;
+    const rawPrimary = Number(resolvedItem?.fps);
+    if (Number.isFinite(rawPrimary) && rawPrimary > 0) return clampStickerFps(rawPrimary);
     const fallback = findStickerByKeyword(keyword);
     return clampStickerFps(fallback?.fps);
   };
@@ -4315,7 +4315,7 @@ Phase G（Frame 36）：循环衔接
       <div class="sticker-ai-body">
         <div class="sticker-ai-tabs">
           <button type="button" class="sticker-ai-tab is-active" data-mode="sticker">贴图模式</button>
-          <button type="button" class="sticker-ai-tab" data-mode="sprite">精灵图/动图</button>
+          <button type="button" class="sticker-ai-tab" data-mode="sprite">动图模式</button>
         </div>
 
         <div class="sticker-ai-mode sticker-ai-mode-sticker is-active" data-mode="sticker">
@@ -4485,20 +4485,22 @@ Phase G（Frame 36）：循环衔接
           <button type="button" class="sticker-ai-btn ghost" id="sticker-ai-auto">自动推断</button>
         </div>
 
-        <label class="sticker-ai-label">动图预览</label>
-        <div class="sticker-ai-anim">
-          <div class="sticker-ai-anim-preview">
-            <img id="sticker-ai-anim-image" alt="动图预览" />
-            <div class="sticker-ai-anim-placeholder" id="sticker-ai-anim-placeholder">暂无切割结果</div>
-          </div>
-          <div class="sticker-ai-anim-controls">
-            <label>预览帧速
-              <input type="number" id="sticker-ai-preview-fps" min="1" max="60" value="12">
-            </label>
-            <label class="sticker-ai-checkbox">
-              <span>仅预览已选</span>
-              <input type="checkbox" id="sticker-ai-preview-selected" checked>
-            </label>
+        <div class="sticker-ai-mode sticker-ai-mode-sprite-anim" data-mode="sprite">
+          <label class="sticker-ai-label">动图预览</label>
+          <div class="sticker-ai-anim">
+            <div class="sticker-ai-anim-preview">
+              <img id="sticker-ai-anim-image" alt="动图预览" />
+              <div class="sticker-ai-anim-placeholder" id="sticker-ai-anim-placeholder">暂无切割结果</div>
+            </div>
+            <div class="sticker-ai-anim-controls">
+              <label>预览帧速
+                <input type="number" id="sticker-ai-preview-fps" min="1" max="60" value="12">
+              </label>
+              <label class="sticker-ai-checkbox">
+                <span>仅预览已选</span>
+                <input type="checkbox" id="sticker-ai-preview-selected" checked>
+              </label>
+            </div>
           </div>
         </div>
 
@@ -5572,8 +5574,11 @@ Phase G（Frame 36）：循环衔接
       });
     };
 
+    let preferredPackId = '';
     const renderPackOptions = () => {
       if (!packSelectEl) return;
+      const currentValue = String(packSelectEl.value || '').trim();
+      const nextPreferred = String(preferredPackId || '').trim();
       packSelectEl.innerHTML = '';
       const createOption = document.createElement('option');
       createOption.value = '__new__';
@@ -5586,6 +5591,14 @@ Phase G（Frame 36）：循环衔接
         option.textContent = `贴图包 ${idx + 1}`;
         packSelectEl.appendChild(option);
       });
+      const candidate = nextPreferred || currentValue;
+      if (candidate && candidate !== '__new__' && packs.some(pack => String(pack?.id || '') === candidate)) {
+        packSelectEl.value = candidate;
+        return;
+      }
+      if (currentValue && currentValue !== '__new__') {
+        packSelectEl.value = '__new__';
+      }
     };
 
     const stopAnimationPreview = () => {
@@ -6743,7 +6756,10 @@ Phase G（Frame 36）：循环衔接
       }
     };
 
-    const show = () => {
+    const show = (options = {}) => {
+      const optionPackId = String(options?.packId || '').trim();
+      const currentPackId = getStickerPackIdFromTab(stickerPanelTab);
+      preferredPackId = optionPackId || currentPackId || preferredPackId;
       if (!templateInput?.value) {
         templateInput.value = getDefaultTemplateForMode(stickerAiMode);
       }
@@ -6815,6 +6831,11 @@ Phase G（Frame 36）：循环衔接
       animPreviewSelectedInput.addEventListener('change', () => {
         updateAnimationPreview();
         schedulePreviewSettingsSave(true);
+      });
+    }
+    if (packSelectEl) {
+      packSelectEl.addEventListener('change', () => {
+        preferredPackId = String(packSelectEl.value || '').trim();
       });
     }
     resetBtn?.addEventListener('click', () => {
@@ -6942,7 +6963,8 @@ Phase G（Frame 36）：循环衔接
     stickerPanel.generateBtn.addEventListener('click', event => {
       event.preventDefault();
       event.stopPropagation();
-      stickerAiModal.show();
+      const packId = getStickerPackIdFromTab(stickerPanelTab);
+      stickerAiModal.show({ packId });
     });
   }
   if (stickerPanel?.deleteBtn) {
@@ -8042,12 +8064,7 @@ Phase G（Frame 36）：循环衔接
   // Quick action buttons
   const actionHandlers = {
     image: async () => {
-      const useFile = confirm('使用本地图片文件吗？点击「取消」改用 URL。');
-      if (useFile) {
-        await mediaPicker.pickFile('image');
-      } else {
-        await mediaPicker.pickUrl('输入图片地址（可贴 https:// 或本地 file://）', avatars.user);
-      }
+      await mediaPicker.pickFile('image');
     },
     music: async () => {
       const useFile = confirm('使用本地音频文件吗？点击「取消」改用 URL。');
@@ -8101,6 +8118,17 @@ Phase G（Frame 36）：循环衔接
     }
     window.toastr?.info?.(`快捷操作占位：${action}`);
   };
+
+  document.querySelectorAll('.chat-action-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const action = btn.dataset.action;
+      runQuickAction(action);
+    });
+  });
+  const chatStickerBtn = document.querySelector('.chat-sticker-btn');
+  chatStickerBtn?.addEventListener('click', () => {
+    runQuickAction('sticker');
+  });
 
   document.querySelectorAll('.action-chip').forEach(btn => {
     btn.addEventListener('click', () => {
