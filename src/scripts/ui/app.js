@@ -142,6 +142,7 @@ const initApp = async () => {
   });
   const personaStore = new PersonaStore();
   let activePersonaScopeKey = '';
+  let activePersonaId = 'default';
   let chatRoom = null;
   const getPersonaScopeKey = personaId => {
     const settings = appSettings.get();
@@ -153,7 +154,8 @@ const initApp = async () => {
   let lastMomentRawMeta = null;
   const worldPanel = new WorldPanel({ contactsStore, getSessionId: () => chatStore.getCurrent() });
   await personaStore.ready;
-  const initialScopeKey = getPersonaScopeKey();
+  activePersonaId = personaStore.getActive?.()?.id || 'default';
+  const initialScopeKey = getPersonaScopeKey(activePersonaId);
   await Promise.all([
     chatStore.setScope?.(initialScopeKey),
     contactsStore.setScope?.(initialScopeKey),
@@ -191,7 +193,10 @@ const initApp = async () => {
     await window.appBridge?.syncPresetRegexBindings?.();
   } catch {}
   window.appBridge.setActiveSession(chatStore.getCurrent());
-  const sessionPanel = new SessionPanel(chatStore, contactsStore, ui);
+  const sessionPanel = new SessionPanel(chatStore, contactsStore, ui, { personaStore, getPersonaScopeKey });
+  try {
+    window.__sessionPanel = sessionPanel;
+  } catch {}
   const regexSessionPanel = new RegexSessionPanel(() => chatStore.getCurrent());
   const contactSettingsPanel = new ContactSettingsPanel({
     contactsStore,
@@ -375,9 +380,20 @@ const initApp = async () => {
   };
 
   const applyPersonaScope = async ({ personaId = null, force = false } = {}) => {
-    const nextKey = getPersonaScopeKey(personaId);
-    if (!force && nextKey === activePersonaScopeKey) return false;
     const pid = personaId || personaStore.getActive?.()?.id || 'default';
+    const nextKey = getPersonaScopeKey(pid);
+    if (!force && nextKey === activePersonaScopeKey) {
+      activePersonaId = pid;
+      return false;
+    }
+    try {
+      const prevId = activePersonaId || 'default';
+      const cache = (window.__personaContactsCache = window.__personaContactsCache || {});
+      cache[prevId] = {
+        contacts: (contactsStore.listContacts?.() || []).map(c => ({ ...c })),
+        updatedAt: Date.now(),
+      };
+    } catch {}
     logger.info(`[Persona_test] applyPersonaScope start persona=${pid} scope=${nextKey || 'default'}`);
     activePersonaScopeKey = nextKey;
     await Promise.all([
@@ -413,6 +429,7 @@ const initApp = async () => {
         chatStore.listSessions?.().length || 0
       } contacts=${contactsStore.listContacts?.().length || 0}`,
     );
+    activePersonaId = pid;
     return true;
   };
 

@@ -25,6 +25,7 @@ pub fn run() {
             commands::get_characters,
             commands::save_kv,
             commands::load_kv,
+            commands::list_contacts_by_scopes,
             commands::chat_store_v2_read_index,
             commands::chat_store_v2_write_index,
             commands::chat_store_v2_read_part,

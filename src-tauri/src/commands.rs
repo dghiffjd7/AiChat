@@ -79,6 +79,26 @@ fn sanitize_download_name(input: &str) -> String {
     cleaned
 }
 
+fn normalize_scope_id(input: &str) -> String {
+    let raw = input.trim();
+    if raw.is_empty() {
+        return String::new();
+    }
+    let mut out = String::with_capacity(raw.len());
+    for ch in raw.chars() {
+        if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+            out.push(ch);
+        } else {
+            out.push('_');
+        }
+    }
+    const MAX_LEN: usize = 64;
+    if out.len() > MAX_LEN {
+        out.truncate(MAX_LEN);
+    }
+    out
+}
+
 fn validate_safe_key(raw: &str, label: &str) -> Result<String, String> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
@@ -2168,6 +2188,129 @@ pub async fn load_kv(app: AppHandle, name: String) -> Result<Value, String> {
     }
 
     Ok(data)
+}
+
+#[tauri::command]
+pub async fn list_contacts_by_scopes(
+    app: AppHandle,
+    scopes: Vec<String>,
+    limit_per_scope: Option<usize>,
+) -> Result<Value, String> {
+    let data_dir = get_data_dir(&app)?;
+    let limit = limit_per_scope.unwrap_or(usize::MAX);
+    let mut results: Vec<Value> = Vec::new();
+
+    for raw_scope in scopes {
+        let scope = normalize_scope_id(&raw_scope);
+        if scope.is_empty() {
+            continue;
+        }
+        let mut file = data_dir.join(format!("contacts_store_v1__{scope}.json"));
+        if !file.exists() && scope == "default" {
+            let legacy = data_dir.join("contacts_store_v1.json");
+            if legacy.exists() {
+                file = legacy;
+            }
+        }
+        if !file.exists() {
+            continue;
+        }
+
+        let json = match fs::read_to_string(&file) {
+            Ok(val) => val,
+            Err(_) => continue,
+        };
+        let max_len: usize = 30 * 1024 * 1024; // 30 MiB safety cap
+        if json.len() > max_len {
+            results.push(serde_json::json!({
+                "scopeId": scope,
+                "contacts": [],
+                "_tooLarge": true,
+                "size": json.len(),
+            }));
+            continue;
+        }
+        let data: Value = serde_json::from_str(&json).unwrap_or(serde_json::json!({}));
+        let obj = match data.as_object() {
+            Some(val) => val,
+            None => continue,
+        };
+        let scope_id = obj
+            .get("scopeId")
+            .and_then(|v| v.as_str())
+            .unwrap_or(scope.as_str());
+
+        let mut contacts_out: Vec<Value> = Vec::new();
+        if let Some(contacts) = obj.get("contacts").and_then(|v| v.as_object()) {
+            for (key, value) in contacts.iter() {
+                if contacts_out.len() >= limit {
+                    break;
+                }
+                let map = match value.as_object() {
+                    Some(v) => v,
+                    None => continue,
+                };
+                let id = map
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(key)
+                    .trim()
+                    .to_string();
+                if id.is_empty() {
+                    continue;
+                }
+                let name = map
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(id.as_str())
+                    .to_string();
+                let mut avatar = map
+                    .get("avatar")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                if avatar.len() > 200_000 {
+                    avatar.clear();
+                }
+                let is_group = map
+                    .get("isGroup")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(id.starts_with("group:"));
+                let members = map
+                    .get("members")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                            .collect::<Vec<String>>()
+                    })
+                    .unwrap_or_else(Vec::new);
+                let added_at = map.get("addedAt").and_then(|v| v.as_i64()).unwrap_or(0);
+                let description = map
+                    .get("description")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+
+                contacts_out.push(serde_json::json!({
+                    "id": id,
+                    "name": name,
+                    "avatar": avatar,
+                    "isGroup": is_group,
+                    "members": members,
+                    "addedAt": added_at,
+                    "description": description,
+                }));
+            }
+        }
+
+        results.push(serde_json::json!({
+            "scopeId": scope_id,
+            "contacts": contacts_out,
+        }));
+    }
+
+    Ok(serde_json::json!(results))
 }
 
 /// 读取分片聊天索引
