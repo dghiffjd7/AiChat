@@ -2,8 +2,26 @@ const STORAGE_KEY = 'sticker_packs_v1';
 
 const DEFAULT_STATE = {
   version: 1,
-  defaultEnabled: true,
+  defaultEnabled: false,
   packs: [],
+};
+
+const normalizeImageMeta = (meta) => {
+  const raw = meta && typeof meta === 'object' ? meta : {};
+  const zoom = Number(raw.zoom);
+  const rotate = Number(raw.rotate);
+  const offsetX = Number(raw.offsetX);
+  const offsetY = Number(raw.offsetY);
+  const width = Number(raw.width);
+  const height = Number(raw.height);
+  return {
+    zoom: Number.isFinite(zoom) ? zoom : 1,
+    rotate: Number.isFinite(rotate) ? rotate : 0,
+    offsetX: Number.isFinite(offsetX) ? offsetX : 0,
+    offsetY: Number.isFinite(offsetY) ? offsetY : 0,
+    width: Number.isFinite(width) ? width : 0,
+    height: Number.isFinite(height) ? height : 0,
+  };
 };
 
 const safeParse = (raw) => {
@@ -37,9 +55,11 @@ const normalizePack = (pack) => {
   const stickers = Array.isArray(raw.stickers) ? raw.stickers.map(normalizeSticker) : [];
   return {
     id: String(raw.id || '').trim(),
+    name: String(raw.name || '').trim(),
     colorIndex: Number.isFinite(Number(raw.colorIndex)) ? Number(raw.colorIndex) : 0,
     iconPath: String(raw.iconPath || '').trim(),
     iconDataUrl: String(raw.iconDataUrl || '').trim(),
+    iconMeta: normalizeImageMeta(raw.iconMeta),
     aiEnabled: Boolean(raw.aiEnabled),
     stickers,
   };
@@ -50,7 +70,7 @@ const normalizeState = (state) => {
   const packs = Array.isArray(raw.packs) ? raw.packs.map(normalizePack).filter(p => p.id) : [];
   return {
     ...DEFAULT_STATE,
-    defaultEnabled: raw.defaultEnabled !== false,
+    defaultEnabled: typeof raw.defaultEnabled === 'boolean' ? raw.defaultEnabled : DEFAULT_STATE.defaultEnabled,
     packs,
   };
 };
@@ -121,7 +141,7 @@ export const stickerPackStore = {
     return this.update(state => ({ ...state, defaultEnabled: Boolean(enabled) }));
   },
   getDefaultEnabled() {
-    return readState().defaultEnabled !== false;
+    return readState().defaultEnabled;
   },
   getEnabledCustomKeywords() {
     const state = readState();

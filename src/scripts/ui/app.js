@@ -1767,6 +1767,7 @@ Phase G（Frame 36）：循环衔接
 
   const stickerFilePicker = createFilePicker('image/*', { multiple: true });
   const stickerIconPicker = createFilePicker('image/*', { multiple: false });
+  const stickerPackIconManagePicker = createFilePicker('image/*', { multiple: false });
   const stickerAiReferencePicker = createFilePicker('image/*', { multiple: true });
   const stickerAiUploadPicker = createFilePicker('image/*', { multiple: true });
 
@@ -2372,6 +2373,13 @@ Phase G（Frame 36）：循环衔接
   };
   syncStickerPackState();
 
+  const formatStickerPackLabel = (pack, index = 0) => {
+    const name = String(pack?.name || '').trim();
+    if (name) return name;
+    const safeIndex = Number.isFinite(index) && index >= 0 ? index : 0;
+    return `贴图包${safeIndex + 1}`;
+  };
+
   const createStickerPack = () => {
     const id =
       typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
@@ -2382,9 +2390,11 @@ Phase G（Frame 36）：循环衔接
     const colorIndex = STICKER_PACK_COLORS.length ? nextIndex % STICKER_PACK_COLORS.length : 0;
     const pack = {
       id,
+      name: '',
       colorIndex,
       iconPath: '',
       iconDataUrl: '',
+      iconMeta: { zoom: 1, rotate: 0, offsetX: 0, offsetY: 0, width: 0, height: 0 },
       aiEnabled: false,
       stickers: [],
     };
@@ -2476,6 +2486,44 @@ Phase G（Frame 36）：循环衔接
       img.src = list[index];
     }, interval);
     return true;
+  };
+
+  const applyStickerTabIconTransform = (img, meta) => {
+    if (!img || !meta) return;
+    const wrap = img.parentElement;
+    const rect = wrap?.getBoundingClientRect?.();
+    const cw = rect?.width || 20;
+    const ch = rect?.height || 20;
+    const iw = Number(meta?.width) || img.naturalWidth || 0;
+    const ih = Number(meta?.height) || img.naturalHeight || 0;
+    if (!iw || !ih || !cw || !ch) return;
+    const baseScale = Math.max(cw / iw, ch / ih);
+    const zoom = Number(meta?.zoom || 1);
+    const rotate = Number(meta?.rotate || 0);
+    const offsetX = Number(meta?.offsetX || 0) * cw;
+    const offsetY = Number(meta?.offsetY || 0) * ch;
+    img.classList.add('is-transformed');
+    img.style.width = `${iw}px`;
+    img.style.height = `${ih}px`;
+    img.style.transform = `translate(-50%, -50%) translate(${offsetX}px, ${offsetY}px) rotate(${rotate}deg) scale(${baseScale * zoom})`;
+    img.style.transformOrigin = 'center';
+  };
+
+  const buildStickerTabIcon = ({ url = '', alt = '', meta = null } = {}) => {
+    if (!url) return null;
+    const wrap = document.createElement('span');
+    wrap.className = 'sticker-tab-icon-wrap';
+    const img = document.createElement('img');
+    img.className = 'sticker-tab-icon-img';
+    img.src = url;
+    img.alt = alt || '贴图包';
+    wrap.appendChild(img);
+    if (meta) {
+      const apply = () => applyStickerTabIconTransform(img, meta);
+      img.addEventListener('load', apply);
+      if (img.complete) apply();
+    }
+    return wrap;
   };
 
   const formatStickerNameSuggestion = (name, index) => {
@@ -3145,7 +3193,7 @@ Phase G（Frame 36）：循环衔接
       pressTimer = setTimeout(() => {
         triggered = true;
         btn.dataset.longpress = '1';
-        updateStickerPackIcon(packId);
+        stickerPackManager?.show?.(packId);
       }, 520);
     });
     ['pointerup', 'pointercancel', 'pointerleave'].forEach(evt => {
@@ -3178,11 +3226,11 @@ Phase G（Frame 36）：循环衔接
     def.className = 'sticker-tab';
     def.dataset.tab = 'default';
     def.title = '默认贴图';
-    const defIcon = document.createElement('img');
-    defIcon.className = 'sticker-tab-icon';
-    defIcon.src = './assets/external/feather-default.png';
-    defIcon.alt = '默认贴图';
-    def.appendChild(defIcon);
+    const defIcon = buildStickerTabIcon({
+      url: './assets/external/feather-default.png',
+      alt: '默认贴图',
+    });
+    if (defIcon) def.appendChild(defIcon);
     addTab(def);
 
     const packs = Array.isArray(stickerPackState?.packs) ? stickerPackState.packs : [];
@@ -3191,7 +3239,7 @@ Phase G（Frame 36）：循环衔接
       btn.type = 'button';
       btn.className = 'sticker-tab sticker-tab-pack';
       btn.dataset.tab = `${STICKER_PACK_TAB_PREFIX}${pack.id}`;
-      btn.title = '自定义贴图';
+      btn.title = formatStickerPackLabel(pack, idx);
       const color = STICKER_PACK_COLORS[pack.colorIndex % STICKER_PACK_COLORS.length];
       if (color) {
         btn.style.background = color;
@@ -3201,11 +3249,12 @@ Phase G（Frame 36）：循环衔接
       const iconUrl = resolveStickerMediaUrl({ dataUrl: pack.iconDataUrl, path: pack.iconPath });
       const showNumber = idx >= STICKER_PACK_COLORS.length;
       if (iconUrl) {
-        const img = document.createElement('img');
-        img.className = 'sticker-tab-icon';
-        img.src = iconUrl;
-        img.alt = '贴图包';
-        btn.appendChild(img);
+        const icon = buildStickerTabIcon({
+          url: iconUrl,
+          alt: formatStickerPackLabel(pack, idx),
+          meta: pack.iconMeta,
+        });
+        if (icon) btn.appendChild(icon);
       } else {
         btn.textContent = showNumber ? String(idx + 1) : '';
       }
@@ -5588,7 +5637,7 @@ Phase G（Frame 36）：循环衔接
       packs.forEach((pack, idx) => {
         const option = document.createElement('option');
         option.value = String(pack?.id || '');
-        option.textContent = `贴图包 ${idx + 1}`;
+        option.textContent = formatStickerPackLabel(pack, idx);
         packSelectEl.appendChild(option);
       });
       const candidate = nextPreferred || currentValue;
@@ -6919,6 +6968,664 @@ Phase G（Frame 36）：循环衔接
     document.body.appendChild(modal);
     document.body.appendChild(zoomOverlay);
     document.body.appendChild(zoomModal);
+
+    return { show, hide };
+  })();
+  const stickerPackManager = (() => {
+    const overlay = document.createElement('div');
+    overlay.className = 'sticker-pack-overlay';
+    const modal = document.createElement('div');
+    modal.className = 'sticker-pack-modal';
+    modal.innerHTML = `
+      <div class="sticker-pack-header">
+        <div>
+          <div class="sticker-pack-title">贴图分页管理</div>
+          <div class="sticker-pack-subtitle" id="sticker-pack-subtitle"></div>
+        </div>
+        <button type="button" class="sticker-pack-close" aria-label="关闭">×</button>
+      </div>
+      <div class="sticker-pack-body">
+        <div class="sticker-pack-section">
+          <label class="sticker-pack-label">
+            分页名称
+            <input type="text" id="sticker-pack-name" placeholder="输入贴图包名称">
+          </label>
+        </div>
+        <div class="sticker-pack-section">
+          <div class="sticker-pack-section-title">分页图标</div>
+          <div class="sticker-pack-editor">
+            <div class="sticker-pack-preview is-square" id="sticker-pack-icon-preview">
+              <img id="sticker-pack-icon-image" alt="" />
+              <div class="sticker-pack-preview-overlay">
+                <div class="sticker-pack-preview-bubble">预览气泡</div>
+              </div>
+            </div>
+            <div class="sticker-pack-controls">
+              <button type="button" id="sticker-pack-icon-upload">上传图标</button>
+              <button type="button" id="sticker-pack-icon-reset">重置</button>
+              <button type="button" id="sticker-pack-icon-clear">清除</button>
+            </div>
+            <div class="sticker-pack-sliders">
+              <label>缩放
+                <input type="range" id="sticker-pack-icon-zoom" min="0.6" max="2.5" step="0.01" value="1">
+              </label>
+              <label>旋转
+                <input type="range" id="sticker-pack-icon-rotate" min="-180" max="180" step="1" value="0">
+              </label>
+            </div>
+          </div>
+        </div>
+        <div class="sticker-pack-section">
+          <div class="sticker-pack-section-title">贴图管理</div>
+          <div class="sticker-pack-toolbar">
+            <div class="sticker-pack-selection">已选 <span id="sticker-pack-selected-count">0</span> 项</div>
+            <div class="sticker-pack-actions">
+              <button type="button" id="sticker-pack-select-all">全选</button>
+              <button type="button" id="sticker-pack-select-none">全不选</button>
+              <button type="button" id="sticker-pack-delete-selected">删除</button>
+            </div>
+          </div>
+          <div class="sticker-pack-move">
+            <select id="sticker-pack-move-target"></select>
+            <button type="button" id="sticker-pack-move-btn">移动</button>
+            <button type="button" id="sticker-pack-download-btn">批量下载</button>
+          </div>
+          <div class="sticker-pack-keywords">
+            <div class="sticker-pack-keywords-title">批量关键词（按勾选顺序，每行一个）</div>
+            <textarea id="sticker-pack-keywords-input" placeholder="例如：开心&#10;生气&#10;点赞"></textarea>
+            <div class="sticker-pack-keywords-actions">
+              <button type="button" id="sticker-pack-keywords-apply">应用到所选</button>
+            </div>
+          </div>
+          <div class="sticker-pack-list" id="sticker-pack-list"></div>
+        </div>
+      </div>
+      <div class="sticker-pack-footer">
+        <button type="button" id="sticker-pack-save">保存</button>
+        <button type="button" id="sticker-pack-close">关闭</button>
+      </div>
+    `;
+
+    const subtitleEl = modal.querySelector('#sticker-pack-subtitle');
+    const nameInput = modal.querySelector('#sticker-pack-name');
+    const iconPreview = modal.querySelector('#sticker-pack-icon-preview');
+    const iconImage = modal.querySelector('#sticker-pack-icon-image');
+    const iconZoom = modal.querySelector('#sticker-pack-icon-zoom');
+    const iconRotate = modal.querySelector('#sticker-pack-icon-rotate');
+    const iconUpload = modal.querySelector('#sticker-pack-icon-upload');
+    const iconReset = modal.querySelector('#sticker-pack-icon-reset');
+    const iconClear = modal.querySelector('#sticker-pack-icon-clear');
+    const selectedCountEl = modal.querySelector('#sticker-pack-selected-count');
+    const selectAllBtn = modal.querySelector('#sticker-pack-select-all');
+    const selectNoneBtn = modal.querySelector('#sticker-pack-select-none');
+    const deleteSelectedBtn = modal.querySelector('#sticker-pack-delete-selected');
+    const moveSelect = modal.querySelector('#sticker-pack-move-target');
+    const moveBtn = modal.querySelector('#sticker-pack-move-btn');
+    const downloadBtn = modal.querySelector('#sticker-pack-download-btn');
+    const keywordInput = modal.querySelector('#sticker-pack-keywords-input');
+    const keywordApplyBtn = modal.querySelector('#sticker-pack-keywords-apply');
+    const listEl = modal.querySelector('#sticker-pack-list');
+    const saveBtn = modal.querySelector('#sticker-pack-save');
+    const closeBtn = modal.querySelector('#sticker-pack-close');
+    const headerCloseBtn = modal.querySelector('.sticker-pack-close');
+
+    let currentPackId = '';
+    let selectedIds = new Set();
+
+    const createEditableImageState = () => ({
+      previewUrl: '',
+      path: '',
+      dataUrl: '',
+      pendingDataUrl: '',
+      fileName: '',
+      zoom: 1,
+      rotate: 0,
+      offsetX: 0,
+      offsetY: 0,
+      width: 0,
+      height: 0,
+      dragging: false,
+      dragStart: null,
+      dirty: false,
+      cleared: false,
+    });
+
+    const applyEditorTransform = (state, previewEl, imageEl) => {
+      if (!previewEl || !imageEl || !state.previewUrl) return;
+      const rect = previewEl.getBoundingClientRect();
+      const cw = rect.width || 1;
+      const ch = rect.height || 1;
+      const iw = state.width || imageEl.naturalWidth || 0;
+      const ih = state.height || imageEl.naturalHeight || 0;
+      if (!iw || !ih) return;
+      const baseScale = Math.max(cw / iw, ch / ih);
+      const scale = baseScale * (Number(state.zoom) || 1);
+      const offsetX = Number(state.offsetX || 0) * cw;
+      const offsetY = Number(state.offsetY || 0) * ch;
+      imageEl.style.transform = `translate(-50%, -50%) translate(${offsetX}px, ${offsetY}px) rotate(${state.rotate}deg) scale(${scale})`;
+    };
+
+    const bindEditorImage = (state, previewEl, imageEl) => {
+      if (!previewEl || !imageEl) return;
+      const url = state.previewUrl;
+      previewEl.classList.toggle('has-image', Boolean(url));
+      if (!url) {
+        imageEl.src = '';
+        state.width = 0;
+        state.height = 0;
+        return;
+      }
+      imageEl.onload = () => {
+        state.width = imageEl.naturalWidth || imageEl.width || 0;
+        state.height = imageEl.naturalHeight || imageEl.height || 0;
+        applyEditorTransform(state, previewEl, imageEl);
+      };
+      imageEl.src = url;
+      if (imageEl.complete) {
+        state.width = imageEl.naturalWidth || imageEl.width || 0;
+        state.height = imageEl.naturalHeight || imageEl.height || 0;
+        applyEditorTransform(state, previewEl, imageEl);
+      }
+    };
+
+    const bindEditorDrag = (state, previewEl, imageEl) => {
+      if (!previewEl) return;
+      const handleDragStart = event => {
+        if (!state.previewUrl) return;
+        state.dragging = true;
+        state.dragStart = {
+          x: event.clientX,
+          y: event.clientY,
+          offsetX: state.offsetX,
+          offsetY: state.offsetY,
+        };
+        previewEl.classList.add('is-dragging');
+        previewEl.setPointerCapture?.(event.pointerId);
+      };
+      const handleDragMove = event => {
+        if (!state.dragging || !state.dragStart) return;
+        const rect = previewEl.getBoundingClientRect();
+        if (!rect.width || !rect.height) return;
+        const dx = (event.clientX - state.dragStart.x) / rect.width;
+        const dy = (event.clientY - state.dragStart.y) / rect.height;
+        state.offsetX = state.dragStart.offsetX + dx;
+        state.offsetY = state.dragStart.offsetY + dy;
+        state.dirty = true;
+        applyEditorTransform(state, previewEl, imageEl);
+      };
+      const handleDragEnd = event => {
+        if (!state.dragging) return;
+        state.dragging = false;
+        previewEl.classList.remove('is-dragging');
+        previewEl.releasePointerCapture?.(event.pointerId);
+      };
+      previewEl.addEventListener('pointerdown', handleDragStart);
+      previewEl.addEventListener('pointermove', handleDragMove);
+      previewEl.addEventListener('pointerup', handleDragEnd);
+      previewEl.addEventListener('pointerleave', handleDragEnd);
+      previewEl.addEventListener('pointercancel', handleDragEnd);
+    };
+
+    const createImageEditor = ({
+      previewEl,
+      imageEl,
+      zoomInput,
+      rotateInput,
+      uploadBtn,
+      resetBtn,
+      clearBtn,
+      picker,
+      compressOptions,
+    }) => {
+      const state = createEditableImageState();
+      const updateInputs = () => {
+        if (zoomInput) zoomInput.value = String(state.zoom || 1);
+        if (rotateInput) rotateInput.value = String(state.rotate || 0);
+      };
+      const resetTransform = () => {
+        state.zoom = 1;
+        state.rotate = 0;
+        state.offsetX = 0;
+        state.offsetY = 0;
+        state.dirty = true;
+        updateInputs();
+        applyEditorTransform(state, previewEl, imageEl);
+      };
+      const setFromPack = (pack, { pathKey, dataKey, metaKey }) => {
+        const meta = pack?.[metaKey] || {};
+        state.path = String(pack?.[pathKey] || '').trim();
+        state.dataUrl = String(pack?.[dataKey] || '').trim();
+        state.pendingDataUrl = '';
+        state.fileName = '';
+        state.zoom = Number(meta.zoom || 1);
+        state.rotate = Number(meta.rotate || 0);
+        state.offsetX = Number(meta.offsetX || 0);
+        state.offsetY = Number(meta.offsetY || 0);
+        state.width = Number(meta.width || 0);
+        state.height = Number(meta.height || 0);
+        state.dirty = false;
+        state.cleared = false;
+        updateInputs();
+        const url = state.dataUrl || resolveLocalStickerUrl(state.path);
+        state.previewUrl = url;
+        bindEditorImage(state, previewEl, imageEl);
+      };
+      const pickFile = async () => {
+        const files = await pickFilesFromInput(picker);
+        const file = files[0];
+        if (!file) return;
+        let dataUrl = await readFileAsDataUrl(file);
+        if (compressOptions && !isGifFile(file)) {
+          try {
+            dataUrl = await compressImageDataUrl(dataUrl, compressOptions);
+          } catch {}
+        }
+        state.pendingDataUrl = dataUrl;
+        state.fileName = file.name || '';
+        state.path = '';
+        state.dataUrl = '';
+        state.cleared = false;
+        state.previewUrl = dataUrl;
+        resetTransform();
+        bindEditorImage(state, previewEl, imageEl);
+      };
+      const clear = () => {
+        state.previewUrl = '';
+        state.path = '';
+        state.dataUrl = '';
+        state.pendingDataUrl = '';
+        state.fileName = '';
+        state.cleared = true;
+        resetTransform();
+        bindEditorImage(state, previewEl, imageEl);
+      };
+      const persistToPack = async (pack, { pathKey, dataKey, metaKey, sessionId }) => {
+        const previousPath = String(pack?.[pathKey] || '').trim();
+        let nextPath = previousPath;
+        let nextDataUrl = String(pack?.[dataKey] || '').trim();
+        if (state.cleared) {
+          if (previousPath) {
+            safeInvoke('delete_attachment', { sessionId, path: previousPath }).catch(() => {});
+          }
+          nextPath = '';
+          nextDataUrl = '';
+        } else if (state.pendingDataUrl) {
+          const savedPath = await saveStickerAsset(state.pendingDataUrl, state.fileName || 'sticker_pack', sessionId);
+          if (savedPath && previousPath && savedPath !== previousPath) {
+            safeInvoke('delete_attachment', { sessionId, path: previousPath }).catch(() => {});
+          }
+          nextPath = savedPath || '';
+          nextDataUrl = savedPath ? '' : state.pendingDataUrl;
+        } else {
+          nextPath = state.path || nextPath;
+          nextDataUrl = state.dataUrl || nextDataUrl;
+        }
+        const meta = state.previewUrl
+          ? {
+              zoom: state.zoom,
+              rotate: state.rotate,
+              offsetX: state.offsetX,
+              offsetY: state.offsetY,
+              width: state.width,
+              height: state.height,
+            }
+          : { zoom: 1, rotate: 0, offsetX: 0, offsetY: 0, width: 0, height: 0 };
+        const next = { ...pack, [pathKey]: nextPath, [dataKey]: nextDataUrl, [metaKey]: meta };
+        state.path = nextPath;
+        state.dataUrl = nextDataUrl;
+        state.pendingDataUrl = '';
+        state.cleared = false;
+        state.dirty = false;
+        return next;
+      };
+
+      zoomInput?.addEventListener('input', e => {
+        state.zoom = Number(e.target?.value || 1);
+        state.dirty = true;
+        applyEditorTransform(state, previewEl, imageEl);
+      });
+      rotateInput?.addEventListener('input', e => {
+        state.rotate = Number(e.target?.value || 0);
+        state.dirty = true;
+        applyEditorTransform(state, previewEl, imageEl);
+      });
+      uploadBtn?.addEventListener('click', () => pickFile());
+      resetBtn?.addEventListener('click', () => resetTransform());
+      clearBtn?.addEventListener('click', () => clear());
+
+      bindEditorDrag(state, previewEl, imageEl);
+
+      return { state, setFromPack, persistToPack, resetTransform, clear };
+    };
+
+    const iconEditor = createImageEditor({
+      previewEl: iconPreview,
+      imageEl: iconImage,
+      zoomInput: iconZoom,
+      rotateInput: iconRotate,
+      uploadBtn: iconUpload,
+      resetBtn: iconReset,
+      clearBtn: iconClear,
+      picker: stickerPackIconManagePicker,
+      compressOptions: { maxDim: 256, quality: 0.86, maxBytes: 220_000 },
+    });
+
+    const getCurrentPack = () => {
+      const packId = String(currentPackId || '').trim();
+      if (!packId) return null;
+      return getStickerPackById(packId);
+    };
+
+    const refreshMoveOptions = () => {
+      if (!moveSelect) return;
+      const currentValue = String(moveSelect.value || '').trim();
+      moveSelect.innerHTML = '';
+      const createOption = document.createElement('option');
+      createOption.value = '__new__';
+      createOption.textContent = '新建贴图包';
+      moveSelect.appendChild(createOption);
+      const packs = Array.isArray(stickerPackState?.packs) ? stickerPackState.packs : [];
+      packs.forEach((pack, idx) => {
+        const option = document.createElement('option');
+        option.value = String(pack?.id || '');
+        option.textContent = formatStickerPackLabel(pack, idx);
+        moveSelect.appendChild(option);
+      });
+      if (currentValue) moveSelect.value = currentValue;
+    };
+
+    const syncSelectedCount = () => {
+      if (selectedCountEl) selectedCountEl.textContent = String(selectedIds.size || 0);
+    };
+
+    const resolvePackStickerList = pack => {
+      const list = Array.isArray(pack?.stickers) ? pack.stickers : [];
+      return list.map(sticker => ({ ...sticker }));
+    };
+
+    const renderStickerList = () => {
+      if (!listEl) return;
+      const pack = getCurrentPack();
+      listEl.innerHTML = '';
+      if (!pack) return;
+      const stickers = resolvePackStickerList(pack);
+      if (!stickers.length) {
+        listEl.innerHTML = '<div class="sticker-pack-empty">暂无贴图</div>';
+        syncSelectedCount();
+        return;
+      }
+      stickers.forEach((sticker, idx) => {
+        const id = String(sticker?.id || '').trim();
+        if (!id) return;
+        const item = document.createElement('div');
+        item.className = 'sticker-pack-item';
+        item.dataset.stickerId = id;
+        const checked = selectedIds.has(id);
+        if (checked) item.classList.add('is-selected');
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.checked = checked;
+        checkbox.addEventListener('change', () => {
+          if (checkbox.checked) selectedIds.add(id);
+          else selectedIds.delete(id);
+          item.classList.toggle('is-selected', checkbox.checked);
+          syncSelectedCount();
+        });
+        const thumb = document.createElement('div');
+        thumb.className = 'sticker-pack-thumb';
+        const url = resolveStickerMediaUrl(sticker);
+        if (url) {
+          const img = document.createElement('img');
+          img.src = url;
+          img.alt = sticker.keyword || sticker.name || `贴图${idx + 1}`;
+          thumb.appendChild(img);
+        } else {
+          thumb.textContent = '无图';
+        }
+        const info = document.createElement('div');
+        info.className = 'sticker-pack-info';
+        const title = document.createElement('div');
+        title.className = 'sticker-pack-name';
+        title.textContent = sticker.name || sticker.keyword || `贴图${idx + 1}`;
+        const meta = document.createElement('div');
+        meta.className = 'sticker-pack-meta';
+        const keyword = String(sticker.keyword || '').trim();
+        meta.textContent = keyword ? `关键词：${keyword}` : '关键词：未设置';
+        info.appendChild(title);
+        info.appendChild(meta);
+        item.appendChild(checkbox);
+        item.appendChild(thumb);
+        item.appendChild(info);
+        item.addEventListener('click', event => {
+          if (event.target === checkbox) return;
+          checkbox.checked = !checkbox.checked;
+          checkbox.dispatchEvent(new Event('change'));
+        });
+        listEl.appendChild(item);
+      });
+      syncSelectedCount();
+    };
+
+    const getSelectedStickerIds = pack => {
+      const list = Array.isArray(pack?.stickers) ? pack.stickers : [];
+      return list.map(sticker => String(sticker?.id || '').trim()).filter(id => id && selectedIds.has(id));
+    };
+
+    const applyPackUpdate = nextState => {
+      syncStickerPackState(nextState);
+      renderStickerPanel();
+      refreshMoveOptions();
+      renderStickerList();
+    };
+
+    const handleDeleteSelected = () => {
+      const pack = getCurrentPack();
+      if (!pack) return;
+      const targets = getSelectedStickerIds(pack);
+      if (!targets.length) {
+        window.toastr?.warning?.('请先选择要删除的贴图');
+        return;
+      }
+      const ok = confirm(`确定删除选中的 ${targets.length} 张贴图？`);
+      if (!ok) return;
+      const nextStickers = (pack.stickers || []).filter(sticker => !targets.includes(String(sticker?.id || '').trim()));
+      (pack.stickers || []).forEach(sticker => {
+        const id = String(sticker?.id || '').trim();
+        if (!targets.includes(id)) return;
+        const path = String(sticker?.path || '').trim();
+        if (path) {
+          safeInvoke('delete_attachment', { sessionId: STICKER_PACK_ASSET_SESSION, path }).catch(() => {});
+        }
+        const frames = Array.isArray(sticker?.frames) ? sticker.frames : [];
+        frames.forEach(frame => {
+          const framePath = String(frame || '').trim();
+          if (!framePath || framePath.startsWith('data:')) return;
+          safeInvoke('delete_attachment', { sessionId: STICKER_PACK_ASSET_SESSION, path: framePath }).catch(() => {});
+        });
+      });
+      selectedIds = new Set();
+      const nextPack = { ...pack, stickers: nextStickers };
+      const nextState = stickerPackStore.updatePack(pack.id, nextPack);
+      applyPackUpdate(nextState);
+    };
+
+    const handleMoveSelected = async () => {
+      const pack = getCurrentPack();
+      if (!pack) return;
+      const targets = getSelectedStickerIds(pack);
+      if (!targets.length) {
+        window.toastr?.warning?.('请先选择要移动的贴图');
+        return;
+      }
+      let targetId = String(moveSelect?.value || '').trim();
+      if (!targetId) return;
+      if (targetId === '__new__') {
+        const newPack = createStickerPack();
+        targetId = newPack?.id || '';
+      }
+      if (!targetId || targetId === pack.id) return;
+      const moving = (pack.stickers || []).filter(sticker => targets.includes(String(sticker?.id || '').trim()));
+      if (!moving.length) return;
+      const nextState = stickerPackStore.update(state => {
+        const packs = (state.packs || []).map(p => {
+          if (p.id === pack.id) {
+            return {
+              ...p,
+              stickers: (p.stickers || []).filter(sticker => !targets.includes(String(sticker?.id || '').trim())),
+            };
+          }
+          if (p.id === targetId) {
+            return { ...p, stickers: (p.stickers || []).concat(moving) };
+          }
+          return p;
+        });
+        return { ...state, packs };
+      });
+      selectedIds = new Set();
+      applyPackUpdate(nextState);
+    };
+
+    const handleApplyKeywords = () => {
+      const pack = getCurrentPack();
+      if (!pack) return;
+      const targets = getSelectedStickerIds(pack);
+      if (!targets.length) {
+        window.toastr?.warning?.('请先选择要写关键词的贴图');
+        return;
+      }
+      const lines = String(keywordInput?.value || '')
+        .split(/\r?\n/)
+        .map(line => line.trim());
+      if (!lines.filter(Boolean).length) {
+        window.toastr?.warning?.('请输入关键词，每行一个');
+        return;
+      }
+      if (lines.length < targets.length) {
+        window.toastr?.warning?.('关键词数量不足，未覆盖的贴图将保留原关键词');
+      }
+      let lineIndex = 0;
+      const nextStickers = (pack.stickers || []).map(sticker => {
+        const id = String(sticker?.id || '').trim();
+        if (!targets.includes(id)) return sticker;
+        const keyword = String(lines[lineIndex] || '').trim();
+        lineIndex += 1;
+        if (!keyword) return sticker;
+        return { ...sticker, keyword };
+      });
+      const nextPack = { ...pack, stickers: nextStickers };
+      const nextState = stickerPackStore.updatePack(pack.id, nextPack);
+      applyPackUpdate(nextState);
+    };
+
+    const handleDownloadSelected = async () => {
+      const pack = getCurrentPack();
+      if (!pack) return;
+      const targets = getSelectedStickerIds(pack);
+      if (!targets.length) {
+        window.toastr?.warning?.('请先选择要下载的贴图');
+        return;
+      }
+      const entries = [];
+      const stickers = (pack.stickers || []).filter(sticker => targets.includes(String(sticker?.id || '').trim()));
+      stickers.forEach((sticker, idx) => {
+        const baseName = sanitizeExportName(
+          sticker.keyword || sticker.name || `sticker_${idx + 1}`,
+          `sticker_${idx + 1}`,
+        );
+        const framePaths = resolveStickerFramePaths(sticker);
+        if (framePaths.length > 1) {
+          framePaths.forEach((frame, frameIndex) => {
+            const name = `${baseName}_frame_${String(frameIndex + 1).padStart(2, '0')}.png`;
+            if (frame.startsWith('data:')) {
+              entries.push({ name, dataUrl: frame });
+            } else {
+              entries.push({ name, path: frame });
+            }
+          });
+          return;
+        }
+        const path = String(sticker?.path || '').trim();
+        if (path) {
+          const extMatch = path.match(/\.([a-z0-9]+)(?:[?#].*)?$/i);
+          const ext = extMatch ? extMatch[1] : 'png';
+          entries.push({ name: ensureFileExtension(baseName, ext), path });
+          return;
+        }
+        const dataUrl = String(sticker?.dataUrl || '').trim();
+        if (dataUrl) {
+          const ext = inferImageExtension(dataUrl, 'png');
+          entries.push({ name: ensureFileExtension(baseName, ext), dataUrl });
+        }
+      });
+      if (!entries.length) {
+        window.toastr?.warning?.('未找到可下载的贴图资源');
+        return;
+      }
+      await exportStickerZip({ entries, fileName: `${sanitizeExportName(pack.name || 'sticker_pack', '贴图包')}.zip` });
+    };
+
+    const handleSavePack = async () => {
+      const pack = getCurrentPack();
+      if (!pack) return;
+      let nextPack = { ...pack, name: String(nameInput?.value || '').trim() };
+      nextPack = await iconEditor.persistToPack(nextPack, {
+        pathKey: 'iconPath',
+        dataKey: 'iconDataUrl',
+        metaKey: 'iconMeta',
+        sessionId: STICKER_ICON_SESSION,
+      });
+      const nextState = stickerPackStore.updatePack(pack.id, nextPack);
+      applyPackUpdate(nextState);
+      window.toastr?.success?.('贴图包已保存');
+    };
+
+    const show = packId => {
+      const pack = getStickerPackById(packId);
+      if (!pack) return;
+      currentPackId = packId;
+      selectedIds = new Set();
+      const packIndex = (stickerPackState?.packs || []).findIndex(item => item.id === pack.id);
+      const defaultLabel = formatStickerPackLabel(pack, packIndex);
+      if (nameInput) nameInput.value = String(pack.name || '').trim() || defaultLabel;
+      if (subtitleEl) subtitleEl.textContent = defaultLabel;
+      iconEditor.setFromPack(pack, { pathKey: 'iconPath', dataKey: 'iconDataUrl', metaKey: 'iconMeta' });
+      if (keywordInput) keywordInput.value = '';
+      refreshMoveOptions();
+      renderStickerList();
+      overlay.classList.add('is-active');
+    };
+
+    const hide = () => {
+      overlay.classList.remove('is-active');
+      currentPackId = '';
+      selectedIds = new Set();
+    };
+
+    selectAllBtn?.addEventListener('click', () => {
+      const pack = getCurrentPack();
+      if (!pack) return;
+      (pack.stickers || []).forEach(sticker => {
+        const id = String(sticker?.id || '').trim();
+        if (id) selectedIds.add(id);
+      });
+      renderStickerList();
+    });
+    selectNoneBtn?.addEventListener('click', () => {
+      selectedIds = new Set();
+      renderStickerList();
+    });
+    deleteSelectedBtn?.addEventListener('click', () => handleDeleteSelected());
+    moveBtn?.addEventListener('click', () => handleMoveSelected());
+    downloadBtn?.addEventListener('click', () => handleDownloadSelected());
+    keywordApplyBtn?.addEventListener('click', () => handleApplyKeywords());
+    saveBtn?.addEventListener('click', () => handleSavePack());
+    closeBtn?.addEventListener('click', () => hide());
+    headerCloseBtn?.addEventListener('click', () => hide());
+
+    overlay.addEventListener('click', () => hide());
+    modal.addEventListener('click', event => event.stopPropagation());
+    document.body.appendChild(overlay);
+    overlay.appendChild(modal);
 
     return { show, hide };
   })();
