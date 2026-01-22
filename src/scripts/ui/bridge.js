@@ -2061,6 +2061,7 @@ class AppBridge {
         const roleMap = { 0: 'system', 1: 'user', 2: 'assistant' };
         const buildStickerListBlock = () => {
           const state = stickerPackStore.getState();
+          const activeSessionId = String(this.activeSessionId || '').trim();
           const keywords = [];
           const seen = new Set();
           const addKeyword = (value) => {
@@ -2075,7 +2076,11 @@ class AppBridge {
             });
           }
           (state.packs || []).forEach((pack) => {
-            if (!pack?.aiEnabled) return;
+            const boundSessions = Array.isArray(pack?.boundSessions)
+              ? pack.boundSessions.map(item => String(item || '').trim()).filter(Boolean)
+              : [];
+            const bound = activeSessionId && boundSessions.includes(activeSessionId);
+            if (!pack?.aiEnabled && !bound) return;
             (pack.stickers || []).forEach((sticker) => {
               addKeyword(sticker?.keyword || '');
             });

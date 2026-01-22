@@ -2395,6 +2395,7 @@ Phase G（Frame 36）：循环衔接
       iconPath: '',
       iconDataUrl: '',
       iconMeta: { zoom: 1, rotate: 0, offsetX: 0, offsetY: 0, width: 0, height: 0 },
+      boundSessions: [],
       aiEnabled: false,
       stickers: [],
     };
@@ -6990,6 +6991,16 @@ Phase G（Frame 36）：循环衔接
             分页名称
             <input type="text" id="sticker-pack-name" placeholder="输入贴图包名称">
           </label>
+          <div class="sticker-pack-bind">
+            <div class="sticker-pack-bind-row">
+              <span>绑定到当前聊天室</span>
+              <button type="button" id="sticker-pack-bind-toggle" class="sticker-pack-bind-toggle" aria-pressed="false">
+                <span class="sticker-pack-bind-text">未绑定</span>
+                <span class="sticker-pack-bind-dot"></span>
+              </button>
+            </div>
+            <div class="sticker-pack-bind-hint">绑定后该聊天室 AI 可使用此贴图包（长按管理多聊天室）</div>
+          </div>
         </div>
         <div class="sticker-pack-section">
           <div class="sticker-pack-section-title">分页图标</div>
@@ -7048,6 +7059,8 @@ Phase G（Frame 36）：循环衔接
 
     const subtitleEl = modal.querySelector('#sticker-pack-subtitle');
     const nameInput = modal.querySelector('#sticker-pack-name');
+    const bindToggle = modal.querySelector('#sticker-pack-bind-toggle');
+    const bindText = modal.querySelector('.sticker-pack-bind-text');
     const iconPreview = modal.querySelector('#sticker-pack-icon-preview');
     const iconImage = modal.querySelector('#sticker-pack-icon-image');
     const iconZoom = modal.querySelector('#sticker-pack-icon-zoom');
@@ -7071,6 +7084,15 @@ Phase G（Frame 36）：循环衔接
 
     let currentPackId = '';
     let selectedIds = new Set();
+    let bindSelection = new Set();
+
+    const getCurrentSessionId = () => String(chatStore.getCurrent() || '').trim();
+    const isPackBoundToSession = (pack, sessionId) => {
+      const sid = String(sessionId || '').trim();
+      if (!sid || !pack) return false;
+      const list = Array.isArray(pack.boundSessions) ? pack.boundSessions : [];
+      return list.map(item => String(item || '').trim()).includes(sid);
+    };
 
     const createEditableImageState = () => ({
       previewUrl: '',
@@ -7316,6 +7338,16 @@ Phase G（Frame 36）：循环衔接
       return getStickerPackById(packId);
     };
 
+    const updateBindToggleUI = () => {
+      if (!bindToggle || !bindText) return;
+      const pack = getCurrentPack();
+      const sessionId = getCurrentSessionId();
+      const bound = isPackBoundToSession(pack, sessionId);
+      bindToggle.classList.toggle('is-on', bound);
+      bindToggle.setAttribute('aria-pressed', bound ? 'true' : 'false');
+      bindText.textContent = bound ? '已绑定' : '未绑定';
+    };
+
     const refreshMoveOptions = () => {
       if (!moveSelect) return;
       const currentValue = String(moveSelect.value || '').trim();
@@ -7416,6 +7448,7 @@ Phase G（Frame 36）：循环衔接
       renderStickerPanel();
       refreshMoveOptions();
       renderStickerList();
+      updateBindToggleUI();
     };
 
     const handleDeleteSelected = () => {
@@ -7592,6 +7625,7 @@ Phase G（Frame 36）：循环衔接
       if (keywordInput) keywordInput.value = '';
       refreshMoveOptions();
       renderStickerList();
+      updateBindToggleUI();
       overlay.classList.add('is-active');
     };
 
@@ -7621,6 +7655,195 @@ Phase G（Frame 36）：循环衔接
     saveBtn?.addEventListener('click', () => handleSavePack());
     closeBtn?.addEventListener('click', () => hide());
     headerCloseBtn?.addEventListener('click', () => hide());
+
+    const bindModal = (() => {
+      const bindOverlay = document.createElement('div');
+      bindOverlay.className = 'sticker-bind-overlay';
+      bindOverlay.innerHTML = `
+        <div class="sticker-bind-modal">
+          <div class="sticker-bind-header">
+            <div>
+              <div class="sticker-bind-title">绑定聊天室</div>
+              <div class="sticker-bind-subtitle">选择要绑定的聊天室</div>
+            </div>
+            <button type="button" class="sticker-bind-close" aria-label="关闭">×</button>
+          </div>
+          <div class="sticker-bind-search">
+            <input type="text" id="sticker-bind-search" placeholder="搜索聊天室">
+          </div>
+          <div class="sticker-bind-toolbar">
+            <div class="sticker-bind-selection">已选 <span id="sticker-bind-count">0</span> 项</div>
+            <div class="sticker-bind-actions">
+              <button type="button" id="sticker-bind-select-all">全选</button>
+              <button type="button" id="sticker-bind-select-none">全不选</button>
+            </div>
+          </div>
+          <div class="sticker-bind-list" id="sticker-bind-list"></div>
+          <div class="sticker-bind-footer">
+            <button type="button" id="sticker-bind-save">保存</button>
+            <button type="button" id="sticker-bind-cancel">关闭</button>
+          </div>
+        </div>
+      `;
+      const modalEl = bindOverlay.querySelector('.sticker-bind-modal');
+      const closeBtn = bindOverlay.querySelector('.sticker-bind-close');
+      const cancelBtn = bindOverlay.querySelector('#sticker-bind-cancel');
+      const saveBtn = bindOverlay.querySelector('#sticker-bind-save');
+      const searchInput = bindOverlay.querySelector('#sticker-bind-search');
+      const countEl = bindOverlay.querySelector('#sticker-bind-count');
+      const selectAllBtn = bindOverlay.querySelector('#sticker-bind-select-all');
+      const selectNoneBtn = bindOverlay.querySelector('#sticker-bind-select-none');
+      const listEl = bindOverlay.querySelector('#sticker-bind-list');
+
+      const updateCount = () => {
+        if (countEl) countEl.textContent = String(bindSelection.size || 0);
+      };
+
+      const renderList = () => {
+        if (!listEl) return;
+        listEl.innerHTML = '';
+        const keyword = String(searchInput?.value || '').trim().toLowerCase();
+        const sessionIds = chatStore.listSessions();
+        const items = sessionIds.map(id => {
+          const contact = contactsStore.getContact(id);
+          const name = formatSessionName(id, contact);
+          const avatar = contact?.avatar || avatars.assistant;
+          return { id, name: name || id, avatar };
+        });
+        const filtered = keyword
+          ? items.filter(item => item.name.toLowerCase().includes(keyword) || item.id.toLowerCase().includes(keyword))
+          : items;
+        if (!filtered.length) {
+          listEl.innerHTML = '<div class="sticker-bind-empty">暂无匹配聊天室</div>';
+          updateCount();
+          return;
+        }
+        filtered.forEach(item => {
+          const row = document.createElement('label');
+          row.className = 'sticker-bind-row';
+          const checkbox = document.createElement('input');
+          checkbox.type = 'checkbox';
+          checkbox.checked = bindSelection.has(item.id);
+          checkbox.addEventListener('change', () => {
+            if (checkbox.checked) bindSelection.add(item.id);
+            else bindSelection.delete(item.id);
+            updateCount();
+          });
+          const avatar = document.createElement('img');
+          avatar.className = 'sticker-bind-avatar';
+          avatar.src = item.avatar || avatars.assistant;
+          avatar.alt = '';
+          const textWrap = document.createElement('div');
+          textWrap.className = 'sticker-bind-info';
+          const title = document.createElement('div');
+          title.className = 'sticker-bind-name';
+          title.textContent = item.name;
+          const meta = document.createElement('div');
+          meta.className = 'sticker-bind-meta';
+          meta.textContent = item.id;
+          textWrap.appendChild(title);
+          textWrap.appendChild(meta);
+          row.appendChild(checkbox);
+          row.appendChild(avatar);
+          row.appendChild(textWrap);
+          listEl.appendChild(row);
+        });
+        updateCount();
+      };
+
+      const open = () => {
+        const pack = getCurrentPack();
+        if (!pack) return;
+        bindSelection = new Set(
+          Array.isArray(pack.boundSessions)
+            ? pack.boundSessions.map(item => String(item || '').trim()).filter(Boolean)
+            : [],
+        );
+        if (searchInput) searchInput.value = '';
+        renderList();
+        bindOverlay.classList.add('is-active');
+        setTimeout(() => searchInput?.focus?.(), 0);
+      };
+
+      const close = () => {
+        bindOverlay.classList.remove('is-active');
+      };
+
+      const handleSave = () => {
+        const pack = getCurrentPack();
+        if (!pack) return;
+        const nextPack = {
+          ...pack,
+          boundSessions: Array.from(bindSelection),
+        };
+        const nextState = stickerPackStore.updatePack(pack.id, nextPack);
+        applyPackUpdate(nextState);
+        close();
+      };
+
+      searchInput?.addEventListener('input', () => renderList());
+      selectAllBtn?.addEventListener('click', () => {
+        chatStore.listSessions().forEach(id => bindSelection.add(id));
+        renderList();
+      });
+      selectNoneBtn?.addEventListener('click', () => {
+        bindSelection = new Set();
+        renderList();
+      });
+      saveBtn?.addEventListener('click', () => handleSave());
+      cancelBtn?.addEventListener('click', () => close());
+      closeBtn?.addEventListener('click', () => close());
+      bindOverlay.addEventListener('click', () => close());
+      modalEl?.addEventListener('click', event => event.stopPropagation());
+      document.body.appendChild(bindOverlay);
+
+      return { open, close };
+    })();
+
+    if (bindToggle) {
+      let bindPressTimer = null;
+      let bindLongPress = false;
+      const clearBindPress = () => {
+        if (bindPressTimer) {
+          clearTimeout(bindPressTimer);
+          bindPressTimer = null;
+        }
+      };
+      bindToggle.addEventListener('pointerdown', () => {
+        bindLongPress = false;
+        clearBindPress();
+        bindPressTimer = setTimeout(() => {
+          bindLongPress = true;
+          bindModal.open();
+        }, 520);
+      });
+      ['pointerup', 'pointerleave', 'pointercancel'].forEach(evt => {
+        bindToggle.addEventListener(evt, () => clearBindPress());
+      });
+      bindToggle.addEventListener('click', event => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (bindLongPress) {
+          bindLongPress = false;
+          return;
+        }
+        const pack = getCurrentPack();
+        const sessionId = getCurrentSessionId();
+        if (!pack || !sessionId) {
+          window.toastr?.warning?.('未找到当前聊天室');
+          return;
+        }
+        const boundSessions = Array.isArray(pack.boundSessions)
+          ? pack.boundSessions.map(item => String(item || '').trim()).filter(Boolean)
+          : [];
+        const nextBound = new Set(boundSessions);
+        if (nextBound.has(sessionId)) nextBound.delete(sessionId);
+        else nextBound.add(sessionId);
+        const nextPack = { ...pack, boundSessions: Array.from(nextBound) };
+        const nextState = stickerPackStore.updatePack(pack.id, nextPack);
+        applyPackUpdate(nextState);
+      });
+    }
 
     overlay.addEventListener('click', () => hide());
     modal.addEventListener('click', event => event.stopPropagation());
@@ -8729,7 +8952,7 @@ Phase G（Frame 36）：循环衔接
   quickMenu?.querySelectorAll('button').forEach(btn => {
     btn.addEventListener('click', () => {
       const action = btn.dataset.action;
-      if (action === 'add-friend') sessionPanel.show({ focusAdd: true });
+      if (action === 'add-friend') sessionPanel.show();
       if (action === 'create-group') groupCreatePanel.show();
       if (action === 'new-group') groupPanel.show();
       hideMenus();
@@ -12551,6 +12774,11 @@ Phase G（Frame 36）：循环衔接
   });
   window.addEventListener('regex-changed', () => {
     rerenderCurrentSession();
+  });
+  window.addEventListener('session-panel-closed', (event) => {
+    if (event?.detail?.jumpToContacts) {
+      switchPage('contacts');
+    }
   });
   window.addEventListener('session-changed', async e => {
     const id = e.detail?.id;

@@ -17,6 +17,7 @@ export class SessionPanel {
     this.listEl = null;
     this.nameInput = null;
     this.onUpdated = typeof onUpdated === 'function' ? onUpdated : null;
+    this.jumpToContactsOnClose = false;
   }
 
   formatTime(ts) {
@@ -28,8 +29,11 @@ export class SessionPanel {
   show({ focusAdd = false } = {}) {
     if (!this.panel) this.createUI();
     this.refresh();
-    this.overlay.style.display = 'block';
-    this.panel.style.display = 'block';
+    try {
+      document.activeElement?.blur?.();
+    } catch {}
+    this.overlay.style.display = 'flex';
+    this.panel.style.display = 'flex';
     if (focusAdd) {
       setTimeout(() => this.nameInput?.focus(), 0);
     }
@@ -38,6 +42,10 @@ export class SessionPanel {
   hide() {
     if (this.overlay) this.overlay.style.display = 'none';
     if (this.panel) this.panel.style.display = 'none';
+    if (this.jumpToContactsOnClose) {
+      this.jumpToContactsOnClose = false;
+      window.dispatchEvent(new CustomEvent('session-panel-closed', { detail: { jumpToContacts: true } }));
+    }
   }
 
   refresh() {
@@ -46,26 +54,28 @@ export class SessionPanel {
     const contacts = this.contactsStore?.listContacts?.() || [];
     const currentId = this.store.getCurrent();
     if (!contacts.length) {
-      const li = document.createElement('li');
-      li.textContent = '（暂无好友/群组）';
-      li.style.color = '#888';
-      this.listEl.appendChild(li);
+      const empty = document.createElement('div');
+      empty.className = 'sticker-bind-empty';
+      empty.textContent = '暂无好友/群组';
+      this.listEl.appendChild(empty);
       return;
     }
     contacts.forEach(c => {
       const id = c.id;
-      const li = document.createElement('li');
-      li.style.display = 'flex';
-      li.style.justifyContent = 'space-between';
-      li.style.alignItems = 'center';
-      li.style.padding = '6px 8px';
-      li.style.borderBottom = '1px solid #f0f0f0';
-      if (id === currentId) {
-        li.style.background = '#f8fafc';
-        li.style.border = '1px solid #e2e8f0';
-      }
+      const row = document.createElement('div');
+      row.className = 'sticker-bind-row session-row';
+      if (id === currentId) row.classList.add('is-current');
+      row.addEventListener('click', () => this.switchTo(id));
 
-      const name = document.createElement('span');
+      const avatar = document.createElement('img');
+      avatar.className = 'sticker-bind-avatar';
+      avatar.alt = '';
+      avatar.src = c.avatar || './assets/external/feather-default.png';
+
+      const info = document.createElement('div');
+      info.className = 'sticker-bind-info';
+      const name = document.createElement('div');
+      name.className = 'sticker-bind-name';
       const last = this.store.getLastMessage(id);
       const snippet = last ? (last.content || '').slice(0, 32) : '新会话';
       const time = last && last.timestamp ? this.formatTime(last.timestamp) : '';
@@ -83,47 +93,37 @@ export class SessionPanel {
         id === currentId ? `<span style="color:#059669; font-size:11px; margin-left:6px;">当前</span>` : '';
       const baseName = c.name || id;
       const displayName = isGroup ? `${baseName}(${membersCount})` : baseName;
-      name.innerHTML = `<strong>${displayName}${unreadBadge}${badge}${currentTag}</strong><br><span style="color:#888;font-size:12px;">${snippet}</span> ${
-        time ? `<span style="color:#9ca3af;font-size:11px;">${time}</span>` : ''
-      }`;
-      if (id === currentId) {
-        name.style.fontWeight = '700';
-      }
-
-      const btn = document.createElement('button');
-      btn.textContent = id === currentId ? '当前' : '切换';
-      btn.style.cssText = 'padding:4px 8px;border:1px solid #ddd;border-radius:6px;background:#f5f5f5;cursor:pointer;';
-      btn.onclick = () => this.switchTo(id);
+      name.innerHTML = `${displayName}${unreadBadge}${badge}${currentTag}`;
+      const meta = document.createElement('div');
+      meta.className = 'sticker-bind-meta';
+      meta.textContent = `${snippet}${time ? ` · ${time}` : ''}`;
+      info.appendChild(name);
+      info.appendChild(meta);
 
       const actions = document.createElement('div');
-      actions.style.display = 'flex';
-      actions.style.gap = '6px';
-
-      const renameBtn = document.createElement('button');
-      renameBtn.textContent = '改名';
-      renameBtn.style.cssText =
-        'padding:4px 8px;border:1px solid #ddd;border-radius:6px;background:#f5f5f5;cursor:pointer;';
-      renameBtn.onclick = () => this.rename(id);
+      actions.className = 'session-row-actions';
 
       const delBtn = document.createElement('button');
       delBtn.textContent = '删除';
-      delBtn.style.cssText =
-        'padding:4px 8px;border:1px solid #fca5a5;border-radius:6px;background:#fee2e2;color:#b91c1c;cursor:pointer;';
-      delBtn.onclick = () => this.remove(id);
+      delBtn.className = 'session-row-delete';
+      delBtn.onclick = (event) => {
+        event.stopPropagation();
+        this.remove(id);
+      };
 
-      li.appendChild(name);
-      actions.appendChild(btn);
-      actions.appendChild(renameBtn);
+      row.appendChild(avatar);
+      row.appendChild(info);
       actions.appendChild(delBtn);
-      li.appendChild(actions);
-      this.listEl.appendChild(li);
+      row.appendChild(actions);
+      this.listEl.appendChild(row);
     });
   }
 
   switchTo(id) {
     this.store.setCurrent(id);
     window.dispatchEvent(new CustomEvent('session-changed', { detail: { id } }));
-    this.hide();
+    this.refresh();
+    this.onUpdated?.();
     logger.info('Switched session', id);
   }
 
@@ -198,30 +198,30 @@ export class SessionPanel {
 
   createUI() {
     this.overlay = document.createElement('div');
-    this.overlay.style.cssText = `
-            display:none; position:fixed; inset:0; background:rgba(0,0,0,0.4); z-index:20000;
-        `;
+    this.overlay.className = 'session-panel-overlay';
     this.overlay.onclick = () => this.hide();
 
     this.panel = document.createElement('div');
-    this.panel.style.cssText = `
-            display:none; position:fixed; top:50%; left:50%; transform:translate(-50%,-50%);
-            width:min(460px,90vw); background:#fff; border-radius:12px; box-shadow:0 10px 40px rgba(0,0,0,0.2);
-            padding:16px; z-index:21000; max-height:80vh; overflow:auto;
-        `;
+    this.panel.className = 'session-panel';
     this.panel.onclick = e => e.stopPropagation();
 
     this.panel.innerHTML = `
-            <h3 style="margin:0 0 12px;">好友列表</h3>
-            <div style="display:flex; gap:8px; margin-bottom:8px; align-items:center;">
-                <button id="session-avatar-btn" type="button" title="设置好友头像" style="width:64px; height:44px; border-radius:12px; border:1px solid #e2e8f0; background:#fff; padding:0; overflow:hidden; cursor:pointer;">
-                    <img id="session-avatar-preview" alt="" style="width:100%; height:100%; object-fit:cover; display:block;" src="./assets/external/feather-default.png">
-                </button>
-                <input id="session-name" placeholder="新好友名称" style="flex:1; padding:8px; border:1px solid #ddd; border-radius:8px;">
-                <button id="session-add" style="padding:8px 12px; border:1px solid #ddd; border-radius:8px; background:#f5f5f5;">添加</button>
-                <button id="session-clear" style="padding:8px 12px; border:1px solid #fca5a5; border-radius:8px; background:#fee2e2; color:#b91c1c;">清空聊天</button>
+            <div class="session-panel-header">
+              <div>
+                <div class="session-panel-title">好友列表</div>
+                <div class="session-panel-subtitle">点击好友可切换聊天室</div>
+              </div>
+              <button class="session-panel-close" type="button" aria-label="关闭">×</button>
             </div>
-            <ul id="session-list" style="list-style:none; padding:0; margin:0; border:1px solid #eee; border-radius:8px;"></ul>
+            <div class="session-panel-form">
+                <button id="session-avatar-btn" type="button" title="设置好友头像" class="session-avatar-btn">
+                    <img id="session-avatar-preview" alt="" class="session-avatar-preview" src="./assets/external/feather-default.png">
+                </button>
+                <input id="session-name" placeholder="新好友名称" class="session-name-input">
+                <button id="session-add" class="session-btn">添加</button>
+                <button id="session-clear" class="session-btn danger">清空聊天</button>
+            </div>
+            <div id="session-list" class="sticker-bind-list session-list"></div>
         `;
 
     this.newAvatar = '';
@@ -245,6 +245,7 @@ export class SessionPanel {
 
     this.listEl = this.panel.querySelector('#session-list');
     this.nameInput = this.panel.querySelector('#session-name');
+    this.panel.querySelector('.session-panel-close')?.addEventListener('click', () => this.hide());
     this.panel.querySelector('#session-add').onclick = () => this.addSession();
     this.panel.querySelector('#session-clear').onclick = () => this.clearCurrent();
     this.panel.querySelector('#session-avatar-btn').onclick = () => {
@@ -252,8 +253,8 @@ export class SessionPanel {
       fileInput.click();
     };
 
+    this.overlay.appendChild(this.panel);
     document.body.appendChild(this.overlay);
-    document.body.appendChild(this.panel);
   }
 
   addSession() {
@@ -291,6 +292,7 @@ export class SessionPanel {
     this.switchTo(name);
     this.refresh();
     this.onUpdated?.();
+    this.jumpToContactsOnClose = true;
   }
 
   clearCurrent() {

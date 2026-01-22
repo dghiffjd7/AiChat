@@ -53,6 +53,9 @@ const normalizeSticker = (sticker) => {
 const normalizePack = (pack) => {
   const raw = pack && typeof pack === 'object' ? pack : {};
   const stickers = Array.isArray(raw.stickers) ? raw.stickers.map(normalizeSticker) : [];
+  const boundSessions = Array.isArray(raw.boundSessions)
+    ? raw.boundSessions.map(item => String(item || '').trim()).filter(Boolean)
+    : [];
   return {
     id: String(raw.id || '').trim(),
     name: String(raw.name || '').trim(),
@@ -60,6 +63,7 @@ const normalizePack = (pack) => {
     iconPath: String(raw.iconPath || '').trim(),
     iconDataUrl: String(raw.iconDataUrl || '').trim(),
     iconMeta: normalizeImageMeta(raw.iconMeta),
+    boundSessions,
     aiEnabled: Boolean(raw.aiEnabled),
     stickers,
   };
