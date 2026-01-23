@@ -16,6 +16,11 @@
   - `src/assets/css/qq-legacy.css`
   - `src/scripts/ui/session-panel.js`
 
+## 2026-01-22 23:59
+- 修复桌面打包失败：为非 Android 平台补上 publish_bundle_to_downloads 的实现。
+- 修改：
+  - `src-tauri/src/commands.rs`
+
 ## 2026-01-21 18:45
 - 聊天输入区交互调整：贴图按钮移入输入框右侧（素描笑脸）；“+”展开改为左侧图片/附件快捷入口，输入框随展开收缩；底部快捷面板隐藏。
 - 图片发送：移除 URL 模式，仅支持本地图片选择。

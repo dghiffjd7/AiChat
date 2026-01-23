@@ -713,6 +713,23 @@ fn publish_bundle_to_downloads(
         .or_else(|_| publish_bundle_legacy(app, source_path, file_name))
 }
 
+#[cfg(not(target_os = "android"))]
+fn publish_bundle_to_downloads(
+    app: &AppHandle,
+    source_path: &Path,
+    file_name: &str,
+) -> Result<String, String> {
+    let export_dir = resolve_export_dir(app)?;
+    let target = export_dir.join(file_name);
+    if source_path != target {
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        fs::copy(source_path, &target).map_err(|e| e.to_string())?;
+    }
+    Ok(target.to_string_lossy().to_string())
+}
+
 #[cfg(target_os = "android")]
 fn publish_image_to_gallery_bytes(
     bytes: &[u8],

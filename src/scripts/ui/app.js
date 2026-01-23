@@ -6661,14 +6661,15 @@ Phase G（Frame 36）：循环衔接
         const updatedIndexes = new Set();
         for (let i = 0; i < selected.length; i++) {
           const item = selected[i];
-          const baseKeyword = String(item.keyword || item.name || item.defaultName || `贴图${i + 1}`).trim();
+          const baseKeyword = String(item.keyword || '').trim();
           const keyword = makeUniqueKeyword(baseKeyword, usedKeywords);
-          const name = keyword || String(item.name || item.defaultName || `贴图${i + 1}`).trim();
+          const name = String(item.name || '').trim();
           item.keyword = keyword;
           item.name = name;
           const idx = sliceItems.indexOf(item);
           if (idx >= 0) updatedIndexes.add(idx);
-          const fileName = name ? `${name}.png` : 'sticker.png';
+          const fileBase = name || keyword || `slice_${i + 1}`;
+          const fileName = `${fileBase}.png`;
           let dataUrl = String(item.dataUrl || '').trim();
           if (!dataUrl) {
             const source = getStickerAiImageSource(item);
