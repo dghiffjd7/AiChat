@@ -1,6 +1,7 @@
 
 import { MediaPicker } from './media-picker.js';
 import { avatarDataUrlFromFile } from '../utils/image.js';
+import { appConfirm } from './app-confirm.js';
 
 const DEFAULT_USER_BUBBLE_COLOR = '#E8F0FE';
 
@@ -693,7 +694,12 @@ export class PersonaPanel {
 
     async changeAvatar() {
         // Use MediaPicker to pick image
-        const useFile = confirm('使用本地图片文件吗？点击「取消」使用 URL。');
+        const useFile = await appConfirm({
+            title: '头像来源',
+            message: '使用本地图片文件吗？',
+            confirmText: '本地文件',
+            cancelText: '使用 URL',
+        });
         if (useFile) {
             await this.mediaPicker.pickFile('image');
         } else {
@@ -729,7 +735,8 @@ export class PersonaPanel {
 
     async deleteCurrent() {
         if (!this.editingId) return;
-        if (!confirm('确定要删除此角色吗？')) return;
+        const ok = await appConfirm({ title: '删除角色', message: '确定要删除此角色吗？', danger: true });
+        if (!ok) return;
 
         const success = await this.store.delete(this.editingId);
         if (success) {

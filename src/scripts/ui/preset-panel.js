@@ -12,6 +12,7 @@ import { PresetStore } from '../storage/preset-store.js';
 import { appSettings } from '../storage/app-settings.js';
 import { LLMClient } from '../api/client.js';
 import { logger } from '../utils/logger.js';
+import { appConfirm } from './app-confirm.js';
 
 const canInitClient = (cfg) => {
     const c = cfg || {};
@@ -499,7 +500,12 @@ export class PresetPanel {
 
         const detected = this.detectPresetType(json);
         if (detected === 'store') {
-            const replace = confirm('检测到「整套预设设定档」。确定要导入并覆盖当前设置吗？（取消=合并导入）');
+            const replace = await appConfirm({
+                title: '导入预设',
+                message: '检测到「整套预设设定档」。确定要导入并覆盖当前设置吗？（取消=合并导入）',
+                confirmText: '覆盖导入',
+                cancelText: '合并导入',
+            });
             if (replace) {
                 await this.store.importState(json, { mode: 'replace' });
             } else {
@@ -516,12 +522,13 @@ export class PresetPanel {
         let importType = detectedType || currentStoreType;
 
         if (detectedType && detectedType !== currentStoreType) {
-            const ok = confirm(`检测到预设格式为「${this.getTypeLabel(detectedType)}」。要导入到该类型吗？（取消=导入到当前tab）`);
-            if (!ok) {
-                importType = currentStoreType;
-            } else {
-                importType = detectedType;
-            }
+            const ok = await appConfirm({
+                title: '导入类型',
+                message: `检测到预设格式为「${this.getTypeLabel(detectedType)}」。要导入到该类型吗？（取消=导入到当前tab）`,
+                confirmText: `导入到「${this.getTypeLabel(detectedType)}」`,
+                cancelText: '导入当前',
+            });
+            importType = ok ? detectedType : currentStoreType;
         }
 
         // Switch tab after deciding import target (OpenAI goes to "自定义" for prompt blocks)
@@ -548,7 +555,12 @@ export class PresetPanel {
         // 若导入文件包含绑定正则集合，则一并导入并绑定到该预设
         if (Array.isArray(boundSets) && boundSets.length) {
             try {
-                const ok = confirm(`检测到预设包含绑定的正规表达式（${boundSets.length} 组）。是否一并导入并绑定？\n取消：仅导入预设，不导入正则。`);
+                const ok = await appConfirm({
+                    title: '导入正则',
+                    message: `检测到预设包含绑定的正规表达式（${boundSets.length} 组）。是否一并导入并绑定？\n取消：仅导入预设，不导入正则。`,
+                    confirmText: '一并导入',
+                    cancelText: '仅导入预设',
+                });
                 if (!ok) {
                     await this.refreshAll();
                     this.showStatus('已导入预设（未导入绑定正则）', 'success');
@@ -1437,8 +1449,13 @@ export class PresetPanel {
                 del.className = 'block-delete';
                 del.textContent = '删除';
                 del.style.cssText = 'padding:6px 10px; border:1px solid #fecaca; border-radius:10px; background:#fee2e2; color:#b91c1c; cursor:pointer; font-size:12px;';
-                del.onclick = () => {
-                    if (!confirm(`删除区块「${identifier}」？`)) return;
+                del.onclick = async () => {
+                    const ok = await appConfirm({
+                        title: '删除区块',
+                        message: `删除区块「${identifier}」？`,
+                        danger: true,
+                    });
+                    if (!ok) return;
                     card.remove();
                 };
                 del.addEventListener('click', (e) => e.stopPropagation());
@@ -1834,7 +1851,12 @@ export class PresetPanel {
         await this.store.ready;
         const id = this.store.getActiveId(this.getStoreType());
         if (!id) return;
-        if (!confirm('删除该预设？此操作不可恢复。')) return;
+        const ok = await appConfirm({
+            title: '删除预设',
+            message: '删除该预设？此操作不可恢复。',
+            danger: true,
+        });
+        if (!ok) return;
         this.captureDraft();
 
         // If preset has bound regex sets, offer to delete them together.
@@ -1851,7 +1873,13 @@ export class PresetPanel {
                 String(s.bind.presetId || '') === String(id)
             );
             if (bound.length) {
-                const ok = confirm(`检测到该预设绑定了 ${bound.length} 组正则。是否一并删除这些正则？\n取消：仅删除预设，保留正则。`);
+                const ok = await appConfirm({
+                    title: '删除正则',
+                    message: `检测到该预设绑定了 ${bound.length} 组正则。是否一并删除这些正则？\n取消：仅删除预设，保留正则。`,
+                    confirmText: '一并删除',
+                    cancelText: '仅删除预设',
+                    danger: true,
+                });
                 if (ok) {
                     for (const s of bound) {
                         const sid = String(s?.id || '').trim();

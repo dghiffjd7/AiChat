@@ -2941,6 +2941,88 @@ body[data-creative-wide='on'] .QQ_chat_charmsg[data-creative='1'] .QQ_chat_msgdi
    18. 聊天设置弹窗
    ======================================== */
 
+/* App 确认弹窗 */
+.app-confirm-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  z-index: 24000;
+}
+
+.app-confirm-modal {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 88%;
+  max-width: 380px;
+  background: #fff;
+  border-radius: 14px;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.3);
+  z-index: 24001;
+  overflow: hidden;
+}
+
+.app-confirm-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px 8px;
+}
+
+.app-confirm-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.app-confirm-close {
+  border: none;
+  background: transparent;
+  font-size: 22px;
+  color: #94a3b8;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.app-confirm-body {
+  padding: 0 16px 14px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #334155;
+  white-space: pre-wrap;
+}
+
+.app-confirm-actions {
+  display: flex;
+  gap: 10px;
+  padding: 12px 16px 16px;
+  border-top: 1px solid #eef2f7;
+}
+
+.app-confirm-btn {
+  flex: 1;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
+  color: #0f172a;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.app-confirm-btn.app-confirm-ok {
+  border-color: #0ea5e9;
+  background: #0ea5e9;
+  color: #fff;
+}
+
+.app-confirm-modal.is-danger .app-confirm-btn.app-confirm-ok,
+.app-confirm-btn.app-confirm-ok[data-variant='danger'] {
+  border-color: #ef4444;
+  background: #ef4444;
+}
+
 /* 弹窗遮罩层 */
 .popup-overlay {
   position: fixed;

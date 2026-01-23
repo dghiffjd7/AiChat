@@ -1,6 +1,7 @@
 import { appSettings } from '../storage/app-settings.js';
 import { ConfigManager } from '../storage/config.js';
 import { safeInvoke } from '../utils/tauri.js';
+import { appConfirm } from './app-confirm.js';
 
 export class GeneralSettingsPanel {
   constructor() {
@@ -479,13 +480,15 @@ export class GeneralSettingsPanel {
       const settings = appSettings.update({ typingDotsEnabled: enabled });
       this.applyTypingDotsSetting(settings.typingDotsEnabled !== false);
     });
-    this.richIframeScriptsToggle?.addEventListener('change', (e) => {
+    this.richIframeScriptsToggle?.addEventListener('change', async (e) => {
       const target = e?.target;
       const enabled = Boolean(target?.checked);
       if (enabled) {
-        const ok = confirm(
-          '启用后，富文本 iframe 将执行其中的脚本并放宽安全限制，脚本可能访问同源数据、加载外部资源，导致敏感信息泄露或设置被篡改。仅在信任来源时启用。确定继续吗？',
-        );
+        const ok = await appConfirm({
+          title: '安全提示',
+          message:
+            '启用后，富文本 iframe 将执行其中的脚本并放宽安全限制，脚本可能访问同源数据、加载外部资源，导致敏感信息泄露或设置被篡改。仅在信任来源时启用。确定继续吗？',
+        });
         if (!ok) {
           if (target) target.checked = false;
           return;
@@ -506,11 +509,15 @@ export class GeneralSettingsPanel {
       appSettings.update({ creativeHistoryMax: safe });
     });
 
-    this.personaBindToggle?.addEventListener('change', (e) => {
+    this.personaBindToggle?.addEventListener('change', async (e) => {
       const target = e?.target;
       const enabled = Boolean(target?.checked);
       if (!enabled) {
-        const ok = confirm('关闭后，所有 Persona 将共享同一份联系人/聊天记录（共享区）。已绑定的数据不会丢失，但需切回绑定模式才能查看各自内容。确定继续吗？');
+        const ok = await appConfirm({
+          title: '关闭绑定',
+          message:
+            '关闭后，所有 Persona 将共享同一份联系人/聊天记录（共享区）。已绑定的数据不会丢失，但需切回绑定模式才能查看各自内容。确定继续吗？',
+        });
         if (!ok) {
           if (target) target.checked = true;
           return;
@@ -661,10 +668,13 @@ export class GeneralSettingsPanel {
       }
     });
 
-    this.bundleImportBtn?.addEventListener('click', () => {
-      const confirmed = confirm(
-        '导入会覆盖当前所有资料（不包含 API 配置），且无法撤销。\n请确认资料包来源可信，避免泄露隐私。\n确定继续吗？',
-      );
+    this.bundleImportBtn?.addEventListener('click', async () => {
+      const confirmed = await appConfirm({
+        title: '导入资料包',
+        message:
+          '导入会覆盖当前所有资料（不包含 API 配置），且无法撤销。\n请确认资料包来源可信，避免泄露隐私。\n确定继续吗？',
+        danger: true,
+      });
       if (!confirmed) return;
       if (this.bundleImportInput) this.bundleImportInput.value = '';
       this.bundleImportInput?.click();
@@ -695,7 +705,12 @@ export class GeneralSettingsPanel {
         const suffix = skipped ? `（跳过 ${skipped} 项）` : '';
         setBundleStatus(`导入完成${suffix}，请重启应用以加载新资料`);
         window.toastr?.success?.(`资料包导入完成${suffix}`);
-        const restart = confirm('资料导入完成，是否立即重启应用？');
+        const restart = await appConfirm({
+          title: '重启应用',
+          message: '资料导入完成，是否立即重启应用？',
+          confirmText: '立即重启',
+          cancelText: '稍后',
+        });
         if (restart) window.location.reload();
       } catch (err) {
         const message = String(err?.message || err || '导入失败').trim();
@@ -707,7 +722,11 @@ export class GeneralSettingsPanel {
     });
 
     this.cleanWallpapersBtn?.addEventListener('click', async () => {
-      const confirmed = confirm('将清理未被会话引用的壁纸文件，是否继续？');
+      const confirmed = await appConfirm({
+        title: '清理壁纸',
+        message: '将清理未被会话引用的壁纸文件，是否继续？',
+        danger: true,
+      });
       if (!confirmed) return;
       const store = window?.appBridge?.chatStore || null;
       const sessionIds = store?.listSessions?.() || [];
@@ -757,13 +776,15 @@ export class GeneralSettingsPanel {
       appSettings.update({ memoryInjectDepth: safe });
       window.dispatchEvent(new CustomEvent('app-settings-changed', { detail: { key: 'memoryInjectDepth', value: safe } }));
     });
-    this.memoryModeTable?.addEventListener('change', (e) => {
+    this.memoryModeTable?.addEventListener('change', async (e) => {
       const target = e?.target;
       const checked = Boolean(target?.checked);
       if (!checked) return;
-      const ok = confirm(
-        '切换到记忆表格模式？\n\n• 新对话将使用记忆表格\n• 历史摘要数据保留，不会丢失\n• 你可以随时切换回摘要模式\n\n确定切换？',
-      );
+      const ok = await appConfirm({
+        title: '切换记忆模式',
+        message:
+          '切换到记忆表格模式？\n\n• 新对话将使用记忆表格\n• 历史摘要数据保留，不会丢失\n• 你可以随时切换回摘要模式\n\n确定切换？',
+      });
       if (!ok) {
         if (target) target.checked = false;
         if (this.memoryModeSummary) this.memoryModeSummary.checked = true;

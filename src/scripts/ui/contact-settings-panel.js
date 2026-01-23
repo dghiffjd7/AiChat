@@ -6,6 +6,7 @@ import { logger } from '../utils/logger.js';
 import { avatarDataUrlFromFile } from '../utils/image.js';
 import { appSettings } from '../storage/app-settings.js';
 import { MemoryTableEditor } from './memory-table-editor.js';
+import { appConfirm } from './app-confirm.js';
 
 const getMemoryStorageMode = () => {
     const mode = String(appSettings.get().memoryStorageMode || 'table').toLowerCase();
@@ -417,10 +418,15 @@ export class ContactSettingsPanel {
         };
         this.panel.querySelector('#contact-settings-save').onclick = () => this.save();
         this.panel.querySelector('#contact-new-chat').onclick = () => this.startNewChat();
-        this.panel.querySelector('#contact-summaries-clear').onclick = () => {
+        this.panel.querySelector('#contact-summaries-clear').onclick = async () => {
             const sid = this.getSessionId();
             if (!sid) return;
-            if (!confirm('确定要清空当前存档/聊天的所有摘要吗？')) return;
+            const ok = await appConfirm({
+                title: '清空摘要',
+                message: '确定要清空当前存档/聊天的所有摘要吗？',
+                danger: true,
+            });
+            if (!ok) return;
             try { this.chatStore?.clearSummaries?.(sid); } catch {}
             this.summarySelectedKeys = new Set();
             this.setSummaryBatchMode(false);
@@ -436,10 +442,15 @@ export class ContactSettingsPanel {
         this.panel.querySelector('#contact-compacted-raw').onclick = () => this.openCompactedRaw();
         this.panel.querySelector('#contact-compacted-edit').onclick = () => this.editCompactedSummary();
         this.panel.querySelector('#contact-compacted-run').onclick = () => this.runCompactedSummary();
-        this.panel.querySelector('#contact-compacted-clear').onclick = () => {
+        this.panel.querySelector('#contact-compacted-clear').onclick = async () => {
             const sid = this.getSessionId();
             if (!sid) return;
-            if (!confirm('确定要清空当前存档/聊天的大总结吗？')) return;
+            const ok = await appConfirm({
+                title: '清空大总结',
+                message: '确定要清空当前存档/聊天的大总结吗？',
+                danger: true,
+            });
+            if (!ok) return;
             try { this.chatStore?.clearCompactedSummary?.(sid); } catch {}
             this.renderCompactedSummary();
         };
@@ -716,7 +727,7 @@ export class ContactSettingsPanel {
         return lines.filter(Boolean);
     }
 
-    deleteSelectedSummaries() {
+    async deleteSelectedSummaries() {
         const sid = this.getSessionId();
         if (!sid) return;
         const keys = [...this.summarySelectedKeys];
@@ -724,7 +735,12 @@ export class ContactSettingsPanel {
             window.toastr?.info?.('未选择任何摘要');
             return;
         }
-        if (!confirm(`确定要删除所选摘要（${keys.length}条）吗？`)) return;
+        const ok = await appConfirm({
+            title: '删除摘要',
+            message: `确定要删除所选摘要（${keys.length}条）吗？`,
+            danger: true,
+        });
+        if (!ok) return;
         const items = keys.map((k) => {
             const [atStr, ...rest] = String(k).split('|');
             return { at: Number(atStr || 0) || 0, text: rest.join('|') };
@@ -820,36 +836,43 @@ export class ContactSettingsPanel {
             `;
             info.onclick = async () => {
                 if (isCurrent) return;
-                if (confirm(`确定要加载存档「${arc.name}」吗？\n当前聊天将被自动保存。`)) {
-                    const memoryTableOn = getMemoryStorageMode() === 'table';
-                    let currentSnapshot = null;
-                    if (memoryTableOn) {
-                        currentSnapshot = await buildMemoryTableSnapshot({ sessionId: sid, isGroup: false });
-                    }
-                    const targetSnapshot = arc?.memoryTableSnapshot;
-                    const loaded = await this.chatStore.loadArchivedMessages(arc.id, sid, { memoryTableSnapshot: currentSnapshot });
-                    if (loaded && memoryTableOn && targetSnapshot) {
-                        try {
-                            await applyMemoryTableSnapshot({ sessionId: sid, isGroup: false, snapshot: targetSnapshot });
-                        } catch (err) {
-                            logger.warn('apply memory table snapshot failed', err);
-                        }
-                    }
-                    window.toastr?.success('已加载存档');
-                    this.onSaved?.({ id: sid, forceRefresh: true }); 
-                    this.hide();
+                const ok = await appConfirm({
+                    title: '加载存档',
+                    message: `确定要加载存档「${arc.name}」吗？\n当前聊天将被自动保存。`,
+                });
+                if (!ok) return;
+                const memoryTableOn = getMemoryStorageMode() === 'table';
+                let currentSnapshot = null;
+                if (memoryTableOn) {
+                    currentSnapshot = await buildMemoryTableSnapshot({ sessionId: sid, isGroup: false });
                 }
+                const targetSnapshot = arc?.memoryTableSnapshot;
+                const loaded = await this.chatStore.loadArchivedMessages(arc.id, sid, { memoryTableSnapshot: currentSnapshot });
+                if (loaded && memoryTableOn && targetSnapshot) {
+                    try {
+                        await applyMemoryTableSnapshot({ sessionId: sid, isGroup: false, snapshot: targetSnapshot });
+                    } catch (err) {
+                        logger.warn('apply memory table snapshot failed', err);
+                    }
+                }
+                window.toastr?.success('已加载存档');
+                this.onSaved?.({ id: sid, forceRefresh: true });
+                this.hide();
             };
 
             const delBtn = document.createElement('button');
             delBtn.textContent = '×';
             delBtn.style.cssText = 'padding:4px 8px; border:none; background:transparent; color:#94a3b8; font-size:16px; cursor:pointer; margin-left:6px;';
-            delBtn.onclick = (e) => {
+            delBtn.onclick = async (e) => {
                 e.stopPropagation();
-                if (confirm('确定要删除这条存档吗？')) {
-                    this.chatStore.deleteArchive(arc.id, sid);
-                    this.renderArchives();
-                }
+                const ok = await appConfirm({
+                    title: '删除存档',
+                    message: '确定要删除这条存档吗？',
+                    danger: true,
+                });
+                if (!ok) return;
+                this.chatStore.deleteArchive(arc.id, sid);
+                this.renderArchives();
             };
 
             row.appendChild(info);

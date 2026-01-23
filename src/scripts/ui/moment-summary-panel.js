@@ -1,4 +1,5 @@
 import { logger } from '../utils/logger.js';
+import { appConfirm } from './app-confirm.js';
 
 export class MomentSummaryPanel {
     constructor({ store, onRunCompaction } = {}) {
@@ -97,8 +98,13 @@ export class MomentSummaryPanel {
         const batchBar = this.panel.querySelector('#moment-summaries-batchbar');
 
         this.panel.querySelector('#moment-summary-close').onclick = () => this.hide();
-        this.panel.querySelector('#moment-summaries-clear').onclick = () => {
-            if (!confirm('确定要清空所有动态摘要吗？')) return;
+        this.panel.querySelector('#moment-summaries-clear').onclick = async () => {
+            const ok = await appConfirm({
+                title: '清空摘要',
+                message: '确定要清空所有动态摘要吗？',
+                danger: true,
+            });
+            if (!ok) return;
             try { this.store?.clearSummaries?.(); } catch {}
             this.summarySelectedKeys = new Set();
             this.setSummaryBatchMode(false);
@@ -114,8 +120,13 @@ export class MomentSummaryPanel {
         this.panel.querySelector('#moment-compacted-raw').onclick = () => this.openCompactedRaw();
         this.panel.querySelector('#moment-compacted-edit').onclick = () => this.editCompactedSummary();
         this.panel.querySelector('#moment-compacted-run').onclick = () => this.runCompactedSummary();
-        this.panel.querySelector('#moment-compacted-clear').onclick = () => {
-            if (!confirm('确定要清空动态大总结吗？')) return;
+        this.panel.querySelector('#moment-compacted-clear').onclick = async () => {
+            const ok = await appConfirm({
+                title: '清空大总结',
+                message: '确定要清空动态大总结吗？',
+                danger: true,
+            });
+            if (!ok) return;
             try { this.store?.clearCompactedSummary?.(); } catch {}
             this.renderCompactedSummary();
         };
@@ -225,13 +236,18 @@ export class MomentSummaryPanel {
         return lines.filter(Boolean);
     }
 
-    deleteSelectedSummaries() {
+    async deleteSelectedSummaries() {
         const keys = [...this.summarySelectedKeys];
         if (!keys.length) {
             window.toastr?.info?.('未选择任何摘要');
             return;
         }
-        if (!confirm(`确定要删除所选摘要（${keys.length}条）吗？`)) return;
+        const ok = await appConfirm({
+            title: '删除摘要',
+            message: `确定要删除所选摘要（${keys.length}条）吗？`,
+            danger: true,
+        });
+        if (!ok) return;
         const items = keys.map((k) => {
             const [atStr, ...rest] = String(k).split('|');
             return { at: Number(atStr || 0) || 0, text: rest.join('|') };

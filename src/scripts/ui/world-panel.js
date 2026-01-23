@@ -8,6 +8,7 @@ import { convertSTWorld } from '../storage/worldinfo.js';
 import { BUILTIN_PHONE_FORMAT_WORLDBOOK_ID } from '../storage/builtin-worldbooks.js';
 import { logger } from '../utils/logger.js';
 import { WorldEditorModal } from './world-editor.js';
+import { appConfirm } from './app-confirm.js';
 
 export class WorldPanel {
     constructor({ contactsStore = null, getSessionId = null } = {}) {
@@ -239,7 +240,12 @@ export class WorldPanel {
                 deleteBtn.textContent = '删除';
                 deleteBtn.style.cssText = 'padding:4px 8px;border:1px solid #fecaca;border-radius:6px;background:#fff;color:#b91c1c;cursor:pointer;';
                 deleteBtn.onclick = async () => {
-                    if (!confirm(`确定要删除世界书「${name}」吗？此操作不可恢复。`)) return;
+                    const ok = await appConfirm({
+                        title: '删除世界书',
+                        message: `确定要删除世界书「${name}」吗？此操作不可恢复。`,
+                        danger: true,
+                    });
+                    if (!ok) return;
                     await window.appBridge.deleteWorldInfo(name);
                     window.toastr?.success('已删除世界书');
                     await this.refreshList();
@@ -431,7 +437,12 @@ export class WorldPanel {
             const boundSets = json?.boundRegexSets || json?.bound_regex_sets || json?.bound_regex_sets_v1 || null;
             if (Array.isArray(boundSets) && boundSets.length) {
                 try {
-                    const ok = confirm(`检测到世界书包含绑定的正规表达式（${boundSets.length} 组）。是否一并导入并绑定？\n取消：仅导入世界书，不导入正则。`);
+                    const ok = await appConfirm({
+                        title: '导入正则',
+                        message: `检测到世界书包含绑定的正规表达式（${boundSets.length} 组）。是否一并导入并绑定？\n取消：仅导入世界书，不导入正则。`,
+                        confirmText: '一并导入',
+                        cancelText: '仅导入世界书',
+                    });
                     if (!ok) {
                         await this.refreshList();
                         window.toastr?.success(`导入成功：${name}`);

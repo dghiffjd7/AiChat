@@ -4,6 +4,7 @@
 
 import { logger } from '../utils/logger.js';
 import { resolveMediaAsset, isLikelyUrl, isAssetRef } from '../utils/media-assets.js';
+import { appConfirm } from './app-confirm.js';
 
 const esc = s =>
   String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -229,12 +230,16 @@ export class MomentsPanel {
     el.addEventListener('click', e => e.stopPropagation());
     document.addEventListener('click', () => this.hideMenu());
     el.querySelectorAll('button').forEach(btn => {
-      btn.addEventListener('click', () => {
+      btn.addEventListener('click', async () => {
         const action = btn.dataset.action;
         const momentId = el.dataset.momentId || '';
         this.hideMenu();
         if (action === 'delete' && momentId) {
-          const ok = confirm('删除后无法恢复，确定要删除这条动态吗？');
+          const ok = await appConfirm({
+            title: '删除动态',
+            message: '删除后无法恢复，确定要删除这条动态吗？',
+            danger: true,
+          });
           if (!ok) return;
           const removed = this.store?.remove?.(momentId);
           if (!removed) window.toastr?.warning('删除失败：未找到该动态');
@@ -284,13 +289,17 @@ export class MomentsPanel {
     el.addEventListener('click', e => e.stopPropagation());
     document.addEventListener('click', () => this.hideCommentMenu());
     el.querySelectorAll('button').forEach(btn => {
-      btn.addEventListener('click', () => {
+      btn.addEventListener('click', async () => {
         const action = btn.dataset.action;
         const momentId = el.dataset.momentId || '';
         const commentId = el.dataset.commentId || '';
         this.hideCommentMenu();
         if (action === 'delete-comment' && momentId && commentId) {
-          const ok = confirm('删除这条评论？');
+          const ok = await appConfirm({
+            title: '删除评论',
+            message: '删除这条评论？',
+            danger: true,
+          });
           if (!ok) return;
           const removed = this.store?.removeComment?.(momentId, commentId);
           if (!removed) window.toastr?.warning?.('删除失败：未找到该评论');

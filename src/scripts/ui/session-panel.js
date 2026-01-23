@@ -8,6 +8,7 @@ import { logger } from '../utils/logger.js';
 import { safeInvoke } from '../utils/tauri.js';
 import { makeScopedKey, normalizeScopeId } from '../storage/store-scope.js';
 import { ContactsStore } from '../storage/contacts-store.js';
+import { appConfirm } from './app-confirm.js';
 
 const CONTACTS_STORE_KEY = 'contacts_store_v1';
 const CHAT_STORE_KEY = 'chat_store_v1';
@@ -259,9 +260,14 @@ export class SessionPanel {
     this.onUpdated?.();
   }
 
-  remove(id) {
+  async remove(id) {
     const name = this.contactsStore?.getContact?.(id)?.name || id;
-    if (!confirm(`確認删除：${name}？此操作会删除聊天室与好友记录（不可恢复）。`)) return;
+    const ok = await appConfirm({
+      title: '删除好友',
+      message: `確認删除：${name}？此操作会删除聊天室与好友记录（不可恢复）。`,
+      danger: true,
+    });
+    if (!ok) return;
 
     try {
       const settings = this.store?.getSessionSettings?.(id) || null;
@@ -709,9 +715,14 @@ export class SessionPanel {
     this.jumpToContactsOnClose = true;
   }
 
-  clearCurrent() {
+  async clearCurrent() {
     const id = this.store.getCurrent();
-    if (!confirm(`清空当前会话：${id}？此操作不可恢复。`)) return;
+    const ok = await appConfirm({
+      title: '清空会话',
+      message: `清空当前会话：${id}？此操作不可恢复。`,
+      danger: true,
+    });
+    if (!ok) return;
     this.store.clear(id);
     this.switchTo(id);
     this.refresh();

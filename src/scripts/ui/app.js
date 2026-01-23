@@ -49,6 +49,7 @@ import { StickerPicker } from './sticker-picker.js';
 import { VariablePanel } from './variable-panel.js';
 import { WorldPanel } from './world-panel.js';
 import { WorldInfoIndicator } from './worldinfo-indicator.js';
+import { appConfirm } from './app-confirm.js';
 
 const initApp = async () => {
   const ui = new ChatUI();
@@ -2690,7 +2691,7 @@ Phase G（Frame 36）：循环衔接
     const stickers = Array.isArray(pack.stickers) ? pack.stickers.slice() : [];
     const target = stickers.find(s => s.id === stickerId);
     if (!target) return;
-    const ok = confirm('删除该贴图？');
+    const ok = await appConfirm({ title: '删除贴图', message: '删除该贴图？', danger: true });
     if (!ok) return;
     if (target.path) {
       safeInvoke('delete_attachment', { sessionId: STICKER_PACK_ASSET_SESSION, path: target.path }).catch(() => {});
@@ -2712,7 +2713,11 @@ Phase G（Frame 36）：循环衔接
     if (!pack) return;
     const count = Array.isArray(pack.stickers) ? pack.stickers.length : 0;
     if (count > 0) {
-      const ok = confirm(`该贴图包包含 ${count} 张贴图，是否一并删除？`);
+      const ok = await appConfirm({
+        title: '删除贴图包',
+        message: `该贴图包包含 ${count} 张贴图，是否一并删除？`,
+        danger: true,
+      });
       if (!ok) return;
     }
     (pack.stickers || []).forEach(sticker => {
@@ -7469,7 +7474,7 @@ Phase G（Frame 36）：循环衔接
       updateBindToggleUI();
     };
 
-    const handleDeleteSelected = () => {
+    const handleDeleteSelected = async () => {
       const pack = getCurrentPack();
       if (!pack) return;
       const targets = getSelectedStickerIds(pack);
@@ -7477,7 +7482,11 @@ Phase G（Frame 36）：循环衔接
         window.toastr?.warning?.('请先选择要删除的贴图');
         return;
       }
-      const ok = confirm(`确定删除选中的 ${targets.length} 张贴图？`);
+      const ok = await appConfirm({
+        title: '删除贴图',
+        message: `确定删除选中的 ${targets.length} 张贴图？`,
+        danger: true,
+      });
       if (!ok) return;
       const nextStickers = (pack.stickers || []).filter(sticker => !targets.includes(String(sticker?.id || '').trim()));
       (pack.stickers || []).forEach(sticker => {
@@ -9015,7 +9024,12 @@ Phase G（Frame 36）：循环衔接
       await mediaPicker.pickFile('image');
     },
     music: async () => {
-      const useFile = confirm('使用本地音频文件吗？点击「取消」改用 URL。');
+      const useFile = await appConfirm({
+        title: '音频来源',
+        message: '使用本地音频文件吗？',
+        confirmText: '本地文件',
+        cancelText: '使用 URL',
+      });
       if (useFile) {
         await mediaPicker.pickFile('audio');
       } else {
@@ -10147,7 +10161,10 @@ Phase G（Frame 36）：循环衔接
         : [];
       if (stepByStep) {
         if (confirmBefore) {
-          const ok = window.confirm(buildMemoryConfirmText(actions, tableById, planOrder));
+          const ok = await appConfirm({
+            title: '写表确认',
+            message: buildMemoryConfirmText(actions, tableById, planOrder),
+          });
           if (!ok) {
             window.toastr?.info?.('已取消写表执行');
             return [];
@@ -10156,12 +10173,13 @@ Phase G（Frame 36）：循环衔接
         const confirmed = [];
         for (let i = 0; i < actions.length; i++) {
           const action = actions[i];
-          const ok = window.confirm(
-            buildMemoryConfirmText([action], tableById, planOrder, {
+          const ok = await appConfirm({
+            title: `写表确认（${i + 1}/${actions.length}）`,
+            message: buildMemoryConfirmText([action], tableById, planOrder, {
               title: `写表确认（${i + 1}/${actions.length}）`,
               maxLines: 1,
             }),
-          );
+          });
           if (!ok) {
             window.toastr?.info?.('已停止后续写表执行');
             break;
@@ -10170,7 +10188,10 @@ Phase G（Frame 36）：循环衔接
         }
         return confirmed;
       }
-      const ok = window.confirm(buildMemoryConfirmText(actions, tableById, planOrder));
+      const ok = await appConfirm({
+        title: '写表确认',
+        message: buildMemoryConfirmText(actions, tableById, planOrder),
+      });
       if (!ok) {
         window.toastr?.info?.('已取消写表执行');
         return [];

@@ -5,6 +5,7 @@
  */
 import { RegexStore, regex_placement, substitute_find_regex } from '../storage/regex-store.js';
 import { logger } from '../utils/logger.js';
+import { appConfirm } from './app-confirm.js';
 
 const deepClone = (v) => {
     try {
@@ -531,7 +532,12 @@ export class RegexPanel {
         left.querySelector('#re-local-del').onclick = async () => {
             if (!this.activeLocalSetId) return;
             const cur = this.store.getLocalSet(this.activeLocalSetId);
-            if (!confirm(`删除局部正则「${cur?.name || this.activeLocalSetId}」？`)) return;
+            const ok = await appConfirm({
+                title: '删除正则',
+                message: `删除局部正则「${cur?.name || this.activeLocalSetId}」？`,
+                danger: true,
+            });
+            if (!ok) return;
             await this.store.removeLocalSet(this.activeLocalSetId);
             this.activeLocalSetId = null;
             await this.refreshAll();

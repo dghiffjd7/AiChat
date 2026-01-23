@@ -1,5 +1,28 @@
 # 開發進度追蹤（必更新）(必须使用当下时间记录)
 
+## 2026-01-23 10:22
+- 删除确认弹窗统一改为 App 风格小弹窗，避免桌面端不弹出的问题；覆盖贴图包/好友/预设/世界书/摘要/记忆等所有原生 confirm 场景。
+- 新增通用确认弹窗模块与样式（app-confirm），支持危险态按钮与自定义文案。
+- 修改：
+  - `src/scripts/ui/app-confirm.js`
+  - `src/assets/css/qq-legacy.css`
+  - `src/scripts/ui/app.js`
+  - `src/scripts/ui/world-panel.js`
+  - `src/scripts/ui/group-panel.js`
+  - `src/scripts/ui/variable-panel.js`
+  - `src/scripts/ui/group-chat-panels.js`
+  - `src/scripts/ui/general-settings-panel.js`
+  - `src/scripts/ui/session-panel.js`
+  - `src/scripts/ui/contact-settings-panel.js`
+  - `src/scripts/ui/regex-panel.js`
+  - `src/scripts/ui/config-panel.js`
+  - `src/scripts/ui/moment-summary-panel.js`
+  - `src/scripts/ui/memory-table-editor.js`
+  - `src/scripts/ui/preset-panel.js`
+  - `src/scripts/ui/moments-panel.js`
+  - `src/scripts/ui/persona-panel.js`
+  - `src/scripts/ui/memory-template-panel.js`
+
 ## 2026-01-22 23:27
 - 修复添加好友双列表高度压缩：有其他用户联系人时改用等分网格布局，避免下半列表高度为 0。
 - 调试增强：输出添加好友面板的 class/尺寸/样式，定位“其他用户联系人”不显示问题。

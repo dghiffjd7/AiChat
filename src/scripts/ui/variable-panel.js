@@ -1,3 +1,5 @@
+import { appConfirm } from './app-confirm.js';
+
 export class VariablePanel {
     constructor({ chatStore, getSessionId }) {
         this.chatStore = chatStore;
@@ -192,8 +194,9 @@ export class VariablePanel {
         this.renderList();
     }
 
-    deleteKey(key) {
-        if (!confirm(`删除变量 "${key}"？`)) return;
+    async deleteKey(key) {
+        const ok = await appConfirm({ title: '删除变量', message: `删除变量 "${key}"？`, danger: true });
+        if (!ok) return;
         const { sid } = this.getVars();
         if (!sid) {
             window.toastr?.warning?.('请先进入聊天室');
@@ -203,8 +206,9 @@ export class VariablePanel {
         this.renderList();
     }
 
-    clearAll() {
-        if (!confirm('清空当前会话的所有变量？')) return;
+    async clearAll() {
+        const ok = await appConfirm({ title: '清空变量', message: '清空当前会话的所有变量？', danger: true });
+        if (!ok) return;
         const { sid } = this.getVars();
         if (!sid) {
             window.toastr?.warning?.('请先进入聊天室');

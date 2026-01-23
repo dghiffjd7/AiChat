@@ -6,6 +6,7 @@
  */
 
 import { logger } from '../utils/logger.js';
+import { appConfirm } from './app-confirm.js';
 
 export class GroupPanel {
     constructor({ groupStore, onGroupChanged } = {}) {
@@ -198,7 +199,7 @@ export class GroupPanel {
         }
     }
 
-    deleteGroup(groupId) {
+    async deleteGroup(groupId) {
         const group = this.groupStore?.getGroup?.(groupId);
         if (!group) return;
 
@@ -211,7 +212,12 @@ export class GroupPanel {
             ? `确定要删除分组「${group.name}」吗？\n分组中的 ${count} 个联系人将移动到未分组区域。${childMsg}`
             : `确定要删除分组「${group.name}」吗？${childMsg}`;
 
-        if (!confirm(msg)) return;
+        const ok = await appConfirm({
+            title: '删除分组',
+            message: msg,
+            danger: true,
+        });
+        if (!ok) return;
 
         try {
             this.groupStore?.deleteGroup?.(groupId);

@@ -1,6 +1,7 @@
 import { validateTemplate } from '../memory/template-schema.js';
 import { MemoryTableEditor } from './memory-table-editor.js';
 import { logger } from '../utils/logger.js';
+import { appConfirm } from './app-confirm.js';
 
 const sanitizeFileName = (name) => {
   const raw = String(name || '').trim();
@@ -447,7 +448,8 @@ export class MemoryTemplatePanel {
       deleteBtn.textContent = '删除';
       deleteBtn.style.cssText = 'padding:6px 10px; border:1px solid #fecaca; border-radius:10px; background:#fff; cursor:pointer; font-size:12px; color:#b91c1c;';
       deleteBtn.onclick = async () => {
-        if (!confirm('确定删除该模板吗？')) return;
+        const ok = await appConfirm({ title: '删除模板', message: '确定删除该模板吗？', danger: true });
+        if (!ok) return;
         try {
           await this.templateStore.deleteTemplate(record.id);
           this.refresh();
@@ -1758,8 +1760,9 @@ export class MemoryTemplatePanel {
       const deleteBtn = document.createElement('button');
       deleteBtn.textContent = '删除表';
       deleteBtn.style.cssText = 'padding:4px 8px; border:1px solid #fecaca; border-radius:8px; background:#fff; cursor:pointer; font-size:12px; color:#b91c1c;';
-      deleteBtn.onclick = () => {
-        if (!confirm('确定删除该表格吗？')) return;
+      deleteBtn.onclick = async () => {
+        const ok = await appConfirm({ title: '删除表格', message: '确定删除该表格吗？', danger: true });
+        if (!ok) return;
         template.tables.splice(idx, 1);
         this.renderTemplateEditor();
       };

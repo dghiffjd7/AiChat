@@ -6,6 +6,7 @@ import { ConfigManager } from '../storage/config.js';
 import { LLMClient } from '../api/client.js';
 import { logger } from '../utils/logger.js';
 import { logStickerDebugInfo } from '../utils/sticker-debug.js';
+import { appConfirm } from './app-confirm.js';
 
 const canInitClient = (cfg) => {
     const c = cfg || {};
@@ -876,7 +877,12 @@ export class ConfigPanel {
         }
         const active = this.configManager.getActiveProfile?.();
         if (!active) return;
-        if (!confirm(`删除设置档「${active.name}」？此操作不可恢复。`)) return;
+        const ok = await appConfirm({
+            title: '删除设置档',
+            message: `删除设置档「${active.name}」？此操作不可恢复。`,
+            danger: true,
+        });
+        if (!ok) return;
         await this.configManager.deleteProfile(active.id);
         const config = await this.configManager.load();
         this.refreshProfileOptions();
@@ -1014,7 +1020,8 @@ export class ConfigPanel {
             delBtn.textContent = '删除';
             delBtn.style.cssText = 'padding:6px 10px; border:1px solid #fca5a5; border-radius:10px; background:#fee2e2; color:#b91c1c; cursor:pointer;';
             delBtn.onclick = async () => {
-                if (!confirm('删除该 Key？')) return;
+                const ok = await appConfirm({ title: '删除 Key', message: '删除该 Key？', danger: true });
+                if (!ok) return;
                 await this.configManager.removeKey(active?.id, k.id);
                 this.refreshKeyManagerList();
                 this.syncMaskedKeyToForm();

@@ -1,5 +1,6 @@
 import { appSettings } from '../storage/app-settings.js';
 import { logger } from '../utils/logger.js';
+import { appConfirm } from './app-confirm.js';
 
 const scopeLabelMap = {
   global: '全局',
@@ -606,7 +607,10 @@ export class MemoryTableEditor {
     }
     const exportConfig = table?.exportConfig || {};
     if (exportConfig.enabled !== true) {
-      const ok = confirm('该表未开启世界书导出，仍要继续导出吗？');
+      const ok = await appConfirm({
+        title: '导出确认',
+        message: '该表未开启世界书导出，仍要继续导出吗？',
+      });
       if (!ok) return;
     }
     const worldId = await this.resolveWorldbookIdForTable(table, ctx);
@@ -638,7 +642,10 @@ export class MemoryTableEditor {
     if (scope === 'global') {
       let worldId = String(appBridge.globalWorldId || '').trim();
       if (!worldId) {
-        const ok = confirm('未设置全局世界书，是否创建并设为全局世界书？');
+        const ok = await appConfirm({
+          title: '创建世界书',
+          message: '未设置全局世界书，是否创建并设为全局世界书？',
+        });
         if (!ok) return '';
         worldId = 'memory-table-global';
         appBridge.setGlobalWorld?.(worldId);
@@ -650,7 +657,10 @@ export class MemoryTableEditor {
     }
     let worldId = String(appBridge.currentWorldId || '').trim();
     if (!worldId) {
-      const ok = confirm('未设置当前会话世界书，是否创建并设为当前世界书？');
+      const ok = await appConfirm({
+        title: '创建世界书',
+        message: '未设置当前会话世界书，是否创建并设为当前世界书？',
+      });
       if (!ok) return '';
       const rawId = sessionId || 'default';
       const safeId = rawId.replace(/[^a-zA-Z0-9_-]+/g, '_').slice(0, 80) || 'default';
@@ -955,7 +965,8 @@ export class MemoryTableEditor {
     deleteBtn.textContent = '删除';
     deleteBtn.style.cssText = 'padding:4px 8px; border:1px solid #fecaca; border-radius:8px; background:#fff; cursor:pointer; font-size:12px; color:#b91c1c;';
     deleteBtn.onclick = async () => {
-      if (!confirm('确定要删除该记忆条目吗？')) return;
+      const ok = await appConfirm({ title: '删除记忆', message: '确定要删除该记忆条目吗？', danger: true });
+      if (!ok) return;
       try {
         await this.memoryStore.deleteMemory(row.id);
       } catch (err) {
@@ -1012,7 +1023,12 @@ export class MemoryTableEditor {
       window.toastr?.info?.('未选择任何记忆');
       return;
     }
-    if (!confirm(`确定要删除所选记忆（${ids.length}条）吗？`)) return;
+    const ok = await appConfirm({
+      title: '删除记忆',
+      message: `确定要删除所选记忆（${ids.length}条）吗？`,
+      danger: true,
+    });
+    if (!ok) return;
     try {
       await this.memoryStore.batchDeleteMemories(ids);
       this.selectedIds.clear();
