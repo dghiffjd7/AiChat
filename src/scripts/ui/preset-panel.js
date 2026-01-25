@@ -160,15 +160,13 @@ export class PresetPanel {
 
         this.element = document.createElement('div');
         this.element.id = 'preset-panel';
-        // Important: fixed top/bottom/left/right + flex layout so inner can scroll on mobile
+        // Important: fixed + top/bottom avoids 100vh quirks on some WebViews (e.g. MIUI) so inner scroll works
         this.element.style.cssText = `
             display:none; position:fixed;
-            /* 使用 dvh 避免部分移动端 WebView 100vh 计算导致上下被“切掉” */
             top: calc(10px + env(safe-area-inset-top, 0px));
+            bottom: calc(10px + env(safe-area-inset-bottom, 0px));
             left: calc(10px + env(safe-area-inset-left, 0px));
             right: calc(10px + env(safe-area-inset-right, 0px));
-            height: calc(100vh - 20px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
-            height: calc(100dvh - 20px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
             box-sizing: border-box;
             background:#fff; border-radius:12px; box-shadow:0 10px 40px rgba(0,0,0,0.25);
             z-index: 21000;
@@ -208,7 +206,7 @@ export class PresetPanel {
                 </label>
             </div>
 
-            <div id="preset-scroll" style="padding:14px 16px; overflow:auto; flex:1; min-height:0; -webkit-overflow-scrolling: touch; overscroll-behavior: contain;">
+            <div id="preset-scroll" style="padding:14px 16px; overflow:auto; flex:1; min-height:0; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; touch-action: pan-y;">
                 <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;">
                     <div style="flex:1; min-width: 240px;">
                         <div style="font-weight:700; margin-bottom:6px; color:#0f172a;">预设</div>
