@@ -2171,6 +2171,10 @@ body[data-creative-wide='on'] .QQ_chat_charmsg[data-creative='1'] .QQ_chat_msgdi
   display: flex;
 }
 
+.world-library-overlay {
+  z-index: 22000;
+}
+
 .sticker-bind-modal {
   width: min(520px, 94vw);
   max-height: 86vh;

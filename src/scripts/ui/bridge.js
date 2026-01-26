@@ -176,10 +176,14 @@ class AppBridge {
     this.initialized = false;
     this.currentCharacterId = 'default';
     this.currentWorldId = null;
+    this.currentWorldIds = [];
     this.scopeId = '';
     this.globalWorldId = this.loadGlobalWorldId();
+    this.worldGlobalSettings = this.loadWorldGlobalSettings();
     this.activeSessionId = 'default';
     this.worldSessionMap = this.loadWorldSessionMap();
+    this.currentWorldIds = this.normalizeWorldIds(this.worldSessionMap[this.activeSessionId]);
+    this.currentWorldId = this.currentWorldIds[0] || null;
     this.isGenerating = false;
     this.abortController = null;
     this.abortReason = '';
@@ -192,8 +196,10 @@ class AppBridge {
     this.contextBuilder = null; // Injected (from UI)
     this.lastMemoryPlan = null;
     this.lastMemoryUpdateBySession = {};
+    this.lastWorldBudgetWarningAt = 0;
     this.hydrateWorldSessionMap();
     this.hydrateGlobalWorldId();
+    this.hydrateWorldGlobalSettings();
   }
 
   setChatStore(store) {
@@ -919,15 +925,27 @@ class AppBridge {
     return makeScopedKey('global_world_id_v1', this.scopeId);
   }
 
+  getWorldGlobalSettingsKey() {
+    return makeScopedKey('world_global_settings_v1', this.scopeId);
+  }
+
+  normalizeWorldIds(value) {
+    const list = Array.isArray(value) ? value : (value ? [value] : []);
+    return list.map(item => String(item || '').trim()).filter(Boolean);
+  }
+
   setPersonaScope(scopeId = '') {
     const next = normalizeScopeId(scopeId);
     if (next === this.scopeId) return;
     this.scopeId = next;
     this.worldSessionMap = this.loadWorldSessionMap();
     this.globalWorldId = this.loadGlobalWorldId();
-    this.currentWorldId = this.activeSessionId ? this.worldSessionMap[this.activeSessionId] || null : null;
+    this.worldGlobalSettings = this.loadWorldGlobalSettings();
+    this.currentWorldIds = this.activeSessionId ? this.normalizeWorldIds(this.worldSessionMap[this.activeSessionId]) : [];
+    this.currentWorldId = this.currentWorldIds[0] || null;
     this.hydrateWorldSessionMap();
     this.hydrateGlobalWorldId();
+    this.hydrateWorldGlobalSettings();
   }
 
   loadGlobalWorldId() {
@@ -936,6 +954,88 @@ class AppBridge {
       return raw ? String(raw) : null;
     } catch {
       return null;
+    }
+  }
+
+  getDefaultWorldGlobalSettings() {
+    return {
+      scanDepth: 2,
+      insertionStrategy: 'role_first',
+      contextPercent: 20,
+      includeNames: false,
+      budgetCap: 0,
+      minActivations: 0,
+      maxDepth: 0,
+      maxRecursionSteps: 0,
+      recursiveScan: true,
+      caseSensitive: false,
+      matchWholeWords: true,
+      useGroupScoring: false,
+      alertOnOverflow: false,
+    };
+  }
+
+  normalizeWorldGlobalSettings(value) {
+    const base = this.getDefaultWorldGlobalSettings();
+    const obj = value && typeof value === 'object' ? value : {};
+    const scanDepthRaw = obj.scanDepth;
+    const scanDepth = (scanDepthRaw === null || scanDepthRaw === '' || scanDepthRaw === undefined)
+      ? base.scanDepth
+      : (Number.isFinite(Number(scanDepthRaw)) ? Math.max(0, Math.trunc(Number(scanDepthRaw))) : base.scanDepth);
+    const strategyRaw = String(obj.insertionStrategy || base.insertionStrategy || 'role_first');
+    const insertionStrategy = ['role_first', 'global_first', 'even'].includes(strategyRaw)
+      ? strategyRaw
+      : base.insertionStrategy;
+    const contextRaw = obj.contextPercent;
+    const contextPercent = (contextRaw === null || contextRaw === '' || contextRaw === undefined)
+      ? base.contextPercent
+      : (Number.isFinite(Number(contextRaw)) ? Math.max(0, Math.min(100, Math.trunc(Number(contextRaw)))) : base.contextPercent);
+    const budgetRaw = obj.budgetCap;
+    const budgetCap = (budgetRaw === null || budgetRaw === '' || budgetRaw === undefined)
+      ? base.budgetCap
+      : (Number.isFinite(Number(budgetRaw)) ? Math.max(0, Math.trunc(Number(budgetRaw))) : base.budgetCap);
+    const minActRaw = obj.minActivations;
+    const minActivations = (minActRaw === null || minActRaw === '' || minActRaw === undefined)
+      ? base.minActivations
+      : (Number.isFinite(Number(minActRaw)) ? Math.max(0, Math.trunc(Number(minActRaw))) : base.minActivations);
+    const maxDepthRaw = obj.maxDepth;
+    const maxDepth = (maxDepthRaw === null || maxDepthRaw === '' || maxDepthRaw === undefined)
+      ? base.maxDepth
+      : (Number.isFinite(Number(maxDepthRaw)) ? Math.max(0, Math.trunc(Number(maxDepthRaw))) : base.maxDepth);
+    const maxRecursionRaw = obj.maxRecursionSteps;
+    const maxRecursionSteps = (maxRecursionRaw === null || maxRecursionRaw === '' || maxRecursionRaw === undefined)
+      ? base.maxRecursionSteps
+      : (Number.isFinite(Number(maxRecursionRaw)) ? Math.max(0, Math.trunc(Number(maxRecursionRaw))) : base.maxRecursionSteps);
+    const includeNames = obj.includeNames === undefined || obj.includeNames === null ? base.includeNames : obj.includeNames === true;
+    const recursiveScan = obj.recursiveScan === undefined || obj.recursiveScan === null ? base.recursiveScan : obj.recursiveScan === true;
+    const caseSensitive = obj.caseSensitive === undefined || obj.caseSensitive === null ? base.caseSensitive : obj.caseSensitive === true;
+    const matchWholeWords = obj.matchWholeWords === undefined || obj.matchWholeWords === null ? base.matchWholeWords : obj.matchWholeWords === true;
+    const useGroupScoring = obj.useGroupScoring === undefined || obj.useGroupScoring === null ? base.useGroupScoring : obj.useGroupScoring === true;
+    const alertOnOverflow = obj.alertOnOverflow === undefined || obj.alertOnOverflow === null ? base.alertOnOverflow : obj.alertOnOverflow === true;
+    return {
+      scanDepth,
+      insertionStrategy,
+      contextPercent,
+      includeNames,
+      budgetCap,
+      minActivations,
+      maxDepth,
+      maxRecursionSteps,
+      recursiveScan,
+      caseSensitive,
+      matchWholeWords,
+      useGroupScoring,
+      alertOnOverflow,
+    };
+  }
+
+  loadWorldGlobalSettings() {
+    try {
+      const raw = localStorage.getItem(this.getWorldGlobalSettingsKey());
+      if (!raw) return this.getDefaultWorldGlobalSettings();
+      return this.normalizeWorldGlobalSettings(JSON.parse(raw));
+    } catch {
+      return this.getDefaultWorldGlobalSettings();
     }
   }
 
@@ -957,8 +1057,9 @@ class AppBridge {
         localStorage.setItem(this.getWorldSessionMapKey(), JSON.stringify(kv));
         // 切换当前 session 的世界书
         if (this.activeSessionId && kv[this.activeSessionId]) {
-          this.currentWorldId = kv[this.activeSessionId];
-          window.dispatchEvent(new CustomEvent('worldinfo-changed', { detail: { worldId: this.currentWorldId } }));
+          this.currentWorldIds = this.normalizeWorldIds(kv[this.activeSessionId]);
+          this.currentWorldId = this.currentWorldIds[0] || null;
+          window.dispatchEvent(new CustomEvent('worldinfo-changed', { detail: { worldId: this.currentWorldId, worldIds: this.currentWorldIds } }));
         }
         logger.info('world-session map hydrated from disk');
       }
@@ -981,6 +1082,18 @@ class AppBridge {
     }
   }
 
+  async hydrateWorldGlobalSettings() {
+    try {
+      const kv = await safeInvoke('load_kv', { name: this.getWorldGlobalSettingsKey() });
+      if (kv && typeof kv === 'object') {
+        this.worldGlobalSettings = this.normalizeWorldGlobalSettings(kv);
+        localStorage.setItem(this.getWorldGlobalSettingsKey(), JSON.stringify(this.worldGlobalSettings));
+      }
+    } catch (err) {
+      logger.debug('global world settings 磁盘加载失败（可能非 Tauri）', err);
+    }
+  }
+
   persistWorldSessionMap() {
     localStorage.setItem(this.getWorldSessionMapKey(), JSON.stringify(this.worldSessionMap || {}));
     safeInvoke('save_kv', { name: this.getWorldSessionMapKey(), data: this.worldSessionMap }).catch(() => {});
@@ -992,6 +1105,13 @@ class AppBridge {
     } catch {}
     // 保存为 string（kv 支持任意 JSON；这里用 string 简化）
     safeInvoke('save_kv', { name: this.getGlobalWorldIdKey(), data: String(this.globalWorldId || '') }).catch(() => {});
+  }
+
+  persistWorldGlobalSettings() {
+    try {
+      localStorage.setItem(this.getWorldGlobalSettingsKey(), JSON.stringify(this.worldGlobalSettings || {}));
+    } catch {}
+    safeInvoke('save_kv', { name: this.getWorldGlobalSettingsKey(), data: this.worldGlobalSettings || {} }).catch(() => {});
   }
 
   /**
@@ -1041,8 +1161,9 @@ class AppBridge {
    */
   setActiveSession(sessionId = 'default') {
     this.activeSessionId = sessionId;
-    this.currentWorldId = this.worldSessionMap[sessionId] || null;
-    window.dispatchEvent(new CustomEvent('worldinfo-changed', { detail: { worldId: this.currentWorldId } }));
+    this.currentWorldIds = this.normalizeWorldIds(this.worldSessionMap[sessionId]);
+    this.currentWorldId = this.currentWorldIds[0] || null;
+    window.dispatchEvent(new CustomEvent('worldinfo-changed', { detail: { worldId: this.currentWorldId, worldIds: this.currentWorldIds } }));
   }
 
   getRegexContext() {
@@ -1060,7 +1181,9 @@ class AppBridge {
     })();
     const worldIds = [];
     if (this.globalWorldId) worldIds.push(String(this.globalWorldId));
-    if (this.currentWorldId) worldIds.push(String(this.currentWorldId));
+    (this.currentWorldIds || []).forEach(id => {
+      if (id) worldIds.push(String(id));
+    });
     return {
       sessionId: this.activeSessionId,
       worldId: this.currentWorldId,
@@ -1529,11 +1652,29 @@ class AppBridge {
       return String(content ?? '');
     };
     const historyForMatch = Array.isArray(context.history) ? context.history : [];
-    const historyMatchLines = historyForMatch.map(m => stringifyMatchContent(m?.content)).filter(Boolean);
+    const globalWorldSettings = this.getWorldGlobalSettings?.() || this.worldGlobalSettings || {};
+    const includeNames = globalWorldSettings.includeNames === true;
+    const fullHistoryLines = historyForMatch
+      .map(m => {
+        const content = stringifyMatchContent(m?.content);
+        if (!content) return '';
+        if (!includeNames) return content;
+        const role = String(m?.role || '').trim();
+        const speaker = String(m?.name || (role === 'user' ? name1 : role === 'assistant' ? name2 : '') || '').trim();
+        return speaker ? `${speaker}: ${content}` : content;
+      })
+      .filter(Boolean);
+    let historyMatchLines = [...fullHistoryLines];
+    const globalScanDepthRaw = globalWorldSettings.scanDepth;
+    const globalScanDepth = Number.isFinite(Number(globalScanDepthRaw)) ? Math.max(0, Math.trunc(Number(globalScanDepthRaw))) : null;
+    if (globalScanDepth !== null) {
+      historyMatchLines = historyMatchLines.slice(-globalScanDepth);
+    }
     const matchText = [String(userMessage ?? ''), ...historyMatchLines].join('\n');
     const matchContext = {
       userMessage: String(userMessage ?? ''),
       history: historyMatchLines,
+      fullHistory: fullHistoryLines,
       personaText,
       character: {
         description: String(context?.character?.description || ''),
@@ -1635,28 +1776,41 @@ class AppBridge {
     const worldPromptRaw = isMomentCommentTask
       ? ''
       : (() => {
-          const builtinPart = disablePhoneFormat
-            ? ''
-            : this.formatWorldPrompt(BUILTIN_PHONE_FORMAT_WORLDBOOK_ID, { matchText, matchContext });
-          const globalPart =
+          const worldSettings = this.getWorldGlobalSettings?.() || this.worldGlobalSettings || {};
+          const strategyRaw = String(worldSettings.insertionStrategy || 'role_first');
+          const insertionStrategy = ['role_first', 'global_first', 'even'].includes(strategyRaw) ? strategyRaw : 'role_first';
+          const collectEntries = (worldId) => this.collectWorldEntries(worldId, { matchText, matchContext });
+          const buildMergedContent = (globalEntries, sessionEntries) => {
+            const merged = this.mergeWorldEntries(globalEntries, sessionEntries, insertionStrategy);
+            return merged.map(e => e.content).join('\n\n');
+          };
+          const builtinEntries = disablePhoneFormat ? [] : collectEntries(BUILTIN_PHONE_FORMAT_WORLDBOOK_ID);
+          const builtinPart = builtinEntries.map(e => e.content).join('\n\n');
+          const globalEntries =
             this.globalWorldId && String(this.globalWorldId) !== BUILTIN_PHONE_FORMAT_WORLDBOOK_ID
-              ? this.formatWorldPrompt(this.globalWorldId, { matchText, matchContext })
-              : '';
+              ? collectEntries(this.globalWorldId)
+              : [];
           if (!isGroupChat) {
-            const sessionPart = this.currentWorldId
-              ? this.formatWorldPrompt(this.currentWorldId, { matchText, matchContext })
-              : '';
-            return [builtinPart, globalPart, sessionPart].filter(Boolean).join('\n\n');
+            const sessionEntries = [];
+            (this.currentWorldIds || []).forEach((id) => {
+              if (!id) return;
+              const list = collectEntries(id);
+              if (list.length) sessionEntries.push(...list);
+            });
+            const mergedContent = buildMergedContent(globalEntries, sessionEntries);
+            return [builtinPart, mergedContent].filter(Boolean).join('\n\n');
           }
-          const parts = [];
+          const sessionEntries = [];
           for (const memberSessionId of groupMemberIds) {
-            const wid = this.worldSessionMap[String(memberSessionId) || ''] || null;
-            if (!wid) continue;
-            const p = this.formatWorldPrompt(wid, { matchText, matchContext });
-            if (p) parts.push(p);
+            const list = this.normalizeWorldIds(this.worldSessionMap[String(memberSessionId) || '']);
+            if (!list.length) continue;
+            list.forEach((wid) => {
+              const p = collectEntries(wid);
+              if (p.length) sessionEntries.push(...p);
+            });
           }
-          const mergedMembers = parts.join('\n\n');
-          return [builtinPart, globalPart, mergedMembers].filter(Boolean).join('\n\n');
+          const mergedContent = buildMergedContent(globalEntries, sessionEntries);
+          return [builtinPart, mergedContent].filter(Boolean).join('\n\n');
         })();
     // Apply MacroEngine to worldbook text too (worldbook entries may include {{user}}/{{char}} etc.)
     const worldPrompt = worldPromptRaw
@@ -2007,6 +2161,9 @@ class AppBridge {
           depth: [],
         };
         if (!isMomentCommentTask) {
+          const worldSettings = this.getWorldGlobalSettings?.() || this.worldGlobalSettings || {};
+          const strategyRaw = String(worldSettings.insertionStrategy || 'role_first');
+          const insertionStrategy = ['role_first', 'global_first', 'even'].includes(strategyRaw) ? strategyRaw : 'role_first';
           const collectEntries = worldId => this.collectWorldEntries(worldId, { matchText, matchContext });
           const pushEntry = entry => {
             const pos = Number.isFinite(Number(entry?.position)) ? Math.trunc(Number(entry.position)) : 0;
@@ -2044,18 +2201,29 @@ class AppBridge {
           if (!disablePhoneFormat) {
             pushEntries(collectEntries(BUILTIN_PHONE_FORMAT_WORLDBOOK_ID));
           }
-          if (this.globalWorldId && String(this.globalWorldId) !== BUILTIN_PHONE_FORMAT_WORLDBOOK_ID) {
-            pushEntries(collectEntries(this.globalWorldId));
-          }
+          const globalEntries =
+            this.globalWorldId && String(this.globalWorldId) !== BUILTIN_PHONE_FORMAT_WORLDBOOK_ID
+              ? collectEntries(this.globalWorldId)
+              : [];
+          const sessionEntries = [];
           if (!isGroupChat) {
-            if (this.currentWorldId) pushEntries(collectEntries(this.currentWorldId));
+            (this.currentWorldIds || []).forEach((id) => {
+              if (!id) return;
+              const list = collectEntries(id);
+              if (list.length) sessionEntries.push(...list);
+            });
           } else {
             for (const memberSessionId of groupMemberIds) {
-              const wid = this.worldSessionMap[String(memberSessionId) || ''] || null;
-              if (!wid) continue;
-              pushEntries(collectEntries(wid));
+              const list = this.normalizeWorldIds(this.worldSessionMap[String(memberSessionId) || '']);
+              if (!list.length) continue;
+              list.forEach((wid) => {
+                const entries = collectEntries(wid);
+                if (entries.length) sessionEntries.push(...entries);
+              });
             }
           }
+          const mergedEntries = this.mergeWorldEntries(globalEntries, sessionEntries, insertionStrategy);
+          pushEntries(mergedEntries);
         }
 
         const roleMap = { 0: 'system', 1: 'user', 2: 'assistant' };
@@ -3050,16 +3218,93 @@ class AppBridge {
   async saveWorldInfo(characterId, data) {
     try {
       const id = characterId || this.currentCharacterId;
-      await this.worldStore.save(id, data);
+      const now = Date.now();
+      const base = (data && typeof data === 'object') ? data : { name: id, entries: [] };
+      const existing = this.worldStore.load(id);
+      const createdAtRaw = Number(base?.createdAt || base?.created_at || existing?.createdAt || existing?.created_at || 0);
+      const payload = {
+        ...base,
+        createdAt: Number.isFinite(createdAtRaw) && createdAtRaw > 0 ? createdAtRaw : now,
+        updatedAt: now,
+      };
+      await this.worldStore.save(id, payload);
 
       // 如果后端支持可同步保存（忽略失败）
-      safeInvoke('save_world_info', { characterId: id, data }).catch(() => {});
+      safeInvoke('save_world_info', { characterId: id, data: payload }).catch(() => {});
 
       logger.debug('世界书已保存', id);
     } catch (error) {
       logger.error('保存世界书失败:', error);
       throw error;
     }
+  }
+
+  async renameWorldInfo(fromId, toId, data) {
+    const from = String(fromId || '').trim();
+    const to = String(toId || '').trim();
+    if (!from || !to) return;
+    if (from === to) {
+      await this.saveWorldInfo(to, data);
+      return;
+    }
+    if (this.worldStore.ready) {
+      await this.worldStore.ready;
+    }
+
+    await this.saveWorldInfo(to, { ...(data || {}), name: to });
+
+    let mapChanged = false;
+    const map = this.worldSessionMap || {};
+    for (const [sid, val] of Object.entries(map)) {
+      const list = this.normalizeWorldIds(val);
+      if (!list.includes(from)) continue;
+      const next = Array.from(new Set(list.map(id => (id === from ? to : id)))).filter(Boolean);
+      if (!next.length) {
+        delete map[sid];
+      } else {
+        map[sid] = next;
+      }
+      mapChanged = true;
+    }
+    if (mapChanged) this.persistWorldSessionMap();
+
+    let currentChanged = false;
+    if (Array.isArray(this.currentWorldIds) && this.currentWorldIds.includes(from)) {
+      this.currentWorldIds = Array.from(new Set(this.currentWorldIds.map(id => (id === from ? to : id)))).filter(Boolean);
+      this.currentWorldId = this.currentWorldIds[0] || null;
+      currentChanged = true;
+    }
+
+    let globalChanged = false;
+    if (this.globalWorldId === from) {
+      this.globalWorldId = to;
+      this.persistGlobalWorldId();
+      globalChanged = true;
+    }
+
+    let regexChanged = false;
+    try {
+      await this.regex?.ready;
+      const sets = this.regex?.state?.local?.sets || null;
+      if (sets) {
+        for (const s of Object.values(sets)) {
+          if (!s || typeof s !== 'object') continue;
+          if (s.bind?.type !== 'world') continue;
+          if (String(s.bind.worldId || '') !== from) continue;
+          s.bind = { ...s.bind, worldId: to };
+          s.updatedAt = Date.now();
+          regexChanged = true;
+        }
+        if (regexChanged) await this.regex.persist();
+      }
+    } catch {}
+
+    await this.worldStore.remove(from);
+
+    if (mapChanged || currentChanged || globalChanged) {
+      window.dispatchEvent(new CustomEvent('worldinfo-changed', { detail: { worldId: this.currentWorldId, worldIds: this.currentWorldIds, globalWorldId: this.globalWorldId } }));
+    }
+    if (regexChanged) window.dispatchEvent(new CustomEvent('regex-changed'));
   }
 
   /**
@@ -3089,12 +3334,16 @@ class AppBridge {
   }
 
   setCurrentWorld(worldId, sessionId = this.activeSessionId) {
-    this.currentWorldId = worldId;
-    if (sessionId) {
-      this.worldSessionMap[sessionId] = worldId;
+    const sid = String(sessionId || '').trim();
+    const list = this.normalizeWorldIds(worldId);
+    if (sid) {
+      if (!list.length) delete this.worldSessionMap[sid];
+      else this.worldSessionMap[sid] = list;
       this.persistWorldSessionMap();
     }
-    window.dispatchEvent(new CustomEvent('worldinfo-changed', { detail: { worldId } }));
+    this.currentWorldIds = sid === this.activeSessionId ? list : this.currentWorldIds;
+    this.currentWorldId = this.currentWorldIds[0] || null;
+    window.dispatchEvent(new CustomEvent('worldinfo-changed', { detail: { worldId: this.currentWorldId, worldIds: this.currentWorldIds } }));
   }
 
   /**
@@ -3103,19 +3352,45 @@ class AppBridge {
    */
   bindWorldToSession(sessionId, worldId, { silent = true } = {}) {
     const sid = String(sessionId || '').trim();
-    const wid = String(worldId || '').trim();
+    const list = this.normalizeWorldIds(worldId);
     if (!sid) return;
-    if (!wid) {
-      delete this.worldSessionMap[sid];
-      this.persistWorldSessionMap();
-      return;
-    }
-    this.worldSessionMap[sid] = wid;
+    if (!list.length) delete this.worldSessionMap[sid];
+    else this.worldSessionMap[sid] = list;
     this.persistWorldSessionMap();
     if (!silent && sid === this.activeSessionId) {
-      this.currentWorldId = wid;
-      window.dispatchEvent(new CustomEvent('worldinfo-changed', { detail: { worldId: wid } }));
+      this.currentWorldIds = list;
+      this.currentWorldId = this.currentWorldIds[0] || null;
+      window.dispatchEvent(new CustomEvent('worldinfo-changed', { detail: { worldId: this.currentWorldId, worldIds: this.currentWorldIds } }));
     }
+  }
+
+  getWorldIdsForSession(sessionId = this.activeSessionId) {
+    return this.normalizeWorldIds(this.worldSessionMap[sessionId]);
+  }
+
+  setSessionWorldIds(sessionId, worldIds, { silent = true } = {}) {
+    const sid = String(sessionId || '').trim();
+    if (!sid) return;
+    const list = this.normalizeWorldIds(worldIds);
+    if (!list.length) delete this.worldSessionMap[sid];
+    else this.worldSessionMap[sid] = list;
+    this.persistWorldSessionMap();
+    if (!silent && sid === this.activeSessionId) {
+      this.currentWorldIds = list;
+      this.currentWorldId = this.currentWorldIds[0] || null;
+      window.dispatchEvent(new CustomEvent('worldinfo-changed', { detail: { worldId: this.currentWorldId, worldIds: this.currentWorldIds } }));
+    }
+  }
+
+  toggleWorldForSession(sessionId, worldId, { silent = true } = {}) {
+    const sid = String(sessionId || '').trim();
+    const id = String(worldId || '').trim();
+    if (!sid || !id) return;
+    const list = this.normalizeWorldIds(this.worldSessionMap[sid]);
+    const idx = list.indexOf(id);
+    if (idx >= 0) list.splice(idx, 1);
+    else list.push(id);
+    this.setSessionWorldIds(sid, list, { silent });
   }
 
   setGlobalWorld(worldId) {
@@ -3123,9 +3398,46 @@ class AppBridge {
     this.persistGlobalWorldId();
     window.dispatchEvent(
       new CustomEvent('worldinfo-changed', {
-        detail: { worldId: this.currentWorldId, globalWorldId: this.globalWorldId },
+        detail: { worldId: this.currentWorldId, worldIds: this.currentWorldIds, globalWorldId: this.globalWorldId },
       }),
     );
+  }
+
+  getWorldGlobalSettings() {
+    return { ...(this.worldGlobalSettings || this.getDefaultWorldGlobalSettings()) };
+  }
+
+  setWorldGlobalSettings(next = {}) {
+    const merged = { ...(this.worldGlobalSettings || this.getDefaultWorldGlobalSettings()), ...(next || {}) };
+    this.worldGlobalSettings = this.normalizeWorldGlobalSettings(merged);
+    this.persistWorldGlobalSettings();
+    window.dispatchEvent(
+      new CustomEvent('worldinfo-changed', {
+        detail: { worldId: this.currentWorldId, worldIds: this.currentWorldIds, globalWorldId: this.globalWorldId },
+      }),
+    );
+  }
+
+  getWorldBudgetTokens() {
+    const settings = this.getWorldGlobalSettings?.() || this.worldGlobalSettings || {};
+    const budgetCapRaw = Number(settings.budgetCap);
+    if (Number.isFinite(budgetCapRaw) && budgetCapRaw > 0) return Math.max(0, Math.trunc(budgetCapRaw));
+    const percentRaw = Number(settings.contextPercent);
+    if (!Number.isFinite(percentRaw) || percentRaw <= 0) return null;
+    const preset = this.presets?.getActive?.('openai') || {};
+    const maxContext = Number(preset?.openai_max_context);
+    const maxOut = Number(preset?.openai_max_tokens);
+    const ctxTokens = Number.isFinite(maxContext) && maxContext > 0 ? maxContext : 8000;
+    const outTokens = Number.isFinite(maxOut) && maxOut > 0 ? maxOut : 0;
+    const inputBudgetTokens = Math.max(2000, ctxTokens ? ctxTokens - outTokens - 512 : 8000);
+    return Math.max(0, Math.floor(inputBudgetTokens * (percentRaw / 100)));
+  }
+
+  warnWorldBudgetOverflow() {
+    const now = Date.now();
+    if (this.lastWorldBudgetWarningAt && now - this.lastWorldBudgetWarningAt < 5000) return;
+    this.lastWorldBudgetWarningAt = now;
+    window.toastr?.warning('世界书内容超过预算上限，已截断');
   }
 
   collectWorldEntries(worldId, label) {
@@ -3141,6 +3453,20 @@ class AppBridge {
         : null;
     const matchTextRaw = labelObj ? String(labelObj.matchText || '') : '';
     const matchText = matchTextRaw;
+    const worldSettings = this.getWorldGlobalSettings?.() || this.worldGlobalSettings || {};
+    const globalCaseSensitive = worldSettings.caseSensitive === true;
+    const globalMatchWholeWords = worldSettings.matchWholeWords === true;
+    const globalRecursiveScan = worldSettings.recursiveScan !== false;
+    const globalUseGroupScoring = worldSettings.useGroupScoring === true;
+    const minActivations = Number.isFinite(Number(worldSettings.minActivations))
+      ? Math.max(0, Math.trunc(Number(worldSettings.minActivations)))
+      : 0;
+    const maxDepthSetting = Number.isFinite(Number(worldSettings.maxDepth))
+      ? Math.max(0, Math.trunc(Number(worldSettings.maxDepth)))
+      : 0;
+    const maxRecursionStepsSetting = Number.isFinite(Number(worldSettings.maxRecursionSteps))
+      ? Math.max(0, Math.trunc(Number(worldSettings.maxRecursionSteps)))
+      : 0;
 
     const norm = v => String(v ?? '').trim();
     const normalizeKeys = e => {
@@ -3178,19 +3504,19 @@ class AppBridge {
       if (caseSensitive) return rawText.includes(k);
       return rawTextLower.includes(k.toLowerCase());
     };
-    const buildMatchTextForEntry = e => {
-      if (!matchContext) return matchText;
+    const buildMatchTextForEntry = (e, localMatchText, localMatchContext) => {
+      if (!localMatchContext) return localMatchText;
       const parts = [];
-      const userText = String(matchContext.userMessage || '').trim();
+      const userText = String(localMatchContext.userMessage || '').trim();
       if (userText) parts.push(userText);
-      const history = Array.isArray(matchContext.history) ? matchContext.history : [];
+      const history = Array.isArray(localMatchContext.history) ? localMatchContext.history : [];
       const scanDepthRaw = e?.scanDepth;
       const scanDepth = Number.isFinite(Number(scanDepthRaw)) ? Math.max(0, Math.trunc(Number(scanDepthRaw))) : null;
       const historySlice = scanDepth == null ? history : history.slice(-scanDepth);
       if (historySlice.length) parts.push(...historySlice);
-      const personaText = String(matchContext.personaText || '').trim();
+      const personaText = String(localMatchContext.personaText || '').trim();
       if (e?.matchPersonaDescription && personaText) parts.push(personaText);
-      const character = matchContext.character || {};
+      const character = localMatchContext.character || {};
       if (e?.matchCharacterDescription && character.description) parts.push(character.description);
       if (e?.matchCharacterPersonality && character.personality) parts.push(character.personality);
       if (e?.matchCharacterDepthPrompt && character.depthPrompt) parts.push(character.depthPrompt);
@@ -3198,29 +3524,37 @@ class AppBridge {
       if (e?.matchCreatorNotes && character.creatorNotes) parts.push(character.creatorNotes);
       return parts.join('\n');
     };
-    const hasMatchInput = () => {
-      if (String(matchTextRaw || '').trim()) return true;
-      if (!matchContext) return false;
-      const userText = String(matchContext.userMessage || '').trim();
-      const history = Array.isArray(matchContext.history) ? matchContext.history : [];
+    const hasMatchInput = (localMatchText, localMatchContext) => {
+      if (String(localMatchText || '').trim()) return true;
+      if (!localMatchContext) return false;
+      const userText = String(localMatchContext.userMessage || '').trim();
+      const history = Array.isArray(localMatchContext.history) ? localMatchContext.history : [];
       if (userText) return true;
       return history.some(line => String(line || '').trim());
     };
 
-    const shouldInclude = e => {
+    const shouldInclude = (e, { localMatchText, localMatchContext, isRecursivePass = false, recursionStep = 0 } = {}) => {
       if (!e || typeof e !== 'object') return false;
       if (Boolean(e.disable)) return false;
+      if (!isRecursivePass && Number.isFinite(Number(e.delayUntilRecursion)) && Number(e.delayUntilRecursion) > 0) {
+        return false;
+      }
+      if (isRecursivePass) {
+        if (Boolean(e.excludeRecursion)) return false;
+        const delay = Number.isFinite(Number(e.delayUntilRecursion)) ? Math.max(0, Math.trunc(Number(e.delayUntilRecursion))) : 0;
+        if (delay > 0 && recursionStep < delay) return false;
+      }
       // Legacy behavior: when no match text provided, include all enabled entries.
-      if (!hasMatchInput()) return Boolean(e.content);
+      if (!hasMatchInput(localMatchText, localMatchContext)) return Boolean(e.content);
       const content = String(e.content || '').trim();
       if (!content) return false;
       if (Boolean(e.constant)) return true;
       const keys = normalizeKeys(e);
       if (!keys.length) return false;
       const secondaryKeys = normalizeSecondaryKeys(e);
-      const cs = Boolean(e.caseSensitive);
-      const whole = Boolean(e.matchWholeWords);
-      const entryText = buildMatchTextForEntry(e);
+      const cs = (typeof e.caseSensitive === 'boolean') ? e.caseSensitive : globalCaseSensitive;
+      const whole = (typeof e.matchWholeWords === 'boolean') ? e.matchWholeWords : globalMatchWholeWords;
+      const entryText = buildMatchTextForEntry(e, localMatchText, localMatchContext);
       if (!entryText) return false;
       const rawText = String(entryText || '');
       const rawTextLower = cs ? rawText : rawText.toLowerCase();
@@ -3254,7 +3588,6 @@ class AppBridge {
       return Math.random() * 100 < p;
     };
 
-    const applyProbability = hasMatchInput();
     const parseGroups = (val) => {
       if (Array.isArray(val)) return val.map(norm).filter(Boolean);
       return String(val || '')
@@ -3263,9 +3596,81 @@ class AppBridge {
         .filter(Boolean);
     };
 
-    let entries = [...data.entries]
-      .filter(e => shouldInclude(e) && (!applyProbability || rollProbability(e)))
-      .map(e => ({ ...e, _groups: parseGroups(e?.group) }))
+    const baseEntries = data.entries.map((entry, idx) => ({
+      ...entry,
+      _entryId: String(entry?.id ?? entry?.uid ?? `entry-${idx}`),
+      _entryIndex: idx,
+      _groups: parseGroups(entry?.group),
+    }));
+
+    let effectiveMatchContext = matchContext;
+    if (matchContext && minActivations > 0) {
+      const fullHistory = Array.isArray(matchContext.fullHistory) ? matchContext.fullHistory : matchContext.history;
+      const historyLines = Array.isArray(fullHistory) ? fullHistory : [];
+      if (historyLines.length) {
+        const maxDepth = maxDepthSetting > 0 ? Math.min(maxDepthSetting, historyLines.length) : historyLines.length;
+        let selectedHistory = matchContext.history || [];
+        for (let depth = 1; depth <= maxDepth; depth += 1) {
+          const candidateHistory = historyLines.slice(-depth);
+          const candidateContext = { ...matchContext, history: candidateHistory };
+          const matched = baseEntries.filter(e => shouldInclude(e, {
+            localMatchText: matchText,
+            localMatchContext: candidateContext,
+            isRecursivePass: false,
+            recursionStep: 0,
+          }));
+          const uniqueCount = new Set(matched.map(e => e._entryId)).size;
+          selectedHistory = candidateHistory;
+          if (uniqueCount >= minActivations) break;
+        }
+        effectiveMatchContext = { ...matchContext, history: selectedHistory };
+      }
+    }
+    const applyProbability = hasMatchInput(matchText, effectiveMatchContext);
+
+    const directMatches = baseEntries
+      .filter(e => shouldInclude(e, {
+        localMatchText: matchText,
+        localMatchContext: effectiveMatchContext,
+        isRecursivePass: false,
+        recursionStep: 0,
+      }))
+      .filter(e => (!applyProbability || rollProbability(e)));
+
+    const activeMap = new Map();
+    directMatches.forEach(entry => activeMap.set(entry._entryId, entry));
+
+    if (globalRecursiveScan) {
+      let newlyActivated = [...directMatches];
+      const maxRecursionSteps = minActivations > 0
+        ? Number.POSITIVE_INFINITY
+        : (maxRecursionStepsSetting > 0 ? maxRecursionStepsSetting : Number.POSITIVE_INFINITY);
+      let step = 1;
+      while (newlyActivated.length && step <= maxRecursionSteps) {
+        const recursionText = newlyActivated
+          .filter(e => !Boolean(e.preventRecursion))
+          .map(e => String(e.content || '').trim())
+          .filter(Boolean)
+          .join('\n');
+        if (!recursionText) break;
+        const recursionMatches = baseEntries
+          .filter(e => !activeMap.has(e._entryId))
+          .filter(e => shouldInclude(e, {
+            localMatchText: recursionText,
+            localMatchContext: null,
+            isRecursivePass: true,
+            recursionStep: step,
+          }))
+          .filter(e => rollProbability(e));
+        if (!recursionMatches.length) break;
+        recursionMatches.forEach(entry => activeMap.set(entry._entryId, entry));
+        newlyActivated = recursionMatches;
+        step += 1;
+        if (activeMap.size >= baseEntries.length) break;
+      }
+    }
+
+    let entries = [...activeMap.values()]
       .sort((a, b) => {
         const oa = Number.isFinite(Number(a?.order))
           ? Number(a.order)
@@ -3294,7 +3699,7 @@ class AppBridge {
       });
     });
     groupBuckets.forEach((bucket, groupName) => {
-      const enabled = bucket.some(e => e?.useGroupScoring === true || e?.groupOverride === true);
+      const enabled = globalUseGroupScoring || bucket.some(e => e?.useGroupScoring === true || e?.groupOverride === true);
       if (!enabled) return;
       const override = bucket.filter(e => e?.groupOverride);
       const pool = override.length ? override : bucket;
@@ -3346,6 +3751,50 @@ class AppBridge {
       .filter(Boolean);
   }
 
+  mergeWorldEntries(globalEntries = [], sessionEntries = [], strategy = 'role_first') {
+    const sourceRank = (src) => {
+      if (strategy === 'global_first') return src === 'global' ? 0 : 1;
+      if (strategy === 'role_first') return src === 'session' ? 0 : 1;
+      return 0;
+    };
+    const g = Array.isArray(globalEntries) ? globalEntries : [];
+    const s = Array.isArray(sessionEntries) ? sessionEntries : [];
+    const merged = [
+      ...g.map((e, i) => ({ ...e, _src: 'global', _srcSeq: i })),
+      ...s.map((e, i) => ({ ...e, _src: 'session', _srcSeq: i })),
+    ];
+    merged.sort((a, b) => {
+      const oa = Number.isFinite(Number(a?.order)) ? Number(a.order) : 0;
+      const ob = Number.isFinite(Number(b?.order)) ? Number(b.order) : 0;
+      if (oa !== ob) return oa - ob;
+      const sr = sourceRank(a._src) - sourceRank(b._src);
+      if (sr !== 0) return sr;
+      const sa = Number.isFinite(Number(a?._srcSeq)) ? Number(a._srcSeq) : 0;
+      const sb = Number.isFinite(Number(b?._srcSeq)) ? Number(b._srcSeq) : 0;
+      return sa - sb;
+    });
+    const budgetTokens = this.getWorldBudgetTokens?.();
+    if (!Number.isFinite(Number(budgetTokens)) || Number(budgetTokens) <= 0) return merged;
+    let used = 0;
+    let overflowed = false;
+    const filtered = merged.filter((entry) => {
+      const cost = estimateTokens(String(entry?.content || ''), 'rough');
+      if (used + cost > budgetTokens) {
+        overflowed = true;
+        return false;
+      }
+      used += cost;
+      return true;
+    });
+    if (overflowed) {
+      const settings = this.getWorldGlobalSettings?.() || this.worldGlobalSettings || {};
+      if (settings.alertOnOverflow === true) {
+        this.warnWorldBudgetOverflow?.();
+      }
+    }
+    return filtered;
+  }
+
   formatWorldPrompt(worldId, label) {
     const entries = this.collectWorldEntries(worldId, label);
     if (!entries.length) return '';
@@ -3356,17 +3805,32 @@ class AppBridge {
    * 生成当前世界书的提示串
    */
   getActiveWorldPrompt() {
-    const builtinPart = this.formatWorldPrompt(BUILTIN_PHONE_FORMAT_WORLDBOOK_ID, { matchText: '' });
-    const globalPart =
+    const worldSettings = this.getWorldGlobalSettings?.() || this.worldGlobalSettings || {};
+    const strategyRaw = String(worldSettings.insertionStrategy || 'role_first');
+    const insertionStrategy = ['role_first', 'global_first', 'even'].includes(strategyRaw) ? strategyRaw : 'role_first';
+    const collectEntries = worldId => this.collectWorldEntries(worldId, { matchText: '' });
+    const builtinEntries = collectEntries(BUILTIN_PHONE_FORMAT_WORLDBOOK_ID);
+    const builtinPart = builtinEntries.map(e => e.content).join('\n\n');
+    const globalEntries =
       this.globalWorldId && String(this.globalWorldId) !== BUILTIN_PHONE_FORMAT_WORLDBOOK_ID
-        ? this.formatWorldPrompt(this.globalWorldId, { matchText: '' })
-        : '';
-    const sessionPart = this.currentWorldId ? this.formatWorldPrompt(this.currentWorldId, { matchText: '' }) : '';
-    return [builtinPart, globalPart, sessionPart].filter(Boolean).join('\n\n');
+        ? collectEntries(this.globalWorldId)
+        : [];
+    const sessionEntries = [];
+    (this.currentWorldIds || []).forEach((id) => {
+      if (!id) return;
+      const list = collectEntries(id);
+      if (list.length) sessionEntries.push(...list);
+    });
+    const mergedContent = this.mergeWorldEntries(globalEntries, sessionEntries, insertionStrategy)
+      .map(e => e.content)
+      .join('\n\n');
+    return [builtinPart, mergedContent].filter(Boolean).join('\n\n');
   }
 
   getWorldForSession(sessionId = this.activeSessionId) {
-    return this.worldSessionMap[sessionId] || null;
+    const val = this.worldSessionMap[sessionId];
+    const list = this.normalizeWorldIds(val);
+    return list[0] || null;
   }
 }
 

@@ -6,6 +6,7 @@
  */
 
 import { logger } from '../utils/logger.js';
+import { safeInvoke } from '../utils/tauri.js';
 
 const DEFAULT_DEPTH = 4;
 const DEFAULT_WEIGHT = 100;
@@ -39,6 +40,30 @@ const deepClone = (obj) => {
     } catch {
         return JSON.parse(JSON.stringify(obj || {}));
     }
+};
+
+const hasTauriRuntime = () => {
+    const g = typeof globalThis !== 'undefined' ? globalThis : window;
+    return Boolean(g?.__TAURI__ || g?.__TAURI_INTERNALS__ || g?.__TAURI_INVOKE__);
+};
+
+const isAndroid = () => {
+    try {
+        return /android/i.test(navigator.userAgent || '');
+    } catch {
+        return false;
+    }
+};
+
+const buildJsonDataUrl = (payload) => {
+    const json = JSON.stringify(payload, null, 2);
+    const bytes = new TextEncoder().encode(json);
+    let binary = '';
+    const chunkSize = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunkSize) {
+        binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+    }
+    return `data:application/json;base64,${btoa(binary)}`;
 };
 
 const toNumber = (val, def) => {
@@ -147,10 +172,11 @@ export class WorldEditorModal {
         this.modal = null;
         this.entriesListEl = null;
         this.editorEl = null;
-        this.titleEl = null;
+        this.nameInputEl = null;
         this.saveBtn = null;
         this.addBtn = null;
         this.worldName = '';
+        this.originalName = '';
         this.data = { name: '', entries: [] };
         this.currentIndex = 0;
         this.onSaved = onSaved;
@@ -161,14 +187,15 @@ export class WorldEditorModal {
             this.createUI();
         }
         this.worldName = name;
+        this.originalName = name;
         this.data = deepClone(data || { name, entries: [] });
         if (!Array.isArray(this.data.entries)) this.data.entries = [];
         this.data.entries = this.data.entries.map((e, i) => normalizeEntry(e, i));
         if (!this.data.entries.length) {
             this.data.entries.push(createDefaultEntry(0));
         }
-        if (this.titleEl) {
-            this.titleEl.textContent = `世界书：${name}`;
+        if (this.nameInputEl) {
+            this.nameInputEl.value = name || '';
         }
         this.currentIndex = 0;
         this.renderList();
@@ -207,9 +234,13 @@ export class WorldEditorModal {
 
         this.modal.innerHTML = `
             <div class="world-editor-header">
-                <div class="world-editor-title" id="world-editor-title">世界书</div>
+                <div class="world-editor-title">
+                    <span style="margin-right:6px;">世界书</span>
+                    <input id="world-editor-name" type="text" placeholder="名称" style="font-weight:700; font-size:14px; color:#111827; border:1px solid #e2e8f0; border-radius:8px; padding:4px 8px; min-width:140px; max-width:260px;">
+                </div>
                 <div class="world-editor-actions">
                     <button id="world-editor-save">保存</button>
+                    <button id="world-editor-export">导出</button>
                     <button id="world-editor-close" class="world-editor-close">×</button>
                 </div>
             </div>
@@ -226,12 +257,14 @@ export class WorldEditorModal {
 
         this.entriesListEl = this.modal.querySelector('#world-entries-list');
         this.editorEl = this.modal.querySelector('#world-entry-editor');
-        this.titleEl = this.modal.querySelector('#world-editor-title');
+        this.nameInputEl = this.modal.querySelector('#world-editor-name');
         this.saveBtn = this.modal.querySelector('#world-editor-save');
         this.addBtn = this.modal.querySelector('#world-entry-add');
+        this.exportBtn = this.modal.querySelector('#world-editor-export');
 
         this.modal.querySelector('#world-editor-close').onclick = () => this.hide();
         this.saveBtn.onclick = () => this.saveWorld();
+        if (this.exportBtn) this.exportBtn.onclick = () => this.exportWorld();
         this.addBtn.onclick = () => this.addEntry();
 
         document.body.appendChild(this.overlay);
@@ -538,7 +571,7 @@ export class WorldEditorModal {
         this.selectEntry(Math.max(0, index - 1));
     }
 
-    prepareForSave() {
+    prepareForSave(nameOverride = this.worldName) {
         const entries = this.data.entries.map((entry, i) => {
             const e = normalizeEntry(entry, i);
             // 兼容旧命名
@@ -548,13 +581,108 @@ export class WorldEditorModal {
             e.priority = e.order;
             return e;
         });
-        return { name: this.worldName, entries };
+        return { name: nameOverride, entries };
+    }
+
+    sanitizeExportName(name, fallback = 'worldbook') {
+        const raw = String(name || '').trim();
+        const safe = raw.replace(/[\\/:*?"<>|]+/g, '_').trim();
+        return safe || fallback;
+    }
+
+    async pickSavePath(defaultName) {
+        if (isAndroid()) {
+            return { path: '', cancelled: false, fallback: true };
+        }
+        try {
+            const { save } = await import('@tauri-apps/plugin-dialog');
+            const result = await save({
+                defaultPath: defaultName,
+                filters: [{ name: 'JSON', extensions: ['json'] }],
+            });
+            if (!result) return { path: '', cancelled: true, fallback: false };
+            return { path: result, cancelled: false, fallback: false };
+        } catch (err) {
+            logger.warn('世界书导出：保存对话框不可用', err);
+            return { path: '', cancelled: false, fallback: true };
+        }
+    }
+
+    async exportWorld() {
+        try {
+            const nextName = String(this.nameInputEl?.value || '').trim();
+            if (!nextName) {
+                window.toastr?.warning('名称不能为空');
+                return;
+            }
+            const payload = this.prepareForSave(nextName);
+
+            // 追加绑定正则集合（便于导入时自动带上）
+            try {
+                await window.appBridge?.regex?.ready;
+                const sets = window.appBridge?.regex?.listLocalSets?.() || [];
+                const bound = sets
+                    .filter(s => s?.bind?.type === 'world' && s.bind.worldId === nextName)
+                    .map(s => ({ name: s.name, enabled: s.enabled !== false, rules: s.rules || [] }));
+                if (bound.length) payload.boundRegexSets = bound;
+            } catch {}
+
+            const baseName = String(nextName || '').trim() || 'worldbook';
+            const filename = baseName.toLowerCase().endsWith('.json')
+                ? baseName
+                : `${baseName}.json`;
+
+            if (!hasTauriRuntime()) {
+                const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = filename;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                URL.revokeObjectURL(url);
+                window.toastr?.success(`已导出：${filename}`);
+                return;
+            }
+
+            const pick = await this.pickSavePath(filename);
+            if (pick.cancelled) return;
+            const dataUrl = buildJsonDataUrl(payload);
+            const resp = pick.fallback
+                ? await safeInvoke('export_attachment', { dataUrl, fileName: filename })
+                : await safeInvoke('export_attachment', { dataUrl, fileName: filename, path: pick.path });
+            const savedPath = String(resp?.path || '').trim();
+            if (savedPath) {
+                window.toastr?.success(`已导出：${savedPath}`);
+            } else {
+                window.toastr?.success(`已导出：${filename}`);
+            }
+        } catch (err) {
+            logger.error('导出世界书失败', err);
+            window.toastr?.error('导出失败');
+        }
     }
 
     async saveWorld() {
         try {
-            const payload = this.prepareForSave();
-            await window.appBridge.saveWorldInfo(this.worldName, payload);
+            const nextName = String(this.nameInputEl?.value || '').trim();
+            if (!nextName) {
+                window.toastr?.warning('名称不能为空');
+                return;
+            }
+            const payload = this.prepareForSave(nextName);
+            if (nextName !== this.worldName) {
+                const existing = await window.appBridge.listWorlds?.();
+                if (Array.isArray(existing) && existing.includes(nextName)) {
+                    window.toastr?.warning('名称已存在，请换一个');
+                    return;
+                }
+                await window.appBridge.renameWorldInfo?.(this.worldName, nextName, payload);
+                this.worldName = nextName;
+            } else {
+                await window.appBridge.saveWorldInfo(this.worldName, payload);
+            }
             window.toastr?.success(`世界书已保存：${this.worldName}`);
             this.onSaved?.(this.worldName, payload);
             this.hide();

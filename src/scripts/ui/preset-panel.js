@@ -12,6 +12,7 @@ import { PresetStore } from '../storage/preset-store.js';
 import { appSettings } from '../storage/app-settings.js';
 import { LLMClient } from '../api/client.js';
 import { logger } from '../utils/logger.js';
+import { safeInvoke } from '../utils/tauri.js';
 import { appConfirm } from './app-confirm.js';
 
 const canInitClient = (cfg) => {
@@ -193,7 +194,6 @@ export class PresetPanel {
                 <div style="display:flex; align-items:center; gap:8px;">
                     <button id="preset-import" title="导入" style="border:1px solid #e2e8f0; background:#fff; padding:6px 10px; border-radius:10px; cursor:pointer; font-size:12px;">导入</button>
                     <button id="preset-export" title="导出当前" style="border:1px solid #e2e8f0; background:#fff; padding:6px 10px; border-radius:10px; cursor:pointer; font-size:12px;">导出</button>
-                    <button id="preset-export-all" title="导出全部" style="border:1px solid #e2e8f0; background:#fff; padding:6px 10px; border-radius:10px; cursor:pointer; font-size:12px;">导出全部</button>
                     <button id="preset-close" style="border:none; background:transparent; font-size:22px; cursor:pointer; color:#0f172a;">×</button>
                 </div>
             </div>
@@ -285,9 +285,6 @@ export class PresetPanel {
         };
         this.element.querySelector('#preset-export').onclick = async () => {
             await this.exportCurrent();
-        };
-        this.element.querySelector('#preset-export-all').onclick = async () => {
-            await this.exportAll();
         };
     }
 
@@ -433,43 +430,117 @@ export class PresetPanel {
         return out;
     }
 
-    downloadJson(filename, dataObj) {
+    hasTauriRuntime() {
+        const g = typeof globalThis !== 'undefined' ? globalThis : window;
+        return Boolean(g?.__TAURI__ || g?.__TAURI_INTERNALS__ || g?.__TAURI_INVOKE__);
+    }
+
+    isAndroid() {
+        try {
+            return /android/i.test(navigator.userAgent || '');
+        } catch {
+            return false;
+        }
+    }
+
+    async pickSavePath(defaultName) {
+        if (this.isAndroid()) {
+            return { path: '', cancelled: false, fallback: true };
+        }
+        try {
+            const { save } = await import('@tauri-apps/plugin-dialog');
+            const result = await save({
+                defaultPath: defaultName,
+                filters: [{ name: 'JSON', extensions: ['json'] }],
+            });
+            if (!result) return { path: '', cancelled: true, fallback: false };
+            return { path: result, cancelled: false, fallback: false };
+        } catch (err) {
+            logger.warn('预设导出：保存对话框不可用', err);
+            return { path: '', cancelled: false, fallback: true };
+        }
+    }
+
+    buildJsonDataUrl(payload) {
+        const json = JSON.stringify(payload, null, 2);
+        const bytes = new TextEncoder().encode(json);
+        let binary = '';
+        const chunkSize = 0x8000;
+        for (let i = 0; i < bytes.length; i += chunkSize) {
+            binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+        }
+        return `data:application/json;base64,${btoa(binary)}`;
+    }
+
+    async downloadJson(filename, dataObj) {
         const data = JSON.stringify(dataObj, null, 2);
-        const blob = new Blob([data], { type: 'application/json' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = filename;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        setTimeout(() => URL.revokeObjectURL(url), 3000);
+        if (!this.hasTauriRuntime()) {
+            const blob = new Blob([data], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            setTimeout(() => URL.revokeObjectURL(url), 3000);
+            return true;
+        }
+        const pick = await this.pickSavePath(filename);
+        if (pick.cancelled) return false;
+        const dataUrl = this.buildJsonDataUrl(dataObj);
+        if (pick.fallback) {
+            await safeInvoke('export_attachment', { dataUrl, fileName: filename });
+        } else {
+            await safeInvoke('export_attachment', { dataUrl, fileName: filename, path: pick.path });
+        }
+        return true;
     }
 
     async exportCurrent() {
-        await this.store.ready;
-        const type = this.getStoreType();
-        const preset = this.store.getActive(type) || {};
-        const name = String(preset.name || type).replace(/[\\/:*?"<>|]+/g, '_');
-        const prefix = type === 'openai' ? 'preset' : type;
-        const payload = { ...(preset || {}) };
-
-        // 若该预设绑定了正则集合，则导出时一并带上（便于导入自动绑定/启用）
         try {
-            await window.appBridge?.regex?.ready;
-            const sets = window.appBridge?.regex?.listLocalSets?.() || [];
-            const bindType = type;
-            const bindId = this.store.getActiveId(type);
-            if (bindType && bindId) {
-                const bound = sets
-                    .filter(s => s?.bind?.type === 'preset' && s.bind.presetType === bindType && s.bind.presetId === bindId)
-                    .map(s => ({ name: s.name, enabled: s.enabled !== false, rules: s.rules || [] }));
-                if (bound.length) payload.boundRegexSets = bound;
+            await this.store.ready;
+            if (this.activeType !== 'custom') {
+                this.showStatus('仅支持导出自定义预设', 'info');
+                return;
             }
-        } catch {}
+            this.captureDraft();
+            const type = this.getStoreType();
+            const presetId = this.store.getActiveId(type);
+            const draftKey = this.getDraftKey(type, presetId);
+            const draft = draftKey ? this.drafts.get(draftKey) : null;
+            const preset = draft || this.store.getActive(type) || {};
+            const rawName = String(preset.name || type).trim() || type;
+            const prefix = type === 'openai' ? 'preset' : type;
+            const payload = { ...(preset || {}) };
 
-        this.downloadJson(`${prefix}-${name}.json`, payload);
-        this.showStatus('已导出当前预设', 'success');
+            // 若该预设绑定了正则集合，则导出时一并带上（便于导入自动绑定/启用）
+            try {
+                await window.appBridge?.regex?.ready;
+                const sets = window.appBridge?.regex?.listLocalSets?.() || [];
+                const bindType = type;
+                const bindId = this.store.getActiveId(type);
+                if (bindType && bindId) {
+                    const bound = sets
+                        .filter(s => s?.bind?.type === 'preset' && s.bind.presetType === bindType && s.bind.presetId === bindId)
+                        .map(s => ({ name: s.name, enabled: s.enabled !== false, rules: s.rules || [] }));
+                    if (bound.length) payload.boundRegexSets = bound;
+                }
+            } catch {}
+
+            const fileBase = rawName.toLowerCase().endsWith('.json')
+                ? rawName
+                : `${rawName}.json`;
+            const filename = `${prefix}-${fileBase}`;
+            const ok = await this.downloadJson(filename, payload);
+            if (!ok) return;
+            this.showStatus('已导出当前预设', 'success');
+            window.toastr?.success?.('已导出预设');
+        } catch (err) {
+            logger.warn('预设导出失败', err);
+            this.showStatus('预设导出失败', 'error');
+            window.toastr?.error?.('导出失败');
+        }
     }
 
     async exportAll() {
@@ -627,6 +698,14 @@ export class PresetPanel {
     async refreshAll() {
         await this.store.ready;
         this.setActiveTabStyles();
+
+        const exportBtn = this.element?.querySelector('#preset-export');
+        if (exportBtn) {
+            const isCustom = this.activeType === 'custom';
+            exportBtn.style.opacity = isCustom ? '1' : '0.5';
+            exportBtn.style.cursor = isCustom ? 'pointer' : 'not-allowed';
+            exportBtn.title = isCustom ? '导出当前' : '仅自定义预设可导出';
+        }
 
         const enabledEl = this.element.querySelector('#preset-enabled');
         enabledEl.checked = this.store.getEnabled(this.getStoreType());

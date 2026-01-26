@@ -1490,7 +1490,7 @@ pub async fn export_attachment(
 ) -> Result<AttachmentSaveResult, String> {
     let raw_name = file_name.as_deref().unwrap_or("download");
     let name_with_ext = ensure_extension(raw_name, None);
-    let mut safe_name = sanitize_segment(&name_with_ext);
+    let mut safe_name = sanitize_download_name(&name_with_ext);
     let target_path = path.unwrap_or_default();
     let source = source_path.unwrap_or_default();
     let data = data_url.unwrap_or_default();
@@ -1507,7 +1507,7 @@ pub async fn export_attachment(
             .and_then(|v| mime_from_extension(v));
         if let Some(mime) = &mime {
             if is_image_mime(mime) && target_path.trim().is_empty() && mime != "image/gif" {
-                safe_name = sanitize_segment(&ensure_extension(raw_name, ext.as_deref()));
+                safe_name = sanitize_download_name(&ensure_extension(raw_name, ext.as_deref()));
                 #[cfg(target_os = "android")]
                 {
                     let bytes = fs::read(&src_path).map_err(|e| e.to_string())?;
@@ -1541,7 +1541,7 @@ pub async fn export_attachment(
     let data_mime = mime_from_data_url(&data).or_else(|| ext_from_mime.as_ref().and_then(|v| mime_from_extension(v)));
     if let Some(mime) = data_mime {
         if is_image_mime(&mime) && target_path.trim().is_empty() && mime != "image/gif" {
-            safe_name = sanitize_segment(&ensure_extension(raw_name, ext_from_mime.as_deref()));
+            safe_name = sanitize_download_name(&ensure_extension(raw_name, ext_from_mime.as_deref()));
             #[cfg(target_os = "android")]
             {
                 let published = publish_image_to_gallery_bytes(&bytes, &safe_name, &mime)?;
@@ -1561,7 +1561,7 @@ pub async fn export_attachment(
     let temp_dir = data_dir.join("exports_tmp");
     fs::create_dir_all(&temp_dir).map_err(|e| e.to_string())?;
     let temp_name = if ext_from_mime.is_some() {
-        sanitize_segment(&ensure_extension(raw_name, ext_from_mime.as_deref()))
+        sanitize_download_name(&ensure_extension(raw_name, ext_from_mime.as_deref()))
     } else {
         safe_name
     };

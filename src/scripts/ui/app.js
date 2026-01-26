@@ -13005,8 +13005,17 @@ Phase G（Frame 36）：循环衔接
 
   function updateWorldIndicator() {
     const globalId = window.appBridge?.globalWorldId || '';
-    const currentId = window.appBridge?.currentWorldId || '';
-    const label = globalId && currentId ? `全局:${globalId} / 会话:${currentId}` : globalId || currentId || '未启用';
+    const currentIds = Array.isArray(window.appBridge?.currentWorldIds)
+      ? window.appBridge.currentWorldIds
+      : (window.appBridge?.currentWorldId ? [window.appBridge.currentWorldId] : []);
+    const currentLabel = (() => {
+      if (!currentIds.length) return '';
+      if (currentIds.length <= 2) return currentIds.join(' + ');
+      return `${currentIds[0]} + ${currentIds[1]} + ...`;
+    })();
+    const label = globalId && currentLabel
+      ? `全局:${globalId} / 会话:${currentLabel}`
+      : globalId || currentLabel || '未启用';
     worldIndicator.setName(label);
   }
 

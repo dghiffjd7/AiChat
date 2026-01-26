@@ -1,5 +1,37 @@
 # 開發進度追蹤（必更新）(必须使用当下时间记录)
 
+## 2026-01-26 16:06
+
+- 世界书导出改为直接下载 JSON 文件，不再复制到剪贴板。
+- 预设面板移除「导出全部」按钮；导出当前预设改为稳定下载并补充失败提示。
+- 修改：
+  - `src/scripts/ui/world-panel.js`
+  - `src/scripts/ui/preset-panel.js`
+
+## 2026-01-26 16:27
+
+- 世界书导出入口移动到编辑器（保存旁的“导出”），并按桌面/安卓分别走另存为/下载目录导出。
+- 预设导出改为使用 Tauri 导出流程，避免桌面/安卓下载失败。
+- 修改：
+  - `src/scripts/ui/world-editor.js`
+  - `src/scripts/ui/world-panel.js`
+  - `src/scripts/ui/preset-panel.js`
+
+## 2026-01-26 16:35
+
+- 导出文件名支持中文（修复世界书导出变成下划线的问题），导出附件改用可保留 Unicode 的下载命名。
+- 预设导出限制为「自定义」页并支持导出未保存草稿内容。
+- 修改：
+  - `src-tauri/src/commands.rs`
+  - `src/scripts/ui/preset-panel.js`
+
+## 2026-01-26 16:43
+
+- 世界书/预设导出文件名改为使用原始名称（保留 Unicode），预设导出补充成功提示。
+- 修改：
+  - `src/scripts/ui/world-editor.js`
+  - `src/scripts/ui/preset-panel.js`
+
 ## 2026-01-23 10:22
 
 - 删除确认弹窗统一改为 App 风格小弹窗，避免桌面端不弹出的问题；覆盖贴图包/好友/预设/世界书/摘要/记忆等所有原生 confirm 场景。
