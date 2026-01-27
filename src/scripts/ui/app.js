@@ -1495,15 +1495,19 @@ ${listPart || '-（无）'}
     const id = String(sessionId || contact?.id || '').trim();
     const c = contact || contactsStore.getContact(id) || {};
     const isGroup = Boolean(c?.isGroup) || id.startsWith('group:');
-    if (isGroup) {
-      const raw = String(c?.avatar || '').trim();
-      return raw || avatars.assistant;
-    }
     const tags = Array.isArray(c?.libraryTags) && c.libraryTags.length
       ? c.libraryTags
       : Array.isArray(c?.labels)
         ? c.labels
         : [];
+    if (isGroup) {
+      return resolveLineAvatar({
+        avatar: c?.avatar || FEATHER_DEFAULT,
+        name: c?.name || id,
+        tags,
+        size: 96,
+      });
+    }
     return resolveLineAvatar({
       avatar: c?.avatar || FEATHER_DEFAULT,
       name: c?.name || id,
@@ -3688,7 +3692,7 @@ Phase G（Frame 36）：循环衔接
       );
       return;
     }
-    contactsStore.ensureFromSessions(chatStore.listSessions(), { defaultAvatar: avatars.assistant });
+    contactsStore.ensureFromSessions(chatStore.listSessions(), { defaultAvatar: FEATHER_DEFAULT });
     renderChatList();
     renderGroupsList();
     renderContactsUngrouped();

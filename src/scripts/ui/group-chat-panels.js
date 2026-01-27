@@ -6,6 +6,7 @@
 
 import { logger } from '../utils/logger.js';
 import { avatarDataUrlFromFile } from '../utils/image.js';
+import { FEATHER_DEFAULT, resolveLineAvatar } from '../utils/line-avatar.js';
 import { appSettings } from '../storage/app-settings.js';
 import { MemoryTableEditor } from './memory-table-editor.js';
 import { appConfirm } from './app-confirm.js';
@@ -233,7 +234,23 @@ const genGroupId = () => `group:${Date.now()}-${Math.random().toString(16).slice
 const normalize = (s) => String(s || '').trim();
 const normalizeKey = (s) => normalize(s).toLowerCase().replace(/\s+/g, '');
 
-const defaultAvatar = './assets/external/feather-default.png';
+const defaultAvatar = FEATHER_DEFAULT;
+
+const resolveContactAvatar = (contact, fallbackName = '') => {
+    const c = contact || {};
+    const name = String(c?.name || fallbackName || c?.id || '').trim() || '未知';
+    const tags = Array.isArray(c?.libraryTags) && c.libraryTags.length
+        ? c.libraryTags
+        : Array.isArray(c?.labels)
+            ? c.labels
+            : [];
+    return resolveLineAvatar({
+        avatar: c?.avatar || defaultAvatar,
+        name,
+        tags,
+        size: 96,
+    });
+};
 
 export class GroupCreatePanel {
     constructor({ contactsStore, chatStore, onCreated } = {}) {
@@ -357,7 +374,14 @@ export class GroupCreatePanel {
     updateAvatarPreview() {
         const img = this.panel?.querySelector('#group-avatar-preview');
         if (!img) return;
-        img.src = this.avatar || defaultAvatar;
+        const nameInput = this.panel?.querySelector('#group-name');
+        const name = String(nameInput?.value || '群聊').trim() || '群聊';
+        img.src = resolveLineAvatar({
+            avatar: this.avatar || defaultAvatar,
+            name,
+            tags: [],
+            size: 96,
+        });
     }
 
     updateCreateEnabled() {
@@ -418,7 +442,7 @@ export class GroupCreatePanel {
                 text-align:left;
             `;
             const img = document.createElement('img');
-            img.src = c?.avatar || defaultAvatar;
+            img.src = resolveContactAvatar(c, id);
             img.alt = '';
             img.style.cssText = 'width:36px; height:36px; border-radius:50%; object-fit:cover;';
             const name = document.createElement('div');
@@ -1230,7 +1254,13 @@ export class GroupSettingsPanel {
     updateAvatarPreview() {
         const img = this.panel?.querySelector('#group-settings-avatar-preview');
         if (!img) return;
-        img.src = this.avatar || defaultAvatar;
+        const name = String(this.name || '群聊').trim() || '群聊';
+        img.src = resolveLineAvatar({
+            avatar: this.avatar || defaultAvatar,
+            name,
+            tags: [],
+            size: 96,
+        });
     }
 
     renderMembers() {
@@ -1252,7 +1282,7 @@ export class GroupSettingsPanel {
             const row = document.createElement('div');
             row.style.cssText = 'display:flex; align-items:center; gap:10px; padding:10px; border:1px solid #e2e8f0; border-radius:12px;';
             const img = document.createElement('img');
-            img.src = c?.avatar || defaultAvatar;
+            img.src = resolveContactAvatar(c, mid);
             img.alt = '';
             img.style.cssText = 'width:32px; height:32px; border-radius:50%; object-fit:cover;';
             const name = document.createElement('div');
@@ -1378,7 +1408,7 @@ export class GroupSettingsPanel {
                 text-align:left;
             `;
             const img = document.createElement('img');
-            img.src = c?.avatar || defaultAvatar;
+            img.src = resolveContactAvatar(c, id);
             img.alt = '';
             img.style.cssText = 'width:36px; height:36px; border-radius:50%; object-fit:cover;';
             const name = document.createElement('div');

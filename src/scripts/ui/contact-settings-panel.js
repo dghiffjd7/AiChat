@@ -8,6 +8,7 @@ import { appSettings } from '../storage/app-settings.js';
 import { MemoryTableEditor } from './memory-table-editor.js';
 import { appConfirm } from './app-confirm.js';
 import { normalizeBadgeList } from '../utils/name-badges.js';
+import { FEATHER_DEFAULT, resolveLineAvatar } from '../utils/line-avatar.js';
 
 const getMemoryStorageMode = () => {
     const mode = String(appSettings.get().memoryStorageMode || 'table').toLowerCase();
@@ -426,7 +427,22 @@ export class ContactSettingsPanel {
         };
         this.panel.querySelector('#contact-avatar-clear').onclick = () => {
             this.currentAvatar = '';
-            if (this.avatarPreview) this.avatarPreview.src = './assets/external/feather-default.png';
+            if (this.avatarPreview) {
+                const sid = this.getSessionId();
+                const c = sid ? (this.contactsStore?.getContact?.(sid) || {}) : {};
+                const name = String(this.nameInput?.value || c?.name || sid || '好友').trim() || '好友';
+                const tags = Array.isArray(c?.libraryTags) && c.libraryTags.length
+                    ? c.libraryTags
+                    : Array.isArray(c?.labels)
+                        ? c.labels
+                        : [];
+                this.avatarPreview.src = resolveLineAvatar({
+                    avatar: FEATHER_DEFAULT,
+                    name,
+                    tags,
+                    size: 96,
+                });
+            }
         };
         this.panel.querySelector('#contact-settings-save').onclick = () => this.save();
         this.panel.querySelector('#contact-new-chat').onclick = () => this.startNewChat();
@@ -1004,7 +1020,18 @@ export class ContactSettingsPanel {
         if (sub) sub.textContent = `会话：${sessionId}`;
         this.currentAvatar = c.avatar || '';
         if (this.avatarPreview) {
-            this.avatarPreview.src = this.currentAvatar || './assets/external/feather-default.png';
+            const nameForAvatar = String(c?.name || sessionId || '好友').trim() || '好友';
+            const tags = Array.isArray(c?.libraryTags) && c.libraryTags.length
+                ? c.libraryTags
+                : Array.isArray(c?.labels)
+                    ? c.labels
+                    : [];
+            this.avatarPreview.src = resolveLineAvatar({
+                avatar: this.currentAvatar || FEATHER_DEFAULT,
+                name: nameForAvatar,
+                tags,
+                size: 96,
+            });
         }
         if (this.nameInput) this.nameInput.value = c.name || sessionId;
         if (this.labelsInput) {

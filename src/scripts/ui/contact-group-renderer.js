@@ -6,6 +6,7 @@
  */
 
 import { logger } from '../utils/logger.js';
+import { FEATHER_DEFAULT, resolveLineAvatar } from '../utils/line-avatar.js';
 
 export class ContactGroupRenderer {
     constructor({ groupStore, contactsStore, renderContactFn, dragManager, onGroupChanged } = {}) {
@@ -158,8 +159,18 @@ export class ContactGroupRenderer {
         div.dataset.session = contact.id;
         div.dataset.name = contact.name || contact.id;
 
-        const avatar = contact.avatar || './assets/external/feather-default.png';
         const name = contact.name || contact.id;
+        const tags = Array.isArray(contact?.libraryTags) && contact.libraryTags.length
+            ? contact.libraryTags
+            : Array.isArray(contact?.labels)
+                ? contact.labels
+                : [];
+        const avatar = resolveLineAvatar({
+            avatar: contact.avatar || FEATHER_DEFAULT,
+            name,
+            tags,
+            size: 96,
+        });
 
         div.innerHTML = `
             <img src="${avatar}" alt="" class="contact-avatar">
@@ -379,7 +390,18 @@ export class ContactGroupRenderer {
                 opacity:${already ? '0.6' : '1'};
             `;
             const img = document.createElement('img');
-            img.src = c?.avatar || './assets/external/feather-default.png';
+            const nameText = c?.name || id;
+            const tags = Array.isArray(c?.libraryTags) && c.libraryTags.length
+                ? c.libraryTags
+                : Array.isArray(c?.labels)
+                    ? c.labels
+                    : [];
+            img.src = resolveLineAvatar({
+                avatar: c?.avatar || FEATHER_DEFAULT,
+                name: nameText,
+                tags,
+                size: 96,
+            });
             img.alt = '';
             img.style.cssText = 'width:36px; height:36px; border-radius:50%; object-fit:cover;';
             const name = document.createElement('div');

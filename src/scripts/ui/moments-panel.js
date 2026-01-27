@@ -4,6 +4,7 @@
 
 import { logger } from '../utils/logger.js';
 import { resolveMediaAsset, isLikelyUrl, isAssetRef } from '../utils/media-assets.js';
+import { FEATHER_DEFAULT, resolveLineAvatar } from '../utils/line-avatar.js';
 import { appConfirm } from './app-confirm.js';
 
 const esc = s =>
@@ -167,15 +168,34 @@ export class MomentsPanel {
     this.userAvatar = url;
   }
 
+  resolveContactAvatar(contact, fallbackName = '') {
+    const c = contact || {};
+    const name = String(c?.name || fallbackName || c?.id || '').trim() || '未知';
+    const tags = Array.isArray(c?.libraryTags) && c.libraryTags.length
+      ? c.libraryTags
+      : Array.isArray(c?.labels)
+        ? c.labels
+        : [];
+    return resolveLineAvatar({
+      avatar: c?.avatar || this.defaultAvatar || FEATHER_DEFAULT,
+      name,
+      tags,
+      size: 96,
+    });
+  }
+
   getAvatarByName(name) {
     const raw = String(name || '').trim();
-    if (!raw) return this.defaultAvatar;
+    const defaultAvatar = this.defaultAvatar || FEATHER_DEFAULT;
+    if (!raw) {
+      return resolveLineAvatar({ avatar: defaultAvatar, name: '未知', tags: [], size: 96 });
+    }
     if (raw === '我' || raw.toLowerCase() === 'user' || raw === '用户') {
-      return this.userAvatar || this.defaultAvatar;
+      return this.userAvatar || defaultAvatar;
     }
     try {
       const byId = this.contactsStore?.getContact?.(raw);
-      if (byId?.avatar) return byId.avatar;
+      if (byId) return this.resolveContactAvatar(byId, raw);
     } catch {}
     const norm = s =>
       String(s || '')
@@ -188,32 +208,41 @@ export class MomentsPanel {
     try {
       const list = this.contactsStore?.listContacts?.() || [];
       const exact = list.find(x => String(x?.name || '').trim() === raw || String(x?.id || '').trim() === raw);
-      if (exact?.avatar) return exact.avatar;
+      if (exact) return this.resolveContactAvatar(exact, raw);
       const fuzzy = list.find(x => norm(x?.name) === key || norm(x?.id) === key);
-      if (fuzzy?.avatar) return fuzzy.avatar;
+      if (fuzzy) return this.resolveContactAvatar(fuzzy, raw);
       const f2 = list.find(x => loose(x?.name) === looseKey || loose(x?.id) === looseKey);
-      return f2?.avatar || this.defaultAvatar;
+      if (f2) return this.resolveContactAvatar(f2, raw);
+      return resolveLineAvatar({ avatar: defaultAvatar, name: raw, tags: [], size: 96 });
     } catch {
-      return this.defaultAvatar;
+      return resolveLineAvatar({ avatar: defaultAvatar, name: raw, tags: [], size: 96 });
     }
   }
 
   getAvatarForMoment(m) {
     const snap = String(m?.authorAvatar || '').trim();
-    if (snap) return snap;
+    if (snap) {
+      return resolveLineAvatar({
+        avatar: snap,
+        name: m?.author || m?.authorId || m?.originSessionId || '',
+        tags: [],
+        size: 96,
+      });
+    }
     const authorId = String(m?.authorId || '').trim();
-    if (authorId === 'user') return this.userAvatar || this.defaultAvatar;
+    const defaultAvatar = this.defaultAvatar || FEATHER_DEFAULT;
+    if (authorId === 'user') return this.userAvatar || defaultAvatar;
     if (authorId) {
       try {
         const c = this.contactsStore?.getContact?.(authorId);
-        if (c?.avatar) return c.avatar;
+        if (c) return this.resolveContactAvatar(c, authorId);
       } catch {}
     }
     const origin = String(m?.originSessionId || '').trim();
     if (origin) {
       try {
         const c = this.contactsStore?.getContact?.(origin);
-        if (c?.avatar) return c.avatar;
+        if (c) return this.resolveContactAvatar(c, origin);
       } catch {}
     }
     return this.getAvatarByName(m?.author);

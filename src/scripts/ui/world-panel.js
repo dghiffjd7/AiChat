@@ -7,6 +7,7 @@
 import { convertSTWorld } from '../storage/worldinfo.js';
 import { BUILTIN_PHONE_FORMAT_WORLDBOOK_ID } from '../storage/builtin-worldbooks.js';
 import { logger } from '../utils/logger.js';
+import { FEATHER_DEFAULT, resolveLineAvatar } from '../utils/line-avatar.js';
 import { WorldEditorModal } from './world-editor.js';
 import { appConfirm } from './app-confirm.js';
 
@@ -196,7 +197,19 @@ export class WorldPanel {
 
                 const getMemberLabel = (mid) => {
                     const c = this.contactsStore?.getContact?.(mid);
-                    return { name: c?.name || mid, avatar: c?.avatar || './assets/external/feather-default.png' };
+                    const name = c?.name || mid;
+                    const tags = Array.isArray(c?.libraryTags) && c.libraryTags.length
+                        ? c.libraryTags
+                        : Array.isArray(c?.labels)
+                            ? c.labels
+                            : [];
+                    const avatar = resolveLineAvatar({
+                        avatar: c?.avatar || FEATHER_DEFAULT,
+                        name,
+                        tags,
+                        size: 96,
+                    });
+                    return { name, avatar };
                 };
 
                 const bindForMember = (memberId, worldId) => {

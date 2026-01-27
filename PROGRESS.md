@@ -1,5 +1,19 @@
 # 開發進度追蹤（必更新）(必须使用当下时间记录)
 
+## 2026-01-27 23:34
+
+- 未设置头像的角色全面切换为 LINE 风格头像（颜色底 + 首字），不再落回默认图片：
+  - `resolveAvatarForContact` 对群聊也走 `resolveLineAvatar`。
+  - `ensureFromSessions` 的默认头像改为 `FEATHER_DEFAULT`，避免写入“非默认但其实是默认图”的值。
+  - 动态页、联系人分组面板、群聊相关面板、世界书面板、好友设置头像预览均接入同一套头像解析。
+- 修改：
+  - `src/scripts/ui/app.js`
+  - `src/scripts/ui/moments-panel.js`
+  - `src/scripts/ui/contact-group-renderer.js`
+  - `src/scripts/ui/group-chat-panels.js`
+  - `src/scripts/ui/world-panel.js`
+  - `src/scripts/ui/contact-settings-panel.js`
+
 ## 2026-01-27 22:08
 
 - 推荐列表添加好友后的移除交互升级为“局部淡出收缩”而非整批重绘：
