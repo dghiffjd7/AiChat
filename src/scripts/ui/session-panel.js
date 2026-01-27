@@ -71,6 +71,20 @@ const uniqueKeys = (list = []) => {
   return out;
 };
 
+const calculateStaggerDelay = (index = 0) => {
+  const idx = Math.max(0, Math.trunc(index));
+  if (idx <= 0) return 0;
+  const initialDelay = 300;
+  const minDelay = 50;
+  const decay = 0.65;
+  let total = 0;
+  for (let i = 0; i < idx; i += 1) {
+    const gap = Math.max(initialDelay * Math.pow(decay, i), minDelay);
+    total += gap;
+  }
+  return Math.round(total);
+};
+
 export class SessionPanel {
   constructor(chatStore, contactsStore, ui, { onUpdated, personaStore, getPersonaScopeKey } = {}) {
     this.store = chatStore;
@@ -804,13 +818,13 @@ export class SessionPanel {
       el.appendChild(empty);
       return;
     }
-    list.forEach((character) => {
-      const row = this.renderRecommendRow(character);
+    list.forEach((character, index) => {
+      const row = this.renderRecommendRow(character, { index });
       if (row) el.appendChild(row);
     });
   }
 
-  renderRecommendRow(character) {
+  renderRecommendRow(character, { index = 0 } = {}) {
     const char = character || {};
     const id = String(char.id || '').trim();
     const name = String(char.name || '').trim();
@@ -818,6 +832,9 @@ export class SessionPanel {
 
     const row = document.createElement('div');
     row.className = 'sticker-bind-row session-row session-recommend-row';
+    row.dataset.characterId = id;
+    const delay = calculateStaggerDelay(index);
+    row.style.animationDelay = `${delay}ms`;
     row.addEventListener('click', () => this.confirmAddCharacter(char));
 
     const avatar = document.createElement('img');
@@ -946,10 +963,43 @@ export class SessionPanel {
     this.jumpToContactsOnClose = true;
     this.refresh();
     this.onUpdated?.();
-    if (this.recommendQuery) {
-      this.performSearch(this.recommendQuery, { reason: 'added' });
-    } else {
-      this.refreshRecommendations({ force: true, reason: 'added' });
+    const currentList = Array.isArray(this.recommendCharacters) ? this.recommendCharacters : [];
+    this.recommendCharacters = currentList.filter(item => String(item?.id || '').trim() !== id);
+    if (this.recommendMode) {
+      const rows = Array.from(this.recommendListEl?.querySelectorAll?.('.session-recommend-row') || []);
+      const targetRow = rows.find(row => String(row?.dataset?.characterId || '') === id) || null;
+      if (!targetRow) {
+        const hasItems = this.recommendCharacters.length > 0;
+        const kind = this.recommendQuery ? (hasItems ? 'search' : 'empty') : (hasItems ? 'recommend' : 'empty');
+        const hint = hasItems ? '' : (this.recommendQuery ? '未找到匹配角色' : '暂无推荐角色');
+        this.renderRecommendSections(this.recommendCharacters, { kind, hint });
+        return;
+      }
+      targetRow.classList.add('is-removing');
+      targetRow.setAttribute('aria-hidden', 'true');
+      const finalizeRemoval = () => {
+        targetRow.remove();
+        const remainingRows = this.recommendListEl?.querySelectorAll?.('.session-recommend-row').length || 0;
+        if (!remainingRows && this.recommendCharacters.length === 0) {
+          const empty = document.createElement('div');
+          empty.className = 'session-recommend-empty';
+          empty.textContent = this.recommendQuery ? '未找到匹配角色' : '暂无推荐角色';
+          this.recommendListEl?.appendChild(empty);
+        }
+      };
+      let removed = false;
+      const safeFinalize = () => {
+        if (removed) return;
+        removed = true;
+        finalizeRemoval();
+      };
+      const onTransitionEnd = (event) => {
+        const prop = String(event?.propertyName || '');
+        if (prop && prop !== 'max-height' && prop !== 'opacity') return;
+        safeFinalize();
+      };
+      targetRow.addEventListener('transitionend', onTransitionEnd, { once: true });
+      window.setTimeout(safeFinalize, 320);
     }
   }
 

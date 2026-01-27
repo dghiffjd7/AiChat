@@ -2610,7 +2610,7 @@ body[data-creative-wide='on'] .QQ_chat_charmsg[data-creative='1'] .QQ_chat_msgdi
 .session-recommend-list {
   flex: 1 1 auto;
   min-height: 0;
-  padding: 0 16px 12px;
+  padding: 6px 16px 12px;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
@@ -2666,9 +2666,22 @@ body[data-creative-wide='on'] .QQ_chat_charmsg[data-creative='1'] .QQ_chat_msgdi
   align-items: center;
   gap: 10px;
   padding: 10px 12px;
+  max-height: 84px;
+  overflow: hidden;
   border-bottom: 1px solid rgba(15, 23, 42, 0.05);
   cursor: pointer;
-  transition: background 120ms ease;
+  transition:
+    background 120ms ease,
+    opacity 180ms ease,
+    transform 180ms ease,
+    max-height 220ms ease,
+    padding 220ms ease,
+    margin 220ms ease,
+    border-color 220ms ease;
+  opacity: 0;
+  transform: translateY(16px);
+  animation: session-recommend-fade-in-up 320ms ease-out forwards;
+  will-change: opacity, transform;
 }
 
 .session-recommend-row:last-child {
@@ -2677,6 +2690,29 @@ body[data-creative-wide='on'] .QQ_chat_charmsg[data-creative='1'] .QQ_chat_msgdi
 
 .session-recommend-row:active {
   background: rgba(14, 165, 233, 0.08);
+}
+
+.session-recommend-row.is-removing {
+  opacity: 0;
+  transform: translateY(-6px);
+  max-height: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+  margin: 0;
+  border-bottom-color: transparent;
+  pointer-events: none;
+}
+
+@keyframes session-recommend-fade-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .session-recommend-avatar {

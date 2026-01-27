@@ -1,5 +1,30 @@
 # 開發進度追蹤（必更新）(必须使用当下时间记录)
 
+## 2026-01-27 22:08
+
+- 推荐列表添加好友后的移除交互升级为“局部淡出收缩”而非整批重绘：
+  - 为推荐项写入 `data-character-id`，命中后仅对该行添加 `is-removing` 类触发淡出+高度收缩。
+  - DOM 在动画结束后移除该行，后续条目自然补位（前面不动、滚动条自动适配）。
+- 修改：
+  - `src/scripts/ui/session-panel.js`
+  - `src/assets/css/qq-legacy.css`
+
+## 2026-01-27 22:00
+
+- 推荐列表顶部留白微调：给推荐列表增加少量 `padding-top`，首项不再贴顶。
+- 从推荐列表添加好友后不再整批刷新：仅移除已添加项并原地重渲染，保持当前列表与动效节奏。
+- 修改：
+  - `src/assets/css/qq-legacy.css`
+  - `src/scripts/ui/session-panel.js`
+
+## 2026-01-27 18:29
+
+- 推荐好友列表加入“渐次加速浮现”动效：单项淡入上移 + 递减间隔的错峰延迟（越往后越快）。
+- JS 侧为每个推荐项计算累计延迟并写入 `animationDelay`，与 CSS 动画配合实现连贯出场。
+- 修改：
+  - `src/scripts/ui/session-panel.js`
+  - `src/assets/css/qq-legacy.css`
+
 ## 2026-01-27 17:46
 
 - 默认头像升级为 LINE 风格（颜色底 + 首字）：
