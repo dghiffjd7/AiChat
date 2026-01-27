@@ -398,6 +398,36 @@ body.chat-room-active .bottom-nav {
   margin: 8px 0 4px;
 }
 
+.world-entry-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 8px 0 4px;
+}
+
+.world-entry-label-row label {
+  margin: 0;
+}
+
+.world-ai-trigger {
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  background: rgba(255, 255, 255, 0.95);
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 11px;
+  color: #1f2937;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.world-ai-trigger:disabled {
+  background: rgba(226, 232, 240, 0.9);
+  border-color: rgba(148, 163, 184, 0.5);
+  color: #64748b;
+  cursor: not-allowed;
+}
+
 .world-entry-form input[type="text"],
 .world-entry-form input[type="number"],
 .world-entry-form select,
@@ -460,6 +490,147 @@ body.chat-room-active .bottom-nav {
   border-radius: 8px;
   background: #f5f5f5;
   cursor: pointer;
+}
+
+/* ========================================
+   世界书 AI 生成
+   ======================================== */
+.world-ai-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 24000;
+}
+
+.world-ai-modal {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: min(520px, 92vw);
+  max-height: 85vh;
+  background: #fff;
+  border-radius: 14px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.28);
+  z-index: 24010;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.world-ai-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px 10px;
+  border-bottom: 1px solid #eef2f7;
+}
+
+.world-ai-title {
+  font-weight: 700;
+  font-size: 16px;
+  color: #0f172a;
+}
+
+.world-ai-subtitle {
+  font-size: 12px;
+  color: #64748b;
+  margin-top: 4px;
+}
+
+.world-ai-close {
+  border: none;
+  background: transparent;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  color: #94a3b8;
+}
+
+.world-ai-body {
+  padding: 12px 16px 16px;
+  overflow: auto;
+}
+
+.world-ai-label {
+  display: block;
+  font-size: 12px;
+  color: #475569;
+  margin: 8px 0 6px;
+}
+
+.world-ai-textarea {
+  width: 100%;
+  min-height: 120px;
+  padding: 10px 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  font-size: 14px;
+  resize: vertical;
+  box-sizing: border-box;
+  background: #fff;
+}
+
+.world-ai-template {
+  min-height: 140px;
+  font-size: 12px;
+  color: #475569;
+  background: #f8fafc;
+}
+
+.world-ai-hint {
+  font-size: 12px;
+  color: #94a3b8;
+  margin-top: 6px;
+}
+
+.world-ai-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.world-ai-btn {
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(148, 163, 184, 0.6);
+  background: #f8fafc;
+  font-size: 13px;
+  color: #0f172a;
+  cursor: pointer;
+}
+
+.world-ai-btn.primary {
+  border-color: rgba(25, 154, 255, 0.6);
+  background: rgba(25, 154, 255, 0.1);
+  color: #0b66c2;
+  font-weight: 600;
+}
+
+.world-ai-btn.ghost {
+  background: #fff;
+}
+
+.world-ai-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.world-ai-status {
+  margin-top: 10px;
+  font-size: 12px;
+  color: #64748b;
+  white-space: pre-wrap;
+}
+
+.world-ai-status[data-tone='success'] {
+  color: #16a34a;
+}
+
+.world-ai-status[data-tone='error'] {
+  color: #dc2626;
 }
 
 @media (max-width: 640px) {
