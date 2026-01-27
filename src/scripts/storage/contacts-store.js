@@ -265,6 +265,17 @@ export class ContactsStore {
             addedAt: contact.addedAt ?? prev.addedAt ?? Date.now(),
             members: nextMembers,
             description: contact.description ?? prev.description ?? '',
+            // 标签（用于显示 name badge；未设置时不影响 UI）
+            labels: Array.isArray(contact?.labels)
+                ? contact.labels.map(v => String(v || '').trim()).filter(Boolean)
+                : Array.isArray(prev?.labels)
+                    ? prev.labels.map(v => String(v || '').trim()).filter(Boolean)
+                    : [],
+            // 角色来源信息（角色库自动添加时使用）
+            libraryCharacterId: contact.libraryCharacterId ?? prev.libraryCharacterId ?? '',
+            source: contact.source ?? prev.source ?? '',
+            // 是否为用户自建角色（角色库添加时设为 false）
+            isUserCreated: contact.isUserCreated ?? prev.isUserCreated ?? true,
             updatedAt: Date.now(),
         };
         this._persist();

@@ -1,5 +1,46 @@
 # 開發進度追蹤（必更新）(必须使用当下时间记录)
 
+## 2026-01-27 16:08
+
+- 自动创建世界书条目调整：仅保留蓝灯（`constant: true`），移除绿灯（`selective: false`）。
+- 添加好友推荐模式交互优化：输入框失焦后自动回到原本好友列表；为避免点击推荐项被吞，加入 pointerDown 短延时保护。
+- 推荐列表样式微调：padding/gap 对齐原 `sticker-bind-list` 视觉节奏。
+- 修改：
+  - `src/scripts/ui/session-panel.js`
+  - `src/assets/css/qq-legacy.css`
+
+## 2026-01-27 16:03
+
+- 推荐好友 UI 收敛为“原好友列表同款纯列表”：
+  - 点击输入框后隐藏原联系人分块，仅展示推荐角色列表（头像 + 名称）。
+  - 移除推荐标签区块与「换一批」按钮；通过滑动到底后继续下拉自动刷新推荐列表。
+  - 推荐列表头像统一使用默认头像。
+- 搜索匹配策略调整：
+  - 优先匹配角色名/别名；当存在名字命中时，不再混入标签/来源等次级命中结果。
+  - 仅当名字完全无命中时，才退而匹配标签/来源/括号内容。
+- 修改：
+  - `src/scripts/ui/session-panel.js`
+  - `src/scripts/storage/character-library-store.js`
+
+## 2026-01-27 15:44
+
+- 角色库推荐链路落地（添加好友面板）：输入框 focus 时切换到“推荐好友”模式，隐藏原联系人分块并展示推荐/搜索结果列表。
+- 推荐列表支持“换一批”与到底部继续下拉刷新（触发新一轮推荐抽取）。
+- 点击推荐角色会弹确认框；确认后在后台自动创建联系人 + 世界书并绑定，不切换当前聊天室；关闭面板后跳转联系人页可见新会话。
+- 标签体系接入：
+  - 好友设置新增“标签”输入（未设置时 UI 不变）。
+  - 角色库 name 括号内容会在推荐列表显示为标签，并在添加后自动写入联系人标签。
+  - 聊天标题/联系人列表/会话列表接入标签展示（仅在有标签时生效）。
+- 新增/修改：
+  - `src/scripts/storage/character-library-store.js`
+  - `src/scripts/utils/name-badges.js`
+  - `src/scripts/storage/contacts-store.js`
+  - `src/scripts/ui/contact-settings-panel.js`
+  - `src/scripts/ui/session-panel.js`
+  - `src/scripts/ui/app.js`
+  - `src/assets/css/main.css`
+  - `src/assets/css/qq-legacy.css`
+
 ## 2026-01-27 12:38
 
 - 角色库第一步落地：新增静态角色库 JSON 骨架（版本号 + 固定标签 + 示例角色）。

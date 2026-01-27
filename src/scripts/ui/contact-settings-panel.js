@@ -7,6 +7,7 @@ import { avatarDataUrlFromFile } from '../utils/image.js';
 import { appSettings } from '../storage/app-settings.js';
 import { MemoryTableEditor } from './memory-table-editor.js';
 import { appConfirm } from './app-confirm.js';
+import { normalizeBadgeList } from '../utils/name-badges.js';
 
 const getMemoryStorageMode = () => {
     const mode = String(appSettings.get().memoryStorageMode || 'table').toLowerCase();
@@ -339,6 +340,16 @@ export class ContactSettingsPanel {
                     </div>
                 </div>
 
+                <div style="margin-top:12px;">
+                    <div style="font-weight:700; color:#0f172a; margin-bottom:6px;">标签</div>
+                    <input
+                        id="contact-labels-input"
+                        placeholder="用逗号分隔，如：重制版, SG线"
+                        style="width:100%; padding:10px; border:1px solid #e2e8f0; border-radius:10px; font-size:14px;"
+                    >
+                    <div style="color:#64748b; font-size:12px; margin-top:6px;">用于展示标签；不设置则界面保持原样。</div>
+                </div>
+
                 <div style="margin-top:20px; border-top:1px solid #eee; padding-top:14px;">
                     <div style="font-weight:700; color:#0f172a; margin-bottom:10px;">聊天管理</div>
                     <button id="contact-new-chat" style="width:100%; padding:10px; border:1px solid #ddd; border-radius:8px; background:#fff; color:#019aff; font-weight:700; margin-bottom:10px; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:6px;">
@@ -398,6 +409,7 @@ export class ContactSettingsPanel {
 
         this.avatarPreview = this.panel.querySelector('#contact-avatar-preview');
         this.nameInput = this.panel.querySelector('#contact-name-input');
+        this.labelsInput = this.panel.querySelector('#contact-labels-input');
         this.archivesList = this.panel.querySelector('#contact-archives-list');
         this.summariesList = this.panel.querySelector('#contact-summaries-list');
         this.compactedList = this.panel.querySelector('#contact-compacted-summary');
@@ -995,6 +1007,10 @@ export class ContactSettingsPanel {
             this.avatarPreview.src = this.currentAvatar || './assets/external/feather-default.png';
         }
         if (this.nameInput) this.nameInput.value = c.name || sessionId;
+        if (this.labelsInput) {
+            const labels = Array.isArray(c.labels) ? c.labels : [];
+            this.labelsInput.value = labels.join(', ');
+        }
     }
 
     save() {
@@ -1003,9 +1019,17 @@ export class ContactSettingsPanel {
             const prev = this.contactsStore?.getContact?.(sessionId) || { id: sessionId };
             const name = String(this.nameInput?.value || '').trim() || prev.name || sessionId;
             const avatar = String(this.currentAvatar || '');
-            this.contactsStore?.upsertContact?.({ ...prev, id: sessionId, name, avatar });
+            const rawLabels = String(this.labelsInput?.value || '');
+            const labels = normalizeBadgeList(
+                rawLabels
+                    .split(/[,，\n\r]/)
+                    .map(s => s.trim())
+                    .filter(Boolean),
+                { max: 8 },
+            );
+            this.contactsStore?.upsertContact?.({ ...prev, id: sessionId, name, avatar, labels });
             window.toastr?.success?.('已保存好友设置');
-            this.onSaved?.({ id: sessionId, name, avatar });
+            this.onSaved?.({ id: sessionId, name, avatar, labels });
             this.hide();
         } catch (err) {
             logger.error('保存好友设置失败', err);

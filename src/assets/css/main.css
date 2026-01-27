@@ -987,6 +987,61 @@ body,
   margin-bottom: 4px;
 }
 
+/* 名称标签（用于角色标签/括号标签展示；无标签时不影响原有 UI） */
+.name-with-badges {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  min-width: 0;
+  vertical-align: middle;
+}
+
+.name-with-badges .name-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.name-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.2;
+  border: 1px solid transparent;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+  white-space: nowrap;
+}
+
+.name-badge.tone-purple {
+  color: #5b21b6;
+  background: #f3e8ff;
+  border-color: #e9d5ff;
+}
+
+.name-badge.tone-cyan {
+  color: #0e7490;
+  background: #ecfeff;
+  border-color: #bae6fd;
+}
+
+.name-badge.tone-emerald {
+  color: #047857;
+  background: #ecfdf5;
+  border-color: #bbf7d0;
+}
+
+.name-badge.tone-gray {
+  color: #475569;
+  background: #f1f5f9;
+  border-color: #e2e8f0;
+}
+
 .contact-desc {
   font-size: 14px;
   color: #666;

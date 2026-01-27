@@ -15,6 +15,7 @@ import { stickerPackStore } from '../storage/sticker-pack-store.js';
 import { normalizeScopeId } from '../storage/store-scope.js';
 import { avatarDataUrlFromFile, compressImageDataUrl, isGifFile } from '../utils/image.js';
 import { logger } from '../utils/logger.js';
+import { buildNameWithBadgesHtml, escapeHtml, getContactBadges } from '../utils/name-badges.js';
 import {
   initMediaAssets,
   isAssetRef,
@@ -208,7 +209,7 @@ const initApp = async () => {
       const id = chatStore.getCurrent();
       const c = contactsStore.getContact(id);
       const titleEl = document.getElementById('current-chat-title');
-      if (titleEl) titleEl.textContent = formatSessionName(id, c);
+      if (titleEl) titleEl.innerHTML = renderSessionNameHtml(id, c);
       if (forceRefresh) {
         const msgs = await chatStore.ensureRecentMessagesLoaded(id);
         ui.clearMessages();
@@ -271,7 +272,7 @@ const initApp = async () => {
       } catch {}
       const c = contactsStore.getContact(id);
       const cur = chatStore.getCurrent();
-      if (cur === id && currentChatTitle) currentChatTitle.textContent = formatSessionName(id, c) || c?.name || id;
+      if (cur === id && currentChatTitle) currentChatTitle.innerHTML = renderSessionNameHtml(id, c);
       if (forceRefresh && cur === id) {
         const msgs = await chatStore.ensureRecentMessagesLoaded(id);
         ui.clearMessages();
@@ -1477,6 +1478,16 @@ ${listPart || '-（无）'}
     if (!isGroup) return base;
     const count = Array.isArray(c?.members) ? c.members.length : 0;
     return `${base}(${count})`;
+  };
+
+  const renderSessionNameHtml = (sessionId, contact) => {
+    const id = String(sessionId || '');
+    const c = contact || contactsStore.getContact(id);
+    const isGroup = Boolean(c?.isGroup) || id.startsWith('group:');
+    const text = formatSessionName(id, c);
+    if (isGroup) return escapeHtml(text);
+    const badges = getContactBadges(c);
+    return buildNameWithBadgesHtml(text, badges);
   };
 
   const getPendingCountForSession = sessionId => {
@@ -3504,6 +3515,7 @@ Phase G（Frame 36）：循环衔接
     ids.forEach(id => {
       const contact = contactsStore.getContact(id);
       const displayName = formatSessionName(id, contact);
+      const displayNameHtml = renderSessionNameHtml(id, contact);
       const avatar = contact?.avatar || avatars.assistant;
       const last = getLastVisibleMessage(id);
       const preview = snippetFromMessage(last);
@@ -3529,7 +3541,7 @@ Phase G（Frame 36）：循环衔接
 	                <img src="${avatar}" alt="" class="chat-item-avatar">
 	                <div class="chat-item-content">
 	                    <div class="chat-item-header">
-	                        <div class="chat-item-name">${displayName}${unreadBadge}${pendingBadge}</div>
+	                        <div class="chat-item-name">${displayNameHtml}${unreadBadge}${pendingBadge}</div>
 	                        <div class="chat-item-time">${time}</div>
 	                    </div>
 	                    <div class="chat-item-preview">${preview}</div>
@@ -3555,6 +3567,7 @@ Phase G（Frame 36）：循环衔接
       const preview = snippetFromMessage(last);
       const time = last?.timestamp ? formatTime(last.timestamp) : '';
       const name = formatSessionName(id, contact);
+      const nameHtml = renderSessionNameHtml(id, contact);
       const avatar = contact.avatar || avatars.assistant;
       const unread = chatStore.getUnreadCount(id);
       const unreadBadge =
@@ -3576,7 +3589,7 @@ Phase G（Frame 36）：循环衔接
       item.innerHTML = `
 	                <img src="${avatar}" alt="" class="contact-avatar">
 	                <div class="contact-info">
-	                    <div class="contact-name">${name}${unreadBadge}${pendingBadge}</div>
+	                    <div class="contact-name">${nameHtml}${unreadBadge}${pendingBadge}</div>
 	                    <div class="contact-desc">${preview}</div>
 	                </div>
 	                <div class="contact-time">${time}</div>
@@ -3619,6 +3632,7 @@ Phase G（Frame 36）：循环衔接
       const preview = snippetFromMessage(last);
       const time = last?.timestamp ? formatTime(last.timestamp) : '';
       const name = formatSessionName(id, g);
+      const nameHtml = renderSessionNameHtml(id, g);
       const avatar = g.avatar || avatars.assistant;
       const count = Array.isArray(g.members) ? g.members.length : 0;
       const unread = chatStore.getUnreadCount(id);
@@ -3634,7 +3648,7 @@ Phase G（Frame 36）：循环衔接
       item.innerHTML = `
 	                <img src="${avatar}" alt="" class="contact-avatar">
 	                <div class="contact-info">
-	                    <div class="contact-name">${name}${unreadBadge}</div>
+	                    <div class="contact-name">${nameHtml}${unreadBadge}</div>
 	                    <div class="contact-desc">${preview || `群成员：${count}人`}</div>
 	                </div>
 	                <div class="contact-time">${time || String(count).padStart(2, '0') + '人'}</div>
@@ -8857,7 +8871,7 @@ Phase G（Frame 36）：循环衔接
 
     const contact = contactsStore.getContact(sessionId);
     if (currentChatTitle)
-      currentChatTitle.textContent = formatSessionName(sessionId, contact) || sessionName || sessionId;
+      currentChatTitle.innerHTML = renderSessionNameHtml(sessionId, contact);
     // 切换会话
     chatStore.switchSession(sessionId);
     window.appBridge.setActiveSession(sessionId);
@@ -9825,7 +9839,7 @@ Phase G（Frame 36）：循环衔接
       const uniq = [...new Set((nextMembers || []).map(id => String(id || '').trim()).filter(Boolean))];
       contactsStore.upsertContact({ id: gid, members: uniq, isGroup: true });
       if (String(chatStore.getCurrent() || '') === gid && currentChatTitle) {
-        currentChatTitle.textContent = formatSessionName(gid, contactsStore.getContact(gid));
+        currentChatTitle.innerHTML = renderSessionNameHtml(gid, contactsStore.getContact(gid));
       }
       return true;
     };
@@ -12824,7 +12838,7 @@ Phase G（Frame 36）：循环衔接
     if (id) {
       window.appBridge.setActiveSession(id);
       const c = contactsStore.getContact(id);
-      if (currentChatTitle) currentChatTitle.textContent = c?.name || id;
+      if (currentChatTitle) currentChatTitle.innerHTML = renderSessionNameHtml(id, c);
       syncUserPersonaUI(id);
       const msgs = await chatStore.ensureRecentMessagesLoaded(id);
       const draft = chatStore.getDraft(id);

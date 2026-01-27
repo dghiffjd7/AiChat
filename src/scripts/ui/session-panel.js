@@ -8,6 +8,8 @@ import { logger } from '../utils/logger.js';
 import { safeInvoke } from '../utils/tauri.js';
 import { makeScopedKey, normalizeScopeId } from '../storage/store-scope.js';
 import { ContactsStore } from '../storage/contacts-store.js';
+import { CharacterLibraryStore } from '../storage/character-library-store.js';
+import { buildNameWithBadgesHtml, escapeHtml, getAutoBadgeFromName, getContactBadges } from '../utils/name-badges.js';
 import { appConfirm } from './app-confirm.js';
 
 const CONTACTS_STORE_KEY = 'contacts_store_v1';
@@ -55,6 +57,19 @@ const trimAvatarData = (value) => {
   return raw.length > SHARED_AVATAR_MAX ? '' : raw;
 };
 
+const uniqueKeys = (list = []) => {
+  const seen = new Set();
+  const out = [];
+  for (const item of list) {
+    const text = String(item || '').trim();
+    if (!text) continue;
+    if (seen.has(text)) continue;
+    seen.add(text);
+    out.push(text);
+  }
+  return out;
+};
+
 export class SessionPanel {
   constructor(chatStore, contactsStore, ui, { onUpdated, personaStore, getPersonaScopeKey } = {}) {
     this.store = chatStore;
@@ -79,12 +94,44 @@ export class SessionPanel {
     this.contactsReadyScope = '';
     this.contactsReadyPromise = null;
     this.contactsReadyResolved = false;
+    // 角色库推荐（按 persona scope 隔离）
+    this.characterStore = new CharacterLibraryStore({ scopeId: this.contactsStore?.scopeId || '' });
+    this.recommendSection = null;
+    this.recommendTagsEl = null;
+    this.recommendListEl = null;
+    this.recommendMode = false;
+    this.recommendLoading = false;
+    this.recommendSections = [];
+    this.recommendTags = [];
+    this.recommendCharacters = [];
+    this.recommendQuery = '';
+    this.lastRecommendRefreshAt = 0;
+    this.recommendRefreshCooldownMs = 1200;
+    this.recommendPullThreshold = 88;
+    this.recommendTouchStartY = 0;
+    this.recommendBottomArmed = false;
+    this.recommendRequestToken = 0;
+    this.recommendPointerDownAt = 0;
   }
 
   formatTime(ts) {
     if (!ts) return '';
     const d = new Date(ts);
     return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  }
+
+  renderNameHtml(id, contact) {
+    const sid = String(id || '');
+    const c = contact || this.contactsStore?.getContact?.(sid) || { id: sid, name: sid };
+    const isGroup = Boolean(c?.isGroup) || sid.startsWith('group:');
+    const baseName = c.name || sid;
+    if (isGroup) {
+      const count = Array.isArray(c?.members) ? c.members.length : 0;
+      const text = `${baseName}(${count})`;
+      return escapeHtml(text);
+    }
+    const badges = getContactBadges(c);
+    return buildNameWithBadgesHtml(baseName, badges);
   }
 
   show({ focusAdd = false } = {}) {
@@ -112,6 +159,9 @@ export class SessionPanel {
   refresh() {
     if (!this.listElCurrent || !this.listElShared) return;
     this.ensureContactsReady();
+    try {
+      this.characterStore?.setScope?.(this.contactsStore?.scopeId || '');
+    } catch {}
     this.listElCurrent.innerHTML = '';
     let contacts = this.contactsStore?.listContacts?.() || [];
     if (!contacts.length && this.contactsReadyResolved) {
@@ -158,9 +208,8 @@ export class SessionPanel {
           : '';
         const currentTag =
           id === currentId ? `<span style="color:#059669; font-size:11px; margin-left:6px;">当前</span>` : '';
-        const baseName = c.name || id;
-        const displayName = isGroup ? `${baseName}(${membersCount})` : baseName;
-        name.innerHTML = `${displayName}${unreadBadge}${badge}${currentTag}`;
+        const displayNameHtml = this.renderNameHtml(id, c);
+        name.innerHTML = `${displayNameHtml}${unreadBadge}${badge}${currentTag}`;
         const meta = document.createElement('div');
         meta.className = 'sticker-bind-meta';
         meta.textContent = `${snippet}${time ? ` · ${time}` : ''}`;
@@ -440,11 +489,8 @@ export class SessionPanel {
     info.className = 'sticker-bind-info';
     const name = document.createElement('div');
     name.className = 'sticker-bind-name';
-    const baseName = contact.name || id;
     const isGroup = Boolean(contact.isGroup) || id.startsWith('group:');
-    const membersCount = isGroup && Array.isArray(contact.members) ? contact.members.length : 0;
-    const displayName = isGroup ? `${baseName}(${membersCount})` : baseName;
-    name.textContent = displayName;
+    name.innerHTML = this.renderNameHtml(id, contact);
     const meta = document.createElement('div');
     meta.className = 'sticker-bind-meta';
     meta.textContent = item.alreadyAdded ? '已在当前联系人' : '点击添加到当前用户';
@@ -605,6 +651,289 @@ export class SessionPanel {
     this.onUpdated?.();
   }
 
+  setRecommendMode(active) {
+    this.recommendMode = Boolean(active);
+    if (this.panel) {
+      this.panel.classList.toggle('is-recommend-mode', this.recommendMode);
+    }
+    if (!this.recommendMode) {
+      this.recommendQuery = '';
+    }
+  }
+
+  enterRecommendMode({ reason = 'focus', force = false } = {}) {
+    this.setRecommendMode(true);
+    try {
+      this.characterStore?.setScope?.(this.contactsStore?.scopeId || '');
+    } catch {}
+    const q = String(this.nameInput?.value || '').trim();
+    if (q) {
+      this.handleRecommendQueryChange(q, { reason: `${reason}-query`, force });
+      return;
+    }
+    this.refreshRecommendations({ force, reason });
+  }
+
+  handleRecommendQueryChange(query, { reason = 'input', force = false } = {}) {
+    const q = String(query || '').trim();
+    this.recommendQuery = q;
+    this.setRecommendMode(true);
+    if (!q) {
+      this.refreshRecommendations({ force, reason: `${reason}-empty` });
+      return;
+    }
+    this.performSearch(q, { reason });
+  }
+
+  canRefreshRecommendations({ force = false } = {}) {
+    if (force) return true;
+    const now = Date.now();
+    return now - this.lastRecommendRefreshAt >= this.recommendRefreshCooldownMs;
+  }
+
+  async refreshRecommendations({ force = false, reason = 'refresh' } = {}) {
+    if (!this.recommendMode) this.setRecommendMode(true);
+    if (this.recommendLoading) return;
+    if (!this.canRefreshRecommendations({ force })) return;
+    const token = ++this.recommendRequestToken;
+    this.recommendLoading = true;
+    this.lastRecommendRefreshAt = Date.now();
+    this.renderRecommendSections([], { kind: 'loading', hint: '载入推荐中...' });
+    try {
+      await this.characterStore?.setScope?.(this.contactsStore?.scopeId || '');
+      const data = await this.characterStore?.buildRecommendations?.({ contactsStore: this.contactsStore });
+      if (token !== this.recommendRequestToken) return;
+      this.recommendTags = Array.isArray(data?.tags) ? data.tags : [];
+      this.recommendSections = Array.isArray(data?.sections) ? data.sections : [];
+      this.recommendCharacters = Array.isArray(data?.characters) ? data.characters : [];
+      this.renderRecommendSections(this.recommendCharacters, { kind: 'recommend' });
+    } catch (err) {
+      logger.warn('刷新角色推荐失败', err);
+      if (token !== this.recommendRequestToken) return;
+      this.renderRecommendSections([], { kind: 'empty', hint: '推荐加载失败' });
+    } finally {
+      if (token === this.recommendRequestToken) {
+        this.recommendLoading = false;
+      }
+    }
+  }
+
+  async performSearch(query, { reason = 'search' } = {}) {
+    if (!this.recommendMode) this.setRecommendMode(true);
+    const token = ++this.recommendRequestToken;
+    this.recommendLoading = true;
+    this.renderRecommendSections([], { kind: 'loading', hint: '搜索中...' });
+    try {
+      await this.characterStore?.setScope?.(this.contactsStore?.scopeId || '');
+      const results = await this.characterStore?.search?.(query, { contactsStore: this.contactsStore });
+      if (token !== this.recommendRequestToken) return;
+      const list = Array.isArray(results) ? results : [];
+      this.recommendCharacters = list;
+      this.renderRecommendSections(list, {
+        kind: list.length ? 'search' : 'empty',
+        hint: list.length ? '' : '未找到匹配角色',
+      });
+    } catch (err) {
+      logger.warn('角色库搜索失败', err);
+      if (token !== this.recommendRequestToken) return;
+      this.renderRecommendSections([], { kind: 'empty', hint: '搜索失败' });
+    } finally {
+      if (token === this.recommendRequestToken) {
+        this.recommendLoading = false;
+      }
+    }
+  }
+
+  renderRecommendTags(tags, { kind = 'recommend', query = '' } = {}) {
+    if (!this.recommendTagsEl) return;
+    const el = this.recommendTagsEl;
+    el.innerHTML = '';
+    const list = Array.isArray(tags) ? tags : [];
+    if (kind === 'search') {
+      const hint = document.createElement('div');
+      hint.className = 'session-recommend-hint';
+      hint.textContent = query ? `搜索角色库：${query}` : '输入关键词搜索角色库';
+      el.appendChild(hint);
+      return;
+    }
+    if (!list.length) {
+      const hint = document.createElement('div');
+      hint.className = 'session-recommend-hint';
+      hint.textContent = '推荐标签';
+      el.appendChild(hint);
+      return;
+    }
+    list.forEach((tag) => {
+      const chip = document.createElement('span');
+      chip.className = 'session-recommend-tag';
+      chip.textContent = String(tag || '').trim();
+      el.appendChild(chip);
+    });
+  }
+
+  renderRecommendSections(characters, { kind = 'recommend', hint = '' } = {}) {
+    if (!this.recommendListEl) return;
+    const el = this.recommendListEl;
+    el.innerHTML = '';
+    if (kind === 'loading') {
+      const loading = document.createElement('div');
+      loading.className = 'session-recommend-empty';
+      loading.textContent = hint || '载入中...';
+      el.appendChild(loading);
+      return;
+    }
+    const list = Array.isArray(characters) ? characters : [];
+    if (!list.length) {
+      const empty = document.createElement('div');
+      empty.className = 'session-recommend-empty';
+      empty.textContent = hint || '暂无推荐角色';
+      el.appendChild(empty);
+      return;
+    }
+    list.forEach((character) => {
+      const row = this.renderRecommendRow(character);
+      if (row) el.appendChild(row);
+    });
+  }
+
+  renderRecommendRow(character) {
+    const char = character || {};
+    const id = String(char.id || '').trim();
+    const name = String(char.name || '').trim();
+    if (!id || !name) return null;
+
+    const row = document.createElement('div');
+    row.className = 'sticker-bind-row session-row session-recommend-row';
+    row.addEventListener('click', () => this.confirmAddCharacter(char));
+
+    const avatar = document.createElement('img');
+    avatar.className = 'sticker-bind-avatar session-recommend-avatar';
+    avatar.alt = '';
+    avatar.src = './assets/external/feather-default.png';
+
+    const info = document.createElement('div');
+    info.className = 'sticker-bind-info session-recommend-info';
+
+    const nameEl = document.createElement('div');
+    nameEl.className = 'sticker-bind-name session-recommend-name';
+    const autoBadges = getAutoBadgeFromName(name);
+    nameEl.innerHTML = buildNameWithBadgesHtml(name, autoBadges);
+    info.appendChild(nameEl);
+
+    row.appendChild(avatar);
+    row.appendChild(info);
+    return row;
+  }
+
+  isRecommendAtBottom() {
+    const el = this.recommendListEl;
+    if (!el) return false;
+    const { scrollTop, clientHeight, scrollHeight } = el;
+    if (!scrollHeight) return false;
+    return scrollTop + clientHeight >= scrollHeight - 2;
+  }
+
+  async confirmAddCharacter(character) {
+    const name = String(character?.name || '').trim();
+    if (!name) return;
+    const source = String(character?.source || '').trim();
+    const message = source
+      ? `将「${name}」添加为好友？\n\n来源：${source}\n\n会自动创建聊天室与世界书并绑定。`
+      : `将「${name}」添加为好友？\n\n会自动创建聊天室与世界书并绑定。`;
+    const ok = await appConfirm({
+      title: '添加推荐角色',
+      message,
+    });
+    if (!ok) return;
+    await this.addCharacterFromLibrary(character);
+  }
+
+  async ensureWorldBookForCharacter(character, sessionId) {
+    const bridge = window.appBridge;
+    if (!bridge?.saveWorldInfo || !bridge?.bindWorldToSession) return;
+    const worldId = String(sessionId || '').trim();
+    if (!worldId) return;
+    try {
+      const existing = await bridge.getWorldInfo?.(worldId);
+      if (existing && Array.isArray(existing.entries) && existing.entries.length) {
+        const reuse = await appConfirm({
+          title: '同名世界书已存在',
+          message: `检测到同名世界书「${worldId}」。\n\n是否直接复用并绑定到该角色？`,
+        });
+        if (!reuse) return;
+        bridge.bindWorldToSession(worldId, worldId, { silent: true });
+        return;
+      }
+    } catch (err) {
+      logger.debug('检查同名世界书失败（忽略）', err);
+    }
+
+    const baseName = String(character?.baseName || character?.name || worldId).trim() || worldId;
+    const source = String(character?.source || '').trim() || '未知作品';
+    const content = `你是来自“${source}”的${baseName}。`;
+    const entry = {
+      id: baseName,
+      comment: baseName,
+      content,
+      key: uniqueKeys([baseName, worldId]),
+      keysecondary: [],
+      order: 100,
+      depth: 4,
+      position: 0,
+      selective: false,
+      selectiveLogic: 0,
+      disable: false,
+      constant: true,
+      probability: 100,
+      useProbability: true,
+    };
+    const worldData = { name: worldId, entries: [entry] };
+    try {
+      await bridge.saveWorldInfo(worldId, worldData);
+      bridge.bindWorldToSession(worldId, worldId, { silent: true });
+    } catch (err) {
+      logger.warn('自动创建/绑定世界书失败', err);
+    }
+  }
+
+  async addCharacterFromLibrary(character) {
+    const char = character || {};
+    const id = String(char.id || '').trim();
+    const name = String(char.name || '').trim();
+    if (!id || !name) return;
+    const sessionId = name;
+    const existing = this.contactsStore?.getContact?.(sessionId);
+    if (existing) {
+      window.toastr?.info?.('该角色已在联系人列表');
+      this.characterStore?.markAdded?.(id);
+      return;
+    }
+    const addedAt = Date.now();
+    const labels = getAutoBadgeFromName(name);
+    this.contactsStore?.upsertContact?.({
+      id: sessionId,
+      name,
+      avatar: './assets/external/feather-default.png',
+      isGroup: false,
+      addedAt,
+      labels,
+      libraryCharacterId: id,
+      source: String(char.source || ''),
+      isUserCreated: false,
+    });
+    this.characterStore?.markAdded?.(id, { addedAt });
+    await this.ensureWorldBookForCharacter(char, sessionId);
+    window.toastr?.success?.(`已添加：${name}`);
+    this.jumpToContactsOnClose = true;
+    this.refresh();
+    this.onUpdated?.();
+    if (this.recommendQuery) {
+      this.performSearch(this.recommendQuery, { reason: 'added' });
+    } else {
+      this.refreshRecommendations({ force: true, reason: 'added' });
+    }
+  }
+
   createUI() {
     this.overlay = document.createElement('div');
     this.overlay.className = 'session-panel-overlay';
@@ -640,6 +969,9 @@ export class SessionPanel {
                 <div id="session-list-shared" class="sticker-bind-list session-list-pane session-list-other"></div>
               </div>
             </div>
+            <div id="session-recommend-section" class="session-recommend-section">
+              <div id="session-recommend-list" class="sticker-bind-list session-list-pane session-recommend-list"></div>
+            </div>
         `;
 
     this.newAvatar = '';
@@ -664,6 +996,8 @@ export class SessionPanel {
     this.listElCurrent = this.panel.querySelector('#session-list-current');
     this.listElShared = this.panel.querySelector('#session-list-shared');
     this.nameInput = this.panel.querySelector('#session-name');
+    this.recommendSection = this.panel.querySelector('#session-recommend-section');
+    this.recommendListEl = this.panel.querySelector('#session-recommend-list');
     this.listElShared?.addEventListener('scroll', () => this.maybeLoadMoreShared());
     this.panel.querySelector('.session-panel-close')?.addEventListener('click', () => this.hide());
     this.panel.querySelector('#session-add').onclick = () => this.addSession();
@@ -672,6 +1006,58 @@ export class SessionPanel {
       fileInput.value = '';
       fileInput.click();
     };
+
+    this.nameInput?.addEventListener('focus', () => {
+      this.enterRecommendMode({ reason: 'focus', force: true });
+    });
+    this.nameInput?.addEventListener('input', () => {
+      const q = String(this.nameInput?.value || '').trim();
+      this.handleRecommendQueryChange(q);
+    });
+    this.nameInput?.addEventListener('blur', () => {
+      // 当用户点击推荐列表时也会触发 blur；给一次微延时并检测 pointerDown，避免把点击吞掉。
+      setTimeout(() => {
+        if (!this.recommendMode) return;
+        const sincePointerDown = Date.now() - Number(this.recommendPointerDownAt || 0);
+        if (sincePointerDown >= 0 && sincePointerDown < 420) return;
+        this.setRecommendMode(false);
+        this.refresh();
+      }, 0);
+    });
+
+    // 底部继续下拉刷新（推荐列表）
+    const recList = this.recommendListEl;
+    const onMaybeRefresh = (reason) => {
+      if (!this.recommendMode) return;
+      if (!this.isRecommendAtBottom()) return;
+      this.refreshRecommendations({ force: true, reason });
+    };
+    recList?.addEventListener('wheel', (ev) => {
+      const delta = Number(ev?.deltaY || 0);
+      if (delta > 32) onMaybeRefresh('wheel-bottom');
+    });
+    recList?.addEventListener('touchstart', (ev) => {
+      this.recommendPointerDownAt = Date.now();
+      const touch = ev.touches?.[0];
+      this.recommendTouchStartY = touch?.clientY || 0;
+      this.recommendBottomArmed = this.isRecommendAtBottom();
+    }, { passive: true });
+    recList?.addEventListener('mousedown', () => {
+      this.recommendPointerDownAt = Date.now();
+    });
+    recList?.addEventListener('touchmove', (ev) => {
+      if (!this.recommendBottomArmed) return;
+      if (!this.isRecommendAtBottom()) return;
+      const touch = ev.touches?.[0];
+      const y = touch?.clientY || 0;
+      const deltaY = y - this.recommendTouchStartY;
+      if (deltaY < -this.recommendPullThreshold) {
+        this.recommendBottomArmed = false;
+        onMaybeRefresh('pull-bottom');
+      }
+    }, { passive: true });
+
+    this.setRecommendMode(false);
 
     this.overlay.appendChild(this.panel);
     document.body.appendChild(this.overlay);
@@ -701,6 +1087,8 @@ export class SessionPanel {
       avatar: this.newAvatar || '',
       isGroup: false,
       addedAt: Date.now(),
+      labels: [],
+      isUserCreated: true,
     });
     this.store.switchSession(name);
     window.appBridge?.setActiveSession?.(name);

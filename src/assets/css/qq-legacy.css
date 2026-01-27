@@ -2535,6 +2535,196 @@ body[data-creative-wide='on'] .QQ_chat_charmsg[data-creative='1'] .QQ_chat_msgdi
   cursor: pointer;
 }
 
+/* 推荐好友模式：输入框 focus 时展示推荐列表，隐藏原联系人分块 */
+.session-panel.is-recommend-mode .session-list-split {
+  display: none;
+}
+
+.session-recommend-section {
+  display: none;
+  flex: 1 1 auto;
+  min-height: 0;
+  flex-direction: column;
+  background: #fff;
+}
+
+.session-panel.is-recommend-mode .session-recommend-section {
+  display: flex;
+}
+
+.session-recommend-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 16px 8px;
+  border-bottom: 1px solid rgba(15, 23, 42, 0.06);
+}
+
+.session-recommend-title {
+  font-size: 13px;
+  font-weight: 800;
+  color: #0f172a;
+}
+
+.session-recommend-refresh {
+  border: 1px solid rgba(14, 165, 233, 0.35);
+  background: rgba(14, 165, 233, 0.1);
+  color: #0369a1;
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.session-recommend-tags {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 6px;
+  padding: 8px 16px 10px;
+  overflow-x: auto;
+  border-bottom: 1px solid rgba(15, 23, 42, 0.06);
+  -webkit-overflow-scrolling: touch;
+}
+
+.session-recommend-hint {
+  font-size: 12px;
+  color: #64748b;
+  font-weight: 700;
+}
+
+.session-recommend-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: #f1f5f9;
+  border: 1px solid #e2e8f0;
+  color: #0f172a;
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.session-recommend-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 0 16px 12px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: #fff;
+  -webkit-overflow-scrolling: touch;
+}
+
+.session-recommend-empty {
+  padding: 18px 10px;
+  text-align: center;
+  color: #94a3b8;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.session-recommend-block {
+  border: 1px solid rgba(15, 23, 42, 0.06);
+  border-radius: 14px;
+  background: #fff;
+  overflow: hidden;
+}
+
+.session-recommend-block-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px;
+  background: linear-gradient(180deg, rgba(248, 250, 252, 0.92), rgba(248, 250, 252, 0.7));
+  border-bottom: 1px solid rgba(15, 23, 42, 0.06);
+}
+
+.session-recommend-block-title {
+  font-size: 13px;
+  font-weight: 900;
+  color: #0f172a;
+}
+
+.session-recommend-block-meta {
+  font-size: 11px;
+  font-weight: 800;
+  color: #64748b;
+}
+
+.session-recommend-items {
+  display: flex;
+  flex-direction: column;
+}
+
+.session-recommend-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(15, 23, 42, 0.05);
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+
+.session-recommend-row:last-child {
+  border-bottom: none;
+}
+
+.session-recommend-row:active {
+  background: rgba(14, 165, 233, 0.08);
+}
+
+.session-recommend-avatar {
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  object-fit: cover;
+  background: #f8fafc;
+  flex-shrink: 0;
+}
+
+.session-recommend-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.session-recommend-name {
+  font-size: 14px;
+  font-weight: 900;
+  color: #0f172a;
+  min-width: 0;
+}
+
+.session-recommend-meta {
+  font-size: 12px;
+  color: #64748b;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-recommend-add {
+  border: 1px solid rgba(14, 165, 233, 0.45);
+  background: #e0f2fe;
+  color: #0369a1;
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 900;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
 @media (max-width: 520px) {
   .sticker-pack-editor {
     grid-template-columns: 1fr;
