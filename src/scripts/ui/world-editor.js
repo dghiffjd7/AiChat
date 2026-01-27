@@ -37,6 +37,7 @@ const ROLE_OPTIONS = [
 ];
 
 const WORLD_AI_INPUT_KEY = 'world_ai_input_v1';
+const WORLD_AI_TEMPLATE_KEY = 'world_ai_template_v1';
 const WORLD_AI_TEMPLATE = `
 name: ""
 english_name: ""
@@ -130,6 +131,22 @@ const saveWorldAiInput = (value) => {
     } catch {}
 };
 
+const loadWorldAiTemplate = () => {
+    try {
+        const stored = String(localStorage.getItem(WORLD_AI_TEMPLATE_KEY) || '').trim();
+        return stored || WORLD_AI_TEMPLATE;
+    } catch {
+        return WORLD_AI_TEMPLATE;
+    }
+};
+
+const saveWorldAiTemplate = (value) => {
+    try {
+        const trimmed = String(value || '').trim();
+        localStorage.setItem(WORLD_AI_TEMPLATE_KEY, trimmed || WORLD_AI_TEMPLATE);
+    } catch {}
+};
+
 const buildWorldAiMessages = (template, inputText) => {
     const trimmedTemplate = String(template || '').trim();
     const trimmedInput = String(inputText || '').trim();
@@ -147,6 +164,32 @@ const buildWorldAiMessages = (template, inputText) => {
         '<input>',
         trimmedInput || '(未提供)',
         '</input>',
+    ].join('\n');
+    return [{ role: 'user', content: userContent }];
+};
+
+const buildWorldAiContinueMessages = (template, inputText, draft) => {
+    const trimmedTemplate = String(template || '').trim();
+    const trimmedInput = String(inputText || '').trim();
+    const trimmedDraft = String(draft || '').trim();
+    const userContent = [
+        '请在模板约束下，结合用户输入，对已有草稿进行补全与润色。',
+        '要求：',
+        '- 仅输出 YAML，不要解释，不要代码块，不要附加标题。',
+        '- YAML 结构必须与模板一致；不要丢失草稿里已经明确的设定。',
+        '- 对话范例需明确“仅供参考，勿完全按照其输出”。',
+        '',
+        '<template>',
+        trimmedTemplate || '(空模板)',
+        '</template>',
+        '',
+        '<input>',
+        trimmedInput || '(未提供)',
+        '</input>',
+        '',
+        '<draft>',
+        trimmedDraft || '(空草稿)',
+        '</draft>',
     ].join('\n');
     return [{ role: 'user', content: userContent }];
 };
@@ -258,6 +301,7 @@ export class WorldEditorModal {
         this.aiTemplateEl = null;
         this.aiStatusEl = null;
         this.aiGenerateBtn = null;
+        this.aiContinueBtn = null;
         this.aiCloseBtn = null;
         this.aiBusy = false;
         this.aiRequestId = 0;
@@ -380,11 +424,12 @@ export class WorldEditorModal {
                 <textarea id="world-ai-input" class="world-ai-textarea" placeholder="例如：名字、性别、背景、外貌、性格、说话习惯、关系等"></textarea>
                 <div class="world-ai-hint">生成过程中可关闭此窗，完成后自动写入内容并保存。</div>
 
-                <label class="world-ai-label">生成模板（只读）</label>
-                <textarea id="world-ai-template" class="world-ai-textarea world-ai-template" readonly></textarea>
+                <label class="world-ai-label">生成模板</label>
+                <textarea id="world-ai-template" class="world-ai-textarea world-ai-template" placeholder="可编辑模板（建议保留字段结构）"></textarea>
 
                 <div class="world-ai-actions">
                     <button type="button" class="world-ai-btn ghost" id="world-ai-cancel">关闭</button>
+                    <button type="button" class="world-ai-btn" id="world-ai-continue">继续</button>
                     <button type="button" class="world-ai-btn primary" id="world-ai-generate">生成</button>
                 </div>
                 <div class="world-ai-status" id="world-ai-status"></div>
@@ -396,6 +441,7 @@ export class WorldEditorModal {
         this.aiTemplateEl = this.aiModal.querySelector('#world-ai-template');
         this.aiStatusEl = this.aiModal.querySelector('#world-ai-status');
         this.aiGenerateBtn = this.aiModal.querySelector('#world-ai-generate');
+        this.aiContinueBtn = this.aiModal.querySelector('#world-ai-continue');
         this.aiCloseBtn = this.aiModal.querySelector('.world-ai-close');
         const cancelBtn = this.aiModal.querySelector('#world-ai-cancel');
 
@@ -403,9 +449,13 @@ export class WorldEditorModal {
             this.aiInputEl.value = loadWorldAiInput();
             this.aiInputEl.addEventListener('input', () => saveWorldAiInput(this.aiInputEl.value));
         }
-        if (this.aiTemplateEl) this.aiTemplateEl.value = WORLD_AI_TEMPLATE;
+        if (this.aiTemplateEl) {
+            this.aiTemplateEl.value = loadWorldAiTemplate();
+            this.aiTemplateEl.addEventListener('input', () => saveWorldAiTemplate(this.aiTemplateEl.value));
+        }
 
         if (this.aiGenerateBtn) this.aiGenerateBtn.onclick = () => this.handleAiGenerate();
+        if (this.aiContinueBtn) this.aiContinueBtn.onclick = () => this.handleAiContinue();
         if (this.aiCloseBtn) this.aiCloseBtn.onclick = () => this.hideAiModal();
         if (cancelBtn) cancelBtn.onclick = () => this.hideAiModal();
 
@@ -417,7 +467,9 @@ export class WorldEditorModal {
         if (!entry) return;
         if (!this.aiModal) this.createAiModal();
         this.aiTargetEntryId = String(entry.id || '');
-        if (this.aiTemplateEl) this.aiTemplateEl.value = WORLD_AI_TEMPLATE;
+        if (this.aiTemplateEl && !String(this.aiTemplateEl.value || '').trim()) {
+            this.aiTemplateEl.value = loadWorldAiTemplate();
+        }
         this.setAiStatus('');
         this.aiOverlay.style.display = 'block';
         this.aiModal.style.display = 'block';
@@ -441,6 +493,7 @@ export class WorldEditorModal {
     setAiBusy(isBusy, entryId = '') {
         this.aiBusy = Boolean(isBusy);
         if (this.aiGenerateBtn) this.aiGenerateBtn.disabled = this.aiBusy;
+        if (this.aiContinueBtn) this.aiContinueBtn.disabled = this.aiBusy;
         if (this.aiBusy && entryId) {
             this.aiPendingEntryId = String(entryId);
         } else if (!this.aiBusy) {
@@ -458,14 +511,30 @@ export class WorldEditorModal {
         return config;
     }
 
-    applyAiContentToEntry(entryId, content) {
+    resolveEntryById(entryId) {
         const targetId = String(entryId || '');
         const idx = this.data.entries.findIndex(e => String(e.id || '') === targetId);
+        if (idx < 0) return { idx: -1, entry: null };
+        return { idx, entry: this.data.entries[idx] };
+    }
+
+    getEntryContentForAi(entryId) {
+        const { idx, entry } = this.resolveEntryById(entryId);
+        if (!entry || idx < 0) return '';
+        if (this.currentIndex === idx) {
+            const textarea = this.editorEl?.querySelector('#we-content');
+            const live = String(textarea?.value || '').trim();
+            if (live) return live;
+        }
+        return String(entry.content || '').trim();
+    }
+
+    applyAiContentToEntry(entryId, content) {
+        const { idx, entry } = this.resolveEntryById(entryId);
         if (idx < 0) {
             window.toastr?.warning?.('目标条目不存在，未写入内容');
             return false;
         }
-        const entry = this.data.entries[idx];
         entry.content = content;
         if (this.currentIndex === idx) {
             const textarea = this.editorEl?.querySelector('#we-content');
@@ -474,7 +543,7 @@ export class WorldEditorModal {
         return true;
     }
 
-    async handleAiGenerate() {
+    async runWorldAi({ mode = 'generate' } = {}) {
         if (this.aiBusy) {
             window.toastr?.warning?.('AI 生成中，请稍后');
             return;
@@ -491,13 +560,25 @@ export class WorldEditorModal {
             window.toastr?.warning?.('未找到可写入的条目');
             return;
         }
+        const template = String(this.aiTemplateEl?.value || WORLD_AI_TEMPLATE || '').trim();
+        if (!template) {
+            window.toastr?.warning?.('模板不能为空');
+            return;
+        }
+        const draft = this.getEntryContentForAi(entryId);
+        if (mode === 'continue' && !draft) {
+            window.toastr?.warning?.('当前内容为空，无法继续');
+            return;
+        }
         const requestId = ++this.aiRequestId;
         this.setAiBusy(true, entryId);
-        this.setAiStatus('正在生成角色条目...', 'loading');
+        const loadingText = mode === 'continue' ? '正在继续补全角色条目...' : '正在生成角色条目...';
+        this.setAiStatus(loadingText, 'loading');
         try {
             const client = new LLMClient(config);
-            const template = String(this.aiTemplateEl?.value || WORLD_AI_TEMPLATE || '').trim();
-            const messages = buildWorldAiMessages(template, inputText);
+            const messages = mode === 'continue'
+                ? buildWorldAiContinueMessages(template, inputText, draft)
+                : buildWorldAiMessages(template, inputText);
             const output = await client.chat(messages, { temperature: 0.6 });
             if (requestId !== this.aiRequestId) return;
             const yaml = stripCodeFence(output);
@@ -509,21 +590,30 @@ export class WorldEditorModal {
             }
             const saved = await this.saveWorldSilently({ showToast: false });
             if (saved) {
-                this.setAiStatus('生成完成，已写入内容并保存', 'success');
-                window.toastr?.success?.('AI 生成已写入并保存');
+                const successText = mode === 'continue' ? '补全完成，已写入内容并保存' : '生成完成，已写入内容并保存';
+                this.setAiStatus(successText, 'success');
+                window.toastr?.success?.(mode === 'continue' ? 'AI 补全已写入并保存' : 'AI 生成已写入并保存');
             } else {
                 this.setAiStatus('生成完成，但自动保存失败', 'error');
-                window.toastr?.warning?.('AI 已生成，但自动保存失败');
+                window.toastr?.warning?.(mode === 'continue' ? 'AI 已补全，但自动保存失败' : 'AI 已生成，但自动保存失败');
             }
         } catch (err) {
-            logger.error('AI 生成世界书失败', err);
+            logger.error(mode === 'continue' ? 'AI 补全世界书失败' : 'AI 生成世界书失败', err);
             this.setAiStatus(`生成失败：${err?.message || '未知错误'}`, 'error');
-            window.toastr?.error?.('AI 生成失败');
+            window.toastr?.error?.(mode === 'continue' ? 'AI 补全失败' : 'AI 生成失败');
         } finally {
             if (requestId === this.aiRequestId) {
                 this.setAiBusy(false);
             }
         }
+    }
+
+    async handleAiGenerate() {
+        return this.runWorldAi({ mode: 'generate' });
+    }
+
+    async handleAiContinue() {
+        return this.runWorldAi({ mode: 'continue' });
     }
 
     renderList() {
