@@ -10,6 +10,7 @@ import { makeScopedKey, normalizeScopeId } from '../storage/store-scope.js';
 import { ContactsStore } from '../storage/contacts-store.js';
 import { CharacterLibraryStore } from '../storage/character-library-store.js';
 import { buildNameWithBadgesHtml, escapeHtml, getAutoBadgeFromName, getContactBadges } from '../utils/name-badges.js';
+import { FEATHER_DEFAULT, resolveLineAvatar } from '../utils/line-avatar.js';
 import { appConfirm } from './app-confirm.js';
 
 const CONTACTS_STORE_KEY = 'contacts_store_v1';
@@ -134,6 +135,11 @@ export class SessionPanel {
     return buildNameWithBadgesHtml(baseName, badges);
   }
 
+  resolveAvatarSrc({ avatar = '', name = '', tags = [] } = {}) {
+    const list = Array.isArray(tags) ? tags : [];
+    return resolveLineAvatar({ avatar, name, tags: list, size: 96 });
+  }
+
   show({ focusAdd = false } = {}) {
     if (!this.panel) this.createUI();
     this.refresh();
@@ -187,7 +193,11 @@ export class SessionPanel {
         const avatar = document.createElement('img');
         avatar.className = 'sticker-bind-avatar';
         avatar.alt = '';
-        avatar.src = c.avatar || './assets/external/feather-default.png';
+        avatar.src = this.resolveAvatarSrc({
+          avatar: c.avatar,
+          name: c.name || id,
+          tags: c.libraryTags || c.labels || [],
+        });
 
         const info = document.createElement('div');
         info.className = 'sticker-bind-info';
@@ -483,7 +493,11 @@ export class SessionPanel {
     const avatar = document.createElement('img');
     avatar.className = 'sticker-bind-avatar';
     avatar.alt = '';
-    avatar.src = contact.avatar || './assets/external/feather-default.png';
+    avatar.src = this.resolveAvatarSrc({
+      avatar: contact.avatar,
+      name: contact.name || id,
+      tags: contact.libraryTags || contact.labels || [],
+    });
 
     const info = document.createElement('div');
     info.className = 'sticker-bind-info';
@@ -809,7 +823,11 @@ export class SessionPanel {
     const avatar = document.createElement('img');
     avatar.className = 'sticker-bind-avatar session-recommend-avatar';
     avatar.alt = '';
-    avatar.src = './assets/external/feather-default.png';
+    avatar.src = this.resolveAvatarSrc({
+      avatar: '',
+      name,
+      tags: char.tags || [],
+    });
 
     const info = document.createElement('div');
     info.className = 'sticker-bind-info session-recommend-info';
@@ -913,10 +931,11 @@ export class SessionPanel {
     this.contactsStore?.upsertContact?.({
       id: sessionId,
       name,
-      avatar: './assets/external/feather-default.png',
+      avatar: FEATHER_DEFAULT,
       isGroup: false,
       addedAt,
       labels,
+      libraryTags: Array.isArray(char.tags) ? char.tags : [],
       libraryCharacterId: id,
       source: String(char.source || ''),
       isUserCreated: false,

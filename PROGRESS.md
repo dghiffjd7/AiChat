@@ -1,5 +1,17 @@
 # 開發進度追蹤（必更新）(必须使用当下时间记录)
 
+## 2026-01-27 17:46
+
+- 默认头像升级为 LINE 风格（颜色底 + 首字）：
+  - 新增角色标签驱动的色系映射与哈希选色（性别优先，其次类型标签，最后 default）。
+  - 推荐列表与主要联系人/聊天列表/群成员下拉等入口统一接入默认头像生成。
+  - 角色库添加联系人时保存 `libraryTags`（用于后续头像色系与推荐逻辑）。
+- 新增/修改：
+  - `src/scripts/utils/line-avatar.js`
+  - `src/scripts/ui/session-panel.js`
+  - `src/scripts/ui/app.js`
+  - `src/scripts/storage/contacts-store.js`
+
 ## 2026-01-27 16:08
 
 - 自动创建世界书条目调整：仅保留蓝灯（`constant: true`），移除绿灯（`selective: false`）。

@@ -271,6 +271,12 @@ export class ContactsStore {
                 : Array.isArray(prev?.labels)
                     ? prev.labels.map(v => String(v || '').trim()).filter(Boolean)
                     : [],
+            // 角色库标签（用于默认头像色系等；未设置不影响现有逻辑）
+            libraryTags: Array.isArray(contact?.libraryTags)
+                ? contact.libraryTags.map(v => String(v || '').trim()).filter(Boolean)
+                : Array.isArray(prev?.libraryTags)
+                    ? prev.libraryTags.map(v => String(v || '').trim()).filter(Boolean)
+                    : [],
             // 角色来源信息（角色库自动添加时使用）
             libraryCharacterId: contact.libraryCharacterId ?? prev.libraryCharacterId ?? '',
             source: contact.source ?? prev.source ?? '',

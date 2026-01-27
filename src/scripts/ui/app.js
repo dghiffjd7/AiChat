@@ -16,6 +16,7 @@ import { normalizeScopeId } from '../storage/store-scope.js';
 import { avatarDataUrlFromFile, compressImageDataUrl, isGifFile } from '../utils/image.js';
 import { logger } from '../utils/logger.js';
 import { buildNameWithBadgesHtml, escapeHtml, getContactBadges } from '../utils/name-badges.js';
+import { FEATHER_DEFAULT, resolveLineAvatar } from '../utils/line-avatar.js';
 import {
   initMediaAssets,
   isAssetRef,
@@ -787,7 +788,7 @@ ${listPart || '-（无）'}
                   type: 'text',
                   ...parseSpecialMessage(content),
                   name: '助手',
-                  avatar: contactsStore.getContact(targetSessionId)?.avatar || avatars.assistant,
+                  avatar: resolveAvatarForContact(targetSessionId, contactsStore.getContact(targetSessionId)),
                   time,
                 };
                 const saved = chatStore.appendMessage(parsed, targetSessionId);
@@ -1427,7 +1428,7 @@ ${listPart || '-（无）'}
 
   const getAssistantAvatarForSession = sessionId => {
     const c = contactsStore.getContact(sessionId);
-    return c?.avatar || avatars.assistant;
+    return resolveAvatarForContact(sessionId, c);
   };
 
   const getLastVisibleMessage = sessionId => {
@@ -1488,6 +1489,27 @@ ${listPart || '-（无）'}
     if (isGroup) return escapeHtml(text);
     const badges = getContactBadges(c);
     return buildNameWithBadgesHtml(text, badges);
+  };
+
+  const resolveAvatarForContact = (sessionId, contact) => {
+    const id = String(sessionId || contact?.id || '').trim();
+    const c = contact || contactsStore.getContact(id) || {};
+    const isGroup = Boolean(c?.isGroup) || id.startsWith('group:');
+    if (isGroup) {
+      const raw = String(c?.avatar || '').trim();
+      return raw || avatars.assistant;
+    }
+    const tags = Array.isArray(c?.libraryTags) && c.libraryTags.length
+      ? c.libraryTags
+      : Array.isArray(c?.labels)
+        ? c.labels
+        : [];
+    return resolveLineAvatar({
+      avatar: c?.avatar || FEATHER_DEFAULT,
+      name: c?.name || id,
+      tags,
+      size: 96,
+    });
   };
 
   const getPendingCountForSession = sessionId => {
@@ -3516,7 +3538,7 @@ Phase G（Frame 36）：循环衔接
       const contact = contactsStore.getContact(id);
       const displayName = formatSessionName(id, contact);
       const displayNameHtml = renderSessionNameHtml(id, contact);
-      const avatar = contact?.avatar || avatars.assistant;
+      const avatar = resolveAvatarForContact(id, contact);
       const last = getLastVisibleMessage(id);
       const preview = snippetFromMessage(last);
       const time = last?.timestamp ? formatTime(last.timestamp) : '';
@@ -3568,7 +3590,7 @@ Phase G（Frame 36）：循环衔接
       const time = last?.timestamp ? formatTime(last.timestamp) : '';
       const name = formatSessionName(id, contact);
       const nameHtml = renderSessionNameHtml(id, contact);
-      const avatar = contact.avatar || avatars.assistant;
+      const avatar = resolveAvatarForContact(id, contact);
       const unread = chatStore.getUnreadCount(id);
       const unreadBadge =
         unread > 0
@@ -3633,7 +3655,7 @@ Phase G（Frame 36）：循环衔接
       const time = last?.timestamp ? formatTime(last.timestamp) : '';
       const name = formatSessionName(id, g);
       const nameHtml = renderSessionNameHtml(id, g);
-      const avatar = g.avatar || avatars.assistant;
+      const avatar = resolveAvatarForContact(id, g);
       const count = Array.isArray(g.members) ? g.members.length : 0;
       const unread = chatStore.getUnreadCount(id);
       const unreadBadge =
@@ -7748,7 +7770,7 @@ Phase G（Frame 36）：循环衔接
         const items = sessionIds.map(id => {
           const contact = contactsStore.getContact(id);
           const name = formatSessionName(id, contact);
-          const avatar = contact?.avatar || avatars.assistant;
+          const avatar = resolveAvatarForContact(id, contact);
           return { id, name: name || id, avatar };
         });
         const filtered = keyword
@@ -8661,7 +8683,7 @@ Phase G（Frame 36）：循环衔接
                     .map(mid => {
                       const c = contactsStore.getContact(mid);
                       const name = c?.name || mid;
-                      const avatar = c?.avatar || avatars.assistant;
+                      const avatar = resolveAvatarForContact(mid, c);
                       return `
                         <button class="group-dd-member" data-mid="${mid}" style="width:100%; display:flex; align-items:center; gap:10px; padding:10px 12px; border:none; background:transparent; cursor:pointer; text-align:left;">
                             <img src="${avatar}" alt="" style="width:32px; height:32px; border-radius:50%; object-fit:cover;">
@@ -10068,7 +10090,7 @@ Phase G（Frame 36）：循环衔接
         const authorId = resolveMomentAuthorId(author);
         let authorAvatar = '';
         if (authorId === 'user') authorAvatar = avatars.user;
-        else if (authorId) authorAvatar = contactsStore.getContact(authorId)?.avatar || '';
+        else if (authorId) authorAvatar = resolveAvatarForContact(authorId, contactsStore.getContact(authorId));
         const stats = normalizeInitialMomentStats({ views: m?.views, likes: m?.likes }, n);
         return { ...(m || {}), ...stats, author, authorId, authorAvatar, originSessionId: sessionId };
       });
@@ -11634,7 +11656,7 @@ Phase G（Frame 36）：循环衔接
                           sessionId: targetGroupId,
                           time: m?.time || formatNowTime(),
                           name: speaker || '成员',
-                          avatar: c?.avatar || avatars.assistant,
+                          avatar: resolveAvatarForContact(c?.id || speaker, c),
                           showName: true,
                           depth: 0,
                         })
@@ -11764,7 +11786,7 @@ Phase G（Frame 36）：循环衔接
                               sessionId: targetGroupId,
                               time: m?.time || formatNowTime(),
                               name: speaker || '成员',
-                              avatar: c?.avatar || avatars.assistant,
+                              avatar: resolveAvatarForContact(c?.id || speaker, c),
                               showName: true,
                               depth: 0,
                             })
@@ -11868,7 +11890,7 @@ Phase G（Frame 36）：循环衔接
                                 sessionId: targetGroupId,
                                 time: m?.time || formatNowTime(),
                                 name: speaker || '成员',
-                                avatar: c?.avatar || avatars.assistant,
+                                avatar: resolveAvatarForContact(c?.id || speaker, c),
                                 showName: true,
                                 depth: 0,
                               })
@@ -12118,7 +12140,7 @@ Phase G（Frame 36）：循环衔接
                         sessionId: targetGroupId,
                         time: m?.time || formatNowTime(),
                         name: speaker || '成员',
-                        avatar: c?.avatar || avatars.assistant,
+                        avatar: resolveAvatarForContact(c?.id || speaker, c),
                         showName: true,
                         depth: 0,
                       })
@@ -12226,7 +12248,7 @@ Phase G（Frame 36）：循环衔接
                             sessionId: targetGroupId,
                             time: m?.time || formatNowTime(),
                             name: speaker || '成员',
-                            avatar: c?.avatar || avatars.assistant,
+                            avatar: resolveAvatarForContact(c?.id || speaker, c),
                             showName: true,
                             depth: 0,
                           })
@@ -12317,7 +12339,7 @@ Phase G（Frame 36）：循环衔接
                               sessionId: targetGroupId,
                               time: m?.time || formatNowTime(),
                               name: speaker || '成员',
-                              avatar: c?.avatar || avatars.assistant,
+                              avatar: resolveAvatarForContact(c?.id || speaker, c),
                               showName: true,
                               depth: 0,
                             })
