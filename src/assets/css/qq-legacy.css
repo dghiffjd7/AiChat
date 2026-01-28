@@ -2546,6 +2546,7 @@ body[data-creative-wide='on'] .QQ_chat_charmsg[data-creative='1'] .QQ_chat_msgdi
   min-height: 0;
   flex-direction: column;
   background: #fff;
+  position: relative;
 }
 
 .session-panel.is-recommend-mode .session-recommend-section {
@@ -2617,6 +2618,68 @@ body[data-creative-wide='on'] .QQ_chat_charmsg[data-creative='1'] .QQ_chat_msgdi
   gap: 8px;
   background: #fff;
   -webkit-overflow-scrolling: touch;
+  transition: transform 160ms ease;
+  will-change: transform;
+}
+
+.session-recommend-list.is-pulling {
+  transition: none;
+}
+
+.session-recommend-pull {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 8px;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 120ms ease, transform 120ms ease;
+}
+
+.session-recommend-pull-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.06);
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 700;
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.08);
+}
+
+.session-recommend-pull-icon {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 1.5px solid currentColor;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  transition: transform 160ms ease;
+}
+
+.session-recommend-pull.is-armed .session-recommend-pull-icon {
+  transform: rotate(180deg);
+}
+
+.session-recommend-pull.is-loading .session-recommend-pull-icon {
+  animation: session-recommend-spin 0.9s linear infinite;
+}
+
+@keyframes session-recommend-spin {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .session-recommend-empty {

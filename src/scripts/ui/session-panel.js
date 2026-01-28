@@ -3,14 +3,14 @@
  * - list sessions, create new, switch
  */
 
-import { avatarDataUrlFromFile } from '../utils/image.js';
-import { logger } from '../utils/logger.js';
-import { safeInvoke } from '../utils/tauri.js';
-import { makeScopedKey, normalizeScopeId } from '../storage/store-scope.js';
-import { ContactsStore } from '../storage/contacts-store.js';
 import { CharacterLibraryStore } from '../storage/character-library-store.js';
-import { buildNameWithBadgesHtml, escapeHtml, getAutoBadgeFromName, getContactBadges } from '../utils/name-badges.js';
+import { ContactsStore } from '../storage/contacts-store.js';
+import { makeScopedKey, normalizeScopeId } from '../storage/store-scope.js';
+import { avatarDataUrlFromFile } from '../utils/image.js';
 import { FEATHER_DEFAULT, resolveLineAvatar } from '../utils/line-avatar.js';
+import { logger } from '../utils/logger.js';
+import { buildNameWithBadgesHtml, escapeHtml, getAutoBadgeFromName, getContactBadges } from '../utils/name-badges.js';
+import { safeInvoke } from '../utils/tauri.js';
 import { appConfirm } from './app-confirm.js';
 
 const CONTACTS_STORE_KEY = 'contacts_store_v1';
@@ -19,7 +19,7 @@ const WORLD_SESSION_MAP_KEY = 'world_session_map_v1';
 const LEGACY_CONTACTS_MIGRATION_KEY = `${CONTACTS_STORE_KEY}__scoped_migrated`;
 const SHARED_AVATAR_MAX = 200_000;
 
-const readLocalState = (key) => {
+const readLocalState = key => {
   try {
     const raw = localStorage.getItem(key);
     return raw ? JSON.parse(raw) : null;
@@ -28,7 +28,7 @@ const readLocalState = (key) => {
   }
 };
 
-const hasMeaningfulData = (data) => {
+const hasMeaningfulData = data => {
   if (!data) return false;
   if (typeof data !== 'object') return true;
   return Object.keys(data).length > 0;
@@ -52,7 +52,7 @@ const isScopedDataMatch = (data, scopeId) => {
   }
 };
 
-const trimAvatarData = (value) => {
+const trimAvatarData = value => {
   const raw = typeof value === 'string' ? value : '';
   if (!raw) return '';
   return raw.length > SHARED_AVATAR_MAX ? '' : raw;
@@ -114,6 +114,9 @@ export class SessionPanel {
     this.recommendSection = null;
     this.recommendTagsEl = null;
     this.recommendListEl = null;
+    this.recommendPullEl = null;
+    this.recommendPullIcon = null;
+    this.recommendPullText = null;
     this.recommendMode = false;
     this.recommendLoading = false;
     this.recommendSections = [];
@@ -122,9 +125,12 @@ export class SessionPanel {
     this.recommendQuery = '';
     this.lastRecommendRefreshAt = 0;
     this.recommendRefreshCooldownMs = 1200;
-    this.recommendPullThreshold = 88;
+    this.recommendPullThreshold = 188;
     this.recommendTouchStartY = 0;
     this.recommendBottomArmed = false;
+    this.recommendPullDistance = 0;
+    this.recommendPulling = false;
+    this.recommendPullLoading = false;
     this.recommendRequestToken = 0;
     this.recommendPointerDownAt = 0;
   }
@@ -187,7 +193,9 @@ export class SessionPanel {
     if (!contacts.length && this.contactsReadyResolved) {
       const sessions = this.store?.listSessions?.() || [];
       if (sessions.length) {
-        contacts = sessions.map(id => this.contactsStore?.getContact?.(id) || { id, name: id, isGroup: String(id).startsWith('group:') });
+        contacts = sessions.map(
+          id => this.contactsStore?.getContact?.(id) || { id, name: id, isGroup: String(id).startsWith('group:') },
+        );
       }
     }
     const currentId = this.store.getCurrent();
@@ -246,7 +254,7 @@ export class SessionPanel {
         const delBtn = document.createElement('button');
         delBtn.textContent = '删除';
         delBtn.className = 'session-row-delete';
-        delBtn.onclick = (event) => {
+        delBtn.onclick = event => {
           event.stopPropagation();
           this.remove(id);
         };
@@ -559,9 +567,10 @@ export class SessionPanel {
     );
     const personas = (this.personaStore.getAll?.() || []).filter(p => p?.id && p.id !== activeId);
     const results = [];
-    const cache = (window.__personaContactsCache && typeof window.__personaContactsCache === 'object')
-      ? window.__personaContactsCache
-      : {};
+    const cache =
+      window.__personaContactsCache && typeof window.__personaContactsCache === 'object'
+        ? window.__personaContactsCache
+        : {};
     for (const persona of personas) {
       const scope = normalizeScopeId(this.getPersonaScopeKey(persona.id) || persona.id);
       if (!scope) continue;
@@ -686,6 +695,8 @@ export class SessionPanel {
     }
     if (!this.recommendMode) {
       this.recommendQuery = '';
+      this.recommendBottomArmed = false;
+      this.resetRecommendPullUI();
     }
   }
 
@@ -723,9 +734,15 @@ export class SessionPanel {
     if (!this.recommendMode) this.setRecommendMode(true);
     if (this.recommendLoading) return;
     if (!this.canRefreshRecommendations({ force })) return;
+    const isPullRefresh = String(reason || '').includes('pull-bottom') || String(reason || '').includes('wheel-bottom');
     const token = ++this.recommendRequestToken;
     this.recommendLoading = true;
     this.lastRecommendRefreshAt = Date.now();
+    if (isPullRefresh) {
+      this.recommendPullLoading = true;
+      this.updateRecommendPullUI({ progress: 1, state: 'loading' });
+      this.applyRecommendPullTransform(this.recommendPullThreshold, { dragging: false });
+    }
     this.renderRecommendSections([], { kind: 'loading', hint: '载入推荐中...' });
     try {
       await this.characterStore?.setScope?.(this.contactsStore?.scopeId || '');
@@ -742,6 +759,9 @@ export class SessionPanel {
     } finally {
       if (token === this.recommendRequestToken) {
         this.recommendLoading = false;
+      }
+      if (isPullRefresh) {
+        this.resetRecommendPullUI();
       }
     }
   }
@@ -791,7 +811,7 @@ export class SessionPanel {
       el.appendChild(hint);
       return;
     }
-    list.forEach((tag) => {
+    list.forEach(tag => {
       const chip = document.createElement('span');
       chip.className = 'session-recommend-tag';
       chip.textContent = String(tag || '').trim();
@@ -866,6 +886,45 @@ export class SessionPanel {
     const { scrollTop, clientHeight, scrollHeight } = el;
     if (!scrollHeight) return false;
     return scrollTop + clientHeight >= scrollHeight - 2;
+  }
+
+  applyRecommendPullTransform(distance = 0, { dragging = false } = {}) {
+    if (!this.recommendListEl) return;
+    const offset = Math.max(0, Math.min(20, Math.round(distance * 0.2)));
+    if (offset > 0) {
+      this.recommendListEl.style.transform = `translateY(${-offset}px)`;
+    } else {
+      this.recommendListEl.style.transform = '';
+    }
+    this.recommendListEl.classList.toggle('is-pulling', dragging);
+  }
+
+  updateRecommendPullUI({ progress = 0, state = 'idle' } = {}) {
+    if (!this.recommendPullEl) return;
+    const clamped = Math.max(0, Math.min(1, progress));
+    const isLoading = state === 'loading';
+    const isArmed = !isLoading && clamped >= 1;
+    const show = isLoading || clamped > 0.02;
+    const opacity = isLoading ? 1 : Math.min(1, 0.25 + clamped * 0.85);
+    const translate = show ? 0 : 8;
+
+    this.recommendPullEl.style.opacity = show ? String(opacity) : '0';
+    this.recommendPullEl.style.transform = `translateY(${translate}px)`;
+    this.recommendPullEl.classList.toggle('is-armed', isArmed);
+    this.recommendPullEl.classList.toggle('is-loading', isLoading);
+
+    if (this.recommendPullText) {
+      if (isLoading) this.recommendPullText.textContent = '刷新中...';
+      else this.recommendPullText.textContent = isArmed ? '释放刷新' : '上拉刷新';
+    }
+  }
+
+  resetRecommendPullUI() {
+    this.recommendPullDistance = 0;
+    this.recommendPulling = false;
+    this.recommendPullLoading = false;
+    this.updateRecommendPullUI({ progress: 0, state: 'idle' });
+    this.applyRecommendPullTransform(0, { dragging: false });
   }
 
   async confirmAddCharacter(character) {
@@ -970,8 +1029,8 @@ export class SessionPanel {
       const targetRow = rows.find(row => String(row?.dataset?.characterId || '') === id) || null;
       if (!targetRow) {
         const hasItems = this.recommendCharacters.length > 0;
-        const kind = this.recommendQuery ? (hasItems ? 'search' : 'empty') : (hasItems ? 'recommend' : 'empty');
-        const hint = hasItems ? '' : (this.recommendQuery ? '未找到匹配角色' : '暂无推荐角色');
+        const kind = this.recommendQuery ? (hasItems ? 'search' : 'empty') : hasItems ? 'recommend' : 'empty';
+        const hint = hasItems ? '' : this.recommendQuery ? '未找到匹配角色' : '暂无推荐角色';
         this.renderRecommendSections(this.recommendCharacters, { kind, hint });
         return;
       }
@@ -993,7 +1052,7 @@ export class SessionPanel {
         removed = true;
         finalizeRemoval();
       };
-      const onTransitionEnd = (event) => {
+      const onTransitionEnd = event => {
         const prop = String(event?.propertyName || '');
         if (prop && prop !== 'max-height' && prop !== 'opacity') return;
         safeFinalize();
@@ -1040,6 +1099,12 @@ export class SessionPanel {
             </div>
             <div id="session-recommend-section" class="session-recommend-section">
               <div id="session-recommend-list" class="sticker-bind-list session-list-pane session-recommend-list"></div>
+              <div id="session-recommend-pull" class="session-recommend-pull" aria-hidden="true">
+                <div class="session-recommend-pull-indicator">
+                  <span class="session-recommend-pull-icon">↑</span>
+                  <span class="session-recommend-pull-text">上拉刷新</span>
+                </div>
+              </div>
             </div>
         `;
 
@@ -1067,6 +1132,9 @@ export class SessionPanel {
     this.nameInput = this.panel.querySelector('#session-name');
     this.recommendSection = this.panel.querySelector('#session-recommend-section');
     this.recommendListEl = this.panel.querySelector('#session-recommend-list');
+    this.recommendPullEl = this.panel.querySelector('#session-recommend-pull');
+    this.recommendPullIcon = this.panel.querySelector('#session-recommend-pull .session-recommend-pull-icon');
+    this.recommendPullText = this.panel.querySelector('#session-recommend-pull .session-recommend-pull-text');
     this.listElShared?.addEventListener('scroll', () => this.maybeLoadMoreShared());
     this.panel.querySelector('.session-panel-close')?.addEventListener('click', () => this.hide());
     this.panel.querySelector('#session-add').onclick = () => this.addSession();
@@ -1096,35 +1164,81 @@ export class SessionPanel {
 
     // 底部继续下拉刷新（推荐列表）
     const recList = this.recommendListEl;
-    const onMaybeRefresh = (reason) => {
+    const onMaybeRefresh = reason => {
       if (!this.recommendMode) return;
       if (!this.isRecommendAtBottom()) return;
       this.refreshRecommendations({ force: true, reason });
     };
-    recList?.addEventListener('wheel', (ev) => {
+    recList?.addEventListener('wheel', ev => {
       const delta = Number(ev?.deltaY || 0);
       if (delta > 32) onMaybeRefresh('wheel-bottom');
     });
-    recList?.addEventListener('touchstart', (ev) => {
-      this.recommendPointerDownAt = Date.now();
-      const touch = ev.touches?.[0];
-      this.recommendTouchStartY = touch?.clientY || 0;
-      this.recommendBottomArmed = this.isRecommendAtBottom();
-    }, { passive: true });
+    recList?.addEventListener(
+      'touchstart',
+      ev => {
+        this.recommendPointerDownAt = Date.now();
+        const touch = ev.touches?.[0];
+        this.recommendTouchStartY = touch?.clientY || 0;
+        this.recommendBottomArmed = this.isRecommendAtBottom();
+        this.recommendPullDistance = 0;
+        this.recommendPulling = false;
+        if (this.recommendBottomArmed) {
+          this.updateRecommendPullUI({ progress: 0, state: 'idle' });
+        }
+      },
+      { passive: true },
+    );
     recList?.addEventListener('mousedown', () => {
       this.recommendPointerDownAt = Date.now();
     });
-    recList?.addEventListener('touchmove', (ev) => {
-      if (!this.recommendBottomArmed) return;
-      if (!this.isRecommendAtBottom()) return;
-      const touch = ev.touches?.[0];
-      const y = touch?.clientY || 0;
-      const deltaY = y - this.recommendTouchStartY;
-      if (deltaY < -this.recommendPullThreshold) {
+    recList?.addEventListener(
+      'touchmove',
+      ev => {
+        if (!this.recommendBottomArmed) return;
+        if (!this.isRecommendAtBottom()) return;
+        const touch = ev.touches?.[0];
+        const y = touch?.clientY || 0;
+        const deltaY = y - this.recommendTouchStartY;
+        const pull = Math.max(0, -deltaY);
+        this.recommendPullDistance = pull;
+        this.recommendPulling = pull > 0;
+        if (pull <= 0) {
+          this.updateRecommendPullUI({ progress: 0, state: 'idle' });
+          this.applyRecommendPullTransform(0, { dragging: true });
+          return;
+        }
+        const progress = pull / this.recommendPullThreshold;
+        this.updateRecommendPullUI({ progress, state: 'idle' });
+        this.applyRecommendPullTransform(pull, { dragging: true });
+        if (pull >= this.recommendPullThreshold) {
+          if (this.recommendLoading) return;
+          this.recommendBottomArmed = false;
+          this.recommendPullLoading = true;
+          this.updateRecommendPullUI({ progress: 1, state: 'loading' });
+          this.applyRecommendPullTransform(this.recommendPullThreshold, { dragging: false });
+          onMaybeRefresh('pull-bottom');
+        }
+      },
+      { passive: true },
+    );
+    recList?.addEventListener(
+      'touchend',
+      () => {
+        if (this.recommendPullLoading) return;
         this.recommendBottomArmed = false;
-        onMaybeRefresh('pull-bottom');
-      }
-    }, { passive: true });
+        this.resetRecommendPullUI();
+      },
+      { passive: true },
+    );
+    recList?.addEventListener(
+      'touchcancel',
+      () => {
+        if (this.recommendPullLoading) return;
+        this.recommendBottomArmed = false;
+        this.resetRecommendPullUI();
+      },
+      { passive: true },
+    );
 
     this.setRecommendMode(false);
 
