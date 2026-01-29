@@ -46,11 +46,13 @@ import { MomentsPanel } from './moments-panel.js';
 import { PersonaPanel } from './persona-panel.js';
 import { PresetPanel } from './preset-panel.js';
 import { PluginPanel } from './plugin-panel.js';
+import { PluginUiManager } from './plugin-ui-manager.js';
 import { RegexPanel } from './regex-panel.js';
 import { RegexSessionPanel } from './regex-session-panel.js';
 import { SessionPanel } from './session-panel.js';
 import { StickerPicker } from './sticker-picker.js';
 import { VariablePanel } from './variable-panel.js';
+import { VariableRuleEngine } from '../variables/variable-rule-engine.js';
 import { WorldPanel } from './world-panel.js';
 import { WorldInfoIndicator } from './worldinfo-indicator.js';
 import { appConfirm } from './app-confirm.js';
@@ -139,9 +141,8 @@ const initApp = async () => {
   const pluginStore = new PluginStore();
   const pluginRuntime =
     typeof Worker === 'undefined' ? null : new PluginRuntime(pluginStore);
-  if (pluginRuntime) {
-    pluginRuntime.init().catch((err) => logger.warn('plugin runtime init failed', err));
-  } else {
+  const pluginUiManager = new PluginUiManager();
+  if (!pluginRuntime) {
     logger.warn('plugin runtime disabled (Worker unsupported)');
   }
   const presetPanel = new PresetPanel();
@@ -149,6 +150,110 @@ const initApp = async () => {
   const pluginPanel = new PluginPanel({ store: pluginStore, runtime: pluginRuntime });
   const chatStore = new ChatStore();
   window.appBridge.setChatStore(chatStore);
+  const variableRuleEngine = new VariableRuleEngine({ chatStore, appBridge: window.appBridge });
+  window.appBridge.variableRuleEngine = variableRuleEngine;
+  window.appBridge.runVariableRules = (sessionId, ruleId) => variableRuleEngine.runManual(sessionId, ruleId);
+  if (pluginRuntime) {
+    pluginRuntime.setContext({ uiManager: pluginUiManager });
+    window.appBridge.pluginUiManager = pluginUiManager;
+    const emitVariableChanged = (name, oldValue, newValue, sessionId, scope = 'chat') => {
+      const sid = String(sessionId || chatStore.getCurrent() || '').trim();
+      if (!sid && scope !== 'global') return;
+      pluginRuntime.dispatchEvent('variable.changed', {
+        name: String(name || ''),
+        oldValue,
+        newValue,
+        sessionId: sid || null,
+        scope,
+      }).catch(err => logger.warn('plugin variable.changed failed', err));
+    };
+    const originalSetVariable = chatStore.setVariable.bind(chatStore);
+    chatStore.setVariable = (key, value, id = chatStore.getCurrent()) => {
+      const sid = String(id || chatStore.getCurrent() || '').trim();
+      const name = String(key || '').trim();
+      const oldValue = chatStore.getVariable(name, sid);
+      const ok = originalSetVariable(name, value, sid);
+      if (ok && oldValue !== value) emitVariableChanged(name, oldValue, value, sid, 'chat');
+      return ok;
+    };
+    const originalDeleteVariable = chatStore.deleteVariable.bind(chatStore);
+    chatStore.deleteVariable = (key, id = chatStore.getCurrent()) => {
+      const sid = String(id || chatStore.getCurrent() || '').trim();
+      const name = String(key || '').trim();
+      const oldValue = chatStore.getVariable(name, sid);
+      const ok = originalDeleteVariable(name, sid);
+      if (ok) emitVariableChanged(name, oldValue, undefined, sid, 'chat');
+      return ok;
+    };
+    const originalClearVariables = chatStore.clearVariables.bind(chatStore);
+    chatStore.clearVariables = (id = chatStore.getCurrent()) => {
+      const sid = String(id || chatStore.getCurrent() || '').trim();
+      const vars = chatStore.listVariables(sid) || {};
+      const ok = originalClearVariables(sid);
+      if (ok) {
+        Object.keys(vars).forEach((name) => emitVariableChanged(name, vars[name], undefined, sid, 'chat'));
+      }
+      return ok;
+    };
+    if (typeof chatStore.setVariableSchema === 'function') {
+      const originalSetVariableSchema = chatStore.setVariableSchema.bind(chatStore);
+      chatStore.setVariableSchema = (key, schema, id = chatStore.getCurrent()) => {
+        const sid = String(id || chatStore.getCurrent() || '').trim();
+        const name = String(key || '').trim();
+        const oldValue = chatStore.getVariable(name, sid);
+        const ok = originalSetVariableSchema(name, schema, sid);
+        const nextValue = chatStore.getVariable(name, sid);
+        if (ok && oldValue !== nextValue) emitVariableChanged(name, oldValue, nextValue, sid, 'chat');
+        return ok;
+      };
+    }
+    if (typeof chatStore.setGlobalVariable === 'function') {
+      const originalSetGlobalVariable = chatStore.setGlobalVariable.bind(chatStore);
+      chatStore.setGlobalVariable = (key, value) => {
+        const name = String(key || '').trim();
+        const oldValue = chatStore.getGlobalVariable(name);
+        const ok = originalSetGlobalVariable(name, value);
+        if (ok && oldValue !== value) emitVariableChanged(name, oldValue, value, null, 'global');
+        return ok;
+      };
+    }
+    if (typeof chatStore.deleteGlobalVariable === 'function') {
+      const originalDeleteGlobalVariable = chatStore.deleteGlobalVariable.bind(chatStore);
+      chatStore.deleteGlobalVariable = (key) => {
+        const name = String(key || '').trim();
+        const oldValue = chatStore.getGlobalVariable(name);
+        const ok = originalDeleteGlobalVariable(name);
+        if (ok) emitVariableChanged(name, oldValue, undefined, null, 'global');
+        return ok;
+      };
+    }
+    if (typeof chatStore.clearGlobalVariables === 'function') {
+      const originalClearGlobalVariables = chatStore.clearGlobalVariables.bind(chatStore);
+      chatStore.clearGlobalVariables = () => {
+        const vars = chatStore.listGlobalVariables?.() || {};
+        const ok = originalClearGlobalVariables();
+        if (ok) {
+          Object.keys(vars).forEach((name) => emitVariableChanged(name, vars[name], undefined, null, 'global'));
+        }
+        return ok;
+      };
+    }
+    if (typeof chatStore.patchGlobalVariables === 'function') {
+      const originalPatchGlobalVariables = chatStore.patchGlobalVariables.bind(chatStore);
+      chatStore.patchGlobalVariables = (updates) => {
+        const before = chatStore.listGlobalVariables?.() || {};
+        const ok = originalPatchGlobalVariables(updates);
+        if (ok && updates && typeof updates === 'object') {
+          Object.entries(updates).forEach(([name, value]) => {
+            const key = String(name || '').trim();
+            if (!key) return;
+            emitVariableChanged(key, before[key], value, null, 'global');
+          });
+        }
+        return ok;
+      };
+    }
+  }
   const clearDraftMirror = sessionId => {
     const sid = String(sessionId || '').trim();
     if (!sid) return;
@@ -168,6 +273,12 @@ const initApp = async () => {
   try {
     window.appBridge.setContactsStore?.(contactsStore);
   } catch {}
+  if (pluginRuntime) {
+    pluginRuntime.setContext({ bridge: window.appBridge, chatStore, contactsStore, ui, uiManager: pluginUiManager });
+    window.appBridge.setPluginRuntime?.(pluginRuntime);
+    window.appBridge.setChatUI?.(ui);
+    pluginRuntime.init().catch((err) => logger.warn('plugin runtime init failed', err));
+  }
   const groupStore = new GroupStore();
   const momentsStore = new MomentsStore();
   const momentSummaryStore = new MomentSummaryStore();
@@ -3900,6 +4011,7 @@ Phase G（Frame 36）：循环衔接
   const chatScroll = document.getElementById('chat-scroll');
   const composerInput = document.getElementById('composer-input');
   const chatInputContainer = document.querySelector('.chat-input-container');
+  pluginUiManager.mount({ chatRoom, chatInputContainer });
   let chatInputGapTweak = 0;
   const syncChatInputOffset = () => {
     if (!chatRoom || !chatInputContainer || !chatScroll) return;
@@ -9770,6 +9882,14 @@ Phase G（Frame 36）：循环衔接
         chatStore.updateMessage(m.id, { status: 'sending' }, sessionId);
         ui.updateMessage(m.id, { ...m, status: 'sending' });
       });
+      if (pluginRuntime) {
+        pendingMessagesToConfirm.forEach(m => {
+          const updated = chatStore.findMessage(m.id, sessionId) || { ...m, status: 'sending' };
+          pluginRuntime.dispatchEvent('message.after_send', { message: updated, sessionId }).catch(err => {
+            logger.warn('plugin message.after_send failed', err);
+          });
+        });
+      }
       // 立即刷新列表/浮层，避免发送中仍显示旧的 pending 计数
       refreshChatAndContacts({ immediate: true });
       updatePendingFloat(sessionId);
@@ -9807,6 +9927,11 @@ Phase G（Frame 36）：循环衔接
       } catch (err) {
         logger.warn('plugin message.before_send failed', err);
       }
+    }
+    if (variableRuleEngine) {
+      variableRuleEngine.handleBeforeSend({ sessionId, content: text }).catch(err => {
+        logger.warn('variable rules before_send failed', err);
+      });
     }
     const normalizeName = s => String(s || '').trim();
     const normalizeKey = s => normalizeName(s).toLowerCase().replace(/\s+/g, '');
@@ -11146,11 +11271,15 @@ Phase G（Frame 36）：循环衔接
       return next;
     };
     const emitPluginAfterReceive = (message, targetSessionId) => {
-      if (!pluginRuntime) return;
       if (!message || message.role !== 'assistant') return;
-      const payload = { message, sessionId: targetSessionId };
-      pluginRuntime.dispatchEvent('message.after_receive', payload).catch(err => {
-        logger.warn('plugin message.after_receive failed', err);
+      if (pluginRuntime) {
+        const payload = { message, sessionId: targetSessionId };
+        pluginRuntime.dispatchEvent('message.after_receive', payload).catch(err => {
+          logger.warn('plugin message.after_receive failed', err);
+        });
+      }
+      variableRuleEngine?.handleAfterReceive?.({ sessionId: targetSessionId, message }).catch(err => {
+        logger.warn('variable rules after_receive failed', err);
       });
     };
     const sanitizeThinkingForProtocolParse = text => {
@@ -11464,6 +11593,13 @@ Phase G（Frame 36）：循环衔接
     // slash command support
     if (text.startsWith('/')) {
       const handled = runCommand(text, { chatStore, ui, sessionPanel, worldPanel, appBridge: window.appBridge });
+      if (pluginRuntime) {
+        pluginRuntime.dispatchEvent('command.parsed', {
+          text,
+          handled: Boolean(handled),
+          sessionId,
+        }).catch(err => logger.warn('plugin command.parsed failed', err));
+      }
       if (handled) {
         ui.clearInput();
         return true;
@@ -11534,7 +11670,12 @@ Phase G（Frame 36）：循环衔接
           };
         }
         ui.addMessage(userMsg);
-        chatStore.appendMessage(userMsg, sessionId);
+        const savedUser = chatStore.appendMessage(userMsg, sessionId);
+        if (pluginRuntime) {
+          pluginRuntime.dispatchEvent('message.after_send', { message: savedUser || userMsg, sessionId }).catch(err => {
+            logger.warn('plugin message.after_send failed', err);
+          });
+        }
         appendedUserOutput = true;
       }
       const primaryId = userMsg?.id || existingUserMessageId || attachmentPrimaryId || null;
@@ -12573,6 +12714,64 @@ Phase G（Frame 36）：循环衔接
       return sendSucceeded;
     }
   };
+
+  const sendMessageFromPlugin = async (content, options = {}) => {
+    const text = String(content ?? '');
+    const opts = options && typeof options === 'object' ? options : {};
+    const role = String(opts.role || 'user').toLowerCase();
+    const silent = Boolean(opts.silent);
+    const skipInputRegex = Boolean(opts.skipInputRegex);
+    const sessionId = chatStore.getCurrent();
+    if (!sessionId) return null;
+    const contact = contactsStore.getContact(sessionId);
+    const characterName =
+      contact?.name || (sessionId.startsWith('group:') ? sessionId.replace(/^group:/, '') : sessionId) || 'assistant';
+    const activePersona = getEffectivePersona(sessionId);
+    const userName = activePersona.name || '我';
+    const now = formatNowTime();
+
+    if (role !== 'user' || silent) {
+      const isSystem = role === 'system';
+      const isAssistant = role === 'assistant';
+      const isUser = role === 'user';
+      let display = text;
+      let stored = text;
+      if (!isSystem && !isAssistant) {
+        stored = skipInputRegex
+          ? text
+          : window.appBridge.applyInputStoredRegex(text, { isEdit: false });
+        display = skipInputRegex
+          ? text
+          : window.appBridge.applyInputDisplayRegex(stored, { isEdit: false, depth: 0 });
+      }
+      const msg = {
+        role,
+        type: isSystem ? 'meta' : 'text',
+        content: display,
+        raw: stored,
+        name: isSystem ? '系统' : (isAssistant ? '助手' : userName),
+        avatar: isAssistant ? getAssistantAvatarForSession(sessionId) : avatars.user,
+        time: now,
+      };
+      if (isSessionActive(sessionId)) ui.addMessage(msg);
+      const saved = chatStore.appendMessage(msg, sessionId);
+      refreshChatAndContacts();
+      if (isUser && pluginRuntime) {
+        pluginRuntime.dispatchEvent('message.after_send', { message: saved || msg, sessionId }).catch(err => {
+          logger.warn('plugin message.after_send failed', err);
+        });
+      }
+      if (isAssistant) emitPluginAfterReceive(saved, sessionId);
+      return saved;
+    }
+
+    if (!text.trim()) return null;
+    await handleSend(null, { overrideText: text, ignorePending: true, skipInputRegex });
+    const list = chatStore.getMessages(sessionId) || [];
+    const lastUser = [...list].reverse().find(m => m && m.role === 'user');
+    return lastUser || null;
+  };
+  window.appBridge.sendMessageFromPlugin = sendMessageFromPlugin;
 
   // 使用新的分离模式：Enter 缓存，发送按钮真正发送
   ui.onSendWithMode({

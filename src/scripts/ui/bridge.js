@@ -193,6 +193,8 @@ class AppBridge {
     this.momentSummaryStore = null; // Injected
     this.memoryTableStore = null; // Injected
     this.memoryTemplateStore = null; // Injected
+    this.chatUI = null; // Injected
+    this.pluginRuntime = null; // Injected
     this.contextBuilder = null; // Injected (from UI)
     this.lastMemoryPlan = null;
     this.lastMemoryUpdateBySession = {};
@@ -205,6 +207,14 @@ class AppBridge {
   setChatStore(store) {
     this.chatStore = store;
     this.macroEngine = new MacroEngine(store);
+  }
+
+  setChatUI(ui) {
+    this.chatUI = ui;
+  }
+
+  setPluginRuntime(runtime) {
+    this.pluginRuntime = runtime || null;
   }
 
   setContactsStore(store) {
@@ -1160,10 +1170,30 @@ class AppBridge {
    * 切换当前会话（影响世界书选中）
    */
   setActiveSession(sessionId = 'default') {
+    const prevSessionId = this.activeSessionId;
     this.activeSessionId = sessionId;
     this.currentWorldIds = this.normalizeWorldIds(this.worldSessionMap[sessionId]);
     this.currentWorldId = this.currentWorldIds[0] || null;
     window.dispatchEvent(new CustomEvent('worldinfo-changed', { detail: { worldId: this.currentWorldId, worldIds: this.currentWorldIds } }));
+    try {
+      const runtime = this.pluginRuntime;
+      if (runtime) {
+        const buildSessionPayload = (sid) => {
+          const id = String(sid || '').trim();
+          if (!id) return null;
+          const contact = this.contactsStore?.getContact?.(id) || null;
+          const name = contact?.name || id;
+          const isGroup = Boolean(contact?.isGroup) || id.startsWith('group:');
+          return { id, name, isGroup };
+        };
+        runtime.dispatchEvent('session.changed', {
+          oldSession: buildSessionPayload(prevSessionId),
+          newSession: buildSessionPayload(sessionId),
+        }).catch(err => logger.warn('plugin session.changed failed', err));
+      }
+    } catch (err) {
+      logger.debug('plugin session.changed dispatch skipped', err);
+    }
   }
 
   getRegexContext() {
@@ -1358,7 +1388,7 @@ class AppBridge {
             isEdit: false,
             depth: 0,
           });
-      const promptInput = skipInputRegex
+      let promptInput = skipInputRegex
         ? userMessage
         : this.regex.apply(userMessage, ctx, regex_placement.USER_INPUT, {
             // Product requirement: as long as enabled, input regex should apply to outgoing prompt.
@@ -1368,7 +1398,7 @@ class AppBridge {
             isEdit: false,
             depth: 0,
           });
-      const nextContext = {
+      let nextContext = {
         ...(context || {}),
         meta: {
           ...(context?.meta || {}),
@@ -1392,7 +1422,35 @@ class AppBridge {
       } catch (err) {
         logger.warn('memory prompt plan failed', err);
       }
-      const messages = this.buildMessages(promptInput, nextContext);
+      const pluginRuntime = this.pluginRuntime;
+      if (pluginRuntime) {
+        try {
+          const updated = await pluginRuntime.dispatchEvent('prompt.before_build', {
+            input: promptInput,
+            context: nextContext,
+          });
+          if (updated && typeof updated === 'object') {
+            if (typeof updated.input === 'string') promptInput = updated.input;
+            if (updated.context && typeof updated.context === 'object') nextContext = updated.context;
+          }
+        } catch (err) {
+          logger.warn('plugin prompt.before_build failed', err);
+        }
+      }
+      let messages = this.buildMessages(promptInput, nextContext);
+      if (pluginRuntime) {
+        try {
+          const updated = await pluginRuntime.dispatchEvent('prompt.after_build', {
+            prompt: messages,
+            context: nextContext,
+          });
+          if (updated && typeof updated === 'object' && Array.isArray(updated.prompt)) {
+            messages = updated.prompt;
+          }
+        } catch (err) {
+          logger.warn('plugin prompt.after_build failed', err);
+        }
+      }
       const config = this.config.get();
       const genOptions = this.getGenerationOptions();
       const requestOptions = { ...(genOptions || {}), signal: this.abortController.signal };

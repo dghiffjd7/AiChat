@@ -57,6 +57,107 @@ const estimateMessageChars = msg => {
   return total;
 };
 
+const normalizeVariableSchema = (raw) => {
+  const input = raw && typeof raw === 'object' ? raw : {};
+  const typeRaw = String(input.type || 'string').trim().toLowerCase();
+  const type = ['number', 'string', 'boolean', 'enum', 'array', 'object'].includes(typeRaw) ? typeRaw : 'string';
+  const schema = {
+    id: String(input.id || input.name || '').trim(),
+    name: String(input.name || input.id || '').trim(),
+    type,
+    default: input.default,
+    range: null,
+    options: null,
+    ui: null,
+  };
+  if (type === 'number' && input.range && typeof input.range === 'object') {
+    const min = Number(input.range.min);
+    const max = Number(input.range.max);
+    schema.range = {
+      min: Number.isFinite(min) ? min : null,
+      max: Number.isFinite(max) ? max : null,
+    };
+  }
+  if (type === 'enum') {
+    const options = Array.isArray(input.options) ? input.options.map(v => String(v)) : [];
+    schema.options = options.filter(v => v.trim().length > 0);
+  }
+  if (input.ui && typeof input.ui === 'object') {
+    const display = String(input.ui.display || '').trim().toLowerCase();
+    const allowed = new Set(['card', 'chart', 'badge', 'progress', 'hidden']);
+    schema.ui = {
+      display: allowed.has(display) ? display : 'card',
+      label: input.ui.label ? String(input.ui.label) : '',
+      color: input.ui.color ? String(input.ui.color) : '',
+      icon: input.ui.icon ? String(input.ui.icon) : '',
+      format: input.ui.format ? String(input.ui.format) : '',
+    };
+  }
+  return schema;
+};
+
+const coerceVariableValue = (value, schema) => {
+  if (!schema || typeof schema !== 'object') return value;
+  const type = schema.type || 'string';
+  const fallback = schema.default;
+  const applyDefault = (val) => (val === undefined || val === null ? fallback : val);
+
+  if (type === 'number') {
+    const raw = typeof value === 'string' ? value.trim() : value;
+    let num = typeof raw === 'number' ? raw : Number(raw);
+    if (!Number.isFinite(num)) {
+      num = Number.isFinite(Number(fallback)) ? Number(fallback) : 0;
+    }
+    if (schema.range) {
+      const min = schema.range.min;
+      const max = schema.range.max;
+      if (Number.isFinite(min)) num = Math.max(min, num);
+      if (Number.isFinite(max)) num = Math.min(max, num);
+    }
+    return num;
+  }
+  if (type === 'boolean') {
+    if (typeof value === 'boolean') return value;
+    if (typeof value === 'number') return value !== 0;
+    const s = String(value ?? '').trim().toLowerCase();
+    if (s === 'true' || s === '1' || s === 'yes' || s === 'on') return true;
+    if (s === 'false' || s === '0' || s === 'no' || s === 'off') return false;
+    return Boolean(applyDefault(false));
+  }
+  if (type === 'enum') {
+    const options = Array.isArray(schema.options) ? schema.options : [];
+    const v = String(value ?? '');
+    if (options.includes(v)) return v;
+    const def = String(fallback ?? '');
+    if (options.includes(def)) return def;
+    return options.length ? options[0] : v;
+  }
+  if (type === 'array') {
+    if (Array.isArray(value)) return value;
+    if (typeof value === 'string') {
+      try {
+        const parsed = JSON.parse(value);
+        if (Array.isArray(parsed)) return parsed;
+      } catch {}
+      const list = value.split(',').map(v => v.trim()).filter(Boolean);
+      if (list.length) return list;
+    }
+    return Array.isArray(fallback) ? fallback : [];
+  }
+  if (type === 'object') {
+    if (value && typeof value === 'object' && !Array.isArray(value)) return value;
+    if (typeof value === 'string') {
+      try {
+        const parsed = JSON.parse(value);
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed;
+      } catch {}
+    }
+    return fallback && typeof fallback === 'object' && !Array.isArray(fallback) ? fallback : {};
+  }
+  const str = String(value ?? applyDefault('') ?? '');
+  return str;
+};
+
 const snapshotMessage = msg => {
   if (!msg || typeof msg !== 'object') return null;
   const content = typeof msg.content === 'string' ? msg.content.slice(0, 4000) : '';
@@ -295,7 +396,9 @@ const sanitizeStateForPersist = (state, options = {}) => {
   for (const [sid, session] of Object.entries(sessions)) {
     nextSessions[sid] = sanitizeSessionForPersist(session, options);
   }
-  return { ...src, sessions: nextSessions };
+  const globalVariables =
+    src.globalVariables && typeof src.globalVariables === 'object' ? { ...src.globalVariables } : {};
+  return { ...src, globalVariables, sessions: nextSessions };
 };
 
 const resolveCurrentId = (state) => {
@@ -829,6 +932,9 @@ export class ChatStore {
     this.storeKey = makeScopedKey(BASE_STORE_KEY, this.scopeId);
     this._scopeToken = 0;
     this.state = sanitizeStateForPersist(this._load());
+    if (!this.state.globalVariables || typeof this.state.globalVariables !== 'object') {
+      this.state.globalVariables = {};
+    }
     this.currentId = resolveCurrentId(this.state);
     this.state.currentId = this.currentId;
     this.ready = this._hydrateFromDisk();
@@ -875,6 +981,8 @@ export class ChatStore {
     if (typeof s.draft !== 'string') s.draft = '';
     if (!Array.isArray(s.pending)) s.pending = [];
     if (!s.variables) s.variables = {};
+    if (!s.variableSchemas || typeof s.variableSchemas !== 'object') s.variableSchemas = {};
+    if (!Array.isArray(s.variableRules)) s.variableRules = [];
     if (!s.settings) s.settings = {};
     if (!Array.isArray(s.detachedSummaries)) s.detachedSummaries = [];
     if (typeof s.compactedSummary !== 'object') s.compactedSummary = null;
@@ -1663,6 +1771,61 @@ export class ChatStore {
     return true;
   }
 
+  getGlobalVariable(key) {
+    const name = String(key || '').trim();
+    if (!name) return undefined;
+    const globals = this.state.globalVariables || {};
+    return globals[name];
+  }
+
+  setGlobalVariable(key, value) {
+    const name = String(key || '').trim();
+    if (!name) return false;
+    if (!this.state.globalVariables || typeof this.state.globalVariables !== 'object') {
+      this.state.globalVariables = {};
+    }
+    this.state.globalVariables[name] = value;
+    this._persist();
+    return true;
+  }
+
+  listGlobalVariables() {
+    const globals = this.state.globalVariables || {};
+    return { ...globals };
+  }
+
+  patchGlobalVariables(updates) {
+    if (!updates || typeof updates !== 'object') return false;
+    if (!this.state.globalVariables || typeof this.state.globalVariables !== 'object') {
+      this.state.globalVariables = {};
+    }
+    Object.entries(updates).forEach(([name, value]) => {
+      const key = String(name || '').trim();
+      if (!key) return;
+      this.state.globalVariables[key] = value;
+    });
+    this._persist();
+    return true;
+  }
+
+  deleteGlobalVariable(key) {
+    const name = String(key || '').trim();
+    if (!name) return false;
+    if (!this.state.globalVariables || typeof this.state.globalVariables !== 'object') {
+      this.state.globalVariables = {};
+    }
+    if (!Object.prototype.hasOwnProperty.call(this.state.globalVariables, name)) return false;
+    delete this.state.globalVariables[name];
+    this._persist();
+    return true;
+  }
+
+  clearGlobalVariables() {
+    this.state.globalVariables = {};
+    this._persist();
+    return true;
+  }
+
   getVariable(key, id = this.currentId) {
     const sid = String(id || '').trim();
     if (!sid) return undefined;
@@ -1674,7 +1837,10 @@ export class ChatStore {
     const sid = String(id || '').trim();
     if (!sid) return false;
     this._ensureSession(sid);
-    this.state.sessions[sid].variables[key] = value;
+    const schemas = this.state.sessions[sid].variableSchemas || {};
+    const schema = schemas[String(key || '')];
+    const nextValue = schema ? coerceVariableValue(value, schema) : value;
+    this.state.sessions[sid].variables[key] = nextValue;
     this._persist();
     return true;
   }
@@ -1685,6 +1851,86 @@ export class ChatStore {
     this._ensureSession(sid);
     const vars = this.state.sessions[sid].variables || {};
     return { ...vars };
+  }
+
+  getVariableSchema(key, id = this.currentId) {
+    const sid = String(id || '').trim();
+    if (!sid) return null;
+    this._ensureSession(sid);
+    const k = String(key || '').trim();
+    if (!k) return null;
+    const schema = this.state.sessions[sid].variableSchemas?.[k];
+    return schema ? normalizeVariableSchema(schema) : null;
+  }
+
+  listVariableSchemas(id = this.currentId) {
+    const sid = String(id || '').trim();
+    if (!sid) return {};
+    this._ensureSession(sid);
+    const schemas = this.state.sessions[sid].variableSchemas || {};
+    const out = {};
+    Object.entries(schemas).forEach(([k, v]) => {
+      out[String(k)] = normalizeVariableSchema(v);
+    });
+    return out;
+  }
+
+  setVariableSchema(key, schema, id = this.currentId) {
+    const sid = String(id || '').trim();
+    const name = String(key || '').trim();
+    if (!sid || !name) return false;
+    this._ensureSession(sid);
+    const normalized = normalizeVariableSchema({ ...(schema || {}), id: name, name });
+    this.state.sessions[sid].variableSchemas[name] = normalized;
+    const existing = this.state.sessions[sid].variables?.[name];
+    if (existing === undefined || existing === null) {
+      const nextValue = normalized.default !== undefined ? normalized.default : '';
+      this.state.sessions[sid].variables[name] = coerceVariableValue(nextValue, normalized);
+    } else {
+      this.state.sessions[sid].variables[name] = coerceVariableValue(existing, normalized);
+    }
+    this._persist();
+    return true;
+  }
+
+  deleteVariableSchema(key, id = this.currentId) {
+    const sid = String(id || '').trim();
+    const name = String(key || '').trim();
+    if (!sid || !name) return false;
+    this._ensureSession(sid);
+    const schemas = this.state.sessions[sid].variableSchemas || {};
+    if (!Object.prototype.hasOwnProperty.call(schemas, name)) return false;
+    delete schemas[name];
+    this._persist();
+    return true;
+  }
+
+  clearVariableSchemas(id = this.currentId) {
+    const sid = String(id || '').trim();
+    if (!sid) return false;
+    this._ensureSession(sid);
+    this.state.sessions[sid].variableSchemas = {};
+    this._persist();
+    return true;
+  }
+
+  listVariableRules(id = this.currentId) {
+    const sid = String(id || '').trim();
+    if (!sid) return [];
+    this._ensureSession(sid);
+    return Array.isArray(this.state.sessions[sid].variableRules)
+      ? [...this.state.sessions[sid].variableRules]
+      : [];
+  }
+
+  setVariableRules(rules, id = this.currentId) {
+    const sid = String(id || '').trim();
+    if (!sid) return false;
+    this._ensureSession(sid);
+    const list = Array.isArray(rules) ? rules.filter(Boolean) : [];
+    this.state.sessions[sid].variableRules = list;
+    this._persist();
+    return true;
   }
 
   deleteVariable(key, id = this.currentId) {

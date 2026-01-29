@@ -121,6 +121,7 @@ export class PluginStore {
         manifest,
         code: String(item.code || ''),
         enabled: Boolean(item.enabled),
+        powerApproved: Boolean(item.powerApproved),
         installedAt: Number(item.installedAt || 0) || 0,
         updatedAt: Number(item.updatedAt || 0) || 0,
         source: item.source || null,
@@ -145,6 +146,7 @@ export class PluginStore {
         manifest: record.manifest,
         code: record.code,
         enabled: Boolean(record.enabled),
+        powerApproved: Boolean(record.powerApproved),
         installedAt: record.installedAt || Date.now(),
         updatedAt: Date.now(),
         source: record.source || null,
@@ -164,6 +166,7 @@ export class PluginStore {
       id: record.id,
       manifest: record.manifest,
       enabled: Boolean(record.enabled),
+      powerApproved: Boolean(record.powerApproved),
       installedAt: record.installedAt,
       updatedAt: record.updatedAt,
       source: record.source || null,
@@ -193,6 +196,7 @@ export class PluginStore {
       manifest: normalized,
       code: String(code || ''),
       enabled: existing ? Boolean(existing.enabled) : false,
+      powerApproved: existing ? Boolean(existing.powerApproved) : false,
       installedAt: existing?.installedAt || now,
       updatedAt: now,
       source: source || null,
@@ -218,6 +222,22 @@ export class PluginStore {
     record.updatedAt = Date.now();
     this.records.set(key, record);
     await this.save();
+  }
+
+  async setPowerApproved(id, approved) {
+    const key = String(id || '').trim();
+    const record = this.records.get(key);
+    if (!record) return;
+    record.powerApproved = Boolean(approved);
+    record.updatedAt = Date.now();
+    this.records.set(key, record);
+    await this.save();
+  }
+
+  isPowerApproved(id) {
+    const key = String(id || '').trim();
+    const record = this.records.get(key);
+    return Boolean(record?.powerApproved);
   }
 
   async storageGet(pluginId, key) {

@@ -6,8 +6,17 @@ const EVENT_TIMEOUT_MS = 4000;
 const buildWorkerScript = () => `
 const listeners = new Map();
 const pendingRpcs = new Map();
+const subscriptions = new Set();
 let rpcSeq = 1;
 let pluginMeta = {};
+const variableWatchers = new Map();
+const legacyState = {
+  chat: [],
+  variables: {},
+  globalVariables: {},
+  extensionSettings: {},
+};
+const legacyEventCache = new Map();
 
 const makeError = (err) => ({
   message: err && err.message ? String(err.message) : String(err || 'unknown error'),
@@ -18,65 +27,438 @@ const send = (msg) => {
   postMessage(msg);
 };
 
+const makeLogSafe = (value) => {
+  if (value === undefined) return '[undefined]';
+  if (value === null) return null;
+  const t = typeof value;
+  if (t === 'string' || t === 'number' || t === 'boolean') return value;
+  if (t === 'function') return '[Function]';
+  if (t === 'symbol') return String(value);
+  if (t !== 'object') return String(value);
+  try {
+    return JSON.parse(JSON.stringify(value));
+  } catch {
+    try {
+      return String(value);
+    } catch {
+      return '[Unserializable]';
+    }
+  }
+};
+
+const sendLog = (level, args) => {
+  const list = Array.isArray(args) ? args.map(makeLogSafe) : [];
+  send({ type: 'log', level, args: list });
+};
+
 const callRpc = (method, params) => new Promise((resolve, reject) => {
   const id = rpcSeq++;
   pendingRpcs.set(id, { resolve, reject });
   send({ type: 'rpc', id, method, params });
 });
 
+const toPath = (path) => {
+  if (Array.isArray(path)) return path.map(seg => String(seg)).filter(Boolean);
+  const raw = String(path || '');
+  if (!raw) return [];
+  return raw.split('.').map(seg => seg.trim()).filter(Boolean);
+};
+
+const lodashGet = (obj, path, defaultValue) => {
+  const parts = toPath(path);
+  let cur = obj;
+  for (const key of parts) {
+    if (cur && typeof cur === 'object' && key in cur) {
+      cur = cur[key];
+    } else {
+      return defaultValue;
+    }
+  }
+  return cur === undefined ? defaultValue : cur;
+};
+
+const lodashSet = (obj, path, value) => {
+  if (!obj || typeof obj !== 'object') return obj;
+  const parts = toPath(path);
+  if (!parts.length) return obj;
+  let cur = obj;
+  for (let i = 0; i < parts.length - 1; i++) {
+    const key = parts[i];
+    if (!cur[key] || typeof cur[key] !== 'object') cur[key] = {};
+    cur = cur[key];
+  }
+  cur[parts[parts.length - 1]] = value;
+  return obj;
+};
+
+const lodashMerge = (target, source) => {
+  if (!source || typeof source !== 'object') return target;
+  if (!target || typeof target !== 'object') return source;
+  Object.entries(source).forEach(([key, value]) => {
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      if (!target[key] || typeof target[key] !== 'object') target[key] = {};
+      lodashMerge(target[key], value);
+    } else {
+      target[key] = value;
+    }
+  });
+  return target;
+};
+
+const cloneValue = (value) => {
+  try {
+    return JSON.parse(JSON.stringify(value));
+  } catch {
+    return value;
+  }
+};
+
+const _ = {
+  VERSION: '4.17.21',
+  get: lodashGet,
+  set: lodashSet,
+  merge: lodashMerge,
+  cloneDeep: cloneValue,
+};
+self._ = _;
+
+const mapMessagePayload = (payload) => {
+  const message = payload && payload.message ? payload.message : payload;
+  const msgObj = message && typeof message === 'object' ? { ...message } : null;
+  return {
+    message: msgObj,
+    messageId: msgObj?.id || '',
+    role: msgObj?.role || '',
+    content: msgObj?.content || '',
+    sessionId: payload?.sessionId || null,
+  };
+};
+
+const mapVariablePayload = (payload) => {
+  const name = String(payload?.name || '');
+  const scope = payload?.scope || 'chat';
+  return {
+    name,
+    variableName: name,
+    value: payload?.newValue,
+    newValue: payload?.newValue,
+    oldValue: payload?.oldValue,
+    scope,
+    sessionId: payload?.sessionId || null,
+  };
+};
+
+const mapCommandPayload = (payload) => ({
+  command: String(payload?.text || ''),
+  text: String(payload?.text || ''),
+  handled: Boolean(payload?.handled),
+  sessionId: payload?.sessionId || null,
+});
+
+const legacyAliases = new Map([
+  ['message_received', { source: 'message.after_receive', transform: mapMessagePayload }],
+  ['message_sent', { source: 'message.after_send', transform: mapMessagePayload }],
+  ['mag_before_message_update', { source: 'message.before_render', transform: mapMessagePayload }],
+  ['mag_after_message_update', { source: 'message.after_render', transform: mapMessagePayload }],
+  ['mag_variable_updated', { source: 'variable.changed', transform: mapVariablePayload }],
+  ['mag_command_parsed', { source: 'command.parsed', transform: mapCommandPayload }],
+  ['mag_variable_initialized', { source: null }],
+  ['mag_variable_update_started', { source: null }],
+  ['mag_variable_update_ended', { source: null }],
+]);
+
+const legacyForward = new Map();
+legacyAliases.forEach((value, alias) => {
+  if (!value?.source) return;
+  if (!legacyForward.has(value.source)) legacyForward.set(value.source, []);
+  legacyForward.get(value.source).push({ name: alias, transform: value.transform });
+});
+
+const ensureSubscription = (eventName) => {
+  const name = String(eventName || '').trim();
+  if (!name || subscriptions.has(name)) return;
+  subscriptions.add(name);
+  send({ type: 'event_subscribe', event: name });
+};
+
+const addListener = (eventName, callback) => {
+  const name = String(eventName || '').trim();
+  if (!name || typeof callback !== 'function') return;
+  if (!listeners.has(name)) listeners.set(name, new Set());
+  listeners.get(name).add(callback);
+  const alias = legacyAliases.get(name);
+  if (alias && alias.source) ensureSubscription(alias.source);
+  if (!alias) ensureSubscription(name);
+};
+
+const removeListener = (eventName, callback) => {
+  const name = String(eventName || '').trim();
+  if (!name || !listeners.has(name)) return;
+  if (callback) listeners.get(name).delete(callback);
+  if (!callback || listeners.get(name).size === 0) listeners.delete(name);
+};
+
+const dispatchEvent = async (name, payload, options = {}) => {
+  const list = listeners.get(name);
+  if (!list || list.size === 0) return payload;
+  const allowMutate = options.allowMutate !== false;
+  let data = payload;
+  for (const cb of Array.from(list)) {
+    try {
+      const res = await cb(data);
+      if (allowMutate && res && typeof res === 'object') data = res;
+    } catch (err) {
+      send({ type: 'event_error', event: name, error: makeError(err) });
+    }
+  }
+  return data;
+};
+
+const upsertChatMessage = (message) => {
+  if (!message || typeof message !== 'object') return;
+  const id = String(message.id || '');
+  if (!id) return;
+  const idx = legacyState.chat.findIndex(m => String(m?.id || '') === id);
+  if (idx >= 0) legacyState.chat[idx] = { ...message };
+  else legacyState.chat.push({ ...message });
+};
+
+const syncLegacyVariableChange = (payload) => {
+  if (!payload || typeof payload !== 'object') return;
+  const name = String(payload.name || '').trim();
+  if (!name) return;
+  const scope = payload.scope === 'global' ? 'global' : 'chat';
+  const store = scope === 'global' ? legacyState.globalVariables : legacyState.variables;
+  if (payload.newValue === undefined) delete store[name];
+  else store[name] = payload.newValue;
+};
+
+const cacheLegacyInit = (data) => {
+  const list = legacyEventCache.get('mag_variable_initialized') || [];
+  const scope = data?.scope;
+  const next = Array.isArray(list) ? list.filter(item => item?.scope !== scope) : [];
+  next.push(data);
+  legacyEventCache.set('mag_variable_initialized', next);
+};
+
+const emitLegacyEvent = async (name, data, cacheInit = false) => {
+  if (cacheInit && name === 'mag_variable_initialized') cacheLegacyInit(data);
+  await dispatchEvent(name, data, { allowMutate: false });
+};
+
+const refreshLegacySession = async () => {
+  try {
+    const vars = await callRpc('variables.getAll', {});
+    if (vars && typeof vars === 'object') legacyState.variables = { ...vars };
+  } catch {}
+  try {
+    const messages = await callRpc('chat.getMessages', { limit: 200, offset: 0 });
+    if (Array.isArray(messages)) legacyState.chat = messages.slice();
+  } catch {}
+  emitLegacyEvent('mag_variable_initialized', { scope: 'chat', variables: cloneValue(legacyState.variables) }, true);
+};
+
+const dispatchIncomingEvent = async (name, payload) => {
+  const evt = String(name || '').trim();
+  const data = payload || {};
+  if (evt === 'variable.changed') syncLegacyVariableChange(data);
+  if (evt === 'message.after_send' || evt === 'message.after_receive') {
+    if (data?.message) upsertChatMessage(data.message);
+  }
+  if (evt === 'session.changed') {
+    refreshLegacySession();
+  }
+  const result = await dispatchEvent(evt, data, { allowMutate: true });
+  const aliases = legacyForward.get(evt) || [];
+  for (const alias of aliases) {
+    const mapped = alias.transform ? alias.transform(data) : data;
+    await dispatchEvent(alias.name, mapped, { allowMutate: false });
+  }
+  return result;
+};
+
+const getVariables = (scope = 'chat') => {
+  const store = String(scope || '').toLowerCase() === 'global' ? legacyState.globalVariables : legacyState.variables;
+  return cloneValue(store);
+};
+
+const setVariables = (updates, scope = 'chat') => {
+  const data = updates && typeof updates === 'object' ? updates : {};
+  const scoped = String(scope || '').toLowerCase() === 'global' ? 'global' : 'chat';
+  emitLegacyEvent('mag_variable_update_started', { scope: scoped, updates: cloneValue(data) });
+  Object.entries(data).forEach(([name, value]) => {
+    const key = String(name || '').trim();
+    if (!key) return;
+    if (scoped === 'global') legacyState.globalVariables[key] = value;
+    else legacyState.variables[key] = value;
+  });
+  if (scoped === 'global') {
+    callRpc('legacy.setGlobalVariables', { updates: data }).catch(() => {});
+  } else {
+    callRpc('variables.patch', { updates: data }).catch(() => {});
+  }
+  emitLegacyEvent('mag_variable_update_ended', { scope: scoped, variables: getVariables(scoped) });
+  return getVariables(scoped);
+};
+
+const updateVariablesWith = (updates, scope = 'chat') => {
+  if (typeof updates === 'function') {
+    const current = getVariables(scope);
+    const next = updates(current);
+    return setVariables(next && typeof next === 'object' ? next : {}, scope);
+  }
+  return setVariables(updates, scope);
+};
+
+const getChatMessages = () => cloneValue(legacyState.chat);
+
+const setChatMessage = (id, data) => {
+  const msgId = String(id || '').trim();
+  if (!msgId || !data || typeof data !== 'object') return null;
+  const existing = legacyState.chat.find(m => String(m?.id || '') === msgId) || {};
+  const next = { ...existing, ...data, id: msgId };
+  upsertChatMessage(next);
+  callRpc('chat.updateMessage', { id: msgId, data }).catch(() => {});
+  return cloneValue(next);
+};
+
+const setChatMessages = (messages = []) => {
+  if (!Array.isArray(messages)) return [];
+  legacyState.chat = messages.map(m => (m && typeof m === 'object' ? { ...m } : m)).filter(Boolean);
+  legacyState.chat.forEach(m => {
+    if (!m || !m.id) return;
+    callRpc('chat.updateMessage', { id: m.id, data: m }).catch(() => {});
+  });
+  return getChatMessages();
+};
+
+const eventOn = (event, callback) => {
+  if (typeof callback !== 'function') return;
+  const name = String(event || '').trim();
+  if (!name) return;
+  addListener(name, callback);
+  const cached = legacyEventCache.get(name);
+  if (cached && Array.isArray(cached)) {
+    cached.forEach((data) => {
+      Promise.resolve().then(() => callback(data));
+    });
+  }
+};
+
+const eventRemove = (event, callback) => {
+  removeListener(event, callback);
+};
+
+const eventEmit = (event, data) => dispatchEvent(String(event || '').trim(), data || {}, { allowMutate: true });
+
+const buildExtensionSettingsProxy = () => new Proxy(legacyState.extensionSettings, {
+  set: (target, prop, value) => {
+    const key = String(prop || '').trim();
+    if (!key) return true;
+    target[key] = value;
+    callRpc('legacy.setExtensionSetting', { key, value }).catch(() => {});
+    return true;
+  },
+  deleteProperty: (target, prop) => {
+    const key = String(prop || '').trim();
+    if (!key) return true;
+    delete target[key];
+    callRpc('legacy.setExtensionSettings', { data: target }).catch(() => {});
+    return true;
+  },
+});
+
+const buildSillyTavern = () => {
+  const st = {};
+  Object.defineProperty(st, 'chat', {
+    get: () => legacyState.chat,
+    set: (val) => {
+      legacyState.chat = Array.isArray(val) ? val.slice() : [];
+    },
+  });
+  Object.defineProperty(st, 'extensionSettings', {
+    get: () => buildExtensionSettingsProxy(),
+    set: (val) => {
+      legacyState.extensionSettings = val && typeof val === 'object' ? { ...val } : {};
+      callRpc('legacy.setExtensionSettings', { data: legacyState.extensionSettings }).catch(() => {});
+    },
+  });
+  return st;
+};
+
 const api = {
   plugin: {},
+  chat: {
+    getMessages: (options) => callRpc('chat.getMessages', options || {}),
+    getMessage: (id) => callRpc('chat.getMessage', { id }),
+    updateMessage: (id, data) => callRpc('chat.updateMessage', { id, data }),
+    sendMessage: (content, options) => callRpc('chat.sendMessage', { content, options }),
+    getCurrentSession: () => callRpc('chat.getCurrentSession', {}),
+  },
   storage: {
     get: (key) => callRpc('storage.get', { key }),
     set: (key, value) => callRpc('storage.set', { key, value }),
     remove: (key) => callRpc('storage.remove', { key }),
     keys: () => callRpc('storage.keys', {}),
   },
+  variables: {
+    get: (name) => callRpc('variables.get', { name }),
+    getAll: () => callRpc('variables.getAll', {}),
+    set: (name, value) => callRpc('variables.set', { name, value }),
+    patch: (updates) => callRpc('variables.patch', { updates }),
+    watch: (name, callback) => {
+      const key = String(name || '').trim();
+      if (!key || typeof callback !== 'function') return;
+      const wrapped = (data) => {
+        if (!data || typeof data !== 'object') return;
+        if (String(data.name || '') !== key) return;
+        callback(data.newValue, data.oldValue);
+      };
+      variableWatchers.set(callback, { name: key, wrapped });
+      addListener('variable.changed', wrapped);
+    },
+    unwatch: (name, callback) => {
+      const entry = variableWatchers.get(callback);
+      if (!entry) return;
+      removeListener('variable.changed', entry.wrapped);
+      variableWatchers.delete(callback);
+    },
+  },
+  worldbook: {
+    getPrimary: () => callRpc('worldbook.getPrimary', {}),
+    getEntries: (id) => callRpc('worldbook.getEntries', { id }),
+    list: () => callRpc('worldbook.list', {}),
+    getSettings: () => callRpc('worldbook.getSettings', {}),
+    setEntries: (id, entries) => callRpc('worldbook.setEntries', { id, entries }),
+    save: (id, data) => callRpc('worldbook.save', { id, data }),
+  },
+  ui: {
+    registerSidebar: (config) => callRpc('ui.registerSidebar', { config }),
+    unregisterSidebar: (id) => callRpc('ui.unregisterSidebar', { id }),
+    registerChatCard: (config) => callRpc('ui.registerChatCard', { config }),
+    unregisterChatCard: (id) => callRpc('ui.unregisterChatCard', { id }),
+    openModal: (config) => callRpc('ui.openModal', { config }),
+    closeModal: (id) => callRpc('ui.closeModal', { id }),
+  },
   logger: {
-    log: (...args) => send({ type: 'log', level: 'log', args }),
-    info: (...args) => send({ type: 'log', level: 'info', args }),
-    warn: (...args) => send({ type: 'log', level: 'warn', args }),
-    error: (...args) => send({ type: 'log', level: 'error', args }),
-    debug: (...args) => send({ type: 'log', level: 'debug', args }),
+    log: (...args) => sendLog('log', args),
+    info: (...args) => sendLog('info', args),
+    warn: (...args) => sendLog('warn', args),
+    error: (...args) => sendLog('error', args),
+    debug: (...args) => sendLog('debug', args),
   },
   events: {
-    on: (event, callback) => {
-      const name = String(event || '').trim();
-      if (!name || typeof callback !== 'function') return;
-      if (!listeners.has(name)) listeners.set(name, new Set());
-      listeners.get(name).add(callback);
-      send({ type: 'event_subscribe', event: name });
-    },
-    off: (event, callback) => {
-      const name = String(event || '').trim();
-      if (!name || !listeners.has(name)) return;
-      if (callback) listeners.get(name).delete(callback);
-      if (!callback || listeners.get(name).size === 0) listeners.delete(name);
-    },
+    on: (event, callback) => addListener(event, callback),
+    off: (event, callback) => removeListener(event, callback),
     once: (event, callback) => {
       if (typeof callback !== 'function') return;
       const wrapped = async (data) => {
-        api.events.off(event, wrapped);
+        removeListener(event, wrapped);
         return callback(data);
       };
-      api.events.on(event, wrapped);
+      addListener(event, wrapped);
     },
   },
-};
-
-const dispatchEvent = async (name, payload) => {
-  const list = listeners.get(name);
-  if (!list || list.size === 0) return payload;
-  let data = payload;
-  for (const cb of Array.from(list)) {
-    try {
-      const res = await cb(data);
-      if (res && typeof res === 'object') data = res;
-    } catch (err) {
-      send({ type: 'event_error', event: name, error: makeError(err) });
-    }
-  }
-  return data;
 };
 
 const initPlugin = async (meta, code) => {
@@ -87,6 +469,53 @@ const initPlugin = async (meta, code) => {
     version: pluginMeta.version || '',
     mode: pluginMeta.mode || 'safe',
   };
+
+  api.legacy = {
+    SillyTavern: buildSillyTavern(),
+    getVariables,
+    setVariables,
+    updateVariablesWith,
+    getChatMessages,
+    setChatMessage,
+    setChatMessages,
+    eventOn,
+    eventEmit,
+    eventRemove,
+  };
+
+  self.SillyTavern = api.legacy.SillyTavern;
+  self.getVariables = getVariables;
+  self.setVariables = setVariables;
+  self.updateVariablesWith = updateVariablesWith;
+  self.getChatMessages = getChatMessages;
+  self.setChatMessage = setChatMessage;
+  self.setChatMessages = setChatMessages;
+  self.eventOn = eventOn;
+  self.eventEmit = eventEmit;
+  self.eventRemove = eventRemove;
+
+  ensureSubscription('variable.changed');
+  ensureSubscription('message.after_send');
+  ensureSubscription('message.after_receive');
+  ensureSubscription('session.changed');
+
+  try {
+    const vars = await callRpc('variables.getAll', {});
+    if (vars && typeof vars === 'object') legacyState.variables = { ...vars };
+  } catch {}
+  try {
+    const globals = await callRpc('legacy.getGlobalVariables', {});
+    if (globals && typeof globals === 'object') legacyState.globalVariables = { ...globals };
+  } catch {}
+  try {
+    const messages = await callRpc('chat.getMessages', { limit: 200, offset: 0 });
+    if (Array.isArray(messages)) legacyState.chat = messages.slice();
+  } catch {}
+  try {
+    const settings = await callRpc('legacy.getExtensionSettings', {});
+    if (settings && typeof settings === 'object') legacyState.extensionSettings = { ...settings };
+  } catch {}
+
   const module = { exports: {} };
   const exports = module.exports;
   let entry = null;
@@ -104,6 +533,9 @@ const initPlugin = async (meta, code) => {
     throw new Error('Plugin entry must export a function');
   }
   await entry(api);
+
+  emitLegacyEvent('mag_variable_initialized', { scope: 'chat', variables: cloneValue(legacyState.variables) }, true);
+  emitLegacyEvent('mag_variable_initialized', { scope: 'global', variables: cloneValue(legacyState.globalVariables) }, true);
 };
 
 self.addEventListener('message', async (e) => {
@@ -133,7 +565,7 @@ self.addEventListener('message', async (e) => {
 
   if (msg.type === 'event') {
     try {
-      const data = await dispatchEvent(String(msg.name || ''), msg.data || {});
+      const data = await dispatchIncomingEvent(String(msg.name || ''), msg.data || {});
       send({ type: 'event_result', id: msg.id, data });
     } catch (err) {
       send({ type: 'event_result', id: msg.id, data: msg.data, error: makeError(err) });
@@ -166,15 +598,21 @@ const callWithTimeout = (promise, timeoutMs, onTimeout) => new Promise((resolve,
 });
 
 class PluginInstance {
-  constructor(record, store) {
+  constructor(record, store, runtime) {
     this.record = record;
     this.store = store;
+    this.runtime = runtime;
     this.worker = null;
     this.pending = new Map();
     this.seq = 1;
     this.status = 'stopped';
     this.lastError = null;
     this.subscriptions = new Set();
+  }
+
+  hasPermission(perm) {
+    const permissions = Array.isArray(this.record.manifest?.permissions) ? this.record.manifest.permissions : [];
+    return permissions.includes(perm);
   }
 
   async start() {
@@ -192,9 +630,17 @@ class PluginInstance {
     worker.onerror = (err) => {
       this.status = 'error';
       this.lastError = err?.message || 'worker error';
+      this.terminateWorker('worker error');
       logger.warn(`[plugin:${this.record.id}] worker error`, err);
     };
-    await this.init();
+    try {
+      await this.init();
+    } catch (err) {
+      this.status = 'error';
+      this.lastError = err?.message || 'init failed';
+      this.terminateWorker(this.lastError);
+      throw err;
+    }
   }
 
   async init() {
@@ -210,7 +656,11 @@ class PluginInstance {
       },
       code: this.record.code,
     };
-    const result = await this.request(payload, INIT_TIMEOUT_MS);
+    const result = await this.request(payload, INIT_TIMEOUT_MS, () => {
+      this.status = 'error';
+      this.lastError = 'init timeout';
+      this.terminateWorker(this.lastError);
+    });
     if (!result?.ok) {
       this.status = 'error';
       this.lastError = result?.error?.message || 'init failed';
@@ -220,11 +670,7 @@ class PluginInstance {
   }
 
   async stop() {
-    if (this.worker) {
-      this.worker.terminate();
-      this.worker = null;
-    }
-    this.pending.clear();
+    this.terminateWorker('stopped');
     this.status = 'stopped';
   }
 
@@ -236,7 +682,11 @@ class PluginInstance {
       data,
     };
     try {
-      const res = await this.request(payload, EVENT_TIMEOUT_MS);
+      const res = await this.request(payload, EVENT_TIMEOUT_MS, () => {
+        this.status = 'error';
+        this.lastError = 'event timeout';
+        this.terminateWorker(this.lastError);
+      });
       if (res?.error) {
         logger.warn(`[plugin:${this.record.id}] event error`, res.error);
       }
@@ -247,7 +697,7 @@ class PluginInstance {
     }
   }
 
-  request(payload, timeoutMs) {
+  request(payload, timeoutMs, onTimeout) {
     const id = this.seq++;
     payload.id = id;
     return callWithTimeout(
@@ -258,6 +708,7 @@ class PluginInstance {
       timeoutMs,
       () => {
         this.pending.delete(id);
+        if (typeof onTimeout === 'function') onTimeout();
       },
     );
   }
@@ -288,6 +739,20 @@ class PluginInstance {
     }
   }
 
+  terminateWorker(reason) {
+    if (this.worker) {
+      this.worker.terminate();
+      this.worker = null;
+    }
+    if (this.pending.size) {
+      const error = new Error(String(reason || 'terminated'));
+      for (const pending of this.pending.values()) {
+        pending.reject(error);
+      }
+      this.pending.clear();
+    }
+  }
+
   async handleRpc(msg) {
     const respond = (type, payload) => {
       if (!this.worker) return;
@@ -295,9 +760,67 @@ class PluginInstance {
     };
     const method = String(msg.method || '');
     const permissions = Array.isArray(this.record.manifest?.permissions) ? this.record.manifest.permissions : [];
-    if (!permissions.includes('storage')) {
-      respond('rpc_error', { error: { message: 'permission denied' } });
-      return;
+    const hasPermission = (perm) => permissions.includes(perm);
+    const bridge = this.runtime?.bridge || (typeof window !== 'undefined' ? window.appBridge : null);
+    const chatStore = this.runtime?.chatStore || bridge?.chatStore || null;
+    const contactsStore = this.runtime?.contactsStore || bridge?.contactsStore || null;
+    const ui = this.runtime?.ui || bridge?.chatUI || null;
+    const uiManager = this.runtime?.uiManager || bridge?.pluginUiManager || null;
+    const sessionId = String(bridge?.activeSessionId || chatStore?.getCurrent?.() || '').trim();
+    const buildMessagePayload = (msg) => {
+      if (!msg || typeof msg !== 'object') return null;
+      return {
+        id: String(msg.id || ''),
+        role: String(msg.role || ''),
+        content: String(msg.content || ''),
+        timestamp: Number(msg.timestamp || 0) || 0,
+        metadata: msg.meta && typeof msg.meta === 'object' ? { ...msg.meta } : {},
+      };
+    };
+    const buildSessionPayload = (sid) => {
+      const id = String(sid || '').trim();
+      if (!id) return null;
+      const contact = contactsStore?.getContact?.(id) || null;
+      const name = contact?.name || id;
+      const isGroup = Boolean(contact?.isGroup) || id.startsWith('group:');
+      return { id, name, isGroup };
+    };
+
+    if (method.startsWith('storage.')) {
+      if (!hasPermission('storage')) {
+        respond('rpc_error', { error: { message: 'permission denied' } });
+        return;
+      }
+    }
+    if (method.startsWith('chat.')) {
+      const needsWrite = method === 'chat.updateMessage' || method === 'chat.sendMessage';
+      const perm = needsWrite ? 'chat.write' : 'chat.read';
+      if (!hasPermission(perm)) {
+        respond('rpc_error', { error: { message: 'permission denied' } });
+        return;
+      }
+    }
+    if (method.startsWith('variables.')) {
+      const needsWrite = method === 'variables.set' || method === 'variables.patch';
+      const perm = needsWrite ? 'variables.write' : 'variables.read';
+      if (!hasPermission(perm)) {
+        respond('rpc_error', { error: { message: 'permission denied' } });
+        return;
+      }
+    }
+    if (method.startsWith('worldbook.')) {
+      const needsWrite = method === 'worldbook.save' || method === 'worldbook.setEntries';
+      const perm = needsWrite ? 'worldbook.write' : 'worldbook.read';
+      if (!hasPermission(perm)) {
+        respond('rpc_error', { error: { message: 'permission denied' } });
+        return;
+      }
+    }
+    if (method.startsWith('ui.')) {
+      if (!hasPermission('ui.inject')) {
+        respond('rpc_error', { error: { message: 'permission denied' } });
+        return;
+      }
     }
     try {
       if (method === 'storage.get') {
@@ -318,6 +841,317 @@ class PluginInstance {
       if (method === 'storage.keys') {
         const result = await this.store.storageKeys(this.record.id);
         respond('rpc_result', { result });
+        return;
+      }
+      if (method === 'chat.getMessages') {
+        if (!chatStore || !sessionId) {
+          respond('rpc_result', { result: [] });
+          return;
+        }
+        const limitRaw = Number(msg.params?.limit);
+        const offsetRaw = Number(msg.params?.offset);
+        const limit = Number.isFinite(limitRaw) ? Math.max(0, Math.trunc(limitRaw)) : 20;
+        const offset = Number.isFinite(offsetRaw) ? Math.max(0, Math.trunc(offsetRaw)) : 0;
+        const list = chatStore.getMessages(sessionId) || [];
+        const sliced = limit ? list.slice(offset, offset + limit) : list.slice(offset);
+        respond('rpc_result', { result: sliced.map(buildMessagePayload).filter(Boolean) });
+        return;
+      }
+      if (method === 'chat.getMessage') {
+        if (!chatStore || !sessionId) {
+          respond('rpc_result', { result: null });
+          return;
+        }
+        const id = String(msg.params?.id || '').trim();
+        if (!id) {
+          respond('rpc_result', { result: null });
+          return;
+        }
+        const found = chatStore.findMessage(id, sessionId);
+        respond('rpc_result', { result: buildMessagePayload(found) });
+        return;
+      }
+      if (method === 'chat.getCurrentSession') {
+        respond('rpc_result', { result: buildSessionPayload(sessionId) });
+        return;
+      }
+      if (method === 'chat.updateMessage') {
+        if (!chatStore || !sessionId) {
+          respond('rpc_error', { error: { message: 'chat store not ready' } });
+          return;
+        }
+        const id = String(msg.params?.id || '').trim();
+        const data = msg.params?.data && typeof msg.params.data === 'object' ? msg.params.data : null;
+        if (!id || !data) {
+          respond('rpc_error', { error: { message: 'invalid params' } });
+          return;
+        }
+        const updated = chatStore.updateMessage(id, data, sessionId);
+        if (updated && ui && typeof ui.updateMessage === 'function' && chatStore.getCurrent() === sessionId) {
+          ui.updateMessage(id, updated);
+        }
+        respond('rpc_result', { result: buildMessagePayload(updated) });
+        return;
+      }
+      if (method === 'chat.sendMessage') {
+        const content = String(msg.params?.content || '');
+        const options = msg.params?.options && typeof msg.params.options === 'object' ? msg.params.options : {};
+        if (!bridge?.sendMessageFromPlugin) {
+          respond('rpc_error', { error: { message: 'sendMessage not available' } });
+          return;
+        }
+        const result = await bridge.sendMessageFromPlugin(content, options);
+        respond('rpc_result', { result: buildMessagePayload(result) });
+        return;
+      }
+      if (method === 'variables.get') {
+        if (!chatStore || !sessionId) {
+          respond('rpc_result', { result: null });
+          return;
+        }
+        const name = String(msg.params?.name || '').trim();
+        respond('rpc_result', { result: chatStore.getVariable(name, sessionId) });
+        return;
+      }
+      if (method === 'variables.getAll') {
+        if (!chatStore || !sessionId) {
+          respond('rpc_result', { result: {} });
+          return;
+        }
+        respond('rpc_result', { result: chatStore.listVariables(sessionId) || {} });
+        return;
+      }
+      if (method === 'variables.set') {
+        if (!chatStore || !sessionId) {
+          respond('rpc_error', { error: { message: 'variables store not ready' } });
+          return;
+        }
+        const name = String(msg.params?.name || '').trim();
+        chatStore.setVariable(name, msg.params?.value, sessionId);
+        respond('rpc_result', { result: true });
+        return;
+      }
+      if (method === 'variables.patch') {
+        if (!chatStore || !sessionId) {
+          respond('rpc_error', { error: { message: 'variables store not ready' } });
+          return;
+        }
+        const updates = msg.params?.updates && typeof msg.params.updates === 'object' ? msg.params.updates : null;
+        if (!updates) {
+          respond('rpc_error', { error: { message: 'invalid params' } });
+          return;
+        }
+        Object.entries(updates).forEach(([name, value]) => {
+          const key = String(name || '').trim();
+          if (!key) return;
+          chatStore.setVariable(key, value, sessionId);
+        });
+        respond('rpc_result', { result: true });
+        return;
+      }
+      if (method === 'worldbook.getPrimary') {
+        const getWorldForSession = bridge?.getWorldForSession?.bind(bridge);
+        const worldId = getWorldForSession ? getWorldForSession(sessionId) : bridge?.currentWorldId || null;
+        if (!worldId || !bridge?.getWorldInfo) {
+          respond('rpc_result', { result: null });
+          return;
+        }
+        const data = await bridge.getWorldInfo(worldId);
+        respond('rpc_result', { result: data });
+        return;
+      }
+      if (method === 'worldbook.getEntries') {
+        if (!bridge?.getWorldInfo) {
+          respond('rpc_result', { result: [] });
+          return;
+        }
+        const worldId = String(msg.params?.id || '').trim() || (bridge?.getWorldForSession?.(sessionId) || bridge?.currentWorldId || '');
+        if (!worldId) {
+          respond('rpc_result', { result: [] });
+          return;
+        }
+        const data = await bridge.getWorldInfo(worldId);
+        respond('rpc_result', { result: Array.isArray(data?.entries) ? data.entries : [] });
+        return;
+      }
+      if (method === 'worldbook.list') {
+        if (!bridge?.listWorlds) {
+          respond('rpc_result', { result: [] });
+          return;
+        }
+        const list = await bridge.listWorlds();
+        respond('rpc_result', { result: Array.isArray(list) ? list : [] });
+        return;
+      }
+      if (method === 'worldbook.getSettings') {
+        const settings = bridge?.getWorldGlobalSettings?.() || {};
+        respond('rpc_result', { result: settings });
+        return;
+      }
+      if (method === 'worldbook.setEntries') {
+        if (!bridge?.getWorldInfo || !bridge?.saveWorldInfo) {
+          respond('rpc_error', { error: { message: 'worldbook not available' } });
+          return;
+        }
+        const worldId = String(msg.params?.id || '').trim() || (bridge?.getWorldForSession?.(sessionId) || bridge?.currentWorldId || '');
+        const entries = Array.isArray(msg.params?.entries) ? msg.params.entries : null;
+        if (!worldId || !entries) {
+          respond('rpc_error', { error: { message: 'invalid params' } });
+          return;
+        }
+        const existing = await bridge.getWorldInfo(worldId);
+        const payload = { ...(existing || { name: worldId, entries: [] }), entries };
+        await bridge.saveWorldInfo(worldId, payload);
+        respond('rpc_result', { result: true });
+        return;
+      }
+      if (method === 'worldbook.save') {
+        if (!bridge?.saveWorldInfo) {
+          respond('rpc_error', { error: { message: 'worldbook not available' } });
+          return;
+        }
+        const worldId = String(msg.params?.id || '').trim();
+        const data = msg.params?.data && typeof msg.params.data === 'object' ? msg.params.data : null;
+        if (!worldId || !data) {
+          respond('rpc_error', { error: { message: 'invalid params' } });
+          return;
+        }
+        await bridge.saveWorldInfo(worldId, data);
+        respond('rpc_result', { result: true });
+        return;
+      }
+      if (method === 'ui.registerSidebar') {
+        if (!uiManager?.registerSidebar) {
+          respond('rpc_error', { error: { message: 'ui manager not available' } });
+          return;
+        }
+        const ok = uiManager.registerSidebar(this.record.id, msg.params?.config || {});
+        respond('rpc_result', { result: Boolean(ok) });
+        return;
+      }
+      if (method === 'ui.unregisterSidebar') {
+        if (!uiManager?.unregisterSidebar) {
+          respond('rpc_error', { error: { message: 'ui manager not available' } });
+          return;
+        }
+        const ok = uiManager.unregisterSidebar(this.record.id, msg.params?.id);
+        respond('rpc_result', { result: Boolean(ok) });
+        return;
+      }
+      if (method === 'ui.registerChatCard') {
+        if (!uiManager?.registerChatCard) {
+          respond('rpc_error', { error: { message: 'ui manager not available' } });
+          return;
+        }
+        const ok = uiManager.registerChatCard(this.record.id, msg.params?.config || {});
+        respond('rpc_result', { result: Boolean(ok) });
+        return;
+      }
+      if (method === 'ui.unregisterChatCard') {
+        if (!uiManager?.unregisterChatCard) {
+          respond('rpc_error', { error: { message: 'ui manager not available' } });
+          return;
+        }
+        const ok = uiManager.unregisterChatCard(this.record.id, msg.params?.id);
+        respond('rpc_result', { result: Boolean(ok) });
+        return;
+      }
+      if (method === 'ui.openModal') {
+        if (!uiManager?.openModal) {
+          respond('rpc_error', { error: { message: 'ui manager not available' } });
+          return;
+        }
+        const ok = uiManager.openModal(this.record.id, msg.params?.config || {});
+        respond('rpc_result', { result: Boolean(ok) });
+        return;
+      }
+      if (method === 'ui.closeModal') {
+        if (!uiManager?.closeModal) {
+          respond('rpc_error', { error: { message: 'ui manager not available' } });
+          return;
+        }
+        const ok = uiManager.closeModal(this.record.id, msg.params?.id);
+        respond('rpc_result', { result: Boolean(ok) });
+        return;
+      }
+      if (method === 'legacy.getGlobalVariables') {
+        if (!chatStore) {
+          respond('rpc_result', { result: {} });
+          return;
+        }
+        if (!hasPermission('variables.read')) {
+          respond('rpc_error', { error: { message: 'permission denied' } });
+          return;
+        }
+        const result = chatStore.listGlobalVariables?.() || {};
+        respond('rpc_result', { result });
+        return;
+      }
+      if (method === 'legacy.setGlobalVariables') {
+        if (!chatStore) {
+          respond('rpc_error', { error: { message: 'variables store not ready' } });
+          return;
+        }
+        if (!hasPermission('variables.write')) {
+          respond('rpc_error', { error: { message: 'permission denied' } });
+          return;
+        }
+        const updates = msg.params?.updates && typeof msg.params.updates === 'object' ? msg.params.updates : null;
+        if (!updates) {
+          respond('rpc_error', { error: { message: 'invalid params' } });
+          return;
+        }
+        if (chatStore.patchGlobalVariables) {
+          chatStore.patchGlobalVariables(updates);
+        } else {
+          Object.entries(updates).forEach(([name, value]) => {
+            const key = String(name || '').trim();
+            if (!key) return;
+            chatStore.setGlobalVariable?.(key, value);
+          });
+        }
+        respond('rpc_result', { result: true });
+        return;
+      }
+      if (method === 'legacy.setGlobalVariable') {
+        if (!chatStore) {
+          respond('rpc_error', { error: { message: 'variables store not ready' } });
+          return;
+        }
+        if (!hasPermission('variables.write')) {
+          respond('rpc_error', { error: { message: 'permission denied' } });
+          return;
+        }
+        const name = String(msg.params?.name || '').trim();
+        if (!name) {
+          respond('rpc_error', { error: { message: 'invalid params' } });
+          return;
+        }
+        chatStore.setGlobalVariable?.(name, msg.params?.value);
+        respond('rpc_result', { result: true });
+        return;
+      }
+      if (method === 'legacy.getExtensionSettings') {
+        const result = (await this.store.storageGet(this.record.id, '__extension_settings__')) || {};
+        respond('rpc_result', { result });
+        return;
+      }
+      if (method === 'legacy.setExtensionSettings') {
+        const data = msg.params?.data && typeof msg.params.data === 'object' ? msg.params.data : {};
+        await this.store.storageSet(this.record.id, '__extension_settings__', data);
+        respond('rpc_result', { result: true });
+        return;
+      }
+      if (method === 'legacy.setExtensionSetting') {
+        const key = String(msg.params?.key || '').trim();
+        if (!key) {
+          respond('rpc_error', { error: { message: 'invalid params' } });
+          return;
+        }
+        const current = (await this.store.storageGet(this.record.id, '__extension_settings__')) || {};
+        const next = { ...(current || {}), [key]: msg.params?.value };
+        await this.store.storageSet(this.record.id, '__extension_settings__', next);
+        respond('rpc_result', { result: true });
         return;
       }
       respond('rpc_error', { error: { message: 'unknown method' } });
@@ -359,10 +1193,23 @@ class PluginInstance {
 }
 
 export class PluginRuntime {
-  constructor(store) {
+  constructor(store, options = {}) {
     this.store = store;
+    this.bridge = options.bridge || null;
+    this.chatStore = options.chatStore || null;
+    this.contactsStore = options.contactsStore || null;
+    this.ui = options.ui || null;
+    this.uiManager = options.uiManager || null;
     this.instances = new Map();
     this.initialized = false;
+  }
+
+  setContext({ bridge, chatStore, contactsStore, ui, uiManager } = {}) {
+    if (bridge) this.bridge = bridge;
+    if (chatStore) this.chatStore = chatStore;
+    if (contactsStore) this.contactsStore = contactsStore;
+    if (ui) this.ui = ui;
+    if (uiManager) this.uiManager = uiManager;
   }
 
   async init() {
@@ -397,7 +1244,12 @@ export class PluginRuntime {
     if (this.instances.has(key)) return;
     const record = this.store.get(key);
     if (!record) return;
-    const instance = new PluginInstance(record, this.store);
+    if (String(record.manifest?.mode || '').toLowerCase() === 'power' && !this.store.isPowerApproved(key)) {
+      logger.warn(`[plugin:${key}] power plugin not authorized`);
+      await this.store.setEnabled(key, false);
+      return;
+    }
+    const instance = new PluginInstance(record, this.store, this);
     this.instances.set(key, instance);
     try {
       await instance.start();
@@ -415,13 +1267,21 @@ export class PluginRuntime {
       await instance.stop();
     }
     this.instances.delete(key);
+    if (this.uiManager?.removePluginUi) {
+      this.uiManager.removePluginUi(key);
+    }
   }
 
   async dispatchEvent(name, data) {
     let payload = data;
     for (const [id, instance] of this.instances.entries()) {
       if (instance.status !== 'running') continue;
-      payload = await instance.emit(name, payload);
+      if (instance.subscriptions.size && !instance.subscriptions.has(name)) continue;
+      const next = await instance.emit(name, payload);
+      if (String(name || '').startsWith('prompt.') && !instance.hasPermission?.('prompt.modify')) {
+        continue;
+      }
+      payload = next;
     }
     return payload;
   }

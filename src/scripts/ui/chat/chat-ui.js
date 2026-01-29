@@ -6,6 +6,7 @@ import { resolveMediaAsset } from '../../utils/media-assets.js';
 import { stickerPackStore } from '../../storage/sticker-pack-store.js';
 import { renderRichText, setupIframeResizeListener } from './rich-text-renderer.js';
 import { appSettings } from '../../storage/app-settings.js';
+import { logger } from '../../utils/logger.js';
 
 const resolveMediaUrl = (kind, value) => {
   const resolved = resolveMediaAsset(kind, value);
@@ -588,10 +589,24 @@ export class ChatUI {
    * @param {string} message.time - 时间戳
    */
   addMessage(message) {
+    if (message && !message.id) {
+      message.id = `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+    }
+    const runtime = typeof window !== 'undefined' ? window.appBridge?.pluginRuntime : null;
+    if (runtime) {
+      runtime.dispatchEvent('message.before_render', { message }).catch(err => {
+        logger.warn('plugin message.before_render failed', err);
+      });
+    }
     const el = this.buildMessageElement(message);
     if (el) {
       this.scrollEl.appendChild(el);
       this.scrollToBottom();
+    }
+    if (runtime && el) {
+      runtime.dispatchEvent('message.after_render', { message, elementId: message?.id || '' }).catch(err => {
+        logger.warn('plugin message.after_render failed', err);
+      });
     }
     return el?.querySelector('.QQ_chat_msgdiv') || el;
   }

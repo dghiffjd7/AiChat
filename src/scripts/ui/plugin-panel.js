@@ -30,6 +30,9 @@ export class PluginPanel {
     this.zipInput = null;
     this.isAndroid = typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent || '');
     this.statusTimer = null;
+    this.uiManageOverlay = null;
+    this.uiManagePanel = null;
+    this.uiManageList = null;
   }
 
   async show() {
@@ -84,6 +87,7 @@ export class PluginPanel {
         <button id="plugin-import-btn" style="padding:6px 12px;border-radius:10px;border:none;background:#2563eb;color:#fff;font-size:13px;cursor:pointer;">导入插件文件夹</button>
         <button id="plugin-import-zip-btn" style="padding:6px 12px;border-radius:10px;border:none;background:#0ea5e9;color:#fff;font-size:13px;cursor:pointer;">导入插件 ZIP</button>
         <button id="plugin-install-url-btn" style="padding:6px 12px;border-radius:10px;border:1px solid rgba(15,23,42,0.1);background:#fff;font-size:13px;cursor:pointer;">安装插件（链接）</button>
+        <button id="plugin-ui-manage-btn" style="padding:6px 12px;border-radius:10px;border:1px solid rgba(15,23,42,0.1);background:#fff;font-size:13px;cursor:pointer;">UI 管理</button>
         <button id="plugin-refresh-btn" style="padding:6px 12px;border-radius:10px;border:1px solid rgba(15,23,42,0.1);background:#fff;font-size:13px;cursor:pointer;">刷新</button>
         <div id="plugin-status" style="margin-left:auto;font-size:12px;color:#64748b;"></div>
       </div>
@@ -96,6 +100,7 @@ export class PluginPanel {
     const importBtn = this.element.querySelector('#plugin-import-btn');
     const importZipBtn = this.element.querySelector('#plugin-import-zip-btn');
     const installUrlBtn = this.element.querySelector('#plugin-install-url-btn');
+    const manageUiBtn = this.element.querySelector('#plugin-ui-manage-btn');
     const refreshBtn = this.element.querySelector('#plugin-refresh-btn');
 
     this.fileInput = document.createElement('input');
@@ -138,10 +143,155 @@ export class PluginPanel {
       }
     });
     installUrlBtn?.addEventListener('click', () => this.handleUrlInstall());
+    manageUiBtn?.addEventListener('click', () => this.showUiManager());
     refreshBtn?.addEventListener('click', () => this.renderList());
 
     document.body.appendChild(this.overlayElement);
     document.body.appendChild(this.element);
+  }
+
+  createUiManagerUI() {
+    if (this.uiManagePanel || this.uiManageOverlay) return;
+    const overlay = document.createElement('div');
+    overlay.style.cssText = `
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.45);
+      z-index: 21000;
+      display: none;
+    `;
+    overlay.addEventListener('click', () => this.hideUiManager());
+
+    const panel = document.createElement('div');
+    panel.style.cssText = `
+      position: fixed;
+      inset: 10vh 8vw;
+      background: #fff;
+      border-radius: 16px;
+      box-shadow: 0 18px 50px rgba(15, 23, 42, 0.2);
+      z-index: 21001;
+      display: none;
+      flex-direction: column;
+      overflow: hidden;
+    `;
+    panel.addEventListener('click', (e) => e.stopPropagation());
+    panel.innerHTML = `
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid rgba(15,23,42,0.08);">
+        <div style="font-size:16px;font-weight:700;color:#0f172a;">UI 注入管理</div>
+        <button id="plugin-ui-close" style="border:none;background:rgba(15,23,42,0.08);width:28px;height:28px;border-radius:10px;cursor:pointer;font-size:16px;">×</button>
+      </div>
+      <div id="plugin-ui-list" style="flex:1;overflow:auto;padding:16px;display:flex;flex-direction:column;gap:12px;"></div>
+    `;
+    panel.querySelector('#plugin-ui-close')?.addEventListener('click', () => this.hideUiManager());
+
+    document.body.appendChild(overlay);
+    document.body.appendChild(panel);
+    this.uiManageOverlay = overlay;
+    this.uiManagePanel = panel;
+    this.uiManageList = panel.querySelector('#plugin-ui-list');
+  }
+
+  showUiManager() {
+    this.createUiManagerUI();
+    if (!this.uiManageOverlay || !this.uiManagePanel) return;
+    this.renderUiManager();
+    this.uiManageOverlay.style.display = 'block';
+    this.uiManagePanel.style.display = 'flex';
+  }
+
+  hideUiManager() {
+    if (this.uiManageOverlay) this.uiManageOverlay.style.display = 'none';
+    if (this.uiManagePanel) this.uiManagePanel.style.display = 'none';
+  }
+
+  renderUiManager() {
+    if (!this.uiManageList) return;
+    const uiManager = this.runtime?.uiManager || window.appBridge?.pluginUiManager;
+    this.uiManageList.innerHTML = '';
+    if (!uiManager) {
+      const empty = document.createElement('div');
+      empty.style.cssText = 'padding:24px;text-align:center;color:#94a3b8;font-size:13px;';
+      empty.textContent = '当前环境不支持 UI 管理';
+      this.uiManageList.appendChild(empty);
+      return;
+    }
+    const sidebars = uiManager.listSidebars ? uiManager.listSidebars() : [];
+    const cards = uiManager.listCards ? uiManager.listCards() : [];
+    const modal = uiManager.getActiveModal ? uiManager.getActiveModal() : null;
+
+    const addSection = (title) => {
+      const header = document.createElement('div');
+      header.textContent = title;
+      header.style.cssText = 'font-size:13px;font-weight:700;color:#0f172a;margin-top:4px;';
+      this.uiManageList.appendChild(header);
+    };
+
+    const addItem = (label, actionText, onAction) => {
+      const row = document.createElement('div');
+      row.style.cssText = `
+        display:flex;
+        align-items:center;
+        justify-content:space-between;
+        gap:12px;
+        padding:10px 12px;
+        border:1px solid rgba(148,163,184,0.2);
+        border-radius:12px;
+        background:#fff;
+      `;
+      const text = document.createElement('div');
+      text.textContent = label;
+      text.style.cssText = 'font-size:12px;color:#334155;line-height:1.4;';
+      const btn = document.createElement('button');
+      btn.textContent = actionText;
+      btn.style.cssText = `
+        border: 1px solid rgba(15,23,42,0.12);
+        border-radius: 10px;
+        padding: 6px 10px;
+        font-size: 12px;
+        cursor: pointer;
+        background: #fff;
+      `;
+      btn.addEventListener('click', onAction);
+      row.appendChild(text);
+      row.appendChild(btn);
+      this.uiManageList.appendChild(row);
+    };
+
+    if (!sidebars.length && !cards.length && !modal) {
+      const empty = document.createElement('div');
+      empty.style.cssText = 'padding:24px;text-align:center;color:#94a3b8;font-size:13px;';
+      empty.textContent = '暂无插件 UI 注入';
+      this.uiManageList.appendChild(empty);
+      return;
+    }
+
+    if (modal) {
+      addSection('弹窗');
+      addItem(`Modal · ${modal.pluginId}/${modal.id}`, '关闭', () => {
+        uiManager.closeModal?.(modal.pluginId, modal.id);
+        this.renderUiManager();
+      });
+    }
+
+    if (sidebars.length) {
+      addSection('侧边栏');
+      sidebars.forEach(item => {
+        addItem(`Sidebar · ${item.pluginId}/${item.id} · ${item.title || ''}`, '移除', () => {
+          uiManager.unregisterSidebar?.(item.pluginId, item.id);
+          this.renderUiManager();
+        });
+      });
+    }
+
+    if (cards.length) {
+      addSection('聊天卡片');
+      cards.forEach(item => {
+        addItem(`Card · ${item.pluginId}/${item.id} · ${item.position || ''}`, '移除', () => {
+          uiManager.unregisterChatCard?.(item.pluginId, item.id);
+          this.renderUiManager();
+        });
+      });
+    }
   }
 
   async handleImport() {
@@ -226,16 +376,20 @@ export class PluginPanel {
       window.toastr?.warning?.('仅支持 http/https 链接');
       return;
     }
+    const normalizedUrl = this.normalizeInstallUrl(url);
+    if (normalizedUrl !== url) {
+      window.toastr?.info?.('已自动转换为直链');
+    }
     try {
       this.setStatus('正在下载插件…');
-      const res = await fetch(url);
+      const res = await fetch(normalizedUrl);
       if (!res.ok) {
         throw new Error(`下载失败 (${res.status})`);
       }
       const buffer = await res.arrayBuffer();
-      const name = url.split('/').pop() || 'plugin.zip';
+      const name = normalizedUrl.split('/').pop() || 'plugin.zip';
       this.setStatus('正在解析 ZIP…');
-      const installed = await this.installFromZipBytes(Array.from(new Uint8Array(buffer)), { name, url });
+      const installed = await this.installFromZipBytes(Array.from(new Uint8Array(buffer)), { name, url: normalizedUrl });
       if (installed) {
         this.setStatus('安装完成', 2000);
       } else {
@@ -286,6 +440,26 @@ export class PluginPanel {
         this.statusTimer = null;
       }, timeoutMs);
     }
+  }
+
+  normalizeInstallUrl(rawUrl) {
+    try {
+      const parsed = new URL(rawUrl);
+      if (parsed.hostname === 'github.com') {
+        const parts = parsed.pathname.split('/').filter(Boolean);
+        if (parts.length >= 4 && parts[2] === 'blob') {
+          const user = parts[0];
+          const repo = parts[1];
+          const rest = parts.slice(3).join('/');
+          if (user && repo && rest) {
+            return `https://raw.githubusercontent.com/${user}/${repo}/${rest}`;
+          }
+        }
+      }
+    } catch {
+      return rawUrl;
+    }
+    return rawUrl;
   }
 
   async installFromParts({ manifest, code, source }) {
@@ -405,6 +579,8 @@ export class PluginPanel {
       actions.style.cssText = 'display:flex;align-items:center;gap:6px;';
       const toggleBtn = document.createElement('button');
       const enabled = Boolean(item.enabled);
+      const isPower = String(manifest.mode || '').toLowerCase() === 'power';
+      const isApproved = Boolean(item.powerApproved);
       toggleBtn.textContent = enabled ? '已启用' : '未启用';
       toggleBtn.style.cssText = `
         border: none;
@@ -421,9 +597,26 @@ export class PluginPanel {
           return;
         }
         const next = !item.enabled;
+        if (next && isPower && !isApproved) {
+          const ok = await appConfirm({
+            title: '高权限插件授权',
+            message: `插件 ${manifest.name || item.id} 需要高权限授权。\n可能包含：网络访问 / 修改提示词 / 写入世界书 等操作。\n确认授权并启用？`,
+            confirmText: '授权并启用',
+            cancelText: '取消',
+            danger: true,
+          });
+          if (!ok) return;
+          await this.store.setPowerApproved(item.id, true);
+        }
         await this.store.setEnabled(item.id, next);
         if (next) {
           await this.runtime.enablePlugin(item.id);
+          const status = this.runtime.getStatus(item.id);
+          if (status?.status === 'error') {
+            await this.store.setEnabled(item.id, false);
+            await this.runtime.disablePlugin(item.id);
+            window.toastr?.error?.(`启用失败：${status.error || '未知错误'}`);
+          }
         } else {
           await this.runtime.disablePlugin(item.id);
         }
@@ -453,6 +646,46 @@ export class PluginPanel {
         await this.store.removePlugin(item.id);
         await this.renderList();
       };
+      if (isPower) {
+        const powerBtn = document.createElement('button');
+        powerBtn.textContent = isApproved ? '撤销授权' : '授权';
+        powerBtn.style.cssText = `
+          border: 1px solid rgba(15,23,42,0.12);
+          border-radius: 10px;
+          padding: 6px 10px;
+          font-size: 12px;
+          cursor: pointer;
+          color: ${isApproved ? '#ef4444' : '#0f172a'};
+          background: #fff;
+        `;
+        powerBtn.onclick = async () => {
+          if (isApproved) {
+            const ok = await appConfirm({
+              title: '撤销高权限授权',
+              message: `确定撤销插件 ${manifest.name || item.id} 的高权限授权？`,
+              danger: true,
+            });
+            if (!ok) return;
+            await this.store.setPowerApproved(item.id, false);
+            if (this.runtime) {
+              await this.store.setEnabled(item.id, false);
+              await this.runtime.disablePlugin(item.id);
+            }
+          } else {
+            const ok = await appConfirm({
+              title: '高权限插件授权',
+              message: `插件 ${manifest.name || item.id} 需要高权限授权。\n确认授权？`,
+              confirmText: '授权',
+              cancelText: '取消',
+              danger: true,
+            });
+            if (!ok) return;
+            await this.store.setPowerApproved(item.id, true);
+          }
+          await this.renderList();
+        };
+        actions.appendChild(powerBtn);
+      }
       actions.appendChild(toggleBtn);
       actions.appendChild(removeBtn);
 
@@ -472,12 +705,25 @@ export class PluginPanel {
       const mode = document.createElement('span');
       mode.textContent = `模式: ${manifest.mode || 'safe'}`;
       metaRow.appendChild(mode);
+      if (isPower) {
+        const powerState = document.createElement('span');
+        powerState.textContent = `授权: ${isApproved ? '已同意' : '未授权'}`;
+        powerState.style.color = isApproved ? '#16a34a' : '#f97316';
+        metaRow.appendChild(powerState);
+      }
       const statusInfo = this.runtime?.getStatus?.(item.id);
       if (statusInfo?.status && statusInfo.status !== 'running') {
         const statusTag = document.createElement('span');
         statusTag.textContent = `状态: ${statusInfo.status}`;
         statusTag.style.color = statusInfo.status === 'error' ? '#ef4444' : '#64748b';
         metaRow.appendChild(statusTag);
+      }
+      if (statusInfo?.status === 'error' && statusInfo?.error) {
+        const errLine = document.createElement('div');
+        const message = String(statusInfo.error || '');
+        errLine.textContent = `错误: ${message.length > 120 ? `${message.slice(0, 120)}…` : message}`;
+        errLine.style.cssText = 'font-size:11px;color:#ef4444;';
+        card.appendChild(errLine);
       }
       card.appendChild(metaRow);
 
