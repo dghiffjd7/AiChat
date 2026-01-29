@@ -1,5 +1,33 @@
 # 開發進度追蹤（必更新）(必须使用当下时间记录)
 
+## 2026-01-29 11:25
+
+- 插件系统 Phase 1 落地：插件注册存储、运行时沙箱（Worker）、基础事件/日志/存储 API。
+- 新增插件管理面板：导入插件文件夹、启用/禁用、删除与权限展示。
+- 发送链路接入钩子：message.before_send / message.after_receive 在聊天发送/接收处触发。
+- 新增/修改：
+  - `src/scripts/storage/plugin-store.js`
+  - `src/scripts/plugins/plugin-runtime.js`
+  - `src/scripts/ui/plugin-panel.js`
+  - `src/scripts/ui/app.js`
+  - `src/index.html`
+
+## 2026-01-29 11:45
+
+- 插件导入补强：新增 ZIP 导入（安卓无法选文件夹时可用），后端 zip 解析直接读 manifest + main。
+- 新增插件运行时降级：Worker 不可用时禁用插件运行并提示。
+- 新增/修改：
+  - `src-tauri/src/commands.rs`
+  - `src-tauri/src/lib.rs`
+  - `src/scripts/ui/plugin-panel.js`
+  - `src/scripts/ui/app.js`
+
+## 2026-01-29 12:03
+
+- 调试增强：加入全局错误捕获与初始化失败遮罩提示，便于定位安卓 dev 启动时的 JS 崩溃原因。
+- 修改：
+  - `src/scripts/ui/app.js`
+
 ## 2026-01-28 11:33
 
 - 推荐列表“上拉刷新”动效：下拉超出底部时出现提示胶囊、箭头旋转与轻微回弹位移；触发刷新时显示“刷新中...”.

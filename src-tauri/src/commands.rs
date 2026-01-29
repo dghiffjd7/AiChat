@@ -13,6 +13,7 @@ use serde_json::Value;
 use tauri::{AppHandle, Manager, State};
 use std::collections::HashMap;
 use std::fs;
+use std::io::Cursor;
 use std::fs::OpenOptions;
 use std::io::{Read, Seek, Write};
 use std::path::{Path, PathBuf};
@@ -2491,6 +2492,91 @@ pub async fn delete_raw_reply(
         fs::remove_file(file).map_err(|e| e.to_string())?;
     }
     Ok(())
+}
+
+#[tauri::command]
+pub async fn read_plugin_zip(bytes: Vec<u8>) -> Result<serde_json::Value, String> {
+    if bytes.is_empty() {
+        return Err("zip bytes empty".to_string());
+    }
+    let cursor = Cursor::new(bytes);
+    let mut archive = zip::ZipArchive::new(cursor).map_err(|e| e.to_string())?;
+
+    let mut manifest_name: Option<String> = None;
+    for i in 0..archive.len() {
+        let file = archive.by_index(i).map_err(|e| e.to_string())?;
+        let name = file.name().replace('\\', "/");
+        if name.to_lowercase().ends_with("manifest.json") {
+            let pick = match &manifest_name {
+                None => true,
+                Some(existing) => name.len() < existing.len(),
+            };
+            if pick {
+                manifest_name = Some(name);
+            }
+        }
+    }
+    let manifest_path = manifest_name.ok_or_else(|| "manifest.json not found".to_string())?;
+
+    let manifest_text = {
+        let mut file = archive
+            .by_name(&manifest_path)
+            .map_err(|e| format!("read manifest failed: {e}"))?;
+        let mut text = String::new();
+        file.read_to_string(&mut text).map_err(|e| e.to_string())?;
+        text
+    };
+
+    let manifest_json: serde_json::Value =
+        serde_json::from_str(&manifest_text).map_err(|e| format!("manifest json invalid: {e}"))?;
+    let main_raw = manifest_json
+        .get("main")
+        .and_then(|v| v.as_str())
+        .unwrap_or("index.js");
+
+    let normalize_path = |raw: &str| -> String {
+        let mut out = raw.replace('\\', "/");
+        while out.starts_with("./") {
+            out = out.trim_start_matches("./").to_string();
+        }
+        while out.starts_with('/') {
+            out = out.trim_start_matches('/').to_string();
+        }
+        let mut parts: Vec<&str> = Vec::new();
+        for part in out.split('/') {
+            if part.is_empty() || part == "." {
+                continue;
+            }
+            if part == ".." {
+                parts.pop();
+                continue;
+            }
+            parts.push(part);
+        }
+        parts.join("/")
+    };
+
+    let base_dir = match manifest_path.rsplit_once('/') {
+        Some((dir, _)) => format!("{dir}/"),
+        None => String::new(),
+    };
+    let main_path = format!("{}{}", base_dir, normalize_path(main_raw));
+
+    let main_text = {
+        let mut file = archive
+            .by_name(&main_path)
+            .map_err(|e| format!("main file not found: {e}"))?;
+        let mut text = String::new();
+        file.read_to_string(&mut text).map_err(|e| e.to_string())?;
+        text
+    };
+
+    Ok(serde_json::json!({
+        "manifestPath": manifest_path,
+        "manifestText": manifest_text,
+        "mainPath": main_path,
+        "mainText": main_text
+    }))
 }
 
 #[derive(serde::Serialize)]

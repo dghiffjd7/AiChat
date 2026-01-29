@@ -11,6 +11,7 @@ import { MemoryTemplateStore } from '../storage/memory-template-store.js';
 import { MomentSummaryStore } from '../storage/moment-summary-store.js';
 import { MomentsStore } from '../storage/moments-store.js';
 import { PersonaStore } from '../storage/persona-store.js';
+import { PluginStore } from '../storage/plugin-store.js';
 import { stickerPackStore } from '../storage/sticker-pack-store.js';
 import { normalizeScopeId } from '../storage/store-scope.js';
 import { avatarDataUrlFromFile, compressImageDataUrl, isGifFile } from '../utils/image.js';
@@ -44,6 +45,7 @@ import { MomentSummaryPanel } from './moment-summary-panel.js';
 import { MomentsPanel } from './moments-panel.js';
 import { PersonaPanel } from './persona-panel.js';
 import { PresetPanel } from './preset-panel.js';
+import { PluginPanel } from './plugin-panel.js';
 import { RegexPanel } from './regex-panel.js';
 import { RegexSessionPanel } from './regex-session-panel.js';
 import { SessionPanel } from './session-panel.js';
@@ -52,6 +54,38 @@ import { VariablePanel } from './variable-panel.js';
 import { WorldPanel } from './world-panel.js';
 import { WorldInfoIndicator } from './worldinfo-indicator.js';
 import { appConfirm } from './app-confirm.js';
+import { PluginRuntime } from '../plugins/plugin-runtime.js';
+
+const reportFatalError = (err, label = 'App init failed') => {
+  try {
+    const msg = err?.message || String(err || 'unknown error');
+    logger.error(label, msg, err);
+    const overlay = document.createElement('div');
+    overlay.style.cssText = `
+      position: fixed;
+      inset: 0;
+      z-index: 40000;
+      background: rgba(0,0,0,0.86);
+      color: #f8fafc;
+      padding: 20px;
+      font-family: monospace;
+      font-size: 12px;
+      overflow: auto;
+    `;
+    overlay.textContent = `${label}: ${msg}`;
+    document.body.appendChild(overlay);
+  } catch {}
+};
+
+window.addEventListener('error', (event) => {
+  if (!event) return;
+  reportFatalError(event.error || event.message || 'unknown error', 'Runtime error');
+});
+
+window.addEventListener('unhandledrejection', (event) => {
+  if (!event) return;
+  reportFatalError(event.reason || 'unhandled rejection', 'Unhandled rejection');
+});
 
 const initApp = async () => {
   const ui = new ChatUI();
@@ -102,8 +136,17 @@ const initApp = async () => {
   const memoryUpdateConfigManager = new ConfigManager();
   const memoryUpdateRunning = new Set();
   const generalSettingsPanel = new GeneralSettingsPanel();
+  const pluginStore = new PluginStore();
+  const pluginRuntime =
+    typeof Worker === 'undefined' ? null : new PluginRuntime(pluginStore);
+  if (pluginRuntime) {
+    pluginRuntime.init().catch((err) => logger.warn('plugin runtime init failed', err));
+  } else {
+    logger.warn('plugin runtime disabled (Worker unsupported)');
+  }
   const presetPanel = new PresetPanel();
   const regexPanel = new RegexPanel();
+  const pluginPanel = new PluginPanel({ store: pluginStore, runtime: pluginRuntime });
   const chatStore = new ChatStore();
   window.appBridge.setChatStore(chatStore);
   const clearDraftMirror = sessionId => {
@@ -8575,6 +8618,7 @@ Phase G（Frame 36）：循环衔接
       if (action === 'memory-templates') memoryTemplatePanel.show();
       if (action === 'world-global') worldPanel.show({ scope: 'global' });
       if (action === 'regex') regexPanel.show();
+      if (action === 'plugins') pluginPanel.show();
       if (action === 'config') configPanel.show();
       hideMenus();
     });
@@ -9742,6 +9786,28 @@ Phase G（Frame 36）：循环衔接
     const userEchoGuard = createUserEchoGuard(text, userName);
     const isGroupChat = Boolean(contact?.isGroup) || sessionId.startsWith('group:');
     const groupMembers = isGroupChat ? (Array.isArray(contact?.members) ? contact.members : []) : [];
+    if (pluginRuntime) {
+      try {
+        const payload = {
+          content: text,
+          sessionId,
+          userName,
+          isGroup: isGroupChat,
+          hasAttachments,
+        };
+        const updated = await pluginRuntime.dispatchEvent('message.before_send', payload);
+        if (
+          updated &&
+          typeof updated.content === 'string' &&
+          updated.content !== text &&
+          (!pendingMessagesToConfirm || pendingMessagesToConfirm.length === 0)
+        ) {
+          text = updated.content;
+        }
+      } catch (err) {
+        logger.warn('plugin message.before_send failed', err);
+      }
+    }
     const normalizeName = s => String(s || '').trim();
     const normalizeKey = s => normalizeName(s).toLowerCase().replace(/\s+/g, '');
     // keep only letters/numbers/CJK to avoid emoji/punctuation differences
@@ -11079,6 +11145,14 @@ Phase G（Frame 36）：循环衔接
       if (Object.keys(meta).length) next.meta = meta;
       return next;
     };
+    const emitPluginAfterReceive = (message, targetSessionId) => {
+      if (!pluginRuntime) return;
+      if (!message || message.role !== 'assistant') return;
+      const payload = { message, sessionId: targetSessionId };
+      pluginRuntime.dispatchEvent('message.after_receive', payload).catch(err => {
+        logger.warn('plugin message.after_receive failed', err);
+      });
+    };
     const sanitizeThinkingForProtocolParse = text => {
       const raw = String(text ?? '');
       // More tolerant fallback: if model echoed "<content>" inside (possibly unclosed) thinking,
@@ -11589,6 +11663,7 @@ Phase G（Frame 36）：循环衔接
           {
             const saved = chatStore.appendMessage(parsed, sessionId);
             autoMarkReadIfActive(sessionId, saved?.id || parsed?.id || '');
+            emitPluginAfterReceive(saved, sessionId);
           }
           refreshChatAndContacts();
           sendSucceeded = true;
@@ -11646,7 +11721,8 @@ Phase G（Frame 36）：循环衔接
                       time: m?.time || formatNowTime(),
                     };
                     if (isSessionActive(targetGroupId)) ui.addMessage(parsed);
-                    chatStore.appendMessage(parsed, targetGroupId);
+                    const saved = chatStore.appendMessage(parsed, targetGroupId);
+                    emitPluginAfterReceive(saved, targetGroupId);
                     maybeApplyGroupSystemOps(parsed.content, targetGroupId);
                     return;
                   }
@@ -11668,6 +11744,7 @@ Phase G（Frame 36）：循环衔接
                   if (isSessionActive(targetGroupId)) ui.addMessage(parsed);
                   const saved = chatStore.appendMessage(parsed, targetGroupId);
                   if (role === 'assistant') autoMarkReadIfActive(targetGroupId, saved?.id || parsed?.id || '');
+                  emitPluginAfterReceive(saved, targetGroupId);
                 });
                 didAnything = true;
                 refreshChatAndContacts();
@@ -11702,6 +11779,7 @@ Phase G（Frame 36）：循环衔接
                 }
                 const saved = chatStore.appendMessage(parsed, targetSessionId);
                 if (!isMe) autoMarkReadIfActive(targetSessionId, saved?.id || parsed?.id || '');
+                emitPluginAfterReceive(saved, targetSessionId);
               });
               didAnything = true;
               refreshChatAndContacts();
@@ -11776,7 +11854,8 @@ Phase G（Frame 36）：循环衔接
                           time: m?.time || formatNowTime(),
                         };
                         if (isSessionActive(targetGroupId)) ui.addMessage(parsed);
-                        chatStore.appendMessage(parsed, targetGroupId);
+                        const saved = chatStore.appendMessage(parsed, targetGroupId);
+                        emitPluginAfterReceive(saved, targetGroupId);
                         maybeApplyGroupSystemOps(parsed.content, targetGroupId);
                         return;
                       }
@@ -11798,6 +11877,7 @@ Phase G（Frame 36）：循环衔接
                       if (isSessionActive(targetGroupId)) ui.addMessage(parsed);
                       const saved = chatStore.appendMessage(parsed, targetGroupId);
                       if (role === 'assistant') autoMarkReadIfActive(targetGroupId, saved?.id || parsed?.id || '');
+                      emitPluginAfterReceive(saved, targetGroupId);
                     });
                     didAnything = true;
                     refreshChatAndContacts();
@@ -11822,6 +11902,7 @@ Phase G（Frame 36）：循环衔接
                       if (isSessionActive(targetSessionId)) ui.addMessage(parsed);
                       const saved = chatStore.appendMessage(parsed, targetSessionId);
                       if (!isMe) autoMarkReadIfActive(targetSessionId, saved?.id || parsed?.id || '');
+                      emitPluginAfterReceive(saved, targetSessionId);
                     });
                     didAnything = true;
                     refreshChatAndContacts();
@@ -11878,9 +11959,10 @@ Phase G（Frame 36）：循环衔接
                             content: sanitizeAssistantReplyText(content, userName),
                             name: '系统',
                             time: m?.time || formatNowTime(),
-                          };
-                          if (isSessionActive(targetGroupId)) ui.addMessage(parsed);
-                          chatStore.appendMessage(parsed, targetGroupId);
+                        };
+                        if (isSessionActive(targetGroupId)) ui.addMessage(parsed);
+                          const saved = chatStore.appendMessage(parsed, targetGroupId);
+                          emitPluginAfterReceive(saved, targetGroupId);
                           maybeApplyGroupSystemOps(parsed.content, targetGroupId);
                           return;
                         }
@@ -11902,6 +11984,7 @@ Phase G（Frame 36）：循环衔接
                         if (isSessionActive(targetGroupId)) ui.addMessage(parsed);
                         const saved = chatStore.appendMessage(parsed, targetGroupId);
                         if (role === 'assistant') autoMarkReadIfActive(targetGroupId, saved?.id || parsed?.id || '');
+                        emitPluginAfterReceive(saved, targetGroupId);
                       });
                       didAnything = true;
                       refreshChatAndContacts();
@@ -11926,6 +12009,7 @@ Phase G（Frame 36）：循环衔接
                         if (isSessionActive(targetSessionId)) ui.addMessage(parsed);
                         const saved = chatStore.appendMessage(parsed, targetSessionId);
                         if (!isMe) autoMarkReadIfActive(targetSessionId, saved?.id || parsed?.id || '');
+                        emitPluginAfterReceive(saved, targetSessionId);
                       });
                       didAnything = true;
                       refreshChatAndContacts();
@@ -12013,6 +12097,7 @@ Phase G（Frame 36）：循环衔接
           {
             const saved = chatStore.appendMessage(parsed, sessionId);
             autoMarkReadIfActive(sessionId, saved?.id || parsed?.id || '');
+            emitPluginAfterReceive(saved, sessionId);
           }
           refreshChatAndContacts();
           sendSucceeded = true;
@@ -12085,6 +12170,7 @@ Phase G（Frame 36）：循环衔接
           {
             const saved = chatStore.appendMessage(parsed, sessionId);
             autoMarkReadIfActive(sessionId, saved?.id || parsed?.id || '');
+            emitPluginAfterReceive(saved, sessionId);
           }
           refreshChatAndContacts();
           return;
@@ -12129,7 +12215,8 @@ Phase G（Frame 36）：循环衔接
                     time: m?.time || formatNowTime(),
                   };
                   if (isSessionActive(targetGroupId)) ui.addMessage(parsed);
-                  chatStore.appendMessage(parsed, targetGroupId);
+                  const saved = chatStore.appendMessage(parsed, targetGroupId);
+                  emitPluginAfterReceive(saved, targetGroupId);
                   maybeApplyGroupSystemOps(parsed.content, targetGroupId);
                   didAnything = true;
                   return;
@@ -12152,6 +12239,7 @@ Phase G（Frame 36）：循环衔接
                 if (isSessionActive(targetGroupId)) ui.addMessage(parsed);
                 const saved = chatStore.appendMessage(parsed, targetGroupId);
                 if (role === 'assistant') autoMarkReadIfActive(targetGroupId, saved?.id || parsed?.id || '');
+                emitPluginAfterReceive(saved, targetGroupId);
                 didAnything = true;
               });
               return;
@@ -12178,6 +12266,7 @@ Phase G（Frame 36）：循环衔接
                 if (isSessionActive(targetSessionId)) ui.addMessage(parsed);
                 const saved = chatStore.appendMessage(parsed, targetSessionId);
                 if (!isMe) autoMarkReadIfActive(targetSessionId, saved?.id || parsed?.id || '');
+                emitPluginAfterReceive(saved, targetSessionId);
                 didAnything = true;
               });
             }
@@ -12237,7 +12326,8 @@ Phase G（Frame 36）：循环衔接
                         time: m?.time || formatNowTime(),
                       };
                       if (isSessionActive(targetGroupId)) ui.addMessage(parsed);
-                      chatStore.appendMessage(parsed, targetGroupId);
+                      const saved = chatStore.appendMessage(parsed, targetGroupId);
+                      emitPluginAfterReceive(saved, targetGroupId);
                       maybeApplyGroupSystemOps(parsed.content, targetGroupId);
                       didAnything = true;
                       return;
@@ -12260,6 +12350,7 @@ Phase G（Frame 36）：循环衔接
                     if (isSessionActive(targetGroupId)) ui.addMessage(parsed);
                     const saved = chatStore.appendMessage(parsed, targetGroupId);
                     if (role === 'assistant') autoMarkReadIfActive(targetGroupId, saved?.id || parsed?.id || '');
+                    emitPluginAfterReceive(saved, targetGroupId);
                     didAnything = true;
                   });
                   return;
@@ -12283,6 +12374,7 @@ Phase G（Frame 36）：循环衔接
                     if (isSessionActive(targetSessionId)) ui.addMessage(parsed);
                     const saved = chatStore.appendMessage(parsed, targetSessionId);
                     if (!isMe) autoMarkReadIfActive(targetSessionId, saved?.id || parsed?.id || '');
+                    emitPluginAfterReceive(saved, targetSessionId);
                     didAnything = true;
                   });
                 }
@@ -12328,7 +12420,8 @@ Phase G（Frame 36）：循环衔接
                           time: m?.time || formatNowTime(),
                         };
                         if (isSessionActive(targetGroupId)) ui.addMessage(parsed);
-                        chatStore.appendMessage(parsed, targetGroupId);
+                        const saved = chatStore.appendMessage(parsed, targetGroupId);
+                        emitPluginAfterReceive(saved, targetGroupId);
                         maybeApplyGroupSystemOps(parsed.content, targetGroupId);
                         didAnything = true;
                         return;
@@ -12351,6 +12444,7 @@ Phase G（Frame 36）：循环衔接
                       if (isSessionActive(targetGroupId)) ui.addMessage(parsed);
                       const saved = chatStore.appendMessage(parsed, targetGroupId);
                       if (role === 'assistant') autoMarkReadIfActive(targetGroupId, saved?.id || parsed?.id || '');
+                      emitPluginAfterReceive(saved, targetGroupId);
                       didAnything = true;
                     });
                     return;
@@ -12371,11 +12465,12 @@ Phase G（Frame 36）：循环衔接
                             time: time || formatNowTime(),
                             depth: 0,
                           });
-                      if (isSessionActive(targetSessionId)) ui.addMessage(parsed);
-                      const saved = chatStore.appendMessage(parsed, targetSessionId);
-                      if (!isMe) autoMarkReadIfActive(targetSessionId, saved?.id || parsed?.id || '');
-                      didAnything = true;
-                    });
+                    if (isSessionActive(targetSessionId)) ui.addMessage(parsed);
+                    const saved = chatStore.appendMessage(parsed, targetSessionId);
+                    if (!isMe) autoMarkReadIfActive(targetSessionId, saved?.id || parsed?.id || '');
+                    emitPluginAfterReceive(saved, targetSessionId);
+                    didAnything = true;
+                  });
                   }
                 });
               }
@@ -12445,6 +12540,7 @@ Phase G（Frame 36）：循环衔接
         {
           const saved = chatStore.appendMessage(parsed, sessionId);
           autoMarkReadIfActive(sessionId, saved?.id || parsed?.id || '');
+          emitPluginAfterReceive(saved, sessionId);
         }
         refreshChatAndContacts();
         sendSucceeded = true;
@@ -13931,4 +14027,6 @@ Phase G（Frame 36）：循环衔接
   logger.info('✅ Chat UI 初始化完成');
 };
 
-document.addEventListener('DOMContentLoaded', initApp);
+document.addEventListener('DOMContentLoaded', () => {
+  initApp().catch(err => reportFatalError(err, 'App init failed'));
+});
