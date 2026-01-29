@@ -1244,6 +1244,11 @@ export class PluginRuntime {
     if (this.instances.has(key)) return;
     const record = this.store.get(key);
     if (!record) return;
+    if (this.store.isBlocked(key)) {
+      logger.warn(`[plugin:${key}] plugin is blocked`);
+      await this.store.setEnabled(key, false);
+      return;
+    }
     if (String(record.manifest?.mode || '').toLowerCase() === 'power' && !this.store.isPowerApproved(key)) {
       logger.warn(`[plugin:${key}] power plugin not authorized`);
       await this.store.setEnabled(key, false);

@@ -33,6 +33,8 @@ export class PluginPanel {
     this.uiManageOverlay = null;
     this.uiManagePanel = null;
     this.uiManageList = null;
+    this.importMenuCloseHandler = null;
+    this.moreMenuCloseHandler = null;
   }
 
   async show() {
@@ -44,6 +46,7 @@ export class PluginPanel {
   }
 
   hide() {
+    this.closeMenus();
     if (this.element) this.element.style.display = 'none';
     if (this.overlayElement) this.overlayElement.style.display = 'none';
   }
@@ -79,29 +82,43 @@ export class PluginPanel {
       <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid rgba(15,23,42,0.08);">
         <div>
           <div style="font-size:16px;font-weight:700;color:#0f172a;">插件管理</div>
-          <div style="font-size:12px;color:#94a3b8;margin-top:2px;">导入 / 启用 / 禁用插件</div>
+          <div style="font-size:12px;color:#94a3b8;margin-top:2px;">管理已安装的插件</div>
         </div>
         <button id="plugin-panel-close" style="border:none;background:rgba(15,23,42,0.08);width:28px;height:28px;border-radius:10px;cursor:pointer;font-size:16px;">×</button>
       </div>
-      <div style="display:flex;gap:8px;align-items:center;padding:12px 16px;border-bottom:1px solid rgba(148,163,184,0.2);background:#f8fafc;">
-        <button id="plugin-import-btn" style="padding:6px 12px;border-radius:10px;border:none;background:#2563eb;color:#fff;font-size:13px;cursor:pointer;">导入插件文件夹</button>
-        <button id="plugin-import-zip-btn" style="padding:6px 12px;border-radius:10px;border:none;background:#0ea5e9;color:#fff;font-size:13px;cursor:pointer;">导入插件 ZIP</button>
-        <button id="plugin-install-url-btn" style="padding:6px 12px;border-radius:10px;border:1px solid rgba(15,23,42,0.1);background:#fff;font-size:13px;cursor:pointer;">安装插件（链接）</button>
-        <button id="plugin-ui-manage-btn" style="padding:6px 12px;border-radius:10px;border:1px solid rgba(15,23,42,0.1);background:#fff;font-size:13px;cursor:pointer;">UI 管理</button>
-        <button id="plugin-refresh-btn" style="padding:6px 12px;border-radius:10px;border:1px solid rgba(15,23,42,0.1);background:#fff;font-size:13px;cursor:pointer;">刷新</button>
-        <div id="plugin-status" style="margin-left:auto;font-size:12px;color:#64748b;"></div>
+      <div id="plugin-android-tip" style="display:none;background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;padding:8px 12px;margin:12px 16px 0;font-size:12px;color:#92400e;">
+        <span style="margin-right:6px;">⚠️</span>安卓端仅支持 ZIP 导入
+      </div>
+      <div style="padding:12px 16px;border-bottom:1px solid rgba(148,163,184,0.15);background:#f8fafc;">
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+          <button id="plugin-import-btn" style="padding:8px 14px;border-radius:10px;border:none;background:#2563eb;color:#fff;font-size:13px;cursor:pointer;display:flex;align-items:center;gap:6px;">
+            <span style="font-size:14px;">📁</span>导入插件
+          </button>
+          <button id="plugin-install-url-btn" style="padding:8px 14px;border-radius:10px;border:1px solid rgba(15,23,42,0.12);background:#fff;font-size:13px;cursor:pointer;display:flex;align-items:center;gap:6px;">
+            <span style="font-size:14px;">🔗</span>链接安装
+          </button>
+          <button id="plugin-refresh-btn" style="padding:8px 12px;border-radius:10px;border:1px solid rgba(15,23,42,0.12);background:#fff;font-size:13px;cursor:pointer;" title="刷新列表">↻</button>
+          <button id="plugin-ui-manage-btn" style="padding:8px 12px;border-radius:10px;border:1px solid rgba(15,23,42,0.12);background:#fff;font-size:13px;cursor:pointer;" title="UI 注入管理">⚙️</button>
+          <div id="plugin-status" style="margin-left:auto;font-size:12px;color:#64748b;"></div>
+        </div>
+        <div style="margin-top:8px;font-size:11px;color:#64748b;">
+          <span id="plugin-import-hint">桌面端可导入文件夹或 ZIP，安卓端使用 ZIP</span>
+        </div>
       </div>
       <div id="plugin-list" style="flex:1;overflow:auto;padding:16px;display:flex;flex-direction:column;gap:12px;"></div>
     `;
+    // hidden zip input trigger
+    this.element.insertAdjacentHTML('beforeend', '<input type="file" id="plugin-zip-input-hidden" accept=".zip" style="display:none;">');
 
     this.element.querySelector('#plugin-panel-close')?.addEventListener('click', () => this.hide());
     this.statusEl = this.element.querySelector('#plugin-status');
     this.listEl = this.element.querySelector('#plugin-list');
     const importBtn = this.element.querySelector('#plugin-import-btn');
-    const importZipBtn = this.element.querySelector('#plugin-import-zip-btn');
     const installUrlBtn = this.element.querySelector('#plugin-install-url-btn');
     const manageUiBtn = this.element.querySelector('#plugin-ui-manage-btn');
     const refreshBtn = this.element.querySelector('#plugin-refresh-btn');
+    const androidTip = this.element.querySelector('#plugin-android-tip');
+    const importHint = this.element.querySelector('#plugin-import-hint');
 
     this.fileInput = document.createElement('input');
     this.fileInput.type = 'file';
@@ -119,29 +136,22 @@ export class PluginPanel {
     this.zipInput.onchange = () => this.handleZipImport();
     document.body.appendChild(this.zipInput);
 
-    if (this.isAndroid && importBtn) {
-      importBtn.disabled = true;
-      importBtn.textContent = '导入插件文件夹（安卓不支持）';
-      importBtn.title = '安卓端不支持文件夹选择，请使用 ZIP 导入';
-      importBtn.style.opacity = '0.55';
-      importBtn.style.cursor = 'not-allowed';
-      if (this.statusEl) {
-        this.statusEl.textContent = '安卓端请使用 ZIP 导入插件';
-      }
-    } else {
+    // 安卓端显示提示条，并修改导入按钮行为
+    if (this.isAndroid) {
+      if (androidTip) androidTip.style.display = 'block';
+      if (importHint) importHint.textContent = '点击"导入插件"选择 ZIP 文件';
       importBtn?.addEventListener('click', () => {
-        if (this.fileInput) {
-          this.fileInput.value = '';
-          this.fileInput.click();
+        if (this.zipInput) {
+          this.zipInput.value = '';
+          this.zipInput.click();
         }
       });
+    } else {
+      // 桌面端：显示选择菜单（文件夹或 ZIP）
+      importBtn?.addEventListener('click', (e) => {
+        this.showImportMenu(e.currentTarget);
+      });
     }
-    importZipBtn?.addEventListener('click', () => {
-      if (this.zipInput) {
-        this.zipInput.value = '';
-        this.zipInput.click();
-      }
-    });
     installUrlBtn?.addEventListener('click', () => this.handleUrlInstall());
     manageUiBtn?.addEventListener('click', () => this.showUiManager());
     refreshBtn?.addEventListener('click', () => this.renderList());
@@ -192,11 +202,35 @@ export class PluginPanel {
   }
 
   showUiManager() {
+    this.closeMenus();
     this.createUiManagerUI();
     if (!this.uiManageOverlay || !this.uiManagePanel) return;
     this.renderUiManager();
     this.uiManageOverlay.style.display = 'block';
     this.uiManagePanel.style.display = 'flex';
+  }
+
+  closeImportMenu() {
+    const existing = document.querySelector('.plugin-import-menu');
+    if (existing) existing.remove();
+    if (this.importMenuCloseHandler) {
+      document.removeEventListener('pointerdown', this.importMenuCloseHandler, true);
+      this.importMenuCloseHandler = null;
+    }
+  }
+
+  closeMoreMenu() {
+    const existing = document.querySelector('.plugin-more-menu');
+    if (existing) existing.remove();
+    if (this.moreMenuCloseHandler) {
+      document.removeEventListener('pointerdown', this.moreMenuCloseHandler, true);
+      this.moreMenuCloseHandler = null;
+    }
+  }
+
+  closeMenus() {
+    this.closeImportMenu();
+    this.closeMoreMenu();
   }
 
   hideUiManager() {
@@ -292,6 +326,84 @@ export class PluginPanel {
         });
       });
     }
+  }
+
+  showImportMenu(anchor) {
+    // 如果菜单已存在，则关闭并返回
+    const existing = document.querySelector('.plugin-import-menu');
+    if (existing) {
+      this.closeImportMenu();
+      return;
+    }
+    // 同时关闭其他菜单
+    this.closeMoreMenu();
+    const menu = document.createElement('div');
+    menu.className = 'plugin-import-menu';
+    menu.style.cssText = `
+      position: absolute;
+      background: #fff;
+      border: 1px solid rgba(15,23,42,0.1);
+      border-radius: 12px;
+      box-shadow: 0 8px 24px rgba(15,23,42,0.15);
+      padding: 6px;
+      z-index: 25000;
+      min-width: 160px;
+    `;
+    menu.innerHTML = `
+      <button class="import-menu-item" data-type="folder" style="
+        display: flex; align-items: center; gap: 10px; width: 100%;
+        padding: 10px 12px; border: none; background: transparent;
+        border-radius: 8px; cursor: pointer; font-size: 13px; text-align: left;
+      ">
+        <span style="font-size:16px;">📁</span>
+        <span>导入文件夹</span>
+      </button>
+      <button class="import-menu-item" data-type="zip" style="
+        display: flex; align-items: center; gap: 10px; width: 100%;
+        padding: 10px 12px; border: none; background: transparent;
+        border-radius: 8px; cursor: pointer; font-size: 13px; text-align: left;
+      ">
+        <span style="font-size:16px;">📦</span>
+        <span>导入 ZIP</span>
+      </button>
+    `;
+    // 定位到按钮下方
+    const rect = anchor.getBoundingClientRect();
+    menu.style.top = `${rect.bottom + 4}px`;
+    menu.style.left = `${rect.left}px`;
+    document.body.appendChild(menu);
+    // hover 样式
+    menu.querySelectorAll('.import-menu-item').forEach(btn => {
+      btn.addEventListener('mouseenter', () => btn.style.background = '#f1f5f9');
+      btn.addEventListener('mouseleave', () => btn.style.background = 'transparent');
+      btn.addEventListener('click', () => {
+        const nextType = btn.dataset.type;
+        this.closeImportMenu();
+        if (nextType === 'folder') {
+          if (this.fileInput) {
+            this.fileInput.value = '';
+            this.fileInput.click();
+          }
+        } else {
+          if (this.zipInput) {
+            this.zipInput.value = '';
+            this.zipInput.click();
+          }
+        }
+      });
+    });
+    // 点击外部关闭
+    const closeMenu = (e) => {
+      if (!menu.contains(e.target) && e.target !== anchor) {
+        this.closeImportMenu();
+      }
+    };
+    this.importMenuCloseHandler = closeMenu;
+    setTimeout(() => {
+      if (this.importMenuCloseHandler !== closeMenu) return;
+      if (!document.body.contains(menu)) return;
+      document.addEventListener('pointerdown', closeMenu, true);
+    }, 0);
   }
 
   async handleImport() {
@@ -559,44 +671,183 @@ export class PluginPanel {
         box-shadow: 0 4px 12px rgba(15,23,42,0.05);
         display: flex;
         flex-direction: column;
-        gap: 8px;
+        gap: 10px;
       `;
       const manifest = item.manifest || {};
-      const header = document.createElement('div');
-      header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:8px;';
-      const title = document.createElement('div');
-      title.style.cssText = 'display:flex;flex-direction:column;gap:2px;';
-      const name = document.createElement('div');
-      name.textContent = `${manifest.name || item.id} ${manifest.version ? `v${manifest.version}` : ''}`.trim();
-      name.style.cssText = 'font-weight:700;color:#0f172a;font-size:14px;';
-      const idLine = document.createElement('div');
-      idLine.textContent = item.id;
-      idLine.style.cssText = 'font-size:11px;color:#64748b;';
-      title.appendChild(name);
-      title.appendChild(idLine);
-
-      const actions = document.createElement('div');
-      actions.style.cssText = 'display:flex;align-items:center;gap:6px;';
-      const toggleBtn = document.createElement('button');
       const enabled = Boolean(item.enabled);
       const isPower = String(manifest.mode || '').toLowerCase() === 'power';
       const isApproved = Boolean(item.powerApproved);
-      toggleBtn.textContent = enabled ? '已启用' : '未启用';
-      toggleBtn.style.cssText = `
-        border: none;
-        border-radius: 10px;
-        padding: 6px 10px;
-        font-size: 12px;
+      const isBlocked = Boolean(item.blocked);
+
+      // 头部：名称 + 版本
+      const header = document.createElement('div');
+      header.style.cssText = 'display:flex;align-items:flex-start;justify-content:space-between;gap:10px;';
+      const title = document.createElement('div');
+      title.style.cssText = 'flex:1;min-width:0;';
+      const name = document.createElement('div');
+      name.textContent = `${manifest.name || item.id}`;
+      name.style.cssText = 'font-weight:700;color:#0f172a;font-size:14px;';
+      const idLine = document.createElement('div');
+      idLine.style.cssText = 'font-size:11px;color:#64748b;margin-top:2px;';
+      idLine.innerHTML = `${item.id}${manifest.version ? ` <span style="color:#94a3b8;">v${manifest.version}</span>` : ''}`;
+      title.appendChild(name);
+      title.appendChild(idLine);
+
+      // 更多菜单按钮
+      const moreBtn = document.createElement('button');
+      moreBtn.textContent = '⋮';
+      moreBtn.title = '更多操作';
+      moreBtn.style.cssText = `
+        border: 1px solid rgba(15,23,42,0.1);
+        border-radius: 8px;
+        padding: 4px 10px;
+        font-size: 16px;
         cursor: pointer;
-        color: ${enabled ? '#fff' : '#0f172a'};
-        background: ${enabled ? '#16a34a' : 'rgba(15,23,42,0.08)'};
+        background: #fff;
+        color: #64748b;
       `;
-      toggleBtn.onclick = async () => {
+      moreBtn.onclick = (e) => {
+        e.stopPropagation();
+        this.showPluginMoreMenu(e.currentTarget, item, manifest, { isPower, isApproved, isBlocked });
+      };
+
+      header.appendChild(title);
+      header.appendChild(moreBtn);
+      card.appendChild(header);
+
+      // 描述
+      if (manifest.description) {
+        const desc = document.createElement('div');
+        desc.textContent = String(manifest.description || '');
+        desc.style.cssText = 'font-size:12px;color:#475569;line-height:1.4;';
+        card.appendChild(desc);
+      }
+
+      // 状态标签行
+      const metaRow = document.createElement('div');
+      metaRow.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:11px;';
+      // 模式标签
+      const modeTag = document.createElement('span');
+      modeTag.textContent = manifest.mode || 'safe';
+      modeTag.style.cssText = `
+        padding: 2px 8px;
+        border-radius: 999px;
+        background: ${isPower ? 'rgba(249,115,22,0.1)' : 'rgba(34,197,94,0.1)'};
+        color: ${isPower ? '#ea580c' : '#16a34a'};
+        font-size: 10px;
+      `;
+      metaRow.appendChild(modeTag);
+      // 拉黑状态
+      if (isBlocked) {
+        const blockedTag = document.createElement('span');
+        blockedTag.textContent = '已拉黑';
+        blockedTag.style.cssText = 'padding:2px 8px;border-radius:999px;background:rgba(239,68,68,0.1);color:#ef4444;font-size:10px;';
+        metaRow.appendChild(blockedTag);
+      }
+      // 授权状态（仅 power 模式）
+      if (isPower && !isBlocked) {
+        const authTag = document.createElement('span');
+        authTag.textContent = isApproved ? '已授权' : '未授权';
+        authTag.style.cssText = `padding:2px 8px;border-radius:999px;background:${isApproved ? 'rgba(34,197,94,0.1)' : 'rgba(249,115,22,0.1)'};color:${isApproved ? '#16a34a' : '#f97316'};font-size:10px;`;
+        metaRow.appendChild(authTag);
+      }
+      card.appendChild(metaRow);
+
+      // 权限标签
+      const permList = Array.isArray(manifest.permissions) ? manifest.permissions : [];
+      if (permList.length) {
+        const perms = document.createElement('div');
+        perms.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;';
+        permList.forEach(p => {
+          const badge = document.createElement('span');
+          badge.textContent = p;
+          badge.style.cssText = `
+            font-size: 10px;
+            padding: 2px 6px;
+            border-radius: 999px;
+            background: rgba(59,130,246,0.1);
+            color: #2563eb;
+          `;
+          perms.appendChild(badge);
+        });
+        card.appendChild(perms);
+      }
+
+      // 底部：Toggle 开关
+      const footer = document.createElement('div');
+      footer.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding-top:8px;border-top:1px solid rgba(15,23,42,0.06);';
+
+      // 运行状态文字
+      const statusInfo = this.runtime?.getStatus?.(item.id);
+      const statusText = document.createElement('div');
+      statusText.style.cssText = 'font-size:11px;color:#64748b;';
+      if (isBlocked) {
+        statusText.textContent = '已禁用（拉黑）';
+        statusText.style.color = '#ef4444';
+      } else if (statusInfo?.status === 'error') {
+        statusText.textContent = `错误: ${(statusInfo.error || '').slice(0, 30)}`;
+        statusText.style.color = '#ef4444';
+      } else if (enabled && statusInfo?.status === 'running') {
+        statusText.textContent = '运行中';
+        statusText.style.color = '#16a34a';
+      } else if (enabled) {
+        statusText.textContent = '已启用';
+      } else {
+        statusText.textContent = '已停用';
+      }
+      footer.appendChild(statusText);
+
+      // Toggle 开关
+      const toggleWrap = document.createElement('label');
+      toggleWrap.style.cssText = `
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        cursor: ${isBlocked ? 'not-allowed' : 'pointer'};
+        opacity: ${isBlocked ? '0.5' : '1'};
+      `;
+      const toggleInput = document.createElement('input');
+      toggleInput.type = 'checkbox';
+      toggleInput.checked = enabled;
+      toggleInput.disabled = isBlocked;
+      toggleInput.style.cssText = 'display:none;';
+      const toggleTrack = document.createElement('div');
+      toggleTrack.style.cssText = `
+        width: 40px;
+        height: 22px;
+        border-radius: 11px;
+        background: ${enabled ? '#16a34a' : '#e2e8f0'};
+        position: relative;
+        transition: background 0.2s;
+      `;
+      const toggleThumb = document.createElement('div');
+      toggleThumb.style.cssText = `
+        width: 18px;
+        height: 18px;
+        border-radius: 50%;
+        background: #fff;
+        position: absolute;
+        top: 2px;
+        left: ${enabled ? '20px' : '2px'};
+        transition: left 0.2s;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+      `;
+      toggleTrack.appendChild(toggleThumb);
+      toggleWrap.appendChild(toggleInput);
+      toggleWrap.appendChild(toggleTrack);
+
+      toggleInput.onchange = async () => {
         if (!this.runtime) {
           window.toastr?.warning?.('当前环境不支持插件运行');
+          toggleInput.checked = !toggleInput.checked;
           return;
         }
-        const next = !item.enabled;
+        if (isBlocked) {
+          window.toastr?.warning?.('插件已拉黑，请先解除');
+          toggleInput.checked = false;
+          return;
+        }
+        const next = toggleInput.checked;
         if (next && isPower && !isApproved) {
           const ok = await appConfirm({
             title: '高权限插件授权',
@@ -605,7 +856,10 @@ export class PluginPanel {
             cancelText: '取消',
             danger: true,
           });
-          if (!ok) return;
+          if (!ok) {
+            toggleInput.checked = false;
+            return;
+          }
           await this.store.setPowerApproved(item.id, true);
         }
         await this.store.setEnabled(item.id, next);
@@ -622,43 +876,45 @@ export class PluginPanel {
         }
         await this.renderList();
       };
-      const removeBtn = document.createElement('button');
-      removeBtn.textContent = '删除';
-      removeBtn.style.cssText = `
-        border: 1px solid rgba(239,68,68,0.3);
-        border-radius: 10px;
-        padding: 6px 10px;
-        font-size: 12px;
-        cursor: pointer;
-        color: #ef4444;
-        background: #fff;
-      `;
-      removeBtn.onclick = async () => {
-        const ok = await appConfirm({
-          title: '删除插件',
-          message: `确定删除插件 ${manifest.name || item.id}？`,
-          danger: true,
-        });
-        if (!ok) return;
-        if (this.runtime) {
-          await this.runtime.disablePlugin(item.id);
-        }
-        await this.store.removePlugin(item.id);
-        await this.renderList();
-      };
-      if (isPower) {
-        const powerBtn = document.createElement('button');
-        powerBtn.textContent = isApproved ? '撤销授权' : '授权';
-        powerBtn.style.cssText = `
-          border: 1px solid rgba(15,23,42,0.12);
-          border-radius: 10px;
-          padding: 6px 10px;
-          font-size: 12px;
-          cursor: pointer;
-          color: ${isApproved ? '#ef4444' : '#0f172a'};
-          background: #fff;
-        `;
-        powerBtn.onclick = async () => {
+      footer.appendChild(toggleWrap);
+      card.appendChild(footer);
+
+      this.listEl.appendChild(card);
+    });
+  }
+
+  showPluginMoreMenu(anchor, item, manifest, { isPower, isApproved, isBlocked }) {
+    // 如果当前按钮的菜单已存在，则关闭并返回
+    const existing = document.querySelector('.plugin-more-menu');
+    if (existing && existing._anchorId === item.id) {
+      this.closeMoreMenu();
+      return;
+    }
+    // 关闭所有菜单
+    this.closeMenus();
+    const menu = document.createElement('div');
+    menu.className = 'plugin-more-menu';
+    menu._anchorId = item.id; // 标记属于哪个插件
+    menu.style.cssText = `
+      position: fixed;
+      background: #fff;
+      border: 1px solid rgba(15,23,42,0.1);
+      border-radius: 12px;
+      box-shadow: 0 8px 24px rgba(15,23,42,0.18);
+      padding: 6px;
+      z-index: 25000;
+      min-width: 140px;
+    `;
+
+    const menuItems = [];
+
+    // 授权/撤销授权（仅 power 模式）
+    if (isPower) {
+      menuItems.push({
+        icon: isApproved ? '🔓' : '🔐',
+        label: isApproved ? '撤销授权' : '授权',
+        danger: isApproved,
+        action: async () => {
           if (isApproved) {
             const ok = await appConfirm({
               title: '撤销高权限授权',
@@ -683,70 +939,104 @@ export class PluginPanel {
             await this.store.setPowerApproved(item.id, true);
           }
           await this.renderList();
-        };
-        actions.appendChild(powerBtn);
-      }
-      actions.appendChild(toggleBtn);
-      actions.appendChild(removeBtn);
+        }
+      });
+    }
 
-      header.appendChild(title);
-      header.appendChild(actions);
-      card.appendChild(header);
-
-      if (manifest.description) {
-        const desc = document.createElement('div');
-        desc.textContent = String(manifest.description || '');
-        desc.style.cssText = 'font-size:12px;color:#475569;line-height:1.4;';
-        card.appendChild(desc);
-      }
-
-      const metaRow = document.createElement('div');
-      metaRow.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;font-size:11px;color:#64748b;';
-      const mode = document.createElement('span');
-      mode.textContent = `模式: ${manifest.mode || 'safe'}`;
-      metaRow.appendChild(mode);
-      if (isPower) {
-        const powerState = document.createElement('span');
-        powerState.textContent = `授权: ${isApproved ? '已同意' : '未授权'}`;
-        powerState.style.color = isApproved ? '#16a34a' : '#f97316';
-        metaRow.appendChild(powerState);
-      }
-      const statusInfo = this.runtime?.getStatus?.(item.id);
-      if (statusInfo?.status && statusInfo.status !== 'running') {
-        const statusTag = document.createElement('span');
-        statusTag.textContent = `状态: ${statusInfo.status}`;
-        statusTag.style.color = statusInfo.status === 'error' ? '#ef4444' : '#64748b';
-        metaRow.appendChild(statusTag);
-      }
-      if (statusInfo?.status === 'error' && statusInfo?.error) {
-        const errLine = document.createElement('div');
-        const message = String(statusInfo.error || '');
-        errLine.textContent = `错误: ${message.length > 120 ? `${message.slice(0, 120)}…` : message}`;
-        errLine.style.cssText = 'font-size:11px;color:#ef4444;';
-        card.appendChild(errLine);
-      }
-      card.appendChild(metaRow);
-
-      const permList = Array.isArray(manifest.permissions) ? manifest.permissions : [];
-      if (permList.length) {
-        const perms = document.createElement('div');
-        perms.style.cssText = 'display:flex;flex-wrap:wrap;gap:6px;';
-        permList.forEach(p => {
-          const badge = document.createElement('span');
-          badge.textContent = p;
-          badge.style.cssText = `
-            font-size: 10px;
-            padding: 2px 6px;
-            border-radius: 999px;
-            background: rgba(59,130,246,0.1);
-            color: #2563eb;
-          `;
-          perms.appendChild(badge);
+    // 拉黑/解除拉黑
+    menuItems.push({
+      icon: isBlocked ? '✅' : '🚫',
+      label: isBlocked ? '解除拉黑' : '拉黑',
+      danger: !isBlocked,
+      action: async () => {
+        if (isBlocked) {
+          await this.store.setBlocked(item.id, false);
+          await this.renderList();
+          return;
+        }
+        const ok = await appConfirm({
+          title: '拉黑插件',
+          message: `拉黑插件 ${manifest.name || item.id}？\n拉黑后将无法启用，需手动解除。`,
+          danger: true,
         });
-        card.appendChild(perms);
+        if (!ok) return;
+        if (this.runtime) {
+          await this.runtime.disablePlugin(item.id);
+        }
+        await this.store.setBlocked(item.id, true);
+        await this.renderList();
       }
-
-      this.listEl.appendChild(card);
     });
+
+    // 删除
+    menuItems.push({
+      icon: '🗑️',
+      label: '删除插件',
+      danger: true,
+      action: async () => {
+        const ok = await appConfirm({
+          title: '删除插件',
+          message: `确定删除插件 ${manifest.name || item.id}？`,
+          danger: true,
+        });
+        if (!ok) return;
+        if (this.runtime) {
+          await this.runtime.disablePlugin(item.id);
+        }
+        await this.store.removePlugin(item.id);
+        await this.renderList();
+      }
+    });
+
+    menuItems.forEach(({ icon, label, danger, action }) => {
+      const btn = document.createElement('button');
+      btn.style.cssText = `
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        width: 100%;
+        padding: 10px 12px;
+        border: none;
+        background: transparent;
+        border-radius: 8px;
+        cursor: pointer;
+        font-size: 13px;
+        text-align: left;
+        color: ${danger ? '#ef4444' : '#334155'};
+      `;
+      btn.innerHTML = `<span style="font-size:14px;">${icon}</span><span>${label}</span>`;
+      btn.addEventListener('mouseenter', () => btn.style.background = danger ? 'rgba(239,68,68,0.08)' : '#f1f5f9');
+      btn.addEventListener('mouseleave', () => btn.style.background = 'transparent');
+      btn.addEventListener('click', () => {
+        this.closeMoreMenu();
+        action();
+      });
+      menu.appendChild(btn);
+    });
+
+    // 定位
+    const rect = anchor.getBoundingClientRect();
+    const menuHeight = menuItems.length * 44 + 12;
+    const spaceBelow = window.innerHeight - rect.bottom;
+    if (spaceBelow < menuHeight && rect.top > menuHeight) {
+      menu.style.bottom = `${window.innerHeight - rect.top + 4}px`;
+    } else {
+      menu.style.top = `${rect.bottom + 4}px`;
+    }
+    menu.style.right = `${window.innerWidth - rect.right}px`;
+    document.body.appendChild(menu);
+
+    // 点击外部关闭
+    const closeMenu = (e) => {
+      if (!menu.contains(e.target) && e.target !== anchor) {
+        this.closeMoreMenu();
+      }
+    };
+    this.moreMenuCloseHandler = closeMenu;
+    setTimeout(() => {
+      if (this.moreMenuCloseHandler !== closeMenu) return;
+      if (!document.body.contains(menu)) return;
+      document.addEventListener('pointerdown', closeMenu, true);
+    }, 0);
   }
 }

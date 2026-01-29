@@ -121,6 +121,7 @@ export class PluginStore {
         manifest,
         code: String(item.code || ''),
         enabled: Boolean(item.enabled),
+        blocked: Boolean(item.blocked),
         powerApproved: Boolean(item.powerApproved),
         installedAt: Number(item.installedAt || 0) || 0,
         updatedAt: Number(item.updatedAt || 0) || 0,
@@ -146,6 +147,7 @@ export class PluginStore {
         manifest: record.manifest,
         code: record.code,
         enabled: Boolean(record.enabled),
+        blocked: Boolean(record.blocked),
         powerApproved: Boolean(record.powerApproved),
         installedAt: record.installedAt || Date.now(),
         updatedAt: Date.now(),
@@ -166,6 +168,7 @@ export class PluginStore {
       id: record.id,
       manifest: record.manifest,
       enabled: Boolean(record.enabled),
+      blocked: Boolean(record.blocked),
       powerApproved: Boolean(record.powerApproved),
       installedAt: record.installedAt,
       updatedAt: record.updatedAt,
@@ -196,6 +199,7 @@ export class PluginStore {
       manifest: normalized,
       code: String(code || ''),
       enabled: existing ? Boolean(existing.enabled) : false,
+      blocked: existing ? Boolean(existing.blocked) : false,
       powerApproved: existing ? Boolean(existing.powerApproved) : false,
       installedAt: existing?.installedAt || now,
       updatedAt: now,
@@ -222,6 +226,23 @@ export class PluginStore {
     record.updatedAt = Date.now();
     this.records.set(key, record);
     await this.save();
+  }
+
+  async setBlocked(id, blocked) {
+    const key = String(id || '').trim();
+    const record = this.records.get(key);
+    if (!record) return;
+    record.blocked = Boolean(blocked);
+    if (record.blocked) record.enabled = false;
+    record.updatedAt = Date.now();
+    this.records.set(key, record);
+    await this.save();
+  }
+
+  isBlocked(id) {
+    const key = String(id || '').trim();
+    const record = this.records.get(key);
+    return Boolean(record?.blocked);
   }
 
   async setPowerApproved(id, approved) {
@@ -253,6 +274,10 @@ export class PluginStore {
     if (!pid || !key) return;
     const data = { ...(this.storage.get(pid) || {}) };
     data[key] = value;
+    const size = JSON.stringify(data).length;
+    if (size > 200 * 1024) {
+      throw new Error('storage quota exceeded');
+    }
     this.storage.set(pid, data);
     await this.save();
   }
