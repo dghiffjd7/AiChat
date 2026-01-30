@@ -1,34 +1,19 @@
 import { logger } from '../utils/logger.js';
+import { RISKY_PERMISSION_SET, POWER_REQUIRED_PERMISSIONS } from './plugin-permissions.js';
 
 const INIT_TIMEOUT_MS = 10000;
 const EVENT_TIMEOUT_MS = 4000;
 const LOG_WINDOW_MS = 2000;
 const LOG_MAX_PER_WINDOW = 80;
 
-const RISKY_PERMISSIONS = new Set([
-  'chat.write',
-  'worldbook.write',
-  'variables.write',
-  'prompt.modify',
-  'ui.inject',
-  'system.settings',
-  'network',
-]);
-const POWER_ONLY_PERMISSIONS = new Set([
-  'worldbook.write',
-  'network',
-  'prompt.modify',
-  'system.settings',
-]);
-
 const needsPermissionApproval = (manifest) => {
   const perms = Array.isArray(manifest?.permissions) ? manifest.permissions : [];
-  return perms.some(p => RISKY_PERMISSIONS.has(p));
+  return perms.some(p => RISKY_PERMISSION_SET.has(p));
 };
 
 const needsPowerMode = (manifest) => {
   const perms = Array.isArray(manifest?.permissions) ? manifest.permissions : [];
-  return perms.some(p => POWER_ONLY_PERMISSIONS.has(p));
+  return perms.some(p => POWER_REQUIRED_PERMISSIONS.has(p));
 };
 
 const buildWorkerScript = () => `
@@ -55,13 +40,13 @@ const timerIds = new Set();
 
 const hasPermission = (perm) => Array.isArray(pluginMeta?.permissions) && pluginMeta.permissions.includes(perm);
 const denyNetwork = () => {
-  throw new Error('permission denied: network');
+  throw new Error('权限不足: network');
 };
 
 const originalFetch = typeof fetch === 'function' ? fetch.bind(self) : null;
 if (originalFetch) {
   self.fetch = (...args) => {
-    if (!hasPermission('network')) return Promise.reject(new Error('permission denied: network'));
+    if (!hasPermission('network')) return Promise.reject(new Error('权限不足: network'));
     return originalFetch(...args);
   };
 }
@@ -102,8 +87,8 @@ const originalSetTimeout = typeof self.setTimeout === 'function' ? self.setTimeo
 const originalClearTimeout = typeof self.clearTimeout === 'function' ? self.clearTimeout.bind(self) : null;
 if (originalSetTimeout && originalClearTimeout) {
   self.setTimeout = (handler, delay, ...args) => {
-    if (timerIds.size >= MAX_TIMERS) throw new Error('timer limit exceeded');
-    if (typeof handler !== 'function') throw new Error('timer handler must be function');
+    if (timerIds.size >= MAX_TIMERS) throw new Error('定时器数量超出限制');
+    if (typeof handler !== 'function') throw new Error('定时器回调必须是函数');
     let id;
     const wrapped = (...callArgs) => {
       timerIds.delete(id);
@@ -123,8 +108,8 @@ const originalSetInterval = typeof self.setInterval === 'function' ? self.setInt
 const originalClearInterval = typeof self.clearInterval === 'function' ? self.clearInterval.bind(self) : null;
 if (originalSetInterval && originalClearInterval) {
   self.setInterval = (handler, delay, ...args) => {
-    if (timerIds.size >= MAX_TIMERS) throw new Error('timer limit exceeded');
-    if (typeof handler !== 'function') throw new Error('timer handler must be function');
+    if (timerIds.size >= MAX_TIMERS) throw new Error('定时器数量超出限制');
+    if (typeof handler !== 'function') throw new Error('定时器回调必须是函数');
     const id = originalSetInterval(handler, clampDelay(delay), ...args);
     timerIds.add(id);
     return id;
@@ -170,7 +155,7 @@ const sendLog = (level, args) => {
 
 const callRpc = (method, params) => new Promise((resolve, reject) => {
   if (pendingRpcs.size > 200) {
-    reject(new Error('rpc overload'));
+    reject(new Error('请求过多，请稍后重试'));
     return;
   }
   const id = rpcSeq++;
@@ -308,8 +293,8 @@ const addListener = (eventName, callback) => {
   if (!listeners.has(name)) listeners.set(name, new Set());
   const bucket = listeners.get(name);
   if (bucket.has(callback)) return;
-  if (listenerCount >= MAX_LISTENERS_TOTAL) throw new Error('listener limit exceeded');
-  if (bucket.size >= MAX_LISTENERS_PER_EVENT) throw new Error('listener per-event limit exceeded');
+  if (listenerCount >= MAX_LISTENERS_TOTAL) throw new Error('事件监听数量超出限制');
+  if (bucket.size >= MAX_LISTENERS_PER_EVENT) throw new Error('单事件监听数量超出限制');
   bucket.add(callback);
   listenerCount += 1;
   const alias = legacyAliases.get(name);
@@ -542,7 +527,8 @@ const api = {
     watch: (name, callback) => {
       const key = String(name || '').trim();
       if (!key || typeof callback !== 'function') return;
-      if (variableWatchers.size >= MAX_VARIABLE_WATCHERS) throw new Error('variable watcher limit exceeded');
+      if (!hasPermission('variables.read')) throw new Error('权限不足: variables.read');
+      if (variableWatchers.size >= MAX_VARIABLE_WATCHERS) throw new Error('变量监听数量超出限制');
       const wrapped = (data) => {
         if (!data || typeof data !== 'object') return;
         if (String(data.name || '') !== key) return;
@@ -664,7 +650,7 @@ const initPlugin = async (meta, code) => {
     throw err;
   }
   if (typeof entry !== 'function') {
-    throw new Error('Plugin entry must export a function');
+    throw new Error('插件入口必须导出一个函数');
   }
   await entry(api);
 
@@ -714,7 +700,7 @@ const callWithTimeout = (promise, timeoutMs, onTimeout) => new Promise((resolve,
     if (settled) return;
     settled = true;
     if (typeof onTimeout === 'function') onTimeout();
-    reject(new Error('timeout'));
+    reject(new Error('操作超时'));
   }, timeoutMs);
   promise
     .then((res) => {
@@ -861,7 +847,7 @@ class PluginInstance {
 
   request(payload, timeoutMs, onTimeout) {
     if (this.pending.size > 80) {
-      const error = new Error('rpc overload');
+      const error = new Error('请求过多，请稍后重试');
       this.markFailure(error.message);
       return Promise.reject(error);
     }
@@ -955,7 +941,7 @@ class PluginInstance {
 
     if (method.startsWith('storage.')) {
       if (!hasPermission('storage')) {
-        respond('rpc_error', { error: { message: 'permission denied' } });
+        respond('rpc_error', { error: { message: '权限不足' } });
         return;
       }
     }
@@ -963,7 +949,7 @@ class PluginInstance {
       const needsWrite = method === 'chat.updateMessage' || method === 'chat.sendMessage';
       const perm = needsWrite ? 'chat.write' : 'chat.read';
       if (!hasPermission(perm)) {
-        respond('rpc_error', { error: { message: 'permission denied' } });
+        respond('rpc_error', { error: { message: '权限不足' } });
         return;
       }
     }
@@ -971,7 +957,7 @@ class PluginInstance {
       const needsWrite = method === 'variables.set' || method === 'variables.patch';
       const perm = needsWrite ? 'variables.write' : 'variables.read';
       if (!hasPermission(perm)) {
-        respond('rpc_error', { error: { message: 'permission denied' } });
+        respond('rpc_error', { error: { message: '权限不足' } });
         return;
       }
     }
@@ -979,13 +965,13 @@ class PluginInstance {
       const needsWrite = method === 'worldbook.save' || method === 'worldbook.setEntries';
       const perm = needsWrite ? 'worldbook.write' : 'worldbook.read';
       if (!hasPermission(perm)) {
-        respond('rpc_error', { error: { message: 'permission denied' } });
+        respond('rpc_error', { error: { message: '权限不足' } });
         return;
       }
     }
     if (method.startsWith('ui.')) {
       if (!hasPermission('ui.inject')) {
-        respond('rpc_error', { error: { message: 'permission denied' } });
+        respond('rpc_error', { error: { message: '权限不足' } });
         return;
       }
     }
@@ -1247,7 +1233,7 @@ class PluginInstance {
           return;
         }
         if (!hasPermission('variables.read')) {
-          respond('rpc_error', { error: { message: 'permission denied' } });
+          respond('rpc_error', { error: { message: '权限不足' } });
           return;
         }
         const result = chatStore.listGlobalVariables?.() || {};
@@ -1260,7 +1246,7 @@ class PluginInstance {
           return;
         }
         if (!hasPermission('variables.write')) {
-          respond('rpc_error', { error: { message: 'permission denied' } });
+          respond('rpc_error', { error: { message: '权限不足' } });
           return;
         }
         const updates = msg.params?.updates && typeof msg.params.updates === 'object' ? msg.params.updates : null;

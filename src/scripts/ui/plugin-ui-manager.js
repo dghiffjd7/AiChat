@@ -318,6 +318,7 @@ export class PluginUiManager {
     this.activeModalPluginId = '';
     this.activeModalId = '';
     if (this.modalBody) this.modalBody.innerHTML = '';
+    this.pruneFrames();
     return true;
   }
 
@@ -462,6 +463,8 @@ export class PluginUiManager {
   hideSidebar() {
     if (this.sidebarOverlay) this.sidebarOverlay.style.display = 'none';
     if (this.sidebarPanel) this.sidebarPanel.style.display = 'none';
+    if (this.sidebarBody) this.sidebarBody.innerHTML = '';
+    this.pruneFrames();
   }
 
   renderCards() {

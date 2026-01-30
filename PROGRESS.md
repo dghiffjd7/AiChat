@@ -45,6 +45,17 @@
 - 修改：
   - `src/scripts/ui/plugin-ui-manager.js`
 
+## 2026-01-31 01:18
+
+- 插件系统优化清单：权限定义统一、移除未实现权限、变量监听权限校验、frameMap 清理、错误提示中文化。
+- 新增：
+  - `src/scripts/plugins/plugin-permissions.js`
+- 修改：
+  - `src/scripts/storage/plugin-store.js`
+  - `src/scripts/plugins/plugin-runtime.js`
+  - `src/scripts/ui/plugin-panel.js`
+  - `src/scripts/ui/plugin-ui-manager.js`
+
 ## 2026-01-30 10:51
 
 - 记录：Phase 4 验证清单（角色卡导入/导出相关）暂缓，待角色卡完整计划阶段统一实现。

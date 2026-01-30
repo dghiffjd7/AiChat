@@ -1,6 +1,7 @@
 import { appConfirm } from './app-confirm.js';
 import { validateManifest } from '../storage/plugin-store.js';
 import { safeInvoke } from '../utils/tauri.js';
+import { RISKY_PERMISSIONS, RISKY_PERMISSION_SET } from '../plugins/plugin-permissions.js';
 
 const readFileText = (file) => new Promise((resolve, reject) => {
   const reader = new FileReader();
@@ -17,16 +18,6 @@ const pickManifestPath = (paths) => {
   candidates.sort((a, b) => a.length - b.length);
   return candidates[0];
 };
-
-const RISKY_PERMISSIONS = new Map([
-  ['chat.write', '修改聊天内容'],
-  ['worldbook.write', '写入世界书'],
-  ['variables.write', '修改变量'],
-  ['prompt.modify', '修改提示词'],
-  ['ui.inject', '注入 UI'],
-  ['system.settings', '修改系统设置'],
-  ['network', '网络访问'],
-]);
 
 const getRiskyPermissions = (manifest) => {
   const perms = Array.isArray(manifest?.permissions) ? manifest.permissions : [];
@@ -695,8 +686,7 @@ export class PluginPanel {
       lines.push('');
       lines.push(`描述: ${desc.slice(0, 200)}${desc.length > 200 ? '…' : ''}`);
     }
-    const dangerPerms = new Set(['network', 'system.settings', 'ui.inject', 'prompt.modify', 'variables.write']);
-    const hasDanger = perms.some(p => dangerPerms.has(p));
+    const hasDanger = perms.some(p => RISKY_PERMISSION_SET.has(p));
     const ok = await appConfirm({
       title: '确认安装插件',
       message: lines.join('\n'),

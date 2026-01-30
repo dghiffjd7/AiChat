@@ -1,29 +1,11 @@
 import { safeInvoke } from '../utils/tauri.js';
 import { logger } from '../utils/logger.js';
+import { ALLOWED_PERMISSIONS, POWER_REQUIRED_PERMISSIONS } from '../plugins/plugin-permissions.js';
 
 const PLUGIN_STORE_KEY = 'plugin_store_v1';
 const PLUGIN_STORAGE_KEY = 'plugin_storage_v1';
 
 const ALLOWED_MODES = new Set(['safe', 'power', 'legacy']);
-const ALLOWED_PERMISSIONS = new Set([
-  'chat.read',
-  'chat.write',
-  'worldbook.read',
-  'worldbook.write',
-  'storage',
-  'network',
-  'prompt.modify',
-  'ui.inject',
-  'variables.read',
-  'variables.write',
-  'system.settings',
-]);
-const POWER_REQUIRED_PERMISSIONS = new Set([
-  'worldbook.write',
-  'network',
-  'prompt.modify',
-  'system.settings',
-]);
 
 const FAILURE_WINDOW_MS = 10 * 60 * 1000;
 const FAILURE_THRESHOLD = 3;
@@ -433,7 +415,7 @@ export class PluginStore {
     data[key] = value;
     const size = JSON.stringify(data).length;
     if (size > 200 * 1024) {
-      throw new Error('storage quota exceeded');
+      throw new Error('存储空间已满');
     }
     this.storage.set(pid, data);
     await this.save();
