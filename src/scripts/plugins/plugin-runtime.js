@@ -2,6 +2,34 @@ import { logger } from '../utils/logger.js';
 
 const INIT_TIMEOUT_MS = 10000;
 const EVENT_TIMEOUT_MS = 4000;
+const LOG_WINDOW_MS = 2000;
+const LOG_MAX_PER_WINDOW = 80;
+
+const RISKY_PERMISSIONS = new Set([
+  'chat.write',
+  'worldbook.write',
+  'variables.write',
+  'prompt.modify',
+  'ui.inject',
+  'system.settings',
+  'network',
+]);
+const POWER_ONLY_PERMISSIONS = new Set([
+  'worldbook.write',
+  'network',
+  'prompt.modify',
+  'system.settings',
+]);
+
+const needsPermissionApproval = (manifest) => {
+  const perms = Array.isArray(manifest?.permissions) ? manifest.permissions : [];
+  return perms.some(p => RISKY_PERMISSIONS.has(p));
+};
+
+const needsPowerMode = (manifest) => {
+  const perms = Array.isArray(manifest?.permissions) ? manifest.permissions : [];
+  return perms.some(p => POWER_ONLY_PERMISSIONS.has(p));
+};
 
 const buildWorkerScript = () => `
 const listeners = new Map();
@@ -9,6 +37,7 @@ const pendingRpcs = new Map();
 const subscriptions = new Set();
 let rpcSeq = 1;
 let pluginMeta = {};
+let listenerCount = 0;
 const variableWatchers = new Map();
 const legacyState = {
   chat: [],
@@ -17,6 +46,94 @@ const legacyState = {
   extensionSettings: {},
 };
 const legacyEventCache = new Map();
+const MAX_LISTENERS_TOTAL = 120;
+const MAX_LISTENERS_PER_EVENT = 30;
+const MAX_VARIABLE_WATCHERS = 30;
+const MAX_TIMERS = 40;
+const MIN_TIMER_DELAY_MS = 30;
+const timerIds = new Set();
+
+const hasPermission = (perm) => Array.isArray(pluginMeta?.permissions) && pluginMeta.permissions.includes(perm);
+const denyNetwork = () => {
+  throw new Error('permission denied: network');
+};
+
+const originalFetch = typeof fetch === 'function' ? fetch.bind(self) : null;
+if (originalFetch) {
+  self.fetch = (...args) => {
+    if (!hasPermission('network')) return Promise.reject(new Error('permission denied: network'));
+    return originalFetch(...args);
+  };
+}
+
+const originalImportScripts = typeof importScripts === 'function' ? importScripts.bind(self) : null;
+if (originalImportScripts) {
+  self.importScripts = (...args) => {
+    if (!hasPermission('network')) return denyNetwork();
+    return originalImportScripts(...args);
+  };
+}
+
+const OriginalWebSocket = self.WebSocket;
+if (OriginalWebSocket) {
+  self.WebSocket = function(...args) {
+    if (!hasPermission('network')) return denyNetwork();
+    return new OriginalWebSocket(...args);
+  };
+  self.WebSocket.prototype = OriginalWebSocket.prototype;
+}
+
+const OriginalXHR = self.XMLHttpRequest;
+if (OriginalXHR) {
+  self.XMLHttpRequest = function() {
+    if (!hasPermission('network')) return denyNetwork();
+    return new OriginalXHR();
+  };
+  self.XMLHttpRequest.prototype = OriginalXHR.prototype;
+}
+
+const clampDelay = (delay) => {
+  const raw = Number(delay);
+  if (!Number.isFinite(raw) || raw < 0) return MIN_TIMER_DELAY_MS;
+  return Math.max(MIN_TIMER_DELAY_MS, raw);
+};
+
+const originalSetTimeout = typeof self.setTimeout === 'function' ? self.setTimeout.bind(self) : null;
+const originalClearTimeout = typeof self.clearTimeout === 'function' ? self.clearTimeout.bind(self) : null;
+if (originalSetTimeout && originalClearTimeout) {
+  self.setTimeout = (handler, delay, ...args) => {
+    if (timerIds.size >= MAX_TIMERS) throw new Error('timer limit exceeded');
+    if (typeof handler !== 'function') throw new Error('timer handler must be function');
+    let id;
+    const wrapped = (...callArgs) => {
+      timerIds.delete(id);
+      return handler(...callArgs);
+    };
+    id = originalSetTimeout(wrapped, clampDelay(delay), ...args);
+    timerIds.add(id);
+    return id;
+  };
+  self.clearTimeout = (id) => {
+    timerIds.delete(id);
+    return originalClearTimeout(id);
+  };
+}
+
+const originalSetInterval = typeof self.setInterval === 'function' ? self.setInterval.bind(self) : null;
+const originalClearInterval = typeof self.clearInterval === 'function' ? self.clearInterval.bind(self) : null;
+if (originalSetInterval && originalClearInterval) {
+  self.setInterval = (handler, delay, ...args) => {
+    if (timerIds.size >= MAX_TIMERS) throw new Error('timer limit exceeded');
+    if (typeof handler !== 'function') throw new Error('timer handler must be function');
+    const id = originalSetInterval(handler, clampDelay(delay), ...args);
+    timerIds.add(id);
+    return id;
+  };
+  self.clearInterval = (id) => {
+    timerIds.delete(id);
+    return originalClearInterval(id);
+  };
+}
 
 const makeError = (err) => ({
   message: err && err.message ? String(err.message) : String(err || 'unknown error'),
@@ -52,6 +169,10 @@ const sendLog = (level, args) => {
 };
 
 const callRpc = (method, params) => new Promise((resolve, reject) => {
+  if (pendingRpcs.size > 200) {
+    reject(new Error('rpc overload'));
+    return;
+  }
   const id = rpcSeq++;
   pendingRpcs.set(id, { resolve, reject });
   send({ type: 'rpc', id, method, params });
@@ -185,7 +306,12 @@ const addListener = (eventName, callback) => {
   const name = String(eventName || '').trim();
   if (!name || typeof callback !== 'function') return;
   if (!listeners.has(name)) listeners.set(name, new Set());
-  listeners.get(name).add(callback);
+  const bucket = listeners.get(name);
+  if (bucket.has(callback)) return;
+  if (listenerCount >= MAX_LISTENERS_TOTAL) throw new Error('listener limit exceeded');
+  if (bucket.size >= MAX_LISTENERS_PER_EVENT) throw new Error('listener per-event limit exceeded');
+  bucket.add(callback);
+  listenerCount += 1;
   const alias = legacyAliases.get(name);
   if (alias && alias.source) ensureSubscription(alias.source);
   if (!alias) ensureSubscription(name);
@@ -194,8 +320,15 @@ const addListener = (eventName, callback) => {
 const removeListener = (eventName, callback) => {
   const name = String(eventName || '').trim();
   if (!name || !listeners.has(name)) return;
-  if (callback) listeners.get(name).delete(callback);
-  if (!callback || listeners.get(name).size === 0) listeners.delete(name);
+  const bucket = listeners.get(name);
+  if (callback) {
+    if (bucket.delete(callback)) listenerCount = Math.max(0, listenerCount - 1);
+  } else {
+    listenerCount = Math.max(0, listenerCount - bucket.size);
+    listeners.delete(name);
+    return;
+  }
+  if (bucket.size === 0) listeners.delete(name);
 };
 
 const dispatchEvent = async (name, payload, options = {}) => {
@@ -409,6 +542,7 @@ const api = {
     watch: (name, callback) => {
       const key = String(name || '').trim();
       if (!key || typeof callback !== 'function') return;
+      if (variableWatchers.size >= MAX_VARIABLE_WATCHERS) throw new Error('variable watcher limit exceeded');
       const wrapped = (data) => {
         if (!data || typeof data !== 'object') return;
         if (String(data.name || '') !== key) return;
@@ -608,6 +742,9 @@ class PluginInstance {
     this.status = 'stopped';
     this.lastError = null;
     this.subscriptions = new Set();
+    this.logWindowStart = 0;
+    this.logCount = 0;
+    this.logSuppressed = false;
   }
 
   hasPermission(perm) {
@@ -631,6 +768,7 @@ class PluginInstance {
       this.status = 'error';
       this.lastError = err?.message || 'worker error';
       this.terminateWorker('worker error');
+      this.markFailure(this.lastError);
       logger.warn(`[plugin:${this.record.id}] worker error`, err);
     };
     try {
@@ -639,6 +777,7 @@ class PluginInstance {
       this.status = 'error';
       this.lastError = err?.message || 'init failed';
       this.terminateWorker(this.lastError);
+      await this.markFailure(this.lastError);
       throw err;
     }
   }
@@ -656,17 +795,24 @@ class PluginInstance {
       },
       code: this.record.code,
     };
-    const result = await this.request(payload, INIT_TIMEOUT_MS, () => {
+    const result = await this.request(payload, INIT_TIMEOUT_MS, async () => {
       this.status = 'error';
       this.lastError = 'init timeout';
       this.terminateWorker(this.lastError);
+      await this.markFailure(this.lastError);
     });
     if (!result?.ok) {
       this.status = 'error';
       this.lastError = result?.error?.message || 'init failed';
+      await this.markFailure(this.lastError);
       throw new Error(this.lastError);
     }
     this.status = 'running';
+    try {
+      await this.store.resetFailures(this.record.id);
+    } catch (err) {
+      logger.warn(`[plugin:${this.record.id}] reset failure stats failed`, err);
+    }
   }
 
   async stop() {
@@ -682,10 +828,11 @@ class PluginInstance {
       data,
     };
     try {
-      const res = await this.request(payload, EVENT_TIMEOUT_MS, () => {
+      const res = await this.request(payload, EVENT_TIMEOUT_MS, async () => {
         this.status = 'error';
         this.lastError = 'event timeout';
         this.terminateWorker(this.lastError);
+        await this.markFailure(this.lastError);
       });
       if (res?.error) {
         logger.warn(`[plugin:${this.record.id}] event error`, res.error);
@@ -697,7 +844,27 @@ class PluginInstance {
     }
   }
 
+  async markFailure(reason) {
+    const msg = String(reason || 'plugin error');
+    try {
+      const result = await this.store.recordFailure(this.record.id, msg);
+      if (result?.blocked) {
+        await this.store.setEnabled(this.record.id, false);
+        if (this.runtime) {
+          await this.runtime.disablePlugin(this.record.id);
+        }
+      }
+    } catch (err) {
+      logger.warn(`[plugin:${this.record.id}] record failure failed`, err);
+    }
+  }
+
   request(payload, timeoutMs, onTimeout) {
+    if (this.pending.size > 80) {
+      const error = new Error('rpc overload');
+      this.markFailure(error.message);
+      return Promise.reject(error);
+    }
     const id = this.seq++;
     payload.id = id;
     return callWithTimeout(
@@ -1162,6 +1329,20 @@ class PluginInstance {
 
   handleLog(level, args) {
     const prefix = `[plugin:${this.record.id}]`;
+    const now = Date.now();
+    if (!this.logWindowStart || (now - this.logWindowStart) > LOG_WINDOW_MS) {
+      this.logWindowStart = now;
+      this.logCount = 0;
+      this.logSuppressed = false;
+    }
+    this.logCount += 1;
+    if (this.logCount > LOG_MAX_PER_WINDOW) {
+      if (!this.logSuppressed) {
+        this.logSuppressed = true;
+        logger.warn(`${prefix} 日志过多，已暂时抑制输出`);
+      }
+      return;
+    }
     const payload = Array.isArray(args)
       ? args.map(a => {
           if (typeof a === 'string') return a;
@@ -1249,8 +1430,18 @@ export class PluginRuntime {
       await this.store.setEnabled(key, false);
       return;
     }
+    if (needsPowerMode(record.manifest) && String(record.manifest?.mode || '').toLowerCase() !== 'power') {
+      logger.warn(`[plugin:${key}] permissions require power mode`);
+      await this.store.setEnabled(key, false);
+      return;
+    }
     if (String(record.manifest?.mode || '').toLowerCase() === 'power' && !this.store.isPowerApproved(key)) {
       logger.warn(`[plugin:${key}] power plugin not authorized`);
+      await this.store.setEnabled(key, false);
+      return;
+    }
+    if (needsPermissionApproval(record.manifest) && !this.store.isPermissionsApproved(key)) {
+      logger.warn(`[plugin:${key}] permissions not authorized`);
       await this.store.setEnabled(key, false);
       return;
     }

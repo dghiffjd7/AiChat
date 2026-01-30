@@ -18,6 +18,21 @@ const pickManifestPath = (paths) => {
   return candidates[0];
 };
 
+const RISKY_PERMISSIONS = new Map([
+  ['chat.write', '修改聊天内容'],
+  ['worldbook.write', '写入世界书'],
+  ['variables.write', '修改变量'],
+  ['prompt.modify', '修改提示词'],
+  ['ui.inject', '注入 UI'],
+  ['system.settings', '修改系统设置'],
+  ['network', '网络访问'],
+]);
+
+const getRiskyPermissions = (manifest) => {
+  const perms = Array.isArray(manifest?.permissions) ? manifest.permissions : [];
+  return perms.filter(p => RISKY_PERMISSIONS.has(p));
+};
+
 export class PluginPanel {
   constructor({ store, runtime }) {
     this.store = store;
@@ -597,13 +612,58 @@ export class PluginPanel {
         message: '是否立即启用该插件？',
       });
       if (enable) {
-        await this.store.setEnabled(manifest.id, true);
-        await this.runtime.enablePlugin(manifest.id);
+        await this.enablePluginWithChecks(manifest.id, manifest);
         await this.renderList();
       }
     } else {
       window.toastr?.warning?.('当前环境不支持插件运行');
     }
+  }
+
+  async enablePluginWithChecks(id, manifest) {
+    if (!this.runtime) {
+      window.toastr?.warning?.('当前环境不支持插件运行');
+      return false;
+    }
+    const pluginId = String(id || '').trim();
+    if (!pluginId) return false;
+    const isPower = String(manifest?.mode || '').toLowerCase() === 'power';
+    if (isPower && !this.store.isPowerApproved(pluginId)) {
+      const ok = await appConfirm({
+        title: '高权限插件授权',
+        message: `插件 ${manifest?.name || pluginId} 需要高权限授权。\n可能包含：网络访问 / 修改提示词 / 写入世界书 等操作。\n确认授权并启用？`,
+        confirmText: '授权并启用',
+        cancelText: '取消',
+        danger: true,
+      });
+      if (!ok) return false;
+      await this.store.setPowerApproved(pluginId, true);
+    }
+    if (!this.store.isPermissionsApproved(pluginId)) {
+      const risky = getRiskyPermissions(manifest);
+      if (risky.length) {
+        const details = risky.map(p => `${p}（${RISKY_PERMISSIONS.get(p)}）`).join('\n');
+        const ok = await appConfirm({
+          title: '权限授权确认',
+          message: `插件 ${manifest?.name || pluginId} 需要以下权限：\n${details}\n确认授权并启用？`,
+          confirmText: '授权并启用',
+          cancelText: '取消',
+          danger: true,
+        });
+        if (!ok) return false;
+        await this.store.approvePermissions(pluginId);
+      }
+    }
+    await this.store.setEnabled(pluginId, true);
+    await this.runtime.enablePlugin(pluginId);
+    const status = this.runtime.getStatus(pluginId);
+    if (status?.status === 'error') {
+      await this.store.setEnabled(pluginId, false);
+      await this.runtime.disablePlugin(pluginId);
+      window.toastr?.error?.(`启用失败：${status.error || '未知错误'}`);
+      return false;
+    }
+    return true;
   }
 
   async confirmInstall(manifest, source) {
@@ -678,6 +738,12 @@ export class PluginPanel {
       const isPower = String(manifest.mode || '').toLowerCase() === 'power';
       const isApproved = Boolean(item.powerApproved);
       const isBlocked = Boolean(item.blocked);
+      const riskyPerms = getRiskyPermissions(manifest);
+      const hasRisky = riskyPerms.length > 0;
+      const permApproved = this.store?.isPermissionsApproved ? this.store.isPermissionsApproved(item.id) : Boolean(item.permissionApproved);
+      const failureCount = Number(item.failureCount || 0) || 0;
+      const disabledReason = String(item.disabledReason || '');
+      const backupCount = Number(item.backupCount || 0) || 0;
 
       // 头部：名称 + 版本
       const header = document.createElement('div');
@@ -708,7 +774,7 @@ export class PluginPanel {
       `;
       moreBtn.onclick = (e) => {
         e.stopPropagation();
-        this.showPluginMoreMenu(e.currentTarget, item, manifest, { isPower, isApproved, isBlocked });
+        this.showPluginMoreMenu(e.currentTarget, item, manifest, { isPower, isApproved, isBlocked, hasRisky, permApproved, backupCount });
       };
 
       header.appendChild(title);
@@ -751,6 +817,24 @@ export class PluginPanel {
         authTag.style.cssText = `padding:2px 8px;border-radius:999px;background:${isApproved ? 'rgba(34,197,94,0.1)' : 'rgba(249,115,22,0.1)'};color:${isApproved ? '#16a34a' : '#f97316'};font-size:10px;`;
         metaRow.appendChild(authTag);
       }
+      if (hasRisky && !isBlocked) {
+        const permTag = document.createElement('span');
+        permTag.textContent = permApproved ? '权限已授权' : '权限未授权';
+        permTag.style.cssText = `padding:2px 8px;border-radius:999px;background:${permApproved ? 'rgba(59,130,246,0.1)' : 'rgba(249,115,22,0.12)'};color:${permApproved ? '#2563eb' : '#f97316'};font-size:10px;`;
+        metaRow.appendChild(permTag);
+      }
+      if (failureCount > 0) {
+        const failTag = document.createElement('span');
+        failTag.textContent = `错误 ${failureCount}`;
+        failTag.style.cssText = 'padding:2px 8px;border-radius:999px;background:rgba(239,68,68,0.12);color:#dc2626;font-size:10px;';
+        metaRow.appendChild(failTag);
+      }
+      if (backupCount > 0) {
+        const backupTag = document.createElement('span');
+        backupTag.textContent = `可回滚 ${backupCount}`;
+        backupTag.style.cssText = 'padding:2px 8px;border-radius:999px;background:rgba(15,23,42,0.08);color:#475569;font-size:10px;';
+        metaRow.appendChild(backupTag);
+      }
       card.appendChild(metaRow);
 
       // 权限标签
@@ -782,7 +866,7 @@ export class PluginPanel {
       const statusText = document.createElement('div');
       statusText.style.cssText = 'font-size:11px;color:#64748b;';
       if (isBlocked) {
-        statusText.textContent = '已禁用（拉黑）';
+        statusText.textContent = disabledReason || '已禁用（拉黑）';
         statusText.style.color = '#ef4444';
       } else if (statusInfo?.status === 'error') {
         statusText.textContent = `错误: ${(statusInfo.error || '').slice(0, 30)}`;
@@ -848,30 +932,13 @@ export class PluginPanel {
           return;
         }
         const next = toggleInput.checked;
-        if (next && isPower && !isApproved) {
-          const ok = await appConfirm({
-            title: '高权限插件授权',
-            message: `插件 ${manifest.name || item.id} 需要高权限授权。\n可能包含：网络访问 / 修改提示词 / 写入世界书 等操作。\n确认授权并启用？`,
-            confirmText: '授权并启用',
-            cancelText: '取消',
-            danger: true,
-          });
+        if (next) {
+          const ok = await this.enablePluginWithChecks(item.id, manifest);
           if (!ok) {
             toggleInput.checked = false;
-            return;
-          }
-          await this.store.setPowerApproved(item.id, true);
-        }
-        await this.store.setEnabled(item.id, next);
-        if (next) {
-          await this.runtime.enablePlugin(item.id);
-          const status = this.runtime.getStatus(item.id);
-          if (status?.status === 'error') {
-            await this.store.setEnabled(item.id, false);
-            await this.runtime.disablePlugin(item.id);
-            window.toastr?.error?.(`启用失败：${status.error || '未知错误'}`);
           }
         } else {
+          await this.store.setEnabled(item.id, false);
           await this.runtime.disablePlugin(item.id);
         }
         await this.renderList();
@@ -883,7 +950,7 @@ export class PluginPanel {
     });
   }
 
-  showPluginMoreMenu(anchor, item, manifest, { isPower, isApproved, isBlocked }) {
+  showPluginMoreMenu(anchor, item, manifest, { isPower, isApproved, isBlocked, hasRisky, permApproved, backupCount }) {
     // 如果当前按钮的菜单已存在，则关闭并返回
     const existing = document.querySelector('.plugin-more-menu');
     if (existing && existing._anchorId === item.id) {
@@ -943,6 +1010,43 @@ export class PluginPanel {
       });
     }
 
+    // 权限授权/撤销（风险权限）
+    if (hasRisky) {
+      menuItems.push({
+        icon: permApproved ? '🔓' : '🔐',
+        label: permApproved ? '撤销权限授权' : '授权权限',
+        danger: permApproved,
+        action: async () => {
+          if (permApproved) {
+            const ok = await appConfirm({
+              title: '撤销权限授权',
+              message: `确定撤销插件 ${manifest.name || item.id} 的权限授权？`,
+              danger: true,
+            });
+            if (!ok) return;
+            await this.store.revokePermissions(item.id);
+            if (this.runtime) {
+              await this.store.setEnabled(item.id, false);
+              await this.runtime.disablePlugin(item.id);
+            }
+          } else {
+            const risky = getRiskyPermissions(manifest);
+            const details = risky.map(p => `${p}（${RISKY_PERMISSIONS.get(p)}）`).join('\n');
+            const ok = await appConfirm({
+              title: '权限授权确认',
+              message: `插件 ${manifest.name || item.id} 需要以下权限：\n${details}\n确认授权？`,
+              confirmText: '授权',
+              cancelText: '取消',
+              danger: true,
+            });
+            if (!ok) return;
+            await this.store.approvePermissions(item.id);
+          }
+          await this.renderList();
+        }
+      });
+    }
+
     // 拉黑/解除拉黑
     menuItems.push({
       icon: isBlocked ? '✅' : '🚫',
@@ -967,6 +1071,30 @@ export class PluginPanel {
         await this.renderList();
       }
     });
+
+    if (backupCount > 0) {
+      menuItems.push({
+        icon: '⏪',
+        label: '回滚到上一版',
+        action: async () => {
+          const ok = await appConfirm({
+            title: '回滚插件版本',
+            message: `确定将插件 ${manifest.name || item.id} 回滚到上一版本？\n回滚后需要重新启用。`,
+            danger: true,
+          });
+          if (!ok) return;
+          if (this.runtime) {
+            await this.runtime.disablePlugin(item.id);
+            await this.store.setEnabled(item.id, false);
+          }
+          const rolled = await this.store.rollbackPlugin(item.id);
+          if (!rolled) {
+            window.toastr?.warning?.('没有可回滚版本');
+          }
+          await this.renderList();
+        }
+      });
+    }
 
     // 删除
     menuItems.push({

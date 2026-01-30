@@ -2580,6 +2580,72 @@ pub async fn read_plugin_zip(bytes: Vec<u8>) -> Result<serde_json::Value, String
 }
 
 #[derive(serde::Serialize)]
+pub struct ZipEntryPayload {
+    pub name: String,
+    pub size: usize,
+    pub is_text: bool,
+    pub text: Option<String>,
+    pub base64: Option<String>,
+}
+
+#[tauri::command]
+pub async fn read_zip_entries(bytes: Vec<u8>) -> Result<Vec<ZipEntryPayload>, String> {
+    if bytes.is_empty() {
+        return Err("zip bytes empty".to_string());
+    }
+    let cursor = Cursor::new(bytes);
+    let mut archive = zip::ZipArchive::new(cursor).map_err(|e| e.to_string())?;
+    let mut out: Vec<ZipEntryPayload> = Vec::new();
+    let mut total: usize = 0;
+    const MAX_TOTAL: usize = 30 * 1024 * 1024;
+    const MAX_FILE: usize = 12 * 1024 * 1024;
+    for i in 0..archive.len() {
+        let mut file = archive.by_index(i).map_err(|e| e.to_string())?;
+        if file.is_dir() {
+            continue;
+        }
+        let name = file.name().replace('\\', "/");
+        let mut buf: Vec<u8> = Vec::new();
+        file.read_to_end(&mut buf).map_err(|e| e.to_string())?;
+        if buf.len() > MAX_FILE {
+            return Err(format!("zip entry too large: {}", name));
+        }
+        total = total.saturating_add(buf.len());
+        if total > MAX_TOTAL {
+            return Err("zip too large".to_string());
+        }
+        let lower = name.to_lowercase();
+        let is_text = lower.ends_with(".json")
+            || lower.ends_with(".txt")
+            || lower.ends_with(".md")
+            || lower.ends_with(".js")
+            || lower.ends_with(".yaml")
+            || lower.ends_with(".yml");
+        if is_text {
+            if let Ok(text) = String::from_utf8(buf.clone()) {
+                out.push(ZipEntryPayload {
+                    name,
+                    size: buf.len(),
+                    is_text: true,
+                    text: Some(text),
+                    base64: None,
+                });
+                continue;
+            }
+        }
+        let encoded = BASE64_ENGINE.encode(&buf);
+        out.push(ZipEntryPayload {
+            name,
+            size: buf.len(),
+            is_text: false,
+            text: None,
+            base64: Some(encoded),
+        });
+    }
+    Ok(out)
+}
+
+#[derive(serde::Serialize)]
 pub struct HttpResponse {
     pub status: u16,
     pub ok: bool,

@@ -18,6 +18,24 @@ const ALLOWED_PERMISSIONS = new Set([
   'variables.write',
   'system.settings',
 ]);
+const POWER_REQUIRED_PERMISSIONS = new Set([
+  'worldbook.write',
+  'network',
+  'prompt.modify',
+  'system.settings',
+]);
+
+const FAILURE_WINDOW_MS = 10 * 60 * 1000;
+const FAILURE_THRESHOLD = 3;
+
+const normalizePermissions = (list = []) => {
+  const normalized = Array.isArray(list)
+    ? list.map(p => String(p || '').trim()).filter(Boolean)
+    : [];
+  return Array.from(new Set(normalized)).sort();
+};
+
+const computePermissionHash = (list = []) => normalizePermissions(list).join('|');
 
 const readLocalJson = (key) => {
   try {
@@ -93,6 +111,10 @@ export const validateManifest = (rawManifest) => {
   if (manifest.mode && !ALLOWED_MODES.has(manifest.mode)) errors.push(`mode 不支持: ${manifest.mode}`);
   const invalidPerms = manifest.permissions.filter(p => p && !ALLOWED_PERMISSIONS.has(p));
   if (invalidPerms.length) errors.push(`权限不支持: ${invalidPerms.join(', ')}`);
+  const powerPerms = manifest.permissions.filter(p => p && POWER_REQUIRED_PERMISSIONS.has(p));
+  if (powerPerms.length && manifest.mode !== 'power') {
+    errors.push(`权限需要 power 模式: ${powerPerms.join(', ')}`);
+  }
   return { manifest, ok: errors.length === 0, errors };
 };
 
@@ -123,6 +145,13 @@ export class PluginStore {
         enabled: Boolean(item.enabled),
         blocked: Boolean(item.blocked),
         powerApproved: Boolean(item.powerApproved),
+        permissionApproved: Boolean(item.permissionApproved) && String(item.permissionHash || '') === computePermissionHash(manifest.permissions),
+        permissionHash: computePermissionHash(manifest.permissions),
+        failureCount: Number(item.failureCount || 0) || 0,
+        lastFailureAt: Number(item.lastFailureAt || 0) || 0,
+        lastFailureReason: String(item.lastFailureReason || ''),
+        disabledReason: String(item.disabledReason || ''),
+        backups: Array.isArray(item.backups) ? item.backups.filter(b => b && typeof b === 'object') : [],
         installedAt: Number(item.installedAt || 0) || 0,
         updatedAt: Number(item.updatedAt || 0) || 0,
         source: item.source || null,
@@ -149,6 +178,13 @@ export class PluginStore {
         enabled: Boolean(record.enabled),
         blocked: Boolean(record.blocked),
         powerApproved: Boolean(record.powerApproved),
+        permissionApproved: Boolean(record.permissionApproved),
+        permissionHash: String(record.permissionHash || ''),
+        failureCount: Number(record.failureCount || 0) || 0,
+        lastFailureAt: Number(record.lastFailureAt || 0) || 0,
+        lastFailureReason: String(record.lastFailureReason || ''),
+        disabledReason: String(record.disabledReason || ''),
+        backups: Array.isArray(record.backups) ? record.backups : [],
         installedAt: record.installedAt || Date.now(),
         updatedAt: Date.now(),
         source: record.source || null,
@@ -170,6 +206,12 @@ export class PluginStore {
       enabled: Boolean(record.enabled),
       blocked: Boolean(record.blocked),
       powerApproved: Boolean(record.powerApproved),
+      permissionApproved: Boolean(record.permissionApproved),
+      failureCount: Number(record.failureCount || 0) || 0,
+      lastFailureAt: Number(record.lastFailureAt || 0) || 0,
+      lastFailureReason: String(record.lastFailureReason || ''),
+      disabledReason: String(record.disabledReason || ''),
+      backupCount: Array.isArray(record.backups) ? record.backups.length : 0,
       installedAt: record.installedAt,
       updatedAt: record.updatedAt,
       source: record.source || null,
@@ -194,6 +236,20 @@ export class PluginStore {
     const id = normalized.id;
     const now = Date.now();
     const existing = this.records.get(id);
+    const permHash = computePermissionHash(normalized.permissions);
+    const backups = Array.isArray(existing?.backups) ? [...existing.backups] : [];
+    const hasChange = existing
+      ? (existing.code !== String(code || '') || JSON.stringify(existing.manifest || {}) !== JSON.stringify(normalized || {}))
+      : false;
+    if (existing && hasChange) {
+      backups.unshift({
+        manifest: existing.manifest,
+        code: existing.code,
+        version: String(existing.manifest?.version || ''),
+        updatedAt: Number(existing.updatedAt || existing.installedAt || now) || now,
+      });
+      if (backups.length > 3) backups.length = 3;
+    }
     const record = {
       id,
       manifest: normalized,
@@ -201,6 +257,13 @@ export class PluginStore {
       enabled: existing ? Boolean(existing.enabled) : false,
       blocked: existing ? Boolean(existing.blocked) : false,
       powerApproved: existing ? Boolean(existing.powerApproved) : false,
+      permissionApproved: existing ? Boolean(existing.permissionApproved) && String(existing.permissionHash || '') === permHash : false,
+      permissionHash: permHash,
+      failureCount: existing ? Number(existing.failureCount || 0) || 0 : 0,
+      lastFailureAt: existing ? Number(existing.lastFailureAt || 0) || 0 : 0,
+      lastFailureReason: existing ? String(existing.lastFailureReason || '') : '',
+      disabledReason: existing ? String(existing.disabledReason || '') : '',
+      backups,
       installedAt: existing?.installedAt || now,
       updatedAt: now,
       source: source || null,
@@ -234,6 +297,8 @@ export class PluginStore {
     if (!record) return;
     record.blocked = Boolean(blocked);
     if (record.blocked) record.enabled = false;
+    if (record.blocked) record.disabledReason = '已手动拉黑';
+    if (!record.blocked && record.disabledReason === '已手动拉黑') record.disabledReason = '';
     record.updatedAt = Date.now();
     this.records.set(key, record);
     await this.save();
@@ -259,6 +324,98 @@ export class PluginStore {
     const key = String(id || '').trim();
     const record = this.records.get(key);
     return Boolean(record?.powerApproved);
+  }
+
+  isPermissionsApproved(id) {
+    const key = String(id || '').trim();
+    const record = this.records.get(key);
+    if (!record) return false;
+    const currentHash = computePermissionHash(record.manifest?.permissions || []);
+    return Boolean(record.permissionApproved) && String(record.permissionHash || '') === currentHash;
+  }
+
+  async approvePermissions(id) {
+    const key = String(id || '').trim();
+    const record = this.records.get(key);
+    if (!record) return;
+    record.permissionApproved = true;
+    record.permissionHash = computePermissionHash(record.manifest?.permissions || []);
+    record.updatedAt = Date.now();
+    this.records.set(key, record);
+    await this.save();
+  }
+
+  async revokePermissions(id) {
+    const key = String(id || '').trim();
+    const record = this.records.get(key);
+    if (!record) return;
+    record.permissionApproved = false;
+    record.permissionHash = computePermissionHash(record.manifest?.permissions || []);
+    record.updatedAt = Date.now();
+    this.records.set(key, record);
+    await this.save();
+  }
+
+  async recordFailure(id, reason = '') {
+    const key = String(id || '').trim();
+    const record = this.records.get(key);
+    if (!record) return { blocked: false, count: 0 };
+    const now = Date.now();
+    const last = Number(record.lastFailureAt || 0) || 0;
+    const withinWindow = last && (now - last) <= FAILURE_WINDOW_MS;
+    record.failureCount = withinWindow ? (Number(record.failureCount || 0) || 0) + 1 : 1;
+    record.lastFailureAt = now;
+    record.lastFailureReason = String(reason || '');
+    if (record.failureCount >= FAILURE_THRESHOLD) {
+      record.blocked = true;
+      record.enabled = false;
+      record.disabledReason = '插件连续错误，已自动禁用';
+    }
+    record.updatedAt = now;
+    this.records.set(key, record);
+    await this.save();
+    return { blocked: Boolean(record.blocked), count: record.failureCount };
+  }
+
+  async resetFailures(id) {
+    const key = String(id || '').trim();
+    const record = this.records.get(key);
+    if (!record) return;
+    record.failureCount = 0;
+    record.lastFailureAt = 0;
+    record.lastFailureReason = '';
+    if (record.disabledReason === '插件连续错误，已自动禁用') record.disabledReason = '';
+    record.updatedAt = Date.now();
+    this.records.set(key, record);
+    await this.save();
+  }
+
+  async rollbackPlugin(id) {
+    const key = String(id || '').trim();
+    const record = this.records.get(key);
+    if (!record) return false;
+    if (!Array.isArray(record.backups) || record.backups.length === 0) return false;
+    const [backup, ...rest] = record.backups;
+    const currentSnapshot = {
+      manifest: record.manifest,
+      code: record.code,
+      version: String(record.manifest?.version || ''),
+      updatedAt: Number(record.updatedAt || Date.now()),
+    };
+    const nextBackups = [currentSnapshot, ...rest].slice(0, 3);
+    record.manifest = backup.manifest || record.manifest;
+    record.code = String(backup.code || '');
+    record.backups = nextBackups;
+    record.enabled = false;
+    record.blocked = false;
+    record.powerApproved = record.powerApproved && String(record.manifest?.mode || '').toLowerCase() === 'power';
+    record.permissionApproved = false;
+    record.permissionHash = computePermissionHash(record.manifest?.permissions || []);
+    record.disabledReason = '已回滚至上一版本';
+    record.updatedAt = Date.now();
+    this.records.set(key, record);
+    await this.save();
+    return true;
   }
 
   async storageGet(pluginId, key) {

@@ -161,7 +161,8 @@ body[data-typing-dots="off"] [data-typing-placeholder="1"] {
 
 .page {
     display: none;
-    height: calc(100vh - 60px);
+    height: calc(100vh - 56px - env(safe-area-inset-bottom, 0px));
+    height: calc(100dvh - 56px - env(safe-area-inset-bottom, 0px));
     overflow: hidden;
 }
 
@@ -708,7 +709,7 @@ body,
   min-height: 100vh;
   /* 不添加 padding，让内容从0开始，状态栏透明显示 */
   padding-top: 0;
-  padding-bottom: env(safe-area-inset-bottom, 12px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
   box-sizing: border-box;
   background: transparent; /* 透明背景，不遮挡状态栏 */
 }
@@ -1328,7 +1329,8 @@ body,
   bottom: 0;
   left: 0;
   right: 0;
-  height: 56px;
+  height: calc(56px + env(safe-area-inset-bottom, 0px));
+  box-sizing: border-box;
   display: flex;
   justify-content: space-around;
   align-items: center;
@@ -1351,9 +1353,7 @@ body,
   font-weight: 700;
 }
 
-.page {
-  padding-bottom: 60px; /* 留出底部导航空间 */
-}
+/* page 底部留白由高度计算处理，避免重复叠加 */
 
 /* 响应式 */
 @media (max-width: 768px) {

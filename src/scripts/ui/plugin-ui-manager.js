@@ -1,7 +1,19 @@
 const DEFAULT_CARD_HEIGHT = 80;
 const RESIZE_MESSAGE = 'plugin_ui_resize';
+const MAX_SIDEBARS_TOTAL = 8;
+const MAX_SIDEBARS_PER_PLUGIN = 3;
+const MAX_CARDS_TOTAL = 12;
+const MAX_CARDS_PER_PLUGIN = 4;
+const MAX_HTML_LENGTH = 200000;
 
 const normalizeId = (value) => String(value || '').trim();
+const countByPlugin = (map, pluginId) => {
+  let count = 0;
+  for (const item of map.values()) {
+    if (item.pluginId === pluginId) count += 1;
+  }
+  return count;
+};
 
 const wrapShadowContent = (content) => `
   <style>
@@ -216,15 +228,15 @@ export class PluginUiManager {
 
     const before = document.createElement('div');
     before.id = 'plugin-chatcard-before';
-    before.style.cssText = 'display:flex;flex-direction:column;gap:8px;margin:6px 0;';
+    before.style.cssText = 'display:none;flex-direction:column;gap:8px;margin:6px 0;';
 
     const after = document.createElement('div');
     after.id = 'plugin-chatcard-after';
-    after.style.cssText = 'display:flex;flex-direction:column;gap:8px;margin:6px 0;';
+    after.style.cssText = 'display:none;flex-direction:column;gap:8px;margin:6px 0;';
 
     const above = document.createElement('div');
     above.id = 'plugin-chatcard-above';
-    above.style.cssText = 'display:flex;flex-direction:column;gap:8px;margin:8px 0;';
+    above.style.cssText = 'display:none;flex-direction:column;gap:8px;margin:8px 0;';
 
     this.chatInputContainer.insertBefore(before, row);
     this.chatInputContainer.appendChild(after);
@@ -245,13 +257,20 @@ export class PluginUiManager {
     const id = normalizeId(data.id);
     if (!pid || !id) return false;
     const key = `${pid}:${id}`;
+    const content = String(data.content || '');
+    if (content.length > MAX_HTML_LENGTH) return false;
+    const isUpdate = this.sidebars.has(key);
+    if (!isUpdate) {
+      if (this.sidebars.size >= MAX_SIDEBARS_TOTAL) return false;
+      if (countByPlugin(this.sidebars, pid) >= MAX_SIDEBARS_PER_PLUGIN) return false;
+    }
     this.sidebars.set(key, {
       key,
       pluginId: pid,
       id,
       title: String(data.title || id),
       icon: String(data.icon || '◆'),
-      content: String(data.content || ''),
+      content,
       width: data.width,
     });
     this.renderDock();
@@ -262,6 +281,9 @@ export class PluginUiManager {
     const pid = normalizeId(pluginId);
     const id = normalizeId(data.id || 'modal');
     if (!pid || !id || !this.modalPanel || !this.modalOverlay || !this.modalBody) return false;
+    if (this.activeModalPluginId && this.activeModalPluginId !== pid) return false;
+    const content = String(data.content || '');
+    if (content.length > MAX_HTML_LENGTH) return false;
     const key = `${pid}:${id}`;
     this.activeModalKey = key;
     this.activeModalPluginId = pid;
@@ -271,7 +293,7 @@ export class PluginUiManager {
     const host = document.createElement('div');
     host.style.cssText = 'width: 100%;';
     this.modalBody.appendChild(host);
-    this.renderSandbox(host, String(data.content || ''), data.height);
+    this.renderSandbox(host, content, data.height);
     const width = data.width ? String(data.width) : '';
     const maxWidth = data.maxWidth ? String(data.maxWidth) : '';
     if (width) this.modalPanel.style.width = width;
@@ -314,12 +336,19 @@ export class PluginUiManager {
     const id = normalizeId(data.id);
     if (!pid || !id) return false;
     const key = `${pid}:${id}`;
+    const content = String(data.content || '');
+    if (content.length > MAX_HTML_LENGTH) return false;
+    const isUpdate = this.cards.has(key);
+    if (!isUpdate) {
+      if (this.cards.size >= MAX_CARDS_TOTAL) return false;
+      if (countByPlugin(this.cards, pid) >= MAX_CARDS_PER_PLUGIN) return false;
+    }
     this.cards.set(key, {
       key,
       pluginId: pid,
       id,
       position: String(data.position || 'after_input'),
-      content: String(data.content || ''),
+      content,
       height: data.height,
     });
     this.renderCards();
@@ -440,6 +469,9 @@ export class PluginUiManager {
     this.cardSlots.before.innerHTML = '';
     this.cardSlots.after.innerHTML = '';
     if (this.cardSlots.above) this.cardSlots.above.innerHTML = '';
+    let countBefore = 0;
+    let countAfter = 0;
+    let countAbove = 0;
     Array.from(this.cards.values()).forEach(card => {
       const pos = card.position === 'before_input' ? 'before' : card.position === 'above_messages' ? 'above' : 'after';
       const slot = this.cardSlots[pos];
@@ -455,7 +487,15 @@ export class PluginUiManager {
       slot.appendChild(host);
       card.host = host;
       this.renderSandbox(host, card.content, card.height);
+      if (pos === 'before') countBefore += 1;
+      else if (pos === 'above') countAbove += 1;
+      else countAfter += 1;
     });
+    this.cardSlots.before.style.display = countBefore ? 'flex' : 'none';
+    this.cardSlots.after.style.display = countAfter ? 'flex' : 'none';
+    if (this.cardSlots.above) {
+      this.cardSlots.above.style.display = countAbove ? 'flex' : 'none';
+    }
     this.pruneFrames();
   }
 

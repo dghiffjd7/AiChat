@@ -59,6 +59,7 @@ pub fn run() {
             commands::load_raw_reply,
             commands::delete_raw_reply,
             commands::read_plugin_zip,
+            commands::read_zip_entries,
             commands::init_database,
             commands::create_memory,
             commands::update_memory,

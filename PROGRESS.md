@@ -1,5 +1,88 @@
 # 開發進度追蹤（必更新）(必须使用当下时间记录)
 
+## 2026-01-30 11:14
+
+- Phase 5（安全/授权/资源限制）补强：权限与 mode 校验、网络权限拦截、UI 注入限额、日志节流、失败计数复位、权限授权可撤销。
+- 修改：
+  - `src/scripts/storage/plugin-store.js`
+  - `src/scripts/plugins/plugin-runtime.js`
+  - `src/scripts/ui/plugin-ui-manager.js`
+  - `src/scripts/ui/plugin-panel.js`
+
+## 2026-01-30 11:20
+
+- Phase 6（安全与稳定性）继续：增加版本回滚/黑名单原因、RPC 过载限制、插件回滚入口。
+- 修改：
+  - `src/scripts/storage/plugin-store.js`
+  - `src/scripts/plugins/plugin-runtime.js`
+  - `src/scripts/ui/plugin-panel.js`
+
+## 2026-01-30 11:42
+
+- Phase 6（安全与稳定性）补完：Worker 级资源限制（定时器/监听器/变量监听上限）。
+- 修改：
+  - `src/scripts/plugins/plugin-runtime.js`
+
+## 2026-01-30 11:48
+
+- Phase 7 开始：新增示例插件（hello-world/UI/legacy-compat）与插件文档。
+- 新增：
+  - `/mnt/d/my/phone/test-plugin-phase7/hello-world`
+  - `/mnt/d/my/phone/test-plugin-phase7/ui-inject`
+  - `/mnt/d/my/phone/test-plugin-phase7/legacy-compat`
+  - `docs/plugin-system.md`
+
+## 2026-01-31 00:52
+
+- Phase 7：修复插件导入后自动启用的权限授权流程；修正底部导航/页面高度导致的空白遮挡。
+- 修改：
+  - `src/scripts/ui/plugin-panel.js`
+  - `src/assets/css/main.css`
+
+## 2026-01-31 00:58
+
+- 修复输入区灰色区域过高：空的插件卡片插槽改为隐藏。
+- 修改：
+  - `src/scripts/ui/plugin-ui-manager.js`
+
+## 2026-01-30 10:51
+
+- 记录：Phase 4 验证清单（角色卡导入/导出相关）暂缓，待角色卡完整计划阶段统一实现。
+- Phase 5 起步：新增权限授权校验、插件失败计数与自动禁用（安全/授权）。
+- 修改：
+  - `src/scripts/storage/plugin-store.js`
+  - `src/scripts/plugins/plugin-runtime.js`
+  - `src/scripts/ui/plugin-panel.js`
+
+## 2026-01-30 10:05
+
+- 角色卡 Phase 4 最小版落地：导出/导入角色卡 ZIP（变量/世界书/正则/记忆表格 + 头像）。
+- 新增酒馆兼容导出包：worldbook.json + regex-scripts.json + README。
+- 新增通用 ZIP 读取命令，支持角色卡 ZIP 解析。
+- 修改：
+  - `src/scripts/ui/character-card-transfer.js`
+  - `src/scripts/ui/session-panel.js`
+  - `src/scripts/ui/contact-settings-panel.js`
+  - `src/scripts/ui/app.js`
+  - `src-tauri/src/commands.rs`
+  - `src-tauri/src/lib.rs`
+
+## 2026-01-30 10:30
+
+- 按角色卡完整规划调整：移除“单聊天室导入/导出角色卡”入口，后续改为 Persona 层导入导出。
+- 记忆表格移除“导出世界书”入口（避免与角色卡体系冲突）。
+- 修改：
+  - `src/scripts/ui/session-panel.js`
+  - `src/scripts/ui/contact-settings-panel.js`
+  - `src/scripts/ui/app.js`
+  - `src/scripts/ui/memory-table-editor.js`
+
+## 2026-01-30 10:39
+
+- 按当前需求恢复记忆表格“导出世界书”入口。
+- 修改：
+  - `src/scripts/ui/memory-table-editor.js`
+
 ## 2026-01-29 11:25
 
 - 插件系统 Phase 1 落地：插件注册存储、运行时沙箱（Worker）、基础事件/日志/存储 API。
