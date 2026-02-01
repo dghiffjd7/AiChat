@@ -27,6 +27,8 @@
   --qq-size-sticker-panel: 288px; /* 贴图面板高度 */
   --qq-size-sticker-preview: 64px; /* 输入框贴图预览高度 */
   --qq-size-action-panel: 108px; /* 快捷功能面板高度 */
+  --mode-switch-size: 26px; /* 社交/RP 开关尺寸 */
+  --mode-switch-slot: 10px; /* 悬浮在底部导航上方的间距 */
 
   /* 圆角 */
   --qq-radius-full: 50%; /* 圆形（头像） */
@@ -194,33 +196,97 @@
 
 .mode-switch {
   position: fixed;
-  top: calc(var(--safe-area-top, 0px) + 10px);
-  right: 12px;
   z-index: 26050;
-  display: flex;
-  gap: 4px;
-  padding: 4px;
-  border-radius: 999px;
-  background: rgba(15, 23, 42, 0.65);
-  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.18);
-  backdrop-filter: blur(6px);
+  width: var(--mode-switch-size);
+  height: var(--mode-switch-size);
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  transition: top 0.22s ease, left 0.22s ease, opacity 0.2s ease;
 }
 
-.mode-btn {
-  border: none;
-  background: transparent;
-  color: #e2e8f0;
-  font-size: 12px;
-  padding: 6px 12px;
-  border-radius: 999px;
-  cursor: pointer;
-  transition: background 0.2s ease, color 0.2s ease;
+.mode-switch.is-dragging {
+  transition: none;
 }
 
-.mode-btn.is-active {
-  background: #f8fafc;
-  color: #0f172a;
-  font-weight: 700;
+.mode-switch-btn {
+  pointer-events: auto;
+  width: 100%;
+  height: 100%;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+  padding: 0;
+  cursor: grab;
+  touch-action: none;
+  background: radial-gradient(circle at 30% 30%, rgba(31, 41, 55, 0.9), rgba(6, 10, 14, 0.96) 65%, #030406 100%);
+  box-shadow: 0 8px 18px rgba(2, 6, 23, 0.45), inset 0 0 8px rgba(0, 0, 0, 0.65);
+  position: relative;
+  outline: none;
+}
+
+.mode-switch-btn::before {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border-radius: inherit;
+  background: conic-gradient(from 90deg, #7dd3fc, #f0abfc, #fcd34d, #6ee7b7, #38bdf8, #7dd3fc);
+  filter: blur(0.6px);
+  opacity: 0.9;
+  animation: modeRingSpin 4.6s linear infinite;
+  -webkit-mask: radial-gradient(circle, transparent 58%, #000 62%);
+  mask: radial-gradient(circle, transparent 58%, #000 62%);
+}
+
+.mode-switch-btn::after {
+  content: '';
+  position: absolute;
+  inset: 4px;
+  border-radius: inherit;
+  background: radial-gradient(circle at 35% 35%, rgba(255, 255, 255, 0.18), rgba(0, 0, 0, 0.9) 70%);
+  box-shadow: inset 0 0 8px rgba(0, 0, 0, 0.7);
+}
+
+.mode-switch-indicator {
+  position: absolute;
+  left: 50%;
+  top: -2px;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: #e2e8f0;
+  transform: translateX(-50%);
+  box-shadow: 0 0 6px rgba(96, 165, 250, 0.75);
+}
+
+.mode-switch[data-mode='rp'] .mode-switch-indicator {
+  top: auto;
+  bottom: -2px;
+  background: #7dd3fc;
+  box-shadow: 0 0 6px rgba(125, 211, 252, 0.75);
+}
+
+.mode-switch-btn:active {
+  transform: scale(0.96);
+}
+
+.mode-switch.is-dragging .mode-switch-btn {
+  cursor: grabbing;
+}
+
+@keyframes modeRingSpin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mode-switch-btn::before {
+    animation: none;
+  }
 }
 
 body[data-ui-mode='rp'] .bottom-nav {

@@ -201,6 +201,7 @@ body.chat-room-active .bottom-nav {
   padding: 0 12px 20px;
 }
 
+
 .contact-item {
   display: flex;
   align-items: center;
@@ -833,6 +834,7 @@ body,
   display: block; /* 确保默认显示 */
 }
 
+
 .chat-list.hidden {
   display: none !important;
 }
@@ -1124,6 +1126,7 @@ body,
   padding: 12px 0;
   overflow-y: auto;
 }
+
 
 .moment-card {
   background: #fff;

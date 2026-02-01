@@ -19,9 +19,10 @@
   </head>
   <body class="bg-legacy">
     <div id="app">
-      <div id="mode-switch" class="mode-switch">
-        <button type="button" class="mode-btn is-active" data-mode="social" aria-pressed="true">社交</button>
-        <button type="button" class="mode-btn" data-mode="rp" aria-pressed="false">RP</button>
+      <div id="mode-switch" class="mode-switch" data-mode="social">
+        <button type="button" class="mode-switch-btn" aria-pressed="false" aria-label="切换到 RP" title="切换到 RP">
+          <span class="mode-switch-indicator" aria-hidden="true"></span>
+        </button>
       </div>
       <section id="chat-page" class="page active">
         <!-- 消息界面顶部：头像+用户信息横向布局 -->

@@ -3709,6 +3709,7 @@ Phase G（Frame 36）：循环衔接
       chatRoom.classList.remove('action-panel-open');
     }
     syncChatInputOffset();
+    scheduleModeSwitchSync();
   };
 
   const setStickerPanelOpen = open => {
@@ -3731,6 +3732,7 @@ Phase G（Frame 36）：循环衔接
     }
     updateStickerPreview(composerInput?.value || '');
     syncChatInputOffset();
+    scheduleModeSwitchSync();
   };
 
   const renderChatList = () => {
@@ -4061,15 +4063,43 @@ Phase G（Frame 36）：循环衔接
   /* ---------------- 底部导航（聊天/联系人/动态） ---------------- */
   const navBtns = document.querySelectorAll('.bottom-nav .nav-btn');
   const modeSwitch = document.getElementById('mode-switch');
-  const modeButtons = modeSwitch ? Array.from(modeSwitch.querySelectorAll('button')) : [];
+  const modeSwitchBtn = modeSwitch ? modeSwitch.querySelector('button') : null;
+  let syncModeSwitchPosition = () => {};
+  let scheduleModeSwitchSync = () => {};
+  const MODE_SWITCH_POS_KEY = 'phone_mode_switch_pos_v1';
+  let modeSwitchPinned = false;
+  let modeSwitchPos = null;
+  let modeSwitchSuppressClick = false;
+  const loadModeSwitchPos = () => {
+    try {
+      const raw = localStorage.getItem(MODE_SWITCH_POS_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== 'object') return null;
+      const xRatio = Number(parsed.xRatio);
+      const yRatio = Number(parsed.yRatio);
+      if (!Number.isFinite(xRatio) || !Number.isFinite(yRatio)) return null;
+      return { xRatio, yRatio };
+    } catch {
+      return null;
+    }
+  };
+  const saveModeSwitchPos = () => {
+    try {
+      if (!modeSwitchPos) return;
+      localStorage.setItem(MODE_SWITCH_POS_KEY, JSON.stringify(modeSwitchPos));
+    } catch {}
+  };
   const applyUiModeUI = () => {
     if (document?.body) document.body.dataset.uiMode = uiMode;
-    modeButtons.forEach(btn => {
-      const target = btn.dataset.mode === 'rp' ? 'rp' : 'social';
-      const isActive = uiMode === target;
-      btn.classList.toggle('is-active', isActive);
-      btn.setAttribute('aria-pressed', isActive ? 'true' : 'false');
-    });
+    if (modeSwitch) modeSwitch.dataset.mode = uiMode;
+    if (modeSwitchBtn) {
+      const isRp = uiMode === 'rp';
+      modeSwitchBtn.setAttribute('aria-pressed', isRp ? 'true' : 'false');
+      modeSwitchBtn.setAttribute('aria-label', isRp ? '切换到社交' : '切换到 RP');
+      modeSwitchBtn.setAttribute('title', isRp ? '切换到社交' : '切换到 RP');
+    }
+    scheduleModeSwitchSync();
   };
   const initialUiMode = loadUiMode();
   const pages = {
@@ -4098,6 +4128,7 @@ Phase G（Frame 36）：循环衔接
     if (offset) {
       chatRoom.style.setProperty('--qq-size-input-bar', `${offset}px`);
     }
+    scheduleModeSwitchSync();
   };
   const syncChatBottomGap = () => {
     if (!chatRoom || !chatInputContainer || !chatScroll) return;
@@ -8393,7 +8424,114 @@ Phase G（Frame 36）：循环衔接
     }
     if (uiStateArmed) saveUiState();
     uiLog('switchPage', { activePage });
+    scheduleModeSwitchSync();
   };
+
+  const readCssVarPx = (name, fallback) => {
+    try {
+      const raw = getComputedStyle(document.documentElement).getPropertyValue(name);
+      const val = parseFloat(String(raw || '').trim());
+      return Number.isFinite(val) ? val : fallback;
+    } catch {
+      return fallback;
+    }
+  };
+
+  let modeSwitchSize = 26;
+  let modeSwitchSlot = 10;
+  const refreshModeSwitchMetrics = () => {
+    modeSwitchSize = readCssVarPx('--mode-switch-size', modeSwitchSize);
+    modeSwitchSlot = readCssVarPx('--mode-switch-slot', modeSwitchSlot);
+  };
+  const clamp = (val, min, max) => Math.min(max, Math.max(min, val));
+  const getViewportSize = () => {
+    try {
+      const w = window.innerWidth || document.documentElement.clientWidth || 0;
+      const h = window.innerHeight || document.documentElement.clientHeight || 0;
+      return { w, h };
+    } catch {
+      return { w: 0, h: 0 };
+    }
+  };
+  const normalizeModeSwitchPos = (x, y) => {
+    const { w, h } = getViewportSize();
+    if (!w || !h) return null;
+    return { xRatio: x / w, yRatio: y / h };
+  };
+  const resolvePinnedModeSwitchPos = () => {
+    if (!modeSwitchPos) return null;
+    const { w, h } = getViewportSize();
+    if (!w || !h) return null;
+    const margin = 8 + modeSwitchSize / 2;
+    const x = clamp(modeSwitchPos.xRatio * w, margin, w - margin);
+    const y = clamp(modeSwitchPos.yRatio * h, margin, h - margin);
+    return { x, y };
+  };
+
+  const resolveModeSwitchAnchor = () => {
+    if (document?.body?.classList.contains('chat-room-active') || uiMode === 'rp') {
+      return { rect: chatInputContainer?.getBoundingClientRect?.(), mode: 'input' };
+    }
+    const bottomNav = document.querySelector('.bottom-nav');
+    const contactsBtn = bottomNav?.querySelector?.('.nav-btn[data-page="contacts"]');
+    return {
+      rect: (contactsBtn || bottomNav)?.getBoundingClientRect?.(),
+      mode: 'dock',
+      dockRect: bottomNav?.getBoundingClientRect?.(),
+    };
+  };
+
+  syncModeSwitchPosition = () => {
+    if (!modeSwitch) return;
+    refreshModeSwitchMetrics();
+    if (modeSwitchPinned && modeSwitchPos) {
+      const pinned = resolvePinnedModeSwitchPos();
+      if (pinned) {
+        modeSwitch.style.left = `${Math.round(pinned.x)}px`;
+        modeSwitch.style.top = `${Math.round(pinned.y)}px`;
+        modeSwitch.style.opacity = '1';
+        modeSwitch.style.pointerEvents = 'auto';
+        return;
+      }
+      modeSwitchPinned = false;
+    }
+    const { rect, mode, dockRect } = resolveModeSwitchAnchor();
+    if (!rect || !Number.isFinite(rect.width) || !Number.isFinite(rect.height)) {
+      modeSwitch.style.opacity = '0';
+      modeSwitch.style.pointerEvents = 'none';
+      return;
+    }
+    const x = rect.left + rect.width / 2;
+    let y = rect.top - 8 - modeSwitchSize / 2;
+    if (mode === 'dock') {
+      const baseTop = dockRect?.top ?? rect.top;
+      y = baseTop - modeSwitchSlot - modeSwitchSize / 2;
+    }
+    modeSwitch.style.left = `${Math.round(x)}px`;
+    modeSwitch.style.top = `${Math.round(y)}px`;
+    modeSwitch.style.opacity = '1';
+    modeSwitch.style.pointerEvents = 'auto';
+  };
+
+  scheduleModeSwitchSync = () => {
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(syncModeSwitchPosition);
+    } else {
+      setTimeout(syncModeSwitchPosition, 0);
+    }
+  };
+
+  if (modeSwitch) {
+    const stored = loadModeSwitchPos();
+    if (stored) {
+      modeSwitchPos = stored;
+      modeSwitchPinned = true;
+    }
+  }
+  scheduleModeSwitchSync();
+  if (typeof window !== 'undefined') {
+    window.addEventListener('resize', scheduleModeSwitchSync);
+  }
   navBtns.forEach(btn => btn.addEventListener('click', () => switchPage(btn.dataset.page)));
 
   // 搜索框初始化（仅联系人页）
@@ -8411,6 +8549,7 @@ Phase G（Frame 36）：循环衔接
   composerInput?.addEventListener('focus', () => {
     setStickerPanelOpen(false);
     setActionPanelOpen(false);
+    scheduleModeSwitchSync();
   });
 
   // Mirror composer draft to sessionStorage to avoid losing the last few keystrokes on reload/update.
@@ -9111,6 +9250,7 @@ Phase G（Frame 36）：循环衔接
     document.body?.classList.add('chat-room-active');
     chatInputGapTweak = 0;
     setStickerPanelOpen(false);
+    scheduleModeSwitchSync();
     if (typeof requestAnimationFrame === 'function') {
       requestAnimationFrame(() => {
         syncChatInputOffset();
@@ -9228,6 +9368,7 @@ Phase G（Frame 36）：循环衔接
     document.body?.classList.remove('chat-room-active');
     setStickerPanelOpen(false);
     setActionPanelOpen(false);
+    scheduleModeSwitchSync();
     scheduleWallpaperIdle();
 
     // 恢复显示消息界面顶部和底部导航栏
@@ -9396,15 +9537,70 @@ Phase G（Frame 36）：循环衔接
     exitChatRoom();
   });
 
-  modeButtons.forEach(btn => {
-    btn.addEventListener('click', () => {
-      const target = btn.dataset.mode === 'rp' ? 'rp' : 'social';
-      if (target === 'rp') {
-        enterRpMode();
-      } else {
-        exitRpMode();
-      }
-    });
+  const startModeSwitchDrag = event => {
+    if (!modeSwitch || !modeSwitchBtn) return;
+    if (event.pointerType === 'mouse' && event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const rect = modeSwitch.getBoundingClientRect();
+    const originX = rect.left + rect.width / 2;
+    const originY = rect.top + rect.height / 2;
+    modeSwitchDrag = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      originX,
+      originY,
+      moved: false,
+    };
+    modeSwitch.classList.add('is-dragging');
+    modeSwitchBtn.setPointerCapture?.(event.pointerId);
+  };
+  const updateModeSwitchDrag = event => {
+    if (!modeSwitchDrag || !modeSwitch) return;
+    if (event.pointerId !== modeSwitchDrag.pointerId) return;
+    const dx = event.clientX - modeSwitchDrag.startX;
+    const dy = event.clientY - modeSwitchDrag.startY;
+    if (!modeSwitchDrag.moved && Math.hypot(dx, dy) > 4) modeSwitchDrag.moved = true;
+    const { w, h } = getViewportSize();
+    if (!w || !h) return;
+    const margin = 8 + modeSwitchSize / 2;
+    const x = clamp(modeSwitchDrag.originX + dx, margin, w - margin);
+    const y = clamp(modeSwitchDrag.originY + dy, margin, h - margin);
+    modeSwitch.style.left = `${Math.round(x)}px`;
+    modeSwitch.style.top = `${Math.round(y)}px`;
+    modeSwitch.style.opacity = '1';
+    modeSwitch.style.pointerEvents = 'auto';
+    modeSwitchPinned = true;
+    modeSwitchPos = normalizeModeSwitchPos(x, y);
+  };
+  const endModeSwitchDrag = event => {
+    if (!modeSwitchDrag || !modeSwitch) return;
+    if (event.pointerId !== modeSwitchDrag.pointerId) return;
+    modeSwitchBtn?.releasePointerCapture?.(event.pointerId);
+    modeSwitch.classList.remove('is-dragging');
+    if (modeSwitchDrag.moved) {
+      modeSwitchSuppressClick = true;
+      saveModeSwitchPos();
+      setTimeout(() => {
+        modeSwitchSuppressClick = false;
+      }, 220);
+    }
+    modeSwitchDrag = null;
+    scheduleModeSwitchSync();
+  };
+  let modeSwitchDrag = null;
+  modeSwitchBtn?.addEventListener('pointerdown', startModeSwitchDrag);
+  modeSwitchBtn?.addEventListener('pointermove', updateModeSwitchDrag);
+  modeSwitchBtn?.addEventListener('pointerup', endModeSwitchDrag);
+  modeSwitchBtn?.addEventListener('pointercancel', endModeSwitchDrag);
+  modeSwitchBtn?.addEventListener('click', () => {
+    if (modeSwitchSuppressClick) return;
+    if (uiMode === 'rp') {
+      exitRpMode();
+    } else {
+      enterRpMode();
+    }
   });
 
   rpGreetingSelect?.addEventListener('change', async () => {
