@@ -65,18 +65,18 @@ export class VariableRuleEngine {
     return list.map(normalizeRule);
   }
 
-  async handleBeforeSend({ sessionId, content }) {
-    await this.runRules(sessionId, { type: 'keyword', content });
+  async handleBeforeSend({ sessionId, content, useGlobalVariables = false }) {
+    await this.runRules(sessionId, { type: 'keyword', content, useGlobalVariables });
   }
 
-  async handleAfterReceive({ sessionId, message }) {
+  async handleAfterReceive({ sessionId, message, useGlobalVariables = false }) {
     const sid = String(sessionId || '').trim();
     if (!sid) return;
     const next = (this.turnCounts.get(sid) || 0) + 1;
     this.turnCounts.set(sid, next);
-    await this.runRules(sid, { type: 'every_turn', turn: next, message });
-    await this.runRules(sid, { type: 'every_n_turns', turn: next, message });
-    await this.runRules(sid, { type: 'condition', turn: next, message });
+    await this.runRules(sid, { type: 'every_turn', turn: next, message, useGlobalVariables });
+    await this.runRules(sid, { type: 'every_n_turns', turn: next, message, useGlobalVariables });
+    await this.runRules(sid, { type: 'condition', turn: next, message, useGlobalVariables });
   }
 
   async runManual(sessionId, ruleId = '') {
@@ -92,7 +92,10 @@ export class VariableRuleEngine {
 
     const ctx = context || {};
     const type = String(ctx.type || '').trim().toLowerCase();
-    const vars = this.chatStore?.listVariables?.(sid) || {};
+    const useGlobal = ctx.useGlobalVariables === true;
+    const vars = useGlobal
+      ? (this.chatStore?.listGlobalVariables?.() || {})
+      : (this.chatStore?.listVariables?.(sid) || {});
 
     const sorted = rules.slice().sort((a, b) => b.priority - a.priority);
     const eligible = sorted.filter(rule => {
@@ -124,20 +127,25 @@ export class VariableRuleEngine {
     this.running.add(sid);
     try {
       for (const rule of eligible) {
-        await this.applyAction(rule, { sessionId: sid, vars, context: ctx });
+        await this.applyAction(rule, { sessionId: sid, vars, context: ctx, useGlobalVariables: useGlobal });
       }
     } finally {
       this.running.delete(sid);
     }
   }
 
-  async applyAction(rule, { sessionId, vars }) {
+  async applyAction(rule, { sessionId, vars, useGlobalVariables = false }) {
     const action = rule.action || {};
     const target = String(action.target || '').trim();
     if (!target) return;
     const cur = vars?.[target];
+    const setVar = (name, value) => (
+      useGlobalVariables
+        ? this.chatStore?.setGlobalVariable?.(name, value)
+        : this.chatStore?.setVariable?.(name, value, sessionId)
+    );
     if (action.type === 'set_value') {
-      this.chatStore?.setVariable?.(target, action.value, sessionId);
+      setVar(target, action.value);
       return;
     }
     if (action.type === 'increment' || action.type === 'decrement') {
@@ -145,7 +153,7 @@ export class VariableRuleEngine {
       const delta = Number.isFinite(deltaRaw) ? deltaRaw : 1;
       const curNum = Number(cur) || 0;
       const next = action.type === 'decrement' ? curNum - delta : curNum + delta;
-      this.chatStore?.setVariable?.(target, next, sessionId);
+      setVar(target, next);
       return;
     }
     if (action.type === 'ai_evaluate') {
@@ -176,10 +184,10 @@ export class VariableRuleEngine {
         if (!Number.isFinite(num)) return;
         const mode = action.mode === 'set' ? 'set' : 'delta';
         if (mode === 'set') {
-          this.chatStore?.setVariable?.(target, num, sessionId);
+          setVar(target, num);
         } else {
           const curNum = Number(cur) || 0;
-          this.chatStore?.setVariable?.(target, curNum + num, sessionId);
+          setVar(target, curNum + num);
         }
       } catch (err) {
         logger.warn('ai_evaluate failed', err);

@@ -19,6 +19,10 @@
   </head>
   <body class="bg-legacy">
     <div id="app">
+      <div id="mode-switch" class="mode-switch">
+        <button type="button" class="mode-btn is-active" data-mode="social" aria-pressed="true">社交</button>
+        <button type="button" class="mode-btn" data-mode="rp" aria-pressed="false">RP</button>
+      </div>
       <section id="chat-page" class="page active">
         <!-- 消息界面顶部：头像+用户信息横向布局 -->
         <div id="message-topbar" class="topbar qq-message-topbar">
@@ -59,6 +63,16 @@
             <button id="back-to-list" class="chat-back-btn">‹</button>
             <div class="chat-room-title" id="current-chat-title">default</div>
             <button id="chat-menu-btn" class="chat-menu-btn">≡</button>
+          </div>
+          <div id="rp-toolbar" class="rp-toolbar" style="display:none;">
+            <div class="rp-greeting">
+              <span class="rp-label">开场白</span>
+              <select id="rp-greeting-select"></select>
+            </div>
+            <div class="rp-actions">
+              <button type="button" id="rp-reset-btn">重置</button>
+              <button type="button" id="rp-vars-btn">变量</button>
+            </div>
           </div>
 
           <!-- 消息列表区 -->

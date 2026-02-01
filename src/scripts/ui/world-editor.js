@@ -110,6 +110,8 @@ const normalizeArray = (val) => {
     return [];
 };
 
+const normalizeScopeList = (val) => normalizeArray(val);
+
 const stripCodeFence = (text) => {
     const raw = String(text || '').trim();
     if (!raw) return '';
@@ -212,6 +214,7 @@ const normalizeEntry = (entry = {}, index = 0) => {
     e.triggers = key;
     e.keysecondary = keysecondary;
     e.secondary = keysecondary;
+    e.scope = normalizeScopeList(e.scope);
 
     const order = toNumber(e.order ?? e.priority, 100);
     e.order = order;
@@ -308,6 +311,15 @@ export class WorldEditorModal {
         this.aiPendingEntryId = '';
         this.aiTargetEntryId = '';
         this.chatConfigManager = new ConfigManager();
+        this.batchMode = false;
+        this.selectedEntries = new Set();
+        this.batchToggleBtn = null;
+        this.batchBarEl = null;
+        this.batchCountEl = null;
+        this.batchSelectAllBtn = null;
+        this.batchClearBtn = null;
+        this.batchCreateBtn = null;
+        this.batchCreateAllBtn = null;
     }
 
     async show(name, data) {
@@ -322,6 +334,9 @@ export class WorldEditorModal {
         if (!this.data.entries.length) {
             this.data.entries.push(createDefaultEntry(0));
         }
+        this.batchMode = false;
+        this.selectedEntries.clear();
+        this.updateBatchBar();
         if (this.nameInputEl) {
             this.nameInputEl.value = name || '';
         }
@@ -377,6 +392,14 @@ export class WorldEditorModal {
                 <div class="world-entries-column">
                     <div class="world-entries-toolbar">
                         <button id="world-entry-add">＋ 新条目</button>
+                        <button id="world-entry-batch">批量选择</button>
+                        <button id="world-entry-create-all">全书创建</button>
+                    </div>
+                    <div id="world-entry-batch-bar" class="world-entry-batch-bar" style="display:none;">
+                        <span id="world-entry-batch-count">已选 0</span>
+                        <button id="world-entry-batch-selectall">全选</button>
+                        <button id="world-entry-batch-clear">清空</button>
+                        <button id="world-entry-batch-create">合并创建聊天室</button>
                     </div>
                     <ul id="world-entries-list" class="world-entries-list"></ul>
                 </div>
@@ -390,11 +413,23 @@ export class WorldEditorModal {
         this.saveBtn = this.modal.querySelector('#world-editor-save');
         this.addBtn = this.modal.querySelector('#world-entry-add');
         this.exportBtn = this.modal.querySelector('#world-editor-export');
+        this.batchToggleBtn = this.modal.querySelector('#world-entry-batch');
+        this.batchBarEl = this.modal.querySelector('#world-entry-batch-bar');
+        this.batchCountEl = this.modal.querySelector('#world-entry-batch-count');
+        this.batchSelectAllBtn = this.modal.querySelector('#world-entry-batch-selectall');
+        this.batchClearBtn = this.modal.querySelector('#world-entry-batch-clear');
+        this.batchCreateBtn = this.modal.querySelector('#world-entry-batch-create');
+        this.batchCreateAllBtn = this.modal.querySelector('#world-entry-create-all');
 
         this.modal.querySelector('#world-editor-close').onclick = () => this.hide();
         this.saveBtn.onclick = () => this.saveWorld();
         if (this.exportBtn) this.exportBtn.onclick = () => this.exportWorld();
         this.addBtn.onclick = () => this.addEntry();
+        if (this.batchToggleBtn) this.batchToggleBtn.onclick = () => this.toggleBatchMode();
+        if (this.batchSelectAllBtn) this.batchSelectAllBtn.onclick = () => this.selectAllEntries();
+        if (this.batchClearBtn) this.batchClearBtn.onclick = () => this.clearSelection();
+        if (this.batchCreateBtn) this.batchCreateBtn.onclick = () => this.createChatFromSelection();
+        if (this.batchCreateAllBtn) this.batchCreateAllBtn.onclick = () => this.createChatFromAllEntries();
 
         document.body.appendChild(this.overlay);
         document.body.appendChild(this.modal);
@@ -616,12 +651,93 @@ export class WorldEditorModal {
         return this.runWorldAi({ mode: 'continue' });
     }
 
+    getEntryId(entry, idx = 0) {
+        const raw = entry && typeof entry === 'object' ? entry : {};
+        const id = raw.id ?? raw.uid ?? `entry-${idx}`;
+        return String(id || '').trim();
+    }
+
+    toggleBatchMode(force = null) {
+        this.batchMode = force === null ? !this.batchMode : Boolean(force);
+        if (!this.batchMode) {
+            this.selectedEntries.clear();
+        }
+        this.updateBatchBar();
+        this.renderList();
+    }
+
+    syncSelectedEntries() {
+        const existing = new Set(this.data.entries.map((entry, idx) => this.getEntryId(entry, idx)));
+        const next = new Set();
+        this.selectedEntries.forEach((id) => {
+            if (existing.has(id)) next.add(id);
+        });
+        this.selectedEntries = next;
+    }
+
+    updateBatchBar() {
+        if (!this.batchBarEl) return;
+        this.syncSelectedEntries();
+        const count = this.selectedEntries.size;
+        this.batchBarEl.style.display = this.batchMode ? 'flex' : 'none';
+        if (this.batchCountEl) this.batchCountEl.textContent = `已选 ${count}`;
+        if (this.batchCreateBtn) this.batchCreateBtn.disabled = count === 0;
+    }
+
+    toggleEntrySelection(entryId) {
+        const id = String(entryId || '').trim();
+        if (!id) return;
+        if (this.selectedEntries.has(id)) this.selectedEntries.delete(id);
+        else this.selectedEntries.add(id);
+        this.updateBatchBar();
+        this.renderList();
+    }
+
+    selectAllEntries() {
+        this.selectedEntries = new Set(this.data.entries.map((entry, idx) => this.getEntryId(entry, idx)).filter(Boolean));
+        this.updateBatchBar();
+        this.renderList();
+    }
+
+    clearSelection() {
+        this.selectedEntries.clear();
+        this.updateBatchBar();
+        this.renderList();
+    }
+
+    getSelectedEntries() {
+        const selected = this.selectedEntries;
+        return this.data.entries.filter((entry, idx) => selected.has(this.getEntryId(entry, idx)));
+    }
+
+    async createChatFromSelection() {
+        if (!this.selectedEntries.size) {
+            window.toastr?.info?.('请先选择条目');
+            return;
+        }
+        const name = prompt('输入合并后的联系人/聊天室名称', '');
+        if (!name || !String(name).trim()) return;
+        await this.createChatFromEntries(this.getSelectedEntries(), { name });
+        this.clearSelection();
+        this.toggleBatchMode(false);
+    }
+
+    async createChatFromAllEntries() {
+        const name = prompt('输入聊天室名称（将引用整本世界书）', this.worldName || '新聊天室');
+        if (!name || !String(name).trim()) return;
+        await this.createChatFromEntries(this.data.entries, { name, includeAll: true });
+    }
+
     renderList() {
         if (!this.entriesListEl) return;
+        this.updateBatchBar();
         this.entriesListEl.innerHTML = '';
         this.data.entries.forEach((entry, i) => {
+            const entryId = this.getEntryId(entry, i);
+            const isSelected = this.selectedEntries.has(entryId);
             const li = document.createElement('li');
             li.className = `world-entry-item ${i === this.currentIndex ? 'active' : ''}`;
+            if (this.batchMode && isSelected) li.classList.add('is-selected');
 
             const lights = document.createElement('div');
             lights.className = 'world-entry-lights';
@@ -649,6 +765,17 @@ export class WorldEditorModal {
             main.appendChild(title);
             main.appendChild(meta);
 
+            if (this.batchMode) {
+                const checkbox = document.createElement('input');
+                checkbox.type = 'checkbox';
+                checkbox.className = 'world-entry-select';
+                checkbox.checked = isSelected;
+                checkbox.addEventListener('click', (event) => {
+                    event.stopPropagation();
+                    this.toggleEntrySelection(entryId);
+                });
+                li.appendChild(checkbox);
+            }
             li.appendChild(lights);
             li.appendChild(main);
             li.onclick = () => this.selectEntry(i);
@@ -693,6 +820,19 @@ export class WorldEditorModal {
                     <div class="col">
                         <label>副触发关键词（keysecondary）</label>
                         <textarea id="we-keysecondary" placeholder="用逗号或换行分隔">${(entry.keysecondary || []).join(', ')}</textarea>
+                    </div>
+                </div>
+                <div class="world-entry-row">
+                    <div class="col">
+                        <label>作用域（scope）</label>
+                        <input type="text" id="we-scope" value="${(entry.scope || []).join(', ')}" placeholder="rp, chat:*, chat:sessionId">
+                        <div style="margin-top:6px; font-size:11px; color:#64748b;">留空=全部生效；rp=仅 RP；chat:*=所有聊天；chat:xxx=指定会话</div>
+                    </div>
+                </div>
+                <div class="world-entry-row">
+                    <div class="col">
+                        <button type="button" id="we-create-chat">创建聊天室</button>
+                        <div style="margin-top:6px; font-size:11px; color:#64748b;">基于本条目创建联系人，并自动加入 scope。</div>
                     </div>
                 </div>
 
@@ -816,6 +956,7 @@ export class WorldEditorModal {
         bindInput('#we-content', 'content', (v) => v);
         bindInput('#we-key', 'key', (v) => normalizeArray(v));
         bindInput('#we-keysecondary', 'keysecondary', (v) => normalizeArray(v));
+        bindInput('#we-scope', 'scope', (v) => normalizeScopeList(v));
 
         bindNumber('#we-depth', 'depth', DEFAULT_DEPTH, 0, 1000);
         bindNumber('#we-order', 'order', 100, -9999, 9999);
@@ -845,6 +986,13 @@ export class WorldEditorModal {
         if (logicEl) {
             logicEl.addEventListener('change', () => {
                 entry.selectiveLogic = toNumber(logicEl.value, 0);
+            });
+        }
+
+        const createChatBtn = q('#we-create-chat');
+        if (createChatBtn) {
+            createChatBtn.addEventListener('click', () => {
+                void this.createChatFromEntry(entry);
             });
         }
 
@@ -922,6 +1070,119 @@ export class WorldEditorModal {
         this.selectEntry(Math.max(0, index - 1));
     }
 
+    ensureUniqueSessionId(baseName, contactsStore) {
+        const name = String(baseName || '').trim() || '新聊天室';
+        let sessionId = name;
+        let idx = 1;
+        while (contactsStore.getContact(sessionId)) {
+            sessionId = `${name}_${idx}`;
+            idx += 1;
+        }
+        return { sessionId, name };
+    }
+
+    async ensureUniqueWorldbookId(baseName) {
+        const sanitize = (value, fallback = 'worldbook') => {
+            const raw = String(value || '').trim();
+            const cleaned = raw.replace(/[^a-zA-Z0-9_-]/g, '_').replace(/_+/g, '_').slice(0, 48);
+            return cleaned || fallback;
+        };
+        const worldStore = window.appBridge?.worldStore;
+        try {
+            await worldStore?.ready;
+        } catch {}
+        const base = sanitize(baseName, 'worldbook');
+        if (!worldStore?.load?.(base)) return base;
+        let idx = 1;
+        while (idx < 9999) {
+            const next = `${base}_${idx}`;
+            if (!worldStore?.load?.(next)) return next;
+            idx += 1;
+        }
+        return `${base}_${Date.now()}`;
+    }
+
+    buildWorldRefs(entries = [], { includeAll = false } = {}) {
+        const sourceWorldId = String(this.worldName || '').trim();
+        if (!sourceWorldId) return [];
+        if (includeAll) {
+            return [{ sourceId: sourceWorldId, includeAll: true }];
+        }
+        const list = Array.isArray(entries) ? entries : [];
+        const refs = [];
+        const seen = new Set();
+        list.forEach((entry, idx) => {
+            const entryId = this.getEntryId(entry, idx);
+            if (!entryId || seen.has(entryId)) return;
+            seen.add(entryId);
+            refs.push({ sourceId: sourceWorldId, entryId });
+        });
+        return refs;
+    }
+
+    async createChatFromEntries(entries, { name = '', includeAll = false } = {}) {
+        const list = Array.isArray(entries) ? entries.filter(Boolean) : [];
+        if (!list.length) {
+            window.toastr?.warning?.('未选择任何条目');
+            return;
+        }
+        const contactsStore = window.appBridge?.contactsStore;
+        const chatStore = window.appBridge?.chatStore;
+        if (!contactsStore || !chatStore) {
+            window.toastr?.warning?.('联系人/会话尚未就绪');
+            return;
+        }
+        const baseName = String(name || '').trim() || String(list[0]?.comment || list[0]?.title || '新聊天室').trim() || '新聊天室';
+        const { sessionId, name: resolvedName } = this.ensureUniqueSessionId(baseName, contactsStore);
+        contactsStore.upsertContact({
+            id: sessionId,
+            name: resolvedName,
+            avatar: '',
+            isGroup: false,
+            addedAt: Date.now(),
+            description: '',
+            source: 'world_entry',
+            isUserCreated: true,
+        });
+        if (typeof chatStore._ensureSession === 'function') {
+            chatStore._ensureSession(sessionId);
+            const settings = chatStore.getSessionSettings?.(sessionId) || {};
+            chatStore.setSessionSettings?.(sessionId, { ...settings, sharedVariables: true, sharedMemory: true });
+            chatStore._persist?.();
+        }
+        const refs = this.buildWorldRefs(list, { includeAll });
+        if (refs.length) {
+            const worldName = `${resolvedName}·世界书`;
+            const worldId = await this.ensureUniqueWorldbookId(worldName);
+            const payload = {
+                name: worldName,
+                entries: [],
+                refs,
+                source: 'world_entry',
+            };
+            await window.appBridge?.saveWorldInfo?.(worldId, payload);
+            window.appBridge?.bindWorldToSession?.(sessionId, worldId, { silent: true });
+        }
+        list.forEach((entry) => {
+            const scope = normalizeScopeList(entry.scope || []);
+            const tag = `chat:${sessionId}`;
+            if (!scope.includes(tag)) scope.push(tag);
+            entry.scope = scope;
+            const splitTo = Array.isArray(entry.splitTo) ? entry.splitTo.slice() : [];
+            if (!splitTo.includes(sessionId)) splitTo.push(sessionId);
+            entry.splitTo = splitTo;
+        });
+        this.renderList();
+        this.renderEditor();
+        this.saveWorldSilently?.({ showToast: false });
+        window.toastr?.success?.(`已创建聊天室：${resolvedName}`);
+    }
+
+    async createChatFromEntry(entry) {
+        if (!entry) return;
+        await this.createChatFromEntries([entry], { name: entry.comment || entry.title || '' });
+    }
+
     prepareForSave(nameOverride = this.worldName) {
         const entries = this.data.entries.map((entry, i) => {
             const e = normalizeEntry(entry, i);
@@ -932,7 +1193,7 @@ export class WorldEditorModal {
             e.priority = e.order;
             return e;
         });
-        return { name: nameOverride, entries };
+        return { ...(this.data || {}), name: nameOverride, entries };
     }
 
     sanitizeExportName(name, fallback = 'worldbook') {

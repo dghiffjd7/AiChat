@@ -1,5 +1,24 @@
 # 開發進度追蹤（必更新）(必须使用当下时间记录)
 
+## 2026-02-01 16:25
+
+- 角色卡共享记忆补完：记忆表格编辑器在共享模式下写入全局行，预览/导出改为按共享范围取世界书。
+- 暴露共享判定：`appBridge.isSharedMemorySession/isSharedVariableSession` 提供给设置面板使用。
+- 私聊设置面板在渲染记忆表格时携带 sharedMemory 上下文。
+- 修改：
+  - `src/scripts/ui/app.js`
+  - `src/scripts/ui/contact-settings-panel.js`
+  - `src/scripts/ui/memory-table-editor.js`
+
+## 2026-01-31 01:51
+
+- 角色卡导入 Phase 1：新增 ST 角色卡解析（PNG/JSON），导入为 Persona workspace 并生成全局世界书；Persona 面板加入“导入角色卡”入口。
+- 修改/新增：
+  - `src/scripts/utils/character-card.js`
+  - `src/scripts/ui/character-card-importer.js`
+  - `src/scripts/ui/persona-panel.js`
+  - `src/scripts/storage/persona-store.js`
+
 ## 2026-01-30 11:14
 
 - Phase 5（安全/授权/资源限制）补强：权限与 mode 校验、网络权限拦截、UI 注入限额、日志节流、失败计数复位、权限授权可撤销。

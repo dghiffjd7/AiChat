@@ -486,7 +486,11 @@ export class ContactSettingsPanel {
         if (this.memoryTableContent && window.appBridge) {
             this.memoryTableEditor = new MemoryTableEditor({
                 container: this.memoryTableContent,
-                getContext: () => ({ type: 'contact', contactId: this.getSessionId() }),
+                getContext: () => {
+                    const contactId = this.getSessionId();
+                    const sharedMemory = window.appBridge?.isSharedMemorySession?.(contactId) === true;
+                    return { type: 'contact', contactId, sharedMemory };
+                },
                 memoryStore: window.appBridge.memoryTableStore,
                 templateStore: window.appBridge.memoryTemplateStore,
                 includeGlobal: true,

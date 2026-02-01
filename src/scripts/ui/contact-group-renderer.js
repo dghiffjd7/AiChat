@@ -9,10 +9,11 @@ import { logger } from '../utils/logger.js';
 import { FEATHER_DEFAULT, resolveLineAvatar } from '../utils/line-avatar.js';
 
 export class ContactGroupRenderer {
-    constructor({ groupStore, contactsStore, renderContactFn, dragManager, onGroupChanged } = {}) {
+    constructor({ groupStore, contactsStore, renderContactFn, filterContactFn, dragManager, onGroupChanged } = {}) {
         this.groupStore = groupStore;
         this.contactsStore = contactsStore;
         this.renderContactFn = renderContactFn || this.defaultRenderContact.bind(this);
+        this.filterContactFn = typeof filterContactFn === 'function' ? filterContactFn : null;
         this.dragManager = dragManager;
         this.onGroupChanged = typeof onGroupChanged === 'function' ? onGroupChanged : null;
         this.batchAddOverlay = null;
@@ -38,7 +39,10 @@ export class ContactGroupRenderer {
         containerEl.innerHTML = '';
 
         const groups = this.groupStore?.listGroups?.() || [];
-        const allContacts = (this.contactsStore?.listContacts?.() || []).filter(c => c && !c.isGroup);
+        let allContacts = (this.contactsStore?.listContacts?.() || []).filter(c => c && !c.isGroup);
+        if (this.filterContactFn) {
+            allContacts = allContacts.filter(this.filterContactFn);
+        }
         const tree = this.buildGroupTree(groups);
 
         // 1. 渲染分组（含嵌套）

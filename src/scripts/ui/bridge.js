@@ -446,13 +446,16 @@ class AppBridge {
       lines.push('</memory_edit_rules>');
       return lines.join('\n').trim();
     };
+    const useSharedMemory = context?.meta?.sharedMemory === true && !isGroup;
     let scopedRows = [];
     let globalRows = [];
     try {
-      if (isGroup) {
-        scopedRows = await this.memoryTableStore.getMemories({ scope: 'group', group_id: sessionId, template_id: templateId });
-      } else {
-        scopedRows = await this.memoryTableStore.getMemories({ scope: 'contact', contact_id: sessionId, template_id: templateId });
+      if (!useSharedMemory) {
+        if (isGroup) {
+          scopedRows = await this.memoryTableStore.getMemories({ scope: 'group', group_id: sessionId, template_id: templateId });
+        } else {
+          scopedRows = await this.memoryTableStore.getMemories({ scope: 'contact', contact_id: sessionId, template_id: templateId });
+        }
       }
     } catch {
       scopedRows = [];
@@ -465,7 +468,8 @@ class AppBridge {
 
     const resolveRequiredHints = () => {
       const hints = [];
-      const rows = Array.isArray(scopedRows) ? scopedRows : [];
+      const baseRows = useSharedMemory ? globalRows : scopedRows;
+      const rows = Array.isArray(baseRows) ? baseRows : [];
       if (!isGroup) {
         const targetTableId = 'character_profile';
         const table = tableById.get(targetTableId);
@@ -1677,9 +1681,18 @@ class AppBridge {
     const effectiveLastUserMessage = overrideLastUserMessageRaw.trim()
       ? overrideLastUserMessageRaw.trim()
       : pendingUserPrompt;
+    const macroUiMode = String(context?.meta?.uiMode || context?.uiMode || '').trim().toLowerCase() === 'rp' ? 'rp' : 'chat';
+    const macroUseGlobalVariables = context?.meta?.useGlobalVariables === true || context?.useGlobalVariables === true;
     const processTextMacrosWithPendingFlag = (rawText, extraContext) => {
       const raw = String(rawText ?? '');
-      return raw ? this.processTextMacros(raw, { ...(extraContext || {}), lastUserMessage: effectiveLastUserMessage }) : '';
+      return raw
+        ? this.processTextMacros(raw, {
+            ...(extraContext || {}),
+            uiMode: macroUiMode,
+            lastUserMessage: effectiveLastUserMessage,
+            useGlobalVariables: macroUseGlobalVariables,
+          })
+        : '';
     };
     const trimEdgeBlankLines = (text) =>
       String(text ?? '').replace(/^(?:[ \t]*\r?\n)+/, '').replace(/(?:\r?\n[ \t]*)+$/, '');
@@ -1729,11 +1742,18 @@ class AppBridge {
       historyMatchLines = historyMatchLines.slice(-globalScanDepth);
     }
     const matchText = [String(userMessage ?? ''), ...historyMatchLines].join('\n');
+    const sessionId = String(context?.session?.id || '').trim();
+    const sessionName = String(context?.session?.name || '').trim();
+    const uiModeRaw = String(context?.meta?.uiMode || context?.uiMode || '').trim().toLowerCase();
+    const uiMode = uiModeRaw === 'rp' ? 'rp' : 'chat';
     const matchContext = {
       userMessage: String(userMessage ?? ''),
       history: historyMatchLines,
       fullHistory: fullHistoryLines,
       personaText,
+      sessionId,
+      sessionName,
+      uiMode,
       character: {
         description: String(context?.character?.description || ''),
         personality: String(context?.character?.personality || ''),
@@ -2223,6 +2243,7 @@ class AppBridge {
           const strategyRaw = String(worldSettings.insertionStrategy || 'role_first');
           const insertionStrategy = ['role_first', 'global_first', 'even'].includes(strategyRaw) ? strategyRaw : 'role_first';
           const collectEntries = worldId => this.collectWorldEntries(worldId, { matchText, matchContext });
+          const isRpMode = String(matchContext?.uiMode || '').trim().toLowerCase() === 'rp';
           const pushEntry = entry => {
             const pos = Number.isFinite(Number(entry?.position)) ? Math.trunc(Number(entry.position)) : 0;
             switch (pos) {
@@ -2264,20 +2285,22 @@ class AppBridge {
               ? collectEntries(this.globalWorldId)
               : [];
           const sessionEntries = [];
-          if (!isGroupChat) {
-            (this.currentWorldIds || []).forEach((id) => {
-              if (!id) return;
-              const list = collectEntries(id);
-              if (list.length) sessionEntries.push(...list);
-            });
-          } else {
-            for (const memberSessionId of groupMemberIds) {
-              const list = this.normalizeWorldIds(this.worldSessionMap[String(memberSessionId) || '']);
-              if (!list.length) continue;
-              list.forEach((wid) => {
-                const entries = collectEntries(wid);
-                if (entries.length) sessionEntries.push(...entries);
+          if (!isRpMode) {
+            if (!isGroupChat) {
+              (this.currentWorldIds || []).forEach((id) => {
+                if (!id) return;
+                const list = collectEntries(id);
+                if (list.length) sessionEntries.push(...list);
               });
+            } else {
+              for (const memberSessionId of groupMemberIds) {
+                const list = this.normalizeWorldIds(this.worldSessionMap[String(memberSessionId) || '']);
+                if (!list.length) continue;
+                list.forEach((wid) => {
+                  const entries = collectEntries(wid);
+                  if (entries.length) sessionEntries.push(...entries);
+                });
+              }
             }
           }
           const mergedEntries = this.mergeWorldEntries(globalEntries, sessionEntries, insertionStrategy);
@@ -3357,9 +3380,33 @@ class AppBridge {
       }
     } catch {}
 
+    let refsChanged = false;
+    try {
+      if (this.worldStore.ready) {
+        await this.worldStore.ready;
+      }
+      const names = this.worldStore.list();
+      for (const wid of names) {
+        if (!wid || wid === from) continue;
+        const data = this.worldStore.load(wid);
+        if (!data || !Array.isArray(data.refs)) continue;
+        let changed = false;
+        const nextRefs = data.refs.map((ref) => {
+          if (!ref || typeof ref !== 'object') return ref;
+          const sourceId = String(ref.sourceId || ref.worldId || ref.source || '').trim();
+          if (sourceId !== from) return ref;
+          changed = true;
+          return { ...ref, sourceId: to };
+        });
+        if (!changed) continue;
+        await this.saveWorldInfo(wid, { ...(data || {}), refs: nextRefs });
+        refsChanged = true;
+      }
+    } catch {}
+
     await this.worldStore.remove(from);
 
-    if (mapChanged || currentChanged || globalChanged) {
+    if (mapChanged || currentChanged || globalChanged || refsChanged) {
       window.dispatchEvent(new CustomEvent('worldinfo-changed', { detail: { worldId: this.currentWorldId, worldIds: this.currentWorldIds, globalWorldId: this.globalWorldId } }));
     }
     if (regexChanged) window.dispatchEvent(new CustomEvent('regex-changed'));
@@ -3502,7 +3549,7 @@ class AppBridge {
     const id = String(worldId || '').trim();
     if (!id) return [];
     const data = this.worldStore.load(id);
-    if (!data || !Array.isArray(data.entries)) return [];
+    if (!data || typeof data !== 'object') return [];
 
     const labelObj = (label && typeof label === 'object') ? label : {};
     const matchContext =
@@ -3511,6 +3558,9 @@ class AppBridge {
         : null;
     const matchTextRaw = labelObj ? String(labelObj.matchText || '') : '';
     const matchText = matchTextRaw;
+    const scopeMode = String(matchContext?.uiMode || '').trim().toLowerCase() === 'rp' ? 'rp' : 'chat';
+    const scopeSessionId = String(matchContext?.sessionId || '').trim();
+    const scopeSessionName = String(matchContext?.sessionName || '').trim();
     const worldSettings = this.getWorldGlobalSettings?.() || this.worldGlobalSettings || {};
     const globalCaseSensitive = worldSettings.caseSensitive === true;
     const globalMatchWholeWords = worldSettings.matchWholeWords === true;
@@ -3527,6 +3577,75 @@ class AppBridge {
       : 0;
 
     const norm = v => String(v ?? '').trim();
+    const normalizeScopeList = (val) => {
+      if (Array.isArray(val)) return val.map(norm).filter(Boolean);
+      if (typeof val === 'string') {
+        return val.split(/[,，\n\r]/).map(s => s.trim()).filter(Boolean);
+      }
+      return [];
+    };
+    const resolveRefEntries = (refs, refFromWorldId) => {
+      const list = Array.isArray(refs) ? refs : [];
+      if (!list.length) return [];
+      const results = [];
+      list.forEach((raw) => {
+        const ref = raw && typeof raw === 'object' ? raw : {};
+        const sourceId = String(ref.sourceId || ref.worldId || ref.source || '').trim();
+        if (!sourceId) return;
+        const source = this.worldStore.load(sourceId);
+        const sourceEntries = Array.isArray(source?.entries) ? source.entries : [];
+        if (!sourceEntries.length) return;
+        const entryIdRaw = String(ref.entryId || ref.entry || '').trim();
+        const entryIds = Array.isArray(ref.entryIds)
+          ? ref.entryIds.map(val => String(val || '').trim()).filter(Boolean)
+          : [];
+        const includeAll = ref.includeAll === true || ref.all === true || entryIdRaw === '*' || entryIds.includes('*');
+        let picked = sourceEntries;
+        if (!includeAll) {
+          const idSet = new Set(entryIds);
+          if (entryIdRaw) idSet.add(entryIdRaw);
+          if (idSet.size) {
+            picked = sourceEntries.filter(entry => idSet.has(String(entry?.id ?? entry?.uid ?? '').trim()));
+          } else {
+            picked = [];
+          }
+        }
+        picked.forEach((entry) => {
+          if (!entry) return;
+          results.push({
+            ...entry,
+            _sourceWorldId: sourceId,
+            _refWorldId: refFromWorldId,
+          });
+        });
+      });
+      return results;
+    };
+    const normalizeScopeTarget = (value) => norm(value).replace(/\s+/g, '').toLowerCase();
+    const isScopeAllowed = (entryScope) => {
+      const scopes = normalizeScopeList(entryScope);
+      if (!scopes.length) return true;
+      const isRpScope = (s) => {
+        const key = norm(s).toLowerCase();
+        return key === 'rp' || key === 'rp:*';
+      };
+      const isChatScope = (s) => {
+        const raw = norm(s);
+        if (!raw) return false;
+        const lower = raw.toLowerCase();
+        if (lower === 'chat' || lower === 'chat:*') return true;
+        if (!lower.startsWith('chat:')) return false;
+        const targetRaw = raw.slice(5).trim();
+        if (!targetRaw) return false;
+        const target = normalizeScopeTarget(targetRaw);
+        if (!target) return false;
+        const sid = normalizeScopeTarget(scopeSessionId);
+        const sname = normalizeScopeTarget(scopeSessionName);
+        return (sid && target === sid) || (sname && target === sname);
+      };
+      if (scopeMode === 'rp') return scopes.some(isRpScope);
+      return scopes.some(isChatScope);
+    };
     const normalizeKeys = e => {
       const keys = Array.isArray(e?.key) ? e.key : Array.isArray(e?.triggers) ? e.triggers : [];
       return keys.map(norm).filter(Boolean);
@@ -3593,6 +3712,7 @@ class AppBridge {
 
     const shouldInclude = (e, { localMatchText, localMatchContext, isRecursivePass = false, recursionStep = 0 } = {}) => {
       if (!e || typeof e !== 'object') return false;
+      if (!isScopeAllowed(e.scope)) return false;
       if (Boolean(e.disable)) return false;
       if (!isRecursivePass && Number.isFinite(Number(e.delayUntilRecursion)) && Number(e.delayUntilRecursion) > 0) {
         return false;
@@ -3654,11 +3774,19 @@ class AppBridge {
         .filter(Boolean);
     };
 
-    const baseEntries = data.entries.map((entry, idx) => ({
+    const localEntries = Array.isArray(data.localEntries)
+      ? data.localEntries
+      : (Array.isArray(data.entries) ? data.entries : []);
+    const refEntries = resolveRefEntries(data.refs, id);
+    const combinedEntries = [...localEntries, ...refEntries];
+    if (!combinedEntries.length) return [];
+    const baseEntries = combinedEntries.map((entry, idx) => ({
       ...entry,
       _entryId: String(entry?.id ?? entry?.uid ?? `entry-${idx}`),
       _entryIndex: idx,
       _groups: parseGroups(entry?.group),
+      _sourceWorldId: String(entry?._sourceWorldId || id || '').trim(),
+      _refWorldId: String(entry?._refWorldId || '').trim(),
     }));
 
     let effectiveMatchContext = matchContext;
@@ -3804,6 +3932,9 @@ class AppBridge {
           role,
           order,
           _seq: idx,
+          _entryId: String(e?._entryId || ''),
+          _sourceWorldId: String(e?._sourceWorldId || ''),
+          _refWorldId: String(e?._refWorldId || ''),
         };
       })
       .filter(Boolean);
@@ -3831,11 +3962,21 @@ class AppBridge {
       const sb = Number.isFinite(Number(b?._srcSeq)) ? Number(b._srcSeq) : 0;
       return sa - sb;
     });
+    const seen = new Set();
+    const deduped = merged.filter((entry) => {
+      const sourceId = String(entry?._sourceWorldId || '').trim();
+      const entryId = String(entry?._entryId || '').trim();
+      if (!sourceId || !entryId) return true;
+      const key = `${sourceId}::${entryId}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
     const budgetTokens = this.getWorldBudgetTokens?.();
-    if (!Number.isFinite(Number(budgetTokens)) || Number(budgetTokens) <= 0) return merged;
+    if (!Number.isFinite(Number(budgetTokens)) || Number(budgetTokens) <= 0) return deduped;
     let used = 0;
     let overflowed = false;
-    const filtered = merged.filter((entry) => {
+    const filtered = deduped.filter((entry) => {
       const cost = estimateTokens(String(entry?.content || ''), 'rough');
       if (used + cost > budgetTokens) {
         overflowed = true;

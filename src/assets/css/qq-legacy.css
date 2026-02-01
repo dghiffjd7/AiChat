@@ -192,6 +192,90 @@
   z-index: 1;
 }
 
+.mode-switch {
+  position: fixed;
+  top: calc(var(--safe-area-top, 0px) + 10px);
+  right: 12px;
+  z-index: 26050;
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.65);
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.18);
+  backdrop-filter: blur(6px);
+}
+
+.mode-btn {
+  border: none;
+  background: transparent;
+  color: #e2e8f0;
+  font-size: 12px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 0.2s ease, color 0.2s ease;
+}
+
+.mode-btn.is-active {
+  background: #f8fafc;
+  color: #0f172a;
+  font-weight: 700;
+}
+
+body[data-ui-mode='rp'] .bottom-nav {
+  display: none;
+}
+
+.rp-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  background: rgba(248, 250, 252, 0.92);
+  border-bottom: 1px solid rgba(15, 23, 42, 0.08);
+}
+
+.rp-greeting {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+}
+
+.rp-greeting select {
+  flex: 1;
+  min-width: 120px;
+  padding: 6px 10px;
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  border-radius: 10px;
+  background: #fff;
+  font-size: 12px;
+}
+
+.rp-label {
+  font-size: 12px;
+  color: #0f172a;
+  font-weight: 700;
+}
+
+.rp-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.rp-actions button {
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  background: #fff;
+  color: #0f172a;
+  border-radius: 10px;
+  padding: 6px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
 .chat-back-btn {
   width: 28px;
   height: 28px;

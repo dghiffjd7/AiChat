@@ -12,6 +12,7 @@ import { MomentSummaryStore } from '../storage/moment-summary-store.js';
 import { MomentsStore } from '../storage/moments-store.js';
 import { PersonaStore } from '../storage/persona-store.js';
 import { PluginStore } from '../storage/plugin-store.js';
+import { RpSessionStore } from '../storage/rp-session-store.js';
 import { stickerPackStore } from '../storage/sticker-pack-store.js';
 import { normalizeScopeId } from '../storage/store-scope.js';
 import { avatarDataUrlFromFile, compressImageDataUrl, isGifFile } from '../utils/image.js';
@@ -298,9 +299,13 @@ const initApp = async () => {
     memoryStore: memoryTableStore,
   });
   const personaStore = new PersonaStore();
+  const rpSessionStore = new RpSessionStore();
   let activePersonaScopeKey = '';
   let activePersonaId = 'default';
   let chatRoom = null;
+  const RP_SESSION_PREFIX = 'rp:';
+  const isRpSessionId = (sessionId) => String(sessionId || '').startsWith(RP_SESSION_PREFIX);
+  const getRpSessionId = (personaId = activePersonaId) => `${RP_SESSION_PREFIX}${personaId || 'default'}`;
   const getPersonaScopeKey = personaId => {
     const settings = appSettings.get();
     if (settings.personaBindContacts === false) return '';
@@ -319,6 +324,7 @@ const initApp = async () => {
     groupStore.setScope?.(initialScopeKey),
     momentsStore.setScope?.(initialScopeKey),
     momentSummaryStore.setScope?.(initialScopeKey),
+    rpSessionStore.setScope?.(initialScopeKey),
   ]);
   const initMemoryStores = async () => {
     const results = await Promise.allSettled([
@@ -489,6 +495,24 @@ const initApp = async () => {
   };
   setSendMode(loadSendMode(), { silent: true });
 
+  const UI_MODE_KEY = 'chat_ui_mode_v1';
+  let uiMode = 'social';
+  let lastSocialState = { activePage: 'chat', sessionId: '', inChatRoom: false };
+  let lastSocialSendMode = '';
+  const loadUiMode = () => {
+    try {
+      const raw = localStorage.getItem(UI_MODE_KEY);
+      return raw === 'rp' ? 'rp' : 'social';
+    } catch {
+      return 'social';
+    }
+  };
+  const persistUiMode = () => {
+    try {
+      localStorage.setItem(UI_MODE_KEY, uiMode);
+    } catch {}
+  };
+
   const getEffectivePersona = (sessionId = chatStore.getCurrent()) => {
     const sid = String(sessionId || '').trim() || 'default';
     const lockedId = chatStore.getPersonaLock?.(sid) || '';
@@ -502,6 +526,32 @@ const initApp = async () => {
     }
     return personaStore.getActive();
   };
+
+  const isSharedVariableSession = (sessionId = chatStore.getCurrent()) => {
+    if (uiMode === 'rp') return true;
+    const sid = String(sessionId || '').trim();
+    if (!sid) return false;
+    const settings = chatStore.getSessionSettings?.(sid) || {};
+    if (typeof settings.sharedVariables === 'boolean') return settings.sharedVariables;
+    const persona = getEffectivePersona(sid);
+    return persona?.source?.type === 'character_card';
+  };
+
+  const isSharedMemorySession = (sessionId = chatStore.getCurrent()) => {
+    if (uiMode === 'rp') return true;
+    const sid = String(sessionId || '').trim();
+    if (!sid) return false;
+    const settings = chatStore.getSessionSettings?.(sid) || {};
+    if (typeof settings.sharedMemory === 'boolean') return settings.sharedMemory;
+    const persona = getEffectivePersona(sid);
+    return persona?.source?.type === 'character_card';
+  };
+  try {
+    if (window.appBridge) {
+      window.appBridge.isSharedVariableSession = isSharedVariableSession;
+      window.appBridge.isSharedMemorySession = isSharedMemorySession;
+    }
+  } catch {}
 
   const DEFAULT_USER_BUBBLE_COLOR = '#E8F0FE';
 
@@ -559,6 +609,7 @@ const initApp = async () => {
       groupStore.setScope?.(nextKey),
       momentsStore.setScope?.(nextKey),
       momentSummaryStore.setScope?.(nextKey),
+      rpSessionStore.setScope?.(nextKey),
       memoryTableStore.setScope?.(nextKey),
       memoryTemplateStore.setScope?.(nextKey),
     ]);
@@ -586,6 +637,9 @@ const initApp = async () => {
         chatStore.listSessions?.().length || 0
       } contacts=${contactsStore.listContacts?.().length || 0}`,
     );
+    if (uiMode === 'rp') {
+      enterRpMode({ captureSocial: false });
+    }
     activePersonaId = pid;
     return true;
   };
@@ -594,6 +648,7 @@ const initApp = async () => {
     personaStore,
     chatStore,
     contactsStore,
+    rpSessionStore,
     getSessionId: () => chatStore.getCurrent(),
     onPersonaChanged: async () => {
       await applyPersonaScope({ personaId: personaStore.getActive?.()?.id });
@@ -620,6 +675,7 @@ const initApp = async () => {
   const variablePanel = new VariablePanel({
     chatStore,
     getSessionId: () => chatStore.getCurrent(),
+    getVariableScope: sid => (isSharedVariableSession(sid) ? 'global' : 'session'),
   });
 
   const getContactCountN = () => {
@@ -3682,6 +3738,7 @@ Phase G（Frame 36）：循环衔接
     if (!el) return;
     const ids = chatStore
       .listSessions()
+      .filter(id => !isRpSessionId(id))
       .filter(id => chatStore.hasMessages?.(id) || (chatStore.getMessages(id) || []).some(isConversationMessage))
       .slice(0, 50);
     el.innerHTML = '';
@@ -3735,6 +3792,7 @@ Phase G（Frame 36）：循环衔接
   const contactGroupRenderer = new ContactGroupRenderer({
     groupStore,
     contactsStore,
+    filterContactFn: contact => !isRpSessionId(contact?.id),
     dragManager: contactDragManager,
     onGroupChanged: () => {
       try {
@@ -3781,7 +3839,7 @@ Phase G（Frame 36）：循环衔接
   const renderContactsUngrouped = () => {
     const el = document.getElementById('contacts-ungrouped-list');
     if (!el) return;
-    const contacts = contactsStore.listContacts().filter(c => c && !c.isGroup);
+    const contacts = contactsStore.listContacts().filter(c => c && !c.isGroup && !isRpSessionId(c.id));
     if (!contacts.length) {
       el.innerHTML = '';
       const empty = document.createElement('div');
@@ -3846,7 +3904,8 @@ Phase G（Frame 36）：循环衔接
       );
       return;
     }
-    contactsStore.ensureFromSessions(chatStore.listSessions(), { defaultAvatar: FEATHER_DEFAULT });
+    const socialSessions = chatStore.listSessions().filter(id => !isRpSessionId(id));
+    contactsStore.ensureFromSessions(socialSessions, { defaultAvatar: FEATHER_DEFAULT });
     renderChatList();
     renderGroupsList();
     renderContactsUngrouped();
@@ -4001,6 +4060,18 @@ Phase G（Frame 36）：循环衔接
 
   /* ---------------- 底部导航（聊天/联系人/动态） ---------------- */
   const navBtns = document.querySelectorAll('.bottom-nav .nav-btn');
+  const modeSwitch = document.getElementById('mode-switch');
+  const modeButtons = modeSwitch ? Array.from(modeSwitch.querySelectorAll('button')) : [];
+  const applyUiModeUI = () => {
+    if (document?.body) document.body.dataset.uiMode = uiMode;
+    modeButtons.forEach(btn => {
+      const target = btn.dataset.mode === 'rp' ? 'rp' : 'social';
+      const isActive = uiMode === target;
+      btn.classList.toggle('is-active', isActive);
+      btn.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+    });
+  };
+  const initialUiMode = loadUiMode();
   const pages = {
     chat: document.getElementById('chat-page'),
     contacts: document.getElementById('contacts-page'),
@@ -4008,6 +4079,10 @@ Phase G（Frame 36）：循环衔接
   };
   const chatList = document.getElementById('chat-list');
   chatRoom = document.getElementById('chat-room');
+  const rpToolbar = document.getElementById('rp-toolbar');
+  const rpGreetingSelect = document.getElementById('rp-greeting-select');
+  const rpResetBtn = document.getElementById('rp-reset-btn');
+  const rpVarsBtn = document.getElementById('rp-vars-btn');
   const chatScroll = document.getElementById('chat-scroll');
   const composerInput = document.getElementById('composer-input');
   const chatInputContainer = document.querySelector('.chat-input-container');
@@ -7925,7 +8000,7 @@ Phase G（Frame 36）：循环衔接
         if (!listEl) return;
         listEl.innerHTML = '';
         const keyword = String(searchInput?.value || '').trim().toLowerCase();
-        const sessionIds = chatStore.listSessions();
+        const sessionIds = chatStore.listSessions().filter(id => !isRpSessionId(id));
         const items = sessionIds.map(id => {
           const contact = contactsStore.getContact(id);
           const name = formatSessionName(id, contact);
@@ -8005,7 +8080,7 @@ Phase G（Frame 36）：循环衔接
 
       searchInput?.addEventListener('input', () => renderList());
       selectAllBtn?.addEventListener('click', () => {
-        chatStore.listSessions().forEach(id => bindSelection.add(id));
+        chatStore.listSessions().filter(id => !isRpSessionId(id)).forEach(id => bindSelection.add(id));
         renderList();
       });
       selectNoneBtn?.addEventListener('click', () => {
@@ -9170,7 +9245,209 @@ Phase G（Frame 36）：循环衔接
     uiLog('exitChatRoom', { activePage, sessionId: chatStore.getCurrent() });
   };
 
-  backToListBtn?.addEventListener('click', exitChatRoom);
+  const getRpTitle = () => {
+    const p = personaStore.getActive?.() || {};
+    const name = String(p?.name || '').trim();
+    return name ? `RP · ${name}` : 'RP';
+  };
+
+  const getRpGreetings = () => rpSessionStore.getGreetings?.() || [];
+  const ensureRpGreetingActive = () => {
+    const list = getRpGreetings();
+    if (!list.length) return null;
+    const active = rpSessionStore.getActiveGreeting?.();
+    if (active) return active;
+    const nextId = list[0]?.id || '';
+    if (nextId) rpSessionStore.setActiveGreeting?.(nextId);
+    return list[0] || null;
+  };
+
+  const renderRpToolbar = () => {
+    if (!rpGreetingSelect) return;
+    const list = getRpGreetings();
+    rpGreetingSelect.innerHTML = '';
+    if (!list.length) {
+      const opt = document.createElement('option');
+      opt.value = '';
+      opt.textContent = '无开场白';
+      rpGreetingSelect.appendChild(opt);
+      rpGreetingSelect.disabled = true;
+      return;
+    }
+    list.forEach((g, idx) => {
+      const opt = document.createElement('option');
+      opt.value = g.id;
+      opt.textContent = g.title || `开场白 ${idx + 1}`;
+      rpGreetingSelect.appendChild(opt);
+    });
+    rpGreetingSelect.disabled = false;
+    const active = ensureRpGreetingActive();
+    if (active?.id) rpGreetingSelect.value = active.id;
+  };
+
+  const buildRpGreetingMessage = (greeting, sessionId) => {
+    const content = String(greeting?.content || '').trim();
+    if (!content) return null;
+    const parsed = parseSpecialMessage(content);
+    const assistantName = String(personaStore.getActive?.()?.name || '角色');
+    const meta = { ...(parsed.meta || {}), isGreeting: true };
+    return {
+      role: 'assistant',
+      ...parsed,
+      name: assistantName,
+      avatar: getAssistantAvatarForSession(sessionId),
+      time: formatNowTime(),
+      meta,
+    };
+  };
+
+  const seedRpGreetingIfNeeded = (sessionId) => {
+    const sid = String(sessionId || '').trim();
+    if (!sid) return false;
+    const messages = chatStore.getMessages(sid) || [];
+    if (messages.some(isConversationMessage)) return false;
+    const greeting = ensureRpGreetingActive();
+    const msg = buildRpGreetingMessage(greeting, sid);
+    if (!msg) return false;
+    chatStore.appendMessage(msg, sid);
+    if (String(chatStore.getCurrent() || '') === sid) ui.addMessage(msg);
+    return true;
+  };
+
+  const resetRpHistory = (sessionId, { keepInput = false } = {}) => {
+    const sid = String(sessionId || '').trim();
+    if (!sid) return;
+    chatStore.clear(sid);
+    ui.clearMessages();
+    chatRenderState.set(sid, { start: 0 });
+    seedRpGreetingIfNeeded(sid);
+    if (!keepInput) ui.clearInput();
+    refreshChatAndContacts();
+    updatePendingFloat(sid);
+  };
+
+  const enterRpMode = async ({ captureSocial = true } = {}) => {
+    if (uiMode === 'rp') return;
+    if (captureSocial) {
+      lastSocialState = {
+        activePage,
+        sessionId: chatStore.getCurrent(),
+        inChatRoom: isChatRoomVisible(),
+      };
+      lastSocialSendMode = sendMode;
+    }
+    uiMode = 'rp';
+    persistUiMode();
+    applyUiModeUI();
+    if (sendMode !== 'creative') {
+      setSendMode('creative', { silent: true });
+    }
+    try {
+      await rpSessionStore?.ready;
+    } catch {}
+    renderRpToolbar();
+    if (activePage !== 'chat') {
+      switchPage('chat');
+    }
+    const rpSessionId = getRpSessionId(activePersonaId);
+    if (typeof chatStore._ensureSession === 'function') {
+      chatStore._ensureSession(rpSessionId);
+      const settings = chatStore.getSessionSettings?.(rpSessionId) || {};
+      chatStore.setSessionSettings?.(rpSessionId, { ...settings, sharedVariables: true, sharedMemory: true });
+      chatStore._persist?.();
+    }
+    enterChatRoom(rpSessionId, getRpTitle(), 'chat');
+    if (currentChatTitle) currentChatTitle.textContent = getRpTitle();
+    seedRpGreetingIfNeeded(rpSessionId);
+    if (rpToolbar) rpToolbar.style.display = '';
+  };
+
+  const exitRpMode = () => {
+    if (uiMode !== 'rp') return;
+    uiMode = 'social';
+    persistUiMode();
+    applyUiModeUI();
+    if (lastSocialSendMode) {
+      setSendMode(lastSocialSendMode, { silent: true });
+    }
+    if (rpToolbar) rpToolbar.style.display = 'none';
+
+    const restorePage = lastSocialState.activePage || 'chat';
+    const restoreSession = String(lastSocialState.sessionId || '').trim();
+    const restoreInRoom = Boolean(lastSocialState.inChatRoom);
+
+    chatOriginPage = restorePage;
+    exitChatRoom();
+
+    if (restoreInRoom && restoreSession) {
+      const c = contactsStore.getContact(restoreSession);
+      switchPage(restorePage);
+      enterChatRoom(restoreSession, c?.name || restoreSession, restorePage);
+    } else {
+      switchPage(restorePage);
+    }
+  };
+
+  backToListBtn?.addEventListener('click', () => {
+    if (uiMode === 'rp') {
+      exitRpMode();
+      return;
+    }
+    exitChatRoom();
+  });
+
+  modeButtons.forEach(btn => {
+    btn.addEventListener('click', () => {
+      const target = btn.dataset.mode === 'rp' ? 'rp' : 'social';
+      if (target === 'rp') {
+        enterRpMode();
+      } else {
+        exitRpMode();
+      }
+    });
+  });
+
+  rpGreetingSelect?.addEventListener('change', async () => {
+    const nextId = String(rpGreetingSelect.value || '').trim();
+    if (!nextId) return;
+    const prevId = rpSessionStore.getActiveGreetingId?.() || '';
+    if (nextId === prevId) return;
+    rpSessionStore.setActiveGreeting?.(nextId);
+    if (uiMode !== 'rp') return;
+    const rpSessionId = getRpSessionId(activePersonaId);
+    const hasHistory = (chatStore.getMessages(rpSessionId) || []).some(isConversationMessage);
+    if (hasHistory) {
+      const ok = await appConfirm({
+        title: '切换开场白',
+        message: '切换开场白将清空当前 RP 剧情，是否继续？',
+        confirmText: '切换并清空',
+        cancelText: '取消',
+        danger: true,
+      });
+      if (!ok) {
+        if (prevId) rpGreetingSelect.value = prevId;
+        return;
+      }
+    }
+    resetRpHistory(rpSessionId);
+  });
+
+  rpResetBtn?.addEventListener('click', async () => {
+    if (uiMode !== 'rp') return;
+    const ok = await appConfirm({
+      title: '重置 RP 剧情',
+      message: '将清空当前 RP 历史并重新插入开场白，是否继续？',
+      confirmText: '重置',
+      cancelText: '取消',
+      danger: true,
+    });
+    if (!ok) return;
+    resetRpHistory(getRpSessionId(activePersonaId));
+  });
+
+  rpVarsBtn?.addEventListener('click', () => {
+    variablePanel.show();
+  });
 
   quickMenu?.querySelectorAll('button').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -9799,7 +10076,7 @@ Phase G（Frame 36）：循环衔接
     const existingUserMessageId =
       typeof options.existingUserMessageId === 'string' ? options.existingUserMessageId : '';
     const skipInputRegex = Boolean(options.skipInputRegex);
-    const creativeMode = sendMode === 'creative';
+    const creativeMode = sendMode === 'creative' || uiMode === 'rp';
     const includeAttachments = options.includeAttachments !== false;
     const attachmentQueue = includeAttachments ? composerAttachments.slice() : [];
     const hasAttachments = attachmentQueue.length > 0;
@@ -9899,10 +10176,14 @@ Phase G（Frame 36）：循环衔接
       if (!text && !hasAttachments) return false;
     }
     const contact = contactsStore.getContact(sessionId);
-    const characterName =
-      contact?.name || (sessionId.startsWith('group:') ? sessionId.replace(/^group:/, '') : sessionId) || 'assistant';
+    const isRpMode = uiMode === 'rp';
+    const sharedVariables = isSharedVariableSession(sessionId);
+    const sharedMemory = isSharedMemorySession(sessionId);
     const activePersona = getEffectivePersona(sessionId);
-    const userName = activePersona.name || '我';
+    const characterName = isRpMode
+      ? (String(activePersona?.name || '').trim() || '角色')
+      : (contact?.name || (sessionId.startsWith('group:') ? sessionId.replace(/^group:/, '') : sessionId) || 'assistant');
+    const userName = isRpMode ? '我' : (activePersona?.name || '我');
     const userEchoGuard = createUserEchoGuard(text, userName);
     const isGroupChat = Boolean(contact?.isGroup) || sessionId.startsWith('group:');
     const groupMembers = isGroupChat ? (Array.isArray(contact?.members) ? contact.members : []) : [];
@@ -9929,7 +10210,7 @@ Phase G（Frame 36）：循环衔接
       }
     }
     if (variableRuleEngine) {
-      variableRuleEngine.handleBeforeSend({ sessionId, content: text }).catch(err => {
+      variableRuleEngine.handleBeforeSend({ sessionId, content: text, useGlobalVariables: sharedVariables }).catch(err => {
         logger.warn('variable rules before_send failed', err);
       });
     }
@@ -10527,9 +10808,13 @@ Phase G（Frame 36）：循环衔接
       const tableOrder = planOrder.length ? planOrder : templateOrder;
       const rowIndexMap = plan?.rowIndexMap && typeof plan.rowIndexMap === 'object' ? plan.rowIndexMap : {};
 
-      const scopedRows = isGroup
-        ? await memoryTableStore.getMemories({ scope: 'group', group_id: sessionId, template_id: templateId })
-        : await memoryTableStore.getMemories({ scope: 'contact', contact_id: sessionId, template_id: templateId });
+      const useSharedGlobalScope = sharedMemory && !isGroup;
+      let scopedRows = [];
+      if (!useSharedGlobalScope) {
+        scopedRows = isGroup
+          ? await memoryTableStore.getMemories({ scope: 'group', group_id: sessionId, template_id: templateId })
+          : await memoryTableStore.getMemories({ scope: 'contact', contact_id: sessionId, template_id: templateId });
+      }
       const globalRows = await memoryTableStore.getMemories({ scope: 'global', template_id: templateId });
       const allRows = [
         ...(Array.isArray(globalRows) ? globalRows : []),
@@ -10599,6 +10884,7 @@ Phase G（Frame 36）：循环衔接
         return '';
       };
       const resolveScopeForTable = table => {
+        if (useSharedGlobalScope) return { key: 'global', contactId: null, groupId: null };
         const scope = String(table?.scope || '')
           .trim()
           .toLowerCase();
@@ -10680,8 +10966,9 @@ Phase G（Frame 36）：循环衔接
           const tableScope = String(table?.scope || '')
             .trim()
             .toLowerCase();
-          const effectiveScope = tableScope || (isGroup ? 'group' : 'contact');
-          if ((effectiveScope === 'group' && !isGroup) || (effectiveScope === 'contact' && isGroup)) return;
+          if (tableScope === 'group' && !isGroup) return;
+          if (tableScope === 'contact' && isGroup) return;
+          const effectiveScope = useSharedGlobalScope ? 'global' : (tableScope || (isGroup ? 'group' : 'contact'));
           const isSummaryTable = isSummaryTableId(tableId);
           if ((isSummaryTable && !allowSummaryTables) || (!isSummaryTable && !allowStandardTables)) return;
           const { key: scopeKey } = resolveScopeForTable(table);
@@ -10704,11 +10991,15 @@ Phase G（Frame 36）：循环衔接
         const tableScope = String(table?.scope || '')
           .trim()
           .toLowerCase();
-        const effectiveScope = tableScope || (isGroup ? 'group' : 'contact');
-        if ((effectiveScope === 'group' && !isGroup) || (effectiveScope === 'contact' && isGroup)) {
+        if (tableScope === 'group' && !isGroup) {
           skipped += 1;
           continue;
         }
+        if (tableScope === 'contact' && isGroup) {
+          skipped += 1;
+          continue;
+        }
+        const effectiveScope = useSharedGlobalScope ? 'global' : (tableScope || (isGroup ? 'group' : 'contact'));
         const { key: scopeKey, contactId, groupId } = resolveScopeForTable(table);
         const isSummaryTable = isSummaryTableId(tableId);
         if ((isSummaryTable && !allowSummaryTables) || (!isSummaryTable && !allowStandardTables)) {
@@ -10862,6 +11153,8 @@ Phase G（Frame 36）：循环衔接
       if (!templateId) return false;
       const template = templateInfo.template || {};
       const { tableById, tableNameMap, tableOrder } = buildTableMaps(template);
+      const isGroupScope = String(sessionId || '').startsWith('group:');
+      const useSharedGlobalScope = sharedMemory && !isGroupScope;
       const resolveTableId = action => {
         const rawId = String(action?.tableId || '').trim();
         if (rawId && tableById.has(rawId)) return rawId;
@@ -10883,8 +11176,8 @@ Phase G（Frame 36）：循环衔接
           .toLowerCase();
         if (scope === 'global') return 'global';
         if (scope === 'group') return 'group';
-        if (scope === 'contact') return 'contact';
-        return '';
+        if (scope === 'contact') return useSharedGlobalScope ? 'global' : 'contact';
+        return useSharedGlobalScope ? 'global' : '';
       };
       const scopeRowsCache = new Map();
       const getScopedRows = async scopeKey => {
@@ -10923,7 +11216,7 @@ Phase G（Frame 36）：循环衔接
         if (!tableId) continue;
         const table = tableById.get(tableId);
         if (!table) continue;
-        const scopeKey = resolveScopeKey(table) || (String(sessionId || '').startsWith('group:') ? 'group' : 'contact');
+        const scopeKey = resolveScopeKey(table) || (useSharedGlobalScope ? 'global' : (isGroupScope ? 'group' : 'contact'));
         const currentRows = await getScopedRows(scopeKey);
         const scopedRows = (Array.isArray(currentRows) ? currentRows : []).filter(
           row => String(row?.table_id || '').trim() === tableId,
@@ -11278,7 +11571,8 @@ Phase G（Frame 36）：循环衔接
           logger.warn('plugin message.after_receive failed', err);
         });
       }
-      variableRuleEngine?.handleAfterReceive?.({ sessionId: targetSessionId, message }).catch(err => {
+      const useGlobal = isSharedVariableSession(targetSessionId);
+      variableRuleEngine?.handleAfterReceive?.({ sessionId: targetSessionId, message, useGlobalVariables: useGlobal }).catch(err => {
         logger.warn('variable rules after_receive failed', err);
       });
     };
@@ -11506,14 +11800,14 @@ Phase G（Frame 36）：循环衔接
         const prefixRaw = String(preset?.prefix ?? '');
         const suffixRaw = String(preset?.suffix ?? '');
         const sepRaw = String(preset?.separator ?? '');
-        if (addToPrompts && (prefixRaw || suffixRaw || sepRaw)) {
+          if (addToPrompts && (prefixRaw || suffixRaw || sepRaw)) {
           const maxAdditions = Number.isFinite(Number(settings.reasoningMaxAdditions))
             ? Math.max(0, Math.trunc(Number(settings.reasoningMaxAdditions)))
             : 1;
           if (maxAdditions > 0) {
             const applyMacros = val => {
               try {
-                return window.appBridge.processTextMacros(String(val ?? ''), { sessionId });
+                return window.appBridge.processTextMacros(String(val ?? ''), { sessionId, useGlobalVariables: sharedVariables });
               } catch {
                 return String(val ?? '');
               }
@@ -11559,7 +11853,7 @@ Phase G（Frame 36）：循环衔接
           personaRole: activePersona.role,
         },
         character: { name: characterName },
-        session: { id: sessionId, isGroup: isGroupChat },
+        session: { id: sessionId, isGroup: isGroupChat, name: characterName },
         meta: {
           // Keep summary prompt on; creative mode restricts chat guide to summary-only.
           disableSummary: Boolean(disableSummaryForThis),
@@ -11569,6 +11863,9 @@ Phase G（Frame 36）：循环衔接
           disableScenarioHint: Boolean(creativeMode),
           disableMomentSummary: Boolean(creativeMode),
           disablePhoneFormat: Boolean(creativeMode),
+          uiMode,
+          useGlobalVariables: Boolean(sharedVariables),
+          sharedMemory: Boolean(sharedMemory),
           memoryStorageMode: getMemoryStorageMode(),
           memoryAutoExtract: isMemoryAutoExtractInline(),
           memoryInjectPosition,
@@ -12815,6 +13112,11 @@ Phase G（Frame 36）：循环衔接
     popover.addEventListener('click', e => {
       e.preventDefault();
       e.stopPropagation();
+      if (uiMode === 'rp') {
+        window.toastr?.info?.('RP 模式固定为创意写作');
+        hidePopover();
+        return;
+      }
       const next = sendMode === 'creative' ? 'chat' : 'creative';
       setSendMode(next);
       hidePopover();
@@ -12829,6 +13131,7 @@ Phase G（Frame 36）：循环衔接
 
     sendBtn.addEventListener('pointerdown', e => {
       if (e.button !== 0) return;
+      if (uiMode === 'rp') return;
       pressTriggered = false;
       clearTimer();
       pressTimer = setTimeout(() => {
@@ -13189,6 +13492,10 @@ Phase G（Frame 36）：循环衔接
   });
   updateWorldIndicator();
   refreshChatAndContacts();
+  applyUiModeUI();
+  if (initialUiMode === 'rp') {
+    enterRpMode({ captureSocial: false });
+  }
   uiStateArmed = true;
   try {
     saveUiState();

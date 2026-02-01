@@ -2,6 +2,7 @@
 import { MediaPicker } from './media-picker.js';
 import { avatarDataUrlFromFile } from '../utils/image.js';
 import { appConfirm } from './app-confirm.js';
+import { CharacterCardImporter } from './character-card-importer.js';
 
 const DEFAULT_USER_BUBBLE_COLOR = '#E8F0FE';
 
@@ -11,10 +12,11 @@ const normalizeHexColor = (value, fallback = DEFAULT_USER_BUBBLE_COLOR) => {
 };
 
 export class PersonaPanel {
-    constructor({ personaStore, chatStore = null, contactsStore = null, getSessionId = null, onPersonaChanged }) {
+    constructor({ personaStore, chatStore = null, contactsStore = null, rpSessionStore = null, getSessionId = null, onPersonaChanged }) {
         this.store = personaStore;
         this.chatStore = chatStore;
         this.contactsStore = contactsStore;
+        this.rpSessionStore = rpSessionStore;
         this.getSessionId = typeof getSessionId === 'function' ? getSessionId : null;
         this.onPersonaChanged = onPersonaChanged;
         this.overlay = null;
@@ -35,6 +37,13 @@ export class PersonaPanel {
         this.editingId = null;
         this.bulkModal = null;
         this.bulkState = null;
+        this.cardImporter = new CharacterCardImporter({
+            personaStore: this.store,
+            appBridge: window.appBridge,
+            rpSessionStore: this.rpSessionStore,
+            onPersonaChanged: this.onPersonaChanged,
+        });
+        this.importInput = null;
     }
 
     ensureUI() {
@@ -77,12 +86,19 @@ export class PersonaPanel {
                 <!-- List goes here -->
             </div>
             <div class="panel-footer" style="padding: 15px; border-top: 1px solid #eee; background: #fff; text-align: center;">
-                <button id="create-persona-btn" style="
-                    background: #007bff; color: white; border: none; padding: 10px 20px; 
-                    border-radius: 20px; font-size: 14px; cursor: pointer; width: 100%;
-                    box-shadow: 0 2px 5px rgba(0,123,255,0.3);
-                ">+ 新建角色</button>
+                <div style="display:flex; gap:8px;">
+                    <button id="import-card-btn" style="
+                        background: #0f172a; color: white; border: none; padding: 10px 16px;
+                        border-radius: 18px; font-size: 13px; cursor: pointer; flex: 1;
+                    ">导入角色卡</button>
+                    <button id="create-persona-btn" style="
+                        background: #007bff; color: white; border: none; padding: 10px 16px; 
+                        border-radius: 18px; font-size: 13px; cursor: pointer; flex: 1;
+                        box-shadow: 0 2px 5px rgba(0,123,255,0.3);
+                    ">+ 新建角色</button>
+                </div>
             </div>
+            <input type="file" id="persona-card-import" accept=".png,.json,application/json,image/png" style="display:none;">
 
             <!-- Edit View (Hidden by default) -->
             <div id="persona-edit-view" style="
@@ -177,6 +193,15 @@ export class PersonaPanel {
         // Bind Events
         this.panel.querySelector('.close-btn').addEventListener('click', () => this.hide());
         this.panel.querySelector('#create-persona-btn').addEventListener('click', () => this.openEdit());
+        const importBtn = this.panel.querySelector('#import-card-btn');
+        this.importInput = this.panel.querySelector('#persona-card-import');
+        if (importBtn && this.importInput) {
+            importBtn.addEventListener('click', () => {
+                this.importInput.value = '';
+                this.importInput.click();
+            });
+            this.importInput.addEventListener('change', () => this.handleCardImport());
+        }
         this.panel.querySelector('#edit-back-btn').addEventListener('click', () => this.closeEdit());
         this.panel.querySelector('#edit-avatar-preview').addEventListener('click', () => this.changeAvatar());
         this.panel.querySelector('#edit-avatar-btn').addEventListener('click', () => this.changeAvatar());
@@ -704,6 +729,18 @@ export class PersonaPanel {
             await this.mediaPicker.pickFile('image');
         } else {
             await this.mediaPicker.pickUrl('请输入头像地址', './assets/external/feather-default.png');
+        }
+    }
+
+    async handleCardImport() {
+        const file = this.importInput?.files?.[0];
+        if (!file) return;
+        try {
+            await this.cardImporter.importFromFile(file);
+            this.renderList();
+        } catch (err) {
+            const msg = err?.message || '导入失败';
+            window.toastr?.error?.(msg);
         }
     }
 

@@ -275,13 +275,14 @@ export class MemoryTableEditor {
     const templateId = String(template?.meta?.id || '').trim();
     if (!templateId) return [];
     const out = [];
+    const useSharedMemory = ctx?.sharedMemory === true;
     if (ctx.type === 'contact') {
       const contactId = String(ctx.contactId || '').trim();
-      if (contactId) {
+      if (contactId && !useSharedMemory) {
         const rows = await this.memoryStore.getMemories({ scope: 'contact', contact_id: contactId, template_id: templateId });
         out.push(...(Array.isArray(rows) ? rows : []));
       }
-      if (this.includeGlobal) {
+      if (this.includeGlobal || useSharedMemory) {
         const globals = await this.memoryStore.getMemories({ scope: 'global', template_id: templateId });
         out.push(...(Array.isArray(globals) ? globals : []));
       }
@@ -311,13 +312,14 @@ export class MemoryTableEditor {
     }
     this.listWrap.innerHTML = '';
     this.visibleIds = new Set();
+    const includeGlobal = this.includeGlobal || ctx?.sharedMemory === true;
     const tables = template.tables.filter(table => {
       if (ctx.type === 'contact') return table.scope === 'global' || table.scope === 'contact';
       if (ctx.type === 'group') return table.scope === 'global' || table.scope === 'group';
       if (ctx.type === 'global') return table.scope === 'global';
       return false;
     }).filter(table => {
-      if (!this.includeGlobal && table.scope === 'global') return false;
+      if (!includeGlobal && table.scope === 'global') return false;
       return true;
     });
     if (!tables.length) {
@@ -546,6 +548,7 @@ export class MemoryTableEditor {
     const baseSessionId = ctx?.type === 'group' ? ctx?.groupId : ctx?.contactId;
     const sessionId = String(baseSessionId || window.appBridge?.activeSessionId || '').trim();
     const isGroup = ctx?.type === 'group' || String(sessionId).startsWith('group:');
+    const sharedMemory = ctx?.sharedMemory === true && !isGroup;
     const contact = sessionId ? window.appBridge?.contactsStore?.getContact?.(sessionId) : null;
     const characterName = String(contact?.name || (isGroup ? sessionId.replace(/^group:/, '') : sessionId) || '助手');
     const settings = appSettings.get();
@@ -563,6 +566,7 @@ export class MemoryTableEditor {
         memoryAutoExtract,
         memoryInjectPosition,
         memoryInjectDepth,
+        sharedMemory,
       },
       group: isGroup ? { id: sessionId, name: characterName, members: [], memberNames: [] } : null,
       history: [],
@@ -638,8 +642,10 @@ export class MemoryTableEditor {
     const appBridge = window.appBridge;
     if (!appBridge) return '';
     const scope = String(table?.scope || '').trim().toLowerCase();
+    const sharedMemory = ctx?.sharedMemory === true;
+    const effectiveScope = sharedMemory && scope === 'contact' ? 'global' : scope;
     const sessionId = this.resolveSessionId(ctx);
-    if (scope === 'global') {
+    if (effectiveScope === 'global') {
       let worldId = String(appBridge.globalWorldId || '').trim();
       if (!worldId) {
         const ok = await appConfirm({
@@ -1082,6 +1088,7 @@ export class MemoryTableEditor {
     this.ensureEditorModal();
     if (!this.modalForm || !this.modalHeader) return;
     const isNew = !row;
+    const sharedMemory = ctx?.sharedMemory === true;
     this.modalHeader.textContent = `${isNew ? '新增' : '编辑'} · ${table.name || table.id || ''}`;
     this.modalForm.innerHTML = '';
     this.modalFields = [];
@@ -1133,11 +1140,13 @@ export class MemoryTableEditor {
       for (const field of this.modalFields) {
         rowData[field.id] = field.getValue();
       }
+      const contactId = table.scope === 'contact' && !sharedMemory ? String(ctx.contactId || '') : null;
+      const groupId = table.scope === 'group' ? String(ctx.groupId || '') : null;
       const payload = {
         template_id: this.template?.meta?.id,
         table_id: table.id,
-        contact_id: table.scope === 'contact' ? String(ctx.contactId || '') : null,
-        group_id: table.scope === 'group' ? String(ctx.groupId || '') : null,
+        contact_id: contactId,
+        group_id: groupId,
         row_data: rowData,
         is_active: Boolean(activeInput.checked),
         is_pinned: Boolean(pinInput.checked),

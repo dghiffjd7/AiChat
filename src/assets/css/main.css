@@ -304,6 +304,9 @@ body.chat-room-active .bottom-nav {
 .world-entries-toolbar {
   padding: 8px;
   border-bottom: 1px solid #f0f0f0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
 .world-entries-toolbar button {
@@ -314,6 +317,26 @@ body.chat-room-active .bottom-nav {
   background: #fff;
   cursor: pointer;
   font-size: 14px;
+}
+
+.world-entry-batch-bar {
+  padding: 6px 8px;
+  border-bottom: 1px dashed #e2e8f0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  font-size: 12px;
+  color: #475569;
+}
+
+.world-entry-batch-bar button {
+  padding: 5px 8px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #fff;
+  cursor: pointer;
+  font-size: 12px;
 }
 
 .world-entries-list {
@@ -334,6 +357,14 @@ body.chat-room-active .bottom-nav {
 
 .world-entry-item.active {
   background: #f8fafc;
+}
+
+.world-entry-item.is-selected {
+  background: #eef2ff;
+}
+
+.world-entry-select {
+  margin-top: 2px;
 }
 
 .world-entry-lights {

@@ -82,6 +82,19 @@ export class MacroEngine {
 
     applyVariableMacros(text, context) {
         const sessionId = this.getSessionId(context);
+        const useGlobal =
+            context?.useGlobalVariables === true ||
+            String(context?.uiMode || '').trim().toLowerCase() === 'rp';
+        const getVar = (key) => (
+            useGlobal
+                ? this.chatStore?.getGlobalVariable?.(key)
+                : this.chatStore?.getVariable?.(key, sessionId)
+        );
+        const setVar = (key, value) => (
+            useGlobal
+                ? this.chatStore?.setGlobalVariable?.(key, value)
+                : this.chatStore?.setVariable?.(key, value, sessionId)
+        );
         let out = String(text || '');
         const overrideLastUserMessage = (() => {
             const v = context?.lastUserMessage;
@@ -92,38 +105,38 @@ export class MacroEngine {
         // Replace {{setvar::name::value}} with empty string and set local variable
         out = out.replace(/{{setvar::([^:}]+)::([^}]*)}}/gi, (_m, name, value) => {
             const key = String(name || '').trim();
-            if (key) this.chatStore?.setVariable?.(key, String(value ?? ''), sessionId);
+            if (key) setVar(key, String(value ?? ''));
             return '';
         });
         // {{addvar::name::value}} - numeric add when possible
         out = out.replace(/{{addvar::([^:}]+)::([^}]*)}}/gi, (_m, name, value) => {
             const key = String(name || '').trim();
             if (!key) return '';
-            const curRaw = this.chatStore?.getVariable?.(key, sessionId);
+            const curRaw = getVar(key);
             const curNum = Number(curRaw);
             const addNum = Number(value);
             const next = (Number.isFinite(curNum) && Number.isFinite(addNum)) ? String(curNum + addNum) : `${String(curRaw ?? '')}${String(value ?? '')}`;
-            this.chatStore?.setVariable?.(key, next, sessionId);
+            setVar(key, next);
             return '';
         });
         // {{incvar::name}} / {{decvar::name}} return updated value
         out = out.replace(/{{incvar::([^}]+)}}/gi, (_m, name) => {
             const key = String(name || '').trim();
-            const cur = Number(this.chatStore?.getVariable?.(key, sessionId));
+            const cur = Number(getVar(key));
             const next = (Number.isFinite(cur) ? cur : 0) + 1;
-            this.chatStore?.setVariable?.(key, String(next), sessionId);
+            setVar(key, String(next));
             return String(next);
         });
         out = out.replace(/{{decvar::([^}]+)}}/gi, (_m, name) => {
             const key = String(name || '').trim();
-            const cur = Number(this.chatStore?.getVariable?.(key, sessionId));
+            const cur = Number(getVar(key));
             const next = (Number.isFinite(cur) ? cur : 0) - 1;
-            this.chatStore?.setVariable?.(key, String(next), sessionId);
+            setVar(key, String(next));
             return String(next);
         });
         out = out.replace(/{{getvar::([^}]+)}}/gi, (_m, name) => {
             const key = String(name || '').trim();
-            const val = this.chatStore?.getVariable?.(key, sessionId);
+            const val = getVar(key);
             return (val === undefined || val === null) ? '' : String(val);
         });
 

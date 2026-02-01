@@ -1,9 +1,10 @@
 import { appConfirm } from './app-confirm.js';
 
 export class VariablePanel {
-    constructor({ chatStore, getSessionId }) {
+    constructor({ chatStore, getSessionId, getVariableScope }) {
         this.chatStore = chatStore;
         this.getSessionId = typeof getSessionId === 'function' ? getSessionId : () => '';
+        this.getVariableScope = typeof getVariableScope === 'function' ? getVariableScope : null;
         this.overlay = null;
         this.panel = null;
         this.schemaOverlay = null;
@@ -583,9 +584,9 @@ export class VariablePanel {
 
     show() {
         this.ensureUI();
-        const sid = String(this.getSessionId() || '').trim();
+        const { sid, scope } = this.getVars();
         const meta = this.panel?.querySelector?.('#var-meta');
-        if (meta) meta.textContent = sid ? `会话：${sid}` : '未选择会话';
+        if (meta) meta.textContent = scope === 'global' ? '全局变量（共享）' : (sid ? `会话：${sid}` : '未选择会话');
         this.term = '';
         const searchEl = this.panel?.querySelector?.('#var-search');
         if (searchEl) searchEl.value = '';
@@ -609,9 +610,13 @@ export class VariablePanel {
     }
 
     showRules() {
-        const { sid } = this.getVars();
+        const { sid, scope } = this.getVars();
         if (!sid) {
             window.toastr?.warning?.('请先进入聊天室');
+            return;
+        }
+        if (scope === 'global') {
+            window.toastr?.info?.('全局变量暂不支持规则');
             return;
         }
         this.ensureRuleUI();
@@ -716,7 +721,7 @@ export class VariablePanel {
         const idx = rules.findIndex(r => String(r?.id || '') === id);
         if (idx >= 0) rules[idx] = next;
         else rules.push(next);
-        this.chatStore?.setVariableRules?.(rules, sid);
+        this.setRules(rules);
         this.renderRuleList();
         this.hideRuleEditor();
         window.toastr?.success?.('规则已保存');
@@ -729,9 +734,13 @@ export class VariablePanel {
     }
 
     showTemplateModal() {
-        const { sid } = this.getVars();
+        const { sid, scope } = this.getVars();
         if (!sid) {
             window.toastr?.warning?.('请先进入聊天室');
+            return;
+        }
+        if (scope === 'global') {
+            window.toastr?.info?.('全局变量暂不支持模板');
             return;
         }
         this.ensureTemplateUI();
@@ -749,8 +758,8 @@ export class VariablePanel {
             window.toastr?.warning?.('请先进入聊天室');
             return;
         }
-        const schemas = this.chatStore?.listVariableSchemas?.(sid) || {};
-        const rules = this.chatStore?.listVariableRules?.(sid) || [];
+        const schemas = this.listSchemas();
+        const rules = this.listRules();
         const payload = {
             version: 1,
             sessionId: sid,
@@ -811,7 +820,7 @@ export class VariablePanel {
     }
 
     async applyImportModal(merge = false) {
-        const { sid } = this.getVars();
+        const { sid, scope } = this.getVars();
         if (!sid || !this.dataTextarea) return;
         const raw = String(this.dataTextarea.value || '').trim();
         if (!raw) {
@@ -833,37 +842,43 @@ export class VariablePanel {
         if (!merge) {
             const ok = await appConfirm({ title: '覆盖导入', message: '将覆盖当前变量/规则，是否继续？', danger: true });
             if (!ok) return;
-            this.chatStore?.clearVariables?.(sid);
-            this.chatStore?.clearVariableSchemas?.(sid);
-            this.chatStore?.setVariableRules?.(nextRules, sid);
+            this.clearVars();
+            if (scope !== 'global') {
+                this.clearSchemas();
+                this.setRules(nextRules);
+            }
         } else {
-            const currentSchemas = this.chatStore?.listVariableSchemas?.(sid) || {};
-            const currentVars = this.chatStore?.listVariables?.(sid) || {};
-            const currentRules = this.chatStore?.listVariableRules?.(sid) || [];
+            const currentSchemas = scope === 'global' ? {} : this.listSchemas();
+            const currentVars = this.listVars();
+            const currentRules = scope === 'global' ? [] : this.listRules();
             const mergedRules = Array.isArray(currentRules) ? currentRules.slice() : [];
-            nextRules.forEach((rule) => {
-                const id = String(rule?.id || '');
-                if (!id || mergedRules.some(r => String(r?.id || '') === id)) {
-                    mergedRules.push({ ...rule, id: `vr_${Date.now()}_${Math.random().toString(16).slice(2, 8)}` });
-                } else {
-                    mergedRules.push(rule);
-                }
-            });
-            this.chatStore?.setVariableRules?.(mergedRules, sid);
-            Object.entries({ ...(currentSchemas || {}), ...(nextSchemas || {}) }).forEach(([key, schema]) => {
-                this.chatStore?.setVariableSchema?.(key, schema, sid);
-            });
+            if (scope !== 'global') {
+                nextRules.forEach((rule) => {
+                    const id = String(rule?.id || '');
+                    if (!id || mergedRules.some(r => String(r?.id || '') === id)) {
+                        mergedRules.push({ ...rule, id: `vr_${Date.now()}_${Math.random().toString(16).slice(2, 8)}` });
+                    } else {
+                        mergedRules.push(rule);
+                    }
+                });
+                this.setRules(mergedRules);
+                Object.entries({ ...(currentSchemas || {}), ...(nextSchemas || {}) }).forEach(([key, schema]) => {
+                    this.setSchema(key, schema);
+                });
+            }
             Object.entries({ ...(currentVars || {}), ...(nextVars || {}) }).forEach(([key, value]) => {
-                this.chatStore?.setVariable?.(key, value, sid);
+                this.setVar(key, value);
             });
         }
 
         if (!merge) {
-            Object.entries(nextSchemas || {}).forEach(([key, schema]) => {
-                this.chatStore?.setVariableSchema?.(key, schema, sid);
-            });
+            if (scope !== 'global') {
+                Object.entries(nextSchemas || {}).forEach(([key, schema]) => {
+                    this.setSchema(key, schema);
+                });
+            }
             Object.entries(nextVars || {}).forEach(([key, value]) => {
-                this.chatStore?.setVariable?.(key, value, sid);
+                this.setVar(key, value);
             });
         }
 
@@ -1002,12 +1017,16 @@ export class VariablePanel {
                 format: String(fields.format?.value || '').trim(),
             };
 
-            this.chatStore?.setVariableSchema?.(key, schema, sid);
+            if (!this.isGlobalScope()) {
+                this.setSchema(key, schema);
+            }
         } else {
-            this.chatStore?.deleteVariableSchema?.(key, sid);
+            if (!this.isGlobalScope()) {
+                this.deleteSchema(key);
+            }
         }
 
-        this.chatStore?.setVariable?.(key, valueRaw, sid);
+        this.setVar(key, valueRaw);
         this.renderList();
         this.hideSchemaModal();
     }
@@ -1019,21 +1038,115 @@ export class VariablePanel {
         if (!sid) return;
         const key = String(fields.key?.value || '').trim();
         if (!key) return;
-        this.chatStore?.deleteVariableSchema?.(key, sid);
+        this.deleteSchema(key);
         this.renderList();
         this.hideSchemaModal();
     }
 
-    getVars() {
+    resolveScope() {
         const sid = String(this.getSessionId() || '').trim();
-        const vars = sid ? (this.chatStore?.listVariables?.(sid) || {}) : {};
-        return { sid, vars };
+        const rawScope = this.getVariableScope ? this.getVariableScope(sid) : 'session';
+        const scope = rawScope === 'global' ? 'global' : 'session';
+        return { sid, scope };
+    }
+
+    isGlobalScope() {
+        return this.resolveScope().scope === 'global';
+    }
+
+    listVars() {
+        const { sid, scope } = this.resolveScope();
+        if (scope === 'global') {
+            return this.chatStore?.listGlobalVariables?.() || {};
+        }
+        return sid ? (this.chatStore?.listVariables?.(sid) || {}) : {};
+    }
+
+    setVar(key, value) {
+        const name = String(key || '').trim();
+        if (!name) return false;
+        const { sid, scope } = this.resolveScope();
+        if (scope === 'global') return this.chatStore?.setGlobalVariable?.(name, value);
+        if (!sid) return false;
+        return this.chatStore?.setVariable?.(name, value, sid);
+    }
+
+    deleteVar(key) {
+        const name = String(key || '').trim();
+        if (!name) return false;
+        const { sid, scope } = this.resolveScope();
+        if (scope === 'global') return this.chatStore?.deleteGlobalVariable?.(name);
+        if (!sid) return false;
+        return this.chatStore?.deleteVariable?.(name, sid);
+    }
+
+    clearVars() {
+        const { sid, scope } = this.resolveScope();
+        if (scope === 'global') return this.chatStore?.clearGlobalVariables?.();
+        if (!sid) return false;
+        return this.chatStore?.clearVariables?.(sid);
+    }
+
+    listSchemas() {
+        const { sid, scope } = this.resolveScope();
+        if (scope === 'global') return {};
+        return sid ? (this.chatStore?.listVariableSchemas?.(sid) || {}) : {};
+    }
+
+    setSchema(key, schema) {
+        if (this.isGlobalScope()) {
+            window.toastr?.info?.('全局变量暂不支持 Schema');
+            return false;
+        }
+        const name = String(key || '').trim();
+        if (!name) return false;
+        const { sid } = this.resolveScope();
+        if (!sid) return false;
+        return this.chatStore?.setVariableSchema?.(name, schema, sid);
+    }
+
+    deleteSchema(key) {
+        if (this.isGlobalScope()) return false;
+        const name = String(key || '').trim();
+        if (!name) return false;
+        const { sid } = this.resolveScope();
+        if (!sid) return false;
+        return this.chatStore?.deleteVariableSchema?.(name, sid);
+    }
+
+    clearSchemas() {
+        if (this.isGlobalScope()) return false;
+        const { sid } = this.resolveScope();
+        if (!sid) return false;
+        return this.chatStore?.clearVariableSchemas?.(sid);
+    }
+
+    listRules() {
+        const { sid, scope } = this.resolveScope();
+        if (scope === 'global') return [];
+        return sid ? (this.chatStore?.listVariableRules?.(sid) || []) : [];
+    }
+
+    setRules(list) {
+        if (this.isGlobalScope()) {
+            window.toastr?.info?.('全局变量暂不支持规则');
+            return false;
+        }
+        const { sid } = this.resolveScope();
+        if (!sid) return false;
+        return this.chatStore?.setVariableRules?.(list, sid);
+    }
+
+    getVars() {
+        const { sid, scope } = this.resolveScope();
+        const vars = this.listVars();
+        return { sid, vars, scope };
     }
 
     getSchemas() {
-        const sid = String(this.getSessionId() || '').trim();
-        const schemas = sid ? (this.chatStore?.listVariableSchemas?.(sid) || {}) : {};
-        return { sid, schemas };
+        const { sid, scope } = this.resolveScope();
+        const schemas = this.listSchemas();
+        return { sid, schemas, scope };
     }
 
     getSchema(key) {
@@ -1045,9 +1158,9 @@ export class VariablePanel {
     }
 
     getRules() {
-        const sid = String(this.getSessionId() || '').trim();
-        const rules = sid ? (this.chatStore?.listVariableRules?.(sid) || []) : [];
-        return { sid, rules: Array.isArray(rules) ? rules : [] };
+        const { sid, scope } = this.resolveScope();
+        const rules = this.listRules();
+        return { sid, rules: Array.isArray(rules) ? rules : [], scope };
     }
 
     normalizeRule(rule) {
@@ -1153,7 +1266,7 @@ export class VariablePanel {
                     if (String(item?.id || '') !== rule.id) return item;
                     return { ...item, enabled };
                 });
-                this.chatStore?.setVariableRules?.(next, sid);
+                this.setRules(next);
                 this.renderRuleList();
             });
             title.appendChild(name);
@@ -1199,7 +1312,7 @@ export class VariablePanel {
         const ok = await appConfirm({ title: '删除规则', message: '确定删除该规则？', danger: true });
         if (!ok) return;
         const next = rules.filter(r => String(r?.id || '') !== targetId);
-        this.chatStore?.setVariableRules?.(next, sid);
+        this.setRules(next);
         this.renderRuleList();
     }
 
@@ -1221,7 +1334,7 @@ export class VariablePanel {
                 id: 'affection',
                 name: '好感度',
                 desc: '数值 0-100，进度条展示',
-                apply: (sid) => {
+                apply: () => {
                     const key = '好感度';
                     const schema = {
                         id: key,
@@ -1231,15 +1344,15 @@ export class VariablePanel {
                         range: { min: 0, max: 100 },
                         ui: { display: 'progress', color: '#f97316', format: '{value}/100', label: '好感度' },
                     };
-                    this.chatStore?.setVariableSchema?.(key, schema, sid);
-                    this.chatStore?.setVariable?.(key, schema.default, sid);
+                    this.setSchema(key, schema);
+                    this.setVar(key, schema.default);
                 },
             },
             {
                 id: 'relationship',
                 name: '关系阶段',
                 desc: '枚举展示',
-                apply: (sid) => {
+                apply: () => {
                     const key = '关系阶段';
                     const schema = {
                         id: key,
@@ -1249,8 +1362,8 @@ export class VariablePanel {
                         options: ['陌生', '熟悉', '朋友', '亲密', '恋人'],
                         ui: { display: 'badge', color: '#16a34a', label: '关系' },
                     };
-                    this.chatStore?.setVariableSchema?.(key, schema, sid);
-                    this.chatStore?.setVariable?.(key, schema.default, sid);
+                    this.setSchema(key, schema);
+                    this.setVar(key, schema.default);
                 },
             },
         ];
@@ -1270,7 +1383,7 @@ export class VariablePanel {
                     const ok = await appConfirm({ title: '覆盖变量', message: `变量 "${tpl.name}" 已存在，是否覆盖？`, danger: true });
                     if (!ok) return;
                 }
-                tpl.apply(sid);
+                tpl.apply();
                 this.renderList();
                 window.toastr?.success?.('模板已应用');
             });
@@ -1415,8 +1528,8 @@ export class VariablePanel {
             window.toastr?.warning?.('请先进入聊天室');
             return;
         }
-        this.chatStore?.deleteVariable?.(String(key).trim(), sid);
-        this.chatStore?.deleteVariableSchema?.(String(key).trim(), sid);
+        this.deleteVar(String(key).trim());
+        this.deleteSchema(String(key).trim());
         this.renderList();
     }
 
@@ -1428,7 +1541,7 @@ export class VariablePanel {
             window.toastr?.warning?.('请先进入聊天室');
             return;
         }
-        this.chatStore?.clearVariables?.(sid);
+        this.clearVars();
         this.renderList();
     }
 
@@ -1437,19 +1550,23 @@ export class VariablePanel {
     }
 
     promptRulesJson() {
-        const { sid } = this.getVars();
+        const { sid, scope } = this.getVars();
         if (!sid) {
             window.toastr?.warning?.('请先进入聊天室');
             return;
         }
-        const current = this.chatStore?.listVariableRules?.(sid) || [];
+        if (scope === 'global') {
+            window.toastr?.info?.('全局变量暂不支持规则');
+            return;
+        }
+        const current = this.listRules();
         const draft = JSON.stringify(current, null, 2);
         const input = prompt('编辑规则 JSON（数组）', draft);
         if (input === null) return;
         try {
             const parsed = JSON.parse(input || '[]');
             if (!Array.isArray(parsed)) throw new Error('必须是数组');
-            this.chatStore?.setVariableRules?.(parsed, sid);
+            this.setRules(parsed);
             window.toastr?.success?.('规则已保存');
         } catch (err) {
             window.toastr?.error?.(`规则解析失败：${err?.message || err}`);

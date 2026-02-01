@@ -54,6 +54,8 @@ export class PersonaStore {
                 const position = Number.isFinite(Number(obj.position)) ? Number(obj.position) : persona_description_positions.IN_PROMPT;
                 const depth = Number.isFinite(Number(obj.depth)) ? Math.max(0, Math.trunc(Number(obj.depth))) : DEFAULT_DEPTH;
                 const role = Number.isFinite(Number(obj.role)) ? Math.max(0, Math.min(2, Math.trunc(Number(obj.role)))) : DEFAULT_ROLE;
+                const source = (obj.source && typeof obj.source === 'object') ? obj.source : null;
+                const originalCard = (obj.originalCard && typeof obj.originalCard === 'object') ? obj.originalCard : null;
                 const normalized = {
                     id: String(obj.id || '').trim() || `persona_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
                     name: String(obj.name || '').trim() || '我',
@@ -65,6 +67,8 @@ export class PersonaStore {
                     role,
                     created: Number.isFinite(Number(obj.created)) ? Number(obj.created) : Date.now(),
                     updated: Number.isFinite(Number(obj.updated)) ? Number(obj.updated) : Date.now(),
+                    source,
+                    originalCard,
                 };
                 if (
                     normalized.id !== obj.id ||
@@ -76,7 +80,9 @@ export class PersonaStore {
                     normalized.depth !== obj.depth ||
                     normalized.role !== obj.role ||
                     normalized.created !== obj.created ||
-                    normalized.updated !== obj.updated
+                    normalized.updated !== obj.updated ||
+                    (obj.source && typeof obj.source !== 'object') ||
+                    (obj.originalCard && typeof obj.originalCard !== 'object')
                 ) {
                     changed = true;
                 }
@@ -116,7 +122,9 @@ export class PersonaStore {
             depth: DEFAULT_DEPTH,
             role: DEFAULT_ROLE,
             created: Date.now(),
-            updated: Date.now()
+            updated: Date.now(),
+            source: null,
+            originalCard: null
         };
     }
 
@@ -168,7 +176,9 @@ export class PersonaStore {
             depth,
             role,
             created: Date.now(),
-            updated: Date.now()
+            updated: Date.now(),
+            source: (data && typeof data.source === 'object') ? data.source : null,
+            originalCard: (data && typeof data.originalCard === 'object') ? data.originalCard : null
         };
         this.personas.push(newPersona);
         await this.save();
@@ -194,6 +204,12 @@ export class PersonaStore {
         }
         if (data && Object.prototype.hasOwnProperty.call(data, 'userBubbleColor')) {
             next.userBubbleColor = normalizeBubbleColor(data.userBubbleColor);
+        }
+        if (data && Object.prototype.hasOwnProperty.call(data, 'source')) {
+            next.source = (data.source && typeof data.source === 'object') ? data.source : null;
+        }
+        if (data && Object.prototype.hasOwnProperty.call(data, 'originalCard')) {
+            next.originalCard = (data.originalCard && typeof data.originalCard === 'object') ? data.originalCard : null;
         }
 
         this.personas[idx] = {
