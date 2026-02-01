@@ -161,8 +161,8 @@ body[data-typing-dots="off"] [data-typing-placeholder="1"] {
 
 .page {
     display: none;
-    height: calc(100vh - 56px - env(safe-area-inset-bottom, 0px));
-    height: calc(100dvh - 56px - env(safe-area-inset-bottom, 0px));
+    height: calc(100vh - 56px);
+    height: calc(100dvh - 56px);
     overflow: hidden;
 }
 
@@ -1360,7 +1360,7 @@ body,
   bottom: 0;
   left: 0;
   right: 0;
-  height: calc(56px + env(safe-area-inset-bottom, 0px));
+  height: 56px;
   box-sizing: border-box;
   display: flex;
   justify-content: space-around;
