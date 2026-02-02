@@ -320,6 +320,24 @@ export class WorldEditorModal {
         this.batchClearBtn = null;
         this.batchCreateBtn = null;
         this.batchCreateAllBtn = null;
+        this.manageBtn = null;
+        this.manageOverlay = null;
+        this.manageModal = null;
+        this.manageCountEl = null;
+        this.manageSelectAllBtn = null;
+        this.manageClearBtn = null;
+        this.manageCreateSelectedBtn = null;
+        this.manageDeleteBtn = null;
+        this.manageMoveUpBtn = null;
+        this.manageMoveDownBtn = null;
+        this.manageMoveTopBtn = null;
+        this.manageMoveBottomBtn = null;
+        this.manageListEl = null;
+        this.chatNameOverlay = null;
+        this.chatNameModal = null;
+        this.chatNameInputEl = null;
+        this.chatNameResolve = null;
+        this.chatNameKeyHandler = null;
     }
 
     async show(name, data) {
@@ -350,6 +368,7 @@ export class WorldEditorModal {
     hide() {
         if (this.overlay) this.overlay.style.display = 'none';
         if (this.modal) this.modal.style.display = 'none';
+        this.hideManageModal();
         this.hideAiModal();
     }
 
@@ -385,6 +404,7 @@ export class WorldEditorModal {
                 <div class="world-editor-actions">
                     <button id="world-editor-save">保存</button>
                     <button id="world-editor-export">导出</button>
+                    <button id="world-editor-manage">管理</button>
                     <button id="world-editor-close" class="world-editor-close">×</button>
                 </div>
             </div>
@@ -392,14 +412,6 @@ export class WorldEditorModal {
                 <div class="world-entries-column">
                     <div class="world-entries-toolbar">
                         <button id="world-entry-add">＋ 新条目</button>
-                        <button id="world-entry-batch">批量选择</button>
-                        <button id="world-entry-create-all">全书创建</button>
-                    </div>
-                    <div id="world-entry-batch-bar" class="world-entry-batch-bar" style="display:none;">
-                        <span id="world-entry-batch-count">已选 0</span>
-                        <button id="world-entry-batch-selectall">全选</button>
-                        <button id="world-entry-batch-clear">清空</button>
-                        <button id="world-entry-batch-create">合并创建聊天室</button>
                     </div>
                     <ul id="world-entries-list" class="world-entries-list"></ul>
                 </div>
@@ -413,27 +425,18 @@ export class WorldEditorModal {
         this.saveBtn = this.modal.querySelector('#world-editor-save');
         this.addBtn = this.modal.querySelector('#world-entry-add');
         this.exportBtn = this.modal.querySelector('#world-editor-export');
-        this.batchToggleBtn = this.modal.querySelector('#world-entry-batch');
-        this.batchBarEl = this.modal.querySelector('#world-entry-batch-bar');
-        this.batchCountEl = this.modal.querySelector('#world-entry-batch-count');
-        this.batchSelectAllBtn = this.modal.querySelector('#world-entry-batch-selectall');
-        this.batchClearBtn = this.modal.querySelector('#world-entry-batch-clear');
-        this.batchCreateBtn = this.modal.querySelector('#world-entry-batch-create');
-        this.batchCreateAllBtn = this.modal.querySelector('#world-entry-create-all');
+        this.manageBtn = this.modal.querySelector('#world-editor-manage');
 
         this.modal.querySelector('#world-editor-close').onclick = () => this.hide();
         this.saveBtn.onclick = () => this.saveWorld();
         if (this.exportBtn) this.exportBtn.onclick = () => this.exportWorld();
         this.addBtn.onclick = () => this.addEntry();
-        if (this.batchToggleBtn) this.batchToggleBtn.onclick = () => this.toggleBatchMode();
-        if (this.batchSelectAllBtn) this.batchSelectAllBtn.onclick = () => this.selectAllEntries();
-        if (this.batchClearBtn) this.batchClearBtn.onclick = () => this.clearSelection();
-        if (this.batchCreateBtn) this.batchCreateBtn.onclick = () => this.createChatFromSelection();
-        if (this.batchCreateAllBtn) this.batchCreateAllBtn.onclick = () => this.createChatFromAllEntries();
+        if (this.manageBtn) this.manageBtn.onclick = () => this.showManageModal();
 
         document.body.appendChild(this.overlay);
         document.body.appendChild(this.modal);
         this.createAiModal();
+        this.createManageModal();
     }
 
     createAiModal() {
@@ -513,6 +516,216 @@ export class WorldEditorModal {
     hideAiModal() {
         if (this.aiOverlay) this.aiOverlay.style.display = 'none';
         if (this.aiModal) this.aiModal.style.display = 'none';
+    }
+
+    createChatNameModal() {
+        if (this.chatNameModal) return;
+        this.chatNameOverlay = document.createElement('div');
+        this.chatNameOverlay.className = 'world-chatname-overlay';
+        this.chatNameOverlay.style.display = 'none';
+        this.chatNameOverlay.addEventListener('click', () => this.closeChatNameModal(''));
+
+        this.chatNameModal = document.createElement('div');
+        this.chatNameModal.className = 'world-chatname-modal';
+        this.chatNameModal.style.display = 'none';
+        this.chatNameModal.innerHTML = `
+            <div class="world-chatname-header">
+                <div class="world-chatname-title">创建聊天室</div>
+                <button type="button" class="world-chatname-close" aria-label="关闭">×</button>
+            </div>
+            <div class="world-chatname-body">
+                <label class="world-chatname-label" for="world-chatname-input">聊天室名称</label>
+                <input id="world-chatname-input" class="world-chatname-input" type="text" value="">
+                <div class="world-chatname-hint">名称可修改，默认使用选中条目的名称</div>
+            </div>
+            <div class="world-chatname-actions">
+                <button type="button" class="world-chatname-btn ghost" id="world-chatname-cancel">取消</button>
+                <button type="button" class="world-chatname-btn primary" id="world-chatname-ok">创建</button>
+            </div>
+        `;
+        this.chatNameModal.addEventListener('click', (e) => e.stopPropagation());
+
+        this.chatNameInputEl = this.chatNameModal.querySelector('#world-chatname-input');
+        const closeBtn = this.chatNameModal.querySelector('.world-chatname-close');
+        const cancelBtn = this.chatNameModal.querySelector('#world-chatname-cancel');
+        const okBtn = this.chatNameModal.querySelector('#world-chatname-ok');
+
+        closeBtn?.addEventListener('click', () => this.closeChatNameModal(''));
+        cancelBtn?.addEventListener('click', () => this.closeChatNameModal(''));
+        okBtn?.addEventListener('click', () => this.submitChatNameModal());
+
+        this.chatNameInputEl?.addEventListener('focus', () => {
+            if (!this.chatNameInputEl) return;
+            if (this.chatNameInputEl.classList.contains('is-placeholder')) {
+                this.chatNameInputEl.value = '';
+                this.chatNameInputEl.classList.remove('is-placeholder');
+            }
+        });
+        this.chatNameInputEl?.addEventListener('blur', () => this.restoreChatNamePlaceholder());
+
+        document.body.appendChild(this.chatNameOverlay);
+        document.body.appendChild(this.chatNameModal);
+    }
+
+    openChatNameModal(defaultName) {
+        if (!this.chatNameModal) this.createChatNameModal();
+        if (!this.chatNameOverlay || !this.chatNameModal || !this.chatNameInputEl) return Promise.resolve('');
+        const defaultText = String(defaultName || '').trim();
+        this.chatNameInputEl.dataset.defaultName = defaultText;
+        this.chatNameInputEl.value = defaultText;
+        this.chatNameInputEl.classList.toggle('is-placeholder', Boolean(defaultText));
+        this.chatNameOverlay.style.display = 'block';
+        this.chatNameModal.style.display = 'block';
+
+        if (this.chatNameKeyHandler) {
+            document.removeEventListener('keydown', this.chatNameKeyHandler);
+        }
+        this.chatNameKeyHandler = (event) => {
+            if (event.key === 'Escape') {
+                event.preventDefault();
+                this.closeChatNameModal('');
+            } else if (event.key === 'Enter') {
+                event.preventDefault();
+                this.submitChatNameModal();
+            }
+        };
+        document.addEventListener('keydown', this.chatNameKeyHandler);
+
+        return new Promise((resolve) => {
+            this.chatNameResolve = resolve;
+        });
+    }
+
+    restoreChatNamePlaceholder() {
+        if (!this.chatNameInputEl) return;
+        const text = String(this.chatNameInputEl.value || '').trim();
+        if (!text) {
+            const fallback = String(this.chatNameInputEl.dataset?.defaultName || '').trim();
+            this.chatNameInputEl.value = fallback;
+            this.chatNameInputEl.classList.toggle('is-placeholder', Boolean(fallback));
+        } else {
+            this.chatNameInputEl.classList.remove('is-placeholder');
+        }
+    }
+
+    submitChatNameModal() {
+        if (!this.chatNameInputEl) return;
+        const isPlaceholder = this.chatNameInputEl.classList.contains('is-placeholder');
+        const raw = String(this.chatNameInputEl.value || '').trim();
+        const fallback = String(this.chatNameInputEl.dataset?.defaultName || '').trim();
+        const value = (isPlaceholder || !raw) ? fallback : raw;
+        this.closeChatNameModal(value);
+    }
+
+    closeChatNameModal(value) {
+        if (this.chatNameOverlay) this.chatNameOverlay.style.display = 'none';
+        if (this.chatNameModal) this.chatNameModal.style.display = 'none';
+        if (this.chatNameKeyHandler) {
+            document.removeEventListener('keydown', this.chatNameKeyHandler);
+            this.chatNameKeyHandler = null;
+        }
+        if (this.chatNameResolve) {
+            const resolve = this.chatNameResolve;
+            this.chatNameResolve = null;
+            resolve(String(value || ''));
+        }
+    }
+
+    createManageModal() {
+        if (this.manageModal) return;
+        this.manageOverlay = document.createElement('div');
+        this.manageOverlay.className = 'world-manage-overlay';
+        this.manageOverlay.style.display = 'none';
+        this.manageOverlay.addEventListener('click', () => this.hideManageModal());
+
+        this.manageModal = document.createElement('div');
+        this.manageModal.className = 'world-manage-modal';
+        this.manageModal.style.display = 'none';
+        this.manageModal.innerHTML = `
+            <div class="world-manage-header">
+                <div>
+                    <div class="world-manage-title">条目管理</div>
+                    <div class="world-manage-subtitle">批量操作、创建聊天室、删除与移动</div>
+                </div>
+                <button type="button" class="world-manage-close" aria-label="关闭">×</button>
+            </div>
+            <div class="world-manage-body">
+                <div class="world-manage-toolbar">
+                    <div class="world-manage-label">条目列表</div>
+                    <div id="world-manage-count" class="world-manage-count">已选 0</div>
+                    <div class="world-manage-actions">
+                        <button type="button" class="world-manage-link" id="world-manage-selectall">全选</button>
+                        <button type="button" class="world-manage-link" id="world-manage-clear">清空</button>
+                        <span class="world-manage-sep"></span>
+                        <button type="button" class="world-manage-link" id="world-manage-create-selected">创建聊天室</button>
+                        <span class="world-manage-sep"></span>
+                        <button type="button" class="world-manage-icon" id="world-manage-move-top" aria-label="置顶">
+                            <svg viewBox="0 0 24 24" aria-hidden="true">
+                                <path d="M5 4h14v2H5z"></path>
+                                <path d="M12 7l-5 5h3v6h4v-6h3z"></path>
+                            </svg>
+                        </button>
+                        <button type="button" class="world-manage-icon" id="world-manage-move-up" aria-label="上移">
+                            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 6l-6 6h4v6h4v-6h4z"></path></svg>
+                        </button>
+                        <button type="button" class="world-manage-icon" id="world-manage-move-down" aria-label="下移">
+                            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 18l6-6h-4V6h-4v6H6z"></path></svg>
+                        </button>
+                        <button type="button" class="world-manage-icon" id="world-manage-move-bottom" aria-label="置底">
+                            <svg viewBox="0 0 24 24" aria-hidden="true">
+                                <path d="M5 18h14v2H5z"></path>
+                                <path d="M12 17l5-5h-3V6h-4v6H7z"></path>
+                            </svg>
+                        </button>
+                        <button type="button" class="world-manage-link danger" id="world-manage-delete">删除</button>
+                    </div>
+                </div>
+                <div id="world-manage-list" class="world-manage-list"></div>
+            </div>
+            <div class="world-manage-footer">
+                <button type="button" class="world-manage-btn primary" id="world-manage-close-btn">完成</button>
+            </div>
+        `;
+        this.manageModal.addEventListener('click', (e) => e.stopPropagation());
+        this.manageModal.querySelector('.world-manage-close')?.addEventListener('click', () => this.hideManageModal());
+        this.manageModal.querySelector('#world-manage-close-btn')?.addEventListener('click', () => this.hideManageModal());
+
+        this.manageCountEl = this.manageModal.querySelector('#world-manage-count');
+        this.manageSelectAllBtn = this.manageModal.querySelector('#world-manage-selectall');
+        this.manageClearBtn = this.manageModal.querySelector('#world-manage-clear');
+        this.manageCreateSelectedBtn = this.manageModal.querySelector('#world-manage-create-selected');
+        this.manageDeleteBtn = this.manageModal.querySelector('#world-manage-delete');
+        this.manageMoveUpBtn = this.manageModal.querySelector('#world-manage-move-up');
+        this.manageMoveDownBtn = this.manageModal.querySelector('#world-manage-move-down');
+        this.manageMoveTopBtn = this.manageModal.querySelector('#world-manage-move-top');
+        this.manageMoveBottomBtn = this.manageModal.querySelector('#world-manage-move-bottom');
+        this.manageListEl = this.manageModal.querySelector('#world-manage-list');
+
+        this.manageSelectAllBtn?.addEventListener('click', () => {
+            this.selectAllEntries();
+        });
+        this.manageClearBtn?.addEventListener('click', () => this.clearSelection());
+        this.manageCreateSelectedBtn?.addEventListener('click', () => this.createChatFromSelection());
+        this.manageDeleteBtn?.addEventListener('click', () => this.deleteSelectedEntries());
+        this.manageMoveUpBtn?.addEventListener('click', () => this.moveSelectedEntries(-1));
+        this.manageMoveDownBtn?.addEventListener('click', () => this.moveSelectedEntries(1));
+        this.manageMoveTopBtn?.addEventListener('click', () => this.moveSelectedToEdge('top'));
+        this.manageMoveBottomBtn?.addEventListener('click', () => this.moveSelectedToEdge('bottom'));
+
+        document.body.appendChild(this.manageOverlay);
+        document.body.appendChild(this.manageModal);
+    }
+
+    showManageModal() {
+        if (!this.manageModal) this.createManageModal();
+        this.updateManageState();
+        if (this.manageOverlay) this.manageOverlay.style.display = 'block';
+        if (this.manageModal) this.manageModal.style.display = 'block';
+    }
+
+    hideManageModal() {
+        if (this.manageOverlay) this.manageOverlay.style.display = 'none';
+        if (this.manageModal) this.manageModal.style.display = 'none';
     }
 
     setAiStatus(message, tone = '') {
@@ -657,6 +870,12 @@ export class WorldEditorModal {
         return String(id || '').trim();
     }
 
+    getEntryDisplayName(entry, idx = 0) {
+        const raw = entry && typeof entry === 'object' ? entry : {};
+        const title = String(raw.comment || raw.title || '').trim();
+        return title || `条目 ${idx + 1}`;
+    }
+
     toggleBatchMode(force = null) {
         this.batchMode = force === null ? !this.batchMode : Boolean(force);
         if (!this.batchMode) {
@@ -676,12 +895,80 @@ export class WorldEditorModal {
     }
 
     updateBatchBar() {
-        if (!this.batchBarEl) return;
         this.syncSelectedEntries();
         const count = this.selectedEntries.size;
-        this.batchBarEl.style.display = this.batchMode ? 'flex' : 'none';
-        if (this.batchCountEl) this.batchCountEl.textContent = `已选 ${count}`;
-        if (this.batchCreateBtn) this.batchCreateBtn.disabled = count === 0;
+        if (this.batchBarEl) {
+            this.batchBarEl.style.display = this.batchMode ? 'flex' : 'none';
+            if (this.batchCountEl) this.batchCountEl.textContent = `已选 ${count}`;
+            if (this.batchCreateBtn) this.batchCreateBtn.disabled = count === 0;
+        }
+        this.updateManageState();
+    }
+
+    updateManageState() {
+        this.syncSelectedEntries();
+        const count = this.selectedEntries.size;
+        if (this.manageCountEl) this.manageCountEl.textContent = `已选 ${count}`;
+        const disableBatchActions = count === 0;
+        if (this.manageCreateSelectedBtn) this.manageCreateSelectedBtn.disabled = disableBatchActions;
+        if (this.manageDeleteBtn) this.manageDeleteBtn.disabled = disableBatchActions;
+        if (this.manageMoveUpBtn) this.manageMoveUpBtn.disabled = disableBatchActions;
+        if (this.manageMoveDownBtn) this.manageMoveDownBtn.disabled = disableBatchActions;
+        if (this.manageMoveTopBtn) this.manageMoveTopBtn.disabled = disableBatchActions;
+        if (this.manageMoveBottomBtn) this.manageMoveBottomBtn.disabled = disableBatchActions;
+        this.renderManageList();
+    }
+
+    renderManageList() {
+        if (!this.manageListEl) return;
+        this.manageListEl.innerHTML = '';
+        const compact = (text, max = 52) => {
+            const raw = String(text || '').replace(/\s+/g, ' ').trim();
+            if (!raw) return '';
+            return raw.length > max ? `${raw.slice(0, max)}…` : raw;
+        };
+        this.data.entries.forEach((entry, idx) => {
+            const entryId = this.getEntryId(entry, idx);
+            const title = this.getEntryDisplayName(entry, idx);
+            const content = compact(entry.content, 48);
+            const scopeText = Array.isArray(entry.scope) && entry.scope.length
+                ? entry.scope.join(', ')
+                : '全局';
+            const isSelected = this.selectedEntries.has(entryId);
+            const isActive = idx === this.currentIndex;
+            const item = document.createElement('div');
+            item.className = `world-manage-item${isActive ? ' active' : ''}${isSelected ? ' is-selected' : ''}`;
+
+            const checkbox = document.createElement('input');
+            checkbox.type = 'checkbox';
+            checkbox.className = 'world-manage-check';
+            checkbox.checked = isSelected;
+            checkbox.addEventListener('click', (event) => {
+                event.stopPropagation();
+                this.toggleEntrySelection(entryId);
+            });
+            item.appendChild(checkbox);
+
+            const main = document.createElement('div');
+            main.className = 'world-manage-item-main';
+            const titleEl = document.createElement('div');
+            titleEl.className = 'world-manage-item-title';
+            titleEl.textContent = title;
+            const subEl = document.createElement('div');
+            subEl.className = 'world-manage-item-sub';
+            subEl.textContent = [content, `scope: ${scopeText}`].filter(Boolean).join(' · ');
+            main.appendChild(titleEl);
+            main.appendChild(subEl);
+            item.appendChild(main);
+
+            item.addEventListener('click', () => {
+                this.currentIndex = idx;
+                this.toggleEntrySelection(entryId);
+                this.renderEditor();
+            });
+
+            this.manageListEl.appendChild(item);
+        });
     }
 
     toggleEntrySelection(entryId) {
@@ -715,17 +1002,94 @@ export class WorldEditorModal {
             window.toastr?.info?.('请先选择条目');
             return;
         }
-        const name = prompt('输入合并后的联系人/聊天室名称', '');
+        const selected = this.getSelectedEntries();
+        const firstEntry = selected[0] || null;
+        const firstIdx = firstEntry ? this.data.entries.findIndex(e => this.getEntryId(e) === this.getEntryId(firstEntry)) : -1;
+        const defaultName = firstEntry ? this.getEntryDisplayName(firstEntry, Math.max(0, firstIdx)) : '新聊天室';
+        const name = await this.openChatNameModal(defaultName);
         if (!name || !String(name).trim()) return;
-        await this.createChatFromEntries(this.getSelectedEntries(), { name });
+        await this.createChatFromEntries(selected, { name });
         this.clearSelection();
-        this.toggleBatchMode(false);
+        this.updateBatchBar();
     }
 
     async createChatFromAllEntries() {
         const name = prompt('输入聊天室名称（将引用整本世界书）', this.worldName || '新聊天室');
         if (!name || !String(name).trim()) return;
         await this.createChatFromEntries(this.data.entries, { name, includeAll: true });
+    }
+
+    deleteSelectedEntries() {
+        if (!this.selectedEntries.size) {
+            window.toastr?.info?.('请先选择条目');
+            return;
+        }
+        const count = this.selectedEntries.size;
+        const ok = window.confirm(`确定删除已选 ${count} 个条目？此操作不可撤销。`);
+        if (!ok) return;
+        const selected = new Set(this.selectedEntries);
+        const currentId = this.getEntryId(this.data.entries[this.currentIndex], this.currentIndex);
+        this.data.entries = this.data.entries.filter((entry, idx) => !selected.has(this.getEntryId(entry, idx)));
+        if (!this.data.entries.length) this.data.entries.push(createDefaultEntry(0));
+        this.selectedEntries.clear();
+        this.batchMode = false;
+        this.currentIndex = Math.max(0, this.data.entries.findIndex((entry, idx) => this.getEntryId(entry, idx) === currentId));
+        if (this.currentIndex < 0) this.currentIndex = 0;
+        this.renderList();
+        this.renderEditor();
+    }
+
+    moveSelectedEntries(direction = 0) {
+        if (!this.selectedEntries.size) {
+            window.toastr?.info?.('请先选择条目');
+            return;
+        }
+        if (!direction) return;
+        const selected = new Set(this.selectedEntries);
+        const currentId = this.getEntryId(this.data.entries[this.currentIndex], this.currentIndex);
+        const entries = this.data.entries;
+        if (direction < 0) {
+            for (let i = 1; i < entries.length; i += 1) {
+                const id = this.getEntryId(entries[i], i);
+                const prevId = this.getEntryId(entries[i - 1], i - 1);
+                if (selected.has(id) && !selected.has(prevId)) {
+                    const tmp = entries[i - 1];
+                    entries[i - 1] = entries[i];
+                    entries[i] = tmp;
+                }
+            }
+        } else {
+            for (let i = entries.length - 2; i >= 0; i -= 1) {
+                const id = this.getEntryId(entries[i], i);
+                const nextId = this.getEntryId(entries[i + 1], i + 1);
+                if (selected.has(id) && !selected.has(nextId)) {
+                    const tmp = entries[i + 1];
+                    entries[i + 1] = entries[i];
+                    entries[i] = tmp;
+                }
+            }
+        }
+        this.currentIndex = Math.max(0, entries.findIndex((entry, idx) => this.getEntryId(entry, idx) === currentId));
+        if (this.currentIndex < 0) this.currentIndex = 0;
+        this.renderList();
+        this.renderEditor();
+    }
+
+    moveSelectedToEdge(target = 'top') {
+        if (!this.selectedEntries.size) {
+            window.toastr?.info?.('请先选择条目');
+            return;
+        }
+        const selected = new Set(this.selectedEntries);
+        const currentId = this.getEntryId(this.data.entries[this.currentIndex], this.currentIndex);
+        const entries = this.data.entries;
+        const selectedEntries = entries.filter((entry, idx) => selected.has(this.getEntryId(entry, idx)));
+        const rest = entries.filter((entry, idx) => !selected.has(this.getEntryId(entry, idx)));
+        this.data.entries = target === 'bottom' ? [...rest, ...selectedEntries] : [...selectedEntries, ...rest];
+        this.currentIndex = Math.max(0, this.data.entries.findIndex((entry, idx) => this.getEntryId(entry, idx) === currentId));
+        if (this.currentIndex < 0) this.currentIndex = 0;
+        this.renderList();
+        this.renderEditor();
     }
 
     renderList() {
@@ -827,12 +1191,6 @@ export class WorldEditorModal {
                         <label>作用域（scope）</label>
                         <input type="text" id="we-scope" value="${(entry.scope || []).join(', ')}" placeholder="rp, chat:*, chat:sessionId">
                         <div style="margin-top:6px; font-size:11px; color:#64748b;">留空=全部生效；rp=仅 RP；chat:*=所有聊天；chat:xxx=指定会话</div>
-                    </div>
-                </div>
-                <div class="world-entry-row">
-                    <div class="col">
-                        <button type="button" id="we-create-chat">创建聊天室</button>
-                        <div style="margin-top:6px; font-size:11px; color:#64748b;">基于本条目创建联系人，并自动加入 scope。</div>
                     </div>
                 </div>
 
@@ -986,13 +1344,6 @@ export class WorldEditorModal {
         if (logicEl) {
             logicEl.addEventListener('change', () => {
                 entry.selectiveLogic = toNumber(logicEl.value, 0);
-            });
-        }
-
-        const createChatBtn = q('#we-create-chat');
-        if (createChatBtn) {
-            createChatBtn.addEventListener('click', () => {
-                void this.createChatFromEntry(entry);
             });
         }
 
