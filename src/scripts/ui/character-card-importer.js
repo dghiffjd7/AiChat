@@ -250,7 +250,7 @@ export class CharacterCardImporter {
         await this.appBridge.worldStore.ready;
       }
       const worldPayload = {
-        name: String(card?.name || '').trim() ? `${displayName}·世界书` : '角色卡世界书',
+        name: String(card?.name || '').trim() ? `${displayName}·角色世界书` : '角色世界书',
         entries: worldEntries,
         source: 'character_card',
       };

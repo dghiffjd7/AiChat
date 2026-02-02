@@ -203,7 +203,15 @@
   top: 50%;
   transform: translate(-50%, -50%);
   pointer-events: none;
-  transition: top 0.22s ease, left 0.22s ease, opacity 0.2s ease;
+  transition: top 0.22s ease, left 0.22s ease, opacity var(--mode-switch-opacity-duration, 0.2s) ease;
+}
+
+.mode-switch.is-dim {
+  opacity: 0.6;
+}
+
+.mode-switch.is-hidden {
+  opacity: 0;
 }
 
 .mode-switch.is-dragging {
@@ -914,6 +922,10 @@ body[data-creative-wide='on'] .QQ_chat_charmsg[data-creative='1'] .QQ_chat_msgdi
   opacity: 0.7;
 }
 
+body[data-ui-mode='rp'] .chat-sticker-btn {
+  display: none;
+}
+
 .chat-send-btn {
   width: 44px;
   height: 44px;
@@ -929,6 +941,7 @@ body[data-creative-wide='on'] .QQ_chat_charmsg[data-creative='1'] .QQ_chat_msgdi
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  position: relative;
 }
 
 .chat-send-btn:active {
@@ -937,6 +950,37 @@ body[data-creative-wide='on'] .QQ_chat_charmsg[data-creative='1'] .QQ_chat_msgdi
 
 .chat-send-btn:disabled {
   opacity: 0.5;
+}
+
+.chat-send-btn.is-generating .chat-send-icon {
+  opacity: 0;
+  transform: scale(0.7);
+}
+
+.chat-send-btn.is-generating::before {
+  content: '';
+  position: absolute;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  border: 2px solid rgba(15, 23, 42, 0.35);
+  border-top-color: rgba(15, 23, 42, 0.9);
+  animation: sendSpin 1s linear infinite;
+}
+
+.chat-send-btn.is-generating::after {
+  content: '';
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  background: rgba(15, 23, 42, 0.9);
+}
+
+@keyframes sendSpin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .chat-send-icon {
@@ -1054,6 +1098,10 @@ body[data-creative-wide='on'] .QQ_chat_charmsg[data-creative='1'] .QQ_chat_msgdi
   display: flex;
   flex-direction: column;
   gap: 4px;
+}
+
+body[data-ui-mode='rp'] .sticker-panel {
+  display: none !important;
 }
 
 .sticker-tabbar {
@@ -1318,6 +1366,14 @@ body[data-creative-wide='on'] .QQ_chat_charmsg[data-creative='1'] .QQ_chat_msgdi
 
 .sticker-preview.is-active {
   display: block;
+}
+
+body[data-ui-mode='rp'] .sticker-preview {
+  display: none !important;
+}
+
+body[data-ui-mode='rp'] .QQ_chat_page.sticker-preview-active .msgcontent {
+  padding-bottom: var(--qq-size-input-bar);
 }
 
 .sticker-preview-list {

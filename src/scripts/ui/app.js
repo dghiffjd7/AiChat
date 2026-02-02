@@ -1740,6 +1740,7 @@ ${listPart || '-（无）'}
     if (!match) return '';
     return String(match[1] || '').trim();
   };
+  const isStickerAllowed = () => uiMode !== 'rp';
 
   const buildStickerToken = keyword => `[bqb-${keyword}]`;
 
@@ -3653,6 +3654,12 @@ Phase G（Frame 36）：循环衔接
 
   updateStickerPreview = (text = '') => {
     if (!stickerPreview?.el || !stickerPreview.list) return;
+    if (!isStickerAllowed()) {
+      stickerPreview.el.classList.remove('is-active');
+      chatRoom?.classList.remove('sticker-preview-active');
+      stickerPreview.list.innerHTML = '';
+      return;
+    }
     const matches = extractStickerTokenMatches(text || composerInput?.value || '');
     if (!matches.length) {
       stickerPreview.el.classList.remove('is-active');
@@ -3714,6 +3721,7 @@ Phase G（Frame 36）：循环衔接
 
   const setStickerPanelOpen = open => {
     if (!stickerPanel?.el || !chatRoom) return;
+    if (open && !isStickerAllowed()) return;
     const next = Boolean(open);
     stickerPanelOpen = next;
     if (next) {
@@ -4070,6 +4078,8 @@ Phase G（Frame 36）：循环衔接
   let modeSwitchPinned = false;
   let modeSwitchPos = null;
   let modeSwitchSuppressClick = false;
+  let modeSwitchDimTimer = null;
+  const MODE_SWITCH_DIM_DELAY = 30_000;
   const loadModeSwitchPos = () => {
     try {
       const raw = localStorage.getItem(MODE_SWITCH_POS_KEY);
@@ -4089,6 +4099,29 @@ Phase G（Frame 36）：循环衔接
       if (!modeSwitchPos) return;
       localStorage.setItem(MODE_SWITCH_POS_KEY, JSON.stringify(modeSwitchPos));
     } catch {}
+  };
+  const setModeSwitchOpacityDuration = ms => {
+    if (!modeSwitch) return;
+    const val = Number(ms);
+    if (!Number.isFinite(val)) return;
+    modeSwitch.style.setProperty('--mode-switch-opacity-duration', `${val}ms`);
+  };
+  const setModeSwitchDim = (dim, { durationMs } = {}) => {
+    if (!modeSwitch) return;
+    if (typeof durationMs === 'number') setModeSwitchOpacityDuration(durationMs);
+    modeSwitch.style.opacity = '';
+    modeSwitch.classList.toggle('is-dim', Boolean(dim));
+  };
+  const scheduleModeSwitchDim = () => {
+    if (!modeSwitch) return;
+    if (modeSwitchDimTimer) clearTimeout(modeSwitchDimTimer);
+    modeSwitchDimTimer = setTimeout(() => {
+      setModeSwitchDim(true, { durationMs: 1400 });
+    }, MODE_SWITCH_DIM_DELAY);
+  };
+  const wakeModeSwitch = () => {
+    setModeSwitchDim(false, { durationMs: 180 });
+    scheduleModeSwitchDim();
   };
   const applyUiModeUI = () => {
     if (document?.body) document.body.dataset.uiMode = uiMode;
@@ -8489,15 +8522,15 @@ Phase G（Frame 36）：循环衔接
       if (pinned) {
         modeSwitch.style.left = `${Math.round(pinned.x)}px`;
         modeSwitch.style.top = `${Math.round(pinned.y)}px`;
-        modeSwitch.style.opacity = '1';
         modeSwitch.style.pointerEvents = 'auto';
+        modeSwitch.classList.remove('is-hidden');
         return;
       }
       modeSwitchPinned = false;
     }
     const { rect, mode, dockRect } = resolveModeSwitchAnchor();
     if (!rect || !Number.isFinite(rect.width) || !Number.isFinite(rect.height)) {
-      modeSwitch.style.opacity = '0';
+      modeSwitch.classList.add('is-hidden');
       modeSwitch.style.pointerEvents = 'none';
       return;
     }
@@ -8509,8 +8542,8 @@ Phase G（Frame 36）：循环衔接
     }
     modeSwitch.style.left = `${Math.round(x)}px`;
     modeSwitch.style.top = `${Math.round(y)}px`;
-    modeSwitch.style.opacity = '1';
     modeSwitch.style.pointerEvents = 'auto';
+    modeSwitch.classList.remove('is-hidden');
   };
 
   scheduleModeSwitchSync = () => {
@@ -8527,6 +8560,8 @@ Phase G（Frame 36）：循环衔接
       modeSwitchPos = stored;
       modeSwitchPinned = true;
     }
+    setModeSwitchDim(true, { durationMs: 0 });
+    scheduleModeSwitchDim();
   }
   scheduleModeSwitchSync();
   if (typeof window !== 'undefined') {
@@ -8792,6 +8827,7 @@ Phase G（Frame 36）：循环衔接
   const plusBtns = document.querySelectorAll('.qq-message-topbar .icon-button');
   const chatMenuBtn = document.getElementById('chat-menu-btn');
   const chatroomMenu = document.getElementById('chatroom-menu');
+  const rpChatroomMenu = document.getElementById('rp-chatroom-menu');
   const momentsSettingsBtn = document.getElementById('moments-settings-btn');
   const momentsMenu = (() => {
     const menu = document.createElement('div');
@@ -8844,6 +8880,7 @@ Phase G（Frame 36）：循环衔接
     settingsMenu?.classList.add('hidden');
     quickMenu?.classList.add('hidden');
     chatroomMenu?.classList.add('hidden');
+    rpChatroomMenu?.classList.add('hidden');
     momentsMenu?.classList.add('hidden');
     document.getElementById('chat-title-menu')?.classList.add('hidden');
     const gd = document.getElementById('group-management-dropdown');
@@ -8927,8 +8964,10 @@ Phase G（Frame 36）：循环衔接
   } catch {}
   chatMenuBtn?.addEventListener('click', e => {
     e.stopPropagation();
-    positionSheet(chatroomMenu, chatMenuBtn, 0, 4, true);
-    chatroomMenu?.classList.toggle('hidden');
+    const menu = uiMode === 'rp' ? rpChatroomMenu : chatroomMenu;
+    if (!menu) return;
+    positionSheet(menu, chatMenuBtn, 0, 4, true);
+    menu.classList.toggle('hidden');
     settingsMenu?.classList.add('hidden');
     quickMenu?.classList.add('hidden');
   });
@@ -8949,70 +8988,74 @@ Phase G（Frame 36）：循环衔接
       hideMenus();
     });
   });
-  chatroomMenu?.querySelectorAll('button').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const action = btn.dataset.action;
-      if (action === 'world') worldPanel.show();
-      if (action === 'regex') regexSessionPanel.show();
-      if (action === 'vars') variablePanel.show();
-      if (action === 'chat-settings') openChatSettings();
-      if (action === 'prompt-preview') {
-        try {
+  const bindChatroomMenuActions = (menuEl) => {
+    menuEl?.querySelectorAll('button').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const action = btn.dataset.action;
+        if (action === 'world') worldPanel.show();
+        if (action === 'regex') regexSessionPanel.show();
+        if (action === 'vars') variablePanel.show();
+        if (action === 'chat-settings') openChatSettings();
+        if (action === 'prompt-preview') {
+          try {
+            const sid = chatStore.getCurrent();
+            const contact = contactsStore.getContact(sid);
+            const name = contact?.name || sid;
+            const req = window.appBridge?.lastRequest;
+            const msgs = Array.isArray(req?.messages) ? req.messages : null;
+            if (!msgs || !msgs.length) {
+              window.toastr?.warning?.('暂无本次 Prompt 记录（请先发送一次）');
+            } else {
+              const at = req?.at ? new Date(req.at).toLocaleString() : '';
+              const head = [
+                `provider: ${req?.provider || ''}`,
+                `model: ${req?.model || ''}`,
+                `baseUrl: ${req?.baseUrl || ''}`,
+                `stream: ${req?.stream ? 'true' : 'false'}`,
+                req?.options
+                  ? `options: ${Object.entries(req.options)
+                      .filter(([_, v]) => v !== undefined)
+                      .map(([k, v]) => `${k}=${v}`)
+                      .join(', ')}`
+                  : '',
+              ]
+                .filter(Boolean)
+                .join('\n');
+              // Display only: show prompt text content for easier reading (no JSON, no numbering).
+              const body =
+                typeof buildRequestPromptText === 'function'
+                  ? buildRequestPromptText(msgs)
+                  : msgs
+                      .map(m => String(m?.content ?? ''))
+                      .filter(t => t.trim().length > 0)
+                      .join('\n\n');
+              const meta = `${name}${at ? ` · ${at}` : ''}`;
+              promptPreviewModal.show(`${head}\n\n${body}`.trim(), meta);
+            }
+          } catch (err) {
+            logger.warn('prompt preview failed', err);
+            window.toastr?.error?.('打开本次 Prompt 失败');
+          }
+        }
+        if (action === 'raw-reply') {
           const sid = chatStore.getCurrent();
           const contact = contactsStore.getContact(sid);
           const name = contact?.name || sid;
-          const req = window.appBridge?.lastRequest;
-          const msgs = Array.isArray(req?.messages) ? req.messages : null;
-          if (!msgs || !msgs.length) {
-            window.toastr?.warning?.('暂无本次 Prompt 记录（请先发送一次）');
+          const raw = chatStore.getLastRawResponse(sid);
+          const at = chatStore.getLastRawAt(sid);
+          if (!raw) {
+            window.toastr?.warning?.('暂无原始回复记录（请先让 AI 回复一次）');
           } else {
-            const at = req?.at ? new Date(req.at).toLocaleString() : '';
-            const head = [
-              `provider: ${req?.provider || ''}`,
-              `model: ${req?.model || ''}`,
-              `baseUrl: ${req?.baseUrl || ''}`,
-              `stream: ${req?.stream ? 'true' : 'false'}`,
-              req?.options
-                ? `options: ${Object.entries(req.options)
-                    .filter(([_, v]) => v !== undefined)
-                    .map(([k, v]) => `${k}=${v}`)
-                    .join(', ')}`
-                : '',
-            ]
-              .filter(Boolean)
-              .join('\n');
-            // Display only: show prompt text content for easier reading (no JSON, no numbering).
-            const body =
-              typeof buildRequestPromptText === 'function'
-                ? buildRequestPromptText(msgs)
-                : msgs
-                    .map(m => String(m?.content ?? ''))
-                    .filter(t => t.trim().length > 0)
-                    .join('\n\n');
-            const meta = `${name}${at ? ` · ${at}` : ''}`;
-            promptPreviewModal.show(`${head}\n\n${body}`.trim(), meta);
+            const meta = `${name}${at ? ` · ${new Date(at).toLocaleString()}` : ''}`;
+            rawReplyModal.show(raw, meta);
           }
-        } catch (err) {
-          logger.warn('prompt preview failed', err);
-          window.toastr?.error?.('打开本次 Prompt 失败');
         }
-      }
-      if (action === 'raw-reply') {
-        const sid = chatStore.getCurrent();
-        const contact = contactsStore.getContact(sid);
-        const name = contact?.name || sid;
-        const raw = chatStore.getLastRawResponse(sid);
-        const at = chatStore.getLastRawAt(sid);
-        if (!raw) {
-          window.toastr?.warning?.('暂无原始回复记录（请先让 AI 回复一次）');
-        } else {
-          const meta = `${name}${at ? ` · ${new Date(at).toLocaleString()}` : ''}`;
-          rawReplyModal.show(raw, meta);
-        }
-      }
-      hideMenus();
+        hideMenus();
+      });
     });
-  });
+  };
+  bindChatroomMenuActions(chatroomMenu);
+  bindChatroomMenuActions(rpChatroomMenu);
 
   // Chat title menu (click current title)
   const chatTitleMenu = document.getElementById('chat-title-menu');
@@ -9389,18 +9432,17 @@ Phase G（Frame 36）：循环衔接
   const getRpTitle = () => {
     const p = personaStore.getActive?.() || {};
     const name = String(p?.name || '').trim();
-    return name ? `RP · ${name}` : 'RP';
+    return name || 'RP';
   };
 
   const getRpGreetings = () => rpSessionStore.getGreetings?.() || [];
   const ensureRpGreetingActive = () => {
     const list = getRpGreetings();
     if (!list.length) return null;
-    const active = rpSessionStore.getActiveGreeting?.();
-    if (active) return active;
-    const nextId = list[0]?.id || '';
+    const first = list[0] || null;
+    const nextId = first?.id || '';
     if (nextId) rpSessionStore.setActiveGreeting?.(nextId);
-    return list[0] || null;
+    return first;
   };
 
   const renderRpToolbar = () => {
@@ -9486,7 +9528,8 @@ Phase G（Frame 36）：循环衔接
     try {
       await rpSessionStore?.ready;
     } catch {}
-    renderRpToolbar();
+    setStickerPanelOpen(false);
+    setActionPanelOpen(false);
     if (activePage !== 'chat') {
       switchPage('chat');
     }
@@ -9500,7 +9543,8 @@ Phase G（Frame 36）：循环衔接
     enterChatRoom(rpSessionId, getRpTitle(), 'chat');
     if (currentChatTitle) currentChatTitle.textContent = getRpTitle();
     seedRpGreetingIfNeeded(rpSessionId);
-    if (rpToolbar) rpToolbar.style.display = '';
+    if (rpToolbar) rpToolbar.style.display = 'none';
+    if (backToListBtn) backToListBtn.style.display = 'none';
   };
 
   const exitRpMode = () => {
@@ -9512,6 +9556,7 @@ Phase G（Frame 36）：循环衔接
       setSendMode(lastSocialSendMode, { silent: true });
     }
     if (rpToolbar) rpToolbar.style.display = 'none';
+    if (backToListBtn) backToListBtn.style.display = '';
 
     const restorePage = lastSocialState.activePage || 'chat';
     const restoreSession = String(lastSocialState.sessionId || '').trim();
@@ -9542,6 +9587,7 @@ Phase G（Frame 36）：循环衔接
     if (event.pointerType === 'mouse' && event.button !== 0) return;
     event.preventDefault();
     event.stopPropagation();
+    wakeModeSwitch();
     const rect = modeSwitch.getBoundingClientRect();
     const originX = rect.left + rect.width / 2;
     const originY = rect.top + rect.height / 2;
@@ -9569,7 +9615,6 @@ Phase G（Frame 36）：循环衔接
     const y = clamp(modeSwitchDrag.originY + dy, margin, h - margin);
     modeSwitch.style.left = `${Math.round(x)}px`;
     modeSwitch.style.top = `${Math.round(y)}px`;
-    modeSwitch.style.opacity = '1';
     modeSwitch.style.pointerEvents = 'auto';
     modeSwitchPinned = true;
     modeSwitchPos = normalizeModeSwitchPos(x, y);
@@ -9587,6 +9632,7 @@ Phase G（Frame 36）：循环衔接
       }, 220);
     }
     modeSwitchDrag = null;
+    wakeModeSwitch();
     scheduleModeSwitchSync();
   };
   let modeSwitchDrag = null;
@@ -9596,6 +9642,7 @@ Phase G（Frame 36）：循环衔接
   modeSwitchBtn?.addEventListener('pointercancel', endModeSwitchDrag);
   modeSwitchBtn?.addEventListener('click', () => {
     if (modeSwitchSuppressClick) return;
+    wakeModeSwitch();
     if (uiMode === 'rp') {
       exitRpMode();
     } else {
@@ -9734,6 +9781,10 @@ Phase G（Frame 36）：循环衔接
       chatStore.appendMessage(msg);
     },
     sticker: async () => {
+      if (!isStickerAllowed()) {
+        window.toastr?.info?.('RP 模式不支持贴图');
+        return;
+      }
       setStickerPanelOpen(true);
     },
     document: async () => {
@@ -9812,6 +9863,28 @@ Phase G（Frame 36）：循环衔接
 
   // Track the current in-flight generation so we can support "收回" (cancel + retract)
   let activeGeneration = null; // { sessionId, userMsgId, streamCtrl, cancelled }
+  const cancelActiveGeneration = (reason = 'user') => {
+    if (!activeGeneration || activeGeneration.cancelled) return false;
+    try {
+      activeGeneration.cancelled = true;
+    } catch {}
+    try {
+      window.appBridge.cancelCurrentGeneration(reason);
+    } catch {}
+    try {
+      activeGeneration.streamCtrl?.cancel?.();
+    } catch {}
+    try {
+      ui.hideTyping?.();
+    } catch {}
+    try {
+      ui.setStreamingState?.(false);
+    } catch {}
+    try {
+      ui.setSendingState(false);
+    } catch {}
+    return true;
+  };
   const pendingGroupJoins = new Set();
 
   // Chat UI lazy-load: only render the latest N messages; load earlier on scroll-to-top.
@@ -10207,7 +10280,7 @@ Phase G（Frame 36）：循环衔接
 
     const sessionId = chatStore.getCurrent();
     const activePersona = getEffectivePersona(sessionId);
-    const stickerKey = text ? parseStickerToken(text) : '';
+    const stickerKey = text && isStickerAllowed() ? parseStickerToken(text) : '';
     const attachmentSummary = () => {
       const images = composerAttachments.filter(a => a?.kind === 'image').length;
       const docs = composerAttachments.filter(a => a?.kind === 'document').length;
@@ -10323,7 +10396,7 @@ Phase G（Frame 36）：循环衔接
         const currentInput = ui.getInputText().trim();
         if (currentInput) {
           const activePersona = getEffectivePersona(sessionId);
-          const stickerKey = parseStickerToken(currentInput);
+          const stickerKey = isStickerAllowed() ? parseStickerToken(currentInput) : '';
           const newPendingMsg = {
             role: 'user',
             type: stickerKey ? 'sticker' : 'text',
@@ -12138,7 +12211,7 @@ Phase G（Frame 36）：循环衔接
     let userMsg = null;
     if (!pendingMessagesToConfirm || pendingMessagesToConfirm.length === 0) {
       if (!suppressUserMessage && hasUserText) {
-        const stickerKey = parseStickerToken(text);
+        const stickerKey = isStickerAllowed() ? parseStickerToken(text) : '';
         if (stickerKey) {
           userMsg = {
             role: 'user',
@@ -13269,7 +13342,13 @@ Phase G（Frame 36）：循环衔接
   // 使用新的分离模式：Enter 缓存，发送按钮真正发送
   ui.onSendWithMode({
     onEnter: handleEnter,
-    onSendButton: handleSend,
+    onSendButton: () => {
+      if (ui?.isSending || ui?.isStreaming || (activeGeneration && !activeGeneration.cancelled)) {
+        cancelActiveGeneration('user');
+        return;
+      }
+      handleSend();
+    },
   });
 
   // Long-press send button to switch mode
@@ -13328,6 +13407,7 @@ Phase G（Frame 36）：循环衔接
     sendBtn.addEventListener('pointerdown', e => {
       if (e.button !== 0) return;
       if (uiMode === 'rp') return;
+      if (activeGeneration && !activeGeneration.cancelled) return;
       pressTriggered = false;
       clearTimer();
       pressTimer = setTimeout(() => {
@@ -13802,6 +13882,10 @@ Phase G（Frame 36）：循环衔接
   }
 
   function handleSticker(tag) {
+    if (!isStickerAllowed()) {
+      window.toastr?.info?.('RP 模式不支持贴图');
+      return;
+    }
     const sessionId = chatStore.getCurrent();
     bumpStickerUsage(tag);
     const msg = {

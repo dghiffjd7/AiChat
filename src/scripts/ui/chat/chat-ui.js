@@ -535,6 +535,11 @@ export class ChatUI {
     this.updateSendButtonState();
   }
 
+  setStreamingState(isStreaming) {
+    this.isStreaming = Boolean(isStreaming);
+    this.updateSendButtonState();
+  }
+
   setSendEnabled(enabled) {
     this.isOnline = Boolean(enabled);
     this.updateSendButtonState();
@@ -542,9 +547,11 @@ export class ChatUI {
 
   updateSendButtonState() {
     if (!this.sendBtn) return;
-    const disabled = !this.isOnline || this.isSending || this.isStreaming;
+    const isBusy = this.isSending || this.isStreaming;
+    const disabled = !this.isOnline;
     this.sendBtn.disabled = disabled;
-    const label = this.isOnline ? '发送' : '离线';
+    this.sendBtn.classList.toggle('is-generating', isBusy);
+    const label = !this.isOnline ? '离线' : (isBusy ? '停止生成' : '发送');
     this.sendBtn.setAttribute('aria-label', label);
     if (this.isOnline) {
       this.sendBtn.classList.remove('is-offline');
@@ -1077,8 +1084,7 @@ export class ChatUI {
     let updateHandle = null;
     let pendingText = '';
     const bufferIndex = this.messageBuffer.push({ role: 'assistant', type: 'text', content: '' }) - 1;
-    this.isStreaming = true;
-    this.updateSendButtonState();
+    this.setStreamingState(true);
     return {
       id: msgId,
       update: text => {
@@ -1099,8 +1105,7 @@ export class ChatUI {
         });
       },
       finish: finalMessage => {
-        this.isStreaming = false;
-        this.updateSendButtonState();
+        this.setStreamingState(false);
         if (updateHandle != null) {
           caf(updateHandle);
           updateHandle = null;
