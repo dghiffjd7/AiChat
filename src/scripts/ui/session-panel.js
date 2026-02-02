@@ -71,6 +71,8 @@ const uniqueKeys = (list = []) => {
   return out;
 };
 
+const isRpSessionId = (sessionId) => String(sessionId || '').startsWith('rp:');
+
 const calculateStaggerDelay = (index = 0) => {
   const idx = Math.max(0, Math.trunc(index));
   if (idx <= 0) return 0;
@@ -86,7 +88,7 @@ const calculateStaggerDelay = (index = 0) => {
 };
 
 export class SessionPanel {
-  constructor(chatStore, contactsStore, ui, { onUpdated, personaStore, getPersonaScopeKey } = {}) {
+  constructor(chatStore, contactsStore, ui, { onUpdated, personaStore, getPersonaScopeKey, getSocialSessionId } = {}) {
     this.store = chatStore;
     this.contactsStore = contactsStore;
     this.ui = ui;
@@ -99,6 +101,7 @@ export class SessionPanel {
     this.onUpdated = typeof onUpdated === 'function' ? onUpdated : null;
     this.personaStore = personaStore || null;
     this.getPersonaScopeKey = typeof getPersonaScopeKey === 'function' ? getPersonaScopeKey : null;
+    this.getSocialSessionId = typeof getSocialSessionId === 'function' ? getSocialSessionId : null;
     this.otherContacts = [];
     this.sharedLoading = false;
     this.sharedHardLoading = false;
@@ -133,6 +136,7 @@ export class SessionPanel {
     this.recommendPullLoading = false;
     this.recommendRequestToken = 0;
     this.recommendPointerDownAt = 0;
+    this.lastSocialSessionId = '';
   }
 
   formatTime(ts) {
@@ -193,19 +197,29 @@ export class SessionPanel {
     if (!contacts.length && this.contactsReadyResolved) {
       const sessions = this.store?.listSessions?.() || [];
       if (sessions.length) {
-        contacts = sessions.map(
-          id => this.contactsStore?.getContact?.(id) || { id, name: id, isGroup: String(id).startsWith('group:') },
-        );
+        contacts = sessions
+          .filter(id => !isRpSessionId(id))
+          .map(id => this.contactsStore?.getContact?.(id) || { id, name: id, isGroup: String(id).startsWith('group:') });
       }
     }
-    const currentId = this.store.getCurrent();
-    if (!contacts.length) {
+    const currentIdRaw = this.store.getCurrent();
+    if (currentIdRaw && !isRpSessionId(currentIdRaw)) {
+      this.lastSocialSessionId = currentIdRaw;
+    } else if (isRpSessionId(currentIdRaw) && !this.lastSocialSessionId && this.getSocialSessionId) {
+      const fromSocial = String(this.getSocialSessionId() || '').trim();
+      if (fromSocial && !isRpSessionId(fromSocial)) {
+        this.lastSocialSessionId = fromSocial;
+      }
+    }
+    const currentId = isRpSessionId(currentIdRaw) ? this.lastSocialSessionId : currentIdRaw;
+    const visibleContacts = contacts.filter(c => c && !isRpSessionId(c.id));
+    if (!visibleContacts.length) {
       const empty = document.createElement('div');
       empty.className = 'sticker-bind-empty';
       empty.textContent = this.contactsReadyResolved ? '暂无好友/群组' : '载入中...';
       this.listElCurrent.appendChild(empty);
     } else {
-      contacts.forEach(c => {
+      visibleContacts.forEach(c => {
         const id = c.id;
         const row = document.createElement('div');
         row.className = 'sticker-bind-row session-row';
@@ -313,7 +327,10 @@ export class SessionPanel {
       window.toastr?.warning('好友名称不可使用 group: 前綴');
       return;
     }
-    if (this.contactsStore?.getContact?.(nextId) || this.store.listSessions().includes(nextId)) {
+    if (
+      this.contactsStore?.getContact?.(nextId) ||
+      this.store.listSessions().filter(id => !isRpSessionId(id)).includes(nextId)
+    ) {
       window.toastr?.warning('名称已存在，请换一个');
       return;
     }
@@ -360,6 +377,34 @@ export class SessionPanel {
       }
     } catch (err) {
       logger.warn('删除联系人时读取壁纸失败', err);
+    }
+
+    // 删除由拆分条目创建的引用世界书（仅在未被其他会话使用时）
+    try {
+      const bound = window.appBridge?.getWorldIdsForSession?.(id) || [];
+      const boundIds = Array.isArray(bound) ? bound.filter(Boolean) : (bound ? [String(bound)] : []);
+      const map = window.appBridge?.worldSessionMap || {};
+      const isUsedElsewhere = (worldId) => {
+        const target = String(worldId || '').trim();
+        if (!target) return false;
+        return Object.entries(map).some(([sid, list]) => {
+          if (String(sid || '').trim() === String(id || '').trim()) return false;
+          const ids = Array.isArray(list) ? list : (list ? [list] : []);
+          return ids.some(val => String(val || '').trim() === target);
+        });
+      };
+      for (const worldId of boundIds) {
+        if (!worldId || isUsedElsewhere(worldId)) continue;
+        let data = null;
+        try {
+          data = await window.appBridge?.getWorldInfo?.(worldId);
+        } catch {}
+        if (data?.source === 'world_entry') {
+          await window.appBridge?.deleteWorldInfo?.(worldId);
+        }
+      }
+    } catch (err) {
+      logger.warn('删除联系人时清理引用世界书失败', err);
     }
 
     // 清理世界书映射
@@ -595,6 +640,7 @@ export class SessionPanel {
       contacts.forEach(contact => {
         const id = String(contact?.id || '').trim();
         if (!id) return;
+        if (isRpSessionId(id)) return;
         results.push({
           contact: {
             ...contact,
@@ -650,6 +696,7 @@ export class SessionPanel {
         contacts.forEach(contact => {
           const id = String(contact?.id || '').trim();
           if (!id) return;
+          if (isRpSessionId(id)) return;
           results.push({
             contact: {
               ...contact,

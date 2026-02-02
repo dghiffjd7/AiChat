@@ -499,6 +499,9 @@ const initApp = async () => {
   let uiMode = 'social';
   let lastSocialState = { activePage: 'chat', sessionId: '', inChatRoom: false };
   let lastSocialSendMode = '';
+  try {
+    sessionPanel.getSocialSessionId = () => String(lastSocialState?.sessionId || '').trim();
+  } catch {}
   const loadUiMode = () => {
     try {
       const raw = localStorage.getItem(UI_MODE_KEY);
@@ -3957,6 +3960,7 @@ Phase G（Frame 36）：循环衔接
     });
   };
   sessionPanel.onUpdated = refreshChatAndContacts;
+  window.addEventListener('contacts-updated', () => refreshChatAndContacts({ immediate: true }));
 
   /* ---------------- 联系人搜索（参照手机流式.html） ---------------- */
   const contactsSearch = {

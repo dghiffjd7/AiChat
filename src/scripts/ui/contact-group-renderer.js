@@ -361,7 +361,10 @@ export class ContactGroupRenderer {
         const q = String(this.batchAddSearch?.value || '').trim().toLowerCase().replace(/\s+/g, '');
         const group = this.groupStore?.getGroup?.(this.batchAddGroupId);
         const inGroup = new Set(group?.contacts || []);
-        const allContacts = (this.contactsStore?.listContacts?.() || []).filter(c => c && !c.isGroup);
+        let allContacts = (this.contactsStore?.listContacts?.() || []).filter(c => c && !c.isGroup);
+        if (this.filterContactFn) {
+            allContacts = allContacts.filter(this.filterContactFn);
+        }
         const filtered = q
             ? allContacts.filter(c => String(c?.name || c?.id || '').toLowerCase().replace(/\s+/g, '').includes(q))
             : allContacts;

@@ -338,6 +338,12 @@ export class WorldEditorModal {
         this.chatNameInputEl = null;
         this.chatNameResolve = null;
         this.chatNameKeyHandler = null;
+        this.refMode = false;
+        this.refLocalEntries = null;
+        this.refSyncTimer = null;
+        this.refSyncDelay = 900;
+        this.refSyncInFlight = false;
+        this.refSyncPending = false;
     }
 
     async show(name, data) {
@@ -348,19 +354,33 @@ export class WorldEditorModal {
         this.originalName = name;
         this.data = deepClone(data || { name, entries: [] });
         if (!Array.isArray(this.data.entries)) this.data.entries = [];
+        const hasRefs = Array.isArray(this.data.refs) && this.data.refs.length > 0;
+        const hasEntries = this.data.entries.length > 0;
+        this.refMode = hasRefs && !hasEntries;
+        this.refLocalEntries = hasEntries ? null : this.data.entries.slice();
+        if (this.refMode) {
+            try {
+                const resolved = await this.resolveRefEntriesForDisplay(this.data.refs);
+                this.data.entries = Array.isArray(resolved) ? resolved : [];
+            } catch (err) {
+                logger.warn('读取引用世界书失败', err);
+                this.data.entries = [];
+            }
+        }
         this.data.entries = this.data.entries.map((e, i) => normalizeEntry(e, i));
-        if (!this.data.entries.length) {
+        if (!this.data.entries.length && !this.refMode) {
             this.data.entries.push(createDefaultEntry(0));
         }
         this.batchMode = false;
         this.selectedEntries.clear();
         this.updateBatchBar();
         if (this.nameInputEl) {
-            this.nameInputEl.value = name || '';
+            this.nameInputEl.value = (this.refMode ? (this.data?.name || name) : name) || '';
         }
         this.currentIndex = 0;
         this.renderList();
         this.selectEntry(0);
+        this.updateRefModeUI();
         this.overlay.style.display = 'block';
         this.modal.style.display = 'block';
     }
@@ -370,6 +390,50 @@ export class WorldEditorModal {
         if (this.modal) this.modal.style.display = 'none';
         this.hideManageModal();
         this.hideAiModal();
+        if (this.refSyncTimer) {
+            clearTimeout(this.refSyncTimer);
+            this.refSyncTimer = null;
+        }
+    }
+
+    updateRefModeUI() {
+        const disabled = Boolean(this.refMode);
+        const applyState = (btn) => {
+            if (!btn) return;
+            btn.disabled = disabled;
+            btn.style.opacity = disabled ? '0.6' : '';
+            btn.style.cursor = disabled ? 'not-allowed' : '';
+        };
+        applyState(this.addBtn);
+        applyState(this.manageBtn);
+        if (this.nameInputEl) {
+            this.nameInputEl.disabled = disabled;
+            this.nameInputEl.style.opacity = disabled ? '0.6' : '';
+        }
+    }
+
+    scheduleRefSync() {
+        if (!this.refMode) return;
+        if (this.refSyncTimer) clearTimeout(this.refSyncTimer);
+        this.refSyncTimer = setTimeout(() => this.flushRefSync(), this.refSyncDelay);
+    }
+
+    async flushRefSync() {
+        if (!this.refMode) return;
+        if (this.refSyncInFlight) {
+            this.refSyncPending = true;
+            return;
+        }
+        this.refSyncInFlight = true;
+        try {
+            await this.saveRefEdits({ showToast: false });
+        } finally {
+            this.refSyncInFlight = false;
+            if (this.refSyncPending) {
+                this.refSyncPending = false;
+                this.scheduleRefSync();
+            }
+        }
     }
 
     createUI() {
@@ -788,6 +852,7 @@ export class WorldEditorModal {
             const textarea = this.editorEl?.querySelector('#we-content');
             if (textarea) textarea.value = content;
         }
+        this.scheduleRefSync();
         return true;
     }
 
@@ -1282,12 +1347,16 @@ export class WorldEditorModal {
         `;
 
         const q = (sel) => this.editorEl.querySelector(sel);
+        const markRefDirty = () => {
+            if (this.refMode) this.scheduleRefSync();
+        };
         const bindInput = (sel, key, map = (v) => v) => {
             const el = q(sel);
             if (!el) return;
             el.addEventListener('input', () => {
                 entry[key] = map(el.value);
                 if (key === 'comment') this.renderList();
+                markRefDirty();
             });
         };
         const bindNumber = (sel, key, def, min, max) => {
@@ -1299,6 +1368,7 @@ export class WorldEditorModal {
                 if (max != null) v = Math.min(max, v);
                 entry[key] = v;
                 if (key === 'order' || key === 'depth' || key === 'position') this.renderList();
+                markRefDirty();
             });
         };
         const bindCheck = (sel, key) => {
@@ -1307,6 +1377,7 @@ export class WorldEditorModal {
             el.addEventListener('change', () => {
                 entry[key] = el.checked;
                 this.renderList();
+                markRefDirty();
             });
         };
 
@@ -1329,6 +1400,7 @@ export class WorldEditorModal {
                 const roleWrap = q('#we-role-wrap');
                 if (roleWrap) roleWrap.style.display = Number(entry.position) === 4 ? '' : 'none';
                 this.renderList();
+                markRefDirty();
             });
         }
 
@@ -1337,6 +1409,7 @@ export class WorldEditorModal {
             roleEl.addEventListener('change', () => {
                 entry.role = toNumber(roleEl.value, 0);
                 this.renderList();
+                markRefDirty();
             });
         }
 
@@ -1344,6 +1417,7 @@ export class WorldEditorModal {
         if (logicEl) {
             logicEl.addEventListener('change', () => {
                 entry.selectiveLogic = toNumber(logicEl.value, 0);
+                markRefDirty();
             });
         }
 
@@ -1353,6 +1427,7 @@ export class WorldEditorModal {
             if (!el) return;
             el.addEventListener('change', () => {
                 entry[key] = el.checked ? true : null;
+                markRefDirty();
             });
         };
 
@@ -1382,15 +1457,32 @@ export class WorldEditorModal {
             scanDepthEl.addEventListener('input', () => {
                 const v = scanDepthEl.value.trim();
                 entry.scanDepth = v === '' ? null : toNumber(v, null);
+                markRefDirty();
             });
         }
 
         bindCheck('#we-useProbability', 'useProbability');
 
         const dupBtn = q('#we-duplicate');
-        if (dupBtn) dupBtn.onclick = () => this.duplicateEntry(this.currentIndex);
+        if (dupBtn) {
+            if (this.refMode) {
+                dupBtn.disabled = true;
+                dupBtn.style.opacity = '0.6';
+                dupBtn.style.cursor = 'not-allowed';
+            } else {
+                dupBtn.onclick = () => this.duplicateEntry(this.currentIndex);
+            }
+        }
         const delBtn = q('#we-delete');
-        if (delBtn) delBtn.onclick = () => this.deleteEntry(this.currentIndex);
+        if (delBtn) {
+            if (this.refMode) {
+                delBtn.disabled = true;
+                delBtn.style.opacity = '0.6';
+                delBtn.style.cursor = 'not-allowed';
+            } else {
+                delBtn.onclick = () => this.deleteEntry(this.currentIndex);
+            }
+        }
         const aiBtn = q('#we-ai-generate');
         if (aiBtn) aiBtn.onclick = () => this.showAiModal(entry);
     }
@@ -1432,9 +1524,10 @@ export class WorldEditorModal {
         return { sessionId, name };
     }
 
-    async ensureUniqueWorldbookId(baseName) {
+    async ensureUniqueWorldbookId(baseName, { allowUnicode = false } = {}) {
         const sanitize = (value, fallback = 'worldbook') => {
             const raw = String(value || '').trim();
+            if (allowUnicode) return raw || fallback;
             const cleaned = raw.replace(/[^a-zA-Z0-9_-]/g, '_').replace(/_+/g, '_').slice(0, 48);
             return cleaned || fallback;
         };
@@ -1471,6 +1564,47 @@ export class WorldEditorModal {
         return refs;
     }
 
+    async resolveRefEntriesForDisplay(refs = []) {
+        const list = Array.isArray(refs) ? refs : [];
+        if (!list.length) return [];
+        const results = [];
+        const cache = new Map();
+        for (const raw of list) {
+            const ref = raw && typeof raw === 'object' ? raw : {};
+            const sourceId = String(ref.sourceId || ref.worldId || ref.source || '').trim();
+            if (!sourceId) continue;
+            if (!cache.has(sourceId)) {
+                let sourceData = null;
+                try {
+                    sourceData = await window.appBridge?.getWorldInfo?.(sourceId);
+                } catch {}
+                cache.set(sourceId, sourceData || null);
+            }
+            const sourceData = cache.get(sourceId);
+            const sourceEntries = Array.isArray(sourceData?.entries) ? sourceData.entries : [];
+            if (!sourceEntries.length) continue;
+            const entryIdRaw = String(ref.entryId || ref.entry || '').trim();
+            const entryIds = Array.isArray(ref.entryIds)
+                ? ref.entryIds.map(val => String(val || '').trim()).filter(Boolean)
+                : [];
+            const includeAll = ref.includeAll === true || ref.all === true || entryIdRaw === '*' || entryIds.includes('*');
+            let picked = sourceEntries;
+            if (!includeAll) {
+                const idSet = new Set(entryIds);
+                if (entryIdRaw) idSet.add(entryIdRaw);
+                picked = idSet.size
+                    ? sourceEntries.filter(entry => idSet.has(String(entry?.id ?? entry?.uid ?? '').trim()))
+                    : [];
+            }
+            picked.forEach((entry, idx) => {
+                if (!entry) return;
+                const entryId = String(entry?.id ?? entry?.uid ?? `entry-${idx}`).trim();
+                results.push({ ...entry, _refSourceId: sourceId, _refEntryId: entryId });
+            });
+        }
+        return results;
+    }
+
     async createChatFromEntries(entries, { name = '', includeAll = false } = {}) {
         const list = Array.isArray(entries) ? entries.filter(Boolean) : [];
         if (!list.length) {
@@ -1501,10 +1635,20 @@ export class WorldEditorModal {
             chatStore.setSessionSettings?.(sessionId, { ...settings, sharedVariables: true, sharedMemory: true });
             chatStore._persist?.();
         }
+        window.dispatchEvent(new CustomEvent('contacts-updated', { detail: { id: sessionId, source: 'world_entry' } }));
+        const tag = `chat:${sessionId}`;
+        list.forEach((entry) => {
+            const scope = normalizeScopeList(entry.scope || []);
+            if (!scope.includes(tag)) scope.push(tag);
+            entry.scope = scope;
+            const splitTo = Array.isArray(entry.splitTo) ? entry.splitTo.slice() : [];
+            if (!splitTo.includes(sessionId)) splitTo.push(sessionId);
+            entry.splitTo = splitTo;
+        });
         const refs = this.buildWorldRefs(list, { includeAll });
         if (refs.length) {
-            const worldName = `${resolvedName}·世界书`;
-            const worldId = await this.ensureUniqueWorldbookId(worldName);
+            const worldName = resolvedName;
+            const worldId = await this.ensureUniqueWorldbookId(worldName, { allowUnicode: true });
             const payload = {
                 name: worldName,
                 entries: [],
@@ -1513,16 +1657,9 @@ export class WorldEditorModal {
             };
             await window.appBridge?.saveWorldInfo?.(worldId, payload);
             window.appBridge?.bindWorldToSession?.(sessionId, worldId, { silent: true });
+        } else {
+            window.toastr?.warning?.('未能创建引用世界书，请稍后重试');
         }
-        list.forEach((entry) => {
-            const scope = normalizeScopeList(entry.scope || []);
-            const tag = `chat:${sessionId}`;
-            if (!scope.includes(tag)) scope.push(tag);
-            entry.scope = scope;
-            const splitTo = Array.isArray(entry.splitTo) ? entry.splitTo.slice() : [];
-            if (!splitTo.includes(sessionId)) splitTo.push(sessionId);
-            entry.splitTo = splitTo;
-        });
         this.renderList();
         this.renderEditor();
         this.saveWorldSilently?.({ showToast: false });
@@ -1535,7 +1672,8 @@ export class WorldEditorModal {
     }
 
     prepareForSave(nameOverride = this.worldName) {
-        const entries = this.data.entries.map((entry, i) => {
+        const sourceEntries = this.refMode ? (this.refLocalEntries || []) : this.data.entries;
+        const entries = sourceEntries.map((entry, i) => {
             const e = normalizeEntry(entry, i);
             // 兼容旧命名
             e.title = e.comment;
@@ -1545,6 +1683,84 @@ export class WorldEditorModal {
             return e;
         });
         return { ...(this.data || {}), name: nameOverride, entries };
+    }
+
+    async saveRefEdits({ showToast = true } = {}) {
+        try {
+            const list = Array.isArray(this.data?.entries) ? this.data.entries : [];
+            if (!list.length) {
+                if (showToast) window.toastr?.warning?.('没有可同步的条目');
+                return false;
+            }
+            const updatesBySource = new Map();
+            list.forEach((entry, idx) => {
+                const sourceId = String(entry?._refSourceId || '').trim();
+                if (!sourceId) return;
+                const targetId = String(entry?._refEntryId ?? entry?.id ?? entry?.uid ?? '').trim();
+                const fallbackIndex = Number.isFinite(Number(entry?._refEntryIndex)) ? Number(entry._refEntryIndex) : idx;
+                const cleaned = normalizeEntry(deepClone(entry), idx);
+                delete cleaned._refSourceId;
+                delete cleaned._refWorldId;
+                delete cleaned._refEntryId;
+                delete cleaned._refEntryIndex;
+                if (targetId) cleaned.id = targetId;
+                if (cleaned.uid == null && /^\d+$/.test(cleaned.id)) cleaned.uid = Number(cleaned.id);
+                if (!updatesBySource.has(sourceId)) updatesBySource.set(sourceId, []);
+                updatesBySource.get(sourceId).push({ targetId, fallbackIndex, data: cleaned });
+            });
+            if (!updatesBySource.size) {
+                if (showToast) window.toastr?.warning?.('未找到可同步的来源世界书');
+                return false;
+            }
+            const updatedSources = [];
+            let updatedCount = 0;
+            let failedCount = 0;
+            for (const [sourceId, updates] of updatesBySource.entries()) {
+                let sourceData = null;
+                try {
+                    sourceData = await window.appBridge?.getWorldInfo?.(sourceId);
+                } catch {}
+                if (!sourceData || !Array.isArray(sourceData.entries)) {
+                    failedCount += updates.length;
+                    continue;
+                }
+                const nextEntries = sourceData.entries.map((item) => ({ ...item }));
+                let localUpdated = 0;
+                updates.forEach(({ targetId, fallbackIndex, data }) => {
+                    let idx = -1;
+                    if (targetId) {
+                        idx = nextEntries.findIndex(item => String(item?.id ?? item?.uid ?? '').trim() === targetId);
+                    }
+                    if (idx < 0 && Number.isFinite(fallbackIndex) && fallbackIndex >= 0 && fallbackIndex < nextEntries.length) {
+                        idx = fallbackIndex;
+                    }
+                    if (idx < 0) return;
+                    nextEntries[idx] = { ...nextEntries[idx], ...data };
+                    localUpdated += 1;
+                });
+                if (localUpdated > 0) {
+                    await window.appBridge?.saveWorldInfo?.(sourceId, { ...sourceData, entries: nextEntries });
+                    updatedCount += localUpdated;
+                    updatedSources.push(sourceId);
+                }
+            }
+            if (showToast) {
+                if (updatedCount > 0) {
+                    const labels = updatedSources.length ? `（${updatedSources.join('、')}）` : '';
+                    window.toastr?.success?.(`已同步到来源世界书${labels}`);
+                } else {
+                    window.toastr?.warning?.('未找到可同步的条目');
+                }
+                if (failedCount > 0) {
+                    window.toastr?.warning?.('部分来源世界书不可用，已跳过');
+                }
+            }
+            return updatedCount > 0;
+        } catch (err) {
+            logger.error('同步引用世界书失败', err);
+            if (showToast) window.toastr?.error?.('同步失败，请检查控制台');
+            return false;
+        }
     }
 
     sanitizeExportName(name, fallback = 'worldbook') {
@@ -1629,6 +1845,12 @@ export class WorldEditorModal {
 
     async saveWorld() {
         try {
+            if (this.refMode) {
+                const ok = await this.saveRefEdits({ showToast: true });
+                if (ok) this.onSaved?.(this.worldName, this.data);
+                this.hide();
+                return;
+            }
             const nextName = String(this.nameInputEl?.value || '').trim();
             if (!nextName) {
                 window.toastr?.warning('名称不能为空');
@@ -1657,6 +1879,11 @@ export class WorldEditorModal {
 
     async saveWorldSilently({ showToast = true } = {}) {
         try {
+            if (this.refMode) {
+                const ok = await this.saveRefEdits({ showToast });
+                if (ok) this.onSaved?.(this.worldName, this.data);
+                return ok;
+            }
             const nextName = String(this.nameInputEl?.value || '').trim();
             if (!nextName) {
                 if (showToast) window.toastr?.warning?.('名称不能为空');

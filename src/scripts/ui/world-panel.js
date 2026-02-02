@@ -110,6 +110,51 @@ export class WorldPanel {
         setTimeout(() => URL.revokeObjectURL(url), 2000);
     }
 
+    async resolveWorldEntries(data, { worldId = '' } = {}) {
+        const localEntries = Array.isArray(data?.localEntries)
+            ? data.localEntries
+            : (Array.isArray(data?.entries) ? data.entries : []);
+        const refs = Array.isArray(data?.refs) ? data.refs : [];
+        if (!refs.length) return localEntries;
+        const results = [...localEntries];
+        const cache = new Map();
+        for (const raw of refs) {
+            const ref = raw && typeof raw === 'object' ? raw : {};
+            const sourceId = String(ref.sourceId || ref.worldId || ref.source || '').trim();
+            if (!sourceId) continue;
+            if (!cache.has(sourceId)) {
+                let sourceData = null;
+                try {
+                    sourceData = await window.appBridge?.getWorldInfo?.(sourceId);
+                } catch {}
+                cache.set(sourceId, sourceData || null);
+            }
+            const sourceData = cache.get(sourceId);
+            const sourceEntries = Array.isArray(sourceData?.entries) ? sourceData.entries : [];
+            if (!sourceEntries.length) continue;
+            const entryIdRaw = String(ref.entryId || ref.entry || '').trim();
+            const entryIds = Array.isArray(ref.entryIds)
+                ? ref.entryIds.map(val => String(val || '').trim()).filter(Boolean)
+                : [];
+            const includeAll = ref.includeAll === true || ref.all === true || entryIdRaw === '*' || entryIds.includes('*');
+            const idSet = new Set(entryIds);
+            if (entryIdRaw) idSet.add(entryIdRaw);
+            sourceEntries.forEach((entry, idx) => {
+                if (!entry) return;
+                const entryId = String(entry?.id ?? entry?.uid ?? '').trim();
+                if (!includeAll && (!entryId || !idSet.has(entryId))) return;
+                results.push({
+                    ...entry,
+                    _refSourceId: sourceId,
+                    _refWorldId: String(worldId || '').trim(),
+                    _refEntryId: entryId || `entry-${idx}`,
+                    _refEntryIndex: idx,
+                });
+            });
+        }
+        return results;
+    }
+
     async refreshList() {
         if (!this.listEl) return;
         this.listEl.innerHTML = '';
@@ -177,6 +222,18 @@ export class WorldPanel {
             };
 
             const buildToggle = (opts) => this.buildToggle(opts);
+            const worldDataCache = new Map();
+            const getWorldData = async (worldId) => {
+                const key = String(worldId || '').trim();
+                if (!key) return null;
+                if (worldDataCache.has(key)) return worldDataCache.get(key);
+                let data = null;
+                try {
+                    data = await window.appBridge.getWorldInfo(key);
+                } catch {}
+                worldDataCache.set(key, data || null);
+                return data || null;
+            };
 
             // Group chat: show per-member world bindings (do not rely on world name == member name)
             if (isGroupSession) {
@@ -289,7 +346,9 @@ export class WorldPanel {
                 if (!boundIds.length) {
                     renderEmpty(this.listEl, '（未绑定世界书）');
                 } else {
-                    boundIds.forEach((worldId) => {
+                    for (const worldId of boundIds) {
+                        const worldData = await getWorldData(worldId);
+                        const displayName = worldData?.name || worldId;
                         const li = document.createElement('li');
                         li.style.listStyle = 'none';
                         li.style.padding = '10px';
@@ -304,7 +363,7 @@ export class WorldPanel {
                         const titleWrap = document.createElement('div');
                         titleWrap.style.cssText = 'display:flex; flex-direction:column; gap:2px; min-width:0; flex:1;';
                         const title = document.createElement('div');
-                        title.textContent = worldId;
+                        title.textContent = displayName;
                         title.style.fontWeight = '700';
                         title.style.color = '#0f172a';
                         title.style.whiteSpace = 'nowrap';
@@ -347,7 +406,7 @@ export class WorldPanel {
                         deleteBtn.onclick = async () => {
                             const ok = await appConfirm({
                                 title: '删除世界书',
-                                message: `确定要删除世界书「${worldId}」吗？此操作不可恢复。`,
+                                message: `确定要删除世界书「${displayName}」吗？此操作不可恢复。`,
                                 danger: true,
                             });
                             if (!ok) return;
@@ -371,8 +430,8 @@ export class WorldPanel {
                             if (entriesLoaded) return;
                             entriesLoaded = true;
                             try {
-                                const data = await window.appBridge.getWorldInfo(worldId);
-                                const entries = Array.isArray(data?.entries) ? data.entries : [];
+                                const data = await getWorldData(worldId);
+                                const entries = data ? await this.resolveWorldEntries(data, { worldId }) : [];
                                 meta.textContent = data ? `共 ${entries.length} 条目` : '世界书不存在或已删除';
                                 if (!entries.length) {
                                     const empty = document.createElement('div');
@@ -394,16 +453,32 @@ export class WorldPanel {
                                         labelOn: '已启用',
                                         labelOff: '未启用',
                                         onClick: async () => {
-                                            const latest = await window.appBridge.getWorldInfo(worldId);
+                                            const targetWorldId = entry?._refSourceId || worldId;
+                                            const latest = await window.appBridge.getWorldInfo(targetWorldId);
                                             if (!latest || !Array.isArray(latest.entries)) {
                                                 window.toastr?.warning?.('世界书不存在或已删除');
                                                 return;
                                             }
+                                            const targetId = String(entry?._refEntryId ?? entry?.id ?? entry?.uid ?? '').trim();
+                                            const fallbackIndex = Number.isFinite(Number(entry?._refEntryIndex)) ? Number(entry._refEntryIndex) : idx;
+                                            let updated = false;
                                             const nextEntries = latest.entries.map((item, i) => {
-                                                if (i !== idx) return item;
-                                                return { ...item, disable: !item?.disable };
+                                                const itemId = String(item?.id ?? item?.uid ?? '').trim();
+                                                if (targetId && itemId === targetId) {
+                                                    updated = true;
+                                                    return { ...item, disable: !item?.disable };
+                                                }
+                                                return item;
                                             });
-                                            await window.appBridge.saveWorldInfo(worldId, { ...latest, entries: nextEntries });
+                                            if (!updated && fallbackIndex >= 0 && fallbackIndex < latest.entries.length) {
+                                                nextEntries[fallbackIndex] = { ...latest.entries[fallbackIndex], disable: !latest.entries[fallbackIndex]?.disable };
+                                                updated = true;
+                                            }
+                                            if (!updated) {
+                                                window.toastr?.warning?.('未找到要更新的条目');
+                                                return;
+                                            }
+                                            await window.appBridge.saveWorldInfo(targetWorldId, { ...latest, entries: nextEntries });
                                             entry.disable = !entry?.disable;
                                             nameEl.style.color = entry?.disable ? '#94a3b8' : '#0f172a';
                                             entryToggle.classList.toggle('is-enabled', !entry?.disable);
@@ -444,7 +519,7 @@ export class WorldPanel {
                             await toggleEntries();
                         };
                         this.listEl.appendChild(li);
-                    });
+                    }
                 }
 
                 await this.renderLibraryList({ names: visibleNames, boundIds, sessionId });
@@ -456,6 +531,8 @@ export class WorldPanel {
                 if (!globalId) {
                     renderEmpty(this.listEl, '（未启用）');
                 } else {
+                    const globalData = await getWorldData(globalId);
+                    const displayName = globalData?.name || globalId;
                     const li = document.createElement('li');
                     li.style.listStyle = 'none';
                     li.style.padding = '10px';
@@ -470,7 +547,7 @@ export class WorldPanel {
                     const titleWrap = document.createElement('div');
                     titleWrap.style.cssText = 'display:flex; flex-direction:column; gap:2px; min-width:0; flex:1;';
                     const title = document.createElement('div');
-                    title.textContent = globalId;
+                    title.textContent = displayName;
                     title.style.fontWeight = '700';
                     title.style.color = '#0f172a';
                     title.style.whiteSpace = 'nowrap';
@@ -512,7 +589,7 @@ export class WorldPanel {
                     deleteBtn.onclick = async () => {
                         const ok = await appConfirm({
                             title: '删除世界书',
-                            message: `确定要删除世界书「${globalId}」吗？此操作不可恢复。`,
+                            message: `确定要删除世界书「${displayName}」吗？此操作不可恢复。`,
                             danger: true,
                         });
                         if (!ok) return;
@@ -536,8 +613,8 @@ export class WorldPanel {
                         if (entriesLoaded) return;
                         entriesLoaded = true;
                         try {
-                            const data = await window.appBridge.getWorldInfo(globalId);
-                            const entries = Array.isArray(data?.entries) ? data.entries : [];
+                            const data = await getWorldData(globalId);
+                            const entries = data ? await this.resolveWorldEntries(data, { worldId: globalId }) : [];
                             meta.textContent = data ? `共 ${entries.length} 条目` : '世界书不存在或已删除';
                             if (!entries.length) {
                                 const empty = document.createElement('div');
@@ -559,16 +636,32 @@ export class WorldPanel {
                                     labelOn: '已启用',
                                     labelOff: '未启用',
                                     onClick: async () => {
-                                        const latest = await window.appBridge.getWorldInfo(globalId);
+                                        const targetWorldId = entry?._refSourceId || globalId;
+                                        const latest = await window.appBridge.getWorldInfo(targetWorldId);
                                         if (!latest || !Array.isArray(latest.entries)) {
                                             window.toastr?.warning?.('世界书不存在或已删除');
                                             return;
                                         }
+                                        const targetId = String(entry?._refEntryId ?? entry?.id ?? entry?.uid ?? '').trim();
+                                        const fallbackIndex = Number.isFinite(Number(entry?._refEntryIndex)) ? Number(entry._refEntryIndex) : idx;
+                                        let updated = false;
                                         const nextEntries = latest.entries.map((item, i) => {
-                                            if (i !== idx) return item;
-                                            return { ...item, disable: !item?.disable };
+                                            const itemId = String(item?.id ?? item?.uid ?? '').trim();
+                                            if (targetId && itemId === targetId) {
+                                                updated = true;
+                                                return { ...item, disable: !item?.disable };
+                                            }
+                                            return item;
                                         });
-                                        await window.appBridge.saveWorldInfo(globalId, { ...latest, entries: nextEntries });
+                                        if (!updated && fallbackIndex >= 0 && fallbackIndex < latest.entries.length) {
+                                            nextEntries[fallbackIndex] = { ...latest.entries[fallbackIndex], disable: !latest.entries[fallbackIndex]?.disable };
+                                            updated = true;
+                                        }
+                                        if (!updated) {
+                                            window.toastr?.warning?.('未找到要更新的条目');
+                                            return;
+                                        }
+                                        await window.appBridge.saveWorldInfo(targetWorldId, { ...latest, entries: nextEntries });
                                         entry.disable = !entry?.disable;
                                         nameEl.style.color = entry?.disable ? '#94a3b8' : '#0f172a';
                                         entryToggle.classList.toggle('is-enabled', !entry?.disable);
