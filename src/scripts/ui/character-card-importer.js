@@ -131,12 +131,7 @@ const buildCharacterDefinitionText = (card) => {
 
 const withScope = (entry, scope = []) => {
   const extra = Array.isArray(scope) ? scope.map(s => String(s || '').trim()).filter(Boolean) : [];
-  if (!extra.length) return { ...entry };
-  const existing = Array.isArray(entry?.scope)
-    ? entry.scope.map(s => String(s || '').trim()).filter(Boolean)
-    : (typeof entry?.scope === 'string' ? [entry.scope] : []);
-  const merged = Array.from(new Set([...existing, ...extra]));
-  return { ...entry, scope: merged };
+  return { ...entry, scope: extra };
 };
 
 const buildWorldbookEntries = (card, { defaultScope = [] } = {}) => {
@@ -209,7 +204,7 @@ export class CharacterCardImporter {
     if (!card) throw new Error('角色卡解析失败');
     const displayName = String(card.name || '').trim() || '角色卡';
     const greetings = buildGreetingList(card);
-    const worldEntries = buildWorldbookEntries(card, { defaultScope: ['rp'] });
+    const worldEntries = buildWorldbookEntries(card, { defaultScope: [] });
     const regexScripts = extractRegexScripts(card);
     const options = await promptImportOptions({
       displayName,

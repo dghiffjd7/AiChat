@@ -3645,30 +3645,7 @@ class AppBridge {
       return results;
     };
     const normalizeScopeTarget = (value) => norm(value).replace(/\s+/g, '').toLowerCase();
-    const isScopeAllowed = (entryScope) => {
-      const scopes = normalizeScopeList(entryScope);
-      if (!scopes.length) return true;
-      const isRpScope = (s) => {
-        const key = norm(s).toLowerCase();
-        return key === 'rp' || key === 'rp:*';
-      };
-      const isChatScope = (s) => {
-        const raw = norm(s);
-        if (!raw) return false;
-        const lower = raw.toLowerCase();
-        if (lower === 'chat' || lower === 'chat:*') return true;
-        if (!lower.startsWith('chat:')) return false;
-        const targetRaw = raw.slice(5).trim();
-        if (!targetRaw) return false;
-        const target = normalizeScopeTarget(targetRaw);
-        if (!target) return false;
-        const sid = normalizeScopeTarget(scopeSessionId);
-        const sname = normalizeScopeTarget(scopeSessionName);
-        return (sid && target === sid) || (sname && target === sname);
-      };
-      if (scopeMode === 'rp') return scopes.some(isRpScope);
-      return scopes.some(isChatScope);
-    };
+    const isScopeAllowed = () => true;
     const normalizeKeys = e => {
       const keys = Array.isArray(e?.key) ? e.key : Array.isArray(e?.triggers) ? e.triggers : [];
       return keys.map(norm).filter(Boolean);

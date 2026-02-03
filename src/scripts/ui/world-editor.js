@@ -110,8 +110,6 @@ const normalizeArray = (val) => {
     return [];
 };
 
-const normalizeScopeList = (val) => normalizeArray(val);
-
 const stripCodeFence = (text) => {
     const raw = String(text || '').trim();
     if (!raw) return '';
@@ -214,7 +212,7 @@ const normalizeEntry = (entry = {}, index = 0) => {
     e.triggers = key;
     e.keysecondary = keysecondary;
     e.secondary = keysecondary;
-    e.scope = normalizeScopeList(e.scope);
+    e.scope = [];
 
     const order = toNumber(e.order ?? e.priority, 100);
     e.order = order;
@@ -1060,9 +1058,6 @@ export class WorldEditorModal {
             const entryId = this.getEntryId(entry, idx);
             const title = this.getEntryDisplayName(entry, idx);
             const content = compact(entry.content, 48);
-            const scopeText = Array.isArray(entry.scope) && entry.scope.length
-                ? entry.scope.join(', ')
-                : '全局';
             const isSelected = this.selectedEntries.has(entryId);
             const isActive = idx === this.currentIndex;
             const item = document.createElement('div');
@@ -1085,7 +1080,7 @@ export class WorldEditorModal {
             titleEl.textContent = title;
             const subEl = document.createElement('div');
             subEl.className = 'world-manage-item-sub';
-            subEl.textContent = [content, `scope: ${scopeText}`].filter(Boolean).join(' · ');
+            subEl.textContent = content || '';
             main.appendChild(titleEl);
             main.appendChild(subEl);
             item.appendChild(main);
@@ -1248,7 +1243,8 @@ export class WorldEditorModal {
             const lights = document.createElement('div');
             lights.className = 'world-entry-lights';
             const green = document.createElement('span');
-            green.className = `world-entry-light ${entry.disable ? 'red' : 'green'}`;
+            const greenState = entry.disable ? 'red' : (entry.selective && !entry.constant ? 'green' : '');
+            green.className = `world-entry-light ${greenState}`;
             const blue = document.createElement('span');
             blue.className = `world-entry-light ${entry.constant ? 'blue' : ''}`;
             lights.appendChild(green);
@@ -1431,14 +1427,6 @@ export class WorldEditorModal {
                 </div>
                 <div class="world-entry-row">
                     <div class="col">
-                        <label>作用域（scope）</label>
-                        <input type="text" id="we-scope" value="${(entry.scope || []).join(', ')}" placeholder="rp, chat:*, chat:sessionId">
-                        <div style="margin-top:6px; font-size:11px; color:#64748b;">留空=全部生效；rp=仅 RP；chat:*=所有聊天；chat:xxx=指定会话</div>
-                    </div>
-                </div>
-
-                <div class="world-entry-row">
-                    <div class="col">
                         <label>位置（position）</label>
                         <select id="we-position">${buildOptions(POSITION_OPTIONS, entry.position)}</select>
                     </div>
@@ -1563,7 +1551,6 @@ export class WorldEditorModal {
         bindInput('#we-content', 'content', (v) => v);
         bindInput('#we-key', 'key', (v) => normalizeArray(v));
         bindInput('#we-keysecondary', 'keysecondary', (v) => normalizeArray(v));
-        bindInput('#we-scope', 'scope', (v) => normalizeScopeList(v));
 
         bindNumber('#we-depth', 'depth', DEFAULT_DEPTH, 0, 1000);
         bindNumber('#we-order', 'order', 100, -9999, 9999);
@@ -1814,11 +1801,7 @@ export class WorldEditorModal {
             chatStore._persist?.();
         }
         window.dispatchEvent(new CustomEvent('contacts-updated', { detail: { id: sessionId, source: 'world_entry' } }));
-        const tag = `chat:${sessionId}`;
         list.forEach((entry) => {
-            const scope = normalizeScopeList(entry.scope || []);
-            if (!scope.includes(tag)) scope.push(tag);
-            entry.scope = scope;
             const splitTo = Array.isArray(entry.splitTo) ? entry.splitTo.slice() : [];
             if (!splitTo.includes(sessionId)) splitTo.push(sessionId);
             entry.splitTo = splitTo;
