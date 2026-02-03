@@ -190,6 +190,39 @@ export class CharacterCardImporter {
     this.onPersonaChanged = onPersonaChanged;
   }
 
+  async importFromUrl(url) {
+    const raw = String(url || '').trim();
+    if (!raw) throw new Error('链接为空');
+    let response;
+    try {
+      response = await fetch(raw, { credentials: 'omit' });
+    } catch (err) {
+      throw new Error('链接加载失败');
+    }
+    if (!response?.ok) {
+      throw new Error(`链接加载失败（${response?.status || 'unknown'}）`);
+    }
+    const blob = await response.blob();
+    const mime = String(blob?.type || '').toLowerCase();
+    let fileName = '';
+    try {
+      const parsed = new URL(raw);
+      const base = parsed.pathname.split('/').pop() || '';
+      fileName = base;
+    } catch {}
+    if (!fileName) {
+      if (mime.includes('json')) fileName = 'card.json';
+      else if (mime.includes('png')) fileName = 'card.png';
+      else fileName = 'card';
+    }
+    if (!/\.[a-z0-9]+$/i.test(fileName)) {
+      if (mime.includes('json')) fileName += '.json';
+      else if (mime.includes('png')) fileName += '.png';
+    }
+    const file = new File([blob], fileName, { type: blob?.type || 'application/octet-stream' });
+    return this.importFromFile(file);
+  }
+
   async importFromFile(file) {
     const parsed = await parseCharacterCardFile(file);
     const fileName = String(file?.name || '').trim();

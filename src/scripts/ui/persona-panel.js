@@ -44,6 +44,12 @@ export class PersonaPanel {
             onPersonaChanged: this.onPersonaChanged,
         });
         this.importInput = null;
+        this.importOverlay = null;
+        this.importModal = null;
+        this.importUrlInput = null;
+        this.importUrlBtn = null;
+        this.importFileBtn = null;
+        this.importCloseBtn = null;
     }
 
     ensureUI() {
@@ -197,8 +203,7 @@ export class PersonaPanel {
         this.importInput = this.panel.querySelector('#persona-card-import');
         if (importBtn && this.importInput) {
             importBtn.addEventListener('click', () => {
-                this.importInput.value = '';
-                this.importInput.click();
+                this.showImportModal();
             });
             this.importInput.addEventListener('change', () => this.handleCardImport());
         }
@@ -221,6 +226,104 @@ export class PersonaPanel {
                 bubblePicker.value = color;
             }
         });
+    }
+
+    ensureImportModal() {
+        if (this.importOverlay) return;
+        const overlay = document.createElement('div');
+        overlay.style.cssText = `
+            display:none; position:fixed; inset:0;
+            background: rgba(0,0,0,0.38);
+            z-index: 22040;
+            padding: calc(10px + env(safe-area-inset-top, 0px)) 10px calc(10px + env(safe-area-inset-bottom, 0px)) 10px;
+            box-sizing: border-box;
+            align-items:center;
+            justify-content:center;
+        `;
+        overlay.addEventListener('click', (e) => {
+            if (e.target === overlay) this.hideImportModal();
+        });
+
+        const modal = document.createElement('div');
+        modal.style.cssText = `
+            width: min(92vw, 420px);
+            background: #fff;
+            border-radius: 14px;
+            overflow: hidden;
+            display:flex;
+            flex-direction:column;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.18);
+            max-height: min(84vh, 560px);
+        `;
+        modal.addEventListener('click', (e) => e.stopPropagation());
+
+        modal.innerHTML = `
+            <div style="display:flex; align-items:center; gap:10px; padding:12px 14px; background:#f8fafc; border-bottom:1px solid #e5e7eb;">
+                <div style="font-weight:800;">导入角色卡</div>
+                <button id="persona-import-close" style="margin-left:auto; width:36px; height:36px; border:none; background:transparent; font-size:20px; border-radius:10px; cursor:pointer;">×</button>
+            </div>
+            <div style="padding:14px; display:flex; flex-direction:column; gap:12px;">
+                <div>
+                    <div style="font-size:12px; color:#64748b; margin-bottom:6px;">本地文件</div>
+                    <button id="persona-import-file" style="width:100%; padding:10px 12px; border:1px solid #e2e8f0; border-radius:10px; background:#fff; cursor:pointer; font-size:14px;">选择文件（PNG / JSON）</button>
+                </div>
+                <div style="border-top:1px dashed #e5e7eb; padding-top:12px;">
+                    <div style="font-size:12px; color:#64748b; margin-bottom:6px;">链接导入</div>
+                    <input id="persona-import-url" type="url" placeholder="粘贴 PNG/JSON 链接" style="width:100%; padding:8px 10px; border:1px solid #e2e8f0; border-radius:10px; box-sizing:border-box;">
+                    <button id="persona-import-url-btn" style="margin-top:8px; width:100%; padding:9px 12px; border:none; border-radius:10px; background:#0f172a; color:#fff; cursor:pointer; font-size:14px;">导入链接</button>
+                </div>
+            </div>
+        `;
+
+        overlay.appendChild(modal);
+        document.body.appendChild(overlay);
+
+        this.importOverlay = overlay;
+        this.importModal = modal;
+        this.importUrlInput = modal.querySelector('#persona-import-url');
+        this.importUrlBtn = modal.querySelector('#persona-import-url-btn');
+        this.importFileBtn = modal.querySelector('#persona-import-file');
+        this.importCloseBtn = modal.querySelector('#persona-import-close');
+
+        this.importCloseBtn?.addEventListener('click', () => this.hideImportModal());
+        this.importFileBtn?.addEventListener('click', () => {
+            if (!this.importInput) return;
+            this.importInput.value = '';
+            this.importInput.click();
+        });
+        if (this.importUrlInput && this.importUrlBtn) {
+            const syncBtn = () => {
+                const has = String(this.importUrlInput?.value || '').trim().length > 0;
+                this.importUrlBtn.disabled = !has;
+                this.importUrlBtn.style.opacity = has ? '1' : '0.6';
+                this.importUrlBtn.style.cursor = has ? 'pointer' : 'not-allowed';
+            };
+            this.importUrlInput.addEventListener('input', syncBtn);
+            this.importUrlInput.addEventListener('keydown', (event) => {
+                if (event.key === 'Enter') {
+                    event.preventDefault();
+                    this.handleCardImportUrl();
+                }
+            });
+            syncBtn();
+        }
+        this.importUrlBtn?.addEventListener('click', () => this.handleCardImportUrl());
+    }
+
+    showImportModal() {
+        this.ensureImportModal();
+        if (this.importUrlInput) this.importUrlInput.value = '';
+        if (this.importUrlBtn) {
+            this.importUrlBtn.disabled = true;
+            this.importUrlBtn.style.opacity = '0.6';
+            this.importUrlBtn.style.cursor = 'not-allowed';
+            this.importUrlBtn.textContent = '导入链接';
+        }
+        if (this.importOverlay) this.importOverlay.style.display = 'flex';
+    }
+
+    hideImportModal() {
+        if (this.importOverlay) this.importOverlay.style.display = 'none';
     }
 
     ensureBulkModal() {
@@ -738,9 +841,32 @@ export class PersonaPanel {
         try {
             await this.cardImporter.importFromFile(file);
             this.renderList();
+            this.hideImportModal();
         } catch (err) {
             const msg = err?.message || '导入失败';
             window.toastr?.error?.(msg);
+        }
+    }
+
+    async handleCardImportUrl() {
+        const url = String(this.importUrlInput?.value || '').trim();
+        if (!url) return;
+        if (this.importUrlBtn) {
+            this.importUrlBtn.disabled = true;
+            this.importUrlBtn.textContent = '导入中...';
+        }
+        try {
+            await this.cardImporter.importFromUrl(url);
+            this.renderList();
+            this.hideImportModal();
+        } catch (err) {
+            const msg = err?.message || '链接导入失败';
+            window.toastr?.error?.(msg);
+        } finally {
+            if (this.importUrlBtn) {
+                this.importUrlBtn.disabled = false;
+                this.importUrlBtn.textContent = '导入链接';
+            }
         }
     }
 

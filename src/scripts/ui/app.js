@@ -1584,7 +1584,11 @@ ${listPart || '-（无）'}
             meta,
           };
         }
-        return { ...m, avatar, content: base, status: m.status, meta }; // 保留 status 字段
+        let display = base;
+        try {
+          display = window.appBridge.applyOutputDisplayRegex(base, { depth });
+        } catch {}
+        return { ...m, avatar, content: display, status: m.status, meta }; // 保留 status 字段
       }
       if (m.role === 'user' && (m.type === 'text' || !m.type)) {
         return {
@@ -9475,12 +9479,19 @@ Phase G（Frame 36）：循环衔接
   const buildRpGreetingMessage = (greeting, sessionId) => {
     const content = String(greeting?.content || '').trim();
     if (!content) return null;
-    const parsed = parseSpecialMessage(content);
+    let stored = content;
+    let display = content;
+    try {
+      stored = window.appBridge.applyOutputStoredRegex(content, { depth: 0 });
+      display = window.appBridge.applyOutputDisplayRegex(stored, { depth: 0 });
+    } catch {}
+    const parsed = parseSpecialMessage(display);
     const assistantName = String(personaStore.getActive?.()?.name || '角色');
     const meta = { ...(parsed.meta || {}), isGreeting: true };
     return {
       role: 'assistant',
       ...parsed,
+      raw: stored,
       name: assistantName,
       avatar: getAssistantAvatarForSession(sessionId),
       time: formatNowTime(),
