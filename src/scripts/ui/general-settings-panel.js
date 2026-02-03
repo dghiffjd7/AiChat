@@ -8,6 +8,7 @@ export class GeneralSettingsPanel {
     this.element = null;
     this.overlayElement = null;
     this.debugToggle = null;
+    this.debugLogToggle = null;
     this.typingDotsToggle = null;
     this.richIframeScriptsToggle = null;
     this.creativeHistoryInput = null;
@@ -38,6 +39,7 @@ export class GeneralSettingsPanel {
     this.scriptEnabledToggle = null;
     this.scriptAllowVarsToggle = null;
     this.scriptAllowMessagesToggle = null;
+    this.scriptAllowNetworkToggle = null;
     this.cleanWallpapersBtn = null;
     this.cleanWallpapersStatus = null;
     this.bundleExportBtn = null;
@@ -54,6 +56,9 @@ export class GeneralSettingsPanel {
     const settings = appSettings.get();
     if (this.debugToggle) {
       this.debugToggle.checked = Boolean(settings.showDebugToggle);
+    }
+    if (this.debugLogToggle) {
+      this.debugLogToggle.checked = settings.debugExecutionLogs === true;
     }
     if (this.typingDotsToggle) {
       this.typingDotsToggle.checked = settings.typingDotsEnabled !== false;
@@ -142,6 +147,9 @@ export class GeneralSettingsPanel {
     }
     if (this.scriptAllowMessagesToggle) {
       this.scriptAllowMessagesToggle.checked = settings.scriptAllowReadMessages !== false;
+    }
+    if (this.scriptAllowNetworkToggle) {
+      this.scriptAllowNetworkToggle.checked = settings.scriptAllowNetwork === true;
     }
     this.refreshMemoryUpdateProfiles().catch(() => {});
     this.updateMemoryAutoVisibility();
@@ -265,6 +273,14 @@ export class GeneralSettingsPanel {
             <span style="font-weight: 700;">显示 Debug 按钮</span>
           </label>
           <small style="color: #666; margin-left: 26px;">右下角调试按钮，默认隐藏</small>
+        </div>
+
+        <div style="margin-bottom: 16px;">
+          <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+            <input type="checkbox" id="general-debug-logs" style="width: 18px; height: 18px;">
+            <span style="font-weight: 700;">记录执行日志</span>
+          </label>
+          <small style="color: #666; margin-left: 26px;">记录模板/脚本执行日志，用于调试面板查看</small>
         </div>
 
         <div style="margin-bottom: 16px;">
@@ -457,6 +473,10 @@ export class GeneralSettingsPanel {
               <input type="checkbox" id="general-script-allow-messages" style="width: 16px; height: 16px;">
               <span>允许脚本读取聊天记录</span>
             </label>
+            <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+              <input type="checkbox" id="general-script-allow-network" style="width: 16px; height: 16px;">
+              <span>允许脚本访问网络（不建议）</span>
+            </label>
           </div>
         </div>
 
@@ -511,6 +531,7 @@ export class GeneralSettingsPanel {
     this.element.onclick = (e) => e.stopPropagation();
 
     this.debugToggle = this.element.querySelector('#general-debug-toggle');
+    this.debugLogToggle = this.element.querySelector('#general-debug-logs');
     this.typingDotsToggle = this.element.querySelector('#general-typing-dots');
     this.richIframeScriptsToggle = this.element.querySelector('#general-rich-iframe-scripts');
     this.creativeHistoryInput = this.element.querySelector('#general-creative-history');
@@ -541,6 +562,7 @@ export class GeneralSettingsPanel {
     this.scriptEnabledToggle = this.element.querySelector('#general-script-enabled');
     this.scriptAllowVarsToggle = this.element.querySelector('#general-script-allow-vars');
     this.scriptAllowMessagesToggle = this.element.querySelector('#general-script-allow-messages');
+    this.scriptAllowNetworkToggle = this.element.querySelector('#general-script-allow-network');
     this.cleanWallpapersBtn = this.element.querySelector('#general-clean-wallpapers');
     this.cleanWallpapersStatus = this.element.querySelector('#general-clean-wallpapers-status');
     this.bundleExportBtn = this.element.querySelector('#general-bundle-export');
@@ -555,6 +577,10 @@ export class GeneralSettingsPanel {
         const panel = getDebugPanel();
         panel.setEnabled(Boolean(settings.showDebugToggle));
       } catch {}
+    });
+    this.debugLogToggle?.addEventListener('change', (e) => {
+      const enabled = Boolean(e?.target?.checked);
+      appSettings.update({ debugExecutionLogs: enabled });
     });
     this.typingDotsToggle?.addEventListener('change', (e) => {
       const enabled = Boolean(e?.target?.checked);
@@ -617,6 +643,10 @@ export class GeneralSettingsPanel {
     this.scriptAllowMessagesToggle?.addEventListener('change', (e) => {
       const enabled = Boolean(e?.target?.checked);
       appSettings.update({ scriptAllowReadMessages: enabled });
+    });
+    this.scriptAllowNetworkToggle?.addEventListener('change', (e) => {
+      const enabled = Boolean(e?.target?.checked);
+      appSettings.update({ scriptAllowNetwork: enabled });
     });
 
     this.personaBindToggle?.addEventListener('change', async (e) => {

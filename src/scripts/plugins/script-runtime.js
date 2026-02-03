@@ -1,13 +1,18 @@
 import { appSettings } from '../storage/app-settings.js';
 import { logger } from '../utils/logger.js';
+import { emitDebugLog } from '../utils/debug-log.js';
+
+const SCRIPT_MAX_BYTES = 2 * 1024 * 1024;
+const SCRIPT_TOTAL_BYTES = 8 * 1024 * 1024;
 
 const buildWorkerScript = () => `
 const scripts = new Map();
 let currentContext = { sessionId: '', personaId: '', presetId: '', worldId: '', worldIds: [] };
-let currentSettings = { allowReadMessages: true, allowModifyVariables: true };
+let currentSettings = { allowReadMessages: true, allowModifyVariables: true, allowNetwork: false };
 let seq = 0;
 const pending = new Map();
 const importCache = new Map();
+const IMPORT_CACHE_LIMIT = 32;
 
 const clone = (v) => {
   try { return structuredClone(v); } catch { return JSON.parse(JSON.stringify(v)); }
@@ -80,6 +85,12 @@ const resolveLibUrl = (path) => {
   return origin + '/' + raw.replace(/^\\.?\\//, '');
 };
 
+const isRemoteUrl = (value) => {
+  const raw = String(value || '').trim();
+  if (!raw) return false;
+  return /^https?:\\/\\//i.test(raw) || raw.startsWith('//');
+};
+
 const loadScriptText = (url) => {
   const xhr = new XMLHttpRequest();
   xhr.open('GET', url, false);
@@ -149,20 +160,17 @@ const makeCompatDollar = () => {
 };
 
 const ensureCompatGlobals = () => {
+  const allowNetwork = currentSettings.allowNetwork === true;
   if (!self.window) self.window = self;
   if (!self._) {
-    const lodashUrls = [
-      resolveLibUrl('lib/lodash.min.js'),
-      'https://cdn.jsdelivr.net/npm/lodash@4.17.21/lodash.min.js',
-    ];
+    const lodashUrls = [resolveLibUrl('lib/lodash.min.js')];
+    if (allowNetwork) lodashUrls.push('https://cdn.jsdelivr.net/npm/lodash@4.17.21/lodash.min.js');
     loadLibrary(lodashUrls);
   }
   if (!self._) self._ = makeCompatLodash();
   if (!self.z) {
-    const zodUrls = [
-      resolveLibUrl('lib/zod.min.js'),
-      'https://cdn.jsdelivr.net/npm/zod@3.22.4/lib/index.umd.min.js',
-    ];
+    const zodUrls = [resolveLibUrl('lib/zod.min.js')];
+    if (allowNetwork) zodUrls.push('https://cdn.jsdelivr.net/npm/zod@3.22.4/lib/index.umd.min.js');
     loadLibrary(zodUrls);
   }
   if (!self.z) {
@@ -186,6 +194,10 @@ const runImport = (url) => {
   ensureCompatGlobals();
   const key = String(url || '').trim();
   if (!key) return {};
+  if (isRemoteUrl(key) && !currentSettings.allowNetwork) {
+    callRpc('log', { level: 'warn', args: ['脚本网络已禁用，阻止加载', key] }).catch(() => {});
+    return {};
+  }
   if (importCache.has(key)) return importCache.get(key);
   const before = new Set(Object.keys(self));
   const prevModule = self.module;
@@ -221,6 +233,10 @@ const runImport = (url) => {
   });
   const result = buildModuleNamespace(module.exports, diff);
   importCache.set(key, result);
+  if (importCache.size > IMPORT_CACHE_LIMIT) {
+    const first = importCache.keys().next().value;
+    if (first) importCache.delete(first);
+  }
   return result;
 };
 
@@ -454,6 +470,8 @@ const makeApi = (scriptId) => {
     activewi: (world, title, force) => call('world.activate', { world, title, force }),
     getchar: (name) => call('context.getCharacter', { name }),
     getpreset: (name) => call('context.getPreset', { name }),
+    getContext: () => call('context.getContext', {}),
+    getcontext: () => call('context.getContext', {}),
     log: (...args) => call('log', { level: 'log', args }),
     warn: (...args) => call('log', { level: 'warn', args }),
     error: (...args) => call('log', { level: 'error', args }),
@@ -548,6 +566,9 @@ self.onmessage = async (e) => {
   if (msg.type === 'sync') {
     const list = Array.isArray(msg.scripts) ? msg.scripts : [];
     scripts.clear();
+    if (msg.settings && typeof msg.settings === 'object') {
+      currentSettings = { ...currentSettings, ...msg.settings };
+    }
     list.forEach(item => {
       const record = { ...item };
       record.enabled = item.enabled === true;
@@ -555,9 +576,6 @@ self.onmessage = async (e) => {
     });
     if (msg.context && typeof msg.context === 'object') {
       currentContext = { ...currentContext, ...msg.context };
-    }
-    if (msg.settings && typeof msg.settings === 'object') {
-      currentSettings = { ...currentSettings, ...msg.settings };
     }
     postMessage({ type: 'sync_done' });
     return;
@@ -656,11 +674,32 @@ export class ScriptRuntime {
       this.worker.onmessage = (e) => this.handleWorkerMessage(e?.data || {});
       this.worker.onerror = (err) => {
         logger.warn('script runtime worker error', err);
+        emitDebugLog({
+          message: `脚本运行器异常：${err?.message || 'unknown error'}`,
+          type: 'warn',
+          source: 'script',
+        });
       };
     } catch (err) {
       logger.warn('script runtime worker init failed', err);
       this.worker = null;
     }
+  }
+
+  restartWorker(reason = '') {
+    const msg = String(reason || '脚本运行器已重启');
+    try {
+      this.worker?.terminate?.();
+    } catch {}
+    this.worker = null;
+    for (const pending of this.pending.values()) {
+      clearTimeout(pending.timer);
+      pending.reject(new Error(msg));
+    }
+    this.pending.clear();
+    emitDebugLog({ message: msg, type: 'warn', source: 'script' });
+    this.startWorker();
+    this.syncScripts().catch(() => {});
   }
 
   getSessionSettings(sessionId) {
@@ -728,13 +767,36 @@ export class ScriptRuntime {
       personaId: this.context.personaId,
       presetId: this.context.presetId,
     }) || [];
+    let totalSize = 0;
+    const filtered = [];
+    const skipped = [];
+    for (const script of scripts) {
+      const content = String(script?.content || '');
+      const size = content.length;
+      if (size > SCRIPT_MAX_BYTES) {
+        skipped.push(`${script?.name || script?.id || '未命名'}（过大）`);
+        continue;
+      }
+      if (totalSize + size > SCRIPT_TOTAL_BYTES) {
+        skipped.push(`${script?.name || script?.id || '未命名'}（超出总量）`);
+        continue;
+      }
+      totalSize += size;
+      filtered.push(script);
+    }
+    if (skipped.length) {
+      const msg = `脚本加载被限制：${skipped.join('、')}`;
+      logger.warn(msg);
+      emitDebugLog({ message: msg, type: 'warn', source: 'script' });
+    }
     const settings = appSettings.get();
     const payload = {
-      scripts,
+      scripts: filtered,
       context: this.context,
       settings: {
         allowReadMessages: settings.scriptAllowReadMessages !== false,
         allowModifyVariables: settings.scriptAllowModifyVariables !== false,
+        allowNetwork: settings.scriptAllowNetwork === true,
       },
     };
     this.worker.postMessage({ type: 'sync', ...payload });
@@ -753,6 +815,7 @@ export class ScriptRuntime {
       settings: {
         allowReadMessages: settings.scriptAllowReadMessages !== false,
         allowModifyVariables: settings.scriptAllowModifyVariables !== false,
+        allowNetwork: settings.scriptAllowNetwork === true,
       },
     });
     if (changed) {
@@ -778,7 +841,9 @@ export class ScriptRuntime {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
-        reject(new Error('script runtime timeout'));
+        const err = new Error('script runtime timeout');
+        reject(err);
+        this.restartWorker('脚本执行超时，运行器已重启');
       }, timeoutMs);
       this.pending.set(id, { resolve, reject, timer });
       this.worker.postMessage({ type, id, ...payload });
@@ -912,6 +977,9 @@ export class ScriptRuntime {
       }
       return { name };
     }
+    if (method === 'context.getContext') {
+      return {};
+    }
     if (method === 'script.updateData') {
       const scriptId = String(params.scriptId || '').trim();
       const data = params.data && typeof params.data === 'object' ? params.data : {};
@@ -930,6 +998,21 @@ export class ScriptRuntime {
       const level = params.level || 'log';
       const args = Array.isArray(params.args) ? params.args : [params.args];
       logger[level]?.('[script]', ...args);
+      const type = level === 'error' ? 'error' : level === 'warn' ? 'warn' : 'info';
+      const text = args
+        .map(item => {
+          if (typeof item === 'string') return item;
+          try {
+            return JSON.stringify(item);
+          } catch {
+            return String(item);
+          }
+        })
+        .filter(Boolean)
+        .join(' ');
+      if (text) {
+        emitDebugLog({ message: text, type, source: 'script' });
+      }
       return true;
     }
     if (method === 'toast') {

@@ -22,6 +22,10 @@ export class DebugPanel {
         this.memoryModeBtn = null;
         this.memoryInspectBtn = null;
         this.stickerDebugBtn = null;
+        this.variableInspectBtn = null;
+        this.templateLogBtn = null;
+        this.promptPreviewBtn = null;
+        this.errorLogBtn = null;
         this.filterInput = null;
         this.filterClearBtn = null;
         this.filterText = '';
@@ -33,6 +37,24 @@ export class DebugPanel {
         this.memoryInspectorTruncated = null;
         this.memoryInspectorPrompt = null;
         this.memoryInspectorRefresh = null;
+        this.variableInspectorOverlay = null;
+        this.variableInspectorPanel = null;
+        this.variableInspectorMeta = null;
+        this.variableInspectorText = null;
+        this.variableInspectorRefresh = null;
+        this.templateLogOverlay = null;
+        this.templateLogPanel = null;
+        this.templateLogMeta = null;
+        this.templateLogText = null;
+        this.templateLogRefresh = null;
+        this.templateLogClear = null;
+        this.errorLogOverlay = null;
+        this.errorLogPanel = null;
+        this.errorLogMeta = null;
+        this.errorLogText = null;
+        this.errorLogRefresh = null;
+        this.errorLogExport = null;
+        this.debugLogListener = null;
     }
 
     init() {
@@ -62,6 +84,7 @@ export class DebugPanel {
         this.controls.style.cssText = `
             display: flex;
             align-items: center;
+            flex-wrap: wrap;
             gap: 6px;
             padding-bottom: 6px;
             margin-bottom: 6px;
@@ -134,6 +157,74 @@ export class DebugPanel {
         stickerDebugBtn.onclick = () => this.runStickerDebug();
         this.stickerDebugBtn = stickerDebugBtn;
         this.controls.appendChild(stickerDebugBtn);
+
+        const variableInspectBtn = document.createElement('button');
+        variableInspectBtn.type = 'button';
+        variableInspectBtn.textContent = '变量';
+        variableInspectBtn.style.cssText = `
+            padding: 2px 6px;
+            background: rgba(0, 0, 0, 0.8);
+            color: #00ff00;
+            border: 1px solid #00ff00;
+            border-radius: 4px;
+            font-size: 10px;
+            font-family: monospace;
+            cursor: pointer;
+        `;
+        variableInspectBtn.onclick = () => this.showVariableInspector();
+        this.variableInspectBtn = variableInspectBtn;
+        this.controls.appendChild(variableInspectBtn);
+
+        const templateLogBtn = document.createElement('button');
+        templateLogBtn.type = 'button';
+        templateLogBtn.textContent = '模板日志';
+        templateLogBtn.style.cssText = `
+            padding: 2px 6px;
+            background: rgba(0, 0, 0, 0.8);
+            color: #00ff00;
+            border: 1px solid #00ff00;
+            border-radius: 4px;
+            font-size: 10px;
+            font-family: monospace;
+            cursor: pointer;
+        `;
+        templateLogBtn.onclick = () => this.showTemplateLogs();
+        this.templateLogBtn = templateLogBtn;
+        this.controls.appendChild(templateLogBtn);
+
+        const promptPreviewBtn = document.createElement('button');
+        promptPreviewBtn.type = 'button';
+        promptPreviewBtn.textContent = 'Prompt';
+        promptPreviewBtn.style.cssText = `
+            padding: 2px 6px;
+            background: rgba(0, 0, 0, 0.8);
+            color: #00ff00;
+            border: 1px solid #00ff00;
+            border-radius: 4px;
+            font-size: 10px;
+            font-family: monospace;
+            cursor: pointer;
+        `;
+        promptPreviewBtn.onclick = () => this.showPromptPreview();
+        this.promptPreviewBtn = promptPreviewBtn;
+        this.controls.appendChild(promptPreviewBtn);
+
+        const errorLogBtn = document.createElement('button');
+        errorLogBtn.type = 'button';
+        errorLogBtn.textContent = '错误日志';
+        errorLogBtn.style.cssText = `
+            padding: 2px 6px;
+            background: rgba(0, 0, 0, 0.8);
+            color: #00ff00;
+            border: 1px solid #00ff00;
+            border-radius: 4px;
+            font-size: 10px;
+            font-family: monospace;
+            cursor: pointer;
+        `;
+        errorLogBtn.onclick = () => this.showErrorLogs();
+        this.errorLogBtn = errorLogBtn;
+        this.controls.appendChild(errorLogBtn);
 
         const filterWrap = document.createElement('div');
         filterWrap.style.cssText = `
@@ -231,6 +322,16 @@ export class DebugPanel {
                 }
             } catch {}
         });
+        this.debugLogListener = (ev) => {
+            const detail = ev?.detail || {};
+            const type = detail.type || 'info';
+            const source = String(detail.source || '').trim();
+            const message = String(detail.message || '').trim();
+            if (!message) return;
+            const prefix = source ? `[${source}] ` : '';
+            this.log(`${prefix}${message}`, type);
+        };
+        window.addEventListener('app-debug-log', this.debugLogListener);
 
         // APP启动时自动显示5秒，让用户看到加载日志（仅在启用时）
         this.log('=== APP 启动，调试面板已激活 ===', 'info');
@@ -328,7 +429,7 @@ export class DebugPanel {
         if (this.seenMessages.has(key)) return;
         this.seenMessages.add(key);
 
-        this.logs.push({ timestamp, message, color, prefix, key });
+        this.logs.push({ timestamp, message, color, prefix, key, type });
         if (this.logs.length > this.maxLogs) {
             const removed = this.logs.shift();
             if (removed?.key) this.seenMessages.delete(removed.key);
@@ -646,6 +747,456 @@ export class DebugPanel {
             this.memoryInspectorOverlay.style.display = 'block';
         }
         await this.refreshMemoryInspector();
+    }
+
+    showPromptPreview() {
+        try {
+            if (typeof window?.appBridge?.showPromptPreview === 'function') {
+                window.appBridge.showPromptPreview();
+                return;
+            }
+            window.toastr?.warning?.('暂无 Prompt 预览入口');
+        } catch (err) {
+            const msg = err?.message ? String(err.message) : String(err || '');
+            this.log(`Prompt 预览失败: ${msg || 'unknown error'}`, 'warn');
+            window.toastr?.error?.('打开 Prompt 失败');
+        }
+    }
+
+    ensureVariableInspector() {
+        if (this.variableInspectorOverlay) return;
+        const overlay = document.createElement('div');
+        overlay.id = 'debug-variable-overlay';
+        overlay.style.cssText = `
+            display:none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.38);
+            z-index: 22050;
+            padding: calc(10px + env(safe-area-inset-top, 0px)) 10px calc(10px + env(safe-area-inset-bottom, 0px)) 10px;
+            box-sizing: border-box;
+        `;
+        const panel = document.createElement('div');
+        panel.id = 'debug-variable-panel';
+        panel.style.cssText = `
+            width: 100%;
+            height: 100%;
+            background: #fff;
+            border-radius: 14px;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        `;
+        panel.addEventListener('click', e => e.stopPropagation());
+        panel.innerHTML = `
+            <div style="display:flex; align-items:center; gap:10px; padding:12px; background:#f3f4f6; border-bottom:1px solid #e5e7eb;">
+                <div style="font-weight:900;">变量查看器</div>
+                <div id="debug-variable-meta" style="margin-left:auto; font-size:12px; color:#64748b; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"></div>
+                <button id="debug-variable-refresh" style="border:1px solid #e5e7eb; background:#fff; border-radius:10px; padding:6px 10px;">刷新</button>
+                <button id="debug-variable-copy" style="border:1px solid #e5e7eb; background:#fff; border-radius:10px; padding:6px 10px;">复制</button>
+                <button id="debug-variable-close" style="border:1px solid #e5e7eb; background:#fff; border-radius:10px; padding:6px 10px;">关闭</button>
+            </div>
+            <div style="flex:1; min-height:0; overflow:auto; -webkit-overflow-scrolling:touch; padding:10px;">
+                <textarea id="debug-variable-text" readonly style="
+                    width:100%;
+                    height:100%;
+                    min-height: 100%;
+                    resize:none;
+                    border:1px solid rgba(0,0,0,0.10);
+                    border-radius:12px;
+                    padding:12px;
+                    font-size:12px;
+                    line-height:1.4;
+                    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+                    white-space: pre;
+                    box-sizing:border-box;
+                    outline:none;
+                "></textarea>
+            </div>
+        `;
+        overlay.appendChild(panel);
+        overlay.addEventListener('click', () => this.hideVariableInspector());
+        document.body.appendChild(overlay);
+
+        this.variableInspectorOverlay = overlay;
+        this.variableInspectorPanel = panel;
+        this.variableInspectorMeta = panel.querySelector('#debug-variable-meta');
+        this.variableInspectorText = panel.querySelector('#debug-variable-text');
+        this.variableInspectorRefresh = panel.querySelector('#debug-variable-refresh');
+
+        panel.querySelector('#debug-variable-close')?.addEventListener('click', () => this.hideVariableInspector());
+        panel.querySelector('#debug-variable-refresh')?.addEventListener('click', () => this.refreshVariableInspector());
+        panel.querySelector('#debug-variable-copy')?.addEventListener('click', async () => {
+            const text = String(this.variableInspectorText?.value || '');
+            if (!text) {
+                window.toastr?.warning?.('暂无内容可复制');
+                return;
+            }
+            try {
+                await navigator.clipboard.writeText(text);
+                window.toastr?.success?.('已复制');
+            } catch {
+                try {
+                    this.variableInspectorText?.select?.();
+                    document.execCommand?.('copy');
+                    window.toastr?.success?.('已复制');
+                } catch {
+                    window.toastr?.error?.('复制失败');
+                }
+            }
+        });
+    }
+
+    hideVariableInspector() {
+        if (this.variableInspectorOverlay) {
+            this.variableInspectorOverlay.style.display = 'none';
+        }
+    }
+
+    renderVariableInspector({ sessionId, sessionName, globals, locals, initials, messageVars } = {}) {
+        if (!this.variableInspectorText || !this.variableInspectorMeta) return;
+        const formatJson = (value) => {
+            try {
+                return JSON.stringify(value ?? {}, null, 2);
+            } catch {
+                return String(value ?? '');
+            }
+        };
+        const metaParts = [];
+        if (sessionName) metaParts.push(sessionName);
+        if (sessionId) metaParts.push(`sid=${sessionId}`);
+        this.variableInspectorMeta.textContent = metaParts.join(' · ');
+        const text = [
+            '# Global Variables',
+            formatJson(globals || {}),
+            '',
+            '# Local Variables',
+            formatJson(locals || {}),
+            '',
+            '# Initial Variables',
+            formatJson(initials || {}),
+            '',
+            '# Message Variables (last)',
+            formatJson(messageVars || {}),
+        ].join('\n');
+        this.variableInspectorText.value = text;
+    }
+
+    async refreshVariableInspector() {
+        if (!this.variableInspectorOverlay) return;
+        try {
+            const bridge = window.appBridge;
+            const chatStore = bridge?.chatStore;
+            const sessionId = String(bridge?.activeSessionId || chatStore?.getCurrent?.() || '').trim();
+            const contact = bridge?.contactsStore?.getContact?.(sessionId);
+            const sessionName = contact?.name || sessionId || '未选择会话';
+            const globals = chatStore?.listGlobalVariables?.() || {};
+            const locals = sessionId ? (chatStore?.listVariables?.(sessionId) || {}) : {};
+            const initials = sessionId ? (chatStore?.listInitialVariables?.(sessionId) || {}) : {};
+            const messages = sessionId ? (chatStore?.getMessages?.(sessionId) || []) : [];
+            let messageVars = {};
+            for (let i = messages.length - 1; i >= 0; i--) {
+                const vars = messages[i]?.meta?.templateVars;
+                if (vars && Object.keys(vars).length) {
+                    messageVars = vars;
+                    break;
+                }
+            }
+            this.renderVariableInspector({ sessionId, sessionName, globals, locals, initials, messageVars });
+        } catch (err) {
+            const msg = err?.message ? String(err.message) : String(err || '');
+            this.renderVariableInspector({ sessionName: '加载失败', sessionId: '', globals: {}, locals: {}, initials: {}, messageVars: {} });
+            if (this.variableInspectorMeta) this.variableInspectorMeta.textContent = `加载失败: ${msg || 'unknown error'}`;
+        }
+    }
+
+    async showVariableInspector() {
+        this.ensureVariableInspector();
+        if (this.variableInspectorOverlay) {
+            this.variableInspectorOverlay.style.display = 'block';
+        }
+        await this.refreshVariableInspector();
+    }
+
+    ensureTemplateLogViewer() {
+        if (this.templateLogOverlay) return;
+        const overlay = document.createElement('div');
+        overlay.id = 'debug-template-log-overlay';
+        overlay.style.cssText = `
+            display:none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.38);
+            z-index: 22050;
+            padding: calc(10px + env(safe-area-inset-top, 0px)) 10px calc(10px + env(safe-area-inset-bottom, 0px)) 10px;
+            box-sizing: border-box;
+        `;
+        const panel = document.createElement('div');
+        panel.id = 'debug-template-log-panel';
+        panel.style.cssText = `
+            width: 100%;
+            height: 100%;
+            background: #fff;
+            border-radius: 14px;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        `;
+        panel.addEventListener('click', e => e.stopPropagation());
+        panel.innerHTML = `
+            <div style="display:flex; align-items:center; gap:10px; padding:12px; background:#f3f4f6; border-bottom:1px solid #e5e7eb;">
+                <div style="font-weight:900;">模板执行日志</div>
+                <div id="debug-template-log-meta" style="margin-left:auto; font-size:12px; color:#64748b; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"></div>
+                <button id="debug-template-log-refresh" style="border:1px solid #e5e7eb; background:#fff; border-radius:10px; padding:6px 10px;">刷新</button>
+                <button id="debug-template-log-clear" style="border:1px solid #e5e7eb; background:#fff; border-radius:10px; padding:6px 10px;">清空</button>
+                <button id="debug-template-log-copy" style="border:1px solid #e5e7eb; background:#fff; border-radius:10px; padding:6px 10px;">复制</button>
+                <button id="debug-template-log-close" style="border:1px solid #e5e7eb; background:#fff; border-radius:10px; padding:6px 10px;">关闭</button>
+            </div>
+            <div style="flex:1; min-height:0; overflow:auto; -webkit-overflow-scrolling:touch; padding:10px;">
+                <textarea id="debug-template-log-text" readonly style="
+                    width:100%;
+                    height:100%;
+                    min-height: 100%;
+                    resize:none;
+                    border:1px solid rgba(0,0,0,0.10);
+                    border-radius:12px;
+                    padding:12px;
+                    font-size:12px;
+                    line-height:1.4;
+                    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+                    white-space: pre;
+                    box-sizing:border-box;
+                    outline:none;
+                "></textarea>
+            </div>
+        `;
+        overlay.appendChild(panel);
+        overlay.addEventListener('click', () => this.hideTemplateLogs());
+        document.body.appendChild(overlay);
+
+        this.templateLogOverlay = overlay;
+        this.templateLogPanel = panel;
+        this.templateLogMeta = panel.querySelector('#debug-template-log-meta');
+        this.templateLogText = panel.querySelector('#debug-template-log-text');
+        this.templateLogRefresh = panel.querySelector('#debug-template-log-refresh');
+        this.templateLogClear = panel.querySelector('#debug-template-log-clear');
+
+        panel.querySelector('#debug-template-log-close')?.addEventListener('click', () => this.hideTemplateLogs());
+        panel.querySelector('#debug-template-log-refresh')?.addEventListener('click', () => this.refreshTemplateLogs());
+        panel.querySelector('#debug-template-log-clear')?.addEventListener('click', () => this.clearTemplateLogs());
+        panel.querySelector('#debug-template-log-copy')?.addEventListener('click', async () => {
+            const text = String(this.templateLogText?.value || '');
+            if (!text) {
+                window.toastr?.warning?.('暂无内容可复制');
+                return;
+            }
+            try {
+                await navigator.clipboard.writeText(text);
+                window.toastr?.success?.('已复制');
+            } catch {
+                try {
+                    this.templateLogText?.select?.();
+                    document.execCommand?.('copy');
+                    window.toastr?.success?.('已复制');
+                } catch {
+                    window.toastr?.error?.('复制失败');
+                }
+            }
+        });
+    }
+
+    hideTemplateLogs() {
+        if (this.templateLogOverlay) {
+            this.templateLogOverlay.style.display = 'none';
+        }
+    }
+
+    formatTemplateLogs(logs) {
+        const list = Array.isArray(logs) ? logs : [];
+        if (!list.length) return '暂无模板执行记录';
+        const parts = list.map(entry => {
+            const ts = entry?.at ? new Date(entry.at).toLocaleTimeString('zh-CN', { hour12: false }) : '';
+            const dur = Number.isFinite(Number(entry?.durationMs)) ? `${Math.round(Number(entry.durationMs))}ms` : '';
+            const stage = entry?.stage ? `stage=${entry.stage}` : '';
+            const sid = entry?.sessionId ? `sid=${entry.sessionId}` : '';
+            const head = `[${ts}] ${[stage, dur, sid].filter(Boolean).join(' · ')}`.trim();
+            const err = entry?.error ? `error: ${entry.error}` : '';
+            const input = entry?.input ? `-- input --\n${entry.input}` : '';
+            const output = entry?.output ? `-- output --\n${entry.output}` : '';
+            return [head, err, input, output].filter(Boolean).join('\n');
+        });
+        return parts.join('\n\n---\n\n');
+    }
+
+    async refreshTemplateLogs() {
+        if (!this.templateLogOverlay) return;
+        try {
+            const { templateDebug } = await import('../plugins/template-engine.js');
+            const logs = templateDebug?.getLogs?.() || [];
+            if (this.templateLogMeta) this.templateLogMeta.textContent = `共 ${logs.length} 条`;
+            if (this.templateLogText) this.templateLogText.value = this.formatTemplateLogs(logs);
+        } catch (err) {
+            const msg = err?.message ? String(err.message) : String(err || '');
+            if (this.templateLogMeta) this.templateLogMeta.textContent = `加载失败: ${msg || 'unknown error'}`;
+            if (this.templateLogText) this.templateLogText.value = '模板日志加载失败';
+        }
+    }
+
+    async clearTemplateLogs() {
+        try {
+            const { templateDebug } = await import('../plugins/template-engine.js');
+            templateDebug?.clearLogs?.();
+        } catch {}
+        await this.refreshTemplateLogs();
+    }
+
+    async showTemplateLogs() {
+        this.ensureTemplateLogViewer();
+        if (this.templateLogOverlay) {
+            this.templateLogOverlay.style.display = 'block';
+        }
+        await this.refreshTemplateLogs();
+    }
+
+    ensureErrorLogViewer() {
+        if (this.errorLogOverlay) return;
+        const overlay = document.createElement('div');
+        overlay.id = 'debug-error-log-overlay';
+        overlay.style.cssText = `
+            display:none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.38);
+            z-index: 22050;
+            padding: calc(10px + env(safe-area-inset-top, 0px)) 10px calc(10px + env(safe-area-inset-bottom, 0px)) 10px;
+            box-sizing: border-box;
+        `;
+        const panel = document.createElement('div');
+        panel.id = 'debug-error-log-panel';
+        panel.style.cssText = `
+            width: 100%;
+            height: 100%;
+            background: #fff;
+            border-radius: 14px;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        `;
+        panel.addEventListener('click', e => e.stopPropagation());
+        panel.innerHTML = `
+            <div style="display:flex; align-items:center; gap:10px; padding:12px; background:#f3f4f6; border-bottom:1px solid #e5e7eb;">
+                <div style="font-weight:900;">错误日志</div>
+                <div id="debug-error-log-meta" style="margin-left:auto; font-size:12px; color:#64748b; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"></div>
+                <button id="debug-error-log-refresh" style="border:1px solid #e5e7eb; background:#fff; border-radius:10px; padding:6px 10px;">刷新</button>
+                <button id="debug-error-log-export" style="border:1px solid #e5e7eb; background:#fff; border-radius:10px; padding:6px 10px;">导出</button>
+                <button id="debug-error-log-copy" style="border:1px solid #e5e7eb; background:#fff; border-radius:10px; padding:6px 10px;">复制</button>
+                <button id="debug-error-log-close" style="border:1px solid #e5e7eb; background:#fff; border-radius:10px; padding:6px 10px;">关闭</button>
+            </div>
+            <div style="flex:1; min-height:0; overflow:auto; -webkit-overflow-scrolling:touch; padding:10px;">
+                <textarea id="debug-error-log-text" readonly style="
+                    width:100%;
+                    height:100%;
+                    min-height: 100%;
+                    resize:none;
+                    border:1px solid rgba(0,0,0,0.10);
+                    border-radius:12px;
+                    padding:12px;
+                    font-size:12px;
+                    line-height:1.4;
+                    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+                    white-space: pre;
+                    box-sizing:border-box;
+                    outline:none;
+                "></textarea>
+            </div>
+        `;
+        overlay.appendChild(panel);
+        overlay.addEventListener('click', () => this.hideErrorLogs());
+        document.body.appendChild(overlay);
+
+        this.errorLogOverlay = overlay;
+        this.errorLogPanel = panel;
+        this.errorLogMeta = panel.querySelector('#debug-error-log-meta');
+        this.errorLogText = panel.querySelector('#debug-error-log-text');
+        this.errorLogRefresh = panel.querySelector('#debug-error-log-refresh');
+        this.errorLogExport = panel.querySelector('#debug-error-log-export');
+
+        panel.querySelector('#debug-error-log-close')?.addEventListener('click', () => this.hideErrorLogs());
+        panel.querySelector('#debug-error-log-refresh')?.addEventListener('click', () => this.refreshErrorLogs());
+        panel.querySelector('#debug-error-log-export')?.addEventListener('click', () => this.exportErrorLogs());
+        panel.querySelector('#debug-error-log-copy')?.addEventListener('click', async () => {
+            const text = String(this.errorLogText?.value || '');
+            if (!text) {
+                window.toastr?.warning?.('暂无内容可复制');
+                return;
+            }
+            try {
+                await navigator.clipboard.writeText(text);
+                window.toastr?.success?.('已复制');
+            } catch {
+                try {
+                    this.errorLogText?.select?.();
+                    document.execCommand?.('copy');
+                    window.toastr?.success?.('已复制');
+                } catch {
+                    window.toastr?.error?.('复制失败');
+                }
+            }
+        });
+    }
+
+    hideErrorLogs() {
+        if (this.errorLogOverlay) {
+            this.errorLogOverlay.style.display = 'none';
+        }
+    }
+
+    formatErrorLogs() {
+        const list = this.logs.filter(log => log.type === 'error' || log.type === 'warn');
+        if (!list.length) return '暂无错误日志';
+        return list.map(log => `${log.prefix}[${log.timestamp}] ${log.message}`).join('\n');
+    }
+
+    refreshErrorLogs() {
+        if (!this.errorLogOverlay || !this.errorLogText) return;
+        const list = this.logs.filter(log => log.type === 'error' || log.type === 'warn');
+        if (this.errorLogMeta) this.errorLogMeta.textContent = `共 ${list.length} 条`;
+        this.errorLogText.value = this.formatErrorLogs();
+    }
+
+    showErrorLogs() {
+        this.ensureErrorLogViewer();
+        if (this.errorLogOverlay) {
+            this.errorLogOverlay.style.display = 'block';
+        }
+        this.refreshErrorLogs();
+    }
+
+    exportErrorLogs() {
+        try {
+            const text = this.formatErrorLogs();
+            if (!text.trim()) {
+                window.toastr?.warning?.('暂无内容可导出');
+                return;
+            }
+            const ts = new Date();
+            const pad = (n) => String(n).padStart(2, '0');
+            const filename = `app-debug-errors-${ts.getFullYear()}${pad(ts.getMonth() + 1)}${pad(ts.getDate())}-${pad(ts.getHours())}${pad(ts.getMinutes())}${pad(ts.getSeconds())}.txt`;
+            const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = filename;
+            link.style.display = 'none';
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+            URL.revokeObjectURL(url);
+        } catch (err) {
+            const msg = err?.message ? String(err.message) : String(err || '');
+            this.log(`导出失败: ${msg || 'unknown error'}`, 'warn');
+            window.toastr?.error?.('导出失败');
+        }
     }
 
     showConfigStatus(configManager) {

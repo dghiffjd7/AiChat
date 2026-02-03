@@ -2,6 +2,7 @@ const SETTINGS_KEY = 'app_settings_v1';
 
 const defaults = {
   showDebugToggle: false,
+  debugExecutionLogs: false,
   typingDotsEnabled: true,
   allowRichIframeScripts: false,
   creativeHistoryMax: 3,
@@ -20,6 +21,7 @@ const defaults = {
   scriptEnabled: false,
   scriptAllowModifyVariables: true,
   scriptAllowReadMessages: true,
+  scriptAllowNetwork: false,
   memoryStorageMode: 'table',
   memoryAutoExtract: true,
   memoryAutoExtractMode: 'inline',

@@ -2,7 +2,7 @@ import { LLMClient } from '../api/client.js';
 import { extractTableEditBlocks, stripTableEditBlocks } from '../memory/memory-edit-parser.js';
 import { isSummaryTableId, normalizeMemoryUpdateMode } from '../memory/memory-prompt-utils.js';
 import { appSettings } from '../storage/app-settings.js';
-import { renderTemplateText, templateSettings } from '../plugins/template-engine.js';
+import { renderTemplateTextAsync, templateSettings } from '../plugins/template-engine.js';
 import { ScriptRuntime } from '../plugins/script-runtime.js';
 import { ChatStore } from '../storage/chat-store.js';
 import { ConfigManager } from '../storage/config.js';
@@ -8863,6 +8863,50 @@ Phase G（Frame 36）：循环衔接
     return { show, hide };
   })();
 
+  const showPromptPreview = () => {
+    try {
+      const sid = chatStore.getCurrent();
+      const contact = contactsStore.getContact(sid);
+      const name = contact?.name || sid;
+      const req = window.appBridge?.lastRequest;
+      const msgs = Array.isArray(req?.messages) ? req.messages : null;
+      if (!msgs || !msgs.length) {
+        window.toastr?.warning?.('暂无本次 Prompt 记录（请先发送一次）');
+        return;
+      }
+      const at = req?.at ? new Date(req.at).toLocaleString() : '';
+      const head = [
+        `provider: ${req?.provider || ''}`,
+        `model: ${req?.model || ''}`,
+        `baseUrl: ${req?.baseUrl || ''}`,
+        `stream: ${req?.stream ? 'true' : 'false'}`,
+        req?.options
+          ? `options: ${Object.entries(req.options)
+              .filter(([_, v]) => v !== undefined)
+              .map(([k, v]) => `${k}=${v}`)
+              .join(', ')}`
+          : '',
+      ]
+        .filter(Boolean)
+        .join('\n');
+      const body =
+        typeof buildRequestPromptText === 'function'
+          ? buildRequestPromptText(msgs)
+          : msgs
+              .map(m => String(m?.content ?? ''))
+              .filter(t => t.trim().length > 0)
+              .join('\n\n');
+      const meta = `${name}${at ? ` · ${at}` : ''}`;
+      promptPreviewModal.show(`${head}\n\n${body}`.trim(), meta);
+    } catch (err) {
+      logger.warn('prompt preview failed', err);
+      window.toastr?.error?.('打开本次 Prompt 失败');
+    }
+  };
+  if (window.appBridge) {
+    window.appBridge.showPromptPreview = showPromptPreview;
+  }
+
   /* ---------------- 头像设置菜单 ---------------- */
   const settingsMenu = document.getElementById('settings-menu');
   const quickMenu = document.getElementById('quick-menu');
@@ -9042,45 +9086,7 @@ Phase G（Frame 36）：循环衔接
         if (action === 'vars') variablePanel.show();
         if (action === 'chat-settings') openChatSettings();
         if (action === 'prompt-preview') {
-          try {
-            const sid = chatStore.getCurrent();
-            const contact = contactsStore.getContact(sid);
-            const name = contact?.name || sid;
-            const req = window.appBridge?.lastRequest;
-            const msgs = Array.isArray(req?.messages) ? req.messages : null;
-            if (!msgs || !msgs.length) {
-              window.toastr?.warning?.('暂无本次 Prompt 记录（请先发送一次）');
-            } else {
-              const at = req?.at ? new Date(req.at).toLocaleString() : '';
-              const head = [
-                `provider: ${req?.provider || ''}`,
-                `model: ${req?.model || ''}`,
-                `baseUrl: ${req?.baseUrl || ''}`,
-                `stream: ${req?.stream ? 'true' : 'false'}`,
-                req?.options
-                  ? `options: ${Object.entries(req.options)
-                      .filter(([_, v]) => v !== undefined)
-                      .map(([k, v]) => `${k}=${v}`)
-                      .join(', ')}`
-                  : '',
-              ]
-                .filter(Boolean)
-                .join('\n');
-              // Display only: show prompt text content for easier reading (no JSON, no numbering).
-              const body =
-                typeof buildRequestPromptText === 'function'
-                  ? buildRequestPromptText(msgs)
-                  : msgs
-                      .map(m => String(m?.content ?? ''))
-                      .filter(t => t.trim().length > 0)
-                      .join('\n\n');
-              const meta = `${name}${at ? ` · ${at}` : ''}`;
-              promptPreviewModal.show(`${head}\n\n${body}`.trim(), meta);
-            }
-          } catch (err) {
-            logger.warn('prompt preview failed', err);
-            window.toastr?.error?.('打开本次 Prompt 失败');
-          }
+          showPromptPreview();
         }
         if (action === 'raw-reply') {
           const sid = chatStore.getCurrent();
@@ -11942,7 +11948,7 @@ Phase G（Frame 36）：循环衔接
         memoryUpdateRunning.delete(sessionId);
       }
     };
-    const buildAssistantMessageFromText = (rawText, { sessionId, time, name, avatar, showName, depth } = {}) => {
+    const buildAssistantMessageFromText = async (rawText, { sessionId, time, name, avatar, showName, depth } = {}) => {
       const sessionKey = String(sessionId || '').trim();
       let displayText = String(rawText ?? '');
       let templateVars = null;
@@ -11971,7 +11977,7 @@ Phase G（Frame 36）：循环衔接
           logger.warn('template render injection failed', err);
         }
         try {
-          const res = renderTemplateText(displayText, {
+          const res = await renderTemplateTextAsync(displayText, {
             stage: 'render',
             chatStore,
             sessionId: sessionKey,
@@ -12612,7 +12618,7 @@ Phase G（Frame 36）：循环衔接
                   continue;
                 }
                 summarySessionIds.add(targetGroupId);
-                (ev.messages || []).forEach(m => {
+                for (const m of (ev.messages || [])) {
                   const speaker = normalizeName(m?.speaker);
                   const content = String(m?.content || '').replace(/<br\s*\/?>/gi, '\n');
                   if (isSystemSpeaker(speaker)) {
@@ -12627,15 +12633,15 @@ Phase G（Frame 36）：循环衔接
                     const saved = chatStore.appendMessage(parsed, targetGroupId);
                     emitPluginAfterReceive(saved, targetGroupId);
                     maybeApplyGroupSystemOps(parsed.content, targetGroupId);
-                    return;
+                    continue;
                   }
                   const isMe = isUserSpeakerName(speaker);
-                  if (isMe && userEchoGuard.shouldDrop(content, speaker)) return;
+                  if (isMe && userEchoGuard.shouldDrop(content, speaker)) continue;
                   const role = isMe ? 'user' : 'assistant';
                   const c = isMe ? null : resolveContactByDisplayName(speaker);
                   const parsed =
                     role === 'assistant'
-                      ? buildAssistantMessageFromText(content, {
+                      ? await buildAssistantMessageFromText(content, {
                           sessionId: targetGroupId,
                           time: m?.time || formatNowTime(),
                           name: speaker || '成员',
@@ -12648,7 +12654,7 @@ Phase G（Frame 36）：循环衔接
                   const saved = chatStore.appendMessage(parsed, targetGroupId);
                   if (role === 'assistant') autoMarkReadIfActive(targetGroupId, saved?.id || parsed?.id || '');
                   emitPluginAfterReceive(saved, targetGroupId);
-                });
+                }
                 didAnything = true;
                 refreshChatAndContacts();
                 if (isSessionActive(sessionId)) ui.showTyping(assistantAvatar);
@@ -12665,14 +12671,14 @@ Phase G（Frame 36）：循环衔接
               }
               summarySessionIds.add(targetSessionId);
 
-              ev.messages.forEach(msgText => {
+              for (const msgText of (ev.messages || [])) {
                 const { speaker, content, time } = normalizeDialogueMessage(msgText);
-                if (!content) return;
-                if (userEchoGuard.shouldDrop(content, speaker)) return;
+                if (!content) continue;
+                if (userEchoGuard.shouldDrop(content, speaker)) continue;
                 const isMe = isUserSpeakerName(speaker);
                 const parsed = isMe
                   ? buildUserMessageFromAI(content, time || formatNowTime())
-                  : buildAssistantMessageFromText(content, {
+                  : await buildAssistantMessageFromText(content, {
                       sessionId: targetSessionId,
                       time: time || formatNowTime(),
                       depth: 0,
@@ -12683,7 +12689,7 @@ Phase G（Frame 36）：循环衔接
                 const saved = chatStore.appendMessage(parsed, targetSessionId);
                 if (!isMe) autoMarkReadIfActive(targetSessionId, saved?.id || parsed?.id || '');
                 emitPluginAfterReceive(saved, targetSessionId);
-              });
+              }
               didAnything = true;
               refreshChatAndContacts();
 
@@ -12720,7 +12726,7 @@ Phase G（Frame 36）：循环衔接
               if (retryText && retryText !== fullRaw) {
                 const retryParser = createDialogueParser();
                 const retryEvents = retryParser.push(retryText);
-                retryEvents.forEach(ev => {
+                for (const ev of retryEvents) {
                   if (ev?.type === 'moments') {
                     try {
                       momentsStore.addMany(ingestMoments(ev.moments || []));
@@ -12728,24 +12734,24 @@ Phase G（Frame 36）：循环衔接
                       didAnything = true;
                       if (activePage === 'moments') momentsPanel.render();
                     } catch {}
-                    return;
+                    continue;
                   }
                   if (ev?.type === 'moment_reply') {
                     try {
                       const mid = String(ev.momentId || '').trim();
-                      if (!mid) return;
+                      if (!mid) continue;
                       momentsStore.addComments(mid, ev.comments || []);
                       mutatedMoments = true;
                       didAnything = true;
                       if (activePage === 'moments') momentsPanel.render();
                     } catch {}
-                    return;
+                    continue;
                   }
                   if (ev?.type === 'group_chat') {
                     const targetGroupId = resolveGroupChatTargetSessionId(ev.groupName);
-                    if (!targetGroupId) return;
+                    if (!targetGroupId) continue;
                     summarySessionIds.add(targetGroupId);
-                    (ev.messages || []).forEach(m => {
+                    for (const m of (ev.messages || [])) {
                       const speaker = normalizeName(m?.speaker);
                       const content = String(m?.content || '').replace(/<br\s*\/?>/gi, '\n');
                       if (isSystemSpeaker(speaker)) {
@@ -12760,15 +12766,15 @@ Phase G（Frame 36）：循环衔接
                         const saved = chatStore.appendMessage(parsed, targetGroupId);
                         emitPluginAfterReceive(saved, targetGroupId);
                         maybeApplyGroupSystemOps(parsed.content, targetGroupId);
-                        return;
+                        continue;
                       }
                       const isMe = isUserSpeakerName(speaker);
-                      if (isMe && userEchoGuard.shouldDrop(content, speaker)) return;
+                      if (isMe && userEchoGuard.shouldDrop(content, speaker)) continue;
                       const role = isMe ? 'user' : 'assistant';
                       const c = isMe ? null : resolveContactByDisplayName(speaker);
                       const parsed =
                         role === 'assistant'
-                          ? buildAssistantMessageFromText(content, {
+                          ? await buildAssistantMessageFromText(content, {
                               sessionId: targetGroupId,
                               time: m?.time || formatNowTime(),
                               name: speaker || '成员',
@@ -12781,23 +12787,23 @@ Phase G（Frame 36）：循环衔接
                       const saved = chatStore.appendMessage(parsed, targetGroupId);
                       if (role === 'assistant') autoMarkReadIfActive(targetGroupId, saved?.id || parsed?.id || '');
                       emitPluginAfterReceive(saved, targetGroupId);
-                    });
+                    }
                     didAnything = true;
                     refreshChatAndContacts();
-                    return;
+                    continue;
                   }
                   if (ev?.type === 'private_chat') {
                     const targetSessionId = resolvePrivateChatTargetSessionId(ev.otherName || characterName);
-                    if (!targetSessionId) return;
+                    if (!targetSessionId) continue;
                     summarySessionIds.add(targetSessionId);
-                    (ev.messages || []).forEach(msgText => {
+                    for (const msgText of (ev.messages || [])) {
                       const { speaker, content, time } = normalizeDialogueMessage(msgText);
-                      if (!content) return;
-                      if (userEchoGuard.shouldDrop(content, speaker)) return;
+                      if (!content) continue;
+                      if (userEchoGuard.shouldDrop(content, speaker)) continue;
                       const isMe = isUserSpeakerName(speaker);
                       const parsed = isMe
                         ? buildUserMessageFromAI(content, time || formatNowTime())
-                        : buildAssistantMessageFromText(content, {
+                        : await buildAssistantMessageFromText(content, {
                             sessionId: targetSessionId,
                             time: time || formatNowTime(),
                             depth: 0,
@@ -12806,11 +12812,11 @@ Phase G（Frame 36）：循环衔接
                       const saved = chatStore.appendMessage(parsed, targetSessionId);
                       if (!isMe) autoMarkReadIfActive(targetSessionId, saved?.id || parsed?.id || '');
                       emitPluginAfterReceive(saved, targetSessionId);
-                    });
+                    }
                     didAnything = true;
                     refreshChatAndContacts();
                   }
-                });
+                }
                 if (mutatedMoments) {
                   try {
                     await momentsStore.flush();
@@ -12827,7 +12833,7 @@ Phase G（Frame 36）：循环衔接
                 if (miPhoneBlock) {
                   const retryParser = createDialogueParser();
                   const retryEvents = retryParser.push(miPhoneBlock);
-                  retryEvents.forEach(ev => {
+                  for (const ev of retryEvents) {
                     if (ev?.type === 'moments') {
                       try {
                         momentsStore.addMany(ingestMoments(ev.moments || []));
@@ -12835,24 +12841,24 @@ Phase G（Frame 36）：循环衔接
                         didAnything = true;
                         if (activePage === 'moments') momentsPanel.render();
                       } catch {}
-                      return;
+                      continue;
                     }
                     if (ev?.type === 'moment_reply') {
                       try {
                         const mid = String(ev.momentId || '').trim();
-                        if (!mid) return;
+                        if (!mid) continue;
                         momentsStore.addComments(mid, ev.comments || []);
                         mutatedMoments = true;
                         didAnything = true;
                         if (activePage === 'moments') momentsPanel.render();
                       } catch {}
-                      return;
+                      continue;
                     }
                     if (ev?.type === 'group_chat') {
                       const targetGroupId = resolveGroupChatTargetSessionId(ev.groupName);
-                      if (!targetGroupId) return;
+                      if (!targetGroupId) continue;
                       summarySessionIds.add(targetGroupId);
-                      (ev.messages || []).forEach(m => {
+                      for (const m of (ev.messages || [])) {
                         const speaker = normalizeName(m?.speaker);
                         const content = String(m?.content || '').replace(/<br\s*\/?>/gi, '\n');
                         if (isSystemSpeaker(speaker)) {
@@ -12867,15 +12873,15 @@ Phase G（Frame 36）：循环衔接
                           const saved = chatStore.appendMessage(parsed, targetGroupId);
                           emitPluginAfterReceive(saved, targetGroupId);
                           maybeApplyGroupSystemOps(parsed.content, targetGroupId);
-                          return;
+                          continue;
                         }
                         const isMe = isUserSpeakerName(speaker);
-                        if (isMe && userEchoGuard.shouldDrop(content, speaker)) return;
+                        if (isMe && userEchoGuard.shouldDrop(content, speaker)) continue;
                         const role = isMe ? 'user' : 'assistant';
                         const c = isMe ? null : resolveContactByDisplayName(speaker);
                         const parsed =
                           role === 'assistant'
-                            ? buildAssistantMessageFromText(content, {
+                            ? await buildAssistantMessageFromText(content, {
                                 sessionId: targetGroupId,
                                 time: m?.time || formatNowTime(),
                                 name: speaker || '成员',
@@ -12888,23 +12894,23 @@ Phase G（Frame 36）：循环衔接
                         const saved = chatStore.appendMessage(parsed, targetGroupId);
                         if (role === 'assistant') autoMarkReadIfActive(targetGroupId, saved?.id || parsed?.id || '');
                         emitPluginAfterReceive(saved, targetGroupId);
-                      });
+                      }
                       didAnything = true;
                       refreshChatAndContacts();
-                      return;
+                      continue;
                     }
                     if (ev?.type === 'private_chat') {
                       const targetSessionId = resolvePrivateChatTargetSessionId(ev.otherName || characterName);
-                      if (!targetSessionId) return;
+                      if (!targetSessionId) continue;
                       summarySessionIds.add(targetSessionId);
-                      (ev.messages || []).forEach(msgText => {
+                      for (const msgText of (ev.messages || [])) {
                         const { speaker, content, time } = normalizeDialogueMessage(msgText);
-                        if (!content) return;
-                        if (userEchoGuard.shouldDrop(content, speaker)) return;
+                        if (!content) continue;
+                        if (userEchoGuard.shouldDrop(content, speaker)) continue;
                         const isMe = isUserSpeakerName(speaker);
                         const parsed = isMe
                           ? buildUserMessageFromAI(content, time || formatNowTime())
-                          : buildAssistantMessageFromText(content, {
+                          : await buildAssistantMessageFromText(content, {
                               sessionId: targetSessionId,
                               time: time || formatNowTime(),
                               depth: 0,
@@ -12913,11 +12919,11 @@ Phase G（Frame 36）：循环衔接
                         const saved = chatStore.appendMessage(parsed, targetSessionId);
                         if (!isMe) autoMarkReadIfActive(targetSessionId, saved?.id || parsed?.id || '');
                         emitPluginAfterReceive(saved, targetSessionId);
-                      });
+                      }
                       didAnything = true;
                       refreshChatAndContacts();
                     }
-                  });
+                  }
                   if (mutatedMoments) {
                     try {
                       await momentsStore.flush();
@@ -13084,29 +13090,29 @@ Phase G（Frame 36）：循环衔接
           let didAnything = false;
           let mutatedMoments = false;
           handleMemoryEditsFromRaw(resultRaw, { sessionId, isGroup: isGroupChat }).catch(() => {});
-          events.forEach(ev => {
+          for (const ev of events) {
             if (ev?.type === 'moments') {
               momentsStore.addMany(ingestMoments(ev.moments || []));
               didAnything = true;
               mutatedMoments = true;
-              return;
+              continue;
             }
             if (ev?.type === 'moment_reply') {
               const mid = String(ev.momentId || '').trim();
-              if (!mid) return;
+              if (!mid) continue;
               momentsStore.addComments(mid, ev.comments || []);
               didAnything = true;
               mutatedMoments = true;
-              return;
+              continue;
             }
             if (ev?.type === 'group_chat') {
               const targetGroupId = resolveGroupChatTargetSessionId(ev.groupName);
               if (!targetGroupId) {
                 window.toastr?.warning?.('对话回复格式错误：群聊标签未匹配任何已存在群组，已丢弃');
-                return;
+                continue;
               }
               summarySessionIds.add(targetGroupId);
-              (ev.messages || []).forEach(m => {
+              for (const m of (ev.messages || [])) {
                 const speaker = normalizeName(m?.speaker);
                 const content = String(m?.content || '').replace(/<br\s*\/?>/gi, '\n');
                 if (isSystemSpeaker(speaker)) {
@@ -13122,15 +13128,15 @@ Phase G（Frame 36）：循环衔接
                   emitPluginAfterReceive(saved, targetGroupId);
                   maybeApplyGroupSystemOps(parsed.content, targetGroupId);
                   didAnything = true;
-                  return;
+                  continue;
                 }
                 const isMe = isUserSpeakerName(speaker);
-                if (isMe && userEchoGuard.shouldDrop(content, speaker)) return;
+                if (isMe && userEchoGuard.shouldDrop(content, speaker)) continue;
                 const role = isMe ? 'user' : 'assistant';
                 const c = isMe ? null : resolveContactByDisplayName(speaker);
                 const parsed =
                   role === 'assistant'
-                    ? buildAssistantMessageFromText(content, {
+                    ? await buildAssistantMessageFromText(content, {
                         sessionId: targetGroupId,
                         time: m?.time || formatNowTime(),
                         name: speaker || '成员',
@@ -13144,24 +13150,24 @@ Phase G（Frame 36）：循环衔接
                 if (role === 'assistant') autoMarkReadIfActive(targetGroupId, saved?.id || parsed?.id || '');
                 emitPluginAfterReceive(saved, targetGroupId);
                 didAnything = true;
-              });
-              return;
+              }
+              continue;
             }
             if (ev?.type === 'private_chat') {
               const targetSessionId = resolvePrivateChatTargetSessionId(ev.otherName || characterName);
               if (!targetSessionId) {
                 window.toastr?.warning?.('对话回复格式错误：私聊标签未匹配当前联系人，已丢弃');
-                return;
+                continue;
               }
               summarySessionIds.add(targetSessionId);
-              (ev.messages || []).forEach(msgText => {
+              for (const msgText of (ev.messages || [])) {
                 const { speaker, content, time } = normalizeDialogueMessage(msgText);
-                if (!content) return;
-                if (userEchoGuard.shouldDrop(content, speaker)) return;
+                if (!content) continue;
+                if (userEchoGuard.shouldDrop(content, speaker)) continue;
                 const isMe = isUserSpeakerName(speaker);
                 const parsed = isMe
                   ? buildUserMessageFromAI(content, time || formatNowTime())
-                  : buildAssistantMessageFromText(content, {
+                  : await buildAssistantMessageFromText(content, {
                       sessionId: targetSessionId,
                       time: time || formatNowTime(),
                       depth: 0,
@@ -13171,9 +13177,9 @@ Phase G（Frame 36）：循环衔接
                 if (!isMe) autoMarkReadIfActive(targetSessionId, saved?.id || parsed?.id || '');
                 emitPluginAfterReceive(saved, targetSessionId);
                 didAnything = true;
-              });
+              }
             }
-          });
+          }
           if (didAnything) {
             if (protocolSummary) {
               try {
@@ -13198,26 +13204,26 @@ Phase G（Frame 36）：循环衔接
             if (retryText && retryText !== resultRaw) {
               const retryParser = createDialogueParser();
               const retryEvents = retryParser.push(retryText);
-              retryEvents.forEach(ev => {
+              for (const ev of retryEvents) {
                 if (ev?.type === 'moments') {
                   momentsStore.addMany(ingestMoments(ev.moments || []));
                   didAnything = true;
                   mutatedMoments = true;
-                  return;
+                  continue;
                 }
                 if (ev?.type === 'moment_reply') {
                   const mid = String(ev.momentId || '').trim();
-                  if (!mid) return;
+                  if (!mid) continue;
                   momentsStore.addComments(mid, ev.comments || []);
                   didAnything = true;
                   mutatedMoments = true;
-                  return;
+                  continue;
                 }
                 if (ev?.type === 'group_chat') {
                   const targetGroupId = resolveGroupChatTargetSessionId(ev.groupName);
-                  if (!targetGroupId) return;
+                  if (!targetGroupId) continue;
                   summarySessionIds.add(targetGroupId);
-                  (ev.messages || []).forEach(m => {
+                  for (const m of (ev.messages || [])) {
                     const speaker = normalizeName(m?.speaker);
                     const content = String(m?.content || '').replace(/<br\s*\/?>/gi, '\n');
                     if (isSystemSpeaker(speaker)) {
@@ -13233,15 +13239,15 @@ Phase G（Frame 36）：循环衔接
                       emitPluginAfterReceive(saved, targetGroupId);
                       maybeApplyGroupSystemOps(parsed.content, targetGroupId);
                       didAnything = true;
-                      return;
+                      continue;
                     }
                     const isMe = isUserSpeakerName(speaker);
-                    if (isMe && userEchoGuard.shouldDrop(content, speaker)) return;
+                    if (isMe && userEchoGuard.shouldDrop(content, speaker)) continue;
                     const role = isMe ? 'user' : 'assistant';
                     const c = isMe ? null : resolveContactByDisplayName(speaker);
                     const parsed =
                       role === 'assistant'
-                        ? buildAssistantMessageFromText(content, {
+                        ? await buildAssistantMessageFromText(content, {
                             sessionId: targetGroupId,
                             time: m?.time || formatNowTime(),
                             name: speaker || '成员',
@@ -13255,21 +13261,21 @@ Phase G（Frame 36）：循环衔接
                     if (role === 'assistant') autoMarkReadIfActive(targetGroupId, saved?.id || parsed?.id || '');
                     emitPluginAfterReceive(saved, targetGroupId);
                     didAnything = true;
-                  });
-                  return;
+                  }
+                  continue;
                 }
                 if (ev?.type === 'private_chat') {
                   const targetSessionId = resolvePrivateChatTargetSessionId(ev.otherName || characterName);
-                  if (!targetSessionId) return;
+                  if (!targetSessionId) continue;
                   summarySessionIds.add(targetSessionId);
-                  (ev.messages || []).forEach(msgText => {
+                  for (const msgText of (ev.messages || [])) {
                     const { speaker, content, time } = normalizeDialogueMessage(msgText);
-                    if (!content) return;
-                    if (userEchoGuard.shouldDrop(content, speaker)) return;
+                    if (!content) continue;
+                    if (userEchoGuard.shouldDrop(content, speaker)) continue;
                     const isMe = isUserSpeakerName(speaker);
                     const parsed = isMe
                       ? buildUserMessageFromAI(content, time || formatNowTime())
-                      : buildAssistantMessageFromText(content, {
+                      : await buildAssistantMessageFromText(content, {
                           sessionId: targetSessionId,
                           time: time || formatNowTime(),
                           depth: 0,
@@ -13279,9 +13285,9 @@ Phase G（Frame 36）：循环衔接
                     if (!isMe) autoMarkReadIfActive(targetSessionId, saved?.id || parsed?.id || '');
                     emitPluginAfterReceive(saved, targetSessionId);
                     didAnything = true;
-                  });
+                  }
                 }
-              });
+              }
             }
           } catch {}
           if (!didAnything) {
@@ -13292,26 +13298,26 @@ Phase G（Frame 36）：循环衔接
               if (miPhoneBlock) {
                 const retryParser = createDialogueParser();
                 const retryEvents = retryParser.push(miPhoneBlock);
-                retryEvents.forEach(ev => {
+                for (const ev of retryEvents) {
                   if (ev?.type === 'moments') {
                     momentsStore.addMany(ingestMoments(ev.moments || []));
                     didAnything = true;
                     mutatedMoments = true;
-                    return;
+                    continue;
                   }
                   if (ev?.type === 'moment_reply') {
                     const mid = String(ev.momentId || '').trim();
-                    if (!mid) return;
+                    if (!mid) continue;
                     momentsStore.addComments(mid, ev.comments || []);
                     didAnything = true;
                     mutatedMoments = true;
-                    return;
+                    continue;
                   }
                   if (ev?.type === 'group_chat') {
                     const targetGroupId = resolveGroupChatTargetSessionId(ev.groupName);
-                    if (!targetGroupId) return;
+                    if (!targetGroupId) continue;
                     summarySessionIds.add(targetGroupId);
-                    (ev.messages || []).forEach(m => {
+                    for (const m of (ev.messages || [])) {
                       const speaker = normalizeName(m?.speaker);
                       const content = String(m?.content || '').replace(/<br\s*\/?>/gi, '\n');
                       if (isSystemSpeaker(speaker)) {
@@ -13327,15 +13333,15 @@ Phase G（Frame 36）：循环衔接
                         emitPluginAfterReceive(saved, targetGroupId);
                         maybeApplyGroupSystemOps(parsed.content, targetGroupId);
                         didAnything = true;
-                        return;
+                        continue;
                       }
                       const isMe = isUserSpeakerName(speaker);
-                      if (isMe && userEchoGuard.shouldDrop(content, speaker)) return;
+                      if (isMe && userEchoGuard.shouldDrop(content, speaker)) continue;
                       const role = isMe ? 'user' : 'assistant';
                       const c = isMe ? null : resolveContactByDisplayName(speaker);
                       const parsed =
                         role === 'assistant'
-                          ? buildAssistantMessageFromText(content, {
+                          ? await buildAssistantMessageFromText(content, {
                               sessionId: targetGroupId,
                               time: m?.time || formatNowTime(),
                               name: speaker || '成员',
@@ -13349,21 +13355,21 @@ Phase G（Frame 36）：循环衔接
                       if (role === 'assistant') autoMarkReadIfActive(targetGroupId, saved?.id || parsed?.id || '');
                       emitPluginAfterReceive(saved, targetGroupId);
                       didAnything = true;
-                    });
-                    return;
+                    }
+                    continue;
                   }
                   if (ev?.type === 'private_chat') {
                     const targetSessionId = resolvePrivateChatTargetSessionId(ev.otherName || characterName);
-                    if (!targetSessionId) return;
+                    if (!targetSessionId) continue;
                     summarySessionIds.add(targetSessionId);
-                    (ev.messages || []).forEach(msgText => {
+                    for (const msgText of (ev.messages || [])) {
                       const { speaker, content, time } = normalizeDialogueMessage(msgText);
-                      if (!content) return;
-                      if (userEchoGuard.shouldDrop(content, speaker)) return;
+                      if (!content) continue;
+                      if (userEchoGuard.shouldDrop(content, speaker)) continue;
                       const isMe = isUserSpeakerName(speaker);
                       const parsed = isMe
                         ? buildUserMessageFromAI(content, time || formatNowTime())
-                        : buildAssistantMessageFromText(content, {
+                        : await buildAssistantMessageFromText(content, {
                             sessionId: targetSessionId,
                             time: time || formatNowTime(),
                             depth: 0,
@@ -13373,9 +13379,9 @@ Phase G（Frame 36）：循环衔接
                     if (!isMe) autoMarkReadIfActive(targetSessionId, saved?.id || parsed?.id || '');
                     emitPluginAfterReceive(saved, targetSessionId);
                     didAnything = true;
-                  });
                   }
-                });
+                  }
+                }
               }
             } catch {}
           }
