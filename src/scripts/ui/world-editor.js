@@ -344,6 +344,17 @@ export class WorldEditorModal {
         this.refSyncDelay = 900;
         this.refSyncInFlight = false;
         this.refSyncPending = false;
+        this.entrySearchTerm = '';
+        this.entryPageSize = 5;
+        this.entryPageIndex = 0;
+        this.entrySearchEl = null;
+        this.entryPageSizeEl = null;
+        this.entryPagePrevBtn = null;
+        this.entryPageNextBtn = null;
+        this.entryPageIndicatorEl = null;
+        this.entryDotsEl = null;
+        this.entryPageScrollLock = false;
+        this.entryTotalPages = 1;
     }
 
     async show(name, data) {
@@ -373,10 +384,14 @@ export class WorldEditorModal {
         }
         this.batchMode = false;
         this.selectedEntries.clear();
+        this.entrySearchTerm = '';
+        this.entryPageIndex = 0;
         this.updateBatchBar();
         if (this.nameInputEl) {
-            this.nameInputEl.value = (this.refMode ? (this.data?.name || name) : name) || '';
+            const displayName = String(this.data?.name || name || '').trim();
+            this.nameInputEl.value = displayName || '';
         }
+        if (this.entrySearchEl) this.entrySearchEl.value = '';
         this.currentIndex = 0;
         this.renderList();
         this.selectEntry(0);
@@ -476,8 +491,22 @@ export class WorldEditorModal {
                 <div class="world-entries-column">
                     <div class="world-entries-toolbar">
                         <button id="world-entry-add">＋ 新条目</button>
+                        <div class="world-entries-search">
+                            <input id="world-entry-search" type="search" placeholder="搜索条目">
+                        </div>
+                        <div class="world-entries-pager">
+                            <span class="world-entries-pager-label">每页</span>
+                            <input id="world-entry-page-size" type="number" min="1" max="200" step="1" list="world-entry-page-sizes" value="5">
+                            <datalist id="world-entry-page-sizes">
+                                <option value="5"></option>
+                                <option value="10"></option>
+                                <option value="50"></option>
+                                <option value="100"></option>
+                            </datalist>
+                        </div>
                     </div>
                     <ul id="world-entries-list" class="world-entries-list"></ul>
+                    <div id="world-entry-dots" class="world-entries-dots"></div>
                 </div>
                 <div id="world-entry-editor" class="world-entry-editor"></div>
             </div>
@@ -490,12 +519,47 @@ export class WorldEditorModal {
         this.addBtn = this.modal.querySelector('#world-entry-add');
         this.exportBtn = this.modal.querySelector('#world-editor-export');
         this.manageBtn = this.modal.querySelector('#world-editor-manage');
+        this.entrySearchEl = this.modal.querySelector('#world-entry-search');
+        this.entryPageSizeEl = this.modal.querySelector('#world-entry-page-size');
+        this.entryPagePrevBtn = this.modal.querySelector('#world-entry-page-prev');
+        this.entryPageNextBtn = this.modal.querySelector('#world-entry-page-next');
+        this.entryPageIndicatorEl = this.modal.querySelector('#world-entry-page-indicator');
+        this.entryDotsEl = this.modal.querySelector('#world-entry-dots');
 
         this.modal.querySelector('#world-editor-close').onclick = () => this.hide();
         this.saveBtn.onclick = () => this.saveWorld();
         if (this.exportBtn) this.exportBtn.onclick = () => this.exportWorld();
         this.addBtn.onclick = () => this.addEntry();
         if (this.manageBtn) this.manageBtn.onclick = () => this.showManageModal();
+        if (this.entrySearchEl) {
+            this.entrySearchEl.addEventListener('input', () => {
+                this.entrySearchTerm = String(this.entrySearchEl.value || '');
+                this.entryPageIndex = 0;
+                this.renderList();
+            });
+        }
+        if (this.entryPageSizeEl) {
+            this.entryPageSizeEl.addEventListener('input', () => {
+                const raw = Number(this.entryPageSizeEl.value);
+                if (!Number.isFinite(raw)) return;
+                const next = Math.max(1, Math.min(200, Math.trunc(raw)));
+                this.entryPageSize = next;
+                this.entryPageSizeEl.value = String(next);
+                this.entryPageIndex = 0;
+                this.renderList();
+            });
+        }
+        if (this.entriesListEl) {
+            this.entriesListEl.addEventListener('scroll', () => {
+                if (this.entryPageScrollLock) return;
+                const width = this.entriesListEl.clientWidth || 1;
+                const idx = Math.round(this.entriesListEl.scrollLeft / width);
+                if (idx !== this.entryPageIndex) {
+                    this.entryPageIndex = idx;
+                    this.updateEntryPageIndicator();
+                }
+            });
+        }
 
         document.body.appendChild(this.overlay);
         document.body.appendChild(this.modal);
@@ -1161,12 +1225,25 @@ export class WorldEditorModal {
         if (!this.entriesListEl) return;
         this.updateBatchBar();
         this.entriesListEl.innerHTML = '';
-        this.data.entries.forEach((entry, i) => {
+        const searchTerm = this.getEntrySearchTerm();
+        const filtered = this.getFilteredEntries(searchTerm);
+
+        const rawSize = Number(this.entryPageSize);
+        const pageSize = Math.max(1, Math.min(200, Number.isFinite(rawSize) ? Math.trunc(rawSize) : 5));
+        this.entryPageSize = pageSize;
+        if (this.entryPageSizeEl) this.entryPageSizeEl.value = String(pageSize);
+
+        const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+        this.entryTotalPages = totalPages;
+
+        this.entryPageIndex = Math.min(Math.max(0, this.entryPageIndex), totalPages - 1);
+
+        const buildEntryItem = (entry, i) => {
             const entryId = this.getEntryId(entry, i);
             const isSelected = this.selectedEntries.has(entryId);
-            const li = document.createElement('li');
-            li.className = `world-entry-item ${i === this.currentIndex ? 'active' : ''}`;
-            if (this.batchMode && isSelected) li.classList.add('is-selected');
+            const item = document.createElement('div');
+            item.className = `world-entry-item ${i === this.currentIndex ? 'active' : ''}`;
+            if (this.batchMode && isSelected) item.classList.add('is-selected');
 
             const lights = document.createElement('div');
             lights.className = 'world-entry-lights';
@@ -1203,17 +1280,118 @@ export class WorldEditorModal {
                     event.stopPropagation();
                     this.toggleEntrySelection(entryId);
                 });
-                li.appendChild(checkbox);
+                item.appendChild(checkbox);
             }
-            li.appendChild(lights);
-            li.appendChild(main);
-            li.onclick = () => this.selectEntry(i);
-            this.entriesListEl.appendChild(li);
-        });
+            item.appendChild(lights);
+            item.appendChild(main);
+            item.onclick = () => this.selectEntry(i);
+            return item;
+        };
+
+        if (!filtered.length) {
+            const pageEl = document.createElement('li');
+            pageEl.className = 'world-entry-page';
+            const list = document.createElement('div');
+            list.className = 'world-entry-page-list';
+            const empty = document.createElement('div');
+            empty.className = 'world-entry-empty';
+            empty.textContent = searchTerm ? '没有匹配的条目' : '（无条目）';
+            list.appendChild(empty);
+            pageEl.appendChild(list);
+            this.entriesListEl.appendChild(pageEl);
+            this.updateEntryPageIndicator();
+            requestAnimationFrame(() => this.scrollEntryListToPage());
+            return;
+        }
+
+        for (let page = 0; page < totalPages; page += 1) {
+            const pageEl = document.createElement('li');
+            pageEl.className = 'world-entry-page';
+            const list = document.createElement('div');
+            list.className = 'world-entry-page-list';
+            const start = page * pageSize;
+            const end = Math.min(start + pageSize, filtered.length);
+            for (let idx = start; idx < end; idx += 1) {
+                const { entry, idx: originalIndex } = filtered[idx];
+                list.appendChild(buildEntryItem(entry, originalIndex));
+            }
+            pageEl.appendChild(list);
+            this.entriesListEl.appendChild(pageEl);
+        }
+        this.updateEntryPageIndicator();
+        requestAnimationFrame(() => this.scrollEntryListToPage());
+    }
+
+    getEntrySearchTerm() {
+        return String(this.entrySearchTerm || '').trim().toLowerCase();
+    }
+
+    getFilteredEntries(searchTerm = this.getEntrySearchTerm()) {
+        return this.data.entries
+            .map((entry, idx) => ({ entry, idx }))
+            .filter(({ entry }) => {
+                if (!searchTerm) return true;
+                const parts = [];
+                if (entry?.comment) parts.push(entry.comment);
+                if (entry?.content) parts.push(entry.content);
+                if (Array.isArray(entry?.key)) parts.push(entry.key.join(' '));
+                if (!Array.isArray(entry?.key) && entry?.key) parts.push(entry.key);
+                if (Array.isArray(entry?.keysecondary)) parts.push(entry.keysecondary.join(' '));
+                if (!Array.isArray(entry?.keysecondary) && entry?.keysecondary) parts.push(entry.keysecondary);
+                if (entry?.id) parts.push(entry.id);
+                const haystack = parts.join(' ').toLowerCase();
+                return haystack.includes(searchTerm);
+            });
+    }
+
+    updateEntryPageIndicator() {
+        const total = Math.max(1, this.entryTotalPages || 1);
+        const current = Math.min(Math.max(0, this.entryPageIndex), total - 1);
+        if (this.entryPageIndicatorEl) this.entryPageIndicatorEl.textContent = `${current + 1}/${total}`;
+        if (this.entryPagePrevBtn) this.entryPagePrevBtn.disabled = current <= 0;
+        if (this.entryPageNextBtn) this.entryPageNextBtn.disabled = current >= total - 1;
+        if (this.entryDotsEl) {
+            this.entryDotsEl.innerHTML = '';
+            if (total <= 1) {
+                this.entryDotsEl.style.display = 'none';
+                return;
+            }
+            this.entryDotsEl.style.display = 'flex';
+            for (let i = 0; i < total; i += 1) {
+                const dot = document.createElement('button');
+                dot.type = 'button';
+                dot.className = `world-entries-dot${i === current ? ' active' : ''}`;
+                dot.setAttribute('aria-label', `第 ${i + 1} 页`);
+                dot.addEventListener('click', () => {
+                    this.entryPageIndex = i;
+                    this.renderList();
+                });
+                this.entryDotsEl.appendChild(dot);
+            }
+        }
+    }
+
+    scrollEntryListToPage() {
+        if (!this.entriesListEl) return;
+        const width = this.entriesListEl.clientWidth;
+        if (!width) return;
+        const target = Math.round(width * this.entryPageIndex);
+        this.entryPageScrollLock = true;
+        this.entriesListEl.scrollTo({ left: target, behavior: 'auto' });
+        window.setTimeout(() => {
+            this.entryPageScrollLock = false;
+        }, 120);
     }
 
     selectEntry(index) {
         this.currentIndex = Math.max(0, Math.min(index, this.data.entries.length - 1));
+        const filtered = this.getFilteredEntries();
+        const currentPos = filtered.findIndex(item => item.idx === this.currentIndex);
+        if (currentPos >= 0) {
+            const rawSize = Number(this.entryPageSize);
+            const pageSize = Math.max(1, Math.min(200, Number.isFinite(rawSize) ? Math.trunc(rawSize) : 5));
+            this.entryPageIndex = Math.floor(currentPos / pageSize);
+        }
         this.renderList();
         this.renderEditor();
     }

@@ -423,7 +423,7 @@ export class WorldPanel {
                         header.appendChild(actions);
 
                         const entriesWrap = document.createElement('div');
-                        entriesWrap.style.cssText = 'display:none; margin-top:8px; padding-top:8px; border-top:1px dashed #e2e8f0;';
+                        entriesWrap.style.cssText = 'display:none; margin-top:8px; padding-top:8px; border-top:1px dashed #e2e8f0; max-height:220px; overflow:auto;';
                         let entriesLoaded = false;
 
                         const renderEntries = async () => {
@@ -606,7 +606,7 @@ export class WorldPanel {
                     header.appendChild(actions);
 
                     const entriesWrap = document.createElement('div');
-                    entriesWrap.style.cssText = 'display:none; margin-top:8px; padding-top:8px; border-top:1px dashed #e2e8f0;';
+                    entriesWrap.style.cssText = 'display:none; margin-top:8px; padding-top:8px; border-top:1px dashed #e2e8f0; max-height:220px; overflow:auto;';
                     let entriesLoaded = false;
 
                     const renderEntries = async () => {

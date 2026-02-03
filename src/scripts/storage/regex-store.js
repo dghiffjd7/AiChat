@@ -309,6 +309,32 @@ export class RegexStore {
         return changed;
     }
 
+    async syncWorldBindings(activeWorldIds = []) {
+        await this.ready;
+        const ids = new Set(
+            (Array.isArray(activeWorldIds) ? activeWorldIds : [activeWorldIds])
+                .map(v => String(v || '').trim())
+                .filter(Boolean),
+        );
+        const sets = ensureObj(this.state?.local?.sets, {});
+        let changed = false;
+        for (const s of Object.values(sets)) {
+            if (!s || typeof s !== 'object') continue;
+            const bind = s.bind;
+            if (!bind || typeof bind !== 'object' || bind.type !== 'world') continue;
+            const wid = String(bind.worldId || '').trim();
+            if (!wid) continue;
+            const shouldEnable = ids.has(wid);
+            if (s.enabled !== shouldEnable) {
+                s.enabled = shouldEnable;
+                s.updatedAt = Date.now();
+                changed = true;
+            }
+        }
+        if (changed) await this.persist();
+        return changed;
+    }
+
     /* ---------------- Session ---------------- */
     getSession(sessionId) {
         const sid = String(sessionId || '');

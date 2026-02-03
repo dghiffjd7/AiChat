@@ -127,7 +127,7 @@ export function convertSTWorld(stJson = {}, name = 'imported') {
             priority: order, // 旧别名：顺序
             depth,
             position,
-            selective: preserved.selective !== false,
+            selective: preserved.selective === true,
             selectiveLogic: toNumber(preserved.selectiveLogic, 0),
             disable: Boolean(preserved.disable),
             constant: Boolean(preserved.constant),

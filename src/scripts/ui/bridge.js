@@ -960,6 +960,7 @@ class AppBridge {
     this.hydrateWorldSessionMap();
     this.hydrateGlobalWorldId();
     this.hydrateWorldGlobalSettings();
+    this.syncWorldRegexBindings?.();
   }
 
   loadGlobalWorldId() {
@@ -1243,6 +1244,24 @@ class AppBridge {
         return out;
       })();
       const changed = await this.regex.syncPresetBindings?.(active);
+      if (changed) {
+        window.dispatchEvent(new CustomEvent('regex-changed'));
+      }
+      return Boolean(changed);
+    } catch {
+      return false;
+    }
+  }
+
+  async syncWorldRegexBindings() {
+    try {
+      await this.regex?.ready;
+      const worldIds = [];
+      if (this.globalWorldId) worldIds.push(String(this.globalWorldId));
+      (this.currentWorldIds || []).forEach(id => {
+        if (id) worldIds.push(String(id));
+      });
+      const changed = await this.regex?.syncWorldBindings?.(worldIds);
       if (changed) {
         window.dispatchEvent(new CustomEvent('regex-changed'));
       }
@@ -3448,6 +3467,7 @@ class AppBridge {
     }
     this.currentWorldIds = sid === this.activeSessionId ? list : this.currentWorldIds;
     this.currentWorldId = this.currentWorldIds[0] || null;
+    this.syncWorldRegexBindings?.();
     window.dispatchEvent(new CustomEvent('worldinfo-changed', { detail: { worldId: this.currentWorldId, worldIds: this.currentWorldIds } }));
   }
 
@@ -3465,6 +3485,7 @@ class AppBridge {
     if (!silent && sid === this.activeSessionId) {
       this.currentWorldIds = list;
       this.currentWorldId = this.currentWorldIds[0] || null;
+      this.syncWorldRegexBindings?.();
       window.dispatchEvent(new CustomEvent('worldinfo-changed', { detail: { worldId: this.currentWorldId, worldIds: this.currentWorldIds } }));
     }
   }
@@ -3483,6 +3504,7 @@ class AppBridge {
     if (!silent && sid === this.activeSessionId) {
       this.currentWorldIds = list;
       this.currentWorldId = this.currentWorldIds[0] || null;
+      this.syncWorldRegexBindings?.();
       window.dispatchEvent(new CustomEvent('worldinfo-changed', { detail: { worldId: this.currentWorldId, worldIds: this.currentWorldIds } }));
     }
   }
@@ -3501,6 +3523,7 @@ class AppBridge {
   setGlobalWorld(worldId) {
     this.globalWorldId = worldId || null;
     this.persistGlobalWorldId();
+    this.syncWorldRegexBindings?.();
     window.dispatchEvent(
       new CustomEvent('worldinfo-changed', {
         detail: { worldId: this.currentWorldId, worldIds: this.currentWorldIds, globalWorldId: this.globalWorldId },

@@ -20,8 +20,10 @@ const buildGreetingList = (card = {}) => {
 
 const sanitizeId = (value, fallback = 'worldbook') => {
   const raw = String(value || '').trim();
-  const cleaned = raw.replace(/[^a-zA-Z0-9_-]/g, '_').replace(/_+/g, '_').slice(0, 48);
-  return cleaned || fallback;
+  if (!raw) return fallback;
+  if (/^[a-zA-Z0-9_-]+$/.test(raw)) return raw;
+  const safe = raw.replace(/[\\/:*?"<>|]/g, '_').replace(/_+/g, '_').slice(0, 48).trim();
+  return safe || fallback;
 };
 
 const extractRegexScripts = (card = {}) => {
@@ -221,7 +223,7 @@ export class CharacterCardImporter {
 
     if (!this.personaStore) throw new Error('PersonaStore 未就绪');
     const persona = await this.personaStore.create({
-      name: displayName,
+      name: 'user',
       description: '',
       avatar: avatarDataUrl || '',
       source: {
@@ -250,7 +252,7 @@ export class CharacterCardImporter {
         await this.appBridge.worldStore.ready;
       }
       const worldPayload = {
-        name: String(card?.name || '').trim() ? `${displayName}·角色世界书` : '角色世界书',
+        name: String(card?.name || '').trim() ? displayName : '角色世界书',
         entries: worldEntries,
         source: 'character_card',
       };

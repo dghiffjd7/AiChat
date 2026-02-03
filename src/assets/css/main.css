@@ -230,6 +230,7 @@ body.chat-room-active .bottom-nav {
   left: 50%;
   transform: translate(-50%, -50%);
   width: min(900px, 96vw);
+  height: 90vh;
   max-height: 90vh;
   background: #fff;
   border-radius: 12px;
@@ -310,7 +311,7 @@ body.chat-room-active .bottom-nav {
   gap: 6px;
 }
 
-.world-entries-toolbar button {
+.world-entries-toolbar > button {
   width: 100%;
   padding: 8px 10px;
   border: 1px solid #ddd;
@@ -318,6 +319,57 @@ body.chat-room-active .bottom-nav {
   background: #fff;
   cursor: pointer;
   font-size: 14px;
+}
+
+.world-entries-search input {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  font-size: 12px;
+  box-sizing: border-box;
+}
+
+.world-entries-pager {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.world-entries-pager-label {
+  font-size: 12px;
+  color: #64748b;
+}
+
+.world-entries-pager input {
+  width: 60px;
+  padding: 4px 6px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  font-size: 12px;
+}
+
+.world-entries-pager button {
+  padding: 4px 8px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #fff;
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.world-entries-pager button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.world-entries-pager span {
+  font-size: 12px;
+  color: #475569;
+  min-width: 36px;
+  text-align: center;
 }
 
 .world-entry-batch-bar {
@@ -344,8 +396,65 @@ body.chat-room-active .bottom-nav {
   list-style: none;
   margin: 0;
   padding: 0;
-  overflow: auto;
-  flex: 1;
+  display: flex;
+  flex-direction: row;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-snap-type: x mandatory;
+  scroll-behavior: smooth;
+  -webkit-overflow-scrolling: touch;
+  flex: 0 0 auto;
+  height: 260px;
+  max-height: 260px;
+  scrollbar-width: none;
+}
+
+.world-entries-list::-webkit-scrollbar {
+  height: 0;
+  width: 0;
+}
+
+.world-entry-page {
+  flex: 0 0 100%;
+  scroll-snap-align: start;
+  box-sizing: border-box;
+  padding-right: 6px;
+}
+
+.world-entry-page-list {
+  height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.world-entry-empty {
+  color: #94a3b8;
+  font-size: 12px;
+  padding: 12px;
+}
+
+.world-entries-dots {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 0 10px;
+}
+
+.world-entries-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  border: none;
+  padding: 0;
+  background: #cbd5e1;
+  cursor: pointer;
+}
+
+.world-entries-dot.active {
+  background: #475569;
 }
 
 .world-entry-item {
