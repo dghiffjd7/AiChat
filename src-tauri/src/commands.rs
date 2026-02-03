@@ -2134,6 +2134,74 @@ pub async fn get_characters(app: AppHandle) -> Result<Vec<Value>, String> {
     Ok(characters)
 }
 
+/// 保存 Persona 原始角色卡（单独文件，避免 KV 体积上限）
+#[tauri::command]
+pub async fn save_persona_card(
+    app: AppHandle,
+    id: String,
+    data: Value,
+) -> Result<Value, String> {
+    let data_dir = get_data_dir(&app)?;
+    let card_dir = data_dir.join("persona_cards");
+    fs::create_dir_all(&card_dir).map_err(|e| e.to_string())?;
+    let safe_id = sanitize_segment(&id);
+    let file = card_dir.join(format!("{}.json", safe_id));
+    let json = serde_json::to_string(&data).map_err(|e| e.to_string())?;
+    fs::write(&file, &json).map_err(|e| e.to_string())?;
+
+    #[cfg(target_os = "android")]
+    {
+        if let Ok(f) = fs::File::open(&file) {
+            unsafe {
+                libc::fsync(f.as_raw_fd());
+            }
+        }
+    }
+
+    Ok(serde_json::json!({
+        "path": file.to_string_lossy().to_string(),
+        "bytes": json.len(),
+        "id": safe_id
+    }))
+}
+
+/// 读取 Persona 原始角色卡
+#[tauri::command]
+pub async fn load_persona_card(app: AppHandle, id: String) -> Result<Value, String> {
+    let data_dir = get_data_dir(&app)?;
+    let card_dir = data_dir.join("persona_cards");
+    let safe_id = sanitize_segment(&id);
+    let file = card_dir.join(format!("{}.json", safe_id));
+    if !file.exists() {
+        return Ok(serde_json::json!({}));
+    }
+    let max_len: u64 = 30 * 1024 * 1024; // 30 MiB safety cap
+    if let Ok(meta) = fs::metadata(&file) {
+        let len = meta.len();
+        if len > max_len {
+            eprintln!("[load_persona_card] 文件过大，跳过加载: {:?}, {} bytes", file, len);
+            return Ok(serde_json::json!({ "_tooLarge": true, "size": len }));
+        }
+    }
+    let json = fs::read_to_string(&file).map_err(|e| e.to_string())?;
+    let data: Value = serde_json::from_str(&json).map_err(|e| e.to_string())?;
+    Ok(data)
+}
+
+/// 删除 Persona 原始角色卡
+#[tauri::command]
+pub async fn delete_persona_card(app: AppHandle, id: String) -> Result<bool, String> {
+    let data_dir = get_data_dir(&app)?;
+    let card_dir = data_dir.join("persona_cards");
+    let safe_id = sanitize_segment(&id);
+    let file = card_dir.join(format!("{}.json", safe_id));
+    if file.exists() {
+        fs::remove_file(&file).map_err(|e| e.to_string())?;
+        return Ok(true);
+    }
+    Ok(false)
+}
+
 /// 通用 KV 持久化（前端清缓存后仍可讀）
 #[tauri::command]
 pub async fn save_kv(app: AppHandle, name: String, data: Value) -> Result<(), String> {

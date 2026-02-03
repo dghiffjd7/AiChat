@@ -19,6 +19,7 @@ import { avatarDataUrlFromFile, compressImageDataUrl, isGifFile } from '../utils
 import { logger } from '../utils/logger.js';
 import { buildNameWithBadgesHtml, escapeHtml, getContactBadges } from '../utils/name-badges.js';
 import { FEATHER_DEFAULT, resolveLineAvatar } from '../utils/line-avatar.js';
+import { normalizeCharacterCard } from '../utils/character-card.js';
 import {
   initMediaAssets,
   isAssetRef,
@@ -1547,7 +1548,15 @@ ${listPart || '-（无）'}
         typeof m.rawSource === 'string' ? m.rawSource : typeof m.raw_source === 'string' ? m.raw_source : '';
       const creativeSource = rawSource ? normalizeCreativeLineBreaks(rawSource) : '';
       const creativeBase = creativeSource || base;
-      const meta = m?.meta && typeof m.meta === 'object' ? { ...m.meta } : m?.meta;
+      const isRpSession = sessionId && isRpSessionId(sessionId);
+      let meta = m?.meta && typeof m.meta === 'object' ? { ...m.meta } : m?.meta;
+      if (isRpSession && m.role === 'assistant' && (m.type === 'text' || !m.type)) {
+        if (!meta || typeof meta !== 'object') {
+          meta = { renderRich: true };
+        } else if (meta.renderRich !== true) {
+          meta.renderRich = true;
+        }
+      }
       if (meta && typeof meta.reasoning === 'string') {
         try {
           meta.reasoningDisplay = window.appBridge.applyReasoningDisplayRegex(meta.reasoning, { depth });
@@ -9437,9 +9446,54 @@ Phase G（Frame 36）：循环衔接
     uiLog('exitChatRoom', { activePage, sessionId: chatStore.getCurrent() });
   };
 
-  const getRpTitle = () => {
-    const p = personaStore.getActive?.() || {};
+  const rpCharacterNameCache = new Map();
+  const getRpCharacterName = (persona = null) => {
+    const p = persona || personaStore.getActive?.() || {};
+    const source = p?.source && typeof p.source === 'object' ? p.source : {};
+    const sourceName = String(source?.characterName || source?.cardName || '').trim();
+    if (source?.type === 'character_card' && sourceName) return sourceName;
+    if (source?.type === 'character_card' && p?.id && rpCharacterNameCache.has(p.id)) {
+      return rpCharacterNameCache.get(p.id);
+    }
     const name = String(p?.name || '').trim();
+    return name || '角色';
+  };
+  const hydrateRpCharacterNameFromCard = async (persona = null) => {
+    const p = persona || personaStore.getActive?.() || {};
+    const pid = String(p?.id || '').trim();
+    if (!pid) return '';
+    const source = p?.source && typeof p.source === 'object' ? p.source : {};
+    if (source.type !== 'character_card') return '';
+    const existing = String(source?.characterName || '').trim();
+    if (existing) {
+      rpCharacterNameCache.set(pid, existing);
+      return existing;
+    }
+    const cached = rpCharacterNameCache.get(pid);
+    if (cached) return cached;
+    const raw = await window.appBridge?.loadPersonaCard?.(pid);
+    if (!raw || raw._tooLarge) return '';
+    let normalized = raw;
+    try {
+      normalized = normalizeCharacterCard(raw);
+    } catch {}
+    const name = String(normalized?.name || raw?.name || raw?.data?.name || '').trim();
+    if (!name) return '';
+    rpCharacterNameCache.set(pid, name);
+    try {
+      await personaStore.update?.(pid, { source: { ...source, characterName: name } });
+    } catch {}
+    if (uiMode === 'rp') {
+      const rpSessionId = getRpSessionId(pid);
+      if (String(chatStore.getCurrent() || '') === rpSessionId && currentChatTitle) {
+        currentChatTitle.textContent = name;
+      }
+    }
+    return name;
+  };
+
+  const getRpTitle = () => {
+    const name = getRpCharacterName();
     return name || 'RP';
   };
 
@@ -9486,8 +9540,8 @@ Phase G（Frame 36）：循环衔接
       display = window.appBridge.applyOutputDisplayRegex(stored, { depth: 0 });
     } catch {}
     const parsed = parseSpecialMessage(display);
-    const assistantName = String(personaStore.getActive?.()?.name || '角色');
-    const meta = { ...(parsed.meta || {}), isGreeting: true };
+    const assistantName = String(getRpCharacterName() || '角色');
+    const meta = { ...(parsed.meta || {}), isGreeting: true, renderRich: true };
     return {
       role: 'assistant',
       ...parsed,
@@ -9557,6 +9611,9 @@ Phase G（Frame 36）：循环衔接
     }
     enterChatRoom(rpSessionId, getRpTitle(), 'chat');
     if (currentChatTitle) currentChatTitle.textContent = getRpTitle();
+    try {
+      await hydrateRpCharacterNameFromCard(personaStore.getActive?.());
+    } catch {}
     seedRpGreetingIfNeeded(rpSessionId);
     if (rpToolbar) rpToolbar.style.display = 'none';
     if (backToListBtn) backToListBtn.style.display = 'none';
@@ -10465,7 +10522,7 @@ Phase G（Frame 36）：循环衔接
     const sharedMemory = isSharedMemorySession(sessionId);
     const activePersona = getEffectivePersona(sessionId);
     const characterName = isRpMode
-      ? (String(activePersona?.name || '').trim() || '角色')
+      ? (String(getRpCharacterName(activePersona) || '').trim() || '角色')
       : (contact?.name || (sessionId.startsWith('group:') ? sessionId.replace(/^group:/, '') : sessionId) || 'assistant');
     const userName = isRpMode ? '我' : (activePersona?.name || '我');
     const userEchoGuard = createUserEchoGuard(text, userName);
@@ -13334,6 +13391,9 @@ Phase G（Frame 36）：循环衔接
         avatar: isAssistant ? getAssistantAvatarForSession(sessionId) : avatars.user,
         time: now,
       };
+      if (isAssistant && isRpSessionId(sessionId)) {
+        msg.meta = { ...(msg.meta || {}), renderRich: true };
+      }
       if (isSessionActive(sessionId)) ui.addMessage(msg);
       const saved = chatStore.appendMessage(msg, sessionId);
       refreshChatAndContacts();

@@ -3339,6 +3339,44 @@ class AppBridge {
     }
   }
 
+  /**
+   * 保存 Persona 角色卡原始数据（独立文件）
+   */
+  async savePersonaCard(personaId, data) {
+    const id = String(personaId || '').trim();
+    if (!id) throw new Error('persona id missing');
+    return await safeInvoke('save_persona_card', { id, data });
+  }
+
+  /**
+   * 读取 Persona 角色卡原始数据
+   */
+  async loadPersonaCard(personaId) {
+    const id = String(personaId || '').trim();
+    if (!id) return null;
+    try {
+      const res = await safeInvoke('load_persona_card', { id });
+      return res;
+    } catch (err) {
+      logger.warn('load persona card failed', err);
+      return null;
+    }
+  }
+
+  /**
+   * 删除 Persona 角色卡原始数据
+   */
+  async deletePersonaCard(personaId) {
+    const id = String(personaId || '').trim();
+    if (!id) return false;
+    try {
+      return await safeInvoke('delete_persona_card', { id });
+    } catch (err) {
+      logger.warn('delete persona card failed', err);
+      return false;
+    }
+  }
+
   async renameWorldInfo(fromId, toId, data) {
     const from = String(fromId || '').trim();
     const to = String(toId || '').trim();

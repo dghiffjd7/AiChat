@@ -903,6 +903,9 @@ export class PersonaPanel {
 
         const success = await this.store.delete(this.editingId);
         if (success) {
+            try {
+                await window.appBridge?.deletePersonaCard?.(this.editingId);
+            } catch {}
             this.closeEdit();
             this.renderList();
             if (this.onPersonaChanged) this.onPersonaChanged();

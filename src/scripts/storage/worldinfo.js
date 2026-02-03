@@ -8,6 +8,7 @@ import { logger } from '../utils/logger.js';
 import { safeInvoke } from '../utils/tauri.js';
 
 const STORAGE_KEY = 'worldinfo_store';
+const LOCALSTORAGE_SOFT_LIMIT = 3 * 1024 * 1024; // 3MB: avoid quota errors on mobile WebView
 
 export class WorldInfoStore {
     constructor() {
@@ -47,9 +48,28 @@ export class WorldInfoStore {
         return this.cache[name] || null;
     }
 
+    _persistLocal() {
+        try {
+            const payload = JSON.stringify(this.cache);
+            if (payload.length > LOCALSTORAGE_SOFT_LIMIT) {
+                logger.warn('世界书缓存过大，跳过 localStorage 持久化', { size: payload.length });
+                try {
+                    localStorage.removeItem(STORAGE_KEY);
+                } catch {}
+                return;
+            }
+            localStorage.setItem(STORAGE_KEY, payload);
+        } catch (err) {
+            logger.warn('世界书写入 localStorage 失败，已跳过', err);
+            try {
+                localStorage.removeItem(STORAGE_KEY);
+            } catch {}
+        }
+    }
+
     async save(name, data) {
         this.cache[name] = data;
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(this.cache));
+        this._persistLocal();
         try {
             await safeInvoke('save_kv', { name: STORAGE_KEY, data: this.cache });
         } catch (err) {
@@ -59,7 +79,7 @@ export class WorldInfoStore {
 
     async remove(name) {
         delete this.cache[name];
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(this.cache));
+        this._persistLocal();
         try {
             await safeInvoke('save_kv', { name: STORAGE_KEY, data: this.cache });
         } catch (err) {
@@ -69,7 +89,7 @@ export class WorldInfoStore {
 
     async saveMany(map) {
         this.cache = { ...this.cache, ...map };
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(this.cache));
+        this._persistLocal();
         try {
             await safeInvoke('save_kv', { name: STORAGE_KEY, data: this.cache });
         } catch (err) {

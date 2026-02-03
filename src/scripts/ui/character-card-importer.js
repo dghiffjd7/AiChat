@@ -2,6 +2,8 @@ import { logger } from '../utils/logger.js';
 import { convertSTWorld } from '../storage/worldinfo.js';
 import { normalizeScopeId } from '../storage/store-scope.js';
 import { parseCharacterCardFile } from '../utils/character-card.js';
+import { avatarDataUrlFromFile } from '../utils/image.js';
+import { safeInvoke } from '../utils/tauri.js';
 
 const buildGreetingList = (card = {}) => {
   const list = [];
@@ -226,8 +228,14 @@ export class CharacterCardImporter {
   async importFromFile(file) {
     const parsed = await parseCharacterCardFile(file);
     const fileName = String(file?.name || '').trim();
+    let avatarDataUrl = parsed.avatarDataUrl || '';
+    if (file && avatarDataUrl) {
+      try {
+        avatarDataUrl = await avatarDataUrlFromFile(file, { maxDim: 256, quality: 0.84, maxBytes: 420_000 });
+      } catch {}
+    }
     return this.importCard(parsed.card, {
-      avatarDataUrl: parsed.avatarDataUrl || '',
+      avatarDataUrl,
       raw: parsed.raw,
       fileName,
     });
@@ -250,20 +258,40 @@ export class CharacterCardImporter {
     if (!options) return false;
 
     if (!this.personaStore) throw new Error('PersonaStore 未就绪');
+    const rawCard = raw || card.raw || card;
+    const sourceBase = {
+      type: 'character_card',
+      format: card.format || 'unknown',
+      importedAt: new Date().toISOString(),
+      originalFile: fileName || '',
+      characterName: displayName,
+    };
     const persona = await this.personaStore.create({
       name: 'user',
       description: '',
       avatar: avatarDataUrl || '',
-      source: {
-        type: 'character_card',
-        format: card.format || 'unknown',
-        importedAt: new Date().toISOString(),
-        originalFile: fileName || '',
-      },
-      originalCard: raw || card.raw || card,
+      source: sourceBase,
+      originalCard: null,
     });
     await this.personaStore.setActive(persona.id);
     await Promise.resolve(this.onPersonaChanged?.());
+
+    let originalCardStored = false;
+    let originalCardSize = 0;
+    try {
+      originalCardSize = JSON.stringify(rawCard).length;
+    } catch {}
+    try {
+      if (this.appBridge?.savePersonaCard) {
+        const saved = await this.appBridge.savePersonaCard(persona.id, rawCard);
+        originalCardStored = Boolean(saved?.path);
+      } else {
+        await safeInvoke('save_persona_card', { id: persona.id, data: rawCard });
+        originalCardStored = true;
+      }
+    } catch (err) {
+      logger.warn('save persona card failed', err);
+    }
 
     try {
       if (options.importGreetings && this.rpSessionStore && greetings.length) {
@@ -338,8 +366,14 @@ export class CharacterCardImporter {
         worldbookId: worldId || persona?.source?.worldbookId,
         systemPresetId: presetId || persona?.source?.systemPresetId,
         regexSetId: regexSetId || persona?.source?.regexSetId,
+        originalCardStored,
+        originalCardSize,
       };
-      await this.personaStore.update?.(persona.id, { source });
+      const update = { source };
+      if (!originalCardStored) {
+        update.originalCard = rawCard;
+      }
+      await this.personaStore.update?.(persona.id, update);
     } catch (err) {
       logger.warn('update persona source failed', err);
     }

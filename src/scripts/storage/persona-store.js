@@ -4,6 +4,9 @@ import { logger } from '../utils/logger.js';
 
 const STORAGE_KEY = 'user_personas_v1';
 const ACTIVE_KEY = 'user_personas_active_id_v1';
+const LOCALSTORAGE_SOFT_LIMIT = 3 * 1024 * 1024; // 3MB safety cap for WebView localStorage
+const KV_SOFT_LIMIT = 9 * 1024 * 1024; // 9MB safety cap (load_kv rejects >10MB)
+const MAX_AVATAR_DATA_URL_CHARS = 350_000; // avoid bloating storage with huge data URLs
 
 // Align with SillyTavern's persona_description_positions (subset)
 export const persona_description_positions = {
@@ -19,6 +22,21 @@ const DEFAULT_USER_BUBBLE_COLOR = '#E8F0FE';
 const normalizeBubbleColor = (value) => {
     const raw = String(value || '').trim();
     return /^#[0-9A-F]{6}$/i.test(raw) ? raw : DEFAULT_USER_BUBBLE_COLOR;
+};
+
+const isLargeDataUrl = (value) => {
+    if (typeof value !== 'string') return false;
+    if (!value.startsWith('data:')) return false;
+    return value.length > MAX_AVATAR_DATA_URL_CHARS;
+};
+
+const sanitizePersonaForPersist = (persona, { stripOriginalCard = false, stripAvatar = false, stripDescription = false } = {}) => {
+    if (!persona || typeof persona !== 'object') return persona;
+    const next = { ...persona };
+    if (stripOriginalCard) next.originalCard = null;
+    if (stripAvatar && isLargeDataUrl(next.avatar)) next.avatar = '';
+    if (stripDescription) next.description = '';
+    return next;
 };
 
 export class PersonaStore {
@@ -38,8 +56,15 @@ export class PersonaStore {
             let data = await safeInvoke('load_kv', { name: STORAGE_KEY });
             let active = await safeInvoke('load_kv', { name: ACTIVE_KEY });
 
+            let tooLarge = false;
+            if (data && typeof data === 'object' && data._tooLarge) {
+                tooLarge = true;
+                logger.warn('PersonaStore load_kv data too large, fallback to localStorage', data);
+                data = null;
+            }
+
             // Fallback to localStorage
-            if (!data) {
+            if (!Array.isArray(data)) {
                 const raw = localStorage.getItem(STORAGE_KEY);
                 if (raw) data = JSON.parse(raw);
             }
@@ -100,7 +125,7 @@ export class PersonaStore {
                 await this.save();
             }
             // Persist normalization upgrades (backfill position/depth/role, etc.)
-            if (changed) await this.save();
+            if (changed || tooLarge) await this.save();
             
             logger.info(`PersonaStore loaded: ${this.personas.length} personas, active: ${this.activeId}`);
         } catch (err) {
@@ -128,12 +153,99 @@ export class PersonaStore {
         };
     }
 
-    async save() {
-        try {
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(this.personas));
-            localStorage.setItem(ACTIVE_KEY, this.activeId);
+    async _offloadOriginalCards() {
+        let changed = false;
+        for (const persona of this.personas) {
+            if (!persona || typeof persona !== 'object') continue;
+            if (!persona.originalCard || typeof persona.originalCard !== 'object') continue;
+            const source = (persona.source && typeof persona.source === 'object') ? persona.source : {};
+            if (source.type !== 'character_card') continue;
+            if (source.originalCardStored) continue;
+            let size = 0;
+            try {
+                size = JSON.stringify(persona.originalCard).length;
+            } catch {}
+            try {
+                await safeInvoke('save_persona_card', { id: persona.id, data: persona.originalCard });
+                persona.originalCard = null;
+                persona.source = {
+                    ...source,
+                    originalCardStored: true,
+                    originalCardSize: size,
+                };
+                changed = true;
+            } catch (err) {
+                logger.warn('offload persona card failed', err);
+            }
+        }
+        return changed;
+    }
 
-            await safeInvoke('save_kv', { name: STORAGE_KEY, data: this.personas });
+    _buildPersistPayloads() {
+        const base = (opts) => this.personas.map(p => sanitizePersonaForPersist(p, opts));
+
+        let kvPayload = base({ stripOriginalCard: false, stripAvatar: false, stripDescription: false });
+        let kvJson = JSON.stringify(kvPayload);
+        let kvDropped = { originalCard: false, avatar: false, description: false };
+
+        if (kvJson.length > KV_SOFT_LIMIT) {
+            kvPayload = base({ stripOriginalCard: true, stripAvatar: false, stripDescription: false });
+            kvJson = JSON.stringify(kvPayload);
+            kvDropped.originalCard = true;
+        }
+        if (kvJson.length > KV_SOFT_LIMIT) {
+            kvPayload = base({ stripOriginalCard: true, stripAvatar: true, stripDescription: false });
+            kvJson = JSON.stringify(kvPayload);
+            kvDropped.avatar = true;
+        }
+        if (kvJson.length > KV_SOFT_LIMIT) {
+            kvPayload = base({ stripOriginalCard: true, stripAvatar: true, stripDescription: true });
+            kvJson = JSON.stringify(kvPayload);
+            kvDropped.description = true;
+        }
+
+        let localPayload = base({ stripOriginalCard: true, stripAvatar: false, stripDescription: false });
+        let localJson = JSON.stringify(localPayload);
+        if (localJson.length > LOCALSTORAGE_SOFT_LIMIT) {
+            localPayload = base({ stripOriginalCard: true, stripAvatar: true, stripDescription: false });
+            localJson = JSON.stringify(localPayload);
+        }
+        if (localJson.length > LOCALSTORAGE_SOFT_LIMIT) {
+            localPayload = base({ stripOriginalCard: true, stripAvatar: true, stripDescription: true });
+            localJson = JSON.stringify(localPayload);
+        }
+
+        return {
+            kvPayload,
+            kvJson,
+            kvDropped,
+            localPayload,
+            localJson,
+        };
+    }
+
+    async save() {
+        await this._offloadOriginalCards();
+        const { kvPayload, kvJson, kvDropped, localPayload, localJson } = this._buildPersistPayloads();
+        try {
+            if (localJson.length <= LOCALSTORAGE_SOFT_LIMIT) {
+                localStorage.setItem(STORAGE_KEY, localJson);
+            } else {
+                localStorage.removeItem(STORAGE_KEY);
+                logger.warn('PersonaStore localStorage payload too large, skipped', { size: localJson.length });
+            }
+            localStorage.setItem(ACTIVE_KEY, this.activeId);
+        } catch (err) {
+            logger.warn('PersonaStore localStorage save failed', err);
+            try {
+                localStorage.removeItem(STORAGE_KEY);
+            } catch {}
+        }
+        try {
+            if (kvJson.length > KV_SOFT_LIMIT) {
+                logger.warn('PersonaStore kv payload too large after trimming', { size: kvJson.length, kvDropped });
+            }
+            await safeInvoke('save_kv', { name: STORAGE_KEY, data: kvPayload });
             await safeInvoke('save_kv', { name: ACTIVE_KEY, data: this.activeId });
         } catch (err) {
             logger.warn('PersonaStore save failed', err);
