@@ -27,6 +27,24 @@ else
     echo "❌ Toastr 下载失败"
 fi
 
+# 下载 Lodash
+echo "⬇️  下载 Lodash..."
+curl -L -o src/lib/lodash.min.js https://cdn.jsdelivr.net/npm/lodash@4.17.21/lodash.min.js
+if [ $? -eq 0 ]; then
+    echo "✅ Lodash 下载完成"
+else
+    echo "❌ Lodash 下载失败"
+fi
+
+# 下载 Zod
+echo "⬇️  下载 Zod..."
+curl -L -o src/lib/zod.min.js https://cdn.jsdelivr.net/npm/zod@3.22.4/lib/index.umd.min.js
+if [ $? -eq 0 ]; then
+    echo "✅ Zod 下载完成"
+else
+    echo "❌ Zod 下载失败"
+fi
+
 # 下载外部 CSS（如果需要）
 # echo "⬇️  下载外部 CSS..."
 # curl -L -o src/assets/css/result.css https://static.zeoseven.com/zsft/59/main/result.css

@@ -31,6 +31,13 @@ export class GeneralSettingsPanel {
     this.memoryInjectDepthInput = null;
     this.memoryAutoConfirmToggle = null;
     this.memoryAutoStepToggle = null;
+    this.templateEnabledToggle = null;
+    this.templateBeforeToggle = null;
+    this.templateAfterToggle = null;
+    this.templateErrorToggle = null;
+    this.scriptEnabledToggle = null;
+    this.scriptAllowVarsToggle = null;
+    this.scriptAllowMessagesToggle = null;
     this.cleanWallpapersBtn = null;
     this.cleanWallpapersStatus = null;
     this.bundleExportBtn = null;
@@ -114,6 +121,27 @@ export class GeneralSettingsPanel {
       const raw = Math.trunc(Number(settings.memoryInjectDepth));
       const safe = Number.isFinite(raw) ? Math.max(0, raw) : 4;
       this.memoryInjectDepthInput.value = String(safe);
+    }
+    if (this.templateEnabledToggle) {
+      this.templateEnabledToggle.checked = settings.templateEnabled !== false;
+    }
+    if (this.templateBeforeToggle) {
+      this.templateBeforeToggle.checked = settings.templateExecuteBeforeGenerate !== false;
+    }
+    if (this.templateAfterToggle) {
+      this.templateAfterToggle.checked = settings.templateExecuteAfterRender !== false;
+    }
+    if (this.templateErrorToggle) {
+      this.templateErrorToggle.checked = settings.templateShowErrorToast !== false;
+    }
+    if (this.scriptEnabledToggle) {
+      this.scriptEnabledToggle.checked = settings.scriptEnabled === true;
+    }
+    if (this.scriptAllowVarsToggle) {
+      this.scriptAllowVarsToggle.checked = settings.scriptAllowModifyVariables !== false;
+    }
+    if (this.scriptAllowMessagesToggle) {
+      this.scriptAllowMessagesToggle.checked = settings.scriptAllowReadMessages !== false;
     }
     this.refreshMemoryUpdateProfiles().catch(() => {});
     this.updateMemoryAutoVisibility();
@@ -387,6 +415,52 @@ export class GeneralSettingsPanel {
         </div>
 
         <div style="margin: 8px 0 12px; padding-top: 6px; border-top: 1px dashed #e2e8f0;">
+          <div style="font-size: 12px; color:#64748b; margin-bottom: 10px;">模板与脚本</div>
+
+          <div style="margin-bottom: 12px;">
+            <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+              <input type="checkbox" id="general-template-enabled" style="width: 18px; height: 18px;">
+              <span style="font-weight: 700;">启用模板处理</span>
+            </label>
+            <small style="color:#666; margin-left: 26px;">角色卡/世界书中的 &lt;% %&gt; 模板将被执行</small>
+          </div>
+
+          <div style="margin-left: 26px; display:flex; flex-direction:column; gap:8px; margin-bottom: 12px;">
+            <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+              <input type="checkbox" id="general-template-before" style="width: 16px; height: 16px;">
+              <span>生成前执行（Prompt）</span>
+            </label>
+            <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+              <input type="checkbox" id="general-template-after" style="width: 16px; height: 16px;">
+              <span>渲染后执行（显示）</span>
+            </label>
+            <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+              <input type="checkbox" id="general-template-error" style="width: 16px; height: 16px;">
+              <span>显示模板错误提示</span>
+            </label>
+          </div>
+
+          <div style="margin-bottom: 10px;">
+            <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+              <input type="checkbox" id="general-script-enabled" style="width: 18px; height: 18px;">
+              <span style="font-weight: 700;">启用角色卡脚本</span>
+            </label>
+            <small style="color:#666; margin-left: 26px;">脚本可能修改变量或读取聊天记录</small>
+          </div>
+
+          <div style="margin-left: 26px; display:flex; flex-direction:column; gap:8px;">
+            <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+              <input type="checkbox" id="general-script-allow-vars" style="width: 16px; height: 16px;">
+              <span>允许脚本修改变量</span>
+            </label>
+            <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+              <input type="checkbox" id="general-script-allow-messages" style="width: 16px; height: 16px;">
+              <span>允许脚本读取聊天记录</span>
+            </label>
+          </div>
+        </div>
+
+        <div style="margin: 8px 0 12px; padding-top: 6px; border-top: 1px dashed #e2e8f0;">
           <div style="font-size: 12px; color:#64748b; margin-bottom: 10px;">资料迁移</div>
           <div style="display:flex; align-items:center; gap:8px; flex-wrap: wrap;">
             <button id="general-bundle-export"
@@ -460,6 +534,13 @@ export class GeneralSettingsPanel {
     this.memoryInjectDepthInput = this.element.querySelector('#general-memory-inject-depth');
     this.memoryAutoConfirmToggle = this.element.querySelector('#general-memory-auto-confirm');
     this.memoryAutoStepToggle = this.element.querySelector('#general-memory-auto-step');
+    this.templateEnabledToggle = this.element.querySelector('#general-template-enabled');
+    this.templateBeforeToggle = this.element.querySelector('#general-template-before');
+    this.templateAfterToggle = this.element.querySelector('#general-template-after');
+    this.templateErrorToggle = this.element.querySelector('#general-template-error');
+    this.scriptEnabledToggle = this.element.querySelector('#general-script-enabled');
+    this.scriptAllowVarsToggle = this.element.querySelector('#general-script-allow-vars');
+    this.scriptAllowMessagesToggle = this.element.querySelector('#general-script-allow-messages');
     this.cleanWallpapersBtn = this.element.querySelector('#general-clean-wallpapers');
     this.cleanWallpapersStatus = this.element.querySelector('#general-clean-wallpapers-status');
     this.bundleExportBtn = this.element.querySelector('#general-bundle-export');
@@ -507,6 +588,35 @@ export class GeneralSettingsPanel {
       const safe = Number.isFinite(n) ? Math.max(0, n) : 3;
       if (e?.target) e.target.value = String(safe);
       appSettings.update({ creativeHistoryMax: safe });
+    });
+
+    this.templateEnabledToggle?.addEventListener('change', (e) => {
+      const enabled = Boolean(e?.target?.checked);
+      appSettings.update({ templateEnabled: enabled });
+    });
+    this.templateBeforeToggle?.addEventListener('change', (e) => {
+      const enabled = Boolean(e?.target?.checked);
+      appSettings.update({ templateExecuteBeforeGenerate: enabled });
+    });
+    this.templateAfterToggle?.addEventListener('change', (e) => {
+      const enabled = Boolean(e?.target?.checked);
+      appSettings.update({ templateExecuteAfterRender: enabled });
+    });
+    this.templateErrorToggle?.addEventListener('change', (e) => {
+      const enabled = Boolean(e?.target?.checked);
+      appSettings.update({ templateShowErrorToast: enabled });
+    });
+    this.scriptEnabledToggle?.addEventListener('change', (e) => {
+      const enabled = Boolean(e?.target?.checked);
+      appSettings.update({ scriptEnabled: enabled });
+    });
+    this.scriptAllowVarsToggle?.addEventListener('change', (e) => {
+      const enabled = Boolean(e?.target?.checked);
+      appSettings.update({ scriptAllowModifyVariables: enabled });
+    });
+    this.scriptAllowMessagesToggle?.addEventListener('change', (e) => {
+      const enabled = Boolean(e?.target?.checked);
+      appSettings.update({ scriptAllowReadMessages: enabled });
     });
 
     this.personaBindToggle?.addEventListener('change', async (e) => {

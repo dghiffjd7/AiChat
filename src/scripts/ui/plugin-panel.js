@@ -494,14 +494,30 @@ export class PluginPanel {
       window.toastr?.warning?.('仅支持 http/https 链接');
       return;
     }
-    const normalizedUrl = this.normalizeInstallUrl(url);
-    if (normalizedUrl !== url) {
+    const normalizedUrl = await this.resolveInstallUrl(url);
+    if (normalizedUrl && normalizedUrl !== url) {
       window.toastr?.info?.('已自动转换为直链');
     }
     try {
       this.setStatus('正在下载插件…');
       const res = await fetch(normalizedUrl);
       if (!res.ok) {
+        if (this.shouldRetryGithubMain(normalizedUrl, res.status)) {
+          const fallback = this.replaceGithubBranch(normalizedUrl, 'master');
+          this.setStatus('尝试主分支…');
+          const retry = await fetch(fallback);
+          if (!retry.ok) throw new Error(`下载失败 (${retry.status})`);
+          const buffer = await retry.arrayBuffer();
+          const name = fallback.split('/').pop() || 'plugin.zip';
+          this.setStatus('正在解析 ZIP…');
+          const installed = await this.installFromZipBytes(Array.from(new Uint8Array(buffer)), { name, url: fallback });
+          if (installed) {
+            this.setStatus('安装完成', 2000);
+          } else {
+            this.setStatus('已取消', 1500);
+          }
+          return;
+        }
         throw new Error(`下载失败 (${res.status})`);
       }
       const buffer = await res.arrayBuffer();
@@ -578,6 +594,100 @@ export class PluginPanel {
       return rawUrl;
     }
     return rawUrl;
+  }
+
+  parseGithubRepoUrl(rawUrl) {
+    try {
+      const parsed = new URL(rawUrl);
+      if (parsed.hostname !== 'github.com') return null;
+      const parts = parsed.pathname.split('/').filter(Boolean);
+      if (parts.length < 2) return null;
+      const owner = parts[0];
+      const repo = String(parts[1] || '').replace(/\.git$/i, '');
+      if (!owner || !repo) return null;
+      const kind = parts[2] || '';
+      if (kind === 'tree' && parts[3]) {
+        return { owner, repo, branch: parts.slice(3).join('/') };
+      }
+      if (kind === 'releases' && parts[3] === 'tag' && parts[4]) {
+        return { owner, repo, tag: parts.slice(4).join('/') };
+      }
+      if (kind === 'releases' && parts[3] === 'latest') {
+        return { owner, repo, latest: true };
+      }
+      if (kind === 'archive') {
+        return { owner, repo, archive: true, url: rawUrl };
+      }
+      return { owner, repo };
+    } catch {
+      return null;
+    }
+  }
+
+  buildGithubZipUrl(owner, repo, refType, ref) {
+    const safeOwner = encodeURIComponent(owner);
+    const safeRepo = encodeURIComponent(repo);
+    const safeRef = encodeURIComponent(ref);
+    if (refType === 'tags') {
+      return `https://codeload.github.com/${safeOwner}/${safeRepo}/zip/refs/tags/${safeRef}`;
+    }
+    return `https://codeload.github.com/${safeOwner}/${safeRepo}/zip/refs/heads/${safeRef}`;
+  }
+
+  async resolveInstallUrl(rawUrl) {
+    const normalized = this.normalizeInstallUrl(rawUrl);
+    const github = this.parseGithubRepoUrl(normalized);
+    if (!github) return normalized;
+    if (github.archive && github.url) return github.url;
+    if (github.tag) {
+      return this.buildGithubZipUrl(github.owner, github.repo, 'tags', github.tag);
+    }
+    if (github.branch) {
+      return this.buildGithubZipUrl(github.owner, github.repo, 'heads', github.branch);
+    }
+    if (github.latest) {
+      try {
+        const api = `https://api.github.com/repos/${github.owner}/${github.repo}/releases/latest`;
+        const res = await fetch(api);
+        if (res.ok) {
+          const data = await res.json();
+          const tag = String(data?.tag_name || '').trim();
+          if (tag) return this.buildGithubZipUrl(github.owner, github.repo, 'tags', tag);
+        }
+      } catch {}
+    }
+    try {
+      const api = `https://api.github.com/repos/${github.owner}/${github.repo}`;
+      const res = await fetch(api);
+      if (res.ok) {
+        const data = await res.json();
+        const branch = String(data?.default_branch || '').trim();
+        if (branch) return this.buildGithubZipUrl(github.owner, github.repo, 'heads', branch);
+      }
+    } catch {}
+    return this.buildGithubZipUrl(github.owner, github.repo, 'heads', 'main');
+  }
+
+  shouldRetryGithubMain(url, status) {
+    if (status !== 404 && status !== 403) return false;
+    try {
+      const parsed = new URL(url);
+      if (!parsed.hostname.endsWith('github.com')) return false;
+      if (!parsed.pathname.includes('/zip/refs/heads/main')) return false;
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  replaceGithubBranch(url, branch) {
+    try {
+      const parsed = new URL(url);
+      parsed.pathname = parsed.pathname.replace(/\/zip\/refs\/heads\/[^/]+/i, `/zip/refs/heads/${branch}`);
+      return parsed.toString();
+    } catch {
+      return url;
+    }
   }
 
   async installFromParts({ manifest, code, source }) {

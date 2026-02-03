@@ -2,6 +2,8 @@ import { LLMClient } from '../api/client.js';
 import { extractTableEditBlocks, stripTableEditBlocks } from '../memory/memory-edit-parser.js';
 import { isSummaryTableId, normalizeMemoryUpdateMode } from '../memory/memory-prompt-utils.js';
 import { appSettings } from '../storage/app-settings.js';
+import { renderTemplateText, templateSettings } from '../plugins/template-engine.js';
+import { ScriptRuntime } from '../plugins/script-runtime.js';
 import { ChatStore } from '../storage/chat-store.js';
 import { ConfigManager } from '../storage/config.js';
 import { ContactsStore } from '../storage/contacts-store.js';
@@ -37,6 +39,7 @@ import { runCommand } from './command-runner.js';
 import { ConfigPanel } from './config-panel.js';
 import { ContactDragManager } from './contact-drag-manager.js';
 import { ContactGroupRenderer } from './contact-group-renderer.js';
+import { ScriptPanel } from './script-panel.js';
 import { ContactSettingsPanel } from './contact-settings-panel.js';
 import { GeneralSettingsPanel } from './general-settings-panel.js';
 import { GroupCreatePanel, GroupSettingsPanel } from './group-chat-panels.js';
@@ -143,9 +146,15 @@ const initApp = async () => {
   const pluginStore = new PluginStore();
   const pluginRuntime =
     typeof Worker === 'undefined' ? null : new PluginRuntime(pluginStore);
+  const scriptStore = window.appBridge?.scriptStore || null;
+  const scriptRuntime =
+    typeof Worker === 'undefined' || !scriptStore ? null : new ScriptRuntime(scriptStore);
   const pluginUiManager = new PluginUiManager();
   if (!pluginRuntime) {
     logger.warn('plugin runtime disabled (Worker unsupported)');
+  }
+  if (!scriptRuntime) {
+    logger.warn('script runtime disabled (Worker unsupported or store missing)');
   }
   const presetPanel = new PresetPanel();
   const regexPanel = new RegexPanel();
@@ -168,6 +177,15 @@ const initApp = async () => {
         sessionId: sid || null,
         scope,
       }).catch(err => logger.warn('plugin variable.changed failed', err));
+      if (scriptRuntime) {
+        scriptRuntime.dispatchEvent('variable.changed', {
+          name: String(name || ''),
+          oldValue,
+          newValue,
+          sessionId: sid || null,
+          scope,
+        }).catch(err => logger.warn('script variable.changed failed', err));
+      }
     };
     const originalSetVariable = chatStore.setVariable.bind(chatStore);
     chatStore.setVariable = (key, value, id = chatStore.getCurrent()) => {
@@ -281,6 +299,10 @@ const initApp = async () => {
     window.appBridge.setChatUI?.(ui);
     pluginRuntime.init().catch((err) => logger.warn('plugin runtime init failed', err));
   }
+  if (scriptRuntime) {
+    scriptRuntime.setContext({ bridge: window.appBridge, chatStore, contactsStore, presets: window.appBridge?.presets });
+    window.appBridge.setScriptRuntime?.(scriptRuntime);
+  }
   const groupStore = new GroupStore();
   const momentsStore = new MomentsStore();
   const momentSummaryStore = new MomentSummaryStore();
@@ -316,6 +338,7 @@ const initApp = async () => {
   let lastMomentRawReply = '';
   let lastMomentRawMeta = null;
   const worldPanel = new WorldPanel({ contactsStore, getSessionId: () => chatStore.getCurrent() });
+  const scriptPanel = new ScriptPanel({ store: scriptStore, personaStore, presetStore: window.appBridge?.presets });
   await personaStore.ready;
   activePersonaId = personaStore.getActive?.()?.id || 'default';
   const initialScopeKey = getPersonaScopeKey(activePersonaId);
@@ -530,6 +553,10 @@ const initApp = async () => {
     }
     return personaStore.getActive();
   };
+  if (scriptRuntime) {
+    scriptRuntime.setContext({ getEffectivePersona });
+    scriptRuntime.syncContext?.().catch(() => {});
+  }
 
   const isSharedVariableSession = (sessionId = chatStore.getCurrent()) => {
     if (uiMode === 'rp') return true;
@@ -9000,6 +9027,7 @@ Phase G（Frame 36）：循环衔接
       if (action === 'memory-templates') memoryTemplatePanel.show();
       if (action === 'world-global') worldPanel.show({ scope: 'global' });
       if (action === 'regex') regexPanel.show();
+      if (action === 'scripts') scriptPanel.show();
       if (action === 'plugins') pluginPanel.show();
       if (action === 'config') configPanel.show();
       hideMenus();
@@ -10500,6 +10528,14 @@ Phase G（Frame 36）：循环衔接
         chatStore.updateMessage(m.id, { status: 'sending' }, sessionId);
         ui.updateMessage(m.id, { ...m, status: 'sending' });
       });
+      if (scriptRuntime) {
+        pendingMessagesToConfirm.forEach(m => {
+          const updated = chatStore.findMessage(m.id, sessionId) || { ...m, status: 'sending' };
+          scriptRuntime.dispatchEvent('message.after_send', { message: updated, sessionId }).catch(err => {
+            logger.warn('script message.after_send failed', err);
+          });
+        });
+      }
       if (pluginRuntime) {
         pendingMessagesToConfirm.forEach(m => {
           const updated = chatStore.findMessage(m.id, sessionId) || { ...m, status: 'sending' };
@@ -10528,6 +10564,28 @@ Phase G（Frame 36）：循环衔接
     const userEchoGuard = createUserEchoGuard(text, userName);
     const isGroupChat = Boolean(contact?.isGroup) || sessionId.startsWith('group:');
     const groupMembers = isGroupChat ? (Array.isArray(contact?.members) ? contact.members : []) : [];
+    if (scriptRuntime) {
+      try {
+        const payload = {
+          content: text,
+          sessionId,
+          userName,
+          isGroup: isGroupChat,
+          hasAttachments,
+        };
+        const updated = await scriptRuntime.dispatchEvent('message.before_send', payload);
+        if (
+          updated &&
+          typeof updated.content === 'string' &&
+          updated.content !== text &&
+          (!pendingMessagesToConfirm || pendingMessagesToConfirm.length === 0)
+        ) {
+          text = updated.content;
+        }
+      } catch (err) {
+        logger.warn('script message.before_send failed', err);
+      }
+    }
     if (pluginRuntime) {
       try {
         const payload = {
@@ -11885,11 +11943,59 @@ Phase G（Frame 36）：循环衔接
       }
     };
     const buildAssistantMessageFromText = (rawText, { sessionId, time, name, avatar, showName, depth } = {}) => {
-      const cleaned = sanitizeAssistantReplyText(rawText, userName);
+      const sessionKey = String(sessionId || '').trim();
+      let displayText = String(rawText ?? '');
+      let templateVars = null;
+      const templateAllowed = templateSettings.shouldRun('render', {
+        session: { id: sessionKey, settings: chatStore.getSessionSettings?.(sessionKey) || {} },
+      });
+      if (templateAllowed) {
+        try {
+          const membersText = Array.isArray(groupMembers)
+            ? groupMembers.map(mid => contactsStore.getContact(mid)?.name || mid).filter(Boolean).join(',')
+            : '';
+          const inject = window.appBridge?.getTemplateRenderInjections?.({
+            sessionId: sessionKey,
+            uiMode,
+            content: displayText,
+            userName,
+            characterName,
+            groupName: isGroupChat ? characterName : '',
+            membersText,
+          });
+          const before = Array.isArray(inject?.before) ? inject.before.filter(Boolean).join('\n\n') : '';
+          const after = Array.isArray(inject?.after) ? inject.after.filter(Boolean).join('\n\n') : '';
+          if (before) displayText = `${before}\n\n${displayText}`;
+          if (after) displayText = `${displayText}\n\n${after}`;
+        } catch (err) {
+          logger.warn('template render injection failed', err);
+        }
+        try {
+          const res = renderTemplateText(displayText, {
+            stage: 'render',
+            chatStore,
+            sessionId: sessionKey,
+            context: {
+              session: { id: sessionKey },
+              user: { name: userName },
+            },
+          });
+          if (!res.error) {
+            displayText = res.text;
+            if (res.messageVars && Object.keys(res.messageVars).length) {
+              templateVars = res.messageVars;
+            }
+          }
+        } catch (err) {
+          logger.warn('template render (message) failed', err);
+        }
+      }
+      const cleaned = sanitizeAssistantReplyText(displayText, userName);
       const reasoningParsed = extractReasoningFromContent(cleaned, { depth, strict: true });
       const parsed = parseSpecialMessage(reasoningParsed.content || '');
       const meta = { ...(parsed.meta || {}) };
       if (showName) meta.showName = true;
+      if (templateVars) meta.templateVars = templateVars;
       if (reasoningParsed.reasoning) {
         meta.reasoning = reasoningParsed.reasoning;
         meta.reasoningDisplay = reasoningParsed.reasoningDisplay;
@@ -11901,11 +12007,19 @@ Phase G（Frame 36）：循环衔接
         avatar: avatar || getAssistantAvatarForSession(sessionId),
         time: time || formatNowTime(),
       };
+      const rawValue = String(rawText ?? '');
+      if (rawValue && rawValue !== displayText) next.raw = rawValue;
       if (Object.keys(meta).length) next.meta = meta;
       return next;
     };
     const emitPluginAfterReceive = (message, targetSessionId) => {
       if (!message || message.role !== 'assistant') return;
+      if (scriptRuntime) {
+        const payload = { message, sessionId: targetSessionId };
+        scriptRuntime.dispatchEvent('message.after_receive', payload).catch(err => {
+          logger.warn('script message.after_receive failed', err);
+        });
+      }
       if (pluginRuntime) {
         const payload = { message, sessionId: targetSessionId };
         pluginRuntime.dispatchEvent('message.after_receive', payload).catch(err => {
@@ -12194,7 +12308,12 @@ Phase G（Frame 36）：循环衔接
           personaRole: activePersona.role,
         },
         character: { name: characterName },
-        session: { id: sessionId, isGroup: isGroupChat, name: characterName },
+        session: {
+          id: sessionId,
+          isGroup: isGroupChat,
+          name: characterName,
+          settings: chatStore.getSessionSettings?.(sessionId) || {},
+        },
         meta: {
           // Keep summary prompt on; creative mode restricts chat guide to summary-only.
           disableSummary: Boolean(disableSummaryForThis),
@@ -12309,6 +12428,11 @@ Phase G（Frame 36）：循环衔接
         }
         ui.addMessage(userMsg);
         const savedUser = chatStore.appendMessage(userMsg, sessionId);
+        if (scriptRuntime) {
+          scriptRuntime.dispatchEvent('message.after_send', { message: savedUser || userMsg, sessionId }).catch(err => {
+            logger.warn('script message.after_send failed', err);
+          });
+        }
         if (pluginRuntime) {
           pluginRuntime.dispatchEvent('message.after_send', { message: savedUser || userMsg, sessionId }).catch(err => {
             logger.warn('plugin message.after_send failed', err);
@@ -13397,6 +13521,11 @@ Phase G（Frame 36）：循环衔接
       if (isSessionActive(sessionId)) ui.addMessage(msg);
       const saved = chatStore.appendMessage(msg, sessionId);
       refreshChatAndContacts();
+      if (isUser && scriptRuntime) {
+        scriptRuntime.dispatchEvent('message.after_send', { message: saved || msg, sessionId }).catch(err => {
+          logger.warn('script message.after_send failed', err);
+        });
+      }
       if (isUser && pluginRuntime) {
         pluginRuntime.dispatchEvent('message.after_send', { message: saved || msg, sessionId }).catch(err => {
           logger.warn('plugin message.after_send failed', err);
@@ -13798,6 +13927,7 @@ Phase G（Frame 36）：循环衔接
     try {
       await window.appBridge?.syncPresetRegexBindings?.();
     } catch {}
+    scriptRuntime?.syncContext?.().catch(() => {});
     rerenderCurrentSession();
   });
   window.addEventListener('regex-changed', () => {
@@ -13812,6 +13942,7 @@ Phase G（Frame 36）：循环衔接
     const id = e.detail?.id;
     if (id) {
       window.appBridge.setActiveSession(id);
+      scriptRuntime?.syncContext?.({ sessionId: id }).catch(() => {});
       const c = contactsStore.getContact(id);
       if (currentChatTitle) currentChatTitle.innerHTML = renderSessionNameHtml(id, c);
       syncUserPersonaUI(id);

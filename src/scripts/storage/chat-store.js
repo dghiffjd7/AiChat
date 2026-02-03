@@ -962,6 +962,7 @@ export class ChatStore {
         draft: '',
         pending: [],
         variables: {},
+        initialVariables: {},
         settings: {
           bubbleColor: defaults.bubbleColor,
           textColor: defaults.textColor,
@@ -981,6 +982,7 @@ export class ChatStore {
     if (typeof s.draft !== 'string') s.draft = '';
     if (!Array.isArray(s.pending)) s.pending = [];
     if (!s.variables) s.variables = {};
+    if (!s.initialVariables || typeof s.initialVariables !== 'object') s.initialVariables = {};
     if (!s.variableSchemas || typeof s.variableSchemas !== 'object') s.variableSchemas = {};
     if (!Array.isArray(s.variableRules)) s.variableRules = [];
     if (!s.settings) s.settings = {};
@@ -1822,6 +1824,45 @@ export class ChatStore {
 
   clearGlobalVariables() {
     this.state.globalVariables = {};
+    this._persist();
+    return true;
+  }
+
+  getInitialVariable(key, id = this.currentId) {
+    const sid = String(id || '').trim();
+    if (!sid) return undefined;
+    this._ensureSession(sid);
+    const name = String(key || '').trim();
+    if (!name) return undefined;
+    return this.state.sessions[sid].initialVariables?.[name];
+  }
+
+  setInitialVariable(key, value, id = this.currentId) {
+    const sid = String(id || '').trim();
+    const name = String(key || '').trim();
+    if (!sid || !name) return false;
+    this._ensureSession(sid);
+    if (!this.state.sessions[sid].initialVariables || typeof this.state.sessions[sid].initialVariables !== 'object') {
+      this.state.sessions[sid].initialVariables = {};
+    }
+    this.state.sessions[sid].initialVariables[name] = value;
+    this._persist();
+    return true;
+  }
+
+  listInitialVariables(id = this.currentId) {
+    const sid = String(id || '').trim();
+    if (!sid) return {};
+    this._ensureSession(sid);
+    const vars = this.state.sessions[sid].initialVariables || {};
+    return { ...vars };
+  }
+
+  clearInitialVariables(id = this.currentId) {
+    const sid = String(id || '').trim();
+    if (!sid) return false;
+    this._ensureSession(sid);
+    this.state.sessions[sid].initialVariables = {};
     this._persist();
     return true;
   }

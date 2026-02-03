@@ -8,10 +8,12 @@ import { ChatStorage } from '../storage/chat.js';
 import { ConfigManager } from '../storage/config.js';
 import { PresetStore } from '../storage/preset-store.js';
 import { RegexStore, regex_placement } from '../storage/regex-store.js';
+import { ScriptStore } from '../storage/script-store.js';
 import { WorldInfoStore, convertSTWorld } from '../storage/worldinfo.js';
 import { stickerPackStore } from '../storage/sticker-pack-store.js';
 import { makeScopedKey, normalizeScopeId } from '../storage/store-scope.js';
 import { appSettings } from '../storage/app-settings.js';
+import { renderTemplateMessages, templateSettings } from '../plugins/template-engine.js';
 import {
   buildMemoryTablePlan,
   estimateTokens,
@@ -172,6 +174,7 @@ class AppBridge {
     this.worldStore = new WorldInfoStore();
     this.presets = new PresetStore();
     this.regex = new RegexStore();
+    this.scriptStore = new ScriptStore();
     this.client = null;
     this.initialized = false;
     this.currentCharacterId = 'default';
@@ -195,6 +198,7 @@ class AppBridge {
     this.memoryTemplateStore = null; // Injected
     this.chatUI = null; // Injected
     this.pluginRuntime = null; // Injected
+    this.scriptRuntime = null; // Injected
     this.contextBuilder = null; // Injected (from UI)
     this.lastMemoryPlan = null;
     this.lastMemoryUpdateBySession = {};
@@ -215,6 +219,10 @@ class AppBridge {
 
   setPluginRuntime(runtime) {
     this.pluginRuntime = runtime || null;
+  }
+
+  setScriptRuntime(runtime) {
+    this.scriptRuntime = runtime || null;
   }
 
   setContactsStore(store) {
@@ -1196,6 +1204,21 @@ class AppBridge {
           newSession: buildSessionPayload(sessionId),
         }).catch(err => logger.warn('plugin session.changed failed', err));
       }
+      const scriptRuntime = this.scriptRuntime;
+      if (scriptRuntime) {
+        const buildSessionPayload = (sid) => {
+          const id = String(sid || '').trim();
+          if (!id) return null;
+          const contact = this.contactsStore?.getContact?.(id) || null;
+          const name = contact?.name || id;
+          const isGroup = Boolean(contact?.isGroup) || id.startsWith('group:');
+          return { id, name, isGroup };
+        };
+        scriptRuntime.dispatchEvent('session.changed', {
+          oldSession: buildSessionPayload(prevSessionId),
+          newSession: buildSessionPayload(sessionId),
+        }).catch(err => logger.warn('script session.changed failed', err));
+      }
     } catch (err) {
       logger.debug('plugin session.changed dispatch skipped', err);
     }
@@ -1445,6 +1468,21 @@ class AppBridge {
       } catch (err) {
         logger.warn('memory prompt plan failed', err);
       }
+      const scriptRuntime = this.scriptRuntime;
+      if (scriptRuntime) {
+        try {
+          const updated = await scriptRuntime.dispatchEvent('prompt.before_build', {
+            input: promptInput,
+            context: nextContext,
+          });
+          if (updated && typeof updated === 'object') {
+            if (typeof updated.input === 'string') promptInput = updated.input;
+            if (updated.context && typeof updated.context === 'object') nextContext = updated.context;
+          }
+        } catch (err) {
+          logger.warn('script prompt.before_build failed', err);
+        }
+      }
       const pluginRuntime = this.pluginRuntime;
       if (pluginRuntime) {
         try {
@@ -1461,6 +1499,19 @@ class AppBridge {
         }
       }
       let messages = this.buildMessages(promptInput, nextContext);
+      if (scriptRuntime) {
+        try {
+          const updated = await scriptRuntime.dispatchEvent('prompt.after_build', {
+            prompt: messages,
+            context: nextContext,
+          });
+          if (updated && typeof updated === 'object' && Array.isArray(updated.prompt)) {
+            messages = updated.prompt;
+          }
+        } catch (err) {
+          logger.warn('script prompt.after_build failed', err);
+        }
+      }
       if (pluginRuntime) {
         try {
           const updated = await pluginRuntime.dispatchEvent('prompt.after_build', {
@@ -1472,6 +1523,25 @@ class AppBridge {
           }
         } catch (err) {
           logger.warn('plugin prompt.after_build failed', err);
+        }
+      }
+      if (templateSettings.shouldRun('generate', nextContext)) {
+        const sessionId = String(nextContext?.session?.id || this.activeSessionId || '').trim();
+        try {
+          const rendered = await renderTemplateMessages(messages, {
+            stage: 'generate',
+            chatStore: this.chatStore,
+            sessionId,
+            context: {
+              ...(nextContext || {}),
+              messages,
+            },
+          });
+          if (rendered && Array.isArray(rendered.messages)) {
+            messages = rendered.messages;
+          }
+        } catch (err) {
+          logger.warn('template render (generate) failed', err);
         }
       }
       const config = this.config.get();
@@ -2070,8 +2140,81 @@ class AppBridge {
 	          _seq: Number.isFinite(Number(item?._seq)) ? item._seq : idx,
 	        });
 	      });
-	      return out;
-	    };
+  return out;
+};
+
+const parseTemplateInjectTags = (comment = '') => {
+  const raw = String(comment || '');
+  if (!raw.includes('[')) return [];
+  const out = [];
+  const re = /\[(GENERATE|RENDER)\s*:\s*([^\]]+)\]/gi;
+  let m;
+  while ((m = re.exec(raw))) {
+    const stage = String(m[1] || '').toLowerCase();
+    const body = String(m[2] || '').trim();
+    if (!body) continue;
+    const parts = body.split(':').map(s => s.trim()).filter(Boolean);
+    if (!parts.length) continue;
+    if (stage === 'generate') {
+      if (parts[0].toUpperCase() === 'REGEX') {
+        const pattern = parts.slice(1).join(':').trim();
+        if (!pattern) continue;
+        out.push({ stage, type: 'regex', pattern, mode: 'before' });
+        continue;
+      }
+      if (parts.length >= 2 && /^\d+$/.test(parts[0])) {
+        const index = Number(parts[0]);
+        const modeRaw = String(parts[1] || '').trim().toLowerCase();
+        if (modeRaw === 'before' || modeRaw === 'after') {
+          out.push({ stage, type: 'index', index, mode: modeRaw });
+        }
+        continue;
+      }
+      const mode = String(parts[0] || '').trim().toLowerCase();
+      if (mode === 'before' || mode === 'after') {
+        out.push({ stage, type: 'edge', mode });
+      }
+      continue;
+    }
+    if (stage === 'render') {
+      const mode = String(parts[0] || '').trim().toLowerCase();
+      if (mode === 'before' || mode === 'after') {
+        out.push({ stage, type: 'edge', mode });
+      }
+    }
+  }
+  return out;
+};
+
+const buildRegexFromTag = (pattern) => {
+  const raw = String(pattern || '').trim();
+  if (!raw) return null;
+  if (raw.startsWith('/') && raw.lastIndexOf('/') > 0) {
+    const last = raw.lastIndexOf('/');
+    const body = raw.slice(1, last);
+    const flags = raw.slice(last + 1) || 'i';
+    try {
+      return new RegExp(body, flags);
+    } catch {
+      return null;
+    }
+  }
+  try {
+    return new RegExp(raw, 'i');
+  } catch {
+    return null;
+  }
+};
+
+const stringifyMessageContent = (content) => {
+  if (Array.isArray(content)) {
+    return content
+      .map(part => (part?.type === 'text' ? String(part.text || '') : ''))
+      .filter(Boolean)
+      .join('\n');
+  }
+  return String(content ?? '');
+};
 	    const buildChatGuidePlan = () => {
 	      const mode = String(context?.meta?.chatGuideMode || '').trim().toLowerCase();
 	      if (Boolean(context?.meta?.disableChatGuide) || mode === 'none') {
@@ -2257,6 +2400,13 @@ class AppBridge {
           defaultPrompt: [],
           depth: [],
         };
+        const templateInject = {
+          generateBeforeEntries: [],
+          generateAfterEntries: [],
+          generateIndexEntries: [],
+          generateRegexEntries: [],
+          hasTemplateTags: false,
+        };
         if (!isMomentCommentTask) {
           const worldSettings = this.getWorldGlobalSettings?.() || this.worldGlobalSettings || {};
           const strategyRaw = String(worldSettings.insertionStrategy || 'role_first');
@@ -2264,6 +2414,51 @@ class AppBridge {
           const collectEntries = worldId => this.collectWorldEntries(worldId, { matchText, matchContext });
           const isRpMode = String(matchContext?.uiMode || '').trim().toLowerCase() === 'rp';
           const pushEntry = entry => {
+            const commentRaw = String(entry?.comment || '');
+            if (/\[InitialVariables\]/i.test(commentRaw)) {
+              try {
+                const raw = processTextMacrosWithPendingFlag(entry?.content || '', macroContext);
+                const parsed = JSON.parse(String(raw || '').trim() || '{}');
+                if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+                  Object.entries(parsed).forEach(([key, value]) => {
+                    const name = String(key || '').trim();
+                    if (!name) return;
+                    this.chatStore?.setInitialVariable?.(name, value, sessionId);
+                  });
+                }
+              } catch (err) {
+                logger.warn('InitialVariables parse failed', err);
+              }
+              return;
+            }
+            const tags = parseTemplateInjectTags(commentRaw);
+            if (tags.length) {
+              templateInject.hasTemplateTags = true;
+              tags.forEach(tag => {
+                if (tag.stage !== 'generate') return;
+                if (tag.type === 'edge') {
+                  if (tag.mode === 'before') templateInject.generateBeforeEntries.push(entry);
+                  if (tag.mode === 'after') templateInject.generateAfterEntries.push(entry);
+                  return;
+                }
+                if (tag.type === 'index') {
+                  templateInject.generateIndexEntries.push({
+                    entry,
+                    index: Number(tag.index) || 0,
+                    mode: tag.mode === 'after' ? 'after' : 'before',
+                  });
+                  return;
+                }
+                if (tag.type === 'regex') {
+                  templateInject.generateRegexEntries.push({
+                    entry,
+                    pattern: String(tag.pattern || ''),
+                    mode: tag.mode === 'after' ? 'after' : 'before',
+                  });
+                }
+              });
+              return;
+            }
             const pos = Number.isFinite(Number(entry?.position)) ? Math.trunc(Number(entry.position)) : 0;
             switch (pos) {
               case 0:
@@ -2410,11 +2605,30 @@ class AppBridge {
           afterExamples: buildWorldMessages(worldBuckets.afterExamples),
         };
         const depthWorldMessages = buildWorldMessages(worldBuckets.depth, { forHistory: true });
+        const materializeInjectMessages = (entry) => (
+          buildWorldMessages([entry]).map(msg => ({ role: msg.role, content: msg.content }))
+        );
+        const templateInjectPlan = {
+          generateBefore: templateInject.generateBeforeEntries.flatMap(materializeInjectMessages),
+          generateAfter: templateInject.generateAfterEntries.flatMap(materializeInjectMessages),
+          generateIndex: templateInject.generateIndexEntries.map(item => ({
+            index: Math.max(0, Math.trunc(Number(item.index) || 0)),
+            mode: item.mode === 'after' ? 'after' : 'before',
+            messages: materializeInjectMessages(item.entry),
+          })).filter(item => item.messages.length > 0),
+          generateRegex: templateInject.generateRegexEntries.map(item => ({
+            regex: buildRegexFromTag(item.pattern),
+            mode: item.mode === 'after' ? 'after' : 'before',
+            messages: materializeInjectMessages(item.entry),
+          })).filter(item => item.regex && item.messages.length > 0),
+          hasTemplateTags: templateInject.hasTemplateTags,
+        };
 
         return {
           worldPromptDefault,
           worldPromptMessages,
           depthWorldMessages,
+          templateInject: templateInjectPlan,
         };
       };
 
@@ -3177,6 +3391,58 @@ class AppBridge {
     }
     if (hasUserAttachments && !attachmentsInserted && attachmentOnlyContent) {
       messages.push({ role: 'user', content: attachmentOnlyContent });
+    }
+    try {
+      const inject = worldInjectionPlan?.templateInject || null;
+      if (inject) {
+        const findLastUserIndex = () => {
+          for (let i = messages.length - 1; i >= 0; i--) {
+            if (messages[i]?.role === 'user') return i;
+          }
+          return -1;
+        };
+        const insertAt = (idx, list) => {
+          if (!list || !list.length) return 0;
+          const safe = Math.max(0, Math.min(messages.length, idx));
+          messages.splice(safe, 0, ...list);
+          return list.length;
+        };
+        if (Array.isArray(inject.generateBefore) && inject.generateBefore.length) {
+          insertAt(0, inject.generateBefore);
+        }
+        if (Array.isArray(inject.generateAfter) && inject.generateAfter.length) {
+          const userIdx = findLastUserIndex();
+          const at = userIdx >= 0 ? userIdx + 1 : messages.length;
+          insertAt(at, inject.generateAfter);
+        }
+        if (Array.isArray(inject.generateIndex) && inject.generateIndex.length) {
+          const sorted = [...inject.generateIndex].sort((a, b) => (a.index || 0) - (b.index || 0));
+          let offset = 0;
+          sorted.forEach(item => {
+            const base = Math.max(0, Math.trunc(Number(item.index) || 0));
+            const mode = item.mode === 'after' ? 'after' : 'before';
+            const at = base + offset + (mode === 'after' ? 1 : 0);
+            offset += insertAt(at, item.messages || []);
+          });
+        }
+        if (Array.isArray(inject.generateRegex) && inject.generateRegex.length) {
+          inject.generateRegex.forEach(item => {
+            const re = item.regex;
+            if (!re) return;
+            const idx = messages.findIndex(msg => {
+              if (!msg) return false;
+              const text = stringifyMessageContent(msg.content);
+              return re.test(text);
+            });
+            if (idx < 0) return;
+            const mode = item.mode === 'after' ? 'after' : 'before';
+            const at = idx + (mode === 'after' ? 1 : 0);
+            insertAt(at, item.messages || []);
+          });
+        }
+      }
+    } catch (err) {
+      logger.warn('template inject apply failed', err);
     }
     return messages;
   }
@@ -3976,6 +4242,70 @@ class AppBridge {
         };
       })
       .filter(Boolean);
+  }
+
+  getTemplateRenderInjections({ sessionId, uiMode, content, userName, characterName, groupName, membersText } = {}) {
+    const sid = String(sessionId || '').trim();
+    const mode = String(uiMode || '').trim().toLowerCase() === 'rp' ? 'rp' : 'chat';
+    const matchContext = {
+      uiMode: mode,
+      sessionId: sid,
+      sessionName: String(groupName || characterName || '').trim(),
+    };
+    const matchText = String(content ?? '');
+    const collectEntries = (worldId) => this.collectWorldEntries(worldId, { matchText, matchContext });
+    const worldSettings = this.getWorldGlobalSettings?.() || this.worldGlobalSettings || {};
+    const strategyRaw = String(worldSettings.insertionStrategy || 'role_first');
+    const insertionStrategy = ['role_first', 'global_first', 'even'].includes(strategyRaw) ? strategyRaw : 'role_first';
+    const globalEntries =
+      this.globalWorldId && String(this.globalWorldId) !== BUILTIN_PHONE_FORMAT_WORLDBOOK_ID
+        ? collectEntries(this.globalWorldId)
+        : [];
+    const sessionEntries = [];
+    if (mode !== 'rp') {
+      const list = this.normalizeWorldIds(this.worldSessionMap[String(sid) || '']);
+      list.forEach((id) => {
+        if (!id) return;
+        const entries = collectEntries(id);
+        if (entries.length) sessionEntries.push(...entries);
+      });
+    }
+    const mergedEntries = this.mergeWorldEntries(globalEntries, sessionEntries, insertionStrategy);
+    const before = [];
+    const after = [];
+    const macroContext = {
+      user: String(userName || '').trim(),
+      char: String(characterName || '').trim(),
+      group: String(groupName || '').trim() || String(characterName || '').trim(),
+      members: String(membersText || '').trim(),
+      uiMode: mode,
+    };
+    const formatContent = (entry) => {
+      const raw = this.processTextMacros(String(entry?.content || ''), {
+        ...macroContext,
+        sessionId: sid,
+      });
+      const trimmed = String(raw || '').trim();
+      if (!trimmed) return '';
+      return this.regex.apply(trimmed, this.getRegexContext(), regex_placement.WORLD_INFO, {
+        isMarkdown: true,
+        isPrompt: false,
+        isEdit: false,
+        depth: 0,
+      });
+    };
+    mergedEntries.forEach((entry) => {
+      const tags = parseTemplateInjectTags(entry?.comment || '');
+      if (!tags.length) return;
+      const text = formatContent(entry);
+      if (!text) return;
+      tags.forEach(tag => {
+        if (tag.stage !== 'render' || tag.type !== 'edge') return;
+        if (tag.mode === 'before') before.push(text);
+        if (tag.mode === 'after') after.push(text);
+      });
+    });
+    return { before, after };
   }
 
   mergeWorldEntries(globalEntries = [], sessionEntries = [], strategy = 'role_first') {

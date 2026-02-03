@@ -600,9 +600,15 @@ export class ChatUI {
       message.id = `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
     }
     const runtime = typeof window !== 'undefined' ? window.appBridge?.pluginRuntime : null;
+    const scriptRuntime = typeof window !== 'undefined' ? window.appBridge?.scriptRuntime : null;
     if (runtime) {
       runtime.dispatchEvent('message.before_render', { message }).catch(err => {
         logger.warn('plugin message.before_render failed', err);
+      });
+    }
+    if (scriptRuntime) {
+      scriptRuntime.dispatchEvent('message.before_render', { message }).catch(err => {
+        logger.warn('script message.before_render failed', err);
       });
     }
     const el = this.buildMessageElement(message);
@@ -613,6 +619,11 @@ export class ChatUI {
     if (runtime && el) {
       runtime.dispatchEvent('message.after_render', { message, elementId: message?.id || '' }).catch(err => {
         logger.warn('plugin message.after_render failed', err);
+      });
+    }
+    if (scriptRuntime && el) {
+      scriptRuntime.dispatchEvent('message.after_render', { message, elementId: message?.id || '' }).catch(err => {
+        logger.warn('script message.after_render failed', err);
       });
     }
     return el?.querySelector('.QQ_chat_msgdiv') || el;

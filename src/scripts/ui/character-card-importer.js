@@ -4,6 +4,7 @@ import { normalizeScopeId } from '../storage/store-scope.js';
 import { parseCharacterCardFile } from '../utils/character-card.js';
 import { avatarDataUrlFromFile } from '../utils/image.js';
 import { safeInvoke } from '../utils/tauri.js';
+import { appConfirm } from './app-confirm.js';
 
 const buildGreetingList = (card = {}) => {
   const list = [];
@@ -45,13 +46,22 @@ const extractRegexScripts = (card = {}) => {
   return list;
 };
 
+const extractTavernHelperScripts = (card = {}) => {
+  const ext = card?.extensions && typeof card.extensions === 'object' ? card.extensions : {};
+  const thRaw = ext.tavern_helper || ext.tavernHelper || ext.tavern_helper_scripts || ext.tavernHelperScripts;
+  if (!thRaw || typeof thRaw !== 'object') return [];
+  const th = Array.isArray(thRaw) ? Object.fromEntries(thRaw) : thRaw;
+  const scripts = th?.scripts;
+  return Array.isArray(scripts) ? scripts : [];
+};
+
 const hasSystemPrompt = (card = {}) => {
   const sys = String(card.system_prompt || '').trim();
   const post = String(card.post_history_instructions || '').trim();
   return Boolean(sys || post);
 };
 
-const promptImportOptions = ({ displayName, fileName, worldCount, greetingCount, regexCount, allowSystemPrompt } = {}) =>
+const promptImportOptions = ({ displayName, fileName, worldCount, greetingCount, regexCount, scriptCount, allowSystemPrompt } = {}) =>
   new Promise((resolve) => {
     const overlay = document.createElement('div');
     overlay.style.cssText = `
@@ -89,6 +99,10 @@ const promptImportOptions = ({ displayName, fileName, worldCount, greetingCount,
           <input type="checkbox" id="cc-opt-regex" ${regexCount ? 'checked' : ''} ${regexCount ? '' : 'disabled'}>
           <span>导入正则脚本（${regexCount} 条）</span>
         </label>
+        <label style="display:flex; align-items:center; gap:8px;">
+          <input type="checkbox" id="cc-opt-script" ${scriptCount ? '' : 'disabled'}>
+          <span>导入脚本（${scriptCount} 条）</span>
+        </label>
       </div>
       <div style="display:flex; gap:8px; justify-content:flex-end; padding:12px 16px; border-top:1px solid #e5e7eb; background:#fff;">
         <button id="cc-opt-cancel" style="border:1px solid #e2e8f0; background:#fff; border-radius:10px; padding:8px 12px;">取消</button>
@@ -109,6 +123,7 @@ const promptImportOptions = ({ displayName, fileName, worldCount, greetingCount,
     const greetEl = panel.querySelector('#cc-opt-greeting');
     const sysEl = panel.querySelector('#cc-opt-system');
     const regexEl = panel.querySelector('#cc-opt-regex');
+    const scriptEl = panel.querySelector('#cc-opt-script');
     panel.querySelector('#cc-opt-cancel')?.addEventListener('click', () => cleanup(null));
     panel.querySelector('#cc-opt-confirm')?.addEventListener('click', () => {
       cleanup({
@@ -116,6 +131,7 @@ const promptImportOptions = ({ displayName, fileName, worldCount, greetingCount,
         importGreetings: Boolean(greetEl?.checked),
         importSystemPrompt: Boolean(sysEl?.checked),
         importRegex: Boolean(regexEl?.checked),
+        importScripts: Boolean(scriptEl?.checked),
       });
     });
   });
@@ -247,12 +263,14 @@ export class CharacterCardImporter {
     const greetings = buildGreetingList(card);
     const worldEntries = buildWorldbookEntries(card, { defaultScope: [] });
     const regexScripts = extractRegexScripts(card);
+    const tavernScripts = extractTavernHelperScripts(card);
     const options = await promptImportOptions({
       displayName,
       fileName,
       worldCount: worldEntries.length,
       greetingCount: greetings.length,
       regexCount: regexScripts.length,
+      scriptCount: tavernScripts.length,
       allowSystemPrompt: hasSystemPrompt(card),
     });
     if (!options) return false;
@@ -357,6 +375,32 @@ export class CharacterCardImporter {
         }
       } catch (err) {
         logger.warn('import regex scripts failed', err);
+      }
+    }
+
+    if (options.importScripts && tavernScripts.length) {
+      try {
+        const scriptStore = this.appBridge?.scriptStore;
+        if (scriptStore?.ready) await scriptStore.ready;
+        const result = await scriptStore?.importTavernHelperScripts?.({
+          scripts: tavernScripts,
+          scope: 'character',
+          scopeId: persona.id,
+          source: 'card',
+        });
+        if (result?.count) {
+          const ok = await appConfirm({
+            title: '导入脚本',
+            message: `检测到 ${result.count} 条脚本，是否现在启用？`,
+          });
+          if (ok) {
+            const ids = Array.isArray(result.ids) ? result.ids : [];
+            await Promise.all(ids.map((id) => scriptStore.toggleScript('character', persona.id, id, true)));
+          }
+          window.toastr?.success?.('脚本已导入');
+        }
+      } catch (err) {
+        logger.warn('import tavern helper scripts failed', err);
       }
     }
 

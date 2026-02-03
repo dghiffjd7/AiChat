@@ -256,6 +256,9 @@ export class ContactSettingsPanel {
         this.summaryEditSave = null;
         this.summaryEditCancel = null;
         this.summaryCompacting = false;
+        this.templateToggle = null;
+        this.scriptToggle = null;
+        this.resetVarsBtn = null;
     }
 
     show() {
@@ -351,6 +354,22 @@ export class ContactSettingsPanel {
                     <div style="color:#64748b; font-size:12px; margin-top:6px;">用于展示标签；不设置则界面保持原样。</div>
                 </div>
 
+                <div style="margin-top:16px; border-top:1px solid #eee; padding-top:14px;">
+                    <div style="font-weight:700; color:#0f172a; margin-bottom:10px;">模板与脚本（本会话）</div>
+                    <label style="display:flex; align-items:center; gap:8px; cursor:pointer; margin-bottom:8px;">
+                        <input type="checkbox" id="contact-template-enabled" style="width:18px; height:18px;">
+                        <span>启用模板处理</span>
+                    </label>
+                    <label style="display:flex; align-items:center; gap:8px; cursor:pointer; margin-bottom:8px;">
+                        <input type="checkbox" id="contact-script-enabled" style="width:18px; height:18px;">
+                        <span>启用脚本</span>
+                    </label>
+                    <button id="contact-reset-vars" type="button" style="padding:8px 12px; border:1px solid #e2e8f0; border-radius:10px; background:#fff; cursor:pointer; font-size:12px;">
+                        重置本会话变量
+                    </button>
+                    <div style="color:#64748b; font-size:12px; margin-top:6px;">仅清空本会话 local 变量，不影响全局变量。</div>
+                </div>
+
                 <div style="margin-top:20px; border-top:1px solid #eee; padding-top:14px;">
                     <div style="font-weight:700; color:#0f172a; margin-bottom:10px;">聊天管理</div>
                     <button id="contact-new-chat" style="width:100%; padding:10px; border:1px solid #ddd; border-radius:8px; background:#fff; color:#019aff; font-weight:700; margin-bottom:10px; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:6px;">
@@ -418,6 +437,9 @@ export class ContactSettingsPanel {
         this.memoryTableSection = this.panel.querySelector('#contact-memory-table-section');
         this.memoryTableContent = this.panel.querySelector('#contact-memory-table-content');
         this.summariesBatchBar = this.panel.querySelector('#contact-summaries-batchbar');
+        this.templateToggle = this.panel.querySelector('#contact-template-enabled');
+        this.scriptToggle = this.panel.querySelector('#contact-script-enabled');
+        this.resetVarsBtn = this.panel.querySelector('#contact-reset-vars');
 
         this.panel.querySelector('#contact-settings-close').onclick = () => this.hide();
         this.panel.querySelector('#contact-settings-cancel').onclick = () => this.hide();
@@ -445,6 +467,23 @@ export class ContactSettingsPanel {
             }
         };
         this.panel.querySelector('#contact-settings-save').onclick = () => this.save();
+        this.resetVarsBtn?.addEventListener('click', async () => {
+            const sid = this.getSessionId();
+            if (!sid) return;
+            const ok = await appConfirm({
+                title: '重置变量',
+                message: '确定要清空本会话的全部 local 变量吗？',
+                danger: true,
+            });
+            if (!ok) return;
+            try {
+                this.chatStore?.clearVariables?.(sid);
+                window.toastr?.success?.('已清空本会话变量');
+            } catch (err) {
+                logger.warn('clear session variables failed', err);
+                window.toastr?.error?.('清空失败');
+            }
+        });
         this.panel.querySelector('#contact-new-chat').onclick = () => this.startNewChat();
         this.panel.querySelector('#contact-summaries-clear').onclick = async () => {
             const sid = this.getSessionId();
@@ -1042,6 +1081,18 @@ export class ContactSettingsPanel {
             const labels = Array.isArray(c.labels) ? c.labels : [];
             this.labelsInput.value = labels.join(', ');
         }
+        const sessionSettings = this.chatStore?.getSessionSettings?.(sessionId) || {};
+        const globalSettings = appSettings.get();
+        if (this.templateToggle) {
+            this.templateToggle.checked = (typeof sessionSettings.templateEnabled === 'boolean')
+                ? sessionSettings.templateEnabled
+                : (globalSettings.templateEnabled !== false);
+        }
+        if (this.scriptToggle) {
+            this.scriptToggle.checked = (typeof sessionSettings.scriptEnabled === 'boolean')
+                ? sessionSettings.scriptEnabled
+                : (globalSettings.scriptEnabled === true);
+        }
     }
 
     save() {
@@ -1058,6 +1109,10 @@ export class ContactSettingsPanel {
                     .filter(Boolean),
                 { max: 8 },
             );
+            const sessionSettings = this.chatStore?.getSessionSettings?.(sessionId) || {};
+            if (this.templateToggle) sessionSettings.templateEnabled = Boolean(this.templateToggle.checked);
+            if (this.scriptToggle) sessionSettings.scriptEnabled = Boolean(this.scriptToggle.checked);
+            this.chatStore?.setSessionSettings?.(sessionId, sessionSettings);
             this.contactsStore?.upsertContact?.({ ...prev, id: sessionId, name, avatar, labels });
             window.toastr?.success?.('已保存好友设置');
             this.onSaved?.({ id: sessionId, name, avatar, labels });

@@ -1,5 +1,21 @@
 # 開發進度追蹤（必更新）(必须使用当下时间记录)
 
+## 2026-02-03 15:20
+
+- 角色卡导入增强：新增链接导入弹窗（PNG/JSON）、居中显示与确认弹窗层级修复；导入头像自动压缩，避免 dev 重载丢头像。
+- Persona/角色卡持久化增强：原始角色卡改为独立文件存储（`persona_cards`），Persona 存储自动剥离大字段防止 KV/LocalStorage 超限；删除 Persona 同步清理原始卡文件。
+- RP 体验修正：RP 标题与开场白角色名改用角色卡名称（Persona 名保持 `user`）；RP 会话强制富文本渲染以正确显示代码块。
+- 世界书持久化保护：`worldinfo_store` 写入加软上限与降级，避免 localStorage 配额异常导致崩溃。
+- 修改：
+  - `src/scripts/ui/app.js`
+  - `src/scripts/ui/character-card-importer.js`
+  - `src/scripts/ui/persona-panel.js`
+  - `src/scripts/ui/bridge.js`
+  - `src/scripts/storage/persona-store.js`
+  - `src/scripts/storage/worldinfo.js`
+  - `src-tauri/src/commands.rs`
+  - `src-tauri/src/lib.rs`
+
 ## 2026-02-01 16:25
 
 - 角色卡共享记忆补完：记忆表格编辑器在共享模式下写入全局行，预览/导出改为按共享范围取世界书。
