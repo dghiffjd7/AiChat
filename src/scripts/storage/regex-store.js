@@ -430,10 +430,53 @@ export class RegexStore {
     applyMacros(text, vars, { escape = false } = {}) {
         const raw = String(text ?? '');
         if (!raw) return '';
-        return raw.replace(/{{\s*([a-zA-Z0-9_]+)\s*}}/g, (_m, key) => {
-            let v = vars?.[key];
-            v = (v === null || v === undefined) ? '' : String(v);
-            return escape ? this.sanitizeRegexMacro(v) : v;
+        const normalizeKey = (val) => String(val || '').trim();
+        const toPath = (val) => {
+            const rawKey = normalizeKey(val);
+            if (!rawKey) return [];
+            const bracketed = rawKey.replace(/\[([^\]]+)\]/g, '.$1');
+            return bracketed
+                .split('.')
+                .map(seg => seg.trim().replace(/^['"]|['"]$/g, ''))
+                .filter(Boolean);
+        };
+        const getByPath = (obj, key) => {
+            const parts = toPath(key);
+            if (!parts.length) return undefined;
+            let cur = obj;
+            for (const part of parts) {
+                if (cur === null || cur === undefined) return undefined;
+                const idx = /^\d+$/.test(part) ? Number(part) : null;
+                if (idx !== null && Array.isArray(cur)) {
+                    cur = cur[idx];
+                    continue;
+                }
+                if (typeof cur !== 'object') return undefined;
+                if (!(part in cur)) return undefined;
+                cur = cur[part];
+            }
+            return cur;
+        };
+        const formatValue = (value) => {
+            if (value === null || value === undefined) return '';
+            if (typeof value === 'string') return value;
+            if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+            try {
+                return JSON.stringify(value);
+            } catch {
+                return String(value);
+            }
+        };
+        return raw.replace(/{{\s*([^}]+)\s*}}/g, (_m, rawKey) => {
+            const key = normalizeKey(rawKey);
+            if (!key) return '';
+            const lower = key.toLowerCase();
+            let lookupKey = key;
+            if (lower.startsWith('getvar::')) lookupKey = key.slice(8);
+            else if (lower.startsWith('getvar:')) lookupKey = key.slice(7);
+            const value = getByPath(vars, lookupKey);
+            const out = formatValue(value);
+            return escape ? this.sanitizeRegexMacro(out) : out;
         });
     }
 
@@ -450,6 +493,7 @@ export class RegexStore {
     runRegexScript(script, rawString, vars) {
         let newString = String(rawString ?? '');
         if (!script || script.disabled || !script.findRegex || !newString) return newString;
+        const STATUS_TOKEN = '__CHATAPP_STATUS__';
 
         const getRegexString = () => {
             const mode = Number(script.substituteRegex ?? 0);
@@ -484,7 +528,31 @@ export class RegexStore {
                 return this.filterString(match, script.trimStrings, vars);
             });
 
-            return this.applyMacros(replaceWithGroups, vars, { escape: false });
+            let replaced = replaceWithGroups;
+            const statusInFind = /StatusPlaceHolderImpl/i.test(String(script.findRegex || ''));
+            const statusInReplace = /StatusPlaceHolderImpl/i.test(String(script.replaceString || ''));
+            if (statusInFind || statusInReplace) {
+                const looksLikeScripted =
+                    /<script\b/i.test(replaced) ||
+                    /getAllVariables\s*\(/i.test(replaced) ||
+                    /waitGlobalInitialized\s*\(/i.test(replaced) ||
+                    /\bMvu\b/i.test(replaced) ||
+                    /\beventOn\s*\(/i.test(replaced);
+                if (!looksLikeScripted) {
+                    const statusRe = /<StatusPlaceHolderImpl\s*\/?>/gi;
+                    if (statusRe.test(replaced)) {
+                        replaced = replaced.replace(statusRe, STATUS_TOKEN);
+                    } else {
+                        const insertIdx = replaced.lastIndexOf('</');
+                        if (insertIdx > -1) {
+                            replaced = `${replaced.slice(0, insertIdx)}${STATUS_TOKEN}${replaced.slice(insertIdx)}`;
+                        } else {
+                            replaced = `${replaced}${STATUS_TOKEN}`;
+                        }
+                    }
+                }
+            }
+            return this.applyMacros(replaced, vars, { escape: false });
         }.bind(this));
 
         return newString;

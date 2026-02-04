@@ -54,6 +54,72 @@ const resolveProgress = (value, schema = {}) => {
   return { percent, text: formatValue(value, schema) || String(num) };
 };
 
+const collectEntries = (chatStore, sessionId) => {
+  const sid = String(sessionId || '').trim();
+  if (!sid) return [];
+  const schemas = chatStore?.listVariableSchemas?.(sid) || {};
+  const vars = chatStore?.listVariables?.(sid) || {};
+  return Object.entries(schemas)
+    .map(([key, schema]) => {
+      if (!schema || typeof schema !== 'object') return null;
+      const display = String(schema?.ui?.display || 'card');
+      if (display === 'hidden') return null;
+      const label = String(schema?.ui?.label || schema?.name || key || '').trim();
+      if (!label) return null;
+      return { key, schema, display, label, value: vars[key] };
+    })
+    .filter(Boolean);
+};
+
+const renderEntriesIntoList = (listEl, entries = []) => {
+  if (!listEl) return;
+  listEl.innerHTML = '';
+  entries.forEach((entry) => {
+    const item = document.createElement('div');
+    item.className = `variable-status-item var-status-${entry.display}`;
+    const color = String(entry.schema?.ui?.color || '').trim();
+    if (color) item.style.setProperty('--var-color', color);
+
+    const label = document.createElement('div');
+    label.className = 'var-status-label';
+    const icon = String(entry.schema?.ui?.icon || '').trim();
+    label.textContent = icon ? `${icon} ${entry.label}` : entry.label;
+
+    const valueText = formatValue(entry.value, entry.schema);
+    const value = document.createElement('div');
+    value.className = 'var-status-value';
+    value.textContent = truncate(valueText, 80);
+    value.title = valueText;
+
+    item.appendChild(label);
+    item.appendChild(value);
+
+    if (entry.display === 'progress') {
+      const progress = resolveProgress(entry.value, entry.schema);
+      const bar = document.createElement('div');
+      bar.className = 'var-status-progress';
+      const fill = document.createElement('span');
+      fill.style.width = `${Math.round(progress.percent * 100)}%`;
+      bar.appendChild(fill);
+      item.appendChild(bar);
+    }
+
+    listEl.appendChild(item);
+  });
+};
+
+export const buildVariableStatusSnapshot = ({ chatStore, sessionId, inline = false } = {}) => {
+  const entries = collectEntries(chatStore, sessionId);
+  if (!entries.length) return null;
+  const root = document.createElement('div');
+  root.className = inline ? 'variable-status-card inline is-active' : 'variable-status-card is-active';
+  const list = document.createElement('div');
+  list.className = 'variable-status-list';
+  root.appendChild(list);
+  renderEntriesIntoList(list, entries);
+  return root;
+};
+
 export class VariableStatusCard {
   constructor({ chatStore } = {}) {
     this.chatStore = chatStore;
@@ -112,18 +178,7 @@ export class VariableStatusCard {
       this.listEl.innerHTML = '';
       return;
     }
-    const schemas = this.chatStore?.listVariableSchemas?.(sid) || {};
-    const vars = this.chatStore?.listVariables?.(sid) || {};
-    const entries = Object.entries(schemas)
-      .map(([key, schema]) => {
-        if (!schema || typeof schema !== 'object') return null;
-        const display = String(schema?.ui?.display || 'card');
-        if (display === 'hidden') return null;
-        const label = String(schema?.ui?.label || schema?.name || key || '').trim();
-        if (!label) return null;
-        return { key, schema, display, label, value: vars[key] };
-      })
-      .filter(Boolean);
+    const entries = collectEntries(this.chatStore, sid);
 
     if (!entries.length) {
       this.el.classList.remove('is-active');
@@ -132,39 +187,7 @@ export class VariableStatusCard {
       return;
     }
 
-    this.listEl.innerHTML = '';
-    entries.forEach((entry) => {
-      const item = document.createElement('div');
-      item.className = `variable-status-item var-status-${entry.display}`;
-      const color = String(entry.schema?.ui?.color || '').trim();
-      if (color) item.style.setProperty('--var-color', color);
-
-      const label = document.createElement('div');
-      label.className = 'var-status-label';
-      const icon = String(entry.schema?.ui?.icon || '').trim();
-      label.textContent = icon ? `${icon} ${entry.label}` : entry.label;
-
-      const valueText = formatValue(entry.value, entry.schema);
-      const value = document.createElement('div');
-      value.className = 'var-status-value';
-      value.textContent = truncate(valueText, 80);
-      value.title = valueText;
-
-      item.appendChild(label);
-      item.appendChild(value);
-
-      if (entry.display === 'progress') {
-        const progress = resolveProgress(entry.value, entry.schema);
-        const bar = document.createElement('div');
-        bar.className = 'var-status-progress';
-        const fill = document.createElement('span');
-        fill.style.width = `${Math.round(progress.percent * 100)}%`;
-        bar.appendChild(fill);
-        item.appendChild(bar);
-      }
-
-      this.listEl.appendChild(item);
-    });
+    renderEntriesIntoList(this.listEl, entries);
 
     this.el.classList.add('is-active');
     this.el.setAttribute('aria-hidden', 'false');

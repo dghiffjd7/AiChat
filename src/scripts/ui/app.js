@@ -1698,6 +1698,7 @@ ${listPart || '-（无）'}
 
     return list.map((m, i) => {
       if (!m || typeof m !== 'object') return m;
+      const sid = String(sessionId || '').trim();
       const base = typeof m.raw === 'string' ? m.raw : typeof m.content === 'string' ? m.content : '';
       if (!base) return m;
       const avatar = m.avatar || resolveAvatarForMessage(m, sessionId);
@@ -1741,6 +1742,7 @@ ${listPart || '-（无）'}
               raw: stored,
               content: display,
               status: m.status,
+              sessionId: sid,
               meta,
             };
           }
@@ -1749,6 +1751,7 @@ ${listPart || '-（无）'}
             avatar,
             content: normalizeCreativeLineBreaks(window.appBridge.applyOutputDisplayRegex(creativeBase, { depth })),
             status: m.status,
+            sessionId: sid,
             meta,
           };
         }
@@ -1756,7 +1759,7 @@ ${listPart || '-（无）'}
         try {
           display = window.appBridge.applyOutputDisplayRegex(base, { depth });
         } catch {}
-        return { ...m, avatar, content: display, status: m.status, meta }; // 保留 status 字段
+        return { ...m, avatar, content: display, status: m.status, sessionId: sid, meta }; // 保留 status 字段
       }
       if (m.role === 'user' && (m.type === 'text' || !m.type)) {
         return {
@@ -1764,6 +1767,7 @@ ${listPart || '-（无）'}
           avatar,
           content: window.appBridge.applyInputDisplayRegex(base, { depth }),
           status: m.status,
+          sessionId: sid,
           meta,
         }; // 保留 status 字段
       }
@@ -1779,17 +1783,18 @@ ${listPart || '-（无）'}
             content: '[图片已过期]',
             avatar,
             status: m.status,
+            sessionId: sid,
             meta: expiredMeta,
           };
         }
         if (localPath && (!content || content === '[binary omitted]')) {
           const localUrl = resolveLocalAttachmentUrl(localPath);
           if (localUrl) {
-            return { ...m, avatar, content: localUrl, status: m.status, meta };
+            return { ...m, avatar, content: localUrl, status: m.status, sessionId: sid, meta };
           }
         }
       }
-      return { ...m, avatar, status: m.status, meta }; // 保留 status 字段
+      return { ...m, avatar, status: m.status, sessionId: sid, meta }; // 保留 status 字段
     });
   };
 
@@ -10108,13 +10113,16 @@ Phase G（Frame 36）：循环衔接
     const assistantName = String(getRpCharacterName() || '角色');
     const meta = { ...(parsed.meta || {}), isGreeting: true, renderRich: true };
     return {
-      role: 'assistant',
-      ...parsed,
-      raw: stored,
-      name: assistantName,
-      avatar: getAssistantAvatarForSession(sessionId),
-      time: formatNowTime(),
-      meta,
+      message: {
+        role: 'assistant',
+        ...parsed,
+        raw: stored,
+        name: assistantName,
+        avatar: getAssistantAvatarForSession(sessionId),
+        time: formatNowTime(),
+        meta,
+      },
+      initVarData: initVarResult.data || null,
     };
   };
 

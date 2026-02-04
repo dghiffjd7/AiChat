@@ -1242,11 +1242,28 @@ class AppBridge {
     (this.currentWorldIds || []).forEach(id => {
       if (id) worldIds.push(String(id));
     });
+    const sid = String(this.activeSessionId || '').trim();
+    let localVars = {};
+    let globalVars = {};
+    try {
+      localVars = this.chatStore?.listVariables?.(sid) || {};
+    } catch {}
+    try {
+      globalVars = this.chatStore?.listGlobalVariables?.() || {};
+    } catch {}
+    const mergedVars = { ...globalVars, ...localVars };
     return {
       sessionId: this.activeSessionId,
       worldId: this.currentWorldId,
       worldIds,
       activePresets,
+      macroVars: {
+        ...mergedVars,
+        stat_data: localVars,
+        variables: localVars,
+        status_current_variables: localVars,
+        global_variables: globalVars,
+      },
     };
   }
 

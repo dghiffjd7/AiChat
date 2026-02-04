@@ -6,6 +6,7 @@
 
 import { logger } from '../../utils/logger.js';
 import { appSettings } from '../../storage/app-settings.js';
+import { buildVariableStatusSnapshot } from '../variable-status-card.js';
 
 const iframeDebugState = new Map();
 const getIframeState = (id, init) => {
@@ -28,6 +29,241 @@ const getIframeHostUrl = () => {
 const escapeText = (s) => String(s ?? '');
 const allowRichIframeScripts = () => appSettings.get().allowRichIframeScripts === true;
 const stripScriptsForPreview = (html) => String(html ?? '').replace(/<script[\s\S]*?<\/script\s*>/gi, '');
+const shouldEnableMvuCompat = (html) => {
+    const raw = String(html || '');
+    if (!raw) return false;
+    return /getAllVariables\s*\(|waitGlobalInitialized\s*\(|\bMvu\b|StatusPlaceHolderImpl|mag_variable_/i.test(raw);
+};
+const buildMvuCompatBridge = ({ iframeId, sessionId } = {}) => {
+    const id = String(iframeId || '');
+    const sid = String(sessionId || '');
+    return `
+<script>
+(() => {
+  const CHATAPP_IFRAME_ID = ${JSON.stringify(id)};
+  const CHATAPP_SESSION_ID = ${JSON.stringify(sid)};
+  const listeners = new Map();
+
+  const ensureEventSet = (event) => {
+    if (!listeners.has(event)) listeners.set(event, new Set());
+    return listeners.get(event);
+  };
+  const emit = (event, payload) => {
+    const set = listeners.get(event);
+    if (!set) return;
+    for (const fn of set.values()) {
+      try { fn(payload); } catch (err) { console.error(err); }
+    }
+  };
+  const eventOn = (event, cb) => {
+    if (!event || typeof cb !== 'function') return;
+    ensureEventSet(event).add(cb);
+  };
+  const eventRemoveListener = (event, cb) => {
+    if (!event || typeof cb !== 'function') return;
+    const set = listeners.get(event);
+    if (set) set.delete(cb);
+  };
+  const normalizeVars = (input) => {
+    const vars = input && typeof input === 'object' ? input : {};
+    const stat = (vars.stat_data && typeof vars.stat_data === 'object')
+      ? vars.stat_data
+      : (vars.variables && typeof vars.variables === 'object' ? vars.variables : {});
+    const globalVars = (vars.global_variables && typeof vars.global_variables === 'object') ? vars.global_variables : {};
+    return {
+      ...vars,
+      stat_data: stat,
+      variables: stat,
+      status_current_variables: stat,
+      global_variables: globalVars,
+    };
+  };
+  const state = { vars: normalizeVars({}) };
+
+  const ensureMvu = () => {
+    if (!window.Mvu || typeof window.Mvu !== 'object') {
+      window.Mvu = { events: {} };
+    }
+    if (!window.Mvu.events || typeof window.Mvu.events !== 'object') {
+      window.Mvu.events = {};
+    }
+    if (!window.Mvu.events.VARIABLE_UPDATE_ENDED) {
+      window.Mvu.events.VARIABLE_UPDATE_ENDED = 'mag_variable_update_ended';
+    }
+    if (!window.Mvu.events.VARIABLE_UPDATE_STARTED) {
+      window.Mvu.events.VARIABLE_UPDATE_STARTED = 'mag_variable_update_started';
+    }
+    if (!window.Mvu.events.VARIABLE_INITIALIZED) {
+      window.Mvu.events.VARIABLE_INITIALIZED = 'mag_variable_initialized';
+    }
+  };
+
+  const setVars = (vars) => {
+    state.vars = normalizeVars(vars);
+    emit(window.Mvu?.events?.VARIABLE_UPDATE_ENDED || 'mag_variable_update_ended', state.vars);
+  };
+
+  window.getAllVariables = window.getAllVariables || (() => state.vars);
+  if (typeof window.eventOn !== 'function') window.eventOn = eventOn;
+  if (typeof window.eventRemoveListener !== 'function') window.eventRemoveListener = eventRemoveListener;
+  if (typeof window.waitGlobalInitialized !== 'function') {
+    window.waitGlobalInitialized = (name) => new Promise((resolve) => {
+      if (name && window[name]) return resolve(window[name]);
+      let done = false;
+      const tick = () => {
+        if (done) return;
+        if (name && window[name]) {
+          done = true;
+          return resolve(window[name]);
+        }
+        if (!name) {
+          done = true;
+          return resolve(null);
+        }
+        setTimeout(tick, 30);
+      };
+      tick();
+      setTimeout(() => { if (!done) resolve(window[name] || null); done = true; }, 3000);
+    });
+  }
+  if (typeof window.errorCatched !== 'function') {
+    window.errorCatched = (fn) => (...args) => {
+      try { return fn?.(...args); } catch (err) { console.error(err); }
+    };
+  }
+
+  const ensureLodash = () => {
+    if (!window._ || typeof window._ !== 'object') window._ = {};
+    const _ = window._;
+    if (typeof _.isArray !== 'function') _.isArray = Array.isArray;
+    if (typeof _.isObject !== 'function') _.isObject = (v) => v !== null && typeof v === 'object';
+    if (typeof _.isNil !== 'function') _.isNil = (v) => v === null || v === undefined;
+    if (typeof _.clamp !== 'function') _.clamp = (n, min, max) => Math.max(min, Math.min(max, n));
+    const toPath = (raw) => String(raw || '')
+      .replace(/\\[([^\\]]+)\\]/g, '.$1')
+      .split('.')
+      .map(seg => seg.trim().replace(/^['"]|['"]$/g, ''))
+      .filter(Boolean);
+    if (typeof _.get !== 'function') {
+      _.get = (obj, path, defVal) => {
+        const parts = toPath(path);
+        let cur = obj;
+        for (const part of parts) {
+          if (cur === null || cur === undefined) return defVal;
+          cur = cur[part];
+        }
+        return cur === undefined ? defVal : cur;
+      };
+    }
+    if (typeof _.set !== 'function') {
+      _.set = (obj, path, value) => {
+        const parts = toPath(path);
+        if (!parts.length) return obj;
+        let cur = obj;
+        for (let i = 0; i < parts.length - 1; i += 1) {
+          const key = parts[i];
+          if (!cur[key] || typeof cur[key] !== 'object') cur[key] = {};
+          cur = cur[key];
+        }
+        cur[parts[parts.length - 1]] = value;
+        return obj;
+      };
+    }
+  };
+
+  const ensureMiniQuery = () => {
+    const hasJq = typeof window.$ === 'function' && window.$.fn && window.$.fn.jquery;
+    if (hasJq) return;
+    if (typeof window.$ === 'function' && window.$.__chatappMini) return;
+    const toNodes = (input) => {
+      if (!input) return [];
+      if (input instanceof Element || input === window || input === document) return [input];
+      if (Array.isArray(input)) return input.filter(Boolean);
+      return Array.from(document.querySelectorAll(String(input)));
+    };
+    const wrap = (nodes) => ({
+      __chatappMini: true,
+      nodes,
+      text(value) {
+        if (value === undefined) return nodes[0]?.textContent ?? '';
+        nodes.forEach(n => { n.textContent = String(value); });
+        return this;
+      },
+      html(value) {
+        if (value === undefined) return nodes[0]?.innerHTML ?? '';
+        nodes.forEach(n => { n.innerHTML = String(value); });
+        return this;
+      },
+      css(prop, value) {
+        if (!prop) return this;
+        if (typeof prop === 'object') {
+          nodes.forEach(n => {
+            Object.entries(prop).forEach(([k, v]) => { n.style[k] = String(v); });
+          });
+          return this;
+        }
+        nodes.forEach(n => { n.style[String(prop)] = String(value); });
+        return this;
+      },
+      addClass(cls) {
+        const list = String(cls || '').split(/\s+/).filter(Boolean);
+        nodes.forEach(n => n.classList.add(...list));
+        return this;
+      },
+      removeClass(cls) {
+        const list = String(cls || '').split(/\s+/).filter(Boolean);
+        nodes.forEach(n => n.classList.remove(...list));
+        return this;
+      },
+      empty() {
+        nodes.forEach(n => { n.innerHTML = ''; });
+        return this;
+      },
+      append(content) {
+        if (content === undefined || content === null) return this;
+        nodes.forEach((n, idx) => {
+          if (typeof content === 'string') {
+            n.insertAdjacentHTML('beforeend', content);
+          } else if (content instanceof Node) {
+            n.appendChild(idx === 0 ? content : content.cloneNode(true));
+          }
+        });
+        return this;
+      },
+    });
+    const mini = (input) => {
+      if (typeof input === 'function') {
+        if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', input);
+        else setTimeout(input, 0);
+        return wrap([]);
+      }
+      return wrap(toNodes(input));
+    };
+    mini.__chatappMini = true;
+    window.$ = mini;
+  };
+
+  ensureMvu();
+  ensureLodash();
+  ensureMiniQuery();
+
+  window.addEventListener('message', (e) => {
+    const data = e?.data;
+    if (!data || data.type !== 'chatapp:mvu-vars') return;
+    if (data.sessionId && CHATAPP_SESSION_ID && String(data.sessionId) !== CHATAPP_SESSION_ID) return;
+    setVars(data.vars || {});
+  });
+
+  const request = () => {
+    try {
+      parent.postMessage({ type: 'chatapp:mvu-ready', id: CHATAPP_IFRAME_ID, sessionId: CHATAPP_SESSION_ID }, '*');
+    } catch {}
+  };
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', request);
+  else request();
+})();
+</script>`;
+};
 
 let iframeBridgeScriptUrl = '';
 const buildIframeBridgeScript = () => `
@@ -521,6 +757,7 @@ const buildIframeSrcDoc = (
         styleInBody = false,
         baseHref = '',
         bridgeScriptUrl = '',
+        headPrepend = '',
     } = {},
 ) => {
     const content = String(htmlBodyOrDocument ?? '');
@@ -576,6 +813,16 @@ const buildIframeSrcDoc = (
         const wrapped = preserveNewlines ? `<div class="__chatapp-prewrap">${content}</div>` : content;
         const iframeAttr = iframeIdValue ? ` data-chatapp-iframe-id="${iframeIdValue}"` : '';
         doc = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"></head><body${bodyClass}${iframeAttr}>${wrapped}</body></html>`;
+    }
+    const headPrependHtml = headPrepend ? String(headPrepend) : '';
+    if (headPrependHtml) {
+        if (/<head[^>]*>/i.test(doc)) {
+            doc = doc.replace(/<head([^>]*)>/i, `<head$1>${headPrependHtml}`);
+        } else if (/<html[^>]*>/i.test(doc)) {
+            doc = doc.replace(/<html([^>]*)>/i, `<html$1><head>${headPrependHtml}</head>`);
+        } else {
+            doc = `${headPrependHtml}${doc}`;
+        }
     }
 
     // Base style: avoid overflowing the phone width; keep layout modern and readable
@@ -994,7 +1241,7 @@ const processAllVhUnits = (htmlContent) => {
     return processed;
 };
 
-const makeCodeBlock = ({ lang, code, messageId, preserveHtmlNewlines = false }) => {
+const makeCodeBlock = ({ lang, code, messageId, preserveHtmlNewlines = false, sessionId } = {}) => {
     const wrap = document.createElement('div');
     wrap.className = 'chat-codeblock';
     wrap.style.cssText = 'border:1px solid rgba(0,0,0,0.10); border-radius:12px; overflow:hidden; margin:8px 0;';
@@ -1010,6 +1257,7 @@ const makeCodeBlock = ({ lang, code, messageId, preserveHtmlNewlines = false }) 
         /<details[\s>]/i.test(code) ||
         /<div[\s>]/i.test(code);
     const allowScripts = allowRichIframeScripts();
+    const needsMvuCompat = allowScripts && shouldEnableMvuCompat(code);
     if (looksLikeHtmlDoc || isHtmlLang) {
         const previewWrap = document.createElement('div');
         previewWrap.style.cssText = 'background:#fff;';
@@ -1017,8 +1265,10 @@ const makeCodeBlock = ({ lang, code, messageId, preserveHtmlNewlines = false }) 
         const iframeId = `msg-${String(messageId || 'x')}-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
         iframe.dataset.iframeId = iframeId;
         iframe.dataset.msgId = String(messageId || '');
+        if (sessionId) iframe.dataset.sessionId = String(sessionId || '');
         iframe.dataset.iframeSource = 'host';
         iframe.dataset.iframeAllowScripts = allowScripts ? '1' : '0';
+        iframe.dataset.iframeMvuCompat = needsMvuCompat ? '1' : '0';
         iframe.style.cssText = 'width:100%; border:0; display:block; height:240px; background:#fff;';
         if (!allowScripts) {
             iframe.setAttribute('sandbox', 'allow-scripts');
@@ -1056,6 +1306,7 @@ const makeCodeBlock = ({ lang, code, messageId, preserveHtmlNewlines = false }) 
         });
         const bridgeScriptUrl = '';
         const baseHref = allowScripts ? `${window.location.origin}/` : '';
+        const mvuCompatBridge = needsMvuCompat ? buildMvuCompatBridge({ iframeId, sessionId }) : '';
         const scriptDoc = buildIframeSrcDoc(html, {
             iframeId,
             needsVhHandling,
@@ -1064,6 +1315,7 @@ const makeCodeBlock = ({ lang, code, messageId, preserveHtmlNewlines = false }) 
             styleInBody: false,
             baseHref,
             bridgeScriptUrl,
+            headPrepend: mvuCompatBridge,
         });
         previewWrap.appendChild(iframe);
         if (allowScripts) {
@@ -1198,6 +1450,45 @@ export const setupIframeResizeListener = () => {
         }
         return null;
     };
+    const collectMvuVars = (sessionId) => {
+        const sid = String(sessionId || window.appBridge?.activeSessionId || '').trim();
+        if (!sid) return null;
+        const store = window.appBridge?.chatStore;
+        if (!store) return null;
+        const localVars = store?.listVariables?.(sid) || {};
+        const globalVars = store?.listGlobalVariables?.() || {};
+        return {
+            stat_data: localVars,
+            variables: localVars,
+            status_current_variables: localVars,
+            global_variables: globalVars,
+        };
+    };
+    const postMvuVarsToIframe = (iframe, sessionId) => {
+        if (!iframe || iframe.dataset.iframeMvuCompat !== '1' || iframe.dataset.iframeAllowScripts !== '1') return;
+        const sid = String(sessionId || iframe.dataset.sessionId || window.appBridge?.activeSessionId || '').trim();
+        if (!sid) return;
+        const vars = collectMvuVars(sid);
+        if (!vars) return;
+        try {
+            iframe.contentWindow?.postMessage({
+                type: 'chatapp:mvu-vars',
+                id: String(iframe.dataset.iframeId || ''),
+                sessionId: sid,
+                vars,
+            }, '*');
+        } catch {}
+    };
+    const broadcastMvuVars = (sessionId, { includeAll = false } = {}) => {
+        const sid = String(sessionId || '').trim();
+        const nodes = document.querySelectorAll('iframe[data-iframe-mvu-compat="1"]');
+        for (const iframe of nodes) {
+            if (!iframe || iframe.dataset.iframeAllowScripts !== '1') continue;
+            const targetSid = String(iframe.dataset.sessionId || '').trim();
+            if (!includeAll && sid && targetSid && targetSid !== sid) continue;
+            postMvuVarsToIframe(iframe, targetSid || sid);
+        }
+    };
 
     window.addEventListener('message', (e) => {
         const data = e?.data;
@@ -1211,6 +1502,20 @@ export const setupIframeResizeListener = () => {
             iframe.dataset.iframeReady = '1';
             const st = getIframeState(id, { messageId: String(iframe.dataset.msgId || ''), createdAt: Date.now() });
             if (st && !st.readyAt) st.readyAt = Date.now();
+            if (iframe.dataset.iframeMvuCompat === '1') {
+                postMvuVarsToIframe(iframe, iframe.dataset.sessionId || '');
+            }
+            return;
+        }
+        if (data.type === 'chatapp:mvu-ready') {
+            const id = String(data.id || '');
+            if (!id) return;
+            const iframe = document.querySelector(`iframe[data-iframe-id="${esc(id)}"]`);
+            if (!iframe) return;
+            if (data.sessionId && !iframe.dataset.sessionId) {
+                iframe.dataset.sessionId = String(data.sessionId || '');
+            }
+            postMvuVarsToIframe(iframe, data.sessionId || iframe.dataset.sessionId || '');
             return;
         }
         if (data.type === 'chatapp:iframe-host-ready') {
@@ -1313,13 +1618,29 @@ export const setupIframeResizeListener = () => {
             }));
         }
     });
+
+    window.addEventListener('chatapp-variable-changed', (ev) => {
+        const sid = String(ev?.detail?.sessionId || '').trim();
+        const scope = String(ev?.detail?.scope || '').trim();
+        if (scope === 'global') {
+            broadcastMvuVars('', { includeAll: true });
+            return;
+        }
+        if (sid) broadcastMvuVars(sid);
+    });
+    window.addEventListener('chatapp-variable-schema-changed', (ev) => {
+        const sid = String(ev?.detail?.sessionId || '').trim();
+        if (sid) broadcastMvuVars(sid);
+    });
 };
 
-export const renderRichText = (containerEl, text, { messageId, preserveHtmlNewlines = false } = {}) => {
+export const renderRichText = (containerEl, text, { messageId, preserveHtmlNewlines = false, sessionId } = {}) => {
     if (!containerEl) return;
     containerEl.innerHTML = '';
 
+    const STATUS_TOKEN = '__CHATAPP_STATUS__';
     const rawText = String(text ?? '');
+    const normalizedText = rawText;
     const escapeHtml = (value) => (
         String(value ?? '')
             .replace(/&/g, '&amp;')
@@ -1340,17 +1661,17 @@ export const renderRichText = (containerEl, text, { messageId, preserveHtmlNewli
     // 酒馆助手/正则常见用法：
     // - 直接把可渲染的 HTML 片段塞进消息（例如把 <thinking> 替换为 <style>+<details>）
     // 我们保持默认安全文本渲染，但对“明显是 HTML 的整段消息”提供 iframe 渲染（沙盒）
-    const trimmed = rawText.trim();
+    const trimmed = normalizedText.trim();
     const wholeLooksLikeHtml = (
         trimmed.startsWith('<') &&
         (/<style[\s>]/i.test(trimmed) || /<details[\s>]/i.test(trimmed) || /<div[\s>]/i.test(trimmed) || /<body[\s>]/i.test(trimmed)) &&
         /<\/[a-z][a-z0-9]*\s*>/i.test(trimmed)
     );
-    const textWithBreaks = rawText
+    const textWithBreaks = normalizedText
         .replace(/&lt;br\s*\/?&gt;/gi, '\n')
         .replace(/<br\s*\/?>/gi, '\n');
-    const hasCodeFence = /```/.test(rawText);
-    let parts = (hasCodeFence ? splitFencedCodeBlocks(rawText)
+    const hasCodeFence = /```/.test(normalizedText);
+    let parts = (hasCodeFence ? splitFencedCodeBlocks(normalizedText)
         : wholeLooksLikeHtml
             ? [{ type: 'code', lang: 'html', code: trimmed }]
             : [{ type: 'text', text: textWithBreaks }]);
@@ -1375,6 +1696,12 @@ export const renderRichText = (containerEl, text, { messageId, preserveHtmlNewli
             return { ...p, text: normalized };
         });
     }
+    const resolveStatusCard = () => {
+        const sid = String(sessionId || window.appBridge?.activeSessionId || '').trim();
+        const store = window.appBridge?.chatStore;
+        return buildVariableStatusSnapshot({ chatStore: store, sessionId: sid, inline: true });
+    };
+
     parts.forEach((p) => {
         if (p.type === 'code') {
             containerEl.appendChild(makeCodeBlock({
@@ -1382,6 +1709,7 @@ export const renderRichText = (containerEl, text, { messageId, preserveHtmlNewli
                 code: p.code,
                 messageId,
                 preserveHtmlNewlines,
+                sessionId,
             }));
             return;
         }
@@ -1390,9 +1718,20 @@ export const renderRichText = (containerEl, text, { messageId, preserveHtmlNewli
         const chunk = String(p.text || '');
         const lines = chunk.split(/\n/);
         lines.forEach((line, idx) => {
-            const span = document.createElement('span');
-            span.textContent = escapeText(line);
-            containerEl.appendChild(span);
+            const segments = line.split(STATUS_TOKEN);
+            segments.forEach((seg, segIdx) => {
+                if (seg) {
+                    const span = document.createElement('span');
+                    span.textContent = escapeText(seg);
+                    containerEl.appendChild(span);
+                }
+                if (segIdx !== segments.length - 1) {
+                    const card = resolveStatusCard();
+                    if (card) {
+                        containerEl.appendChild(card);
+                    }
+                }
+            });
             if (idx !== lines.length - 1) containerEl.appendChild(document.createElement('br'));
         });
     });

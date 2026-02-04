@@ -898,19 +898,161 @@ export class PersonaPanel {
 
     async deleteCurrent() {
         if (!this.editingId) return;
-        const ok = await appConfirm({ title: '删除角色', message: '确定要删除此角色吗？', danger: true });
-        if (!ok) return;
+        const persona = this.store.get(this.editingId);
+        const options = await this.promptDeleteOptions(persona);
+        if (!options?.confirm) return;
 
         const success = await this.store.delete(this.editingId);
         if (success) {
             try {
                 await window.appBridge?.deletePersonaCard?.(this.editingId);
             } catch {}
+            try {
+                await this.cleanupPersonaBindings(persona, options);
+            } catch {}
             this.closeEdit();
             this.renderList();
             if (this.onPersonaChanged) this.onPersonaChanged();
         } else {
             alert('无法删除（至少保留一个角色）');
+        }
+    }
+
+    async promptDeleteOptions(persona) {
+        const source = (persona && typeof persona === 'object' && persona.source && typeof persona.source === 'object')
+            ? persona.source
+            : {};
+        const worldId = String(source.worldbookId || '').trim();
+        const regexSetId = String(source.regexSetId || '').trim();
+        const scriptStore = window.appBridge?.scriptStore;
+        let scriptCount = 0;
+        try {
+            if (scriptStore?.ready) await scriptStore.ready;
+            if (scriptStore?.getScripts) {
+                scriptCount = (scriptStore.getScripts('character', persona?.id || '') || []).length;
+            }
+        } catch {}
+        const hasWorld = Boolean(worldId);
+        const hasRegex = Boolean(regexSetId);
+        const hasScripts = scriptCount > 0;
+
+        if (!hasWorld && !hasRegex && !hasScripts) {
+            const ok = await appConfirm({ title: '删除角色', message: '确定要删除此角色吗？', danger: true });
+            return { confirm: ok, deleteWorld: false, deleteRegex: false, deleteScripts: false };
+        }
+
+        const worldLabel = hasWorld ? worldId : '';
+        let regexLabel = hasRegex ? regexSetId : '';
+        try {
+            const regexStore = window.appBridge?.regex;
+            if (regexStore?.ready) await regexStore.ready;
+            const set = regexStore?.getLocalSet?.(regexSetId);
+            if (set?.name) regexLabel = set.name;
+        } catch {}
+        let worldName = worldLabel;
+        try {
+            const data = await window.appBridge?.getWorldInfo?.(worldId);
+            if (data?.name) worldName = data.name;
+        } catch {}
+
+        return new Promise((resolve) => {
+            const overlay = document.createElement('div');
+            overlay.className = 'app-confirm-overlay';
+            overlay.style.display = 'block';
+            overlay.addEventListener('click', () => cleanup(false));
+
+            const modal = document.createElement('div');
+            modal.className = 'app-confirm-modal is-danger';
+            modal.style.display = 'block';
+            modal.innerHTML = `
+                <div class="app-confirm-header">
+                    <div class="app-confirm-title">删除角色</div>
+                    <button type="button" class="app-confirm-close" aria-label="关闭">×</button>
+                </div>
+                <div class="app-confirm-body" style="text-align:left;">
+                    <div style="margin-bottom:10px;">确定要删除此角色吗？</div>
+                    <div style="display:flex; flex-direction:column; gap:8px; font-size:13px;">
+                        ${hasWorld ? `
+                            <label style="display:flex; align-items:center; gap:8px;">
+                                <input type="checkbox" id="persona-del-world" checked>
+                                <span>删除绑定世界书（${worldName}）</span>
+                            </label>
+                        ` : ''}
+                        ${hasRegex ? `
+                            <label style="display:flex; align-items:center; gap:8px;">
+                                <input type="checkbox" id="persona-del-regex" checked>
+                                <span>删除绑定正则（${regexLabel}）</span>
+                            </label>
+                        ` : ''}
+                        ${hasScripts ? `
+                            <label style="display:flex; align-items:center; gap:8px;">
+                                <input type="checkbox" id="persona-del-scripts" checked>
+                                <span>删除绑定脚本（${scriptCount} 条）</span>
+                            </label>
+                        ` : ''}
+                    </div>
+                </div>
+                <div class="app-confirm-actions">
+                    <button type="button" class="app-confirm-btn app-confirm-cancel">取消</button>
+                    <button type="button" class="app-confirm-btn app-confirm-ok" data-variant="danger">删除</button>
+                </div>
+            `;
+            modal.addEventListener('click', (event) => event.stopPropagation());
+
+            const closeBtn = modal.querySelector('.app-confirm-close');
+            const cancelBtn = modal.querySelector('.app-confirm-cancel');
+            const okBtn = modal.querySelector('.app-confirm-ok');
+            const worldBox = modal.querySelector('#persona-del-world');
+            const regexBox = modal.querySelector('#persona-del-regex');
+            const scriptBox = modal.querySelector('#persona-del-scripts');
+            if (worldBox) worldBox.checked = true;
+            if (regexBox) regexBox.checked = true;
+            if (scriptBox) scriptBox.checked = true;
+
+            const cleanup = (confirm) => {
+                overlay.remove();
+                modal.remove();
+                resolve({
+                    confirm,
+                    deleteWorld: confirm && hasWorld ? Boolean(worldBox?.checked) : false,
+                    deleteRegex: confirm && hasRegex ? Boolean(regexBox?.checked) : false,
+                    deleteScripts: confirm && hasScripts ? Boolean(scriptBox?.checked) : false,
+                });
+            };
+
+            closeBtn?.addEventListener('click', () => cleanup(false));
+            cancelBtn?.addEventListener('click', () => cleanup(false));
+            okBtn?.addEventListener('click', () => cleanup(true));
+
+            document.body.appendChild(overlay);
+            document.body.appendChild(modal);
+            requestAnimationFrame(() => okBtn?.focus());
+        });
+    }
+
+    async cleanupPersonaBindings(persona, options) {
+        if (!persona || typeof persona !== 'object' || !options) return;
+        const source = (persona.source && typeof persona.source === 'object') ? persona.source : {};
+        const worldId = String(source.worldbookId || '').trim();
+        const regexSetId = String(source.regexSetId || '').trim();
+        if (options.deleteWorld && worldId) {
+            try {
+                await window.appBridge?.deleteWorldInfo?.(worldId);
+            } catch {}
+        }
+        if (options.deleteRegex && regexSetId) {
+            try {
+                const regexStore = window.appBridge?.regex;
+                if (regexStore?.ready) await regexStore.ready;
+                await regexStore?.removeLocalSet?.(regexSetId);
+            } catch {}
+        }
+        if (options.deleteScripts) {
+            try {
+                const scriptStore = window.appBridge?.scriptStore;
+                if (scriptStore?.ready) await scriptStore.ready;
+                await scriptStore?.setScripts?.('character', persona.id, []);
+            } catch {}
         }
     }
 }

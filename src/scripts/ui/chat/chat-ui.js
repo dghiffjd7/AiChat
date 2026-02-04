@@ -926,6 +926,7 @@ export class ChatUI {
           renderRichText(target, String(message.content ?? ''), {
             messageId: message.id,
             preserveHtmlNewlines: true,
+            sessionId: message?.sessionId,
           });
           break;
         }
@@ -1143,7 +1144,7 @@ export class ChatUI {
             const text = String(fm?.content ?? '');
             const target = this.prepareTextContainer(messageEl, fm);
             if (fm?.meta?.renderRich) {
-              renderRichText(target, text, { messageId: msgId || fm?.id || meta?.id });
+              renderRichText(target, text, { messageId: msgId || fm?.id || meta?.id, sessionId: fm?.sessionId });
             } else {
               const normalized = this.normalizeAssistantLineBreaks(text);
               if (!this.renderTextWithStickers(target, normalized)) {

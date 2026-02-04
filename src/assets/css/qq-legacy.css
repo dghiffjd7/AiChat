@@ -4043,6 +4043,19 @@ body[data-ui-mode='rp'] .QQ_chat_page.sticker-preview-active .msgcontent {
   display: block;
 }
 
+.variable-status-card.inline {
+  display: block;
+  padding: 6px 8px;
+  border-radius: 14px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 6px 14px rgba(15, 23, 42, 0.08);
+}
+
+.variable-status-card.inline .variable-status-list {
+  padding-bottom: 0;
+}
+
 .variable-status-list {
   display: flex;
   gap: 8px;
