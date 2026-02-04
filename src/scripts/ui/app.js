@@ -35,7 +35,7 @@ import './bridge.js';
 import { ChatUI } from './chat/chat-ui.js';
 import { DialogueStreamParser } from './chat/dialogue-stream-parser.js';
 import { parseSpecialMessage } from './chat/message-parser.js';
-import { runCommand } from './command-runner.js';
+import { runCommand, getCommandList } from './command-runner.js';
 import { ConfigPanel } from './config-panel.js';
 import { ContactDragManager } from './contact-drag-manager.js';
 import { ContactGroupRenderer } from './contact-group-renderer.js';
@@ -60,7 +60,7 @@ import { VariablePanel } from './variable-panel.js';
 import { VariableRuleEngine } from '../variables/variable-rule-engine.js';
 import { WorldPanel } from './world-panel.js';
 import { WorldInfoIndicator } from './worldinfo-indicator.js';
-import { appConfirm } from './app-confirm.js';
+import { appConfirm, appChoice } from './app-confirm.js';
 import { PluginRuntime } from '../plugins/plugin-runtime.js';
 
 const reportFatalError = (err, label = 'App init failed') => {
@@ -150,6 +150,8 @@ const initApp = async () => {
   const scriptRuntime =
     typeof Worker === 'undefined' || !scriptStore ? null : new ScriptRuntime(scriptStore);
   const pluginUiManager = new PluginUiManager();
+  const templatePromptedSessions = new Set();
+  const scriptPromptedSessions = new Set();
   if (!pluginRuntime) {
     logger.warn('plugin runtime disabled (Worker unsupported)');
   }
@@ -4241,6 +4243,175 @@ Phase G（Frame 36）：循环衔接
     requestAnimationFrame(syncChatInputOffset);
     requestAnimationFrame(syncChatBottomGap);
   });
+
+  // Slash command menu (type "/" in composer)
+  (() => {
+    if (!composerInput) return;
+    const menu = document.createElement('div');
+    menu.className = 'slash-command-menu';
+    menu.style.display = 'none';
+    document.body.appendChild(menu);
+
+    let items = [];
+    let selectedIndex = 0;
+    let lastQuery = '';
+
+    const hideMenu = () => {
+      menu.style.display = 'none';
+      lastQuery = '';
+    };
+
+    const getQuery = () => {
+      const value = String(composerInput.value || '');
+      const pos = Number.isFinite(Number(composerInput.selectionStart))
+        ? composerInput.selectionStart
+        : value.length;
+      const before = value.slice(0, pos);
+      const match = before.match(/^(\/[^\s]*)$/);
+      if (!match) return null;
+      const token = match[1] || '';
+      if (!token.startsWith('/')) return null;
+      return { token, start: 0, end: token.length };
+    };
+
+    const filterCommands = (token) => {
+      const query = String(token || '').toLowerCase();
+      const list = getCommandList();
+      if (!query || query === '/') return list;
+      return list.filter(item => String(item.key || '').toLowerCase().startsWith(query));
+    };
+
+    const renderMenu = () => {
+      if (!items.length) {
+        hideMenu();
+        return;
+      }
+      menu.innerHTML = items
+        .map((item, idx) => {
+          const key = String(item.key || '');
+          const desc = String(item.desc || '');
+          const active = idx === selectedIndex ? ' is-active' : '';
+          return `
+            <div class="slash-command-item${active}" data-index="${idx}">
+              <div class="slash-command-key">${key}</div>
+              <div class="slash-command-desc">${desc}</div>
+            </div>
+          `;
+        })
+        .join('');
+      menu.style.display = 'block';
+      menu.style.visibility = 'hidden';
+      const rect = composerInput.getBoundingClientRect();
+      menu.style.left = `${Math.round(rect.left)}px`;
+      menu.style.minWidth = `${Math.round(rect.width)}px`;
+      const height = menu.offsetHeight || 0;
+      let top = rect.top - height - 8;
+      if (top < 8) top = rect.bottom + 8;
+      menu.style.top = `${Math.round(top)}px`;
+      menu.style.visibility = 'visible';
+    };
+
+    const updateMenu = () => {
+      const query = getQuery();
+      if (!query) {
+        hideMenu();
+        return;
+      }
+      const nextItems = filterCommands(query.token);
+      if (!nextItems.length) {
+        hideMenu();
+        return;
+      }
+      if (lastQuery !== query.token) {
+        selectedIndex = 0;
+        lastQuery = query.token;
+      }
+      items = nextItems;
+      if (selectedIndex >= items.length) selectedIndex = 0;
+      renderMenu();
+    };
+
+    const applySelection = (index) => {
+      const item = items[index];
+      if (!item) return;
+      const value = String(composerInput.value || '');
+      const pos = Number.isFinite(Number(composerInput.selectionStart))
+        ? composerInput.selectionStart
+        : value.length;
+      const before = value.slice(0, pos);
+      const after = value.slice(pos);
+      const match = before.match(/^(\/[^\s]*)$/);
+      if (!match) return;
+      const token = match[1] || '';
+      const start = 0;
+      const nextValue = item.key + ' ' + after;
+      composerInput.value = nextValue;
+      const nextPos = start + String(item.key).length + 1;
+      composerInput.setSelectionRange(nextPos, nextPos);
+      composerInput.dispatchEvent(new Event('input', { bubbles: true }));
+      hideMenu();
+      composerInput.focus();
+    };
+
+    const updateActiveItem = () => {
+      const list = menu.querySelectorAll('.slash-command-item');
+      list.forEach((el, idx) => {
+        if (idx === selectedIndex) el.classList.add('is-active');
+        else el.classList.remove('is-active');
+      });
+      const active = list[selectedIndex];
+      if (active?.scrollIntoView) {
+        active.scrollIntoView({ block: 'nearest' });
+      }
+    };
+
+    composerInput.addEventListener('input', () => updateMenu());
+    composerInput.addEventListener('keydown', (e) => {
+      if (menu.style.display === 'none') return;
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        selectedIndex = (selectedIndex + 1) % items.length;
+        updateActiveItem();
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        selectedIndex = (selectedIndex - 1 + items.length) % items.length;
+        updateActiveItem();
+        return;
+      }
+      if (e.key === 'Enter' || e.key === 'Tab') {
+        e.preventDefault();
+        applySelection(selectedIndex);
+        return;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        hideMenu();
+      }
+    });
+    composerInput.addEventListener('blur', () => {
+      setTimeout(() => hideMenu(), 80);
+    });
+
+    menu.addEventListener('mousedown', e => e.preventDefault());
+    menu.addEventListener('click', e => {
+      const item = e.target?.closest?.('.slash-command-item');
+      if (!item) return;
+      const idx = Number(item.getAttribute('data-index'));
+      if (Number.isFinite(idx)) applySelection(idx);
+    });
+
+    document.addEventListener('pointerdown', e => {
+      if (menu.style.display === 'none') return;
+      if (menu.contains(e.target) || composerInput.contains(e.target)) return;
+      hideMenu();
+    });
+    window.addEventListener('resize', () => {
+      if (menu.style.display !== 'none') renderMenu();
+    });
+  })();
+
   chatScroll?.addEventListener(
     'scroll',
     () => {
@@ -10451,6 +10622,8 @@ Phase G（Frame 36）：循环衔接
     const existingUserMessageId =
       typeof options.existingUserMessageId === 'string' ? options.existingUserMessageId : '';
     const skipInputRegex = Boolean(options.skipInputRegex);
+    const skipTemplate = Boolean(options.skipTemplate);
+    const skipScripts = Boolean(options.skipScripts);
     const creativeMode = sendMode === 'creative' || uiMode === 'rp';
     const includeAttachments = options.includeAttachments !== false;
     const attachmentQueue = includeAttachments ? composerAttachments.slice() : [];
@@ -10534,7 +10707,7 @@ Phase G（Frame 36）：循环衔接
         chatStore.updateMessage(m.id, { status: 'sending' }, sessionId);
         ui.updateMessage(m.id, { ...m, status: 'sending' });
       });
-      if (scriptRuntime) {
+      if (scriptRuntime && !skipScripts) {
         pendingMessagesToConfirm.forEach(m => {
           const updated = chatStore.findMessage(m.id, sessionId) || { ...m, status: 'sending' };
           scriptRuntime.dispatchEvent('message.after_send', { message: updated, sessionId }).catch(err => {
@@ -10570,7 +10743,85 @@ Phase G（Frame 36）：循环衔接
     const userEchoGuard = createUserEchoGuard(text, userName);
     const isGroupChat = Boolean(contact?.isGroup) || sessionId.startsWith('group:');
     const groupMembers = isGroupChat ? (Array.isArray(contact?.members) ? contact.members : []) : [];
-    if (scriptRuntime) {
+    const containsTemplateSyntax = (value) => {
+      if (!value) return false;
+      if (typeof value === 'string') return value.includes('<%');
+      if (Array.isArray(value)) return value.some(containsTemplateSyntax);
+      if (typeof value === 'object') {
+        if (containsTemplateSyntax(value.content)) return true;
+        if (containsTemplateSyntax(value.text)) return true;
+      }
+      return false;
+    };
+    const hasTemplateInMessages = (messages) => {
+      if (!Array.isArray(messages)) return false;
+      return messages.some(msg => containsTemplateSyntax(msg?.content ?? msg));
+    };
+    const maybePromptTemplateEnable = async ({ sampleText = '' } = {}) => {
+      if (skipTemplate) return;
+      const settings = appSettings.get();
+      if (settings.templateEnabled !== false) return;
+      if (settings.templateDetectDisabled === true) return;
+      if (templatePromptedSessions.has(sessionId)) return;
+      let detected = containsTemplateSyntax(sampleText);
+      if (!detected && typeof window.appBridge?.buildMessages === 'function') {
+        try {
+          const preview = window.appBridge.buildMessages(sampleText || text, llmContext(sampleText || text));
+          detected = hasTemplateInMessages(preview);
+        } catch {}
+      }
+      if (!detected) return;
+      templatePromptedSessions.add(sessionId);
+      const choice = await appChoice({
+        title: '模板提示',
+        message: '检测到当前内容包含模板语法（<% %>）。\n启用后可获得完整变量驱动体验。',
+        actions: [
+          { id: 'enable', label: '启用模板', primary: true },
+          { id: 'later', label: '暂不' },
+          { id: 'never', label: '不再提示', variant: 'danger' },
+        ],
+        defaultActionId: 'enable',
+      });
+      if (choice === 'enable') {
+        appSettings.update({ templateEnabled: true });
+      } else if (choice === 'never') {
+        appSettings.update({ templateDetectDisabled: true });
+      }
+    };
+    const maybePromptScriptAuthorization = async () => {
+      if (skipScripts) return;
+      if (!scriptStore) return;
+      if (scriptPromptedSessions.has(sessionId)) return;
+      const personaId = String(activePersona?.id || '').trim();
+      if (!personaId) return;
+      const scripts = scriptStore.getScripts('character', personaId).filter(s => s && s.authorized !== true);
+      if (!scripts.length) return;
+      scriptPromptedSessions.add(sessionId);
+      const settings = appSettings.get();
+      const perms = [
+        `读取聊天记录：${settings.scriptAllowReadMessages !== false ? '允许' : '禁用'}`,
+        `修改变量：${settings.scriptAllowModifyVariables !== false ? '允许' : '禁用'}`,
+        `访问网络：${settings.scriptAllowNetwork === true ? '允许' : '禁用'}`,
+      ];
+      const choice = await appChoice({
+        title: '脚本授权',
+        message: `检测到此角色卡包含 ${scripts.length} 条脚本。\n脚本可能需要权限：\n- ${perms.join('\n- ')}`,
+        actions: [
+          { id: 'allow', label: '允许并启用', primary: true },
+          { id: 'once', label: '仅本次允许' },
+          { id: 'deny', label: '拒绝', variant: 'danger' },
+        ],
+        defaultActionId: 'allow',
+      });
+      if (choice === 'allow') {
+        if (settings.scriptEnabled !== true) appSettings.update({ scriptEnabled: true });
+        await Promise.all(scripts.map(s => scriptStore.toggleScript('character', personaId, s.id, true)));
+        await scriptRuntime?.syncScripts?.({ sessionId });
+      } else if (choice === 'once') {
+        scriptRuntime?.allowOnce?.(sessionId, scripts.map(s => s.id));
+      }
+    };
+    if (scriptRuntime && !skipScripts) {
       try {
         const payload = {
           content: text,
@@ -11952,8 +12203,11 @@ Phase G（Frame 36）：循环衔接
       const sessionKey = String(sessionId || '').trim();
       let displayText = String(rawText ?? '');
       let templateVars = null;
+      await maybePromptTemplateEnable({ sampleText: displayText });
+      const templateMeta = skipTemplate ? { templateEnabled: false } : undefined;
       const templateAllowed = templateSettings.shouldRun('render', {
         session: { id: sessionKey, settings: chatStore.getSessionSettings?.(sessionKey) || {} },
+        meta: templateMeta,
       });
       if (templateAllowed) {
         try {
@@ -11984,6 +12238,7 @@ Phase G（Frame 36）：循环衔接
             context: {
               session: { id: sessionKey },
               user: { name: userName },
+              meta: templateMeta,
             },
           });
           if (!res.error) {
@@ -12018,9 +12273,10 @@ Phase G（Frame 36）：循环衔接
       if (Object.keys(meta).length) next.meta = meta;
       return next;
     };
-    const emitPluginAfterReceive = (message, targetSessionId) => {
+    const emitPluginAfterReceive = (message, targetSessionId, { skipScripts: skipThisScripts } = {}) => {
       if (!message || message.role !== 'assistant') return;
-      if (scriptRuntime) {
+      const shouldSkipScripts = typeof skipThisScripts === 'boolean' ? skipThisScripts : skipScripts;
+      if (scriptRuntime && !shouldSkipScripts) {
         const payload = { message, sessionId: targetSessionId };
         scriptRuntime.dispatchEvent('message.after_receive', payload).catch(err => {
           logger.warn('script message.after_receive failed', err);
@@ -12305,6 +12561,9 @@ Phase G（Frame 36）：循环衔接
       const memoryInjectPosition = String(settings.memoryInjectPosition || 'template').toLowerCase();
       const memoryInjectDepthRaw = Math.trunc(Number(settings.memoryInjectDepth));
       const memoryInjectDepth = Number.isFinite(memoryInjectDepthRaw) ? Math.max(0, memoryInjectDepthRaw) : 4;
+      const metaOverrides = {};
+      if (skipTemplate) metaOverrides.templateEnabled = false;
+      if (skipScripts) metaOverrides.skipScripts = true;
       return {
         user: {
           name: userName,
@@ -12337,6 +12596,7 @@ Phase G（Frame 36）：循环衔接
           memoryInjectPosition,
           memoryInjectDepth,
           userAttachmentParts: attachmentParts,
+          ...metaOverrides,
         },
         group: isGroupChat
           ? {
@@ -12355,7 +12615,15 @@ Phase G（Frame 36）：循环衔接
 
     // slash command support
     if (text.startsWith('/')) {
-      const handled = runCommand(text, { chatStore, ui, sessionPanel, worldPanel, appBridge: window.appBridge });
+      const handled = runCommand(text, {
+        chatStore,
+        ui,
+        sessionPanel,
+        worldPanel,
+        appBridge: window.appBridge,
+        sendMessage: (content, opts = {}) =>
+          handleSend(null, { overrideText: String(content ?? ''), ignorePending: true, ...opts }),
+      });
       if (pluginRuntime) {
         pluginRuntime.dispatchEvent('command.parsed', {
           text,
@@ -12380,6 +12648,9 @@ Phase G（Frame 36）：循环衔接
       window.toastr?.warning('离线状态，无法发送');
       return false;
     }
+
+    await maybePromptTemplateEnable({ sampleText: text });
+    await maybePromptScriptAuthorization();
 
     let attachmentMessages = [];
     let attachmentPrimaryId = '';
@@ -12434,7 +12705,7 @@ Phase G（Frame 36）：循环衔接
         }
         ui.addMessage(userMsg);
         const savedUser = chatStore.appendMessage(userMsg, sessionId);
-        if (scriptRuntime) {
+        if (scriptRuntime && !skipScripts) {
           scriptRuntime.dispatchEvent('message.after_send', { message: savedUser || userMsg, sessionId }).catch(err => {
             logger.warn('script message.after_send failed', err);
           });
@@ -13474,6 +13745,7 @@ Phase G（Frame 36）：循环衔接
         }
         movePendingFromHistoryToQueue(sessionId);
         refreshChatAndContacts();
+        scriptRuntime?.consumeOnce?.(sessionId);
         runMemoryUpdateAfterChat(sessionId, isGroupChat, llmContext('')).catch(() => {});
       }
       updatePendingFloat(sessionId);

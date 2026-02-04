@@ -4,11 +4,13 @@ import { emitDebugLog } from '../utils/debug-log.js';
 
 const SCRIPT_MAX_BYTES = 2 * 1024 * 1024;
 const SCRIPT_TOTAL_BYTES = 8 * 1024 * 1024;
+const SCRIPT_PAYLOAD_LIMIT = 1200000;
 
 const buildWorkerScript = () => `
 const scripts = new Map();
 let currentContext = { sessionId: '', personaId: '', presetId: '', worldId: '', worldIds: [] };
 let currentSettings = { allowReadMessages: true, allowModifyVariables: true, allowNetwork: false };
+const DISPATCH_RESULT_LIMIT = ${SCRIPT_PAYLOAD_LIMIT};
 let seq = 0;
 const pending = new Map();
 const importCache = new Map();
@@ -16,6 +18,10 @@ const IMPORT_CACHE_LIMIT = 32;
 
 const clone = (v) => {
   try { return structuredClone(v); } catch { return JSON.parse(JSON.stringify(v)); }
+};
+
+const estimateSize = (value) => {
+  try { return JSON.stringify(value).length; } catch { return DISPATCH_RESULT_LIMIT + 1; }
 };
 
 const callRpc = (method, params = {}) => {
@@ -596,8 +602,15 @@ self.onmessage = async (e) => {
       return;
     }
     const allowMutate = msg.allowMutate !== false;
-    const result = await dispatchEvent(evt, msg.payload, allowMutate);
-    postMessage({ type: 'dispatch_result', id: msg.id, result });
+    try {
+      const result = await dispatchEvent(evt, msg.payload, allowMutate);
+      if (estimateSize(result) > DISPATCH_RESULT_LIMIT) {
+        throw new Error('脚本结果过大');
+      }
+      postMessage({ type: 'dispatch_result', id: msg.id, result });
+    } catch (err) {
+      postMessage({ type: 'dispatch_error', id: msg.id, error: String(err?.message || err || 'unknown error') });
+    }
   }
 };
 `;
@@ -627,12 +640,21 @@ const setByPath = (obj, path, value) => {
   return obj;
 };
 
+const estimatePayloadSize = (value) => {
+  try {
+    return JSON.stringify(value).length;
+  } catch {
+    return Infinity;
+  }
+};
+
 export class ScriptRuntime {
   constructor(store) {
     this.store = store;
     this.worker = null;
     this.pending = new Map();
     this.seq = 0;
+    this.oneTimeScripts = new Map();
     this.context = {
       sessionId: '',
       personaId: '',
@@ -709,12 +731,37 @@ export class ScriptRuntime {
 
   isEnabled(sessionId) {
     const settings = appSettings.get();
-    if (settings.scriptEnabled !== true) return false;
+    if (settings.scriptEnabled !== true) {
+      if (sessionId && this.oneTimeScripts.get(sessionId)?.size) return true;
+      return false;
+    }
     if (sessionId) {
       const session = this.getSessionSettings(sessionId);
       if (typeof session.scriptEnabled === 'boolean') return session.scriptEnabled;
     }
     return true;
+  }
+
+  allowOnce(sessionId, scriptIds = []) {
+    const sid = String(sessionId || '').trim();
+    if (!sid) return;
+    const list = Array.isArray(scriptIds) ? scriptIds : [scriptIds];
+    if (!list.length) return;
+    const set = this.oneTimeScripts.get(sid) || new Set();
+    list.forEach(id => {
+      const key = String(id || '').trim();
+      if (key) set.add(key);
+    });
+    this.oneTimeScripts.set(sid, set);
+    this.syncScripts({ sessionId: sid }).catch(() => {});
+  }
+
+  consumeOnce(sessionId) {
+    const sid = String(sessionId || '').trim();
+    if (!sid) return;
+    if (!this.oneTimeScripts.has(sid)) return;
+    this.oneTimeScripts.delete(sid);
+    this.syncScripts({ sessionId: sid }).catch(() => {});
   }
 
   buildContext(sessionId) {
@@ -763,10 +810,31 @@ export class ScriptRuntime {
     if (!this.worker) return;
     const context = contextOverride || this.buildContext();
     this.context = { ...this.context, ...context };
-    const scripts = this.store?.getActiveScripts?.({
-      personaId: this.context.personaId,
-      presetId: this.context.presetId,
-    }) || [];
+    const scripts = [];
+    const oneTime = this.oneTimeScripts.get(this.context.sessionId) || null;
+    const seen = new Set();
+    const push = (scope, scopeId) => {
+      if (!this.store?.getScripts) return;
+      const list = this.store.getScripts(scope, scopeId);
+      list.forEach((s) => {
+        if (!s || typeof s !== 'object') return;
+        const id = String(s.id || '').trim();
+        if (!id || seen.has(id)) return;
+        const isActive = s.enabled === true && s.authorized === true;
+        const allowOnce = oneTime && oneTime.has(id);
+        if (!isActive && !allowOnce) return;
+        const next = { ...s, scope, scopeId };
+        if (allowOnce) {
+          next.enabled = true;
+          next.authorized = true;
+        }
+        scripts.push(next);
+        seen.add(id);
+      });
+    };
+    push('global', 'global');
+    if (this.context.personaId) push('character', this.context.personaId);
+    if (this.context.presetId) push('preset', this.context.presetId);
     let totalSize = 0;
     const filtered = [];
     const skipped = [];
@@ -827,6 +895,16 @@ export class ScriptRuntime {
     if (!this.worker) return payload;
     const sessionId = String(payload?.sessionId || this.context.sessionId || this.chatStore?.getCurrent?.() || '').trim();
     if (!this.isEnabled(sessionId)) return payload;
+    if (options?.skip === true || payload?.skipScripts === true || payload?.meta?.skipScripts === true) {
+      return payload;
+    }
+    const payloadSize = estimatePayloadSize({ event, payload });
+    if (payloadSize > SCRIPT_PAYLOAD_LIMIT) {
+      const msg = '脚本执行负载过大，已跳过';
+      logger.warn(msg, { size: payloadSize });
+      emitDebugLog({ message: msg, type: 'warn', source: 'script' });
+      return payload;
+    }
     await this.syncContext({ sessionId });
     return this.callWorker('dispatch', {
       event,
@@ -858,6 +936,15 @@ export class ScriptRuntime {
       clearTimeout(pending.timer);
       this.pending.delete(msg.id);
       pending.resolve(msg.result);
+      return;
+    }
+    if (msg.type === 'dispatch_error') {
+      const pending = this.pending.get(msg.id);
+      if (!pending) return;
+      clearTimeout(pending.timer);
+      this.pending.delete(msg.id);
+      pending.reject(new Error(msg.error || 'script dispatch error'));
+      this.restartWorker('脚本结果过大，运行器已重启');
       return;
     }
     if (msg.type === 'rpc') {

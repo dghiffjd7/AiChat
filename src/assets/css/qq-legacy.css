@@ -1040,6 +1040,50 @@ body[data-ui-mode='rp'] .chat-sticker-btn {
   -webkit-backdrop-filter: blur(4px);
 }
 
+.slash-command-menu {
+  position: fixed;
+  z-index: 26000;
+  max-width: min(360px, 92vw);
+  max-height: 240px;
+  overflow: auto;
+  background: rgba(15, 23, 42, 0.86);
+  color: #e2e8f0;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 12px;
+  padding: 6px;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.22);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.slash-command-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.slash-command-item:hover,
+.slash-command-item.is-active {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.slash-command-key {
+  font-weight: 700;
+  font-size: 12px;
+  color: #fff;
+  letter-spacing: 0.2px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
+
+.slash-command-desc {
+  font-size: 11px;
+  color: rgba(226, 232, 240, 0.75);
+  line-height: 1.2;
+}
+
 .voice-btn {
   font-size: 26px;
   font-weight: 700;

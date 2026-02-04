@@ -4,7 +4,8 @@ import { normalizeScopeId } from '../storage/store-scope.js';
 import { parseCharacterCardFile } from '../utils/character-card.js';
 import { avatarDataUrlFromFile } from '../utils/image.js';
 import { safeInvoke } from '../utils/tauri.js';
-import { appConfirm } from './app-confirm.js';
+import { appSettings } from '../storage/app-settings.js';
+import { appConfirm, appChoice } from './app-confirm.js';
 
 const buildGreetingList = (card = {}) => {
   const list = [];
@@ -389,13 +390,33 @@ export class CharacterCardImporter {
           source: 'card',
         });
         if (result?.count) {
-          const ok = await appConfirm({
-            title: '导入脚本',
-            message: `检测到 ${result.count} 条脚本，是否现在启用？`,
+          const settings = appSettings.get();
+          const perms = [
+            `读取聊天记录：${settings.scriptAllowReadMessages !== false ? '允许' : '禁用'}`,
+            `修改变量：${settings.scriptAllowModifyVariables !== false ? '允许' : '禁用'}`,
+            `访问网络：${settings.scriptAllowNetwork === true ? '允许' : '禁用'}`,
+          ];
+          const choice = await appChoice({
+            title: '脚本授权',
+            message: `检测到 ${result.count} 条脚本。\n脚本可能需要权限：\n- ${perms.join('\n- ')}`,
+            actions: [
+              { id: 'allow', label: '允许并启用', primary: true },
+              { id: 'once', label: '仅本次允许' },
+              { id: 'deny', label: '拒绝', variant: 'danger' },
+            ],
+            defaultActionId: 'allow',
           });
-          if (ok) {
-            const ids = Array.isArray(result.ids) ? result.ids : [];
+          const ids = Array.isArray(result.ids) ? result.ids : [];
+          if (choice === 'allow') {
+            if (settings.scriptEnabled !== true) appSettings.update({ scriptEnabled: true });
             await Promise.all(ids.map((id) => scriptStore.toggleScript('character', persona.id, id, true)));
+          } else if (choice === 'once') {
+            const sid = this.appBridge?.chatStore?.getCurrent?.() || '';
+            if (sid && this.appBridge?.scriptRuntime?.allowOnce) {
+              this.appBridge.scriptRuntime.allowOnce(sid, ids);
+            } else {
+              window.toastr?.info?.('当前未打开会话，脚本已导入但未启用');
+            }
           }
           window.toastr?.success?.('脚本已导入');
         }

@@ -68,6 +68,31 @@ const COMMANDS = {
       window.toastr?.success('已复制当前会话 JSON');
     }
   },
+  '/send': {
+    desc: '/send [--no-template] [--no-script] <内容> 发送并可跳过模板/脚本',
+    run: async ({ sendMessage }, args) => {
+      const flags = new Set();
+      let idx = 1;
+      while (idx < args.length && String(args[idx]).startsWith('--')) {
+        flags.add(String(args[idx]).toLowerCase());
+        idx += 1;
+      }
+      const text = args.slice(idx).join(' ');
+      if (!text.trim()) {
+        window.toastr?.warning('请输入要发送的内容');
+        return;
+      }
+      if (typeof sendMessage !== 'function') {
+        window.toastr?.error('发送接口未就绪');
+        return;
+      }
+      const skipTemplate =
+        flags.has('--no-template') || flags.has('--skip-template') || flags.has('--notemplate');
+      const skipScripts =
+        flags.has('--no-script') || flags.has('--skip-script') || flags.has('--no-scripts') || flags.has('--noscript');
+      await sendMessage(text, { skipTemplate, skipScripts });
+    }
+  },
   '/rename': {
     desc: '/rename 新ID 重命名当前会话',
     run: async ({ chatStore, ui }, args) => {
@@ -114,4 +139,11 @@ export function runCommand(input, ctx) {
 
 export function registerCommand(key, desc, runner) {
   COMMANDS[key] = { desc, run: runner };
+}
+
+export function getCommandList() {
+  return Object.entries(COMMANDS).map(([key, value]) => ({
+    key,
+    desc: value?.desc || '',
+  }));
 }

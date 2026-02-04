@@ -7,6 +7,9 @@ const TEMPLATE_LOG_LIMIT = 50;
 const TEMPLATE_TIMEOUT_MS = 3000;
 const TEMPLATE_GUARD_LIMIT = 50000;
 const TEMPLATE_OUTPUT_LIMIT = 120000;
+const TEMPLATE_PAYLOAD_LIMIT = 1200000;
+const TEMPLATE_RENDER_CHUNK_SIZE = 8192;
+const TEMPLATE_RENDER_RESULT_LIMIT = 3000000;
 const templateCache = new Map();
 const templateExecutionLogs = [];
 let templateWorkerInstance = null;
@@ -51,10 +54,20 @@ const recordTemplateExecution = (entry = {}) => {
   }
 };
 
+const estimatePayloadSize = (value) => {
+  try {
+    return JSON.stringify(value).length;
+  } catch {
+    return Infinity;
+  }
+};
+
 const buildTemplateWorkerScript = () => `
 const CACHE_LIMIT = ${CACHE_LIMIT};
 const TEMPLATE_GUARD_LIMIT = ${TEMPLATE_GUARD_LIMIT};
 const TEMPLATE_OUTPUT_LIMIT = ${TEMPLATE_OUTPUT_LIMIT};
+const DEFAULT_RESULT_LIMIT = ${TEMPLATE_PAYLOAD_LIMIT};
+const DEFAULT_CHUNK_SIZE = ${TEMPLATE_RENDER_CHUNK_SIZE};
 const templateCache = new Map();
 
 const nowMs = () => {
@@ -113,6 +126,14 @@ const cloneValue = (value) => {
   }
 };
 
+const estimateSize = (value) => {
+  try {
+    return JSON.stringify(value).length;
+  } catch {
+    return TEMPLATE_RESULT_LIMIT + 1;
+  }
+};
+
 const normalizeScope = (raw) => {
   const s = String(raw || '').trim().toLowerCase();
   if (s === 'global' || s === 'g') return 'global';
@@ -148,33 +169,37 @@ const compileTemplate = (template) => {
   const re = /<%([=#-]?)([\\s\\S]*?)%>/g;
   let cursor = 0;
   let src = "let __out = '';\n";
+  src += 'const __emit = typeof ctx.__emit === "function" ? ctx.__emit : null;\n';
+  src += 'const __chunkLimit = typeof ctx.__chunkLimit === "number" ? ctx.__chunkLimit : 0;\n';
+  src += 'const __flush = () => { if (!__emit || !__chunkLimit) return; if (__out.length >= __chunkLimit) { __emit(__out); __out = ""; } };\n';
   src += 'const __outLimit = typeof ctx.__outLimit === "number" ? ctx.__outLimit : ' + TEMPLATE_OUTPUT_LIMIT + ';\n';
   src += 'const __ensureOut = () => { if (__out.length > __outLimit) throw new Error("模板输出过大"); };\n';
-  src += 'const print = (...args) => { __out += args.join(""); __ensureOut(); };\n';
+  src += 'const print = (...args) => { __out += args.join(""); __ensureOut(); __flush(); };\n';
   src += 'const __escape = __esc;\n';
   src += 'const __guard = ctx.__guard;\n';
   src += 'if (__guard) __guard();\n';
   const guardLine = '__guard && __guard();\n';
   template.replace(re, (match, flag, code, index) => {
     const text = template.slice(cursor, index);
-    if (text) src += '__out += ' + JSON.stringify(text) + ';\\n__ensureOut();\\n';
+    if (text) src += '__out += ' + JSON.stringify(text) + ';\\n__ensureOut();\\n__flush();\\n';
     if (flag === '#') {
       // comment, ignore
     } else if (flag === '=') {
       src += guardLine;
-      src += '__out += __escape((' + code + ') ?? "");\\n__ensureOut();\\n';
+      src += '__out += __escape((' + code + ') ?? "");\\n__ensureOut();\\n__flush();\\n';
     } else if (flag === '-') {
       src += guardLine;
-      src += '__out += ((' + code + ') ?? "");\\n__ensureOut();\\n';
+      src += '__out += ((' + code + ') ?? "");\\n__ensureOut();\\n__flush();\\n';
     } else {
       src += guardLine;
       src += code + '\\n';
+      src += '__flush();\\n';
     }
     cursor = index + match.length;
     return '';
   });
   const rest = template.slice(cursor);
-  if (rest) src += '__out += ' + JSON.stringify(rest) + ';\\n__ensureOut();\\n';
+  if (rest) src += '__out += ' + JSON.stringify(rest) + ';\\n__ensureOut();\\n__flush();\\n';
   src += 'return __out;';
   const fn = new Function('ctx', '__esc', 'with (ctx) {\\n' + src + '\\n}');
   if (templateCache.size >= CACHE_LIMIT) {
@@ -556,18 +581,49 @@ self.onmessage = (event) => {
   const id = msg.id;
   try {
     const payload = msg.payload || {};
+    const resultLimit = Number.isFinite(Number(payload.resultLimit)) ? Number(payload.resultLimit) : DEFAULT_RESULT_LIMIT;
+    const chunkSize = Number.isFinite(Number(payload.chunkSize)) ? Number(payload.chunkSize) : DEFAULT_CHUNK_SIZE;
+    let sentSize = 0;
+    const emitChunk = (chunk) => {
+      const text = String(chunk || '');
+      if (!text) return;
+      sentSize += text.length;
+      if (sentSize > resultLimit) {
+        throw new Error('模板结果过大');
+      }
+      self.postMessage({ type: 'render_chunk', id, chunk: text });
+    };
     const pack = createRuntime(payload);
+    if (payload.chunked) {
+      pack.runtime.__emit = emitChunk;
+      pack.runtime.__chunkLimit = chunkSize;
+    }
     const result = renderTemplateWithRuntime(payload.template || '', pack.runtime);
     const output = result.text;
     const printBuffer = pack.runtime.__printBuffer;
     const finalText = Array.isArray(printBuffer) && printBuffer.length
       ? String(output || '') + String(printBuffer.join(''))
       : output;
+    if (payload.chunked && finalText) emitChunk(finalText);
+    let totalSize = 0;
+    const addSize = (value) => {
+      totalSize += estimateSize(value);
+      if (totalSize > resultLimit) {
+        throw new Error('模板结果过大');
+      }
+    };
+    if (!payload.chunked) addSize(finalText);
+    addSize(pack.globals);
+    addSize(pack.locals);
+    addSize(pack.initials);
+    addSize(pack.msgVars);
+    addSize(pack.defines);
+    if (pack.worldUpdates && pack.worldUpdates.length) addSize(pack.worldUpdates);
     self.postMessage({
       type: 'render_result',
       id,
       result: {
-        text: String(finalText ?? ''),
+        text: payload.chunked ? '' : String(finalText ?? ''),
         error: result.error ? String(result.error?.message || result.error) : '',
         globals: pack.globals,
         locals: pack.locals,
@@ -575,6 +631,7 @@ self.onmessage = (event) => {
         messageVars: pack.msgVars,
         defines: pack.defines,
         worldUpdates: pack.worldUpdates,
+        chunked: Boolean(payload.chunked),
       },
     });
   } catch (err) {
@@ -622,6 +679,22 @@ class TemplateWorker {
 
   handleMessage(msg) {
     if (!msg || typeof msg !== 'object') return;
+    if (msg.type === 'render_chunk') {
+      const pending = this.pending.get(msg.id);
+      if (!pending || !pending.chunked) return;
+      const chunk = String(msg.chunk || '');
+      if (!chunk) return;
+      pending.totalSize += chunk.length;
+      if (pending.totalSize > pending.resultLimit) {
+        clearTimeout(pending.timer);
+        this.pending.delete(msg.id);
+        pending.reject(new Error('模板结果过大'));
+        this.restart('模板结果过大，Worker 已重启');
+        return;
+      }
+      pending.chunks.push(chunk);
+      return;
+    }
     if (msg.type !== 'render_result' && msg.type !== 'render_error') return;
     const pending = this.pending.get(msg.id);
     if (!pending) return;
@@ -631,19 +704,38 @@ class TemplateWorker {
       pending.reject(new Error(msg.error || 'template worker error'));
       return;
     }
-    pending.resolve(msg.result || {});
+    const result = msg.result || {};
+    let text = String(result.text || '');
+    if (pending.chunked) {
+      const chunks = pending.chunks || [];
+      if (text) chunks.push(text);
+      text = chunks.join('');
+    }
+    pending.resolve({ ...result, text });
   }
 
   render(payload, timeoutMs = TEMPLATE_TIMEOUT_MS) {
     if (!this.worker) return Promise.reject(new Error('template worker unavailable'));
     const id = `${Date.now()}-${++this.seq}`;
+    const chunked = payload?.chunked === true;
+    const resultLimit = Number.isFinite(Number(payload?.resultLimit))
+      ? Number(payload.resultLimit)
+      : TEMPLATE_PAYLOAD_LIMIT;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
         reject(new Error('template worker timeout'));
         this.restart('模板执行超时，已重启 Worker');
       }, timeoutMs);
-      this.pending.set(id, { resolve, reject, timer });
+      this.pending.set(id, {
+        resolve,
+        reject,
+        timer,
+        chunked,
+        resultLimit,
+        totalSize: 0,
+        chunks: [],
+      });
       this.worker.postMessage({ type: 'render', id, payload });
     });
   }
@@ -762,33 +854,37 @@ const compileTemplate = (template) => {
   const re = /<%([=#-]?)([\s\S]*?)%>/g;
   let cursor = 0;
   let src = "let __out = '';\n";
+  src += 'const __emit = typeof ctx.__emit === "function" ? ctx.__emit : null;\n';
+  src += 'const __chunkLimit = typeof ctx.__chunkLimit === "number" ? ctx.__chunkLimit : 0;\n';
+  src += 'const __flush = () => { if (!__emit || !__chunkLimit) return; if (__out.length >= __chunkLimit) { __emit(__out); __out = ""; } };\n';
   src += 'const __outLimit = typeof ctx.__outLimit === "number" ? ctx.__outLimit : ' + TEMPLATE_OUTPUT_LIMIT + ';\n';
   src += 'const __ensureOut = () => { if (__out.length > __outLimit) throw new Error("模板输出过大"); };\n';
-  src += 'const print = (...args) => { __out += args.join(""); __ensureOut(); };\n';
+  src += 'const print = (...args) => { __out += args.join(""); __ensureOut(); __flush(); };\n';
   src += 'const __escape = __esc;\n';
   src += 'const __guard = ctx.__guard;\n';
   src += 'if (__guard) __guard();\n';
   const guardLine = '__guard && __guard();\n';
   template.replace(re, (match, flag, code, index) => {
     const text = template.slice(cursor, index);
-    if (text) src += '__out += ' + JSON.stringify(text) + ';\n__ensureOut();\n';
+    if (text) src += '__out += ' + JSON.stringify(text) + ';\n__ensureOut();\n__flush();\n';
     if (flag === '#') {
       // comment, ignore
     } else if (flag === '=') {
       src += guardLine;
-      src += '__out += __escape((' + code + ') ?? "");\n__ensureOut();\n';
+      src += '__out += __escape((' + code + ') ?? "");\n__ensureOut();\n__flush();\n';
     } else if (flag === '-') {
       src += guardLine;
-      src += '__out += ((' + code + ') ?? "");\n__ensureOut();\n';
+      src += '__out += ((' + code + ') ?? "");\n__ensureOut();\n__flush();\n';
     } else {
       src += guardLine;
       src += code + '\n';
+      src += '__flush();\n';
     }
     cursor = index + match.length;
     return '';
   });
   const rest = template.slice(cursor);
-  if (rest) src += '__out += ' + JSON.stringify(rest) + ';\n__ensureOut();\n';
+  if (rest) src += '__out += ' + JSON.stringify(rest) + ';\n__ensureOut();\n__flush();\n';
   src += 'return __out;';
   const fn = new Function('ctx', '__esc', 'with (ctx) {\n' + src + '\n}');
   if (templateCache.size >= CACHE_LIMIT) {
@@ -1435,6 +1531,26 @@ export const renderTemplateTextAsync = async (rawText, options = {}) => {
     character: safeContext?.character,
     preset: safeContext?.preset,
   };
+  if (stage === 'render') {
+    payload.chunked = true;
+    payload.chunkSize = TEMPLATE_RENDER_CHUNK_SIZE;
+    payload.resultLimit = TEMPLATE_RENDER_RESULT_LIMIT;
+  }
+  const payloadSize = estimatePayloadSize(payload);
+  if (payloadSize > TEMPLATE_PAYLOAD_LIMIT) {
+    const err = new Error('模板上下文过大，已跳过执行');
+    logger.warn('template payload too large, skip worker', { size: payloadSize });
+    emitDebugLog({ message: '模板上下文过大，已跳过执行', type: 'warn', source: 'template' });
+    recordTemplateExecution({
+      stage,
+      sessionId: options.sessionId || '',
+      input: template,
+      output: template,
+      error: err.message,
+      durationMs: null,
+    });
+    return { text: template, error: err, messageVars: options.messageVars || {}, state };
+  }
   try {
     const worker = getTemplateWorker();
     const result = await worker.render(payload, TEMPLATE_TIMEOUT_MS);

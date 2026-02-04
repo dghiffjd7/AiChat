@@ -1469,7 +1469,7 @@ class AppBridge {
         logger.warn('memory prompt plan failed', err);
       }
       const scriptRuntime = this.scriptRuntime;
-      if (scriptRuntime) {
+      if (scriptRuntime && nextContext?.meta?.skipScripts !== true) {
         try {
           const updated = await scriptRuntime.dispatchEvent('prompt.before_build', {
             input: promptInput,
@@ -1499,7 +1499,7 @@ class AppBridge {
         }
       }
       let messages = this.buildMessages(promptInput, nextContext);
-      if (scriptRuntime) {
+      if (scriptRuntime && nextContext?.meta?.skipScripts !== true) {
         try {
           const updated = await scriptRuntime.dispatchEvent('prompt.after_build', {
             prompt: messages,

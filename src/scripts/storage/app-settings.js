@@ -18,6 +18,7 @@ const defaults = {
   templateExecuteBeforeGenerate: true,
   templateExecuteAfterRender: true,
   templateShowErrorToast: true,
+  templateDetectDisabled: false,
   scriptEnabled: false,
   scriptAllowModifyVariables: true,
   scriptAllowReadMessages: true,
