@@ -538,7 +538,15 @@ export class RegexStore {
                     /waitGlobalInitialized\s*\(/i.test(replaced) ||
                     /\bMvu\b/i.test(replaced) ||
                     /\beventOn\s*\(/i.test(replaced);
-                if (!looksLikeScripted) {
+                const looksLikeHtml =
+                    /```\\s*html/i.test(replaced) ||
+                    /<html\b/i.test(replaced) ||
+                    /<body\b/i.test(replaced) ||
+                    /<style\b/i.test(replaced) ||
+                    /<div\b/i.test(replaced) ||
+                    /<iframe\b/i.test(replaced) ||
+                    /<svg\b/i.test(replaced);
+                if (!looksLikeScripted && !looksLikeHtml) {
                     const statusRe = /<StatusPlaceHolderImpl\s*\/?>/gi;
                     if (statusRe.test(replaced)) {
                         replaced = replaced.replace(statusRe, STATUS_TOKEN);

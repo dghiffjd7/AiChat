@@ -12642,6 +12642,595 @@ Phase G（Frame 36）：循环衔接
       if (Object.keys(meta).length) next.meta = meta;
       return next;
     };
+    const stripUpdateVariableBlocks = (text) => {
+      const raw = String(text || '');
+      if (!raw) return raw;
+      const cleaned = raw
+        .replace(/<\s*(update(?:variable)?|variableupdate)\s*>[\s\S]*?<\/\s*\1\s*>/gi, '')
+        .replace(/\n{3,}/g, '\n\n')
+        .trimEnd();
+      return cleaned;
+    };
+    const extractUpdateVariableBlock = (text) => {
+      const raw = String(text || '');
+      if (!raw) return { block: '', cleaned: raw };
+      const openRe = /<\s*(update(?:variable)?|variableupdate)\s*>/gi;
+      let last = null;
+      let m;
+      while ((m = openRe.exec(raw))) {
+        last = { tag: m[1], index: m.index, len: m[0].length };
+      }
+      if (!last) return { block: '', cleaned: raw };
+      const start = last.index + last.len;
+      const tail = raw.slice(start);
+      const closeRe = new RegExp(`<\\s*\\/\\s*${last.tag}\\s*>`, 'i');
+      const close = closeRe.exec(tail);
+      const endIndex = close ? start + close.index : raw.length;
+      const block = raw.slice(start, endIndex);
+      const cleaned = raw.slice(0, last.index) + raw.slice(close ? endIndex + close[0].length : raw.length);
+      return { block, cleaned };
+    };
+    const buildUpdateVariableParser = () => {
+      const stripCodeFence = (text) => {
+        const raw = String(text || '').trim();
+        if (!raw) return '';
+        const withoutStart = raw.replace(/^```[a-z0-9_-]*\s*/i, '');
+        return withoutStart.replace(/```\s*$/i, '').trim();
+      };
+      const safeJsonParse = (text) => {
+        try {
+          return JSON.parse(text);
+        } catch {
+          return null;
+        }
+      };
+      const parseLooseJson = (text) => {
+        let raw = String(text || '').trim();
+        if (!raw) return null;
+        raw = raw.replace(/\/\*[\s\S]*?\*\//g, '');
+        raw = raw.replace(/(^|[^\\])\/\/.*$/gm, '$1');
+        raw = raw.replace(/,\s*([}\]])/g, '$1');
+        raw = raw.replace(/([{,]\s*)([A-Za-z0-9_-]+)\s*:/g, '$1"$2":');
+        raw = raw.replace(/'([^'\\]*(\\.[^'\\]*)*)'/g, (_m, body) => {
+          const cleaned = String(body || '').replace(/\\"/g, '"').replace(/"/g, '\\"');
+          return `"${cleaned}"`;
+        });
+        return safeJsonParse(raw);
+      };
+      const parseValue = (input) => {
+        const raw = String(input ?? '').trim();
+        if (!raw) return '';
+        if (raw === 'true') return true;
+        if (raw === 'false') return false;
+        if (raw === 'null') return null;
+        if (raw === 'undefined') return undefined;
+        if (/^[+-]?\d+(\.\d+)?$/.test(raw)) return Number(raw);
+        const quoted =
+          (raw.startsWith('"') && raw.endsWith('"')) ||
+          (raw.startsWith("'") && raw.endsWith("'")) ||
+          (raw.startsWith('`') && raw.endsWith('`'));
+        const unquoted = quoted ? raw.slice(1, -1) : raw;
+        if (unquoted.startsWith('{') || unquoted.startsWith('[')) {
+          const parsed = parseLooseJson(unquoted);
+          if (parsed !== null) return parsed;
+          const direct = safeJsonParse(unquoted);
+          if (direct !== null) return direct;
+        }
+        return unquoted;
+      };
+      const normalizePath = (raw) => {
+        let text = String(raw || '').trim();
+        if (!text) return '';
+        const isQuoted =
+          (text.startsWith('"') && text.endsWith('"')) ||
+          (text.startsWith("'") && text.endsWith("'")) ||
+          (text.startsWith('`') && text.endsWith('`'));
+        if (
+          (text.startsWith('"') && text.endsWith('"')) ||
+          (text.startsWith("'") && text.endsWith("'")) ||
+          (text.startsWith('`') && text.endsWith('`'))
+        ) {
+          text = text.slice(1, -1);
+        }
+        if (text === 'stat_data' || text === 'status_current_variables') return '';
+        if (isQuoted && text.includes('.') && !text.includes('[') && !text.includes(']')) {
+          const escaped = text.replace(/"/g, '\\"');
+          return `["${escaped}"]`;
+        }
+        text = text.replace(/^(?:stat_data|status_current_variables)\./, '');
+        text = text.replace(/^(?:stat_data|status_current_variables)\[/, '[');
+        return text;
+      };
+      const toPath = (raw) => {
+        const text = String(raw || '').trim();
+        if (!text) return [];
+        const parts = [];
+        let buf = '';
+        let inBracket = false;
+        let quote = '';
+        for (let i = 0; i < text.length; i += 1) {
+          const ch = text[i];
+          if (inBracket) {
+            if (quote) {
+              if (ch === quote && text[i - 1] !== '\\') {
+                quote = '';
+              } else {
+                buf += ch;
+              }
+            } else if (ch === '"' || ch === "'" || ch === '`') {
+              quote = ch;
+            } else if (ch === ']') {
+              const seg = buf.trim();
+              if (seg) parts.push(seg);
+              buf = '';
+              inBracket = false;
+            } else {
+              buf += ch;
+            }
+          } else if (ch === '.') {
+            if (buf) parts.push(buf);
+            buf = '';
+          } else if (ch === '[') {
+            if (buf) parts.push(buf);
+            buf = '';
+            inBracket = true;
+          } else {
+            buf += ch;
+          }
+        }
+        if (buf) parts.push(buf);
+        return parts
+          .map(seg => seg.trim().replace(/^['"]|['"]$/g, ''))
+          .filter(Boolean)
+          .map(seg => (/^\d+$/.test(seg) ? Number(seg) : seg));
+      };
+      const decodeJsonPointer = (path) => {
+        const raw = String(path || '');
+        if (!raw) return [];
+        return raw
+          .replace(/^\/+/, '')
+          .split('/')
+          .map(seg => seg.replace(/~1/g, '/').replace(/~0/g, '~'))
+          .filter(Boolean);
+      };
+      const findMatchingParen = (text, startIndex) => {
+        let depth = 1;
+        let inQuote = false;
+        let quoteChar = '';
+        for (let i = startIndex; i < text.length; i += 1) {
+          const ch = text[i];
+          const prev = i > 0 ? text[i - 1] : '';
+          if ((ch === '"' || ch === "'" || ch === '`') && prev !== '\\') {
+            if (inQuote && ch === quoteChar) {
+              inQuote = false;
+              quoteChar = '';
+            } else if (!inQuote) {
+              inQuote = true;
+              quoteChar = ch;
+            }
+          }
+          if (inQuote) continue;
+          if (ch === '(') depth += 1;
+          if (ch === ')') {
+            depth -= 1;
+            if (depth === 0) return i;
+          }
+        }
+        return -1;
+      };
+      const splitArgs = (text) => {
+        const args = [];
+        let buf = '';
+        let inQuote = false;
+        let quoteChar = '';
+        let paren = 0;
+        let bracket = 0;
+        let brace = 0;
+        for (let i = 0; i < text.length; i += 1) {
+          const ch = text[i];
+          const prev = i > 0 ? text[i - 1] : '';
+          if ((ch === '"' || ch === "'" || ch === '`') && prev !== '\\') {
+            if (inQuote && ch === quoteChar) {
+              inQuote = false;
+              quoteChar = '';
+            } else if (!inQuote) {
+              inQuote = true;
+              quoteChar = ch;
+            }
+          }
+          if (!inQuote) {
+            if (ch === '(') paren += 1;
+            if (ch === ')') paren -= 1;
+            if (ch === '[') bracket += 1;
+            if (ch === ']') bracket -= 1;
+            if (ch === '{') brace += 1;
+            if (ch === '}') brace -= 1;
+          }
+          if (ch === ',' && !inQuote && paren === 0 && bracket === 0 && brace === 0) {
+            const trimmed = buf.trim();
+            if (trimmed) args.push(trimmed);
+            buf = '';
+            continue;
+          }
+          buf += ch;
+        }
+        const trimmed = buf.trim();
+        if (trimmed) args.push(trimmed);
+        return args;
+      };
+      const parseJsonPatchCommands = (text) => {
+        const commands = [];
+        const re = /<(json_?patch)>(?:\s*```.*)?([\s\S]*?)(?:```\s*)?<\/\1>/gim;
+        let m;
+        while ((m = re.exec(text))) {
+          const body = stripCodeFence(m[2] || '');
+          if (!body) continue;
+          const parsed = parseLooseJson(body) ?? safeJsonParse(body);
+          if (!Array.isArray(parsed)) continue;
+          parsed.forEach((op) => {
+            const action = String(op?.op || '').toLowerCase();
+            let pathParts = decodeJsonPointer(op?.path || op?.to || '');
+            pathParts = pathParts.filter(Boolean);
+            if (pathParts[0] === 'stat_data' || pathParts[0] === 'status_current_variables') {
+              pathParts = pathParts.slice(1);
+            }
+            const path = pathParts.map(seg => (/^\d+$/.test(seg) ? Number(seg) : seg));
+            if (!action || !path.length) return;
+            if (action === 'replace') {
+              commands.push({ type: 'set', path, value: op?.value, reason: 'json_patch' });
+              return;
+            }
+            if (action === 'delta') {
+              commands.push({ type: 'add', path, value: op?.value, reason: 'json_patch' });
+              return;
+            }
+            if (action === 'add' || action === 'insert') {
+              const key = path[path.length - 1];
+              const parentPath = path.slice(0, -1);
+              if (!parentPath.length) {
+                commands.push({ type: 'set', path, value: op?.value, reason: 'json_patch' });
+                return;
+              }
+              commands.push({ type: 'insert', path: parentPath, key, value: op?.value, reason: 'json_patch' });
+              return;
+            }
+            if (action === 'remove') {
+              commands.push({ type: 'delete', path, reason: 'json_patch' });
+              return;
+            }
+            if (action === 'move') {
+              let fromParts = decodeJsonPointer(op?.from || '');
+              fromParts = fromParts.filter(Boolean);
+              if (fromParts[0] === 'stat_data' || fromParts[0] === 'status_current_variables') {
+                fromParts = fromParts.slice(1);
+              }
+              const from = fromParts.map(seg => (/^\d+$/.test(seg) ? Number(seg) : seg));
+              if (!from.length) return;
+              commands.push({ type: 'move', from, to: path, reason: 'json_patch' });
+            }
+          });
+        }
+        return commands;
+      };
+      const parseInlineCommands = (text) => {
+        const commands = [];
+        let index = 0;
+        while (index < text.length) {
+          const match = text.substring(index).match(/_\.(set|insert|assign|remove|unset|delete|add)\(/);
+          if (!match || match.index === undefined) break;
+          const type = match[1];
+          const start = index + match.index + match[0].length;
+          const end = findMatchingParen(text, start);
+          if (end === -1) break;
+          const argsText = text.slice(start, end);
+          const args = splitArgs(argsText);
+          if (!args.length) {
+            index = end + 1;
+            continue;
+          }
+          const rawPath = normalizePath(args[0]);
+          const path = toPath(rawPath);
+          if (!path.length && rawPath !== '') {
+            index = end + 1;
+            continue;
+          }
+          if (type === 'set') {
+            if (args.length >= 2) commands.push({ type: 'set', path, value: parseValue(args[args.length - 1]) });
+          } else if (type === 'add') {
+            if (args.length >= 2) commands.push({ type: 'add', path, value: parseValue(args[1]) });
+          } else if (type === 'insert' || type === 'assign') {
+            if (args.length === 2) {
+              commands.push({ type: 'insert', path, key: null, value: parseValue(args[1]) });
+            } else if (args.length >= 3) {
+              commands.push({ type: 'insert', path, key: parseValue(args[1]), value: parseValue(args[2]) });
+            }
+          } else if (type === 'remove' || type === 'unset' || type === 'delete') {
+            if (args.length >= 2) {
+              commands.push({ type: 'remove', path, key: parseValue(args[1]) });
+            } else {
+              commands.push({ type: 'delete', path });
+            }
+          }
+          index = end + 1;
+        }
+        return commands;
+      };
+      const parseCommands = (text) => {
+        const stripped = String(text || '')
+          .replace(/<analysis>[\s\S]*?<\/analysis>/gi, '')
+          .replace(/<analyze>[\s\S]*?<\/analyze>/gi, '');
+        const commands = [];
+        const jsonCmds = parseJsonPatchCommands(stripped);
+        commands.push(...jsonCmds);
+        const cleaned = stripped.replace(/<(json_?patch)>(?:\s*```.*)?[\s\S]*?<\/\1>/gim, '');
+        commands.push(...parseInlineCommands(cleaned));
+        return commands;
+      };
+      return { parseCommands };
+    };
+    const updateParser = buildUpdateVariableParser();
+    const applyUpdateVariableCommands = (sessionId, commands, { useGlobal = false } = {}) => {
+      if (!Array.isArray(commands) || !commands.length) return false;
+      const sid = String(sessionId || '').trim();
+      if (!sid) return false;
+      const listVars = useGlobal
+        ? (chatStore.listGlobalVariables?.() || {})
+        : (chatStore.listVariables?.(sid) || {});
+      const clone = (v) => {
+        try {
+          return structuredClone(v);
+        } catch {
+          return JSON.parse(JSON.stringify(v));
+        }
+      };
+      const isPlainObject = (val) => val && typeof val === 'object' && !Array.isArray(val);
+      const deepEqual = (a, b) => {
+        if (Object.is(a, b)) return true;
+        if (typeof a !== typeof b) return false;
+        if (Array.isArray(a)) {
+          if (!Array.isArray(b) || a.length !== b.length) return false;
+          return a.every((v, i) => deepEqual(v, b[i]));
+        }
+        if (isPlainObject(a)) {
+          if (!isPlainObject(b)) return false;
+          const keysA = Object.keys(a);
+          const keysB = Object.keys(b);
+          if (keysA.length !== keysB.length) return false;
+          return keysA.every(k => deepEqual(a[k], b[k]));
+        }
+        return false;
+      };
+      const getAt = (obj, path) => {
+        let cur = obj;
+        for (const seg of path) {
+          if (cur === null || cur === undefined) return undefined;
+          cur = cur[seg];
+        }
+        return cur;
+      };
+      const hasAt = (obj, path) => {
+        let cur = obj;
+        for (let i = 0; i < path.length; i += 1) {
+          const seg = path[i];
+          if (cur === null || cur === undefined || typeof cur !== 'object') return false;
+          if (!(seg in cur)) return false;
+          cur = cur[seg];
+        }
+        return true;
+      };
+      const setAt = (obj, path, value, { create = false } = {}) => {
+        if (!path.length) return { root: value, ok: true };
+        let cur = obj;
+        for (let i = 0; i < path.length - 1; i += 1) {
+          const seg = path[i];
+          const next = path[i + 1];
+          if (cur[seg] === undefined || cur[seg] === null || typeof cur[seg] !== 'object') {
+            if (!create) return { root: obj, ok: false };
+            cur[seg] = typeof next === 'number' ? [] : {};
+          }
+          cur = cur[seg];
+        }
+        const last = path[path.length - 1];
+        cur[last] = value;
+        return { root: obj, ok: true };
+      };
+      const deleteAt = (obj, path) => {
+        if (!path.length) return { root: obj, ok: false };
+        const parentPath = path.slice(0, -1);
+        const key = path[path.length - 1];
+        const parent = parentPath.length ? getAt(obj, parentPath) : obj;
+        if (!parent || typeof parent !== 'object') return { root: obj, ok: false };
+        if (Array.isArray(parent) && typeof key === 'number') {
+          if (key >= 0 && key < parent.length) {
+            parent.splice(key, 1);
+            return { root: obj, ok: true };
+          }
+          return { root: obj, ok: false };
+        }
+        if (key in parent) {
+          delete parent[key];
+          return { root: obj, ok: true };
+        }
+        return { root: obj, ok: false };
+      };
+      const mergeObjects = (target, value) => {
+        if (!isPlainObject(target) || !isPlainObject(value)) return false;
+        Object.entries(value).forEach(([k, v]) => {
+          if (isPlainObject(v) && isPlainObject(target[k])) {
+            mergeObjects(target[k], v);
+          } else {
+            target[k] = v;
+          }
+        });
+        return true;
+      };
+      let root = clone(listVars);
+      const original = clone(listVars);
+      commands.forEach((cmd) => {
+        const type = String(cmd?.type || '').trim().toLowerCase();
+        if (!type) return;
+        if (type === 'move') {
+          const from = Array.isArray(cmd.from) ? cmd.from : [];
+          const to = Array.isArray(cmd.to) ? cmd.to : [];
+          if (!from.length || !to.length) return;
+          if (!hasAt(root, from)) return;
+          const value = clone(getAt(root, from));
+          deleteAt(root, from);
+          setAt(root, to, value, { create: true });
+          return;
+        }
+        const path = Array.isArray(cmd.path) ? cmd.path : [];
+        if (type === 'set') {
+          if (!path.length) {
+            root = cmd.value && typeof cmd.value === 'object' ? clone(cmd.value) : root;
+            return;
+          }
+          if (!hasAt(root, path)) return;
+          setAt(root, path, cmd.value, { create: false });
+          return;
+        }
+        if (type === 'add') {
+          if (!hasAt(root, path)) return;
+          const cur = getAt(root, path);
+          const next = (typeof cur === 'number' || typeof cur === 'string') ? cur + cmd.value : cur;
+          if (next === cur) return;
+          setAt(root, path, next, { create: false });
+          return;
+        }
+        if (type === 'insert') {
+          const key = cmd.key;
+          const target = path.length ? getAt(root, path) : root;
+          if (target === undefined || target === null || typeof target !== 'object') {
+            const created = typeof key === 'number' || key === '-' ? [] : {};
+            setAt(root, path, created, { create: true });
+          }
+          const container = path.length ? getAt(root, path) : root;
+          if (Array.isArray(container)) {
+            if (key === null || key === undefined || key === '-') {
+              container.push(cmd.value);
+            } else if (typeof key === 'number') {
+              const idx = Math.max(0, Math.min(container.length, key));
+              container.splice(idx, 0, cmd.value);
+            }
+          } else if (isPlainObject(container)) {
+            if (key === null || key === undefined) {
+              mergeObjects(container, cmd.value);
+            } else {
+              container[String(key)] = cmd.value;
+            }
+          }
+          return;
+        }
+        if (type === 'remove') {
+          const key = cmd.key;
+          const target = path.length ? getAt(root, path) : root;
+          if (!target || typeof target !== 'object') return;
+          if (Array.isArray(target)) {
+            if (typeof key === 'number') {
+              if (key >= 0 && key < target.length) target.splice(key, 1);
+            } else {
+              const idx = target.findIndex(item => Object.is(item, key));
+              if (idx >= 0) target.splice(idx, 1);
+            }
+            return;
+          }
+          if (isPlainObject(target) && key !== null && key !== undefined) {
+            delete target[String(key)];
+          }
+          return;
+        }
+        if (type === 'delete') {
+          deleteAt(root, path);
+        }
+      });
+      if (!isPlainObject(root)) return false;
+      const setVar = useGlobal ? chatStore.setGlobalVariable?.bind(chatStore) : chatStore.setVariable?.bind(chatStore);
+      const delVar = useGlobal ? chatStore.deleteGlobalVariable?.bind(chatStore) : chatStore.deleteVariable?.bind(chatStore);
+      if (typeof setVar !== 'function') return false;
+      const allKeys = new Set([...Object.keys(original), ...Object.keys(root)]);
+      let changed = false;
+      for (const key of allKeys) {
+        const nextVal = root[key];
+        const prevVal = original[key];
+        if (nextVal === undefined) {
+          if (typeof delVar === 'function' && key in original) {
+            delVar(key, sid);
+            changed = true;
+          }
+          continue;
+        }
+        if (!deepEqual(prevVal, nextVal)) {
+          setVar(key, nextVal, sid);
+          changed = true;
+        }
+      }
+      return changed;
+    };
+    const applyUpdateVariableFromMessage = (message, targetSessionId) => {
+      if (!message || message.role !== 'assistant') return false;
+      const raw =
+        (typeof message.rawOriginal === 'string' && message.rawOriginal) ||
+        (typeof message.rawSource === 'string' && message.rawSource) ||
+        (typeof message.raw === 'string' && message.raw) ||
+        (typeof message.content === 'string' && message.content) ||
+        '';
+      if (!raw) return false;
+      const { block } = extractUpdateVariableBlock(raw);
+      if (!block) return false;
+      const commands = updateParser.parseCommands(block);
+      if (!commands.length) return false;
+      const useGlobal = isSharedVariableSession(targetSessionId);
+      const changed = applyUpdateVariableCommands(targetSessionId, commands, { useGlobal });
+      const rawHasPlaceholder = /<StatusPlaceHolderImpl\s*\/?>/i.test(raw);
+      const baseStoredRaw = typeof message.raw === 'string' ? message.raw : '';
+      const baseSource = typeof message.rawSource === 'string' ? message.rawSource : '';
+      const baseOriginal = typeof message.rawOriginal === 'string' ? message.rawOriginal : '';
+      const baseFallback = typeof message.content === 'string' ? message.content : '';
+      const sourceText = baseSource || baseOriginal || baseFallback;
+      const hasSourceText = Boolean(sourceText);
+      const sourceHasPlaceholder = /<StatusPlaceHolderImpl\s*\/?>/i.test(sourceText || '');
+      const storedHasPlaceholder = /<StatusPlaceHolderImpl\s*\/?>/i.test(baseStoredRaw || '');
+      let nextStored = baseStoredRaw ? stripUpdateVariableBlocks(baseStoredRaw) : '';
+      let nextSource = sourceText ? stripUpdateVariableBlocks(sourceText) : '';
+      if (!nextStored) {
+        const cleanedSource = nextSource;
+        if (window.appBridge?.applyOutputStoredRegex) {
+          try {
+            nextStored = window.appBridge.applyOutputStoredRegex(cleanedSource, { depth: 0 });
+          } catch {
+            nextStored = cleanedSource;
+          }
+        } else {
+          nextStored = cleanedSource;
+        }
+      }
+      const shouldAppendPlaceholder = !(rawHasPlaceholder || sourceHasPlaceholder || storedHasPlaceholder);
+      if (shouldAppendPlaceholder) {
+        nextStored = `${nextStored || ''}\n\n<StatusPlaceHolderImpl/>`.trim();
+        nextSource = `${nextSource || ''}\n\n<StatusPlaceHolderImpl/>`.trim();
+      }
+      const nextDisplay = window.appBridge?.applyOutputDisplayRegex
+        ? window.appBridge.applyOutputDisplayRegex(nextStored, { depth: 0 })
+        : nextStored;
+      let nextMeta = message?.meta && typeof message.meta === 'object' ? { ...message.meta } : null;
+      if (isRpSessionId(targetSessionId)) {
+        if (!nextMeta) nextMeta = { renderRich: true };
+        else if (nextMeta.renderRich !== true) nextMeta.renderRich = true;
+      }
+      const updatePayload = { raw: nextStored, content: nextDisplay };
+      if (hasSourceText) updatePayload.rawSource = nextSource;
+      if (nextMeta) updatePayload.meta = nextMeta;
+      const updated =
+        chatStore.updateMessage(message.id, updatePayload, targetSessionId) || {
+          ...message,
+          raw: nextStored,
+          content: nextDisplay,
+          rawSource: hasSourceText ? nextSource : message.rawSource,
+          meta: nextMeta || message.meta,
+        };
+      if (isSessionActive(targetSessionId)) ui.updateMessage(message.id, updated);
+      return changed;
+    };
     const emitPluginAfterReceive = (message, targetSessionId, { skipScripts: skipThisScripts } = {}) => {
       if (!message || message.role !== 'assistant') return;
       const shouldSkipScripts = typeof skipThisScripts === 'boolean' ? skipThisScripts : skipScripts;
@@ -12658,6 +13247,11 @@ Phase G（Frame 36）：循环衔接
         });
       }
       const useGlobal = isSharedVariableSession(targetSessionId);
+      try {
+        applyUpdateVariableFromMessage(message, targetSessionId);
+      } catch (err) {
+        logger.warn('UpdateVariable parse failed', err);
+      }
       variableRuleEngine?.handleAfterReceive?.({ sessionId: targetSessionId, message, useGlobalVariables: useGlobal }).catch(err => {
         logger.warn('variable rules after_receive failed', err);
       });

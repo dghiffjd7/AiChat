@@ -233,6 +233,27 @@ export class DebugPanel {
             gap: 4px;
             margin-left: auto;
         `;
+        const clearLogBtn = document.createElement('button');
+        clearLogBtn.type = 'button';
+        clearLogBtn.textContent = '∅';
+        clearLogBtn.title = '清空日志';
+        clearLogBtn.style.cssText = `
+            padding: 2px 6px;
+            background: rgba(0, 0, 0, 0.8);
+            color: #00ff00;
+            border: 1px solid #00ff00;
+            border-radius: 4px;
+            font-size: 10px;
+            font-family: monospace;
+            cursor: pointer;
+            opacity: 0.9;
+        `;
+        clearLogBtn.onclick = () => {
+            this.clear();
+            if (this.filterInput) this.filterInput.value = '';
+            this.filterText = '';
+            this.render();
+        };
         const filterInput = document.createElement('input');
         filterInput.type = 'text';
         filterInput.placeholder = '筛选日志...';
@@ -272,6 +293,7 @@ export class DebugPanel {
             this.render();
             filterInput.focus();
         };
+        filterWrap.appendChild(clearLogBtn);
         filterWrap.appendChild(filterInput);
         filterWrap.appendChild(filterClearBtn);
         this.controls.appendChild(filterWrap);

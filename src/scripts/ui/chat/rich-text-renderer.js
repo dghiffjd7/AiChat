@@ -5,6 +5,7 @@
  */
 
 import { logger } from '../../utils/logger.js';
+import { emitDebugLog } from '../../utils/debug-log.js';
 import { appSettings } from '../../storage/app-settings.js';
 import { buildVariableStatusSnapshot } from '../variable-status-card.js';
 
@@ -28,6 +29,10 @@ const getIframeHostUrl = () => {
 };
 const escapeText = (s) => String(s ?? '');
 const allowRichIframeScripts = () => appSettings.get().allowRichIframeScripts === true;
+const shouldLogRichDebug = () => {
+    const settings = appSettings.get();
+    return settings.debugExecutionLogs === true || settings.showDebugToggle === true;
+};
 const stripScriptsForPreview = (html) => String(html ?? '').replace(/<script[\s\S]*?<\/script\s*>/gi, '');
 const shouldEnableMvuCompat = (html) => {
     const raw = String(html || '');
@@ -1258,7 +1263,17 @@ const makeCodeBlock = ({ lang, code, messageId, preserveHtmlNewlines = false, se
         /<div[\s>]/i.test(code);
     const allowScripts = allowRichIframeScripts();
     const needsMvuCompat = allowScripts && shouldEnableMvuCompat(code);
-    if (looksLikeHtmlDoc || isHtmlLang) {
+    const shouldRenderHtml = looksLikeHtmlDoc || isHtmlLang || looksLikeHtmlSnippet;
+    if (shouldLogRichDebug()) {
+        const hasHtmlHint = /<\s*(style|details|div|body|html|table|section|article|main|svg|iframe)\b/i.test(code) ||
+            /&lt;\s*(style|details|div|body|html|table|section|article|main|svg|iframe)\b/i.test(code);
+        if (hasHtmlHint || shouldRenderHtml) {
+            const msg = `codeblock html?=${shouldRenderHtml} lang=${lang || 'none'} len=${String(code || '').length} msg=${String(messageId || '')}`;
+            emitDebugLog({ source: 'rich', type: shouldRenderHtml ? 'info' : 'warn', message: msg, force: true });
+            logger.info(`[rich] ${msg}`);
+        }
+    }
+    if (shouldRenderHtml) {
         const previewWrap = document.createElement('div');
         previewWrap.style.cssText = 'background:#fff;';
         const iframe = document.createElement('iframe');
@@ -1640,7 +1655,20 @@ export const renderRichText = (containerEl, text, { messageId, preserveHtmlNewli
 
     const STATUS_TOKEN = '__CHATAPP_STATUS__';
     const rawText = String(text ?? '');
-    const normalizedText = rawText;
+    const decodeHtmlEntities = (input) => {
+        const s = String(input ?? '');
+        if (!s.includes('&')) return s;
+        return s
+            .replace(/&lt;/gi, '<')
+            .replace(/&gt;/gi, '>')
+            .replace(/&quot;/gi, '"')
+            .replace(/&#39;|&#x27;/gi, "'")
+            .replace(/&amp;/gi, '&');
+    };
+    const htmlEntityTagRe = /&lt;(style|details|div|body|html|table|section|article|main|svg|iframe)\b/i;
+    const htmlEntityCloseRe = /&lt;\/(style|details|div|body|html|table|section|article|main|svg|iframe)\b/i;
+    const hasEscapedHtml = htmlEntityTagRe.test(rawText) && htmlEntityCloseRe.test(rawText);
+    const htmlCandidateText = hasEscapedHtml ? decodeHtmlEntities(rawText) : rawText;
     const escapeHtml = (value) => (
         String(value ?? '')
             .replace(/&/g, '&amp;')
@@ -1661,20 +1689,44 @@ export const renderRichText = (containerEl, text, { messageId, preserveHtmlNewli
     // 酒馆助手/正则常见用法：
     // - 直接把可渲染的 HTML 片段塞进消息（例如把 <thinking> 替换为 <style>+<details>）
     // 我们保持默认安全文本渲染，但对“明显是 HTML 的整段消息”提供 iframe 渲染（沙盒）
-    const trimmed = normalizedText.trim();
-    const wholeLooksLikeHtml = (
-        trimmed.startsWith('<') &&
-        (/<style[\s>]/i.test(trimmed) || /<details[\s>]/i.test(trimmed) || /<div[\s>]/i.test(trimmed) || /<body[\s>]/i.test(trimmed)) &&
-        /<\/[a-z][a-z0-9]*\s*>/i.test(trimmed)
-    );
-    const textWithBreaks = normalizedText
+    const trimmed = htmlCandidateText.trim();
+    const htmlTagRe = /<(style|details|div|body|html|table|section|article|main|svg|iframe)\b/i;
+    const htmlCloseRe = /<\/(style|details|div|body|html|table|section|article|main|svg|iframe)\b/i;
+    const hasHtmlTag = htmlTagRe.test(trimmed) || /^\s*<!doctype\s+html/i.test(trimmed);
+    const hasHtmlClose = htmlCloseRe.test(trimmed) || /<\/html\s*>/i.test(trimmed);
+    const wholeLooksLikeHtml = hasHtmlTag && hasHtmlClose;
+    const textWithBreaks = rawText
         .replace(/&lt;br\s*\/?&gt;/gi, '\n')
         .replace(/<br\s*\/?>/gi, '\n');
-    const hasCodeFence = /```/.test(normalizedText);
-    let parts = (hasCodeFence ? splitFencedCodeBlocks(normalizedText)
+    const hasCodeFence = /```/.test(htmlCandidateText);
+    let parts = (hasCodeFence ? splitFencedCodeBlocks(htmlCandidateText)
         : wholeLooksLikeHtml
             ? [{ type: 'code', lang: 'html', code: trimmed }]
             : [{ type: 'text', text: textWithBreaks }]);
+    const hasHtmlLikeText = (val) => {
+        const raw = String(val || '');
+        if (!raw) return false;
+        const hasTag = htmlTagRe.test(raw) && htmlCloseRe.test(raw);
+        const escapedTag = htmlEntityTagRe.test(raw) && htmlEntityCloseRe.test(raw);
+        return hasTag || escapedTag;
+    };
+    if (hasCodeFence) {
+        parts = parts.flatMap((p) => {
+            if (p.type !== 'text') return [p];
+            if (!hasHtmlLikeText(p.text)) return [p];
+            const decoded = decodeHtmlEntities(p.text);
+            return [{ type: 'code', lang: 'html', code: decoded }];
+        });
+    }
+    if (shouldLogRichDebug()) {
+        const htmlHint = /<\s*(style|details|div|body|html|table|section|article|main|svg|iframe)\b/i.test(htmlCandidateText) ||
+            /&lt;\s*(style|details|div|body|html|table|section|article|main|svg|iframe)\b/i.test(rawText);
+        if (htmlHint || hasCodeFence || wholeLooksLikeHtml) {
+            const msg = `render msg=${String(messageId || '')} codeFence=${hasCodeFence} html=${wholeLooksLikeHtml} escaped=${hasEscapedHtml} parts=${parts.length}`;
+            emitDebugLog({ source: 'rich', type: 'info', message: msg, force: true });
+            logger.info(`[rich] ${msg}`);
+        }
+    }
     if (hasCodeFence) {
         const firstCodeIdx = parts.findIndex(p => p.type === 'code' && (p.lang === 'html' || p.lang === 'htm'));
         const hasOtherCode = parts.some((p, idx) => p.type === 'code' && idx !== firstCodeIdx);
