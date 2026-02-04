@@ -963,6 +963,7 @@ export class ChatStore {
         pending: [],
         variables: {},
         initialVariables: {},
+        stageSchema: null,
         settings: {
           bubbleColor: defaults.bubbleColor,
           textColor: defaults.textColor,
@@ -985,6 +986,7 @@ export class ChatStore {
     if (!s.initialVariables || typeof s.initialVariables !== 'object') s.initialVariables = {};
     if (!s.variableSchemas || typeof s.variableSchemas !== 'object') s.variableSchemas = {};
     if (!Array.isArray(s.variableRules)) s.variableRules = [];
+    if (!('stageSchema' in s)) s.stageSchema = null;
     if (!s.settings) s.settings = {};
     if (!Array.isArray(s.detachedSummaries)) s.detachedSummaries = [];
     if (typeof s.compactedSummary !== 'object') s.compactedSummary = null;
@@ -1970,6 +1972,32 @@ export class ChatStore {
     this._ensureSession(sid);
     const list = Array.isArray(rules) ? rules.filter(Boolean) : [];
     this.state.sessions[sid].variableRules = list;
+    this._persist();
+    return true;
+  }
+
+  getStageSchema(id = this.currentId) {
+    const sid = String(id || '').trim();
+    if (!sid) return null;
+    this._ensureSession(sid);
+    const schema = this.state.sessions[sid].stageSchema;
+    return schema && typeof schema === 'object' ? { ...schema } : null;
+  }
+
+  setStageSchema(schema, id = this.currentId) {
+    const sid = String(id || '').trim();
+    if (!sid) return false;
+    this._ensureSession(sid);
+    this.state.sessions[sid].stageSchema = schema && typeof schema === 'object' ? { ...schema } : null;
+    this._persist();
+    return true;
+  }
+
+  clearStageSchema(id = this.currentId) {
+    const sid = String(id || '').trim();
+    if (!sid) return false;
+    this._ensureSession(sid);
+    this.state.sessions[sid].stageSchema = null;
     this._persist();
     return true;
   }

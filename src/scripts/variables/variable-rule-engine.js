@@ -26,6 +26,11 @@ const normalizeRule = (raw) => {
       target: String(action.target || ''),
       value: action.value,
       prompt: typeof action.prompt === 'string' ? action.prompt : '',
+      message: typeof action.message === 'string' ? action.message : '',
+      style: typeof action.style === 'string' ? action.style : '',
+      persona: typeof action.persona === 'string' ? action.persona : '',
+      role: typeof action.role === 'string' ? action.role : '',
+      position: typeof action.position === 'string' ? action.position : '',
       mode: String(action.mode || '').trim().toLowerCase(),
     },
   };
@@ -136,27 +141,89 @@ export class VariableRuleEngine {
 
   async applyAction(rule, { sessionId, vars, useGlobalVariables = false }) {
     const action = rule.action || {};
+    const type = String(action.type || '').trim().toLowerCase();
+    const needsTarget = !['notify', 'switch_persona', 'inject_prompt'].includes(type);
     const target = String(action.target || '').trim();
-    if (!target) return;
-    const cur = vars?.[target];
+    if (needsTarget && !target) return;
+    const cur = target ? vars?.[target] : undefined;
     const setVar = (name, value) => (
       useGlobalVariables
         ? this.chatStore?.setGlobalVariable?.(name, value)
         : this.chatStore?.setVariable?.(name, value, sessionId)
     );
-    if (action.type === 'set_value') {
+    if (type === 'set_value') {
       setVar(target, action.value);
       return;
     }
-    if (action.type === 'increment' || action.type === 'decrement') {
+    if (type === 'increment' || type === 'decrement') {
       const deltaRaw = Number(action.value);
       const delta = Number.isFinite(deltaRaw) ? deltaRaw : 1;
       const curNum = Number(cur) || 0;
-      const next = action.type === 'decrement' ? curNum - delta : curNum + delta;
+      const next = type === 'decrement' ? curNum - delta : curNum + delta;
       setVar(target, next);
       return;
     }
-    if (action.type === 'ai_evaluate') {
+    if (type === 'toggle') {
+      setVar(target, !Boolean(cur));
+      return;
+    }
+    if (type === 'push') {
+      const list = Array.isArray(cur) ? [...cur] : (cur === undefined || cur === null || cur === '' ? [] : [cur]);
+      const value = action.value;
+      if (value === undefined) return;
+      if (!list.some(item => Object.is(item, value))) list.push(value);
+      setVar(target, list);
+      return;
+    }
+    if (type === 'remove') {
+      const list = Array.isArray(cur) ? cur : [];
+      const value = action.value;
+      if (value === undefined) return;
+      const next = list.filter(item => !Object.is(item, value));
+      setVar(target, next);
+      return;
+    }
+    if (type === 'notify') {
+      const message = String(action.message || action.value || '').trim();
+      if (!message) return;
+      const style = String(action.style || 'info').trim().toLowerCase();
+      const notify = this.appBridge?.notify || ((msg, level) => {
+        const fn = window?.toastr?.[level] || window?.toastr?.info;
+        fn?.(msg);
+      });
+      notify(message, style);
+      return;
+    }
+    if (type === 'switch_persona') {
+      const personaId = String(action.persona || action.value || '').trim();
+      if (!personaId) return;
+      if (!this.appBridge?.switchPersona) {
+        logger.warn('switch_persona skipped: appBridge.switchPersona unavailable');
+        return;
+      }
+      await this.appBridge.switchPersona(personaId);
+      return;
+    }
+    if (type === 'inject_prompt') {
+      const rawPrompt = String(action.prompt || action.value || '').trim();
+      if (!rawPrompt) return;
+      const roleRaw = String(action.role || 'system').trim().toLowerCase();
+      const role = (roleRaw === 'user' || roleRaw === 'assistant' || roleRaw === 'system') ? roleRaw : 'system';
+      const processed = this.appBridge?.processTextMacros
+        ? this.appBridge.processTextMacros(rawPrompt, { sessionId, useGlobalVariables })
+        : rawPrompt;
+      if (!this.appBridge?.queuePromptInjection) {
+        logger.warn('inject_prompt skipped: appBridge.queuePromptInjection unavailable');
+        return;
+      }
+      this.appBridge.queuePromptInjection(sessionId, {
+        content: String(processed || '').trim(),
+        role,
+        position: String(action.position || '').trim(),
+      });
+      return;
+    }
+    if (type === 'ai_evaluate') {
       const bridge = this.appBridge;
       if (!bridge?.backgroundChat || !bridge?.buildMessages) {
         logger.warn('ai_evaluate skipped: backgroundChat/buildMessages unavailable');

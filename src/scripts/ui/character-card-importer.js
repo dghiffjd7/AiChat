@@ -6,6 +6,7 @@ import { avatarDataUrlFromFile } from '../utils/image.js';
 import { safeInvoke } from '../utils/tauri.js';
 import { appSettings } from '../storage/app-settings.js';
 import { appConfirm, appChoice } from './app-confirm.js';
+import { MVUConverter } from '../import/mvu-converter.js';
 
 const buildGreetingList = (card = {}) => {
   const list = [];
@@ -336,6 +337,52 @@ export class CharacterCardImporter {
       this.appBridge?.setGlobalWorld?.(worldId);
     }
 
+    let mvuConverted = false;
+    let mvuVariableCount = 0;
+    if (MVUConverter.detect(rawCard)) {
+      const mvu = MVUConverter.convert(rawCard);
+      const vars = mvu?.variables || {};
+      mvuVariableCount = Object.keys(vars).length;
+      if (mvuVariableCount > 0) {
+        const choice = await appChoice({
+          title: '检测到 MVU 变量卡',
+          message: `发现 ${mvuVariableCount} 个变量。\n是否转换为原生变量系统并写入 RP 会话？`,
+          actions: [
+            { id: 'convert', label: '转换', primary: true },
+            { id: 'skip', label: '跳过' },
+          ],
+          defaultActionId: 'convert',
+        });
+        if (choice === 'convert') {
+          try {
+            const chatStore = this.appBridge?.chatStore;
+            const rpSessionId = `rp:${persona.id}`;
+            if (chatStore) {
+              Object.entries(mvu.schemas || {}).forEach(([key, schema]) => {
+                if (!key) return;
+                chatStore.setVariableSchema?.(key, schema, rpSessionId);
+              });
+              Object.entries(vars).forEach(([key, value]) => {
+                if (!key) return;
+                chatStore.setVariable?.(key, value, rpSessionId);
+              });
+              if (Array.isArray(mvu.rules) && mvu.rules.length) {
+                chatStore.setVariableRules?.(mvu.rules, rpSessionId);
+              }
+              if (mvu.stageSchema) {
+                chatStore.setStageSchema?.(mvu.stageSchema, rpSessionId);
+              }
+              mvuConverted = true;
+              window.toastr?.success?.('MVU 变量已转换到 RP 会话');
+            }
+          } catch (err) {
+            logger.warn('mvu convert failed', err);
+            window.toastr?.warning?.('MVU 转换失败，已跳过');
+          }
+        }
+      }
+    }
+
     let presetId = '';
     if (options.importSystemPrompt && hasSystemPrompt(card)) {
       try {
@@ -431,6 +478,8 @@ export class CharacterCardImporter {
         worldbookId: worldId || persona?.source?.worldbookId,
         systemPresetId: presetId || persona?.source?.systemPresetId,
         regexSetId: regexSetId || persona?.source?.regexSetId,
+        mvuConverted,
+        mvuVariableCount,
         originalCardStored,
         originalCardSize,
       };

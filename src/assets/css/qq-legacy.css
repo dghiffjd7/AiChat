@@ -4026,3 +4026,156 @@ body[data-ui-mode='rp'] .QQ_chat_page.sticker-preview-active .msgcontent {
   color: rgba(30, 64, 175, 0.7);
   text-align: right;
 }
+
+/* ========================================
+   3.6 变量状态卡片
+   ======================================== */
+.variable-status-card {
+  display: none;
+  padding: 8px 12px 6px;
+  background: rgba(255, 255, 255, 0.92);
+  border-bottom: 1px solid rgba(15, 23, 42, 0.08);
+  backdrop-filter: blur(6px);
+  z-index: 2;
+}
+
+.variable-status-card.is-active {
+  display: block;
+}
+
+.variable-status-list {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+  scrollbar-width: thin;
+}
+
+.variable-status-list::-webkit-scrollbar {
+  height: 6px;
+}
+
+.variable-status-list::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.5);
+  border-radius: 999px;
+}
+
+.variable-status-item {
+  min-width: 120px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  background: #fff;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.06);
+  color: #0f172a;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.variable-status-item.var-status-badge {
+  justify-content: center;
+}
+
+.var-status-label {
+  font-size: 11px;
+  color: #64748b;
+}
+
+.var-status-value {
+  font-size: 13px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.var-status-progress {
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.08);
+  overflow: hidden;
+}
+
+.var-status-progress span {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: var(--var-color, #3b82f6);
+  transition: width 0.2s ease;
+}
+
+/* ========================================
+   3.7 阶段时间线
+   ======================================== */
+.stage-timeline {
+  display: none;
+  padding: 8px 12px 6px;
+  background: rgba(248, 250, 252, 0.92);
+  border-bottom: 1px solid rgba(15, 23, 42, 0.08);
+  backdrop-filter: blur(6px);
+  z-index: 2;
+}
+
+.stage-timeline.is-active {
+  display: block;
+}
+
+.stage-timeline-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: #64748b;
+  margin-bottom: 6px;
+}
+
+.stage-timeline-title {
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.stage-timeline-meta {
+  margin-left: auto;
+  font-size: 11px;
+  color: #94a3b8;
+}
+
+.stage-timeline-list {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+  scrollbar-width: thin;
+}
+
+.stage-timeline-list::-webkit-scrollbar {
+  height: 6px;
+}
+
+.stage-timeline-list::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.45);
+  border-radius: 999px;
+}
+
+.stage-timeline-item {
+  min-width: 72px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: #fff;
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  font-size: 12px;
+  color: #0f172a;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.stage-timeline-item.is-done {
+  background: #ecfeff;
+  border-color: rgba(14, 116, 144, 0.25);
+  color: #0f766e;
+}
+
+.stage-timeline-item.is-active {
+  background: #0f172a;
+  color: #fff;
+  border-color: #0f172a;
+}

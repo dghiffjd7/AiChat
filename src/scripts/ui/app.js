@@ -58,6 +58,9 @@ import { SessionPanel } from './session-panel.js';
 import { StickerPicker } from './sticker-picker.js';
 import { VariablePanel } from './variable-panel.js';
 import { VariableRuleEngine } from '../variables/variable-rule-engine.js';
+import { VariableStatusCard } from './variable-status-card.js';
+import { StageManager } from '../variables/stage-manager.js';
+import { StageTimeline } from './stage-timeline.js';
 import { WorldPanel } from './world-panel.js';
 import { WorldInfoIndicator } from './worldinfo-indicator.js';
 import { appConfirm, appChoice } from './app-confirm.js';
@@ -137,6 +140,8 @@ const initApp = async () => {
     originalSetInputText(val);
     updateStickerPreview(val);
   };
+  let stageManager = null;
+  let stageTimeline = null;
   const configPanel = new ConfigPanel();
   const chatConfigManager = new ConfigManager();
   const imageConfigManager = new ConfigManager({ scope: 'image' });
@@ -166,6 +171,51 @@ const initApp = async () => {
   const variableRuleEngine = new VariableRuleEngine({ chatStore, appBridge: window.appBridge });
   window.appBridge.variableRuleEngine = variableRuleEngine;
   window.appBridge.runVariableRules = (sessionId, ruleId) => variableRuleEngine.runManual(sessionId, ruleId);
+  stageManager = new StageManager({ chatStore, appBridge: window.appBridge });
+  window.appBridge.stageManager = stageManager;
+  const promptInjectionQueue = new Map();
+  const normalizePromptBlock = (input = {}) => {
+    const raw = String(input?.content ?? input?.prompt ?? '').trim();
+    if (!raw) return null;
+    const roleRaw = String(input?.role || 'system').trim().toLowerCase();
+    const role = (roleRaw === 'user' || roleRaw === 'assistant' || roleRaw === 'system') ? roleRaw : 'system';
+    const position = String(input?.position || '').trim();
+    return { content: raw, role, position };
+  };
+  const queuePromptInjection = (sessionId, block) => {
+    const sid = String(sessionId || chatStore.getCurrent() || '').trim();
+    if (!sid) return false;
+    const normalized = normalizePromptBlock(block);
+    if (!normalized) return false;
+    const list = promptInjectionQueue.get(sid) || [];
+    list.push(normalized);
+    promptInjectionQueue.set(sid, list);
+    return true;
+  };
+  const peekPromptInjections = (sessionId) => {
+    const sid = String(sessionId || chatStore.getCurrent() || '').trim();
+    if (!sid) return [];
+    const list = promptInjectionQueue.get(sid) || [];
+    return list.slice();
+  };
+  const consumePromptInjections = (sessionId) => {
+    const sid = String(sessionId || chatStore.getCurrent() || '').trim();
+    if (!sid) return [];
+    const list = promptInjectionQueue.get(sid) || [];
+    promptInjectionQueue.delete(sid);
+    return list.slice();
+  };
+  window.appBridge.queuePromptInjection = queuePromptInjection;
+  window.appBridge.peekPromptInjections = peekPromptInjections;
+  window.appBridge.consumePromptInjections = consumePromptInjections;
+  window.appBridge.notify = (message, level = 'info') => {
+    const text = String(message || '').trim();
+    if (!text) return false;
+    const style = String(level || 'info').trim().toLowerCase();
+    const fn = window?.toastr?.[style] || window?.toastr?.info;
+    fn?.(text);
+    return true;
+  };
   if (pluginRuntime) {
     pluginRuntime.setContext({ uiManager: pluginUiManager });
     window.appBridge.pluginUiManager = pluginUiManager;
@@ -188,6 +238,20 @@ const initApp = async () => {
           scope,
         }).catch(err => logger.warn('script variable.changed failed', err));
       }
+      try {
+        window.dispatchEvent(new CustomEvent('chatapp-variable-changed', {
+          detail: { name: String(name || ''), oldValue, newValue, sessionId: sid || null, scope },
+        }));
+      } catch {}
+    };
+    const emitVariableSchemaChanged = (name, sessionId) => {
+      const sid = String(sessionId || chatStore.getCurrent() || '').trim();
+      if (!sid) return;
+      try {
+        window.dispatchEvent(new CustomEvent('chatapp-variable-schema-changed', {
+          detail: { name: String(name || ''), sessionId: sid },
+        }));
+      } catch {}
     };
     const originalSetVariable = chatStore.setVariable.bind(chatStore);
     chatStore.setVariable = (key, value, id = chatStore.getCurrent()) => {
@@ -226,6 +290,53 @@ const initApp = async () => {
         const ok = originalSetVariableSchema(name, schema, sid);
         const nextValue = chatStore.getVariable(name, sid);
         if (ok && oldValue !== nextValue) emitVariableChanged(name, oldValue, nextValue, sid, 'chat');
+        if (ok) emitVariableSchemaChanged(name, sid);
+        return ok;
+      };
+    }
+    if (typeof chatStore.deleteVariableSchema === 'function') {
+      const originalDeleteVariableSchema = chatStore.deleteVariableSchema.bind(chatStore);
+      chatStore.deleteVariableSchema = (key, id = chatStore.getCurrent()) => {
+        const sid = String(id || chatStore.getCurrent() || '').trim();
+        const name = String(key || '').trim();
+        const ok = originalDeleteVariableSchema(name, sid);
+        if (ok) emitVariableSchemaChanged(name, sid);
+        return ok;
+      };
+    }
+    if (typeof chatStore.clearVariableSchemas === 'function') {
+      const originalClearVariableSchemas = chatStore.clearVariableSchemas.bind(chatStore);
+      chatStore.clearVariableSchemas = (id = chatStore.getCurrent()) => {
+        const sid = String(id || chatStore.getCurrent() || '').trim();
+        const ok = originalClearVariableSchemas(sid);
+        if (ok) emitVariableSchemaChanged('', sid);
+        return ok;
+      };
+    }
+    const emitStageSchemaChanged = (sessionId) => {
+      const sid = String(sessionId || chatStore.getCurrent() || '').trim();
+      if (!sid) return;
+      try {
+        window.dispatchEvent(new CustomEvent('chatapp-stage-schema-changed', {
+          detail: { sessionId: sid },
+        }));
+      } catch {}
+    };
+    if (typeof chatStore.setStageSchema === 'function') {
+      const originalSetStageSchema = chatStore.setStageSchema.bind(chatStore);
+      chatStore.setStageSchema = (schema, id = chatStore.getCurrent()) => {
+        const sid = String(id || chatStore.getCurrent() || '').trim();
+        const ok = originalSetStageSchema(schema, sid);
+        if (ok) emitStageSchemaChanged(sid);
+        return ok;
+      };
+    }
+    if (typeof chatStore.clearStageSchema === 'function') {
+      const originalClearStageSchema = chatStore.clearStageSchema.bind(chatStore);
+      chatStore.clearStageSchema = (id = chatStore.getCurrent()) => {
+        const sid = String(id || chatStore.getCurrent() || '').trim();
+        const ok = originalClearStageSchema(sid);
+        if (ok) emitStageSchemaChanged(sid);
         return ok;
       };
     }
@@ -328,6 +439,7 @@ const initApp = async () => {
   let activePersonaScopeKey = '';
   let activePersonaId = 'default';
   let chatRoom = null;
+  let variableStatusCard = null;
   const RP_SESSION_PREFIX = 'rp:';
   const isRpSessionId = (sessionId) => String(sessionId || '').startsWith(RP_SESSION_PREFIX);
   const getRpSessionId = (personaId = activePersonaId) => `${RP_SESSION_PREFIX}${personaId || 'default'}`;
@@ -689,6 +801,24 @@ const initApp = async () => {
       refreshChatAndContacts();
     },
   });
+  window.appBridge.switchPersona = async (personaIdOrName) => {
+    const raw = String(personaIdOrName || '').trim();
+    if (!raw) return false;
+    let target = personaStore.get(raw);
+    if (!target) {
+      const list = personaStore.getAll?.() || [];
+      const lower = raw.toLowerCase();
+      target = list.find(p => String(p?.name || '').trim().toLowerCase() === lower);
+    }
+    if (!target) return false;
+    if (String(personaStore.getActive?.()?.id || '') === String(target.id || '')) return true;
+    const ok = await personaStore.setActive(target.id);
+    if (!ok) return false;
+    await applyPersonaScope({ personaId: target.id });
+    syncUserPersonaUI(chatStore.getCurrent());
+    refreshChatAndContacts();
+    return true;
+  };
   // Initial sync
   syncUserPersonaUI(chatStore.getCurrent());
 
@@ -4195,6 +4325,12 @@ Phase G（Frame 36）：循环衔接
   const chatScroll = document.getElementById('chat-scroll');
   const composerInput = document.getElementById('composer-input');
   const chatInputContainer = document.querySelector('.chat-input-container');
+  if (chatRoom && chatScroll) {
+    stageTimeline = new StageTimeline({ stageManager });
+    stageTimeline.mount({ container: chatRoom, before: chatScroll });
+    variableStatusCard = new VariableStatusCard({ chatStore });
+    variableStatusCard.mount({ container: chatRoom, before: chatScroll });
+  }
   pluginUiManager.mount({ chatRoom, chatInputContainer });
   let chatInputGapTweak = 0;
   const syncChatInputOffset = () => {
@@ -9536,6 +9672,9 @@ Phase G（Frame 36）：循环衔接
       currentChatTitle.innerHTML = renderSessionNameHtml(sessionId, contact);
     // 切换会话
     chatStore.switchSession(sessionId);
+    stageManager?.setSession?.(sessionId);
+    stageTimeline?.setSession?.(sessionId);
+    variableStatusCard?.setSession?.(sessionId);
     window.appBridge.setActiveSession(sessionId);
     syncUserPersonaUI(sessionId);
     if (chatSettingsReady) {
@@ -9631,6 +9770,8 @@ Phase G（Frame 36）：循环衔接
     chatList?.classList.remove('hidden');
     pages.chat?.classList.remove('chat-room-active');
     document.body?.classList.remove('chat-room-active');
+    stageTimeline?.render?.('');
+    variableStatusCard?.render?.('');
     setStickerPanelOpen(false);
     setActionPanelOpen(false);
     scheduleModeSwitchSync();
@@ -9736,12 +9877,231 @@ Phase G（Frame 36）：循环衔接
   };
 
   const buildRpGreetingMessage = (greeting, sessionId) => {
+    const isPlainObject = (val) => (
+      val && typeof val === 'object' && !Array.isArray(val)
+    );
+    const deepEqual = (a, b) => {
+      if (Object.is(a, b)) return true;
+      if (typeof a !== typeof b) return false;
+      if (Array.isArray(a)) {
+        if (!Array.isArray(b) || a.length !== b.length) return false;
+        return a.every((v, i) => deepEqual(v, b[i]));
+      }
+      if (isPlainObject(a)) {
+        if (!isPlainObject(b)) return false;
+        const keysA = Object.keys(a);
+        const keysB = Object.keys(b);
+        if (keysA.length !== keysB.length) return false;
+        return keysA.every(k => deepEqual(a[k], b[k]));
+      }
+      return false;
+    };
+    const stripCodeFence = (text) => {
+      const raw = String(text || '').trim();
+      if (!raw) return '';
+      const withoutStart = raw.replace(/^```[a-z0-9_-]*\s*/i, '');
+      return withoutStart.replace(/```\s*$/i, '').trim();
+    };
+    const safeJsonParse = (text) => {
+      try {
+        return JSON.parse(text);
+      } catch {
+        return null;
+      }
+    };
+    const parseLooseJson = (text) => {
+      let raw = String(text || '').trim();
+      if (!raw) return null;
+      raw = raw.replace(/\/\*[\s\S]*?\*\//g, '');
+      raw = raw.replace(/(^|[^\\])\/\/.*$/gm, '$1');
+      raw = raw.replace(/,\s*([}\]])/g, '$1');
+      raw = raw.replace(/([{,]\s*)([A-Za-z0-9_-]+)\s*:/g, '$1"$2":');
+      raw = raw.replace(/'([^'\\]*(\\.[^'\\]*)*)'/g, (_m, body) => {
+        const cleaned = String(body || '').replace(/\\"/g, '"').replace(/"/g, '\\"');
+        return `"${cleaned}"`;
+      });
+      return safeJsonParse(raw);
+    };
+    const parseYamlScalar = (raw) => {
+      const text = String(raw || '').trim();
+      if (!text) return '';
+      if (text === 'null' || text === '~') return null;
+      if (text === 'true') return true;
+      if (text === 'false') return false;
+      if (/^[+-]?\d+(\.\d+)?$/.test(text)) return Number(text);
+      if ((text.startsWith('"') && text.endsWith('"')) || (text.startsWith("'") && text.endsWith("'"))) {
+        return text.slice(1, -1);
+      }
+      if (text.startsWith('{') || text.startsWith('[')) {
+        const parsed = parseLooseJson(text);
+        if (parsed !== null) return parsed;
+      }
+      return text;
+    };
+    const parseSimpleYaml = (text) => {
+      const lines = String(text || '').replace(/\t/g, '  ').split(/\r?\n/);
+      const root = {};
+      const stack = [{ indent: -1, container: root, parent: null, key: null }];
+      const parseKeyValue = (line) => {
+        const idx = line.indexOf(':');
+        if (idx < 0) return null;
+        const key = line.slice(0, idx).trim();
+        if (!key) return null;
+        const rest = line.slice(idx + 1).trim();
+        return { key, value: rest, hasValue: rest.length > 0 };
+      };
+      for (const rawLine of lines) {
+        const line = String(rawLine || '');
+        if (!line.trim()) continue;
+        if (/^\s*#/.test(line)) continue;
+        const indent = line.match(/^ */)?.[0]?.length ?? 0;
+        while (stack.length > 1 && indent <= stack[stack.length - 1].indent) {
+          stack.pop();
+        }
+        const ctx = stack[stack.length - 1];
+        const trimmed = line.trim();
+        if (trimmed.startsWith('- ')) {
+          const itemRaw = trimmed.slice(2).trim();
+          if (!Array.isArray(ctx.container)) {
+            if (ctx.parent && ctx.key) {
+              const nextArr = [];
+              ctx.parent[ctx.key] = nextArr;
+              ctx.container = nextArr;
+            } else {
+              return null;
+            }
+          }
+          if (!itemRaw) {
+            const obj = {};
+            ctx.container.push(obj);
+            stack.push({ indent, container: obj, parent: ctx.container, key: String(ctx.container.length - 1) });
+            continue;
+          }
+          const kv = parseKeyValue(itemRaw);
+          if (kv) {
+            const obj = {};
+            if (kv.hasValue) {
+              obj[kv.key] = parseYamlScalar(kv.value);
+            } else {
+              obj[kv.key] = {};
+              stack.push({ indent, container: obj[kv.key], parent: obj, key: kv.key });
+            }
+            ctx.container.push(obj);
+            continue;
+          }
+          ctx.container.push(parseYamlScalar(itemRaw));
+          continue;
+        }
+        const kv = parseKeyValue(trimmed);
+        if (!kv) continue;
+        if (!isPlainObject(ctx.container)) {
+          return null;
+        }
+        if (kv.hasValue) {
+          ctx.container[kv.key] = parseYamlScalar(kv.value);
+        } else {
+          ctx.container[kv.key] = {};
+          stack.push({ indent, container: ctx.container[kv.key], parent: ctx.container, key: kv.key });
+        }
+      }
+      return root;
+    };
+    const extractStatData = (payload) => {
+      if (!payload || typeof payload !== 'object') return null;
+      if (payload.stat_data && typeof payload.stat_data === 'object') return payload.stat_data;
+      if (payload.mvu_data && typeof payload.mvu_data === 'object') {
+        const nested = payload.mvu_data.stat_data || payload.mvu_data.statData;
+        if (nested && typeof nested === 'object') return nested;
+      }
+      if (payload.data && typeof payload.data === 'object') {
+        const nested = payload.data.stat_data || payload.data.statData;
+        if (nested && typeof nested === 'object') return nested;
+      }
+      return null;
+    };
+    const mergeDeep = (base, override) => {
+      const out = Array.isArray(base) ? [...base] : { ...(base || {}) };
+      if (!override || typeof override !== 'object') return out;
+      Object.entries(override).forEach(([key, value]) => {
+        if (Array.isArray(value)) {
+          out[key] = value.slice();
+        } else if (isPlainObject(value) && isPlainObject(out[key])) {
+          out[key] = mergeDeep(out[key], value);
+        } else {
+          out[key] = value;
+        }
+      });
+      return out;
+    };
+    const parseInitVarPayload = (text) => {
+      const raw = stripCodeFence(text);
+      if (!raw) return null;
+      const direct = safeJsonParse(raw);
+      if (direct && typeof direct === 'object') return direct;
+      const loose = parseLooseJson(raw);
+      if (loose && typeof loose === 'object') return loose;
+      const yaml = parseSimpleYaml(raw);
+      if (yaml && typeof yaml === 'object') return yaml;
+      return null;
+    };
+    const extractInitVarBlocks = (text, sid) => {
+      const raw = String(text || '');
+      const blocks = [];
+      const re = /<(initvar)>(?:\s*```.*)?([\s\S]*?)(?:```\s*)?<\/\1>/gim;
+      const cleaned = raw.replace(re, (_m, _tag, body) => {
+        if (body) blocks.push(body);
+        return '';
+      });
+      if (!blocks.length) return { text: raw, data: null };
+      let merged = null;
+      blocks.forEach((block) => {
+        const processed = window.appBridge?.processTextMacros
+          ? window.appBridge.processTextMacros(String(block || ''), { sessionId: sid, uiMode })
+          : String(block || '');
+        const parsed = parseInitVarPayload(processed);
+        const data = extractStatData(parsed) || parsed;
+        if (data && typeof data === 'object') {
+          merged = mergeDeep(merged || {}, data);
+        }
+      });
+      if (!merged || !Object.keys(merged).length) return { text: raw, data: null };
+      const nextText = cleaned.replace(/\n{3,}/g, '\n\n').trim();
+      return { text: nextText, data: merged };
+    };
+    const applyInitVarToSession = (data, sid) => {
+      if (!data || typeof data !== 'object') return false;
+      const sessionId = String(sid || '').trim();
+      if (!sessionId) return false;
+      const existing = chatStore.listVariables(sessionId) || {};
+      const hasExisting = Object.keys(existing).length > 0;
+      const merged = hasExisting ? mergeDeep(data, existing) : data;
+      let changed = false;
+      Object.entries(merged).forEach(([key, value]) => {
+        const name = String(key || '').trim();
+        if (!name) return;
+        if (hasExisting && deepEqual(existing[name], value)) return;
+        chatStore.setVariable(name, value, sessionId);
+        if (chatStore.getInitialVariable(name, sessionId) === undefined) {
+          chatStore.setInitialVariable(name, value, sessionId);
+        }
+        changed = true;
+      });
+      return changed;
+    };
     const content = String(greeting?.content || '').trim();
-    if (!content) return null;
-    let stored = content;
-    let display = content;
+    if (!content) return { message: null, initVarData: null };
+    const initVarResult = extractInitVarBlocks(content, sessionId);
+    const baseContent = String(initVarResult.text || '').trim();
+    if (initVarResult.data) {
+      applyInitVarToSession(initVarResult.data, sessionId);
+    }
+    if (!baseContent) {
+      return { message: null, initVarData: initVarResult.data || null };
+    }
+    let stored = baseContent;
+    let display = baseContent;
     try {
-      stored = window.appBridge.applyOutputStoredRegex(content, { depth: 0 });
+      stored = window.appBridge.applyOutputStoredRegex(baseContent, { depth: 0 });
       display = window.appBridge.applyOutputDisplayRegex(stored, { depth: 0 });
     } catch {}
     const parsed = parseSpecialMessage(display);
@@ -9764,8 +10124,9 @@ Phase G（Frame 36）：循环衔接
     const messages = chatStore.getMessages(sid) || [];
     if (messages.some(isConversationMessage)) return false;
     const greeting = ensureRpGreetingActive();
-    const msg = buildRpGreetingMessage(greeting, sid);
-    if (!msg) return false;
+    const result = buildRpGreetingMessage(greeting, sid);
+    const msg = result?.message || null;
+    if (!msg) return Boolean(result?.initVarData);
     chatStore.appendMessage(msg, sid);
     if (String(chatStore.getCurrent() || '') === sid) ui.addMessage(msg);
     return true;
@@ -12596,6 +12957,10 @@ Phase G（Frame 36）：循环衔接
           memoryInjectPosition,
           memoryInjectDepth,
           userAttachmentParts: attachmentParts,
+          extraPromptBlocks: [
+            ...(stageManager?.getPromptBlocks?.(sessionId) || []),
+            ...peekPromptInjections(sessionId),
+          ],
           ...metaOverrides,
         },
         group: isGroupChat
@@ -12754,6 +13119,7 @@ Phase G（Frame 36）：循环衔接
         if (creativeMode) {
           // 创意写作模式：完整长文输出，不解析线上格式
           if (isSessionActive(sessionId)) ui.showTyping(assistantAvatar);
+          consumePromptInjections(sessionId);
           const stream = await window.appBridge.generate(text, llmContext(text));
           let full = '';
           streamCtrl = null;
@@ -12851,6 +13217,7 @@ Phase G（Frame 36）：循环衔接
           // 对话模式（流式）：不逐字显示 AI 原文；只在捕获到完整的“有效标签”后输出解析结果
           if (isSessionActive(sessionId)) ui.showTyping(assistantAvatar);
           const parser = createDialogueParser();
+          consumePromptInjections(sessionId);
           const stream = await window.appBridge.generate(text, llmContext(text));
           let fullRaw = '';
           let didAnything = false;
@@ -13222,6 +13589,7 @@ Phase G（Frame 36）：循环衔接
           if (streamCtrl && activeGeneration && activeGeneration.sessionId === sessionId) {
             activeGeneration.streamCtrl = streamCtrl;
           }
+          consumePromptInjections(sessionId);
           const stream = await window.appBridge.generate(text, llmContext(text));
           let full = '';
           for await (const chunk of stream) {
@@ -13294,6 +13662,7 @@ Phase G（Frame 36）：循环衔接
         disableSummaryForThis = !isSummaryMemoryEnabled();
 
         if (isSessionActive(sessionId)) ui.showTyping(assistantAvatar);
+        consumePromptInjections(sessionId);
         const resultRaw = await window.appBridge.generate(text, llmContext(text));
         sendSucceeded = true;
         if (isSessionActive(sessionId)) ui.hideTyping();

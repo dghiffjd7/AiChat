@@ -1,4 +1,5 @@
 import { appConfirm } from './app-confirm.js';
+import { applyTemplate, listVariableTemplates } from '../variables/variable-templates.js';
 
 export class VariablePanel {
     constructor({ chatStore, getSessionId, getVariableScope }) {
@@ -388,7 +389,13 @@ export class VariablePanel {
                     <option value="set_value">设置数值</option>
                     <option value="increment">递增</option>
                     <option value="decrement">递减</option>
+                    <option value="toggle">切换布尔</option>
+                    <option value="push">数组追加</option>
+                    <option value="remove">数组移除</option>
                     <option value="ai_evaluate">AI 评估</option>
+                    <option value="notify">通知提示</option>
+                    <option value="switch_persona">切换 Persona</option>
+                    <option value="inject_prompt">注入提示词</option>
                 </select>
 
                 <label style="font-size:12px; color:#64748b;">目标变量</label>
@@ -396,7 +403,7 @@ export class VariablePanel {
                 <datalist id="rule-target-list"></datalist>
 
                 <div id="rule-action-value-wrap">
-                    <label style="font-size:12px; color:#64748b;">设置值</label>
+                    <label id="rule-action-value-label" style="font-size:12px; color:#64748b;">设置值</label>
                     <input id="rule-action-value" type="text" style="padding:8px 10px; border:1px solid #e2e8f0; border-radius:10px;">
                 </div>
 
@@ -412,6 +419,34 @@ export class VariablePanel {
                     <select id="rule-action-mode" style="padding:8px 10px; border:1px solid #e2e8f0; border-radius:10px;">
                         <option value="delta">增量</option>
                         <option value="set">直接赋值</option>
+                    </select>
+                </div>
+
+                <div id="rule-action-message-wrap" style="display:none;">
+                    <label style="font-size:12px; color:#64748b;">通知内容</label>
+                    <input id="rule-action-message" type="text" style="padding:8px 10px; border:1px solid #e2e8f0; border-radius:10px;">
+                    <label style="font-size:12px; color:#64748b;">通知级别</label>
+                    <select id="rule-action-message-style" style="padding:8px 10px; border:1px solid #e2e8f0; border-radius:10px;">
+                        <option value="info">info</option>
+                        <option value="success">success</option>
+                        <option value="warning">warning</option>
+                        <option value="error">error</option>
+                    </select>
+                </div>
+
+                <div id="rule-action-persona-wrap" style="display:none;">
+                    <label style="font-size:12px; color:#64748b;">Persona ID / 名称</label>
+                    <input id="rule-action-persona" type="text" style="padding:8px 10px; border:1px solid #e2e8f0; border-radius:10px;">
+                </div>
+
+                <div id="rule-action-inject-wrap" style="display:none;">
+                    <label style="font-size:12px; color:#64748b;">注入提示词</label>
+                    <textarea id="rule-action-inject" rows="4" style="padding:8px 10px; border:1px solid #e2e8f0; border-radius:10px;"></textarea>
+                    <label style="font-size:12px; color:#64748b;">注入角色</label>
+                    <select id="rule-action-inject-role" style="padding:8px 10px; border:1px solid #e2e8f0; border-radius:10px;">
+                        <option value="system">system</option>
+                        <option value="user">user</option>
+                        <option value="assistant">assistant</option>
                     </select>
                 </div>
             </div>
@@ -440,12 +475,21 @@ export class VariablePanel {
             actionType: q('#rule-action-type'),
             actionTarget: q('#rule-action-target'),
             actionValueWrap: q('#rule-action-value-wrap'),
+            actionValueLabel: q('#rule-action-value-label'),
             actionValue: q('#rule-action-value'),
             actionDeltaWrap: q('#rule-action-delta-wrap'),
             actionDelta: q('#rule-action-delta'),
             actionAiWrap: q('#rule-action-ai-wrap'),
             actionPrompt: q('#rule-action-prompt'),
             actionMode: q('#rule-action-mode'),
+            actionMessageWrap: q('#rule-action-message-wrap'),
+            actionMessage: q('#rule-action-message'),
+            actionMessageStyle: q('#rule-action-message-style'),
+            actionPersonaWrap: q('#rule-action-persona-wrap'),
+            actionPersona: q('#rule-action-persona'),
+            actionInjectWrap: q('#rule-action-inject-wrap'),
+            actionInject: q('#rule-action-inject'),
+            actionInjectRole: q('#rule-action-inject-role'),
             targetList: q('#rule-target-list'),
             save: q('#rule-save'),
             cancel: q('#rule-cancel'),
@@ -461,9 +505,23 @@ export class VariablePanel {
         };
         const updateActionUI = () => {
             const type = String(fields.actionType?.value || '');
-            if (fields.actionValueWrap) fields.actionValueWrap.style.display = type === 'set_value' ? 'block' : 'none';
+            const needsTarget = !['notify', 'switch_persona', 'inject_prompt'].includes(type);
+            if (fields.actionTarget) {
+                fields.actionTarget.disabled = !needsTarget;
+                fields.actionTarget.style.opacity = needsTarget ? '1' : '0.6';
+            }
+            const needsValue = type === 'set_value' || type === 'push' || type === 'remove';
+            if (fields.actionValueWrap) fields.actionValueWrap.style.display = needsValue ? 'block' : 'none';
+            if (fields.actionValueLabel) {
+                if (type === 'push') fields.actionValueLabel.textContent = '追加值';
+                else if (type === 'remove') fields.actionValueLabel.textContent = '移除值';
+                else fields.actionValueLabel.textContent = '设置值';
+            }
             if (fields.actionDeltaWrap) fields.actionDeltaWrap.style.display = (type === 'increment' || type === 'decrement') ? 'block' : 'none';
             if (fields.actionAiWrap) fields.actionAiWrap.style.display = type === 'ai_evaluate' ? 'block' : 'none';
+            if (fields.actionMessageWrap) fields.actionMessageWrap.style.display = type === 'notify' ? 'block' : 'none';
+            if (fields.actionPersonaWrap) fields.actionPersonaWrap.style.display = type === 'switch_persona' ? 'block' : 'none';
+            if (fields.actionInjectWrap) fields.actionInjectWrap.style.display = type === 'inject_prompt' ? 'block' : 'none';
         };
         fields.triggerType?.addEventListener('change', updateTriggerUI);
         fields.actionType?.addEventListener('change', updateActionUI);
@@ -652,6 +710,11 @@ export class VariablePanel {
         if (fields.actionDelta) fields.actionDelta.value = Number.isFinite(Number(normalized.action.value)) ? Number(normalized.action.value) : 1;
         if (fields.actionPrompt) fields.actionPrompt.value = normalized.action.prompt || '';
         if (fields.actionMode) fields.actionMode.value = normalized.action.mode || 'delta';
+        if (fields.actionMessage) fields.actionMessage.value = normalized.action.message || '';
+        if (fields.actionMessageStyle) fields.actionMessageStyle.value = normalized.action.style || 'info';
+        if (fields.actionPersona) fields.actionPersona.value = normalized.action.persona || '';
+        if (fields.actionInject) fields.actionInject.value = normalized.action.prompt || '';
+        if (fields.actionInjectRole) fields.actionInjectRole.value = normalized.action.role || 'system';
 
         const { vars } = this.getVars();
         if (fields.targetList) {
@@ -702,12 +765,13 @@ export class VariablePanel {
         }
         const actionType = String(fields.actionType?.value || 'set_value');
         const action = { type: actionType };
+        const needsTarget = !['notify', 'switch_persona', 'inject_prompt'].includes(actionType);
         action.target = String(fields.actionTarget?.value || '').trim();
-        if (!action.target) {
+        if (needsTarget && !action.target) {
             window.toastr?.warning?.('目标变量不能为空');
             return;
         }
-        if (actionType === 'set_value') {
+        if (actionType === 'set_value' || actionType === 'push' || actionType === 'remove') {
             action.value = this.parseValue(fields.actionValue?.value || '');
         } else if (actionType === 'increment' || actionType === 'decrement') {
             const delta = Number(fields.actionDelta?.value || 0);
@@ -715,6 +779,14 @@ export class VariablePanel {
         } else if (actionType === 'ai_evaluate') {
             action.prompt = String(fields.actionPrompt?.value || '').trim();
             action.mode = String(fields.actionMode?.value || 'delta');
+        } else if (actionType === 'notify') {
+            action.message = String(fields.actionMessage?.value || '').trim();
+            action.style = String(fields.actionMessageStyle?.value || 'info');
+        } else if (actionType === 'switch_persona') {
+            action.persona = String(fields.actionPersona?.value || '').trim();
+        } else if (actionType === 'inject_prompt') {
+            action.prompt = String(fields.actionInject?.value || '').trim();
+            action.role = String(fields.actionInjectRole?.value || 'system');
         }
 
         const next = { id, name, enabled, priority, trigger, action };
@@ -1186,6 +1258,11 @@ export class VariablePanel {
                 target: String(action.target || ''),
                 value: action.value,
                 prompt: String(action.prompt || ''),
+                message: String(action.message || ''),
+                style: String(action.style || ''),
+                persona: String(action.persona || ''),
+                role: String(action.role || ''),
+                position: String(action.position || ''),
                 mode: String(action.mode || 'delta'),
             },
         };
@@ -1222,7 +1299,13 @@ export class VariablePanel {
         const target = a.target ? String(a.target) : '未设置';
         if (a.type === 'increment') return `递增 ${target} (+${a.value ?? 1})`;
         if (a.type === 'decrement') return `递减 ${target} (-${a.value ?? 1})`;
+        if (a.type === 'toggle') return `切换 ${target}`;
+        if (a.type === 'push') return `追加 ${target}`;
+        if (a.type === 'remove') return `移除 ${target}`;
         if (a.type === 'ai_evaluate') return `AI 评估 ${target}`;
+        if (a.type === 'notify') return `通知: ${String(a.message || a.value || '').trim() || '提示'}`;
+        if (a.type === 'switch_persona') return `切换 Persona: ${String(a.persona || a.value || '').trim() || '未设置'}`;
+        if (a.type === 'inject_prompt') return `注入提示词 (${String(a.role || 'system')})`;
         return `设置 ${target}`;
     }
 
@@ -1329,63 +1412,41 @@ export class VariablePanel {
         const wrap = this.templatePanel?.querySelector?.('#tpl-list');
         if (!wrap) return;
         wrap.innerHTML = '';
-        const templates = [
-            {
-                id: 'affection',
-                name: '好感度',
-                desc: '数值 0-100，进度条展示',
-                apply: () => {
-                    const key = '好感度';
-                    const schema = {
-                        id: key,
-                        name: key,
-                        type: 'number',
-                        default: 50,
-                        range: { min: 0, max: 100 },
-                        ui: { display: 'progress', color: '#f97316', format: '{value}/100', label: '好感度' },
-                    };
-                    this.setSchema(key, schema);
-                    this.setVar(key, schema.default);
-                },
-            },
-            {
-                id: 'relationship',
-                name: '关系阶段',
-                desc: '枚举展示',
-                apply: () => {
-                    const key = '关系阶段';
-                    const schema = {
-                        id: key,
-                        name: key,
-                        type: 'enum',
-                        default: '陌生',
-                        options: ['陌生', '熟悉', '朋友', '亲密', '恋人'],
-                        ui: { display: 'badge', color: '#16a34a', label: '关系' },
-                    };
-                    this.setSchema(key, schema);
-                    this.setVar(key, schema.default);
-                },
-            },
-        ];
+        const templates = listVariableTemplates();
         const { sid, vars } = this.getVars();
         templates.forEach(tpl => {
             const card = document.createElement('div');
             card.style.cssText = 'border:1px solid rgba(15,23,42,0.08); border-radius:12px; padding:10px; background:#fff; display:flex; align-items:center; gap:10px;';
             const meta = document.createElement('div');
             meta.style.cssText = 'flex:1;';
-            meta.innerHTML = `<div style="font-weight:700; color:#0f172a;">${tpl.name}</div><div style="font-size:12px; color:#64748b; margin-top:4px;">${tpl.desc}</div>`;
+            const count = Array.isArray(tpl.variables) ? tpl.variables.length : 0;
+            const desc = tpl.desc ? `${tpl.desc}${count ? ` · ${count} 变量` : ''}` : (count ? `${count} 变量` : '');
+            meta.innerHTML = `<div style="font-weight:700; color:#0f172a;">${tpl.name}</div><div style="font-size:12px; color:#64748b; margin-top:4px;">${desc}</div>`;
             const btn = document.createElement('button');
             btn.textContent = '应用';
             btn.style.cssText = 'border:1px solid #e2e8f0; background:#fff; border-radius:10px; padding:6px 10px; cursor:pointer;';
             btn.addEventListener('click', async () => {
-                const exists = Object.prototype.hasOwnProperty.call(vars || {}, tpl.name);
-                if (exists) {
-                    const ok = await appConfirm({ title: '覆盖变量', message: `变量 "${tpl.name}" 已存在，是否覆盖？`, danger: true });
+                if (!sid) return;
+                const keys = Array.isArray(tpl.variables) ? tpl.variables.map(v => String(v?.id || v?.name || '').trim()).filter(Boolean) : [];
+                const exists = keys.filter(k => Object.prototype.hasOwnProperty.call(vars || {}, k));
+                let overwrite = true;
+                if (exists.length) {
+                    const ok = await appConfirm({
+                        title: '覆盖变量',
+                        message: `已存在变量：${exists.join('、')}\n是否覆盖？`,
+                        danger: true,
+                    });
                     if (!ok) return;
+                } else {
+                    overwrite = true;
                 }
-                tpl.apply();
-                this.renderList();
-                window.toastr?.success?.('模板已应用');
+                const res = applyTemplate(this.chatStore, sid, tpl.id, { overwrite });
+                if (res?.ok) {
+                    this.renderList();
+                    window.toastr?.success?.('模板已应用');
+                } else {
+                    window.toastr?.error?.('模板应用失败');
+                }
             });
             card.appendChild(meta);
             card.appendChild(btn);
