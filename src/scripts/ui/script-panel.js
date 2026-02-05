@@ -373,6 +373,9 @@ export class ScriptPanel {
           }
         }
         await this.store.toggleScript(this.tab, scopeId, script.id, toggle.checked);
+        try {
+          window.appBridge?.scriptRuntime?.restartWorker?.('脚本已重新加载');
+        } catch {}
         this.refresh();
       });
       const editBtn = document.createElement('button');

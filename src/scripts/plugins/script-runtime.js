@@ -32,6 +32,40 @@ const callRpc = (method, params = {}) => {
   });
 };
 
+const legacyListenerMap = new WeakMap();
+const wrapLegacyHandler = (cb) => {
+  if (legacyListenerMap.has(cb)) return legacyListenerMap.get(cb);
+  const wrapped = (payload) => {
+    try {
+      if (payload && typeof payload === 'object' && Array.isArray(payload.args)) {
+        return cb(...payload.args);
+      }
+      return cb(payload);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+  legacyListenerMap.set(cb, wrapped);
+  return wrapped;
+};
+
+const eventOn = (event, cb) => {
+  const on = self.__chatappScriptOn;
+  if (!on || typeof cb !== 'function') return;
+  on(event, wrapLegacyHandler(cb));
+};
+
+const eventRemoveListener = (event, cb) => {
+  const off = self.__chatappScriptOff;
+  if (!off) return;
+  if (!cb) return off(event);
+  const wrapped = legacyListenerMap.get(cb) || cb;
+  off(event, wrapped);
+};
+
+self.eventOn = eventOn;
+self.eventRemoveListener = eventRemoveListener;
+
 const buildModuleNamespace = (moduleExports, diff) => {
   const hasDiff = diff && Object.keys(diff).length > 0;
   let result = null;
@@ -97,28 +131,51 @@ const isRemoteUrl = (value) => {
   return /^https?:\\/\\//i.test(raw) || raw.startsWith('//');
 };
 
-const loadScriptText = (url) => {
+const resolveImportUrl = (value, baseUrl) => {
+  if (!value) return '';
+  const raw = String(value).trim();
+  if (!raw) return '';
+  if (/^[a-z]+:\\/\\//i.test(raw) || raw.startsWith('blob:') || raw.startsWith('tauri:') || raw.startsWith('app:')) {
+    return raw;
+  }
+  if (raw.startsWith('//')) {
+    const proto = baseUrl && /^https?:\\/\\//i.test(baseUrl) ? baseUrl.split(':')[0] : 'https';
+    return proto + ':' + raw;
+  }
+  try {
+    if (baseUrl) return new URL(raw, baseUrl).toString();
+  } catch {}
+  const origin = getOrigin();
+  if (!origin) return raw;
+  if (raw.startsWith('/')) return origin + raw;
+  return origin + '/' + raw.replace(/^\\.?\\//, '');
+};
+
+const loadScriptText = (url, baseUrl) => {
+  const resolved = resolveImportUrl(url, baseUrl);
   const xhr = new XMLHttpRequest();
-  xhr.open('GET', url, false);
+  xhr.open('GET', resolved, false);
   xhr.send(null);
   if (xhr.status >= 200 && xhr.status < 300) return String(xhr.responseText || '');
   throw new Error('HTTP ' + xhr.status);
 };
 
-const safeImportScript = (url) => {
-  if (!url) return false;
+const safeImportScript = (url, baseUrl) => {
+  const resolved = resolveImportUrl(url, baseUrl);
+  if (!resolved) return false;
   try {
-    importScripts(url);
+    importScripts(resolved);
     return true;
   } catch {
     return false;
   }
 };
 
-const safeEvalScript = (url) => {
-  if (!url) return false;
+const safeEvalScript = (url, baseUrl) => {
+  const resolved = resolveImportUrl(url, baseUrl);
+  if (!resolved) return false;
   try {
-    const text = loadScriptText(url);
+    const text = loadScriptText(resolved);
     const runner = new Function(text);
     runner();
     return true;
@@ -127,12 +184,12 @@ const safeEvalScript = (url) => {
   }
 };
 
-const loadLibrary = (urls) => {
+const loadLibrary = (urls, baseUrl) => {
   if (!Array.isArray(urls)) return false;
   for (const url of urls) {
     if (!url) continue;
-    if (safeImportScript(url)) return true;
-    if (safeEvalScript(url)) return true;
+    if (safeImportScript(url, baseUrl)) return true;
+    if (safeEvalScript(url, baseUrl)) return true;
   }
   return false;
 };
@@ -165,6 +222,54 @@ const makeCompatDollar = () => {
   return fn;
 };
 
+const legacyMacros = new Map();
+
+const buildSillyTavern = () => {
+  const st = {};
+  st.chat = [];
+  st.characters = [];
+  st.characterId = 0;
+  st.extensionSettings = {};
+  st.chatCompletionSettings = { function_calling: false };
+  st.ToolManager = {
+    isToolCallingSupported: () => false,
+    parseToolCalls: () => {},
+  };
+  st.getRequestHeaders = () => ({});
+  st.getChatCompletionModel = () => '';
+  st.getCurrentChatId = () => String(currentContext.sessionId || '');
+  st.saveChat = () => Promise.resolve(true);
+  st.saveSettingsDebounced = () => {};
+  st.registerMacro = (name, fn) => {
+    const key = String(name || '').trim();
+    if (!key || typeof fn !== 'function') return;
+    legacyMacros.set(key, fn);
+  };
+  st.unregisterMacro = (name) => {
+    const key = String(name || '').trim();
+    if (!key) return;
+    legacyMacros.delete(key);
+  };
+  st.registerFunctionTool = () => {};
+  st.unregisterFunctionTool = () => {};
+  st.POPUP_TYPE = { TEXT: 'text', INPUT: 'input', CONFIRM: 'confirm' };
+  st.POPUP_RESULT = { AFFIRMATIVE: 1, CANCELLED: 0, NEGATIVE: -1, CUSTOM1: 2 };
+  st.callGenericPopup = async () => null;
+  return st;
+};
+
+const ensureSillyTavern = () => {
+  if (!self.SillyTavern) self.SillyTavern = buildSillyTavern();
+  return self.SillyTavern;
+};
+
+const refreshSillyTavernChat = async () => {
+  try {
+    const list = await callRpc('chat.getMessages', { sessionId: currentContext.sessionId });
+    if (Array.isArray(list)) ensureSillyTavern().chat = list;
+  } catch {}
+};
+
 const ensureCompatGlobals = () => {
   const allowNetwork = currentSettings.allowNetwork === true;
   if (!self.window) self.window = self;
@@ -192,13 +297,202 @@ const ensureCompatGlobals = () => {
         return this;
       };
     }
+    if (!self.z.z) self.z.z = self.z;
+    if (!self.z.ZodObject && self.Zod?.ZodObject) self.z.ZodObject = self.Zod.ZodObject;
+    if (typeof self.z.looseObject !== 'function') {
+      self.z.looseObject = (shape) => {
+        const resolved = typeof shape === 'function' ? shape() : shape;
+        const obj = self.z.object(resolved || {});
+        const optional = typeof obj.partial === 'function' ? obj.partial() : obj;
+        if (typeof optional.passthrough === 'function') return optional.passthrough();
+        if (typeof optional.nonstrict === 'function') return optional.nonstrict();
+        return optional;
+      };
+    }
   }
   if (!self.$) self.$ = makeCompatDollar();
+  ensureSillyTavern();
+  if (!self.TavernHelper) {
+    self.TavernHelper = {
+      getTavernHelperVersion: async () => '0.0.0',
+    };
+  }
 };
 
-const runImport = (url) => {
+let lastSchemaDebug = null;
+const resolveSchemaDefaults = (schema) => {
+  if (!schema) return null;
+  let value = schema;
+  if (typeof value === 'function') {
+    try {
+      value = value();
+    } catch {
+      return null;
+    }
+  }
+  const pickStat = (obj) => {
+    if (!obj || typeof obj !== 'object') return null;
+    if (obj.stat_data && typeof obj.stat_data === 'object') return obj.stat_data;
+    if (obj.statData && typeof obj.statData === 'object') return obj.statData;
+    if (obj.variables && typeof obj.variables === 'object') return obj.variables;
+    return obj;
+  };
+  let parsedData = null;
+  if (value && typeof value.safeParse === 'function') {
+    try {
+      let parsed = value.safeParse({ stat_data: {} });
+      if (!parsed?.success) parsed = value.safeParse({ statData: {} });
+      if (!parsed?.success) parsed = value.safeParse({});
+      if (parsed?.success) {
+        const data = pickStat(parsed.data);
+        if (data && typeof data === 'object') parsedData = data;
+      }
+    } catch {}
+  }
+  const getTypeName = (node) =>
+    node?._def?.typeName || node?._def?.type || node?.constructor?.name || '';
+  const getShape = (node) => {
+    if (!node) return null;
+    if (typeof node.shape === 'function') return node.shape();
+    if (node.shape && typeof node.shape === 'object') return node.shape;
+    if (typeof node._def?.shape === 'function') return node._def.shape();
+    if (node._def?.shape && typeof node._def.shape === 'object') return node._def.shape;
+    return null;
+  };
+  const tryDefault = (node) => {
+    if (!node) return undefined;
+    try {
+      if (typeof node._def?.defaultValue === 'function') {
+        const raw = node._def.defaultValue();
+        return typeof raw === 'function' ? raw() : raw;
+      }
+    } catch {}
+    try {
+      if (typeof node.parse === 'function') return node.parse(undefined);
+    } catch {}
+    return undefined;
+  };
+  const buildDefaults = (node) => {
+    if (!node) return undefined;
+    const typeName = getTypeName(node);
+    if (typeName === 'ZodDefault') {
+      const val = tryDefault(node);
+      return val !== undefined ? val : undefined;
+    }
+    if (typeName === 'ZodEffects') {
+      const inner = node._def?.schema || node._def?.innerType;
+      let base = buildDefaults(inner);
+      if (base === undefined) base = tryDefault(node);
+      const effect = node._def?.effect;
+      if (effect?.type === 'transform' && typeof effect.transform === 'function') {
+        try {
+          return effect.transform(base, { addIssue: () => {}, path: [] });
+        } catch {}
+      }
+      return base;
+    }
+    if (typeName === 'ZodOptional' || typeName === 'ZodNullable') {
+      const inner = node._def?.innerType;
+      const base = buildDefaults(inner);
+      if (base !== undefined) return base;
+      return tryDefault(node);
+    }
+    if (typeName === 'ZodObject') {
+      const shape = getShape(node);
+      if (!shape || typeof shape !== 'object') return tryDefault(node);
+      const out = {};
+      Object.entries(shape).forEach(([key, child]) => {
+        const val = buildDefaults(child);
+        if (val !== undefined) out[key] = val;
+      });
+      return out;
+    }
+    if (typeName === 'ZodRecord') {
+      const rec = tryDefault(node);
+      if (rec !== undefined) return rec;
+      return {};
+    }
+    if (typeName === 'ZodArray') {
+      const arr = tryDefault(node);
+      if (arr !== undefined) return arr;
+      return [];
+    }
+    return tryDefault(node);
+  };
+  const mergeDeep = (base, override) => {
+    const out = Array.isArray(base) ? [...base] : { ...(base || {}) };
+    if (!override || typeof override !== 'object') return out;
+    Object.entries(override).forEach(([key, val]) => {
+      if (Array.isArray(val)) {
+        out[key] = val.slice();
+      } else if (val && typeof val === 'object' && out[key] && typeof out[key] === 'object') {
+        out[key] = mergeDeep(out[key], val);
+      } else {
+        out[key] = val;
+      }
+    });
+    return out;
+  };
+  const fallback = buildDefaults(value);
+  const fallbackPicked = pickStat(fallback);
+  if (parsedData && typeof parsedData === 'object') {
+    if (fallbackPicked && typeof fallbackPicked === 'object') {
+      const merged = mergeDeep(fallbackPicked, parsedData);
+      lastSchemaDebug = {
+        mode: 'merge',
+        parsedKeys: Object.keys(parsedData),
+        fallbackKeys: Object.keys(fallbackPicked),
+        mergedKeys: Object.keys(merged),
+      };
+      return merged;
+    }
+    if (Object.keys(parsedData).length) {
+      lastSchemaDebug = { mode: 'parsed', parsedKeys: Object.keys(parsedData) };
+      return parsedData;
+    }
+  }
+  if (fallbackPicked && typeof fallbackPicked === 'object') {
+    lastSchemaDebug = { mode: 'fallback', fallbackKeys: Object.keys(fallbackPicked) };
+    return fallbackPicked;
+  }
+  const direct = pickStat(value);
+  if (direct && typeof direct === 'object') {
+    lastSchemaDebug = { mode: 'direct', directKeys: Object.keys(direct) };
+    return direct;
+  }
+  lastSchemaDebug = { mode: 'none' };
+  return null;
+};
+
+const registerVariableSchema = (schema, options = {}) => {
+  try {
+    ensureCompatGlobals();
+    const defaults = resolveSchemaDefaults(schema);
+    if (!defaults || typeof defaults !== 'object') {
+      callRpc('log', { level: 'warn', args: ['[MVU] registerVariableSchema: no defaults', JSON.stringify(lastSchemaDebug || {})] }).catch(() => {});
+      return false;
+    }
+    const keys = Object.keys(defaults);
+    const sampleKeys = keys.slice(0, 6).join(',');
+    const msg = '[MVU] registerVariableSchema defaults=' + keys.length +
+      ' keys=' + sampleKeys + (keys.length > 6 ? ',…' : '');
+    callRpc('log', {
+      level: 'info',
+      args: [msg, JSON.stringify(lastSchemaDebug || {})],
+    }).catch(() => {});
+    callRpc('variables.registerSchema', { defaults, options }).catch(() => {});
+    return true;
+  } catch (err) {
+    callRpc('log', { level: 'warn', args: ['registerVariableSchema failed', String(err?.message || err)] }).catch(() => {});
+    return false;
+  }
+};
+
+if (!self.registerVariableSchema) self.registerVariableSchema = registerVariableSchema;
+
+const runImport = (url, baseUrl) => {
   ensureCompatGlobals();
-  const key = String(url || '').trim();
+  const key = resolveImportUrl(String(url || '').trim(), baseUrl);
   if (!key) return {};
   if (isRemoteUrl(key) && !currentSettings.allowNetwork) {
     callRpc('log', { level: 'warn', args: ['脚本网络已禁用，阻止加载', key] }).catch(() => {});
@@ -223,13 +517,25 @@ const runImport = (url) => {
     else self.exports = prevExports;
   }
   if (importError) {
+    let esmToken = null;
+    let processed = '';
     try {
       const text = loadScriptText(key);
-      const code = preprocess(text);
-      const runner = new Function('module', 'exports', '__import', code);
-      runner(module, module.exports, runImport);
+      processed = preprocess(text);
+      esmToken = findEsmToken(processed);
+      const runner = new Function('module', 'exports', '__import', processed);
+      const localImport = (nextUrl) => runImport(nextUrl, key);
+      runner(module, module.exports, localImport);
       importError = null;
     } catch (err) {
+      if (esmToken) {
+        const start = Math.max(0, esmToken.index - 80);
+        const end = Math.min(processed.length, esmToken.index + 200);
+        callRpc('log', {
+          level: 'warn',
+          args: ['[preprocess] unresolved', esmToken.type, key, processed.slice(start, end)],
+        }).catch(() => {});
+      }
       callRpc('log', { level: 'warn', args: ['脚本 import 失败', key, String(err?.message || err)] }).catch(() => {});
     }
   }
@@ -271,6 +577,203 @@ const parseNamedExports = (raw) => {
     .filter(Boolean);
 };
 
+const isWordChar = (ch) => !!ch && /[A-Za-z0-9_$]/.test(ch);
+
+const readQuotedString = (text, start) => {
+  const quote = text[start];
+  if (quote !== '"' && quote !== "'") return null;
+  let i = start + 1;
+  for (; i < text.length; i += 1) {
+    const ch = text[i];
+    if (ch === '\\\\') {
+      i += 1;
+      continue;
+    }
+    if (ch === quote) {
+      return { value: text.slice(start + 1, i), end: i + 1 };
+    }
+  }
+  return null;
+};
+
+const looseTransformImports = (code) => {
+  const text = String(code || '');
+  let out = '';
+  let i = 0;
+  const len = text.length;
+  let state = 'code';
+  while (i < len) {
+    const ch = text[i];
+    const next = text[i + 1];
+    if (state === 'code') {
+      if (ch === "'" || ch === '"' || ch === '\`') {
+        state = ch;
+        out += ch;
+        i += 1;
+        continue;
+      }
+      if (ch === '/' && next === '/') {
+        state = 'line';
+        out += ch + next;
+        i += 2;
+        continue;
+      }
+      if (ch === '/' && next === '*') {
+        state = 'block';
+        out += ch + next;
+        i += 2;
+        continue;
+      }
+      if (
+        ch === 'i' &&
+        text.startsWith('import', i) &&
+        !isWordChar(text[i - 1])
+      ) {
+        const importStart = i;
+        let cursor = i + 6;
+        if (text[cursor] === '.') {
+          out += text[i];
+          i += 1;
+          continue;
+        }
+        while (cursor < len && /\\s/.test(text[cursor])) cursor += 1;
+        if (text[cursor] === '(') {
+          out += text[i];
+          i += 1;
+          continue;
+        }
+        if (text[cursor] === '"' || text[cursor] === "'") {
+          const parsed = readQuotedString(text, cursor);
+          if (parsed) {
+            out += '__import(' + JSON.stringify(parsed.value) + ');';
+            i = parsed.end;
+            while (i < len && /\\s/.test(text[i])) i += 1;
+            if (text[i] === ';') i += 1;
+            continue;
+          }
+        }
+        let braceDepth = 0;
+        let scan = cursor;
+        let fromIndex = -1;
+        while (scan < len) {
+          const c = text[scan];
+          if (c === "'" || c === '"') {
+            const quoted = readQuotedString(text, scan);
+            if (quoted) {
+              scan = quoted.end;
+              continue;
+            }
+          }
+          if (c === '{') braceDepth += 1;
+          else if (c === '}') braceDepth = Math.max(0, braceDepth - 1);
+          if (
+            braceDepth === 0 &&
+            text.startsWith('from', scan) &&
+            !isWordChar(text[scan - 1]) &&
+            !isWordChar(text[scan + 4])
+          ) {
+            fromIndex = scan;
+            break;
+          }
+          scan += 1;
+        }
+        if (fromIndex !== -1) {
+          const clause = text.slice(cursor, fromIndex).trim();
+          let specStart = fromIndex + 4;
+          while (specStart < len && /\\s/.test(text[specStart])) specStart += 1;
+          const spec = readQuotedString(text, specStart);
+          if (spec) {
+            let replacement = '';
+            if (clause.startsWith('{') && clause.endsWith('}')) {
+              const converted = normalizeNamedImport(clause.slice(1, -1));
+              replacement = 'const { ' + converted + ' } = __import(' + JSON.stringify(spec.value) + ');';
+            } else if (clause.startsWith('*')) {
+              const m = clause.match(/^\\*\\s*as\\s+([\\w$]+)/);
+              if (m) replacement = 'const ' + m[1] + ' = __import(' + JSON.stringify(spec.value) + ');';
+            } else if (clause.includes(',')) {
+              const [left, rightRaw] = clause.split(',', 2);
+              const defaultName = left.trim();
+              const right = (rightRaw || '').trim();
+              if (right.startsWith('{') && right.endsWith('}')) {
+                const converted = normalizeNamedImport(right.slice(1, -1));
+                replacement = 'const { default: ' + defaultName + (converted ? ', ' + converted : '') + ' } = __import(' + JSON.stringify(spec.value) + ');';
+              } else if (right.startsWith('*')) {
+                const m = right.match(/^\\*\\s*as\\s+([\\w$]+)/);
+                if (m) {
+                  replacement = 'const { default: ' + defaultName + ' } = __import(' + JSON.stringify(spec.value) + ');\\nconst ' + m[1] + ' = __import(' + JSON.stringify(spec.value) + ');';
+                }
+              }
+            } else if (/^[\\w$]+$/.test(clause)) {
+              replacement = 'const { default: ' + clause + ' } = __import(' + JSON.stringify(spec.value) + ');';
+            }
+            if (replacement) {
+              out += replacement;
+              i = spec.end;
+              while (i < len && /\\s/.test(text[i])) i += 1;
+              if (text[i] === ';') i += 1;
+              continue;
+            }
+          }
+        }
+        out += text[importStart];
+        i = importStart + 1;
+        continue;
+      }
+      out += ch;
+      i += 1;
+      continue;
+    }
+    if (state === 'line') {
+      out += ch;
+      i += 1;
+      if (ch === '\\n') state = 'code';
+      continue;
+    }
+    if (state === 'block') {
+      out += ch;
+      i += 1;
+      if (ch === '*' && next === '/') {
+        out += next;
+        i += 1;
+        state = 'code';
+      }
+      continue;
+    }
+    if (state === "'" || state === '"') {
+      out += ch;
+      i += 1;
+      if (ch === '\\\\') {
+        out += text[i] || '';
+        i += 1;
+        continue;
+      }
+      if (ch === state) state = 'code';
+      continue;
+    }
+    if (state === '\`') {
+      out += ch;
+      i += 1;
+      if (ch === '\\\\') {
+        out += text[i] || '';
+        i += 1;
+        continue;
+      }
+      if (ch === '\`') state = 'code';
+      continue;
+    }
+  }
+  return out;
+};
+
+const findEsmToken = (code) => {
+  if (!code) return null;
+  const importIndex = String(code).search(/(^|[^\\w$])import\\s*(?:['"]|\\{|\\*|[\\w$]+\\s+from)/m);
+  if (importIndex !== -1) return { type: 'import', index: importIndex };
+  const exportIndex = String(code).search(/(^|[^\\w$])export\\s+/m);
+  if (exportIndex !== -1) return { type: 'export', index: exportIndex };
+  return null;
+};
+
 const preprocess = (code) => {
   if (!code) return '';
   let out = String(code);
@@ -279,16 +782,16 @@ const preprocess = (code) => {
   let exportSeq = 0;
   // export * from 'url'
   out = out.replace(
-    /^\\s*export\\s+\\*\\s+from\\s+['"]([^'"]+)['"]\\s*;?/gm,
-    (_m, url) => \`Object.assign(exports, __import(\${JSON.stringify(url)}));\`,
+    /(^|[\\r\\n;\\)\\}\\]])\\s*export\\s*\\*\\s*from\\s*['"]([^'"]+)['"]\\s*;?/g,
+    (_m, prefix, url) => \`\${prefix}Object.assign(exports, __import(\${JSON.stringify(url)}));\`,
   );
   // export { a as b } from 'url'
   out = out.replace(
-    /^\\s*export\\s+\\{([^}]+)\\}\\s+from\\s+['"]([^'"]+)['"]\\s*;?/gm,
-    (_m, named, url) => {
+    /(^|[\\r\\n;\\)\\}\\]])\\s*export\\s*\\{([^}]+)\\}\\s*from\\s*['"]([^'"]+)['"]\\s*;?/g,
+    (_m, prefix, named, url) => {
       const entries = parseNamedExports(named);
       const modName = \`__mod\${++exportSeq}\`;
-      const lines = [\`const \${modName} = __import(\${JSON.stringify(url)});\`];
+      const lines = [\`\${prefix}const \${modName} = __import(\${JSON.stringify(url)});\`];
       entries.forEach(({ local, exported }) => {
         lines.push(\`exports.\${exported} = \${modName}.\${local};\`);
       });
@@ -297,53 +800,62 @@ const preprocess = (code) => {
   );
   // export { a as b, c }
   out = out.replace(
-    /^\\s*export\\s+\\{([^}]+)\\}\\s*;?/gm,
-    (_m, named) => {
+    /(^|[\\r\\n;\\)\\}\\]])\\s*export\\s*\\{([^}]+)\\}\\s*;?/g,
+    (_m, prefix, named) => {
       const entries = parseNamedExports(named);
       entries.forEach(({ local, exported }) => {
         exportAssignments.push(\`exports.\${exported} = \${local};\`);
       });
-      return '';
+      return prefix;
     },
   );
   // export const/let/var/function/class name
   out = out.replace(
-    /^\\s*export\\s+(const|let|var|function|class)\\s+([\\w$]+)/gm,
-    (_m, type, name) => {
+    /(^|[\\r\\n;\\)\\}\\]])\\s*export\\s*(const|let|var|function|class)\\s+([\\w$]+)/g,
+    (_m, prefix, type, name) => {
       exportNames.push(name);
-      return \`\${type} \${name}\`;
+      return \`\${prefix}\${type} \${name}\`;
     },
   );
   // import * from 'url'
-  out = out.replace(/^\\s*import\\s+\\*\\s+from\\s+['"]([^'"]+)['"]\\s*;?/gm, (_m, url) => \`__import(\${JSON.stringify(url)});\`);
+  out = out.replace(
+    /(^|[\\r\\n;\\)\\}\\]])\\s*import(?!\\s*\\.)\\s*\\*\\s*from\\s*['"]([^'"]+)['"]\\s*;?/g,
+    (_m, prefix, url) => \`\${prefix}__import(\${JSON.stringify(url)});\`,
+  );
   // import * as name from 'url'
   out = out.replace(
-    /^\\s*import\\s+\\*\\s+as\\s+([\\w$]+)\\s+from\\s+['"]([^'"]+)['"]\\s*;?/gm,
-    (_m, name, url) => \`const \${name} = __import(\${JSON.stringify(url)});\`,
+    /(^|[\\r\\n;\\)\\}\\]])\\s*import(?!\\s*\\.)\\s*\\*\\s*as\\s*([\\w$]+)\\s*from\\s*['"]([^'"]+)['"]\\s*;?/g,
+    (_m, prefix, name, url) => \`\${prefix}const \${name} = __import(\${JSON.stringify(url)});\`,
   );
   // import name, { a as b } from 'url'
   out = out.replace(
-    /^\\s*import\\s+([\\w$]+)\\s*,\\s*\\{([^}]+)\\}\\s+from\\s+['"]([^'"]+)['"]\\s*;?/gm,
-    (_m, name, named, url) => {
+    /(^|[\\r\\n;\\)\\}\\]])\\s*import(?!\\s*\\.)\\s*([\\w$]+)\\s*,\\s*\\{([^}]+)\\}\\s*from\\s*['"]([^'"]+)['"]\\s*;?/g,
+    (_m, prefix, name, named, url) => {
       const converted = normalizeNamedImport(named);
-      return \`const { default: \${name}\${converted ? \`, \${converted}\` : ''} } = __import(\${JSON.stringify(url)});\`;
+      return \`\${prefix}const { default: \${name}\${converted ? \`, \${converted}\` : ''} } = __import(\${JSON.stringify(url)});\`;
     },
   );
   // import { a as b } from 'url'
   out = out.replace(
-    /^\\s*import\\s+\\{([^}]+)\\}\\s+from\\s+['"]([^'"]+)['"]\\s*;?/gm,
-    (_m, named, url) => {
+    /(^|[\\r\\n;\\)\\}\\]])\\s*import(?!\\s*\\.)\\s*\\{([^}]+)\\}\\s*from\\s*['"]([^'"]+)['"]\\s*;?/g,
+    (_m, prefix, named, url) => {
       const converted = normalizeNamedImport(named);
-      return \`const { \${converted} } = __import(\${JSON.stringify(url)});\`;
+      return \`\${prefix}const { \${converted} } = __import(\${JSON.stringify(url)});\`;
     },
   );
   // import name from 'url'
   out = out.replace(
-    /^\\s*import\\s+([\\w$]+)\\s+from\\s+['"]([^'"]+)['"]\\s*;?/gm,
-    (_m, name, url) => \`const { default: \${name} } = __import(\${JSON.stringify(url)});\`,
+    /(^|[\\r\\n;\\)\\}\\]])\\s*import(?!\\s*\\.)\\s*([\\w$]+)\\s*from\\s*['"]([^'"]+)['"]\\s*;?/g,
+    (_m, prefix, name, url) => \`\${prefix}const { default: \${name} } = __import(\${JSON.stringify(url)});\`,
   );
   // import 'url'
-  out = out.replace(/^\\s*import\\s+['"]([^'"]+)['"]\\s*;?/gm, (_m, url) => \`__import(\${JSON.stringify(url)});\`);
+  out = out.replace(
+    /(^|[\\r\\n;\\)\\}\\]])\\s*import(?!\\s*\\.)\\s*['"]([^'"]+)['"]\\s*;?/g,
+    (_m, prefix, url) => \`\${prefix}__import(\${JSON.stringify(url)});\`,
+  );
+  if (findEsmToken(out)) {
+    out = looseTransformImports(out);
+  }
   out = out.replace(/\\bexport\\s+default\\s+/g, 'exports.default = ');
   if (exportNames.length || exportAssignments.length) {
     const lines = [];
@@ -505,6 +1017,26 @@ const compileScript = (record) => {
     const list = handlers.get(name) || [];
     handlers.set(name, list.filter(item => item !== fn));
   };
+  const legacyHandlerMap = new WeakMap();
+  const eventOn = (event, cb) => {
+    const name = String(event || '').trim();
+    if (!name || typeof cb !== 'function') return;
+    const wrapped = (payload) => {
+      if (payload && typeof payload === 'object' && Array.isArray(payload.args)) {
+        return cb(...payload.args);
+      }
+      return cb(payload);
+    };
+    legacyHandlerMap.set(cb, wrapped);
+    on(name, wrapped);
+  };
+  const eventRemoveListener = (event, cb) => {
+    const name = String(event || '').trim();
+    if (!name) return;
+    if (!cb) return off(name);
+    const wrapped = legacyHandlerMap.get(cb) || cb;
+    off(name, wrapped);
+  };
   const api = makeApi(record.id);
   const script = {
     id: record.id,
@@ -515,13 +1047,31 @@ const compileScript = (record) => {
     data: makeDataProxy(record.id, clone(record.data || {})),
   };
   let defaultHandler = null;
+  // schemaOnly 脚本不执行代码，仅保留记录（Schema 已在导入时静态解析）
+  if (record.schemaOnly === true) {
+    callRpc('log', { level: 'info', args: ['[MVU] 跳过 schemaOnly 脚本执行', record.name] }).catch(() => {});
+    return { record, handlers, defaultHandler, api, script };
+  }
   try {
     const module = { exports: {} };
     const exports = module.exports;
     const code = preprocess(record.content || '');
-    const runner = new Function('api', 'script', 'on', 'off', 'module', 'exports', '__import', code);
-    const __import = (url) => runImport(url);
-    runner(api, script, on, off, module, exports, __import);
+    const runner = new Function(
+      'api',
+      'script',
+      'on',
+      'off',
+      'eventOn',
+      'eventRemoveListener',
+      'module',
+      'exports',
+      '__import',
+      code,
+    );
+    const __import = (url) => runImport(url, getOrigin());
+    self.__chatappScriptOn = on;
+    self.__chatappScriptOff = off;
+    runner(api, script, on, off, eventOn, eventRemoveListener, module, exports, __import);
     if (typeof module.exports === 'function') defaultHandler = module.exports;
     else if (module.exports && typeof module.exports.default === 'function') defaultHandler = module.exports.default;
     else if (exports && typeof exports.default === 'function') defaultHandler = exports.default;
@@ -552,6 +1102,7 @@ const runHandlers = async (entry, eventName, payload, allowMutate) => {
 
 const dispatchEvent = async (eventName, payload, allowMutate = true) => {
   let data = payload;
+  await refreshSillyTavernChat();
   for (const entry of scripts.values()) {
     if (!entry?.record?.enabled) continue;
     data = await runHandlers(entry, eventName, data, allowMutate);
@@ -648,10 +1199,480 @@ const estimatePayloadSize = (value) => {
   }
 };
 
+const isEsmLikeScript = (content) => {
+  const text = String(content || '');
+  if (!text) return false;
+  return /(^|[^\\w$])import\\s*(?:['"]|\\{|\\*|[\\w$]+\\s+from)/m.test(text) ||
+    /(^|[^\\w$])export\\s+/m.test(text);
+};
+
+class ScriptIframeRuntime {
+  constructor(owner) {
+    this.owner = owner;
+    this.iframes = new Map();
+    this.windowMap = new Map();
+    this.context = {};
+    this.settings = {};
+    this.settingsSignature = '';
+    this.onMessage = this.onMessage.bind(this);
+    window.addEventListener('message', this.onMessage);
+  }
+
+  destroy() {
+    window.removeEventListener('message', this.onMessage);
+    this.iframes.forEach(entry => {
+      entry.iframe.remove();
+    });
+    this.iframes.clear();
+    this.windowMap.clear();
+  }
+
+  buildIframeHtml(record, context, settings) {
+    const baseHref = settings?.esmIframeBase || 'https://testingcf.jsdelivr.net/';
+    const allowNetwork = settings?.allowNetwork === true;
+    const csp = allowNetwork
+      ? "default-src 'none'; script-src 'unsafe-inline' blob: https:; connect-src https:; img-src data: https:;"
+      : "default-src 'none'; script-src 'unsafe-inline' blob:;";
+    const vueUrl = settings?.esmIframeVueUrl || 'https://cdn.jsdelivr.net/npm/vue@3.5.22/dist/vue.global.prod.js';
+    const vueEsmUrl = settings?.esmIframeVueEsmUrl || 'https://testingcf.jsdelivr.net/npm/vue@3.5.22/+esm';
+    const lodashUrl = settings?.esmIframeLodashUrl || 'https://cdn.jsdelivr.net/npm/lodash@4.17.21/lodash.min.js';
+    const jqueryUrl = settings?.esmIframeJqueryUrl || 'https://cdn.jsdelivr.net/npm/jquery@3.7.1/dist/jquery.min.js';
+    const toastrUrl = settings?.esmIframeToastrUrl || 'https://cdn.jsdelivr.net/npm/toastr@2.1.4/build/toastr.min.js';
+    const zodUrl = settings?.esmIframeZodUrl || 'https://cdn.jsdelivr.net/npm/zod@3.22.4/lib/index.umd.min.js';
+    const yamlUrl = settings?.esmIframeYamlUrl || 'https://cdn.jsdelivr.net/npm/js-yaml@4.1.0/dist/js-yaml.min.js';
+    const scriptId = String(record.id || '');
+    const scriptName = String(record.name || '');
+    const scriptInfo = String(record.info || '');
+    const scriptScope = String(record.scope || '');
+    const scriptScopeId = String(record.scopeId || '');
+    const scriptData = record.data && typeof record.data === 'object' ? record.data : {};
+    const content = String(record.content || '');
+    const contextJson = JSON.stringify(context || {});
+    const dataJson = JSON.stringify(scriptData);
+    const nameJson = JSON.stringify(scriptName);
+    const infoJson = JSON.stringify(scriptInfo);
+    const scopeJson = JSON.stringify(scriptScope);
+    const scopeIdJson = JSON.stringify(scriptScopeId);
+    const scriptIdJson = JSON.stringify(scriptId);
+    const contentJson = JSON.stringify(content);
+    const baseJson = JSON.stringify(baseHref);
+    const cspJson = JSON.stringify(csp);
+    return `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content=${cspJson} />
+  <base href=${baseJson} />
+</head>
+<body>
+${allowNetwork ? `
+<script src="${lodashUrl}"></script>
+<script src="${jqueryUrl}"></script>
+<script src="${toastrUrl}"></script>
+<script src="${zodUrl}"></script>
+<script src="${yamlUrl}"></script>
+<script src="${vueUrl}"></script>
+<script>window.vue=window.Vue||window.vue;window.Vue=window.Vue||window.vue;var Vue=window.Vue;var vue=window.vue;</script>` : ''}
+<script>
+  const scriptId = ${scriptIdJson};
+  const scriptName = ${nameJson};
+  const scriptInfo = ${infoJson};
+  const scriptScope = ${scopeJson};
+  const scriptScopeId = ${scopeIdJson};
+  let currentContext = ${contextJson};
+  const pending = new Map();
+  let seq = 0;
+  const handlers = new Map();
+  let defaultHandler = null;
+  function callParent(method, params) {
+    const id = String(Date.now()) + '-' + (++seq);
+    const payload = { type: 'script-iframe-rpc', id, scriptId, method, params };
+    return new Promise((resolve, reject) => {
+      pending.set(id, { resolve, reject });
+      parent.postMessage(payload, '*');
+    });
+  }
+  window.addEventListener('message', (event) => {
+    const msg = event && event.data ? event.data : {};
+    if (msg.type === 'script-iframe-rpc-result' && msg.id) {
+      const item = pending.get(msg.id);
+      if (item) {
+        pending.delete(msg.id);
+        item.resolve(msg.result);
+      }
+      return;
+    }
+    if (msg.type === 'script-iframe-rpc-error' && msg.id) {
+      const item = pending.get(msg.id);
+      if (item) {
+        pending.delete(msg.id);
+        item.reject(msg.error);
+      }
+      return;
+    }
+    if (msg.type === 'script-iframe-context' && msg.context) {
+      currentContext = Object.assign({}, currentContext, msg.context);
+      return;
+    }
+    if (msg.type === 'script-iframe-dispatch') {
+      dispatchEvent(msg.event || '', msg.payload || {}, msg.allowMutate !== false)
+        .then(result => {
+          parent.postMessage({ type: 'script-iframe-dispatch-result', id: msg.id, scriptId, result }, '*');
+        })
+        .catch(err => {
+          parent.postMessage({ type: 'script-iframe-dispatch-error', id: msg.id, scriptId, error: String(err && err.message || err) }, '*');
+        });
+    }
+  });
+  function ensureArray(map, key) {
+    if (!map.has(key)) map.set(key, []);
+    return map.get(key);
+  }
+  function on(event, fn) {
+    const name = String(event || '').trim();
+    if (!name || typeof fn !== 'function') return;
+    ensureArray(handlers, name).push(fn);
+  }
+  function off(event, fn) {
+    const name = String(event || '').trim();
+    if (!name) return;
+    if (!handlers.has(name)) return;
+    if (!fn) { handlers.delete(name); return; }
+    handlers.set(name, handlers.get(name).filter(item => item !== fn));
+  }
+  window.on = on;
+  window.off = off;
+  window.eventOn = on;
+  window.eventRemoveListener = off;
+  window.eventEmit = (event, payload) => dispatchEvent(event, payload, true);
+  var eventOn = on;
+  var eventRemoveListener = off;
+  var eventEmit = window.eventEmit;
+  var on = window.on;
+  var off = window.off;
+  function makeDataProxy(data) {
+    const base = data && typeof data === 'object' ? data : {};
+    return new Proxy(base, {
+      set(target, prop, value) {
+        target[prop] = value;
+        callParent('script.updateData', { scriptId, data: base, scope: scriptScope, scopeId: scriptScopeId });
+        return true;
+      },
+      deleteProperty(target, prop) {
+        delete target[prop];
+        callParent('script.updateData', { scriptId, data: base, scope: scriptScope, scopeId: scriptScopeId });
+        return true;
+      },
+    });
+  }
+  function normalizeRole(role) {
+    const r = String(role || '').trim().toLowerCase();
+    if (!r) return '';
+    if (r === 'user' || r === 'assistant' || r === 'system') return r;
+    if (r === 'any') return '';
+    return r;
+  }
+  function messageContentToText(msg) {
+    if (!msg || typeof msg !== 'object') return '';
+    const content = msg.content;
+    if (Array.isArray(content)) {
+      return content.map(part => part && part.type === 'text' ? String(part.text || '') : '').filter(Boolean).join('\\n');
+    }
+    return String(msg.raw || content || '');
+  }
+  function makeApi() {
+    const call = (method, params) => callParent(method, Object.assign({}, params || {}, { sessionId: currentContext.sessionId, scriptId }));
+    const resolveChatMessages = async () => {
+      const list = await call('chat.getMessages', {});
+      return Array.isArray(list) ? list : [];
+    };
+    return {
+      getvar: (key, options = {}) => call('variables.get', { key, options }),
+      setvar: (key, value, options = {}) => call('variables.set', { key, value, options }),
+      incvar: (key, delta = 1, options = {}) => call('variables.inc', { key, delta, options }),
+      decvar: (key, delta = 1, options = {}) => call('variables.dec', { key, delta, options }),
+      getChatMessage: async (idx, role) => {
+        const list = await resolveChatMessages();
+        const roleFilter = normalizeRole(role);
+        const filtered = roleFilter ? list.filter(m => String(m && m.role || '').trim().toLowerCase() === roleFilter) : list;
+        if (!filtered.length) return '';
+        let index = Number(idx);
+        if (!Number.isFinite(index)) return '';
+        index = Math.trunc(index);
+        if (index < 0) index = filtered.length + index;
+        if (index < 0 || index >= filtered.length) return '';
+        return messageContentToText(filtered[index]);
+      },
+      getChatMessages: async (...args) => {
+        const list = await resolveChatMessages();
+        if (!list.length) return [];
+        let start = null;
+        let end = null;
+        let role = '';
+        if (args.length === 1) {
+          start = null;
+          end = Number(args[0]);
+        } else if (args.length === 2) {
+          if (typeof args[1] === 'string') {
+            end = Number(args[0]);
+            role = String(args[1] || '');
+          } else {
+            start = Number(args[0]);
+            end = Number(args[1]);
+          }
+        } else if (args.length >= 3) {
+          start = Number(args[0]);
+          end = Number(args[1]);
+          role = String(args[2] || '');
+        }
+        const roleFilter = normalizeRole(role);
+        const filtered = roleFilter ? list.filter(m => String(m && m.role || '').trim().toLowerCase() === roleFilter) : list;
+        if (!filtered.length) return [];
+        if (start === null) {
+          const count = Number(end);
+          if (!Number.isFinite(count)) return [];
+          const n = Math.max(0, Math.trunc(count));
+          const slice = n === 0 ? [] : filtered.slice(-n);
+          return slice.map(messageContentToText);
+        }
+        const s = Math.max(0, Math.trunc(Number(start) || 0));
+        const eRaw = Number(end);
+        const e = Number.isFinite(eRaw) ? Math.max(s, Math.trunc(eRaw)) : filtered.length;
+        return filtered.slice(s, e).map(messageContentToText);
+      },
+      getwi: (world, title, data) => call('world.getEntry', { world, title, data }),
+      activewi: (world, title, force) => call('world.activate', { world, title, force }),
+      getchar: (name) => call('context.getCharacter', { name }),
+      getpreset: (name) => call('context.getPreset', { name }),
+      getContext: () => call('context.getContext', {}),
+      getcontext: () => call('context.getContext', {}),
+      log: (...args) => call('log', { level: 'log', args }),
+      warn: (...args) => call('log', { level: 'warn', args }),
+      error: (...args) => call('log', { level: 'error', args }),
+      toast: (message, level = 'info') => call('toast', { message, level }),
+    };
+  }
+  function buildSillyTavern() {
+    const st = {};
+    st.chat = [];
+    st.characters = [];
+    st.characterId = 0;
+    st.extensionSettings = {};
+    st.chatCompletionSettings = { function_calling: false };
+    st.ToolManager = { isToolCallingSupported: () => false, parseToolCalls: () => {} };
+    st.getRequestHeaders = () => ({});
+    st.getChatCompletionModel = () => '';
+    st.getCurrentChatId = () => String(currentContext.sessionId || '');
+    st.saveChat = () => Promise.resolve(true);
+    st.saveSettingsDebounced = () => {};
+    st.registerMacro = () => {};
+    st.unregisterMacro = () => {};
+    st.registerFunctionTool = () => {};
+    st.unregisterFunctionTool = () => {};
+    st.POPUP_TYPE = { TEXT: 'text', INPUT: 'input', CONFIRM: 'confirm' };
+    st.POPUP_RESULT = { AFFIRMATIVE: 1, CANCELLED: 0, NEGATIVE: -1, CUSTOM1: 2 };
+    st.callGenericPopup = async () => null;
+    return st;
+  }
+  window.SillyTavern = buildSillyTavern();
+  window.TavernHelper = window.TavernHelper || {
+    getTavernHelperVersion: async () => '0.0.0',
+  };
+  var SillyTavern = window.SillyTavern;
+  var TavernHelper = window.TavernHelper;
+  if (!window._ && window.lodash) window._ = window.lodash;
+  window._ = window._ || { clamp: (v, l, u) => {
+    const num = Number(v);
+    if (!Number.isFinite(num)) return l || 0;
+    if (Number.isFinite(l) && num < l) return l;
+    if (Number.isFinite(u) && num > u) return u;
+    return num;
+  }, max: (arr) => Array.isArray(arr) ? arr.reduce((a, b) => a === undefined || b > a ? b : a, undefined) : undefined };
+  var _ = window._;
+  if (!window.YAML && window.jsyaml) window.YAML = window.jsyaml;
+  if (!window.YAML && window.jsyaml && window.jsyaml.default) window.YAML = window.jsyaml.default;
+  if (!window.z) {
+    const candidate = window.Zod || window.zod;
+    if (candidate && candidate.z) window.z = candidate.z;
+    else if (candidate) window.z = candidate;
+  }
+  if (window.z && !window.z.z) window.z.z = window.z;
+  window.$ = window.$ || function(handler) { if (typeof handler === 'function') { try { handler(); } catch {} } return { on: () => {}, ready: (cb) => { if (cb) cb(); } }; };
+  var $ = window.$;
+  window.toastr = window.toastr || {
+    info: (msg, title) => callParent('toast', { message: String(msg || title || ''), level: 'info' }),
+    warning: (msg, title) => callParent('toast', { message: String(msg || title || ''), level: 'warning' }),
+    warn: (msg, title) => callParent('toast', { message: String(msg || title || ''), level: 'warning' }),
+    error: (msg, title) => callParent('toast', { message: String(msg || title || ''), level: 'error' }),
+  };
+  var toastr = window.toastr;
+  const apiRef = makeApi();
+  var api = apiRef;
+  const scriptRef = { id: scriptId, name: scriptName, info: scriptInfo, scope: scriptScope, scopeId: scriptScopeId, data: makeDataProxy(${dataJson}) };
+  var script = scriptRef;
+  window.__chatappScript = scriptRef;
+  window.__chatappApi = apiRef;
+  window.api = apiRef;
+  window.script = scriptRef;
+  async function refreshSillyTavernChat() {
+    try {
+      const list = await callParent('chat.getMessages', { sessionId: currentContext.sessionId });
+      if (Array.isArray(list)) {
+        window.SillyTavern.chat = list;
+      }
+    } catch {}
+  }
+  async function dispatchEvent(eventName, payload, allowMutate) {
+    await refreshSillyTavernChat();
+    const base = payload && typeof payload === 'object' ? Object.assign({}, payload) : { value: payload };
+    let data = payload;
+    const handlerPayload = Object.assign({}, base, { event: eventName, context: currentContext, api, script });
+    const list = handlers.get(eventName) || handlers.get('*') || [];
+    const all = list.slice();
+    if (!all.length && typeof defaultHandler === 'function') all.push(defaultHandler);
+    for (const fn of all) {
+      const res = await fn(handlerPayload);
+      if (allowMutate && res && typeof res === 'object') data = res;
+    }
+    return data;
+  }
+  window.__chatappSetDefault = (fn) => { defaultHandler = fn; };
+</script>
+<script type="module">
+  try {
+    const allowNetwork = ${allowNetwork ? 'true' : 'false'};
+    if (!window.Vue && allowNetwork) {
+      try {
+        const mod = await import(${JSON.stringify(vueEsmUrl)});
+        const resolved = mod?.default && mod.default.createApp ? mod.default : mod;
+        if (resolved) {
+          window.Vue = resolved;
+          window.vue = resolved;
+        }
+      } catch (err) {
+        parent.postMessage({ type: 'script-iframe-error', scriptId: ${scriptIdJson}, error: 'vue load failed: ' + String(err && err.message || err) }, '*');
+      }
+    }
+    const blob = new Blob([${contentJson}], { type: 'text/javascript' });
+    const url = URL.createObjectURL(blob);
+    const mod = await import(url);
+    if (mod && typeof mod.default === 'function') {
+      window.__chatappSetDefault(mod.default);
+    }
+  } catch (err) {
+    parent.postMessage({ type: 'script-iframe-error', scriptId: ${scriptIdJson}, error: String(err && err.message || err) }, '*');
+  }
+</script>
+</body>
+</html>`;
+  }
+
+  getSettingsSignature(settings = {}) {
+    const pick = (value) => (value == null ? '' : String(value));
+    return JSON.stringify({
+      allowNetwork: settings?.allowNetwork === true,
+      base: pick(settings?.esmIframeBase),
+      vue: pick(settings?.esmIframeVueUrl),
+      lodash: pick(settings?.esmIframeLodashUrl),
+      jquery: pick(settings?.esmIframeJqueryUrl),
+      toastr: pick(settings?.esmIframeToastrUrl),
+      zod: pick(settings?.esmIframeZodUrl),
+      yaml: pick(settings?.esmIframeYamlUrl),
+    });
+  }
+
+  syncScripts(list = [], context = {}, settings = {}) {
+    this.context = context || {};
+    this.settings = settings || {};
+    this.settingsSignature = this.getSettingsSignature(this.settings);
+    const seen = new Set();
+    list.forEach((record) => {
+      const id = String(record?.id || '').trim();
+      if (!id) return;
+      seen.add(id);
+      const existing = this.iframes.get(id);
+      if (
+        existing &&
+        existing.record?.content === record.content &&
+        existing.record?.enabled === record.enabled &&
+        existing.settingsSignature === this.settingsSignature
+      ) {
+        existing.record = record;
+        return;
+      }
+      if (existing) {
+        existing.iframe.remove();
+        this.windowMap.delete(existing.iframe.contentWindow);
+      }
+      if (!record.enabled) {
+        this.iframes.delete(id);
+        return;
+      }
+      // schemaOnly 脚本不创建 iframe（Schema 已在导入时静态解析）
+      if (record.schemaOnly === true) {
+        this.iframes.delete(id);
+        return;
+      }
+      const iframe = document.createElement('iframe');
+      iframe.setAttribute('sandbox', 'allow-scripts');
+      iframe.setAttribute('referrerpolicy', 'no-referrer');
+      iframe.style.display = 'none';
+      iframe.setAttribute('aria-hidden', 'true');
+      iframe.srcdoc = this.buildIframeHtml(record, this.context, this.settings);
+      document.body.appendChild(iframe);
+      const entry = { iframe, record, settingsSignature: this.settingsSignature };
+      this.iframes.set(id, entry);
+      if (iframe.contentWindow) this.windowMap.set(iframe.contentWindow, id);
+    });
+    this.iframes.forEach((entry, id) => {
+      if (!seen.has(id)) {
+        entry.iframe.remove();
+        this.windowMap.delete(entry.iframe.contentWindow);
+        this.iframes.delete(id);
+      }
+    });
+  }
+
+  syncContext(context = {}, settings = {}) {
+    this.context = context || this.context;
+    this.settings = settings || this.settings;
+    this.iframes.forEach((entry) => {
+      entry.iframe.contentWindow?.postMessage({ type: 'script-iframe-context', context: this.context, settings: this.settings }, '*');
+    });
+  }
+
+  async dispatchEvent(event, payload, allowMutate = true) {
+    const id = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    this.iframes.forEach((entry) => {
+      entry.iframe.contentWindow?.postMessage({ type: 'script-iframe-dispatch', id, event, payload, allowMutate }, '*');
+    });
+    return payload;
+  }
+
+  async onMessage(e) {
+    const msg = e?.data || {};
+    if (!msg || typeof msg !== 'object') return;
+    if (msg.type === 'script-iframe-rpc') {
+      try {
+        const result = await this.owner.processRpc(msg.method, msg.params || {});
+        e.source?.postMessage({ type: 'script-iframe-rpc-result', id: msg.id, result }, '*');
+      } catch (err) {
+        e.source?.postMessage({ type: 'script-iframe-rpc-error', id: msg.id, error: String(err?.message || err) }, '*');
+      }
+      return;
+    }
+    if (msg.type === 'script-iframe-error') {
+      logger.warn('[script-iframe]', msg.scriptId || '', msg.error || '');
+      emitDebugLog({ message: String(msg.error || 'script iframe error'), type: 'warn', source: 'script' });
+    }
+  }
+}
+
 export class ScriptRuntime {
   constructor(store) {
     this.store = store;
     this.worker = null;
+    this.iframeRuntime = new ScriptIframeRuntime(this);
     this.pending = new Map();
     this.seq = 0;
     this.oneTimeScripts = new Map();
@@ -669,6 +1690,11 @@ export class ScriptRuntime {
     this.presets = null;
     this.ready = this.init();
     window.addEventListener('scripts-changed', () => {
+      this.syncScripts().catch(() => {});
+    });
+    window.addEventListener('app-settings-changed', (event) => {
+      const key = String(event?.detail?.key || '');
+      if (!key || !key.startsWith('script')) return;
       this.syncScripts().catch(() => {});
     });
   }
@@ -807,7 +1833,6 @@ export class ScriptRuntime {
   }
 
   async syncScripts(contextOverride) {
-    if (!this.worker) return;
     const context = contextOverride || this.buildContext();
     this.context = { ...this.context, ...context };
     const scripts = [];
@@ -858,41 +1883,58 @@ export class ScriptRuntime {
       emitDebugLog({ message: msg, type: 'warn', source: 'script' });
     }
     const settings = appSettings.get();
-    const payload = {
-      scripts: filtered,
-      context: this.context,
-      settings: {
-        allowReadMessages: settings.scriptAllowReadMessages !== false,
-        allowModifyVariables: settings.scriptAllowModifyVariables !== false,
-        allowNetwork: settings.scriptAllowNetwork === true,
-      },
+    const runtimeSettings = {
+      allowReadMessages: settings.scriptAllowReadMessages !== false,
+      allowModifyVariables: settings.scriptAllowModifyVariables !== false,
+      allowNetwork: settings.scriptAllowNetwork === true,
     };
-    this.worker.postMessage({ type: 'sync', ...payload });
+    const workerScripts = [];
+    const iframeScripts = [];
+    filtered.forEach((script) => {
+      const content = String(script?.content || '');
+      if (isEsmLikeScript(content)) iframeScripts.push(script);
+      else workerScripts.push(script);
+    });
+    if (this.worker) {
+      this.worker.postMessage({
+        type: 'sync',
+        scripts: workerScripts,
+        context: this.context,
+        settings: runtimeSettings,
+      });
+    }
+    if (this.iframeRuntime) {
+      this.iframeRuntime.syncScripts(iframeScripts, this.context, runtimeSettings);
+    }
   }
 
   async syncContext(contextOverride) {
-    if (!this.worker) return;
     const context = contextOverride || this.buildContext();
     const next = { ...this.context, ...context };
     const changed = JSON.stringify(next) !== JSON.stringify(this.context);
     this.context = next;
     const settings = appSettings.get();
-    this.worker.postMessage({
-      type: 'context',
-      context: this.context,
-      settings: {
-        allowReadMessages: settings.scriptAllowReadMessages !== false,
-        allowModifyVariables: settings.scriptAllowModifyVariables !== false,
-        allowNetwork: settings.scriptAllowNetwork === true,
-      },
-    });
+    const runtimeSettings = {
+      allowReadMessages: settings.scriptAllowReadMessages !== false,
+      allowModifyVariables: settings.scriptAllowModifyVariables !== false,
+      allowNetwork: settings.scriptAllowNetwork === true,
+    };
+    if (this.worker) {
+      this.worker.postMessage({
+        type: 'context',
+        context: this.context,
+        settings: runtimeSettings,
+      });
+    }
+    if (this.iframeRuntime) {
+      this.iframeRuntime.syncContext(this.context, runtimeSettings);
+    }
     if (changed) {
       await this.syncScripts(this.context);
     }
   }
 
   async dispatchEvent(event, payload = {}, options = {}) {
-    if (!this.worker) return payload;
     const sessionId = String(payload?.sessionId || this.context.sessionId || this.chatStore?.getCurrent?.() || '').trim();
     if (!this.isEnabled(sessionId)) return payload;
     if (options?.skip === true || payload?.skipScripts === true || payload?.meta?.skipScripts === true) {
@@ -906,11 +1948,19 @@ export class ScriptRuntime {
       return payload;
     }
     await this.syncContext({ sessionId });
-    return this.callWorker('dispatch', {
-      event,
-      payload,
-      allowMutate: options.allowMutate !== false,
-    }, options.timeoutMs || 3000);
+    const allowMutate = options.allowMutate !== false;
+    let result = payload;
+    if (this.worker) {
+      result = await this.callWorker('dispatch', {
+        event,
+        payload,
+        allowMutate,
+      }, options.timeoutMs || 3000);
+    }
+    if (this.iframeRuntime) {
+      this.iframeRuntime.dispatchEvent(event, result, allowMutate).catch(() => {});
+    }
+    return result;
   }
 
   callWorker(type, payload, timeoutMs = 3000) {
@@ -1007,12 +2057,113 @@ export class ScriptRuntime {
       await this.processRpc('variables.set', { key, value: next, options: params.options, scope: params.scope, sessionId });
       return next;
     }
+    if (method === 'variables.registerSchema') {
+      if (!allowModifyVariables) return false;
+      const rawDefaults = params.defaults && typeof params.defaults === 'object' ? params.defaults : null;
+      if (!rawDefaults) return false;
+      const scope = String(params.options?.scope || params.scope || params.options?.type || '').toLowerCase();
+      const useGlobal = scope === 'global';
+      const defaults =
+        rawDefaults.stat_data && typeof rawDefaults.stat_data === 'object'
+          ? rawDefaults.stat_data
+          : rawDefaults.statData && typeof rawDefaults.statData === 'object'
+            ? rawDefaults.statData
+            : rawDefaults;
+      if (!defaults || typeof defaults !== 'object') return false;
+      const isPlainObject = (val) => val && typeof val === 'object' && !Array.isArray(val);
+      const mergeDeep = (base, override) => {
+        const out = Array.isArray(base) ? [...base] : { ...(base || {}) };
+        if (!override || typeof override !== 'object') return out;
+        Object.entries(override).forEach(([key, value]) => {
+          if (Array.isArray(value)) {
+            out[key] = value.slice();
+          } else if (isPlainObject(value) && isPlainObject(out[key])) {
+            out[key] = mergeDeep(out[key], value);
+          } else {
+            out[key] = value;
+          }
+        });
+        return out;
+      };
+      const deepEqual = (a, b) => {
+        if (Object.is(a, b)) return true;
+        if (typeof a !== typeof b) return false;
+        if (Array.isArray(a)) {
+          if (!Array.isArray(b) || a.length !== b.length) return false;
+          return a.every((v, i) => deepEqual(v, b[i]));
+        }
+        if (isPlainObject(a)) {
+          if (!isPlainObject(b)) return false;
+          const keysA = Object.keys(a);
+          const keysB = Object.keys(b);
+          if (keysA.length !== keysB.length) return false;
+          return keysA.every(k => deepEqual(a[k], b[k]));
+        }
+        return false;
+      };
+      const inferSchema = (name, value) => {
+        let type = typeof value;
+        if (Array.isArray(value)) type = 'array';
+        else if (value === null) type = 'string';
+        else if (type !== 'number' && type !== 'boolean' && type !== 'string' && type !== 'object') type = 'string';
+        return {
+          type,
+          default: value,
+          ui: { display: 'hidden', label: String(name || '') },
+        };
+      };
+      const listVars = useGlobal
+        ? (this.chatStore?.listGlobalVariables?.() || {})
+        : (this.chatStore?.listVariables?.(sessionId) || {});
+      const setVar = useGlobal
+        ? (key, value) => this.chatStore?.setGlobalVariable?.(key, value)
+        : (key, value) => this.chatStore?.setVariable?.(key, value, sessionId);
+      Object.entries(defaults).forEach(([key, value]) => {
+        const name = String(key || '').trim();
+        if (!name) return;
+        const existing = listVars[name];
+        let next = value;
+        if (isPlainObject(value) && isPlainObject(existing)) {
+          next = mergeDeep(value, existing);
+        } else if (existing !== undefined) {
+          next = existing;
+        }
+        if (!deepEqual(existing, next)) {
+          setVar(name, next);
+          if (!useGlobal && this.chatStore?.getInitialVariable?.(name, sessionId) === undefined) {
+            this.chatStore?.setInitialVariable?.(name, next, sessionId);
+          }
+        }
+        if (!useGlobal && this.chatStore?.getVariableSchema?.(name, sessionId) == null) {
+          this.chatStore?.setVariableSchema?.(name, inferSchema(name, next), sessionId);
+        }
+      });
+      emitDebugLog({
+        message: `[MVU] registerSchema applied=${Object.keys(defaults).length} scope=${useGlobal ? 'global' : 'session'} session=${sessionId || 'unknown'}`,
+        type: 'info',
+        source: 'script',
+      });
+      return true;
+    }
     if (method === 'chat.getMessages') {
       if (!allowReadMessages) return [];
       const list = Array.isArray(this.chatStore?.getMessages?.(sessionId))
         ? this.chatStore.getMessages(sessionId)
         : [];
       return list.map(m => ({ ...m }));
+    }
+    if (method === 'chat.updateMessage') {
+      if (!allowReadMessages) return null;
+      if (!this.chatStore || !sessionId) return null;
+      const id = String(params.id || '').trim();
+      const data = params.data && typeof params.data === 'object' ? params.data : null;
+      if (!id || !data) return null;
+      const updated = this.chatStore.updateMessage(id, data, sessionId);
+      const ui = this.bridge?.chatUI || null;
+      if (updated && ui && typeof ui.updateMessage === 'function' && this.chatStore.getCurrent?.() === sessionId) {
+        ui.updateMessage(id, updated);
+      }
+      return updated || null;
     }
     if (method === 'world.getEntry') {
       const worldId = String(params.world || this.context.worldId || '').trim();

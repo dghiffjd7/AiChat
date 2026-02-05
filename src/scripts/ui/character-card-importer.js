@@ -339,46 +339,79 @@ export class CharacterCardImporter {
 
     let mvuConverted = false;
     let mvuVariableCount = 0;
-    if (MVUConverter.detect(rawCard)) {
-      const mvu = MVUConverter.convert(rawCard);
-      const vars = mvu?.variables || {};
-      mvuVariableCount = Object.keys(vars).length;
-      if (mvuVariableCount > 0) {
-        const choice = await appChoice({
-          title: '检测到 MVU 变量卡',
-          message: `发现 ${mvuVariableCount} 个变量。\n是否转换为原生变量系统并写入 RP 会话？`,
-          actions: [
-            { id: 'convert', label: '转换', primary: true },
-            { id: 'skip', label: '跳过' },
-          ],
-          defaultActionId: 'convert',
-        });
-        if (choice === 'convert') {
-          try {
-            const chatStore = this.appBridge?.chatStore;
-            const rpSessionId = `rp:${persona.id}`;
-            if (chatStore) {
-              Object.entries(mvu.schemas || {}).forEach(([key, schema]) => {
-                if (!key) return;
-                chatStore.setVariableSchema?.(key, schema, rpSessionId);
-              });
-              Object.entries(vars).forEach(([key, value]) => {
-                if (!key) return;
-                chatStore.setVariable?.(key, value, rpSessionId);
-              });
-              if (Array.isArray(mvu.rules) && mvu.rules.length) {
-                chatStore.setVariableRules?.(mvu.rules, rpSessionId);
-              }
-              if (mvu.stageSchema) {
-                chatStore.setStageSchema?.(mvu.stageSchema, rpSessionId);
-              }
-              mvuConverted = true;
-              window.toastr?.success?.('MVU 变量已转换到 RP 会话');
+    let mvuSource = 'none';
+
+    // 尝试多种方式提取 MVU 变量定义
+    // 1. 首先尝试从 TavernHelper 脚本中解析 Zod Schema（更精确的类型信息）
+    // 2. 然后尝试从角色卡 stat_data 中提取（JSON 格式）
+    const zodScriptsWithSchema = tavernScripts.filter(s => MVUConverter.detectZodScript(s));
+    let combinedMvu = { variables: {}, schemas: {}, rules: [], stageSchema: null };
+
+    if (zodScriptsWithSchema.length > 0) {
+      // 解析 Zod Schema 脚本
+      const parsed = MVUConverter.parseMultipleScripts(zodScriptsWithSchema);
+      if (Object.keys(parsed.variables).length > 0) {
+        combinedMvu.variables = { ...parsed.variables };
+        combinedMvu.schemas = { ...parsed.schemas };
+        mvuSource = 'zod_script';
+        logger.info(`[character-card] parsed ${Object.keys(parsed.variables).length} variables from Zod scripts`);
+        if (parsed.errors.length) {
+          logger.warn('[character-card] Zod parse errors:', parsed.errors);
+        }
+      }
+    }
+
+    // 补充角色卡 stat_data（填充缺失变量与默认值）
+    const mvuFromCard = MVUConverter.detect(rawCard) ? MVUConverter.convert(rawCard) : null;
+    if (mvuFromCard && Object.keys(mvuFromCard.variables || {}).length > 0) {
+      if (Object.keys(combinedMvu.variables).length === 0) {
+        combinedMvu = mvuFromCard;
+        mvuSource = 'stat_data';
+      } else {
+        combinedMvu.variables = { ...combinedMvu.variables, ...mvuFromCard.variables };
+        combinedMvu.schemas = { ...mvuFromCard.schemas, ...combinedMvu.schemas };
+        if (mvuSource === 'zod_script') mvuSource = 'zod_script+stat_data';
+      }
+    }
+
+    mvuVariableCount = Object.keys(combinedMvu.variables).length;
+
+    if (mvuVariableCount > 0) {
+      const sourceText = mvuSource === 'zod_script' ? '（来自脚本 Schema）' : '（来自角色卡数据）';
+      const choice = await appChoice({
+        title: '检测到 MVU 变量卡',
+        message: `发现 ${mvuVariableCount} 个变量${sourceText}。\n是否转换为原生变量系统并写入 RP 会话？`,
+        actions: [
+          { id: 'convert', label: '转换', primary: true },
+          { id: 'skip', label: '跳过' },
+        ],
+        defaultActionId: 'convert',
+      });
+      if (choice === 'convert') {
+        try {
+          const chatStore = this.appBridge?.chatStore;
+          const rpSessionId = `rp:${persona.id}`;
+          if (chatStore) {
+            Object.entries(combinedMvu.schemas || {}).forEach(([key, schema]) => {
+              if (!key) return;
+              chatStore.setVariableSchema?.(key, schema, rpSessionId);
+            });
+            Object.entries(combinedMvu.variables).forEach(([key, value]) => {
+              if (!key) return;
+              chatStore.setVariable?.(key, value, rpSessionId);
+            });
+            if (Array.isArray(combinedMvu.rules) && combinedMvu.rules.length) {
+              chatStore.setVariableRules?.(combinedMvu.rules, rpSessionId);
             }
-          } catch (err) {
-            logger.warn('mvu convert failed', err);
-            window.toastr?.warning?.('MVU 转换失败，已跳过');
+            if (combinedMvu.stageSchema) {
+              chatStore.setStageSchema?.(combinedMvu.stageSchema, rpSessionId);
+            }
+            mvuConverted = true;
+            window.toastr?.success?.('MVU 变量已转换到 RP 会话');
           }
+        } catch (err) {
+          logger.warn('mvu convert failed', err);
+          window.toastr?.warning?.('MVU 转换失败，已跳过');
         }
       }
     }
@@ -430,8 +463,36 @@ export class CharacterCardImporter {
       try {
         const scriptStore = this.appBridge?.scriptStore;
         if (scriptStore?.ready) await scriptStore.ready;
+        const zodSchemaScriptIds = new Set(
+          zodScriptsWithSchema.map(s => String(s?.id || s?.name || '').trim()).filter(Boolean)
+        );
+        const isMvuCard =
+          mvuVariableCount > 0 ||
+          zodScriptsWithSchema.length > 0 ||
+          MVUConverter.detect(rawCard);
+        const shouldForceSchemaOnly = (script) => {
+          if (!script || typeof script !== 'object') return false;
+          if (isMvuCard) return true;
+          const name = String(script?.name || '').toLowerCase();
+          const content = String(script?.content || '').toLowerCase();
+          return name.includes('mvu') || content.includes('mvu_') || content.includes('stat_data');
+        };
+        const markSchemaOnly = (list = []) => list.map((item) => {
+          if (!item || typeof item !== 'object') return item;
+          if (item.type === 'folder' && Array.isArray(item.scripts)) {
+            return { ...item, scripts: markSchemaOnly(item.scripts) };
+          }
+          const scriptId = String(item?.id || item?.name || '').trim();
+          const isZodSchema = zodSchemaScriptIds.has(scriptId) || MVUConverter.detectZodScript(item);
+          if (item.schemaOnly === true || isZodSchema || shouldForceSchemaOnly(item)) {
+            return { ...item, schemaOnly: true };
+          }
+          return item;
+        });
+        // 将 Zod Schema/MVU 相关脚本标记为 schemaOnly，避免执行时加载外部依赖（如 Vue）
+        const scriptsWithSchemaFlag = markSchemaOnly(tavernScripts);
         const result = await scriptStore?.importTavernHelperScripts?.({
-          scripts: tavernScripts,
+          scripts: scriptsWithSchemaFlag,
           scope: 'character',
           scopeId: persona.id,
           source: 'card',
@@ -480,6 +541,7 @@ export class CharacterCardImporter {
         regexSetId: regexSetId || persona?.source?.regexSetId,
         mvuConverted,
         mvuVariableCount,
+        mvuSource: mvuConverted ? mvuSource : 'none',
         originalCardStored,
         originalCardSize,
       };

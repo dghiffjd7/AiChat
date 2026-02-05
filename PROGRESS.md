@@ -1,5 +1,37 @@
 # 開發進度追蹤（必更新）(必须使用当下时间记录)
 
+## 2026-02-05 (MVU schemaOnly 脚本执行跳过)
+
+- **修复 Vue 报错**：解决导入 MVU 脚本后 "vue is not defined" 错误。
+- 问题原因：Zod Schema 脚本虽然在导入时已静态解析，但仍会在启用后被 script-runtime 执行，导致加载 bundle.js 时因缺少 Vue 全局变量而报错。
+- 解决方案：
+  - 新增 `schemaOnly` 标志，标记仅用于 Schema 定义的脚本
+  - Worker `compileScript` 函数跳过 `schemaOnly` 脚本的代码执行
+  - `ScriptIframeRuntime.syncScripts` 跳过 `schemaOnly` 脚本的 iframe 创建
+  - 导入时自动检测 Zod Schema 脚本并标记为 `schemaOnly: true`
+- 修改：
+  - `src/scripts/storage/script-store.js`（normalizeScript 添加 schemaOnly 字段）
+  - `src/scripts/plugins/script-runtime.js`（Worker 和 iframe 运行时跳过 schemaOnly）
+  - `src/scripts/ui/character-card-importer.js`（导入时标记 Zod Schema 脚本）
+
+## 2026-02-05 (MVU Zod Schema 解析器)
+
+- **MVU 兼容性增强**：新增 Zod Schema 静态解析器，无需运行脚本即可提取酒馆 MVU 变量定义。
+- 解析能力：
+  - 支持 `z.object()`, `z.string()`, `z.number()`, `z.boolean()`, `z.enum()`, `z.record()` 等类型
+  - 从 `.prefault()` / `.default()` 提取默认值
+  - 从 `.transform(v => _.clamp(v, min, max))` 提取范围限制
+  - 从 `.describe()` 提取描述信息
+  - 自动推断 UI 展示方式（进度条、徽章等）和图标
+- 集成到角色卡导入流程：
+  - 优先从 TavernHelper 脚本解析 Zod Schema（更精确的类型信息）
+  - 回退到角色卡 `stat_data` JSON 提取
+  - 提示用户变量来源（脚本 Schema / 角色卡数据）
+- 新增/修改：
+  - `src/scripts/import/mvu-schema-parser.js`（新增）
+  - `src/scripts/import/mvu-converter.js`
+  - `src/scripts/ui/character-card-importer.js`
+
 ## 2026-02-03 15:20
 
 - 角色卡导入增强：新增链接导入弹窗（PNG/JSON）、居中显示与确认弹窗层级修复；导入头像自动压缩，避免 dev 重载丢头像。

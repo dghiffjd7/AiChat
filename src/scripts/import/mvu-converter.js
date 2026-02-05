@@ -1,3 +1,5 @@
+import { parseMvuScript, parseScriptJson, hasZodSchema } from './mvu-schema-parser.js';
+
 const safeJsonParse = (text) => {
   try {
     return JSON.parse(text);
@@ -124,6 +126,9 @@ const inferSchema = (key, value) => {
 };
 
 export class MVUConverter {
+  /**
+   * 检测是否为 MVU 相关的角色卡或脚本
+   */
   static detect(rawInput) {
     const raw = rawInput?.raw ? rawInput.raw : rawInput;
     if (!raw || typeof raw !== 'object') return false;
@@ -132,6 +137,39 @@ export class MVUConverter {
     if (ext?.mvu || ext?.mvu_data || ext?.mvuData) return true;
     const entries = getWorldEntries(raw);
     return entries.some(hasMvuMarker);
+  }
+
+  /**
+   * 检测脚本 JSON 是否包含 Zod Schema 定义
+   * @param {object|string} scriptJson - 脚本 JSON 对象或字符串
+   */
+  static detectZodScript(scriptJson) {
+    try {
+      const data = typeof scriptJson === 'string' ? JSON.parse(scriptJson) : scriptJson;
+      if (!data || typeof data !== 'object') return false;
+      const content = data.content || '';
+      return hasZodSchema(content);
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * 解析 Zod Schema 脚本，提取变量定义
+   * @param {object|string} scriptJson - 脚本 JSON 对象或字符串
+   * @returns {{ variables: object, schemas: object, rawSchema: object|null, error: string|null, name: string }}
+   */
+  static parseZodScript(scriptJson) {
+    return parseScriptJson(scriptJson);
+  }
+
+  /**
+   * 直接解析脚本内容中的 Zod Schema
+   * @param {string} scriptContent - 脚本内容
+   * @returns {{ variables: object, schemas: object, rawSchema: object|null, error: string|null }}
+   */
+  static parseZodContent(scriptContent) {
+    return parseMvuScript(scriptContent);
   }
 
   static extractStatData(rawInput) {
@@ -163,6 +201,9 @@ export class MVUConverter {
     return null;
   }
 
+  /**
+   * 从角色卡中提取 stat_data（JSON 格式）
+   */
   static convert(rawInput) {
     const statData = MVUConverter.extractStatData(rawInput);
     if (!statData || typeof statData !== 'object') {
@@ -170,12 +211,128 @@ export class MVUConverter {
     }
     const variables = {};
     const schemas = {};
-    Object.entries(statData).forEach(([key, value]) => {
-      const name = String(key || '').trim();
+    const flattenStatData = (value, prefix = '') => {
+      const name = String(prefix || '').trim();
+      if (value && typeof value === 'object' && !Array.isArray(value)) {
+        const entries = Object.entries(value);
+        if (!entries.length) {
+          if (name) {
+            variables[name] = value;
+            schemas[name] = inferSchema(name, value);
+          }
+          return;
+        }
+        entries.forEach(([key, val]) => {
+          const next = name ? `${name}.${key}` : String(key || '').trim();
+          if (!next) return;
+          flattenStatData(val, next);
+        });
+        return;
+      }
       if (!name) return;
       variables[name] = value;
       schemas[name] = inferSchema(name, value);
-    });
+    };
+    flattenStatData(statData, '');
     return { variables, schemas, rules: [], stageSchema: null };
+  }
+
+  /**
+   * 综合转换方法：支持角色卡 JSON 和 Zod Schema 脚本
+   *
+   * @param {object} options
+   * @param {object} [options.characterCard] - 角色卡数据
+   * @param {object|string} [options.script] - MVU 脚本 JSON
+   * @param {string} [options.scriptContent] - 脚本内容（直接传入 content 字段）
+   * @returns {{ variables: object, schemas: object, rules: [], stageSchema: null, source: string, error: string|null }}
+   */
+  static convertAll(options = {}) {
+    const result = {
+      variables: {},
+      schemas: {},
+      rules: [],
+      stageSchema: null,
+      source: 'none',
+      error: null,
+    };
+
+    // 优先尝试 Zod Schema 脚本（更精确的类型信息）
+    if (options.script) {
+      const parsed = MVUConverter.parseZodScript(options.script);
+      if (!parsed.error && Object.keys(parsed.variables).length > 0) {
+        result.variables = parsed.variables;
+        result.schemas = parsed.schemas;
+        result.source = 'zod_script';
+        return result;
+      }
+      if (parsed.error) {
+        result.error = parsed.error;
+      }
+    }
+
+    // 尝试直接解析脚本内容
+    if (options.scriptContent) {
+      const parsed = MVUConverter.parseZodContent(options.scriptContent);
+      if (!parsed.error && Object.keys(parsed.variables).length > 0) {
+        result.variables = parsed.variables;
+        result.schemas = parsed.schemas;
+        result.source = 'zod_content';
+        result.error = null;
+        return result;
+      }
+      if (parsed.error && !result.error) {
+        result.error = parsed.error;
+      }
+    }
+
+    // 回退到角色卡 stat_data 提取
+    if (options.characterCard) {
+      const converted = MVUConverter.convert(options.characterCard);
+      if (Object.keys(converted.variables).length > 0) {
+        result.variables = converted.variables;
+        result.schemas = converted.schemas;
+        result.source = 'stat_data';
+        result.error = null;
+        return result;
+      }
+    }
+
+    return result;
+  }
+
+  /**
+   * 批量解析多个脚本，合并变量定义
+   * @param {Array<object|string>} scripts - 脚本 JSON 数组
+   * @returns {{ variables: object, schemas: object, errors: string[] }}
+   */
+  static parseMultipleScripts(scripts) {
+    const result = {
+      variables: {},
+      schemas: {},
+      errors: [],
+    };
+
+    if (!Array.isArray(scripts)) return result;
+
+    for (const script of scripts) {
+      if (!script) continue;
+
+      // 跳过非 Zod Schema 脚本（如纯 import 的 MVU 加载脚本）
+      if (!MVUConverter.detectZodScript(script)) {
+        continue;
+      }
+
+      const parsed = MVUConverter.parseZodScript(script);
+      if (parsed.error) {
+        result.errors.push(`${parsed.name || '未知脚本'}: ${parsed.error}`);
+        continue;
+      }
+
+      // 合并变量和 Schema
+      Object.assign(result.variables, parsed.variables);
+      Object.assign(result.schemas, parsed.schemas);
+    }
+
+    return result;
   }
 }

@@ -62,6 +62,7 @@ const normalizeScript = (raw = {}, overrides = {}) => {
     info: String(base.info || ''),
     enabled: base.enabled === true,
     authorized: base.authorized === true,
+    schemaOnly: base.schemaOnly === true,
     data: base.data && typeof base.data === 'object' ? base.data : {},
     createdAt: Number.isFinite(Number(base.createdAt)) ? Number(base.createdAt) : Date.now(),
     updatedAt: Date.now(),

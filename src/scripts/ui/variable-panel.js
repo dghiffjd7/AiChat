@@ -1,6 +1,187 @@
 import { appConfirm } from './app-confirm.js';
 import { applyTemplate, listVariableTemplates } from '../variables/variable-templates.js';
 
+const TREE_LIMITS = {
+    maxDepth: 8,
+    maxNodes: 2000,
+    maxArray: 120,
+};
+
+const createTreeNode = (name, path, order = 0) => ({
+    name,
+    path,
+    order,
+    children: new Map(),
+    hasValue: false,
+    value: undefined,
+});
+
+const formatTreeValue = (value) => {
+    if (value === undefined) return '';
+    if (value === null) return 'null';
+    if (typeof value === 'string') {
+        const trimmed = value.replace(/\s+/g, ' ').trim();
+        return trimmed.length > 80 ? `${trimmed.slice(0, 77)}...` : trimmed;
+    }
+    if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+    if (Array.isArray(value)) return `[${value.length}]`;
+    if (typeof value === 'object') return `{${Object.keys(value).length}}`;
+    return String(value);
+};
+
+const buildVariableTree = (vars = {}) => {
+    const root = createTreeNode('', '');
+    let nodeCount = 0;
+
+    const ensureChild = (parent, name, path, order = 0) => {
+        if (!parent) return null;
+        let child = parent.children.get(name);
+        if (!child) {
+            if (nodeCount >= TREE_LIMITS.maxNodes) return null;
+            child = createTreeNode(name, path, order);
+            parent.children.set(name, child);
+            nodeCount += 1;
+        } else if (Number.isFinite(order)) {
+            child.order = order;
+        }
+        return child;
+    };
+
+    const assignValue = (node, value, override = false) => {
+        if (!node) return;
+        if (override || !node.hasValue) {
+            node.value = value;
+            node.hasValue = true;
+        }
+    };
+
+    const expandValue = (node, value, depth = 0) => {
+        if (!node || value == null) return;
+        if (depth >= TREE_LIMITS.maxDepth) return;
+        if (Array.isArray(value)) {
+            const limit = Math.min(value.length, TREE_LIMITS.maxArray);
+            for (let i = 0; i < limit; i += 1) {
+                const name = `[${i}]`;
+                const path = node.path ? `${node.path}${name}` : name;
+                const child = ensureChild(node, name, path, i);
+                if (!child) break;
+                assignValue(child, value[i], false);
+                expandValue(child, value[i], depth + 1);
+            }
+            return;
+        }
+        if (typeof value === 'object') {
+            const entries = Object.entries(value);
+            for (let i = 0; i < entries.length; i += 1) {
+                const [key, val] = entries[i];
+                const name = String(key);
+                const path = node.path ? `${node.path}.${name}` : name;
+                const child = ensureChild(node, name, path, i);
+                if (!child) break;
+                assignValue(child, val, false);
+                expandValue(child, val, depth + 1);
+            }
+        }
+    };
+
+    const addPath = (path, value) => {
+        const raw = String(path || '').trim();
+        if (!raw) return;
+        const parts = raw.split('.').filter(Boolean);
+        let node = root;
+        let currentPath = '';
+        for (let i = 0; i < parts.length; i += 1) {
+            const part = parts[i];
+            currentPath = currentPath ? `${currentPath}.${part}` : part;
+            node = ensureChild(node, part, currentPath, i);
+            if (!node) return;
+        }
+        assignValue(node, value, true);
+        expandValue(node, value, parts.length);
+    };
+
+    Object.entries(vars || {}).forEach(([key, value]) => addPath(key, value));
+    return root;
+};
+
+const getSortedChildren = (node) => {
+    const list = Array.from(node?.children?.values?.() || []);
+    return list.sort((a, b) => {
+        if (a.order !== b.order) return a.order - b.order;
+        return String(a.name || '').localeCompare(String(b.name || ''));
+    });
+};
+
+const treeNodeMatches = (node, term) => {
+    if (!term) return true;
+    const text = `${node.path} ${node.name} ${formatTreeValue(node.value)}`.toLowerCase();
+    if (text.includes(term)) return true;
+    for (const child of node.children.values()) {
+        if (treeNodeMatches(child, term)) return true;
+    }
+    return false;
+};
+
+const renderTreeNode = (node, term, depth = 0) => {
+    if (!node) return null;
+    if (!treeNodeMatches(node, term)) return null;
+    const hasChildren = node.children && node.children.size > 0;
+    const valueText = node.hasValue ? formatTreeValue(node.value) : '';
+
+    if (hasChildren) {
+        const wrap = document.createElement('details');
+        wrap.open = Boolean(term) || depth < 1;
+        wrap.style.cssText = `margin-left:${depth ? 12 : 0}px; padding:2px 0;`;
+
+        const summary = document.createElement('summary');
+        summary.style.cssText = 'cursor:pointer; display:flex; align-items:center; gap:8px; font-size:13px; color:#0f172a;';
+
+        const nameEl = document.createElement('span');
+        nameEl.textContent = node.name || '(root)';
+        nameEl.style.cssText = 'font-weight:700;';
+        summary.appendChild(nameEl);
+
+        if (valueText) {
+            const valueEl = document.createElement('span');
+            valueEl.textContent = valueText;
+            valueEl.style.cssText = 'font-size:11px; color:#64748b;';
+            summary.appendChild(valueEl);
+        }
+
+        const countEl = document.createElement('span');
+        countEl.textContent = `(${node.children.size})`;
+        countEl.style.cssText = 'font-size:11px; color:#94a3b8;';
+        summary.appendChild(countEl);
+
+        wrap.appendChild(summary);
+
+        const body = document.createElement('div');
+        body.style.cssText = 'display:flex; flex-direction:column; gap:4px; padding:4px 0 4px 8px;';
+        getSortedChildren(node).forEach((child) => {
+            const childEl = renderTreeNode(child, term, depth + 1);
+            if (childEl) body.appendChild(childEl);
+        });
+        wrap.appendChild(body);
+        return wrap;
+    }
+
+    const row = document.createElement('div');
+    row.style.cssText = `display:flex; gap:10px; align-items:flex-start; margin-left:${depth ? 12 : 0}px; padding:2px 0;`;
+    row.title = node.path || node.name || '';
+
+    const nameEl = document.createElement('span');
+    nameEl.textContent = node.name || '';
+    nameEl.style.cssText = 'flex:1; min-width:0; font-size:13px; color:#0f172a;';
+    row.appendChild(nameEl);
+
+    const valueEl = document.createElement('span');
+    valueEl.textContent = valueText || '（空）';
+    valueEl.style.cssText = 'font-size:12px; color:#64748b; white-space:nowrap;';
+    row.appendChild(valueEl);
+
+    return row;
+};
+
 export class VariablePanel {
     constructor({ chatStore, getSessionId, getVariableScope }) {
         this.chatStore = chatStore;
@@ -29,6 +210,8 @@ export class VariablePanel {
         this.term = '';
         this.editingKey = '';
         this.moreMenuCloseHandler = null;
+        this.viewMode = 'list';
+        this.viewButtons = null;
     }
 
     ensureUI() {
@@ -83,6 +266,13 @@ export class VariablePanel {
                 <div style="margin-top:10px; padding:8px 10px; background:#f8fafc; border-radius:8px; font-size:11px; color:#64748b;">
                     💡 提示词中使用 <code style="background:#e2e8f0; padding:2px 6px; border-radius:4px;">{{getvar::name}}</code> 引用变量
                 </div>
+                <div style="margin-top:10px; display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                    <div style="font-size:12px; color:#64748b;">视图</div>
+                    <div id="var-view-toggle" style="display:flex; gap:6px; padding:2px; background:#f1f5f9; border-radius:999px;">
+                        <button id="var-view-list" type="button" style="border:1px solid #e2e8f0; background:#0f172a; color:#fff; border-radius:999px; padding:4px 10px; font-size:12px; cursor:pointer;">文本</button>
+                        <button id="var-view-tree" type="button" style="border:1px solid #e2e8f0; background:#fff; color:#0f172a; border-radius:999px; padding:4px 10px; font-size:12px; cursor:pointer;">树状</button>
+                    </div>
+                </div>
             </div>
             <div id="var-cards" style="padding:10px 12px; border-bottom:1px solid rgba(0,0,0,0.06); display:flex; flex-wrap:wrap; gap:8px;"></div>
 
@@ -120,6 +310,13 @@ export class VariablePanel {
             updateSearch('');
             searchEl?.focus?.();
         });
+
+        const viewListBtn = q('#var-view-list');
+        const viewTreeBtn = q('#var-view-tree');
+        this.viewButtons = { list: viewListBtn, tree: viewTreeBtn };
+        viewListBtn?.addEventListener('click', () => this.setViewMode('list'));
+        viewTreeBtn?.addEventListener('click', () => this.setViewMode('tree'));
+        this.updateViewToggle();
 
         this.overlay = overlay;
         this.panel = panel;
@@ -1454,10 +1651,58 @@ export class VariablePanel {
         });
     }
 
+    setViewMode(mode) {
+        const next = mode === 'tree' ? 'tree' : 'list';
+        if (this.viewMode === next) return;
+        this.viewMode = next;
+        this.updateViewToggle();
+        this.renderList();
+    }
+
+    updateViewToggle() {
+        if (!this.viewButtons) return;
+        const { list, tree } = this.viewButtons;
+        const applyStyle = (btn, active) => {
+            if (!btn) return;
+            btn.style.background = active ? '#0f172a' : '#fff';
+            btn.style.color = active ? '#fff' : '#0f172a';
+            btn.style.border = active ? '1px solid #0f172a' : '1px solid #e2e8f0';
+        };
+        applyStyle(list, this.viewMode === 'list');
+        applyStyle(tree, this.viewMode === 'tree');
+    }
+
+    renderTreeList(listEl) {
+        const { vars } = this.getVars();
+        const term = this.term.trim().toLowerCase();
+        const tree = buildVariableTree(vars || {});
+        const nodes = getSortedChildren(tree);
+
+        listEl.innerHTML = '';
+        if (!nodes.length) {
+            const empty = document.createElement('div');
+            empty.style.cssText = 'padding:18px 10px; color:#94a3b8; text-align:center;';
+            empty.textContent = this.getVars().sid ? '暂无变量' : '未选择会话';
+            listEl.appendChild(empty);
+            return;
+        }
+
+        const fragment = document.createDocumentFragment();
+        nodes.forEach((node) => {
+            const nodeEl = renderTreeNode(node, term, 0);
+            if (nodeEl) fragment.appendChild(nodeEl);
+        });
+        listEl.appendChild(fragment);
+    }
+
     renderList() {
         this.renderCards();
         const listEl = this.panel?.querySelector?.('#var-list');
         if (!listEl) return;
+        if (this.viewMode === 'tree') {
+            this.renderTreeList(listEl);
+            return;
+        }
         const { vars } = this.getVars();
         const term = this.term.trim().toLowerCase();
         const entries = Object.entries(vars || {})

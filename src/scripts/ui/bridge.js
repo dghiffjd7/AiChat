@@ -1243,6 +1243,37 @@ class AppBridge {
       if (id) worldIds.push(String(id));
     });
     const sid = String(this.activeSessionId || '').trim();
+    const buildNestedVars = (flat = {}) => {
+      const root = {};
+      const toPath = (val) => String(val || '')
+        .replace(/\[([^\]]+)\]/g, '.$1')
+        .split('.')
+        .map(seg => seg.trim().replace(/^['"]|['"]$/g, ''))
+        .filter(Boolean);
+      const isIndex = (seg) => /^\d+$/.test(seg);
+      const setByPath = (obj, path, value) => {
+        const parts = toPath(path);
+        if (!parts.length) return;
+        let cur = obj;
+        for (let i = 0; i < parts.length - 1; i += 1) {
+          const key = isIndex(parts[i]) ? Number(parts[i]) : parts[i];
+          const nextKey = parts[i + 1];
+          const shouldArray = isIndex(nextKey);
+          if (!cur[key] || typeof cur[key] !== 'object') {
+            cur[key] = shouldArray ? [] : {};
+          }
+          cur = cur[key];
+        }
+        const lastKey = isIndex(parts[parts.length - 1]) ? Number(parts[parts.length - 1]) : parts[parts.length - 1];
+        cur[lastKey] = value;
+      };
+      Object.entries(flat || {}).forEach(([key, value]) => {
+        const name = String(key || '').trim();
+        if (!name) return;
+        setByPath(root, name, value);
+      });
+      return root;
+    };
     let localVars = {};
     let globalVars = {};
     try {
@@ -1251,6 +1282,12 @@ class AppBridge {
     try {
       globalVars = this.chatStore?.listGlobalVariables?.() || {};
     } catch {}
+    const isShared = typeof this.isSharedVariableSession === 'function'
+      ? Boolean(this.isSharedVariableSession(sid))
+      : false;
+    const baseVars = isShared ? globalVars : localVars;
+    const baseNested = buildNestedVars(baseVars);
+    const globalNested = buildNestedVars(globalVars);
     const mergedVars = { ...globalVars, ...localVars };
     return {
       sessionId: this.activeSessionId,
@@ -1259,10 +1296,11 @@ class AppBridge {
       activePresets,
       macroVars: {
         ...mergedVars,
-        stat_data: localVars,
-        variables: localVars,
-        status_current_variables: localVars,
-        global_variables: globalVars,
+        stat_data: baseNested,
+        variables: baseNested,
+        status_current_variables: baseNested,
+        global_variables: globalNested,
+        local_variables: localVars,
       },
     };
   }

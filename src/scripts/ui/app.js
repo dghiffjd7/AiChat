@@ -58,7 +58,6 @@ import { SessionPanel } from './session-panel.js';
 import { StickerPicker } from './sticker-picker.js';
 import { VariablePanel } from './variable-panel.js';
 import { VariableRuleEngine } from '../variables/variable-rule-engine.js';
-import { VariableStatusCard } from './variable-status-card.js';
 import { StageManager } from '../variables/stage-manager.js';
 import { StageTimeline } from './stage-timeline.js';
 import { WorldPanel } from './world-panel.js';
@@ -439,7 +438,6 @@ const initApp = async () => {
   let activePersonaScopeKey = '';
   let activePersonaId = 'default';
   let chatRoom = null;
-  let variableStatusCard = null;
   const RP_SESSION_PREFIX = 'rp:';
   const isRpSessionId = (sessionId) => String(sessionId || '').startsWith(RP_SESSION_PREFIX);
   const getRpSessionId = (personaId = activePersonaId) => `${RP_SESSION_PREFIX}${personaId || 'default'}`;
@@ -673,9 +671,9 @@ const initApp = async () => {
   }
 
   const isSharedVariableSession = (sessionId = chatStore.getCurrent()) => {
-    if (uiMode === 'rp') return true;
     const sid = String(sessionId || '').trim();
     if (!sid) return false;
+    if (isRpSessionId(sid)) return false;
     const settings = chatStore.getSessionSettings?.(sid) || {};
     if (typeof settings.sharedVariables === 'boolean') return settings.sharedVariables;
     const persona = getEffectivePersona(sid);
@@ -4333,8 +4331,6 @@ Phase G（Frame 36）：循环衔接
   if (chatRoom && chatScroll) {
     stageTimeline = new StageTimeline({ stageManager });
     stageTimeline.mount({ container: chatRoom, before: chatScroll });
-    variableStatusCard = new VariableStatusCard({ chatStore });
-    variableStatusCard.mount({ container: chatRoom, before: chatScroll });
   }
   pluginUiManager.mount({ chatRoom, chatInputContainer });
   let chatInputGapTweak = 0;
@@ -9679,7 +9675,6 @@ Phase G（Frame 36）：循环衔接
     chatStore.switchSession(sessionId);
     stageManager?.setSession?.(sessionId);
     stageTimeline?.setSession?.(sessionId);
-    variableStatusCard?.setSession?.(sessionId);
     window.appBridge.setActiveSession(sessionId);
     syncUserPersonaUI(sessionId);
     if (chatSettingsReady) {
@@ -9776,7 +9771,6 @@ Phase G（Frame 36）：循环衔接
     pages.chat?.classList.remove('chat-room-active');
     document.body?.classList.remove('chat-room-active');
     stageTimeline?.render?.('');
-    variableStatusCard?.render?.('');
     setStickerPanelOpen(false);
     setActionPanelOpen(false);
     scheduleModeSwitchSync();
@@ -10093,15 +10087,57 @@ Phase G（Frame 36）：循环衔接
       });
       return changed;
     };
+    const extractInitVarFromWorldbooks = (sid) => {
+      const app = window.appBridge;
+      const ids = new Set();
+      const globalId = String(app?.globalWorldId || '').trim();
+      if (globalId) ids.add(globalId);
+      const sessionIds = Array.isArray(app?.getWorldIdsForSession?.(sid))
+        ? app.getWorldIdsForSession(sid)
+        : Array.isArray(app?.currentWorldIds)
+          ? app.currentWorldIds
+          : [];
+      sessionIds.forEach((id) => {
+        const name = String(id || '').trim();
+        if (name) ids.add(name);
+      });
+      if (!ids.size) return null;
+      let merged = null;
+      ids.forEach((id) => {
+        const world = app?.worldStore?.load?.(id);
+        const entries = Array.isArray(world?.entries) ? world.entries : [];
+        entries.forEach((entry) => {
+          const tag = String(entry?.comment || entry?.title || entry?.name || '').toLowerCase();
+          if (!tag.includes('[initvar]')) return;
+          let body = String(entry?.content || '');
+          const fenced = body.trim().match(/```.*\n([\s\S]*?)\n```/m);
+          if (fenced && fenced[1]) body = fenced[1];
+          const processed = app?.processTextMacros
+            ? app.processTextMacros(body, { sessionId: sid, uiMode })
+            : body;
+          const parsed = parseInitVarPayload(processed);
+          const data = extractStatData(parsed) || parsed;
+          if (data && typeof data === 'object') {
+            merged = mergeDeep(merged || {}, data);
+          }
+        });
+      });
+      if (!merged || !Object.keys(merged).length) return null;
+      return merged;
+    };
+
     const content = String(greeting?.content || '').trim();
-    if (!content) return { message: null, initVarData: null };
     const initVarResult = extractInitVarBlocks(content, sessionId);
     const baseContent = String(initVarResult.text || '').trim();
     if (initVarResult.data) {
       applyInitVarToSession(initVarResult.data, sessionId);
     }
+    const worldInitVars = extractInitVarFromWorldbooks(sessionId);
+    if (worldInitVars) {
+      applyInitVarToSession(worldInitVars, sessionId);
+    }
     if (!baseContent) {
-      return { message: null, initVarData: initVarResult.data || null };
+      return { message: null, initVarData: initVarResult.data || worldInitVars || null };
     }
     let stored = baseContent;
     let display = baseContent;
@@ -10122,7 +10158,7 @@ Phase G（Frame 36）：循环衔接
         time: formatNowTime(),
         meta,
       },
-      initVarData: initVarResult.data || null,
+      initVarData: initVarResult.data || worldInitVars || null,
     };
   };
 

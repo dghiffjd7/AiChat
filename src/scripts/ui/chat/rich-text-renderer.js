@@ -20,6 +20,38 @@ const warnIframe = (msg, id, extra = '') => {
     logger.warn(`[iframe] ${msg} id=${id || 'unknown'}${suffix}`);
 };
 
+const buildNestedVars = (flat = {}) => {
+    const root = {};
+    const toPath = (val) => String(val || '')
+        .replace(/\[([^\]]+)\]/g, '.$1')
+        .split('.')
+        .map(seg => seg.trim().replace(/^['"]|['"]$/g, ''))
+        .filter(Boolean);
+    const isIndex = (seg) => /^\d+$/.test(seg);
+    const setByPath = (obj, path, value) => {
+        const parts = toPath(path);
+        if (!parts.length) return;
+        let cur = obj;
+        for (let i = 0; i < parts.length - 1; i += 1) {
+            const key = isIndex(parts[i]) ? Number(parts[i]) : parts[i];
+            const nextKey = parts[i + 1];
+            const shouldArray = isIndex(nextKey);
+            if (!cur[key] || typeof cur[key] !== 'object') {
+                cur[key] = shouldArray ? [] : {};
+            }
+            cur = cur[key];
+        }
+        const lastKey = isIndex(parts[parts.length - 1]) ? Number(parts[parts.length - 1]) : parts[parts.length - 1];
+        cur[lastKey] = value;
+    };
+    Object.entries(flat || {}).forEach(([key, value]) => {
+        const name = String(key || '').trim();
+        if (!name) return;
+        setByPath(root, name, value);
+    });
+    return root;
+};
+
 const getIframeHostUrl = () => {
     try {
         return new URL('iframe-host.html', window.location.href).toString();
@@ -1472,11 +1504,18 @@ export const setupIframeResizeListener = () => {
         if (!store) return null;
         const localVars = store?.listVariables?.(sid) || {};
         const globalVars = store?.listGlobalVariables?.() || {};
+        const isShared = window.appBridge?.isSharedVariableSession
+            ? Boolean(window.appBridge.isSharedVariableSession(sid))
+            : false;
+        const baseVars = isShared ? globalVars : localVars;
+        const nestedBase = buildNestedVars(baseVars);
+        const nestedGlobal = buildNestedVars(globalVars);
         return {
-            stat_data: localVars,
-            variables: localVars,
-            status_current_variables: localVars,
-            global_variables: globalVars,
+            stat_data: nestedBase,
+            variables: nestedBase,
+            status_current_variables: nestedBase,
+            global_variables: nestedGlobal,
+            local_variables: localVars,
         };
     };
     const postMvuVarsToIframe = (iframe, sessionId) => {

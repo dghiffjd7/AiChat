@@ -963,6 +963,8 @@ export class ChatStore {
         pending: [],
         variables: {},
         initialVariables: {},
+        variableSchemas: {},
+        variableRules: [],
         stageSchema: null,
         settings: {
           bubbleColor: defaults.bubbleColor,
