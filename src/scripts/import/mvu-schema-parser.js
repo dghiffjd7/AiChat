@@ -182,20 +182,142 @@ const extractSchemaCode = (content) => {
   let cleaned = raw.replace(/import\s+[\s\S]*?from\s+['"][^'"]+['"];?\s*/g, '');
   cleaned = cleaned.replace(/import\s+['"][^'"]+['"];?\s*/g, '');
 
-  // 移除 $(() => { ... }) 包装
-  cleaned = cleaned.replace(/\$\s*\(\s*\(\s*\)\s*=>\s*\{[\s\S]*?\}\s*\)\s*;?/g, '');
-  cleaned = cleaned.replace(/\$\s*\(\s*function\s*\(\s*\)\s*\{[\s\S]*?\}\s*\)\s*;?/g, '');
+  // 展开 $(() => { ... }) 包装，保留内部内容
+  cleaned = cleaned.replace(/\$\s*\(\s*\(\s*\)\s*=>\s*\{([\s\S]*?)\}\s*\)\s*;?/g, '$1');
+  cleaned = cleaned.replace(/\$\s*\(\s*function\s*\(\s*\)\s*\{([\s\S]*?)\}\s*\)\s*;?/g, '$1');
+
+  const findCallArgs = (source, fnName) => {
+    if (!source || !fnName) return null;
+    const re = new RegExp(`\\b${fnName}\\s*\\(`, 'g');
+    let m;
+    while ((m = re.exec(source))) {
+      const start = m.index + m[0].length;
+      let depth = 0;
+      let inQuote = '';
+      for (let i = start; i < source.length; i += 1) {
+        const ch = source[i];
+        const prev = i > 0 ? source[i - 1] : '';
+        if (inQuote) {
+          if (ch === inQuote && prev !== '\\') inQuote = '';
+          continue;
+        }
+        if (ch === '"' || ch === "'" || ch === '`') {
+          inQuote = ch;
+          continue;
+        }
+        if (ch === '(') depth += 1;
+        if (ch === ')') {
+          if (depth === 0) {
+            return source.slice(start, i);
+          }
+          depth -= 1;
+        }
+      }
+    }
+    return null;
+  };
+
+  const splitArgs = (text) => {
+    const args = [];
+    let buf = '';
+    let inQuote = '';
+    let paren = 0;
+    let bracket = 0;
+    let brace = 0;
+    for (let i = 0; i < text.length; i += 1) {
+      const ch = text[i];
+      const prev = i > 0 ? text[i - 1] : '';
+      if (inQuote) {
+        buf += ch;
+        if (ch === inQuote && prev !== '\\') inQuote = '';
+        continue;
+      }
+      if (ch === '"' || ch === "'" || ch === '`') {
+        inQuote = ch;
+        buf += ch;
+        continue;
+      }
+      if (ch === '(') paren += 1;
+      if (ch === ')') paren -= 1;
+      if (ch === '[') bracket += 1;
+      if (ch === ']') bracket -= 1;
+      if (ch === '{') brace += 1;
+      if (ch === '}') brace -= 1;
+      if (ch === ',' && paren === 0 && bracket === 0 && brace === 0) {
+        const trimmed = buf.trim();
+        if (trimmed) args.push(trimmed);
+        buf = '';
+        continue;
+      }
+      buf += ch;
+    }
+    const trimmed = buf.trim();
+    if (trimmed) args.push(trimmed);
+    return args;
+  };
+
+  const findAssignedExpression = (name) => {
+    const key = String(name || '').trim();
+    if (!key) return null;
+    const re = new RegExp(
+      `(?:export\\s+)?(?:const|let|var)\\s+${key}\\s*=\\s*([\\s\\S]*?)(?:;?\\s*$|;?\\s*(?:export|const|let|var|function|class)\\s)`,
+    );
+    const match = cleaned.match(re);
+    return match ? match[1].replace(/;+\s*$/, '') : null;
+  };
+
+  const resolveSchemaExpr = (expr) => {
+    const rawExpr = String(expr || '').trim();
+    if (!rawExpr) return null;
+    if (/^z\./.test(rawExpr) || /^zod\./.test(rawExpr)) return rawExpr;
+    if (/^[A-Za-z_$][\w$]*$/.test(rawExpr)) {
+      const assigned = findAssignedExpression(rawExpr);
+      if (assigned) return assigned;
+    }
+    return rawExpr;
+  };
+
+  const registerMvuArgs = findCallArgs(cleaned, 'registerMvuSchema');
+  if (registerMvuArgs) {
+    const args = splitArgs(registerMvuArgs);
+    if (args.length) {
+      const resolved = resolveSchemaExpr(args[0]);
+      if (resolved) return resolved;
+    }
+  }
+
+  const registerVarArgs = findCallArgs(cleaned, 'registerVariableSchema');
+  if (registerVarArgs) {
+    const args = splitArgs(registerVarArgs);
+    if (args.length) {
+      const expr = String(args[0] || '').trim();
+      const statMatch = expr.match(/stat_data\s*:\s*([A-Za-z_$][\w$]*)\s*(?:[,}])/);
+      if (statMatch) {
+        const assigned = findAssignedExpression(statMatch[1]);
+        if (assigned) return assigned;
+      }
+      const statDataMatch = expr.match(/statData\s*:\s*([A-Za-z_$][\w$]*)\s*(?:[,}])/);
+      if (statDataMatch) {
+        const assigned = findAssignedExpression(statDataMatch[1]);
+        if (assigned) return assigned;
+      }
+      const resolved = resolveSchemaExpr(expr);
+      if (resolved) return resolved;
+    }
+  }
 
   // 尝试提取 export const Schema = z.object({...})
-  const exportMatch = cleaned.match(/export\s+const\s+Schema\s*=\s*(z\.[\s\S]*?)(?:;?\s*$|;?\s*(?:export|const|let|var|function|class)\s)/);
+  const exportMatch = cleaned.match(/export\s+const\s+Schema\s*=\s*([\s\S]*?)(?:;?\s*$|;?\s*(?:export|const|let|var|function|class)\s)/);
   if (exportMatch) {
-    return exportMatch[1].replace(/;+\s*$/, '');
+    const resolved = resolveSchemaExpr(exportMatch[1]);
+    if (resolved) return resolved;
   }
 
   // 尝试提取 const Schema = z.object({...})
-  const constMatch = cleaned.match(/const\s+Schema\s*=\s*(z\.[\s\S]*?)(?:;?\s*$|;?\s*(?:export|const|let|var|function|class)\s)/);
+  const constMatch = cleaned.match(/const\s+Schema\s*=\s*([\s\S]*?)(?:;?\s*$|;?\s*(?:export|const|let|var|function|class)\s)/);
   if (constMatch) {
-    return constMatch[1].replace(/;+\s*$/, '');
+    const resolved = resolveSchemaExpr(constMatch[1]);
+    if (resolved) return resolved;
   }
 
   // 尝试提取任何 z.object({...}) 形式
@@ -419,7 +541,13 @@ export const parseMvuScript = (scriptContent) => {
     }
 
     // 转换为原生格式
-    const nativeSchema = convertToNativeSchema(schemaResult);
+    let nativeSchema = convertToNativeSchema(schemaResult);
+    if (nativeSchema && nativeSchema.type === 'object' && nativeSchema.properties) {
+      const statData = nativeSchema.properties.stat_data || nativeSchema.properties.statData;
+      if (statData && typeof statData === 'object') {
+        nativeSchema = statData;
+      }
+    }
     result.rawSchema = nativeSchema;
 
     // 展平为变量列表
@@ -439,7 +567,10 @@ export const parseMvuScript = (scriptContent) => {
  */
 export const hasZodSchema = (scriptContent) => {
   const raw = String(scriptContent || '');
-  return /z\.object\s*\(/.test(raw) || /export\s+const\s+Schema\s*=/.test(raw);
+  return /z\.object\s*\(/.test(raw) ||
+    /export\s+const\s+Schema\s*=/.test(raw) ||
+    /\bregisterMvuSchema\s*\(/.test(raw) ||
+    /\bregisterVariableSchema\s*\(/.test(raw);
 };
 
 /**

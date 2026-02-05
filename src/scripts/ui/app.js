@@ -696,6 +696,132 @@ const initApp = async () => {
     }
   } catch {}
 
+  const buildNestedVars = (flat = {}) => {
+    const root = {};
+    const toPath = (val) => String(val || '')
+      .replace(/\[([^\]]+)\]/g, '.$1')
+      .split('.')
+      .map(seg => seg.trim().replace(/^['"]|['"]$/g, ''))
+      .filter(Boolean);
+    const isIndex = (seg) => /^\d+$/.test(seg);
+    const setByPath = (obj, path, value) => {
+      const parts = toPath(path);
+      if (!parts.length) return;
+      let cur = obj;
+      for (let i = 0; i < parts.length - 1; i += 1) {
+        const key = isIndex(parts[i]) ? Number(parts[i]) : parts[i];
+        const nextKey = parts[i + 1];
+        const shouldArray = isIndex(nextKey);
+        if (!cur[key] || typeof cur[key] !== 'object') {
+          cur[key] = shouldArray ? [] : {};
+        }
+        cur = cur[key];
+      }
+      const lastKey = isIndex(parts[parts.length - 1]) ? Number(parts[parts.length - 1]) : parts[parts.length - 1];
+      cur[lastKey] = value;
+    };
+    Object.entries(flat || {}).forEach(([key, value]) => {
+      const name = String(key || '').trim();
+      if (!name) return;
+      setByPath(root, name, value);
+    });
+    return root;
+  };
+
+  const buildMvuVarsPayload = (sessionId, { useGlobal } = {}) => {
+    const sid = String(sessionId || chatStore.getCurrent() || '').trim();
+    if (!sid) return null;
+    const localVars = chatStore.listVariables?.(sid) || {};
+    const globalVars = chatStore.listGlobalVariables?.() || {};
+    const shared = typeof useGlobal === 'boolean' ? useGlobal : isSharedVariableSession(sid);
+    const baseVars = shared ? globalVars : localVars;
+    const nestedBase = buildNestedVars(baseVars);
+    const nestedGlobal = buildNestedVars(globalVars);
+    return {
+      stat_data: nestedBase,
+      variables: nestedBase,
+      status_current_variables: nestedBase,
+      global_variables: nestedGlobal,
+      local_variables: localVars,
+    };
+  };
+
+  const shouldEmitMvuEvent = (name) => Boolean(scriptRuntime?.hasListener?.(name));
+
+  const emitMvuEvent = (eventName, payload) => {
+    if (!scriptRuntime) return;
+    scriptRuntime.dispatchEvent(eventName, payload, { allowMutate: false })
+      .catch(err => logger.warn('script mvu event failed', eventName, err));
+  };
+
+  const emitMvuInitialized = (sessionId, messageIndex = 0, { useGlobal } = {}) => {
+    if (!shouldEmitMvuEvent('mag_variable_initialized')) return false;
+    const vars = buildMvuVarsPayload(sessionId, { useGlobal });
+    if (!vars) return false;
+    const scope = useGlobal ? 'global' : 'chat';
+    emitMvuEvent('mag_variable_initialized', { scope, variables: vars, args: [vars, messageIndex] });
+    return true;
+  };
+
+  const emitMvuUpdateStarted = (sessionId, updates, { useGlobal } = {}) => {
+    if (!shouldEmitMvuEvent('mag_variable_update_started')) return false;
+    const scope = useGlobal ? 'global' : 'chat';
+    const payload = { scope, updates: updates || {} };
+    emitMvuEvent('mag_variable_update_started', { ...payload, args: [payload] });
+    return true;
+  };
+
+  const emitMvuUpdateEnded = (sessionId, { useGlobal } = {}) => {
+    const vars = buildMvuVarsPayload(sessionId, { useGlobal });
+    if (!vars) return false;
+    const scope = useGlobal ? 'global' : 'chat';
+    const payload = { scope, variables: vars };
+    if (shouldEmitMvuEvent('mag_variable_update_ended')) {
+      emitMvuEvent('mag_variable_update_ended', { ...payload, args: [vars] });
+    }
+    if (shouldEmitMvuEvent('mag_variable_update_ended_for_zod')) {
+      emitMvuEvent('mag_variable_update_ended_for_zod', { ...payload, args: [vars] });
+    }
+    return true;
+  };
+
+  const applyMvuSchemaDefaults = (sessionId, { reason = '' } = {}) => {
+    const sid = String(sessionId || chatStore.getCurrent() || '').trim();
+    if (!sid) return false;
+    const schemas = chatStore.listVariableSchemas?.(sid) || {};
+    const keys = Object.keys(schemas);
+    if (!keys.length) return false;
+    const useGlobal = isSharedVariableSession(sid);
+    const vars = useGlobal ? (chatStore.listGlobalVariables?.() || {}) : (chatStore.listVariables?.(sid) || {});
+    const updates = {};
+    keys.forEach((name) => {
+      const key = String(name || '').trim();
+      if (!key) return;
+      const schema = schemas[key];
+      if (!schema || schema.default === undefined) return;
+      if (Object.prototype.hasOwnProperty.call(vars, key)) return;
+      updates[key] = schema.default;
+    });
+    const updateKeys = Object.keys(updates);
+    if (!updateKeys.length) return false;
+    updateKeys.forEach((key) => {
+      const value = updates[key];
+      if (useGlobal) {
+        chatStore.setGlobalVariable?.(key, value);
+      } else {
+        chatStore.setVariable?.(key, value, sid);
+        if (chatStore.getInitialVariable?.(key, sid) === undefined) {
+          chatStore.setInitialVariable?.(key, value, sid);
+        }
+      }
+    });
+    emitMvuInitialized(sid, 0, { useGlobal });
+    if (reason) {
+      logger.info(`[MVU] defaults applied=${updateKeys.length} reason=${reason} session=${sid}`);
+    }
+    return true;
+  };
+
   const DEFAULT_USER_BUBBLE_COLOR = '#E8F0FE';
 
   const normalizeHexColor = (value, fallback) => {
@@ -766,6 +892,11 @@ const initApp = async () => {
       window.appBridge?.setActiveSession?.(chatStore.getCurrent());
     } catch {}
     const sid = chatStore.getCurrent();
+    applyMvuSchemaDefaults(sid, { reason: 'persona' });
+    const rpSessionId = getRpSessionId(pid);
+    if (chatStore.hasSession?.(rpSessionId)) {
+      applyMvuSchemaDefaults(rpSessionId, { reason: 'persona_rp' });
+    }
     const contact = contactsStore.getContact(sid);
     if (typeof isChatRoomVisible === 'function' && isChatRoomVisible()) {
       enterChatRoom(sid, contact?.name || sid, chatOriginPage);
@@ -13100,6 +13231,10 @@ Phase G（Frame 36）：循环衔接
         });
         return true;
       };
+      const shouldEmitStarted = shouldEmitMvuEvent('mag_variable_update_started');
+      const shouldEmitEnded =
+        shouldEmitMvuEvent('mag_variable_update_ended') || shouldEmitMvuEvent('mag_variable_update_ended_for_zod');
+      const updates = (shouldEmitStarted || shouldEmitEnded) ? {} : null;
       let root = clone(listVars);
       const original = clone(listVars);
       commands.forEach((cmd) => {
@@ -13184,10 +13319,26 @@ Phase G（Frame 36）：循环衔接
       const delVar = useGlobal ? chatStore.deleteGlobalVariable?.bind(chatStore) : chatStore.deleteVariable?.bind(chatStore);
       if (typeof setVar !== 'function') return false;
       const allKeys = new Set([...Object.keys(original), ...Object.keys(root)]);
+      if (updates) {
+        for (const key of allKeys) {
+          const nextVal = root[key];
+          const prevVal = original[key];
+          if (nextVal === undefined) {
+            if (key in original) updates[key] = undefined;
+            continue;
+          }
+          if (!deepEqual(prevVal, nextVal)) updates[key] = nextVal;
+        }
+        if (Object.keys(updates).length && shouldEmitStarted) {
+          emitMvuUpdateStarted(sid, updates, { useGlobal });
+        }
+      }
       let changed = false;
       for (const key of allKeys) {
+        if (updates && !Object.prototype.hasOwnProperty.call(updates, key)) continue;
         const nextVal = root[key];
         const prevVal = original[key];
+        if (!updates && deepEqual(prevVal, nextVal)) continue;
         if (nextVal === undefined) {
           if (typeof delVar === 'function' && key in original) {
             delVar(key, sid);
@@ -13195,10 +13346,11 @@ Phase G（Frame 36）：循环衔接
           }
           continue;
         }
-        if (!deepEqual(prevVal, nextVal)) {
-          setVar(key, nextVal, sid);
-          changed = true;
-        }
+        setVar(key, nextVal, sid);
+        changed = true;
+      }
+      if (changed && shouldEmitEnded) {
+        emitMvuUpdateEnded(sid, { useGlobal });
       }
       return changed;
     };
@@ -15185,6 +15337,7 @@ Phase G（Frame 36）：循环衔接
 
   window.addEventListener('worldinfo-changed', () => {
     updateWorldIndicator();
+    applyMvuSchemaDefaults(chatStore.getCurrent(), { reason: 'worldbook' });
     rerenderCurrentSession();
   });
   window.addEventListener('memory-table-push', ev => {

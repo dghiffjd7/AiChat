@@ -1,5 +1,15 @@
 # 開發進度追蹤（必更新）(必须使用当下时间记录)
 
+## 2026-02-05 (MVU 兼容补齐 + 事件模拟)
+
+- **Schema 入口扩展**：解析 `registerMvuSchema/registerVariableSchema` 调用，支持 stat_data 包装自动解包。
+- **默认值补齐**：Persona/世界书切换时按变量 Schema 自动补齐缺失默认值，并触发初始化事件。
+- **事件模拟（懒加载）**：脚本运行时监听事件注册后才触发 `mag_variable_initialized` / `mag_variable_update_started` / `mag_variable_update_ended(_for_zod)`。
+- 修改：
+  - `src/scripts/import/mvu-schema-parser.js`
+  - `src/scripts/plugins/script-runtime.js`
+  - `src/scripts/ui/app.js`
+
 ## 2026-02-05 (MVU schemaOnly 脚本执行跳过)
 
 - **修复 Vue 报错**：解决导入 MVU 脚本后 "vue is not defined" 错误。

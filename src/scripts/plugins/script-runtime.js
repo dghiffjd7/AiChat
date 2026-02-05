@@ -15,6 +15,14 @@ let seq = 0;
 const pending = new Map();
 const importCache = new Map();
 const IMPORT_CACHE_LIMIT = 32;
+const listenedEvents = new Set();
+
+const notifyListener = (eventName) => {
+  const name = String(eventName || '').trim();
+  if (!name || listenedEvents.has(name)) return;
+  listenedEvents.add(name);
+  try { postMessage({ type: 'listener_add', event: name }); } catch {}
+};
 
 const clone = (v) => {
   try { return structuredClone(v); } catch { return JSON.parse(JSON.stringify(v)); }
@@ -53,6 +61,7 @@ const eventOn = (event, cb) => {
   const on = self.__chatappScriptOn;
   if (!on || typeof cb !== 'function') return;
   on(event, wrapLegacyHandler(cb));
+  notifyListener(event);
 };
 
 const eventRemoveListener = (event, cb) => {
@@ -1006,6 +1015,7 @@ const compileScript = (record) => {
     const list = handlers.get(name) || [];
     list.push(fn);
     handlers.set(name, list);
+    notifyListener(name);
   };
   const off = (event, fn) => {
     const name = String(event || '').trim();
@@ -1029,6 +1039,7 @@ const compileScript = (record) => {
     };
     legacyHandlerMap.set(cb, wrapped);
     on(name, wrapped);
+    notifyListener(name);
   };
   const eventRemoveListener = (event, cb) => {
     const name = String(event || '').trim();
@@ -1328,10 +1339,18 @@ ${allowNetwork ? `
     if (!map.has(key)) map.set(key, []);
     return map.get(key);
   }
+  const listenedEvents = new Set();
+  function notifyListener(name) {
+    const eventName = String(name || '').trim();
+    if (!eventName || listenedEvents.has(eventName)) return;
+    listenedEvents.add(eventName);
+    parent.postMessage({ type: 'script-iframe-listener', event: eventName, scriptId }, '*');
+  }
   function on(event, fn) {
     const name = String(event || '').trim();
     if (!name || typeof fn !== 'function') return;
     ensureArray(handlers, name).push(fn);
+    notifyListener(name);
   }
   function off(event, fn) {
     const name = String(event || '').trim();
@@ -1652,6 +1671,10 @@ ${allowNetwork ? `
   async onMessage(e) {
     const msg = e?.data || {};
     if (!msg || typeof msg !== 'object') return;
+    if (msg.type === 'script-iframe-listener') {
+      this.owner.recordListener?.(msg.event);
+      return;
+    }
     if (msg.type === 'script-iframe-rpc') {
       try {
         const result = await this.owner.processRpc(msg.method, msg.params || {});
@@ -1676,6 +1699,7 @@ export class ScriptRuntime {
     this.pending = new Map();
     this.seq = 0;
     this.oneTimeScripts = new Map();
+    this.listenerEvents = new Set();
     this.context = {
       sessionId: '',
       personaId: '',
@@ -1697,6 +1721,18 @@ export class ScriptRuntime {
       if (!key || !key.startsWith('script')) return;
       this.syncScripts().catch(() => {});
     });
+  }
+
+  recordListener(eventName) {
+    const name = String(eventName || '').trim();
+    if (!name) return;
+    this.listenerEvents.add(name);
+  }
+
+  hasListener(eventName) {
+    const name = String(eventName || '').trim();
+    if (!name) return false;
+    return this.listenerEvents.has(name);
   }
 
   async init() {
@@ -1980,6 +2016,10 @@ export class ScriptRuntime {
 
   handleWorkerMessage(msg) {
     if (!msg || typeof msg !== 'object') return;
+    if (msg.type === 'listener_add') {
+      this.recordListener(msg.event);
+      return;
+    }
     if (msg.type === 'dispatch_result') {
       const pending = this.pending.get(msg.id);
       if (!pending) return;
