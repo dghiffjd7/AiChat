@@ -10346,7 +10346,25 @@ Phase G（Frame 36）：循环衔接
         out[name] = value;
         if (log) log.unmatched.push(name);
       });
-      if (log) log.normalizedKeys = Object.keys(out);
+      if (log) {
+        log.normalizedKeys = Object.keys(out);
+        log.missingSchema = schemaKeys.filter(key => !Object.prototype.hasOwnProperty.call(out, key));
+        log.unmatchedNested = [];
+        const collectNested = (prefix, obj, depth = 0) => {
+          if (!obj || typeof obj !== 'object' || Array.isArray(obj) || depth > 2) return;
+          Object.keys(obj).forEach((child) => {
+            const name = String(child || '').trim();
+            if (!name) return;
+            const path = prefix ? `${prefix}.${name}` : name;
+            log.unmatchedNested.push(path);
+            collectNested(path, obj[child], depth + 1);
+          });
+        };
+        (log.unmatched || []).forEach((name) => {
+          const val = data[name];
+          collectNested(name, val, 0);
+        });
+      }
       return out;
     };
 
@@ -10361,6 +10379,8 @@ Phase G（Frame 36）：循环衔接
         const normalizedKeys = meta.normalizedKeys || Object.keys(normalized || {});
         const mappedLeaf = Array.isArray(meta.mappedLeaf) ? meta.mappedLeaf : [];
         const unmatched = Array.isArray(meta.unmatched) ? meta.unmatched : [];
+        const missingSchema = Array.isArray(meta.missingSchema) ? meta.missingSchema : [];
+        const unmatchedNested = Array.isArray(meta.unmatchedNested) ? meta.unmatchedNested : [];
         logger.info(`[initvar] session=${sessionId} source=${source || 'unknown'} raw=${rawKeys.length} normalized=${normalizedKeys.length} schema=${(meta.schemaKeys || []).length} mappedLeaf=${mappedLeaf.length} unmatched=${unmatched.length}`);
         if (meta.noSchema) logger.info(`[initvar] session=${sessionId} source=${source || 'unknown'} no schema detected, using raw keys`);
         if (mappedLeaf.length) {
@@ -10368,12 +10388,41 @@ Phase G（Frame 36）：循环衔接
           logger.info(`[initvar] session=${sessionId} source=${source || 'unknown'} leaf mapped: ${pairs}`);
         }
         if (unmatched.length) logger.info(`[initvar] session=${sessionId} source=${source || 'unknown'} unmatched: ${unmatched.join(', ')}`);
+        if (missingSchema.length) {
+          const sample = missingSchema.slice(0, 12).join(', ');
+          logger.info(`[initvar] session=${sessionId} source=${source || 'unknown'} missing schema keys (${missingSchema.length}): ${sample}`);
+        }
+        if (unmatchedNested.length) {
+          const sample = unmatchedNested.slice(0, 20).join(', ');
+          logger.info(`[initvar] session=${sessionId} source=${source || 'unknown'} nested keys under unmatched: ${sample}`);
+        }
       }
       const existing = chatStore.listVariables(sessionId) || {};
       const hasExisting = Object.keys(existing).length > 0;
-      const merged = hasExisting
-        ? (preferInit ? mergeDeep(existing, normalized) : mergeDeep(normalized, existing))
-        : normalized;
+      let merged = {};
+      const mergedUpdates = {};
+      if (!hasExisting) {
+        merged = normalized;
+      } else if (!preferInit) {
+        merged = mergeDeep(normalized, existing);
+      } else {
+        merged = { ...existing };
+        Object.entries(normalized).forEach(([key, value]) => {
+          const name = String(key || '').trim();
+          if (!name) return;
+          if (!Object.prototype.hasOwnProperty.call(existing, name)) {
+            merged[name] = value;
+            mergedUpdates[name] = value;
+            return;
+          }
+          const initial = chatStore.getInitialVariable?.(name, sessionId);
+          if (initial !== undefined && !deepEqual(existing[name], initial)) {
+            return; // user changed; keep existing
+          }
+          merged[name] = value;
+          mergedUpdates[name] = value;
+        });
+      }
       let changed = false;
       Object.entries(merged).forEach(([key, value]) => {
         const name = String(key || '').trim();
@@ -10385,6 +10434,14 @@ Phase G（Frame 36）：循环衔接
         }
         changed = true;
       });
+      if (preferInit && hasExisting && logger?.info) {
+        const applied = Object.keys(mergedUpdates);
+        if (applied.length) {
+          logger.info(`[initvar] session=${sessionId} source=${source || 'unknown'} applied=${applied.length} (respecting user changes)`);
+        } else {
+          logger.info(`[initvar] session=${sessionId} source=${source || 'unknown'} applied=0 (all keys already set or user-changed)`);
+        }
+      }
       return changed;
     };
     const extractInitVarFromWorldbooks = (sid) => {

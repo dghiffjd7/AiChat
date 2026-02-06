@@ -71,12 +71,27 @@ const normalizeVariableSchema = (raw) => {
     ui: null,
   };
   if (type === 'number' && input.range && typeof input.range === 'object') {
-    const min = Number(input.range.min);
-    const max = Number(input.range.max);
-    schema.range = {
-      min: Number.isFinite(min) ? min : null,
-      max: Number.isFinite(max) ? max : null,
-    };
+    const minRaw = input.range.min;
+    const maxRaw = input.range.max;
+    const minText = minRaw === null || minRaw === undefined ? '' : String(minRaw).trim();
+    const maxText = maxRaw === null || maxRaw === undefined ? '' : String(maxRaw).trim();
+    const hasMin = minText.length > 0;
+    const hasMax = maxText.length > 0;
+    const min = hasMin ? Number(minText) : null;
+    const max = hasMax ? Number(maxText) : null;
+    if (Number.isFinite(min) || Number.isFinite(max)) {
+      schema.range = {
+        min: Number.isFinite(min) ? min : null,
+        max: Number.isFinite(max) ? max : null,
+      };
+    }
+  }
+  if (schema.range && schema.range.min === 0 && schema.range.max === 0) {
+    const display = String(schema.ui?.display || '').toLowerCase();
+    const defNum = Number(input.default);
+    if (display === 'card' && Number.isFinite(defNum) && defNum !== 0) {
+      schema.range = null;
+    }
   }
   if (type === 'enum') {
     const options = Array.isArray(input.options) ? input.options.map(v => String(v)) : [];

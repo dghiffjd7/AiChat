@@ -9,7 +9,9 @@
 - **MVU Schema 合并优化**：保留 Zod 默认值/范围信息，避免被卡内推断 Schema 覆盖导致数值归零。
 - **默认值补齐防覆盖**：检测嵌套对象已存在的值时不再回填默认值，避免覆盖已有数值。
 - **变量管理器滚动**：列表与卡片统一滚动容器，避免内容被截断。
-- **InitVar 日志**：记录 initvar 规范化/映射与未匹配项，便于排查变量不一致问题。
+- **InitVar 日志**：记录 initvar 规范化/映射与未匹配项，并补充缺失 schema/嵌套键提示。
+- **InitVar 不覆盖改动**：initvar 只补缺/默认值，已被用户修改的变量不会被重置。
+- **变量范围清理**：数值变量未设置 min/max 时不再保存空 range；读取时避免将空 range 归为 0..0，并对 card+默认值非 0 的 0..0 range 做回收。
 - 修改：
   - `src/index.html`
   - `src/assets/css/qq-legacy.css`
@@ -17,6 +19,7 @@
   - `src/scripts/ui/chat/chat-ui.js`
   - `src/scripts/ui/character-card-importer.js`
   - `src/scripts/ui/variable-panel.js`
+  - `src/scripts/storage/chat-store.js`
 
 ## 2026-02-05 (MVU 兼容补齐 + 事件模拟)
 

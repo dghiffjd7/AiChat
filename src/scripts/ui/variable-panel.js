@@ -1269,12 +1269,18 @@ export class VariablePanel {
             if (type === 'number') {
                 const minRaw = fields.min?.value ?? '';
                 const maxRaw = fields.max?.value ?? '';
-                const min = minRaw === '' ? null : Number(minRaw);
-                const max = maxRaw === '' ? null : Number(maxRaw);
-                schema.range = {
-                    min: Number.isFinite(min) ? min : null,
-                    max: Number.isFinite(max) ? max : null,
-                };
+                const minText = String(minRaw ?? '').trim();
+                const maxText = String(maxRaw ?? '').trim();
+                const hasMin = minText.length > 0;
+                const hasMax = maxText.length > 0;
+                if (hasMin || hasMax) {
+                    const min = hasMin ? Number(minText) : null;
+                    const max = hasMax ? Number(maxText) : null;
+                    schema.range = {
+                        min: Number.isFinite(min) ? min : null,
+                        max: Number.isFinite(max) ? max : null,
+                    };
+                }
             }
             if (type === 'enum') {
                 const options = String(fields.options?.value || '').split(',').map(s => s.trim()).filter(Boolean);
