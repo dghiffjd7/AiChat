@@ -793,13 +793,30 @@ const initApp = async () => {
     if (!keys.length) return false;
     const useGlobal = isSharedVariableSession(sid);
     const vars = useGlobal ? (chatStore.listGlobalVariables?.() || {}) : (chatStore.listVariables?.(sid) || {});
+    const toPath = (raw) => String(raw || '')
+      .replace(/\[([^\]]+)\]/g, '.$1')
+      .split('.')
+      .map(seg => seg.trim().replace(/^['"]|['"]$/g, ''))
+      .filter(Boolean);
+    const hasNestedValue = (key) => {
+      if (Object.prototype.hasOwnProperty.call(vars, key)) return true;
+      const parts = toPath(key);
+      if (parts.length < 2) return false;
+      let cur = vars[parts[0]];
+      for (let i = 1; i < parts.length; i += 1) {
+        const part = parts[i];
+        if (!cur || typeof cur !== 'object' || !(part in cur)) return false;
+        cur = cur[part];
+      }
+      return true;
+    };
     const updates = {};
     keys.forEach((name) => {
       const key = String(name || '').trim();
       if (!key) return;
       const schema = schemas[key];
       if (!schema || schema.default === undefined) return;
-      if (Object.prototype.hasOwnProperty.call(vars, key)) return;
+      if (hasNestedValue(key)) return;
       updates[key] = schema.default;
     });
     const updateKeys = Object.keys(updates);
@@ -915,6 +932,9 @@ const initApp = async () => {
       enterRpMode({ captureSocial: false });
     }
     activePersonaId = pid;
+    if (uiMode === 'rp') {
+      refreshRpToolbar(getRpSessionId(pid));
+    }
     return true;
   };
 
@@ -4439,8 +4459,8 @@ Phase G（Frame 36）：循环衔接
     if (modeSwitchBtn) {
       const isRp = uiMode === 'rp';
       modeSwitchBtn.setAttribute('aria-pressed', isRp ? 'true' : 'false');
-      modeSwitchBtn.setAttribute('aria-label', isRp ? '切换到社交' : '切换到 RP');
-      modeSwitchBtn.setAttribute('title', isRp ? '切换到社交' : '切换到 RP');
+      modeSwitchBtn.setAttribute('aria-label', isRp ? '切换到社交' : '切换到创意写作');
+      modeSwitchBtn.setAttribute('title', isRp ? '切换到社交' : '切换到创意写作');
     }
     scheduleModeSwitchSync();
   };
@@ -9970,13 +9990,22 @@ Phase G（Frame 36）：循环衔接
 
   const getRpTitle = () => {
     const name = getRpCharacterName();
-    return name || 'RP';
+    return name || '创意写作';
   };
 
   const getRpGreetings = () => rpSessionStore.getGreetings?.() || [];
+  const hasRpConversation = (sessionId) => {
+    const sid = String(sessionId || '').trim();
+    if (!sid) return false;
+    const messages = chatStore.getMessages(sid) || [];
+    return messages.some(m => m?.role === 'user');
+  };
   const ensureRpGreetingActive = () => {
     const list = getRpGreetings();
     if (!list.length) return null;
+    const activeId = String(rpSessionStore.getActiveGreetingId?.() || '').trim();
+    const found = activeId ? list.find(item => String(item?.id || '') === activeId) : null;
+    if (found) return found;
     const first = list[0] || null;
     const nextId = first?.id || '';
     if (nextId) rpSessionStore.setActiveGreeting?.(nextId);
@@ -10005,6 +10034,64 @@ Phase G（Frame 36）：循环衔接
     const active = ensureRpGreetingActive();
     if (active?.id) rpGreetingSelect.value = active.id;
   };
+
+  const refreshRpToolbar = (sessionId = getRpSessionId(activePersonaId)) => {
+    if (!rpToolbar) return;
+    if (uiMode !== 'rp') {
+      rpToolbar.style.display = 'none';
+      return;
+    }
+    rpToolbar.style.display = '';
+    renderRpToolbar();
+    const list = getRpGreetings();
+    const locked = hasRpConversation(sessionId);
+    if (rpGreetingSelect) {
+      if (!list.length) {
+        rpGreetingSelect.disabled = true;
+      } else {
+        rpGreetingSelect.disabled = locked;
+      }
+    }
+  };
+
+  const getRpGreetingState = (sessionId = getRpSessionId(activePersonaId)) => {
+    const sid = String(sessionId || '').trim();
+    const list = getRpGreetings()
+      .map(item => ({
+        id: String(item?.id || '').trim(),
+        title: String(item?.title || '').trim(),
+      }))
+      .filter(item => item.id);
+    return {
+      sessionId: sid,
+      greetings: list,
+      activeId: String(rpSessionStore.getActiveGreetingId?.() || '').trim(),
+      locked: hasRpConversation(sid),
+    };
+  };
+
+  const setRpGreeting = async (nextId, sessionId = getRpSessionId(activePersonaId)) => {
+    const sid = String(sessionId || '').trim();
+    const targetId = String(nextId || '').trim();
+    if (!sid || !targetId) return false;
+    if (hasRpConversation(sid)) {
+      window.toastr?.info?.('已有互动，无法切换开场白');
+      refreshRpToolbar(sid);
+      return false;
+    }
+    const prevId = String(rpSessionStore.getActiveGreetingId?.() || '').trim();
+    if (targetId === prevId) return true;
+    rpSessionStore.setActiveGreeting?.(targetId);
+    resetRpHistory(sid);
+    return true;
+  };
+
+  try {
+    if (window.appBridge) {
+      window.appBridge.getRpGreetingState = getRpGreetingState;
+      window.appBridge.setRpGreeting = setRpGreeting;
+    }
+  } catch {}
 
   const buildRpGreetingMessage = (greeting, sessionId) => {
     const isPlainObject = (val) => (
@@ -10198,13 +10285,95 @@ Phase G（Frame 36）：循环衔接
       const nextText = cleaned.replace(/\n{3,}/g, '\n\n').trim();
       return { text: nextText, data: merged };
     };
-    const applyInitVarToSession = (data, sid) => {
+    const normalizeInitVarData = (data, sid, meta) => {
+      const log = meta && typeof meta === 'object' ? meta : null;
+      if (!data || typeof data !== 'object') return null;
+      const schemaMap = chatStore.listVariableSchemas?.(sid) || {};
+      const schemaKeys = Object.keys(schemaMap);
+      if (log) {
+        log.rawKeys = Object.keys(data || {}).map(key => String(key || '').trim()).filter(Boolean);
+        log.schemaKeys = schemaKeys.slice();
+        log.mappedPath = [];
+        log.mappedLeaf = [];
+        log.unmatched = [];
+        log.noSchema = false;
+      }
+      if (!schemaKeys.length) {
+        if (log) log.noSchema = true;
+        return data;
+      }
+      const leafIndex = {};
+      schemaKeys.forEach((key) => {
+        const name = String(key || '').trim();
+        if (!name) return;
+        const leaf = name.split('.').pop() || name;
+        if (!leafIndex[leaf]) leafIndex[leaf] = [];
+        leafIndex[leaf].push(name);
+      });
+      const getByPath = (obj, path) => {
+        if (!obj || typeof obj !== 'object') return undefined;
+        if (Object.prototype.hasOwnProperty.call(obj, path)) return obj[path];
+        const parts = String(path || '').split('.').filter(Boolean);
+        if (parts.length < 2) return undefined;
+        let cur = obj;
+        for (const part of parts) {
+          if (!cur || typeof cur !== 'object' || !(part in cur)) return undefined;
+          cur = cur[part];
+        }
+        return cur;
+      };
+      const out = {};
+      schemaKeys.forEach((key) => {
+        const name = String(key || '').trim();
+        if (!name) return;
+        const hit = getByPath(data, name);
+        if (hit !== undefined) {
+          out[name] = hit;
+          if (log) log.mappedPath.push(name);
+        }
+      });
+      Object.entries(data || {}).forEach(([key, value]) => {
+        const name = String(key || '').trim();
+        if (!name) return;
+        if (Object.prototype.hasOwnProperty.call(out, name)) return;
+        if (schemaMap[name]) return;
+        const candidates = leafIndex[name] || [];
+        if (candidates.length === 1 && !Object.prototype.hasOwnProperty.call(out, candidates[0])) {
+          out[candidates[0]] = value;
+          if (log) log.mappedLeaf.push({ from: name, to: candidates[0] });
+          return;
+        }
+        out[name] = value;
+        if (log) log.unmatched.push(name);
+      });
+      if (log) log.normalizedKeys = Object.keys(out);
+      return out;
+    };
+
+    const applyInitVarToSession = (data, sid, { preferInit = false, source = '' } = {}) => {
       if (!data || typeof data !== 'object') return false;
       const sessionId = String(sid || '').trim();
       if (!sessionId) return false;
+      const meta = {};
+      const normalized = normalizeInitVarData(data, sessionId, meta) || {};
+      if (logger?.info) {
+        const rawKeys = meta.rawKeys || Object.keys(data || {});
+        const normalizedKeys = meta.normalizedKeys || Object.keys(normalized || {});
+        const mappedLeaf = Array.isArray(meta.mappedLeaf) ? meta.mappedLeaf : [];
+        const unmatched = Array.isArray(meta.unmatched) ? meta.unmatched : [];
+        logger.info(`[initvar] session=${sessionId} source=${source || 'unknown'} raw=${rawKeys.length} normalized=${normalizedKeys.length} schema=${(meta.schemaKeys || []).length} mappedLeaf=${mappedLeaf.length} unmatched=${unmatched.length}`);
+        if (meta.noSchema) logger.info(`[initvar] session=${sessionId} source=${source || 'unknown'} no schema detected, using raw keys`);
+        if (mappedLeaf.length) {
+          const pairs = mappedLeaf.map(item => `${item.from}->${item.to}`).join(', ');
+          logger.info(`[initvar] session=${sessionId} source=${source || 'unknown'} leaf mapped: ${pairs}`);
+        }
+        if (unmatched.length) logger.info(`[initvar] session=${sessionId} source=${source || 'unknown'} unmatched: ${unmatched.join(', ')}`);
+      }
       const existing = chatStore.listVariables(sessionId) || {};
       const hasExisting = Object.keys(existing).length > 0;
-      const merged = hasExisting ? mergeDeep(data, existing) : data;
+      const merged = hasExisting
+        ? (preferInit ? mergeDeep(existing, normalized) : mergeDeep(normalized, existing))
+        : normalized;
       let changed = false;
       Object.entries(merged).forEach(([key, value]) => {
         const name = String(key || '').trim();
@@ -10261,11 +10430,11 @@ Phase G（Frame 36）：循环衔接
     const initVarResult = extractInitVarBlocks(content, sessionId);
     const baseContent = String(initVarResult.text || '').trim();
     if (initVarResult.data) {
-      applyInitVarToSession(initVarResult.data, sessionId);
+      applyInitVarToSession(initVarResult.data, sessionId, { preferInit: true, source: 'greeting' });
     }
     const worldInitVars = extractInitVarFromWorldbooks(sessionId);
     if (worldInitVars) {
-      applyInitVarToSession(worldInitVars, sessionId);
+      applyInitVarToSession(worldInitVars, sessionId, { preferInit: true, source: 'worldbook' });
     }
     if (!baseContent) {
       return { message: null, initVarData: initVarResult.data || worldInitVars || null };
@@ -10304,6 +10473,7 @@ Phase G（Frame 36）：循环衔接
     if (!msg) return Boolean(result?.initVarData);
     chatStore.appendMessage(msg, sid);
     if (String(chatStore.getCurrent() || '') === sid) ui.addMessage(msg);
+    refreshRpToolbar(sid);
     return true;
   };
 
@@ -10317,7 +10487,35 @@ Phase G（Frame 36）：循环衔接
     if (!keepInput) ui.clearInput();
     refreshChatAndContacts();
     updatePendingFloat(sid);
+    refreshRpToolbar(sid);
   };
+
+  if (!chatStore.__rpGreetingWrapped) {
+    chatStore.__rpGreetingWrapped = true;
+    const originalAppendMessage = chatStore.appendMessage.bind(chatStore);
+    chatStore.appendMessage = (message, id = chatStore.getCurrent()) => {
+      const sid = String(id || chatStore.getCurrent() || '').trim();
+      const saved = originalAppendMessage(message, sid);
+      if (saved && sid && isRpSessionId(sid)) {
+        if (saved.role === 'user' || (saved.role === 'assistant' && !saved?.meta?.isGreeting)) {
+          refreshRpToolbar(sid);
+        }
+      }
+      return saved;
+    };
+    if (typeof chatStore.startNewChat === 'function') {
+      const originalStartNewChat = chatStore.startNewChat.bind(chatStore);
+      chatStore.startNewChat = (id = chatStore.getCurrent(), archiveName = '', options = {}) => {
+        const sid = String(id || chatStore.getCurrent() || '').trim();
+        const result = originalStartNewChat(id, archiveName, options);
+        if (sid && isRpSessionId(sid)) {
+          seedRpGreetingIfNeeded(sid);
+          refreshRpToolbar(sid);
+        }
+        return result;
+      };
+    }
+  }
 
   const enterRpMode = async ({ captureSocial = true } = {}) => {
     if (uiMode === 'rp') return;
@@ -10350,13 +10548,14 @@ Phase G（Frame 36）：循环衔接
       chatStore.setSessionSettings?.(rpSessionId, { ...settings, sharedVariables: true, sharedMemory: true });
       chatStore._persist?.();
     }
+    applyMvuSchemaDefaults(rpSessionId, { reason: 'rp_enter' });
     enterChatRoom(rpSessionId, getRpTitle(), 'chat');
     if (currentChatTitle) currentChatTitle.textContent = getRpTitle();
     try {
       await hydrateRpCharacterNameFromCard(personaStore.getActive?.());
     } catch {}
     seedRpGreetingIfNeeded(rpSessionId);
-    if (rpToolbar) rpToolbar.style.display = 'none';
+    refreshRpToolbar(rpSessionId);
     if (backToListBtn) backToListBtn.style.display = 'none';
   };
 
@@ -10466,33 +10665,14 @@ Phase G（Frame 36）：循环衔接
   rpGreetingSelect?.addEventListener('change', async () => {
     const nextId = String(rpGreetingSelect.value || '').trim();
     if (!nextId) return;
-    const prevId = rpSessionStore.getActiveGreetingId?.() || '';
-    if (nextId === prevId) return;
-    rpSessionStore.setActiveGreeting?.(nextId);
-    if (uiMode !== 'rp') return;
-    const rpSessionId = getRpSessionId(activePersonaId);
-    const hasHistory = (chatStore.getMessages(rpSessionId) || []).some(isConversationMessage);
-    if (hasHistory) {
-      const ok = await appConfirm({
-        title: '切换开场白',
-        message: '切换开场白将清空当前 RP 剧情，是否继续？',
-        confirmText: '切换并清空',
-        cancelText: '取消',
-        danger: true,
-      });
-      if (!ok) {
-        if (prevId) rpGreetingSelect.value = prevId;
-        return;
-      }
-    }
-    resetRpHistory(rpSessionId);
+    await setRpGreeting(nextId, getRpSessionId(activePersonaId));
   });
 
   rpResetBtn?.addEventListener('click', async () => {
     if (uiMode !== 'rp') return;
     const ok = await appConfirm({
-      title: '重置 RP 剧情',
-      message: '将清空当前 RP 历史并重新插入开场白，是否继续？',
+      title: '重置创意写作剧情',
+      message: '将清空当前创意写作历史并重新插入开场白，是否继续？',
       confirmText: '重置',
       cancelText: '取消',
       danger: true,
@@ -10595,7 +10775,7 @@ Phase G（Frame 36）：循环衔接
     },
     sticker: async () => {
       if (!isStickerAllowed()) {
-        window.toastr?.info?.('RP 模式不支持贴图');
+        window.toastr?.info?.('创意写作模式不支持贴图');
         return;
       }
       setStickerPanelOpen(true);
@@ -15029,7 +15209,7 @@ Phase G（Frame 36）：循环衔接
       e.preventDefault();
       e.stopPropagation();
       if (uiMode === 'rp') {
-        window.toastr?.info?.('RP 模式固定为创意写作');
+        window.toastr?.info?.('创意写作模式已固定为创意写作');
         hidePopover();
         return;
       }
@@ -15395,6 +15575,10 @@ Phase G（Frame 36）：循环衔接
       }
       ui.setInputText(draft || '');
       ui.setSessionLabel(id);
+      applyMvuSchemaDefaults(id, { reason: 'session' });
+      if (uiMode === 'rp') {
+        refreshRpToolbar(id);
+      }
       refreshChatAndContacts();
     }
   });
@@ -15410,6 +15594,7 @@ Phase G（Frame 36）：循环衔接
     sessionId: chatStore.getCurrent(),
     inChatRoom: chatRoom ? !chatRoom.classList.contains('hidden') : false,
   });
+  applyMvuSchemaDefaults(chatStore.getCurrent(), { reason: 'boot' });
   updateWorldIndicator();
   refreshChatAndContacts();
   applyUiModeUI();
@@ -15527,7 +15712,7 @@ Phase G（Frame 36）：循环衔接
 
   function handleSticker(tag) {
     if (!isStickerAllowed()) {
-      window.toastr?.info?.('RP 模式不支持贴图');
+      window.toastr?.info?.('创意写作模式不支持贴图');
       return;
     }
     const sessionId = chatStore.getCurrent();

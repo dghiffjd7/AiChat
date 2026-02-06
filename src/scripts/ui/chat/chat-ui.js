@@ -247,11 +247,49 @@ export class ChatUI {
     return details;
   }
 
+  buildGreetingSwitch(message) {
+    const meta = message?.meta;
+    if (!meta || meta.isGreeting !== true) return null;
+    if (document?.body?.dataset?.uiMode !== 'rp') return null;
+    const bridge = typeof window !== 'undefined' ? window.appBridge : null;
+    if (!bridge?.getRpGreetingState || !bridge?.setRpGreeting) return null;
+    const state = bridge.getRpGreetingState(bridge.activeSessionId || message?.sessionId);
+    const list = Array.isArray(state?.greetings) ? state.greetings : [];
+    if (list.length <= 1) return null;
+
+    const wrap = document.createElement('div');
+    wrap.className = 'rp-greeting-switch';
+    const label = document.createElement('span');
+    label.className = 'rp-greeting-switch-label';
+    label.textContent = '开场白';
+    const select = document.createElement('select');
+    select.className = 'rp-greeting-switch-select';
+    list.forEach((g, idx) => {
+      const opt = document.createElement('option');
+      opt.value = g.id;
+      opt.textContent = g.title || `开场白 ${idx + 1}`;
+      select.appendChild(opt);
+    });
+    const activeId = String(state?.activeId || '').trim();
+    if (activeId) select.value = activeId;
+    select.disabled = state?.locked === true;
+    select.addEventListener('change', () => {
+      const nextId = String(select.value || '').trim();
+      if (!nextId) return;
+      bridge.setRpGreeting?.(nextId, state?.sessionId || bridge.activeSessionId);
+    });
+    wrap.appendChild(label);
+    wrap.appendChild(select);
+    return wrap;
+  }
+
   prepareTextContainer(bubble, message) {
+    const greetingEl = this.buildGreetingSwitch(message);
     const reasoningEl = this.buildReasoningElement(message);
-    if (!reasoningEl) return bubble;
+    if (!greetingEl && !reasoningEl) return bubble;
     bubble.innerHTML = '';
-    bubble.appendChild(reasoningEl);
+    if (greetingEl) bubble.appendChild(greetingEl);
+    if (reasoningEl) bubble.appendChild(reasoningEl);
     const content = document.createElement('div');
     content.className = 'chat-message-content';
     bubble.appendChild(content);

@@ -350,6 +350,32 @@ body[data-ui-mode='rp'] .bottom-nav {
   cursor: pointer;
 }
 
+.rp-greeting-switch {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: -2px 0 6px;
+  padding-bottom: 6px;
+  border-bottom: 1px dashed rgba(15, 23, 42, 0.14);
+}
+
+.rp-greeting-switch-label {
+  font-size: 11px;
+  color: #0f172a;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.rp-greeting-switch-select {
+  flex: 1;
+  min-width: 110px;
+  padding: 4px 8px;
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  border-radius: 8px;
+  background: #fff;
+  font-size: 11px;
+}
+
 .chat-back-btn {
   width: 28px;
   height: 28px;

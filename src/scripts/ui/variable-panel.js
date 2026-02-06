@@ -274,9 +274,10 @@ export class VariablePanel {
                     </div>
                 </div>
             </div>
-            <div id="var-cards" style="padding:10px 12px; border-bottom:1px solid rgba(0,0,0,0.06); display:flex; flex-wrap:wrap; gap:8px;"></div>
-
-            <div id="var-list" style="flex:1; min-height:0; overflow:auto; -webkit-overflow-scrolling:touch; padding:10px 12px;"></div>
+            <div id="var-scroll" style="flex:1; min-height:0; overflow:auto; -webkit-overflow-scrolling:touch;">
+                <div id="var-cards" style="padding:10px 12px; border-bottom:1px solid rgba(0,0,0,0.06); display:flex; flex-wrap:wrap; gap:8px;"></div>
+                <div id="var-list" style="padding:10px 12px;"></div>
+            </div>
         `;
 
         overlay.appendChild(panel);

@@ -369,7 +369,33 @@ export class CharacterCardImporter {
         mvuSource = 'stat_data';
       } else {
         combinedMvu.variables = { ...combinedMvu.variables, ...mvuFromCard.variables };
-        combinedMvu.schemas = { ...mvuFromCard.schemas, ...combinedMvu.schemas };
+        const mergeSchema = (base, extra) => {
+          const out = { ...(extra || {}) };
+          const prefer = (key) => {
+            if (base && base[key] !== undefined) return base[key];
+            if (extra && extra[key] !== undefined) return extra[key];
+            return undefined;
+          };
+          const type = prefer('type');
+          if (type !== undefined) out.type = type;
+          const def = prefer('default');
+          if (def !== undefined) out.default = def;
+          const range = base?.range ?? extra?.range;
+          if (range !== undefined) out.range = range;
+          const options = base?.options ?? extra?.options;
+          if (options !== undefined) out.options = options;
+          if (base?.ui || extra?.ui) {
+            out.ui = { ...(extra?.ui || {}), ...(base?.ui || {}) };
+          }
+          return out;
+        };
+        const nextSchemas = { ...combinedMvu.schemas };
+        Object.entries(mvuFromCard.schemas || {}).forEach(([key, schema]) => {
+          if (!key) return;
+          if (nextSchemas[key]) nextSchemas[key] = mergeSchema(nextSchemas[key], schema);
+          else nextSchemas[key] = schema;
+        });
+        combinedMvu.schemas = nextSchemas;
         if (mvuSource === 'zod_script') mvuSource = 'zod_script+stat_data';
       }
     }
@@ -380,7 +406,7 @@ export class CharacterCardImporter {
       const sourceText = mvuSource === 'zod_script' ? '（来自脚本 Schema）' : '（来自角色卡数据）';
       const choice = await appChoice({
         title: '检测到 MVU 变量卡',
-        message: `发现 ${mvuVariableCount} 个变量${sourceText}。\n是否转换为原生变量系统并写入 RP 会话？`,
+        message: `发现 ${mvuVariableCount} 个变量${sourceText}。\n是否转换为原生变量系统并写入创意写作会话？`,
         actions: [
           { id: 'convert', label: '转换', primary: true },
           { id: 'skip', label: '跳过' },
@@ -407,7 +433,7 @@ export class CharacterCardImporter {
               chatStore.setStageSchema?.(combinedMvu.stageSchema, rpSessionId);
             }
             mvuConverted = true;
-            window.toastr?.success?.('MVU 变量已转换到 RP 会话');
+            window.toastr?.success?.('MVU 变量已转换到创意写作会话');
           }
         } catch (err) {
           logger.warn('mvu convert failed', err);

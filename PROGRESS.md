@@ -1,5 +1,23 @@
 # 開發進度追蹤（必更新）(必须使用当下时间记录)
 
+## 2026-02-06 (创意写作界面优化 + 开场白切换)
+
+- **界面文案**：移除所有 “RP” 显示文案，统一改为“创意写作”。
+- **开场白切换**：在开场白气泡内提供切换下拉；有用户交互后自动锁定不可切换。
+- **新聊天补齐开场白**：创意写作会话开启新聊天后自动重新插入开场白。
+- **MVU 默认值补齐**：启动/会话切换时补齐缺失变量默认值，减少重启丢失。
+- **MVU Schema 合并优化**：保留 Zod 默认值/范围信息，避免被卡内推断 Schema 覆盖导致数值归零。
+- **默认值补齐防覆盖**：检测嵌套对象已存在的值时不再回填默认值，避免覆盖已有数值。
+- **变量管理器滚动**：列表与卡片统一滚动容器，避免内容被截断。
+- **InitVar 日志**：记录 initvar 规范化/映射与未匹配项，便于排查变量不一致问题。
+- 修改：
+  - `src/index.html`
+  - `src/assets/css/qq-legacy.css`
+  - `src/scripts/ui/app.js`
+  - `src/scripts/ui/chat/chat-ui.js`
+  - `src/scripts/ui/character-card-importer.js`
+  - `src/scripts/ui/variable-panel.js`
+
 ## 2026-02-05 (MVU 兼容补齐 + 事件模拟)
 
 - **Schema 入口扩展**：解析 `registerMvuSchema/registerVariableSchema` 调用，支持 stat_data 包装自动解包。
