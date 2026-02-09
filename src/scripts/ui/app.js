@@ -9994,6 +9994,21 @@ Phase G（Frame 36）：循环衔接
   };
 
   const getRpGreetings = () => rpSessionStore.getGreetings?.() || [];
+  const previewLogText = (value, maxLen = 120) => {
+    const raw = String(value || '');
+    if (!raw) return '';
+    const oneLine = raw.replace(/\s+/g, ' ').trim();
+    if (oneLine.length <= maxLen) return oneLine;
+    return `${oneLine.slice(0, maxLen)}...`;
+  };
+  const logRpGreetingDebug = (stage, fields = {}) => {
+    try {
+      const detail = Object.entries(fields)
+        .map(([key, value]) => `${key}=${String(value ?? '')}`)
+        .join(' ');
+      logger.info(`[rp-greeting] ${stage}${detail ? ` ${detail}` : ''}`);
+    } catch {}
+  };
   const hasRpConversation = (sessionId) => {
     const sid = String(sessionId || '').trim();
     if (!sid) return false;
@@ -10269,7 +10284,7 @@ Phase G（Frame 36）：循环衔接
         if (body) blocks.push(body);
         return '';
       });
-      if (!blocks.length) return { text: raw, data: null };
+      if (!blocks.length) return { text: raw, data: null, blockCount: 0 };
       let merged = null;
       blocks.forEach((block) => {
         const processed = window.appBridge?.processTextMacros
@@ -10281,9 +10296,9 @@ Phase G（Frame 36）：循环衔接
           merged = mergeDeep(merged || {}, data);
         }
       });
-      if (!merged || !Object.keys(merged).length) return { text: raw, data: null };
+      if (!merged || !Object.keys(merged).length) return { text: raw, data: null, blockCount: blocks.length };
       const nextText = cleaned.replace(/\n{3,}/g, '\n\n').trim();
-      return { text: nextText, data: merged };
+      return { text: nextText, data: merged, blockCount: blocks.length };
     };
     const normalizeInitVarData = (data, sid, meta) => {
       const log = meta && typeof meta === 'object' ? meta : null;
@@ -10483,17 +10498,39 @@ Phase G（Frame 36）：循环衔接
       return merged;
     };
 
+    const greetingId = String(greeting?.id || '').trim();
     const content = String(greeting?.content || '').trim();
+    logRpGreetingDebug('build-start', {
+      session: sessionId,
+      greetingId: greetingId || 'none',
+      rawLen: content.length,
+    });
     const initVarResult = extractInitVarBlocks(content, sessionId);
     const baseContent = String(initVarResult.text || '').trim();
+    logRpGreetingDebug('build-after-initvar', {
+      session: sessionId,
+      greetingId: greetingId || 'none',
+      initBlocks: Number(initVarResult.blockCount || 0),
+      baseLen: baseContent.length,
+      hasInitVar: initVarResult.data ? 1 : 0,
+    });
     if (initVarResult.data) {
       applyInitVarToSession(initVarResult.data, sessionId, { preferInit: true, source: 'greeting' });
     }
     const worldInitVars = extractInitVarFromWorldbooks(sessionId);
+    logRpGreetingDebug('build-world-initvar', {
+      session: sessionId,
+      greetingId: greetingId || 'none',
+      hasWorldInitVar: worldInitVars ? 1 : 0,
+    });
     if (worldInitVars) {
       applyInitVarToSession(worldInitVars, sessionId, { preferInit: true, source: 'worldbook' });
     }
     if (!baseContent) {
+      logRpGreetingDebug('build-empty-after-initvar', {
+        session: sessionId,
+        greetingId: greetingId || 'none',
+      });
       return { message: null, initVarData: initVarResult.data || worldInitVars || null };
     }
     let stored = baseContent;
@@ -10501,8 +10538,20 @@ Phase G（Frame 36）：循环衔接
     try {
       stored = window.appBridge.applyOutputStoredRegex(baseContent, { depth: 0 });
       display = window.appBridge.applyOutputDisplayRegex(stored, { depth: 0 });
-    } catch {}
+    } catch (err) {
+      logger.warn('[rp-greeting] regex-apply-failed', err);
+    }
     const parsed = parseSpecialMessage(display);
+    logRpGreetingDebug('build-parse', {
+      session: sessionId,
+      greetingId: greetingId || 'none',
+      parsedType: parsed?.type || 'unknown',
+      displayLen: String(display || '').length,
+      storedLen: String(stored || '').length,
+      parsedLen: String(parsed?.content || '').length,
+      storedPreview: previewLogText(stored, 90),
+      displayPreview: previewLogText(display, 90),
+    });
     const assistantName = String(getRpCharacterName() || '角色');
     const meta = { ...(parsed.meta || {}), isGreeting: true, renderRich: true };
     return {
@@ -10510,6 +10559,7 @@ Phase G（Frame 36）：循环衔接
         role: 'assistant',
         ...parsed,
         raw: stored,
+        sessionId,
         name: assistantName,
         avatar: getAssistantAvatarForSession(sessionId),
         time: formatNowTime(),
@@ -10523,13 +10573,29 @@ Phase G（Frame 36）：循环衔接
     const sid = String(sessionId || '').trim();
     if (!sid) return false;
     const messages = chatStore.getMessages(sid) || [];
-    if (messages.some(isConversationMessage)) return false;
+    if (messages.some(isConversationMessage)) {
+      logRpGreetingDebug('seed-skip-has-conversation', { session: sid, msgCount: messages.length });
+      return false;
+    }
     const greeting = ensureRpGreetingActive();
     const result = buildRpGreetingMessage(greeting, sid);
     const msg = result?.message || null;
-    if (!msg) return Boolean(result?.initVarData);
-    chatStore.appendMessage(msg, sid);
-    if (String(chatStore.getCurrent() || '') === sid) ui.addMessage(msg);
+    if (!msg) {
+      logRpGreetingDebug('seed-no-message', {
+        session: sid,
+        hasInitVar: result?.initVarData ? 1 : 0,
+      });
+      return Boolean(result?.initVarData);
+    }
+    const savedMsg = chatStore.appendMessage(msg, sid);
+    logRpGreetingDebug('seed-appended', {
+      session: sid,
+      messageId: savedMsg?.id || msg?.id || '',
+      type: savedMsg?.type || msg?.type || 'text',
+      contentLen: String(savedMsg?.content || msg?.content || '').length,
+      renderRich: (savedMsg?.meta?.renderRich || msg?.meta?.renderRich) ? 1 : 0,
+    });
+    if (String(chatStore.getCurrent() || '') === sid) ui.addMessage(savedMsg || msg);
     refreshRpToolbar(sid);
     return true;
   };

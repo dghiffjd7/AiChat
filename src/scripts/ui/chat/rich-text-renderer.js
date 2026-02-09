@@ -10,6 +10,32 @@ import { appSettings } from '../../storage/app-settings.js';
 import { buildVariableStatusSnapshot } from '../variable-status-card.js';
 
 const iframeDebugState = new Map();
+const directLoadCache = new Map();
+const DIRECT_LOAD_CACHE_TTL = 5 * 60 * 1000;
+const DIRECT_LOAD_CACHE_LIMIT = 6;
+const readDirectLoadCache = (url) => {
+    const key = String(url || '').trim();
+    if (!key) return null;
+    const record = directLoadCache.get(key);
+    if (!record) return null;
+    const at = Number(record.at || 0);
+    if (!Number.isFinite(at) || at <= 0 || (Date.now() - at) > DIRECT_LOAD_CACHE_TTL) {
+        directLoadCache.delete(key);
+        return null;
+    }
+    return String(record.html || '');
+};
+const writeDirectLoadCache = (url, html) => {
+    const key = String(url || '').trim();
+    if (!key) return;
+    directLoadCache.set(key, { html: String(html || ''), at: Date.now() });
+    if (directLoadCache.size <= DIRECT_LOAD_CACHE_LIMIT) return;
+    const oldest = Array.from(directLoadCache.entries())
+        .sort((a, b) => Number(a?.[1]?.at || 0) - Number(b?.[1]?.at || 0))
+        .slice(0, Math.max(0, directLoadCache.size - DIRECT_LOAD_CACHE_LIMIT));
+    oldest.forEach(([k]) => directLoadCache.delete(k));
+};
+
 const getIframeState = (id, init) => {
     if (!id) return null;
     if (!iframeDebugState.has(id) && init) iframeDebugState.set(id, init);
@@ -18,6 +44,11 @@ const getIframeState = (id, init) => {
 const warnIframe = (msg, id, extra = '') => {
     const suffix = extra ? ` ${extra}` : '';
     logger.warn(`[iframe] ${msg} id=${id || 'unknown'}${suffix}`);
+};
+const isLiveIframe = (iframe, iframeId = '') => {
+    if (iframe && iframe.isConnected) return true;
+    if (iframeId) iframeDebugState.delete(iframeId);
+    return false;
 };
 
 const buildNestedVars = (flat = {}) => {
@@ -69,17 +100,41 @@ const stripScriptsForPreview = (html) => String(html ?? '').replace(/<script[\s\
 const shouldEnableMvuCompat = (html) => {
     const raw = String(html || '');
     if (!raw) return false;
-    return /getAllVariables\s*\(|waitGlobalInitialized\s*\(|\bMvu\b|StatusPlaceHolderImpl|mag_variable_/i.test(raw);
+    return /getAllVariables\s*\(|waitGlobalInitialized\s*\(|\bMvu\b|StatusPlaceHolderImpl|mag_variable_|\$\(\s*['"]body['"]\s*\)\s*\.load\s*\(/i.test(raw);
 };
-const buildMvuCompatBridge = ({ iframeId, sessionId } = {}) => {
+const shouldInjectFrameworkShim = (html, { directLoad = false } = {}) => {
+    const raw = String(html || '');
+    if (!raw && !directLoad) return false;
+    if (directLoad) return true;
+    return /\bVueRouter\b|\bVue\b|\bPinia\b|createApp\s*\(|createRouter\s*\(|createPinia\s*\(/.test(raw);
+};
+const buildMvuCompatBridge = ({ iframeId, sessionId, debugTag } = {}) => {
     const id = String(iframeId || '');
     const sid = String(sessionId || '');
+    const tag = String(debugTag || '');
     return `
 <script>
 (() => {
   const CHATAPP_IFRAME_ID = ${JSON.stringify(id)};
   const CHATAPP_SESSION_ID = ${JSON.stringify(sid)};
+  const CHATAPP_DEBUG_TAG = ${JSON.stringify(tag)};
   const listeners = new Map();
+  const withTag = (message) => {
+    const msg = String(message || '');
+    if (!CHATAPP_DEBUG_TAG) return msg;
+    return 'tag=' + CHATAPP_DEBUG_TAG + ' ' + msg;
+  };
+  const postCompatLog = (level, message) => {
+    const lv = String(level || 'info');
+    const msg = withTag(message);
+    try {
+      parent.postMessage({ type: 'chatapp:iframe-debug', id: CHATAPP_IFRAME_ID, level: lv, message: msg }, '*');
+    } catch {}
+    try {
+      const fn = (lv === 'warn' || lv === 'error') ? console.warn : console.log;
+      fn('[mvu-compat] ' + msg);
+    } catch {}
+  };
 
   const ensureEventSet = (event) => {
     if (!listeners.has(event)) listeners.set(event, new Set());
@@ -140,6 +195,421 @@ const buildMvuCompatBridge = ({ iframeId, sessionId } = {}) => {
     emit(window.Mvu?.events?.VARIABLE_UPDATE_ENDED || 'mag_variable_update_ended', state.vars);
   };
 
+  const safeWaitGlobalInitialized = (name) => new Promise((resolve) => {
+    if (name && window[name]) return resolve(window[name]);
+    let done = false;
+    const tick = () => {
+      if (done) return;
+      if (name && window[name]) {
+        done = true;
+        return resolve(window[name]);
+      }
+      if (!name) {
+        done = true;
+        return resolve(null);
+      }
+      setTimeout(tick, 30);
+    };
+    tick();
+    setTimeout(() => { if (!done) resolve(window[name] || null); done = true; }, 3000);
+  });
+  const safeErrorCatched = (fn) => (...args) => {
+    try { return fn?.(...args); } catch (err) { console.error(err); }
+  };
+  const compatApi = (window.__chatappCompat && typeof window.__chatappCompat === 'object')
+    ? window.__chatappCompat
+    : {};
+  const defaultErrorCatched = (fn) => safeErrorCatched(fn);
+  const normalizeErrorCatched = (next) => (typeof next === 'function' ? next : defaultErrorCatched);
+  compatApi.getAllVariables = () => state.vars;
+  compatApi.eventOn = (event, cb) => eventOn(event, cb);
+  compatApi.eventRemoveListener = (event, cb) => eventRemoveListener(event, cb);
+  compatApi.waitGlobalInitialized = (name) => safeWaitGlobalInitialized(name);
+  compatApi.errorCatched = normalizeErrorCatched(compatApi.errorCatched);
+  window.__chatappCompat = compatApi;
+
+  window.getAllVariables = window.getAllVariables || (() => state.vars);
+  if (typeof window.eventOn !== 'function') window.eventOn = eventOn;
+  if (typeof window.eventRemoveListener !== 'function') window.eventRemoveListener = eventRemoveListener;
+  if (typeof window.waitGlobalInitialized !== 'function') {
+    window.waitGlobalInitialized = (name) => safeWaitGlobalInitialized(name);
+  }
+  if (typeof window.errorCatched !== 'function') window.errorCatched = defaultErrorCatched;
+  try {
+    Object.defineProperty(window, 'errorCatched', {
+      configurable: false,
+      enumerable: true,
+      get() { return normalizeErrorCatched(compatApi.errorCatched); },
+      set(next) {
+        compatApi.errorCatched = normalizeErrorCatched(next);
+      },
+    });
+  } catch {}
+  window.getAllVariables = () => compatApi.getAllVariables();
+  window.eventOn = (event, cb) => compatApi.eventOn(event, cb);
+  window.eventRemoveListener = (event, cb) => compatApi.eventRemoveListener(event, cb);
+  window.waitGlobalInitialized = (name) => compatApi.waitGlobalInitialized(name);
+  const exposeAlias = (name, value) => {
+    const key = String(name || '').trim();
+    if (!key) return;
+    try { window[key] = value; } catch {}
+    try { window.eval('var ' + key + ' = window["' + key + '"];'); } catch {}
+  };
+  const exposeCoreAliases = () => {
+    exposeAlias('errorCatched', window.errorCatched);
+    exposeAlias('getAllVariables', window.getAllVariables);
+    exposeAlias('eventOn', window.eventOn);
+    exposeAlias('eventRemoveListener', window.eventRemoveListener);
+    exposeAlias('waitGlobalInitialized', window.waitGlobalInitialized);
+    exposeAlias('__chatappCompat', window.__chatappCompat);
+    exposeAlias('Mvu', window.Mvu);
+    exposeAlias('_', window._);
+    try { window.eval('var $ = window.$; var jQuery = window.jQuery || window.$;'); } catch {}
+    postCompatLog('info', 'mvu-alias-ready');
+  };
+
+  const ensureLodash = () => {
+    if (!window._ || typeof window._ !== 'object') window._ = {};
+    const _ = window._;
+    if (typeof _.isArray !== 'function') _.isArray = Array.isArray;
+    if (typeof _.isObject !== 'function') _.isObject = (v) => v !== null && typeof v === 'object';
+    if (typeof _.isNil !== 'function') _.isNil = (v) => v === null || v === undefined;
+    if (typeof _.clamp !== 'function') _.clamp = (n, min, max) => Math.max(min, Math.min(max, n));
+    const toPath = (raw) => String(raw || '')
+      .replace(/\\[([^\\]]+)\\]/g, '.$1')
+      .split('.')
+      .map(seg => seg.trim().replace(/^['"]|['"]$/g, ''))
+      .filter(Boolean);
+    if (typeof _.get !== 'function') {
+      _.get = (obj, path, defVal) => {
+        const parts = toPath(path);
+        let cur = obj;
+        for (const part of parts) {
+          if (cur === null || cur === undefined) return defVal;
+          cur = cur[part];
+        }
+        return cur === undefined ? defVal : cur;
+      };
+    }
+    if (typeof _.set !== 'function') {
+      _.set = (obj, path, value) => {
+        const parts = toPath(path);
+        if (!parts.length) return obj;
+        let cur = obj;
+        for (let i = 0; i < parts.length - 1; i += 1) {
+          const key = parts[i];
+          if (!cur[key] || typeof cur[key] !== 'object') cur[key] = {};
+          cur = cur[key];
+        }
+        cur[parts[parts.length - 1]] = value;
+        return obj;
+      };
+    }
+  };
+
+  const ensureMiniQuery = () => {
+    const hasJq = typeof window.$ === 'function' && window.$.fn && window.$.fn.jquery;
+    if (hasJq) return;
+    if (typeof window.$ === 'function' && window.$.__chatappMini) return;
+    const parseLoadTarget = (input) => {
+      const raw = String(input || '').trim();
+      if (!raw) return { url: '', selector: '' };
+      const m = raw.match(/^(\S+)\s+(.+)$/);
+      if (!m) return { url: raw, selector: '' };
+      return { url: String(m[1] || '').trim(), selector: String(m[2] || '').trim() };
+    };
+    const toAbsUrl = (url) => {
+      const raw = String(url || '').trim();
+      if (!raw) return '';
+      try {
+        return new URL(raw, window.location.href).toString();
+      } catch {
+        return raw;
+      }
+    };
+    const parseHtml = (html) => {
+      try {
+        return new DOMParser().parseFromString(String(html || ''), 'text/html');
+      } catch {
+        return null;
+      }
+    };
+    const pickHtmlBySelector = (html, selector) => {
+      const sel = String(selector || '').trim();
+      if (!sel) return String(html || '');
+      const doc = parseHtml(html);
+      if (!doc) return '';
+      const hit = doc.querySelector(sel);
+      return hit ? String(hit.innerHTML || '') : '';
+    };
+    const applyHtmlToNodes = (nodes, html) => {
+      const text = String(html || '');
+      nodes.forEach((node) => {
+        if (!(node instanceof Element)) return;
+        node.innerHTML = text;
+      });
+    };
+    const mountRemoteFrame = (nodes, url, reason = '') => {
+      const absUrl = toAbsUrl(url);
+      if (!absUrl || !/^https?:\/\//i.test(absUrl)) return false;
+      let mounted = false;
+      nodes.forEach((node) => {
+        if (!(node instanceof Element)) return;
+        const frame = document.createElement('iframe');
+        frame.src = absUrl;
+        frame.setAttribute('referrerpolicy', 'no-referrer');
+        frame.style.cssText = 'width:100%; border:0; display:block; min-height:360px; height:70vh; max-height:720px; background:#fff;';
+        node.innerHTML = '';
+        node.appendChild(frame);
+        mounted = true;
+      });
+      if (mounted) {
+        postCompatLog('warn', '$.load fallback iframe url=' + absUrl + (reason ? ' reason=' + reason : ''));
+      }
+      return mounted;
+    };
+    const toNodes = (input) => {
+      if (!input) return [];
+      if (input instanceof Element || input === window || input === document) return [input];
+      if (Array.isArray(input)) return input.filter(Boolean);
+      return Array.from(document.querySelectorAll(String(input)));
+    };
+    const wrap = (nodes) => ({
+      __chatappMini: true,
+      nodes,
+      text(value) {
+        if (value === undefined) return nodes[0]?.textContent ?? '';
+        nodes.forEach(n => { n.textContent = String(value); });
+        return this;
+      },
+      html(value) {
+        if (value === undefined) return nodes[0]?.innerHTML ?? '';
+        nodes.forEach(n => { n.innerHTML = String(value); });
+        return this;
+      },
+      css(prop, value) {
+        if (!prop) return this;
+        if (typeof prop === 'object') {
+          nodes.forEach(n => {
+            Object.entries(prop).forEach(([k, v]) => { n.style[k] = String(v); });
+          });
+          return this;
+        }
+        nodes.forEach(n => { n.style[String(prop)] = String(value); });
+        return this;
+      },
+      addClass(cls) {
+        const list = String(cls || '').split(/\s+/).filter(Boolean);
+        nodes.forEach(n => n.classList.add(...list));
+        return this;
+      },
+      removeClass(cls) {
+        const list = String(cls || '').split(/\s+/).filter(Boolean);
+        nodes.forEach(n => n.classList.remove(...list));
+        return this;
+      },
+      empty() {
+        nodes.forEach(n => { n.innerHTML = ''; });
+        return this;
+      },
+      append(content) {
+        if (content === undefined || content === null) return this;
+        nodes.forEach((n, idx) => {
+          if (typeof content === 'string') {
+            n.insertAdjacentHTML('beforeend', content);
+          } else if (content instanceof Node) {
+            n.appendChild(idx === 0 ? content : content.cloneNode(true));
+          }
+        });
+        return this;
+      },
+      load(url, dataOrCb, cb) {
+        const target = parseLoadTarget(url);
+        const targetUrl = target.url;
+        const selector = target.selector;
+        const callback = (typeof dataOrCb === 'function')
+          ? dataOrCb
+          : (typeof cb === 'function' ? cb : null);
+        const payload = (dataOrCb && typeof dataOrCb === 'object' && !Array.isArray(dataOrCb) && !(dataOrCb instanceof FormData))
+          ? dataOrCb
+          : null;
+        if (!targetUrl) {
+          postCompatLog('warn', '$.load skipped: empty url');
+          if (callback) {
+            nodes.forEach((n) => {
+              try { callback.call(n, '', 'error', new Error('empty url')); } catch {}
+            });
+          }
+          return this;
+        }
+
+        const absUrl = toAbsUrl(targetUrl);
+        postCompatLog('info', '$.load start url=' + absUrl + (selector ? ' selector=' + selector : ''));
+
+        const done = (responseText, status, err) => {
+          if (typeof callback !== 'function') return;
+          nodes.forEach((n) => {
+            try { callback.call(n, responseText, status, err || null); } catch {}
+          });
+        };
+
+        const applyResponse = (responseText) => {
+          let htmlText = String(responseText || '');
+          if (selector) htmlText = pickHtmlBySelector(htmlText, selector);
+          const fullDoc = /<html[\s>]/i.test(htmlText) || /<body[\s>]/i.test(htmlText);
+          const hasScript = /<script[\s>]/i.test(htmlText);
+          if (!selector && fullDoc && hasScript) {
+            if (mountRemoteFrame(nodes, absUrl, 'full-document-with-script')) {
+              done('', 'success', null);
+              return;
+            }
+          }
+          applyHtmlToNodes(nodes, htmlText);
+          postCompatLog('info', '$.load success url=' + absUrl + ' len=' + String(htmlText.length));
+          done(htmlText, 'success', null);
+        };
+
+        const onFailed = (err) => {
+          const msg = err?.message ? String(err.message) : String(err || 'unknown');
+          if (!selector && /^https?:\/\//i.test(absUrl) && mountRemoteFrame(nodes, absUrl, 'fetch-failed:' + msg)) {
+            done('', 'fallback', err || null);
+            return;
+          }
+          postCompatLog('warn', '$.load failed url=' + absUrl + ' err=' + msg);
+          done('', 'error', err || null);
+        };
+
+        let requestUrl = absUrl;
+        if (payload) {
+          try {
+            const qs = new URLSearchParams();
+            Object.entries(payload).forEach(([k, v]) => {
+              if (v === undefined || v === null) return;
+              qs.append(String(k), String(v));
+            });
+            const query = qs.toString();
+            if (query) requestUrl += (requestUrl.includes('?') ? '&' : '?') + query;
+          } catch {}
+        }
+
+        fetch(requestUrl, { method: 'GET', mode: 'cors', credentials: 'omit' })
+          .then((resp) => {
+            if (!resp?.ok) throw new Error('http-' + String(resp?.status ?? '0'));
+            return resp.text();
+          })
+          .then(applyResponse)
+          .catch(onFailed);
+        return this;
+      },
+    });
+    const mini = (input) => {
+      if (typeof input === 'function') {
+        if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', input);
+        else setTimeout(input, 0);
+        return wrap([]);
+      }
+      return wrap(toNodes(input));
+    };
+    mini.__chatappMini = true;
+    window.$ = mini;
+  };
+
+  ensureMvu();
+  ensureLodash();
+  ensureMiniQuery();
+  exposeCoreAliases();
+  postCompatLog('info', 'bridge-ready session=' + (CHATAPP_SESSION_ID || ''));
+
+  window.addEventListener('message', (e) => {
+    const data = e?.data;
+    if (!data || data.type !== 'chatapp:mvu-vars') return;
+    if (data.sessionId && CHATAPP_SESSION_ID && String(data.sessionId) !== CHATAPP_SESSION_ID) return;
+    setVars(data.vars || {});
+    try {
+      parent.postMessage({
+        type: 'chatapp:iframe-debug',
+        id: CHATAPP_IFRAME_ID,
+        level: 'info',
+        message: 'legacy-vars-applied session=' + (CHATAPP_SESSION_ID || '') + ' keys=' + String(Object.keys((data.vars && data.vars.stat_data) || {}).length),
+      }, '*');
+    } catch {}
+  });
+
+  const request = () => {
+    try {
+      parent.postMessage({ type: 'chatapp:mvu-ready', id: CHATAPP_IFRAME_ID, sessionId: CHATAPP_SESSION_ID }, '*');
+      parent.postMessage({
+        type: 'chatapp:iframe-debug',
+        id: CHATAPP_IFRAME_ID,
+        level: 'info',
+        message: 'legacy-bridge-ready session=' + (CHATAPP_SESSION_ID || ''),
+      }, '*');
+    } catch {}
+  };
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', request);
+  else request();
+})();
+</script>`;
+};
+const buildMvuCompatBridgeLegacy = ({ iframeId, sessionId } = {}) => {
+    const id = String(iframeId || '');
+    const sid = String(sessionId || '');
+    return `
+<script>
+(() => {
+  const CHATAPP_IFRAME_ID = ${JSON.stringify(id)};
+  const CHATAPP_SESSION_ID = ${JSON.stringify(sid)};
+  const listeners = new Map();
+
+  const ensureEventSet = (event) => {
+    if (!listeners.has(event)) listeners.set(event, new Set());
+    return listeners.get(event);
+  };
+  const emit = (event, payload) => {
+    const set = listeners.get(event);
+    if (!set) return;
+    for (const fn of set.values()) {
+      try { fn(payload); } catch (err) { console.error(err); }
+    }
+  };
+  const eventOn = (event, cb) => {
+    if (!event || typeof cb !== 'function') return;
+    ensureEventSet(event).add(cb);
+  };
+  const eventRemoveListener = (event, cb) => {
+    if (!event || typeof cb !== 'function') return;
+    const set = listeners.get(event);
+    if (set) set.delete(cb);
+  };
+  const normalizeVars = (input) => {
+    const vars = input && typeof input === 'object' ? input : {};
+    const stat = (vars.stat_data && typeof vars.stat_data === 'object')
+      ? vars.stat_data
+      : (vars.variables && typeof vars.variables === 'object' ? vars.variables : {});
+    const globalVars = (vars.global_variables && typeof vars.global_variables === 'object') ? vars.global_variables : {};
+    return {
+      ...vars,
+      stat_data: stat,
+      variables: stat,
+      status_current_variables: stat,
+      global_variables: globalVars,
+    };
+  };
+  const state = { vars: normalizeVars({}) };
+
+  const ensureMvu = () => {
+    if (!window.Mvu || typeof window.Mvu !== 'object') window.Mvu = { events: {} };
+    if (!window.Mvu.events || typeof window.Mvu.events !== 'object') window.Mvu.events = {};
+    if (!window.Mvu.events.VARIABLE_UPDATE_ENDED) window.Mvu.events.VARIABLE_UPDATE_ENDED = 'mag_variable_update_ended';
+    if (!window.Mvu.events.VARIABLE_UPDATE_STARTED) window.Mvu.events.VARIABLE_UPDATE_STARTED = 'mag_variable_update_started';
+    if (!window.Mvu.events.VARIABLE_INITIALIZED) window.Mvu.events.VARIABLE_INITIALIZED = 'mag_variable_initialized';
+  };
+
+  const setVars = (vars) => {
+    state.vars = normalizeVars(vars);
+    emit(window.Mvu?.events?.VARIABLE_UPDATE_ENDED || 'mag_variable_update_ended', state.vars);
+  };
+
   window.getAllVariables = window.getAllVariables || (() => state.vars);
   if (typeof window.eventOn !== 'function') window.eventOn = eventOn;
   if (typeof window.eventRemoveListener !== 'function') window.eventRemoveListener = eventRemoveListener;
@@ -168,6 +638,9 @@ const buildMvuCompatBridge = ({ iframeId, sessionId } = {}) => {
       try { return fn?.(...args); } catch (err) { console.error(err); }
     };
   }
+  try {
+    window.eval('var errorCatched = window.errorCatched; var getAllVariables = window.getAllVariables; var eventOn = window.eventOn; var eventRemoveListener = window.eventRemoveListener; var waitGlobalInitialized = window.waitGlobalInitialized;');
+  } catch {}
 
   const ensureLodash = () => {
     if (!window._ || typeof window._ !== 'object') window._ = {};
@@ -243,13 +716,68 @@ const buildMvuCompatBridge = ({ iframeId, sessionId } = {}) => {
         return this;
       },
       addClass(cls) {
-        const list = String(cls || '').split(/\s+/).filter(Boolean);
+        const list = String(cls || '').split(/\\s+/).filter(Boolean);
         nodes.forEach(n => n.classList.add(...list));
         return this;
       },
       removeClass(cls) {
-        const list = String(cls || '').split(/\s+/).filter(Boolean);
+        const list = String(cls || '').split(/\\s+/).filter(Boolean);
         nodes.forEach(n => n.classList.remove(...list));
+        return this;
+      },
+      attr(name, value) {
+        const key = String(name || '').trim();
+        if (!key) return value === undefined ? undefined : this;
+        if (value === undefined) return nodes[0]?.getAttribute?.(key) ?? undefined;
+        nodes.forEach((n) => {
+          if (!(n instanceof Element)) return;
+          if (value === null) n.removeAttribute(key);
+          else n.setAttribute(key, String(value));
+        });
+        return this;
+      },
+      prop(name, value) {
+        const key = String(name || '').trim();
+        if (!key) return value === undefined ? undefined : this;
+        if (value === undefined) return nodes[0]?.[key];
+        nodes.forEach((n) => {
+          try { n[key] = value; } catch {}
+        });
+        return this;
+      },
+      val(value) {
+        if (value === undefined) return nodes[0]?.value;
+        nodes.forEach((n) => {
+          try { n.value = value; } catch {}
+        });
+        return this;
+      },
+      find(selector) {
+        const sel = String(selector || '').trim();
+        if (!sel) return wrap([]);
+        const found = [];
+        nodes.forEach((n) => {
+          if (!(n instanceof Element) && n !== document) return;
+          try {
+            found.push(...Array.from(n.querySelectorAll(sel)));
+          } catch {}
+        });
+        return wrap(found);
+      },
+      on(event, handler) {
+        const evt = String(event || '').trim();
+        if (!evt || typeof handler !== 'function') return this;
+        nodes.forEach((n) => {
+          try { n.addEventListener(evt, handler); } catch {}
+        });
+        return this;
+      },
+      off(event, handler) {
+        const evt = String(event || '').trim();
+        if (!evt || typeof handler !== 'function') return this;
+        nodes.forEach((n) => {
+          try { n.removeEventListener(evt, handler); } catch {}
+        });
         return this;
       },
       empty() {
@@ -259,11 +787,8 @@ const buildMvuCompatBridge = ({ iframeId, sessionId } = {}) => {
       append(content) {
         if (content === undefined || content === null) return this;
         nodes.forEach((n, idx) => {
-          if (typeof content === 'string') {
-            n.insertAdjacentHTML('beforeend', content);
-          } else if (content instanceof Node) {
-            n.appendChild(idx === 0 ? content : content.cloneNode(true));
-          }
+          if (typeof content === 'string') n.insertAdjacentHTML('beforeend', content);
+          else if (content instanceof Node) n.appendChild(idx === 0 ? content : content.cloneNode(true));
         });
         return this;
       },
@@ -702,6 +1227,15 @@ const adjustIframeHeight = (iframe) => {
         const current = parseFloat(iframe.style.height || '') || 0;
         if (Math.abs(current - clamped) > 2) {
             iframe.style.height = `${clamped}px`;
+            markIframePostResize(iframe);
+            const id = String(iframe.dataset.iframeId || '');
+            if (id) {
+                const st = getIframeState(id, { messageId: String(iframe.dataset.msgId || ''), createdAt: Date.now() });
+                if (st) {
+                    st.resizeCount = (st.resizeCount || 0) + 1;
+                    st.lastResizeAt = Date.now();
+                }
+            }
         }
     } catch {}
 };
@@ -1164,7 +1698,15 @@ const buildIframeSrcDoc = (
   window.addEventListener('error', (ev) => {
     try {
       const message = String(ev?.message || ev?.error?.message || 'iframe error');
-      parent.postMessage({ type: 'chatapp:iframe-error', id, message }, '*');
+      const lineno = Number(ev?.lineno || 0);
+      const colno = Number(ev?.colno || 0);
+      const file = String(ev?.filename || '');
+      const extra = [
+        file ? ('file=' + file) : '',
+        lineno ? ('line=' + lineno) : '',
+        colno ? ('col=' + colno) : '',
+      ].filter(Boolean).join(' ');
+      parent.postMessage({ type: 'chatapp:iframe-error', id, message: extra ? (message + ' ' + extra) : message }, '*');
     } catch {}
   });
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start);
@@ -1278,7 +1820,219 @@ const processAllVhUnits = (htmlContent) => {
     return processed;
 };
 
-const makeCodeBlock = ({ lang, code, messageId, preserveHtmlNewlines = false, sessionId } = {}) => {
+const detectBodyLoadUrl = (htmlCode) => {
+    const raw = String(htmlCode || '');
+    if (!raw) return '';
+    const m = raw.match(/\$\(\s*['"]body['"]\s*\)\s*\.load\s*\(\s*['"]([^'"]+)['"]/i);
+    if (!m) return '';
+    const url = String(m[1] || '').trim();
+    if (!url) return '';
+    try {
+        return new URL(url, window.location.href).toString();
+    } catch {
+        return url;
+    }
+};
+
+const stripInlineCspMeta = (html) => String(html || '')
+    .replace(/<meta[^>]+http-equiv\s*=\s*["'](?:content-security-policy|x-content-security-policy|x-webkit-csp)["'][^>]*>/gi, '');
+
+const rewriteStHelperGlobals = (htmlCode) => {
+    let html = String(htmlCode || '');
+    let replaced = 0;
+    const rewriteJs = (jsCode) => {
+        let js = String(jsCode || '');
+        const markFnCall = (regex, name) => {
+            js = js.replace(regex, (...args) => {
+                replaced += 1;
+                const prefix = String(args[1] || '');
+                return `${prefix}window.__chatappCompat.${name}(`;
+            });
+        };
+        // Keep rewrite minimal to avoid breaking script syntax.
+        markFnCall(/(^|[^\w$.])errorCatched\s*\(/g, 'errorCatched');
+        markFnCall(/(^|[^\w$.])getAllVariables\s*\(/g, 'getAllVariables');
+        markFnCall(/(^|[^\w$.])waitGlobalInitialized\s*\(/g, 'waitGlobalInitialized');
+        markFnCall(/(^|[^\w$.])eventOn\s*\(/g, 'eventOn');
+        markFnCall(/(^|[^\w$.])eventRemoveListener\s*\(/g, 'eventRemoveListener');
+        return js;
+    };
+    try {
+        html = html.replace(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi, (full, attrs, body) => {
+            const attrText = String(attrs || '');
+            if (/\bsrc\s*=/.test(attrText)) return full;
+            if (/\btype\s*=\s*["'](?:application\/json|application\/ld\+json|text\/plain)["']/.test(attrText)) return full;
+            const nextBody = rewriteJs(String(body || ''));
+            return `<script${attrText}>${nextBody}</script>`;
+        });
+    } catch {
+        return { html: String(htmlCode || ''), replaced: 0, failed: true };
+    }
+    return { html, replaced };
+};
+const rewriteErrorCatchedOnly = (htmlCode) => {
+    let html = String(htmlCode || '');
+    let replaced = 0;
+    const rewriteJs = (jsCode) => {
+        let js = String(jsCode || '');
+        js = js.replace(/(^|[^\w$.])errorCatched\s*\(/g, (...args) => {
+            replaced += 1;
+            const prefix = String(args[1] || '');
+            return `${prefix}window.errorCatched(`;
+        });
+        return js;
+    };
+    try {
+        html = html.replace(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi, (full, attrs, body) => {
+            const attrText = String(attrs || '');
+            if (/\bsrc\s*=/.test(attrText)) return full;
+            if (/\btype\s*=\s*["'](?:application\/json|application\/ld\+json|text\/plain)["']/.test(attrText)) return full;
+            const nextBody = rewriteJs(String(body || ''));
+            return `<script${attrText}>${nextBody}</script>`;
+        });
+    } catch {
+        return { html: String(htmlCode || ''), replaced: 0, failed: true };
+    }
+    return { html, replaced };
+};
+const maybeRewriteStHelperGlobals = (htmlCode, { directLoad = false } = {}) => {
+    const html = String(htmlCode || '');
+    if (!directLoad) return { html, replaced: 0, skipped: true };
+    return rewriteStHelperGlobals(html);
+};
+const maybeRewriteMvuInlineHelpers = (htmlCode, { needsMvuCompat = false, directLoad = false } = {}) => {
+    const html = String(htmlCode || '');
+    if (!needsMvuCompat || directLoad) return { html, replaced: 0, skipped: true };
+    return rewriteErrorCatchedOnly(html);
+};
+
+const buildFrameworkGlobalShim = ({ iframeId = '', debugTag = '' } = {}) => {
+    const id = String(iframeId || '');
+    const tag = String(debugTag || '');
+    return `<script>
+(() => {
+  const CHATAPP_IFRAME_ID = ${JSON.stringify(id)};
+  const CHATAPP_DEBUG_TAG = ${JSON.stringify(tag)};
+  const withTag = (msg) => CHATAPP_DEBUG_TAG ? ('tag=' + CHATAPP_DEBUG_TAG + ' ' + String(msg || '')) : String(msg || '');
+  const log = (level, message) => {
+    try {
+      parent.postMessage({
+        type: 'chatapp:iframe-debug',
+        id: CHATAPP_IFRAME_ID,
+        level: String(level || 'info'),
+        message: withTag(message),
+      }, '*');
+    } catch {}
+  };
+  const ensureGlobal = (name, urls, readyMsg, missMsg) => {
+    if (window[name]) {
+      log('info', readyMsg + '-existing');
+      return;
+    }
+    for (let i = 0; i < urls.length; i += 1) {
+      if (window[name]) break;
+      const u = String(urls[i] || '');
+      if (!u) continue;
+      document.write('<script src="' + u + '"><\\\\/script>');
+    }
+    if (window[name]) log('info', readyMsg);
+    else log('warn', missMsg);
+  };
+  ensureGlobal('Vue', [
+    'https://testingcf.jsdelivr.net/npm/vue@3/dist/vue.global.prod.js',
+    'https://cdn.jsdelivr.net/npm/vue@3/dist/vue.global.prod.js',
+    'https://unpkg.com/vue@3/dist/vue.global.prod.js',
+  ], 'vue-shim-ready', 'vue-shim-missing');
+  ensureGlobal('VueRouter', [
+    'https://testingcf.jsdelivr.net/npm/vue-router@4/dist/vue-router.global.prod.js',
+    'https://cdn.jsdelivr.net/npm/vue-router@4/dist/vue-router.global.prod.js',
+    'https://unpkg.com/vue-router@4/dist/vue-router.global.prod.js',
+  ], 'vue-router-shim-ready', 'vue-router-shim-missing');
+})();
+</script>`;
+};
+
+const buildDollarGlobalShim = ({ iframeId = '', debugTag = '' } = {}) => {
+    const id = String(iframeId || '');
+    const tag = String(debugTag || '');
+    return `<script>
+(() => {
+  const CHATAPP_IFRAME_ID = ${JSON.stringify(id)};
+  const CHATAPP_DEBUG_TAG = ${JSON.stringify(tag)};
+  const withTag = (msg) => CHATAPP_DEBUG_TAG ? ('tag=' + CHATAPP_DEBUG_TAG + ' ' + String(msg || '')) : String(msg || '');
+  const log = (level, message) => {
+    try {
+      parent.postMessage({
+        type: 'chatapp:iframe-debug',
+        id: CHATAPP_IFRAME_ID,
+        level: String(level || 'info'),
+        message: withTag(message),
+      }, '*');
+    } catch {}
+  };
+  const hasJq = typeof window.$ === 'function' && window.$.fn && window.$.fn.jquery;
+  if (!hasJq) {
+    if (!(typeof window.$ === 'function' && window.$.__chatappMini)) {
+      const toNodes = (input) => {
+        if (!input) return [];
+        if (input instanceof Element || input === window || input === document) return [input];
+        if (Array.isArray(input)) return input.filter(Boolean);
+        return Array.from(document.querySelectorAll(String(input)));
+      };
+      const wrap = (nodes) => ({
+        __chatappMini: true,
+        nodes,
+        text(value) {
+          if (value === undefined) return nodes[0]?.textContent ?? '';
+          nodes.forEach(n => { n.textContent = String(value); });
+          return this;
+        },
+        html(value) {
+          if (value === undefined) return nodes[0]?.innerHTML ?? '';
+          nodes.forEach(n => { n.innerHTML = String(value); });
+          return this;
+        },
+        append(content) {
+          if (content === undefined || content === null) return this;
+          nodes.forEach((n, idx) => {
+            if (typeof content === 'string') n.insertAdjacentHTML('beforeend', content);
+            else if (content instanceof Node) n.appendChild(idx === 0 ? content : content.cloneNode(true));
+          });
+          return this;
+        },
+        empty() {
+          nodes.forEach(n => { n.innerHTML = ''; });
+          return this;
+        },
+      });
+      const mini = (input) => {
+        if (typeof input === 'function') {
+          if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', input);
+          else setTimeout(input, 0);
+          return wrap([]);
+        }
+        return wrap(toNodes(input));
+      };
+      mini.__chatappMini = true;
+      window.$ = mini;
+    }
+  }
+  if (typeof window.jQuery !== 'function') window.jQuery = window.$;
+  if (typeof window.errorCatched !== 'function') {
+    window.errorCatched = (fn) => (...args) => {
+      try { return fn?.(...args); } catch (err) { console.error(err); }
+    };
+  }
+  try {
+    window.eval('var $ = window.$; var jQuery = window.jQuery; var errorCatched = window.errorCatched;');
+  } catch {}
+  if (typeof window.$ === 'function') log('info', 'dollar-shim-ready');
+  else log('warn', 'dollar-shim-missing');
+})();
+</script>`;
+};
+
+const makeCodeBlock = ({ lang, code, messageId, preserveHtmlNewlines = false, sessionId, debugTag = '' } = {}) => {
     const wrap = document.createElement('div');
     wrap.className = 'chat-codeblock';
     wrap.style.cssText = 'border:1px solid rgba(0,0,0,0.10); border-radius:12px; overflow:hidden; margin:8px 0;';
@@ -1294,15 +2048,30 @@ const makeCodeBlock = ({ lang, code, messageId, preserveHtmlNewlines = false, se
         /<details[\s>]/i.test(code) ||
         /<div[\s>]/i.test(code);
     const allowScripts = allowRichIframeScripts();
-    const needsMvuCompat = allowScripts && shouldEnableMvuCompat(code);
     const shouldRenderHtml = looksLikeHtmlDoc || isHtmlLang || looksLikeHtmlSnippet;
-    if (shouldLogRichDebug()) {
+    const directBodyLoadUrl = shouldRenderHtml ? detectBodyLoadUrl(code) : '';
+    const forceMvuCompat = Boolean(directBodyLoadUrl);
+    const needsMvuCompat = allowScripts && (forceMvuCompat || shouldEnableMvuCompat(code));
+    const needsFrameworkShim = allowScripts && shouldInjectFrameworkShim(code, { directLoad: Boolean(directBodyLoadUrl) });
+    const useLegacyMvuBridge = !directBodyLoadUrl;
+    const mvuBridgeBuilder = useLegacyMvuBridge ? buildMvuCompatBridgeLegacy : buildMvuCompatBridge;
+    if (debugTag === 'rp-greeting' && !allowScripts) {
+        const tip = 'rp-greeting scripts-disabled: enable `allowRichIframeScripts` to run <script> / $.load()';
+        emitDebugLog({ source: 'rich', type: 'warn', message: tip, force: true });
+        logger.warn(`[rich] ${tip}`);
+    }
+    if (Boolean(debugTag) || shouldLogRichDebug()) {
         const hasHtmlHint = /<\s*(style|details|div|body|html|table|section|article|main|svg|iframe)\b/i.test(code) ||
             /&lt;\s*(style|details|div|body|html|table|section|article|main|svg|iframe)\b/i.test(code);
         if (hasHtmlHint || shouldRenderHtml) {
-            const msg = `codeblock html?=${shouldRenderHtml} lang=${lang || 'none'} len=${String(code || '').length} msg=${String(messageId || '')}`;
+            const msg = `codeblock html?=${shouldRenderHtml} lang=${lang || 'none'} len=${String(code || '').length} msg=${String(messageId || '')} scripts=${allowScripts ? 1 : 0} mvu=${needsMvuCompat ? 1 : 0} forceMvu=${forceMvuCompat ? 1 : 0}${debugTag ? ` tag=${debugTag}` : ''}`;
             emitDebugLog({ source: 'rich', type: shouldRenderHtml ? 'info' : 'warn', message: msg, force: true });
             logger.info(`[rich] ${msg}`);
+            if (directBodyLoadUrl) {
+                const bodyLoadMsg = `body-load-detected url=${directBodyLoadUrl}${debugTag ? ` tag=${debugTag}` : ''}`;
+                emitDebugLog({ source: 'rich', type: 'info', message: bodyLoadMsg, force: true });
+                logger.info(`[rich] ${bodyLoadMsg}`);
+            }
         }
     }
     if (shouldRenderHtml) {
@@ -1332,6 +2101,21 @@ const makeCodeBlock = ({ lang, code, messageId, preserveHtmlNewlines = false, se
         });
 
         let html = preserveHtmlNewlines ? injectHtmlNewlines(code) : code;
+        if (allowScripts) {
+            html = stripInlineCspMeta(html);
+            const rewriteResult = maybeRewriteMvuInlineHelpers(html, { needsMvuCompat, directLoad: Boolean(directBodyLoadUrl) });
+            html = rewriteResult.html;
+            if (rewriteResult.failed) {
+                const msg = `helper-rewrite-inline-failed${debugTag ? ` tag=${debugTag}` : ''}`;
+                emitDebugLog({ source: 'rich', type: 'warn', message: msg, force: true });
+                logger.warn(`[rich] ${msg}`);
+            }
+            if (rewriteResult.replaced > 0) {
+                const msg = `helper-rewrite-inline count=${rewriteResult.replaced}${debugTag ? ` tag=${debugTag}` : ''}`;
+                emitDebugLog({ source: 'rich', type: 'info', message: msg, force: true });
+                logger.info(`[rich] ${msg}`);
+            }
+        }
         const hasMinVh = /min-height:\s*[^;]*vh/i.test(html);
         const hasJsVhUsage = /\d+vh/.test(html);
         const needsVhHandling = hasMinVh || hasJsVhUsage;
@@ -1353,7 +2137,16 @@ const makeCodeBlock = ({ lang, code, messageId, preserveHtmlNewlines = false, se
         });
         const bridgeScriptUrl = '';
         const baseHref = allowScripts ? `${window.location.origin}/` : '';
-        const mvuCompatBridge = needsMvuCompat ? buildMvuCompatBridge({ iframeId, sessionId }) : '';
+        const dollarShim = (allowScripts && !useLegacyMvuBridge) ? buildDollarGlobalShim({ iframeId, debugTag }) : '';
+        const frameworkShim = (allowScripts && !useLegacyMvuBridge && needsFrameworkShim)
+            ? buildFrameworkGlobalShim({ iframeId, debugTag })
+            : '';
+        const mvuCompatBridge = needsMvuCompat ? mvuBridgeBuilder({ iframeId, sessionId, debugTag }) : '';
+        if (needsMvuCompat && (Boolean(debugTag) || shouldLogRichDebug())) {
+            const modeMsg = `mvu-bridge=${useLegacyMvuBridge ? 'legacy' : 'enhanced'}${debugTag ? ` tag=${debugTag}` : ''}`;
+            emitDebugLog({ source: 'rich', type: 'info', message: modeMsg, force: true });
+            logger.info(`[rich] ${modeMsg}`);
+        }
         const scriptDoc = buildIframeSrcDoc(html, {
             iframeId,
             needsVhHandling,
@@ -1362,10 +2155,116 @@ const makeCodeBlock = ({ lang, code, messageId, preserveHtmlNewlines = false, se
             styleInBody: false,
             baseHref,
             bridgeScriptUrl,
-            headPrepend: mvuCompatBridge,
+            headPrepend: `${dollarShim}${frameworkShim}${mvuCompatBridge}`,
         });
         previewWrap.appendChild(iframe);
-        if (allowScripts) {
+        if (directBodyLoadUrl) {
+            iframe.dataset.iframeSource = 'direct-load';
+            iframe.dataset.iframeDocSent = '1';
+            iframe.style.height = '260px';
+            iframe.style.minHeight = '220px';
+            iframe.style.maxHeight = '760px';
+            const logDirect = (type, message) => {
+                const msg = String(message || '');
+                emitDebugLog({ source: 'iframe', type, message: msg, force: true });
+                if (type === 'warn') warnIframe('direct-load', iframeId, `msg=${msg}`);
+                else logger.info(`[iframe] ${msg}`);
+            };
+            const onDirectReady = (kind) => {
+                const curSrc = String(iframe.currentSrc || iframe.src || '').trim();
+                if (iframe.dataset.iframeSource === 'direct-load' && (!curSrc || curSrc === 'about:blank')) return;
+                iframe.dataset.iframeReady = '1';
+                iframe.dataset.iframeLoaded = '1';
+                const st = getIframeState(iframeId, { messageId: String(messageId || ''), createdAt: Date.now() });
+                if (st) {
+                    const now = Date.now();
+                    st.readyAt = st.readyAt || now;
+                    st.loadedAt = st.loadedAt || now;
+                    st.resizeCount = Math.max(Number(st.resizeCount || 0), 1);
+                    st.lastResizeAt = st.lastResizeAt || now;
+                }
+                const msg = `direct-load-${kind} id=${iframeId} source=${String(iframe.dataset.iframeSource || '')} url=${directBodyLoadUrl}`;
+                logDirect(kind === 'error' ? 'warn' : 'info', msg);
+            };
+            iframe.addEventListener('load', () => onDirectReady('load'), { once: false });
+            iframe.addEventListener('error', () => onDirectReady('error'), { once: false });
+            const runDirectLoad = async () => {
+                const baseHref = (() => {
+                    try { return new URL('.', directBodyLoadUrl).toString(); } catch { return directBodyLoadUrl; }
+                })();
+                logDirect('info', `direct-load-fetch-start id=${iframeId} url=${directBodyLoadUrl}`);
+                const cachedHtml = readDirectLoadCache(directBodyLoadUrl);
+                if (cachedHtml) {
+                    let directHtml = stripInlineCspMeta(cachedHtml);
+                    const rewriteResult = maybeRewriteStHelperGlobals(directHtml, { directLoad: true });
+                    directHtml = rewriteResult.html;
+                    if (rewriteResult.failed) {
+                        logDirect('warn', `direct-load-rewrite-failed id=${iframeId} source=cache`);
+                    }
+                    const fetchedNeedsVh = /min-height:\s*[^;]*vh/i.test(directHtml) || /\d+vh/.test(directHtml);
+                    if (fetchedNeedsVh) directHtml = processAllVhUnits(directHtml);
+                    const directDollarShim = buildDollarGlobalShim({ iframeId, debugTag });
+                    const directNeedsFrameworkShim = shouldInjectFrameworkShim(directHtml, { directLoad: true });
+                    const directFrameworkShim = directNeedsFrameworkShim ? buildFrameworkGlobalShim({ iframeId, debugTag }) : '';
+                    const directMvuBridge = needsMvuCompat ? buildMvuCompatBridge({ iframeId, sessionId, debugTag }) : '';
+                    const directDoc = buildIframeSrcDoc(directHtml, {
+                        iframeId,
+                        needsVhHandling: fetchedNeedsVh,
+                        preserveNewlines: false,
+                        injectBridgeScript: true,
+                        styleInBody: false,
+                        baseHref,
+                        headPrepend: `${directDollarShim}${directFrameworkShim}${directMvuBridge}`,
+                    });
+                    iframe.dataset.iframeSource = 'direct-srcdoc';
+                    iframe.srcdoc = directDoc;
+                    logDirect('info', `direct-load-cache-hit id=${iframeId} len=${directHtml.length} rewrite=${rewriteResult.replaced} base=${baseHref}`);
+                    return;
+                }
+                try {
+                    const resp = await fetch(directBodyLoadUrl, { method: 'GET', mode: 'cors', credentials: 'omit' });
+                    if (!resp?.ok) throw new Error(`http-${String(resp?.status ?? '0')}`);
+                    const fetched = String(await resp.text() || '');
+                    const looksHtml = /<html[\s>]|<body[\s>]|<script[\s>]|<!doctype/i.test(fetched);
+                    if (!looksHtml || fetched.length < 32) {
+                        throw new Error('non-html-response');
+                    }
+                    let directHtml = stripInlineCspMeta(fetched);
+                    const rewriteResult = maybeRewriteStHelperGlobals(directHtml, { directLoad: true });
+                    directHtml = rewriteResult.html;
+                    if (rewriteResult.failed) {
+                        logDirect('warn', `direct-load-rewrite-failed id=${iframeId} source=fetch`);
+                    }
+                    const fetchedNeedsVh = /min-height:\s*[^;]*vh/i.test(directHtml) || /\d+vh/.test(directHtml);
+                    if (fetchedNeedsVh) directHtml = processAllVhUnits(directHtml);
+                    writeDirectLoadCache(directBodyLoadUrl, directHtml);
+                    const directDollarShim = buildDollarGlobalShim({ iframeId, debugTag });
+                    const directNeedsFrameworkShim = shouldInjectFrameworkShim(directHtml, { directLoad: true });
+                    const directFrameworkShim = directNeedsFrameworkShim ? buildFrameworkGlobalShim({ iframeId, debugTag }) : '';
+                    const directMvuBridge = needsMvuCompat ? buildMvuCompatBridge({ iframeId, sessionId, debugTag }) : '';
+                    const directDoc = buildIframeSrcDoc(directHtml, {
+                        iframeId,
+                        needsVhHandling: fetchedNeedsVh,
+                        preserveNewlines: false,
+                        injectBridgeScript: true,
+                        styleInBody: false,
+                        baseHref,
+                        headPrepend: `${directDollarShim}${directFrameworkShim}${directMvuBridge}`,
+                    });
+                    iframe.dataset.iframeSource = 'direct-srcdoc';
+                    iframe.srcdoc = directDoc;
+                    logDirect('info', `direct-load-fetch-success id=${iframeId} len=${directHtml.length} rewrite=${rewriteResult.replaced} base=${baseHref}`);
+                    return;
+                } catch (err) {
+                    const msg = err?.message ? String(err.message) : String(err || 'unknown');
+                    logDirect('warn', `direct-load-fetch-failed id=${iframeId} err=${msg}`);
+                }
+                iframe.dataset.iframeSource = 'direct-load';
+                iframe.src = directBodyLoadUrl;
+                logDirect('warn', `direct-load-fallback-src id=${iframeId} url=${directBodyLoadUrl}`);
+            };
+            runDirectLoad();
+        } else if (allowScripts) {
             let blobUrl = '';
             const onLoad = () => {
                 iframe.dataset.iframeLoaded = '1';
@@ -1409,21 +2308,25 @@ const makeCodeBlock = ({ lang, code, messageId, preserveHtmlNewlines = false, se
                 if (st) st.error = st.error || 'load-error';
                 warnIframe('iframe-load-error', iframeId);
             });
-            setTimeout(() => {
-                const st = getIframeState(iframeId);
-                if (st && st.lastResizeAt) return;
-                if (iframe.dataset.iframePostResizeAt) return;
-                observeIframeContent(iframe);
-                bindIframeDocumentPressFallback(iframe, iframeId);
-            }, 900);
         }
 
         wrap.appendChild(previewWrap);
         // Match ST 酒馆助手体验：渲染后不显示源码（源码/复制转移到长按菜单）
 
+        // 回退观测：脚本桥未就绪时，仍尝试本地测高与长按转发。
+        setTimeout(() => {
+            if (!isLiveIframe(iframe, iframeId)) return;
+            const st = getIframeState(iframeId);
+            if (st && st.lastResizeAt) return;
+            if (iframe.dataset.iframePostResizeAt) return;
+            observeIframeContent(iframe);
+            bindIframeDocumentPressFallback(iframe, iframeId);
+        }, 900);
+
         // Fallback: some WebViews choke on srcdoc; retry via srcdoc if host never reports ready.
         if (!allowScripts) {
             setTimeout(() => {
+                if (!isLiveIframe(iframe, iframeId)) return;
                 if (iframe.dataset.iframeReady === '1') return;
                 if (iframe.dataset.iframeFallbackAttempted === '1') return;
                 iframe.dataset.iframeFallbackAttempted = '1';
@@ -1436,9 +2339,11 @@ const makeCodeBlock = ({ lang, code, messageId, preserveHtmlNewlines = false, se
             }, 1200);
         }
         setTimeout(() => {
+            if (!isLiveIframe(iframe, iframeId)) return;
             const st = getIframeState(iframeId);
             if (!st) return;
-            if (!st.readyAt) {
+            if (!st.readyAt && iframe.dataset.iframeWarnedNoReady !== '1') {
+                iframe.dataset.iframeWarnedNoReady = '1';
                 const msgId = st.messageId || iframe.dataset.msgId || '';
                 const fallback = iframe.dataset.iframeFallbackAttempted === '1' ? 'fallback=1' : 'fallback=0';
                 const loaded = iframe.dataset.iframeLoaded === '1' ? 'loaded=1' : 'loaded=0';
@@ -1446,7 +2351,8 @@ const makeCodeBlock = ({ lang, code, messageId, preserveHtmlNewlines = false, se
                 const sent = iframe.dataset.iframeDocSent === '1' ? 'sent=1' : 'sent=0';
                 warnIframe('no-ready-after-2s', iframeId, `msg=${msgId} ${fallback} ${loaded} ${sent} source=${source}`);
             }
-            if (!st.lastResizeAt) {
+            if (!st.lastResizeAt && iframe.dataset.iframeWarnedNoResize !== '1') {
+                iframe.dataset.iframeWarnedNoResize = '1';
                 const msgId = st.messageId || iframe.dataset.msgId || '';
                 const loaded = iframe.dataset.iframeLoaded === '1' ? 'loaded=1' : 'loaded=0';
                 const source = iframe.dataset.iframeSource || 'host';
@@ -1455,6 +2361,7 @@ const makeCodeBlock = ({ lang, code, messageId, preserveHtmlNewlines = false, se
             }
         }, 2000);
         setTimeout(() => {
+            if (!isLiveIframe(iframe, iframeId)) return;
             if (iframe.dataset.iframeReady === '1') {
                 try { iframe.contentWindow?.postMessage({ type: 'chatapp:ping' }, '*'); } catch {}
             }
@@ -1554,6 +2461,7 @@ export const setupIframeResizeListener = () => {
             const iframe = document.querySelector(`iframe[data-iframe-id="${esc(id)}"]`);
             if (!iframe) return;
             iframe.dataset.iframeReady = '1';
+            iframe.dataset.iframeLoaded = iframe.dataset.iframeLoaded || '1';
             const st = getIframeState(id, { messageId: String(iframe.dataset.msgId || ''), createdAt: Date.now() });
             if (st && !st.readyAt) st.readyAt = Date.now();
             if (iframe.dataset.iframeMvuCompat === '1') {
@@ -1612,6 +2520,22 @@ export const setupIframeResizeListener = () => {
             const st = getIframeState(id, { messageId: String(iframe.dataset.msgId || ''), createdAt: Date.now() });
             if (st) st.error = message || 'error';
             warnIframe('iframe-error', id, message ? `err=${message}` : '');
+            return;
+        }
+        if (data.type === 'chatapp:iframe-debug') {
+            const id = String(data.id || '');
+            const level = String(data.level || 'info').toLowerCase();
+            const message = String(data.message || '').trim();
+            const info = `compat id=${id || 'unknown'}${message ? ` ${message}` : ''}`;
+            const warnType = level === 'warn' || level === 'error';
+            emitDebugLog({
+                source: 'iframe',
+                type: warnType ? 'warn' : 'info',
+                message: info,
+                force: true,
+            });
+            if (warnType) warnIframe('compat', id, message ? `msg=${message}` : '');
+            else logger.info(`[iframe] ${info}`);
             return;
         }
         if (data.type === 'chatapp:iframe-resize') {
@@ -1688,7 +2612,7 @@ export const setupIframeResizeListener = () => {
     });
 };
 
-export const renderRichText = (containerEl, text, { messageId, preserveHtmlNewlines = false, sessionId } = {}) => {
+export const renderRichText = (containerEl, text, { messageId, preserveHtmlNewlines = false, sessionId, debugTag = '' } = {}) => {
     if (!containerEl) return;
     containerEl.innerHTML = '';
 
@@ -1757,11 +2681,11 @@ export const renderRichText = (containerEl, text, { messageId, preserveHtmlNewli
             return [{ type: 'code', lang: 'html', code: decoded }];
         });
     }
-    if (shouldLogRichDebug()) {
+    if (Boolean(debugTag) || shouldLogRichDebug()) {
         const htmlHint = /<\s*(style|details|div|body|html|table|section|article|main|svg|iframe)\b/i.test(htmlCandidateText) ||
             /&lt;\s*(style|details|div|body|html|table|section|article|main|svg|iframe)\b/i.test(rawText);
         if (htmlHint || hasCodeFence || wholeLooksLikeHtml) {
-            const msg = `render msg=${String(messageId || '')} codeFence=${hasCodeFence} html=${wholeLooksLikeHtml} escaped=${hasEscapedHtml} parts=${parts.length}`;
+            const msg = `render msg=${String(messageId || '')} codeFence=${hasCodeFence} html=${wholeLooksLikeHtml} escaped=${hasEscapedHtml} parts=${parts.length}${debugTag ? ` tag=${debugTag}` : ''}`;
             emitDebugLog({ source: 'rich', type: 'info', message: msg, force: true });
             logger.info(`[rich] ${msg}`);
         }
@@ -1801,6 +2725,7 @@ export const renderRichText = (containerEl, text, { messageId, preserveHtmlNewli
                 messageId,
                 preserveHtmlNewlines,
                 sessionId,
+                debugTag,
             }));
             return;
         }

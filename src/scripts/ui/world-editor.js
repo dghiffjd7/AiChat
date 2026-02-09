@@ -225,6 +225,13 @@ const normalizeEntry = (entry = {}, index = 0) => {
     e.disable = Boolean(e.disable);
     e.constant = Boolean(e.constant);
     e.selective = e.selective !== false;
+    // 三态灯逻辑：红灯（禁用）优先，其次蓝灯；避免出现红/蓝/绿同时选中。
+    if (e.disable) {
+        e.constant = false;
+        e.selective = false;
+    } else if (e.constant) {
+        e.selective = false;
+    }
     e.selectiveLogic = toNumber(e.selectiveLogic, 0);
 
     // 概率：旧格式可能是 0-1 的 ratio
@@ -1596,9 +1603,43 @@ export class WorldEditorModal {
             });
         };
 
-        bindCheck('#we-disable', 'disable');
-        bindCheck('#we-constant', 'constant');
-        bindCheck('#we-selective', 'selective');
+        const disableEl = q('#we-disable');
+        const constantEl = q('#we-constant');
+        const selectiveEl = q('#we-selective');
+        const syncLightChecks = () => {
+            if (disableEl) disableEl.checked = Boolean(entry.disable);
+            if (constantEl) constantEl.checked = Boolean(entry.constant);
+            if (selectiveEl) selectiveEl.checked = Boolean(entry.selective);
+        };
+        const updateLightState = (type, checked) => {
+            if (type === 'disable') {
+                entry.disable = Boolean(checked);
+                if (checked) {
+                    entry.constant = false;
+                    entry.selective = false;
+                }
+            } else if (type === 'constant') {
+                entry.constant = Boolean(checked);
+                if (checked) {
+                    entry.disable = false;
+                    entry.selective = false;
+                }
+            } else if (type === 'selective') {
+                entry.selective = Boolean(checked);
+                if (checked) {
+                    entry.disable = false;
+                    entry.constant = false;
+                }
+            }
+            syncLightChecks();
+            this.renderList();
+            markRefDirty();
+        };
+        if (disableEl) disableEl.addEventListener('change', () => updateLightState('disable', disableEl.checked));
+        if (constantEl) constantEl.addEventListener('change', () => updateLightState('constant', constantEl.checked));
+        if (selectiveEl) selectiveEl.addEventListener('change', () => updateLightState('selective', selectiveEl.checked));
+        syncLightChecks();
+
         bindCheck('#we-ignoreBudget', 'ignoreBudget');
         bindCheck('#we-excludeRecursion', 'excludeRecursion');
         bindCheck('#we-preventRecursion', 'preventRecursion');

@@ -28,6 +28,7 @@ export class DebugPanel {
         this.errorLogBtn = null;
         this.filterInput = null;
         this.filterClearBtn = null;
+        this.copyLogBtn = null;
         this.filterText = '';
         this.memoryInspectorOverlay = null;
         this.memoryInspectorPanel = null;
@@ -254,6 +255,22 @@ export class DebugPanel {
             this.filterText = '';
             this.render();
         };
+        const copyLogBtn = document.createElement('button');
+        copyLogBtn.type = 'button';
+        copyLogBtn.textContent = '⧉';
+        copyLogBtn.title = '复制当前日志';
+        copyLogBtn.style.cssText = `
+            padding: 2px 6px;
+            background: rgba(0, 0, 0, 0.8);
+            color: #00ff00;
+            border: 1px solid #00ff00;
+            border-radius: 4px;
+            font-size: 10px;
+            font-family: monospace;
+            cursor: pointer;
+            opacity: 0.9;
+        `;
+        copyLogBtn.onclick = () => this.copyVisibleLogs();
         const filterInput = document.createElement('input');
         filterInput.type = 'text';
         filterInput.placeholder = '筛选日志...';
@@ -294,11 +311,13 @@ export class DebugPanel {
             filterInput.focus();
         };
         filterWrap.appendChild(clearLogBtn);
+        filterWrap.appendChild(copyLogBtn);
         filterWrap.appendChild(filterInput);
         filterWrap.appendChild(filterClearBtn);
         this.controls.appendChild(filterWrap);
         this.filterInput = filterInput;
         this.filterClearBtn = filterClearBtn;
+        this.copyLogBtn = copyLogBtn;
 
         this.logContainer = document.createElement('div');
         this.logContainer.style.cssText = `
@@ -486,6 +505,38 @@ export class DebugPanel {
         this.seenMessages.clear();
         if (this.logContainer) {
             this.logContainer.innerHTML = '';
+        }
+    }
+
+    async copyVisibleLogs() {
+        const term = String(this.filterText || '').trim().toLowerCase();
+        const list = term
+            ? this.logs.filter(log => String(log.message || '').toLowerCase().includes(term))
+            : this.logs;
+        if (!list.length) {
+            window.toastr?.warning?.('暂无日志可复制');
+            return;
+        }
+        const text = list.map(log => `${log.prefix} [${log.timestamp}] ${log.message}`).join('\n');
+        try {
+            await navigator.clipboard.writeText(text);
+            window.toastr?.success?.(`已复制 ${list.length} 条日志`);
+        } catch {
+            try {
+                const ta = document.createElement('textarea');
+                ta.value = text;
+                ta.style.position = 'fixed';
+                ta.style.left = '-9999px';
+                ta.style.top = '0';
+                ta.setAttribute('readonly', 'true');
+                document.body.appendChild(ta);
+                ta.select();
+                document.execCommand?.('copy');
+                ta.remove();
+                window.toastr?.success?.(`已复制 ${list.length} 条日志`);
+            } catch {
+                window.toastr?.error?.('复制失败');
+            }
         }
     }
 

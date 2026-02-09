@@ -1,5 +1,56 @@
 # 開發進度追蹤（必更新）(必须使用当下时间记录)
 
+## 2026-02-09 (MVU 角色卡导入状态修正 + RP 开场白调试 + iframe 告警降噪)
+
+- **世界书条目状态互斥修正（红/蓝/绿灯）**：
+  - 角色卡导入的世界书条目在 `disable=true`（红灯）时，自动清除 `constant/selective`，避免出现三灯同时选中的脏状态。
+  - 世界书编辑器中将红灯/蓝灯/绿灯改为互斥行为：勾选其一会自动取消另外两项。
+- **RP（创意写作界面）开场白调试增强**：
+  - 新增 `[rp-greeting]` 调试日志，覆盖开场白构建全链路：原始长度、initvar 抽取结果、worldbook initvar 合并、正则处理、`parseSpecialMessage` 结果、实际入库消息信息。
+  - `build-parse` 日志补充 `stored/display` 预览片段，方便直接判断是内容构建异常还是渲染异常。
+  - 聊天渲染层新增开场白专用渲染日志，便于定位“开场白空白”是生成链路问题还是渲染链路问题。
+- **RP 开场白 MVU 兼容补强**：
+  - 对 RP 开场白富文本代码块在脚本模式下强制开启 MVU 兼容桥（`forceMvu=1`），避免复杂变量卡因特征未命中而走 `mvu=0`。
+  - MVU 兼容桥内的 mini `$` 新增 `$.load(...)` 支持（含 `url selector` 语法），并在跨域/脚本文档场景下提供 iframe 回退，提升 `$('body').load('https://...')` 这类角色卡开场白的可用性。
+- **富文本 iframe 告警治理**：
+  - `no-ready-after-2s / no-resize-after-2s` 诊断前增加 `isConnected` 检查，跳过已被重渲染移除的旧 iframe，减少无效告警刷屏。
+  - 增加脚本模式下的本地回退观测（测高与长按转发），桥接未就绪时仍尝试本地测高。
+  - iframe 本地测高时会回写 resize 状态，降低“实际已渲染但仍报 no-resize”的误报。
+- **调试面板可用性增强**：
+  - 在 debug 面板顶部“清空（∅）”旁新增“一键复制（⧉）”按钮，可复制当前显示（含筛选结果）的全部日志。
+- **iframe 兼容调试日志补充**：
+  - 新增 `chatapp:iframe-debug` 通道，记录 `$.load` 开始/成功/失败/回退细节，便于定位开场白空白是加载失败、CORS、还是脚本文档回退路径触发。
+  - 新增 `bridge-ready` 日志与 `scripts-disabled` 显式提示，快速区分“脚本未开启”与“脚本已执行但加载失败”两类问题。
+  - 对 `$('body').load('URL')` 形态新增宿主直连兜底：检测到该模式时直接加载 URL 到 iframe（`direct-load`），即使脚本链路异常也可避免开场白空白。
+  - 将 `direct-load` 升级为“优先 fetch+srcdoc 渲染（`direct-srcdoc`）”：可绕过部分 CDN 错误 MIME 导致的源码直出；fetch 失败时再回退到直接 `iframe src`。
+  - 新增 `direct-load` 小缓存（5 分钟、最多 6 条）以减少同一开场白反复切换时的重复下载与脚本编译，降低加载发热与卡顿。
+  - 对 `direct-srcdoc` 注入框架全局预加载 shim（Vue + VueRouter，多 CDN 回退），缓解远程页面运行时报 `Vue is not defined` / `VueRouter is not defined` 导致的空白，并新增 `vue-shim-ready/missing`、`vue-router-shim-ready/missing` 诊断日志。
+  - 新增 `$ / jQuery` 全局 shim（`dollar-shim`，含 `window.eval` 变量绑定），优先于框架 shim 注入，缓解开场白脚本运行时报 `$ is not defined` 导致变量卡状态栏不渲染。
+  - MVU 兼容桥补充全局别名导出（`errorCatched/getAllVariables/eventOn/...` + `$` 绑定），修复脚本直接调用标识符时报 `errorCatched is not defined` 的场景，并新增 `mvu-alias-ready` 日志。
+  - 增加脚本内容重写（`helper-rewrite`）：对内联脚本中的 ST 常用裸标识符调用自动改写为 `window.xxx`（如 `errorCatched/getAllVariables/$/Mvu/VueRouter`），降低 module/严格作用域下 `xxx is not defined` 的报错概率。
+  - 将 `helper-rewrite` 收敛为“函数调用名最小改写”（`errorCatched/getAllVariables/waitGlobalInitialized/eventOn/eventRemoveListener`），减少语法污染导致的 `Unexpected token` 风险。
+  - 修复 `helper-rewrite` 的动态正则构造风险：改为固定正则字面量匹配，并在异常时回退原文；新增 `helper-rewrite-failed/direct-load-rewrite-failed` 诊断日志。
+  - 新增稳定兼容命名空间 `window.__chatappCompat`，并将 helper 改写目标切到 `window.__chatappCompat.*`（不再依赖 `window.errorCatched` 可变引用），修复被页面脚本覆盖后出现 `window.errorCatched is not a function` 的问题。
+  - iframe 错误日志补充 `file/line/col` 位置信息，便于快速定位是用户脚本语法错误还是兼容层注入导致。
+  - 对脚本执行路径加入 HTML 内联 CSP 元标签清理（`content-security-policy` 等），减少注入桥脚本与外部依赖脚本被页面自带 CSP 拦截导致的 `$ is not defined`。
+  - 修正 `direct-load` 首帧 `about:blank` onload 误判，避免“已成功加载”假阳性日志与过高初始空白区域。
+- **兼容回归收敛（避免“复杂卡修复反伤简单卡”）**：
+  - 取消 RP 开场白“无条件 `forceMvu`”，改为仅在检测到 `$('body').load(...)` 时强制兼容，其余场景按特征判定，避免普通开场白被过度注入。
+  - `helper-rewrite` 改为仅在 `direct-load` 外链场景启用；内联开场白不再做 helper 正则改写，降低 `Unexpected token` / 正则被污染风险。
+  - Vue/VueRouter 框架 shim 改为按需注入（非 `direct-load` 场景仅命中特征时启用），减少无关 `vue-shim-missing` 告警。
+  - `errorCatched` 兼容函数改为强约束 getter/setter（始终归一为函数），降低页面脚本覆盖后触发 `window.errorCatched is not a function` 的概率。
+  - 针对简单卡补丁：新增“仅 `errorCatched(...)` 的最小内联改写”（仅在 `needsMvuCompat` 且非 `direct-load` 场景触发），并在 dollar shim 增加 `errorCatched` 全局兜底，修复 `ReferenceError: errorCatched is not defined`。
+  - 引入“双轨桥接”策略：普通开场白（非 `body.load`）切回 backup 风格稳定 MVU 兼容桥；仅 `$('body').load(...)` 的复杂场景继续走增强桥与 direct-load 链路，降低回归面。
+  - 修复“双轨短路”问题：非 `body.load` 场景不再预注入外层简化 `$` shim，避免覆盖/阻断 legacy bridge 内的完整 mini-jQuery（含 `css/addClass/removeClass`），并新增 `mvu-bridge=legacy|enhanced` 调试日志。
+  - 继续对齐 backup：补回 legacy mini-jQuery 常用接口（`css/addClass/removeClass/attr/prop/val/find/on/off`），避免脚本在 `errorCatched(...)` 包裹下静默失败；新增 `legacy-bridge-ready` 与 `legacy-vars-applied` 诊断日志。
+- 修改：
+  - `src/scripts/ui/world-editor.js`
+  - `src/scripts/storage/worldinfo.js`
+  - `src/scripts/ui/app.js`
+  - `src/scripts/ui/chat/chat-ui.js`
+  - `src/scripts/ui/chat/rich-text-renderer.js`
+  - `src/scripts/ui/debug-panel.js`
+
 ## 2026-02-06 (创意写作界面优化 + 开场白切换)
 
 - **界面文案**：移除所有 “RP” 显示文案，统一改为“创意写作”。

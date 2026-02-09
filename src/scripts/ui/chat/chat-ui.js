@@ -961,10 +961,16 @@ export class ChatUI {
         // Safe rich rendering (code fences + html iframe preview)
         if (message?.meta?.renderRich) {
           const target = this.prepareTextContainer(bubble, message);
+          if (message?.meta?.isGreeting) {
+            logger.info(
+              `[rp-greeting] ui-render messageId=${String(message?.id || '')} session=${String(message?.sessionId || '')} len=${String(message?.content || '').length}`,
+            );
+          }
           renderRichText(target, String(message.content ?? ''), {
             messageId: message.id,
             preserveHtmlNewlines: true,
             sessionId: message?.sessionId,
+            debugTag: message?.meta?.isGreeting ? 'rp-greeting' : '',
           });
           break;
         }
@@ -1182,7 +1188,11 @@ export class ChatUI {
             const text = String(fm?.content ?? '');
             const target = this.prepareTextContainer(messageEl, fm);
             if (fm?.meta?.renderRich) {
-              renderRichText(target, text, { messageId: msgId || fm?.id || meta?.id, sessionId: fm?.sessionId });
+              renderRichText(target, text, {
+                messageId: msgId || fm?.id || meta?.id,
+                sessionId: fm?.sessionId,
+                debugTag: fm?.meta?.isGreeting ? 'rp-greeting' : '',
+              });
             } else {
               const normalized = this.normalizeAssistantLineBreaks(text);
               if (!this.renderTextWithStickers(target, normalized)) {

@@ -155,10 +155,12 @@ export function convertSTWorld(stJson = {}, name = 'imported') {
         const position = resolvePosition(preserved, ext);
         const probability = toNumber(readExt(ext, 'probability', 'probability') ?? preserved.probability, 100);
         const useProbability = toBool(readExt(ext, 'useProbability', 'use_probability') ?? preserved.useProbability, true);
-        const selective = (typeof preserved.selective === 'boolean') ? preserved.selective : undefined;
+        let selective = (typeof preserved.selective === 'boolean') ? preserved.selective : undefined;
         const disable = (typeof preserved.disable === 'boolean')
             ? preserved.disable
             : (typeof preserved.enabled === 'boolean' ? !preserved.enabled : false);
+        const constant = disable ? false : Boolean(preserved.constant);
+        if (disable) selective = false;
 
         return {
             ...preserved,
@@ -178,7 +180,7 @@ export function convertSTWorld(stJson = {}, name = 'imported') {
             selective,
             selectiveLogic: toNumber(readExt(ext, 'selectiveLogic', 'selectiveLogic') ?? preserved.selectiveLogic, 0),
             disable,
-            constant: Boolean(preserved.constant),
+            constant,
             ignoreBudget: Boolean(readExt(ext, 'ignoreBudget', 'ignore_budget') ?? preserved.ignoreBudget),
             excludeRecursion: Boolean(readExt(ext, 'excludeRecursion', 'exclude_recursion') ?? preserved.excludeRecursion),
             preventRecursion: Boolean(readExt(ext, 'preventRecursion', 'prevent_recursion') ?? preserved.preventRecursion),
