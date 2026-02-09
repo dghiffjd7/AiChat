@@ -12880,8 +12880,11 @@ Phase G（Frame 36）：循环衔接
       return parts.join('\n\n');
     };
     const handleMemoryEditsFromRaw = async (raw, { sessionId, isGroup, force = false, requestPrompt } = {}) => {
+      if (uiMode === 'rp') {
+        return { text: raw, blocks: [], actions: [] };
+      }
       if (!force && !isMemoryAutoExtractInline()) {
-        return { text: raw, actions: [] };
+        return { text: raw, blocks: [], actions: [] };
       }
       const parsed = extractTableEditBlocks(raw);
       try {
@@ -13001,6 +13004,7 @@ Phase G（Frame 36）：循环衔接
       return runtime;
     };
     const runMemoryUpdateAfterChat = async (sessionId, isGroup, baseContext) => {
+      if (uiMode === 'rp') return;
       if (!isMemoryAutoExtractSeparate()) return;
       if (!sessionId) return;
       if (memoryUpdateRunning.has(sessionId)) return;
@@ -13141,24 +13145,30 @@ Phase G（Frame 36）：循环衔接
     // Backward-compatible aliases for historical typo variants used in old edit pipelines.
     const stripUpdateVariableBloacks = stripUpdateVariableBlocks;
     const stripupdatevariablebloacks = stripUpdateVariableBlocks;
-    const extractUpdateVariableBlock = (text) => {
-      const raw = String(text || '');
-      if (!raw) return { block: '', cleaned: raw };
-      const openRe = /<\s*(update(?:variable)?|variableupdate)\b[^>]*>/gi;
-      let last = null;
-      let m;
-      while ((m = openRe.exec(raw))) {
-        last = { tag: m[1], index: m.index, len: m[0].length };
+    const extractUpdateVariableBlocks = (text) => {
+      let out = String(text || '');
+      if (!out) return { blocks: [], cleaned: out };
+      const blocks = [];
+      const openRe = /<\s*(update(?:variable)?|variableupdate)\b[^>]*>/i;
+      for (let i = 0; i < 50; i += 1) {
+        const open = openRe.exec(out);
+        if (!open) break;
+        const tag = String(open[1] || 'UpdateVariable');
+        const start = open.index;
+        const afterStart = start + open[0].length;
+        const tail = out.slice(afterStart);
+        const closeRe = new RegExp(`<\\s*\\/\\s*${tag}\\s*>`, 'i');
+        const close = closeRe.exec(tail);
+        if (!close) {
+          blocks.push(out.slice(afterStart));
+          out = out.slice(0, start);
+          break;
+        }
+        const end = afterStart + close.index + close[0].length;
+        blocks.push(out.slice(afterStart, afterStart + close.index));
+        out = out.slice(0, start) + out.slice(end);
       }
-      if (!last) return { block: '', cleaned: raw };
-      const start = last.index + last.len;
-      const tail = raw.slice(start);
-      const closeRe = new RegExp(`<\\s*\\/\\s*${last.tag}\\s*>`, 'i');
-      const close = closeRe.exec(tail);
-      const endIndex = close ? start + close.index : raw.length;
-      const block = raw.slice(start, endIndex);
-      const cleaned = raw.slice(0, last.index) + raw.slice(close ? endIndex + close[0].length : raw.length);
-      return { block, cleaned };
+      return { blocks, cleaned: out };
     };
     const buildUpdateVariableParser = () => {
       const stripCodeFence = (text) => {
@@ -13348,6 +13358,57 @@ Phase G（Frame 36）：循环衔接
         if (trimmed) args.push(trimmed);
         return args;
       };
+      const stripKnownRootPrefix = (parts) => {
+        let next = Array.isArray(parts) ? [...parts] : [];
+        const known = new Set(['stat_data', 'status_current_variables', 'variables', 'variable', 'vars', '变量']);
+        while (next.length > 1 && known.has(String(next[0] || '').trim().toLowerCase())) {
+          next = next.slice(1);
+        }
+        return next;
+      };
+      const parseJsonPatchArray = (value, reason = 'json_patch') => {
+        if (!Array.isArray(value)) return [];
+        const commands = [];
+        value.forEach((op) => {
+          const action = String(op?.op || '').toLowerCase();
+          let pathParts = decodeJsonPointer(op?.path || op?.to || '');
+          pathParts = pathParts.filter(Boolean);
+          pathParts = stripKnownRootPrefix(pathParts);
+          const path = pathParts.map(seg => (/^\d+$/.test(seg) ? Number(seg) : seg));
+          if (!action || !path.length) return;
+          if (action === 'replace') {
+            commands.push({ type: 'set', path, value: op?.value, reason });
+            return;
+          }
+          if (action === 'delta') {
+            commands.push({ type: 'add', path, value: op?.value, reason });
+            return;
+          }
+          if (action === 'add' || action === 'insert') {
+            const key = path[path.length - 1];
+            const parentPath = path.slice(0, -1);
+            if (!parentPath.length) {
+              commands.push({ type: 'set', path, value: op?.value, reason });
+              return;
+            }
+            commands.push({ type: 'insert', path: parentPath, key, value: op?.value, reason });
+            return;
+          }
+          if (action === 'remove') {
+            commands.push({ type: 'delete', path, reason });
+            return;
+          }
+          if (action === 'move') {
+            let fromParts = decodeJsonPointer(op?.from || '');
+            fromParts = fromParts.filter(Boolean);
+            fromParts = stripKnownRootPrefix(fromParts);
+            const from = fromParts.map(seg => (/^\d+$/.test(seg) ? Number(seg) : seg));
+            if (!from.length) return;
+            commands.push({ type: 'move', from, to: path, reason });
+          }
+        });
+        return commands;
+      };
       const parseJsonPatchCommands = (text) => {
         const commands = [];
         const re = /<(json_?patch)>(?:\s*```.*)?([\s\S]*?)(?:```\s*)?<\/\1>/gim;
@@ -13356,49 +13417,7 @@ Phase G（Frame 36）：循环衔接
           const body = stripCodeFence(m[2] || '');
           if (!body) continue;
           const parsed = parseLooseJson(body) ?? safeJsonParse(body);
-          if (!Array.isArray(parsed)) continue;
-          parsed.forEach((op) => {
-            const action = String(op?.op || '').toLowerCase();
-            let pathParts = decodeJsonPointer(op?.path || op?.to || '');
-            pathParts = pathParts.filter(Boolean);
-            if (pathParts[0] === 'stat_data' || pathParts[0] === 'status_current_variables') {
-              pathParts = pathParts.slice(1);
-            }
-            const path = pathParts.map(seg => (/^\d+$/.test(seg) ? Number(seg) : seg));
-            if (!action || !path.length) return;
-            if (action === 'replace') {
-              commands.push({ type: 'set', path, value: op?.value, reason: 'json_patch' });
-              return;
-            }
-            if (action === 'delta') {
-              commands.push({ type: 'add', path, value: op?.value, reason: 'json_patch' });
-              return;
-            }
-            if (action === 'add' || action === 'insert') {
-              const key = path[path.length - 1];
-              const parentPath = path.slice(0, -1);
-              if (!parentPath.length) {
-                commands.push({ type: 'set', path, value: op?.value, reason: 'json_patch' });
-                return;
-              }
-              commands.push({ type: 'insert', path: parentPath, key, value: op?.value, reason: 'json_patch' });
-              return;
-            }
-            if (action === 'remove') {
-              commands.push({ type: 'delete', path, reason: 'json_patch' });
-              return;
-            }
-            if (action === 'move') {
-              let fromParts = decodeJsonPointer(op?.from || '');
-              fromParts = fromParts.filter(Boolean);
-              if (fromParts[0] === 'stat_data' || fromParts[0] === 'status_current_variables') {
-                fromParts = fromParts.slice(1);
-              }
-              const from = fromParts.map(seg => (/^\d+$/.test(seg) ? Number(seg) : seg));
-              if (!from.length) return;
-              commands.push({ type: 'move', from, to: path, reason: 'json_patch' });
-            }
-          });
+          commands.push(...parseJsonPatchArray(parsed, 'json_patch'));
         }
         return commands;
       };
@@ -13425,7 +13444,19 @@ Phase G（Frame 36）：循环衔接
             continue;
           }
           if (type === 'set') {
-            if (args.length >= 2) commands.push({ type: 'set', path, value: parseValue(args[args.length - 1]) });
+            if (args.length >= 3 && rawPath === '') {
+              const keyPathRaw = normalizePath(args[1]);
+              let keyPath = toPath(keyPathRaw);
+              if (!keyPath.length && keyPathRaw !== '') {
+                const parsedKey = parseValue(args[1]);
+                if (parsedKey !== undefined && parsedKey !== null && parsedKey !== '') {
+                  keyPath = [String(parsedKey)];
+                }
+              }
+              if (keyPath.length) commands.push({ type: 'set', path: keyPath, value: parseValue(args[args.length - 1]) });
+            } else if (args.length >= 2) {
+              commands.push({ type: 'set', path, value: parseValue(args[args.length - 1]) });
+            }
           } else if (type === 'add') {
             if (args.length >= 2) commands.push({ type: 'add', path, value: parseValue(args[1]) });
           } else if (type === 'insert' || type === 'assign') {
@@ -13454,6 +13485,11 @@ Phase G（Frame 36）：循环衔接
         commands.push(...jsonCmds);
         const cleaned = stripped.replace(/<(json_?patch)>(?:\s*```.*)?[\s\S]*?<\/\1>/gim, '');
         commands.push(...parseInlineCommands(cleaned));
+        if (!commands.length) {
+          const body = stripCodeFence(stripped);
+          const parsed = parseLooseJson(body) ?? safeJsonParse(body);
+          commands.push(...parseJsonPatchArray(parsed, 'json_patch_raw'));
+        }
         return commands;
       };
       return { parseCommands };
@@ -13474,6 +13510,8 @@ Phase G（Frame 36）：循环衔接
         }
       };
       const isPlainObject = (val) => val && typeof val === 'object' && !Array.isArray(val);
+      const isMvuWrappedScalar = (val) =>
+        Array.isArray(val) && val.length === 2 && typeof val[1] === 'string' && !Array.isArray(val[0]);
       const deepEqual = (a, b) => {
         if (Object.is(a, b)) return true;
         if (typeof a !== typeof b) return false;
@@ -13524,6 +13562,47 @@ Phase G（Frame 36）：循环衔接
         cur[last] = value;
         return { root: obj, ok: true };
       };
+      const resolveExistingPath = (obj, path, { allowLeaf = false } = {}) => {
+        const base = Array.isArray(path) ? path : [];
+        if (!base.length) return [];
+        const dotKey = base.map(seg => String(seg)).join('.');
+        if (dotKey && hasAt(obj, [dotKey])) return [dotKey];
+        if (hasAt(obj, base)) return base;
+        for (let i = 1; i < base.length; i += 1) {
+          const suffix = base.slice(i);
+          if (!suffix.length) continue;
+          if (hasAt(obj, suffix)) return suffix;
+          const suffixDot = suffix.map(seg => String(seg)).join('.');
+          if (suffixDot && hasAt(obj, [suffixDot])) return [suffixDot];
+        }
+        // Flat-key fallback for MVU cards: when path prefix is wrong (e.g. 世界状态.存量 vs 玩家状态.存量),
+        // we only auto-map if there is exactly one unique candidate by leaf/tail.
+        if (obj && typeof obj === 'object') {
+          const flatKeys = Object.keys(obj).filter(k => typeof k === 'string' && k.trim().length > 0);
+          if (flatKeys.length) {
+            const leaf = String(base[base.length - 1] ?? '').trim();
+            if (leaf) {
+              const leafMatches = flatKeys.filter((k) => {
+                const parts = String(k).split('.');
+                return String(parts[parts.length - 1] || '').trim() === leaf;
+              });
+              if (leafMatches.length === 1 && hasAt(obj, [leafMatches[0]])) return [leafMatches[0]];
+            }
+            if (base.length > 1) {
+              const tailDot = base.slice(1).map(seg => String(seg)).join('.');
+              if (tailDot) {
+                const tailMatches = flatKeys.filter(k => k === tailDot || k.endsWith(`.${tailDot}`));
+                if (tailMatches.length === 1 && hasAt(obj, [tailMatches[0]])) return [tailMatches[0]];
+              }
+            }
+          }
+        }
+        if (allowLeaf) {
+          const leaf = String(base[base.length - 1] ?? '').trim();
+          if (leaf && hasAt(obj, [leaf])) return [leaf];
+        }
+        return null;
+      };
       const deleteAt = (obj, path) => {
         if (!path.length) return { root: obj, ok: false };
         const parentPath = path.slice(0, -1);
@@ -13554,6 +13633,37 @@ Phase G（Frame 36）：循环衔接
         });
         return true;
       };
+      const pathToString = (path) => {
+        if (!Array.isArray(path) || !path.length) return '(root)';
+        return path.map(seg => String(seg)).join('.');
+      };
+      const previewValue = (value) => {
+        if (value === null || value === undefined) return String(value);
+        if (typeof value === 'string') return value.length > 120 ? `${value.slice(0, 117)}...` : value;
+        if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+        try {
+          const text = JSON.stringify(value);
+          return text.length > 120 ? `${text.slice(0, 117)}...` : text;
+        } catch {
+          return '[unserializable]';
+        }
+      };
+      const toDateValue = (value) => {
+        if (value instanceof Date && !Number.isNaN(value.getTime())) return new Date(value.getTime());
+        if (typeof value !== 'string') return null;
+        const raw = value.trim();
+        if (!raw || Number.isFinite(Number(raw))) return null;
+        const dt = new Date(raw);
+        return Number.isNaN(dt.getTime()) ? null : dt;
+      };
+      const skipped = [];
+      const pushSkip = (cmd, reason) => {
+        if (skipped.length >= 12) return;
+        const type = String(cmd?.type || '').trim().toLowerCase() || 'unknown';
+        const path = Array.isArray(cmd?.path) ? cmd.path : (Array.isArray(cmd?.from) ? cmd.from : []);
+        skipped.push(`${type}@${pathToString(path)}:${reason}`);
+      };
+      let appliedCount = 0;
       const shouldEmitStarted = shouldEmitMvuEvent('mag_variable_update_started');
       const shouldEmitEnded =
         shouldEmitMvuEvent('mag_variable_update_ended') || shouldEmitMvuEvent('mag_variable_update_ended_for_zod');
@@ -13566,29 +13676,122 @@ Phase G（Frame 36）：循环衔接
         if (type === 'move') {
           const from = Array.isArray(cmd.from) ? cmd.from : [];
           const to = Array.isArray(cmd.to) ? cmd.to : [];
-          if (!from.length || !to.length) return;
-          if (!hasAt(root, from)) return;
-          const value = clone(getAt(root, from));
-          deleteAt(root, from);
-          setAt(root, to, value, { create: true });
+          if (!from.length || !to.length) {
+            pushSkip(cmd, 'invalid move path');
+            return;
+          }
+          const resolvedFrom = resolveExistingPath(root, from, { allowLeaf: true });
+          if (!resolvedFrom || !resolvedFrom.length) {
+            pushSkip(cmd, 'move source not found');
+            return;
+          }
+          const value = clone(getAt(root, resolvedFrom));
+          const deleted = deleteAt(root, resolvedFrom);
+          if (!deleted.ok) {
+            pushSkip(cmd, 'move source delete failed');
+            return;
+          }
+          const moved = setAt(root, to, value, { create: true });
+          if (!moved.ok) {
+            pushSkip(cmd, 'move target set failed');
+            return;
+          }
+          appliedCount += 1;
           return;
         }
         const path = Array.isArray(cmd.path) ? cmd.path : [];
         if (type === 'set') {
           if (!path.length) {
-            root = cmd.value && typeof cmd.value === 'object' ? clone(cmd.value) : root;
+            if (!cmd.value || typeof cmd.value !== 'object') {
+              pushSkip(cmd, 'root set requires object');
+              return;
+            }
+            root = clone(cmd.value);
+            appliedCount += 1;
             return;
           }
-          if (!hasAt(root, path)) return;
-          setAt(root, path, cmd.value, { create: false });
+          const resolvedPath = resolveExistingPath(root, path, { allowLeaf: true });
+          if (!resolvedPath || !resolvedPath.length) {
+            pushSkip(cmd, 'set path not found');
+            return;
+          }
+          const prev = getAt(root, resolvedPath);
+          if (isMvuWrappedScalar(prev) && (typeof prev[0] !== 'object' || prev[0] === null)) {
+            const nextWrapped = clone(prev);
+            let nextValue = cmd.value;
+            if (typeof prev[0] === 'number' && typeof cmd.value === 'string') {
+              const n = Number(cmd.value);
+              if (Number.isFinite(n)) nextValue = n;
+            }
+            nextWrapped[0] = nextValue;
+            const result = setAt(root, resolvedPath, nextWrapped, { create: false });
+            if (!result.ok) {
+              pushSkip(cmd, 'wrapped set failed');
+              return;
+            }
+            appliedCount += 1;
+            return;
+          }
+          const result = setAt(root, resolvedPath, cmd.value, { create: false });
+          if (!result.ok) {
+            pushSkip(cmd, 'set failed');
+            return;
+          }
+          appliedCount += 1;
           return;
         }
         if (type === 'add') {
-          if (!hasAt(root, path)) return;
-          const cur = getAt(root, path);
-          const next = (typeof cur === 'number' || typeof cur === 'string') ? cur + cmd.value : cur;
-          if (next === cur) return;
-          setAt(root, path, next, { create: false });
+          const resolvedPath = resolveExistingPath(root, path, { allowLeaf: true });
+          if (!resolvedPath || !resolvedPath.length) {
+            pushSkip(cmd, 'add path not found');
+            return;
+          }
+          const rawPathText = pathToString(path);
+          const resolvedPathText = pathToString(resolvedPath);
+          const currentRaw = getAt(root, resolvedPath);
+          const wrapped = isMvuWrappedScalar(currentRaw) && (typeof currentRaw[0] !== 'object' || currentRaw[0] === null);
+          const current = wrapped ? currentRaw[0] : currentRaw;
+          const delta = Number(cmd.value);
+          if (!Number.isFinite(delta)) {
+            pushSkip(cmd, 'add delta not number');
+            return;
+          }
+          let next = null;
+          const dateBase = toDateValue(current);
+          if (dateBase) {
+            next = new Date(dateBase.getTime() + delta).toISOString();
+          } else if (typeof current === 'number') {
+            next = parseFloat((current + delta).toPrecision(12));
+          } else if (typeof current === 'string') {
+            const baseNum = Number(current);
+            if (!Number.isFinite(baseNum)) {
+              pushSkip(cmd, 'add target is non-numeric string');
+              return;
+            }
+            next = parseFloat((baseNum + delta).toPrecision(12));
+          } else {
+            pushSkip(cmd, `add target unsupported type=${typeof current}`);
+            return;
+          }
+          if (wrapped) {
+            const nextWrapped = clone(currentRaw);
+            nextWrapped[0] = next;
+            const result = setAt(root, resolvedPath, nextWrapped, { create: false });
+            if (!result.ok) {
+              pushSkip(cmd, 'wrapped add failed');
+              return;
+            }
+          } else {
+            const result = setAt(root, resolvedPath, next, { create: false });
+            if (!result.ok) {
+              pushSkip(cmd, 'add set failed');
+              return;
+            }
+          }
+          logger.info(
+            `[update-variable] add-debug path=${rawPathText} resolved=${resolvedPathText} cur=${previewValue(current)} delta=${previewValue(cmd.value)} next=${previewValue(next)}`,
+          );
+          appliedCount += 1;
           return;
         }
         if (type === 'insert') {
@@ -13602,39 +13805,94 @@ Phase G（Frame 36）：循环衔接
           if (Array.isArray(container)) {
             if (key === null || key === undefined || key === '-') {
               container.push(cmd.value);
+              appliedCount += 1;
             } else if (typeof key === 'number') {
               const idx = Math.max(0, Math.min(container.length, key));
               container.splice(idx, 0, cmd.value);
+              appliedCount += 1;
+            } else {
+              pushSkip(cmd, 'insert array key invalid');
             }
           } else if (isPlainObject(container)) {
             if (key === null || key === undefined) {
-              mergeObjects(container, cmd.value);
+              if (!mergeObjects(container, cmd.value)) {
+                pushSkip(cmd, 'insert merge requires object');
+                return;
+              }
             } else {
               container[String(key)] = cmd.value;
             }
+            appliedCount += 1;
+          } else {
+            pushSkip(cmd, 'insert target not object');
           }
           return;
         }
         if (type === 'remove') {
           const key = cmd.key;
           const target = path.length ? getAt(root, path) : root;
-          if (!target || typeof target !== 'object') return;
+          if (!target || typeof target !== 'object') {
+            pushSkip(cmd, 'remove target not object');
+            return;
+          }
           if (Array.isArray(target)) {
             if (typeof key === 'number') {
-              if (key >= 0 && key < target.length) target.splice(key, 1);
+              if (key >= 0 && key < target.length) {
+                target.splice(key, 1);
+                appliedCount += 1;
+              } else {
+                pushSkip(cmd, 'remove array index out of range');
+              }
             } else {
-              const idx = target.findIndex(item => Object.is(item, key));
-              if (idx >= 0) target.splice(idx, 1);
+              const idx = target.findIndex(item => deepEqual(item, key));
+              if (idx >= 0) {
+                target.splice(idx, 1);
+                appliedCount += 1;
+              } else {
+                pushSkip(cmd, 'remove array item not found');
+              }
             }
             return;
           }
-          if (isPlainObject(target) && key !== null && key !== undefined) {
-            delete target[String(key)];
+          if (isPlainObject(target)) {
+            if (typeof key === 'number') {
+              const keys = Object.keys(target);
+              if (key >= 0 && key < keys.length) {
+                delete target[keys[key]];
+                appliedCount += 1;
+              } else {
+                pushSkip(cmd, 'remove object index out of range');
+              }
+              return;
+            }
+            if (key === null || key === undefined) {
+              pushSkip(cmd, 'remove object key missing');
+              return;
+            }
+            const k = String(key);
+            if (!Object.prototype.hasOwnProperty.call(target, k)) {
+              pushSkip(cmd, 'remove object key not found');
+              return;
+            }
+            delete target[k];
+            appliedCount += 1;
+            return;
           }
+          pushSkip(cmd, 'remove target unsupported');
           return;
         }
         if (type === 'delete') {
-          deleteAt(root, path);
+          const resolvedPath = resolveExistingPath(root, path, { allowLeaf: true });
+          if (!resolvedPath || !resolvedPath.length) {
+            pushSkip(cmd, 'delete path not found');
+            return;
+          }
+          const result = deleteAt(root, resolvedPath);
+          if (!result.ok) {
+            pushSkip(cmd, 'delete failed');
+            return;
+          }
+          appliedCount += 1;
         }
       });
       if (!isPlainObject(root)) return false;
@@ -13675,10 +13933,40 @@ Phase G（Frame 36）：循环衔接
       if (changed && shouldEmitEnded) {
         emitMvuUpdateEnded(sid, { useGlobal });
       }
+      if (appliedCount || skipped.length) {
+        logger.info(
+          `[update-variable] apply session=${sid} total=${commands.length} applied=${appliedCount} skipped=${skipped.length}`,
+        );
+      }
+      if (skipped.length) {
+        logger.warn(`[update-variable] skipped-detail ${skipped.join(' | ')}`);
+      }
+      if (changed) {
+        const changedKeys = [];
+        for (const key of allKeys) {
+          const nextVal = root[key];
+          const prevVal = original[key];
+          if (!deepEqual(prevVal, nextVal)) changedKeys.push(String(key));
+          if (changedKeys.length >= 12) break;
+        }
+        if (changedKeys.length) logger.info(`[update-variable] changed-keys ${changedKeys.join(', ')}`);
+      }
       return changed;
     };
     const applyUpdateVariableFromMessage = (message, targetSessionId) => {
       if (!message || message.role !== 'assistant') return false;
+      const sid = String(targetSessionId || '').trim();
+      const isTavernMvuSession = (() => {
+        if (!sid) return false;
+        const persona = getEffectivePersona(sid);
+        const source = persona && typeof persona.source === 'object' ? persona.source : null;
+        if (!source || source.type !== 'character_card') return false;
+        const mvuSource = String(source.mvuSource || '').trim().toLowerCase();
+        const hasCardMvu = source.mvuConverted === true || (mvuSource && mvuSource !== 'none');
+        if (!hasCardMvu) return false;
+        const schemas = chatStore.listVariableSchemas?.(sid) || {};
+        return Object.keys(schemas).length > 0;
+      })();
       const raw =
         (typeof message.rawOriginal === 'string' && message.rawOriginal) ||
         (typeof message.rawSource === 'string' && message.rawSource) ||
@@ -13686,9 +13974,45 @@ Phase G（Frame 36）：循环衔接
         (typeof message.content === 'string' && message.content) ||
         '';
       if (!raw) return false;
-      const { block } = extractUpdateVariableBlock(raw);
-      if (!block) return false;
-      const commands = updateParser.parseCommands(block);
+      const { blocks, cleaned: outsideUpdateBlocks } = extractUpdateVariableBlocks(raw);
+      const commands = [];
+      blocks.forEach((block) => {
+        const parsed = updateParser.parseCommands(block);
+        if (parsed.length) commands.push(...parsed);
+      });
+      if (outsideUpdateBlocks) {
+        const hasOutsideProtocol =
+          /<(json_?patch)\b/i.test(outsideUpdateBlocks) ||
+          /_\.(set|insert|assign|remove|unset|delete|add)\(/i.test(outsideUpdateBlocks);
+        if (hasOutsideProtocol) {
+          const parsedOutside = updateParser.parseCommands(outsideUpdateBlocks);
+          if (parsedOutside.length) commands.push(...parsedOutside);
+        }
+      }
+      if (!blocks.length && isTavernMvuSession && !commands.length) {
+        commands.push(...updateParser.parseCommands(raw));
+      }
+      if (!blocks.length && !commands.length && !isTavernMvuSession) return false;
+      if (blocks.length || commands.length) {
+        logger.info(
+          `[update-variable] parse messageId=${String(message?.id || '')} session=${sid} blocks=${blocks.length} commands=${commands.length}`,
+        );
+        const cmdPreview = commands
+          .slice(0, 8)
+          .map((cmd) => {
+            const type = String(cmd?.type || '');
+            const path = Array.isArray(cmd?.path) ? cmd.path.map(p => String(p)).join('.') : '';
+            const from = Array.isArray(cmd?.from) ? cmd.from.map(p => String(p)).join('.') : '';
+            if (type === 'move') return `move(${from}=>${path})`;
+            if (type === 'add' || type === 'set') return `${type}(${path})=${String(cmd?.value ?? '')}`;
+            if (type === 'insert') return `insert(${path},${String(cmd?.key ?? '-')})`;
+            if (type === 'remove') return `remove(${path},${String(cmd?.key ?? '-')})`;
+            if (type === 'delete') return `delete(${path})`;
+            return type || 'unknown';
+          })
+          .join(' | ');
+        if (cmdPreview) logger.info(`[update-variable] command-preview ${cmdPreview}`);
+      }
       const useGlobal = isSharedVariableSession(targetSessionId);
       const changed = commands.length ? applyUpdateVariableCommands(targetSessionId, commands, { useGlobal }) : false;
       const rawHasPlaceholder = /<StatusPlaceHolderImpl\s*\/?>/i.test(raw);
@@ -13702,6 +14026,7 @@ Phase G（Frame 36）：循环衔接
       const storedHasPlaceholder = /<StatusPlaceHolderImpl\s*\/?>/i.test(baseStoredRaw || '');
       let nextStored = baseStoredRaw ? stripUpdateVariableBlocks(baseStoredRaw) : '';
       let nextSource = sourceText ? stripUpdateVariableBlocks(sourceText) : '';
+      let placeholderInjected = false;
       if (!nextStored) {
         const cleanedSource = nextSource;
         if (window.appBridge?.applyOutputStoredRegex) {
@@ -13714,10 +14039,11 @@ Phase G（Frame 36）：循环衔接
           nextStored = cleanedSource;
         }
       }
-      const shouldAppendPlaceholder = !(rawHasPlaceholder || sourceHasPlaceholder || storedHasPlaceholder);
+      const shouldAppendPlaceholder = isTavernMvuSession && !(rawHasPlaceholder || sourceHasPlaceholder || storedHasPlaceholder);
       if (shouldAppendPlaceholder) {
         nextStored = `${nextStored || ''}\n\n<StatusPlaceHolderImpl/>`.trim();
         nextSource = `${nextSource || ''}\n\n<StatusPlaceHolderImpl/>`.trim();
+        placeholderInjected = true;
       }
       const nextDisplay = window.appBridge?.applyOutputDisplayRegex
         ? window.appBridge.applyOutputDisplayRegex(nextStored, { depth: 0 })
@@ -13730,6 +14056,12 @@ Phase G（Frame 36）：循环衔接
       const updatePayload = { raw: nextStored, content: nextDisplay };
       if (hasSourceText) updatePayload.rawSource = nextSource;
       if (nextMeta) updatePayload.meta = nextMeta;
+      const sourceUnchanged = !hasSourceText || nextSource === sourceText;
+      const displayUnchanged = nextDisplay === (typeof message.content === 'string' ? message.content : '');
+      const storedUnchanged = nextStored === baseStoredRaw;
+      if (!changed && !placeholderInjected && storedUnchanged && sourceUnchanged && displayUnchanged) {
+        return false;
+      }
       const updated =
         chatStore.updateMessage(message.id, updatePayload, targetSessionId) || {
           ...message,
@@ -13738,8 +14070,13 @@ Phase G（Frame 36）：循环衔接
           rawSource: hasSourceText ? nextSource : message.rawSource,
           meta: nextMeta || message.meta,
         };
+      if (placeholderInjected) {
+        logger.info(
+          `[update-variable] placeholder-injected messageId=${String(message?.id || '')} session=${sid} source=tavern-mvu`,
+        );
+      }
       if (isSessionActive(targetSessionId)) ui.updateMessage(message.id, updated);
-      return changed;
+      return changed || placeholderInjected;
     };
     if (typeof window !== 'undefined') {
       window.__chatappApplyUpdateVariableFromMessage = applyUpdateVariableFromMessage;
@@ -14074,8 +14411,8 @@ Phase G（Frame 36）：循环衔接
           uiMode,
           useGlobalVariables: Boolean(sharedVariables),
           sharedMemory: Boolean(sharedMemory),
-          memoryStorageMode: getMemoryStorageMode(),
-          memoryAutoExtract: isMemoryAutoExtractInline(),
+          memoryStorageMode: isRpMode ? 'summary' : getMemoryStorageMode(),
+          memoryAutoExtract: isRpMode ? false : isMemoryAutoExtractInline(),
           memoryInjectPosition,
           memoryInjectDepth,
           userAttachmentParts: attachmentParts,
@@ -14261,7 +14598,7 @@ Phase G（Frame 36）：循环衔接
                   activeGeneration.streamCtrl = streamCtrl;
               }
             }
-            const streamText = isMemoryAutoExtractInline() ? stripTableEditBlocks(full) : full;
+            const streamText = (!isRpMode && isMemoryAutoExtractInline()) ? stripTableEditBlocks(full) : full;
             if (streamCtrl) streamCtrl.update(streamText);
           }
           if (activeGeneration?.cancelled) return;
@@ -14274,7 +14611,7 @@ Phase G（Frame 36）：循环衔接
               typing: false,
             });
             if (activeGeneration && activeGeneration.sessionId === sessionId) activeGeneration.streamCtrl = streamCtrl;
-            const streamText = isMemoryAutoExtractInline() ? stripTableEditBlocks(full) : full;
+            const streamText = (!isRpMode && isMemoryAutoExtractInline()) ? stripTableEditBlocks(full) : full;
             streamCtrl.update(streamText);
           }
           chatStore.setLastRawResponse(full, sessionId);
@@ -14717,7 +15054,7 @@ Phase G（Frame 36）：循环衔接
           for await (const chunk of stream) {
             if (activeGeneration?.cancelled) break;
             full += chunk;
-            const streamText = isMemoryAutoExtractInline() ? stripTableEditBlocks(full) : full;
+            const streamText = (!isRpMode && isMemoryAutoExtractInline()) ? stripTableEditBlocks(full) : full;
             if (streamCtrl) streamCtrl.update(streamText);
           }
           if (activeGeneration?.cancelled) return;
@@ -15459,8 +15796,27 @@ Phase G（Frame 36）：循环衔接
         const baseOriginal = typeof targetMessage?.rawOriginal === 'string' ? targetMessage.rawOriginal : '';
         const baseFallback = typeof targetMessage?.content === 'string' ? targetMessage.content : '';
         const sourceText = baseSource || baseOriginal || baseFallback;
-        const nextStored = localStrip(baseStoredRaw || raw);
-        const nextSource = localStrip(sourceText || raw);
+        let nextStored = localStrip(baseStoredRaw || raw);
+        let nextSource = localStrip(sourceText || raw);
+        const sid = String(targetSessionId || '').trim();
+        const isTavernMvuSession = (() => {
+          if (!sid) return false;
+          const persona = getEffectivePersona(sid);
+          const source = persona && typeof persona.source === 'object' ? persona.source : null;
+          if (!source || source.type !== 'character_card') return false;
+          const mvuSource = String(source.mvuSource || '').trim().toLowerCase();
+          const hasCardMvu = source.mvuConverted === true || (mvuSource && mvuSource !== 'none');
+          if (!hasCardMvu) return false;
+          const schemas = chatStore.listVariableSchemas?.(sid) || {};
+          return Object.keys(schemas).length > 0;
+        })();
+        const rawHasPlaceholder = /<StatusPlaceHolderImpl\s*\/?>/i.test(raw);
+        const sourceHasPlaceholder = /<StatusPlaceHolderImpl\s*\/?>/i.test(sourceText || '');
+        const storedHasPlaceholder = /<StatusPlaceHolderImpl\s*\/?>/i.test(baseStoredRaw || '');
+        if (isTavernMvuSession && !(rawHasPlaceholder || sourceHasPlaceholder || storedHasPlaceholder)) {
+          nextStored = `${nextStored || ''}\n\n<StatusPlaceHolderImpl/>`.trim();
+          nextSource = `${nextSource || ''}\n\n<StatusPlaceHolderImpl/>`.trim();
+        }
         if (nextStored === (baseStoredRaw || raw) && nextSource === (sourceText || raw)) return false;
         const nextDisplay = window.appBridge?.applyOutputDisplayRegex
           ? window.appBridge.applyOutputDisplayRegex(nextStored, { depth: 0 })
@@ -15472,7 +15828,7 @@ Phase G（Frame 36）：循环衔接
       } catch (err) {
         logger.warn('edit-assistant-raw: update-variable fallback failed', err);
       }
-      logger.warn('[update-variable] apply function unavailable (fallback-strip-applied)');
+      logger.info('[update-variable] apply function unavailable yet (fallback-strip-applied)');
       return false;
     };
     const isSyntheticUser = m => m?.role === 'user' && m?.meta?.generatedByAssistant === true;

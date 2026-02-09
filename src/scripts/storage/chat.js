@@ -19,14 +19,18 @@ export class ChatStorage {
      */
     async saveMessages(characterId, messages) {
         try {
+            const cid = String(characterId || '').trim();
             await safeInvoke('save_chat_history', {
-                characterId,
+                character_id: cid,
+                characterId: cid,
                 messages: messages.map(msg => ({
+                    character_id: cid,
+                    characterId: cid,
                     ...msg,
                     timestamp: msg.timestamp || Date.now()
                 }))
             });
-            logger.debug(`保存了 ${messages.length} 条消息到角色 ${characterId}`);
+            logger.debug(`保存了 ${messages.length} 条消息到角色 ${cid}`);
         } catch (error) {
             logger.error('保存聊天记录失败:', error);
             throw error;
@@ -41,8 +45,10 @@ export class ChatStorage {
      */
     async getMessages(characterId, limit = 100) {
         try {
+            const cid = String(characterId || '').trim();
             const messages = await safeInvoke('get_chat_history', {
-                characterId,
+                character_id: cid,
+                characterId: cid,
                 limit
             });
             logger.debug(`加载了 ${messages.length} 条消息从角色 ${characterId}`);
@@ -59,7 +65,8 @@ export class ChatStorage {
      */
     async clearMessages(characterId) {
         try {
-            await safeInvoke('clear_chat_history', { characterId });
+            const cid = String(characterId || '').trim();
+            await safeInvoke('clear_chat_history', { character_id: cid, characterId: cid });
             logger.info(`清除了角色 ${characterId} 的聊天记录`);
         } catch (error) {
             logger.error('清除聊天记录失败:', error);

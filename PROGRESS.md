@@ -53,6 +53,8 @@
   - 修复编辑保存偶发 `applyUpdateVariableFromMessage is not defined`：新增 `invokeApplyUpdateVariableFromMessage` 安全调用器（本地函数 + `window.__chatappApplyUpdateVariableFromMessage` 双通道兜底），并替换编辑保存/after_receive 两处直连调用，避免作用域漂移导致的 `ReferenceError`。
   - 进一步收敛 `undefined` 连锁：移除对中间调用器标识符的依赖，改为在调用点内联解析（本地函数 + 全局兜底）并按需降级告警，避免热更新缓存不一致时再出现 `invokeApplyUpdateVariableFromMessage is not defined`。
   - 再次收敛编辑态告警：`edit-assistant-raw` 增加 `applyUpdateVariableForMessageSafe`，优先执行完整 UpdateVariable 解析；若函数入口不可用则自动回退为“剥离 `<UpdateVariable>` 内容并重渲染”以避免内容外露与保存报错。
+  - 修复“酒馆变量卡偶发未附加 `<StatusPlaceHolderImpl/>`”：`applyUpdateVariableFromMessage` 增加 Tavern MVU 会话兜底（`character_card + mvuConverted/mvuSource + 有 schema`），即使该条回复不含 `<UpdateVariable>` 也会补占位符并重渲染，避免状态栏正则偶发不触发。
+  - 增加诊断日志：`[update-variable] placeholder-injected ... source=tavern-mvu`，用于确认占位符兜底是否命中。
 - 修改：
   - `src/scripts/ui/world-editor.js`
   - `src/scripts/storage/worldinfo.js`
