@@ -13113,18 +13113,38 @@ Phase G（Frame 36）：循环衔接
       return next;
     };
     const stripUpdateVariableBlocks = (text) => {
-      const raw = String(text || '');
-      if (!raw) return raw;
-      const cleaned = raw
-        .replace(/<\s*(update(?:variable)?|variableupdate)\s*>[\s\S]*?<\/\s*\1\s*>/gi, '')
+      let out = String(text || '');
+      if (!out) return out;
+      const openRe = /<\s*(update(?:variable)?|variableupdate)\b[^>]*>/i;
+      for (let i = 0; i < 20; i++) {
+        const open = openRe.exec(out);
+        if (!open) break;
+        const tag = String(open[1] || 'UpdateVariable');
+        const start = open.index;
+        const afterStart = start + open[0].length;
+        const tail = out.slice(afterStart);
+        const closeRe = new RegExp(`<\\s*\\/\\s*${tag}\\s*>`, 'i');
+        const close = closeRe.exec(tail);
+        if (!close) {
+          out = out.slice(0, start);
+          break;
+        }
+        const end = afterStart + close.index + close[0].length;
+        out = out.slice(0, start) + out.slice(end);
+      }
+      out = out
+        .replace(/<\s*\/?\s*(update(?:variable)?|variableupdate)\b[^>]*>/gi, '')
         .replace(/\n{3,}/g, '\n\n')
         .trimEnd();
-      return cleaned;
+      return out;
     };
+    // Backward-compatible aliases for historical typo variants used in old edit pipelines.
+    const stripUpdateVariableBloacks = stripUpdateVariableBlocks;
+    const stripupdatevariablebloacks = stripUpdateVariableBlocks;
     const extractUpdateVariableBlock = (text) => {
       const raw = String(text || '');
       if (!raw) return { block: '', cleaned: raw };
-      const openRe = /<\s*(update(?:variable)?|variableupdate)\s*>/gi;
+      const openRe = /<\s*(update(?:variable)?|variableupdate)\b[^>]*>/gi;
       let last = null;
       let m;
       while ((m = openRe.exec(raw))) {
@@ -13669,9 +13689,8 @@ Phase G（Frame 36）：循环衔接
       const { block } = extractUpdateVariableBlock(raw);
       if (!block) return false;
       const commands = updateParser.parseCommands(block);
-      if (!commands.length) return false;
       const useGlobal = isSharedVariableSession(targetSessionId);
-      const changed = applyUpdateVariableCommands(targetSessionId, commands, { useGlobal });
+      const changed = commands.length ? applyUpdateVariableCommands(targetSessionId, commands, { useGlobal }) : false;
       const rawHasPlaceholder = /<StatusPlaceHolderImpl\s*\/?>/i.test(raw);
       const baseStoredRaw = typeof message.raw === 'string' ? message.raw : '';
       const baseSource = typeof message.rawSource === 'string' ? message.rawSource : '';
@@ -13722,6 +13741,9 @@ Phase G（Frame 36）：循环衔接
       if (isSessionActive(targetSessionId)) ui.updateMessage(message.id, updated);
       return changed;
     };
+    if (typeof window !== 'undefined') {
+      window.__chatappApplyUpdateVariableFromMessage = applyUpdateVariableFromMessage;
+    }
     const emitPluginAfterReceive = (message, targetSessionId, { skipScripts: skipThisScripts } = {}) => {
       if (!message || message.role !== 'assistant') return;
       const shouldSkipScripts = typeof skipThisScripts === 'boolean' ? skipThisScripts : skipScripts;
@@ -13739,7 +13761,14 @@ Phase G（Frame 36）：循环衔接
       }
       const useGlobal = isSharedVariableSession(targetSessionId);
       try {
-        applyUpdateVariableFromMessage(message, targetSessionId);
+        const localFn = typeof applyUpdateVariableFromMessage === 'function' ? applyUpdateVariableFromMessage : null;
+        const globalFn =
+          typeof window !== 'undefined' && typeof window.__chatappApplyUpdateVariableFromMessage === 'function'
+            ? window.__chatappApplyUpdateVariableFromMessage
+            : null;
+        const fn = localFn || globalFn;
+        if (typeof fn === 'function') fn(message, targetSessionId);
+        else logger.warn('[update-variable] apply function unavailable');
       } catch (err) {
         logger.warn('UpdateVariable parse failed', err);
       }
@@ -15388,6 +15417,64 @@ Phase G（Frame 36）：循环衔接
   });
   ui.onMessageAction(async (action, message, payload) => {
     const sessionId = chatStore.getCurrent();
+    const applyUpdateVariableForMessageSafe = (targetMessage, targetSessionId) => {
+      const pickApplyFn = () => {
+        const localFn = typeof applyUpdateVariableFromMessage === 'function' ? applyUpdateVariableFromMessage : null;
+        const globalFn =
+          typeof window !== 'undefined' && typeof window.__chatappApplyUpdateVariableFromMessage === 'function'
+            ? window.__chatappApplyUpdateVariableFromMessage
+            : null;
+        return localFn || globalFn || null;
+      };
+      const stripSimple = (text) => {
+        const raw = String(text || '');
+        if (!raw) return raw;
+        return raw
+          .replace(/<\s*(update(?:variable)?|variableupdate)\b[^>]*>[\s\S]*?<\/\s*\1\s*>/gi, '')
+          .replace(/<\s*\/?\s*(update(?:variable)?|variableupdate)\b[^>]*>/gi, '')
+          .replace(/\n{3,}/g, '\n\n')
+          .trimEnd();
+      };
+      try {
+        const fn = pickApplyFn();
+        if (typeof fn === 'function') return Boolean(fn(targetMessage, targetSessionId));
+      } catch (err) {
+        logger.warn('edit-assistant-raw: update apply via function failed', err);
+      }
+      try {
+        const raw =
+          (typeof targetMessage?.rawOriginal === 'string' && targetMessage.rawOriginal) ||
+          (typeof targetMessage?.rawSource === 'string' && targetMessage.rawSource) ||
+          (typeof targetMessage?.raw === 'string' && targetMessage.raw) ||
+          (typeof targetMessage?.content === 'string' && targetMessage.content) ||
+          '';
+        if (!raw) return false;
+        const localStrip =
+          (typeof stripUpdateVariableBlocks === 'function' && stripUpdateVariableBlocks) ||
+          (typeof stripUpdateVariableBloacks === 'function' && stripUpdateVariableBloacks) ||
+          (typeof stripupdatevariablebloacks === 'function' && stripupdatevariablebloacks) ||
+          stripSimple;
+        const baseStoredRaw = typeof targetMessage?.raw === 'string' ? targetMessage.raw : '';
+        const baseSource = typeof targetMessage?.rawSource === 'string' ? targetMessage.rawSource : '';
+        const baseOriginal = typeof targetMessage?.rawOriginal === 'string' ? targetMessage.rawOriginal : '';
+        const baseFallback = typeof targetMessage?.content === 'string' ? targetMessage.content : '';
+        const sourceText = baseSource || baseOriginal || baseFallback;
+        const nextStored = localStrip(baseStoredRaw || raw);
+        const nextSource = localStrip(sourceText || raw);
+        if (nextStored === (baseStoredRaw || raw) && nextSource === (sourceText || raw)) return false;
+        const nextDisplay = window.appBridge?.applyOutputDisplayRegex
+          ? window.appBridge.applyOutputDisplayRegex(nextStored, { depth: 0 })
+          : nextStored;
+        const patch = { raw: nextStored, content: nextDisplay };
+        if (sourceText) patch.rawSource = nextSource;
+        const updatedFallback = chatStore.updateMessage(targetMessage.id, patch, targetSessionId);
+        if (updatedFallback && isSessionActive(targetSessionId)) ui.updateMessage(targetMessage.id, updatedFallback);
+      } catch (err) {
+        logger.warn('edit-assistant-raw: update-variable fallback failed', err);
+      }
+      logger.warn('[update-variable] apply function unavailable (fallback-strip-applied)');
+      return false;
+    };
     const isSyntheticUser = m => m?.role === 'user' && m?.meta?.generatedByAssistant === true;
     const regenerateFromUserIndex = async (userIdx, { allowEmpty = false } = {}) => {
       const msgs = chatStore.getMessages(sessionId);
@@ -15550,20 +15637,92 @@ Phase G（Frame 36）：循环衔接
     }
     if (action === 'edit-assistant-raw' && message.role === 'assistant') {
       const next = String(payload?.text ?? '');
-      // === 创意写作模式===
-      // const stored = window.appBridge.applyOutputStoredRegex(next, { isEdit: true });
-      // const display = window.appBridge.applyOutputDisplayRegex(stored, { isEdit: true, depth: 0 });
-      const stored = next;
-      const display = next;
-      const updater = {
-        rawOriginal: next,
-        rawSource: normalizeCreativeLineBreaks(next),
-        raw: stored,
-        ...parseSpecialMessage(display),
-      };
+      const stripFn =
+        (typeof stripUpdateVariableBlocks === 'function' && stripUpdateVariableBlocks) ||
+        (typeof stripUpdateVariableBloacks === 'function' && stripUpdateVariableBloacks) ||
+        (typeof stripupdatevariablebloacks === 'function' && stripupdatevariablebloacks) ||
+        (text => String(text ?? ''));
+      const cleanedForRender = stripFn(next);
+      const hadUpdateVariableTag = /<\s*(update(?:variable)?|variableupdate)\b/i.test(next);
+      if (hadUpdateVariableTag) {
+        logger.info(
+          `[edit-assistant-raw] strip-update-variable messageId=${String(message?.id || '')} rawLen=${next.length} cleanedLen=${cleanedForRender.length}`,
+        );
+      }
+      const isCreativeAssistant =
+        Boolean(message?.meta?.renderRich) || (sessionId && isRpSessionId(sessionId));
+      let updater = null;
+
+      if (isCreativeAssistant) {
+        const rawSource = normalizeCreativeLineBreaks(cleanedForRender);
+        const reasoningParsed = extractReasoningFromContent(rawSource, { depth: 0, strict: true });
+        const finalSource = normalizeCreativeLineBreaks(reasoningParsed.content || '');
+        let stored = finalSource;
+        let display = finalSource;
+        try {
+          stored = normalizeCreativeLineBreaks(
+            window.appBridge.applyOutputStoredRegex(finalSource, { isEdit: true, depth: 0 }),
+          );
+          display = normalizeCreativeLineBreaks(
+            window.appBridge.applyOutputDisplayRegex(stored, { isEdit: true, depth: 0 }),
+          );
+        } catch {}
+        const nextMeta =
+          message?.meta && typeof message.meta === 'object' ? { ...message.meta, renderRich: true } : { renderRich: true };
+        if (reasoningParsed.reasoning) {
+          nextMeta.reasoning = reasoningParsed.reasoning;
+          nextMeta.reasoningDisplay = reasoningParsed.reasoningDisplay;
+        } else {
+          delete nextMeta.reasoning;
+          delete nextMeta.reasoningDisplay;
+        }
+        updater = {
+          rawOriginal: next,
+          rawSource: finalSource,
+          raw: stored,
+          type: 'text',
+          content: display,
+          meta: nextMeta,
+        };
+      } else {
+        let stored = cleanedForRender;
+        let display = cleanedForRender;
+        try {
+          stored = window.appBridge.applyOutputStoredRegex(cleanedForRender, { isEdit: true, depth: 0 });
+          display = window.appBridge.applyOutputDisplayRegex(stored, { isEdit: true, depth: 0 });
+        } catch {}
+        const parsed = parseSpecialMessage(display);
+        const nextMeta = message?.meta && typeof message.meta === 'object' ? { ...message.meta } : undefined;
+        if (parsed?.meta && typeof parsed.meta === 'object') {
+          updater = {
+            rawOriginal: next,
+            rawSource: cleanedForRender,
+            raw: stored,
+            ...parsed,
+            meta: nextMeta ? { ...nextMeta, ...parsed.meta } : parsed.meta,
+          };
+        } else {
+          updater = {
+            rawOriginal: next,
+            rawSource: cleanedForRender,
+            raw: stored,
+            ...parsed,
+          };
+        }
+      }
       const updated = chatStore.updateMessage(message.id, updater, sessionId);
       if (updated) {
-        ui.updateMessage(message.id, updated);
+        let finalMessage = updated;
+        try {
+          const changed = applyUpdateVariableForMessageSafe(updated, sessionId);
+          logger.info(
+            `[edit-assistant-raw] update-variable messageId=${String(message?.id || '')} session=${String(sessionId || '')} changed=${changed ? 1 : 0}`,
+          );
+          finalMessage = chatStore.findMessage(message.id, sessionId) || finalMessage;
+        } catch (err) {
+          logger.warn('edit-assistant-raw: UpdateVariable parse failed', err);
+        }
+        ui.updateMessage(message.id, finalMessage);
         refreshChatAndContacts();
       }
       return;

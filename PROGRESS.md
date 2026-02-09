@@ -43,6 +43,16 @@
   - 引入“双轨桥接”策略：普通开场白（非 `body.load`）切回 backup 风格稳定 MVU 兼容桥；仅 `$('body').load(...)` 的复杂场景继续走增强桥与 direct-load 链路，降低回归面。
   - 修复“双轨短路”问题：非 `body.load` 场景不再预注入外层简化 `$` shim，避免覆盖/阻断 legacy bridge 内的完整 mini-jQuery（含 `css/addClass/removeClass`），并新增 `mvu-bridge=legacy|enhanced` 调试日志。
   - 继续对齐 backup：补回 legacy mini-jQuery 常用接口（`css/addClass/removeClass/attr/prop/val/find/on/off`），避免脚本在 `errorCatched(...)` 包裹下静默失败；新增 `legacy-bridge-ready` 与 `legacy-vars-applied` 诊断日志。
+  - 增加复杂卡诊断分型：渲染时输出 `compat-profile` 与 `flags`（如 `stGlobals/stApi/vue/vueRouter/bodyLoad`）；direct-load fetch/cache 阶段也输出 profile；`iframe-error` 追加可读 `hint`（如 `st-api-missing`、`vue-missing-or-cdn-blocked`、`network-or-cors`），便于批量归类测试结果。
+  - 修复“长按铅笔编辑助手原回复后不自动渲染”：`edit-assistant-raw` 改为复用正式输出链路。创意写作/`renderRich` 消息走 `rawSource -> outputStoredRegex -> outputDisplayRegex -> renderRich` 并保留 `meta.renderRich`；普通助手消息走输出正则后再 `parseSpecialMessage`，保存后立即 `ui.updateMessage` 重渲染。
+  - 修复“编辑助手原回复后 `<UpdateVariable>` 外露”：`edit-assistant-raw` 保存后追加执行 `applyUpdateVariableFromMessage`，并以解析后的最新消息重刷 UI，确保编辑场景也会提取变量更新并剥离更新标签内容。
+  - 继续修复 `<UpdateVariable>` 泄漏边界：标签匹配升级为容错形态（支持带属性标签），并在缺少闭合标签时从起点截断，避免只去标签壳而把内部命令文本渲染出来。
+  - 修复编辑回写源文本：普通助手消息 `edit-assistant-raw` 回写 `rawSource` 改为“剥离 UpdateVariable 后的文本”（`rawOriginal` 仍保留原文），避免后续重渲染路径再次暴露内部更新内容。
+  - 新增编辑链路调试日志：命中 UpdateVariable 标签时输出 `strip-update-variable` 的 `rawLen/cleanedLen`，便于快速确认是否完成剥离。
+  - 修复编辑回写偶发 `stripupdatevariablebloacks is not defined`：增加历史拼写兼容别名与运行时兜底选择，避免旧路径/缓存代码触发保存时报错。
+  - 修复编辑保存偶发 `applyUpdateVariableFromMessage is not defined`：新增 `invokeApplyUpdateVariableFromMessage` 安全调用器（本地函数 + `window.__chatappApplyUpdateVariableFromMessage` 双通道兜底），并替换编辑保存/after_receive 两处直连调用，避免作用域漂移导致的 `ReferenceError`。
+  - 进一步收敛 `undefined` 连锁：移除对中间调用器标识符的依赖，改为在调用点内联解析（本地函数 + 全局兜底）并按需降级告警，避免热更新缓存不一致时再出现 `invokeApplyUpdateVariableFromMessage is not defined`。
+  - 再次收敛编辑态告警：`edit-assistant-raw` 增加 `applyUpdateVariableForMessageSafe`，优先执行完整 UpdateVariable 解析；若函数入口不可用则自动回退为“剥离 `<UpdateVariable>` 内容并重渲染”以避免内容外露与保存报错。
 - 修改：
   - `src/scripts/ui/world-editor.js`
   - `src/scripts/storage/worldinfo.js`

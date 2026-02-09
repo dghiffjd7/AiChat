@@ -108,6 +108,41 @@ const shouldInjectFrameworkShim = (html, { directLoad = false } = {}) => {
     if (directLoad) return true;
     return /\bVueRouter\b|\bVue\b|\bPinia\b|createApp\s*\(|createRouter\s*\(|createPinia\s*\(/.test(raw);
 };
+const analyzeCompatProfile = (html, { directLoad = false } = {}) => {
+    const raw = String(html || '');
+    const flags = {
+        bodyLoad: /\$\(\s*['"]body['"]\s*\)\s*\.load\s*\(/i.test(raw),
+        jqueryLoad: /\.load\s*\(/i.test(raw),
+        vue: /\bVue\b|createApp\s*\(|from\s+['"]vue['"]/i.test(raw),
+        vueRouter: /\bVueRouter\b|createRouter\s*\(|from\s+['"]vue-router['"]/i.test(raw),
+        pinia: /\bPinia\b|createPinia\s*\(|from\s+['"]pinia['"]/i.test(raw),
+        stGlobals: /\bSillyTavern\b|\bTavernHelper\b|\btoastr\b|\bYAML\b|registerMvuSchema\s*\(|registerVariableSchema\s*\(|mag_variable_/i.test(raw),
+        stApi: /getRequestHeaders\s*\(|\/api\/backends\//i.test(raw),
+        externalScript: /<script[^>]+src\s*=\s*["']https?:\/\//i.test(raw),
+        externalEsmImport: /\bimport\s+[^;]*['"]https?:\/\//i.test(raw),
+    };
+    let profile = 'basic-inline';
+    if (flags.bodyLoad || directLoad) profile = 'direct-load-static';
+    if (flags.vue || flags.vueRouter || flags.pinia) profile = flags.bodyLoad || directLoad ? 'direct-load-framework' : 'inline-framework';
+    if (flags.stGlobals || flags.stApi) profile = 'st-runtime-dependent';
+    return { profile, flags };
+};
+const summarizeCompatFlags = (flags = {}) => Object.entries(flags)
+    .filter(([, v]) => Boolean(v))
+    .map(([k]) => k)
+    .join(',');
+const diagnoseIframeError = (message = '') => {
+    const msg = String(message || '');
+    if (!msg) return '';
+    if (/SillyTavern|TavernHelper|getRequestHeaders/i.test(msg)) return 'hint=st-api-missing';
+    if (/VueRouter is not defined/i.test(msg)) return 'hint=vue-router-missing-or-cdn-blocked';
+    if (/Vue is not defined/i.test(msg)) return 'hint=vue-missing-or-cdn-blocked';
+    if (/\$ is not defined|jQuery is not defined/i.test(msg)) return 'hint=jquery-shim-missing-or-overwritten';
+    if (/errorCatched is not defined|errorCatched is not a function/i.test(msg)) return 'hint=compat-helper-binding-missing';
+    if (/Failed to fetch|NetworkError|CORS|cross-origin/i.test(msg)) return 'hint=network-or-cors';
+    if (/Unexpected token|Invalid regular expression|SyntaxError/i.test(msg)) return 'hint=user-script-syntax';
+    return '';
+};
 const buildMvuCompatBridge = ({ iframeId, sessionId, debugTag } = {}) => {
     const id = String(iframeId || '');
     const sid = String(sessionId || '');
@@ -2055,6 +2090,7 @@ const makeCodeBlock = ({ lang, code, messageId, preserveHtmlNewlines = false, se
     const needsFrameworkShim = allowScripts && shouldInjectFrameworkShim(code, { directLoad: Boolean(directBodyLoadUrl) });
     const useLegacyMvuBridge = !directBodyLoadUrl;
     const mvuBridgeBuilder = useLegacyMvuBridge ? buildMvuCompatBridgeLegacy : buildMvuCompatBridge;
+    const sourceCompat = analyzeCompatProfile(code, { directLoad: Boolean(directBodyLoadUrl) });
     if (debugTag === 'rp-greeting' && !allowScripts) {
         const tip = 'rp-greeting scripts-disabled: enable `allowRichIframeScripts` to run <script> / $.load()';
         emitDebugLog({ source: 'rich', type: 'warn', message: tip, force: true });
@@ -2067,6 +2103,9 @@ const makeCodeBlock = ({ lang, code, messageId, preserveHtmlNewlines = false, se
             const msg = `codeblock html?=${shouldRenderHtml} lang=${lang || 'none'} len=${String(code || '').length} msg=${String(messageId || '')} scripts=${allowScripts ? 1 : 0} mvu=${needsMvuCompat ? 1 : 0} forceMvu=${forceMvuCompat ? 1 : 0}${debugTag ? ` tag=${debugTag}` : ''}`;
             emitDebugLog({ source: 'rich', type: shouldRenderHtml ? 'info' : 'warn', message: msg, force: true });
             logger.info(`[rich] ${msg}`);
+            const compatMsg = `compat-profile=${sourceCompat.profile} flags=${summarizeCompatFlags(sourceCompat.flags) || 'none'}${debugTag ? ` tag=${debugTag}` : ''}`;
+            emitDebugLog({ source: 'rich', type: 'info', message: compatMsg, force: true });
+            logger.info(`[rich] ${compatMsg}`);
             if (directBodyLoadUrl) {
                 const bodyLoadMsg = `body-load-detected url=${directBodyLoadUrl}${debugTag ? ` tag=${debugTag}` : ''}`;
                 emitDebugLog({ source: 'rich', type: 'info', message: bodyLoadMsg, force: true });
@@ -2198,6 +2237,8 @@ const makeCodeBlock = ({ lang, code, messageId, preserveHtmlNewlines = false, se
                     let directHtml = stripInlineCspMeta(cachedHtml);
                     const rewriteResult = maybeRewriteStHelperGlobals(directHtml, { directLoad: true });
                     directHtml = rewriteResult.html;
+                    const directProfile = analyzeCompatProfile(directHtml, { directLoad: true });
+                    logDirect('info', `direct-load-profile id=${iframeId} profile=${directProfile.profile} flags=${summarizeCompatFlags(directProfile.flags) || 'none'} source=cache`);
                     if (rewriteResult.failed) {
                         logDirect('warn', `direct-load-rewrite-failed id=${iframeId} source=cache`);
                     }
@@ -2232,6 +2273,8 @@ const makeCodeBlock = ({ lang, code, messageId, preserveHtmlNewlines = false, se
                     let directHtml = stripInlineCspMeta(fetched);
                     const rewriteResult = maybeRewriteStHelperGlobals(directHtml, { directLoad: true });
                     directHtml = rewriteResult.html;
+                    const directProfile = analyzeCompatProfile(directHtml, { directLoad: true });
+                    logDirect('info', `direct-load-profile id=${iframeId} profile=${directProfile.profile} flags=${summarizeCompatFlags(directProfile.flags) || 'none'} source=fetch`);
                     if (rewriteResult.failed) {
                         logDirect('warn', `direct-load-rewrite-failed id=${iframeId} source=fetch`);
                     }
@@ -2520,6 +2563,12 @@ export const setupIframeResizeListener = () => {
             const st = getIframeState(id, { messageId: String(iframe.dataset.msgId || ''), createdAt: Date.now() });
             if (st) st.error = message || 'error';
             warnIframe('iframe-error', id, message ? `err=${message}` : '');
+            const hint = diagnoseIframeError(message);
+            if (hint) {
+                const diag = `diag id=${id} ${hint}`;
+                emitDebugLog({ source: 'iframe', type: 'warn', message: diag, force: true });
+                warnIframe('diag', id, hint);
+            }
             return;
         }
         if (data.type === 'chatapp:iframe-debug') {
