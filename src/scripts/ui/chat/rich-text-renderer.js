@@ -137,12 +137,44 @@ const detectVueRuntimePreference = (html) => {
     if (/\bnew\s+Vue\s*\(|\bVue\.use\s*\(|vue-router@3|vue@2/i.test(raw)) return 2;
     return 3;
 };
+const rewriteDirectLoadAssetPaths = (htmlCode, baseHref) => {
+    const html = String(htmlCode || '');
+    const base = String(baseHref || '').trim();
+    if (!html || !base) return { html, rewritten: 0, failed: false };
+    let rewritten = 0;
+    try {
+        const abs = (path) => {
+            try { return new URL(String(path || '').replace(/^\/+/, ''), base).toString(); }
+            catch { return `${base}${String(path || '').replace(/^\/+/, '')}`; }
+        };
+        let next = html;
+        // Rewrite common root-relative Vite/static asset refs to the direct-load base path.
+        next = next.replace(/(["'])\/(assets\/[^"'`]+)\1/gi, (m, q, p) => {
+            rewritten += 1;
+            return `${q}${abs(p)}${q}`;
+        });
+        next = next.replace(/(["'])\/(static\/[^"'`]+)\1/gi, (m, q, p) => {
+            rewritten += 1;
+            return `${q}${abs(p)}${q}`;
+        });
+        // CSS url('/assets/...') or url(/assets/...)
+        next = next.replace(/url\(\s*(["'])?\/(assets\/[^)"']+)\1?\s*\)/gi, (m, q, p) => {
+            rewritten += 1;
+            const qq = q || '';
+            return `url(${qq}${abs(p)}${qq})`;
+        });
+        return { html: next, rewritten, failed: false };
+    } catch {
+        return { html, rewritten: 0, failed: true };
+    }
+};
 const diagnoseIframeError = (message = '') => {
     const msg = String(message || '');
     if (!msg) return '';
     if (/SillyTavern|TavernHelper|getRequestHeaders/i.test(msg)) return 'hint=st-api-missing';
     if (/VueRouter is not defined/i.test(msg)) return 'hint=vue-router-missing-or-cdn-blocked';
     if (/Vue is not defined/i.test(msg)) return 'hint=vue-missing-or-cdn-blocked';
+    if (/Pinia is not defined|createPinia is not defined/i.test(msg)) return 'hint=pinia-missing-or-cdn-blocked';
     if (/\$ is not defined|jQuery is not defined/i.test(msg)) return 'hint=jquery-shim-missing-or-overwritten';
     if (/errorCatched is not defined|errorCatched is not a function/i.test(msg)) return 'hint=compat-helper-binding-missing';
     if (/Failed to fetch|NetworkError|CORS|cross-origin/i.test(msg)) return 'hint=network-or-cors';
@@ -1738,6 +1770,18 @@ const buildIframeSrcDoc = (
 
   window.addEventListener('error', (ev) => {
     try {
+      const target = ev?.target;
+      if (target && target !== window) {
+        const tag = String(target.tagName || '').toLowerCase();
+        const src = String(target.src || target.href || target.currentSrc || '').trim();
+        if (src) {
+          parent.postMessage({
+            type: 'chatapp:iframe-error',
+            id,
+            message: 'resource-load-failed tag=' + tag + ' url=' + src,
+          }, '*');
+        }
+      }
       const message = String(ev?.message || ev?.error?.message || 'iframe error');
       const lineno = Number(ev?.lineno || 0);
       const colno = Number(ev?.colno || 0);
@@ -1748,6 +1792,13 @@ const buildIframeSrcDoc = (
         colno ? ('col=' + colno) : '',
       ].filter(Boolean).join(' ');
       parent.postMessage({ type: 'chatapp:iframe-error', id, message: extra ? (message + ' ' + extra) : message }, '*');
+    } catch {}
+  }, true);
+  window.addEventListener('unhandledrejection', (ev) => {
+    try {
+      const reason = ev?.reason;
+      const msg = reason?.message ? String(reason.message) : String(reason || 'unhandledrejection');
+      parent.postMessage({ type: 'chatapp:iframe-error', id, message: 'unhandledrejection ' + msg }, '*');
     } catch {}
   });
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start);
@@ -1947,32 +1998,43 @@ const maybeRewriteMvuInlineHelpers = (htmlCode, { needsMvuCompat = false, direct
     return rewriteErrorCatchedOnly(html);
 };
 
-const buildFrameworkGlobalShim = ({ iframeId = '', debugTag = '', vueMajor = 3 } = {}) => {
+const buildFrameworkGlobalShim = ({ iframeId = '', debugTag = '', vueMajor = 3, appOrigin = '' } = {}) => {
     const id = String(iframeId || '');
     const tag = String(debugTag || '');
+    const origin = String(appOrigin || '').trim();
     const major = Number(vueMajor) === 2 ? 2 : 3;
     const vueUrls = major === 2
         ? [
+            origin ? `${origin}/lib/vue2.min.js` : '',
             'https://testingcf.jsdelivr.net/npm/vue@2/dist/vue.min.js',
             'https://cdn.jsdelivr.net/npm/vue@2/dist/vue.min.js',
             'https://unpkg.com/vue@2/dist/vue.min.js',
         ]
         : [
+            origin ? `${origin}/lib/vue3.global.prod.js` : '',
             'https://testingcf.jsdelivr.net/npm/vue@3/dist/vue.global.prod.js',
             'https://cdn.jsdelivr.net/npm/vue@3/dist/vue.global.prod.js',
             'https://unpkg.com/vue@3/dist/vue.global.prod.js',
         ];
     const routerUrls = major === 2
         ? [
+            origin ? `${origin}/lib/vue-router3.min.js` : '',
             'https://testingcf.jsdelivr.net/npm/vue-router@3/dist/vue-router.min.js',
             'https://cdn.jsdelivr.net/npm/vue-router@3/dist/vue-router.min.js',
             'https://unpkg.com/vue-router@3/dist/vue-router.min.js',
         ]
         : [
+            origin ? `${origin}/lib/vue-router4.global.prod.js` : '',
             'https://testingcf.jsdelivr.net/npm/vue-router@4/dist/vue-router.global.prod.js',
             'https://cdn.jsdelivr.net/npm/vue-router@4/dist/vue-router.global.prod.js',
             'https://unpkg.com/vue-router@4/dist/vue-router.global.prod.js',
         ];
+    const piniaUrls = [
+        origin ? `${origin}/lib/pinia.iife.prod.js` : '',
+        'https://testingcf.jsdelivr.net/npm/pinia@2/dist/pinia.iife.prod.js',
+        'https://cdn.jsdelivr.net/npm/pinia@2/dist/pinia.iife.prod.js',
+        'https://unpkg.com/pinia@2/dist/pinia.iife.prod.js',
+    ];
     return `<script>
 (() => {
   const CHATAPP_IFRAME_ID = ${JSON.stringify(id)};
@@ -2006,13 +2068,32 @@ const buildFrameworkGlobalShim = ({ iframeId = '', debugTag = '', vueMajor = 3 }
   log('info', 'vue-shim-mode major=' + ${JSON.stringify(major)});
   ensureGlobal('Vue', ${JSON.stringify(vueUrls)}, 'vue-shim-ready', 'vue-shim-missing');
   ensureGlobal('VueRouter', ${JSON.stringify(routerUrls)}, 'vue-router-shim-ready', 'vue-router-shim-missing');
+  if (${JSON.stringify(major)} === 3) {
+    ensureGlobal('Pinia', ${JSON.stringify(piniaUrls)}, 'pinia-shim-ready', 'pinia-shim-missing');
+  }
+  setTimeout(() => {
+    try {
+      log('info', 'vue-shim-late ' + (window.Vue ? 'ready' : 'missing'));
+      log('info', 'vue-router-shim-late ' + (window.VueRouter ? 'ready' : 'missing'));
+      if (${JSON.stringify(major)} === 3) {
+        log('info', 'pinia-shim-late ' + (window.Pinia ? 'ready' : 'missing'));
+      }
+    } catch {}
+  }, 1200);
 })();
 </script>`;
 };
 
-const buildDollarGlobalShim = ({ iframeId = '', debugTag = '' } = {}) => {
+const buildDollarGlobalShim = ({ iframeId = '', debugTag = '', appOrigin = '' } = {}) => {
     const id = String(iframeId || '');
     const tag = String(debugTag || '');
+    const origin = String(appOrigin || '').trim();
+    const lodashUrls = [
+        origin ? `${origin}/lib/lodash.min.js` : '',
+        'https://testingcf.jsdelivr.net/npm/lodash@4.17.21/lodash.min.js',
+        'https://cdn.jsdelivr.net/npm/lodash@4.17.21/lodash.min.js',
+        'https://unpkg.com/lodash@4.17.21/lodash.min.js',
+    ];
     return `<script>
 (() => {
   const CHATAPP_IFRAME_ID = ${JSON.stringify(id)};
@@ -2076,13 +2157,111 @@ const buildDollarGlobalShim = ({ iframeId = '', debugTag = '' } = {}) => {
     }
   }
   if (typeof window.jQuery !== 'function') window.jQuery = window.$;
+  const ensureGlobal = (name, urls, readyMsg, missMsg) => {
+    if (window[name]) {
+      log('info', readyMsg + '-existing');
+      return;
+    }
+    for (let i = 0; i < urls.length; i += 1) {
+      if (window[name]) break;
+      const u = String(urls[i] || '');
+      if (!u) continue;
+      log('info', 'compat-load-attempt name=' + name + ' url=' + u);
+      document.write('<script src="' + u + '"><\\/script>');
+    }
+    if (window[name]) log('info', readyMsg);
+    else log('warn', missMsg);
+  };
+  ensureGlobal('_', ${JSON.stringify(lodashUrls)}, 'lodash-shim-ready', 'lodash-shim-missing');
+  if (!window._ || typeof window._ !== 'object') {
+    const toPath = (raw) => String(raw || '')
+      .replace(/\\[([^\\]]+)\\]/g, '.$1')
+      .split('.')
+      .map(seg => seg.trim().replace(/^['"]|['"]$/g, ''))
+      .filter(Boolean);
+    window._ = window._ || {};
+    if (typeof window._.isArray !== 'function') window._.isArray = Array.isArray;
+    if (typeof window._.isObject !== 'function') window._.isObject = (v) => v !== null && typeof v === 'object';
+    if (typeof window._.isNil !== 'function') window._.isNil = (v) => v === null || v === undefined;
+    if (typeof window._.clamp !== 'function') window._.clamp = (n, min, max) => Math.max(min, Math.min(max, n));
+    if (typeof window._.get !== 'function') {
+      window._.get = (obj, path, defVal) => {
+        const parts = toPath(path);
+        let cur = obj;
+        for (const part of parts) {
+          if (cur === null || cur === undefined) return defVal;
+          cur = cur[part];
+        }
+        return cur === undefined ? defVal : cur;
+      };
+    }
+    if (typeof window._.set !== 'function') {
+      window._.set = (obj, path, value) => {
+        const parts = toPath(path);
+        if (!parts.length) return obj;
+        let cur = obj;
+        for (let i = 0; i < parts.length - 1; i += 1) {
+          const key = parts[i];
+          if (!cur[key] || typeof cur[key] !== 'object') cur[key] = {};
+          cur = cur[key];
+        }
+        cur[parts[parts.length - 1]] = value;
+        return obj;
+      };
+    }
+    if (typeof window._.mergeWith !== 'function') {
+      const isObject = (v) => v !== null && typeof v === 'object';
+      window._.mergeWith = (object, ...rest) => {
+        if (!isObject(object)) object = {};
+        let customizer = null;
+        if (rest.length && typeof rest[rest.length - 1] === 'function') {
+          customizer = rest.pop();
+        }
+        const mergeInto = (target, source) => {
+          if (!isObject(source)) return target;
+          Object.keys(source).forEach((key) => {
+            const srcVal = source[key];
+            const objVal = target[key];
+            let next;
+            if (customizer) {
+              try { next = customizer(objVal, srcVal, key, target, source); } catch {}
+            }
+            if (next !== undefined) {
+              target[key] = next;
+              return;
+            }
+            if (Array.isArray(objVal) && Array.isArray(srcVal)) {
+              target[key] = srcVal.slice();
+              return;
+            }
+            if (isObject(objVal) && isObject(srcVal)) {
+              target[key] = mergeInto(objVal, srcVal);
+              return;
+            }
+            if (Array.isArray(srcVal)) {
+              target[key] = srcVal.slice();
+              return;
+            }
+            if (isObject(srcVal)) {
+              target[key] = mergeInto(isObject(objVal) ? objVal : {}, srcVal);
+              return;
+            }
+            target[key] = srcVal;
+          });
+          return target;
+        };
+        rest.forEach((src) => { mergeInto(object, src); });
+        return object;
+      };
+    }
+  }
   if (typeof window.errorCatched !== 'function') {
     window.errorCatched = (fn) => (...args) => {
       try { return fn?.(...args); } catch (err) { console.error(err); }
     };
   }
   try {
-    window.eval('var $ = window.$; var jQuery = window.jQuery; var errorCatched = window.errorCatched;');
+    window.eval('var $ = window.$; var jQuery = window.jQuery; var _ = window._; var errorCatched = window.errorCatched;');
   } catch {}
   if (typeof window.$ === 'function') log('info', 'dollar-shim-ready');
   else log('warn', 'dollar-shim-missing');
@@ -2200,9 +2379,11 @@ const makeCodeBlock = ({ lang, code, messageId, preserveHtmlNewlines = false, se
         const bridgeScriptUrl = '';
         const baseHref = allowScripts ? `${window.location.origin}/` : '';
         const vueRuntimePreference = detectVueRuntimePreference(html);
-        const dollarShim = (allowScripts && !useLegacyMvuBridge) ? buildDollarGlobalShim({ iframeId, debugTag }) : '';
+        const dollarShim = (allowScripts && !useLegacyMvuBridge)
+            ? buildDollarGlobalShim({ iframeId, debugTag, appOrigin: window.location.origin })
+            : '';
         const frameworkShim = (allowScripts && !useLegacyMvuBridge && needsFrameworkShim)
-            ? buildFrameworkGlobalShim({ iframeId, debugTag, vueMajor: vueRuntimePreference })
+            ? buildFrameworkGlobalShim({ iframeId, debugTag, vueMajor: vueRuntimePreference, appOrigin: window.location.origin })
             : '';
         const mvuCompatBridge = needsMvuCompat ? mvuBridgeBuilder({ iframeId, sessionId, debugTag }) : '';
         if (needsMvuCompat && (Boolean(debugTag) || shouldLogRichDebug())) {
@@ -2222,6 +2403,7 @@ const makeCodeBlock = ({ lang, code, messageId, preserveHtmlNewlines = false, se
         });
         previewWrap.appendChild(iframe);
         if (directBodyLoadUrl) {
+            iframe.dataset.directLoadUrl = String(directBodyLoadUrl || '');
             iframe.dataset.iframeSource = 'direct-load';
             iframe.dataset.iframeDocSent = '1';
             iframe.style.height = '260px';
@@ -2259,20 +2441,27 @@ const makeCodeBlock = ({ lang, code, messageId, preserveHtmlNewlines = false, se
                 const cachedHtml = readDirectLoadCache(directBodyLoadUrl);
                 if (cachedHtml) {
                     let directHtml = stripInlineCspMeta(cachedHtml);
+                    const pathRewrite = rewriteDirectLoadAssetPaths(directHtml, baseHref);
+                    directHtml = pathRewrite.html;
                     const rewriteResult = maybeRewriteStHelperGlobals(directHtml, { directLoad: true });
                     directHtml = rewriteResult.html;
                     const directProfile = analyzeCompatProfile(directHtml, { directLoad: true });
                     logDirect('info', `direct-load-profile id=${iframeId} profile=${directProfile.profile} flags=${summarizeCompatFlags(directProfile.flags) || 'none'} source=cache`);
+                    if (pathRewrite.failed) {
+                        logDirect('warn', `direct-load-asset-rewrite-failed id=${iframeId} source=cache`);
+                    } else if (pathRewrite.rewritten > 0) {
+                        logDirect('info', `direct-load-asset-rewrite id=${iframeId} source=cache count=${pathRewrite.rewritten}`);
+                    }
                     if (rewriteResult.failed) {
                         logDirect('warn', `direct-load-rewrite-failed id=${iframeId} source=cache`);
                     }
                     const fetchedNeedsVh = /min-height:\s*[^;]*vh/i.test(directHtml) || /\d+vh/.test(directHtml);
                     if (fetchedNeedsVh) directHtml = processAllVhUnits(directHtml);
-                    const directDollarShim = buildDollarGlobalShim({ iframeId, debugTag });
+                    const directDollarShim = buildDollarGlobalShim({ iframeId, debugTag, appOrigin: window.location.origin });
                     const directNeedsFrameworkShim = shouldInjectFrameworkShim(directHtml, { directLoad: true });
                     const directVueRuntimePreference = detectVueRuntimePreference(directHtml);
                     const directFrameworkShim = directNeedsFrameworkShim
-                        ? buildFrameworkGlobalShim({ iframeId, debugTag, vueMajor: directVueRuntimePreference })
+                        ? buildFrameworkGlobalShim({ iframeId, debugTag, vueMajor: directVueRuntimePreference, appOrigin: window.location.origin })
                         : '';
                     const directMvuBridge = needsMvuCompat ? buildMvuCompatBridge({ iframeId, sessionId, debugTag }) : '';
                     const directDoc = buildIframeSrcDoc(directHtml, {
@@ -2298,21 +2487,28 @@ const makeCodeBlock = ({ lang, code, messageId, preserveHtmlNewlines = false, se
                         throw new Error('non-html-response');
                     }
                     let directHtml = stripInlineCspMeta(fetched);
+                    const pathRewrite = rewriteDirectLoadAssetPaths(directHtml, baseHref);
+                    directHtml = pathRewrite.html;
                     const rewriteResult = maybeRewriteStHelperGlobals(directHtml, { directLoad: true });
                     directHtml = rewriteResult.html;
                     const directProfile = analyzeCompatProfile(directHtml, { directLoad: true });
                     logDirect('info', `direct-load-profile id=${iframeId} profile=${directProfile.profile} flags=${summarizeCompatFlags(directProfile.flags) || 'none'} source=fetch`);
+                    if (pathRewrite.failed) {
+                        logDirect('warn', `direct-load-asset-rewrite-failed id=${iframeId} source=fetch`);
+                    } else if (pathRewrite.rewritten > 0) {
+                        logDirect('info', `direct-load-asset-rewrite id=${iframeId} source=fetch count=${pathRewrite.rewritten}`);
+                    }
                     if (rewriteResult.failed) {
                         logDirect('warn', `direct-load-rewrite-failed id=${iframeId} source=fetch`);
                     }
                     const fetchedNeedsVh = /min-height:\s*[^;]*vh/i.test(directHtml) || /\d+vh/.test(directHtml);
                     if (fetchedNeedsVh) directHtml = processAllVhUnits(directHtml);
                     writeDirectLoadCache(directBodyLoadUrl, directHtml);
-                    const directDollarShim = buildDollarGlobalShim({ iframeId, debugTag });
+                    const directDollarShim = buildDollarGlobalShim({ iframeId, debugTag, appOrigin: window.location.origin });
                     const directNeedsFrameworkShim = shouldInjectFrameworkShim(directHtml, { directLoad: true });
                     const directVueRuntimePreference = detectVueRuntimePreference(directHtml);
                     const directFrameworkShim = directNeedsFrameworkShim
-                        ? buildFrameworkGlobalShim({ iframeId, debugTag, vueMajor: directVueRuntimePreference })
+                        ? buildFrameworkGlobalShim({ iframeId, debugTag, vueMajor: directVueRuntimePreference, appOrigin: window.location.origin })
                         : '';
                     const directMvuBridge = needsMvuCompat ? buildMvuCompatBridge({ iframeId, sessionId, debugTag }) : '';
                     const directDoc = buildIframeSrcDoc(directHtml, {
@@ -2523,6 +2719,34 @@ export const setupIframeResizeListener = () => {
             postMvuVarsToIframe(iframe, targetSid || sid);
         }
     };
+    const tryRecoverDirectLoadFallback = (iframe, id, reason = '') => {
+        if (!iframe || !id) return false;
+        const source = String(iframe.dataset.iframeSource || '');
+        if (source !== 'direct-srcdoc') return false;
+        if (iframe.dataset.directRecoverTried === '1') return false;
+        const url = String(iframe.dataset.directLoadUrl || '').trim();
+        if (!url) return false;
+        iframe.dataset.directRecoverTried = '1';
+        iframe.dataset.iframeSource = 'direct-load';
+        iframe.dataset.iframeReady = '0';
+        iframe.dataset.iframeLoaded = '0';
+        iframe.dataset.iframeError = reason || 'direct-recover';
+        iframe.style.height = '70vh';
+        iframe.style.minHeight = '320px';
+        iframe.style.maxHeight = '860px';
+        try {
+            iframe.removeAttribute('srcdoc');
+            iframe.src = url;
+            const info = `direct-load-recover-src id=${id} url=${url}${reason ? ` reason=${reason}` : ''}`;
+            emitDebugLog({ source: 'iframe', type: 'warn', message: info, force: true });
+            warnIframe('direct-load', id, `msg=${info}`);
+            return true;
+        } catch (err) {
+            const msg = err?.message ? String(err.message) : String(err || 'recover-failed');
+            warnIframe('direct-load-recover-failed', id, `err=${msg}`);
+            return false;
+        }
+    };
 
     window.addEventListener('message', (e) => {
         const data = e?.data;
@@ -2598,6 +2822,11 @@ export const setupIframeResizeListener = () => {
                 const diag = `diag id=${id} ${hint}`;
                 emitDebugLog({ source: 'iframe', type: 'warn', message: diag, force: true });
                 warnIframe('diag', id, hint);
+            }
+            if (
+                /VueRouter is not defined|Vue is not defined|Pinia is not defined|createPinia is not defined|_ is not defined|resource-load-failed|unhandledrejection/i.test(message)
+            ) {
+                tryRecoverDirectLoadFallback(iframe, id, message.slice(0, 120));
             }
             return;
         }

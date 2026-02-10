@@ -8,6 +8,17 @@ echo "📦 开始下载前端依赖..."
 mkdir -p src/lib
 mkdir -p src/assets/css
 
+download_with_fallback() {
+    local output="$1"
+    shift
+    local urls=("$@")
+    for u in "${urls[@]}"; do
+        [ -z "$u" ] && continue
+        curl -fL -o "$output" "$u" && return 0
+    done
+    return 1
+}
+
 # 下载 jQuery
 echo "⬇️  下载 jQuery..."
 curl -L -o src/lib/jquery.min.js https://code.jquery.com/jquery-3.7.1.min.js
@@ -29,7 +40,9 @@ fi
 
 # 下载 Lodash
 echo "⬇️  下载 Lodash..."
-curl -L -o src/lib/lodash.min.js https://cdn.jsdelivr.net/npm/lodash@4.17.21/lodash.min.js
+download_with_fallback src/lib/lodash.min.js \
+    https://testingcf.jsdelivr.net/npm/lodash@4.17.21/lodash.min.js \
+    https://cdn.jsdelivr.net/npm/lodash@4.17.21/lodash.min.js
 if [ $? -eq 0 ]; then
     echo "✅ Lodash 下载完成"
 else
@@ -38,11 +51,69 @@ fi
 
 # 下载 Zod
 echo "⬇️  下载 Zod..."
-curl -L -o src/lib/zod.min.js https://cdn.jsdelivr.net/npm/zod@3.22.4/lib/index.umd.min.js
+download_with_fallback src/lib/zod.min.js \
+    https://testingcf.jsdelivr.net/npm/zod@3.22.4/lib/index.umd.min.js \
+    https://cdn.jsdelivr.net/npm/zod@3.22.4/lib/index.umd.min.js
 if [ $? -eq 0 ]; then
     echo "✅ Zod 下载完成"
 else
     echo "❌ Zod 下载失败"
+fi
+
+# 下载 Vue / Vue Router / Pinia（用于复杂 MVU 卡离线兜底）
+echo "⬇️  下载 Vue3..."
+download_with_fallback src/lib/vue3.global.prod.js \
+    https://testingcf.jsdelivr.net/npm/vue@3/dist/vue.global.prod.js \
+    https://cdn.jsdelivr.net/npm/vue@3/dist/vue.global.prod.js \
+    https://unpkg.com/vue@3/dist/vue.global.prod.js
+if [ $? -eq 0 ]; then
+    echo "✅ Vue3 下载完成"
+else
+    echo "❌ Vue3 下载失败"
+fi
+
+echo "⬇️  下载 Vue2..."
+download_with_fallback src/lib/vue2.min.js \
+    https://testingcf.jsdelivr.net/npm/vue@2/dist/vue.min.js \
+    https://cdn.jsdelivr.net/npm/vue@2/dist/vue.min.js \
+    https://unpkg.com/vue@2/dist/vue.min.js
+if [ $? -eq 0 ]; then
+    echo "✅ Vue2 下载完成"
+else
+    echo "❌ Vue2 下载失败"
+fi
+
+echo "⬇️  下载 Vue Router 4..."
+download_with_fallback src/lib/vue-router4.global.prod.js \
+    https://testingcf.jsdelivr.net/npm/vue-router@4/dist/vue-router.global.prod.js \
+    https://cdn.jsdelivr.net/npm/vue-router@4/dist/vue-router.global.prod.js \
+    https://unpkg.com/vue-router@4/dist/vue-router.global.prod.js
+if [ $? -eq 0 ]; then
+    echo "✅ Vue Router 4 下载完成"
+else
+    echo "❌ Vue Router 4 下载失败"
+fi
+
+echo "⬇️  下载 Vue Router 3..."
+download_with_fallback src/lib/vue-router3.min.js \
+    https://testingcf.jsdelivr.net/npm/vue-router@3/dist/vue-router.min.js \
+    https://cdn.jsdelivr.net/npm/vue-router@3/dist/vue-router.min.js \
+    https://unpkg.com/vue-router@3/dist/vue-router.min.js
+if [ $? -eq 0 ]; then
+    echo "✅ Vue Router 3 下载完成"
+else
+    echo "❌ Vue Router 3 下载失败"
+fi
+
+echo "⬇️  下载 Pinia..."
+download_with_fallback src/lib/pinia.iife.prod.js \
+    https://testingcf.jsdelivr.net/npm/pinia@2/dist/pinia.iife.prod.js \
+    https://cdn.jsdelivr.net/npm/pinia@2/dist/pinia.iife.prod.js \
+    https://unpkg.com/pinia@2/dist/pinia.iife.prod.js
+if [ $? -eq 0 ]; then
+    echo "✅ Pinia 下载完成"
+else
+    echo "❌ Pinia 下载失败"
 fi
 
 # 下载外部 CSS（如果需要）
