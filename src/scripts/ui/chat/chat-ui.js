@@ -563,9 +563,11 @@ export class ChatUI {
     this.scrollEl.innerHTML = '';
   }
 
-  clearInput() {
+  clearInput(options = {}) {
+    const shouldFocus = options === true
+      || (typeof options === 'object' ? options.focus !== false : options !== false);
     this.inputEl.value = '';
-    this.inputEl.focus();
+    if (shouldFocus) this.inputEl.focus();
   }
 
   setSendingState(isSending) {

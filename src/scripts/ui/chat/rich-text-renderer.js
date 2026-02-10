@@ -3427,12 +3427,6 @@ export const setupIframeResizeListener = () => {
                 warnIframe('diag', id, hint);
             }
             const recoverableRuntimeError = shouldStaticFallbackForIframeError(message);
-            const wasPreviouslyHealthy = Boolean(st?.readyAt && st?.lastResizeAt);
-            if (recoverableRuntimeError && wasPreviouslyHealthy && st?.dynamicDoc && st?.autoRecoverTried !== 1) {
-                st.autoRecoverTried = 1;
-                const recovered = applyIframeDynamicRecover(iframe, id, `auto-recover ${message.slice(0, 120)}`);
-                if (recovered) return;
-            }
             if (
                 /VueRouter is not defined|Vue is not defined|Pinia is not defined|createPinia is not defined|_ is not defined|resource-load-failed|unhandledrejection/i.test(message)
             ) {

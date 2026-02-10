@@ -848,7 +848,6 @@ export class VariablePanel {
         if (searchEl) searchEl.value = '';
         this.renderList();
         this.overlay.style.display = 'block';
-        this.panel?.querySelector?.('#var-search')?.focus?.();
     }
 
     hide() {

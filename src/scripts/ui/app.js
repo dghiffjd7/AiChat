@@ -4479,6 +4479,14 @@ Phase G（Frame 36）：循环衔接
   const chatScroll = document.getElementById('chat-scroll');
   const composerInput = document.getElementById('composer-input');
   const chatInputContainer = document.querySelector('.chat-input-container');
+  const blurComposerInput = () => {
+    try {
+      const active = document.activeElement;
+      if (active && typeof active.blur === 'function' && (active === composerInput || active.tagName === 'TEXTAREA' || active.tagName === 'INPUT')) {
+        active.blur();
+      }
+    } catch {}
+  };
   if (chatRoom && chatScroll) {
     stageTimeline = new StageTimeline({ stageManager });
     stageTimeline.mount({ container: chatRoom, before: chatScroll });
@@ -9542,7 +9550,10 @@ Phase G（Frame 36）：循环衔接
         const action = btn.dataset.action;
         if (action === 'world') worldPanel.show();
         if (action === 'regex') regexSessionPanel.show();
-        if (action === 'vars') variablePanel.show();
+        if (action === 'vars') {
+          blurComposerInput();
+          variablePanel.show();
+        }
         if (action === 'chat-settings') openChatSettings();
         if (action === 'prompt-preview') {
           showPromptPreview();
@@ -10096,6 +10107,7 @@ Phase G（Frame 36）：循环衔接
     }
     const prevId = String(rpSessionStore.getActiveGreetingId?.() || '').trim();
     if (targetId === prevId) return true;
+    blurComposerInput();
     rpSessionStore.setActiveGreeting?.(targetId);
     resetRpHistory(sid);
     return true;
@@ -10607,7 +10619,7 @@ Phase G（Frame 36）：循环衔接
     ui.clearMessages();
     chatRenderState.set(sid, { start: 0 });
     seedRpGreetingIfNeeded(sid);
-    if (!keepInput) ui.clearInput();
+    if (!keepInput) ui.clearInput({ focus: false });
     refreshChatAndContacts();
     updatePendingFloat(sid);
     refreshRpToolbar(sid);
@@ -10805,6 +10817,7 @@ Phase G（Frame 36）：循环衔接
   });
 
   rpVarsBtn?.addEventListener('click', () => {
+    blurComposerInput();
     variablePanel.show();
   });
 
