@@ -45,6 +45,128 @@ const warnIframe = (msg, id, extra = '') => {
     const suffix = extra ? ` ${extra}` : '';
     logger.warn(`[iframe] ${msg} id=${id || 'unknown'}${suffix}`);
 };
+const escapeHtmlText = (value) => String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+const isLikelyBlankStaticDoc = (doc = '') => {
+    const raw = String(doc || '');
+    if (!raw.trim()) return true;
+    const noScript = raw.replace(/<script[\s\S]*?<\/script\s*>/gi, '');
+    const noStyle = noScript.replace(/<style[\s\S]*?<\/style\s*>/gi, '');
+    const visibleText = noStyle
+        .replace(/<[^>]*>/g, ' ')
+        .replace(/&nbsp;/gi, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+    const hasRenderableMarkup = /<(img|svg|table|details|pre|code|p|li|h1|h2|h3|article|section|main|canvas)\b/i.test(noStyle);
+    const appShellOnly = /<div[^>]+id=["'](?:app|root|__next|__nuxt|status|mount|container)[^"']*["'][^>]*>\s*<\/div>/i.test(noStyle);
+    if (appShellOnly && !hasRenderableMarkup && visibleText.length < 12) return true;
+    return !hasRenderableMarkup && visibleText.length < 24;
+};
+const buildStaticFallbackPlaceholderDoc = (reason = '', { canRecover = false, iframeId = '' } = {}) => {
+    const msg = String(reason || '').trim().slice(0, 320);
+    const safeReason = escapeHtmlText(msg || 'runtime-error');
+    const recoverBtn = canRecover
+        ? '<button id="__chatapp_recover_btn" type="button" style="margin-top:10px;padding:8px 10px;border-radius:8px;border:1px solid #3b424d;background:#1e2630;color:#dbe7f2;font-size:12px;cursor:pointer;">恢复动态渲染</button>'
+        : '';
+    const recoverScript = canRecover
+        ? `<script>(function(){var id=${JSON.stringify(String(iframeId || ''))};var btn=document.getElementById('__chatapp_recover_btn');if(!btn)return;btn.addEventListener('click',function(){try{parent.postMessage({type:'chatapp:iframe-recover-dynamic',id:id},'*');}catch{}});})();<\/script>`
+        : '';
+    return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><style>
+html,body{margin:0;padding:0;background:#0f1115;color:#e6edf3;font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
+.box{padding:14px;border:1px solid #2c323a;border-radius:10px;background:#151a20;margin:10px}
+.title{font-size:14px;font-weight:700;margin-bottom:8px}
+.desc{font-size:12px;opacity:.88;line-height:1.45}
+.err{margin-top:10px;padding:8px;border-radius:8px;background:#0f1318;border:1px dashed #3b424d;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px;white-space:pre-wrap;word-break:break-word}
+</style></head><body><div class="box"><div class="title">Static fallback applied</div><div class="desc">This card page depends on runtime scripts and cannot be rendered interactively in fallback mode.</div><div class="err">${safeReason}</div>${recoverBtn}</div>${recoverScript}</body></html>`;
+};
+const shouldStaticFallbackForIframeError = (message = '') => {
+    const msg = String(message || '').toLowerCase();
+    if (!msg) return false;
+    return /cannot read properties of undefined|is not defined|typeerror|referenceerror|syntaxerror|unhandledrejection|resource-load-failed|failed to fetch|script error/.test(msg);
+};
+const setIframeStaticFallbackDoc = (id, doc) => {
+    const key = String(id || '').trim();
+    if (!key) return;
+    const st = getIframeState(key, { createdAt: Date.now() });
+    if (!st) return;
+    st.staticDoc = String(doc || '');
+};
+const setIframeDynamicDoc = (id, doc, source = 'dynamic-srcdoc') => {
+    const key = String(id || '').trim();
+    if (!key) return;
+    const st = getIframeState(key, { createdAt: Date.now() });
+    if (!st) return;
+    st.dynamicDoc = String(doc || '');
+    st.dynamicSource = String(source || 'dynamic-srcdoc');
+};
+const applyIframeDynamicRecover = (iframe, id, reason = '') => {
+    if (!iframe || !id) return false;
+    const st = getIframeState(id, { messageId: String(iframe.dataset.msgId || ''), createdAt: Date.now() });
+    const dynamicDoc = String(st?.dynamicDoc || '').trim();
+    if (!dynamicDoc) return false;
+    try {
+        iframe.dataset.staticFallbackApplied = '0';
+        iframe.dataset.iframeSource = String(st?.dynamicSource || 'dynamic-srcdoc');
+        iframe.dataset.iframeReady = '0';
+        iframe.dataset.iframeLoaded = '0';
+        iframe.dataset.iframeError = reason || 'dynamic-recover';
+        iframe.dataset.iframeDocSent = '1';
+        iframe.style.height = '320px';
+        iframe.style.minHeight = '220px';
+        iframe.style.maxHeight = '1200px';
+        iframe.removeAttribute('src');
+        iframe.srcdoc = dynamicDoc;
+        if (st) st.dynamicRecoverAt = Date.now();
+        const msg = `dynamic-recover-applied id=${id}${reason ? ` reason=${reason}` : ''}`;
+        emitDebugLog({ source: 'iframe', type: 'warn', message: msg, force: true });
+        warnIframe('dynamic-recover', id, reason ? `reason=${reason}` : '');
+        return true;
+    } catch (err) {
+        const errMsg = err?.message ? String(err.message) : String(err || 'recover-failed');
+        warnIframe('dynamic-recover-failed', id, `err=${errMsg}`);
+        return false;
+    }
+};
+const applyIframeStaticFallback = (iframe, id, reason = '') => {
+    if (!iframe || !id) return false;
+    if (iframe.dataset.staticFallbackApplied === '1') return false;
+    const st = getIframeState(id, { messageId: String(iframe.dataset.msgId || ''), createdAt: Date.now() });
+    const staticDoc = String(st?.staticDoc || '').trim();
+    if (!staticDoc) return false;
+    let nextDoc = staticDoc;
+    if (isLikelyBlankStaticDoc(staticDoc)) {
+        nextDoc = buildStaticFallbackPlaceholderDoc(reason, { canRecover: Boolean(st?.dynamicDoc), iframeId: id });
+        const hint = `static-fallback-placeholder id=${id} reason=${String(reason || '').slice(0, 160)}`;
+        emitDebugLog({ source: 'iframe', type: 'warn', message: hint, force: true });
+        warnIframe('static-fallback-placeholder', id, reason ? `reason=${reason}` : '');
+    }
+    try {
+        iframe.dataset.staticFallbackApplied = '1';
+        iframe.dataset.iframeSource = 'static-srcdoc';
+        iframe.dataset.iframeReady = '0';
+        iframe.dataset.iframeLoaded = '0';
+        iframe.dataset.iframeError = reason || 'static-fallback';
+        iframe.dataset.iframeDocSent = '1';
+        iframe.style.height = '320px';
+        iframe.style.minHeight = '220px';
+        iframe.style.maxHeight = '1200px';
+        iframe.removeAttribute('src');
+        iframe.srcdoc = nextDoc;
+        if (st) st.staticFallbackAt = Date.now();
+        const msg = `static-fallback-applied id=${id}${reason ? ` reason=${reason}` : ''}`;
+        emitDebugLog({ source: 'iframe', type: 'warn', message: msg, force: true });
+        warnIframe('static-fallback', id, reason ? `reason=${reason}` : '');
+        return true;
+    } catch (err) {
+        const errMsg = err?.message ? String(err.message) : String(err || 'apply-failed');
+        warnIframe('static-fallback-failed', id, `err=${errMsg}`);
+        return false;
+    }
+};
 const isLiveIframe = (iframe, iframeId = '') => {
     if (iframe && iframe.isConnected) return true;
     if (iframeId) iframeDebugState.delete(iframeId);
@@ -2784,6 +2906,7 @@ const makeCodeBlock = ({ lang, code, messageId, preserveHtmlNewlines = false, se
         const needsVhHandling = hasMinVh || hasJsVhUsage;
         if (needsVhHandling) html = processAllVhUnits(html);
         const previewHtml = allowScripts ? html : stripScriptsForPreview(html);
+        const staticHtml = stripScriptsForPreview(html);
         const hostDoc = buildIframeSrcDoc(previewHtml, {
             iframeId,
             needsVhHandling,
@@ -2798,6 +2921,15 @@ const makeCodeBlock = ({ lang, code, messageId, preserveHtmlNewlines = false, se
             injectBridgeScript: true,
             styleInBody: false,
         });
+        const staticDoc = buildIframeSrcDoc(staticHtml, {
+            iframeId,
+            needsVhHandling,
+            preserveNewlines: false,
+            injectBridgeScript: false,
+            styleInBody: false,
+            baseHref: allowScripts ? `${window.location.origin}/` : '',
+        });
+        setIframeStaticFallbackDoc(iframeId, staticDoc);
         const bridgeScriptUrl = '';
         const baseHref = allowScripts ? `${window.location.origin}/` : '';
         const vueRuntimePreference = detectVueRuntimePreference(html);
@@ -2824,6 +2956,9 @@ const makeCodeBlock = ({ lang, code, messageId, preserveHtmlNewlines = false, se
             bridgeScriptUrl,
             headPrepend: `${dollarShim}${frameworkShim}${mvuCompatBridge}`,
         });
+        if (allowScripts) {
+            setIframeDynamicDoc(iframeId, scriptDoc, directBodyLoadUrl ? 'direct-scriptdoc' : 'inline-scriptdoc');
+        }
         previewWrap.appendChild(iframe);
         if (directBodyLoadUrl) {
             iframe.dataset.directLoadUrl = String(directBodyLoadUrl || '');
@@ -2902,6 +3037,17 @@ const makeCodeBlock = ({ lang, code, messageId, preserveHtmlNewlines = false, se
                         baseHref,
                         headPrepend: `${directDollarShim}${directFrameworkShim}${directMvuBridge}`,
                     });
+                    setIframeDynamicDoc(iframeId, directDoc, 'direct-srcdoc');
+                    const directStaticHtml = stripScriptsForPreview(directHtml);
+                    const directStaticDoc = buildIframeSrcDoc(directStaticHtml, {
+                        iframeId,
+                        needsVhHandling: fetchedNeedsVh,
+                        preserveNewlines: false,
+                        injectBridgeScript: false,
+                        styleInBody: false,
+                        baseHref,
+                    });
+                    setIframeStaticFallbackDoc(iframeId, directStaticDoc);
                     iframe.dataset.iframeSource = 'direct-srcdoc';
                     iframe.srcdoc = directDoc;
                     logDirect('info', `direct-load-cache-hit id=${iframeId} len=${directHtml.length} rewrite=${rewriteResult.replaced} base=${baseHref}`);
@@ -2955,6 +3101,17 @@ const makeCodeBlock = ({ lang, code, messageId, preserveHtmlNewlines = false, se
                         baseHref,
                         headPrepend: `${directDollarShim}${directFrameworkShim}${directMvuBridge}`,
                     });
+                    setIframeDynamicDoc(iframeId, directDoc, 'direct-srcdoc');
+                    const directStaticHtml = stripScriptsForPreview(directHtml);
+                    const directStaticDoc = buildIframeSrcDoc(directStaticHtml, {
+                        iframeId,
+                        needsVhHandling: fetchedNeedsVh,
+                        preserveNewlines: false,
+                        injectBridgeScript: false,
+                        styleInBody: false,
+                        baseHref,
+                    });
+                    setIframeStaticFallbackDoc(iframeId, directStaticDoc);
                     iframe.dataset.iframeSource = 'direct-srcdoc';
                     iframe.srcdoc = directDoc;
                     logDirect('info', `direct-load-fetch-success id=${iframeId} len=${directHtml.length} rewrite=${rewriteResult.replaced} base=${baseHref}`);
@@ -3233,6 +3390,17 @@ export const setupIframeResizeListener = () => {
             warnIframe('iframe-host-error', id, message ? `err=${message}` : '');
             return;
         }
+        if (data.type === 'chatapp:iframe-recover-dynamic') {
+            const id = String(data.id || '');
+            if (!id) return;
+            const iframe = document.querySelector(`iframe[data-iframe-id="${esc(id)}"]`);
+            if (!iframe) return;
+            const recovered = applyIframeDynamicRecover(iframe, id, 'manual-button');
+            if (!recovered) {
+                warnIframe('dynamic-recover-unavailable', id);
+            }
+            return;
+        }
         if (data.type === 'chatapp:pong') {
             const id = String(data.id || '');
             if (!id) return;
@@ -3258,10 +3426,22 @@ export const setupIframeResizeListener = () => {
                 emitDebugLog({ source: 'iframe', type: 'warn', message: diag, force: true });
                 warnIframe('diag', id, hint);
             }
+            const recoverableRuntimeError = shouldStaticFallbackForIframeError(message);
+            const wasPreviouslyHealthy = Boolean(st?.readyAt && st?.lastResizeAt);
+            if (recoverableRuntimeError && wasPreviouslyHealthy && st?.dynamicDoc && st?.autoRecoverTried !== 1) {
+                st.autoRecoverTried = 1;
+                const recovered = applyIframeDynamicRecover(iframe, id, `auto-recover ${message.slice(0, 120)}`);
+                if (recovered) return;
+            }
             if (
                 /VueRouter is not defined|Vue is not defined|Pinia is not defined|createPinia is not defined|_ is not defined|resource-load-failed|unhandledrejection/i.test(message)
             ) {
-                tryRecoverDirectLoadFallback(iframe, id, message.slice(0, 120));
+                const recovered = tryRecoverDirectLoadFallback(iframe, id, message.slice(0, 120));
+                if (!recovered && recoverableRuntimeError) {
+                    applyIframeStaticFallback(iframe, id, message.slice(0, 160));
+                }
+            } else if (recoverableRuntimeError) {
+                applyIframeStaticFallback(iframe, id, message.slice(0, 160));
             }
             return;
         }
