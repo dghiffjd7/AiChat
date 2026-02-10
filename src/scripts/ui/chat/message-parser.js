@@ -15,6 +15,8 @@
 import { resolveMediaAsset, isLikelyUrl } from '../../utils/media-assets.js';
 
 const TOKEN_PATTERN = /^\[(img|yy|music|zz|bqb)-([\s\S]+)\]$/i;
+const FENCED_CODE_PATTERN = /^```[\s\S]*```$/;
+const HTML_DOC_HINT_PATTERN = /<!doctype\s+html|<html[\s>]|<head[\s>]|<body[\s>]/i;
 
 const attachAssetMeta = (resolved) => {
     const item = resolved?.item;
@@ -28,6 +30,11 @@ const attachAssetMeta = (resolved) => {
 
 export function parseSpecialMessage(raw = '') {
     const text = (raw || '').trim();
+    // Do not interpret fenced code / HTML documents as media.
+    // These should stay as text so rich renderer can handle them.
+    if (FENCED_CODE_PATTERN.test(text) || HTML_DOC_HINT_PATTERN.test(text)) {
+        return { type: 'text', content: raw };
+    }
     // If HTML-like img tag exists, treat as image content
     if (/<img\s+[^>]*src=/.test(text)) {
         const src = (text.match(/src=["']([^"']+)["']/) || [])[1];

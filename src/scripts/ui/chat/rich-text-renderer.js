@@ -222,7 +222,7 @@ const stripScriptsForPreview = (html) => String(html ?? '').replace(/<script[\s\
 const shouldEnableMvuCompat = (html) => {
     const raw = String(html || '');
     if (!raw) return false;
-    return /getAllVariables\s*\(|getVariables\s*\(|waitGlobalInitialized\s*\(|\bMvu\b|StatusPlaceHolderImpl|mag_variable_|\$\(\s*['"]body['"]\s*\)\s*\.load\s*\(/i.test(raw);
+    return /getAllVariables\s*\(|getVariables\s*\(|getCurrentMessageId\s*\(|getChatMessages\s*\(|getChatMessage\s*\(|setChatMessage\s*\(|setChatMessages\s*\(|getContext\s*\(|waitGlobalInitialized\s*\(|\bMvu\b|StatusPlaceHolderImpl|mag_variable_|\$\(\s*['"]body['"]\s*\)\s*\.load\s*\(/i.test(raw);
 };
 const shouldInjectFrameworkShim = (html, { directLoad = false } = {}) => {
     const raw = String(html || '');
@@ -243,7 +243,7 @@ const analyzeCompatProfile = (html, { directLoad = false } = {}) => {
         vue: /\bVue\b|createApp\s*\(|from\s+['"]vue['"]/i.test(raw),
         vueRouter: /\bVueRouter\b|createRouter\s*\(|from\s+['"]vue-router['"]/i.test(raw),
         pinia: /\bPinia\b|createPinia\s*\(|from\s+['"]pinia['"]/i.test(raw),
-        stGlobals: /\bSillyTavern\b|\bTavernHelper\b|\btoastr\b|\bYAML\b|registerMvuSchema\s*\(|registerVariableSchema\s*\(|mag_variable_/i.test(raw),
+        stGlobals: /\bSillyTavern\b|\bTavernHelper\b|\btoastr\b|\bYAML\b|registerMvuSchema\s*\(|registerVariableSchema\s*\(|mag_variable_|setChatMessage\s*\(|setChatMessages\s*\(|getCurrentMessageId\s*\(|getChatMessages\s*\(|getChatMessage\s*\(|getContext\s*\(/i.test(raw),
         stApi: /getRequestHeaders\s*\(|\/api\/backends\//i.test(raw),
         externalScript: /<script[^>]+src\s*=\s*["']https?:\/\//i.test(raw),
         externalEsmImport: /\bimport\s+[^;]*['"]https?:\/\//i.test(raw),
@@ -308,11 +308,13 @@ const diagnoseIframeError = (message = '') => {
     if (/Unexpected token|Invalid regular expression|SyntaxError/i.test(msg)) return 'hint=user-script-syntax';
     return '';
 };
-const buildMvuCompatBridge = ({ iframeId, sessionId, debugTag, messageId } = {}) => {
+const buildMvuCompatBridge = ({ iframeId, sessionId, debugTag, messageId, messageIndex } = {}) => {
     const id = String(iframeId || '');
     const sid = String(sessionId || '');
     const tag = String(debugTag || '');
     const mid = String(messageId || '');
+    const rawIdx = Number(messageIndex);
+    const midx = Number.isFinite(rawIdx) ? Math.trunc(rawIdx) : null;
     return `
 <script>
 (() => {
@@ -320,6 +322,7 @@ const buildMvuCompatBridge = ({ iframeId, sessionId, debugTag, messageId } = {})
   const CHATAPP_SESSION_ID = ${JSON.stringify(sid)};
   const CHATAPP_DEBUG_TAG = ${JSON.stringify(tag)};
   const CHATAPP_MESSAGE_ID = ${JSON.stringify(mid)};
+  const CHATAPP_MESSAGE_INDEX = ${midx === null ? 'null' : String(midx)};
   const listeners = new Map();
   const withTag = (message) => {
     const msg = String(message || '');
@@ -378,7 +381,174 @@ const buildMvuCompatBridge = ({ iframeId, sessionId, debugTag, messageId } = {})
     try { return JSON.parse(JSON.stringify(input)); } catch {}
     return input;
   };
-
+  let hostReqSeq = 0;
+  const hostReqResolvers = new Map();
+  const makeHostRequestId = () => {
+    hostReqSeq += 1;
+    return String(CHATAPP_IFRAME_ID || 'iframe') + ':' + String(Date.now()) + ':' + String(hostReqSeq);
+  };
+  const waitHostResult = (requestId, timeoutMs = 2600) => new Promise((resolve) => {
+    const reqId = String(requestId || '').trim();
+    if (!reqId) return resolve({ ok: false, reason: 'missing-request-id' });
+    let done = false;
+    const timer = setTimeout(() => {
+      if (done) return;
+      done = true;
+      hostReqResolvers.delete(reqId);
+      resolve({ ok: false, reason: 'timeout' });
+    }, Math.max(400, Number(timeoutMs) || 2600));
+    hostReqResolvers.set(reqId, (payload) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      hostReqResolvers.delete(reqId);
+      resolve(payload && typeof payload === 'object' ? payload : { ok: false, reason: 'invalid-result' });
+    });
+  });
+  const postHostRequest = async (type, payload = {}, timeoutMs = 2600) => {
+    const requestId = makeHostRequestId();
+    const waiter = waitHostResult(requestId, timeoutMs);
+    try {
+      parent.postMessage({
+        type: String(type || ''),
+        id: CHATAPP_IFRAME_ID,
+        requestId,
+        sessionId: CHATAPP_SESSION_ID,
+        ...payload,
+      }, '*');
+    } catch (err) {
+      hostReqResolvers.delete(requestId);
+      return { ok: false, reason: String(err?.message || err || 'post-message-failed') };
+    }
+    return await waiter;
+  };
+  const normalizeChatMessageFieldValues = (input) => {
+    if (typeof input === 'string') return { message: input };
+    if (!input || typeof input !== 'object') return {};
+    return { ...input };
+  };
+  const normalizeChatMessageRef = (input) => {
+    if (input === undefined || input === null || input === '') return String(CHATAPP_MESSAGE_ID || '');
+    return String(input);
+  };
+  const chatState = {
+    currentRef: String(CHATAPP_MESSAGE_ID || ''),
+    currentIndex: Number.isInteger(CHATAPP_MESSAGE_INDEX) ? CHATAPP_MESSAGE_INDEX : null,
+    entries: new Map(),
+  };
+  const getCurrentCompatRef = () => String(chatState.currentRef || CHATAPP_MESSAGE_ID || '');
+  const normalizeCompatRef = (input) => {
+    const ref = normalizeChatMessageRef(input);
+    const idx = Number(ref);
+    if (Number.isInteger(idx) && Number.isInteger(chatState.currentIndex) && idx === chatState.currentIndex) {
+      return getCurrentCompatRef();
+    }
+    return ref;
+  };
+  const normalizeCompatEntry = (entry = {}, fallbackRef = '') => {
+    const ref = normalizeCompatRef(entry.message_id ?? entry.messageId ?? entry.id ?? fallbackRef ?? '');
+    const numericId = Number(ref);
+    const messageId = Number.isInteger(numericId) ? numericId : ref;
+    const role = String(entry.role || 'assistant');
+    const message = String(entry.message ?? entry.content ?? entry.raw ?? '');
+    const data = entry.data && typeof entry.data === 'object' ? cloneVars(entry.data) : {};
+    const extra = entry.extra && typeof entry.extra === 'object' ? cloneVars(entry.extra) : {};
+    return {
+      message_id: messageId,
+      role,
+      message,
+      data,
+      extra,
+      is_hidden: Boolean(entry.is_hidden),
+      name: String(entry.name || ''),
+    };
+  };
+  const upsertCompatEntry = (refInput, patch = {}) => {
+    const ref = normalizeCompatRef(refInput);
+    if (!ref) return null;
+    const prev = chatState.entries.get(ref) || normalizeCompatEntry({ message_id: ref }, ref);
+    const merged = normalizeCompatEntry({ ...prev, ...patch, message_id: patch?.message_id ?? prev.message_id }, ref);
+    chatState.entries.set(ref, merged);
+    return merged;
+  };
+  const exportCompatEntries = () => Array.from(chatState.entries.values()).map((entry) => normalizeCompatEntry(entry, ''));
+  const sortCompatEntries = (items) => (Array.isArray(items) ? items.slice() : [])
+    .sort((a, b) => {
+      const an = Number(a?.message_id);
+      const bn = Number(b?.message_id);
+      const ai = Number.isFinite(an) && Number.isInteger(an);
+      const bi = Number.isFinite(bn) && Number.isInteger(bn);
+      if (ai && bi) return an - bn;
+      if (ai) return -1;
+      if (bi) return 1;
+      return String(a?.message_id ?? '').localeCompare(String(b?.message_id ?? ''));
+    });
+  const toLegacyChatMessage = (entry = {}) => {
+    const message = String(entry?.message || '');
+    const role = String(entry?.role || 'assistant').trim().toLowerCase();
+    const data = entry?.data && typeof entry.data === 'object' ? entry.data : {};
+    const extra = entry?.extra && typeof entry.extra === 'object' ? entry.extra : {};
+    const swipes = Array.isArray(entry?.swipes) && entry.swipes.length
+      ? entry.swipes.slice()
+      : [message];
+    const swipeVars = Array.isArray(entry?.swipes_data) && entry.swipes_data.length
+      ? entry.swipes_data.slice()
+      : [data];
+    return {
+      mes: message,
+      name: String(entry?.name || (role === 'user' ? 'user' : 'assistant')),
+      is_user: role === 'user',
+      is_system: Boolean(entry?.is_hidden),
+      swipe_id: Number.isInteger(Number(entry?.swipe_id)) ? Number(entry.swipe_id) : 0,
+      swipes,
+      variables: swipeVars,
+      extra,
+    };
+  };
+  const syncLegacyChatGlobals = () => {
+    const legacy = sortCompatEntries(exportCompatEntries()).map((entry) => toLegacyChatMessage(entry));
+    const currentId = Number.isInteger(chatState.currentIndex) ? chatState.currentIndex : 0;
+    const mirrorHost = (host) => {
+      try {
+        if (!host) return;
+        host.chat = legacy;
+        host.this_chid = currentId;
+        if (!host.chat_metadata || typeof host.chat_metadata !== 'object') host.chat_metadata = {};
+      } catch {}
+    };
+    mirrorHost(window);
+    mirrorHost(window.parent);
+    mirrorHost(window.top);
+    return legacy;
+  };
+  const resolveCompatCurrentMessageId = () =>
+    Number.isInteger(chatState.currentIndex) ? chatState.currentIndex : getCurrentCompatRef();
+  const applyCompatSetMessageCache = (messageRef, fieldValues = {}) => {
+    const ref = normalizeCompatRef(messageRef);
+    const fields = fieldValues && typeof fieldValues === 'object' ? fieldValues : {};
+    const patch = {};
+    if (Object.prototype.hasOwnProperty.call(fields, 'message')) patch.message = String(fields.message ?? '');
+    if (Object.prototype.hasOwnProperty.call(fields, 'data')) {
+      patch.data = fields.data && typeof fields.data === 'object' ? cloneVars(fields.data) : {};
+    }
+    const next = upsertCompatEntry(ref, patch);
+    syncLegacyChatGlobals();
+    return next;
+  };
+  {
+    const currentRef = getCurrentCompatRef();
+    if (currentRef && !chatState.entries.has(currentRef)) {
+      upsertCompatEntry(currentRef, {
+        message_id: Number.isInteger(chatState.currentIndex) ? chatState.currentIndex : currentRef,
+        role: 'assistant',
+        message: '',
+        data: {},
+        extra: {},
+      });
+    }
+    const seededCurrent = currentRef ? chatState.entries.get(currentRef) : null;
+    log('info', 'tavern-helper-shim-seed-current has=' + (seededCurrent ? '1' : '0') + ' len=' + String(seededCurrent ? String(seededCurrent.message || '').length : 0));
+  }
   const ensureMvu = () => {
     if (!window.Mvu || typeof window.Mvu !== 'object') {
       window.Mvu = { events: {} };
@@ -443,7 +613,140 @@ const buildMvuCompatBridge = ({ iframeId, sessionId, debugTag, messageId } = {})
   const normalizeErrorCatched = (next) => (typeof next === 'function' ? next : defaultErrorCatched);
   compatApi.getAllVariables = () => state.vars;
   compatApi.getVariables = () => state.vars;
-  compatApi.getCurrentMessageId = () => CHATAPP_MESSAGE_ID;
+  compatApi.getCurrentMessageId = () => resolveCompatCurrentMessageId();
+  compatApi.getChatMessages = (...args) => {
+    const all = exportCompatEntries()
+      .slice()
+      .sort((a, b) => {
+        const an = Number(a?.message_id);
+        const bn = Number(b?.message_id);
+        const ai = Number.isFinite(an) && Number.isInteger(an);
+        const bi = Number.isFinite(bn) && Number.isInteger(bn);
+        if (ai && bi) return an - bn;
+        if (ai) return -1;
+        if (bi) return 1;
+        return String(a?.message_id ?? '').localeCompare(String(b?.message_id ?? ''));
+      });
+    if (!all.length) return [];
+    const first = args[0];
+    let range = first;
+    let options = {};
+    if (first && typeof first === 'object' && !Array.isArray(first)) {
+      options = { ...first };
+      range = undefined;
+    } else {
+      const second = args[1];
+      const third = args[2];
+      if (second && typeof second === 'object' && !Array.isArray(second)) options = { ...second };
+      else if (typeof second === 'string') options.role = second;
+      if (third && typeof third === 'object' && !Array.isArray(third)) options = { ...options, ...third };
+      else if (typeof third === 'string' && !options.role) options.role = third;
+    }
+    const roleKey = String(options?.role || 'all').trim().toLowerCase();
+    const hideState = String(options?.hide_state || 'all').trim().toLowerCase();
+    const applyFilters = (items) => items.filter((item) => {
+      const msgRole = String(item?.role || '').trim().toLowerCase();
+      if (roleKey && roleKey !== 'all' && roleKey !== 'any' && msgRole !== roleKey) return false;
+      if (hideState === 'hidden' && !Boolean(item?.is_hidden)) return false;
+      if (hideState === 'unhidden' && Boolean(item?.is_hidden)) return false;
+      return true;
+    });
+    if (range === undefined || range === null || range === '') return applyFilters(all);
+    const numericIds = all
+      .map((item) => Number(item?.message_id))
+      .filter((n) => Number.isFinite(n) && Number.isInteger(n));
+    const fallbackMax = Number.isInteger(state.currentIndex) ? state.currentIndex : -1;
+    const maxId = numericIds.length ? Math.max(...numericIds) : fallbackMax;
+    const clamp = (value) => {
+      if (!Number.isFinite(value) || !Number.isInteger(value)) return null;
+      if (maxId < 0) return value;
+      const normalized = value < 0 ? maxId + value + 1 : value;
+      return Math.max(0, Math.min(maxId, normalized));
+    };
+    const parseRange = (raw) => {
+      if (typeof raw === 'number' && Number.isInteger(raw)) {
+        const one = clamp(raw);
+        return one === null ? null : { start: one, end: one };
+      }
+      const text = String(raw ?? '').trim();
+      const oneMatch = text.match(/^(-?\d+)$/);
+      if (oneMatch) {
+        const one = clamp(Number(oneMatch[1]));
+        return one === null ? null : { start: one, end: one };
+      }
+      const rangeMatch = text.match(/^(-?\d+)\s*-\s*(-?\d+)$/);
+      if (!rangeMatch) return null;
+      const a = clamp(Number(rangeMatch[1]));
+      const b = clamp(Number(rangeMatch[2]));
+      if (a === null || b === null) return null;
+      return a <= b ? { start: a, end: b } : { start: b, end: a };
+    };
+    const parsed = parseRange(range);
+    if (parsed) {
+      const matched = all.filter((item) => {
+        const id = Number(item?.message_id);
+        if (!Number.isFinite(id) || !Number.isInteger(id)) return false;
+        return id >= parsed.start && id <= parsed.end;
+      });
+      return applyFilters(matched);
+    }
+    const ref = normalizeCompatRef(range);
+    return applyFilters(all.filter((item) => String(item?.message_id) === ref || String(item?.id || '') === ref));
+  };
+  compatApi.getChatMessage = (idx, role) => {
+    const list = compatApi.getChatMessages();
+    const roleKey = String(role || '').trim().toLowerCase();
+    const filtered = roleKey && roleKey !== 'any'
+      ? list.filter((item) => String(item?.role || '').trim().toLowerCase() === roleKey)
+      : list;
+    if (!filtered.length) return '';
+    const asId = Number(idx);
+    if (Number.isFinite(asId) && Number.isInteger(asId)) {
+      const hitById = filtered.find((item) => Number(item?.message_id) === asId || String(item?.message_id) === String(asId));
+      if (hitById) return String(hitById?.message || '');
+    }
+    let index = Number(idx);
+    if (!Number.isFinite(index) || !Number.isInteger(index)) return '';
+    if (index < 0) index = filtered.length + index;
+    if (index < 0 || index >= filtered.length) return '';
+    return String(filtered[index]?.message || '');
+  };
+  compatApi.setChatMessage = async (fieldValues, messageId, options = {}) => {
+    const payload = normalizeChatMessageFieldValues(fieldValues);
+    const targetMessageId = normalizeCompatRef(messageId);
+    const safeOptions = options && typeof options === 'object' ? options : {};
+    applyCompatSetMessageCache(targetMessageId, payload);
+    const result = await postHostRequest('chatapp:set-chat-message', {
+      messageId: targetMessageId,
+      fieldValues: payload,
+      options: safeOptions,
+    });
+    if (!result?.ok) {
+      postCompatLog('warn', 'set-chat-message failed reason=' + String(result?.reason || 'unknown'));
+      return false;
+    }
+    return true;
+  };
+  compatApi.setChatMessages = async (messages = [], options = {}) => {
+    const list = Array.isArray(messages) ? messages : [];
+    const safeOptions = options && typeof options === 'object' ? options : {};
+    const normalized = list
+      .map((item) => (item && typeof item === 'object' ? { ...item } : null))
+      .filter(Boolean);
+    normalized.forEach((item) => {
+      const ref = item?.message_id ?? item?.messageId ?? item?.id ?? item?.mid ?? '';
+      applyCompatSetMessageCache(ref, item);
+    });
+    const result = await postHostRequest('chatapp:set-chat-messages', {
+      messages: normalized,
+      options: safeOptions,
+    });
+    if (!result?.ok) {
+      postCompatLog('warn', 'set-chat-messages failed reason=' + String(result?.reason || 'unknown'));
+      return false;
+    }
+    return true;
+  };
   compatApi.insertOrAssignVariables = async (patch, options = {}) => {
     const next = normalizeVars(cloneVars(state.vars) || {});
     const payload = patch && typeof patch === 'object' ? patch : {};
@@ -483,7 +786,19 @@ const buildMvuCompatBridge = ({ iframeId, sessionId, debugTag, messageId } = {})
 
   window.getAllVariables = window.getAllVariables || (() => state.vars);
   window.getVariables = window.getVariables || (() => state.vars);
-  if (typeof window.getCurrentMessageId !== 'function') window.getCurrentMessageId = () => CHATAPP_MESSAGE_ID;
+  if (typeof window.getCurrentMessageId !== 'function') window.getCurrentMessageId = () => resolveCompatCurrentMessageId();
+  if (typeof window.getChatMessages !== 'function') {
+    window.getChatMessages = (...args) => compatApi.getChatMessages(...args);
+  }
+  if (typeof window.getChatMessage !== 'function') {
+    window.getChatMessage = (...args) => compatApi.getChatMessage(...args);
+  }
+  if (typeof window.setChatMessage !== 'function') {
+    window.setChatMessage = (...args) => compatApi.setChatMessage(...args);
+  }
+  if (typeof window.setChatMessages !== 'function') {
+    window.setChatMessages = (...args) => compatApi.setChatMessages(...args);
+  }
   if (typeof window.insertOrAssignVariables !== 'function') {
     window.insertOrAssignVariables = (...args) => compatApi.insertOrAssignVariables(...args);
   }
@@ -508,7 +823,30 @@ const buildMvuCompatBridge = ({ iframeId, sessionId, debugTag, messageId } = {})
   } catch {}
   window.getAllVariables = () => compatApi.getAllVariables();
   window.getVariables = () => (typeof compatApi.getVariables === 'function' ? compatApi.getVariables() : compatApi.getAllVariables());
-  window.getCurrentMessageId = () => (typeof compatApi.getCurrentMessageId === 'function' ? compatApi.getCurrentMessageId() : CHATAPP_MESSAGE_ID);
+  window.getCurrentMessageId = () => (typeof compatApi.getCurrentMessageId === 'function' ? compatApi.getCurrentMessageId() : resolveCompatCurrentMessageId());
+  window.getChatMessages = (...args) => compatApi.getChatMessages(...args);
+  window.getChatMessage = (...args) => compatApi.getChatMessage(...args);
+  window.getContext = () => {
+    const vars = (typeof compatApi.getVariables === 'function' ? compatApi.getVariables() : compatApi.getAllVariables()) || {};
+    const stat = (vars && typeof vars === 'object' && vars.stat_data && typeof vars.stat_data === 'object')
+      ? vars.stat_data
+      : ((vars && typeof vars === 'object' && vars.variables && typeof vars.variables === 'object') ? vars.variables : {});
+    const globalVars = (vars && typeof vars === 'object' && vars.global_variables && typeof vars.global_variables === 'object')
+      ? vars.global_variables
+      : {};
+    const chat = (typeof compatApi.getChatMessages === 'function' ? compatApi.getChatMessages() : []) || [];
+    return {
+      chat,
+      messages: chat,
+      currentMessageId: (typeof compatApi.getCurrentMessageId === 'function' ? compatApi.getCurrentMessageId() : resolveCompatCurrentMessageId()),
+      variables: stat,
+      stat_data: stat,
+      status_current_variables: stat,
+      global_variables: globalVars,
+    };
+  };
+  window.setChatMessage = (...args) => compatApi.setChatMessage(...args);
+  window.setChatMessages = (...args) => compatApi.setChatMessages(...args);
   window.insertOrAssignVariables = (...args) => compatApi.insertOrAssignVariables(...args);
   window.deleteVariable = (...args) => compatApi.deleteVariable(...args);
   window.eventOn = (event, cb) => compatApi.eventOn(event, cb);
@@ -521,6 +859,11 @@ const buildMvuCompatBridge = ({ iframeId, sessionId, debugTag, messageId } = {})
     helper.getAllVariables = (...args) => window.getAllVariables(...args);
     helper.getVariables = (...args) => window.getVariables(...args);
     helper.getCurrentMessageId = (...args) => window.getCurrentMessageId(...args);
+    helper.getChatMessages = (...args) => window.getChatMessages(...args);
+    helper.getChatMessage = (...args) => window.getChatMessage(...args);
+    helper.getContext = (...args) => window.getContext(...args);
+    helper.setChatMessage = (...args) => window.setChatMessage(...args);
+    helper.setChatMessages = (...args) => window.setChatMessages(...args);
     helper.insertOrAssignVariables = (...args) => window.insertOrAssignVariables(...args);
     helper.deleteVariable = (...args) => window.deleteVariable(...args);
     helper.waitGlobalInitialized = (name) => window.waitGlobalInitialized(name);
@@ -551,12 +894,35 @@ const buildMvuCompatBridge = ({ iframeId, sessionId, debugTag, messageId } = {})
     if (!window.SillyTavern.TavernHelper || typeof window.SillyTavern.TavernHelper !== 'object') {
       window.SillyTavern.TavernHelper = helper;
     }
-    ['getAllVariables', 'getVariables', 'getCurrentMessageId', 'insertOrAssignVariables', 'deleteVariable', 'waitGlobalInitialized', 'replaceVariables']
+    ['getAllVariables', 'getVariables', 'getCurrentMessageId', 'getChatMessages', 'getChatMessage', 'getContext', 'setChatMessage', 'setChatMessages', 'insertOrAssignVariables', 'deleteVariable', 'waitGlobalInitialized', 'replaceVariables']
       .forEach((name) => {
         if (typeof helper[name] === 'function' && typeof window.SillyTavern[name] !== 'function') {
           window.SillyTavern[name] = (...args) => helper[name](...args);
         }
       });
+    const bridgeHostCompat = (host) => {
+      try {
+        if (!host || host === window) return false;
+        if (!host.TavernHelper || typeof host.TavernHelper !== 'object') host.TavernHelper = helper;
+        if (!host.SillyTavern || typeof host.SillyTavern !== 'object') host.SillyTavern = {};
+        if (!host.SillyTavern.TavernHelper || typeof host.SillyTavern.TavernHelper !== 'object') host.SillyTavern.TavernHelper = helper;
+        ['getAllVariables', 'getVariables', 'getCurrentMessageId', 'getChatMessages', 'getChatMessage', 'getContext', 'setChatMessage', 'setChatMessages', 'insertOrAssignVariables', 'deleteVariable', 'waitGlobalInitialized', 'replaceVariables']
+          .forEach((name) => {
+            if (typeof helper[name] === 'function' && typeof host.SillyTavern[name] !== 'function') {
+              host.SillyTavern[name] = (...args) => helper[name](...args);
+            }
+            if (typeof helper[name] === 'function' && typeof host[name] !== 'function') {
+              host[name] = (...args) => helper[name](...args);
+            }
+          });
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    const bridgedParent = bridgeHostCompat(window.parent);
+    const bridgedTop = bridgeHostCompat(window.top);
+    postCompatLog('info', 'tavern-helper-shim-host-bridge parent=' + (bridgedParent ? '1' : '0') + ' top=' + (bridgedTop ? '1' : '0'));
     postCompatLog('info', 'tavern-helper-shim-ready');
   };
   ensureTavernHelperApi();
@@ -571,6 +937,11 @@ const buildMvuCompatBridge = ({ iframeId, sessionId, debugTag, messageId } = {})
     exposeAlias('getAllVariables', window.getAllVariables);
     exposeAlias('getVariables', window.getVariables);
     exposeAlias('getCurrentMessageId', window.getCurrentMessageId);
+    exposeAlias('getChatMessages', window.getChatMessages);
+    exposeAlias('getChatMessage', window.getChatMessage);
+    exposeAlias('getContext', window.getContext);
+    exposeAlias('setChatMessage', window.setChatMessage);
+    exposeAlias('setChatMessages', window.setChatMessages);
     exposeAlias('insertOrAssignVariables', window.insertOrAssignVariables);
     exposeAlias('deleteVariable', window.deleteVariable);
     exposeAlias('eventOn', window.eventOn);
@@ -581,22 +952,176 @@ const buildMvuCompatBridge = ({ iframeId, sessionId, debugTag, messageId } = {})
     exposeAlias('__chatappCompat', window.__chatappCompat);
     exposeAlias('Mvu', window.Mvu);
     exposeAlias('_', window._);
-    try { window.eval('var $ = window.$; var jQuery = window.jQuery || window.$; var getVariables = window.getVariables; var getCurrentMessageId = window.getCurrentMessageId; var insertOrAssignVariables = window.insertOrAssignVariables; var deleteVariable = window.deleteVariable; var TavernHelper = window.TavernHelper; var SillyTavern = window.SillyTavern;'); } catch {}
+    try { window.eval('var $ = window.$; var jQuery = window.jQuery || window.$; var getVariables = window.getVariables; var getCurrentMessageId = window.getCurrentMessageId; var getChatMessages = window.getChatMessages; var getChatMessage = window.getChatMessage; var getContext = window.getContext; var setChatMessage = window.setChatMessage; var setChatMessages = window.setChatMessages; var insertOrAssignVariables = window.insertOrAssignVariables; var deleteVariable = window.deleteVariable; var TavernHelper = window.TavernHelper; var SillyTavern = window.SillyTavern;'); } catch {}
     postCompatLog('info', 'mvu-alias-ready');
   };
 
   const ensureLodash = () => {
-    if (!window._ || typeof window._ !== 'object') window._ = {};
-    const _ = window._;
-    if (typeof _.isArray !== 'function') _.isArray = Array.isArray;
-    if (typeof _.isObject !== 'function') _.isObject = (v) => v !== null && typeof v === 'object';
-    if (typeof _.isNil !== 'function') _.isNil = (v) => v === null || v === undefined;
-    if (typeof _.clamp !== 'function') _.clamp = (n, min, max) => Math.max(min, Math.min(max, n));
     const toPath = (raw) => String(raw || '')
       .replace(/\\[([^\\]]+)\\]/g, '.$1')
       .split('.')
       .map(seg => seg.trim().replace(/^['"]|['"]$/g, ''))
       .filter(Boolean);
+    if (typeof window._ !== 'function') {
+      const existing = (window._ && typeof window._ === 'object') ? window._ : {};
+      const makeChain = (initial) => {
+        let current = initial;
+        const api = {
+          value() { return current; },
+          map(fn) {
+            if (Array.isArray(current)) current = current.map((v, i) => fn(v, i));
+            else if (current && typeof current === 'object') current = Object.keys(current).map((k) => fn(current[k], k));
+            else current = [];
+            return api;
+          },
+          filter(fn) {
+            current = Array.isArray(current) ? current.filter((v, i) => fn(v, i)) : [];
+            return api;
+          },
+          sortBy(iteratee) {
+            const arr = Array.isArray(current) ? current.slice() : [];
+            const getter = typeof iteratee === 'function'
+              ? iteratee
+              : (v) => (v && typeof v === 'object' ? v[iteratee] : undefined);
+            arr.sort((a, b) => {
+              const av = getter(a);
+              const bv = getter(b);
+              if (av > bv) return 1;
+              if (av < bv) return -1;
+              return 0;
+            });
+            current = arr;
+            return api;
+          },
+          sortedUniq() {
+            const out = [];
+            (Array.isArray(current) ? current : []).forEach((v) => {
+              if (!out.some((x) => x === v)) out.push(v);
+            });
+            current = out;
+            return api;
+          },
+          uniq() { return api.sortedUniq(); },
+          find(fn) {
+            current = Array.isArray(current) ? current.find((v, i) => fn(v, i)) : undefined;
+            return api;
+          },
+          findLast(fn) {
+            if (!Array.isArray(current)) {
+              current = undefined;
+              return api;
+            }
+            for (let i = current.length - 1; i >= 0; i -= 1) {
+              if (fn(current[i], i)) {
+                current = current[i];
+                return api;
+              }
+            }
+            current = undefined;
+            return api;
+          },
+          forEach(fn) {
+            if (Array.isArray(current)) current.forEach((v, i) => fn(v, i));
+            else if (current && typeof current === 'object') Object.keys(current).forEach((k) => fn(current[k], k));
+            return api;
+          },
+          each(fn) { return api.forEach(fn); },
+          reduce(fn, init) {
+            current = (Array.isArray(current) ? current : []).reduce((acc, v, i) => fn(acc, v, i), init);
+            return api;
+          },
+        };
+        return api;
+      };
+      const lodashLite = (value) => makeChain(value);
+      Object.assign(lodashLite, existing);
+      lodashLite.chain = (value) => makeChain(value);
+      window._ = lodashLite;
+    }
+    const _ = window._;
+    if (typeof _.isArray !== 'function') _.isArray = Array.isArray;
+    if (typeof _.isObject !== 'function') _.isObject = (v) => v !== null && typeof v === 'object';
+    if (typeof _.isNil !== 'function') _.isNil = (v) => v === null || v === undefined;
+    if (typeof _.clamp !== 'function') _.clamp = (n, min, max) => Math.max(min, Math.min(max, n));
+    if (typeof _.map !== 'function') _.map = (list, fn) => (Array.isArray(list) ? list.map(fn) : Object.keys(list || {}).map((k) => fn(list[k], k)));
+    if (typeof _.filter !== 'function') _.filter = (list, fn) => (Array.isArray(list) ? list.filter(fn) : []);
+    if (typeof _.sortBy !== 'function') _.sortBy = (list, iteratee) => {
+      const getter = typeof iteratee === 'function'
+        ? iteratee
+        : (v) => (v && typeof v === 'object' ? v[iteratee] : undefined);
+      return (Array.isArray(list) ? list.slice() : []).sort((a, b) => {
+        const av = getter(a);
+        const bv = getter(b);
+        if (av > bv) return 1;
+        if (av < bv) return -1;
+        return 0;
+      });
+    };
+    if (typeof _.sortedUniq !== 'function') _.sortedUniq = (list) => {
+      const out = [];
+      (Array.isArray(list) ? list : []).forEach((v) => {
+        if (!out.some((x) => x === v)) out.push(v);
+      });
+      return out;
+    };
+    if (typeof _.uniq !== 'function') _.uniq = (list) => _.sortedUniq(list);
+    if (typeof _.find !== 'function') _.find = (list, fn) => (Array.isArray(list) ? list.find(fn) : undefined);
+    if (typeof _.findLast !== 'function') _.findLast = (list, fn) => {
+      if (!Array.isArray(list)) return undefined;
+      for (let i = list.length - 1; i >= 0; i -= 1) {
+        if (fn(list[i], i)) return list[i];
+      }
+      return undefined;
+    };
+    if (typeof _.range !== 'function') _.range = (start, end, step = 1) => {
+      let s = Number(start);
+      let e = Number(end);
+      if (!Number.isFinite(e)) {
+        e = s;
+        s = 0;
+      }
+      const st = Number(step) || 1;
+      const out = [];
+      if (st > 0) for (let i = s; i < e; i += st) out.push(i);
+      else for (let i = s; i > e; i += st) out.push(i);
+      return out;
+    };
+    if (typeof _.times !== 'function') _.times = (n, fn) => {
+      const len = Math.max(0, Number(n) || 0);
+      const out = [];
+      for (let i = 0; i < len; i += 1) out.push(typeof fn === 'function' ? fn(i) : undefined);
+      return out;
+    };
+    if (typeof _.constant !== 'function') _.constant = (v) => () => v;
+    if (typeof _.debounce !== 'function') {
+      _.debounce = (fn, wait = 0) => {
+        let timer = 0;
+        return (...args) => {
+          clearTimeout(timer);
+          timer = setTimeout(() => fn(...args), Number(wait) || 0);
+        };
+      };
+    }
+    if (typeof _.throttle !== 'function') {
+      _.throttle = (fn, wait = 0) => {
+        let last = 0;
+        let timer = 0;
+        return (...args) => {
+          const now = Date.now();
+          const gap = Number(wait) || 0;
+          if (now - last >= gap) {
+            last = now;
+            fn(...args);
+            return;
+          }
+          clearTimeout(timer);
+          timer = setTimeout(() => {
+            last = Date.now();
+            fn(...args);
+          }, Math.max(0, gap - (now - last)));
+        };
+      };
+    }
     if (typeof _.get !== 'function') {
       _.get = (obj, path, defVal) => {
         const parts = toPath(path);
@@ -620,6 +1145,28 @@ const buildMvuCompatBridge = ({ iframeId, sessionId, debugTag, messageId } = {})
         }
         cur[parts[parts.length - 1]] = value;
         return obj;
+      };
+    }
+    if (typeof _.has !== 'function') _.has = (obj, path) => _.get(obj, path, undefined) !== undefined;
+    if (typeof _.unset !== 'function') {
+      _.unset = (obj, path) => {
+        const parts = toPath(path);
+        if (!parts.length) return false;
+        let cur = obj;
+        for (let i = 0; i < parts.length - 1; i += 1) {
+          const key = parts[i];
+          if (!cur || typeof cur !== 'object') return false;
+          cur = cur[key];
+        }
+        if (!cur || typeof cur !== 'object') return false;
+        return delete cur[parts[parts.length - 1]];
+      };
+    }
+    if (typeof _.cloneDeep !== 'function') {
+      _.cloneDeep = (v) => {
+        try { return structuredClone(v); } catch {}
+        try { return JSON.parse(JSON.stringify(v)); } catch {}
+        return v;
       };
     }
   };
@@ -839,7 +1386,16 @@ const buildMvuCompatBridge = ({ iframeId, sessionId, debugTag, messageId } = {})
 
   window.addEventListener('message', (e) => {
     const data = e?.data;
-    if (!data || data.type !== 'chatapp:mvu-vars') return;
+    if (!data || typeof data !== 'object') return;
+    if (data.type === 'chatapp:set-chat-message-result' || data.type === 'chatapp:set-chat-messages-result') {
+      if (data.id && CHATAPP_IFRAME_ID && String(data.id) !== CHATAPP_IFRAME_ID) return;
+      const requestId = String(data.requestId || '').trim();
+      if (!requestId) return;
+      const resolver = hostReqResolvers.get(requestId);
+      if (typeof resolver === 'function') resolver(data);
+      return;
+    }
+    if (data.type !== 'chatapp:mvu-vars') return;
     if (data.sessionId && CHATAPP_SESSION_ID && String(data.sessionId) !== CHATAPP_SESSION_ID) return;
     setVars(data.vars || {});
     try {
@@ -868,16 +1424,19 @@ const buildMvuCompatBridge = ({ iframeId, sessionId, debugTag, messageId } = {})
 })();
 </script>`;
 };
-const buildMvuCompatBridgeLegacy = ({ iframeId, sessionId, messageId } = {}) => {
+const buildMvuCompatBridgeLegacy = ({ iframeId, sessionId, messageId, messageIndex } = {}) => {
     const id = String(iframeId || '');
     const sid = String(sessionId || '');
     const mid = String(messageId || '');
+    const rawIdx = Number(messageIndex);
+    const midx = Number.isFinite(rawIdx) ? Math.trunc(rawIdx) : null;
     return `
 <script>
 (() => {
   const CHATAPP_IFRAME_ID = ${JSON.stringify(id)};
   const CHATAPP_SESSION_ID = ${JSON.stringify(sid)};
   const CHATAPP_MESSAGE_ID = ${JSON.stringify(mid)};
+  const CHATAPP_MESSAGE_INDEX = ${midx === null ? 'null' : String(midx)};
   const listeners = new Map();
 
   const ensureEventSet = (event) => {
@@ -920,6 +1479,119 @@ const buildMvuCompatBridgeLegacy = ({ iframeId, sessionId, messageId } = {}) => 
     try { return JSON.parse(JSON.stringify(input)); } catch {}
     return input;
   };
+  let hostReqSeq = 0;
+  const hostReqResolvers = new Map();
+  const makeHostRequestId = () => {
+    hostReqSeq += 1;
+    return String(CHATAPP_IFRAME_ID || 'iframe') + ':' + String(Date.now()) + ':' + String(hostReqSeq);
+  };
+  const waitHostResult = (requestId, timeoutMs = 2600) => new Promise((resolve) => {
+    const reqId = String(requestId || '').trim();
+    if (!reqId) return resolve({ ok: false, reason: 'missing-request-id' });
+    let done = false;
+    const timer = setTimeout(() => {
+      if (done) return;
+      done = true;
+      hostReqResolvers.delete(reqId);
+      resolve({ ok: false, reason: 'timeout' });
+    }, Math.max(400, Number(timeoutMs) || 2600));
+    hostReqResolvers.set(reqId, (payload) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      hostReqResolvers.delete(reqId);
+      resolve(payload && typeof payload === 'object' ? payload : { ok: false, reason: 'invalid-result' });
+    });
+  });
+  const postHostRequest = async (type, payload = {}, timeoutMs = 2600) => {
+    const requestId = makeHostRequestId();
+    const waiter = waitHostResult(requestId, timeoutMs);
+    try {
+      parent.postMessage({
+        type: String(type || ''),
+        id: CHATAPP_IFRAME_ID,
+        requestId,
+        sessionId: CHATAPP_SESSION_ID,
+        ...payload,
+      }, '*');
+    } catch (err) {
+      hostReqResolvers.delete(requestId);
+      return { ok: false, reason: String(err?.message || err || 'post-message-failed') };
+    }
+    return await waiter;
+  };
+  const normalizeChatMessageFieldValues = (input) => {
+    if (typeof input === 'string') return { message: input };
+    if (!input || typeof input !== 'object') return {};
+    return { ...input };
+  };
+  const normalizeChatMessageRef = (input) => {
+    if (input === undefined || input === null || input === '') return String(CHATAPP_MESSAGE_ID || '');
+    return String(input);
+  };
+  const chatState = {
+    currentRef: String(CHATAPP_MESSAGE_ID || ''),
+    currentIndex: Number.isInteger(CHATAPP_MESSAGE_INDEX) ? CHATAPP_MESSAGE_INDEX : null,
+    entries: new Map(),
+  };
+  const getCurrentCompatRef = () => String(chatState.currentRef || CHATAPP_MESSAGE_ID || '');
+  const normalizeCompatRef = (input) => {
+    const ref = normalizeChatMessageRef(input);
+    const idx = Number(ref);
+    if (Number.isInteger(idx) && Number.isInteger(chatState.currentIndex) && idx === chatState.currentIndex) {
+      return getCurrentCompatRef();
+    }
+    return ref;
+  };
+  const normalizeCompatEntry = (entry = {}, fallbackRef = '') => {
+    const ref = normalizeCompatRef(entry.message_id ?? entry.messageId ?? entry.id ?? fallbackRef ?? '');
+    const numericId = Number(ref);
+    const messageId = Number.isInteger(numericId) ? numericId : ref;
+    const role = String(entry.role || 'assistant');
+    const message = String(entry.message ?? entry.content ?? entry.raw ?? '');
+    const data = entry.data && typeof entry.data === 'object' ? cloneVars(entry.data) : {};
+    const extra = entry.extra && typeof entry.extra === 'object' ? cloneVars(entry.extra) : {};
+    return {
+      message_id: messageId,
+      role,
+      message,
+      data,
+      extra,
+      is_hidden: Boolean(entry.is_hidden),
+      name: String(entry.name || ''),
+    };
+  };
+  const upsertCompatEntry = (refInput, patch = {}) => {
+    const ref = normalizeCompatRef(refInput);
+    if (!ref) return null;
+    const prev = chatState.entries.get(ref) || normalizeCompatEntry({ message_id: ref }, ref);
+    const merged = normalizeCompatEntry({ ...prev, ...patch, message_id: patch?.message_id ?? prev.message_id }, ref);
+    chatState.entries.set(ref, merged);
+    return merged;
+  };
+  const exportCompatEntries = () => Array.from(chatState.entries.values()).map((entry) => normalizeCompatEntry(entry, ''));
+  const applyCompatSetMessageCache = (messageRef, fieldValues = {}) => {
+    const ref = normalizeCompatRef(messageRef);
+    const fields = fieldValues && typeof fieldValues === 'object' ? fieldValues : {};
+    const patch = {};
+    if (Object.prototype.hasOwnProperty.call(fields, 'message')) patch.message = String(fields.message ?? '');
+    if (Object.prototype.hasOwnProperty.call(fields, 'data')) {
+      patch.data = fields.data && typeof fields.data === 'object' ? cloneVars(fields.data) : {};
+    }
+    return upsertCompatEntry(ref, patch);
+  };
+  {
+    const currentRef = getCurrentCompatRef();
+    if (currentRef && !chatState.entries.has(currentRef)) {
+      upsertCompatEntry(currentRef, {
+        message_id: Number.isInteger(chatState.currentIndex) ? chatState.currentIndex : currentRef,
+        role: 'assistant',
+        message: '',
+        data: {},
+        extra: {},
+      });
+    }
+  }
 
   const ensureMvu = () => {
     if (!window.Mvu || typeof window.Mvu !== 'object') window.Mvu = { events: {} };
@@ -949,7 +1621,89 @@ const buildMvuCompatBridgeLegacy = ({ iframeId, sessionId, messageId } = {}) => 
 
   window.getAllVariables = window.getAllVariables || (() => state.vars);
   window.getVariables = window.getVariables || (() => state.vars);
-  if (typeof window.getCurrentMessageId !== 'function') window.getCurrentMessageId = () => CHATAPP_MESSAGE_ID;
+  const resolveCompatCurrentMessageId = () =>
+    Number.isInteger(chatState.currentIndex) ? chatState.currentIndex : getCurrentCompatRef();
+  const getCompatChatMessages = (...args) => {
+    const all = exportCompatEntries();
+    if (!all.length) return [];
+    const [range] = args;
+    if (range === undefined || range === null || range === '') return all;
+    const num = Number(range);
+    if (Number.isFinite(num) && Number.isInteger(num)) {
+      return all.filter((item) => Number(item?.message_id) === num || String(item?.message_id) === String(num));
+    }
+    const ref = normalizeCompatRef(range);
+    return all.filter((item) => String(item?.message_id) === ref || String(item?.id || '') === ref);
+  };
+  const getCompatChatMessage = (idx, role) => {
+    const list = getCompatChatMessages();
+    const roleKey = String(role || '').trim().toLowerCase();
+    const filtered = roleKey && roleKey !== 'any'
+      ? list.filter((item) => String(item?.role || '').trim().toLowerCase() === roleKey)
+      : list;
+    if (!filtered.length) return '';
+    let index = Number(idx);
+    if (!Number.isFinite(index) || !Number.isInteger(index)) return '';
+    if (index < 0) index = filtered.length + index;
+    if (index < 0 || index >= filtered.length) return '';
+    return String(filtered[index]?.message || '');
+  };
+  if (typeof window.getCurrentMessageId !== 'function') window.getCurrentMessageId = () => resolveCompatCurrentMessageId();
+  if (typeof window.getChatMessages !== 'function') window.getChatMessages = (...args) => getCompatChatMessages(...args);
+  if (typeof window.getChatMessage !== 'function') window.getChatMessage = (...args) => getCompatChatMessage(...args);
+  if (typeof window.getContext !== 'function') {
+    window.getContext = () => {
+      const vars = (typeof window.getVariables === 'function' ? window.getVariables() : state.vars) || {};
+      const stat = (vars && typeof vars === 'object' && vars.stat_data && typeof vars.stat_data === 'object')
+        ? vars.stat_data
+        : ((vars && typeof vars === 'object' && vars.variables && typeof vars.variables === 'object') ? vars.variables : {});
+      const globalVars = (vars && typeof vars === 'object' && vars.global_variables && typeof vars.global_variables === 'object')
+        ? vars.global_variables
+        : {};
+      const chat = getCompatChatMessages();
+      return {
+        chat,
+        messages: chat,
+        currentMessageId: resolveCompatCurrentMessageId(),
+        variables: stat,
+        stat_data: stat,
+        status_current_variables: stat,
+        global_variables: globalVars,
+      };
+    };
+  }
+  if (typeof window.setChatMessage !== 'function') {
+    window.setChatMessage = async (fieldValues, messageId, options = {}) => {
+      const payload = normalizeChatMessageFieldValues(fieldValues);
+      const targetMessageId = normalizeCompatRef(messageId);
+      const safeOptions = options && typeof options === 'object' ? options : {};
+      applyCompatSetMessageCache(targetMessageId, payload);
+      const result = await postHostRequest('chatapp:set-chat-message', {
+        messageId: targetMessageId,
+        fieldValues: payload,
+        options: safeOptions,
+      });
+      return Boolean(result?.ok);
+    };
+  }
+  if (typeof window.setChatMessages !== 'function') {
+    window.setChatMessages = async (messages = [], options = {}) => {
+      const list = Array.isArray(messages) ? messages : [];
+      const safeOptions = options && typeof options === 'object' ? options : {};
+      const normalized = list
+        .map((item) => (item && typeof item === 'object' ? { ...item } : null))
+        .filter(Boolean);
+      normalized.forEach((item) => {
+        const ref = item?.message_id ?? item?.messageId ?? item?.id ?? item?.mid ?? '';
+        applyCompatSetMessageCache(ref, item);
+      });
+      const result = await postHostRequest('chatapp:set-chat-messages', {
+        messages: normalized,
+        options: safeOptions,
+      });
+      return Boolean(result?.ok);
+    };
+  }
   if (typeof window.insertOrAssignVariables !== 'function') {
     window.insertOrAssignVariables = async (patch, options = {}) => {
       const next = normalizeVars(cloneVars(state.vars) || {});
@@ -1013,16 +1767,143 @@ const buildMvuCompatBridgeLegacy = ({ iframeId, sessionId, messageId } = {}) => 
     };
   }
   try {
-    window.eval('var errorCatched = window.errorCatched; var getAllVariables = window.getAllVariables; var getVariables = window.getVariables; var getCurrentMessageId = window.getCurrentMessageId; var insertOrAssignVariables = window.insertOrAssignVariables; var deleteVariable = window.deleteVariable; var eventOn = window.eventOn; var eventRemoveListener = window.eventRemoveListener; var waitGlobalInitialized = window.waitGlobalInitialized;');
+    window.eval('var errorCatched = window.errorCatched; var getAllVariables = window.getAllVariables; var getVariables = window.getVariables; var getCurrentMessageId = window.getCurrentMessageId; var getChatMessages = window.getChatMessages; var getChatMessage = window.getChatMessage; var getContext = window.getContext; var setChatMessage = window.setChatMessage; var setChatMessages = window.setChatMessages; var insertOrAssignVariables = window.insertOrAssignVariables; var deleteVariable = window.deleteVariable; var eventOn = window.eventOn; var eventRemoveListener = window.eventRemoveListener; var waitGlobalInitialized = window.waitGlobalInitialized;');
   } catch {}
 
   const ensureLodash = () => {
-    if (!window._ || typeof window._ !== 'object') window._ = {};
+    if (typeof window._ !== 'function') {
+      const existing = (window._ && typeof window._ === 'object') ? window._ : {};
+      const makeChain = (initial) => {
+        let current = initial;
+        const api = {
+          value() { return current; },
+          map(fn) {
+            if (Array.isArray(current)) current = current.map((v, i) => fn(v, i));
+            else if (current && typeof current === 'object') current = Object.keys(current).map((k) => fn(current[k], k));
+            else current = [];
+            return api;
+          },
+          filter(fn) {
+            current = Array.isArray(current) ? current.filter((v, i) => fn(v, i)) : [];
+            return api;
+          },
+          sortBy(iteratee) {
+            const arr = Array.isArray(current) ? current.slice() : [];
+            const getter = typeof iteratee === 'function'
+              ? iteratee
+              : (v) => (v && typeof v === 'object' ? v[iteratee] : undefined);
+            arr.sort((a, b) => {
+              const av = getter(a);
+              const bv = getter(b);
+              if (av > bv) return 1;
+              if (av < bv) return -1;
+              return 0;
+            });
+            current = arr;
+            return api;
+          },
+          find(fn) {
+            current = Array.isArray(current) ? current.find((v, i) => fn(v, i)) : undefined;
+            return api;
+          },
+          forEach(fn) {
+            if (Array.isArray(current)) current.forEach((v, i) => fn(v, i));
+            else if (current && typeof current === 'object') Object.keys(current).forEach((k) => fn(current[k], k));
+            return api;
+          },
+          each(fn) { return api.forEach(fn); },
+        };
+        return api;
+      };
+      const lodashLite = (value) => makeChain(value);
+      Object.assign(lodashLite, existing);
+      lodashLite.chain = (value) => makeChain(value);
+      window._ = lodashLite;
+    }
     const _ = window._;
     if (typeof _.isArray !== 'function') _.isArray = Array.isArray;
     if (typeof _.isObject !== 'function') _.isObject = (v) => v !== null && typeof v === 'object';
     if (typeof _.isNil !== 'function') _.isNil = (v) => v === null || v === undefined;
     if (typeof _.clamp !== 'function') _.clamp = (n, min, max) => Math.max(min, Math.min(max, n));
+    if (typeof _.map !== 'function') _.map = (list, fn) => (Array.isArray(list) ? list.map(fn) : Object.keys(list || {}).map((k) => fn(list[k], k)));
+    if (typeof _.filter !== 'function') _.filter = (list, fn) => (Array.isArray(list) ? list.filter(fn) : []);
+    if (typeof _.sortBy !== 'function') _.sortBy = (list, iteratee) => {
+      const getter = typeof iteratee === 'function'
+        ? iteratee
+        : (v) => (v && typeof v === 'object' ? v[iteratee] : undefined);
+      return (Array.isArray(list) ? list.slice() : []).sort((a, b) => {
+        const av = getter(a);
+        const bv = getter(b);
+        if (av > bv) return 1;
+        if (av < bv) return -1;
+        return 0;
+      });
+    };
+    if (typeof _.sortedUniq !== 'function') _.sortedUniq = (list) => {
+      const out = [];
+      (Array.isArray(list) ? list : []).forEach((v) => {
+        if (!out.some((x) => x === v)) out.push(v);
+      });
+      return out;
+    };
+    if (typeof _.uniq !== 'function') _.uniq = (list) => _.sortedUniq(list);
+    if (typeof _.find !== 'function') _.find = (list, fn) => (Array.isArray(list) ? list.find(fn) : undefined);
+    if (typeof _.findLast !== 'function') _.findLast = (list, fn) => {
+      if (!Array.isArray(list)) return undefined;
+      for (let i = list.length - 1; i >= 0; i -= 1) {
+        if (fn(list[i], i)) return list[i];
+      }
+      return undefined;
+    };
+    if (typeof _.range !== 'function') _.range = (start, end, step = 1) => {
+      let s = Number(start);
+      let e = Number(end);
+      if (!Number.isFinite(e)) {
+        e = s;
+        s = 0;
+      }
+      const st = Number(step) || 1;
+      const out = [];
+      if (st > 0) for (let i = s; i < e; i += st) out.push(i);
+      else for (let i = s; i > e; i += st) out.push(i);
+      return out;
+    };
+    if (typeof _.times !== 'function') _.times = (n, fn) => {
+      const len = Math.max(0, Number(n) || 0);
+      const out = [];
+      for (let i = 0; i < len; i += 1) out.push(typeof fn === 'function' ? fn(i) : undefined);
+      return out;
+    };
+    if (typeof _.constant !== 'function') _.constant = (v) => () => v;
+    if (typeof _.debounce !== 'function') {
+      _.debounce = (fn, wait = 0) => {
+        let timer = 0;
+        return (...args) => {
+          clearTimeout(timer);
+          timer = setTimeout(() => fn(...args), Number(wait) || 0);
+        };
+      };
+    }
+    if (typeof _.throttle !== 'function') {
+      _.throttle = (fn, wait = 0) => {
+        let last = 0;
+        let timer = 0;
+        return (...args) => {
+          const now = Date.now();
+          const gap = Number(wait) || 0;
+          if (now - last >= gap) {
+            last = now;
+            fn(...args);
+            return;
+          }
+          clearTimeout(timer);
+          timer = setTimeout(() => {
+            last = Date.now();
+            fn(...args);
+          }, Math.max(0, gap - (now - last)));
+        };
+      };
+    }
     const toPath = (raw) => String(raw || '')
       .replace(/\\[([^\\]]+)\\]/g, '.$1')
       .split('.')
@@ -1051,6 +1932,73 @@ const buildMvuCompatBridgeLegacy = ({ iframeId, sessionId, messageId } = {}) => 
         }
         cur[parts[parts.length - 1]] = value;
         return obj;
+      };
+    }
+    if (typeof _.has !== 'function') _.has = (obj, path) => _.get(obj, path, undefined) !== undefined;
+    if (typeof _.unset !== 'function') {
+      _.unset = (obj, path) => {
+        const parts = toPath(path);
+        if (!parts.length) return false;
+        let cur = obj;
+        for (let i = 0; i < parts.length - 1; i += 1) {
+          const key = parts[i];
+          if (!cur || typeof cur !== 'object') return false;
+          cur = cur[key];
+        }
+        if (!cur || typeof cur !== 'object') return false;
+        return delete cur[parts[parts.length - 1]];
+      };
+    }
+    if (typeof _.cloneDeep !== 'function') {
+      _.cloneDeep = (v) => {
+        try { return structuredClone(v); } catch {}
+        try { return JSON.parse(JSON.stringify(v)); } catch {}
+        return v;
+      };
+    }
+    if (typeof _.mergeWith !== 'function') {
+      const isObject = (v) => v !== null && typeof v === 'object';
+      _.mergeWith = (object, ...rest) => {
+        if (!isObject(object)) object = {};
+        let customizer = null;
+        if (rest.length && typeof rest[rest.length - 1] === 'function') {
+          customizer = rest.pop();
+        }
+        const mergeInto = (target, source) => {
+          if (!isObject(source)) return target;
+          Object.keys(source).forEach((key) => {
+            const srcVal = source[key];
+            const objVal = target[key];
+            let next;
+            if (customizer) {
+              try { next = customizer(objVal, srcVal, key, target, source); } catch {}
+            }
+            if (next !== undefined) {
+              target[key] = next;
+              return;
+            }
+            if (Array.isArray(objVal) && Array.isArray(srcVal)) {
+              target[key] = srcVal.slice();
+              return;
+            }
+            if (isObject(objVal) && isObject(srcVal)) {
+              target[key] = mergeInto(objVal, srcVal);
+              return;
+            }
+            if (Array.isArray(srcVal)) {
+              target[key] = srcVal.slice();
+              return;
+            }
+            if (isObject(srcVal)) {
+              target[key] = mergeInto(isObject(objVal) ? objVal : {}, srcVal);
+              return;
+            }
+            target[key] = srcVal;
+          });
+          return target;
+        };
+        rest.forEach((src) => { mergeInto(object, src); });
+        return object;
       };
     }
   };
@@ -1185,7 +2133,16 @@ const buildMvuCompatBridgeLegacy = ({ iframeId, sessionId, messageId } = {}) => 
 
   window.addEventListener('message', (e) => {
     const data = e?.data;
-    if (!data || data.type !== 'chatapp:mvu-vars') return;
+    if (!data || typeof data !== 'object') return;
+    if (data.type === 'chatapp:set-chat-message-result' || data.type === 'chatapp:set-chat-messages-result') {
+      if (data.id && CHATAPP_IFRAME_ID && String(data.id) !== CHATAPP_IFRAME_ID) return;
+      const requestId = String(data.requestId || '').trim();
+      if (!requestId) return;
+      const resolver = hostReqResolvers.get(requestId);
+      if (typeof resolver === 'function') resolver(data);
+      return;
+    }
+    if (data.type !== 'chatapp:mvu-vars') return;
     if (data.sessionId && CHATAPP_SESSION_ID && String(data.sessionId) !== CHATAPP_SESSION_ID) return;
     setVars(data.vars || {});
   });
@@ -2069,6 +3026,46 @@ const buildIframeSrcDoc = (
     window.addEventListener('resize', () => setTimeout(() => { requestLayout(); }, 0));
   };
 
+  const isIgnorableNoise = (value) => /resizeobserver loop (limit exceeded|completed with (?:undelivered|delivered) notifications)/i.test(String(value || ''));
+  const formatConsoleArg = (value) => {
+    try {
+      if (value instanceof Error) return value.stack || value.message || String(value);
+      if (typeof value === 'string') return value;
+      if (typeof value === 'number' || typeof value === 'boolean' || value == null) return String(value);
+      return JSON.stringify(value);
+    } catch {
+      try { return String(value); } catch { return '[unserializable]'; }
+    }
+  };
+  const setupConsoleForwarder = () => {
+    if (window.__chatappConsoleForwarded) return;
+    window.__chatappConsoleForwarded = true;
+    const c = window.console || {};
+    const levels = ['error', 'warn', 'info', 'log', 'debug'];
+    let sent = 0;
+    const maxLogs = 80;
+    levels.forEach((level) => {
+      const orig = typeof c[level] === 'function' ? c[level].bind(c) : null;
+      c[level] = (...args) => {
+        try { orig?.(...args); } catch {}
+        try {
+          if (sent >= maxLogs) return;
+          const text = (Array.isArray(args) ? args : []).map((a) => formatConsoleArg(a)).join(' ');
+          if (!text || isIgnorableNoise(text)) return;
+          sent += 1;
+          parent.postMessage({
+            type: 'chatapp:iframe-debug',
+            id,
+            level: level === 'log' || level === 'debug' ? 'info' : level,
+            message: 'console-' + level + ' ' + text,
+          }, '*');
+        } catch {}
+      };
+    });
+    window.console = c;
+  };
+  setupConsoleForwarder();
+
   window.addEventListener('error', (ev) => {
     try {
       const target = ev?.target;
@@ -2084,6 +3081,7 @@ const buildIframeSrcDoc = (
         }
       }
       const message = String(ev?.message || ev?.error?.message || 'iframe error');
+      if (isIgnorableNoise(message)) return;
       const lineno = Number(ev?.lineno || 0);
       const colno = Number(ev?.colno || 0);
       const file = String(ev?.filename || '');
@@ -2099,9 +3097,64 @@ const buildIframeSrcDoc = (
     try {
       const reason = ev?.reason;
       const msg = reason?.message ? String(reason.message) : String(reason || 'unhandledrejection');
+      if (isIgnorableNoise(msg)) return;
       parent.postMessage({ type: 'chatapp:iframe-error', id, message: 'unhandledrejection ' + msg }, '*');
     } catch {}
   });
+  setTimeout(() => {
+    try {
+      const title = String(document.title || '');
+      const scriptCount = document.scripts ? Number(document.scripts.length || 0) : 0;
+      const textLen = String(document.body?.innerText || '').trim().length;
+      const srcScripts = Array.from(document.scripts || [])
+        .map((s) => String(s?.src || '').trim())
+        .filter(Boolean)
+        .slice(0, 6);
+      const inlineScripts = Array.from(document.scripts || [])
+        .filter((s) => !s?.src)
+        .map((s) => String(s?.textContent || '').replace(/\s+/g, ' ').trim())
+        .filter(Boolean);
+      const contentNode = document.querySelector('content');
+      const stateBarNode = document.querySelector('state_bar');
+      const contentTextLen = String(contentNode?.textContent || '').trim().length;
+      const stateBarTextLen = String(stateBarNode?.textContent || '').trim().length;
+      const contentHtml = String(contentNode?.innerHTML || '');
+      const contentHasBr = /<br\s*\/?>/i.test(contentHtml) ? 1 : 0;
+      const narrationCount = (String(contentNode?.textContent || '').match(/\[旁白\]\|/g) || []).length;
+      parent.postMessage({
+        type: 'chatapp:iframe-debug',
+        id,
+        level: 'info',
+        message:
+          'dom-snapshot title=' + (title || '(empty)') +
+          ' scripts=' + String(scriptCount) +
+          ' textLen=' + String(textLen) +
+          ' hasContentNode=' + (contentNode ? '1' : '0') +
+          ' contentTextLen=' + String(contentTextLen) +
+          ' contentHasBr=' + String(contentHasBr) +
+          ' narrationCount=' + String(narrationCount) +
+          ' hasStateBarNode=' + (stateBarNode ? '1' : '0') +
+          ' stateBarTextLen=' + String(stateBarTextLen),
+      }, '*');
+      if (srcScripts.length) {
+        parent.postMessage({
+          type: 'chatapp:iframe-debug',
+          id,
+          level: 'info',
+          message: 'dom-script-src ' + srcScripts.join(' | ') + (document.scripts.length > srcScripts.length ? ' | ...' : ''),
+        }, '*');
+      }
+      if (inlineScripts.length) {
+        const inlinePreview = inlineScripts[0].slice(0, 220);
+        parent.postMessage({
+          type: 'chatapp:iframe-debug',
+          id,
+          level: 'info',
+          message: 'dom-inline-script-preview ' + inlinePreview + (inlineScripts[0].length > 220 ? '...' : ''),
+        }, '*');
+      }
+    } catch {}
+  }, 1500);
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start);
   else start();
 })();
@@ -2243,6 +3296,21 @@ const rewriteStHelperGlobals = (htmlCode) => {
             if (n === 'getCurrentMessageId') {
                 return '((window.__chatappCompat&&typeof window.__chatappCompat.getCurrentMessageId==="function")?window.__chatappCompat.getCurrentMessageId:(typeof window.getCurrentMessageId==="function"?window.getCurrentMessageId:function(){return ""; }))';
             }
+            if (n === 'getChatMessages') {
+                return '((window.__chatappCompat&&typeof window.__chatappCompat.getChatMessages==="function")?window.__chatappCompat.getChatMessages:(typeof window.getChatMessages==="function"?window.getChatMessages:function(){return []; }))';
+            }
+            if (n === 'getChatMessage') {
+                return '((window.__chatappCompat&&typeof window.__chatappCompat.getChatMessage==="function")?window.__chatappCompat.getChatMessage:(typeof window.getChatMessage==="function"?window.getChatMessage:function(){return ""; }))';
+            }
+            if (n === 'getContext') {
+                return '((window.__chatappCompat&&typeof window.__chatappCompat.getContext==="function")?window.__chatappCompat.getContext:(typeof window.getContext==="function"?window.getContext:function(){return {}; }))';
+            }
+            if (n === 'setChatMessage') {
+                return '((window.__chatappCompat&&typeof window.__chatappCompat.setChatMessage==="function")?window.__chatappCompat.setChatMessage:(typeof window.setChatMessage==="function"?window.setChatMessage:async function(){return false;}))';
+            }
+            if (n === 'setChatMessages') {
+                return '((window.__chatappCompat&&typeof window.__chatappCompat.setChatMessages==="function")?window.__chatappCompat.setChatMessages:(typeof window.setChatMessages==="function"?window.setChatMessages:async function(){return false;}))';
+            }
             if (n === 'insertOrAssignVariables') {
                 return '((window.__chatappCompat&&typeof window.__chatappCompat.insertOrAssignVariables==="function")?window.__chatappCompat.insertOrAssignVariables:(typeof window.insertOrAssignVariables==="function"?window.insertOrAssignVariables:async function(){return false;}))';
             }
@@ -2275,6 +3343,11 @@ const rewriteStHelperGlobals = (htmlCode) => {
         markFnCall(/(^|[^\w$.])getAllVariables\s*\(/g, 'getAllVariables');
         markFnCall(/(^|[^\w$.])getVariables\s*\(/g, 'getVariables');
         markFnCall(/(^|[^\w$.])getCurrentMessageId\s*\(/g, 'getCurrentMessageId');
+        markFnCall(/(^|[^\w$.])getChatMessages\s*\(/g, 'getChatMessages');
+        markFnCall(/(^|[^\w$.])getChatMessage\s*\(/g, 'getChatMessage');
+        markFnCall(/(^|[^\w$.])getContext\s*\(/g, 'getContext');
+        markFnCall(/(^|[^\w$.])setChatMessage\s*\(/g, 'setChatMessage');
+        markFnCall(/(^|[^\w$.])setChatMessages\s*\(/g, 'setChatMessages');
         markFnCall(/(^|[^\w$.])insertOrAssignVariables\s*\(/g, 'insertOrAssignVariables');
         markFnCall(/(^|[^\w$.])deleteVariable\s*\(/g, 'deleteVariable');
         markFnCall(/(^|[^\w$.])waitGlobalInitialized\s*\(/g, 'waitGlobalInitialized');
@@ -2512,10 +3585,22 @@ const buildFrameworkGlobalShim = ({ iframeId = '', debugTag = '', vueMajor = 3, 
 </script>`;
 };
 
-const buildDollarGlobalShim = ({ iframeId = '', debugTag = '', appOrigin = '', needsZodShim = false } = {}) => {
+const buildDollarGlobalShim = ({
+    iframeId = '',
+    debugTag = '',
+    appOrigin = '',
+    needsZodShim = false,
+    messageId = '',
+    messageIndex = null,
+    seedMessages = [],
+} = {}) => {
     const id = String(iframeId || '');
     const tag = String(debugTag || '');
     const origin = String(appOrigin || '').trim();
+    const mid = String(messageId || '');
+    const rawIdx = Number(messageIndex);
+    const midx = Number.isFinite(rawIdx) ? Math.trunc(rawIdx) : null;
+    const seed = Array.isArray(seedMessages) ? seedMessages : [];
     const lodashUrls = [
         origin ? `${origin}/lib/lodash.min.js` : '',
         'https://testingcf.jsdelivr.net/npm/lodash@4.17.21/lodash.min.js',
@@ -2532,6 +3617,9 @@ const buildDollarGlobalShim = ({ iframeId = '', debugTag = '', appOrigin = '', n
 (() => {
   const CHATAPP_IFRAME_ID = ${JSON.stringify(id)};
   const CHATAPP_DEBUG_TAG = ${JSON.stringify(tag)};
+  const CHATAPP_MESSAGE_ID = ${JSON.stringify(mid)};
+  const CHATAPP_MESSAGE_INDEX = ${midx === null ? 'null' : String(midx)};
+  const CHATAPP_SEED_MESSAGES = ${JSON.stringify(seed)};
   const withTag = (msg) => CHATAPP_DEBUG_TAG ? ('tag=' + CHATAPP_DEBUG_TAG + ' ' + String(msg || '')) : String(msg || '');
   const log = (level, message) => {
     try {
@@ -2547,6 +3635,141 @@ const buildDollarGlobalShim = ({ iframeId = '', debugTag = '', appOrigin = '', n
     window.__chatappCompat = {};
   }
   const compat = window.__chatappCompat;
+  const chatState = {
+    currentRef: String(CHATAPP_MESSAGE_ID || ''),
+    currentIndex: Number.isInteger(CHATAPP_MESSAGE_INDEX) ? CHATAPP_MESSAGE_INDEX : null,
+    entries: new Map(),
+  };
+  const getCurrentCompatRef = () => String(chatState.currentRef || CHATAPP_MESSAGE_ID || '');
+  const normalizeCompatRef = (input) => {
+    const raw = input === undefined || input === null || input === '' ? getCurrentCompatRef() : String(input);
+    const idx = Number(raw);
+    if (Number.isInteger(idx) && Number.isInteger(chatState.currentIndex) && idx === chatState.currentIndex) {
+      return getCurrentCompatRef();
+    }
+    return raw;
+  };
+  const normalizeCompatEntry = (entry = {}, fallbackRef = '') => {
+    const ref = normalizeCompatRef(entry.message_id ?? entry.messageId ?? entry.id ?? fallbackRef ?? '');
+    const numericId = Number(ref);
+    const messageId = Number.isInteger(numericId) ? numericId : ref;
+    const message = String(entry.message ?? entry.content ?? entry.raw ?? '');
+    const data = entry.data && typeof entry.data === 'object' ? JSON.parse(JSON.stringify(entry.data)) : {};
+    const extra = entry.extra && typeof entry.extra === 'object' ? JSON.parse(JSON.stringify(entry.extra)) : {};
+    return {
+      message_id: messageId,
+      id: messageId,
+      role: String(entry.role || 'assistant'),
+      message,
+      mes: message,
+      content: message,
+      data,
+      extra,
+      is_hidden: Boolean(entry.is_hidden),
+      name: String(entry.name || ''),
+      swipe_id: Number.isInteger(Number(entry.swipe_id)) ? Number(entry.swipe_id) : 0,
+      swipes: Array.isArray(entry.swipes) ? entry.swipes.slice() : [message],
+      swipes_data: Array.isArray(entry.swipes_data) ? entry.swipes_data.slice() : [data],
+      swipes_info: Array.isArray(entry.swipes_info) ? entry.swipes_info.slice() : [extra],
+    };
+  };
+  const upsertCompatEntry = (refInput, patch = {}) => {
+    const ref = normalizeCompatRef(refInput);
+    if (!ref) return null;
+    const prev = chatState.entries.get(ref) || normalizeCompatEntry({ message_id: ref }, ref);
+    const merged = normalizeCompatEntry({ ...prev, ...patch, message_id: patch?.message_id ?? prev.message_id }, ref);
+    chatState.entries.set(ref, merged);
+    return merged;
+  };
+  const exportCompatEntries = () => Array.from(chatState.entries.values()).map((entry) => normalizeCompatEntry(entry, ''));
+  const sortCompatEntries = (items) => (Array.isArray(items) ? items.slice() : [])
+    .sort((a, b) => {
+      const an = Number(a?.message_id);
+      const bn = Number(b?.message_id);
+      const ai = Number.isFinite(an) && Number.isInteger(an);
+      const bi = Number.isFinite(bn) && Number.isInteger(bn);
+      if (ai && bi) return an - bn;
+      if (ai) return -1;
+      if (bi) return 1;
+      return String(a?.message_id ?? '').localeCompare(String(b?.message_id ?? ''));
+    });
+  const toLegacyChatMessage = (entry = {}) => {
+    const message = String(entry?.message || '');
+    const role = String(entry?.role || 'assistant').trim().toLowerCase();
+    const data = entry?.data && typeof entry.data === 'object' ? entry.data : {};
+    const extra = entry?.extra && typeof entry.extra === 'object' ? entry.extra : {};
+    const swipes = Array.isArray(entry?.swipes) && entry.swipes.length
+      ? entry.swipes.slice()
+      : [message];
+    const swipeVars = Array.isArray(entry?.swipes_data) && entry.swipes_data.length
+      ? entry.swipes_data.slice()
+      : [data];
+    return {
+      mes: message,
+      name: String(entry?.name || (role === 'user' ? 'user' : 'assistant')),
+      is_user: role === 'user',
+      is_system: Boolean(entry?.is_hidden),
+      swipe_id: Number.isInteger(Number(entry?.swipe_id)) ? Number(entry.swipe_id) : 0,
+      swipes,
+      variables: swipeVars,
+      extra,
+    };
+  };
+  const syncLegacyChatGlobals = () => {
+    const legacy = sortCompatEntries(exportCompatEntries()).map((entry) => toLegacyChatMessage(entry));
+    const currentId = Number.isInteger(chatState.currentIndex) ? chatState.currentIndex : 0;
+    const mirrorHost = (host) => {
+      try {
+        if (!host) return;
+        host.chat = legacy;
+        host.this_chid = currentId;
+        if (!host.chat_metadata || typeof host.chat_metadata !== 'object') host.chat_metadata = {};
+      } catch {}
+    };
+    mirrorHost(window);
+    mirrorHost(window.parent);
+    mirrorHost(window.top);
+    return legacy;
+  };
+  const resolveCompatCurrentMessageId = () =>
+    Number.isInteger(chatState.currentIndex) ? chatState.currentIndex : getCurrentCompatRef();
+  const applyCompatSetMessageCache = (messageRef, fieldValues = {}) => {
+    const ref = normalizeCompatRef(messageRef);
+    const fields = fieldValues && typeof fieldValues === 'object' ? fieldValues : {};
+    const patch = {};
+    if (Object.prototype.hasOwnProperty.call(fields, 'message')) patch.message = String(fields.message ?? '');
+    if (Object.prototype.hasOwnProperty.call(fields, 'data')) {
+      patch.data = fields.data && typeof fields.data === 'object' ? JSON.parse(JSON.stringify(fields.data)) : {};
+    }
+    const next = upsertCompatEntry(ref, patch);
+    syncLegacyChatGlobals();
+    return next;
+  };
+  let compatReadLogCount = 0;
+  const logCompatRead = (name, detail = '') => {
+    compatReadLogCount += 1;
+    if (compatReadLogCount > 24) return;
+    log('info', String(name || '') + (detail ? (' ' + detail) : ''));
+  };
+  (Array.isArray(CHATAPP_SEED_MESSAGES) ? CHATAPP_SEED_MESSAGES : []).forEach((entry) => {
+    const ref = entry?.id ?? entry?.message_id ?? entry?.messageId ?? '';
+    if (!ref) return;
+    upsertCompatEntry(ref, entry);
+  });
+  {
+    const currentRef = getCurrentCompatRef();
+    if (currentRef && !chatState.entries.has(currentRef)) {
+      upsertCompatEntry(currentRef, {
+        message_id: Number.isInteger(chatState.currentIndex) ? chatState.currentIndex : currentRef,
+        role: 'assistant',
+        message: '',
+        data: {},
+        extra: {},
+      });
+    }
+  }
+  const legacySeed = syncLegacyChatGlobals();
+  log('info', 'legacy-chat-shim-ready count=' + String(Array.isArray(legacySeed) ? legacySeed.length : 0) + ' this_chid=' + String(Number.isInteger(chatState.currentIndex) ? chatState.currentIndex : 0));
   if (typeof compat.getAllVariables !== 'function') {
     compat.getAllVariables = () => {
       try {
@@ -2564,8 +3787,234 @@ const buildDollarGlobalShim = ({ iframeId = '', debugTag = '', appOrigin = '', n
       return compat.getAllVariables();
     };
   }
+  if (typeof compat.getContext !== 'function') {
+    compat.getContext = () => {
+      const vars = compat.getVariables();
+      const stat = (vars && typeof vars === 'object' && vars.stat_data && typeof vars.stat_data === 'object')
+        ? vars.stat_data
+        : ((vars && typeof vars === 'object' && vars.variables && typeof vars.variables === 'object') ? vars.variables : {});
+      const globalVars = (vars && typeof vars === 'object' && vars.global_variables && typeof vars.global_variables === 'object')
+        ? vars.global_variables
+        : {};
+      const chat = compat.getChatMessages();
+      const ctx = {
+        chat,
+        messages: chat,
+        currentMessageId: compat.getCurrentMessageId(),
+        variables: stat,
+        stat_data: stat,
+        status_current_variables: stat,
+        global_variables: globalVars,
+      };
+      logCompatRead('compat-read getContext', 'chat=' + String(Array.isArray(chat) ? chat.length : 0) + ' vars=' + String(Object.keys(stat || {}).length));
+      return ctx;
+    };
+  }
   if (typeof compat.getCurrentMessageId !== 'function') {
-    compat.getCurrentMessageId = () => '';
+    compat.getCurrentMessageId = () => {
+      const id = resolveCompatCurrentMessageId();
+      logCompatRead('compat-read getCurrentMessageId', 'value=' + String(id));
+      return id;
+    };
+  }
+  if (typeof compat.getChatMessages !== 'function') {
+    compat.getChatMessages = (...args) => {
+      const all = exportCompatEntries()
+        .slice()
+        .sort((a, b) => {
+          const an = Number(a?.message_id);
+          const bn = Number(b?.message_id);
+          const ai = Number.isFinite(an) && Number.isInteger(an);
+          const bi = Number.isFinite(bn) && Number.isInteger(bn);
+          if (ai && bi) return an - bn;
+          if (ai) return -1;
+          if (bi) return 1;
+          return String(a?.message_id ?? '').localeCompare(String(b?.message_id ?? ''));
+        });
+      if (!all.length) return [];
+      const first = args[0];
+      let range = first;
+      let options = {};
+      if (first && typeof first === 'object' && !Array.isArray(first)) {
+        options = { ...first };
+        range = undefined;
+      } else {
+        const second = args[1];
+        const third = args[2];
+        if (second && typeof second === 'object' && !Array.isArray(second)) options = { ...second };
+        else if (typeof second === 'string') options.role = second;
+        if (third && typeof third === 'object' && !Array.isArray(third)) options = { ...options, ...third };
+        else if (typeof third === 'string' && !options.role) options.role = third;
+      }
+      const roleKey = String(options?.role || 'all').trim().toLowerCase();
+      const hideState = String(options?.hide_state || 'all').trim().toLowerCase();
+      const applyFilters = (items) => items.filter((item) => {
+        const msgRole = String(item?.role || '').trim().toLowerCase();
+        if (roleKey && roleKey !== 'all' && roleKey !== 'any' && msgRole !== roleKey) return false;
+        if (hideState === 'hidden' && !Boolean(item?.is_hidden)) return false;
+        if (hideState === 'unhidden' && Boolean(item?.is_hidden)) return false;
+        return true;
+      });
+      if (range === undefined || range === null || range === '') {
+        const filtered = applyFilters(all);
+        logCompatRead(
+          'compat-read getChatMessages',
+          'range=all count=' + String(filtered.length) +
+            ' role=' + String(roleKey || 'all') +
+            ' hide=' + String(hideState || 'all'),
+        );
+        return filtered;
+      }
+      const numericIds = all
+        .map((item) => Number(item?.message_id))
+        .filter((n) => Number.isFinite(n) && Number.isInteger(n));
+      const fallbackMax = Number.isInteger(chatState.currentIndex) ? chatState.currentIndex : -1;
+      const maxId = numericIds.length ? Math.max(...numericIds) : fallbackMax;
+      const clamp = (value) => {
+        if (!Number.isFinite(value) || !Number.isInteger(value)) return null;
+        if (maxId < 0) return value;
+        const normalized = value < 0 ? maxId + value + 1 : value;
+        return Math.max(0, Math.min(maxId, normalized));
+      };
+      const parseRange = (raw) => {
+        if (typeof raw === 'number' && Number.isInteger(raw)) {
+          const one = clamp(raw);
+          return one === null ? null : { start: one, end: one };
+        }
+        const text = String(raw ?? '').trim();
+        const oneMatch = text.match(/^(-?\d+)$/);
+        if (oneMatch) {
+          const one = clamp(Number(oneMatch[1]));
+          return one === null ? null : { start: one, end: one };
+        }
+        const rangeMatch = text.match(/^(-?\d+)\s*-\s*(-?\d+)$/);
+        if (!rangeMatch) return null;
+        const a = clamp(Number(rangeMatch[1]));
+        const b = clamp(Number(rangeMatch[2]));
+        if (a === null || b === null) return null;
+        return a <= b ? { start: a, end: b } : { start: b, end: a };
+      };
+      const parsed = parseRange(range);
+      if (parsed) {
+        const matched = all.filter((item) => {
+          const id = Number(item?.message_id);
+          if (!Number.isFinite(id) || !Number.isInteger(id)) return false;
+          return id >= parsed.start && id <= parsed.end;
+        });
+        const filtered = applyFilters(matched);
+        const sampleText = filtered[0] ? String(filtered[0]?.message || '') : '';
+        const sampleLen = sampleText.length;
+        const sampleHasContent = /<\s*content\b/i.test(sampleText) ? 1 : 0;
+        logCompatRead(
+          'compat-read getChatMessages',
+          'range=' + String(parsed.start) + '-' + String(parsed.end) +
+            ' count=' + String(filtered.length) +
+            ' len=' + String(sampleLen) +
+            ' hasContent=' + String(sampleHasContent) +
+            ' role=' + String(roleKey || 'all') +
+            ' hide=' + String(hideState || 'all'),
+        );
+        return filtered;
+      }
+      const ref = normalizeCompatRef(range);
+      const matched = all.filter((item) => String(item?.message_id) === ref || String(item?.id || '') === ref);
+      const filtered = applyFilters(matched);
+      const sampleText = filtered[0] ? String(filtered[0]?.message || '') : '';
+      const sampleLen = sampleText.length;
+      const sampleHasContent = /<\s*content\b/i.test(sampleText) ? 1 : 0;
+      logCompatRead(
+        'compat-read getChatMessages',
+        'range=' + String(range) + ' ref=' + String(ref) +
+          ' count=' + String(filtered.length) +
+          ' len=' + String(sampleLen) +
+          ' hasContent=' + String(sampleHasContent) +
+          ' role=' + String(roleKey || 'all') +
+          ' hide=' + String(hideState || 'all'),
+      );
+      return filtered;
+    };
+  }
+  if (typeof compat.getChatMessage !== 'function') {
+    compat.getChatMessage = (idx, role) => {
+      const list = compat.getChatMessages();
+      const roleKey = String(role || '').trim().toLowerCase();
+      const filtered = roleKey && roleKey !== 'any'
+        ? list.filter((item) => String(item?.role || '').trim().toLowerCase() === roleKey)
+        : list;
+      if (!filtered.length) return '';
+      const asId = Number(idx);
+      if (Number.isFinite(asId) && Number.isInteger(asId)) {
+        const hitById = filtered.find((item) => Number(item?.message_id) === asId || String(item?.message_id) === String(asId));
+        if (hitById) {
+          const txt = String(hitById?.message || '');
+          logCompatRead('compat-read getChatMessage', 'id=' + String(asId) + ' by=message_id len=' + String(txt.length));
+          return txt;
+        }
+      }
+      let index = Number(idx);
+      if (!Number.isFinite(index) || !Number.isInteger(index)) {
+        logCompatRead('compat-read getChatMessage', 'idx=' + String(idx) + ' invalid');
+        return '';
+      }
+      if (index < 0) index = filtered.length + index;
+      if (index < 0 || index >= filtered.length) {
+        logCompatRead('compat-read getChatMessage', 'idx=' + String(index) + ' out-of-range size=' + String(filtered.length));
+        return '';
+      }
+      const txt = String(filtered[index]?.message || '');
+      logCompatRead('compat-read getChatMessage', 'idx=' + String(index) + ' by=index len=' + String(txt.length));
+      return txt;
+    };
+  }
+  if (typeof compat.setChatMessage !== 'function') {
+    compat.setChatMessage = async (fieldValues, messageId, options = {}) => {
+      const payload = typeof fieldValues === 'string'
+        ? { message: fieldValues }
+        : (fieldValues && typeof fieldValues === 'object' ? { ...fieldValues } : {});
+      const targetMessageId = messageId === undefined || messageId === null || messageId === ''
+        ? (typeof compat.getCurrentMessageId === 'function' ? compat.getCurrentMessageId() : '')
+        : normalizeCompatRef(messageId);
+      const safeOptions = options && typeof options === 'object' ? options : {};
+      try {
+        parent.postMessage({
+          type: 'chatapp:set-chat-message',
+          id: CHATAPP_IFRAME_ID,
+          sessionId: '',
+          messageId: String(targetMessageId || ''),
+          fieldValues: payload,
+          options: safeOptions,
+        }, '*');
+        applyCompatSetMessageCache(targetMessageId, payload);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+  }
+  if (typeof compat.setChatMessages !== 'function') {
+    compat.setChatMessages = async (messages = [], options = {}) => {
+      const list = Array.isArray(messages) ? messages : [];
+      const safeOptions = options && typeof options === 'object' ? options : {};
+      const normalized = list
+        .map((item) => (item && typeof item === 'object' ? { ...item } : null))
+        .filter(Boolean);
+      try {
+        parent.postMessage({
+          type: 'chatapp:set-chat-messages',
+          id: CHATAPP_IFRAME_ID,
+          sessionId: '',
+          messages: normalized,
+          options: safeOptions,
+        }, '*');
+        normalized.forEach((item) => {
+          const ref = item?.message_id ?? item?.messageId ?? item?.id ?? item?.mid ?? '';
+          applyCompatSetMessageCache(ref, item);
+        });
+        return true;
+      } catch {
+        return false;
+      }
+    };
   }
   if (typeof compat.insertOrAssignVariables !== 'function') {
     compat.insertOrAssignVariables = async () => false;
@@ -2580,6 +4029,11 @@ const buildDollarGlobalShim = ({ iframeId = '', debugTag = '', appOrigin = '', n
   if (typeof helper.getAllVariables !== 'function') helper.getAllVariables = (...args) => compat.getAllVariables(...args);
   if (typeof helper.getVariables !== 'function') helper.getVariables = (...args) => compat.getVariables(...args);
   if (typeof helper.getCurrentMessageId !== 'function') helper.getCurrentMessageId = (...args) => compat.getCurrentMessageId(...args);
+  if (typeof helper.getChatMessages !== 'function') helper.getChatMessages = (...args) => compat.getChatMessages(...args);
+  if (typeof helper.getChatMessage !== 'function') helper.getChatMessage = (...args) => compat.getChatMessage(...args);
+  if (typeof helper.getContext !== 'function') helper.getContext = (...args) => compat.getContext(...args);
+  if (typeof helper.setChatMessage !== 'function') helper.setChatMessage = (...args) => compat.setChatMessage(...args);
+  if (typeof helper.setChatMessages !== 'function') helper.setChatMessages = (...args) => compat.setChatMessages(...args);
   if (typeof helper.insertOrAssignVariables !== 'function') helper.insertOrAssignVariables = (...args) => compat.insertOrAssignVariables(...args);
   if (typeof helper.deleteVariable !== 'function') helper.deleteVariable = (...args) => compat.deleteVariable(...args);
   if (typeof helper.waitGlobalInitialized !== 'function') helper.waitGlobalInitialized = async () => null;
@@ -2591,13 +4045,64 @@ const buildDollarGlobalShim = ({ iframeId = '', debugTag = '', appOrigin = '', n
   if (!window.SillyTavern.TavernHelper || typeof window.SillyTavern.TavernHelper !== 'object') {
     window.SillyTavern.TavernHelper = helper;
   }
-  ['getAllVariables', 'getVariables', 'getCurrentMessageId', 'insertOrAssignVariables', 'deleteVariable', 'waitGlobalInitialized', 'replaceVariables']
+  ['getAllVariables', 'getVariables', 'getCurrentMessageId', 'getChatMessages', 'getChatMessage', 'getContext', 'setChatMessage', 'setChatMessages', 'insertOrAssignVariables', 'deleteVariable', 'waitGlobalInitialized', 'replaceVariables']
     .forEach((name) => {
       if (typeof helper[name] === 'function' && typeof window.SillyTavern[name] !== 'function') {
         window.SillyTavern[name] = (...args) => helper[name](...args);
       }
     });
-  log('info', 'tavern-helper-shim-bootstrap');
+  if (typeof window.getCurrentMessageId !== 'function') window.getCurrentMessageId = (...args) => compat.getCurrentMessageId(...args);
+  if (typeof window.getChatMessages !== 'function') window.getChatMessages = (...args) => compat.getChatMessages(...args);
+  if (typeof window.getChatMessage !== 'function') window.getChatMessage = (...args) => compat.getChatMessage(...args);
+  if (typeof window.getContext !== 'function') window.getContext = (...args) => compat.getContext(...args);
+  if (typeof window.setChatMessage !== 'function') window.setChatMessage = (...args) => compat.setChatMessage(...args);
+  if (typeof window.setChatMessages !== 'function') window.setChatMessages = (...args) => compat.setChatMessages(...args);
+  const bridgeHostCompat = (host) => {
+    try {
+      if (!host || host === window) return false;
+      if (!host.TavernHelper || typeof host.TavernHelper !== 'object') host.TavernHelper = {};
+      const hostHelper = host.TavernHelper;
+      const names = ['getAllVariables', 'getVariables', 'getCurrentMessageId', 'getChatMessages', 'getChatMessage', 'getContext', 'setChatMessage', 'setChatMessages', 'insertOrAssignVariables', 'deleteVariable', 'waitGlobalInitialized', 'replaceVariables'];
+      names.forEach((name) => {
+        if (typeof hostHelper[name] !== 'function' && typeof helper[name] === 'function') {
+          hostHelper[name] = (...args) => helper[name](...args);
+        }
+      });
+      if (typeof hostHelper.getTavernHelperVersion !== 'function') hostHelper.getTavernHelperVersion = async () => '4.0.99-chatapp';
+      if (!host.SillyTavern || typeof host.SillyTavern !== 'object') host.SillyTavern = {};
+      if (!host.SillyTavern.TavernHelper || typeof host.SillyTavern.TavernHelper !== 'object') {
+        host.SillyTavern.TavernHelper = hostHelper;
+      }
+      names.forEach((name) => {
+        if (typeof host.SillyTavern[name] !== 'function' && typeof hostHelper[name] === 'function') {
+          host.SillyTavern[name] = (...args) => hostHelper[name](...args);
+        }
+      });
+      if (typeof host.getCurrentMessageId !== 'function') host.getCurrentMessageId = (...args) => compat.getCurrentMessageId(...args);
+      if (typeof host.getChatMessages !== 'function') host.getChatMessages = (...args) => compat.getChatMessages(...args);
+      if (typeof host.getChatMessage !== 'function') host.getChatMessage = (...args) => compat.getChatMessage(...args);
+      if (typeof host.getContext !== 'function') host.getContext = (...args) => compat.getContext(...args);
+      if (typeof host.getVariables !== 'function') host.getVariables = (...args) => compat.getVariables(...args);
+      if (typeof host.getAllVariables !== 'function') host.getAllVariables = (...args) => compat.getAllVariables(...args);
+      if (typeof host.setChatMessage !== 'function') host.setChatMessage = (...args) => compat.setChatMessage(...args);
+      if (typeof host.setChatMessages !== 'function') host.setChatMessages = (...args) => compat.setChatMessages(...args);
+      if (typeof host._ === 'undefined' && typeof window._ !== 'undefined') host._ = window._;
+      if (typeof host.$ === 'undefined' && typeof window.$ === 'function') host.$ = window.$;
+      if (typeof host.jQuery === 'undefined' && typeof window.jQuery === 'function') host.jQuery = window.jQuery;
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  const bridgedParent = bridgeHostCompat(window.parent);
+  const bridgedTop = bridgeHostCompat(window.top);
+  log('info', 'tavern-helper-shim-bootstrap seed=' + String(Array.isArray(CHATAPP_SEED_MESSAGES) ? CHATAPP_SEED_MESSAGES.length : 0));
+  log('info', 'tavern-helper-shim-host-bridge parent=' + (bridgedParent ? '1' : '0') + ' top=' + (bridgedTop ? '1' : '0'));
+  {
+    const currentRef = getCurrentCompatRef();
+    const seededCurrent = currentRef ? chatState.entries.get(currentRef) : null;
+    log('info', 'tavern-helper-shim-seed-current has=' + (seededCurrent ? '1' : '0') + ' len=' + String(seededCurrent ? String(seededCurrent.message || '').length : 0));
+  }
   const hasJq = typeof window.$ === 'function' && window.$.fn && window.$.fn.jquery;
   if (!hasJq) {
     if (!(typeof window.$ === 'function' && window.$.__chatappMini)) {
@@ -2717,17 +4222,195 @@ const buildDollarGlobalShim = ({ iframeId = '', debugTag = '', appOrigin = '', n
       return {};
     };
   }
-  if (!window._ || typeof window._ !== 'object') {
+  if (typeof window._ !== 'function') {
     const toPath = (raw) => String(raw || '')
       .replace(/\\[([^\\]]+)\\]/g, '.$1')
       .split('.')
       .map(seg => seg.trim().replace(/^['"]|['"]$/g, ''))
       .filter(Boolean);
-    window._ = window._ || {};
+    const existing = (window._ && typeof window._ === 'object') ? window._ : {};
+    const makeChain = (initial) => {
+      let current = initial;
+      const api = {
+        value() { return current; },
+        map(fn) {
+          if (Array.isArray(current)) current = current.map((v, i) => fn(v, i));
+          else if (current && typeof current === 'object') current = Object.keys(current).map((k) => fn(current[k], k));
+          else current = [];
+          return api;
+        },
+        filter(fn) {
+          current = Array.isArray(current) ? current.filter((v, i) => fn(v, i)) : [];
+          return api;
+        },
+        sortBy(iteratee) {
+          const arr = Array.isArray(current) ? current.slice() : [];
+          const getter = typeof iteratee === 'function'
+            ? iteratee
+            : (v) => (v && typeof v === 'object' ? v[iteratee] : undefined);
+          arr.sort((a, b) => {
+            const av = getter(a);
+            const bv = getter(b);
+            if (av > bv) return 1;
+            if (av < bv) return -1;
+            return 0;
+          });
+          current = arr;
+          return api;
+        },
+        find(fn) {
+          current = Array.isArray(current) ? current.find((v, i) => fn(v, i)) : undefined;
+          return api;
+        },
+        forEach(fn) {
+          if (Array.isArray(current)) current.forEach((v, i) => fn(v, i));
+          else if (current && typeof current === 'object') Object.keys(current).forEach((k) => fn(current[k], k));
+          return api;
+        },
+        each(fn) { return api.forEach(fn); },
+      };
+      return api;
+    };
+    const lodashLite = (value) => makeChain(value);
+    Object.assign(lodashLite, existing);
+    lodashLite.chain = (value) => makeChain(value);
+    window._ = lodashLite;
     if (typeof window._.isArray !== 'function') window._.isArray = Array.isArray;
     if (typeof window._.isObject !== 'function') window._.isObject = (v) => v !== null && typeof v === 'object';
+    if (typeof window._.isPlainObject !== 'function') {
+      window._.isPlainObject = (v) => {
+        if (v === null || typeof v !== 'object') return false;
+        const proto = Object.getPrototypeOf(v);
+        return proto === Object.prototype || proto === null;
+      };
+    }
     if (typeof window._.isNil !== 'function') window._.isNil = (v) => v === null || v === undefined;
+    if (typeof window._.isString !== 'function') window._.isString = (v) => typeof v === 'string';
+    if (typeof window._.isNumber !== 'function') window._.isNumber = (v) => typeof v === 'number' && Number.isFinite(v);
+    if (typeof window._.isBoolean !== 'function') window._.isBoolean = (v) => typeof v === 'boolean';
+    if (typeof window._.isFunction !== 'function') window._.isFunction = (v) => typeof v === 'function';
     if (typeof window._.clamp !== 'function') window._.clamp = (n, min, max) => Math.max(min, Math.min(max, n));
+    if (typeof window._.map !== 'function') window._.map = (list, fn) => (Array.isArray(list) ? list.map(fn) : Object.keys(list || {}).map((k) => fn(list[k], k)));
+    if (typeof window._.filter !== 'function') window._.filter = (list, fn) => (Array.isArray(list) ? list.filter(fn) : []);
+    if (typeof window._.forEach !== 'function') {
+      window._.forEach = (list, fn) => {
+        if (Array.isArray(list)) list.forEach((v, i) => fn(v, i));
+        else if (list && typeof list === 'object') Object.keys(list).forEach((k) => fn(list[k], k));
+        return list;
+      };
+    }
+    if (typeof window._.each !== 'function') window._.each = window._.forEach;
+    if (typeof window._.sortBy !== 'function') {
+      window._.sortBy = (list, iteratee) => {
+        const getter = typeof iteratee === 'function'
+          ? iteratee
+          : (v) => (v && typeof v === 'object' ? v[iteratee] : undefined);
+        return (Array.isArray(list) ? list.slice() : []).sort((a, b) => {
+          const av = getter(a);
+          const bv = getter(b);
+          if (av > bv) return 1;
+          if (av < bv) return -1;
+          return 0;
+        });
+      };
+    }
+    if (typeof window._.sortedUniq !== 'function') {
+      window._.sortedUniq = (list) => {
+        const out = [];
+        (Array.isArray(list) ? list : []).forEach((v) => {
+          if (!out.some((x) => x === v)) out.push(v);
+        });
+        return out;
+      };
+    }
+    if (typeof window._.uniq !== 'function') window._.uniq = (list) => window._.sortedUniq(list);
+    if (typeof window._.find !== 'function') window._.find = (list, fn) => (Array.isArray(list) ? list.find(fn) : undefined);
+    if (typeof window._.some !== 'function') {
+      window._.some = (list, fn) => (Array.isArray(list) ? list.some(fn) : Object.keys(list || {}).some((k) => fn(list[k], k)));
+    }
+    if (typeof window._.every !== 'function') {
+      window._.every = (list, fn) => (Array.isArray(list) ? list.every(fn) : Object.keys(list || {}).every((k) => fn(list[k], k)));
+    }
+    if (typeof window._.includes !== 'function') {
+      window._.includes = (list, value) => {
+        if (typeof list === 'string') return list.includes(String(value));
+        if (Array.isArray(list)) return list.includes(value);
+        if (list && typeof list === 'object') return Object.values(list).includes(value);
+        return false;
+      };
+    }
+    if (typeof window._.findLast !== 'function') {
+      window._.findLast = (list, fn) => {
+        if (!Array.isArray(list)) return undefined;
+        for (let i = list.length - 1; i >= 0; i -= 1) {
+          if (fn(list[i], i)) return list[i];
+        }
+        return undefined;
+      };
+    }
+    if (typeof window._.range !== 'function') {
+      window._.range = (start, end, step = 1) => {
+        let s = Number(start);
+        let e = Number(end);
+        if (!Number.isFinite(e)) {
+          e = s;
+          s = 0;
+        }
+        const st = Number(step) || 1;
+        const out = [];
+        if (st > 0) for (let i = s; i < e; i += st) out.push(i);
+        else for (let i = s; i > e; i += st) out.push(i);
+        return out;
+      };
+    }
+    if (typeof window._.times !== 'function') {
+      window._.times = (n, fn) => {
+        const len = Math.max(0, Number(n) || 0);
+        const out = [];
+        for (let i = 0; i < len; i += 1) out.push(typeof fn === 'function' ? fn(i) : undefined);
+        return out;
+      };
+    }
+    if (typeof window._.constant !== 'function') window._.constant = (v) => () => v;
+    if (typeof window._.keys !== 'function') window._.keys = (obj) => Object.keys(obj || {});
+    if (typeof window._.values !== 'function') window._.values = (obj) => Object.values(obj || {});
+    if (typeof window._.size !== 'function') {
+      window._.size = (obj) => {
+        if (obj == null) return 0;
+        if (typeof obj === 'string' || Array.isArray(obj)) return obj.length;
+        if (typeof obj === 'object') return Object.keys(obj).length;
+        return 0;
+      };
+    }
+    if (typeof window._.debounce !== 'function') {
+      window._.debounce = (fn, wait = 0) => {
+        let timer = 0;
+        return (...args) => {
+          clearTimeout(timer);
+          timer = setTimeout(() => fn(...args), Number(wait) || 0);
+        };
+      };
+    }
+    if (typeof window._.throttle !== 'function') {
+      window._.throttle = (fn, wait = 0) => {
+        let last = 0;
+        let timer = 0;
+        return (...args) => {
+          const now = Date.now();
+          const gap = Number(wait) || 0;
+          if (now - last >= gap) {
+            last = now;
+            fn(...args);
+            return;
+          }
+          clearTimeout(timer);
+          timer = setTimeout(() => {
+            last = Date.now();
+            fn(...args);
+          }, Math.max(0, gap - (now - last)));
+        };
+      };
+    }
     if (typeof window._.get !== 'function') {
       window._.get = (obj, path, defVal) => {
         const parts = toPath(path);
@@ -2751,6 +4434,35 @@ const buildDollarGlobalShim = ({ iframeId = '', debugTag = '', appOrigin = '', n
         }
         cur[parts[parts.length - 1]] = value;
         return obj;
+      };
+    }
+    if (typeof window._.has !== 'function') window._.has = (obj, path) => window._.get(obj, path, undefined) !== undefined;
+    if (typeof window._.unset !== 'function') {
+      window._.unset = (obj, path) => {
+        const parts = toPath(path);
+        if (!parts.length) return false;
+        let cur = obj;
+        for (let i = 0; i < parts.length - 1; i += 1) {
+          const key = parts[i];
+          if (!cur || typeof cur !== 'object') return false;
+          cur = cur[key];
+        }
+        if (!cur || typeof cur !== 'object') return false;
+        return delete cur[parts[parts.length - 1]];
+      };
+    }
+    if (typeof window._.cloneDeep !== 'function') {
+      window._.cloneDeep = (v) => {
+        try { return structuredClone(v); } catch {}
+        try { return JSON.parse(JSON.stringify(v)); } catch {}
+        return v;
+      };
+    }
+    if (typeof window._.clone !== 'function') {
+      window._.clone = (v) => {
+        if (Array.isArray(v)) return v.slice();
+        if (v && typeof v === 'object') return { ...v };
+        return v;
       };
     }
     if (typeof window._.mergeWith !== 'function') {
@@ -2798,6 +4510,112 @@ const buildDollarGlobalShim = ({ iframeId = '', debugTag = '', appOrigin = '', n
         return object;
       };
     }
+    if (typeof window._.merge !== 'function') {
+      window._.merge = (object, ...rest) => window._.mergeWith(object, ...rest);
+    }
+    if (typeof window._.defaults !== 'function') {
+      window._.defaults = (object, ...sources) => {
+        const out = object && typeof object === 'object' ? object : {};
+        sources.forEach((src) => {
+          if (!src || typeof src !== 'object') return;
+          Object.keys(src).forEach((k) => {
+            if (out[k] === undefined) out[k] = src[k];
+          });
+        });
+        return out;
+      };
+    }
+    if (typeof window._.defaultsDeep !== 'function') {
+      window._.defaultsDeep = (object, ...sources) => {
+        const out = object && typeof object === 'object' ? object : {};
+        sources.forEach((src) => {
+          if (!src || typeof src !== 'object') return;
+          Object.keys(src).forEach((k) => {
+            const cur = out[k];
+            const next = src[k];
+            if (cur === undefined) out[k] = Array.isArray(next) ? next.slice() : (window._.isPlainObject(next) ? { ...next } : next);
+            else if (window._.isPlainObject(cur) && window._.isPlainObject(next)) window._.defaultsDeep(cur, next);
+          });
+        });
+        return out;
+      };
+    }
+    if (typeof window._.mapValues !== 'function') {
+      window._.mapValues = (obj, fn) => {
+        const out = {};
+        Object.keys(obj || {}).forEach((k) => { out[k] = fn(obj[k], k); });
+        return out;
+      };
+    }
+    if (typeof window._.groupBy !== 'function') {
+      window._.groupBy = (list, iteratee) => {
+        const out = {};
+        const getter = typeof iteratee === 'function'
+          ? iteratee
+          : (v) => (v && typeof v === 'object' ? v[iteratee] : v);
+        (Array.isArray(list) ? list : []).forEach((item, idx) => {
+          const key = String(getter(item, idx));
+          if (!out[key]) out[key] = [];
+          out[key].push(item);
+        });
+        return out;
+      };
+    }
+    if (typeof window._.flatten !== 'function') window._.flatten = (list) => (Array.isArray(list) ? list.flat(1) : []);
+    if (typeof window._.flattenDeep !== 'function') window._.flattenDeep = (list) => (Array.isArray(list) ? list.flat(Infinity) : []);
+    if (typeof window._.uniqBy !== 'function') {
+      window._.uniqBy = (list, iteratee) => {
+        const getter = typeof iteratee === 'function'
+          ? iteratee
+          : (v) => (v && typeof v === 'object' ? v[iteratee] : v);
+        const seen = new Set();
+        const out = [];
+        (Array.isArray(list) ? list : []).forEach((item) => {
+          const key = getter(item);
+          if (seen.has(key)) return;
+          seen.add(key);
+          out.push(item);
+        });
+        return out;
+      };
+    }
+    if (typeof window._.pick !== 'function') {
+      window._.pick = (obj, keys) => {
+        const out = {};
+        (Array.isArray(keys) ? keys : []).forEach((k) => {
+          if (obj && Object.prototype.hasOwnProperty.call(obj, k)) out[k] = obj[k];
+        });
+        return out;
+      };
+    }
+    if (typeof window._.omit !== 'function') {
+      window._.omit = (obj, keys) => {
+        const deny = new Set(Array.isArray(keys) ? keys : []);
+        const out = {};
+        Object.keys(obj || {}).forEach((k) => { if (!deny.has(k)) out[k] = obj[k]; });
+        return out;
+      };
+    }
+    if (typeof window._.toNumber !== 'function') window._.toNumber = (v) => Number(v);
+    if (typeof window._.trim !== 'function') window._.trim = (v) => String(v ?? '').trim();
+    if (typeof window._.split !== 'function') window._.split = (v, sep, limit) => String(v ?? '').split(sep, limit);
+    if (!(window._ && window._.__chatappProbe)) {
+      const seen = new Set();
+      const missingLimit = 24;
+      const target = window._;
+      window._ = new Proxy(target, {
+        get(obj, prop, receiver) {
+          if (Reflect.has(obj, prop)) return Reflect.get(obj, prop, receiver);
+          if (typeof prop === 'string' && prop && !prop.startsWith('__') && seen.size < missingLimit) {
+            seen.add(prop);
+            log('warn', 'lodash-missing-method-access name=' + prop);
+          }
+          return undefined;
+        },
+      });
+      window._.__chatappProbe = true;
+      log('info', 'lodash-shim-fallback');
+    }
   }
   if (typeof window.errorCatched !== 'function') {
     window.errorCatched = (fn) => (...args) => {
@@ -2805,7 +4623,7 @@ const buildDollarGlobalShim = ({ iframeId = '', debugTag = '', appOrigin = '', n
     };
   }
   try {
-    window.eval('var $ = window.$; var jQuery = window.jQuery; var _ = window._; var z = window.z; var Zod = window.Zod; var getVariables = window.getVariables; var getCurrentMessageId = window.getCurrentMessageId; var insertOrAssignVariables = window.insertOrAssignVariables; var deleteVariable = window.deleteVariable; var errorCatched = window.errorCatched;');
+    window.eval('var $ = window.$; var jQuery = window.jQuery; var _ = window._; var z = window.z; var Zod = window.Zod; var getVariables = window.getVariables; var getCurrentMessageId = window.getCurrentMessageId; var getChatMessages = window.getChatMessages; var getChatMessage = window.getChatMessage; var getContext = window.getContext; var setChatMessage = window.setChatMessage; var setChatMessages = window.setChatMessages; var insertOrAssignVariables = window.insertOrAssignVariables; var deleteVariable = window.deleteVariable; var errorCatched = window.errorCatched;');
   } catch {}
   if (typeof window.$ === 'function') log('info', 'dollar-shim-ready');
   else log('warn', 'dollar-shim-missing');
@@ -2834,6 +4652,51 @@ const makeCodeBlock = ({ lang, code, messageId, preserveHtmlNewlines = false, se
     const forceMvuCompat = Boolean(directBodyLoadUrl);
     const needsMvuCompat = allowScripts && (forceMvuCompat || shouldEnableMvuCompat(code));
     const needsFrameworkShim = allowScripts && shouldInjectFrameworkShim(code, { directLoad: Boolean(directBodyLoadUrl) });
+    const messageIndex = (() => {
+        try {
+            const sid = String(sessionId || '').trim();
+            const mid = String(messageId || '').trim();
+            const store = window.appBridge?.chatStore;
+            if (!store || !sid || !mid) return null;
+            const list = Array.isArray(store.getMessages?.(sid)) ? store.getMessages(sid) : [];
+            const idx = list.findIndex((item) => String(item?.id || '').trim() === mid);
+            return idx >= 0 ? idx : null;
+        } catch {
+            return null;
+        }
+    })();
+    const compatSeedMessages = (() => {
+        try {
+            const sid = String(sessionId || '').trim();
+            const mid = String(messageId || '').trim();
+            const store = window.appBridge?.chatStore;
+            if (!store || !sid || !mid) return [];
+            const msg = store.findMessage?.(mid, sid);
+            if (!msg) return [];
+            const idx = Number.isInteger(messageIndex) ? messageIndex : null;
+            const text =
+                String(
+                    (typeof msg.rawSource === 'string' && msg.rawSource) ||
+                    (typeof msg.raw_source === 'string' && msg.raw_source) ||
+                    (typeof msg.rawOriginal === 'string' && msg.rawOriginal) ||
+                    (typeof msg.raw === 'string' && msg.raw) ||
+                    (typeof msg.content === 'string' && msg.content) ||
+                    ''
+                );
+            return [{
+                id: mid,
+                message_id: idx !== null ? idx : mid,
+                role: String(msg.role || 'assistant'),
+                message: text,
+                data: msg?.data && typeof msg.data === 'object' ? msg.data : {},
+                extra: msg?.extra && typeof msg.extra === 'object' ? msg.extra : {},
+                name: String(msg?.name || ''),
+                is_hidden: Boolean(msg?.is_system || msg?.isHidden),
+            }];
+        } catch {
+            return [];
+        }
+    })();
     const useLegacyMvuBridge = !directBodyLoadUrl;
     const mvuBridgeBuilder = useLegacyMvuBridge ? buildMvuCompatBridgeLegacy : buildMvuCompatBridge;
     const sourceCompat = analyzeCompatProfile(code, { directLoad: Boolean(directBodyLoadUrl) });
@@ -2852,6 +4715,79 @@ const makeCodeBlock = ({ lang, code, messageId, preserveHtmlNewlines = false, se
             const compatMsg = `compat-profile=${sourceCompat.profile} flags=${summarizeCompatFlags(sourceCompat.flags) || 'none'}${debugTag ? ` tag=${debugTag}` : ''}`;
             emitDebugLog({ source: 'rich', type: 'info', message: compatMsg, force: true });
             logger.info(`[rich] ${compatMsg}`);
+            if (debugTag === 'rp-greeting') {
+                const importUrlSet = new Set();
+                const codeText = String(code || '');
+                const scriptSrcList = Array.from(codeText.matchAll(/<script\b[^>]*\bsrc\s*=\s*["']([^"']+)["'][^>]*>/gi))
+                    .map((m) => String(m?.[1] || '').trim())
+                    .filter(Boolean);
+                const inlineScriptList = Array.from(codeText.matchAll(/<script\b(?![^>]*\bsrc\s*=)[^>]*>([\s\S]*?)<\/script>/gi))
+                    .map((m) => String(m?.[1] || '').trim())
+                    .filter(Boolean);
+                const contentMatch = codeText.match(/<content>([\s\S]*?)<\/content>/i);
+                const contentBlock = contentMatch ? String(contentMatch[1] || '') : '';
+                const contentHasBr = /<br\s*\/?>/i.test(contentBlock) ? 1 : 0;
+                const contentLineCount = contentBlock
+                    ? contentBlock.split(/\r?\n/).filter((line) => String(line || '').trim().length > 0).length
+                    : 0;
+                const narrationCount = (contentBlock.match(/\[旁白\]\|/g) || []).length;
+                const importFromRe = /\bimport\s*(?:[\w*\s{},]*?\sfrom\s*)?["']([^"']+)["']/g;
+                const dynamicImportRe = /\bimport\s*\(\s*["']([^"']+)["']\s*\)/g;
+                let importMatch;
+                while ((importMatch = importFromRe.exec(codeText))) {
+                    const u = String(importMatch[1] || '').trim();
+                    if (u) importUrlSet.add(u);
+                }
+                while ((importMatch = dynamicImportRe.exec(codeText))) {
+                    const u = String(importMatch[1] || '').trim();
+                    if (u) importUrlSet.add(u);
+                }
+                const importUrls = Array.from(importUrlSet);
+                const preview = String(code || '')
+                    .replace(/\s+/g, ' ')
+                    .slice(0, 220);
+                const probeMsg =
+                    `html-probe len=${String(code || '').length}` +
+                    ` hasContentTag=${/<\s*content\b/i.test(code) ? 1 : 0}` +
+                    ` hasStateBar=${/<\s*state_bar\b/i.test(code) ? 1 : 0}` +
+                    ` hasNarration=${/\[旁白\]\|/.test(code) ? 1 : 0}` +
+                    ` usesGetChatMessages=${/getChatMessages\s*\(/.test(code) ? 1 : 0}` +
+                    ` usesGetChatMessage=${/getChatMessage\s*\(/.test(code) ? 1 : 0}` +
+                    ` usesGetContext=${/getContext\s*\(/.test(code) ? 1 : 0}` +
+                    ` usesSetChatMessage=${/setChatMessage\s*\(/.test(code) ? 1 : 0}` +
+                    ` usesLodash=${/\b_\s*\./.test(code) ? 1 : 0}` +
+                    ` importUrlCount=${importUrls.length}` +
+                    ` scriptSrcCount=${scriptSrcList.length}` +
+                    ` inlineScriptCount=${inlineScriptList.length}` +
+                    ` contentBlockLen=${contentBlock.length}` +
+                    ` contentHasBr=${contentHasBr}` +
+                    ` contentLineCount=${contentLineCount}` +
+                    ` narrationCount=${narrationCount}` +
+                    ` tag=${debugTag}`;
+                emitDebugLog({ source: 'rich', type: 'info', message: probeMsg, force: true });
+                logger.info(`[rich] ${probeMsg}`);
+                if (importUrls.length) {
+                    const importMsg = `html-import-urls ${importUrls.slice(0, 6).join(' | ')}${importUrls.length > 6 ? ' | ...' : ''} tag=${debugTag}`;
+                    emitDebugLog({ source: 'rich', type: 'info', message: importMsg, force: true });
+                    logger.info(`[rich] ${importMsg}`);
+                }
+                if (scriptSrcList.length) {
+                    const srcMsg = `html-script-src ${scriptSrcList.slice(0, 6).join(' | ')}${scriptSrcList.length > 6 ? ' | ...' : ''} tag=${debugTag}`;
+                    emitDebugLog({ source: 'rich', type: 'info', message: srcMsg, force: true });
+                    logger.info(`[rich] ${srcMsg}`);
+                }
+                if (inlineScriptList.length) {
+                    const inlinePreview = inlineScriptList[0].replace(/\s+/g, ' ').slice(0, 180);
+                    const inlineMsg = `html-inline-script-preview ${inlinePreview}${inlineScriptList[0].length > 180 ? '...' : ''} tag=${debugTag}`;
+                    emitDebugLog({ source: 'rich', type: 'info', message: inlineMsg, force: true });
+                    logger.info(`[rich] ${inlineMsg}`);
+                }
+                if (preview) {
+                    const previewMsg = `html-preview ${preview}${String(code || '').length > 220 ? '...' : ''} tag=${debugTag}`;
+                    emitDebugLog({ source: 'rich', type: 'info', message: previewMsg, force: true });
+                    logger.info(`[rich] ${previewMsg}`);
+                }
+            }
             if (directBodyLoadUrl) {
                 const bodyLoadMsg = `body-load-detected url=${directBodyLoadUrl}${debugTag ? ` tag=${debugTag}` : ''}`;
                 emitDebugLog({ source: 'rich', type: 'info', message: bodyLoadMsg, force: true });
@@ -2885,7 +4821,9 @@ const makeCodeBlock = ({ lang, code, messageId, preserveHtmlNewlines = false, se
             error: '',
         });
 
-        let html = preserveHtmlNewlines ? injectHtmlNewlines(code) : code;
+        // Keep full HTML documents byte-stable: injecting <br> into text nodes can
+        // break card scripts that parse <content>/<state_bar> by raw line breaks.
+        let html = (preserveHtmlNewlines && !looksLikeHtmlDoc) ? injectHtmlNewlines(code) : code;
         if (allowScripts) {
             html = stripInlineCspMeta(html);
             const rewriteResult = maybeRewriteMvuInlineHelpers(html, { needsMvuCompat, directLoad: Boolean(directBodyLoadUrl) });
@@ -2934,13 +4872,21 @@ const makeCodeBlock = ({ lang, code, messageId, preserveHtmlNewlines = false, se
         const baseHref = allowScripts ? `${window.location.origin}/` : '';
         const vueRuntimePreference = detectVueRuntimePreference(html);
         const needsZodShim = allowScripts && shouldInjectZodShim(html);
-        const dollarShim = (allowScripts && !useLegacyMvuBridge)
-            ? buildDollarGlobalShim({ iframeId, debugTag, appOrigin: window.location.origin, needsZodShim })
+        const dollarShim = allowScripts
+            ? buildDollarGlobalShim({
+                iframeId,
+                debugTag,
+                appOrigin: window.location.origin,
+                needsZodShim,
+                messageId,
+                messageIndex,
+                seedMessages: compatSeedMessages,
+            })
             : '';
         const frameworkShim = (allowScripts && !useLegacyMvuBridge && needsFrameworkShim)
             ? buildFrameworkGlobalShim({ iframeId, debugTag, vueMajor: vueRuntimePreference, appOrigin: window.location.origin })
             : '';
-        const mvuCompatBridge = needsMvuCompat ? mvuBridgeBuilder({ iframeId, sessionId, debugTag, messageId }) : '';
+        const mvuCompatBridge = needsMvuCompat ? mvuBridgeBuilder({ iframeId, sessionId, debugTag, messageId, messageIndex }) : '';
         if (needsMvuCompat && (Boolean(debugTag) || shouldLogRichDebug())) {
             const modeMsg = `mvu-bridge=${useLegacyMvuBridge ? 'legacy' : 'enhanced'}${debugTag ? ` tag=${debugTag}` : ''}`;
             emitDebugLog({ source: 'rich', type: 'info', message: modeMsg, force: true });
@@ -3021,13 +4967,16 @@ const makeCodeBlock = ({ lang, code, messageId, preserveHtmlNewlines = false, se
                         debugTag,
                         appOrigin: window.location.origin,
                         needsZodShim: directNeedsZodShim,
+                        messageId,
+                        messageIndex,
+                        seedMessages: compatSeedMessages,
                     });
                     const directNeedsFrameworkShim = shouldInjectFrameworkShim(directHtml, { directLoad: true });
                     const directVueRuntimePreference = detectVueRuntimePreference(directHtml);
                     const directFrameworkShim = directNeedsFrameworkShim
                         ? buildFrameworkGlobalShim({ iframeId, debugTag, vueMajor: directVueRuntimePreference, appOrigin: window.location.origin })
                         : '';
-                    const directMvuBridge = needsMvuCompat ? buildMvuCompatBridge({ iframeId, sessionId, debugTag, messageId }) : '';
+                    const directMvuBridge = needsMvuCompat ? buildMvuCompatBridge({ iframeId, sessionId, debugTag, messageId, messageIndex }) : '';
                     const directDoc = buildIframeSrcDoc(directHtml, {
                         iframeId,
                         needsVhHandling: fetchedNeedsVh,
@@ -3085,13 +5034,16 @@ const makeCodeBlock = ({ lang, code, messageId, preserveHtmlNewlines = false, se
                         debugTag,
                         appOrigin: window.location.origin,
                         needsZodShim: directNeedsZodShim,
+                        messageId,
+                        messageIndex,
+                        seedMessages: compatSeedMessages,
                     });
                     const directNeedsFrameworkShim = shouldInjectFrameworkShim(directHtml, { directLoad: true });
                     const directVueRuntimePreference = detectVueRuntimePreference(directHtml);
                     const directFrameworkShim = directNeedsFrameworkShim
                         ? buildFrameworkGlobalShim({ iframeId, debugTag, vueMajor: directVueRuntimePreference, appOrigin: window.location.origin })
                         : '';
-                    const directMvuBridge = needsMvuCompat ? buildMvuCompatBridge({ iframeId, sessionId, debugTag, messageId }) : '';
+                    const directMvuBridge = needsMvuCompat ? buildMvuCompatBridge({ iframeId, sessionId, debugTag, messageId, messageIndex }) : '';
                     const directDoc = buildIframeSrcDoc(directHtml, {
                         iframeId,
                         needsVhHandling: fetchedNeedsVh,
@@ -3339,11 +5291,246 @@ export const setupIframeResizeListener = () => {
             return false;
         }
     };
+    const normalizeCompatFieldValues = (input) => {
+        if (typeof input === 'string') return { message: input };
+        if (!input || typeof input !== 'object') return {};
+        return { ...input };
+    };
+    const resolveCompatSessionId = (iframe, sessionId) => {
+        const sid = String(sessionId || iframe?.dataset?.sessionId || window.appBridge?.activeSessionId || '').trim();
+        return sid;
+    };
+    const resolveCompatMessageId = (sessionId, rawRef, fallbackRef = '') => {
+        const sid = String(sessionId || '').trim();
+        const store = window.appBridge?.chatStore;
+        const fallback = String(fallbackRef || '').trim();
+        const ref = String(rawRef ?? '').trim();
+        if (!store || !sid) return ref || fallback;
+        const pickByNumericIndex = (raw) => {
+            const num = Number(raw);
+            if (!Number.isFinite(num) || !Number.isInteger(num)) return '';
+            const list = Array.isArray(store.getMessages?.(sid)) ? store.getMessages(sid) : [];
+            if (!list.length) return '';
+            const idx = num < 0 ? list.length + num : num;
+            if (idx < 0 || idx >= list.length) return '';
+            return String(list[idx]?.id || '').trim();
+        };
+        if (ref) {
+            const direct = store.findMessage?.(ref, sid);
+            if (direct) return ref;
+            const byIndex = pickByNumericIndex(ref);
+            if (byIndex) return byIndex;
+            return ref;
+        }
+        if (fallback) {
+            const direct = store.findMessage?.(fallback, sid);
+            if (direct) return fallback;
+            const byIndex = pickByNumericIndex(fallback);
+            if (byIndex) return byIndex;
+            return fallback;
+        }
+        return '';
+    };
+    const applyCompatSetChatMessage = async ({ iframe, sessionId, messageRef, fieldValues }) => {
+        const store = window.appBridge?.chatStore;
+        const ui = window.appBridge?.chatUI;
+        const sid = String(sessionId || '').trim();
+        if (!store || !sid) return { ok: false, reason: 'missing-store-or-session' };
+        const fallbackRef = String(iframe?.dataset?.msgId || '').trim();
+        const targetId = resolveCompatMessageId(sid, messageRef, fallbackRef);
+        if (!targetId) return { ok: false, reason: 'missing-message-id' };
+        const current = store.findMessage?.(targetId, sid);
+        if (!current) return { ok: false, reason: 'message-not-found', messageId: targetId };
+        const fields = normalizeCompatFieldValues(fieldValues);
+        const hasMessage = Object.prototype.hasOwnProperty.call(fields, 'message');
+        const hasData = Object.prototype.hasOwnProperty.call(fields, 'data');
+        if (!hasMessage && !hasData) return { ok: true, messageId: targetId };
+        if (hasMessage) {
+            const nextRaw = String(fields.message ?? '');
+            const handler = ui && typeof ui.actionHandler === 'function' ? ui.actionHandler : null;
+            if (handler && String(current.role || '') === 'assistant') {
+                try {
+                    await handler('edit-assistant-raw', current, {
+                        text: nextRaw,
+                        regexEditMode: false,
+                        source: 'iframe-set-chat-message',
+                    });
+                    const latest = store.findMessage?.(targetId, sid);
+                    if (latest) {
+                        const latestRawSource =
+                            (typeof latest.rawSource === 'string' && latest.rawSource) ||
+                            (typeof latest.raw_source === 'string' && latest.raw_source) ||
+                            '';
+                        const latestRaw = typeof latest.raw === 'string' ? latest.raw : '';
+                        const latestContent = typeof latest.content === 'string' ? latest.content : '';
+                        const hasContentTag = /<\s*content\b/i.test(latestRawSource) ? 1 : 0;
+                        emitDebugLog({
+                            source: 'iframe',
+                            type: 'info',
+                            message:
+                                `set-chat-message-updated sid=${sid} mid=${targetId} ` +
+                                `rawSourceLen=${latestRawSource.length} rawLen=${latestRaw.length} contentLen=${latestContent.length} hasContentTag=${hasContentTag}`,
+                            force: true,
+                        });
+                    }
+                    if (latest && store.getCurrent?.() === sid && typeof ui.updateMessage === 'function') {
+                        ui.updateMessage(targetId, latest);
+                    }
+                    return { ok: true, messageId: targetId };
+                } catch (err) {
+                    logger.warn('iframe set-chat-message via action handler failed', err);
+                }
+            }
+            let stored = nextRaw;
+            let display = nextRaw;
+            try {
+                stored = window.appBridge?.applyOutputStoredRegex
+                    ? window.appBridge.applyOutputStoredRegex(nextRaw, { isEdit: false, depth: 0 })
+                    : nextRaw;
+                display = window.appBridge?.applyOutputDisplayRegex
+                    ? window.appBridge.applyOutputDisplayRegex(stored, { isEdit: false, depth: 0 })
+                    : stored;
+            } catch {}
+            const patch = {
+                rawOriginal: nextRaw,
+                rawSource: nextRaw,
+                raw: stored,
+                content: display,
+            };
+            if (hasData) patch.data = fields.data;
+            const updated = store.updateMessage?.(targetId, patch, sid) || null;
+            if (updated) {
+                const nextRawSource =
+                    (typeof updated.rawSource === 'string' && updated.rawSource) ||
+                    (typeof updated.raw_source === 'string' && updated.raw_source) ||
+                    '';
+                const nextRaw = typeof updated.raw === 'string' ? updated.raw : '';
+                const nextContent = typeof updated.content === 'string' ? updated.content : '';
+                const hasContentTag = /<\s*content\b/i.test(nextRawSource) ? 1 : 0;
+                emitDebugLog({
+                    source: 'iframe',
+                    type: 'info',
+                    message:
+                        `set-chat-message-updated sid=${sid} mid=${targetId} ` +
+                        `rawSourceLen=${nextRawSource.length} rawLen=${nextRaw.length} contentLen=${nextContent.length} hasContentTag=${hasContentTag}`,
+                    force: true,
+                });
+            }
+            if (updated && store.getCurrent?.() === sid && typeof ui?.updateMessage === 'function') {
+                ui.updateMessage(targetId, updated);
+            }
+            return { ok: Boolean(updated), messageId: targetId };
+        }
+        if (hasData) {
+            const updated = store.updateMessage?.(targetId, { data: fields.data }, sid) || null;
+            if (updated && store.getCurrent?.() === sid && typeof ui?.updateMessage === 'function') {
+                ui.updateMessage(targetId, updated);
+            }
+            return { ok: Boolean(updated), messageId: targetId };
+        }
+        return { ok: true, messageId: targetId };
+    };
+    const applyCompatSetChatMessages = async ({ iframe, sessionId, messages }) => {
+        const list = Array.isArray(messages) ? messages : [];
+        let applied = 0;
+        let skipped = 0;
+        for (const item of list) {
+            if (!item || typeof item !== 'object') {
+                skipped += 1;
+                continue;
+            }
+            const messageRef =
+                item.message_id ??
+                item.messageId ??
+                item.id ??
+                item.mid ??
+                (item.message && !item.data ? (iframe?.dataset?.msgId || '') : '');
+            const fields = {};
+            if (Object.prototype.hasOwnProperty.call(item, 'message')) fields.message = item.message;
+            if (Object.prototype.hasOwnProperty.call(item, 'data')) fields.data = item.data;
+            const result = await applyCompatSetChatMessage({
+                iframe,
+                sessionId,
+                messageRef,
+                fieldValues: fields,
+            });
+            if (result?.ok) applied += 1;
+            else skipped += 1;
+        }
+        return { ok: skipped === 0, applied, skipped, total: list.length };
+    };
 
     window.addEventListener('message', (e) => {
         const data = e?.data;
         if (!data || typeof data !== 'object') return;
         const esc = (CSS && typeof CSS.escape === 'function') ? CSS.escape : (s) => String(s).replace(/[^a-zA-Z0-9_-]/g, '\\$&');
+        if (data.type === 'chatapp:set-chat-message') {
+            const id = String(data.id || '');
+            if (!id) return;
+            const iframe = document.querySelector(`iframe[data-iframe-id="${esc(id)}"]`);
+            if (!iframe) return;
+            void (async () => {
+                const sid = resolveCompatSessionId(iframe, data.sessionId);
+                const result = await applyCompatSetChatMessage({
+                    iframe,
+                    sessionId: sid,
+                    messageRef: data.messageId,
+                    fieldValues: data.fieldValues,
+                });
+                const info = `set-chat-message id=${id} ok=${result?.ok ? 1 : 0} sid=${sid || 'none'} mid=${String(result?.messageId || data.messageId || '')}`;
+                emitDebugLog({
+                    source: 'iframe',
+                    type: result?.ok ? 'info' : 'warn',
+                    message: info,
+                    force: true,
+                });
+                try {
+                    e.source?.postMessage({
+                        type: 'chatapp:set-chat-message-result',
+                        id,
+                        requestId: String(data.requestId || ''),
+                        ok: Boolean(result?.ok),
+                        reason: String(result?.reason || ''),
+                        messageId: String(result?.messageId || ''),
+                    }, '*');
+                } catch {}
+            })();
+            return;
+        }
+        if (data.type === 'chatapp:set-chat-messages') {
+            const id = String(data.id || '');
+            if (!id) return;
+            const iframe = document.querySelector(`iframe[data-iframe-id="${esc(id)}"]`);
+            if (!iframe) return;
+            void (async () => {
+                const sid = resolveCompatSessionId(iframe, data.sessionId);
+                const result = await applyCompatSetChatMessages({
+                    iframe,
+                    sessionId: sid,
+                    messages: data.messages,
+                });
+                const info = `set-chat-messages id=${id} ok=${result?.ok ? 1 : 0} sid=${sid || 'none'} applied=${Number(result?.applied || 0)} skipped=${Number(result?.skipped || 0)} total=${Number(result?.total || 0)}`;
+                emitDebugLog({
+                    source: 'iframe',
+                    type: result?.ok ? 'info' : 'warn',
+                    message: info,
+                    force: true,
+                });
+                try {
+                    e.source?.postMessage({
+                        type: 'chatapp:set-chat-messages-result',
+                        id,
+                        requestId: String(data.requestId || ''),
+                        ok: Boolean(result?.ok),
+                        reason: result?.ok ? '' : 'partial-or-failed',
+                        applied: Number(result?.applied || 0),
+                        skipped: Number(result?.skipped || 0),
+                        total: Number(result?.total || 0),
+                    }, '*');
+                } catch {}
+            })();
+            return;
+        }
         if (data.type === 'chatapp:iframe-ready') {
             const id = String(data.id || '');
             if (!id) return;

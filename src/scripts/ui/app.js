@@ -86,13 +86,23 @@ const reportFatalError = (err, label = 'App init failed') => {
   } catch {}
 };
 
+const isIgnorableRuntimeNoise = (value = '') => {
+  const msg = String(value || '');
+  if (!msg) return false;
+  return /resizeobserver loop (limit exceeded|completed with (?:undelivered|delivered) notifications)/i.test(msg);
+};
+
 window.addEventListener('error', (event) => {
   if (!event) return;
+  const msg = String(event?.message || event?.error?.message || event?.error || '');
+  if (isIgnorableRuntimeNoise(msg)) return;
   reportFatalError(event.error || event.message || 'unknown error', 'Runtime error');
 });
 
 window.addEventListener('unhandledrejection', (event) => {
   if (!event) return;
+  const msg = String(event?.reason?.message || event?.reason || '');
+  if (isIgnorableRuntimeNoise(msg)) return;
   reportFatalError(event.reason || 'unhandled rejection', 'Unhandled rejection');
 });
 
@@ -16006,6 +16016,7 @@ Phase G（Frame 36）：循环衔接
     }
     if (action === 'edit-assistant-raw' && message.role === 'assistant') {
       const next = String(payload?.text ?? '');
+      const regexEditMode = payload?.regexEditMode === false ? false : true;
       const stripFn =
         (typeof stripUpdateVariableBlocks === 'function' && stripUpdateVariableBlocks) ||
         (typeof stripUpdateVariableBloacks === 'function' && stripUpdateVariableBloacks) ||
@@ -16030,10 +16041,10 @@ Phase G（Frame 36）：循环衔接
         let display = finalSource;
         try {
           stored = normalizeCreativeLineBreaks(
-            window.appBridge.applyOutputStoredRegex(finalSource, { isEdit: true, depth: 0 }),
+            window.appBridge.applyOutputStoredRegex(finalSource, { isEdit: regexEditMode, depth: 0 }),
           );
           display = normalizeCreativeLineBreaks(
-            window.appBridge.applyOutputDisplayRegex(stored, { isEdit: true, depth: 0 }),
+            window.appBridge.applyOutputDisplayRegex(stored, { isEdit: regexEditMode, depth: 0 }),
           );
         } catch {}
         const nextMeta =
@@ -16057,8 +16068,8 @@ Phase G（Frame 36）：循环衔接
         let stored = cleanedForRender;
         let display = cleanedForRender;
         try {
-          stored = window.appBridge.applyOutputStoredRegex(cleanedForRender, { isEdit: true, depth: 0 });
-          display = window.appBridge.applyOutputDisplayRegex(stored, { isEdit: true, depth: 0 });
+          stored = window.appBridge.applyOutputStoredRegex(cleanedForRender, { isEdit: regexEditMode, depth: 0 });
+          display = window.appBridge.applyOutputDisplayRegex(stored, { isEdit: regexEditMode, depth: 0 });
         } catch {}
         const parsed = parseSpecialMessage(display);
         const nextMeta = message?.meta && typeof message.meta === 'object' ? { ...message.meta } : undefined;
@@ -16295,20 +16306,24 @@ Phase G（Frame 36）：循环衔接
     window.addEventListener('unload', () => uiLog('unload'));
     window.addEventListener('error', e => {
       const err = e?.error;
+      const msg = String(e?.message || err?.message || err || '');
+      if (isIgnorableRuntimeNoise(msg)) return;
       uiLog('window.error', {
-        msg: String(e?.message || err?.message || err || ''),
+        msg,
         file: e?.filename,
         line: e?.lineno,
         col: e?.colno,
         stack: err?.stack || '',
       });
     });
-    window.addEventListener('unhandledrejection', e =>
+    window.addEventListener('unhandledrejection', e => {
+      const msg = String(e?.reason?.message || e?.reason || '');
+      if (isIgnorableRuntimeNoise(msg)) return;
       uiLog('unhandledrejection', {
-        reason: String(e?.reason?.message || e?.reason || ''),
+        reason: msg,
         stack: e?.reason?.stack || '',
-      }),
-    );
+      });
+    });
   } catch {}
 
   async function handleDocumentFile(file) {
