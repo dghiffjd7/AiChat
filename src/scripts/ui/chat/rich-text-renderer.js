@@ -131,6 +131,12 @@ const summarizeCompatFlags = (flags = {}) => Object.entries(flags)
     .filter(([, v]) => Boolean(v))
     .map(([k]) => k)
     .join(',');
+const detectVueRuntimePreference = (html) => {
+    const raw = String(html || '');
+    if (!raw) return 3;
+    if (/\bnew\s+Vue\s*\(|\bVue\.use\s*\(|vue-router@3|vue@2/i.test(raw)) return 2;
+    return 3;
+};
 const diagnoseIframeError = (message = '') => {
     const msg = String(message || '');
     if (!msg) return '';
@@ -1941,9 +1947,32 @@ const maybeRewriteMvuInlineHelpers = (htmlCode, { needsMvuCompat = false, direct
     return rewriteErrorCatchedOnly(html);
 };
 
-const buildFrameworkGlobalShim = ({ iframeId = '', debugTag = '' } = {}) => {
+const buildFrameworkGlobalShim = ({ iframeId = '', debugTag = '', vueMajor = 3 } = {}) => {
     const id = String(iframeId || '');
     const tag = String(debugTag || '');
+    const major = Number(vueMajor) === 2 ? 2 : 3;
+    const vueUrls = major === 2
+        ? [
+            'https://testingcf.jsdelivr.net/npm/vue@2/dist/vue.min.js',
+            'https://cdn.jsdelivr.net/npm/vue@2/dist/vue.min.js',
+            'https://unpkg.com/vue@2/dist/vue.min.js',
+        ]
+        : [
+            'https://testingcf.jsdelivr.net/npm/vue@3/dist/vue.global.prod.js',
+            'https://cdn.jsdelivr.net/npm/vue@3/dist/vue.global.prod.js',
+            'https://unpkg.com/vue@3/dist/vue.global.prod.js',
+        ];
+    const routerUrls = major === 2
+        ? [
+            'https://testingcf.jsdelivr.net/npm/vue-router@3/dist/vue-router.min.js',
+            'https://cdn.jsdelivr.net/npm/vue-router@3/dist/vue-router.min.js',
+            'https://unpkg.com/vue-router@3/dist/vue-router.min.js',
+        ]
+        : [
+            'https://testingcf.jsdelivr.net/npm/vue-router@4/dist/vue-router.global.prod.js',
+            'https://cdn.jsdelivr.net/npm/vue-router@4/dist/vue-router.global.prod.js',
+            'https://unpkg.com/vue-router@4/dist/vue-router.global.prod.js',
+        ];
     return `<script>
 (() => {
   const CHATAPP_IFRAME_ID = ${JSON.stringify(id)};
@@ -1968,21 +1997,15 @@ const buildFrameworkGlobalShim = ({ iframeId = '', debugTag = '' } = {}) => {
       if (window[name]) break;
       const u = String(urls[i] || '');
       if (!u) continue;
-      document.write('<script src="' + u + '"><\\\\/script>');
+      log('info', 'compat-load-attempt name=' + name + ' url=' + u);
+      document.write('<script src="' + u + '"><\\/script>');
     }
     if (window[name]) log('info', readyMsg);
     else log('warn', missMsg);
   };
-  ensureGlobal('Vue', [
-    'https://testingcf.jsdelivr.net/npm/vue@3/dist/vue.global.prod.js',
-    'https://cdn.jsdelivr.net/npm/vue@3/dist/vue.global.prod.js',
-    'https://unpkg.com/vue@3/dist/vue.global.prod.js',
-  ], 'vue-shim-ready', 'vue-shim-missing');
-  ensureGlobal('VueRouter', [
-    'https://testingcf.jsdelivr.net/npm/vue-router@4/dist/vue-router.global.prod.js',
-    'https://cdn.jsdelivr.net/npm/vue-router@4/dist/vue-router.global.prod.js',
-    'https://unpkg.com/vue-router@4/dist/vue-router.global.prod.js',
-  ], 'vue-router-shim-ready', 'vue-router-shim-missing');
+  log('info', 'vue-shim-mode major=' + ${JSON.stringify(major)});
+  ensureGlobal('Vue', ${JSON.stringify(vueUrls)}, 'vue-shim-ready', 'vue-shim-missing');
+  ensureGlobal('VueRouter', ${JSON.stringify(routerUrls)}, 'vue-router-shim-ready', 'vue-router-shim-missing');
 })();
 </script>`;
 };
@@ -2176,9 +2199,10 @@ const makeCodeBlock = ({ lang, code, messageId, preserveHtmlNewlines = false, se
         });
         const bridgeScriptUrl = '';
         const baseHref = allowScripts ? `${window.location.origin}/` : '';
+        const vueRuntimePreference = detectVueRuntimePreference(html);
         const dollarShim = (allowScripts && !useLegacyMvuBridge) ? buildDollarGlobalShim({ iframeId, debugTag }) : '';
         const frameworkShim = (allowScripts && !useLegacyMvuBridge && needsFrameworkShim)
-            ? buildFrameworkGlobalShim({ iframeId, debugTag })
+            ? buildFrameworkGlobalShim({ iframeId, debugTag, vueMajor: vueRuntimePreference })
             : '';
         const mvuCompatBridge = needsMvuCompat ? mvuBridgeBuilder({ iframeId, sessionId, debugTag }) : '';
         if (needsMvuCompat && (Boolean(debugTag) || shouldLogRichDebug())) {
@@ -2246,7 +2270,10 @@ const makeCodeBlock = ({ lang, code, messageId, preserveHtmlNewlines = false, se
                     if (fetchedNeedsVh) directHtml = processAllVhUnits(directHtml);
                     const directDollarShim = buildDollarGlobalShim({ iframeId, debugTag });
                     const directNeedsFrameworkShim = shouldInjectFrameworkShim(directHtml, { directLoad: true });
-                    const directFrameworkShim = directNeedsFrameworkShim ? buildFrameworkGlobalShim({ iframeId, debugTag }) : '';
+                    const directVueRuntimePreference = detectVueRuntimePreference(directHtml);
+                    const directFrameworkShim = directNeedsFrameworkShim
+                        ? buildFrameworkGlobalShim({ iframeId, debugTag, vueMajor: directVueRuntimePreference })
+                        : '';
                     const directMvuBridge = needsMvuCompat ? buildMvuCompatBridge({ iframeId, sessionId, debugTag }) : '';
                     const directDoc = buildIframeSrcDoc(directHtml, {
                         iframeId,
@@ -2283,7 +2310,10 @@ const makeCodeBlock = ({ lang, code, messageId, preserveHtmlNewlines = false, se
                     writeDirectLoadCache(directBodyLoadUrl, directHtml);
                     const directDollarShim = buildDollarGlobalShim({ iframeId, debugTag });
                     const directNeedsFrameworkShim = shouldInjectFrameworkShim(directHtml, { directLoad: true });
-                    const directFrameworkShim = directNeedsFrameworkShim ? buildFrameworkGlobalShim({ iframeId, debugTag }) : '';
+                    const directVueRuntimePreference = detectVueRuntimePreference(directHtml);
+                    const directFrameworkShim = directNeedsFrameworkShim
+                        ? buildFrameworkGlobalShim({ iframeId, debugTag, vueMajor: directVueRuntimePreference })
+                        : '';
                     const directMvuBridge = needsMvuCompat ? buildMvuCompatBridge({ iframeId, sessionId, debugTag }) : '';
                     const directDoc = buildIframeSrcDoc(directHtml, {
                         iframeId,
