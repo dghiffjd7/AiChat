@@ -2,13 +2,38 @@
   let applied = false;
   let currentId = '';
   let layoutScheduled = false;
-  let lastHeight = 0;
+  let pendingSource = 'bridge';
+  let pendingForce = false;
+  let lastSentHeight = 0;
+  let lastSentMode = 'document';
+  let lastSentLock = false;
+  let resizeSeq = 0;
   let pressTimer = null;
   let pressActive = false;
   let touchActive = false;
   let touchStartPoint = null;
   const moveThreshold = 12;
   let bypassed = false;
+  let forceNextResize = false;
+  let viewportLogged = false;
+  let lockLogged = false;
+
+  const normalizeSource = (source) => {
+    const raw = String(source || '').trim().toLowerCase();
+    if (raw === 'observer' || raw === 'fallback') return raw;
+    return 'bridge';
+  };
+
+  const sendDebug = (level, message) => {
+    try {
+      parent.postMessage({
+        type: 'chatapp:iframe-debug',
+        id: currentId,
+        level: String(level || 'info'),
+        message: String(message || ''),
+      }, '*');
+    } catch {}
+  };
 
   const getPoint = (ev) => {
     try {
@@ -49,7 +74,52 @@
     }, 520);
   };
 
-  const measureContentHeight = () => {
+  const readMetaPolicy = () => {
+    try {
+      const metaHeight = document.querySelector('meta[name="chatapp-height"]');
+      const metaResize = document.querySelector('meta[name="chatapp-resize"]');
+      const rawHeight = String(metaHeight?.getAttribute('content') || '').trim();
+      const parsedHeight = Number(rawHeight);
+      const height = Number.isFinite(parsedHeight) && parsedHeight > 0 ? parsedHeight : 0;
+      const resize = String(metaResize?.getAttribute('content') || '').trim().toLowerCase();
+      let mode = '';
+      if (resize.includes('viewport')) mode = 'viewport';
+      else if (resize.includes('document')) mode = 'document';
+      const lock = resize === 'none' || resize === 'lock' || resize === 'locked';
+      return { height, mode, lock };
+    } catch {
+      return { height: 0, mode: '', lock: false };
+    }
+  };
+
+  const detectViewportMode = () => {
+    try {
+      const body = document.body;
+      const docEl = document.documentElement;
+      if (!body || !docEl) return false;
+      const bodyStyle = getComputedStyle(body);
+      const docStyle = getComputedStyle(docEl);
+      const overflowHidden = /hidden|clip/i.test(String(bodyStyle.overflowY || '')) ||
+        /hidden|clip/i.test(String(docStyle.overflowY || ''));
+      const fixedBody = String(bodyStyle.position || '').toLowerCase() === 'fixed';
+      const vhDecl = String(body.style.height || '') + ';' + String(body.style.minHeight || '') + ';' +
+        String(docEl.style.height || '') + ';' + String(docEl.style.minHeight || '');
+      const hasVhDecl = /\b\d+(?:\.\d+)?vh\b/i.test(vhDecl);
+      const viewportH = Math.max(window.innerHeight || 0, docEl.clientHeight || 0);
+      const bodyH = Math.max(body.scrollHeight || 0, body.offsetHeight || 0, body.clientHeight || 0);
+      const docH = Math.max(docEl.scrollHeight || 0, docEl.offsetHeight || 0, docEl.clientHeight || 0);
+      const closeToViewport = viewportH > 0 &&
+        Math.abs(bodyH - viewportH) <= 28 &&
+        Math.abs(docH - viewportH) <= 28;
+      if (overflowHidden && (fixedBody || hasVhDecl || closeToViewport)) return true;
+      if (fixedBody && closeToViewport) return true;
+      return false;
+    } catch {
+      return false;
+    }
+  };
+
+  const measureDocumentHeight = () => {
     try {
       const body = document.body;
       if (!body) return 0;
@@ -70,22 +140,67 @@
         const rect = body.getBoundingClientRect();
         return rect ? rect.height : 0;
       }
-      const padTop = parseFloat(getComputedStyle(body).paddingTop || '0') || 0;
-      const padBottom = parseFloat(getComputedStyle(body).paddingBottom || '0') || 0;
+      const style = getComputedStyle(body);
+      const padTop = parseFloat(style.paddingTop || '0') || 0;
+      const padBottom = parseFloat(style.paddingBottom || '0') || 0;
       return Math.max(0, maxBottom - minTop) + padTop + padBottom;
     } catch {
       return 0;
     }
   };
 
-  const postHeight = () => {
+  const measureViewportHeight = () => {
     try {
-      const rawH = measureContentHeight();
-      const h = Math.ceil(Math.max(120, rawH || 0));
-      if (h && h !== lastHeight) {
-        lastHeight = h;
-        parent.postMessage({ type: 'chatapp:iframe-resize', id: currentId, height: h }, '*');
+      const body = document.body;
+      const docEl = document.documentElement;
+      const viewport = Math.max(window.innerHeight || 0, docEl?.clientHeight || 0);
+      const bodyRect = body?.getBoundingClientRect?.();
+      const bodyH = bodyRect ? bodyRect.height : 0;
+      const docH = Math.max(docEl?.clientHeight || 0, docEl?.offsetHeight || 0);
+      return Math.max(viewport, bodyH, docH);
+    } catch {
+      return 0;
+    }
+  };
+
+  const postHeight = ({ source = 'bridge', force = false } = {}) => {
+    try {
+      const meta = readMetaPolicy();
+      const mode = meta.mode || (detectViewportMode() ? 'viewport' : 'document');
+      const lock = Boolean(meta.lock);
+      const measured = meta.height > 0
+        ? meta.height
+        : (mode === 'viewport' ? measureViewportHeight() : measureDocumentHeight());
+      const raw = lock && lastSentHeight > 0 && meta.height <= 0 ? lastSentHeight : measured;
+      const nextHeight = Math.ceil(Math.max(120, raw || 0));
+
+      if (mode === 'viewport' && !viewportLogged) {
+        viewportLogged = true;
+        sendDebug('info', 'height-mode=viewport');
       }
+      if (lock !== lockLogged) {
+        lockLogged = lock;
+        sendDebug('info', 'height-lock=' + (lock ? '1' : '0'));
+      }
+
+      if (!force && !forceNextResize && nextHeight === lastSentHeight && mode === lastSentMode && lock === lastSentLock) {
+        return;
+      }
+      forceNextResize = false;
+      resizeSeq += 1;
+      lastSentHeight = nextHeight;
+      lastSentMode = mode;
+      lastSentLock = lock;
+      parent.postMessage({
+        type: 'chatapp:iframe-resize',
+        id: currentId,
+        height: nextHeight,
+        seq: resizeSeq,
+        source: normalizeSource(source),
+        mode,
+        lock,
+        ts: Date.now(),
+      }, '*');
     } catch {}
   };
 
@@ -100,32 +215,38 @@
 
       const clientW = Math.max(1, docEl.clientWidth || 1);
       const scrollW = Math.max(body.scrollWidth || 0, docEl.scrollWidth || 0);
-      if (scrollW <= clientW + 2) {
-        postHeight();
-        return;
-      }
+      if (scrollW <= clientW + 2) return;
       let scale = clientW / scrollW;
-      if (scale > 0.98) {
-        postHeight();
-        return;
-      }
+      if (scale > 0.98) return;
       const minScale = 0.55;
       scale = Math.max(minScale, Math.min(1, scale));
       body.style.transformOrigin = 'top left';
       body.style.transform = 'scale(' + scale + ')';
       body.style.width = (100 / scale) + '%';
       docEl.style.overflowX = 'hidden';
-      postHeight();
     } catch {}
   };
 
-  const requestLayout = () => {
+  const requestLayout = (source = 'bridge', force = false) => {
+    pendingSource = normalizeSource(source);
+    if (force) pendingForce = true;
     if (layoutScheduled) return;
     layoutScheduled = true;
     requestAnimationFrame(() => {
       layoutScheduled = false;
+      const sourceToSend = pendingSource;
+      const forceToSend = pendingForce;
+      pendingSource = 'bridge';
+      pendingForce = false;
       fitToWidth();
-      postHeight();
+      postHeight({ source: sourceToSend, force: forceToSend });
+    });
+  };
+
+  const triggerBurstLayout = (source = 'observer') => {
+    forceNextResize = true;
+    [0, 60, 180, 360].forEach((ms) => {
+      setTimeout(() => { requestLayout(source, true); }, ms);
     });
   };
 
@@ -185,7 +306,24 @@
       try { ev.preventDefault(); } catch {}
     }, { passive: false });
     document.addEventListener('toggle', (ev) => {
-      if (ev && ev.target && ev.target.tagName === 'DETAILS') requestLayout();
+      if (ev && ev.target && ev.target.tagName === 'DETAILS') {
+        forceNextResize = true;
+        triggerBurstLayout('observer');
+      }
+    }, true);
+    document.addEventListener('transitionend', (ev) => {
+      const target = ev?.target;
+      if (!target || typeof target.closest !== 'function') return;
+      if (!target.closest('details')) return;
+      forceNextResize = true;
+      triggerBurstLayout('observer');
+    }, true);
+    document.addEventListener('animationend', (ev) => {
+      const target = ev?.target;
+      if (!target || typeof target.closest !== 'function') return;
+      if (!target.closest('details')) return;
+      forceNextResize = true;
+      triggerBurstLayout('observer');
     }, true);
   };
 
@@ -288,23 +426,40 @@
       parent.postMessage({ type: 'chatapp:iframe-host-ready', id }, '*');
     } catch {}
     bindBridgeEvents();
-    requestLayout();
+    requestLayout('bridge', true);
     [50, 150, 300, 600].forEach((ms) => {
-      setTimeout(() => { requestLayout(); }, ms);
+      setTimeout(() => { requestLayout('observer', true); }, ms);
     });
     try {
-      const ro = new ResizeObserver(() => { requestLayout(); });
+      const ro = new ResizeObserver(() => {
+        if (lastSentLock && lastSentMode === 'viewport') return;
+        requestLayout('observer');
+      });
       ro.observe(document.documentElement);
       if (document.body) ro.observe(document.body);
     } catch {
-      setInterval(() => { requestLayout(); }, 500);
+      setInterval(() => {
+        if (lastSentLock && lastSentMode === 'viewport') return;
+        requestLayout('fallback');
+      }, 500);
     }
     try {
-      const mo = new MutationObserver(() => { requestLayout(); });
-      if (document.body) mo.observe(document.body, { subtree: true, childList: true, attributes: true, characterData: true });
+      const mo = new MutationObserver(() => {
+        if (lastSentLock && lastSentMode === 'viewport') return;
+        requestLayout('observer');
+      });
+      if (document.body) {
+        mo.observe(document.body, { subtree: true, childList: true, attributes: true, characterData: true });
+      }
     } catch {}
-    window.addEventListener('resize', () => setTimeout(() => { requestLayout(); }, 0));
-    window.addEventListener('load', () => setTimeout(() => { requestLayout(); }, 0));
+    window.addEventListener('resize', () => {
+      forceNextResize = true;
+      requestLayout('observer', true);
+    });
+    window.addEventListener('load', () => {
+      forceNextResize = true;
+      requestLayout('observer', true);
+    });
     try {
       parent.postMessage({ type: 'chatapp:iframe-ready', id }, '*');
     } catch {}
@@ -320,7 +475,8 @@
     if (bypassed) return;
     if (data.type === 'chatapp:updateViewportHeight' && typeof data.height === 'number') {
       document.documentElement.style.setProperty('--viewport-height', data.height + 'px');
-      requestLayout();
+      forceNextResize = true;
+      requestLayout('observer', true);
       return;
     }
     if (data.type === 'chatapp:ping') {

@@ -26,10 +26,12 @@ export class DebugPanel {
         this.templateLogBtn = null;
         this.promptPreviewBtn = null;
         this.errorLogBtn = null;
+        this.heightDiagBtn = null;
         this.filterInput = null;
         this.filterClearBtn = null;
         this.copyLogBtn = null;
         this.filterText = '';
+        this.quickFilterMode = 'none';
         this.memoryInspectorOverlay = null;
         this.memoryInspectorPanel = null;
         this.memoryInspectorMeta = null;
@@ -227,6 +229,23 @@ export class DebugPanel {
         this.errorLogBtn = errorLogBtn;
         this.controls.appendChild(errorLogBtn);
 
+        const heightDiagBtn = document.createElement('button');
+        heightDiagBtn.type = 'button';
+        heightDiagBtn.textContent = '高度诊断';
+        heightDiagBtn.style.cssText = `
+            padding: 2px 6px;
+            background: rgba(0, 0, 0, 0.8);
+            color: #00ff00;
+            border: 1px solid #00ff00;
+            border-radius: 4px;
+            font-size: 10px;
+            font-family: monospace;
+            cursor: pointer;
+        `;
+        heightDiagBtn.onclick = () => this.toggleHeightDiagnosticsFilter();
+        this.heightDiagBtn = heightDiagBtn;
+        this.controls.appendChild(heightDiagBtn);
+
         const filterWrap = document.createElement('div');
         filterWrap.style.cssText = `
             display: flex;
@@ -318,6 +337,7 @@ export class DebugPanel {
         this.filterInput = filterInput;
         this.filterClearBtn = filterClearBtn;
         this.copyLogBtn = copyLogBtn;
+        this.updateQuickFilterButtons();
 
         this.logContainer = document.createElement('div');
         this.logContainer.style.cssText = `
@@ -462,6 +482,49 @@ export class DebugPanel {
         }
     }
 
+    isHeightDiagnosticLog(message = '') {
+        const text = String(message || '').toLowerCase();
+        if (!text) return false;
+        return (
+            text.includes('[rich]') ||
+            text.includes('[iframe]') ||
+            text.includes('[iframe-height]')
+        );
+    }
+
+    getVisibleLogs() {
+        let list = this.logs;
+        if (this.quickFilterMode === 'height') {
+            list = list.filter(log => this.isHeightDiagnosticLog(log?.message || ''));
+        }
+        const term = String(this.filterText || '').trim().toLowerCase();
+        if (term) {
+            list = list.filter(log => String(log?.message || '').toLowerCase().includes(term));
+        }
+        return list;
+    }
+
+    updateQuickFilterButtons() {
+        if (!this.heightDiagBtn) return;
+        const active = this.quickFilterMode === 'height';
+        this.heightDiagBtn.style.background = active ? '#00ff00' : 'rgba(0, 0, 0, 0.8)';
+        this.heightDiagBtn.style.color = active ? '#001500' : '#00ff00';
+        this.heightDiagBtn.style.fontWeight = active ? '700' : '400';
+        this.heightDiagBtn.title = active
+            ? '已启用：仅显示高度相关日志'
+            : '点击后仅显示 rich/iframe/iframe-height 日志';
+    }
+
+    toggleHeightDiagnosticsFilter() {
+        this.quickFilterMode = this.quickFilterMode === 'height' ? 'none' : 'height';
+        if (this.filterInput && this.quickFilterMode === 'height') {
+            this.filterInput.value = '';
+            this.filterText = '';
+        }
+        this.updateQuickFilterButtons();
+        this.render();
+    }
+
     log(message, type = 'info') {
         const timestamp = new Date().toLocaleTimeString('zh-CN', { hour12: false });
         const prefix = type === 'error' ? '❌' : type === 'warn' ? '⚠️' : '✓';
@@ -482,10 +545,7 @@ export class DebugPanel {
     render() {
         if (!this.logContainer) return;
 
-        const term = String(this.filterText || '').trim().toLowerCase();
-        const list = term
-            ? this.logs.filter(log => String(log.message || '').toLowerCase().includes(term))
-            : this.logs;
+        const list = this.getVisibleLogs();
 
         this.logContainer.innerHTML = list.map(log =>
             `<div style="color: ${log.color}; margin-bottom: 2px;">${log.prefix} [${log.timestamp}] ${log.message}</div>`
@@ -509,10 +569,7 @@ export class DebugPanel {
     }
 
     async copyVisibleLogs() {
-        const term = String(this.filterText || '').trim().toLowerCase();
-        const list = term
-            ? this.logs.filter(log => String(log.message || '').toLowerCase().includes(term))
-            : this.logs;
+        const list = this.getVisibleLogs();
         if (!list.length) {
             window.toastr?.warning?.('暂无日志可复制');
             return;

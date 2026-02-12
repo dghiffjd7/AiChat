@@ -2300,15 +2300,75 @@ const buildIframeBridgeScript = () => `
     }
   };
   const id = getIframeId();
-  let lastH = 0;
+  let lastSentHeight = 0;
+  let lastSentMode = 'document';
+  let lastSentLock = false;
+  let seq = 0;
+  let rafId = null;
+  let pendingSource = 'bridge';
+  let pendingForce = false;
+  let forceNextResize = false;
   let pressTimer = null;
   let pressActive = false;
   let pressStartedAt = 0;
   let touchActive = false;
   let touchStartPoint = null;
   const moveThreshold = 12;
+  let viewportLogged = false;
+  let lockLogged = false;
 
-  const measureContentHeight = () => {
+  const normalizeSource = (source) => {
+    const raw = String(source || '').trim().toLowerCase();
+    if (raw === 'observer' || raw === 'fallback') return raw;
+    return 'bridge';
+  };
+  const sendDebug = (level, message) => {
+    try {
+      parent.postMessage({ type: 'chatapp:iframe-debug', id, level: String(level || 'info'), message: String(message || '') }, '*');
+    } catch {}
+  };
+  const readMetaPolicy = () => {
+    try {
+      const metaHeight = document.querySelector('meta[name="chatapp-height"]');
+      const metaResize = document.querySelector('meta[name="chatapp-resize"]');
+      const rawHeight = String(metaHeight?.getAttribute('content') || '').trim();
+      const parsedHeight = Number(rawHeight);
+      const height = Number.isFinite(parsedHeight) && parsedHeight > 0 ? parsedHeight : 0;
+      const resize = String(metaResize?.getAttribute('content') || '').trim().toLowerCase();
+      let mode = '';
+      if (resize.includes('viewport')) mode = 'viewport';
+      else if (resize.includes('document')) mode = 'document';
+      const lock = resize === 'none' || resize === 'lock' || resize === 'locked';
+      return { height, mode, lock };
+    } catch {
+      return { height: 0, mode: '', lock: false };
+    }
+  };
+  const detectViewportMode = () => {
+    try {
+      const body = document.body;
+      const docEl = document.documentElement;
+      if (!body || !docEl) return false;
+      const bodyStyle = getComputedStyle(body);
+      const docStyle = getComputedStyle(docEl);
+      const overflowHidden = /hidden|clip/i.test(String(bodyStyle.overflowY || '')) ||
+        /hidden|clip/i.test(String(docStyle.overflowY || ''));
+      const fixedBody = String(bodyStyle.position || '').toLowerCase() === 'fixed';
+      const vhDecl = String(body.style.height || '') + ';' + String(body.style.minHeight || '') +
+        ';' + String(docEl.style.height || '') + ';' + String(docEl.style.minHeight || '');
+      const hasVhDecl = /\\b\\d+(?:\\.\\d+)?vh\\b/i.test(vhDecl);
+      const viewportH = Math.max(window.innerHeight || 0, docEl.clientHeight || 0);
+      const bodyH = Math.max(body.scrollHeight || 0, body.offsetHeight || 0, body.clientHeight || 0);
+      const docH = Math.max(docEl.scrollHeight || 0, docEl.offsetHeight || 0, docEl.clientHeight || 0);
+      const closeToViewport = viewportH > 0 && Math.abs(bodyH - viewportH) <= 28 && Math.abs(docH - viewportH) <= 28;
+      if (overflowHidden && (fixedBody || hasVhDecl || closeToViewport)) return true;
+      if (fixedBody && closeToViewport) return true;
+      return false;
+    } catch {
+      return false;
+    }
+  };
+  const measureDocumentHeight = () => {
     try {
       const body = document.body;
       if (!body) return 0;
@@ -2336,18 +2396,57 @@ const buildIframeBridgeScript = () => `
       return 0;
     }
   };
-
-  const postResize = () => {
+  const measureViewportHeight = () => {
     try {
-      const rawH = measureContentHeight();
-      const h = Math.ceil(Math.max(120, rawH || 0));
-      if (h && h !== lastH) {
-        lastH = h;
-        parent.postMessage({ type: 'chatapp:iframe-resize', id, height: h }, '*');
+      const body = document.body;
+      const docEl = document.documentElement;
+      const viewport = Math.max(window.innerHeight || 0, docEl?.clientHeight || 0);
+      const bodyRect = body?.getBoundingClientRect?.();
+      const bodyH = bodyRect ? bodyRect.height : 0;
+      const docH = Math.max(docEl?.clientHeight || 0, docEl?.offsetHeight || 0);
+      return Math.max(viewport, bodyH, docH);
+    } catch {
+      return 0;
+    }
+  };
+  const postResize = ({ source = 'bridge', force = false } = {}) => {
+    try {
+      const meta = readMetaPolicy();
+      const mode = meta.mode || (detectViewportMode() ? 'viewport' : 'document');
+      const lock = Boolean(meta.lock);
+      const measured = meta.height > 0
+        ? meta.height
+        : (mode === 'viewport' ? measureViewportHeight() : measureDocumentHeight());
+      const raw = lock && lastSentHeight > 0 && meta.height <= 0 ? lastSentHeight : measured;
+      const height = Math.ceil(Math.max(120, raw || 0));
+      if (mode === 'viewport' && !viewportLogged) {
+        viewportLogged = true;
+        sendDebug('info', 'height-mode=viewport');
       }
+      if (lock !== lockLogged) {
+        lockLogged = lock;
+        sendDebug('info', 'height-lock=' + (lock ? '1' : '0'));
+      }
+      if (!force && !forceNextResize && height === lastSentHeight && mode === lastSentMode && lock === lastSentLock) {
+        return;
+      }
+      forceNextResize = false;
+      seq += 1;
+      lastSentHeight = height;
+      lastSentMode = mode;
+      lastSentLock = lock;
+      parent.postMessage({
+        type: 'chatapp:iframe-resize',
+        id,
+        height,
+        seq,
+        source: normalizeSource(source),
+        mode,
+        lock,
+        ts: Date.now(),
+      }, '*');
     } catch {}
   };
-
   const fitToWidth = () => {
     try {
       const docEl = document.documentElement;
@@ -2356,26 +2455,38 @@ const buildIframeBridgeScript = () => `
       body.style.transform = '';
       body.style.width = '';
       docEl.style.overflowX = 'hidden';
-
       const clientW = Math.max(1, docEl.clientWidth || 1);
       const scrollW = Math.max(body.scrollWidth || 0, docEl.scrollWidth || 0);
-      if (scrollW <= clientW + 2) {
-        postResize();
-        return;
-      }
+      if (scrollW <= clientW + 2) return;
       let scale = clientW / scrollW;
-      if (scale > 0.98) {
-        postResize();
-        return;
-      }
+      if (scale > 0.98) return;
       const minScale = 0.55;
       scale = Math.max(minScale, Math.min(1, scale));
       body.style.transformOrigin = 'top left';
       body.style.transform = 'scale(' + scale + ')';
       body.style.width = (100 / scale) + '%';
       docEl.style.overflowX = 'hidden';
-      postResize();
     } catch {}
+  };
+  const requestLayout = (source = 'bridge', force = false) => {
+    pendingSource = normalizeSource(source);
+    if (force) pendingForce = true;
+    if (rafId) return;
+    rafId = requestAnimationFrame(() => {
+      rafId = null;
+      const sourceToSend = pendingSource;
+      const forceToSend = pendingForce;
+      pendingSource = 'bridge';
+      pendingForce = false;
+      fitToWidth();
+      postResize({ source: sourceToSend, force: forceToSend });
+    });
+  };
+  const triggerBurstLayout = (source = 'observer') => {
+    forceNextResize = true;
+    [0, 60, 180, 360].forEach((ms) => {
+      setTimeout(() => { requestLayout(source, true); }, ms);
+    });
   };
 
   const getPoint = (ev) => {
@@ -2402,18 +2513,6 @@ const buildIframeBridgeScript = () => `
       parent.postMessage({ type: 'chatapp:iframe-press', id, phase, x: p.x, y: p.y }, '*');
     } catch {}
   };
-
-  const requestLayout = (() => {
-    let rafId = null;
-    return () => {
-      if (rafId) return;
-      rafId = requestAnimationFrame(() => {
-        rafId = null;
-        fitToWidth();
-        postResize();
-      });
-    };
-  })();
 
   const start = () => {
     const stripBodyWhitespace = () => {
@@ -2445,17 +2544,11 @@ const buildIframeBridgeScript = () => `
             if (justify.includes('center')) el.style.justifyContent = 'flex-start';
           }
           const minH = parseFloat(style.minHeight || '');
-          if (Number.isFinite(minH) && minH >= vh * 0.9) {
-            el.style.minHeight = 'auto';
-          }
+          if (Number.isFinite(minH) && minH >= vh * 0.9) el.style.minHeight = 'auto';
           const h = parseFloat(style.height || '');
-          if (Number.isFinite(h) && h >= vh * 0.9) {
-            el.style.height = 'auto';
-          }
+          if (Number.isFinite(h) && h >= vh * 0.9) el.style.height = 'auto';
           const maxH = parseFloat(style.maxHeight || '');
-          if (Number.isFinite(maxH) && maxH >= vh * 0.9) {
-            el.style.maxHeight = 'none';
-          }
+          if (Number.isFinite(maxH) && maxH >= vh * 0.9) el.style.maxHeight = 'none';
           const mt = parseFloat(style.marginTop || '');
           const mb = parseFloat(style.marginBottom || '');
           if (Number.isFinite(mt) && mt >= 48) el.style.marginTop = '16px';
@@ -2544,34 +2637,57 @@ const buildIframeBridgeScript = () => `
     document.addEventListener('selectstart', (ev) => {
       try { ev.preventDefault(); } catch {}
     }, { passive: false, capture: true });
+    document.addEventListener('toggle', (ev) => {
+      if (ev && ev.target && ev.target.tagName === 'DETAILS') triggerBurstLayout('observer');
+    }, true);
+    document.addEventListener('transitionend', (ev) => {
+      const target = ev?.target;
+      if (!target || typeof target.closest !== 'function') return;
+      if (!target.closest('details')) return;
+      triggerBurstLayout('observer');
+    }, true);
+    document.addEventListener('animationend', (ev) => {
+      const target = ev?.target;
+      if (!target || typeof target.closest !== 'function') return;
+      if (!target.closest('details')) return;
+      triggerBurstLayout('observer');
+    }, true);
 
-    requestLayout();
-    try {
-      parent.postMessage({ type: 'chatapp:iframe-ready', id }, '*');
-    } catch {}
-
+    try { parent.postMessage({ type: 'chatapp:iframe-ready', id }, '*'); } catch {}
+    stripBodyWhitespace();
+    clampOversizedBlocks();
+    requestLayout('bridge', true);
     [50, 150, 300, 600].forEach((ms) => {
-      setTimeout(() => { requestLayout(); }, ms);
+      setTimeout(() => { requestLayout('observer', true); }, ms);
     });
     try {
-      const ro = new ResizeObserver(() => { requestLayout(); });
+      const ro = new ResizeObserver(() => {
+        if (lastSentLock && lastSentMode === 'viewport') return;
+        requestLayout('observer');
+      });
       ro.observe(document.documentElement);
       if (document.body) ro.observe(document.body);
     } catch {
-      setInterval(() => { requestLayout(); }, 500);
+      setInterval(() => {
+        if (lastSentLock && lastSentMode === 'viewport') return;
+        requestLayout('fallback');
+      }, 500);
     }
     try {
-      const mo = new MutationObserver(() => { requestLayout(); });
+      const mo = new MutationObserver(() => {
+        if (lastSentLock && lastSentMode === 'viewport') return;
+        requestLayout('observer');
+      });
       if (document.body) mo.observe(document.body, { subtree: true, childList: true, attributes: true, characterData: true });
     } catch {}
-    window.addEventListener('load', () => setTimeout(() => { requestLayout(); }, 0));
-    window.addEventListener('resize', () => setTimeout(() => { requestLayout(); }, 0));
-    document.addEventListener('toggle', (ev) => {
-      if (ev && ev.target && ev.target.tagName === 'DETAILS') requestLayout();
-    }, true);
-    stripBodyWhitespace();
-    clampOversizedBlocks();
-    requestLayout();
+    window.addEventListener('load', () => {
+      forceNextResize = true;
+      requestLayout('observer', true);
+    });
+    window.addEventListener('resize', () => {
+      forceNextResize = true;
+      requestLayout('observer', true);
+    });
   };
 
   window.addEventListener('message', (e) => {
@@ -2581,7 +2697,8 @@ const buildIframeBridgeScript = () => `
       try {
         document.documentElement.style.setProperty('--viewport-height', data.height + 'px');
       } catch {}
-      requestLayout();
+      forceNextResize = true;
+      requestLayout('observer', true);
       return;
     }
     if (data.type === 'chatapp:ping') {
@@ -2613,6 +2730,19 @@ const iframeResizeState = {
     mutationObservers: new WeakMap(),
 };
 
+const IFRAME_HEIGHT_MIN = 120;
+const IFRAME_HEIGHT_MAX = 2000;
+const IFRAME_HEIGHT_PAD = 4;
+const IFRAME_AUTHORITY_HOST = 'host';
+const IFRAME_AUTHORITY_IFRAME = 'iframe';
+const IFRAME_AUTHORITY_LOCKED = 'locked';
+const IFRAME_HEIGHT_SOURCE_PRIORITY = {
+    bridge: 3,
+    observer: 2,
+    fallback: 1,
+    legacy: 1,
+};
+
 const markIframePostResize = (iframe) => {
     if (!iframe) return;
     iframe.dataset.iframePostResizeAt = String(Date.now());
@@ -2623,6 +2753,367 @@ const hasRecentPostResize = (iframe, windowMs = 420) => {
     const ts = Number(iframe.dataset.iframePostResizeAt || 0);
     if (!Number.isFinite(ts) || ts <= 0) return false;
     return (Date.now() - ts) < windowMs;
+};
+
+const normalizeHeightSource = (value) => {
+    const raw = String(value || '').trim().toLowerCase();
+    if (raw === 'bridge' || raw === 'observer' || raw === 'fallback' || raw === 'legacy') return raw;
+    return 'bridge';
+};
+
+const normalizeHeightMode = (value) => {
+    const raw = String(value || '').trim().toLowerCase();
+    if (raw === 'viewport') return 'viewport';
+    return 'document';
+};
+
+const getHeightSourcePriority = (source) => {
+    const key = normalizeHeightSource(source);
+    return Number(IFRAME_HEIGHT_SOURCE_PRIORITY[key] || 0);
+};
+
+const clampIframeHeight = (height) => {
+    const raw = Number(height);
+    if (!Number.isFinite(raw)) return IFRAME_HEIGHT_MIN;
+    return Math.max(IFRAME_HEIGHT_MIN, Math.min(Math.ceil(raw + IFRAME_HEIGHT_PAD), IFRAME_HEIGHT_MAX));
+};
+
+const logIframeHeight = ({
+    id,
+    seq,
+    source,
+    mode,
+    raw,
+    applied,
+    authority,
+    lock,
+    event = 'apply',
+    level = 'info',
+    extra = '',
+}) => {
+    const msg = [
+        `[iframe-height] event=${event}`,
+        `id=${id || 'unknown'}`,
+        `seq=${Number.isFinite(Number(seq)) ? String(Math.trunc(Number(seq))) : 'na'}`,
+        `source=${normalizeHeightSource(source)}`,
+        `mode=${normalizeHeightMode(mode)}`,
+        `raw=${Number.isFinite(Number(raw)) ? String(Math.round(Number(raw))) : 'na'}`,
+        `applied=${Number.isFinite(Number(applied)) ? String(Math.round(Number(applied))) : 'na'}`,
+        `authority=${String(authority || IFRAME_AUTHORITY_HOST)}`,
+        `lock=${lock ? 1 : 0}`,
+        String(extra || '').trim(),
+    ].filter(Boolean).join(' ');
+    emitDebugLog({
+        source: 'iframe',
+        type: level === 'warn' ? 'warn' : 'info',
+        message: msg,
+        force: true,
+    });
+    if (level === 'warn') logger.warn(msg);
+    else logger.info(msg);
+};
+
+const clearIframeAutoResizeObservers = (iframe) => {
+    try {
+        if (!iframe) return;
+        const doc = iframe.contentWindow?.document;
+        const body = doc?.body;
+        const docEl = doc?.documentElement;
+        if (iframeResizeState.resizeObserver) {
+            if (body) {
+                try { iframeResizeState.resizeObserver.unobserve(body); } catch {}
+                try { iframeResizeState.observedElements.delete(body); } catch {}
+            }
+            if (docEl) {
+                try { iframeResizeState.resizeObserver.unobserve(docEl); } catch {}
+                try { iframeResizeState.observedElements.delete(docEl); } catch {}
+            }
+        }
+        const mo = iframeResizeState.mutationObservers.get(iframe);
+        if (mo) {
+            try { mo.disconnect(); } catch {}
+            iframeResizeState.mutationObservers.delete(iframe);
+        }
+        delete iframe.dataset.iframeAutoResize;
+    } catch {}
+};
+
+const switchIframeAuthority = (iframe, st, nextAuthority, reason = '') => {
+    if (!iframe || !st) return;
+    const prev = String(st.authority || IFRAME_AUTHORITY_HOST);
+    const next = String(nextAuthority || IFRAME_AUTHORITY_HOST);
+    if (prev === next) return;
+    st.authority = next;
+    iframe.dataset.iframeAuthority = next;
+    if (next !== IFRAME_AUTHORITY_HOST) {
+        clearIframeAutoResizeObservers(iframe);
+    }
+    logIframeHeight({
+        id: String(iframe.dataset.iframeId || ''),
+        seq: st.lastSeq,
+        source: st.lastResizeSource || 'bridge',
+        mode: st.lastResizeMode || 'document',
+        raw: st.lastRawHeight || 0,
+        applied: st.lastAppliedHeight || 0,
+        authority: next,
+        lock: Boolean(st.lock),
+        event: 'authority-switch',
+        level: 'info',
+        extra: `from=${prev}${reason ? ` reason=${reason}` : ''}`,
+    });
+};
+
+const appendHeightHistory = (st, appliedHeight, at = Date.now(), {
+    source = 'observer',
+    mode = 'document',
+} = {}) => {
+    if (!st) return;
+    const next = Array.isArray(st.heightHistory) ? st.heightHistory.slice() : [];
+    next.push({
+        value: Number(appliedHeight) || 0,
+        at,
+        source: normalizeHeightSource(source),
+        mode: normalizeHeightMode(mode),
+    });
+    const pruned = next.filter((entry) => (at - Number(entry?.at || 0)) <= 3000);
+    while (pruned.length > 24) pruned.shift();
+    st.heightHistory = pruned;
+};
+
+const detectHeightFeedbackLoop = (st, now = Date.now(), {
+    source = 'observer',
+    mode = 'document',
+} = {}) => {
+    if (!st) return false;
+    const currentSource = normalizeHeightSource(source);
+    const currentMode = normalizeHeightMode(mode);
+    if (currentMode !== 'document') return false;
+    if (currentSource !== 'observer' && currentSource !== 'fallback') return false;
+    const history = Array.isArray(st.heightHistory)
+        ? st.heightHistory.filter((entry) => (now - Number(entry?.at || 0)) <= 3000)
+        : [];
+    if (history.length < 3) return false;
+    const tail = history.slice(-10);
+    let monotonic = true;
+    let totalIncrease = 0;
+    let smallStepGrow = true;
+    for (let i = 1; i < tail.length; i += 1) {
+        const prev = Number(tail[i - 1]?.value || 0);
+        const cur = Number(tail[i]?.value || 0);
+        const delta = cur - prev;
+        if (delta < 1 || delta > 280) {
+            monotonic = false;
+            break;
+        }
+        if (delta > 12) smallStepGrow = false;
+        totalIncrease += delta;
+    }
+    if (!monotonic) return false;
+    const lastPressAt = Number(st.lastPressAt || 0);
+    const hasRecentPress = Number.isFinite(lastPressAt) && (now - lastPressAt) <= 1800;
+    // 点击驱动场景：尽早止损（避免“先涨几次再停”）
+    if (hasRecentPress && tail.length >= 3 && smallStepGrow && totalIncrease >= 8) {
+        return true;
+    }
+    // 普通场景：更保守，避免误判正常布局收敛
+    return tail.length >= 7 && smallStepGrow && totalIncrease >= 24;
+};
+
+const getIframeAuthority = (iframe, st) => {
+    const fromState = String(st?.authority || '').trim();
+    if (fromState) return fromState;
+    const fromDataset = String(iframe?.dataset?.iframeAuthority || '').trim();
+    if (fromDataset) return fromDataset;
+    return IFRAME_AUTHORITY_HOST;
+};
+
+const canHostAutoResize = (iframe) => {
+    if (!iframe) return false;
+    const id = String(iframe.dataset.iframeId || '');
+    const st = id ? getIframeState(id) : null;
+    const authority = getIframeAuthority(iframe, st);
+    if (authority !== IFRAME_AUTHORITY_HOST) return false;
+    if (Boolean(st?.lock)) return false;
+    return true;
+};
+
+const applyIframeResizeUpdate = (iframe, {
+    rawHeight,
+    source = 'bridge',
+    mode = 'document',
+    seq = null,
+    lock = false,
+    unlock = false,
+    ts = Date.now(),
+    canTakeAuthority = true,
+} = {}) => {
+    if (!iframe) return false;
+    const id = String(iframe.dataset.iframeId || '');
+    if (!id) return false;
+    const st = getIframeState(id, { messageId: String(iframe.dataset.msgId || ''), createdAt: Date.now() });
+    if (!st) return false;
+
+    const normalizedSource = normalizeHeightSource(source);
+    const normalizedMode = normalizeHeightMode(mode);
+    const raw = Number(rawHeight);
+    if (!Number.isFinite(raw)) return false;
+    const appliedHeight = clampIframeHeight(raw);
+
+    const hasIncomingSeq = (
+        seq !== null &&
+        seq !== undefined &&
+        seq !== '' &&
+        Number.isFinite(Number(seq))
+    );
+    const prevSeqBase = (st.lastSeq ?? -1);
+    const incomingSeq = hasIncomingSeq ? Math.trunc(Number(seq)) : (Math.trunc(Number(prevSeqBase)) + 1);
+    const prevSeq = Number.isFinite(Number(st.lastSeq)) ? Math.trunc(Number(st.lastSeq)) : -1;
+    if (incomingSeq < prevSeq) {
+        logIframeHeight({
+            id,
+            seq: incomingSeq,
+            source: normalizedSource,
+            mode: normalizedMode,
+            raw,
+            applied: appliedHeight,
+            authority: getIframeAuthority(iframe, st),
+            lock: Boolean(st.lock),
+            event: 'seq-drop',
+            level: 'warn',
+            extra: `lastSeq=${prevSeq}`,
+        });
+        return false;
+    }
+
+    if (incomingSeq === prevSeq) {
+        const prevApplied = Number(st.lastAppliedHeight || 0);
+        const sameHeight = Math.abs(prevApplied - appliedHeight) <= 1;
+        const sameMode = normalizeHeightMode(st.lastResizeMode) === normalizedMode;
+        const prevLock = Boolean(st.lock);
+        const nextLock = unlock ? false : (Boolean(lock) || prevLock);
+        const sameLock = prevLock === nextLock;
+        const prevSourcePrio = getHeightSourcePriority(st.lastResizeSource || 'fallback');
+        const incomingPrio = getHeightSourcePriority(normalizedSource);
+        if (sameHeight && sameMode && sameLock) return false;
+        if (incomingPrio < prevSourcePrio) {
+            logIframeHeight({
+                id,
+                seq: incomingSeq,
+                source: normalizedSource,
+                mode: normalizedMode,
+                raw,
+                applied: appliedHeight,
+                authority: getIframeAuthority(iframe, st),
+                lock: Boolean(st.lock),
+                event: 'seq-tie-drop',
+                level: 'warn',
+                extra: `prevSource=${normalizeHeightSource(st.lastResizeSource)}`,
+            });
+            return false;
+        }
+    }
+
+    if (unlock) st.lock = false;
+    if (lock) st.lock = true;
+
+    let authority = getIframeAuthority(iframe, st);
+    if (st.lock) {
+        authority = IFRAME_AUTHORITY_LOCKED;
+        switchIframeAuthority(iframe, st, IFRAME_AUTHORITY_LOCKED, lock ? 'lock-message' : 'locked');
+    } else if (authority === IFRAME_AUTHORITY_HOST && canTakeAuthority) {
+        switchIframeAuthority(iframe, st, IFRAME_AUTHORITY_IFRAME, 'first-valid-resize');
+        authority = IFRAME_AUTHORITY_IFRAME;
+    }
+
+    if (authority === IFRAME_AUTHORITY_LOCKED && !(lock || unlock)) {
+        logIframeHeight({
+            id,
+            seq: incomingSeq,
+            source: normalizedSource,
+            mode: normalizedMode,
+            raw,
+            applied: appliedHeight,
+            authority,
+            lock: Boolean(st.lock),
+            event: 'locked-drop',
+            level: 'info',
+        });
+        return false;
+    }
+
+    const current = parseFloat(iframe.style.height || '') || 0;
+    if (Math.abs(current - appliedHeight) > 1) {
+        iframe.style.height = `${appliedHeight}px`;
+    }
+    markIframePostResize(iframe);
+    const now = Number.isFinite(Number(ts)) ? Math.trunc(Number(ts)) : Date.now();
+    const previousAppliedHeight = Number(st.lastAppliedHeight || 0);
+
+    st.lastSeq = incomingSeq;
+    st.lastResizeSource = normalizedSource;
+    st.lastResizeMode = normalizedMode;
+    st.lastRawHeight = raw;
+    st.lastAppliedHeight = appliedHeight;
+    st.lastResizeAt = now;
+    st.resizeCount = (st.resizeCount || 0) + 1;
+    st.authority = getIframeAuthority(iframe, st);
+    iframe.dataset.iframeMode = normalizedMode;
+    iframe.dataset.iframeLock = st.lock ? '1' : '0';
+
+    appendHeightHistory(st, appliedHeight, now, {
+        source: normalizedSource,
+        mode: normalizedMode,
+    });
+    if (detectHeightFeedbackLoop(st, now, {
+        source: normalizedSource,
+        mode: normalizedMode,
+    })) {
+        const recentValues = (Array.isArray(st.heightHistory) ? st.heightHistory : [])
+            .slice(-10)
+            .map((entry) => Number(entry?.value))
+            .filter((value) => Number.isFinite(value) && value > 0);
+        const minRecent = recentValues.length ? Math.min(...recentValues) : appliedHeight;
+        const freezeHeight = Math.max(
+            IFRAME_HEIGHT_MIN,
+            Math.min(
+                appliedHeight,
+                previousAppliedHeight > 0 ? previousAppliedHeight : appliedHeight,
+                minRecent,
+            ),
+        );
+        if (Math.abs((parseFloat(iframe.style.height || '') || 0) - freezeHeight) > 1) {
+            iframe.style.height = `${freezeHeight}px`;
+        }
+        st.lastAppliedHeight = freezeHeight;
+        st.lock = true;
+        switchIframeAuthority(iframe, st, IFRAME_AUTHORITY_LOCKED, 'feedback-loop');
+        logIframeHeight({
+            id,
+            seq: incomingSeq,
+            source: normalizedSource,
+            mode: normalizedMode,
+            raw,
+            applied: freezeHeight,
+            authority: IFRAME_AUTHORITY_LOCKED,
+            lock: true,
+            event: 'feedback-loop',
+            level: 'warn',
+        });
+    } else {
+        logIframeHeight({
+            id,
+            seq: incomingSeq,
+            source: normalizedSource,
+            mode: normalizedMode,
+            raw,
+            applied: appliedHeight,
+            authority: getIframeAuthority(iframe, st),
+            lock: Boolean(st.lock),
+            event: 'apply',
+            level: 'info',
+        });
+    }
+    return true;
 };
 
 const bindIframeDocumentPressFallback = (iframe, iframeId) => {
@@ -2674,34 +3165,50 @@ const bindIframeDocumentPressFallback = (iframe, iframeId) => {
 const adjustIframeHeight = (iframe) => {
     try {
         if (!iframe || !iframe.contentWindow) return;
+        if (!canHostAutoResize(iframe)) return;
+        if (iframe.dataset.iframeLoaded !== '1') return;
         if (iframe.dataset.iframeAllowScripts === '1' && hasRecentPostResize(iframe)) return;
         const doc = iframe.contentWindow.document;
         const body = doc?.body;
         const docEl = doc?.documentElement;
         if (!body || !docEl) return;
+        const id = String(iframe.dataset.iframeId || '');
+        const st = id ? getIframeState(id, { messageId: String(iframe.dataset.msgId || ''), createdAt: Date.now() }) : null;
         const bodyHeight = Math.max(body.scrollHeight || 0, body.offsetHeight || 0, body.clientHeight || 0);
         const docHeight = Math.max(docEl.scrollHeight || 0, docEl.offsetHeight || 0, docEl.clientHeight || 0);
-        const newHeight = Math.max(120, bodyHeight, docHeight);
-        const clamped = Math.min(newHeight + 4, 2000);
-        const current = parseFloat(iframe.style.height || '') || 0;
-        if (Math.abs(current - clamped) > 2) {
-            iframe.style.height = `${clamped}px`;
-            markIframePostResize(iframe);
-            const id = String(iframe.dataset.iframeId || '');
-            if (id) {
-                const st = getIframeState(id, { messageId: String(iframe.dataset.msgId || ''), createdAt: Date.now() });
-                if (st) {
-                    st.resizeCount = (st.resizeCount || 0) + 1;
-                    st.lastResizeAt = Date.now();
-                }
-            }
+        const newHeight = Math.max(IFRAME_HEIGHT_MIN, bodyHeight, docHeight);
+        const currentApplied = parseFloat(iframe.style.height || '') || 0;
+        const selfMeasured = currentApplied > 0 && Math.abs(newHeight - currentApplied) <= 2;
+        if (selfMeasured) {
+            const freezeRaw = Math.max(IFRAME_HEIGHT_MIN, currentApplied - IFRAME_HEIGHT_PAD);
+            const nextHits = Number(st?.selfMeasureHits || 0) + 1;
+            if (st) st.selfMeasureHits = nextHits;
+            applyIframeResizeUpdate(iframe, {
+                rawHeight: freezeRaw,
+                source: 'observer',
+                mode: nextHits >= 2 ? 'viewport' : 'document',
+                lock: nextHits >= 2,
+                ts: Date.now(),
+                canTakeAuthority: false,
+            });
+            return;
         }
+        if (st) st.selfMeasureHits = 0;
+        applyIframeResizeUpdate(iframe, {
+            rawHeight: newHeight,
+            source: 'observer',
+            mode: 'document',
+            lock: false,
+            ts: Date.now(),
+            canTakeAuthority: false,
+        });
     } catch {}
 };
 
 const observeIframeContent = (iframe) => {
     try {
         if (!iframe || iframe.dataset.iframeAutoResize === '1') return;
+        if (!canHostAutoResize(iframe)) return;
         if (!iframe.contentWindow) return;
         const doc = iframe.contentWindow.document;
         const body = doc?.body;
@@ -2874,9 +3381,73 @@ const buildIframeSrcDoc = (
 <script>
 (() => {
   const id = ${JSON.stringify(String(iframeId || ''))};
-  let lastH = 0;
+  let lastSentHeight = 0;
+  let lastSentMode = 'document';
+  let lastSentLock = false;
+  let seq = 0;
+  let pendingSource = 'bridge';
+  let pendingForce = false;
+  let forceNextResize = false;
+  let layoutRafId = null;
   let pressTimer = null;
   let pressActive = false;
+  let viewportLogged = false;
+  let lockLogged = false;
+
+  const normalizeSource = (source) => {
+    const raw = String(source || '').trim().toLowerCase();
+    if (raw === 'observer' || raw === 'fallback') return raw;
+    return 'bridge';
+  };
+
+  const sendDebug = (level, message) => {
+    try {
+      parent.postMessage({ type: 'chatapp:iframe-debug', id, level: String(level || 'info'), message: String(message || '') }, '*');
+    } catch {}
+  };
+
+  const readMetaPolicy = () => {
+    try {
+      const metaHeight = document.querySelector('meta[name="chatapp-height"]');
+      const metaResize = document.querySelector('meta[name="chatapp-resize"]');
+      const rawHeight = String(metaHeight?.getAttribute('content') || '').trim();
+      const parsedHeight = Number(rawHeight);
+      const height = Number.isFinite(parsedHeight) && parsedHeight > 0 ? parsedHeight : 0;
+      const resize = String(metaResize?.getAttribute('content') || '').trim().toLowerCase();
+      let mode = '';
+      if (resize.includes('viewport')) mode = 'viewport';
+      else if (resize.includes('document')) mode = 'document';
+      const lock = resize === 'none' || resize === 'lock' || resize === 'locked';
+      return { height, mode, lock };
+    } catch {
+      return { height: 0, mode: '', lock: false };
+    }
+  };
+
+  const detectViewportMode = () => {
+    try {
+      const body = document.body;
+      const docEl = document.documentElement;
+      if (!body || !docEl) return false;
+      const bodyStyle = getComputedStyle(body);
+      const docStyle = getComputedStyle(docEl);
+      const overflowHidden = /hidden|clip/i.test(String(bodyStyle.overflowY || '')) ||
+        /hidden|clip/i.test(String(docStyle.overflowY || ''));
+      const fixedBody = String(bodyStyle.position || '').toLowerCase() === 'fixed';
+      const vhDecl = String(body.style.height || '') + ';' + String(body.style.minHeight || '') +
+        ';' + String(docEl.style.height || '') + ';' + String(docEl.style.minHeight || '');
+      const hasVhDecl = /\\b\\d+(?:\\.\\d+)?vh\\b/i.test(vhDecl);
+      const viewportH = Math.max(window.innerHeight || 0, docEl.clientHeight || 0);
+      const bodyH = Math.max(body.scrollHeight || 0, body.offsetHeight || 0, body.clientHeight || 0);
+      const docH = Math.max(docEl.scrollHeight || 0, docEl.offsetHeight || 0, docEl.clientHeight || 0);
+      const closeToViewport = viewportH > 0 && Math.abs(bodyH - viewportH) <= 28 && Math.abs(docH - viewportH) <= 28;
+      if (overflowHidden && (fixedBody || hasVhDecl || closeToViewport)) return true;
+      if (fixedBody && closeToViewport) return true;
+      return false;
+    } catch {
+      return false;
+    }
+  };
 
   const measureContentHeight = () => {
     try {
@@ -2907,14 +3478,56 @@ const buildIframeSrcDoc = (
     }
   };
 
-  const post = () => {
+  const measureViewportHeight = () => {
     try {
-      const rawH = measureContentHeight();
+      const body = document.body;
+      const docEl = document.documentElement;
+      const viewport = Math.max(window.innerHeight || 0, docEl?.clientHeight || 0);
+      const bodyRect = body?.getBoundingClientRect?.();
+      const bodyH = bodyRect ? bodyRect.height : 0;
+      const docH = Math.max(docEl?.clientHeight || 0, docEl?.offsetHeight || 0);
+      return Math.max(viewport, bodyH, docH);
+    } catch {
+      return 0;
+    }
+  };
+
+  const post = ({ source = 'bridge', force = false } = {}) => {
+    try {
+      const meta = readMetaPolicy();
+      const mode = meta.mode || (detectViewportMode() ? 'viewport' : 'document');
+      const lock = Boolean(meta.lock);
+      const measured = meta.height > 0
+        ? meta.height
+        : (mode === 'viewport' ? measureViewportHeight() : measureContentHeight());
+      const rawH = lock && lastSentHeight > 0 && meta.height <= 0 ? lastSentHeight : measured;
       const h = Math.ceil(Math.max(120, rawH || 0));
-      if (h && h !== lastH) {
-        lastH = h;
-        parent.postMessage({ type: 'chatapp:iframe-resize', id, height: h }, '*');
+      if (mode === 'viewport' && !viewportLogged) {
+        viewportLogged = true;
+        sendDebug('info', 'height-mode=viewport');
       }
+      if (lock !== lockLogged) {
+        lockLogged = lock;
+        sendDebug('info', 'height-lock=' + (lock ? '1' : '0'));
+      }
+      if (!force && !forceNextResize && h === lastSentHeight && mode === lastSentMode && lock === lastSentLock) {
+        return;
+      }
+      forceNextResize = false;
+      seq += 1;
+      lastSentHeight = h;
+      lastSentMode = mode;
+      lastSentLock = lock;
+      parent.postMessage({
+        type: 'chatapp:iframe-resize',
+        id,
+        height: h,
+        seq,
+        source: normalizeSource(source),
+        mode,
+        lock,
+        ts: Date.now(),
+      }, '*');
     } catch {}
   };
 
@@ -2931,16 +3544,10 @@ const buildIframeSrcDoc = (
       // Prefer making content responsive via CSS, then scale down to fit phone width (avoid long horizontal scroll).
       const clientW = Math.max(1, docEl.clientWidth || 1);
       const scrollW = Math.max(body.scrollWidth || 0, docEl.scrollWidth || 0);
-      if (scrollW <= clientW + 2) {
-        post();
-        return;
-      }
+      if (scrollW <= clientW + 2) return;
 
       let scale = clientW / scrollW;
-      if (scale > 0.98) {
-        post();
-        return;
-      }
+      if (scale > 0.98) return;
       const minScale = 0.55;
       scale = Math.max(minScale, Math.min(1, scale));
       body.style.transformOrigin = 'top left';
@@ -2948,7 +3555,6 @@ const buildIframeSrcDoc = (
       body.style.width = (100 / scale) + '%';
 
       docEl.style.overflowX = 'hidden';
-      post();
     } catch {}
   };
 
@@ -3100,7 +3706,16 @@ const buildIframeSrcDoc = (
       setTimeout(() => { touchActive = false; }, 120);
     }, { passive: true });
     window.addEventListener('message', (e) => {
-      if (!e || !e.data || e.data.type !== 'chatapp:ping') return;
+      if (!e || !e.data || typeof e.data !== 'object') return;
+      if (e.data.type === 'chatapp:updateViewportHeight' && typeof e.data.height === 'number') {
+        try {
+          document.documentElement.style.setProperty('--viewport-height', e.data.height + 'px');
+        } catch {}
+        forceNextResize = true;
+        requestLayout('observer', true);
+        return;
+      }
+      if (e.data.type !== 'chatapp:ping') return;
       try {
         parent.postMessage({ type: 'chatapp:pong', id }, '*');
       } catch {}
@@ -3114,44 +3729,80 @@ const buildIframeSrcDoc = (
       try { ev.preventDefault(); } catch {}
     }, { passive: false });
 
-    const requestLayout = (() => {
-      let rafId = null;
-      return () => {
-        if (rafId) return;
-        rafId = requestAnimationFrame(() => {
-          rafId = null;
-          stripBodyWhitespace();
-          clampOversizedBlocks();
-          fitToWidth();
-          post();
-        });
-      };
-    })();
+    const requestLayout = (source = 'bridge', force = false) => {
+      pendingSource = normalizeSource(source);
+      if (force) pendingForce = true;
+      if (layoutRafId) return;
+      layoutRafId = requestAnimationFrame(() => {
+        layoutRafId = null;
+        const sourceToSend = pendingSource;
+        const forceToSend = pendingForce;
+        pendingSource = 'bridge';
+        pendingForce = false;
+        stripBodyWhitespace();
+        clampOversizedBlocks();
+        fitToWidth();
+        post({ source: sourceToSend, force: forceToSend });
+      });
+    };
+    const triggerBurstLayout = (source = 'observer') => {
+      forceNextResize = true;
+      [0, 60, 180, 360].forEach((ms) => {
+        setTimeout(() => { requestLayout(source, true); }, ms);
+      });
+    };
 
-    requestLayout();
+    requestLayout('bridge', true);
     sendReady();
     // Warm up layout to cover WebViews that delay initial paints.
     [50, 150, 300, 600].forEach((ms) => {
-      setTimeout(() => { requestLayout(); }, ms);
+      setTimeout(() => { requestLayout('observer', true); }, ms);
     });
 
     document.addEventListener('toggle', (ev) => {
-      if (ev && ev.target && ev.target.tagName === 'DETAILS') requestLayout();
+      if (ev && ev.target && ev.target.tagName === 'DETAILS') triggerBurstLayout('observer');
+    }, true);
+    document.addEventListener('transitionend', (ev) => {
+      const target = ev?.target;
+      if (!target || typeof target.closest !== 'function') return;
+      if (!target.closest('details')) return;
+      triggerBurstLayout('observer');
+    }, true);
+    document.addEventListener('animationend', (ev) => {
+      const target = ev?.target;
+      if (!target || typeof target.closest !== 'function') return;
+      if (!target.closest('details')) return;
+      triggerBurstLayout('observer');
     }, true);
 
     try {
-      const ro = new ResizeObserver(() => { requestLayout(); });
+      const ro = new ResizeObserver(() => {
+        if (lastSentLock && lastSentMode === 'viewport') return;
+        requestLayout('observer');
+      });
       ro.observe(document.documentElement);
       if (document.body) ro.observe(document.body);
     } catch {
-      setInterval(() => { requestLayout(); }, 500);
+      setInterval(() => {
+        if (lastSentLock && lastSentMode === 'viewport') return;
+        requestLayout('fallback');
+      }, 500);
     }
     try {
-      const mo = new MutationObserver(() => { requestLayout(); });
+      const mo = new MutationObserver(() => {
+        if (lastSentLock && lastSentMode === 'viewport') return;
+        requestLayout('observer');
+      });
       if (document.body) mo.observe(document.body, { subtree: true, childList: true, attributes: true, characterData: true });
     } catch {}
-    window.addEventListener('load', () => setTimeout(() => { requestLayout(); }, 0));
-    window.addEventListener('resize', () => setTimeout(() => { requestLayout(); }, 0));
+    window.addEventListener('load', () => {
+      forceNextResize = true;
+      setTimeout(() => { requestLayout('observer', true); }, 0);
+    });
+    window.addEventListener('resize', () => {
+      forceNextResize = true;
+      setTimeout(() => { requestLayout('observer', true); }, 0);
+    });
   };
 
   const isIgnorableNoise = (value) => /resizeobserver loop (limit exceeded|completed with (?:undelivered|delivered) notifications)/i.test(String(value || ''));
@@ -3302,7 +3953,8 @@ window.addEventListener('message', (e) => {
 
     const normalizedBaseHref = baseHref ? String(baseHref) : '';
     const baseTag = normalizedBaseHref ? `<base href="${normalizedBaseHref}">` : '';
-    const bridgeTag = bridgeScriptUrl ? `<script src="${bridgeScriptUrl}"></script>` : '';
+    const resolvedBridgeScriptUrl = String(bridgeScriptUrl || '').trim();
+    const bridgeTag = resolvedBridgeScriptUrl ? `<script src="${resolvedBridgeScriptUrl}"></script>` : '';
     const bridgeInject = injectBridgeScript
         ? (bridgeTag ? bridgeTag : `${viewportAdjust}${bridge}`)
         : '';
@@ -5062,6 +5714,9 @@ const makeCodeBlock = ({ lang, code, messageId, preserveHtmlNewlines = false, se
         iframe.dataset.iframeSource = 'host';
         iframe.dataset.iframeAllowScripts = allowScripts ? '1' : '0';
         iframe.dataset.iframeMvuCompat = needsMvuCompat ? '1' : '0';
+        iframe.dataset.iframeAuthority = IFRAME_AUTHORITY_HOST;
+        iframe.dataset.iframeLock = '0';
+        iframe.dataset.iframeMode = 'document';
         iframe.style.cssText = 'width:100%; border:0; display:block; height:240px; background:#fff;';
         if (!allowScripts) {
             iframe.setAttribute('sandbox', 'allow-scripts');
@@ -5072,6 +5727,14 @@ const makeCodeBlock = ({ lang, code, messageId, preserveHtmlNewlines = false, se
             readyAt: 0,
             resizeCount: 0,
             lastResizeAt: 0,
+            lastSeq: -1,
+            lastResizeSource: '',
+            lastResizeMode: 'document',
+            lastRawHeight: 0,
+            lastAppliedHeight: 0,
+            authority: IFRAME_AUTHORITY_HOST,
+            lock: false,
+            heightHistory: [],
             pressCount: 0,
             lastPressAt: 0,
             error: '',
@@ -5392,9 +6055,12 @@ const makeCodeBlock = ({ lang, code, messageId, preserveHtmlNewlines = false, se
         setTimeout(() => {
             if (!isLiveIframe(iframe, iframeId)) return;
             const st = getIframeState(iframeId);
-            if (st && st.lastResizeAt) return;
-            if (iframe.dataset.iframePostResizeAt) return;
-            observeIframeContent(iframe);
+            if (st && st.authority && st.authority !== IFRAME_AUTHORITY_HOST) return;
+            if (st && st.lock) return;
+            if (iframe.dataset.iframeLoaded !== '1') return;
+            if (!(st && st.lastResizeAt) && !iframe.dataset.iframePostResizeAt) {
+                observeIframeContent(iframe);
+            }
             bindIframeDocumentPressFallback(iframe, iframeId);
         }, 900);
 
@@ -5433,6 +6099,15 @@ const makeCodeBlock = ({ lang, code, messageId, preserveHtmlNewlines = false, se
                 const source = iframe.dataset.iframeSource || 'host';
                 const sent = iframe.dataset.iframeDocSent === '1' ? 'sent=1' : 'sent=0';
                 warnIframe('no-resize-after-2s', iframeId, `msg=${msgId} ${loaded} ${sent} source=${source}`);
+            }
+            if (
+                iframe.dataset.iframeReady !== '1' &&
+                iframe.dataset.iframeLoaded === '1' &&
+                !(st.authority && st.authority !== IFRAME_AUTHORITY_HOST) &&
+                !st.lock
+            ) {
+                observeIframeContent(iframe);
+                bindIframeDocumentPressFallback(iframe, iframeId);
             }
         }, 2000);
         setTimeout(() => {
@@ -5478,6 +6153,20 @@ export const setupIframeResizeListener = () => {
             } catch {}
         }
         return null;
+    };
+    const applyIncomingResizeMessage = (iframe, data, { sourceFallback = 'bridge' } = {}) => {
+        if (!iframe || !data || typeof data !== 'object') return false;
+        const rawHeight = Number(data.height ?? data.newHeight);
+        if (!Number.isFinite(rawHeight)) return false;
+        return applyIframeResizeUpdate(iframe, {
+            rawHeight,
+            source: normalizeHeightSource(data.source || sourceFallback),
+            mode: normalizeHeightMode(data.mode || 'document'),
+            seq: data.seq,
+            lock: Boolean(data.lock),
+            unlock: Boolean(data.unlock),
+            ts: data.ts,
+        });
     };
     const collectMvuVars = (sessionId) => {
         const sid = String(sessionId || window.appBridge?.activeSessionId || '').trim();
@@ -5829,7 +6518,10 @@ export const setupIframeResizeListener = () => {
             iframe.dataset.iframeReady = '1';
             iframe.dataset.iframeLoaded = iframe.dataset.iframeLoaded || '1';
             const st = getIframeState(id, { messageId: String(iframe.dataset.msgId || ''), createdAt: Date.now() });
-            if (st && !st.readyAt) st.readyAt = Date.now();
+            if (st) {
+                if (!st.readyAt) st.readyAt = Date.now();
+                if (!st.authority) st.authority = IFRAME_AUTHORITY_HOST;
+            }
             if (iframe.dataset.iframeMvuCompat === '1') {
                 postMvuVarsToIframe(iframe, iframe.dataset.sessionId || '');
             }
@@ -5934,36 +6626,16 @@ export const setupIframeResizeListener = () => {
         }
         if (data.type === 'chatapp:iframe-resize') {
             const id = String(data.id || '');
-            const height = Number(data.height);
-            if (!id || !Number.isFinite(height)) return;
+            if (!id) return;
             const iframe = document.querySelector(`iframe[data-iframe-id="${esc(id)}"]`);
             if (!iframe) return;
-            const clamped = Math.max(120, Math.min(height + 4, 2000));
-            iframe.style.height = `${clamped}px`;
-            markIframePostResize(iframe);
-            const st = getIframeState(id, { messageId: String(iframe.dataset.msgId || ''), createdAt: Date.now() });
-            if (st) {
-                st.resizeCount = (st.resizeCount || 0) + 1;
-                st.lastResizeAt = Date.now();
-            }
+            applyIncomingResizeMessage(iframe, data, { sourceFallback: 'bridge' });
             return;
         }
         if (data.type === 'resizeIframe') {
-            const height = Number(data.height ?? data.newHeight);
-            if (!Number.isFinite(height)) return;
             const iframe = findIframeBySource(e?.source) || null;
             if (!iframe) return;
-            const clamped = Math.max(120, Math.min(height + 4, 2000));
-            iframe.style.height = `${clamped}px`;
-            markIframePostResize(iframe);
-            const id = String(iframe.dataset.iframeId || '');
-            if (id) {
-                const st = getIframeState(id, { messageId: String(iframe.dataset.msgId || ''), createdAt: Date.now() });
-                if (st) {
-                    st.resizeCount = (st.resizeCount || 0) + 1;
-                    st.lastResizeAt = Date.now();
-                }
-            }
+            applyIncomingResizeMessage(iframe, data, { sourceFallback: 'legacy' });
             return;
         }
 
