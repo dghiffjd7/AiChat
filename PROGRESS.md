@@ -1,5 +1,56 @@
 # 開發進度追蹤（必更新）(必须使用当下时间记录)
 
+## 2026-02-12 (MVU 兼容桥短路修复 + 变量链路诊断增强)
+
+- **mini-$ 短路修复（简单卡状态栏空白高频原因）**：
+  - 现象：`dollar shim` 先注入 lite mini-`$` 后，legacy/enhanced bridge 的 `ensureMiniQuery` 直接短路返回，导致桥接侧 richer API 未接管，部分卡脚本（如 `$(document).ready(...)`）静默失败。
+  - 修复：兼容桥仅在 `__chatappMiniRich` 时才短路；lite shim 不再阻断升级。并为 mini-`$` 补齐 `ready/get/eq/length/[0]` 常用能力。
+  - 结果：静态 schema 变量卡脚本在 bridge 场景下不再被前置 lite shim 抢占。
+- **依赖加载回退增强**：
+  - `buildDollarGlobalShim` 增加本地候选路径：`${origin}/src/lib/lodash.min.js`、`${origin}/src/lib/zod.min.js`，降低 CDN 不可用时的 fallback 触发概率。
+- **变量下发链路日志增强（快速定位源头）**：
+  - host 侧新增：`mvu-vars-posted / mvu-vars-skip / mvu-vars-post-failed`。
+  - iframe 侧新增：`legacy-vars-skip-session expected=... got=...`（会话不匹配直接可见）。
+  - bridge 启动新增：`legacy-seed-vars keys=...`，用于确认首帧 seed 是否为空。
+- **MVU 计划文档状态同步**：
+  - 更新 `MVU_plan/原生MVU实现计划.md`：将“兼容层运行时桥接”独立标记为已完成（持续回归），并把“简单卡/复杂卡交替测试全通过”明确为待回归项。
+  - 更新 `MVU_plan/MVU_compat_gap_report_2026-02-05.md`：补充第二轮稳定性收敛进度（短路修复、日志链路）。
+- 修改：
+  - `src/scripts/ui/chat/rich-text-renderer.js`
+  - `/mnt/d/my/phone/MVU_plan/原生MVU实现计划.md`
+  - `/mnt/d/my/phone/MVU_plan/MVU_compat_gap_report_2026-02-05.md`
+
+## 2026-02-12 (MVU 兼容桥变量首帧注入 + 文档状态同步)
+
+- **MVU 兼容桥首帧变量注入修复**：
+  - 现象：部分 RP 富文本 iframe 出现 `no-ready-after-2s` 时，`chatapp:mvu-vars` 注入不稳定，导致状态栏脚本读取到空 `stat_data`（变量管理器有值但卡内显示为空）。
+  - 修复：在渲染代码块时直接将当前会话变量作为 `seedVars` 注入 MVU 兼容桥（legacy/enhanced 双桥），使 iframe 在首帧就拥有 `stat_data / variables / status_current_variables`，不再完全依赖 ready 握手。
+  - 结果：即使 ready 回报延迟，变量卡状态栏也能先拿到初始变量值，再由后续广播增量更新。
+- **MVU 模块脚本作用域兼容修复**：
+  - 现象：部分状态栏美化脚本使用 `<script type="module">` 且直接调用裸标识符（`_/$/Mvu/getAllVariables` 等），在 module 作用域下可能触发 `ReferenceError` 后被 `errorCatched` 吞掉，表现为界面空白。
+  - 修复：对“MVU 兼容 + 非 direct-load”场景新增 module 定向重写，将关键调用/对象访问统一改写为 `window.xxx` 安全访问（含 `getAllVariables/getVariables/eventOn/waitGlobalInitialized/_/$/Mvu`）。
+  - 结果：module 脚本无需手改即可读取兼容桥变量与 API，降低“有变量但状态栏空白”的概率。
+- **RP 历史渲染会话上下文修复（通用）**：
+  - 现象：部分 RP 开场白重进界面后，日志出现 `ui-render session=` 空值，随后 iframe 侧 `tavern-helper-shim-seed-current len=0`，导致依赖 `getChatMessages/getCurrentMessageId` 的通用状态栏脚本拿不到当前消息文本而空白。
+  - 修复：在 UI 与 rich 渲染链路补齐 `sessionId` 透传与兜底（历史渲染/更新重渲染），并在 bridge 注入前按 `messageId` 反查会话，统一用解析后的会话构建 `seedMessages/seedVars`。
+  - 结果：即使消息对象本身未携带 `sessionId`，兼容桥仍可稳定拿到当前消息与变量种子，不再出现“变量管理器有值但状态栏空白”。
+- **MVU 兼容桥首帧事件与 ready 握手补齐（通用）**：
+  - 现象：部分卡片虽已拿到 seed 变量，但仍出现 `no-ready-after-2s`，且状态栏依赖的事件流未触发，导致变量不显示。
+  - 修复：在 legacy/enhanced 两套 MVU bridge 中主动回传 `chatapp:iframe-ready`，并在启动后补发一次初始变量事件（`mag_variable_initialized` + `mag_variable_update_ended`）。
+  - 结果：不再依赖外层 bridge 的 ready 才能进入变量广播链路，事件驱动型状态栏可在首帧触发渲染。
+- **跨卡兼容函数污染修复（简单卡/复杂卡互相影响）**：
+  - 现象：`parent/top` 上的兼容 API 之前采用“缺了才挂”，导致先加载卡片的闭包被后续卡复用，出现简单卡修好后复杂卡异常、或反向回归。
+  - 修复：兼容桥每次启动都刷新 `parent/top` 的关键函数映射（`getVariables/getChatMessages/setChatMessage/...`），确保当前卡上下文优先。
+  - 结果：减少不同类型卡片（静态 schema vs `$('body').load(...)`）交替测试时的上下文串用。
+- **MVU 规划文档同步**：
+  - 更新 `MVU_plan/MVU_compat_gap_report_2026-02-05.md`：将 Schema 入口、默认值补齐、最小事件集等兼容层能力标记为已完成，核心待实现改为 0（兼容层维度）。
+  - 更新 `MVU_plan/原生MVU实现计划.md`：明确“兼容层已完成、原生玩法待验收”的状态边界。
+- 修改：
+  - `src/scripts/ui/chat/chat-ui.js`
+  - `src/scripts/ui/chat/rich-text-renderer.js`
+  - `/mnt/d/my/phone/MVU_plan/MVU_compat_gap_report_2026-02-05.md`
+  - `/mnt/d/my/phone/MVU_plan/原生MVU实现计划.md`
+
 ## 2026-02-09 (MVU 角色卡导入状态修正 + RP 开场白调试 + iframe 告警降噪)
 
 - **世界书条目状态互斥修正（红/蓝/绿灯）**：

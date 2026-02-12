@@ -219,6 +219,15 @@ export class ChatUI {
     }
   }
 
+  resolveMessageSessionId(message = null) {
+    const explicit = String(message?.sessionId || '').trim();
+    if (explicit) return explicit;
+    const bridge = typeof window !== 'undefined' ? window.appBridge : null;
+    const active = String(bridge?.activeSessionId || '').trim();
+    if (active) return active;
+    return String(bridge?.chatStore?.getCurrent?.() || '').trim();
+  }
+
   getReasoningText(message) {
     const meta = message?.meta;
     if (!meta || typeof meta !== 'object') return '';
@@ -676,6 +685,10 @@ export class ChatUI {
     if (!message.id) {
       message.id = `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
     }
+    const resolvedSessionId = this.resolveMessageSessionId(message);
+    if (resolvedSessionId && String(message?.sessionId || '').trim() !== resolvedSessionId) {
+      message = { ...message, sessionId: resolvedSessionId };
+    }
 
     if (message.role === 'system' && message.type === 'divider') {
       const wrapper = document.createElement('div');
@@ -965,13 +978,13 @@ export class ChatUI {
           const target = this.prepareTextContainer(bubble, message);
           if (message?.meta?.isGreeting) {
             logger.info(
-              `[rp-greeting] ui-render messageId=${String(message?.id || '')} session=${String(message?.sessionId || '')} len=${String(message?.content || '').length}`,
+              `[rp-greeting] ui-render messageId=${String(message?.id || '')} session=${resolvedSessionId} len=${String(message?.content || '').length}`,
             );
           }
           renderRichText(target, String(message.content ?? ''), {
             messageId: message.id,
             preserveHtmlNewlines: true,
-            sessionId: message?.sessionId,
+            sessionId: resolvedSessionId,
             debugTag: message?.meta?.isGreeting ? 'rp-greeting' : '',
           });
           break;
@@ -1238,6 +1251,7 @@ export class ChatUI {
         badge: msg.badge,
         id: msg.id,
         status: msg.status,
+        sessionId: msg.sessionId,
       });
       if (el) fragment.appendChild(el);
     }
@@ -1264,6 +1278,7 @@ export class ChatUI {
         badge: msg.badge,
         id: msg.id,
         status: msg.status,
+        sessionId: msg.sessionId,
       });
       if (el) fragment.appendChild(el);
     }
@@ -1297,7 +1312,15 @@ export class ChatUI {
   updateMessage(msgId, newMessage) {
     const existing = this.scrollEl.querySelector(`[data-msg-id="${msgId}"]`);
     if (!existing) return;
-    const newEl = this.buildMessageElement({ ...newMessage, id: msgId });
+    const prev = existing.__chatappMessage && typeof existing.__chatappMessage === 'object'
+      ? existing.__chatappMessage
+      : {};
+    const resolvedSessionId =
+      String(newMessage?.sessionId || '').trim()
+      || String(prev?.sessionId || '').trim()
+      || this.resolveMessageSessionId(prev);
+    const next = { ...prev, ...(newMessage || {}), id: msgId, sessionId: resolvedSessionId };
+    const newEl = this.buildMessageElement(next);
     if (newEl) existing.replaceWith(newEl);
   }
 

@@ -308,13 +308,14 @@ const diagnoseIframeError = (message = '') => {
     if (/Unexpected token|Invalid regular expression|SyntaxError/i.test(msg)) return 'hint=user-script-syntax';
     return '';
 };
-const buildMvuCompatBridge = ({ iframeId, sessionId, debugTag, messageId, messageIndex } = {}) => {
+const buildMvuCompatBridge = ({ iframeId, sessionId, debugTag, messageId, messageIndex, seedVars } = {}) => {
     const id = String(iframeId || '');
     const sid = String(sessionId || '');
     const tag = String(debugTag || '');
     const mid = String(messageId || '');
     const rawIdx = Number(messageIndex);
     const midx = Number.isFinite(rawIdx) ? Math.trunc(rawIdx) : null;
+    const seed = seedVars && typeof seedVars === 'object' ? seedVars : {};
     return `
 <script>
 (() => {
@@ -323,6 +324,7 @@ const buildMvuCompatBridge = ({ iframeId, sessionId, debugTag, messageId, messag
   const CHATAPP_DEBUG_TAG = ${JSON.stringify(tag)};
   const CHATAPP_MESSAGE_ID = ${JSON.stringify(mid)};
   const CHATAPP_MESSAGE_INDEX = ${midx === null ? 'null' : String(midx)};
+  const CHATAPP_SEED_VARS = ${JSON.stringify(seed)};
   const listeners = new Map();
   const withTag = (message) => {
     const msg = String(message || '');
@@ -375,7 +377,7 @@ const buildMvuCompatBridge = ({ iframeId, sessionId, debugTag, messageId, messag
       global_variables: globalVars,
     };
   };
-  const state = { vars: normalizeVars({}) };
+  const state = { vars: normalizeVars(CHATAPP_SEED_VARS || {}) };
   const cloneVars = (input) => {
     try { return structuredClone(input); } catch {}
     try { return JSON.parse(JSON.stringify(input)); } catch {}
@@ -583,6 +585,14 @@ const buildMvuCompatBridge = ({ iframeId, sessionId, debugTag, messageId, messag
   const setVars = (vars) => {
     state.vars = normalizeVars(vars);
     emit(window.Mvu?.events?.VARIABLE_UPDATE_ENDED || 'mag_variable_update_ended', state.vars);
+  };
+  const emitInitialVarEvents = () => {
+    try {
+      emit(window.Mvu?.events?.VARIABLE_INITIALIZED || 'mag_variable_initialized', state.vars);
+    } catch {}
+    try {
+      emit(window.Mvu?.events?.VARIABLE_UPDATE_ENDED || 'mag_variable_update_ended', state.vars);
+    } catch {}
   };
 
   const safeWaitGlobalInitialized = (name) => new Promise((resolve) => {
@@ -896,7 +906,7 @@ const buildMvuCompatBridge = ({ iframeId, sessionId, debugTag, messageId, messag
     }
     ['getAllVariables', 'getVariables', 'getCurrentMessageId', 'getChatMessages', 'getChatMessage', 'getContext', 'setChatMessage', 'setChatMessages', 'insertOrAssignVariables', 'deleteVariable', 'waitGlobalInitialized', 'replaceVariables']
       .forEach((name) => {
-        if (typeof helper[name] === 'function' && typeof window.SillyTavern[name] !== 'function') {
+        if (typeof helper[name] === 'function') {
           window.SillyTavern[name] = (...args) => helper[name](...args);
         }
       });
@@ -908,10 +918,10 @@ const buildMvuCompatBridge = ({ iframeId, sessionId, debugTag, messageId, messag
         if (!host.SillyTavern.TavernHelper || typeof host.SillyTavern.TavernHelper !== 'object') host.SillyTavern.TavernHelper = helper;
         ['getAllVariables', 'getVariables', 'getCurrentMessageId', 'getChatMessages', 'getChatMessage', 'getContext', 'setChatMessage', 'setChatMessages', 'insertOrAssignVariables', 'deleteVariable', 'waitGlobalInitialized', 'replaceVariables']
           .forEach((name) => {
-            if (typeof helper[name] === 'function' && typeof host.SillyTavern[name] !== 'function') {
+            if (typeof helper[name] === 'function') {
               host.SillyTavern[name] = (...args) => helper[name](...args);
             }
-            if (typeof helper[name] === 'function' && typeof host[name] !== 'function') {
+            if (typeof helper[name] === 'function') {
               host[name] = (...args) => helper[name](...args);
             }
           });
@@ -1174,7 +1184,7 @@ const buildMvuCompatBridge = ({ iframeId, sessionId, debugTag, messageId, messag
   const ensureMiniQuery = () => {
     const hasJq = typeof window.$ === 'function' && window.$.fn && window.$.fn.jquery;
     if (hasJq) return;
-    if (typeof window.$ === 'function' && window.$.__chatappMini) return;
+    if (typeof window.$ === 'function' && window.$.__chatappMini && window.$.__chatappMiniRich) return;
     const parseLoadTarget = (input) => {
       const raw = String(input || '').trim();
       if (!raw) return { url: '', selector: '' };
@@ -1238,9 +1248,39 @@ const buildMvuCompatBridge = ({ iframeId, sessionId, debugTag, messageId, messag
       if (Array.isArray(input)) return input.filter(Boolean);
       return Array.from(document.querySelectorAll(String(input)));
     };
-    const wrap = (nodes) => ({
+    const asIndexedApi = (api, nodes) => {
+      try {
+        api.length = Array.isArray(nodes) ? nodes.length : 0;
+        (Array.isArray(nodes) ? nodes : []).forEach((n, i) => {
+          api[i] = n;
+        });
+      } catch {}
+      return api;
+    };
+    const wrap = (nodes) => asIndexedApi({
       __chatappMini: true,
+      __chatappMiniRich: true,
       nodes,
+      length: Array.isArray(nodes) ? nodes.length : 0,
+      ready(handler) {
+        if (typeof handler !== 'function') return this;
+        if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', handler, { once: true });
+        else setTimeout(() => {
+          try { handler.call(document); } catch {}
+        }, 0);
+        return this;
+      },
+      get(index) {
+        if (index === undefined) return Array.isArray(nodes) ? nodes.slice() : [];
+        let idx = Number(index);
+        if (!Number.isFinite(idx) || !Number.isInteger(idx)) return undefined;
+        if (idx < 0) idx = (Array.isArray(nodes) ? nodes.length : 0) + idx;
+        return (Array.isArray(nodes) && idx >= 0 && idx < nodes.length) ? nodes[idx] : undefined;
+      },
+      eq(index) {
+        const hit = this.get(index);
+        return wrap(hit ? [hit] : []);
+      },
       text(value) {
         if (value === undefined) return nodes[0]?.textContent ?? '';
         nodes.forEach(n => { n.textContent = String(value); });
@@ -1365,7 +1405,7 @@ const buildMvuCompatBridge = ({ iframeId, sessionId, debugTag, messageId, messag
           .catch(onFailed);
         return this;
       },
-    });
+    }, nodes);
     const mini = (input) => {
       if (typeof input === 'function') {
         if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', input);
@@ -1375,6 +1415,7 @@ const buildMvuCompatBridge = ({ iframeId, sessionId, debugTag, messageId, messag
       return wrap(toNodes(input));
     };
     mini.__chatappMini = true;
+    mini.__chatappMiniRich = true;
     window.$ = mini;
   };
 
@@ -1396,7 +1437,17 @@ const buildMvuCompatBridge = ({ iframeId, sessionId, debugTag, messageId, messag
       return;
     }
     if (data.type !== 'chatapp:mvu-vars') return;
-    if (data.sessionId && CHATAPP_SESSION_ID && String(data.sessionId) !== CHATAPP_SESSION_ID) return;
+    if (data.sessionId && CHATAPP_SESSION_ID && String(data.sessionId) !== CHATAPP_SESSION_ID) {
+      try {
+        parent.postMessage({
+          type: 'chatapp:iframe-debug',
+          id: CHATAPP_IFRAME_ID,
+          level: 'warn',
+          message: 'legacy-vars-skip-session expected=' + String(CHATAPP_SESSION_ID || '') + ' got=' + String(data.sessionId || ''),
+        }, '*');
+      } catch {}
+      return;
+    }
     setVars(data.vars || {});
     try {
       parent.postMessage({
@@ -1417,19 +1468,30 @@ const buildMvuCompatBridge = ({ iframeId, sessionId, debugTag, messageId, messag
         level: 'info',
         message: 'legacy-bridge-ready session=' + (CHATAPP_SESSION_ID || ''),
       }, '*');
+      parent.postMessage({
+        type: 'chatapp:iframe-debug',
+        id: CHATAPP_IFRAME_ID,
+        level: 'info',
+        message: 'legacy-seed-vars keys=' + String(Object.keys((state.vars && state.vars.stat_data) || {}).length),
+      }, '*');
+      parent.postMessage({ type: 'chatapp:iframe-ready', id: CHATAPP_IFRAME_ID }, '*');
     } catch {}
+    setTimeout(() => {
+      emitInitialVarEvents();
+    }, 0);
   };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', request);
   else request();
 })();
 </script>`;
 };
-const buildMvuCompatBridgeLegacy = ({ iframeId, sessionId, messageId, messageIndex } = {}) => {
+const buildMvuCompatBridgeLegacy = ({ iframeId, sessionId, messageId, messageIndex, seedVars } = {}) => {
     const id = String(iframeId || '');
     const sid = String(sessionId || '');
     const mid = String(messageId || '');
     const rawIdx = Number(messageIndex);
     const midx = Number.isFinite(rawIdx) ? Math.trunc(rawIdx) : null;
+    const seed = seedVars && typeof seedVars === 'object' ? seedVars : {};
     return `
 <script>
 (() => {
@@ -1437,6 +1499,7 @@ const buildMvuCompatBridgeLegacy = ({ iframeId, sessionId, messageId, messageInd
   const CHATAPP_SESSION_ID = ${JSON.stringify(sid)};
   const CHATAPP_MESSAGE_ID = ${JSON.stringify(mid)};
   const CHATAPP_MESSAGE_INDEX = ${midx === null ? 'null' : String(midx)};
+  const CHATAPP_SEED_VARS = ${JSON.stringify(seed)};
   const listeners = new Map();
 
   const ensureEventSet = (event) => {
@@ -1473,7 +1536,7 @@ const buildMvuCompatBridgeLegacy = ({ iframeId, sessionId, messageId, messageInd
       global_variables: globalVars,
     };
   };
-  const state = { vars: normalizeVars({}) };
+  const state = { vars: normalizeVars(CHATAPP_SEED_VARS || {}) };
   const cloneVars = (input) => {
     try { return structuredClone(input); } catch {}
     try { return JSON.parse(JSON.stringify(input)); } catch {}
@@ -1617,6 +1680,14 @@ const buildMvuCompatBridgeLegacy = ({ iframeId, sessionId, messageId, messageInd
   const setVars = (vars) => {
     state.vars = normalizeVars(vars);
     emit(window.Mvu?.events?.VARIABLE_UPDATE_ENDED || 'mag_variable_update_ended', state.vars);
+  };
+  const emitInitialVarEvents = () => {
+    try {
+      emit(window.Mvu?.events?.VARIABLE_INITIALIZED || 'mag_variable_initialized', state.vars);
+    } catch {}
+    try {
+      emit(window.Mvu?.events?.VARIABLE_UPDATE_ENDED || 'mag_variable_update_ended', state.vars);
+    } catch {}
   };
 
   window.getAllVariables = window.getAllVariables || (() => state.vars);
@@ -2006,16 +2077,46 @@ const buildMvuCompatBridgeLegacy = ({ iframeId, sessionId, messageId, messageInd
   const ensureMiniQuery = () => {
     const hasJq = typeof window.$ === 'function' && window.$.fn && window.$.fn.jquery;
     if (hasJq) return;
-    if (typeof window.$ === 'function' && window.$.__chatappMini) return;
+    if (typeof window.$ === 'function' && window.$.__chatappMini && window.$.__chatappMiniRich) return;
     const toNodes = (input) => {
       if (!input) return [];
       if (input instanceof Element || input === window || input === document) return [input];
       if (Array.isArray(input)) return input.filter(Boolean);
       return Array.from(document.querySelectorAll(String(input)));
     };
-    const wrap = (nodes) => ({
+    const asIndexedApi = (api, nodes) => {
+      try {
+        api.length = Array.isArray(nodes) ? nodes.length : 0;
+        (Array.isArray(nodes) ? nodes : []).forEach((n, i) => {
+          api[i] = n;
+        });
+      } catch {}
+      return api;
+    };
+    const wrap = (nodes) => asIndexedApi({
       __chatappMini: true,
+      __chatappMiniRich: true,
       nodes,
+      length: Array.isArray(nodes) ? nodes.length : 0,
+      ready(handler) {
+        if (typeof handler !== 'function') return this;
+        if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', handler, { once: true });
+        else setTimeout(() => {
+          try { handler.call(document); } catch {}
+        }, 0);
+        return this;
+      },
+      get(index) {
+        if (index === undefined) return Array.isArray(nodes) ? nodes.slice() : [];
+        let idx = Number(index);
+        if (!Number.isFinite(idx) || !Number.isInteger(idx)) return undefined;
+        if (idx < 0) idx = (Array.isArray(nodes) ? nodes.length : 0) + idx;
+        return (Array.isArray(nodes) && idx >= 0 && idx < nodes.length) ? nodes[idx] : undefined;
+      },
+      eq(index) {
+        const hit = this.get(index);
+        return wrap(hit ? [hit] : []);
+      },
       text(value) {
         if (value === undefined) return nodes[0]?.textContent ?? '';
         nodes.forEach(n => { n.textContent = String(value); });
@@ -2114,7 +2215,7 @@ const buildMvuCompatBridgeLegacy = ({ iframeId, sessionId, messageId, messageInd
         });
         return this;
       },
-    });
+    }, nodes);
     const mini = (input) => {
       if (typeof input === 'function') {
         if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', input);
@@ -2124,6 +2225,7 @@ const buildMvuCompatBridgeLegacy = ({ iframeId, sessionId, messageId, messageInd
       return wrap(toNodes(input));
     };
     mini.__chatappMini = true;
+    mini.__chatappMiniRich = true;
     window.$ = mini;
   };
 
@@ -2143,14 +2245,40 @@ const buildMvuCompatBridgeLegacy = ({ iframeId, sessionId, messageId, messageInd
       return;
     }
     if (data.type !== 'chatapp:mvu-vars') return;
-    if (data.sessionId && CHATAPP_SESSION_ID && String(data.sessionId) !== CHATAPP_SESSION_ID) return;
+    if (data.sessionId && CHATAPP_SESSION_ID && String(data.sessionId) !== CHATAPP_SESSION_ID) {
+      try {
+        parent.postMessage({
+          type: 'chatapp:iframe-debug',
+          id: CHATAPP_IFRAME_ID,
+          level: 'warn',
+          message: 'legacy-vars-skip-session expected=' + String(CHATAPP_SESSION_ID || '') + ' got=' + String(data.sessionId || ''),
+        }, '*');
+      } catch {}
+      return;
+    }
     setVars(data.vars || {});
   });
 
   const request = () => {
     try {
       parent.postMessage({ type: 'chatapp:mvu-ready', id: CHATAPP_IFRAME_ID, sessionId: CHATAPP_SESSION_ID }, '*');
+      parent.postMessage({
+        type: 'chatapp:iframe-debug',
+        id: CHATAPP_IFRAME_ID,
+        level: 'info',
+        message: 'legacy-bridge-ready session=' + (CHATAPP_SESSION_ID || ''),
+      }, '*');
+      parent.postMessage({
+        type: 'chatapp:iframe-debug',
+        id: CHATAPP_IFRAME_ID,
+        level: 'info',
+        message: 'legacy-seed-vars keys=' + String(Object.keys((state.vars && state.vars.stat_data) || {}).length),
+      }, '*');
+      parent.postMessage({ type: 'chatapp:iframe-ready', id: CHATAPP_IFRAME_ID }, '*');
     } catch {}
+    setTimeout(() => {
+      emitInitialVarEvents();
+    }, 0);
   };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', request);
   else request();
@@ -3393,6 +3521,50 @@ const rewriteErrorCatchedOnly = (htmlCode) => {
     }
     return { html, replaced };
 };
+const rewriteMvuModuleGlobals = (htmlCode) => {
+    let html = String(htmlCode || '');
+    let replaced = 0;
+    const rewriteJs = (jsCode) => {
+        let js = String(jsCode || '');
+        const replaceCall = (regex, replacementFactory) => {
+            js = js.replace(regex, (...args) => {
+                replaced += 1;
+                return replacementFactory(...args);
+            });
+        };
+        replaceCall(/(^|[^\w$.])errorCatched\s*\(/g, (full, prefix) => `${String(prefix || '')}window.errorCatched(`);
+        replaceCall(/(^|[^\w$.])getAllVariables\s*\(/g, (full, prefix) => `${String(prefix || '')}(window.getAllVariables||(()=>({})))(`);
+        replaceCall(/(^|[^\w$.])getVariables\s*\(/g, (full, prefix) => `${String(prefix || '')}(window.getVariables||window.getAllVariables||(()=>({})))(`);
+        replaceCall(/(^|[^\w$.])getCurrentMessageId\s*\(/g, (full, prefix) => `${String(prefix || '')}(window.getCurrentMessageId||(()=>''))(`);
+        replaceCall(/(^|[^\w$.])getChatMessages\s*\(/g, (full, prefix) => `${String(prefix || '')}(window.getChatMessages||(()=>[]))(`);
+        replaceCall(/(^|[^\w$.])getChatMessage\s*\(/g, (full, prefix) => `${String(prefix || '')}(window.getChatMessage||(()=>''))(`);
+        replaceCall(/(^|[^\w$.])getContext\s*\(/g, (full, prefix) => `${String(prefix || '')}(window.getContext||(()=>({})))(`);
+        replaceCall(/(^|[^\w$.])setChatMessage\s*\(/g, (full, prefix) => `${String(prefix || '')}(window.setChatMessage|| (async()=>false))(`);
+        replaceCall(/(^|[^\w$.])setChatMessages\s*\(/g, (full, prefix) => `${String(prefix || '')}(window.setChatMessages|| (async()=>false))(`);
+        replaceCall(/(^|[^\w$.])insertOrAssignVariables\s*\(/g, (full, prefix) => `${String(prefix || '')}(window.insertOrAssignVariables|| (async()=>false))(`);
+        replaceCall(/(^|[^\w$.])deleteVariable\s*\(/g, (full, prefix) => `${String(prefix || '')}(window.deleteVariable|| (async()=>false))(`);
+        replaceCall(/(^|[^\w$.])waitGlobalInitialized\s*\(/g, (full, prefix) => `${String(prefix || '')}(window.waitGlobalInitialized||(()=>Promise.resolve(null)))(`);
+        replaceCall(/(^|[^\w$.])eventOn\s*\(/g, (full, prefix) => `${String(prefix || '')}(window.eventOn||(()=>{}))(`);
+        replaceCall(/(^|[^\w$.])eventRemoveListener\s*\(/g, (full, prefix) => `${String(prefix || '')}(window.eventRemoveListener||(()=>{}))(`);
+        replaceCall(/(^|[^\w$.])Mvu\b/g, (full, prefix) => `${String(prefix || '')}window.Mvu`);
+        replaceCall(/(^|[^\w$.])_\s*\./g, (full, prefix) => `${String(prefix || '')}window._.`);
+        replaceCall(/(^|[^\w$.])\$\s*\(/g, (full, prefix) => `${String(prefix || '')}(window.$||(()=>({text(){return this;},css(){return this;},addClass(){return this;},removeClass(){return this;},empty(){return this;},html(){return this;},append(){return this;}})))(`);
+        return js;
+    };
+    try {
+        html = html.replace(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi, (full, attrs, body) => {
+            const attrText = String(attrs || '');
+            if (/\bsrc\s*=/.test(attrText)) return full;
+            if (!/\btype\s*=\s*["']module["']/i.test(attrText)) return full;
+            if (/\btype\s*=\s*["'](?:application\/json|application\/ld\+json|text\/plain)["']/i.test(attrText)) return full;
+            const nextBody = rewriteJs(String(body || ''));
+            return `<script${attrText}>${nextBody}</script>`;
+        });
+    } catch {
+        return { html: String(htmlCode || ''), replaced: 0, failed: true };
+    }
+    return { html, replaced };
+};
 const maybeRewriteStHelperGlobals = (htmlCode, { directLoad = false } = {}) => {
     const html = String(htmlCode || '');
     if (!directLoad) return { html, replaced: 0, skipped: true };
@@ -3401,6 +3573,8 @@ const maybeRewriteStHelperGlobals = (htmlCode, { directLoad = false } = {}) => {
 const maybeRewriteMvuInlineHelpers = (htmlCode, { needsMvuCompat = false, directLoad = false } = {}) => {
     const html = String(htmlCode || '');
     if (!needsMvuCompat || directLoad) return { html, replaced: 0, skipped: true };
+    const hasModuleScript = /<script\b[^>]*\btype\s*=\s*["']module["'][^>]*>/i.test(html);
+    if (hasModuleScript) return rewriteMvuModuleGlobals(html);
     return rewriteErrorCatchedOnly(html);
 };
 
@@ -3603,12 +3777,14 @@ const buildDollarGlobalShim = ({
     const seed = Array.isArray(seedMessages) ? seedMessages : [];
     const lodashUrls = [
         origin ? `${origin}/lib/lodash.min.js` : '',
+        origin ? `${origin}/src/lib/lodash.min.js` : '',
         'https://testingcf.jsdelivr.net/npm/lodash@4.17.21/lodash.min.js',
         'https://cdn.jsdelivr.net/npm/lodash@4.17.21/lodash.min.js',
         'https://unpkg.com/lodash@4.17.21/lodash.min.js',
     ];
     const zodUrls = [
         origin ? `${origin}/lib/zod.min.js` : '',
+        origin ? `${origin}/src/lib/zod.min.js` : '',
         'https://testingcf.jsdelivr.net/npm/zod@3.22.4/lib/index.umd.min.js',
         'https://cdn.jsdelivr.net/npm/zod@3.22.4/lib/index.umd.min.js',
         'https://unpkg.com/zod@3.22.4/lib/index.umd.min.js',
@@ -4047,7 +4223,7 @@ const buildDollarGlobalShim = ({
   }
   ['getAllVariables', 'getVariables', 'getCurrentMessageId', 'getChatMessages', 'getChatMessage', 'getContext', 'setChatMessage', 'setChatMessages', 'insertOrAssignVariables', 'deleteVariable', 'waitGlobalInitialized', 'replaceVariables']
     .forEach((name) => {
-      if (typeof helper[name] === 'function' && typeof window.SillyTavern[name] !== 'function') {
+      if (typeof helper[name] === 'function') {
         window.SillyTavern[name] = (...args) => helper[name](...args);
       }
     });
@@ -4064,7 +4240,7 @@ const buildDollarGlobalShim = ({
       const hostHelper = host.TavernHelper;
       const names = ['getAllVariables', 'getVariables', 'getCurrentMessageId', 'getChatMessages', 'getChatMessage', 'getContext', 'setChatMessage', 'setChatMessages', 'insertOrAssignVariables', 'deleteVariable', 'waitGlobalInitialized', 'replaceVariables'];
       names.forEach((name) => {
-        if (typeof hostHelper[name] !== 'function' && typeof helper[name] === 'function') {
+        if (typeof helper[name] === 'function') {
           hostHelper[name] = (...args) => helper[name](...args);
         }
       });
@@ -4074,18 +4250,18 @@ const buildDollarGlobalShim = ({
         host.SillyTavern.TavernHelper = hostHelper;
       }
       names.forEach((name) => {
-        if (typeof host.SillyTavern[name] !== 'function' && typeof hostHelper[name] === 'function') {
+        if (typeof hostHelper[name] === 'function') {
           host.SillyTavern[name] = (...args) => hostHelper[name](...args);
         }
       });
-      if (typeof host.getCurrentMessageId !== 'function') host.getCurrentMessageId = (...args) => compat.getCurrentMessageId(...args);
-      if (typeof host.getChatMessages !== 'function') host.getChatMessages = (...args) => compat.getChatMessages(...args);
-      if (typeof host.getChatMessage !== 'function') host.getChatMessage = (...args) => compat.getChatMessage(...args);
-      if (typeof host.getContext !== 'function') host.getContext = (...args) => compat.getContext(...args);
-      if (typeof host.getVariables !== 'function') host.getVariables = (...args) => compat.getVariables(...args);
-      if (typeof host.getAllVariables !== 'function') host.getAllVariables = (...args) => compat.getAllVariables(...args);
-      if (typeof host.setChatMessage !== 'function') host.setChatMessage = (...args) => compat.setChatMessage(...args);
-      if (typeof host.setChatMessages !== 'function') host.setChatMessages = (...args) => compat.setChatMessages(...args);
+      host.getCurrentMessageId = (...args) => compat.getCurrentMessageId(...args);
+      host.getChatMessages = (...args) => compat.getChatMessages(...args);
+      host.getChatMessage = (...args) => compat.getChatMessage(...args);
+      host.getContext = (...args) => compat.getContext(...args);
+      host.getVariables = (...args) => compat.getVariables(...args);
+      host.getAllVariables = (...args) => compat.getAllVariables(...args);
+      host.setChatMessage = (...args) => compat.setChatMessage(...args);
+      host.setChatMessages = (...args) => compat.setChatMessages(...args);
       if (typeof host._ === 'undefined' && typeof window._ !== 'undefined') host._ = window._;
       if (typeof host.$ === 'undefined' && typeof window.$ === 'function') host.$ = window.$;
       if (typeof host.jQuery === 'undefined' && typeof window.jQuery === 'function') host.jQuery = window.jQuery;
@@ -4112,9 +4288,39 @@ const buildDollarGlobalShim = ({
         if (Array.isArray(input)) return input.filter(Boolean);
         return Array.from(document.querySelectorAll(String(input)));
       };
-      const wrap = (nodes) => ({
+      const asIndexedApi = (api, nodes) => {
+        try {
+          api.length = Array.isArray(nodes) ? nodes.length : 0;
+          (Array.isArray(nodes) ? nodes : []).forEach((n, i) => {
+            api[i] = n;
+          });
+        } catch {}
+        return api;
+      };
+      const wrap = (nodes) => asIndexedApi({
         __chatappMini: true,
+        __chatappMiniLite: true,
         nodes,
+        length: Array.isArray(nodes) ? nodes.length : 0,
+        ready(handler) {
+          if (typeof handler !== 'function') return this;
+          if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', handler, { once: true });
+          else setTimeout(() => {
+            try { handler.call(document); } catch {}
+          }, 0);
+          return this;
+        },
+        get(index) {
+          if (index === undefined) return Array.isArray(nodes) ? nodes.slice() : [];
+          let idx = Number(index);
+          if (!Number.isFinite(idx) || !Number.isInteger(idx)) return undefined;
+          if (idx < 0) idx = (Array.isArray(nodes) ? nodes.length : 0) + idx;
+          return (Array.isArray(nodes) && idx >= 0 && idx < nodes.length) ? nodes[idx] : undefined;
+        },
+        eq(index) {
+          const hit = this.get(index);
+          return wrap(hit ? [hit] : []);
+        },
         text(value) {
           if (value === undefined) return nodes[0]?.textContent ?? '';
           nodes.forEach(n => { n.textContent = String(value); });
@@ -4137,7 +4343,7 @@ const buildDollarGlobalShim = ({
           nodes.forEach(n => { n.innerHTML = ''; });
           return this;
         },
-      });
+      }, nodes);
       const mini = (input) => {
         if (typeof input === 'function') {
           if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', input);
@@ -4147,6 +4353,7 @@ const buildDollarGlobalShim = ({
         return wrap(toNodes(input));
       };
       mini.__chatappMini = true;
+      mini.__chatappMiniLite = true;
       window.$ = mini;
     }
   }
@@ -4652,9 +4859,29 @@ const makeCodeBlock = ({ lang, code, messageId, preserveHtmlNewlines = false, se
     const forceMvuCompat = Boolean(directBodyLoadUrl);
     const needsMvuCompat = allowScripts && (forceMvuCompat || shouldEnableMvuCompat(code));
     const needsFrameworkShim = allowScripts && shouldInjectFrameworkShim(code, { directLoad: Boolean(directBodyLoadUrl) });
+    const resolvedSessionId = (() => {
+        try {
+            const explicitSid = String(sessionId || '').trim();
+            if (explicitSid) return explicitSid;
+            const mid = String(messageId || '').trim();
+            const store = window.appBridge?.chatStore;
+            const currentSid = String(store?.getCurrent?.() || window.appBridge?.activeSessionId || '').trim();
+            if (!store || !mid) return currentSid;
+            if (currentSid && store.findMessage?.(mid, currentSid)) return currentSid;
+            const sessionIds = Array.isArray(store.listSessions?.()) ? store.listSessions() : [];
+            for (const id of sessionIds) {
+                const sid = String(id || '').trim();
+                if (!sid) continue;
+                if (store.findMessage?.(mid, sid)) return sid;
+            }
+            return currentSid;
+        } catch {
+            return String(sessionId || window.appBridge?.activeSessionId || '').trim();
+        }
+    })();
     const messageIndex = (() => {
         try {
-            const sid = String(sessionId || '').trim();
+            const sid = String(resolvedSessionId || '').trim();
             const mid = String(messageId || '').trim();
             const store = window.appBridge?.chatStore;
             if (!store || !sid || !mid) return null;
@@ -4667,7 +4894,7 @@ const makeCodeBlock = ({ lang, code, messageId, preserveHtmlNewlines = false, se
     })();
     const compatSeedMessages = (() => {
         try {
-            const sid = String(sessionId || '').trim();
+            const sid = String(resolvedSessionId || '').trim();
             const mid = String(messageId || '').trim();
             const store = window.appBridge?.chatStore;
             if (!store || !sid || !mid) return [];
@@ -4697,6 +4924,35 @@ const makeCodeBlock = ({ lang, code, messageId, preserveHtmlNewlines = false, se
             return [];
         }
     })();
+    const compatSeedVars = (() => {
+        try {
+            const sid = String(resolvedSessionId || window.appBridge?.activeSessionId || '').trim();
+            const store = window.appBridge?.chatStore;
+            if (!store || !sid) return null;
+            const localVars = store?.listVariables?.(sid) || {};
+            const globalVars = store?.listGlobalVariables?.() || {};
+            const isShared = window.appBridge?.isSharedVariableSession
+                ? Boolean(window.appBridge.isSharedVariableSession(sid))
+                : false;
+            const baseVars = isShared ? globalVars : localVars;
+            const nestedBase = buildNestedVars(baseVars);
+            const nestedGlobal = buildNestedVars(globalVars);
+            return {
+                stat_data: nestedBase,
+                variables: nestedBase,
+                status_current_variables: nestedBase,
+                global_variables: nestedGlobal,
+                local_variables: localVars,
+            };
+        } catch {
+            return null;
+        }
+    })();
+    if (debugTag === 'rp-greeting' && !String(sessionId || '').trim() && resolvedSessionId) {
+        const sidMsg = `rp-greeting session-fallback sid=${resolvedSessionId}`;
+        emitDebugLog({ source: 'rich', type: 'info', message: sidMsg, force: true });
+        logger.info(`[rich] ${sidMsg}`);
+    }
     const useLegacyMvuBridge = !directBodyLoadUrl;
     const mvuBridgeBuilder = useLegacyMvuBridge ? buildMvuCompatBridgeLegacy : buildMvuCompatBridge;
     const sourceCompat = analyzeCompatProfile(code, { directLoad: Boolean(directBodyLoadUrl) });
@@ -4802,7 +5058,7 @@ const makeCodeBlock = ({ lang, code, messageId, preserveHtmlNewlines = false, se
         const iframeId = `msg-${String(messageId || 'x')}-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
         iframe.dataset.iframeId = iframeId;
         iframe.dataset.msgId = String(messageId || '');
-        if (sessionId) iframe.dataset.sessionId = String(sessionId || '');
+        if (resolvedSessionId) iframe.dataset.sessionId = String(resolvedSessionId || '');
         iframe.dataset.iframeSource = 'host';
         iframe.dataset.iframeAllowScripts = allowScripts ? '1' : '0';
         iframe.dataset.iframeMvuCompat = needsMvuCompat ? '1' : '0';
@@ -4886,7 +5142,9 @@ const makeCodeBlock = ({ lang, code, messageId, preserveHtmlNewlines = false, se
         const frameworkShim = (allowScripts && !useLegacyMvuBridge && needsFrameworkShim)
             ? buildFrameworkGlobalShim({ iframeId, debugTag, vueMajor: vueRuntimePreference, appOrigin: window.location.origin })
             : '';
-        const mvuCompatBridge = needsMvuCompat ? mvuBridgeBuilder({ iframeId, sessionId, debugTag, messageId, messageIndex }) : '';
+        const mvuCompatBridge = needsMvuCompat
+            ? mvuBridgeBuilder({ iframeId, sessionId: resolvedSessionId, debugTag, messageId, messageIndex, seedVars: compatSeedVars || {} })
+            : '';
         if (needsMvuCompat && (Boolean(debugTag) || shouldLogRichDebug())) {
             const modeMsg = `mvu-bridge=${useLegacyMvuBridge ? 'legacy' : 'enhanced'}${debugTag ? ` tag=${debugTag}` : ''}`;
             emitDebugLog({ source: 'rich', type: 'info', message: modeMsg, force: true });
@@ -4976,7 +5234,9 @@ const makeCodeBlock = ({ lang, code, messageId, preserveHtmlNewlines = false, se
                     const directFrameworkShim = directNeedsFrameworkShim
                         ? buildFrameworkGlobalShim({ iframeId, debugTag, vueMajor: directVueRuntimePreference, appOrigin: window.location.origin })
                         : '';
-                    const directMvuBridge = needsMvuCompat ? buildMvuCompatBridge({ iframeId, sessionId, debugTag, messageId, messageIndex }) : '';
+                    const directMvuBridge = needsMvuCompat
+                        ? buildMvuCompatBridge({ iframeId, sessionId: resolvedSessionId, debugTag, messageId, messageIndex, seedVars: compatSeedVars || {} })
+                        : '';
                     const directDoc = buildIframeSrcDoc(directHtml, {
                         iframeId,
                         needsVhHandling: fetchedNeedsVh,
@@ -5043,7 +5303,9 @@ const makeCodeBlock = ({ lang, code, messageId, preserveHtmlNewlines = false, se
                     const directFrameworkShim = directNeedsFrameworkShim
                         ? buildFrameworkGlobalShim({ iframeId, debugTag, vueMajor: directVueRuntimePreference, appOrigin: window.location.origin })
                         : '';
-                    const directMvuBridge = needsMvuCompat ? buildMvuCompatBridge({ iframeId, sessionId, debugTag, messageId, messageIndex }) : '';
+                    const directMvuBridge = needsMvuCompat
+                        ? buildMvuCompatBridge({ iframeId, sessionId: resolvedSessionId, debugTag, messageId, messageIndex, seedVars: compatSeedVars || {} })
+                        : '';
                     const directDoc = buildIframeSrcDoc(directHtml, {
                         iframeId,
                         needsVhHandling: fetchedNeedsVh,
@@ -5240,18 +5502,46 @@ export const setupIframeResizeListener = () => {
     };
     const postMvuVarsToIframe = (iframe, sessionId) => {
         if (!iframe || iframe.dataset.iframeMvuCompat !== '1' || iframe.dataset.iframeAllowScripts !== '1') return;
+        const iframeId = String(iframe.dataset.iframeId || '');
         const sid = String(sessionId || iframe.dataset.sessionId || window.appBridge?.activeSessionId || '').trim();
-        if (!sid) return;
+        if (!sid) {
+            emitDebugLog({
+                source: 'iframe',
+                type: 'warn',
+                message: `mvu-vars-skip id=${iframeId || 'unknown'} reason=no-session`,
+            });
+            return;
+        }
         const vars = collectMvuVars(sid);
-        if (!vars) return;
+        if (!vars) {
+            emitDebugLog({
+                source: 'iframe',
+                type: 'warn',
+                message: `mvu-vars-skip id=${iframeId || 'unknown'} sid=${sid} reason=no-vars`,
+            });
+            return;
+        }
         try {
             iframe.contentWindow?.postMessage({
                 type: 'chatapp:mvu-vars',
-                id: String(iframe.dataset.iframeId || ''),
+                id: iframeId,
                 sessionId: sid,
                 vars,
             }, '*');
-        } catch {}
+            const keyCount = Object.keys((vars && vars.stat_data) || {}).length;
+            emitDebugLog({
+                source: 'iframe',
+                type: 'info',
+                message: `mvu-vars-posted id=${iframeId || 'unknown'} sid=${sid} keys=${keyCount}`,
+            });
+        } catch (err) {
+            const msg = err?.message ? String(err.message) : String(err || 'post-failed');
+            emitDebugLog({
+                source: 'iframe',
+                type: 'warn',
+                message: `mvu-vars-post-failed id=${iframeId || 'unknown'} sid=${sid} err=${msg}`,
+            });
+        }
     };
     const broadcastMvuVars = (sessionId, { includeAll = false } = {}) => {
         const sid = String(sessionId || '').trim();
