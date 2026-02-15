@@ -36,10 +36,20 @@ export class GeneralSettingsPanel {
     this.templateBeforeToggle = null;
     this.templateAfterToggle = null;
     this.templateErrorToggle = null;
+    this.templateOptionsWrap = null;
+    this.templateAdvancedToggle = null;
+    this.templateAdvancedWrap = null;
+    this.scriptAdvancedToggle = null;
+    this.scriptAdvancedWrap = null;
     this.scriptEnabledToggle = null;
     this.scriptAllowVarsToggle = null;
     this.scriptAllowMessagesToggle = null;
     this.scriptAllowNetworkToggle = null;
+    this.scriptOptionsWrap = null;
+    this.uiAdvancedToggle = null;
+    this.uiAdvancedWrap = null;
+    this.memoryAdvancedToggle = null;
+    this.memoryAdvancedWrap = null;
     this.cleanWallpapersBtn = null;
     this.cleanWallpapersStatus = null;
     this.bundleExportBtn = null;
@@ -151,8 +161,11 @@ export class GeneralSettingsPanel {
     if (this.scriptAllowNetworkToggle) {
       this.scriptAllowNetworkToggle.checked = settings.scriptAllowNetwork === true;
     }
+    this.syncAdvancedFoldVisibility();
+    this.updateTemplateScriptVisibility();
     this.refreshMemoryUpdateProfiles().catch(() => {});
     this.updateMemoryAutoVisibility();
+    this.updateSelectableCards();
     this.applyTypingDotsSetting(settings.typingDotsEnabled !== false);
     this.applyCreativeWideSetting(Boolean(settings.creativeWideBubble));
     this.element.style.display = 'block';
@@ -217,6 +230,120 @@ export class GeneralSettingsPanel {
     if (this.memoryInjectDepthInput) {
       this.memoryInjectDepthInput.disabled = !showDepth;
     }
+    this.updateSelectableCards();
+  }
+
+  updateTemplateScriptVisibility() {
+    const templateAdvancedOpen = this.isFoldExpanded(this.templateAdvancedToggle);
+    const templateEnabled = Boolean(this.templateEnabledToggle?.checked);
+    if (this.templateOptionsWrap) {
+      this.templateOptionsWrap.style.display = templateEnabled && templateAdvancedOpen ? 'flex' : 'none';
+    }
+    if (this.templateBeforeToggle) this.templateBeforeToggle.disabled = !templateEnabled || !templateAdvancedOpen;
+    if (this.templateAfterToggle) this.templateAfterToggle.disabled = !templateEnabled || !templateAdvancedOpen;
+    if (this.templateErrorToggle) this.templateErrorToggle.disabled = !templateEnabled || !templateAdvancedOpen;
+
+    const scriptAdvancedOpen = this.isFoldExpanded(this.scriptAdvancedToggle);
+    const scriptEnabled = Boolean(this.scriptEnabledToggle?.checked);
+    if (this.scriptOptionsWrap) {
+      this.scriptOptionsWrap.style.display = scriptEnabled && scriptAdvancedOpen ? 'flex' : 'none';
+    }
+    if (this.scriptAllowVarsToggle) this.scriptAllowVarsToggle.disabled = !scriptEnabled || !scriptAdvancedOpen;
+    if (this.scriptAllowMessagesToggle) this.scriptAllowMessagesToggle.disabled = !scriptEnabled || !scriptAdvancedOpen;
+    if (this.scriptAllowNetworkToggle) this.scriptAllowNetworkToggle.disabled = !scriptEnabled || !scriptAdvancedOpen;
+    this.updateSelectableCards();
+  }
+
+  isFoldExpanded(toggle) {
+    return String(toggle?.dataset?.expanded || '0') === '1';
+  }
+
+  syncAdvancedFoldVisibility() {
+    const applyFold = (toggle, wrap) => {
+      const expanded = this.isFoldExpanded(toggle);
+      if (toggle) {
+        toggle.dataset.expanded = expanded ? '1' : '0';
+        toggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+        toggle.setAttribute('aria-label', expanded ? '收起子项' : '展开子项');
+      }
+      if (wrap) {
+        wrap.style.display = expanded ? 'block' : 'none';
+      }
+    };
+    applyFold(this.uiAdvancedToggle, this.uiAdvancedWrap);
+    applyFold(this.memoryAdvancedToggle, this.memoryAdvancedWrap);
+    applyFold(this.templateAdvancedToggle, this.templateAdvancedWrap);
+    applyFold(this.scriptAdvancedToggle, this.scriptAdvancedWrap);
+  }
+
+  initSelectableCards() {
+    if (!this.element) return;
+    const labels = this.element.querySelectorAll('label');
+    labels.forEach((label) => {
+      if (!label.querySelector('input[type="checkbox"], input[type="radio"]')) return;
+      label.classList.add('general-settings-toggle-row');
+      if (label.closest('.general-settings-fold-content')) {
+        label.classList.add('general-settings-toggle-subrow');
+      }
+      if (label.dataset.cardFxBound === '1') return;
+      label.dataset.cardFxBound = '1';
+      label.addEventListener('pointerdown', (event) => this.handleCardPointerDown(label, event));
+      label.addEventListener('pointerup', () => this.handleCardPointerUp(label));
+      label.addEventListener('pointercancel', () => this.handleCardPointerUp(label));
+      label.addEventListener('pointerleave', () => this.handleCardPointerUp(label));
+    });
+    this.updateSelectableCards();
+  }
+
+  updateSelectableCards() {
+    if (!this.element) return;
+    const inputs = this.element.querySelectorAll('input[type="checkbox"], input[type="radio"]');
+    inputs.forEach((input) => {
+      const label = input.closest('label');
+      if (!label || !label.classList.contains('general-settings-toggle-row')) return;
+      const checked = Boolean(input.checked);
+      const disabled = Boolean(input.disabled);
+      label.classList.toggle('is-on', checked);
+      label.classList.toggle('is-off', !checked);
+      label.classList.toggle('is-disabled', disabled);
+    });
+  }
+
+  handleCardPointerDown(label, event) {
+    if (!label || label.classList.contains('is-disabled') || label.classList.contains('general-settings-toggle-subrow')) return;
+    label.classList.remove('is-bounce');
+    label.classList.add('is-pressing');
+    this.spawnCardRipple(label, event);
+  }
+
+  handleCardPointerUp(label) {
+    if (!label || label.classList.contains('general-settings-toggle-subrow')) return;
+    label.classList.remove('is-pressing');
+    label.classList.remove('is-bounce');
+    // Restart animation so rapid taps still produce a clear elastic response.
+    void label.offsetWidth;
+    label.classList.add('is-bounce');
+    if (label.__cardBounceTimer) clearTimeout(label.__cardBounceTimer);
+    label.__cardBounceTimer = setTimeout(() => {
+      label.classList.remove('is-bounce');
+      label.__cardBounceTimer = null;
+    }, 240);
+  }
+
+  spawnCardRipple(label, event) {
+    if (!label) return;
+    const rect = label.getBoundingClientRect();
+    const x = Number.isFinite(event?.clientX) ? (event.clientX - rect.left) : (rect.width / 2);
+    const y = Number.isFinite(event?.clientY) ? (event.clientY - rect.top) : (rect.height / 2);
+    const size = Math.max(rect.width, rect.height) * 2.1;
+    const ripple = document.createElement('span');
+    ripple.className = 'general-settings-ripple';
+    ripple.style.width = `${size}px`;
+    ripple.style.height = `${size}px`;
+    ripple.style.left = `${x}px`;
+    ripple.style.top = `${y}px`;
+    ripple.addEventListener('animationend', () => ripple.remove(), { once: true });
+    label.appendChild(ripple);
   }
 
   async refreshMemoryUpdateProfiles() {
@@ -241,7 +368,320 @@ export class GeneralSettingsPanel {
     } catch {}
   }
 
+  ensureStyles() {
+    if (document.getElementById('general-settings-style')) return;
+    const style = document.createElement('style');
+    style.id = 'general-settings-style';
+    style.textContent = `
+      #general-settings-overlay {
+        background: rgba(15, 23, 42, 0.42) !important;
+        backdrop-filter: blur(2px);
+      }
+      #general-settings-panel {
+        width: min(94vw, 460px);
+      }
+      #general-settings-panel .general-settings-modal {
+        padding: 16px;
+        background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+        border: 1px solid #e2e8f0;
+        border-radius: 16px;
+        box-shadow: 0 12px 34px rgba(15, 23, 42, 0.22);
+        max-height: calc(100vh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - 20px);
+        overflow-y: auto;
+      }
+      #general-settings-panel .general-settings-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        margin-bottom: 6px;
+      }
+      #general-settings-panel .general-settings-title {
+        margin: 0;
+        color: #0f172a;
+        font-size: 18px;
+        font-weight: 800;
+        letter-spacing: 0.2px;
+      }
+      #general-settings-panel .general-settings-close {
+        width: 30px;
+        height: 30px;
+        border: 1px solid #e2e8f0;
+        border-radius: 10px;
+        background: #fff;
+        color: #0f172a;
+        font-size: 18px;
+        cursor: pointer;
+      }
+      #general-settings-panel .general-settings-subtitle {
+        color: #64748b;
+        font-size: 12px;
+        margin-bottom: 12px;
+      }
+      #general-settings-panel .general-settings-card {
+        margin: 8px 0 12px;
+        padding: 12px;
+        border: 1px solid #e2e8f0;
+        border-radius: 12px;
+        background: #ffffff;
+      }
+      #general-settings-panel .general-settings-card-title {
+        font-size: 12px;
+        color: #475569;
+        font-weight: 700;
+        margin-bottom: 10px;
+      }
+      #general-settings-panel .general-settings-risk {
+        margin-left: 6px;
+        font-size: 10px;
+        line-height: 1;
+        border-radius: 999px;
+        padding: 3px 6px;
+        border: 1px solid #fecaca;
+        color: #b91c1c;
+        background: #fef2f2;
+        vertical-align: middle;
+      }
+      #general-settings-panel #general-template-options,
+      #general-settings-panel #general-script-options,
+      #general-settings-panel #general-memory-auto-options,
+      #general-settings-panel #general-memory-budget-block {
+        margin-top: 8px !important;
+        padding: 8px 10px;
+        border-radius: 10px;
+        border: 1px dashed #dbe3ee;
+        background: #f8fafc;
+      }
+      #general-settings-panel .general-settings-fold-btn {
+        width: 30px;
+        height: 30px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        border: 1px solid #d6deea;
+        border-radius: 999px;
+        background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+        color: #334155;
+        padding: 0;
+        cursor: pointer;
+        box-shadow:
+          0 1px 2px rgba(15, 23, 42, 0.07),
+          inset 0 1px 0 rgba(255, 255, 255, 0.9);
+        transition:
+          background 180ms ease,
+          border-color 180ms ease,
+          box-shadow 180ms ease,
+          transform 160ms ease;
+      }
+      #general-settings-panel .general-settings-fold-btn:hover {
+        border-color: #c4cfde;
+        background: linear-gradient(180deg, #ffffff 0%, #f1f6fc 100%);
+      }
+      #general-settings-panel .general-settings-fold-btn:active {
+        transform: scale(0.96);
+      }
+      #general-settings-panel .general-settings-fold-btn:focus-visible {
+        outline: 2px solid rgba(14, 165, 233, 0.28);
+        outline-offset: 1px;
+      }
+      #general-settings-panel .general-settings-fold-btn[data-expanded='1'] {
+        border-color: #b8c4d6;
+        background: linear-gradient(180deg, #f9fbff 0%, #edf3fb 100%);
+        box-shadow:
+          0 1px 3px rgba(15, 23, 42, 0.1),
+          inset 0 1px 0 rgba(255, 255, 255, 0.88);
+      }
+      #general-settings-panel .general-settings-fold-btn [data-role='chevron'] {
+        display: block;
+        width: 8px;
+        height: 8px;
+        font-size: 0;
+        color: transparent;
+        line-height: 0;
+        border-right: 2px solid #64748b;
+        border-bottom: 2px solid #64748b;
+        transform: rotate(45deg);
+        transform-origin: 50% 50%;
+        transition: transform 220ms cubic-bezier(0.2, 0.9, 0.2, 1), border-color 180ms ease;
+      }
+      #general-settings-panel .general-settings-fold-btn[data-expanded='1'] [data-role='chevron'] {
+        border-right-color: #475569;
+        border-bottom-color: #475569;
+        transform: rotate(-135deg);
+      }
+      #general-settings-panel .general-settings-inline-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+      }
+      #general-settings-panel .general-settings-inline-row > label {
+        flex: 1 1 auto;
+      }
+      #general-settings-panel .general-settings-inline-row .general-settings-fold-btn {
+        flex: 0 0 auto;
+      }
+      #general-settings-panel .general-settings-fold-content {
+        margin-top: 10px;
+        padding-top: 10px;
+        border-top: 1px dashed #e2e8f0;
+      }
+      #general-settings-panel .general-settings-toggle-row {
+        position: relative;
+        overflow: hidden;
+        user-select: none;
+        border: 1px solid #e2e8f0;
+        border-radius: 10px;
+        padding: 8px 10px;
+        background: #f7f8fa;
+        color: #333333;
+        transition:
+          background 300ms ease-in-out,
+          border-color 300ms ease-in-out,
+          box-shadow 300ms ease-in-out,
+          color 300ms ease-in-out,
+          transform 180ms ease-out;
+      }
+      #general-settings-panel .general-settings-toggle-row.is-on {
+        background:
+          linear-gradient(140deg, rgba(26, 26, 26, 0.82) 0%, rgba(42, 49, 62, 0.88) 48%, rgba(74, 85, 104, 0.92) 100%),
+          radial-gradient(120% 90% at 14% 8%, rgba(255, 255, 255, 0.14) 0%, rgba(255, 255, 255, 0) 56%),
+          radial-gradient(100% 88% at 86% 100%, rgba(148, 163, 184, 0.18) 0%, rgba(148, 163, 184, 0) 62%);
+        border-color: rgba(107, 119, 140, 0.56);
+        box-shadow:
+          0 0 0 1px rgba(255, 255, 255, 0.16) inset,
+          0 8px 22px rgba(52, 63, 81, 0.3);
+      }
+      #general-settings-panel .general-settings-toggle-row.is-on span {
+        color: #ffffff;
+        text-shadow: 0 1px 1px rgba(0, 0, 0, 0.18);
+      }
+      #general-settings-panel .general-settings-toggle-row.is-off {
+        background: #f7f8fa;
+        border-color: #e2e8f0;
+      }
+      #general-settings-panel .general-settings-toggle-row.is-off span {
+        color: #333333;
+      }
+      #general-settings-panel .general-settings-toggle-row .general-settings-risk {
+        color: #b91c1c !important;
+      }
+      #general-settings-panel .general-settings-toggle-row.is-on .general-settings-risk {
+        color: #ffffff !important;
+        border-color: rgba(255, 255, 255, 0.56);
+        background: rgba(255, 255, 255, 0.18);
+      }
+      #general-settings-panel .general-settings-toggle-row.is-disabled {
+        opacity: 0.56;
+      }
+      #general-settings-panel .general-settings-toggle-row.general-settings-toggle-subrow {
+        border-color: transparent;
+        background: transparent;
+        box-shadow: none;
+        border-radius: 8px;
+        padding: 4px 8px 4px 12px;
+        overflow: visible;
+      }
+      #general-settings-panel .general-settings-toggle-row.general-settings-toggle-subrow.is-off {
+        background: transparent;
+        border-color: transparent;
+      }
+      #general-settings-panel .general-settings-toggle-row.general-settings-toggle-subrow.is-on {
+        background: rgba(0, 122, 255, 0.05);
+        border-color: rgba(0, 122, 255, 0.08);
+        box-shadow: none;
+      }
+      #general-settings-panel .general-settings-toggle-row.general-settings-toggle-subrow.is-on span,
+      #general-settings-panel .general-settings-toggle-row.general-settings-toggle-subrow.is-off span {
+        color: #1f2937;
+        text-shadow: none;
+      }
+      #general-settings-panel .general-settings-toggle-row.general-settings-toggle-subrow .general-settings-risk {
+        color: #b91c1c !important;
+        border-color: #fecaca;
+        background: #fef2f2;
+      }
+      #general-settings-panel .general-settings-toggle-row.is-pressing {
+        transform: scale(0.98);
+      }
+      #general-settings-panel .general-settings-toggle-row.is-bounce {
+        animation: general-settings-bounce 220ms cubic-bezier(0.2, 0.9, 0.2, 1);
+      }
+      #general-settings-panel .general-settings-ripple {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 20px;
+        height: 20px;
+        border-radius: 999px;
+        pointer-events: none;
+        opacity: 0.72;
+        transform: translate(-50%, -50%) scale(0);
+        background:
+          radial-gradient(circle, rgba(255, 255, 255, 0.72) 0%, rgba(214, 180, 255, 0.45) 45%, rgba(255, 255, 255, 0) 72%);
+        animation: general-settings-ripple 520ms ease-out forwards;
+      }
+      @keyframes general-settings-ripple {
+        from {
+          transform: translate(-50%, -50%) scale(0.02);
+          opacity: 0.76;
+        }
+        to {
+          transform: translate(-50%, -50%) scale(1);
+          opacity: 0;
+        }
+      }
+      @keyframes general-settings-bounce {
+        0% {
+          transform: scale(0.98);
+        }
+        56% {
+          transform: scale(1.02);
+        }
+        100% {
+          transform: scale(1);
+        }
+      }
+      #general-settings-panel input[type='checkbox'],
+      #general-settings-panel input[type='radio'] {
+        position: absolute;
+        width: 0;
+        height: 0;
+        margin: 0;
+        opacity: 0;
+        pointer-events: none;
+      }
+      #general-settings-panel input[type='number'],
+      #general-settings-panel select {
+        border-color: #dbe3ee !important;
+        background: #fff;
+      }
+      #general-settings-panel button[id^='general-bundle-'],
+      #general-settings-panel #general-clean-wallpapers {
+        border: 1px solid #dbe3ee !important;
+        border-radius: 10px !important;
+        background: #fff !important;
+        color: #0f172a !important;
+        font-weight: 600;
+        padding: 7px 12px !important;
+      }
+      #general-settings-panel #general-clean-wallpapers {
+        border-color: #fecaca !important;
+        background: #fff5f5 !important;
+        color: #b91c1c !important;
+      }
+      #general-settings-panel #general-settings-done {
+        border-color: #0ea5e9 !important;
+        background: #0ea5e9 !important;
+        color: #fff !important;
+        font-weight: 700;
+      }
+    `;
+    document.head.appendChild(style);
+  }
+
   createUI() {
+    this.ensureStyles();
     this.overlayElement = document.createElement('div');
     this.overlayElement.id = 'general-settings-overlay';
     this.overlayElement.style.cssText = `
@@ -259,44 +699,26 @@ export class GeneralSettingsPanel {
     this.element = document.createElement('div');
     this.element.id = 'general-settings-panel';
     this.element.innerHTML = `
-      <div style="padding: 18px 20px; background: white; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.3);
-                  width: 92vw; max-width: 420px; max-height: calc(100vh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - 20px); overflow-y: auto;">
-        <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:8px;">
-          <h2 style="margin: 0; color: #0f172a; font-size: 18px;">通用设定</h2>
-          <button id="general-settings-close" style="border:none; background:transparent; font-size:22px; cursor:pointer; color:#0f172a;">×</button>
+      <div class="general-settings-modal" style="width: 92vw; max-width: 420px;">
+        <div class="general-settings-header">
+          <h2 class="general-settings-title">通用设定</h2>
+          <button id="general-settings-close" class="general-settings-close">×</button>
         </div>
-        <div style="color:#64748b; font-size:12px; margin-bottom:16px;">界面与调试相关</div>
+        <div class="general-settings-subtitle">视觉与体验相关设定。</div>
 
-        <div style="margin-bottom: 16px;">
-          <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
-            <input type="checkbox" id="general-debug-toggle" style="width: 18px; height: 18px;">
-            <span style="font-weight: 700;">显示 Debug 按钮</span>
-          </label>
-          <small style="color: #666; margin-left: 26px;">右下角调试按钮，默认隐藏</small>
-        </div>
-
-        <div style="margin-bottom: 16px;">
-          <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
-            <input type="checkbox" id="general-debug-logs" style="width: 18px; height: 18px;">
-            <span style="font-weight: 700;">记录执行日志</span>
-          </label>
-          <small style="color: #666; margin-left: 26px;">记录模板/脚本执行日志，用于调试面板查看</small>
-        </div>
+        <div class="general-settings-card">
+          <div class="general-settings-inline-row" style="margin-bottom: 10px;">
+            <div class="general-settings-card-title" style="margin-bottom: 0;">界面与调试</div>
+            <button type="button" id="general-ui-advanced-toggle" class="general-settings-fold-btn" data-expanded="0" aria-expanded="false">
+              <span data-role="chevron"></span>
+            </button>
+          </div>
 
         <div style="margin-bottom: 16px;">
           <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
             <input type="checkbox" id="general-typing-dots" style="width: 18px; height: 18px;">
             <span style="font-weight: 700;">流式小点动画</span>
           </label>
-          <small style="color: #666; margin-left: 26px;">关闭后保留静态小点</small>
-        </div>
-
-        <div style="margin-bottom: 16px;">
-          <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
-            <input type="checkbox" id="general-rich-iframe-scripts" style="width: 18px; height: 18px;">
-            <span style="font-weight: 700;">富文本 iframe 执行脚本</span>
-          </label>
-          <small style="color: #666; margin-left: 26px;">高风险：脚本可访问同源数据并加载外部资源，仅信任来源启用</small>
         </div>
 
         <div style="margin-bottom: 16px;">
@@ -304,7 +726,6 @@ export class GeneralSettingsPanel {
             <input type="checkbox" id="general-creative-wide" style="width: 18px; height: 18px;">
             <span style="font-weight: 700;">创意写作气泡加宽</span>
           </label>
-          <small style="color: #666; margin-left: 26px;">仅影响创意写作的回复气泡</small>
         </div>
 
         <div style="margin-bottom: 16px;">
@@ -318,15 +739,43 @@ export class GeneralSettingsPanel {
           </div>
         </div>
 
-        <div style="margin: 8px 0 12px; padding-top: 6px; border-top: 1px dashed #e2e8f0;">
-          <div style="font-size: 12px; color:#64748b; margin-bottom: 10px;">记忆与角色</div>
+        <div id="general-ui-advanced" class="general-settings-fold-content" style="display:none;">
+          <div style="margin-bottom: 16px;">
+            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+              <input type="checkbox" id="general-debug-toggle" style="width: 18px; height: 18px;">
+              <span style="font-weight: 700;">显示 Debug 按钮</span>
+            </label>
+          </div>
+
+          <div style="margin-bottom: 16px;">
+            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+              <input type="checkbox" id="general-debug-logs" style="width: 18px; height: 18px;">
+              <span style="font-weight: 700;">记录执行日志</span>
+            </label>
+          </div>
+
+          <div style="margin-bottom: 4px;">
+            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+              <input type="checkbox" id="general-rich-iframe-scripts" style="width: 18px; height: 18px;">
+              <span style="font-weight: 700;">富文本 iframe 执行脚本 <span class="general-settings-risk">高风险</span></span>
+            </label>
+          </div>
+        </div>
+        </div>
+
+        <div class="general-settings-card">
+          <div class="general-settings-inline-row" style="margin-bottom: 10px;">
+            <div class="general-settings-card-title" style="margin-bottom: 0;">记忆与角色</div>
+            <button type="button" id="general-memory-advanced-toggle" class="general-settings-fold-btn" data-expanded="0" aria-expanded="false">
+              <span data-role="chevron"></span>
+            </button>
+          </div>
 
           <div style="margin-bottom: 14px;">
             <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
               <input type="checkbox" id="general-persona-bind" style="width: 18px; height: 18px;">
               <span style="font-weight: 700;">用户角色绑定联系人/聊天记录</span>
             </label>
-            <small style="color: #666; margin-left: 26px;">开启后每个 Persona 独立联系人、聊天记录、摘要与动态（互不影响）</small>
           </div>
 
           <div style="margin-bottom: 14px;">
@@ -334,31 +783,29 @@ export class GeneralSettingsPanel {
               <input type="checkbox" id="general-prompt-time" style="width: 18px; height: 18px;">
               <span style="font-weight: 700;">发送当前时间给 AI</span>
             </label>
-            <small style="color:#666; margin-left: 26px;">开启后每次请求都会附带当前时间（本地时区）</small>
           </div>
 
           <div style="margin-bottom: 10px;">
             <div style="font-weight: 700; margin-bottom: 8px;">记忆存储方式</div>
             <label style="display:flex; align-items:center; gap:8px; cursor:pointer; margin-bottom:8px;">
               <input type="radio" name="general-memory-mode" id="general-memory-mode-summary" value="summary">
-              <span>摘要模式</span>
+              <span style="font-weight:700;">摘要模式</span>
             </label>
             <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
               <input type="radio" name="general-memory-mode" id="general-memory-mode-table" value="table">
-              <span>记忆表格模式</span>
+              <span style="font-weight:700;">记忆表格模式</span>
             </label>
-            <small style="color:#666; margin-left: 26px;">两种方式互斥，切换后立即生效</small>
           </div>
 
-          <div style="margin-bottom: 10px;">
-            <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
-              <input type="checkbox" id="general-memory-auto" style="width: 18px; height: 18px;">
-              <span style="font-weight: 700;">AI 自动写入记忆表格</span>
-            </label>
-            <small style="color:#666; margin-left: 26px;">仅在记忆表格模式生效，AI 会在回复末尾输出 &lt;tableEdit&gt; 指令写入表格</small>
-          </div>
+          <div id="general-memory-advanced" class="general-settings-fold-content" style="display:none;">
+            <div style="margin-bottom: 10px;">
+              <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+                <input type="checkbox" id="general-memory-auto" style="width: 18px; height: 18px;">
+                <span style="font-weight: 700;">AI 自动写入记忆表格</span>
+              </label>
+            </div>
 
-          <div id="general-memory-auto-options" style="margin-left: 26px; margin-top: 6px; display: none;">
+            <div id="general-memory-auto-options" style="margin-left: 26px; margin-top: 6px; display: none;">
             <div style="font-size:12px; color:#64748b; margin-bottom:8px;">写表方式</div>
             <label style="display:flex; align-items:center; gap:8px; cursor:pointer; margin-bottom:6px;">
               <input type="radio" name="general-memory-auto-mode" id="general-memory-auto-inline" value="inline">
@@ -401,9 +848,9 @@ export class GeneralSettingsPanel {
                 <small style="color:#94a3b8; display:block; margin-top:4px;">默认 6 轮（用户+助手），0 表示不发送历史</small>
               </div>
             </div>
-          </div>
+            </div>
 
-          <div id="general-memory-budget-block" style="margin-left: 26px; margin-top: 10px; padding: 8px; border: 1px dashed #e2e8f0; border-radius: 10px; display: none;">
+            <div id="general-memory-budget-block" style="margin-left: 26px; margin-top: 10px; padding: 8px; border: 1px dashed #e2e8f0; border-radius: 10px; display: none;">
             <div style="font-size:12px; color:#64748b; margin-bottom:8px;">记忆注入设置</div>
 
             <div style="margin-top: 10px;">
@@ -428,60 +875,67 @@ export class GeneralSettingsPanel {
               <small style="color:#94a3b8; display:block; margin-top:4px;">距聊天末尾 N 条插入，0 表示追加到末尾</small>
             </div>
           </div>
+          </div>
         </div>
 
-        <div style="margin: 8px 0 12px; padding-top: 6px; border-top: 1px dashed #e2e8f0;">
-          <div style="font-size: 12px; color:#64748b; margin-bottom: 10px;">模板与脚本</div>
+        <div class="general-settings-card">
+          <div class="general-settings-card-title">模板与脚本</div>
 
-          <div style="margin-bottom: 12px;">
+          <div class="general-settings-inline-row" style="margin-bottom: 10px;">
             <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
               <input type="checkbox" id="general-template-enabled" style="width: 18px; height: 18px;">
               <span style="font-weight: 700;">启用模板处理</span>
             </label>
-            <small style="color:#666; margin-left: 26px;">角色卡/世界书中的 &lt;% %&gt; 模板将被执行</small>
+            <button type="button" id="general-template-advanced-toggle" class="general-settings-fold-btn" data-expanded="0" aria-expanded="false">
+              <span data-role="chevron"></span>
+            </button>
+          </div>
+          <div id="general-template-advanced" class="general-settings-fold-content" style="display:none; margin-bottom: 10px;">
+            <div id="general-template-options" style="margin-left: 26px; display:none; flex-direction:column; gap:8px;">
+              <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+                <input type="checkbox" id="general-template-before" style="width: 16px; height: 16px;">
+                <span>生成前执行（Prompt）</span>
+              </label>
+              <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+                <input type="checkbox" id="general-template-after" style="width: 16px; height: 16px;">
+                <span>渲染后执行（显示）</span>
+              </label>
+              <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+                <input type="checkbox" id="general-template-error" style="width: 16px; height: 16px;">
+                <span>显示模板错误提示</span>
+              </label>
+            </div>
           </div>
 
-          <div style="margin-left: 26px; display:flex; flex-direction:column; gap:8px; margin-bottom: 12px;">
-            <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
-              <input type="checkbox" id="general-template-before" style="width: 16px; height: 16px;">
-              <span>生成前执行（Prompt）</span>
-            </label>
-            <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
-              <input type="checkbox" id="general-template-after" style="width: 16px; height: 16px;">
-              <span>渲染后执行（显示）</span>
-            </label>
-            <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
-              <input type="checkbox" id="general-template-error" style="width: 16px; height: 16px;">
-              <span>显示模板错误提示</span>
-            </label>
-          </div>
-
-          <div style="margin-bottom: 10px;">
+          <div class="general-settings-inline-row" style="margin-bottom: 6px;">
             <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
               <input type="checkbox" id="general-script-enabled" style="width: 18px; height: 18px;">
               <span style="font-weight: 700;">启用角色卡脚本</span>
             </label>
-            <small style="color:#666; margin-left: 26px;">脚本可能修改变量或读取聊天记录</small>
+            <button type="button" id="general-script-advanced-toggle" class="general-settings-fold-btn" data-expanded="0" aria-expanded="false">
+              <span data-role="chevron"></span>
+            </button>
           </div>
-
-          <div style="margin-left: 26px; display:flex; flex-direction:column; gap:8px;">
-            <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
-              <input type="checkbox" id="general-script-allow-vars" style="width: 16px; height: 16px;">
-              <span>允许脚本修改变量</span>
-            </label>
-            <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
-              <input type="checkbox" id="general-script-allow-messages" style="width: 16px; height: 16px;">
-              <span>允许脚本读取聊天记录</span>
-            </label>
-            <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
-              <input type="checkbox" id="general-script-allow-network" style="width: 16px; height: 16px;">
-              <span>允许脚本访问网络（不建议）</span>
-            </label>
+          <div id="general-script-advanced" class="general-settings-fold-content" style="display:none;">
+            <div id="general-script-options" style="margin-left: 26px; display:none; flex-direction:column; gap:8px;">
+              <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+                <input type="checkbox" id="general-script-allow-vars" style="width: 16px; height: 16px;">
+                <span>允许脚本修改变量</span>
+              </label>
+              <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+                <input type="checkbox" id="general-script-allow-messages" style="width: 16px; height: 16px;">
+                <span>允许脚本读取聊天记录</span>
+              </label>
+              <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+                <input type="checkbox" id="general-script-allow-network" style="width: 16px; height: 16px;">
+                <span>允许脚本访问网络<span class="general-settings-risk">高风险</span></span>
+              </label>
+            </div>
           </div>
         </div>
 
-        <div style="margin: 8px 0 12px; padding-top: 6px; border-top: 1px dashed #e2e8f0;">
-          <div style="font-size: 12px; color:#64748b; margin-bottom: 10px;">资料迁移</div>
+        <div class="general-settings-card">
+          <div class="general-settings-card-title">资料迁移</div>
           <div style="display:flex; align-items:center; gap:8px; flex-wrap: wrap;">
             <button id="general-bundle-export"
                     style="padding: 6px 10px; border-radius: 8px; border: 1px solid #e2e8f0; background: #fff; cursor: pointer; font-size: 12px; color: #0f172a;">
@@ -492,22 +946,22 @@ export class GeneralSettingsPanel {
               导入资料包
             </button>
             <span id="general-bundle-status" style="font-size: 12px; color:#64748b;">
-              将聊天记录/联系人/壁纸/记忆表格打包为 ZIP（不包含 API 配置）
+              打包聊天与资源（不含 API 配置）
             </span>
           </div>
-          <small style="color:#94a3b8; display:block; margin-top:6px;">导入会覆盖当前资料，请勿导入来源不明的资料包。</small>
+          <small style="color:#94a3b8; display:block; margin-top:6px;">导入会覆盖当前资料。</small>
           <input type="file" id="general-bundle-file" accept=".zip,application/zip" style="display:none;">
         </div>
 
-        <div style="margin: 8px 0 12px; padding-top: 6px; border-top: 1px dashed #e2e8f0;">
-          <div style="font-size: 12px; color:#64748b; margin-bottom: 10px;">存储清理</div>
+        <div class="general-settings-card">
+          <div class="general-settings-card-title">存储清理</div>
           <div style="display:flex; align-items:center; gap:8px; flex-wrap: wrap;">
             <button id="general-clean-wallpapers"
                     style="padding: 6px 10px; border-radius: 8px; border: 1px solid #e2e8f0; background: #fff; cursor: pointer; font-size: 12px; color: #0f172a;">
               清理壁纸残留
             </button>
             <span id="general-clean-wallpapers-status" style="font-size: 12px; color:#64748b;">
-              仅清理未被会话引用的旧文件
+              清理未引用旧文件
             </span>
           </div>
         </div>
@@ -536,10 +990,14 @@ export class GeneralSettingsPanel {
     this.richIframeScriptsToggle = this.element.querySelector('#general-rich-iframe-scripts');
     this.creativeHistoryInput = this.element.querySelector('#general-creative-history');
     this.creativeWideToggle = this.element.querySelector('#general-creative-wide');
+    this.uiAdvancedToggle = this.element.querySelector('#general-ui-advanced-toggle');
+    this.uiAdvancedWrap = this.element.querySelector('#general-ui-advanced');
     this.personaBindToggle = this.element.querySelector('#general-persona-bind');
     this.promptTimeToggle = this.element.querySelector('#general-prompt-time');
     this.memoryModeSummary = this.element.querySelector('#general-memory-mode-summary');
     this.memoryModeTable = this.element.querySelector('#general-memory-mode-table');
+    this.memoryAdvancedToggle = this.element.querySelector('#general-memory-advanced-toggle');
+    this.memoryAdvancedWrap = this.element.querySelector('#general-memory-advanced');
     this.memoryAutoToggle = this.element.querySelector('#general-memory-auto');
     this.memoryAutoModeInline = this.element.querySelector('#general-memory-auto-inline');
     this.memoryAutoModeSeparate = this.element.querySelector('#general-memory-auto-separate');
@@ -559,16 +1017,31 @@ export class GeneralSettingsPanel {
     this.templateBeforeToggle = this.element.querySelector('#general-template-before');
     this.templateAfterToggle = this.element.querySelector('#general-template-after');
     this.templateErrorToggle = this.element.querySelector('#general-template-error');
+    this.templateOptionsWrap = this.element.querySelector('#general-template-options');
+    this.templateAdvancedToggle = this.element.querySelector('#general-template-advanced-toggle');
+    this.templateAdvancedWrap = this.element.querySelector('#general-template-advanced');
+    this.scriptAdvancedToggle = this.element.querySelector('#general-script-advanced-toggle');
+    this.scriptAdvancedWrap = this.element.querySelector('#general-script-advanced');
     this.scriptEnabledToggle = this.element.querySelector('#general-script-enabled');
     this.scriptAllowVarsToggle = this.element.querySelector('#general-script-allow-vars');
     this.scriptAllowMessagesToggle = this.element.querySelector('#general-script-allow-messages');
     this.scriptAllowNetworkToggle = this.element.querySelector('#general-script-allow-network');
+    this.scriptOptionsWrap = this.element.querySelector('#general-script-options');
     this.cleanWallpapersBtn = this.element.querySelector('#general-clean-wallpapers');
     this.cleanWallpapersStatus = this.element.querySelector('#general-clean-wallpapers-status');
     this.bundleExportBtn = this.element.querySelector('#general-bundle-export');
     this.bundleImportBtn = this.element.querySelector('#general-bundle-import');
     this.bundleStatus = this.element.querySelector('#general-bundle-status');
     this.bundleImportInput = this.element.querySelector('#general-bundle-file');
+
+    this.initSelectableCards();
+    this.element.addEventListener('change', (e) => {
+      const target = e?.target;
+      if (target instanceof HTMLInputElement && (target.type === 'checkbox' || target.type === 'radio')) {
+        this.updateSelectableCards();
+      }
+    });
+
     this.debugToggle?.addEventListener('change', async (e) => {
       const enabled = Boolean(e?.target?.checked);
       const settings = appSettings.update({ showDebugToggle: enabled });
@@ -615,10 +1088,29 @@ export class GeneralSettingsPanel {
       if (e?.target) e.target.value = String(safe);
       appSettings.update({ creativeHistoryMax: safe });
     });
+    this.uiAdvancedToggle?.addEventListener('click', () => {
+      this.uiAdvancedToggle.dataset.expanded = this.isFoldExpanded(this.uiAdvancedToggle) ? '0' : '1';
+      this.syncAdvancedFoldVisibility();
+    });
+    this.memoryAdvancedToggle?.addEventListener('click', () => {
+      this.memoryAdvancedToggle.dataset.expanded = this.isFoldExpanded(this.memoryAdvancedToggle) ? '0' : '1';
+      this.syncAdvancedFoldVisibility();
+    });
+    this.templateAdvancedToggle?.addEventListener('click', () => {
+      this.templateAdvancedToggle.dataset.expanded = this.isFoldExpanded(this.templateAdvancedToggle) ? '0' : '1';
+      this.syncAdvancedFoldVisibility();
+      this.updateTemplateScriptVisibility();
+    });
+    this.scriptAdvancedToggle?.addEventListener('click', () => {
+      this.scriptAdvancedToggle.dataset.expanded = this.isFoldExpanded(this.scriptAdvancedToggle) ? '0' : '1';
+      this.syncAdvancedFoldVisibility();
+      this.updateTemplateScriptVisibility();
+    });
 
     this.templateEnabledToggle?.addEventListener('change', (e) => {
       const enabled = Boolean(e?.target?.checked);
       appSettings.update({ templateEnabled: enabled });
+      this.updateTemplateScriptVisibility();
     });
     this.templateBeforeToggle?.addEventListener('change', (e) => {
       const enabled = Boolean(e?.target?.checked);
@@ -635,6 +1127,7 @@ export class GeneralSettingsPanel {
     this.scriptEnabledToggle?.addEventListener('change', (e) => {
       const enabled = Boolean(e?.target?.checked);
       appSettings.update({ scriptEnabled: enabled });
+      this.updateTemplateScriptVisibility();
     });
     this.scriptAllowVarsToggle?.addEventListener('change', (e) => {
       const enabled = Boolean(e?.target?.checked);

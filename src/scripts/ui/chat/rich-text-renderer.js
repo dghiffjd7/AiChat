@@ -167,6 +167,99 @@ const applyIframeStaticFallback = (iframe, id, reason = '') => {
         return false;
     }
 };
+const inspectIframeBlankState = (iframe) => {
+    try {
+        const win = iframe?.contentWindow;
+        const doc = win?.document;
+        const body = doc?.body;
+        const docEl = doc?.documentElement;
+        if (!body || !docEl) return { isBlank: false, reason: 'doc-unavailable' };
+
+        let bodyStyle = null;
+        let docElStyle = null;
+        try {
+            bodyStyle = win?.getComputedStyle?.(body) || null;
+            docElStyle = win?.getComputedStyle?.(docEl) || null;
+        } catch {}
+        const hidden = (
+            (bodyStyle && (
+                bodyStyle.display === 'none' ||
+                bodyStyle.visibility === 'hidden' ||
+                Number.parseFloat(bodyStyle.opacity || '1') <= 0.01
+            )) ||
+            (docElStyle && (
+                docElStyle.display === 'none' ||
+                docElStyle.visibility === 'hidden' ||
+                Number.parseFloat(docElStyle.opacity || '1') <= 0.01
+            ))
+        );
+        if (hidden) return { isBlank: true, reason: 'hidden-root' };
+
+        const rawHtml = String(body.innerHTML || docEl.innerHTML || '');
+        const rawText = String(body.innerText || docEl.innerText || '')
+            .replace(/\s+/g, '')
+            .trim();
+        const hasVisualNode = Boolean(
+            body.querySelector?.(
+                'img,svg,canvas,video,audio,table,details,pre,code,p,li,h1,h2,h3,h4,' +
+                'article,section,main,blockquote,[role="img"]',
+            ),
+        );
+        const scrollH = Math.max(
+            Number(body.scrollHeight || 0),
+            Number(body.offsetHeight || 0),
+            Number(body.clientHeight || 0),
+            Number(docEl.scrollHeight || 0),
+            Number(docEl.offsetHeight || 0),
+            Number(docEl.clientHeight || 0),
+        );
+
+        if (isLikelyBlankStaticDoc(rawHtml)) {
+            return { isBlank: true, reason: 'blank-markup' };
+        }
+        if (!hasVisualNode && rawText.length === 0 && scrollH <= 140) {
+            return { isBlank: true, reason: 'empty-no-content' };
+        }
+        if (!hasVisualNode && rawText.length <= 4 && scrollH <= 100) {
+            return { isBlank: true, reason: 'tiny-content' };
+        }
+        return { isBlank: false, reason: 'ok' };
+    } catch (err) {
+        const msg = String(err?.message || err || 'inspect-error');
+        if (/cross-origin|permission denied|securityerror|blocked a frame/i.test(msg)) {
+            return { isBlank: false, reason: 'cross-origin' };
+        }
+        return { isBlank: false, reason: 'inspect-error' };
+    }
+};
+const applyIframeBlankFallbackIfNeeded = (
+    iframe,
+    id,
+    reason = '',
+    {
+        assumeBlank = false,
+        requireLoaded = false,
+        tryDirectRecover = true,
+    } = {},
+) => {
+    if (!iframe || !id) return false;
+    if (iframe.dataset.staticFallbackApplied === '1') return false;
+    if (requireLoaded && iframe.dataset.iframeLoaded !== '1') return false;
+
+    const blankState = inspectIframeBlankState(iframe);
+    const shouldFallback = assumeBlank || blankState.isBlank;
+    if (!shouldFallback) return false;
+
+    const shortReason = String(reason || '').trim();
+    const detailReason = blankState?.reason ? `blank=${blankState.reason}` : 'blank=unknown';
+    const finalReason = [shortReason, detailReason].filter(Boolean).join(' ').slice(0, 180);
+
+    if (tryDirectRecover && String(iframe.dataset.iframeSource || '') === 'direct-srcdoc') {
+        const recovered = tryRecoverDirectLoadFallback(iframe, id, finalReason.slice(0, 120));
+        if (recovered) return true;
+    }
+    return applyIframeStaticFallback(iframe, id, finalReason);
+};
 const isLiveIframe = (iframe, iframeId = '') => {
     if (iframe && iframe.isConnected) return true;
     if (iframeId) iframeDebugState.delete(iframeId);
@@ -6045,6 +6138,10 @@ const makeCodeBlock = ({ lang, code, messageId, preserveHtmlNewlines = false, se
                 const st = getIframeState(iframeId, { messageId: String(messageId || ''), createdAt: Date.now() });
                 if (st) st.error = st.error || 'load-error';
                 warnIframe('iframe-load-error', iframeId);
+                applyIframeBlankFallbackIfNeeded(iframe, iframeId, 'iframe-load-error', {
+                    assumeBlank: true,
+                    requireLoaded: false,
+                });
             });
         }
 
@@ -6100,6 +6197,13 @@ const makeCodeBlock = ({ lang, code, messageId, preserveHtmlNewlines = false, se
                 const sent = iframe.dataset.iframeDocSent === '1' ? 'sent=1' : 'sent=0';
                 warnIframe('no-resize-after-2s', iframeId, `msg=${msgId} ${loaded} ${sent} source=${source}`);
             }
+            if (!st.readyAt && !st.lastResizeAt) {
+                const reason = 'no-ready-after-2s+no-resize-after-2s';
+                applyIframeBlankFallbackIfNeeded(iframe, iframeId, reason, {
+                    requireLoaded: true,
+                    tryDirectRecover: true,
+                });
+            }
             if (
                 iframe.dataset.iframeReady !== '1' &&
                 iframe.dataset.iframeLoaded === '1' &&
@@ -6116,6 +6220,13 @@ const makeCodeBlock = ({ lang, code, messageId, preserveHtmlNewlines = false, se
                 try { iframe.contentWindow?.postMessage({ type: 'chatapp:ping' }, '*'); } catch {}
             }
         }, 2200);
+        setTimeout(() => {
+            if (!isLiveIframe(iframe, iframeId)) return;
+            applyIframeBlankFallbackIfNeeded(iframe, iframeId, 'post-load-blank-probe', {
+                requireLoaded: true,
+                tryDirectRecover: true,
+            });
+        }, 3200);
 
         // notify iframe about viewport height changes (for vh handling)
         if (needsVhHandling) {
@@ -6557,6 +6668,10 @@ export const setupIframeResizeListener = () => {
             const st = getIframeState(id, { messageId: String(iframe.dataset.msgId || ''), createdAt: Date.now() });
             if (st) st.error = message || 'host-error';
             warnIframe('iframe-host-error', id, message ? `err=${message}` : '');
+            applyIframeBlankFallbackIfNeeded(iframe, id, `iframe-host-error ${String(message || '').slice(0, 120)}`, {
+                requireLoaded: true,
+                tryDirectRecover: true,
+            });
             return;
         }
         if (data.type === 'chatapp:iframe-recover-dynamic') {
@@ -6596,15 +6711,23 @@ export const setupIframeResizeListener = () => {
                 warnIframe('diag', id, hint);
             }
             const recoverableRuntimeError = shouldStaticFallbackForIframeError(message);
+            let handled = false;
             if (
                 /VueRouter is not defined|Vue is not defined|Pinia is not defined|createPinia is not defined|_ is not defined|resource-load-failed|unhandledrejection/i.test(message)
             ) {
                 const recovered = tryRecoverDirectLoadFallback(iframe, id, message.slice(0, 120));
+                handled = recovered;
                 if (!recovered && recoverableRuntimeError) {
-                    applyIframeStaticFallback(iframe, id, message.slice(0, 160));
+                    handled = applyIframeStaticFallback(iframe, id, message.slice(0, 160));
                 }
             } else if (recoverableRuntimeError) {
-                applyIframeStaticFallback(iframe, id, message.slice(0, 160));
+                handled = applyIframeStaticFallback(iframe, id, message.slice(0, 160));
+            }
+            if (!handled) {
+                applyIframeBlankFallbackIfNeeded(iframe, id, `iframe-error ${String(message || '').slice(0, 120)}`, {
+                    requireLoaded: true,
+                    tryDirectRecover: true,
+                });
             }
             return;
         }
