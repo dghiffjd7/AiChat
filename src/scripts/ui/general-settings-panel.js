@@ -4,7 +4,7 @@ import { safeInvoke } from '../utils/tauri.js';
 import { appConfirm } from './app-confirm.js';
 
 export class GeneralSettingsPanel {
-  constructor() {
+  constructor(actions = {}) {
     this.element = null;
     this.overlayElement = null;
     this.debugToggle = null;
@@ -56,7 +56,22 @@ export class GeneralSettingsPanel {
     this.bundleImportBtn = null;
     this.bundleStatus = null;
     this.bundleImportInput = null;
+    this.openSessionBtn = null;
+    this.openMemoryTemplatesBtn = null;
+    this.externalActions = {
+      openSession: null,
+      openMemoryTemplates: null,
+    };
     this.configManager = new ConfigManager();
+    this.setExternalActions(actions);
+  }
+
+  setExternalActions(actions = {}) {
+    this.externalActions.openSession =
+      typeof actions.openSession === 'function' ? actions.openSession : null;
+    this.externalActions.openMemoryTemplates =
+      typeof actions.openMemoryTemplates === 'function' ? actions.openMemoryTemplates : null;
+    this.updateShortcutButtons();
   }
 
   show() {
@@ -163,6 +178,7 @@ export class GeneralSettingsPanel {
     }
     this.syncAdvancedFoldVisibility();
     this.updateTemplateScriptVisibility();
+    this.updateShortcutButtons();
     this.refreshMemoryUpdateProfiles().catch(() => {});
     this.updateMemoryAutoVisibility();
     this.updateSelectableCards();
@@ -252,6 +268,15 @@ export class GeneralSettingsPanel {
     if (this.scriptAllowMessagesToggle) this.scriptAllowMessagesToggle.disabled = !scriptEnabled || !scriptAdvancedOpen;
     if (this.scriptAllowNetworkToggle) this.scriptAllowNetworkToggle.disabled = !scriptEnabled || !scriptAdvancedOpen;
     this.updateSelectableCards();
+  }
+
+  updateShortcutButtons() {
+    if (this.openSessionBtn) {
+      this.openSessionBtn.disabled = typeof this.externalActions.openSession !== 'function';
+    }
+    if (this.openMemoryTemplatesBtn) {
+      this.openMemoryTemplatesBtn.disabled = typeof this.externalActions.openMemoryTemplates !== 'function';
+    }
   }
 
   isFoldExpanded(toggle) {
@@ -587,8 +612,8 @@ export class GeneralSettingsPanel {
         border-color: transparent;
       }
       #general-settings-panel .general-settings-toggle-row.general-settings-toggle-subrow.is-on {
-        background: rgba(0, 122, 255, 0.05);
-        border-color: rgba(0, 122, 255, 0.08);
+        background: rgba(0, 122, 255, 0.11);
+        border-color: rgba(0, 122, 255, 0.2);
         box-shadow: none;
       }
       #general-settings-panel .general-settings-toggle-row.general-settings-toggle-subrow.is-on span,
@@ -655,6 +680,25 @@ export class GeneralSettingsPanel {
       #general-settings-panel select {
         border-color: #dbe3ee !important;
         background: #fff;
+      }
+      #general-settings-panel .general-settings-shortcut-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+      }
+      #general-settings-panel .general-settings-shortcut-btn {
+        border: 1px solid #dbe3ee !important;
+        border-radius: 10px !important;
+        background: #fff !important;
+        color: #0f172a !important;
+        font-weight: 700;
+        padding: 8px 10px !important;
+        cursor: pointer;
+        text-align: center;
+      }
+      #general-settings-panel .general-settings-shortcut-btn:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
       }
       #general-settings-panel button[id^='general-bundle-'],
       #general-settings-panel #general-clean-wallpapers {
@@ -935,6 +979,13 @@ export class GeneralSettingsPanel {
         </div>
 
         <div class="general-settings-card">
+          <div class="general-settings-shortcut-grid">
+            <button id="general-open-session" class="general-settings-shortcut-btn">💬 会话</button>
+            <button id="general-open-memory-templates" class="general-settings-shortcut-btn">🧠 记忆表格</button>
+          </div>
+        </div>
+
+        <div class="general-settings-card">
           <div class="general-settings-card-title">资料迁移</div>
           <div style="display:flex; align-items:center; gap:8px; flex-wrap: wrap;">
             <button id="general-bundle-export"
@@ -1027,6 +1078,8 @@ export class GeneralSettingsPanel {
     this.scriptAllowMessagesToggle = this.element.querySelector('#general-script-allow-messages');
     this.scriptAllowNetworkToggle = this.element.querySelector('#general-script-allow-network');
     this.scriptOptionsWrap = this.element.querySelector('#general-script-options');
+    this.openSessionBtn = this.element.querySelector('#general-open-session');
+    this.openMemoryTemplatesBtn = this.element.querySelector('#general-open-memory-templates');
     this.cleanWallpapersBtn = this.element.querySelector('#general-clean-wallpapers');
     this.cleanWallpapersStatus = this.element.querySelector('#general-clean-wallpapers-status');
     this.bundleExportBtn = this.element.querySelector('#general-bundle-export');
@@ -1035,6 +1088,19 @@ export class GeneralSettingsPanel {
     this.bundleImportInput = this.element.querySelector('#general-bundle-file');
 
     this.initSelectableCards();
+    this.updateShortcutButtons();
+    this.openSessionBtn?.addEventListener('click', () => {
+      const fn = this.externalActions.openSession;
+      if (typeof fn !== 'function') return;
+      this.hide();
+      fn();
+    });
+    this.openMemoryTemplatesBtn?.addEventListener('click', () => {
+      const fn = this.externalActions.openMemoryTemplates;
+      if (typeof fn !== 'function') return;
+      this.hide();
+      fn();
+    });
     this.element.addEventListener('change', (e) => {
       const target = e?.target;
       if (target instanceof HTMLInputElement && (target.type === 'checkbox' || target.type === 'radio')) {

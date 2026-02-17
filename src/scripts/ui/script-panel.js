@@ -112,6 +112,7 @@ export class ScriptPanel {
     this.overlay.addEventListener('click', () => this.hide());
 
     this.panel = document.createElement('div');
+    this.panel.id = 'script-panel';
     this.panel.style.cssText = `
       display:none; position:fixed;
       inset: 6vh 6vw;

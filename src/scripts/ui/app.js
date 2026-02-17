@@ -41,6 +41,7 @@ import { ContactDragManager } from './contact-drag-manager.js';
 import { ContactGroupRenderer } from './contact-group-renderer.js';
 import { ScriptPanel } from './script-panel.js';
 import { ContactSettingsPanel } from './contact-settings-panel.js';
+import { ExtensionsPanel } from './extensions-panel.js';
 import { GeneralSettingsPanel } from './general-settings-panel.js';
 import { GroupCreatePanel, GroupSettingsPanel } from './group-chat-panels.js';
 import { GroupPanel } from './group-panel.js';
@@ -507,6 +508,15 @@ const initApp = async () => {
     window.__sessionPanel = sessionPanel;
   } catch {}
   const regexSessionPanel = new RegexSessionPanel(() => chatStore.getCurrent());
+  generalSettingsPanel.setExternalActions({
+    openSession: () => sessionPanel.show(),
+    openMemoryTemplates: () => memoryTemplatePanel.show(),
+  });
+  const extensionsPanel = new ExtensionsPanel({
+    regexPanel,
+    scriptPanel,
+    pluginPanel,
+  });
   const contactSettingsPanel = new ContactSettingsPanel({
     contactsStore,
     chatStore,
@@ -9543,13 +9553,9 @@ Phase G（Frame 36）：循环衔接
       const action = btn.dataset.action;
       if (action === 'settings') generalSettingsPanel.show();
       if (action === 'persona') personaPanel.show();
-      if (action === 'session') sessionPanel.show();
       if (action === 'preset') presetPanel.show();
-      if (action === 'memory-templates') memoryTemplatePanel.show();
       if (action === 'world-global') worldPanel.show({ scope: 'global' });
-      if (action === 'regex') regexPanel.show();
-      if (action === 'scripts') scriptPanel.show();
-      if (action === 'plugins') pluginPanel.show();
+      if (action === 'extensions') extensionsPanel.show();
       if (action === 'config') configPanel.show();
       hideMenus();
     });
