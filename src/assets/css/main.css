@@ -398,13 +398,14 @@ body.chat-room-active .bottom-nav {
   padding: 0;
   display: flex;
   flex-direction: row;
+  align-items: flex-start;
   overflow-x: auto;
   overflow-y: hidden;
   scroll-snap-type: x mandatory;
   scroll-behavior: smooth;
   -webkit-overflow-scrolling: touch;
   flex: 0 0 auto;
-  height: 260px;
+  height: auto;
   max-height: 260px;
   scrollbar-width: none;
 }
@@ -422,7 +423,8 @@ body.chat-room-active .bottom-nav {
 }
 
 .world-entry-page-list {
-  height: 100%;
+  height: auto;
+  max-height: 260px;
   overflow-y: auto;
   overflow-x: hidden;
   display: flex;

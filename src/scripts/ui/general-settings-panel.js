@@ -569,17 +569,27 @@ export class GeneralSettingsPanel {
       }
       #general-settings-panel .general-settings-toggle-row.is-on {
         background:
-          linear-gradient(140deg, rgba(26, 26, 26, 0.82) 0%, rgba(42, 49, 62, 0.88) 48%, rgba(74, 85, 104, 0.92) 100%),
-          radial-gradient(120% 90% at 14% 8%, rgba(255, 255, 255, 0.14) 0%, rgba(255, 255, 255, 0) 56%),
-          radial-gradient(100% 88% at 86% 100%, rgba(148, 163, 184, 0.18) 0%, rgba(148, 163, 184, 0) 62%);
-        border-color: rgba(107, 119, 140, 0.56);
+          repeating-linear-gradient(
+            128deg,
+            rgba(255, 255, 255, 0.2) 0px,
+            rgba(255, 255, 255, 0.2) 2px,
+            rgba(206, 199, 187, 0.14) 2px,
+            rgba(206, 199, 187, 0.14) 5px,
+            rgba(177, 170, 159, 0.08) 5px,
+            rgba(177, 170, 159, 0.08) 8px
+          ),
+          linear-gradient(142deg, rgba(212, 205, 191, 0.94) 0%, rgba(188, 181, 168, 0.96) 48%, rgba(168, 161, 149, 0.98) 100%),
+          radial-gradient(118% 90% at 12% 8%, rgba(255, 255, 255, 0.28) 0%, rgba(255, 255, 255, 0) 58%),
+          radial-gradient(105% 90% at 86% 100%, rgba(124, 118, 108, 0.22) 0%, rgba(124, 118, 108, 0) 66%);
+        border-color: rgba(144, 136, 123, 0.7);
         box-shadow:
-          0 0 0 1px rgba(255, 255, 255, 0.16) inset,
-          0 8px 22px rgba(52, 63, 81, 0.3);
+          0 0 0 1px rgba(255, 255, 255, 0.42) inset,
+          0 1px 0 rgba(255, 255, 255, 0.46),
+          0 8px 20px rgba(92, 86, 76, 0.24);
       }
       #general-settings-panel .general-settings-toggle-row.is-on span {
-        color: #ffffff;
-        text-shadow: 0 1px 1px rgba(0, 0, 0, 0.18);
+        color: #232a33;
+        text-shadow: none;
       }
       #general-settings-panel .general-settings-toggle-row.is-off {
         background: #f7f8fa;
@@ -592,9 +602,9 @@ export class GeneralSettingsPanel {
         color: #b91c1c !important;
       }
       #general-settings-panel .general-settings-toggle-row.is-on .general-settings-risk {
-        color: #ffffff !important;
-        border-color: rgba(255, 255, 255, 0.56);
-        background: rgba(255, 255, 255, 0.18);
+        color: #8f1d1d !important;
+        border-color: rgba(191, 126, 126, 0.48);
+        background: rgba(255, 243, 243, 0.72);
       }
       #general-settings-panel .general-settings-toggle-row.is-disabled {
         opacity: 0.56;
@@ -640,10 +650,10 @@ export class GeneralSettingsPanel {
         height: 20px;
         border-radius: 999px;
         pointer-events: none;
-        opacity: 0.72;
+        opacity: 0.68;
         transform: translate(-50%, -50%) scale(0);
         background:
-          radial-gradient(circle, rgba(255, 255, 255, 0.72) 0%, rgba(214, 180, 255, 0.45) 45%, rgba(255, 255, 255, 0) 72%);
+          radial-gradient(circle, rgba(255, 255, 255, 0.76) 0%, rgba(214, 208, 195, 0.46) 45%, rgba(255, 255, 255, 0) 72%);
         animation: general-settings-ripple 520ms ease-out forwards;
       }
       @keyframes general-settings-ripple {
