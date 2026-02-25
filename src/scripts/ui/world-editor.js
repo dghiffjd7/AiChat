@@ -36,6 +36,11 @@ const ROLE_OPTIONS = [
     { value: 2, label: 'assistant' },
 ];
 
+const TRIGGER_STRATEGY_OPTIONS = [
+    { value: 'blue', label: '🔵 蓝灯（常驻触发）' },
+    { value: 'green', label: '🟢 绿灯（关键词触发）' },
+];
+
 const WORLD_AI_INPUT_KEY = 'world_ai_input_v1';
 const WORLD_AI_TEMPLATE_KEY = 'world_ai_template_v1';
 const WORLD_AI_TEMPLATE = `
@@ -224,13 +229,12 @@ const normalizeEntry = (entry = {}, index = 0) => {
 
     e.disable = Boolean(e.disable);
     e.constant = Boolean(e.constant);
-    e.selective = e.selective !== false;
-    // 三态灯逻辑：红灯（禁用）优先，其次蓝灯；避免出现红/蓝/绿同时选中。
-    if (e.disable) {
-        e.constant = false;
+    e.selective = Boolean(e.selective);
+    // 触发策略仅保留蓝/绿两态；禁用状态独立控制。
+    if (e.constant) {
         e.selective = false;
-    } else if (e.constant) {
-        e.selective = false;
+    } else if (!e.selective) {
+        e.selective = true;
     }
     e.selectiveLogic = toNumber(e.selectiveLogic, 0);
 
@@ -360,6 +364,9 @@ export class WorldEditorModal {
         this.entryDotsEl = null;
         this.entryPageScrollLock = false;
         this.entryTotalPages = 1;
+        this.customSelectMenuEl = null;
+        this.customSelectMenuAnchor = null;
+        this.customSelectMenuCleanup = null;
     }
 
     async show(name, data) {
@@ -406,6 +413,7 @@ export class WorldEditorModal {
     }
 
     hide() {
+        this.closeCustomSelectMenu();
         if (this.overlay) this.overlay.style.display = 'none';
         if (this.modal) this.modal.style.display = 'none';
         this.hideManageModal();
@@ -1223,6 +1231,124 @@ export class WorldEditorModal {
         this.renderEditor();
     }
 
+    getEntryTriggerStrategy(entry) {
+        return entry?.constant ? 'blue' : 'green';
+    }
+
+    applyEntryTriggerStrategy(entry, strategy = 'green') {
+        if (!entry || typeof entry !== 'object') return;
+        const mode = String(strategy || '').toLowerCase() === 'blue' ? 'blue' : 'green';
+        entry.constant = mode === 'blue';
+        entry.selective = mode === 'green';
+    }
+
+    setEntryDisabled(index, disabled) {
+        const entry = this.data.entries[index];
+        if (!entry) return;
+        entry.disable = Boolean(disabled);
+        if (!entry.disable && !entry.constant && !entry.selective) {
+            this.applyEntryTriggerStrategy(entry, 'green');
+        }
+        this.renderList();
+        if (this.currentIndex === index) this.renderEditor();
+        if (this.refMode) this.scheduleRefSync();
+    }
+
+    getOptionLabel(options = [], value, fallback = '') {
+        const target = String(value ?? '').trim();
+        const hit = (Array.isArray(options) ? options : []).find((opt) => String(opt?.value ?? '').trim() === target);
+        return hit?.label || fallback || target;
+    }
+
+    ensureCustomSelectMenu() {
+        if (this.customSelectMenuEl) return this.customSelectMenuEl;
+        const menu = document.createElement('div');
+        menu.className = 'world-app-select-menu';
+        menu.style.display = 'none';
+        menu.addEventListener('click', (e) => e.stopPropagation());
+        document.body.appendChild(menu);
+        this.customSelectMenuEl = menu;
+        return menu;
+    }
+
+    closeCustomSelectMenu() {
+        if (typeof this.customSelectMenuCleanup === 'function') {
+            try { this.customSelectMenuCleanup(); } catch {}
+        }
+        this.customSelectMenuCleanup = null;
+        this.customSelectMenuAnchor = null;
+        if (this.customSelectMenuEl) {
+            this.customSelectMenuEl.style.display = 'none';
+            this.customSelectMenuEl.innerHTML = '';
+        }
+    }
+
+    openCustomSelectMenu({ anchorEl, options = [], currentValue = '', onSelect = null } = {}) {
+        if (!anchorEl) return;
+        const menu = this.ensureCustomSelectMenu();
+        const current = String(currentValue ?? '').trim();
+        const opts = Array.isArray(options) ? options : [];
+        menu.innerHTML = opts.map((opt) => {
+            const value = String(opt?.value ?? '');
+            const selected = value === current;
+            const label = String(opt?.label ?? value);
+            return `
+                <button type="button" class="world-app-select-item ${selected ? 'is-selected' : ''}" data-value="${value}">
+                    <span class="world-app-select-item-label">${label}</span>
+                    <span class="world-app-select-item-check">${selected ? '✓' : ''}</span>
+                </button>
+            `;
+        }).join('');
+
+        menu.querySelectorAll('.world-app-select-item').forEach((item) => {
+            item.addEventListener('click', () => {
+                const value = String(item.dataset.value ?? '');
+                if (typeof onSelect === 'function') onSelect(value);
+                this.closeCustomSelectMenu();
+            });
+        });
+
+        menu.style.display = 'block';
+        menu.style.visibility = 'hidden';
+        menu.style.minWidth = `${Math.max(170, Math.round(anchorEl.getBoundingClientRect().width))}px`;
+        menu.style.left = '0px';
+        menu.style.top = '0px';
+
+        const anchorRect = anchorEl.getBoundingClientRect();
+        const menuRect = menu.getBoundingClientRect();
+        const gap = 6;
+        let left = anchorRect.left;
+        let top = anchorRect.bottom + gap;
+        if (left + menuRect.width > window.innerWidth - 8) {
+            left = Math.max(8, window.innerWidth - menuRect.width - 8);
+        }
+        if (top + menuRect.height > window.innerHeight - 8) {
+            top = Math.max(8, anchorRect.top - menuRect.height - gap);
+        }
+        menu.style.left = `${Math.round(left)}px`;
+        menu.style.top = `${Math.round(top)}px`;
+        menu.style.visibility = 'visible';
+
+        const onDocClick = (ev) => {
+            const target = ev?.target;
+            if (!target) return;
+            if (menu.contains(target) || anchorEl.contains(target)) return;
+            this.closeCustomSelectMenu();
+        };
+        const onResize = () => this.closeCustomSelectMenu();
+        document.addEventListener('mousedown', onDocClick, true);
+        document.addEventListener('touchstart', onDocClick, true);
+        window.addEventListener('resize', onResize);
+        window.addEventListener('scroll', onResize, true);
+        this.customSelectMenuCleanup = () => {
+            document.removeEventListener('mousedown', onDocClick, true);
+            document.removeEventListener('touchstart', onDocClick, true);
+            window.removeEventListener('resize', onResize);
+            window.removeEventListener('scroll', onResize, true);
+        };
+        this.customSelectMenuAnchor = anchorEl;
+    }
+
     renderList() {
         if (!this.entriesListEl) return;
         this.updateBatchBar();
@@ -1246,16 +1372,14 @@ export class WorldEditorModal {
             const item = document.createElement('div');
             item.className = `world-entry-item ${i === this.currentIndex ? 'active' : ''}`;
             if (this.batchMode && isSelected) item.classList.add('is-selected');
+            if (entry.disable) item.classList.add('is-disabled');
 
             const lights = document.createElement('div');
             lights.className = 'world-entry-lights';
-            const green = document.createElement('span');
-            const greenState = entry.disable ? 'red' : (entry.selective && !entry.constant ? 'green' : '');
-            green.className = `world-entry-light ${greenState}`;
-            const blue = document.createElement('span');
-            blue.className = `world-entry-light ${entry.constant ? 'blue' : ''}`;
-            lights.appendChild(green);
-            lights.appendChild(blue);
+            const strategyLight = document.createElement('span');
+            const strategy = this.getEntryTriggerStrategy(entry);
+            strategyLight.className = `world-entry-light ${entry.disable ? 'off' : strategy}`;
+            lights.appendChild(strategyLight);
 
             const main = document.createElement('div');
             main.className = 'world-entry-main';
@@ -1287,6 +1411,19 @@ export class WorldEditorModal {
             }
             item.appendChild(lights);
             item.appendChild(main);
+            const controls = document.createElement('div');
+            controls.className = 'world-entry-controls';
+            const enableToggle = document.createElement('button');
+            enableToggle.type = 'button';
+            enableToggle.className = `world-entry-enable-toggle ${entry.disable ? 'is-off' : 'is-on'}`;
+            enableToggle.setAttribute('aria-label', entry.disable ? '启用条目' : '停用条目');
+            enableToggle.setAttribute('aria-pressed', entry.disable ? 'false' : 'true');
+            enableToggle.addEventListener('click', (event) => {
+                event.stopPropagation();
+                this.setEntryDisabled(i, !entry.disable);
+            });
+            controls.appendChild(enableToggle);
+            item.appendChild(controls);
             item.onclick = () => this.selectEntry(i);
             return item;
         };
@@ -1344,6 +1481,12 @@ export class WorldEditorModal {
                 if (entry?.id) parts.push(entry.id);
                 const haystack = parts.join(' ').toLowerCase();
                 return haystack.includes(searchTerm);
+            })
+            .sort((a, b) => {
+                const aDisabled = a.entry?.disable ? 1 : 0;
+                const bDisabled = b.entry?.disable ? 1 : 0;
+                if (aDisabled !== bDisabled) return aDisabled - bDisabled;
+                return a.idx - b.idx;
             });
     }
 
@@ -1401,116 +1544,150 @@ export class WorldEditorModal {
 
     renderEditor() {
         if (!this.editorEl) return;
+        this.closeCustomSelectMenu();
         const entry = this.data.entries[this.currentIndex];
         if (!entry) {
             this.editorEl.innerHTML = '<div style="color:#888;">（无条目）</div>';
             return;
         }
 
-        const buildOptions = (opts, selected) =>
-            opts.map(o => `<option value="${o.value}" ${Number(selected) === o.value ? 'selected' : ''}>${o.label}</option>`).join('');
-
         const aiBusy = this.aiBusy && String(entry.id || '') === String(this.aiPendingEntryId || '');
+        const triggerStrategy = this.getEntryTriggerStrategy(entry);
+        const triggerStrategyLabel = this.getOptionLabel(TRIGGER_STRATEGY_OPTIONS, triggerStrategy, '🟢 绿灯（关键词触发）');
+        const positionLabelText = this.getOptionLabel(POSITION_OPTIONS, entry.position, '↑Char（角色前）');
+        const roleLabelText = this.getOptionLabel(ROLE_OPTIONS, entry.role, 'system');
+        const selectiveLogicLabel = this.getOptionLabel(SELECTIVE_LOGIC_OPTIONS, entry.selectiveLogic, 'AND 任一（匹配任一关键词）');
         this.editorEl.innerHTML = `
             <div class="world-entry-form">
-                <label>标题 / Memo</label>
-                <input type="text" id="we-comment" value="${entry.comment || ''}" placeholder="条目标题（可选）">
+                <div class="world-entry-card">
+                    <label>标题 / Memo</label>
+                    <input type="text" id="we-comment" value="${entry.comment || ''}" placeholder="条目标题（可选）">
 
-                <div class="world-entry-label-row">
-                    <label for="we-content">内容</label>
-                    <button type="button" class="world-ai-trigger" id="we-ai-generate" ${aiBusy ? 'disabled' : ''}>${aiBusy ? '生成中...' : 'AI生成'}</button>
-                </div>
-                <textarea id="we-content" placeholder="条目内容">${entry.content || ''}</textarea>
-
-                <div class="world-entry-row">
-                    <div class="col">
-                        <label>主触发关键词（key）</label>
-                        <textarea id="we-key" placeholder="用逗号或换行分隔">${(entry.key || []).join(', ')}</textarea>
+                    <div class="world-entry-label-row">
+                        <label for="we-content">内容</label>
+                        <button type="button" class="world-ai-trigger" id="we-ai-generate" ${aiBusy ? 'disabled' : ''}>${aiBusy ? '生成中...' : 'AI生成'}</button>
                     </div>
-                    <div class="col">
-                        <label>副触发关键词（keysecondary）</label>
-                        <textarea id="we-keysecondary" placeholder="用逗号或换行分隔">${(entry.keysecondary || []).join(', ')}</textarea>
-                    </div>
-                </div>
-                <div class="world-entry-row">
-                    <div class="col">
-                        <label>位置（position）</label>
-                        <select id="we-position">${buildOptions(POSITION_OPTIONS, entry.position)}</select>
-                    </div>
-                    <div class="col">
-                        <label>深度（depth）</label>
-                        <input type="number" id="we-depth" min="0" max="1000" value="${entry.depth}">
-                    </div>
-                    <div class="col">
-                        <label>顺序 / Order</label>
-                        <input type="number" id="we-order" min="-9999" max="9999" value="${entry.order}">
-                    </div>
+                    <textarea id="we-content" placeholder="条目内容">${entry.content || ''}</textarea>
                 </div>
 
-                <div class="world-entry-row">
-                    <div class="col">
-                        <label>触发概率（Trigger %）</label>
-                        <input type="number" id="we-probability" min="0" max="100" value="${entry.probability}">
-                    </div>
-                    <div class="col">
-                        <label>&nbsp;</label>
-                        <div class="world-entry-toggles">
-                            <label><input type="checkbox" id="we-useProbability" ${entry.useProbability ? 'checked' : ''}> 启用概率</label>
+                <div class="world-entry-card">
+                    <div class="world-entry-card-title">基础触发设置</div>
+                    <div class="world-entry-grid world-entry-grid-core">
+                        <div class="world-entry-field">
+                            <label>触发策略</label>
+                            <button type="button" class="world-app-select-btn" id="we-triggerStrategy-btn">
+                                <span>${triggerStrategyLabel}</span>
+                                <span class="world-app-select-btn-chevron">▾</span>
+                            </button>
+                        </div>
+                        <div class="world-entry-field">
+                            <label>位置（position）</label>
+                            <button type="button" class="world-app-select-btn" id="we-position-btn">
+                                <span>${positionLabelText}</span>
+                                <span class="world-app-select-btn-chevron">▾</span>
+                            </button>
+                        </div>
+                        <div class="world-entry-field">
+                            <label>深度（depth）</label>
+                            <input type="number" id="we-depth" min="0" max="1000" value="${entry.depth}">
+                        </div>
+                        <div class="world-entry-field">
+                            <label>顺序 / Order</label>
+                            <input type="number" id="we-order" min="-9999" max="9999" value="${entry.order}">
+                        </div>
+                        <div class="world-entry-field">
+                            <label>触发概率（Trigger %）</label>
+                            <input type="number" id="we-probability" min="0" max="100" value="${entry.probability}">
+                        </div>
+                        <div class="world-entry-field">
+                            <label>&nbsp;</label>
+                            <label class="world-entry-inline-check">
+                                <input type="checkbox" id="we-useProbability" ${entry.useProbability ? 'checked' : ''}>
+                                <span>启用概率</span>
+                            </label>
                         </div>
                     </div>
-                    <div class="col" id="we-role-wrap" style="${Number(entry.position) === 4 ? '' : 'display:none;'}">
-                        <label>插入角色（role）</label>
-                        <select id="we-role">${buildOptions(ROLE_OPTIONS, entry.role)}</select>
-                    </div>
                 </div>
 
-                <div class="world-entry-section">
-                    <label>状态（绿灯 / 蓝灯等）</label>
-                    <div class="world-entry-toggles">
-                        <label><input type="checkbox" id="we-disable" ${entry.disable ? 'checked' : ''}> 禁用（红灯）</label>
-                        <label><input type="checkbox" id="we-constant" ${entry.constant ? 'checked' : ''}> 常驻（蓝灯）</label>
-                        <label><input type="checkbox" id="we-selective" ${entry.selective ? 'checked' : ''}> 选择性触发（绿灯）</label>
-                        <label><input type="checkbox" id="we-ignoreBudget" ${entry.ignoreBudget ? 'checked' : ''}> 忽略预算</label>
-                        <label><input type="checkbox" id="we-excludeRecursion" ${entry.excludeRecursion ? 'checked' : ''}> 不参与递归</label>
-                        <label><input type="checkbox" id="we-preventRecursion" ${entry.preventRecursion ? 'checked' : ''}> 阻止递归</label>
-                    </div>
-
-                    <label style="margin-top:8px;">选择性逻辑（Selective Logic）</label>
-                    <select id="we-selectiveLogic">${buildOptions(SELECTIVE_LOGIC_OPTIONS, entry.selectiveLogic)}</select>
-                </div>
-
-                <div class="world-entry-section">
-                    <label>匹配来源（Match）</label>
-                    <div class="world-entry-toggles">
-                        <label><input type="checkbox" id="we-matchPersonaDescription" ${entry.matchPersonaDescription ? 'checked' : ''}> Persona 描述</label>
-                        <label><input type="checkbox" id="we-matchCharacterDescription" ${entry.matchCharacterDescription ? 'checked' : ''}> 角色描述</label>
-                        <label><input type="checkbox" id="we-matchCharacterPersonality" ${entry.matchCharacterPersonality ? 'checked' : ''}> 角色性格</label>
-                        <label><input type="checkbox" id="we-matchCharacterDepthPrompt" ${entry.matchCharacterDepthPrompt ? 'checked' : ''}> 角色深度提示</label>
-                        <label><input type="checkbox" id="we-matchScenario" ${entry.matchScenario ? 'checked' : ''}> 场景</label>
-                        <label><input type="checkbox" id="we-matchCreatorNotes" ${entry.matchCreatorNotes ? 'checked' : ''}> 作者注释</label>
-                    </div>
-                </div>
-
-                <div class="world-entry-section">
-                    <div class="world-entry-row">
-                        <div class="col">
-                            <label>纳入组（group）</label>
-                            <input type="text" id="we-group" value="${entry.group || ''}" placeholder="逗号分隔多个组">
+                <details class="world-entry-advanced">
+                    <summary>高级设置</summary>
+                    <div class="world-entry-advanced-body">
+                        <div class="world-entry-group">
+                            <div class="world-entry-group-title">关键词与角色</div>
+                            <div class="world-entry-grid world-entry-grid-2">
+                                <div class="world-entry-field">
+                                    <label>主触发关键词（key）</label>
+                                    <textarea id="we-key" placeholder="用逗号或换行分隔">${(entry.key || []).join(', ')}</textarea>
+                                </div>
+                                <div class="world-entry-field">
+                                    <label>副触发关键词（keysecondary）</label>
+                                    <textarea id="we-keysecondary" placeholder="用逗号或换行分隔">${(entry.keysecondary || []).join(', ')}</textarea>
+                                </div>
+                            </div>
+                            <div class="world-entry-grid world-entry-grid-2">
+                                <div class="world-entry-field" id="we-role-wrap" style="${Number(entry.position) === 4 ? '' : 'display:none;'}">
+                                    <label>插入角色（role）</label>
+                                    <button type="button" class="world-app-select-btn" id="we-role-btn">
+                                        <span>${roleLabelText}</span>
+                                        <span class="world-app-select-btn-chevron">▾</span>
+                                    </button>
+                                </div>
+                            </div>
                         </div>
-                        <div class="col">
-                            <label>组权重（groupWeight）</label>
-                            <input type="number" id="we-groupWeight" min="0" max="9999" value="${entry.groupWeight}">
+
+                        <div class="world-entry-group">
+                            <div class="world-entry-group-title">触发补充与递归</div>
+                            <div class="world-entry-toggle-grid">
+                                <label><input type="checkbox" id="we-ignoreBudget" ${entry.ignoreBudget ? 'checked' : ''}> 忽略预算</label>
+                                <label><input type="checkbox" id="we-excludeRecursion" ${entry.excludeRecursion ? 'checked' : ''}> 不参与递归</label>
+                                <label><input type="checkbox" id="we-preventRecursion" ${entry.preventRecursion ? 'checked' : ''}> 阻止递归</label>
+                            </div>
+                            <label style="margin-top:8px;">选择性逻辑（Selective Logic）</label>
+                            <button type="button" class="world-app-select-btn" id="we-selectiveLogic-btn">
+                                <span>${selectiveLogicLabel}</span>
+                                <span class="world-app-select-btn-chevron">▾</span>
+                            </button>
+                        </div>
+
+                        <div class="world-entry-group">
+                            <div class="world-entry-group-title">匹配来源（Match）</div>
+                            <div class="world-entry-toggle-grid">
+                                <label><input type="checkbox" id="we-matchPersonaDescription" ${entry.matchPersonaDescription ? 'checked' : ''}> Persona 描述</label>
+                                <label><input type="checkbox" id="we-matchCharacterDescription" ${entry.matchCharacterDescription ? 'checked' : ''}> 角色描述</label>
+                                <label><input type="checkbox" id="we-matchCharacterPersonality" ${entry.matchCharacterPersonality ? 'checked' : ''}> 角色性格</label>
+                                <label><input type="checkbox" id="we-matchCharacterDepthPrompt" ${entry.matchCharacterDepthPrompt ? 'checked' : ''}> 角色深度提示</label>
+                                <label><input type="checkbox" id="we-matchScenario" ${entry.matchScenario ? 'checked' : ''}> 场景</label>
+                                <label><input type="checkbox" id="we-matchCreatorNotes" ${entry.matchCreatorNotes ? 'checked' : ''}> 作者注释</label>
+                            </div>
+                        </div>
+
+                        <div class="world-entry-group">
+                            <div class="world-entry-group-title">分组与覆盖</div>
+                            <div class="world-entry-grid world-entry-grid-3">
+                                <div class="world-entry-field">
+                                    <label>纳入组（group）</label>
+                                    <input type="text" id="we-group" value="${entry.group || ''}" placeholder="逗号分隔多个组">
+                                </div>
+                                <div class="world-entry-field">
+                                    <label>组权重（groupWeight）</label>
+                                    <input type="number" id="we-groupWeight" min="0" max="9999" value="${entry.groupWeight}">
+                                </div>
+                                <div class="world-entry-field">
+                                    <label>递归延迟（delayUntilRecursion）</label>
+                                    <input type="number" id="we-delayUntilRecursion" min="0" max="9999" value="${entry.delayUntilRecursion ?? 0}">
+                                </div>
+                            </div>
+                            <div class="world-entry-toggle-grid" style="margin-top:6px;">
+                                <label><input type="checkbox" id="we-groupOverride" ${entry.groupOverride ? 'checked' : ''}> 允许覆盖同组</label>
+                                <label><input type="checkbox" id="we-caseSensitive" ${entry.caseSensitive ? 'checked' : ''}> 区分大小写（覆盖）</label>
+                                <label><input type="checkbox" id="we-matchWholeWords" ${entry.matchWholeWords ? 'checked' : ''}> 全词匹配（覆盖）</label>
+                                <label><input type="checkbox" id="we-useGroupScoring" ${entry.useGroupScoring ? 'checked' : ''}> 组打分（覆盖）</label>
+                            </div>
+                            <label style="margin-top:6px;">扫描深度覆盖（scanDepth，可空）</label>
+                            <input type="number" id="we-scanDepth" min="0" max="1000" value="${entry.scanDepth ?? ''}" placeholder="留空使用全局设置">
                         </div>
                     </div>
-                    <div class="world-entry-toggles" style="margin-top:6px;">
-                        <label><input type="checkbox" id="we-groupOverride" ${entry.groupOverride ? 'checked' : ''}> 允许覆盖同组</label>
-                        <label><input type="checkbox" id="we-caseSensitive" ${entry.caseSensitive ? 'checked' : ''}> 区分大小写（覆盖）</label>
-                        <label><input type="checkbox" id="we-matchWholeWords" ${entry.matchWholeWords ? 'checked' : ''}> 全词匹配（覆盖）</label>
-                        <label><input type="checkbox" id="we-useGroupScoring" ${entry.useGroupScoring ? 'checked' : ''}> 组打分（覆盖）</label>
-                    </div>
-                    <label style="margin-top:6px;">扫描深度覆盖（scanDepth，可空）</label>
-                    <input type="number" id="we-scanDepth" min="0" max="1000" value="${entry.scanDepth ?? ''}" placeholder="留空使用全局设置">
-                </div>
+                </details>
 
                 <div class="world-entry-actions">
                     <button id="we-duplicate">复制条目</button>
@@ -1565,33 +1742,63 @@ export class WorldEditorModal {
         bindNumber('#we-groupWeight', 'groupWeight', DEFAULT_WEIGHT, 0, 9999);
         bindNumber('#we-delayUntilRecursion', 'delayUntilRecursion', 0, 0, 9999);
 
-        const posEl = q('#we-position');
-        if (posEl) {
-            posEl.addEventListener('change', () => {
-                entry.position = toNumber(posEl.value, 0);
+        const bindCustomSelect = ({ btnSelector, options, getValue, setValue, rerenderList = false }) => {
+            const btn = q(btnSelector);
+            if (!btn) return;
+            const renderBtn = () => {
+                const label = this.getOptionLabel(options, getValue(), '');
+                const labelEl = btn.querySelector('span');
+                if (labelEl) labelEl.textContent = label;
+            };
+            renderBtn();
+            btn.addEventListener('click', (ev) => {
+                ev.preventDefault();
+                ev.stopPropagation();
+                this.openCustomSelectMenu({
+                    anchorEl: btn,
+                    options,
+                    currentValue: getValue(),
+                    onSelect: (value) => {
+                        setValue(value);
+                        renderBtn();
+                        if (rerenderList) this.renderList();
+                        markRefDirty();
+                    },
+                });
+            });
+        };
+
+        bindCustomSelect({
+            btnSelector: '#we-position-btn',
+            options: POSITION_OPTIONS,
+            getValue: () => entry.position,
+            setValue: (value) => {
+                entry.position = toNumber(value, 0);
                 const roleWrap = q('#we-role-wrap');
                 if (roleWrap) roleWrap.style.display = Number(entry.position) === 4 ? '' : 'none';
-                this.renderList();
-                markRefDirty();
-            });
-        }
+            },
+            rerenderList: true,
+        });
 
-        const roleEl = q('#we-role');
-        if (roleEl) {
-            roleEl.addEventListener('change', () => {
-                entry.role = toNumber(roleEl.value, 0);
-                this.renderList();
-                markRefDirty();
-            });
-        }
+        bindCustomSelect({
+            btnSelector: '#we-role-btn',
+            options: ROLE_OPTIONS,
+            getValue: () => entry.role,
+            setValue: (value) => {
+                entry.role = toNumber(value, 0);
+            },
+            rerenderList: true,
+        });
 
-        const logicEl = q('#we-selectiveLogic');
-        if (logicEl) {
-            logicEl.addEventListener('change', () => {
-                entry.selectiveLogic = toNumber(logicEl.value, 0);
-                markRefDirty();
-            });
-        }
+        bindCustomSelect({
+            btnSelector: '#we-selectiveLogic-btn',
+            options: SELECTIVE_LOGIC_OPTIONS,
+            getValue: () => entry.selectiveLogic,
+            setValue: (value) => {
+                entry.selectiveLogic = toNumber(value, 0);
+            },
+            rerenderList: false,
+        });
 
         // 覆盖类字段：checkbox 表示 true；若取消则置 null（表示不覆盖）
         const bindOverrideCheck = (sel, key) => {
@@ -1603,42 +1810,15 @@ export class WorldEditorModal {
             });
         };
 
-        const disableEl = q('#we-disable');
-        const constantEl = q('#we-constant');
-        const selectiveEl = q('#we-selective');
-        const syncLightChecks = () => {
-            if (disableEl) disableEl.checked = Boolean(entry.disable);
-            if (constantEl) constantEl.checked = Boolean(entry.constant);
-            if (selectiveEl) selectiveEl.checked = Boolean(entry.selective);
-        };
-        const updateLightState = (type, checked) => {
-            if (type === 'disable') {
-                entry.disable = Boolean(checked);
-                if (checked) {
-                    entry.constant = false;
-                    entry.selective = false;
-                }
-            } else if (type === 'constant') {
-                entry.constant = Boolean(checked);
-                if (checked) {
-                    entry.disable = false;
-                    entry.selective = false;
-                }
-            } else if (type === 'selective') {
-                entry.selective = Boolean(checked);
-                if (checked) {
-                    entry.disable = false;
-                    entry.constant = false;
-                }
-            }
-            syncLightChecks();
-            this.renderList();
-            markRefDirty();
-        };
-        if (disableEl) disableEl.addEventListener('change', () => updateLightState('disable', disableEl.checked));
-        if (constantEl) constantEl.addEventListener('change', () => updateLightState('constant', constantEl.checked));
-        if (selectiveEl) selectiveEl.addEventListener('change', () => updateLightState('selective', selectiveEl.checked));
-        syncLightChecks();
+        bindCustomSelect({
+            btnSelector: '#we-triggerStrategy-btn',
+            options: TRIGGER_STRATEGY_OPTIONS,
+            getValue: () => this.getEntryTriggerStrategy(entry),
+            setValue: (value) => {
+                this.applyEntryTriggerStrategy(entry, value);
+            },
+            rerenderList: true,
+        });
 
         bindCheck('#we-ignoreBudget', 'ignoreBudget');
         bindCheck('#we-excludeRecursion', 'excludeRecursion');
