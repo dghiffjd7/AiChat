@@ -4082,9 +4082,12 @@ const stringifyMessageContent = (content) => {
         if (delay > 0 && recursionStep < delay) return false;
       }
       // Legacy behavior: when no match text provided, include all enabled entries.
-      if (!hasMatchInput(localMatchText, localMatchContext)) return Boolean(e.content);
       const content = String(e.content || '').trim();
-      if (!content) return false;
+      const blockHasContent = Array.isArray(e?.promptBlocks)
+        ? e.promptBlocks.some(block => String(block?.content || '').trim().length > 0)
+        : false;
+      if (!hasMatchInput(localMatchText, localMatchContext)) return Boolean(content || blockHasContent);
+      if (!content && !blockHasContent) return false;
       if (Boolean(e.constant)) return true;
       const keys = normalizeKeys(e);
       if (!keys.length) return false;
@@ -4133,6 +4136,302 @@ const stringifyMessageContent = (content) => {
         .filter(Boolean);
     };
 
+    const toPathParts = (value) => String(value || '')
+      .replace(/\[([^\]]+)\]/g, '.$1')
+      .split('.')
+      .map(seg => seg.trim().replace(/^['"]|['"]$/g, ''))
+      .filter(Boolean);
+    const isIndexPathPart = (seg) => /^\d+$/.test(String(seg || '').trim());
+    const getByPath = (obj, path) => {
+      const parts = toPathParts(path);
+      if (!parts.length) return undefined;
+      let cur = obj;
+      for (let i = 0; i < parts.length; i += 1) {
+        if (cur == null || (typeof cur !== 'object' && typeof cur !== 'function')) return undefined;
+        const key = isIndexPathPart(parts[i]) ? Number(parts[i]) : parts[i];
+        if (!(key in cur)) return undefined;
+        cur = cur[key];
+      }
+      return cur;
+    };
+    const buildNestedVars = (flat = {}) => {
+      const root = {};
+      const setByPath = (obj, path, value) => {
+        const parts = toPathParts(path);
+        if (!parts.length) return;
+        let cur = obj;
+        for (let i = 0; i < parts.length - 1; i += 1) {
+          const key = isIndexPathPart(parts[i]) ? Number(parts[i]) : parts[i];
+          const nextKey = parts[i + 1];
+          const shouldArray = isIndexPathPart(nextKey);
+          if (!cur[key] || typeof cur[key] !== 'object') cur[key] = shouldArray ? [] : {};
+          cur = cur[key];
+        }
+        const lastKey = isIndexPathPart(parts[parts.length - 1]) ? Number(parts[parts.length - 1]) : parts[parts.length - 1];
+        cur[lastKey] = value;
+      };
+      Object.entries(flat || {}).forEach(([key, value]) => {
+        const name = String(key || '').trim();
+        if (!name) return;
+        setByPath(root, name, value);
+      });
+      return root;
+    };
+
+    const runtimeSessionId = String(scopeSessionId || this.activeSessionId || '').trim();
+    const useGlobalVariables = Boolean(
+      runtimeSessionId &&
+      typeof this.isSharedVariableSession === 'function' &&
+      this.isSharedVariableSession(runtimeSessionId),
+    );
+    const localVars = this.chatStore?.listVariables?.(runtimeSessionId) || {};
+    const globalVars = this.chatStore?.listGlobalVariables?.() || {};
+    const baseVars = useGlobalVariables ? globalVars : localVars;
+    const baseVarsNested = buildNestedVars(baseVars);
+    const globalVarsNested = buildNestedVars(globalVars);
+    const variableContext = {
+      ...baseVars,
+      stat_data: baseVarsNested,
+      variables: baseVarsNested,
+      status_current_variables: baseVarsNested,
+      global_variables: globalVarsNested,
+      local_variables: localVars,
+    };
+    const resolvePathValue = (path) => {
+      const key = String(path || '').trim();
+      if (!key) return undefined;
+      if (Object.prototype.hasOwnProperty.call(variableContext, key)) return variableContext[key];
+      if (Object.prototype.hasOwnProperty.call(baseVars, key)) return baseVars[key];
+      if (Object.prototype.hasOwnProperty.call(globalVars, key)) return globalVars[key];
+      const byPath = getByPath(variableContext, key);
+      if (byPath !== undefined) return byPath;
+      return undefined;
+    };
+    const coerceBoolean = (value) => {
+      if (typeof value === 'boolean') return value;
+      if (typeof value === 'number') return value !== 0;
+      const text = String(value || '').trim().toLowerCase();
+      if (!text) return false;
+      return text === 'true' || text === '1' || text === 'yes' || text === 'on';
+    };
+    const coerceLiteral = (value, rightType = 'string') => {
+      const type = String(rightType || 'string').trim().toLowerCase();
+      if (type === 'number') {
+        const n = Number(value);
+        return Number.isFinite(n) ? n : 0;
+      }
+      if (type === 'boolean') return coerceBoolean(value);
+      if (type === 'null') return null;
+      return value;
+    };
+    const normalizePromptBlocks = (entry = {}) => {
+      const blocks = Array.isArray(entry?.promptBlocks) ? entry.promptBlocks : [];
+      return blocks
+        .map((raw, idx) => {
+          const block = raw && typeof raw === 'object' ? raw : {};
+          const whenRaw = block.when && typeof block.when === 'object' ? block.when : {};
+          const logicRaw = String(whenRaw.logic || 'and').trim().toLowerCase();
+          const logic = ['and', 'or', 'not'].includes(logicRaw) ? logicRaw : 'and';
+          const clauses = Array.isArray(whenRaw.clauses) ? whenRaw.clauses : [];
+          const clause = whenRaw.clause && typeof whenRaw.clause === 'object' ? whenRaw.clause : null;
+          return {
+            id: String(block.id || `blk_${idx}`),
+            enabled: block.enabled !== false,
+            content: String(block.content || ''),
+            role: block.role,
+            priority: Number.isFinite(Number(block.priority)) ? Number(block.priority) : 100,
+            when: logic === 'not'
+              ? { logic: 'not', clause: clause || clauses[0] || null }
+              : { logic, clauses },
+          };
+        })
+        .filter(Boolean);
+    };
+
+    const evalExpression = (expr) => {
+      if (expr && typeof expr === 'object') {
+        if (typeof expr.var === 'string' && expr.var.trim()) {
+          return resolvePathValue(expr.var);
+        }
+        const fn = String(expr.fn || '').trim().toLowerCase();
+        const args = Array.isArray(expr.args) ? expr.args.map(arg => evalExpression(arg)) : [];
+        const toNum = (value) => {
+          const n = Number(value);
+          return Number.isFinite(n) ? n : 0;
+        };
+        if (fn === 'add') return args.reduce((sum, item) => sum + toNum(item), 0);
+        if (fn === 'sub') {
+          if (!args.length) return 0;
+          return args.slice(1).reduce((acc, item) => acc - toNum(item), toNum(args[0]));
+        }
+        if (fn === 'mul') return args.reduce((acc, item) => acc * toNum(item), args.length ? 1 : 0);
+        if (fn === 'div') {
+          if (!args.length) return 0;
+          return args.slice(1).reduce((acc, item) => {
+            const d = toNum(item);
+            return d === 0 ? acc : acc / d;
+          }, toNum(args[0]));
+        }
+        if (fn === 'min') return args.length ? Math.min(...args.map(toNum)) : 0;
+        if (fn === 'max') return args.length ? Math.max(...args.map(toNum)) : 0;
+        if (fn === 'abs') return Math.abs(toNum(args[0]));
+        return undefined;
+      }
+      if (typeof expr === 'string') {
+        const key = expr.trim();
+        if (!key) return undefined;
+        const resolved = resolvePathValue(key);
+        if (resolved !== undefined) return resolved;
+        if (/^-?\d+(?:\.\d+)?$/.test(key)) return Number(key);
+        const lower = key.toLowerCase();
+        if (lower === 'true') return true;
+        if (lower === 'false') return false;
+        if (lower === 'null') return null;
+        return undefined;
+      }
+      return expr;
+    };
+
+    const evalClause = (clause) => {
+      if (!clause || typeof clause !== 'object') return true;
+      const leftRaw = clause.left;
+      const leftMissing = leftRaw == null || (typeof leftRaw === 'string' && leftRaw.trim() === '');
+      if (leftMissing) return true;
+      const op = String(clause.op || '==').trim().toLowerCase();
+      const rightType = String(clause.rightType || 'string').trim().toLowerCase();
+      const leftValue = evalExpression(leftRaw);
+      if (op === 'is_empty') {
+        if (Array.isArray(leftValue)) return leftValue.length === 0;
+        if (leftValue && typeof leftValue === 'object') return Object.keys(leftValue).length === 0;
+        return String(leftValue ?? '').trim().length === 0;
+      }
+      if (op === 'not_empty') {
+        if (Array.isArray(leftValue)) return leftValue.length > 0;
+        if (leftValue && typeof leftValue === 'object') return Object.keys(leftValue).length > 0;
+        return String(leftValue ?? '').trim().length > 0;
+      }
+      const rightValue = rightType === 'variable'
+        ? evalExpression(clause.right)
+        : coerceLiteral(clause.right, rightType);
+      let compareLeft = leftValue;
+      let compareRight = rightValue;
+      if (rightType === 'number') {
+        const l = Number(leftValue);
+        const r = Number(rightValue);
+        compareLeft = Number.isFinite(l) ? l : leftValue;
+        compareRight = Number.isFinite(r) ? r : rightValue;
+      } else if (rightType === 'boolean') {
+        compareLeft = coerceBoolean(leftValue);
+        compareRight = coerceBoolean(rightValue);
+      } else if (rightType === 'string') {
+        compareLeft = String(leftValue ?? '');
+        compareRight = String(rightValue ?? '');
+      } else if (rightType === 'null') {
+        compareLeft = leftValue == null ? null : leftValue;
+        compareRight = null;
+      }
+      if (op === 'contains') {
+        if (Array.isArray(leftValue)) return leftValue.some(item => String(item ?? '') === String(rightValue ?? ''));
+        return String(leftValue ?? '').includes(String(rightValue ?? ''));
+      }
+      if (op === 'not_contains') {
+        if (Array.isArray(leftValue)) return !leftValue.some(item => String(item ?? '') === String(rightValue ?? ''));
+        return !String(leftValue ?? '').includes(String(rightValue ?? ''));
+      }
+      if (op === 'regex') {
+        const pattern = String(rightValue ?? '').trim();
+        if (!pattern) return false;
+        try {
+          const literal = pattern.match(/^\/(.+)\/([gimsuy]*)$/);
+          const re = literal ? new RegExp(literal[1], literal[2] || '') : new RegExp(pattern, 'i');
+          return re.test(String(leftValue ?? ''));
+        } catch {
+          return false;
+        }
+      }
+      if (op === '>' || op === '>=' || op === '<' || op === '<=') {
+        const l = Number(leftValue);
+        const r = Number(rightValue);
+        if (!Number.isFinite(l) || !Number.isFinite(r)) return false;
+        if (op === '>') return l > r;
+        if (op === '>=') return l >= r;
+        if (op === '<') return l < r;
+        return l <= r;
+      }
+      if (op === '!=') return compareLeft !== compareRight;
+      return compareLeft === compareRight;
+    };
+
+    function evalConditionNode(node) {
+      if (!node || typeof node !== 'object') return true;
+      const logicRaw = String(node.logic || '').trim().toLowerCase();
+      if (logicRaw === 'not') {
+        if (node.clause && typeof node.clause === 'object') return !evalConditionNode(node.clause);
+        const list = Array.isArray(node.clauses) ? node.clauses : [];
+        if (!list.length) return true;
+        return !evalConditionNode(list[0]);
+      }
+      if (Array.isArray(node.clauses)) {
+        const logic = logicRaw === 'or' ? 'or' : 'and';
+        if (!node.clauses.length) return true;
+        const values = node.clauses.map(item => evalConditionNode(item));
+        return logic === 'or' ? values.some(Boolean) : values.every(Boolean);
+      }
+      if (node.clause && typeof node.clause === 'object') {
+        return evalConditionNode(node.clause);
+      }
+      return evalClause(node);
+    }
+
+    const evalConditionGroup = (when) => {
+      if (!when || typeof when !== 'object') return true;
+      return evalConditionNode(when);
+    };
+
+    const ensureDefinedVariable = (spec) => {
+      const chatStore = this.chatStore;
+      if (!chatStore || !runtimeSessionId) return;
+      if (!spec || typeof spec !== 'object') return;
+      const name = String(spec.name || '').trim();
+      if (!name) return;
+      const typeRaw = String(spec.type || 'number').trim().toLowerCase();
+      const type = ['number', 'string', 'boolean'].includes(typeRaw) ? typeRaw : 'number';
+      const defaultValue = coerceLiteral(spec.default, type);
+      const schema = chatStore.getVariableSchema?.(name, runtimeSessionId);
+      if (!schema) {
+        chatStore.setVariableSchema?.(name, { type, default: defaultValue }, runtimeSessionId);
+      }
+      if (useGlobalVariables) {
+        const currentGlobal = chatStore.getGlobalVariable?.(name);
+        if (currentGlobal === undefined || currentGlobal === null) {
+          chatStore.setGlobalVariable?.(name, defaultValue);
+        }
+      } else {
+        const current = chatStore.getVariable?.(name, runtimeSessionId);
+        if (current === undefined || current === null) {
+          chatStore.setVariable?.(name, defaultValue, runtimeSessionId);
+        }
+        if (chatStore.getInitialVariable?.(name, runtimeSessionId) === undefined) {
+          chatStore.setInitialVariable?.(name, defaultValue, runtimeSessionId);
+        }
+      }
+    };
+    const collectDefineSpecs = (node, out = []) => {
+      if (!node || typeof node !== 'object') return out;
+      if (node.defineVariable && typeof node.defineVariable === 'object') out.push(node.defineVariable);
+      if (Array.isArray(node.clauses)) node.clauses.forEach(item => collectDefineSpecs(item, out));
+      if (node.clause && typeof node.clause === 'object') collectDefineSpecs(node.clause, out);
+      if (node.where && typeof node.where === 'object') collectDefineSpecs(node.where, out);
+      return out;
+    };
+    const syncPromptBlockVariableSchemas = (entry) => {
+      const blocks = normalizePromptBlocks(entry);
+      blocks.forEach((block) => {
+        const specs = collectDefineSpecs(block?.when, []);
+        specs.forEach(spec => ensureDefinedVariable(spec));
+      });
+    };
+
     const localEntries = Array.isArray(data.localEntries)
       ? data.localEntries
       : (Array.isArray(data.entries) ? data.entries : []);
@@ -4147,6 +4446,9 @@ const stringifyMessageContent = (content) => {
       _sourceWorldId: String(entry?._sourceWorldId || id || '').trim(),
       _refWorldId: String(entry?._refWorldId || '').trim(),
     }));
+    baseEntries.forEach((entry) => {
+      syncPromptBlockVariableSchemas(entry);
+    });
 
     let effectiveMatchContext = matchContext;
     if (matchContext && minActivations > 0) {
@@ -4272,31 +4574,89 @@ const stringifyMessageContent = (content) => {
       });
     }
 
-    return entries
-      .map((e, idx) => {
-        const content = trimEdgeBlankLines(e?.content);
-        if (!String(content || '').trim()) return null;
-        const positionRaw = Number(e?.position);
-        const depthRaw = Number(e?.depth);
-        const roleRaw = Number(e?.role);
-        const orderRaw = Number(e?.order);
-        const position = Number.isFinite(positionRaw) ? Math.trunc(positionRaw) : 0;
-        const depth = Number.isFinite(depthRaw) ? Math.max(0, Math.trunc(depthRaw)) : 0;
-        const role = Number.isFinite(roleRaw) ? Math.max(0, Math.min(2, Math.trunc(roleRaw))) : 0;
-        const order = Number.isFinite(orderRaw) ? orderRaw : idx;
-        return {
-          content,
-          position,
-          depth,
-          role,
-          order,
-          _seq: idx,
-          _entryId: String(e?._entryId || ''),
-          _sourceWorldId: String(e?._sourceWorldId || ''),
-          _refWorldId: String(e?._refWorldId || ''),
-        };
-      })
-      .filter(Boolean);
+    const roleToNumber = (value, fallback = 0) => {
+      if (Number.isFinite(Number(value))) return Math.max(0, Math.min(2, Math.trunc(Number(value))));
+      const text = String(value || '').trim().toLowerCase();
+      if (text === 'user') return 1;
+      if (text === 'assistant') return 2;
+      if (text === 'system') return 0;
+      return Math.max(0, Math.min(2, Math.trunc(Number(fallback) || 0)));
+    };
+    const expanded = [];
+    entries.forEach((entry, idx) => {
+      const modeRaw = String(entry?.promptMode || '').trim().toLowerCase();
+      const promptMode = ['legacy', 'blocks', 'hybrid'].includes(modeRaw) ? modeRaw : 'legacy';
+      const blocks = normalizePromptBlocks(entry);
+      const useBlocks = promptMode !== 'legacy' && blocks.length > 0;
+      const fallbackRole = roleToNumber(entry?.role, 0);
+      if (!useBlocks) {
+        const legacyContent = trimEdgeBlankLines(entry?.content);
+        if (!String(legacyContent || '').trim()) return;
+        expanded.push({
+          ...entry,
+          content: legacyContent,
+          _blockId: 'legacy',
+          _blockPriority: Number.isFinite(Number(entry?.priority)) ? Number(entry.priority) : 100,
+          _blockOrder: 0,
+          _blockRole: fallbackRole,
+          _dedupeKey: `${String(entry?._entryId || '')}::legacy`,
+        });
+        return;
+      }
+      blocks.forEach((block, blockIdx) => {
+        if (block?.enabled === false) return;
+        const blockContent = trimEdgeBlankLines(block?.content);
+        if (!String(blockContent || '').trim()) return;
+        if (!evalConditionGroup(block?.when)) return;
+        expanded.push({
+          ...entry,
+          content: blockContent,
+          _blockId: String(block?.id || `blk_${blockIdx}`),
+          _blockPriority: Number.isFinite(Number(block?.priority)) ? Number(block.priority) : 100,
+          _blockOrder: blockIdx,
+          _blockRole: roleToNumber(block?.role, fallbackRole),
+          _dedupeKey: `${String(entry?._entryId || '')}::${String(block?.id || `blk_${blockIdx}`)}`,
+        });
+      });
+    });
+
+    expanded.sort((a, b) => {
+      const orderA = Number.isFinite(Number(a?.order)) ? Number(a.order) : 0;
+      const orderB = Number.isFinite(Number(b?.order)) ? Number(b.order) : 0;
+      if (orderA !== orderB) return orderA - orderB;
+      const priorityA = Number.isFinite(Number(a?._blockPriority)) ? Number(a._blockPriority) : 100;
+      const priorityB = Number.isFinite(Number(b?._blockPriority)) ? Number(b._blockPriority) : 100;
+      if (priorityA !== priorityB) return priorityA - priorityB;
+      const entrySeqA = Number.isFinite(Number(a?._entryIndex)) ? Number(a._entryIndex) : 0;
+      const entrySeqB = Number.isFinite(Number(b?._entryIndex)) ? Number(b._entryIndex) : 0;
+      if (entrySeqA !== entrySeqB) return entrySeqA - entrySeqB;
+      const blockOrderA = Number.isFinite(Number(a?._blockOrder)) ? Number(a._blockOrder) : 0;
+      const blockOrderB = Number.isFinite(Number(b?._blockOrder)) ? Number(b._blockOrder) : 0;
+      return blockOrderA - blockOrderB;
+    });
+
+    return expanded.map((e, idx) => {
+      const positionRaw = Number(e?.position);
+      const depthRaw = Number(e?.depth);
+      const orderRaw = Number(e?.order);
+      const position = Number.isFinite(positionRaw) ? Math.trunc(positionRaw) : 0;
+      const depth = Number.isFinite(depthRaw) ? Math.max(0, Math.trunc(depthRaw)) : 0;
+      const role = roleToNumber(e?._blockRole, e?.role);
+      const order = Number.isFinite(orderRaw) ? orderRaw : idx;
+      return {
+        content: String(e?.content || ''),
+        position,
+        depth,
+        role,
+        order,
+        _seq: idx,
+        _entryId: String(e?._entryId || ''),
+        _blockId: String(e?._blockId || ''),
+        _dedupeKey: String(e?._dedupeKey || `${String(e?._entryId || '')}::${String(e?._blockId || 'legacy')}`),
+        _sourceWorldId: String(e?._sourceWorldId || ''),
+        _refWorldId: String(e?._refWorldId || ''),
+      };
+    });
   }
 
   getTemplateRenderInjections({ sessionId, uiMode, content, userName, characterName, groupName, membersText } = {}) {
@@ -4388,9 +4748,9 @@ const stringifyMessageContent = (content) => {
     const seen = new Set();
     const deduped = merged.filter((entry) => {
       const sourceId = String(entry?._sourceWorldId || '').trim();
-      const entryId = String(entry?._entryId || '').trim();
-      if (!sourceId || !entryId) return true;
-      const key = `${sourceId}::${entryId}`;
+      const dedupeKey = String(entry?._dedupeKey || entry?._entryId || '').trim();
+      if (!sourceId || !dedupeKey) return true;
+      const key = `${sourceId}::${dedupeKey}`;
       if (seen.has(key)) return false;
       seen.add(key);
       return true;

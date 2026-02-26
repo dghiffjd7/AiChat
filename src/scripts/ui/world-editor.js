@@ -41,6 +41,45 @@ const TRIGGER_STRATEGY_OPTIONS = [
     { value: 'green', label: '🟢 绿灯（关键词触发）' },
 ];
 
+const BLOCK_OP_OPTIONS = [
+    { value: '==', label: '等于 (==)' },
+    { value: '!=', label: '不等于 (!=)' },
+    { value: '>', label: '大于 (>)' },
+    { value: '>=', label: '大于等于 (>=)' },
+    { value: '<', label: '小于 (<)' },
+    { value: '<=', label: '小于等于 (<=)' },
+    { value: 'contains', label: '包含 (contains)' },
+    { value: 'not_contains', label: '不包含 (not_contains)' },
+    { value: 'is_empty', label: '为空 (is_empty)' },
+    { value: 'not_empty', label: '非空 (not_empty)' },
+    { value: 'regex', label: '正则匹配 (regex)' },
+];
+
+const BLOCK_RIGHT_TYPE_OPTIONS = [
+    { value: 'number', label: '数字' },
+    { value: 'string', label: '文本' },
+    { value: 'boolean', label: '布尔' },
+    { value: 'variable', label: '变量' },
+];
+
+const BLOCK_EXPAND_ICON_SVG = `
+<svg class="world-corner-icon" viewBox="0 0 24 24" aria-hidden="true">
+    <path d="M8 3H3v5M16 3h5v5M21 16v5h-5M3 16v5h5"></path>
+    <path d="M9 9L3 3M15 9l6-6M9 15l-6 6M15 15l6 6"></path>
+</svg>
+`.trim();
+
+const BLOCK_FLIP_ICON_SVG = `
+<svg class="world-corner-icon" viewBox="0 0 24 24" aria-hidden="true">
+    <path d="M4 7h11"></path>
+    <path d="M12.5 4.5L15 7l-2.5 2.5"></path>
+    <path d="M20 17H9"></path>
+    <path d="M11.5 14.5L9 17l2.5 2.5"></path>
+    <path d="M17 4a8 8 0 0 1 3 6"></path>
+    <path d="M7 20a8 8 0 0 1-3-6"></path>
+</svg>
+`.trim();
+
 const WORLD_AI_INPUT_KEY = 'world_ai_input_v1';
 const WORLD_AI_TEMPLATE_KEY = 'world_ai_template_v1';
 const WORLD_AI_TEMPLATE = `
@@ -95,6 +134,52 @@ const buildJsonDataUrl = (payload) => {
 const toNumber = (val, def) => {
     const n = Number(val);
     return Number.isFinite(n) ? n : def;
+};
+
+const genBlockId = () => `blk_${Date.now().toString(36)}_${Math.random().toString(16).slice(2, 7)}`;
+
+const normalizePromptClause = (raw = {}) => {
+    const clause = raw && typeof raw === 'object' ? { ...raw } : {};
+    return {
+        left: String(clause.left || '').trim(),
+        op: String(clause.op || '>').trim(),
+        right: clause.right ?? '',
+        rightType: String(clause.rightType || 'number').trim(),
+        defineVariable: clause.defineVariable && typeof clause.defineVariable === 'object'
+            ? {
+                name: String(clause.defineVariable.name || '').trim(),
+                type: String(clause.defineVariable.type || 'number').trim().toLowerCase(),
+                default: clause.defineVariable.default ?? 0,
+            }
+            : null,
+    };
+};
+
+const normalizePromptBlock = (raw = {}, index = 0, fallbackContent = '') => {
+    const block = raw && typeof raw === 'object' ? { ...raw } : {};
+    const whenRaw = block.when && typeof block.when === 'object' ? block.when : {};
+    const clauses = Array.isArray(whenRaw.clauses) ? whenRaw.clauses : [];
+    const normalizedClauses = clauses.map(normalizePromptClause).filter(Boolean);
+    if (!normalizedClauses.length) {
+        normalizedClauses.push(normalizePromptClause({
+            left: '',
+            op: '>',
+            right: 10,
+            rightType: 'number',
+        }));
+    }
+    return {
+        id: String(block.id || '').trim() || genBlockId(),
+        title: String(block.title || `内容 ${index + 1}`).trim(),
+        enabled: block.enabled !== false,
+        content: String(block.content ?? (index === 0 ? fallbackContent : '')).trim(),
+        role: Number.isFinite(Number(block.role)) ? Number(block.role) : 0,
+        priority: Number.isFinite(Number(block.priority)) ? Number(block.priority) : 100,
+        when: {
+            logic: String(whenRaw.logic || 'and').trim().toLowerCase(),
+            clauses: normalizedClauses,
+        },
+    };
 };
 
 const canUseApiConfig = config => {
@@ -275,6 +360,14 @@ const normalizeEntry = (entry = {}, index = 0) => {
     e.delayUntilRecursion = toNumber(e.delayUntilRecursion, 0);
 
     e.content = e.content ?? '';
+    const promptBlocksRaw = Array.isArray(e.promptBlocks) ? e.promptBlocks : [];
+    e.promptBlocks = promptBlocksRaw.length
+        ? promptBlocksRaw.map((block, idx) => normalizePromptBlock(block, idx, e.content))
+        : [normalizePromptBlock({ content: e.content, title: e.comment || `内容 ${index + 1}` }, 0, e.content)];
+    e.promptMode = String(e.promptMode || 'hybrid').trim().toLowerCase();
+    if (!['legacy', 'blocks', 'hybrid'].includes(e.promptMode)) e.promptMode = 'hybrid';
+    const firstContent = String(e.promptBlocks?.[0]?.content || '').trim();
+    if (firstContent) e.content = firstContent;
     return e;
 };
 
@@ -367,6 +460,14 @@ export class WorldEditorModal {
         this.customSelectMenuEl = null;
         this.customSelectMenuAnchor = null;
         this.customSelectMenuCleanup = null;
+        this.entryBlockPageMap = new Map();
+        this.blockFlipMap = new Map();
+        this.blockExpandMap = new Map();
+        this.blockManageOverlay = null;
+        this.blockManageModal = null;
+        this.blockManageList = null;
+        this.blockManageCloseBtn = null;
+        this.blockManageEntryId = '';
     }
 
     async show(name, data) {
@@ -396,6 +497,9 @@ export class WorldEditorModal {
         }
         this.batchMode = false;
         this.selectedEntries.clear();
+        this.blockFlipMap.clear();
+        this.blockExpandMap.clear();
+        this.blockManageEntryId = '';
         this.entrySearchTerm = '';
         this.entryPageIndex = 0;
         this.updateBatchBar();
@@ -418,6 +522,7 @@ export class WorldEditorModal {
         if (this.modal) this.modal.style.display = 'none';
         this.hideManageModal();
         this.hideAiModal();
+        this.hideBlockManageModal();
         if (this.refSyncTimer) {
             clearTimeout(this.refSyncTimer);
             this.refSyncTimer = null;
@@ -910,12 +1015,16 @@ export class WorldEditorModal {
     getEntryContentForAi(entryId) {
         const { idx, entry } = this.resolveEntryById(entryId);
         if (!entry || idx < 0) return '';
+        const blocks = this.ensureEntryPromptBlocks(entry);
+        const currentEntryId = this.getEntryId(entry, idx);
+        const blockPage = this.getEntryBlockPage(entry, currentEntryId);
+        const activeBlock = blocks[blockPage] || blocks[0] || null;
         if (this.currentIndex === idx) {
-            const textarea = this.editorEl?.querySelector('#we-content');
+            const textarea = this.editorEl?.querySelector('#we-block-content');
             const live = String(textarea?.value || '').trim();
             if (live) return live;
         }
-        return String(entry.content || '').trim();
+        return String(activeBlock?.content ?? entry.content ?? '').trim();
     }
 
     applyAiContentToEntry(entryId, content) {
@@ -924,11 +1033,21 @@ export class WorldEditorModal {
             window.toastr?.warning?.('目标条目不存在，未写入内容');
             return false;
         }
-        entry.content = content;
+        const blocks = this.ensureEntryPromptBlocks(entry);
+        const currentEntryId = this.getEntryId(entry, idx);
+        const blockPage = this.getEntryBlockPage(entry, currentEntryId);
+        const activeBlock = blocks[blockPage] || blocks[0] || null;
+        if (activeBlock) {
+            activeBlock.content = content;
+        } else {
+            entry.content = content;
+        }
+        this.syncEntryContentFromBlocks(entry);
         if (this.currentIndex === idx) {
-            const textarea = this.editorEl?.querySelector('#we-content');
+            const textarea = this.editorEl?.querySelector('#we-block-content');
             if (textarea) textarea.value = content;
         }
+        this.renderList();
         this.scheduleRefSync();
         return true;
     }
@@ -1016,6 +1135,291 @@ export class WorldEditorModal {
         const raw = entry && typeof entry === 'object' ? entry : {};
         const title = String(raw.comment || raw.title || '').trim();
         return title || `条目 ${idx + 1}`;
+    }
+
+    ensureEntryPromptBlocks(entry) {
+        if (!entry || typeof entry !== 'object') return [];
+        if (!Array.isArray(entry.promptBlocks) || !entry.promptBlocks.length) {
+            entry.promptBlocks = [normalizePromptBlock({
+                content: String(entry.content || ''),
+                title: String(entry.comment || '内容 1'),
+            }, 0, String(entry.content || ''))];
+        }
+        entry.promptBlocks = entry.promptBlocks.map((block, idx) => normalizePromptBlock(block, idx, idx === 0 ? entry.content : ''));
+        return entry.promptBlocks;
+    }
+
+    getEntryBlockPage(entry, entryId = '') {
+        const blocks = this.ensureEntryPromptBlocks(entry);
+        const key = String(entryId || this.getEntryId(entry) || '').trim();
+        const raw = Number(this.entryBlockPageMap.get(key) || 0);
+        const page = Number.isFinite(raw) ? Math.max(0, Math.min(blocks.length - 1, Math.trunc(raw))) : 0;
+        this.entryBlockPageMap.set(key, page);
+        return page;
+    }
+
+    setEntryBlockPage(entry, entryId = '', page = 0) {
+        const blocks = this.ensureEntryPromptBlocks(entry);
+        const key = String(entryId || this.getEntryId(entry) || '').trim();
+        const next = Math.max(0, Math.min(blocks.length - 1, Math.trunc(Number(page) || 0)));
+        this.entryBlockPageMap.set(key, next);
+        this.renderEditor();
+    }
+
+    isBlockFlipped(blockId = '') {
+        return this.blockFlipMap.get(String(blockId || '').trim()) === true;
+    }
+
+    setBlockFlipped(blockId = '', flipped = false) {
+        const id = String(blockId || '').trim();
+        if (!id) return;
+        this.blockFlipMap.set(id, Boolean(flipped));
+        this.renderEditor();
+    }
+
+    isBlockExpanded(blockId = '') {
+        return this.blockExpandMap.get(String(blockId || '').trim()) === true;
+    }
+
+    setBlockExpanded(blockId = '', expanded = false) {
+        const id = String(blockId || '').trim();
+        if (!id) return;
+        const next = Boolean(expanded);
+        this.blockExpandMap.set(id, next);
+        if (!next) this.blockFlipMap.set(id, false);
+        this.renderEditor();
+    }
+
+    syncEntryContentFromBlocks(entry) {
+        if (!entry || typeof entry !== 'object') return;
+        const blocks = this.ensureEntryPromptBlocks(entry);
+        const first = blocks[0];
+        entry.content = String(first?.content || '').trim();
+    }
+
+    addPromptBlock(entry) {
+        if (!entry || typeof entry !== 'object') return;
+        const blocks = this.ensureEntryPromptBlocks(entry);
+        const entryId = this.getEntryId(entry);
+        const next = normalizePromptBlock({
+            title: `内容 ${blocks.length + 1}`,
+            content: '',
+            when: {
+                logic: 'and',
+                clauses: [{
+                    left: '',
+                    op: '>',
+                    right: 10,
+                    rightType: 'number',
+                }],
+            },
+        }, blocks.length, '');
+        blocks.push(next);
+        if (entryId) this.entryBlockPageMap.set(String(entryId), Math.max(0, blocks.length - 1));
+        this.syncEntryContentFromBlocks(entry);
+        this.renderEditor();
+        this.renderBlockManageModalList();
+        if (this.refMode) this.scheduleRefSync();
+    }
+
+    removePromptBlock(entry, blockIndex = 0) {
+        if (!entry || typeof entry !== 'object') return;
+        const blocks = this.ensureEntryPromptBlocks(entry);
+        if (blocks.length <= 1) {
+            window.toastr?.warning?.('至少保留一页内容');
+            return;
+        }
+        const removeAt = Math.max(0, Math.min(blocks.length - 1, Math.trunc(Number(blockIndex) || 0)));
+        const removed = blocks[removeAt];
+        const removedId = String(removed?.id || '').trim();
+        blocks.splice(removeAt, 1);
+        if (removedId) {
+            this.blockFlipMap.delete(removedId);
+            this.blockExpandMap.delete(removedId);
+        }
+        const entryId = this.getEntryId(entry);
+        if (entryId) {
+            const current = this.getEntryBlockPage(entry, entryId);
+            const next = Math.max(0, Math.min(blocks.length - 1, current >= removeAt ? current - 1 : current));
+            this.entryBlockPageMap.set(String(entryId), next);
+        }
+        this.syncEntryContentFromBlocks(entry);
+        this.renderEditor();
+        this.renderBlockManageModalList();
+        if (this.refMode) this.scheduleRefSync();
+    }
+
+    movePromptBlock(entry, fromIndex, toIndex) {
+        if (!entry || typeof entry !== 'object') return;
+        const blocks = this.ensureEntryPromptBlocks(entry);
+        const from = Math.trunc(Number(fromIndex));
+        const to = Math.trunc(Number(toIndex));
+        if (!Number.isFinite(from) || !Number.isFinite(to)) return;
+        if (from < 0 || from >= blocks.length || to < 0 || to >= blocks.length || from === to) return;
+        const [moved] = blocks.splice(from, 1);
+        blocks.splice(to, 0, moved);
+        const entryId = this.getEntryId(entry);
+        if (entryId) this.entryBlockPageMap.set(String(entryId), to);
+        this.syncEntryContentFromBlocks(entry);
+        this.renderEditor();
+        this.renderBlockManageModalList();
+        if (this.refMode) this.scheduleRefSync();
+    }
+
+    ensureBlockPrimaryClause(block) {
+        if (!block || typeof block !== 'object') return normalizePromptClause({});
+        if (!block.when || typeof block.when !== 'object') block.when = { logic: 'and', clauses: [] };
+        if (!Array.isArray(block.when.clauses)) block.when.clauses = [];
+        if (!block.when.clauses.length) block.when.clauses.push(normalizePromptClause({}));
+        block.when.clauses[0] = normalizePromptClause(block.when.clauses[0]);
+        return block.when.clauses[0];
+    }
+
+    getSessionVariableOptions() {
+        const bridge = window.appBridge;
+        const chatStore = bridge?.chatStore;
+        const sid = String(chatStore?.getCurrent?.() || bridge?.activeSessionId || '').trim();
+        const useGlobal = Boolean(typeof bridge?.isSharedVariableSession === 'function' && sid && bridge.isSharedVariableSession(sid));
+        const vars = useGlobal
+            ? (chatStore?.listGlobalVariables?.() || {})
+            : (chatStore?.listVariables?.(sid) || {});
+        const schemas = chatStore?.listVariableSchemas?.(sid) || {};
+        const keys = new Set([
+            ...Object.keys(vars || {}).map(k => String(k || '').trim()).filter(Boolean),
+            ...Object.keys(schemas || {}).map(k => String(k || '').trim()).filter(Boolean),
+        ]);
+        return [...keys].sort((a, b) => a.localeCompare(b, 'zh-CN')).map((key) => ({
+            value: key,
+            label: key,
+        }));
+    }
+
+    ensureVariableInStore(name, type = 'number', defaultValue = 0) {
+        const key = String(name || '').trim();
+        if (!key) return false;
+        const varType = ['number', 'string', 'boolean'].includes(String(type || '').trim().toLowerCase())
+            ? String(type || '').trim().toLowerCase()
+            : 'number';
+        const bridge = window.appBridge;
+        const chatStore = bridge?.chatStore;
+        const sid = String(chatStore?.getCurrent?.() || bridge?.activeSessionId || '').trim();
+        if (!chatStore || !sid) return false;
+        const useGlobal = Boolean(typeof bridge?.isSharedVariableSession === 'function' && bridge.isSharedVariableSession(sid));
+        chatStore.setVariableSchema?.(key, { type: varType, default: defaultValue }, sid);
+        if (useGlobal) {
+            const current = chatStore.getGlobalVariable?.(key);
+            if (current === undefined || current === null) {
+                chatStore.setGlobalVariable?.(key, defaultValue);
+            }
+        } else {
+            const current = chatStore.getVariable?.(key, sid);
+            if (current === undefined || current === null) {
+                chatStore.setVariable?.(key, defaultValue, sid);
+            }
+            if (chatStore.getInitialVariable?.(key, sid) === undefined) {
+                chatStore.setInitialVariable?.(key, defaultValue, sid);
+            }
+        }
+        return true;
+    }
+
+    ensureBlockManageModal() {
+        if (this.blockManageModal) return;
+        this.blockManageOverlay = document.createElement('div');
+        this.blockManageOverlay.className = 'world-block-manage-overlay';
+        this.blockManageOverlay.style.display = 'none';
+        this.blockManageOverlay.addEventListener('click', () => this.hideBlockManageModal());
+
+        this.blockManageModal = document.createElement('div');
+        this.blockManageModal.className = 'world-block-manage-modal';
+        this.blockManageModal.style.display = 'none';
+        this.blockManageModal.innerHTML = `
+            <div class="world-block-manage-modal-header">
+                <div class="world-block-manage-modal-title">分页管理</div>
+                <button type="button" class="world-block-manage-modal-close" aria-label="关闭">×</button>
+            </div>
+            <div class="world-block-manage-modal-list" id="world-block-manage-modal-list"></div>
+            <div class="world-block-manage-modal-footer">
+                <button type="button" class="world-block-manage-modal-done" id="world-block-manage-modal-done">完成</button>
+            </div>
+        `;
+        this.blockManageModal.addEventListener('click', (event) => event.stopPropagation());
+        this.blockManageList = this.blockManageModal.querySelector('#world-block-manage-modal-list');
+        this.blockManageCloseBtn = this.blockManageModal.querySelector('#world-block-manage-modal-done');
+
+        this.blockManageModal.querySelector('.world-block-manage-modal-close')?.addEventListener('click', () => this.hideBlockManageModal());
+        this.blockManageCloseBtn?.addEventListener('click', () => this.hideBlockManageModal());
+
+        document.body.appendChild(this.blockManageOverlay);
+        document.body.appendChild(this.blockManageModal);
+    }
+
+    getBlockManageEntry() {
+        const id = String(this.blockManageEntryId || '').trim();
+        if (!id) return null;
+        const { entry } = this.resolveEntryById(id);
+        return entry || null;
+    }
+
+    renderBlockManageModalList() {
+        if (!this.blockManageList) return;
+        const entry = this.getBlockManageEntry();
+        if (!entry) {
+            this.blockManageList.innerHTML = '<div class="world-block-manage-modal-empty">未找到条目</div>';
+            return;
+        }
+        const entryId = this.getEntryId(entry);
+        const blocks = this.ensureEntryPromptBlocks(entry);
+        const currentPage = this.getEntryBlockPage(entry, entryId);
+        const compact = (text, max = 50) => {
+            const raw = String(text || '').replace(/\s+/g, ' ').trim();
+            if (!raw) return '（空）';
+            return raw.length > max ? `${raw.slice(0, max)}…` : raw;
+        };
+        this.blockManageList.innerHTML = blocks.map((block, idx) => `
+            <div class="world-block-manage-modal-item ${idx === currentPage ? 'is-active' : ''}">
+                <button type="button" class="world-block-manage-modal-open" data-action="open" data-idx="${idx}">
+                    <span class="world-block-manage-modal-page">第 ${idx + 1} 页</span>
+                    <span class="world-block-manage-modal-preview">${compact(block?.content)}</span>
+                </button>
+                <div class="world-block-manage-modal-actions">
+                    <button type="button" data-action="up" data-idx="${idx}" ${idx <= 0 ? 'disabled' : ''}>上移</button>
+                    <button type="button" data-action="down" data-idx="${idx}" ${idx >= blocks.length - 1 ? 'disabled' : ''}>下移</button>
+                    <button type="button" data-action="delete" data-idx="${idx}" ${blocks.length <= 1 ? 'disabled' : ''}>删除</button>
+                </div>
+            </div>
+        `).join('');
+
+        this.blockManageList.querySelectorAll('button[data-action]').forEach((btn) => {
+            btn.addEventListener('click', () => {
+                const action = String(btn.dataset.action || '');
+                const idx = Number(btn.dataset.idx);
+                if (!Number.isFinite(idx)) return;
+                if (action === 'open') {
+                    this.setEntryBlockPage(entry, entryId, idx);
+                    this.hideBlockManageModal();
+                    return;
+                }
+                if (action === 'up') this.movePromptBlock(entry, idx, idx - 1);
+                if (action === 'down') this.movePromptBlock(entry, idx, idx + 1);
+                if (action === 'delete') this.removePromptBlock(entry, idx);
+                this.renderBlockManageModalList();
+            });
+        });
+    }
+
+    showBlockManageModal(entry, entryId = '') {
+        if (!entry || typeof entry !== 'object') return;
+        this.ensureBlockManageModal();
+        this.blockManageEntryId = String(entryId || this.getEntryId(entry) || '').trim();
+        this.renderBlockManageModalList();
+        if (this.blockManageOverlay) this.blockManageOverlay.style.display = 'block';
+        if (this.blockManageModal) this.blockManageModal.style.display = 'block';
+    }
+
+    hideBlockManageModal() {
+        if (this.blockManageOverlay) this.blockManageOverlay.style.display = 'none';
+        if (this.blockManageModal) this.blockManageModal.style.display = 'none';
     }
 
     toggleBatchMode(force = null) {
@@ -1285,6 +1689,14 @@ export class WorldEditorModal {
 
     openCustomSelectMenu({ anchorEl, options = [], currentValue = '', onSelect = null } = {}) {
         if (!anchorEl) return;
+        const isSameAnchorOpen =
+            this.customSelectMenuAnchor === anchorEl &&
+            this.customSelectMenuEl &&
+            this.customSelectMenuEl.style.display !== 'none';
+        if (isSameAnchorOpen) {
+            this.closeCustomSelectMenu();
+            return;
+        }
         const menu = this.ensureCustomSelectMenu();
         const current = String(currentValue ?? '').trim();
         const opts = Array.isArray(options) ? options : [];
@@ -1530,6 +1942,7 @@ export class WorldEditorModal {
     }
 
     selectEntry(index) {
+        this.hideBlockManageModal();
         this.currentIndex = Math.max(0, Math.min(index, this.data.entries.length - 1));
         const filtered = this.getFilteredEntries();
         const currentPos = filtered.findIndex(item => item.idx === this.currentIndex);
@@ -1551,23 +1964,89 @@ export class WorldEditorModal {
             return;
         }
 
+        const blocks = this.ensureEntryPromptBlocks(entry);
+        const entryId = this.getEntryId(entry, this.currentIndex);
+        const blockPage = this.getEntryBlockPage(entry, entryId);
+        const activeBlock = blocks[blockPage] || blocks[0];
+        const blockFlipped = this.isBlockFlipped(activeBlock?.id);
+        const blockExpanded = this.isBlockExpanded(activeBlock?.id);
+        const primaryClause = this.ensureBlockPrimaryClause(activeBlock);
         const aiBusy = this.aiBusy && String(entry.id || '') === String(this.aiPendingEntryId || '');
         const triggerStrategy = this.getEntryTriggerStrategy(entry);
         const triggerStrategyLabel = this.getOptionLabel(TRIGGER_STRATEGY_OPTIONS, triggerStrategy, '🟢 绿灯（关键词触发）');
         const positionLabelText = this.getOptionLabel(POSITION_OPTIONS, entry.position, '↑Char（角色前）');
         const roleLabelText = this.getOptionLabel(ROLE_OPTIONS, entry.role, 'system');
         const selectiveLogicLabel = this.getOptionLabel(SELECTIVE_LOGIC_OPTIONS, entry.selectiveLogic, 'AND 任一（匹配任一关键词）');
+        const opLabelText = this.getOptionLabel(BLOCK_OP_OPTIONS, primaryClause.op, '大于 (>)');
+        const rightTypeLabelText = this.getOptionLabel(BLOCK_RIGHT_TYPE_OPTIONS, primaryClause.rightType, '数字');
+        const varOptions = this.getSessionVariableOptions();
+        const blockVarLabel = primaryClause.left || '选择变量';
+        const blockValueRaw = primaryClause.right ?? '';
+        const blockValueText = (typeof blockValueRaw === 'string' || typeof blockValueRaw === 'number')
+            ? String(blockValueRaw)
+            : (typeof blockValueRaw === 'boolean' ? (blockValueRaw ? 'true' : 'false') : '');
         this.editorEl.innerHTML = `
             <div class="world-entry-form">
                 <div class="world-entry-card">
                     <label>标题 / Memo</label>
                     <input type="text" id="we-comment" value="${entry.comment || ''}" placeholder="条目标题（可选）">
 
-                    <div class="world-entry-label-row">
-                        <label for="we-content">内容</label>
-                        <button type="button" class="world-ai-trigger" id="we-ai-generate" ${aiBusy ? 'disabled' : ''}>${aiBusy ? '生成中...' : 'AI生成'}</button>
+                    <div class="world-block-toolbar">
+                        <div class="world-block-toolbar-actions">
+                            <button type="button" class="world-ai-trigger" id="we-ai-generate" ${aiBusy ? 'disabled' : ''}>${aiBusy ? '生成中...' : 'AI生成'}</button>
+                            <button type="button" class="world-block-btn" id="we-block-add">＋</button>
+                            <button type="button" class="world-block-btn" id="we-block-manage">管理</button>
+                        </div>
                     </div>
-                    <textarea id="we-content" placeholder="条目内容">${entry.content || ''}</textarea>
+
+                    <div class="world-block-page-dots" id="we-block-dots">
+                        ${blocks.map((_, idx) => `
+                            <button type="button" class="world-block-dot ${idx === blockPage ? 'active' : ''}" data-idx="${idx}" aria-label="第 ${idx + 1} 页"></button>
+                        `).join('')}
+                    </div>
+
+                    <div class="world-content-title">内容</div>
+                    <div class="world-block-overlay ${blockExpanded ? 'show' : ''}" id="we-block-overlay"></div>
+                    <div class="world-flip-card world-content-card ${blockFlipped ? 'is-flipped' : ''} ${blockExpanded ? 'is-expanded' : ''}" id="we-block-shell">
+                        <button type="button" class="world-block-corner-btn" id="we-block-corner-btn" aria-label="${blockExpanded ? '翻转' : '展开'}">
+                            ${blockExpanded ? BLOCK_FLIP_ICON_SVG : BLOCK_EXPAND_ICON_SVG}
+                        </button>
+                        <div class="world-flip-card-face world-flip-card-front">
+                            <textarea id="we-block-content" placeholder="输入本页提示词内容">${activeBlock?.content || ''}</textarea>
+                        </div>
+                        <div class="world-flip-card-face world-flip-card-back">
+                            <div class="world-entry-grid world-entry-grid-2">
+                                <div class="world-entry-field">
+                                    <label>变量</label>
+                                    <button type="button" class="world-app-select-btn" id="we-block-var-btn">
+                                        <span>${blockVarLabel}</span>
+                                        <span class="world-app-select-btn-chevron">▾</span>
+                                    </button>
+                                </div>
+                                <div class="world-entry-field">
+                                    <label>比较</label>
+                                    <button type="button" class="world-app-select-btn" id="we-block-op-btn">
+                                        <span>${opLabelText}</span>
+                                        <span class="world-app-select-btn-chevron">▾</span>
+                                    </button>
+                                </div>
+                                <div class="world-entry-field">
+                                    <label>类型</label>
+                                    <button type="button" class="world-app-select-btn" id="we-block-rightType-btn">
+                                        <span>${rightTypeLabelText}</span>
+                                        <span class="world-app-select-btn-chevron">▾</span>
+                                    </button>
+                                </div>
+                                <div class="world-entry-field">
+                                    <label>值</label>
+                                    <input type="text" id="we-block-right" value="${blockValueText}" placeholder="例如 10 / true / 变量名">
+                                </div>
+                            </div>
+                            <div class="world-entry-actions" style="margin-top:8px;">
+                                <button type="button" id="we-block-new-var">新增变量</button>
+                            </div>
+                        </div>
+                    </div>
                 </div>
 
                 <div class="world-entry-card">
@@ -1732,9 +2211,29 @@ export class WorldEditorModal {
         };
 
         bindInput('#we-comment', 'comment', (v) => v);
-        bindInput('#we-content', 'content', (v) => v);
         bindInput('#we-key', 'key', (v) => normalizeArray(v));
         bindInput('#we-keysecondary', 'keysecondary', (v) => normalizeArray(v));
+
+        const blockContentEl = q('#we-block-content');
+        if (blockContentEl) {
+            let blockScrollTimer = null;
+            blockContentEl.addEventListener('input', () => {
+                activeBlock.content = String(blockContentEl.value || '');
+                this.syncEntryContentFromBlocks(entry);
+                this.renderList();
+                markRefDirty();
+            });
+            blockContentEl.addEventListener('scroll', () => {
+                const shell = q('#we-block-shell');
+                if (!shell) return;
+                shell.classList.add('is-scrolling');
+                if (blockScrollTimer) clearTimeout(blockScrollTimer);
+                blockScrollTimer = setTimeout(() => {
+                    shell.classList.remove('is-scrolling');
+                    blockScrollTimer = null;
+                }, 520);
+            }, { passive: true });
+        }
 
         bindNumber('#we-depth', 'depth', DEFAULT_DEPTH, 0, 1000);
         bindNumber('#we-order', 'order', 100, -9999, 9999);
@@ -1819,6 +2318,148 @@ export class WorldEditorModal {
             },
             rerenderList: true,
         });
+
+        bindCustomSelect({
+            btnSelector: '#we-block-op-btn',
+            options: BLOCK_OP_OPTIONS,
+            getValue: () => primaryClause.op,
+            setValue: (value) => {
+                primaryClause.op = String(value || '>');
+            },
+            rerenderList: false,
+        });
+
+        bindCustomSelect({
+            btnSelector: '#we-block-rightType-btn',
+            options: BLOCK_RIGHT_TYPE_OPTIONS,
+            getValue: () => primaryClause.rightType,
+            setValue: (value) => {
+                primaryClause.rightType = String(value || 'number');
+            },
+            rerenderList: false,
+        });
+
+        const varOptionsWithCreate = [...varOptions, { value: '__create_var__', label: '＋ 新建变量…' }];
+        bindCustomSelect({
+            btnSelector: '#we-block-var-btn',
+            options: varOptionsWithCreate,
+            getValue: () => primaryClause.left || '',
+            setValue: (value) => {
+                if (value === '__create_var__') {
+                    const name = window.prompt('变量名称（例如 stat_data.苏晚晴.love_degree.0）', String(primaryClause.left || '').trim());
+                    const varName = String(name || '').trim();
+                    if (!varName) return;
+                    const typeRaw = window.prompt('变量类型（number/string/boolean）', 'number');
+                    const varTypeInput = String(typeRaw || 'number').trim().toLowerCase();
+                    const varType = ['number', 'string', 'boolean'].includes(varTypeInput) ? varTypeInput : 'number';
+                    const defRaw = window.prompt('默认值', varType === 'number' ? '0' : (varType === 'boolean' ? 'false' : ''));
+                    const defaultValue = varType === 'number'
+                        ? Number(defRaw || 0)
+                        : (varType === 'boolean' ? String(defRaw || '').trim().toLowerCase() === 'true' : String(defRaw || ''));
+                    primaryClause.left = varName;
+                    primaryClause.defineVariable = { name: varName, type: varType, default: defaultValue };
+                    this.ensureVariableInStore(varName, varType, defaultValue);
+                    window.toastr?.success?.('变量已创建（若未创建会在首次发送时自动补建）');
+                    this.renderEditor();
+                    markRefDirty();
+                    return;
+                }
+                primaryClause.left = String(value || '').trim();
+            },
+            rerenderList: false,
+        });
+
+        const blockRightEl = q('#we-block-right');
+        if (blockRightEl) {
+            blockRightEl.addEventListener('input', () => {
+                const raw = String(blockRightEl.value || '');
+                if (primaryClause.rightType === 'number') {
+                    const num = Number(raw);
+                    primaryClause.right = Number.isFinite(num) ? num : 0;
+                } else if (primaryClause.rightType === 'boolean') {
+                    const t = raw.trim().toLowerCase();
+                    primaryClause.right = t === 'true' || t === '1' || t === 'yes' || t === 'on';
+                } else {
+                    primaryClause.right = raw;
+                }
+                markRefDirty();
+            });
+        }
+
+        this.editorEl.querySelectorAll('.world-block-dot').forEach((dot) => {
+            dot.addEventListener('click', () => {
+                const idx = Number(dot.dataset.idx);
+                if (!Number.isFinite(idx)) return;
+                this.setEntryBlockPage(entry, entryId, idx);
+            });
+        });
+        const addBlockBtn = q('#we-block-add');
+        if (addBlockBtn) addBlockBtn.addEventListener('click', () => this.addPromptBlock(entry));
+        const manageBtn = q('#we-block-manage');
+        if (manageBtn) manageBtn.addEventListener('click', () => this.showBlockManageModal(entry, entryId));
+
+        const blockOverlayEl = q('#we-block-overlay');
+        if (blockOverlayEl) blockOverlayEl.addEventListener('click', () => this.setBlockExpanded(activeBlock?.id, false));
+
+        const cornerBtn = q('#we-block-corner-btn');
+        if (cornerBtn) {
+            cornerBtn.addEventListener('click', () => {
+                if (!this.isBlockExpanded(activeBlock?.id)) {
+                    this.setBlockExpanded(activeBlock?.id, true);
+                    return;
+                }
+                this.setBlockFlipped(activeBlock?.id, !this.isBlockFlipped(activeBlock?.id));
+            });
+        }
+
+        const blockShellEl = q('#we-block-shell');
+        if (blockShellEl) {
+            let startX = 0;
+            let startY = 0;
+            blockShellEl.addEventListener('touchstart', (event) => {
+                const touch = event.touches?.[0];
+                if (!touch) return;
+                startX = touch.clientX;
+                startY = touch.clientY;
+            }, { passive: true });
+            blockShellEl.addEventListener('touchend', (event) => {
+                if (this.isBlockExpanded(activeBlock?.id)) return;
+                const touch = event.changedTouches?.[0];
+                if (!touch) return;
+                const dx = touch.clientX - startX;
+                const dy = touch.clientY - startY;
+                if (Math.abs(dx) < 46 || Math.abs(dx) <= Math.abs(dy)) return;
+                if (dx < 0 && blockPage < blocks.length - 1) {
+                    this.setEntryBlockPage(entry, entryId, blockPage + 1);
+                } else if (dx > 0 && blockPage > 0) {
+                    this.setEntryBlockPage(entry, entryId, blockPage - 1);
+                }
+            }, { passive: true });
+        }
+
+        const newVarBtn = q('#we-block-new-var');
+        if (newVarBtn) {
+            newVarBtn.addEventListener('click', () => {
+                const name = window.prompt('变量名称（例如 stat_data.苏晚晴.love_degree.0）', String(primaryClause.left || '').trim());
+                const varName = String(name || '').trim();
+                if (!varName) return;
+                const clauseType = String(primaryClause.rightType || 'number').trim().toLowerCase();
+                const schemaType = ['number', 'string', 'boolean'].includes(clauseType) ? clauseType : 'number';
+                primaryClause.left = varName;
+                primaryClause.defineVariable = {
+                    name: varName,
+                    type: schemaType,
+                    default: schemaType === 'number' ? Number(primaryClause.right || 0) : (schemaType === 'boolean' ? Boolean(primaryClause.right) : (primaryClause.right ?? '')),
+                };
+                this.ensureVariableInStore(
+                    varName,
+                    primaryClause.defineVariable.type,
+                    primaryClause.defineVariable.default,
+                );
+                this.renderEditor();
+                markRefDirty();
+            });
+        }
 
         bindCheck('#we-ignoreBudget', 'ignoreBudget');
         bindCheck('#we-excludeRecursion', 'excludeRecursion');
