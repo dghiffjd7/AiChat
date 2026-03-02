@@ -1059,6 +1059,8 @@ export class WorldEditorModal {
         this.entryBlockPageMap = new Map();
         this.blockFlipMap = new Map();
         this.blockExpandMap = new Map();
+        this.blockBackViewMap = new Map();
+        this.blockConditionFocusPathMap = new Map();
         this.blockConditionModeMap = new Map();
         this.blockManageOverlay = null;
         this.blockManageModal = null;
@@ -2019,7 +2021,9 @@ export class WorldEditorModal {
     setBlockFlipped(blockId = '', flipped = false) {
         const id = String(blockId || '').trim();
         if (!id) return;
-        this.blockFlipMap.set(id, Boolean(flipped));
+        const next = Boolean(flipped);
+        this.blockFlipMap.set(id, next);
+        if (next) this.blockBackViewMap.set(id, 'summary');
         this.renderEditor();
     }
 
@@ -2032,7 +2036,64 @@ export class WorldEditorModal {
         if (!id) return;
         const next = Boolean(expanded);
         this.blockExpandMap.set(id, next);
-        if (!next) this.blockFlipMap.set(id, false);
+        if (!next) {
+            this.blockFlipMap.set(id, false);
+            this.blockBackViewMap.set(id, 'summary');
+        }
+        this.renderEditor();
+    }
+
+    getBlockBackView(blockId = '') {
+        const id = String(blockId || '').trim();
+        if (!id) return 'summary';
+        return this.blockBackViewMap.get(id) === 'editor' ? 'editor' : 'summary';
+    }
+
+    getBlockConditionFocusPath(blockId = '') {
+        const id = String(blockId || '').trim();
+        if (!id) return '';
+        return String(this.blockConditionFocusPathMap.get(id) || '').trim();
+    }
+
+    setBlockConditionFocusPath(blockId = '', path = '') {
+        const id = String(blockId || '').trim();
+        if (!id) return;
+        const next = String(path || '').trim();
+        if (next) this.blockConditionFocusPathMap.set(id, next);
+        else this.blockConditionFocusPathMap.delete(id);
+    }
+
+    setBlockBackView(blockId = '', view = 'summary') {
+        const id = String(blockId || '').trim();
+        if (!id) return;
+        const next = String(view || '').trim().toLowerCase() === 'editor' ? 'editor' : 'summary';
+        this.blockBackViewMap.set(id, next);
+        this.renderEditor();
+    }
+
+    openBlockConditionEditor(blockId = '', mode = 'form', block = null, focusPath = '') {
+        const id = String(blockId || '').trim();
+        if (!id) return;
+        const nextMode = String(mode || '').trim().toLowerCase() === 'node' ? 'node' : 'form';
+        this.blockConditionModeMap.set(id, nextMode);
+        if (block && typeof block === 'object') block.uiMode = nextMode;
+        this.setBlockConditionFocusPath(id, nextMode === 'form' ? focusPath : '');
+        this.blockBackViewMap.set(id, 'editor');
+        this.renderEditor();
+    }
+
+    async saveBlockConditionEditor(blockId = '', block = null) {
+        const id = String(blockId || '').trim();
+        if (!id) return;
+        if (block && typeof block === 'object') {
+            if (this.getBlockConditionMode(id, block) === 'node') this.syncBlockWhenFromNodeGraph(block);
+            else this.syncBlockNodeGraphFromWhen(block);
+        }
+        const saved = await this.saveWorldSilently({ showToast: true });
+        if (saved) {
+            this.blockBackViewMap.set(id, 'summary');
+            this.setBlockConditionFocusPath(id, '');
+        }
         this.renderEditor();
     }
 
@@ -2318,7 +2379,194 @@ export class WorldEditorModal {
         return block.nodeGraph;
     }
 
-    renderConditionNodeForm(node, path = 'root', depth = 0) {
+    getConditionSummaryOperator(op = '>') {
+        const value = String(op || '>').trim();
+        const map = {
+            contains: '包含',
+            not_contains: '不包含',
+            is_empty: '为空',
+            not_empty: '非空',
+            regex: '正则匹配',
+        };
+        return map[value] || value;
+    }
+
+    getConditionSummaryValueText(value, rightType = 'number') {
+        const type = normalizeRightTypeValue(rightType);
+        if (type === 'variable') {
+            const text = String(value ?? '').trim();
+            return text ? `变量 ${text}` : '变量';
+        }
+        if (type === 'boolean') return parseTypedValue(value, 'boolean') ? 'true' : 'false';
+        return stringifyTypedValue(value, type);
+    }
+
+    collectBlockConditionOverview(block) {
+        let tree = null;
+        if (block && typeof block === 'object' && this.getBlockConditionMode(block.id, block) === 'node') {
+            const primaryClause = this.ensureBlockPrimaryClause(block);
+            const graph = this.ensureBlockNodeGraph(block);
+            const compiledWhen = buildWhenFromNodeGraph(graph, primaryClause);
+            tree = normalizeConditionTree(compiledWhen, primaryClause);
+            block.when = tree;
+        } else {
+            tree = this.ensureBlockConditionTree(block);
+        }
+        const stats = {
+            clauseCount: 0,
+            groupCount: 0,
+            pendingCount: 0,
+            pendingItems: [],
+            variables: new Map(),
+        };
+        let clauseOrder = 0;
+        visitConditionTree(tree, (node, path) => {
+            if (isConditionTreeGroup(node)) {
+                stats.groupCount += 1;
+                return;
+            }
+            const clause = normalizePromptClause(node);
+            clauseOrder += 1;
+            stats.clauseCount += 1;
+            const left = String(clause.left || '').trim();
+            const op = String(clause.op || '').trim().toLowerCase();
+            const needsRight = !['is_empty', 'not_empty'].includes(op);
+            const rightMissing = needsRight && clause.rightType === 'variable' && !String(clause.right || '').trim();
+            if (!left) {
+                stats.pendingCount += 1;
+                stats.pendingItems.push({
+                    order: clauseOrder,
+                    path,
+                    label: `条件 ${clauseOrder}`,
+                    reason: '未设置变量',
+                });
+                return;
+            }
+            if (rightMissing) {
+                stats.pendingCount += 1;
+                stats.pendingItems.push({
+                    order: clauseOrder,
+                    path,
+                    label: `条件 ${clauseOrder}`,
+                    reason: '变量比较的右值为空',
+                });
+                return;
+            }
+            const prev = stats.variables.get(left) || {
+                name: left,
+                type: clause.defineVariable?.type || '',
+                defaultValue: clause.defineVariable?.default,
+                autoCreate: false,
+                refCount: 0,
+            };
+            prev.refCount += 1;
+            if (clause.defineVariable?.name === left) {
+                prev.autoCreate = true;
+                prev.type = clause.defineVariable?.type || prev.type || 'number';
+                prev.defaultValue = clause.defineVariable?.default ?? prev.defaultValue;
+            }
+            stats.variables.set(left, prev);
+        });
+        return {
+            tree,
+            clauseCount: stats.clauseCount,
+            groupCount: stats.groupCount,
+            pendingCount: stats.pendingCount,
+            pendingItems: stats.pendingItems,
+            variables: [...stats.variables.values()].sort((a, b) => a.name.localeCompare(b.name, 'zh-CN')),
+        };
+    }
+
+    renderConditionOverviewNode(node, depth = 0) {
+        if (!node || typeof node !== 'object') return '';
+        if (isConditionTreeGroup(node)) {
+            const logic = normalizeLogicValue(node.logic || 'and');
+            const children = logic === 'not'
+                ? [node.clause || createDefaultPromptClause()]
+                : (Array.isArray(node.clauses) && node.clauses.length ? node.clauses : [createDefaultPromptClause()]);
+            return `
+                <div class="world-cond-summary-group" data-depth="${depth}">
+                    <div class="world-cond-summary-group-head">
+                        <span class="world-cond-summary-logic">${escapeHtml(String(logic || 'and').toUpperCase())}</span>
+                    </div>
+                    <div class="world-cond-summary-group-body">
+                        ${children.map((child) => this.renderConditionOverviewNode(child, depth + 1)).join('')}
+                    </div>
+                </div>
+            `;
+        }
+        const clause = normalizePromptClause(node);
+        const left = String(clause.left || '').trim() || '未设置变量';
+        const op = this.getConditionSummaryOperator(clause.op);
+        const hideRight = ['is_empty', 'not_empty'].includes(String(clause.op || '').trim().toLowerCase());
+        const right = hideRight ? '' : this.getConditionSummaryValueText(clause.right, clause.rightType);
+        return `
+            <div class="world-cond-summary-clause${clause.left ? '' : ' is-pending'}" data-depth="${depth}">
+                <div class="world-cond-summary-clause-main">
+                    <span class="world-cond-summary-var">${escapeHtml(left)}</span>
+                    <span class="world-cond-summary-op">${escapeHtml(op)}</span>
+                    ${hideRight ? '' : `<span class="world-cond-summary-value">${escapeHtml(right || '未设置')}</span>`}
+                </div>
+                <div class="world-cond-summary-meta">
+                    ${clause.defineVariable?.name ? `<span class="world-cond-summary-badge">自动建</span>` : ''}
+                    ${clause.rightType === 'variable' && right ? `<span class="world-cond-summary-badge subtle">变量比较</span>` : ''}
+                    ${clause.left ? '' : `<span class="world-cond-summary-badge danger">待完善</span>`}
+                </div>
+            </div>
+        `;
+    }
+
+    renderBlockConditionOverview(block) {
+        const overview = this.collectBlockConditionOverview(block);
+        return `
+            <div class="world-cond-overview" id="we-condition-overview">
+                <div class="world-cond-overview-head">
+                    <div>
+                        <div class="world-cond-overview-title">当前触发条件</div>
+                        <div class="world-cond-overview-subtitle">先查看当前结构，需要调整时再进入编辑。</div>
+                    </div>
+                    <div class="world-cond-overview-stats">
+                        <span class="world-cond-overview-pill">${overview.clauseCount} 条条件</span>
+                        <span class="world-cond-overview-pill">${overview.variables.length} 个变量</span>
+                        ${overview.pendingCount ? `<span class="world-cond-overview-pill warn">${overview.pendingCount} 处待完善</span>` : ''}
+                    </div>
+                </div>
+                <div class="world-cond-overview-structure">
+                    ${this.renderConditionOverviewNode(overview.tree, 0)}
+                </div>
+                ${overview.pendingCount ? `
+                    <details class="world-cond-overview-pending">
+                        <summary>待完善项（${overview.pendingCount}）</summary>
+                        <div class="world-cond-overview-pending-list">
+                            ${overview.pendingItems.map((item) => `
+                                <button type="button" class="world-cond-overview-pending-item" data-path="${escapeHtml(item.path || '')}">
+                                    <span class="world-cond-overview-pending-label">${escapeHtml(item.label)}</span>
+                                    <span class="world-cond-overview-pending-reason">${escapeHtml(item.reason)}</span>
+                                </button>
+                            `).join('')}
+                        </div>
+                    </details>
+                ` : ''}
+                <div class="world-cond-overview-vars">
+                    <div class="world-cond-overview-vars-title">涉及变量</div>
+                    <div class="world-cond-overview-var-list">
+                        ${overview.variables.length ? overview.variables.map((item) => `
+                            <div class="world-cond-overview-var-card">
+                                <div class="world-cond-overview-var-name">${escapeHtml(item.name)}</div>
+                                <div class="world-cond-overview-var-meta">
+                                    <span>${escapeHtml(this.getOptionLabel(BLOCK_RIGHT_TYPE_OPTIONS, item.type, item.type || '未定义类型'))}</span>
+                                    <span>引用 ${item.refCount}</span>
+                                    ${item.autoCreate ? `<span>默认 ${escapeHtml(this.getConditionSummaryValueText(item.defaultValue, item.type || 'number'))}</span>` : ''}
+                                </div>
+                            </div>
+                        `).join('') : '<div class="world-cond-overview-empty">当前还没有可识别的变量条件。</div>'}
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
+    renderConditionNodeForm(node, path = 'root', depth = 0, focusedPath = '') {
         if (!node || typeof node !== 'object') return '';
         if (isConditionTreeGroup(node)) {
             const logic = normalizeLogicValue(node.logic || 'and');
@@ -2327,7 +2575,7 @@ export class WorldEditorModal {
                 ? [node.clause || createDefaultPromptClause()]
                 : (Array.isArray(node.clauses) && node.clauses.length ? node.clauses : [createDefaultPromptClause()]);
             return `
-                <div class="world-cond-group" data-path="${path}" data-depth="${depth}">
+                <div class="world-cond-group${focusedPath === path ? ' is-focused' : ''}" data-path="${path}" data-depth="${depth}">
                     <div class="world-cond-group-head">
                         <button type="button" class="world-app-select-btn world-cond-select world-cond-logic-btn" data-path="${path}" data-field="logic">
                             <span>${escapeHtml(logicLabel)}</span>
@@ -2342,7 +2590,7 @@ export class WorldEditorModal {
                         </div>
                     </div>
                     <div class="world-cond-group-body">
-                        ${children.map((child, idx) => this.renderConditionNodeForm(child, `${path}.${idx}`, depth + 1)).join('')}
+                        ${children.map((child, idx) => this.renderConditionNodeForm(child, `${path}.${idx}`, depth + 1, focusedPath)).join('')}
                     </div>
                 </div>
             `;
@@ -2354,7 +2602,7 @@ export class WorldEditorModal {
         const showRightValue = !['is_empty', 'not_empty'].includes(String(clause.op || '').trim().toLowerCase());
         const rightValue = stringifyTypedValue(clause.right, clause.rightType);
         return `
-            <div class="world-cond-clause" data-path="${path}" data-depth="${depth}">
+            <div class="world-cond-clause${focusedPath === path ? ' is-focused' : ''}" data-path="${path}" data-depth="${depth}">
                 <div class="world-cond-clause-row">
                     <button type="button" class="world-app-select-btn world-cond-select" data-path="${path}" data-field="left">
                         <span>${escapeHtml(varLabel)}</span>
@@ -2385,6 +2633,7 @@ export class WorldEditorModal {
 
     renderConditionFormEditor(block) {
         const tree = this.ensureBlockConditionTree(block);
+        const focusedPath = this.getBlockConditionFocusPath(block?.id);
         return `
             <div class="world-cond-form" id="we-condition-form">
                 <div class="world-cond-form-header">
@@ -2392,7 +2641,7 @@ export class WorldEditorModal {
                     <div class="world-cond-form-hint">表单模式下可完整编辑 AND / OR / NOT 与多条件。</div>
                 </div>
                 <div class="world-cond-form-body">
-                    ${this.renderConditionNodeForm(tree, 'root', 0)}
+                    ${this.renderConditionNodeForm(tree, 'root', 0, focusedPath)}
                 </div>
             </div>
         `;
@@ -2609,12 +2858,67 @@ export class WorldEditorModal {
         let sceneWidth = NODE_CANVAS_MIN_WIDTH;
         let sceneHeight = NODE_CANVAS_MIN_HEIGHT;
         let zoom = clamp(Number(graph?.viewport?.zoom || 1), 0.55, 1.8);
+        let lastNodeSelectOpenAt = 0;
+        let lastNodeSelectAnchor = null;
+        let lastNodeSelectEventType = '';
         const selectedNodeIds = new Set();
 
         const getNodeById = (nodeId) => {
             const id = String(nodeId || '').trim();
             if (!id) return null;
             return (graph.nodes || []).find(node => String(node.id || '') === id) || null;
+        };
+        const getIncomingEdges = (nodeId) => (graph.edges || []).filter(edge => edge.to === nodeId);
+        const getOutgoingEdges = (nodeId) => (graph.edges || []).filter(edge => edge.from === nodeId);
+        const getActiveNodeIds = () => {
+            const active = new Set();
+            const stack = [];
+            const resultNode = (graph.nodes || []).find(node => node.type === 'result');
+            if (resultNode) stack.push(resultNode.id);
+            while (stack.length) {
+                const currentId = String(stack.pop() || '').trim();
+                if (!currentId || active.has(currentId)) continue;
+                active.add(currentId);
+                getIncomingEdges(currentId).forEach((edge) => {
+                    if (edge?.from) stack.push(edge.from);
+                });
+            }
+            return active;
+        };
+        const getNodeIssueState = (node) => {
+            if (!node) return { level: '', issues: [] };
+            const activeNodeIds = getActiveNodeIds();
+            const issues = [];
+            const incoming = getIncomingEdges(node.id);
+            const type = normalizeNodeType(node.type);
+            const data = node.data || {};
+            if (!activeNodeIds.has(node.id)) {
+                issues.push('未接入当前生效链路');
+                return { level: 'danger', issues };
+            }
+            if (type === 'variable') {
+                if (!String(data.path || '').trim()) issues.push('未选择变量');
+            } else if (type === 'value') {
+                if (!String(data.value || '').trim()) issues.push('未填写比较值');
+            } else if (type === 'compare') {
+                const hasLeft = incoming.some(edge => edge.toPort === 'left');
+                const hasRight = incoming.some(edge => edge.toPort === 'right');
+                const op = String(data.op || '>').trim().toLowerCase();
+                if (!hasLeft) issues.push('缺少左值输入');
+                if (!['is_empty', 'not_empty'].includes(op) && !hasRight) issues.push('缺少右值输入');
+            } else if (type === 'logic') {
+                const inputPorts = getNodePortSpec(node).inputs;
+                const connectedCount = inputPorts.filter(port => incoming.some(edge => edge.toPort === port)).length;
+                const logic = normalizeLogicValue(data.logic);
+                const minRequired = logic === 'not' ? 1 : 2;
+                if (connectedCount < minRequired) issues.push('输入条件不足');
+            } else if (type === 'result') {
+                if (!incoming.length) issues.push('没有生效条件');
+            }
+            return {
+                level: issues.length ? 'warn' : '',
+                issues,
+            };
         };
         const persistGraph = ({ syncWhen = true } = {}) => {
             graph.viewport = { x: 0, y: 0, zoom };
@@ -2637,8 +2941,9 @@ export class WorldEditorModal {
             nodeCanvasEl.style.height = `${sceneHeight}px`;
             nodeLinksEl.style.width = `${sceneWidth}px`;
             nodeLinksEl.style.height = `${sceneHeight}px`;
-            nodeCanvasEl.style.transform = `scale(${zoom})`;
-            nodeLinksEl.style.transform = `scale(${zoom})`;
+            const useTransform = Math.abs(zoom - 1) > 0.001;
+            nodeCanvasEl.style.transform = useTransform ? `scale(${zoom})` : '';
+            nodeLinksEl.style.transform = useTransform ? `scale(${zoom})` : '';
             nodeCanvasEl.style.transformOrigin = '0 0';
             nodeLinksEl.style.transformOrigin = '0 0';
         };
@@ -2808,10 +3113,207 @@ export class WorldEditorModal {
             }
             nodeLinksEl.innerHTML = paths.join('');
         };
+        const openNodeSelectMenu = (selectBtn) => {
+            if (!selectBtn) return;
+            const nodeId = String(selectBtn.dataset.nodeId || '');
+            const field = String(selectBtn.dataset.field || '');
+            const node = getNodeById(nodeId);
+            if (!node) return;
+            let options = [];
+            let current = '';
+            if (field === 'op') {
+                options = BLOCK_OP_OPTIONS;
+                current = String(node?.data?.op || '>');
+            } else if (field === 'logic') {
+                options = NODE_LOGIC_OPTIONS;
+                current = String(node?.data?.logic || 'and');
+            } else if (field === 'valueType') {
+                options = BLOCK_RIGHT_TYPE_OPTIONS;
+                current = String(node?.data?.rightType || 'number');
+            } else if (field === 'varPath') {
+                options = [...this.getSessionVariableOptions(), { value: '__create_var__', label: '＋ 新建变量…' }];
+                current = String(node?.data?.path || '');
+            }
+            logger.info(`[world-node-select] open field=${field || 'unknown'} node=${nodeId || 'unknown'} options=${options.length} current=${current || ''}`);
+            this.openCustomSelectMenu({
+                anchorEl: selectBtn,
+                options,
+                currentValue: current,
+                onSelect: (value) => {
+                    logger.info(`[world-node-select] select field=${field || 'unknown'} node=${nodeId || 'unknown'} value=${String(value || '')}`);
+                    if (field === 'op') {
+                        node.data.op = String(value || '>');
+                    } else if (field === 'logic') {
+                        node.data.logic = normalizeLogicValue(value);
+                        if (node.data.logic === 'not') node.data.inputCount = 1;
+                        else node.data.inputCount = Math.max(2, Number(node.data.inputCount || 2));
+                    } else if (field === 'valueType') {
+                        const nextType = normalizeRightTypeValue(value);
+                        node.data.rightType = nextType;
+                        node.data.value = stringifyTypedValue(parseTypedValue(node.data.value, nextType), nextType);
+                    } else if (field === 'varPath') {
+                        if (value === '__create_var__') {
+                            void this.openVariableModal({
+                                name: node?.data?.path || '',
+                                type: node?.data?.varType || 'number',
+                                defaultValue: node?.data?.defaultValue ?? 0,
+                                op: '>',
+                                rightType: 'number',
+                                rightValue: 10,
+                            }).then((payload) => {
+                                if (!payload) return;
+                                if (!this.applyVariablePayloadToNode(node, payload)) return;
+                                this.ensureVariableInStore(payload.name, payload.type, payload.defaultValue);
+                                persistGraph({ syncWhen: true });
+                                renderScene();
+                            });
+                            return;
+                        }
+                        node.data.path = String(value || '').trim();
+                        if (node.data.path) node.data.autoCreate = false;
+                    }
+                    persistGraph({ syncWhen: true });
+                    renderScene();
+                },
+            });
+        };
+        const bindNodeInteractiveControls = () => {
+            nodeCanvasEl.querySelectorAll('.world-node-body').forEach((el) => {
+                el.addEventListener('pointerdown', (event) => event.stopPropagation());
+                el.addEventListener('mousedown', (event) => event.stopPropagation());
+                el.addEventListener('click', (event) => event.stopPropagation());
+                el.addEventListener('touchstart', (event) => event.stopPropagation(), { passive: true });
+            });
+
+            nodeCanvasEl.querySelectorAll('.world-node-body button, .world-node-body input, .world-node-body label').forEach((el) => {
+                el.addEventListener('pointerdown', (event) => event.stopPropagation());
+                el.addEventListener('mousedown', (event) => event.stopPropagation());
+                el.addEventListener('click', (event) => event.stopPropagation());
+                el.addEventListener('touchstart', (event) => event.stopPropagation(), { passive: true });
+            });
+
+            nodeCanvasEl.querySelectorAll('.world-node-select').forEach((btn) => {
+                const openMenu = (event) => {
+                    const eventType = String(event?.type || 'unknown');
+                    const now = Date.now();
+                    const isSameAnchor = lastNodeSelectAnchor === btn;
+                    const isDuplicateWindow = isSameAnchor && now - lastNodeSelectOpenAt < 420;
+                    const isSyntheticFollowup =
+                        isDuplicateWindow &&
+                        (
+                            (lastNodeSelectEventType === 'pointerup' && (eventType === 'touchend' || eventType === 'click')) ||
+                            (lastNodeSelectEventType === 'touchend' && eventType === 'click')
+                        );
+                    if (isSyntheticFollowup) {
+                        logger.info(`[world-node-select] skip duplicate event=${eventType} after=${lastNodeSelectEventType} field=${String(btn.dataset.field || '')} node=${String(btn.dataset.nodeId || '')}`);
+                        event.preventDefault();
+                        event.stopPropagation();
+                        return;
+                    }
+                    event.preventDefault();
+                    event.stopPropagation();
+                    lastNodeSelectAnchor = btn;
+                    lastNodeSelectOpenAt = now;
+                    lastNodeSelectEventType = eventType;
+                    logger.info(`[world-node-select] trigger event=${eventType} field=${String(btn.dataset.field || '')} node=${String(btn.dataset.nodeId || '')}`);
+                    openNodeSelectMenu(btn);
+                };
+                btn.addEventListener('click', openMenu);
+                btn.addEventListener('pointerup', openMenu);
+                if (!(window.PointerEvent)) {
+                    btn.addEventListener('touchend', openMenu);
+                }
+            });
+
+            nodeCanvasEl.querySelectorAll('.world-node-text-input').forEach((inputEl) => {
+                const focusInput = (event) => {
+                    event.stopPropagation();
+                    inputEl.focus();
+                };
+                inputEl.addEventListener('pointerup', focusInput);
+                inputEl.addEventListener('touchend', focusInput);
+                inputEl.addEventListener('input', () => {
+                    const nodeId = String(inputEl.dataset.nodeId || '');
+                    const field = String(inputEl.dataset.field || '');
+                    const node = getNodeById(nodeId);
+                    if (!node) return;
+                    if (field === 'value') node.data.value = String(inputEl.value || '');
+                    persistGraph({ syncWhen: true });
+                });
+            });
+
+            nodeCanvasEl.querySelectorAll('.world-node-input-check').forEach((checkEl) => {
+                checkEl.addEventListener('change', () => {
+                    const nodeId = String(checkEl.dataset.nodeId || '');
+                    const field = String(checkEl.dataset.field || '');
+                    const node = getNodeById(nodeId);
+                    if (!node) return;
+                    if (field === 'autoCreate') node.data.autoCreate = Boolean(checkEl.checked);
+                    persistGraph({ syncWhen: true });
+                    renderScene();
+                });
+            });
+
+            nodeCanvasEl.querySelectorAll('.world-node-mini-btn[data-action]').forEach((btn) => {
+                btn.addEventListener('click', () => {
+                    const nodeId = String(btn.dataset.nodeId || '');
+                    const action = String(btn.dataset.action || '');
+                    const node = getNodeById(nodeId);
+                    if (!node || node.type !== 'logic') return;
+                    if (action === 'add-input') {
+                        node.data.inputCount = Math.min(8, Number(node.data.inputCount || 2) + 1);
+                    } else if (action === 'remove-input') {
+                        node.data.inputCount = Math.max(2, Number(node.data.inputCount || 2) - 1);
+                        const validPorts = new Set(getNodePortSpec(node).inputs);
+                        graph.edges = (graph.edges || []).filter(edge => edge.to !== node.id || validPorts.has(edge.toPort));
+                    }
+                    persistGraph({ syncWhen: true });
+                    renderScene();
+                });
+            });
+
+            nodeCanvasEl.querySelectorAll('.world-node-delete').forEach((btn) => {
+                btn.addEventListener('click', () => {
+                    const nodeId = String(btn.dataset.nodeId || '');
+                    graph.nodes = (graph.nodes || []).filter(node => node.id !== nodeId);
+                    graph.edges = (graph.edges || []).filter(edge => edge.from !== nodeId && edge.to !== nodeId);
+                    selectedNodeIds.delete(nodeId);
+                    persistGraph({ syncWhen: true });
+                    renderScene();
+                });
+            });
+
+            nodeCanvasEl.querySelectorAll('.world-node-create-var').forEach((btn) => {
+                btn.addEventListener('click', () => {
+                    const nodeId = String(btn.dataset.nodeId || '');
+                    const node = getNodeById(nodeId);
+                    if (!node || node.type !== 'variable') return;
+                    void this.openVariableModal({
+                        name: node?.data?.path || '',
+                        type: node?.data?.varType || 'number',
+                        defaultValue: node?.data?.defaultValue ?? 0,
+                        op: '>',
+                        rightType: 'number',
+                        rightValue: 10,
+                    }).then((payload) => {
+                        if (!payload) return;
+                        if (!this.applyVariablePayloadToNode(node, payload)) return;
+                        this.ensureVariableInStore(payload.name, payload.type, payload.defaultValue);
+                        persistGraph({ syncWhen: true });
+                        renderScene();
+                    });
+                });
+            });
+        };
         const renderScene = () => {
             updateSceneSize();
             nodeCanvasEl.innerHTML = (graph.nodes || []).map((node) => `
-                <div class="world-node-item world-node-item-${node.type}${selectedNodeIds.has(node.id) ? ' is-selected' : ''}" data-node-id="${node.id}" style="left:${Math.round(Number(node.x || 0))}px; top:${Math.round(Number(node.y || 0))}px;">
+                ${(() => {
+                    const issueState = getNodeIssueState(node);
+                    const issueClass = issueState.level ? ` is-${issueState.level}` : '';
+                    const issueTitle = issueState.issues.length ? ` title="${escapeHtml(issueState.issues.join(' / '))}"` : '';
+                    return `
+                <div class="world-node-item world-node-item-${node.type}${selectedNodeIds.has(node.id) ? ' is-selected' : ''}${issueClass}" data-node-id="${node.id}" style="left:${Math.round(Number(node.x || 0))}px; top:${Math.round(Number(node.y || 0))}px;"${issueTitle}>
                     <div class="world-node-head" data-node-id="${node.id}">
                         <span>${getNodeLabel(node)}</span>
                         ${node.type === 'result' ? '' : `<button type="button" class="world-node-delete" data-node-id="${node.id}" aria-label="删除节点">×</button>`}
@@ -2822,7 +3324,10 @@ export class WorldEditorModal {
                     <div class="world-node-ports is-input">${renderNodePorts(node, 'input')}</div>
                     <div class="world-node-ports is-output">${renderNodePorts(node, 'output')}</div>
                 </div>
+                    `;
+                })()}
             `).join('');
+            bindNodeInteractiveControls();
             renderLinks();
         };
         const addNode = (type, center = getViewCenter()) => {
@@ -2959,6 +3464,7 @@ export class WorldEditorModal {
         };
         const onCanvasPointerDown = (event) => {
             hideContextMenu();
+            if (event.target?.closest?.('.world-node-body')) return;
             const outputPortEl = event.target?.closest?.('.world-node-port.is-output');
             if (outputPortEl) {
                 const nodeId = String(outputPortEl.dataset.nodeId || '');
@@ -3084,134 +3590,6 @@ export class WorldEditorModal {
             }
         };
         const onCanvasClick = (event) => {
-            const miniActionBtn = event.target?.closest?.('.world-node-mini-btn[data-action]');
-            if (miniActionBtn) {
-                const nodeId = String(miniActionBtn.dataset.nodeId || '');
-                const action = String(miniActionBtn.dataset.action || '');
-                const node = getNodeById(nodeId);
-                if (!node || node.type !== 'logic') return;
-                if (action === 'add-input') {
-                    node.data.inputCount = Math.min(8, Number(node.data.inputCount || 2) + 1);
-                } else if (action === 'remove-input') {
-                    node.data.inputCount = Math.max(2, Number(node.data.inputCount || 2) - 1);
-                    const validPorts = new Set(getNodePortSpec(node).inputs);
-                    graph.edges = (graph.edges || []).filter(edge => edge.to !== node.id || validPorts.has(edge.toPort));
-                }
-                persistGraph({ syncWhen: true });
-                renderScene();
-                return;
-            }
-            const deleteBtn = event.target?.closest?.('.world-node-delete');
-            if (deleteBtn) {
-                const nodeId = String(deleteBtn.dataset.nodeId || '');
-                graph.nodes = (graph.nodes || []).filter(node => node.id !== nodeId);
-                graph.edges = (graph.edges || []).filter(edge => edge.from !== nodeId && edge.to !== nodeId);
-                selectedNodeIds.delete(nodeId);
-                persistGraph({ syncWhen: true });
-                renderScene();
-                return;
-            }
-            const createVarBtn = event.target?.closest?.('.world-node-create-var');
-            if (createVarBtn) {
-                const nodeId = String(createVarBtn.dataset.nodeId || '');
-                const node = getNodeById(nodeId);
-                if (!node || node.type !== 'variable') return;
-                void this.openVariableModal({
-                    name: node?.data?.path || '',
-                    type: node?.data?.varType || 'number',
-                    defaultValue: node?.data?.defaultValue ?? 0,
-                    op: '>',
-                    rightType: 'number',
-                    rightValue: 10,
-                }).then((payload) => {
-                    if (!payload) return;
-                    if (!this.applyVariablePayloadToNode(node, payload)) return;
-                    this.ensureVariableInStore(payload.name, payload.type, payload.defaultValue);
-                    persistGraph({ syncWhen: true });
-                    renderScene();
-                });
-                return;
-            }
-            const selectBtn = event.target?.closest?.('.world-node-select');
-            if (selectBtn) {
-                event.preventDefault();
-                event.stopPropagation();
-                const nodeId = String(selectBtn.dataset.nodeId || '');
-                const field = String(selectBtn.dataset.field || '');
-                const node = getNodeById(nodeId);
-                if (!node) return;
-                let options = [];
-                let current = '';
-                if (field === 'op') {
-                    options = BLOCK_OP_OPTIONS;
-                    current = String(node?.data?.op || '>');
-                } else if (field === 'logic') {
-                    options = NODE_LOGIC_OPTIONS;
-                    current = String(node?.data?.logic || 'and');
-                } else if (field === 'valueType') {
-                    options = BLOCK_RIGHT_TYPE_OPTIONS;
-                    current = String(node?.data?.rightType || 'number');
-                } else if (field === 'varPath') {
-                    options = [...this.getSessionVariableOptions(), { value: '__create_var__', label: '＋ 新建变量…' }];
-                    current = String(node?.data?.path || '');
-                }
-                this.openCustomSelectMenu({
-                    anchorEl: selectBtn,
-                    options,
-                    currentValue: current,
-                    onSelect: (value) => {
-                        if (field === 'op') {
-                            node.data.op = String(value || '>');
-                        } else if (field === 'logic') {
-                            node.data.logic = normalizeLogicValue(value);
-                            if (node.data.logic === 'not') node.data.inputCount = 1;
-                            else node.data.inputCount = Math.max(2, Number(node.data.inputCount || 2));
-                        } else if (field === 'valueType') {
-                            const nextType = normalizeRightTypeValue(value);
-                            node.data.rightType = nextType;
-                            node.data.value = stringifyTypedValue(parseTypedValue(node.data.value, nextType), nextType);
-                        } else if (field === 'varPath') {
-                            if (value === '__create_var__') {
-                                void this.openVariableModal({
-                                    name: node?.data?.path || '',
-                                    type: node?.data?.varType || 'number',
-                                    defaultValue: node?.data?.defaultValue ?? 0,
-                                    op: '>',
-                                    rightType: 'number',
-                                    rightValue: 10,
-                                }).then((payload) => {
-                                    if (!payload) return;
-                                    if (!this.applyVariablePayloadToNode(node, payload)) return;
-                                    this.ensureVariableInStore(payload.name, payload.type, payload.defaultValue);
-                                    persistGraph({ syncWhen: true });
-                                    renderScene();
-                                });
-                                return;
-                            }
-                            node.data.path = String(value || '').trim();
-                            if (node.data.path) node.data.autoCreate = false;
-                        }
-                        persistGraph({ syncWhen: true });
-                        renderScene();
-                    },
-                });
-                return;
-            }
-            const nodeItem = event.target?.closest?.('.world-node-item');
-            if (nodeItem && !event.target?.closest?.('button, input')) {
-                const nodeId = String(nodeItem.dataset.nodeId || '');
-                const node = getNodeById(nodeId);
-                if (!node || node.type === 'result') return;
-                if (event.shiftKey) {
-                    if (selectedNodeIds.has(nodeId)) selectedNodeIds.delete(nodeId);
-                    else selectedNodeIds.add(nodeId);
-                } else {
-                    selectedNodeIds.clear();
-                    selectedNodeIds.add(nodeId);
-                }
-                renderScene();
-                return;
-            }
             if (!event.target?.closest?.('.world-node-item')) {
                 selectedNodeIds.clear();
                 hideContextMenu();
@@ -3222,27 +3600,6 @@ export class WorldEditorModal {
             const removeEdge = event.target?.closest?.('.world-node-edge');
             if (!removeEdge || removeEdge.classList.contains('is-preview')) return;
             graph.edges = (graph.edges || []).filter(edge => String(edge.id || '') !== String(removeEdge.dataset.edgeId || ''));
-            persistGraph({ syncWhen: true });
-            renderScene();
-        };
-        const onCanvasInput = (event) => {
-            const inputEl = event.target?.closest?.('.world-node-text-input');
-            if (!inputEl) return;
-            const nodeId = String(inputEl.dataset.nodeId || '');
-            const field = String(inputEl.dataset.field || '');
-            const node = getNodeById(nodeId);
-            if (!node) return;
-            if (field === 'value') node.data.value = String(inputEl.value || '');
-            persistGraph({ syncWhen: true });
-        };
-        const onCanvasChange = (event) => {
-            const checkEl = event.target?.closest?.('.world-node-input-check');
-            if (!checkEl) return;
-            const nodeId = String(checkEl.dataset.nodeId || '');
-            const field = String(checkEl.dataset.field || '');
-            const node = getNodeById(nodeId);
-            if (!node) return;
-            if (field === 'autoCreate') node.data.autoCreate = Boolean(checkEl.checked);
             persistGraph({ syncWhen: true });
             renderScene();
         };
@@ -3324,8 +3681,6 @@ export class WorldEditorModal {
         nodeCanvasWrap.addEventListener('wheel', onWheel, { passive: false });
         nodeCanvasEl.addEventListener('pointerdown', onCanvasPointerDown);
         nodeCanvasEl.addEventListener('click', onCanvasClick);
-        nodeCanvasEl.addEventListener('input', onCanvasInput);
-        nodeCanvasEl.addEventListener('change', onCanvasChange);
         nodeLinksEl.addEventListener('click', onLinksClick);
         nodeEditorEl.addEventListener('click', onToolbarClick);
         contextMenuEl.addEventListener('click', onContextMenuClick);
@@ -3342,8 +3697,6 @@ export class WorldEditorModal {
             nodeCanvasWrap.removeEventListener('wheel', onWheel);
             nodeCanvasEl.removeEventListener('pointerdown', onCanvasPointerDown);
             nodeCanvasEl.removeEventListener('click', onCanvasClick);
-            nodeCanvasEl.removeEventListener('input', onCanvasInput);
-            nodeCanvasEl.removeEventListener('change', onCanvasChange);
             nodeLinksEl.removeEventListener('click', onLinksClick);
             nodeEditorEl.removeEventListener('click', onToolbarClick);
             contextMenuEl.removeEventListener('click', onContextMenuClick);
@@ -3708,6 +4061,10 @@ export class WorldEditorModal {
     }
 
     closeCustomSelectMenu() {
+        if (this.customSelectMenuAnchor) {
+            const field = this.customSelectMenuAnchor?.dataset?.field || this.customSelectMenuAnchor?.id || '';
+            logger.info(`[world-select] close anchor=${field}`);
+        }
         if (typeof this.customSelectMenuCleanup === 'function') {
             try { this.customSelectMenuCleanup(); } catch {}
         }
@@ -3726,12 +4083,18 @@ export class WorldEditorModal {
             this.customSelectMenuEl &&
             this.customSelectMenuEl.style.display !== 'none';
         if (isSameAnchorOpen) {
+            const field = anchorEl?.dataset?.field || anchorEl?.id || '';
+            logger.info(`[world-select] toggle-close same-anchor=${field}`);
             this.closeCustomSelectMenu();
             return;
         }
         const menu = this.ensureCustomSelectMenu();
         const current = String(currentValue ?? '').trim();
         const opts = Array.isArray(options) ? options : [];
+        {
+            const field = anchorEl?.dataset?.field || anchorEl?.id || '';
+            logger.info(`[world-select] open anchor=${field} options=${opts.length} current=${current}`);
+        }
         menu.innerHTML = opts.map((opt) => {
             const value = String(opt?.value ?? '');
             const selected = value === current;
@@ -3777,12 +4140,14 @@ export class WorldEditorModal {
             const target = ev?.target;
             if (!target) return;
             if (menu.contains(target) || anchorEl.contains(target)) return;
+            logger.info('[world-select] close reason=doc-click');
             this.closeCustomSelectMenu();
         };
         const onResize = () => this.closeCustomSelectMenu();
         const onScroll = (ev) => {
             const target = ev?.target;
             if (target && (menu.contains(target) || anchorEl.contains(target))) return;
+            logger.info('[world-select] close reason=scroll');
             this.closeCustomSelectMenu();
         };
         document.addEventListener('mousedown', onDocClick, true);
@@ -4008,6 +4373,7 @@ export class WorldEditorModal {
         const activeBlock = blocks[blockPage] || blocks[0];
         const blockFlipped = this.isBlockFlipped(activeBlock?.id);
         const blockExpanded = this.isBlockExpanded(activeBlock?.id);
+        const blockBackView = this.getBlockBackView(activeBlock?.id);
         const blockConditionMode = this.getBlockConditionMode(activeBlock?.id, activeBlock);
         const blockNodeMode = blockConditionMode === 'node';
         const primaryClause = this.ensureBlockPrimaryClause(activeBlock);
@@ -4055,12 +4421,23 @@ export class WorldEditorModal {
                             <textarea id="we-block-content" placeholder="输入本页提示词内容">${activeBlock?.content || ''}</textarea>
                         </div>
                         <div class="world-flip-card-face world-flip-card-back">
-                            <div class="world-block-back-tools">
-                                <button type="button" class="world-cond-mode-btn" id="we-cond-mode-toggle" aria-label="${blockNodeMode ? '切换为表单模式' : '切换为节点模式'}">
-                                    ${blockNodeMode ? BLOCK_MODE_FORM_ICON_SVG : BLOCK_MODE_NODE_ICON_SVG}
-                                </button>
+                            <div class="world-block-back-tools ${blockBackView === 'editor' ? 'is-editor' : 'is-summary'}">
+                                ${blockBackView === 'editor' ? `
+                                    <div class="world-block-back-tool-group">
+                                        <button type="button" class="world-block-back-nav-btn" id="we-block-editor-back">概览</button>
+                                        <button type="button" class="world-cond-mode-btn" id="we-cond-mode-toggle" aria-label="${blockNodeMode ? '切换为表单模式' : '切换为节点模式'}">
+                                            ${blockNodeMode ? BLOCK_MODE_FORM_ICON_SVG : BLOCK_MODE_NODE_ICON_SVG}
+                                        </button>
+                                    </div>
+                                    <button type="button" class="world-block-back-save-btn" id="we-block-editor-save">保存</button>
+                                ` : `
+                                    <div class="world-block-back-tool-group">
+                                        <button type="button" class="world-block-back-nav-btn primary" id="we-block-open-form">表单编辑</button>
+                                        <button type="button" class="world-block-back-nav-btn" id="we-block-open-node">${BLOCK_MODE_NODE_ICON_SVG}<span>节点编辑</span></button>
+                                    </div>
+                                `}
                             </div>
-                            ${blockNodeMode ? `
+                            ${blockBackView === 'editor' ? (blockNodeMode ? `
                                 <div class="world-node-editor" id="we-node-editor">
                                     <div class="world-node-toolbar">
                                         <button type="button" class="world-node-toolbar-btn" data-action="addCondition" title="新增条件链">+</button>
@@ -4084,7 +4461,7 @@ export class WorldEditorModal {
                                 </div>
                             ` : `
                                 ${this.renderConditionFormEditor(activeBlock)}
-                            `}
+                            `) : this.renderBlockConditionOverview(activeBlock)}
                         </div>
                     </div>
                 </div>
@@ -4218,6 +4595,11 @@ export class WorldEditorModal {
         const q = (sel) => this.editorEl.querySelector(sel);
         const markRefDirty = () => {
             if (this.refMode) this.scheduleRefSync();
+        };
+        const scrollFocusedConditionIntoView = () => {
+            const focusedEl = this.editorEl?.querySelector?.('.world-cond-clause.is-focused, .world-cond-group.is-focused');
+            if (!focusedEl) return;
+            focusedEl.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
         };
         const bindInput = (sel, key, map = (v) => v) => {
             const el = q(sel);
@@ -4458,16 +4840,50 @@ export class WorldEditorModal {
                 this.setBlockFlipped(activeBlock?.id, !this.isBlockFlipped(activeBlock?.id));
             });
         }
+        const openFormBtn = q('#we-block-open-form');
+        if (openFormBtn) {
+            openFormBtn.addEventListener('click', () => {
+                this.openBlockConditionEditor(activeBlock?.id, 'form', activeBlock);
+            });
+        }
+        const openNodeBtn = q('#we-block-open-node');
+        if (openNodeBtn) {
+            openNodeBtn.addEventListener('click', () => {
+                this.openBlockConditionEditor(activeBlock?.id, 'node', activeBlock);
+            });
+        }
+        const editorBackBtn = q('#we-block-editor-back');
+        if (editorBackBtn) {
+            editorBackBtn.addEventListener('click', () => {
+                this.setBlockConditionFocusPath(activeBlock?.id, '');
+                this.setBlockBackView(activeBlock?.id, 'summary');
+            });
+        }
+        const editorSaveBtn = q('#we-block-editor-save');
+        if (editorSaveBtn) {
+            editorSaveBtn.addEventListener('click', () => {
+                void this.saveBlockConditionEditor(activeBlock?.id, activeBlock);
+            });
+        }
+        this.editorEl.querySelectorAll('.world-cond-overview-pending-item').forEach((btn) => {
+            btn.addEventListener('click', () => {
+                const path = String(btn.dataset.path || '').trim();
+                this.openBlockConditionEditor(activeBlock?.id, 'form', activeBlock, path || 'root');
+            });
+        });
         const condModeBtn = q('#we-cond-mode-toggle');
         if (condModeBtn) {
             condModeBtn.addEventListener('click', () => {
                 this.toggleBlockConditionMode(activeBlock?.id, activeBlock);
             });
         }
-        if (blockNodeMode) {
-            this.mountNodeEditor({ entry, block: activeBlock, markRefDirty });
-        } else {
-            this.mountConditionFormEditor(activeBlock, markRefDirty);
+        if (blockBackView === 'editor') {
+            if (blockNodeMode) {
+                this.mountNodeEditor({ entry, block: activeBlock, markRefDirty });
+            } else {
+                this.mountConditionFormEditor(activeBlock, markRefDirty);
+                queueMicrotask(() => scrollFocusedConditionIntoView());
+            }
         }
 
         const blockShellEl = q('#we-block-shell');
