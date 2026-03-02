@@ -62,6 +62,18 @@ const BLOCK_RIGHT_TYPE_OPTIONS = [
     { value: 'variable', label: '变量' },
 ];
 
+const NODE_LOGIC_OPTIONS = [
+    { value: 'and', label: 'AND' },
+    { value: 'or', label: 'OR' },
+    { value: 'not', label: 'NOT' },
+];
+
+const NODE_GRAPH_VERSION = 1;
+const NODE_CANVAS_MIN_WIDTH = 760;
+const NODE_CANVAS_MIN_HEIGHT = 320;
+const NODE_CANVAS_PADDING_X = 220;
+const NODE_CANVAS_PADDING_Y = 160;
+
 const BLOCK_EXPAND_ICON_SVG = `
 <svg class="world-corner-icon" viewBox="0 0 24 24" aria-hidden="true">
     <path d="M8 3H3v5M16 3h5v5M21 16v5h-5M3 16v5h5"></path>
@@ -77,6 +89,27 @@ const BLOCK_FLIP_ICON_SVG = `
     <path d="M11.5 14.5L9 17l2.5 2.5"></path>
     <path d="M17 4a8 8 0 0 1 3 6"></path>
     <path d="M7 20a8 8 0 0 1-3-6"></path>
+</svg>
+`.trim();
+
+const BLOCK_MODE_NODE_ICON_SVG = `
+<svg class="world-mini-icon" viewBox="0 0 24 24" aria-hidden="true">
+    <circle cx="6" cy="6" r="2.2"></circle>
+    <circle cx="18" cy="12" r="2.2"></circle>
+    <circle cx="6" cy="18" r="2.2"></circle>
+    <path d="M8.2 7.2l7.6 3.6"></path>
+    <path d="M8.2 16.8l7.6-3.6"></path>
+</svg>
+`.trim();
+
+const BLOCK_MODE_FORM_ICON_SVG = `
+<svg class="world-mini-icon" viewBox="0 0 24 24" aria-hidden="true">
+    <path d="M5 6h14"></path>
+    <path d="M5 12h14"></path>
+    <path d="M5 18h14"></path>
+    <circle cx="9" cy="6" r="1.7"></circle>
+    <circle cx="15" cy="12" r="1.7"></circle>
+    <circle cx="11" cy="18" r="1.7"></circle>
 </svg>
 `.trim();
 
@@ -106,6 +139,13 @@ const deepClone = (obj) => {
         return JSON.parse(JSON.stringify(obj || {}));
     }
 };
+
+const escapeHtml = (value) => String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 
 const hasTauriRuntime = () => {
     const g = typeof globalThis !== 'undefined' ? globalThis : window;
@@ -137,6 +177,467 @@ const toNumber = (val, def) => {
 };
 
 const genBlockId = () => `blk_${Date.now().toString(36)}_${Math.random().toString(16).slice(2, 7)}`;
+const genNodeId = () => `nd_${Date.now().toString(36)}_${Math.random().toString(16).slice(2, 7)}`;
+const genEdgeId = () => `ed_${Date.now().toString(36)}_${Math.random().toString(16).slice(2, 7)}`;
+const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+const sanitizeNodeId = (value, fallback = '') => {
+    const raw = String(value || '').trim();
+    const cleaned = raw.replace(/[^a-zA-Z0-9_-]/g, '_').replace(/_+/g, '_');
+    if (cleaned) return cleaned;
+    const backup = String(fallback || '').trim().replace(/[^a-zA-Z0-9_-]/g, '_').replace(/_+/g, '_');
+    return backup || `node_${Date.now().toString(36)}`;
+};
+const normalizeNodeType = (type) => {
+    const t = String(type || '').trim().toLowerCase();
+    if (['variable', 'value', 'compare', 'logic', 'result'].includes(t)) return t;
+    return 'compare';
+};
+const normalizeLogicValue = (logic) => {
+    const value = String(logic || '').trim().toLowerCase();
+    return ['and', 'or', 'not'].includes(value) ? value : 'and';
+};
+const normalizeRightTypeValue = (raw) => {
+    const value = String(raw || '').trim().toLowerCase();
+    return ['number', 'string', 'boolean', 'variable'].includes(value) ? value : 'number';
+};
+const parseTypedValue = (value, type = 'string') => {
+    const mode = normalizeRightTypeValue(type);
+    if (mode === 'number') {
+        const n = Number(value);
+        return Number.isFinite(n) ? n : 0;
+    }
+    if (mode === 'boolean') {
+        const text = String(value ?? '').trim().toLowerCase();
+        return text === 'true' || text === '1' || text === 'yes' || text === 'on';
+    }
+    return String(value ?? '');
+};
+const stringifyTypedValue = (value, type = 'string') => {
+    const mode = normalizeRightTypeValue(type);
+    if (mode === 'boolean') return value ? 'true' : 'false';
+    return String(value ?? '');
+};
+const buildNodeDefineSpec = (data = {}) => {
+    const path = String(data.path || '').trim();
+    if (!path || data.autoCreate !== true) return null;
+    const typeRaw = String(data.varType || 'number').trim().toLowerCase();
+    const type = ['number', 'string', 'boolean'].includes(typeRaw) ? typeRaw : 'number';
+    const defaultValue = parseTypedValue(data.defaultValue, type);
+    return { name: path, type, default: defaultValue };
+};
+const getNodePortSpec = (node = {}) => {
+    const type = normalizeNodeType(node.type);
+    if (type === 'variable') return { inputs: [], outputs: ['out'] };
+    if (type === 'value') return { inputs: [], outputs: ['out'] };
+    if (type === 'compare') return { inputs: ['left', 'right'], outputs: ['out'] };
+    if (type === 'logic') {
+        const mode = normalizeLogicValue(node?.data?.logic);
+        const inputCountRaw = Number(node?.data?.inputCount || 2);
+        const inputCount = Number.isFinite(inputCountRaw) ? Math.max(1, Math.min(8, Math.trunc(inputCountRaw))) : 2;
+        return mode === 'not'
+            ? { inputs: ['in'], outputs: ['out'] }
+            : { inputs: Array.from({ length: inputCount }, (_, idx) => `in${idx + 1}`), outputs: ['out'] };
+    }
+    return { inputs: ['in'], outputs: [] };
+};
+const normalizeGraphNodeData = (type, data = {}) => {
+    const base = data && typeof data === 'object' ? { ...data } : {};
+    if (type === 'variable') {
+        return {
+            path: String(base.path || '').trim(),
+            autoCreate: base.autoCreate === true,
+            varType: ['number', 'string', 'boolean'].includes(String(base.varType || '').trim().toLowerCase())
+                ? String(base.varType).trim().toLowerCase()
+                : 'number',
+            defaultValue: base.defaultValue ?? 0,
+        };
+    }
+    if (type === 'value') {
+        const rightType = normalizeRightTypeValue(base.rightType || 'number');
+        const value = base.value ?? (rightType === 'number' ? 0 : '');
+        return {
+            rightType,
+            value: stringifyTypedValue(value, rightType),
+        };
+    }
+    if (type === 'compare') {
+        const op = String(base.op || '>').trim();
+        const knownOps = new Set(BLOCK_OP_OPTIONS.map(opt => String(opt.value)));
+        return {
+            op: knownOps.has(op) ? op : '>',
+            fallbackRightType: normalizeRightTypeValue(base.fallbackRightType || 'number'),
+            fallbackRight: stringifyTypedValue(base.fallbackRight ?? 10, base.fallbackRightType || 'number'),
+        };
+    }
+    if (type === 'logic') {
+        const logic = normalizeLogicValue(base.logic);
+        const inputCountRaw = Number(base.inputCount || (logic === 'not' ? 1 : 2));
+        const inputCount = logic === 'not'
+            ? 1
+            : (Number.isFinite(inputCountRaw) ? Math.max(2, Math.min(8, Math.trunc(inputCountRaw))) : 2);
+        return { logic, inputCount };
+    }
+    return {};
+};
+const normalizeGraphNode = (raw = {}, index = 0) => {
+    const node = raw && typeof raw === 'object' ? { ...raw } : {};
+    const type = normalizeNodeType(node.type);
+    const fallbackId = `${type}_${index + 1}`;
+    return {
+        id: sanitizeNodeId(node.id, fallbackId),
+        type,
+        x: Number.isFinite(Number(node.x)) ? Number(node.x) : 36 + (index % 3) * 220,
+        y: Number.isFinite(Number(node.y)) ? Number(node.y) : 36 + Math.floor(index / 3) * 120,
+        data: normalizeGraphNodeData(type, node.data),
+    };
+};
+const normalizeGraphEdge = (raw = {}, index = 0, nodeById = new Map()) => {
+    const edge = raw && typeof raw === 'object' ? { ...raw } : {};
+    const fromRaw = String(edge.from || '').trim();
+    const toRaw = String(edge.to || '').trim();
+    const from = sanitizeNodeId(fromRaw, fromRaw);
+    const to = sanitizeNodeId(toRaw, toRaw);
+    if (!from || !to || from === to) return null;
+    const fromNode = nodeById.get(from);
+    const toNode = nodeById.get(to);
+    if (!fromNode || !toNode) return null;
+    const fromPort = String(edge.fromPort || 'out').trim();
+    const toPort = String(edge.toPort || 'in').trim();
+    const fromPorts = getNodePortSpec(fromNode).outputs;
+    const toPorts = getNodePortSpec(toNode).inputs;
+    if (!fromPorts.includes(fromPort) || !toPorts.includes(toPort)) return null;
+    return {
+        id: sanitizeNodeId(edge.id, `edge_${index + 1}`),
+        from,
+        fromPort,
+        to,
+        toPort,
+    };
+};
+const isConditionLogicNode = (node = {}) => {
+    const logicRaw = String(node?.logic || '').trim().toLowerCase();
+    return logicRaw === 'and' || logicRaw === 'or' || logicRaw === 'not';
+};
+const autoLayoutNodeGraph = (graph = {}) => {
+    const nodes = Array.isArray(graph.nodes) ? graph.nodes : [];
+    const edges = Array.isArray(graph.edges) ? graph.edges : [];
+    const nodeById = new Map(nodes.map(node => [String(node.id || ''), node]));
+    const inDegree = new Map();
+    const outgoing = new Map();
+    nodes.forEach((node) => {
+        const id = String(node.id || '');
+        inDegree.set(id, 0);
+        outgoing.set(id, []);
+    });
+    edges.forEach((edge) => {
+        const from = String(edge.from || '');
+        const to = String(edge.to || '');
+        if (!nodeById.has(from) || !nodeById.has(to)) return;
+        inDegree.set(to, (inDegree.get(to) || 0) + 1);
+        outgoing.get(from)?.push(to);
+    });
+    const queue = [];
+    inDegree.forEach((deg, id) => {
+        if (deg === 0) queue.push(id);
+    });
+    const levelById = new Map();
+    queue.forEach(id => levelById.set(id, 0));
+    while (queue.length) {
+        const id = queue.shift();
+        const level = Number(levelById.get(id) || 0);
+        const nextList = outgoing.get(id) || [];
+        nextList.forEach((to) => {
+            levelById.set(to, Math.max(Number(levelById.get(to) || 0), level + 1));
+            inDegree.set(to, Number(inDegree.get(to) || 0) - 1);
+            if (inDegree.get(to) === 0) queue.push(to);
+        });
+    }
+    nodes.forEach((node) => {
+        if (!levelById.has(node.id)) levelById.set(node.id, 0);
+    });
+    const layers = new Map();
+    nodes.forEach((node) => {
+        const level = Number(levelById.get(node.id) || 0);
+        if (!layers.has(level)) layers.set(level, []);
+        layers.get(level).push(node);
+    });
+    [...layers.entries()]
+        .sort((a, b) => a[0] - b[0])
+        .forEach(([level, layerNodes]) => {
+            layerNodes.sort((a, b) => String(a.type).localeCompare(String(b.type), 'en'));
+            layerNodes.forEach((node, idx) => {
+                node.x = 40 + level * 230;
+                node.y = 40 + idx * 128;
+            });
+        });
+    return graph;
+};
+const buildNodeGraphFromWhen = (when = {}, fallbackClause = {}) => {
+    const nodes = [];
+    const edges = [];
+    const createNode = (type, data = {}) => {
+        const node = {
+            id: genNodeId(),
+            type: normalizeNodeType(type),
+            x: 0,
+            y: 0,
+            data: normalizeGraphNodeData(normalizeNodeType(type), data),
+        };
+        nodes.push(node);
+        return node;
+    };
+    const connect = (fromNode, fromPort, toNode, toPort) => {
+        if (!fromNode?.id || !toNode?.id) return;
+        edges.push({
+            id: genEdgeId(),
+            from: fromNode.id,
+            fromPort,
+            to: toNode.id,
+            toPort,
+        });
+    };
+    const buildClauseNodes = (clauseRaw = {}) => {
+        const clause = normalizePromptClause(clauseRaw);
+        const variableNode = createNode('variable', {
+            path: clause.left,
+            autoCreate: Boolean(clause.defineVariable?.name),
+            varType: clause.defineVariable?.type || 'number',
+            defaultValue: clause.defineVariable?.default ?? 0,
+        });
+        const compareNode = createNode('compare', {
+            op: clause.op,
+            fallbackRightType: clause.rightType,
+            fallbackRight: stringifyTypedValue(clause.right, clause.rightType),
+        });
+        connect(variableNode, 'out', compareNode, 'left');
+        if (clause.op !== 'is_empty' && clause.op !== 'not_empty') {
+            const rightIsVariable = clause.rightType === 'variable';
+            const rightNode = rightIsVariable
+                ? createNode('variable', { path: String(clause.right || ''), autoCreate: false, varType: 'number', defaultValue: 0 })
+                : createNode('value', {
+                    rightType: clause.rightType,
+                    value: stringifyTypedValue(clause.right, clause.rightType),
+                });
+            connect(rightNode, 'out', compareNode, 'right');
+        }
+        return compareNode;
+    };
+    const buildConditionNodes = (nodeRaw = {}) => {
+        const node = nodeRaw && typeof nodeRaw === 'object' ? nodeRaw : {};
+        if (isConditionLogicNode(node)) {
+            const logic = normalizeLogicValue(node.logic);
+            const children = Array.isArray(node.clauses) ? node.clauses.filter(Boolean) : [];
+            const logicNode = createNode('logic', { logic, inputCount: logic === 'not' ? 1 : Math.max(2, children.length) });
+            if (logic === 'not') {
+                const child = node.clause && typeof node.clause === 'object'
+                    ? node.clause
+                    : (Array.isArray(node.clauses) ? node.clauses[0] : null);
+                if (child) {
+                    const childOutput = buildConditionNodes(child);
+                    if (childOutput) connect(childOutput, 'out', logicNode, 'in');
+                }
+                return logicNode;
+            }
+            children.forEach((child, idx) => {
+                const childOutput = buildConditionNodes(child);
+                if (!childOutput) return;
+                connect(childOutput, 'out', logicNode, `in${idx + 1}`);
+            });
+            return logicNode;
+        }
+        if (node.clause && typeof node.clause === 'object') {
+            return buildConditionNodes(node.clause);
+        }
+        return buildClauseNodes(node);
+    };
+
+    const fallback = normalizePromptClause(fallbackClause || {});
+    const root = buildConditionNodes(when && typeof when === 'object' ? when : fallback);
+    const resultNode = createNode('result', {});
+    if (root) connect(root, 'out', resultNode, 'in');
+    return autoLayoutNodeGraph({
+        version: NODE_GRAPH_VERSION,
+        nodes,
+        edges,
+    });
+};
+const normalizeNodeGraph = (raw = {}, fallbackWhen = {}, fallbackClause = {}) => {
+    const graph = raw && typeof raw === 'object' ? raw : {};
+    if (!Array.isArray(graph.nodes) || !graph.nodes.length) {
+        return buildNodeGraphFromWhen(fallbackWhen, fallbackClause);
+    }
+    const nodes = graph.nodes.map((node, idx) => normalizeGraphNode(node, idx));
+    const dedupNodes = [];
+    const nodeById = new Map();
+    nodes.forEach((node) => {
+        const id = String(node.id || '').trim() || genNodeId();
+        if (nodeById.has(id)) {
+            node.id = genNodeId();
+        } else {
+            node.id = id;
+        }
+        nodeById.set(node.id, node);
+        dedupNodes.push(node);
+    });
+    let hasResult = dedupNodes.some(node => node.type === 'result');
+    if (!hasResult) {
+        const resultNode = normalizeGraphNode({ type: 'result', id: genNodeId(), x: 620, y: 120 }, dedupNodes.length);
+        dedupNodes.push(resultNode);
+        nodeById.set(resultNode.id, resultNode);
+        hasResult = true;
+    }
+    const rawEdges = Array.isArray(graph.edges) ? graph.edges : [];
+    const normalizedEdges = rawEdges
+        .map((edge, idx) => normalizeGraphEdge(edge, idx, nodeById))
+        .filter(Boolean);
+    const edgeKeys = new Set();
+    const dedupEdges = [];
+    normalizedEdges.forEach((edge) => {
+        const key = `${edge.from}|${edge.fromPort}|${edge.to}|${edge.toPort}`;
+        if (edgeKeys.has(key)) return;
+        edgeKeys.add(key);
+        dedupEdges.push(edge);
+    });
+    const resultNode = dedupNodes.find(node => node.type === 'result');
+    const hasResultInput = dedupEdges.some(edge => edge.to === resultNode.id && edge.toPort === 'in');
+    if (!hasResultInput) {
+        const candidate = dedupNodes.find(node => node.type === 'compare' || node.type === 'logic') || dedupNodes[0];
+        if (candidate && candidate.id !== resultNode.id) {
+            dedupEdges.push({
+                id: genEdgeId(),
+                from: candidate.id,
+                fromPort: 'out',
+                to: resultNode.id,
+                toPort: 'in',
+            });
+        }
+    }
+    const next = {
+        version: NODE_GRAPH_VERSION,
+        nodes: dedupNodes,
+        edges: dedupEdges,
+        viewport: {
+            x: Number.isFinite(Number(graph?.viewport?.x)) ? Number(graph.viewport.x) : 0,
+            y: Number.isFinite(Number(graph?.viewport?.y)) ? Number(graph.viewport.y) : 0,
+            zoom: Number.isFinite(Number(graph?.viewport?.zoom)) ? clamp(Number(graph.viewport.zoom), 0.55, 1.8) : 1,
+        },
+    };
+    return next;
+};
+const buildWhenFromNodeGraph = (graphRaw = {}, fallbackClause = {}) => {
+    const graph = normalizeNodeGraph(graphRaw, {}, fallbackClause);
+    const nodes = Array.isArray(graph.nodes) ? graph.nodes : [];
+    const edges = Array.isArray(graph.edges) ? graph.edges : [];
+    const nodeById = new Map(nodes.map(node => [String(node.id || ''), node]));
+    const incomingByPort = new Map();
+    edges.forEach((edge) => {
+        const key = `${edge.to}|${edge.toPort}`;
+        if (!incomingByPort.has(key)) incomingByPort.set(key, []);
+        incomingByPort.get(key).push(edge);
+    });
+    const getIncomingNode = (toId, toPort) => {
+        const key = `${toId}|${toPort}`;
+        const list = incomingByPort.get(key) || [];
+        const hit = list[0];
+        if (!hit) return null;
+        return nodeById.get(hit.from) || null;
+    };
+    const buildClauseFromCompare = (node, seen) => {
+        const compareData = normalizeGraphNodeData('compare', node?.data || {});
+        const clause = normalizePromptClause({
+            left: '',
+            op: compareData.op,
+            rightType: compareData.fallbackRightType,
+            right: parseTypedValue(compareData.fallbackRight, compareData.fallbackRightType),
+        });
+        const leftNode = getIncomingNode(node.id, 'left');
+        if (leftNode && !seen.has(leftNode.id)) {
+            if (leftNode.type === 'variable') {
+                clause.left = String(leftNode?.data?.path || '').trim();
+                const defineSpec = buildNodeDefineSpec(leftNode.data);
+                if (defineSpec) clause.defineVariable = defineSpec;
+            } else if (leftNode.type === 'value') {
+                clause.left = String(leftNode?.data?.value || '').trim();
+            }
+        }
+        const rightNode = getIncomingNode(node.id, 'right');
+        if (rightNode && !seen.has(rightNode.id)) {
+            if (rightNode.type === 'variable') {
+                clause.rightType = 'variable';
+                clause.right = String(rightNode?.data?.path || '').trim();
+            } else if (rightNode.type === 'value') {
+                const rightType = normalizeRightTypeValue(rightNode?.data?.rightType || 'number');
+                clause.rightType = rightType;
+                clause.right = parseTypedValue(rightNode?.data?.value, rightType);
+            }
+        }
+        return normalizePromptClause(clause);
+    };
+    const buildCondition = (nodeId, seen = new Set()) => {
+        const id = String(nodeId || '').trim();
+        if (!id || seen.has(id)) return null;
+        const node = nodeById.get(id);
+        if (!node) return null;
+        const nextSeen = new Set(seen);
+        nextSeen.add(id);
+        if (node.type === 'compare') {
+            return buildClauseFromCompare(node, nextSeen);
+        }
+        if (node.type === 'logic') {
+            const logic = normalizeLogicValue(node?.data?.logic);
+            if (logic === 'not') {
+                const child = getIncomingNode(node.id, 'in');
+                const childCondition = child ? buildCondition(child.id, nextSeen) : null;
+                if (!childCondition) return { logic: 'not', clause: normalizePromptClause(fallbackClause) };
+                return { logic: 'not', clause: childCondition };
+            }
+            const inputPorts = getNodePortSpec(node).inputs;
+            const inputs = inputPorts
+                .map((port) => getIncomingNode(node.id, port))
+                .filter(Boolean);
+            const clauses = inputs
+                .map(child => buildCondition(child.id, nextSeen))
+                .filter(Boolean);
+            if (!clauses.length) clauses.push(normalizePromptClause(fallbackClause));
+            return { logic, clauses };
+        }
+        if (node.type === 'result') {
+            const child = getIncomingNode(node.id, 'in');
+            return child ? buildCondition(child.id, nextSeen) : normalizePromptClause(fallbackClause);
+        }
+        if (node.type === 'variable') {
+            return normalizePromptClause({
+                left: String(node?.data?.path || '').trim(),
+                op: 'not_empty',
+                rightType: 'string',
+                right: '',
+                defineVariable: buildNodeDefineSpec(node.data),
+            });
+        }
+        return normalizePromptClause(fallbackClause);
+    };
+    const resultNode = nodes.find(node => node.type === 'result') || null;
+    const built = buildCondition(resultNode?.id, new Set()) || normalizePromptClause(fallbackClause);
+    if (built?.logic && Array.isArray(built.clauses)) {
+        return {
+            logic: normalizeLogicValue(built.logic),
+            clauses: built.clauses.map(clause => {
+                if (clause?.logic) return clause;
+                return normalizePromptClause(clause);
+            }),
+        };
+    }
+    if (built?.logic === 'not') {
+        return {
+            logic: 'not',
+            clause: built.clause?.logic ? built.clause : normalizePromptClause(built.clause || fallbackClause),
+        };
+    }
+    return {
+        logic: 'and',
+        clauses: [normalizePromptClause(built || fallbackClause)],
+    };
+};
 
 const normalizePromptClause = (raw = {}) => {
     const clause = raw && typeof raw === 'object' ? { ...raw } : {};
@@ -155,19 +656,104 @@ const normalizePromptClause = (raw = {}) => {
     };
 };
 
+const isConditionTreeGroup = (raw = {}) => {
+    if (!raw || typeof raw !== 'object') return false;
+    const logic = String(raw.logic || '').trim().toLowerCase();
+    return logic === 'and' || logic === 'or' || logic === 'not' || Array.isArray(raw.clauses) || (raw.clause && typeof raw.clause === 'object');
+};
+
+const createDefaultPromptClause = () => normalizePromptClause({
+    left: '',
+    op: '>',
+    right: 10,
+    rightType: 'number',
+});
+
+const buildVariableCreationDraft = (raw = {}) => {
+    const draft = raw && typeof raw === 'object' ? { ...raw } : {};
+    const type = ['number', 'string', 'boolean'].includes(String(draft.type || '').trim().toLowerCase())
+        ? String(draft.type).trim().toLowerCase()
+        : 'number';
+    const opRaw = String(draft.op || '>').trim();
+    const knownOps = new Set(BLOCK_OP_OPTIONS.map(opt => String(opt.value)));
+    const op = knownOps.has(opRaw) ? opRaw : '>';
+    const rightType = normalizeRightTypeValue(draft.rightType || 'number');
+    return {
+        name: String(draft.name || '').trim(),
+        type,
+        defaultValueText: stringifyTypedValue(
+            draft.defaultValue ?? (type === 'number' ? 0 : (type === 'boolean' ? false : '')),
+            type,
+        ),
+        op,
+        rightType,
+        rightValueText: stringifyTypedValue(
+            draft.rightValue ?? (rightType === 'number' ? 10 : (rightType === 'boolean' ? false : '')),
+            rightType,
+        ),
+    };
+};
+
+const normalizeConditionTree = (raw = null, fallbackClause = null) => {
+    const fallback = normalizePromptClause(fallbackClause || createDefaultPromptClause());
+    if (!raw || typeof raw !== 'object') return { logic: 'and', clauses: [fallback] };
+    if (!isConditionTreeGroup(raw)) return normalizePromptClause(raw);
+    const logic = normalizeLogicValue(raw.logic || 'and');
+    if (logic === 'not') {
+        const childRaw = raw.clause && typeof raw.clause === 'object'
+            ? raw.clause
+            : (Array.isArray(raw.clauses) ? raw.clauses[0] : null);
+        const child = normalizeConditionTree(childRaw, fallback);
+        return { logic: 'not', clause: child };
+    }
+    const listRaw = Array.isArray(raw.clauses) ? raw.clauses : [];
+    const clauses = listRaw.length
+        ? listRaw.map(item => normalizeConditionTree(item, fallback)).filter(Boolean)
+        : [fallback];
+    return { logic, clauses };
+};
+
+const getPrimaryClauseFromConditionTree = (raw = null, fallbackClause = null) => {
+    const node = normalizeConditionTree(raw, fallbackClause);
+    if (!node || typeof node !== 'object') return normalizePromptClause(fallbackClause || createDefaultPromptClause());
+    if (node.logic === 'not') return getPrimaryClauseFromConditionTree(node.clause, fallbackClause);
+    if (Array.isArray(node.clauses)) {
+        const first = node.clauses[0];
+        return getPrimaryClauseFromConditionTree(first, fallbackClause);
+    }
+    return normalizePromptClause(node);
+};
+
+const visitConditionTree = (node, visitor, path = 'root') => {
+    if (!node || typeof node !== 'object' || typeof visitor !== 'function') return;
+    visitor(node, path);
+    if (node.logic === 'not') {
+        if (node.clause && typeof node.clause === 'object') visitConditionTree(node.clause, visitor, `${path}.0`);
+        return;
+    }
+    if (Array.isArray(node.clauses)) {
+        node.clauses.forEach((child, idx) => {
+            if (child && typeof child === 'object') visitConditionTree(child, visitor, `${path}.${idx}`);
+        });
+    }
+};
+
 const normalizePromptBlock = (raw = {}, index = 0, fallbackContent = '') => {
     const block = raw && typeof raw === 'object' ? { ...raw } : {};
     const whenRaw = block.when && typeof block.when === 'object' ? block.when : {};
-    const clauses = Array.isArray(whenRaw.clauses) ? whenRaw.clauses : [];
-    const normalizedClauses = clauses.map(normalizePromptClause).filter(Boolean);
-    if (!normalizedClauses.length) {
-        normalizedClauses.push(normalizePromptClause({
-            left: '',
-            op: '>',
-            right: 10,
-            rightType: 'number',
-        }));
+    const normalizedWhenTree = normalizeConditionTree(whenRaw, createDefaultPromptClause());
+    const primaryClause = getPrimaryClauseFromConditionTree(normalizedWhenTree, createDefaultPromptClause());
+    const normalizedGraph = normalizeNodeGraph(
+        block.nodeGraph,
+        normalizedWhenTree,
+        primaryClause,
+    );
+    const uiMode = String(block.uiMode || block.conditionMode || '').trim().toLowerCase() === 'node' ? 'node' : 'form';
+    let normalizedWhen = normalizedWhenTree;
+    if (uiMode === 'node') {
+        normalizedWhen = buildWhenFromNodeGraph(normalizedGraph, primaryClause);
     }
+    normalizedWhen = normalizeConditionTree(normalizedWhen, primaryClause);
     return {
         id: String(block.id || '').trim() || genBlockId(),
         title: String(block.title || `内容 ${index + 1}`).trim(),
@@ -175,10 +761,9 @@ const normalizePromptBlock = (raw = {}, index = 0, fallbackContent = '') => {
         content: String(block.content ?? (index === 0 ? fallbackContent : '')).trim(),
         role: Number.isFinite(Number(block.role)) ? Number(block.role) : 0,
         priority: Number.isFinite(Number(block.priority)) ? Number(block.priority) : 100,
-        when: {
-            logic: String(whenRaw.logic || 'and').trim().toLowerCase(),
-            clauses: normalizedClauses,
-        },
+        uiMode,
+        nodeGraph: normalizedGraph,
+        when: normalizedWhen,
     };
 };
 
@@ -440,6 +1025,17 @@ export class WorldEditorModal {
         this.chatNameInputEl = null;
         this.chatNameResolve = null;
         this.chatNameKeyHandler = null;
+        this.variableOverlay = null;
+        this.variableModal = null;
+        this.variableNameInputEl = null;
+        this.variableDefaultInputEl = null;
+        this.variableRightInputEl = null;
+        this.variableTypeBtn = null;
+        this.variableOpBtn = null;
+        this.variableRightTypeBtn = null;
+        this.variableResolve = null;
+        this.variableKeyHandler = null;
+        this.variableModalDraft = buildVariableCreationDraft();
         this.refMode = false;
         this.refLocalEntries = null;
         this.refSyncTimer = null;
@@ -463,11 +1059,13 @@ export class WorldEditorModal {
         this.entryBlockPageMap = new Map();
         this.blockFlipMap = new Map();
         this.blockExpandMap = new Map();
+        this.blockConditionModeMap = new Map();
         this.blockManageOverlay = null;
         this.blockManageModal = null;
         this.blockManageList = null;
         this.blockManageCloseBtn = null;
         this.blockManageEntryId = '';
+        this.nodeEditorCleanup = null;
     }
 
     async show(name, data) {
@@ -499,6 +1097,7 @@ export class WorldEditorModal {
         this.selectedEntries.clear();
         this.blockFlipMap.clear();
         this.blockExpandMap.clear();
+        this.blockConditionModeMap.clear();
         this.blockManageEntryId = '';
         this.entrySearchTerm = '';
         this.entryPageIndex = 0;
@@ -517,16 +1116,25 @@ export class WorldEditorModal {
     }
 
     hide() {
+        this.cleanupNodeEditor();
         this.closeCustomSelectMenu();
         if (this.overlay) this.overlay.style.display = 'none';
         if (this.modal) this.modal.style.display = 'none';
         this.hideManageModal();
         this.hideAiModal();
+        this.closeVariableModal(null);
         this.hideBlockManageModal();
         if (this.refSyncTimer) {
             clearTimeout(this.refSyncTimer);
             this.refSyncTimer = null;
         }
+    }
+
+    cleanupNodeEditor() {
+        if (typeof this.nodeEditorCleanup === 'function') {
+            try { this.nodeEditorCleanup(); } catch {}
+        }
+        this.nodeEditorCleanup = null;
     }
 
     updateRefModeUI() {
@@ -762,6 +1370,244 @@ export class WorldEditorModal {
     hideAiModal() {
         if (this.aiOverlay) this.aiOverlay.style.display = 'none';
         if (this.aiModal) this.aiModal.style.display = 'none';
+    }
+
+    createVariableModal() {
+        if (this.variableModal) return;
+        this.variableOverlay = document.createElement('div');
+        this.variableOverlay.className = 'world-var-overlay';
+        this.variableOverlay.style.display = 'none';
+        this.variableOverlay.addEventListener('click', () => this.closeVariableModal(null));
+
+        this.variableModal = document.createElement('div');
+        this.variableModal.className = 'world-var-modal';
+        this.variableModal.style.display = 'none';
+        this.variableModal.innerHTML = `
+            <div class="world-var-header">
+                <div>
+                    <div class="world-var-title">新增变量</div>
+                    <div class="world-var-subtitle">默认会创建数值条件：变量名 > 10，只填名称即可。</div>
+                </div>
+                <button type="button" class="world-var-close" aria-label="关闭">×</button>
+            </div>
+            <div class="world-var-body">
+                <label class="world-var-label" for="world-var-name">变量名</label>
+                <input id="world-var-name" class="world-var-input" type="text" value="" placeholder="例如 stat_data.苏晚晴.love_degree.0">
+
+                <div class="world-var-grid">
+                    <div class="world-var-field">
+                        <label class="world-var-label">变量类型</label>
+                        <button type="button" class="world-app-select-btn" id="world-var-type-btn">
+                            <span>数字</span>
+                            <span class="world-app-select-btn-chevron">▾</span>
+                        </button>
+                    </div>
+                    <div class="world-var-field">
+                        <label class="world-var-label" for="world-var-default">默认值</label>
+                        <input id="world-var-default" class="world-var-input" type="text" value="0" placeholder="0">
+                    </div>
+                    <div class="world-var-field">
+                        <label class="world-var-label">比较</label>
+                        <button type="button" class="world-app-select-btn" id="world-var-op-btn">
+                            <span>大于 (&gt;)</span>
+                            <span class="world-app-select-btn-chevron">▾</span>
+                        </button>
+                    </div>
+                    <div class="world-var-field">
+                        <label class="world-var-label">比较值类型</label>
+                        <button type="button" class="world-app-select-btn" id="world-var-righttype-btn">
+                            <span>数字</span>
+                            <span class="world-app-select-btn-chevron">▾</span>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="world-var-field" id="world-var-right-wrap">
+                    <label class="world-var-label" for="world-var-right">比较值</label>
+                    <input id="world-var-right" class="world-var-input" type="text" value="10" placeholder="10">
+                </div>
+            </div>
+            <div class="world-var-actions">
+                <button type="button" class="world-var-btn ghost" id="world-var-cancel">取消</button>
+                <button type="button" class="world-var-btn primary" id="world-var-ok">创建</button>
+            </div>
+        `;
+        this.variableModal.addEventListener('click', (e) => e.stopPropagation());
+
+        this.variableNameInputEl = this.variableModal.querySelector('#world-var-name');
+        this.variableDefaultInputEl = this.variableModal.querySelector('#world-var-default');
+        this.variableRightInputEl = this.variableModal.querySelector('#world-var-right');
+        this.variableTypeBtn = this.variableModal.querySelector('#world-var-type-btn');
+        this.variableOpBtn = this.variableModal.querySelector('#world-var-op-btn');
+        this.variableRightTypeBtn = this.variableModal.querySelector('#world-var-righttype-btn');
+
+        this.variableModal.querySelector('.world-var-close')?.addEventListener('click', () => this.closeVariableModal(null));
+        this.variableModal.querySelector('#world-var-cancel')?.addEventListener('click', () => this.closeVariableModal(null));
+        this.variableModal.querySelector('#world-var-ok')?.addEventListener('click', () => this.submitVariableModal());
+
+        this.variableTypeBtn?.addEventListener('click', (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            this.openCustomSelectMenu({
+                anchorEl: this.variableTypeBtn,
+                options: BLOCK_RIGHT_TYPE_OPTIONS.filter(opt => opt.value !== 'variable'),
+                currentValue: this.variableModalDraft.type,
+                onSelect: (value) => {
+                    this.variableModalDraft.type = ['number', 'string', 'boolean'].includes(String(value || '')) ? String(value) : 'number';
+                    this.renderVariableModalDraft();
+                },
+            });
+        });
+        this.variableOpBtn?.addEventListener('click', (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            this.openCustomSelectMenu({
+                anchorEl: this.variableOpBtn,
+                options: BLOCK_OP_OPTIONS,
+                currentValue: this.variableModalDraft.op,
+                onSelect: (value) => {
+                    this.variableModalDraft.op = String(value || '>');
+                    this.renderVariableModalDraft();
+                },
+            });
+        });
+        this.variableRightTypeBtn?.addEventListener('click', (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            this.openCustomSelectMenu({
+                anchorEl: this.variableRightTypeBtn,
+                options: BLOCK_RIGHT_TYPE_OPTIONS,
+                currentValue: this.variableModalDraft.rightType,
+                onSelect: (value) => {
+                    this.variableModalDraft.rightType = normalizeRightTypeValue(value);
+                    this.renderVariableModalDraft();
+                },
+            });
+        });
+
+        document.body.appendChild(this.variableOverlay);
+        document.body.appendChild(this.variableModal);
+    }
+
+    renderVariableModalDraft() {
+        if (!this.variableModal) return;
+        const draft = buildVariableCreationDraft(this.variableModalDraft);
+        this.variableModalDraft = draft;
+        if (this.variableNameInputEl) this.variableNameInputEl.value = draft.name;
+        if (this.variableDefaultInputEl) this.variableDefaultInputEl.value = draft.defaultValueText;
+        if (this.variableRightInputEl) this.variableRightInputEl.value = draft.rightValueText;
+        if (this.variableTypeBtn) {
+            const labelEl = this.variableTypeBtn.querySelector('span');
+            if (labelEl) labelEl.textContent = this.getOptionLabel(BLOCK_RIGHT_TYPE_OPTIONS, draft.type, '数字');
+        }
+        if (this.variableOpBtn) {
+            const labelEl = this.variableOpBtn.querySelector('span');
+            if (labelEl) labelEl.textContent = this.getOptionLabel(BLOCK_OP_OPTIONS, draft.op, '大于 (>)');
+        }
+        if (this.variableRightTypeBtn) {
+            const labelEl = this.variableRightTypeBtn.querySelector('span');
+            if (labelEl) labelEl.textContent = this.getOptionLabel(BLOCK_RIGHT_TYPE_OPTIONS, draft.rightType, '数字');
+        }
+        const rightWrap = this.variableModal.querySelector('#world-var-right-wrap');
+        const hideRight = ['is_empty', 'not_empty'].includes(String(draft.op || '').trim().toLowerCase());
+        if (rightWrap) rightWrap.style.display = hideRight ? 'none' : '';
+        if (this.variableRightTypeBtn) this.variableRightTypeBtn.disabled = hideRight;
+        if (this.variableRightInputEl) this.variableRightInputEl.disabled = hideRight;
+    }
+
+    openVariableModal(initialDraft = {}) {
+        if (!this.variableModal) this.createVariableModal();
+        if (!this.variableOverlay || !this.variableModal) return Promise.resolve(null);
+        this.variableModalDraft = buildVariableCreationDraft(initialDraft);
+        this.renderVariableModalDraft();
+        this.variableOverlay.style.display = 'block';
+        this.variableModal.style.display = 'block';
+        queueMicrotask(() => {
+            this.variableNameInputEl?.focus();
+            this.variableNameInputEl?.select();
+        });
+
+        if (this.variableKeyHandler) {
+            document.removeEventListener('keydown', this.variableKeyHandler);
+        }
+        this.variableKeyHandler = (event) => {
+            if (event.key === 'Escape') {
+                event.preventDefault();
+                this.closeVariableModal(null);
+            } else if (event.key === 'Enter') {
+                const target = event.target;
+                if (target && target.tagName === 'TEXTAREA') return;
+                event.preventDefault();
+                this.submitVariableModal();
+            }
+        };
+        document.addEventListener('keydown', this.variableKeyHandler);
+        return new Promise((resolve) => {
+            this.variableResolve = resolve;
+        });
+    }
+
+    submitVariableModal() {
+        const name = String(this.variableNameInputEl?.value || '').trim();
+        if (!name) {
+            window.toastr?.warning?.('请填写变量名');
+            this.variableNameInputEl?.focus();
+            return;
+        }
+        const draft = buildVariableCreationDraft({
+            ...this.variableModalDraft,
+            name,
+            defaultValue: this.variableDefaultInputEl?.value,
+            rightValue: this.variableRightInputEl?.value,
+        });
+        const payload = {
+            name,
+            type: draft.type,
+            defaultValue: parseTypedValue(draft.defaultValueText, draft.type),
+            op: draft.op,
+            rightType: draft.rightType,
+            rightValue: parseTypedValue(draft.rightValueText, draft.rightType),
+        };
+        this.closeVariableModal(payload);
+    }
+
+    closeVariableModal(value = null) {
+        this.closeCustomSelectMenu();
+        if (this.variableOverlay) this.variableOverlay.style.display = 'none';
+        if (this.variableModal) this.variableModal.style.display = 'none';
+        if (this.variableKeyHandler) {
+            document.removeEventListener('keydown', this.variableKeyHandler);
+            this.variableKeyHandler = null;
+        }
+        if (this.variableResolve) {
+            const resolve = this.variableResolve;
+            this.variableResolve = null;
+            resolve(value);
+        }
+    }
+
+    applyVariablePayloadToClause(clause, payload) {
+        if (!clause || typeof clause !== 'object' || !payload) return false;
+        clause.left = String(payload.name || '').trim();
+        clause.defineVariable = {
+            name: String(payload.name || '').trim(),
+            type: String(payload.type || 'number').trim().toLowerCase(),
+            default: payload.defaultValue,
+        };
+        clause.op = String(payload.op || '>');
+        clause.rightType = String(payload.rightType || 'number');
+        clause.right = payload.rightValue;
+        return true;
+    }
+
+    applyVariablePayloadToNode(node, payload) {
+        if (!node || typeof node !== 'object' || !payload) return false;
+        if (!node.data || typeof node.data !== 'object') node.data = {};
+        node.data.path = String(payload.name || '').trim();
+        node.data.autoCreate = true;
+        node.data.varType = String(payload.type || 'number').trim().toLowerCase();
+        node.data.defaultValue = payload.defaultValue;
+        return true;
     }
 
     createChatNameModal() {
@@ -1190,6 +2036,33 @@ export class WorldEditorModal {
         this.renderEditor();
     }
 
+    getBlockConditionMode(blockId = '', block = null) {
+        const id = String(blockId || '').trim();
+        if (!id) return 'form';
+        if (this.blockConditionModeMap.has(id)) {
+            return this.blockConditionModeMap.get(id) === 'node' ? 'node' : 'form';
+        }
+        const mode = String(block?.uiMode || '').trim().toLowerCase() === 'node' ? 'node' : 'form';
+        this.blockConditionModeMap.set(id, mode);
+        return mode;
+    }
+
+    setBlockConditionMode(blockId = '', mode = 'form', block = null) {
+        const id = String(blockId || '').trim();
+        if (!id) return;
+        const next = String(mode || '').trim().toLowerCase() === 'node' ? 'node' : 'form';
+        this.blockConditionModeMap.set(id, next);
+        if (block && typeof block === 'object') block.uiMode = next;
+        this.renderEditor();
+    }
+
+    toggleBlockConditionMode(blockId = '', block = null) {
+        const id = String(blockId || '').trim();
+        if (!id) return;
+        const current = this.getBlockConditionMode(id, block);
+        this.setBlockConditionMode(id, current === 'node' ? 'form' : 'node', block);
+    }
+
     syncEntryContentFromBlocks(entry) {
         if (!entry || typeof entry !== 'object') return;
         const blocks = this.ensureEntryPromptBlocks(entry);
@@ -1236,6 +2109,7 @@ export class WorldEditorModal {
         if (removedId) {
             this.blockFlipMap.delete(removedId);
             this.blockExpandMap.delete(removedId);
+            this.blockConditionModeMap.delete(removedId);
         }
         const entryId = this.getEntryId(entry);
         if (entryId) {
@@ -1268,11 +2142,402 @@ export class WorldEditorModal {
 
     ensureBlockPrimaryClause(block) {
         if (!block || typeof block !== 'object') return normalizePromptClause({});
-        if (!block.when || typeof block.when !== 'object') block.when = { logic: 'and', clauses: [] };
-        if (!Array.isArray(block.when.clauses)) block.when.clauses = [];
-        if (!block.when.clauses.length) block.when.clauses.push(normalizePromptClause({}));
-        block.when.clauses[0] = normalizePromptClause(block.when.clauses[0]);
-        return block.when.clauses[0];
+        block.when = normalizeConditionTree(block.when, createDefaultPromptClause());
+        return getPrimaryClauseFromConditionTree(block.when, createDefaultPromptClause());
+    }
+
+    ensureBlockConditionTree(block) {
+        if (!block || typeof block !== 'object') return normalizeConditionTree(null, createDefaultPromptClause());
+        block.when = normalizeConditionTree(block.when, createDefaultPromptClause());
+        return block.when;
+    }
+
+    getConditionNodeAtPath(block, path = 'root') {
+        const tree = this.ensureBlockConditionTree(block);
+        const key = String(path || 'root').trim();
+        if (!key || key === 'root') return tree;
+        const parts = key.split('.').slice(1).map(part => Number(part));
+        let current = tree;
+        for (const index of parts) {
+            if (!Number.isFinite(index) || index < 0) return null;
+            if (current?.logic === 'not') {
+                current = index === 0 ? current.clause : null;
+            } else if (Array.isArray(current?.clauses)) {
+                current = current.clauses[index];
+            } else {
+                return null;
+            }
+            if (!current) return null;
+        }
+        return current;
+    }
+
+    getConditionParentAtPath(block, path = 'root') {
+        const key = String(path || 'root').trim();
+        if (!key || key === 'root') return { parent: null, node: this.ensureBlockConditionTree(block), index: -1 };
+        const parts = key.split('.');
+        const index = Number(parts.pop());
+        const parentPath = parts.join('.') || 'root';
+        return {
+            parent: this.getConditionNodeAtPath(block, parentPath),
+            node: this.getConditionNodeAtPath(block, key),
+            index,
+            parentPath,
+        };
+    }
+
+    addConditionClause(block, parentPath = 'root') {
+        const parent = this.getConditionNodeAtPath(block, parentPath);
+        if (!parent || typeof parent !== 'object') return false;
+        const clause = createDefaultPromptClause();
+        if (parent.logic === 'not') {
+            parent.clause = clause;
+        } else {
+            if (!Array.isArray(parent.clauses)) parent.clauses = [];
+            parent.clauses.push(clause);
+        }
+        return true;
+    }
+
+    addConditionGroup(block, parentPath = 'root', logic = 'and') {
+        const parent = this.getConditionNodeAtPath(block, parentPath);
+        if (!parent || typeof parent !== 'object') return false;
+        const mode = normalizeLogicValue(logic || 'and');
+        const group = mode === 'not'
+            ? { logic: 'not', clause: createDefaultPromptClause() }
+            : { logic: mode, clauses: [createDefaultPromptClause()] };
+        if (parent.logic === 'not') {
+            parent.clause = group;
+        } else {
+            if (!Array.isArray(parent.clauses)) parent.clauses = [];
+            parent.clauses.push(group);
+        }
+        return true;
+    }
+
+    removeConditionNode(block, path = 'root') {
+        const key = String(path || 'root').trim();
+        if (!key || key === 'root') {
+            block.when = normalizeConditionTree(null, createDefaultPromptClause());
+            return true;
+        }
+        const { parent, index } = this.getConditionParentAtPath(block, key);
+        if (!parent) return false;
+        if (parent.logic === 'not') {
+            parent.clause = createDefaultPromptClause();
+            return true;
+        }
+        if (!Array.isArray(parent.clauses)) return false;
+        if (parent.clauses.length <= 1) {
+            parent.clauses[0] = createDefaultPromptClause();
+            return true;
+        }
+        parent.clauses.splice(index, 1);
+        return true;
+    }
+
+    moveConditionNode(block, path = 'root', direction = 1) {
+        const { parent, index } = this.getConditionParentAtPath(block, path);
+        if (!parent || parent.logic === 'not' || !Array.isArray(parent.clauses)) return false;
+        const to = index + Math.trunc(Number(direction) || 0);
+        if (to < 0 || to >= parent.clauses.length || to === index) return false;
+        const [moved] = parent.clauses.splice(index, 1);
+        parent.clauses.splice(to, 0, moved);
+        return true;
+    }
+
+    updateConditionNodeField(block, path = 'root', key = '', value = null) {
+        const node = this.getConditionNodeAtPath(block, path);
+        if (!node || typeof node !== 'object') return false;
+        if (isConditionTreeGroup(node)) {
+            if (key !== 'logic') return false;
+            const nextLogic = normalizeLogicValue(value || 'and');
+            if (nextLogic === node.logic) return true;
+            if (nextLogic === 'not') {
+                const firstChild = Array.isArray(node.clauses) ? node.clauses[0] : (node.clause || createDefaultPromptClause());
+                node.logic = 'not';
+                node.clause = normalizeConditionTree(firstChild, createDefaultPromptClause());
+                delete node.clauses;
+            } else {
+                const child = node.logic === 'not'
+                    ? (node.clause || createDefaultPromptClause())
+                    : (Array.isArray(node.clauses) && node.clauses.length ? node.clauses : [createDefaultPromptClause()]);
+                node.logic = nextLogic;
+                node.clauses = Array.isArray(child) ? child : [child];
+                delete node.clause;
+            }
+            return true;
+        }
+        if (key === 'defineVariable') {
+            node.defineVariable = value && typeof value === 'object' ? { ...value } : null;
+            return true;
+        }
+        node[key] = value;
+        return true;
+    }
+
+    ensureBlockNodeGraph(block) {
+        if (!block || typeof block !== 'object') return null;
+        const primaryClause = this.ensureBlockPrimaryClause(block);
+        block.nodeGraph = normalizeNodeGraph(block.nodeGraph, block.when, primaryClause);
+        return block.nodeGraph;
+    }
+
+    syncBlockWhenFromNodeGraph(block, graph = null) {
+        if (!block || typeof block !== 'object') return null;
+        const primaryClause = this.ensureBlockPrimaryClause(block);
+        const nodeGraph = graph || this.ensureBlockNodeGraph(block);
+        if (!nodeGraph) return block.when;
+        block.when = buildWhenFromNodeGraph(nodeGraph, primaryClause);
+        if (!block.when || typeof block.when !== 'object') {
+            block.when = { logic: 'and', clauses: [normalizePromptClause(primaryClause)] };
+        }
+        const logic = normalizeLogicValue(block.when.logic || 'and');
+        if (logic === 'not') {
+            const child = block.when.clause && typeof block.when.clause === 'object'
+                ? block.when.clause
+                : (Array.isArray(block.when.clauses) ? block.when.clauses[0] : null);
+            block.when.logic = 'not';
+            block.when.clause = child?.logic ? child : normalizePromptClause(child || primaryClause);
+            delete block.when.clauses;
+            return block.when;
+        }
+        const clauses = Array.isArray(block.when.clauses) ? block.when.clauses : [];
+        block.when.logic = logic;
+        block.when.clauses = clauses.length
+            ? clauses.map(item => (item?.logic ? item : normalizePromptClause(item)))
+            : [normalizePromptClause(primaryClause)];
+        delete block.when.clause;
+        return block.when;
+    }
+
+    syncBlockNodeGraphFromWhen(block) {
+        if (!block || typeof block !== 'object') return null;
+        const primaryClause = this.ensureBlockPrimaryClause(block);
+        block.nodeGraph = normalizeNodeGraph(null, block.when, primaryClause);
+        return block.nodeGraph;
+    }
+
+    renderConditionNodeForm(node, path = 'root', depth = 0) {
+        if (!node || typeof node !== 'object') return '';
+        if (isConditionTreeGroup(node)) {
+            const logic = normalizeLogicValue(node.logic || 'and');
+            const logicLabel = this.getOptionLabel(NODE_LOGIC_OPTIONS, logic, 'AND');
+            const children = logic === 'not'
+                ? [node.clause || createDefaultPromptClause()]
+                : (Array.isArray(node.clauses) && node.clauses.length ? node.clauses : [createDefaultPromptClause()]);
+            return `
+                <div class="world-cond-group" data-path="${path}" data-depth="${depth}">
+                    <div class="world-cond-group-head">
+                        <button type="button" class="world-app-select-btn world-cond-select world-cond-logic-btn" data-path="${path}" data-field="logic">
+                            <span>${escapeHtml(logicLabel)}</span>
+                            <span class="world-app-select-btn-chevron">▾</span>
+                        </button>
+                        <div class="world-cond-actions">
+                            <button type="button" class="world-cond-action-btn" data-action="add-clause" data-path="${path}">+条件</button>
+                            <button type="button" class="world-cond-action-btn" data-action="add-group" data-path="${path}">+组</button>
+                            ${path === 'root' ? '' : `<button type="button" class="world-cond-action-btn" data-action="move-up" data-path="${path}">上移</button>`}
+                            ${path === 'root' ? '' : `<button type="button" class="world-cond-action-btn" data-action="move-down" data-path="${path}">下移</button>`}
+                            ${path === 'root' ? '' : `<button type="button" class="world-cond-action-btn danger" data-action="delete" data-path="${path}">删除</button>`}
+                        </div>
+                    </div>
+                    <div class="world-cond-group-body">
+                        ${children.map((child, idx) => this.renderConditionNodeForm(child, `${path}.${idx}`, depth + 1)).join('')}
+                    </div>
+                </div>
+            `;
+        }
+        const clause = normalizePromptClause(node);
+        const opLabel = this.getOptionLabel(BLOCK_OP_OPTIONS, clause.op, '大于 (>)');
+        const rightTypeLabel = this.getOptionLabel(BLOCK_RIGHT_TYPE_OPTIONS, clause.rightType, '数字');
+        const varLabel = clause.left || '选择变量';
+        const showRightValue = !['is_empty', 'not_empty'].includes(String(clause.op || '').trim().toLowerCase());
+        const rightValue = stringifyTypedValue(clause.right, clause.rightType);
+        return `
+            <div class="world-cond-clause" data-path="${path}" data-depth="${depth}">
+                <div class="world-cond-clause-row">
+                    <button type="button" class="world-app-select-btn world-cond-select" data-path="${path}" data-field="left">
+                        <span>${escapeHtml(varLabel)}</span>
+                        <span class="world-app-select-btn-chevron">▾</span>
+                    </button>
+                    <button type="button" class="world-app-select-btn world-cond-select world-cond-op-btn" data-path="${path}" data-field="op">
+                        <span>${escapeHtml(opLabel)}</span>
+                        <span class="world-app-select-btn-chevron">▾</span>
+                    </button>
+                    <button type="button" class="world-app-select-btn world-cond-select world-cond-type-btn" data-path="${path}" data-field="rightType" ${showRightValue ? '' : 'style="display:none;"'}>
+                        <span>${escapeHtml(rightTypeLabel)}</span>
+                        <span class="world-app-select-btn-chevron">▾</span>
+                    </button>
+                </div>
+                <div class="world-cond-clause-row world-cond-clause-row-bottom">
+                    <input type="text" class="world-cond-input ${showRightValue ? '' : 'is-hidden'}" data-path="${path}" data-field="right" value="${escapeHtml(rightValue)}" placeholder="例如 10 / true / 变量名" ${showRightValue ? '' : 'disabled'}>
+                    <div class="world-cond-actions">
+                        <button type="button" class="world-cond-action-btn" data-action="new-var" data-path="${path}">新变量</button>
+                        <button type="button" class="world-cond-action-btn" data-action="move-up" data-path="${path}">上移</button>
+                        <button type="button" class="world-cond-action-btn" data-action="move-down" data-path="${path}">下移</button>
+                        <button type="button" class="world-cond-action-btn danger" data-action="delete" data-path="${path}">删除</button>
+                    </div>
+                </div>
+                ${clause.defineVariable?.name ? `<div class="world-cond-chip">首次发送时自动补建变量：${escapeHtml(clause.defineVariable.name)}</div>` : ''}
+            </div>
+        `;
+    }
+
+    renderConditionFormEditor(block) {
+        const tree = this.ensureBlockConditionTree(block);
+        return `
+            <div class="world-cond-form" id="we-condition-form">
+                <div class="world-cond-form-header">
+                    <div class="world-cond-form-title">条件结构</div>
+                    <div class="world-cond-form-hint">表单模式下可完整编辑 AND / OR / NOT 与多条件。</div>
+                </div>
+                <div class="world-cond-form-body">
+                    ${this.renderConditionNodeForm(tree, 'root', 0)}
+                </div>
+            </div>
+        `;
+    }
+
+    mountConditionFormEditor(block, markRefDirty) {
+        const container = this.editorEl?.querySelector('#we-condition-form');
+        if (!container || !block) return;
+        const varOptions = this.getSessionVariableOptions();
+        const rerender = () => {
+            this.syncBlockNodeGraphFromWhen(block);
+            this.renderEditor();
+            if (typeof markRefDirty === 'function') markRefDirty();
+        };
+        const getClauseNode = (path) => {
+            const node = this.getConditionNodeAtPath(block, path);
+            if (!node || isConditionTreeGroup(node)) return null;
+            return node;
+        };
+
+        container.querySelectorAll('.world-cond-select').forEach((btn) => {
+            btn.addEventListener('click', (ev) => {
+                ev.preventDefault();
+                ev.stopPropagation();
+                const path = String(btn.dataset.path || 'root');
+                const field = String(btn.dataset.field || '');
+                let options = [];
+                let currentValue = '';
+                if (field === 'logic') {
+                    const group = this.getConditionNodeAtPath(block, path);
+                    options = NODE_LOGIC_OPTIONS;
+                    currentValue = String(group?.logic || 'and');
+                } else if (field === 'left') {
+                    const clause = getClauseNode(path);
+                    options = [...varOptions, { value: '__create_var__', label: '＋ 新建变量…' }];
+                    currentValue = String(clause?.left || '');
+                } else if (field === 'op') {
+                    const clause = getClauseNode(path);
+                    options = BLOCK_OP_OPTIONS;
+                    currentValue = String(clause?.op || '>');
+                } else if (field === 'rightType') {
+                    const clause = getClauseNode(path);
+                    options = BLOCK_RIGHT_TYPE_OPTIONS;
+                    currentValue = String(clause?.rightType || 'number');
+                }
+                this.openCustomSelectMenu({
+                    anchorEl: btn,
+                    options,
+                    currentValue,
+                    onSelect: (value) => {
+                        if (field === 'logic') {
+                            this.updateConditionNodeField(block, path, 'logic', value);
+                            rerender();
+                            return;
+                        }
+                        const clause = getClauseNode(path);
+                        if (!clause) return;
+                        if (field === 'left') {
+                            if (value === '__create_var__') {
+                                void this.openVariableModal({
+                                    name: clause.left,
+                                    type: clause.defineVariable?.type || 'number',
+                                    defaultValue: clause.defineVariable?.default ?? 0,
+                                    op: clause.op || '>',
+                                    rightType: clause.rightType || 'number',
+                                    rightValue: clause.right ?? 10,
+                                }).then((payload) => {
+                                    if (!payload) return;
+                                    if (!this.applyVariablePayloadToClause(clause, payload)) return;
+                                    this.ensureVariableInStore(payload.name, payload.type, payload.defaultValue);
+                                    rerender();
+                                });
+                                return;
+                            }
+                            clause.left = String(value || '').trim();
+                            if (clause.defineVariable?.name && clause.defineVariable.name !== clause.left) clause.defineVariable = null;
+                        } else if (field === 'op') {
+                            clause.op = String(value || '>');
+                        } else if (field === 'rightType') {
+                            clause.rightType = normalizeRightTypeValue(value);
+                            clause.right = parseTypedValue(clause.right, clause.rightType);
+                        }
+                        rerender();
+                    },
+                });
+            });
+        });
+
+        container.querySelectorAll('.world-cond-input').forEach((input) => {
+            input.addEventListener('input', () => {
+                const path = String(input.dataset.path || '');
+                const clause = getClauseNode(path);
+                if (!clause) return;
+                clause.right = parseTypedValue(input.value, clause.rightType);
+                this.syncBlockNodeGraphFromWhen(block);
+                if (typeof markRefDirty === 'function') markRefDirty();
+            });
+        });
+
+        container.querySelectorAll('.world-cond-action-btn').forEach((btn) => {
+            btn.addEventListener('click', () => {
+                const path = String(btn.dataset.path || 'root');
+                const action = String(btn.dataset.action || '');
+                if (action === 'add-clause') {
+                    this.addConditionClause(block, path);
+                    rerender();
+                    return;
+                }
+                if (action === 'add-group') {
+                    this.addConditionGroup(block, path, 'and');
+                    rerender();
+                    return;
+                }
+                if (action === 'delete') {
+                    this.removeConditionNode(block, path);
+                    rerender();
+                    return;
+                }
+                if (action === 'move-up') {
+                    if (this.moveConditionNode(block, path, -1)) rerender();
+                    return;
+                }
+                if (action === 'move-down') {
+                    if (this.moveConditionNode(block, path, 1)) rerender();
+                    return;
+                }
+                if (action === 'new-var') {
+                    const clause = getClauseNode(path);
+                    if (!clause) return;
+                    void this.openVariableModal({
+                        name: clause.left,
+                        type: clause.defineVariable?.type || 'number',
+                        defaultValue: clause.defineVariable?.default ?? 0,
+                        op: clause.op || '>',
+                        rightType: clause.rightType || 'number',
+                        rightValue: clause.right ?? 10,
+                    }).then((payload) => {
+                        if (!payload) return;
+                        if (!this.applyVariablePayloadToClause(clause, payload)) return;
+                        this.ensureVariableInStore(payload.name, payload.type, payload.defaultValue);
+                        rerender();
+                    });
+                }
+            });
+        });
     }
 
     getSessionVariableOptions() {
@@ -1323,6 +2588,773 @@ export class WorldEditorModal {
         return true;
     }
 
+    mountNodeEditor({ entry, block, markRefDirty }) {
+        const nodeEditorEl = this.editorEl?.querySelector('#we-node-editor');
+        const nodeCanvasWrap = this.editorEl?.querySelector('#we-node-canvas-wrap');
+        const nodeSceneEl = this.editorEl?.querySelector('#we-node-scene');
+        const nodeCanvasEl = this.editorEl?.querySelector('#we-node-canvas');
+        const nodeLinksEl = this.editorEl?.querySelector('#we-node-links');
+        const nodeMarqueeEl = this.editorEl?.querySelector('#we-node-marquee');
+        const contextMenuEl = this.editorEl?.querySelector('#we-node-context-menu');
+        if (!nodeEditorEl || !nodeCanvasWrap || !nodeSceneEl || !nodeCanvasEl || !nodeLinksEl || !nodeMarqueeEl || !contextMenuEl || !block) return;
+
+        let graph = this.ensureBlockNodeGraph(block);
+        if (!graph) return;
+        let activeDrag = null;
+        let activeLink = null;
+        let activePan = null;
+        let activeMarquee = null;
+        let previewPoint = null;
+        let spacePressed = false;
+        let sceneWidth = NODE_CANVAS_MIN_WIDTH;
+        let sceneHeight = NODE_CANVAS_MIN_HEIGHT;
+        let zoom = clamp(Number(graph?.viewport?.zoom || 1), 0.55, 1.8);
+        const selectedNodeIds = new Set();
+
+        const getNodeById = (nodeId) => {
+            const id = String(nodeId || '').trim();
+            if (!id) return null;
+            return (graph.nodes || []).find(node => String(node.id || '') === id) || null;
+        };
+        const persistGraph = ({ syncWhen = true } = {}) => {
+            graph.viewport = { x: 0, y: 0, zoom };
+            graph = normalizeNodeGraph(graph, block.when, this.ensureBlockPrimaryClause(block));
+            graph.viewport.zoom = zoom;
+            block.nodeGraph = graph;
+            if (syncWhen) this.syncBlockWhenFromNodeGraph(block, graph);
+            if (typeof markRefDirty === 'function') markRefDirty();
+        };
+        const hideContextMenu = () => {
+            contextMenuEl.innerHTML = '';
+            contextMenuEl.style.display = 'none';
+        };
+        const applyViewport = () => {
+            const scaledWidth = Math.ceil(sceneWidth * zoom);
+            const scaledHeight = Math.ceil(sceneHeight * zoom);
+            nodeSceneEl.style.width = `${scaledWidth}px`;
+            nodeSceneEl.style.height = `${scaledHeight}px`;
+            nodeCanvasEl.style.width = `${sceneWidth}px`;
+            nodeCanvasEl.style.height = `${sceneHeight}px`;
+            nodeLinksEl.style.width = `${sceneWidth}px`;
+            nodeLinksEl.style.height = `${sceneHeight}px`;
+            nodeCanvasEl.style.transform = `scale(${zoom})`;
+            nodeLinksEl.style.transform = `scale(${zoom})`;
+            nodeCanvasEl.style.transformOrigin = '0 0';
+            nodeLinksEl.style.transformOrigin = '0 0';
+        };
+        const setZoom = (nextZoom) => {
+            zoom = clamp(Number(nextZoom || 1), 0.55, 1.8);
+            persistGraph({ syncWhen: false });
+            renderScene();
+        };
+        const getViewCenter = () => {
+            const x = (nodeCanvasWrap.scrollLeft + (nodeCanvasWrap.clientWidth / 2)) / zoom;
+            const y = (nodeCanvasWrap.scrollTop + (nodeCanvasWrap.clientHeight / 2)) / zoom;
+            return { x: Math.max(24, x - 90), y: Math.max(24, y - 50) };
+        };
+        const getNodeLabel = (node) => {
+            const type = normalizeNodeType(node?.type);
+            if (type === 'variable') return '变量';
+            if (type === 'value') return '值';
+            if (type === 'compare') return '比较';
+            if (type === 'logic') return '逻辑';
+            return '输出';
+        };
+        const findPortEl = (nodeId, port, direction) => nodeCanvasEl.querySelector(
+            `.world-node-port[data-node-id="${nodeId}"][data-port="${port}"][data-direction="${direction}"]`,
+        );
+        const portCenter = (nodeId, port, direction) => {
+            const portEl = findPortEl(nodeId, port, direction);
+            if (!portEl) return null;
+            const portRect = portEl.getBoundingClientRect();
+            const canvasRect = nodeCanvasEl.getBoundingClientRect();
+            return {
+                x: (portRect.left - canvasRect.left + (portRect.width / 2)) / zoom,
+                y: (portRect.top - canvasRect.top + (portRect.height / 2)) / zoom,
+            };
+        };
+        const curvePath = (sx, sy, tx, ty) => {
+            const dx = Math.max(56, Math.abs(tx - sx) * 0.45);
+            return `M${sx} ${sy} C${sx + dx} ${sy}, ${tx - dx} ${ty}, ${tx} ${ty}`;
+        };
+        const checkLinkCycle = (fromId, toId) => {
+            const adjacency = new Map();
+            (graph.nodes || []).forEach((node) => adjacency.set(String(node.id || ''), []));
+            (graph.edges || []).forEach((edge) => {
+                const from = String(edge.from || '');
+                const to = String(edge.to || '');
+                if (!adjacency.has(from) || !adjacency.has(to)) return;
+                adjacency.get(from).push(to);
+            });
+            if (adjacency.has(fromId) && adjacency.has(toId)) adjacency.get(fromId).push(toId);
+            const seen = new Set();
+            const stack = [toId];
+            while (stack.length) {
+                const cur = stack.pop();
+                if (cur === fromId) return true;
+                if (seen.has(cur)) continue;
+                seen.add(cur);
+                (adjacency.get(cur) || []).forEach(next => stack.push(next));
+            }
+            return false;
+        };
+        const connectNodes = (fromNodeId, fromPort, toNodeId, toPort) => {
+            if (!fromNodeId || !toNodeId || fromNodeId === toNodeId) return false;
+            const fromNode = getNodeById(fromNodeId);
+            const toNode = getNodeById(toNodeId);
+            if (!fromNode || !toNode) return false;
+            const fromPorts = getNodePortSpec(fromNode).outputs;
+            const toPorts = getNodePortSpec(toNode).inputs;
+            if (!fromPorts.includes(fromPort) || !toPorts.includes(toPort)) return false;
+            if (checkLinkCycle(fromNodeId, toNodeId)) {
+                window.toastr?.warning?.('该连线会形成循环，已阻止');
+                return false;
+            }
+            graph.edges = (graph.edges || []).filter(edge => !(edge.to === toNodeId && edge.toPort === toPort));
+            graph.edges.push({ id: genEdgeId(), from: fromNodeId, fromPort, to: toNodeId, toPort });
+            return true;
+        };
+        const updateSceneSize = () => {
+            const nodes = Array.isArray(graph.nodes) ? graph.nodes : [];
+            const maxX = nodes.reduce((acc, node) => Math.max(acc, Number(node.x || 0)), 0);
+            const maxY = nodes.reduce((acc, node) => Math.max(acc, Number(node.y || 0)), 0);
+            sceneWidth = Math.max(NODE_CANVAS_MIN_WIDTH, Math.ceil(maxX + NODE_CANVAS_PADDING_X));
+            sceneHeight = Math.max(NODE_CANVAS_MIN_HEIGHT, Math.ceil(maxY + NODE_CANVAS_PADDING_Y));
+            nodeLinksEl.setAttribute('viewBox', `0 0 ${sceneWidth} ${sceneHeight}`);
+            applyViewport();
+        };
+        const renderNodeBody = (node) => {
+            const type = normalizeNodeType(node.type);
+            const data = node.data || {};
+            if (type === 'variable') {
+                const label = escapeHtml(String(data.path || '').trim() || '选择变量');
+                return `
+                    <button type="button" class="world-app-select-btn world-node-select" data-node-id="${node.id}" data-field="varPath">
+                        <span>${label}</span>
+                        <span class="world-app-select-btn-chevron">▾</span>
+                    </button>
+                    <div class="world-node-inline-row">
+                        <button type="button" class="world-node-mini-btn world-node-create-var" data-node-id="${node.id}" title="新建变量">+</button>
+                        <label class="world-node-check">
+                            <input type="checkbox" class="world-node-input-check" data-node-id="${node.id}" data-field="autoCreate" ${data.autoCreate ? 'checked' : ''}>
+                            <span>自动建</span>
+                        </label>
+                    </div>
+                `;
+            }
+            if (type === 'value') {
+                const rightTypeLabel = this.getOptionLabel(BLOCK_RIGHT_TYPE_OPTIONS, data.rightType, '数字');
+                return `
+                    <button type="button" class="world-app-select-btn world-node-select" data-node-id="${node.id}" data-field="valueType">
+                        <span>${escapeHtml(rightTypeLabel)}</span>
+                        <span class="world-app-select-btn-chevron">▾</span>
+                    </button>
+                    <input type="text" class="world-node-text-input" data-node-id="${node.id}" data-field="value" value="${escapeHtml(String(data.value || ''))}" placeholder="输入值">
+                `;
+            }
+            if (type === 'compare') {
+                const opLabel = this.getOptionLabel(BLOCK_OP_OPTIONS, data.op, '大于 (>)');
+                return `
+                    <button type="button" class="world-app-select-btn world-node-select" data-node-id="${node.id}" data-field="op">
+                        <span>${escapeHtml(opLabel)}</span>
+                        <span class="world-app-select-btn-chevron">▾</span>
+                    </button>
+                `;
+            }
+            if (type === 'logic') {
+                const logicLabel = this.getOptionLabel(NODE_LOGIC_OPTIONS, data.logic, 'AND');
+                const inputCount = getNodePortSpec(node).inputs.length;
+                return `
+                    <button type="button" class="world-app-select-btn world-node-select" data-node-id="${node.id}" data-field="logic">
+                        <span>${escapeHtml(logicLabel)}</span>
+                        <span class="world-app-select-btn-chevron">▾</span>
+                    </button>
+                    ${normalizeLogicValue(data.logic) === 'not' ? '' : `
+                        <div class="world-node-inline-row">
+                            <button type="button" class="world-node-mini-btn" data-node-id="${node.id}" data-action="add-input" title="增加输入">+</button>
+                            <button type="button" class="world-node-mini-btn" data-node-id="${node.id}" data-action="remove-input" title="减少输入">-</button>
+                            <span class="world-node-count">${inputCount} 路</span>
+                        </div>
+                    `}
+                `;
+            }
+            return '<div class="world-node-output-hint">连接到这里作为注入条件</div>';
+        };
+        const renderNodePorts = (node, direction = 'input') => {
+            const spec = getNodePortSpec(node);
+            const ports = direction === 'output' ? spec.outputs : spec.inputs;
+            return ports.map((port) => `
+                <button
+                    type="button"
+                    class="world-node-port ${direction === 'input' ? 'is-input' : 'is-output'}"
+                    data-direction="${direction}"
+                    data-node-id="${node.id}"
+                    data-port="${port}"
+                    aria-label="${direction === 'input' ? '输入端口' : '输出端口'}"
+                ></button>
+            `).join('');
+        };
+        const renderLinks = () => {
+            const paths = [];
+            (graph.edges || []).forEach((edge) => {
+                const from = portCenter(edge.from, edge.fromPort, 'output');
+                const to = portCenter(edge.to, edge.toPort, 'input');
+                if (!from || !to) return;
+                paths.push(`<path class="world-node-edge" data-edge-id="${edge.id}" d="${curvePath(from.x, from.y, to.x, to.y)}"></path>`);
+            });
+            if (activeLink && previewPoint) {
+                const from = portCenter(activeLink.fromNodeId, activeLink.fromPort, 'output');
+                if (from) paths.push(`<path class="world-node-edge is-preview" d="${curvePath(from.x, from.y, previewPoint.x, previewPoint.y)}"></path>`);
+            }
+            nodeLinksEl.innerHTML = paths.join('');
+        };
+        const renderScene = () => {
+            updateSceneSize();
+            nodeCanvasEl.innerHTML = (graph.nodes || []).map((node) => `
+                <div class="world-node-item world-node-item-${node.type}${selectedNodeIds.has(node.id) ? ' is-selected' : ''}" data-node-id="${node.id}" style="left:${Math.round(Number(node.x || 0))}px; top:${Math.round(Number(node.y || 0))}px;">
+                    <div class="world-node-head" data-node-id="${node.id}">
+                        <span>${getNodeLabel(node)}</span>
+                        ${node.type === 'result' ? '' : `<button type="button" class="world-node-delete" data-node-id="${node.id}" aria-label="删除节点">×</button>`}
+                    </div>
+                    <div class="world-node-body">
+                        ${renderNodeBody(node)}
+                    </div>
+                    <div class="world-node-ports is-input">${renderNodePorts(node, 'input')}</div>
+                    <div class="world-node-ports is-output">${renderNodePorts(node, 'output')}</div>
+                </div>
+            `).join('');
+            renderLinks();
+        };
+        const addNode = (type, center = getViewCenter()) => {
+            const nodeType = normalizeNodeType(type);
+            if (nodeType === 'result' && (graph.nodes || []).some(node => node.type === 'result')) {
+                window.toastr?.info?.('输出节点只保留一个');
+                return;
+            }
+            const node = normalizeGraphNode({ id: genNodeId(), type: nodeType, x: center.x, y: center.y, data: {} }, (graph.nodes || []).length);
+            graph.nodes.push(node);
+            selectedNodeIds.clear();
+            if (node.type !== 'result') selectedNodeIds.add(node.id);
+            persistGraph({ syncWhen: true });
+            renderScene();
+        };
+        const addConditionChain = (payload = null) => {
+            const center = getViewCenter();
+            const variableNode = normalizeGraphNode({
+                id: genNodeId(),
+                type: 'variable',
+                x: center.x - 170,
+                y: center.y - 30,
+                data: payload ? {
+                    path: String(payload.name || '').trim(),
+                    autoCreate: true,
+                    varType: String(payload.type || 'number').trim().toLowerCase(),
+                    defaultValue: payload.defaultValue,
+                } : {},
+            }, graph.nodes.length);
+            const valueNode = normalizeGraphNode({
+                id: genNodeId(),
+                type: 'value',
+                x: center.x - 170,
+                y: center.y + 110,
+                data: payload ? {
+                    rightType: payload.rightType,
+                    value: payload.rightValue,
+                } : {},
+            }, graph.nodes.length + 1);
+            const compareNode = normalizeGraphNode({
+                id: genNodeId(),
+                type: 'compare',
+                x: center.x + 40,
+                y: center.y + 38,
+                data: payload ? {
+                    op: payload.op,
+                    fallbackRightType: payload.rightType,
+                    fallbackRight: payload.rightValue,
+                } : {},
+            }, graph.nodes.length + 2);
+            graph.nodes.push(variableNode, valueNode, compareNode);
+            connectNodes(variableNode.id, 'out', compareNode.id, 'left');
+            connectNodes(valueNode.id, 'out', compareNode.id, 'right');
+            const resultNode = (graph.nodes || []).find(node => node.type === 'result');
+            if (resultNode) connectNodes(compareNode.id, 'out', resultNode.id, 'in');
+            selectedNodeIds.clear();
+            selectedNodeIds.add(variableNode.id);
+            selectedNodeIds.add(valueNode.id);
+            selectedNodeIds.add(compareNode.id);
+            persistGraph({ syncWhen: true });
+            renderScene();
+        };
+        const deleteSelection = () => {
+            if (!selectedNodeIds.size) return;
+            graph.nodes = (graph.nodes || []).filter(node => !selectedNodeIds.has(node.id));
+            graph.edges = (graph.edges || []).filter(edge => !selectedNodeIds.has(edge.from) && !selectedNodeIds.has(edge.to));
+            selectedNodeIds.clear();
+            persistGraph({ syncWhen: true });
+            renderScene();
+        };
+        const duplicateSelection = () => {
+            const sourceNodes = (graph.nodes || []).filter(node => selectedNodeIds.has(node.id));
+            if (!sourceNodes.length) return;
+            const idMap = new Map();
+            const clones = sourceNodes.map((node, idx) => {
+                const clone = normalizeGraphNode({
+                    ...node,
+                    id: genNodeId(),
+                    x: Number(node.x || 0) + 28,
+                    y: Number(node.y || 0) + 28 + (idx * 3),
+                    data: deepClone(node.data),
+                }, (graph.nodes || []).length + idx);
+                idMap.set(node.id, clone.id);
+                return clone;
+            });
+            const cloneEdges = (graph.edges || [])
+                .filter(edge => idMap.has(edge.from) && idMap.has(edge.to))
+                .map(edge => ({ id: genEdgeId(), from: idMap.get(edge.from), fromPort: edge.fromPort, to: idMap.get(edge.to), toPort: edge.toPort }));
+            graph.nodes.push(...clones);
+            graph.edges.push(...cloneEdges);
+            selectedNodeIds.clear();
+            clones.forEach(node => selectedNodeIds.add(node.id));
+            persistGraph({ syncWhen: true });
+            renderScene();
+        };
+        const showContextMenu = (event) => {
+            const items = [
+                { action: 'addCondition', label: '新增条件链' },
+                { action: 'addLogic', label: '新增逻辑节点' },
+                { action: 'layout', label: '自动排版' },
+            ];
+            if (selectedNodeIds.size) {
+                items.unshift({ action: 'duplicate', label: '复制所选' });
+                items.unshift({ action: 'delete', label: '删除所选' });
+            }
+            contextMenuEl.innerHTML = items.map(item => `<button type="button" class="world-node-context-item" data-action="${item.action}">${item.label}</button>`).join('');
+            const wrapRect = nodeCanvasWrap.getBoundingClientRect();
+            const left = clamp(event.clientX - wrapRect.left + nodeCanvasWrap.scrollLeft, 8, Math.max(8, Math.ceil(sceneWidth * zoom) - 180));
+            const top = clamp(event.clientY - wrapRect.top + nodeCanvasWrap.scrollTop, 8, Math.max(8, Math.ceil(sceneHeight * zoom) - 180));
+            contextMenuEl.style.left = `${left}px`;
+            contextMenuEl.style.top = `${top}px`;
+            contextMenuEl.style.display = 'block';
+        };
+
+        const onWrapPointerDown = (event) => {
+            if (event.target?.closest?.('.world-node-item, .world-node-context-menu')) return;
+            hideContextMenu();
+            if (event.button === 1 || (spacePressed && event.button === 0)) {
+                event.preventDefault();
+                activePan = {
+                    startX: event.clientX,
+                    startY: event.clientY,
+                    scrollLeft: nodeCanvasWrap.scrollLeft,
+                    scrollTop: nodeCanvasWrap.scrollTop,
+                };
+                return;
+            }
+            if (event.button !== 0) return;
+            const wrapRect = nodeCanvasWrap.getBoundingClientRect();
+            const contentX = event.clientX - wrapRect.left + nodeCanvasWrap.scrollLeft;
+            const contentY = event.clientY - wrapRect.top + nodeCanvasWrap.scrollTop;
+            activeMarquee = { startX: contentX, startY: contentY, endX: contentX, endY: contentY };
+            nodeMarqueeEl.style.display = 'block';
+        };
+        const onCanvasPointerDown = (event) => {
+            hideContextMenu();
+            const outputPortEl = event.target?.closest?.('.world-node-port.is-output');
+            if (outputPortEl) {
+                const nodeId = String(outputPortEl.dataset.nodeId || '');
+                const port = String(outputPortEl.dataset.port || 'out');
+                activeLink = { fromNodeId: nodeId, fromPort: port };
+                const canvasRect = nodeCanvasEl.getBoundingClientRect();
+                previewPoint = {
+                    x: (event.clientX - canvasRect.left) / zoom,
+                    y: (event.clientY - canvasRect.top) / zoom,
+                };
+                renderLinks();
+                return;
+            }
+            const headEl = event.target?.closest?.('.world-node-head');
+            if (!headEl || event.target?.closest?.('button')) return;
+            const nodeId = String(headEl.dataset.nodeId || '');
+            const node = getNodeById(nodeId);
+            if (!node || node.type === 'result') return;
+            event.preventDefault();
+            if (event.shiftKey) {
+                if (selectedNodeIds.has(nodeId)) selectedNodeIds.delete(nodeId);
+                else selectedNodeIds.add(nodeId);
+            } else if (!selectedNodeIds.has(nodeId)) {
+                selectedNodeIds.clear();
+                selectedNodeIds.add(nodeId);
+            }
+            const nodes = [...selectedNodeIds].map(id => getNodeById(id)).filter(Boolean);
+            activeDrag = {
+                startX: event.clientX,
+                startY: event.clientY,
+                origins: new Map(nodes.map(item => [item.id, { x: Number(item.x || 0), y: Number(item.y || 0) }])),
+            };
+            renderScene();
+        };
+        const onDocPointerMove = (event) => {
+            if (activePan) {
+                nodeCanvasWrap.scrollLeft = activePan.scrollLeft - (event.clientX - activePan.startX);
+                nodeCanvasWrap.scrollTop = activePan.scrollTop - (event.clientY - activePan.startY);
+                return;
+            }
+            if (activeDrag) {
+                const dx = (event.clientX - activeDrag.startX) / zoom;
+                const dy = (event.clientY - activeDrag.startY) / zoom;
+                activeDrag.origins.forEach((origin, nodeId) => {
+                    const node = getNodeById(nodeId);
+                    if (!node) return;
+                    node.x = clamp(origin.x + dx, 0, Math.max(24, sceneWidth - 170));
+                    node.y = clamp(origin.y + dy, 0, Math.max(24, sceneHeight - 70));
+                    const el = nodeCanvasEl.querySelector(`.world-node-item[data-node-id="${node.id}"]`);
+                    if (el) {
+                        el.style.left = `${Math.round(node.x)}px`;
+                        el.style.top = `${Math.round(node.y)}px`;
+                    }
+                });
+                renderLinks();
+                return;
+            }
+            if (activeLink) {
+                const canvasRect = nodeCanvasEl.getBoundingClientRect();
+                previewPoint = {
+                    x: (event.clientX - canvasRect.left) / zoom,
+                    y: (event.clientY - canvasRect.top) / zoom,
+                };
+                renderLinks();
+                return;
+            }
+            if (activeMarquee) {
+                const wrapRect = nodeCanvasWrap.getBoundingClientRect();
+                activeMarquee.endX = event.clientX - wrapRect.left + nodeCanvasWrap.scrollLeft;
+                activeMarquee.endY = event.clientY - wrapRect.top + nodeCanvasWrap.scrollTop;
+                const left = Math.min(activeMarquee.startX, activeMarquee.endX);
+                const top = Math.min(activeMarquee.startY, activeMarquee.endY);
+                const width = Math.abs(activeMarquee.endX - activeMarquee.startX);
+                const height = Math.abs(activeMarquee.endY - activeMarquee.startY);
+                nodeMarqueeEl.style.left = `${left}px`;
+                nodeMarqueeEl.style.top = `${top}px`;
+                nodeMarqueeEl.style.width = `${width}px`;
+                nodeMarqueeEl.style.height = `${height}px`;
+            }
+        };
+        const onDocPointerUp = (event) => {
+            if (activePan) activePan = null;
+            if (activeDrag) {
+                activeDrag = null;
+                persistGraph({ syncWhen: true });
+            }
+            if (activeLink) {
+                const inputPortEl = event.target?.closest?.('.world-node-port.is-input');
+                if (inputPortEl) {
+                    const toNodeId = String(inputPortEl.dataset.nodeId || '');
+                    const toPort = String(inputPortEl.dataset.port || 'in');
+                    if (connectNodes(activeLink.fromNodeId, activeLink.fromPort, toNodeId, toPort)) {
+                        persistGraph({ syncWhen: true });
+                    }
+                }
+                activeLink = null;
+                previewPoint = null;
+                renderScene();
+            }
+            if (activeMarquee) {
+                const wrapRect = nodeCanvasWrap.getBoundingClientRect();
+                const left = Math.min(activeMarquee.startX, activeMarquee.endX) - nodeCanvasWrap.scrollLeft;
+                const top = Math.min(activeMarquee.startY, activeMarquee.endY) - nodeCanvasWrap.scrollTop;
+                const right = Math.max(activeMarquee.startX, activeMarquee.endX) - nodeCanvasWrap.scrollLeft;
+                const bottom = Math.max(activeMarquee.startY, activeMarquee.endY) - nodeCanvasWrap.scrollTop;
+                selectedNodeIds.clear();
+                nodeCanvasEl.querySelectorAll('.world-node-item').forEach((nodeEl) => {
+                    const rect = nodeEl.getBoundingClientRect();
+                    const relLeft = rect.left - wrapRect.left;
+                    const relTop = rect.top - wrapRect.top;
+                    const relRight = relLeft + rect.width;
+                    const relBottom = relTop + rect.height;
+                    const nodeId = String(nodeEl.dataset.nodeId || '');
+                    const node = getNodeById(nodeId);
+                    if (node?.type === 'result') return;
+                    if (relRight >= left && relLeft <= right && relBottom >= top && relTop <= bottom) {
+                        selectedNodeIds.add(nodeId);
+                    }
+                });
+                activeMarquee = null;
+                nodeMarqueeEl.style.display = 'none';
+                renderScene();
+            }
+        };
+        const onCanvasClick = (event) => {
+            const miniActionBtn = event.target?.closest?.('.world-node-mini-btn[data-action]');
+            if (miniActionBtn) {
+                const nodeId = String(miniActionBtn.dataset.nodeId || '');
+                const action = String(miniActionBtn.dataset.action || '');
+                const node = getNodeById(nodeId);
+                if (!node || node.type !== 'logic') return;
+                if (action === 'add-input') {
+                    node.data.inputCount = Math.min(8, Number(node.data.inputCount || 2) + 1);
+                } else if (action === 'remove-input') {
+                    node.data.inputCount = Math.max(2, Number(node.data.inputCount || 2) - 1);
+                    const validPorts = new Set(getNodePortSpec(node).inputs);
+                    graph.edges = (graph.edges || []).filter(edge => edge.to !== node.id || validPorts.has(edge.toPort));
+                }
+                persistGraph({ syncWhen: true });
+                renderScene();
+                return;
+            }
+            const deleteBtn = event.target?.closest?.('.world-node-delete');
+            if (deleteBtn) {
+                const nodeId = String(deleteBtn.dataset.nodeId || '');
+                graph.nodes = (graph.nodes || []).filter(node => node.id !== nodeId);
+                graph.edges = (graph.edges || []).filter(edge => edge.from !== nodeId && edge.to !== nodeId);
+                selectedNodeIds.delete(nodeId);
+                persistGraph({ syncWhen: true });
+                renderScene();
+                return;
+            }
+            const createVarBtn = event.target?.closest?.('.world-node-create-var');
+            if (createVarBtn) {
+                const nodeId = String(createVarBtn.dataset.nodeId || '');
+                const node = getNodeById(nodeId);
+                if (!node || node.type !== 'variable') return;
+                void this.openVariableModal({
+                    name: node?.data?.path || '',
+                    type: node?.data?.varType || 'number',
+                    defaultValue: node?.data?.defaultValue ?? 0,
+                    op: '>',
+                    rightType: 'number',
+                    rightValue: 10,
+                }).then((payload) => {
+                    if (!payload) return;
+                    if (!this.applyVariablePayloadToNode(node, payload)) return;
+                    this.ensureVariableInStore(payload.name, payload.type, payload.defaultValue);
+                    persistGraph({ syncWhen: true });
+                    renderScene();
+                });
+                return;
+            }
+            const selectBtn = event.target?.closest?.('.world-node-select');
+            if (selectBtn) {
+                event.preventDefault();
+                event.stopPropagation();
+                const nodeId = String(selectBtn.dataset.nodeId || '');
+                const field = String(selectBtn.dataset.field || '');
+                const node = getNodeById(nodeId);
+                if (!node) return;
+                let options = [];
+                let current = '';
+                if (field === 'op') {
+                    options = BLOCK_OP_OPTIONS;
+                    current = String(node?.data?.op || '>');
+                } else if (field === 'logic') {
+                    options = NODE_LOGIC_OPTIONS;
+                    current = String(node?.data?.logic || 'and');
+                } else if (field === 'valueType') {
+                    options = BLOCK_RIGHT_TYPE_OPTIONS;
+                    current = String(node?.data?.rightType || 'number');
+                } else if (field === 'varPath') {
+                    options = [...this.getSessionVariableOptions(), { value: '__create_var__', label: '＋ 新建变量…' }];
+                    current = String(node?.data?.path || '');
+                }
+                this.openCustomSelectMenu({
+                    anchorEl: selectBtn,
+                    options,
+                    currentValue: current,
+                    onSelect: (value) => {
+                        if (field === 'op') {
+                            node.data.op = String(value || '>');
+                        } else if (field === 'logic') {
+                            node.data.logic = normalizeLogicValue(value);
+                            if (node.data.logic === 'not') node.data.inputCount = 1;
+                            else node.data.inputCount = Math.max(2, Number(node.data.inputCount || 2));
+                        } else if (field === 'valueType') {
+                            const nextType = normalizeRightTypeValue(value);
+                            node.data.rightType = nextType;
+                            node.data.value = stringifyTypedValue(parseTypedValue(node.data.value, nextType), nextType);
+                        } else if (field === 'varPath') {
+                            if (value === '__create_var__') {
+                                void this.openVariableModal({
+                                    name: node?.data?.path || '',
+                                    type: node?.data?.varType || 'number',
+                                    defaultValue: node?.data?.defaultValue ?? 0,
+                                    op: '>',
+                                    rightType: 'number',
+                                    rightValue: 10,
+                                }).then((payload) => {
+                                    if (!payload) return;
+                                    if (!this.applyVariablePayloadToNode(node, payload)) return;
+                                    this.ensureVariableInStore(payload.name, payload.type, payload.defaultValue);
+                                    persistGraph({ syncWhen: true });
+                                    renderScene();
+                                });
+                                return;
+                            }
+                            node.data.path = String(value || '').trim();
+                            if (node.data.path) node.data.autoCreate = false;
+                        }
+                        persistGraph({ syncWhen: true });
+                        renderScene();
+                    },
+                });
+                return;
+            }
+            const nodeItem = event.target?.closest?.('.world-node-item');
+            if (nodeItem && !event.target?.closest?.('button, input')) {
+                const nodeId = String(nodeItem.dataset.nodeId || '');
+                const node = getNodeById(nodeId);
+                if (!node || node.type === 'result') return;
+                if (event.shiftKey) {
+                    if (selectedNodeIds.has(nodeId)) selectedNodeIds.delete(nodeId);
+                    else selectedNodeIds.add(nodeId);
+                } else {
+                    selectedNodeIds.clear();
+                    selectedNodeIds.add(nodeId);
+                }
+                renderScene();
+                return;
+            }
+            if (!event.target?.closest?.('.world-node-item')) {
+                selectedNodeIds.clear();
+                hideContextMenu();
+                renderScene();
+            }
+        };
+        const onLinksClick = (event) => {
+            const removeEdge = event.target?.closest?.('.world-node-edge');
+            if (!removeEdge || removeEdge.classList.contains('is-preview')) return;
+            graph.edges = (graph.edges || []).filter(edge => String(edge.id || '') !== String(removeEdge.dataset.edgeId || ''));
+            persistGraph({ syncWhen: true });
+            renderScene();
+        };
+        const onCanvasInput = (event) => {
+            const inputEl = event.target?.closest?.('.world-node-text-input');
+            if (!inputEl) return;
+            const nodeId = String(inputEl.dataset.nodeId || '');
+            const field = String(inputEl.dataset.field || '');
+            const node = getNodeById(nodeId);
+            if (!node) return;
+            if (field === 'value') node.data.value = String(inputEl.value || '');
+            persistGraph({ syncWhen: true });
+        };
+        const onCanvasChange = (event) => {
+            const checkEl = event.target?.closest?.('.world-node-input-check');
+            if (!checkEl) return;
+            const nodeId = String(checkEl.dataset.nodeId || '');
+            const field = String(checkEl.dataset.field || '');
+            const node = getNodeById(nodeId);
+            if (!node) return;
+            if (field === 'autoCreate') node.data.autoCreate = Boolean(checkEl.checked);
+            persistGraph({ syncWhen: true });
+            renderScene();
+        };
+        const onToolbarClick = (event) => {
+            const btn = event.target?.closest?.('.world-node-toolbar-btn');
+            if (!btn) return;
+            const action = String(btn.dataset.action || '');
+            if (action === 'addCondition') return void addConditionChain();
+            if (action === 'addVariable') {
+                void this.openVariableModal().then((payload) => {
+                    if (!payload) return;
+                    this.ensureVariableInStore(payload.name, payload.type, payload.defaultValue);
+                    addConditionChain(payload);
+                });
+                return;
+            }
+            if (action === 'addValue') return void addNode('value');
+            if (action === 'addCompare') return void addNode('compare');
+            if (action === 'addLogic') return void addNode('logic');
+            if (action === 'zoomIn') return void setZoom(zoom + 0.1);
+            if (action === 'zoomOut') return void setZoom(zoom - 0.1);
+            if (action === 'zoomReset') return void setZoom(1);
+            if (action === 'layout') {
+                autoLayoutNodeGraph(graph);
+                persistGraph({ syncWhen: true });
+                renderScene();
+            }
+        };
+        const onWrapContextMenu = (event) => {
+            event.preventDefault();
+            const nodeItem = event.target?.closest?.('.world-node-item');
+            if (nodeItem) {
+                const nodeId = String(nodeItem.dataset.nodeId || '');
+                const node = getNodeById(nodeId);
+                if (node?.type !== 'result' && !selectedNodeIds.has(nodeId)) {
+                    selectedNodeIds.clear();
+                    selectedNodeIds.add(nodeId);
+                    renderScene();
+                }
+            }
+            showContextMenu(event);
+        };
+        const onContextMenuClick = (event) => {
+            const btn = event.target?.closest?.('.world-node-context-item');
+            if (!btn) return;
+            const action = String(btn.dataset.action || '');
+            hideContextMenu();
+            if (action === 'delete') return void deleteSelection();
+            if (action === 'duplicate') return void duplicateSelection();
+            if (action === 'addCondition') return void addConditionChain();
+            if (action === 'addLogic') return void addNode('logic');
+            if (action === 'layout') {
+                autoLayoutNodeGraph(graph);
+                persistGraph({ syncWhen: true });
+                renderScene();
+            }
+        };
+        const onWheel = (event) => {
+            if (!event.ctrlKey) return;
+            event.preventDefault();
+            setZoom(zoom + (event.deltaY < 0 ? 0.08 : -0.08));
+        };
+        const onKeyDown = (event) => {
+            if (event.code === 'Space') spacePressed = true;
+            if ((event.key === 'Delete' || event.key === 'Backspace') && selectedNodeIds.size) {
+                event.preventDefault();
+                deleteSelection();
+            }
+        };
+        const onKeyUp = (event) => {
+            if (event.code === 'Space') spacePressed = false;
+        };
+        const onDocPointerDown = (event) => {
+            if (!nodeCanvasWrap.contains(event.target)) hideContextMenu();
+        };
+
+        nodeCanvasWrap.addEventListener('pointerdown', onWrapPointerDown);
+        nodeCanvasWrap.addEventListener('contextmenu', onWrapContextMenu);
+        nodeCanvasWrap.addEventListener('wheel', onWheel, { passive: false });
+        nodeCanvasEl.addEventListener('pointerdown', onCanvasPointerDown);
+        nodeCanvasEl.addEventListener('click', onCanvasClick);
+        nodeCanvasEl.addEventListener('input', onCanvasInput);
+        nodeCanvasEl.addEventListener('change', onCanvasChange);
+        nodeLinksEl.addEventListener('click', onLinksClick);
+        nodeEditorEl.addEventListener('click', onToolbarClick);
+        contextMenuEl.addEventListener('click', onContextMenuClick);
+        document.addEventListener('pointerdown', onDocPointerDown, true);
+        document.addEventListener('pointermove', onDocPointerMove);
+        document.addEventListener('pointerup', onDocPointerUp);
+        document.addEventListener('keydown', onKeyDown);
+        document.addEventListener('keyup', onKeyUp);
+
+        renderScene();
+        this.nodeEditorCleanup = () => {
+            nodeCanvasWrap.removeEventListener('pointerdown', onWrapPointerDown);
+            nodeCanvasWrap.removeEventListener('contextmenu', onWrapContextMenu);
+            nodeCanvasWrap.removeEventListener('wheel', onWheel);
+            nodeCanvasEl.removeEventListener('pointerdown', onCanvasPointerDown);
+            nodeCanvasEl.removeEventListener('click', onCanvasClick);
+            nodeCanvasEl.removeEventListener('input', onCanvasInput);
+            nodeCanvasEl.removeEventListener('change', onCanvasChange);
+            nodeLinksEl.removeEventListener('click', onLinksClick);
+            nodeEditorEl.removeEventListener('click', onToolbarClick);
+            contextMenuEl.removeEventListener('click', onContextMenuClick);
+            document.removeEventListener('pointerdown', onDocPointerDown, true);
+            document.removeEventListener('pointermove', onDocPointerMove);
+            document.removeEventListener('pointerup', onDocPointerUp);
+            document.removeEventListener('keydown', onKeyDown);
+            document.removeEventListener('keyup', onKeyUp);
+            hideContextMenu();
+        };
+    }
     ensureBlockManageModal() {
         if (this.blockManageModal) return;
         this.blockManageOverlay = document.createElement('div');
@@ -1748,15 +3780,20 @@ export class WorldEditorModal {
             this.closeCustomSelectMenu();
         };
         const onResize = () => this.closeCustomSelectMenu();
+        const onScroll = (ev) => {
+            const target = ev?.target;
+            if (target && (menu.contains(target) || anchorEl.contains(target))) return;
+            this.closeCustomSelectMenu();
+        };
         document.addEventListener('mousedown', onDocClick, true);
         document.addEventListener('touchstart', onDocClick, true);
         window.addEventListener('resize', onResize);
-        window.addEventListener('scroll', onResize, true);
+        window.addEventListener('scroll', onScroll, true);
         this.customSelectMenuCleanup = () => {
             document.removeEventListener('mousedown', onDocClick, true);
             document.removeEventListener('touchstart', onDocClick, true);
             window.removeEventListener('resize', onResize);
-            window.removeEventListener('scroll', onResize, true);
+            window.removeEventListener('scroll', onScroll, true);
         };
         this.customSelectMenuAnchor = anchorEl;
     }
@@ -1957,6 +3994,7 @@ export class WorldEditorModal {
 
     renderEditor() {
         if (!this.editorEl) return;
+        this.cleanupNodeEditor();
         this.closeCustomSelectMenu();
         const entry = this.data.entries[this.currentIndex];
         if (!entry) {
@@ -1970,6 +4008,8 @@ export class WorldEditorModal {
         const activeBlock = blocks[blockPage] || blocks[0];
         const blockFlipped = this.isBlockFlipped(activeBlock?.id);
         const blockExpanded = this.isBlockExpanded(activeBlock?.id);
+        const blockConditionMode = this.getBlockConditionMode(activeBlock?.id, activeBlock);
+        const blockNodeMode = blockConditionMode === 'node';
         const primaryClause = this.ensureBlockPrimaryClause(activeBlock);
         const aiBusy = this.aiBusy && String(entry.id || '') === String(this.aiPendingEntryId || '');
         const triggerStrategy = this.getEntryTriggerStrategy(entry);
@@ -2015,36 +4055,36 @@ export class WorldEditorModal {
                             <textarea id="we-block-content" placeholder="输入本页提示词内容">${activeBlock?.content || ''}</textarea>
                         </div>
                         <div class="world-flip-card-face world-flip-card-back">
-                            <div class="world-entry-grid world-entry-grid-2">
-                                <div class="world-entry-field">
-                                    <label>变量</label>
-                                    <button type="button" class="world-app-select-btn" id="we-block-var-btn">
-                                        <span>${blockVarLabel}</span>
-                                        <span class="world-app-select-btn-chevron">▾</span>
-                                    </button>
-                                </div>
-                                <div class="world-entry-field">
-                                    <label>比较</label>
-                                    <button type="button" class="world-app-select-btn" id="we-block-op-btn">
-                                        <span>${opLabelText}</span>
-                                        <span class="world-app-select-btn-chevron">▾</span>
-                                    </button>
-                                </div>
-                                <div class="world-entry-field">
-                                    <label>类型</label>
-                                    <button type="button" class="world-app-select-btn" id="we-block-rightType-btn">
-                                        <span>${rightTypeLabelText}</span>
-                                        <span class="world-app-select-btn-chevron">▾</span>
-                                    </button>
-                                </div>
-                                <div class="world-entry-field">
-                                    <label>值</label>
-                                    <input type="text" id="we-block-right" value="${blockValueText}" placeholder="例如 10 / true / 变量名">
-                                </div>
+                            <div class="world-block-back-tools">
+                                <button type="button" class="world-cond-mode-btn" id="we-cond-mode-toggle" aria-label="${blockNodeMode ? '切换为表单模式' : '切换为节点模式'}">
+                                    ${blockNodeMode ? BLOCK_MODE_FORM_ICON_SVG : BLOCK_MODE_NODE_ICON_SVG}
+                                </button>
                             </div>
-                            <div class="world-entry-actions" style="margin-top:8px;">
-                                <button type="button" id="we-block-new-var">新增变量</button>
-                            </div>
+                            ${blockNodeMode ? `
+                                <div class="world-node-editor" id="we-node-editor">
+                                    <div class="world-node-toolbar">
+                                        <button type="button" class="world-node-toolbar-btn" data-action="addCondition" title="新增条件链">+</button>
+                                        <button type="button" class="world-node-toolbar-btn" data-action="addVariable" title="新增变量节点">V</button>
+                                        <button type="button" class="world-node-toolbar-btn" data-action="addValue" title="新增值节点">#</button>
+                                        <button type="button" class="world-node-toolbar-btn" data-action="addCompare" title="新增比较节点">=</button>
+                                        <button type="button" class="world-node-toolbar-btn" data-action="addLogic" title="新增逻辑节点">&amp;</button>
+                                        <button type="button" class="world-node-toolbar-btn" data-action="zoomOut" title="缩小">-</button>
+                                        <button type="button" class="world-node-toolbar-btn" data-action="zoomReset" title="缩放重置">1:1</button>
+                                        <button type="button" class="world-node-toolbar-btn" data-action="zoomIn" title="放大">+</button>
+                                        <button type="button" class="world-node-toolbar-btn" data-action="layout" title="自动排版">L</button>
+                                    </div>
+                                    <div class="world-node-canvas-wrap" id="we-node-canvas-wrap">
+                                        <div class="world-node-scene" id="we-node-scene">
+                                            <svg class="world-node-links" id="we-node-links" viewBox="0 0 760 320" preserveAspectRatio="none" aria-hidden="true"></svg>
+                                            <div class="world-node-canvas" id="we-node-canvas"></div>
+                                            <div class="world-node-marquee" id="we-node-marquee"></div>
+                                        </div>
+                                        <div class="world-node-context-menu" id="we-node-context-menu"></div>
+                                    </div>
+                                </div>
+                            ` : `
+                                ${this.renderConditionFormEditor(activeBlock)}
+                            `}
                         </div>
                     </div>
                 </div>
@@ -2325,6 +4365,7 @@ export class WorldEditorModal {
             getValue: () => primaryClause.op,
             setValue: (value) => {
                 primaryClause.op = String(value || '>');
+                this.syncBlockNodeGraphFromWhen(activeBlock);
             },
             rerenderList: false,
         });
@@ -2335,6 +4376,7 @@ export class WorldEditorModal {
             getValue: () => primaryClause.rightType,
             setValue: (value) => {
                 primaryClause.rightType = String(value || 'number');
+                this.syncBlockNodeGraphFromWhen(activeBlock);
             },
             rerenderList: false,
         });
@@ -2346,25 +4388,29 @@ export class WorldEditorModal {
             getValue: () => primaryClause.left || '',
             setValue: (value) => {
                 if (value === '__create_var__') {
-                    const name = window.prompt('变量名称（例如 stat_data.苏晚晴.love_degree.0）', String(primaryClause.left || '').trim());
-                    const varName = String(name || '').trim();
-                    if (!varName) return;
-                    const typeRaw = window.prompt('变量类型（number/string/boolean）', 'number');
-                    const varTypeInput = String(typeRaw || 'number').trim().toLowerCase();
-                    const varType = ['number', 'string', 'boolean'].includes(varTypeInput) ? varTypeInput : 'number';
-                    const defRaw = window.prompt('默认值', varType === 'number' ? '0' : (varType === 'boolean' ? 'false' : ''));
-                    const defaultValue = varType === 'number'
-                        ? Number(defRaw || 0)
-                        : (varType === 'boolean' ? String(defRaw || '').trim().toLowerCase() === 'true' : String(defRaw || ''));
-                    primaryClause.left = varName;
-                    primaryClause.defineVariable = { name: varName, type: varType, default: defaultValue };
-                    this.ensureVariableInStore(varName, varType, defaultValue);
-                    window.toastr?.success?.('变量已创建（若未创建会在首次发送时自动补建）');
-                    this.renderEditor();
-                    markRefDirty();
+                    void this.openVariableModal({
+                        name: primaryClause.left,
+                        type: primaryClause.defineVariable?.type || 'number',
+                        defaultValue: primaryClause.defineVariable?.default ?? 0,
+                        op: primaryClause.op || '>',
+                        rightType: primaryClause.rightType || 'number',
+                        rightValue: primaryClause.right ?? 10,
+                    }).then((payload) => {
+                        if (!payload) return;
+                        if (!this.applyVariablePayloadToClause(primaryClause, payload)) return;
+                        this.ensureVariableInStore(payload.name, payload.type, payload.defaultValue);
+                        this.syncBlockNodeGraphFromWhen(activeBlock);
+                        window.toastr?.success?.('变量已创建（若未创建会在首次发送时自动补建）');
+                        this.renderEditor();
+                        markRefDirty();
+                    });
                     return;
                 }
                 primaryClause.left = String(value || '').trim();
+                if (primaryClause.defineVariable?.name && primaryClause.defineVariable.name !== primaryClause.left) {
+                    primaryClause.defineVariable = null;
+                }
+                this.syncBlockNodeGraphFromWhen(activeBlock);
             },
             rerenderList: false,
         });
@@ -2382,6 +4428,7 @@ export class WorldEditorModal {
                 } else {
                     primaryClause.right = raw;
                 }
+                this.syncBlockNodeGraphFromWhen(activeBlock);
                 markRefDirty();
             });
         }
@@ -2410,6 +4457,17 @@ export class WorldEditorModal {
                 }
                 this.setBlockFlipped(activeBlock?.id, !this.isBlockFlipped(activeBlock?.id));
             });
+        }
+        const condModeBtn = q('#we-cond-mode-toggle');
+        if (condModeBtn) {
+            condModeBtn.addEventListener('click', () => {
+                this.toggleBlockConditionMode(activeBlock?.id, activeBlock);
+            });
+        }
+        if (blockNodeMode) {
+            this.mountNodeEditor({ entry, block: activeBlock, markRefDirty });
+        } else {
+            this.mountConditionFormEditor(activeBlock, markRefDirty);
         }
 
         const blockShellEl = q('#we-block-shell');
@@ -2440,24 +4498,21 @@ export class WorldEditorModal {
         const newVarBtn = q('#we-block-new-var');
         if (newVarBtn) {
             newVarBtn.addEventListener('click', () => {
-                const name = window.prompt('变量名称（例如 stat_data.苏晚晴.love_degree.0）', String(primaryClause.left || '').trim());
-                const varName = String(name || '').trim();
-                if (!varName) return;
-                const clauseType = String(primaryClause.rightType || 'number').trim().toLowerCase();
-                const schemaType = ['number', 'string', 'boolean'].includes(clauseType) ? clauseType : 'number';
-                primaryClause.left = varName;
-                primaryClause.defineVariable = {
-                    name: varName,
-                    type: schemaType,
-                    default: schemaType === 'number' ? Number(primaryClause.right || 0) : (schemaType === 'boolean' ? Boolean(primaryClause.right) : (primaryClause.right ?? '')),
-                };
-                this.ensureVariableInStore(
-                    varName,
-                    primaryClause.defineVariable.type,
-                    primaryClause.defineVariable.default,
-                );
-                this.renderEditor();
-                markRefDirty();
+                void this.openVariableModal({
+                    name: primaryClause.left,
+                    type: primaryClause.defineVariable?.type || 'number',
+                    defaultValue: primaryClause.defineVariable?.default ?? 0,
+                    op: primaryClause.op || '>',
+                    rightType: primaryClause.rightType || 'number',
+                    rightValue: primaryClause.right ?? 10,
+                }).then((payload) => {
+                    if (!payload) return;
+                    if (!this.applyVariablePayloadToClause(primaryClause, payload)) return;
+                    this.ensureVariableInStore(payload.name, payload.type, payload.defaultValue);
+                    this.syncBlockNodeGraphFromWhen(activeBlock);
+                    this.renderEditor();
+                    markRefDirty();
+                });
             });
         }
 
