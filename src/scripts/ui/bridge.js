@@ -30,6 +30,14 @@ import { MacroEngine } from '../utils/macro-engine.js';
 import { listMediaAssets } from '../utils/media-assets.js';
 import { isRetryableError, retryWithBackoff } from '../utils/retry.js';
 import { safeInvoke } from '../utils/tauri.js';
+import {
+  buildVariableContext,
+  collectConditionDefineSpecs,
+  createDefaultPromptClause,
+  evaluateConditionTree,
+  normalizeConditionTree,
+  parseTypedValue,
+} from '../variables/world-condition-core.js';
 
 const canInitClient = cfg => {
   const c = cfg || {};
@@ -1613,6 +1621,7 @@ class AppBridge {
         stream: Boolean(config?.stream),
         options: genOptions,
         messages,
+        worldDebug: worldInjectionPlan?.debug || null,
       };
 
       if (config.stream) {
@@ -2462,15 +2471,39 @@ const stringifyMessageContent = (content) => {
           generateRegexEntries: [],
           hasTemplateTags: false,
         };
+        const worldDebugRaw = {
+          insertionStrategy: 'role_first',
+          budgetTokens: null,
+          usedTokens: 0,
+          overflowed: false,
+          builtinEntries: [],
+          globalEntries: [],
+          sessionEntries: [],
+          mergedEntries: [],
+          trimmedEntries: [],
+          injectedEntries: [],
+          templateEntries: [],
+          initialVariableEntries: [],
+        };
+        const captureWorldDebugEntry = (target, entry, extra = {}) => {
+          if (!target || !entry) return;
+          target.push({ entry, ...extra });
+        };
         if (!isMomentCommentTask) {
           const worldSettings = this.getWorldGlobalSettings?.() || this.worldGlobalSettings || {};
           const strategyRaw = String(worldSettings.insertionStrategy || 'role_first');
           const insertionStrategy = ['role_first', 'global_first', 'even'].includes(strategyRaw) ? strategyRaw : 'role_first';
+          worldDebugRaw.insertionStrategy = insertionStrategy;
           const collectEntries = worldId => this.collectWorldEntries(worldId, { matchText, matchContext });
           const isRpMode = String(matchContext?.uiMode || '').trim().toLowerCase() === 'rp';
-          const pushEntry = entry => {
+          const pushEntry = (entry, meta = {}) => {
+            const sourceKind = String(meta?.sourceKind || entry?._src || '').trim() || 'session';
             const commentRaw = String(entry?.comment || '');
             if (/\[InitialVariables\]/i.test(commentRaw)) {
+              captureWorldDebugEntry(worldDebugRaw.initialVariableEntries, entry, {
+                sourceKind,
+                injectMode: 'initial_variables',
+              });
               try {
                 const raw = processTextMacrosWithPendingFlag(entry?.content || '', macroContext);
                 const parsed = JSON.parse(String(raw || '').trim() || '{}');
@@ -2488,6 +2521,11 @@ const stringifyMessageContent = (content) => {
             }
             const tags = parseTemplateInjectTags(commentRaw);
             if (tags.length) {
+              captureWorldDebugEntry(worldDebugRaw.templateEntries, entry, {
+                sourceKind,
+                injectMode: 'template',
+                tags,
+              });
               templateInject.hasTemplateTags = true;
               tags.forEach(tag => {
                 if (tag.stage !== 'generate') return;
@@ -2515,44 +2553,64 @@ const stringifyMessageContent = (content) => {
               return;
             }
             const pos = Number.isFinite(Number(entry?.position)) ? Math.trunc(Number(entry.position)) : 0;
+            let bucket = 'defaultPrompt';
             switch (pos) {
               case 0:
+                bucket = 'beforeChar';
                 worldBuckets.beforeChar.push(entry);
                 break;
               case 1:
+                bucket = 'afterChar';
                 worldBuckets.afterChar.push(entry);
                 break;
               case 2:
+                bucket = 'beforeScenario';
                 worldBuckets.beforeScenario.push(entry);
                 break;
               case 3:
+                bucket = 'afterScenario';
                 worldBuckets.afterScenario.push(entry);
                 break;
               case 4:
+                bucket = 'depth';
                 worldBuckets.depth.push(entry);
                 break;
               case 5:
+                bucket = 'beforeExamples';
                 worldBuckets.beforeExamples.push(entry);
                 break;
               case 6:
+                bucket = 'afterExamples';
                 worldBuckets.afterExamples.push(entry);
                 break;
               default:
                 worldBuckets.defaultPrompt.push(entry);
                 break;
             }
+            captureWorldDebugEntry(worldDebugRaw.injectedEntries, entry, {
+              sourceKind,
+              bucket,
+              injectMode: 'bucket',
+            });
           };
-          const pushEntries = entries => {
+          const pushEntries = (entries, meta = {}) => {
             const list = Array.isArray(entries) ? entries : [];
-            list.forEach(pushEntry);
+            list.forEach(entry => pushEntry(entry, meta));
           };
           if (!disablePhoneFormat) {
-            pushEntries(collectEntries(BUILTIN_PHONE_FORMAT_WORLDBOOK_ID));
+            const builtinEntries = collectEntries(BUILTIN_PHONE_FORMAT_WORLDBOOK_ID);
+            builtinEntries.forEach(entry => captureWorldDebugEntry(worldDebugRaw.builtinEntries, entry, {
+              sourceKind: 'builtin',
+            }));
+            pushEntries(builtinEntries, { sourceKind: 'builtin' });
           }
           const globalEntries =
             this.globalWorldId && String(this.globalWorldId) !== BUILTIN_PHONE_FORMAT_WORLDBOOK_ID
               ? collectEntries(this.globalWorldId)
               : [];
+          globalEntries.forEach(entry => captureWorldDebugEntry(worldDebugRaw.globalEntries, entry, {
+            sourceKind: 'global',
+          }));
           const sessionEntries = [];
           if (!isRpMode) {
             if (!isGroupChat) {
@@ -2572,11 +2630,33 @@ const stringifyMessageContent = (content) => {
               }
             }
           }
-          const mergedEntries = this.mergeWorldEntries(globalEntries, sessionEntries, insertionStrategy);
-          pushEntries(mergedEntries);
+          sessionEntries.forEach(entry => captureWorldDebugEntry(worldDebugRaw.sessionEntries, entry, {
+            sourceKind: 'session',
+          }));
+          const mergedDetail = this.mergeWorldEntriesDetailed(globalEntries, sessionEntries, insertionStrategy);
+          worldDebugRaw.budgetTokens = mergedDetail.budgetTokens;
+          worldDebugRaw.usedTokens = mergedDetail.usedTokens;
+          worldDebugRaw.overflowed = mergedDetail.overflowed === true;
+          (mergedDetail.entries || []).forEach(entry => captureWorldDebugEntry(worldDebugRaw.mergedEntries, entry, {
+            sourceKind: entry?._src || 'session',
+          }));
+          (mergedDetail.trimmedEntries || []).forEach(entry => captureWorldDebugEntry(worldDebugRaw.trimmedEntries, entry, {
+            sourceKind: entry?._src || 'session',
+          }));
+          pushEntries(mergedDetail.entries, {});
         }
 
         const roleMap = { 0: 'system', 1: 'user', 2: 'assistant' };
+        const bucketLabels = {
+          beforeChar: '角色描述前',
+          afterChar: '角色描述后',
+          beforeScenario: '场景前',
+          afterScenario: '场景后',
+          beforeExamples: '示例前',
+          afterExamples: '示例后',
+          defaultPrompt: '默认 Prompt',
+          depth: '按深度插入',
+        };
         const buildStickerListBlock = () => {
           const state = stickerPackStore.getState();
           const activeSessionId = String(this.activeSessionId || '').trim();
@@ -2646,6 +2726,43 @@ const stringifyMessageContent = (content) => {
           });
           return out;
         };
+        const buildDebugPreview = (entry) => {
+          const formatted = formatWorldEntryContent(entry, { applyRegex: false });
+          const text = trimEdgeBlankLines(formatted || entry?.content || '');
+          return text.replace(/\s+/g, ' ').slice(0, 120);
+        };
+        const sanitizeWorldDebugTitle = (entry) => {
+          const raw = String(entry?.comment || entry?.title || entry?.name || '').replace(/\[[^\]]+\]/g, '').trim();
+          return raw || String(entry?._entryId || '').trim() || '未命名条目';
+        };
+        const mapWorldDebugEntries = (list = []) => list.map((item) => {
+          const entry = item?.entry || {};
+          const tags = Array.isArray(item?.tags) ? item.tags : [];
+          const position = Number.isFinite(Number(entry?.position)) ? Math.trunc(Number(entry.position)) : 0;
+          return {
+            sourceKind: String(item?.sourceKind || entry?._src || '').trim() || 'session',
+            worldId: String(entry?._sourceWorldId || '').trim(),
+            refWorldId: String(entry?._refWorldId || '').trim(),
+            entryId: String(entry?._entryId || '').trim(),
+            blockId: String(entry?._blockId || '').trim() || 'legacy',
+            title: sanitizeWorldDebugTitle(entry),
+            role: roleMap[entry?.role] || 'system',
+            position,
+            positionLabel: bucketLabels[String(item?.bucket || '')] || bucketLabels.defaultPrompt,
+            depth: Number.isFinite(Number(entry?.depth)) ? Math.max(0, Math.trunc(Number(entry.depth))) : 0,
+            order: Number.isFinite(Number(entry?.order)) ? Number(entry.order) : 0,
+            injectMode: String(item?.injectMode || 'bucket').trim() || 'bucket',
+            bucket: String(item?.bucket || '').trim(),
+            tags: tags.map(tag => ({
+              stage: String(tag?.stage || '').trim(),
+              type: String(tag?.type || '').trim(),
+              mode: String(tag?.mode || '').trim(),
+              index: Number.isFinite(Number(tag?.index)) ? Number(tag.index) : null,
+              pattern: String(tag?.pattern || '').trim(),
+            })),
+            contentPreview: buildDebugPreview(entry),
+          };
+        });
 
         const worldPromptDefaultParts = worldBuckets.defaultPrompt
           .map(entry => formatWorldEntryContent(entry, { applyRegex: false }))
@@ -2678,12 +2795,27 @@ const stringifyMessageContent = (content) => {
           })).filter(item => item.regex && item.messages.length > 0),
           hasTemplateTags: templateInject.hasTemplateTags,
         };
+        const worldDebug = {
+          insertionStrategy: worldDebugRaw.insertionStrategy,
+          budgetTokens: worldDebugRaw.budgetTokens,
+          usedTokens: worldDebugRaw.usedTokens,
+          overflowed: worldDebugRaw.overflowed,
+          builtinEntries: mapWorldDebugEntries(worldDebugRaw.builtinEntries),
+          globalEntries: mapWorldDebugEntries(worldDebugRaw.globalEntries),
+          sessionEntries: mapWorldDebugEntries(worldDebugRaw.sessionEntries),
+          mergedEntries: mapWorldDebugEntries(worldDebugRaw.mergedEntries),
+          trimmedEntries: mapWorldDebugEntries(worldDebugRaw.trimmedEntries),
+          injectedEntries: mapWorldDebugEntries(worldDebugRaw.injectedEntries),
+          templateEntries: mapWorldDebugEntries(worldDebugRaw.templateEntries),
+          initialVariableEntries: mapWorldDebugEntries(worldDebugRaw.initialVariableEntries),
+        };
 
         return {
           worldPromptDefault,
           worldPromptMessages,
           depthWorldMessages,
           templateInject: templateInjectPlan,
+          debug: worldDebug,
         };
       };
 
@@ -4187,42 +4319,11 @@ const stringifyMessageContent = (content) => {
     const localVars = this.chatStore?.listVariables?.(runtimeSessionId) || {};
     const globalVars = this.chatStore?.listGlobalVariables?.() || {};
     const baseVars = useGlobalVariables ? globalVars : localVars;
-    const baseVarsNested = buildNestedVars(baseVars);
-    const globalVarsNested = buildNestedVars(globalVars);
-    const variableContext = {
-      ...baseVars,
-      stat_data: baseVarsNested,
-      variables: baseVarsNested,
-      status_current_variables: baseVarsNested,
-      global_variables: globalVarsNested,
-      local_variables: localVars,
-    };
-    const resolvePathValue = (path) => {
-      const key = String(path || '').trim();
-      if (!key) return undefined;
-      if (Object.prototype.hasOwnProperty.call(variableContext, key)) return variableContext[key];
-      if (Object.prototype.hasOwnProperty.call(baseVars, key)) return baseVars[key];
-      if (Object.prototype.hasOwnProperty.call(globalVars, key)) return globalVars[key];
-      const byPath = getByPath(variableContext, key);
-      if (byPath !== undefined) return byPath;
-      return undefined;
-    };
-    const coerceBoolean = (value) => {
-      if (typeof value === 'boolean') return value;
-      if (typeof value === 'number') return value !== 0;
-      const text = String(value || '').trim().toLowerCase();
-      if (!text) return false;
-      return text === 'true' || text === '1' || text === 'yes' || text === 'on';
-    };
-    const coerceLiteral = (value, rightType = 'string') => {
-      const type = String(rightType || 'string').trim().toLowerCase();
-      if (type === 'number') {
-        const n = Number(value);
-        return Number.isFinite(n) ? n : 0;
-      }
-      if (type === 'boolean') return coerceBoolean(value);
-      if (type === 'null') return null;
-      return value;
+    const runtimeConditionContext = buildVariableContext({ baseVars, globalVars });
+    runtimeConditionContext.variableContext.local_variables = localVars;
+    const evalConditionGroup = (when) => {
+      if (!when || typeof when !== 'object') return true;
+      return evaluateConditionTree(when, runtimeConditionContext);
     };
     const normalizePromptBlocks = (entry = {}) => {
       const blocks = Array.isArray(entry?.promptBlocks) ? entry.promptBlocks : [];
@@ -4230,162 +4331,16 @@ const stringifyMessageContent = (content) => {
         .map((raw, idx) => {
           const block = raw && typeof raw === 'object' ? raw : {};
           const whenRaw = block.when && typeof block.when === 'object' ? block.when : {};
-          const logicRaw = String(whenRaw.logic || 'and').trim().toLowerCase();
-          const logic = ['and', 'or', 'not'].includes(logicRaw) ? logicRaw : 'and';
-          const clauses = Array.isArray(whenRaw.clauses) ? whenRaw.clauses : [];
-          const clause = whenRaw.clause && typeof whenRaw.clause === 'object' ? whenRaw.clause : null;
           return {
             id: String(block.id || `blk_${idx}`),
             enabled: block.enabled !== false,
             content: String(block.content || ''),
             role: block.role,
             priority: Number.isFinite(Number(block.priority)) ? Number(block.priority) : 100,
-            when: logic === 'not'
-              ? { logic: 'not', clause: clause || clauses[0] || null }
-              : { logic, clauses },
+            when: normalizeConditionTree(whenRaw, createDefaultPromptClause()),
           };
         })
         .filter(Boolean);
-    };
-
-    const evalExpression = (expr) => {
-      if (expr && typeof expr === 'object') {
-        if (typeof expr.var === 'string' && expr.var.trim()) {
-          return resolvePathValue(expr.var);
-        }
-        const fn = String(expr.fn || '').trim().toLowerCase();
-        const args = Array.isArray(expr.args) ? expr.args.map(arg => evalExpression(arg)) : [];
-        const toNum = (value) => {
-          const n = Number(value);
-          return Number.isFinite(n) ? n : 0;
-        };
-        if (fn === 'add') return args.reduce((sum, item) => sum + toNum(item), 0);
-        if (fn === 'sub') {
-          if (!args.length) return 0;
-          return args.slice(1).reduce((acc, item) => acc - toNum(item), toNum(args[0]));
-        }
-        if (fn === 'mul') return args.reduce((acc, item) => acc * toNum(item), args.length ? 1 : 0);
-        if (fn === 'div') {
-          if (!args.length) return 0;
-          return args.slice(1).reduce((acc, item) => {
-            const d = toNum(item);
-            return d === 0 ? acc : acc / d;
-          }, toNum(args[0]));
-        }
-        if (fn === 'min') return args.length ? Math.min(...args.map(toNum)) : 0;
-        if (fn === 'max') return args.length ? Math.max(...args.map(toNum)) : 0;
-        if (fn === 'abs') return Math.abs(toNum(args[0]));
-        return undefined;
-      }
-      if (typeof expr === 'string') {
-        const key = expr.trim();
-        if (!key) return undefined;
-        const resolved = resolvePathValue(key);
-        if (resolved !== undefined) return resolved;
-        if (/^-?\d+(?:\.\d+)?$/.test(key)) return Number(key);
-        const lower = key.toLowerCase();
-        if (lower === 'true') return true;
-        if (lower === 'false') return false;
-        if (lower === 'null') return null;
-        return undefined;
-      }
-      return expr;
-    };
-
-    const evalClause = (clause) => {
-      if (!clause || typeof clause !== 'object') return true;
-      const leftRaw = clause.left;
-      const leftMissing = leftRaw == null || (typeof leftRaw === 'string' && leftRaw.trim() === '');
-      if (leftMissing) return true;
-      const op = String(clause.op || '==').trim().toLowerCase();
-      const rightType = String(clause.rightType || 'string').trim().toLowerCase();
-      const leftValue = evalExpression(leftRaw);
-      if (op === 'is_empty') {
-        if (Array.isArray(leftValue)) return leftValue.length === 0;
-        if (leftValue && typeof leftValue === 'object') return Object.keys(leftValue).length === 0;
-        return String(leftValue ?? '').trim().length === 0;
-      }
-      if (op === 'not_empty') {
-        if (Array.isArray(leftValue)) return leftValue.length > 0;
-        if (leftValue && typeof leftValue === 'object') return Object.keys(leftValue).length > 0;
-        return String(leftValue ?? '').trim().length > 0;
-      }
-      const rightValue = rightType === 'variable'
-        ? evalExpression(clause.right)
-        : coerceLiteral(clause.right, rightType);
-      let compareLeft = leftValue;
-      let compareRight = rightValue;
-      if (rightType === 'number') {
-        const l = Number(leftValue);
-        const r = Number(rightValue);
-        compareLeft = Number.isFinite(l) ? l : leftValue;
-        compareRight = Number.isFinite(r) ? r : rightValue;
-      } else if (rightType === 'boolean') {
-        compareLeft = coerceBoolean(leftValue);
-        compareRight = coerceBoolean(rightValue);
-      } else if (rightType === 'string') {
-        compareLeft = String(leftValue ?? '');
-        compareRight = String(rightValue ?? '');
-      } else if (rightType === 'null') {
-        compareLeft = leftValue == null ? null : leftValue;
-        compareRight = null;
-      }
-      if (op === 'contains') {
-        if (Array.isArray(leftValue)) return leftValue.some(item => String(item ?? '') === String(rightValue ?? ''));
-        return String(leftValue ?? '').includes(String(rightValue ?? ''));
-      }
-      if (op === 'not_contains') {
-        if (Array.isArray(leftValue)) return !leftValue.some(item => String(item ?? '') === String(rightValue ?? ''));
-        return !String(leftValue ?? '').includes(String(rightValue ?? ''));
-      }
-      if (op === 'regex') {
-        const pattern = String(rightValue ?? '').trim();
-        if (!pattern) return false;
-        try {
-          const literal = pattern.match(/^\/(.+)\/([gimsuy]*)$/);
-          const re = literal ? new RegExp(literal[1], literal[2] || '') : new RegExp(pattern, 'i');
-          return re.test(String(leftValue ?? ''));
-        } catch {
-          return false;
-        }
-      }
-      if (op === '>' || op === '>=' || op === '<' || op === '<=') {
-        const l = Number(leftValue);
-        const r = Number(rightValue);
-        if (!Number.isFinite(l) || !Number.isFinite(r)) return false;
-        if (op === '>') return l > r;
-        if (op === '>=') return l >= r;
-        if (op === '<') return l < r;
-        return l <= r;
-      }
-      if (op === '!=') return compareLeft !== compareRight;
-      return compareLeft === compareRight;
-    };
-
-    function evalConditionNode(node) {
-      if (!node || typeof node !== 'object') return true;
-      const logicRaw = String(node.logic || '').trim().toLowerCase();
-      if (logicRaw === 'not') {
-        if (node.clause && typeof node.clause === 'object') return !evalConditionNode(node.clause);
-        const list = Array.isArray(node.clauses) ? node.clauses : [];
-        if (!list.length) return true;
-        return !evalConditionNode(list[0]);
-      }
-      if (Array.isArray(node.clauses)) {
-        const logic = logicRaw === 'or' ? 'or' : 'and';
-        if (!node.clauses.length) return true;
-        const values = node.clauses.map(item => evalConditionNode(item));
-        return logic === 'or' ? values.some(Boolean) : values.every(Boolean);
-      }
-      if (node.clause && typeof node.clause === 'object') {
-        return evalConditionNode(node.clause);
-      }
-      return evalClause(node);
-    }
-
-    const evalConditionGroup = (when) => {
-      if (!when || typeof when !== 'object') return true;
-      return evalConditionNode(when);
     };
 
     const ensureDefinedVariable = (spec) => {
@@ -4396,7 +4351,7 @@ const stringifyMessageContent = (content) => {
       if (!name) return;
       const typeRaw = String(spec.type || 'number').trim().toLowerCase();
       const type = ['number', 'string', 'boolean'].includes(typeRaw) ? typeRaw : 'number';
-      const defaultValue = coerceLiteral(spec.default, type);
+      const defaultValue = parseTypedValue(spec.default, type);
       const schema = chatStore.getVariableSchema?.(name, runtimeSessionId);
       if (!schema) {
         chatStore.setVariableSchema?.(name, { type, default: defaultValue }, runtimeSessionId);
@@ -4416,18 +4371,10 @@ const stringifyMessageContent = (content) => {
         }
       }
     };
-    const collectDefineSpecs = (node, out = []) => {
-      if (!node || typeof node !== 'object') return out;
-      if (node.defineVariable && typeof node.defineVariable === 'object') out.push(node.defineVariable);
-      if (Array.isArray(node.clauses)) node.clauses.forEach(item => collectDefineSpecs(item, out));
-      if (node.clause && typeof node.clause === 'object') collectDefineSpecs(node.clause, out);
-      if (node.where && typeof node.where === 'object') collectDefineSpecs(node.where, out);
-      return out;
-    };
     const syncPromptBlockVariableSchemas = (entry) => {
       const blocks = normalizePromptBlocks(entry);
       blocks.forEach((block) => {
-        const specs = collectDefineSpecs(block?.when, []);
+        const specs = collectConditionDefineSpecs(block?.when, []);
         specs.forEach(spec => ensureDefinedVariable(spec));
       });
     };
@@ -4659,6 +4606,516 @@ const stringifyMessageContent = (content) => {
     });
   }
 
+  buildWorldDebugLabel({ userMessage = '', context = null } = {}) {
+    const ctx = context || (this.contextBuilder ? this.contextBuilder(String(userMessage ?? '')) : null) || {};
+    const sessionId = String(ctx?.session?.id || this.activeSessionId || '').trim();
+    const sessionName = String(
+      ctx?.session?.name ||
+      this.contactsStore?.getContact?.(sessionId)?.name ||
+      '',
+    ).trim();
+    const userName = String(ctx?.user?.name || 'user').trim() || 'user';
+    const characterName = String(
+      ctx?.character?.name ||
+      this.contactsStore?.getContact?.(sessionId)?.name ||
+      'assistant',
+    ).trim() || 'assistant';
+    const personaRaw = String(ctx?.user?.persona || '');
+    const personaText = personaRaw
+      ? processTextMacrosWithPendingFlag(personaRaw, { user: userName, char: characterName })
+      : '';
+    const stringifyMatchContent = (content) => {
+      if (Array.isArray(content)) {
+        return content
+          .map((part) => (part?.type === 'text' ? String(part.text || '') : ''))
+          .filter(Boolean)
+          .join('\n');
+      }
+      return String(content ?? '');
+    };
+    const historyForMatch = Array.isArray(ctx.history) ? ctx.history : [];
+    const globalWorldSettings = this.getWorldGlobalSettings?.() || this.worldGlobalSettings || {};
+    const includeNames = globalWorldSettings.includeNames === true;
+    const fullHistoryLines = historyForMatch
+      .map((m) => {
+        const content = stringifyMatchContent(m?.content);
+        if (!content) return '';
+        if (!includeNames) return content;
+        const role = String(m?.role || '').trim();
+        const speaker = String(m?.name || (role === 'user' ? userName : role === 'assistant' ? characterName : '') || '').trim();
+        return speaker ? `${speaker}: ${content}` : content;
+      })
+      .filter(Boolean);
+    let historyMatchLines = [...fullHistoryLines];
+    const globalScanDepthRaw = globalWorldSettings.scanDepth;
+    const globalScanDepth = Number.isFinite(Number(globalScanDepthRaw)) ? Math.max(0, Math.trunc(Number(globalScanDepthRaw))) : null;
+    if (globalScanDepth !== null) {
+      historyMatchLines = historyMatchLines.slice(-globalScanDepth);
+    }
+    const uiModeRaw = String(ctx?.meta?.uiMode || ctx?.uiMode || '').trim().toLowerCase();
+    const uiMode = uiModeRaw === 'rp' ? 'rp' : 'chat';
+    const matchText = [String(userMessage ?? ''), ...historyMatchLines].join('\n');
+    return {
+      matchText,
+      matchContext: {
+        userMessage: String(userMessage ?? ''),
+        history: historyMatchLines,
+        fullHistory: fullHistoryLines,
+        personaText,
+        sessionId,
+        sessionName,
+        uiMode,
+        character: {
+          description: String(ctx?.character?.description || ''),
+          personality: String(ctx?.character?.personality || ''),
+          scenario: String(ctx?.character?.scenario || ''),
+          depthPrompt: String(ctx?.character?.depthPrompt || ''),
+          creatorNotes: String(ctx?.character?.creatorNotes || ''),
+        },
+      },
+    };
+  }
+
+  explainWorldEntryActivation(worldId, entryId, label = null) {
+    const id = String(worldId || '').trim();
+    const targetEntryId = String(entryId || '').trim();
+    if (!id || !targetEntryId) return null;
+    const data = this.worldStore.load(id);
+    if (!data || typeof data !== 'object') return null;
+
+    const labelObj = (label && typeof label === 'object') ? label : this.buildWorldDebugLabel();
+    const matchContext =
+      labelObj && typeof labelObj.matchContext === 'object' && labelObj.matchContext
+        ? labelObj.matchContext
+        : null;
+    const matchText = String(labelObj?.matchText || '');
+    const worldSettings = this.getWorldGlobalSettings?.() || this.worldGlobalSettings || {};
+    const globalCaseSensitive = worldSettings.caseSensitive === true;
+    const globalMatchWholeWords = worldSettings.matchWholeWords === true;
+    const globalRecursiveScan = worldSettings.recursiveScan !== false;
+    const globalUseGroupScoring = worldSettings.useGroupScoring === true;
+    const minActivations = Number.isFinite(Number(worldSettings.minActivations))
+      ? Math.max(0, Math.trunc(Number(worldSettings.minActivations)))
+      : 0;
+    const maxDepthSetting = Number.isFinite(Number(worldSettings.maxDepth))
+      ? Math.max(0, Math.trunc(Number(worldSettings.maxDepth)))
+      : 0;
+    const maxRecursionStepsSetting = Number.isFinite(Number(worldSettings.maxRecursionSteps))
+      ? Math.max(0, Math.trunc(Number(worldSettings.maxRecursionSteps)))
+      : 0;
+
+    const norm = v => String(v ?? '').trim();
+    const resolveRefEntries = (refs, refFromWorldId) => {
+      const list = Array.isArray(refs) ? refs : [];
+      if (!list.length) return [];
+      const results = [];
+      list.forEach((raw) => {
+        const ref = raw && typeof raw === 'object' ? raw : {};
+        const sourceId = String(ref.sourceId || ref.worldId || ref.source || '').trim();
+        if (!sourceId) return;
+        const source = this.worldStore.load(sourceId);
+        const sourceEntries = Array.isArray(source?.entries) ? source.entries : [];
+        if (!sourceEntries.length) return;
+        const entryIdRaw = String(ref.entryId || ref.entry || '').trim();
+        const entryIds = Array.isArray(ref.entryIds)
+          ? ref.entryIds.map(val => String(val || '').trim()).filter(Boolean)
+          : [];
+        const includeAll = ref.includeAll === true || ref.all === true || entryIdRaw === '*' || entryIds.includes('*');
+        let picked = sourceEntries;
+        if (!includeAll) {
+          const idSet = new Set(entryIds);
+          if (entryIdRaw) idSet.add(entryIdRaw);
+          picked = idSet.size
+            ? sourceEntries.filter(entry => idSet.has(String(entry?.id ?? entry?.uid ?? '').trim()))
+            : [];
+        }
+        picked.forEach((entry) => {
+          if (!entry) return;
+          results.push({
+            ...entry,
+            _sourceWorldId: sourceId,
+            _refWorldId: refFromWorldId,
+          });
+        });
+      });
+      return results;
+    };
+    const normalizeKeys = e => {
+      const keys = Array.isArray(e?.key) ? e.key : Array.isArray(e?.triggers) ? e.triggers : [];
+      return keys.map(norm).filter(Boolean);
+    };
+    const normalizeSecondaryKeys = e => {
+      const keys = Array.isArray(e?.keysecondary) ? e.keysecondary : Array.isArray(e?.secondary) ? e.secondary : [];
+      return keys.map(norm).filter(Boolean);
+    };
+    const parseGroups = (val) => {
+      if (Array.isArray(val)) return val.map(norm).filter(Boolean);
+      return String(val || '')
+        .split(/[,，]/)
+        .map(norm)
+        .filter(Boolean);
+    };
+    const isRegexLiteral = k =>
+      k.length >= 2 && k.startsWith('/') && k.endsWith('/') && k.indexOf('/', 1) === k.length - 1;
+    const escapeRegExp = s => String(s || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const hasCjk = s => /[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]/.test(String(s || ''));
+    const matchKey = (key, rawText, rawTextLower, caseSensitive, matchWholeWords) => {
+      const k = norm(key);
+      if (!k) return false;
+      if (isRegexLiteral(k)) {
+        const body = k.slice(1, -1);
+        try {
+          const re = new RegExp(body, caseSensitive ? '' : 'i');
+          return re.test(rawText);
+        } catch {
+          return false;
+        }
+      }
+      if (matchWholeWords && !hasCjk(k)) {
+        try {
+          const re = new RegExp(`\\b${escapeRegExp(k)}\\b`, caseSensitive ? '' : 'i');
+          return re.test(rawText);
+        } catch {
+          return false;
+        }
+      }
+      if (caseSensitive) return rawText.includes(k);
+      return rawTextLower.includes(k.toLowerCase());
+    };
+    const buildMatchTextForEntry = (e, localMatchText, localMatchContext) => {
+      if (!localMatchContext) return localMatchText;
+      const parts = [];
+      const userText = String(localMatchContext.userMessage || '').trim();
+      if (userText) parts.push(userText);
+      const history = Array.isArray(localMatchContext.history) ? localMatchContext.history : [];
+      const scanDepthRaw = e?.scanDepth;
+      const scanDepth = Number.isFinite(Number(scanDepthRaw)) ? Math.max(0, Math.trunc(Number(scanDepthRaw))) : null;
+      const historySlice = scanDepth == null ? history : history.slice(-scanDepth);
+      if (historySlice.length) parts.push(...historySlice);
+      const personaText = String(localMatchContext.personaText || '').trim();
+      if (e?.matchPersonaDescription && personaText) parts.push(personaText);
+      const character = localMatchContext.character || {};
+      if (e?.matchCharacterDescription && character.description) parts.push(character.description);
+      if (e?.matchCharacterPersonality && character.personality) parts.push(character.personality);
+      if (e?.matchCharacterDepthPrompt && character.depthPrompt) parts.push(character.depthPrompt);
+      if (e?.matchScenario && character.scenario) parts.push(character.scenario);
+      if (e?.matchCreatorNotes && character.creatorNotes) parts.push(character.creatorNotes);
+      return parts.join('\n');
+    };
+    const hasMatchInput = (localMatchText, localMatchContext) => {
+      if (String(localMatchText || '').trim()) return true;
+      if (!localMatchContext) return false;
+      const userText = String(localMatchContext.userMessage || '').trim();
+      const history = Array.isArray(localMatchContext.history) ? localMatchContext.history : [];
+      if (userText) return true;
+      return history.some(line => String(line || '').trim());
+    };
+    const explainInclude = (e, { localMatchText, localMatchContext, isRecursivePass = false, recursionStep = 0 } = {}) => {
+      const report = {
+        passed: false,
+        reasons: [],
+        matchedPrimaryKeys: [],
+        matchedSecondaryKeys: [],
+        entryText: '',
+        hasMatchInput: hasMatchInput(localMatchText, localMatchContext),
+        selectivePassed: true,
+      };
+      if (!e || typeof e !== 'object') {
+        report.reasons.push('条目不存在');
+        return report;
+      }
+      if (Boolean(e.disable)) {
+        report.reasons.push('条目已禁用');
+        return report;
+      }
+      if (!isRecursivePass && Number.isFinite(Number(e.delayUntilRecursion)) && Number(e.delayUntilRecursion) > 0) {
+        report.reasons.push(`需在递归第 ${Math.max(0, Math.trunc(Number(e.delayUntilRecursion)))} 轮后才参与`);
+        return report;
+      }
+      if (isRecursivePass) {
+        if (Boolean(e.excludeRecursion)) {
+          report.reasons.push('条目被设置为不参与递归');
+          return report;
+        }
+        const delay = Number.isFinite(Number(e.delayUntilRecursion)) ? Math.max(0, Math.trunc(Number(e.delayUntilRecursion))) : 0;
+        if (delay > 0 && recursionStep < delay) {
+          report.reasons.push(`递归轮次不足，当前第 ${recursionStep} 轮，需要第 ${delay} 轮`);
+          return report;
+        }
+      }
+      const content = String(e.content || '').trim();
+      const blockHasContent = Array.isArray(e?.promptBlocks)
+        ? e.promptBlocks.some(block => String(block?.content || '').trim().length > 0)
+        : false;
+      if (!report.hasMatchInput) {
+        report.passed = Boolean(content || blockHasContent);
+        if (!report.passed) report.reasons.push('条目和分页内容都为空');
+        else report.reasons.push('当前没有匹配输入，因此按“有内容即参与”处理');
+        return report;
+      }
+      if (!content && !blockHasContent) {
+        report.reasons.push('条目和分页内容都为空');
+        return report;
+      }
+      if (Boolean(e.constant)) {
+        report.passed = true;
+        report.reasons.push('常驻条目，跳过关键词匹配');
+        return report;
+      }
+      const keys = normalizeKeys(e);
+      if (!keys.length) {
+        report.reasons.push('未设置主关键词');
+        return report;
+      }
+      const secondaryKeys = normalizeSecondaryKeys(e);
+      const cs = (typeof e.caseSensitive === 'boolean') ? e.caseSensitive : globalCaseSensitive;
+      const whole = (typeof e.matchWholeWords === 'boolean') ? e.matchWholeWords : globalMatchWholeWords;
+      const entryText = buildMatchTextForEntry(e, localMatchText, localMatchContext);
+      report.entryText = entryText;
+      if (!entryText) {
+        report.reasons.push('当前上下文没有可用于匹配的文本');
+        return report;
+      }
+      const rawText = String(entryText || '');
+      const rawTextLower = cs ? rawText : rawText.toLowerCase();
+      report.matchedPrimaryKeys = keys.filter(k => matchKey(k, rawText, rawTextLower, cs, whole));
+      if (!report.matchedPrimaryKeys.length) {
+        report.reasons.push('主关键词未命中当前上下文');
+        return report;
+      }
+      if (!Boolean(e.selective) || secondaryKeys.length === 0) {
+        report.passed = true;
+        report.reasons.push('主关键词已命中');
+        return report;
+      }
+      report.matchedSecondaryKeys = secondaryKeys.filter(k => matchKey(k, rawText, rawTextLower, cs, whole));
+      const anySecondary = report.matchedSecondaryKeys.length > 0;
+      const allSecondary = report.matchedSecondaryKeys.length === secondaryKeys.length;
+      const logic = Number.isFinite(Number(e.selectiveLogic)) ? Math.trunc(Number(e.selectiveLogic)) : 0;
+      switch (logic) {
+        case 0:
+          report.selectivePassed = anySecondary;
+          break;
+        case 1:
+          report.selectivePassed = !allSecondary;
+          break;
+        case 2:
+          report.selectivePassed = !anySecondary;
+          break;
+        case 3:
+          report.selectivePassed = allSecondary;
+          break;
+        default:
+          report.selectivePassed = true;
+          break;
+      }
+      report.passed = report.selectivePassed;
+      if (report.selectivePassed) report.reasons.push('主关键词和副关键词逻辑均通过');
+      else report.reasons.push('副关键词逻辑未通过');
+      return report;
+    };
+
+    const localEntries = Array.isArray(data.localEntries)
+      ? data.localEntries
+      : (Array.isArray(data.entries) ? data.entries : []);
+    const refEntries = resolveRefEntries(data.refs, id);
+    const combinedEntries = [...localEntries, ...refEntries];
+    if (!combinedEntries.length) return null;
+    const baseEntries = combinedEntries.map((entry, idx) => ({
+      ...entry,
+      _entryId: String(entry?.id ?? entry?.uid ?? `entry-${idx}`),
+      _entryIndex: idx,
+      _groups: parseGroups(entry?.group),
+      _sourceWorldId: String(entry?._sourceWorldId || id || '').trim(),
+      _refWorldId: String(entry?._refWorldId || '').trim(),
+    }));
+    const targetEntry = baseEntries.find(entry => String(entry?._entryId || '') === targetEntryId);
+    if (!targetEntry) return null;
+
+    let effectiveMatchContext = matchContext;
+    if (matchContext && minActivations > 0) {
+      const fullHistory = Array.isArray(matchContext.fullHistory) ? matchContext.fullHistory : matchContext.history;
+      const historyLines = Array.isArray(fullHistory) ? fullHistory : [];
+      if (historyLines.length) {
+        const maxDepth = maxDepthSetting > 0 ? Math.min(maxDepthSetting, historyLines.length) : historyLines.length;
+        let selectedHistory = matchContext.history || [];
+        for (let depth = 1; depth <= maxDepth; depth += 1) {
+          const candidateHistory = historyLines.slice(-depth);
+          const candidateContext = { ...matchContext, history: candidateHistory };
+          const matched = baseEntries.filter(e => explainInclude(e, {
+            localMatchText: matchText,
+            localMatchContext: candidateContext,
+            isRecursivePass: false,
+            recursionStep: 0,
+          }).passed);
+          const uniqueCount = new Set(matched.map(e => e._entryId)).size;
+          selectedHistory = candidateHistory;
+          if (uniqueCount >= minActivations) break;
+        }
+        effectiveMatchContext = { ...matchContext, history: selectedHistory };
+      }
+    }
+
+    const directExplain = explainInclude(targetEntry, {
+      localMatchText: matchText,
+      localMatchContext: effectiveMatchContext,
+      isRecursivePass: false,
+      recursionStep: 0,
+    });
+    const directMatches = baseEntries
+      .filter(e => explainInclude(e, {
+        localMatchText: matchText,
+        localMatchContext: effectiveMatchContext,
+        isRecursivePass: false,
+        recursionStep: 0,
+      }).passed);
+    const activationMeta = new Map(directMatches.map(entry => [entry._entryId, { source: 'direct', recursionStep: 0 }]));
+    const activeMap = new Map(directMatches.map(entry => [entry._entryId, entry]));
+
+    if (globalRecursiveScan) {
+      let newlyActivated = [...directMatches];
+      const maxRecursionSteps = minActivations > 0
+        ? Number.POSITIVE_INFINITY
+        : (maxRecursionStepsSetting > 0 ? maxRecursionStepsSetting : Number.POSITIVE_INFINITY);
+      let step = 1;
+      while (newlyActivated.length && step <= maxRecursionSteps) {
+        const recursionText = newlyActivated
+          .filter(e => !Boolean(e.preventRecursion))
+          .map(e => String(e.content || '').trim())
+          .filter(Boolean)
+          .join('\n');
+        if (!recursionText) break;
+        const recursionMatches = baseEntries
+          .filter(e => !activeMap.has(e._entryId))
+          .filter(e => explainInclude(e, {
+            localMatchText: recursionText,
+            localMatchContext: null,
+            isRecursivePass: true,
+            recursionStep: step,
+          }).passed);
+        if (!recursionMatches.length) break;
+        recursionMatches.forEach((entry) => {
+          activeMap.set(entry._entryId, entry);
+          activationMeta.set(entry._entryId, { source: 'recursive', recursionStep: step });
+        });
+        newlyActivated = recursionMatches;
+        step += 1;
+        if (activeMap.size >= baseEntries.length) break;
+      }
+    }
+
+    let entries = [...activeMap.values()]
+      .sort((a, b) => {
+        const oa = Number.isFinite(Number(a?.order))
+          ? Number(a.order)
+          : Number.isFinite(Number(a?.priority))
+          ? Number(a.priority)
+          : 0;
+        const ob = Number.isFinite(Number(b?.order))
+          ? Number(b.order)
+          : Number.isFinite(Number(b?.priority))
+          ? Number(b.priority)
+          : 0;
+        return oa - ob;
+      });
+    const beforeGroupEntryIds = new Set(entries.map(entry => String(entry?._entryId || '')));
+    const groupWinners = new Map();
+    const groupBuckets = new Map();
+    entries.forEach((entry) => {
+      const groups = Array.isArray(entry?._groups) ? entry._groups : [];
+      groups.forEach((g) => {
+        if (!groupBuckets.has(g)) groupBuckets.set(g, []);
+        groupBuckets.get(g).push(entry);
+      });
+    });
+    groupBuckets.forEach((bucket, groupName) => {
+      const enabled = globalUseGroupScoring || bucket.some(e => e?.useGroupScoring === true || e?.groupOverride === true);
+      if (!enabled) return;
+      const override = bucket.filter(e => e?.groupOverride);
+      const pool = override.length ? override : bucket;
+      let maxWeight = null;
+      pool.forEach((e) => {
+        const w = Number.isFinite(Number(e?.groupWeight)) ? Number(e.groupWeight) : 0;
+        if (maxWeight == null || w > maxWeight) maxWeight = w;
+      });
+      if (maxWeight == null) return;
+      const winners = pool.filter((e) => {
+        const w = Number.isFinite(Number(e?.groupWeight)) ? Number(e.groupWeight) : 0;
+        return w === maxWeight;
+      });
+      if (winners.length) groupWinners.set(groupName, new Set(winners));
+    });
+    if (groupWinners.size) {
+      entries = entries.filter((entry) => {
+        const groups = Array.isArray(entry?._groups) ? entry._groups : [];
+        if (!groups.length) return true;
+        return groups.every((g) => {
+          const winners = groupWinners.get(g);
+          if (!winners) return true;
+          return winners.has(entry);
+        });
+      });
+    }
+
+    const active = entries.some(entry => String(entry?._entryId || '') === targetEntryId);
+    const sourceInfo = activationMeta.get(targetEntryId) || { source: 'inactive', recursionStep: null };
+    const selectiveLogicValue = Number.isFinite(Number(targetEntry?.selectiveLogic)) ? Math.trunc(Number(targetEntry.selectiveLogic)) : 0;
+    const selectiveLogicLabelMap = {
+      0: '任一副关键词命中',
+      1: '并非全部命中',
+      2: '全部不命中',
+      3: '全部命中',
+    };
+    const content = String(targetEntry?.content || '').trim();
+    const blockHasContent = Array.isArray(targetEntry?.promptBlocks)
+      ? targetEntry.promptBlocks.some(block => String(block?.content || '').trim().length > 0)
+      : false;
+    const sourceFields = [];
+    if (String(effectiveMatchContext?.userMessage || '').trim()) sourceFields.push('用户输入');
+    if (Array.isArray(effectiveMatchContext?.history) && effectiveMatchContext.history.some(line => String(line || '').trim())) sourceFields.push('聊天历史');
+    if (targetEntry?.matchPersonaDescription && String(effectiveMatchContext?.personaText || '').trim()) sourceFields.push('Persona 描述');
+    if (targetEntry?.matchCharacterDescription && String(effectiveMatchContext?.character?.description || '').trim()) sourceFields.push('角色描述');
+    if (targetEntry?.matchCharacterPersonality && String(effectiveMatchContext?.character?.personality || '').trim()) sourceFields.push('角色性格');
+    if (targetEntry?.matchCharacterDepthPrompt && String(effectiveMatchContext?.character?.depthPrompt || '').trim()) sourceFields.push('角色深度提示');
+    if (targetEntry?.matchScenario && String(effectiveMatchContext?.character?.scenario || '').trim()) sourceFields.push('场景');
+    if (targetEntry?.matchCreatorNotes && String(effectiveMatchContext?.character?.creatorNotes || '').trim()) sourceFields.push('作者注释');
+    const probabilityRaw = Number(targetEntry?.probability);
+    const probabilityEnabled = targetEntry?.useProbability !== false && Number.isFinite(probabilityRaw) && probabilityRaw < 100;
+    const filteredByGroup = beforeGroupEntryIds.has(targetEntryId) && !active;
+    return {
+      entryId: targetEntryId,
+      active,
+      activationSource: active ? sourceInfo.source : 'inactive',
+      recursionStep: active ? sourceInfo.recursionStep : null,
+      directMatch: directExplain.passed,
+      filteredByGroup,
+      disabled: Boolean(targetEntry?.disable),
+      constant: Boolean(targetEntry?.constant),
+      probabilityEnabled,
+      probabilityValue: Number.isFinite(probabilityRaw) ? Math.max(0, Math.min(100, probabilityRaw)) : 100,
+      probabilitySimulated: false,
+      recursiveEnabled: globalRecursiveScan,
+      preventRecursion: Boolean(targetEntry?.preventRecursion),
+      excludeRecursion: Boolean(targetEntry?.excludeRecursion),
+      delayUntilRecursion: Number.isFinite(Number(targetEntry?.delayUntilRecursion))
+        ? Math.max(0, Math.trunc(Number(targetEntry.delayUntilRecursion)))
+        : 0,
+      hasMatchInput: directExplain.hasMatchInput,
+      hasContent: Boolean(content || blockHasContent),
+      keys: normalizeKeys(targetEntry),
+      secondaryKeys: normalizeSecondaryKeys(targetEntry),
+      matchedPrimaryKeys: directExplain.matchedPrimaryKeys,
+      matchedSecondaryKeys: directExplain.matchedSecondaryKeys,
+      selective: Boolean(targetEntry?.selective) && normalizeSecondaryKeys(targetEntry).length > 0,
+      selectiveLogic: selectiveLogicValue,
+      selectiveLogicLabel: selectiveLogicLabelMap[selectiveLogicValue] || '自定义',
+      reasons: directExplain.reasons,
+      sourceFields,
+      entryTextPreview: String(directExplain.entryText || '').slice(0, 240),
+      groups: Array.isArray(targetEntry?._groups) ? targetEntry._groups : [],
+    };
+  }
+
   getTemplateRenderInjections({ sessionId, uiMode, content, userName, characterName, groupName, membersText } = {}) {
     const sid = String(sessionId || '').trim();
     const mode = String(uiMode || '').trim().toLowerCase() === 'rp' ? 'rp' : 'chat';
@@ -4723,7 +5180,7 @@ const stringifyMessageContent = (content) => {
     return { before, after };
   }
 
-  mergeWorldEntries(globalEntries = [], sessionEntries = [], strategy = 'role_first') {
+  mergeWorldEntriesDetailed(globalEntries = [], sessionEntries = [], strategy = 'role_first') {
     const sourceRank = (src) => {
       if (strategy === 'global_first') return src === 'global' ? 0 : 1;
       if (strategy === 'role_first') return src === 'session' ? 0 : 1;
@@ -4756,13 +5213,23 @@ const stringifyMessageContent = (content) => {
       return true;
     });
     const budgetTokens = this.getWorldBudgetTokens?.();
-    if (!Number.isFinite(Number(budgetTokens)) || Number(budgetTokens) <= 0) return deduped;
+    if (!Number.isFinite(Number(budgetTokens)) || Number(budgetTokens) <= 0) {
+      return {
+        entries: deduped,
+        trimmedEntries: [],
+        budgetTokens: Number.isFinite(Number(budgetTokens)) ? Number(budgetTokens) : null,
+        usedTokens: 0,
+        overflowed: false,
+      };
+    }
     let used = 0;
     let overflowed = false;
+    const trimmedEntries = [];
     const filtered = deduped.filter((entry) => {
       const cost = estimateTokens(String(entry?.content || ''), 'rough');
       if (used + cost > budgetTokens) {
         overflowed = true;
+        trimmedEntries.push(entry);
         return false;
       }
       used += cost;
@@ -4774,7 +5241,17 @@ const stringifyMessageContent = (content) => {
         this.warnWorldBudgetOverflow?.();
       }
     }
-    return filtered;
+    return {
+      entries: filtered,
+      trimmedEntries,
+      budgetTokens: Number(budgetTokens),
+      usedTokens: used,
+      overflowed,
+    };
+  }
+
+  mergeWorldEntries(globalEntries = [], sessionEntries = [], strategy = 'role_first') {
+    return this.mergeWorldEntriesDetailed(globalEntries, sessionEntries, strategy).entries;
   }
 
   formatWorldPrompt(worldId, label) {

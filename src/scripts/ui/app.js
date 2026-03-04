@@ -9350,6 +9350,103 @@ Phase G（Frame 36）：循环衔接
     return { show, hide };
   })();
 
+  const formatPromptWorldDebug = (worldDebug) => {
+    if (!worldDebug || typeof worldDebug !== 'object') return '';
+    const listOf = (value) => Array.isArray(value) ? value : [];
+    const previewOf = (entry) => String(entry?.contentPreview || '').trim();
+    const entryLabel = (entry) => {
+      const title = String(entry?.title || '').trim();
+      const worldId = String(entry?.worldId || '').trim() || 'unknown';
+      const entryId = String(entry?.entryId || '').trim() || 'unknown';
+      const blockId = String(entry?.blockId || '').trim() || 'legacy';
+      return `${title} [${worldId} / ${entryId} / ${blockId}]`;
+    };
+    const sourceLabelMap = {
+      builtin: '内置',
+      global: '全局',
+      session: '会话',
+    };
+    const sectionLines = [];
+    const pushSection = (title, rows) => {
+      const list = Array.isArray(rows) ? rows.filter(Boolean) : [];
+      if (!list.length) return;
+      sectionLines.push(title);
+      sectionLines.push(...list);
+    };
+    const renderEntryRows = (entries, {
+      includePosition = false,
+      includeTags = false,
+      emptyText = '',
+    } = {}) => {
+      const list = listOf(entries);
+      if (!list.length) return emptyText ? [`- ${emptyText}`] : [];
+      return list.map((entry) => {
+        const src = sourceLabelMap[String(entry?.sourceKind || '').trim()] || String(entry?.sourceKind || '').trim() || '未知';
+        const parts = [
+          `- ${src}`,
+          entryLabel(entry),
+          `${String(entry?.role || 'system')}`,
+        ];
+        if (includePosition) {
+          const pos = String(entry?.positionLabel || '').trim() || '默认 Prompt';
+          const depth = Number.isFinite(Number(entry?.depth)) ? Number(entry.depth) : 0;
+          parts.push(pos);
+          if (depth > 0) parts.push(`depth=${depth}`);
+        }
+        if (includeTags) {
+          const tags = listOf(entry?.tags)
+            .map((tag) => {
+              const stage = String(tag?.stage || '').trim();
+              const type = String(tag?.type || '').trim();
+              const mode = String(tag?.mode || '').trim();
+              const index = Number.isFinite(Number(tag?.index)) ? `:${Number(tag.index)}` : '';
+              const pattern = String(tag?.pattern || '').trim();
+              if (type === 'regex' && pattern) return `${stage}:${type}:${pattern}`;
+              return `${stage}:${type}${index}${mode ? `:${mode}` : ''}`;
+            })
+            .filter(Boolean);
+          if (tags.length) parts.push(tags.join(', '));
+        }
+        const preview = previewOf(entry);
+        return `${parts.join(' | ')}${preview ? ` | ${preview}` : ''}`;
+      });
+    };
+
+    const builtinEntries = listOf(worldDebug?.builtinEntries);
+    const globalEntries = listOf(worldDebug?.globalEntries);
+    const sessionEntries = listOf(worldDebug?.sessionEntries);
+    const injectedEntries = listOf(worldDebug?.injectedEntries);
+    const templateEntries = listOf(worldDebug?.templateEntries);
+    const initialVariableEntries = listOf(worldDebug?.initialVariableEntries);
+    const trimmedEntries = listOf(worldDebug?.trimmedEntries);
+
+    const budgetTokens = Number.isFinite(Number(worldDebug?.budgetTokens)) ? Number(worldDebug.budgetTokens) : null;
+    const usedTokens = Number.isFinite(Number(worldDebug?.usedTokens)) ? Number(worldDebug.usedTokens) : 0;
+    const strategy = String(worldDebug?.insertionStrategy || '').trim() || 'role_first';
+
+    const header = [
+      '[世界书调试]',
+      `- 插入策略: ${strategy}`,
+      `- 激活命中: 内置 ${builtinEntries.length} / 全局 ${globalEntries.length} / 会话 ${sessionEntries.length}`,
+      `- 实际注入: 普通 ${injectedEntries.length} / 模板 ${templateEntries.length} / 仅变量初始化 ${initialVariableEntries.length}`,
+      budgetTokens != null
+        ? `- 预算: ${usedTokens}/${budgetTokens} tokens${worldDebug?.overflowed ? `，裁掉 ${trimmedEntries.length} 条` : ''}`
+        : '- 预算: 未限制',
+    ];
+
+    pushSection('激活条目', [
+      ...renderEntryRows(builtinEntries, { emptyText: '无内置命中' }),
+      ...renderEntryRows(globalEntries, { emptyText: '无全局命中' }),
+      ...renderEntryRows(sessionEntries, { emptyText: '无会话命中' }),
+    ]);
+    pushSection('实际注入', renderEntryRows(injectedEntries, { includePosition: true, emptyText: '无普通注入内容' }));
+    pushSection('模板注入', renderEntryRows(templateEntries, { includePosition: true, includeTags: true, emptyText: '无模板注入内容' }));
+    pushSection('仅变量初始化', renderEntryRows(initialVariableEntries, { emptyText: '无 InitialVariables 条目' }));
+    pushSection('预算裁掉', renderEntryRows(trimmedEntries, { includePosition: true, emptyText: '无预算裁剪' }));
+
+    return [...header, '', ...sectionLines].join('\n').trim();
+  };
+
   const showPromptPreview = () => {
     try {
       const sid = chatStore.getCurrent();
@@ -9383,8 +9480,9 @@ Phase G（Frame 36）：循环衔接
               .map(m => String(m?.content ?? ''))
               .filter(t => t.trim().length > 0)
               .join('\n\n');
+      const worldDebugText = formatPromptWorldDebug(req?.worldDebug);
       const meta = `${name}${at ? ` · ${at}` : ''}`;
-      promptPreviewModal.show(`${head}\n\n${body}`.trim(), meta);
+      promptPreviewModal.show([head, worldDebugText, body].filter(Boolean).join('\n\n').trim(), meta);
     } catch (err) {
       logger.warn('prompt preview failed', err);
       window.toastr?.error?.('打开本次 Prompt 失败');

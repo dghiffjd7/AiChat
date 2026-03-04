@@ -1877,6 +1877,18 @@ export class ChatStore {
     return { ...vars };
   }
 
+  deleteInitialVariable(key, id = this.currentId) {
+    const sid = String(id || '').trim();
+    const name = String(key || '').trim();
+    if (!sid || !name) return false;
+    this._ensureSession(sid);
+    const vars = this.state.sessions[sid].initialVariables || {};
+    if (!Object.prototype.hasOwnProperty.call(vars, name)) return false;
+    delete vars[name];
+    this._persist();
+    return true;
+  }
+
   clearInitialVariables(id = this.currentId) {
     const sid = String(id || '').trim();
     if (!sid) return false;
