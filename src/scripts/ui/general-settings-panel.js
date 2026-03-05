@@ -331,6 +331,9 @@ export class GeneralSettingsPanel {
       label.classList.toggle('is-on', checked);
       label.classList.toggle('is-off', !checked);
       label.classList.toggle('is-disabled', disabled);
+      if (label.querySelector('.general-settings-risk')) {
+        label.classList.toggle('has-risk', checked);
+      }
     });
   }
 
@@ -478,61 +481,50 @@ export class GeneralSettingsPanel {
         background: #f8fafc;
       }
       #general-settings-panel .general-settings-fold-btn {
-        width: 30px;
-        height: 30px;
+        width: 28px;
+        height: 28px;
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        border: 1px solid #d6deea;
-        border-radius: 999px;
-        background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
-        color: #334155;
+        border: none;
+        border-radius: 8px;
+        background: transparent;
+        color: #94a3b8;
         padding: 0;
         cursor: pointer;
-        box-shadow:
-          0 1px 2px rgba(15, 23, 42, 0.07),
-          inset 0 1px 0 rgba(255, 255, 255, 0.9);
+        box-shadow: none;
         transition:
           background 180ms ease,
-          border-color 180ms ease,
-          box-shadow 180ms ease,
+          color 180ms ease,
           transform 160ms ease;
       }
       #general-settings-panel .general-settings-fold-btn:hover {
-        border-color: #c4cfde;
-        background: linear-gradient(180deg, #ffffff 0%, #f1f6fc 100%);
+        background: rgba(148, 163, 184, 0.1);
+        color: #64748b;
       }
       #general-settings-panel .general-settings-fold-btn:active {
-        transform: scale(0.96);
+        transform: scale(0.92);
       }
       #general-settings-panel .general-settings-fold-btn:focus-visible {
         outline: 2px solid rgba(14, 165, 233, 0.28);
         outline-offset: 1px;
       }
       #general-settings-panel .general-settings-fold-btn[data-expanded='1'] {
-        border-color: #b8c4d6;
-        background: linear-gradient(180deg, #f9fbff 0%, #edf3fb 100%);
-        box-shadow:
-          0 1px 3px rgba(15, 23, 42, 0.1),
-          inset 0 1px 0 rgba(255, 255, 255, 0.88);
+        color: #3b82f6;
+        background: rgba(59, 130, 246, 0.08);
       }
-      #general-settings-panel .general-settings-fold-btn [data-role='chevron'] {
-        display: block;
-        width: 8px;
-        height: 8px;
-        font-size: 0;
-        color: transparent;
-        line-height: 0;
-        border-right: 2px solid #64748b;
-        border-bottom: 2px solid #64748b;
-        transform: rotate(45deg);
-        transform-origin: 50% 50%;
-        transition: transform 220ms cubic-bezier(0.2, 0.9, 0.2, 1), border-color 180ms ease;
+      #general-settings-panel .general-settings-fold-btn svg {
+        width: 16px;
+        height: 16px;
+        stroke: currentColor;
+        stroke-width: 2;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+        fill: none;
+        transition: transform 250ms cubic-bezier(0.2, 0.9, 0.2, 1);
       }
-      #general-settings-panel .general-settings-fold-btn[data-expanded='1'] [data-role='chevron'] {
-        border-right-color: #475569;
-        border-bottom-color: #475569;
-        transform: rotate(-135deg);
+      #general-settings-panel .general-settings-fold-btn[data-expanded='1'] svg {
+        transform: rotate(180deg);
       }
       #general-settings-panel .general-settings-inline-row {
         display: flex;
@@ -568,43 +560,39 @@ export class GeneralSettingsPanel {
           transform 180ms ease-out;
       }
       #general-settings-panel .general-settings-toggle-row.is-on {
-        background:
-          repeating-linear-gradient(
-            128deg,
-            rgba(255, 255, 255, 0.2) 0px,
-            rgba(255, 255, 255, 0.2) 2px,
-            rgba(206, 199, 187, 0.14) 2px,
-            rgba(206, 199, 187, 0.14) 5px,
-            rgba(177, 170, 159, 0.08) 5px,
-            rgba(177, 170, 159, 0.08) 8px
-          ),
-          linear-gradient(142deg, rgba(212, 205, 191, 0.94) 0%, rgba(188, 181, 168, 0.96) 48%, rgba(168, 161, 149, 0.98) 100%),
-          radial-gradient(118% 90% at 12% 8%, rgba(255, 255, 255, 0.28) 0%, rgba(255, 255, 255, 0) 58%),
-          radial-gradient(105% 90% at 86% 100%, rgba(124, 118, 108, 0.22) 0%, rgba(124, 118, 108, 0) 66%);
-        border-color: rgba(144, 136, 123, 0.7);
-        box-shadow:
-          0 0 0 1px rgba(255, 255, 255, 0.42) inset,
-          0 1px 0 rgba(255, 255, 255, 0.46),
-          0 8px 20px rgba(92, 86, 76, 0.24);
+        background: #eff6ff;
+        border-color: #bfdbfe;
+        border-left: 3px solid #3b82f6;
+        box-shadow: 0 1px 3px rgba(59, 130, 246, 0.08);
       }
       #general-settings-panel .general-settings-toggle-row.is-on span {
-        color: #232a33;
+        color: #1e3a5f;
         text-shadow: none;
       }
       #general-settings-panel .general-settings-toggle-row.is-off {
         background: #f7f8fa;
         border-color: #e2e8f0;
+        border-left: 3px solid #d1d5db;
       }
       #general-settings-panel .general-settings-toggle-row.is-off span {
-        color: #333333;
+        color: #334155;
       }
       #general-settings-panel .general-settings-toggle-row .general-settings-risk {
         color: #b91c1c !important;
       }
       #general-settings-panel .general-settings-toggle-row.is-on .general-settings-risk {
-        color: #8f1d1d !important;
-        border-color: rgba(191, 126, 126, 0.48);
-        background: rgba(255, 243, 243, 0.72);
+        color: #b91c1c !important;
+        border-color: #fecaca;
+        background: #fef2f2;
+      }
+      #general-settings-panel .general-settings-toggle-row.is-on.has-risk {
+        background: #fef7f7;
+        border-color: #fecaca;
+        border-left: 3px solid #ef4444;
+        box-shadow: 0 1px 3px rgba(239, 68, 68, 0.06);
+      }
+      #general-settings-panel .general-settings-toggle-row.is-on.has-risk span {
+        color: #1e293b;
       }
       #general-settings-panel .general-settings-toggle-row.is-disabled {
         opacity: 0.56;
@@ -620,15 +608,20 @@ export class GeneralSettingsPanel {
       #general-settings-panel .general-settings-toggle-row.general-settings-toggle-subrow.is-off {
         background: transparent;
         border-color: transparent;
+        border-left: 2px solid #d1d5db;
       }
       #general-settings-panel .general-settings-toggle-row.general-settings-toggle-subrow.is-on {
-        background: rgba(0, 122, 255, 0.11);
-        border-color: rgba(0, 122, 255, 0.2);
+        background: #f0f7ff;
+        border-color: rgba(59, 130, 246, 0.15);
+        border-left: 2px solid #60a5fa;
         box-shadow: none;
       }
-      #general-settings-panel .general-settings-toggle-row.general-settings-toggle-subrow.is-on span,
+      #general-settings-panel .general-settings-toggle-row.general-settings-toggle-subrow.is-on span {
+        color: #1e3a5f;
+        text-shadow: none;
+      }
       #general-settings-panel .general-settings-toggle-row.general-settings-toggle-subrow.is-off span {
-        color: #1f2937;
+        color: #334155;
         text-shadow: none;
       }
       #general-settings-panel .general-settings-toggle-row.general-settings-toggle-subrow .general-settings-risk {
@@ -653,7 +646,7 @@ export class GeneralSettingsPanel {
         opacity: 0.68;
         transform: translate(-50%, -50%) scale(0);
         background:
-          radial-gradient(circle, rgba(255, 255, 255, 0.76) 0%, rgba(214, 208, 195, 0.46) 45%, rgba(255, 255, 255, 0) 72%);
+          radial-gradient(circle, rgba(255, 255, 255, 0.76) 0%, rgba(59, 130, 246, 0.18) 45%, rgba(255, 255, 255, 0) 72%);
         animation: general-settings-ripple 520ms ease-out forwards;
       }
       @keyframes general-settings-ripple {
@@ -764,7 +757,7 @@ export class GeneralSettingsPanel {
           <div class="general-settings-inline-row" style="margin-bottom: 10px;">
             <div class="general-settings-card-title" style="margin-bottom: 0;">界面与调试</div>
             <button type="button" id="general-ui-advanced-toggle" class="general-settings-fold-btn" data-expanded="0" aria-expanded="false">
-              <span data-role="chevron"></span>
+              <svg viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg>
             </button>
           </div>
 
@@ -821,7 +814,7 @@ export class GeneralSettingsPanel {
           <div class="general-settings-inline-row" style="margin-bottom: 10px;">
             <div class="general-settings-card-title" style="margin-bottom: 0;">记忆与角色</div>
             <button type="button" id="general-memory-advanced-toggle" class="general-settings-fold-btn" data-expanded="0" aria-expanded="false">
-              <span data-role="chevron"></span>
+              <svg viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg>
             </button>
           </div>
 
@@ -941,7 +934,7 @@ export class GeneralSettingsPanel {
               <span style="font-weight: 700;">启用模板处理</span>
             </label>
             <button type="button" id="general-template-advanced-toggle" class="general-settings-fold-btn" data-expanded="0" aria-expanded="false">
-              <span data-role="chevron"></span>
+              <svg viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg>
             </button>
           </div>
           <div id="general-template-advanced" class="general-settings-fold-content" style="display:none; margin-bottom: 10px;">
@@ -967,7 +960,7 @@ export class GeneralSettingsPanel {
               <span style="font-weight: 700;">启用角色卡脚本</span>
             </label>
             <button type="button" id="general-script-advanced-toggle" class="general-settings-fold-btn" data-expanded="0" aria-expanded="false">
-              <span data-role="chevron"></span>
+              <svg viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg>
             </button>
           </div>
           <div id="general-script-advanced" class="general-settings-fold-content" style="display:none;">
