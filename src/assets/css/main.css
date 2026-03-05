@@ -1690,34 +1690,6 @@ body.chat-room-active .bottom-nav {
   }
 }
 
-.world-cond-form {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.world-cond-form-header {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.world-cond-form-title {
-  font-size: 12px;
-  color: #334155;
-  font-weight: 600;
-}
-
-.world-cond-form-hint {
-  font-size: 11px;
-  color: #64748b;
-}
-
-.world-cond-form-body {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
 
 .world-cond-group {
   border: 1px solid #dbe3ee;

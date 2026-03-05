@@ -9,7 +9,34 @@ import { LLMClient } from '../api/client.js';
 import { ConfigManager } from '../storage/config.js';
 import { logger } from '../utils/logger.js';
 import { safeInvoke } from '../utils/tauri.js';
-import { buildVariableContext, explainConditionTree } from '../variables/world-condition-core.js';
+import {
+    genNodeId,
+    genEdgeId,
+    sanitizeNodeId,
+    normalizeNodeType,
+    normalizeLogicValue,
+    normalizeRightTypeValue,
+    parseTypedValue,
+    stringifyTypedValue,
+    buildNodeDefineSpec,
+    getNodePortSpec,
+    normalizeGraphNodeData,
+    normalizeGraphNode,
+    normalizeGraphEdge,
+    isConditionLogicNode,
+    autoLayoutNodeGraph,
+    buildNodeGraphFromWhen,
+    normalizeNodeGraph,
+    buildWhenFromNodeGraph,
+    normalizePromptClause,
+    isConditionTreeGroup,
+    createDefaultPromptClause,
+    normalizeConditionTree,
+    getPrimaryClauseFromConditionTree,
+    visitConditionTree,
+    buildVariableContext,
+    explainConditionTree,
+} from '../variables/world-condition-core.js';
 import {
     createVariableModalImpl,
     renderVariableModalDraftImpl,
@@ -139,17 +166,6 @@ const BLOCK_MODE_NODE_ICON_SVG = `
 </svg>
 `.trim();
 
-const BLOCK_MODE_FORM_ICON_SVG = `
-<svg class="world-mini-icon" viewBox="0 0 24 24" aria-hidden="true">
-    <path d="M5 6h14"></path>
-    <path d="M5 12h14"></path>
-    <path d="M5 18h14"></path>
-    <circle cx="9" cy="6" r="1.7"></circle>
-    <circle cx="15" cy="12" r="1.7"></circle>
-    <circle cx="11" cy="18" r="1.7"></circle>
-</svg>
-`.trim();
-
 const WORLD_AI_INPUT_KEY = 'world_ai_input_v1';
 const WORLD_AI_TEMPLATE_KEY = 'world_ai_template_v1';
 const WORLD_VAR_BROWSER_RECENT_KEY = 'world_var_browser_recent_v1';
@@ -215,497 +231,7 @@ const toNumber = (val, def) => {
 };
 
 const genBlockId = () => `blk_${Date.now().toString(36)}_${Math.random().toString(16).slice(2, 7)}`;
-const genNodeId = () => `nd_${Date.now().toString(36)}_${Math.random().toString(16).slice(2, 7)}`;
-const genEdgeId = () => `ed_${Date.now().toString(36)}_${Math.random().toString(16).slice(2, 7)}`;
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
-const sanitizeNodeId = (value, fallback = '') => {
-    const raw = String(value || '').trim();
-    const cleaned = raw.replace(/[^a-zA-Z0-9_-]/g, '_').replace(/_+/g, '_');
-    if (cleaned) return cleaned;
-    const backup = String(fallback || '').trim().replace(/[^a-zA-Z0-9_-]/g, '_').replace(/_+/g, '_');
-    return backup || `node_${Date.now().toString(36)}`;
-};
-const normalizeNodeType = (type) => {
-    const t = String(type || '').trim().toLowerCase();
-    if (['variable', 'value', 'compare', 'logic', 'result'].includes(t)) return t;
-    return 'compare';
-};
-const normalizeLogicValue = (logic) => {
-    const value = String(logic || '').trim().toLowerCase();
-    return ['and', 'or', 'not'].includes(value) ? value : 'and';
-};
-const normalizeRightTypeValue = (raw) => {
-    const value = String(raw || '').trim().toLowerCase();
-    return ['number', 'string', 'boolean', 'variable'].includes(value) ? value : 'number';
-};
-const parseTypedValue = (value, type = 'string') => {
-    const mode = normalizeRightTypeValue(type);
-    if (mode === 'number') {
-        const n = Number(value);
-        return Number.isFinite(n) ? n : 0;
-    }
-    if (mode === 'boolean') {
-        const text = String(value ?? '').trim().toLowerCase();
-        return text === 'true' || text === '1' || text === 'yes' || text === 'on';
-    }
-    return String(value ?? '');
-};
-const stringifyTypedValue = (value, type = 'string') => {
-    const mode = normalizeRightTypeValue(type);
-    if (mode === 'boolean') return value ? 'true' : 'false';
-    return String(value ?? '');
-};
-const buildNodeDefineSpec = (data = {}) => {
-    const path = String(data.path || '').trim();
-    if (!path || data.autoCreate !== true) return null;
-    const typeRaw = String(data.varType || 'number').trim().toLowerCase();
-    const type = ['number', 'string', 'boolean'].includes(typeRaw) ? typeRaw : 'number';
-    const defaultValue = parseTypedValue(data.defaultValue, type);
-    return { name: path, type, default: defaultValue };
-};
-const getNodePortSpec = (node = {}) => {
-    const type = normalizeNodeType(node.type);
-    if (type === 'variable') return { inputs: [], outputs: ['out'] };
-    if (type === 'value') return { inputs: [], outputs: ['out'] };
-    if (type === 'compare') return { inputs: ['left', 'right'], outputs: ['out'] };
-    if (type === 'logic') {
-        const mode = normalizeLogicValue(node?.data?.logic);
-        const inputCountRaw = Number(node?.data?.inputCount || 2);
-        const inputCount = Number.isFinite(inputCountRaw) ? Math.max(1, Math.min(8, Math.trunc(inputCountRaw))) : 2;
-        return mode === 'not'
-            ? { inputs: ['in'], outputs: ['out'] }
-            : { inputs: Array.from({ length: inputCount }, (_, idx) => `in${idx + 1}`), outputs: ['out'] };
-    }
-    return { inputs: ['in'], outputs: [] };
-};
-const normalizeGraphNodeData = (type, data = {}) => {
-    const base = data && typeof data === 'object' ? { ...data } : {};
-    if (type === 'variable') {
-        return {
-            path: String(base.path || '').trim(),
-            autoCreate: base.autoCreate === true,
-            varType: ['number', 'string', 'boolean'].includes(String(base.varType || '').trim().toLowerCase())
-                ? String(base.varType).trim().toLowerCase()
-                : 'number',
-            defaultValue: base.defaultValue ?? 0,
-        };
-    }
-    if (type === 'value') {
-        const rightType = normalizeRightTypeValue(base.rightType || 'number');
-        const value = base.value ?? (rightType === 'number' ? 0 : '');
-        return {
-            rightType,
-            value: stringifyTypedValue(value, rightType),
-        };
-    }
-    if (type === 'compare') {
-        const op = String(base.op || '>').trim();
-        const knownOps = new Set(BLOCK_OP_OPTIONS.map(opt => String(opt.value)));
-        return {
-            op: knownOps.has(op) ? op : '>',
-            fallbackRightType: normalizeRightTypeValue(base.fallbackRightType || 'number'),
-            fallbackRight: stringifyTypedValue(base.fallbackRight ?? 10, base.fallbackRightType || 'number'),
-        };
-    }
-    if (type === 'logic') {
-        const logic = normalizeLogicValue(base.logic);
-        const inputCountRaw = Number(base.inputCount || (logic === 'not' ? 1 : 2));
-        const inputCount = logic === 'not'
-            ? 1
-            : (Number.isFinite(inputCountRaw) ? Math.max(2, Math.min(8, Math.trunc(inputCountRaw))) : 2);
-        return { logic, inputCount };
-    }
-    return {};
-};
-const normalizeGraphNode = (raw = {}, index = 0) => {
-    const node = raw && typeof raw === 'object' ? { ...raw } : {};
-    const type = normalizeNodeType(node.type);
-    const fallbackId = `${type}_${index + 1}`;
-    return {
-        id: sanitizeNodeId(node.id, fallbackId),
-        type,
-        x: Number.isFinite(Number(node.x)) ? Number(node.x) : 36 + (index % 3) * 220,
-        y: Number.isFinite(Number(node.y)) ? Number(node.y) : 36 + Math.floor(index / 3) * 120,
-        data: normalizeGraphNodeData(type, node.data),
-    };
-};
-const normalizeGraphEdge = (raw = {}, index = 0, nodeById = new Map()) => {
-    const edge = raw && typeof raw === 'object' ? { ...raw } : {};
-    const fromRaw = String(edge.from || '').trim();
-    const toRaw = String(edge.to || '').trim();
-    const from = sanitizeNodeId(fromRaw, fromRaw);
-    const to = sanitizeNodeId(toRaw, toRaw);
-    if (!from || !to || from === to) return null;
-    const fromNode = nodeById.get(from);
-    const toNode = nodeById.get(to);
-    if (!fromNode || !toNode) return null;
-    const fromPort = String(edge.fromPort || 'out').trim();
-    const toPort = String(edge.toPort || 'in').trim();
-    const fromPorts = getNodePortSpec(fromNode).outputs;
-    const toPorts = getNodePortSpec(toNode).inputs;
-    if (!fromPorts.includes(fromPort) || !toPorts.includes(toPort)) return null;
-    return {
-        id: sanitizeNodeId(edge.id, `edge_${index + 1}`),
-        from,
-        fromPort,
-        to,
-        toPort,
-    };
-};
-const isConditionLogicNode = (node = {}) => {
-    const logicRaw = String(node?.logic || '').trim().toLowerCase();
-    return logicRaw === 'and' || logicRaw === 'or' || logicRaw === 'not';
-};
-const autoLayoutNodeGraph = (graph = {}) => {
-    const nodes = Array.isArray(graph.nodes) ? graph.nodes : [];
-    const edges = Array.isArray(graph.edges) ? graph.edges : [];
-    const nodeById = new Map(nodes.map(node => [String(node.id || ''), node]));
-    const inDegree = new Map();
-    const outgoing = new Map();
-    nodes.forEach((node) => {
-        const id = String(node.id || '');
-        inDegree.set(id, 0);
-        outgoing.set(id, []);
-    });
-    edges.forEach((edge) => {
-        const from = String(edge.from || '');
-        const to = String(edge.to || '');
-        if (!nodeById.has(from) || !nodeById.has(to)) return;
-        inDegree.set(to, (inDegree.get(to) || 0) + 1);
-        outgoing.get(from)?.push(to);
-    });
-    const queue = [];
-    inDegree.forEach((deg, id) => {
-        if (deg === 0) queue.push(id);
-    });
-    const levelById = new Map();
-    queue.forEach(id => levelById.set(id, 0));
-    while (queue.length) {
-        const id = queue.shift();
-        const level = Number(levelById.get(id) || 0);
-        const nextList = outgoing.get(id) || [];
-        nextList.forEach((to) => {
-            levelById.set(to, Math.max(Number(levelById.get(to) || 0), level + 1));
-            inDegree.set(to, Number(inDegree.get(to) || 0) - 1);
-            if (inDegree.get(to) === 0) queue.push(to);
-        });
-    }
-    nodes.forEach((node) => {
-        if (!levelById.has(node.id)) levelById.set(node.id, 0);
-    });
-    const layers = new Map();
-    nodes.forEach((node) => {
-        const level = Number(levelById.get(node.id) || 0);
-        if (!layers.has(level)) layers.set(level, []);
-        layers.get(level).push(node);
-    });
-    [...layers.entries()]
-        .sort((a, b) => a[0] - b[0])
-        .forEach(([level, layerNodes]) => {
-            layerNodes.sort((a, b) => String(a.type).localeCompare(String(b.type), 'en'));
-            layerNodes.forEach((node, idx) => {
-                node.x = 40 + level * 230;
-                node.y = 40 + idx * 128;
-            });
-        });
-    return graph;
-};
-const buildNodeGraphFromWhen = (when = {}, fallbackClause = {}) => {
-    const nodes = [];
-    const edges = [];
-    const createNode = (type, data = {}) => {
-        const node = {
-            id: genNodeId(),
-            type: normalizeNodeType(type),
-            x: 0,
-            y: 0,
-            data: normalizeGraphNodeData(normalizeNodeType(type), data),
-        };
-        nodes.push(node);
-        return node;
-    };
-    const connect = (fromNode, fromPort, toNode, toPort) => {
-        if (!fromNode?.id || !toNode?.id) return;
-        edges.push({
-            id: genEdgeId(),
-            from: fromNode.id,
-            fromPort,
-            to: toNode.id,
-            toPort,
-        });
-    };
-    const buildClauseNodes = (clauseRaw = {}) => {
-        const clause = normalizePromptClause(clauseRaw);
-        const variableNode = createNode('variable', {
-            path: clause.left,
-            autoCreate: Boolean(clause.defineVariable?.name),
-            varType: clause.defineVariable?.type || 'number',
-            defaultValue: clause.defineVariable?.default ?? 0,
-        });
-        const compareNode = createNode('compare', {
-            op: clause.op,
-            fallbackRightType: clause.rightType,
-            fallbackRight: stringifyTypedValue(clause.right, clause.rightType),
-        });
-        connect(variableNode, 'out', compareNode, 'left');
-        if (clause.op !== 'is_empty' && clause.op !== 'not_empty') {
-            const rightIsVariable = clause.rightType === 'variable';
-            const rightNode = rightIsVariable
-                ? createNode('variable', { path: String(clause.right || ''), autoCreate: false, varType: 'number', defaultValue: 0 })
-                : createNode('value', {
-                    rightType: clause.rightType,
-                    value: stringifyTypedValue(clause.right, clause.rightType),
-                });
-            connect(rightNode, 'out', compareNode, 'right');
-        }
-        return compareNode;
-    };
-    const buildConditionNodes = (nodeRaw = {}) => {
-        const node = nodeRaw && typeof nodeRaw === 'object' ? nodeRaw : {};
-        if (isConditionLogicNode(node)) {
-            const logic = normalizeLogicValue(node.logic);
-            const children = Array.isArray(node.clauses) ? node.clauses.filter(Boolean) : [];
-            const logicNode = createNode('logic', { logic, inputCount: logic === 'not' ? 1 : Math.max(2, children.length) });
-            if (logic === 'not') {
-                const child = node.clause && typeof node.clause === 'object'
-                    ? node.clause
-                    : (Array.isArray(node.clauses) ? node.clauses[0] : null);
-                if (child) {
-                    const childOutput = buildConditionNodes(child);
-                    if (childOutput) connect(childOutput, 'out', logicNode, 'in');
-                }
-                return logicNode;
-            }
-            children.forEach((child, idx) => {
-                const childOutput = buildConditionNodes(child);
-                if (!childOutput) return;
-                connect(childOutput, 'out', logicNode, `in${idx + 1}`);
-            });
-            return logicNode;
-        }
-        if (node.clause && typeof node.clause === 'object') {
-            return buildConditionNodes(node.clause);
-        }
-        return buildClauseNodes(node);
-    };
-
-    const fallback = normalizePromptClause(fallbackClause || {});
-    const root = buildConditionNodes(when && typeof when === 'object' ? when : fallback);
-    const resultNode = createNode('result', {});
-    if (root) connect(root, 'out', resultNode, 'in');
-    return autoLayoutNodeGraph({
-        version: NODE_GRAPH_VERSION,
-        nodes,
-        edges,
-    });
-};
-const normalizeNodeGraph = (raw = {}, fallbackWhen = {}, fallbackClause = {}) => {
-    const graph = raw && typeof raw === 'object' ? raw : {};
-    if (!Array.isArray(graph.nodes) || !graph.nodes.length) {
-        return buildNodeGraphFromWhen(fallbackWhen, fallbackClause);
-    }
-    const nodes = graph.nodes.map((node, idx) => normalizeGraphNode(node, idx));
-    const dedupNodes = [];
-    const nodeById = new Map();
-    nodes.forEach((node) => {
-        const id = String(node.id || '').trim() || genNodeId();
-        if (nodeById.has(id)) {
-            node.id = genNodeId();
-        } else {
-            node.id = id;
-        }
-        nodeById.set(node.id, node);
-        dedupNodes.push(node);
-    });
-    let hasResult = dedupNodes.some(node => node.type === 'result');
-    if (!hasResult) {
-        const resultNode = normalizeGraphNode({ type: 'result', id: genNodeId(), x: 620, y: 120 }, dedupNodes.length);
-        dedupNodes.push(resultNode);
-        nodeById.set(resultNode.id, resultNode);
-        hasResult = true;
-    }
-    const rawEdges = Array.isArray(graph.edges) ? graph.edges : [];
-    const normalizedEdges = rawEdges
-        .map((edge, idx) => normalizeGraphEdge(edge, idx, nodeById))
-        .filter(Boolean);
-    const edgeKeys = new Set();
-    const dedupEdges = [];
-    normalizedEdges.forEach((edge) => {
-        const key = `${edge.from}|${edge.fromPort}|${edge.to}|${edge.toPort}`;
-        if (edgeKeys.has(key)) return;
-        edgeKeys.add(key);
-        dedupEdges.push(edge);
-    });
-    const resultNode = dedupNodes.find(node => node.type === 'result');
-    const hasResultInput = dedupEdges.some(edge => edge.to === resultNode.id && edge.toPort === 'in');
-    if (!hasResultInput) {
-        const candidate = dedupNodes.find(node => node.type === 'compare' || node.type === 'logic') || dedupNodes[0];
-        if (candidate && candidate.id !== resultNode.id) {
-            dedupEdges.push({
-                id: genEdgeId(),
-                from: candidate.id,
-                fromPort: 'out',
-                to: resultNode.id,
-                toPort: 'in',
-            });
-        }
-    }
-    const next = {
-        version: NODE_GRAPH_VERSION,
-        nodes: dedupNodes,
-        edges: dedupEdges,
-        viewport: {
-            x: Number.isFinite(Number(graph?.viewport?.x)) ? Number(graph.viewport.x) : 0,
-            y: Number.isFinite(Number(graph?.viewport?.y)) ? Number(graph.viewport.y) : 0,
-            zoom: Number.isFinite(Number(graph?.viewport?.zoom)) ? clamp(Number(graph.viewport.zoom), 0.55, 1.8) : 1,
-        },
-    };
-    return next;
-};
-const buildWhenFromNodeGraph = (graphRaw = {}, fallbackClause = {}) => {
-    const graph = normalizeNodeGraph(graphRaw, {}, fallbackClause);
-    const nodes = Array.isArray(graph.nodes) ? graph.nodes : [];
-    const edges = Array.isArray(graph.edges) ? graph.edges : [];
-    const nodeById = new Map(nodes.map(node => [String(node.id || ''), node]));
-    const incomingByPort = new Map();
-    edges.forEach((edge) => {
-        const key = `${edge.to}|${edge.toPort}`;
-        if (!incomingByPort.has(key)) incomingByPort.set(key, []);
-        incomingByPort.get(key).push(edge);
-    });
-    const getIncomingNode = (toId, toPort) => {
-        const key = `${toId}|${toPort}`;
-        const list = incomingByPort.get(key) || [];
-        const hit = list[0];
-        if (!hit) return null;
-        return nodeById.get(hit.from) || null;
-    };
-    const buildClauseFromCompare = (node, seen) => {
-        const compareData = normalizeGraphNodeData('compare', node?.data || {});
-        const clause = normalizePromptClause({
-            left: '',
-            op: compareData.op,
-            rightType: compareData.fallbackRightType,
-            right: parseTypedValue(compareData.fallbackRight, compareData.fallbackRightType),
-        });
-        const leftNode = getIncomingNode(node.id, 'left');
-        if (leftNode && !seen.has(leftNode.id)) {
-            if (leftNode.type === 'variable') {
-                clause.left = String(leftNode?.data?.path || '').trim();
-                const defineSpec = buildNodeDefineSpec(leftNode.data);
-                if (defineSpec) clause.defineVariable = defineSpec;
-            } else if (leftNode.type === 'value') {
-                clause.left = String(leftNode?.data?.value || '').trim();
-            }
-        }
-        const rightNode = getIncomingNode(node.id, 'right');
-        if (rightNode && !seen.has(rightNode.id)) {
-            if (rightNode.type === 'variable') {
-                clause.rightType = 'variable';
-                clause.right = String(rightNode?.data?.path || '').trim();
-            } else if (rightNode.type === 'value') {
-                const rightType = normalizeRightTypeValue(rightNode?.data?.rightType || 'number');
-                clause.rightType = rightType;
-                clause.right = parseTypedValue(rightNode?.data?.value, rightType);
-            }
-        }
-        return normalizePromptClause(clause);
-    };
-    const buildCondition = (nodeId, seen = new Set()) => {
-        const id = String(nodeId || '').trim();
-        if (!id || seen.has(id)) return null;
-        const node = nodeById.get(id);
-        if (!node) return null;
-        const nextSeen = new Set(seen);
-        nextSeen.add(id);
-        if (node.type === 'compare') {
-            return buildClauseFromCompare(node, nextSeen);
-        }
-        if (node.type === 'logic') {
-            const logic = normalizeLogicValue(node?.data?.logic);
-            if (logic === 'not') {
-                const child = getIncomingNode(node.id, 'in');
-                const childCondition = child ? buildCondition(child.id, nextSeen) : null;
-                if (!childCondition) return { logic: 'not', clause: normalizePromptClause(fallbackClause) };
-                return { logic: 'not', clause: childCondition };
-            }
-            const inputPorts = getNodePortSpec(node).inputs;
-            const inputs = inputPorts
-                .map((port) => getIncomingNode(node.id, port))
-                .filter(Boolean);
-            const clauses = inputs
-                .map(child => buildCondition(child.id, nextSeen))
-                .filter(Boolean);
-            if (!clauses.length) clauses.push(normalizePromptClause(fallbackClause));
-            return { logic, clauses };
-        }
-        if (node.type === 'result') {
-            const child = getIncomingNode(node.id, 'in');
-            return child ? buildCondition(child.id, nextSeen) : normalizePromptClause(fallbackClause);
-        }
-        if (node.type === 'variable') {
-            return normalizePromptClause({
-                left: String(node?.data?.path || '').trim(),
-                op: 'not_empty',
-                rightType: 'string',
-                right: '',
-                defineVariable: buildNodeDefineSpec(node.data),
-            });
-        }
-        return normalizePromptClause(fallbackClause);
-    };
-    const resultNode = nodes.find(node => node.type === 'result') || null;
-    const built = buildCondition(resultNode?.id, new Set()) || normalizePromptClause(fallbackClause);
-    if (built?.logic && Array.isArray(built.clauses)) {
-        return {
-            logic: normalizeLogicValue(built.logic),
-            clauses: built.clauses.map(clause => {
-                if (clause?.logic) return clause;
-                return normalizePromptClause(clause);
-            }),
-        };
-    }
-    if (built?.logic === 'not') {
-        return {
-            logic: 'not',
-            clause: built.clause?.logic ? built.clause : normalizePromptClause(built.clause || fallbackClause),
-        };
-    }
-    return {
-        logic: 'and',
-        clauses: [normalizePromptClause(built || fallbackClause)],
-    };
-};
-
-const normalizePromptClause = (raw = {}) => {
-    const clause = raw && typeof raw === 'object' ? { ...raw } : {};
-    return {
-        left: String(clause.left || '').trim(),
-        op: String(clause.op || '>').trim(),
-        right: clause.right ?? '',
-        rightType: String(clause.rightType || 'number').trim(),
-        defineVariable: clause.defineVariable && typeof clause.defineVariable === 'object'
-            ? {
-                name: String(clause.defineVariable.name || '').trim(),
-                type: String(clause.defineVariable.type || 'number').trim().toLowerCase(),
-                default: clause.defineVariable.default ?? 0,
-            }
-            : null,
-    };
-};
-
-const isConditionTreeGroup = (raw = {}) => {
-    if (!raw || typeof raw !== 'object') return false;
-    const logic = String(raw.logic || '').trim().toLowerCase();
-    return logic === 'and' || logic === 'or' || logic === 'not' || Array.isArray(raw.clauses) || (raw.clause && typeof raw.clause === 'object');
-};
-
-const createDefaultPromptClause = () => normalizePromptClause({
-    left: '',
-    op: '>',
-    right: 10,
-    rightType: 'number',
-});
 
 const buildVariableCreationDraft = (raw = {}) => {
     const draft = raw && typeof raw === 'object' ? { ...raw } : {};
@@ -732,50 +258,6 @@ const buildVariableCreationDraft = (raw = {}) => {
     };
 };
 
-const normalizeConditionTree = (raw = null, fallbackClause = null) => {
-    const fallback = normalizePromptClause(fallbackClause || createDefaultPromptClause());
-    if (!raw || typeof raw !== 'object') return { logic: 'and', clauses: [fallback] };
-    if (!isConditionTreeGroup(raw)) return normalizePromptClause(raw);
-    const logic = normalizeLogicValue(raw.logic || 'and');
-    if (logic === 'not') {
-        const childRaw = raw.clause && typeof raw.clause === 'object'
-            ? raw.clause
-            : (Array.isArray(raw.clauses) ? raw.clauses[0] : null);
-        const child = normalizeConditionTree(childRaw, fallback);
-        return { logic: 'not', clause: child };
-    }
-    const listRaw = Array.isArray(raw.clauses) ? raw.clauses : [];
-    const clauses = listRaw.length
-        ? listRaw.map(item => normalizeConditionTree(item, fallback)).filter(Boolean)
-        : [fallback];
-    return { logic, clauses };
-};
-
-const getPrimaryClauseFromConditionTree = (raw = null, fallbackClause = null) => {
-    const node = normalizeConditionTree(raw, fallbackClause);
-    if (!node || typeof node !== 'object') return normalizePromptClause(fallbackClause || createDefaultPromptClause());
-    if (node.logic === 'not') return getPrimaryClauseFromConditionTree(node.clause, fallbackClause);
-    if (Array.isArray(node.clauses)) {
-        const first = node.clauses[0];
-        return getPrimaryClauseFromConditionTree(first, fallbackClause);
-    }
-    return normalizePromptClause(node);
-};
-
-const visitConditionTree = (node, visitor, path = 'root') => {
-    if (!node || typeof node !== 'object' || typeof visitor !== 'function') return;
-    visitor(node, path);
-    if (node.logic === 'not') {
-        if (node.clause && typeof node.clause === 'object') visitConditionTree(node.clause, visitor, `${path}.0`);
-        return;
-    }
-    if (Array.isArray(node.clauses)) {
-        node.clauses.forEach((child, idx) => {
-            if (child && typeof child === 'object') visitConditionTree(child, visitor, `${path}.${idx}`);
-        });
-    }
-};
-
 const normalizePromptBlock = (raw = {}, index = 0, fallbackContent = '') => {
     const block = raw && typeof raw === 'object' ? { ...raw } : {};
     const whenRaw = block.when && typeof block.when === 'object' ? block.when : {};
@@ -786,12 +268,10 @@ const normalizePromptBlock = (raw = {}, index = 0, fallbackContent = '') => {
         normalizedWhenTree,
         primaryClause,
     );
-    const uiMode = 'node';
-    let normalizedWhen = normalizedWhenTree;
-    if (uiMode === 'node') {
-        normalizedWhen = buildWhenFromNodeGraph(normalizedGraph, primaryClause);
-    }
-    normalizedWhen = normalizeConditionTree(normalizedWhen, primaryClause);
+    const normalizedWhen = normalizeConditionTree(
+        buildWhenFromNodeGraph(normalizedGraph, primaryClause),
+        primaryClause,
+    );
     return {
         id: String(block.id || '').trim() || genBlockId(),
         title: String(block.title || `内容 ${index + 1}`).trim(),
@@ -799,7 +279,7 @@ const normalizePromptBlock = (raw = {}, index = 0, fallbackContent = '') => {
         content: String(block.content ?? (index === 0 ? fallbackContent : '')).trim(),
         role: Number.isFinite(Number(block.role)) ? Number(block.role) : 0,
         priority: Number.isFinite(Number(block.priority)) ? Number(block.priority) : 100,
-        uiMode,
+        uiMode: 'node',
         nodeGraph: normalizedGraph,
         when: normalizedWhen,
     };

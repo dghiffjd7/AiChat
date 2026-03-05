@@ -1,7 +1,7 @@
-const genNodeId = () => `nd_${Date.now().toString(36)}_${Math.random().toString(16).slice(2, 7)}`;
-const genEdgeId = () => `ed_${Date.now().toString(36)}_${Math.random().toString(16).slice(2, 7)}`;
+export const genNodeId = () => `nd_${Date.now().toString(36)}_${Math.random().toString(16).slice(2, 7)}`;
+export const genEdgeId = () => `ed_${Date.now().toString(36)}_${Math.random().toString(16).slice(2, 7)}`;
 
-const sanitizeNodeId = (value, fallback = '') => {
+export const sanitizeNodeId = (value, fallback = '') => {
   const raw = String(value || '').trim();
   const cleaned = raw.replace(/[^a-zA-Z0-9_-]/g, '_').replace(/_+/g, '_');
   if (cleaned) return cleaned;
@@ -48,7 +48,7 @@ export const stringifyTypedValue = (value, type = 'string') => {
   return String(value ?? '');
 };
 
-const buildNodeDefineSpec = (data = {}) => {
+export const buildNodeDefineSpec = (data = {}) => {
   const path = String(data.path || '').trim();
   if (!path || data.autoCreate !== true) return null;
   const typeRaw = String(data.varType || 'number').trim().toLowerCase();
@@ -73,7 +73,7 @@ export const getNodePortSpec = (node = {}) => {
   return { inputs: ['in'], outputs: [] };
 };
 
-const normalizeGraphNodeData = (type, data = {}) => {
+export const normalizeGraphNodeData = (type, data = {}) => {
   const base = data && typeof data === 'object' ? { ...data } : {};
   if (type === 'variable') {
     return {
@@ -125,7 +125,7 @@ export const normalizeGraphNode = (raw = {}, index = 0) => {
   };
 };
 
-const normalizeGraphEdge = (raw = {}, index = 0, nodeById = new Map()) => {
+export const normalizeGraphEdge = (raw = {}, index = 0, nodeById = new Map()) => {
   const edge = raw && typeof raw === 'object' ? { ...raw } : {};
   const fromRaw = String(edge.from || '').trim();
   const toRaw = String(edge.to || '').trim();
@@ -149,7 +149,7 @@ const normalizeGraphEdge = (raw = {}, index = 0, nodeById = new Map()) => {
   };
 };
 
-const isConditionLogicNode = (node = {}) => {
+export const isConditionLogicNode = (node = {}) => {
   const logicRaw = String(node?.logic || '').trim().toLowerCase();
   return logicRaw === 'and' || logicRaw === 'or' || logicRaw === 'not';
 };
