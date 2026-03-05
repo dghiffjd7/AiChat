@@ -211,6 +211,7 @@ class AppBridge {
     this.lastMemoryPlan = null;
     this.lastMemoryUpdateBySession = {};
     this.lastWorldBudgetWarningAt = 0;
+    this.lastWorldInjectionDebug = null;
     this.hydrateWorldSessionMap();
     this.hydrateGlobalWorldId();
     this.hydrateWorldGlobalSettings();
@@ -1621,7 +1622,7 @@ class AppBridge {
         stream: Boolean(config?.stream),
         options: genOptions,
         messages,
-        worldDebug: worldInjectionPlan?.debug || null,
+        worldDebug: this.lastWorldInjectionDebug || null,
       };
 
       if (config.stream) {
@@ -1734,6 +1735,7 @@ class AppBridge {
    */
 	  buildMessages(userMessage, context = {}) {
 	    const messages = [];
+    this.lastWorldInjectionDebug = null;
 
     const name1 = context?.user?.name || 'user';
     const name2 = context?.character?.name || 'assistant';
@@ -2828,9 +2830,10 @@ const stringifyMessageContent = (content) => {
         afterExamples: Array.isArray(buckets?.afterExamples) ? [...buckets.afterExamples] : [],
       });
 
-      const chatGuidePlan = buildChatGuidePlan();
-      const worldInjectionPlan = buildWorldInjectionPlan();
-      const mergeDepthMessages = (...lists) => {
+	      const chatGuidePlan = buildChatGuidePlan();
+	      const worldInjectionPlan = buildWorldInjectionPlan();
+      this.lastWorldInjectionDebug = worldInjectionPlan?.debug || null;
+	      const mergeDepthMessages = (...lists) => {
         const out = [];
         let seq = 0;
         lists.forEach(list => {
