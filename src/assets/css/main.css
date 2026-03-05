@@ -869,7 +869,7 @@ body.chat-room-active .bottom-nav {
 
 .world-app-select-menu {
   position: fixed;
-  z-index: 23550;
+  z-index: 24100;
   min-width: 170px;
   max-width: min(92vw, 360px);
   max-height: min(48vh, 300px);
@@ -949,7 +949,7 @@ body.chat-room-active .bottom-nav {
 }
 
 .world-block-page-dots {
-  margin: 8px 0 4px;
+  margin: 4px 0 8px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2436,13 +2436,15 @@ body.chat-room-active .bottom-nav {
 
 .world-node-ports.is-input.is-compare .world-node-port[data-port="left"]::after {
   top: calc(50% - 12px);
-  left: 14px;
+  right: calc(100% + 4px);
+  left: auto;
   transform: none;
 }
 
 .world-node-ports.is-input.is-compare .world-node-port[data-port="right"]::after {
   top: calc(50% - 12px);
-  right: 14px;
+  left: calc(100% + 4px);
+  right: auto;
   transform: none;
 }
 

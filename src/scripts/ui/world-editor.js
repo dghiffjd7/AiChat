@@ -3234,6 +3234,13 @@ export class WorldEditorModal {
                 },
             });
         };
+        const ensureInspectorVisible = () => {
+            if (!nodeInspectorEl || !selectedNodeIds.size) return;
+            const rect = nodeInspectorEl.getBoundingClientRect();
+            const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+            if (viewportHeight && rect.top >= 72 && rect.bottom <= viewportHeight - 12) return;
+            nodeInspectorEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        };
         const bindNodeInteractiveControls = () => {
             const queryAllControls = (selector) => [
                 ...nodeCanvasEl.querySelectorAll(selector),
@@ -3254,6 +3261,7 @@ export class WorldEditorModal {
                         selectedNodeIds.add(nodeId);
                     }
                     renderScene();
+                    ensureInspectorVisible();
                 });
                 el.addEventListener('touchstart', (event) => event.stopPropagation(), { passive: true });
             });
@@ -3266,34 +3274,24 @@ export class WorldEditorModal {
             });
 
             queryAllControls('.world-node-select').forEach((btn) => {
-                const openMenu = (event) => {
-                    const eventType = String(event?.type || 'unknown');
-                    const now = Date.now();
-                    const isSameAnchor = lastNodeSelectAnchor === btn;
-                    const isDuplicateWindow = isSameAnchor && now - lastNodeSelectOpenAt < 420;
-                    const isSyntheticFollowup =
-                        isDuplicateWindow &&
-                        (
-                            (lastNodeSelectEventType === 'pointerup' && (eventType === 'touchend' || eventType === 'click')) ||
-                            (lastNodeSelectEventType === 'touchend' && eventType === 'click')
-                        );
-                    if (isSyntheticFollowup) {
-                        event.preventDefault();
-                        event.stopPropagation();
-                        return;
-                    }
+                const openSelect = (event, source = 'click') => {
                     event.preventDefault();
                     event.stopPropagation();
+                    if (
+                        source === 'click' &&
+                        lastNodeSelectAnchor === btn &&
+                        lastNodeSelectEventType === 'pointerup' &&
+                        (Date.now() - lastNodeSelectOpenAt) < 260
+                    ) {
+                        return;
+                    }
                     lastNodeSelectAnchor = btn;
-                    lastNodeSelectOpenAt = now;
-                    lastNodeSelectEventType = eventType;
+                    lastNodeSelectOpenAt = Date.now();
+                    lastNodeSelectEventType = source;
                     openNodeSelectMenu(btn);
                 };
-                btn.addEventListener('click', openMenu);
-                btn.addEventListener('pointerup', openMenu);
-                if (!(window.PointerEvent)) {
-                    btn.addEventListener('touchend', openMenu);
-                }
+                btn.addEventListener('pointerup', (event) => openSelect(event, 'pointerup'));
+                btn.addEventListener('click', (event) => openSelect(event, 'click'));
             });
 
             queryAllControls('.world-node-text-input').forEach((inputEl) => {
@@ -3441,12 +3439,12 @@ export class WorldEditorModal {
                     `;
                 })()}
             `).join('');
+            renderNodeInspector();
             bindNodeInteractiveControls();
             if (!activeDrag) activeGuides = { vertical: null, horizontal: null };
             renderGuides();
             renderLinks();
             renderNodeStatus();
-            renderNodeInspector();
         };
         const addNode = (type, center = getViewCenter()) => {
             const nodeType = normalizeNodeType(type);
@@ -3781,6 +3779,7 @@ export class WorldEditorModal {
                 origins: new Map(nodes.map(item => [item.id, { x: Number(item.x || 0), y: Number(item.y || 0) }])),
             };
             renderScene();
+            ensureInspectorVisible();
         };
         const onDocPointerMove = (event) => {
             if (activePan) {
@@ -4749,12 +4748,6 @@ export class WorldEditorModal {
                         </div>
                     </div>
 
-                    <div class="world-block-page-dots" id="we-block-dots">
-                        ${blocks.map((_, idx) => `
-                            <button type="button" class="world-block-dot ${idx === blockPage ? 'active' : ''}" data-idx="${idx}" aria-label="第 ${idx + 1} 页"></button>
-                        `).join('')}
-                    </div>
-
                     <div class="world-content-title">内容</div>
                     <div class="world-block-overlay ${blockExpanded ? 'show' : ''}" id="we-block-overlay"></div>
                     <div class="world-flip-card world-content-card ${blockFlipped ? 'is-flipped' : ''} ${blockExpanded ? 'is-expanded' : ''}" id="we-block-shell">
@@ -4808,6 +4801,12 @@ export class WorldEditorModal {
                                 </div>
                             ` : this.renderBlockConditionOverview(entry, activeBlock)}
                         </div>
+                    </div>
+
+                    <div class="world-block-page-dots" id="we-block-dots">
+                        ${blocks.map((_, idx) => `
+                            <button type="button" class="world-block-dot ${idx === blockPage ? 'active' : ''}" data-idx="${idx}" aria-label="第 ${idx + 1} 页"></button>
+                        `).join('')}
                     </div>
                 </div>
 

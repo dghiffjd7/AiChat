@@ -206,6 +206,34 @@ export const autoLayoutNodeGraph = (graph = {}) => {
         node.y = 40 + idx * 128;
       });
     });
+  // --- 后处理：重新定位 compare 右端口的源节点到比较节点右侧 ---
+  const edgeByTarget = new Map();
+  edges.forEach(edge => {
+    const key = `${edge.to}|${String(edge.toPort || '')}`;
+    if (!edgeByTarget.has(key)) edgeByTarget.set(key, edge.from);
+  });
+  const movedIds = new Set();
+  nodes.forEach(node => {
+    if (normalizeNodeType(node.type) !== 'compare') return;
+    const rightSourceId = edgeByTarget.get(`${node.id}|right`);
+    if (!rightSourceId || !nodeById.has(rightSourceId)) return;
+    const rightSource = nodeById.get(rightSourceId);
+    rightSource.x = node.x + 230;
+    rightSource.y = node.y;
+    movedIds.add(rightSourceId);
+  });
+  if (movedIds.size > 0) {
+    const colMap = new Map();
+    nodes.forEach(n => {
+      if (!colMap.has(n.x)) colMap.set(n.x, []);
+      colMap.get(n.x).push(n);
+    });
+    colMap.forEach(colNodes => {
+      if (colNodes.length <= 1) return;
+      colNodes.sort((a, b) => a.y - b.y);
+      colNodes.forEach((n, idx) => { n.y = 40 + idx * 128; });
+    });
+  }
   return graph;
 };
 
