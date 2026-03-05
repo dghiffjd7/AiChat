@@ -10,6 +10,42 @@ import { ConfigManager } from '../storage/config.js';
 import { logger } from '../utils/logger.js';
 import { safeInvoke } from '../utils/tauri.js';
 import { buildVariableContext, explainConditionTree } from '../variables/world-condition-core.js';
+import {
+    createVariableModalImpl,
+    renderVariableModalDraftImpl,
+    openVariableModalImpl,
+    submitVariableModalImpl,
+    closeVariableModalImpl,
+} from './world-editor/world-variable-modal.js';
+import {
+    getSessionVariableRecordsImpl,
+    setVariableBrowserScopeImpl,
+    rememberRecentVariableImpl,
+    deleteVariableBrowserDraftImpl,
+    formatVariableBrowserValueImpl,
+    buildVariableBrowserDraftImpl,
+    createVariableBrowserModalImpl,
+    renderVariableBrowserDetailImpl,
+    renderVariableBrowserImpl,
+    saveVariableBrowserDraftImpl,
+    openVariableBrowserImpl,
+    closeVariableBrowserImpl,
+} from './world-editor/world-variable-picker.js';
+import {
+    getConditionSummaryOperatorImpl,
+    getConditionSummaryValueTextImpl,
+    getConditionRuntimeContextImpl,
+    formatConditionRuntimeValueImpl,
+    getConditionExplanationReasonImpl,
+    getConditionGroupExplanationReasonImpl,
+    getEntryActivationExplanationImpl,
+    renderEntryActivationOverviewImpl,
+    renderBlockSettingsPanelImpl,
+    collectBlockConditionOverviewImpl,
+    renderConditionOverviewNodeImpl,
+    renderBlockConditionOverviewImpl,
+} from './world-editor/world-block-overview.js';
+import { mountNodeEditorImpl } from './world-editor/world-node-editor.js';
 
 const DEFAULT_DEPTH = 4;
 const DEFAULT_WEIGHT = 100;
@@ -1418,683 +1454,100 @@ export class WorldEditorModal {
     }
 
     createVariableModal() {
-        if (this.variableModal) return;
-        this.variableOverlay = document.createElement('div');
-        this.variableOverlay.className = 'world-var-overlay';
-        this.variableOverlay.style.display = 'none';
-        this.variableOverlay.addEventListener('click', () => this.closeVariableModal(null));
-
-        this.variableModal = document.createElement('div');
-        this.variableModal.className = 'world-var-modal';
-        this.variableModal.style.display = 'none';
-        this.variableModal.innerHTML = `
-            <div class="world-var-header">
-                <div>
-                    <div class="world-var-title">新增变量</div>
-                    <div class="world-var-subtitle">默认会创建数值条件：变量名 > 10，只填名称即可。</div>
-                </div>
-                <button type="button" class="world-var-close" aria-label="关闭">×</button>
-            </div>
-            <div class="world-var-body">
-                <label class="world-var-label" for="world-var-name">变量名</label>
-                <input id="world-var-name" class="world-var-input" type="text" value="" placeholder="例如 stat_data.苏晚晴.love_degree.0">
-
-                <div class="world-var-grid">
-                    <div class="world-var-field">
-                        <label class="world-var-label">变量类型</label>
-                        <button type="button" class="world-app-select-btn" id="world-var-type-btn">
-                            <span>数字</span>
-                            <span class="world-app-select-btn-chevron">▾</span>
-                        </button>
-                    </div>
-                    <div class="world-var-field">
-                        <label class="world-var-label" for="world-var-default">默认值</label>
-                        <input id="world-var-default" class="world-var-input" type="text" value="0" placeholder="0">
-                    </div>
-                    <div class="world-var-field">
-                        <label class="world-var-label">比较</label>
-                        <button type="button" class="world-app-select-btn" id="world-var-op-btn">
-                            <span>大于 (&gt;)</span>
-                            <span class="world-app-select-btn-chevron">▾</span>
-                        </button>
-                    </div>
-                    <div class="world-var-field">
-                        <label class="world-var-label">比较值类型</label>
-                        <button type="button" class="world-app-select-btn" id="world-var-righttype-btn">
-                            <span>数字</span>
-                            <span class="world-app-select-btn-chevron">▾</span>
-                        </button>
-                    </div>
-                </div>
-
-                <div class="world-var-field" id="world-var-right-wrap">
-                    <label class="world-var-label" for="world-var-right">比较值</label>
-                    <input id="world-var-right" class="world-var-input" type="text" value="10" placeholder="10">
-                </div>
-            </div>
-            <div class="world-var-actions">
-                <button type="button" class="world-var-btn ghost" id="world-var-cancel">取消</button>
-                <button type="button" class="world-var-btn primary" id="world-var-ok">创建</button>
-            </div>
-        `;
-        this.variableModal.addEventListener('click', (e) => e.stopPropagation());
-
-        this.variableNameInputEl = this.variableModal.querySelector('#world-var-name');
-        this.variableDefaultInputEl = this.variableModal.querySelector('#world-var-default');
-        this.variableRightInputEl = this.variableModal.querySelector('#world-var-right');
-        this.variableTypeBtn = this.variableModal.querySelector('#world-var-type-btn');
-        this.variableOpBtn = this.variableModal.querySelector('#world-var-op-btn');
-        this.variableRightTypeBtn = this.variableModal.querySelector('#world-var-righttype-btn');
-
-        this.variableModal.querySelector('.world-var-close')?.addEventListener('click', () => this.closeVariableModal(null));
-        this.variableModal.querySelector('#world-var-cancel')?.addEventListener('click', () => this.closeVariableModal(null));
-        this.variableModal.querySelector('#world-var-ok')?.addEventListener('click', () => this.submitVariableModal());
-
-        this.variableTypeBtn?.addEventListener('click', (event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            this.openCustomSelectMenu({
-                anchorEl: this.variableTypeBtn,
-                options: BLOCK_RIGHT_TYPE_OPTIONS.filter(opt => opt.value !== 'variable'),
-                currentValue: this.variableModalDraft.type,
-                onSelect: (value) => {
-                    this.variableModalDraft.type = ['number', 'string', 'boolean'].includes(String(value || '')) ? String(value) : 'number';
-                    this.renderVariableModalDraft();
-                },
-            });
+        return createVariableModalImpl.call(this, {
+            BLOCK_RIGHT_TYPE_OPTIONS,
+            BLOCK_OP_OPTIONS,
+            buildVariableCreationDraft,
+            normalizeRightTypeValue,
         });
-        this.variableOpBtn?.addEventListener('click', (event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            this.openCustomSelectMenu({
-                anchorEl: this.variableOpBtn,
-                options: BLOCK_OP_OPTIONS,
-                currentValue: this.variableModalDraft.op,
-                onSelect: (value) => {
-                    this.variableModalDraft.op = String(value || '>');
-                    this.renderVariableModalDraft();
-                },
-            });
-        });
-        this.variableRightTypeBtn?.addEventListener('click', (event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            this.openCustomSelectMenu({
-                anchorEl: this.variableRightTypeBtn,
-                options: BLOCK_RIGHT_TYPE_OPTIONS,
-                currentValue: this.variableModalDraft.rightType,
-                onSelect: (value) => {
-                    this.variableModalDraft.rightType = normalizeRightTypeValue(value);
-                    this.renderVariableModalDraft();
-                },
-            });
-        });
-
-        document.body.appendChild(this.variableOverlay);
-        document.body.appendChild(this.variableModal);
     }
 
     renderVariableModalDraft() {
-        if (!this.variableModal) return;
-        const draft = buildVariableCreationDraft(this.variableModalDraft);
-        this.variableModalDraft = draft;
-        if (this.variableNameInputEl) this.variableNameInputEl.value = draft.name;
-        if (this.variableDefaultInputEl) this.variableDefaultInputEl.value = draft.defaultValueText;
-        if (this.variableRightInputEl) this.variableRightInputEl.value = draft.rightValueText;
-        if (this.variableTypeBtn) {
-            const labelEl = this.variableTypeBtn.querySelector('span');
-            if (labelEl) labelEl.textContent = this.getOptionLabel(BLOCK_RIGHT_TYPE_OPTIONS, draft.type, '数字');
-        }
-        if (this.variableOpBtn) {
-            const labelEl = this.variableOpBtn.querySelector('span');
-            if (labelEl) labelEl.textContent = this.getOptionLabel(BLOCK_OP_OPTIONS, draft.op, '大于 (>)');
-        }
-        if (this.variableRightTypeBtn) {
-            const labelEl = this.variableRightTypeBtn.querySelector('span');
-            if (labelEl) labelEl.textContent = this.getOptionLabel(BLOCK_RIGHT_TYPE_OPTIONS, draft.rightType, '数字');
-        }
-        const rightWrap = this.variableModal.querySelector('#world-var-right-wrap');
-        const hideRight = ['is_empty', 'not_empty'].includes(String(draft.op || '').trim().toLowerCase());
-        if (rightWrap) rightWrap.style.display = hideRight ? 'none' : '';
-        if (this.variableRightTypeBtn) this.variableRightTypeBtn.disabled = hideRight;
-        if (this.variableRightInputEl) this.variableRightInputEl.disabled = hideRight;
+        return renderVariableModalDraftImpl.call(this, {
+            BLOCK_RIGHT_TYPE_OPTIONS,
+            BLOCK_OP_OPTIONS,
+            buildVariableCreationDraft,
+        });
     }
 
     openVariableModal(initialDraft = {}) {
-        if (!this.variableModal) this.createVariableModal();
-        if (!this.variableOverlay || !this.variableModal) return Promise.resolve(null);
-        this.variableModalDraft = buildVariableCreationDraft(initialDraft);
-        this.renderVariableModalDraft();
-        this.variableOverlay.style.display = 'block';
-        this.variableModal.style.display = 'block';
-        queueMicrotask(() => {
-            this.variableNameInputEl?.focus();
-            this.variableNameInputEl?.select();
-        });
-
-        if (this.variableKeyHandler) {
-            document.removeEventListener('keydown', this.variableKeyHandler);
-        }
-        this.variableKeyHandler = (event) => {
-            if (event.key === 'Escape') {
-                event.preventDefault();
-                this.closeVariableModal(null);
-            } else if (event.key === 'Enter') {
-                const target = event.target;
-                if (target && target.tagName === 'TEXTAREA') return;
-                event.preventDefault();
-                this.submitVariableModal();
-            }
-        };
-        document.addEventListener('keydown', this.variableKeyHandler);
-        return new Promise((resolve) => {
-            this.variableResolve = resolve;
+        return openVariableModalImpl.call(this, initialDraft, {
+            buildVariableCreationDraft,
         });
     }
 
     submitVariableModal() {
-        const name = String(this.variableNameInputEl?.value || '').trim();
-        if (!name) {
-            window.toastr?.warning?.('请填写变量名');
-            this.variableNameInputEl?.focus();
-            return;
-        }
-        const draft = buildVariableCreationDraft({
-            ...this.variableModalDraft,
-            name,
-            defaultValue: this.variableDefaultInputEl?.value,
-            rightValue: this.variableRightInputEl?.value,
+        return submitVariableModalImpl.call(this, {
+            buildVariableCreationDraft,
+            parseTypedValue,
         });
-        const payload = {
-            name,
-            type: draft.type,
-            defaultValue: parseTypedValue(draft.defaultValueText, draft.type),
-            op: draft.op,
-            rightType: draft.rightType,
-            rightValue: parseTypedValue(draft.rightValueText, draft.rightType),
-        };
-        this.closeVariableModal(payload);
     }
 
     closeVariableModal(value = null) {
-        this.closeCustomSelectMenu();
-        if (this.variableOverlay) this.variableOverlay.style.display = 'none';
-        if (this.variableModal) this.variableModal.style.display = 'none';
-        if (this.variableKeyHandler) {
-            document.removeEventListener('keydown', this.variableKeyHandler);
-            this.variableKeyHandler = null;
-        }
-        if (this.variableResolve) {
-            const resolve = this.variableResolve;
-            this.variableResolve = null;
-            resolve(value);
-        }
+        return closeVariableModalImpl.call(this, value);
     }
 
     getSessionVariableRecords(options = {}) {
-        const opts = typeof options === 'string' ? { searchTerm: options } : (options && typeof options === 'object' ? options : {});
-        const searchTerm = String(opts.searchTerm || '');
-        const scope = String(opts.scope || 'current').trim().toLowerCase();
-        const bridge = window.appBridge;
-        const chatStore = bridge?.chatStore;
-        const sid = String(chatStore?.getCurrent?.() || bridge?.activeSessionId || '').trim();
-        if (!chatStore || !sid) return [];
-        const useGlobal = Boolean(typeof bridge?.isSharedVariableSession === 'function' && bridge.isSharedVariableSession(sid));
-        const localVars = chatStore?.listVariables?.(sid) || {};
-        const globalVars = chatStore?.listGlobalVariables?.() || {};
-        const initialVars = chatStore?.listInitialVariables?.(sid) || {};
-        const schemas = chatStore?.listVariableSchemas?.(sid) || {};
-        const query = String(searchTerm || '').trim().toLowerCase();
-        const recentIds = Array.isArray(this.variableBrowserState?.recentIds) ? this.variableBrowserState.recentIds : [];
-        const getRecentIndex = (item) => {
-            const idIndex = recentIds.indexOf(item.id);
-            if (idIndex >= 0) return idIndex;
-            return recentIds.indexOf(item.name);
-        };
-        const isRecentRecord = (item) => getRecentIndex(item) >= 0;
-        const buildRecords = (sourceName, sourceVars = {}, includeInitial = false) => {
-            const keys = new Set([
-                ...Object.keys(sourceVars || {}),
-                ...Object.keys(schemas || {}),
-                ...(includeInitial ? Object.keys(initialVars || {}) : []),
-            ].map(key => String(key || '').trim()).filter(Boolean));
-            return [...keys].map((key) => {
-                const schema = schemas[key] || null;
-                const fallbackType = typeof sourceVars[key];
-                const type = String(schema?.type || fallbackType || 'string').trim().toLowerCase();
-                return {
-                    id: `${sourceName}:${key}`,
-                    name: key,
-                    type: ['number', 'string', 'boolean', 'enum', 'array', 'object'].includes(type) ? type : 'string',
-                    source: sourceName,
-                    currentValue: sourceVars[key],
-                    defaultValue: schema?.default,
-                    initialValue: includeInitial ? initialVars[key] : undefined,
-                    schema,
-                };
-            });
-        };
-        const sessionRecords = buildRecords('session', localVars, true);
-        const globalRecords = buildRecords('global', globalVars, false);
-        let records = [];
-        if (scope === 'global') records = globalRecords;
-        else if (scope === 'session') records = sessionRecords;
-        else if (scope === 'recent') records = [...sessionRecords, ...globalRecords].filter(isRecentRecord);
-        else records = useGlobal ? globalRecords : sessionRecords;
-        records = records.filter((item) => {
-            if (!query) return true;
-            const haystack = [
-                item.name,
-                item.type,
-                item.source === 'global' ? '全局' : '会话',
-            ].join(' ').toLowerCase();
-            return haystack.includes(query);
-        });
-        records.sort((a, b) => {
-            const recentDelta = getRecentIndex(a) - getRecentIndex(b);
-            const aRecent = isRecentRecord(a);
-            const bRecent = isRecentRecord(b);
-            if (aRecent && bRecent && recentDelta !== 0) return recentDelta;
-            if (aRecent !== bRecent) return aRecent ? -1 : 1;
-            const nameDelta = a.name.localeCompare(b.name, 'zh-CN');
-            if (nameDelta !== 0) return nameDelta;
-            return a.source.localeCompare(b.source, 'zh-CN');
-        });
-        return records.map((item) => {
-            const schema = item.schema || null;
-            const type = String(item.type || schema?.type || 'string').trim().toLowerCase();
-            return {
-                ...item,
-                type: ['number', 'string', 'boolean', 'enum', 'array', 'object'].includes(type) ? type : 'string',
-            };
-        });
+        return getSessionVariableRecordsImpl.call(this, options);
     }
 
     setVariableBrowserScope(scope = 'current') {
-        const nextScope = ['current', 'global', 'session', 'recent'].includes(String(scope || '').trim().toLowerCase())
-            ? String(scope || '').trim().toLowerCase()
-            : 'current';
-        this.variableBrowserState.scope = nextScope;
-        this.renderVariableBrowser();
+        return setVariableBrowserScopeImpl.call(this, scope);
     }
 
     rememberRecentVariable(record = null) {
-        const item = record && typeof record === 'object' ? record : null;
-        const id = String(item?.id || '').trim();
-        const fallbackName = String(item?.name || '').trim();
-        const marker = id || fallbackName;
-        if (!marker) return;
-        const current = Array.isArray(this.variableBrowserState?.recentIds) ? this.variableBrowserState.recentIds : [];
-        const next = [marker, ...current.filter(entry => entry !== marker && entry !== fallbackName && !id.endsWith(`:${entry}`))].slice(0, 24);
-        this.variableBrowserState.recentIds = next;
-        saveRecentVariableNames(next);
+        return rememberRecentVariableImpl.call(this, record, {
+            saveRecentVariableNames,
+        });
     }
 
     deleteVariableBrowserDraft() {
-        const draft = this.variableBrowserState.draft;
-        if (!draft?.name) return false;
-        const bridge = window.appBridge;
-        const chatStore = bridge?.chatStore;
-        const sid = String(chatStore?.getCurrent?.() || bridge?.activeSessionId || '').trim();
-        if (!chatStore || !sid) return false;
-        if (draft.source === 'global') {
-            chatStore.deleteGlobalVariable?.(draft.name);
-        } else {
-            chatStore.deleteVariable?.(draft.name, sid);
-            chatStore.deleteInitialVariable?.(draft.name, sid);
-        }
-        chatStore.deleteVariableSchema?.(draft.name, sid);
-        const nextRecent = (Array.isArray(this.variableBrowserState?.recentIds) ? this.variableBrowserState.recentIds : [])
-            .filter(entry => entry !== draft.id && entry !== draft.name);
-        this.variableBrowserState.recentIds = nextRecent;
-        saveRecentVariableNames(nextRecent);
-        this.variableBrowserState.selectedId = '';
-        this.variableBrowserState.draft = null;
-        this.renderVariableBrowser();
-        window.toastr?.success?.('变量已删除');
-        return true;
+        return deleteVariableBrowserDraftImpl.call(this, {
+            saveRecentVariableNames,
+        });
     }
 
     formatVariableBrowserValue(value, type = 'string') {
-        if (value === undefined) return '未设置';
-        if (value === null) return 'null';
-        const normalizedType = String(type || 'string').trim().toLowerCase();
-        if (normalizedType === 'boolean') return value ? 'true' : 'false';
-        if (normalizedType === 'array' || normalizedType === 'object') {
-            try {
-                return JSON.stringify(value);
-            } catch {
-                return '[object]';
-            }
-        }
-        return String(value);
+        return formatVariableBrowserValueImpl.call(this, value, type);
     }
 
     buildVariableBrowserDraft(record = null) {
-        const item = record && typeof record === 'object' ? record : {};
-        const typeRaw = String(item.type || item.schema?.type || 'string').trim().toLowerCase();
-        const type = ['number', 'string', 'boolean', 'enum', 'array', 'object'].includes(typeRaw) ? typeRaw : 'string';
-        return {
-            id: String(item.id || `${item.source || 'session'}:${item.name || ''}`).trim(),
-            name: String(item.name || '').trim(),
-            type,
-            currentValueText: this.formatVariableBrowserValue(item.currentValue, type),
-            defaultValueText: this.formatVariableBrowserValue(item.defaultValue, type),
-            initialValueText: this.formatVariableBrowserValue(item.initialValue, type),
-            source: item.source === 'global' ? 'global' : 'session',
-        };
+        return buildVariableBrowserDraftImpl.call(this, record);
     }
 
     createVariableBrowserModal() {
-        if (this.variableBrowserModal) return;
-        this.variableBrowserOverlay = document.createElement('div');
-        this.variableBrowserOverlay.className = 'world-var-browser-overlay';
-        this.variableBrowserOverlay.style.display = 'none';
-        this.variableBrowserOverlay.addEventListener('click', () => this.closeVariableBrowser(null));
-
-        this.variableBrowserModal = document.createElement('div');
-        this.variableBrowserModal.className = 'world-var-browser-modal';
-        this.variableBrowserModal.style.display = 'none';
-        this.variableBrowserModal.innerHTML = `
-            <div class="world-var-browser-header">
-                <div>
-                    <div class="world-var-browser-title">变量浏览器</div>
-                    <div class="world-var-browser-subtitle">搜索、查看并管理当前会话可用变量。</div>
-                </div>
-                <button type="button" class="world-var-browser-close" aria-label="关闭">×</button>
-            </div>
-            <div class="world-var-browser-toolbar">
-                <input id="world-var-browser-search" class="world-var-browser-search" type="text" placeholder="搜索变量名 / 类型">
-                <button type="button" class="world-var-btn ghost" id="world-var-browser-create">新建变量</button>
-            </div>
-            <div class="world-var-browser-body">
-                <div class="world-var-browser-list-wrap">
-                    <div class="world-var-browser-scope" id="world-var-browser-scope">
-                        <button type="button" class="world-var-browser-scope-btn is-active" data-scope="current">当前</button>
-                        <button type="button" class="world-var-browser-scope-btn" data-scope="session">会话</button>
-                        <button type="button" class="world-var-browser-scope-btn" data-scope="global">全局</button>
-                        <button type="button" class="world-var-browser-scope-btn" data-scope="recent">最近</button>
-                    </div>
-                    <div class="world-var-browser-list" id="world-var-browser-list"></div>
-                    <div class="world-var-browser-empty" id="world-var-browser-empty">当前没有可用变量。</div>
-                </div>
-                <div class="world-var-browser-detail">
-                    <div class="world-var-browser-detail-head">
-                        <div>
-                            <div class="world-var-browser-detail-name" id="world-var-browser-name">未选择变量</div>
-                            <div class="world-var-browser-detail-source" id="world-var-browser-source"></div>
-                        </div>
-                    </div>
-                    <div class="world-var-browser-fields">
-                        <div class="world-var-field">
-                            <label class="world-var-label">变量类型</label>
-                            <button type="button" class="world-app-select-btn" id="world-var-browser-type-btn">
-                                <span>字符串</span>
-                                <span class="world-app-select-btn-chevron">▾</span>
-                            </button>
-                        </div>
-                        <div class="world-var-field">
-                            <label class="world-var-label" for="world-var-browser-current">当前值</label>
-                            <input id="world-var-browser-current" class="world-var-input" type="text" value="" placeholder="当前值">
-                        </div>
-                        <div class="world-var-field">
-                            <label class="world-var-label" for="world-var-browser-default">默认值</label>
-                            <input id="world-var-browser-default" class="world-var-input" type="text" value="" placeholder="默认值">
-                        </div>
-                        <div class="world-var-field">
-                            <label class="world-var-label" for="world-var-browser-initial">初始值</label>
-                            <input id="world-var-browser-initial" class="world-var-input" type="text" value="" placeholder="初始值">
-                        </div>
-                    </div>
-                    <div class="world-var-browser-actions">
-                        <button type="button" class="world-var-btn danger ghost" id="world-var-browser-delete">删除变量</button>
-                        <button type="button" class="world-var-btn ghost" id="world-var-browser-save">保存更改</button>
-                        <button type="button" class="world-var-btn primary" id="world-var-browser-use">选中变量</button>
-                    </div>
-                </div>
-            </div>
-        `;
-        this.variableBrowserModal.addEventListener('click', (event) => event.stopPropagation());
-
-        this.variableBrowserSearchEl = this.variableBrowserModal.querySelector('#world-var-browser-search');
-        this.variableBrowserListEl = this.variableBrowserModal.querySelector('#world-var-browser-list');
-        this.variableBrowserEmptyEl = this.variableBrowserModal.querySelector('#world-var-browser-empty');
-        this.variableBrowserScopeEl = this.variableBrowserModal.querySelector('#world-var-browser-scope');
-        this.variableBrowserNameEl = this.variableBrowserModal.querySelector('#world-var-browser-name');
-        this.variableBrowserSourceEl = this.variableBrowserModal.querySelector('#world-var-browser-source');
-        this.variableBrowserTypeBtn = this.variableBrowserModal.querySelector('#world-var-browser-type-btn');
-        this.variableBrowserCurrentEl = this.variableBrowserModal.querySelector('#world-var-browser-current');
-        this.variableBrowserDefaultEl = this.variableBrowserModal.querySelector('#world-var-browser-default');
-        this.variableBrowserInitialEl = this.variableBrowserModal.querySelector('#world-var-browser-initial');
-        this.variableBrowserDeleteBtn = this.variableBrowserModal.querySelector('#world-var-browser-delete');
-
-        this.variableBrowserModal.querySelector('.world-var-browser-close')?.addEventListener('click', () => this.closeVariableBrowser(null));
-        this.variableBrowserScopeEl?.querySelectorAll('.world-var-browser-scope-btn').forEach((btn) => {
-            btn.addEventListener('click', () => this.setVariableBrowserScope(btn.dataset.scope || 'current'));
+        return createVariableBrowserModalImpl.call(this, {
+            BLOCK_RIGHT_TYPE_OPTIONS,
+            parseTypedValue,
+            escapeHtml,
         });
-        this.variableBrowserModal.querySelector('#world-var-browser-create')?.addEventListener('click', () => {
-            const selectedId = String(this.variableBrowserState.selectedId || '').trim();
-            const selected = this.getSessionVariableRecords({ scope: this.variableBrowserState.scope }).find(item => item.id === selectedId) || null;
-            void this.openVariableModal(selected ? {
-                name: selected.name,
-                type: selected.type,
-                defaultValue: selected.defaultValue,
-            } : {}).then((payload) => {
-                if (!payload) return;
-                const targetSource = ['global', 'session'].includes(String(this.variableBrowserState.scope || '').trim())
-                    ? String(this.variableBrowserState.scope).trim()
-                    : null;
-                this.ensureVariableInStore(payload.name, payload.type, payload.defaultValue, { source: targetSource });
-                const nextSource = targetSource || this.getSessionVariableRecords({ scope: 'current' }).find(item => item.name === payload.name)?.source || 'session';
-                this.variableBrowserState.selectedId = `${nextSource}:${String(payload.name || '').trim()}`;
-                this.renderVariableBrowser();
-            });
-        });
-        this.variableBrowserSearchEl?.addEventListener('input', () => {
-            this.variableBrowserState.search = String(this.variableBrowserSearchEl.value || '');
-            this.renderVariableBrowser();
-        });
-        this.variableBrowserTypeBtn?.addEventListener('click', (event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            const draft = this.variableBrowserState.draft;
-            if (!draft?.name) return;
-            this.openCustomSelectMenu({
-                anchorEl: this.variableBrowserTypeBtn,
-                options: BLOCK_RIGHT_TYPE_OPTIONS.filter(opt => ['number', 'string', 'boolean'].includes(String(opt.value || ''))),
-                currentValue: draft.type,
-                onSelect: (value) => {
-                    const nextType = ['number', 'string', 'boolean'].includes(String(value || '').trim().toLowerCase())
-                        ? String(value).trim().toLowerCase()
-                        : 'string';
-                    draft.type = nextType;
-                    this.renderVariableBrowserDetail();
-                },
-            });
-        });
-        this.variableBrowserModal.querySelector('#world-var-browser-save')?.addEventListener('click', () => {
-            this.saveVariableBrowserDraft();
-        });
-        this.variableBrowserDeleteBtn?.addEventListener('click', () => {
-            const draft = this.variableBrowserState.draft;
-            if (!draft?.name) {
-                window.toastr?.warning?.('请先选择一个变量');
-                return;
-            }
-            const confirmed = window.confirm(`删除变量「${draft.name}」？这会同时移除当前来源中的值与本会话的变量定义。`);
-            if (!confirmed) return;
-            this.deleteVariableBrowserDraft();
-        });
-        this.variableBrowserModal.querySelector('#world-var-browser-use')?.addEventListener('click', () => {
-            const draft = this.variableBrowserState.draft;
-            const name = String(draft?.name || '').trim();
-            if (!name) {
-                window.toastr?.warning?.('请先选择一个变量');
-                return;
-            }
-            const type = ['number', 'string', 'boolean'].includes(String(draft?.type || '').trim().toLowerCase())
-                ? String(draft.type).trim().toLowerCase()
-                : 'string';
-            this.rememberRecentVariable(draft);
-            this.closeVariableBrowser({
-                name,
-                type,
-                defaultValue: parseTypedValue(String(draft?.defaultValueText || ''), type),
-            });
-        });
-
-        document.body.appendChild(this.variableBrowserOverlay);
-        document.body.appendChild(this.variableBrowserModal);
     }
 
     renderVariableBrowserDetail() {
-        if (!this.variableBrowserModal) return;
-        const draft = this.variableBrowserState.draft;
-        if (!draft || !draft.name) {
-            if (this.variableBrowserNameEl) this.variableBrowserNameEl.textContent = '未选择变量';
-            if (this.variableBrowserSourceEl) this.variableBrowserSourceEl.textContent = '';
-            if (this.variableBrowserCurrentEl) this.variableBrowserCurrentEl.value = '';
-            if (this.variableBrowserDefaultEl) this.variableBrowserDefaultEl.value = '';
-            if (this.variableBrowserInitialEl) this.variableBrowserInitialEl.value = '';
-            if (this.variableBrowserInitialEl) this.variableBrowserInitialEl.disabled = false;
-            if (this.variableBrowserDeleteBtn) this.variableBrowserDeleteBtn.disabled = true;
-            if (this.variableBrowserTypeBtn) {
-                const labelEl = this.variableBrowserTypeBtn.querySelector('span');
-                if (labelEl) labelEl.textContent = '字符串';
-            }
-            return;
-        }
-        if (this.variableBrowserNameEl) this.variableBrowserNameEl.textContent = draft.name;
-        if (this.variableBrowserSourceEl) this.variableBrowserSourceEl.textContent = draft.source === 'global' ? '当前来源：全局变量' : '当前来源：会话变量';
-        if (this.variableBrowserCurrentEl) this.variableBrowserCurrentEl.value = draft.currentValueText;
-        if (this.variableBrowserDefaultEl) this.variableBrowserDefaultEl.value = draft.defaultValueText;
-        if (this.variableBrowserInitialEl) this.variableBrowserInitialEl.value = draft.initialValueText;
-        if (this.variableBrowserInitialEl) this.variableBrowserInitialEl.disabled = draft.source === 'global';
-        if (this.variableBrowserDeleteBtn) this.variableBrowserDeleteBtn.disabled = false;
-        if (this.variableBrowserTypeBtn) {
-            const labelEl = this.variableBrowserTypeBtn.querySelector('span');
-            if (labelEl) labelEl.textContent = this.getOptionLabel(BLOCK_RIGHT_TYPE_OPTIONS, draft.type, '字符串');
-        }
+        return renderVariableBrowserDetailImpl.call(this, {
+            BLOCK_RIGHT_TYPE_OPTIONS,
+        });
     }
 
     renderVariableBrowser() {
-        if (!this.variableBrowserModal || !this.variableBrowserListEl || !this.variableBrowserEmptyEl) return;
-        const scope = String(this.variableBrowserState.scope || 'current').trim().toLowerCase();
-        const records = this.getSessionVariableRecords({ searchTerm: this.variableBrowserState.search, scope });
-        const currentSelected = String(this.variableBrowserState.selectedId || '').trim();
-        const selected = records.find(item => item.id === currentSelected) || records[0] || null;
-        this.variableBrowserState.selectedId = String(selected?.id || '').trim();
-        this.variableBrowserState.draft = selected ? this.buildVariableBrowserDraft(selected) : null;
-        this.variableBrowserScopeEl?.querySelectorAll('.world-var-browser-scope-btn').forEach((btn) => {
-            btn.classList.toggle('is-active', String(btn.dataset.scope || '').trim() === scope);
+        return renderVariableBrowserImpl.call(this, {
+            BLOCK_RIGHT_TYPE_OPTIONS,
+            escapeHtml,
         });
-        this.variableBrowserListEl.innerHTML = records.map((item) => {
-            const active = item.id === this.variableBrowserState.selectedId;
-            const isRecent = (Array.isArray(this.variableBrowserState?.recentIds) ? this.variableBrowserState.recentIds : [])
-                .some(entry => entry === item.id || entry === item.name);
-            return `
-                <button type="button" class="world-var-browser-item ${active ? 'is-active' : ''}" data-id="${escapeHtml(item.id)}">
-                    <div class="world-var-browser-item-top">
-                        <span class="world-var-browser-item-name">${escapeHtml(item.name)}</span>
-                        <span class="world-var-browser-item-badges">
-                            <span class="world-var-browser-item-badge ${item.source === 'global' ? '' : 'subtle'}">${item.source === 'global' ? '全局' : '会话'}</span>
-                            ${isRecent ? '<span class="world-var-browser-item-badge recent">最近</span>' : ''}
-                        </span>
-                    </div>
-                    <div class="world-var-browser-item-meta">
-                        <span>${escapeHtml(this.getOptionLabel(BLOCK_RIGHT_TYPE_OPTIONS, item.type, item.type || '字符串'))}</span>
-                        <span>当前值：${escapeHtml(this.formatVariableBrowserValue(item.currentValue, item.type))}</span>
-                    </div>
-                </button>
-            `;
-        }).join('');
-        this.variableBrowserEmptyEl.style.display = records.length ? 'none' : 'block';
-        this.variableBrowserListEl.querySelectorAll('.world-var-browser-item').forEach((btn) => {
-            btn.addEventListener('click', () => {
-                this.variableBrowserState.selectedId = String(btn.dataset.id || '').trim();
-                this.renderVariableBrowser();
-            });
-        });
-        this.renderVariableBrowserDetail();
     }
 
     saveVariableBrowserDraft() {
-        const draft = this.variableBrowserState.draft;
-        if (!draft?.name) return false;
-        const bridge = window.appBridge;
-        const chatStore = bridge?.chatStore;
-        const sid = String(chatStore?.getCurrent?.() || bridge?.activeSessionId || '').trim();
-        if (!chatStore || !sid) return false;
-        draft.currentValueText = String(this.variableBrowserCurrentEl?.value || '');
-        draft.defaultValueText = String(this.variableBrowserDefaultEl?.value || '');
-        draft.initialValueText = String(this.variableBrowserInitialEl?.value || '');
-        const type = ['number', 'string', 'boolean'].includes(String(draft.type || '').trim().toLowerCase())
-            ? String(draft.type).trim().toLowerCase()
-            : 'string';
-        const defaultValue = parseTypedValue(draft.defaultValueText, type);
-        const currentValue = parseTypedValue(draft.currentValueText, type);
-        const initialValue = parseTypedValue(draft.initialValueText, type);
-        chatStore.setVariableSchema?.(draft.name, { type, default: defaultValue }, sid);
-        if (draft.source === 'global') {
-            chatStore.setGlobalVariable?.(draft.name, currentValue);
-        } else {
-            chatStore.setVariable?.(draft.name, currentValue, sid);
-            chatStore.setInitialVariable?.(draft.name, initialValue, sid);
-        }
-        this.renderVariableBrowser();
-        window.toastr?.success?.('变量已更新');
-        return true;
+        return saveVariableBrowserDraftImpl.call(this, {
+            parseTypedValue,
+        });
     }
 
     openVariableBrowser({ initialName = '' } = {}) {
-        if (!this.variableBrowserModal) this.createVariableBrowserModal();
-        if (!this.variableBrowserOverlay || !this.variableBrowserModal) return Promise.resolve(null);
-        this.variableBrowserState.search = '';
-        this.variableBrowserState.scope = 'current';
-        this.variableBrowserState.selectedId = '';
-        this.variableBrowserState.draft = null;
-        if (this.variableBrowserSearchEl) this.variableBrowserSearchEl.value = '';
-        const initial = String(initialName || '').trim();
-        if (initial) {
-            const currentRecords = this.getSessionVariableRecords({ scope: 'current' });
-            const matched = currentRecords.find(item => item.name === initial) || this.getSessionVariableRecords({ scope: 'session' }).find(item => item.name === initial) || this.getSessionVariableRecords({ scope: 'global' }).find(item => item.name === initial) || null;
-            this.variableBrowserState.selectedId = String(matched?.id || '').trim();
-        }
-        this.renderVariableBrowser();
-        this.variableBrowserOverlay.style.display = 'block';
-        this.variableBrowserModal.style.display = 'flex';
-        queueMicrotask(() => {
-            this.variableBrowserSearchEl?.focus();
-            this.variableBrowserSearchEl?.select?.();
-        });
-        if (this.variableBrowserKeyHandler) {
-            document.removeEventListener('keydown', this.variableBrowserKeyHandler);
-        }
-        this.variableBrowserKeyHandler = (event) => {
-            if (event.key === 'Escape') {
-                event.preventDefault();
-                this.closeVariableBrowser(null);
-            }
-        };
-        document.addEventListener('keydown', this.variableBrowserKeyHandler);
-        return new Promise((resolve) => {
-            this.variableBrowserResolve = resolve;
-        });
+        return openVariableBrowserImpl.call(this, { initialName });
     }
 
     closeVariableBrowser(value = null) {
-        this.closeCustomSelectMenu();
-        if (this.variableBrowserOverlay) this.variableBrowserOverlay.style.display = 'none';
-        if (this.variableBrowserModal) this.variableBrowserModal.style.display = 'none';
-        if (this.variableBrowserKeyHandler) {
-            document.removeEventListener('keydown', this.variableBrowserKeyHandler);
-            this.variableBrowserKeyHandler = null;
-        }
-        if (this.variableBrowserResolve) {
-            const resolve = this.variableBrowserResolve;
-            this.variableBrowserResolve = null;
-            resolve(value);
-        }
+        return closeVariableBrowserImpl.call(this, value);
     }
 
     applyVariablePayloadToNode(node, payload) {
@@ -2889,363 +2342,84 @@ export class WorldEditorModal {
     }
 
     getConditionSummaryOperator(op = '>') {
-        const value = String(op || '>').trim();
-        const map = {
-            contains: '包含',
-            not_contains: '不包含',
-            is_empty: '为空',
-            not_empty: '非空',
-            regex: '正则匹配',
-        };
-        return map[value] || value;
+        return getConditionSummaryOperatorImpl.call(this, op);
     }
 
     getConditionSummaryValueText(value, rightType = 'number') {
-        const type = normalizeRightTypeValue(rightType);
-        if (type === 'variable') {
-            const text = String(value ?? '').trim();
-            return text ? `变量 ${text}` : '变量';
-        }
-        if (type === 'boolean') return parseTypedValue(value, 'boolean') ? 'true' : 'false';
-        return stringifyTypedValue(value, type);
+        return getConditionSummaryValueTextImpl.call(this, value, rightType, {
+            normalizeRightTypeValue,
+            parseTypedValue,
+            stringifyTypedValue,
+        });
     }
 
     getConditionRuntimeContext() {
-        const bridge = window.appBridge;
-        const chatStore = bridge?.chatStore;
-        const sid = String(chatStore?.getCurrent?.() || bridge?.activeSessionId || '').trim();
-        if (!chatStore || !sid) {
-            return buildVariableContext({ baseVars: {}, globalVars: {} });
-        }
-        const useGlobal = Boolean(typeof bridge?.isSharedVariableSession === 'function' && bridge.isSharedVariableSession(sid));
-        const localVars = chatStore?.listVariables?.(sid) || {};
-        const globalVars = chatStore?.listGlobalVariables?.() || {};
-        const baseVars = useGlobal ? globalVars : localVars;
-        const runtimeContext = buildVariableContext({ baseVars, globalVars });
-        runtimeContext.variableContext.local_variables = localVars;
-        return runtimeContext;
+        return getConditionRuntimeContextImpl.call(this, {
+            buildVariableContext,
+        });
     }
 
     formatConditionRuntimeValue(value, rightType = 'string') {
-        if (value === undefined) return '未找到';
-        if (value === null) return 'null';
-        if (Array.isArray(value)) return JSON.stringify(value);
-        if (typeof value === 'object') {
-            try {
-                return JSON.stringify(value);
-            } catch {
-                return '[object]';
-            }
-        }
-        return this.getConditionSummaryValueText(value, rightType);
+        return formatConditionRuntimeValueImpl.call(this, value, rightType);
+    }
+
+    getConditionExplanationReason(clauseRaw, explanation = null) {
+        return getConditionExplanationReasonImpl.call(this, clauseRaw, explanation, {
+            normalizePromptClause,
+        });
+    }
+
+    getConditionGroupExplanationReason(logicRaw = 'and', explanation = null) {
+        return getConditionGroupExplanationReasonImpl.call(this, logicRaw, explanation, {
+            normalizeLogicValue,
+        });
     }
 
     getEntryActivationExplanation(entry, idx = this.currentIndex) {
-        const bridge = window.appBridge;
-        const worldId = String(entry?._refSourceId || entry?._sourceWorldId || this.worldName || '').trim();
-        const entryId = this.getEntryId(entry, idx);
-        if (!bridge?.explainWorldEntryActivation || !worldId || !entryId) return null;
-        try {
-            const label = bridge.buildWorldDebugLabel?.() || null;
-            return bridge.explainWorldEntryActivation(worldId, entryId, label);
-        } catch (err) {
-            logger.warn('读取世界书条目激活解释失败', err);
-            return null;
-        }
+        return getEntryActivationExplanationImpl.call(this, entry, idx, {
+            logger,
+        });
     }
 
     renderEntryActivationOverview(explanation) {
-        if (!explanation) return '';
-        const sourceLabelMap = {
-            direct: '直接命中',
-            recursive: '递归命中',
-            inactive: '当前未激活',
-        };
-        return `
-            <div class="world-entry-activation-overview">
-                <div class="world-entry-activation-head">
-                    <div class="world-entry-activation-title">条目激活</div>
-                    <div class="world-entry-activation-pills">
-                        <span class="world-cond-overview-pill ${explanation.active ? '' : 'warn'}">${explanation.active ? '条目已激活' : '条目未激活'}</span>
-                        <span class="world-cond-overview-pill">${escapeHtml(sourceLabelMap[explanation.activationSource] || '当前未激活')}</span>
-                        ${explanation.recursionStep ? `<span class="world-cond-overview-pill">递归第 ${explanation.recursionStep} 轮</span>` : ''}
-                        ${explanation.probabilityEnabled ? `<span class="world-cond-overview-pill subtle">概率 ${escapeHtml(String(explanation.probabilityValue))}%</span>` : ''}
-                        ${explanation.filteredByGroup ? '<span class="world-cond-overview-pill warn">组竞争过滤</span>' : ''}
-                    </div>
-                </div>
-                <div class="world-entry-activation-grid">
-                    <div class="world-entry-activation-card">
-                        <div class="world-entry-activation-label">主关键词</div>
-                        <div class="world-entry-activation-value">${explanation.keys.length ? escapeHtml(explanation.keys.join(' / ')) : '未设置'}</div>
-                        <div class="world-entry-activation-meta">${explanation.matchedPrimaryKeys.length ? `当前命中：${escapeHtml(explanation.matchedPrimaryKeys.join(' / '))}` : '当前未命中'}</div>
-                    </div>
-                    ${explanation.selective ? `
-                        <div class="world-entry-activation-card">
-                            <div class="world-entry-activation-label">副关键词</div>
-                            <div class="world-entry-activation-value">${explanation.secondaryKeys.length ? escapeHtml(explanation.secondaryKeys.join(' / ')) : '未设置'}</div>
-                            <div class="world-entry-activation-meta">${escapeHtml(explanation.selectiveLogicLabel || '副关键词逻辑')} / ${explanation.matchedSecondaryKeys.length ? `命中：${escapeHtml(explanation.matchedSecondaryKeys.join(' / '))}` : '当前未命中'}</div>
-                        </div>
-                    ` : ''}
-                    <div class="world-entry-activation-card">
-                        <div class="world-entry-activation-label">匹配来源</div>
-                        <div class="world-entry-activation-value">${explanation.sourceFields.length ? escapeHtml(explanation.sourceFields.join(' / ')) : '当前没有可用上下文'}</div>
-                        <div class="world-entry-activation-meta">${explanation.hasMatchInput ? '已按当前会话上下文判定' : '当前没有聊天输入，按条目内容参与'}</div>
-                    </div>
-                    <div class="world-entry-activation-card">
-                        <div class="world-entry-activation-label">状态说明</div>
-                        <div class="world-entry-activation-value">${explanation.reasons.length ? escapeHtml(explanation.reasons[0]) : (explanation.active ? '条目已通过激活层' : '暂无说明')}</div>
-                        <div class="world-entry-activation-meta">
-                            ${explanation.probabilityEnabled ? '概览未模拟随机概率；实际发送时仍会走概率掷骰。' : ''}
-                            ${!explanation.probabilityEnabled && explanation.filteredByGroup ? '当前条目满足触发，但在分组竞争后被过滤。' : ''}
-                            ${!explanation.probabilityEnabled && !explanation.filteredByGroup && explanation.preventRecursion ? '本条目命中后不会继续触发递归。' : ''}
-                        </div>
-                    </div>
-                </div>
-            </div>
-        `;
+        return renderEntryActivationOverviewImpl.call(this, explanation, {
+            escapeHtml,
+        });
     }
 
     renderBlockSettingsPanel(block, blockPage = 0) {
-        if (!block || typeof block !== 'object') return '';
-        const title = String(block.title || '').trim();
-        const roleLabelText = this.getOptionLabel(ROLE_OPTIONS, block.role, 'system');
-        const priorityValue = Number.isFinite(Number(block.priority)) ? Number(block.priority) : 100;
-        return `
-            <div class="world-block-settings-card">
-                <div class="world-block-settings-head">
-                    <div>
-                        <div class="world-block-settings-title">当前分页设置</div>
-                        <div class="world-block-settings-subtitle">控制本页是否启用，以及注入角色与顺序。</div>
-                    </div>
-                    <label class="world-entry-inline-check world-block-settings-toggle">
-                        <input type="checkbox" id="we-block-enabled" ${block.enabled !== false ? 'checked' : ''}>
-                        <span>启用本页</span>
-                    </label>
-                </div>
-                <div class="world-block-settings-grid">
-                    <div class="world-entry-field">
-                        <label>分页标题</label>
-                        <input type="text" id="we-block-title" value="${escapeHtml(title)}" placeholder="例如：基础设定 / 状态卡 / 条件页 ${blockPage + 1}">
-                    </div>
-                    <div class="world-entry-field">
-                        <label>注入角色（role）</label>
-                        <button type="button" class="world-app-select-btn" id="we-block-role-btn">
-                            <span>${escapeHtml(roleLabelText)}</span>
-                            <span class="world-app-select-btn-chevron">▾</span>
-                        </button>
-                    </div>
-                    <div class="world-entry-field">
-                        <label>优先级（priority）</label>
-                        <input type="number" id="we-block-priority" min="-9999" max="9999" value="${priorityValue}">
-                    </div>
-                </div>
-            </div>
-        `;
+        return renderBlockSettingsPanelImpl.call(this, block, blockPage, {
+            escapeHtml,
+            ROLE_OPTIONS,
+        });
     }
 
     collectBlockConditionOverview(entry, block) {
-        let tree = null;
-        if (block && typeof block === 'object') {
-            const primaryClause = this.ensureBlockPrimaryClause(block);
-            const graph = this.ensureBlockNodeGraph(block);
-            const compiledWhen = buildWhenFromNodeGraph(graph, primaryClause);
-            tree = normalizeConditionTree(compiledWhen, primaryClause);
-            block.when = tree;
-        }
-        if (!tree) tree = this.ensureBlockConditionTree(block);
-        const stats = {
-            clauseCount: 0,
-            groupCount: 0,
-            pendingCount: 0,
-            pendingItems: [],
-            variables: new Map(),
-        };
-        const runtimeContext = this.getConditionRuntimeContext();
-        const explanation = explainConditionTree(tree, runtimeContext);
-        const entryActivation = this.getEntryActivationExplanation(entry, this.currentIndex);
-        let clauseOrder = 0;
-        visitConditionTree(tree, (node, path) => {
-            if (isConditionTreeGroup(node)) {
-                stats.groupCount += 1;
-                return;
-            }
-            const clause = normalizePromptClause(node);
-            clauseOrder += 1;
-            stats.clauseCount += 1;
-            const left = String(clause.left || '').trim();
-            const op = String(clause.op || '').trim().toLowerCase();
-            const needsRight = !['is_empty', 'not_empty'].includes(op);
-            const rightMissing = needsRight && clause.rightType === 'variable' && !String(clause.right || '').trim();
-            if (!left) {
-                stats.pendingCount += 1;
-                stats.pendingItems.push({
-                    order: clauseOrder,
-                    path,
-                    label: `条件 ${clauseOrder}`,
-                    reason: '未设置变量',
-                    kind: 'missing_left_variable',
-                    fixIndex: stats.pendingItems.filter(item => item?.kind === 'missing_left_variable').length,
-                });
-                return;
-            }
-            if (rightMissing) {
-                stats.pendingCount += 1;
-                stats.pendingItems.push({
-                    order: clauseOrder,
-                    path,
-                    label: `条件 ${clauseOrder}`,
-                    reason: '变量比较的右值为空',
-                    kind: 'missing_right_variable',
-                    fixIndex: stats.pendingItems.filter(item => item?.kind === 'missing_right_variable').length,
-                });
-                return;
-            }
-            const prev = stats.variables.get(left) || {
-                name: left,
-                type: clause.defineVariable?.type || '',
-                defaultValue: clause.defineVariable?.default,
-                autoCreate: false,
-                refCount: 0,
-            };
-            prev.refCount += 1;
-            if (clause.defineVariable?.name === left) {
-                prev.autoCreate = true;
-                prev.type = clause.defineVariable?.type || prev.type || 'number';
-                prev.defaultValue = clause.defineVariable?.default ?? prev.defaultValue;
-            }
-            stats.variables.set(left, prev);
+        return collectBlockConditionOverviewImpl.call(this, entry, block, {
+            buildWhenFromNodeGraph,
+            normalizeConditionTree,
+            explainConditionTree,
+            visitConditionTree,
+            isConditionTreeGroup,
+            normalizePromptClause,
         });
-        const disconnectedTargets = this.getBlockDisconnectedNodeTargets(block);
-        disconnectedTargets.forEach((target) => {
-            stats.pendingCount += 1;
-            stats.pendingItems.push({
-                order: stats.pendingItems.length + 1,
-                path: 'root',
-                nodeId: target.nodeId,
-                label: `${target.label} ${target.order}`,
-                reason: '未接入当前生效链路',
-                kind: 'disconnected_from_result',
-            });
-        });
-        return {
-            tree,
-            explanation,
-            entryActivation,
-            clauseCount: stats.clauseCount,
-            groupCount: stats.groupCount,
-            pendingCount: stats.pendingCount,
-            pendingItems: stats.pendingItems,
-            variables: [...stats.variables.values()].sort((a, b) => a.name.localeCompare(b.name, 'zh-CN')),
-        };
     }
 
     renderConditionOverviewNode(node, depth = 0, explanation = null) {
-        if (!node || typeof node !== 'object') return '';
-        if (isConditionTreeGroup(node)) {
-            const logic = normalizeLogicValue(node.logic || 'and');
-            const children = logic === 'not'
-                ? [node.clause || createDefaultPromptClause()]
-                : (Array.isArray(node.clauses) && node.clauses.length ? node.clauses : [createDefaultPromptClause()]);
-            const childExplanations = Array.isArray(explanation?.children) ? explanation.children : [];
-            return `
-                <div class="world-cond-summary-group" data-depth="${depth}">
-                    <div class="world-cond-summary-group-head">
-                        <span class="world-cond-summary-logic">${escapeHtml(String(logic || 'and').toUpperCase())}</span>
-                        <span class="world-cond-summary-badge ${explanation?.result ? '' : 'danger'}">${explanation?.result ? '命中' : '未命中'}</span>
-                    </div>
-                    <div class="world-cond-summary-group-body">
-                        ${children.map((child, idx) => this.renderConditionOverviewNode(child, depth + 1, childExplanations[idx] || null)).join('')}
-                    </div>
-                </div>
-            `;
-        }
-        const clause = normalizePromptClause(node);
-        const left = String(clause.left || '').trim() || '未设置变量';
-        const op = this.getConditionSummaryOperator(clause.op);
-        const hideRight = ['is_empty', 'not_empty'].includes(String(clause.op || '').trim().toLowerCase());
-        const right = hideRight ? '' : this.getConditionSummaryValueText(clause.right, clause.rightType);
-        const leftValue = explanation ? this.formatConditionRuntimeValue(explanation.leftValue, clause.rightType) : '';
-        const rightValue = explanation && !hideRight
-            ? this.formatConditionRuntimeValue(explanation.rightValue, clause.rightType === 'variable' ? 'string' : clause.rightType)
-            : '';
-        return `
-            <div class="world-cond-summary-clause${clause.left ? '' : ' is-pending'}" data-depth="${depth}">
-                <div class="world-cond-summary-clause-main">
-                    <span class="world-cond-summary-var">${escapeHtml(left)}</span>
-                    <span class="world-cond-summary-op">${escapeHtml(op)}</span>
-                    ${hideRight ? '' : `<span class="world-cond-summary-value">${escapeHtml(right || '未设置')}</span>`}
-                </div>
-                <div class="world-cond-summary-meta">
-                    ${clause.defineVariable?.name ? `<span class="world-cond-summary-badge">自动建</span>` : ''}
-                    ${clause.rightType === 'variable' && right ? `<span class="world-cond-summary-badge subtle">变量比较</span>` : ''}
-                    ${clause.left ? '' : `<span class="world-cond-summary-badge danger">待完善</span>`}
-                    ${explanation ? `<span class="world-cond-summary-badge ${explanation.result ? '' : 'danger'}">${explanation.result ? '命中' : '未命中'}</span>` : ''}
-                </div>
-                ${explanation ? `
-                    <div class="world-cond-summary-runtime">
-                        <span>当前值：${escapeHtml(leftValue)}</span>
-                        ${hideRight ? '' : `<span>比较值：${escapeHtml(rightValue)}</span>`}
-                    </div>
-                ` : ''}
-            </div>
-        `;
+        return renderConditionOverviewNodeImpl.call(this, node, depth, explanation, {
+            isConditionTreeGroup,
+            normalizeLogicValue,
+            createDefaultPromptClause,
+            normalizePromptClause,
+            escapeHtml,
+        });
     }
 
     renderBlockConditionOverview(entry, block) {
-        const overview = this.collectBlockConditionOverview(entry, block);
-        return `
-            <div class="world-cond-overview" id="we-condition-overview">
-                <div class="world-cond-overview-head">
-                    <div>
-                        <div class="world-cond-overview-title">当前触发条件</div>
-                        <div class="world-cond-overview-subtitle">先看条目激活，再看 block 条件命中，需要调整时再进入编辑。</div>
-                    </div>
-                    <div class="world-cond-overview-stats">
-                        <span class="world-cond-overview-pill ${overview.entryActivation?.active ? '' : 'warn'}">${overview.entryActivation?.active ? '条目已激活' : '条目未激活'}</span>
-                        <span class="world-cond-overview-pill ${block?.enabled === false ? 'warn' : ''}">${block?.enabled === false ? 'block 已禁用' : 'block 已启用'}</span>
-                        <span class="world-cond-overview-pill">${overview.clauseCount} 条条件</span>
-                        <span class="world-cond-overview-pill">${overview.variables.length} 个变量</span>
-                        <span class="world-cond-overview-pill ${overview.explanation?.result ? '' : 'warn'}">${overview.explanation?.result ? 'block 当前命中' : 'block 当前未命中'}</span>
-                        ${overview.pendingCount ? `<span class="world-cond-overview-pill warn">${overview.pendingCount} 处待完善</span>` : ''}
-                    </div>
-                </div>
-                ${this.renderEntryActivationOverview(overview.entryActivation)}
-                <div class="world-cond-overview-structure">
-                    ${this.renderConditionOverviewNode(overview.tree, 0, overview.explanation)}
-                </div>
-                ${overview.pendingCount ? `
-                    <details class="world-cond-overview-pending">
-                        <summary>待完善项（${overview.pendingCount}）</summary>
-                        <div class="world-cond-overview-pending-list">
-                            ${overview.pendingItems.map((item) => `
-                                <div class="world-cond-overview-pending-item">
-                                    <button type="button" class="world-cond-overview-pending-main" data-path="${escapeHtml(item.path || '')}" data-node-id="${escapeHtml(item.nodeId || '')}">
-                                        <span class="world-cond-overview-pending-label">${escapeHtml(item.label)}</span>
-                                        <span class="world-cond-overview-pending-reason">${escapeHtml(item.reason)}</span>
-                                    </button>
-                                    ${item.kind ? `<button type="button" class="world-cond-overview-pending-fix" data-fix-kind="${escapeHtml(item.kind)}" data-fix-index="${Number(item.fixIndex || 0)}" data-node-id="${escapeHtml(item.nodeId || '')}">${item.kind === 'disconnected_from_result' ? '定位节点' : '快速修复'}</button>` : ''}
-                                </div>
-                            `).join('')}
-                        </div>
-                    </details>
-                ` : ''}
-                <div class="world-cond-overview-vars">
-                    <div class="world-cond-overview-vars-title">涉及变量</div>
-                    <div class="world-cond-overview-var-list">
-                        ${overview.variables.length ? overview.variables.map((item) => `
-                            <div class="world-cond-overview-var-card">
-                                <div class="world-cond-overview-var-name">${escapeHtml(item.name)}</div>
-                                <div class="world-cond-overview-var-meta">
-                                    <span>${escapeHtml(this.getOptionLabel(BLOCK_RIGHT_TYPE_OPTIONS, item.type, item.type || '未定义类型'))}</span>
-                                    <span>引用 ${item.refCount}</span>
-                                    ${item.autoCreate ? `<span>默认 ${escapeHtml(this.getConditionSummaryValueText(item.defaultValue, item.type || 'number'))}</span>` : ''}
-                                </div>
-                            </div>
-                        `).join('') : '<div class="world-cond-overview-empty">当前还没有可识别的变量条件。</div>'}
-                    </div>
-                </div>
-            </div>
-        `;
+        return renderBlockConditionOverviewImpl.call(this, entry, block, {
+            escapeHtml,
+            BLOCK_RIGHT_TYPE_OPTIONS,
+        });
     }
 
     getSessionVariableOptions() {
@@ -3302,6 +2476,10 @@ export class WorldEditorModal {
     }
 
     mountNodeEditor({ entry, block, markRefDirty }) {
+        return mountNodeEditorImpl(this, { entry, block, markRefDirty });
+    }
+
+    mountNodeEditorCore({ entry, block, markRefDirty }) {
         const nodeEditorEl = this.editorEl?.querySelector('#we-node-editor');
         const nodeCanvasWrap = this.editorEl?.querySelector('#we-node-canvas-wrap');
         const nodeSceneEl = this.editorEl?.querySelector('#we-node-scene');
@@ -4170,6 +3348,68 @@ export class WorldEditorModal {
                 }
                 return null;
             };
+            const getCompareRuntimeReason = (summary, incoming = []) => {
+                if (!summary?.clause) return '当前比较节点尚未形成可评估条件。';
+                const clause = summary.clause;
+                const explanation = summary.explanation || null;
+                const op = String(clause.op || '').trim().toLowerCase();
+                const needsRight = !['is_empty', 'not_empty'].includes(op);
+                const hasLeft = incoming.some(edge => edge.toPort === 'left');
+                const hasRight = incoming.some(edge => edge.toPort === 'right');
+                if (!hasLeft) return '左侧尚未连接变量节点。';
+                if (needsRight && !hasRight) return '右侧尚未连接值节点或变量节点。';
+                if (!explanation) return '当前会话缺少可用变量上下文，暂时无法评估。';
+                const leftValue = this.formatConditionRuntimeValue(explanation.leftValue, clause.rightType);
+                if (op === 'is_empty') {
+                    return summary.result === true
+                        ? `左值 ${leftValue} 为空，条件成立。`
+                        : `左值 ${leftValue} 不为空，条件不成立。`;
+                }
+                if (op === 'not_empty') {
+                    return summary.result === true
+                        ? `左值 ${leftValue} 不为空，条件成立。`
+                        : `左值 ${leftValue} 为空，条件不成立。`;
+                }
+                const rightType = clause.rightType === 'variable' ? 'string' : clause.rightType;
+                const rightValue = this.formatConditionRuntimeValue(explanation.rightValue, rightType);
+                const opLabel = this.getConditionSummaryOperator(clause.op);
+                return summary.result === true
+                    ? `当前满足：${leftValue} ${opLabel} ${rightValue}`
+                    : `当前不满足：${leftValue} ${opLabel} ${rightValue}`;
+            };
+            const getLogicRuntimeReason = (summary) => {
+                if (!summary) return '当前逻辑节点尚未形成可评估链路。';
+                const children = Array.isArray(summary.children) ? summary.children : [];
+                const connected = children.filter(item => String(item?.child?.nodeId || '').trim());
+                if (!connected.length) return '当前没有连接任何上游结果。';
+                const resolved = connected.filter(item => typeof item?.child?.result === 'boolean');
+                const pending = connected.filter(item => typeof item?.child?.result !== 'boolean');
+                const formatPort = (port = '') => String(port || '').trim().toUpperCase();
+                if (summary.logic === 'not') {
+                    if (!resolved.length) return 'NOT 需要 1 路可判断输入，当前仍未准备好。';
+                    return summary.result === true
+                        ? `NOT 输入 ${formatPort(resolved[0]?.port)} 为未命中，因此当前命中。`
+                        : `NOT 输入 ${formatPort(resolved[0]?.port)} 为命中，因此当前未命中。`;
+                }
+                if (!resolved.length) return `当前 ${connected.length} 路输入都尚未产出可判断结果。`;
+                if (summary.logic === 'and') {
+                    if (summary.result === true) {
+                        return `AND 需要全部命中，当前 ${resolved.length} 路均命中。`;
+                    }
+                    const failedPorts = resolved.filter(item => item?.child?.result === false).map(item => formatPort(item.port));
+                    return failedPorts.length
+                        ? `AND 需要全部命中，未命中输入：${failedPorts.join('、')}${pending.length ? `（另有 ${pending.length} 路待判断）` : ''}。`
+                        : `AND 尚未满足全部输入条件${pending.length ? `（${pending.length} 路待判断）` : ''}。`;
+                }
+                if (summary.logic === 'or') {
+                    if (summary.result === true) {
+                        const hitPorts = resolved.filter(item => item?.child?.result === true).map(item => formatPort(item.port));
+                        return `OR 需要至少一路命中，当前命中输入：${hitPorts.join('、')}。`;
+                    }
+                    return `OR 需要至少一路命中，当前已判断 ${resolved.length} 路均未命中${pending.length ? `（${pending.length} 路待判断）` : ''}。`;
+                }
+                return '当前逻辑结果已更新。';
+            };
             const countVariableRefsInBlock = (name = '') => {
                 const key = String(name || '').trim();
                 if (!key) return 0;
@@ -4295,6 +3535,12 @@ export class WorldEditorModal {
                 const rightValue = compareSummary?.explanation
                     ? this.formatConditionRuntimeValue(compareSummary.explanation.rightValue, compareSummary.clause?.rightType === 'variable' ? 'string' : compareSummary.clause?.rightType)
                     : '未找到';
+                const compareReason = getCompareRuntimeReason(compareSummary, incoming);
+                const compareReasonClass = compareSummary?.result === true
+                    ? ' is-hit'
+                    : compareSummary?.result === false
+                        ? ' is-warn'
+                        : '';
                 body = `
                     <div class="world-node-inspector-row">
                         <div class="world-node-inspector-label">比较方式</div>
@@ -4320,11 +3566,18 @@ export class WorldEditorModal {
                             <span>当前值 ${escapeHtml(rightValue)}</span>
                         </button>
                     </div>
+                    <div class="world-node-inspector-reason${compareReasonClass}">${escapeHtml(compareReason)}</div>
                 `;
             } else if (type === 'logic') {
                 const logicLabel = escapeHtml(this.getOptionLabel(NODE_LOGIC_OPTIONS, data.logic, 'AND'));
                 const inputCount = getNodePortSpec(node).inputs.length;
                 const logicSummary = getNodeRuntimeSummary(node.id);
+                const logicReason = getLogicRuntimeReason(logicSummary);
+                const logicReasonClass = logicSummary?.result === true
+                    ? ' is-hit'
+                    : logicSummary?.result === false
+                        ? ' is-warn'
+                        : '';
                 body = `
                     <div class="world-node-inspector-row">
                         <div class="world-node-inspector-label">逻辑</div>
@@ -4356,6 +3609,7 @@ export class WorldEditorModal {
                             `;
                         }).join('') || '<div class="world-node-inspector-hint">当前还没有输入链路。</div>'}
                     </div>
+                    <div class="world-node-inspector-reason${logicReasonClass}">${escapeHtml(logicReason)}</div>
                 `;
             } else {
                 body = `<div class="world-node-output-hint">当前最终条件由系统内部维护，无需额外设置。</div>`;
@@ -5694,10 +4948,6 @@ export class WorldEditorModal {
     }
 
     closeCustomSelectMenu() {
-        if (this.customSelectMenuAnchor) {
-            const field = this.customSelectMenuAnchor?.dataset?.field || this.customSelectMenuAnchor?.id || '';
-            logger.info(`[world-select] close anchor=${field}`);
-        }
         if (typeof this.customSelectMenuCleanup === 'function') {
             try { this.customSelectMenuCleanup(); } catch {}
         }
@@ -5716,18 +4966,12 @@ export class WorldEditorModal {
             this.customSelectMenuEl &&
             this.customSelectMenuEl.style.display !== 'none';
         if (isSameAnchorOpen) {
-            const field = anchorEl?.dataset?.field || anchorEl?.id || '';
-            logger.info(`[world-select] toggle-close same-anchor=${field}`);
             this.closeCustomSelectMenu();
             return;
         }
         const menu = this.ensureCustomSelectMenu();
         const current = String(currentValue ?? '').trim();
         const opts = Array.isArray(options) ? options : [];
-        {
-            const field = anchorEl?.dataset?.field || anchorEl?.id || '';
-            logger.info(`[world-select] open anchor=${field} options=${opts.length} current=${current}`);
-        }
         menu.innerHTML = opts.map((opt) => {
             const value = String(opt?.value ?? '');
             const selected = value === current;
@@ -5773,14 +5017,12 @@ export class WorldEditorModal {
             const target = ev?.target;
             if (!target) return;
             if (menu.contains(target) || anchorEl.contains(target)) return;
-            logger.info('[world-select] close reason=doc-click');
             this.closeCustomSelectMenu();
         };
         const onResize = () => this.closeCustomSelectMenu();
         const onScroll = (ev) => {
             const target = ev?.target;
             if (target && (menu.contains(target) || anchorEl.contains(target))) return;
-            logger.info('[world-select] close reason=scroll');
             this.closeCustomSelectMenu();
         };
         document.addEventListener('mousedown', onDocClick, true);
