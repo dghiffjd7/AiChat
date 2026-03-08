@@ -336,6 +336,11 @@ struct AttachmentStreamEntry {
     path: PathBuf,
 }
 
+#[derive(Default)]
+pub struct HttpAbortState {
+    inner: Mutex<HashMap<String, tokio::task::AbortHandle>>,
+}
+
 #[derive(serde::Serialize)]
 pub struct WallpaperStreamStartResult {
     pub upload_id: String,
@@ -2729,43 +2734,97 @@ pub async fn http_request(
     headers: HashMap<String, String>,
     body: Option<String>,
     timeout_ms: Option<u64>,
+    request_id: Option<String>,
+    abort_state: State<'_, HttpAbortState>,
 ) -> Result<HttpResponse, String> {
-    let method = reqwest::Method::from_bytes(method.as_bytes()).map_err(|e| e.to_string())?;
+    let request_key = match request_id {
+        Some(raw) => Some(validate_safe_key(&raw, "request_id")?),
+        None => None,
+    };
 
-    let mut header_map = reqwest::header::HeaderMap::new();
-    for (k, v) in headers {
-        let name = reqwest::header::HeaderName::from_bytes(k.as_bytes()).map_err(|e| e.to_string())?;
-        let value = reqwest::header::HeaderValue::from_str(&v).map_err(|e| e.to_string())?;
-        header_map.insert(name, value);
-    }
+    let task = tokio::spawn(async move {
+        let method = reqwest::Method::from_bytes(method.as_bytes()).map_err(|e| e.to_string())?;
 
-    let mut builder = reqwest::Client::builder();
-    if let Some(ms) = timeout_ms {
-        builder = builder.timeout(std::time::Duration::from_millis(ms));
-    }
-    let client = builder.build().map_err(|e| e.to_string())?;
+        let mut header_map = reqwest::header::HeaderMap::new();
+        for (k, v) in headers {
+            let name = reqwest::header::HeaderName::from_bytes(k.as_bytes()).map_err(|e| e.to_string())?;
+            let value = reqwest::header::HeaderValue::from_str(&v).map_err(|e| e.to_string())?;
+            header_map.insert(name, value);
+        }
 
-    let mut req = client.request(method, url).headers(header_map);
-    if let Some(body) = body {
-        req = req.body(body);
-    }
+        let mut builder = reqwest::Client::builder();
+        if let Some(ms) = timeout_ms {
+            builder = builder.timeout(std::time::Duration::from_millis(ms));
+        }
+        let client = builder.build().map_err(|e| e.to_string())?;
 
-    let resp = req.send().await.map_err(|e| e.to_string())?;
-    let status = resp.status();
-    let mut out_headers: HashMap<String, String> = HashMap::new();
-    for (k, v) in resp.headers().iter() {
-        if let Ok(vs) = v.to_str() {
-            out_headers.insert(k.as_str().to_string(), vs.to_string());
+        let mut req = client.request(method, url).headers(header_map);
+        if let Some(body) = body {
+            req = req.body(body);
+        }
+
+        let resp = req.send().await.map_err(|e| e.to_string())?;
+        let status = resp.status();
+        let mut out_headers: HashMap<String, String> = HashMap::new();
+        for (k, v) in resp.headers().iter() {
+            if let Ok(vs) = v.to_str() {
+                out_headers.insert(k.as_str().to_string(), vs.to_string());
+            }
+        }
+        let body = resp.text().await.map_err(|e| e.to_string())?;
+
+        Ok(HttpResponse {
+            status: status.as_u16(),
+            ok: status.is_success(),
+            headers: out_headers,
+            body,
+        })
+    });
+
+    if let Some(key) = request_key.clone() {
+        let abort_handle = task.abort_handle();
+        let mut map = abort_state
+            .inner
+            .lock()
+            .map_err(|_| "http abort state lock poisoned".to_string())?;
+        if let Some(prev) = map.insert(key, abort_handle) {
+            prev.abort();
         }
     }
-    let body = resp.text().await.map_err(|e| e.to_string())?;
 
-    Ok(HttpResponse {
-        status: status.as_u16(),
-        ok: status.is_success(),
-        headers: out_headers,
-        body,
-    })
+    let joined = task.await;
+
+    if let Some(key) = request_key {
+        if let Ok(mut map) = abort_state.inner.lock() {
+            map.remove(&key);
+        }
+    }
+
+    match joined {
+        Ok(result) => result,
+        Err(err) if err.is_cancelled() => Err("aborted".to_string()),
+        Err(err) => Err(err.to_string()),
+    }
+}
+
+#[tauri::command]
+pub async fn http_abort_request(
+    request_id: String,
+    abort_state: State<'_, HttpAbortState>,
+) -> Result<bool, String> {
+    let key = validate_safe_key(&request_id, "request_id")?;
+    let handle = {
+        let mut map = abort_state
+            .inner
+            .lock()
+            .map_err(|_| "http abort state lock poisoned".to_string())?;
+        map.remove(&key)
+    };
+    if let Some(handle) = handle {
+        handle.abort();
+        return Ok(true);
+    }
+    Ok(false)
 }
 
 /// JS -> Rust log bridge (prints to logcat via stderr on Android)

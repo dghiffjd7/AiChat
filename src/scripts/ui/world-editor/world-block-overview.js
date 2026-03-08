@@ -235,20 +235,40 @@ export function collectBlockConditionOverviewImpl(entry, block, deps = {}) {
     if (!tree) tree = this.ensureBlockConditionTree(block);
     const stats = {
         clauseCount: 0,
-        groupCount: 0,
-        pendingCount: 0,
         pendingItems: [],
         variables: new Map(),
     };
     const runtimeContext = this.getConditionRuntimeContext();
     const explanation = explainConditionTree(tree, runtimeContext);
-    const entryActivation = this.getEntryActivationExplanation(entry, this.currentIndex);
-    let clauseOrder = 0;
-    visitConditionTree(tree, (node, path) => {
-        if (isConditionTreeGroup(node)) {
-            stats.groupCount += 1;
+    const runtimeStats = {
+        total: 0,
+        resolved: 0,
+        hit: 0,
+        miss: 0,
+        pending: 0,
+    };
+    const collectRuntimeStats = (node) => {
+        if (!node || typeof node !== 'object') return;
+        if (Array.isArray(node.children)) {
+            node.children.forEach((child) => collectRuntimeStats(child));
             return;
         }
+        runtimeStats.total += 1;
+        if (typeof node.result === 'boolean') {
+            runtimeStats.resolved += 1;
+            if (node.result) runtimeStats.hit += 1;
+            else runtimeStats.miss += 1;
+            return;
+        }
+        runtimeStats.pending += 1;
+    };
+    collectRuntimeStats(explanation);
+    const entryActivation = this.getEntryActivationExplanation(entry, this.currentIndex);
+    let clauseOrder = 0;
+    let missingLeftFixIndex = 0;
+    let missingRightFixIndex = 0;
+    visitConditionTree(tree, (node) => {
+        if (isConditionTreeGroup(node)) return;
         const clause = normalizePromptClause(node);
         clauseOrder += 1;
         stats.clauseCount += 1;
@@ -257,27 +277,23 @@ export function collectBlockConditionOverviewImpl(entry, block, deps = {}) {
         const needsRight = !['is_empty', 'not_empty'].includes(op);
         const rightMissing = needsRight && clause.rightType === 'variable' && !String(clause.right || '').trim();
         if (!left) {
-            stats.pendingCount += 1;
             stats.pendingItems.push({
-                order: clauseOrder,
-                path,
                 label: `条件 ${clauseOrder}`,
                 reason: '未设置变量',
                 kind: 'missing_left_variable',
-                fixIndex: stats.pendingItems.filter(item => item?.kind === 'missing_left_variable').length,
+                fixIndex: missingLeftFixIndex,
             });
+            missingLeftFixIndex += 1;
             return;
         }
         if (rightMissing) {
-            stats.pendingCount += 1;
             stats.pendingItems.push({
-                order: clauseOrder,
-                path,
                 label: `条件 ${clauseOrder}`,
                 reason: '变量比较的右值为空',
                 kind: 'missing_right_variable',
-                fixIndex: stats.pendingItems.filter(item => item?.kind === 'missing_right_variable').length,
+                fixIndex: missingRightFixIndex,
             });
+            missingRightFixIndex += 1;
             return;
         }
         const prev = stats.variables.get(left) || {
@@ -297,25 +313,23 @@ export function collectBlockConditionOverviewImpl(entry, block, deps = {}) {
     });
     const disconnectedTargets = this.getBlockDisconnectedNodeTargets(block);
     disconnectedTargets.forEach((target) => {
-        stats.pendingCount += 1;
         stats.pendingItems.push({
-            order: stats.pendingItems.length + 1,
-            path: 'root',
             nodeId: target.nodeId,
-            label: `${target.label} ${target.order}`,
+            label: target.label,
             reason: '未接入当前生效链路',
             kind: 'disconnected_from_result',
         });
     });
+    const pendingCount = stats.pendingItems.length;
     return {
         tree,
         explanation,
         entryActivation,
         clauseCount: stats.clauseCount,
-        groupCount: stats.groupCount,
-        pendingCount: stats.pendingCount,
+        pendingCount,
         pendingItems: stats.pendingItems,
         variables: [...stats.variables.values()].sort((a, b) => a.name.localeCompare(b.name, 'zh-CN')),
+        runtimeStats,
     };
 }
 
@@ -389,6 +403,87 @@ export function renderConditionOverviewNodeImpl(node, depth = 0, explanation = n
 export function renderBlockConditionOverviewImpl(entry, block, deps = {}) {
     const { escapeHtml, BLOCK_RIGHT_TYPE_OPTIONS = [] } = deps;
     const overview = this.collectBlockConditionOverview(entry, block);
+    const runtimeStats = overview.runtimeStats || { total: 0, resolved: 0, hit: 0, miss: 0, pending: 0 };
+    const runtimeFocus = typeof this.getBlockRuntimeFocusTargets === 'function'
+        ? this.getBlockRuntimeFocusTargets(block)
+        : { pathNodeIds: [], hitNodeIds: [], missNodeIds: [], pendingNodeIds: [] };
+    const runtimeFocusCounts = {
+        path: Array.isArray(runtimeFocus.pathNodeIds) ? runtimeFocus.pathNodeIds.length : 0,
+        hit: Array.isArray(runtimeFocus.hitNodeIds) ? runtimeFocus.hitNodeIds.length : 0,
+        miss: Array.isArray(runtimeFocus.missNodeIds) ? runtimeFocus.missNodeIds.length : 0,
+        pending: Array.isArray(runtimeFocus.pendingNodeIds) ? runtimeFocus.pendingNodeIds.length : 0,
+    };
+    const hitRate = runtimeStats.resolved > 0
+        ? Math.round((runtimeStats.hit / runtimeStats.resolved) * 100)
+        : 0;
+    const blockEnabled = block?.enabled !== false;
+    const blockResultKnown = typeof overview.explanation?.result === 'boolean';
+    const blockHit = blockResultKnown && overview.explanation?.result === true;
+    const entryActive = overview.entryActivation?.active !== false;
+    const effectiveInjectable = blockEnabled && entryActive && blockHit;
+    const blockStatusText = !blockEnabled
+        ? 'block 已禁用'
+        : blockResultKnown
+            ? (blockHit ? 'block 当前命中' : 'block 当前未命中')
+            : 'block 待判断';
+    const blockStatusClass = !blockEnabled
+        ? 'warn'
+        : blockResultKnown
+            ? (blockHit ? 'good' : 'warn')
+            : 'subtle';
+    const entryActivationHtml = this.renderEntryActivationOverview(overview.entryActivation)
+        || '<div class="world-entry-activation-overview"><div class="world-entry-activation-title">条目激活</div><div class="world-entry-activation-meta">当前无法读取条目激活解释。</div></div>';
+    const renderRuntimeAction = (kind = 'path', label = '', count = 0, tone = 'path') => `
+        <button
+            type="button"
+            class="world-block-runtime-action is-${escapeHtml(tone)}"
+            data-runtime-focus="${escapeHtml(kind)}"
+            ${count ? '' : 'disabled'}
+        >
+            <span>${escapeHtml(label)}</span>
+            <span class="world-block-runtime-action-count">(${Number(count || 0)})</span>
+        </button>
+    `;
+    const blockRuntimeOverviewHtml = `
+        <div class="world-block-runtime-overview">
+            <div class="world-block-runtime-head">
+                <div class="world-entry-activation-title">block 判定</div>
+                <div class="world-entry-activation-pills">
+                    <span class="world-cond-overview-pill ${blockStatusClass}">${escapeHtml(blockStatusText)}</span>
+                    <span class="world-cond-overview-pill ${effectiveInjectable ? 'good' : 'warn'}">${effectiveInjectable ? '当前可注入' : '当前不可注入'}</span>
+                </div>
+            </div>
+            <div class="world-block-runtime-grid">
+                <div class="world-block-runtime-card">
+                    <div class="world-entry-activation-label">条件总数</div>
+                    <div class="world-entry-activation-value">${runtimeStats.total}</div>
+                    <div class="world-entry-activation-meta">已判定 ${runtimeStats.resolved} / ${runtimeStats.total}</div>
+                </div>
+                <div class="world-block-runtime-card">
+                    <div class="world-entry-activation-label">命中统计</div>
+                    <div class="world-entry-activation-value">${runtimeStats.hit} 命中 / ${runtimeStats.miss} 未命中</div>
+                    <div class="world-entry-activation-meta">${runtimeStats.pending ? `${runtimeStats.pending} 条待判断` : '当前无待判断项'}</div>
+                </div>
+                <div class="world-block-runtime-card">
+                    <div class="world-entry-activation-label">命中率（已判定）</div>
+                    <div class="world-entry-activation-value">${runtimeStats.resolved ? `${hitRate}%` : '—'}</div>
+                    <div class="world-entry-activation-meta">仅基于当前会话可判定条件计算</div>
+                </div>
+                <div class="world-block-runtime-card">
+                    <div class="world-entry-activation-label">联动说明</div>
+                    <div class="world-entry-activation-value">
+                        ${!entryActive ? '条目未激活，block 条件即使命中也不会注入。' : (!blockEnabled ? 'block 已禁用，当前不会注入。' : (blockHit ? '条目+block 均满足，当前可注入。' : '条目激活但 block 未命中，当前不注入。'))}
+                    </div>
+                </div>
+            </div>
+            <div class="world-block-runtime-actions">
+                ${renderRuntimeAction('path', '定位当前判定链路', runtimeFocusCounts.path, 'path')}
+                ${renderRuntimeAction('hit', '定位命中节点', runtimeFocusCounts.hit, 'hit')}
+                ${renderRuntimeAction('miss', '定位未命中节点', runtimeFocusCounts.miss, 'miss')}
+                ${renderRuntimeAction('pending', '定位待判断节点', runtimeFocusCounts.pending, 'pending')}
+            </div>
+        </div>
+    `;
     return `
         <div class="world-cond-overview" id="we-condition-overview">
             <div class="world-cond-overview-head">
@@ -397,15 +492,17 @@ export function renderBlockConditionOverviewImpl(entry, block, deps = {}) {
                     <div class="world-cond-overview-subtitle">先看条目激活，再看 block 条件命中，需要调整时再进入编辑。</div>
                 </div>
                 <div class="world-cond-overview-stats">
-                    <span class="world-cond-overview-pill ${overview.entryActivation?.active ? '' : 'warn'}">${overview.entryActivation?.active ? '条目已激活' : '条目未激活'}</span>
-                    <span class="world-cond-overview-pill ${block?.enabled === false ? 'warn' : ''}">${block?.enabled === false ? 'block 已禁用' : 'block 已启用'}</span>
                     <span class="world-cond-overview-pill">${overview.clauseCount} 条条件</span>
                     <span class="world-cond-overview-pill">${overview.variables.length} 个变量</span>
-                    <span class="world-cond-overview-pill ${overview.explanation?.result ? '' : 'warn'}">${overview.explanation?.result ? 'block 当前命中' : 'block 当前未命中'}</span>
+                    <span class="world-cond-overview-pill subtle">已判定 ${runtimeStats.resolved} / ${runtimeStats.total}</span>
+                    <span class="world-cond-overview-pill ${blockStatusClass}">${escapeHtml(blockStatusText)}</span>
                     ${overview.pendingCount ? `<span class="world-cond-overview-pill warn">${overview.pendingCount} 处待完善</span>` : ''}
                 </div>
             </div>
-            ${this.renderEntryActivationOverview(overview.entryActivation)}
+            <div class="world-cond-overview-panels">
+                <div class="world-cond-overview-panel">${entryActivationHtml}</div>
+                <div class="world-cond-overview-panel">${blockRuntimeOverviewHtml}</div>
+            </div>
             <div class="world-cond-overview-structure">
                 ${this.renderConditionOverviewNode(overview.tree, 0, overview.explanation)}
             </div>
@@ -415,7 +512,7 @@ export function renderBlockConditionOverviewImpl(entry, block, deps = {}) {
                     <div class="world-cond-overview-pending-list">
                         ${overview.pendingItems.map((item) => `
                             <div class="world-cond-overview-pending-item">
-                                <button type="button" class="world-cond-overview-pending-main" data-path="${escapeHtml(item.path || '')}" data-node-id="${escapeHtml(item.nodeId || '')}">
+                                <button type="button" class="world-cond-overview-pending-main" data-node-id="${escapeHtml(item.nodeId || '')}">
                                     <span class="world-cond-overview-pending-label">${escapeHtml(item.label)}</span>
                                     <span class="world-cond-overview-pending-reason">${escapeHtml(item.reason)}</span>
                                 </button>

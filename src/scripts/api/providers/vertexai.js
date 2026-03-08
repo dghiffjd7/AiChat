@@ -68,7 +68,15 @@ const makeAbortError = () => {
   return err;
 };
 
-const request = async ({ url, method = 'GET', headers = {}, body = undefined, timeoutMs = 60000, signal } = {}) => {
+const request = async ({
+  url,
+  method = 'GET',
+  headers = {},
+  body = undefined,
+  timeoutMs = 60000,
+  signal,
+  requestId = '',
+} = {}) => {
   const invoker = getTauriInvoker();
   if (typeof invoker === 'function') {
     if (signal?.aborted) throw makeAbortError();
@@ -78,6 +86,7 @@ const request = async ({ url, method = 'GET', headers = {}, body = undefined, ti
       headers,
       body: typeof body === 'string' ? body : body == null ? null : String(body),
       timeout_ms: timeoutMs,
+      request_id: requestId || null,
     });
   }
 
@@ -97,8 +106,16 @@ const request = async ({ url, method = 'GET', headers = {}, body = undefined, ti
   }
 };
 
-const requestJson = async ({ url, method = 'GET', headers = {}, body = undefined, timeoutMs = 60000, signal } = {}) => {
-  const res = await request({ url, method, headers, body, timeoutMs, signal });
+const requestJson = async ({
+  url,
+  method = 'GET',
+  headers = {},
+  body = undefined,
+  timeoutMs = 60000,
+  signal,
+  requestId = '',
+} = {}) => {
+  const res = await request({ url, method, headers, body, timeoutMs, signal, requestId });
   if (!res.ok) {
     const raw = String(res.body || '').trim();
     let detail = '';
@@ -383,7 +400,7 @@ export class VertexAIProvider {
    * Send chat message (non-streaming)
    */
   async chat(messages, options = {}) {
-    const { signal, options: payloadOptions } = splitRequestOptions(options);
+    const { signal, requestId, options: payloadOptions } = splitRequestOptions(options);
     const headers = await this.getHeaders();
     const body = this.buildRequestBody(messages, payloadOptions);
     const tryOnce = async ({ region, baseHost }) => {
@@ -395,6 +412,7 @@ export class VertexAIProvider {
         body: JSON.stringify(body),
         timeoutMs: this.timeout,
         signal,
+        requestId,
       });
     };
 
@@ -438,7 +456,7 @@ export class VertexAIProvider {
    * Stream chat messages
    */
   async *streamChat(messages, options = {}) {
-    const { signal, options: payloadOptions } = splitRequestOptions(options);
+    const { signal, requestId, options: payloadOptions } = splitRequestOptions(options);
     const headers = await this.getHeaders();
     const body = this.buildRequestBody(messages, payloadOptions);
 
@@ -455,6 +473,7 @@ export class VertexAIProvider {
           body: JSON.stringify(body),
           timeoutMs: this.timeout,
           signal,
+          requestId,
         });
         if (!res.ok) {
           const err = new Error(`Vertex AI Error: ${res.status}`);

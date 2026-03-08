@@ -66,7 +66,7 @@ export class CustomProvider {
         return headers;
     }
 
-    async request({ url, method = 'GET', headers = {}, body = undefined, signal } = {}) {
+    async request({ url, method = 'GET', headers = {}, body = undefined, signal, requestId = '' } = {}) {
         const mergedHeaders = { ...headers };
         const invoker = getTauriInvoker();
         if (typeof invoker === 'function') {
@@ -78,6 +78,7 @@ export class CustomProvider {
                     headers: mergedHeaders,
                     body: typeof body === 'string' ? body : body == null ? null : String(body),
                     timeout_ms: this.timeout,
+                    request_id: requestId || null,
                 });
             } catch (err) {
                 if (isTauriWebview()) {
@@ -108,8 +109,8 @@ export class CustomProvider {
         }
     }
 
-    async requestJson({ url, method = 'GET', headers = {}, body = undefined, signal } = {}) {
-        const res = await this.request({ url, method, headers, body, signal });
+    async requestJson({ url, method = 'GET', headers = {}, body = undefined, signal, requestId = '' } = {}) {
+        const res = await this.request({ url, method, headers, body, signal, requestId });
         if (!res.ok) {
             const raw = String(res.body || '').trim();
             let detail = '';
@@ -129,7 +130,7 @@ export class CustomProvider {
      * 发送聊天消息（非流式）
      */
     async chat(messages, options = {}) {
-        const { signal, options: payloadOptions } = splitRequestOptions(options);
+        const { signal, requestId, options: payloadOptions } = splitRequestOptions(options);
         const data = await this.requestJson({
             url: `${this.baseUrl}/chat/completions`,
             method: 'POST',
@@ -141,6 +142,7 @@ export class CustomProvider {
                 ...payloadOptions
             }),
             signal,
+            requestId,
         });
 
         if (data.choices && data.choices[0]) {
@@ -158,7 +160,7 @@ export class CustomProvider {
      * 流式聊天
      */
     async *streamChat(messages, options = {}) {
-        const { signal, options: payloadOptions } = splitRequestOptions(options);
+        const { signal, requestId, options: payloadOptions } = splitRequestOptions(options);
         const payload = JSON.stringify({
             model: this.model,
             messages: messages,
@@ -175,6 +177,7 @@ export class CustomProvider {
                 headers: { ...this.getHeaders(), Accept: 'text/event-stream' },
                 body: payload,
                 signal,
+                requestId,
             });
             if (!res.ok) {
                 const raw = String(res.body || '').trim();

@@ -1,8 +1,13 @@
 export const splitRequestOptions = (options = {}) => {
   const src = (options && typeof options === 'object') ? options : {};
   const signal = src.signal;
-  const { signal: _signal, ...rest } = src;
-  return { signal, options: rest };
+  const nativeRequestIdRaw =
+    typeof src.nativeRequestId === 'string'
+      ? src.nativeRequestId
+      : (typeof src.requestId === 'string' ? src.requestId : '');
+  const requestId = String(nativeRequestIdRaw || '').trim();
+  const { signal: _signal, nativeRequestId: _nativeRequestId, requestId: _requestId, ...rest } = src;
+  return { signal, requestId, options: rest };
 };
 
 export const createLinkedAbortController = ({ timeoutMs, signal } = {}) => {
@@ -45,4 +50,3 @@ export const createLinkedAbortController = ({ timeoutMs, signal } = {}) => {
 
   return { controller, cleanup };
 };
-

@@ -8,6 +8,9 @@
     "dev": "tauri dev",
     "build": "tauri build",
     "tauri": "tauri",
+    "test:memory": "node scripts/tests/memory-tests.mjs && node scripts/tests/memory-integration.mjs",
+    "test:cancel": "node scripts/tests/cancel-regression.mjs",
+    "test:all": "npm run test:memory && npm run test:cancel",
     "android:init": "tauri android init",
     "android:dev": "tauri android dev",
     "android:build": "tauri android build"

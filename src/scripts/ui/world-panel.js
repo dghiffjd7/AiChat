@@ -29,6 +29,7 @@ export class WorldPanel {
         this.globalSettingsToggle = null;
         this.globalScanInput = null;
         this.globalStrategySelect = null;
+        this.globalVariableDefineStrategySelect = null;
         this.globalContextInput = null;
         this.globalIncludeNames = null;
         this.globalBudgetInput = null;
@@ -194,6 +195,11 @@ export class WorldPanel {
                 if (this.globalMaxRecursionInput) this.globalMaxRecursionInput.value = maxRecursion === '' ? '' : String(maxRecursion);
                 const strategy = String(settings.insertionStrategy || 'role_first');
                 if (this.globalStrategySelect) this.globalStrategySelect.value = strategy;
+                const strategyRaw = String(settings.variableDefineStrategy || 'legacy_eager');
+                const variableDefineStrategy = ['legacy_eager', 'first_hit', 'off'].includes(strategyRaw)
+                    ? strategyRaw
+                    : 'legacy_eager';
+                if (this.globalVariableDefineStrategySelect) this.globalVariableDefineStrategySelect.value = variableDefineStrategy;
                 if (this.globalIncludeNames) this.globalIncludeNames.checked = settings.includeNames === true;
                 if (this.globalRecursiveScan) this.globalRecursiveScan.checked = settings.recursiveScan !== false;
                 if (this.globalCaseSensitive) this.globalCaseSensitive.checked = settings.caseSensitive === true;
@@ -976,10 +982,10 @@ export class WorldPanel {
         });
     }
 
-    async openEditor(name) {
+    async openEditor(name, options = {}) {
         try {
             const data = await window.appBridge.getWorldInfo(name);
-            await this.editor.show(name, data);
+            await this.editor.show(name, data, options);
         } catch (err) {
             logger.error('打开世界书编辑器失败', err);
             window.toastr?.error('打开编辑器失败');
@@ -1094,6 +1100,14 @@ export class WorldPanel {
                             <option value="even">平均混合</option>
                         </select>
                     </div>
+                    <div style="display:flex; gap:8px; align-items:center; margin-top:8px; flex-wrap:wrap;">
+                        <span style="font-size:12px; color:#475569;">变量自动建立</span>
+                        <select id="world-global-variable-define-strategy" style="border:1px solid #e2e8f0; border-radius:8px; padding:6px 8px; font-size:12px; background:#fff;">
+                            <option value="legacy_eager">请求前自动建立（旧行为）</option>
+                            <option value="first_hit">命中条目后再建立</option>
+                            <option value="off">关闭运行时自动建立</option>
+                        </select>
+                    </div>
                     <div style="display:flex; gap:12px; align-items:center; margin-top:8px; flex-wrap:wrap;">
                         <label style="display:flex; align-items:center; gap:6px; font-size:12px; color:#475569;">
                             <input id="world-global-include-names" type="checkbox">
@@ -1157,6 +1171,7 @@ export class WorldPanel {
         this.globalSettingsToggle = this.panel.querySelector('#world-global-settings-toggle');
         this.globalScanInput = this.panel.querySelector('#world-global-scan-depth');
         this.globalStrategySelect = this.panel.querySelector('#world-global-strategy');
+        this.globalVariableDefineStrategySelect = this.panel.querySelector('#world-global-variable-define-strategy');
         this.globalContextInput = this.panel.querySelector('#world-global-context-percent');
         this.globalIncludeNames = this.panel.querySelector('#world-global-include-names');
         this.globalBudgetInput = this.panel.querySelector('#world-global-budget-cap');
@@ -1234,6 +1249,12 @@ export class WorldPanel {
             this.globalStrategySelect.onchange = () => {
                 const value = String(this.globalStrategySelect.value || 'role_first');
                 window.appBridge?.setWorldGlobalSettings?.({ insertionStrategy: value });
+            };
+        }
+        if (this.globalVariableDefineStrategySelect) {
+            this.globalVariableDefineStrategySelect.onchange = () => {
+                const value = String(this.globalVariableDefineStrategySelect.value || 'legacy_eager');
+                window.appBridge?.setWorldGlobalSettings?.({ variableDefineStrategy: value });
             };
         }
         if (this.globalIncludeNames) {

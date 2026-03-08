@@ -36,7 +36,9 @@ import {
   createDefaultPromptClause,
   evaluateConditionTree,
   normalizeConditionTree,
+  normalizeWorldPromptMode,
   parseTypedValue,
+  shouldUseWorldPromptBlocks,
 } from '../variables/world-condition-core.js';
 
 const canInitClient = cfg => {
@@ -49,12 +51,61 @@ const canInitClient = cfg => {
   return hasKey || hasVertexSa;
 };
 
+const makeCancelledError = (reason = 'user') => {
+  const e = new Error('cancelled');
+  e.name = 'AbortError';
+  e.cancelled = true;
+  e.reason = String(reason || 'user');
+  return e;
+};
+
 const truthy = v => {
   if (v === null || v === undefined) return false;
   if (typeof v === 'string') return v.trim().length > 0;
   if (Array.isArray(v)) return v.length > 0;
   return Boolean(v);
 };
+
+const normalizeWorldVariableDefineStrategy = (raw, fallback = 'legacy_eager') => {
+  const normalize = (value) => {
+    const token = String(value || '').trim().toLowerCase();
+    if (!token) return '';
+    if (token === 'legacy_eager' || token === 'eager' || token === 'request_start') return 'legacy_eager';
+    if (token === 'first_hit' || token === 'on_hit' || token === 'on_match') return 'first_hit';
+    if (token === 'off' || token === 'edit_time' || token === 'manual') return 'off';
+    return '';
+  };
+  return normalize(raw) || normalize(fallback) || 'legacy_eager';
+};
+
+const normalizeWorldInsertionStrategy = (raw, fallback = 'role_first') => {
+  const normalize = (value) => {
+    const token = String(value || '').trim().toLowerCase();
+    if (token === 'role_first' || token === 'global_first' || token === 'even') return token;
+    return '';
+  };
+  return normalize(raw) || normalize(fallback) || 'role_first';
+};
+
+const parseWorldNonNegativeInt = (value, fallback = 0) => {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return Math.max(0, Math.trunc(Number(fallback) || 0));
+  return Math.max(0, Math.trunc(n));
+};
+
+const buildWorldActivationSettings = (worldSettings = {}) => ({
+  globalCaseSensitive: worldSettings.caseSensitive === true,
+  globalMatchWholeWords: worldSettings.matchWholeWords === true,
+  globalRecursiveScan: worldSettings.recursiveScan !== false,
+  globalUseGroupScoring: worldSettings.useGroupScoring === true,
+  minActivations: parseWorldNonNegativeInt(worldSettings.minActivations, 0),
+  maxDepthSetting: parseWorldNonNegativeInt(worldSettings.maxDepth, 0),
+  maxRecursionStepsSetting: parseWorldNonNegativeInt(worldSettings.maxRecursionSteps, 0),
+  variableDefineStrategy: normalizeWorldVariableDefineStrategy(
+    worldSettings.variableDefineStrategy,
+    'legacy_eager',
+  ),
+});
 
 const renderStTemplate = (template, vars) => {
   let out = String(template || '');
@@ -198,6 +249,7 @@ class AppBridge {
     this.isGenerating = false;
     this.abortController = null;
     this.abortReason = '';
+    this.activeNativeRequestId = '';
     this.chatStore = null; // Injected
     this.macroEngine = null; // Initialized on setChatStore
     this.contactsStore = null; // Injected
@@ -270,6 +322,10 @@ class AppBridge {
         this.abortController.abort();
       }
     } catch {}
+    const requestId = String(this.activeNativeRequestId || '').trim();
+    if (requestId) {
+      safeInvoke('http_abort_request', { request_id: requestId }).catch(() => {});
+    }
   }
 
   async getDefaultMemoryTemplateRecord() {
@@ -1004,6 +1060,7 @@ class AppBridge {
       matchWholeWords: true,
       useGroupScoring: false,
       alertOnOverflow: false,
+      variableDefineStrategy: 'legacy_eager',
     };
   }
 
@@ -1014,10 +1071,10 @@ class AppBridge {
     const scanDepth = (scanDepthRaw === null || scanDepthRaw === '' || scanDepthRaw === undefined)
       ? base.scanDepth
       : (Number.isFinite(Number(scanDepthRaw)) ? Math.max(0, Math.trunc(Number(scanDepthRaw))) : base.scanDepth);
-    const strategyRaw = String(obj.insertionStrategy || base.insertionStrategy || 'role_first');
-    const insertionStrategy = ['role_first', 'global_first', 'even'].includes(strategyRaw)
-      ? strategyRaw
-      : base.insertionStrategy;
+    const insertionStrategy = normalizeWorldInsertionStrategy(
+      obj.insertionStrategy,
+      base.insertionStrategy,
+    );
     const contextRaw = obj.contextPercent;
     const contextPercent = (contextRaw === null || contextRaw === '' || contextRaw === undefined)
       ? base.contextPercent
@@ -1044,6 +1101,10 @@ class AppBridge {
     const matchWholeWords = obj.matchWholeWords === undefined || obj.matchWholeWords === null ? base.matchWholeWords : obj.matchWholeWords === true;
     const useGroupScoring = obj.useGroupScoring === undefined || obj.useGroupScoring === null ? base.useGroupScoring : obj.useGroupScoring === true;
     const alertOnOverflow = obj.alertOnOverflow === undefined || obj.alertOnOverflow === null ? base.alertOnOverflow : obj.alertOnOverflow === true;
+    const variableDefineStrategy = normalizeWorldVariableDefineStrategy(
+      obj.variableDefineStrategy,
+      base.variableDefineStrategy,
+    );
     return {
       scanDepth,
       insertionStrategy,
@@ -1058,6 +1119,7 @@ class AppBridge {
       matchWholeWords,
       useGroupScoring,
       alertOnOverflow,
+      variableDefineStrategy,
     };
   }
 
@@ -1481,6 +1543,8 @@ class AppBridge {
     this.isGenerating = true;
     this.abortController = new AbortController();
     this.abortReason = '';
+    const nativeRequestId = `http_${Date.now().toString(36)}_${Math.random().toString(16).slice(2, 10)}`;
+    this.activeNativeRequestId = nativeRequestId;
     let streaming = false;
 
     try {
@@ -1610,7 +1674,11 @@ class AppBridge {
       }
       const config = this.config.get();
       const genOptions = this.getGenerationOptions();
-      const requestOptions = { ...(genOptions || {}), signal: this.abortController.signal };
+      const requestOptions = {
+        ...(genOptions || {}),
+        signal: this.abortController.signal,
+        nativeRequestId,
+      };
 
       logger.debug('发送消息到 LLM:', { messageCount: messages.length, stream: config.stream });
       // Debug: keep the exact request payload used for the latest generation
@@ -1636,6 +1704,9 @@ class AppBridge {
             self.isGenerating = false;
             self.abortController = null;
             self.abortReason = '';
+            if (self.activeNativeRequestId === nativeRequestId) {
+              self.activeNativeRequestId = '';
+            }
           }
         })();
       } else {
@@ -1649,6 +1720,9 @@ class AppBridge {
         return response;
       }
     } catch (error) {
+      if (this.abortController?.signal?.aborted && this.abortReason) {
+        throw makeCancelledError(this.abortReason);
+      }
       logger.error('生成失败:', error);
       throw error;
     } finally {
@@ -1656,6 +1730,9 @@ class AppBridge {
         this.isGenerating = false;
         this.abortController = null;
         this.abortReason = '';
+        if (this.activeNativeRequestId === nativeRequestId) {
+          this.activeNativeRequestId = '';
+        }
       }
     }
   }
@@ -1699,11 +1776,7 @@ class AppBridge {
     } catch (error) {
       // User-initiated cancellation (e.g. message retract) should not be converted into a timeout error.
       if (this.abortController?.signal?.aborted && this.abortReason) {
-        const e = new Error('cancelled');
-        e.name = 'AbortError';
-        e.cancelled = true;
-        e.reason = this.abortReason;
-        throw e;
+        throw makeCancelledError(this.abortReason);
       }
       const normalized = (() => {
         try {
@@ -2010,8 +2083,7 @@ class AppBridge {
       ? ''
       : (() => {
           const worldSettings = this.getWorldGlobalSettings?.() || this.worldGlobalSettings || {};
-          const strategyRaw = String(worldSettings.insertionStrategy || 'role_first');
-          const insertionStrategy = ['role_first', 'global_first', 'even'].includes(strategyRaw) ? strategyRaw : 'role_first';
+          const insertionStrategy = normalizeWorldInsertionStrategy(worldSettings.insertionStrategy, 'role_first');
           const collectEntries = (worldId) => this.collectWorldEntries(worldId, { matchText, matchContext });
           const buildMergedContent = (globalEntries, sessionEntries) => {
             const merged = this.mergeWorldEntries(globalEntries, sessionEntries, insertionStrategy);
@@ -2475,6 +2547,7 @@ const stringifyMessageContent = (content) => {
         };
         const worldDebugRaw = {
           insertionStrategy: 'role_first',
+          variableDefineStrategy: 'legacy_eager',
           budgetTokens: null,
           usedTokens: 0,
           overflowed: false,
@@ -2493,9 +2566,13 @@ const stringifyMessageContent = (content) => {
         };
         if (!isMomentCommentTask) {
           const worldSettings = this.getWorldGlobalSettings?.() || this.worldGlobalSettings || {};
-          const strategyRaw = String(worldSettings.insertionStrategy || 'role_first');
-          const insertionStrategy = ['role_first', 'global_first', 'even'].includes(strategyRaw) ? strategyRaw : 'role_first';
+          const insertionStrategy = normalizeWorldInsertionStrategy(worldSettings.insertionStrategy, 'role_first');
+          const variableDefineStrategy = normalizeWorldVariableDefineStrategy(
+            worldSettings.variableDefineStrategy,
+            'legacy_eager',
+          );
           worldDebugRaw.insertionStrategy = insertionStrategy;
+          worldDebugRaw.variableDefineStrategy = variableDefineStrategy;
           const collectEntries = worldId => this.collectWorldEntries(worldId, { matchText, matchContext });
           const isRpMode = String(matchContext?.uiMode || '').trim().toLowerCase() === 'rp';
           const pushEntry = (entry, meta = {}) => {
@@ -2734,8 +2811,35 @@ const stringifyMessageContent = (content) => {
           return text.replace(/\s+/g, ' ').slice(0, 120);
         };
         const sanitizeWorldDebugTitle = (entry) => {
-          const raw = String(entry?.comment || entry?.title || entry?.name || '').replace(/\[[^\]]+\]/g, '').trim();
+          const raw = String(entry?._entryTitle || entry?.comment || entry?.title || entry?.name || '')
+            .replace(/\[[^\]]+\]/g, '')
+            .trim();
           return raw || String(entry?._entryId || '').trim() || '未命名条目';
+        };
+        const sanitizeWorldDebugBlockTitle = (entry) => {
+          const fallbackId = String(entry?._blockId || 'legacy').trim() || 'legacy';
+          const raw = String(entry?._blockTitle || '').trim();
+          if (raw) return raw;
+          if (fallbackId === 'legacy') return 'legacy';
+          return fallbackId;
+        };
+        const resolveWorldDebugFocusNodeId = (entry) => {
+          const direct = String(entry?._focusNodeId || '').trim();
+          if (direct) return direct;
+          const blockId = String(entry?._blockId || '').trim();
+          if (!blockId || blockId === 'legacy') return '';
+          const blocks = Array.isArray(entry?.promptBlocks) ? entry.promptBlocks : [];
+          const block = blocks.find(item => String(item?.id || '').trim() === blockId) || null;
+          const graph = block?.nodeGraph && typeof block.nodeGraph === 'object' ? block.nodeGraph : null;
+          if (!graph) return '';
+          const nodes = Array.isArray(graph.nodes) ? graph.nodes : [];
+          const edges = Array.isArray(graph.edges) ? graph.edges : [];
+          if (!nodes.length || !edges.length) return '';
+          const resultNode = nodes.find(node => String(node?.type || '').trim().toLowerCase() === 'result');
+          const resultId = String(resultNode?.id || '').trim();
+          if (!resultId) return '';
+          const edge = edges.find(item => String(item?.to || '').trim() === resultId && String(item?.toPort || '').trim() === 'in');
+          return String(edge?.from || '').trim();
         };
         const mapWorldDebugEntries = (list = []) => list.map((item) => {
           const entry = item?.entry || {};
@@ -2747,6 +2851,8 @@ const stringifyMessageContent = (content) => {
             refWorldId: String(entry?._refWorldId || '').trim(),
             entryId: String(entry?._entryId || '').trim(),
             blockId: String(entry?._blockId || '').trim() || 'legacy',
+            blockTitle: sanitizeWorldDebugBlockTitle(entry),
+            focusNodeId: resolveWorldDebugFocusNodeId(entry),
             title: sanitizeWorldDebugTitle(entry),
             role: roleMap[entry?.role] || 'system',
             position,
@@ -2799,6 +2905,7 @@ const stringifyMessageContent = (content) => {
         };
         const worldDebug = {
           insertionStrategy: worldDebugRaw.insertionStrategy,
+          variableDefineStrategy: worldDebugRaw.variableDefineStrategy,
           budgetTokens: worldDebugRaw.budgetTokens,
           usedTokens: worldDebugRaw.usedTokens,
           overflowed: worldDebugRaw.overflowed,
@@ -4075,32 +4182,20 @@ const stringifyMessageContent = (content) => {
         : null;
     const matchTextRaw = labelObj ? String(labelObj.matchText || '') : '';
     const matchText = matchTextRaw;
-    const scopeMode = String(matchContext?.uiMode || '').trim().toLowerCase() === 'rp' ? 'rp' : 'chat';
     const scopeSessionId = String(matchContext?.sessionId || '').trim();
-    const scopeSessionName = String(matchContext?.sessionName || '').trim();
     const worldSettings = this.getWorldGlobalSettings?.() || this.worldGlobalSettings || {};
-    const globalCaseSensitive = worldSettings.caseSensitive === true;
-    const globalMatchWholeWords = worldSettings.matchWholeWords === true;
-    const globalRecursiveScan = worldSettings.recursiveScan !== false;
-    const globalUseGroupScoring = worldSettings.useGroupScoring === true;
-    const minActivations = Number.isFinite(Number(worldSettings.minActivations))
-      ? Math.max(0, Math.trunc(Number(worldSettings.minActivations)))
-      : 0;
-    const maxDepthSetting = Number.isFinite(Number(worldSettings.maxDepth))
-      ? Math.max(0, Math.trunc(Number(worldSettings.maxDepth)))
-      : 0;
-    const maxRecursionStepsSetting = Number.isFinite(Number(worldSettings.maxRecursionSteps))
-      ? Math.max(0, Math.trunc(Number(worldSettings.maxRecursionSteps)))
-      : 0;
+    const {
+      globalCaseSensitive,
+      globalMatchWholeWords,
+      globalRecursiveScan,
+      globalUseGroupScoring,
+      minActivations,
+      maxDepthSetting,
+      maxRecursionStepsSetting,
+      variableDefineStrategy,
+    } = buildWorldActivationSettings(worldSettings);
 
     const norm = v => String(v ?? '').trim();
-    const normalizeScopeList = (val) => {
-      if (Array.isArray(val)) return val.map(norm).filter(Boolean);
-      if (typeof val === 'string') {
-        return val.split(/[,，\n\r]/).map(s => s.trim()).filter(Boolean);
-      }
-      return [];
-    };
     const resolveRefEntries = (refs, refFromWorldId) => {
       const list = Array.isArray(refs) ? refs : [];
       if (!list.length) return [];
@@ -4138,7 +4233,6 @@ const stringifyMessageContent = (content) => {
       });
       return results;
     };
-    const normalizeScopeTarget = (value) => norm(value).replace(/\s+/g, '').toLowerCase();
     const isScopeAllowed = () => true;
     const normalizeKeys = e => {
       const keys = Array.isArray(e?.key) ? e.key : Array.isArray(e?.triggers) ? e.triggers : [];
@@ -4271,76 +4365,68 @@ const stringifyMessageContent = (content) => {
         .filter(Boolean);
     };
 
-    const toPathParts = (value) => String(value || '')
-      .replace(/\[([^\]]+)\]/g, '.$1')
-      .split('.')
-      .map(seg => seg.trim().replace(/^['"]|['"]$/g, ''))
-      .filter(Boolean);
-    const isIndexPathPart = (seg) => /^\d+$/.test(String(seg || '').trim());
-    const getByPath = (obj, path) => {
-      const parts = toPathParts(path);
-      if (!parts.length) return undefined;
-      let cur = obj;
-      for (let i = 0; i < parts.length; i += 1) {
-        if (cur == null || (typeof cur !== 'object' && typeof cur !== 'function')) return undefined;
-        const key = isIndexPathPart(parts[i]) ? Number(parts[i]) : parts[i];
-        if (!(key in cur)) return undefined;
-        cur = cur[key];
-      }
-      return cur;
-    };
-    const buildNestedVars = (flat = {}) => {
-      const root = {};
-      const setByPath = (obj, path, value) => {
-        const parts = toPathParts(path);
-        if (!parts.length) return;
-        let cur = obj;
-        for (let i = 0; i < parts.length - 1; i += 1) {
-          const key = isIndexPathPart(parts[i]) ? Number(parts[i]) : parts[i];
-          const nextKey = parts[i + 1];
-          const shouldArray = isIndexPathPart(nextKey);
-          if (!cur[key] || typeof cur[key] !== 'object') cur[key] = shouldArray ? [] : {};
-          cur = cur[key];
-        }
-        const lastKey = isIndexPathPart(parts[parts.length - 1]) ? Number(parts[parts.length - 1]) : parts[parts.length - 1];
-        cur[lastKey] = value;
-      };
-      Object.entries(flat || {}).forEach(([key, value]) => {
-        const name = String(key || '').trim();
-        if (!name) return;
-        setByPath(root, name, value);
-      });
-      return root;
-    };
-
     const runtimeSessionId = String(scopeSessionId || this.activeSessionId || '').trim();
     const useGlobalVariables = Boolean(
       runtimeSessionId &&
       typeof this.isSharedVariableSession === 'function' &&
       this.isSharedVariableSession(runtimeSessionId),
     );
-    const localVars = this.chatStore?.listVariables?.(runtimeSessionId) || {};
-    const globalVars = this.chatStore?.listGlobalVariables?.() || {};
-    const baseVars = useGlobalVariables ? globalVars : localVars;
-    const runtimeConditionContext = buildVariableContext({ baseVars, globalVars });
-    runtimeConditionContext.variableContext.local_variables = localVars;
+    let runtimeConditionContext = buildVariableContext({
+      baseVars: {},
+      globalVars: {},
+    });
+    const refreshRuntimeConditionContext = () => {
+      const localVars = this.chatStore?.listVariables?.(runtimeSessionId) || {};
+      const globalVars = this.chatStore?.listGlobalVariables?.() || {};
+      const baseVars = useGlobalVariables ? globalVars : localVars;
+      runtimeConditionContext = buildVariableContext({ baseVars, globalVars });
+      runtimeConditionContext.variableContext.local_variables = localVars;
+    };
+    refreshRuntimeConditionContext();
     const evalConditionGroup = (when) => {
       if (!when || typeof when !== 'object') return true;
       return evaluateConditionTree(when, runtimeConditionContext);
     };
+    const resolveBlockFocusNodeId = (graphRaw) => {
+      const graph = graphRaw && typeof graphRaw === 'object' ? graphRaw : null;
+      if (!graph) return '';
+      const nodes = Array.isArray(graph.nodes) ? graph.nodes : [];
+      const edges = Array.isArray(graph.edges) ? graph.edges : [];
+      if (!nodes.length || !edges.length) return '';
+      const resultNode = nodes.find(node => String(node?.type || '').trim().toLowerCase() === 'result');
+      const resultId = String(resultNode?.id || '').trim();
+      if (!resultId) return '';
+      const edge = edges.find(
+        item => String(item?.to || '').trim() === resultId && String(item?.toPort || '').trim() === 'in',
+      );
+      return String(edge?.from || '').trim();
+    };
+
+    const sanitizeEntryDebugTitle = (entry = {}) => {
+      const raw = String(entry?.comment || entry?.title || entry?.name || '')
+        .replace(/\[[^\]]+\]/g, '')
+        .trim();
+      return raw || String(entry?._entryId || '').trim() || '未命名条目';
+    };
+
     const normalizePromptBlocks = (entry = {}) => {
       const blocks = Array.isArray(entry?.promptBlocks) ? entry.promptBlocks : [];
       return blocks
         .map((raw, idx) => {
           const block = raw && typeof raw === 'object' ? raw : {};
           const whenRaw = block.when && typeof block.when === 'object' ? block.when : {};
+          const nodeGraph = block.nodeGraph && typeof block.nodeGraph === 'object' ? block.nodeGraph : null;
+          const blockId = String(block.id || `blk_${idx}`);
           return {
-            id: String(block.id || `blk_${idx}`),
+            id: blockId,
+            title: String(block.title || block.name || blockId).trim() || blockId,
             enabled: block.enabled !== false,
             content: String(block.content || ''),
             role: block.role,
             priority: Number.isFinite(Number(block.priority)) ? Number(block.priority) : 100,
             when: normalizeConditionTree(whenRaw, createDefaultPromptClause()),
+            nodeGraph,
+            debugFocusNodeId: resolveBlockFocusNodeId(nodeGraph),
           };
         })
         .filter(Boolean);
@@ -4381,6 +4467,14 @@ const stringifyMessageContent = (content) => {
         specs.forEach(spec => ensureDefinedVariable(spec));
       });
     };
+    const syncPromptBlockVariableSchemasForEntries = (entryList = []) => {
+      const list = Array.isArray(entryList) ? entryList : [];
+      if (!list.length) return false;
+      list.forEach((entry) => {
+        syncPromptBlockVariableSchemas(entry);
+      });
+      return true;
+    };
 
     const localEntries = Array.isArray(data.localEntries)
       ? data.localEntries
@@ -4396,9 +4490,10 @@ const stringifyMessageContent = (content) => {
       _sourceWorldId: String(entry?._sourceWorldId || id || '').trim(),
       _refWorldId: String(entry?._refWorldId || '').trim(),
     }));
-    baseEntries.forEach((entry) => {
-      syncPromptBlockVariableSchemas(entry);
-    });
+    if (variableDefineStrategy === 'legacy_eager') {
+      const changed = syncPromptBlockVariableSchemasForEntries(baseEntries);
+      if (changed) refreshRuntimeConditionContext();
+    }
 
     let effectiveMatchContext = matchContext;
     if (matchContext && minActivations > 0) {
@@ -4465,6 +4560,11 @@ const stringifyMessageContent = (content) => {
         step += 1;
         if (activeMap.size >= baseEntries.length) break;
       }
+    }
+
+    if (variableDefineStrategy === 'first_hit') {
+      const changed = syncPromptBlockVariableSchemasForEntries([...activeMap.values()]);
+      if (changed) refreshRuntimeConditionContext();
     }
 
     let entries = [...activeMap.values()]
@@ -4534,10 +4634,9 @@ const stringifyMessageContent = (content) => {
     };
     const expanded = [];
     entries.forEach((entry, idx) => {
-      const modeRaw = String(entry?.promptMode || '').trim().toLowerCase();
-      const promptMode = ['legacy', 'blocks', 'hybrid'].includes(modeRaw) ? modeRaw : 'legacy';
       const blocks = normalizePromptBlocks(entry);
-      const useBlocks = promptMode !== 'legacy' && blocks.length > 0;
+      const promptMode = normalizeWorldPromptMode(entry?.promptMode, { fallback: 'hybrid' });
+      const useBlocks = shouldUseWorldPromptBlocks(promptMode, blocks, { fallback: 'hybrid' });
       const fallbackRole = roleToNumber(entry?.role, 0);
       if (!useBlocks) {
         const legacyContent = trimEdgeBlankLines(entry?.content);
@@ -4550,6 +4649,9 @@ const stringifyMessageContent = (content) => {
           _blockOrder: 0,
           _blockRole: fallbackRole,
           _dedupeKey: `${String(entry?._entryId || '')}::legacy`,
+          _entryTitle: sanitizeEntryDebugTitle(entry),
+          _blockTitle: 'legacy',
+          _focusNodeId: '',
         });
         return;
       }
@@ -4558,14 +4660,18 @@ const stringifyMessageContent = (content) => {
         const blockContent = trimEdgeBlankLines(block?.content);
         if (!String(blockContent || '').trim()) return;
         if (!evalConditionGroup(block?.when)) return;
+        const blockId = String(block?.id || `blk_${blockIdx}`);
         expanded.push({
           ...entry,
           content: blockContent,
-          _blockId: String(block?.id || `blk_${blockIdx}`),
+          _blockId: blockId,
           _blockPriority: Number.isFinite(Number(block?.priority)) ? Number(block.priority) : 100,
           _blockOrder: blockIdx,
           _blockRole: roleToNumber(block?.role, fallbackRole),
-          _dedupeKey: `${String(entry?._entryId || '')}::${String(block?.id || `blk_${blockIdx}`)}`,
+          _dedupeKey: `${String(entry?._entryId || '')}::${blockId}`,
+          _entryTitle: sanitizeEntryDebugTitle(entry),
+          _blockTitle: String(block?.title || blockId).trim() || blockId,
+          _focusNodeId: String(block?.debugFocusNodeId || '').trim(),
         });
       });
     });
@@ -4595,6 +4701,9 @@ const stringifyMessageContent = (content) => {
       const order = Number.isFinite(orderRaw) ? orderRaw : idx;
       return {
         content: String(e?.content || ''),
+        comment: String(e?.comment || ''),
+        title: String(e?.title || ''),
+        name: String(e?.name || ''),
         position,
         depth,
         role,
@@ -4605,6 +4714,9 @@ const stringifyMessageContent = (content) => {
         _dedupeKey: String(e?._dedupeKey || `${String(e?._entryId || '')}::${String(e?._blockId || 'legacy')}`),
         _sourceWorldId: String(e?._sourceWorldId || ''),
         _refWorldId: String(e?._refWorldId || ''),
+        _entryTitle: String(e?._entryTitle || sanitizeEntryDebugTitle(e)),
+        _blockTitle: String(e?._blockTitle || e?._blockId || 'legacy'),
+        _focusNodeId: String(e?._focusNodeId || '').trim(),
       };
     });
   }
@@ -4693,19 +4805,15 @@ const stringifyMessageContent = (content) => {
         : null;
     const matchText = String(labelObj?.matchText || '');
     const worldSettings = this.getWorldGlobalSettings?.() || this.worldGlobalSettings || {};
-    const globalCaseSensitive = worldSettings.caseSensitive === true;
-    const globalMatchWholeWords = worldSettings.matchWholeWords === true;
-    const globalRecursiveScan = worldSettings.recursiveScan !== false;
-    const globalUseGroupScoring = worldSettings.useGroupScoring === true;
-    const minActivations = Number.isFinite(Number(worldSettings.minActivations))
-      ? Math.max(0, Math.trunc(Number(worldSettings.minActivations)))
-      : 0;
-    const maxDepthSetting = Number.isFinite(Number(worldSettings.maxDepth))
-      ? Math.max(0, Math.trunc(Number(worldSettings.maxDepth)))
-      : 0;
-    const maxRecursionStepsSetting = Number.isFinite(Number(worldSettings.maxRecursionSteps))
-      ? Math.max(0, Math.trunc(Number(worldSettings.maxRecursionSteps)))
-      : 0;
+    const {
+      globalCaseSensitive,
+      globalMatchWholeWords,
+      globalRecursiveScan,
+      globalUseGroupScoring,
+      minActivations,
+      maxDepthSetting,
+      maxRecursionStepsSetting,
+    } = buildWorldActivationSettings(worldSettings);
 
     const norm = v => String(v ?? '').trim();
     const resolveRefEntries = (refs, refFromWorldId) => {
@@ -5130,8 +5238,7 @@ const stringifyMessageContent = (content) => {
     const matchText = String(content ?? '');
     const collectEntries = (worldId) => this.collectWorldEntries(worldId, { matchText, matchContext });
     const worldSettings = this.getWorldGlobalSettings?.() || this.worldGlobalSettings || {};
-    const strategyRaw = String(worldSettings.insertionStrategy || 'role_first');
-    const insertionStrategy = ['role_first', 'global_first', 'even'].includes(strategyRaw) ? strategyRaw : 'role_first';
+    const insertionStrategy = normalizeWorldInsertionStrategy(worldSettings.insertionStrategy, 'role_first');
     const globalEntries =
       this.globalWorldId && String(this.globalWorldId) !== BUILTIN_PHONE_FORMAT_WORLDBOOK_ID
         ? collectEntries(this.globalWorldId)
@@ -5268,8 +5375,7 @@ const stringifyMessageContent = (content) => {
    */
   getActiveWorldPrompt() {
     const worldSettings = this.getWorldGlobalSettings?.() || this.worldGlobalSettings || {};
-    const strategyRaw = String(worldSettings.insertionStrategy || 'role_first');
-    const insertionStrategy = ['role_first', 'global_first', 'even'].includes(strategyRaw) ? strategyRaw : 'role_first';
+    const insertionStrategy = normalizeWorldInsertionStrategy(worldSettings.insertionStrategy, 'role_first');
     const collectEntries = worldId => this.collectWorldEntries(worldId, { matchText: '' });
     const builtinEntries = collectEntries(BUILTIN_PHONE_FORMAT_WORLDBOOK_ID);
     const builtinPart = builtinEntries.map(e => e.content).join('\n\n');

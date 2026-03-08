@@ -138,7 +138,7 @@ export class MakersuiteProvider {
     };
   }
 
-  async request({ url, method = 'GET', headers = {}, body = undefined, signal } = {}) {
+  async request({ url, method = 'GET', headers = {}, body = undefined, signal, requestId = '' } = {}) {
     const mergedHeaders = { ...headers };
     const invoker = getTauriInvoker();
     if (typeof invoker === 'function') {
@@ -150,6 +150,7 @@ export class MakersuiteProvider {
           headers: mergedHeaders,
           body: typeof body === 'string' ? body : body == null ? null : String(body),
           timeout_ms: this.timeout,
+          request_id: requestId || null,
         });
       } catch (err) {
         if (isTauriWebview()) {
@@ -211,7 +212,7 @@ export class MakersuiteProvider {
    * Send chat message (non-streaming)
    */
   async chat(messages, options = {}) {
-    const { signal, options: payloadOptions } = splitRequestOptions(options);
+    const { signal, requestId, options: payloadOptions } = splitRequestOptions(options);
     const { controller, cleanup } = createLinkedAbortController({ timeoutMs: this.timeout, signal });
 
     try {
@@ -224,6 +225,7 @@ export class MakersuiteProvider {
         headers: this.getHeaders(),
         signal: controller.signal,
         body: JSON.stringify(body),
+        requestId,
       });
       if (!res.ok) {
         const detail = extractErrorDetail(res.body);
@@ -356,7 +358,7 @@ export class MakersuiteProvider {
    * 生成图片（Gemini 图像模型）
    */
   async generateImage(prompt, options = {}) {
-    const { signal, options: payloadOptions } = splitRequestOptions(options);
+    const { signal, requestId, options: payloadOptions } = splitRequestOptions(options);
     const { controller, cleanup } = createLinkedAbortController({ timeoutMs: this.timeout, signal });
 
     const toImageResults = (data) => {
@@ -492,6 +494,7 @@ export class MakersuiteProvider {
         headers: this.getHeaders(),
         signal: controller.signal,
         body: JSON.stringify(body),
+        requestId,
       });
       if (!res.ok) {
         const detail = extractErrorDetail(res.body);
@@ -518,6 +521,7 @@ export class MakersuiteProvider {
         headers: this.getHeaders(),
         signal: controller.signal,
         body: JSON.stringify(body),
+        requestId,
       });
       if (!res.ok) {
         const detail = extractErrorDetail(res.body);
@@ -543,6 +547,7 @@ export class MakersuiteProvider {
           headers: this.getHeaders(),
           signal: controller.signal,
           body: JSON.stringify(body),
+          requestId,
         });
         if (!res.ok) {
           const detail = extractErrorDetail(res.body);

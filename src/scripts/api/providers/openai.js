@@ -136,7 +136,7 @@ export class OpenAIProvider {
     return raw.length > 400 ? `${raw.slice(0, 400)}…` : raw;
   }
 
-  async request({ url, method = 'GET', headers = {}, body = undefined, signal } = {}) {
+  async request({ url, method = 'GET', headers = {}, body = undefined, signal, requestId = '' } = {}) {
     const mergedHeaders = { ...headers };
     const invoker = getTauriInvoker();
     if (typeof invoker === 'function') {
@@ -148,6 +148,7 @@ export class OpenAIProvider {
           headers: mergedHeaders,
           body: typeof body === 'string' ? body : body == null ? null : String(body),
           timeout_ms: this.timeout,
+          request_id: requestId || null,
         });
       } catch (err) {
         if (isTauriWebview()) {
@@ -178,8 +179,8 @@ export class OpenAIProvider {
     }
   }
 
-  async requestJson({ url, method = 'GET', headers = {}, body = undefined, signal } = {}) {
-    const res = await this.request({ url, method, headers, body, signal });
+  async requestJson({ url, method = 'GET', headers = {}, body = undefined, signal, requestId = '' } = {}) {
+    const res = await this.request({ url, method, headers, body, signal, requestId });
     if (!res.ok) {
       const detail = this.extractErrorDetail(res.body);
       const error = new Error(`OpenAI API Error: ${res.status}${detail ? ` - ${detail}` : ''}`);
@@ -201,7 +202,7 @@ export class OpenAIProvider {
    * 发送聊天消息（非流式）
    */
   async chat(messages, options = {}) {
-    const { signal, options: payloadOptions } = splitRequestOptions(options);
+    const { signal, requestId, options: payloadOptions } = splitRequestOptions(options);
     const normalized = this.normalizeOptions(payloadOptions);
     const estimatedChars = estimateOpenAIRequestChars({
       model: this.model,
@@ -225,6 +226,7 @@ export class OpenAIProvider {
         ...normalized,
       }),
       signal,
+      requestId,
     });
 
     return data.choices?.[0]?.message?.content ?? '';
@@ -234,7 +236,7 @@ export class OpenAIProvider {
    * 流式聊天
    */
   async *streamChat(messages, options = {}) {
-    const { signal, options: payloadOptions } = splitRequestOptions(options);
+    const { signal, requestId, options: payloadOptions } = splitRequestOptions(options);
     const normalized = this.normalizeOptions(payloadOptions);
     const estimatedChars = estimateOpenAIRequestChars({
       model: this.model,
@@ -262,6 +264,7 @@ export class OpenAIProvider {
         headers: { ...this.getHeaders(), Accept: 'text/event-stream' },
         body: payload,
         signal,
+        requestId,
       });
       if (!res.ok) {
         const detail = this.extractErrorDetail(res.body);

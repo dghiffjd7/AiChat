@@ -29,6 +29,23 @@ export const normalizeRightTypeValue = (raw) => {
   return ['number', 'string', 'boolean', 'variable'].includes(value) ? value : 'number';
 };
 
+export const normalizeWorldPromptMode = (raw, { fallback = 'hybrid' } = {}) => {
+  const normalizeToken = (value) => {
+    const token = String(value || '').trim().toLowerCase();
+    if (token === 'legacy') return 'legacy';
+    if (token === 'blocks' || token === 'block' || token === 'node') return 'blocks';
+    if (token === 'hybrid' || token === 'mix') return 'hybrid';
+    return '';
+  };
+  const fallbackMode = normalizeToken(fallback) || 'hybrid';
+  return normalizeToken(raw) || fallbackMode;
+};
+
+export const shouldUseWorldPromptBlocks = (promptMode, blocks = [], { fallback = 'hybrid' } = {}) => {
+  const mode = normalizeWorldPromptMode(promptMode, { fallback });
+  return mode !== 'legacy' && Array.isArray(blocks) && blocks.length > 0;
+};
+
 export const parseTypedValue = (value, type = 'string') => {
   const mode = normalizeRightTypeValue(type);
   if (mode === 'number') {

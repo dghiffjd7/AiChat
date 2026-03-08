@@ -9254,6 +9254,8 @@ Phase G（Frame 36）：循环衔接
     let panel = null;
     let textarea = null;
     let metaEl = null;
+    let locateBtn = null;
+    let locateHandler = null;
 
     const ensure = () => {
       if (panel) return;
@@ -9284,6 +9286,7 @@ Phase G（Frame 36）：循环衔接
                 <div style="display:flex; align-items:center; gap:10px; padding:12px; background:#f3f4f6; border-bottom:1px solid #e5e7eb;">
                     <div style="font-weight:900;">本次 Prompt</div>
                     <div id="prompt-preview-meta" style="margin-left:auto; font-size:12px; color:#64748b; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"></div>
+                    <button id="prompt-preview-locate" style="border:1px solid #e5e7eb; background:#fff; border-radius:10px; padding:6px 10px;">定位世界书</button>
                     <button id="prompt-preview-copy" style="border:1px solid #e5e7eb; background:#fff; border-radius:10px; padding:6px 10px;">复制</button>
                     <button id="prompt-preview-close" style="border:1px solid #e5e7eb; background:#fff; border-radius:10px; padding:6px 10px;">关闭</button>
                 </div>
@@ -9312,6 +9315,19 @@ Phase G（Frame 36）：循环衔接
 
       textarea = panel.querySelector('#prompt-preview-text');
       metaEl = panel.querySelector('#prompt-preview-meta');
+      locateBtn = panel.querySelector('#prompt-preview-locate');
+      locateBtn?.addEventListener('click', async () => {
+        if (typeof locateHandler !== 'function') {
+          window.toastr?.info?.('本次请求没有可定位的世界书条目');
+          return;
+        }
+        try {
+          await locateHandler();
+        } catch (err) {
+          logger.warn('open world debug locator failed', err);
+          window.toastr?.error?.('打开世界书定位失败');
+        }
+      });
       panel.querySelector('#prompt-preview-close')?.addEventListener('click', hide);
       panel.querySelector('#prompt-preview-copy')?.addEventListener('click', async () => {
         const text = String(textarea?.value || '');
@@ -9334,9 +9350,15 @@ Phase G（Frame 36）：循环衔接
       });
     };
 
-    const show = (text, meta = '') => {
+    const show = (text, meta = '', { onLocate = null } = {}) => {
       ensure();
       if (!overlay || !panel || !textarea) return;
+      locateHandler = typeof onLocate === 'function' ? onLocate : null;
+      if (locateBtn) {
+        locateBtn.disabled = typeof locateHandler !== 'function';
+        locateBtn.style.opacity = locateBtn.disabled ? '0.6' : '1';
+        locateBtn.style.cursor = locateBtn.disabled ? 'not-allowed' : 'pointer';
+      }
       textarea.value = String(text || '');
       if (metaEl) metaEl.textContent = meta || '';
       overlay.style.display = 'block';
@@ -9345,10 +9367,176 @@ Phase G（Frame 36）：循环衔接
     const hide = () => {
       if (!overlay) return;
       overlay.style.display = 'none';
+      locateHandler = null;
     };
 
     return { show, hide };
   })();
+
+  const worldDebugLocatorModal = (() => {
+    let overlay = null;
+    let panel = null;
+    let listEl = null;
+    let metaEl = null;
+    let candidates = [];
+    let onSelect = null;
+
+    const ensure = () => {
+      if (panel) return;
+      overlay = document.createElement('div');
+      overlay.id = 'world-debug-locator-overlay';
+      overlay.style.cssText = `
+                display:none; position:fixed; inset:0;
+                background: rgba(0,0,0,0.38);
+                z-index: 22010;
+                padding: calc(10px + env(safe-area-inset-top, 0px)) 10px calc(10px + env(safe-area-inset-bottom, 0px)) 10px;
+                box-sizing: border-box;
+            `;
+
+      panel = document.createElement('div');
+      panel.id = 'world-debug-locator-panel';
+      panel.style.cssText = `
+                width: 100%;
+                max-width: 680px;
+                height: min(78vh, 760px);
+                margin: 0 auto;
+                background: #fff;
+                border-radius: 14px;
+                overflow: hidden;
+                display:flex;
+                flex-direction:column;
+            `;
+      panel.addEventListener('click', e => e.stopPropagation());
+      panel.innerHTML = `
+                <div style="display:flex; align-items:center; gap:10px; padding:12px; background:#f3f4f6; border-bottom:1px solid #e5e7eb;">
+                    <div style="font-weight:900;">定位世界书</div>
+                    <div id="world-debug-locator-meta" style="margin-left:auto; font-size:12px; color:#64748b; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"></div>
+                    <button id="world-debug-locator-close" style="border:1px solid #e5e7eb; background:#fff; border-radius:10px; padding:6px 10px;">关闭</button>
+                </div>
+                <div style="padding:10px 12px; font-size:12px; color:#64748b; border-bottom:1px solid #eef2f7;">选择一条记录可直接打开对应世界书并定位到条目/分页。</div>
+                <div id="world-debug-locator-list" style="flex:1; min-height:0; overflow:auto; -webkit-overflow-scrolling:touch; padding:10px; display:flex; flex-direction:column; gap:8px;"></div>
+            `;
+
+      overlay.appendChild(panel);
+      overlay.addEventListener('click', () => hide());
+      document.body.appendChild(overlay);
+
+      listEl = panel.querySelector('#world-debug-locator-list');
+      metaEl = panel.querySelector('#world-debug-locator-meta');
+      panel.querySelector('#world-debug-locator-close')?.addEventListener('click', hide);
+      listEl?.addEventListener('click', async (event) => {
+        const btn = event.target?.closest?.('button[data-index]');
+        if (!btn) return;
+        const index = Number(btn.dataset.index);
+        if (!Number.isFinite(index) || index < 0 || index >= candidates.length) return;
+        const item = candidates[index];
+        if (!item || typeof onSelect !== 'function') return;
+        try {
+          await onSelect(item);
+          hide();
+        } catch (err) {
+          logger.warn('world debug locate failed', err);
+          window.toastr?.error?.('定位失败');
+        }
+      });
+    };
+
+    const show = (items = [], { meta = '', onChoose = null } = {}) => {
+      ensure();
+      candidates = Array.isArray(items) ? items : [];
+      onSelect = typeof onChoose === 'function' ? onChoose : null;
+      if (metaEl) metaEl.textContent = String(meta || '');
+      if (listEl) {
+        listEl.innerHTML = '';
+        if (!candidates.length) {
+          const empty = document.createElement('div');
+          empty.style.cssText = 'padding:14px 12px; color:#64748b; border:1px dashed #dbe3ee; border-radius:10px; background:#f8fafc;';
+          empty.textContent = '本次请求没有可定位的世界书记录。';
+          listEl.appendChild(empty);
+        } else {
+          candidates.forEach((item, index) => {
+            const row = document.createElement('button');
+            row.type = 'button';
+            row.dataset.index = String(index);
+            row.style.cssText = 'text-align:left; border:1px solid #dbe3ee; border-radius:10px; background:#fff; padding:10px 12px; cursor:pointer; display:flex; flex-direction:column; gap:6px;';
+            const title = document.createElement('div');
+            title.style.cssText = 'font-size:13px; font-weight:700; color:#0f172a;';
+            title.textContent = `${item.title || '未命名条目'} (${item.sourceKindLabel || '未知来源'})`;
+            const metaLine = document.createElement('div');
+            metaLine.style.cssText = 'font-size:12px; color:#475569;';
+            const blockId = String(item.blockId || 'legacy').trim() || 'legacy';
+            const blockTitle = String(item.blockTitle || '').trim();
+            const blockLabel = blockTitle && blockTitle !== blockId ? `${blockId} (${blockTitle})` : blockId;
+            metaLine.textContent = `${item.worldId} / ${item.entryId} / ${blockLabel}`;
+            const extra = document.createElement('div');
+            extra.style.cssText = 'font-size:12px; color:#64748b;';
+            extra.textContent = `${item.sectionLabel || '命中记录'} · ${item.positionLabel || '默认 Prompt'} · ${item.role || 'system'}`;
+            row.appendChild(title);
+            row.appendChild(metaLine);
+            row.appendChild(extra);
+            listEl.appendChild(row);
+          });
+        }
+      }
+      if (overlay) overlay.style.display = 'block';
+    };
+
+    const hide = () => {
+      if (!overlay) return;
+      overlay.style.display = 'none';
+      candidates = [];
+      onSelect = null;
+    };
+
+    return { show, hide };
+  })();
+
+  const buildWorldDebugLocatorCandidates = (worldDebug = null) => {
+    if (!worldDebug || typeof worldDebug !== 'object') return [];
+    const sourceKindLabel = {
+      builtin: '内置',
+      global: '全局',
+      session: '会话',
+    };
+    const sections = [
+      { key: 'injectedEntries', label: '实际注入' },
+      { key: 'templateEntries', label: '模板注入' },
+      { key: 'initialVariableEntries', label: '仅变量初始化' },
+      { key: 'trimmedEntries', label: '预算裁剪' },
+      { key: 'mergedEntries', label: '合并后条目' },
+    ];
+    const seen = new Set();
+    const out = [];
+    sections.forEach((section) => {
+      const list = Array.isArray(worldDebug?.[section.key]) ? worldDebug[section.key] : [];
+      list.forEach((entry) => {
+        const worldId = String(entry?.worldId || '').trim();
+        const entryId = String(entry?.entryId || '').trim();
+        if (!worldId || !entryId) return;
+        const blockId = String(entry?.blockId || 'legacy').trim() || 'legacy';
+        const blockTitle = String(entry?.blockTitle || '').trim();
+        const focusNodeId = String(entry?.focusNodeId || '').trim();
+        const key = `${worldId}::${entryId}::${blockId}`;
+        if (seen.has(key)) return;
+        seen.add(key);
+        out.push({
+          key,
+          sectionLabel: section.label,
+          worldId,
+          entryId,
+          blockId,
+          blockTitle,
+          focusNodeId,
+          title: String(entry?.title || '').trim() || entryId,
+          sourceKind: String(entry?.sourceKind || '').trim() || 'session',
+          sourceKindLabel: sourceKindLabel[String(entry?.sourceKind || '').trim()] || String(entry?.sourceKind || '').trim() || '未知',
+          positionLabel: String(entry?.positionLabel || '').trim() || '默认 Prompt',
+          role: String(entry?.role || 'system').trim() || 'system',
+        });
+      });
+    });
+    return out;
+  };
 
   const formatPromptWorldDebug = (worldDebug) => {
     if (!worldDebug || typeof worldDebug !== 'object') return '';
@@ -9359,7 +9547,9 @@ Phase G（Frame 36）：循环衔接
       const worldId = String(entry?.worldId || '').trim() || 'unknown';
       const entryId = String(entry?.entryId || '').trim() || 'unknown';
       const blockId = String(entry?.blockId || '').trim() || 'legacy';
-      return `${title} [${worldId} / ${entryId} / ${blockId}]`;
+      const blockTitle = String(entry?.blockTitle || '').trim();
+      const blockLabel = blockTitle && blockTitle !== blockId ? `${blockTitle}(${blockId})` : blockId;
+      return `${title} [${worldId} / ${entryId} / ${blockLabel}]`;
     };
     const sourceLabelMap = {
       builtin: '内置',
@@ -9419,15 +9609,24 @@ Phase G（Frame 36）：循环衔接
     const templateEntries = listOf(worldDebug?.templateEntries);
     const initialVariableEntries = listOf(worldDebug?.initialVariableEntries);
     const trimmedEntries = listOf(worldDebug?.trimmedEntries);
+    const mergedEntries = listOf(worldDebug?.mergedEntries);
 
     const budgetTokens = Number.isFinite(Number(worldDebug?.budgetTokens)) ? Number(worldDebug.budgetTokens) : null;
     const usedTokens = Number.isFinite(Number(worldDebug?.usedTokens)) ? Number(worldDebug.usedTokens) : 0;
     const strategy = String(worldDebug?.insertionStrategy || '').trim() || 'role_first';
+    const variableStrategyRaw = String(worldDebug?.variableDefineStrategy || '').trim();
+    const variableStrategy = (() => {
+      if (variableStrategyRaw === 'first_hit') return 'first_hit（命中后建立）';
+      if (variableStrategyRaw === 'off') return 'off（关闭自动建立）';
+      return 'legacy_eager（请求前建立）';
+    })();
 
     const header = [
       '[世界书调试]',
       `- 插入策略: ${strategy}`,
+      `- 变量自动建立: ${variableStrategy}`,
       `- 激活命中: 内置 ${builtinEntries.length} / 全局 ${globalEntries.length} / 会话 ${sessionEntries.length}`,
+      `- 合并后条目: ${mergedEntries.length}（预算前）`,
       `- 实际注入: 普通 ${injectedEntries.length} / 模板 ${templateEntries.length} / 仅变量初始化 ${initialVariableEntries.length}`,
       budgetTokens != null
         ? `- 预算: ${usedTokens}/${budgetTokens} tokens${worldDebug?.overflowed ? `，裁掉 ${trimmedEntries.length} 条` : ''}`
@@ -9439,6 +9638,7 @@ Phase G（Frame 36）：循环衔接
       ...renderEntryRows(globalEntries, { emptyText: '无全局命中' }),
       ...renderEntryRows(sessionEntries, { emptyText: '无会话命中' }),
     ]);
+    pushSection('合并后（预算前）', renderEntryRows(mergedEntries, { includePosition: true, emptyText: '无合并条目' }));
     pushSection('实际注入', renderEntryRows(injectedEntries, { includePosition: true, emptyText: '无普通注入内容' }));
     pushSection('模板注入', renderEntryRows(templateEntries, { includePosition: true, includeTags: true, emptyText: '无模板注入内容' }));
     pushSection('仅变量初始化', renderEntryRows(initialVariableEntries, { emptyText: '无 InitialVariables 条目' }));
@@ -9480,9 +9680,33 @@ Phase G（Frame 36）：循环衔接
               .map(m => String(m?.content ?? ''))
               .filter(t => t.trim().length > 0)
               .join('\n\n');
-      const worldDebugText = formatPromptWorldDebug(req?.worldDebug);
+      const worldDebug = req?.worldDebug && typeof req.worldDebug === 'object' ? req.worldDebug : null;
+      const worldDebugText = formatPromptWorldDebug(worldDebug);
+      const locateCandidates = buildWorldDebugLocatorCandidates(worldDebug);
       const meta = `${name}${at ? ` · ${at}` : ''}`;
-      promptPreviewModal.show([head, worldDebugText, body].filter(Boolean).join('\n\n').trim(), meta);
+      promptPreviewModal.show(
+        [head, worldDebugText, body].filter(Boolean).join('\n\n').trim(),
+        meta,
+        {
+          onLocate: locateCandidates.length
+            ? async () => {
+                worldDebugLocatorModal.show(locateCandidates, {
+                  meta: `${meta} · ${locateCandidates.length} 条可定位记录`,
+                  onChoose: async (item) => {
+                    promptPreviewModal.hide();
+                    const worldId = String(item?.worldId || '').trim();
+                    if (!worldId) return;
+                    await worldPanel.openEditor(worldId, {
+                      entryId: String(item?.entryId || '').trim(),
+                      blockId: String(item?.blockId || '').trim(),
+                      nodeId: String(item?.focusNodeId || '').trim(),
+                    });
+                  },
+                });
+              }
+            : null,
+        },
+      );
     } catch (err) {
       logger.warn('prompt preview failed', err);
       window.toastr?.error?.('打开本次 Prompt 失败');
@@ -11114,9 +11338,45 @@ Phase G（Frame 36）：循环衔接
     try {
       window.appBridge.cancelCurrentGeneration(reason);
     } catch {}
+    let partial = null;
     try {
-      activeGeneration.streamCtrl?.cancel?.();
+      partial = activeGeneration.streamCtrl?.cancel?.({ keepPartial: reason === 'user' }) || null;
     } catch {}
+    if (reason === 'user') {
+      try {
+        const sessionId = String(activeGeneration.sessionId || '').trim();
+        const content = String(partial?.content || '').trim();
+        const msgId = String(partial?.id || '').trim();
+        if (sessionId && content) {
+          const exists = msgId ? Boolean(chatStore.findMessage(msgId, sessionId)) : false;
+          if (!exists) {
+            chatStore.appendMessage(
+              {
+                role: 'assistant',
+                type: 'text',
+                id: msgId || undefined,
+                name: partial?.name || '助手',
+                avatar: partial?.avatar || getAssistantAvatarForSession(sessionId),
+                time: partial?.time || formatNowTime(),
+                content: String(partial?.content || ''),
+                raw: typeof partial?.raw === 'string' ? partial.raw : String(partial?.content || ''),
+                rawOriginal:
+                  typeof partial?.rawOriginal === 'string'
+                    ? partial.rawOriginal
+                    : (typeof partial?.raw === 'string' ? partial.raw : String(partial?.content || '')),
+                meta: {
+                  ...(partial?.meta || {}),
+                  partial: true,
+                  cancelled: true,
+                },
+              },
+              sessionId,
+            );
+            refreshChatAndContacts();
+          }
+        }
+      } catch {}
+    }
     try {
       ui.hideTyping?.();
     } catch {}
@@ -15250,6 +15510,10 @@ Phase G（Frame 36）：循环衔接
         if (isSessionActive(sessionId)) ui.showTyping(assistantAvatar);
         consumePromptInjections(sessionId);
         const resultRaw = await window.appBridge.generate(text, llmContext(text));
+        if (activeGeneration?.cancelled) {
+          if (isSessionActive(sessionId)) ui.hideTyping();
+          return;
+        }
         sendSucceeded = true;
         if (isSessionActive(sessionId)) ui.hideTyping();
         chatStore.setLastRawResponse(resultRaw, sessionId);
@@ -15681,9 +15945,12 @@ Phase G（Frame 36）：循环衔接
         sendSucceeded = true;
       }
     } catch (error) {
-      streamCtrl?.cancel?.();
+      const isCancelled = Boolean(error?.cancelled || activeGeneration?.cancelled);
+      if (!isCancelled) {
+        streamCtrl?.cancel?.();
+      }
       if (isSessionActive(sessionId)) ui.hideTyping();
-      if (error?.cancelled || (activeGeneration?.cancelled && String(error?.name || '') === 'AbortError')) {
+      if (isCancelled) {
         suppressErrorUI = true;
       }
       if (suppressErrorUI) return;
@@ -16614,14 +16881,18 @@ Phase G（Frame 36）：循环衔接
 
   let activeWallpaperMeta = null;
   let activeWallpaperUrl = '';
+  let activeWallpaperLoaded = false;
   const WALLPAPER_IDLE_TIMEOUT_MS = 120000;
   let wallpaperIdleTimer = null;
   let lastWallpaperActivityAt = 0;
 
   const hasActiveWallpaper = () => {
-    if (!activeWallpaperUrl || !chatRoom) return false;
+    if (!activeWallpaperUrl || !activeWallpaperLoaded || !chatRoom) return false;
     const layer = chatRoom.querySelector('.chat-wallpaper-layer');
     if (!layer || layer.classList.contains('is-hidden')) return false;
+    const img = layer.querySelector('.chat-wallpaper-image');
+    if (!img) return false;
+    if (!Number(img.naturalWidth || 0) || !Number(img.naturalHeight || 0)) return false;
     return true;
   };
 
@@ -16681,16 +16952,32 @@ Phase G（Frame 36）：循环衔接
     const url = resolveWallpaperUrl(meta);
     activeWallpaperMeta = meta;
     activeWallpaperUrl = url;
+    activeWallpaperLoaded = false;
     if (!url || !img) {
       layer?.classList.add('is-hidden');
-      if (img) img.removeAttribute('src');
+      if (img) {
+        img.onload = null;
+        img.onerror = null;
+        img.removeAttribute('src');
+      }
       scheduleWallpaperIdle();
       return;
     }
     layer?.classList.remove('is-hidden');
     if (img.src !== url) img.src = url;
-    img.onload = () => applyWallpaperTransform(img, chatRoom, meta);
-    if (img.complete) applyWallpaperTransform(img, chatRoom, meta);
+    img.onload = () => {
+      activeWallpaperLoaded = Number(img.naturalWidth || 0) > 0 && Number(img.naturalHeight || 0) > 0;
+      if (activeWallpaperLoaded) applyWallpaperTransform(img, chatRoom, meta);
+      scheduleWallpaperIdle();
+    };
+    img.onerror = () => {
+      activeWallpaperLoaded = false;
+      scheduleWallpaperIdle();
+    };
+    if (img.complete) {
+      activeWallpaperLoaded = Number(img.naturalWidth || 0) > 0 && Number(img.naturalHeight || 0) > 0;
+      if (activeWallpaperLoaded) applyWallpaperTransform(img, chatRoom, meta);
+    }
     scheduleWallpaperIdle();
   };
 

@@ -10,6 +10,16 @@ import { DeepseekProvider } from './providers/deepseek.js';
 import { MakersuiteProvider } from './providers/makersuite.js';
 import { VertexAIProvider } from './providers/vertexai.js';
 
+const PROVIDER_CLASSES = Object.freeze({
+    openai: OpenAIProvider,
+    anthropic: AnthropicProvider,
+    gemini: GeminiProvider,
+    makersuite: MakersuiteProvider,
+    vertexai: VertexAIProvider,
+    deepseek: DeepseekProvider,
+    custom: CustomProvider,
+});
+
 export class LLMClient {
     constructor(config) {
         this.config = config;
@@ -20,19 +30,9 @@ export class LLMClient {
      * 根据配置创建对应的提供商
      */
     createProvider(type) {
-        const providers = {
-            'openai': OpenAIProvider,
-            'anthropic': AnthropicProvider,
-            'gemini': GeminiProvider,
-            'makersuite': MakersuiteProvider,
-            'vertexai': VertexAIProvider,
-            'deepseek': DeepseekProvider,
-            'custom': CustomProvider
-        };
-
-        const ProviderClass = providers[type];
+        const ProviderClass = PROVIDER_CLASSES[type];
         if (!ProviderClass) {
-            throw new Error(`Unknown provider: ${type}. Available: ${Object.keys(providers).join(', ')}`);
+            throw new Error(`Unknown provider: ${type}. Available: ${Object.keys(PROVIDER_CLASSES).join(', ')}`);
         }
 
         return new ProviderClass(this.config);

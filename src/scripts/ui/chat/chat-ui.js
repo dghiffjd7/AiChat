@@ -1181,58 +1181,84 @@ export class ChatUI {
           caf(updateHandle);
           updateHandle = null;
         }
-        if (finalMessage && finalMessage.type && finalMessage.type !== 'text') {
-          // Replace with structured render
-          const parent = messageEl.parentElement?.parentElement || messageEl.parentElement;
-          parent?.remove();
-          this.addMessage(finalMessage);
-          this.messageBuffer[bufferIndex] = finalMessage;
-        } else {
-          const fm = finalMessage || this.messageBuffer[bufferIndex];
-          if (wrapperEl) {
-            wrapperEl.__chatappMessage = {
-              ...(wrapperEl.__chatappMessage || placeholder),
-              ...(fm || {}),
-              id: msgId || fm?.id || placeholder.id,
-            };
-            this.applyCreativeBubbleState(wrapperEl, fm);
-          }
-          this.messageBuffer[bufferIndex] = fm;
-          try {
-            // Render rich content for the final text
-            const text = String(fm?.content ?? '');
-            const target = this.prepareTextContainer(messageEl, fm);
-            if (fm?.meta?.renderRich) {
-              renderRichText(target, text, {
-                messageId: msgId || fm?.id || meta?.id,
-                sessionId: fm?.sessionId,
-                debugTag: fm?.meta?.isGreeting ? 'rp-greeting' : '',
-              });
-            } else {
-              const normalized = this.normalizeAssistantLineBreaks(text);
-              if (!this.renderTextWithStickers(target, normalized)) {
-                target.textContent = normalized;
-                target.style.whiteSpace = 'pre-wrap';
-              }
-            }
-          } catch {}
-        }
+        this.finishMessageDom(messageEl, wrapperEl, finalMessage, bufferIndex, msgId, meta, placeholder);
       },
-      cancel: () => {
-        this.isStreaming = false;
-        this.updateSendButtonState();
+      cancel: (options = {}) => {
+        const keepPartial = Boolean(options && options.keepPartial);
         if (updateHandle != null) {
           caf(updateHandle);
           updateHandle = null;
         }
+        const rawText = String(this.messageBuffer?.[bufferIndex]?.content ?? pendingText ?? '');
+        const hasText = rawText.trim().length > 0;
+        if (keepPartial && hasText) {
+          const partial = {
+            ...(this.messageBuffer?.[bufferIndex] || placeholder),
+            role: 'assistant',
+            type: 'text',
+            id: msgId || this.messageBuffer?.[bufferIndex]?.id || placeholder.id,
+            content: this.normalizeAssistantLineBreaks(rawText),
+            raw: rawText,
+            rawOriginal: rawText,
+            meta: {
+              ...((this.messageBuffer?.[bufferIndex] && this.messageBuffer[bufferIndex].meta) || {}),
+              partial: true,
+              cancelled: true,
+            },
+          };
+          this.setStreamingState(false);
+          this.finishMessageDom(messageEl, wrapperEl, partial, bufferIndex, msgId, meta, placeholder);
+          return partial;
+        }
+
+        this.isStreaming = false;
+        this.updateSendButtonState();
         try {
           wrapperEl?.remove?.();
         } catch {}
         try {
           this.messageBuffer.splice(bufferIndex, 1);
         } catch {}
+        return null;
       },
     };
+  }
+
+  finishMessageDom(messageEl, wrapperEl, finalMessage, bufferIndex, msgId, meta, placeholder) {
+    if (finalMessage && finalMessage.type && finalMessage.type !== 'text') {
+      const parent = messageEl.parentElement?.parentElement || messageEl.parentElement;
+      parent?.remove();
+      this.addMessage(finalMessage);
+      this.messageBuffer[bufferIndex] = finalMessage;
+      return;
+    }
+    const fm = finalMessage || this.messageBuffer[bufferIndex];
+    if (wrapperEl) {
+      wrapperEl.__chatappMessage = {
+        ...(wrapperEl.__chatappMessage || placeholder),
+        ...(fm || {}),
+        id: msgId || fm?.id || placeholder.id,
+      };
+      this.applyCreativeBubbleState(wrapperEl, fm);
+    }
+    this.messageBuffer[bufferIndex] = fm;
+    try {
+      const text = String(fm?.content ?? '');
+      const target = this.prepareTextContainer(messageEl, fm);
+      if (fm?.meta?.renderRich) {
+        renderRichText(target, text, {
+          messageId: msgId || fm?.id || meta?.id,
+          sessionId: fm?.sessionId,
+          debugTag: fm?.meta?.isGreeting ? 'rp-greeting' : '',
+        });
+      } else {
+        const normalized = this.normalizeAssistantLineBreaks(text);
+        if (!this.renderTextWithStickers(target, normalized)) {
+          target.textContent = normalized;
+          target.style.whiteSpace = 'pre-wrap';
+        }
+      }
+    } catch {}
   }
 
   preloadHistory(messages = [], { keepScroll = false } = {}) {
