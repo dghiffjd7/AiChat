@@ -360,6 +360,47 @@ const saveRecentVariableNames = (names = []) => {
     } catch {}
 };
 
+const AI_TRACE_WATCH_MS = 12000;
+const AI_TRACE_VALUE_LIMIT = 84;
+
+const hashTraceText = (value) => {
+    const text = String(value ?? '');
+    let hash = 2166136261;
+    for (let i = 0; i < text.length; i += 1) {
+        hash ^= text.charCodeAt(i);
+        hash = Math.imul(hash, 16777619);
+    }
+    return (hash >>> 0).toString(16);
+};
+
+const summarizeTraceText = (value) => {
+    const text = String(value ?? '');
+    const compact = text.replace(/\s+/g, ' ').trim();
+    const preview = compact.slice(0, 64);
+    return `len=${text.length},hash=${hashTraceText(text)},head=${JSON.stringify(preview)}`;
+};
+
+const formatTraceValue = (value, maxLen = AI_TRACE_VALUE_LIMIT) => {
+    if (value === undefined) return 'undefined';
+    if (value === null) return 'null';
+    if (typeof value === 'boolean' || typeof value === 'number') return String(value);
+    if (typeof value === 'string') {
+        const compact = value.replace(/\s+/g, ' ').trim();
+        const text = compact.length > maxLen ? `${compact.slice(0, maxLen)}...` : compact;
+        return JSON.stringify(text);
+    }
+    if (Array.isArray(value)) {
+        return `[${value.map(item => formatTraceValue(item, Math.max(16, Math.floor(maxLen / 2)))).join(',')}]`;
+    }
+    try {
+        const json = JSON.stringify(value);
+        if (!json) return '{}';
+        return json.length > maxLen ? `${json.slice(0, maxLen)}...` : json;
+    } catch {
+        return String(value);
+    }
+};
+
 const buildWorldAiMessages = (template, inputText) => {
     const trimmedTemplate = String(template || '').trim();
     const trimmedInput = String(inputText || '').trim();
@@ -534,6 +575,10 @@ export class WorldEditorModal {
         this.aiRequestId = 0;
         this.aiPendingEntryId = '';
         this.aiTargetEntryId = '';
+        this.aiTargetBlockId = '';
+        this.aiTraceSeq = 0;
+        this.aiTraceWatchUntil = 0;
+        this.aiLastWriteMeta = null;
         this.chatConfigManager = new ConfigManager();
         this.batchMode = false;
         this.selectedEntries = new Set();
@@ -562,6 +607,7 @@ export class WorldEditorModal {
         this.chatNameInputEl = null;
         this.chatNameResolve = null;
         this.chatNameKeyHandler = null;
+        this.editorRenderRevision = 0;
         this.variableOverlay = null;
         this.variableModal = null;
         this.variableNameInputEl = null;
@@ -740,6 +786,13 @@ export class WorldEditorModal {
     scheduleRefSync() {
         if (!this.refMode) return;
         if (this.refSyncTimer) clearTimeout(this.refSyncTimer);
+        if (this.isAiTraceWatchActive()) {
+            this.traceAi('ref.sync.schedule', {
+                delay: this.refSyncDelay,
+                inFlight: this.refSyncInFlight,
+                pending: this.refSyncPending,
+            });
+        }
         this.refSyncTimer = setTimeout(() => this.flushRefSync(), this.refSyncDelay);
     }
 
@@ -747,13 +800,26 @@ export class WorldEditorModal {
         if (!this.refMode) return;
         if (this.refSyncInFlight) {
             this.refSyncPending = true;
+            if (this.isAiTraceWatchActive()) {
+                this.traceAi('ref.sync.defer', { reason: 'in-flight' });
+            }
             return;
         }
         this.refSyncInFlight = true;
+        if (this.isAiTraceWatchActive()) {
+            this.traceAi('ref.sync.start', {
+                pending: this.refSyncPending,
+            });
+        }
         try {
             await this.saveRefEdits({ showToast: false });
         } finally {
             this.refSyncInFlight = false;
+            if (this.isAiTraceWatchActive()) {
+                this.traceAi('ref.sync.finish', {
+                    pending: this.refSyncPending,
+                });
+            }
             if (this.refSyncPending) {
                 this.refSyncPending = false;
                 this.scheduleRefSync();
@@ -942,7 +1008,23 @@ export class WorldEditorModal {
     showAiModal(entry) {
         if (!entry) return;
         if (!this.aiModal) this.createAiModal();
-        this.aiTargetEntryId = String(entry.id || '');
+        const idx = this.data.entries.findIndex(item => item === entry);
+        const entryIndex = idx >= 0 ? idx : this.currentIndex;
+        const entryId = this.getEntryId(entry, entryIndex);
+        const blocks = this.ensureEntryPromptBlocks(entry);
+        const blockPage = this.getEntryBlockPage(entry, entryId);
+        const activeBlock = blocks[blockPage] || blocks[0] || null;
+        this.aiTargetEntryId = entryId;
+        this.aiTargetBlockId = String(activeBlock?.id || '').trim();
+        this.traceAi('modal.open', {
+            entryIndex,
+            currentIndex: this.currentIndex,
+            entryId,
+            blockPage,
+            blockCount: blocks.length,
+            blockId: this.aiTargetBlockId,
+            blockSummary: summarizeTraceText(activeBlock?.content || ''),
+        });
         if (this.aiTemplateEl && !String(this.aiTemplateEl.value || '').trim()) {
             this.aiTemplateEl.value = loadWorldAiTemplate();
         }
@@ -954,6 +1036,16 @@ export class WorldEditorModal {
     hideAiModal() {
         if (this.aiOverlay) this.aiOverlay.style.display = 'none';
         if (this.aiModal) this.aiModal.style.display = 'none';
+        this.traceAi('modal.hide', {
+            aiBusy: this.aiBusy,
+            pendingEntryId: this.aiPendingEntryId,
+            targetEntryId: this.aiTargetEntryId,
+            targetBlockId: this.aiTargetBlockId,
+        });
+        if (!this.aiBusy) {
+            this.aiTargetEntryId = '';
+            this.aiTargetBlockId = '';
+        }
     }
 
     createVariableModal() {
@@ -1634,6 +1726,47 @@ export class WorldEditorModal {
         if (this.manageModal) this.manageModal.style.display = 'none';
     }
 
+    traceAi(stage, payload = {}, level = 'info') {
+        const seq = ++this.aiTraceSeq;
+        const eventName = String(stage || 'event').trim() || 'event';
+        const details = Object.entries(payload && typeof payload === 'object' ? payload : {})
+            .filter(([, value]) => value !== undefined)
+            .map(([key, value]) => `${key}=${formatTraceValue(value)}`)
+            .join(' ');
+        const message = `[WORLD_AI_TRACE#${seq}] ${eventName}${details ? ` ${details}` : ''}`;
+        if (level === 'error') {
+            logger.error(message);
+        } else if (level === 'warn') {
+            logger.warn(message);
+        } else {
+            logger.info(message);
+        }
+    }
+
+    isAiTraceWatchActive() {
+        return Date.now() <= Number(this.aiTraceWatchUntil || 0);
+    }
+
+    beginAiTraceWatch({ entryId = '', blockId = '', requestId = 0, reason = '' } = {}) {
+        const now = Date.now();
+        const watchUntil = now + AI_TRACE_WATCH_MS;
+        this.aiTraceWatchUntil = watchUntil;
+        this.aiLastWriteMeta = {
+            entryId: String(entryId || '').trim(),
+            blockId: String(blockId || '').trim(),
+            requestId: Number.isFinite(Number(requestId)) ? Number(requestId) : 0,
+            reason: String(reason || '').trim(),
+            startedAt: now,
+        };
+        this.traceAi('watch.start', {
+            entryId: this.aiLastWriteMeta.entryId,
+            blockId: this.aiLastWriteMeta.blockId,
+            requestId: this.aiLastWriteMeta.requestId,
+            reason: this.aiLastWriteMeta.reason,
+            watchUntil,
+        });
+    }
+
     setAiStatus(message, tone = '') {
         if (!this.aiStatusEl) return;
         this.aiStatusEl.textContent = message || '';
@@ -1645,6 +1778,8 @@ export class WorldEditorModal {
     }
 
     setAiBusy(isBusy, entryId = '') {
+        const prevBusy = this.aiBusy;
+        const prevPendingEntryId = String(this.aiPendingEntryId || '').trim();
         this.aiBusy = Boolean(isBusy);
         if (this.aiGenerateBtn) this.aiGenerateBtn.disabled = this.aiBusy;
         if (this.aiContinueBtn) this.aiContinueBtn.disabled = this.aiBusy;
@@ -1653,6 +1788,15 @@ export class WorldEditorModal {
         } else if (!this.aiBusy) {
             this.aiPendingEntryId = '';
         }
+        this.traceAi('busy.set', {
+            prevBusy,
+            nextBusy: this.aiBusy,
+            requestEntryId: entryId,
+            prevPendingEntryId,
+            nextPendingEntryId: this.aiPendingEntryId,
+            targetEntryId: this.aiTargetEntryId,
+            targetBlockId: this.aiTargetBlockId,
+        });
         this.renderEditor();
     }
 
@@ -1666,47 +1810,152 @@ export class WorldEditorModal {
     }
 
     resolveEntryById(entryId) {
-        const targetId = String(entryId || '');
-        const idx = this.data.entries.findIndex(e => String(e.id || '') === targetId);
-        if (idx < 0) return { idx: -1, entry: null };
+        const targetId = String(entryId || '').trim();
+        if (!targetId) {
+            this.traceAi('entry.resolve.skip-empty', { entryId });
+            return { idx: -1, entry: null };
+        }
+        const idx = this.data.entries.findIndex((entry, entryIdx) => {
+            const localId = this.getEntryId(entry, entryIdx);
+            const refId = String(entry?._refEntryId || '').trim();
+            return localId === targetId || refId === targetId;
+        });
+        if (idx < 0) {
+            this.traceAi('entry.resolve.miss', {
+                entryId: targetId,
+                total: this.data.entries.length,
+            }, 'warn');
+            return { idx: -1, entry: null };
+        }
+        if (this.isAiTraceWatchActive()) {
+            this.traceAi('entry.resolve.hit', {
+                entryId: targetId,
+                idx,
+                currentIndex: this.currentIndex,
+            });
+        }
         return { idx, entry: this.data.entries[idx] };
     }
 
-    getEntryContentForAi(entryId) {
+    getEntryContentForAi(entryId, blockId = '') {
         const { idx, entry } = this.resolveEntryById(entryId);
         if (!entry || idx < 0) return '';
         const blocks = this.ensureEntryPromptBlocks(entry);
+        const targetBlockId = String(blockId || '').trim();
         const currentEntryId = this.getEntryId(entry, idx);
-        const blockPage = this.getEntryBlockPage(entry, currentEntryId);
-        const activeBlock = blocks[blockPage] || blocks[0] || null;
-        if (this.currentIndex === idx) {
+        const currentBlockPage = this.getEntryBlockPage(entry, currentEntryId);
+        const currentVisibleBlock = blocks[currentBlockPage] || blocks[0] || null;
+        const targetBlock = targetBlockId
+            ? (blocks.find(block => String(block?.id || '').trim() === targetBlockId) || currentVisibleBlock)
+            : currentVisibleBlock;
+        const targetIsVisible = !targetBlockId || String(currentVisibleBlock?.id || '').trim() === targetBlockId;
+        let source = 'block';
+        if (this.currentIndex === idx && targetIsVisible) {
             const textarea = this.editorEl?.querySelector('#we-block-content');
             const live = String(textarea?.value || '').trim();
-            if (live) return live;
+            if (live) {
+                source = 'textarea';
+                const summary = summarizeTraceText(live);
+                this.traceAi('draft.read', {
+                    entryId,
+                    targetBlockId,
+                    resolvedBlockId: String(targetBlock?.id || '').trim(),
+                    visibleBlockId: String(currentVisibleBlock?.id || '').trim(),
+                    source,
+                    summary,
+                });
+                return live;
+            }
         }
-        return String(activeBlock?.content ?? entry.content ?? '').trim();
+        const content = String(targetBlock?.content ?? entry.content ?? '').trim();
+        this.traceAi('draft.read', {
+            entryId,
+            targetBlockId,
+            resolvedBlockId: String(targetBlock?.id || '').trim(),
+            visibleBlockId: String(currentVisibleBlock?.id || '').trim(),
+            source,
+            summary: summarizeTraceText(content),
+        });
+        return content;
     }
 
-    applyAiContentToEntry(entryId, content) {
+    applyAiContentToEntry(entryId, content, blockId = '') {
         const { idx, entry } = this.resolveEntryById(entryId);
         if (idx < 0) {
             window.toastr?.warning?.('目标条目不存在，未写入内容');
+            this.traceAi('write.apply.miss-entry', { entryId, blockId }, 'warn');
             return false;
         }
         const blocks = this.ensureEntryPromptBlocks(entry);
+        const targetBlockId = String(blockId || '').trim();
+        const normalizedContent = String(content ?? '');
         const currentEntryId = this.getEntryId(entry, idx);
-        const blockPage = this.getEntryBlockPage(entry, currentEntryId);
-        const activeBlock = blocks[blockPage] || blocks[0] || null;
-        if (activeBlock) {
-            activeBlock.content = content;
+        const currentBlockPage = this.getEntryBlockPage(entry, currentEntryId);
+        const currentVisibleBlock = blocks[currentBlockPage] || blocks[0] || null;
+        const foundIndex = targetBlockId
+            ? blocks.findIndex(block => String(block?.id || '').trim() === targetBlockId)
+            : currentBlockPage;
+        const resolvedIndex = foundIndex >= 0 ? foundIndex : (currentBlockPage >= 0 ? currentBlockPage : 0);
+        const targetBlock = blocks[resolvedIndex] || blocks[0] || null;
+        const beforeContent = String(targetBlock?.content ?? entry.content ?? '');
+        if (targetBlock) {
+            targetBlock.content = normalizedContent;
         } else {
-            entry.content = content;
+            entry.content = normalizedContent;
         }
+
+        // Keep canonical entry.promptBlocks in sync with the resolved target block write.
+        const entryBlocks = Array.isArray(entry.promptBlocks) ? entry.promptBlocks : [];
+        let canonicalTargetBlock = null;
+        if (targetBlockId) {
+            canonicalTargetBlock = entryBlocks.find(block => String(block?.id || '').trim() === targetBlockId) || null;
+        }
+        if (!canonicalTargetBlock) {
+            canonicalTargetBlock = entryBlocks[resolvedIndex] || entryBlocks[0] || null;
+        }
+        if (canonicalTargetBlock) {
+            canonicalTargetBlock.content = normalizedContent;
+        }
+
         this.syncEntryContentFromBlocks(entry);
-        if (this.currentIndex === idx) {
-            const textarea = this.editorEl?.querySelector('#we-block-content');
-            if (textarea) textarea.value = content;
+
+        const verifiedTarget = targetBlockId
+            ? (entryBlocks.find(block => String(block?.id || '').trim() === targetBlockId) || canonicalTargetBlock)
+            : canonicalTargetBlock;
+        const verifiedContent = String(verifiedTarget?.content ?? '');
+        if (verifiedTarget && verifiedContent !== normalizedContent) {
+            this.traceAi('write.verify.mismatch', {
+                entryId,
+                targetBlockId,
+                resolvedIndex,
+                expected: summarizeTraceText(normalizedContent),
+                actual: summarizeTraceText(verifiedContent),
+            }, 'warn');
+            verifiedTarget.content = normalizedContent;
+            this.syncEntryContentFromBlocks(entry);
         }
+
+        const targetIsVisible = !targetBlockId || String(currentVisibleBlock?.id || '').trim() === targetBlockId;
+        if (this.currentIndex === idx && targetIsVisible) {
+            const textarea = this.editorEl?.querySelector('#we-block-content');
+            if (textarea) textarea.value = normalizedContent;
+        }
+        const resolvedBlockId = String(targetBlock?.id || '').trim();
+        this.traceAi('write.apply', {
+            entryId,
+            targetBlockId,
+            resolvedBlockId,
+            resolvedIndex,
+            blockCount: blocks.length,
+            currentVisibleBlockId: String(currentVisibleBlock?.id || '').trim(),
+            targetIsVisible,
+            before: summarizeTraceText(beforeContent),
+            after: summarizeTraceText(normalizedContent),
+            canonicalBlock: summarizeTraceText(String(verifiedTarget?.content ?? '')),
+            entryContent: summarizeTraceText(String(entry.content || '')),
+            currentIndex: this.currentIndex,
+            targetIndex: idx,
+        });
         this.renderList();
         this.scheduleRefSync();
         return true;
@@ -1715,31 +1964,70 @@ export class WorldEditorModal {
     async runWorldAi({ mode = 'generate' } = {}) {
         if (this.aiBusy) {
             window.toastr?.warning?.('AI 生成中，请稍后');
+            this.traceAi('run.rejected.busy', {
+                mode,
+                pendingEntryId: this.aiPendingEntryId,
+                targetEntryId: this.aiTargetEntryId,
+                targetBlockId: this.aiTargetBlockId,
+            }, 'warn');
             return;
         }
         const inputText = String(this.aiInputEl?.value || '').trim();
         if (!inputText) {
             window.toastr?.warning?.('请先输入人物设定');
+            this.traceAi('run.rejected.no-input', { mode }, 'warn');
             return;
         }
         const config = await this.ensureChatConfigReady();
-        if (!config) return;
-        const entryId = this.aiTargetEntryId || String(this.data.entries[this.currentIndex]?.id || '');
+        if (!config) {
+            this.traceAi('run.rejected.no-config', { mode }, 'warn');
+            return;
+        }
+        const currentEntry = this.data.entries[this.currentIndex] || null;
+        const entryId = String(
+            this.aiTargetEntryId || this.getEntryId(currentEntry, this.currentIndex) || '',
+        ).trim();
+        const blockId = String(this.aiTargetBlockId || '').trim();
         if (!entryId) {
             window.toastr?.warning?.('未找到可写入的条目');
+            this.traceAi('run.rejected.no-entry', {
+                mode,
+                currentIndex: this.currentIndex,
+                targetEntryId: this.aiTargetEntryId,
+                targetBlockId: blockId,
+            }, 'warn');
             return;
         }
         const template = String(this.aiTemplateEl?.value || WORLD_AI_TEMPLATE || '').trim();
         if (!template) {
             window.toastr?.warning?.('模板不能为空');
+            this.traceAi('run.rejected.no-template', { mode, entryId, blockId }, 'warn');
             return;
         }
-        const draft = this.getEntryContentForAi(entryId);
+        const draft = this.getEntryContentForAi(entryId, blockId);
         if (mode === 'continue' && !draft) {
             window.toastr?.warning?.('当前内容为空，无法继续');
+            this.traceAi('run.rejected.empty-draft', {
+                mode,
+                entryId,
+                blockId,
+            }, 'warn');
             return;
         }
         const requestId = ++this.aiRequestId;
+        this.traceAi('run.start', {
+            requestId,
+            mode,
+            entryId,
+            blockId,
+            currentIndex: this.currentIndex,
+            pendingEntryId: this.aiPendingEntryId,
+            targetEntryId: this.aiTargetEntryId,
+            targetBlockId: this.aiTargetBlockId,
+            inputSummary: summarizeTraceText(inputText),
+            templateSummary: summarizeTraceText(template),
+            draftSummary: summarizeTraceText(draft),
+        });
         this.setAiBusy(true, entryId);
         const loadingText = mode === 'continue' ? '正在继续补全角色条目...' : '正在生成角色条目...';
         this.setAiStatus(loadingText, 'loading');
@@ -1748,16 +2036,59 @@ export class WorldEditorModal {
             const messages = mode === 'continue'
                 ? buildWorldAiContinueMessages(template, inputText, draft)
                 : buildWorldAiMessages(template, inputText);
+            this.traceAi('run.request', {
+                requestId,
+                mode,
+                messageCount: messages.length,
+                firstMessageSummary: summarizeTraceText(messages?.[0]?.content || ''),
+            });
             const output = await client.chat(messages, { temperature: 0.6 });
-            if (requestId !== this.aiRequestId) return;
-            const yaml = stripCodeFence(output);
-            if (!yaml) throw new Error('AI 未返回内容');
-            const applied = this.applyAiContentToEntry(entryId, yaml);
-            if (!applied) {
-                this.setAiStatus('生成成功，但未找到条目写入', 'error');
+            this.traceAi('run.response', {
+                requestId,
+                mode,
+                outputSummary: summarizeTraceText(output),
+            });
+            if (requestId !== this.aiRequestId) {
+                this.traceAi('run.response.stale', {
+                    requestId,
+                    activeRequestId: this.aiRequestId,
+                }, 'warn');
                 return;
             }
+            const yaml = stripCodeFence(output);
+            if (!yaml) throw new Error('AI 未返回内容');
+            this.traceAi('run.response.yaml', {
+                requestId,
+                yamlSummary: summarizeTraceText(yaml),
+            });
+            const applied = this.applyAiContentToEntry(entryId, yaml, blockId);
+            if (!applied) {
+                this.setAiStatus('生成成功，但未找到条目写入', 'error');
+                this.traceAi('run.write.failed', {
+                    requestId,
+                    entryId,
+                    blockId,
+                }, 'warn');
+                return;
+            }
+            this.beginAiTraceWatch({
+                entryId,
+                blockId,
+                requestId,
+                reason: mode === 'continue' ? 'continue-apply' : 'generate-apply',
+            });
+            this.traceAi('run.write.success', {
+                requestId,
+                entryId,
+                blockId,
+                appliedSummary: summarizeTraceText(yaml),
+            });
             const saved = await this.saveWorldSilently({ showToast: false });
+            this.traceAi('run.save.result', {
+                requestId,
+                saved,
+                worldName: this.worldName,
+            }, saved ? 'info' : 'warn');
             if (saved) {
                 const successText = mode === 'continue' ? '补全完成，已写入内容并保存' : '生成完成，已写入内容并保存';
                 this.setAiStatus(successText, 'success');
@@ -1768,11 +2099,27 @@ export class WorldEditorModal {
             }
         } catch (err) {
             logger.error(mode === 'continue' ? 'AI 补全世界书失败' : 'AI 生成世界书失败', err);
+            this.traceAi('run.error', {
+                requestId,
+                mode,
+                message: err?.message || 'unknown',
+            }, 'error');
             this.setAiStatus(`生成失败：${err?.message || '未知错误'}`, 'error');
             window.toastr?.error?.(mode === 'continue' ? 'AI 补全失败' : 'AI 生成失败');
         } finally {
             if (requestId === this.aiRequestId) {
                 this.setAiBusy(false);
+                this.traceAi('run.finish', {
+                    requestId,
+                    mode,
+                    activeRequestId: this.aiRequestId,
+                    pendingEntryId: this.aiPendingEntryId,
+                });
+            } else {
+                this.traceAi('run.finish.stale', {
+                    requestId,
+                    activeRequestId: this.aiRequestId,
+                }, 'warn');
             }
         }
     }
@@ -1935,7 +2282,9 @@ export class WorldEditorModal {
 
     syncEntryContentFromBlocks(entry) {
         if (!entry || typeof entry !== 'object') return;
-        const blocks = this.ensureEntryPromptBlocks(entry);
+        const blocks = Array.isArray(entry.promptBlocks) && entry.promptBlocks.length
+            ? entry.promptBlocks
+            : this.ensureEntryPromptBlocks(entry);
         const first = blocks[0];
         entry.content = String(first?.content || '').trim();
     }
@@ -2901,15 +3250,32 @@ export class WorldEditorModal {
         const entryId = this.getEntryId(entry, this.currentIndex);
         const blockPage = this.getEntryBlockPage(entry, entryId);
         const activeBlock = blocks[blockPage] || blocks[0];
+        const activeBlockId = String(activeBlock?.id || '').trim();
         const blockFlipped = this.isBlockFlipped(activeBlock?.id);
         const blockExpanded = this.isBlockExpanded(activeBlock?.id);
         const blockBackView = this.getBlockBackView(activeBlock?.id);
-        const aiBusy = this.aiBusy && String(entry.id || '') === String(this.aiPendingEntryId || '');
+        const aiBusy = this.aiBusy && entryId === String(this.aiPendingEntryId || '').trim();
+        const aiLockTarget = aiBusy && activeBlockId && activeBlockId === String(this.aiTargetBlockId || '').trim();
         const triggerStrategy = this.getEntryTriggerStrategy(entry);
         const triggerStrategyLabel = this.getOptionLabel(TRIGGER_STRATEGY_OPTIONS, triggerStrategy, '🟢 绿灯（关键词触发）');
         const positionLabelText = this.getOptionLabel(POSITION_OPTIONS, entry.position, '↑Char（角色前）');
         const roleLabelText = this.getOptionLabel(ROLE_OPTIONS, entry.role, 'system');
         const selectiveLogicLabel = this.getOptionLabel(SELECTIVE_LOGIC_OPTIONS, entry.selectiveLogic, 'AND 任一（匹配任一关键词）');
+        const renderRevision = ++this.editorRenderRevision;
+        if (aiBusy || this.isAiTraceWatchActive()) {
+            this.traceAi('render.state', {
+                renderRevision,
+                entryId,
+                blockPage,
+                activeBlockId,
+                aiBusy,
+                aiLockTarget,
+                pendingEntryId: this.aiPendingEntryId,
+                targetEntryId: this.aiTargetEntryId,
+                targetBlockId: this.aiTargetBlockId,
+                blockSummary: summarizeTraceText(activeBlock?.content || ''),
+            });
+        }
         this.editorEl.innerHTML = `
             <div class="world-entry-form">
                 <div class="world-entry-card">
@@ -2931,7 +3297,7 @@ export class WorldEditorModal {
                             ${blockExpanded ? BLOCK_FLIP_ICON_SVG : BLOCK_EXPAND_ICON_SVG}
                         </button>
                         <div class="world-flip-card-face world-flip-card-front">
-                            <textarea id="we-block-content" placeholder="输入本页提示词内容">${activeBlock?.content || ''}</textarea>
+                            <textarea id="we-block-content" placeholder="输入本页提示词内容" ${aiLockTarget ? 'readonly' : ''}>${activeBlock?.content || ''}</textarea>
                         </div>
                         <div class="world-flip-card-face world-flip-card-back">
                             <div class="world-block-back-tools">
@@ -3153,9 +3519,62 @@ export class WorldEditorModal {
 
         const blockContentEl = q('#we-block-content');
         if (blockContentEl) {
+            if (aiLockTarget) {
+                blockContentEl.style.opacity = '0.75';
+                blockContentEl.setAttribute('aria-busy', 'true');
+            }
             let blockScrollTimer = null;
             blockContentEl.addEventListener('input', () => {
-                activeBlock.content = String(blockContentEl.value || '');
+                const nextValue = String(blockContentEl.value || '');
+                if (this.editorRenderRevision !== renderRevision) {
+                    if (this.isAiTraceWatchActive()) {
+                        this.traceAi('input.drop.stale-render', {
+                            eventRenderRevision: renderRevision,
+                            liveRenderRevision: this.editorRenderRevision,
+                            entryId,
+                            activeBlockId,
+                            valueSummary: summarizeTraceText(nextValue),
+                        }, 'warn');
+                    }
+                    return;
+                }
+                const pendingEntryId = String(this.aiPendingEntryId || '').trim();
+                const pendingBlockId = String(this.aiTargetBlockId || '').trim();
+                const isAiLockedNow = this.aiBusy
+                    && pendingEntryId
+                    && pendingBlockId
+                    && pendingEntryId === entryId
+                    && pendingBlockId === activeBlockId;
+                if (isAiLockedNow) {
+                    blockContentEl.value = String(activeBlock?.content || '');
+                    this.traceAi('input.drop.ai-locked', {
+                        entryId,
+                        activeBlockId,
+                        pendingEntryId,
+                        pendingBlockId,
+                        valueSummary: summarizeTraceText(nextValue),
+                        keptSummary: summarizeTraceText(activeBlock?.content || ''),
+                    }, 'warn');
+                    return;
+                }
+                const beforeValue = String(activeBlock?.content || '');
+                activeBlock.content = nextValue;
+                if (this.isAiTraceWatchActive()) {
+                    const watchEntryId = String(this.aiLastWriteMeta?.entryId || '').trim();
+                    const watchBlockId = String(this.aiLastWriteMeta?.blockId || '').trim();
+                    const touchesWatchTarget = watchEntryId === entryId
+                        && Boolean(watchBlockId)
+                        && watchBlockId === activeBlockId;
+                    this.traceAi('input.commit', {
+                        entryId,
+                        activeBlockId,
+                        watchEntryId,
+                        watchBlockId,
+                        touchesWatchTarget,
+                        beforeSummary: summarizeTraceText(beforeValue),
+                        afterSummary: summarizeTraceText(nextValue),
+                    }, touchesWatchTarget ? 'warn' : 'info');
+                }
                 this.syncEntryContentFromBlocks(entry);
                 this.renderList();
                 markRefDirty();
@@ -3648,6 +4067,18 @@ export class WorldEditorModal {
     async saveRefEdits({ showToast = true } = {}) {
         try {
             const list = Array.isArray(this.data?.entries) ? this.data.entries : [];
+            if (this.isAiTraceWatchActive()) {
+                const watchEntryId = String(this.aiLastWriteMeta?.entryId || '').trim();
+                const touchedCount = watchEntryId
+                    ? list.filter((item, idx) => this.getEntryId(item, idx) === watchEntryId || String(item?._refEntryId || '').trim() === watchEntryId).length
+                    : 0;
+                this.traceAi('ref.save.start', {
+                    showToast,
+                    listCount: list.length,
+                    watchEntryId,
+                    touchedCount,
+                });
+            }
             if (!list.length) {
                 if (showToast) window.toastr?.warning?.('没有可同步的条目');
                 return false;
@@ -3715,9 +4146,21 @@ export class WorldEditorModal {
                     window.toastr?.warning?.('部分来源世界书不可用，已跳过');
                 }
             }
+            if (this.isAiTraceWatchActive()) {
+                this.traceAi('ref.save.finish', {
+                    updatedCount,
+                    failedCount,
+                    updatedSources: updatedSources.join(','),
+                }, updatedCount > 0 ? 'info' : 'warn');
+            }
             return updatedCount > 0;
         } catch (err) {
             logger.error('同步引用世界书失败', err);
+            if (this.isAiTraceWatchActive()) {
+                this.traceAi('ref.save.error', {
+                    message: err?.message || 'unknown',
+                }, 'error');
+            }
             if (showToast) window.toastr?.error?.('同步失败，请检查控制台');
             return false;
         }
@@ -3839,14 +4282,41 @@ export class WorldEditorModal {
 
     async saveWorldSilently({ showToast = true } = {}) {
         try {
+            if (this.isAiTraceWatchActive()) {
+                const watchEntryId = String(this.aiLastWriteMeta?.entryId || '').trim();
+                const watchBlockId = String(this.aiLastWriteMeta?.blockId || '').trim();
+                const { idx, entry } = watchEntryId ? this.resolveEntryById(watchEntryId) : { idx: -1, entry: null };
+                const blocks = entry ? this.ensureEntryPromptBlocks(entry) : [];
+                const watchedBlock = watchBlockId
+                    ? blocks.find((item) => String(item?.id || '').trim() === watchBlockId)
+                    : null;
+                this.traceAi('save.silent.start', {
+                    showToast,
+                    refMode: this.refMode,
+                    worldName: this.worldName,
+                    watchEntryId,
+                    watchBlockId,
+                    watchEntryIndex: idx,
+                    watchBlockSummary: summarizeTraceText(String(watchedBlock?.content || '')),
+                });
+            }
             if (this.refMode) {
                 const ok = await this.saveRefEdits({ showToast });
                 if (ok) this.onSaved?.(this.worldName, this.data);
+                if (this.isAiTraceWatchActive()) {
+                    this.traceAi('save.silent.finish', {
+                        refMode: true,
+                        ok,
+                    }, ok ? 'info' : 'warn');
+                }
                 return ok;
             }
             const nextName = String(this.nameInputEl?.value || '').trim();
             if (!nextName) {
                 if (showToast) window.toastr?.warning?.('名称不能为空');
+                if (this.isAiTraceWatchActive()) {
+                    this.traceAi('save.silent.reject.empty-name', {}, 'warn');
+                }
                 return false;
             }
             const payload = this.prepareForSave(nextName);
@@ -3854,6 +4324,11 @@ export class WorldEditorModal {
                 const existing = await window.appBridge.listWorlds?.();
                 if (Array.isArray(existing) && existing.includes(nextName)) {
                     if (showToast) window.toastr?.warning?.('名称已存在，无法自动保存');
+                    if (this.isAiTraceWatchActive()) {
+                        this.traceAi('save.silent.reject.duplicate-name', {
+                            nextName,
+                        }, 'warn');
+                    }
                     return false;
                 }
                 await window.appBridge.renameWorldInfo?.(this.worldName, nextName, payload);
@@ -3863,9 +4338,21 @@ export class WorldEditorModal {
             }
             this.onSaved?.(this.worldName, payload);
             if (showToast) window.toastr?.success?.(`世界书已保存：${this.worldName}`);
+            if (this.isAiTraceWatchActive()) {
+                this.traceAi('save.silent.finish', {
+                    refMode: false,
+                    ok: true,
+                    worldName: this.worldName,
+                });
+            }
             return true;
         } catch (err) {
             logger.error('自动保存世界书失败', err);
+            if (this.isAiTraceWatchActive()) {
+                this.traceAi('save.silent.error', {
+                    message: err?.message || 'unknown',
+                }, 'error');
+            }
             if (showToast) window.toastr?.error?.('自动保存失败');
             return false;
         }
