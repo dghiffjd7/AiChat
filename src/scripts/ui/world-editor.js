@@ -170,6 +170,7 @@ const BLOCK_MODE_NODE_ICON_SVG = `
 const WORLD_AI_INPUT_KEY = 'world_ai_input_v1';
 const WORLD_AI_TEMPLATE_KEY = 'world_ai_template_v1';
 const WORLD_VAR_BROWSER_RECENT_KEY = 'world_var_browser_recent_v1';
+const WORLD_VAR_GUIDE_KEY = 'world_var_guide_v1_seen';
 const WORLD_AI_TEMPLATE = `
 name: ""
 english_name: ""
@@ -671,6 +672,14 @@ export class WorldEditorModal {
         this.blockManageList = null;
         this.blockManageCloseBtn = null;
         this.blockManageEntryId = '';
+        this.variableGuideActive = false;
+        this.variableGuidePending = false;
+        this.variableGuideStepIndex = 0;
+        this.variableGuideSteps = [];
+        this.variableGuideBubbleEl = null;
+        this.variableGuideCurrentTarget = null;
+        this.variableGuideRepositionHandler = null;
+        this.variableGuideResizeHandler = null;
         this.nodeEditorCleanup = null;
     }
 
@@ -747,6 +756,7 @@ export class WorldEditorModal {
     hide() {
         this.cleanupNodeEditor();
         this.closeCustomSelectMenu();
+        this.finishVariableGuide({ markSeen: false });
         if (this.overlay) this.overlay.style.display = 'none';
         if (this.modal) this.modal.style.display = 'none';
         this.hideManageModal();
@@ -781,6 +791,221 @@ export class WorldEditorModal {
             this.nameInputEl.disabled = disabled;
             this.nameInputEl.style.opacity = disabled ? '0.6' : '';
         }
+    }
+
+    isVariableGuideSeen() {
+        try {
+            return localStorage.getItem(WORLD_VAR_GUIDE_KEY) === '1';
+        } catch {
+            return false;
+        }
+    }
+
+    markVariableGuideSeen() {
+        try {
+            localStorage.setItem(WORLD_VAR_GUIDE_KEY, '1');
+        } catch {}
+    }
+
+    shouldShowVariableGuide() {
+        return !this.isVariableGuideSeen();
+    }
+
+    requestVariableGuide() {
+        if (!this.shouldShowVariableGuide()) return;
+        this.variableGuidePending = true;
+    }
+
+    clearVariableGuideTarget() {
+        if (this.variableGuideCurrentTarget) {
+            this.variableGuideCurrentTarget.classList.remove('world-guide-target');
+            this.variableGuideCurrentTarget = null;
+        }
+    }
+
+    buildVariableGuideSteps() {
+        const q = (selector) => this.editorEl?.querySelector(selector) || null;
+        const rawSteps = [
+            {
+                selector: '.world-node-toolbar-btn[data-action="addCondition"]',
+                title: '一步生成条件链',
+                text: '先点“条件链”，会自动生成“变量 -> 比较 -> 值”的基础结构。',
+                effect: '你不需要手工拼三类节点；若加错，选中后按 Delete 或点“删除”即可移除。',
+            },
+            {
+                selector: '.world-node-toolbar-btn[data-action="addMore"]',
+                title: '变量是进阶可选项',
+                text: '“新增”菜单里有变量、值、比较、逻辑节点；只有做动态条件时才需要变量。',
+                effect: '例如“好感度 > 10”这类状态判断，才需要变量。',
+            },
+            {
+                selector: '#we-node-inspector',
+                title: '在这里改条件细节',
+                text: '选中比较节点后，可在属性区设置比较符和值（如 > 10）。',
+                effect: '条件命中才注入，不命中就不会注入这段内容。',
+            },
+            {
+                selector: '#we-block-editor-save',
+                title: '保存后开始生效',
+                text: '设置完成后记得保存，系统会把当前节点规则写回世界书条目。',
+                effect: '后续可在概览和调试里看到命中/未命中的原因。',
+            },
+        ];
+        return rawSteps
+            .map((step) => {
+                const target = q(step.selector);
+                if (!target) return null;
+                return { ...step, target };
+            })
+            .filter(Boolean);
+    }
+
+    ensureVariableGuideBubble() {
+        if (this.variableGuideBubbleEl) return;
+        const bubble = document.createElement('div');
+        bubble.className = 'world-guide-bubble';
+        bubble.style.display = 'none';
+        bubble.innerHTML = `
+            <div class="world-guide-head">
+                <span class="world-guide-kicker">新手引导</span>
+                <span class="world-guide-step"></span>
+            </div>
+            <div class="world-guide-title"></div>
+            <div class="world-guide-text"></div>
+            <div class="world-guide-effect"></div>
+            <div class="world-guide-actions">
+                <button type="button" class="world-guide-btn ghost" data-action="skip">跳过</button>
+                <button type="button" class="world-guide-btn ghost" data-action="prev">上一步</button>
+                <button type="button" class="world-guide-btn primary" data-action="next">下一步</button>
+            </div>
+        `;
+        bubble.addEventListener('click', (event) => event.stopPropagation());
+        bubble.querySelector('[data-action="skip"]')?.addEventListener('click', () => this.finishVariableGuide({ markSeen: true }));
+        bubble.querySelector('[data-action="prev"]')?.addEventListener('click', () => this.advanceVariableGuide(-1));
+        bubble.querySelector('[data-action="next"]')?.addEventListener('click', () => this.advanceVariableGuide(1));
+        document.body.appendChild(bubble);
+        this.variableGuideBubbleEl = bubble;
+    }
+
+    positionVariableGuideBubble() {
+        if (!this.variableGuideActive || !this.variableGuideBubbleEl) return;
+        const step = this.variableGuideSteps[this.variableGuideStepIndex];
+        if (!step?.target || !step.target.isConnected) return;
+        const bubble = this.variableGuideBubbleEl;
+        const rect = step.target.getBoundingClientRect();
+        bubble.style.visibility = 'hidden';
+        bubble.style.display = 'block';
+        const bubbleRect = bubble.getBoundingClientRect();
+        const gap = 10;
+        let top = rect.bottom + gap;
+        let place = 'bottom';
+        if (top + bubbleRect.height > window.innerHeight - 8) {
+            top = Math.max(8, rect.top - bubbleRect.height - gap);
+            place = 'top';
+        }
+        let left = rect.left + rect.width / 2 - bubbleRect.width / 2;
+        left = Math.max(8, Math.min(window.innerWidth - bubbleRect.width - 8, left));
+        bubble.style.left = `${Math.round(left)}px`;
+        bubble.style.top = `${Math.round(top)}px`;
+        bubble.setAttribute('data-place', place);
+        bubble.style.visibility = 'visible';
+    }
+
+    showVariableGuideStep(index = 0) {
+        if (!this.variableGuideActive) return;
+        const total = this.variableGuideSteps.length;
+        if (!total) {
+            this.finishVariableGuide({ markSeen: false });
+            return;
+        }
+        const nextIndex = Math.max(0, Math.min(total - 1, Number(index) || 0));
+        this.variableGuideStepIndex = nextIndex;
+        const step = this.variableGuideSteps[nextIndex];
+        if (!step?.target || !step.target.isConnected) {
+            this.finishVariableGuide({ markSeen: false });
+            return;
+        }
+        this.clearVariableGuideTarget();
+        this.variableGuideCurrentTarget = step.target;
+        step.target.classList.add('world-guide-target');
+        this.ensureVariableGuideBubble();
+        if (!this.variableGuideBubbleEl) return;
+        const bubble = this.variableGuideBubbleEl;
+        const stepEl = bubble.querySelector('.world-guide-step');
+        const titleEl = bubble.querySelector('.world-guide-title');
+        const textEl = bubble.querySelector('.world-guide-text');
+        const effectEl = bubble.querySelector('.world-guide-effect');
+        const prevBtn = bubble.querySelector('[data-action="prev"]');
+        const nextBtn = bubble.querySelector('[data-action="next"]');
+        if (stepEl) stepEl.textContent = `${nextIndex + 1}/${total}`;
+        if (titleEl) titleEl.textContent = step.title;
+        if (textEl) textEl.textContent = step.text;
+        if (effectEl) effectEl.textContent = `效果：${step.effect}`;
+        if (prevBtn) prevBtn.disabled = nextIndex <= 0;
+        if (nextBtn) nextBtn.textContent = nextIndex >= total - 1 ? '完成' : '下一步';
+        this.positionVariableGuideBubble();
+    }
+
+    advanceVariableGuide(stepDelta = 1) {
+        if (!this.variableGuideActive) return;
+        const total = this.variableGuideSteps.length;
+        if (!total) {
+            this.finishVariableGuide({ markSeen: false });
+            return;
+        }
+        const nextIndex = this.variableGuideStepIndex + Number(stepDelta || 0);
+        if (nextIndex >= total) {
+            this.finishVariableGuide({ markSeen: true });
+            return;
+        }
+        if (nextIndex < 0) {
+            this.showVariableGuideStep(0);
+            return;
+        }
+        this.showVariableGuideStep(nextIndex);
+    }
+
+    finishVariableGuide({ markSeen = true } = {}) {
+        if (markSeen) this.markVariableGuideSeen();
+        this.variableGuideActive = false;
+        this.variableGuidePending = false;
+        this.variableGuideStepIndex = 0;
+        this.variableGuideSteps = [];
+        this.clearVariableGuideTarget();
+        if (this.variableGuideBubbleEl) {
+            this.variableGuideBubbleEl.style.display = 'none';
+        }
+        if (this.variableGuideRepositionHandler) {
+            window.removeEventListener('scroll', this.variableGuideRepositionHandler, true);
+            this.variableGuideRepositionHandler = null;
+        }
+        if (this.variableGuideResizeHandler) {
+            window.removeEventListener('resize', this.variableGuideResizeHandler);
+            this.variableGuideResizeHandler = null;
+        }
+    }
+
+    maybeStartVariableGuide() {
+        if (!this.variableGuidePending || this.variableGuideActive) return;
+        if (!this.shouldShowVariableGuide()) {
+            this.variableGuidePending = false;
+            return;
+        }
+        const steps = this.buildVariableGuideSteps();
+        if (!steps.length) return;
+        this.variableGuidePending = false;
+        this.variableGuideSteps = steps;
+        this.variableGuideActive = true;
+        this.ensureVariableGuideBubble();
+        if (!this.variableGuideRepositionHandler) {
+            this.variableGuideRepositionHandler = () => this.positionVariableGuideBubble();
+            window.addEventListener('scroll', this.variableGuideRepositionHandler, true);
+        }
+        if (!this.variableGuideResizeHandler) {
+            this.variableGuideResizeHandler = () => this.positionVariableGuideBubble();
+            window.addEventListener('resize', this.variableGuideResizeHandler);
+        }
+        this.showVariableGuideStep(0);
     }
 
     scheduleRefSync() {
@@ -2249,6 +2474,7 @@ export class WorldEditorModal {
         if (!id) return;
         this.setBlockEditorFocus(id, focusState);
         this.blockBackViewMap.set(id, 'editor');
+        this.requestVariableGuide();
         this.renderEditor();
     }
 
@@ -3317,17 +3543,11 @@ export class WorldEditorModal {
                                 <div class="world-node-editor" id="we-node-editor">
                                     <div class="world-node-toolbar">
                                         <button type="button" class="world-node-toolbar-btn" data-action="template" title="常用节点模板">模板</button>
-                                        <button type="button" class="world-node-toolbar-btn" data-action="addCondition" title="新增条件链">条件链</button>
-                                        <button type="button" class="world-node-toolbar-btn" data-action="addVariable" title="新增变量并建链">变量</button>
-                                        <button type="button" class="world-node-toolbar-btn" data-action="addValue" title="新增值节点">值</button>
-                                        <button type="button" class="world-node-toolbar-btn" data-action="addCompare" title="新增比较节点">比较</button>
-                                        <button type="button" class="world-node-toolbar-btn" data-action="addLogic" title="新增逻辑节点">逻辑</button>
-                                        <button type="button" class="world-node-toolbar-btn" data-action="zoomOut" title="缩小">缩小</button>
-                                        <button type="button" class="world-node-toolbar-btn" data-action="zoomReset" title="缩放重置">1:1</button>
-                                        <button type="button" class="world-node-toolbar-btn" data-action="zoomIn" title="放大">放大</button>
-                                        <button type="button" class="world-node-toolbar-btn" data-action="fitSelection" title="缩放到当前选中">选中</button>
-                                        <button type="button" class="world-node-toolbar-btn" data-action="fitAll" title="缩放到全部节点">全部</button>
-                                        <button type="button" class="world-node-toolbar-btn" data-action="layout" title="自动排版">排版</button>
+                                        <button type="button" class="world-node-toolbar-btn primary" data-action="addCondition" title="一键新增变量->比较->值链路">条件链</button>
+                                        <button type="button" class="world-node-toolbar-btn" data-action="deleteSelection" title="删除当前选中节点">删除</button>
+                                        <button type="button" class="world-node-toolbar-btn" data-action="addMore" title="新增变量/值/比较/逻辑">新增 ▾</button>
+                                        <button type="button" class="world-node-toolbar-btn" data-action="viewMenu" title="缩放与聚焦">视图 ▾</button>
+                                        <button type="button" class="world-node-toolbar-btn" data-action="arrangeMenu" title="整理与排版">整理 ▾</button>
                                     </div>
                                     <div class="world-node-status" id="we-node-status" data-tone="muted"></div>
                                     <div class="world-node-canvas-wrap" id="we-node-canvas-wrap">
@@ -3790,6 +4010,9 @@ export class WorldEditorModal {
         });
         if (blockBackView === 'editor') {
             this.mountNodeEditor({ entry, block: activeBlock, markRefDirty });
+            window.requestAnimationFrame(() => this.maybeStartVariableGuide());
+        } else if (this.variableGuideActive) {
+            this.finishVariableGuide({ markSeen: false });
         }
 
         const blockShellEl = q('#we-block-shell');

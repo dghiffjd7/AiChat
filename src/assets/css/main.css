@@ -1780,6 +1780,7 @@ body.chat-room-active .bottom-nav {
 .world-node-toolbar {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 6px;
   margin-bottom: 8px;
 }
@@ -1802,12 +1803,27 @@ body.chat-room-active .bottom-nav {
   background: #f8fafc;
 }
 
+.world-node-toolbar-btn.primary {
+  border-color: #0ea5e9;
+  background: rgba(14, 165, 233, 0.14);
+  color: #0c4a6e;
+  font-weight: 600;
+}
+
+.world-node-toolbar-btn.primary:hover {
+  border-color: #0284c7;
+  background: rgba(14, 165, 233, 0.2);
+}
+
 .world-node-status {
-  min-height: 18px;
+  height: 18px;
   margin: -2px 0 8px;
   font-size: 12px;
   line-height: 1.45;
   color: #64748b;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .world-node-status[data-tone="success"] {
@@ -1821,10 +1837,12 @@ body.chat-room-active .bottom-nav {
 .world-node-canvas-wrap {
   position: relative;
   min-height: 312px;
+  height: 360px;
   max-height: 380px;
   border: 1px dashed #dbe3ee;
   border-radius: 12px;
   overflow: auto;
+  overscroll-behavior: contain;
   background:
     linear-gradient(90deg, rgba(148, 163, 184, 0.12) 1px, transparent 1px),
     linear-gradient(0deg, rgba(148, 163, 184, 0.12) 1px, transparent 1px),
@@ -2575,8 +2593,9 @@ body.chat-room-active .bottom-nav {
   font-family: "JetBrains Mono", "Consolas", "SFMono-Regular", Menlo, monospace;
   font-size: 12px;
   line-height: 1.5;
-  scrollbar-width: none;
-  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+  scrollbar-gutter: stable both-edges;
 }
 
 #we-block-content:focus {
@@ -2586,25 +2605,117 @@ body.chat-room-active .bottom-nav {
 }
 
 #we-block-content::-webkit-scrollbar {
-  width: 0;
-  height: 0;
+  width: 6px;
+  height: 6px;
+}
+
+#we-block-content::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 999px;
+}
+
+#we-block-content::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 .world-content-card.is-scrolling #we-block-content {
-  scrollbar-width: thin;
-}
-
-.world-content-card.is-scrolling #we-block-content::-webkit-scrollbar {
-  width: 6px;
+  scrollbar-color: rgba(100, 116, 139, 0.72) transparent;
 }
 
 .world-content-card.is-scrolling #we-block-content::-webkit-scrollbar-thumb {
   background: rgba(100, 116, 139, 0.72);
-  border-radius: 999px;
 }
 
-.world-content-card.is-scrolling #we-block-content::-webkit-scrollbar-track {
-  background: transparent;
+.world-guide-target {
+  position: relative;
+  z-index: 23640;
+  border-radius: 10px;
+  box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.9), 0 0 0 5px rgba(56, 189, 248, 0.22);
+}
+
+.world-guide-bubble {
+  position: fixed;
+  z-index: 23660;
+  width: min(320px, calc(100vw - 16px));
+  border: 1px solid rgba(148, 163, 184, 0.38);
+  border-radius: 12px;
+  background: linear-gradient(160deg, rgba(15, 23, 42, 0.98), rgba(30, 41, 59, 0.96));
+  color: #e2e8f0;
+  box-shadow: 0 18px 44px rgba(2, 6, 23, 0.55);
+  padding: 10px 12px;
+}
+
+.world-guide-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.world-guide-kicker {
+  font-size: 11px;
+  color: #7dd3fc;
+}
+
+.world-guide-step {
+  font-size: 11px;
+  color: #94a3b8;
+}
+
+.world-guide-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: #f8fafc;
+  margin-bottom: 4px;
+}
+
+.world-guide-text {
+  font-size: 12px;
+  line-height: 1.5;
+  color: #cbd5e1;
+}
+
+.world-guide-effect {
+  margin-top: 6px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: rgba(14, 116, 144, 0.18);
+  border: 1px solid rgba(125, 211, 252, 0.32);
+  font-size: 12px;
+  line-height: 1.45;
+  color: #bae6fd;
+}
+
+.world-guide-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.world-guide-btn {
+  border: 1px solid rgba(148, 163, 184, 0.42);
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.42);
+  color: #e2e8f0;
+  font-size: 12px;
+  padding: 5px 9px;
+}
+
+.world-guide-btn.ghost {
+  color: #cbd5e1;
+}
+
+.world-guide-btn.primary {
+  border-color: rgba(56, 189, 248, 0.62);
+  background: rgba(14, 165, 233, 0.26);
+  color: #ecfeff;
+}
+
+.world-guide-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 #we-block-new-var {
@@ -2831,6 +2942,7 @@ body.chat-room-active .bottom-nav {
   }
   .world-node-canvas-wrap {
     min-height: 260px;
+    height: 300px;
     max-height: 300px;
   }
   .world-block-manage-modal-page {

@@ -424,7 +424,7 @@ export function mountNodeEditorCoreImpl(context, { entry, block, markRefDirty } 
                     text = `为 ${targetLabel} 选择一个合法来源。`;
                 }
             } else if (selectedNodeIds.size) {
-                text = `已选中 ${selectedNodeIds.size} 个节点，可拖动、复制、整理或设为最终条件。`;
+                text = `已选中 ${selectedNodeIds.size} 个节点，可拖动、复制、整理；按 Delete/Backspace 或点“删除”可移除。`;
             }
             nodeStatusEl.dataset.tone = tone;
             nodeStatusEl.textContent = text;
@@ -2086,11 +2086,13 @@ export function mountNodeEditorCoreImpl(context, { entry, block, markRefDirty } 
         };
         const onDocPointerMove = (event) => {
             if (activePan) {
+                if (event?.cancelable) event.preventDefault();
                 nodeCanvasWrap.scrollLeft = activePan.scrollLeft - (event.clientX - activePan.startX);
                 nodeCanvasWrap.scrollTop = activePan.scrollTop - (event.clientY - activePan.startY);
                 return;
             }
             if (activeDrag) {
+                if (event?.cancelable) event.preventDefault();
                 scrollCanvasForPointer(event.clientX, event.clientY);
                 let dx = (event.clientX - activeDrag.startX + (nodeCanvasWrap.scrollLeft - activeDrag.scrollLeft)) / zoom;
                 let dy = (event.clientY - activeDrag.startY + (nodeCanvasWrap.scrollTop - activeDrag.scrollTop)) / zoom;
@@ -2112,11 +2114,13 @@ export function mountNodeEditorCoreImpl(context, { entry, block, markRefDirty } 
                 return;
             }
             if (activeLink) {
+                if (event?.cancelable) event.preventDefault();
                 scrollCanvasForPointer(event.clientX, event.clientY);
                 updateActiveLinkPreview(event);
                 return;
             }
             if (activeMarquee) {
+                if (event?.cancelable) event.preventDefault();
                 scrollCanvasForPointer(event.clientX, event.clientY);
                 const wrapRect = nodeCanvasWrap.getBoundingClientRect();
                 activeMarquee.endX = event.clientX - wrapRect.left + nodeCanvasWrap.scrollLeft;
@@ -2208,6 +2212,105 @@ export function mountNodeEditorCoreImpl(context, { entry, block, markRefDirty } 
             persistGraph({ syncWhen: true });
             renderScene();
         };
+        const runToolbarAction = (action) => {
+            if (action === 'addCondition') {
+                addConditionChain(null, { openVariablePicker: true });
+                return true;
+            }
+            if (action === 'addVariable') {
+                void this.openVariableModal().then((payload) => {
+                    if (!payload) return;
+                    this.ensureVariableInStore(payload.name, payload.type, payload.defaultValue);
+                    addConditionChain(payload);
+                });
+                return true;
+            }
+            if (action === 'addValue') {
+                addNode('value');
+                return true;
+            }
+            if (action === 'addCompare') {
+                addNode('compare');
+                return true;
+            }
+            if (action === 'addLogic') {
+                addNode('logic');
+                return true;
+            }
+            if (action === 'deleteSelection') {
+                if (!selectedNodeIds.size) {
+                    window.toastr?.info?.('请先选中要删除的节点');
+                    return true;
+                }
+                deleteSelection();
+                return true;
+            }
+            if (action === 'duplicate') {
+                if (!selectedNodeIds.size) {
+                    window.toastr?.info?.('请先选中要复制的节点');
+                    return true;
+                }
+                duplicateSelection();
+                return true;
+            }
+            if (action === 'tidySelection') {
+                const nodes = [...selectedNodeIds].map(id => getNodeById(id)).filter(Boolean);
+                if (!nodes.length) {
+                    window.toastr?.info?.('请先选中要整理的节点');
+                    return true;
+                }
+                arrangeSelectedNodes(nodes);
+                persistGraph({ syncWhen: true });
+                renderScene();
+                return true;
+            }
+            if (action === 'setFinal') {
+                if (selectedNodeIds.size !== 1) {
+                    window.toastr?.info?.('请先选中 1 个节点再设为最终条件');
+                    return true;
+                }
+                const [nodeId] = [...selectedNodeIds];
+                if (setFinalNode(nodeId)) {
+                    persistGraph({ syncWhen: true });
+                    renderScene();
+                }
+                return true;
+            }
+            if (action === 'zoomIn') {
+                setZoom(zoom + 0.1);
+                return true;
+            }
+            if (action === 'zoomOut') {
+                setZoom(zoom - 0.1);
+                return true;
+            }
+            if (action === 'zoomReset') {
+                setZoom(1);
+                return true;
+            }
+            if (action === 'fitSelection') {
+                const nodes = [...selectedNodeIds].map(id => getNodeById(id)).filter(Boolean);
+                if (!nodes.length) {
+                    window.toastr?.info?.('请先选中要聚焦的节点');
+                    return true;
+                }
+                focusNodes(nodes);
+                return true;
+            }
+            if (action === 'fitAll') {
+                const nodes = (graph.nodes || []).filter(node => node.type !== 'result');
+                if (!nodes.length) return true;
+                focusNodes(nodes);
+                return true;
+            }
+            if (action === 'layout') {
+                autoLayoutNodeGraph(graph);
+                persistGraph({ syncWhen: true });
+                renderScene();
+                return true;
+            }
+            return false;
+        };
         const onToolbarClick = (event) => {
             const btn = event.target?.closest?.('.world-node-toolbar-btn');
             if (!btn) return;
@@ -2227,38 +2330,50 @@ export function mountNodeEditorCoreImpl(context, { entry, block, markRefDirty } 
                 });
                 return;
             }
-            if (action === 'addCondition') return void addConditionChain(null, { openVariablePicker: true });
-            if (action === 'addVariable') {
-                void this.openVariableModal().then((payload) => {
-                    if (!payload) return;
-                    this.ensureVariableInStore(payload.name, payload.type, payload.defaultValue);
-                    addConditionChain(payload);
+            if (action === 'addMore') {
+                this.openCustomSelectMenu({
+                    anchorEl: btn,
+                    options: [
+                        { value: 'addVariable', label: '变量（进阶）' },
+                        { value: 'addValue', label: '值节点' },
+                        { value: 'addCompare', label: '比较节点' },
+                        { value: 'addLogic', label: '逻辑节点' },
+                    ],
+                    currentValue: '',
+                    onSelect: (value) => runToolbarAction(value),
                 });
                 return;
             }
-            if (action === 'addValue') return void addNode('value');
-            if (action === 'addCompare') return void addNode('compare');
-            if (action === 'addLogic') return void addNode('logic');
-            if (action === 'zoomIn') return void setZoom(zoom + 0.1);
-            if (action === 'zoomOut') return void setZoom(zoom - 0.1);
-            if (action === 'zoomReset') return void setZoom(1);
-            if (action === 'fitSelection') {
-                const nodes = [...selectedNodeIds].map(id => getNodeById(id)).filter(Boolean);
-                if (!nodes.length) return;
-                focusNodes(nodes);
+            if (action === 'viewMenu') {
+                this.openCustomSelectMenu({
+                    anchorEl: btn,
+                    options: [
+                        { value: 'zoomIn', label: '放大' },
+                        { value: 'zoomOut', label: '缩小' },
+                        { value: 'zoomReset', label: '缩放重置 1:1' },
+                        { value: 'fitSelection', label: '聚焦所选' },
+                        { value: 'fitAll', label: '聚焦全部' },
+                    ],
+                    currentValue: '',
+                    onSelect: (value) => runToolbarAction(value),
+                });
                 return;
             }
-            if (action === 'fitAll') {
-                const nodes = (graph.nodes || []).filter(node => node.type !== 'result');
-                if (!nodes.length) return;
-                focusNodes(nodes);
+            if (action === 'arrangeMenu') {
+                this.openCustomSelectMenu({
+                    anchorEl: btn,
+                    options: [
+                        { value: 'layout', label: '自动排版' },
+                        { value: 'tidySelection', label: '整理所选' },
+                        { value: 'duplicate', label: '复制所选' },
+                        { value: 'setFinal', label: '设为最终条件' },
+                    ],
+                    currentValue: '',
+                    onSelect: (value) => runToolbarAction(value),
+                });
                 return;
             }
-            if (action === 'layout') {
-                autoLayoutNodeGraph(graph);
-                persistGraph({ syncWhen: true });
-                renderScene();
-            }
+            runToolbarAction(action);
         };
         const onWrapContextMenu = (event) => {
             event.preventDefault();
