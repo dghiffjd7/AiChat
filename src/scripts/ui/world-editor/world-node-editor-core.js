@@ -55,11 +55,14 @@ export function mountNodeEditorCoreImpl(context, { entry, block, markRefDirty } 
         let graph = this.ensureBlockNodeGraph(block);
         if (!graph) return;
         let activeDrag = null;
+        let pendingHeadPress = null;
         let activeLink = null;
         let activePan = null;
         let activeMarquee = null;
+        let pendingWrapPress = null;
         let previewPoint = null;
         let spacePressed = false;
+        let pendingDeselectTimer = null;
         let sceneWidth = NODE_CANVAS_MIN_WIDTH;
         let sceneHeight = NODE_CANVAS_MIN_HEIGHT;
         let zoom = clamp(Number(graph?.viewport?.zoom || 1), 0.55, 1.8);
@@ -72,6 +75,10 @@ export function mountNodeEditorCoreImpl(context, { entry, block, markRefDirty } 
         const AUTO_SCROLL_EDGE = 54;
         const AUTO_SCROLL_MAX_STEP = 20;
         const ALIGN_SNAP_THRESHOLD = 10;
+        const DRAG_START_THRESHOLD_MOUSE = 6;
+        const DRAG_START_THRESHOLD_TOUCH = 10;
+        const DESELECT_SCROLL_DELAY_MS = 180;
+        const WRAP_CLICK_THRESHOLD = 5;
         let activeGuides = { vertical: null, horizontal: null };
         let runtimeContextCache = null;
         let runtimePathStateCache = null;
@@ -84,6 +91,137 @@ export function mountNodeEditorCoreImpl(context, { entry, block, markRefDirty } 
             const id = String(nodeId || '').trim();
             if (!id) return null;
             return (graph.nodes || []).find(node => String(node.id || '') === id) || null;
+        };
+        const getDragStartThreshold = (event) => {
+            const pointerType = String(event?.pointerType || 'mouse').trim().toLowerCase();
+            return (pointerType === 'touch' || pointerType === 'pen')
+                ? DRAG_START_THRESHOLD_TOUCH
+                : DRAG_START_THRESHOLD_MOUSE;
+        };
+        const blurExternalFocusedInput = () => {
+            const activeEl = document.activeElement;
+            if (!(activeEl instanceof HTMLElement)) return;
+            if (activeEl === document.body) return;
+            if (nodeEditorEl.contains(activeEl)) return;
+            activeEl.blur();
+        };
+        const getScrollableAncestor = (targetEl) => {
+            let cursor = targetEl instanceof HTMLElement ? targetEl : nodeEditorEl;
+            while (cursor && cursor instanceof HTMLElement) {
+                const style = window.getComputedStyle(cursor);
+                const overflowY = String(style.overflowY || '').toLowerCase();
+                const canScroll = (overflowY === 'auto' || overflowY === 'scroll' || overflowY === 'overlay')
+                    && (cursor.scrollHeight - cursor.clientHeight > 2);
+                if (canScroll) return cursor;
+                cursor = cursor.parentElement;
+            }
+            return document.scrollingElement || document.documentElement;
+        };
+        const getContainerScrollTop = (container) => {
+            const isPage = container === document.scrollingElement
+                || container === document.documentElement
+                || container === document.body;
+            if (isPage) return window.scrollY || document.documentElement.scrollTop || document.body.scrollTop || 0;
+            return Number(container?.scrollTop || 0);
+        };
+        const scrollContainerTo = (container, top, behavior = 'auto') => {
+            const isPage = container === document.scrollingElement
+                || container === document.documentElement
+                || container === document.body;
+            if (isPage) {
+                window.scrollTo({ top, left: window.scrollX || 0, behavior });
+                return;
+            }
+            if (container && typeof container.scrollTo === 'function') {
+                container.scrollTo({ top, behavior });
+                return;
+            }
+            if (container) container.scrollTop = top;
+        };
+        const smoothScrollPageToElement = (targetEl, { topOffset = 72 } = {}) => {
+            if (!(targetEl instanceof HTMLElement)) return;
+            const container = getScrollableAncestor(targetEl);
+            const rect = targetEl.getBoundingClientRect();
+            const currentTop = getContainerScrollTop(container);
+            const isPage = container === document.scrollingElement
+                || container === document.documentElement
+                || container === document.body;
+            const containerTop = isPage ? 0 : container.getBoundingClientRect().top;
+            const maxTop = Math.max(0, (Number(container?.scrollHeight || 0) - Number(container?.clientHeight || 0)));
+            const nextTop = Math.max(0, Math.min(maxTop, Math.round(currentTop + (rect.top - containerTop) - topOffset)));
+            const delta = Math.abs(nextTop - currentTop);
+            if (delta < 2) return;
+            scrollContainerTo(container, nextTop, 'smooth');
+        };
+        const renderSceneWithoutPageJump = (anchorEl = nodeEditorEl) => {
+            const container = getScrollableAncestor(anchorEl);
+            const prevTop = getContainerScrollTop(container);
+            renderScene();
+            const nextTop = getContainerScrollTop(container);
+            if (Math.abs(nextTop - prevTop) >= 2) scrollContainerTo(container, prevTop, 'auto');
+        };
+        const resolveSelectionForNodeHead = (nodeId, { shiftKey = false, baseSelection = selectedNodeIds } = {}) => {
+            const id = String(nodeId || '').trim();
+            const nextSelection = new Set(baseSelection instanceof Set ? [...baseSelection] : []);
+            if (!id) return nextSelection;
+            if (shiftKey) {
+                if (nextSelection.has(id)) nextSelection.delete(id);
+                else nextSelection.add(id);
+                return nextSelection;
+            }
+            if (nextSelection.size === 1 && nextSelection.has(id)) return nextSelection;
+            nextSelection.clear();
+            nextSelection.add(id);
+            return nextSelection;
+        };
+        const applySelection = (nextSelection) => {
+            selectedNodeIds.clear();
+            (nextSelection instanceof Set ? nextSelection : new Set(nextSelection || [])).forEach((id) => {
+                if (getNodeById(id)) selectedNodeIds.add(id);
+            });
+        };
+        const clearPendingDeselectTimer = () => {
+            if (!pendingDeselectTimer) return;
+            clearTimeout(pendingDeselectTimer);
+            pendingDeselectTimer = null;
+        };
+        const scheduleCanvasDeselect = () => {
+            clearPendingDeselectTimer();
+            blurExternalFocusedInput();
+            if (!selectedNodeIds.size) {
+                hideContextMenu();
+                renderScene();
+                return;
+            }
+            smoothScrollPageToElement(nodeCanvasWrap, { topOffset: 84 });
+            pendingDeselectTimer = setTimeout(() => {
+                pendingDeselectTimer = null;
+                selectedNodeIds.clear();
+                hideContextMenu();
+                renderScene();
+            }, DESELECT_SCROLL_DELAY_MS);
+        };
+        const startDragFromSelection = ({
+            nodeIds = [],
+            startX = 0,
+            startY = 0,
+            scrollLeft = nodeCanvasWrap.scrollLeft,
+            scrollTop = nodeCanvasWrap.scrollTop,
+        } = {}) => {
+            const ids = (Array.isArray(nodeIds) ? nodeIds : [...new Set(nodeIds || [])])
+                .map(id => String(id || '').trim())
+                .filter(Boolean);
+            const nodes = ids.map(id => getNodeById(id)).filter(Boolean);
+            if (!nodes.length) return false;
+            activeDrag = {
+                startX,
+                startY,
+                scrollLeft,
+                scrollTop,
+                selection: nodes.map(item => item.id),
+                origins: new Map(nodes.map(item => [item.id, { x: Number(item.x || 0), y: Number(item.y || 0) }])),
+            };
+            return true;
         };
         const getIncomingEdges = (nodeId) => (graph.edges || []).filter(edge => edge.to === nodeId);
         const getOutgoingEdges = (nodeId) => (graph.edges || []).filter(edge => edge.from === nodeId);
@@ -1500,7 +1638,7 @@ export function mountNodeEditorCoreImpl(context, { entry, block, markRefDirty } 
             const rect = nodeInspectorEl.getBoundingClientRect();
             const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
             if (viewportHeight && rect.top >= 72 && rect.bottom <= viewportHeight - 12) return;
-            nodeInspectorEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            smoothScrollPageToElement(nodeInspectorEl, { topOffset: 84 });
         };
         const bindNodeInteractiveControls = () => {
             const queryAllControls = (selector) => [
@@ -1521,7 +1659,7 @@ export function mountNodeEditorCoreImpl(context, { entry, block, markRefDirty } 
                         selectedNodeIds.clear();
                         selectedNodeIds.add(nodeId);
                     }
-                    renderScene();
+                    renderSceneWithoutPageJump();
                     ensureInspectorVisible();
                 });
                 el.addEventListener('touchstart', (event) => event.stopPropagation(), { passive: true });
@@ -1986,6 +2124,9 @@ export function mountNodeEditorCoreImpl(context, { entry, block, markRefDirty } 
         };
 
         const onWrapPointerDown = (event) => {
+            clearPendingDeselectTimer();
+            blurExternalFocusedInput();
+            pendingWrapPress = null;
             if (event.target?.closest?.('.world-node-item, .world-node-context-menu')) return;
             hideContextMenu();
             if (event.button === 1 || (spacePressed && event.button === 0)) {
@@ -2002,10 +2143,18 @@ export function mountNodeEditorCoreImpl(context, { entry, block, markRefDirty } 
             const wrapRect = nodeCanvasWrap.getBoundingClientRect();
             const contentX = event.clientX - wrapRect.left + nodeCanvasWrap.scrollLeft;
             const contentY = event.clientY - wrapRect.top + nodeCanvasWrap.scrollTop;
-            activeMarquee = { startX: contentX, startY: contentY, endX: contentX, endY: contentY };
-            nodeMarqueeEl.style.display = 'block';
+            pendingWrapPress = {
+                pointerId: event.pointerId,
+                clientX: event.clientX,
+                clientY: event.clientY,
+                startX: contentX,
+                startY: contentY,
+            };
         };
         const onCanvasPointerDown = (event) => {
+            clearPendingDeselectTimer();
+            blurExternalFocusedInput();
+            pendingWrapPress = null;
             hideContextMenu();
             if (event.target?.closest?.('.world-node-body')) return;
             const edgeEl = event.target?.closest?.('.world-node-edge');
@@ -2066,23 +2215,19 @@ export function mountNodeEditorCoreImpl(context, { entry, block, markRefDirty } 
             const node = getNodeById(nodeId);
             if (!node || node.type === 'result') return;
             event.preventDefault();
-            if (event.shiftKey) {
-                if (selectedNodeIds.has(nodeId)) selectedNodeIds.delete(nodeId);
-                else selectedNodeIds.add(nodeId);
-            } else if (!selectedNodeIds.has(nodeId)) {
-                selectedNodeIds.clear();
-                selectedNodeIds.add(nodeId);
-            }
-            const nodes = [...selectedNodeIds].map(id => getNodeById(id)).filter(Boolean);
-            activeDrag = {
+            const nextSelection = resolveSelectionForNodeHead(nodeId, {
+                shiftKey: Boolean(event.shiftKey),
+                baseSelection: selectedNodeIds,
+            });
+            pendingHeadPress = {
+                pointerId: event.pointerId,
                 startX: event.clientX,
                 startY: event.clientY,
                 scrollLeft: nodeCanvasWrap.scrollLeft,
                 scrollTop: nodeCanvasWrap.scrollTop,
-                origins: new Map(nodes.map(item => [item.id, { x: Number(item.x || 0), y: Number(item.y || 0) }])),
+                threshold: getDragStartThreshold(event),
+                selection: [...nextSelection],
             };
-            renderScene();
-            ensureInspectorVisible();
         };
         const onDocPointerMove = (event) => {
             if (activePan) {
@@ -2090,6 +2235,38 @@ export function mountNodeEditorCoreImpl(context, { entry, block, markRefDirty } 
                 nodeCanvasWrap.scrollLeft = activePan.scrollLeft - (event.clientX - activePan.startX);
                 nodeCanvasWrap.scrollTop = activePan.scrollTop - (event.clientY - activePan.startY);
                 return;
+            }
+            if (pendingHeadPress && !activeDrag) {
+                if (typeof pendingHeadPress.pointerId === 'number' && event.pointerId !== pendingHeadPress.pointerId) return;
+                const dx = event.clientX - pendingHeadPress.startX;
+                const dy = event.clientY - pendingHeadPress.startY;
+                const distanceSq = (dx * dx) + (dy * dy);
+                const threshold = Number(pendingHeadPress.threshold || DRAG_START_THRESHOLD_MOUSE);
+                if (distanceSq >= (threshold * threshold)) {
+                    startDragFromSelection({
+                        nodeIds: pendingHeadPress.selection || [],
+                        startX: pendingHeadPress.startX,
+                        startY: pendingHeadPress.startY,
+                        scrollLeft: pendingHeadPress.scrollLeft,
+                        scrollTop: pendingHeadPress.scrollTop,
+                    });
+                    pendingHeadPress = null;
+                }
+            }
+            if (pendingWrapPress && !activeMarquee && !activeDrag && !activeLink) {
+                if (typeof pendingWrapPress.pointerId === 'number' && event.pointerId !== pendingWrapPress.pointerId) return;
+                const dx = event.clientX - pendingWrapPress.clientX;
+                const dy = event.clientY - pendingWrapPress.clientY;
+                const distanceSq = (dx * dx) + (dy * dy);
+                if (distanceSq >= (WRAP_CLICK_THRESHOLD * WRAP_CLICK_THRESHOLD)) {
+                    activeMarquee = {
+                        startX: pendingWrapPress.startX,
+                        startY: pendingWrapPress.startY,
+                        endX: pendingWrapPress.startX,
+                        endY: pendingWrapPress.startY,
+                    };
+                    nodeMarqueeEl.style.display = 'block';
+                }
             }
             if (activeDrag) {
                 if (event?.cancelable) event.preventDefault();
@@ -2136,14 +2313,38 @@ export function mountNodeEditorCoreImpl(context, { entry, block, markRefDirty } 
             }
         };
         const onDocPointerUp = (event) => {
+            if (pendingHeadPress) {
+                const samePointer = typeof pendingHeadPress.pointerId !== 'number' || event.pointerId === pendingHeadPress.pointerId;
+                if (samePointer && !activeDrag) {
+                    applySelection(new Set(pendingHeadPress.selection || []));
+                    pendingHeadPress = null;
+                    hideContextMenu();
+                    renderSceneWithoutPageJump();
+                    ensureInspectorVisible();
+                } else if (samePointer) {
+                    pendingHeadPress = null;
+                }
+            }
+            if (pendingWrapPress) {
+                const samePointer = typeof pendingWrapPress.pointerId !== 'number' || event.pointerId === pendingWrapPress.pointerId;
+                if (samePointer && !activeMarquee) {
+                    pendingWrapPress = null;
+                    scheduleCanvasDeselect();
+                } else if (samePointer) {
+                    pendingWrapPress = null;
+                }
+            }
             if (activePan) activePan = null;
             if (activeDrag) {
+                const dragSelection = Array.isArray(activeDrag.selection) ? [...activeDrag.selection] : [];
                 const movedNodes = [...activeDrag.origins.keys()].map(id => getNodeById(id)).filter(Boolean);
                 tidyNodes(movedNodes);
                 activeGuides = { vertical: null, horizontal: null };
                 activeDrag = null;
+                applySelection(new Set(dragSelection));
                 persistGraph({ syncWhen: true });
-                renderScene();
+                renderSceneWithoutPageJump();
+                ensureInspectorVisible();
             }
             if (activeLink) {
                 const hoverTarget = activeLink.hoverTarget;
@@ -2194,13 +2395,6 @@ export function mountNodeEditorCoreImpl(context, { entry, block, markRefDirty } 
                 activeMarquee = null;
                 nodeMarqueeEl.style.display = 'none';
                 activeGuides = { vertical: null, horizontal: null };
-                renderScene();
-            }
-        };
-        const onCanvasClick = (event) => {
-            if (!event.target?.closest?.('.world-node-item')) {
-                selectedNodeIds.clear();
-                hideContextMenu();
                 renderScene();
             }
         };
@@ -2436,14 +2630,15 @@ export function mountNodeEditorCoreImpl(context, { entry, block, markRefDirty } 
             if (event.code === 'Space') spacePressed = false;
         };
         const onDocPointerDown = (event) => {
+            clearPendingDeselectTimer();
             if (!nodeCanvasWrap.contains(event.target)) hideContextMenu();
+            if (!nodeCanvasWrap.contains(event.target)) pendingWrapPress = null;
         };
 
         nodeCanvasWrap.addEventListener('pointerdown', onWrapPointerDown);
         nodeCanvasWrap.addEventListener('contextmenu', onWrapContextMenu);
         nodeCanvasWrap.addEventListener('wheel', onWheel, { passive: false });
         nodeCanvasEl.addEventListener('pointerdown', onCanvasPointerDown);
-        nodeCanvasEl.addEventListener('click', onCanvasClick);
         nodeLinksEl.addEventListener('click', onLinksClick);
         nodeEditorEl.addEventListener('click', onToolbarClick);
         contextMenuEl.addEventListener('click', onContextMenuClick);
@@ -2474,7 +2669,6 @@ export function mountNodeEditorCoreImpl(context, { entry, block, markRefDirty } 
             nodeCanvasWrap.removeEventListener('contextmenu', onWrapContextMenu);
             nodeCanvasWrap.removeEventListener('wheel', onWheel);
             nodeCanvasEl.removeEventListener('pointerdown', onCanvasPointerDown);
-            nodeCanvasEl.removeEventListener('click', onCanvasClick);
             nodeLinksEl.removeEventListener('click', onLinksClick);
             nodeEditorEl.removeEventListener('click', onToolbarClick);
             contextMenuEl.removeEventListener('click', onContextMenuClick);
@@ -2487,6 +2681,7 @@ export function mountNodeEditorCoreImpl(context, { entry, block, markRefDirty } 
                 clearTimeout(focusPulseTimer);
                 focusPulseTimer = null;
             }
+            clearPendingDeselectTimer();
             focusPulseNodeIds.clear();
             hideContextMenu();
         };
