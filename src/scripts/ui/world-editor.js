@@ -2371,14 +2371,33 @@ export class WorldEditorModal {
 
     ensureEntryPromptBlocks(entry) {
         if (!entry || typeof entry !== 'object') return [];
-        if (!Array.isArray(entry.promptBlocks) || !entry.promptBlocks.length) {
+        if (!Array.isArray(entry.promptBlocks)) entry.promptBlocks = [];
+        if (!entry.promptBlocks.length) {
             entry.promptBlocks = [normalizePromptBlock({
                 content: String(entry.content || ''),
                 title: String(entry.comment || '内容 1'),
             }, 0, String(entry.content || ''))];
+            return entry.promptBlocks;
         }
-        entry.promptBlocks = entry.promptBlocks.map((block, idx) => normalizePromptBlock(block, idx, idx === 0 ? entry.content : ''));
-        return entry.promptBlocks;
+
+        // Preserve block object identity. Replacing block objects on every normalize
+        // can stale existing closures (e.g. node editor save handlers) and cause writes
+        // to land on detached block instances.
+        const blocks = entry.promptBlocks;
+        for (let idx = 0; idx < blocks.length; idx += 1) {
+            const raw = blocks[idx];
+            const normalized = normalizePromptBlock(raw, idx, idx === 0 ? entry.content : '');
+            if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+                Object.keys(raw).forEach((key) => {
+                    if (!Object.prototype.hasOwnProperty.call(normalized, key)) delete raw[key];
+                });
+                Object.assign(raw, normalized);
+                blocks[idx] = raw;
+            } else {
+                blocks[idx] = normalized;
+            }
+        }
+        return blocks;
     }
 
     getEntryBlockPage(entry, entryId = '') {
@@ -2676,6 +2695,104 @@ export class WorldEditorModal {
         return getEntryActivationExplanationImpl.call(this, entry, idx, {
             logger,
         });
+    }
+
+    hasConfiguredVariableInBlock(block) {
+        if (!block || typeof block !== 'object') return false;
+        const graphNodes = Array.isArray(block?.nodeGraph?.nodes) ? block.nodeGraph.nodes : [];
+        const hasGraphVariable = graphNodes.some((node) => {
+            if (normalizeNodeType(node?.type) !== 'variable') return false;
+            return Boolean(String(node?.data?.path || '').trim());
+        });
+        if (hasGraphVariable) return true;
+        const tree = normalizeConditionTree(block.when, createDefaultPromptClause());
+        let found = false;
+        visitConditionTree(tree, (node) => {
+            if (found || isConditionTreeGroup(node)) return;
+            const clause = normalizePromptClause(node);
+            const left = String(clause?.left || '').trim();
+            const rightType = String(clause?.rightType || '').trim().toLowerCase();
+            const right = String(clause?.right || '').trim();
+            if (left) {
+                found = true;
+                return;
+            }
+            if (rightType === 'variable' && right) {
+                found = true;
+            }
+        });
+        return found;
+    }
+
+    getEntryVariableStatus(entry, idx = this.currentIndex, { includeActivation = true, blocks = null } = {}) {
+        if (!entry || typeof entry !== 'object') {
+            return {
+                hasVariable: false,
+                isActive: false,
+            };
+        }
+        const resolvedBlocks = Array.isArray(blocks) && blocks.length
+            ? blocks
+            : (Array.isArray(entry.promptBlocks) && entry.promptBlocks.length
+                ? entry.promptBlocks
+                : this.ensureEntryPromptBlocks(entry));
+        const hasVariable = resolvedBlocks.some(block => this.hasConfiguredVariableInBlock(block));
+        if (!hasVariable) {
+            return {
+                hasVariable: false,
+                isActive: false,
+            };
+        }
+        if (!includeActivation || entry.disable) {
+            return {
+                hasVariable: true,
+                isActive: false,
+            };
+        }
+        const explanation = this.getEntryActivationExplanation(entry, idx);
+        return {
+            hasVariable: true,
+            isActive: Boolean(explanation?.active),
+        };
+    }
+
+    getBlockVariableStatus(entry, block, idx = this.currentIndex, { includeActivation = true } = {}) {
+        if (!entry || typeof entry !== 'object' || !block || typeof block !== 'object') {
+            return {
+                hasVariable: false,
+                isActive: false,
+            };
+        }
+        if (entry.disable || block.enabled === false) {
+            return {
+                hasVariable: false,
+                isActive: false,
+            };
+        }
+        const hasVariable = this.hasConfiguredVariableInBlock(block);
+        if (!hasVariable) {
+            return {
+                hasVariable: false,
+                isActive: false,
+            };
+        }
+        if (!includeActivation) {
+            return {
+                hasVariable: true,
+                isActive: false,
+            };
+        }
+        const primaryClause = this.ensureBlockPrimaryClause(block);
+        const graph = this.ensureBlockNodeGraph(block);
+        const compiledWhen = buildWhenFromNodeGraph(graph, primaryClause);
+        const tree = normalizeConditionTree(compiledWhen, primaryClause);
+        block.when = tree;
+        const runtimeContext = this.getConditionRuntimeContext();
+        const explanation = explainConditionTree(tree, runtimeContext);
+        return {
+            hasVariable: true,
+            isActive: Boolean(explanation?.result),
+        };
     }
 
     renderEntryActivationOverview(explanation) {
@@ -3288,10 +3405,15 @@ export class WorldEditorModal {
         const buildEntryItem = (entry, i) => {
             const entryId = this.getEntryId(entry, i);
             const isSelected = this.selectedEntries.has(entryId);
+            const variableStatus = this.getEntryVariableStatus(entry, i, {
+                includeActivation: i === this.currentIndex,
+            });
             const item = document.createElement('div');
             item.className = `world-entry-item ${i === this.currentIndex ? 'active' : ''}`;
             if (this.batchMode && isSelected) item.classList.add('is-selected');
             if (entry.disable) item.classList.add('is-disabled');
+            if (variableStatus.hasVariable) item.classList.add('has-variable-condition');
+            if (variableStatus.isActive) item.classList.add('is-variable-active');
 
             const lights = document.createElement('div');
             lights.className = 'world-entry-lights';
@@ -3299,6 +3421,12 @@ export class WorldEditorModal {
             const strategy = this.getEntryTriggerStrategy(entry);
             strategyLight.className = `world-entry-light ${entry.disable ? 'off' : strategy}`;
             lights.appendChild(strategyLight);
+            if (variableStatus.hasVariable) {
+                const variableLight = document.createElement('span');
+                variableLight.className = `world-entry-light variable is-configured${variableStatus.isActive ? ' is-active' : ''}`;
+                variableLight.setAttribute('title', variableStatus.isActive ? '变量条件生效中' : '已配置变量条件');
+                lights.appendChild(variableLight);
+            }
 
             const main = document.createElement('div');
             main.className = 'world-entry-main';
@@ -3487,6 +3615,9 @@ export class WorldEditorModal {
         const positionLabelText = this.getOptionLabel(POSITION_OPTIONS, entry.position, '↑Char（角色前）');
         const roleLabelText = this.getOptionLabel(ROLE_OPTIONS, entry.role, 'system');
         const selectiveLogicLabel = this.getOptionLabel(SELECTIVE_LOGIC_OPTIONS, entry.selectiveLogic, 'AND 任一（匹配任一关键词）');
+        const blockVariableStatus = this.getBlockVariableStatus(entry, activeBlock, this.currentIndex, {
+            includeActivation: true,
+        });
         const renderRevision = ++this.editorRenderRevision;
         if (aiBusy || this.isAiTraceWatchActive()) {
             this.traceAi('render.state', {
@@ -3504,7 +3635,13 @@ export class WorldEditorModal {
         }
         this.editorEl.innerHTML = `
             <div class="world-entry-form">
-                <div class="world-entry-card">
+                <div class="world-entry-card${blockVariableStatus.hasVariable ? ' has-variable-condition' : ''}${blockVariableStatus.isActive ? ' is-variable-active' : ''}">
+                    ${blockVariableStatus.hasVariable ? `
+                        <div class="world-entry-variable-state ${blockVariableStatus.isActive ? 'is-active' : 'is-configured'}">
+                            <span class="world-entry-variable-dot" aria-hidden="true"></span>
+                            <span>${blockVariableStatus.isActive ? '本卡变量条件：生效中' : '本卡变量条件：未生效'}</span>
+                        </div>
+                    ` : ''}
                     <label>标题 / Memo</label>
                     <input type="text" id="we-comment" value="${entry.comment || ''}" placeholder="条目标题（可选）">
 

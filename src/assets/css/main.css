@@ -472,6 +472,18 @@ body.chat-room-active .bottom-nav {
   background: #f8fafc;
 }
 
+.world-entry-item.has-variable-condition.active {
+  background: #f3f6fb;
+}
+
+.world-entry-item.is-variable-active {
+  background: #effaf3;
+}
+
+.world-entry-item.is-variable-active.active {
+  background: #e8f8ee;
+}
+
 .world-entry-item.is-selected {
   background: #eef2ff;
 }
@@ -515,6 +527,16 @@ body.chat-room-active .bottom-nav {
 .world-entry-light.off {
   background: #cbd5e1;
   border-color: #94a3b8;
+}
+
+.world-entry-light.variable {
+  background: transparent;
+  border-color: #94a3b8;
+}
+
+.world-entry-light.variable.is-active {
+  background: #22c55e;
+  border-color: #16a34a;
 }
 
 .world-entry-main {
@@ -761,6 +783,54 @@ body.chat-room-active .bottom-nav {
   border-radius: 12px;
   background: #ffffff;
   padding: 10px 12px;
+  transition: border-color 0.16s ease, background-color 0.16s ease, box-shadow 0.16s ease;
+}
+
+.world-entry-card.has-variable-condition {
+  border-color: #fca5a5;
+  background: linear-gradient(180deg, #ffffff 0%, #fff6f6 100%);
+  box-shadow: inset 2px 0 0 #ef4444;
+}
+
+.world-entry-card.is-variable-active {
+  border-color: #86efac;
+  background: linear-gradient(180deg, #ffffff 0%, #f6fdf8 100%);
+  box-shadow: inset 2px 0 0 #22c55e;
+}
+
+.world-entry-variable-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: #64748b;
+  margin-bottom: 4px;
+}
+
+.world-entry-variable-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 1px solid #94a3b8;
+  background: transparent;
+}
+
+.world-entry-variable-state.is-active {
+  color: #166534;
+}
+
+.world-entry-variable-state.is-active .world-entry-variable-dot {
+  border-color: #16a34a;
+  background: #22c55e;
+}
+
+.world-entry-variable-state.is-configured {
+  color: #b91c1c;
+}
+
+.world-entry-variable-state.is-configured .world-entry-variable-dot {
+  border-color: #ef4444;
+  background: #f87171;
 }
 
 .world-entry-card-title {
