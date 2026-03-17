@@ -58,6 +58,18 @@ import { RegexSessionPanel } from './regex-session-panel.js';
 import { SessionPanel } from './session-panel.js';
 import { StickerPicker } from './sticker-picker.js';
 import { VariablePanel } from './variable-panel.js';
+import {
+  buildVariableContext,
+  decodeJsonPointer,
+  deleteValueAtPath,
+  getValueAtPath,
+  normalizeVariablePathInput,
+  normalizeVariablePathParts,
+  resolveExistingVariablePath,
+  setValueAtPath,
+  stripKnownVariableRootPrefix,
+  toVariablePath,
+} from '../variables/variable-path-utils.js';
 import { VariableRuleEngine } from '../variables/variable-rule-engine.js';
 import { StageManager } from '../variables/stage-manager.js';
 import { StageTimeline } from './stage-timeline.js';
@@ -716,38 +728,6 @@ const initApp = async () => {
     }
   } catch {}
 
-  const buildNestedVars = (flat = {}) => {
-    const root = {};
-    const toPath = (val) => String(val || '')
-      .replace(/\[([^\]]+)\]/g, '.$1')
-      .split('.')
-      .map(seg => seg.trim().replace(/^['"]|['"]$/g, ''))
-      .filter(Boolean);
-    const isIndex = (seg) => /^\d+$/.test(seg);
-    const setByPath = (obj, path, value) => {
-      const parts = toPath(path);
-      if (!parts.length) return;
-      let cur = obj;
-      for (let i = 0; i < parts.length - 1; i += 1) {
-        const key = isIndex(parts[i]) ? Number(parts[i]) : parts[i];
-        const nextKey = parts[i + 1];
-        const shouldArray = isIndex(nextKey);
-        if (!cur[key] || typeof cur[key] !== 'object') {
-          cur[key] = shouldArray ? [] : {};
-        }
-        cur = cur[key];
-      }
-      const lastKey = isIndex(parts[parts.length - 1]) ? Number(parts[parts.length - 1]) : parts[parts.length - 1];
-      cur[lastKey] = value;
-    };
-    Object.entries(flat || {}).forEach(([key, value]) => {
-      const name = String(key || '').trim();
-      if (!name) return;
-      setByPath(root, name, value);
-    });
-    return root;
-  };
-
   const buildMvuVarsPayload = (sessionId, { useGlobal } = {}) => {
     const sid = String(sessionId || chatStore.getCurrent() || '').trim();
     if (!sid) return null;
@@ -755,15 +735,7 @@ const initApp = async () => {
     const globalVars = chatStore.listGlobalVariables?.() || {};
     const shared = typeof useGlobal === 'boolean' ? useGlobal : isSharedVariableSession(sid);
     const baseVars = shared ? globalVars : localVars;
-    const nestedBase = buildNestedVars(baseVars);
-    const nestedGlobal = buildNestedVars(globalVars);
-    return {
-      stat_data: nestedBase,
-      variables: nestedBase,
-      status_current_variables: nestedBase,
-      global_variables: nestedGlobal,
-      local_variables: localVars,
-    };
+    return buildVariableContext({ baseVars, globalVars, localVars }).variableContext;
   };
 
   const shouldEmitMvuEvent = (name) => Boolean(scriptRuntime?.hasListener?.(name));
@@ -813,23 +785,7 @@ const initApp = async () => {
     if (!keys.length) return false;
     const useGlobal = isSharedVariableSession(sid);
     const vars = useGlobal ? (chatStore.listGlobalVariables?.() || {}) : (chatStore.listVariables?.(sid) || {});
-    const toPath = (raw) => String(raw || '')
-      .replace(/\[([^\]]+)\]/g, '.$1')
-      .split('.')
-      .map(seg => seg.trim().replace(/^['"]|['"]$/g, ''))
-      .filter(Boolean);
-    const hasNestedValue = (key) => {
-      if (Object.prototype.hasOwnProperty.call(vars, key)) return true;
-      const parts = toPath(key);
-      if (parts.length < 2) return false;
-      let cur = vars[parts[0]];
-      for (let i = 1; i < parts.length; i += 1) {
-        const part = parts[i];
-        if (!cur || typeof cur !== 'object' || !(part in cur)) return false;
-        cur = cur[part];
-      }
-      return true;
-    };
+    const hasNestedValue = (key) => getValueAtPath(vars, key) !== undefined;
     const updates = {};
     keys.forEach((name) => {
       const key = String(name || '').trim();
@@ -10675,23 +10631,11 @@ Phase G（Frame 36）：循环衔接
         if (!leafIndex[leaf]) leafIndex[leaf] = [];
         leafIndex[leaf].push(name);
       });
-      const getByPath = (obj, path) => {
-        if (!obj || typeof obj !== 'object') return undefined;
-        if (Object.prototype.hasOwnProperty.call(obj, path)) return obj[path];
-        const parts = String(path || '').split('.').filter(Boolean);
-        if (parts.length < 2) return undefined;
-        let cur = obj;
-        for (const part of parts) {
-          if (!cur || typeof cur !== 'object' || !(part in cur)) return undefined;
-          cur = cur[part];
-        }
-        return cur;
-      };
       const out = {};
       schemaKeys.forEach((key) => {
         const name = String(key || '').trim();
         if (!name) return;
-        const hit = getByPath(data, name);
+        const hit = getValueAtPath(data, name);
         if (hit !== undefined) {
           out[name] = hit;
           if (log) log.mappedPath.push(name);
@@ -13605,81 +13549,8 @@ Phase G（Frame 36）：循环衔接
         }
         return unquoted;
       };
-      const normalizePath = (raw) => {
-        let text = String(raw || '').trim();
-        if (!text) return '';
-        const isQuoted =
-          (text.startsWith('"') && text.endsWith('"')) ||
-          (text.startsWith("'") && text.endsWith("'")) ||
-          (text.startsWith('`') && text.endsWith('`'));
-        if (
-          (text.startsWith('"') && text.endsWith('"')) ||
-          (text.startsWith("'") && text.endsWith("'")) ||
-          (text.startsWith('`') && text.endsWith('`'))
-        ) {
-          text = text.slice(1, -1);
-        }
-        if (text === 'stat_data' || text === 'status_current_variables') return '';
-        if (isQuoted && text.includes('.') && !text.includes('[') && !text.includes(']')) {
-          const escaped = text.replace(/"/g, '\\"');
-          return `["${escaped}"]`;
-        }
-        text = text.replace(/^(?:stat_data|status_current_variables)\./, '');
-        text = text.replace(/^(?:stat_data|status_current_variables)\[/, '[');
-        return text;
-      };
-      const toPath = (raw) => {
-        const text = String(raw || '').trim();
-        if (!text) return [];
-        const parts = [];
-        let buf = '';
-        let inBracket = false;
-        let quote = '';
-        for (let i = 0; i < text.length; i += 1) {
-          const ch = text[i];
-          if (inBracket) {
-            if (quote) {
-              if (ch === quote && text[i - 1] !== '\\') {
-                quote = '';
-              } else {
-                buf += ch;
-              }
-            } else if (ch === '"' || ch === "'" || ch === '`') {
-              quote = ch;
-            } else if (ch === ']') {
-              const seg = buf.trim();
-              if (seg) parts.push(seg);
-              buf = '';
-              inBracket = false;
-            } else {
-              buf += ch;
-            }
-          } else if (ch === '.') {
-            if (buf) parts.push(buf);
-            buf = '';
-          } else if (ch === '[') {
-            if (buf) parts.push(buf);
-            buf = '';
-            inBracket = true;
-          } else {
-            buf += ch;
-          }
-        }
-        if (buf) parts.push(buf);
-        return parts
-          .map(seg => seg.trim().replace(/^['"]|['"]$/g, ''))
-          .filter(Boolean)
-          .map(seg => (/^\d+$/.test(seg) ? Number(seg) : seg));
-      };
-      const decodeJsonPointer = (path) => {
-        const raw = String(path || '');
-        if (!raw) return [];
-        return raw
-          .replace(/^\/+/, '')
-          .split('/')
-          .map(seg => seg.replace(/~1/g, '/').replace(/~0/g, '~'))
-          .filter(Boolean);
-      };
+      const normalizePath = (raw) => normalizeVariablePathInput(raw);
+      const toPath = (raw) => toVariablePath(raw);
       const findMatchingParen = (text, startIndex) => {
         let depth = 1;
         let inQuote = false;
@@ -13745,23 +13616,15 @@ Phase G（Frame 36）：循环衔接
         if (trimmed) args.push(trimmed);
         return args;
       };
-      const stripKnownRootPrefix = (parts) => {
-        let next = Array.isArray(parts) ? [...parts] : [];
-        const known = new Set(['stat_data', 'status_current_variables', 'variables', 'variable', 'vars', '变量']);
-        while (next.length > 1 && known.has(String(next[0] || '').trim().toLowerCase())) {
-          next = next.slice(1);
-        }
-        return next;
-      };
+      const stripKnownRootPrefix = (parts) => stripKnownVariableRootPrefix(parts);
       const parseJsonPatchArray = (value, reason = 'json_patch') => {
         if (!Array.isArray(value)) return [];
         const commands = [];
         value.forEach((op) => {
           const action = String(op?.op || '').toLowerCase();
           let pathParts = decodeJsonPointer(op?.path || op?.to || '');
-          pathParts = pathParts.filter(Boolean);
           pathParts = stripKnownRootPrefix(pathParts);
-          const path = pathParts.map(seg => (/^\d+$/.test(seg) ? Number(seg) : seg));
+          const path = normalizeVariablePathParts(pathParts);
           if (!action || !path.length) return;
           if (action === 'replace') {
             commands.push({ type: 'set', path, value: op?.value, reason });
@@ -13787,9 +13650,8 @@ Phase G（Frame 36）：循环衔接
           }
           if (action === 'move') {
             let fromParts = decodeJsonPointer(op?.from || '');
-            fromParts = fromParts.filter(Boolean);
             fromParts = stripKnownRootPrefix(fromParts);
-            const from = fromParts.map(seg => (/^\d+$/.test(seg) ? Number(seg) : seg));
+            const from = normalizeVariablePathParts(fromParts);
             if (!from.length) return;
             commands.push({ type: 'move', from, to: path, reason });
           }
@@ -13915,100 +13777,10 @@ Phase G（Frame 36）：循环衔接
         }
         return false;
       };
-      const getAt = (obj, path) => {
-        let cur = obj;
-        for (const seg of path) {
-          if (cur === null || cur === undefined) return undefined;
-          cur = cur[seg];
-        }
-        return cur;
-      };
-      const hasAt = (obj, path) => {
-        let cur = obj;
-        for (let i = 0; i < path.length; i += 1) {
-          const seg = path[i];
-          if (cur === null || cur === undefined || typeof cur !== 'object') return false;
-          if (!(seg in cur)) return false;
-          cur = cur[seg];
-        }
-        return true;
-      };
-      const setAt = (obj, path, value, { create = false } = {}) => {
-        if (!path.length) return { root: value, ok: true };
-        let cur = obj;
-        for (let i = 0; i < path.length - 1; i += 1) {
-          const seg = path[i];
-          const next = path[i + 1];
-          if (cur[seg] === undefined || cur[seg] === null || typeof cur[seg] !== 'object') {
-            if (!create) return { root: obj, ok: false };
-            cur[seg] = typeof next === 'number' ? [] : {};
-          }
-          cur = cur[seg];
-        }
-        const last = path[path.length - 1];
-        cur[last] = value;
-        return { root: obj, ok: true };
-      };
-      const resolveExistingPath = (obj, path, { allowLeaf = false } = {}) => {
-        const base = Array.isArray(path) ? path : [];
-        if (!base.length) return [];
-        const dotKey = base.map(seg => String(seg)).join('.');
-        if (dotKey && hasAt(obj, [dotKey])) return [dotKey];
-        if (hasAt(obj, base)) return base;
-        for (let i = 1; i < base.length; i += 1) {
-          const suffix = base.slice(i);
-          if (!suffix.length) continue;
-          if (hasAt(obj, suffix)) return suffix;
-          const suffixDot = suffix.map(seg => String(seg)).join('.');
-          if (suffixDot && hasAt(obj, [suffixDot])) return [suffixDot];
-        }
-        // Flat-key fallback for MVU cards: when path prefix is wrong (e.g. 世界状态.存量 vs 玩家状态.存量),
-        // we only auto-map if there is exactly one unique candidate by leaf/tail.
-        if (obj && typeof obj === 'object') {
-          const flatKeys = Object.keys(obj).filter(k => typeof k === 'string' && k.trim().length > 0);
-          if (flatKeys.length) {
-            const leaf = String(base[base.length - 1] ?? '').trim();
-            if (leaf) {
-              const leafMatches = flatKeys.filter((k) => {
-                const parts = String(k).split('.');
-                return String(parts[parts.length - 1] || '').trim() === leaf;
-              });
-              if (leafMatches.length === 1 && hasAt(obj, [leafMatches[0]])) return [leafMatches[0]];
-            }
-            if (base.length > 1) {
-              const tailDot = base.slice(1).map(seg => String(seg)).join('.');
-              if (tailDot) {
-                const tailMatches = flatKeys.filter(k => k === tailDot || k.endsWith(`.${tailDot}`));
-                if (tailMatches.length === 1 && hasAt(obj, [tailMatches[0]])) return [tailMatches[0]];
-              }
-            }
-          }
-        }
-        if (allowLeaf) {
-          const leaf = String(base[base.length - 1] ?? '').trim();
-          if (leaf && hasAt(obj, [leaf])) return [leaf];
-        }
-        return null;
-      };
-      const deleteAt = (obj, path) => {
-        if (!path.length) return { root: obj, ok: false };
-        const parentPath = path.slice(0, -1);
-        const key = path[path.length - 1];
-        const parent = parentPath.length ? getAt(obj, parentPath) : obj;
-        if (!parent || typeof parent !== 'object') return { root: obj, ok: false };
-        if (Array.isArray(parent) && typeof key === 'number') {
-          if (key >= 0 && key < parent.length) {
-            parent.splice(key, 1);
-            return { root: obj, ok: true };
-          }
-          return { root: obj, ok: false };
-        }
-        if (key in parent) {
-          delete parent[key];
-          return { root: obj, ok: true };
-        }
-        return { root: obj, ok: false };
-      };
+      const getAt = (obj, path) => getValueAtPath(obj, path, { allowDirectKey: false });
+      const setAt = (obj, path, value, options = {}) => setValueAtPath(obj, path, value, options);
+      const resolveExistingPath = (obj, path, options = {}) => resolveExistingVariablePath(obj, path, options);
+      const deleteAt = (obj, path) => deleteValueAtPath(obj, path);
       const mergeObjects = (target, value) => {
         if (!isPlainObject(target) || !isPlainObject(value)) return false;
         Object.entries(value).forEach(([k, v]) => {

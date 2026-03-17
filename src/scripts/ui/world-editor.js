@@ -35,6 +35,7 @@ import {
     getPrimaryClauseFromConditionTree,
     visitConditionTree,
     buildVariableContext,
+    combineConditionLogicState,
     explainConditionTree,
     normalizeWorldPromptMode,
 } from '../variables/world-condition-core.js';
@@ -1540,19 +1541,37 @@ export class WorldEditorModal {
                 const leftNode = getNodeById(leftEdge?.from);
                 const rightNode = getNodeById(rightEdge?.from);
                 const compareData = normalizeGraphNodeData('compare', node?.data || {});
+                const op = String(compareData?.op || '>').trim();
+                const needsRight = !['is_empty', 'not_empty'].includes(op.toLowerCase());
+                const rightNodeType = normalizeNodeType(rightNode?.type);
+                const rightType = rightNode
+                    ? (rightNodeType === 'variable'
+                        ? 'variable'
+                        : normalizeRightTypeValue(rightNode?.data?.rightType || 'number'))
+                    : normalizeRightTypeValue(compareData?.fallbackRightType || 'number');
+                const rightPath = String(rightNode?.data?.path || '').trim();
+                const rightRawValue = String(rightNode?.data?.value ?? '');
+                const pendingReason = !String(leftNode?.data?.path || '').trim()
+                    ? 'missing_left'
+                    : !needsRight
+                        ? ''
+                        : !rightNode
+                            ? 'missing_right_input'
+                            : rightNodeType === 'variable'
+                                ? (rightPath ? '' : 'missing_right_variable')
+                                : (rightRawValue.trim() ? '' : 'missing_right_literal');
                 const clause = normalizePromptClause({
                     left: String(leftNode?.data?.path || '').trim(),
-                    op: String(compareData?.op || '>').trim(),
-                    rightType: rightNode
-                        ? (normalizeNodeType(rightNode?.type) === 'variable'
-                            ? 'variable'
-                            : normalizeRightTypeValue(rightNode?.data?.rightType || 'number'))
-                        : normalizeRightTypeValue(compareData?.fallbackRightType || 'number'),
-                    right: rightNode
-                        ? (normalizeNodeType(rightNode?.type) === 'variable'
-                            ? String(rightNode?.data?.path || '').trim()
-                            : parseTypedValue(rightNode?.data?.value, rightNode?.data?.rightType || 'number'))
-                        : parseTypedValue(compareData?.fallbackRight, compareData?.fallbackRightType || 'number'),
+                    op,
+                    rightType,
+                    right: !needsRight
+                        ? ''
+                        : !rightNode
+                            ? ''
+                            : rightNodeType === 'variable'
+                                ? rightPath
+                                : (rightRawValue.trim() ? parseTypedValue(rightRawValue, rightType) : ''),
+                    pendingReason,
                 });
                 const explanation = explainConditionTree(clause, runtimeContext);
                 const summary = {
@@ -1572,26 +1591,14 @@ export class WorldEditorModal {
                     .map((port) => {
                         const portName = String(port || '').trim();
                         const edge = getIncomingEdges(id).find(item => String(item?.toPort || '').trim() === portName) || null;
-                        if (!edge) return null;
                         return {
                             port: portName,
                             edge,
-                            child: summarizeNode(edge?.from, nextSeen),
+                            child: edge ? summarizeNode(edge?.from, nextSeen) : null,
                         };
-                    })
-                    .filter(Boolean);
-                const childResults = children
-                    .map(item => item?.child?.result)
-                    .filter(value => typeof value === 'boolean');
-                let result = null;
-                if (logic === 'not') {
-                    result = childResults.length ? !childResults[0] : null;
-                } else if (childResults.length) {
-                    result = logic === 'or'
-                        ? childResults.some(Boolean)
-                        : childResults.every(Boolean);
-                }
-                const summary = { nodeId: id, type, logic, children, result };
+                    });
+                const combined = combineConditionLogicState(logic, children.map(item => item?.child?.result));
+                const summary = { nodeId: id, type, logic, children, result: combined.result };
                 summaryCache.set(id, summary);
                 return summary;
             }
@@ -2920,6 +2927,7 @@ export class WorldEditorModal {
             getPrimaryClauseFromConditionTree,
             visitConditionTree,
             buildVariableContext,
+            combineConditionLogicState,
             explainConditionTree,
             BLOCK_OP_OPTIONS,
             BLOCK_RIGHT_TYPE_OPTIONS,

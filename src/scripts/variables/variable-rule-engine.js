@@ -1,4 +1,7 @@
 import { logger } from '../utils/logger.js';
+import { buildVariableContext } from './variable-path-utils.js';
+import { evaluateBooleanExpression } from './safe-expression-evaluator.js';
+import { buildRuleConditionDiagnostics } from './expression-compat-diagnostics.js';
 
 const genId = () => `vr_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`;
 
@@ -49,8 +52,8 @@ const buildKeywordMatcher = (keywords, caseSensitive) => {
 const evalCondition = (expr, vars) => {
   if (!expr) return false;
   try {
-    const fn = new Function('vars', `with (vars) { return (${expr}); }`);
-    return Boolean(fn(vars || {}));
+    const scope = { ...(vars || {}), vars: vars || {} };
+    return evaluateBooleanExpression(expr, scope, { fallback: false });
   } catch (err) {
     logger.warn('variable rule condition eval failed', err);
     return false;
@@ -63,11 +66,30 @@ export class VariableRuleEngine {
     this.appBridge = appBridge || null;
     this.turnCounts = new Map();
     this.running = new Set();
+    this.warnedInvalidConditions = new Set();
+  }
+
+  warnInvalidConditionRules(sessionId, rules = []) {
+    const sid = String(sessionId || '').trim();
+    const diagnosticsByRuleId = buildRuleConditionDiagnostics(rules);
+    Object.entries(diagnosticsByRuleId).forEach(([ruleId, diagnostic]) => {
+      const key = `${sid}:${ruleId}:${diagnostic.error}`;
+      if (this.warnedInvalidConditions.has(key)) return;
+      this.warnedInvalidConditions.add(key);
+      logger.warn('variable rule condition syntax unsupported', {
+        sessionId: sid,
+        ruleId,
+        error: diagnostic.error,
+        expr: diagnostic.expression,
+      });
+    });
   }
 
   getRules(sessionId) {
     const list = this.chatStore?.listVariableRules?.(sessionId) || [];
-    return list.map(normalizeRule);
+    const normalized = list.map(normalizeRule);
+    this.warnInvalidConditionRules(sessionId, normalized);
+    return normalized;
   }
 
   async handleBeforeSend({ sessionId, content, useGlobalVariables = false }) {
@@ -98,9 +120,14 @@ export class VariableRuleEngine {
     const ctx = context || {};
     const type = String(ctx.type || '').trim().toLowerCase();
     const useGlobal = ctx.useGlobalVariables === true;
-    const vars = useGlobal
-      ? (this.chatStore?.listGlobalVariables?.() || {})
-      : (this.chatStore?.listVariables?.(sid) || {});
+    const localVars = this.chatStore?.listVariables?.(sid) || {};
+    const globalVars = this.chatStore?.listGlobalVariables?.() || {};
+    const baseVars = useGlobal ? globalVars : localVars;
+    const vars = buildVariableContext({
+      baseVars,
+      globalVars,
+      localVars,
+    }).variableContext;
 
     const sorted = rules.slice().sort((a, b) => b.priority - a.priority);
     const eligible = sorted.filter(rule => {

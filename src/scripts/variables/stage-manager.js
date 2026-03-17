@@ -1,4 +1,7 @@
 import { logger } from '../utils/logger.js';
+import { buildVariableContext } from './variable-path-utils.js';
+import { evaluateBooleanExpression } from './safe-expression-evaluator.js';
+import { buildStageConditionDiagnostics } from './expression-compat-diagnostics.js';
 
 const normalizeStageId = (value, fallback = '') => {
   const id = String(value || '').trim();
@@ -48,8 +51,8 @@ const normalizeStageSchema = (raw) => {
 const evalCondition = (expr, vars) => {
   if (!expr) return true;
   try {
-    const fn = new Function('vars', `with (vars) { return (${expr}); }`);
-    return Boolean(fn(vars || {}));
+    const scope = { ...(vars || {}), vars: vars || {} };
+    return evaluateBooleanExpression(expr, scope, { fallback: true });
   } catch (err) {
     logger.warn('stage condition eval failed', err);
     return false;
@@ -62,7 +65,25 @@ export class StageManager {
     this.appBridge = appBridge || null;
     this.activeSessionId = '';
     this._bound = false;
+    this.warnedInvalidConditions = new Set();
     this.bindEvents();
+  }
+
+  warnInvalidStageConditions(sessionId, schema = null) {
+    const sid = String(sessionId || this.activeSessionId || '').trim();
+    const diagnosticsByStageId = buildStageConditionDiagnostics(schema);
+    Object.entries(diagnosticsByStageId).forEach(([stageId, diagnostic]) => {
+      const key = `${sid}:${stageId}:${diagnostic.error}`;
+      if (this.warnedInvalidConditions.has(key)) return;
+      this.warnedInvalidConditions.add(key);
+      logger.warn('stage condition syntax unsupported', {
+        sessionId: sid,
+        stageId,
+        error: diagnostic.error,
+        expr: diagnostic.expression,
+      });
+    });
+    return diagnosticsByStageId;
   }
 
   bindEvents() {
@@ -71,7 +92,13 @@ export class StageManager {
     window.addEventListener('chatapp-variable-changed', (ev) => {
       const sid = String(ev?.detail?.sessionId || '').trim();
       const scope = String(ev?.detail?.scope || '').trim();
-      if (!sid || scope === 'global') return;
+      if (scope === 'global') {
+        const targetSessionId = String(this.activeSessionId || sid || '').trim();
+        if (!targetSessionId) return;
+        this.evaluateStageTransition(targetSessionId);
+        return;
+      }
+      if (!sid) return;
       this.evaluateStageTransition(sid);
     });
     window.addEventListener('chatapp-stage-schema-changed', (ev) => {
@@ -93,7 +120,9 @@ export class StageManager {
     if (!sid || !this.chatStore?.getStageSchema) return null;
     const raw = this.chatStore.getStageSchema(sid);
     if (!raw) return null;
-    return normalizeStageSchema(raw);
+    const schema = normalizeStageSchema(raw);
+    this.warnInvalidStageConditions(sid, schema);
+    return schema;
   }
 
   defineStages(sessionId, schema) {
@@ -125,14 +154,25 @@ export class StageManager {
     const sid = String(sessionId || this.activeSessionId || '').trim();
     const currentId = String(this.chatStore?.getVariable?.(schema.currentStageVar, sid) || '').trim();
     const index = schema.stages.findIndex(s => s.id === currentId);
-    return { schema, currentId, index };
+    return {
+      schema,
+      currentId,
+      index,
+      diagnosticsByStageId: buildStageConditionDiagnostics(schema),
+    };
   }
 
   resolveStage(sessionId) {
     const schema = this.getStageSchema(sessionId);
     if (!schema) return null;
     const sid = String(sessionId || this.activeSessionId || '').trim();
-    const vars = this.chatStore?.listVariables?.(sid) || {};
+    const localVars = this.chatStore?.listVariables?.(sid) || {};
+    const globalVars = this.chatStore?.listGlobalVariables?.() || {};
+    const vars = buildVariableContext({
+      baseVars: localVars,
+      globalVars,
+      localVars,
+    }).variableContext;
     let candidate = null;
     schema.stages.forEach((stage) => {
       if (!stage) return;

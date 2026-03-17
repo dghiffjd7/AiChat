@@ -25,6 +25,7 @@ export function mountNodeEditorCoreImpl(context, { entry, block, markRefDirty } 
         getPrimaryClauseFromConditionTree,
         visitConditionTree,
         buildVariableContext,
+        combineConditionLogicState,
         explainConditionTree,
         BLOCK_OP_OPTIONS,
         BLOCK_RIGHT_TYPE_OPTIONS,
@@ -77,6 +78,9 @@ export function mountNodeEditorCoreImpl(context, { entry, block, markRefDirty } 
         const ALIGN_SNAP_THRESHOLD = 10;
         const DRAG_START_THRESHOLD_MOUSE = 6;
         const DRAG_START_THRESHOLD_TOUCH = 10;
+        const blockLiteralTypeOptions = Array.isArray(BLOCK_RIGHT_TYPE_OPTIONS)
+            ? BLOCK_RIGHT_TYPE_OPTIONS.filter((opt) => ['number', 'string', 'boolean'].includes(String(opt?.value || '').trim().toLowerCase()))
+            : [];
         const DESELECT_SCROLL_DELAY_MS = 180;
         const WRAP_CLICK_THRESHOLD = 5;
         let activeGuides = { vertical: null, horizontal: null };
@@ -260,7 +264,7 @@ export function mountNodeEditorCoreImpl(context, { entry, block, markRefDirty } 
             if (!fromPorts.includes(fromPort)) return '起点端口不是输出端口';
             if (!toPorts.includes(toPort)) return '目标端口不是输入端口';
             if (fromType === 'variable') {
-                if (toType !== 'compare' || toPort !== 'left') return '变量节点只能连到比较节点左侧';
+                if (toType !== 'compare' || !['left', 'right'].includes(toPort)) return '变量节点只能连到比较节点左右两侧';
                 return '';
             }
             if (fromType === 'value') {
@@ -545,7 +549,7 @@ export function mountNodeEditorCoreImpl(context, { entry, block, markRefDirty } 
                     tone = 'warn';
                 } else {
                     const fromType = normalizeNodeType(getNodeById(activeLink.fromNodeId)?.type);
-                    if (fromType === 'variable') text = '拖到比较节点左侧“变量”输入口。';
+                    if (fromType === 'variable') text = '拖到比较节点左侧“左值”口，或右侧“右值”口。';
                     else if (fromType === 'value') text = '拖到比较节点右侧“值”输入口。';
                     else text = '拖到逻辑节点输入口，或接入最终条件主链路。';
                 }
@@ -697,8 +701,8 @@ export function mountNodeEditorCoreImpl(context, { entry, block, markRefDirty } 
         const getPortLabel = (node, direction, port) => {
             const type = normalizeNodeType(node?.type);
             if (type === 'compare' && direction === 'input') {
-                if (port === 'left') return '变量';
-                if (port === 'right') return '值';
+                if (port === 'left') return '左值';
+                if (port === 'right') return '右值';
             }
             if (type === 'compare' && direction === 'output' && port === 'out') return '结果';
             if (type === 'variable' && direction === 'output' && port === 'out') return '变量';
@@ -959,24 +963,42 @@ export function mountNodeEditorCoreImpl(context, { entry, block, markRefDirty } 
                 const leftNode = getNodeById(leftEdge?.from);
                 const rightNode = getNodeById(rightEdge?.from);
                 const compareData = targetNode.data || {};
+                const op = String(compareData.op || '>').trim();
+                const needsRight = !['is_empty', 'not_empty'].includes(op.toLowerCase());
+                const rightNodeType = normalizeNodeType(rightNode?.type);
+                const rightType = rightNode
+                    ? (rightNodeType === 'variable' ? 'variable' : normalizeRightTypeValue(rightNode?.data?.rightType || 'number'))
+                    : normalizeRightTypeValue(compareData.fallbackRightType || 'number');
+                const rightPath = String(rightNode?.data?.path || '').trim();
+                const rightRawValue = String(rightNode?.data?.value ?? '');
+                const pendingReason = !String(leftNode?.data?.path || '').trim()
+                    ? 'missing_left'
+                    : !needsRight
+                        ? ''
+                        : !rightNode
+                            ? 'missing_right_input'
+                            : rightNodeType === 'variable'
+                                ? (rightPath ? '' : 'missing_right_variable')
+                                : (rightRawValue.trim() ? '' : 'missing_right_literal');
                 const clause = normalizePromptClause({
                     left: String(leftNode?.data?.path || '').trim(),
-                    op: String(compareData.op || '>').trim(),
-                    rightType: rightNode
-                        ? (normalizeNodeType(rightNode.type) === 'variable' ? 'variable' : normalizeRightTypeValue(rightNode?.data?.rightType || 'number'))
-                        : normalizeRightTypeValue(compareData.fallbackRightType || 'number'),
-                    right: rightNode
-                        ? (normalizeNodeType(rightNode.type) === 'variable'
-                            ? String(rightNode?.data?.path || '').trim()
-                            : parseTypedValue(rightNode?.data?.value, rightNode?.data?.rightType || 'number'))
-                        : parseTypedValue(compareData.fallbackRight, compareData.fallbackRightType || 'number'),
+                    op,
+                    rightType,
+                    right: !needsRight
+                        ? ''
+                        : !rightNode
+                            ? ''
+                            : rightNodeType === 'variable'
+                                ? rightPath
+                                : (rightRawValue.trim() ? parseTypedValue(rightRawValue, rightType) : ''),
+                    pendingReason,
                 });
                 const explanation = explainConditionTree(clause, runtimeContext);
                 const summary = {
                     nodeId: id,
                     type: targetType,
                     label: this.getOptionLabel(BLOCK_OP_OPTIONS, compareData.op, '大于 (>)'),
-                    result: Boolean(explanation?.result),
+                    result: typeof explanation?.result === 'boolean' ? explanation.result : null,
                     explanation,
                     clause,
                 };
@@ -991,23 +1013,13 @@ export function mountNodeEditorCoreImpl(context, { entry, block, markRefDirty } 
                     const child = incoming ? getNodeRuntimeSummary(incoming.from, nextSeen) : null;
                     return { port, child };
                 });
-                const childResults = children
-                    .map(item => item.child?.result)
-                    .filter(value => typeof value === 'boolean');
-                let result = null;
-                if (logicValue === 'not') {
-                    result = childResults.length ? !childResults[0] : null;
-                } else if (childResults.length) {
-                    result = logicValue === 'or'
-                        ? childResults.some(Boolean)
-                        : childResults.every(Boolean);
-                }
+                const combined = combineConditionLogicState(logicValue, children.map(item => item.child?.result));
                 const summary = {
                     nodeId: id,
                     type: targetType,
                     label: this.getOptionLabel(NODE_LOGIC_OPTIONS, logicValue, 'AND'),
                     logic: logicValue,
-                    result,
+                    result: combined.result,
                     children,
                 };
                 runtimeSummaryCache.set(id, summary);
@@ -1026,6 +1038,11 @@ export function mountNodeEditorCoreImpl(context, { entry, block, markRefDirty } 
             if (!hasLeft) return '左侧尚未连接变量节点。';
             if (needsRight && !hasRight) return '右侧尚未连接值节点或变量节点。';
             if (!explanation) return '当前会话缺少可用变量上下文，暂时无法评估。';
+            if (explanation?.pendingReason === 'missing_right_variable') return '右侧变量节点尚未选择变量。';
+            if (explanation?.pendingReason === 'missing_right_literal') return '右侧值节点尚未填写比较值。';
+            if (explanation?.pendingReason === 'missing_right_input') return '右侧尚未连接值节点或变量节点。';
+            if (explanation?.pendingReason === 'missing_input') return '当前比较链路仍缺少上游输入。';
+            if (typeof summary?.result !== 'boolean') return '当前比较节点仍有待完善输入，暂无法判断。';
             const leftValue = this.formatConditionRuntimeValue(explanation.leftValue, clause.rightType);
             if (op === 'is_empty') {
                 return summary.result === true
@@ -1049,8 +1066,8 @@ export function mountNodeEditorCoreImpl(context, { entry, block, markRefDirty } 
             const children = Array.isArray(summary.children) ? summary.children : [];
             const connected = children.filter(item => String(item?.child?.nodeId || '').trim());
             if (!connected.length) return '当前没有连接任何上游结果。';
-            const resolved = connected.filter(item => typeof item?.child?.result === 'boolean');
-            const pending = connected.filter(item => typeof item?.child?.result !== 'boolean');
+            const resolved = children.filter(item => typeof item?.child?.result === 'boolean');
+            const pending = children.filter(item => typeof item?.child?.result !== 'boolean');
             const formatPort = (port = '') => String(port || '').trim().toUpperCase();
             if (summary.logic === 'not') {
                 if (!resolved.length) return 'NOT 需要 1 路可判断输入，当前仍未准备好。';
@@ -1058,8 +1075,15 @@ export function mountNodeEditorCoreImpl(context, { entry, block, markRefDirty } 
                     ? `NOT 输入 ${formatPort(resolved[0]?.port)} 为未命中，因此当前命中。`
                     : `NOT 输入 ${formatPort(resolved[0]?.port)} 为命中，因此当前未命中。`;
             }
-            if (!resolved.length) return `当前 ${connected.length} 路输入都尚未产出可判断结果。`;
+            if (!resolved.length) return `当前 ${pending.length || children.length} 路输入都尚未产出可判断结果。`;
             if (summary.logic === 'and') {
+                if (pending.length && summary.result !== true) {
+                    const failedPorts = resolved.filter(item => item?.child?.result === false).map(item => formatPort(item.port));
+                    if (failedPorts.length) {
+                        return `AND 需要全部命中，未命中输入：${failedPorts.join('、')}（另有 ${pending.length} 路待判断）。`;
+                    }
+                    return `AND 仍有 ${pending.length} 路待判断，当前已成立 ${resolved.filter(item => item?.child?.result === true).length} 路。`;
+                }
                 if (summary.result === true) {
                     return `AND 需要全部命中，当前 ${resolved.length} 路均命中。`;
                 }
@@ -1069,6 +1093,13 @@ export function mountNodeEditorCoreImpl(context, { entry, block, markRefDirty } 
                     : `AND 尚未满足全部输入条件${pending.length ? `（${pending.length} 路待判断）` : ''}。`;
             }
             if (summary.logic === 'or') {
+                if (pending.length && summary.result !== true) {
+                    const hitPorts = resolved.filter(item => item?.child?.result === true).map(item => formatPort(item.port));
+                    if (hitPorts.length) {
+                        return `OR 已有命中输入：${hitPorts.join('、')}，但仍有 ${pending.length} 路待判断。`;
+                    }
+                    return `OR 需要至少一路命中，当前已判断 ${resolved.length} 路均未命中（另有 ${pending.length} 路待判断）。`;
+                }
                 if (summary.result === true) {
                     const hitPorts = resolved.filter(item => item?.child?.result === true).map(item => formatPort(item.port));
                     return `OR 需要至少一路命中，当前命中输入：${hitPorts.join('、')}。`;
@@ -1392,6 +1423,9 @@ export function mountNodeEditorCoreImpl(context, { entry, block, markRefDirty } 
                         <div class="world-node-inspector-label">比较值</div>
                         <input type="text" class="world-node-text-input" data-node-id="${node.id}" data-field="value" value="${escapeHtml(String(data.value || ''))}" placeholder="输入值">
                     </div>
+                    <div class="world-node-inspector-hint">
+                        值节点只编辑数字、文本、布尔字面值。若要与另一个变量比较，请把变量节点连接到比较节点右侧。
+                    </div>
                 `;
             } else if (type === 'compare') {
                 const opLabel = escapeHtml(this.getOptionLabel(BLOCK_OP_OPTIONS, data.op, '大于 (>)'));
@@ -1590,7 +1624,7 @@ export function mountNodeEditorCoreImpl(context, { entry, block, markRefDirty } 
                 options = NODE_LOGIC_OPTIONS;
                 current = String(node?.data?.logic || 'and');
             } else if (field === 'valueType') {
-                options = BLOCK_RIGHT_TYPE_OPTIONS;
+                options = blockLiteralTypeOptions;
                 current = String(node?.data?.rightType || 'number');
             } else if (field === 'varPath') {
                 current = String(node?.data?.path || '');

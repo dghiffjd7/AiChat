@@ -1,3 +1,20 @@
+const VARIABLE_BROWSER_EDITABLE_TYPES = new Set(['number', 'string', 'boolean']);
+const VARIABLE_BROWSER_DISPLAY_TYPES = new Set(['number', 'string', 'boolean', 'enum', 'array', 'object']);
+const WORLD_CONDITION_VARIABLE_HINT = '世界书条件当前只支持数字、文本、布尔；若要与另一个变量比较，请在节点模式把变量节点连到比较节点右侧。';
+const WORLD_CONDITION_COMPLEX_HINT = '复杂类型变量当前仅支持查看，不能直接用于世界书条件；请到变量面板编辑。';
+
+const normalizeVariableBrowserType = (rawType = '', value = undefined) => {
+    const typeText = String(rawType || '').trim().toLowerCase();
+    if (VARIABLE_BROWSER_DISPLAY_TYPES.has(typeText)) return typeText;
+    if (Array.isArray(value)) return 'array';
+    if (value && typeof value === 'object') return 'object';
+    if (typeof value === 'number') return 'number';
+    if (typeof value === 'boolean') return 'boolean';
+    return 'string';
+};
+
+const isVariableBrowserEditableType = (type = 'string') => VARIABLE_BROWSER_EDITABLE_TYPES.has(String(type || '').trim().toLowerCase());
+
 export function getSessionVariableRecordsImpl(options = {}) {
     const opts = typeof options === 'string' ? { searchTerm: options } : (options && typeof options === 'object' ? options : {});
     const searchTerm = String(opts.searchTerm || '');
@@ -19,20 +36,19 @@ export function getSessionVariableRecordsImpl(options = {}) {
         return recentIds.indexOf(item.name);
     };
     const isRecentRecord = (item) => getRecentIndex(item) >= 0;
-    const buildRecords = (sourceName, sourceVars = {}, includeInitial = false) => {
+    const buildRecords = (sourceName, sourceVars = {}, { schemasMap = {}, includeInitial = false, includeSchemaKeys = true } = {}) => {
         const keys = new Set([
             ...Object.keys(sourceVars || {}),
-            ...Object.keys(schemas || {}),
+            ...(includeSchemaKeys ? Object.keys(schemasMap || {}) : []),
             ...(includeInitial ? Object.keys(initialVars || {}) : []),
         ].map(key => String(key || '').trim()).filter(Boolean));
         return [...keys].map((key) => {
-            const schema = schemas[key] || null;
-            const fallbackType = typeof sourceVars[key];
-            const type = String(schema?.type || fallbackType || 'string').trim().toLowerCase();
+            const schema = schemasMap[key] || null;
+            const type = normalizeVariableBrowserType(schema?.type, sourceVars[key]);
             return {
                 id: `${sourceName}:${key}`,
                 name: key,
-                type: ['number', 'string', 'boolean', 'enum', 'array', 'object'].includes(type) ? type : 'string',
+                type,
                 source: sourceName,
                 currentValue: sourceVars[key],
                 defaultValue: schema?.default,
@@ -41,8 +57,8 @@ export function getSessionVariableRecordsImpl(options = {}) {
             };
         });
     };
-    const sessionRecords = buildRecords('session', localVars, true);
-    const globalRecords = buildRecords('global', globalVars, false);
+    const sessionRecords = buildRecords('session', localVars, { schemasMap: schemas, includeInitial: true, includeSchemaKeys: true });
+    const globalRecords = buildRecords('global', globalVars, { schemasMap: {}, includeInitial: false, includeSchemaKeys: false });
     let records = [];
     if (scope === 'global') records = globalRecords;
     else if (scope === 'session') records = sessionRecords;
@@ -69,10 +85,10 @@ export function getSessionVariableRecordsImpl(options = {}) {
     });
     return records.map((item) => {
         const schema = item.schema || null;
-        const type = String(item.type || schema?.type || 'string').trim().toLowerCase();
+        const type = normalizeVariableBrowserType(item.type || schema?.type || 'string', item.currentValue);
         return {
             ...item,
-            type: ['number', 'string', 'boolean', 'enum', 'array', 'object'].includes(type) ? type : 'string',
+            type,
         };
     });
 }
@@ -111,8 +127,8 @@ export function deleteVariableBrowserDraftImpl(deps = {}) {
     } else {
         chatStore.deleteVariable?.(draft.name, sid);
         chatStore.deleteInitialVariable?.(draft.name, sid);
+        chatStore.deleteVariableSchema?.(draft.name, sid);
     }
-    chatStore.deleteVariableSchema?.(draft.name, sid);
     const nextRecent = (Array.isArray(this.variableBrowserState?.recentIds) ? this.variableBrowserState.recentIds : [])
         .filter(entry => entry !== draft.id && entry !== draft.name);
     this.variableBrowserState.recentIds = nextRecent;
@@ -141,8 +157,9 @@ export function formatVariableBrowserValueImpl(value, type = 'string') {
 
 export function buildVariableBrowserDraftImpl(record = null) {
     const item = record && typeof record === 'object' ? record : {};
-    const typeRaw = String(item.type || item.schema?.type || 'string').trim().toLowerCase();
-    const type = ['number', 'string', 'boolean', 'enum', 'array', 'object'].includes(typeRaw) ? typeRaw : 'string';
+    const type = normalizeVariableBrowserType(item.type || item.schema?.type || 'string', item.currentValue);
+    const isEditableType = isVariableBrowserEditableType(type);
+    const isGlobal = item.source === 'global';
     return {
         id: String(item.id || `${item.source || 'session'}:${item.name || ''}`).trim(),
         name: String(item.name || '').trim(),
@@ -150,7 +167,12 @@ export function buildVariableBrowserDraftImpl(record = null) {
         currentValueText: this.formatVariableBrowserValue(item.currentValue, type),
         defaultValueText: this.formatVariableBrowserValue(item.defaultValue, type),
         initialValueText: this.formatVariableBrowserValue(item.initialValue, type),
-        source: item.source === 'global' ? 'global' : 'session',
+        source: isGlobal ? 'global' : 'session',
+        isEditableType,
+        canEditCurrentValue: isEditableType,
+        canEditSchema: !isGlobal && isEditableType,
+        canEditInitialValue: !isGlobal && isEditableType,
+        canUseInWorldEditor: isEditableType,
     };
 }
 
@@ -220,6 +242,9 @@ export function createVariableBrowserModalImpl(deps = {}) {
                         <input id="world-var-browser-initial" class="world-var-input" type="text" value="" placeholder="初始值">
                     </div>
                 </div>
+                <div id="world-var-browser-hint" style="font-size:12px; line-height:1.5; color:#64748b;">
+                    ${WORLD_CONDITION_VARIABLE_HINT}
+                </div>
                 <div class="world-var-browser-actions">
                     <button type="button" class="world-var-btn danger ghost" id="world-var-browser-delete">删除变量</button>
                     <button type="button" class="world-var-btn ghost" id="world-var-browser-save">保存更改</button>
@@ -240,7 +265,10 @@ export function createVariableBrowserModalImpl(deps = {}) {
     this.variableBrowserCurrentEl = this.variableBrowserModal.querySelector('#world-var-browser-current');
     this.variableBrowserDefaultEl = this.variableBrowserModal.querySelector('#world-var-browser-default');
     this.variableBrowserInitialEl = this.variableBrowserModal.querySelector('#world-var-browser-initial');
+    this.variableBrowserHintEl = this.variableBrowserModal.querySelector('#world-var-browser-hint');
     this.variableBrowserDeleteBtn = this.variableBrowserModal.querySelector('#world-var-browser-delete');
+    this.variableBrowserSaveBtn = this.variableBrowserModal.querySelector('#world-var-browser-save');
+    this.variableBrowserUseBtn = this.variableBrowserModal.querySelector('#world-var-browser-use');
 
     this.variableBrowserModal.querySelector('.world-var-browser-close')?.addEventListener('click', () => this.closeVariableBrowser(null));
     this.variableBrowserScopeEl?.querySelectorAll('.world-var-browser-scope-btn').forEach((btn) => {
@@ -258,8 +286,17 @@ export function createVariableBrowserModalImpl(deps = {}) {
             const targetSource = ['global', 'session'].includes(String(this.variableBrowserState.scope || '').trim())
                 ? String(this.variableBrowserState.scope).trim()
                 : null;
-            this.ensureVariableInStore(payload.name, payload.type, payload.defaultValue, { source: targetSource });
-            const nextSource = targetSource || this.getSessionVariableRecords({ scope: 'current' }).find(item => item.name === payload.name)?.source || 'session';
+            const bridge = window.appBridge;
+            const chatStore = bridge?.chatStore;
+            const sid = String(chatStore?.getCurrent?.() || bridge?.activeSessionId || '').trim();
+            const key = String(payload.name || '').trim();
+            if (!key || !chatStore || !sid) return;
+            if (targetSource === 'global') {
+                chatStore.setGlobalVariable?.(key, payload.defaultValue);
+            } else {
+                this.ensureVariableInStore(key, payload.type, payload.defaultValue, { source: targetSource });
+            }
+            const nextSource = targetSource || this.getSessionVariableRecords({ scope: 'current' }).find(item => item.name === key)?.source || 'session';
             this.variableBrowserState.selectedId = `${nextSource}:${String(payload.name || '').trim()}`;
             this.renderVariableBrowser();
         });
@@ -295,7 +332,11 @@ export function createVariableBrowserModalImpl(deps = {}) {
             window.toastr?.warning?.('请先选择一个变量');
             return;
         }
-        const confirmed = window.confirm(`删除变量「${draft.name}」？这会同时移除当前来源中的值与本会话的变量定义。`);
+        const confirmed = window.confirm(
+            draft.source === 'global'
+                ? `删除全局变量「${draft.name}」？这只会移除当前全局值。`
+                : `删除变量「${draft.name}」？这会同时移除当前会话值、初始值和本会话变量定义。`,
+        );
         if (!confirmed) return;
         this.deleteVariableBrowserDraft();
     });
@@ -306,7 +347,11 @@ export function createVariableBrowserModalImpl(deps = {}) {
             window.toastr?.warning?.('请先选择一个变量');
             return;
         }
-        const type = ['number', 'string', 'boolean'].includes(String(draft?.type || '').trim().toLowerCase())
+        if (!draft.canUseInWorldEditor) {
+            window.toastr?.warning?.('复杂类型变量当前仅支持查看，不能直接用于世界书条件。');
+            return;
+        }
+        const type = isVariableBrowserEditableType(draft?.type)
             ? String(draft.type).trim().toLowerCase()
             : 'string';
         this.rememberRecentVariable(draft);
@@ -328,27 +373,48 @@ export function renderVariableBrowserDetailImpl(deps = {}) {
     if (!draft || !draft.name) {
         if (this.variableBrowserNameEl) this.variableBrowserNameEl.textContent = '未选择变量';
         if (this.variableBrowserSourceEl) this.variableBrowserSourceEl.textContent = '';
-        if (this.variableBrowserCurrentEl) this.variableBrowserCurrentEl.value = '';
-        if (this.variableBrowserDefaultEl) this.variableBrowserDefaultEl.value = '';
-        if (this.variableBrowserInitialEl) this.variableBrowserInitialEl.value = '';
-        if (this.variableBrowserInitialEl) this.variableBrowserInitialEl.disabled = false;
-        if (this.variableBrowserDeleteBtn) this.variableBrowserDeleteBtn.disabled = true;
-        if (this.variableBrowserTypeBtn) {
-            const labelEl = this.variableBrowserTypeBtn.querySelector('span');
-            if (labelEl) labelEl.textContent = '字符串';
-        }
-        return;
+    if (this.variableBrowserCurrentEl) this.variableBrowserCurrentEl.value = '';
+    if (this.variableBrowserDefaultEl) this.variableBrowserDefaultEl.value = '';
+    if (this.variableBrowserInitialEl) this.variableBrowserInitialEl.value = '';
+    if (this.variableBrowserCurrentEl) this.variableBrowserCurrentEl.disabled = true;
+    if (this.variableBrowserDefaultEl) this.variableBrowserDefaultEl.disabled = true;
+    if (this.variableBrowserInitialEl) this.variableBrowserInitialEl.disabled = true;
+    if (this.variableBrowserDeleteBtn) this.variableBrowserDeleteBtn.disabled = true;
+    if (this.variableBrowserSaveBtn) this.variableBrowserSaveBtn.disabled = true;
+    if (this.variableBrowserUseBtn) this.variableBrowserUseBtn.disabled = true;
+    if (this.variableBrowserHintEl) this.variableBrowserHintEl.textContent = WORLD_CONDITION_VARIABLE_HINT;
+    if (this.variableBrowserTypeBtn) {
+        const labelEl = this.variableBrowserTypeBtn.querySelector('span');
+        if (labelEl) labelEl.textContent = '字符串';
+        this.variableBrowserTypeBtn.disabled = true;
     }
+    return;
+}
     if (this.variableBrowserNameEl) this.variableBrowserNameEl.textContent = draft.name;
-    if (this.variableBrowserSourceEl) this.variableBrowserSourceEl.textContent = draft.source === 'global' ? '当前来源：全局变量' : '当前来源：会话变量';
+    if (this.variableBrowserSourceEl) {
+        let sourceText = draft.source === 'global' ? '当前来源：全局变量' : '当前来源：会话变量';
+        if (!draft.isEditableType) sourceText += '（复杂类型当前只读，请到变量面板编辑）';
+        else if (draft.source === 'global') sourceText += '（这里只修改当前值，不维护默认值/初始值）';
+        this.variableBrowserSourceEl.textContent = sourceText;
+    }
     if (this.variableBrowserCurrentEl) this.variableBrowserCurrentEl.value = draft.currentValueText;
     if (this.variableBrowserDefaultEl) this.variableBrowserDefaultEl.value = draft.defaultValueText;
     if (this.variableBrowserInitialEl) this.variableBrowserInitialEl.value = draft.initialValueText;
-    if (this.variableBrowserInitialEl) this.variableBrowserInitialEl.disabled = draft.source === 'global';
+    if (this.variableBrowserCurrentEl) this.variableBrowserCurrentEl.disabled = !draft.canEditCurrentValue;
+    if (this.variableBrowserDefaultEl) this.variableBrowserDefaultEl.disabled = !draft.canEditSchema;
+    if (this.variableBrowserInitialEl) this.variableBrowserInitialEl.disabled = !draft.canEditInitialValue;
     if (this.variableBrowserDeleteBtn) this.variableBrowserDeleteBtn.disabled = false;
+    if (this.variableBrowserSaveBtn) this.variableBrowserSaveBtn.disabled = !(draft.canEditCurrentValue || draft.canEditSchema || draft.canEditInitialValue);
+    if (this.variableBrowserUseBtn) this.variableBrowserUseBtn.disabled = !draft.canUseInWorldEditor;
     if (this.variableBrowserTypeBtn) {
         const labelEl = this.variableBrowserTypeBtn.querySelector('span');
         if (labelEl) labelEl.textContent = this.getOptionLabel(BLOCK_RIGHT_TYPE_OPTIONS, draft.type, '字符串');
+        this.variableBrowserTypeBtn.disabled = !draft.canEditSchema;
+    }
+    if (this.variableBrowserHintEl) {
+        this.variableBrowserHintEl.textContent = draft.isEditableType
+            ? WORLD_CONDITION_VARIABLE_HINT
+            : WORLD_CONDITION_COMPLEX_HINT;
     }
 }
 
@@ -402,6 +468,10 @@ export function saveVariableBrowserDraftImpl(deps = {}) {
     const chatStore = bridge?.chatStore;
     const sid = String(chatStore?.getCurrent?.() || bridge?.activeSessionId || '').trim();
     if (!chatStore || !sid) return false;
+    if (!isVariableBrowserEditableType(draft.type)) {
+        window.toastr?.warning?.('复杂类型变量当前仅支持查看，请到变量面板中编辑。');
+        return false;
+    }
     draft.currentValueText = String(this.variableBrowserCurrentEl?.value || '');
     draft.defaultValueText = String(this.variableBrowserDefaultEl?.value || '');
     draft.initialValueText = String(this.variableBrowserInitialEl?.value || '');
@@ -411,10 +481,10 @@ export function saveVariableBrowserDraftImpl(deps = {}) {
     const defaultValue = parseTypedValue(draft.defaultValueText, type);
     const currentValue = parseTypedValue(draft.currentValueText, type);
     const initialValue = parseTypedValue(draft.initialValueText, type);
-    chatStore.setVariableSchema?.(draft.name, { type, default: defaultValue }, sid);
     if (draft.source === 'global') {
         chatStore.setGlobalVariable?.(draft.name, currentValue);
     } else {
+        chatStore.setVariableSchema?.(draft.name, { type, default: defaultValue }, sid);
         chatStore.setVariable?.(draft.name, currentValue, sid);
         chatStore.setInitialVariable?.(draft.name, initialValue, sid);
     }

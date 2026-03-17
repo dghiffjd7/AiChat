@@ -1,5 +1,10 @@
 import { appConfirm } from './app-confirm.js';
 import { applyTemplate, listVariableTemplates } from '../variables/variable-templates.js';
+import {
+    buildRuleConditionDiagnostics,
+    formatUnsupportedExpressionMessage,
+} from '../variables/expression-compat-diagnostics.js';
+import { validateExpressionSyntax } from '../variables/safe-expression-evaluator.js';
 
 const TREE_LIMITS = {
     maxDepth: 8,
@@ -578,8 +583,9 @@ export class VariablePanel {
                 </div>
 
                 <div id="rule-trigger-expr-wrap" style="display:none;">
-                    <label style="font-size:12px; color:#64748b;">条件表达式（vars 可用）</label>
+                    <label style="font-size:12px; color:#64748b;">条件表达式（安全子集：变量、括号、逻辑/比较/四则运算）</label>
                     <textarea id="rule-trigger-expr" rows="2" style="padding:8px 10px; border:1px solid #e2e8f0; border-radius:10px;"></textarea>
+                    <div id="rule-trigger-expr-status" style="display:none; font-size:12px; line-height:1.4; margin-top:6px;"></div>
                 </div>
 
                 <label style="font-size:12px; color:#64748b;">动作类型</label>
@@ -670,6 +676,7 @@ export class VariablePanel {
             triggerCase: q('#rule-trigger-case'),
             triggerExprWrap: q('#rule-trigger-expr-wrap'),
             triggerExpr: q('#rule-trigger-expr'),
+            triggerExprStatus: q('#rule-trigger-expr-status'),
             actionType: q('#rule-action-type'),
             actionTarget: q('#rule-action-target'),
             actionValueWrap: q('#rule-action-value-wrap'),
@@ -700,6 +707,7 @@ export class VariablePanel {
             if (fields.triggerNWrap) fields.triggerNWrap.style.display = type === 'every_n_turns' ? 'block' : 'none';
             if (fields.triggerKeywordsWrap) fields.triggerKeywordsWrap.style.display = type === 'keyword' ? 'block' : 'none';
             if (fields.triggerExprWrap) fields.triggerExprWrap.style.display = type === 'condition' ? 'block' : 'none';
+            this.updateRuleTriggerExprFeedback();
         };
         const updateActionUI = () => {
             const type = String(fields.actionType?.value || '');
@@ -722,6 +730,8 @@ export class VariablePanel {
             if (fields.actionInjectWrap) fields.actionInjectWrap.style.display = type === 'inject_prompt' ? 'block' : 'none';
         };
         fields.triggerType?.addEventListener('change', updateTriggerUI);
+        fields.triggerExpr?.addEventListener('input', () => this.updateRuleTriggerExprFeedback());
+        fields.triggerExpr?.addEventListener('blur', () => this.updateRuleTriggerExprFeedback());
         fields.actionType?.addEventListener('change', updateActionUI);
         fields.close?.addEventListener('click', () => this.hideRuleEditor());
         fields.cancel?.addEventListener('click', () => this.hideRuleEditor());
@@ -925,12 +935,59 @@ export class VariablePanel {
 
         fields.triggerType?.dispatchEvent(new Event('change'));
         fields.actionType?.dispatchEvent(new Event('change'));
+        this.updateRuleTriggerExprFeedback();
         if (this.ruleEditorOverlay) this.ruleEditorOverlay.style.display = 'block';
     }
 
     hideRuleEditor() {
         if (this.ruleEditorOverlay) this.ruleEditorOverlay.style.display = 'none';
         this.editingRuleId = '';
+    }
+
+    validateRuleTriggerExpr(rawInput = null) {
+        const expr = rawInput === null
+            ? String(this.ruleFields?.triggerExpr?.value || '').trim()
+            : String(rawInput || '').trim();
+        if (!expr) return { ok: false, error: '条件表达式不能为空' };
+        const result = validateExpressionSyntax(expr);
+        if (result.ok) return { ok: true, error: '' };
+        return {
+            ok: false,
+            error: result.error || '表达式语法无效',
+        };
+    }
+
+    updateRuleTriggerExprFeedback() {
+        const fields = this.ruleFields;
+        if (!fields?.triggerExpr || !fields?.triggerExprStatus) return { ok: true, error: '' };
+        const isCondition = String(fields.triggerType?.value || '') === 'condition';
+        if (!isCondition) {
+            fields.triggerExpr.style.borderColor = '#e2e8f0';
+            fields.triggerExprStatus.style.display = 'none';
+            fields.triggerExprStatus.textContent = '';
+            return { ok: true, error: '' };
+        }
+        const expr = String(fields.triggerExpr.value || '').trim();
+        if (!expr) {
+            fields.triggerExpr.style.borderColor = '#f59e0b';
+            fields.triggerExprStatus.style.display = 'block';
+            fields.triggerExprStatus.style.color = '#b45309';
+            fields.triggerExprStatus.textContent = '请输入条件表达式';
+            return { ok: false, error: '条件表达式不能为空' };
+        }
+        const result = this.validateRuleTriggerExpr(expr);
+        if (result.ok) {
+            fields.triggerExpr.style.borderColor = '#10b981';
+            fields.triggerExprStatus.style.display = 'block';
+            fields.triggerExprStatus.style.color = '#047857';
+            fields.triggerExprStatus.textContent = '语法通过';
+            return result;
+        }
+        fields.triggerExpr.style.borderColor = '#ef4444';
+        fields.triggerExprStatus.style.display = 'block';
+        fields.triggerExprStatus.style.color = '#b91c1c';
+        fields.triggerExprStatus.textContent = formatUnsupportedExpressionMessage(result.error);
+        return result;
     }
 
     saveRuleEditor() {
@@ -958,7 +1015,14 @@ export class VariablePanel {
             trigger.caseSensitive = Boolean(fields.triggerCase?.checked);
         }
         if (triggerType === 'condition') {
-            trigger.expr = String(fields.triggerExpr?.value || '').trim();
+            const expr = String(fields.triggerExpr?.value || '').trim();
+            const validation = this.validateRuleTriggerExpr(expr);
+            this.updateRuleTriggerExprFeedback();
+            if (!validation.ok) {
+                window.toastr?.warning?.('当前不支持这类条件语法，请按下方提示改写');
+                return;
+            }
+            trigger.expr = expr;
         }
         const actionType = String(fields.actionType?.value || 'set_value');
         const action = { type: actionType };
@@ -1516,6 +1580,7 @@ export class VariablePanel {
         if (!this.ruleList) return;
         const { rules } = this.getRules();
         const list = rules.map(r => this.normalizeRule(r));
+        const diagnosticsByRuleId = buildRuleConditionDiagnostics(list);
         this.ruleList.innerHTML = '';
         if (!list.length) {
             const empty = document.createElement('div');
@@ -1541,6 +1606,13 @@ export class VariablePanel {
             const name = document.createElement('div');
             name.textContent = rule.name || rule.id;
             name.style.cssText = 'font-weight:700; color:#0f172a; font-size:13px;';
+            const diagnostic = diagnosticsByRuleId[rule.id] || null;
+            const warning = diagnostic ? document.createElement('span') : null;
+            if (warning) {
+                warning.textContent = '条件需改写';
+                warning.title = diagnostic.error || '';
+                warning.style.cssText = 'font-size:11px; color:#b45309; background:#fef3c7; border:1px solid #fcd34d; border-radius:999px; padding:2px 7px;';
+            }
             const toggle = document.createElement('label');
             toggle.style.cssText = 'margin-left:auto; font-size:12px; color:#64748b;';
             toggle.innerHTML = `<input type="checkbox" ${rule.enabled ? 'checked' : ''} style="margin-right:6px;">启用`;
@@ -1556,11 +1628,19 @@ export class VariablePanel {
                 this.renderRuleList();
             });
             title.appendChild(name);
+            if (warning) title.appendChild(warning);
             title.appendChild(toggle);
 
             const summary = document.createElement('div');
             summary.style.cssText = 'font-size:12px; color:#475569;';
             summary.textContent = `${this.describeRuleTrigger(rule)} → ${this.describeRuleAction(rule)}`;
+            if (diagnostic) summary.title = formatUnsupportedExpressionMessage(diagnostic, { prefix: '当前不支持这条条件语法' });
+
+            const warningText = diagnostic ? document.createElement('div') : null;
+            if (warningText) {
+                warningText.style.cssText = 'font-size:12px; color:#b45309;';
+                warningText.textContent = formatUnsupportedExpressionMessage(diagnostic, { prefix: '这条规则的条件需要改写' });
+            }
 
             const actions = document.createElement('div');
             actions.style.cssText = 'display:flex; gap:8px; flex-wrap:wrap;';
@@ -1585,6 +1665,7 @@ export class VariablePanel {
 
             row.appendChild(title);
             row.appendChild(summary);
+            if (warningText) row.appendChild(warningText);
             row.appendChild(actions);
             this.ruleList.appendChild(row);
         });

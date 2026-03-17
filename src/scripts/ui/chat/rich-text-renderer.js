@@ -8,11 +8,51 @@ import { logger } from '../../utils/logger.js';
 import { emitDebugLog } from '../../utils/debug-log.js';
 import { appSettings } from '../../storage/app-settings.js';
 import { buildVariableStatusSnapshot } from '../variable-status-card.js';
+import { buildVariableContext } from '../../variables/variable-path-utils.js';
+import {
+    buildMvuCompatWindowContext,
+    cloneMvuCompatValue,
+    deleteMvuCompatScopedVariable,
+    deleteMvuCompatValueAtPath,
+    flattenMvuCompatVariables,
+    getMvuCompatScopeRootKey,
+    getMvuCompatScopedVariables,
+    isMvuCompatContainer,
+    mergeMvuCompatScopedVariables,
+    mergeMvuCompatValues,
+    normalizeMvuCompatVars,
+    normalizeMvuCompatOptionType,
+    normalizeMvuCompatPath,
+    pickMvuCompatSeedVars,
+    replaceMvuCompatScopedVariables,
+    setMvuCompatScopedVariables,
+} from './iframe-variable-compat.js';
 
 const iframeDebugState = new Map();
 const directLoadCache = new Map();
 const DIRECT_LOAD_CACHE_TTL = 5 * 60 * 1000;
 const DIRECT_LOAD_CACHE_LIMIT = 6;
+const MVU_IFRAME_VARIABLE_COMPAT_SOURCE = `
+${cloneMvuCompatValue.toString()}
+${isMvuCompatContainer.toString()}
+${normalizeMvuCompatVars.toString()}
+${normalizeMvuCompatOptionType.toString()}
+${getMvuCompatScopeRootKey.toString()}
+${getMvuCompatScopedVariables.toString()}
+${normalizeMvuCompatPath.toString()}
+${mergeMvuCompatValues.toString()}
+${deleteMvuCompatValueAtPath.toString()}
+${setMvuCompatScopedVariables.toString()}
+${replaceMvuCompatScopedVariables.toString()}
+${mergeMvuCompatScopedVariables.toString()}
+${deleteMvuCompatScopedVariable.toString()}
+${buildMvuCompatWindowContext.toString()}
+const normalizeVars = (input) => normalizeMvuCompatVars(input);
+const getScopedVars = (input, option) => getMvuCompatScopedVariables(input, option);
+const replaceScopedVars = (input, next, option) => replaceMvuCompatScopedVariables(input, next, option);
+const mergeScopedVars = (input, patch, option) => mergeMvuCompatScopedVariables(input, patch, option);
+const deleteScopedVar = (input, path, option) => deleteMvuCompatScopedVariable(input, path, option);
+`;
 const readDirectLoadCache = (url) => {
     const key = String(url || '').trim();
     if (!key) return null;
@@ -266,38 +306,6 @@ const isLiveIframe = (iframe, iframeId = '') => {
     return false;
 };
 
-const buildNestedVars = (flat = {}) => {
-    const root = {};
-    const toPath = (val) => String(val || '')
-        .replace(/\[([^\]]+)\]/g, '.$1')
-        .split('.')
-        .map(seg => seg.trim().replace(/^['"]|['"]$/g, ''))
-        .filter(Boolean);
-    const isIndex = (seg) => /^\d+$/.test(seg);
-    const setByPath = (obj, path, value) => {
-        const parts = toPath(path);
-        if (!parts.length) return;
-        let cur = obj;
-        for (let i = 0; i < parts.length - 1; i += 1) {
-            const key = isIndex(parts[i]) ? Number(parts[i]) : parts[i];
-            const nextKey = parts[i + 1];
-            const shouldArray = isIndex(nextKey);
-            if (!cur[key] || typeof cur[key] !== 'object') {
-                cur[key] = shouldArray ? [] : {};
-            }
-            cur = cur[key];
-        }
-        const lastKey = isIndex(parts[parts.length - 1]) ? Number(parts[parts.length - 1]) : parts[parts.length - 1];
-        cur[lastKey] = value;
-    };
-    Object.entries(flat || {}).forEach(([key, value]) => {
-        const name = String(key || '').trim();
-        if (!name) return;
-        setByPath(root, name, value);
-    });
-    return root;
-};
-
 const getIframeHostUrl = () => {
     try {
         return new URL('iframe-host.html', window.location.href).toString();
@@ -315,7 +323,7 @@ const stripScriptsForPreview = (html) => String(html ?? '').replace(/<script[\s\
 const shouldEnableMvuCompat = (html) => {
     const raw = String(html || '');
     if (!raw) return false;
-    return /getAllVariables\s*\(|getVariables\s*\(|getCurrentMessageId\s*\(|getChatMessages\s*\(|getChatMessage\s*\(|setChatMessage\s*\(|setChatMessages\s*\(|getContext\s*\(|waitGlobalInitialized\s*\(|\bMvu\b|StatusPlaceHolderImpl|mag_variable_|\$\(\s*['"]body['"]\s*\)\s*\.load\s*\(/i.test(raw);
+    return /getAllVariables\s*\(|getVariables\s*\(|getCurrentMessageId\s*\(|getChatMessages\s*\(|getChatMessage\s*\(|setChatMessage\s*\(|setChatMessages\s*\(|replaceVariables\s*\(|insertOrAssignVariables\s*\(|deleteVariable\s*\(|getContext\s*\(|waitGlobalInitialized\s*\(|\bMvu\b|StatusPlaceHolderImpl|mag_variable_|\$\(\s*['"]body['"]\s*\)\s*\.load\s*\(/i.test(raw);
 };
 const shouldInjectFrameworkShim = (html, { directLoad = false } = {}) => {
     const raw = String(html || '');
@@ -336,7 +344,7 @@ const analyzeCompatProfile = (html, { directLoad = false } = {}) => {
         vue: /\bVue\b|createApp\s*\(|from\s+['"]vue['"]/i.test(raw),
         vueRouter: /\bVueRouter\b|createRouter\s*\(|from\s+['"]vue-router['"]/i.test(raw),
         pinia: /\bPinia\b|createPinia\s*\(|from\s+['"]pinia['"]/i.test(raw),
-        stGlobals: /\bSillyTavern\b|\bTavernHelper\b|\btoastr\b|\bYAML\b|registerMvuSchema\s*\(|registerVariableSchema\s*\(|mag_variable_|setChatMessage\s*\(|setChatMessages\s*\(|getCurrentMessageId\s*\(|getChatMessages\s*\(|getChatMessage\s*\(|getContext\s*\(/i.test(raw),
+        stGlobals: /\bSillyTavern\b|\bTavernHelper\b|\btoastr\b|\bYAML\b|registerMvuSchema\s*\(|registerVariableSchema\s*\(|mag_variable_|setChatMessage\s*\(|setChatMessages\s*\(|replaceVariables\s*\(|insertOrAssignVariables\s*\(|deleteVariable\s*\(|getCurrentMessageId\s*\(|getChatMessages\s*\(|getChatMessage\s*\(|getContext\s*\(/i.test(raw),
         stApi: /getRequestHeaders\s*\(|\/api\/backends\//i.test(raw),
         externalScript: /<script[^>]+src\s*=\s*["']https?:\/\//i.test(raw),
         externalEsmImport: /\bimport\s+[^;]*['"]https?:\/\//i.test(raw),
@@ -456,20 +464,7 @@ const buildMvuCompatBridge = ({ iframeId, sessionId, debugTag, messageId, messag
     const set = listeners.get(event);
     if (set) set.delete(cb);
   };
-  const normalizeVars = (input) => {
-    const vars = input && typeof input === 'object' ? input : {};
-    const stat = (vars.stat_data && typeof vars.stat_data === 'object')
-      ? vars.stat_data
-      : (vars.variables && typeof vars.variables === 'object' ? vars.variables : {});
-    const globalVars = (vars.global_variables && typeof vars.global_variables === 'object') ? vars.global_variables : {};
-    return {
-      ...vars,
-      stat_data: stat,
-      variables: stat,
-      status_current_variables: stat,
-      global_variables: globalVars,
-    };
-  };
+  ${MVU_IFRAME_VARIABLE_COMPAT_SOURCE}
   const state = { vars: normalizeVars(CHATAPP_SEED_VARS || {}) };
   const cloneVars = (input) => {
     try { return structuredClone(input); } catch {}
@@ -714,8 +709,15 @@ const buildMvuCompatBridge = ({ iframeId, sessionId, debugTag, messageId, messag
     : {};
   const defaultErrorCatched = (fn) => safeErrorCatched(fn);
   const normalizeErrorCatched = (next) => (typeof next === 'function' ? next : defaultErrorCatched);
+  const applyCompatVarsResult = (result, fallbackVars, option = {}) => {
+    const vars = (result?.vars && typeof result.vars === 'object')
+      ? normalizeVars(result.vars)
+      : normalizeVars(fallbackVars || state.vars || {});
+    setVars(vars);
+    return getScopedVars(vars, option);
+  };
   compatApi.getAllVariables = () => state.vars;
-  compatApi.getVariables = () => state.vars;
+  compatApi.getVariables = (option = { type: 'message' }) => getScopedVars(state.vars, option);
   compatApi.getCurrentMessageId = () => resolveCompatCurrentMessageId();
   compatApi.getChatMessages = (...args) => {
     const all = exportCompatEntries()
@@ -850,36 +852,52 @@ const buildMvuCompatBridge = ({ iframeId, sessionId, debugTag, messageId, messag
     }
     return true;
   };
-  compatApi.insertOrAssignVariables = async (patch, options = {}) => {
-    const next = normalizeVars(cloneVars(state.vars) || {});
-    const payload = patch && typeof patch === 'object' ? patch : {};
-    const type = String(options?.type || '').toLowerCase();
-    if (type === 'message') {
-      const stat = (next.stat_data && typeof next.stat_data === 'object') ? next.stat_data : {};
-      Object.entries(payload).forEach(([k, v]) => { stat[k] = v; });
-      next.stat_data = stat;
-      next.variables = stat;
-      next.status_current_variables = stat;
-    } else {
-      Object.entries(payload).forEach(([k, v]) => { next[k] = v; });
+  compatApi.replaceVariables = async (nextScoped, options = {}) => {
+    const safeOptions = options && typeof options === 'object' ? { ...options } : {};
+    const payload = nextScoped && typeof nextScoped === 'object' ? cloneVars(nextScoped) : {};
+    const fallback = replaceScopedVars(state.vars, payload, safeOptions);
+    const result = await postHostRequest('chatapp:replace-variables', {
+      variables: payload,
+      options: safeOptions,
+    });
+    if (!result?.ok) {
+      postCompatLog('warn', 'replace-variables failed reason=' + String(result?.reason || 'unknown'));
+      return false;
     }
-    setVars(next);
-    return true;
+    return applyCompatVarsResult(result, fallback, safeOptions);
+  };
+  compatApi.insertOrAssignVariables = async (patch, options = {}) => {
+    const safeOptions = options && typeof options === 'object' ? { ...options } : {};
+    const payload = patch && typeof patch === 'object' ? cloneVars(patch) : {};
+    const fallback = mergeScopedVars(state.vars, payload, safeOptions);
+    const result = await postHostRequest('chatapp:merge-variables', {
+      patch: payload,
+      options: safeOptions,
+    });
+    if (!result?.ok) {
+      postCompatLog('warn', 'merge-variables failed reason=' + String(result?.reason || 'unknown'));
+      return false;
+    }
+    return applyCompatVarsResult(result, fallback, safeOptions);
   };
   compatApi.deleteVariable = async (key, options = {}) => {
     const rawKey = String(key || '').trim();
     if (!rawKey) return false;
-    const next = normalizeVars(cloneVars(state.vars) || {});
-    const type = String(options?.type || '').toLowerCase();
-    if (type === 'message') {
-      if (next.stat_data && typeof next.stat_data === 'object') {
-        try { delete next.stat_data[rawKey]; } catch {}
-      }
-    } else {
-      try { delete next[rawKey]; } catch {}
+    const safeOptions = options && typeof options === 'object' ? { ...options } : {};
+    const fallback = deleteScopedVar(state.vars, rawKey, safeOptions);
+    const result = await postHostRequest('chatapp:delete-variable', {
+      key: rawKey,
+      options: safeOptions,
+    });
+    if (!result?.ok) {
+      postCompatLog('warn', 'delete-variable failed reason=' + String(result?.reason || 'unknown'));
+      return false;
     }
-    setVars(next);
-    return true;
+    const variables = applyCompatVarsResult(result, fallback, safeOptions);
+    return {
+      variables,
+      delete_occurred: result?.deleted !== false,
+    };
   };
   compatApi.eventOn = (event, cb) => eventOn(event, cb);
   compatApi.eventRemoveListener = (event, cb) => eventRemoveListener(event, cb);
@@ -925,31 +943,22 @@ const buildMvuCompatBridge = ({ iframeId, sessionId, debugTag, messageId, messag
     });
   } catch {}
   window.getAllVariables = () => compatApi.getAllVariables();
-  window.getVariables = () => (typeof compatApi.getVariables === 'function' ? compatApi.getVariables() : compatApi.getAllVariables());
+  window.getVariables = (...args) => (typeof compatApi.getVariables === 'function' ? compatApi.getVariables(...args) : compatApi.getAllVariables());
   window.getCurrentMessageId = () => (typeof compatApi.getCurrentMessageId === 'function' ? compatApi.getCurrentMessageId() : resolveCompatCurrentMessageId());
   window.getChatMessages = (...args) => compatApi.getChatMessages(...args);
   window.getChatMessage = (...args) => compatApi.getChatMessage(...args);
   window.getContext = () => {
-    const vars = (typeof compatApi.getVariables === 'function' ? compatApi.getVariables() : compatApi.getAllVariables()) || {};
-    const stat = (vars && typeof vars === 'object' && vars.stat_data && typeof vars.stat_data === 'object')
-      ? vars.stat_data
-      : ((vars && typeof vars === 'object' && vars.variables && typeof vars.variables === 'object') ? vars.variables : {});
-    const globalVars = (vars && typeof vars === 'object' && vars.global_variables && typeof vars.global_variables === 'object')
-      ? vars.global_variables
-      : {};
+    const vars = (typeof compatApi.getAllVariables === 'function' ? compatApi.getAllVariables() : state.vars) || {};
     const chat = (typeof compatApi.getChatMessages === 'function' ? compatApi.getChatMessages() : []) || [];
-    return {
+    return buildMvuCompatWindowContext({
+      vars,
       chat,
-      messages: chat,
       currentMessageId: (typeof compatApi.getCurrentMessageId === 'function' ? compatApi.getCurrentMessageId() : resolveCompatCurrentMessageId()),
-      variables: stat,
-      stat_data: stat,
-      status_current_variables: stat,
-      global_variables: globalVars,
-    };
+    });
   };
   window.setChatMessage = (...args) => compatApi.setChatMessage(...args);
   window.setChatMessages = (...args) => compatApi.setChatMessages(...args);
+  window.replaceVariables = (...args) => compatApi.replaceVariables(...args);
   window.insertOrAssignVariables = (...args) => compatApi.insertOrAssignVariables(...args);
   window.deleteVariable = (...args) => compatApi.deleteVariable(...args);
   window.eventOn = (event, cb) => compatApi.eventOn(event, cb);
@@ -967,26 +976,10 @@ const buildMvuCompatBridge = ({ iframeId, sessionId, debugTag, messageId, messag
     helper.getContext = (...args) => window.getContext(...args);
     helper.setChatMessage = (...args) => window.setChatMessage(...args);
     helper.setChatMessages = (...args) => window.setChatMessages(...args);
+    helper.replaceVariables = (...args) => window.replaceVariables(...args);
     helper.insertOrAssignVariables = (...args) => window.insertOrAssignVariables(...args);
     helper.deleteVariable = (...args) => window.deleteVariable(...args);
     helper.waitGlobalInitialized = (name) => window.waitGlobalInitialized(name);
-    helper.replaceVariables = async (next, options = {}) => {
-      const type = String(options?.type || '').toLowerCase();
-      const payload = (next && typeof next === 'object') ? next : {};
-      if (type === 'message') {
-        const normalized = normalizeVars(cloneVars(state.vars) || {});
-        const stat = (payload.stat_data && typeof payload.stat_data === 'object')
-          ? payload.stat_data
-          : payload;
-        normalized.stat_data = stat;
-        normalized.variables = stat;
-        normalized.status_current_variables = stat;
-        setVars(normalized);
-        return true;
-      }
-      setVars(normalizeVars(payload));
-      return true;
-    };
     if (typeof helper.getTavernHelperVersion !== 'function') {
       helper.getTavernHelperVersion = async () => '4.0.99-chatapp';
     }
@@ -1045,6 +1038,7 @@ const buildMvuCompatBridge = ({ iframeId, sessionId, debugTag, messageId, messag
     exposeAlias('getContext', window.getContext);
     exposeAlias('setChatMessage', window.setChatMessage);
     exposeAlias('setChatMessages', window.setChatMessages);
+    exposeAlias('replaceVariables', window.replaceVariables);
     exposeAlias('insertOrAssignVariables', window.insertOrAssignVariables);
     exposeAlias('deleteVariable', window.deleteVariable);
     exposeAlias('eventOn', window.eventOn);
@@ -1055,7 +1049,7 @@ const buildMvuCompatBridge = ({ iframeId, sessionId, debugTag, messageId, messag
     exposeAlias('__chatappCompat', window.__chatappCompat);
     exposeAlias('Mvu', window.Mvu);
     exposeAlias('_', window._);
-    try { window.eval('var $ = window.$; var jQuery = window.jQuery || window.$; var getVariables = window.getVariables; var getCurrentMessageId = window.getCurrentMessageId; var getChatMessages = window.getChatMessages; var getChatMessage = window.getChatMessage; var getContext = window.getContext; var setChatMessage = window.setChatMessage; var setChatMessages = window.setChatMessages; var insertOrAssignVariables = window.insertOrAssignVariables; var deleteVariable = window.deleteVariable; var TavernHelper = window.TavernHelper; var SillyTavern = window.SillyTavern;'); } catch {}
+    try { window.eval('var $ = window.$; var jQuery = window.jQuery || window.$; var getVariables = window.getVariables; var getCurrentMessageId = window.getCurrentMessageId; var getChatMessages = window.getChatMessages; var getChatMessage = window.getChatMessage; var getContext = window.getContext; var setChatMessage = window.setChatMessage; var setChatMessages = window.setChatMessages; var replaceVariables = window.replaceVariables; var insertOrAssignVariables = window.insertOrAssignVariables; var deleteVariable = window.deleteVariable; var TavernHelper = window.TavernHelper; var SillyTavern = window.SillyTavern;'); } catch {}
     postCompatLog('info', 'mvu-alias-ready');
   };
 
@@ -1521,7 +1515,13 @@ const buildMvuCompatBridge = ({ iframeId, sessionId, debugTag, messageId, messag
   window.addEventListener('message', (e) => {
     const data = e?.data;
     if (!data || typeof data !== 'object') return;
-    if (data.type === 'chatapp:set-chat-message-result' || data.type === 'chatapp:set-chat-messages-result') {
+    if (
+      data.type === 'chatapp:set-chat-message-result' ||
+      data.type === 'chatapp:set-chat-messages-result' ||
+      data.type === 'chatapp:replace-variables-result' ||
+      data.type === 'chatapp:merge-variables-result' ||
+      data.type === 'chatapp:delete-variable-result'
+    ) {
       if (data.id && CHATAPP_IFRAME_ID && String(data.id) !== CHATAPP_IFRAME_ID) return;
       const requestId = String(data.requestId || '').trim();
       if (!requestId) return;
@@ -1615,20 +1615,7 @@ const buildMvuCompatBridgeLegacy = ({ iframeId, sessionId, messageId, messageInd
     const set = listeners.get(event);
     if (set) set.delete(cb);
   };
-  const normalizeVars = (input) => {
-    const vars = input && typeof input === 'object' ? input : {};
-    const stat = (vars.stat_data && typeof vars.stat_data === 'object')
-      ? vars.stat_data
-      : (vars.variables && typeof vars.variables === 'object' ? vars.variables : {});
-    const globalVars = (vars.global_variables && typeof vars.global_variables === 'object') ? vars.global_variables : {};
-    return {
-      ...vars,
-      stat_data: stat,
-      variables: stat,
-      status_current_variables: stat,
-      global_variables: globalVars,
-    };
-  };
+  ${MVU_IFRAME_VARIABLE_COMPAT_SOURCE}
   const state = { vars: normalizeVars(CHATAPP_SEED_VARS || {}) };
   const cloneVars = (input) => {
     try { return structuredClone(input); } catch {}
@@ -1784,7 +1771,14 @@ const buildMvuCompatBridgeLegacy = ({ iframeId, sessionId, messageId, messageInd
   };
 
   window.getAllVariables = window.getAllVariables || (() => state.vars);
-  window.getVariables = window.getVariables || (() => state.vars);
+  window.getVariables = window.getVariables || ((option = { type: 'message' }) => getScopedVars(state.vars, option));
+  const applyCompatVarsResult = (result, fallbackVars, option = {}) => {
+    const vars = (result?.vars && typeof result.vars === 'object')
+      ? normalizeVars(result.vars)
+      : normalizeVars(fallbackVars || state.vars || {});
+    setVars(vars);
+    return getScopedVars(vars, option);
+  };
   const resolveCompatCurrentMessageId = () =>
     Number.isInteger(chatState.currentIndex) ? chatState.currentIndex : getCurrentCompatRef();
   const getCompatChatMessages = (...args) => {
@@ -1817,23 +1811,13 @@ const buildMvuCompatBridgeLegacy = ({ iframeId, sessionId, messageId, messageInd
   if (typeof window.getChatMessage !== 'function') window.getChatMessage = (...args) => getCompatChatMessage(...args);
   if (typeof window.getContext !== 'function') {
     window.getContext = () => {
-      const vars = (typeof window.getVariables === 'function' ? window.getVariables() : state.vars) || {};
-      const stat = (vars && typeof vars === 'object' && vars.stat_data && typeof vars.stat_data === 'object')
-        ? vars.stat_data
-        : ((vars && typeof vars === 'object' && vars.variables && typeof vars.variables === 'object') ? vars.variables : {});
-      const globalVars = (vars && typeof vars === 'object' && vars.global_variables && typeof vars.global_variables === 'object')
-        ? vars.global_variables
-        : {};
+      const vars = (typeof window.getAllVariables === 'function' ? window.getAllVariables() : state.vars) || {};
       const chat = getCompatChatMessages();
-      return {
+      return buildMvuCompatWindowContext({
+        vars,
         chat,
-        messages: chat,
         currentMessageId: resolveCompatCurrentMessageId(),
-        variables: stat,
-        stat_data: stat,
-        status_current_variables: stat,
-        global_variables: globalVars,
-      };
+      });
     };
   }
   if (typeof window.setChatMessage !== 'function') {
@@ -1868,39 +1852,48 @@ const buildMvuCompatBridgeLegacy = ({ iframeId, sessionId, messageId, messageInd
       return Boolean(result?.ok);
     };
   }
+  if (typeof window.replaceVariables !== 'function') {
+    window.replaceVariables = async (nextScoped, options = {}) => {
+      const safeOptions = options && typeof options === 'object' ? { ...options } : {};
+      const payload = nextScoped && typeof nextScoped === 'object' ? cloneVars(nextScoped) : {};
+      const fallback = replaceScopedVars(state.vars, payload, safeOptions);
+      const result = await postHostRequest('chatapp:replace-variables', {
+        variables: payload,
+        options: safeOptions,
+      });
+      if (!result?.ok) return false;
+      return applyCompatVarsResult(result, fallback, safeOptions);
+    };
+  }
   if (typeof window.insertOrAssignVariables !== 'function') {
     window.insertOrAssignVariables = async (patch, options = {}) => {
-      const next = normalizeVars(cloneVars(state.vars) || {});
-      const payload = patch && typeof patch === 'object' ? patch : {};
-      const type = String(options?.type || '').toLowerCase();
-      if (type === 'message') {
-        const stat = (next.stat_data && typeof next.stat_data === 'object') ? next.stat_data : {};
-        Object.entries(payload).forEach(([k, v]) => { stat[k] = v; });
-        next.stat_data = stat;
-        next.variables = stat;
-        next.status_current_variables = stat;
-      } else {
-        Object.entries(payload).forEach(([k, v]) => { next[k] = v; });
-      }
-      setVars(next);
-      return true;
+      const safeOptions = options && typeof options === 'object' ? { ...options } : {};
+      const payload = patch && typeof patch === 'object' ? cloneVars(patch) : {};
+      const fallback = mergeScopedVars(state.vars, payload, safeOptions);
+      const result = await postHostRequest('chatapp:merge-variables', {
+        patch: payload,
+        options: safeOptions,
+      });
+      if (!result?.ok) return false;
+      return applyCompatVarsResult(result, fallback, safeOptions);
     };
   }
   if (typeof window.deleteVariable !== 'function') {
     window.deleteVariable = async (key, options = {}) => {
       const rawKey = String(key || '').trim();
       if (!rawKey) return false;
-      const next = normalizeVars(cloneVars(state.vars) || {});
-      const type = String(options?.type || '').toLowerCase();
-      if (type === 'message') {
-        if (next.stat_data && typeof next.stat_data === 'object') {
-          try { delete next.stat_data[rawKey]; } catch {}
-        }
-      } else {
-        try { delete next[rawKey]; } catch {}
-      }
-      setVars(next);
-      return true;
+      const safeOptions = options && typeof options === 'object' ? { ...options } : {};
+      const fallback = deleteScopedVar(state.vars, rawKey, safeOptions);
+      const result = await postHostRequest('chatapp:delete-variable', {
+        key: rawKey,
+        options: safeOptions,
+      });
+      if (!result?.ok) return false;
+      const variables = applyCompatVarsResult(result, fallback, safeOptions);
+      return {
+        variables,
+        delete_occurred: result?.deleted !== false,
+      };
     };
   }
   if (typeof window.eventOn !== 'function') window.eventOn = eventOn;
@@ -1931,7 +1924,7 @@ const buildMvuCompatBridgeLegacy = ({ iframeId, sessionId, messageId, messageInd
     };
   }
   try {
-    window.eval('var errorCatched = window.errorCatched; var getAllVariables = window.getAllVariables; var getVariables = window.getVariables; var getCurrentMessageId = window.getCurrentMessageId; var getChatMessages = window.getChatMessages; var getChatMessage = window.getChatMessage; var getContext = window.getContext; var setChatMessage = window.setChatMessage; var setChatMessages = window.setChatMessages; var insertOrAssignVariables = window.insertOrAssignVariables; var deleteVariable = window.deleteVariable; var eventOn = window.eventOn; var eventRemoveListener = window.eventRemoveListener; var waitGlobalInitialized = window.waitGlobalInitialized;');
+    window.eval('var errorCatched = window.errorCatched; var getAllVariables = window.getAllVariables; var getVariables = window.getVariables; var getCurrentMessageId = window.getCurrentMessageId; var getChatMessages = window.getChatMessages; var getChatMessage = window.getChatMessage; var getContext = window.getContext; var setChatMessage = window.setChatMessage; var setChatMessages = window.setChatMessages; var replaceVariables = window.replaceVariables; var insertOrAssignVariables = window.insertOrAssignVariables; var deleteVariable = window.deleteVariable; var eventOn = window.eventOn; var eventRemoveListener = window.eventRemoveListener; var waitGlobalInitialized = window.waitGlobalInitialized;');
   } catch {}
 
   const ensureLodash = () => {
@@ -2329,7 +2322,13 @@ const buildMvuCompatBridgeLegacy = ({ iframeId, sessionId, messageId, messageInd
   window.addEventListener('message', (e) => {
     const data = e?.data;
     if (!data || typeof data !== 'object') return;
-    if (data.type === 'chatapp:set-chat-message-result' || data.type === 'chatapp:set-chat-messages-result') {
+    if (
+      data.type === 'chatapp:set-chat-message-result' ||
+      data.type === 'chatapp:set-chat-messages-result' ||
+      data.type === 'chatapp:replace-variables-result' ||
+      data.type === 'chatapp:merge-variables-result' ||
+      data.type === 'chatapp:delete-variable-result'
+    ) {
       if (data.id && CHATAPP_IFRAME_ID && String(data.id) !== CHATAPP_IFRAME_ID) return;
       const requestId = String(data.requestId || '').trim();
       if (!requestId) return;
@@ -4701,33 +4700,25 @@ const buildDollarGlobalShim = ({
     };
   }
   if (typeof compat.getVariables !== 'function') {
-    compat.getVariables = (...args) => {
+    compat.getVariables = (option = { type: 'message' }) => {
       try {
-        if (typeof window.getVariables === 'function') return window.getVariables(...args);
+        if (typeof window.getVariables === 'function' && window.getVariables !== compat.getVariables) {
+          return window.getVariables(option);
+        }
       } catch {}
-      return compat.getAllVariables();
+      return getScopedVars(compat.getAllVariables(), option);
     };
   }
   if (typeof compat.getContext !== 'function') {
     compat.getContext = () => {
-      const vars = compat.getVariables();
-      const stat = (vars && typeof vars === 'object' && vars.stat_data && typeof vars.stat_data === 'object')
-        ? vars.stat_data
-        : ((vars && typeof vars === 'object' && vars.variables && typeof vars.variables === 'object') ? vars.variables : {});
-      const globalVars = (vars && typeof vars === 'object' && vars.global_variables && typeof vars.global_variables === 'object')
-        ? vars.global_variables
-        : {};
+      const vars = compat.getAllVariables();
       const chat = compat.getChatMessages();
-      const ctx = {
+      const ctx = buildMvuCompatWindowContext({
+        vars,
         chat,
-        messages: chat,
         currentMessageId: compat.getCurrentMessageId(),
-        variables: stat,
-        stat_data: stat,
-        status_current_variables: stat,
-        global_variables: globalVars,
-      };
-      logCompatRead('compat-read getContext', 'chat=' + String(Array.isArray(chat) ? chat.length : 0) + ' vars=' + String(Object.keys(stat || {}).length));
+      });
+      logCompatRead('compat-read getContext', 'chat=' + String(Array.isArray(chat) ? chat.length : 0) + ' vars=' + String(Object.keys(ctx?.stat_data || {}).length));
       return ctx;
     };
   }
@@ -4937,11 +4928,69 @@ const buildDollarGlobalShim = ({
       }
     };
   }
+  if (typeof compat.replaceVariables !== 'function') {
+    compat.replaceVariables = async (nextScoped, options = {}) => {
+      const safeOptions = options && typeof options === 'object' ? { ...options } : {};
+      const payload = nextScoped && typeof nextScoped === 'object' ? cloneMvuCompatValue(nextScoped) : {};
+      const nextVars = replaceScopedVars(compat.getAllVariables(), payload, safeOptions);
+      try { await window.Mvu?.replaceMvuData?.(nextVars, safeOptions); } catch {}
+      try {
+        parent.postMessage({
+          type: 'chatapp:replace-variables',
+          id: CHATAPP_IFRAME_ID,
+          sessionId: '',
+          variables: payload,
+          options: safeOptions,
+        }, '*');
+        return getScopedVars(nextVars, safeOptions);
+      } catch {
+        return false;
+      }
+    };
+  }
   if (typeof compat.insertOrAssignVariables !== 'function') {
-    compat.insertOrAssignVariables = async () => false;
+    compat.insertOrAssignVariables = async (patch, options = {}) => {
+      const safeOptions = options && typeof options === 'object' ? { ...options } : {};
+      const payload = patch && typeof patch === 'object' ? cloneMvuCompatValue(patch) : {};
+      const nextVars = mergeScopedVars(compat.getAllVariables(), payload, safeOptions);
+      try { await window.Mvu?.replaceMvuData?.(nextVars, safeOptions); } catch {}
+      try {
+        parent.postMessage({
+          type: 'chatapp:merge-variables',
+          id: CHATAPP_IFRAME_ID,
+          sessionId: '',
+          patch: payload,
+          options: safeOptions,
+        }, '*');
+        return getScopedVars(nextVars, safeOptions);
+      } catch {
+        return false;
+      }
+    };
   }
   if (typeof compat.deleteVariable !== 'function') {
-    compat.deleteVariable = async () => false;
+    compat.deleteVariable = async (key, options = {}) => {
+      const rawKey = String(key || '').trim();
+      if (!rawKey) return false;
+      const safeOptions = options && typeof options === 'object' ? { ...options } : {};
+      const nextVars = deleteScopedVar(compat.getAllVariables(), rawKey, safeOptions);
+      try { await window.Mvu?.replaceMvuData?.(nextVars, safeOptions); } catch {}
+      try {
+        parent.postMessage({
+          type: 'chatapp:delete-variable',
+          id: CHATAPP_IFRAME_ID,
+          sessionId: '',
+          key: rawKey,
+          options: safeOptions,
+        }, '*');
+        return {
+          variables: getScopedVars(nextVars, safeOptions),
+          delete_occurred: true,
+        };
+      } catch {
+        return false;
+      }
+    };
   }
   if (!window.TavernHelper || typeof window.TavernHelper !== 'object') {
     window.TavernHelper = {};
@@ -4955,10 +5004,10 @@ const buildDollarGlobalShim = ({
   if (typeof helper.getContext !== 'function') helper.getContext = (...args) => compat.getContext(...args);
   if (typeof helper.setChatMessage !== 'function') helper.setChatMessage = (...args) => compat.setChatMessage(...args);
   if (typeof helper.setChatMessages !== 'function') helper.setChatMessages = (...args) => compat.setChatMessages(...args);
+  if (typeof helper.replaceVariables !== 'function') helper.replaceVariables = (...args) => compat.replaceVariables(...args);
   if (typeof helper.insertOrAssignVariables !== 'function') helper.insertOrAssignVariables = (...args) => compat.insertOrAssignVariables(...args);
   if (typeof helper.deleteVariable !== 'function') helper.deleteVariable = (...args) => compat.deleteVariable(...args);
   if (typeof helper.waitGlobalInitialized !== 'function') helper.waitGlobalInitialized = async () => null;
-  if (typeof helper.replaceVariables !== 'function') helper.replaceVariables = async () => false;
   if (typeof helper.getTavernHelperVersion !== 'function') helper.getTavernHelperVersion = async () => '4.0.99-chatapp';
   if (!window.SillyTavern || typeof window.SillyTavern !== 'object') {
     window.SillyTavern = {};
@@ -4978,6 +5027,9 @@ const buildDollarGlobalShim = ({
   if (typeof window.getContext !== 'function') window.getContext = (...args) => compat.getContext(...args);
   if (typeof window.setChatMessage !== 'function') window.setChatMessage = (...args) => compat.setChatMessage(...args);
   if (typeof window.setChatMessages !== 'function') window.setChatMessages = (...args) => compat.setChatMessages(...args);
+  if (typeof window.replaceVariables !== 'function') window.replaceVariables = (...args) => compat.replaceVariables(...args);
+  if (typeof window.insertOrAssignVariables !== 'function') window.insertOrAssignVariables = (...args) => compat.insertOrAssignVariables(...args);
+  if (typeof window.deleteVariable !== 'function') window.deleteVariable = (...args) => compat.deleteVariable(...args);
   const bridgeHostCompat = (host) => {
     try {
       if (!host || host === window) return false;
@@ -5007,6 +5059,9 @@ const buildDollarGlobalShim = ({
       host.getAllVariables = (...args) => compat.getAllVariables(...args);
       host.setChatMessage = (...args) => compat.setChatMessage(...args);
       host.setChatMessages = (...args) => compat.setChatMessages(...args);
+      host.replaceVariables = (...args) => compat.replaceVariables(...args);
+      host.insertOrAssignVariables = (...args) => compat.insertOrAssignVariables(...args);
+      host.deleteVariable = (...args) => compat.deleteVariable(...args);
       if (typeof host._ === 'undefined' && typeof window._ !== 'undefined') host._ = window._;
       if (typeof host.$ === 'undefined' && typeof window.$ === 'function') host.$ = window.$;
       if (typeof host.jQuery === 'undefined' && typeof window.jQuery === 'function') host.jQuery = window.jQuery;
@@ -5680,15 +5735,8 @@ const makeCodeBlock = ({ lang, code, messageId, preserveHtmlNewlines = false, se
                 ? Boolean(window.appBridge.isSharedVariableSession(sid))
                 : false;
             const baseVars = isShared ? globalVars : localVars;
-            const nestedBase = buildNestedVars(baseVars);
-            const nestedGlobal = buildNestedVars(globalVars);
-            return {
-                stat_data: nestedBase,
-                variables: nestedBase,
-                status_current_variables: nestedBase,
-                global_variables: nestedGlobal,
-                local_variables: localVars,
-            };
+            const variableContext = buildVariableContext({ baseVars, globalVars, localVars }).variableContext;
+            return pickMvuCompatSeedVars(variableContext);
         } catch {
             return null;
         }
@@ -6290,14 +6338,92 @@ export const setupIframeResizeListener = () => {
             ? Boolean(window.appBridge.isSharedVariableSession(sid))
             : false;
         const baseVars = isShared ? globalVars : localVars;
-        const nestedBase = buildNestedVars(baseVars);
-        const nestedGlobal = buildNestedVars(globalVars);
+        const variableContext = buildVariableContext({ baseVars, globalVars, localVars }).variableContext;
+        return pickMvuCompatSeedVars(variableContext);
+    };
+    const isCompatValueEqual = (left, right) => {
+        if (Object.is(left, right)) return true;
+        if (typeof left !== typeof right) return false;
+        if (!left || !right || typeof left !== 'object') return false;
+        try {
+            return JSON.stringify(left) === JSON.stringify(right);
+        } catch {
+            return false;
+        }
+    };
+    const resolveCompatVariableStoreScope = (sessionId, options = {}) => {
+        const sid = String(sessionId || window.appBridge?.activeSessionId || '').trim();
+        const type = normalizeMvuCompatOptionType(options);
+        if (type === 'global') return 'global';
+        if (type === 'local') return 'local';
+        const shared = sid && window.appBridge?.isSharedVariableSession
+            ? Boolean(window.appBridge.isSharedVariableSession(sid))
+            : false;
+        return shared ? 'global' : 'local';
+    };
+    const buildCompatVarsSnapshot = (sessionId, scopeType = 'local') => {
+        const sid = String(sessionId || window.appBridge?.activeSessionId || '').trim();
+        const store = window.appBridge?.chatStore;
+        const globalVars = store?.listGlobalVariables?.() || {};
+        const localVars = sid ? (store?.listVariables?.(sid) || {}) : {};
+        const baseVars = scopeType === 'global' ? globalVars : localVars;
+        const variableContext = buildVariableContext({ baseVars, globalVars, localVars }).variableContext;
+        return pickMvuCompatSeedVars(variableContext);
+    };
+    const syncCompatScopedVariablesToStore = (scopeType, nextScoped, sessionId) => {
+        const store = window.appBridge?.chatStore;
+        const sid = String(sessionId || window.appBridge?.activeSessionId || '').trim();
+        if (!store) return false;
+        if (scopeType !== 'global' && !sid) return false;
+        const currentFlat = scopeType === 'global'
+            ? (store.listGlobalVariables?.() || {})
+            : (store.listVariables?.(sid) || {});
+        const nextFlat = flattenMvuCompatVariables(nextScoped);
+        const keys = new Set([...Object.keys(currentFlat), ...Object.keys(nextFlat)]);
+        let changed = false;
+        keys.forEach((key) => {
+            const name = String(key || '').trim();
+            if (!name) return;
+            const hasNext = Object.prototype.hasOwnProperty.call(nextFlat, name);
+            const hasCurrent = Object.prototype.hasOwnProperty.call(currentFlat, name);
+            if (!hasNext) {
+                const ok = scopeType === 'global'
+                    ? store.deleteGlobalVariable?.(name)
+                    : store.deleteVariable?.(name, sid);
+                changed = Boolean(ok) || changed;
+                return;
+            }
+            const nextValue = cloneMvuCompatValue(nextFlat[name]);
+            if (hasCurrent && isCompatValueEqual(currentFlat[name], nextValue)) return;
+            const ok = scopeType === 'global'
+                ? store.setGlobalVariable?.(name, nextValue)
+                : store.setVariable?.(name, nextValue, sid);
+            changed = Boolean(ok) || changed;
+        });
+        return changed;
+    };
+    const applyCompatVariableMutation = ({ sessionId, mode, payload, key, options = {} }) => {
+        const sid = String(sessionId || window.appBridge?.activeSessionId || '').trim();
+        const scopeType = resolveCompatVariableStoreScope(sid, options);
+        const currentVars = collectMvuVars(sid) || buildCompatVarsSnapshot(sid, scopeType);
+        const currentScoped = getMvuCompatScopedVariables(currentVars, { type: scopeType });
+        let nextVars = currentVars;
+        if (mode === 'replace') {
+            nextVars = replaceMvuCompatScopedVariables(currentVars, payload, { type: scopeType });
+        } else if (mode === 'merge') {
+            nextVars = mergeMvuCompatScopedVariables(currentVars, payload, { type: scopeType });
+        } else if (mode === 'delete') {
+            nextVars = deleteMvuCompatScopedVariable(currentVars, key, { type: scopeType });
+        }
+        const nextScoped = getMvuCompatScopedVariables(nextVars, { type: scopeType });
+        const changed = syncCompatScopedVariablesToStore(scopeType, nextScoped, sid);
+        const vars = collectMvuVars(sid) || buildCompatVarsSnapshot(sid, scopeType);
         return {
-            stat_data: nestedBase,
-            variables: nestedBase,
-            status_current_variables: nestedBase,
-            global_variables: nestedGlobal,
-            local_variables: localVars,
+            ok: true,
+            changed,
+            deleted: mode === 'delete' ? !isCompatValueEqual(currentScoped, nextScoped) : undefined,
+            scopeType,
+            vars,
         };
     };
     const postMvuVarsToIframe = (iframe, sessionId) => {
@@ -6616,6 +6742,47 @@ export const setupIframeResizeListener = () => {
                         applied: Number(result?.applied || 0),
                         skipped: Number(result?.skipped || 0),
                         total: Number(result?.total || 0),
+                    }, '*');
+                } catch {}
+            })();
+            return;
+        }
+        if (data.type === 'chatapp:replace-variables' || data.type === 'chatapp:merge-variables' || data.type === 'chatapp:delete-variable') {
+            const id = String(data.id || '');
+            if (!id) return;
+            const iframe = document.querySelector(`iframe[data-iframe-id="${esc(id)}"]`);
+            if (!iframe) return;
+            void (async () => {
+                const sid = resolveCompatSessionId(iframe, data.sessionId);
+                const mode = data.type === 'chatapp:replace-variables'
+                    ? 'replace'
+                    : (data.type === 'chatapp:merge-variables' ? 'merge' : 'delete');
+                const result = applyCompatVariableMutation({
+                    sessionId: sid,
+                    mode,
+                    payload: data.type === 'chatapp:replace-variables' ? data.variables : data.patch,
+                    key: data.key,
+                    options: data.options,
+                });
+                const count = Object.keys((result?.vars && result.vars.stat_data) || {}).length;
+                emitDebugLog({
+                    source: 'iframe',
+                    type: result?.ok ? 'info' : 'warn',
+                    message:
+                        `${mode}-variables id=${id} ok=${result?.ok ? 1 : 0} ` +
+                        `sid=${sid || 'none'} scope=${String(result?.scopeType || '')} keys=${count}`,
+                    force: true,
+                });
+                try {
+                    e.source?.postMessage({
+                        type: `${data.type}-result`,
+                        id,
+                        requestId: String(data.requestId || ''),
+                        ok: Boolean(result?.ok),
+                        reason: String(result?.reason || ''),
+                        deleted: Boolean(result?.deleted),
+                        scopeType: String(result?.scopeType || ''),
+                        vars: result?.vars || null,
                     }, '*');
                 } catch {}
             })();

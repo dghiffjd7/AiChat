@@ -55,9 +55,15 @@ export function formatConditionRuntimeValueImpl(value, rightType = 'string') {
 export function getConditionExplanationReasonImpl(clauseRaw, explanation = null, deps = {}) {
     const { normalizePromptClause } = deps;
     const clause = normalizePromptClause(clauseRaw || {});
+    const pendingReason = String(explanation?.pendingReason || clause.pendingReason || '').trim().toLowerCase();
     const leftName = String(clause.left || '').trim();
     if (!leftName) return '左侧变量未设置，当前按待完善处理。';
     if (!explanation) return '当前会话暂无可用运行值，暂无法解释命中原因。';
+    if (pendingReason === 'missing_right_variable') return '右侧比较变量未设置，当前按待完善处理。';
+    if (pendingReason === 'missing_right_literal') return '右侧比较值未填写，当前按待完善处理。';
+    if (pendingReason === 'missing_right_input') return '右侧比较输入未接好，当前按待完善处理。';
+    if (pendingReason === 'missing_input') return '当前条件链仍缺少上游输入，暂按待完善处理。';
+    if (typeof explanation.result !== 'boolean') return '当前条件仍有待完善项，暂按待判断处理。';
     const op = String(clause.op || '').trim().toLowerCase();
     const leftValue = this.formatConditionRuntimeValue(explanation.leftValue, clause.rightType);
     if (op === 'is_empty') {
@@ -85,6 +91,8 @@ export function getConditionGroupExplanationReasonImpl(logicRaw = 'and', explana
     const children = Array.isArray(explanation.children) ? explanation.children : [];
     const resolved = children.filter(item => typeof item?.result === 'boolean');
     const pendingCount = Math.max(0, children.length - resolved.length);
+    const hitCount = resolved.filter(item => item?.result === true).length;
+    const failedCount = resolved.filter(item => item?.result === false).length;
     if (logic === 'not') {
         if (!resolved.length) return 'NOT 需要 1 条可判断子条件，当前仍未准备好。';
         return explanation.result
@@ -95,13 +103,19 @@ export function getConditionGroupExplanationReasonImpl(logicRaw = 'and', explana
         return `当前 ${children.length || 0} 条子条件都尚未产出可判断结果。`;
     }
     if (logic === 'and') {
+        if (pendingCount > 0) {
+            if (failedCount > 0) return `AND 需要全部成立，当前有 ${failedCount} 条未满足，另有 ${pendingCount} 条待判断。`;
+            return `AND 仍有 ${pendingCount} 条待判断，当前已成立 ${hitCount} 条。`;
+        }
         if (explanation.result) return `AND 需要全部成立，当前 ${resolved.length} 条已判断子条件均成立。`;
-        const failedCount = resolved.filter(item => item?.result === false).length;
         return `AND 需要全部成立，当前有 ${failedCount} 条未满足${pendingCount ? `，${pendingCount} 条待判断` : ''}。`;
     }
     if (logic === 'or') {
+        if (pendingCount > 0) {
+            if (hitCount > 0) return `OR 已有 ${hitCount} 条成立，但仍有 ${pendingCount} 条待判断，当前按待完善处理。`;
+            return `OR 需要任一成立，当前已判断子条件均未成立，另有 ${pendingCount} 条待判断。`;
+        }
         if (explanation.result) {
-            const hitCount = resolved.filter(item => item?.result === true).length;
             return `OR 需要任一成立，当前已有 ${hitCount} 条成立。`;
         }
         return `OR 需要任一成立，当前已判断子条件均未成立${pendingCount ? `，${pendingCount} 条待判断` : ''}。`;
@@ -272,10 +286,35 @@ export function collectBlockConditionOverviewImpl(entry, block, deps = {}) {
         const clause = normalizePromptClause(node);
         clauseOrder += 1;
         stats.clauseCount += 1;
+        const pendingReason = String(clause.pendingReason || '').trim().toLowerCase();
         const left = String(clause.left || '').trim();
         const op = String(clause.op || '').trim().toLowerCase();
         const needsRight = !['is_empty', 'not_empty'].includes(op);
         const rightMissing = needsRight && clause.rightType === 'variable' && !String(clause.right || '').trim();
+        if (pendingReason === 'missing_input') {
+            stats.pendingItems.push({
+                label: `条件 ${clauseOrder}`,
+                reason: '上游输入缺失',
+                kind: 'missing_input',
+            });
+            return;
+        }
+        if (pendingReason === 'missing_right_input') {
+            stats.pendingItems.push({
+                label: `条件 ${clauseOrder}`,
+                reason: '缺少右值输入',
+                kind: 'missing_right_input',
+            });
+            return;
+        }
+        if (pendingReason === 'missing_right_literal') {
+            stats.pendingItems.push({
+                label: `条件 ${clauseOrder}`,
+                reason: '右侧比较值未填写',
+                kind: 'missing_right_literal',
+            });
+            return;
+        }
         if (!left) {
             stats.pendingItems.push({
                 label: `条件 ${clauseOrder}`,
@@ -343,6 +382,7 @@ export function renderConditionOverviewNodeImpl(node, depth = 0, explanation = n
             : (Array.isArray(node.clauses) && node.clauses.length ? node.clauses : [createDefaultPromptClause()]);
         const childExplanations = Array.isArray(explanation?.children) ? explanation.children : [];
         const groupReason = this.getConditionGroupExplanationReason(logic, explanation);
+        const groupResultKnown = typeof explanation?.result === 'boolean';
         const groupReasonClass = explanation?.result === true
             ? ' is-hit'
             : explanation?.result === false
@@ -352,7 +392,7 @@ export function renderConditionOverviewNodeImpl(node, depth = 0, explanation = n
             <div class="world-cond-summary-group" data-depth="${depth}">
                 <div class="world-cond-summary-group-head">
                     <span class="world-cond-summary-logic">${escapeHtml(String(logic || 'and').toUpperCase())}</span>
-                    <span class="world-cond-summary-badge ${explanation?.result ? '' : 'danger'}">${explanation?.result ? '命中' : '未命中'}</span>
+                    <span class="world-cond-summary-badge ${groupResultKnown ? (explanation?.result ? '' : 'danger') : 'subtle'}">${groupResultKnown ? (explanation?.result ? '命中' : '未命中') : '待判断'}</span>
                 </div>
                 <div class="world-cond-summary-group-reason${groupReasonClass}">${escapeHtml(groupReason)}</div>
                 <div class="world-cond-summary-group-body">
@@ -371,6 +411,7 @@ export function renderConditionOverviewNodeImpl(node, depth = 0, explanation = n
         ? this.formatConditionRuntimeValue(explanation.rightValue, clause.rightType === 'variable' ? 'string' : clause.rightType)
         : '';
     const runtimeReason = this.getConditionExplanationReason(clause, explanation);
+    const clauseResultKnown = typeof explanation?.result === 'boolean';
     const reasonClass = explanation?.result === true
         ? ' is-hit'
         : explanation?.result === false
@@ -387,7 +428,7 @@ export function renderConditionOverviewNodeImpl(node, depth = 0, explanation = n
                 ${clause.defineVariable?.name ? `<span class="world-cond-summary-badge">自动建</span>` : ''}
                 ${clause.rightType === 'variable' && right ? `<span class="world-cond-summary-badge subtle">变量比较</span>` : ''}
                 ${clause.left ? '' : `<span class="world-cond-summary-badge danger">待完善</span>`}
-                ${explanation ? `<span class="world-cond-summary-badge ${explanation.result ? '' : 'danger'}">${explanation.result ? '命中' : '未命中'}</span>` : ''}
+                ${explanation ? `<span class="world-cond-summary-badge ${clauseResultKnown ? (explanation.result ? '' : 'danger') : 'subtle'}">${clauseResultKnown ? (explanation.result ? '命中' : '未命中') : '待判断'}</span>` : ''}
             </div>
             ${explanation ? `
                 <div class="world-cond-summary-runtime">

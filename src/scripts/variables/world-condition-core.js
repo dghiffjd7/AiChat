@@ -1,3 +1,7 @@
+import {
+  buildVariableContext as buildVariableContextImpl,
+} from './variable-path-utils.js';
+
 export const genNodeId = () => `nd_${Date.now().toString(36)}_${Math.random().toString(16).slice(2, 7)}`;
 export const genEdgeId = () => `ed_${Date.now().toString(36)}_${Math.random().toString(16).slice(2, 7)}`;
 
@@ -10,6 +14,13 @@ export const sanitizeNodeId = (value, fallback = '') => {
 };
 
 const KNOWN_OPS = new Set(['==', '!=', '>', '>=', '<', '<=', 'contains', 'not_contains', 'is_empty', 'not_empty', 'regex']);
+const KNOWN_PENDING_REASONS = new Set([
+  'missing_input',
+  'missing_left',
+  'missing_right_input',
+  'missing_right_literal',
+  'missing_right_variable',
+]);
 
 export const clampConditionZoom = (value, min, max) => Math.max(min, Math.min(max, value));
 
@@ -261,6 +272,9 @@ export const normalizePromptClause = (raw = {}) => {
     op: KNOWN_OPS.has(String(clause.op || '>').trim()) ? String(clause.op || '>').trim() : '>',
     right: clause.right ?? '',
     rightType: normalizeRightTypeValue(clause.rightType || 'number'),
+    pendingReason: KNOWN_PENDING_REASONS.has(String(clause.pendingReason || '').trim().toLowerCase())
+      ? String(clause.pendingReason || '').trim().toLowerCase()
+      : '',
     defineVariable: clause.defineVariable && typeof clause.defineVariable === 'object'
       ? {
           name: String(clause.defineVariable.name || '').trim(),
@@ -282,6 +296,11 @@ export const createDefaultPromptClause = () => normalizePromptClause({
   op: '>',
   right: 10,
   rightType: 'number',
+});
+
+export const createPendingPromptClause = (pendingReason = 'missing_input') => normalizePromptClause({
+  ...createDefaultPromptClause(),
+  pendingReason,
 });
 
 export const normalizeConditionTree = (raw = null, fallbackClause = null) => {
@@ -512,12 +531,19 @@ export const buildWhenFromNodeGraph = (graphRaw = {}, fallbackClause = {}) => {
   };
   const buildClauseFromCompare = (node, seen) => {
     const compareData = normalizeGraphNodeData('compare', node?.data || {});
+    const op = String(compareData.op || '>').trim();
+    const needsRight = !['is_empty', 'not_empty'].includes(op.toLowerCase());
     const clause = normalizePromptClause({
       left: '',
-      op: compareData.op,
+      op,
       rightType: compareData.fallbackRightType,
       right: parseTypedValue(compareData.fallbackRight, compareData.fallbackRightType),
     });
+    const markPendingReason = (reason = '') => {
+      if (!clause.pendingReason && KNOWN_PENDING_REASONS.has(String(reason || '').trim().toLowerCase())) {
+        clause.pendingReason = String(reason || '').trim().toLowerCase();
+      }
+    };
     const leftNode = getIncomingNode(node.id, 'left');
     if (leftNode && !seen.has(leftNode.id)) {
       if (leftNode.type === 'variable') {
@@ -528,15 +554,27 @@ export const buildWhenFromNodeGraph = (graphRaw = {}, fallbackClause = {}) => {
         clause.left = String(leftNode?.data?.value || '').trim();
       }
     }
+    if (!clause.left) markPendingReason('missing_left');
     const rightNode = getIncomingNode(node.id, 'right');
-    if (rightNode && !seen.has(rightNode.id)) {
-      if (rightNode.type === 'variable') {
-        clause.rightType = 'variable';
-        clause.right = String(rightNode?.data?.path || '').trim();
-      } else if (rightNode.type === 'value') {
-        const rightType = normalizeRightTypeValue(rightNode?.data?.rightType || 'number');
-        clause.rightType = rightType;
-        clause.right = parseTypedValue(rightNode?.data?.value, rightType);
+    if (needsRight) {
+      if (rightNode && !seen.has(rightNode.id)) {
+        if (rightNode.type === 'variable') {
+          clause.rightType = 'variable';
+          clause.right = String(rightNode?.data?.path || '').trim();
+          if (!String(clause.right || '').trim()) markPendingReason('missing_right_variable');
+        } else if (rightNode.type === 'value') {
+          const rightType = normalizeRightTypeValue(rightNode?.data?.rightType || 'number');
+          const rawValue = String(rightNode?.data?.value ?? '');
+          clause.rightType = rightType;
+          clause.right = rawValue.trim() ? parseTypedValue(rawValue, rightType) : '';
+          if (!rawValue.trim()) markPendingReason('missing_right_literal');
+        } else {
+          clause.right = '';
+          markPendingReason('missing_right_input');
+        }
+      } else {
+        clause.right = '';
+        markPendingReason('missing_right_input');
       }
     }
     return normalizePromptClause(clause);
@@ -556,22 +594,20 @@ export const buildWhenFromNodeGraph = (graphRaw = {}, fallbackClause = {}) => {
       if (logic === 'not') {
         const child = getIncomingNode(node.id, 'in');
         const childCondition = child ? buildCondition(child.id, nextSeen) : null;
-        if (!childCondition) return { logic: 'not', clause: normalizePromptClause(fallbackClause) };
+        if (!childCondition) return { logic: 'not', clause: createPendingPromptClause('missing_input') };
         return { logic: 'not', clause: childCondition };
       }
       const inputPorts = getNodePortSpec(node).inputs;
-      const inputs = inputPorts
-        .map((port) => getIncomingNode(node.id, port))
-        .filter(Boolean);
-      const clauses = inputs
-        .map(child => buildCondition(child.id, nextSeen))
-        .filter(Boolean);
-      if (!clauses.length) clauses.push(normalizePromptClause(fallbackClause));
+      const clauses = inputPorts.map((port) => {
+        const child = getIncomingNode(node.id, port);
+        if (!child) return createPendingPromptClause('missing_input');
+        return buildCondition(child.id, nextSeen) || createPendingPromptClause('missing_input');
+      });
       return { logic, clauses };
     }
     if (node.type === 'result') {
       const child = getIncomingNode(node.id, 'in');
-      return child ? buildCondition(child.id, nextSeen) : normalizePromptClause(fallbackClause);
+      return child ? buildCondition(child.id, nextSeen) : createPendingPromptClause('missing_input');
     }
     if (node.type === 'variable') {
       return normalizePromptClause({
@@ -582,10 +618,10 @@ export const buildWhenFromNodeGraph = (graphRaw = {}, fallbackClause = {}) => {
         defineVariable: buildNodeDefineSpec(node.data),
       });
     }
-    return normalizePromptClause(fallbackClause);
+    return createPendingPromptClause('missing_input');
   };
   const resultNode = nodes.find(node => node.type === 'result') || null;
-  const built = buildCondition(resultNode?.id, new Set()) || normalizePromptClause(fallbackClause);
+  const built = buildCondition(resultNode?.id, new Set()) || createPendingPromptClause('missing_input');
   if (built?.logic && Array.isArray(built.clauses)) {
     return {
       logic: normalizeLogicValue(built.logic),
@@ -604,79 +640,7 @@ export const buildWhenFromNodeGraph = (graphRaw = {}, fallbackClause = {}) => {
   };
 };
 
-const toPathParts = (value) => String(value || '')
-  .replace(/\[([^\]]+)\]/g, '.$1')
-  .split('.')
-  .map(seg => seg.trim().replace(/^['"]|['"]$/g, ''))
-  .filter(Boolean);
-
-const isIndexPathPart = (seg) => /^\d+$/.test(String(seg || '').trim());
-
-const getByPath = (obj, path) => {
-  const parts = toPathParts(path);
-  if (!parts.length) return undefined;
-  let cur = obj;
-  for (let i = 0; i < parts.length; i += 1) {
-    if (cur == null || (typeof cur !== 'object' && typeof cur !== 'function')) return undefined;
-    const key = isIndexPathPart(parts[i]) ? Number(parts[i]) : parts[i];
-    if (!(key in cur)) return undefined;
-    cur = cur[key];
-  }
-  return cur;
-};
-
-const buildNestedVars = (flat = {}) => {
-  const root = {};
-  const setByPath = (obj, path, value) => {
-    const parts = toPathParts(path);
-    if (!parts.length) return;
-    let cur = obj;
-    for (let i = 0; i < parts.length - 1; i += 1) {
-      const key = isIndexPathPart(parts[i]) ? Number(parts[i]) : parts[i];
-      const nextKey = parts[i + 1];
-      const shouldArray = isIndexPathPart(nextKey);
-      if (!cur[key] || typeof cur[key] !== 'object') cur[key] = shouldArray ? [] : {};
-      cur = cur[key];
-    }
-    const lastKey = isIndexPathPart(parts[parts.length - 1]) ? Number(parts[parts.length - 1]) : parts[parts.length - 1];
-    cur[lastKey] = value;
-  };
-  Object.entries(flat || {}).forEach(([key, value]) => {
-    const name = String(key || '').trim();
-    if (!name) return;
-    setByPath(root, name, value);
-  });
-  return root;
-};
-
-export const buildVariableContext = ({ baseVars = {}, globalVars = {} } = {}) => {
-  const baseVarsNested = buildNestedVars(baseVars);
-  const globalVarsNested = buildNestedVars(globalVars);
-  const variableContext = {
-    ...baseVars,
-    stat_data: baseVarsNested,
-    variables: baseVarsNested,
-    status_current_variables: baseVarsNested,
-    global_variables: globalVarsNested,
-    local_variables: baseVars,
-  };
-  const resolvePathValue = (path) => {
-    const key = String(path || '').trim();
-    if (!key) return undefined;
-    if (Object.prototype.hasOwnProperty.call(variableContext, key)) return variableContext[key];
-    if (Object.prototype.hasOwnProperty.call(baseVars, key)) return baseVars[key];
-    if (Object.prototype.hasOwnProperty.call(globalVars, key)) return globalVars[key];
-    const byPath = getByPath(variableContext, key);
-    if (byPath !== undefined) return byPath;
-    return undefined;
-  };
-  return {
-    baseVars,
-    globalVars,
-    variableContext,
-    resolvePathValue,
-  };
-};
+export const buildVariableContext = (options = {}) => buildVariableContextImpl(options);
 
 const coerceBoolean = (value) => {
   if (typeof value === 'boolean') return value;
@@ -693,7 +657,6 @@ const coerceLiteral = (value, rightType = 'string') => {
     return Number.isFinite(n) ? n : 0;
   }
   if (type === 'boolean') return coerceBoolean(value);
-  if (type === 'null') return null;
   return value;
 };
 
@@ -748,27 +711,64 @@ const evalExpression = (expr, runtime = {}) => {
   return expr;
 };
 
-const evaluateClause = (clause, runtime = {}) => {
-  if (!clause || typeof clause !== 'object') return true;
-  const leftRaw = clause.left;
-  const leftMissing = leftRaw == null || (typeof leftRaw === 'string' && leftRaw.trim() === '');
-  if (leftMissing) return true;
+export const getClausePendingReason = (clauseRaw = {}) => {
+  const clause = normalizePromptClause(clauseRaw);
+  if (clause.pendingReason) return clause.pendingReason;
+  if (!String(clause.left || '').trim()) return 'missing_left';
+  const op = String(clause.op || '==').trim().toLowerCase();
+  if (!['is_empty', 'not_empty'].includes(op) && clause.rightType === 'variable' && !String(clause.right || '').trim()) {
+    return 'missing_right_variable';
+  }
+  return '';
+};
+
+const evaluateClauseState = (clauseRaw, runtime = {}) => {
+  const clause = normalizePromptClause(clauseRaw);
+  const pendingReason = getClausePendingReason(clause);
+  const leftValue = evalExpression(clause.left, runtime);
+  const rightValue = clause.rightType === 'variable'
+    ? evalExpression(clause.right, runtime)
+    : coerceLiteral(clause.right, clause.rightType);
+  if (pendingReason) {
+    return {
+      clause,
+      result: null,
+      runtimeResult: false,
+      pendingReason,
+      leftValue,
+      rightValue,
+    };
+  }
   const op = String(clause.op || '==').trim().toLowerCase();
   const rightType = String(clause.rightType || 'string').trim().toLowerCase();
-  const leftValue = evalExpression(leftRaw, runtime);
   if (op === 'is_empty') {
-    if (Array.isArray(leftValue)) return leftValue.length === 0;
-    if (leftValue && typeof leftValue === 'object') return Object.keys(leftValue).length === 0;
-    return String(leftValue ?? '').trim().length === 0;
+    let result = false;
+    if (Array.isArray(leftValue)) result = leftValue.length === 0;
+    else if (leftValue && typeof leftValue === 'object') result = Object.keys(leftValue).length === 0;
+    else result = String(leftValue ?? '').trim().length === 0;
+    return {
+      clause,
+      result,
+      runtimeResult: result,
+      pendingReason: '',
+      leftValue,
+      rightValue,
+    };
   }
   if (op === 'not_empty') {
-    if (Array.isArray(leftValue)) return leftValue.length > 0;
-    if (leftValue && typeof leftValue === 'object') return Object.keys(leftValue).length > 0;
-    return String(leftValue ?? '').trim().length > 0;
+    let result = false;
+    if (Array.isArray(leftValue)) result = leftValue.length > 0;
+    else if (leftValue && typeof leftValue === 'object') result = Object.keys(leftValue).length > 0;
+    else result = String(leftValue ?? '').trim().length > 0;
+    return {
+      clause,
+      result,
+      runtimeResult: result,
+      pendingReason: '',
+      leftValue,
+      rightValue,
+    };
   }
-  const rightValue = rightType === 'variable'
-    ? evalExpression(clause.right, runtime)
-    : coerceLiteral(clause.right, rightType);
   let compareLeft = leftValue;
   let compareRight = rightValue;
   if (rightType === 'number') {
@@ -782,101 +782,227 @@ const evaluateClause = (clause, runtime = {}) => {
   } else if (rightType === 'string') {
     compareLeft = String(leftValue ?? '');
     compareRight = String(rightValue ?? '');
-  } else if (rightType === 'null') {
-    compareLeft = leftValue == null ? null : leftValue;
-    compareRight = null;
   }
+  let result = false;
   if (op === 'contains') {
-    if (Array.isArray(leftValue)) return leftValue.some(item => String(item ?? '') === String(rightValue ?? ''));
-    return String(leftValue ?? '').includes(String(rightValue ?? ''));
+    result = Array.isArray(leftValue)
+      ? leftValue.some(item => String(item ?? '') === String(rightValue ?? ''))
+      : String(leftValue ?? '').includes(String(rightValue ?? ''));
+    return {
+      clause,
+      result,
+      runtimeResult: result,
+      pendingReason: '',
+      leftValue,
+      rightValue,
+    };
   }
   if (op === 'not_contains') {
-    if (Array.isArray(leftValue)) return !leftValue.some(item => String(item ?? '') === String(rightValue ?? ''));
-    return !String(leftValue ?? '').includes(String(rightValue ?? ''));
+    result = Array.isArray(leftValue)
+      ? !leftValue.some(item => String(item ?? '') === String(rightValue ?? ''))
+      : !String(leftValue ?? '').includes(String(rightValue ?? ''));
+    return {
+      clause,
+      result,
+      runtimeResult: result,
+      pendingReason: '',
+      leftValue,
+      rightValue,
+    };
   }
   if (op === 'regex') {
     const pattern = String(rightValue ?? '').trim();
-    if (!pattern) return false;
+    if (!pattern) {
+      return {
+        clause,
+        result: false,
+        runtimeResult: false,
+        pendingReason: '',
+        leftValue,
+        rightValue,
+      };
+    }
     try {
       const literal = pattern.match(/^\/(.+)\/([gimsuy]*)$/);
       const re = literal ? new RegExp(literal[1], literal[2] || '') : new RegExp(pattern, 'i');
-      return re.test(String(leftValue ?? ''));
+      result = re.test(String(leftValue ?? ''));
+      return {
+        clause,
+        result,
+        runtimeResult: result,
+        pendingReason: '',
+        leftValue,
+        rightValue,
+      };
     } catch {
-      return false;
+      return {
+        clause,
+        result: false,
+        runtimeResult: false,
+        pendingReason: '',
+        leftValue,
+        rightValue,
+      };
     }
   }
   if (op === '>' || op === '>=' || op === '<' || op === '<=') {
     const l = Number(leftValue);
     const r = Number(rightValue);
-    if (!Number.isFinite(l) || !Number.isFinite(r)) return false;
-    if (op === '>') return l > r;
-    if (op === '>=') return l >= r;
-    if (op === '<') return l < r;
-    return l <= r;
+    if (!Number.isFinite(l) || !Number.isFinite(r)) {
+      return {
+        clause,
+        result: false,
+        runtimeResult: false,
+        pendingReason: '',
+        leftValue,
+        rightValue,
+      };
+    }
+    if (op === '>') result = l > r;
+    else if (op === '>=') result = l >= r;
+    else if (op === '<') result = l < r;
+    else result = l <= r;
+    return {
+      clause,
+      result,
+      runtimeResult: result,
+      pendingReason: '',
+      leftValue,
+      rightValue,
+    };
   }
-  if (op === '!=') return compareLeft !== compareRight;
-  return compareLeft === compareRight;
+  result = op === '!=' ? compareLeft !== compareRight : compareLeft === compareRight;
+  return {
+    clause,
+    result,
+    runtimeResult: result,
+    pendingReason: '',
+    leftValue,
+    rightValue,
+  };
 };
 
-export const evaluateConditionTree = (node, runtime = {}) => {
-  if (!node || typeof node !== 'object') return true;
+const evaluateClause = (clause, runtime = {}) => evaluateClauseState(clause, runtime).runtimeResult;
+
+export const combineConditionLogicState = (logicRaw = 'and', childResults = []) => {
+  const logic = normalizeLogicValue(logicRaw || 'and');
+  const values = Array.isArray(childResults)
+    ? childResults.map(value => (typeof value === 'boolean' ? value : null))
+    : [];
+  const pendingCount = values.filter(value => typeof value !== 'boolean').length;
+  const resolved = values.filter(value => typeof value === 'boolean');
+  if (logic === 'not') {
+    const first = values.length ? values[0] : null;
+    if (typeof first !== 'boolean') {
+      return { logic, result: null, runtimeResult: false, pendingCount, resolvedCount: resolved.length };
+    }
+    return { logic, result: !first, runtimeResult: !first, pendingCount, resolvedCount: resolved.length };
+  }
+  if (!values.length) {
+    return { logic, result: null, runtimeResult: false, pendingCount: 1, resolvedCount: 0 };
+  }
+  if (pendingCount > 0) {
+    return { logic, result: null, runtimeResult: false, pendingCount, resolvedCount: resolved.length };
+  }
+  const result = logic === 'or' ? resolved.some(Boolean) : resolved.every(Boolean);
+  return { logic, result, runtimeResult: result, pendingCount, resolvedCount: resolved.length };
+};
+
+export const evaluateConditionTreeState = (node, runtime = {}) => {
+  if (!node || typeof node !== 'object') {
+    return { result: true, runtimeResult: true, kind: 'empty' };
+  }
   const logicRaw = String(node.logic || '').trim().toLowerCase();
   if (logicRaw === 'not') {
-    if (node.clause && typeof node.clause === 'object') return !evaluateConditionTree(node.clause, runtime);
-    const list = Array.isArray(node.clauses) ? node.clauses : [];
-    if (!list.length) return true;
-    return !evaluateConditionTree(list[0], runtime);
+    const childNode = node.clause && typeof node.clause === 'object'
+      ? node.clause
+      : (Array.isArray(node.clauses) ? node.clauses[0] : null);
+    const childState = childNode
+      ? evaluateConditionTreeState(childNode, runtime)
+      : evaluateConditionTreeState(createPendingPromptClause('missing_input'), runtime);
+    const combined = combineConditionLogicState('not', [childState.result]);
+    return {
+      kind: 'group',
+      logic: 'not',
+      result: combined.result,
+      runtimeResult: combined.runtimeResult,
+      child: childState,
+      children: [childState],
+    };
   }
   if (Array.isArray(node.clauses)) {
     const logic = logicRaw === 'or' ? 'or' : 'and';
-    if (!node.clauses.length) return true;
-    const values = node.clauses.map(item => evaluateConditionTree(item, runtime));
-    return logic === 'or' ? values.some(Boolean) : values.every(Boolean);
+    const items = node.clauses.length ? node.clauses : [createPendingPromptClause('missing_input')];
+    const children = items.map(item => evaluateConditionTreeState(item, runtime));
+    const combined = combineConditionLogicState(logic, children.map(item => item.result));
+    return {
+      kind: 'group',
+      logic,
+      result: combined.result,
+      runtimeResult: combined.runtimeResult,
+      children,
+    };
   }
   if (node.clause && typeof node.clause === 'object') {
-    return evaluateConditionTree(node.clause, runtime);
+    return evaluateConditionTreeState(node.clause, runtime);
   }
-  return evaluateClause(node, runtime);
+  const clauseState = evaluateClauseState(node, runtime);
+  return {
+    kind: 'clause',
+    result: clauseState.result,
+    runtimeResult: clauseState.runtimeResult,
+    clause: clauseState.clause,
+    leftValue: clauseState.leftValue,
+    rightValue: clauseState.rightValue,
+    pendingReason: clauseState.pendingReason,
+  };
+};
+
+export const evaluateConditionTree = (node, runtime = {}) => {
+  const state = evaluateConditionTreeState(node, runtime);
+  return Boolean(state?.runtimeResult);
 };
 
 export const explainConditionTree = (node, runtime = {}, path = 'root') => {
   if (!node || typeof node !== 'object') {
-    return { kind: 'empty', path, result: true };
+    return { kind: 'empty', path, result: true, runtimeResult: true };
   }
   if (isConditionTreeGroup(node)) {
     const logic = normalizeLogicValue(node.logic || 'and');
     if (logic === 'not') {
-      const child = explainConditionTree(node.clause || createDefaultPromptClause(), runtime, `${path}.0`);
+      const child = explainConditionTree(node.clause || createPendingPromptClause('missing_input'), runtime, `${path}.0`);
+      const combined = combineConditionLogicState('not', [child.result]);
       return {
         kind: 'group',
         path,
         logic,
-        result: !Boolean(child.result),
+        result: combined.result,
+        runtimeResult: combined.runtimeResult,
         child,
         children: [child],
       };
     }
-    const children = (Array.isArray(node.clauses) && node.clauses.length ? node.clauses : [createDefaultPromptClause()])
+    const children = (Array.isArray(node.clauses) && node.clauses.length ? node.clauses : [createPendingPromptClause('missing_input')])
       .map((child, idx) => explainConditionTree(child, runtime, `${path}.${idx}`));
+    const combined = combineConditionLogicState(logic, children.map(child => child.result));
     return {
       kind: 'group',
       path,
       logic,
-      result: logic === 'or' ? children.some(child => Boolean(child.result)) : children.every(child => Boolean(child.result)),
+      result: combined.result,
+      runtimeResult: combined.runtimeResult,
       children,
     };
   }
-  const clause = normalizePromptClause(node);
-  const leftValue = evalExpression(clause.left, runtime);
-  const rightValue = clause.rightType === 'variable'
-    ? evalExpression(clause.right, runtime)
-    : coerceLiteral(clause.right, clause.rightType);
+  const clauseState = evaluateClauseState(node, runtime);
   return {
     kind: 'clause',
     path,
-    result: evaluateClause(clause, runtime),
-    clause,
-    leftValue,
-    rightValue,
+    result: clauseState.result,
+    runtimeResult: clauseState.runtimeResult,
+    clause: clauseState.clause,
+    leftValue: clauseState.leftValue,
+    rightValue: clauseState.rightValue,
+    pendingReason: clauseState.pendingReason,
   };
 };

@@ -31,7 +31,16 @@ import { listMediaAssets } from '../utils/media-assets.js';
 import { isRetryableError, retryWithBackoff } from '../utils/retry.js';
 import { safeInvoke } from '../utils/tauri.js';
 import {
+  analyzeWorldEntryActivation,
+  normalizeWorldEntryKeys,
+  normalizeWorldEntrySecondaryKeys,
+  prepareWorldEntries,
+} from '../utils/world-entry-activation.js';
+import {
+  buildMacroVariableContext,
   buildVariableContext,
+} from '../variables/variable-path-utils.js';
+import {
   collectConditionDefineSpecs,
   createDefaultPromptClause,
   evaluateConditionTree,
@@ -1314,37 +1323,6 @@ class AppBridge {
       if (id) worldIds.push(String(id));
     });
     const sid = String(this.activeSessionId || '').trim();
-    const buildNestedVars = (flat = {}) => {
-      const root = {};
-      const toPath = (val) => String(val || '')
-        .replace(/\[([^\]]+)\]/g, '.$1')
-        .split('.')
-        .map(seg => seg.trim().replace(/^['"]|['"]$/g, ''))
-        .filter(Boolean);
-      const isIndex = (seg) => /^\d+$/.test(seg);
-      const setByPath = (obj, path, value) => {
-        const parts = toPath(path);
-        if (!parts.length) return;
-        let cur = obj;
-        for (let i = 0; i < parts.length - 1; i += 1) {
-          const key = isIndex(parts[i]) ? Number(parts[i]) : parts[i];
-          const nextKey = parts[i + 1];
-          const shouldArray = isIndex(nextKey);
-          if (!cur[key] || typeof cur[key] !== 'object') {
-            cur[key] = shouldArray ? [] : {};
-          }
-          cur = cur[key];
-        }
-        const lastKey = isIndex(parts[parts.length - 1]) ? Number(parts[parts.length - 1]) : parts[parts.length - 1];
-        cur[lastKey] = value;
-      };
-      Object.entries(flat || {}).forEach(([key, value]) => {
-        const name = String(key || '').trim();
-        if (!name) return;
-        setByPath(root, name, value);
-      });
-      return root;
-    };
     let localVars = {};
     let globalVars = {};
     try {
@@ -1357,22 +1335,17 @@ class AppBridge {
       ? Boolean(this.isSharedVariableSession(sid))
       : false;
     const baseVars = isShared ? globalVars : localVars;
-    const baseNested = buildNestedVars(baseVars);
-    const globalNested = buildNestedVars(globalVars);
-    const mergedVars = { ...globalVars, ...localVars };
     return {
       sessionId: this.activeSessionId,
       worldId: this.currentWorldId,
       worldIds,
       activePresets,
-      macroVars: {
-        ...mergedVars,
-        stat_data: baseNested,
-        variables: baseNested,
-        status_current_variables: baseNested,
-        global_variables: globalNested,
-        local_variables: localVars,
-      },
+      macroVars: buildMacroVariableContext({
+        baseVars,
+        globalVars,
+        localVars,
+        topLevelMode: isShared ? 'base' : 'merged',
+      }),
     };
   }
 
@@ -4195,176 +4168,6 @@ const stringifyMessageContent = (content) => {
       variableDefineStrategy,
     } = buildWorldActivationSettings(worldSettings);
 
-    const norm = v => String(v ?? '').trim();
-    const resolveRefEntries = (refs, refFromWorldId) => {
-      const list = Array.isArray(refs) ? refs : [];
-      if (!list.length) return [];
-      const results = [];
-      list.forEach((raw) => {
-        const ref = raw && typeof raw === 'object' ? raw : {};
-        const sourceId = String(ref.sourceId || ref.worldId || ref.source || '').trim();
-        if (!sourceId) return;
-        const source = this.worldStore.load(sourceId);
-        const sourceEntries = Array.isArray(source?.entries) ? source.entries : [];
-        if (!sourceEntries.length) return;
-        const entryIdRaw = String(ref.entryId || ref.entry || '').trim();
-        const entryIds = Array.isArray(ref.entryIds)
-          ? ref.entryIds.map(val => String(val || '').trim()).filter(Boolean)
-          : [];
-        const includeAll = ref.includeAll === true || ref.all === true || entryIdRaw === '*' || entryIds.includes('*');
-        let picked = sourceEntries;
-        if (!includeAll) {
-          const idSet = new Set(entryIds);
-          if (entryIdRaw) idSet.add(entryIdRaw);
-          if (idSet.size) {
-            picked = sourceEntries.filter(entry => idSet.has(String(entry?.id ?? entry?.uid ?? '').trim()));
-          } else {
-            picked = [];
-          }
-        }
-        picked.forEach((entry) => {
-          if (!entry) return;
-          results.push({
-            ...entry,
-            _sourceWorldId: sourceId,
-            _refWorldId: refFromWorldId,
-          });
-        });
-      });
-      return results;
-    };
-    const isScopeAllowed = () => true;
-    const normalizeKeys = e => {
-      const keys = Array.isArray(e?.key) ? e.key : Array.isArray(e?.triggers) ? e.triggers : [];
-      return keys.map(norm).filter(Boolean);
-    };
-    const normalizeSecondaryKeys = e => {
-      const keys = Array.isArray(e?.keysecondary) ? e.keysecondary : Array.isArray(e?.secondary) ? e.secondary : [];
-      return keys.map(norm).filter(Boolean);
-    };
-    const isRegexLiteral = k =>
-      k.length >= 2 && k.startsWith('/') && k.endsWith('/') && k.indexOf('/', 1) === k.length - 1;
-    const escapeRegExp = s => String(s || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const hasCjk = s => /[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]/.test(String(s || ''));
-    const matchKey = (key, rawText, rawTextLower, caseSensitive, matchWholeWords) => {
-      const k = norm(key);
-      if (!k) return false;
-      if (isRegexLiteral(k)) {
-        const body = k.slice(1, -1);
-        try {
-          const re = new RegExp(body, caseSensitive ? '' : 'i');
-          return re.test(rawText);
-        } catch {
-          return false;
-        }
-      }
-      if (matchWholeWords && !hasCjk(k)) {
-        try {
-          const re = new RegExp(`\\b${escapeRegExp(k)}\\b`, caseSensitive ? '' : 'i');
-          return re.test(rawText);
-        } catch {
-          return false;
-        }
-      }
-      if (caseSensitive) return rawText.includes(k);
-      return rawTextLower.includes(k.toLowerCase());
-    };
-    const buildMatchTextForEntry = (e, localMatchText, localMatchContext) => {
-      if (!localMatchContext) return localMatchText;
-      const parts = [];
-      const userText = String(localMatchContext.userMessage || '').trim();
-      if (userText) parts.push(userText);
-      const history = Array.isArray(localMatchContext.history) ? localMatchContext.history : [];
-      const scanDepthRaw = e?.scanDepth;
-      const scanDepth = Number.isFinite(Number(scanDepthRaw)) ? Math.max(0, Math.trunc(Number(scanDepthRaw))) : null;
-      const historySlice = scanDepth == null ? history : history.slice(-scanDepth);
-      if (historySlice.length) parts.push(...historySlice);
-      const personaText = String(localMatchContext.personaText || '').trim();
-      if (e?.matchPersonaDescription && personaText) parts.push(personaText);
-      const character = localMatchContext.character || {};
-      if (e?.matchCharacterDescription && character.description) parts.push(character.description);
-      if (e?.matchCharacterPersonality && character.personality) parts.push(character.personality);
-      if (e?.matchCharacterDepthPrompt && character.depthPrompt) parts.push(character.depthPrompt);
-      if (e?.matchScenario && character.scenario) parts.push(character.scenario);
-      if (e?.matchCreatorNotes && character.creatorNotes) parts.push(character.creatorNotes);
-      return parts.join('\n');
-    };
-    const hasMatchInput = (localMatchText, localMatchContext) => {
-      if (String(localMatchText || '').trim()) return true;
-      if (!localMatchContext) return false;
-      const userText = String(localMatchContext.userMessage || '').trim();
-      const history = Array.isArray(localMatchContext.history) ? localMatchContext.history : [];
-      if (userText) return true;
-      return history.some(line => String(line || '').trim());
-    };
-
-    const shouldInclude = (e, { localMatchText, localMatchContext, isRecursivePass = false, recursionStep = 0 } = {}) => {
-      if (!e || typeof e !== 'object') return false;
-      if (!isScopeAllowed(e.scope)) return false;
-      if (Boolean(e.disable)) return false;
-      if (!isRecursivePass && Number.isFinite(Number(e.delayUntilRecursion)) && Number(e.delayUntilRecursion) > 0) {
-        return false;
-      }
-      if (isRecursivePass) {
-        if (Boolean(e.excludeRecursion)) return false;
-        const delay = Number.isFinite(Number(e.delayUntilRecursion)) ? Math.max(0, Math.trunc(Number(e.delayUntilRecursion))) : 0;
-        if (delay > 0 && recursionStep < delay) return false;
-      }
-      // Legacy behavior: when no match text provided, include all enabled entries.
-      const content = String(e.content || '').trim();
-      const blockHasContent = Array.isArray(e?.promptBlocks)
-        ? e.promptBlocks.some(block => String(block?.content || '').trim().length > 0)
-        : false;
-      if (!hasMatchInput(localMatchText, localMatchContext)) return Boolean(content || blockHasContent);
-      if (!content && !blockHasContent) return false;
-      if (Boolean(e.constant)) return true;
-      const keys = normalizeKeys(e);
-      if (!keys.length) return false;
-      const secondaryKeys = normalizeSecondaryKeys(e);
-      const cs = (typeof e.caseSensitive === 'boolean') ? e.caseSensitive : globalCaseSensitive;
-      const whole = (typeof e.matchWholeWords === 'boolean') ? e.matchWholeWords : globalMatchWholeWords;
-      const entryText = buildMatchTextForEntry(e, localMatchText, localMatchContext);
-      if (!entryText) return false;
-      const rawText = String(entryText || '');
-      const rawTextLower = cs ? rawText : rawText.toLowerCase();
-      const primaryMatch = keys.some(k => matchKey(k, rawText, rawTextLower, cs, whole));
-      if (!primaryMatch) return false;
-      if (!Boolean(e.selective) || secondaryKeys.length === 0) return true;
-      const secondaryMatches = secondaryKeys.map(k => matchKey(k, rawText, rawTextLower, cs, whole));
-      const anySecondary = secondaryMatches.some(Boolean);
-      const allSecondary = secondaryMatches.every(Boolean);
-      const logic = Number.isFinite(Number(e.selectiveLogic)) ? Math.trunc(Number(e.selectiveLogic)) : 0;
-      switch (logic) {
-        case 0:
-          return anySecondary;
-        case 1:
-          return !allSecondary;
-        case 2:
-          return !anySecondary;
-        case 3:
-          return allSecondary;
-        default:
-          return true;
-      }
-    };
-
-    const rollProbability = e => {
-      if (!e || e.useProbability === false) return true;
-      const p = Number(e.probability);
-      if (!Number.isFinite(p)) return true;
-      if (p >= 100) return true;
-      if (p <= 0) return false;
-      return Math.random() * 100 < p;
-    };
-
-    const parseGroups = (val) => {
-      if (Array.isArray(val)) return val.map(norm).filter(Boolean);
-      return String(val || '')
-        .split(/[,，]/)
-        .map(norm)
-        .filter(Boolean);
-    };
-
     const runtimeSessionId = String(scopeSessionId || this.activeSessionId || '').trim();
     const useGlobalVariables = Boolean(
       runtimeSessionId &&
@@ -4379,8 +4182,7 @@ const stringifyMessageContent = (content) => {
       const localVars = this.chatStore?.listVariables?.(runtimeSessionId) || {};
       const globalVars = this.chatStore?.listGlobalVariables?.() || {};
       const baseVars = useGlobalVariables ? globalVars : localVars;
-      runtimeConditionContext = buildVariableContext({ baseVars, globalVars });
-      runtimeConditionContext.variableContext.local_variables = localVars;
+      runtimeConditionContext = buildVariableContext({ baseVars, globalVars, localVars });
     };
     refreshRuntimeConditionContext();
     const evalConditionGroup = (when) => {
@@ -4476,153 +4278,41 @@ const stringifyMessageContent = (content) => {
       return true;
     };
 
-    const localEntries = Array.isArray(data.localEntries)
-      ? data.localEntries
-      : (Array.isArray(data.entries) ? data.entries : []);
-    const refEntries = resolveRefEntries(data.refs, id);
-    const combinedEntries = [...localEntries, ...refEntries];
-    if (!combinedEntries.length) return [];
-    const baseEntries = combinedEntries.map((entry, idx) => ({
-      ...entry,
-      _entryId: String(entry?.id ?? entry?.uid ?? `entry-${idx}`),
-      _entryIndex: idx,
-      _groups: parseGroups(entry?.group),
-      _sourceWorldId: String(entry?._sourceWorldId || id || '').trim(),
-      _refWorldId: String(entry?._refWorldId || '').trim(),
-    }));
+    const baseEntries = prepareWorldEntries({
+      worldId: id,
+      data,
+      loadWorld: (sourceId) => this.worldStore.load(sourceId),
+    });
+    if (!baseEntries.length) return [];
     if (variableDefineStrategy === 'legacy_eager') {
       const changed = syncPromptBlockVariableSchemasForEntries(baseEntries);
       if (changed) refreshRuntimeConditionContext();
     }
 
-    let effectiveMatchContext = matchContext;
-    if (matchContext && minActivations > 0) {
-      const fullHistory = Array.isArray(matchContext.fullHistory) ? matchContext.fullHistory : matchContext.history;
-      const historyLines = Array.isArray(fullHistory) ? fullHistory : [];
-      if (historyLines.length) {
-        const maxDepth = maxDepthSetting > 0 ? Math.min(maxDepthSetting, historyLines.length) : historyLines.length;
-        let selectedHistory = matchContext.history || [];
-        for (let depth = 1; depth <= maxDepth; depth += 1) {
-          const candidateHistory = historyLines.slice(-depth);
-          const candidateContext = { ...matchContext, history: candidateHistory };
-          const matched = baseEntries.filter(e => shouldInclude(e, {
-            localMatchText: matchText,
-            localMatchContext: candidateContext,
-            isRecursivePass: false,
-            recursionStep: 0,
-          }));
-          const uniqueCount = new Set(matched.map(e => e._entryId)).size;
-          selectedHistory = candidateHistory;
-          if (uniqueCount >= minActivations) break;
-        }
-        effectiveMatchContext = { ...matchContext, history: selectedHistory };
-      }
-    }
-    const applyProbability = hasMatchInput(matchText, effectiveMatchContext);
-
-    const directMatches = baseEntries
-      .filter(e => shouldInclude(e, {
-        localMatchText: matchText,
-        localMatchContext: effectiveMatchContext,
-        isRecursivePass: false,
-        recursionStep: 0,
-      }))
-      .filter(e => (!applyProbability || rollProbability(e)));
-
-    const activeMap = new Map();
-    directMatches.forEach(entry => activeMap.set(entry._entryId, entry));
-
-    if (globalRecursiveScan) {
-      let newlyActivated = [...directMatches];
-      const maxRecursionSteps = minActivations > 0
-        ? Number.POSITIVE_INFINITY
-        : (maxRecursionStepsSetting > 0 ? maxRecursionStepsSetting : Number.POSITIVE_INFINITY);
-      let step = 1;
-      while (newlyActivated.length && step <= maxRecursionSteps) {
-        const recursionText = newlyActivated
-          .filter(e => !Boolean(e.preventRecursion))
-          .map(e => String(e.content || '').trim())
-          .filter(Boolean)
-          .join('\n');
-        if (!recursionText) break;
-        const recursionMatches = baseEntries
-          .filter(e => !activeMap.has(e._entryId))
-          .filter(e => shouldInclude(e, {
-            localMatchText: recursionText,
-            localMatchContext: null,
-            isRecursivePass: true,
-            recursionStep: step,
-          }))
-          .filter(e => rollProbability(e));
-        if (!recursionMatches.length) break;
-        recursionMatches.forEach(entry => activeMap.set(entry._entryId, entry));
-        newlyActivated = recursionMatches;
-        step += 1;
-        if (activeMap.size >= baseEntries.length) break;
-      }
-    }
-
+    const activation = analyzeWorldEntryActivation({
+      baseEntries,
+      matchText,
+      matchContext,
+      settings: {
+        globalCaseSensitive,
+        globalMatchWholeWords,
+        globalRecursiveScan,
+        globalUseGroupScoring,
+        minActivations,
+        maxDepthSetting,
+        maxRecursionStepsSetting,
+      },
+      applyProbability: true,
+    });
     if (variableDefineStrategy === 'first_hit') {
-      const changed = syncPromptBlockVariableSchemasForEntries([...activeMap.values()]);
+      const changed = syncPromptBlockVariableSchemasForEntries(activation.activeEntries);
       if (changed) refreshRuntimeConditionContext();
     }
 
-    let entries = [...activeMap.values()]
-      .sort((a, b) => {
-        const oa = Number.isFinite(Number(a?.order))
-          ? Number(a.order)
-          : Number.isFinite(Number(a?.priority))
-          ? Number(a.priority)
-          : 0;
-        const ob = Number.isFinite(Number(b?.order))
-          ? Number(b.order)
-          : Number.isFinite(Number(b?.priority))
-          ? Number(b.priority)
-          : 0;
-        return oa - ob;
-      });
+    let entries = activation.activeEntries.slice();
 
     const trimEdgeBlankLines = (text) =>
       String(text ?? '').replace(/^(?:[ \t]*\r?\n)+/, '').replace(/(?:\r?\n[ \t]*)+$/, '');
-
-    // Group scoring: if enabled within a group, keep only highest-weight entries in that group.
-    const groupWinners = new Map();
-    const groupBuckets = new Map();
-    entries.forEach(entry => {
-      const groups = Array.isArray(entry?._groups) ? entry._groups : [];
-      groups.forEach(g => {
-        if (!groupBuckets.has(g)) groupBuckets.set(g, []);
-        groupBuckets.get(g).push(entry);
-      });
-    });
-    groupBuckets.forEach((bucket, groupName) => {
-      const enabled = globalUseGroupScoring || bucket.some(e => e?.useGroupScoring === true || e?.groupOverride === true);
-      if (!enabled) return;
-      const override = bucket.filter(e => e?.groupOverride);
-      const pool = override.length ? override : bucket;
-      let maxWeight = null;
-      pool.forEach(e => {
-        const w = Number.isFinite(Number(e?.groupWeight)) ? Number(e.groupWeight) : 0;
-        if (maxWeight == null || w > maxWeight) maxWeight = w;
-      });
-      if (maxWeight == null) return;
-      const winners = pool.filter(e => {
-        const w = Number.isFinite(Number(e?.groupWeight)) ? Number(e.groupWeight) : 0;
-        return w === maxWeight;
-      });
-      if (winners.length) groupWinners.set(groupName, new Set(winners));
-    });
-    if (groupWinners.size) {
-      entries = entries.filter(entry => {
-        const groups = Array.isArray(entry?._groups) ? entry._groups : [];
-        if (!groups.length) return true;
-        return groups.every(g => {
-          const winners = groupWinners.get(g);
-          if (!winners) return true;
-          return winners.has(entry);
-        });
-      });
-    }
 
     const roleToNumber = (value, fallback = 0) => {
       if (Number.isFinite(Number(value))) return Math.max(0, Math.min(2, Math.trunc(Number(value))));
@@ -4814,362 +4504,34 @@ const stringifyMessageContent = (content) => {
       maxDepthSetting,
       maxRecursionStepsSetting,
     } = buildWorldActivationSettings(worldSettings);
+    const baseEntries = prepareWorldEntries({
+      worldId: id,
+      data,
+      loadWorld: (sourceId) => this.worldStore.load(sourceId),
+    });
+    if (!baseEntries.length) return null;
 
-    const norm = v => String(v ?? '').trim();
-    const resolveRefEntries = (refs, refFromWorldId) => {
-      const list = Array.isArray(refs) ? refs : [];
-      if (!list.length) return [];
-      const results = [];
-      list.forEach((raw) => {
-        const ref = raw && typeof raw === 'object' ? raw : {};
-        const sourceId = String(ref.sourceId || ref.worldId || ref.source || '').trim();
-        if (!sourceId) return;
-        const source = this.worldStore.load(sourceId);
-        const sourceEntries = Array.isArray(source?.entries) ? source.entries : [];
-        if (!sourceEntries.length) return;
-        const entryIdRaw = String(ref.entryId || ref.entry || '').trim();
-        const entryIds = Array.isArray(ref.entryIds)
-          ? ref.entryIds.map(val => String(val || '').trim()).filter(Boolean)
-          : [];
-        const includeAll = ref.includeAll === true || ref.all === true || entryIdRaw === '*' || entryIds.includes('*');
-        let picked = sourceEntries;
-        if (!includeAll) {
-          const idSet = new Set(entryIds);
-          if (entryIdRaw) idSet.add(entryIdRaw);
-          picked = idSet.size
-            ? sourceEntries.filter(entry => idSet.has(String(entry?.id ?? entry?.uid ?? '').trim()))
-            : [];
-        }
-        picked.forEach((entry) => {
-          if (!entry) return;
-          results.push({
-            ...entry,
-            _sourceWorldId: sourceId,
-            _refWorldId: refFromWorldId,
-          });
-        });
-      });
-      return results;
-    };
-    const normalizeKeys = e => {
-      const keys = Array.isArray(e?.key) ? e.key : Array.isArray(e?.triggers) ? e.triggers : [];
-      return keys.map(norm).filter(Boolean);
-    };
-    const normalizeSecondaryKeys = e => {
-      const keys = Array.isArray(e?.keysecondary) ? e.keysecondary : Array.isArray(e?.secondary) ? e.secondary : [];
-      return keys.map(norm).filter(Boolean);
-    };
-    const parseGroups = (val) => {
-      if (Array.isArray(val)) return val.map(norm).filter(Boolean);
-      return String(val || '')
-        .split(/[,，]/)
-        .map(norm)
-        .filter(Boolean);
-    };
-    const isRegexLiteral = k =>
-      k.length >= 2 && k.startsWith('/') && k.endsWith('/') && k.indexOf('/', 1) === k.length - 1;
-    const escapeRegExp = s => String(s || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const hasCjk = s => /[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]/.test(String(s || ''));
-    const matchKey = (key, rawText, rawTextLower, caseSensitive, matchWholeWords) => {
-      const k = norm(key);
-      if (!k) return false;
-      if (isRegexLiteral(k)) {
-        const body = k.slice(1, -1);
-        try {
-          const re = new RegExp(body, caseSensitive ? '' : 'i');
-          return re.test(rawText);
-        } catch {
-          return false;
-        }
-      }
-      if (matchWholeWords && !hasCjk(k)) {
-        try {
-          const re = new RegExp(`\\b${escapeRegExp(k)}\\b`, caseSensitive ? '' : 'i');
-          return re.test(rawText);
-        } catch {
-          return false;
-        }
-      }
-      if (caseSensitive) return rawText.includes(k);
-      return rawTextLower.includes(k.toLowerCase());
-    };
-    const buildMatchTextForEntry = (e, localMatchText, localMatchContext) => {
-      if (!localMatchContext) return localMatchText;
-      const parts = [];
-      const userText = String(localMatchContext.userMessage || '').trim();
-      if (userText) parts.push(userText);
-      const history = Array.isArray(localMatchContext.history) ? localMatchContext.history : [];
-      const scanDepthRaw = e?.scanDepth;
-      const scanDepth = Number.isFinite(Number(scanDepthRaw)) ? Math.max(0, Math.trunc(Number(scanDepthRaw))) : null;
-      const historySlice = scanDepth == null ? history : history.slice(-scanDepth);
-      if (historySlice.length) parts.push(...historySlice);
-      const personaText = String(localMatchContext.personaText || '').trim();
-      if (e?.matchPersonaDescription && personaText) parts.push(personaText);
-      const character = localMatchContext.character || {};
-      if (e?.matchCharacterDescription && character.description) parts.push(character.description);
-      if (e?.matchCharacterPersonality && character.personality) parts.push(character.personality);
-      if (e?.matchCharacterDepthPrompt && character.depthPrompt) parts.push(character.depthPrompt);
-      if (e?.matchScenario && character.scenario) parts.push(character.scenario);
-      if (e?.matchCreatorNotes && character.creatorNotes) parts.push(character.creatorNotes);
-      return parts.join('\n');
-    };
-    const hasMatchInput = (localMatchText, localMatchContext) => {
-      if (String(localMatchText || '').trim()) return true;
-      if (!localMatchContext) return false;
-      const userText = String(localMatchContext.userMessage || '').trim();
-      const history = Array.isArray(localMatchContext.history) ? localMatchContext.history : [];
-      if (userText) return true;
-      return history.some(line => String(line || '').trim());
-    };
-    const explainInclude = (e, { localMatchText, localMatchContext, isRecursivePass = false, recursionStep = 0 } = {}) => {
-      const report = {
-        passed: false,
-        reasons: [],
-        matchedPrimaryKeys: [],
-        matchedSecondaryKeys: [],
-        entryText: '',
-        hasMatchInput: hasMatchInput(localMatchText, localMatchContext),
-        selectivePassed: true,
-      };
-      if (!e || typeof e !== 'object') {
-        report.reasons.push('条目不存在');
-        return report;
-      }
-      if (Boolean(e.disable)) {
-        report.reasons.push('条目已禁用');
-        return report;
-      }
-      if (!isRecursivePass && Number.isFinite(Number(e.delayUntilRecursion)) && Number(e.delayUntilRecursion) > 0) {
-        report.reasons.push(`需在递归第 ${Math.max(0, Math.trunc(Number(e.delayUntilRecursion)))} 轮后才参与`);
-        return report;
-      }
-      if (isRecursivePass) {
-        if (Boolean(e.excludeRecursion)) {
-          report.reasons.push('条目被设置为不参与递归');
-          return report;
-        }
-        const delay = Number.isFinite(Number(e.delayUntilRecursion)) ? Math.max(0, Math.trunc(Number(e.delayUntilRecursion))) : 0;
-        if (delay > 0 && recursionStep < delay) {
-          report.reasons.push(`递归轮次不足，当前第 ${recursionStep} 轮，需要第 ${delay} 轮`);
-          return report;
-        }
-      }
-      const content = String(e.content || '').trim();
-      const blockHasContent = Array.isArray(e?.promptBlocks)
-        ? e.promptBlocks.some(block => String(block?.content || '').trim().length > 0)
-        : false;
-      if (!report.hasMatchInput) {
-        report.passed = Boolean(content || blockHasContent);
-        if (!report.passed) report.reasons.push('条目和分页内容都为空');
-        else report.reasons.push('当前没有匹配输入，因此按“有内容即参与”处理');
-        return report;
-      }
-      if (!content && !blockHasContent) {
-        report.reasons.push('条目和分页内容都为空');
-        return report;
-      }
-      if (Boolean(e.constant)) {
-        report.passed = true;
-        report.reasons.push('常驻条目，跳过关键词匹配');
-        return report;
-      }
-      const keys = normalizeKeys(e);
-      if (!keys.length) {
-        report.reasons.push('未设置主关键词');
-        return report;
-      }
-      const secondaryKeys = normalizeSecondaryKeys(e);
-      const cs = (typeof e.caseSensitive === 'boolean') ? e.caseSensitive : globalCaseSensitive;
-      const whole = (typeof e.matchWholeWords === 'boolean') ? e.matchWholeWords : globalMatchWholeWords;
-      const entryText = buildMatchTextForEntry(e, localMatchText, localMatchContext);
-      report.entryText = entryText;
-      if (!entryText) {
-        report.reasons.push('当前上下文没有可用于匹配的文本');
-        return report;
-      }
-      const rawText = String(entryText || '');
-      const rawTextLower = cs ? rawText : rawText.toLowerCase();
-      report.matchedPrimaryKeys = keys.filter(k => matchKey(k, rawText, rawTextLower, cs, whole));
-      if (!report.matchedPrimaryKeys.length) {
-        report.reasons.push('主关键词未命中当前上下文');
-        return report;
-      }
-      if (!Boolean(e.selective) || secondaryKeys.length === 0) {
-        report.passed = true;
-        report.reasons.push('主关键词已命中');
-        return report;
-      }
-      report.matchedSecondaryKeys = secondaryKeys.filter(k => matchKey(k, rawText, rawTextLower, cs, whole));
-      const anySecondary = report.matchedSecondaryKeys.length > 0;
-      const allSecondary = report.matchedSecondaryKeys.length === secondaryKeys.length;
-      const logic = Number.isFinite(Number(e.selectiveLogic)) ? Math.trunc(Number(e.selectiveLogic)) : 0;
-      switch (logic) {
-        case 0:
-          report.selectivePassed = anySecondary;
-          break;
-        case 1:
-          report.selectivePassed = !allSecondary;
-          break;
-        case 2:
-          report.selectivePassed = !anySecondary;
-          break;
-        case 3:
-          report.selectivePassed = allSecondary;
-          break;
-        default:
-          report.selectivePassed = true;
-          break;
-      }
-      report.passed = report.selectivePassed;
-      if (report.selectivePassed) report.reasons.push('主关键词和副关键词逻辑均通过');
-      else report.reasons.push('副关键词逻辑未通过');
-      return report;
-    };
-
-    const localEntries = Array.isArray(data.localEntries)
-      ? data.localEntries
-      : (Array.isArray(data.entries) ? data.entries : []);
-    const refEntries = resolveRefEntries(data.refs, id);
-    const combinedEntries = [...localEntries, ...refEntries];
-    if (!combinedEntries.length) return null;
-    const baseEntries = combinedEntries.map((entry, idx) => ({
-      ...entry,
-      _entryId: String(entry?.id ?? entry?.uid ?? `entry-${idx}`),
-      _entryIndex: idx,
-      _groups: parseGroups(entry?.group),
-      _sourceWorldId: String(entry?._sourceWorldId || id || '').trim(),
-      _refWorldId: String(entry?._refWorldId || '').trim(),
-    }));
-    const targetEntry = baseEntries.find(entry => String(entry?._entryId || '') === targetEntryId);
+    const activation = analyzeWorldEntryActivation({
+      baseEntries,
+      matchText,
+      matchContext,
+      settings: {
+        globalCaseSensitive,
+        globalMatchWholeWords,
+        globalRecursiveScan,
+        globalUseGroupScoring,
+        minActivations,
+        maxDepthSetting,
+        maxRecursionStepsSetting,
+      },
+      targetEntryId,
+      applyProbability: false,
+    });
+    const targetEntry = activation.targetEntry;
     if (!targetEntry) return null;
-
-    let effectiveMatchContext = matchContext;
-    if (matchContext && minActivations > 0) {
-      const fullHistory = Array.isArray(matchContext.fullHistory) ? matchContext.fullHistory : matchContext.history;
-      const historyLines = Array.isArray(fullHistory) ? fullHistory : [];
-      if (historyLines.length) {
-        const maxDepth = maxDepthSetting > 0 ? Math.min(maxDepthSetting, historyLines.length) : historyLines.length;
-        let selectedHistory = matchContext.history || [];
-        for (let depth = 1; depth <= maxDepth; depth += 1) {
-          const candidateHistory = historyLines.slice(-depth);
-          const candidateContext = { ...matchContext, history: candidateHistory };
-          const matched = baseEntries.filter(e => explainInclude(e, {
-            localMatchText: matchText,
-            localMatchContext: candidateContext,
-            isRecursivePass: false,
-            recursionStep: 0,
-          }).passed);
-          const uniqueCount = new Set(matched.map(e => e._entryId)).size;
-          selectedHistory = candidateHistory;
-          if (uniqueCount >= minActivations) break;
-        }
-        effectiveMatchContext = { ...matchContext, history: selectedHistory };
-      }
-    }
-
-    const directExplain = explainInclude(targetEntry, {
-      localMatchText: matchText,
-      localMatchContext: effectiveMatchContext,
-      isRecursivePass: false,
-      recursionStep: 0,
-    });
-    const directMatches = baseEntries
-      .filter(e => explainInclude(e, {
-        localMatchText: matchText,
-        localMatchContext: effectiveMatchContext,
-        isRecursivePass: false,
-        recursionStep: 0,
-      }).passed);
-    const activationMeta = new Map(directMatches.map(entry => [entry._entryId, { source: 'direct', recursionStep: 0 }]));
-    const activeMap = new Map(directMatches.map(entry => [entry._entryId, entry]));
-
-    if (globalRecursiveScan) {
-      let newlyActivated = [...directMatches];
-      const maxRecursionSteps = minActivations > 0
-        ? Number.POSITIVE_INFINITY
-        : (maxRecursionStepsSetting > 0 ? maxRecursionStepsSetting : Number.POSITIVE_INFINITY);
-      let step = 1;
-      while (newlyActivated.length && step <= maxRecursionSteps) {
-        const recursionText = newlyActivated
-          .filter(e => !Boolean(e.preventRecursion))
-          .map(e => String(e.content || '').trim())
-          .filter(Boolean)
-          .join('\n');
-        if (!recursionText) break;
-        const recursionMatches = baseEntries
-          .filter(e => !activeMap.has(e._entryId))
-          .filter(e => explainInclude(e, {
-            localMatchText: recursionText,
-            localMatchContext: null,
-            isRecursivePass: true,
-            recursionStep: step,
-          }).passed);
-        if (!recursionMatches.length) break;
-        recursionMatches.forEach((entry) => {
-          activeMap.set(entry._entryId, entry);
-          activationMeta.set(entry._entryId, { source: 'recursive', recursionStep: step });
-        });
-        newlyActivated = recursionMatches;
-        step += 1;
-        if (activeMap.size >= baseEntries.length) break;
-      }
-    }
-
-    let entries = [...activeMap.values()]
-      .sort((a, b) => {
-        const oa = Number.isFinite(Number(a?.order))
-          ? Number(a.order)
-          : Number.isFinite(Number(a?.priority))
-          ? Number(a.priority)
-          : 0;
-        const ob = Number.isFinite(Number(b?.order))
-          ? Number(b.order)
-          : Number.isFinite(Number(b?.priority))
-          ? Number(b.priority)
-          : 0;
-        return oa - ob;
-      });
-    const beforeGroupEntryIds = new Set(entries.map(entry => String(entry?._entryId || '')));
-    const groupWinners = new Map();
-    const groupBuckets = new Map();
-    entries.forEach((entry) => {
-      const groups = Array.isArray(entry?._groups) ? entry._groups : [];
-      groups.forEach((g) => {
-        if (!groupBuckets.has(g)) groupBuckets.set(g, []);
-        groupBuckets.get(g).push(entry);
-      });
-    });
-    groupBuckets.forEach((bucket, groupName) => {
-      const enabled = globalUseGroupScoring || bucket.some(e => e?.useGroupScoring === true || e?.groupOverride === true);
-      if (!enabled) return;
-      const override = bucket.filter(e => e?.groupOverride);
-      const pool = override.length ? override : bucket;
-      let maxWeight = null;
-      pool.forEach((e) => {
-        const w = Number.isFinite(Number(e?.groupWeight)) ? Number(e.groupWeight) : 0;
-        if (maxWeight == null || w > maxWeight) maxWeight = w;
-      });
-      if (maxWeight == null) return;
-      const winners = pool.filter((e) => {
-        const w = Number.isFinite(Number(e?.groupWeight)) ? Number(e.groupWeight) : 0;
-        return w === maxWeight;
-      });
-      if (winners.length) groupWinners.set(groupName, new Set(winners));
-    });
-    if (groupWinners.size) {
-      entries = entries.filter((entry) => {
-        const groups = Array.isArray(entry?._groups) ? entry._groups : [];
-        if (!groups.length) return true;
-        return groups.every((g) => {
-          const winners = groupWinners.get(g);
-          if (!winners) return true;
-          return winners.has(entry);
-        });
-      });
-    }
-
-    const active = entries.some(entry => String(entry?._entryId || '') === targetEntryId);
-    const sourceInfo = activationMeta.get(targetEntryId) || { source: 'inactive', recursionStep: null };
+    const directExplain = activation.directExplain;
+    const active = activation.activeEntries.some((entry) => String(entry?._entryId || '') === targetEntryId);
+    const sourceInfo = activation.activationMeta.get(targetEntryId) || { source: 'inactive', recursionStep: null };
     const selectiveLogicValue = Number.isFinite(Number(targetEntry?.selectiveLogic)) ? Math.trunc(Number(targetEntry.selectiveLogic)) : 0;
     const selectiveLogicLabelMap = {
       0: '任一副关键词命中',
@@ -5181,6 +4543,7 @@ const stringifyMessageContent = (content) => {
     const blockHasContent = Array.isArray(targetEntry?.promptBlocks)
       ? targetEntry.promptBlocks.some(block => String(block?.content || '').trim().length > 0)
       : false;
+    const effectiveMatchContext = activation.effectiveMatchContext;
     const sourceFields = [];
     if (String(effectiveMatchContext?.userMessage || '').trim()) sourceFields.push('用户输入');
     if (Array.isArray(effectiveMatchContext?.history) && effectiveMatchContext.history.some(line => String(line || '').trim())) sourceFields.push('聊天历史');
@@ -5192,7 +4555,9 @@ const stringifyMessageContent = (content) => {
     if (targetEntry?.matchCreatorNotes && String(effectiveMatchContext?.character?.creatorNotes || '').trim()) sourceFields.push('作者注释');
     const probabilityRaw = Number(targetEntry?.probability);
     const probabilityEnabled = targetEntry?.useProbability !== false && Number.isFinite(probabilityRaw) && probabilityRaw < 100;
-    const filteredByGroup = beforeGroupEntryIds.has(targetEntryId) && !active;
+    const filteredByGroup = activation.beforeGroupEntryIds.has(targetEntryId) && !active;
+    const keys = normalizeWorldEntryKeys(targetEntry);
+    const secondaryKeys = normalizeWorldEntrySecondaryKeys(targetEntry);
     return {
       entryId: targetEntryId,
       active,
@@ -5213,11 +4578,11 @@ const stringifyMessageContent = (content) => {
         : 0,
       hasMatchInput: directExplain.hasMatchInput,
       hasContent: Boolean(content || blockHasContent),
-      keys: normalizeKeys(targetEntry),
-      secondaryKeys: normalizeSecondaryKeys(targetEntry),
+      keys,
+      secondaryKeys,
       matchedPrimaryKeys: directExplain.matchedPrimaryKeys,
       matchedSecondaryKeys: directExplain.matchedSecondaryKeys,
-      selective: Boolean(targetEntry?.selective) && normalizeSecondaryKeys(targetEntry).length > 0,
+      selective: Boolean(targetEntry?.selective) && secondaryKeys.length > 0,
       selectiveLogic: selectiveLogicValue,
       selectiveLogicLabel: selectiveLogicLabelMap[selectiveLogicValue] || '自定义',
       reasons: directExplain.reasons,
