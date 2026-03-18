@@ -51,6 +51,7 @@ export class WorldPanel {
         this.librarySearchTerm = '';
         this.librarySort = 'time';
         this.librarySortDir = 'desc';
+        this.libraryTarget = { type: 'session_extra', sessionId: '', personaId: '' };
         this.editor = new WorldEditorModal({
             onSaved: async () => {
                 await this.refreshList();
@@ -156,29 +157,86 @@ export class WorldPanel {
         return results;
     }
 
+    normalizeLibraryTarget(target = null) {
+        const raw = target && typeof target === 'object' ? target : {};
+        const type = ['global', 'session_extra', 'role'].includes(String(raw.type || '').trim())
+            ? String(raw.type || '').trim()
+            : (this.scope === 'global' ? 'global' : 'session_extra');
+        return {
+            type,
+            sessionId: String(raw.sessionId || this.getSessionId?.() || window.appBridge?.activeSessionId || '').trim(),
+            personaId: String(raw.personaId || '').trim(),
+        };
+    }
+
+    getRoleBindings(sessionId = '', options = {}) {
+        const list = window.appBridge?.getRoleWorldBindings?.(sessionId, options) || [];
+        return Array.isArray(list) ? list : [];
+    }
+
     async refreshList() {
         if (!this.listEl) return;
         this.listEl.innerHTML = '';
         try {
             const sessionId = this.getSessionId ? this.getSessionId() : (window.appBridge?.activeSessionId || 'default');
-            const contact = this.contactsStore?.getContact?.(sessionId) || null;
-            const isGroupSession = this.scope === 'session' && (Boolean(contact?.isGroup) || String(sessionId).startsWith('group:'));
-            const rawCurrentId = this.scope === 'global'
-                ? (window.appBridge.globalWorldId || '')
-                : (window.appBridge.currentWorldId || '');
-            const currentId = rawCurrentId === BUILTIN_PHONE_FORMAT_WORLDBOOK_ID ? '' : rawCurrentId;
-            const isSessionScope = this.scope === 'session' && !isGroupSession;
-            const boundIds = isSessionScope
-                ? (window.appBridge?.getWorldIdsForSession?.(sessionId) || [])
-                : (currentId ? [currentId] : []);
+            const sessionKey = String(sessionId || 'default').trim() || 'default';
+            const contact = this.contactsStore?.getContact?.(sessionKey) || null;
+            const isRpSession = sessionKey.startsWith('rp:');
+            const isGroupSession = this.scope === 'session' && (Boolean(contact?.isGroup) || sessionKey.startsWith('group:'));
             const listTitle = this.panel?.querySelector('#world-list-title');
-            if (listTitle) listTitle.textContent = isSessionScope ? '已绑定' : (this.scope === 'global' ? '已启用' : '世界书列表');
-            if (this.libraryToggleBtn) {
-                this.libraryToggleBtn.style.display = (this.scope === 'session' || this.scope === 'global') ? '' : 'none';
+            const newBtn = this.panel?.querySelector('#world-new');
+            const indicator = this.panel?.querySelector('#world-current');
+            const buildToggle = (opts) => this.buildToggle(opts);
+            const visibleSessionIds = (window.appBridge?.getWorldIdsForSession?.(sessionKey) || []).filter((id) => id !== BUILTIN_PHONE_FORMAT_WORLDBOOK_ID);
+            const globalId = String(window.appBridge?.globalWorldId || '').trim();
+            const normalizedGlobalId = globalId === BUILTIN_PHONE_FORMAT_WORLDBOOK_ID ? '' : globalId;
+            const roleBindings = this.getRoleBindings(sessionKey, { includeEmpty: true })
+                .filter((item) => item?.hasWorld || item?.isActive);
+            const activeRoleBindings = roleBindings.filter((item) => item?.isActive);
+            const activeRoleIds = activeRoleBindings
+                .filter((item) => item?.enabled !== false)
+                .map((item) => String(item?.worldId || '').trim())
+                .filter(Boolean);
+            const roleSummary = activeRoleIds.length ? activeRoleIds.join(' + ') : '未启用';
+
+            if (listTitle) {
+                listTitle.textContent = this.scope === 'global' ? '全局世界书' : '角色与聊天室世界书';
             }
             if (this.globalSettingsEl) {
                 this.globalSettingsEl.style.display = this.scope === 'global' ? '' : 'none';
             }
+
+            const defaultLibraryTarget = this.normalizeLibraryTarget(
+                this.scope === 'global'
+                    ? { type: 'global' }
+                    : { type: 'session_extra', sessionId: sessionKey },
+            );
+            const keepLibraryTarget = Boolean(this.libraryOverlay?.classList.contains('is-active') && this.libraryTarget?.type);
+            this.libraryTarget = this.normalizeLibraryTarget(keepLibraryTarget ? this.libraryTarget : defaultLibraryTarget);
+
+            if (newBtn) {
+                if (this.scope === 'global') {
+                    newBtn.style.display = '';
+                    newBtn.textContent = '新增全局';
+                } else if (!isGroupSession && !isRpSession) {
+                    newBtn.style.display = '';
+                    newBtn.textContent = '新增附加';
+                } else {
+                    newBtn.style.display = 'none';
+                }
+            }
+            if (this.libraryToggleBtn) {
+                if (this.scope === 'global') {
+                    this.libraryToggleBtn.style.display = '';
+                    this.libraryToggleBtn.textContent = '全局世界书库';
+                } else if (!isGroupSession && !isRpSession) {
+                    this.libraryToggleBtn.style.display = '';
+                    this.libraryToggleBtn.textContent = '附加世界书库';
+                } else {
+                    this.libraryToggleBtn.style.display = 'none';
+                }
+            }
+
             if (this.scope === 'global') {
                 const settings = window.appBridge?.getWorldGlobalSettings?.() || {};
                 const scanDepth = Number.isFinite(Number(settings.scanDepth)) ? Number(settings.scanDepth) : '';
@@ -207,27 +265,22 @@ export class WorldPanel {
                 if (this.globalUseGroupScoring) this.globalUseGroupScoring.checked = settings.useGroupScoring === true;
                 if (this.globalOverflowWarning) this.globalOverflowWarning.checked = settings.alertOnOverflow === true;
             }
-            const indicator = this.panel?.querySelector('#world-current');
+
             if (indicator) {
-                const boundLabel = boundIds.length ? boundIds.join(' + ') : '未启用';
-                indicator.textContent = this.scope === 'global'
-                    ? `全局当前：${currentId || '未启用'}`
-                    : (isGroupSession ? `群聊 ${contact?.name || sessionId}：按成员绑定世界书` : `会话 ${sessionId} 当前：${boundLabel}`);
+                if (this.scope === 'global') {
+                    indicator.textContent = `全局当前：${normalizedGlobalId || '未启用'}`;
+                } else if (isGroupSession) {
+                    indicator.textContent = `群聊 ${contact?.name || sessionKey}：角色 ${roleSummary} / 成员附加自动合并`;
+                } else if (isRpSession) {
+                    indicator.textContent = `RP 会话：角色 ${roleSummary} / 附加世界书不参与`;
+                } else {
+                    const extrasLabel = visibleSessionIds.length ? visibleSessionIds.join(' + ') : '未启用';
+                    indicator.textContent = `私聊 ${contact?.name || sessionKey}：角色 ${roleSummary} / 附加 ${extrasLabel}`;
+                }
             }
+
             const names = await window.appBridge.listWorlds?.();
             const visibleNames = (names || []).filter((name) => name !== BUILTIN_PHONE_FORMAT_WORLDBOOK_ID);
-
-            const renderEmpty = (el, text) => {
-                if (!el) return;
-                const li = document.createElement('li');
-                li.textContent = text;
-                li.style.color = '#888';
-                li.style.listStyle = 'none';
-                li.style.padding = '6px 4px';
-                el.appendChild(li);
-            };
-
-            const buildToggle = (opts) => this.buildToggle(opts);
             const worldDataCache = new Map();
             const getWorldData = async (worldId) => {
                 const key = String(worldId || '').trim();
@@ -240,578 +293,504 @@ export class WorldPanel {
                 worldDataCache.set(key, data || null);
                 return data || null;
             };
-
-            // Group chat: show per-member world bindings (do not rely on world name == member name)
-            if (isGroupSession) {
-                const members = Array.isArray(contact?.members) ? contact.members : [];
-                const wrap = document.createElement('div');
-                wrap.style.cssText = 'padding:10px 8px; border:1px solid #e2e8f0; border-radius:12px; background:#f8fafc; margin:0 0 10px 0;';
-                const title = document.createElement('div');
-                title.style.cssText = 'font-weight:800; color:#0f172a;';
-                title.textContent = '群聊世界书（按成员绑定，自动合并 A+B+...）';
-                const desc = document.createElement('div');
-                desc.style.cssText = 'color:#64748b; font-size:12px; margin-top:4px;';
-                desc.textContent = '提示：在某个成员的私聊里启用世界书，会自动绑定到该成员；群聊会自动使用所有成员已绑定的世界书。';
-                wrap.appendChild(title);
-                wrap.appendChild(desc);
-
-                const list = document.createElement('div');
-                list.style.cssText = 'margin-top:10px; display:flex; flex-direction:column; gap:8px;';
-
-                const getMemberLabel = (mid) => {
-                    const c = this.contactsStore?.getContact?.(mid);
-                    const name = c?.name || mid;
-                    const tags = Array.isArray(c?.libraryTags) && c.libraryTags.length
-                        ? c.libraryTags
-                        : Array.isArray(c?.labels)
-                            ? c.labels
-                            : [];
-                    const avatar = resolveLineAvatar({
-                        avatar: c?.avatar || FEATHER_DEFAULT,
-                        name,
-                        tags,
-                        size: 96,
-                    });
-                    return { name, avatar };
-                };
-
-                const bindForMember = (memberId, worldId) => {
-                    const sid = String(memberId || '').trim();
-                    if (!sid) return;
-                    window.appBridge?.bindWorldToSession?.(sid, worldId, { silent: true });
-                    window.dispatchEvent(new CustomEvent('worldinfo-changed', { detail: { worldId: window.appBridge?.currentWorldId } }));
-                };
-
-                members.forEach((mid) => {
-                    const memberId = String(mid || '').trim();
-                    if (!memberId) return;
-                    const { name, avatar } = getMemberLabel(memberId);
-                    const rawBound = window.appBridge?.getWorldIdsForSession?.(memberId) || [];
-                    const bound = Array.isArray(rawBound)
-                        ? rawBound.filter(id => id !== BUILTIN_PHONE_FORMAT_WORLDBOOK_ID)
-                        : [];
-
-                    const row = document.createElement('div');
-                    row.style.cssText = 'display:flex; align-items:center; gap:10px; padding:10px; border:1px solid rgba(0,0,0,0.08); border-radius:12px; background:#fff;';
-                    row.innerHTML = `
-                        <img src="${avatar}" alt="" style="width:34px; height:34px; border-radius:50%; object-fit:cover;">
-                        <div style="flex:1; min-width:0;">
-                            <div style="font-weight:800; color:#0f172a; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${name}</div>
-                            <div style="color:${bound.length ? '#0f172a' : '#94a3b8'}; font-size:12px; margin-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
-                                ${bound.length ? `已绑定：${bound.join(' + ')}` : '未绑定世界书'}
-                            </div>
-                        </div>
-                    `;
-
-                    const btnWrap = document.createElement('div');
-                    btnWrap.style.cssText = 'display:flex; gap:6px; align-items:center;';
-                    const pickBtn = document.createElement('button');
-                    pickBtn.textContent = bound.length ? '更换' : '绑定';
-                    pickBtn.style.cssText = 'padding:6px 10px;border:1px solid #ddd;border-radius:10px;background:#fff;cursor:pointer;';
-                    pickBtn.disabled = !visibleNames.length;
-                    if (pickBtn.disabled) {
-                        pickBtn.style.cursor = 'not-allowed';
-                        pickBtn.style.opacity = '0.6';
-                    }
-                    pickBtn.onclick = () => {
-                        if (!visibleNames.length) return;
-                        const options = visibleNames.slice().sort((a, b) => String(a).localeCompare(String(b)));
-                        const hint = options.slice(0, 40).join('\n');
-                        const raw = prompt(`为「${name}」选择要绑定的世界书名称（输入名称即可）：\n\n（部分列表）\n${hint}\n\n也可直接输入完整名称`, bound.join(' + ') || '');
-                        const next = String(raw || '').trim();
-                        if (!next) return;
-                        if (!options.includes(next)) {
-                            window.toastr?.warning?.('未找到该世界书名称');
-                            return;
-                        }
-                        bindForMember(memberId, next);
-                        this.refreshList();
-                    };
-                    const offBtn = document.createElement('button');
-                    offBtn.textContent = '停用';
-                    offBtn.style.cssText = 'padding:6px 10px;border:1px solid #fecaca;border-radius:10px;background:#fee2e2;color:#b91c1c;cursor:pointer;';
-                    offBtn.disabled = !bound.length;
-                    offBtn.onclick = () => {
-                        bindForMember(memberId, '');
-                        this.refreshList();
-                    };
-                    btnWrap.appendChild(pickBtn);
-                    btnWrap.appendChild(offBtn);
-                    row.appendChild(btnWrap);
-                    list.appendChild(row);
-                });
-
-                wrap.appendChild(list);
+            const appendEmpty = (container, text) => {
+                const empty = document.createElement('div');
+                empty.textContent = text;
+                empty.style.cssText = 'font-size:12px; color:#94a3b8; padding:6px 0;';
+                container.appendChild(empty);
+            };
+            const createTextButton = (label, variant = 'neutral') => {
+                const btn = document.createElement('button');
+                btn.type = 'button';
+                const palette = variant === 'danger'
+                    ? 'border:1px solid #fecaca;background:#fff;color:#b91c1c;'
+                    : variant === 'primary'
+                        ? 'border:1px solid rgba(14,116,144,0.18);background:#ecfeff;color:#0f766e;'
+                        : 'border:1px solid #e2e8f0;background:#fff;color:#0f172a;';
+                btn.style.cssText = `padding:4px 8px;border-radius:999px;font-size:12px;cursor:pointer;${palette}`;
+                btn.textContent = label;
+                return btn;
+            };
+            const createSection = ({ title, description = '' } = {}) => {
                 const host = document.createElement('li');
                 host.style.listStyle = 'none';
-                host.appendChild(wrap);
-                this.listEl.appendChild(host);
-            }
+                host.style.marginBottom = '10px';
 
-            if (isSessionScope) {
-                if (!boundIds.length) {
-                    renderEmpty(this.listEl, '（未绑定世界书）');
-                } else {
-                    for (const worldId of boundIds) {
-                        const worldData = await getWorldData(worldId);
-                        const displayName = worldData?.name || worldId;
-                        const li = document.createElement('li');
-                        li.style.listStyle = 'none';
-                        li.style.padding = '10px';
-                        li.style.border = '1px solid #e2e8f0';
-                        li.style.borderRadius = '12px';
-                        li.style.background = '#f8fafc';
-                        li.style.marginBottom = '8px';
+                const box = document.createElement('div');
+                box.style.cssText = 'padding:12px; border:1px solid #e2e8f0; border-radius:14px; background:linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);';
 
-                        const header = document.createElement('div');
-                        header.style.cssText = 'display:flex; align-items:center; justify-content:space-between; gap:10px;';
+                const header = document.createElement('div');
+                header.style.cssText = 'display:flex; align-items:flex-start; justify-content:space-between; gap:12px;';
 
-                        const titleWrap = document.createElement('div');
-                        titleWrap.style.cssText = 'display:flex; flex-direction:column; gap:2px; min-width:0; flex:1;';
-                        const title = document.createElement('div');
-                        title.textContent = displayName;
-                        title.style.fontWeight = '700';
-                        title.style.color = '#0f172a';
-                        title.style.whiteSpace = 'nowrap';
-                        title.style.overflow = 'hidden';
-                        title.style.textOverflow = 'ellipsis';
-                        title.style.cursor = 'pointer';
-                        const meta = document.createElement('div');
-                        meta.style.cssText = 'font-size:12px; color:#64748b;';
-                        meta.textContent = '点击标题展开条目';
-                        titleWrap.appendChild(title);
-                        titleWrap.appendChild(meta);
-
-                        const actions = document.createElement('div');
-                        actions.style.cssText = 'display:flex; align-items:center; gap:6px;';
-
-                        const toggle = buildToggle({
-                            enabled: true,
-                            labelOn: '已启用',
-                            labelOff: '未启用',
-                            onClick: async () => {
-                                const next = boundIds.filter(id => id !== worldId);
-                                window.appBridge?.setSessionWorldIds?.(sessionId, next, { silent: false });
-                                window.toastr?.success('已停用世界书');
-                                await this.refreshList();
-                            },
-                        });
-
-                        const editBtn = document.createElement('button');
-                        editBtn.type = 'button';
-                        editBtn.textContent = '编辑';
-                        editBtn.style.cssText = 'padding:4px 8px;border:1px solid #e2e8f0;border-radius:999px;background:#fff;font-size:12px;cursor:pointer;';
-                        editBtn.onclick = async (e) => {
-                            e.stopPropagation();
-                            await this.openEditor(worldId);
-                        };
-
-                        const deleteBtn = document.createElement('button');
-                        deleteBtn.textContent = '删除';
-                        deleteBtn.style.cssText = 'padding:4px 8px;border:1px solid #fecaca;border-radius:6px;background:#fff;color:#b91c1c;cursor:pointer;';
-                        deleteBtn.onclick = async () => {
-                            const ok = await appConfirm({
-                                title: '删除世界书',
-                                message: `确定要删除世界书「${displayName}」吗？此操作不可恢复。`,
-                                danger: true,
-                            });
-                            if (!ok) return;
-                            await window.appBridge.deleteWorldInfo(worldId);
-                            window.toastr?.success('已删除世界书');
-                            await this.refreshList();
-                        };
-
-                        actions.appendChild(editBtn);
-                        actions.appendChild(toggle);
-                        actions.appendChild(deleteBtn);
-
-                        header.appendChild(titleWrap);
-                        header.appendChild(actions);
-
-                        const entriesWrap = document.createElement('div');
-                        entriesWrap.style.cssText = 'display:none; margin-top:8px; padding-top:8px; border-top:1px dashed #e2e8f0; max-height:220px; overflow:auto;';
-                        let entriesLoaded = false;
-
-                        const renderEntries = async () => {
-                            if (entriesLoaded) return;
-                            entriesLoaded = true;
-                            try {
-                                const data = await getWorldData(worldId);
-                                const entries = data ? await this.resolveWorldEntries(data, { worldId }) : [];
-                                meta.textContent = data ? `共 ${entries.length} 条目` : '世界书不存在或已删除';
-                                if (!entries.length) {
-                                    const empty = document.createElement('div');
-                                    empty.textContent = data ? '（无条目）' : '（无法读取条目）';
-                                    empty.style.cssText = 'font-size:12px; color:#94a3b8; padding:4px 0;';
-                                    entriesWrap.appendChild(empty);
-                                    return;
-                                }
-                                entries.forEach((entry, idx) => {
-                                    const row = document.createElement('div');
-                                    row.style.cssText = 'display:flex; align-items:center; justify-content:space-between; gap:10px; padding:6px 0;';
-                                    const label = String(entry?.comment || entry?.title || entry?.id || `entry-${idx}`);
-                                    const nameEl = document.createElement('div');
-                                    nameEl.textContent = label;
-                                    nameEl.style.cssText = `font-size:12px; color:${entry?.disable ? '#94a3b8' : '#0f172a'}; flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;`;
-
-                                    const entryToggle = buildToggle({
-                                        enabled: !entry?.disable,
-                                        labelOn: '已启用',
-                                        labelOff: '未启用',
-                                        onClick: async () => {
-                                            const targetWorldId = entry?._refSourceId || worldId;
-                                            const latest = await window.appBridge.getWorldInfo(targetWorldId);
-                                            if (!latest || !Array.isArray(latest.entries)) {
-                                                window.toastr?.warning?.('世界书不存在或已删除');
-                                                return;
-                                            }
-                                            const targetId = String(entry?._refEntryId ?? entry?.id ?? entry?.uid ?? '').trim();
-                                            const fallbackIndex = Number.isFinite(Number(entry?._refEntryIndex)) ? Number(entry._refEntryIndex) : idx;
-                                            let updated = false;
-                                            const nextEntries = latest.entries.map((item, i) => {
-                                                const itemId = String(item?.id ?? item?.uid ?? '').trim();
-                                                if (targetId && itemId === targetId) {
-                                                    updated = true;
-                                                    return { ...item, disable: !item?.disable };
-                                                }
-                                                return item;
-                                            });
-                                            if (!updated && fallbackIndex >= 0 && fallbackIndex < latest.entries.length) {
-                                                nextEntries[fallbackIndex] = { ...latest.entries[fallbackIndex], disable: !latest.entries[fallbackIndex]?.disable };
-                                                updated = true;
-                                            }
-                                            if (!updated) {
-                                                window.toastr?.warning?.('未找到要更新的条目');
-                                                return;
-                                            }
-                                            await window.appBridge.saveWorldInfo(targetWorldId, { ...latest, entries: nextEntries });
-                                            entry.disable = !entry?.disable;
-                                            nameEl.style.color = entry?.disable ? '#94a3b8' : '#0f172a';
-                                            entryToggle.classList.toggle('is-enabled', !entry?.disable);
-                                            entryToggle.classList.toggle('is-disabled', Boolean(entry?.disable));
-                                            entryToggle.setAttribute('aria-pressed', entry?.disable ? 'false' : 'true');
-                                            const labelEl = entryToggle.querySelector('span:last-child');
-                                            if (labelEl) labelEl.textContent = entry?.disable ? '未启用' : '已启用';
-                                            window.toastr?.success(entry?.disable ? '条目已停用' : '条目已启用');
-                                        },
-                                    });
-
-                                    row.appendChild(nameEl);
-                                    row.appendChild(entryToggle);
-                                    entriesWrap.appendChild(row);
-                                });
-                            } catch (err) {
-                                meta.textContent = '条目读取失败';
-                                const empty = document.createElement('div');
-                                empty.textContent = '（读取条目失败）';
-                                empty.style.cssText = 'font-size:12px; color:#94a3b8; padding:4px 0;';
-                                entriesWrap.appendChild(empty);
-                            }
-                        };
-
-                        const toggleEntries = async () => {
-                            if (entriesWrap.style.display === 'none') {
-                                await renderEntries();
-                                entriesWrap.style.display = 'block';
-                            } else {
-                                entriesWrap.style.display = 'none';
-                            }
-                        };
-
-                        li.appendChild(header);
-                        li.appendChild(entriesWrap);
-                        title.onclick = async (e) => {
-                            e.stopPropagation();
-                            await toggleEntries();
-                        };
-                        this.listEl.appendChild(li);
-                    }
-                }
-
-                await this.renderLibraryList({ names: visibleNames, boundIds, sessionId });
-                return;
-            }
-
-            if (this.scope === 'global') {
-                const globalId = String(window.appBridge?.globalWorldId || '').trim();
-                if (!globalId) {
-                    renderEmpty(this.listEl, '（未启用）');
-                } else {
-                    const globalData = await getWorldData(globalId);
-                    const displayName = globalData?.name || globalId;
-                    const li = document.createElement('li');
-                    li.style.listStyle = 'none';
-                    li.style.padding = '10px';
-                    li.style.border = '1px solid #e2e8f0';
-                    li.style.borderRadius = '12px';
-                    li.style.background = '#f8fafc';
-                    li.style.marginBottom = '8px';
-
-                    const header = document.createElement('div');
-                    header.style.cssText = 'display:flex; align-items:center; justify-content:space-between; gap:10px;';
-
-                    const titleWrap = document.createElement('div');
-                    titleWrap.style.cssText = 'display:flex; flex-direction:column; gap:2px; min-width:0; flex:1;';
-                    const title = document.createElement('div');
-                    title.textContent = displayName;
-                    title.style.fontWeight = '700';
-                    title.style.color = '#0f172a';
-                    title.style.whiteSpace = 'nowrap';
-                    title.style.overflow = 'hidden';
-                    title.style.textOverflow = 'ellipsis';
-                    title.style.cursor = 'pointer';
-                    const meta = document.createElement('div');
-                    meta.style.cssText = 'font-size:12px; color:#64748b;';
-                    meta.textContent = '点击标题展开条目';
-                    titleWrap.appendChild(title);
-                    titleWrap.appendChild(meta);
-
-                    const actions = document.createElement('div');
-                    actions.style.cssText = 'display:flex; align-items:center; gap:6px;';
-
-                    const toggle = buildToggle({
-                        enabled: true,
-                        labelOn: '已启用',
-                        labelOff: '未启用',
-                        onClick: async () => {
-                            await window.appBridge.setGlobalWorld('');
-                            window.toastr?.success('已停用世界书');
-                            await this.refreshList();
-                        },
-                    });
-
-                    const editBtn = document.createElement('button');
-                    editBtn.type = 'button';
-                    editBtn.textContent = '编辑';
-                    editBtn.style.cssText = 'padding:4px 8px;border:1px solid #e2e8f0;border-radius:999px;background:#fff;font-size:12px;cursor:pointer;';
-                    editBtn.onclick = async (e) => {
-                        e.stopPropagation();
-                        await this.openEditor(globalId);
-                    };
-
-                    const deleteBtn = document.createElement('button');
-                    deleteBtn.textContent = '删除';
-                    deleteBtn.style.cssText = 'padding:4px 8px;border:1px solid #fecaca;border-radius:6px;background:#fff;color:#b91c1c;cursor:pointer;';
-                    deleteBtn.onclick = async () => {
-                        const ok = await appConfirm({
-                            title: '删除世界书',
-                            message: `确定要删除世界书「${displayName}」吗？此操作不可恢复。`,
-                            danger: true,
-                        });
-                        if (!ok) return;
-                        await window.appBridge.deleteWorldInfo(globalId);
-                        window.toastr?.success('已删除世界书');
-                        await this.refreshList();
-                    };
-
-                    actions.appendChild(editBtn);
-                    actions.appendChild(toggle);
-                    actions.appendChild(deleteBtn);
-
-                    header.appendChild(titleWrap);
-                    header.appendChild(actions);
-
-                    const entriesWrap = document.createElement('div');
-                    entriesWrap.style.cssText = 'display:none; margin-top:8px; padding-top:8px; border-top:1px dashed #e2e8f0; max-height:220px; overflow:auto;';
-                    let entriesLoaded = false;
-
-                    const renderEntries = async () => {
-                        if (entriesLoaded) return;
-                        entriesLoaded = true;
-                        try {
-                            const data = await getWorldData(globalId);
-                            const entries = data ? await this.resolveWorldEntries(data, { worldId: globalId }) : [];
-                            meta.textContent = data ? `共 ${entries.length} 条目` : '世界书不存在或已删除';
-                            if (!entries.length) {
-                                const empty = document.createElement('div');
-                                empty.textContent = data ? '（无条目）' : '（无法读取条目）';
-                                empty.style.cssText = 'font-size:12px; color:#94a3b8; padding:4px 0;';
-                                entriesWrap.appendChild(empty);
-                                return;
-                            }
-                            entries.forEach((entry, idx) => {
-                                const row = document.createElement('div');
-                                row.style.cssText = 'display:flex; align-items:center; justify-content:space-between; gap:10px; padding:6px 0;';
-                                const label = String(entry?.comment || entry?.title || entry?.id || `entry-${idx}`);
-                                const nameEl = document.createElement('div');
-                                nameEl.textContent = label;
-                                nameEl.style.cssText = `font-size:12px; color:${entry?.disable ? '#94a3b8' : '#0f172a'}; flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;`;
-
-                                const entryToggle = buildToggle({
-                                    enabled: !entry?.disable,
-                                    labelOn: '已启用',
-                                    labelOff: '未启用',
-                                    onClick: async () => {
-                                        const targetWorldId = entry?._refSourceId || globalId;
-                                        const latest = await window.appBridge.getWorldInfo(targetWorldId);
-                                        if (!latest || !Array.isArray(latest.entries)) {
-                                            window.toastr?.warning?.('世界书不存在或已删除');
-                                            return;
-                                        }
-                                        const targetId = String(entry?._refEntryId ?? entry?.id ?? entry?.uid ?? '').trim();
-                                        const fallbackIndex = Number.isFinite(Number(entry?._refEntryIndex)) ? Number(entry._refEntryIndex) : idx;
-                                        let updated = false;
-                                        const nextEntries = latest.entries.map((item, i) => {
-                                            const itemId = String(item?.id ?? item?.uid ?? '').trim();
-                                            if (targetId && itemId === targetId) {
-                                                updated = true;
-                                                return { ...item, disable: !item?.disable };
-                                            }
-                                            return item;
-                                        });
-                                        if (!updated && fallbackIndex >= 0 && fallbackIndex < latest.entries.length) {
-                                            nextEntries[fallbackIndex] = { ...latest.entries[fallbackIndex], disable: !latest.entries[fallbackIndex]?.disable };
-                                            updated = true;
-                                        }
-                                        if (!updated) {
-                                            window.toastr?.warning?.('未找到要更新的条目');
-                                            return;
-                                        }
-                                        await window.appBridge.saveWorldInfo(targetWorldId, { ...latest, entries: nextEntries });
-                                        entry.disable = !entry?.disable;
-                                        nameEl.style.color = entry?.disable ? '#94a3b8' : '#0f172a';
-                                        entryToggle.classList.toggle('is-enabled', !entry?.disable);
-                                        entryToggle.classList.toggle('is-disabled', Boolean(entry?.disable));
-                                        entryToggle.setAttribute('aria-pressed', entry?.disable ? 'false' : 'true');
-                                        const labelEl = entryToggle.querySelector('span:last-child');
-                                        if (labelEl) labelEl.textContent = entry?.disable ? '未启用' : '已启用';
-                                        window.toastr?.success(entry?.disable ? '条目已停用' : '条目已启用');
-                                    },
-                                });
-
-                                row.appendChild(nameEl);
-                                row.appendChild(entryToggle);
-                                entriesWrap.appendChild(row);
-                            });
-                        } catch (err) {
-                            meta.textContent = '条目读取失败';
-                            const empty = document.createElement('div');
-                            empty.textContent = '（读取条目失败）';
-                            empty.style.cssText = 'font-size:12px; color:#94a3b8; padding:4px 0;';
-                            entriesWrap.appendChild(empty);
-                        }
-                    };
-
-                    const toggleEntries = async () => {
-                        if (entriesWrap.style.display === 'none') {
-                            await renderEntries();
-                            entriesWrap.style.display = 'block';
-                        } else {
-                            entriesWrap.style.display = 'none';
-                        }
-                    };
-
-                    li.appendChild(header);
-                    li.appendChild(entriesWrap);
-                    title.onclick = async (e) => {
-                        e.stopPropagation();
-                        await toggleEntries();
-                    };
-                    this.listEl.appendChild(li);
-                }
-
-                await this.renderLibraryList({ names: visibleNames, boundIds: globalId ? [globalId] : [], scope: 'global' });
-                return;
-            }
-
-            if (!visibleNames.length) {
-                renderEmpty(this.listEl, '（暂无世界书）');
-                return;
-            }
-
-            visibleNames.forEach((name) => {
-                const li = document.createElement('li');
-                li.style.display = 'flex';
-                li.style.alignItems = 'center';
-                li.style.justifyContent = 'space-between';
-                li.style.padding = '6px 8px';
-                li.style.borderBottom = '1px solid #f0f0f0';
-                li.style.cursor = 'pointer';
-                li.title = '编辑世界书';
-                if (name === currentId) {
-                    li.style.background = '#f8fafc';
-                    li.style.border = '1px solid #e2e8f0';
-                }
-
-                const title = document.createElement('span');
-                title.textContent = name;
-                title.style.fontWeight = '600';
-                title.style.cursor = 'pointer';
+                const titleWrap = document.createElement('div');
+                const titleEl = document.createElement('div');
+                titleEl.textContent = title;
+                titleEl.style.cssText = 'font-weight:800; color:#0f172a;';
+                const descEl = document.createElement('div');
+                descEl.textContent = description;
+                descEl.style.cssText = 'font-size:12px; color:#64748b; margin-top:4px;';
+                titleWrap.appendChild(titleEl);
+                if (description) titleWrap.appendChild(descEl);
 
                 const actions = document.createElement('div');
-                actions.style.display = 'flex';
-                actions.style.gap = '6px';
+                actions.style.cssText = 'display:flex; align-items:center; gap:6px; flex-wrap:wrap; justify-content:flex-end;';
 
-                const editBtn = document.createElement('button');
-                editBtn.type = 'button';
-                editBtn.textContent = '编辑';
-                editBtn.style.cssText = 'padding:4px 8px;border:1px solid #e2e8f0;border-radius:999px;background:#fff;font-size:12px;cursor:pointer;';
-                editBtn.onclick = async (e) => {
-                    e.stopPropagation();
-                    await this.openEditor(name);
-                };
+                const body = document.createElement('div');
+                body.style.cssText = 'margin-top:10px; display:flex; flex-direction:column; gap:8px;';
 
-                const disabledToggle = isGroupSession && this.scope === 'session';
-                const toggle = buildToggle({
-                    enabled: name === currentId,
-                    disabled: disabledToggle,
-                    labelOn: disabledToggle ? '群聊' : '已启用',
-                    labelOff: disabledToggle ? '群聊' : '未启用',
-                    onClick: async () => {
-                        if (disabledToggle) return;
-                        if (name === currentId) {
-                            if (this.scope === 'global') {
-                                await window.appBridge.setGlobalWorld('');
-                            } else {
-                                window.appBridge?.bindWorldToSession?.(sessionId, '', { silent: false });
-                            }
-                            window.toastr?.success('已停用世界书');
-                        } else {
-                            if (this.scope === 'global') {
-                                await window.appBridge.setGlobalWorld(name);
-                            } else {
-                                await window.appBridge.setCurrentWorld(name);
-                            }
-                            const data = await window.appBridge.getWorldInfo(name);
-                            logger.info('Activated world', name, data);
-                            window.toastr?.success(`已启用世界书：${name}`);
-                            window.dispatchEvent(new CustomEvent('worldinfo-changed', { detail: { worldId: name } }));
-                        }
-                        await this.refreshList();
-                    },
+                header.appendChild(titleWrap);
+                header.appendChild(actions);
+                box.appendChild(header);
+                box.appendChild(body);
+                host.appendChild(box);
+                this.listEl.appendChild(host);
+                return { host, box, body, actions };
+            };
+            const confirmDeleteWorld = async (worldId, displayName) => {
+                const ok = await appConfirm({
+                    title: '删除世界书',
+                    message: `确定要删除世界书「${displayName || worldId}」吗？此操作不可恢复。`,
+                    danger: true,
                 });
+                if (!ok) return false;
+                await window.appBridge.deleteWorldInfo(worldId);
+                window.toastr?.success('已删除世界书');
+                await this.refreshList();
+                return true;
+            };
+            const buildWorldCard = async (worldId, {
+                subtitle = '',
+                toggleEnabled = true,
+                toggleLabelOn = '已启用',
+                toggleLabelOff = '未启用',
+                onToggle = null,
+                onDelete = null,
+                extraButtons = [],
+            } = {}) => {
+                const worldData = await getWorldData(worldId);
+                const displayName = worldData?.name || worldId;
+                const card = document.createElement('div');
+                card.style.cssText = 'padding:10px; border:1px solid #dbe4ee; border-radius:12px; background:#fff;';
 
-                const deleteBtn = document.createElement('button');
-                deleteBtn.textContent = '删除';
-                deleteBtn.style.cssText = 'padding:4px 8px;border:1px solid #fecaca;border-radius:6px;background:#fff;color:#b91c1c;cursor:pointer;';
-                deleteBtn.onclick = async () => {
-                    const ok = await appConfirm({
-                        title: '删除世界书',
-                        message: `确定要删除世界书「${name}」吗？此操作不可恢复。`,
-                        danger: true,
-                    });
-                    if (!ok) return;
-                    await window.appBridge.deleteWorldInfo(name);
-                    window.toastr?.success('已删除世界书');
-                    await this.refreshList();
+                const header = document.createElement('div');
+                header.style.cssText = 'display:flex; flex-direction:column; gap:8px;';
+
+                const titleWrap = document.createElement('div');
+                titleWrap.style.cssText = 'display:flex; flex-direction:column; gap:2px; min-width:0; flex:1;';
+                const title = document.createElement('button');
+                title.type = 'button';
+                title.textContent = displayName;
+                title.style.cssText = 'padding:0; border:none; background:none; text-align:left; font-weight:700; color:#0f172a; cursor:pointer; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;';
+                const meta = document.createElement('div');
+                meta.textContent = subtitle || '点击标题展开条目';
+                meta.style.cssText = 'font-size:12px; color:#64748b;';
+                titleWrap.appendChild(title);
+                titleWrap.appendChild(meta);
+
+                const actions = document.createElement('div');
+                actions.style.cssText = 'display:flex; align-items:center; gap:6px; flex-wrap:wrap; justify-content:flex-start;';
+
+                const editBtn = createTextButton('编辑');
+                editBtn.onclick = async (event) => {
+                    event.stopPropagation();
+                    await this.openEditor(worldId);
+                };
+                actions.appendChild(editBtn);
+                (Array.isArray(extraButtons) ? extraButtons : []).forEach((btn) => {
+                    if (btn) actions.appendChild(btn);
+                });
+                if (typeof onToggle === 'function') {
+                    actions.appendChild(buildToggle({
+                        enabled: Boolean(toggleEnabled),
+                        labelOn: toggleLabelOn,
+                        labelOff: toggleLabelOff,
+                        onClick: () => onToggle(),
+                    }));
+                }
+                const deleteBtn = createTextButton('删除', 'danger');
+                deleteBtn.onclick = async (event) => {
+                    event.stopPropagation();
+                    if (typeof onDelete === 'function') {
+                        await onDelete();
+                    } else {
+                        await confirmDeleteWorld(worldId, displayName);
+                    }
+                };
+                actions.appendChild(deleteBtn);
+
+                const entriesWrap = document.createElement('div');
+                entriesWrap.style.cssText = 'display:none; margin-top:8px; padding-top:8px; border-top:1px dashed #e2e8f0; max-height:220px; overflow:auto;';
+                let entriesLoaded = false;
+
+                const renderEntries = async () => {
+                    if (entriesLoaded) return;
+                    entriesLoaded = true;
+                    try {
+                        const latest = await getWorldData(worldId);
+                        const entries = latest ? await this.resolveWorldEntries(latest, { worldId }) : [];
+                        meta.textContent = latest ? `共 ${entries.length} 条目${subtitle ? ` · ${subtitle}` : ''}` : '世界书不存在或已删除';
+                        if (!entries.length) {
+                            appendEmpty(entriesWrap, latest ? '（无条目）' : '（无法读取条目）');
+                            return;
+                        }
+                        entries.forEach((entry, idx) => {
+                            const row = document.createElement('div');
+                            row.style.cssText = 'display:flex; align-items:center; justify-content:space-between; gap:10px; padding:6px 0;';
+                            const label = String(entry?.comment || entry?.title || entry?.id || `entry-${idx}`);
+                            const nameEl = document.createElement('div');
+                            nameEl.textContent = label;
+                            nameEl.style.cssText = `font-size:12px; color:${entry?.disable ? '#94a3b8' : '#0f172a'}; flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;`;
+                            const entryToggle = buildToggle({
+                                enabled: !entry?.disable,
+                                labelOn: '已启用',
+                                labelOff: '未启用',
+                                onClick: async () => {
+                                    const targetWorldId = entry?._refSourceId || worldId;
+                                    const latestWorld = await window.appBridge.getWorldInfo(targetWorldId);
+                                    if (!latestWorld || !Array.isArray(latestWorld.entries)) {
+                                        window.toastr?.warning?.('世界书不存在或已删除');
+                                        return;
+                                    }
+                                    const targetId = String(entry?._refEntryId ?? entry?.id ?? entry?.uid ?? '').trim();
+                                    const fallbackIndex = Number.isFinite(Number(entry?._refEntryIndex)) ? Number(entry._refEntryIndex) : idx;
+                                    let updated = false;
+                                    const nextEntries = latestWorld.entries.map((item) => {
+                                        const itemId = String(item?.id ?? item?.uid ?? '').trim();
+                                        if (targetId && itemId === targetId) {
+                                            updated = true;
+                                            return { ...item, disable: !item?.disable };
+                                        }
+                                        return item;
+                                    });
+                                    if (!updated && fallbackIndex >= 0 && fallbackIndex < latestWorld.entries.length) {
+                                        nextEntries[fallbackIndex] = { ...latestWorld.entries[fallbackIndex], disable: !latestWorld.entries[fallbackIndex]?.disable };
+                                        updated = true;
+                                    }
+                                    if (!updated) {
+                                        window.toastr?.warning?.('未找到要更新的条目');
+                                        return;
+                                    }
+                                    await window.appBridge.saveWorldInfo(targetWorldId, { ...latestWorld, entries: nextEntries });
+                                    entry.disable = !entry?.disable;
+                                    nameEl.style.color = entry?.disable ? '#94a3b8' : '#0f172a';
+                                    entryToggle.classList.toggle('is-enabled', !entry?.disable);
+                                    entryToggle.classList.toggle('is-disabled', Boolean(entry?.disable));
+                                    entryToggle.setAttribute('aria-pressed', entry?.disable ? 'false' : 'true');
+                                    const labelEl = entryToggle.querySelector('span:last-child');
+                                    if (labelEl) labelEl.textContent = entry?.disable ? '未启用' : '已启用';
+                                    window.toastr?.success(entry?.disable ? '条目已停用' : '条目已启用');
+                                },
+                            });
+                            row.appendChild(nameEl);
+                            row.appendChild(entryToggle);
+                            entriesWrap.appendChild(row);
+                        });
+                    } catch (err) {
+                        meta.textContent = '条目读取失败';
+                        appendEmpty(entriesWrap, '（读取条目失败）');
+                    }
                 };
 
-                actions.appendChild(editBtn);
-                actions.appendChild(toggle);
-                actions.appendChild(deleteBtn);
-                li.appendChild(title);
-                li.appendChild(actions);
-                this.listEl.appendChild(li);
+                title.onclick = async (event) => {
+                    event.stopPropagation();
+                    if (entriesWrap.style.display === 'none') {
+                        await renderEntries();
+                        entriesWrap.style.display = 'block';
+                    } else {
+                        entriesWrap.style.display = 'none';
+                    }
+                };
+
+                header.appendChild(titleWrap);
+                header.appendChild(actions);
+                card.appendChild(header);
+                card.appendChild(entriesWrap);
+                return card;
+            };
+
+            if (this.scope === 'global') {
+                const globalSection = createSection({
+                    title: '全局世界书',
+                    description: '全局世界书在聊天模式与 RP 模式共用，深度和预算配置由下面的全局设置统一控制。',
+                });
+                if (!normalizedGlobalId) {
+                    appendEmpty(globalSection.body, '尚未启用全局世界书。');
+                } else {
+                    const card = await buildWorldCard(normalizedGlobalId, {
+                        subtitle: '聊天 / RP 共用',
+                        onToggle: async () => {
+                            await window.appBridge.setGlobalWorld('');
+                            window.toastr?.success?.('已停用全局世界书');
+                            await this.refreshList();
+                        },
+                        onDelete: () => confirmDeleteWorld(normalizedGlobalId, normalizedGlobalId),
+                    });
+                    globalSection.body.appendChild(card);
+                }
+            } else if (isGroupSession) {
+                const roleSection = createSection({
+                    title: '角色世界书',
+                    description: '当前 Persona 的角色世界书在聊天模式与 RP 模式共用。',
+                });
+                const activeEmptyBinding = roleBindings.find((item) => item?.isActive && !item?.hasWorld);
+                if (activeEmptyBinding) {
+                    const newRoleBtn = createTextButton('为当前角色新建', 'primary');
+                    newRoleBtn.onclick = async () => {
+                        await this.onNewWorld({ target: { type: 'role', personaId: activeEmptyBinding.personaId, sessionId: sessionKey } });
+                    };
+                    const roleLibraryBtn = createTextButton('角色世界书库');
+                    roleLibraryBtn.onclick = () => this.openLibraryModal({ type: 'role', personaId: activeEmptyBinding.personaId, sessionId: sessionKey });
+                    roleSection.actions.appendChild(newRoleBtn);
+                    roleSection.actions.appendChild(roleLibraryBtn);
+                }
+                if (!roleBindings.length) {
+                    appendEmpty(roleSection.body, '当前 Persona 没有角色世界书绑定。');
+                } else {
+                    for (const binding of roleBindings) {
+                        if (!binding?.hasWorld) {
+                            const row = document.createElement('div');
+                            row.style.cssText = 'display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px; border:1px dashed #dbe4ee; border-radius:12px; background:#fff;';
+                            const info = document.createElement('div');
+                            info.style.cssText = 'min-width:0; flex:1;';
+                            info.innerHTML = `
+                                <div style="font-weight:700; color:#0f172a;">${binding.personaName} · 当前 Persona</div>
+                                <div style="font-size:12px; color:#64748b; margin-top:2px;">未绑定角色世界书</div>
+                            `;
+                            const actions = document.createElement('div');
+                            actions.style.cssText = 'display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end;';
+                            const newBtnRole = createTextButton('新建', 'primary');
+                            newBtnRole.onclick = async () => {
+                                await this.onNewWorld({ target: { type: 'role', personaId: binding.personaId, sessionId: sessionKey } });
+                            };
+                            const pickBtn = createTextButton('书库');
+                            pickBtn.onclick = () => this.openLibraryModal({ type: 'role', personaId: binding.personaId, sessionId: sessionKey });
+                            actions.appendChild(newBtnRole);
+                            actions.appendChild(pickBtn);
+                            row.appendChild(info);
+                            row.appendChild(actions);
+                            roleSection.body.appendChild(row);
+                            continue;
+                        }
+                        const chooseBtn = createTextButton('更换');
+                        chooseBtn.onclick = (event) => {
+                            event.stopPropagation();
+                            this.openLibraryModal({ type: 'role', personaId: binding.personaId, sessionId: sessionKey });
+                        };
+                        const unbindBtn = createTextButton('解绑', 'danger');
+                        unbindBtn.onclick = async (event) => {
+                            event.stopPropagation();
+                            await window.appBridge?.clearRoleWorldForPersona?.(binding.personaId);
+                            window.toastr?.success?.('已解绑角色世界书');
+                            await this.refreshList();
+                        };
+                        const card = await buildWorldCard(binding.worldId, {
+                            subtitle: `角色：${binding.personaName} · 当前 Persona`,
+                            toggleEnabled: binding.enabled !== false,
+                            toggleLabelOn: '已启用',
+                            toggleLabelOff: '已停用',
+                            onToggle: async () => {
+                                await window.appBridge?.setRoleWorldEnabled?.(binding.personaId, binding.enabled === false);
+                                window.toastr?.success?.(binding.enabled === false ? '已启用角色世界书' : '已停用角色世界书');
+                                await this.refreshList();
+                            },
+                            onDelete: () => confirmDeleteWorld(binding.worldId, binding.worldId),
+                            extraButtons: [chooseBtn, unbindBtn],
+                        });
+                        roleSection.body.appendChild(card);
+                    }
+                }
+                const memberSection = createSection({
+                    title: '成员聊天室附加世界书',
+                    description: '群聊会自动合并群成员各自私聊中的附加世界书；只在包含该成员的群聊中生效。',
+                });
+                const members = Array.isArray(contact?.members) ? contact.members : [];
+                if (!members.length) {
+                    appendEmpty(memberSection.body, '当前群聊没有成员。');
+                } else {
+                    members.forEach((mid) => {
+                        const memberId = String(mid || '').trim();
+                        if (!memberId) return;
+                        const memberContact = this.contactsStore?.getContact?.(memberId) || null;
+                        const name = memberContact?.name || memberId;
+                        const tags = Array.isArray(memberContact?.libraryTags) && memberContact.libraryTags.length
+                            ? memberContact.libraryTags
+                            : Array.isArray(memberContact?.labels) ? memberContact.labels : [];
+                        const avatar = resolveLineAvatar({
+                            avatar: memberContact?.avatar || FEATHER_DEFAULT,
+                            name,
+                            tags,
+                            size: 96,
+                        });
+                        const bound = (window.appBridge?.getWorldIdsForSession?.(memberId) || []).filter((id) => id !== BUILTIN_PHONE_FORMAT_WORLDBOOK_ID);
+
+                        const row = document.createElement('div');
+                        row.style.cssText = 'display:flex; align-items:center; gap:10px; padding:10px; border:1px solid #dbe4ee; border-radius:12px; background:#fff;';
+                        row.innerHTML = `
+                            <img src="${avatar}" alt="" style="width:34px; height:34px; border-radius:50%; object-fit:cover;">
+                            <div style="flex:1; min-width:0;">
+                                <div style="font-weight:700; color:#0f172a; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${name}</div>
+                                <div style="font-size:12px; color:${bound.length ? '#475569' : '#94a3b8'}; margin-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
+                                    ${bound.length ? `已绑定：${bound.join(' + ')}` : '未设置成员附加世界书'}
+                                </div>
+                            </div>
+                        `;
+                        const actions = document.createElement('div');
+                        actions.style.cssText = 'display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end;';
+                        const chooseBtn = createTextButton(bound.length ? '更换' : '绑定');
+                        chooseBtn.onclick = () => this.openLibraryModal({ type: 'session_extra', sessionId: memberId });
+                        const offBtn = createTextButton('清空', 'danger');
+                        offBtn.disabled = !bound.length;
+                        offBtn.style.opacity = offBtn.disabled ? '0.55' : '1';
+                        offBtn.style.cursor = offBtn.disabled ? 'not-allowed' : 'pointer';
+                        offBtn.onclick = async () => {
+                            if (offBtn.disabled) return;
+                            window.appBridge?.setSessionWorldIds?.(memberId, [], { silent: true });
+                            window.appBridge?.syncWorldRegexBindings?.();
+                            window.appBridge?.emitWorldInfoChanged?.({ sessionId: sessionKey });
+                            window.toastr?.success?.('已清空成员附加世界书');
+                            await this.refreshList();
+                        };
+                        actions.appendChild(chooseBtn);
+                        actions.appendChild(offBtn);
+                        row.appendChild(actions);
+                        memberSection.body.appendChild(row);
+                    });
+                }
+            } else {
+                const roleSection = createSection({
+                    title: '角色世界书',
+                    description: '当前 Persona 的角色世界书在聊天模式与 RP 模式共用。',
+                });
+                const activeEmptyBinding = roleBindings.find((item) => item?.isActive && !item?.hasWorld);
+                if (activeEmptyBinding) {
+                    const newRoleBtn = createTextButton('为当前角色新建', 'primary');
+                    newRoleBtn.onclick = async () => {
+                        await this.onNewWorld({ target: { type: 'role', personaId: activeEmptyBinding.personaId, sessionId: sessionKey } });
+                    };
+                    const roleLibraryBtn = createTextButton('角色世界书库');
+                    roleLibraryBtn.onclick = () => this.openLibraryModal({ type: 'role', personaId: activeEmptyBinding.personaId, sessionId: sessionKey });
+                    roleSection.actions.appendChild(newRoleBtn);
+                    roleSection.actions.appendChild(roleLibraryBtn);
+                }
+                if (!roleBindings.length) {
+                    appendEmpty(roleSection.body, '当前 Persona 没有角色世界书绑定。');
+                } else {
+                    for (const binding of roleBindings) {
+                        if (!binding?.hasWorld) {
+                            const row = document.createElement('div');
+                            row.style.cssText = 'display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px; border:1px dashed #dbe4ee; border-radius:12px; background:#fff;';
+                            const info = document.createElement('div');
+                            info.style.cssText = 'min-width:0; flex:1;';
+                            info.innerHTML = `
+                                <div style="font-weight:700; color:#0f172a;">${binding.personaName} · 当前 Persona</div>
+                                <div style="font-size:12px; color:#64748b; margin-top:2px;">未绑定角色世界书</div>
+                            `;
+                            const actions = document.createElement('div');
+                            actions.style.cssText = 'display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end;';
+                            const newBtnRole = createTextButton('新建', 'primary');
+                            newBtnRole.onclick = async () => {
+                                await this.onNewWorld({ target: { type: 'role', personaId: binding.personaId, sessionId: sessionKey } });
+                            };
+                            const pickBtn = createTextButton('书库');
+                            pickBtn.onclick = () => this.openLibraryModal({ type: 'role', personaId: binding.personaId, sessionId: sessionKey });
+                            actions.appendChild(newBtnRole);
+                            actions.appendChild(pickBtn);
+                            row.appendChild(info);
+                            row.appendChild(actions);
+                            roleSection.body.appendChild(row);
+                            continue;
+                        }
+                        const chooseBtn = createTextButton('更换');
+                        chooseBtn.onclick = (event) => {
+                            event.stopPropagation();
+                            this.openLibraryModal({ type: 'role', personaId: binding.personaId, sessionId: sessionKey });
+                        };
+                        const unbindBtn = createTextButton('解绑', 'danger');
+                        unbindBtn.onclick = async (event) => {
+                            event.stopPropagation();
+                            await window.appBridge?.clearRoleWorldForPersona?.(binding.personaId);
+                            window.toastr?.success?.('已解绑角色世界书');
+                            await this.refreshList();
+                        };
+                        const card = await buildWorldCard(binding.worldId, {
+                            subtitle: `角色：${binding.personaName} · 当前 Persona`,
+                            toggleEnabled: binding.enabled !== false,
+                            toggleLabelOn: '已启用',
+                            toggleLabelOff: '已停用',
+                            onToggle: async () => {
+                                await window.appBridge?.setRoleWorldEnabled?.(binding.personaId, binding.enabled === false);
+                                window.toastr?.success?.(binding.enabled === false ? '已启用角色世界书' : '已停用角色世界书');
+                                await this.refreshList();
+                            },
+                            onDelete: () => confirmDeleteWorld(binding.worldId, binding.worldId),
+                            extraButtons: [chooseBtn, unbindBtn],
+                        });
+                        roleSection.body.appendChild(card);
+                    }
+                }
+                const sessionSection = createSection({
+                    title: '聊天室附加世界书',
+                    description: isRpSession
+                        ? 'RP 模式不读取聊天室附加世界书。'
+                        : '只对当前聊天室生效；不会影响 RP 或其他聊天。',
+                });
+                if (isRpSession) {
+                    appendEmpty(sessionSection.body, '当前为 RP 会话，附加世界书暂停生效。');
+                } else if (!visibleSessionIds.length) {
+                    appendEmpty(sessionSection.body, '当前聊天室还没有附加世界书。');
+                } else {
+                    for (const worldId of visibleSessionIds) {
+                        const card = await buildWorldCard(worldId, {
+                            subtitle: `聊天室：${contact?.name || sessionKey}`,
+                            onToggle: async () => {
+                                const next = visibleSessionIds.filter((id) => id !== worldId);
+                                window.appBridge?.setSessionWorldIds?.(sessionKey, next, { silent: false });
+                                window.toastr?.success?.('已停用附加世界书');
+                                await this.refreshList();
+                            },
+                            onDelete: () => confirmDeleteWorld(worldId, worldId),
+                        });
+                        sessionSection.body.appendChild(card);
+                    }
+                }
+            }
+
+            let boundIds = [];
+            if (this.libraryTarget.type === 'global') {
+                boundIds = normalizedGlobalId ? [normalizedGlobalId] : [];
+            } else if (this.libraryTarget.type === 'role') {
+                const binding = roleBindings.find((item) => item.personaId === this.libraryTarget.personaId);
+                boundIds = binding?.worldId ? [binding.worldId] : [];
+            } else {
+                boundIds = (window.appBridge?.getWorldIdsForSession?.(this.libraryTarget.sessionId || sessionKey) || []).filter((id) => id !== BUILTIN_PHONE_FORMAT_WORLDBOOK_ID);
+            }
+            await this.renderLibraryList({
+                names: visibleNames,
+                boundIds,
+                scope: this.libraryTarget.type,
+                sessionId: this.libraryTarget.sessionId || sessionKey,
+                personaId: this.libraryTarget.personaId,
             });
         } catch (err) {
             logger.error('刷新世界书列表失败', err);
         }
     }
 
-    async renderLibraryList({ names = [], boundIds = [], sessionId = '', scope = 'session' } = {}) {
+    async renderLibraryList({ names = [], boundIds = [], sessionId = '', scope = 'session_extra', personaId = '' } = {}) {
         if (!this.libraryListEl) return;
         const listEl = this.libraryListEl;
         listEl.innerHTML = '';
+        const scopeKey = ['global', 'role', 'session_extra'].includes(String(scope || '').trim())
+            ? String(scope || '').trim()
+            : 'session_extra';
+        const normalizedTarget = this.normalizeLibraryTarget({ type: scopeKey, sessionId, personaId });
+        this.libraryTarget = normalizedTarget;
+        const subtitleEl = this.libraryOverlay?.querySelector('.sticker-bind-subtitle');
+        if (subtitleEl) {
+            subtitleEl.textContent = scopeKey === 'global'
+                ? '选择要设为全局的世界书'
+                : (scopeKey === 'role' ? '选择要绑定到角色的世界书' : '选择要附加到聊天室的世界书');
+        }
         if (this.librarySearchEl && this.librarySearchEl.value !== this.librarySearchTerm) {
             this.librarySearchEl.value = this.librarySearchTerm || '';
         }
@@ -926,10 +905,10 @@ export class WorldPanel {
 
             const toggle = this.buildToggle({
                 enabled: boundSet.has(item.name),
-                labelOn: scope === 'global' ? '已启用' : '已绑定',
-                labelOff: scope === 'global' ? '未启用' : '未绑定',
+                labelOn: scopeKey === 'global' ? '已启用' : '已绑定',
+                labelOff: scopeKey === 'global' ? '未启用' : '未绑定',
                 onClick: async () => {
-                    if (scope === 'global') {
+                    if (scopeKey === 'global') {
                         if (boundSet.has(item.name)) {
                             await window.appBridge.setGlobalWorld('');
                             window.toastr?.success('已停用世界书');
@@ -938,6 +917,21 @@ export class WorldPanel {
                             const data = await window.appBridge.getWorldInfo(item.name);
                             logger.info('Activated world', item.name, data);
                             window.toastr?.success(`已启用世界书：${item.name}`);
+                        }
+                    } else if (scopeKey === 'role') {
+                        const pid = String(normalizedTarget.personaId || '').trim();
+                        if (!pid) {
+                            window.toastr?.warning?.('未指定角色');
+                            return;
+                        }
+                        if (boundSet.has(item.name)) {
+                            await window.appBridge?.clearRoleWorldForPersona?.(pid);
+                            window.toastr?.success?.('已解绑角色世界书');
+                        } else {
+                            await window.appBridge?.assignRoleWorldToPersona?.(pid, item.name, { enabled: true });
+                            const data = await window.appBridge.getWorldInfo(item.name);
+                            logger.info('Activated role world', item.name, data);
+                            window.toastr?.success?.(`已绑定角色世界书：${item.name}`);
                         }
                     } else {
                         const next = new Set(boundSet);
@@ -950,8 +944,13 @@ export class WorldPanel {
                             logger.info('Activated world', item.name, data);
                             window.toastr?.success(`已启用世界书：${item.name}`);
                         }
-                        const sid = String(sessionId || window.appBridge?.activeSessionId || '').trim();
-                        window.appBridge?.setSessionWorldIds?.(sid, Array.from(next), { silent: false });
+                        const sid = String(normalizedTarget.sessionId || window.appBridge?.activeSessionId || '').trim();
+                        const isActiveSession = sid === String(window.appBridge?.activeSessionId || '').trim();
+                        window.appBridge?.setSessionWorldIds?.(sid, Array.from(next), { silent: !isActiveSession });
+                        if (!isActiveSession) {
+                            window.appBridge?.syncWorldRegexBindings?.();
+                            window.appBridge?.emitWorldInfoChanged?.({ sessionId: sid });
+                        }
                     }
                     await this.refreshList();
                 },
@@ -992,8 +991,13 @@ export class WorldPanel {
         }
     }
 
-    async onNewWorld() {
+    async onNewWorld(options = {}) {
         try {
+            const target = this.normalizeLibraryTarget(options?.target || this.libraryTarget);
+            if (target.type === 'role' && !String(target.personaId || '').trim()) {
+                window.toastr?.warning?.('未指定角色，无法新建角色世界书');
+                return;
+            }
             const raw = prompt('新建世界书名称', '新世界书');
             const name = String(raw || '').trim();
             if (!name) return;
@@ -1006,14 +1010,23 @@ export class WorldPanel {
             const blank = { name, entries: [] };
             await window.appBridge.saveWorldInfo(name, blank);
 
-            if (this.scope === 'global') {
+            if (target.type === 'global' || this.scope === 'global') {
                 await window.appBridge.setGlobalWorld(name);
+            } else if (target.type === 'role') {
+                await window.appBridge?.assignRoleWorldToPersona?.(String(target.personaId || '').trim(), name, { enabled: true });
             } else {
-                await window.appBridge.setCurrentWorld(name);
+                const sid = String(target.sessionId || window.appBridge?.activeSessionId || '').trim();
+                const current = window.appBridge?.getWorldIdsForSession?.(sid) || [];
+                const next = Array.from(new Set([...(Array.isArray(current) ? current : []), name]));
+                const isActiveSession = sid === String(window.appBridge?.activeSessionId || '').trim();
+                await window.appBridge?.setSessionWorldIds?.(sid, next, { silent: !isActiveSession });
+                if (!isActiveSession) {
+                    window.appBridge?.syncWorldRegexBindings?.();
+                    window.appBridge?.emitWorldInfoChanged?.({ sessionId: sid });
+                }
             }
 
             window.toastr?.success(`已新建并启用：${name}`);
-            window.dispatchEvent(new CustomEvent('worldinfo-changed', { detail: { worldId: name } }));
             await this.refreshList();
 
             // Open editor immediately for convenience
@@ -1139,7 +1152,7 @@ export class WorldPanel {
             <div style="display:flex; gap:12px; flex-wrap: wrap;">
                 <div style="flex:1 1 45%; min-width: 200px;">
                     <div id="world-list-title" style="font-weight:700; margin-bottom:6px;">已绑定</div>
-                    <ul id="world-list" style="list-style:none; padding:8px; border:1px solid #eee; border-radius:8px; max-height:220px; overflow:auto; margin:0;"></ul>
+                    <ul id="world-list" style="list-style:none; padding:0; border:none; border-radius:0; max-height:none; overflow:visible; margin:0; display:flex; flex-direction:column; gap:10px;"></ul>
                     <div style="display:flex; gap:8px; margin-top:8px; flex-wrap: wrap;">
                         <button id="world-new" style="flex:1; min-width:120px; padding:8px 10px; border:1px solid #ddd; border-radius:8px; background:#019aff; color:#fff; font-weight:700;">新增</button>
                         <button id="world-library-toggle" style="flex:1; min-width:120px; padding:8px 10px; border:1px solid #ddd; border-radius:8px; background:#f5f5f5;">世界书库</button>
@@ -1186,11 +1199,19 @@ export class WorldPanel {
 
         this.panel.querySelector('#world-close').onclick = () => this.hide();
         this.panel.querySelector('#world-import').onclick = () => this.onImport();
-        this.panel.querySelector('#world-new').onclick = () => this.onNewWorld();
+        this.panel.querySelector('#world-new').onclick = () => this.onNewWorld({
+            target: this.scope === 'global'
+                ? { type: 'global' }
+                : { type: 'session_extra', sessionId: this.getSessionId ? this.getSessionId() : (window.appBridge?.activeSessionId || '') },
+        });
         const exportBtn = this.panel.querySelector('#world-export-current');
         if (exportBtn) exportBtn.onclick = () => this.onExportCurrent();
         if (this.libraryToggleBtn) {
-            this.libraryToggleBtn.onclick = () => this.openLibraryModal();
+            this.libraryToggleBtn.onclick = () => this.openLibraryModal(
+                this.scope === 'global'
+                    ? { type: 'global' }
+                    : { type: 'session_extra', sessionId: this.getSessionId ? this.getSessionId() : (window.appBridge?.activeSessionId || '') },
+            );
         }
         if (this.fileBtn && this.fileInput) {
             this.fileBtn.onclick = () => this.fileInput?.click();
@@ -1354,8 +1375,9 @@ export class WorldPanel {
             this.libraryOverlay?.classList.remove('is-active');
         };
 
-        const openLibrary = async () => {
+        const openLibrary = async (target = null) => {
             if (!this.libraryOverlay) return;
+            if (target) this.libraryTarget = this.normalizeLibraryTarget(target);
             this.libraryOverlay.classList.add('is-active');
             await this.refreshList();
         };

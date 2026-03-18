@@ -334,7 +334,6 @@ export class CharacterCardImporter {
       };
       worldId = ensureUniqueWorldbookId(displayName, this.appBridge?.worldStore);
       await this.appBridge?.saveWorldInfo?.(worldId, worldPayload);
-      this.appBridge?.setGlobalWorld?.(worldId);
     }
 
     let mvuConverted = false;
@@ -563,6 +562,7 @@ export class CharacterCardImporter {
       const source = {
         ...(persona?.source || {}),
         worldbookId: worldId || persona?.source?.worldbookId,
+        worldbookEnabled: worldId ? true : (persona?.source?.worldbookEnabled !== false),
         systemPresetId: presetId || persona?.source?.systemPresetId,
         regexSetId: regexSetId || persona?.source?.regexSetId,
         mvuConverted,
@@ -576,6 +576,7 @@ export class CharacterCardImporter {
         update.originalCard = rawCard;
       }
       await this.personaStore.update?.(persona.id, update);
+      this.appBridge?.emitWorldInfoChanged?.({ roleWorldChanged: Boolean(worldId) });
     } catch (err) {
       logger.warn('update persona source failed', err);
     }

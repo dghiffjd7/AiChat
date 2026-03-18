@@ -1840,8 +1840,13 @@ export class ScriptRuntime {
       const state = this.presets.getState();
       presetId = String(state?.active?.sysprompt || '') || '';
     }
-    const worldId = String(this.bridge?.currentWorldId || '');
-    const worldIds = Array.isArray(this.bridge?.currentWorldIds) ? this.bridge.currentWorldIds.slice() : [];
+    const resolvedWorldState = this.bridge?.getResolvedWorldState?.(sid, {
+      uiMode: sid.startsWith('rp:') ? 'rp' : 'chat',
+    }) || null;
+    const worldIds = Array.isArray(resolvedWorldState?.worldIds) && resolvedWorldState.worldIds.length
+      ? resolvedWorldState.worldIds.slice()
+      : (Array.isArray(this.bridge?.currentWorldIds) ? this.bridge.currentWorldIds.slice() : []);
+    const worldId = String(this.bridge?.currentWorldId || worldIds[0] || '');
     return {
       sessionId: sid,
       personaId,

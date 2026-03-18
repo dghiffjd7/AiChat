@@ -1291,11 +1291,18 @@ const buildWorldSnapshot = (context) => {
   const worldStore = appBridge?.worldStore;
   if (!worldStore?.load) return { worlds: [], worldMeta: {} };
   const ids = new Set();
+  const resolved = appBridge?.getResolvedWorldState?.(appBridge?.activeSessionId, {
+    uiMode: String(context?.meta?.uiMode || context?.uiMode || '').trim().toLowerCase() === 'rp' ? 'rp' : 'chat',
+    groupMemberIds: Array.isArray(context?.group?.members) ? context.group.members : [],
+    isGroupChat: Boolean(context?.session?.isGroup) || String(context?.session?.id || '').startsWith('group:'),
+  }) || null;
+  const list = Array.isArray(resolved?.worldIds) && resolved.worldIds.length
+    ? resolved.worldIds
+    : (Array.isArray(appBridge?.currentWorldIds) ? appBridge.currentWorldIds : []);
   const currentId = String(appBridge?.currentWorldId || '').trim();
   const globalId = String(appBridge?.globalWorldId || '').trim();
   if (currentId) ids.add(currentId);
   if (globalId) ids.add(globalId);
-  const list = Array.isArray(appBridge?.currentWorldIds) ? appBridge.currentWorldIds : [];
   list.forEach(id => {
     const key = String(id || '').trim();
     if (key) ids.add(key);

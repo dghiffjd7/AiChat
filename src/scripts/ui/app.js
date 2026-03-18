@@ -75,6 +75,7 @@ import { StageManager } from '../variables/stage-manager.js';
 import { StageTimeline } from './stage-timeline.js';
 import { WorldPanel } from './world-panel.js';
 import { WorldInfoIndicator } from './worldinfo-indicator.js';
+import { buildRoleWorldBindingsImpl } from './world-role-binding-utils.js';
 import { appConfirm, appChoice } from './app-confirm.js';
 import { PluginRuntime } from '../plugins/plugin-runtime.js';
 
@@ -697,6 +698,92 @@ const initApp = async () => {
     }
     return personaStore.getActive();
   };
+  const buildRoleWorldBindingsForSession = (sessionId = chatStore.getCurrent(), options = {}) => {
+    const sid = String(sessionId || chatStore.getCurrent() || '').trim();
+    const activePersona = personaStore.getActive?.() || null;
+    const effectivePersona = sid ? getEffectivePersona(sid) : activePersona;
+    return buildRoleWorldBindingsImpl({
+      personas: personaStore.getAll?.() || [],
+      activePersonaId: activePersona?.id || '',
+      effectivePersonaId: effectivePersona?.id || activePersona?.id || '',
+      includeAll: options?.includeAll === true,
+      includeEmpty: options?.includeEmpty === true,
+    });
+  };
+  const emitRoleWorldBindingsChanged = (detail = {}) => {
+    try {
+      window.appBridge?.syncWorldRegexBindings?.();
+    } catch {}
+    try {
+      window.appBridge?.emitWorldInfoChanged?.({ roleWorldChanged: true, ...(detail || {}) });
+    } catch {}
+  };
+  const updatePersonaRoleWorldBinding = async (personaId, { worldbookId, worldbookEnabled } = {}) => {
+    const pid = String(personaId || '').trim();
+    if (!pid) return false;
+    const persona = personaStore.get(pid);
+    if (!persona) return false;
+    const source = persona?.source && typeof persona.source === 'object' ? { ...persona.source } : {};
+    if (worldbookId !== undefined) source.worldbookId = String(worldbookId || '').trim();
+    if (worldbookEnabled !== undefined) source.worldbookEnabled = Boolean(worldbookEnabled);
+    if (!String(source.worldbookId || '').trim()) {
+      source.worldbookId = '';
+      if (worldbookEnabled === undefined) source.worldbookEnabled = true;
+    }
+    await personaStore.update(pid, { source });
+    emitRoleWorldBindingsChanged({ personaId: pid, worldbookId: String(source.worldbookId || '').trim() });
+    return true;
+  };
+  try {
+    if (window.appBridge) {
+      window.appBridge.setRoleWorldResolver?.((sessionId, options = {}) => buildRoleWorldBindingsForSession(sessionId, options));
+      window.appBridge.assignRoleWorldToPersona = async (personaId, worldId, { enabled = true } = {}) => {
+        return updatePersonaRoleWorldBinding(personaId, {
+          worldbookId: worldId,
+          worldbookEnabled: enabled,
+        });
+      };
+      window.appBridge.clearRoleWorldForPersona = async (personaId) => {
+        return updatePersonaRoleWorldBinding(personaId, {
+          worldbookId: '',
+          worldbookEnabled: true,
+        });
+      };
+      window.appBridge.setRoleWorldEnabled = async (personaId, enabled) => {
+        return updatePersonaRoleWorldBinding(personaId, {
+          worldbookEnabled: enabled !== false,
+        });
+      };
+      window.appBridge.setWorldLifecycleHandler?.(async (event = {}) => {
+        const type = String(event?.type || '').trim();
+        const from = String(event?.from || '').trim();
+        const to = String(event?.to || '').trim();
+        const targetWorldId = String(event?.worldId || '').trim();
+        const personas = personaStore.getAll?.() || [];
+        let changed = false;
+        for (const persona of personas) {
+          const pid = String(persona?.id || '').trim();
+          const source = persona?.source && typeof persona.source === 'object' ? { ...persona.source } : null;
+          const currentWorldId = String(source?.worldbookId || '').trim();
+          if (!pid || !source || !currentWorldId) continue;
+          if (type === 'rename' && currentWorldId === from && to) {
+            source.worldbookId = to;
+            await personaStore.update(pid, { source });
+            changed = true;
+            continue;
+          }
+          if (type === 'delete' && currentWorldId === targetWorldId) {
+            source.worldbookId = '';
+            source.worldbookEnabled = true;
+            await personaStore.update(pid, { source });
+            changed = true;
+          }
+        }
+        if (changed) emitRoleWorldBindingsChanged({ lifecycleType: type });
+        return changed;
+      });
+    }
+  } catch {}
   if (scriptRuntime) {
     scriptRuntime.setContext({ getEffectivePersona });
     scriptRuntime.syncContext?.().catch(() => {});
@@ -9452,6 +9539,7 @@ Phase G（Frame 36）：循环衔接
     const sourceKindLabel = {
       builtin: '内置',
       global: '全局',
+      role: '角色',
       session: '会话',
     };
     const sections = [
@@ -9510,6 +9598,7 @@ Phase G（Frame 36）：循环衔接
     const sourceLabelMap = {
       builtin: '内置',
       global: '全局',
+      role: '角色',
       session: '会话',
     };
     const sectionLines = [];
@@ -9560,6 +9649,7 @@ Phase G（Frame 36）：循环衔接
 
     const builtinEntries = listOf(worldDebug?.builtinEntries);
     const globalEntries = listOf(worldDebug?.globalEntries);
+    const roleEntries = listOf(worldDebug?.roleEntries);
     const sessionEntries = listOf(worldDebug?.sessionEntries);
     const injectedEntries = listOf(worldDebug?.injectedEntries);
     const templateEntries = listOf(worldDebug?.templateEntries);
@@ -9581,7 +9671,7 @@ Phase G（Frame 36）：循环衔接
       '[世界书调试]',
       `- 插入策略: ${strategy}`,
       `- 变量自动建立: ${variableStrategy}`,
-      `- 激活命中: 内置 ${builtinEntries.length} / 全局 ${globalEntries.length} / 会话 ${sessionEntries.length}`,
+      `- 激活命中: 内置 ${builtinEntries.length} / 全局 ${globalEntries.length} / 角色 ${roleEntries.length} / 会话 ${sessionEntries.length}`,
       `- 合并后条目: ${mergedEntries.length}（预算前）`,
       `- 实际注入: 普通 ${injectedEntries.length} / 模板 ${templateEntries.length} / 仅变量初始化 ${initialVariableEntries.length}`,
       budgetTokens != null
@@ -9592,6 +9682,7 @@ Phase G（Frame 36）：循环衔接
     pushSection('激活条目', [
       ...renderEntryRows(builtinEntries, { emptyText: '无内置命中' }),
       ...renderEntryRows(globalEntries, { emptyText: '无全局命中' }),
+      ...renderEntryRows(roleEntries, { emptyText: '无角色命中' }),
       ...renderEntryRows(sessionEntries, { emptyText: '无会话命中' }),
     ]);
     pushSection('合并后（预算前）', renderEntryRows(mergedEntries, { includePosition: true, emptyText: '无合并条目' }));
@@ -16565,17 +16656,25 @@ Phase G（Frame 36）：循环衔接
 
   function updateWorldIndicator() {
     const globalId = window.appBridge?.globalWorldId || '';
+    const roleIds = window.appBridge?.getRoleWorldIds?.(chatStore.getCurrent?.()) || [];
     const currentIds = Array.isArray(window.appBridge?.currentWorldIds)
       ? window.appBridge.currentWorldIds
       : (window.appBridge?.currentWorldId ? [window.appBridge.currentWorldId] : []);
+    const roleLabel = (() => {
+      if (!Array.isArray(roleIds) || !roleIds.length) return '';
+      if (roleIds.length <= 2) return roleIds.join(' + ');
+      return `${roleIds[0]} + ${roleIds[1]} + ...`;
+    })();
     const currentLabel = (() => {
       if (!currentIds.length) return '';
       if (currentIds.length <= 2) return currentIds.join(' + ');
       return `${currentIds[0]} + ${currentIds[1]} + ...`;
     })();
-    const label = globalId && currentLabel
-      ? `全局:${globalId} / 会话:${currentLabel}`
-      : globalId || currentLabel || '未启用';
+    const parts = [];
+    if (globalId) parts.push(`全局:${globalId}`);
+    if (roleLabel) parts.push(`角色:${roleLabel}`);
+    if (currentLabel) parts.push(`会话:${currentLabel}`);
+    const label = parts.length ? parts.join(' / ') : '未启用';
     worldIndicator.setName(label);
   }
 

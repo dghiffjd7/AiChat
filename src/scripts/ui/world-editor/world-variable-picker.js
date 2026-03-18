@@ -167,12 +167,33 @@ export function buildVariableBrowserDraftImpl(record = null) {
         currentValueText: this.formatVariableBrowserValue(item.currentValue, type),
         defaultValueText: this.formatVariableBrowserValue(item.defaultValue, type),
         initialValueText: this.formatVariableBrowserValue(item.initialValue, type),
+        defaultValueRaw: item.defaultValue,
         source: isGlobal ? 'global' : 'session',
         isEditableType,
         canEditCurrentValue: isEditableType,
         canEditSchema: !isGlobal && isEditableType,
         canEditInitialValue: !isGlobal && isEditableType,
         canUseInWorldEditor: isEditableType,
+    };
+}
+
+export function buildVariableBrowserSelectionPayloadImpl(draft = null, deps = {}) {
+    const { parseTypedValue } = deps;
+    const name = String(draft?.name || '').trim();
+    if (!name || !draft?.canUseInWorldEditor) return null;
+    const type = isVariableBrowserEditableType(draft?.type)
+        ? String(draft.type).trim().toLowerCase()
+        : 'string';
+    const rawDefault = Object.prototype.hasOwnProperty.call(draft || {}, 'defaultValueRaw')
+        ? draft.defaultValueRaw
+        : undefined;
+    const defaultSource = rawDefault === undefined
+        ? ''
+        : rawDefault;
+    return {
+        name,
+        type,
+        defaultValue: parseTypedValue(defaultSource, type),
     };
 }
 
@@ -342,8 +363,7 @@ export function createVariableBrowserModalImpl(deps = {}) {
     });
     this.variableBrowserModal.querySelector('#world-var-browser-use')?.addEventListener('click', () => {
         const draft = this.variableBrowserState.draft;
-        const name = String(draft?.name || '').trim();
-        if (!name) {
+        if (!String(draft?.name || '').trim()) {
             window.toastr?.warning?.('请先选择一个变量');
             return;
         }
@@ -351,15 +371,10 @@ export function createVariableBrowserModalImpl(deps = {}) {
             window.toastr?.warning?.('复杂类型变量当前仅支持查看，不能直接用于世界书条件。');
             return;
         }
-        const type = isVariableBrowserEditableType(draft?.type)
-            ? String(draft.type).trim().toLowerCase()
-            : 'string';
+        const payload = buildVariableBrowserSelectionPayloadImpl(draft, { parseTypedValue });
+        if (!payload) return;
         this.rememberRecentVariable(draft);
-        this.closeVariableBrowser({
-            name,
-            type,
-            defaultValue: parseTypedValue(String(draft?.defaultValueText || ''), type),
-        });
+        this.closeVariableBrowser({ payload });
     });
 
     document.body.appendChild(this.variableBrowserOverlay);

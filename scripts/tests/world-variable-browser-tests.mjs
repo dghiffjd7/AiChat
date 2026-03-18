@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { parseTypedValue } from '../../src/scripts/variables/world-condition-core.js';
 import {
   buildVariableBrowserDraftImpl,
+  buildVariableBrowserSelectionPayloadImpl,
   deleteVariableBrowserDraftImpl,
   getSessionVariableRecordsImpl,
   saveVariableBrowserDraftImpl,
@@ -64,6 +65,50 @@ test('complex draft is read-only and unavailable for world condition picking', (
   assert.equal(draft.canEditCurrentValue, false);
   assert.equal(draft.canEditSchema, false);
   assert.equal(draft.canUseInWorldEditor, false);
+});
+
+test('world-condition selection returns auto-create payload using schema default', () => {
+  const context = {
+    formatVariableBrowserValue(value) {
+      return value === undefined ? '未设置' : String(value);
+    },
+  };
+  const draft = buildVariableBrowserDraftImpl.call(context, {
+    id: 'session:favor',
+    name: 'favor',
+    type: 'number',
+    source: 'session',
+    currentValue: 12,
+    defaultValue: 0,
+  });
+  const payload = buildVariableBrowserSelectionPayloadImpl(draft, { parseTypedValue });
+  assert.deepEqual(payload, {
+    name: 'favor',
+    type: 'number',
+    defaultValue: 0,
+  });
+});
+
+test('world-condition selection falls back to typed empty default when schema is missing', () => {
+  const context = {
+    formatVariableBrowserValue(value, type) {
+      return value === undefined ? '未设置' : (type === 'boolean' ? String(value) : String(value));
+    },
+  };
+  const draft = buildVariableBrowserDraftImpl.call(context, {
+    id: 'global:sharedTitle',
+    name: 'sharedTitle',
+    type: 'string',
+    source: 'global',
+    currentValue: 'captain',
+    defaultValue: undefined,
+  });
+  const payload = buildVariableBrowserSelectionPayloadImpl(draft, { parseTypedValue });
+  assert.deepEqual(payload, {
+    name: 'sharedTitle',
+    type: 'string',
+    defaultValue: '',
+  });
 });
 
 test('saving a global draft only updates global value and does not write schema', () => {

@@ -269,6 +269,8 @@ class AppBridge {
     this.pluginRuntime = null; // Injected
     this.scriptRuntime = null; // Injected
     this.contextBuilder = null; // Injected (from UI)
+    this.roleWorldResolver = null; // Injected (from UI)
+    this.worldLifecycleHandler = null; // Injected (from UI)
     this.lastMemoryPlan = null;
     this.lastMemoryUpdateBySession = {};
     this.lastWorldBudgetWarningAt = 0;
@@ -313,6 +315,113 @@ class AppBridge {
 
   setContextBuilder(fn) {
     this.contextBuilder = typeof fn === 'function' ? fn : null;
+  }
+
+  setRoleWorldResolver(fn) {
+    this.roleWorldResolver = typeof fn === 'function' ? fn : null;
+    this.syncWorldRegexBindings?.();
+  }
+
+  setWorldLifecycleHandler(fn) {
+    this.worldLifecycleHandler = typeof fn === 'function' ? fn : null;
+  }
+
+  getRoleWorldBindings(sessionId = this.activeSessionId, options = {}) {
+    if (typeof this.roleWorldResolver !== 'function') return [];
+    const sid = String(sessionId || this.activeSessionId || '').trim();
+    try {
+      const list = this.roleWorldResolver(sid, options || {});
+      if (!Array.isArray(list)) return [];
+      return list
+        .map((item) => {
+          const worldId = String(item?.worldId || '').trim();
+          return {
+            personaId: String(item?.personaId || '').trim(),
+            personaName: String(item?.personaName || '').trim() || '未命名角色',
+            worldId,
+            enabled: Boolean(worldId) && item?.enabled !== false,
+            hasWorld: Boolean(worldId),
+            isActive: item?.isActive === true,
+          };
+        })
+        .filter((item) => item.personaId || item.worldId);
+    } catch (err) {
+      logger.debug('role world resolve failed', err);
+      return [];
+    }
+  }
+
+  getRoleWorldIds(sessionId = this.activeSessionId, options = {}) {
+    const seen = new Set();
+    const out = [];
+    this.getRoleWorldBindings(sessionId, options).forEach((item) => {
+      const worldId = String(item?.worldId || '').trim();
+      if (!worldId || item?.enabled === false || seen.has(worldId) || worldId === BUILTIN_PHONE_FORMAT_WORLDBOOK_ID) return;
+      seen.add(worldId);
+      out.push(worldId);
+    });
+    return out;
+  }
+
+  getResolvedWorldState(sessionId = this.activeSessionId, options = {}) {
+    const sid = String(sessionId || this.activeSessionId || 'default').trim() || 'default';
+    const contact = this.contactsStore?.getContact?.(sid) || null;
+    const uiModeRaw = String(options?.uiMode || '').trim().toLowerCase();
+    const uiMode = uiModeRaw === 'rp' || sid.startsWith('rp:') ? 'rp' : 'chat';
+    const isGroupChat = options?.isGroupChat === undefined
+      ? (Boolean(contact?.isGroup) || sid.startsWith('group:'))
+      : Boolean(options.isGroupChat);
+    const groupMemberIds = Array.isArray(options?.groupMemberIds)
+      ? options.groupMemberIds.map(item => String(item || '').trim()).filter(Boolean)
+      : (isGroupChat && Array.isArray(contact?.members) ? contact.members.map(item => String(item || '').trim()).filter(Boolean) : []);
+    const normalizeVisibleIds = (value) => this.normalizeWorldIds(value).filter((id) => id !== BUILTIN_PHONE_FORMAT_WORLDBOOK_ID);
+    const globalWorldId = String(this.globalWorldId || '').trim();
+    const roleWorldIds = normalizeVisibleIds(this.getRoleWorldIds(sid, { ...(options || {}), uiMode, isGroupChat, groupMemberIds }));
+    const sessionWorldIds = [];
+    if (uiMode !== 'rp') {
+      if (!isGroupChat) {
+        sessionWorldIds.push(...normalizeVisibleIds(this.worldSessionMap[sid]));
+      } else {
+        groupMemberIds.forEach((memberSessionId) => {
+          normalizeVisibleIds(this.worldSessionMap[memberSessionId]).forEach((worldId) => {
+            if (!sessionWorldIds.includes(worldId)) sessionWorldIds.push(worldId);
+          });
+        });
+      }
+    }
+    const worldIds = [];
+    const pushUnique = (value) => {
+      const worldId = String(value || '').trim();
+      if (!worldId || worldId === BUILTIN_PHONE_FORMAT_WORLDBOOK_ID || worldIds.includes(worldId)) return;
+      worldIds.push(worldId);
+    };
+    pushUnique(globalWorldId);
+    roleWorldIds.forEach(pushUnique);
+    sessionWorldIds.forEach(pushUnique);
+    return {
+      sessionId: sid,
+      uiMode,
+      isGroupChat,
+      groupMemberIds,
+      globalWorldId: globalWorldId && globalWorldId !== BUILTIN_PHONE_FORMAT_WORLDBOOK_ID ? globalWorldId : '',
+      roleWorldIds,
+      sessionWorldIds,
+      worldIds,
+    };
+  }
+
+  emitWorldInfoChanged(detail = {}) {
+    const resolved = this.getResolvedWorldState(this.activeSessionId);
+    window.dispatchEvent(new CustomEvent('worldinfo-changed', {
+      detail: {
+        worldId: this.currentWorldId,
+        worldIds: this.currentWorldIds,
+        globalWorldId: this.globalWorldId,
+        roleWorldIds: resolved.roleWorldIds,
+        resolvedWorldIds: resolved.worldIds,
+        ...(detail || {}),
+      },
+    }));
   }
 
   processTextMacros(text, extraContext = {}) {
@@ -1018,10 +1127,18 @@ class AppBridge {
   }
 
   getGlobalWorldIdKey() {
+    return 'global_world_id_shared_v1';
+  }
+
+  getLegacyScopedGlobalWorldIdKey() {
     return makeScopedKey('global_world_id_v1', this.scopeId);
   }
 
   getWorldGlobalSettingsKey() {
+    return 'world_global_settings_shared_v1';
+  }
+
+  getLegacyScopedWorldGlobalSettingsKey() {
     return makeScopedKey('world_global_settings_v1', this.scopeId);
   }
 
@@ -1043,12 +1160,21 @@ class AppBridge {
     this.hydrateGlobalWorldId();
     this.hydrateWorldGlobalSettings();
     this.syncWorldRegexBindings?.();
+    this.emitWorldInfoChanged({ scopeId: this.scopeId });
   }
 
   loadGlobalWorldId() {
     try {
       const raw = localStorage.getItem(this.getGlobalWorldIdKey());
-      return raw ? String(raw) : null;
+      if (raw) return String(raw);
+      const legacy = localStorage.getItem(this.getLegacyScopedGlobalWorldIdKey());
+      if (legacy) {
+        try {
+          localStorage.setItem(this.getGlobalWorldIdKey(), String(legacy));
+        } catch {}
+        return String(legacy);
+      }
+      return null;
     } catch {
       return null;
     }
@@ -1135,8 +1261,14 @@ class AppBridge {
   loadWorldGlobalSettings() {
     try {
       const raw = localStorage.getItem(this.getWorldGlobalSettingsKey());
-      if (!raw) return this.getDefaultWorldGlobalSettings();
-      return this.normalizeWorldGlobalSettings(JSON.parse(raw));
+      if (raw) return this.normalizeWorldGlobalSettings(JSON.parse(raw));
+      const legacy = localStorage.getItem(this.getLegacyScopedWorldGlobalSettingsKey());
+      if (!legacy) return this.getDefaultWorldGlobalSettings();
+      const normalized = this.normalizeWorldGlobalSettings(JSON.parse(legacy));
+      try {
+        localStorage.setItem(this.getWorldGlobalSettingsKey(), JSON.stringify(normalized));
+      } catch {}
+      return normalized;
     } catch {
       return this.getDefaultWorldGlobalSettings();
     }
@@ -1162,7 +1294,7 @@ class AppBridge {
         if (this.activeSessionId && kv[this.activeSessionId]) {
           this.currentWorldIds = this.normalizeWorldIds(kv[this.activeSessionId]);
           this.currentWorldId = this.currentWorldIds[0] || null;
-          window.dispatchEvent(new CustomEvent('worldinfo-changed', { detail: { worldId: this.currentWorldId, worldIds: this.currentWorldIds } }));
+          this.emitWorldInfoChanged();
         }
         logger.info('world-session map hydrated from disk');
       }
@@ -1179,6 +1311,12 @@ class AppBridge {
         try {
           localStorage.setItem(this.getGlobalWorldIdKey(), this.globalWorldId);
         } catch {}
+        return;
+      }
+      const legacy = await safeInvoke('load_kv', { name: this.getLegacyScopedGlobalWorldIdKey() });
+      if (legacy && typeof legacy === 'string' && legacy.trim()) {
+        this.globalWorldId = legacy.trim();
+        this.persistGlobalWorldId();
       }
     } catch (err) {
       logger.debug('global world id 磁盘加载失败（可能非 Tauri）', err);
@@ -1191,6 +1329,12 @@ class AppBridge {
       if (kv && typeof kv === 'object') {
         this.worldGlobalSettings = this.normalizeWorldGlobalSettings(kv);
         localStorage.setItem(this.getWorldGlobalSettingsKey(), JSON.stringify(this.worldGlobalSettings));
+        return;
+      }
+      const legacy = await safeInvoke('load_kv', { name: this.getLegacyScopedWorldGlobalSettingsKey() });
+      if (legacy && typeof legacy === 'object') {
+        this.worldGlobalSettings = this.normalizeWorldGlobalSettings(legacy);
+        this.persistWorldGlobalSettings();
       }
     } catch (err) {
       logger.debug('global world settings 磁盘加载失败（可能非 Tauri）', err);
@@ -1267,7 +1411,8 @@ class AppBridge {
     this.activeSessionId = sessionId;
     this.currentWorldIds = this.normalizeWorldIds(this.worldSessionMap[sessionId]);
     this.currentWorldId = this.currentWorldIds[0] || null;
-    window.dispatchEvent(new CustomEvent('worldinfo-changed', { detail: { worldId: this.currentWorldId, worldIds: this.currentWorldIds } }));
+    this.syncWorldRegexBindings?.();
+    this.emitWorldInfoChanged({ sessionId: this.activeSessionId });
     try {
       const runtime = this.pluginRuntime;
       if (runtime) {
@@ -1304,7 +1449,7 @@ class AppBridge {
     }
   }
 
-  getRegexContext() {
+  getRegexContext(options = {}) {
     const presetState = this.presets?.getState?.() || {};
     const activePresets = (() => {
       const active = presetState?.active || {};
@@ -1317,12 +1462,9 @@ class AppBridge {
       }
       return out;
     })();
-    const worldIds = [];
-    if (this.globalWorldId) worldIds.push(String(this.globalWorldId));
-    (this.currentWorldIds || []).forEach(id => {
-      if (id) worldIds.push(String(id));
-    });
-    const sid = String(this.activeSessionId || '').trim();
+    const sid = String(options?.sessionId || this.activeSessionId || '').trim();
+    const resolvedWorldState = this.getResolvedWorldState(sid, options);
+    const worldIds = Array.isArray(resolvedWorldState?.worldIds) ? resolvedWorldState.worldIds : [];
     let localVars = {};
     let globalVars = {};
     try {
@@ -1336,8 +1478,8 @@ class AppBridge {
       : false;
     const baseVars = isShared ? globalVars : localVars;
     return {
-      sessionId: this.activeSessionId,
-      worldId: this.currentWorldId,
+      sessionId: sid,
+      worldId: String(this.currentWorldId || '').trim() || worldIds[0] || '',
       worldIds,
       activePresets,
       macroVars: buildMacroVariableContext({
@@ -1378,11 +1520,7 @@ class AppBridge {
   async syncWorldRegexBindings() {
     try {
       await this.regex?.ready;
-      const worldIds = [];
-      if (this.globalWorldId) worldIds.push(String(this.globalWorldId));
-      (this.currentWorldIds || []).forEach(id => {
-        if (id) worldIds.push(String(id));
-      });
+      const worldIds = this.getResolvedWorldState(this.activeSessionId).worldIds;
       const changed = await this.regex?.syncWorldBindings?.(worldIds);
       if (changed) {
         window.dispatchEvent(new CustomEvent('regex-changed'));
@@ -1829,8 +1967,14 @@ class AppBridge {
         const isReply = Boolean(context?.task?.replyToAuthor) || Boolean(context?.task?.replyToCommentId) || Boolean(context?.task?.isReplyToComment);
         return isReply ? '在动态评论回复，注意动态评论格式' : '在动态评论，注意动态评论格式';
       }
-      if (isGroupChat) return '在群聊，注意群聊格式';
-      return '在私聊，注意私聊格式';
+      const sessionName = String(context?.session?.name || '').trim();
+      const characterName = String(context?.character?.name || '').trim();
+      if (isGroupChat) {
+        const groupName = String(context?.group?.name || sessionName || characterName || context?.session?.id || '当前群聊').trim();
+        return `在${groupName}中群聊，请遵循群聊格式`;
+      }
+      const privateTargetName = String(sessionName || characterName || context?.session?.id || '当前对象').trim();
+      return `正在与${privateTargetName}私聊，请遵循私聊格式`;
     })();
     const pendingUserText = pendingUserTextRaw && !disableScenarioHint
       ? `${pendingUserTextRaw}（${scenarioHint}）`
@@ -1967,6 +2111,11 @@ class AppBridge {
     const groupMemberIds = Array.isArray(context?.group?.members) ? context.group.members.map(String) : [];
     const groupMemberNames = Array.isArray(context?.group?.memberNames) ? context.group.memberNames.map(String) : [];
     const membersText = groupMemberNames.filter(Boolean).join(',');
+    const resolvedWorldState = this.getResolvedWorldState(sessionId || this.activeSessionId, {
+      uiMode,
+      isGroupChat,
+      groupMemberIds,
+    });
     const macroContext = {
       user: name1,
       char: name2,
@@ -2058,36 +2207,28 @@ class AppBridge {
           const worldSettings = this.getWorldGlobalSettings?.() || this.worldGlobalSettings || {};
           const insertionStrategy = normalizeWorldInsertionStrategy(worldSettings.insertionStrategy, 'role_first');
           const collectEntries = (worldId) => this.collectWorldEntries(worldId, { matchText, matchContext });
-          const buildMergedContent = (globalEntries, sessionEntries) => {
-            const merged = this.mergeWorldEntries(globalEntries, sessionEntries, insertionStrategy);
+          const buildMergedContent = (globalEntries, nonGlobalEntries) => {
+            const merged = this.mergeWorldEntries(globalEntries, nonGlobalEntries, insertionStrategy);
             return merged.map(e => e.content).join('\n\n');
           };
           const builtinEntries = disablePhoneFormat ? [] : collectEntries(BUILTIN_PHONE_FORMAT_WORLDBOOK_ID);
           const builtinPart = builtinEntries.map(e => e.content).join('\n\n');
-          const globalEntries =
-            this.globalWorldId && String(this.globalWorldId) !== BUILTIN_PHONE_FORMAT_WORLDBOOK_ID
-              ? collectEntries(this.globalWorldId)
-              : [];
-          if (!isGroupChat) {
-            const sessionEntries = [];
-            (this.currentWorldIds || []).forEach((id) => {
-              if (!id) return;
-              const list = collectEntries(id);
-              if (list.length) sessionEntries.push(...list);
-            });
-            const mergedContent = buildMergedContent(globalEntries, sessionEntries);
-            return [builtinPart, mergedContent].filter(Boolean).join('\n\n');
-          }
+          const globalEntries = resolvedWorldState.globalWorldId ? collectEntries(resolvedWorldState.globalWorldId) : [];
+          const roleEntries = [];
+          resolvedWorldState.roleWorldIds.forEach((id) => {
+            if (!id) return;
+            const list = collectEntries(id);
+            if (!list.length) return;
+            roleEntries.push(...list.map(entry => ({ ...entry, _src: 'role' })));
+          });
           const sessionEntries = [];
-          for (const memberSessionId of groupMemberIds) {
-            const list = this.normalizeWorldIds(this.worldSessionMap[String(memberSessionId) || '']);
-            if (!list.length) continue;
-            list.forEach((wid) => {
-              const p = collectEntries(wid);
-              if (p.length) sessionEntries.push(...p);
-            });
-          }
-          const mergedContent = buildMergedContent(globalEntries, sessionEntries);
+          resolvedWorldState.sessionWorldIds.forEach((id) => {
+            if (!id) return;
+            const list = collectEntries(id);
+            if (!list.length) return;
+            sessionEntries.push(...list.map(entry => ({ ...entry, _src: 'session' })));
+          });
+          const mergedContent = buildMergedContent(globalEntries, [...roleEntries, ...sessionEntries]);
           return [builtinPart, mergedContent].filter(Boolean).join('\n\n');
         })();
     // Apply MacroEngine to worldbook text too (worldbook entries may include {{user}}/{{char}} etc.)
@@ -2526,6 +2667,7 @@ const stringifyMessageContent = (content) => {
           overflowed: false,
           builtinEntries: [],
           globalEntries: [],
+          roleEntries: [],
           sessionEntries: [],
           mergedEntries: [],
           trimmedEntries: [],
@@ -2547,7 +2689,6 @@ const stringifyMessageContent = (content) => {
           worldDebugRaw.insertionStrategy = insertionStrategy;
           worldDebugRaw.variableDefineStrategy = variableDefineStrategy;
           const collectEntries = worldId => this.collectWorldEntries(worldId, { matchText, matchContext });
-          const isRpMode = String(matchContext?.uiMode || '').trim().toLowerCase() === 'rp';
           const pushEntry = (entry, meta = {}) => {
             const sourceKind = String(meta?.sourceKind || entry?._src || '').trim() || 'session';
             const commentRaw = String(entry?.comment || '');
@@ -2657,35 +2798,34 @@ const stringifyMessageContent = (content) => {
             pushEntries(builtinEntries, { sourceKind: 'builtin' });
           }
           const globalEntries =
-            this.globalWorldId && String(this.globalWorldId) !== BUILTIN_PHONE_FORMAT_WORLDBOOK_ID
-              ? collectEntries(this.globalWorldId)
+            resolvedWorldState.globalWorldId
+              ? collectEntries(resolvedWorldState.globalWorldId)
               : [];
           globalEntries.forEach(entry => captureWorldDebugEntry(worldDebugRaw.globalEntries, entry, {
             sourceKind: 'global',
           }));
+          const roleEntries = [];
+          resolvedWorldState.roleWorldIds.forEach((id) => {
+            if (!id) return;
+            const entries = collectEntries(id);
+            if (!entries.length) return;
+            const tagged = entries.map(entry => ({ ...entry, _src: 'role' }));
+            tagged.forEach(entry => captureWorldDebugEntry(worldDebugRaw.roleEntries, entry, {
+              sourceKind: 'role',
+            }));
+            roleEntries.push(...tagged);
+          });
           const sessionEntries = [];
-          if (!isRpMode) {
-            if (!isGroupChat) {
-              (this.currentWorldIds || []).forEach((id) => {
-                if (!id) return;
-                const list = collectEntries(id);
-                if (list.length) sessionEntries.push(...list);
-              });
-            } else {
-              for (const memberSessionId of groupMemberIds) {
-                const list = this.normalizeWorldIds(this.worldSessionMap[String(memberSessionId) || '']);
-                if (!list.length) continue;
-                list.forEach((wid) => {
-                  const entries = collectEntries(wid);
-                  if (entries.length) sessionEntries.push(...entries);
-                });
-              }
-            }
-          }
+          resolvedWorldState.sessionWorldIds.forEach((id) => {
+            if (!id) return;
+            const entries = collectEntries(id);
+            if (!entries.length) return;
+            sessionEntries.push(...entries.map(entry => ({ ...entry, _src: 'session' })));
+          });
           sessionEntries.forEach(entry => captureWorldDebugEntry(worldDebugRaw.sessionEntries, entry, {
             sourceKind: 'session',
           }));
-          const mergedDetail = this.mergeWorldEntriesDetailed(globalEntries, sessionEntries, insertionStrategy);
+          const mergedDetail = this.mergeWorldEntriesDetailed(globalEntries, [...roleEntries, ...sessionEntries], insertionStrategy);
           worldDebugRaw.budgetTokens = mergedDetail.budgetTokens;
           worldDebugRaw.usedTokens = mergedDetail.usedTokens;
           worldDebugRaw.overflowed = mergedDetail.overflowed === true;
@@ -2884,6 +3024,7 @@ const stringifyMessageContent = (content) => {
           overflowed: worldDebugRaw.overflowed,
           builtinEntries: mapWorldDebugEntries(worldDebugRaw.builtinEntries),
           globalEntries: mapWorldDebugEntries(worldDebugRaw.globalEntries),
+          roleEntries: mapWorldDebugEntries(worldDebugRaw.roleEntries),
           sessionEntries: mapWorldDebugEntries(worldDebugRaw.sessionEntries),
           mergedEntries: mapWorldDebugEntries(worldDebugRaw.mergedEntries),
           trimmedEntries: mapWorldDebugEntries(worldDebugRaw.trimmedEntries),
@@ -3997,10 +4138,18 @@ const stringifyMessageContent = (content) => {
       }
     } catch {}
 
+    let roleChanged = false;
+    try {
+      roleChanged = Boolean(await this.worldLifecycleHandler?.({ type: 'rename', from, to }));
+    } catch (err) {
+      logger.warn('rename role world refs failed', err);
+    }
+
     await this.worldStore.remove(from);
 
-    if (mapChanged || currentChanged || globalChanged || refsChanged) {
-      window.dispatchEvent(new CustomEvent('worldinfo-changed', { detail: { worldId: this.currentWorldId, worldIds: this.currentWorldIds, globalWorldId: this.globalWorldId } }));
+    if (mapChanged || currentChanged || globalChanged || refsChanged || roleChanged) {
+      this.syncWorldRegexBindings?.();
+      this.emitWorldInfoChanged({ renamedFrom: from, renamedTo: to });
     }
     if (regexChanged) window.dispatchEvent(new CustomEvent('regex-changed'));
   }
@@ -4010,12 +4159,43 @@ const stringifyMessageContent = (content) => {
    */
   async deleteWorldInfo(worldId) {
     try {
-      await this.worldStore.remove(worldId);
-      if (this.currentWorldId === worldId) {
-        this.setCurrentWorld(null);
+      const target = String(worldId || '').trim();
+      if (!target) return;
+      await this.worldStore.remove(target);
+
+      let mapChanged = false;
+      for (const [sid, val] of Object.entries(this.worldSessionMap || {})) {
+        const next = this.normalizeWorldIds(val).filter((id) => id !== target);
+        if (next.length === this.normalizeWorldIds(val).length) continue;
+        if (!next.length) delete this.worldSessionMap[sid];
+        else this.worldSessionMap[sid] = next;
+        mapChanged = true;
       }
-      if (this.globalWorldId === worldId) {
-        this.setGlobalWorld(null);
+      if (mapChanged) this.persistWorldSessionMap();
+
+      let currentChanged = false;
+      if (Array.isArray(this.currentWorldIds) && this.currentWorldIds.includes(target)) {
+        this.currentWorldIds = this.currentWorldIds.filter((id) => id !== target);
+        this.currentWorldId = this.currentWorldIds[0] || null;
+        currentChanged = true;
+      }
+      let globalChanged = false;
+      if (this.globalWorldId === target) {
+        this.globalWorldId = null;
+        this.persistGlobalWorldId();
+        globalChanged = true;
+      }
+
+      let roleChanged = false;
+      try {
+        roleChanged = Boolean(await this.worldLifecycleHandler?.({ type: 'delete', worldId: target }));
+      } catch (err) {
+        logger.warn('delete role world refs failed', err);
+      }
+
+      if (mapChanged || currentChanged || globalChanged || roleChanged) {
+        this.syncWorldRegexBindings?.();
+        this.emitWorldInfoChanged({ deletedWorldId: target });
       }
       logger.debug('世界书已删除', worldId);
     } catch (error) {
@@ -4042,7 +4222,7 @@ const stringifyMessageContent = (content) => {
     this.currentWorldIds = sid === this.activeSessionId ? list : this.currentWorldIds;
     this.currentWorldId = this.currentWorldIds[0] || null;
     this.syncWorldRegexBindings?.();
-    window.dispatchEvent(new CustomEvent('worldinfo-changed', { detail: { worldId: this.currentWorldId, worldIds: this.currentWorldIds } }));
+    this.emitWorldInfoChanged({ sessionId: sid });
   }
 
   /**
@@ -4060,7 +4240,7 @@ const stringifyMessageContent = (content) => {
       this.currentWorldIds = list;
       this.currentWorldId = this.currentWorldIds[0] || null;
       this.syncWorldRegexBindings?.();
-      window.dispatchEvent(new CustomEvent('worldinfo-changed', { detail: { worldId: this.currentWorldId, worldIds: this.currentWorldIds } }));
+      this.emitWorldInfoChanged({ sessionId: sid });
     }
   }
 
@@ -4079,7 +4259,7 @@ const stringifyMessageContent = (content) => {
       this.currentWorldIds = list;
       this.currentWorldId = this.currentWorldIds[0] || null;
       this.syncWorldRegexBindings?.();
-      window.dispatchEvent(new CustomEvent('worldinfo-changed', { detail: { worldId: this.currentWorldId, worldIds: this.currentWorldIds } }));
+      this.emitWorldInfoChanged({ sessionId: sid });
     }
   }
 
@@ -4098,11 +4278,7 @@ const stringifyMessageContent = (content) => {
     this.globalWorldId = worldId || null;
     this.persistGlobalWorldId();
     this.syncWorldRegexBindings?.();
-    window.dispatchEvent(
-      new CustomEvent('worldinfo-changed', {
-        detail: { worldId: this.currentWorldId, worldIds: this.currentWorldIds, globalWorldId: this.globalWorldId },
-      }),
-    );
+    this.emitWorldInfoChanged();
   }
 
   getWorldGlobalSettings() {
@@ -4113,11 +4289,7 @@ const stringifyMessageContent = (content) => {
     const merged = { ...(this.worldGlobalSettings || this.getDefaultWorldGlobalSettings()), ...(next || {}) };
     this.worldGlobalSettings = this.normalizeWorldGlobalSettings(merged);
     this.persistWorldGlobalSettings();
-    window.dispatchEvent(
-      new CustomEvent('worldinfo-changed', {
-        detail: { worldId: this.currentWorldId, worldIds: this.currentWorldIds, globalWorldId: this.globalWorldId },
-      }),
-    );
+    this.emitWorldInfoChanged();
   }
 
   getWorldBudgetTokens() {
@@ -4604,20 +4776,21 @@ const stringifyMessageContent = (content) => {
     const collectEntries = (worldId) => this.collectWorldEntries(worldId, { matchText, matchContext });
     const worldSettings = this.getWorldGlobalSettings?.() || this.worldGlobalSettings || {};
     const insertionStrategy = normalizeWorldInsertionStrategy(worldSettings.insertionStrategy, 'role_first');
-    const globalEntries =
-      this.globalWorldId && String(this.globalWorldId) !== BUILTIN_PHONE_FORMAT_WORLDBOOK_ID
-        ? collectEntries(this.globalWorldId)
-        : [];
+    const resolvedWorldState = this.getResolvedWorldState(sid, { uiMode: mode });
+    const globalEntries = resolvedWorldState.globalWorldId ? collectEntries(resolvedWorldState.globalWorldId) : [];
+    const roleEntries = [];
+    resolvedWorldState.roleWorldIds.forEach((id) => {
+      if (!id) return;
+      const entries = collectEntries(id);
+      if (entries.length) roleEntries.push(...entries.map(entry => ({ ...entry, _src: 'role' })));
+    });
     const sessionEntries = [];
-    if (mode !== 'rp') {
-      const list = this.normalizeWorldIds(this.worldSessionMap[String(sid) || '']);
-      list.forEach((id) => {
-        if (!id) return;
-        const entries = collectEntries(id);
-        if (entries.length) sessionEntries.push(...entries);
-      });
-    }
-    const mergedEntries = this.mergeWorldEntries(globalEntries, sessionEntries, insertionStrategy);
+    resolvedWorldState.sessionWorldIds.forEach((id) => {
+      if (!id) return;
+      const entries = collectEntries(id);
+      if (entries.length) sessionEntries.push(...entries.map(entry => ({ ...entry, _src: 'session' })));
+    });
+    const mergedEntries = this.mergeWorldEntries(globalEntries, [...roleEntries, ...sessionEntries], insertionStrategy);
     const before = [];
     const after = [];
     const macroContext = {
@@ -4634,7 +4807,7 @@ const stringifyMessageContent = (content) => {
       });
       const trimmed = String(raw || '').trim();
       if (!trimmed) return '';
-      return this.regex.apply(trimmed, this.getRegexContext(), regex_placement.WORLD_INFO, {
+      return this.regex.apply(trimmed, this.getRegexContext({ sessionId: sid, uiMode: mode }), regex_placement.WORLD_INFO, {
         isMarkdown: true,
         isPrompt: false,
         isEdit: false,
@@ -4657,15 +4830,23 @@ const stringifyMessageContent = (content) => {
 
   mergeWorldEntriesDetailed(globalEntries = [], sessionEntries = [], strategy = 'role_first') {
     const sourceRank = (src) => {
-      if (strategy === 'global_first') return src === 'global' ? 0 : 1;
-      if (strategy === 'role_first') return src === 'session' ? 0 : 1;
+      if (strategy === 'global_first') {
+        if (src === 'global') return 0;
+        if (src === 'role') return 1;
+        return 2;
+      }
+      if (strategy === 'role_first') {
+        if (src === 'role') return 0;
+        if (src === 'session') return 1;
+        return 2;
+      }
       return 0;
     };
     const g = Array.isArray(globalEntries) ? globalEntries : [];
     const s = Array.isArray(sessionEntries) ? sessionEntries : [];
     const merged = [
-      ...g.map((e, i) => ({ ...e, _src: 'global', _srcSeq: i })),
-      ...s.map((e, i) => ({ ...e, _src: 'session', _srcSeq: i })),
+      ...g.map((e, i) => ({ ...e, _src: String(e?._src || 'global').trim() || 'global', _srcSeq: i })),
+      ...s.map((e, i) => ({ ...e, _src: String(e?._src || 'session').trim() || 'session', _srcSeq: i })),
     ];
     merged.sort((a, b) => {
       const oa = Number.isFinite(Number(a?.order)) ? Number(a.order) : 0;
@@ -4741,20 +4922,24 @@ const stringifyMessageContent = (content) => {
   getActiveWorldPrompt() {
     const worldSettings = this.getWorldGlobalSettings?.() || this.worldGlobalSettings || {};
     const insertionStrategy = normalizeWorldInsertionStrategy(worldSettings.insertionStrategy, 'role_first');
+    const resolvedWorldState = this.getResolvedWorldState(this.activeSessionId);
     const collectEntries = worldId => this.collectWorldEntries(worldId, { matchText: '' });
     const builtinEntries = collectEntries(BUILTIN_PHONE_FORMAT_WORLDBOOK_ID);
     const builtinPart = builtinEntries.map(e => e.content).join('\n\n');
-    const globalEntries =
-      this.globalWorldId && String(this.globalWorldId) !== BUILTIN_PHONE_FORMAT_WORLDBOOK_ID
-        ? collectEntries(this.globalWorldId)
-        : [];
-    const sessionEntries = [];
-    (this.currentWorldIds || []).forEach((id) => {
+    const globalEntries = resolvedWorldState.globalWorldId ? collectEntries(resolvedWorldState.globalWorldId) : [];
+    const roleEntries = [];
+    resolvedWorldState.roleWorldIds.forEach((id) => {
       if (!id) return;
       const list = collectEntries(id);
-      if (list.length) sessionEntries.push(...list);
+      if (list.length) roleEntries.push(...list.map(entry => ({ ...entry, _src: 'role' })));
     });
-    const mergedContent = this.mergeWorldEntries(globalEntries, sessionEntries, insertionStrategy)
+    const sessionEntries = [];
+    resolvedWorldState.sessionWorldIds.forEach((id) => {
+      if (!id) return;
+      const list = collectEntries(id);
+      if (list.length) sessionEntries.push(...list.map(entry => ({ ...entry, _src: 'session' })));
+    });
+    const mergedContent = this.mergeWorldEntries(globalEntries, [...roleEntries, ...sessionEntries], insertionStrategy)
       .map(e => e.content)
       .join('\n\n');
     return [builtinPart, mergedContent].filter(Boolean).join('\n\n');
