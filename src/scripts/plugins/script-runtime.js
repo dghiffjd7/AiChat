@@ -1,6 +1,7 @@
 import { appSettings } from '../storage/app-settings.js';
 import { logger } from '../utils/logger.js';
 import { emitDebugLog } from '../utils/debug-log.js';
+import { serializeForInlineScript } from '../utils/inline-script.js';
 
 const SCRIPT_MAX_BYTES = 2 * 1024 * 1024;
 const SCRIPT_TOTAL_BYTES = 8 * 1024 * 1024;
@@ -1258,16 +1259,16 @@ class ScriptIframeRuntime {
     const scriptScopeId = String(record.scopeId || '');
     const scriptData = record.data && typeof record.data === 'object' ? record.data : {};
     const content = String(record.content || '');
-    const contextJson = JSON.stringify(context || {});
-    const dataJson = JSON.stringify(scriptData);
-    const nameJson = JSON.stringify(scriptName);
-    const infoJson = JSON.stringify(scriptInfo);
-    const scopeJson = JSON.stringify(scriptScope);
-    const scopeIdJson = JSON.stringify(scriptScopeId);
-    const scriptIdJson = JSON.stringify(scriptId);
-    const contentJson = JSON.stringify(content);
-    const baseJson = JSON.stringify(baseHref);
-    const cspJson = JSON.stringify(csp);
+    const contextJson = serializeForInlineScript(context || {});
+    const dataJson = serializeForInlineScript(scriptData);
+    const nameJson = serializeForInlineScript(scriptName);
+    const infoJson = serializeForInlineScript(scriptInfo);
+    const scopeJson = serializeForInlineScript(scriptScope);
+    const scopeIdJson = serializeForInlineScript(scriptScopeId);
+    const scriptIdJson = serializeForInlineScript(scriptId);
+    const contentJson = serializeForInlineScript(content);
+    const baseJson = serializeForInlineScript(baseHref);
+    const cspJson = serializeForInlineScript(csp);
     return `<!doctype html>
 <html>
 <head>
@@ -1562,7 +1563,7 @@ ${allowNetwork ? `
     const allowNetwork = ${allowNetwork ? 'true' : 'false'};
     if (!window.Vue && allowNetwork) {
       try {
-        const mod = await import(${JSON.stringify(vueEsmUrl)});
+        const mod = await import(${serializeForInlineScript(vueEsmUrl)});
         const resolved = mod?.default && mod.default.createApp ? mod.default : mod;
         if (resolved) {
           window.Vue = resolved;

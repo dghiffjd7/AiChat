@@ -7,6 +7,7 @@
 import { logger } from '../../utils/logger.js';
 import { emitDebugLog } from '../../utils/debug-log.js';
 import { appSettings } from '../../storage/app-settings.js';
+import { serializeForInlineScript } from '../../utils/inline-script.js';
 import { buildVariableStatusSnapshot } from '../variable-status-card.js';
 import { buildVariableContext } from '../../variables/variable-path-utils.js';
 import {
@@ -113,7 +114,7 @@ const buildStaticFallbackPlaceholderDoc = (reason = '', { canRecover = false, if
         ? '<button id="__chatapp_recover_btn" type="button" style="margin-top:10px;padding:8px 10px;border-radius:8px;border:1px solid #3b424d;background:#1e2630;color:#dbe7f2;font-size:12px;cursor:pointer;">恢复动态渲染</button>'
         : '';
     const recoverScript = canRecover
-        ? `<script>(function(){var id=${JSON.stringify(String(iframeId || ''))};var btn=document.getElementById('__chatapp_recover_btn');if(!btn)return;btn.addEventListener('click',function(){try{parent.postMessage({type:'chatapp:iframe-recover-dynamic',id:id},'*');}catch{}});})();<\/script>`
+        ? `<script>(function(){var id=${serializeForInlineScript(String(iframeId || ''))};var btn=document.getElementById('__chatapp_recover_btn');if(!btn)return;btn.addEventListener('click',function(){try{parent.postMessage({type:'chatapp:iframe-recover-dynamic',id:id},'*');}catch{}});})();<\/script>`
         : '';
     return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><style>
 html,body{margin:0;padding:0;background:#0f1115;color:#e6edf3;font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
@@ -420,12 +421,12 @@ const buildMvuCompatBridge = ({ iframeId, sessionId, debugTag, messageId, messag
     return `
 <script>
 (() => {
-  const CHATAPP_IFRAME_ID = ${JSON.stringify(id)};
-  const CHATAPP_SESSION_ID = ${JSON.stringify(sid)};
-  const CHATAPP_DEBUG_TAG = ${JSON.stringify(tag)};
-  const CHATAPP_MESSAGE_ID = ${JSON.stringify(mid)};
+  const CHATAPP_IFRAME_ID = ${serializeForInlineScript(id)};
+  const CHATAPP_SESSION_ID = ${serializeForInlineScript(sid)};
+  const CHATAPP_DEBUG_TAG = ${serializeForInlineScript(tag)};
+  const CHATAPP_MESSAGE_ID = ${serializeForInlineScript(mid)};
   const CHATAPP_MESSAGE_INDEX = ${midx === null ? 'null' : String(midx)};
-  const CHATAPP_SEED_VARS = ${JSON.stringify(seed)};
+  const CHATAPP_SEED_VARS = ${serializeForInlineScript(seed)};
   const listeners = new Map();
   const withTag = (message) => {
     const msg = String(message || '');
@@ -1588,11 +1589,11 @@ const buildMvuCompatBridgeLegacy = ({ iframeId, sessionId, messageId, messageInd
     return `
 <script>
 (() => {
-  const CHATAPP_IFRAME_ID = ${JSON.stringify(id)};
-  const CHATAPP_SESSION_ID = ${JSON.stringify(sid)};
-  const CHATAPP_MESSAGE_ID = ${JSON.stringify(mid)};
+  const CHATAPP_IFRAME_ID = ${serializeForInlineScript(id)};
+  const CHATAPP_SESSION_ID = ${serializeForInlineScript(sid)};
+  const CHATAPP_MESSAGE_ID = ${serializeForInlineScript(mid)};
   const CHATAPP_MESSAGE_INDEX = ${midx === null ? 'null' : String(midx)};
-  const CHATAPP_SEED_VARS = ${JSON.stringify(seed)};
+  const CHATAPP_SEED_VARS = ${serializeForInlineScript(seed)};
   const listeners = new Map();
 
   const ensureEventSet = (event) => {
@@ -3472,7 +3473,7 @@ const buildIframeSrcDoc = (
     const bridge = `
 <script>
 (() => {
-  const id = ${JSON.stringify(String(iframeId || ''))};
+  const id = ${serializeForInlineScript(String(iframeId || ''))};
   let lastSentHeight = 0;
   let lastSentMode = 'document';
   let lastSentLock = false;
@@ -4361,8 +4362,8 @@ const buildFrameworkGlobalShim = ({ iframeId = '', debugTag = '', vueMajor = 3, 
     ];
     return `<script>
 (() => {
-  const CHATAPP_IFRAME_ID = ${JSON.stringify(id)};
-  const CHATAPP_DEBUG_TAG = ${JSON.stringify(tag)};
+  const CHATAPP_IFRAME_ID = ${serializeForInlineScript(id)};
+  const CHATAPP_DEBUG_TAG = ${serializeForInlineScript(tag)};
   const withTag = (msg) => CHATAPP_DEBUG_TAG ? ('tag=' + CHATAPP_DEBUG_TAG + ' ' + String(msg || '')) : String(msg || '');
   const log = (level, message) => {
     try {
@@ -4442,29 +4443,29 @@ const buildFrameworkGlobalShim = ({ iframeId = '', debugTag = '', vueMajor = 3, 
       log('warn', 'vue-demi-shim-failed');
     }
   };
-  log('info', 'vue-shim-mode major=' + ${JSON.stringify(major)});
-  ensureGlobal('Vue', ${JSON.stringify(vueUrls)}, 'vue-shim-ready', 'vue-shim-missing');
+  log('info', 'vue-shim-mode major=' + ${serializeForInlineScript(major)});
+  ensureGlobal('Vue', ${serializeForInlineScript(vueUrls)}, 'vue-shim-ready', 'vue-shim-missing');
   setupVueDemi();
-  ensureGlobal('VueRouter', ${JSON.stringify(routerUrls)}, 'vue-router-shim-ready', 'vue-router-shim-missing');
-  if (${JSON.stringify(major)} === 3) {
+  ensureGlobal('VueRouter', ${serializeForInlineScript(routerUrls)}, 'vue-router-shim-ready', 'vue-router-shim-missing');
+  if (${serializeForInlineScript(major)} === 3) {
     setupVueDemi();
-    ensureGlobal('Pinia', ${JSON.stringify(piniaUrls)}, 'pinia-shim-ready', 'pinia-shim-missing');
+    ensureGlobal('Pinia', ${serializeForInlineScript(piniaUrls)}, 'pinia-shim-ready', 'pinia-shim-missing');
   }
   setTimeout(async () => {
     try {
       log('info', 'vue-shim-late ' + (window.Vue ? 'ready' : 'missing'));
       log('info', 'vue-router-shim-late ' + (window.VueRouter ? 'ready' : 'missing'));
-      if (${JSON.stringify(major)} === 3) {
+      if (${serializeForInlineScript(major)} === 3) {
         log('info', 'pinia-shim-late ' + (window.Pinia ? 'ready' : 'missing'));
       }
       if (window.Vue && !window.VueRouter) {
-        await ensureGlobalAsync('VueRouter', ${JSON.stringify(routerUrls)}, 'vue-router-shim-ready-retry', 'vue-router-shim-missing-retry');
+        await ensureGlobalAsync('VueRouter', ${serializeForInlineScript(routerUrls)}, 'vue-router-shim-ready-retry', 'vue-router-shim-missing-retry');
       }
-      if (${JSON.stringify(major)} === 3 && window.Vue && !window.Pinia) {
+      if (${serializeForInlineScript(major)} === 3 && window.Vue && !window.Pinia) {
         setupVueDemi();
-        await ensureGlobalAsync('Pinia', ${JSON.stringify(piniaUrls)}, 'pinia-shim-ready-retry', 'pinia-shim-missing-retry');
+        await ensureGlobalAsync('Pinia', ${serializeForInlineScript(piniaUrls)}, 'pinia-shim-ready-retry', 'pinia-shim-missing-retry');
       }
-      if (${JSON.stringify(major)} === 3 && !window.Pinia) {
+      if (${serializeForInlineScript(major)} === 3 && !window.Pinia) {
         const piniaFallback = {
           createPinia: () => ({}),
           defineStore: (_id, setupOrOpts) => {
@@ -4535,11 +4536,11 @@ const buildDollarGlobalShim = ({
     ];
     return `<script>
 (() => {
-  const CHATAPP_IFRAME_ID = ${JSON.stringify(id)};
-  const CHATAPP_DEBUG_TAG = ${JSON.stringify(tag)};
-  const CHATAPP_MESSAGE_ID = ${JSON.stringify(mid)};
+  const CHATAPP_IFRAME_ID = ${serializeForInlineScript(id)};
+  const CHATAPP_DEBUG_TAG = ${serializeForInlineScript(tag)};
+  const CHATAPP_MESSAGE_ID = ${serializeForInlineScript(mid)};
   const CHATAPP_MESSAGE_INDEX = ${midx === null ? 'null' : String(midx)};
-  const CHATAPP_SEED_MESSAGES = ${JSON.stringify(seed)};
+  const CHATAPP_SEED_MESSAGES = ${serializeForInlineScript(seed)};
   const withTag = (msg) => CHATAPP_DEBUG_TAG ? ('tag=' + CHATAPP_DEBUG_TAG + ' ' + String(msg || '')) : String(msg || '');
   const log = (level, message) => {
     try {
@@ -5173,9 +5174,9 @@ const buildDollarGlobalShim = ({
     if (window[name]) log('info', readyMsg);
     else log('warn', missMsg);
   };
-  ensureGlobal('_', ${JSON.stringify(lodashUrls)}, 'lodash-shim-ready', 'lodash-shim-missing');
-  if (${JSON.stringify(Boolean(needsZodShim))}) {
-    ensureGlobal('Zod', ${JSON.stringify(zodUrls)}, 'zod-shim-ready', 'zod-shim-missing');
+  ensureGlobal('_', ${serializeForInlineScript(lodashUrls)}, 'lodash-shim-ready', 'lodash-shim-missing');
+  if (${serializeForInlineScript(Boolean(needsZodShim))}) {
+    ensureGlobal('Zod', ${serializeForInlineScript(zodUrls)}, 'zod-shim-ready', 'zod-shim-missing');
   }
   if (!window.z) {
     const candidate = window.Zod || window.zod || null;
@@ -5188,7 +5189,7 @@ const buildDollarGlobalShim = ({
   if (!window.Zod.z && window.z) {
     window.Zod.z = window.z;
   }
-  if (${JSON.stringify(Boolean(needsZodShim))} && (!window.z || typeof window.z !== 'object')) {
+  if (${serializeForInlineScript(Boolean(needsZodShim))} && (!window.z || typeof window.z !== 'object')) {
     const makeChain = () => {
       const fn = (..._args) => proxy;
       const proxy = new Proxy(fn, {
