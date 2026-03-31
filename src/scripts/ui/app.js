@@ -909,6 +909,27 @@ const initApp = async () => {
     return /^#[0-9A-F]{6}$/i.test(raw) ? raw : fallback;
   };
 
+  const hashPersonaToken = (input = '') => {
+    const raw = String(input || '').trim() || 'default';
+    let hash = 0;
+    for (let i = 0; i < raw.length; i += 1) {
+      hash = (hash * 131 + raw.charCodeAt(i)) >>> 0;
+    }
+    return hash >>> 0;
+  };
+
+  const getPersonaAccent = (persona = null) => {
+    const token = String(persona?.id || persona?.name || 'default').trim() || 'default';
+    const hash = hashPersonaToken(token);
+    const hue = hash % 360;
+    const saturation = 72;
+    const lightness = 48;
+    return {
+      color: `hsl(${hue} ${saturation}% ${lightness}%)`,
+      soft: `hsl(${hue} ${saturation}% ${lightness}% / 0.14)`,
+    };
+  };
+
   const getUserBubbleColor = (sessionId = chatStore.getCurrent()) => {
     const p = getEffectivePersona(sessionId);
     return normalizeHexColor(p?.userBubbleColor, DEFAULT_USER_BUBBLE_COLOR);
@@ -926,9 +947,23 @@ const initApp = async () => {
     const p = getEffectivePersona(sessionId);
     const url = p.avatar || './assets/external/feather-default.png';
     const name = p.name || '我';
+    const accent = getPersonaAccent(p);
     avatars.user = url;
-    document.querySelectorAll('.user-avatar-btn img').forEach(img => (img.src = url));
-    document.querySelectorAll('.user-nickname').forEach(el => (el.textContent = name));
+    document.querySelectorAll('.user-avatar-btn').forEach(btn => {
+      btn.dataset.personaAccent = '1';
+      btn.style.setProperty('--persona-accent', accent.color);
+      btn.style.setProperty('--persona-accent-soft', accent.soft);
+      btn.title = `当前 Persona：${name}`;
+      const img = btn.querySelector('img');
+      if (img) img.src = url;
+    });
+    document.querySelectorAll('.user-nickname').forEach(el => {
+      el.textContent = name;
+      el.dataset.personaAccent = '1';
+      el.style.setProperty('--persona-accent', accent.color);
+      el.style.setProperty('--persona-accent-soft', accent.soft);
+      el.title = `当前 Persona：${name}`;
+    });
     try {
       momentsPanel?.setUserAvatar?.(url);
     } catch {}
@@ -1013,7 +1048,7 @@ const initApp = async () => {
       refreshChatAndContacts();
     },
   });
-  window.appBridge.switchPersona = async (personaIdOrName) => {
+  const switchPersona = async (personaIdOrName) => {
     const raw = String(personaIdOrName || '').trim();
     if (!raw) return false;
     let target = personaStore.get(raw);
@@ -1031,6 +1066,7 @@ const initApp = async () => {
     refreshChatAndContacts();
     return true;
   };
+  window.appBridge.switchPersona = switchPersona;
   // Initial sync
   syncUserPersonaUI(chatStore.getCurrent());
 
@@ -9768,7 +9804,8 @@ Phase G（Frame 36）：循环衔接
   const quickMenu = document.getElementById('quick-menu');
   // 顶部头像/＋按钮在「消息」与「联系人」页共用同样外观
   const avatarBtns = document.querySelectorAll('.qq-message-topbar .user-avatar-btn');
-  const plusBtns = document.querySelectorAll('.qq-message-topbar .icon-button');
+  const settingsBtns = document.querySelectorAll('.qq-message-topbar .user-settings-btn');
+  const plusBtns = document.querySelectorAll('.qq-message-topbar .topbar-plus-btn');
   const chatMenuBtn = document.getElementById('chat-menu-btn');
   const chatroomMenu = document.getElementById('chatroom-menu');
   const rpChatroomMenu = document.getElementById('rp-chatroom-menu');
@@ -9789,6 +9826,28 @@ Phase G（Frame 36）：循环衔接
       if (action === 'moment-summary') momentSummaryPanel.show();
       if (action === 'raw-reply') showMomentRawReply();
       hideMenus();
+    });
+    document.body.appendChild(menu);
+    return menu;
+  })();
+  const personaSwitcherMenu = (() => {
+    const menu = document.createElement('div');
+    menu.id = 'persona-switcher-menu';
+    menu.className = 'sheet hidden persona-switcher-menu';
+    menu.addEventListener('click', async e => {
+      e.stopPropagation();
+      const manageBtn = e?.target?.closest?.('button[data-action="manage"]');
+      if (manageBtn) {
+        hideMenus();
+        personaPanel.show();
+        return;
+      }
+      const itemBtn = e?.target?.closest?.('button[data-persona-id]');
+      if (!itemBtn) return;
+      const personaId = String(itemBtn.dataset.personaId || '').trim();
+      if (!personaId) return;
+      hideMenus();
+      await switchPersona(personaId);
     });
     document.body.appendChild(menu);
     return menu;
@@ -9821,6 +9880,7 @@ Phase G（Frame 36）：循环衔接
   const cancelSettingBtn = document.getElementById('cancel-setting-btn');
 
   const hideMenus = () => {
+    personaSwitcherMenu?.classList.add('hidden');
     settingsMenu?.classList.add('hidden');
     quickMenu?.classList.add('hidden');
     chatroomMenu?.classList.add('hidden');
@@ -9853,6 +9913,7 @@ Phase G（Frame 36）：循环衔接
   };
 
   let lastSettingsAnchor = null;
+  let lastPersonaAnchor = null;
   let lastQuickAnchor = null;
   let lastMomentsAnchor = null;
 
@@ -9860,7 +9921,9 @@ Phase G（Frame 36）：循环衔接
     if (!menuEl || !anchorEl) return;
     const isVisible = !menuEl.classList.contains('hidden');
     const lastAnchor =
-      kind === 'settings'
+      kind === 'persona'
+        ? lastPersonaAnchor
+        : kind === 'settings'
         ? lastSettingsAnchor
         : kind === 'quick'
         ? lastQuickAnchor
@@ -9876,12 +9939,84 @@ Phase G（Frame 36）：循环衔接
     } else {
       menuEl.classList.add('hidden');
     }
+    if (kind === 'persona') lastPersonaAnchor = anchorEl;
     if (kind === 'settings') lastSettingsAnchor = anchorEl;
     if (kind === 'quick') lastQuickAnchor = anchorEl;
     if (kind === 'moments') lastMomentsAnchor = anchorEl;
   };
 
+  const renderPersonaSwitcher = () => {
+    if (!personaSwitcherMenu) return;
+    const sessionId = String(chatStore.getCurrent() || '').trim();
+    const activePersona = personaStore.getActive?.() || null;
+    const effectivePersona = getEffectivePersona(sessionId);
+    const lockPersonaId = String(chatStore.getPersonaLock?.(sessionId) || '').trim();
+    const personas = Array.isArray(personaStore.getAll?.()) ? personaStore.getAll() : [];
+    const currentAccent = getPersonaAccent(effectivePersona);
+    const currentAvatar = effectivePersona?.avatar || './assets/external/feather-default.png';
+    const currentName = escapeHtml(effectivePersona?.name || '我');
+    const currentSub = lockPersonaId
+      ? '当前会话使用此 Persona'
+      : '当前全局 Persona';
+    const items = personas.map(persona => {
+      const personaId = String(persona?.id || '').trim();
+      if (!personaId) return '';
+      if (personaId === String(effectivePersona?.id || '').trim()) return '';
+      const accent = getPersonaAccent(persona);
+      const avatar = escapeHtml(persona?.avatar || './assets/external/feather-default.png');
+      const name = escapeHtml(persona?.name || '我');
+      const isActive = personaId === String(activePersona?.id || '').trim();
+      const isLocked = personaId === lockPersonaId;
+      const tags = [];
+      if (isActive) tags.push('<span class="persona-switcher-tag">全局</span>');
+      if (isLocked) tags.push('<span class="persona-switcher-tag is-lock">🔒 已锁定</span>');
+      return `
+        <button
+          type="button"
+          class="persona-switcher-item${isActive ? ' is-active' : ''}"
+          data-persona-id="${escapeHtml(personaId)}"
+        >
+          <div class="persona-switcher-avatar" style="--persona-accent:${accent.color}; --persona-accent-soft:${accent.soft};">
+            <img src="${avatar}" alt="">
+          </div>
+          <div class="persona-switcher-meta">
+            <span class="persona-switcher-name" style="--persona-accent:${accent.color}; --persona-accent-soft:${accent.soft};">${name}</span>
+            <div class="persona-switcher-tags">${tags.join('')}</div>
+          </div>
+          ${isActive ? '<span class="persona-switcher-check">✓</span>' : ''}
+        </button>
+      `;
+    }).filter(Boolean).join('');
+
+    personaSwitcherMenu.innerHTML = `
+      <div class="sheet-header">👤 切换 Persona</div>
+      <div class="persona-switcher-current">
+        <div class="persona-switcher-avatar" style="--persona-accent:${currentAccent.color}; --persona-accent-soft:${currentAccent.soft};">
+          <img src="${currentAvatar}" alt="">
+        </div>
+        <div class="persona-switcher-meta">
+          <span class="persona-switcher-name" style="--persona-accent:${currentAccent.color}; --persona-accent-soft:${currentAccent.soft};">${currentName}</span>
+          <div class="persona-switcher-subtitle">${currentSub}</div>
+        </div>
+      </div>
+      <div class="persona-switcher-list">
+        ${items || '<div class="persona-switcher-subtitle" style="padding: 8px 4px;">暂无其他 Persona</div>'}
+      </div>
+      <div class="persona-switcher-actions">
+        <button type="button" data-action="manage">管理 Persona</button>
+      </div>
+    `;
+  };
+
   avatarBtns.forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      renderPersonaSwitcher();
+      toggleSheetAt(personaSwitcherMenu, btn, { kind: 'persona' });
+    });
+  });
+
+  settingsBtns.forEach(btn => {
     btn.addEventListener('click', e => {
       e.stopPropagation();
       toggleSheetAt(settingsMenu, btn, { kind: 'settings' });
@@ -9921,7 +10056,6 @@ Phase G（Frame 36）：循环衔接
     btn.addEventListener('click', () => {
       const action = btn.dataset.action;
       if (action === 'settings') generalSettingsPanel.show();
-      if (action === 'persona') personaPanel.show();
       if (action === 'preset') presetPanel.show();
       if (action === 'world-global') worldPanel.show({ scope: 'global' });
       if (action === 'extensions') extensionsPanel.show();
