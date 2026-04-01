@@ -71,6 +71,8 @@ body[data-typing-dots="off"] [data-typing-placeholder="1"] {
 /* 消息界面顶部：头像+用户信息横向布局 */
 .qq-message-topbar {
   justify-content: space-between;
+  min-height: calc(env(safe-area-inset-top, 0px) + 54px);
+  box-sizing: border-box;
 }
 
 .user-info-section {
@@ -115,6 +117,7 @@ body[data-typing-dots="off"] [data-typing-placeholder="1"] {
 .user-nickname {
   font-size: 18px;
   font-weight: 600;
+  line-height: 22px;
   color: #1a1a1a;
   display: inline-flex;
   align-self: flex-start;
@@ -136,6 +139,7 @@ body[data-typing-dots="off"] [data-typing-placeholder="1"] {
 
 .user-status {
   font-size: 13px;
+  line-height: 16px;
   color: #666;
   display: flex;
   align-items: center;
