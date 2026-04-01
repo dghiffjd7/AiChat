@@ -9895,20 +9895,30 @@ Phase G（Frame 36）：循环衔接
   const positionSheet = (menuEl, anchorEl, offsetX = 0, offsetY = 0, alignRight = false) => {
     if (!menuEl || !anchorEl) return;
     const rect = anchorEl.getBoundingClientRect();
-    const desiredTop = rect.bottom + window.scrollY + 1 + offsetY;
-    const top = Math.max(0, desiredTop);
-
+    const viewportPad = 12;
+    const wasHidden = menuEl.classList.contains('hidden');
+    const prevVisibility = menuEl.style.visibility;
+    if (wasHidden) {
+      menuEl.classList.remove('hidden');
+      menuEl.style.visibility = 'hidden';
+    }
+    const menuWidth = menuEl.offsetWidth || 180;
+    const menuHeight = menuEl.offsetHeight || 120;
+    let top = rect.bottom + 1 + offsetY;
+    const maxTop = Math.max(viewportPad, window.innerHeight - menuHeight - viewportPad);
+    if (top > maxTop) {
+      top = rect.top - menuHeight - 8 + offsetY;
+    }
+    top = Math.min(Math.max(viewportPad, top), maxTop);
+    let left = alignRight ? (rect.right - menuWidth + offsetX) : (rect.left + offsetX);
+    const maxLeft = Math.max(viewportPad, window.innerWidth - menuWidth - viewportPad);
+    left = Math.min(Math.max(viewportPad, left), maxLeft);
     menuEl.style.top = `${top}px`;
-    if (alignRight) {
-      // Right align: position from right edge of anchor
-      const right = window.innerWidth - rect.right - window.scrollX + offsetX;
-      menuEl.style.right = `${right}px`;
-      menuEl.style.left = 'auto';
-    } else {
-      // Left align: position from left edge of anchor
-      const left = rect.left + window.scrollX + offsetX;
-      menuEl.style.left = `${left}px`;
-      menuEl.style.right = 'auto';
+    menuEl.style.left = `${left}px`;
+    menuEl.style.right = 'auto';
+    if (wasHidden) {
+      menuEl.classList.add('hidden');
+      menuEl.style.visibility = prevVisibility;
     }
   };
 
@@ -10019,7 +10029,7 @@ Phase G（Frame 36）：循环衔接
   settingsBtns.forEach(btn => {
     btn.addEventListener('click', e => {
       e.stopPropagation();
-      toggleSheetAt(settingsMenu, btn, { kind: 'settings' });
+      toggleSheetAt(settingsMenu, btn, { alignRight: true, kind: 'settings' });
     });
   });
 
@@ -10522,6 +10532,11 @@ Phase G（Frame 36）：循环衔接
     const name = getRpCharacterName();
     return name || '创意写作';
   };
+  const getPromptUserName = (sessionId = chatStore.getCurrent()) => {
+    const persona = getEffectivePersona(sessionId);
+    const name = String(persona?.name || '').trim();
+    return name || '我';
+  };
 
   const getRpGreetings = () => rpSessionStore.getGreetings?.() || [];
   const previewLogText = (value, maxLen = 120) => {
@@ -10628,7 +10643,7 @@ Phase G（Frame 36）：循环衔接
     if (targetId === prevId) return true;
     blurComposerInput();
     rpSessionStore.setActiveGreeting?.(targetId);
-    resetRpHistory(sid);
+    await resetRpHistory(sid);
     return true;
   };
 
@@ -10807,7 +10822,7 @@ Phase G（Frame 36）：循环衔接
       if (yaml && typeof yaml === 'object') return yaml;
       return null;
     };
-    const extractInitVarBlocks = (text, sid) => {
+    const extractInitVarBlocks = (text, sid, macroContext = {}) => {
       const raw = String(text || '');
       const blocks = [];
       const re = /<(initvar)>(?:\s*```.*)?([\s\S]*?)(?:```\s*)?<\/\1>/gim;
@@ -10819,7 +10834,7 @@ Phase G（Frame 36）：循环衔接
       let merged = null;
       blocks.forEach((block) => {
         const processed = window.appBridge?.processTextMacros
-          ? window.appBridge.processTextMacros(String(block || ''), { sessionId: sid, uiMode })
+          ? window.appBridge.processTextMacros(String(block || ''), { sessionId: sid, uiMode, ...macroContext })
           : String(block || '');
         const parsed = parseInitVarPayload(processed);
         const data = extractStatData(parsed) || parsed;
@@ -10978,7 +10993,7 @@ Phase G（Frame 36）：循环衔接
       }
       return changed;
     };
-    const extractInitVarFromWorldbooks = (sid) => {
+    const extractInitVarFromWorldbooks = (sid, macroContext = {}) => {
       const app = window.appBridge;
       const ids = new Set();
       const globalId = String(app?.globalWorldId || '').trim();
@@ -11004,7 +11019,7 @@ Phase G（Frame 36）：循环衔接
           const fenced = body.trim().match(/```.*\n([\s\S]*?)\n```/m);
           if (fenced && fenced[1]) body = fenced[1];
           const processed = app?.processTextMacros
-            ? app.processTextMacros(body, { sessionId: sid, uiMode })
+            ? app.processTextMacros(body, { sessionId: sid, uiMode, ...macroContext })
             : body;
           const parsed = parseInitVarPayload(processed);
           const data = extractStatData(parsed) || parsed;
@@ -11019,24 +11034,34 @@ Phase G（Frame 36）：循环衔接
 
     const greetingId = String(greeting?.id || '').trim();
     const content = String(greeting?.content || '').trim();
+    const assistantName = String(getRpCharacterName() || '角色');
+    const promptUserName = getPromptUserName(sessionId);
+    const macroContext = { user: promptUserName, char: assistantName };
     logRpGreetingDebug('build-start', {
       session: sessionId,
       greetingId: greetingId || 'none',
       rawLen: content.length,
     });
-    const initVarResult = extractInitVarBlocks(content, sessionId);
+    const initVarResult = extractInitVarBlocks(content, sessionId, macroContext);
     const baseContent = String(initVarResult.text || '').trim();
+    const macroContent = window.appBridge?.processTextMacros
+      ? String(window.appBridge.processTextMacros(baseContent, {
+          sessionId,
+          uiMode,
+          ...macroContext,
+        }) || '').trim()
+      : baseContent;
     logRpGreetingDebug('build-after-initvar', {
       session: sessionId,
       greetingId: greetingId || 'none',
       initBlocks: Number(initVarResult.blockCount || 0),
-      baseLen: baseContent.length,
+      baseLen: macroContent.length,
       hasInitVar: initVarResult.data ? 1 : 0,
     });
     if (initVarResult.data) {
       applyInitVarToSession(initVarResult.data, sessionId, { preferInit: true, source: 'greeting' });
     }
-    const worldInitVars = extractInitVarFromWorldbooks(sessionId);
+    const worldInitVars = extractInitVarFromWorldbooks(sessionId, macroContext);
     logRpGreetingDebug('build-world-initvar', {
       session: sessionId,
       greetingId: greetingId || 'none',
@@ -11045,17 +11070,17 @@ Phase G（Frame 36）：循环衔接
     if (worldInitVars) {
       applyInitVarToSession(worldInitVars, sessionId, { preferInit: true, source: 'worldbook' });
     }
-    if (!baseContent) {
+    if (!macroContent) {
       logRpGreetingDebug('build-empty-after-initvar', {
         session: sessionId,
         greetingId: greetingId || 'none',
       });
       return { message: null, initVarData: initVarResult.data || worldInitVars || null };
     }
-    let stored = baseContent;
-    let display = baseContent;
+    let stored = macroContent;
+    let display = macroContent;
     try {
-      stored = window.appBridge.applyOutputStoredRegex(baseContent, { depth: 0 });
+      stored = window.appBridge.applyOutputStoredRegex(macroContent, { depth: 0 });
       display = window.appBridge.applyOutputDisplayRegex(stored, { depth: 0 });
     } catch (err) {
       logger.warn('[rp-greeting] regex-apply-failed', err);
@@ -11071,7 +11096,6 @@ Phase G（Frame 36）：循环衔接
       storedPreview: previewLogText(stored, 90),
       displayPreview: previewLogText(display, 90),
     });
-    const assistantName = String(getRpCharacterName() || '角色');
     const meta = { ...(parsed.meta || {}), isGreeting: true, renderRich: true };
     return {
       message: {
@@ -11088,9 +11112,12 @@ Phase G（Frame 36）：循环衔接
     };
   };
 
-  const seedRpGreetingIfNeeded = (sessionId) => {
+  const seedRpGreetingIfNeeded = async (sessionId) => {
     const sid = String(sessionId || '').trim();
     if (!sid) return false;
+    try {
+      await chatStore.ensureRecentMessagesLoaded?.(sid);
+    } catch {}
     const messages = chatStore.getMessages(sid) || [];
     if (messages.some(isConversationMessage)) {
       logRpGreetingDebug('seed-skip-has-conversation', { session: sid, msgCount: messages.length });
@@ -11119,13 +11146,13 @@ Phase G（Frame 36）：循环衔接
     return true;
   };
 
-  const resetRpHistory = (sessionId, { keepInput = false } = {}) => {
+  const resetRpHistory = async (sessionId, { keepInput = false } = {}) => {
     const sid = String(sessionId || '').trim();
     if (!sid) return;
     chatStore.clear(sid);
     ui.clearMessages();
     chatRenderState.set(sid, { start: 0 });
-    seedRpGreetingIfNeeded(sid);
+    await seedRpGreetingIfNeeded(sid);
     if (!keepInput) ui.clearInput({ focus: false });
     refreshChatAndContacts();
     updatePendingFloat(sid);
@@ -11151,7 +11178,7 @@ Phase G（Frame 36）：循环衔接
         const sid = String(id || chatStore.getCurrent() || '').trim();
         const result = originalStartNewChat(id, archiveName, options);
         if (sid && isRpSessionId(sid)) {
-          seedRpGreetingIfNeeded(sid);
+          seedRpGreetingIfNeeded(sid).catch(() => {});
           refreshRpToolbar(sid);
         }
         return result;
@@ -11191,12 +11218,12 @@ Phase G（Frame 36）：循环衔接
       chatStore._persist?.();
     }
     applyMvuSchemaDefaults(rpSessionId, { reason: 'rp_enter' });
-    enterChatRoom(rpSessionId, getRpTitle(), 'chat');
+    await enterChatRoom(rpSessionId, getRpTitle(), 'chat');
     if (currentChatTitle) currentChatTitle.textContent = getRpTitle();
     try {
       await hydrateRpCharacterNameFromCard(personaStore.getActive?.());
     } catch {}
-    seedRpGreetingIfNeeded(rpSessionId);
+    await seedRpGreetingIfNeeded(rpSessionId);
     refreshRpToolbar(rpSessionId);
     if (backToListBtn) backToListBtn.style.display = 'none';
   };
@@ -11320,7 +11347,7 @@ Phase G（Frame 36）：循环衔接
       danger: true,
     });
     if (!ok) return;
-    resetRpHistory(getRpSessionId(activePersonaId));
+    await resetRpHistory(getRpSessionId(activePersonaId));
   });
 
   rpVarsBtn?.addEventListener('click', () => {
@@ -12131,11 +12158,12 @@ Phase G（Frame 36）：循环衔接
     const sharedVariables = isSharedVariableSession(sessionId);
     const sharedMemory = isSharedMemorySession(sessionId);
     const activePersona = getEffectivePersona(sessionId);
+    const promptUserName = String(activePersona?.name || '').trim() || '我';
+    const userName = isRpMode ? '我' : promptUserName;
     const characterName = isRpMode
       ? (String(getRpCharacterName(activePersona) || '').trim() || '角色')
       : (contact?.name || (sessionId.startsWith('group:') ? sessionId.replace(/^group:/, '') : sessionId) || 'assistant');
-    const userName = isRpMode ? '我' : (activePersona?.name || '我');
-    const userEchoGuard = createUserEchoGuard(text, userName);
+    const userEchoGuard = createUserEchoGuard(text, promptUserName);
     const isGroupChat = Boolean(contact?.isGroup) || sessionId.startsWith('group:');
     const groupMembers = isGroupChat ? (Array.isArray(contact?.members) ? contact.members : []) : [];
     const containsTemplateSyntax = (value) => {
@@ -12841,9 +12869,19 @@ Phase G（Frame 36）：循环衔接
       if (!Array.isArray(actions) || actions.length === 0) return null;
       if (!memoryTableStore || !memoryTemplateStore) return null;
 
-      const plan = window.appBridge?.lastMemoryPlan || null;
-      if (plan?.enabled === false) return null;
-      if (plan?.targetId && String(plan.targetId) !== String(sessionId)) return null;
+      const rawPlan = window.appBridge?.lastMemoryPlan || null;
+      const planTargetId = String(rawPlan?.targetId || '').trim();
+      const currentSessionId = String(sessionId || '').trim();
+      const plan =
+        rawPlan && (!planTargetId || planTargetId === currentSessionId)
+          ? rawPlan
+          : null;
+      if (rawPlan && planTargetId && planTargetId !== currentSessionId) {
+        logger.debug('memory apply: ignore stale plan target', {
+          planTargetId,
+          currentSessionId,
+        });
+      }
 
       let templateInfo = null;
       try {
@@ -13568,6 +13606,10 @@ Phase G（Frame 36）：循环衔接
       try {
         if (typeof navigator !== 'undefined' && !navigator.onLine) return;
         const plan = await buildMemoryUpdatePlan(sessionId, isGroup, baseContext);
+        if (window.appBridge) {
+          // Keep the separate updater and write-back path on the same plan/session.
+          window.appBridge.lastMemoryPlan = plan || null;
+        }
         if (!plan?.enabled || !plan.promptText) return;
         const historyText = buildMemoryUpdateHistoryText(sessionId);
         if (!historyText.trim()) return;
@@ -13617,7 +13659,7 @@ Phase G（Frame 36）：循环衔接
             sessionId: sessionKey,
             uiMode,
             content: displayText,
-            userName,
+            userName: promptUserName,
             characterName,
             groupName: isGroupChat ? characterName : '',
             membersText,
@@ -13636,7 +13678,7 @@ Phase G（Frame 36）：循环衔接
             sessionId: sessionKey,
             context: {
               session: { id: sessionKey },
-              user: { name: userName },
+              user: { name: promptUserName },
               meta: templateMeta,
             },
           });
@@ -13650,7 +13692,7 @@ Phase G（Frame 36）：循环衔接
           logger.warn('template render (message) failed', err);
         }
       }
-      const cleaned = sanitizeAssistantReplyText(displayText, userName);
+      const cleaned = sanitizeAssistantReplyText(displayText, promptUserName);
       const reasoningParsed = extractReasoningFromContent(cleaned, { depth, strict: true });
       const parsed = parseSpecialMessage(reasoningParsed.content || '');
       const meta = { ...(parsed.meta || {}) };
@@ -14770,7 +14812,7 @@ Phase G（Frame 36）：循环衔接
       if (skipScripts) metaOverrides.skipScripts = true;
       return {
         user: {
-          name: userName,
+          name: promptUserName,
           persona: activePersona.description || '',
           personaPosition: activePersona.position,
           personaDepth: activePersona.depth,

@@ -70,11 +70,15 @@ const renderExportTemplate = (template, vars) => {
   });
 };
 
-const filterRowsByScope = (rows, table) => {
+const filterRowsByScope = (rows, table, ctx = null) => {
   const scope = String(table?.scope || '').trim().toLowerCase();
+  const sharedMemory = ctx?.sharedMemory === true;
   if (!scope) return rows;
   if (scope === 'global') return rows.filter(row => !row?.contact_id && !row?.group_id);
-  if (scope === 'contact') return rows.filter(row => row?.contact_id);
+  if (scope === 'contact') {
+    if (sharedMemory) return rows.filter(row => !row?.group_id);
+    return rows.filter(row => row?.contact_id);
+  }
   if (scope === 'group') return rows.filter(row => row?.group_id);
   return rows;
 };
@@ -841,7 +845,7 @@ export class MemoryTableEditor {
     const meta = document.createElement('div');
     meta.style.cssText = 'font-size:11px; color:#64748b;';
     const allRows = this.memories.filter(row => String(row.table_id || '') === String(table.id || ''));
-    const scopedRows = filterRowsByScope(allRows, table);
+    const scopedRows = filterRowsByScope(allRows, table, ctx);
     const maxLabel = table.maxRows ? ` / ${table.maxRows}` : '';
     meta.textContent = `${scopeLabelMap[table.scope] || table.scope || '未知'} · ${scopedRows.length}${maxLabel} · ${table.columns?.length || 0} 列`;
     const titleWrap = document.createElement('div');

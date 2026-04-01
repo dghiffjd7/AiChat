@@ -15,6 +15,8 @@ const getMemoryStorageMode = () => {
     return mode === 'table' ? 'table' : 'summary';
 };
 
+const isRpSessionId = (sessionId) => String(sessionId || '').startsWith('rp:');
+
 const resolveDefaultMemoryTemplateId = async () => {
     const store = window.appBridge?.memoryTemplateStore;
     if (!store?.getTemplates) return '';
@@ -268,7 +270,7 @@ export class ContactSettingsPanel {
         this.renderArchives();
         this.renderSummaries();
         this.renderCompactedSummary();
-        if (getMemoryStorageMode() === 'table') {
+        if (getMemoryStorageMode() === 'table' && !isRpSessionId(this.getSessionId())) {
             this.memoryTableEditor?.render?.();
         }
         this.overlay.style.display = 'block';
@@ -281,10 +283,11 @@ export class ContactSettingsPanel {
     }
 
     applyMemoryMode() {
+        const isRpSession = isRpSessionId(this.getSessionId());
         const summaryOn = getMemoryStorageMode() === 'summary';
         if (this.summarySection) this.summarySection.style.display = summaryOn ? 'block' : 'none';
-        if (this.memoryTableSection) this.memoryTableSection.style.display = summaryOn ? 'none' : 'block';
-        if (!summaryOn) this.memoryTableEditor?.render?.();
+        if (this.memoryTableSection) this.memoryTableSection.style.display = (!summaryOn && !isRpSession) ? 'block' : 'none';
+        if (!summaryOn && !isRpSession) this.memoryTableEditor?.render?.();
     }
 
     createUI() {
@@ -527,7 +530,7 @@ export class ContactSettingsPanel {
                 container: this.memoryTableContent,
                 getContext: () => {
                     const contactId = this.getSessionId();
-                    const sharedMemory = window.appBridge?.isSharedMemorySession?.(contactId) === true;
+                    const sharedMemory = !isRpSessionId(contactId) && window.appBridge?.isSharedMemorySession?.(contactId) === true;
                     return { type: 'contact', contactId, sharedMemory };
                 },
                 memoryStore: window.appBridge.memoryTableStore,
