@@ -259,6 +259,7 @@ class AppBridge {
     this.abortController = null;
     this.abortReason = '';
     this.activeNativeRequestId = '';
+    this.activeGenerationToken = 0;
     this.chatStore = null; // Injected
     this.macroEngine = null; // Initialized on setChatStore
     this.contactsStore = null; // Injected
@@ -434,13 +435,19 @@ class AppBridge {
   }
 
   cancelCurrentGeneration(reason = 'user') {
-    this.abortReason = String(reason || 'user');
+    const abortReason = String(reason || 'user');
+    this.abortReason = abortReason;
+    const controller = this.abortController;
+    const requestId = String(this.activeNativeRequestId || '').trim();
+    this.isGenerating = false;
+    this.abortController = null;
+    this.activeNativeRequestId = '';
+    this.activeGenerationToken = 0;
     try {
-      if (this.abortController && !this.abortController.signal.aborted) {
-        this.abortController.abort();
+      if (controller && !controller.signal.aborted) {
+        controller.abort();
       }
     } catch {}
-    const requestId = String(this.activeNativeRequestId || '').trim();
     if (requestId) {
       safeInvoke('http_abort_request', { request_id: requestId }).catch(() => {});
     }
@@ -1652,11 +1659,27 @@ class AppBridge {
     }
 
     this.isGenerating = true;
-    this.abortController = new AbortController();
+    const generationToken = (Number(this.activeGenerationToken) || 0) + 1;
+    this.activeGenerationToken = generationToken;
+    const abortController = new AbortController();
+    this.abortController = abortController;
     this.abortReason = '';
     const nativeRequestId = `http_${Date.now().toString(36)}_${Math.random().toString(16).slice(2, 10)}`;
     this.activeNativeRequestId = nativeRequestId;
     let streaming = false;
+    const releaseGenerationLock = () => {
+      if (this.activeGenerationToken === generationToken) {
+        this.isGenerating = false;
+        if (this.abortController === abortController) {
+          this.abortController = null;
+        }
+        this.abortReason = '';
+        this.activeGenerationToken = 0;
+        if (this.activeNativeRequestId === nativeRequestId) {
+          this.activeNativeRequestId = '';
+        }
+      }
+    };
 
     try {
       const originalInput = userMessage;
@@ -1787,7 +1810,7 @@ class AppBridge {
       const genOptions = this.getGenerationOptions();
       const requestOptions = {
         ...(genOptions || {}),
-        signal: this.abortController.signal,
+        signal: abortController.signal,
         nativeRequestId,
       };
 
@@ -1812,38 +1835,31 @@ class AppBridge {
           try {
             yield* inner;
           } finally {
-            self.isGenerating = false;
-            self.abortController = null;
-            self.abortReason = '';
-            if (self.activeNativeRequestId === nativeRequestId) {
-              self.activeNativeRequestId = '';
-            }
+            releaseGenerationLock();
           }
         })();
       } else {
         const response = await retryWithBackoff(() => this.client.chat(messages, requestOptions), {
           maxRetries: config.maxRetries || 3,
-          shouldRetry: err => !this.abortController?.signal?.aborted && isRetryableError(err),
+          shouldRetry: err => !abortController.signal.aborted && isRetryableError(err),
         });
+        if (abortController.signal.aborted) {
+          throw makeCancelledError('user');
+        }
 
         // 保存到历史记录
         await this.saveToHistory(originalInput, response);
         return response;
       }
     } catch (error) {
-      if (this.abortController?.signal?.aborted && this.abortReason) {
-        throw makeCancelledError(this.abortReason);
+      if (abortController.signal.aborted) {
+        throw makeCancelledError('user');
       }
       logger.error('生成失败:', error);
       throw error;
     } finally {
       if (!streaming) {
-        this.isGenerating = false;
-        this.abortController = null;
-        this.abortReason = '';
-        if (this.activeNativeRequestId === nativeRequestId) {
-          this.activeNativeRequestId = '';
-        }
+        releaseGenerationLock();
       }
     }
   }

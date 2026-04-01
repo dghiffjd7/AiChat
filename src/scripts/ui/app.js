@@ -79,25 +79,90 @@ import { buildRoleWorldBindingsImpl } from './world-role-binding-utils.js';
 import { appConfirm, appChoice } from './app-confirm.js';
 import { PluginRuntime } from '../plugins/plugin-runtime.js';
 
+let appRuntimeReady = false;
+let lastRuntimeNoticeKey = '';
+let lastRuntimeNoticeAt = 0;
+
+const getRuntimeErrorMessage = (err) => {
+  if (err?.message) return String(err.message);
+  return String(err || 'unknown error');
+};
+
 const reportFatalError = (err, label = 'App init failed') => {
   try {
-    const msg = err?.message || String(err || 'unknown error');
+    const msg = getRuntimeErrorMessage(err);
     logger.error(label, msg, err);
-    const overlay = document.createElement('div');
-    overlay.style.cssText = `
-      position: fixed;
-      inset: 0;
-      z-index: 40000;
-      background: rgba(0,0,0,0.86);
-      color: #f8fafc;
-      padding: 20px;
-      font-family: monospace;
-      font-size: 12px;
-      overflow: auto;
-    `;
+    let overlay = document.getElementById('chatapp-fatal-error-overlay');
+    if (!overlay) {
+      overlay = document.createElement('div');
+      overlay.id = 'chatapp-fatal-error-overlay';
+      overlay.style.cssText = `
+        position: fixed;
+        inset: 0;
+        z-index: 40000;
+        background: rgba(0,0,0,0.86);
+        color: #f8fafc;
+        padding: 20px;
+        font-family: monospace;
+        font-size: 12px;
+        overflow: auto;
+      `;
+      document.body.appendChild(overlay);
+    }
     overlay.textContent = `${label}: ${msg}`;
-    document.body.appendChild(overlay);
   } catch {}
+};
+
+const reportRuntimeToast = (err, label = 'Runtime error') => {
+  try {
+    const msg = getRuntimeErrorMessage(err);
+    logger.error(label, msg, err);
+    const noticeKey = `${label}::${msg}`;
+    const now = Date.now();
+    if (noticeKey === lastRuntimeNoticeKey && (now - lastRuntimeNoticeAt) < 4000) return;
+    lastRuntimeNoticeKey = noticeKey;
+    lastRuntimeNoticeAt = now;
+    if (window.toastr?.error) {
+      window.toastr.error(msg, label);
+      return;
+    }
+    let banner = document.getElementById('chatapp-runtime-error-banner');
+    if (!banner) {
+      banner = document.createElement('div');
+      banner.id = 'chatapp-runtime-error-banner';
+      banner.style.cssText = `
+        position: fixed;
+        left: 12px;
+        right: 12px;
+        bottom: 18px;
+        z-index: 39999;
+        border-radius: 12px;
+        padding: 10px 12px;
+        background: rgba(15,23,42,0.94);
+        color: #f8fafc;
+        border: 1px solid rgba(248,250,252,0.14);
+        box-shadow: 0 12px 30px rgba(15,23,42,0.28);
+        font-size: 12px;
+        line-height: 1.45;
+        white-space: pre-wrap;
+        word-break: break-word;
+      `;
+      document.body.appendChild(banner);
+    }
+    banner.textContent = `${label}: ${msg}`;
+    clearTimeout(window.__chatappRuntimeBannerTimer);
+    window.__chatappRuntimeBannerTimer = setTimeout(() => {
+      try { banner?.remove(); } catch {}
+    }, 6000);
+  } catch {}
+};
+
+const reportGlobalRuntimeIssue = (err, label = 'Runtime error') => {
+  if (appRuntimeReady) {
+    reportRuntimeToast(err, label);
+    return;
+  }
+  reportFatalError(err, label);
 };
 
 const isIgnorableRuntimeNoise = (value = '') => {
@@ -110,14 +175,14 @@ window.addEventListener('error', (event) => {
   if (!event) return;
   const msg = String(event?.message || event?.error?.message || event?.error || '');
   if (isIgnorableRuntimeNoise(msg)) return;
-  reportFatalError(event.error || event.message || 'unknown error', 'Runtime error');
+  reportGlobalRuntimeIssue(event.error || event.message || 'unknown error', 'Runtime error');
 });
 
 window.addEventListener('unhandledrejection', (event) => {
   if (!event) return;
   const msg = String(event?.reason?.message || event?.reason || '');
   if (isIgnorableRuntimeNoise(msg)) return;
-  reportFatalError(event.reason || 'unhandled rejection', 'Unhandled rejection');
+  reportGlobalRuntimeIssue(event.reason || 'unhandled rejection', 'Unhandled rejection');
 });
 
 const initApp = async () => {
@@ -795,8 +860,7 @@ const initApp = async () => {
     if (isRpSessionId(sid)) return false;
     const settings = chatStore.getSessionSettings?.(sid) || {};
     if (typeof settings.sharedVariables === 'boolean') return settings.sharedVariables;
-    const persona = getEffectivePersona(sid);
-    return persona?.source?.type === 'character_card';
+    return false;
   };
 
   const isSharedMemorySession = (sessionId = chatStore.getCurrent()) => {
@@ -805,8 +869,7 @@ const initApp = async () => {
     if (!sid) return false;
     const settings = chatStore.getSessionSettings?.(sid) || {};
     if (typeof settings.sharedMemory === 'boolean') return settings.sharedMemory;
-    const persona = getEffectivePersona(sid);
-    return persona?.source?.type === 'character_card';
+    return false;
   };
   try {
     if (window.appBridge) {
@@ -11525,22 +11588,26 @@ Phase G（Frame 36）：循环衔接
   }
 
   // Track the current in-flight generation so we can support "收回" (cancel + retract)
-  let activeGeneration = null; // { sessionId, userMsgId, streamCtrl, cancelled }
+  let activeGeneration = null; // { id, sessionId, userMsgId, streamCtrl, cancelled }
+  let generationSequence = 0;
+  const isGenerationInterrupted = (generationId) =>
+    Boolean(generationId) && (!activeGeneration || activeGeneration.id !== generationId || activeGeneration.cancelled);
   const cancelActiveGeneration = (reason = 'user') => {
     if (!activeGeneration || activeGeneration.cancelled) return false;
+    const generation = activeGeneration;
     try {
-      activeGeneration.cancelled = true;
+      generation.cancelled = true;
     } catch {}
     try {
       window.appBridge.cancelCurrentGeneration(reason);
     } catch {}
     let partial = null;
     try {
-      partial = activeGeneration.streamCtrl?.cancel?.({ keepPartial: reason === 'user' }) || null;
+      partial = generation.streamCtrl?.cancel?.({ keepPartial: reason === 'user' }) || null;
     } catch {}
     if (reason === 'user') {
       try {
-        const sessionId = String(activeGeneration.sessionId || '').trim();
+        const sessionId = String(generation.sessionId || '').trim();
         const content = String(partial?.content || '').trim();
         const msgId = String(partial?.id || '').trim();
         if (sessionId && content) {
@@ -11582,6 +11649,9 @@ Phase G（Frame 36）：循环衔接
     try {
       ui.setSendingState(false);
     } catch {}
+    if (activeGeneration?.id === generation.id) {
+      activeGeneration = null;
+    }
     return true;
   };
   const pendingGroupJoins = new Set();
@@ -12051,6 +12121,11 @@ Phase G（Frame 36）：循环衔接
     const attachmentQueue = includeAttachments ? composerAttachments.slice() : [];
     const hasAttachments = attachmentQueue.length > 0;
     const sessionId = chatStore.getCurrent();
+    let generationId = 0;
+    if (activeGeneration && !activeGeneration.cancelled) {
+      window.toastr?.warning?.('正在生成中，请稍候...');
+      return false;
+    }
     const allMessages = chatStore.getMessages(sessionId);
 
     // 找到所有 pending 消息
@@ -14969,16 +15044,25 @@ Phase G（Frame 36）：循环衔接
       }
       const primaryId = userMsg?.id || existingUserMessageId || attachmentPrimaryId || null;
       activeGeneration = {
+        id: ++generationSequence,
         sessionId,
         userMsgId: primaryId,
         streamCtrl: null,
         cancelled: false,
       };
+      generationId = activeGeneration.id;
       if (appendedUserOutput) refreshChatAndContacts();
       if (!suppressUserMessage && appendedUserOutput) ui.clearInput();
     } else {
       // 有 pending 消息时，使用第一条 pending 消息的 ID
-      activeGeneration = { sessionId, userMsgId: pendingMessagesToConfirm[0]?.id, streamCtrl: null, cancelled: false };
+      activeGeneration = {
+        id: ++generationSequence,
+        sessionId,
+        userMsgId: pendingMessagesToConfirm[0]?.id,
+        streamCtrl: null,
+        cancelled: false,
+      };
+      generationId = activeGeneration.id;
       if (attachmentMessages.length) refreshChatAndContacts();
       if (!suppressUserMessage && attachmentMessages.length) ui.clearInput();
     }
@@ -15009,7 +15093,7 @@ Phase G（Frame 36）：循环衔接
           let full = '';
           streamCtrl = null;
           for await (const chunk of stream) {
-            if (activeGeneration?.cancelled) break;
+            if (isGenerationInterrupted(generationId)) break;
             full += chunk;
             if (!streamCtrl) {
               if (isSessionActive(sessionId)) {
@@ -15020,14 +15104,14 @@ Phase G（Frame 36）：循环衔接
                   time: formatNowTime(),
                   typing: false,
                 });
-                if (activeGeneration && activeGeneration.sessionId === sessionId)
+                if (activeGeneration && activeGeneration.id === generationId && activeGeneration.sessionId === sessionId)
                   activeGeneration.streamCtrl = streamCtrl;
               }
             }
             const streamText = (!isRpMode && isMemoryAutoExtractInline()) ? stripTableEditBlocks(full) : full;
             if (streamCtrl) streamCtrl.update(streamText);
           }
-          if (activeGeneration?.cancelled) return;
+          if (isGenerationInterrupted(generationId)) return;
           if (isSessionActive(sessionId)) ui.hideTyping();
           if (!streamCtrl && isSessionActive(sessionId)) {
             streamCtrl = ui.startAssistantStream({
@@ -15036,7 +15120,8 @@ Phase G（Frame 36）：循环衔接
               time: formatNowTime(),
               typing: false,
             });
-            if (activeGeneration && activeGeneration.sessionId === sessionId) activeGeneration.streamCtrl = streamCtrl;
+            if (activeGeneration && activeGeneration.id === generationId && activeGeneration.sessionId === sessionId)
+              activeGeneration.streamCtrl = streamCtrl;
             const streamText = (!isRpMode && isMemoryAutoExtractInline()) ? stripTableEditBlocks(full) : full;
             streamCtrl.update(streamText);
           }
@@ -15109,7 +15194,7 @@ Phase G（Frame 36）：循环衔接
           let mutatedMoments = false;
           const summarySessionIds = new Set([sessionId]);
           for await (const chunk of stream) {
-            if (activeGeneration?.cancelled) break;
+            if (isGenerationInterrupted(generationId)) break;
             fullRaw += chunk;
             const events = parser.push(chunk);
             for (const ev of events) {
@@ -15220,7 +15305,7 @@ Phase G（Frame 36）：循环衔接
               if (isSessionActive(sessionId)) ui.showTyping(assistantAvatar);
             }
           }
-          if (activeGeneration?.cancelled) return;
+          if (isGenerationInterrupted(generationId)) return;
           if (isSessionActive(sessionId)) ui.hideTyping();
           chatStore.setLastRawResponse(fullRaw, sessionId);
           if (isSummaryMemoryEnabled()) {
@@ -15471,19 +15556,19 @@ Phase G（Frame 36）：循环衔接
                 typing: true,
               })
             : null;
-          if (streamCtrl && activeGeneration && activeGeneration.sessionId === sessionId) {
+          if (streamCtrl && activeGeneration && activeGeneration.id === generationId && activeGeneration.sessionId === sessionId) {
             activeGeneration.streamCtrl = streamCtrl;
           }
           consumePromptInjections(sessionId);
           const stream = await window.appBridge.generate(text, llmContext(text));
           let full = '';
           for await (const chunk of stream) {
-            if (activeGeneration?.cancelled) break;
+            if (isGenerationInterrupted(generationId)) break;
             full += chunk;
             const streamText = (!isRpMode && isMemoryAutoExtractInline()) ? stripTableEditBlocks(full) : full;
             if (streamCtrl) streamCtrl.update(streamText);
           }
-          if (activeGeneration?.cancelled) return;
+          if (isGenerationInterrupted(generationId)) return;
           chatStore.setLastRawResponse(full, sessionId);
           const memoryParsed = await handleMemoryEditsFromRaw(full, { sessionId, isGroup: isGroupChat });
           let stripped = memoryParsed.text;
@@ -15549,7 +15634,7 @@ Phase G（Frame 36）：循环衔接
         if (isSessionActive(sessionId)) ui.showTyping(assistantAvatar);
         consumePromptInjections(sessionId);
         const resultRaw = await window.appBridge.generate(text, llmContext(text));
-        if (activeGeneration?.cancelled) {
+        if (isGenerationInterrupted(generationId)) {
           if (isSessionActive(sessionId)) ui.hideTyping();
           return;
         }
@@ -15984,11 +16069,12 @@ Phase G（Frame 36）：循环衔接
         sendSucceeded = true;
       }
     } catch (error) {
-      const isCancelled = Boolean(error?.cancelled || activeGeneration?.cancelled);
+      const generationInterrupted = isGenerationInterrupted(generationId);
+      const isCancelled = Boolean(error?.cancelled || generationInterrupted);
       if (!isCancelled) {
         streamCtrl?.cancel?.();
       }
-      if (isSessionActive(sessionId)) ui.hideTyping();
+      if (!generationInterrupted && isSessionActive(sessionId)) ui.hideTyping();
       if (isCancelled) {
         suppressErrorUI = true;
       }
@@ -16010,8 +16096,12 @@ Phase G（Frame 36）：循环衔接
         runMemoryUpdateAfterChat(sessionId, isGroupChat, llmContext('')).catch(() => {});
       }
       updatePendingFloat(sessionId);
-      ui.setSendingState(false);
-      activeGeneration = null;
+      if (!activeGeneration || activeGeneration.id === generationId) {
+        ui.setSendingState(false);
+      }
+      if (activeGeneration?.id === generationId) {
+        activeGeneration = null;
+      }
       return sendSucceeded;
     }
   };
@@ -16397,21 +16487,7 @@ Phase G（Frame 36）：循环衔接
       const pending =
         activeGeneration && activeGeneration.sessionId === sessionId && activeGeneration.userMsgId === message.id;
       if (pending) {
-        try {
-          activeGeneration.cancelled = true;
-        } catch {}
-        try {
-          window.appBridge.cancelCurrentGeneration('retract');
-        } catch {}
-        try {
-          activeGeneration.streamCtrl?.cancel?.();
-        } catch {}
-        try {
-          ui.hideTyping?.();
-        } catch {}
-        try {
-          ui.setSendingState(false);
-        } catch {}
+        cancelActiveGeneration('retract');
       }
       chatStore.deleteMessage(message.id, sessionId);
       ui.removeMessage(message.id);
@@ -17743,6 +17819,7 @@ Phase G（Frame 36）：循环衔接
     }
   }
 
+  appRuntimeReady = true;
   logger.info('✅ Chat UI 初始化完成');
 };
 
