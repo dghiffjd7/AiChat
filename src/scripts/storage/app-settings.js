@@ -23,6 +23,7 @@ const defaults = {
   scriptAllowModifyVariables: true,
   scriptAllowReadMessages: true,
   scriptAllowNetwork: false,
+  memoryEnabled: true,
   memoryStorageMode: 'table',
   memoryAutoExtract: true,
   memoryAutoExtractMode: 'inline',

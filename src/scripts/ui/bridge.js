@@ -1948,7 +1948,7 @@ class AppBridge {
     const isMomentCommentTask = String(context?.task?.type || '').toLowerCase() === 'moment_comment';
     const isGroupChat = Boolean(context?.session?.isGroup) || String(context?.session?.id || '').startsWith('group:');
     const memoryMode = String(context?.meta?.memoryStorageMode || '').trim().toLowerCase();
-    const useSummaryMemory = memoryMode !== 'table' && !Boolean(context?.meta?.disableSummary);
+    const useSummaryMemory = memoryMode === 'summary' && !Boolean(context?.meta?.disableSummary);
     const includeTimeContext = (() => {
       const raw = context?.meta?.includeTimeContext;
       if (typeof raw === 'boolean') return raw;
@@ -2268,63 +2268,67 @@ class AppBridge {
 
     // 对话模式：额外注入对话协议提示词（保存于 sysprompt 预设）
     // ST extension prompt types => IN_PROMPT:0, IN_CHAT:1, BEFORE_PROMPT:2, NONE:-1
-    const dialogueEnabled = Boolean(syspActive?.dialogue_enabled);
-    const dialogueRulesRaw = typeof syspActive?.dialogue_rules === 'string' ? syspActive.dialogue_rules : '';
-    const dialogueRules = processTextMacrosWithPendingFlag(dialogueRulesRaw, { user: name1, char: name2 });
-    const dialoguePosition = Number.isFinite(Number(syspActive?.dialogue_position))
-      ? Number(syspActive.dialogue_position)
+    const dialogueEnabled = Boolean(sysp?.dialogue_enabled);
+    const dialogueRulesRaw = typeof sysp?.dialogue_rules === 'string' ? sysp.dialogue_rules : '';
+    const dialogueRules = dialogueEnabled ? processTextMacrosWithPendingFlag(dialogueRulesRaw, { user: name1, char: name2 }) : '';
+    const dialoguePosition = Number.isFinite(Number(sysp?.dialogue_position))
+      ? Number(sysp.dialogue_position)
       : 0;
-    const dialogueDepth = Number.isFinite(Number(syspActive?.dialogue_depth))
-      ? Math.max(0, Math.trunc(Number(syspActive.dialogue_depth)))
+    const dialogueDepth = Number.isFinite(Number(sysp?.dialogue_depth))
+      ? Math.max(0, Math.trunc(Number(sysp.dialogue_depth)))
       : 1;
-    const dialogueRole = Number.isFinite(Number(syspActive?.dialogue_role))
-      ? Math.trunc(Number(syspActive.dialogue_role))
+    const dialogueRole = Number.isFinite(Number(sysp?.dialogue_role))
+      ? Math.trunc(Number(sysp.dialogue_role))
       : 0;
 
     // 动态发布决策提示词（用于私聊/群聊场景）
-    const momentCreateEnabled = Boolean(syspActive?.moment_create_enabled);
+    const momentCreateEnabled = Boolean(sysp?.moment_create_enabled);
     const momentCreateRulesRaw =
-      typeof syspActive?.moment_create_rules === 'string' ? syspActive.moment_create_rules : '';
-    const momentCreateRules = processTextMacrosWithPendingFlag(momentCreateRulesRaw, { user: name1, char: name2 });
-    const momentCreatePosition = Number.isFinite(Number(syspActive?.moment_create_position))
-      ? Number(syspActive.moment_create_position)
+      typeof sysp?.moment_create_rules === 'string' ? sysp.moment_create_rules : '';
+    const momentCreateRules = momentCreateEnabled
+      ? processTextMacrosWithPendingFlag(momentCreateRulesRaw, { user: name1, char: name2 })
+      : '';
+    const momentCreatePosition = Number.isFinite(Number(sysp?.moment_create_position))
+      ? Number(sysp.moment_create_position)
       : 0;
-    const momentCreateDepth = Number.isFinite(Number(syspActive?.moment_create_depth))
-      ? Math.max(0, Math.trunc(Number(syspActive.moment_create_depth)))
+    const momentCreateDepth = Number.isFinite(Number(sysp?.moment_create_depth))
+      ? Math.max(0, Math.trunc(Number(sysp.moment_create_depth)))
       : 1;
-    const momentCreateRole = Number.isFinite(Number(syspActive?.moment_create_role))
-      ? Math.trunc(Number(syspActive.moment_create_role))
+    const momentCreateRole = Number.isFinite(Number(sysp?.moment_create_role))
+      ? Math.trunc(Number(sysp.moment_create_role))
       : 0;
 
     // 动态评论回复提示词（仅用于“动态评论”场景）
-    const momentCommentEnabled = Boolean(syspActive?.moment_comment_enabled);
+    const momentCommentEnabled = Boolean(sysp?.moment_comment_enabled);
     const momentCommentRulesRaw =
-      typeof syspActive?.moment_comment_rules === 'string' ? syspActive.moment_comment_rules : '';
-    const momentCommentRules = processTextMacrosWithPendingFlag(momentCommentRulesRaw, { user: name1, char: name2 });
-    const momentCommentPosition = Number.isFinite(Number(syspActive?.moment_comment_position))
-      ? Number(syspActive.moment_comment_position)
+      typeof sysp?.moment_comment_rules === 'string' ? sysp.moment_comment_rules : '';
+    const momentCommentRules = momentCommentEnabled
+      ? processTextMacrosWithPendingFlag(momentCommentRulesRaw, { user: name1, char: name2 })
+      : '';
+    const momentCommentPosition = Number.isFinite(Number(sysp?.moment_comment_position))
+      ? Number(sysp.moment_comment_position)
       : 0;
-    const momentCommentDepth = Number.isFinite(Number(syspActive?.moment_comment_depth))
-      ? Math.max(0, Math.trunc(Number(syspActive.moment_comment_depth)))
+    const momentCommentDepth = Number.isFinite(Number(sysp?.moment_comment_depth))
+      ? Math.max(0, Math.trunc(Number(sysp.moment_comment_depth)))
       : 0;
-    const momentCommentRole = Number.isFinite(Number(syspActive?.moment_comment_role))
-      ? Math.trunc(Number(syspActive.moment_comment_role))
+    const momentCommentRole = Number.isFinite(Number(sysp?.moment_comment_role))
+      ? Math.trunc(Number(sysp.moment_comment_role))
       : 0;
 
     // 群聊模式：群聊协议提示词（保存于 sysprompt 预设）
-    const groupEnabled = Boolean(syspActive?.group_enabled);
-    const groupRulesRaw = typeof syspActive?.group_rules === 'string' ? syspActive.group_rules : '';
-    const groupRules = processTextMacrosWithPendingFlag(groupRulesRaw, {
+    const groupEnabled = Boolean(sysp?.group_enabled);
+    const groupRulesRaw = typeof sysp?.group_rules === 'string' ? sysp.group_rules : '';
+    const groupRules = groupEnabled ? processTextMacrosWithPendingFlag(groupRulesRaw, {
       user: name1,
       char: name2,
       group: groupName || name2,
       members: membersText,
-    });
-    const groupPosition = Number.isFinite(Number(syspActive?.group_position)) ? Number(syspActive.group_position) : 0;
-    const groupDepth = Number.isFinite(Number(syspActive?.group_depth))
-      ? Math.max(0, Math.trunc(Number(syspActive.group_depth)))
+    }) : '';
+    const groupPosition = Number.isFinite(Number(sysp?.group_position)) ? Number(sysp.group_position) : 0;
+    const groupDepth = Number.isFinite(Number(sysp?.group_depth))
+      ? Math.max(0, Math.trunc(Number(sysp.group_depth)))
       : 1;
-    const groupRole = Number.isFinite(Number(syspActive?.group_role)) ? Math.trunc(Number(syspActive.group_role)) : 0;
+    const groupRole = Number.isFinite(Number(sysp?.group_role)) ? Math.trunc(Number(sysp.group_role)) : 0;
 
     // Formatting helpers from OpenAI preset (optional)
     const wiFormatRaw =

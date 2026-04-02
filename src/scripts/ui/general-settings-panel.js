@@ -15,6 +15,7 @@ export class GeneralSettingsPanel {
     this.creativeWideToggle = null;
     this.personaBindToggle = null;
     this.promptTimeToggle = null;
+    this.memoryEnabledToggle = null;
     this.memoryModeSummary = null;
     this.memoryModeTable = null;
     this.memoryAutoToggle = null;
@@ -104,7 +105,11 @@ export class GeneralSettingsPanel {
     if (this.promptTimeToggle) {
       this.promptTimeToggle.checked = settings.promptCurrentTimeEnabled === true;
     }
+    const memoryEnabled = settings.memoryEnabled !== false;
     const memoryMode = String(settings.memoryStorageMode || 'table').toLowerCase();
+    if (this.memoryEnabledToggle) {
+      this.memoryEnabledToggle.checked = memoryEnabled;
+    }
     if (this.memoryModeSummary) {
       this.memoryModeSummary.checked = memoryMode !== 'table';
     }
@@ -213,11 +218,15 @@ export class GeneralSettingsPanel {
 
   updateMemoryAutoVisibility() {
     const settings = appSettings.get();
-    const memoryMode = String(settings.memoryStorageMode || 'table').toLowerCase();
-    const showMemoryTable = memoryMode === 'table';
+    const memoryEnabled = settings.memoryEnabled !== false;
+    const memoryMode = memoryEnabled ? String(settings.memoryStorageMode || 'table').toLowerCase() : 'off';
+    const showMemoryTable = memoryEnabled && memoryMode === 'table';
     const enabled = settings.memoryAutoExtract === true;
     const mode = String(settings.memoryAutoExtractMode || 'inline').toLowerCase();
     const showAuto = showMemoryTable && Boolean(enabled);
+    if (this.memoryModeSummary) this.memoryModeSummary.disabled = !memoryEnabled;
+    if (this.memoryModeTable) this.memoryModeTable.disabled = !memoryEnabled;
+    if (this.memoryAutoToggle) this.memoryAutoToggle.disabled = !showMemoryTable;
     if (this.memoryAutoOptions) {
       this.memoryAutoOptions.style.display = showAuto ? 'block' : 'none';
     }
@@ -833,6 +842,11 @@ export class GeneralSettingsPanel {
           </div>
 
           <div style="margin-bottom: 10px;">
+            <label style="display:flex; align-items:center; gap:8px; cursor:pointer; margin-bottom:8px;">
+              <input type="checkbox" id="general-memory-enabled" style="width: 18px; height: 18px;">
+              <span style="font-weight:700;">启用记忆系统</span>
+            </label>
+            <small style="display:block; color:#64748b; margin:0 0 10px 26px;">关闭后，不发送摘要提示词，也不读写记忆表格。</small>
             <div style="font-weight: 700; margin-bottom: 8px;">记忆存储方式</div>
             <label style="display:flex; align-items:center; gap:8px; cursor:pointer; margin-bottom:8px;">
               <input type="radio" name="general-memory-mode" id="general-memory-mode-summary" value="summary">
@@ -1048,6 +1062,7 @@ export class GeneralSettingsPanel {
     this.uiAdvancedWrap = this.element.querySelector('#general-ui-advanced');
     this.personaBindToggle = this.element.querySelector('#general-persona-bind');
     this.promptTimeToggle = this.element.querySelector('#general-prompt-time');
+    this.memoryEnabledToggle = this.element.querySelector('#general-memory-enabled');
     this.memoryModeSummary = this.element.querySelector('#general-memory-mode-summary');
     this.memoryModeTable = this.element.querySelector('#general-memory-mode-table');
     this.memoryAdvancedToggle = this.element.querySelector('#general-memory-advanced-toggle');
@@ -1237,11 +1252,20 @@ export class GeneralSettingsPanel {
 
     const applyMemoryMode = (mode) => {
       const next = mode === 'table' ? 'table' : 'summary';
-      appSettings.update({ memoryStorageMode: next });
+      appSettings.update({ memoryEnabled: true, memoryStorageMode: next });
       window.dispatchEvent(new CustomEvent('memory-storage-mode-changed', { detail: { mode: next } }));
+      window.dispatchEvent(new CustomEvent('app-settings-changed', { detail: { key: 'memoryEnabled', value: true } }));
       window.dispatchEvent(new CustomEvent('app-settings-changed', { detail: { key: 'memoryStorageMode', value: next } }));
       this.updateMemoryAutoVisibility();
     };
+    this.memoryEnabledToggle?.addEventListener('change', (e) => {
+      const enabled = Boolean(e?.target?.checked);
+      appSettings.update({ memoryEnabled: enabled });
+      const nextMode = enabled ? (this.memoryModeTable?.checked ? 'table' : 'summary') : 'off';
+      window.dispatchEvent(new CustomEvent('memory-storage-mode-changed', { detail: { mode: nextMode } }));
+      window.dispatchEvent(new CustomEvent('app-settings-changed', { detail: { key: 'memoryEnabled', value: enabled } }));
+      this.updateMemoryAutoVisibility();
+    });
     this.memoryModeSummary?.addEventListener('change', (e) => {
       const checked = Boolean(e?.target?.checked);
       if (!checked) return;

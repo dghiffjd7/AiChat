@@ -378,7 +378,7 @@ export class DebugPanel {
         this.updateMemoryModeButton();
         window.addEventListener('app-settings-changed', (ev) => {
             try {
-                if (ev?.detail?.key === 'memoryStorageMode') {
+                if (ev?.detail?.key === 'memoryStorageMode' || ev?.detail?.key === 'memoryEnabled') {
                     this.updateMemoryModeButton();
                 }
             } catch {}
@@ -440,6 +440,7 @@ export class DebugPanel {
     }
 
     getMemoryMode() {
+        if (appSettings.get().memoryEnabled === false) return 'off';
         const mode = String(appSettings.get().memoryStorageMode || 'table').toLowerCase();
         return mode === 'table' ? 'table' : 'summary';
     }
@@ -447,17 +448,21 @@ export class DebugPanel {
     updateMemoryModeButton() {
         if (!this.memoryModeBtn) return;
         const mode = this.getMemoryMode();
-        this.memoryModeBtn.textContent = mode === 'table' ? '记忆: 表格' : '记忆: 摘要';
+        this.memoryModeBtn.textContent = mode === 'table' ? '记忆: 表格' : mode === 'summary' ? '记忆: 摘要' : '记忆: 关闭';
     }
 
     toggleMemoryMode() {
         const current = this.getMemoryMode();
-        const next = current === 'table' ? 'summary' : 'table';
-        appSettings.update({ memoryStorageMode: next });
+        const next = current === 'table' ? 'summary' : current === 'summary' ? 'off' : 'table';
+        const patch = next === 'off' ? { memoryEnabled: false } : { memoryEnabled: true, memoryStorageMode: next };
+        appSettings.update(patch);
         window.dispatchEvent(new CustomEvent('memory-storage-mode-changed', { detail: { mode: next } }));
-        window.dispatchEvent(new CustomEvent('app-settings-changed', { detail: { key: 'memoryStorageMode', value: next } }));
+        window.dispatchEvent(new CustomEvent('app-settings-changed', { detail: { key: 'memoryEnabled', value: next !== 'off' } }));
+        if (next !== 'off') {
+            window.dispatchEvent(new CustomEvent('app-settings-changed', { detail: { key: 'memoryStorageMode', value: next } }));
+        }
         this.updateMemoryModeButton();
-        this.log(`[记忆模式] 已切换为 ${next === 'table' ? '表格' : '摘要'}`);
+        this.log(`[记忆模式] 已切换为 ${next === 'table' ? '表格' : next === 'summary' ? '摘要' : '关闭'}`);
     }
 
     async runStickerDebug() {

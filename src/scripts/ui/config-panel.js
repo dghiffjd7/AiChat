@@ -241,10 +241,10 @@ export class ConfigPanel {
                 <div style="margin-bottom: 20px;">
                     <label style="display:flex; align-items:center; justify-content:space-between; gap:10px; font-weight:bold; margin-bottom:6px;">
                         <span>请求超时（秒）</span>
-                        <input id="config-timeout" type="number" min="10" max="300" step="5" value="60" inputmode="numeric"
+                        <input id="config-timeout" type="number" min="10" max="9000" step="5" value="60" inputmode="numeric"
                                style="width: 120px; padding: 8px 10px; border-radius: 8px; border: 1px solid #ddd; font-size: 14px; text-align:right;">
                     </label>
-                    <small style="color:#666;">超过该时间将中止请求并报错（10–300 秒，上限 5 分钟）</small>
+                    <small style="color:#666;">超过该时间将中止请求并报错（10–9000 秒）</small>
                 </div>
 
                 <div id="config-status" style="margin-bottom: 15px; padding: 10px; border-radius: 5px; display: none;"></div>
@@ -598,7 +598,7 @@ export class ConfigPanel {
         if (timeoutEl) {
             const ms = Number(config.timeout);
             const sec = Number.isFinite(ms) ? Math.round(ms / 1000) : 60;
-            timeoutEl.value = String(Math.min(300, Math.max(10, sec)));
+            timeoutEl.value = String(Math.min(9000, Math.max(10, sec)));
         }
 
         // Profile selector
@@ -795,7 +795,7 @@ export class ConfigPanel {
             timeout: (() => {
                 const secRaw = (panel.querySelector('#config-timeout')?.value || '').trim();
                 const sec = Number(secRaw);
-                const clamped = Number.isFinite(sec) ? Math.min(300, Math.max(10, Math.trunc(sec))) : 60;
+                const clamped = Number.isFinite(sec) ? Math.min(9000, Math.max(10, Math.trunc(sec))) : 60;
                 return clamped * 1000;
             })(),
             maxRetries: 3

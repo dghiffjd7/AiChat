@@ -12,6 +12,7 @@ import { MemoryTableEditor } from './memory-table-editor.js';
 import { appConfirm } from './app-confirm.js';
 
 const getMemoryStorageMode = () => {
+    if (appSettings.get().memoryEnabled === false) return 'off';
     const mode = String(appSettings.get().memoryStorageMode || 'table').toLowerCase();
     return mode === 'table' ? 'table' : 'summary';
 };

@@ -11,6 +11,7 @@ import { normalizeBadgeList } from '../utils/name-badges.js';
 import { FEATHER_DEFAULT, resolveLineAvatar } from '../utils/line-avatar.js';
 
 const getMemoryStorageMode = () => {
+    if (appSettings.get().memoryEnabled === false) return 'off';
     const mode = String(appSettings.get().memoryStorageMode || 'table').toLowerCase();
     return mode === 'table' ? 'table' : 'summary';
 };

@@ -207,7 +207,9 @@ const initApp = async () => {
     }
   };
   applyCreativeWideSetting();
+  const isMemoryEnabled = () => appSettings.get().memoryEnabled !== false;
   const getMemoryStorageMode = () => {
+    if (!isMemoryEnabled()) return 'off';
     const mode = String(appSettings.get().memoryStorageMode || 'table').toLowerCase();
     return mode === 'table' ? 'table' : 'summary';
   };
@@ -1141,7 +1143,7 @@ const initApp = async () => {
       refreshChatAndContacts({ immediate: true });
       return;
     }
-    if (key === 'memoryStorageMode') {
+    if (key === 'memoryStorageMode' || key === 'memoryEnabled') {
       refreshChatAndContacts({ immediate: true });
     }
   });
@@ -13715,6 +13717,18 @@ Phase G（Frame 36）：循环衔接
         memoryUpdateRunning.delete(sessionId);
       }
     };
+    const applyChatModeAssistantRegex = (text, { depth } = {}) => {
+      const cleaned = sanitizeAssistantReplyText(text, promptUserName);
+      const reasoningParsed = extractReasoningFromContent(cleaned, { depth, strict: true });
+      const finalSource = String(reasoningParsed.content || '');
+      let stored = finalSource;
+      let display = finalSource;
+      try {
+        stored = window.appBridge.applyOutputStoredRegex(finalSource, { depth });
+        display = window.appBridge.applyOutputDisplayRegex(stored, { depth });
+      } catch {}
+      return { cleaned, reasoningParsed, finalSource, stored, display };
+    };
     const buildAssistantMessageFromText = async (rawText, { sessionId, time, name, avatar, showName, depth } = {}) => {
       const sessionKey = String(sessionId || '').trim();
       let displayText = String(rawText ?? '');
@@ -13767,9 +13781,13 @@ Phase G（Frame 36）：循环衔接
           logger.warn('template render (message) failed', err);
         }
       }
-      const cleaned = sanitizeAssistantReplyText(displayText, promptUserName);
-      const reasoningParsed = extractReasoningFromContent(cleaned, { depth, strict: true });
-      const parsed = parseSpecialMessage(reasoningParsed.content || '');
+      // chat-mode-regex rollback marker:
+      // Old logic kept for comparison / easy rollback.
+      // const cleaned = sanitizeAssistantReplyText(displayText, promptUserName);
+      // const reasoningParsed = extractReasoningFromContent(cleaned, { depth, strict: true });
+      // const parsed = parseSpecialMessage(reasoningParsed.content || '');
+      const { reasoningParsed, finalSource, stored, display } = applyChatModeAssistantRegex(displayText, { depth });
+      const parsed = parseSpecialMessage(display);
       const meta = { ...(parsed.meta || {}) };
       if (showName) meta.showName = true;
       if (templateVars) meta.templateVars = templateVars;
@@ -13785,7 +13803,9 @@ Phase G（Frame 36）：循环衔接
         time: time || formatNowTime(),
       };
       const rawValue = String(rawText ?? '');
-      if (rawValue && rawValue !== displayText) next.raw = rawValue;
+      if (rawValue) next.rawOriginal = rawValue;
+      if (finalSource && finalSource !== rawValue) next.rawSource = finalSource;
+      if (stored) next.raw = stored;
       if (Object.keys(meta).length) next.meta = meta;
       return next;
     };
@@ -14912,7 +14932,7 @@ Phase G（Frame 36）：循环衔接
           uiMode,
           useGlobalVariables: Boolean(sharedVariables),
           sharedMemory: Boolean(sharedMemory),
-          memoryStorageMode: isRpMode ? 'summary' : getMemoryStorageMode(),
+          memoryStorageMode: isRpMode ? (isMemoryEnabled() ? 'summary' : 'off') : getMemoryStorageMode(),
           memoryAutoExtract: isRpMode ? false : isMemoryAutoExtractInline(),
           memoryInjectPosition,
           memoryInjectDepth,
@@ -15076,7 +15096,10 @@ Phase G（Frame 36）：循环衔接
     try {
       if (config.stream) {
         const assistantAvatar = getAssistantAvatarForSession(sessionId);
-        const sysp = window.appBridge?.presets?.getActive?.('sysprompt') || {};
+        const presetState = window.appBridge?.presets?.getState?.() || null;
+        const sysp = Boolean(presetState?.enabled?.sysprompt)
+          ? (window.appBridge?.presets?.getActive?.('sysprompt') || {})
+          : {};
         const privateEnabled = Boolean(sysp?.dialogue_enabled) && String(sysp?.dialogue_rules || '').trim().length > 0;
         const groupEnabled = Boolean(sysp?.group_enabled) && String(sysp?.group_rules || '').trim().length > 0;
         const momentCreateEnabled =
@@ -15581,10 +15604,13 @@ Phase G（Frame 36）：循环衔接
               } catch {}
             }
           }
-          let stored = sanitizeAssistantReplyText(stripped, userName);
-          const reasoningParsed = extractReasoningFromContent(stored, { depth: 0, strict: true });
-          stored = reasoningParsed.content || '';
-          let display = stored;
+          // chat-mode-regex rollback marker:
+          // Old logic kept for comparison / easy rollback.
+          // let stored = sanitizeAssistantReplyText(stripped, userName);
+          // const reasoningParsed = extractReasoningFromContent(stored, { depth: 0, strict: true });
+          // stored = reasoningParsed.content || '';
+          // let display = stored;
+          const { reasoningParsed, finalSource, stored, display } = applyChatModeAssistantRegex(stripped, { depth: 0 });
           const meta = {};
           if (reasoningParsed.reasoning) {
             meta.reasoning = reasoningParsed.reasoning;
@@ -15603,6 +15629,7 @@ Phase G（Frame 36）：循环衔接
             time: formatNowTime(),
             id: streamCtrl?.id,
             rawOriginal: full,
+            rawSource: finalSource || undefined,
             raw: stored,
             ...parseSpecialMessage(display),
             meta: Object.keys(meta).length ? meta : undefined,
@@ -15622,7 +15649,10 @@ Phase G（Frame 36）：循环衔接
         }
       } else {
         const assistantAvatar = getAssistantAvatarForSession(sessionId);
-        const sysp = window.appBridge?.presets?.getActive?.('sysprompt') || {};
+        const presetState = window.appBridge?.presets?.getState?.() || null;
+        const sysp = Boolean(presetState?.enabled?.sysprompt)
+          ? (window.appBridge?.presets?.getActive?.('sysprompt') || {})
+          : {};
         const privateEnabled = Boolean(sysp?.dialogue_enabled) && String(sysp?.dialogue_rules || '').trim().length > 0;
         const groupEnabled = Boolean(sysp?.group_enabled) && String(sysp?.group_rules || '').trim().length > 0;
         const momentCreateEnabled =
@@ -16040,10 +16070,13 @@ Phase G（Frame 36）：循环衔接
             requestSummaryCompaction(sessionId);
           } catch {}
         }
-        const cleaned = sanitizeAssistantReplyText(stripped, userName);
-        const reasoningParsed = extractReasoningFromContent(cleaned, { depth: 0, strict: true });
-        const stored = reasoningParsed.content || '';
-        const display = stored;
+        // chat-mode-regex rollback marker:
+        // Old logic kept for comparison / easy rollback.
+        // const cleaned = sanitizeAssistantReplyText(stripped, userName);
+        // const reasoningParsed = extractReasoningFromContent(cleaned, { depth: 0, strict: true });
+        // const stored = reasoningParsed.content || '';
+        // const display = stored;
+        const { reasoningParsed, finalSource, stored, display } = applyChatModeAssistantRegex(stripped, { depth: 0 });
         const meta = {};
         if (reasoningParsed.reasoning) {
           meta.reasoning = reasoningParsed.reasoning;
@@ -16055,6 +16088,7 @@ Phase G（Frame 36）：循环衔接
           avatar: assistantAvatar,
           time: formatNowTime(),
           rawOriginal: resultRaw,
+          rawSource: finalSource || undefined,
           raw: stored,
           ...parseSpecialMessage(display),
           meta: Object.keys(meta).length ? meta : undefined,
@@ -16393,9 +16427,7 @@ Phase G（Frame 36）：循环衔接
         refreshChatAndContacts();
       }
       chatStore.removeLastSummary?.(sessionId);
-      const settings = appSettings.get();
-      const memoryMode = String(settings.memoryStorageMode || 'table').toLowerCase();
-      if (memoryMode === 'table') {
+      if (getMemoryStorageMode() === 'table') {
         try {
           logger.debug('memory rollback: start', { sessionId, messageId: prevUser?.id || '' });
           const rollbackFn = window.appBridge?.rollbackLastMemoryUpdate;
