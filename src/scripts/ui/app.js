@@ -1360,7 +1360,10 @@ ${listPart || '-（无）'}
           if (ev.type === 'moments') {
             const list = (ev.moments || []).map(mm => {
               const stats = normalizeInitialMomentStats({ views: mm?.views, likes: mm?.likes }, n);
-              return { ...(mm || {}), ...stats, originSessionId };
+              return normalizeMomentRecordForStore(
+                { ...(mm || {}), ...stats, originSessionId },
+                { regexMode: 'output', depth: 0 },
+              );
             });
             momentsStore.addMany(list);
             touchedMoments = true;
@@ -1417,7 +1420,10 @@ ${listPart || '-（无）'}
                 return { ...c, replyTo: String(replyTo.id || ''), replyToAuthor: String(replyTo.author || '') };
               });
             })();
-            const saved = momentsStore.addComments(mid, patched);
+            const saved = momentsStore.addComments(
+              mid,
+              normalizeMomentCommentsForStore(patched, { regexMode: 'output', depth: 0 }),
+            );
             if (!saved) {
               try {
                 logger.warn(
@@ -12714,6 +12720,40 @@ Phase G（Frame 36）：循环衔接
         return normalizeName(characterName) || raw;
       return raw;
     };
+    const normalizeMomentStoredText = (text, { regexMode = 'output', depth = 0 } = {}) => {
+      const source = String(text ?? '');
+      const mode = String(regexMode || '').trim().toLowerCase() === 'input' ? 'input' : 'output';
+      try {
+        if (mode === 'input' && typeof window.appBridge?.applyInputStoredRegex === 'function') {
+          return window.appBridge.applyInputStoredRegex(source, { isEdit: false, depth });
+        }
+        if (typeof window.appBridge?.applyOutputStoredRegex === 'function') {
+          return window.appBridge.applyOutputStoredRegex(source, { isEdit: false, depth });
+        }
+      } catch {}
+      return source;
+    };
+    const normalizeMomentCommentForStore = (comment, { regexMode = 'output', depth = 0 } = {}) => {
+      if (!comment || typeof comment !== 'object') return comment;
+      const mode = String(regexMode || '').trim().toLowerCase() === 'input' ? 'input' : 'output';
+      return {
+        ...(comment || {}),
+        content: normalizeMomentStoredText(comment?.content, { regexMode: mode, depth }),
+        regexMode: mode,
+      };
+    };
+    const normalizeMomentCommentsForStore = (comments = [], opts = {}) =>
+      (Array.isArray(comments) ? comments : []).map(comment => normalizeMomentCommentForStore(comment, opts));
+    const normalizeMomentRecordForStore = (moment, { regexMode = 'output', depth = 0 } = {}) => {
+      if (!moment || typeof moment !== 'object') return moment;
+      const mode = String(regexMode || '').trim().toLowerCase() === 'input' ? 'input' : 'output';
+      return {
+        ...(moment || {}),
+        content: normalizeMomentStoredText(moment?.content, { regexMode: mode, depth }),
+        comments: normalizeMomentCommentsForStore(moment?.comments, { regexMode: mode, depth }),
+        regexMode: mode,
+      };
+    };
     const ingestMoments = (moments = []) => {
       const list = Array.isArray(moments) ? moments : [];
       const n = getContactCountN();
@@ -12724,7 +12764,10 @@ Phase G（Frame 36）：循环衔接
         if (authorId === 'user') authorAvatar = avatars.user;
         else if (authorId) authorAvatar = resolveAvatarForContact(authorId, contactsStore.getContact(authorId));
         const stats = normalizeInitialMomentStats({ views: m?.views, likes: m?.likes }, n);
-        return { ...(m || {}), ...stats, author, authorId, authorAvatar, originSessionId: sessionId };
+        return normalizeMomentRecordForStore(
+          { ...(m || {}), ...stats, author, authorId, authorAvatar, originSessionId: sessionId },
+          { regexMode: 'output', depth: 0 },
+        );
       });
     };
     const extractSummaryBlock = text => {
@@ -15234,7 +15277,9 @@ Phase G（Frame 36）：循环衔接
                 try {
                   const mid = String(ev.momentId || '').trim();
                   if (!mid) return;
-                  momentsStore.addComments(mid, ev.comments || []);
+                  // moments-regex rollback marker:
+                  // momentsStore.addComments(mid, ev.comments || []);
+                  momentsStore.addComments(mid, normalizeMomentCommentsForStore(ev.comments || [], { regexMode: 'output', depth: 0 }));
                   mutatedMoments = true;
                   didAnything = true;
                   if (activePage === 'moments') momentsPanel.render();
@@ -15371,7 +15416,9 @@ Phase G（Frame 36）：循环衔接
                     try {
                       const mid = String(ev.momentId || '').trim();
                       if (!mid) continue;
-                      momentsStore.addComments(mid, ev.comments || []);
+                      // moments-regex rollback marker:
+                      // momentsStore.addComments(mid, ev.comments || []);
+                      momentsStore.addComments(mid, normalizeMomentCommentsForStore(ev.comments || [], { regexMode: 'output', depth: 0 }));
                       mutatedMoments = true;
                       didAnything = true;
                       if (activePage === 'moments') momentsPanel.render();
@@ -15478,7 +15525,9 @@ Phase G（Frame 36）：循环衔接
                       try {
                         const mid = String(ev.momentId || '').trim();
                         if (!mid) continue;
-                        momentsStore.addComments(mid, ev.comments || []);
+                        // moments-regex rollback marker:
+                        // momentsStore.addComments(mid, ev.comments || []);
+                        momentsStore.addComments(mid, normalizeMomentCommentsForStore(ev.comments || [], { regexMode: 'output', depth: 0 }));
                         mutatedMoments = true;
                         didAnything = true;
                         if (activePage === 'moments') momentsPanel.render();
@@ -15744,7 +15793,9 @@ Phase G（Frame 36）：循环衔接
             if (ev?.type === 'moment_reply') {
               const mid = String(ev.momentId || '').trim();
               if (!mid) continue;
-              momentsStore.addComments(mid, ev.comments || []);
+              // moments-regex rollback marker:
+              // momentsStore.addComments(mid, ev.comments || []);
+              momentsStore.addComments(mid, normalizeMomentCommentsForStore(ev.comments || [], { regexMode: 'output', depth: 0 }));
               didAnything = true;
               mutatedMoments = true;
               continue;
@@ -15858,7 +15909,9 @@ Phase G（Frame 36）：循环衔接
                 if (ev?.type === 'moment_reply') {
                   const mid = String(ev.momentId || '').trim();
                   if (!mid) continue;
-                  momentsStore.addComments(mid, ev.comments || []);
+                  // moments-regex rollback marker:
+                  // momentsStore.addComments(mid, ev.comments || []);
+                  momentsStore.addComments(mid, normalizeMomentCommentsForStore(ev.comments || [], { regexMode: 'output', depth: 0 }));
                   didAnything = true;
                   mutatedMoments = true;
                   continue;
@@ -15952,7 +16005,9 @@ Phase G（Frame 36）：循环衔接
                   if (ev?.type === 'moment_reply') {
                     const mid = String(ev.momentId || '').trim();
                     if (!mid) continue;
-                    momentsStore.addComments(mid, ev.comments || []);
+                    // moments-regex rollback marker:
+                    // momentsStore.addComments(mid, ev.comments || []);
+                    momentsStore.addComments(mid, normalizeMomentCommentsForStore(ev.comments || [], { regexMode: 'output', depth: 0 }));
                     didAnything = true;
                     mutatedMoments = true;
                     continue;

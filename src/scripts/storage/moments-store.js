@@ -100,6 +100,8 @@ export class MomentsStore {
             const list = Array.isArray(this.state?.moments) ? this.state.moments : [];
             list.forEach((m) => {
                 if (!m || typeof m !== 'object') return;
+                const momentRegexMode = String(m.regexMode || '').trim().toLowerCase();
+                m.regexMode = momentRegexMode === 'input' ? 'input' : 'output';
                 if (typeof m.authorAvatar === 'string') {
                     m.authorAvatar = this._sanitizeAvatarForStore(m.authorAvatar);
                 }
@@ -107,8 +109,14 @@ export class MomentsStore {
                 if (Array.isArray(m.comments)) {
                     m.comments = m.comments.map((c) => {
                         if (!c || typeof c !== 'object') return c;
-                        if (!c.id) return { ...c, id: genId('comment') };
-                        return c;
+                        const next = !c.id ? { ...c, id: genId('comment') } : { ...c };
+                        const commentRegexMode = String(next.regexMode || '').trim().toLowerCase();
+                        next.regexMode = commentRegexMode === 'input'
+                            ? 'input'
+                            : String(next.author || '').trim() === '我'
+                                ? 'input'
+                                : 'output';
+                        return next;
                     });
                 }
             });
@@ -272,6 +280,10 @@ export class MomentsStore {
         const content = hasOwn(moment, 'content') ? String(moment.content || '') : (existingById?.content || existingBySig?.content || '');
         const time = hasOwn(moment, 'time') ? String(moment.time || '') : (existingById?.time || existingBySig?.time || '');
         const originSessionId = hasOwn(moment, 'originSessionId') ? String(moment.originSessionId || '').trim() : (existingById?.originSessionId || existingBySig?.originSessionId || '');
+        const momentRegexModeRaw = hasOwn(moment, 'regexMode')
+            ? String(moment.regexMode || '').trim().toLowerCase()
+            : String(existingById?.regexMode || existingBySig?.regexMode || '').trim().toLowerCase();
+        const regexMode = momentRegexModeRaw === 'input' ? 'input' : 'output';
 
         const views = hasOwn(moment, 'views')
             ? (Number.isFinite(Number(moment.views)) ? Number(moment.views) : 0)
@@ -293,6 +305,11 @@ export class MomentsStore {
                     id,
                     author: String(c.author || '').trim(),
                     content: String(c.content || ''),
+                    regexMode: String(c.regexMode || '').trim().toLowerCase() === 'input'
+                        ? 'input'
+                        : String(c.author || '').trim() === '我'
+                            ? 'input'
+                            : 'output',
                     replyTo: String(c.replyTo || '').trim(),
                     replyToAuthor: String(c.replyToAuthor || '').trim(),
                     time: String(c.time || ''),
@@ -323,6 +340,7 @@ export class MomentsStore {
             author,
             authorAvatar,
             originSessionId,
+            regexMode,
             content,
             time,
             views,
@@ -363,6 +381,11 @@ export class MomentsStore {
                 id: cid,
                 author: String(c.author || '').trim(),
                 content: String(c.content || ''),
+                regexMode: String(c.regexMode || '').trim().toLowerCase() === 'input'
+                    ? 'input'
+                    : String(c.author || '').trim() === '我'
+                        ? 'input'
+                        : 'output',
                 replyTo: String(c.replyTo || '').trim(),
                 replyToAuthor: String(c.replyToAuthor || '').trim(),
                 time: String(c.time || ''),

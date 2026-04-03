@@ -13,6 +13,54 @@ const normalizeInlineBreaks = (s) => String(s ?? '')
   .replace(/&lt;br\s*\/?&gt;/gi, '\n')
   .replace(/<br\s*\/?>/gi, '\n');
 
+const normalizeMomentRegexMode = (mode, fallback = 'output') => {
+  const raw = String(mode || '').trim().toLowerCase();
+  if (raw === 'input') return 'input';
+  if (raw === 'output') return 'output';
+  return String(fallback || '').trim().toLowerCase() === 'input' ? 'input' : 'output';
+};
+
+const applyMomentStoredRegex = (raw = '', { regexMode = 'output' } = {}) => {
+  const text = String(raw ?? '');
+  try {
+    const bridge = window.appBridge;
+    const mode = normalizeMomentRegexMode(regexMode);
+    if (mode === 'input' && typeof bridge?.applyInputStoredRegex === 'function') {
+      return bridge.applyInputStoredRegex(text, { isEdit: false, depth: 0 });
+    }
+    if (typeof bridge?.applyOutputStoredRegex === 'function') {
+      return bridge.applyOutputStoredRegex(text, { isEdit: false, depth: 0 });
+    }
+  } catch {}
+  return text;
+};
+
+const applyMomentDisplayRegex = (raw = '', { regexMode = 'output' } = {}) => {
+  const text = String(raw ?? '');
+  try {
+    const bridge = window.appBridge;
+    const mode = normalizeMomentRegexMode(regexMode);
+    if (mode === 'input' && typeof bridge?.applyInputDisplayRegex === 'function') {
+      return bridge.applyInputDisplayRegex(text, { isEdit: false, depth: 0 });
+    }
+    if (typeof bridge?.applyOutputDisplayRegex === 'function') {
+      return bridge.applyOutputDisplayRegex(text, { isEdit: false, depth: 0 });
+    }
+  } catch {}
+  return text;
+};
+
+const resolveMomentDisplayText = (record, { fallbackMode = 'output' } = {}) => {
+  const fallback = fallbackMode === 'input'
+    ? 'input'
+    : String(record?.author || '').trim() === '我'
+      ? 'input'
+      : 'output';
+  return applyMomentDisplayRegex(String(record?.content ?? ''), {
+    regexMode: normalizeMomentRegexMode(record?.regexMode, fallback),
+  });
+};
+
 const renderTextWithStickers = (raw = '') => {
   const input = normalizeInlineBreaks(raw);
   if (!input) return '';
@@ -98,6 +146,19 @@ const extractMomentMedia = (raw = '') => {
     if (!ok) output += match[0];
   }
   output += text.slice(lastIndex);
+
+  const stripEmptyWrappers = (input = '') => {
+    let next = String(input ?? '');
+    let prev = '';
+    while (next !== prev) {
+      prev = next;
+      next = next
+        .replace(/<\s*(div|p|span|figure|center)\b[^>]*>\s*<\/\s*\1\s*>/gi, '')
+        .replace(/\n{3,}/g, '\n\n');
+    }
+    return next.trim();
+  };
+  output = stripEmptyWrappers(output);
 
   const trimmed = output.trim();
   if (trimmed && (isAssetRef(trimmed) || isLikelyUrl(trimmed))) {
@@ -420,13 +481,13 @@ export class MomentsPanel {
         .map((c) => {
           const cid = String(c?.id || '').trim();
           const author = String(c?.author || '').trim();
-          const content = String(c?.content || '');
+          const content = resolveMomentDisplayText(c);
           const replies = cid ? (repliesByParent.get(cid) || []) : [];
           const replyHtml = replies
             .map((r) => {
               const rid = String(r?.id || '').trim();
               const rauthor = String(r?.author || '').trim();
-              const rcontent = String(r?.content || '');
+              const rcontent = resolveMomentDisplayText(r);
               const toName = String(r?.replyToAuthor || '').trim() || author;
               return `
                         <div class="moment-comment moment-comment-reply" data-comment-id="${esc(rid)}" style="margin-left:20px; padding-left:10px; border-left:2px solid rgba(0,0,0,0.08);">
@@ -488,7 +549,7 @@ export class MomentsPanel {
                     } padding:8px 10px; margin-bottom:10px; border:1px solid rgba(0,0,0,0.08); border-radius:12px; background:rgba(248,250,252,0.92); font-size:12px; color:#334155;">
                         <div style="display:flex; gap:10px; align-items:flex-start;">
                             <div style="flex:1; min-width:0; white-space:normal; overflow-wrap:anywhere; word-break:break-word; line-height:1.35;">
-                                回复 <b>${esc(replyTarget?.author || '')}</b>：${esc(String(replyTarget?.content || '').slice(0, 120))}
+                                回复 <b>${esc(replyTarget?.author || '')}</b>：${esc(resolveMomentDisplayText(replyTarget).slice(0, 120))}
                             </div>
                             <button class="moment-reply-cancel" data-action="cancel-reply" type="button" style="border:none; background:transparent; color:#ef4444; font-weight:900; cursor:pointer; padding:0 4px; font-size:16px; line-height:1;">×</button>
                         </div>
@@ -503,7 +564,8 @@ export class MomentsPanel {
                     </div>
                 </div>
             `;
-      const media = extractMomentMedia(m.content || '');
+      const displayContent = resolveMomentDisplayText(m, { fallbackMode: 'output' });
+      const media = extractMomentMedia(displayContent || '');
       const textEl = card.querySelector('.moment-text');
       if (textEl) {
         textEl.innerHTML = '';
@@ -679,7 +741,10 @@ export class MomentsPanel {
           {
             id: userCommentId,
             author: '我',
-            content: text,
+            // moments-regex rollback marker:
+            // content: text,
+            content: applyMomentStoredRegex(text, { regexMode: 'input' }),
+            regexMode: 'input',
             replyTo: String(reply?.id || '').trim(),
             replyToAuthor: String(reply?.author || '').trim(),
           },
@@ -821,7 +886,7 @@ export class MomentsPanel {
                               c => `
                         <div class="moment-detail-comment" data-comment-id="${esc(c.id || '')}" style="border:1px solid #e5e7eb; border-radius:12px; padding:10px;">
                             <div class="moment-detail-author" role="button" tabindex="0" data-comment-id="${esc(c.id || '')}" style="font-weight:800; font-size:13px; cursor:pointer;">${esc(c.author || '')}</div>
-                            <div style="margin-top:6px; overflow-wrap:anywhere;">${renderTextWithStickers(c.content || '')}</div>
+                            <div style="margin-top:6px; overflow-wrap:anywhere;">${renderTextWithStickers(resolveMomentDisplayText(c))}</div>
                         </div>
                     `,
                             )
@@ -830,7 +895,8 @@ export class MomentsPanel {
                     }
                 </div>
             `;
-      const media = extractMomentMedia(m.content || '');
+      const displayContent = resolveMomentDisplayText(m, { fallbackMode: 'output' });
+      const media = extractMomentMedia(displayContent || '');
       const detailText = body.querySelector('.moment-detail-text');
       if (detailText) {
         detailText.innerHTML = '';
@@ -966,7 +1032,13 @@ export class MomentsPanel {
       const input = this.modal?.querySelector('#moment-comment-input');
       const text = String(input?.value || '').trim();
       if (!text) return;
-      this.store.addComments(id, [{ author: '我', content: text }]);
+      this.store.addComments(id, [{
+        author: '我',
+        // moments-regex rollback marker:
+        // content: text,
+        content: applyMomentStoredRegex(text, { regexMode: 'input' }),
+        regexMode: 'input',
+      }]);
       if (input) input.value = '';
       this.openDetail(id);
       this.render();
