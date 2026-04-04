@@ -5,6 +5,7 @@
 
 import { handleSSE } from '../stream.js';
 import { createLinkedAbortController, splitRequestOptions } from '../abort.js';
+import { prepareTransportRequest } from '../transport.js';
 
 const GEMINI_SAFETY = [
   { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
@@ -15,6 +16,7 @@ const GEMINI_SAFETY = [
 
 export class GeminiProvider {
   constructor(config) {
+    this.transportConfig = config || {};
     this.apiKey = config.apiKey;
     this.model = config.model || 'gemini-2.0-flash-exp';
     this.timeout = config.timeout || 60000;
@@ -178,10 +180,16 @@ export class GeminiProvider {
     try {
       const url = this.buildUrl(false);
       const body = this.buildRequestBody(messages, payloadOptions);
-
-      const response = await fetch(url, {
-        method: 'POST',
+      const prepared = prepareTransportRequest({
+        config: this.transportConfig,
+        provider: 'gemini',
+        url,
         headers: this.getHeaders(),
+      });
+
+      const response = await fetch(prepared.url, {
+        method: 'POST',
+        headers: prepared.headers,
         signal: controller.signal,
         body: JSON.stringify(body),
       });
@@ -235,10 +243,16 @@ export class GeminiProvider {
     try {
       const url = this.buildUrl(true);
       const body = this.buildRequestBody(messages, payloadOptions);
-
-      const response = await fetch(url, {
-        method: 'POST',
+      const prepared = prepareTransportRequest({
+        config: this.transportConfig,
+        provider: 'gemini',
+        url,
         headers: this.getHeaders(),
+      });
+
+      const response = await fetch(prepared.url, {
+        method: 'POST',
+        headers: prepared.headers,
         signal: controller.signal,
         body: JSON.stringify(body),
       });
@@ -296,8 +310,13 @@ export class GeminiProvider {
         // Google AI Studio models endpoint
         url = `${this.baseUrl}/${this.apiVersion}/models?key=${this.apiKey}`;
       }
-
-      const response = await fetch(url, { headers });
+      const prepared = prepareTransportRequest({
+        config: this.transportConfig,
+        provider: 'gemini',
+        url,
+        headers,
+      });
+      const response = await fetch(prepared.url, { headers: prepared.headers });
 
       if (!response.ok) {
         throw new Error(`Failed to fetch models: ${response.status}`);

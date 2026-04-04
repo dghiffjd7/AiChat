@@ -5,6 +5,7 @@
 
 import { handleSSE } from '../stream.js';
 import { createLinkedAbortController, splitRequestOptions } from '../abort.js';
+import { prepareTransportRequest } from '../transport.js';
 
 const getTauriInvoker = () => {
     const g = typeof globalThis !== 'undefined' ? globalThis : undefined;
@@ -47,6 +48,7 @@ const makeAbortError = () => {
 
 export class CustomProvider {
     constructor(config) {
+        this.transportConfig = config || {};
         this.provider = config.provider || 'custom';
         this.apiKey = config.apiKey || '';
         this.baseUrl = config.baseUrl;
@@ -67,13 +69,19 @@ export class CustomProvider {
     }
 
     async request({ url, method = 'GET', headers = {}, body = undefined, signal, requestId = '' } = {}) {
-        const mergedHeaders = { ...headers };
+        const prepared = prepareTransportRequest({
+            config: this.transportConfig,
+            provider: this.provider,
+            url,
+            headers,
+        });
+        const mergedHeaders = { ...(prepared.headers || {}) };
         const invoker = getTauriInvoker();
         if (typeof invoker === 'function') {
             if (signal?.aborted) throw makeAbortError();
             try {
                 return await invoker('http_request', {
-                    url,
+                    url: prepared.url,
                     method,
                     headers: mergedHeaders,
                     body: typeof body === 'string' ? body : body == null ? null : String(body),
@@ -92,7 +100,7 @@ export class CustomProvider {
 
         const { controller, cleanup } = createLinkedAbortController({ timeoutMs: this.timeout, signal });
         try {
-            const response = await fetch(url, {
+            const response = await fetch(prepared.url, {
                 method,
                 headers: mergedHeaders,
                 signal: controller.signal,
@@ -204,9 +212,15 @@ export class CustomProvider {
 
         const { controller, cleanup } = createLinkedAbortController({ timeoutMs: this.timeout, signal });
         try {
-            const response = await fetch(`${this.baseUrl}/chat/completions`, {
-                method: 'POST',
+            const prepared = prepareTransportRequest({
+                config: this.transportConfig,
+                provider: this.provider,
+                url: `${this.baseUrl}/chat/completions`,
                 headers: { ...this.getHeaders(), Accept: 'text/event-stream' },
+            });
+            const response = await fetch(prepared.url, {
+                method: 'POST',
+                headers: prepared.headers,
                 signal: controller.signal,
                 body: payload
             });

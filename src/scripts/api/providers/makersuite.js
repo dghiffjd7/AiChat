@@ -5,6 +5,7 @@
 
 import { handleSSE } from '../stream.js';
 import { createLinkedAbortController, splitRequestOptions } from '../abort.js';
+import { prepareTransportRequest } from '../transport.js';
 
 const getTauriInvoker = () => {
   const g = typeof globalThis !== 'undefined' ? globalThis : undefined;
@@ -52,6 +53,7 @@ const GEMINI_SAFETY = [
 
 export class MakersuiteProvider {
   constructor(config) {
+    this.transportConfig = config || {};
     this.apiKey = config.apiKey;
     this.model = config.model || 'gemini-2.0-flash-exp';
     this.timeout = config.timeout || 60000;
@@ -139,13 +141,19 @@ export class MakersuiteProvider {
   }
 
   async request({ url, method = 'GET', headers = {}, body = undefined, signal, requestId = '' } = {}) {
-    const mergedHeaders = { ...headers };
+    const prepared = prepareTransportRequest({
+      config: this.transportConfig,
+      provider: 'makersuite',
+      url,
+      headers,
+    });
+    const mergedHeaders = { ...(prepared.headers || {}) };
     const invoker = getTauriInvoker();
     if (typeof invoker === 'function') {
       if (signal?.aborted) throw makeAbortError();
       try {
         return await invoker('http_request', {
-          url,
+          url: prepared.url,
           method,
           headers: mergedHeaders,
           body: typeof body === 'string' ? body : body == null ? null : String(body),
@@ -163,7 +171,7 @@ export class MakersuiteProvider {
 
     const { controller, cleanup } = createLinkedAbortController({ timeoutMs: this.timeout, signal });
     try {
-      const response = await fetch(url, {
+      const response = await fetch(prepared.url, {
         method,
         headers: mergedHeaders,
         signal: controller.signal,
@@ -275,10 +283,16 @@ export class MakersuiteProvider {
     try {
       const url = this.buildUrl(true);
       const body = this.buildRequestBody(messages, payloadOptions);
-
-      const response = await fetch(url, {
-        method: 'POST',
+      const prepared = prepareTransportRequest({
+        config: this.transportConfig,
+        provider: 'makersuite',
+        url,
         headers: this.getHeaders(),
+      });
+
+      const response = await fetch(prepared.url, {
+        method: 'POST',
+        headers: prepared.headers,
         signal: controller.signal,
         body: JSON.stringify(body),
       });
@@ -314,7 +328,13 @@ export class MakersuiteProvider {
   async listModels() {
     try {
       const url = `${this.baseUrl}/${this.apiVersion}/models?key=${this.apiKey}`;
-      const response = await fetch(url);
+      const prepared = prepareTransportRequest({
+        config: this.transportConfig,
+        provider: 'makersuite',
+        url,
+        headers: {},
+      });
+      const response = await fetch(prepared.url, { headers: prepared.headers });
 
       if (!response.ok) {
         throw new Error(`Failed to fetch models: ${response.status}`);

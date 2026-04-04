@@ -4,9 +4,50 @@
 
 import { handleSSE } from '../stream.js';
 import { createLinkedAbortController, splitRequestOptions } from '../abort.js';
+import { prepareTransportRequest } from '../transport.js';
+
+const getTauriInvoker = () => {
+    const g = typeof globalThis !== 'undefined' ? globalThis : undefined;
+    return (
+        g?.__TAURI__?.core?.invoke ||
+        g?.__TAURI__?.invoke ||
+        g?.__TAURI_INVOKE__ ||
+        g?.__TAURI_INTERNALS__?.invoke
+    );
+};
+
+const isTauriWebview = () => {
+    try {
+        const g = typeof globalThis !== 'undefined' ? globalThis : undefined;
+        const origin = String(g?.location?.origin || '');
+        return Boolean(g?.__TAURI__ || g?.__TAURI_INTERNALS__ || origin.includes('tauri.localhost'));
+    } catch (_e) {
+        return false;
+    }
+};
+
+const parseSSEText = function* (text) {
+    const raw = String(text ?? '');
+    const lines = raw.split('\n');
+    for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        const data = line.slice(6).trim();
+        if (!data || data === '[DONE]') continue;
+        try {
+            yield JSON.parse(data);
+        } catch (_e) {}
+    }
+};
+
+const makeAbortError = () => {
+    const err = new Error('Aborted');
+    err.name = 'AbortError';
+    return err;
+};
 
 export class AnthropicProvider {
     constructor(config) {
+        this.transportConfig = config || {};
         this.apiKey = config.apiKey;
         this.baseUrl = config.baseUrl || 'https://api.anthropic.com/v1';
         this.model = config.model || 'claude-3-5-sonnet-20241022';
@@ -20,6 +61,92 @@ export class AnthropicProvider {
             'x-api-key': this.apiKey,
             'anthropic-version': this.apiVersion
         };
+    }
+
+    canUseNativeHttp() {
+        try {
+            return typeof getTauriInvoker() === 'function';
+        } catch (_e) {
+            return false;
+        }
+    }
+
+    extractErrorDetail(bodyText) {
+        const raw = String(bodyText ?? '').trim();
+        if (!raw) return '';
+        try {
+            const j = JSON.parse(raw);
+            const msg = j?.error?.message || j?.message || j?.detail || j?.error || '';
+            if (msg) return String(msg);
+        } catch (_e) {}
+        return raw.length > 400 ? `${raw.slice(0, 400)}…` : raw;
+    }
+
+    async request({ url, method = 'GET', headers = {}, body = undefined, signal, requestId = '' } = {}) {
+        const prepared = prepareTransportRequest({
+            config: this.transportConfig,
+            provider: 'anthropic',
+            url,
+            headers,
+        });
+        const mergedHeaders = { ...(prepared.headers || {}) };
+        const invoker = getTauriInvoker();
+        if (typeof invoker === 'function') {
+            if (signal?.aborted) throw makeAbortError();
+            try {
+                return await invoker('http_request', {
+                    url: prepared.url,
+                    method,
+                    headers: mergedHeaders,
+                    body: typeof body === 'string' ? body : body == null ? null : String(body),
+                    timeout_ms: this.timeout,
+                    request_id: requestId || null,
+                });
+            } catch (err) {
+                if (isTauriWebview()) {
+                    const e = new Error(`native http_request failed: ${err?.message || err}`);
+                    e.cause = err;
+                    throw e;
+                }
+            }
+        }
+
+        const { controller, cleanup } = createLinkedAbortController({ timeoutMs: this.timeout, signal });
+        try {
+            const response = await fetch(prepared.url, {
+                method,
+                headers: mergedHeaders,
+                signal: controller.signal,
+                body,
+            });
+            const text = await response.text();
+            const outHeaders = {};
+            response.headers.forEach((v, k) => {
+                outHeaders[k] = v;
+            });
+            return { status: response.status, ok: response.ok, headers: outHeaders, body: text };
+        } finally {
+            cleanup();
+        }
+    }
+
+    async requestJson({ url, method = 'GET', headers = {}, body = undefined, signal, requestId = '' } = {}) {
+        const res = await this.request({ url, method, headers, body, signal, requestId });
+        if (!res.ok) {
+            const detail = this.extractErrorDetail(res.body);
+            const error = new Error(`Anthropic API Error: ${res.status}${detail ? ` - ${detail}` : ''}`);
+            error.status = res.status;
+            error.response = res.body;
+            throw error;
+        }
+        try {
+            return JSON.parse(res.body || '{}');
+        } catch (e) {
+            const error = new Error(`Invalid JSON response: ${e.message}`);
+            error.status = res.status;
+            error.response = res.body;
+            throw error;
+        }
     }
 
     /**
@@ -91,73 +218,98 @@ export class AnthropicProvider {
      * 发送聊天消息（非流式）
      */
     async chat(messages, options = {}) {
-        const { signal, options: payloadOptionsRaw } = splitRequestOptions(options);
+        const { signal, requestId, options: payloadOptionsRaw } = splitRequestOptions(options);
         const maxTokens = payloadOptionsRaw?.maxTokens ?? payloadOptionsRaw?.max_tokens;
         const payloadOptions = { ...(payloadOptionsRaw || {}) };
         delete payloadOptions.maxTokens;
-        const { controller, cleanup } = createLinkedAbortController({ timeoutMs: this.timeout, signal });
 
         const { system, messages: convertedMessages } = this.convertMessages(messages);
 
-        try {
-            const response = await fetch(`${this.baseUrl}/messages`, {
-                method: 'POST',
-                headers: this.getHeaders(),
-                signal: controller.signal,
-                body: JSON.stringify({
-                    model: this.model,
-                    messages: convertedMessages,
-                    system: system,
-                    max_tokens: maxTokens || payloadOptions.max_tokens || 4096,
-                    stream: false,
-                    ...payloadOptions
-                })
-            });
+        const data = await this.requestJson({
+            url: `${this.baseUrl}/messages`,
+            method: 'POST',
+            headers: this.getHeaders(),
+            body: JSON.stringify({
+                model: this.model,
+                messages: convertedMessages,
+                system: system,
+                max_tokens: maxTokens || payloadOptions.max_tokens || 4096,
+                stream: false,
+                ...payloadOptions
+            }),
+            signal,
+            requestId,
+        });
 
-            if (!response.ok) {
-                const error = new Error(`Anthropic API Error: ${response.status}`);
-                error.status = response.status;
-                error.response = await response.text();
-                throw error;
-            }
-
-            const data = await response.json();
-            return data.content[0].text;
-        } finally {
-            cleanup();
-        }
+        return data?.content?.[0]?.text || '';
     }
 
     /**
      * 流式聊天
      */
     async *streamChat(messages, options = {}) {
-        const { signal, options: payloadOptionsRaw } = splitRequestOptions(options);
+        const { signal, requestId, options: payloadOptionsRaw } = splitRequestOptions(options);
         const maxTokens = payloadOptionsRaw?.maxTokens ?? payloadOptionsRaw?.max_tokens;
         const payloadOptions = { ...(payloadOptionsRaw || {}) };
         delete payloadOptions.maxTokens;
-        const { controller, cleanup } = createLinkedAbortController({ timeoutMs: this.timeout, signal });
 
         const { system, messages: convertedMessages } = this.convertMessages(messages);
+        const payload = JSON.stringify({
+            model: this.model,
+            messages: convertedMessages,
+            system: system,
+            max_tokens: maxTokens || payloadOptions.max_tokens || 4096,
+            stream: true,
+            ...payloadOptions
+        });
 
-        try {
-            const response = await fetch(`${this.baseUrl}/messages`, {
+        if (this.canUseNativeHttp()) {
+            if (signal?.aborted) throw makeAbortError();
+            const res = await this.request({
+                url: `${this.baseUrl}/messages`,
                 method: 'POST',
-                headers: this.getHeaders(),
+                headers: { ...this.getHeaders(), Accept: 'text/event-stream' },
+                body: payload,
+                signal,
+                requestId,
+            });
+            if (!res.ok) {
+                const detail = this.extractErrorDetail(res.body);
+                const error = new Error(`Anthropic API Error: ${res.status}${detail ? ` - ${detail}` : ''}`);
+                error.status = res.status;
+                error.response = res.body;
+                throw error;
+            }
+            for (const data of parseSSEText(res.body)) {
+                if (data.type === 'content_block_delta') {
+                    const content = data.delta?.text;
+                    if (content) yield content;
+                }
+            }
+            return;
+        }
+
+        const { controller, cleanup } = createLinkedAbortController({ timeoutMs: this.timeout, signal });
+        try {
+            const prepared = prepareTransportRequest({
+                config: this.transportConfig,
+                provider: 'anthropic',
+                url: `${this.baseUrl}/messages`,
+                headers: { ...this.getHeaders(), Accept: 'text/event-stream' },
+            });
+            const response = await fetch(prepared.url, {
+                method: 'POST',
+                headers: prepared.headers,
                 signal: controller.signal,
-                body: JSON.stringify({
-                    model: this.model,
-                    messages: convertedMessages,
-                    system: system,
-                    max_tokens: maxTokens || payloadOptions.max_tokens || 4096,
-                    stream: true,
-                    ...payloadOptions
-                })
+                body: payload
             });
 
             if (!response.ok) {
-                const error = new Error(`Anthropic API Error: ${response.status}`);
+                const txt = await response.text();
+                const detail = this.extractErrorDetail(txt);
+                const error = new Error(`Anthropic API Error: ${response.status}${detail ? ` - ${detail}` : ''}`);
                 error.status = response.status;
+                error.response = txt;
                 throw error;
             }
 
@@ -178,13 +330,35 @@ export class AnthropicProvider {
      * 获取可用模型列表
      */
     async listModels() {
-        // Anthropic 不提供模型列表 API，返回常用模型
-        return [
+        const fallbackModels = [
             'claude-3-5-sonnet-20241022',
             'claude-3-opus-20240229',
             'claude-3-sonnet-20240229',
             'claude-3-haiku-20240307'
         ];
+
+        try {
+            const data = await this.requestJson({
+                url: `${this.baseUrl}/models`,
+                method: 'GET',
+                headers: this.getHeaders(),
+            });
+            const rawItems = Array.isArray(data)
+                ? data
+                : Array.isArray(data?.data)
+                    ? data.data
+                    : [];
+            const models = rawItems
+                .map((item) => {
+                    if (typeof item === 'string') return item.trim();
+                    return String(item?.id || item?.name || '').trim();
+                })
+                .filter(Boolean);
+
+            return models.length ? Array.from(new Set(models)) : fallbackModels;
+        } catch {
+            return fallbackModels;
+        }
     }
 
     /**

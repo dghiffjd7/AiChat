@@ -15,6 +15,13 @@ const canInitClient = (cfg) => {
     return hasKey || hasVertexSa;
 };
 
+const escapeHtml = (value) => String(value ?? '').replace(/[&<>"]/g, (ch) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+}[ch]));
+
 
 export class ConfigPanel {
     constructor() {
@@ -30,6 +37,10 @@ export class ConfigPanel {
         this.keyOverlay = null;
         this.keyModal = null;
         this.isRefreshingProfile = false; // 防止刷新时触发 onchange
+        this.customSelectMenuEl = null;
+        this.customSelectMenuCleanup = null;
+        this.customSelectMenuAnchor = null;
+        this.transportExpanded = false;
     }
 
     /**
@@ -152,13 +163,17 @@ export class ConfigPanel {
                             <button id="profile-delete" title="删除" style="font-size:12px; border:none; background:#fee2e2; color:#b91c1c; padding:4px 8px; border-radius:6px; cursor:pointer;">🗑</button>
                         </div>
                     </label>
-                    <select id="config-profile" style="width: 100%; padding: 10px; border-radius: 5px; border: 1px solid #ddd; font-size: 14px;"></select>
+                    <select id="config-profile" style="display:none;"></select>
+                    <button type="button" id="config-profile-btn" class="world-app-select-btn" data-select-id="config-profile" style="margin-top:2px;">
+                        <span class="config-custom-select-label">请选择设置档</span>
+                        <span class="world-app-select-btn-chevron">▾</span>
+                    </button>
                     <small style="color: #666;">可保存多个配置并快速切换（清除缓存也不丢）</small>
                 </div>
 
                 <div style="margin-bottom: 15px;">
                     <label style="display: block; margin-bottom: 5px; font-weight: bold;">服务商</label>
-                    <select id="config-provider" style="width: 100%; padding: 10px; border-radius: 5px; border: 1px solid #ddd; font-size: 14px;">
+                    <select id="config-provider" style="display:none;">
                         <option value="openai">OpenAI</option>
                         <option value="makersuite">Google AI Studio (Makersuite)</option>
                         <option value="vertexai">Google Vertex AI</option>
@@ -166,13 +181,17 @@ export class ConfigPanel {
                         <option value="anthropic">Anthropic (Claude)</option>
                         <option value="custom">自定义 API</option>
                     </select>
+                    <button type="button" id="config-provider-btn" class="world-app-select-btn" data-select-id="config-provider" style="margin-top:2px;">
+                        <span class="config-custom-select-label">请选择服务商</span>
+                        <span class="world-app-select-btn-chevron">▾</span>
+                    </button>
                 </div>
 
-                <div style="margin-bottom: 15px;">
+                <div id="config-baseurl-section" style="margin-bottom: 15px;">
                     <label style="display: block; margin-bottom: 5px; font-weight: bold;">API Base URL</label>
                     <input type="text" id="config-baseurl" placeholder="https://api.openai.com/v1"
                            style="width: 100%; padding: 10px; border-radius: 5px; border: 1px solid #ddd; font-size: 14px; box-sizing: border-box;">
-                    <small style="color: #666;">填写 API 的基础 URL</small>
+                    <small style="color: #666;">仅自定义 API 需要填写；内建服务商会自动使用默认协议地址</small>
                 </div>
 
                 <div style="margin-bottom: 15px;">
@@ -191,13 +210,17 @@ export class ConfigPanel {
                 <div id="vertexai-fields" style="display: none;">
                     <div style="margin-bottom: 15px;">
                         <label style="display: block; margin-bottom: 5px; font-weight: bold;">Region</label>
-                        <select id="config-region" style="width: 100%; padding: 10px; border-radius: 5px; border: 1px solid #ddd; font-size: 14px;">
+                        <select id="config-region" style="display:none;">
                             <option value="us-central1">us-central1</option>
                             <option value="us-east1">us-east1</option>
                             <option value="us-west1">us-west1</option>
                             <option value="europe-west1">europe-west1</option>
                             <option value="asia-southeast1">asia-southeast1</option>
                         </select>
+                        <button type="button" id="config-region-btn" class="world-app-select-btn" data-select-id="config-region" style="margin-top:2px;">
+                            <span class="config-custom-select-label">请选择 Region</span>
+                            <span class="world-app-select-btn-chevron">▾</span>
+                        </button>
                         <small style="color: #666;">Vertex AI 区域</small>
                     </div>
 
@@ -245,6 +268,68 @@ export class ConfigPanel {
                                style="width: 120px; padding: 8px 10px; border-radius: 8px; border: 1px solid #ddd; font-size: 14px; text-align:right;">
                     </label>
                     <small style="color:#666;">超过该时间将中止请求并报错（10–9000 秒）</small>
+                </div>
+
+                <div style="margin-bottom: 18px; border:1px solid #e2e8f0; border-radius: 12px; background:#f8fafc;">
+                    <button type="button" id="config-transport-toggle"
+                            style="width:100%; display:flex; align-items:center; justify-content:space-between; gap:12px; border:none; background:transparent; padding:12px 14px; cursor:pointer; text-align:left;">
+                        <div style="display:flex; flex-direction:column; gap:2px;">
+                            <span style="font-weight:800; color:#0f172a;">高级连线与反代</span>
+                            <span id="config-transport-summary" style="font-size:12px; color:#64748b;">默认直连，只有需要代理出口时再展开</span>
+                        </div>
+                        <span id="config-transport-chevron" style="color:#64748b; font-size:12px;">▾</span>
+                    </button>
+                    <div id="config-transport-content" style="display:none; padding:0 14px 14px;">
+                        <div style="margin-bottom: 14px;">
+                            <label style="display:block; margin-bottom:5px; font-weight:bold;">连线模式</label>
+                            <select id="config-transport-mode" style="display:none;">
+                                <option value="direct">直连</option>
+                                <option value="reverse_proxy">反代出口</option>
+                            </select>
+                            <button type="button" id="config-transport-mode-btn" class="world-app-select-btn" data-select-id="config-transport-mode" style="margin-top:2px;">
+                                <span class="config-custom-select-label">直连</span>
+                                <span class="world-app-select-btn-chevron">▾</span>
+                            </button>
+                            <small style="color:#666;">大多数情况下保持直连；只有需要走代理出口时再改这里。</small>
+                        </div>
+
+                        <div id="config-proxy-fields" style="display:none;">
+                            <div style="margin-bottom: 14px;">
+                                <label style="display:block; margin-bottom:5px; font-weight:bold;">反代 URL</label>
+                                <input type="text" id="config-proxy-baseurl" placeholder="https://proxy.example.com/llm"
+                                       style="width:100%; padding:10px; border-radius:5px; border:1px solid #ddd; font-size:14px; box-sizing:border-box;">
+                                <small style="color:#666;">通常只需填写这里；上方 API Key 继续照原本方式填写，程序会保留当前服务商协议并改走这个出口。</small>
+                            </div>
+
+                            <div id="config-proxy-auth-header-row" style="margin-bottom: 14px; display:none;">
+                                <label style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:5px; font-weight:bold;">
+                                    <span>代理鉴权 Header</span>
+                                    <span style="font-size:12px; color:#94a3b8; font-weight:600;">可选</span>
+                                </label>
+                                <input type="text" id="config-proxy-auth-header" placeholder="X-Proxy-Auth / Authorization"
+                                       style="width:100%; padding:10px; border-radius:5px; border:1px solid #ddd; font-size:14px; box-sizing:border-box;">
+                                <small style="color:#666;">如你的反代需要额外密钥，可填写自定义 Header 名。</small>
+                            </div>
+
+                            <div id="config-proxy-auth-token-row" style="margin-bottom: 14px; display:none;">
+                                <label style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:5px; font-weight:bold;">
+                                    <span>代理鉴权 Token</span>
+                                    <button id="toggle-proxy-token" type="button" style="font-size:12px; border:none; background:#f1f5f9; padding:4px 8px; border-radius:6px; cursor:pointer;">显示</button>
+                                </label>
+                                <input type="password" id="config-proxy-auth-token" placeholder="可选"
+                                       style="width:100%; padding:10px; border-radius:5px; border:1px solid #ddd; font-size:14px; box-sizing:border-box;">
+                                <small style="color:#666;">若反代不要求单独鉴权，这里留空即可。</small>
+                            </div>
+
+                            <div id="config-forward-provider-auth-row" style="margin-bottom: 2px; display:none;">
+                                <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+                                    <input type="checkbox" id="config-forward-provider-auth" checked style="width:18px; height:18px;">
+                                    <span style="font-weight:700;">同时转发原服务商鉴权信息</span>
+                                </label>
+                                <small style="color:#666; margin-left:26px;">关闭后，会移除原本的 API Key / Authorization，仅保留反代鉴权。</small>
+                            </div>
+                        </div>
+                    </div>
                 </div>
 
                 <div id="config-status" style="margin-bottom: 15px; padding: 10px; border-radius: 5px; display: none;"></div>
@@ -310,6 +395,8 @@ export class ConfigPanel {
         this.element.querySelector('#profile-delete').onclick = () => this.deleteProfile();
         this.element.querySelector('#toggle-sa')?.addEventListener('click', () => this.toggleServiceAccount());
         this.element.querySelector('#refresh-models').onclick = () => this.refreshModels();
+        this.element.querySelector('#config-transport-toggle').onclick = () => this.toggleTransportSection();
+        this.element.querySelector('#toggle-proxy-token').onclick = () => this.toggleProxyToken();
 
         // 连线设置档切换
         this.element.querySelector('#config-profile').onchange = async (e) => {
@@ -336,16 +423,235 @@ export class ConfigPanel {
             this.updateDefaultsForProvider(provider);
             this.updateFieldVisibility(provider);
         };
+        this.element.querySelector('#config-region').onchange = async () => {
+            const provider = this.element.querySelector('#config-provider')?.value || 'openai';
+            if (provider === 'vertexai') {
+                this.updateDefaultsForProvider(provider);
+            }
+        };
+        this.element.querySelector('#config-transport-mode').onchange = async () => {
+            this.updateTransportVisibility({ autoExpand: true });
+        };
+
+        this.initCustomSelects();
 
         document.body.appendChild(this.overlayElement);
         document.body.appendChild(this.element);
     }
 
+    ensureCustomSelectMenu() {
+        if (this.customSelectMenuEl) return this.customSelectMenuEl;
+        const menu = document.createElement('div');
+        menu.className = 'world-app-select-menu';
+        menu.style.display = 'none';
+        menu.addEventListener('click', (e) => e.stopPropagation());
+        document.body.appendChild(menu);
+        this.customSelectMenuEl = menu;
+        return menu;
+    }
+
+    closeCustomSelectMenu() {
+        if (typeof this.customSelectMenuCleanup === 'function') {
+            try { this.customSelectMenuCleanup(); } catch {}
+        }
+        this.customSelectMenuCleanup = null;
+        this.customSelectMenuAnchor = null;
+        if (this.customSelectMenuEl) {
+            this.customSelectMenuEl.style.display = 'none';
+            this.customSelectMenuEl.innerHTML = '';
+        }
+    }
+
+    openCustomSelectMenu({ anchorEl, options = [], currentValue = '', onSelect = null } = {}) {
+        if (!anchorEl) return;
+        const isSameAnchorOpen =
+            this.customSelectMenuAnchor === anchorEl &&
+            this.customSelectMenuEl &&
+            this.customSelectMenuEl.style.display !== 'none';
+        if (isSameAnchorOpen) {
+            this.closeCustomSelectMenu();
+            return;
+        }
+        const menu = this.ensureCustomSelectMenu();
+        const current = String(currentValue ?? '').trim();
+        const opts = Array.isArray(options) ? options : [];
+        menu.innerHTML = opts.map((opt) => {
+            const value = String(opt?.value ?? '');
+            const label = escapeHtml(String(opt?.label ?? value));
+            const selected = value === current;
+            return `
+                <button type="button" class="world-app-select-item ${selected ? 'is-selected' : ''}" data-value="${value.replace(/"/g, '&quot;')}">
+                    <span class="world-app-select-item-label">${label}</span>
+                    <span class="world-app-select-item-check">${selected ? '✓' : ''}</span>
+                </button>
+            `;
+        }).join('');
+
+        menu.querySelectorAll('.world-app-select-item').forEach((item) => {
+            item.addEventListener('click', () => {
+                const value = String(item.dataset.value ?? '');
+                if (typeof onSelect === 'function') onSelect(value);
+                this.closeCustomSelectMenu();
+            });
+        });
+
+        menu.style.display = 'block';
+        menu.style.visibility = 'hidden';
+        menu.style.minWidth = `${Math.max(170, Math.round(anchorEl.getBoundingClientRect().width))}px`;
+        menu.style.left = '0px';
+        menu.style.top = '0px';
+
+        const anchorRect = anchorEl.getBoundingClientRect();
+        const menuRect = menu.getBoundingClientRect();
+        const gap = 6;
+        let left = anchorRect.left;
+        let top = anchorRect.bottom + gap;
+        if (left + menuRect.width > window.innerWidth - 8) {
+            left = Math.max(8, window.innerWidth - menuRect.width - 8);
+        }
+        if (top + menuRect.height > window.innerHeight - 8) {
+            top = Math.max(8, anchorRect.top - menuRect.height - gap);
+        }
+        menu.style.left = `${Math.round(left)}px`;
+        menu.style.top = `${Math.round(top)}px`;
+        menu.style.visibility = 'visible';
+
+        const onDocClick = (ev) => {
+            const target = ev?.target;
+            if (!target) return;
+            if (menu.contains(target) || anchorEl.contains(target)) return;
+            this.closeCustomSelectMenu();
+        };
+        const onResize = () => this.closeCustomSelectMenu();
+        const onScroll = (ev) => {
+            const target = ev?.target;
+            if (target && (menu.contains(target) || anchorEl.contains(target))) return;
+            this.closeCustomSelectMenu();
+        };
+        document.addEventListener('mousedown', onDocClick, true);
+        document.addEventListener('touchstart', onDocClick, true);
+        window.addEventListener('resize', onResize);
+        window.addEventListener('scroll', onScroll, true);
+        this.customSelectMenuCleanup = () => {
+            document.removeEventListener('mousedown', onDocClick, true);
+            document.removeEventListener('touchstart', onDocClick, true);
+            window.removeEventListener('resize', onResize);
+            window.removeEventListener('scroll', onScroll, true);
+        };
+        this.customSelectMenuAnchor = anchorEl;
+    }
+
+    refreshCustomSelect(selectOrId) {
+        const panel = this.element || document;
+        const select = typeof selectOrId === 'string'
+            ? panel.querySelector(`#${selectOrId}`)
+            : selectOrId;
+        if (!select) return;
+        const button = panel.querySelector(`[data-select-id="${select.id}"]`);
+        if (!button) return;
+        const labelEl = button.querySelector('.config-custom-select-label');
+        const current = Array.from(select.options || []).find((opt) => opt.value === select.value) || select.options?.[select.selectedIndex] || null;
+        if (labelEl) {
+            labelEl.textContent = current?.textContent?.trim() || button.dataset.placeholder || '请选择';
+        }
+    }
+
+    refreshAllCustomSelects() {
+        ['config-profile', 'config-provider', 'config-region', 'config-transport-mode'].forEach((id) => this.refreshCustomSelect(id));
+    }
+
+    bindCustomSelect(selectId) {
+        const panel = this.element || document;
+        const select = panel.querySelector(`#${selectId}`);
+        const button = panel.querySelector(`[data-select-id="${selectId}"]`);
+        if (!select || !button || button.dataset.bound === 'true') return;
+
+        button.dataset.bound = 'true';
+        button.addEventListener('click', () => {
+            const options = Array.from(select.options || []).map((opt) => ({
+                value: opt.value,
+                label: opt.textContent || opt.value,
+            }));
+            this.openCustomSelectMenu({
+                anchorEl: button,
+                options,
+                currentValue: select.value,
+                onSelect: (value) => {
+                    if (select.value !== value) {
+                        select.value = value;
+                        select.dispatchEvent(new Event('change', { bubbles: true }));
+                    } else {
+                        this.refreshCustomSelect(select);
+                    }
+                },
+            });
+        });
+
+        select.addEventListener('change', () => this.refreshCustomSelect(select));
+        this.refreshCustomSelect(select);
+    }
+
+    initCustomSelects() {
+        ['config-profile', 'config-provider', 'config-region', 'config-transport-mode'].forEach((id) => this.bindCustomSelect(id));
+        this.refreshAllCustomSelects();
+    }
+
+    setTransportSectionExpanded(expanded) {
+        this.transportExpanded = Boolean(expanded);
+        const panel = this.element || document;
+        const content = panel.querySelector('#config-transport-content');
+        const chevron = panel.querySelector('#config-transport-chevron');
+        if (content) content.style.display = this.transportExpanded ? 'block' : 'none';
+        if (chevron) chevron.textContent = this.transportExpanded ? '▴' : '▾';
+    }
+
+    toggleTransportSection() {
+        this.setTransportSectionExpanded(!this.transportExpanded);
+    }
+
+    updateTransportVisibility({ autoExpand = false } = {}) {
+        const panel = this.element || document;
+        const mode = panel.querySelector('#config-transport-mode')?.value || 'direct';
+        const proxyFields = panel.querySelector('#config-proxy-fields');
+        const summary = panel.querySelector('#config-transport-summary');
+        if (proxyFields) {
+            proxyFields.style.display = mode === 'reverse_proxy' ? 'block' : 'none';
+        }
+        if (summary) {
+            summary.textContent = mode === 'reverse_proxy'
+                ? '当前：反代出口。保留服务商原协议，只改请求出口和附加鉴权。'
+                : '当前：直连。保持现在的请求方式，不经过反代。';
+        }
+        if (autoExpand && mode === 'reverse_proxy') {
+            this.setTransportSectionExpanded(true);
+        }
+        if (!autoExpand && mode !== 'reverse_proxy' && !this.transportExpanded) {
+            this.setTransportSectionExpanded(false);
+        }
+        this.refreshCustomSelect('config-transport-mode');
+    }
+
+    toggleProxyToken() {
+        const panel = this.element || document;
+        const input = panel.querySelector('#config-proxy-auth-token');
+        const btn = panel.querySelector('#toggle-proxy-token');
+        if (!input || !btn) return;
+        if (input.type === 'password') {
+            input.type = 'text';
+            btn.textContent = '隐藏';
+        } else {
+            input.type = 'password';
+            btn.textContent = '显示';
+        }
+    }
+
     /**
      * 获取指定 provider 的默认配置
      */
-    getProviderDefaults(provider) {
+    getProviderDefaults(provider, options = {}) {
         const isImage = this.activeTab === 'image';
+        const regionRaw = String(options?.region || 'us-central1').trim();
+        const region = regionRaw || 'us-central1';
         const defaults = {
             openai: {
                 baseUrl: 'https://api.openai.com/v1',
@@ -358,7 +664,7 @@ export class ConfigPanel {
                 urlHelp: 'Google AI Studio API URL'
             },
             vertexai: {
-                baseUrl: 'https://us-central1-aiplatform.googleapis.com',
+                baseUrl: `https://${region}-aiplatform.googleapis.com`,
                 model: 'gemini-2.0-flash-exp',
                 urlHelp: 'Vertex AI API URL (根据 Region 自动调整)'
             },
@@ -382,6 +688,10 @@ export class ConfigPanel {
         return defaults[provider] || defaults.openai;
     }
 
+    usesEditableBaseUrl(provider) {
+        return String(provider || '').trim().toLowerCase() === 'custom';
+    }
+
     resetFormForProvider(provider) {
         const panel = this.element || document;
         const baseEl = panel.querySelector('#config-baseurl');
@@ -392,7 +702,7 @@ export class ConfigPanel {
         const saEl = panel.querySelector('#config-serviceaccount');
         const datalist = panel.querySelector('#model-list');
 
-        const defaults = this.getProviderDefaults(provider);
+        const defaults = this.getProviderDefaults(provider, { region: regionEl?.value || 'us-central1' });
 
         if (baseEl) {
             baseEl.value = defaults.baseUrl;
@@ -423,6 +733,7 @@ export class ConfigPanel {
             datalist.innerHTML = '';
         }
         this.clearModelOptions();
+        this.refreshAllCustomSelects();
     }
 
     clearModelOptions() {
@@ -566,6 +877,7 @@ export class ConfigPanel {
 
             logger.info(`已加载 ${provider} 的配置`);
             this.updateFieldVisibility(provider);
+            this.refreshAllCustomSelects();
 
         } catch (e) {
             logger.error('加载 provider 配置失败:', e);
@@ -584,6 +896,11 @@ export class ConfigPanel {
         const baseEl = panel.querySelector('#config-baseurl');
         const modelEl = panel.querySelector('#config-model');
         const streamEl = panel.querySelector('#config-stream');
+        const transportModeEl = panel.querySelector('#config-transport-mode');
+        const proxyBaseEl = panel.querySelector('#config-proxy-baseurl');
+        const proxyHeaderEl = panel.querySelector('#config-proxy-auth-header');
+        const proxyTokenEl = panel.querySelector('#config-proxy-auth-token');
+        const forwardProviderAuthEl = panel.querySelector('#config-forward-provider-auth');
         const apiKeyInput = panel.querySelector('#config-apikey');
         if (!providerEl || !baseEl || !modelEl || !streamEl || !apiKeyInput) {
             logger.error('配置面板元素缺失，填充表单中止');
@@ -591,9 +908,36 @@ export class ConfigPanel {
         }
 
         providerEl.value = config.provider || 'openai';
-        baseEl.value = config.baseUrl || '';
+        const currentProvider = providerEl.value || 'openai';
+        const currentRegion = config.vertexaiRegion || 'us-central1';
+        const defaultBaseUrl = this.getProviderDefaults(currentProvider, { region: currentRegion }).baseUrl;
+        const storedBaseUrl = String(config.baseUrl || '').trim();
+        const legacyProxyBaseUrl =
+            !this.usesEditableBaseUrl(currentProvider) &&
+            storedBaseUrl &&
+            storedBaseUrl !== defaultBaseUrl &&
+            config.connectionMode !== 'reverse_proxy'
+                ? storedBaseUrl
+                : '';
+        baseEl.value = this.usesEditableBaseUrl(currentProvider)
+            ? (config.baseUrl || '')
+            : defaultBaseUrl;
         modelEl.value = config.model || '';
         streamEl.checked = config.stream !== false;
+        if (transportModeEl) {
+            transportModeEl.value = (config.connectionMode === 'reverse_proxy' || legacyProxyBaseUrl)
+                ? 'reverse_proxy'
+                : 'direct';
+        }
+        if (proxyBaseEl) proxyBaseEl.value = config.proxyBaseUrl || legacyProxyBaseUrl || '';
+        if (proxyHeaderEl) proxyHeaderEl.value = config.proxyAuthHeaderName || '';
+        if (proxyTokenEl) {
+            proxyTokenEl.type = 'password';
+            proxyTokenEl.value = config.proxyAuthToken || '';
+        }
+        const proxyToggleBtn = panel.querySelector('#toggle-proxy-token');
+        if (proxyToggleBtn) proxyToggleBtn.textContent = '显示';
+        if (forwardProviderAuthEl) forwardProviderAuthEl.checked = config.forwardProviderAuth !== false;
         const timeoutEl = panel.querySelector('#config-timeout');
         if (timeoutEl) {
             const ms = Number(config.timeout);
@@ -667,6 +1011,9 @@ export class ConfigPanel {
 
         // 更新字段可见性
         this.updateFieldVisibility(config.provider || 'openai');
+        this.updateTransportVisibility();
+        this.setTransportSectionExpanded(config.connectionMode === 'reverse_proxy' || Boolean(legacyProxyBaseUrl));
+        this.refreshAllCustomSelects();
     }
 
     refreshProfileOptions() {
@@ -691,6 +1038,7 @@ export class ConfigPanel {
                 select.value = activeId;
                 logger.debug(`刷新配置选择器，当前: ${activeId.slice(0, 20)}...`);
             }
+            this.refreshCustomSelect(select);
         } finally {
             // 延迟重置标志，确保 onchange 事件不会触发
             setTimeout(() => {
@@ -711,17 +1059,23 @@ export class ConfigPanel {
      * 更新不同 provider 的默认值
      */
     updateDefaultsForProvider(provider) {
-        const defaults = this.getProviderDefaults(provider);
         const panel = this.element || document;
+        const defaults = this.getProviderDefaults(provider, {
+            region: panel.querySelector('#config-region')?.value || 'us-central1',
+        });
         const baseUrlInput = panel.querySelector('#config-baseurl');
+        const baseUrlSection = panel.querySelector('#config-baseurl-section');
         const modelInput = panel.querySelector('#config-model');
+        const editableBaseUrl = this.usesEditableBaseUrl(provider);
 
         if (baseUrlInput) {
-            // 自动填写 Base URL（如果当前为空或为其他服务商的默认值）
+            // 内建服务商固定使用默认协议地址；custom 保持可编辑。
             const currentUrl = baseUrlInput.value.trim();
-            const allDefaults = ['openai','makersuite','vertexai','deepseek','anthropic','custom'].map(p => this.getProviderDefaults(p).baseUrl);
+            const selectedRegion = panel.querySelector('#config-region')?.value || 'us-central1';
+            const allDefaults = ['openai', 'makersuite', 'vertexai', 'deepseek', 'anthropic', 'custom']
+                .map((name) => this.getProviderDefaults(name, { region: selectedRegion }).baseUrl);
             const isDefaultUrl = allDefaults.includes(currentUrl);
-            if (!currentUrl || isDefaultUrl) {
+            if (!editableBaseUrl || !currentUrl || isDefaultUrl) {
                 baseUrlInput.value = defaults.baseUrl;
             }
             baseUrlInput.placeholder = defaults.baseUrl;
@@ -730,6 +1084,9 @@ export class ConfigPanel {
             if (helpText && helpText.tagName === 'SMALL') {
                 helpText.textContent = defaults.urlHelp;
             }
+        }
+        if (baseUrlSection) {
+            baseUrlSection.style.display = editableBaseUrl ? 'block' : 'none';
         }
 
         if (modelInput) {
@@ -749,8 +1106,12 @@ export class ConfigPanel {
      */
     updateFieldVisibility(provider) {
         const panel = this.element || document;
+        const baseUrlSection = panel.querySelector('#config-baseurl-section');
         const vertexaiFields = panel.querySelector('#vertexai-fields');
         const apiKeyHelp = panel.querySelector('#apikey-help');
+        if (baseUrlSection) {
+            baseUrlSection.style.display = this.usesEditableBaseUrl(provider) ? 'block' : 'none';
+        }
 
         if (provider === 'vertexai') {
             vertexaiFields.style.display = 'block';
@@ -763,6 +1124,7 @@ export class ConfigPanel {
                 apiKeyHelp.textContent = '保存后 Key 以遮罩显示（不可复制）；用 🔑 管理多个 Key';
             }
         }
+        this.refreshAllCustomSelects();
     }
 
     /**
@@ -780,6 +1142,7 @@ export class ConfigPanel {
         } catch {}
 
         const provider = panel.querySelector('#config-provider')?.value;
+        const region = panel.querySelector('#config-region')?.value || 'us-central1';
         const apiKeyInput = panel.querySelector('#config-apikey');
         const rawKey = (apiKeyInput?.value || '').trim();
         const masked = apiKeyInput?.dataset?.masked || '';
@@ -788,7 +1151,14 @@ export class ConfigPanel {
 
         const formData = {
             provider: provider,
-            baseUrl: (panel.querySelector('#config-baseurl')?.value || '').trim(),
+            baseUrl: this.usesEditableBaseUrl(provider)
+                ? (panel.querySelector('#config-baseurl')?.value || '').trim()
+                : this.getProviderDefaults(provider, { region }).baseUrl,
+            connectionMode: panel.querySelector('#config-transport-mode')?.value === 'reverse_proxy' ? 'reverse_proxy' : 'direct',
+            proxyBaseUrl: (panel.querySelector('#config-proxy-baseurl')?.value || '').trim(),
+            proxyAuthHeaderName: (panel.querySelector('#config-proxy-auth-header')?.value || '').trim(),
+            proxyAuthToken: panel.querySelector('#config-proxy-auth-token')?.value || '',
+            forwardProviderAuth: Boolean(panel.querySelector('#config-forward-provider-auth')?.checked),
             apiKey: apiKey,
             model: (panel.querySelector('#config-model')?.value || '').trim(),
             stream: Boolean(panel.querySelector('#config-stream')?.checked),
@@ -803,7 +1173,6 @@ export class ConfigPanel {
 
         // Add Vertex AI specific fields
         if (provider === 'vertexai') {
-            const region = panel.querySelector('#config-region')?.value;
             const saInput = panel.querySelector('#config-serviceaccount');
             let serviceAccount = saInput?.value;
 
@@ -1070,8 +1439,8 @@ export class ConfigPanel {
         const formData = this.getFormData();
 
         try {
-            if (!formData.baseUrl || !formData.model) {
-                this.showStatus('请填写 Base URL / 模型', 'error');
+            if (!formData.model || (this.usesEditableBaseUrl(formData.provider) && !formData.baseUrl)) {
+                this.showStatus(this.usesEditableBaseUrl(formData.provider) ? '请填写 Base URL / 模型' : '请填写模型', 'error');
                 return;
             }
 
@@ -1228,7 +1597,7 @@ export class ConfigPanel {
 
         try {
             // 验证必填字段
-            if (!formData.baseUrl) {
+            if (this.usesEditableBaseUrl(formData.provider) && !formData.baseUrl) {
                 this.showStatus('请先填写 Base URL', 'error');
                 return;
             }

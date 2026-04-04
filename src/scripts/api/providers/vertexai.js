@@ -5,6 +5,7 @@
 
 import { handleSSE } from '../stream.js';
 import { createLinkedAbortController, splitRequestOptions } from '../abort.js';
+import { prepareTransportRequest } from '../transport.js';
 
 const getTauriInvoker = () => {
   const g = typeof globalThis !== 'undefined' ? globalThis : undefined;
@@ -69,6 +70,8 @@ const makeAbortError = () => {
 };
 
 const request = async ({
+  provider = 'vertexai',
+  transportConfig = null,
   url,
   method = 'GET',
   headers = {},
@@ -76,14 +79,22 @@ const request = async ({
   timeoutMs = 60000,
   signal,
   requestId = '',
+  allowProxy = true,
 } = {}) => {
+  const prepared = prepareTransportRequest({
+    config: transportConfig,
+    provider,
+    url,
+    headers,
+    allowProxy,
+  });
   const invoker = getTauriInvoker();
   if (typeof invoker === 'function') {
     if (signal?.aborted) throw makeAbortError();
     return invoker('http_request', {
-      url,
+      url: prepared.url,
       method,
-      headers,
+      headers: prepared.headers,
       body: typeof body === 'string' ? body : body == null ? null : String(body),
       timeout_ms: timeoutMs,
       request_id: requestId || null,
@@ -96,7 +107,12 @@ const request = async ({
 
   const { controller, cleanup } = createLinkedAbortController({ timeoutMs, signal });
   try {
-    const resp = await fetch(url, { method, headers, body, signal: controller.signal });
+    const resp = await fetch(prepared.url, {
+      method,
+      headers: prepared.headers,
+      body,
+      signal: controller.signal,
+    });
     const text = await resp.text();
     const outHeaders = {};
     resp.headers.forEach((v, k) => { outHeaders[k] = v; });
@@ -107,6 +123,8 @@ const request = async ({
 };
 
 const requestJson = async ({
+  provider = 'vertexai',
+  transportConfig = null,
   url,
   method = 'GET',
   headers = {},
@@ -114,8 +132,20 @@ const requestJson = async ({
   timeoutMs = 60000,
   signal,
   requestId = '',
+  allowProxy = true,
 } = {}) => {
-  const res = await request({ url, method, headers, body, timeoutMs, signal, requestId });
+  const res = await request({
+    provider,
+    transportConfig,
+    url,
+    method,
+    headers,
+    body,
+    timeoutMs,
+    signal,
+    requestId,
+    allowProxy,
+  });
   if (!res.ok) {
     const raw = String(res.body || '').trim();
     let detail = '';
@@ -145,6 +175,7 @@ const getHostForRegion = (region) => {
 
 export class VertexAIProvider {
   constructor(config) {
+    this.transportConfig = config || {};
     this.timeout = config.timeout || 60000;
     this.model = config.model || 'gemini-2.0-flash-exp';
     this.region = config.vertexaiRegion || 'us-central1';
@@ -251,11 +282,14 @@ export class VertexAIProvider {
       form.set('assertion', jwt);
 
       const tok = await requestJson({
+        provider: 'vertexai',
+        transportConfig: this.transportConfig,
         url: 'https://oauth2.googleapis.com/token',
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: form.toString(),
         timeoutMs: this.timeout,
+        allowProxy: false,
       });
 
       const accessToken = String(tok?.access_token || '').trim();
@@ -406,6 +440,8 @@ export class VertexAIProvider {
     const tryOnce = async ({ region, baseHost }) => {
       const url = this.buildUrlFor({ stream: false, region, baseHost, model: this.model });
       return requestJson({
+        provider: 'vertexai',
+        transportConfig: this.transportConfig,
         url,
         method: 'POST',
         headers,
@@ -467,6 +503,8 @@ export class VertexAIProvider {
       if (typeof invoker === 'function') {
         if (signal?.aborted) throw makeAbortError();
         const res = await request({
+          provider: 'vertexai',
+          transportConfig: this.transportConfig,
           url,
           method: 'POST',
           headers: { ...headers, Accept: 'text/event-stream' },
@@ -498,9 +536,15 @@ export class VertexAIProvider {
       // Browser fallback
       const { controller, cleanup } = createLinkedAbortController({ timeoutMs: this.timeout, signal });
       try {
-        const response = await fetch(url, {
-          method: 'POST',
+        const prepared = prepareTransportRequest({
+          config: this.transportConfig,
+          provider: 'vertexai',
+          url,
           headers: { ...headers, Accept: 'text/event-stream' },
+        });
+        const response = await fetch(prepared.url, {
+          method: 'POST',
+          headers: prepared.headers,
           signal: controller.signal,
           body: JSON.stringify(body),
         });
@@ -560,7 +604,14 @@ export class VertexAIProvider {
           if (pageToken) qs.set('pageToken', pageToken);
           const url = `${baseHost}/v1/projects/${this.projectId}/locations/${region}/publishers/google/models?${qs.toString()}`;
 
-          const data = await requestJson({ url, method: 'GET', headers, timeoutMs: this.timeout });
+          const data = await requestJson({
+            provider: 'vertexai',
+            transportConfig: this.transportConfig,
+            url,
+            method: 'GET',
+            headers,
+            timeoutMs: this.timeout,
+          });
           const models = Array.isArray(data?.models) ? data.models : [];
           models.forEach((m) => {
             const id = String(m?.name || '').split('/').pop();

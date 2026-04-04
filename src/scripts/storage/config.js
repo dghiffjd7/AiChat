@@ -68,6 +68,11 @@ const normalizeProfile = (p = {}) => ({
     name: p.name || '未命名',
     provider: p.provider || 'openai',
     baseUrl: p.baseUrl || 'https://api.openai.com/v1',
+    connectionMode: p.connectionMode === 'reverse_proxy' ? 'reverse_proxy' : 'direct',
+    proxyBaseUrl: typeof p.proxyBaseUrl === 'string' ? p.proxyBaseUrl : '',
+    proxyAuthHeaderName: typeof p.proxyAuthHeaderName === 'string' ? p.proxyAuthHeaderName : '',
+    proxyAuthToken: typeof p.proxyAuthToken === 'string' ? p.proxyAuthToken : '',
+    forwardProviderAuth: p.forwardProviderAuth !== false,
     model: p.model || 'gpt-3.5-turbo',
     stream: p.stream !== false,
     timeout: typeof p.timeout === 'number' ? p.timeout : 60000,
@@ -189,6 +194,11 @@ export class ConfigManager {
             provider: 'openai',
             apiKey: '',
             baseUrl: 'https://api.openai.com/v1',
+            connectionMode: 'direct',
+            proxyBaseUrl: '',
+            proxyAuthHeaderName: '',
+            proxyAuthToken: '',
+            forwardProviderAuth: true,
             model: isImage ? 'gpt-image-1' : 'gpt-3.5-turbo',
             stream: true,
             timeout: 60000,
@@ -601,6 +611,11 @@ export class ConfigManager {
         const runtime = {
             provider: p.provider,
             baseUrl: p.baseUrl,
+            connectionMode: p.connectionMode === 'reverse_proxy' ? 'reverse_proxy' : 'direct',
+            proxyBaseUrl: String(p.proxyBaseUrl || '').trim(),
+            proxyAuthHeaderName: String(p.proxyAuthHeaderName || '').trim(),
+            proxyAuthToken: String(p.proxyAuthToken || ''),
+            forwardProviderAuth: p.forwardProviderAuth !== false,
             model: p.model,
             stream: p.stream,
             timeout: p.timeout,
@@ -660,6 +675,21 @@ export class ConfigManager {
             new URL(config.baseUrl);
         } catch (e) {
             throw new Error(`无效的 baseUrl: ${config.baseUrl}`);
+        }
+
+        const mode = String(config.connectionMode || 'direct').trim().toLowerCase();
+        if (!['direct', 'reverse_proxy'].includes(mode)) {
+            throw new Error(`无效的 connectionMode: ${config.connectionMode}`);
+        }
+        if (mode === 'reverse_proxy') {
+            if (!config.proxyBaseUrl) {
+                throw new Error('启用反代时必须填写反代 Base URL');
+            }
+            try {
+                new URL(config.proxyBaseUrl);
+            } catch (e) {
+                throw new Error(`无效的 proxyBaseUrl: ${config.proxyBaseUrl}`);
+            }
         }
 
         return true;

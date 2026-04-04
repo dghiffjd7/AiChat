@@ -4,6 +4,7 @@
 
 import { handleSSE } from '../stream.js';
 import { createLinkedAbortController, splitRequestOptions } from '../abort.js';
+import { prepareTransportRequest } from '../transport.js';
 
 const getTauriInvoker = () => {
   const g = typeof globalThis !== 'undefined' ? globalThis : undefined;
@@ -76,6 +77,7 @@ const estimateOpenAIRequestChars = ({ model, messages, stream, options } = {}) =
 
 export class OpenAIProvider {
   constructor(config) {
+    this.transportConfig = config || {};
     this.provider = config.provider || 'openai';
     this.apiKey = config.apiKey;
     this.baseUrl = config.baseUrl || 'https://api.openai.com/v1';
@@ -137,13 +139,19 @@ export class OpenAIProvider {
   }
 
   async request({ url, method = 'GET', headers = {}, body = undefined, signal, requestId = '' } = {}) {
-    const mergedHeaders = { ...headers };
+    const prepared = prepareTransportRequest({
+      config: this.transportConfig,
+      provider: this.provider,
+      url,
+      headers,
+    });
+    const mergedHeaders = { ...(prepared.headers || {}) };
     const invoker = getTauriInvoker();
     if (typeof invoker === 'function') {
       if (signal?.aborted) throw makeAbortError();
       try {
         return await invoker('http_request', {
-          url,
+          url: prepared.url,
           method,
           headers: mergedHeaders,
           body: typeof body === 'string' ? body : body == null ? null : String(body),
@@ -162,7 +170,7 @@ export class OpenAIProvider {
 
     const { controller, cleanup } = createLinkedAbortController({ timeoutMs: this.timeout, signal });
     try {
-      const response = await fetch(url, {
+      const response = await fetch(prepared.url, {
         method,
         headers: mergedHeaders,
         signal: controller.signal,
@@ -249,7 +257,7 @@ export class OpenAIProvider {
         `请求过大（约 ${Math.round(estimatedChars / 1024)} KB），可能导致 Android WebView OOM；请减少历史/摘要/世界书注入或清理该聊天室。`,
       );
     }
-    const payload = JSON.stringify({
+      const payload = JSON.stringify({
       model: this.model,
       messages: messages,
       stream: true,
@@ -282,9 +290,15 @@ export class OpenAIProvider {
 
     const { controller, cleanup } = createLinkedAbortController({ timeoutMs: this.timeout, signal });
     try {
-      const response = await fetch(`${this.baseUrl}/chat/completions`, {
-        method: 'POST',
+      const prepared = prepareTransportRequest({
+        config: this.transportConfig,
+        provider: this.provider,
+        url: `${this.baseUrl}/chat/completions`,
         headers: { ...this.getHeaders(), Accept: 'text/event-stream' },
+      });
+      const response = await fetch(prepared.url, {
+        method: 'POST',
+        headers: prepared.headers,
         signal: controller.signal,
         body: payload,
       });
