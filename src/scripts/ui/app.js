@@ -15231,6 +15231,7 @@ Phase G（Frame 36）：循环衔接
             avatar: assistantAvatar,
             time: formatNowTime(),
             id: streamCtrl?.id,
+            sessionId,
             rawOriginal: full,
             rawSource: finalSource,
             raw: stored,
@@ -15244,6 +15245,8 @@ Phase G（Frame 36）：循环衔接
           }
           {
             const saved = chatStore.appendMessage(parsed, sessionId);
+            // Keep RP/creative first-render on the same full rebuild path as raw-edit save.
+            if (isSessionActive(sessionId) && saved?.id) ui.updateMessage(saved.id, saved);
             autoMarkReadIfActive(sessionId, saved?.id || parsed?.id || '');
             emitPluginAfterReceive(saved, sessionId);
           }
@@ -15762,6 +15765,7 @@ Phase G（Frame 36）：循环衔接
             name: '助手',
             avatar: assistantAvatar,
             time: formatNowTime(),
+            sessionId,
             rawOriginal: resultRaw,
             rawSource: finalSource,
             raw: stored,
@@ -15771,6 +15775,8 @@ Phase G（Frame 36）：循环衔接
           if (isSessionActive(sessionId)) ui.addMessage(parsed);
           {
             const saved = chatStore.appendMessage(parsed, sessionId);
+            // Keep RP/creative first-render on the same full rebuild path as raw-edit save.
+            if (isSessionActive(sessionId) && saved?.id) ui.updateMessage(saved.id, saved);
             autoMarkReadIfActive(sessionId, saved?.id || parsed?.id || '');
             emitPluginAfterReceive(saved, sessionId);
           }
@@ -16589,7 +16595,7 @@ Phase G（Frame 36）：循环衔接
     }
     if (action === 'edit-assistant-raw' && message.role === 'assistant') {
       const next = String(payload?.text ?? '');
-      const regexEditMode = payload?.regexEditMode === false ? false : true;
+      const regexEditMode = payload?.regexEditMode === true;
       const stripFn =
         (typeof stripUpdateVariableBlocks === 'function' && stripUpdateVariableBlocks) ||
         (typeof stripUpdateVariableBloacks === 'function' && stripUpdateVariableBloacks) ||

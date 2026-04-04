@@ -1248,6 +1248,7 @@ export class ChatUI {
       if (fm?.meta?.renderRich) {
         renderRichText(target, text, {
           messageId: msgId || fm?.id || meta?.id,
+          preserveHtmlNewlines: true,
           sessionId: fm?.sessionId,
           debugTag: fm?.meta?.isGreeting ? 'rp-greeting' : '',
         });
@@ -1746,7 +1747,7 @@ export class ChatUI {
         if (!m || m.role !== 'assistant') return;
         const codeEl = overlay.querySelector('[data-role="code"]');
         const nextText = String(codeEl?.value ?? '');
-        this.actionHandler?.('edit-assistant-raw', m, { text: nextText });
+        this.actionHandler?.('edit-assistant-raw', m, { text: nextText, regexEditMode: false });
         hide();
       });
 
