@@ -1738,7 +1738,6 @@ export class ScriptRuntime {
 
   async init() {
     await this.store?.ready;
-    this.startWorker();
     await this.syncScripts();
   }
 
@@ -1877,6 +1876,26 @@ export class ScriptRuntime {
   async syncScripts(contextOverride) {
     const context = contextOverride || this.buildContext();
     this.context = { ...this.context, ...context };
+    const settings = appSettings.get();
+    const runtimeSettings = {
+      allowReadMessages: settings.scriptAllowReadMessages !== false,
+      allowModifyVariables: settings.scriptAllowModifyVariables !== false,
+      allowNetwork: settings.scriptAllowNetwork === true,
+    };
+    if (!this.isEnabled(this.context.sessionId)) {
+      if (this.worker) {
+        this.worker.postMessage({
+          type: 'sync',
+          scripts: [],
+          context: this.context,
+          settings: runtimeSettings,
+        });
+      }
+      if (this.iframeRuntime) {
+        this.iframeRuntime.syncScripts([], this.context, runtimeSettings);
+      }
+      return;
+    }
     const scripts = [];
     const oneTime = this.oneTimeScripts.get(this.context.sessionId) || null;
     const seen = new Set();
@@ -1924,12 +1943,6 @@ export class ScriptRuntime {
       logger.warn(msg);
       emitDebugLog({ message: msg, type: 'warn', source: 'script' });
     }
-    const settings = appSettings.get();
-    const runtimeSettings = {
-      allowReadMessages: settings.scriptAllowReadMessages !== false,
-      allowModifyVariables: settings.scriptAllowModifyVariables !== false,
-      allowNetwork: settings.scriptAllowNetwork === true,
-    };
     const workerScripts = [];
     const iframeScripts = [];
     filtered.forEach((script) => {
@@ -1937,6 +1950,9 @@ export class ScriptRuntime {
       if (isEsmLikeScript(content)) iframeScripts.push(script);
       else workerScripts.push(script);
     });
+    if (workerScripts.length && !this.worker) {
+      this.startWorker();
+    }
     if (this.worker) {
       this.worker.postMessage({
         type: 'sync',

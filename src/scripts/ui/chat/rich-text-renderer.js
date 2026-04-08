@@ -208,6 +208,9 @@ const applyIframeStaticFallback = (iframe, id, reason = '') => {
         return false;
     }
 };
+try {
+    localStorage.removeItem('chatapp_rich_script_guard_v1');
+} catch {}
 const inspectIframeBlankState = (iframe) => {
     try {
         const win = iframe?.contentWindow;
@@ -5639,6 +5642,167 @@ const buildDollarGlobalShim = ({
 </script>`;
 };
 
+const LAZY_RICH_ROOT_MARGIN = '360px 0px';
+const lazyRichObserverRoots = new WeakMap();
+const lazyRichPendingMounts = new WeakMap();
+const lazyRichMountQueue = [];
+let lazyRichViewportObserver = null;
+let lazyRichMountRaf = 0;
+
+const buildLazyRichPlaceholder = (onActivate) => {
+    const wrap = document.createElement('div');
+    wrap.className = 'chat-lazy-rich-placeholder';
+    wrap.style.cssText = [
+        'display:flex',
+        'align-items:center',
+        'justify-content:space-between',
+        'gap:12px',
+        'padding:12px 14px',
+        'min-height:84px',
+        'background:linear-gradient(180deg, rgba(248,250,252,0.96), rgba(241,245,249,0.96))',
+        'color:#0f172a',
+    ].join(';');
+
+    const textWrap = document.createElement('div');
+    textWrap.style.cssText = 'display:flex; flex-direction:column; gap:4px; min-width:0;';
+    const title = document.createElement('div');
+    title.style.cssText = 'font-size:13px; font-weight:700;';
+    title.textContent = '复杂卡片待加载';
+    const desc = document.createElement('div');
+    desc.style.cssText = 'font-size:12px; line-height:1.45; color:#475569;';
+    desc.textContent = '滚动到可见区域会自动加载；点击右侧也可立即展开。';
+    textWrap.appendChild(title);
+    textWrap.appendChild(desc);
+
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = '立即加载';
+    button.style.cssText = [
+        'flex:0 0 auto',
+        'border:1px solid rgba(15,23,42,0.14)',
+        'background:#fff',
+        'color:#0f172a',
+        'border-radius:10px',
+        'padding:8px 12px',
+        'font-size:12px',
+        'font-weight:600',
+        'cursor:pointer',
+    ].join(';');
+    button.addEventListener('click', (event) => {
+        try { event.preventDefault(); } catch {}
+        try { event.stopPropagation(); } catch {}
+        onActivate?.();
+    });
+
+    wrap.appendChild(textWrap);
+    wrap.appendChild(button);
+    return wrap;
+};
+
+const drainLazyRichMountQueue = () => {
+    lazyRichMountRaf = 0;
+    const batch = lazyRichMountQueue.splice(0, 2);
+    batch.forEach((containerEl) => {
+        const pending = lazyRichPendingMounts.get(containerEl);
+        if (!pending || pending.mounted) return;
+        pending.queued = false;
+        pending.mounted = true;
+        if (pending.observer) {
+            try { pending.observer.unobserve(containerEl); } catch {}
+        }
+        pending.observer = null;
+        if (!containerEl || !containerEl.isConnected) {
+            lazyRichPendingMounts.delete(containerEl);
+            return;
+        }
+        const options = pending.options || {};
+        const text = pending.text;
+        lazyRichPendingMounts.delete(containerEl);
+        renderRichText(containerEl, text, { ...options, lazyMount: false });
+    });
+    if (lazyRichMountQueue.length) {
+        lazyRichMountRaf = requestAnimationFrame(drainLazyRichMountQueue);
+    }
+};
+
+const enqueueLazyRichMount = (containerEl, { immediate = false } = {}) => {
+    const pending = lazyRichPendingMounts.get(containerEl);
+    if (!pending || pending.mounted) return;
+    if (immediate) {
+        lazyRichMountQueue.unshift(containerEl);
+        if (!lazyRichMountRaf) drainLazyRichMountQueue();
+        return;
+    }
+    if (pending.queued) return;
+    pending.queued = true;
+    lazyRichMountQueue.push(containerEl);
+    if (!lazyRichMountRaf) {
+        lazyRichMountRaf = requestAnimationFrame(drainLazyRichMountQueue);
+    }
+};
+
+const getLazyRichObserver = (rootEl = null) => {
+    if (typeof IntersectionObserver === 'undefined') return null;
+    if (!rootEl) {
+        if (!lazyRichViewportObserver) {
+            lazyRichViewportObserver = new IntersectionObserver((entries) => {
+                entries.forEach((entry) => {
+                    if (!entry?.isIntersecting && !(entry?.intersectionRatio > 0)) return;
+                    enqueueLazyRichMount(entry.target);
+                });
+            }, { root: null, rootMargin: LAZY_RICH_ROOT_MARGIN, threshold: 0.01 });
+        }
+        return lazyRichViewportObserver;
+    }
+    if (lazyRichObserverRoots.has(rootEl)) return lazyRichObserverRoots.get(rootEl);
+    const observer = new IntersectionObserver((entries) => {
+        entries.forEach((entry) => {
+            if (!entry?.isIntersecting && !(entry?.intersectionRatio > 0)) return;
+            enqueueLazyRichMount(entry.target);
+        });
+    }, { root: rootEl, rootMargin: LAZY_RICH_ROOT_MARGIN, threshold: 0.01 });
+    lazyRichObserverRoots.set(rootEl, observer);
+    return observer;
+};
+
+const cancelLazyRichMount = (containerEl) => {
+    const pending = lazyRichPendingMounts.get(containerEl);
+    if (!pending) return;
+    if (pending.observer) {
+        try { pending.observer.unobserve(containerEl); } catch {}
+    }
+    lazyRichPendingMounts.delete(containerEl);
+};
+
+const shouldLazyMountRichText = (text) => {
+    const raw = String(text || '');
+    if (!raw) return false;
+    return /```|<(style|details|div|body|html|table|section|article|main|svg|iframe|script)\b|&lt;(style|details|div|body|html|table|section|article|main|svg|iframe|script)\b/i.test(raw);
+};
+
+const scheduleLazyRichMount = (containerEl, text, options = {}) => {
+    if (!containerEl) return;
+    cancelLazyRichMount(containerEl);
+    containerEl.innerHTML = '';
+    const placeholder = buildLazyRichPlaceholder(() => enqueueLazyRichMount(containerEl, { immediate: true }));
+    containerEl.appendChild(placeholder);
+    const rootEl = containerEl.closest?.('#chat-scroll') || null;
+    const observer = getLazyRichObserver(rootEl);
+    const pending = {
+        text: String(text ?? ''),
+        options: { ...options },
+        observer,
+        mounted: false,
+        queued: false,
+    };
+    lazyRichPendingMounts.set(containerEl, pending);
+    if (observer) {
+        observer.observe(containerEl);
+        return;
+    }
+    enqueueLazyRichMount(containerEl);
+};
+
 const makeCodeBlock = ({ lang, code, messageId, preserveHtmlNewlines = false, sessionId, debugTag = '' } = {}) => {
     const wrap = document.createElement('div');
     wrap.className = 'chat-codeblock';
@@ -6969,8 +7133,22 @@ export const setupIframeResizeListener = () => {
     });
 };
 
-export const renderRichText = (containerEl, text, { messageId, preserveHtmlNewlines = false, sessionId, debugTag = '' } = {}) => {
+export const renderRichText = (
+    containerEl,
+    text,
+    { messageId, preserveHtmlNewlines = false, sessionId, debugTag = '', lazyMount = false } = {},
+) => {
     if (!containerEl) return;
+    cancelLazyRichMount(containerEl);
+    if (lazyMount && shouldLazyMountRichText(text)) {
+        scheduleLazyRichMount(containerEl, text, {
+            messageId,
+            preserveHtmlNewlines,
+            sessionId,
+            debugTag,
+        });
+        return;
+    }
     containerEl.innerHTML = '';
 
     const STATUS_TOKEN = '__CHATAPP_STATUS__';
@@ -7108,4 +7286,9 @@ export const renderRichText = (containerEl, text, { messageId, preserveHtmlNewli
             if (idx !== lines.length - 1) containerEl.appendChild(document.createElement('br'));
         });
     });
+};
+
+export const cleanupRichText = (containerEl) => {
+    if (!containerEl) return;
+    cancelLazyRichMount(containerEl);
 };

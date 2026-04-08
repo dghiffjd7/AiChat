@@ -4,7 +4,7 @@
 
 import { resolveMediaAsset } from '../../utils/media-assets.js';
 import { stickerPackStore } from '../../storage/sticker-pack-store.js';
-import { renderRichText, setupIframeResizeListener } from './rich-text-renderer.js';
+import { cleanupRichText, renderRichText, setupIframeResizeListener } from './rich-text-renderer.js';
 import { appSettings } from '../../storage/app-settings.js';
 import { logger } from '../../utils/logger.js';
 
@@ -569,7 +569,23 @@ export class ChatUI {
   }
 
   clearMessages() {
+    this.cleanupRichTextMounts(this.scrollEl);
     this.scrollEl.innerHTML = '';
+  }
+
+  cleanupRichTextMounts(rootEl) {
+    if (!rootEl) return;
+    const seen = new Set();
+    const candidates = [];
+    if (rootEl.matches?.('.chat-message-content, .QQ_chat_msgdiv')) candidates.push(rootEl);
+    rootEl.querySelectorAll?.('.chat-message-content, .QQ_chat_msgdiv').forEach(el => candidates.push(el));
+    candidates.forEach(el => {
+      if (!el || seen.has(el)) return;
+      seen.add(el);
+      try {
+        cleanupRichText(el);
+      } catch {}
+    });
   }
 
   clearInput(options = {}) {
@@ -986,6 +1002,7 @@ export class ChatUI {
             preserveHtmlNewlines: true,
             sessionId: resolvedSessionId,
             debugTag: message?.meta?.isGreeting ? 'rp-greeting' : '',
+            lazyMount: message?.__lazyRichMount === true,
           });
           break;
         }
@@ -1251,6 +1268,7 @@ export class ChatUI {
           preserveHtmlNewlines: true,
           sessionId: fm?.sessionId,
           debugTag: fm?.meta?.isGreeting ? 'rp-greeting' : '',
+          lazyMount: false,
         });
       } else {
         const normalized = this.normalizeAssistantLineBreaks(text);
@@ -1265,8 +1283,11 @@ export class ChatUI {
   preloadHistory(messages = [], { keepScroll = false } = {}) {
     const list = Array.isArray(messages) ? messages : [];
     if (!list.length || !this.scrollEl) return;
+    const eagerTailCount = 8;
+    const eagerStart = Math.max(0, list.length - eagerTailCount);
     const fragment = document.createDocumentFragment();
-    for (const msg of list) {
+    for (let idx = 0; idx < list.length; idx += 1) {
+      const msg = list[idx];
       const el = this.buildMessageElement({
         role: msg.role === 'system' ? 'system' : msg.role === 'user' ? 'user' : 'assistant',
         type: msg.type || 'text',
@@ -1279,6 +1300,7 @@ export class ChatUI {
         id: msg.id,
         status: msg.status,
         sessionId: msg.sessionId,
+        __lazyRichMount: Boolean(msg?.meta?.renderRich) && idx < eagerStart,
       });
       if (el) fragment.appendChild(el);
     }
@@ -1306,6 +1328,7 @@ export class ChatUI {
         id: msg.id,
         status: msg.status,
         sessionId: msg.sessionId,
+        __lazyRichMount: Boolean(msg?.meta?.renderRich),
       });
       if (el) fragment.appendChild(el);
     }
@@ -1333,7 +1356,10 @@ export class ChatUI {
 
   removeMessage(msgId) {
     const el = this.scrollEl.querySelector(`[data-msg-id="${msgId}"]`);
-    if (el) el.remove();
+    if (el) {
+      this.cleanupRichTextMounts(el);
+      el.remove();
+    }
   }
 
   updateMessage(msgId, newMessage) {
@@ -1347,8 +1373,74 @@ export class ChatUI {
       || String(prev?.sessionId || '').trim()
       || this.resolveMessageSessionId(prev);
     const next = { ...prev, ...(newMessage || {}), id: msgId, sessionId: resolvedSessionId };
+    if (this.tryPatchMessageElement(existing, next)) return existing;
     const newEl = this.buildMessageElement(next);
-    if (newEl) existing.replaceWith(newEl);
+    if (newEl) {
+      this.cleanupRichTextMounts(existing);
+      existing.replaceWith(newEl);
+    }
+  }
+
+  getMessageRenderSignature(message) {
+    const msg = message && typeof message === 'object' ? message : {};
+    const meta = msg.meta && typeof msg.meta === 'object' ? msg.meta : {};
+    const rawSource =
+      typeof msg.rawSource === 'string'
+        ? msg.rawSource
+        : (typeof msg.raw_source === 'string' ? msg.raw_source : '');
+    return JSON.stringify({
+      role: String(msg.role || ''),
+      type: String(msg.type || 'text'),
+      content: typeof msg.content === 'string' ? msg.content : '',
+      raw: typeof msg.raw === 'string' ? msg.raw : '',
+      rawSource,
+      renderRich: meta.renderRich === true,
+      isGreeting: meta.isGreeting === true,
+      showName: meta.showName === true,
+      reasoning: typeof meta.reasoning === 'string' ? meta.reasoning : '',
+      reasoningDisplay: typeof meta.reasoningDisplay === 'string' ? meta.reasoningDisplay : '',
+      reasoningHidden: meta.reasoningHidden === true,
+      summary: typeof meta.summary === 'string' ? meta.summary : '',
+      name: typeof msg.name === 'string' ? msg.name : '',
+      badge: typeof msg.badge === 'string' ? msg.badge : '',
+    });
+  }
+
+  patchMessageChrome(existing, next) {
+    if (!existing || !next) return;
+    existing.__chatappMessage = next;
+    existing.dataset.msgId = String(next.id || '');
+    existing.dataset.role = String(next.role || '');
+    this.applyCreativeBubbleState(existing, next);
+
+    const avatarImg = existing.querySelector('img.QQ_chat_head');
+    if (avatarImg && typeof next.avatar === 'string' && next.avatar.trim()) {
+      avatarImg.src = next.avatar;
+    }
+
+    const nameEl = existing.querySelector('.QQ_chat_name');
+    if (nameEl && typeof next.name === 'string') {
+      nameEl.textContent = next.name;
+    }
+
+    const timeEls = existing.querySelectorAll('.QQ_chat_time');
+    const timeEl = timeEls.length ? timeEls[timeEls.length - 1] : null;
+    if (timeEl) {
+      timeEl.textContent = next.time || '';
+    }
+  }
+
+  tryPatchMessageElement(existing, next) {
+    if (!existing || !next) return false;
+    const prev = existing.__chatappMessage && typeof existing.__chatappMessage === 'object'
+      ? existing.__chatappMessage
+      : null;
+    if (!prev) return false;
+    if (String(prev.role || '') !== String(next.role || '')) return false;
+    if (String(prev.type || 'text') !== String(next.type || 'text')) return false;
+    if (this.getMessageRenderSignature(prev) !== this.getMessageRenderSignature(next)) return false;
+    this.patchMessageChrome(existing, next);
+    return true;
   }
 
   onMessageAction(handler) {

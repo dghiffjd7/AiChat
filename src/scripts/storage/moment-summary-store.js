@@ -185,6 +185,15 @@ export class MomentSummaryStore {
         return true;
     }
 
+    setSummaries(items = []) {
+        const normalized = (Array.isArray(items) ? items : [])
+            .map(normalizeSummaryItem)
+            .filter(Boolean);
+        this.state.summaries = normalized;
+        this._persist();
+        return true;
+    }
+
     deleteSummaryItems(items = []) {
         const list = Array.isArray(this.state.summaries) ? this.state.summaries : [];
         const keys = new Set(

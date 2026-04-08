@@ -45,10 +45,19 @@ const safeInvoke = async (cmd, args) => {
 
 const BASE_STORE_KEY = 'contacts_store_v1';
 const LEGACY_MIGRATION_KEY = `${BASE_STORE_KEY}__scoped_migrated`;
+const LOCAL_BOOTSTRAP_JSON_SOFT_LIMIT = 220_000;
 
 const readLocalState = (key) => {
     try {
         const raw = localStorage.getItem(key);
+        if (typeof raw === 'string' && raw.length > LOCAL_BOOTSTRAP_JSON_SOFT_LIMIT) {
+            logger.warn('contacts store local bootstrap skipped: oversized localStorage snapshot', {
+                key,
+                size: raw.length,
+                limit: LOCAL_BOOTSTRAP_JSON_SOFT_LIMIT,
+            });
+            return null;
+        }
         return raw ? JSON.parse(raw) : null;
     } catch {
         return null;

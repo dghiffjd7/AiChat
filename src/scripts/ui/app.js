@@ -165,6 +165,11 @@ const reportGlobalRuntimeIssue = (err, label = 'Runtime error') => {
   reportFatalError(err, label);
 };
 
+try {
+  localStorage.removeItem('chatapp_renderer_lifecycle_v1');
+  localStorage.removeItem('chatapp_rich_script_guard_v1');
+} catch {}
+
 const isIgnorableRuntimeNoise = (value = '') => {
   const msg = String(value || '');
   if (!msg) return false;
@@ -3963,7 +3968,7 @@ Phase G（Frame 36）：循环衔接
       pressTimer = setTimeout(() => {
         triggered = true;
         btn.dataset.longpress = '1';
-        stickerPackManager?.show?.(packId);
+        ensureStickerPackManager().show(packId);
       }, 520);
     });
     ['pointerup', 'pointercancel', 'pointerleave'].forEach(evt => {
@@ -5386,7 +5391,7 @@ Phase G（Frame 36）：循环衔接
       deleteBtn: panel.querySelector('.sticker-pack-delete'),
     };
   })();
-  const stickerAiModal = (() => {
+  const createStickerAiModal = () => {
     const overlay = document.createElement('div');
     overlay.className = 'sticker-ai-overlay';
     const modal = document.createElement('div');
@@ -8009,8 +8014,13 @@ Phase G（Frame 36）：循环衔接
     document.body.appendChild(zoomModal);
 
     return { show, hide };
-  })();
-  const stickerPackManager = (() => {
+  };
+  let stickerAiModal = null;
+  const ensureStickerAiModal = () => {
+    if (!stickerAiModal) stickerAiModal = createStickerAiModal();
+    return stickerAiModal;
+  };
+  const createStickerPackManager = () => {
     const overlay = document.createElement('div');
     overlay.className = 'sticker-pack-overlay';
     const modal = document.createElement('div');
@@ -8893,7 +8903,12 @@ Phase G（Frame 36）：循环衔接
     overlay.appendChild(modal);
 
     return { show, hide };
-  })();
+  };
+  let stickerPackManager = null;
+  const ensureStickerPackManager = () => {
+    if (!stickerPackManager) stickerPackManager = createStickerPackManager();
+    return stickerPackManager;
+  };
   if (stickerPanel?.toggle) {
     let deletePressTimer = null;
     let deletePressTriggered = false;
@@ -8936,7 +8951,7 @@ Phase G（Frame 36）：循环衔接
       event.preventDefault();
       event.stopPropagation();
       const packId = getStickerPackIdFromTab(stickerPanelTab);
-      stickerAiModal.show({ packId });
+      ensureStickerAiModal().show({ packId });
     });
   }
   if (stickerPanel?.deleteBtn) {
@@ -9063,24 +9078,49 @@ Phase G（Frame 36）：循环衔接
       uiLog('saveUiState', state);
     } catch {}
   };
+  let startupRestoreGuardReason = '';
+  const markStartupRestoreGuard = (message) => {
+    const text = String(message || '').trim();
+    if (!text) return;
+    startupRestoreGuardReason = text;
+  };
+  const pickSavedUiState = async () => {
+    try {
+      const raw1 = sessionStorage.getItem(UI_STATE_KEY);
+      if (raw1) return JSON.parse(raw1);
+    } catch {}
+    try {
+      const raw2 = localStorage.getItem(UI_STATE_KEY);
+      if (raw2) return JSON.parse(raw2);
+    } catch {}
+    try {
+      const kv = await safeInvoke('load_kv', { name: UI_STATE_KV });
+      if (kv && typeof kv === 'object') return kv;
+    } catch {}
+    return null;
+  };
+  const applyRestoredSessionShell = (sessionId) => {
+    const sid = String(sessionId || '').trim();
+    if (!sid) return false;
+    const known = chatStore.hasSession?.(sid) || contactsStore.getContact(sid);
+    if (!known) return false;
+    chatStore.switchSession(sid);
+    window.appBridge.setActiveSession(sid);
+    syncUserPersonaUI(sid);
+    try {
+      const contact = contactsStore.getContact(sid);
+      if (currentChatTitle) currentChatTitle.innerHTML = renderSessionNameHtml(sid, contact);
+    } catch {}
+    try {
+      const draft = chatStore.getDraft(sid);
+      ui.setInputText(draft || '');
+    } catch {}
+    ui.setSessionLabel(sid);
+    return true;
+  };
   const restoreUiState = async () => {
     try {
-      const pick = async () => {
-        try {
-          const raw1 = sessionStorage.getItem(UI_STATE_KEY);
-          if (raw1) return JSON.parse(raw1);
-        } catch {}
-        try {
-          const raw2 = localStorage.getItem(UI_STATE_KEY);
-          if (raw2) return JSON.parse(raw2);
-        } catch {}
-        try {
-          const kv = await safeInvoke('load_kv', { name: UI_STATE_KV });
-          if (kv && typeof kv === 'object') return kv;
-        } catch {}
-        return null;
-      };
-      const s = await pick();
+      const s = await pickSavedUiState();
       if (!s) {
         uiLog('restoreUiState: no saved state');
         return false;
@@ -9090,27 +9130,9 @@ Phase G（Frame 36）：循环衔接
       const inChatRoom = Boolean(s?.inChatRoom);
       uiLog('restoreUiState: picked', { page, sid, inChatRoom, at: s?.at || 0 });
       if (page && pages[page]) switchPage(page);
-      const sidKnown = sid && (chatStore.hasSession?.(sid) || contactsStore.getContact(sid));
-      if (sidKnown) {
-        // ensure session exists
-        chatStore.switchSession(sid);
-        window.appBridge.setActiveSession(sid);
-        syncUserPersonaUI(sid);
-        const msgs = await chatStore.ensureRecentMessagesLoaded(sid);
-        const draft = chatStore.getDraft(sid);
-        ui.clearMessages();
-        {
-          const PAGE = 90;
-          const start = Math.max(0, msgs.length - PAGE);
-          ui.preloadHistory(decorateMessagesForDisplay(msgs.slice(start), { sessionId: sid }));
-          chatRenderState.set(sid, { start });
-        }
-        ui.setInputText(draft || '');
-        ui.setSessionLabel(sid);
-      }
-      if (inChatRoom && sid && sidKnown) {
-        const c = contactsStore.getContact(sid);
-        enterChatRoom(sid, c?.name || sid, page || 'chat');
+      const sidKnown = applyRestoredSessionShell(sid);
+      if (sidKnown && inChatRoom) {
+        markStartupRestoreGuard('为避免启动卡死，已跳过自动恢复上次聊天房间，请手动进入会话。');
       }
       if (sid && !sidKnown) {
         uiLog('restoreUiState: sid not yet known (skip switchSession)', { sid });
@@ -11712,6 +11734,21 @@ Phase G（Frame 36）：循环衔接
   bindChatScrollLazyLoad();
 
   // Summary compaction runner (used by auto-trigger and manual "↻" button in settings)
+  const normalizeSummarySnapshotItems = (items = []) =>
+    (Array.isArray(items) ? items : [])
+      .map(it => {
+        if (!it) return null;
+        if (typeof it === 'string') {
+          const text = String(it || '').trim();
+          if (!text) return null;
+          return { at: 0, text };
+        }
+        const text = String(it?.text || '').trim();
+        if (!text) return null;
+        const at = Number(it?.at || 0) || 0;
+        return { at, text };
+      })
+      .filter(Boolean);
   const summaryCompacting = new Set();
   const requestSummaryCompaction = (sid, { force = false } = {}) => {
     if (!isSummaryMemoryEnabled()) return Promise.resolve(false);
@@ -11869,12 +11906,8 @@ Phase G（Frame 36）：循环衔接
             chatStore.setCompactedSummary(text, sessionId, { raw });
           } catch {}
           try {
-            const keep = (chatStore.getSummaries(sessionId) || []).slice(-2);
-            chatStore.clearSummaries(sessionId);
-            keep.forEach(it => {
-              const t = String(typeof it === 'string' ? it : it?.text || '').trim();
-              if (t) chatStore.addSummary(t, sessionId);
-            });
+            const keep = normalizeSummarySnapshotItems(chatStore.getSummaries(sessionId)).slice(-2);
+            chatStore.setSummaries(keep, sessionId);
           } catch {}
 
           try {
@@ -12024,12 +12057,8 @@ Phase G（Frame 36）：循环衔接
             momentSummaryStore.setCompactedSummary(text, { raw });
           } catch {}
           try {
-            const keep = (momentSummaryStore.getSummaries() || []).slice(-2);
-            momentSummaryStore.clearSummaries();
-            keep.forEach(it => {
-              const t = String(typeof it === 'string' ? it : it?.text || '').trim();
-              if (t) momentSummaryStore.addSummary(t);
-            });
+            const keep = normalizeSummarySnapshotItems(momentSummaryStore.getSummaries()).slice(-2);
+            momentSummaryStore.setSummaries(keep);
           } catch {}
           try {
             window.dispatchEvent(new CustomEvent('moment-summaries-updated'));
@@ -15245,8 +15274,6 @@ Phase G（Frame 36）：循环衔接
           }
           {
             const saved = chatStore.appendMessage(parsed, sessionId);
-            // Keep RP/creative first-render on the same full rebuild path as raw-edit save.
-            if (isSessionActive(sessionId) && saved?.id) ui.updateMessage(saved.id, saved);
             autoMarkReadIfActive(sessionId, saved?.id || parsed?.id || '');
             emitPluginAfterReceive(saved, sessionId);
           }
@@ -15775,8 +15802,6 @@ Phase G（Frame 36）：循环衔接
           if (isSessionActive(sessionId)) ui.addMessage(parsed);
           {
             const saved = chatStore.appendMessage(parsed, sessionId);
-            // Keep RP/creative first-render on the same full rebuild path as raw-edit save.
-            if (isSessionActive(sessionId) && saved?.id) ui.updateMessage(saved.id, saved);
             autoMarkReadIfActive(sessionId, saved?.id || parsed?.id || '');
             emitPluginAfterReceive(saved, sessionId);
           }
@@ -16840,12 +16865,20 @@ Phase G（Frame 36）：循环衔接
   refreshChatAndContacts();
   applyUiModeUI();
   if (initialUiMode === 'rp') {
-    enterRpMode({ captureSocial: false });
+    markStartupRestoreGuard('为避免启动卡死，已跳过自动进入 RP，请手动切换进入。');
+    uiMode = 'social';
+    persistUiMode();
+    applyUiModeUI();
   }
   uiStateArmed = true;
   try {
     saveUiState();
   } catch {}
+  if (startupRestoreGuardReason) {
+    setTimeout(() => {
+      window.toastr?.info?.(startupRestoreGuardReason);
+    }, 60);
+  }
 
   // If stores hydrate later (e.g. after a WebView reload / offline resume), refresh UI without jumping to defaults.
   window.addEventListener('store-hydrated', async ev => {
@@ -16871,7 +16904,13 @@ Phase G（Frame 36）：循环衔接
       const want = raw ? String(JSON.parse(raw)?.sessionId || '').trim() : '';
       uiLog('store-hydrated: check restore', { cur, want, curKnown: chatStore.hasSession?.(cur) });
       if (want && want !== cur && (cur === 'default' || !chatStore.hasSession?.(cur))) {
-        await restoreUiState();
+        const saved = await pickSavedUiState();
+        const page = String(saved?.activePage || '').trim();
+        const inChatRoom = Boolean(saved?.inChatRoom);
+        if (page && pages[page]) switchPage(page);
+        if (applyRestoredSessionShell(want) && inChatRoom) {
+          markStartupRestoreGuard('为避免启动卡死，已跳过自动恢复上次聊天房间，请手动进入会话。');
+        }
       }
     } catch {}
   });

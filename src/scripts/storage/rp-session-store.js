@@ -3,6 +3,7 @@ import { safeInvoke } from '../utils/tauri.js';
 import { makeScopedKey, normalizeScopeId } from './store-scope.js';
 
 const BASE_STORE_KEY = 'rp_session_v1';
+const LOCAL_BOOTSTRAP_JSON_SOFT_LIMIT = 160_000;
 
 const normalizeGreeting = (item, idx = 0) => {
   const raw = item && typeof item === 'object' ? item : {};
@@ -37,6 +38,14 @@ export class RpSessionStore {
   _load() {
     try {
       const raw = localStorage.getItem(this.storeKey);
+      if (typeof raw === 'string' && raw.length > LOCAL_BOOTSTRAP_JSON_SOFT_LIMIT) {
+        logger.warn('rp session store local bootstrap skipped: oversized localStorage snapshot', {
+          key: this.storeKey,
+          size: raw.length,
+          limit: LOCAL_BOOTSTRAP_JSON_SOFT_LIMIT,
+        });
+        return {};
+      }
       return raw ? JSON.parse(raw) : {};
     } catch {
       return {};

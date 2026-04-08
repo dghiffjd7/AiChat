@@ -249,6 +249,7 @@ const sliceTailWithinChars = (arr, getText, { maxItems, maxChars } = {}) => {
 };
 
 const MAX_WALLPAPER_DATA_URL_CHARS = 200000;
+const LOCAL_BOOTSTRAP_JSON_SOFT_LIMIT = 450_000;
 
 const sanitizeSessionForPersist = (session, options = {}) => {
   if (!session || typeof session !== 'object') return session;
@@ -907,6 +908,14 @@ class ChatStoreV2 {
 const readLocalState = (key) => {
   try {
     const raw = localStorage.getItem(key);
+    if (typeof raw === 'string' && raw.length > LOCAL_BOOTSTRAP_JSON_SOFT_LIMIT) {
+      logger.warn('chat store local bootstrap skipped: oversized localStorage snapshot', {
+        key,
+        size: raw.length,
+        limit: LOCAL_BOOTSTRAP_JSON_SOFT_LIMIT,
+      });
+      return null;
+    }
     return raw ? JSON.parse(raw) : null;
   } catch {
     return null;
