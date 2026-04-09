@@ -530,7 +530,7 @@ export class WorldPanel {
             } else if (isGroupSession) {
                 const roleSection = createSection({
                     title: '角色世界书',
-                    description: '当前 Persona 的角色世界书在聊天模式与 RP 模式共用。',
+                    description: '当前角色卡的角色世界书在聊天模式与 RP 模式共用。',
                 });
                 const activeEmptyBinding = roleBindings.find((item) => item?.isActive && !item?.hasWorld);
                 if (activeEmptyBinding) {
@@ -544,7 +544,7 @@ export class WorldPanel {
                     roleSection.actions.appendChild(roleLibraryBtn);
                 }
                 if (!roleBindings.length) {
-                    appendEmpty(roleSection.body, '当前 Persona 没有角色世界书绑定。');
+                    appendEmpty(roleSection.body, '当前角色卡没有角色世界书绑定。');
                 } else {
                     for (const binding of roleBindings) {
                         if (!binding?.hasWorld) {
@@ -553,7 +553,7 @@ export class WorldPanel {
                             const info = document.createElement('div');
                             info.style.cssText = 'min-width:0; flex:1;';
                             info.innerHTML = `
-                                <div style="font-weight:700; color:#0f172a;">${binding.personaName} · 当前 Persona</div>
+                                <div style="font-weight:700; color:#0f172a;">${binding.personaName} · 当前角色卡</div>
                                 <div style="font-size:12px; color:#64748b; margin-top:2px;">未绑定角色世界书</div>
                             `;
                             const actions = document.createElement('div');
@@ -584,7 +584,7 @@ export class WorldPanel {
                             await this.refreshList();
                         };
                         const card = await buildWorldCard(binding.worldId, {
-                            subtitle: `角色：${binding.personaName} · 当前 Persona`,
+                            subtitle: `角色：${binding.personaName} · 当前角色卡`,
                             toggleEnabled: binding.enabled !== false,
                             toggleLabelOn: '已启用',
                             toggleLabelOff: '已停用',
@@ -659,7 +659,7 @@ export class WorldPanel {
             } else {
                 const roleSection = createSection({
                     title: '角色世界书',
-                    description: '当前 Persona 的角色世界书在聊天模式与 RP 模式共用。',
+                    description: '当前角色卡的角色世界书在聊天模式与 RP 模式共用。',
                 });
                 const activeEmptyBinding = roleBindings.find((item) => item?.isActive && !item?.hasWorld);
                 if (activeEmptyBinding) {
@@ -673,7 +673,7 @@ export class WorldPanel {
                     roleSection.actions.appendChild(roleLibraryBtn);
                 }
                 if (!roleBindings.length) {
-                    appendEmpty(roleSection.body, '当前 Persona 没有角色世界书绑定。');
+                    appendEmpty(roleSection.body, '当前角色卡没有角色世界书绑定。');
                 } else {
                     for (const binding of roleBindings) {
                         if (!binding?.hasWorld) {
@@ -682,7 +682,7 @@ export class WorldPanel {
                             const info = document.createElement('div');
                             info.style.cssText = 'min-width:0; flex:1;';
                             info.innerHTML = `
-                                <div style="font-weight:700; color:#0f172a;">${binding.personaName} · 当前 Persona</div>
+                                <div style="font-weight:700; color:#0f172a;">${binding.personaName} · 当前角色卡</div>
                                 <div style="font-size:12px; color:#64748b; margin-top:2px;">未绑定角色世界书</div>
                             `;
                             const actions = document.createElement('div');
@@ -713,7 +713,7 @@ export class WorldPanel {
                             await this.refreshList();
                         };
                         const card = await buildWorldCard(binding.worldId, {
-                            subtitle: `角色：${binding.personaName} · 当前 Persona`,
+                            subtitle: `角色：${binding.personaName} · 当前角色卡`,
                             toggleEnabled: binding.enabled !== false,
                             toggleLabelOn: '已启用',
                             toggleLabelOff: '已停用',

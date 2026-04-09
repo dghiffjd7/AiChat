@@ -3,17 +3,12 @@ import { MediaPicker } from './media-picker.js';
 import { avatarDataUrlFromFile } from '../utils/image.js';
 import { appConfirm } from './app-confirm.js';
 import { CharacterCardImporter } from './character-card-importer.js';
-
-const DEFAULT_USER_BUBBLE_COLOR = '#E8F0FE';
-
-const normalizeHexColor = (value, fallback = DEFAULT_USER_BUBBLE_COLOR) => {
-    const raw = String(value || '').trim();
-    return /^#[0-9A-F]{6}$/i.test(raw) ? raw : fallback;
-};
+import { getCharacterCardDisplayName, getCharacterCardSource } from '../utils/character-card-display.js';
 
 export class PersonaPanel {
-    constructor({ personaStore, chatStore = null, contactsStore = null, rpSessionStore = null, getSessionId = null, onPersonaChanged }) {
+    constructor({ personaStore, userStore = null, chatStore = null, contactsStore = null, rpSessionStore = null, getSessionId = null, onPersonaChanged }) {
         this.store = personaStore;
+        this.userStore = userStore;
         this.chatStore = chatStore;
         this.contactsStore = contactsStore;
         this.rpSessionStore = rpSessionStore;
@@ -82,7 +77,7 @@ export class PersonaPanel {
 
         this.panel.innerHTML = `
             <div class="panel-header" style="padding: 15px; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; align-items: center; background: #f8f9fa;">
-                <span style="font-weight: bold; font-size: 16px;">👤 用户角色 (Personas)</span>
+                <span style="font-weight: bold; font-size: 16px;">🎭 角色卡管理</span>
                 <button class="close-btn" style="border: none; background: transparent; font-size: 20px; cursor: pointer; color: #666;">×</button>
             </div>
             <div id="persona-session-lock-bar" style="padding: 10px 15px; border-bottom: 1px solid rgba(0,0,0,0.06); background: #fff; display:none;">
@@ -101,7 +96,7 @@ export class PersonaPanel {
                         background: #007bff; color: white; border: none; padding: 10px 16px; 
                         border-radius: 18px; font-size: 13px; cursor: pointer; flex: 1;
                         box-shadow: 0 2px 5px rgba(0,123,255,0.3);
-                    ">+ 新建角色</button>
+                    ">+ 新建角色卡</button>
                 </div>
             </div>
             <input type="file" id="persona-card-import" accept=".png,.json,application/json,image/png" style="display:none;">
@@ -119,7 +114,7 @@ export class PersonaPanel {
                         display: flex; align-items: center; justify-content: center;
                         border-radius: 12px;
                     ">←</button>
-                    <span style="font-weight: bold; font-size: 16px;">编辑角色</span>
+                    <span style="font-weight: bold; font-size: 16px;">编辑角色卡</span>
                 </div>
                 <div style="flex: 1; overflow-y: auto; padding: 20px;">
                     <div style="text-align: center; margin-bottom: 20px;">
@@ -132,32 +127,23 @@ export class PersonaPanel {
                     </div>
 
                     <div style="margin-bottom: 15px;">
-                        <label style="display: block; font-size: 12px; color: #666; margin-bottom: 5px;">名称 ({{user}})</label>
+                        <label style="display: block; font-size: 12px; color: #666; margin-bottom: 5px;">角色卡名称</label>
                         <input type="text" id="edit-name" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 8px; box-sizing: border-box;">
                     </div>
 
                     <div style="margin-bottom: 15px;">
-                        <label style="display: block; font-size: 12px; color: #666; margin-bottom: 5px;">用户气泡颜色</label>
-                        <div style="display:flex; align-items:center; gap:10px;">
-                            <input type="text" id="edit-bubble-color-input" value="#E8F0FE" style="flex:1; padding: 10px; border: 1px solid #ddd; border-radius: 8px; box-sizing: border-box;">
-                            <input type="color" id="edit-bubble-color" value="#E8F0FE" style="width:44px; height:44px; border:1px solid #ddd; border-radius:8px; padding:0; cursor:pointer;">
-                        </div>
-                        <div style="margin-top:6px; font-size:11px; color:#94a3b8;">仅影响“我”的气泡背景，字体颜色跟随聊天设置</div>
-                    </div>
-
-                    <div style="margin-bottom: 15px;">
                         <label style="display: block; font-size: 12px; color: #666; margin-bottom: 5px;">
-                            详细描述 ({{persona}})
-                            <span style="color:#999; font-size:11px; margin-left:5px;">注入到 System Prompt 或 Character Card 中</span>
+                            角色描述
+                            <span style="color:#999; font-size:11px; margin-left:5px;">可用于手动补充角色卡设定</span>
                         </label>
                         <textarea id="edit-desc" style="
                             width: 100%; height: 120px; padding: 10px; border: 1px solid #ddd; 
                             border-radius: 8px; resize: none; box-sizing: border-box; font-family: inherit;
-                        " placeholder="例如：我是一个富有冒险精神的旅行者..."></textarea>
+                        " placeholder="例如：外表冷淡、说话简短，但会在关键时刻保护同伴。"></textarea>
                     </div>
 
                     <div style="margin-bottom: 15px; padding: 12px; border: 1px solid rgba(0,0,0,0.06); border-radius: 10px; background: rgba(248,250,252,0.8);">
-                        <div style="font-size: 12px; font-weight: 700; color: #334155; margin-bottom: 8px;">注入设置（参考 SillyTavern）</div>
+                        <div style="font-size: 12px; font-weight: 700; color: #334155; margin-bottom: 8px;">注入设置</div>
                         <div style="margin-bottom: 10px;">
                             <label style="display:block; font-size:12px; color:#666; margin-bottom:5px;">插入位置</label>
                             <select id="edit-position" style="width:100%; padding:10px; border:1px solid #ddd; border-radius:8px; box-sizing:border-box;">
@@ -181,11 +167,11 @@ export class PersonaPanel {
                             </div>
                         </div>
                         <div style="margin-top:10px; font-size:11px; color:#64748b; line-height:1.4;">
-                            支持宏：<code>{{user}}</code> <code>{{char}}</code> <code>{{time}}</code> <code>{{date}}</code> 以及 <code>{{getvar::k}}</code> 等。
+                            当前仍沿用旧字段结构，后续会继续调整角色卡编辑内容。
                         </div>
                     </div>
 
-                    <button id="delete-persona-btn" style="width: 100%; padding: 12px; background: #fee2e2; color: #dc2626; border: none; border-radius: 8px; margin-top: 20px; cursor: pointer;">删除此角色</button>
+                    <button id="delete-persona-btn" style="width: 100%; padding: 12px; background: #fee2e2; color: #dc2626; border: none; border-radius: 8px; margin-top: 20px; cursor: pointer;">删除此角色卡</button>
                 </div>
                 <div style="padding: 15px; border-top: 1px solid #eee; background: #fff;">
                     <button id="save-persona-btn" style="width: 100%; padding: 12px; background: #007bff; color: white; border: none; border-radius: 8px; font-weight: bold; cursor: pointer;">保存</button>
@@ -214,18 +200,6 @@ export class PersonaPanel {
         this.panel.querySelector('#delete-persona-btn').addEventListener('click', () => this.deleteCurrent());
         this.panel.querySelector('#edit-position').addEventListener('change', () => this.updateInjectionUi());
 
-        const bubbleInput = this.panel.querySelector('#edit-bubble-color-input');
-        const bubblePicker = this.panel.querySelector('#edit-bubble-color');
-        bubblePicker?.addEventListener('input', (e) => {
-            const color = e.target?.value || DEFAULT_USER_BUBBLE_COLOR;
-            if (bubbleInput) bubbleInput.value = color;
-        });
-        bubbleInput?.addEventListener('input', (e) => {
-            const color = String(e.target?.value || '').trim();
-            if (/^#[0-9A-F]{6}$/i.test(color) && bubblePicker) {
-                bubblePicker.value = color;
-            }
-        });
     }
 
     ensureImportModal() {
@@ -310,6 +284,10 @@ export class PersonaPanel {
         this.importUrlBtn?.addEventListener('click', () => this.handleCardImportUrl());
     }
 
+    getCharacterCardName(card) {
+        return getCharacterCardDisplayName(card, '角色卡');
+    }
+
     showImportModal() {
         this.ensureImportModal();
         if (this.importUrlInput) this.importUrlInput.value = '';
@@ -356,7 +334,7 @@ export class PersonaPanel {
         panel.innerHTML = `
             <div style="display:flex; align-items:center; gap:10px; padding:12px; background:#f3f4f6; border-bottom:1px solid #e5e7eb;">
                 <button id="persona-bulk-back" style="width:44px; height:44px; border:none; background:transparent; border-radius:12px; font-size:22px; display:flex; align-items:center; justify-content:center; cursor:pointer;">←</button>
-                <div style="font-weight:900;">批量绑定/解绑</div>
+                <div style="font-weight:900;">批量绑定角色卡</div>
                 <div id="persona-bulk-meta" style="margin-left:auto; font-size:12px; color:#64748b; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"></div>
             </div>
 
@@ -456,14 +434,14 @@ export class PersonaPanel {
 
         this.bulkState = {
             personaId: String(personaId),
-            personaName: String(p.name || '').trim() || personaId,
+            personaName: this.getCharacterCardName(p) || personaId,
             term: '',
             sessionIds,
             selected: new Set(bound),
         };
 
         const metaEl = this.bulkModal.panel.querySelector('#persona-bulk-meta');
-        if (metaEl) metaEl.textContent = `Persona：${this.bulkState.personaName}`;
+        if (metaEl) metaEl.textContent = `角色卡：${this.bulkState.personaName}`;
 
         this.renderBulkList();
         this.bulkModal.overlay.style.display = 'block';
@@ -646,7 +624,7 @@ export class PersonaPanel {
         }
         const lockPersonaId = this.getSessionLockPersonaId(sessionId);
         const lockedPersona = lockPersonaId ? this.store.get(lockPersonaId) : null;
-        const lockedName = lockedPersona?.name || lockPersonaId || '';
+        const lockedName = this.getCharacterCardName(lockedPersona) || lockPersonaId || '';
 
         bar.style.display = 'block';
         bar.innerHTML = `
@@ -654,7 +632,7 @@ export class PersonaPanel {
                 <div style="flex:1; min-width:0;">
                     <div style="font-weight:800; color:#0f172a; font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">当前会话：${sessionId}</div>
                     <div style="color:#64748b; font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
-                        ${lockPersonaId ? `已锁定 Persona：${lockedName}` : '未锁定（使用全局 Persona）'}
+                        ${lockPersonaId ? `已锁定角色卡：${lockedName}` : '未锁定（使用全局角色卡）'}
                     </div>
                 </div>
                 ${lockPersonaId ? `<button id="persona-unlock-btn" style="border:1px solid #e2e8f0; background:#fff; border-radius:10px; padding:6px 10px; cursor:pointer;">解除锁定</button>` : ''}
@@ -704,6 +682,8 @@ export class PersonaPanel {
 
             const avatarUrl = p.avatar || './assets/external/feather-default.png'; // Default user avatar
             const isLockedForSession = lockPersonaId && p.id === lockPersonaId;
+            const cardName = this.getCharacterCardName(p);
+            const subtitle = p.description || '未设置角色描述';
 
             item.innerHTML = `
                 <div style="position: relative;">
@@ -712,10 +692,9 @@ export class PersonaPanel {
                     ${isLockedForSession ? '<div title="此会话已锁定" style="position:absolute; top:-4px; right:-4px; width:18px; height:18px; background:#0f172a; color:#fff; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:11px; border:2px solid #fff;">🔒</div>' : ''}
                 </div>
                 <div style="flex: 1; min-width: 0;">
-                    <div style="font-weight: bold; color: #333; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${p.name}</div>
-                    <div style="font-size: 12px; color: #999; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${p.description || '暂无描述'}</div>
+                    <div style="font-weight: bold; color: #333; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${cardName}</div>
+                    <div style="font-size: 12px; color: #999; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${subtitle}</div>
                 </div>
-                ${this.chatStore ? `<button class="bulk-lock-btn" title="批量绑定/解绑联系人（含群组）" style="padding: 8px; border: none; background: transparent; color: ${isLockedForSession ? '#0f172a' : '#999'}; cursor: pointer; font-size: 16px;">🔒</button>` : ''}
                 <button class="edit-btn" style="
                     padding: 8px; border: none; background: transparent; color: #999; cursor: pointer;
                     font-size: 16px;
@@ -725,16 +704,10 @@ export class PersonaPanel {
             // Click item to switch
             item.addEventListener('click', async (e) => {
                 // Ignore if clicked edit button
-                if (e.target.closest('.edit-btn') || e.target.closest('.bulk-lock-btn')) return;
+                if (e.target.closest('.edit-btn')) return;
                 await this.store.setActive(p.id);
                 this.renderList();
                 if (this.onPersonaChanged) this.onPersonaChanged();
-            });
-
-            // Bulk lock/unlock to sessions
-            item.querySelector('.bulk-lock-btn')?.addEventListener('click', (e) => {
-                e.stopPropagation();
-                this.openBulkModal(p.id);
             });
 
             // Click edit button
@@ -752,45 +725,37 @@ export class PersonaPanel {
         const view = this.panel.querySelector('#persona-edit-view');
         const nameInput = this.panel.querySelector('#edit-name');
         const descInput = this.panel.querySelector('#edit-desc');
-        const avatarPreview = this.panel.querySelector('#edit-avatar-preview');
         const posEl = this.panel.querySelector('#edit-position');
         const depthEl = this.panel.querySelector('#edit-depth');
         const roleEl = this.panel.querySelector('#edit-role');
-        const bubbleInput = this.panel.querySelector('#edit-bubble-color-input');
-        const bubblePicker = this.panel.querySelector('#edit-bubble-color');
         const deleteBtn = this.panel.querySelector('#delete-persona-btn');
         const title = view.querySelector('span');
 
         if (id) {
             const p = this.store.get(id);
             if (!p) return;
-            nameInput.value = p.name || '';
+            nameInput.value = this.getCharacterCardName(p);
             descInput.value = p.description || '';
             if (posEl) posEl.value = String(Number.isFinite(Number(p.position)) ? Number(p.position) : 0);
             if (depthEl) depthEl.value = String(Number.isFinite(Number(p.depth)) ? Math.max(0, Math.trunc(Number(p.depth))) : 2);
             if (roleEl) roleEl.value = String(Number.isFinite(Number(p.role)) ? Math.max(0, Math.min(2, Math.trunc(Number(p.role)))) : 0);
-            const bubble = normalizeHexColor(p.userBubbleColor);
-            if (bubbleInput) bubbleInput.value = bubble;
-            if (bubblePicker) bubblePicker.value = bubble;
             this.updateAvatarPreview(p.avatar);
             deleteBtn.style.display = 'block';
-            title.textContent = '编辑角色';
+            title.textContent = '编辑角色卡';
             
             // Disable delete if it's the only one
             if (this.store.getAll().length <= 1) {
                 deleteBtn.style.display = 'none';
             }
         } else {
-            nameInput.value = 'User';
+            nameInput.value = '新角色卡';
             descInput.value = '';
             if (posEl) posEl.value = '0';
             if (depthEl) depthEl.value = '2';
             if (roleEl) roleEl.value = '0';
-            if (bubbleInput) bubbleInput.value = DEFAULT_USER_BUBBLE_COLOR;
-            if (bubblePicker) bubblePicker.value = DEFAULT_USER_BUBBLE_COLOR;
             this.updateAvatarPreview('');
             deleteBtn.style.display = 'none';
-            title.textContent = '新建角色';
+            title.textContent = '新建角色卡';
         }
 
         this.updateInjectionUi();
@@ -877,17 +842,25 @@ export class PersonaPanel {
         const position = Number(this.panel.querySelector('#edit-position')?.value ?? 0);
         const depth = Math.max(0, Math.trunc(Number(this.panel.querySelector('#edit-depth')?.value ?? 2) || 0));
         const role = Math.max(0, Math.min(2, Math.trunc(Number(this.panel.querySelector('#edit-role')?.value ?? 0) || 0)));
-        const bubbleColor = normalizeHexColor(this.panel.querySelector('#edit-bubble-color-input')?.value);
 
         if (!name) {
-            alert('请输入角色名称');
+            alert('请输入角色卡名称');
             return;
         }
 
+        const applySourcePatch = (existing = null) => {
+            const source = { ...getCharacterCardSource(existing) };
+            if (getCharacterCardDisplayName(existing, '') || source.type === 'character_card') {
+                source.characterName = name;
+            }
+            return Object.keys(source).length ? source : null;
+        };
+
         if (this.editingId) {
-            await this.store.update(this.editingId, { name, description, avatar, position, depth, role, userBubbleColor: bubbleColor });
+            const current = this.store.get(this.editingId);
+            await this.store.update(this.editingId, { name, description, avatar, position, depth, role, source: applySourcePatch(current) });
         } else {
-            const newP = await this.store.create({ name, description, avatar, position, depth, role, userBubbleColor: bubbleColor });
+            const newP = await this.store.create({ name, description, avatar, position, depth, role, source: applySourcePatch(null) });
             this.store.setActive(newP.id); // Auto switch to new
         }
 
@@ -914,7 +887,7 @@ export class PersonaPanel {
             this.renderList();
             if (this.onPersonaChanged) this.onPersonaChanged();
         } else {
-            alert('无法删除（至少保留一个角色）');
+            alert('无法删除（至少保留一个角色卡）');
         }
     }
 
@@ -937,7 +910,7 @@ export class PersonaPanel {
         const hasScripts = scriptCount > 0;
 
         if (!hasWorld && !hasRegex && !hasScripts) {
-            const ok = await appConfirm({ title: '删除角色', message: '确定要删除此角色吗？', danger: true });
+            const ok = await appConfirm({ title: '删除角色卡', message: '确定要删除此角色卡吗？', danger: true });
             return { confirm: ok, deleteWorld: false, deleteRegex: false, deleteScripts: false };
         }
 
@@ -966,11 +939,11 @@ export class PersonaPanel {
             modal.style.display = 'block';
             modal.innerHTML = `
                 <div class="app-confirm-header">
-                    <div class="app-confirm-title">删除角色</div>
+                    <div class="app-confirm-title">删除角色卡</div>
                     <button type="button" class="app-confirm-close" aria-label="关闭">×</button>
                 </div>
                 <div class="app-confirm-body" style="text-align:left;">
-                    <div style="margin-bottom:10px;">确定要删除此角色吗？</div>
+                    <div style="margin-bottom:10px;">确定要删除此角色卡吗？</div>
                     <div style="display:flex; flex-direction:column; gap:8px; font-size:13px;">
                         ${hasWorld ? `
                             <label style="display:flex; align-items:center; gap:8px;">

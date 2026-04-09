@@ -2,8 +2,10 @@ import assert from 'node:assert/strict';
 import {
   buildNodeGraphFromWhen,
   buildWhenFromNodeGraph,
+  createDefaultPromptClause,
   evaluateConditionTree,
   explainConditionTree,
+  isTrivialConditionTree,
 } from '../../src/scripts/variables/world-condition-core.js';
 
 const tests = [];
@@ -110,6 +112,30 @@ test('variable-to-variable comparisons roundtrip through node graph helpers', ()
     resolvePathValue: (path) => ({ hp: 12, targetHp: 10 }[path]),
   };
   assert.equal(evaluateConditionTree(rebuilt, runtime), true);
+});
+
+test('default placeholder condition tree is treated as trivial', () => {
+  const when = {
+    logic: 'and',
+    clauses: [createDefaultPromptClause()],
+  };
+  assert.equal(isTrivialConditionTree(when), true);
+  const graph = buildNodeGraphFromWhen(when, createDefaultPromptClause());
+  const rebuilt = buildWhenFromNodeGraph(graph, createDefaultPromptClause());
+  assert.equal(isTrivialConditionTree(rebuilt), true);
+});
+
+test('configured condition tree is not treated as trivial', () => {
+  const when = {
+    logic: 'and',
+    clauses: [{
+      left: 'hp',
+      op: '>',
+      right: 10,
+      rightType: 'number',
+    }],
+  };
+  assert.equal(isTrivialConditionTree(when), false);
 });
 
 let failed = 0;

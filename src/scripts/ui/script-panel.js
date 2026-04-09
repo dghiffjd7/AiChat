@@ -1,5 +1,6 @@
 import { appSettings } from '../storage/app-settings.js';
 import { appConfirm } from './app-confirm.js';
+import { getCharacterCardDisplayName } from '../utils/character-card-display.js';
 
 const SOURCE_LABELS = {
   user: '手动创建',
@@ -210,7 +211,7 @@ export class ScriptPanel {
       select.style.cssText = 'min-width:160px;padding:6px 10px;border:1px solid #e2e8f0;border-radius:10px;font-size:12px;';
       const list = Array.isArray(this.personaStore?.getAll?.()) ? this.personaStore.getAll() : [];
       list.forEach(p => {
-        select.appendChild(createOption(p.id, p.name || p.id));
+        select.appendChild(createOption(p.id, getCharacterCardDisplayName(p, p.id)));
       });
       select.value = String(this.personaStore?.getActive?.()?.id || '');
       select.addEventListener('change', () => this.refresh());

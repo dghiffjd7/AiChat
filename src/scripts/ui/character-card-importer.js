@@ -287,7 +287,7 @@ export class CharacterCardImporter {
       characterName: displayName,
     };
     const persona = await this.personaStore.create({
-      name: 'user',
+      name: displayName,
       description: '',
       avatar: avatarDataUrl || '',
       source: sourceBase,
@@ -586,7 +586,7 @@ export class CharacterCardImporter {
       logger.info(`[character-card] imported persona=${persona.id} scope=${scopeId} world=${worldId || 'none'}`);
     } catch {}
 
-    window.toastr?.success?.('角色卡导入完成（已切换 Persona）');
+    window.toastr?.success?.('角色卡导入完成（已切换角色卡）');
     return true;
   }
 }

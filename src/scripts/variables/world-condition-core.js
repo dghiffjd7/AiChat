@@ -303,6 +303,45 @@ export const createPendingPromptClause = (pendingReason = 'missing_input') => no
   pendingReason,
 });
 
+export const isDefaultPromptClause = (raw = {}) => {
+  const clause = normalizePromptClause(raw);
+  if (String(clause.left || '').trim()) return false;
+  if (clause.defineVariable && typeof clause.defineVariable === 'object' && String(clause.defineVariable.name || '').trim()) {
+    return false;
+  }
+  const op = String(clause.op || '').trim().toLowerCase();
+  if (op !== '>') return false;
+  const rightType = normalizeRightTypeValue(clause.rightType || 'number');
+  if (rightType !== 'number') return false;
+  const pending = String(clause.pendingReason || '').trim().toLowerCase();
+  if (pending && pending !== 'missing_left' && pending !== 'missing_input') return false;
+  const rightNumber = Number(clause.right);
+  if (Number.isFinite(rightNumber)) return rightNumber === 10;
+  return String(clause.right ?? '').trim() === '';
+};
+
+export const isTrivialConditionTree = (raw = null) => {
+  if (!raw || typeof raw !== 'object') return true;
+  const node = normalizeConditionTree(raw, createDefaultPromptClause());
+  const inspect = (item) => {
+    if (!item || typeof item !== 'object') return true;
+    const logic = String(item.logic || '').trim().toLowerCase();
+    if (logic === 'not') {
+      const child = item.clause && typeof item.clause === 'object'
+        ? item.clause
+        : (Array.isArray(item.clauses) ? item.clauses[0] : null);
+      return inspect(child);
+    }
+    if (logic === 'and' || logic === 'or' || Array.isArray(item.clauses)) {
+      const clauses = Array.isArray(item.clauses) ? item.clauses : [];
+      if (!clauses.length) return true;
+      return clauses.every(inspect);
+    }
+    return isDefaultPromptClause(item);
+  };
+  return inspect(node);
+};
+
 export const normalizeConditionTree = (raw = null, fallbackClause = null) => {
   const fallback = normalizePromptClause(fallbackClause || createDefaultPromptClause());
   if (!raw || typeof raw !== 'object') return { logic: 'and', clauses: [fallback] };

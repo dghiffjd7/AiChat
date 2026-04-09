@@ -40,9 +40,16 @@ const sanitizePersonaForPersist = (persona, { stripOriginalCard = false, stripAv
 };
 
 export class PersonaStore {
-    constructor() {
+    constructor(options = {}) {
+        this.storageKey = String(options.storageKey || STORAGE_KEY);
+        this.activeKey = String(options.activeKey || ACTIVE_KEY);
+        this.idPrefix = String(options.idPrefix || 'persona').trim() || 'persona';
+        this.defaultId = String(options.defaultId || 'default').trim() || 'default';
+        this.defaultName = String(options.defaultName || '我').trim() || '我';
+        this.enableCardOffload = options.enableCardOffload !== false;
         this.personas = [];
-        this.activeId = 'default';
+        this.activeId = this.defaultId;
+        this.createdFromEmpty = false;
         this.ready = this.init();
     }
 
@@ -52,9 +59,10 @@ export class PersonaStore {
 
     async load() {
         try {
+            this.createdFromEmpty = false;
             // Try loading from Tauri KV first (disk)
-            let data = await safeInvoke('load_kv', { name: STORAGE_KEY });
-            let active = await safeInvoke('load_kv', { name: ACTIVE_KEY });
+            let data = await safeInvoke('load_kv', { name: this.storageKey });
+            let active = await safeInvoke('load_kv', { name: this.activeKey });
 
             let tooLarge = false;
             if (data && typeof data === 'object' && data._tooLarge) {
@@ -65,11 +73,11 @@ export class PersonaStore {
 
             // Fallback to localStorage
             if (!Array.isArray(data)) {
-                const raw = localStorage.getItem(STORAGE_KEY);
+                const raw = localStorage.getItem(this.storageKey);
                 if (raw) data = JSON.parse(raw);
             }
             if (!active) {
-                active = localStorage.getItem(ACTIVE_KEY);
+                active = localStorage.getItem(this.activeKey);
             }
 
             const incoming = Array.isArray(data) ? data : [];
@@ -113,12 +121,13 @@ export class PersonaStore {
                 }
                 return normalized;
             });
-            this.activeId = active || 'default';
+            this.activeId = active || this.defaultId;
 
             // Ensure default persona exists
             if (this.personas.length === 0) {
                 this.personas.push(this.createDefaultPersona());
-                this.activeId = 'default';
+                this.activeId = this.defaultId;
+                this.createdFromEmpty = true;
                 await this.save();
             } else if (!this.personas.find(p => p.id === this.activeId)) {
                 this.activeId = this.personas[0].id;
@@ -132,14 +141,15 @@ export class PersonaStore {
             logger.error('PersonaStore load failed', err);
             // Fallback to default in memory
             this.personas = [this.createDefaultPersona()];
-            this.activeId = 'default';
+            this.activeId = this.defaultId;
+            this.createdFromEmpty = true;
         }
     }
 
     createDefaultPersona() {
         return {
-            id: 'default',
-            name: '我',
+            id: this.defaultId,
+            name: this.defaultName,
             avatar: '', // Will fallback to app default in UI
             description: '',
             userBubbleColor: DEFAULT_USER_BUBBLE_COLOR,
@@ -154,6 +164,7 @@ export class PersonaStore {
     }
 
     async _offloadOriginalCards() {
+        if (!this.enableCardOffload) return false;
         let changed = false;
         for (const persona of this.personas) {
             if (!persona || typeof persona !== 'object') continue;
@@ -229,24 +240,24 @@ export class PersonaStore {
         const { kvPayload, kvJson, kvDropped, localPayload, localJson } = this._buildPersistPayloads();
         try {
             if (localJson.length <= LOCALSTORAGE_SOFT_LIMIT) {
-                localStorage.setItem(STORAGE_KEY, localJson);
+                localStorage.setItem(this.storageKey, localJson);
             } else {
-                localStorage.removeItem(STORAGE_KEY);
+                localStorage.removeItem(this.storageKey);
                 logger.warn('PersonaStore localStorage payload too large, skipped', { size: localJson.length });
             }
-            localStorage.setItem(ACTIVE_KEY, this.activeId);
+            localStorage.setItem(this.activeKey, this.activeId);
         } catch (err) {
             logger.warn('PersonaStore localStorage save failed', err);
             try {
-                localStorage.removeItem(STORAGE_KEY);
+                localStorage.removeItem(this.storageKey);
             } catch {}
         }
         try {
             if (kvJson.length > KV_SOFT_LIMIT) {
                 logger.warn('PersonaStore kv payload too large after trimming', { size: kvJson.length, kvDropped });
             }
-            await safeInvoke('save_kv', { name: STORAGE_KEY, data: kvPayload });
-            await safeInvoke('save_kv', { name: ACTIVE_KEY, data: this.activeId });
+            await safeInvoke('save_kv', { name: this.storageKey, data: kvPayload });
+            await safeInvoke('save_kv', { name: this.activeKey, data: this.activeId });
         } catch (err) {
             logger.warn('PersonaStore save failed', err);
         }
@@ -274,13 +285,13 @@ export class PersonaStore {
     }
 
     async create(data) {
-        const id = `persona_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+        const id = `${this.idPrefix}_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
         const position = Number.isFinite(Number(data?.position)) ? Number(data.position) : persona_description_positions.IN_PROMPT;
         const depth = Number.isFinite(Number(data?.depth)) ? Math.max(0, Math.trunc(Number(data.depth))) : DEFAULT_DEPTH;
         const role = Number.isFinite(Number(data?.role)) ? Math.max(0, Math.min(2, Math.trunc(Number(data.role)))) : DEFAULT_ROLE;
         const newPersona = {
             id,
-            name: data.name || 'User',
+            name: data.name || this.defaultName,
             avatar: data.avatar || '',
             description: data.description || '',
             userBubbleColor: normalizeBubbleColor(data.userBubbleColor),

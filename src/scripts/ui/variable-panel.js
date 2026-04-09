@@ -598,7 +598,7 @@ export class VariablePanel {
                     <option value="remove">数组移除</option>
                     <option value="ai_evaluate">AI 评估</option>
                     <option value="notify">通知提示</option>
-                    <option value="switch_persona">切换 Persona</option>
+                    <option value="switch_persona">切换角色卡</option>
                     <option value="inject_prompt">注入提示词</option>
                 </select>
 
@@ -639,7 +639,7 @@ export class VariablePanel {
                 </div>
 
                 <div id="rule-action-persona-wrap" style="display:none;">
-                    <label style="font-size:12px; color:#64748b;">Persona ID / 名称</label>
+                    <label style="font-size:12px; color:#64748b;">角色卡 ID / 名称</label>
                     <input id="rule-action-persona" type="text" style="padding:8px 10px; border:1px solid #e2e8f0; border-radius:10px;">
                 </div>
 
@@ -1571,7 +1571,7 @@ export class VariablePanel {
         if (a.type === 'remove') return `移除 ${target}`;
         if (a.type === 'ai_evaluate') return `AI 评估 ${target}`;
         if (a.type === 'notify') return `通知: ${String(a.message || a.value || '').trim() || '提示'}`;
-        if (a.type === 'switch_persona') return `切换 Persona: ${String(a.persona || a.value || '').trim() || '未设置'}`;
+        if (a.type === 'switch_persona') return `切换角色卡: ${String(a.persona || a.value || '').trim() || '未设置'}`;
         if (a.type === 'inject_prompt') return `注入提示词 (${String(a.role || 'system')})`;
         return `设置 ${target}`;
     }

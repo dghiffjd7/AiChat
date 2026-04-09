@@ -1411,6 +1411,13 @@ export class ChatUI {
     existing.__chatappMessage = next;
     existing.dataset.msgId = String(next.id || '');
     existing.dataset.role = String(next.role || '');
+    if (next.status === 'pending' || next.status === 'sending') {
+      existing.classList.add('message-pending');
+      existing.dataset.status = String(next.status || '');
+    } else {
+      existing.classList.remove('message-pending');
+      delete existing.dataset.status;
+    }
     this.applyCreativeBubbleState(existing, next);
 
     const avatarImg = existing.querySelector('img.QQ_chat_head');

@@ -830,7 +830,7 @@ export class GeneralSettingsPanel {
           <div style="margin-bottom: 14px;">
             <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
               <input type="checkbox" id="general-persona-bind" style="width: 18px; height: 18px;">
-              <span style="font-weight: 700;">用户角色绑定联系人/聊天记录</span>
+              <span style="font-weight: 700;">角色卡绑定联系人/聊天记录</span>
             </label>
           </div>
 
@@ -1233,7 +1233,7 @@ export class GeneralSettingsPanel {
         const ok = await appConfirm({
           title: '关闭绑定',
           message:
-            '关闭后，所有 Persona 将共享同一份联系人/聊天记录（共享区）。已绑定的数据不会丢失，但需切回绑定模式才能查看各自内容。确定继续吗？',
+            '关闭后，所有角色卡将共享同一份联系人/聊天记录（共享区）。已绑定的数据不会丢失，但需切回绑定模式才能查看各自内容。确定继续吗？',
         });
         if (!ok) {
           if (target) target.checked = true;

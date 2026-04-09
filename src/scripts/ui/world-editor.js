@@ -31,6 +31,7 @@ import {
     normalizePromptClause,
     isConditionTreeGroup,
     createDefaultPromptClause,
+    isTrivialConditionTree,
     normalizeConditionTree,
     getPrimaryClauseFromConditionTree,
     visitConditionTree,
@@ -263,18 +264,23 @@ const buildVariableCreationDraft = (raw = {}) => {
 
 const normalizePromptBlock = (raw = {}, index = 0, fallbackContent = '') => {
     const block = raw && typeof raw === 'object' ? { ...raw } : {};
-    const whenRaw = block.when && typeof block.when === 'object' ? block.when : {};
-    const normalizedWhenTree = normalizeConditionTree(whenRaw, createDefaultPromptClause());
-    const primaryClause = getPrimaryClauseFromConditionTree(normalizedWhenTree, createDefaultPromptClause());
-    const normalizedGraph = normalizeNodeGraph(
-        block.nodeGraph,
-        normalizedWhenTree,
-        primaryClause,
-    );
-    const normalizedWhen = normalizeConditionTree(
-        buildWhenFromNodeGraph(normalizedGraph, primaryClause),
-        primaryClause,
-    );
+    const whenRaw = block.when && typeof block.when === 'object' ? block.when : null;
+    const hasMeaningfulWhen = !isTrivialConditionTree(whenRaw);
+    let normalizedGraph = null;
+    let normalizedWhen = null;
+    if (hasMeaningfulWhen) {
+        const normalizedWhenTree = normalizeConditionTree(whenRaw, createDefaultPromptClause());
+        const primaryClause = getPrimaryClauseFromConditionTree(normalizedWhenTree, createDefaultPromptClause());
+        normalizedGraph = normalizeNodeGraph(
+            block.nodeGraph,
+            normalizedWhenTree,
+            primaryClause,
+        );
+        normalizedWhen = normalizeConditionTree(
+            buildWhenFromNodeGraph(normalizedGraph, primaryClause),
+            primaryClause,
+        );
+    }
     return {
         id: String(block.id || '').trim() || genBlockId(),
         title: String(block.title || `内容 ${index + 1}`).trim(),
@@ -450,8 +456,9 @@ const buildWorldAiContinueMessages = (template, inputText, draft) => {
     return [{ role: 'user', content: userContent }];
 };
 
-const normalizeEntry = (entry = {}, index = 0) => {
+const normalizeEntry = (entry = {}, index = 0, options = {}) => {
     const e = { ...entry };
+    const isCharacterCardWorld = options?.characterCardWorld === true;
 
     e.id = e.id ?? (Number.isInteger(e.uid) ? String(e.uid) : `entry-${index}`);
     if (e.uid == null && /^\d+$/.test(e.id)) {
@@ -480,12 +487,16 @@ const normalizeEntry = (entry = {}, index = 0) => {
 
     e.disable = Boolean(e.disable);
     e.constant = Boolean(e.constant);
+    e.selectiveExplicit = e.selectiveExplicit === true;
     e.selective = Boolean(e.selective);
-    // 触发策略仅保留蓝/绿两态；禁用状态独立控制。
+    // 蓝灯=常驻；绿灯=关键词触发。副关键词逻辑应独立控制，不能在保存时自动改写。
+    // 兼容修复：旧版本编辑器会把角色卡世界书的所有绿灯条目强制写成 selective=true。
+    // 对未显式开启过该逻辑的角色卡世界书条目，这里回退为普通关键词触发。
     if (e.constant) {
         e.selective = false;
-    } else if (!e.selective) {
-        e.selective = true;
+        e.selectiveExplicit = false;
+    } else if (isCharacterCardWorld && !e.selectiveExplicit) {
+        e.selective = false;
     }
     e.selectiveLogic = toNumber(e.selectiveLogic, 0);
 
@@ -728,7 +739,10 @@ export class WorldEditorModal {
                 this.data.entries = [];
             }
         }
-        this.data.entries = this.data.entries.map((e, i) => normalizeEntry(e, i));
+        const isCharacterCardWorld = String(this.data?.source || '').trim() === 'character_card';
+        this.data.entries = this.data.entries.map((e, i) => normalizeEntry(e, i, {
+            characterCardWorld: isCharacterCardWorld,
+        }));
         if (!this.data.entries.length && !this.refMode) {
             this.data.entries.push(createDefaultEntry(0));
         }
@@ -2548,15 +2562,6 @@ export class WorldEditorModal {
         const next = normalizePromptBlock({
             title: `内容 ${blocks.length + 1}`,
             content: '',
-            when: {
-                logic: 'and',
-                clauses: [{
-                    left: '',
-                    op: '>',
-                    right: 10,
-                    rightType: 'number',
-                }],
-            },
         }, blocks.length, '');
         blocks.push(next);
         if (entryId) this.entryBlockPageMap.set(String(entryId), Math.max(0, blocks.length - 1));
@@ -3269,8 +3274,14 @@ export class WorldEditorModal {
     applyEntryTriggerStrategy(entry, strategy = 'green') {
         if (!entry || typeof entry !== 'object') return;
         const mode = String(strategy || '').toLowerCase() === 'blue' ? 'blue' : 'green';
-        entry.constant = mode === 'blue';
-        entry.selective = mode === 'green';
+        if (mode === 'blue') {
+            entry.constant = true;
+            entry.selective = false;
+            entry.selectiveExplicit = false;
+            return;
+        }
+        entry.constant = false;
+        entry.selective = Boolean(entry.selective);
     }
 
     setEntryDisabled(index, disabled) {
@@ -3789,6 +3800,9 @@ export class WorldEditorModal {
                                 <label><input type="checkbox" id="we-excludeRecursion" ${entry.excludeRecursion ? 'checked' : ''}> 不参与递归</label>
                                 <label><input type="checkbox" id="we-preventRecursion" ${entry.preventRecursion ? 'checked' : ''}> 阻止递归</label>
                             </div>
+                            <div class="world-entry-toggle-grid" style="margin-top:8px;">
+                                <label><input type="checkbox" id="we-selective" ${!entry.constant && entry.selective ? 'checked' : ''}> 启用副关键词逻辑（selective）</label>
+                            </div>
                             <label style="margin-top:8px;">选择性逻辑（Selective Logic）</label>
                             <button type="button" class="world-app-select-btn" id="we-selectiveLogic-btn">
                                 <span>${selectiveLogicLabel}</span>
@@ -3990,7 +4004,7 @@ export class WorldEditorModal {
         bindNumber('#we-groupWeight', 'groupWeight', DEFAULT_WEIGHT, 0, 9999);
         bindNumber('#we-delayUntilRecursion', 'delayUntilRecursion', 0, 0, 9999);
 
-        const bindCustomSelect = ({ btnSelector, options, getValue, setValue, rerenderList = false }) => {
+        const bindCustomSelect = ({ btnSelector, options, getValue, setValue, rerenderList = false, rerenderEditor = false }) => {
             const btn = q(btnSelector);
             if (!btn) return;
             const renderBtn = () => {
@@ -4010,6 +4024,7 @@ export class WorldEditorModal {
                         setValue(value);
                         renderBtn();
                         if (rerenderList) this.renderList();
+                        if (rerenderEditor) this.renderEditor();
                         markRefDirty();
                     },
                 });
@@ -4077,7 +4092,17 @@ export class WorldEditorModal {
                 this.applyEntryTriggerStrategy(entry, value);
             },
             rerenderList: true,
+            rerenderEditor: true,
         });
+
+        const selectiveEl = q('#we-selective');
+        if (selectiveEl) {
+            selectiveEl.addEventListener('change', () => {
+                entry.selective = !entry.constant && selectiveEl.checked;
+                entry.selectiveExplicit = entry.selective === true;
+                markRefDirty();
+            });
+        }
 
         this.editorEl.querySelectorAll('.world-block-dot').forEach((dot) => {
             dot.addEventListener('click', () => {
@@ -4420,8 +4445,11 @@ export class WorldEditorModal {
 
     prepareForSave(nameOverride = this.worldName) {
         const sourceEntries = this.refMode ? (this.refLocalEntries || []) : this.data.entries;
+        const isCharacterCardWorld = String(this.data?.source || '').trim() === 'character_card';
         const entries = sourceEntries.map((entry, i) => {
-            const e = normalizeEntry(entry, i);
+            const e = normalizeEntry(entry, i, {
+                characterCardWorld: isCharacterCardWorld,
+            });
             // 兼容旧命名
             e.title = e.comment;
             e.triggers = e.key;

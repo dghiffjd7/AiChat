@@ -1,3 +1,5 @@
+import { getCharacterCardDisplayName, getCharacterCardSource } from '../utils/character-card-display.js';
+
 const normalizeName = (value, fallback = '未命名角色') => {
   const raw = String(value || '').trim();
   return raw || fallback;
@@ -7,13 +9,13 @@ const normalizeBindingItem = (persona = null, { activePersonaId = '', effectiveP
   const item = persona && typeof persona === 'object' ? persona : {};
   const personaId = String(item.id || '').trim();
   if (!personaId) return null;
-  const source = item.source && typeof item.source === 'object' ? item.source : {};
+  const source = getCharacterCardSource(item);
   const worldId = String(source.worldbookId || '').trim();
   const enabled = Boolean(worldId) && source.worldbookEnabled !== false;
   const activeId = String(effectivePersonaId || activePersonaId || '').trim();
   return {
     personaId,
-    personaName: normalizeName(item.name, personaId),
+    personaName: normalizeName(getCharacterCardDisplayName(item, personaId), personaId),
     worldId,
     enabled,
     hasWorld: Boolean(worldId),

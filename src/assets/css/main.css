@@ -4262,6 +4262,28 @@ body,
   gap: 8px;
 }
 
+.persona-switcher-tabs {
+  display: flex;
+  gap: 6px;
+  padding-bottom: 2px;
+}
+
+.persona-switcher-tabs button {
+  flex: 1;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  background: #f8fafc;
+  color: #475569;
+  border-radius: 12px;
+  padding: 9px 12px;
+  font-weight: 700;
+}
+
+.persona-switcher-tabs button.is-active {
+  background: #0f172a;
+  color: #fff;
+  border-color: #0f172a;
+}
+
 .persona-switcher-current {
   display: flex;
   align-items: center;
@@ -4321,6 +4343,9 @@ body,
   color: #64748b;
   font-size: 12px;
   line-height: 1.35;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .persona-switcher-list {

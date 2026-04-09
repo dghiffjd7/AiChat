@@ -44,6 +44,7 @@ import {
   collectConditionDefineSpecs,
   createDefaultPromptClause,
   evaluateConditionTree,
+  isTrivialConditionTree,
   normalizeConditionTree,
   normalizeWorldPromptMode,
   parseTypedValue,
@@ -4408,8 +4409,11 @@ const stringifyMessageContent = (content) => {
       return blocks
         .map((raw, idx) => {
           const block = raw && typeof raw === 'object' ? raw : {};
-          const whenRaw = block.when && typeof block.when === 'object' ? block.when : {};
+          const whenRaw = block.when && typeof block.when === 'object' ? block.when : null;
           const nodeGraph = block.nodeGraph && typeof block.nodeGraph === 'object' ? block.nodeGraph : null;
+          const normalizedWhen = !isTrivialConditionTree(whenRaw)
+            ? normalizeConditionTree(whenRaw, createDefaultPromptClause())
+            : null;
           const blockId = String(block.id || `blk_${idx}`);
           return {
             id: blockId,
@@ -4418,9 +4422,9 @@ const stringifyMessageContent = (content) => {
             content: String(block.content || ''),
             role: block.role,
             priority: Number.isFinite(Number(block.priority)) ? Number(block.priority) : 100,
-            when: normalizeConditionTree(whenRaw, createDefaultPromptClause()),
-            nodeGraph,
-            debugFocusNodeId: resolveBlockFocusNodeId(nodeGraph),
+            when: normalizedWhen,
+            nodeGraph: normalizedWhen ? nodeGraph : null,
+            debugFocusNodeId: normalizedWhen ? resolveBlockFocusNodeId(nodeGraph) : '',
           };
         })
         .filter(Boolean);

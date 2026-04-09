@@ -15,9 +15,11 @@ import { MomentsStore } from '../storage/moments-store.js';
 import { PersonaStore } from '../storage/persona-store.js';
 import { PluginStore } from '../storage/plugin-store.js';
 import { RpSessionStore } from '../storage/rp-session-store.js';
+import { UserStore } from '../storage/user-store.js';
 import { stickerPackStore } from '../storage/sticker-pack-store.js';
 import { normalizeScopeId } from '../storage/store-scope.js';
 import { avatarDataUrlFromFile, compressImageDataUrl, isGifFile } from '../utils/image.js';
+import { getCharacterCardBoundUserId as readCharacterCardBoundUserId, getCharacterCardDisplayName, getCharacterCardSource } from '../utils/character-card-display.js';
 import { logger } from '../utils/logger.js';
 import { buildNameWithBadgesHtml, escapeHtml, getContactBadges } from '../utils/name-badges.js';
 import { FEATHER_DEFAULT, resolveLineAvatar } from '../utils/line-avatar.js';
@@ -57,6 +59,7 @@ import { RegexPanel } from './regex-panel.js';
 import { RegexSessionPanel } from './regex-session-panel.js';
 import { SessionPanel } from './session-panel.js';
 import { StickerPicker } from './sticker-picker.js';
+import { UserPanel } from './user-panel.js';
 import { VariablePanel } from './variable-panel.js';
 import {
   buildVariableContext,
@@ -530,6 +533,7 @@ const initApp = async () => {
     memoryStore: memoryTableStore,
   });
   const personaStore = new PersonaStore();
+  const userStore = new UserStore();
   const rpSessionStore = new RpSessionStore();
   let activePersonaScopeKey = '';
   let activePersonaId = 'default';
@@ -548,6 +552,27 @@ const initApp = async () => {
   const worldPanel = new WorldPanel({ contactsStore, getSessionId: () => chatStore.getCurrent() });
   const scriptPanel = new ScriptPanel({ store: scriptStore, personaStore, presetStore: window.appBridge?.presets });
   await personaStore.ready;
+  await userStore.ready;
+  if (userStore.createdFromEmpty) {
+    try {
+      const currentCard = personaStore.getActive?.() || null;
+      const source = getCharacterCardSource(currentCard);
+      const nextPatch = {
+        description: String(currentCard?.description || ''),
+        position: currentCard?.position,
+        depth: currentCard?.depth,
+        role: currentCard?.role,
+        userBubbleColor: currentCard?.userBubbleColor,
+      };
+      if (source?.type !== 'character_card') {
+        nextPatch.name = String(currentCard?.name || '').trim() || '我';
+        nextPatch.avatar = String(currentCard?.avatar || '').trim();
+      }
+      await userStore.update(userStore.getActive?.()?.id || 'default', nextPatch);
+    } catch (err) {
+      logger.warn('hydrate default user from legacy persona failed', err);
+    }
+  }
   activePersonaId = personaStore.getActive?.()?.id || 'default';
   const initialScopeKey = getPersonaScopeKey(activePersonaId);
   await Promise.all([
@@ -757,6 +782,12 @@ const initApp = async () => {
     } catch {}
   };
 
+  const getActiveUserProfile = () => userStore.getActive?.() || { id: 'default', name: '我', avatar: '', description: '' };
+  const getActiveUserName = () => String(getActiveUserProfile()?.name || '').trim() || '我';
+  const getActiveUserAvatar = () => String(getActiveUserProfile()?.avatar || '').trim() || './assets/external/feather-default.png';
+  const getCharacterCardName = (card = null, fallback = '角色') => getCharacterCardDisplayName(card, fallback);
+  const getBoundUserIdForCharacterCard = (card = null) => readCharacterCardBoundUserId(card);
+
   const getEffectivePersona = (sessionId = chatStore.getCurrent()) => {
     const sid = String(sessionId || '').trim() || 'default';
     const lockedId = chatStore.getPersonaLock?.(sid) || '';
@@ -769,6 +800,14 @@ const initApp = async () => {
       } catch {}
     }
     return personaStore.getActive();
+  };
+  const syncBoundUserForCharacterCard = async (card = personaStore.getActive?.()) => {
+    const userId = String(getBoundUserIdForCharacterCard(card) || '').trim();
+    if (!userId) return false;
+    if (String(userStore.getActive?.()?.id || '') === userId) return true;
+    const ok = await userStore.setActive(userId);
+    if (ok) syncUserPersonaUI(chatStore.getCurrent());
+    return ok;
   };
   const buildRoleWorldBindingsForSession = (sessionId = chatStore.getCurrent(), options = {}) => {
     const sid = String(sessionId || chatStore.getCurrent() || '').trim();
@@ -1001,8 +1040,8 @@ const initApp = async () => {
   };
 
   const getUserBubbleColor = (sessionId = chatStore.getCurrent()) => {
-    const p = getEffectivePersona(sessionId);
-    return normalizeHexColor(p?.userBubbleColor, DEFAULT_USER_BUBBLE_COLOR);
+    const user = getActiveUserProfile();
+    return normalizeHexColor(user?.userBubbleColor, DEFAULT_USER_BUBBLE_COLOR);
   };
 
   const applyUserBubbleColor = (sessionId = chatStore.getCurrent()) => {
@@ -1014,16 +1053,16 @@ const initApp = async () => {
   };
 
   const syncUserPersonaUI = (sessionId = chatStore.getCurrent()) => {
-    const p = getEffectivePersona(sessionId);
-    const url = p.avatar || './assets/external/feather-default.png';
-    const name = p.name || '我';
-    const accent = getPersonaAccent(p);
+    const user = getActiveUserProfile();
+    const url = getActiveUserAvatar();
+    const name = getActiveUserName();
+    const accent = getPersonaAccent(user);
     avatars.user = url;
     document.querySelectorAll('.user-avatar-btn').forEach(btn => {
       btn.dataset.personaAccent = '1';
       btn.style.setProperty('--persona-accent', accent.color);
       btn.style.setProperty('--persona-accent-soft', accent.soft);
-      btn.title = `当前 Persona：${name}`;
+      btn.title = `当前用户：${name}`;
       const img = btn.querySelector('img');
       if (img) img.src = url;
     });
@@ -1032,7 +1071,7 @@ const initApp = async () => {
       el.dataset.personaAccent = '1';
       el.style.setProperty('--persona-accent', accent.color);
       el.style.setProperty('--persona-accent-soft', accent.soft);
-      el.title = `当前 Persona：${name}`;
+      el.title = `当前用户：${name}`;
     });
     try {
       momentsPanel?.setUserAvatar?.(url);
@@ -1108,12 +1147,25 @@ const initApp = async () => {
 
   const personaPanel = new PersonaPanel({
     personaStore,
+    userStore,
     chatStore,
     contactsStore,
     rpSessionStore,
     getSessionId: () => chatStore.getCurrent(),
     onPersonaChanged: async () => {
       await applyPersonaScope({ personaId: personaStore.getActive?.()?.id });
+      await syncBoundUserForCharacterCard(personaStore.getActive?.());
+      syncUserPersonaUI(chatStore.getCurrent());
+      refreshChatAndContacts();
+    },
+  });
+  const userPanel = new UserPanel({
+    userStore,
+    personaStore,
+    onUserChanged: async (detail = {}) => {
+      if (detail?.affectsActiveCharacter) {
+        await syncBoundUserForCharacterCard(personaStore.getActive?.());
+      }
       syncUserPersonaUI(chatStore.getCurrent());
       refreshChatAndContacts();
     },
@@ -1128,16 +1180,40 @@ const initApp = async () => {
       target = list.find(p => String(p?.name || '').trim().toLowerCase() === lower);
     }
     if (!target) return false;
-    if (String(personaStore.getActive?.()?.id || '') === String(target.id || '')) return true;
+    if (String(personaStore.getActive?.()?.id || '') === String(target.id || '')) {
+      await syncBoundUserForCharacterCard(target);
+      syncUserPersonaUI(chatStore.getCurrent());
+      return true;
+    }
     const ok = await personaStore.setActive(target.id);
     if (!ok) return false;
     await applyPersonaScope({ personaId: target.id });
+    await syncBoundUserForCharacterCard(target);
     syncUserPersonaUI(chatStore.getCurrent());
     refreshChatAndContacts();
     return true;
   };
   window.appBridge.switchPersona = switchPersona;
+  const switchUserProfile = async (userIdOrName) => {
+    const raw = String(userIdOrName || '').trim();
+    if (!raw) return false;
+    let target = userStore.get(raw);
+    if (!target) {
+      const list = userStore.getAll?.() || [];
+      const lower = raw.toLowerCase();
+      target = list.find(user => String(user?.name || '').trim().toLowerCase() === lower);
+    }
+    if (!target) return false;
+    if (String(userStore.getActive?.()?.id || '') === String(target.id || '')) return true;
+    const ok = await userStore.setActive(target.id);
+    if (!ok) return false;
+    syncUserPersonaUI(chatStore.getCurrent());
+    refreshChatAndContacts();
+    return true;
+  };
+  window.appBridge.switchUserProfile = switchUserProfile;
   // Initial sync
+  await syncBoundUserForCharacterCard(personaStore.getActive?.());
   syncUserPersonaUI(chatStore.getCurrent());
 
   window.addEventListener('app-settings-changed', async ev => {
@@ -1218,7 +1294,7 @@ const initApp = async () => {
     momentsStore,
     contactsStore,
     defaultAvatar: avatars.assistant,
-    userAvatar: personaStore.getActive()?.avatar || avatars.user,
+    userAvatar: userStore.getActive()?.avatar || avatars.user,
     onUserComment: async (momentId, commentText, meta = null) => {
       const id = String(momentId || '').trim();
       const userComment = String(commentText || '').trim();
@@ -1455,7 +1531,7 @@ ${listPart || '-（无）'}
               const speakerRaw = String(payload?.speaker || '').trim();
               const content = String(payload?.content || '').trim();
               if (!content) return;
-              const userDisplayName = getEffectivePersona(targetSessionId)?.name || '我';
+              const userDisplayName = getActiveUserName();
               const speakerKey = normalizeName(speakerRaw).replace(/[：:]/g, '').trim();
               const userKey = normalizeName(userDisplayName).replace(/[：:]/g, '').trim();
               const isMe = Boolean(
@@ -1562,15 +1638,15 @@ ${listPart || '-（无）'}
         let fullRaw = '';
 
         const p = personaStore.getActive?.() || {};
-        const persona = getEffectivePersona(originSessionId);
-        const uName = String(persona?.name || '').trim() || '我';
+        const userProfile = getActiveUserProfile();
+        const uName = String(userProfile?.name || '').trim() || '我';
         const ctx = {
           user: {
             name: uName,
-            persona: String(persona?.description || ''),
-            personaPosition: persona?.position,
-            personaDepth: persona?.depth,
-            personaRole: persona?.role,
+            persona: String(userProfile?.description || ''),
+            personaPosition: userProfile?.position,
+            personaDepth: userProfile?.depth,
+            personaRole: userProfile?.role,
           },
           character: { name: target.name || authorName },
           history: [],
@@ -9895,6 +9971,23 @@ Phase G（Frame 36）：循环衔接
   /* ---------------- 头像设置菜单 ---------------- */
   const settingsMenu = document.getElementById('settings-menu');
   const quickMenu = document.getElementById('quick-menu');
+  const PERSONA_SWITCHER_TAB_KEY = 'persona_switcher_tab_v2';
+  const normalizePersonaSwitcherTab = (value = '') => {
+    const raw = String(value || '').trim().toLowerCase();
+    return raw === 'character' ? 'character' : 'user';
+  };
+  let personaSwitcherTab = (() => {
+    try {
+      return normalizePersonaSwitcherTab(localStorage.getItem(PERSONA_SWITCHER_TAB_KEY));
+    } catch {
+      return 'user';
+    }
+  })();
+  const persistPersonaSwitcherTab = () => {
+    try {
+      localStorage.setItem(PERSONA_SWITCHER_TAB_KEY, normalizePersonaSwitcherTab(personaSwitcherTab));
+    } catch {}
+  };
   // 顶部头像/＋按钮在「消息」与「联系人」页共用同样外观
   const avatarBtns = document.querySelectorAll('.qq-message-topbar .user-avatar-btn');
   const settingsBtns = document.querySelectorAll('.qq-message-topbar .user-settings-btn');
@@ -9929,10 +10022,32 @@ Phase G（Frame 36）：循环衔接
     menu.className = 'sheet hidden persona-switcher-menu';
     menu.addEventListener('click', async e => {
       e.stopPropagation();
-      const manageBtn = e?.target?.closest?.('button[data-action="manage"]');
-      if (manageBtn) {
+      const tabBtn = e?.target?.closest?.('button[data-action="switcher-tab"]');
+      if (tabBtn) {
+        personaSwitcherTab = normalizePersonaSwitcherTab(tabBtn.dataset.tab);
+        persistPersonaSwitcherTab();
+        renderPersonaSwitcher();
+        if (lastPersonaAnchor) positionSheet(menu, lastPersonaAnchor, 0, 4, false);
+        return;
+      }
+      const manageUsersBtn = e?.target?.closest?.('button[data-action="manage-users"]');
+      if (manageUsersBtn) {
+        hideMenus();
+        userPanel.show();
+        return;
+      }
+      const manageCardsBtn = e?.target?.closest?.('button[data-action="manage-cards"]');
+      if (manageCardsBtn) {
         hideMenus();
         personaPanel.show();
+        return;
+      }
+      const userBtn = e?.target?.closest?.('button[data-user-id]');
+      if (userBtn) {
+        const userId = String(userBtn.dataset.userId || '').trim();
+        if (!userId) return;
+        hideMenus();
+        await switchUserProfile(userId);
         return;
       }
       const itemBtn = e?.target?.closest?.('button[data-persona-id]');
@@ -10051,28 +10166,90 @@ Phase G（Frame 36）：循环衔接
   const renderPersonaSwitcher = () => {
     if (!personaSwitcherMenu) return;
     const sessionId = String(chatStore.getCurrent() || '').trim();
+    const activeTab = normalizePersonaSwitcherTab(personaSwitcherTab);
+    const tabsHtml = `
+      <div class="persona-switcher-tabs">
+        <button type="button" data-action="switcher-tab" data-tab="user" class="${activeTab === 'user' ? 'is-active' : ''}">用户</button>
+        <button type="button" data-action="switcher-tab" data-tab="character" class="${activeTab === 'character' ? 'is-active' : ''}">角色卡</button>
+      </div>
+    `;
+
+    if (activeTab === 'user') {
+      const activeUser = getActiveUserProfile();
+      const users = Array.isArray(userStore.getAll?.()) ? userStore.getAll() : [];
+      const currentAccent = getPersonaAccent(activeUser);
+      const currentAvatar = escapeHtml(getActiveUserAvatar());
+      const currentName = escapeHtml(getActiveUserName());
+      const items = users.map(user => {
+        const userId = String(user?.id || '').trim();
+        if (!userId) return '';
+        if (userId === String(activeUser?.id || '').trim()) return '';
+        const accent = getPersonaAccent(user);
+        const avatar = escapeHtml(String(user?.avatar || '').trim() || './assets/external/feather-default.png');
+        const name = escapeHtml(String(user?.name || '').trim() || '我');
+        return `
+          <button
+            type="button"
+            class="persona-switcher-item"
+            data-user-id="${escapeHtml(userId)}"
+          >
+            <div class="persona-switcher-avatar" style="--persona-accent:${accent.color}; --persona-accent-soft:${accent.soft};">
+              <img src="${avatar}" alt="">
+            </div>
+            <div class="persona-switcher-meta">
+              <span class="persona-switcher-name" style="--persona-accent:${accent.color}; --persona-accent-soft:${accent.soft};">${name}</span>
+              <div class="persona-switcher-subtitle">${escapeHtml(String(user?.description || '').trim() || '点击切换用户')}</div>
+            </div>
+          </button>
+        `;
+      }).filter(Boolean).join('');
+
+      personaSwitcherMenu.innerHTML = `
+        ${tabsHtml}
+        <div class="persona-switcher-current">
+          <div class="persona-switcher-avatar" style="--persona-accent:${currentAccent.color}; --persona-accent-soft:${currentAccent.soft};">
+            <img src="${currentAvatar}" alt="">
+          </div>
+          <div class="persona-switcher-meta">
+            <span class="persona-switcher-name" style="--persona-accent:${currentAccent.color}; --persona-accent-soft:${currentAccent.soft};">${currentName}</span>
+            <div class="persona-switcher-subtitle">当前用户</div>
+          </div>
+        </div>
+        <div class="persona-switcher-list">
+          ${items || '<div class="persona-switcher-subtitle" style="padding: 8px 4px;">暂无其他用户</div>'}
+        </div>
+        <div class="persona-switcher-actions">
+          <button type="button" data-action="manage-users">管理用户</button>
+        </div>
+      `;
+      return;
+    }
+
     const activePersona = personaStore.getActive?.() || null;
     const effectivePersona = getEffectivePersona(sessionId);
     const lockPersonaId = String(chatStore.getPersonaLock?.(sessionId) || '').trim();
     const personas = Array.isArray(personaStore.getAll?.()) ? personaStore.getAll() : [];
     const currentAccent = getPersonaAccent(effectivePersona);
-    const currentAvatar = effectivePersona?.avatar || './assets/external/feather-default.png';
-    const currentName = escapeHtml(effectivePersona?.name || '我');
+    const currentAvatar = escapeHtml(String(effectivePersona?.avatar || '').trim() || './assets/external/feather-default.png');
+    const currentName = escapeHtml(getCharacterCardName(effectivePersona, '角色卡'));
     const currentSub = lockPersonaId
-      ? '当前会话使用此 Persona'
-      : '当前全局 Persona';
+      ? '当前会话使用此角色卡'
+      : '当前全局角色卡';
     const items = personas.map(persona => {
       const personaId = String(persona?.id || '').trim();
       if (!personaId) return '';
       if (personaId === String(effectivePersona?.id || '').trim()) return '';
       const accent = getPersonaAccent(persona);
-      const avatar = escapeHtml(persona?.avatar || './assets/external/feather-default.png');
-      const name = escapeHtml(persona?.name || '我');
+      const avatar = escapeHtml(String(persona?.avatar || '').trim() || './assets/external/feather-default.png');
+      const name = escapeHtml(getCharacterCardName(persona, personaId));
       const isActive = personaId === String(activePersona?.id || '').trim();
       const isLocked = personaId === lockPersonaId;
+      const boundUserId = getBoundUserIdForCharacterCard(persona);
+      const boundUser = boundUserId ? userStore.get?.(boundUserId) : null;
       const tags = [];
       if (isActive) tags.push('<span class="persona-switcher-tag">全局</span>');
       if (isLocked) tags.push('<span class="persona-switcher-tag is-lock">🔒 已锁定</span>');
+      if (boundUser) tags.push(`<span class="persona-switcher-tag">绑定 ${escapeHtml(String(boundUser?.name || '').trim() || '用户')}</span>`);
       return `
         <button
           type="button"
@@ -10092,7 +10269,7 @@ Phase G（Frame 36）：循环衔接
     }).filter(Boolean).join('');
 
     personaSwitcherMenu.innerHTML = `
-      <div class="sheet-header">👤 切换 Persona</div>
+      ${tabsHtml}
       <div class="persona-switcher-current">
         <div class="persona-switcher-avatar" style="--persona-accent:${currentAccent.color}; --persona-accent-soft:${currentAccent.soft};">
           <img src="${currentAvatar}" alt="">
@@ -10103,10 +10280,10 @@ Phase G（Frame 36）：循环衔接
         </div>
       </div>
       <div class="persona-switcher-list">
-        ${items || '<div class="persona-switcher-subtitle" style="padding: 8px 4px;">暂无其他 Persona</div>'}
+        ${items || '<div class="persona-switcher-subtitle" style="padding: 8px 4px;">暂无其他角色卡</div>'}
       </div>
       <div class="persona-switcher-actions">
-        <button type="button" data-action="manage">管理 Persona</button>
+        <button type="button" data-action="manage-cards">管理角色卡</button>
       </div>
     `;
   };
@@ -10626,8 +10803,7 @@ Phase G（Frame 36）：循环衔接
     return name || '创意写作';
   };
   const getPromptUserName = (sessionId = chatStore.getCurrent()) => {
-    const persona = getEffectivePersona(sessionId);
-    const name = String(persona?.name || '').trim();
+    const name = String(getActiveUserProfile()?.name || '').trim();
     return name || '我';
   };
 
@@ -11514,7 +11690,7 @@ Phase G（Frame 36）：循环衔接
           type: 'music',
           content: title,
           meta: { artist, url: audioUrl },
-          name: getEffectivePersona(chatStore.getCurrent())?.name || '我',
+          name: getActiveUserName(),
           avatar: avatars.user,
           time: formatNowTime(),
         };
@@ -11529,7 +11705,7 @@ Phase G（Frame 36）：循环衔接
         role: 'user',
         type: 'transfer',
         content: amount,
-        name: getEffectivePersona(chatStore.getCurrent())?.name || '我',
+        name: getActiveUserName(),
         avatar: avatars.user,
         time: formatNowTime(),
       };
@@ -11825,16 +12001,16 @@ Phase G（Frame 36）：循环衔接
 
           const contact = contactsStore?.getContact?.(sessionId) || null;
           const isGroup = Boolean(contact?.isGroup) || sessionId.startsWith('group:');
-          const activePersona = getEffectivePersona?.(chatStore.getCurrent?.()) || getEffectivePersona?.() || {};
-          const userName = activePersona?.name || '我';
+          const activeUser = getActiveUserProfile();
+          const userName = String(activeUser?.name || '').trim() || '我';
           const charName = String(contact?.name || sessionId.replace(/^group:/, '') || sessionId) || 'assistant';
           const ctx = {
             user: {
               name: userName,
-              persona: String(activePersona?.description || ''),
-              personaPosition: activePersona?.position,
-              personaDepth: activePersona?.depth,
-              personaRole: activePersona?.role,
+              persona: String(activeUser?.description || ''),
+              personaPosition: activeUser?.position,
+              personaDepth: activeUser?.depth,
+              personaRole: activeUser?.role,
             },
             character: { name: charName },
             session: { id: sessionId, isGroup },
@@ -12007,15 +12183,15 @@ Phase G（Frame 36）：循环衔接
             payload,
           ].join('\n');
 
-          const activePersona = getEffectivePersona?.(chatStore.getCurrent?.()) || getEffectivePersona?.() || {};
-          const userName = activePersona?.name || '我';
+          const activeUser = getActiveUserProfile();
+          const userName = String(activeUser?.name || '').trim() || '我';
           const ctx = {
             user: {
               name: userName,
-              persona: String(activePersona?.description || ''),
-              personaPosition: activePersona?.position,
-              personaDepth: activePersona?.depth,
-              personaRole: activePersona?.role,
+              persona: String(activeUser?.description || ''),
+              personaPosition: activeUser?.position,
+              personaDepth: activeUser?.depth,
+              personaRole: activeUser?.role,
             },
             character: { name: '动态' },
             session: { id: 'moment_summary_global', isGroup: false },
@@ -12085,7 +12261,7 @@ Phase G（Frame 36）：循环衔接
     if (!text && !hasAttachments) return;
 
     const sessionId = chatStore.getCurrent();
-    const activePersona = getEffectivePersona(sessionId);
+    const activeUser = getActiveUserProfile();
     const stickerKey = text && isStickerAllowed() ? parseStickerToken(text) : '';
     const attachmentSummary = () => {
       const images = composerAttachments.filter(a => a?.kind === 'image').length;
@@ -12104,7 +12280,7 @@ Phase G（Frame 36）：循环衔接
       raw: stickerKey ? text : undefined,
       status: 'pending', // 标记为待发送
       avatar: avatars.user,
-      name: activePersona.name || '我',
+      name: String(activeUser?.name || '').trim() || '我',
       time: formatNowTime(),
     };
     if (!text && hasAttachments && !stickerKey) {
@@ -12208,7 +12384,7 @@ Phase G（Frame 36）：循环衔接
         // 如果输入框也有内容，先将其添加为 pending 消息
         const currentInput = ui.getInputText().trim();
         if (currentInput) {
-          const activePersona = getEffectivePersona(sessionId);
+          const activeUser = getActiveUserProfile();
           const stickerKey = isStickerAllowed() ? parseStickerToken(currentInput) : '';
           const newPendingMsg = {
             role: 'user',
@@ -12217,7 +12393,7 @@ Phase G（Frame 36）：循环衔接
             raw: stickerKey ? currentInput : undefined,
             status: 'pending',
             avatar: avatars.user,
-            name: activePersona.name || '我',
+            name: String(activeUser?.name || '').trim() || '我',
             time: formatNowTime(),
           };
           const saved = chatStore.appendMessage(newPendingMsg, sessionId);
@@ -12269,8 +12445,9 @@ Phase G（Frame 36）：循环衔接
     const isRpMode = uiMode === 'rp';
     const sharedVariables = isSharedVariableSession(sessionId);
     const sharedMemory = isSharedMemorySession(sessionId);
+    const activeUser = getActiveUserProfile();
     const activePersona = getEffectivePersona(sessionId);
-    const promptUserName = String(activePersona?.name || '').trim() || '我';
+    const promptUserName = String(activeUser?.name || '').trim() || '我';
     const userName = isRpMode ? '我' : promptUserName;
     const characterName = isRpMode
       ? (String(getRpCharacterName(activePersona) || '').trim() || '角色')
@@ -14980,12 +15157,15 @@ Phase G（Frame 36）：循环衔接
       return {
         user: {
           name: promptUserName,
-          persona: activePersona.description || '',
-          personaPosition: activePersona.position,
-          personaDepth: activePersona.depth,
-          personaRole: activePersona.role,
+          persona: String(activeUser?.description || ''),
+          personaPosition: activeUser?.position,
+          personaDepth: activeUser?.depth,
+          personaRole: activeUser?.role,
         },
-        character: { name: characterName },
+        character: {
+          name: characterName,
+          description: String(activePersona?.description || ''),
+        },
         session: {
           id: sessionId,
           isGroup: isGroupChat,
@@ -16237,8 +16417,8 @@ Phase G（Frame 36）：循环衔接
     const contact = contactsStore.getContact(sessionId);
     const characterName =
       contact?.name || (sessionId.startsWith('group:') ? sessionId.replace(/^group:/, '') : sessionId) || 'assistant';
-    const activePersona = getEffectivePersona(sessionId);
-    const userName = activePersona.name || '我';
+    const activeUser = getActiveUserProfile();
+    const userName = String(activeUser?.name || '').trim() || '我';
     const now = formatNowTime();
 
     if (role !== 'user' || silent) {
@@ -16727,7 +16907,7 @@ Phase G（Frame 36）：循环衔接
           role: 'user',
           type: 'text',
           avatar: avatars.user,
-          name: getEffectivePersona(sessionId)?.name || '我',
+          name: getActiveUserName(),
         });
         refreshChatAndContacts();
       }
@@ -17005,7 +17185,7 @@ Phase G（Frame 36）：循环衔接
       role: 'user',
       type: 'sticker',
       content: tag,
-      name: getEffectivePersona(sessionId)?.name || '我',
+      name: getActiveUserName(),
       avatar: avatars.user,
       time: formatNowTime(),
     };
@@ -17030,7 +17210,7 @@ Phase G（Frame 36）：循环衔接
       type: 'music',
       content: name,
       meta: { artist: '本地', url: dataUrl },
-      name: getEffectivePersona(sessionId)?.name || '我',
+      name: getActiveUserName(),
       avatar: avatars.user,
       time: formatNowTime(),
     };
