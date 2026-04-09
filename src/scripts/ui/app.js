@@ -9154,12 +9154,6 @@ Phase G（Frame 36）：循环衔接
       uiLog('saveUiState', state);
     } catch {}
   };
-  let startupRestoreGuardReason = '';
-  const markStartupRestoreGuard = (message) => {
-    const text = String(message || '').trim();
-    if (!text) return;
-    startupRestoreGuardReason = text;
-  };
   const pickSavedUiState = async () => {
     try {
       const raw1 = sessionStorage.getItem(UI_STATE_KEY);
@@ -9207,9 +9201,6 @@ Phase G（Frame 36）：循环衔接
       uiLog('restoreUiState: picked', { page, sid, inChatRoom, at: s?.at || 0 });
       if (page && pages[page]) switchPage(page);
       const sidKnown = applyRestoredSessionShell(sid);
-      if (sidKnown && inChatRoom) {
-        markStartupRestoreGuard('为避免启动卡死，已跳过自动恢复上次聊天房间，请手动进入会话。');
-      }
       if (sid && !sidKnown) {
         uiLog('restoreUiState: sid not yet known (skip switchSession)', { sid });
       }
@@ -17045,7 +17036,6 @@ Phase G（Frame 36）：循环衔接
   refreshChatAndContacts();
   applyUiModeUI();
   if (initialUiMode === 'rp') {
-    markStartupRestoreGuard('为避免启动卡死，已跳过自动进入 RP，请手动切换进入。');
     uiMode = 'social';
     persistUiMode();
     applyUiModeUI();
@@ -17054,11 +17044,6 @@ Phase G（Frame 36）：循环衔接
   try {
     saveUiState();
   } catch {}
-  if (startupRestoreGuardReason) {
-    setTimeout(() => {
-      window.toastr?.info?.(startupRestoreGuardReason);
-    }, 60);
-  }
 
   // If stores hydrate later (e.g. after a WebView reload / offline resume), refresh UI without jumping to defaults.
   window.addEventListener('store-hydrated', async ev => {
@@ -17089,7 +17074,7 @@ Phase G（Frame 36）：循环衔接
         const inChatRoom = Boolean(saved?.inChatRoom);
         if (page && pages[page]) switchPage(page);
         if (applyRestoredSessionShell(want) && inChatRoom) {
-          markStartupRestoreGuard('为避免启动卡死，已跳过自动恢复上次聊天房间，请手动进入会话。');
+          // Preserve session/persona shell only; startup intentionally stays on main UI.
         }
       }
     } catch {}
