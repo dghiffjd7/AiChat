@@ -3,10 +3,125 @@ import { ConfigManager } from '../storage/config.js';
 import { safeInvoke } from '../utils/tauri.js';
 import { appConfirm } from './app-confirm.js';
 
+const GENERAL_SETTINGS_ICONS = Object.freeze({
+  reply: `
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M9 8L4 12l5 4"></path>
+      <path d="M4 12h8c4.4 0 8 3.6 8 8"></path>
+    </svg>
+  `.trim(),
+  expand: `
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <rect x="3.5" y="6" width="17" height="12" rx="2"></rect>
+      <path d="M8 9H6v6h2"></path>
+      <path d="M16 9h2v6h-2"></path>
+    </svg>
+  `.trim(),
+  history: `
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M4 6h16"></path>
+      <path d="M4 12h10"></path>
+      <path d="M4 18h7"></path>
+      <path d="M17 15v4"></path>
+      <path d="M15 17h4"></path>
+    </svg>
+  `.trim(),
+  bug: `
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M8 8a4 4 0 0 1 8 0"></path>
+      <path d="M8 10h8v4a4 4 0 0 1-8 0z"></path>
+      <path d="M6 13H4"></path>
+      <path d="M20 13h-2"></path>
+      <path d="M7 7L5.5 5.5"></path>
+      <path d="M17 7l1.5-1.5"></path>
+      <path d="M8 17l-2 2"></path>
+      <path d="M16 17l2 2"></path>
+    </svg>
+  `.trim(),
+  log: `
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <circle cx="5" cy="6" r="1"></circle>
+      <circle cx="5" cy="12" r="1"></circle>
+      <circle cx="5" cy="18" r="1"></circle>
+      <path d="M9 6h10"></path>
+      <path d="M9 12h10"></path>
+      <path d="M9 18h10"></path>
+    </svg>
+  `.trim(),
+  code: `
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M8 8l-4 4 4 4"></path>
+      <path d="M16 8l4 4-4 4"></path>
+      <path d="M13 5l-2 14"></path>
+    </svg>
+  `.trim(),
+  link: `
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M10 13a5 5 0 0 1 0-7l1-1a5 5 0 0 1 7 7l-1 1"></path>
+      <path d="M14 11a5 5 0 0 1 0 7l-1 1a5 5 0 0 1-7-7l1-1"></path>
+    </svg>
+  `.trim(),
+  clock: `
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <circle cx="12" cy="12" r="8"></circle>
+      <path d="M12 8v4l3 2"></path>
+    </svg>
+  `.trim(),
+  brain: `
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M9 6a3 3 0 0 1 6 0 3 3 0 0 1 3 3c1.1.4 2 1.5 2 2.9 0 1.8-1.4 3.1-3.2 3.1H7.2C5.4 15 4 13.7 4 11.9c0-1.4.9-2.5 2-2.9A3 3 0 0 1 9 6z"></path>
+      <path d="M10 10v5"></path>
+      <path d="M14 10v5"></path>
+      <path d="M10 12h4"></path>
+    </svg>
+  `.trim(),
+  notes: `
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <rect x="5" y="4" width="14" height="16" rx="2"></rect>
+      <path d="M8 8h8"></path>
+      <path d="M8 12h8"></path>
+      <path d="M8 16h5"></path>
+    </svg>
+  `.trim(),
+  table: `
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <rect x="4" y="5" width="16" height="14" rx="2"></rect>
+      <path d="M4 10h16"></path>
+      <path d="M9 5v14"></path>
+      <path d="M15 5v14"></path>
+    </svg>
+  `.trim(),
+  template: `
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M8 5C6 5 6 7 6 8.5S5 12 3.5 12C5 12 6 14 6 15.5S6 19 8 19"></path>
+      <path d="M16 5c2 0 2 2 2 3.5S19 12 20.5 12C19 12 18 14 18 15.5S18 19 16 19"></path>
+    </svg>
+  `.trim(),
+  script: `
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M7 5h8l3 3v11a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2z"></path>
+      <path d="M15 5v4h4"></path>
+      <path d="M9 12h6"></path>
+      <path d="M9 16h4"></path>
+    </svg>
+  `.trim(),
+  sliders: `
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M5 6h14"></path>
+      <path d="M9 12h10"></path>
+      <path d="M5 18h14"></path>
+      <circle cx="8" cy="6" r="2"></circle>
+      <circle cx="14" cy="12" r="2"></circle>
+      <circle cx="11" cy="18" r="2"></circle>
+    </svg>
+  `.trim(),
+});
+
 export class GeneralSettingsPanel {
   constructor(actions = {}) {
     this.element = null;
     this.overlayElement = null;
+    this.modalElement = null;
     this.debugToggle = null;
     this.debugLogToggle = null;
     this.typingDotsToggle = null;
@@ -310,21 +425,42 @@ export class GeneralSettingsPanel {
     applyFold(this.scriptAdvancedToggle, this.scriptAdvancedWrap);
   }
 
+  scrollFoldSectionIntoView(toggle, wrap) {
+    const container = this.modalElement || this.element?.querySelector('.general-settings-modal');
+    if (!(container instanceof HTMLElement)) return;
+    const anchor = (wrap?.firstElementChild instanceof HTMLElement
+      ? wrap.firstElementChild
+      : (wrap instanceof HTMLElement ? wrap : toggle));
+    if (!(anchor instanceof HTMLElement)) return;
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        const containerRect = container.getBoundingClientRect();
+        const anchorRect = anchor.getBoundingClientRect();
+        const rawTop = container.scrollTop + (anchorRect.top - containerRect.top) - 12;
+        const maxTop = Math.max(0, container.scrollHeight - container.clientHeight);
+        const nextTop = Math.max(0, Math.min(maxTop, Math.round(rawTop)));
+        container.scrollTo({ top: nextTop, behavior: 'smooth' });
+      });
+    });
+  }
+
+  toggleAdvancedSection(toggle, wrap, afterToggle = null) {
+    if (!toggle) return;
+    const nextExpanded = !this.isFoldExpanded(toggle);
+    toggle.dataset.expanded = nextExpanded ? '1' : '0';
+    this.syncAdvancedFoldVisibility();
+    if (typeof afterToggle === 'function') afterToggle(nextExpanded);
+    if (nextExpanded) this.scrollFoldSectionIntoView(toggle, wrap);
+  }
+
   initSelectableCards() {
     if (!this.element) return;
-    const labels = this.element.querySelectorAll('label');
+    const labels = this.element.querySelectorAll('.general-settings-toggle-row');
     labels.forEach((label) => {
       if (!label.querySelector('input[type="checkbox"], input[type="radio"]')) return;
-      label.classList.add('general-settings-toggle-row');
-      if (label.closest('.general-settings-fold-content')) {
+      if (label.closest('.general-settings-fold-content') && !label.classList.contains('general-settings-toggle-subrow')) {
         label.classList.add('general-settings-toggle-subrow');
       }
-      if (label.dataset.cardFxBound === '1') return;
-      label.dataset.cardFxBound = '1';
-      label.addEventListener('pointerdown', (event) => this.handleCardPointerDown(label, event));
-      label.addEventListener('pointerup', () => this.handleCardPointerUp(label));
-      label.addEventListener('pointercancel', () => this.handleCardPointerUp(label));
-      label.addEventListener('pointerleave', () => this.handleCardPointerUp(label));
     });
     this.updateSelectableCards();
   }
@@ -457,59 +593,113 @@ export class GeneralSettingsPanel {
       }
       #general-settings-panel .general-settings-card {
         margin: 8px 0 12px;
-        padding: 12px;
+        padding: 14px;
         border: 1px solid #e2e8f0;
-        border-radius: 12px;
-        background: #ffffff;
+        border-radius: 16px;
+        background: rgba(255, 255, 255, 0.96);
+        box-shadow: 0 8px 24px rgba(15, 23, 42, 0.04);
+      }
+      #general-settings-panel .general-settings-card-head {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 10px;
+        margin-bottom: 12px;
       }
       #general-settings-panel .general-settings-card-title {
+        font-size: 13px;
+        color: #334155;
+        font-weight: 700;
+        margin-bottom: 0;
+      }
+      #general-settings-panel .general-settings-card-note {
+        margin-top: 4px;
+        color: #94a3b8;
         font-size: 12px;
+        line-height: 1.45;
+      }
+      #general-settings-panel .general-settings-subcard {
+        margin-top: 10px;
+        padding: 12px;
+        border: 1px solid #e2e8f0;
+        border-radius: 14px;
+        background: #f8fafc;
+      }
+      #general-settings-panel .general-settings-subcard + .general-settings-subcard {
+        margin-top: 10px;
+      }
+      #general-settings-panel .general-settings-subcard-title {
+        font-size: 12px;
+        line-height: 1.4;
         color: #475569;
         font-weight: 700;
-        margin-bottom: 10px;
+      }
+      #general-settings-panel .general-settings-subcard-note {
+        margin-top: 4px;
+        color: #94a3b8;
+        font-size: 12px;
+        line-height: 1.45;
+      }
+      #general-settings-panel .general-settings-setting-list {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+      #general-settings-panel .general-settings-setting-list-sub {
+        gap: 8px;
       }
       #general-settings-panel .general-settings-risk {
-        margin-left: 6px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        margin-left: 2px;
+        min-height: 20px;
+        padding: 0 8px;
         font-size: 10px;
-        line-height: 1;
+        line-height: 20px;
         border-radius: 999px;
-        padding: 3px 6px;
-        border: 1px solid #fecaca;
-        color: #b91c1c;
-        background: #fef2f2;
+        border: none;
+        color: #ffffff;
+        background: #ef4444;
+        font-weight: 800;
+        letter-spacing: 0.2px;
         vertical-align: middle;
       }
       #general-settings-panel #general-template-options,
       #general-settings-panel #general-script-options,
       #general-settings-panel #general-memory-auto-options,
       #general-settings-panel #general-memory-budget-block {
-        margin-top: 8px !important;
-        padding: 8px 10px;
-        border-radius: 10px;
-        border: 1px dashed #dbe3ee;
+        margin-top: 10px !important;
+        padding: 12px;
+        border-radius: 14px;
+        border: 1px solid #e2e8f0;
         background: #f8fafc;
       }
       #general-settings-panel .general-settings-fold-btn {
-        width: 28px;
-        height: 28px;
+        min-width: auto;
+        height: 32px;
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        border: none;
-        border-radius: 8px;
-        background: transparent;
-        color: #94a3b8;
-        padding: 0;
+        gap: 6px;
+        border: 1px solid #dbe3ee;
+        border-radius: 999px;
+        background: #f8fafc;
+        color: #64748b;
+        padding: 0 10px;
         cursor: pointer;
-        box-shadow: none;
+        font-size: 12px;
+        font-weight: 700;
         transition:
           background 180ms ease,
+          border-color 180ms ease,
           color 180ms ease,
           transform 160ms ease;
       }
       #general-settings-panel .general-settings-fold-btn:hover {
-        background: rgba(148, 163, 184, 0.1);
-        color: #64748b;
+        background: #eff6ff;
+        border-color: #bfdbfe;
+        color: #2563eb;
       }
       #general-settings-panel .general-settings-fold-btn:active {
         transform: scale(0.92);
@@ -519,8 +709,12 @@ export class GeneralSettingsPanel {
         outline-offset: 1px;
       }
       #general-settings-panel .general-settings-fold-btn[data-expanded='1'] {
-        color: #3b82f6;
-        background: rgba(59, 130, 246, 0.08);
+        color: #2563eb;
+        background: #eff6ff;
+        border-color: #bfdbfe;
+      }
+      #general-settings-panel .general-settings-fold-btn-label {
+        white-space: nowrap;
       }
       #general-settings-panel .general-settings-fold-btn svg {
         width: 16px;
@@ -548,139 +742,223 @@ export class GeneralSettingsPanel {
         flex: 0 0 auto;
       }
       #general-settings-panel .general-settings-fold-content {
-        margin-top: 10px;
-        padding-top: 10px;
+        margin-top: 12px;
+        padding-top: 12px;
         border-top: 1px dashed #e2e8f0;
       }
       #general-settings-panel .general-settings-toggle-row {
         position: relative;
-        overflow: hidden;
         user-select: none;
         border: 1px solid #e2e8f0;
-        border-radius: 10px;
-        padding: 8px 10px;
-        background: #f7f8fa;
-        color: #333333;
+        border-radius: 14px;
+        padding: 12px;
+        background: #ffffff;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
         transition:
           background 300ms ease-in-out,
           border-color 300ms ease-in-out,
-          box-shadow 300ms ease-in-out,
-          color 300ms ease-in-out,
-          transform 180ms ease-out;
+          box-shadow 300ms ease-in-out;
+      }
+      #general-settings-panel .general-settings-toggle-row:hover {
+        border-color: #cbd5e1;
       }
       #general-settings-panel .general-settings-toggle-row.is-on {
-        background: #eff6ff;
-        border-color: #bfdbfe;
-        border-left: 3px solid #3b82f6;
-        box-shadow: 0 1px 3px rgba(59, 130, 246, 0.08);
-      }
-      #general-settings-panel .general-settings-toggle-row.is-on span {
-        color: #1e3a5f;
-        text-shadow: none;
+        background: #f8fbff;
+        border-color: #cfe1ff;
+        box-shadow: 0 8px 18px rgba(37, 99, 235, 0.06);
       }
       #general-settings-panel .general-settings-toggle-row.is-off {
-        background: #f7f8fa;
+        background: #ffffff;
         border-color: #e2e8f0;
-        border-left: 3px solid #d1d5db;
-      }
-      #general-settings-panel .general-settings-toggle-row.is-off span {
-        color: #334155;
-      }
-      #general-settings-panel .general-settings-toggle-row .general-settings-risk {
-        color: #b91c1c !important;
-      }
-      #general-settings-panel .general-settings-toggle-row.is-on .general-settings-risk {
-        color: #b91c1c !important;
-        border-color: #fecaca;
-        background: #fef2f2;
       }
       #general-settings-panel .general-settings-toggle-row.is-on.has-risk {
-        background: #fef7f7;
+        background: #fff7f7;
         border-color: #fecaca;
-        border-left: 3px solid #ef4444;
-        box-shadow: 0 1px 3px rgba(239, 68, 68, 0.06);
-      }
-      #general-settings-panel .general-settings-toggle-row.is-on.has-risk span {
-        color: #1e293b;
+        box-shadow: 0 8px 18px rgba(239, 68, 68, 0.08);
       }
       #general-settings-panel .general-settings-toggle-row.is-disabled {
         opacity: 0.56;
+        cursor: not-allowed;
       }
       #general-settings-panel .general-settings-toggle-row.general-settings-toggle-subrow {
-        border-color: transparent;
-        background: transparent;
-        box-shadow: none;
-        border-radius: 8px;
-        padding: 4px 8px 4px 12px;
-        overflow: visible;
+        border-radius: 12px;
+        padding: 10px 12px;
       }
-      #general-settings-panel .general-settings-toggle-row.general-settings-toggle-subrow.is-off {
-        background: transparent;
-        border-color: transparent;
-        border-left: 2px solid #d1d5db;
+      #general-settings-panel .general-settings-row-main {
+        min-width: 0;
+        flex: 1 1 auto;
+        display: flex;
+        align-items: flex-start;
+        gap: 12px;
       }
-      #general-settings-panel .general-settings-toggle-row.general-settings-toggle-subrow.is-on {
-        background: #f0f7ff;
-        border-color: rgba(59, 130, 246, 0.15);
-        border-left: 2px solid #60a5fa;
-        box-shadow: none;
+      #general-settings-panel .general-settings-row-icon {
+        width: 36px;
+        height: 36px;
+        border-radius: 12px;
+        background: #f1f5f9;
+        color: #64748b;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        flex: 0 0 36px;
+        transition:
+          background 220ms ease,
+          color 220ms ease;
       }
-      #general-settings-panel .general-settings-toggle-row.general-settings-toggle-subrow.is-on span {
-        color: #1e3a5f;
-        text-shadow: none;
+      #general-settings-panel .general-settings-row-icon svg {
+        width: 18px;
+        height: 18px;
+        stroke: currentColor;
+        stroke-width: 1.8;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+        fill: none;
       }
-      #general-settings-panel .general-settings-toggle-row.general-settings-toggle-subrow.is-off span {
-        color: #334155;
-        text-shadow: none;
+      #general-settings-panel .general-settings-toggle-row.is-on .general-settings-row-icon {
+        background: #e0ecff;
+        color: #2563eb;
       }
-      #general-settings-panel .general-settings-toggle-row.general-settings-toggle-subrow .general-settings-risk {
-        color: #b91c1c !important;
-        border-color: #fecaca;
-        background: #fef2f2;
+      #general-settings-panel .general-settings-toggle-row.has-risk.is-on .general-settings-row-icon {
+        background: #fee2e2;
+        color: #dc2626;
       }
-      #general-settings-panel .general-settings-toggle-row.is-pressing {
-        transform: scale(0.98);
+      #general-settings-panel .general-settings-row-copy {
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
       }
-      #general-settings-panel .general-settings-toggle-row.is-bounce {
-        animation: general-settings-bounce 220ms cubic-bezier(0.2, 0.9, 0.2, 1);
+      #general-settings-panel .general-settings-row-title {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 8px;
+        color: #0f172a;
+        font-size: 14px;
+        font-weight: 700;
+        line-height: 1.35;
       }
-      #general-settings-panel .general-settings-ripple {
+      #general-settings-panel .general-settings-row-desc {
+        color: #64748b;
+        font-size: 12px;
+        line-height: 1.45;
+      }
+      #general-settings-panel .general-settings-control {
+        flex: 0 0 auto;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+      }
+      #general-settings-panel .general-settings-switch {
+        position: relative;
+        width: 44px;
+        height: 26px;
+        border-radius: 999px;
+        background: #cbd5e1;
+        transition: background 200ms ease;
+      }
+      #general-settings-panel .general-settings-switch::after {
+        content: '';
         position: absolute;
-        left: 0;
-        top: 0;
+        top: 3px;
+        left: 3px;
         width: 20px;
         height: 20px;
         border-radius: 999px;
-        pointer-events: none;
-        opacity: 0.68;
+        background: #ffffff;
+        box-shadow: 0 1px 3px rgba(15, 23, 42, 0.22);
+        transition: transform 180ms ease;
+      }
+      #general-settings-panel .general-settings-toggle-row.is-on .general-settings-switch {
+        background: #2563eb;
+      }
+      #general-settings-panel .general-settings-toggle-row.is-on .general-settings-switch::after {
+        transform: translateX(18px);
+      }
+      #general-settings-panel .general-settings-radio {
+        position: relative;
+        width: 22px;
+        height: 22px;
+        border-radius: 999px;
+        border: 2px solid #cbd5e1;
+        background: #ffffff;
+        box-sizing: border-box;
+      }
+      #general-settings-panel .general-settings-radio::after {
+        content: '';
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        width: 10px;
+        height: 10px;
+        border-radius: 999px;
+        background: #2563eb;
         transform: translate(-50%, -50%) scale(0);
-        background:
-          radial-gradient(circle, rgba(255, 255, 255, 0.76) 0%, rgba(59, 130, 246, 0.18) 45%, rgba(255, 255, 255, 0) 72%);
-        animation: general-settings-ripple 520ms ease-out forwards;
+        transition: transform 160ms ease;
       }
-      @keyframes general-settings-ripple {
-        from {
-          transform: translate(-50%, -50%) scale(0.02);
-          opacity: 0.76;
-        }
-        to {
-          transform: translate(-50%, -50%) scale(1);
-          opacity: 0;
-        }
+      #general-settings-panel .general-settings-toggle-row.is-on .general-settings-radio {
+        border-color: #60a5fa;
+        background: #eff6ff;
       }
-      @keyframes general-settings-bounce {
-        0% {
-          transform: scale(0.98);
-        }
-        56% {
-          transform: scale(1.02);
-        }
-        100% {
-          transform: scale(1);
-        }
+      #general-settings-panel .general-settings-toggle-row.is-on .general-settings-radio::after {
+        transform: translate(-50%, -50%) scale(1);
       }
-      #general-settings-panel input[type='checkbox'],
-      #general-settings-panel input[type='radio'] {
+      #general-settings-panel .general-settings-input-row {
+        display: flex;
+        flex-direction: column;
+        align-items: stretch;
+        gap: 12px;
+        border: 1px solid #e2e8f0;
+        border-radius: 14px;
+        padding: 12px;
+        background: #ffffff;
+      }
+      #general-settings-panel .general-settings-input-control {
+        flex: 0 0 auto;
+        width: 100%;
+        min-width: 0;
+      }
+      #general-settings-panel .general-settings-input-control-row {
+        width: 100%;
+      }
+      #general-settings-panel .general-settings-number-input,
+      #general-settings-panel .general-settings-select {
+        width: 100%;
+        padding: 8px 10px;
+        border: 1px solid #dbe3ee;
+        border-radius: 10px;
+        font-size: 13px;
+        background: #ffffff;
+        color: #0f172a;
+      }
+      #general-settings-panel .general-settings-inline-hint {
+        margin-top: 8px;
+        color: #94a3b8;
+        font-size: 12px;
+        line-height: 1.45;
+      }
+      #general-settings-panel .general-settings-field-block {
+        margin-top: 10px;
+      }
+      #general-settings-panel .general-settings-field-label {
+        display: block;
+        margin-bottom: 6px;
+        color: #0f172a;
+        font-size: 12px;
+        font-weight: 700;
+      }
+      #general-settings-panel .general-settings-field-help {
+        display: block;
+        margin-top: 6px;
+        color: #94a3b8;
+        font-size: 12px;
+        line-height: 1.45;
+      }
+      #general-settings-panel .general-settings-toggle-row input[type='checkbox'],
+      #general-settings-panel .general-settings-toggle-row input[type='radio'] {
         position: absolute;
         width: 0;
         height: 0;
@@ -736,6 +1014,74 @@ export class GeneralSettingsPanel {
     document.head.appendChild(style);
   }
 
+  getSettingIcon(name = 'sliders') {
+    return GENERAL_SETTINGS_ICONS[name] || GENERAL_SETTINGS_ICONS.sliders;
+  }
+
+  renderFoldButton(id, label = '高级选项') {
+    return `
+      <button type="button" id="${id}" class="general-settings-fold-btn" data-expanded="0" aria-expanded="false">
+        <span class="general-settings-fold-btn-label">${label}</span>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
+      </button>
+    `.trim();
+  }
+
+  renderSettingRow({
+    id,
+    title,
+    description = '',
+    icon = 'sliders',
+    type = 'checkbox',
+    name = '',
+    value = '',
+    nested = false,
+    risk = false,
+    extraClass = '',
+  } = {}) {
+    const inputAttrs = type === 'radio'
+      ? `type="radio" id="${id}" name="${name}" value="${value}"`
+      : `type="checkbox" id="${id}"`;
+    const classes = [
+      'general-settings-toggle-row',
+      nested ? 'general-settings-toggle-subrow' : '',
+      extraClass,
+    ].filter(Boolean).join(' ');
+    const control = type === 'radio'
+      ? '<span class="general-settings-control general-settings-radio" aria-hidden="true"></span>'
+      : '<span class="general-settings-control general-settings-switch" aria-hidden="true"></span>';
+    return `
+      <label class="${classes}">
+        <input ${inputAttrs}>
+        <span class="general-settings-row-main">
+          <span class="general-settings-row-icon" aria-hidden="true">${this.getSettingIcon(icon)}</span>
+          <span class="general-settings-row-copy">
+            <span class="general-settings-row-title">${title}${risk ? '<span class="general-settings-risk">高风险</span>' : ''}</span>
+            ${description ? `<span class="general-settings-row-desc">${description}</span>` : ''}
+          </span>
+        </span>
+        ${control}
+      </label>
+    `.trim();
+  }
+
+  renderInputRow({ title, description = '', icon = 'sliders', control = '' } = {}) {
+    return `
+      <div class="general-settings-input-row">
+        <div class="general-settings-row-main">
+          <span class="general-settings-row-icon" aria-hidden="true">${this.getSettingIcon(icon)}</span>
+          <span class="general-settings-row-copy">
+            <span class="general-settings-row-title">${title}</span>
+            ${description ? `<span class="general-settings-row-desc">${description}</span>` : ''}
+          </span>
+        </div>
+        <div class="general-settings-input-control-row">
+          <div class="general-settings-input-control">${control}</div>
+        </div>
+      </div>
+    `.trim();
+  }
+
   createUI() {
     this.ensureStyles();
     this.overlayElement = document.createElement('div');
@@ -763,99 +1109,122 @@ export class GeneralSettingsPanel {
         <div class="general-settings-subtitle">视觉与体验相关设定。</div>
 
         <div class="general-settings-card">
-          <div class="general-settings-inline-row" style="margin-bottom: 10px;">
-            <div class="general-settings-card-title" style="margin-bottom: 0;">界面与调试</div>
-            <button type="button" id="general-ui-advanced-toggle" class="general-settings-fold-btn" data-expanded="0" aria-expanded="false">
-              <svg viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg>
-            </button>
+          <div class="general-settings-card-head">
+            <div>
+              <div class="general-settings-card-title">界面与调试</div>
+              <div class="general-settings-card-note">显示、动画与调试辅助选项。</div>
+            </div>
+            ${this.renderFoldButton('general-ui-advanced-toggle', '调试选项')}
           </div>
 
-        <div style="margin-bottom: 16px;">
-          <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
-            <input type="checkbox" id="general-typing-dots" style="width: 18px; height: 18px;">
-            <span style="font-weight: 700;">流式小点动画</span>
-          </label>
-        </div>
-
-        <div style="margin-bottom: 16px;">
-          <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
-            <input type="checkbox" id="general-creative-wide" style="width: 18px; height: 18px;">
-            <span style="font-weight: 700;">创意写作气泡加宽</span>
-          </label>
-        </div>
-
-        <div style="margin-bottom: 16px;">
-          <label style="display: flex; align-items: center; gap: 8px;">
-            <span style="font-weight: 700;">创意写作注入条数</span>
-          </label>
-          <div style="margin-top: 6px; display:flex; align-items:center; gap:8px;">
-            <input type="number" id="general-creative-history" min="0" step="1"
-                   style="width: 120px; padding: 6px 8px; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 14px;">
-            <span style="color:#64748b; font-size:12px;">chat_history 中保留的创意写作回复数量</span>
-          </div>
-        </div>
-
-        <div id="general-ui-advanced" class="general-settings-fold-content" style="display:none;">
-          <div style="margin-bottom: 16px;">
-            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
-              <input type="checkbox" id="general-debug-toggle" style="width: 18px; height: 18px;">
-              <span style="font-weight: 700;">显示 Debug 按钮</span>
-            </label>
+          <div class="general-settings-setting-list">
+            ${this.renderSettingRow({
+              id: 'general-typing-dots',
+              title: '回复动画',
+              description: '控制回复时跳动小点动画的显示。',
+              icon: 'reply',
+            })}
+            ${this.renderSettingRow({
+              id: 'general-creative-wide',
+              title: '创意写作气泡加宽',
+              description: '让创意写作内容使用更舒展的宽气泡版式。',
+              icon: 'expand',
+            })}
+            ${this.renderInputRow({
+              title: '创意写作注入条数',
+              description: '控制 chat_history 中保留的创意写作回复数量。',
+              icon: 'history',
+              control: '<input type="number" id="general-creative-history" min="0" step="1" class="general-settings-number-input">',
+            })}
           </div>
 
-          <div style="margin-bottom: 16px;">
-            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
-              <input type="checkbox" id="general-debug-logs" style="width: 18px; height: 18px;">
-              <span style="font-weight: 700;">记录执行日志</span>
-            </label>
+          <div id="general-ui-advanced" class="general-settings-fold-content" style="display:none;">
+            <div class="general-settings-subcard">
+              <div class="general-settings-subcard-title">调试与实验功能</div>
+              <div class="general-settings-subcard-note">只在需要排查问题或验证特殊渲染路径时开启。</div>
+              <div class="general-settings-setting-list general-settings-setting-list-sub">
+                ${this.renderSettingRow({
+                  id: 'general-debug-toggle',
+                  title: '显示 Debug 按钮',
+                  description: '在界面中显示调试入口，便于快速查看运行状态。',
+                  icon: 'bug',
+                  nested: true,
+                })}
+                ${this.renderSettingRow({
+                  id: 'general-debug-logs',
+                  title: '记录执行日志',
+                  description: '保留更多执行日志，方便定位异常链路。',
+                  icon: 'log',
+                  nested: true,
+                })}
+                ${this.renderSettingRow({
+                  id: 'general-rich-iframe-scripts',
+                  title: '富文本 iframe 执行脚本',
+                  description: '允许 iframe 执行脚本并放宽安全限制，仅在信任来源时启用。',
+                  icon: 'code',
+                  nested: true,
+                  risk: true,
+                })}
+              </div>
+            </div>
           </div>
-
-          <div style="margin-bottom: 4px;">
-            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
-              <input type="checkbox" id="general-rich-iframe-scripts" style="width: 18px; height: 18px;">
-              <span style="font-weight: 700;">富文本 iframe 执行脚本 <span class="general-settings-risk">高风险</span></span>
-            </label>
-          </div>
-        </div>
         </div>
 
         <div class="general-settings-card">
-          <div class="general-settings-inline-row" style="margin-bottom: 10px;">
-            <div class="general-settings-card-title" style="margin-bottom: 0;">记忆与角色</div>
-            <button type="button" id="general-memory-advanced-toggle" class="general-settings-fold-btn" data-expanded="0" aria-expanded="false">
-              <svg viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg>
-            </button>
+          <div class="general-settings-card-head">
+            <div>
+              <div class="general-settings-card-title">记忆与角色</div>
+              <div class="general-settings-card-note">角色绑定、时间上下文与记忆系统。</div>
+            </div>
+            ${this.renderFoldButton('general-memory-advanced-toggle', '更多设置')}
           </div>
 
-          <div style="margin-bottom: 14px;">
-            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
-              <input type="checkbox" id="general-persona-bind" style="width: 18px; height: 18px;">
-              <span style="font-weight: 700;">角色卡绑定联系人/聊天记录</span>
-            </label>
+          <div class="general-settings-setting-list">
+            ${this.renderSettingRow({
+              id: 'general-persona-bind',
+              title: '角色卡绑定联系人 / 聊天记录',
+              description: '让不同角色卡保留各自的联系人与聊天上下文。',
+              icon: 'link',
+            })}
+            ${this.renderSettingRow({
+              id: 'general-prompt-time',
+              title: '发送当前时间给 AI',
+              description: '将当前真实时间作为上下文发送给模型。',
+              icon: 'clock',
+            })}
+            ${this.renderSettingRow({
+              id: 'general-memory-enabled',
+              title: '启用记忆系统',
+              description: '关闭后不会发送摘要提示词，也不会读写记忆表格。',
+              icon: 'brain',
+            })}
           </div>
 
-          <div style="margin-bottom: 14px;">
-            <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
-              <input type="checkbox" id="general-prompt-time" style="width: 18px; height: 18px;">
-              <span style="font-weight: 700;">发送当前时间给 AI</span>
-            </label>
-          </div>
-
-          <div style="margin-bottom: 10px;">
-            <label style="display:flex; align-items:center; gap:8px; cursor:pointer; margin-bottom:8px;">
-              <input type="checkbox" id="general-memory-enabled" style="width: 18px; height: 18px;">
-              <span style="font-weight:700;">启用记忆系统</span>
-            </label>
-            <small style="display:block; color:#64748b; margin:0 0 10px 26px;">关闭后，不发送摘要提示词，也不读写记忆表格。</small>
-            <div style="font-weight: 700; margin-bottom: 8px;">记忆存储方式</div>
-            <label style="display:flex; align-items:center; gap:8px; cursor:pointer; margin-bottom:8px;">
-              <input type="radio" name="general-memory-mode" id="general-memory-mode-summary" value="summary">
-              <span style="font-weight:700;">摘要模式</span>
-            </label>
-            <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
-              <input type="radio" name="general-memory-mode" id="general-memory-mode-table" value="table">
-              <span style="font-weight:700;">记忆表格模式</span>
-            </label>
+          <div class="general-settings-subcard">
+            <div class="general-settings-subcard-title">记忆存储方式</div>
+            <div class="general-settings-subcard-note">选择当前角色/会话默认使用的记忆结构。</div>
+            <div class="general-settings-setting-list general-settings-setting-list-sub">
+              ${this.renderSettingRow({
+                id: 'general-memory-mode-summary',
+                type: 'radio',
+                name: 'general-memory-mode',
+                value: 'summary',
+                title: '摘要模式',
+                description: '使用摘要文本积累长期记忆。',
+                icon: 'notes',
+                nested: true,
+              })}
+              ${this.renderSettingRow({
+                id: 'general-memory-mode-table',
+                type: 'radio',
+                name: 'general-memory-mode',
+                value: 'table',
+                title: '记忆表格模式',
+                description: '使用结构化表格保存角色、事件与状态。',
+                icon: 'table',
+                nested: true,
+              })}
+            </div>
           </div>
 
           <div id="general-memory-advanced" class="general-settings-fold-content" style="display:none;">
@@ -940,17 +1309,29 @@ export class GeneralSettingsPanel {
         </div>
 
         <div class="general-settings-card">
-          <div class="general-settings-card-title">模板与脚本</div>
-
-          <div class="general-settings-inline-row" style="margin-bottom: 10px;">
-            <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
-              <input type="checkbox" id="general-template-enabled" style="width: 18px; height: 18px;">
-              <span style="font-weight: 700;">启用模板处理</span>
-            </label>
-            <button type="button" id="general-template-advanced-toggle" class="general-settings-fold-btn" data-expanded="0" aria-expanded="false">
-              <svg viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg>
-            </button>
+          <div class="general-settings-card-head">
+            <div>
+              <div class="general-settings-card-title">模板与脚本</div>
+              <div class="general-settings-card-note">角色卡模板、脚本与扩展行为。</div>
+            </div>
           </div>
+
+          <div class="general-settings-subcard">
+            <div class="general-settings-card-head" style="margin-bottom: 10px;">
+              <div>
+                <div class="general-settings-subcard-title">模板处理</div>
+                <div class="general-settings-card-note" style="margin-top: 4px;">控制模板在生成前与渲染后的执行。</div>
+              </div>
+              ${this.renderFoldButton('general-template-advanced-toggle', '模板选项')}
+            </div>
+            <div class="general-settings-setting-list">
+              ${this.renderSettingRow({
+                id: 'general-template-enabled',
+                title: '启用模板处理',
+                description: '统一控制模板执行链路。',
+                icon: 'template',
+              })}
+            </div>
           <div id="general-template-advanced" class="general-settings-fold-content" style="display:none; margin-bottom: 10px;">
             <div id="general-template-options" style="margin-left: 26px; display:none; flex-direction:column; gap:8px;">
               <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
@@ -967,16 +1348,24 @@ export class GeneralSettingsPanel {
               </label>
             </div>
           </div>
-
-          <div class="general-settings-inline-row" style="margin-bottom: 6px;">
-            <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
-              <input type="checkbox" id="general-script-enabled" style="width: 18px; height: 18px;">
-              <span style="font-weight: 700;">启用角色卡脚本</span>
-            </label>
-            <button type="button" id="general-script-advanced-toggle" class="general-settings-fold-btn" data-expanded="0" aria-expanded="false">
-              <svg viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg>
-            </button>
           </div>
+
+          <div class="general-settings-subcard">
+            <div class="general-settings-card-head" style="margin-bottom: 10px;">
+              <div>
+                <div class="general-settings-subcard-title">角色卡脚本</div>
+                <div class="general-settings-card-note" style="margin-top: 4px;">控制角色卡脚本可用性与权限边界。</div>
+              </div>
+              ${this.renderFoldButton('general-script-advanced-toggle', '脚本选项')}
+            </div>
+            <div class="general-settings-setting-list">
+              ${this.renderSettingRow({
+                id: 'general-script-enabled',
+                title: '启用角色卡脚本',
+                description: '允许角色卡脚本参与运行时行为。',
+                icon: 'script',
+              })}
+            </div>
           <div id="general-script-advanced" class="general-settings-fold-content" style="display:none;">
             <div id="general-script-options" style="margin-left: 26px; display:none; flex-direction:column; gap:8px;">
               <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
@@ -992,6 +1381,7 @@ export class GeneralSettingsPanel {
                 <span>允许脚本访问网络<span class="general-settings-risk">高风险</span></span>
               </label>
             </div>
+          </div>
           </div>
         </div>
 
@@ -1051,6 +1441,7 @@ export class GeneralSettingsPanel {
       z-index: 21000;
     `;
     this.element.onclick = (e) => e.stopPropagation();
+    this.modalElement = this.element.querySelector('.general-settings-modal');
 
     this.debugToggle = this.element.querySelector('#general-debug-toggle');
     this.debugLogToggle = this.element.querySelector('#general-debug-logs');
@@ -1173,22 +1564,20 @@ export class GeneralSettingsPanel {
       appSettings.update({ creativeHistoryMax: safe });
     });
     this.uiAdvancedToggle?.addEventListener('click', () => {
-      this.uiAdvancedToggle.dataset.expanded = this.isFoldExpanded(this.uiAdvancedToggle) ? '0' : '1';
-      this.syncAdvancedFoldVisibility();
+      this.toggleAdvancedSection(this.uiAdvancedToggle, this.uiAdvancedWrap);
     });
     this.memoryAdvancedToggle?.addEventListener('click', () => {
-      this.memoryAdvancedToggle.dataset.expanded = this.isFoldExpanded(this.memoryAdvancedToggle) ? '0' : '1';
-      this.syncAdvancedFoldVisibility();
+      this.toggleAdvancedSection(this.memoryAdvancedToggle, this.memoryAdvancedWrap);
     });
     this.templateAdvancedToggle?.addEventListener('click', () => {
-      this.templateAdvancedToggle.dataset.expanded = this.isFoldExpanded(this.templateAdvancedToggle) ? '0' : '1';
-      this.syncAdvancedFoldVisibility();
-      this.updateTemplateScriptVisibility();
+      this.toggleAdvancedSection(this.templateAdvancedToggle, this.templateAdvancedWrap, () => {
+        this.updateTemplateScriptVisibility();
+      });
     });
     this.scriptAdvancedToggle?.addEventListener('click', () => {
-      this.scriptAdvancedToggle.dataset.expanded = this.isFoldExpanded(this.scriptAdvancedToggle) ? '0' : '1';
-      this.syncAdvancedFoldVisibility();
-      this.updateTemplateScriptVisibility();
+      this.toggleAdvancedSection(this.scriptAdvancedToggle, this.scriptAdvancedWrap, () => {
+        this.updateTemplateScriptVisibility();
+      });
     });
 
     this.templateEnabledToggle?.addEventListener('change', (e) => {

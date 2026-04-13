@@ -1,8 +1,8 @@
 /**
- * Preset panel (SillyTavern-like) — vertical card layout
- * - "生成参数" and "自定义" are primary cards (expanded by default)
- * - Other sections are secondary cards (collapsed by default)
- * - Each section has its own inline preset selector
+ * Preset panel
+ * - Fixed preset manager at the top
+ * - Root page lists preset categories as navigation items
+ * - Tapping a category pushes into a dedicated detail page
  */
 
 import { PresetStore } from '../storage/preset-store.js';
@@ -88,8 +88,9 @@ const getInt = (val, fallback) => {
 
 const setValue = (el, val) => { if (el) el.value = (val ?? '').toString(); };
 
-/* ── chevron SVG (shared) ── */
-const chevronSvg = `<svg viewBox="0 0 24 24" style="width:16px;height:16px;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;fill:none;transition:transform 250ms cubic-bezier(.2,.9,.2,1);"><polyline points="6 9 12 15 18 9"/></svg>`;
+/* ── icons ── */
+const chevronRightSvg = `<svg viewBox="0 0 24 24" style="width:16px;height:16px;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;fill:none;"><polyline points="9 6 15 12 9 18"/></svg>`;
+const chevronLeftSvg = `<svg viewBox="0 0 24 24" style="width:16px;height:16px;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;fill:none;"><polyline points="15 6 9 12 15 18"/></svg>`;
 
 /* ── CSS ── */
 const PANEL_CSS = `
@@ -125,98 +126,302 @@ const PANEL_CSS = `
     font-size: 22px !important; color: #0f172a !important; padding: 4px 6px !important;
 }
 
-/* ── scroll body ── */
-.pp-scroll {
-    padding: 12px 16px 16px;
-    overflow-y: auto;
+/* ── body shell ── */
+.pp-shell {
     flex: 1 1 0;
     min-height: 0;
-    max-height: 100%;
+    display: flex;
+    flex-direction: column;
+    background: linear-gradient(180deg, #f8fbff 0%, #ffffff 100%);
+}
+
+.pp-manager {
+    padding: 12px 16px 14px;
+    border-bottom: 1px solid #e2e8f0;
+    background: rgba(255,255,255,0.96);
+    backdrop-filter: blur(12px);
+    flex-shrink: 0;
+}
+.pp-manager-card {
+    border: 1px solid #dbe7ff;
+    border-radius: 16px;
+    background: linear-gradient(180deg, #f8fbff 0%, #eef5ff 100%);
+    box-shadow: 0 8px 24px rgba(59,130,246,0.08);
+    padding: 12px;
+}
+.pp-manager-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 10px;
+}
+.pp-manager-title { font-size: 14px; font-weight: 800; color: #0f172a; }
+.pp-manager-sub {
+    margin-top: 4px;
+    font-size: 12px;
+    color: #64748b;
+    line-height: 1.45;
+}
+.pp-enabled-chip {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    border-radius: 999px;
+    background: rgba(255,255,255,0.92);
+    border: 1px solid rgba(59,130,246,0.12);
+}
+.pp-enabled-chip.pp-readonly {
+    background: rgba(248,250,252,0.98);
+    border-color: rgba(148,163,184,0.28);
+}
+.pp-enabled-text {
+    font-size: 12px;
+    font-weight: 700;
+    color: #1e40af;
+}
+.pp-enabled-chip.pp-readonly .pp-enabled-text {
+    color: #64748b;
+}
+.pp-switch {
+    position: relative;
+    display: inline-flex;
+    width: 42px;
+    height: 24px;
+    flex-shrink: 0;
+}
+.pp-switch input {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    margin: 0;
+    cursor: pointer;
+}
+.pp-switch input:disabled {
+    cursor: default;
+}
+.pp-switch-track {
+    width: 100%;
+    height: 100%;
+    border-radius: 999px;
+    background: #cbd5e1;
+    transition: background 180ms ease;
+    position: relative;
+}
+.pp-switch-track::after {
+    content: '';
+    position: absolute;
+    top: 3px;
+    left: 3px;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: #fff;
+    box-shadow: 0 1px 2px rgba(15,23,42,0.18);
+    transition: transform 180ms ease;
+}
+.pp-switch input:checked + .pp-switch-track {
+    background: #3b82f6;
+}
+.pp-switch input:checked + .pp-switch-track::after {
+    transform: translateX(18px);
+}
+.pp-switch input:disabled + .pp-switch-track {
+    opacity: 0.72;
+}
+.pp-enabled-chip.pp-readonly .pp-switch-track {
+    background: #d1d5db;
+}
+.pp-enabled-chip.pp-readonly .pp-switch input:checked + .pp-switch-track {
+    background: #cbd5e1;
+}
+.pp-enabled-chip.pp-readonly .pp-switch-track::after {
+    background: #f8fafc;
+    box-shadow: 0 1px 2px rgba(100,116,139,0.22);
+}
+.pp-manager-select-row {
+    display: flex;
+    align-items: stretch;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+.pp-manager-select-wrap {
+    flex: 1 1 220px;
+    min-width: 0;
+}
+.pp-manager-label {
+    display: block;
+    margin-bottom: 6px;
+    font-size: 12px;
+    font-weight: 700;
+    color: #334155;
+}
+.pp-manager-select {
+    appearance: none;
+    -webkit-appearance: none;
+    width: 100%;
+    min-height: 42px;
+    padding: 10px 12px;
+    border: 1px solid #cbd5e1;
+    border-radius: 12px;
+    background: #fff;
+    color: #0f172a;
+    font-size: 14px;
+}
+.pp-manager-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-top: 10px;
+}
+.pp-manager-btn {
+    appearance: none;
+    -webkit-appearance: none;
+    min-height: 36px;
+    padding: 8px 12px;
+    border: 1px solid #dbe2ea;
+    border-radius: 10px;
+    background: #fff;
+    color: #334155;
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+}
+.pp-manager-btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+.pp-manager-btn.pp-danger {
+    border-color: #fecaca;
+    background: #fff5f5;
+    color: #b91c1c;
+}
+
+/* ── nav pages ── */
+.pp-nav-shell {
+    flex: 1 1 0;
+    min-height: 0;
+    overflow: hidden;
+    position: relative;
+}
+.pp-pages {
+    width: 200%;
+    height: 100%;
+    display: flex;
+    transition: transform 260ms cubic-bezier(.2,.9,.2,1);
+    transform: translateX(0);
+}
+.pp-pages[data-view="detail"] {
+    transform: translateX(-50%);
+}
+.pp-page {
+    width: 50%;
+    min-width: 50%;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+}
+.pp-page-scroll {
+    flex: 1 1 0;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 12px 16px 16px;
     -webkit-overflow-scrolling: touch;
     overscroll-behavior: contain;
     touch-action: pan-y;
 }
+.pp-detail-topbar {
+    padding: 10px 16px 0;
+    flex-shrink: 0;
+}
+.pp-back-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    border: none;
+    background: transparent;
+    color: #2563eb;
+    font-size: 14px;
+    font-weight: 700;
+    padding: 6px 2px;
+    cursor: pointer;
+}
+.pp-back-btn svg { width: 16px; height: 16px; }
+.pp-detail-heading {
+    margin-top: 8px;
+    margin-bottom: 2px;
+    font-size: 18px;
+    font-weight: 800;
+    color: #0f172a;
+    line-height: 1.2;
+}
+.pp-detail-subheading {
+    font-size: 12px;
+    color: #64748b;
+    line-height: 1.45;
+}
 
-/* ── section card ── */
-.pp-card {
+/* ── root list ── */
+.pp-nav-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+.pp-nav-item {
+    appearance: none;
+    -webkit-appearance: none;
+    width: 100%;
     border: 1px solid #e2e8f0;
-    border-radius: 12px;
+    border-radius: 16px;
     background: #fff;
+    padding: 14px 16px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    text-align: left;
+    cursor: pointer;
+    box-shadow: 0 4px 18px rgba(15,23,42,0.04);
+}
+.pp-nav-item:active {
+    transform: scale(0.995);
+}
+.pp-nav-item-left {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+.pp-nav-item-title {
+    font-size: 15px;
+    font-weight: 800;
+    color: #0f172a;
+    line-height: 1.35;
+}
+.pp-nav-item-sub {
+    font-size: 12px;
+    color: #64748b;
+    line-height: 1.45;
+    white-space: nowrap;
     overflow: hidden;
-    transition: box-shadow 200ms ease;
-    margin-bottom: 12px;
+    text-overflow: ellipsis;
 }
-.pp-card:last-child { margin-bottom: 0; }
-.pp-card.pp-primary {
-    border-left: 3px solid #3b82f6;
+.pp-nav-item.pp-disabled .pp-nav-item-title,
+.pp-nav-item.pp-disabled .pp-nav-item-sub {
+    color: #94a3b8;
 }
-.pp-card.pp-secondary {
-    border-left: 3px solid #d1d5db;
-}
-.pp-card.pp-secondary.pp-expanded {
-    border-left-color: #3b82f6;
-}
-.pp-card-header {
-    display: flex; align-items: center; justify-content: space-between;
-    gap: 10px; padding: 12px 14px;
-    min-height: 48px;
-    cursor: pointer; user-select: none;
+.pp-nav-item-arrow {
+    width: 30px;
+    height: 30px;
+    border-radius: 10px;
     background: #f8fafc;
-    transition: background 180ms ease;
-}
-.pp-card-header:hover { background: #f1f5f9; }
-.pp-card.pp-primary .pp-card-header { cursor: pointer; }
-.pp-card-header-left {
-    display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1;
-}
-.pp-card-label { font-weight: 700; color: #0f172a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.pp-card-badge {
-    font-size: 11px; color: #64748b; background: #f1f5f9;
-    padding: 2px 8px; border-radius: 999px; white-space: nowrap; flex-shrink: 0;
-}
-.pp-card-chevron {
-    color: #94a3b8; flex-shrink: 0; width: 28px; height: 28px;
-    display: flex; align-items: center; justify-content: center;
-    border-radius: 8px; transition: color 180ms, background 180ms;
-}
-.pp-card.pp-expanded .pp-card-chevron { color: #3b82f6; }
-.pp-card.pp-expanded .pp-card-chevron svg { transform: rotate(180deg); }
-/* primary cards are also collapsible */
-
-.pp-card-body {
-    padding: 0 14px 14px;
-    display: none;
-    overflow-y: auto;
-    -webkit-overflow-scrolling: touch;
-    overscroll-behavior: contain;
-}
-.pp-card.pp-expanded .pp-card-body {
-    display: block;
-    max-height: 50vh;
-}
-
-/* ── inline preset selector ── */
-.pp-preset-bar {
-    display: flex; align-items: center; gap: 6px;
-    padding: 8px 0 10px; border-bottom: 1px solid #f1f5f9; margin-bottom: 10px;
-    overflow-x: auto; -webkit-overflow-scrolling: touch;
-}
-.pp-preset-bar select {
-    flex: 1; min-width: 100px; padding: 7px 8px;
-    border: 1px solid #e2e8f0; border-radius: 8px; font-size: 13px;
-    background: #fff; color: #0f172a;
-}
-.pp-preset-bar button {
-    padding: 5px 8px; border: 1px solid #e2e8f0; border-radius: 8px;
-    background: #f8fafc; cursor: pointer; font-size: 11px; color: #334155;
-    white-space: nowrap; flex-shrink: 0;
-}
-.pp-preset-bar button.pp-danger {
-    border-color: #fecaca; background: #fee2e2; color: #b91c1c;
-}
-.pp-preset-bar .pp-enabled-wrap {
-    display: flex; align-items: center; gap: 4px; font-size: 11px; color: #334155;
-    cursor: pointer; white-space: nowrap; flex-shrink: 0;
+    color: #94a3b8;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
 }
 
 /* ── form helpers ── */
@@ -291,6 +496,14 @@ export class PresetPanel {
         this.element = null;
         this.overlayElement = null;
         this.statusEl = null;
+        this.managerEl = null;
+        this.pagesEl = null;
+        this.rootListEl = null;
+        this.detailTitleEl = null;
+        this.detailSubtitleEl = null;
+        this.detailEditorEl = null;
+        this.detailScrollEl = null;
+        this.currentSectionId = null;
         this.drafts = new Map();
     }
 
@@ -323,6 +536,7 @@ export class PresetPanel {
     async show() {
         await this.store.ready;
         if (!this.element) this.createUI();
+        this.currentSectionId = null;
         this.renderAllSections();
         this.element.style.display = 'flex';
         this.overlayElement.style.display = 'block';
@@ -372,7 +586,31 @@ export class PresetPanel {
                     <button class="pp-close" id="preset-close">&times;</button>
                 </div>
             </div>
-            <div class="pp-scroll" id="preset-scroll"></div>
+            <div class="pp-shell">
+                <div class="pp-manager" id="preset-manager"></div>
+                <div class="pp-nav-shell">
+                    <div class="pp-pages" id="preset-pages" data-view="root">
+                        <section class="pp-page">
+                            <div class="pp-page-scroll">
+                                <div class="pp-nav-list" id="preset-root-list"></div>
+                            </div>
+                        </section>
+                        <section class="pp-page">
+                            <div class="pp-detail-topbar">
+                                <button type="button" class="pp-back-btn" id="preset-back">
+                                    ${chevronLeftSvg}
+                                    <span>返回</span>
+                                </button>
+                                <div class="pp-detail-heading" id="preset-detail-title"></div>
+                                <div class="pp-detail-subheading" id="preset-detail-subtitle"></div>
+                            </div>
+                            <div class="pp-page-scroll" id="preset-detail-scroll">
+                                <div class="pp-section-editor" id="preset-detail-editor"></div>
+                            </div>
+                        </section>
+                    </div>
+                </div>
+            </div>
             <div class="pp-status" id="preset-status"></div>
             <div class="pp-footer">
                 <button class="pp-btn-cancel" id="preset-cancel">取消</button>
@@ -384,9 +622,17 @@ export class PresetPanel {
         document.body.appendChild(this.element);
 
         this.statusEl = this.element.querySelector('#preset-status');
+        this.managerEl = this.element.querySelector('#preset-manager');
+        this.pagesEl = this.element.querySelector('#preset-pages');
+        this.rootListEl = this.element.querySelector('#preset-root-list');
+        this.detailTitleEl = this.element.querySelector('#preset-detail-title');
+        this.detailSubtitleEl = this.element.querySelector('#preset-detail-subtitle');
+        this.detailEditorEl = this.element.querySelector('#preset-detail-editor');
+        this.detailScrollEl = this.element.querySelector('#preset-detail-scroll');
         this.element.querySelector('#preset-close').onclick = () => this.hide();
         this.element.querySelector('#preset-cancel').onclick = () => this.hide();
         this.element.querySelector('#preset-save').onclick = () => this.onSave();
+        this.element.querySelector('#preset-back').onclick = () => this.showRootPage();
 
         /* hidden file input for import */
         const importInput = document.createElement('input');
@@ -408,62 +654,53 @@ export class PresetPanel {
     }
 
     /* ════════════════════════════════════════
-       Render all section cards
+       Render shell pages
        ════════════════════════════════════════ */
     renderAllSections() {
-        const scroll = this.element.querySelector('#preset-scroll');
-        if (!scroll) return;
-        scroll.innerHTML = '';
-
-        for (const sec of SECTIONS) {
-            const card = this.buildSectionCard(sec);
-            scroll.appendChild(card);
+        if (!this.element) return;
+        this.renderManager();
+        this.renderMainList();
+        if (this.currentSectionId) {
+            const sec = this.getSectionById(this.currentSectionId);
+            if (sec) this.renderDetailSection(sec);
+            else this.currentSectionId = null;
         }
+        if (!this.currentSectionId) this.clearDetailSection();
+        this.setPageView(this.currentSectionId ? 'detail' : 'root');
     }
 
-    buildSectionCard(sec) {
-        const card = document.createElement('div');
-        card.className = `pp-card ${sec.primary ? 'pp-primary pp-expanded' : 'pp-secondary'}`;
-        card.dataset.sectionId = sec.id;
+    getSectionById(id) {
+        return SECTIONS.find((sec) => sec.id === id) || null;
+    }
 
-        /* badge text: show key info */
-        const badgeText = this.getSectionBadge(sec);
+    getDefaultContextSection() {
+        return this.getSectionById('openai') || SECTIONS[0] || null;
+    }
 
-        /* header */
-        const header = document.createElement('div');
-        header.className = 'pp-card-header';
-        header.innerHTML = `
-            <div class="pp-card-header-left">
-                <span class="pp-card-label">${sec.label}</span>
-                ${badgeText ? `<span class="pp-card-badge">${badgeText}</span>` : ''}
-            </div>
-            <div class="pp-card-chevron">${chevronSvg}</div>
-        `;
-        card.appendChild(header);
+    getCurrentContextSection() {
+        return this.getSectionById(this.currentSectionId) || this.getDefaultContextSection();
+    }
 
-        /* body */
-        const body = document.createElement('div');
-        body.className = 'pp-card-body';
-        card.appendChild(body);
+    getStoreTypeSectionsLabel(storeType) {
+        return SECTIONS
+            .filter((sec) => sec.storeType === storeType)
+            .map((sec) => sec.label)
+            .join(' / ');
+    }
 
-        /* preset bar + editor */
-        body.appendChild(this.buildPresetBar(sec));
-        const editor = document.createElement('div');
-        editor.className = 'pp-section-editor';
-        body.appendChild(editor);
-        this.renderSectionEditor(sec, editor);
+    getActivePresetSnapshot(storeType) {
+        const presetId = this.store.getActiveId(storeType);
+        const key = this.getDraftKey(storeType, presetId);
+        if (key && this.drafts.has(key)) return deepClone(this.drafts.get(key));
+        return this.store.getActive(storeType) || {};
+    }
 
-        /* collapse toggle for all cards */
-        header.addEventListener('click', () => {
-            const expanded = card.classList.contains('pp-expanded');
-            card.classList.toggle('pp-expanded', !expanded);
-        });
-
-        return card;
+    isEnabledToggleReadonly(storeType) {
+        return storeType === 'instruct' || storeType === 'reasoning';
     }
 
     getSectionBadge(sec) {
-        const p = this.store.getActive(sec.storeType) || {};
+        const p = this.getActivePresetSnapshot(sec.storeType) || {};
         if (sec.id === 'openai') {
             const t = p.temperature ?? 1;
             const tp = p.top_p ?? 0.98;
@@ -473,104 +710,163 @@ export class PresetPanel {
             const prompts = Array.isArray(p.prompts) ? p.prompts : [];
             return `${prompts.length} 区块`;
         }
-        const name = this.store.getActive(sec.storeType)?.name;
+        const name = p?.name || this.store.getActive(sec.storeType)?.name;
         return name || '';
     }
 
-    /* ── inline preset selector bar ── */
-    buildPresetBar(sec) {
-        const bar = document.createElement('div');
-        bar.className = 'pp-preset-bar';
+    renderManager() {
+        if (!this.managerEl) return;
+        const sec = this.getCurrentContextSection();
+        if (!sec) return;
+        const storeType = sec.storeType;
+        const presets = this.store.list(storeType);
+        const activeId = this.store.getActiveId(storeType);
+        const enabledReadonly = this.isEnabledToggleReadonly(storeType);
 
-        const select = document.createElement('select');
-        const presets = this.store.list(sec.storeType);
-        const activeId = this.store.getActiveId(sec.storeType);
-        presets.forEach(p => {
+        this.managerEl.innerHTML = `
+            <div class="pp-manager-card">
+                <div class="pp-manager-head">
+                    <div style="min-width:0;">
+                        <div class="pp-manager-title">预设方案</div>
+                        <div class="pp-manager-sub">当前分类：${this.getStoreTypeSectionsLabel(storeType) || sec.label}</div>
+                    </div>
+                    <div class="pp-enabled-chip ${enabledReadonly ? 'pp-readonly' : ''}">
+                        <span class="pp-enabled-text">启用</span>
+                        <label class="pp-switch">
+                            <input type="checkbox" id="preset-manager-enabled">
+                            <span class="pp-switch-track"></span>
+                        </label>
+                    </div>
+                </div>
+                <div class="pp-manager-select-row">
+                    <div class="pp-manager-select-wrap">
+                        <label class="pp-manager-label" for="preset-manager-select">当前预设</label>
+                        <select class="pp-manager-select" id="preset-manager-select"></select>
+                    </div>
+                </div>
+                <div class="pp-manager-actions">
+                    <button type="button" class="pp-manager-btn" id="preset-manager-new">新建</button>
+                    <button type="button" class="pp-manager-btn" id="preset-manager-rename">重命名</button>
+                    <button type="button" class="pp-manager-btn pp-danger" id="preset-manager-delete">删除</button>
+                </div>
+            </div>
+        `;
+
+        const select = this.managerEl.querySelector('#preset-manager-select');
+        const enabledCb = this.managerEl.querySelector('#preset-manager-enabled');
+        const renameBtn = this.managerEl.querySelector('#preset-manager-rename');
+        const deleteBtn = this.managerEl.querySelector('#preset-manager-delete');
+
+        presets.forEach((preset) => {
             const opt = document.createElement('option');
-            opt.value = p.id;
-            opt.textContent = p.name || p.id;
+            opt.value = preset.id;
+            opt.textContent = preset.name || preset.id;
             select.appendChild(opt);
         });
+        select.disabled = presets.length === 0;
         if (activeId) select.value = activeId;
-        bar.appendChild(select);
+        enabledCb.checked = this.store.getEnabled(storeType);
+        enabledCb.disabled = enabledReadonly;
+        renameBtn.disabled = !activeId;
+        deleteBtn.disabled = !activeId;
 
         select.onchange = async () => {
-            this.captureDraftsFromDOM();
-            await this.store.setActive(sec.storeType, select.value);
-            if (sec.storeType === 'openai') await this.applyBoundConfigIfAny();
-            this.rerenderSection(sec);
+            this.captureCurrentDetailDraft();
+            await this.store.setActive(storeType, select.value);
+            if (storeType === 'openai') await this.applyBoundConfigIfAny();
+            this.renderAllSections();
             window.dispatchEvent(new CustomEvent('preset-changed'));
         };
 
-        const enabledWrap = document.createElement('label');
-        enabledWrap.className = 'pp-enabled-wrap';
-        const enabledCb = document.createElement('input');
-        enabledCb.type = 'checkbox';
-        enabledCb.style.cssText = 'width:16px; height:16px;';
-        enabledCb.checked = this.store.getEnabled(sec.storeType);
-        enabledCb.onchange = async () => {
-            await this.store.setEnabled(sec.storeType, !!enabledCb.checked);
-            this.showStatus('已更新启用状态', 'success');
-            window.dispatchEvent(new CustomEvent('preset-changed'));
-        };
-        enabledWrap.appendChild(enabledCb);
-        enabledWrap.appendChild(document.createTextNode('启用'));
-        bar.appendChild(enabledWrap);
-
-        /* For "custom" section, also show "新建区块" in the bar header. For others, show new/rename/delete */
-        if (sec.id !== 'custom') {
-            const btnNew = document.createElement('button');
-            btnNew.textContent = '新建';
-            btnNew.onclick = () => this.onNewForSection(sec);
-            bar.appendChild(btnNew);
-
-            const btnRename = document.createElement('button');
-            btnRename.textContent = '重命名';
-            btnRename.onclick = () => this.onRenameForSection(sec);
-            bar.appendChild(btnRename);
-
-            const btnDel = document.createElement('button');
-            btnDel.textContent = '删除';
-            btnDel.className = 'pp-danger';
-            btnDel.onclick = () => this.onDeleteForSection(sec);
-            bar.appendChild(btnDel);
+        if (!enabledReadonly) {
+            enabledCb.onchange = async () => {
+                await this.store.setEnabled(storeType, !!enabledCb.checked);
+                this.renderAllSections();
+                this.showStatus('已更新启用状态', 'success');
+                window.dispatchEvent(new CustomEvent('preset-changed'));
+            };
         }
 
-        return bar;
+        this.managerEl.querySelector('#preset-manager-new').onclick = () => this.onNewForStoreType(storeType);
+        renameBtn.onclick = () => this.onRenameForStoreType(storeType);
+        deleteBtn.onclick = () => this.onDeleteForStoreType(storeType);
     }
 
-    rerenderSection(sec) {
-        const card = this.element.querySelector(`.pp-card[data-section-id="${sec.id}"]`);
-        if (!card) return;
-        /* update badge */
-        const badge = card.querySelector('.pp-card-badge');
-        const newBadge = this.getSectionBadge(sec);
-        if (badge) badge.textContent = newBadge || '';
-
-        /* update preset bar select */
-        const select = card.querySelector('.pp-preset-bar select');
-        if (select) {
-            const presets = this.store.list(sec.storeType);
-            const activeId = this.store.getActiveId(sec.storeType);
-            select.innerHTML = '';
-            presets.forEach(p => {
-                const opt = document.createElement('option');
-                opt.value = p.id;
-                opt.textContent = p.name || p.id;
-                select.appendChild(opt);
-            });
-            if (activeId) select.value = activeId;
+    renderMainList() {
+        if (!this.rootListEl) return;
+        this.rootListEl.innerHTML = '';
+        for (const sec of SECTIONS) {
+            this.rootListEl.appendChild(this.buildSectionListItem(sec));
         }
+    }
 
-        /* update enabled */
-        const enabledCb = card.querySelector('.pp-enabled-wrap input');
-        if (enabledCb) enabledCb.checked = this.store.getEnabled(sec.storeType);
+    buildSectionListItem(sec) {
+        const item = document.createElement('button');
+        item.type = 'button';
+        item.className = `pp-nav-item ${this.store.getEnabled(sec.storeType) ? '' : 'pp-disabled'}`.trim();
+        item.innerHTML = `
+            <div class="pp-nav-item-left">
+                <div class="pp-nav-item-title">${sec.label}</div>
+                <div class="pp-nav-item-sub">${this.getSectionBadge(sec) || '进入后编辑该分类内容'}</div>
+            </div>
+            <span class="pp-nav-item-arrow">${chevronRightSvg}</span>
+        `;
+        item.addEventListener('click', () => this.openSection(sec.id));
+        return item;
+    }
 
-        /* re-render editor */
-        const editor = card.querySelector('.pp-section-editor');
-        if (editor) {
-            editor.innerHTML = '';
-            this.renderSectionEditor(sec, editor);
+    openSection(sectionId) {
+        const sec = this.getSectionById(sectionId);
+        if (!sec) return;
+        this.captureCurrentDetailDraft();
+        this.currentSectionId = sec.id;
+        this.renderAllSections();
+        this.setPageView('detail');
+        if (this.detailScrollEl) this.detailScrollEl.scrollTop = 0;
+    }
+
+    showRootPage({ capture = true } = {}) {
+        if (capture) this.captureCurrentDetailDraft();
+        this.currentSectionId = null;
+        this.renderAllSections();
+        this.setPageView('root');
+    }
+
+    setPageView(view) {
+        if (!this.pagesEl) return;
+        this.pagesEl.dataset.view = view === 'detail' ? 'detail' : 'root';
+    }
+
+    renderDetailSection(sec) {
+        if (!this.detailEditorEl || !this.detailTitleEl || !this.detailSubtitleEl) return;
+        this.detailTitleEl.textContent = sec.label;
+        this.detailSubtitleEl.textContent = this.getSectionBadge(sec) || '编辑该分类中的具体内容';
+        this.detailEditorEl.innerHTML = '';
+        this.renderSectionEditor(sec, this.detailEditorEl);
+    }
+
+    clearDetailSection() {
+        if (this.detailTitleEl) this.detailTitleEl.textContent = '';
+        if (this.detailSubtitleEl) this.detailSubtitleEl.textContent = '';
+        if (this.detailEditorEl) this.detailEditorEl.innerHTML = '';
+    }
+
+    captureCurrentDetailDraft() {
+        if (!this.currentSectionId || !this.detailEditorEl || !this.detailEditorEl.children.length) return;
+        const sec = this.getSectionById(this.currentSectionId);
+        if (!sec) return;
+        try {
+            const storeType = sec.storeType;
+            const presetId = this.store.getActiveId(storeType);
+            const key = this.getDraftKey(storeType, presetId);
+            if (!key) return;
+            const base = this.drafts.has(key)
+                ? this.drafts.get(key)
+                : deepClone(this.store.getActive(storeType) || {});
+            const next = this.collectSectionData(sec.id, this.detailEditorEl, base);
+            this.drafts.set(key, next);
+        } catch (err) {
+            logger.debug('capture detail draft failed', sec.id, err);
         }
     }
 
@@ -1218,29 +1514,7 @@ export class PresetPanel {
 
     captureDraftsFromDOM() {
         if (!this.element) return;
-        /* Capture all visible sections at once.
-         * Multiple sections may share the same storeType (e.g. sysprompt + chatprompts both → 'sysprompt').
-         * We accumulate into the same draft so fields merge rather than overwrite. */
-        for (const sec of SECTIONS) {
-            try {
-                const card = this.element.querySelector(`.pp-card[data-section-id="${sec.id}"]`);
-                if (!card) continue;
-                const editor = card.querySelector('.pp-section-editor');
-                if (!editor || !editor.children.length) continue;
-                const storeType = sec.storeType;
-                const presetId = this.store.getActiveId(storeType);
-                const key = this.getDraftKey(storeType, presetId);
-                if (!key) continue;
-                /* Use existing draft as base (may already contain fields from a sibling section) */
-                const base = this.drafts.has(key)
-                    ? this.drafts.get(key)
-                    : deepClone(this.store.getActive(storeType) || {});
-                const next = this.collectSectionData(sec.id, editor, base);
-                this.drafts.set(key, next);
-            } catch (err) {
-                logger.debug('captureDraft failed for', sec.id, err);
-            }
-        }
+        this.captureCurrentDetailDraft();
     }
 
     collectSectionData(sectionId, root, base) {
@@ -1408,53 +1682,47 @@ export class PresetPanel {
         }
     }
 
-    async onNewForSection(sec) {
+    async onNewForStoreType(storeType) {
         await this.store.ready;
         const name = prompt('新建预设名称', '新预设');
         if (!name) return;
         this.captureDraftsFromDOM();
-        const base = this.store.getActive(sec.storeType) || {};
+        const base = this.getActivePresetSnapshot(storeType) || {};
         const data = { ...deepClone(base), name };
-        const id = await this.store.upsert(sec.storeType, { name, data });
-        await this.store.setActive(sec.storeType, id);
+        const id = await this.store.upsert(storeType, { name, data });
+        await this.store.setActive(storeType, id);
         for (const k of Array.from(this.drafts.keys())) {
-            if (String(k).startsWith(`${sec.storeType}:`)) this.drafts.delete(k);
+            if (String(k).startsWith(`${storeType}:`)) this.drafts.delete(k);
         }
-        this.rerenderSection(sec);
-        /* Also re-render sibling sections sharing same storeType */
-        for (const s of SECTIONS) {
-            if (s.id !== sec.id && s.storeType === sec.storeType) this.rerenderSection(s);
-        }
+        if (storeType === 'openai') await this.applyBoundConfigIfAny();
+        this.renderAllSections();
         this.showStatus('已新建', 'success');
         window.dispatchEvent(new CustomEvent('preset-changed'));
     }
 
-    async onRenameForSection(sec) {
+    async onRenameForStoreType(storeType) {
         await this.store.ready;
-        const id = this.store.getActiveId(sec.storeType);
-        const current = this.store.getActive(sec.storeType);
+        const id = this.store.getActiveId(storeType);
+        const current = this.getActivePresetSnapshot(storeType);
         if (!id || !current) return;
         this.captureDraftsFromDOM();
         const name = prompt('重命名预设', current.name || id);
         if (!name) return;
-        await this.store.upsert(sec.storeType, { id, name, data: { ...current, name } });
-        const key = this.getDraftKey(sec.storeType, id);
+        await this.store.upsert(storeType, { id, name, data: { ...current, name } });
+        const key = this.getDraftKey(storeType, id);
         if (key && this.drafts.has(key)) {
             const d = this.drafts.get(key) || {};
             d.name = name;
             this.drafts.set(key, d);
         }
-        this.rerenderSection(sec);
-        for (const s of SECTIONS) {
-            if (s.id !== sec.id && s.storeType === sec.storeType) this.rerenderSection(s);
-        }
+        this.renderAllSections();
         this.showStatus('已重命名', 'success');
         window.dispatchEvent(new CustomEvent('preset-changed'));
     }
 
-    async onDeleteForSection(sec) {
+    async onDeleteForStoreType(storeType) {
         await this.store.ready;
-        const id = this.store.getActiveId(sec.storeType);
+        const id = this.store.getActiveId(storeType);
         if (!id) return;
         const ok = await appConfirm({ title: '删除预设', message: '删除该预设？此操作不可恢复。', danger: true });
         if (!ok) return;
@@ -1465,7 +1733,7 @@ export class PresetPanel {
             const sets = window.appBridge?.regex?.listLocalSets?.() || [];
             const bound = sets.filter(s =>
                 s?.bind?.type === 'preset' &&
-                String(s.bind.presetType || '') === String(sec.storeType) &&
+                String(s.bind.presetType || '') === String(storeType) &&
                 String(s.bind.presetId || '') === String(id)
             );
             if (bound.length) {
@@ -1484,13 +1752,10 @@ export class PresetPanel {
             }
         } catch {}
 
-        await this.store.remove(sec.storeType, id);
-        const key = this.getDraftKey(sec.storeType, id);
+        await this.store.remove(storeType, id);
+        const key = this.getDraftKey(storeType, id);
         if (key) this.drafts.delete(key);
-        this.rerenderSection(sec);
-        for (const s of SECTIONS) {
-            if (s.id !== sec.id && s.storeType === sec.storeType) this.rerenderSection(s);
-        }
+        this.renderAllSections();
         this.showStatus('已删除', 'success');
         window.dispatchEvent(new CustomEvent('preset-changed'));
     }
