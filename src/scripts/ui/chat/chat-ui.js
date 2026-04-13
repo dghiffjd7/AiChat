@@ -189,11 +189,13 @@ export class ChatUI {
     this.selectedMessageIds = new Set();
     this.selectionBar = null;
     this.sendClickGuard = null;
+    this.jumpFocusState = null;
 
     setupIframeResizeListener();
     this.bindIframeLongPressForwarding();
     this.bindInputAutosize();
     this.bindFocusScroll();
+    this.bindJumpFocusDismiss();
     this.bindNetworkEvents();
     this.bindReasoningSettings();
   }
@@ -464,6 +466,140 @@ export class ChatUI {
     });
   }
 
+  bindJumpFocusDismiss() {
+    if (!this.scrollEl || this.__chatappJumpFocusBound) return;
+    this.__chatappJumpFocusBound = true;
+    this.scrollEl.addEventListener(
+      'scroll',
+      () => {
+        const state = this.jumpFocusState;
+        if (!state?.dismissOnScroll || !state.wrapper) return;
+        if (Date.now() < Number(state.ignoreScrollUntil || 0)) return;
+        const currentTop = Number(this.scrollEl?.scrollTop || 0);
+        if (Math.abs(currentTop - Number(state.scrollTop || 0)) < 6) return;
+        this.clearJumpFocus();
+      },
+      { passive: true },
+    );
+  }
+
+  resolveJumpFocusElements(wrapper) {
+    if (!wrapper) return { focusEl: null, textRoot: null };
+    const focusEl =
+      wrapper.querySelector('.QQ_chat_unread-line')
+      || wrapper.querySelector('.QQ_chat_msgdiv')
+      || wrapper.querySelector('.QQ_chat_sysbubble')
+      || wrapper;
+    const textRoot = focusEl?.querySelector?.('.chat-message-content') || focusEl;
+    return { focusEl, textRoot };
+  }
+
+  clearJumpKeywordHighlights(root) {
+    if (!root?.querySelectorAll) return;
+    root.querySelectorAll('.chat-jump-keyword').forEach(mark => {
+      const parent = mark.parentNode;
+      if (!parent) return;
+      parent.replaceChild(document.createTextNode(mark.textContent || ''), mark);
+      parent.normalize?.();
+    });
+  }
+
+  highlightKeywordInElement(root, keyword) {
+    const term = String(keyword || '').trim();
+    if (!root || !term || typeof document === 'undefined' || typeof NodeFilter === 'undefined') return 0;
+    this.clearJumpKeywordHighlights(root);
+    const skipTags = new Set(['SCRIPT', 'STYLE', 'TEXTAREA', 'INPUT', 'SELECT', 'OPTION', 'BUTTON', 'PRE', 'CODE']);
+    const walker = document.createTreeWalker(
+      root,
+      NodeFilter.SHOW_TEXT,
+      {
+        acceptNode: node => {
+          const value = String(node?.nodeValue || '');
+          if (!value.trim()) return NodeFilter.FILTER_REJECT;
+          const parent = node.parentElement;
+          if (!parent) return NodeFilter.FILTER_REJECT;
+          if (skipTags.has(parent.tagName)) return NodeFilter.FILTER_REJECT;
+          if (parent.closest?.('.chat-reasoning')) return NodeFilter.FILTER_REJECT;
+          if (parent.closest?.('.chat-jump-keyword')) return NodeFilter.FILTER_REJECT;
+          if (!value.toLowerCase().includes(term.toLowerCase())) return NodeFilter.FILTER_REJECT;
+          return NodeFilter.FILTER_ACCEPT;
+        },
+      },
+      false,
+    );
+    const textNodes = [];
+    let current = null;
+    while ((current = walker.nextNode())) textNodes.push(current);
+    let hitCount = 0;
+    textNodes.forEach(node => {
+      const value = String(node.nodeValue || '');
+      const lower = value.toLowerCase();
+      const termLower = term.toLowerCase();
+      let index = 0;
+      let cursor = 0;
+      const frag = document.createDocumentFragment();
+      while ((index = lower.indexOf(termLower, cursor)) !== -1) {
+        if (index > cursor) frag.appendChild(document.createTextNode(value.slice(cursor, index)));
+        const mark = document.createElement('span');
+        mark.className = 'chat-jump-keyword';
+        mark.textContent = value.slice(index, index + term.length);
+        frag.appendChild(mark);
+        cursor = index + term.length;
+        hitCount += 1;
+      }
+      if (!hitCount && !frag.childNodes.length) return;
+      if (cursor < value.length) frag.appendChild(document.createTextNode(value.slice(cursor)));
+      node.parentNode?.replaceChild(frag, node);
+    });
+    return hitCount;
+  }
+
+  clearJumpFocus() {
+    const state = this.jumpFocusState;
+    if (state?.timer) {
+      clearTimeout(state.timer);
+    }
+    const wrapper = state?.wrapper;
+    const focusEl = state?.focusEl;
+    if (focusEl?.classList) {
+      focusEl.classList.remove('chat-jump-focus-target');
+    }
+    if (wrapper?.classList) {
+      wrapper.classList.remove('chat-jump-focus-line');
+      delete wrapper.dataset.chatJumpKind;
+    }
+    this.clearJumpKeywordHighlights(state?.textRoot || focusEl || wrapper);
+    this.jumpFocusState = null;
+  }
+
+  applyJumpFocus(wrapper, { keyword = '', kind = 'anchor', dismissOnScroll = true, autoClearMs = 0 } = {}) {
+    if (!wrapper) return false;
+    this.clearJumpFocus();
+    const { focusEl, textRoot } = this.resolveJumpFocusElements(wrapper);
+    wrapper.classList.add('chat-jump-focus-line');
+    wrapper.dataset.chatJumpKind = String(kind || 'anchor');
+    focusEl?.classList?.add('chat-jump-focus-target');
+    if (keyword) this.highlightKeywordInElement(textRoot, keyword);
+    const state = {
+      wrapper,
+      focusEl,
+      textRoot,
+      dismissOnScroll: dismissOnScroll !== false,
+      scrollTop: Number(this.scrollEl?.scrollTop || 0),
+      ignoreScrollUntil: Date.now() + 260,
+      timer: null,
+    };
+    if (Number(autoClearMs) > 0) {
+      state.timer = setTimeout(() => {
+        if (this.jumpFocusState?.wrapper === wrapper) {
+          wrapper.classList.remove('chat-jump-focus-line');
+        }
+      }, Number(autoClearMs));
+    }
+    this.jumpFocusState = state;
+    return true;
+  }
+
   bindNetworkEvents() {
     const updateStatus = () => {
       if (typeof navigator !== 'undefined' && !navigator.onLine) {
@@ -629,7 +765,7 @@ export class ChatUI {
     this.scrollEl.scrollTop = this.scrollEl.scrollHeight;
   }
 
-  scrollToMessage(msgId) {
+  scrollToMessage(msgId, options = {}) {
     const id = String(msgId || '').trim();
     if (!id || !this.scrollEl) return false;
     const esc =
@@ -638,15 +774,15 @@ export class ChatUI {
     if (!el) return false;
     const top = el.offsetTop - 12;
     this.scrollEl.scrollTop = Math.max(0, top);
-    // brief highlight
-    try {
-      el.style.transition = 'background 0.2s ease';
-      const prev = el.style.backgroundColor;
-      el.style.backgroundColor = 'rgba(239,68,68,0.10)';
-      setTimeout(() => {
-        el.style.backgroundColor = prev || '';
-      }, 900);
-    } catch {}
+    const autoClearMs = Number.isFinite(Number(options?.autoClearMs))
+      ? Number(options.autoClearMs)
+      : 2900;
+    this.applyJumpFocus(el, {
+      keyword: options?.keyword || '',
+      kind: options?.kind || (options?.keyword ? 'search' : 'anchor'),
+      dismissOnScroll: options?.dismissOnScroll !== false,
+      autoClearMs,
+    });
     return true;
   }
 

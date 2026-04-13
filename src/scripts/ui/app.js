@@ -4952,12 +4952,18 @@ Phase G（Frame 36）：循环衔接
     } catch {}
   };
 
-  const ensureMessageVisibleInCurrentChat = async (sessionId, messageId) => {
+  const ensureMessageVisibleInCurrentChat = async (sessionId, messageId, keyword = '') => {
     const sid = String(sessionId || '').trim();
     const mid = String(messageId || '').trim();
     if (!sid || !mid) return false;
+    const focusOpts = {
+      keyword,
+      kind: keyword ? 'search' : 'anchor',
+      dismissOnScroll: true,
+    };
+    if (ui.scrollToMessage(mid, focusOpts)) return true;
     await waitForNextFrame();
-    if (ui.scrollToMessage(mid)) return true;
+    if (ui.scrollToMessage(mid, focusOpts)) return true;
 
     const PAGE = 90;
     let guard = 0;
@@ -4975,7 +4981,7 @@ Phase G（Frame 36）：循环衔接
           chatRenderState.set(sid, { start: nextStart });
           chatStore.prefetchRawOriginalsForMessages?.(chunk, sid).catch(() => {});
           await waitForNextFrame();
-          if (ui.scrollToMessage(mid)) return true;
+          if (ui.scrollToMessage(mid, focusOpts)) return true;
           continue;
         }
         chatRenderState.set(sid, { start: 0 });
@@ -4988,10 +4994,10 @@ Phase G（Frame 36）：循环衔接
       chatRenderState.set(sid, { start: 0 });
       chatStore.prefetchRawOriginalsForMessages?.(older, sid).catch(() => {});
       await waitForNextFrame();
-      if (ui.scrollToMessage(mid)) return true;
+      if (ui.scrollToMessage(mid, focusOpts)) return true;
     }
 
-    return ui.scrollToMessage(mid);
+    return ui.scrollToMessage(mid, focusOpts);
   };
 
   const initChatContentSearch = () => {
@@ -5053,8 +5059,16 @@ Phase G（Frame 36）：循环衔接
       const mid = item.getAttribute('data-message-id') || '';
       const contact = contactsStore.getContact(sid);
       switchPage('chat');
-      await enterChatRoom(sid, formatSessionName(sid, contact), 'chat', { suppressInitialAutoScroll: true });
-      const jumped = await ensureMessageVisibleInCurrentChat(sid, mid);
+      const enterResult = await enterChatRoom(sid, formatSessionName(sid, contact), 'chat', {
+        suppressInitialAutoScroll: true,
+        jumpTargetMessageId: mid,
+        jumpKeyword: chatContentSearch.term,
+        jumpKind: 'search',
+      });
+      const jumped =
+        enterResult?.jumpedToTarget === true
+          ? true
+          : await ensureMessageVisibleInCurrentChat(sid, mid, chatContentSearch.term);
       if (!jumped) window.toastr?.warning?.('未能定位到对应消息');
     });
 
@@ -11022,6 +11036,9 @@ Phase G（Frame 36）：循环衔接
 
   const enterChatRoom = async (sessionId, sessionName, originPage = activePage, options = {}) => {
     const suppressInitialAutoScroll = options?.suppressInitialAutoScroll === true;
+    const jumpTargetMessageId = String(options?.jumpTargetMessageId || '').trim();
+    const jumpKeyword = String(options?.jumpKeyword || '').trim();
+    const jumpKind = String(options?.jumpKind || (jumpKeyword ? 'search' : 'anchor')).trim() || 'anchor';
     chatOriginPage = originPage || 'chat';
     chatList?.classList.add('hidden');
     chatRoom?.classList.remove('hidden');
@@ -11083,13 +11100,32 @@ Phase G（Frame 36）：循环衔接
     chatStore.prefetchRawOriginals?.(sessionId).catch(() => {});
     // Keep a render cursor so we can lazy-load earlier messages when scrolling up.
     chatRenderState.set(sessionId, { start });
+    const jumpTargetNow = () => {
+      if (!jumpTargetMessageId) return false;
+      return ui.scrollToMessage(jumpTargetMessageId, {
+        keyword: jumpKeyword,
+        kind: jumpKind,
+        dismissOnScroll: true,
+      });
+    };
+    const jumpedToTarget = jumpTargetNow();
 
     const jumpToUnread = () => {
-      if (dividerId && ui.scrollToMessage(dividerId)) return true;
-      if (firstUnreadId) return ui.scrollToMessage(firstUnreadId);
+      if (dividerId && ui.scrollToMessage(dividerId, { kind: 'unread', dismissOnScroll: true })) return true;
+      if (firstUnreadId) return ui.scrollToMessage(firstUnreadId, { kind: 'unread', dismissOnScroll: true });
       return false;
     };
-    if (suppressInitialAutoScroll) {
+    if (jumpedToTarget) {
+      try {
+        if (typeof requestAnimationFrame === 'function') {
+          requestAnimationFrame(syncChatBottomGap);
+        } else {
+          setTimeout(syncChatBottomGap, 0);
+        }
+      } catch {
+        setTimeout(syncChatBottomGap, 0);
+      }
+    } else if (suppressInitialAutoScroll) {
       try {
         if (typeof requestAnimationFrame === 'function') {
           requestAnimationFrame(syncChatBottomGap);
@@ -11150,6 +11186,7 @@ Phase G（Frame 36）：循环衔接
       ui.showTyping(getAssistantAvatarForSession(sessionId));
     }
     uiLog('enterChatRoom', { sessionId, originPage: chatOriginPage });
+    return { jumpedToTarget };
   };
 
   const exitChatRoom = () => {

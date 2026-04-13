@@ -611,6 +611,100 @@ body[data-ui-mode='rp'] .qq-avatar {
   white-space: pre-wrap;
 }
 
+.QQ_chat_charmsg.chat-jump-focus-line,
+.QQ_chat_mymsg.chat-jump-focus-line,
+.QQ_chat_sysmsg.chat-jump-focus-line {
+  position: relative;
+  isolation: isolate;
+}
+
+.QQ_chat_charmsg.chat-jump-focus-line > *,
+.QQ_chat_mymsg.chat-jump-focus-line > *,
+.QQ_chat_sysmsg.chat-jump-focus-line > * {
+  position: relative;
+  z-index: 1;
+}
+
+.QQ_chat_charmsg.chat-jump-focus-line::before,
+.QQ_chat_mymsg.chat-jump-focus-line::before,
+.QQ_chat_sysmsg.chat-jump-focus-line::before {
+  content: '';
+  position: absolute;
+  inset: -7px -12px;
+  border-radius: 18px;
+  background:
+    linear-gradient(90deg, rgba(59, 130, 246, 0) 0%, rgba(96, 165, 250, 0.16) 16%, rgba(56, 189, 248, 0.26) 50%, rgba(96, 165, 250, 0.16) 84%, rgba(59, 130, 246, 0) 100%);
+  box-shadow:
+    inset 0 0 0 1px rgba(96, 165, 250, 0.22),
+    0 10px 28px rgba(56, 189, 248, 0.14);
+  pointer-events: none;
+  z-index: 0;
+  opacity: 0;
+  transform: scale(0.985);
+  will-change: opacity, transform;
+  animation: chat-jump-line-pulse 0.9s ease-in-out 3 both;
+}
+
+.QQ_chat_unread-divider.chat-jump-focus-line::before {
+  inset: -6px 0;
+  border-radius: 14px;
+}
+
+.QQ_chat_unread-divider.chat-jump-focus-line .QQ_chat_unread-line {
+  color: rgba(37, 99, 235, 0.92);
+}
+
+.QQ_chat_unread-divider.chat-jump-focus-line .QQ_chat_unread-line::before,
+.QQ_chat_unread-divider.chat-jump-focus-line .QQ_chat_unread-line::after {
+  background: linear-gradient(90deg, rgba(59, 130, 246, 0.12), rgba(59, 130, 246, 0.65), rgba(59, 130, 246, 0.12));
+}
+
+.chat-jump-keyword {
+  display: inline;
+  padding: 0 2px;
+  margin: 0 1px;
+  border-radius: 6px;
+  background: linear-gradient(180deg, rgba(254, 240, 138, 0.28) 0%, rgba(250, 204, 21, 0.72) 100%);
+  box-shadow: inset 0 -1px 0 rgba(202, 138, 4, 0.28);
+  color: inherit;
+  font-weight: 700;
+}
+
+@keyframes chat-jump-line-pulse {
+  0% {
+    opacity: 0;
+    transform: scale(0.988);
+  }
+  12% {
+    opacity: 0.14;
+    transform: scale(0.992);
+  }
+  28% {
+    opacity: 0.48;
+    transform: scale(0.996);
+  }
+  44% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  60% {
+    opacity: 0.72;
+    transform: scale(1.002);
+  }
+  78% {
+    opacity: 0.24;
+    transform: scale(1.005);
+  }
+  92% {
+    opacity: 0.06;
+    transform: scale(0.992);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.008);
+  }
+}
+
 .QQ_chat_msgdiv img.previewable {
   max-width: 240px;
   max-height: 240px;
