@@ -42,6 +42,22 @@
           </div>
         </div>
 
+        <div class="search-box-wrapper chat-content-search-wrap">
+          <div id="chat_search_box" class="search-box-wrapper-inner">
+            <input type="text" id="chat_content_search_input" class="contact-search" placeholder="搜索聊天内容..." />
+            <button
+              id="chat_search_clear_btn"
+              class="search-clear-btn"
+              type="button"
+              aria-label="清除聊天内容搜索"
+              style="display:none;"
+            >×</button>
+          </div>
+        </div>
+
+        <div id="chat-search-root" class="chat-search-panel" hidden></div>
+        <div id="chat-search-detail" class="chat-search-panel" hidden></div>
+
         <!-- 聊天列表：头像+名字+预览+时间 -->
         <div id="chat-list" class="chat-list">
           <div class="chat-list-item" data-session="default">

@@ -1787,6 +1787,18 @@ ${listPart || '-（无）'}
     return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   };
 
+  const formatSearchTime = ts => {
+    if (!ts) return '';
+    const date = new Date(ts);
+    const now = new Date();
+    const sameDay =
+      date.getFullYear() === now.getFullYear() &&
+      date.getMonth() === now.getMonth() &&
+      date.getDate() === now.getDate();
+    if (sameDay) return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    return date.toLocaleDateString([], { month: 'numeric', day: 'numeric' });
+  };
+
   const formatNowTime = () => new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 
   const isConversationMessage = m => m && (m.role === 'user' || m.role === 'assistant' || m.role === 'system');
@@ -4504,6 +4516,9 @@ Phase G（Frame 36）：循环衔接
         applyContactsSearchFilter();
       } catch {}
     }
+    try {
+      updateChatContentSearchVisibility();
+    } catch {}
   };
 
   // Coalesce multiple refresh requests into a single paint cycle to reduce redundant re-renders.
@@ -4649,6 +4664,404 @@ Phase G（Frame 36）：循环衔接
     input.setAttribute('data-initialized', 'true');
   };
 
+  /* ---------------- 聊天内容搜索（聊天室内容 -> 会话结果 -> 消息结果） ---------------- */
+  const chatContentSearch = {
+    term: '',
+    timeout: null,
+    loading: false,
+    searchToken: 0,
+    detailSessionId: '',
+    rootResults: [],
+    preparedSessions: new Set(),
+    cache: new Map(),
+  };
+
+  const normalizeSearchText = value =>
+    String(value || '')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+  const renderHighlightedSearchTextHtml = (text, term) => {
+    const source = String(text || '');
+    const query = normalizeSearchText(term);
+    if (!query) return escapeHtml(source);
+    const re = new RegExp(`(${escapeRegExp(query)})`, 'gi');
+    return source
+      .split(re)
+      .map((part, index) => (index % 2 ? `<span class="search-highlight">${escapeHtml(part)}</span>` : escapeHtml(part)))
+      .join('');
+  };
+
+  const buildSearchSnippet = (text, term, { radius = 24, fallbackLength = 56 } = {}) => {
+    const source = normalizeSearchText(text);
+    const query = normalizeSearchText(term);
+    if (!source) return '';
+    if (!query) return source.slice(0, fallbackLength);
+    const lower = source.toLowerCase();
+    const queryLower = query.toLowerCase();
+    const hitIndex = lower.indexOf(queryLower);
+    if (hitIndex === -1) return source.slice(0, fallbackLength);
+    let start = Math.max(0, hitIndex - radius);
+    let end = Math.min(source.length, hitIndex + query.length + radius);
+    if (start > 0) {
+      const nextSpace = source.indexOf(' ', start);
+      if (nextSpace !== -1 && nextSpace < hitIndex) start = nextSpace + 1;
+    }
+    if (end < source.length) {
+      const prevSpace = source.lastIndexOf(' ', end);
+      if (prevSpace !== -1 && prevSpace > hitIndex + query.length) end = prevSpace;
+    }
+    return `${start > 0 ? '…' : ''}${source.slice(start, end)}${end < source.length ? '…' : ''}`;
+  };
+
+  const waitForNextFrame = () =>
+    new Promise(resolve => {
+      try {
+        if (typeof window !== 'undefined' && window.requestAnimationFrame) {
+          window.requestAnimationFrame(() => resolve());
+          return;
+        }
+      } catch {}
+      setTimeout(resolve, 16);
+    });
+
+  const resolveChatSearchSpeakerName = (message, sessionId) => {
+    if (!message || typeof message !== 'object') return '';
+    if (message.role === 'user') return getActiveUserName();
+    const explicit = String(message.name || '').trim();
+    if (explicit && explicit !== '助手') return explicit;
+    const contact = contactsStore.getContact(sessionId);
+    return formatSessionName(sessionId, contact) || '助手';
+  };
+
+  const buildChatContentSearchEntry = (sessionId, message) => {
+    if (!message || typeof message !== 'object') return null;
+    if (!message.id || (message.role !== 'user' && message.role !== 'assistant')) return null;
+    const text = normalizeSearchText(resolveMessagePlainText(message));
+    if (!text) return null;
+    return {
+      sessionId,
+      messageId: String(message.id || ''),
+      role: message.role,
+      timestamp: Number(message.timestamp || 0),
+      text,
+      textLower: text.toLowerCase(),
+      message,
+    };
+  };
+
+  const renderChatContentSearchRoot = () => {
+    if (!chatSearchRootEl) return;
+    const term = normalizeSearchText(chatContentSearch.term);
+    if (!term) {
+      chatSearchRootEl.innerHTML = '';
+      return;
+    }
+    if (chatContentSearch.loading) {
+      chatSearchRootEl.innerHTML = `<div class="chat-search-empty chat-search-loading">正在搜索聊天记录...</div>`;
+      return;
+    }
+    const totalHits = chatContentSearch.rootResults.reduce((sum, item) => sum + (Number(item?.count || 0) || 0), 0);
+    if (!chatContentSearch.rootResults.length) {
+      chatSearchRootEl.innerHTML = `<div class="chat-search-empty">未找到包含“${escapeHtml(term)}”的聊天内容</div>`;
+      return;
+    }
+    const summary = `<div class="chat-search-summary">在 ${chatContentSearch.rootResults.length} 个聊天室中找到 ${totalHits} 条消息</div>`;
+    const items = chatContentSearch.rootResults
+      .map(result => {
+        const latest = result.latestMatch || {};
+        const speaker = resolveChatSearchSpeakerName(latest.message, result.sessionId);
+        const snippet = buildSearchSnippet(latest.text, term);
+        return `
+          <div class="chat-list-item chat-search-session-item" data-search-session="${escapeHtml(result.sessionId)}">
+            <img src="${result.avatar}" alt="" class="chat-item-avatar">
+            <div class="chat-item-content">
+              <div class="chat-item-header">
+                <div class="chat-item-name">${result.sessionNameHtml}</div>
+                <div class="chat-search-count-pill">${result.count}</div>
+              </div>
+              <div class="chat-search-session-meta">
+                <span>${escapeHtml(speaker || '未知发送者')}</span>
+                <span>${escapeHtml(formatSearchTime(latest.timestamp))}</span>
+              </div>
+              <div class="chat-search-session-preview">${renderHighlightedSearchTextHtml(snippet, term)}</div>
+            </div>
+          </div>
+        `;
+      })
+      .join('');
+    chatSearchRootEl.innerHTML = `${summary}${items}`;
+  };
+
+  const renderChatContentSearchDetail = sessionId => {
+    if (!chatSearchDetailEl) return;
+    const sid = String(sessionId || chatContentSearch.detailSessionId || '').trim();
+    if (!sid) {
+      chatSearchDetailEl.innerHTML = '';
+      return;
+    }
+    const result = chatContentSearch.rootResults.find(item => item.sessionId === sid);
+    if (!result) {
+      chatContentSearch.detailSessionId = '';
+      chatSearchDetailEl.innerHTML = '';
+      renderChatContentSearchRoot();
+      updateChatContentSearchVisibility();
+      return;
+    }
+    const term = normalizeSearchText(chatContentSearch.term);
+    const items = [...(result.matches || [])]
+      .sort((a, b) => (Number(b.timestamp || 0) || 0) - (Number(a.timestamp || 0) || 0))
+      .map(match => {
+        const speaker = resolveChatSearchSpeakerName(match.message, sid);
+        const avatar =
+          match.message?.role === 'user'
+            ? getActiveUserAvatar()
+            : resolveAvatarForMessage(match.message, sid) || resolveAvatarForContact(sid, contactsStore.getContact(sid));
+        const snippet = buildSearchSnippet(match.text, term, { radius: 34, fallbackLength: 78 });
+        return `
+          <div
+            class="chat-list-item chat-search-message-item"
+            data-session="${escapeHtml(sid)}"
+            data-message-id="${escapeHtml(match.messageId)}"
+          >
+            <img src="${avatar}" alt="" class="chat-item-avatar">
+            <div class="chat-item-content">
+              <div class="chat-search-message-head">
+                <div class="chat-search-message-name">${escapeHtml(speaker || '未知发送者')}</div>
+                <div class="chat-search-message-time">${escapeHtml(formatSearchTime(match.timestamp))}</div>
+              </div>
+              <div class="chat-search-message-text">${renderHighlightedSearchTextHtml(snippet, term)}</div>
+            </div>
+          </div>
+        `;
+      })
+      .join('');
+    chatSearchDetailEl.innerHTML = `
+      <div class="chat-search-detail-head">
+        <button type="button" class="chat-search-detail-back" data-chat-search-back="1">‹</button>
+        <div class="chat-search-detail-copy">
+          <div class="chat-search-detail-title">${result.sessionNameHtml}</div>
+          <div class="chat-search-detail-note">共找到 ${result.count} 条命中消息</div>
+        </div>
+      </div>
+      ${items || '<div class="chat-search-empty">当前聊天室没有可跳转的命中消息</div>'}
+    `;
+  };
+
+  const updateChatContentSearchVisibility = () => {
+    const hasTerm = normalizeSearchText(chatContentSearch.term).length > 0;
+    const showDetail = hasTerm && Boolean(chatContentSearch.detailSessionId);
+    const showRoot = hasTerm && !showDetail;
+    if (chatList) chatList.classList.toggle('hidden', hasTerm);
+    if (chatSearchRootEl) chatSearchRootEl.hidden = !showRoot;
+    if (chatSearchDetailEl) chatSearchDetailEl.hidden = !showDetail;
+  };
+
+  const ensureChatContentSearchSessionPrepared = async (sessionId, token) => {
+    const sid = String(sessionId || '').trim();
+    if (!sid) return false;
+    if (chatContentSearch.preparedSessions.has(sid)) return true;
+    await chatStore.ensureRecentMessagesLoaded(sid);
+    if (chatContentSearch.searchToken !== token) return false;
+    let guard = 0;
+    while (chatStore.hasOlderMessages?.(sid) && guard < 256) {
+      const older = await chatStore.loadOlderMessages(sid, '', { partCount: 8 });
+      if (chatContentSearch.searchToken !== token) return false;
+      if (!older.length) break;
+      guard += 1;
+    }
+    if (chatContentSearch.searchToken !== token) return false;
+    chatContentSearch.preparedSessions.add(sid);
+    return true;
+  };
+
+  const getChatContentSearchEntries = async (sessionId, token) => {
+    const sid = String(sessionId || '').trim();
+    if (!sid) return null;
+    const prepared = await ensureChatContentSearchSessionPrepared(sid, token);
+    if (!prepared) return null;
+    const messages = chatStore.getMessages(sid) || [];
+    const fingerprint = `${messages.length}:${messages[0]?.id || ''}:${messages[messages.length - 1]?.id || ''}`;
+    const cached = chatContentSearch.cache.get(sid);
+    if (cached?.fingerprint === fingerprint) return cached.entries;
+    const entries = messages.map(msg => buildChatContentSearchEntry(sid, msg)).filter(Boolean);
+    chatContentSearch.cache.set(sid, { fingerprint, entries });
+    return entries;
+  };
+
+  const runChatContentSearch = async nextTerm => {
+    const term = normalizeSearchText(nextTerm);
+    const token = ++chatContentSearch.searchToken;
+    chatContentSearch.term = term;
+    chatContentSearch.detailSessionId = '';
+    if (!term) {
+      chatContentSearch.loading = false;
+      chatContentSearch.rootResults = [];
+      if (chatSearchRootEl) chatSearchRootEl.innerHTML = '';
+      if (chatSearchDetailEl) chatSearchDetailEl.innerHTML = '';
+      updateChatContentSearchVisibility();
+      return;
+    }
+
+    chatContentSearch.loading = true;
+    chatContentSearch.rootResults = [];
+    renderChatContentSearchRoot();
+    updateChatContentSearchVisibility();
+
+    const query = term.toLowerCase();
+    const sessionIds = chatStore
+      .listSessions()
+      .filter(id => !isRpSessionId(id))
+      .filter(id => chatStore.hasMessages?.(id) || (chatStore.getMessages(id) || []).some(isConversationMessage));
+    const results = [];
+
+    for (const sessionId of sessionIds) {
+      if (chatContentSearch.searchToken !== token) return;
+      const entries = await getChatContentSearchEntries(sessionId, token);
+      if (!entries) return;
+      const matches = entries.filter(entry => entry.textLower.includes(query));
+      if (!matches.length) continue;
+      const contact = contactsStore.getContact(sessionId);
+      results.push({
+        sessionId,
+        sessionName: formatSessionName(sessionId, contact),
+        sessionNameHtml: renderSessionNameHtml(sessionId, contact),
+        avatar: resolveAvatarForContact(sessionId, contact),
+        count: matches.length,
+        latestMatch: matches[matches.length - 1],
+        matches,
+      });
+    }
+
+    if (chatContentSearch.searchToken !== token) return;
+    results.sort((a, b) => (Number(b.latestMatch?.timestamp || 0) || 0) - (Number(a.latestMatch?.timestamp || 0) || 0));
+    chatContentSearch.loading = false;
+    chatContentSearch.rootResults = results;
+    renderChatContentSearchRoot();
+    updateChatContentSearchVisibility();
+  };
+
+  const openChatContentSearchDetail = sessionId => {
+    const sid = String(sessionId || '').trim();
+    if (!sid) return;
+    chatContentSearch.detailSessionId = sid;
+    renderChatContentSearchDetail(sid);
+    updateChatContentSearchVisibility();
+    try {
+      chatSearchDetailEl.scrollTop = 0;
+    } catch {}
+  };
+
+  const ensureMessageVisibleInCurrentChat = async (sessionId, messageId) => {
+    const sid = String(sessionId || '').trim();
+    const mid = String(messageId || '').trim();
+    if (!sid || !mid) return false;
+    await waitForNextFrame();
+    if (ui.scrollToMessage(mid)) return true;
+
+    const PAGE = 90;
+    let guard = 0;
+    while (guard < 256) {
+      guard += 1;
+      const state = chatRenderState.get(sid) || { start: 0 };
+      const start = Number.isFinite(state.start) ? state.start : 0;
+      const messages = chatStore.getMessages(sid) || [];
+
+      if (start > 0) {
+        const nextStart = Math.max(0, start - PAGE);
+        const chunk = messages.slice(nextStart, start);
+        if (chunk.length) {
+          ui.prependHistory(decorateMessagesForDisplay(chunk, { sessionId: sid }));
+          chatRenderState.set(sid, { start: nextStart });
+          chatStore.prefetchRawOriginalsForMessages?.(chunk, sid).catch(() => {});
+          await waitForNextFrame();
+          if (ui.scrollToMessage(mid)) return true;
+          continue;
+        }
+        chatRenderState.set(sid, { start: 0 });
+      }
+
+      if (!chatStore.hasOlderMessages?.(sid)) break;
+      const older = await chatStore.loadOlderMessages(sid, '', { partCount: 1 });
+      if (!older.length) break;
+      ui.prependHistory(decorateMessagesForDisplay(older, { sessionId: sid }));
+      chatRenderState.set(sid, { start: 0 });
+      chatStore.prefetchRawOriginalsForMessages?.(older, sid).catch(() => {});
+      await waitForNextFrame();
+      if (ui.scrollToMessage(mid)) return true;
+    }
+
+    return ui.scrollToMessage(mid);
+  };
+
+  const initChatContentSearch = () => {
+    if (!chatContentSearchInput || !chatSearchClearBtn || !chatSearchBox) return;
+    if (chatContentSearchInput.hasAttribute('data-initialized')) return;
+
+    const setActiveUi = active => {
+      chatSearchBox.classList.toggle('is-active', Boolean(active));
+    };
+
+    const update = (nextTerm, { immediate = false } = {}) => {
+      const term = String(nextTerm || '');
+      const has = normalizeSearchText(term).length > 0;
+      chatSearchClearBtn.style.display = has ? 'block' : 'none';
+      setActiveUi(has);
+      if (chatContentSearch.timeout) clearTimeout(chatContentSearch.timeout);
+      const run = () => {
+        runChatContentSearch(term).catch(err => {
+          chatContentSearch.loading = false;
+          logger.warn('聊天内容搜索失败', err);
+          renderChatContentSearchRoot();
+          updateChatContentSearchVisibility();
+        });
+      };
+      if (immediate) run();
+      else chatContentSearch.timeout = setTimeout(run, 260);
+    };
+
+    chatContentSearchInput.addEventListener('input', e => update(e.target.value));
+    chatContentSearchInput.addEventListener('focus', () => chatSearchBox.classList.add('is-focus'));
+    chatContentSearchInput.addEventListener('blur', () => chatSearchBox.classList.remove('is-focus'));
+    chatContentSearchInput.addEventListener('keydown', e => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        chatContentSearchInput.value = '';
+        update('', { immediate: true });
+      }
+    });
+    chatSearchClearBtn.addEventListener('click', () => {
+      chatContentSearchInput.value = '';
+      update('', { immediate: true });
+      chatContentSearchInput.focus();
+    });
+    chatSearchRootEl?.addEventListener('click', e => {
+      const item = e.target.closest('[data-search-session]');
+      if (!item) return;
+      openChatContentSearchDetail(item.getAttribute('data-search-session') || '');
+    });
+    chatSearchDetailEl?.addEventListener('click', async e => {
+      const backBtn = e.target.closest('[data-chat-search-back]');
+      if (backBtn) {
+        chatContentSearch.detailSessionId = '';
+        updateChatContentSearchVisibility();
+        return;
+      }
+      const item = e.target.closest('[data-message-id][data-session]');
+      if (!item) return;
+      const sid = item.getAttribute('data-session') || '';
+      const mid = item.getAttribute('data-message-id') || '';
+      const contact = contactsStore.getContact(sid);
+      switchPage('chat');
+      await enterChatRoom(sid, formatSessionName(sid, contact), 'chat', { suppressInitialAutoScroll: true });
+      const jumped = await ensureMessageVisibleInCurrentChat(sid, mid);
+      if (!jumped) window.toastr?.warning?.('未能定位到对应消息');
+    });
+
+    chatContentSearchInput.setAttribute('data-initialized', 'true');
+    updateChatContentSearchVisibility();
+  };
+
   /* ---------------- 底部导航（聊天/联系人/动态） ---------------- */
   const navBtns = document.querySelectorAll('.bottom-nav .nav-btn');
   const modeSwitch = document.getElementById('mode-switch');
@@ -4722,6 +5135,11 @@ Phase G（Frame 36）：循环衔接
     moments: document.getElementById('moments-page'),
   };
   const chatList = document.getElementById('chat-list');
+  const chatSearchRootEl = document.getElementById('chat-search-root');
+  const chatSearchDetailEl = document.getElementById('chat-search-detail');
+  const chatContentSearchInput = document.getElementById('chat_content_search_input');
+  const chatSearchClearBtn = document.getElementById('chat_search_clear_btn');
+  const chatSearchBox = document.getElementById('chat_search_box');
   chatRoom = document.getElementById('chat-room');
   const rpToolbar = document.getElementById('rp-toolbar');
   const rpGreetingSelect = document.getElementById('rp-greeting-select');
@@ -9225,6 +9643,11 @@ Phase G（Frame 36）：循环衔接
         momentsPanel.render();
       } catch {}
     }
+    if (name === 'chat') {
+      try {
+        updateChatContentSearchVisibility();
+      } catch {}
+    }
     if (uiStateArmed) saveUiState();
     uiLog('switchPage', { activePage });
     scheduleModeSwitchSync();
@@ -9339,8 +9762,9 @@ Phase G（Frame 36）：循环衔接
   }
   navBtns.forEach(btn => btn.addEventListener('click', () => switchPage(btn.dataset.page)));
 
-  // 搜索框初始化（仅联系人页）
+  // 搜索框初始化（联系人页 / 聊天内容搜索）
   initContactSearch();
+  initChatContentSearch();
 
   if (stickerToggleBtn) {
     stickerToggleBtn.textContent = '+';
@@ -10596,7 +11020,8 @@ Phase G（Frame 36）：循环衔接
     return String(chatStore.getCurrent() || '').trim() === sid;
   };
 
-  const enterChatRoom = async (sessionId, sessionName, originPage = activePage) => {
+  const enterChatRoom = async (sessionId, sessionName, originPage = activePage, options = {}) => {
+    const suppressInitialAutoScroll = options?.suppressInitialAutoScroll === true;
     chatOriginPage = originPage || 'chat';
     chatList?.classList.add('hidden');
     chatRoom?.classList.remove('hidden');
@@ -10664,7 +11089,17 @@ Phase G（Frame 36）：循环衔接
       if (firstUnreadId) return ui.scrollToMessage(firstUnreadId);
       return false;
     };
-    if (dividerId || firstUnreadId) {
+    if (suppressInitialAutoScroll) {
+      try {
+        if (typeof requestAnimationFrame === 'function') {
+          requestAnimationFrame(syncChatBottomGap);
+        } else {
+          setTimeout(syncChatBottomGap, 0);
+        }
+      } catch {
+        setTimeout(syncChatBottomGap, 0);
+      }
+    } else if (dividerId || firstUnreadId) {
       try {
         if (typeof window !== 'undefined' && window.requestAnimationFrame) {
           window.requestAnimationFrame(() => {
@@ -10733,6 +11168,7 @@ Phase G（Frame 36）：循环衔接
     const bottomNav = document.querySelector('.bottom-nav');
     if (messageTopbar) messageTopbar.style.display = '';
     if (bottomNav) bottomNav.style.display = '';
+    updateChatContentSearchVisibility();
 
     if (chatOriginPage && chatOriginPage !== 'chat') {
       switchPage(chatOriginPage);
@@ -11883,7 +12319,7 @@ Phase G（Frame 36）：循环衔接
             chatRenderState.set(sid, { start: 0 });
           }
           if (!chatStore.hasOlderMessages?.(sid)) return;
-          const older = await chatStore.loadOlderMessages(sid, { partCount: 1 });
+          const older = await chatStore.loadOlderMessages(sid, '', { partCount: 1 });
           if (older.length) {
             ui.prependHistory(decorateMessagesForDisplay(older, { sessionId: sid }));
             chatRenderState.set(sid, { start: 0 });
