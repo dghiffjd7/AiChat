@@ -190,12 +190,22 @@ export class ChatUI {
     this.selectionBar = null;
     this.sendClickGuard = null;
     this.jumpFocusState = null;
+    this.scrollDateBadgeEl = null;
+    this.scrollDateHideTimer = null;
+    this.scrollBottomButtonEl = null;
+    this.scrollBottomButtonRaf = 0;
+    this.scrollBottomButtonImmediate = false;
+    this.scrollBottomButtonResizeObserver = null;
 
     setupIframeResizeListener();
+    this.initScrollDateBadge();
+    this.initScrollBottomButton();
     this.bindIframeLongPressForwarding();
     this.bindInputAutosize();
     this.bindFocusScroll();
     this.bindJumpFocusDismiss();
+    this.bindScrollDateBadge();
+    this.bindScrollBottomButton();
     this.bindNetworkEvents();
     this.bindReasoningSettings();
   }
@@ -466,6 +476,247 @@ export class ChatUI {
     });
   }
 
+  initScrollDateBadge() {
+    if (!this.scrollEl || this.scrollDateBadgeEl) return;
+    const host = this.scrollEl.parentElement;
+    if (!host) return;
+    const badge = document.createElement('div');
+    badge.className = 'chat-scroll-date-badge';
+    badge.setAttribute('aria-hidden', 'true');
+    host.appendChild(badge);
+    this.scrollDateBadgeEl = badge;
+  }
+
+  initScrollBottomButton() {
+    if (!this.scrollEl || this.scrollBottomButtonEl) return;
+    const host = this.scrollEl.parentElement;
+    if (!host) return;
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'chat-scroll-bottom-btn';
+    button.setAttribute('aria-label', '跳到最新消息');
+    button.setAttribute('title', '跳到最新消息');
+    button.innerHTML = `
+      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path
+          d="M12 4.75a1 1 0 0 1 1 1v10.586l2.714-2.714a1 1 0 1 1 1.414 1.414l-4.422 4.422a1 1 0 0 1-1.414 0l-4.422-4.422a1 1 0 1 1 1.414-1.414L11 16.336V5.75a1 1 0 0 1 1-1Z"
+          fill="currentColor"
+        />
+      </svg>
+    `;
+    button.addEventListener('click', () => {
+      this.scrollToBottom();
+    });
+    host.appendChild(button);
+    this.scrollBottomButtonEl = button;
+  }
+
+  formatScrollDateLabel(timestamp) {
+    const ts = Number(timestamp || 0);
+    if (!Number.isFinite(ts) || ts <= 0) return '';
+    const date = new Date(ts);
+    const now = new Date();
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    const targetStart = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+    const diffDays = Math.round((todayStart - targetStart) / 86400000);
+    if (diffDays === 0) return '今天';
+    if (diffDays === 1) return '昨天';
+    if (date.getFullYear() === now.getFullYear()) {
+      return `${date.getMonth() + 1}/${date.getDate()}`;
+    }
+    return `${date.getFullYear()}/${date.getMonth() + 1}/${date.getDate()}`;
+  }
+
+  resolveScrollDateLabel() {
+    if (!this.scrollEl) return '';
+    const items = this.scrollEl.querySelectorAll('[data-msg-id][data-timestamp]');
+    if (!items.length) return '';
+    const anchorTop = Number(this.scrollEl.scrollTop || 0) + 24;
+    let fallback = null;
+    for (const el of items) {
+      const ts = Number(el.dataset.timestamp || 0);
+      if (!Number.isFinite(ts) || ts <= 0) continue;
+      fallback = el;
+      const bottom = Number(el.offsetTop || 0) + Number(el.offsetHeight || 0);
+      if (bottom >= anchorTop) {
+        return this.formatScrollDateLabel(ts);
+      }
+    }
+    return fallback ? this.formatScrollDateLabel(Number(fallback.dataset.timestamp || 0)) : '';
+  }
+
+  hideScrollDateBadge({ immediate = false } = {}) {
+    if (this.scrollDateHideTimer) {
+      clearTimeout(this.scrollDateHideTimer);
+      this.scrollDateHideTimer = null;
+    }
+    if (!this.scrollDateBadgeEl) return;
+    if (immediate) {
+      this.scrollDateBadgeEl.classList.add('is-immediate');
+      this.scrollDateBadgeEl.classList.remove('is-visible');
+      setTimeout(() => {
+        this.scrollDateBadgeEl?.classList?.remove('is-immediate');
+      }, 0);
+      return;
+    }
+    this.scrollDateBadgeEl.classList.remove('is-visible');
+  }
+
+  showScrollDateBadge(label) {
+    const text = String(label || '').trim();
+    if (!this.scrollDateBadgeEl || !text) {
+      this.hideScrollDateBadge();
+      return;
+    }
+    this.scrollDateBadgeEl.textContent = text;
+    this.scrollDateBadgeEl.classList.remove('is-immediate');
+    this.scrollDateBadgeEl.classList.add('is-visible');
+    if (this.scrollDateHideTimer) clearTimeout(this.scrollDateHideTimer);
+    this.scrollDateHideTimer = setTimeout(() => {
+      this.scrollDateHideTimer = null;
+      this.scrollDateBadgeEl?.classList?.remove('is-visible');
+    }, 760);
+  }
+
+  refreshScrollDateBadge({ reveal = false } = {}) {
+    if (document?.body?.dataset?.uiMode === 'rp') {
+      this.hideScrollDateBadge({ immediate: true });
+      return;
+    }
+    const label = this.resolveScrollDateLabel();
+    if (!label) {
+      this.hideScrollDateBadge({ immediate: !reveal });
+      return;
+    }
+    if (reveal) this.showScrollDateBadge(label);
+    else this.hideScrollDateBadge({ immediate: true });
+  }
+
+  bindScrollDateBadge() {
+    if (!this.scrollEl || this.__chatappScrollDateBadgeBound) return;
+    this.__chatappScrollDateBadgeBound = true;
+    let rafId = 0;
+    this.scrollEl.addEventListener(
+      'scroll',
+      () => {
+        if (rafId) return;
+        const schedule =
+          typeof requestAnimationFrame === 'function'
+            ? requestAnimationFrame
+            : (cb => setTimeout(cb, 16));
+        rafId = schedule(() => {
+          rafId = 0;
+          this.refreshScrollDateBadge({ reveal: true });
+        });
+      },
+      { passive: true },
+    );
+  }
+
+  getScrollDistanceFromBottom() {
+    if (!this.scrollEl) return 0;
+    const scrollHeight = Number(this.scrollEl.scrollHeight || 0);
+    const viewportHeight = Number(this.scrollEl.clientHeight || 0);
+    const scrollTop = Number(this.scrollEl.scrollTop || 0);
+    return Math.max(0, scrollHeight - viewportHeight - scrollTop);
+  }
+
+  resolveScrollBottomButtonThresholds() {
+    const viewportHeight = Math.max(0, Number(this.scrollEl?.clientHeight || 0));
+    return {
+      show: Math.max(220, Math.round(viewportHeight * 0.58)),
+      hide: Math.max(84, Math.round(viewportHeight * 0.18)),
+    };
+  }
+
+  hideScrollBottomButton({ immediate = false } = {}) {
+    const button = this.scrollBottomButtonEl;
+    if (!button) return;
+    if (immediate) {
+      button.classList.add('is-immediate');
+    } else {
+      button.classList.remove('is-immediate');
+    }
+    button.classList.remove('is-visible');
+    if (!immediate) return;
+    setTimeout(() => {
+      this.scrollBottomButtonEl?.classList?.remove('is-immediate');
+    }, 0);
+  }
+
+  showScrollBottomButton({ immediate = false } = {}) {
+    const button = this.scrollBottomButtonEl;
+    if (!button) return;
+    if (immediate) {
+      button.classList.add('is-immediate');
+    } else {
+      button.classList.remove('is-immediate');
+    }
+    button.classList.add('is-visible');
+    if (!immediate) return;
+    setTimeout(() => {
+      this.scrollBottomButtonEl?.classList?.remove('is-immediate');
+    }, 0);
+  }
+
+  refreshScrollBottomButton({ immediate = false } = {}) {
+    const button = this.scrollBottomButtonEl;
+    if (!this.scrollEl || !button) return;
+    const scrollHeight = Number(this.scrollEl.scrollHeight || 0);
+    const viewportHeight = Number(this.scrollEl.clientHeight || 0);
+    const maxScrollable = Math.max(0, scrollHeight - viewportHeight);
+    if (maxScrollable <= 8) {
+      this.hideScrollBottomButton({ immediate });
+      return;
+    }
+    const distance = this.getScrollDistanceFromBottom();
+    const { show, hide } = this.resolveScrollBottomButtonThresholds();
+    const visible = button.classList.contains('is-visible');
+    const shouldShow = visible ? distance > hide : distance > show;
+    if (shouldShow) this.showScrollBottomButton({ immediate });
+    else this.hideScrollBottomButton({ immediate });
+  }
+
+  scheduleScrollBottomButtonRefresh({ immediate = false } = {}) {
+    this.scrollBottomButtonImmediate = this.scrollBottomButtonImmediate || immediate;
+    if (this.scrollBottomButtonRaf) return;
+    const schedule =
+      typeof requestAnimationFrame === 'function'
+        ? requestAnimationFrame
+        : (cb => setTimeout(cb, 16));
+    this.scrollBottomButtonRaf = schedule(() => {
+      this.scrollBottomButtonRaf = 0;
+      const shouldApplyImmediately = this.scrollBottomButtonImmediate;
+      this.scrollBottomButtonImmediate = false;
+      this.refreshScrollBottomButton({ immediate: shouldApplyImmediately });
+    });
+  }
+
+  bindScrollBottomButton() {
+    if (!this.scrollEl || this.__chatappScrollBottomButtonBound) return;
+    this.__chatappScrollBottomButtonBound = true;
+    this.scrollEl.addEventListener(
+      'scroll',
+      () => {
+        this.scheduleScrollBottomButtonRefresh();
+      },
+      { passive: true },
+    );
+    if (typeof ResizeObserver === 'function') {
+      this.scrollBottomButtonResizeObserver = new ResizeObserver(() => {
+        this.scheduleScrollBottomButtonRefresh({ immediate: true });
+      });
+      this.scrollBottomButtonResizeObserver.observe(this.scrollEl);
+    }
+    window.addEventListener(
+      'resize',
+      () => {
+        this.scheduleScrollBottomButtonRefresh({ immediate: true });
+      },
+      { passive: true },
+    );
+  }
+
   bindJumpFocusDismiss() {
     if (!this.scrollEl || this.__chatappJumpFocusBound) return;
     this.__chatappJumpFocusBound = true;
@@ -707,6 +958,8 @@ export class ChatUI {
   clearMessages() {
     this.cleanupRichTextMounts(this.scrollEl);
     this.scrollEl.innerHTML = '';
+    this.hideScrollDateBadge({ immediate: true });
+    this.hideScrollBottomButton({ immediate: true });
   }
 
   cleanupRichTextMounts(rootEl) {
@@ -763,6 +1016,7 @@ export class ChatUI {
 
   scrollToBottom() {
     this.scrollEl.scrollTop = this.scrollEl.scrollHeight;
+    this.scheduleScrollBottomButtonRefresh({ immediate: true });
   }
 
   scrollToMessage(msgId, options = {}) {
@@ -774,6 +1028,7 @@ export class ChatUI {
     if (!el) return false;
     const top = el.offsetTop - 12;
     this.scrollEl.scrollTop = Math.max(0, top);
+    this.scheduleScrollBottomButtonRefresh({ immediate: true });
     const autoClearMs = Number.isFinite(Number(options?.autoClearMs))
       ? Number(options.autoClearMs)
       : 2900;
@@ -864,6 +1119,9 @@ export class ChatUI {
       wrapper.className = 'QQ_chat_sysmsg';
       wrapper.dataset.msgId = message.id;
       wrapper.dataset.role = 'system';
+      if (Number.isFinite(Number(message?.timestamp)) && Number(message.timestamp) > 0) {
+        wrapper.dataset.timestamp = String(Number(message.timestamp));
+      }
       wrapper.__chatappMessage = message;
 
       const bubble = document.createElement('div');
@@ -913,6 +1171,11 @@ export class ChatUI {
     wrapper.className = isUser ? 'QQ_chat_mymsg' : 'QQ_chat_charmsg';
     wrapper.dataset.msgId = message.id;
     wrapper.dataset.role = message.role || '';
+    if (Number.isFinite(Number(message?.timestamp)) && Number(message.timestamp) > 0) {
+      wrapper.dataset.timestamp = String(Number(message.timestamp));
+    } else {
+      delete wrapper.dataset.timestamp;
+    }
     wrapper.__chatappMessage = message;
     this.applyCreativeBubbleState(wrapper, message);
 
@@ -1260,6 +1523,7 @@ export class ChatUI {
     if (this.typingEl) {
       this.typingEl.remove();
       this.typingEl = null;
+      this.scheduleScrollBottomButtonRefresh({ immediate: true });
     }
   }
 
@@ -1431,6 +1695,7 @@ export class ChatUI {
         name: msg.name,
         avatar: msg.avatar,
         time: msg.time,
+        timestamp: msg.timestamp,
         meta: msg.meta,
         badge: msg.badge,
         id: msg.id,
@@ -1442,6 +1707,8 @@ export class ChatUI {
     }
     this.scrollEl.appendChild(fragment);
     if (!keepScroll) this.scrollToBottom();
+    this.refreshScrollDateBadge();
+    this.scheduleScrollBottomButtonRefresh({ immediate: true });
   }
 
   prependHistory(messages = []) {
@@ -1459,6 +1726,7 @@ export class ChatUI {
         name: msg.name,
         avatar: msg.avatar,
         time: msg.time,
+        timestamp: msg.timestamp,
         meta: msg.meta,
         badge: msg.badge,
         id: msg.id,
@@ -1476,6 +1744,8 @@ export class ChatUI {
     const afterHeight = this.scrollEl.scrollHeight;
     const delta = afterHeight - beforeHeight;
     this.scrollEl.scrollTop = beforeTop + delta;
+    this.refreshScrollDateBadge();
+    this.scheduleScrollBottomButtonRefresh({ immediate: true });
   }
 
   refreshAvatars(resolver) {
@@ -1495,6 +1765,8 @@ export class ChatUI {
     if (el) {
       this.cleanupRichTextMounts(el);
       el.remove();
+      this.refreshScrollDateBadge();
+      this.scheduleScrollBottomButtonRefresh({ immediate: true });
     }
   }
 
@@ -1509,11 +1781,17 @@ export class ChatUI {
       || String(prev?.sessionId || '').trim()
       || this.resolveMessageSessionId(prev);
     const next = { ...prev, ...(newMessage || {}), id: msgId, sessionId: resolvedSessionId };
-    if (this.tryPatchMessageElement(existing, next)) return existing;
+    if (this.tryPatchMessageElement(existing, next)) {
+      this.refreshScrollDateBadge();
+      this.scheduleScrollBottomButtonRefresh({ immediate: true });
+      return existing;
+    }
     const newEl = this.buildMessageElement(next);
     if (newEl) {
       this.cleanupRichTextMounts(existing);
       existing.replaceWith(newEl);
+      this.refreshScrollDateBadge();
+      this.scheduleScrollBottomButtonRefresh({ immediate: true });
     }
   }
 
@@ -1547,6 +1825,11 @@ export class ChatUI {
     existing.__chatappMessage = next;
     existing.dataset.msgId = String(next.id || '');
     existing.dataset.role = String(next.role || '');
+    if (Number.isFinite(Number(next?.timestamp)) && Number(next.timestamp) > 0) {
+      existing.dataset.timestamp = String(Number(next.timestamp));
+    } else {
+      delete existing.dataset.timestamp;
+    }
     if (next.status === 'pending' || next.status === 'sending') {
       existing.classList.add('message-pending');
       existing.dataset.status = String(next.status || '');

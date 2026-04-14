@@ -459,6 +459,123 @@ body[data-ui-mode='rp'] .bottom-nav {
   display: none !important;
 }
 
+.chat-scroll-date-badge {
+  position: absolute;
+  top: calc(var(--safe-area-top) + 74px);
+  left: 50%;
+  transform: translateX(-50%) translateY(-8px);
+  min-width: 64px;
+  max-width: calc(100% - 32px);
+  padding: 7px 14px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.28);
+  color: rgba(255, 255, 255, 0.96);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0.2px;
+  text-align: center;
+  white-space: nowrap;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  z-index: 4;
+  transition: opacity 0.22s ease, transform 0.22s ease, visibility 0.22s linear;
+}
+
+.chat-scroll-date-badge.is-visible {
+  opacity: 1;
+  visibility: visible;
+  transform: translateX(-50%) translateY(0);
+}
+
+.chat-scroll-date-badge.is-immediate {
+  transition: none !important;
+}
+
+body[data-ui-mode='rp'] .chat-scroll-date-badge {
+  opacity: 0 !important;
+  visibility: hidden !important;
+}
+
+.chat-scroll-bottom-btn {
+  position: absolute;
+  right: 14px;
+  bottom: calc(78px + env(safe-area-inset-bottom, 0px));
+  width: 38px;
+  height: 38px;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.64);
+  color: rgba(37, 99, 235, 0.92);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  cursor: pointer;
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  box-shadow: 0 12px 26px rgba(15, 23, 42, 0.16);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translateY(10px) scale(0.92);
+  z-index: 118;
+  transition:
+    opacity 0.22s ease,
+    transform 0.28s cubic-bezier(0.22, 1, 0.36, 1),
+    visibility 0.22s linear,
+    background 0.18s ease,
+    box-shadow 0.18s ease;
+}
+
+.chat-scroll-bottom-btn svg {
+  width: 18px;
+  height: 18px;
+  display: block;
+  flex: 0 0 18px;
+}
+
+.chat-scroll-bottom-btn.is-visible {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transform: translateY(0) scale(1);
+}
+
+.chat-scroll-bottom-btn.is-immediate {
+  transition: none !important;
+}
+
+.chat-scroll-bottom-btn:active {
+  background: rgba(255, 255, 255, 0.76);
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.14);
+  transform: translateY(0) scale(0.96);
+}
+
+.QQ_chat_page.sticker-preview-active .chat-scroll-bottom-btn {
+  bottom: calc(78px + var(--qq-size-sticker-preview) + env(safe-area-inset-bottom, 0px));
+}
+
+.QQ_chat_page.sticker-panel-open .chat-scroll-bottom-btn {
+  bottom: calc(78px + var(--qq-size-sticker-panel) + env(safe-area-inset-bottom, 0px));
+}
+
+.QQ_chat_page.sticker-panel-open.sticker-preview-active .chat-scroll-bottom-btn {
+  bottom: calc(
+    78px + var(--qq-size-sticker-panel) + var(--qq-size-sticker-preview) + env(safe-area-inset-bottom, 0px)
+  );
+}
+
+.QQ_chat_page.wallpaper-idle .chat-scroll-bottom-btn {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
 /* ========================================
    5. 消息气泡基础样式
    ======================================== */

@@ -5133,6 +5133,7 @@ Phase G（Frame 36）：循环衔接
   };
   const applyUiModeUI = () => {
     if (document?.body) document.body.dataset.uiMode = uiMode;
+    ui.hideScrollDateBadge?.({ immediate: true });
     if (modeSwitch) modeSwitch.dataset.mode = uiMode;
     if (modeSwitchBtn) {
       const isRp = uiMode === 'rp';
