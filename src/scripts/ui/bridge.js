@@ -3,7 +3,12 @@
  */
 
 import { LLMClient } from '../api/client.js';
-import { BUILTIN_PHONE_FORMAT_WORLDBOOK, BUILTIN_PHONE_FORMAT_WORLDBOOK_ID } from '../storage/builtin-worldbooks.js';
+import {
+  BUILTIN_PHONE_FORMAT_CHAT_PROMPT_SPECS,
+  BUILTIN_PHONE_FORMAT_WORLDBOOK,
+  BUILTIN_PHONE_FORMAT_WORLDBOOK_ID,
+  getBuiltinPhoneFormatPromptSeed,
+} from '../storage/builtin-worldbooks.js';
 import { ChatStorage } from '../storage/chat.js';
 import { ConfigManager } from '../storage/config.js';
 import { PresetStore } from '../storage/preset-store.js';
@@ -1130,6 +1135,73 @@ class AppBridge {
     }
   }
 
+  buildPhoneFormatPromptEntries(preset = null) {
+    const source = (preset && typeof preset === 'object') ? preset : {};
+    const seed = getBuiltinPhoneFormatPromptSeed(BUILTIN_PHONE_FORMAT_WORLDBOOK);
+    const out = [];
+    BUILTIN_PHONE_FORMAT_CHAT_PROMPT_SPECS.forEach((spec, index) => {
+      if (source?.[spec.enabledKey] === false) return;
+      const raw = typeof source?.[spec.rulesKey] === 'string' && source[spec.rulesKey].trim()
+        ? source[spec.rulesKey]
+        : String(seed?.[spec.rulesKey] ?? '');
+      const content = String(raw ?? '');
+      if (!content.trim()) return;
+      const order = Number.isFinite(Number(spec.order)) ? Number(spec.order) : index;
+      out.push({
+        id: spec.entryId,
+        comment: spec.entryId,
+        title: spec.title,
+        content,
+        order,
+        priority: order,
+        depth: 0,
+        position: 0,
+        role: 0,
+        constant: true,
+        disable: false,
+        _src: 'builtin',
+        _sourceWorldId: '',
+        _refWorldId: '',
+        _entryId: spec.entryId,
+        _entryTitle: spec.title,
+      });
+    });
+    return out;
+  }
+
+  async ensurePhoneFormatChatPromptMigration() {
+    await this.presets.ready;
+    try {
+      const sourceWorldbook = this.worldStore.load(BUILTIN_PHONE_FORMAT_WORLDBOOK_ID) || BUILTIN_PHONE_FORMAT_WORLDBOOK;
+      const seed = getBuiltinPhoneFormatPromptSeed(sourceWorldbook);
+      const next = this.presets.getState();
+      const syspromptPresets = next?.presets?.sysprompt;
+      if (!syspromptPresets || typeof syspromptPresets !== 'object') return;
+
+      let changed = false;
+      Object.values(syspromptPresets).forEach((preset) => {
+        if (!preset || typeof preset !== 'object') return;
+        BUILTIN_PHONE_FORMAT_CHAT_PROMPT_SPECS.forEach((spec) => {
+          if (typeof preset[spec.enabledKey] !== 'boolean') {
+            preset[spec.enabledKey] = seed[spec.enabledKey] !== false;
+            changed = true;
+          }
+          if (typeof preset[spec.rulesKey] !== 'string' || !preset[spec.rulesKey].trim()) {
+            preset[spec.rulesKey] = String(seed[spec.rulesKey] ?? '');
+            changed = true;
+          }
+        });
+      });
+
+      if (changed) {
+        await this.presets.persist(next);
+        logger.info('已将旧手机格式世界书迁移到聊天提示词固定区块');
+      }
+    } catch (err) {
+      logger.warn('手机格式聊天提示词迁移失败（忽略）', err);
+    }
+  }
+
   getWorldSessionMapKey() {
     return makeScopedKey('world_session_map_v1', this.scopeId);
   }
@@ -1380,6 +1452,7 @@ class AppBridge {
       await this.presets.ready;
       await this.regex.ready;
       await this.ensureBuiltinWorldbooks();
+      await this.ensurePhoneFormatChatPromptMigration();
       let config = await this.config.load();
       // 注意：不要在启动时强制用“预设绑定连接”覆盖用户最后一次使用的连接配置。
       // 预设绑定仅在用户切换预设时应用（由 preset-panel 调用 applyBoundConfigIfAny），否则会导致
@@ -2218,45 +2291,6 @@ class AppBridge {
       };
     };
     const disablePhoneFormat = Boolean(context?.meta?.disablePhoneFormat);
-    const worldPromptRaw = isMomentCommentTask
-      ? ''
-      : (() => {
-          const worldSettings = this.getWorldGlobalSettings?.() || this.worldGlobalSettings || {};
-          const insertionStrategy = normalizeWorldInsertionStrategy(worldSettings.insertionStrategy, 'role_first');
-          const collectEntries = (worldId) => this.collectWorldEntries(worldId, { matchText, matchContext });
-          const buildMergedContent = (globalEntries, nonGlobalEntries) => {
-            const merged = this.mergeWorldEntries(globalEntries, nonGlobalEntries, insertionStrategy);
-            return merged.map(e => e.content).join('\n\n');
-          };
-          const builtinEntries = disablePhoneFormat ? [] : collectEntries(BUILTIN_PHONE_FORMAT_WORLDBOOK_ID);
-          const builtinPart = builtinEntries.map(e => e.content).join('\n\n');
-          const globalEntries = resolvedWorldState.globalWorldId ? collectEntries(resolvedWorldState.globalWorldId) : [];
-          const roleEntries = [];
-          resolvedWorldState.roleWorldIds.forEach((id) => {
-            if (!id) return;
-            const list = collectEntries(id);
-            if (!list.length) return;
-            roleEntries.push(...list.map(entry => ({ ...entry, _src: 'role' })));
-          });
-          const sessionEntries = [];
-          resolvedWorldState.sessionWorldIds.forEach((id) => {
-            if (!id) return;
-            const list = collectEntries(id);
-            if (!list.length) return;
-            sessionEntries.push(...list.map(entry => ({ ...entry, _src: 'session' })));
-          });
-          const mergedContent = buildMergedContent(globalEntries, [...roleEntries, ...sessionEntries]);
-          return [builtinPart, mergedContent].filter(Boolean).join('\n\n');
-        })();
-    // Apply MacroEngine to worldbook text too (worldbook entries may include {{user}}/{{char}} etc.)
-    const worldPrompt = worldPromptRaw
-      ? processTextMacrosWithPendingFlag(worldPromptRaw, {
-          user: name1,
-          char: name2,
-          group: groupName || name2,
-          members: membersText,
-        })
-      : '';
 
     const presetState = this.presets?.getState?.() || null;
     const useSysprompt = Boolean(presetState?.enabled?.sysprompt);
@@ -2812,7 +2846,7 @@ const stringifyMessageContent = (content) => {
             list.forEach(entry => pushEntry(entry, meta));
           };
           if (!disablePhoneFormat) {
-            const builtinEntries = collectEntries(BUILTIN_PHONE_FORMAT_WORLDBOOK_ID);
+            const builtinEntries = this.buildPhoneFormatPromptEntries(syspActive);
             builtinEntries.forEach(entry => captureWorldDebugEntry(worldDebugRaw.builtinEntries, entry, {
               sourceKind: 'builtin',
             }));
@@ -4948,7 +4982,8 @@ const stringifyMessageContent = (content) => {
     const insertionStrategy = normalizeWorldInsertionStrategy(worldSettings.insertionStrategy, 'role_first');
     const resolvedWorldState = this.getResolvedWorldState(this.activeSessionId);
     const collectEntries = worldId => this.collectWorldEntries(worldId, { matchText: '' });
-    const builtinEntries = collectEntries(BUILTIN_PHONE_FORMAT_WORLDBOOK_ID);
+    const syspActive = this.presets.getActive('sysprompt') || null;
+    const builtinEntries = this.buildPhoneFormatPromptEntries(syspActive);
     const builtinPart = builtinEntries.map(e => e.content).join('\n\n');
     const globalEntries = resolvedWorldState.globalWorldId ? collectEntries(resolvedWorldState.globalWorldId) : [];
     const roleEntries = [];

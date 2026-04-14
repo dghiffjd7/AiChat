@@ -4,6 +4,10 @@
  * - Loads bundled ST default presets from `assets/presets/st-defaults.json`
  */
 
+import {
+    BUILTIN_PHONE_FORMAT_CHAT_PROMPT_SPECS,
+    getBuiltinPhoneFormatPromptSeed,
+} from './builtin-worldbooks.js';
 import { logger } from '../utils/logger.js';
 
 const safeInvoke = async (cmd, args) => {
@@ -21,8 +25,7 @@ const genId = (prefix) => `${prefix}-${Date.now()}-${Math.random().toString(16).
 
 // 对话模式（私聊）提示词：
 // - 预设的优势：可按场景（私聊/群聊/动态评论）自动注入不同提示词块（见 bridge.js A/B/C）。
-// - 世界书的优势：可提供“格式大全/静态规则”并在缺失时自动创建（与手机流式一致）。
-// 决策：场景判别继续由预设/应用侧负责；手机格式说明由世界书 `手机-格式*` 提供。
+// - 手机格式大全现已迁移到“聊天提示词”固定区块中管理，注入顺序与旧 `手机-格式*` 世界书保持一致。
 //
 // 下面这段历史默认值包含大量“格式协议/<content> 约束”，与世界书 `手机-格式2-QQ聊天` / `手机-格式3-QQ空间` 重复，
 // 且与我们后续要把 `<content>` 规则放在“预设-自定义”区块的做法冲突，因此默认不再内置这些约束。
@@ -46,12 +49,11 @@ const DEFAULT_DIALOGUE_RULES_PRIVATE_CHAT = `
 // 群聊提示词（默认精简版）：
 // - 旧版包含完整 QQ 聊天格式介绍，与世界书 `手机-格式2-QQ聊天` 重复，已停用（保留于注释对照）。
 // const DEFAULT_GROUP_RULES_LEGACY_DUP = `...`.trim();
+const LEGACY_GROUP_RULES_NOTE = '（注：QQ聊天/群聊格式、特殊消息类型等“手机格式提示词”已迁移到聊天提示词固定区块「QQ聊天格式」；本区块仅保留场景信息，避免重复。）';
 const DEFAULT_GROUP_RULES = `
 【群聊场景提示词】
 当前处于群聊：{{group}}
 群成员：{{members}}
-
-（注：QQ聊天/群聊格式、特殊消息类型等“手机格式提示词”已由世界书「手机-格式2-QQ聊天」提供；本区块仅保留场景信息，避免重复。）
 `.trim();
 
 // 动态（QQ空间）提示词：从 `手机流式.html` 的“QQ空间格式介绍”迁移并适配到 <content> 内输出
@@ -60,7 +62,7 @@ const DEFAULT_GROUP_RULES = `
 // const DEFAULT_MOMENT_RULES_LEGACY_DUP = `...`.trim();
 const DEFAULT_MOMENT_RULES = `
 【动态（QQ空间）场景提示词】
-（注：QQ空间格式、评论系统说明、moment_start/moment_end 等“手机格式提示词”已由世界书「手机-格式3-QQ空间」提供；本区块默认不重复这些格式说明。）
+（注：QQ空间格式、评论系统说明、moment_start/moment_end 等“手机格式提示词”已迁移到聊天提示词固定区块「QQ空间格式」；本区块默认不重复这些格式说明。）
 `.trim();
 
 // 动态发布决策提示词：从 DEFAULT_MOMENT_RULES 中的“任务：动态发布决策”段落拆分
@@ -159,6 +161,30 @@ const DEFAULT_SUMMARY_RULES = [
     '',
     '用一句话概括本条回复的内容，禁止不必要的总结和升华',
 ].join('\n').trim();
+
+const DEFAULT_PHONE_FORMAT_PROMPTS = getBuiltinPhoneFormatPromptSeed();
+
+const ensurePhoneFormatPromptFields = (preset, seed = DEFAULT_PHONE_FORMAT_PROMPTS) => {
+    const p = (preset && typeof preset === 'object') ? preset : null;
+    if (!p) return;
+    BUILTIN_PHONE_FORMAT_CHAT_PROMPT_SPECS.forEach((spec) => {
+        if (typeof p[spec.enabledKey] !== 'boolean') {
+            p[spec.enabledKey] = seed[spec.enabledKey] !== false;
+        }
+        if (typeof p[spec.rulesKey] !== 'string' || !p[spec.rulesKey].trim()) {
+            p[spec.rulesKey] = String(seed[spec.rulesKey] ?? '');
+        }
+    });
+};
+
+const sanitizeGroupRulesText = (value) => {
+    const raw = String(value ?? '');
+    if (!raw) return '';
+    return raw
+        .replace(LEGACY_GROUP_RULES_NOTE, '')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
+};
 
 const clone = (v) => {
     try {
@@ -423,6 +449,7 @@ export class PresetStore {
             // 对话模式默认值（保存于 sysprompt 预设）
             for (const p of Object.values(state.presets.sysprompt || {})) {
                 if (!p || typeof p !== 'object') continue;
+                ensurePhoneFormatPromptFields(p);
                 if (typeof p.dialogue_enabled !== 'boolean') p.dialogue_enabled = true;
                 // 聊天提示词：固定注入到系统深度=1（历史前），避免混入 <history>
                 if (typeof p.dialogue_position !== 'number') p.dialogue_position = 3;
@@ -440,7 +467,7 @@ export class PresetStore {
                 }
 
                 // 分场景：动态发布决策 / 动态评论回复
-                if (typeof p.moment_create_enabled !== 'boolean') p.moment_create_enabled = true;
+                if (typeof p.moment_create_enabled !== 'boolean') p.moment_create_enabled = false;
                 if (typeof p.moment_create_position !== 'number') p.moment_create_position = 0;
                 if (typeof p.moment_create_depth !== 'number') p.moment_create_depth = 1;
                 if (typeof p.moment_create_role !== 'number') p.moment_create_role = 0;
@@ -471,6 +498,7 @@ export class PresetStore {
                 if (typeof p.group_rules !== 'string' || !p.group_rules.trim()) {
                     p.group_rules = DEFAULT_GROUP_RULES;
                 }
+                p.group_rules = sanitizeGroupRulesText(p.group_rules);
 
                 if (typeof p.summary_enabled !== 'boolean') p.summary_enabled = true;
                 if (typeof p.summary_position !== 'number') p.summary_position = 3;
@@ -505,6 +533,7 @@ export class PresetStore {
             // 对话模式默认值（保存于 sysprompt 预设，不覆盖用户已配置内容）
             for (const p of Object.values(state.presets.sysprompt || {})) {
                 if (!p || typeof p !== 'object') continue;
+                ensurePhoneFormatPromptFields(p);
                 if (typeof p.dialogue_enabled !== 'boolean') p.dialogue_enabled = true; // 聊天室自动启用
                 // 私聊提示词：迁移为系统深度=1（历史前）
                 if (typeof p.dialogue_position !== 'number') p.dialogue_position = 3;
@@ -545,7 +574,7 @@ export class PresetStore {
                     p.moment_comment_rules = DEFAULT_MOMENT_COMMENT_RULES;
                 }
 
-                if (typeof p.moment_create_enabled !== 'boolean') p.moment_create_enabled = true;
+                if (typeof p.moment_create_enabled !== 'boolean') p.moment_create_enabled = false;
                 if (typeof p.moment_create_position !== 'number') p.moment_create_position = 0;
                 if (typeof p.moment_create_depth !== 'number') p.moment_create_depth = 1;
                 if (typeof p.moment_create_role !== 'number') p.moment_create_role = 0;
@@ -564,6 +593,7 @@ export class PresetStore {
                 if (typeof p.group_rules !== 'string' || !p.group_rules.trim() || looksDupGroupDefault) {
                     p.group_rules = DEFAULT_GROUP_RULES;
                 }
+                p.group_rules = sanitizeGroupRulesText(p.group_rules);
 
                 if (typeof p.summary_enabled !== 'boolean') p.summary_enabled = true;
                 if (typeof p.summary_position !== 'number') p.summary_position = 3;
@@ -683,6 +713,12 @@ export class PresetStore {
         const t = normalizeType(type);
         const presetId = id || genId(`preset-${t}`);
         const next = { ...(data || {}), name: String(name || data?.name || presetId) };
+        if (t === 'sysprompt') {
+            ensurePhoneFormatPromptFields(next);
+            if (typeof next.group_rules === 'string') {
+                next.group_rules = sanitizeGroupRulesText(next.group_rules);
+            }
+        }
         if (t === 'openai') {
             try { normalizeOpenAIPreset(next); } catch {}
         }

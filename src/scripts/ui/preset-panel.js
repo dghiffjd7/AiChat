@@ -456,12 +456,51 @@ const PANEL_CSS = `
     gap: 10px; padding: 10px 12px; background: rgba(248,250,252,0.85);
     cursor: pointer; user-select: none;
 }
-.pp-block-left { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.pp-block-left { display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1; }
 .pp-block-toggle { font-size: 16px; color: #64748b; user-select: none; width: 18px; }
 .pp-block-drag { font-size: 16px; color: #64748b; cursor: grab; user-select: none; }
+.pp-block-main { min-width: 0; display: flex; flex-direction: column; gap: 5px; }
 .pp-block-title { font-weight: 800; color: #0f172a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pp-block-sub { color: #64748b; font-size: 12px; }
-.pp-block-right { display: flex; align-items: center; gap: 10px; }
+.pp-block-meta {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+.pp-meta-chip {
+    display: inline-flex;
+    align-items: center;
+    min-height: 22px;
+    padding: 4px 8px;
+    border-radius: 999px;
+    border: 1px solid transparent;
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1;
+    white-space: nowrap;
+}
+.pp-meta-chip.is-scope {
+    background: rgba(59,130,246,0.10);
+    border-color: rgba(59,130,246,0.16);
+    color: #1d4ed8;
+}
+.pp-meta-chip.is-placement {
+    background: rgba(148,163,184,0.12);
+    border-color: rgba(148,163,184,0.2);
+    color: #475569;
+}
+.pp-meta-chip.is-dynamic {
+    background: rgba(245,158,11,0.12);
+    border-color: rgba(245,158,11,0.2);
+    color: #b45309;
+}
+.pp-meta-chip.is-replace {
+    background: rgba(244,63,94,0.10);
+    border-color: rgba(244,63,94,0.18);
+    color: #be123c;
+}
+.pp-block-right { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
 .pp-block-body { padding: 10px 12px; display: none; flex-direction: column; gap: 10px; }
 .pp-block.pp-block-disabled { opacity: 0.62; filter: grayscale(1); background: #f1f5f9; }
 .pp-block.pp-block-disabled .pp-block-header { background: #e2e8f0; }
@@ -930,7 +969,7 @@ export class PresetPanel {
         const wrap = document.createElement('div');
         const desc = document.createElement('div');
         desc.style.cssText = 'color:#64748b; font-size:12px; margin-bottom:8px;';
-        desc.textContent = '私聊/群聊/动态提示词都放在这里；其中"私聊/群聊/摘要"固定注入到系统深度=1。';
+        desc.textContent = '这里统一编辑聊天提示词。下方标签表示区块的适用链路、注入位置与动态替换关系，不代表当前聊天室的实时状态。';
         wrap.appendChild(desc);
 
         const list = document.createElement('div');
@@ -941,20 +980,49 @@ export class PresetPanel {
             card.className = 'pp-block';
             card.dataset.collapsed = 'true';
 
-            const isEnabled = Boolean(p[cfg.enabledKey]);
+            const isEnabled = p[cfg.enabledKey] !== false;
             if (!isEnabled) card.classList.add('pp-block-disabled');
 
             const header = document.createElement('div');
             header.className = 'pp-block-header';
-            header.innerHTML = `
-                <div class="pp-block-left">
-                    <div class="pp-block-toggle">&#9656;</div>
-                    <div style="min-width:0;">
-                        <div class="pp-block-title">${cfg.title}</div>
-                        <div class="pp-block-sub">${cfg.subtitle}</div>
-                    </div>
-                </div>
-            `;
+            const left = document.createElement('div');
+            left.className = 'pp-block-left';
+            const toggle = document.createElement('div');
+            toggle.className = 'pp-block-toggle';
+            toggle.innerHTML = '&#9656;';
+            left.appendChild(toggle);
+
+            const main = document.createElement('div');
+            main.className = 'pp-block-main';
+            const title = document.createElement('div');
+            title.className = 'pp-block-title';
+            title.textContent = cfg.title;
+            main.appendChild(title);
+
+            const metaChips = Array.isArray(cfg.metaChips) ? cfg.metaChips.filter(Boolean) : [];
+            if (metaChips.length) {
+                const meta = document.createElement('div');
+                meta.className = 'pp-block-meta';
+                metaChips.forEach((chip) => {
+                    const el = document.createElement('span');
+                    const tone = String(chip?.tone || 'placement').trim();
+                    el.className = `pp-meta-chip is-${tone}`;
+                    el.textContent = String(chip?.label || '').trim();
+                    if (!el.textContent) return;
+                    meta.appendChild(el);
+                });
+                if (meta.childElementCount) {
+                    main.appendChild(meta);
+                }
+            } else if (cfg.subtitle) {
+                const subtitle = document.createElement('div');
+                subtitle.className = 'pp-block-sub';
+                subtitle.textContent = cfg.subtitle;
+                main.appendChild(subtitle);
+            }
+
+            left.appendChild(main);
+            header.appendChild(left);
 
             const right = document.createElement('div');
             right.className = 'pp-block-right';
@@ -1005,7 +1073,12 @@ export class PresetPanel {
             `;
             role.value = String(p[cfg.roleKey] ?? EXT_PROMPT_ROLES.SYSTEM);
 
-            if (cfg.showDepthRole !== false) {
+            if (cfg.showPlacementControls === false) {
+                const fixedHint = document.createElement('div');
+                fixedHint.style.cssText = 'margin-bottom:10px; padding:10px 12px; border:1px solid #dbeafe; border-radius:12px; background:#eff6ff; color:#1d4ed8; font-size:12px; line-height:1.5;';
+                fixedHint.textContent = cfg.fixedHint || '固定注入位置';
+                body.appendChild(fixedHint);
+            } else if (cfg.showDepthRole !== false) {
                 body.appendChild(this.renderInputRow([
                     { label: '注入位置', el: pos },
                     { label: '深度（IN_CHAT）', el: depth },
@@ -1042,42 +1115,112 @@ export class PresetPanel {
         ];
 
         list.appendChild(makePromptBlock({
+            idPrefix: 'phone-format-intro', title: '手机格式开头',
+            enabledKey: 'phone_format_intro_enabled',
+            rulesKey: 'phone_format_intro_rules',
+            placeholder: '手机格式开头',
+            showPlacementControls: false,
+            fixedHint: '固定前置区块。始终排在手机格式链路的第 1 段。',
+            metaChips: [
+                { label: '聊天主链路', tone: 'scope' },
+                { label: '固定前置', tone: 'placement' },
+                { label: '固定顺序 1/4', tone: 'placement' },
+            ],
+        }));
+        list.appendChild(makePromptBlock({
+            idPrefix: 'phone-format-chat', title: 'QQ聊天格式',
+            enabledKey: 'phone_format_chat_enabled',
+            rulesKey: 'phone_format_chat_rules',
+            placeholder: 'QQ聊天格式说明',
+            showPlacementControls: false,
+            fixedHint: '固定前置区块。表情包列表会在发送前按当前启用的表情包资源自动替换。',
+            metaChips: [
+                { label: '聊天主链路', tone: 'scope' },
+                { label: '固定前置', tone: 'placement' },
+                { label: '表情包列表动态填充', tone: 'dynamic' },
+            ],
+        }));
+        list.appendChild(makePromptBlock({
+            idPrefix: 'phone-format-moment', title: 'QQ空间格式',
+            enabledKey: 'phone_format_moment_enabled',
+            rulesKey: 'phone_format_moment_rules',
+            placeholder: 'QQ空间格式说明',
+            showPlacementControls: false,
+            fixedHint: '固定前置区块。用于动态发布相关格式说明，不参与动态评论回复任务。',
+            metaChips: [
+                { label: '聊天主链路', tone: 'scope' },
+                { label: '固定前置', tone: 'placement' },
+                { label: '动态评论任务不发送', tone: 'dynamic' },
+            ],
+        }));
+        list.appendChild(makePromptBlock({
+            idPrefix: 'phone-format-footer', title: '手机格式结尾',
+            enabledKey: 'phone_format_footer_enabled',
+            rulesKey: 'phone_format_footer_rules',
+            placeholder: '手机格式结尾',
+            showPlacementControls: false,
+            fixedHint: '固定前置区块。始终排在手机格式链路的最后一段。',
+            metaChips: [
+                { label: '聊天主链路', tone: 'scope' },
+                { label: '固定前置', tone: 'placement' },
+                { label: '固定顺序 4/4', tone: 'placement' },
+            ],
+        }));
+        list.appendChild(makePromptBlock({
             idPrefix: 'dialogue', title: '私聊提示词',
-            subtitle: '解析 <content> 内的私聊标签',
             enabledKey: 'dialogue_enabled', positionKey: 'dialogue_position',
             depthKey: 'dialogue_depth', roleKey: 'dialogue_role',
             rulesKey: 'dialogue_rules', defaultDepth: 1, placeholder: '私聊协议提示词',
             positionOptions: fixedDepthOpts, showDepthRole: false,
+            metaChips: [
+                { label: '仅私聊', tone: 'scope' },
+                { label: '系统深度 1', tone: 'placement' },
+            ],
         }));
         list.appendChild(makePromptBlock({
             idPrefix: 'moment', title: '动态发布决策提示词',
-            subtitle: '让模型决定是否输出 moment_start/moment_end',
             enabledKey: 'moment_create_enabled', positionKey: 'moment_create_position',
             depthKey: 'moment_create_depth', roleKey: 'moment_create_role',
             rulesKey: 'moment_create_rules', defaultDepth: 0, placeholder: '动态发布决策提示词',
+            metaChips: [
+                { label: '私聊/群聊', tone: 'scope' },
+                { label: '按任务条件发送', tone: 'dynamic' },
+                { label: '位置可调', tone: 'placement' },
+            ],
         }));
         list.appendChild(makePromptBlock({
             idPrefix: 'moment-comment', title: '动态评论回复提示词',
-            subtitle: '仅用于"动态评论"场景',
             enabledKey: 'moment_comment_enabled', positionKey: 'moment_comment_position',
             depthKey: 'moment_comment_depth', roleKey: 'moment_comment_role',
             rulesKey: 'moment_comment_rules', defaultDepth: 0, placeholder: '动态评论回复规则',
+            metaChips: [
+                { label: '仅动态评论', tone: 'scope' },
+                { label: '私聊/群聊不发送', tone: 'dynamic' },
+                { label: '位置可调', tone: 'placement' },
+            ],
         }));
         list.appendChild(makePromptBlock({
             idPrefix: 'group', title: '群聊提示词',
-            subtitle: '解析 <content> 内的群聊标签',
             enabledKey: 'group_enabled', positionKey: 'group_position',
             depthKey: 'group_depth', roleKey: 'group_role',
             rulesKey: 'group_rules', defaultDepth: 1, placeholder: '群聊协议提示词',
             positionOptions: fixedDepthOpts, showDepthRole: false,
+            metaChips: [
+                { label: '仅群聊', tone: 'scope' },
+                { label: '系统深度 1', tone: 'placement' },
+            ],
         }));
         list.appendChild(makePromptBlock({
             idPrefix: 'summary', title: '摘要提示词',
-            subtitle: '固定注入到系统深度=1',
             enabledKey: 'summary_enabled', positionKey: 'summary_position',
             depthKey: 'summary_depth', roleKey: 'summary_role',
             rulesKey: 'summary_rules', defaultDepth: 1, placeholder: '摘要格式提示词',
             positionOptions: fixedDepthOpts, showDepthRole: false,
+            metaChips: [
+                { label: '常规聊天', tone: 'scope' },
+                { label: '系统深度 1', tone: 'placement' },
+                { label: '记忆表格模式会替代', tone: 'replace' },
+            ],
         }));
 
         wrap.appendChild(list);
@@ -1527,6 +1670,14 @@ export class PresetPanel {
         }
 
         if (sectionId === 'chatprompts') {
+            current.phone_format_intro_enabled = Boolean(root.querySelector('#phone-format-intro-enabled')?.checked);
+            current.phone_format_intro_rules = root.querySelector('#phone-format-intro-rules')?.value ?? '';
+            current.phone_format_chat_enabled = Boolean(root.querySelector('#phone-format-chat-enabled')?.checked);
+            current.phone_format_chat_rules = root.querySelector('#phone-format-chat-rules')?.value ?? '';
+            current.phone_format_moment_enabled = Boolean(root.querySelector('#phone-format-moment-enabled')?.checked);
+            current.phone_format_moment_rules = root.querySelector('#phone-format-moment-rules')?.value ?? '';
+            current.phone_format_footer_enabled = Boolean(root.querySelector('#phone-format-footer-enabled')?.checked);
+            current.phone_format_footer_rules = root.querySelector('#phone-format-footer-rules')?.value ?? '';
             current.dialogue_enabled = Boolean(root.querySelector('#dialogue-enabled')?.checked);
             current.dialogue_position = getInt(root.querySelector('#dialogue-position')?.value, current.dialogue_position ?? EXT_PROMPT_TYPES.SYSTEM_DEPTH_1);
             current.dialogue_depth = getInt(root.querySelector('#dialogue-depth')?.value, current.dialogue_depth ?? 1);

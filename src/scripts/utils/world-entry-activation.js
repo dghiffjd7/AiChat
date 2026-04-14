@@ -52,6 +52,8 @@ const matchKey = (key, rawText, rawTextLower, caseSensitive, matchWholeWords) =>
 const buildMatchTextForEntry = (entry, matchText, matchContext) => {
   if (!matchContext) return matchText;
   const parts = [];
+  const sessionName = String(matchContext.sessionName || '').trim();
+  if (sessionName) parts.push(sessionName);
   const userText = String(matchContext.userMessage || '').trim();
   if (userText) parts.push(userText);
   const history = Array.isArray(matchContext.history) ? matchContext.history : [];

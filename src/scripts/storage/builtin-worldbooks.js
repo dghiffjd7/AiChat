@@ -16,6 +16,60 @@ const splitKeywords = (text) => {
  */
 export const BUILTIN_PHONE_FORMAT_WORLDBOOK_ID = '手机-格式';
 
+export const BUILTIN_PHONE_FORMAT_CHAT_PROMPT_SPECS = Object.freeze([
+    {
+        entryId: '手机-格式1-格式开头',
+        title: '手机格式开头',
+        enabledKey: 'phone_format_intro_enabled',
+        rulesKey: 'phone_format_intro_rules',
+        order: 5560,
+    },
+    {
+        entryId: '手机-格式2-QQ聊天',
+        title: 'QQ聊天格式',
+        enabledKey: 'phone_format_chat_enabled',
+        rulesKey: 'phone_format_chat_rules',
+        order: 5561,
+    },
+    {
+        entryId: '手机-格式3-QQ空间',
+        title: 'QQ空间格式',
+        enabledKey: 'phone_format_moment_enabled',
+        rulesKey: 'phone_format_moment_rules',
+        order: 5562,
+    },
+    {
+        entryId: '手机-格式999-格式结尾',
+        title: '手机格式结尾',
+        enabledKey: 'phone_format_footer_enabled',
+        rulesKey: 'phone_format_footer_rules',
+        order: 5564,
+    },
+]);
+
+export const getBuiltinPhoneFormatPromptSeed = (source = BUILTIN_PHONE_FORMAT_WORLDBOOK) => {
+    const entries = Array.isArray(source?.entries) ? source.entries : [];
+    const byKey = new Map();
+    entries.forEach((entry) => {
+        const keys = [
+            entry?.id,
+            entry?.comment,
+            entry?.title,
+        ].map(value => String(value || '').trim()).filter(Boolean);
+        keys.forEach((key) => {
+            if (!byKey.has(key)) byKey.set(key, entry);
+        });
+    });
+
+    const out = {};
+    BUILTIN_PHONE_FORMAT_CHAT_PROMPT_SPECS.forEach((spec) => {
+        const entry = byKey.get(spec.entryId) || null;
+        out[spec.enabledKey] = true;
+        out[spec.rulesKey] = String(entry?.content ?? '');
+    });
+    return out;
+};
+
 export const BUILTIN_PHONE_FORMAT_WORLDBOOK = {
     name: BUILTIN_PHONE_FORMAT_WORLDBOOK_ID,
     entries: [
