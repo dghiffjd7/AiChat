@@ -202,8 +202,26 @@ const normalizeType = (type) => {
 
 const ensureObj = (v, fallback) => (v && typeof v === 'object') ? v : fallback;
 
+const DEFAULT_OPENAI_IMPERSONATION_PROMPT = '[Write your next reply from the point of view of {{user}}, using the chat history so far as a guideline for the writing style of {{user}}. Don\'t write as {{char}} or system. Don\'t describe actions of {{char}}.]';
+
+const normalizeResponseTarget = (value, fallback = 'character') => {
+    const token = String(value || '').trim().toLowerCase();
+    if (token === 'user') return 'user';
+    if (token === 'character' || token === 'char' || token === 'assistant') return 'character';
+    return String(fallback || '').trim().toLowerCase() === 'user' ? 'user' : 'character';
+};
+
 const normalizeOpenAIPreset = (preset) => {
     if (!preset || typeof preset !== 'object') return;
+
+    preset.response_target_chat = normalizeResponseTarget(preset.response_target_chat, 'character');
+    preset.response_target_rp = normalizeResponseTarget(preset.response_target_rp, 'user');
+    if (typeof preset.impersonation_prompt !== 'string' || !preset.impersonation_prompt.trim()) {
+        preset.impersonation_prompt = DEFAULT_OPENAI_IMPERSONATION_PROMPT;
+    }
+    if (typeof preset.assistant_impersonation !== 'string') {
+        preset.assistant_impersonation = '';
+    }
 
     // SillyTavern PromptManager global dummy character id
     const ST_PROMPT_ORDER_DUMMY_ID = 100001;

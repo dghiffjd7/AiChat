@@ -178,6 +178,25 @@ const renderStTemplate = (template, vars) => {
   return out.trim();
 };
 
+const DEFAULT_OPENAI_IMPERSONATION_PROMPT =
+  '[Write your next reply from the point of view of {{user}}, using the chat history so far as a guideline for the writing style of {{user}}. Don\'t write as {{char}} or system. Don\'t describe actions of {{char}}.]';
+
+const normalizeReplyTarget = (value, fallback = 'character') => {
+  const token = String(value || '').trim().toLowerCase();
+  if (token === 'user') return 'user';
+  if (token === 'character' || token === 'char' || token === 'assistant') return 'character';
+  return String(fallback || '').trim().toLowerCase() === 'user' ? 'user' : 'character';
+};
+
+const resolvePresetReplyTarget = (preset, uiMode = 'chat', override = '') => {
+  const mode = String(uiMode || '').trim().toLowerCase() === 'rp' ? 'rp' : 'chat';
+  const fallback = mode === 'rp' ? 'user' : 'character';
+  const overrideTarget = normalizeReplyTarget(override, '');
+  if (String(override || '').trim()) return overrideTarget;
+  const key = mode === 'rp' ? 'response_target_rp' : 'response_target_chat';
+  return normalizeReplyTarget(preset?.[key], fallback);
+};
+
 const withSpeakerPrefix = (content, speaker) => {
   const text = String(content ?? '');
   const name = String(speaker || '').trim();
@@ -2544,7 +2563,8 @@ class AppBridge {
     const syspActive = this.presets.getActive('sysprompt') || null;
     const sysp = useSysprompt ? syspActive : null;
     const ctxp = useContext ? this.presets.getActive('context') : null;
-    const openp = useOpenAIPreset ? this.presets.getActive('openai') : null;
+    const activeOpenAIPreset = this.presets.getActive('openai') || null;
+    const openp = useOpenAIPreset ? activeOpenAIPreset : null;
 
     // 对话模式：额外注入对话协议提示词（保存于 sysprompt 预设）
     // ST extension prompt types => IN_PROMPT:0, IN_CHAT:1, BEFORE_PROMPT:2, NONE:-1
@@ -2623,6 +2643,20 @@ class AppBridge {
     const scenarioFormat = typeof openp?.scenario_format === 'string' ? openp.scenario_format : '{{scenario}}';
     const personalityFormat =
       typeof openp?.personality_format === 'string' ? openp.personality_format : '{{personality}}';
+    const replyTarget = resolvePresetReplyTarget(activeOpenAIPreset, macroUiMode, context?.meta?.responseTarget);
+    const impersonationPromptRaw = replyTarget === 'user'
+      ? (typeof activeOpenAIPreset?.impersonation_prompt === 'string' && activeOpenAIPreset.impersonation_prompt.trim()
+        ? activeOpenAIPreset.impersonation_prompt
+        : DEFAULT_OPENAI_IMPERSONATION_PROMPT)
+      : '';
+    const impersonationPrompt = impersonationPromptRaw
+      ? processTextMacrosWithPendingFlag(impersonationPromptRaw, {
+          user: name1,
+          char: name2,
+          group: groupName || name2,
+          members: membersText,
+        })
+      : '';
 
 	    // When OpenAI preset has prompt_order: use ST-like block ordering (drag & drop in UI)
 	    // ST PromptManager global dummyId=100001; keep 100000 as fallback.
@@ -4094,6 +4128,12 @@ const stringifyMessageContent = (content) => {
         messages.push({ role, content: rendered });
       }
     } catch {}
+
+    // ST-style user POV reply target: keep it close to the final turn so it can override
+    // the default "reply as character" framing without adding extra main-UI controls.
+    if (impersonationPrompt) {
+      messages.push({ role: 'system', content: impersonationPrompt });
+    }
 
     // 5) Current user message
     if (!usedLastUserMessageForPendingInput && (pendingUserPrompt || hasUserAttachments)) {

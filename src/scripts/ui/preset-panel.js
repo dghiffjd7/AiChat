@@ -1455,6 +1455,31 @@ export class PresetPanel {
             { label: 'frequency_penalty', el: frequency },
         ]));
 
+        const viewHint = document.createElement('div');
+        viewHint.style.cssText = 'color:#64748b; font-size:12px; margin:10px 0 4px;';
+        viewHint.textContent = '默认回复视角。聊天与 RP 分开保存；不额外增加聊天区按钮。';
+        wrap.appendChild(viewHint);
+
+        const makeTargetSelect = (id, value, fallback) => {
+            const el = document.createElement('select');
+            el.id = id;
+            el.className = 'pp-input';
+            el.innerHTML = `
+                <option value="character">角色（{{char}}）</option>
+                <option value="user">用户（{{user}}）</option>
+            `;
+            const next = String(value || '').trim().toLowerCase();
+            el.value = next === 'user' ? 'user' : (String(fallback || '').trim().toLowerCase() === 'user' ? 'user' : 'character');
+            return el;
+        };
+
+        const chatTarget = makeTargetSelect('gen-response-target-chat', p.response_target_chat, 'character');
+        const rpTarget = makeTargetSelect('gen-response-target-rp', p.response_target_rp, 'user');
+        wrap.appendChild(this.renderInputRow([
+            { label: '聊天模式回复视角', el: chatTarget },
+            { label: 'RP模式回复视角', el: rpTarget },
+        ]));
+
         return wrap;
     }
 
@@ -1744,6 +1769,8 @@ export class PresetPanel {
             current.openai_max_tokens = getInt(root.querySelector('#gen-max-tokens')?.value, current.openai_max_tokens ?? 8192);
             current.presence_penalty = getNum(root.querySelector('#gen-presence')?.value, current.presence_penalty ?? 0);
             current.frequency_penalty = getNum(root.querySelector('#gen-frequency')?.value, current.frequency_penalty ?? 0);
+            current.response_target_chat = root.querySelector('#gen-response-target-chat')?.value === 'user' ? 'user' : 'character';
+            current.response_target_rp = root.querySelector('#gen-response-target-rp')?.value === 'character' ? 'character' : 'user';
             current.boundProfileId = window.appBridge?.config?.getActiveProfileId?.() || current.boundProfileId || null;
             return current;
         }
