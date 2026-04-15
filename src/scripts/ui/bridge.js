@@ -30,6 +30,22 @@ import {
   normalizeTokenMode,
   parseMemoryPromptPositions,
 } from '../memory/memory-prompt-utils.js';
+import {
+  getMemoryContextType,
+  getSummaryTableIdsForContext,
+  isRpSessionId,
+  resolveMemorySessionMode,
+  tableMatchesMemoryContext,
+} from '../memory/memory-context-utils.js';
+import {
+  getChatToRpBridgeSourceMeta,
+  getChatToRpBridgeTableIds,
+  getRpToChatBridgeTableIds,
+  isChatToRpGroupTableId,
+  normalizeBridgeLimit,
+  resolveChatToRpBridgeTableSettings,
+  resolveRpToChatBridgeTableSettings,
+} from '../memory/memory-bridge-utils.js';
 import { logger } from '../utils/logger.js';
 import { MacroEngine } from '../utils/macro-engine.js';
 import { listMediaAssets } from '../utils/media-assets.js';
@@ -520,7 +536,16 @@ class AppBridge {
     if (!sessionId) return disabledPlan('missing_session');
 
     const isGroup = Boolean(context?.session?.isGroup) || sessionId.startsWith('group:');
+    const contextType = getMemoryContextType({ sessionId, isGroup });
+    const sessionMode = resolveMemorySessionMode({
+      uiMode: context?.meta?.uiMode,
+      sessionId,
+      contextType,
+    });
     const scope = isGroup ? 'group' : 'contact';
+    const sessionSettings = context?.session?.settings && typeof context.session.settings === 'object'
+      ? context.session.settings
+      : {};
     const targetName =
       String(context?.character?.name || '').trim() ||
       String(this.contactsStore?.getContact?.(sessionId)?.name || '').trim() ||
@@ -577,6 +602,7 @@ class AppBridge {
       tableByIdAll.set(id, t);
       if (!shouldIncludeTable(id)) return;
       if (!matchesScope(t)) return;
+      if (!tableMatchesMemoryContext(t, { uiMode: context?.meta?.uiMode, sessionId, contextType, isGroup })) return;
       tableById.set(id, t);
       tableOrder.push(id);
     });
@@ -650,16 +676,13 @@ class AppBridge {
       lines.push('</memory_edit_rules>');
       return lines.join('\n').trim();
     };
-    const useSharedMemory = context?.meta?.sharedMemory === true && !isGroup;
     let scopedRows = [];
     let globalRows = [];
     try {
-      if (!useSharedMemory) {
-        if (isGroup) {
-          scopedRows = await this.memoryTableStore.getMemories({ scope: 'group', group_id: sessionId, template_id: templateId });
-        } else {
-          scopedRows = await this.memoryTableStore.getMemories({ scope: 'contact', contact_id: sessionId, template_id: templateId });
-        }
+      if (isGroup) {
+        scopedRows = await this.memoryTableStore.getMemories({ scope: 'group', group_id: sessionId, template_id: templateId });
+      } else {
+        scopedRows = await this.memoryTableStore.getMemories({ scope: 'contact', contact_id: sessionId, template_id: templateId });
       }
     } catch {
       scopedRows = [];
@@ -672,9 +695,8 @@ class AppBridge {
 
     const resolveRequiredHints = () => {
       const hints = [];
-      const baseRows = useSharedMemory ? globalRows : scopedRows;
-      const rows = Array.isArray(baseRows) ? baseRows : [];
-      if (!isGroup) {
+      const rows = Array.isArray(scopedRows) ? scopedRows : [];
+      if (!isGroup && sessionMode === 'chat') {
         const targetTableId = 'character_profile';
         const table = tableById.get(targetTableId);
         if (table) {
@@ -703,13 +725,17 @@ class AppBridge {
         }
       }
 
-      const summaryTableId = isGroup ? 'group_summary' : 'chat_summary';
+      const { summaryTableId, outlineTableId } = getSummaryTableIdsForContext({
+        uiMode: context?.meta?.uiMode,
+        sessionId,
+        contextType,
+        isGroup,
+      });
       const summaryTable = tableById.get(summaryTableId);
       if (summaryTable) {
         const summaryLabel = String(summaryTable?.name || summaryTableId).trim() || summaryTableId;
         hints.push(`本轮必须新增${summaryLabel}（摘要栏位使用“【摘要】...”格式；仅使用 insert）。`);
       }
-      const outlineTableId = isGroup ? 'group_outline' : 'chat_outline';
       const outlineTable = tableById.get(outlineTableId);
       if (outlineTable) {
         const outlineLabel = String(outlineTable?.name || outlineTableId).trim() || outlineTableId;
@@ -740,9 +766,27 @@ class AppBridge {
     };
 
     const activeTableIds = new Set(tableOrder);
+    const resolveRowScope = (row) => {
+      if (row?.contact_id) return 'contact';
+      if (row?.group_id) return 'group';
+      return 'global';
+    };
+    const rowMatchesTableScope = (row, table) => {
+      const tableScope = String(table?.scope || '').trim().toLowerCase();
+      const rowScope = resolveRowScope(row);
+      if (tableScope === 'global') return rowScope === 'global';
+      if (tableScope === 'group') return rowScope === 'group';
+      if (tableScope === 'contact') return rowScope === 'contact';
+      return true;
+    };
     const rows = [...(Array.isArray(globalRows) ? globalRows : []), ...(Array.isArray(scopedRows) ? scopedRows : [])]
       .filter(row => row && row.is_active !== false)
-      .filter(row => activeTableIds.has(String(row?.table_id || '').trim()));
+      .filter(row => {
+        const tableId = String(row?.table_id || '').trim();
+        if (!activeTableIds.has(tableId)) return false;
+        const table = tableById.get(tableId);
+        return table ? rowMatchesTableScope(row, table) : false;
+      });
     const resolveRowSortKey = (row, fallback = 0) => {
       const updatedAt = Number(row?.updated_at);
       if (Number.isFinite(updatedAt) && updatedAt > 0) return updatedAt;
@@ -827,8 +871,34 @@ class AppBridge {
         const c = this.contactsStore?.getContact?.(cid);
         return String(c?.name || cid || '').trim();
       };
+      const clampBridgeLimit = (raw, fallback) => normalizeBridgeLimit(raw, fallback);
+      const pickNewestRows = (rows = [], limit = 0) => {
+        const list = Array.isArray(rows) ? rows.slice() : [];
+        list.sort((a, b) => resolveRowSortKey(a, 0) - resolveRowSortKey(b, 0));
+        if (limit > 0 && list.length > limit) return list.slice(-limit);
+        return list;
+      };
+      const appendOutlineRows = ({
+        header,
+        note = '',
+        rows = [],
+        table = null,
+        limit = 0,
+      } = {}) => {
+        if (!table || !rows.length) return;
+        const selectedRows = pickNewestRows(rows, limit);
+        if (!selectedRows.length) return;
+        pushSpacer();
+        if (!pushLine(header)) return;
+        if (note) pushLine(note);
+        selectedRows.forEach((row) => {
+          const rowText = getRowText(row, table);
+          if (!rowText) return;
+          pushLine(`- ${rowText}`);
+        });
+      };
 
-      if (!isGroup) {
+      if (sessionMode === 'chat' && !isGroup) {
         const contactId = sessionId;
         const groups = this.contactsStore?.listGroups?.() || [];
         const memberGroups = groups.filter(g => Array.isArray(g?.members) && g.members.includes(contactId));
@@ -859,7 +929,7 @@ class AppBridge {
             }
           }
         }
-      } else {
+      } else if (sessionMode === 'chat') {
         const groupContact = this.contactsStore?.getContact?.(sessionId);
         const members = Array.isArray(groupContact?.members)
           ? groupContact.members.map(item => normalizeId(item)).filter(Boolean)
@@ -964,6 +1034,181 @@ class AppBridge {
                 if (!pushLine(`- ${rowText}`)) break;
               }
             }
+          }
+        }
+      }
+
+      const globalSettings = appSettings.get();
+      if (sessionMode === 'chat') {
+        const rpBridgeSourceId = String(sessionSettings?.rpBridgeSourceSessionId || context?.meta?.defaultRpBridgeSessionId || '').trim();
+        const rpTableSettings = resolveRpToChatBridgeTableSettings({
+          sessionSettings,
+          fallbackEnabled: globalSettings.memoryBridgeRpToChatEnabled !== false,
+          fallbackLimit: clampBridgeLimit(globalSettings.memoryBridgeRpToChatLimit, 0),
+        });
+        const enabledRpTableIds = getRpToChatBridgeTableIds()
+          .filter((tableId) => rpTableSettings?.[tableId]?.enabled === true);
+        if (enabledRpTableIds.length && rpBridgeSourceId && rpBridgeSourceId !== sessionId) {
+          const rpRows = await this.memoryTableStore.getMemories({
+            scope: 'contact',
+            contact_id: rpBridgeSourceId,
+            template_id: templateId,
+          }).catch(() => []);
+          const activeRpRows = (Array.isArray(rpRows) ? rpRows : [])
+            .filter(row => row && row.is_active !== false);
+          const sourceName = resolveContactName(rpBridgeSourceId) || rpBridgeSourceId;
+          const blockLines = [];
+          enabledRpTableIds.forEach((tableId) => {
+            const table = tableByIdAll.get(tableId);
+            if (!table) return;
+            const rowsForTable = activeRpRows.filter((row) => normalizeId(row?.table_id) === tableId);
+            if (!rowsForTable.length) return;
+            const limit = clampBridgeLimit(rpTableSettings?.[tableId]?.limit, 0);
+            const selectedRows = pickNewestRows(rowsForTable, limit);
+            if (!selectedRows.length) return;
+            if (blockLines.length === 0) {
+              blockLines.push(`【跨模式参考｜RP剧情记忆：${sourceName}】`);
+              blockLines.push('（仅用于帮助理解 RP 剧情进度，不代表当前聊天消息格式）');
+            } else {
+              blockLines.push('');
+            }
+            blockLines.push(`【${String(table?.name || tableId).trim() || tableId}】`);
+            selectedRows.forEach((row) => {
+              const rowText = getRowText(row, table);
+              if (!rowText) return;
+              blockLines.push(`- ${rowText}`);
+            });
+          });
+          if (blockLines.length) {
+            pushSpacer();
+            blockLines.forEach((line) => {
+              pushLine(line);
+            });
+          }
+        }
+      } else if (sessionMode === 'rp') {
+        const rawChatBridgeSourceId = String(sessionSettings?.chatBridgeSourceSessionId || '').trim();
+        const {
+          sourceMode: chatBridgeSourceMode,
+          sourceId: chatBridgeSourceId,
+          sourceIsGroup,
+        } = getChatToRpBridgeSourceMeta(rawChatBridgeSourceId);
+        const tableSettings = resolveChatToRpBridgeTableSettings({
+          sessionSettings,
+          sourceIsGroup,
+          sourceMode: chatBridgeSourceMode,
+          fallbackEnabled: globalSettings.memoryBridgeChatToRpEnabled !== false,
+          fallbackLimit: 0,
+        });
+        const enabledTableIds = getChatToRpBridgeTableIds({
+          sourceIsGroup,
+          sourceMode: chatBridgeSourceMode,
+        }).filter((tableId) => tableSettings?.[tableId]?.enabled === true);
+        if (chatBridgeSourceMode === 'all_social') {
+          const socialSessionIds = (this.chatStore?.listSessions?.() || [])
+            .map((id) => String(id || '').trim())
+            .filter(Boolean)
+            .filter((id) => !isRpSessionId(id))
+            .filter((id) => id !== sessionId);
+          if (enabledTableIds.length && socialSessionIds.length) {
+            const sourceRecords = await Promise.all(socialSessionIds.map(async (sourceId) => {
+              const currentSourceIsGroup = sourceId.startsWith('group:');
+              const rows = await this.memoryTableStore.getMemories({
+                scope: currentSourceIsGroup ? 'group' : 'contact',
+                group_id: currentSourceIsGroup ? sourceId : undefined,
+                contact_id: currentSourceIsGroup ? undefined : sourceId,
+                template_id: templateId,
+              }).catch(() => []);
+              return {
+                sourceId,
+                sourceIsGroup: currentSourceIsGroup,
+                rows: Array.isArray(rows) ? rows.filter((row) => row && row.is_active !== false) : [],
+              };
+            }));
+            const blockLines = [];
+            enabledTableIds.forEach((tableId) => {
+              const table = tableByIdAll.get(tableId);
+              if (!table) return;
+              const tableSourceIsGroup = isChatToRpGroupTableId(tableId);
+              const collectedRows = [];
+              sourceRecords.forEach((record) => {
+                if (record.sourceIsGroup !== tableSourceIsGroup) return;
+                record.rows
+                  .filter((row) => normalizeId(row?.table_id) === tableId)
+                  .forEach((row) => {
+                    collectedRows.push({ sourceId: record.sourceId, row });
+                  });
+              });
+              if (!collectedRows.length) return;
+              collectedRows.sort((a, b) => resolveRowSortKey(a?.row, 0) - resolveRowSortKey(b?.row, 0));
+              const limit = normalizeBridgeLimit(tableSettings?.[tableId]?.limit, 0);
+              const selectedRows = limit > 0 && collectedRows.length > limit
+                ? collectedRows.slice(-limit)
+                : collectedRows;
+              if (!selectedRows.length) return;
+              if (blockLines.length === 0) {
+                blockLines.push('【跨模式参考｜聊天互动记忆：所有聊天室】');
+                blockLines.push('（以下内容来自全部私聊 / 群聊的记忆表格，仅用于帮助理解用户近期互动，不代表 RP 正文格式）');
+              } else {
+                blockLines.push('');
+              }
+              const tableLabel = String(table?.name || tableId).trim() || tableId;
+              const scopedLabel = `${tableSourceIsGroup ? '群聊' : '私聊'}${tableLabel}`;
+              blockLines.push(`【${scopedLabel}】`);
+              selectedRows.forEach(({ sourceId, row }) => {
+                const rowText = getRowText(row, table);
+                if (!rowText) return;
+                const sourceName = resolveContactName(sourceId) || sourceId;
+                blockLines.push(`- ${sourceName}：${rowText}`);
+              });
+            });
+            if (blockLines.length) {
+              pushSpacer();
+              blockLines.forEach((line) => {
+                pushLine(line);
+              });
+            }
+          }
+        } else if (enabledTableIds.length && chatBridgeSourceId && chatBridgeSourceId !== sessionId) {
+          const sourceRows = await this.memoryTableStore.getMemories({
+            scope: sourceIsGroup ? 'group' : 'contact',
+            group_id: sourceIsGroup ? chatBridgeSourceId : undefined,
+            contact_id: sourceIsGroup ? undefined : chatBridgeSourceId,
+            template_id: templateId,
+          }).catch(() => []);
+          const activeSourceRows = (Array.isArray(sourceRows) ? sourceRows : [])
+            .filter(row => row && row.is_active !== false);
+          const sourceName = resolveContactName(chatBridgeSourceId) || chatBridgeSourceId;
+          const blockNote = sourceIsGroup
+            ? '（以下内容来自群聊记忆表格，仅用于帮助理解用户近期互动，不代表 RP 正文格式）'
+            : '（以下内容来自私聊记忆表格，仅用于帮助理解用户近期互动，不代表 RP 正文格式）';
+          const blockLines = [];
+          enabledTableIds.forEach((tableId) => {
+            const table = tableByIdAll.get(tableId);
+            if (!table) return;
+            const rowsForTable = activeSourceRows.filter((row) => normalizeId(row?.table_id) === tableId);
+            if (!rowsForTable.length) return;
+            const limit = normalizeBridgeLimit(tableSettings?.[tableId]?.limit, 0);
+            const selectedRows = pickNewestRows(rowsForTable, limit);
+            if (!selectedRows.length) return;
+            if (blockLines.length === 0) {
+              blockLines.push(`【跨模式参考｜聊天互动记忆：${sourceName}】`);
+              blockLines.push(blockNote);
+            } else {
+              blockLines.push('');
+            }
+            blockLines.push(`【${String(table?.name || tableId).trim() || tableId}】`);
+            selectedRows.forEach((row) => {
+              const rowText = getRowText(row, table);
+              if (!rowText) return;
+              blockLines.push(`- ${rowText}`);
+            });
+          });
+          if (blockLines.length) {
+            pushSpacer();
+            blockLines.forEach((line) => {
+              pushLine(line);
+            });
           }
         }
       }

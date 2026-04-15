@@ -1,4 +1,8 @@
 import { appSettings } from '../storage/app-settings.js';
+import {
+  isRpSessionId,
+  tableMatchesMemoryContext,
+} from '../memory/memory-context-utils.js';
 import { logger } from '../utils/logger.js';
 import { appConfirm } from './app-confirm.js';
 
@@ -6,6 +10,13 @@ const scopeLabelMap = {
   global: '全局',
   contact: '私聊',
   group: '群聊',
+  rp: 'RP',
+};
+
+const getRuntimeScopeLabel = (table, ctx = null) => {
+  const scope = String(table?.scope || '').trim().toLowerCase();
+  if (scope === 'contact' && ctx?.type === 'rp') return scopeLabelMap.rp;
+  return scopeLabelMap[scope] || scope || '未知';
 };
 
 const clampText = (value, max = 120) => {
@@ -72,11 +83,9 @@ const renderExportTemplate = (template, vars) => {
 
 const filterRowsByScope = (rows, table, ctx = null) => {
   const scope = String(table?.scope || '').trim().toLowerCase();
-  const sharedMemory = ctx?.sharedMemory === true;
   if (!scope) return rows;
   if (scope === 'global') return rows.filter(row => !row?.contact_id && !row?.group_id);
   if (scope === 'contact') {
-    if (sharedMemory) return rows.filter(row => !row?.group_id);
     return rows.filter(row => row?.contact_id);
   }
   if (scope === 'group') return rows.filter(row => row?.group_id);
@@ -279,14 +288,13 @@ export class MemoryTableEditor {
     const templateId = String(template?.meta?.id || '').trim();
     if (!templateId) return [];
     const out = [];
-    const useSharedMemory = ctx?.sharedMemory === true;
-    if (ctx.type === 'contact') {
+    if (ctx.type === 'contact' || ctx.type === 'rp') {
       const contactId = String(ctx.contactId || '').trim();
-      if (contactId && !useSharedMemory) {
+      if (contactId) {
         const rows = await this.memoryStore.getMemories({ scope: 'contact', contact_id: contactId, template_id: templateId });
         out.push(...(Array.isArray(rows) ? rows : []));
       }
-      if (this.includeGlobal || useSharedMemory) {
+      if (this.includeGlobal) {
         const globals = await this.memoryStore.getMemories({ scope: 'global', template_id: templateId });
         out.push(...(Array.isArray(globals) ? globals : []));
       }
@@ -316,12 +324,20 @@ export class MemoryTableEditor {
     }
     this.listWrap.innerHTML = '';
     this.visibleIds = new Set();
-    const includeGlobal = this.includeGlobal || ctx?.sharedMemory === true;
+    const includeGlobal = this.includeGlobal;
     const tables = template.tables.filter(table => {
-      if (ctx.type === 'contact') return table.scope === 'global' || table.scope === 'contact';
+      if (ctx.type === 'contact' || ctx.type === 'rp') return table.scope === 'global' || table.scope === 'contact';
       if (ctx.type === 'group') return table.scope === 'global' || table.scope === 'group';
       if (ctx.type === 'global') return table.scope === 'global';
       return false;
+    }).filter(table => {
+      const sessionId = ctx?.type === 'group' ? ctx?.groupId : ctx?.contactId;
+      return tableMatchesMemoryContext(table, {
+        sessionId,
+        contextType: ctx?.type,
+        isGroup: ctx?.type === 'group',
+        uiMode: ctx?.type === 'rp' || isRpSessionId(sessionId) ? 'rp' : 'social',
+      });
     }).filter(table => {
       if (!includeGlobal && table.scope === 'global') return false;
       return true;
@@ -552,7 +568,7 @@ export class MemoryTableEditor {
     const baseSessionId = ctx?.type === 'group' ? ctx?.groupId : ctx?.contactId;
     const sessionId = String(baseSessionId || window.appBridge?.activeSessionId || '').trim();
     const isGroup = ctx?.type === 'group' || String(sessionId).startsWith('group:');
-    const sharedMemory = ctx?.sharedMemory === true && !isGroup;
+    const isRp = ctx?.type === 'rp' || isRpSessionId(sessionId);
     const contact = sessionId ? window.appBridge?.contactsStore?.getContact?.(sessionId) : null;
     const characterName = String(contact?.name || (isGroup ? sessionId.replace(/^group:/, '') : sessionId) || '助手');
     const settings = appSettings.get();
@@ -570,7 +586,10 @@ export class MemoryTableEditor {
         memoryAutoExtract,
         memoryInjectPosition,
         memoryInjectDepth,
-        sharedMemory,
+        sharedMemory: false,
+        uiMode: isRp ? 'rp' : 'social',
+        defaultRpBridgeSessionId: !isRp ? String(window.appBridge?.getRpSessionIdForActivePersona?.() || '').trim() : '',
+        defaultChatBridgeSessionId: isRp ? String(window.appBridge?.getLastSocialSessionId?.() || '').trim() : '',
       },
       group: isGroup ? { id: sessionId, name: characterName, members: [], memberNames: [] } : null,
       history: [],
@@ -580,6 +599,7 @@ export class MemoryTableEditor {
   resolveSessionId(ctx) {
     if (!ctx) return '';
     if (ctx.type === 'group') return String(ctx.groupId || '').trim();
+    if (ctx.type === 'rp') return String(ctx.contactId || '').trim();
     if (ctx.type === 'contact') return String(ctx.contactId || '').trim();
     return String(window.appBridge?.activeSessionId || '').trim();
   }
@@ -646,8 +666,7 @@ export class MemoryTableEditor {
     const appBridge = window.appBridge;
     if (!appBridge) return '';
     const scope = String(table?.scope || '').trim().toLowerCase();
-    const sharedMemory = ctx?.sharedMemory === true;
-    const effectiveScope = sharedMemory && scope === 'contact' ? 'global' : scope;
+    const effectiveScope = scope;
     const sessionId = this.resolveSessionId(ctx);
     if (effectiveScope === 'global') {
       let worldId = String(appBridge.globalWorldId || '').trim();
@@ -847,7 +866,7 @@ export class MemoryTableEditor {
     const allRows = this.memories.filter(row => String(row.table_id || '') === String(table.id || ''));
     const scopedRows = filterRowsByScope(allRows, table, ctx);
     const maxLabel = table.maxRows ? ` / ${table.maxRows}` : '';
-    meta.textContent = `${scopeLabelMap[table.scope] || table.scope || '未知'} · ${scopedRows.length}${maxLabel} · ${table.columns?.length || 0} 列`;
+    meta.textContent = `${getRuntimeScopeLabel(table, ctx)} · ${scopedRows.length}${maxLabel} · ${table.columns?.length || 0} 列`;
     const titleWrap = document.createElement('div');
     titleWrap.appendChild(title);
     titleWrap.appendChild(meta);
@@ -938,7 +957,7 @@ export class MemoryTableEditor {
       select.onchange = () => {
         if (select.checked) this.selectedIds.add(row.id);
         else this.selectedIds.delete(row.id);
-        this.renderTables(this.currentContext);
+        this.renderTableList(this.currentContext);
       };
       controls.appendChild(select);
     }
@@ -1092,7 +1111,6 @@ export class MemoryTableEditor {
     this.ensureEditorModal();
     if (!this.modalForm || !this.modalHeader) return;
     const isNew = !row;
-    const sharedMemory = ctx?.sharedMemory === true;
     this.modalHeader.textContent = `${isNew ? '新增' : '编辑'} · ${table.name || table.id || ''}`;
     this.modalForm.innerHTML = '';
     this.modalFields = [];
@@ -1144,7 +1162,7 @@ export class MemoryTableEditor {
       for (const field of this.modalFields) {
         rowData[field.id] = field.getValue();
       }
-      const contactId = table.scope === 'contact' && !sharedMemory ? String(ctx.contactId || '') : null;
+      const contactId = table.scope === 'contact' ? String(ctx.contactId || '') : null;
       const groupId = table.scope === 'group' ? String(ctx.groupId || '') : null;
       const payload = {
         template_id: this.template?.meta?.id,

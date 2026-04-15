@@ -1,4 +1,5 @@
 import { validateTemplate } from '../memory/template-schema.js';
+import { getMemoryTableUsageLabel, normalizeMemoryTableUsage } from '../memory/memory-context-utils.js';
 import { MemoryTableEditor } from './memory-table-editor.js';
 import { logger } from '../utils/logger.js';
 import { appConfirm } from './app-confirm.js';
@@ -23,6 +24,7 @@ const ensureTableConfigDefaults = (table) => {
   if (!table.sourceData || typeof table.sourceData !== 'object') table.sourceData = {};
   if (!table.updateConfig || typeof table.updateConfig !== 'object') table.updateConfig = {};
   if (!table.exportConfig || typeof table.exportConfig !== 'object') table.exportConfig = {};
+  table.usage = normalizeMemoryTableUsage(table.usage);
   return table;
 };
 
@@ -1625,6 +1627,7 @@ export class MemoryTemplatePanel {
       id: `table_${stamp}`,
       name: '新表格',
       scope: 'contact',
+      usage: 'chat',
       maxRows: null,
       columns: [{ id: 'col1', name: '字段1', type: 'text' }],
       sourceData: {},
@@ -1687,7 +1690,7 @@ export class MemoryTemplatePanel {
       details.style.cssText = 'border:1px solid #e2e8f0; border-radius:12px; padding:10px; margin-bottom:12px; background:#fff;';
       const summary = document.createElement('summary');
       summary.style.cssText = 'cursor:pointer; font-weight:700; color:#0f172a;';
-      summary.textContent = `${table.name || table.id || '未命名表格'} · ${table.scope || 'contact'}`;
+      summary.textContent = `${table.name || table.id || '未命名表格'} · ${table.scope || 'contact'} · ${getMemoryTableUsageLabel(table.usage)}`;
       details.appendChild(summary);
 
       const body = document.createElement('div');
@@ -1706,29 +1709,41 @@ export class MemoryTemplatePanel {
           <option value="contact">私聊</option>
           <option value="group">群聊</option>
         </select>
+        <label style="font-size:12px; color:#64748b;">模式</label>
+        <select class="memory-table-usage" style="padding:6px 8px; border:1px solid #e2e8f0; border-radius:8px; font-size:12px;">
+          <option value="all">通用</option>
+          <option value="chat">聊天</option>
+          <option value="rp">RP</option>
+        </select>
         <label style="font-size:12px; color:#64748b;">最大行数</label>
         <input type="number" class="memory-table-max-rows" min="0" step="1" style="width:90px; padding:6px 8px; border:1px solid #e2e8f0; border-radius:8px; font-size:12px;">
       `;
       const idInput = baseRow.querySelector('.memory-table-id');
       const nameInput = baseRow.querySelector('.memory-table-name');
       const scopeSelect = baseRow.querySelector('.memory-table-scope');
+      const usageSelect = baseRow.querySelector('.memory-table-usage');
       const maxRowsInput = baseRow.querySelector('.memory-table-max-rows');
       if (idInput) idInput.value = String(table.id || '');
       if (nameInput) nameInput.value = String(table.name || '');
       if (scopeSelect) scopeSelect.value = String(table.scope || 'contact');
+      if (usageSelect) usageSelect.value = normalizeMemoryTableUsage(table.usage);
       if (maxRowsInput) maxRowsInput.value = table.maxRows != null ? String(table.maxRows) : '';
 
       idInput?.addEventListener('input', () => {
         table.id = String(idInput.value || '').trim();
-        summary.textContent = `${table.name || table.id || '未命名表格'} · ${table.scope || 'contact'}`;
+        summary.textContent = `${table.name || table.id || '未命名表格'} · ${table.scope || 'contact'} · ${getMemoryTableUsageLabel(table.usage)}`;
       });
       nameInput?.addEventListener('input', () => {
         table.name = String(nameInput.value || '').trim();
-        summary.textContent = `${table.name || table.id || '未命名表格'} · ${table.scope || 'contact'}`;
+        summary.textContent = `${table.name || table.id || '未命名表格'} · ${table.scope || 'contact'} · ${getMemoryTableUsageLabel(table.usage)}`;
       });
       scopeSelect?.addEventListener('change', () => {
         table.scope = String(scopeSelect.value || 'contact');
-        summary.textContent = `${table.name || table.id || '未命名表格'} · ${table.scope || 'contact'}`;
+        summary.textContent = `${table.name || table.id || '未命名表格'} · ${table.scope || 'contact'} · ${getMemoryTableUsageLabel(table.usage)}`;
+      });
+      usageSelect?.addEventListener('change', () => {
+        table.usage = normalizeMemoryTableUsage(usageSelect.value);
+        summary.textContent = `${table.name || table.id || '未命名表格'} · ${table.scope || 'contact'} · ${getMemoryTableUsageLabel(table.usage)}`;
       });
       maxRowsInput?.addEventListener('input', () => {
         const raw = Math.trunc(Number(maxRowsInput.value));

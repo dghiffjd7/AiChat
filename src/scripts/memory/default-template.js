@@ -2,16 +2,17 @@ export const DEFAULT_MEMORY_TEMPLATE = {
   meta: {
     id: 'default-v1',
     name: '通用记忆模板',
-    version: '1.0.2',
+    version: '1.1.1',
     author: '官方',
-    description: '适用于常规角色扮演与日常聊天的基础记忆表格模板。',
-    tags: ['通用', '角色扮演'],
+    description: '适用于聊天模式与 RP 模式的基础记忆表格模板。',
+    tags: ['通用', '聊天', 'RP'],
   },
   tables: [
     {
       id: 'user_profile',
       name: '用户档案',
       scope: 'global',
+      usage: 'all',
       maxRows: 1,
       sourceData: {
         note: '记录用户基础档案，仅允许单行存在。',
@@ -45,6 +46,7 @@ export const DEFAULT_MEMORY_TEMPLATE = {
       id: 'character_profile',
       name: '角色档案',
       scope: 'contact',
+      usage: 'chat',
       maxRows: 1,
       sourceData: {
         note: '记录角色档案信息。',
@@ -77,6 +79,7 @@ export const DEFAULT_MEMORY_TEMPLATE = {
       id: 'important_people',
       name: '重要人物表',
       scope: 'group',
+      usage: 'chat',
       sourceData: {
         note: '群聊专用：记录群内或剧情中出现的重要人物。每轮需判断该人物是否仍在场/可互动，更新“是否在场”。私聊不使用该表。',
         initNode: '群聊首次出现重要人物时插入。',
@@ -110,6 +113,7 @@ export const DEFAULT_MEMORY_TEMPLATE = {
       id: 'relationship',
       name: '关系记录',
       scope: 'contact',
+      usage: 'chat',
       sourceData: {
         note: '记录与当前角色的关系与印象变化。',
         initNode: '首次对话时初始化关系记录。',
@@ -141,6 +145,7 @@ export const DEFAULT_MEMORY_TEMPLATE = {
       id: 'events',
       name: '重要事件',
       scope: 'contact',
+      usage: 'chat',
       sourceData: {
         note: '记录重要事件的时间、描述与影响。',
         initNode: '首次出现重大事件时插入。',
@@ -172,6 +177,7 @@ export const DEFAULT_MEMORY_TEMPLATE = {
       id: 'items',
       name: '重要物品',
       scope: 'contact',
+      usage: 'chat',
       sourceData: {
         note: '记录重要物品的名称、描述与持有者。',
         initNode: '首次出现重要物品时插入。',
@@ -203,6 +209,7 @@ export const DEFAULT_MEMORY_TEMPLATE = {
       id: 'group_consensus',
       name: '群聊共识',
       scope: 'group',
+      usage: 'chat',
       sourceData: {
         note: '记录群聊中形成的共识与规则。',
         initNode: '首次形成共识时插入。',
@@ -233,6 +240,7 @@ export const DEFAULT_MEMORY_TEMPLATE = {
       id: 'chat_summary',
       name: '私聊摘要',
       scope: 'contact',
+      usage: 'chat',
       sourceData: {
         note: '记录每次私聊后的摘要。每次对话必须新增一行，禁止用 update 覆盖旧行。按手机对话模式写纯文本，禁止输出 <details>/<summary> 等标签。仅记录该私聊内容，避免泄露群聊或其他角色的私密信息。',
         initNode: '首次对话后插入一条摘要。',
@@ -262,6 +270,7 @@ export const DEFAULT_MEMORY_TEMPLATE = {
       id: 'chat_outline',
       name: '私聊总体大纲',
       scope: 'contact',
+      usage: 'chat',
       sourceData: {
         note: '记录每次私聊后的总体大纲（精简摘要）。每次对话必须新增一行，禁止用 update 覆盖旧行。内容需精炼到关键事件与关系变化；按手机对话模式写纯文本，禁止输出 <details>/<summary> 等标签。仅记录该私聊内容，避免泄露群聊或其他角色的私密信息。',
         initNode: '首次对话后插入一条总体大纲。',
@@ -291,6 +300,7 @@ export const DEFAULT_MEMORY_TEMPLATE = {
       id: 'group_summary',
       name: '群聊摘要',
       scope: 'group',
+      usage: 'chat',
       sourceData: {
         note: '记录群聊每次互动摘要。每次对话必须新增一行，禁止用 update 覆盖旧行。按手机对话模式写纯文本，禁止输出 <details>/<summary> 等标签。仅记录群聊公开信息，不包含成员私聊或敏感隐私。',
         initNode: '群聊首次互动后插入一条摘要。',
@@ -320,6 +330,7 @@ export const DEFAULT_MEMORY_TEMPLATE = {
       id: 'group_outline',
       name: '群聊总体大纲',
       scope: 'group',
+      usage: 'chat',
       sourceData: {
         note: '记录群聊每次互动的总体大纲（精简摘要）。每次对话必须新增一行，禁止用 update 覆盖旧行。内容需精炼到关键事件与关系变化；按手机对话模式写纯文本，禁止输出 <details>/<summary> 等标签。仅记录群聊公开信息，不包含成员私聊或敏感隐私。',
         initNode: '群聊首次互动后插入一条总体大纲。',
@@ -342,6 +353,136 @@ export const DEFAULT_MEMORY_TEMPLATE = {
       },
       columns: [
         { id: 'time', name: '时间/轮次', type: 'text' },
+        { id: 'outline', name: '总体大纲', type: 'multiline' },
+      ],
+    },
+    {
+      id: 'rp_important_people',
+      name: '重要人物表',
+      scope: 'contact',
+      usage: 'rp',
+      sourceData: {
+        note: '记录当前 RP 中推动剧情的重要人物，仅限当前 RP 会话。',
+        initNode: '首次出现关键人物时插入。',
+        insertNode: '新增关键人物时插入。',
+        updateNode: '关系、立场、状态、经历变化时更新。',
+        deleteNode: '人物长期退出剧情且已无影响时可删除。',
+      },
+      updateConfig: {
+        contextDepth: 6,
+        updateFrequency: 1,
+        batchSize: 20,
+        skipFloors: 0,
+      },
+      exportConfig: {
+        enabled: false,
+        splitByRow: false,
+        entryName: '',
+        keywords: '',
+        injectionTemplate: '',
+      },
+      columns: [
+        { id: 'name', name: '姓名', type: 'text' },
+        { id: 'identity', name: '身份', type: 'text' },
+        { id: 'relation', name: '与用户关系', type: 'text' },
+        { id: 'stance', name: '当前立场', type: 'text' },
+        { id: 'key_events', name: '重要事件', type: 'multiline' },
+        { id: 'status', name: '当前状态', type: 'multiline' },
+        { id: 'notes', name: '备注', type: 'multiline' },
+      ],
+    },
+    {
+      id: 'rp_tasks',
+      name: '任务',
+      scope: 'contact',
+      usage: 'rp',
+      sourceData: {
+        note: '记录当前 RP 的主线、支线或阶段目标。',
+        initNode: '首次出现明确任务时插入。',
+        insertNode: '新增任务时插入。',
+        updateNode: '任务状态、线索、目标变化时更新。',
+        deleteNode: '任务彻底作废或已无意义时删除。',
+      },
+      updateConfig: {
+        contextDepth: 6,
+        updateFrequency: 1,
+        batchSize: 20,
+        skipFloors: 0,
+      },
+      exportConfig: {
+        enabled: false,
+        splitByRow: false,
+        entryName: '',
+        keywords: '',
+        injectionTemplate: '',
+      },
+      columns: [
+        { id: 'title', name: '任务名称', type: 'text' },
+        { id: 'type', name: '类型', type: 'text' },
+        { id: 'status', name: '当前状态', type: 'text' },
+        { id: 'goal', name: '目标', type: 'multiline' },
+        { id: 'clues', name: '关键线索', type: 'multiline' },
+        { id: 'risk_reward', name: '奖励/风险', type: 'multiline' },
+        { id: 'notes', name: '备注', type: 'multiline' },
+      ],
+    },
+    {
+      id: 'rp_summary',
+      name: '摘要',
+      scope: 'contact',
+      usage: 'rp',
+      sourceData: {
+        note: '记录 RP 每轮推进后的阶段性摘要。每次推进必须新增一行，禁止用 update 覆盖旧行。',
+        initNode: '首次推进后插入一条摘要。',
+        insertNode: '每轮推进新增一条摘要（必须）。',
+        updateNode: '禁止使用 update 覆盖旧摘要；如需修正请手动编辑。',
+        deleteNode: '一般不删除，除非摘要明显错误或需要合并重写。',
+      },
+      updateConfig: {
+        contextDepth: 6,
+        updateFrequency: 1,
+        batchSize: 20,
+        skipFloors: 0,
+      },
+      exportConfig: {
+        enabled: false,
+        splitByRow: false,
+        entryName: '',
+        keywords: '',
+        injectionTemplate: '',
+      },
+      columns: [
+        { id: 'time', name: '时间/章节', type: 'text' },
+        { id: 'summary', name: '摘要', type: 'multiline' },
+      ],
+    },
+    {
+      id: 'rp_outline',
+      name: '总体大纲',
+      scope: 'contact',
+      usage: 'rp',
+      sourceData: {
+        note: '记录 RP 每轮推进后的关键剧情大纲。每次推进必须新增一行，禁止用 update 覆盖旧行。内容需精炼到剧情进展、状态变化与关键人物。',
+        initNode: '首次推进后插入一条总体大纲。',
+        insertNode: '每轮推进新增一条总体大纲（必须）。',
+        updateNode: '禁止使用 update 覆盖旧大纲；如需修正请手动编辑。',
+        deleteNode: '一般不删除，除非大纲明显错误或需要合并重写。',
+      },
+      updateConfig: {
+        contextDepth: 6,
+        updateFrequency: 1,
+        batchSize: 20,
+        skipFloors: 0,
+      },
+      exportConfig: {
+        enabled: false,
+        splitByRow: false,
+        entryName: '',
+        keywords: '',
+        injectionTemplate: '',
+      },
+      columns: [
+        { id: 'time', name: '时间/章节', type: 'text' },
         { id: 'outline', name: '总体大纲', type: 'multiline' },
       ],
     },

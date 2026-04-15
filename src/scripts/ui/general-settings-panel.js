@@ -146,6 +146,11 @@ export class GeneralSettingsPanel {
     this.memoryInjectPositionSelect = null;
     this.memoryInjectDepthWrap = null;
     this.memoryInjectDepthInput = null;
+    this.memoryBridgeBlock = null;
+    this.memoryBridgeRpToChatToggle = null;
+    this.memoryBridgeRpToChatLimitInput = null;
+    this.memoryBridgeChatToRpToggle = null;
+    this.memoryBridgeChatToRpLimitInput = null;
     this.memoryAutoConfirmToggle = null;
     this.memoryAutoStepToggle = null;
     this.templateEnabledToggle = null;
@@ -272,6 +277,22 @@ export class GeneralSettingsPanel {
       const safe = Number.isFinite(raw) ? Math.max(0, raw) : 4;
       this.memoryInjectDepthInput.value = String(safe);
     }
+    if (this.memoryBridgeRpToChatToggle) {
+      this.memoryBridgeRpToChatToggle.checked = settings.memoryBridgeRpToChatEnabled !== false;
+    }
+    if (this.memoryBridgeRpToChatLimitInput) {
+      const raw = Math.trunc(Number(settings.memoryBridgeRpToChatLimit));
+      const safe = Number.isFinite(raw) ? Math.max(0, raw) : 5;
+      this.memoryBridgeRpToChatLimitInput.value = String(safe);
+    }
+    if (this.memoryBridgeChatToRpToggle) {
+      this.memoryBridgeChatToRpToggle.checked = settings.memoryBridgeChatToRpEnabled !== false;
+    }
+    if (this.memoryBridgeChatToRpLimitInput) {
+      const raw = Math.trunc(Number(settings.memoryBridgeChatToRpLimit));
+      const safe = Number.isFinite(raw) ? Math.max(0, raw) : 5;
+      this.memoryBridgeChatToRpLimitInput.value = String(safe);
+    }
     if (this.templateEnabledToggle) {
       this.templateEnabledToggle.checked = settings.templateEnabled !== false;
     }
@@ -369,6 +390,21 @@ export class GeneralSettingsPanel {
     }
     if (this.memoryInjectDepthInput) {
       this.memoryInjectDepthInput.disabled = !showDepth;
+    }
+    if (this.memoryBridgeBlock) {
+      this.memoryBridgeBlock.style.display = showMemoryTable ? 'block' : 'none';
+    }
+    if (this.memoryBridgeRpToChatToggle) {
+      this.memoryBridgeRpToChatToggle.disabled = !showMemoryTable;
+    }
+    if (this.memoryBridgeRpToChatLimitInput) {
+      this.memoryBridgeRpToChatLimitInput.disabled = !showMemoryTable || this.memoryBridgeRpToChatToggle?.checked === false;
+    }
+    if (this.memoryBridgeChatToRpToggle) {
+      this.memoryBridgeChatToRpToggle.disabled = !showMemoryTable;
+    }
+    if (this.memoryBridgeChatToRpLimitInput) {
+      this.memoryBridgeChatToRpLimitInput.disabled = !showMemoryTable || this.memoryBridgeChatToRpToggle?.checked === false;
     }
     this.updateSelectableCards();
   }
@@ -1296,17 +1332,46 @@ export class GeneralSettingsPanel {
               <small style="color:#94a3b8; display:block; margin-top:4px;">可覆盖模板注入位置</small>
             </div>
 
-            <div id="general-memory-inject-depth-wrap" style="margin-top: 10px; display:none;">
-              <label style="display:flex; align-items:center; justify-content:space-between; gap:8px; font-size:12px; font-weight:700; color:#0f172a;">
-                <span>深度注入位置</span>
-                <input type="number" id="general-memory-inject-depth" min="0" step="1"
-                       style="width: 90px; padding: 4px 6px; border:1px solid #e2e8f0; border-radius:8px; font-size:12px; text-align:right;">
-              </label>
-              <small style="color:#94a3b8; display:block; margin-top:4px;">距聊天末尾 N 条插入，0 表示追加到末尾</small>
-            </div>
-          </div>
-          </div>
-        </div>
+	            <div id="general-memory-inject-depth-wrap" style="margin-top: 10px; display:none;">
+	              <label style="display:flex; align-items:center; justify-content:space-between; gap:8px; font-size:12px; font-weight:700; color:#0f172a;">
+	                <span>深度注入位置</span>
+	                <input type="number" id="general-memory-inject-depth" min="0" step="1"
+	                       style="width: 90px; padding: 4px 6px; border:1px solid #e2e8f0; border-radius:8px; font-size:12px; text-align:right;">
+	              </label>
+	              <small style="color:#94a3b8; display:block; margin-top:4px;">距聊天末尾 N 条插入，0 表示追加到末尾</small>
+	            </div>
+	          </div>
+
+              <div id="general-memory-bridge-block" style="margin-left: 26px; margin-top: 10px; padding: 8px; border: 1px dashed #e2e8f0; border-radius: 10px; display: none;">
+                <div style="font-size:12px; color:#64748b; margin-bottom:8px;">聊天 / RP 桥接默认规则</div>
+                <div style="display:flex; flex-direction:column; gap:10px;">
+                  <div style="padding:8px; border:1px solid #e2e8f0; border-radius:10px; background:#fff;">
+                    <label style="display:flex; align-items:center; justify-content:space-between; gap:10px; font-size:12px; font-weight:700; color:#0f172a;">
+                      <span>RP 大纲 -> 聊天模式</span>
+                      <input type="checkbox" id="general-memory-bridge-rp-to-chat" style="width:16px; height:16px;">
+                    </label>
+                    <label style="display:flex; align-items:center; justify-content:space-between; gap:10px; font-size:12px; color:#475569; margin-top:8px;">
+                      <span>默认注入条数（0=全部）</span>
+                      <input type="number" id="general-memory-bridge-rp-to-chat-limit" min="0" step="1"
+                             style="width: 90px; padding: 4px 6px; border:1px solid #e2e8f0; border-radius:8px; font-size:12px; text-align:right;">
+                    </label>
+                  </div>
+                  <div style="padding:8px; border:1px solid #e2e8f0; border-radius:10px; background:#fff;">
+                    <label style="display:flex; align-items:center; justify-content:space-between; gap:10px; font-size:12px; font-weight:700; color:#0f172a;">
+                      <span>聊天大纲 -> RP 模式</span>
+                      <input type="checkbox" id="general-memory-bridge-chat-to-rp" style="width:16px; height:16px;">
+                    </label>
+                    <label style="display:flex; align-items:center; justify-content:space-between; gap:10px; font-size:12px; color:#475569; margin-top:8px;">
+                      <span>默认注入条数（0=全部）</span>
+                      <input type="number" id="general-memory-bridge-chat-to-rp-limit" min="0" step="1"
+                             style="width: 90px; padding: 4px 6px; border:1px solid #e2e8f0; border-radius:8px; font-size:12px; text-align:right;">
+                    </label>
+                  </div>
+                </div>
+                <small style="color:#94a3b8; display:block; margin-top:6px;">当前默认只桥接双方“总体大纲”，不桥接原始消息。</small>
+              </div>
+	          </div>
+	        </div>
 
         <div class="general-settings-card">
           <div class="general-settings-card-head">
@@ -1471,6 +1536,11 @@ export class GeneralSettingsPanel {
     this.memoryInjectPositionSelect = this.element.querySelector('#general-memory-inject-position');
     this.memoryInjectDepthWrap = this.element.querySelector('#general-memory-inject-depth-wrap');
     this.memoryInjectDepthInput = this.element.querySelector('#general-memory-inject-depth');
+    this.memoryBridgeBlock = this.element.querySelector('#general-memory-bridge-block');
+    this.memoryBridgeRpToChatToggle = this.element.querySelector('#general-memory-bridge-rp-to-chat');
+    this.memoryBridgeRpToChatLimitInput = this.element.querySelector('#general-memory-bridge-rp-to-chat-limit');
+    this.memoryBridgeChatToRpToggle = this.element.querySelector('#general-memory-bridge-chat-to-rp');
+    this.memoryBridgeChatToRpLimitInput = this.element.querySelector('#general-memory-bridge-chat-to-rp-limit');
     this.memoryAutoConfirmToggle = this.element.querySelector('#general-memory-auto-confirm');
     this.memoryAutoStepToggle = this.element.querySelector('#general-memory-auto-step');
     this.templateEnabledToggle = this.element.querySelector('#general-template-enabled');
@@ -1890,6 +1960,32 @@ export class GeneralSettingsPanel {
       if (e?.target) e.target.value = String(safe);
       appSettings.update({ memoryInjectDepth: safe });
       window.dispatchEvent(new CustomEvent('app-settings-changed', { detail: { key: 'memoryInjectDepth', value: safe } }));
+    });
+    this.memoryBridgeRpToChatToggle?.addEventListener('change', (e) => {
+      const enabled = Boolean(e?.target?.checked);
+      appSettings.update({ memoryBridgeRpToChatEnabled: enabled });
+      window.dispatchEvent(new CustomEvent('app-settings-changed', { detail: { key: 'memoryBridgeRpToChatEnabled', value: enabled } }));
+      this.updateMemoryAutoVisibility();
+    });
+    this.memoryBridgeRpToChatLimitInput?.addEventListener('input', (e) => {
+      const raw = Math.trunc(Number(e?.target?.value));
+      const safe = Number.isFinite(raw) ? Math.max(0, raw) : 5;
+      if (e?.target) e.target.value = String(safe);
+      appSettings.update({ memoryBridgeRpToChatLimit: safe });
+      window.dispatchEvent(new CustomEvent('app-settings-changed', { detail: { key: 'memoryBridgeRpToChatLimit', value: safe } }));
+    });
+    this.memoryBridgeChatToRpToggle?.addEventListener('change', (e) => {
+      const enabled = Boolean(e?.target?.checked);
+      appSettings.update({ memoryBridgeChatToRpEnabled: enabled });
+      window.dispatchEvent(new CustomEvent('app-settings-changed', { detail: { key: 'memoryBridgeChatToRpEnabled', value: enabled } }));
+      this.updateMemoryAutoVisibility();
+    });
+    this.memoryBridgeChatToRpLimitInput?.addEventListener('input', (e) => {
+      const raw = Math.trunc(Number(e?.target?.value));
+      const safe = Number.isFinite(raw) ? Math.max(0, raw) : 5;
+      if (e?.target) e.target.value = String(safe);
+      appSettings.update({ memoryBridgeChatToRpLimit: safe });
+      window.dispatchEvent(new CustomEvent('app-settings-changed', { detail: { key: 'memoryBridgeChatToRpLimit', value: safe } }));
     });
     this.memoryModeTable?.addEventListener('change', async (e) => {
       const target = e?.target;

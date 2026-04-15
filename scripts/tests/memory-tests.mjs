@@ -1,5 +1,10 @@
 import assert from 'node:assert/strict';
 import { extractTableEditBlocks, parseTableEditActions, stripTableEditBlocks } from '../../src/scripts/memory/memory-edit-parser.js';
+import {
+  getChatToRpBridgeSourceMeta,
+  resolveChatToRpBridgeTableSettings,
+  resolveRpToChatBridgeTableSettings,
+} from '../../src/scripts/memory/memory-bridge-utils.js';
 import { validateTemplate } from '../../src/scripts/memory/template-schema.js';
 import { buildMemoryTablePlan, estimateTokens, parseMemoryPromptPositions } from '../../src/scripts/memory/memory-prompt-utils.js';
 
@@ -136,6 +141,55 @@ test('buildMemoryTablePlan: max_tokens truncation', () => {
   assert.equal(plan.items.length, 1);
   assert.equal(plan.truncated.length, 1);
   assert.equal(plan.truncated[0].reason, 'max_tokens');
+});
+
+test('getChatToRpBridgeSourceMeta: empty source defaults to all_social', () => {
+  const meta = getChatToRpBridgeSourceMeta('');
+  assert.deepEqual(meta, {
+    sourceMode: 'all_social',
+    sourceId: '',
+    sourceIsGroup: false,
+  });
+});
+
+test('resolveChatToRpBridgeTableSettings: all_social enables both outlines by legacy defaults', () => {
+  const settings = resolveChatToRpBridgeTableSettings({
+    sessionSettings: {},
+    sourceMode: 'all_social',
+    fallbackEnabled: true,
+    fallbackLimit: 0,
+  });
+  assert.ok(Object.prototype.hasOwnProperty.call(settings, 'character_profile'));
+  assert.ok(Object.prototype.hasOwnProperty.call(settings, 'group_summary'));
+  assert.equal(settings.chat_outline.enabled, true);
+  assert.equal(settings.group_outline.enabled, true);
+  assert.equal(settings.character_profile.enabled, false);
+  assert.equal(settings.group_summary.enabled, false);
+  assert.equal(settings.chat_outline.limit, 0);
+  assert.equal(settings.group_outline.limit, 0);
+  assert.equal(settings.character_profile.limit, 0);
+});
+
+test('resolveRpToChatBridgeTableSettings: explicit table settings override legacy fields', () => {
+  const settings = resolveRpToChatBridgeTableSettings({
+    sessionSettings: {
+      rpBridgeEnabled: false,
+      rpBridgeOutlineLimit: 5,
+      rpBridgeTableSettings: {
+        rp_outline: { enabled: true, limit: 2 },
+      },
+    },
+    fallbackEnabled: false,
+    fallbackLimit: 5,
+  });
+  assert.ok(Object.prototype.hasOwnProperty.call(settings, 'rp_important_people'));
+  assert.ok(Object.prototype.hasOwnProperty.call(settings, 'rp_tasks'));
+  assert.ok(Object.prototype.hasOwnProperty.call(settings, 'rp_summary'));
+  assert.equal(settings.rp_outline.enabled, true);
+  assert.equal(settings.rp_outline.limit, 2);
+  assert.equal(settings.rp_important_people.enabled, false);
+  assert.equal(settings.rp_tasks.enabled, false);
+  assert.equal(settings.rp_summary.enabled, false);
 });
 
 let failed = 0;

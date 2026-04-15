@@ -4408,7 +4408,7 @@ export class WorldEditorModal {
         if (typeof chatStore._ensureSession === 'function') {
             chatStore._ensureSession(sessionId);
             const settings = chatStore.getSessionSettings?.(sessionId) || {};
-            chatStore.setSessionSettings?.(sessionId, { ...settings, sharedVariables: true, sharedMemory: true });
+            chatStore.setSessionSettings?.(sessionId, { ...settings, sharedVariables: true, sharedMemory: false });
             chatStore._persist?.();
         }
         window.dispatchEvent(new CustomEvent('contacts-updated', { detail: { id: sessionId, source: 'world_entry' } }));

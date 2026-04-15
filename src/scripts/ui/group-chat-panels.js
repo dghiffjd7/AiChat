@@ -8,6 +8,13 @@ import { logger } from '../utils/logger.js';
 import { avatarDataUrlFromFile } from '../utils/image.js';
 import { FEATHER_DEFAULT, resolveLineAvatar } from '../utils/line-avatar.js';
 import { appSettings } from '../storage/app-settings.js';
+import {
+    getBridgeTableShortLabel,
+    getRpToChatBridgeTableIds,
+    normalizeBridgeLimit,
+    pruneRpToChatBridgeTableSettings,
+    resolveRpToChatBridgeTableSettings,
+} from '../memory/memory-bridge-utils.js';
 import { MemoryTableEditor } from './memory-table-editor.js';
 import { appConfirm } from './app-confirm.js';
 
@@ -33,6 +40,24 @@ const resolveDefaultMemoryTemplateId = async () => {
         }
     } catch {}
     return '';
+};
+
+const resolveDefaultMemoryTemplateDefinition = async () => {
+    const store = window.appBridge?.memoryTemplateStore;
+    if (!store?.getTemplates) return null;
+    try {
+        const list = await store.getTemplates({ is_default: true });
+        if (Array.isArray(list) && list.length) {
+            return store.toTemplateDefinition?.(list[0]) || list[0]?.schema || null;
+        }
+    } catch {}
+    try {
+        const fallback = await store.getTemplates({ id: 'default-v1' });
+        if (Array.isArray(fallback) && fallback.length) {
+            return store.toTemplateDefinition?.(fallback[0]) || fallback[0]?.schema || null;
+        }
+    } catch {}
+    return null;
 };
 
 const askMemoryTableNewChatMode = () => new Promise((resolve) => {
@@ -531,6 +556,18 @@ export class GroupSettingsPanel {
         this.summaryEditSave = null;
         this.summaryEditCancel = null;
         this.summaryCompacting = false;
+        this.rpBridgeSection = null;
+        this.rpBridgeToggle = null;
+        this.rpBridgeLimitInput = null;
+        this.rpBridgeSourceNote = null;
+        this.memoryShareSection = null;
+        this.memoryShareButton = null;
+        this.memoryShareSummary = null;
+        this.memoryShareOverlay = null;
+        this.memorySharePanel = null;
+        this.memoryShareRows = null;
+        this.memoryShareSaveBtn = null;
+        this.memoryShareDraft = null;
 
         this.addOverlay = null;
         this.addPanel = null;
@@ -624,6 +661,17 @@ export class GroupSettingsPanel {
                         <div id="group-archives-list" style="max-height:160px; overflow-y:auto; border:1px solid #eee; border-radius:8px; background:#f9f9f9; padding:0;"></div>
                     </div>
 
+                    <div style="margin-top:18px; border-top:1px solid rgba(0,0,0,0.06); padding-top:14px;">
+                        <div style="font-weight:800; color:#0f172a; margin-bottom:10px;">聊天 / RP 桥接（当前会话）</div>
+                        <div id="group-rp-bridge-section" style="display:none;"></div>
+                        <div id="group-memory-share-section">
+                            <button id="group-memory-share-manage" type="button" style="width:100%; padding:10px 12px; border:1px solid #e2e8f0; border-radius:12px; background:#fff; color:#0f172a; font-weight:800; cursor:pointer;">
+                                记忆共享
+                            </button>
+                            <div id="group-memory-share-summary" style="color:#64748b; font-size:12px; line-height:1.5; margin-top:8px;"></div>
+                        </div>
+                    </div>
+
                     <div id="group-summary-section" style="margin-top:18px; border-top:1px solid rgba(0,0,0,0.06); padding-top:14px;">
                         <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:6px;">
                             <div style="font-weight:800; color:#0f172a;">摘要</div>
@@ -693,6 +741,13 @@ export class GroupSettingsPanel {
         this.memoryTableSection = this.panel.querySelector('#group-memory-table-section');
         this.memoryTableContent = this.panel.querySelector('#group-memory-table-content');
         this.summariesBatchBar = this.panel.querySelector('#group-summaries-batchbar');
+        this.rpBridgeSection = this.panel.querySelector('#group-rp-bridge-section');
+        this.rpBridgeToggle = this.panel.querySelector('#group-rp-bridge-enabled');
+        this.rpBridgeLimitInput = this.panel.querySelector('#group-rp-bridge-limit');
+        this.rpBridgeSourceNote = this.panel.querySelector('#group-rp-bridge-source-note');
+        this.memoryShareSection = this.panel.querySelector('#group-memory-share-section');
+        this.memoryShareButton = this.panel.querySelector('#group-memory-share-manage');
+        this.memoryShareSummary = this.panel.querySelector('#group-memory-share-summary');
 
         this.panel.querySelector('#group-settings-close').onclick = () => this.hide();
         this.panel.querySelector('#group-settings-cancel').onclick = () => this.hide();
@@ -702,6 +757,12 @@ export class GroupSettingsPanel {
         };
         this.panel.querySelector('#group-settings-add').onclick = () => this.openAddMembers();
         this.panel.querySelector('#group-settings-save').onclick = () => this.save();
+        this.memoryShareButton?.addEventListener('click', () => {
+            this.openMemoryShareManager().catch((err) => {
+                logger.warn('open group memory share manager failed', err);
+                window.toastr?.error?.('打开记忆共享失败');
+            });
+        });
         this.panel.querySelector('#group-new-chat').onclick = () => this.startNewChat();
         this.panel.querySelector('#group-summaries-clear').onclick = async () => {
             const sid = this.groupId;
@@ -1100,8 +1161,261 @@ export class GroupSettingsPanel {
         this.members = Array.isArray(g.members) ? g.members.map(normalize).filter(Boolean) : [];
         const nameEl = this.panel.querySelector('#group-settings-name');
         if (nameEl) nameEl.value = g.name || '';
+        if (this.rpBridgeSection) this.rpBridgeSection.style.display = 'none';
+        if (this.memoryShareSection) this.memoryShareSection.style.display = 'block';
+        this.refreshMemoryShareSummary().catch((err) => {
+            logger.warn('refresh group memory share summary failed', err);
+            if (this.memoryShareSummary) this.memoryShareSummary.textContent = '记忆共享状态读取失败';
+        });
         this.updateAvatarPreview();
         this.renderMembers();
+    }
+
+    getRpDisplayName(sessionId = '') {
+        const sid = normalize(sessionId);
+        if (!sid) return '';
+        const contact = this.contactsStore?.getContact?.(sid);
+        const saved = String(contact?.name || '').trim();
+        if (saved && !saved.startsWith('rp:')) return saved;
+        return window.appBridge?.getRpCharacterNameForSession?.(sid) || saved || sid || '角色';
+    }
+
+    getDefaultRpBridgeSourceId(sessionId = this.groupId) {
+        return normalize(
+            window.appBridge?.getRpSessionIdForSession?.(sessionId)
+            || window.appBridge?.getRpSessionIdForActivePersona?.()
+            || '',
+        );
+    }
+
+    async loadRpMemoryShareRows(sourceId = '', templateId = '') {
+        const sid = normalize(sourceId);
+        if (!sid || !templateId || !window.appBridge?.memoryTableStore?.getMemories) return [];
+        try {
+            const rows = await window.appBridge.memoryTableStore.getMemories({
+                scope: 'contact',
+                contact_id: sid,
+                template_id: templateId,
+            });
+            return Array.isArray(rows) ? rows.filter((row) => row && row.is_active !== false) : [];
+        } catch {
+            return [];
+        }
+    }
+
+    async buildMemoryShareContext(sessionId = this.groupId, rawTableSettings = null) {
+        const sid = normalize(sessionId);
+        const template = await resolveDefaultMemoryTemplateDefinition();
+        const templateId = await resolveDefaultMemoryTemplateId();
+        const tableMap = new Map((template?.tables || []).map((table) => [normalize(table?.id), table]));
+        const sessionSettings = this.chatStore?.getSessionSettings?.(sid) || {};
+        const sourceId = this.getDefaultRpBridgeSourceId(sid);
+        const mergedSessionSettings = { ...sessionSettings };
+        if (rawTableSettings && typeof rawTableSettings === 'object') {
+            mergedSessionSettings.rpBridgeTableSettings = rawTableSettings;
+        }
+        const tableSettings = resolveRpToChatBridgeTableSettings({
+            sessionSettings: mergedSessionSettings,
+            fallbackEnabled: appSettings.get().memoryBridgeRpToChatEnabled !== false,
+            fallbackLimit: normalizeBridgeLimit(appSettings.get().memoryBridgeRpToChatLimit, 0),
+        });
+        const activeRows = await this.loadRpMemoryShareRows(sourceId, templateId);
+        return {
+            sourceId,
+            sourceLabel: sourceId ? this.getRpDisplayName(sourceId) : '',
+            summarySourceText: sourceId
+                ? `来源：${this.getRpDisplayName(sourceId) || sourceId}`
+                : '来源：当前角色 RP 会话（当前为空）',
+            entries: getRpToChatBridgeTableIds().map((tableId) => {
+                const table = tableMap.get(tableId);
+                const rowCount = activeRows.filter((row) => normalize(row?.table_id) === tableId).length;
+                const limit = normalizeBridgeLimit(tableSettings?.[tableId]?.limit, 0);
+                return {
+                    tableId,
+                    shortLabel: getBridgeTableShortLabel(table || { id: tableId, name: tableId }),
+                    enabled: tableSettings?.[tableId]?.enabled === true,
+                    limit,
+                    rowCount,
+                    actualCount: limit > 0 ? Math.min(rowCount, limit) : rowCount,
+                };
+            }),
+        };
+    }
+
+    async refreshMemoryShareSummary(sessionId = this.groupId) {
+        if (!this.memoryShareSummary) return;
+        const sid = normalize(sessionId);
+        if (!sid) {
+            this.memoryShareSummary.textContent = '';
+            return;
+        }
+        this.memoryShareSummary.textContent = '正在计算注入记忆...';
+        const context = await this.buildMemoryShareContext(sid).catch(() => null);
+        if (!context) {
+            this.memoryShareSummary.textContent = '记忆共享状态读取失败';
+            return;
+        }
+        const enabledEntries = context.entries.filter((entry) => entry.enabled);
+        if (!enabledEntries.length) {
+            this.memoryShareSummary.textContent = `${context.summarySourceText}；未启用跨模式记忆注入`;
+            return;
+        }
+        const parts = enabledEntries.map((entry) => `${entry.shortLabel}${entry.actualCount}条`);
+        this.memoryShareSummary.textContent = `${context.summarySourceText}；注入记忆：${parts.join('、')}`;
+    }
+
+    ensureMemoryShareModal() {
+        if (this.memorySharePanel) return;
+        this.memoryShareOverlay = document.createElement('div');
+        this.memoryShareOverlay.style.cssText = 'display:none; position:fixed; inset:0; background:rgba(0,0,0,0.45); z-index:22000;';
+        this.memoryShareOverlay.addEventListener('click', () => this.closeMemoryShareManager());
+
+        this.memorySharePanel = document.createElement('div');
+        this.memorySharePanel.style.cssText = `
+            display:none; position:fixed;
+            left: calc(12px + env(safe-area-inset-left, 0px));
+            right: calc(12px + env(safe-area-inset-right, 0px));
+            bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+            max-height: calc(100dvh - 24px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+            background:#fff; border-radius:14px; box-shadow:0 10px 40px rgba(0,0,0,0.28);
+            z-index:23000; overflow:hidden; display:flex; flex-direction:column;
+        `;
+        this.memorySharePanel.addEventListener('click', (e) => e.stopPropagation());
+        this.memorySharePanel.innerHTML = `
+            <div style="padding:12px 14px; border-bottom:1px solid rgba(0,0,0,0.06); display:flex; align-items:center; justify-content:space-between; gap:10px;">
+                <div style="font-weight:900; color:#0f172a;">记忆共享</div>
+                <button data-role="close" style="border:none; background:transparent; font-size:22px; cursor:pointer; color:#0f172a;">×</button>
+            </div>
+            <div style="padding:12px 14px; flex:1; min-height:0; overflow:auto;">
+                <div style="font-size:12px; color:#64748b; line-height:1.5; margin-bottom:12px;">真正全局的用户档案会自动共享；这里仅管理当前角色的 RP 会话注入到本群聊的额外记忆。</div>
+                <div data-role="source" style="margin-bottom:12px; padding:10px 12px; border:1px solid #e2e8f0; border-radius:12px; background:#f8fafc; color:#334155; font-size:12px; line-height:1.5;"></div>
+                <div data-role="rows" style="display:flex; flex-direction:column; gap:10px;"></div>
+            </div>
+            <div style="padding:12px 14px; border-top:1px solid rgba(0,0,0,0.06); background:rgba(248,250,252,0.92); display:flex; gap:10px;">
+                <button data-role="cancel" style="flex:1; padding:10px 12px; border:1px solid #e2e8f0; border-radius:12px; background:#fff; cursor:pointer;">取消</button>
+                <button data-role="save" style="flex:1; padding:10px 12px; border:none; border-radius:12px; background:#019aff; color:#fff; cursor:pointer; font-weight:900;">保存</button>
+            </div>
+        `;
+        document.body.appendChild(this.memoryShareOverlay);
+        document.body.appendChild(this.memorySharePanel);
+
+        this.memoryShareRows = this.memorySharePanel.querySelector('[data-role="rows"]');
+        this.memoryShareSaveBtn = this.memorySharePanel.querySelector('[data-role="save"]');
+        this.memorySharePanel.querySelector('[data-role="close"]').onclick = () => this.closeMemoryShareManager();
+        this.memorySharePanel.querySelector('[data-role="cancel"]').onclick = () => this.closeMemoryShareManager();
+        this.memoryShareSaveBtn?.addEventListener('click', () => {
+            this.saveMemoryShareManager().catch((err) => {
+                logger.warn('save group memory share manager failed', err);
+                window.toastr?.error?.('保存记忆共享失败');
+            });
+        });
+    }
+
+    closeMemoryShareManager() {
+        if (this.memoryShareOverlay) this.memoryShareOverlay.style.display = 'none';
+        if (this.memorySharePanel) this.memorySharePanel.style.display = 'none';
+        this.memoryShareDraft = null;
+    }
+
+    async renderMemoryShareManager() {
+        if (!this.memoryShareDraft || !this.memoryShareRows) return;
+        const sessionId = normalize(this.memoryShareDraft.sessionId);
+        const sourceEl = this.memorySharePanel?.querySelector('[data-role="source"]');
+        const sourceId = this.getDefaultRpBridgeSourceId(sessionId);
+        const sourceLabel = sourceId ? (this.getRpDisplayName(sourceId) || sourceId) : '当前为空';
+        if (sourceEl) sourceEl.textContent = `来源 RP 会话：${sourceLabel}`;
+
+        const context = await this.buildMemoryShareContext(sessionId, this.memoryShareDraft.tableSettings);
+        this.memoryShareRows.innerHTML = '';
+        context.entries.forEach((entry) => {
+            const row = document.createElement('div');
+            row.style.cssText = 'padding:10px; border:1px solid #e2e8f0; border-radius:12px; background:#fff;';
+            row.innerHTML = `
+                <label style="display:flex; align-items:center; justify-content:space-between; gap:10px; cursor:pointer;">
+                    <span style="font-weight:700; color:#0f172a;">${entry.shortLabel}</span>
+                    <input type="checkbox" data-role="enabled" style="width:18px; height:18px;">
+                </label>
+                <div style="color:#64748b; font-size:12px; margin-top:6px;">当前可注入 ${entry.rowCount} 条；0 代表全部注入。</div>
+                <label style="display:flex; align-items:center; justify-content:space-between; gap:8px; font-size:12px; color:#475569; margin-top:10px;">
+                    <span>注入条数</span>
+                    <input type="number" data-role="limit" min="0" step="1"
+                           style="width:88px; padding:4px 6px; border:1px solid #e2e8f0; border-radius:8px; font-size:12px; text-align:right;">
+                </label>
+            `;
+            const toggle = row.querySelector('[data-role="enabled"]');
+            const limitInput = row.querySelector('[data-role="limit"]');
+            toggle.checked = entry.enabled;
+            limitInput.value = String(entry.limit);
+            limitInput.disabled = entry.enabled !== true;
+            toggle.addEventListener('change', () => {
+                const current = this.memoryShareDraft.tableSettings?.[entry.tableId] || {};
+                this.memoryShareDraft.tableSettings = {
+                    ...(this.memoryShareDraft.tableSettings || {}),
+                    [entry.tableId]: {
+                        ...current,
+                        enabled: toggle.checked === true,
+                        limit: normalizeBridgeLimit(current.limit, entry.limit),
+                    },
+                };
+                limitInput.disabled = toggle.checked !== true;
+            });
+            limitInput.addEventListener('input', () => {
+                const safe = normalizeBridgeLimit(limitInput.value, 0);
+                limitInput.value = String(safe);
+                const current = this.memoryShareDraft.tableSettings?.[entry.tableId] || {};
+                this.memoryShareDraft.tableSettings = {
+                    ...(this.memoryShareDraft.tableSettings || {}),
+                    [entry.tableId]: {
+                        ...current,
+                        enabled: current.enabled === true,
+                        limit: safe,
+                    },
+                };
+            });
+            this.memoryShareRows.appendChild(row);
+        });
+    }
+
+    async openMemoryShareManager() {
+        this.ensureMemoryShareModal();
+        const sessionSettings = this.chatStore?.getSessionSettings?.(this.groupId) || {};
+        this.memoryShareDraft = {
+            sessionId: this.groupId,
+            tableSettings: {
+                ...(sessionSettings.rpBridgeTableSettings && typeof sessionSettings.rpBridgeTableSettings === 'object'
+                    ? sessionSettings.rpBridgeTableSettings
+                    : {}),
+            },
+        };
+        await this.renderMemoryShareManager();
+        if (this.memoryShareOverlay) this.memoryShareOverlay.style.display = 'block';
+        if (this.memorySharePanel) this.memorySharePanel.style.display = 'flex';
+    }
+
+    async saveMemoryShareManager() {
+        if (!this.memoryShareDraft) return;
+        const sessionSettings = this.chatStore?.getSessionSettings?.(this.groupId) || {};
+        const normalizedTableSettings = {
+            ...(sessionSettings.rpBridgeTableSettings && typeof sessionSettings.rpBridgeTableSettings === 'object'
+                ? sessionSettings.rpBridgeTableSettings
+                : {}),
+            ...pruneRpToChatBridgeTableSettings(this.memoryShareDraft.tableSettings || {}),
+        };
+        const resolvedTableSettings = resolveRpToChatBridgeTableSettings({
+            sessionSettings: {
+                ...sessionSettings,
+                rpBridgeTableSettings: normalizedTableSettings,
+            },
+            fallbackEnabled: appSettings.get().memoryBridgeRpToChatEnabled !== false,
+            fallbackLimit: normalizeBridgeLimit(appSettings.get().memoryBridgeRpToChatLimit, 0),
+        });
+        sessionSettings.rpBridgeTableSettings = normalizedTableSettings;
+        sessionSettings.rpBridgeEnabled = Object.values(resolvedTableSettings).some((entry) => entry?.enabled === true);
+        sessionSettings.rpBridgeOutlineLimit = normalizeBridgeLimit(resolvedTableSettings?.rp_outline?.limit, 0);
+        this.chatStore?.setSessionSettings?.(this.groupId, sessionSettings);
+        this.closeMemoryShareManager();
+        await this.refreshMemoryShareSummary();
+        window.toastr?.success?.('已保存记忆共享设置');
     }
 
     renderSummaries() {
@@ -1461,6 +1775,7 @@ export class GroupSettingsPanel {
         try {
             const prev = this.contactsStore?.getContact?.(this.groupId);
             if (!prev) return;
+            const sessionSettings = this.chatStore?.getSessionSettings?.(this.groupId) || {};
             const nextName = normalize(this.panel?.querySelector('#group-settings-name')?.value) || prev.name;
             const nextKey = normalizeKey(nextName);
             const groups = this.contactsStore?.listGroups?.() || [];
@@ -1472,6 +1787,7 @@ export class GroupSettingsPanel {
 
             const beforeMembers = Array.isArray(prev.members) ? prev.members.map(normalize).filter(Boolean) : [];
             const afterMembers = [...new Set(this.members.map(normalize).filter(Boolean))];
+            this.chatStore?.setSessionSettings?.(this.groupId, sessionSettings);
             this.contactsStore?.upsertContact?.({
                 ...prev,
                 id: this.groupId,

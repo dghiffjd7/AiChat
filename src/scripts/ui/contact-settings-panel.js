@@ -5,6 +5,19 @@
 import { logger } from '../utils/logger.js';
 import { avatarDataUrlFromFile } from '../utils/image.js';
 import { appSettings } from '../storage/app-settings.js';
+import { getSummaryTableIdsForContext, isRpSessionId } from '../memory/memory-context-utils.js';
+import {
+    getBridgeTableShortLabel,
+    getChatToRpBridgeSourceMeta,
+    getChatToRpBridgeTableIds,
+    getRpToChatBridgeTableIds,
+    isChatToRpGroupTableId,
+    normalizeBridgeLimit,
+    pruneChatToRpBridgeTableSettings,
+    pruneRpToChatBridgeTableSettings,
+    resolveChatToRpBridgeTableSettings,
+    resolveRpToChatBridgeTableSettings,
+} from '../memory/memory-bridge-utils.js';
 import { MemoryTableEditor } from './memory-table-editor.js';
 import { appConfirm } from './app-confirm.js';
 import { normalizeBadgeList } from '../utils/name-badges.js';
@@ -15,8 +28,6 @@ const getMemoryStorageMode = () => {
     const mode = String(appSettings.get().memoryStorageMode || 'table').toLowerCase();
     return mode === 'table' ? 'table' : 'summary';
 };
-
-const isRpSessionId = (sessionId) => String(sessionId || '').startsWith('rp:');
 
 const resolveDefaultMemoryTemplateId = async () => {
     const store = window.appBridge?.memoryTemplateStore;
@@ -34,6 +45,24 @@ const resolveDefaultMemoryTemplateId = async () => {
         }
     } catch {}
     return '';
+};
+
+const resolveDefaultMemoryTemplateDefinition = async () => {
+    const store = window.appBridge?.memoryTemplateStore;
+    if (!store?.getTemplates) return null;
+    try {
+        const list = await store.getTemplates({ is_default: true });
+        if (Array.isArray(list) && list.length) {
+            return store.toTemplateDefinition?.(list[0]) || list[0]?.schema || null;
+        }
+    } catch {}
+    try {
+        const fallback = await store.getTemplates({ id: 'default-v1' });
+        if (Array.isArray(fallback) && fallback.length) {
+            return store.toTemplateDefinition?.(fallback[0]) || fallback[0]?.schema || null;
+        }
+    } catch {}
+    return null;
 };
 
 const askMemoryTableNewChatMode = () => new Promise((resolve) => {
@@ -190,7 +219,7 @@ const applyMemoryTableSnapshot = async ({ sessionId, isGroup, snapshot } = {}) =
     return true;
 };
 
-const clearSessionMemoriesForNewChat = async ({ sessionId, isGroup, keepNonSummary } = {}) => {
+const clearSessionMemoriesForNewChat = async ({ sessionId, isGroup, keepNonSummary, sessionMode = '' } = {}) => {
     const memoryTableStore = window.appBridge?.memoryTableStore;
     if (!memoryTableStore?.getMemories) return false;
     const templateId = await resolveDefaultMemoryTemplateId();
@@ -209,10 +238,13 @@ const clearSessionMemoriesForNewChat = async ({ sessionId, isGroup, keepNonSumma
         return false;
     }
     if (!Array.isArray(rows) || rows.length === 0) return true;
-    const summaryTableIds = new Set([
-        isGroup ? 'group_summary' : 'chat_summary',
-        isGroup ? 'group_outline' : 'chat_outline',
-    ]);
+    const { summaryTableId, outlineTableId } = getSummaryTableIdsForContext({
+        sessionId: sid,
+        isGroup,
+        contextType: isRpSessionId(sid) ? 'rp' : (isGroup ? 'group' : 'contact'),
+        uiMode: sessionMode === 'rp' || isRpSessionId(sid) ? 'rp' : 'social',
+    });
+    const summaryTableIds = new Set([summaryTableId, outlineTableId]);
     const ids = rows
         .filter(row => row && (!keepNonSummary || summaryTableIds.has(String(row?.table_id || '').trim())))
         .map(row => String(row?.id || '').trim())
@@ -262,6 +294,19 @@ export class ContactSettingsPanel {
         this.templateToggle = null;
         this.scriptToggle = null;
         this.resetVarsBtn = null;
+        this.rpBridgeSection = null;
+        this.rpBridgeToggle = null;
+        this.rpBridgeLimitInput = null;
+        this.rpBridgeSourceNote = null;
+        this.memoryShareSection = null;
+        this.memoryShareButton = null;
+        this.memoryShareSummary = null;
+        this.memoryShareOverlay = null;
+        this.memorySharePanel = null;
+        this.memoryShareSourceSelect = null;
+        this.memoryShareRows = null;
+        this.memoryShareSaveBtn = null;
+        this.memoryShareDraft = null;
     }
 
     show() {
@@ -271,7 +316,7 @@ export class ContactSettingsPanel {
         this.renderArchives();
         this.renderSummaries();
         this.renderCompactedSummary();
-        if (getMemoryStorageMode() === 'table' && !isRpSessionId(this.getSessionId())) {
+        if (getMemoryStorageMode() === 'table') {
             this.memoryTableEditor?.render?.();
         }
         this.overlay.style.display = 'block';
@@ -284,11 +329,10 @@ export class ContactSettingsPanel {
     }
 
     applyMemoryMode() {
-        const isRpSession = isRpSessionId(this.getSessionId());
         const summaryOn = getMemoryStorageMode() === 'summary';
         if (this.summarySection) this.summarySection.style.display = summaryOn ? 'block' : 'none';
-        if (this.memoryTableSection) this.memoryTableSection.style.display = (!summaryOn && !isRpSession) ? 'block' : 'none';
-        if (!summaryOn && !isRpSession) this.memoryTableEditor?.render?.();
+        if (this.memoryTableSection) this.memoryTableSection.style.display = !summaryOn ? 'block' : 'none';
+        if (!summaryOn) this.memoryTableEditor?.render?.();
     }
 
     createUI() {
@@ -330,7 +374,7 @@ export class ContactSettingsPanel {
         this.panel.innerHTML = `
             <div style="padding:14px 16px; border-bottom:1px solid rgba(0,0,0,0.06); background:rgba(248,250,252,0.92); display:flex; align-items:center; justify-content:space-between; gap:10px;">
                 <div style="min-width:0;">
-                    <div style="font-weight:800; color:#0f172a;">好友设置</div>
+                    <div id="contact-settings-title" style="font-weight:800; color:#0f172a;">好友设置</div>
                     <div id="contact-settings-sub" style="color:#64748b; font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"></div>
                 </div>
                 <button id="contact-settings-close" style="border:none; background:transparent; font-size:22px; cursor:pointer; color:#0f172a;">×</button>
@@ -358,8 +402,8 @@ export class ContactSettingsPanel {
                     <div style="color:#64748b; font-size:12px; margin-top:6px;">用于展示标签；不设置则界面保持原样。</div>
                 </div>
 
-                <div style="margin-top:16px; border-top:1px solid #eee; padding-top:14px;">
-                    <div style="font-weight:700; color:#0f172a; margin-bottom:10px;">模板与脚本（本会话）</div>
+	                <div style="margin-top:16px; border-top:1px solid #eee; padding-top:14px;">
+	                    <div style="font-weight:700; color:#0f172a; margin-bottom:10px;">模板与脚本（本会话）</div>
                     <label style="display:flex; align-items:center; gap:8px; cursor:pointer; margin-bottom:8px;">
                         <input type="checkbox" id="contact-template-enabled" style="width:18px; height:18px;">
                         <span>启用模板处理</span>
@@ -371,10 +415,33 @@ export class ContactSettingsPanel {
                     <button id="contact-reset-vars" type="button" style="padding:8px 12px; border:1px solid #e2e8f0; border-radius:10px; background:#fff; cursor:pointer; font-size:12px;">
                         重置本会话变量
                     </button>
-                    <div style="color:#64748b; font-size:12px; margin-top:6px;">仅清空本会话 local 变量，不影响全局变量。</div>
-                </div>
+	                    <div style="color:#64748b; font-size:12px; margin-top:6px;">仅清空本会话 local 变量，不影响全局变量。</div>
+	                </div>
 
-                <div style="margin-top:20px; border-top:1px solid #eee; padding-top:14px;">
+                    <div style="margin-top:16px; border-top:1px solid #eee; padding-top:14px;">
+                        <div id="contact-bridge-block-title" style="font-weight:700; color:#0f172a; margin-bottom:10px;">聊天 / RP 桥接（当前会话）</div>
+                        <div id="contact-rp-bridge-section" style="display:none; padding:10px; border:1px solid #e2e8f0; border-radius:12px; background:#fff; margin-bottom:10px;">
+                            <label style="display:flex; align-items:center; justify-content:space-between; gap:10px; cursor:pointer;">
+                                <span style="font-weight:700; color:#0f172a;">注入 RP 总体大纲</span>
+                                <input type="checkbox" id="contact-rp-bridge-enabled" style="width:18px; height:18px;">
+                            </label>
+                            <div style="color:#64748b; font-size:12px; margin-top:6px;">默认来源为当前角色的 RP 会话。</div>
+                            <div id="contact-rp-bridge-source-note" style="color:#475569; font-size:12px; margin-top:6px;"></div>
+                            <label style="display:flex; align-items:center; justify-content:space-between; gap:8px; font-size:12px; color:#475569; margin-top:10px;">
+                                <span>注入条数（0=全部）</span>
+                                <input type="number" id="contact-rp-bridge-limit" min="0" step="1"
+                                       style="width:88px; padding:4px 6px; border:1px solid #e2e8f0; border-radius:8px; font-size:12px; text-align:right;">
+                            </label>
+                        </div>
+                        <div id="contact-memory-share-section" style="display:none;">
+                            <button id="contact-memory-share-manage" type="button" style="width:100%; padding:10px 12px; border:1px solid #e2e8f0; border-radius:12px; background:#fff; color:#0f172a; font-weight:800; cursor:pointer;">
+                                记忆共享
+                            </button>
+                            <div id="contact-memory-share-summary" style="color:#64748b; font-size:12px; line-height:1.5; margin-top:8px;"></div>
+                        </div>
+                    </div>
+
+	                <div style="margin-top:20px; border-top:1px solid #eee; padding-top:14px;">
                     <div style="font-weight:700; color:#0f172a; margin-bottom:10px;">聊天管理</div>
                     <button id="contact-new-chat" style="width:100%; padding:10px; border:1px solid #ddd; border-radius:8px; background:#fff; color:#019aff; font-weight:700; margin-bottom:10px; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:6px;">
                         <span>✨</span> 开启新聊天（存档当前）
@@ -444,6 +511,18 @@ export class ContactSettingsPanel {
         this.templateToggle = this.panel.querySelector('#contact-template-enabled');
         this.scriptToggle = this.panel.querySelector('#contact-script-enabled');
         this.resetVarsBtn = this.panel.querySelector('#contact-reset-vars');
+        this.rpBridgeSection = this.panel.querySelector('#contact-rp-bridge-section');
+        this.rpBridgeToggle = this.panel.querySelector('#contact-rp-bridge-enabled');
+        this.rpBridgeLimitInput = this.panel.querySelector('#contact-rp-bridge-limit');
+        this.rpBridgeSourceNote = this.panel.querySelector('#contact-rp-bridge-source-note');
+        this.memoryShareSection = this.panel.querySelector('#contact-memory-share-section');
+        this.memoryShareButton = this.panel.querySelector('#contact-memory-share-manage');
+        this.memoryShareSummary = this.panel.querySelector('#contact-memory-share-summary');
+        const syncBridgeControls = () => {
+            if (this.rpBridgeLimitInput) {
+                this.rpBridgeLimitInput.disabled = this.rpBridgeToggle?.checked === false;
+            }
+        };
 
         this.panel.querySelector('#contact-settings-close').onclick = () => this.hide();
         this.panel.querySelector('#contact-settings-cancel').onclick = () => this.hide();
@@ -471,6 +550,13 @@ export class ContactSettingsPanel {
             }
         };
         this.panel.querySelector('#contact-settings-save').onclick = () => this.save();
+        this.rpBridgeToggle?.addEventListener('change', syncBridgeControls);
+        this.memoryShareButton?.addEventListener('click', () => {
+            this.openMemoryShareManager().catch((err) => {
+                logger.warn('open memory share manager failed', err);
+                window.toastr?.error?.('打开记忆共享失败');
+            });
+        });
         this.resetVarsBtn?.addEventListener('click', async () => {
             const sid = this.getSessionId();
             if (!sid) return;
@@ -531,8 +617,7 @@ export class ContactSettingsPanel {
                 container: this.memoryTableContent,
                 getContext: () => {
                     const contactId = this.getSessionId();
-                    const sharedMemory = !isRpSessionId(contactId) && window.appBridge?.isSharedMemorySession?.(contactId) === true;
-                    return { type: 'contact', contactId, sharedMemory };
+                    return { type: isRpSessionId(contactId) ? 'rp' : 'contact', contactId };
                 },
                 memoryStore: window.appBridge.memoryTableStore,
                 templateStore: window.appBridge.memoryTemplateStore,
@@ -1037,6 +1122,7 @@ export class ContactSettingsPanel {
         const sid = this.getSessionId();
         let keepNonSummary = false;
         let memoryTableSnapshot = null;
+        const isRpSession = isRpSessionId(sid);
         if (getMemoryStorageMode() === 'table') {
             const choice = await askMemoryTableNewChatMode();
             if (choice === 'cancel') return;
@@ -1047,7 +1133,12 @@ export class ContactSettingsPanel {
         if (getMemoryStorageMode() === 'table') {
             memoryTableSnapshot = await buildMemoryTableSnapshot({ sessionId: sid, isGroup: false });
             try {
-                await clearSessionMemoriesForNewChat({ sessionId: sid, isGroup: false, keepNonSummary });
+                await clearSessionMemoriesForNewChat({
+                    sessionId: sid,
+                    isGroup: false,
+                    keepNonSummary,
+                    sessionMode: isRpSession ? 'rp' : 'chat',
+                });
             } catch (err) {
                 logger.warn('clear memory tables for new chat failed', err);
             }
@@ -1058,16 +1149,512 @@ export class ContactSettingsPanel {
         this.hide();
     }
 
+    getRpDisplayName(sessionId = this.getSessionId()) {
+        const sid = String(sessionId || '').trim();
+        const direct = String(window.appBridge?.getRpCharacterNameForSession?.(sid) || '').trim();
+        if (direct) return direct;
+        const contact = this.contactsStore?.getContact?.(sid);
+        const saved = String(contact?.name || '').trim();
+        if (saved && !saved.startsWith('rp:')) return saved;
+        return saved || sid || '角色';
+    }
+
+    getSessionDisplayName(sessionId = '') {
+        const sid = String(sessionId || '').trim();
+        if (!sid) return '';
+        if (isRpSessionId(sid)) return this.getRpDisplayName(sid);
+        const contact = this.contactsStore?.getContact?.(sid);
+        return String(contact?.name || sid).trim() || sid;
+    }
+
+    listSocialSessions() {
+        return (this.chatStore?.listSessions?.() || [])
+            .map((id) => String(id || '').trim())
+            .filter(Boolean)
+            .filter((id) => !isRpSessionId(id));
+    }
+
+    getDefaultRpBridgeSourceId(sessionId = this.getSessionId()) {
+        return String(
+            window.appBridge?.getRpSessionIdForSession?.(sessionId)
+            || window.appBridge?.getRpSessionIdForActivePersona?.()
+            || '',
+        ).trim();
+    }
+
+    getMemoryShareTableLabel(table, { tableId = '', sourceMode = '' } = {}) {
+        const base = getBridgeTableShortLabel(table);
+        if (sourceMode === 'all_social') {
+            return `${isChatToRpGroupTableId(tableId) ? '群聊' : '私聊'}${base}`;
+        }
+        return base;
+    }
+
+    async loadMemoryShareRows(sourceId = '', { templateId = '', sourceIsGroup = false } = {}) {
+        const sid = String(sourceId || '').trim();
+        if (!sid || !templateId || !window.appBridge?.memoryTableStore?.getMemories) return [];
+        try {
+            const rows = await window.appBridge.memoryTableStore.getMemories({
+                scope: sourceIsGroup ? 'group' : 'contact',
+                group_id: sourceIsGroup ? sid : undefined,
+                contact_id: sourceIsGroup ? undefined : sid,
+                template_id: templateId,
+            });
+            return Array.isArray(rows) ? rows.filter((row) => row && row.is_active !== false) : [];
+        } catch {
+            return [];
+        }
+    }
+
+    async buildChatToRpMemoryShareContext(sessionId = this.getSessionId(), rawSourceId = null, rawTableSettings = null) {
+        const sid = String(sessionId || '').trim();
+        const template = await resolveDefaultMemoryTemplateDefinition();
+        const templateId = await resolveDefaultMemoryTemplateId();
+        const tableMap = new Map((template?.tables || []).map((table) => [String(table?.id || '').trim(), table]));
+        const sessionSettings = this.chatStore?.getSessionSettings?.(sid) || {};
+        const selectedSourceId = rawSourceId === null
+            ? String(sessionSettings.chatBridgeSourceSessionId || '').trim()
+            : String(rawSourceId || '').trim();
+        const { sourceMode, sourceId, sourceIsGroup } = getChatToRpBridgeSourceMeta(selectedSourceId);
+        const mergedSessionSettings = {
+            ...sessionSettings,
+            chatBridgeSourceSessionId: selectedSourceId,
+        };
+        if (rawTableSettings && typeof rawTableSettings === 'object') {
+            if (sourceMode === 'all_social') mergedSessionSettings.chatBridgeAllSocialTableSettings = rawTableSettings;
+            else mergedSessionSettings.chatBridgeTableSettings = rawTableSettings;
+        }
+        const tableSettings = resolveChatToRpBridgeTableSettings({
+            sessionSettings: mergedSessionSettings,
+            sourceIsGroup,
+            sourceMode,
+            fallbackEnabled: appSettings.get().memoryBridgeChatToRpEnabled !== false,
+            fallbackLimit: 0,
+        });
+        const socialSessionIds = this.listSocialSessions();
+        const sourceRecords = sourceMode === 'all_social'
+            ? await Promise.all(socialSessionIds.map(async (socialId) => ({
+                sourceId: socialId,
+                sourceIsGroup: socialId.startsWith('group:'),
+                rows: await this.loadMemoryShareRows(socialId, {
+                    templateId,
+                    sourceIsGroup: socialId.startsWith('group:'),
+                }),
+            })))
+            : [{
+                sourceId,
+                sourceIsGroup,
+                rows: await this.loadMemoryShareRows(sourceId, { templateId, sourceIsGroup }),
+            }];
+        const entries = getChatToRpBridgeTableIds({ sourceIsGroup, sourceMode })
+            .map((tableId) => {
+                const table = tableMap.get(tableId);
+                if (!table) return null;
+                const enabled = tableSettings?.[tableId]?.enabled === true;
+                const limit = normalizeBridgeLimit(tableSettings?.[tableId]?.limit, 0);
+                const rowCount = sourceRecords.reduce((total, record) => {
+                    if (!record || !Array.isArray(record.rows)) return total;
+                    if (sourceMode === 'all_social') {
+                        const expectsGroup = isChatToRpGroupTableId(tableId);
+                        if (expectsGroup !== record.sourceIsGroup) return total;
+                    }
+                    return total + record.rows.filter((row) => String(row?.table_id || '').trim() === tableId).length;
+                }, 0);
+                return {
+                    tableId,
+                    table,
+                    enabled,
+                    limit,
+                    rowCount,
+                    actualCount: limit > 0 ? Math.min(rowCount, limit) : rowCount,
+                    shortLabel: this.getMemoryShareTableLabel(table, { tableId, sourceMode }),
+                };
+            })
+            .filter(Boolean);
+        return {
+            mode: 'chat_to_rp',
+            sessionSettings,
+            sourceMode,
+            selectedSourceId,
+            sourceId,
+            sourceIsGroup,
+            sourceLabel: sourceMode === 'all_social'
+                ? '所有聊天室（默认）'
+                : (sourceId ? this.getSessionDisplayName(sourceId) : ''),
+            summarySourceText: sourceMode === 'all_social'
+                ? '来源：所有聊天室（默认）'
+                : (sourceId ? `来源：${this.getSessionDisplayName(sourceId) || sourceId}` : '来源：指定聊天室（当前为空）'),
+            entries,
+        };
+    }
+
+    async buildRpToChatMemoryShareContext(sessionId = this.getSessionId(), rawTableSettings = null) {
+        const sid = String(sessionId || '').trim();
+        const template = await resolveDefaultMemoryTemplateDefinition();
+        const templateId = await resolveDefaultMemoryTemplateId();
+        const tableMap = new Map((template?.tables || []).map((table) => [String(table?.id || '').trim(), table]));
+        const sessionSettings = this.chatStore?.getSessionSettings?.(sid) || {};
+        const sourceId = this.getDefaultRpBridgeSourceId(sid);
+        const mergedSessionSettings = { ...sessionSettings };
+        if (rawTableSettings && typeof rawTableSettings === 'object') {
+            mergedSessionSettings.rpBridgeTableSettings = rawTableSettings;
+        }
+        const tableSettings = resolveRpToChatBridgeTableSettings({
+            sessionSettings: mergedSessionSettings,
+            fallbackEnabled: appSettings.get().memoryBridgeRpToChatEnabled !== false,
+            fallbackLimit: normalizeBridgeLimit(appSettings.get().memoryBridgeRpToChatLimit, 0),
+        });
+        const activeRows = await this.loadMemoryShareRows(sourceId, { templateId, sourceIsGroup: false });
+        const entries = getRpToChatBridgeTableIds()
+            .map((tableId) => {
+                const table = tableMap.get(tableId);
+                if (!table) return null;
+                const enabled = tableSettings?.[tableId]?.enabled === true;
+                const limit = normalizeBridgeLimit(tableSettings?.[tableId]?.limit, 0);
+                const rowCount = activeRows.filter((row) => String(row?.table_id || '').trim() === tableId).length;
+                return {
+                    tableId,
+                    table,
+                    enabled,
+                    limit,
+                    rowCount,
+                    actualCount: limit > 0 ? Math.min(rowCount, limit) : rowCount,
+                    shortLabel: this.getMemoryShareTableLabel(table, { tableId }),
+                };
+            })
+            .filter(Boolean);
+        return {
+            mode: 'rp_to_chat',
+            sessionSettings,
+            sourceId,
+            sourceLabel: sourceId ? this.getRpDisplayName(sourceId) : '',
+            summarySourceText: sourceId
+                ? `来源：${this.getRpDisplayName(sourceId) || sourceId}`
+                : '来源：当前角色 RP 会话（当前为空）',
+            entries,
+        };
+    }
+
+    async buildMemoryShareContext(sessionId = this.getSessionId(), rawSourceId = null, rawTableSettings = null) {
+        const sid = String(sessionId || '').trim();
+        if (!sid) return null;
+        return isRpSessionId(sid)
+            ? this.buildChatToRpMemoryShareContext(sid, rawSourceId, rawTableSettings)
+            : this.buildRpToChatMemoryShareContext(sid, rawTableSettings);
+    }
+
+    async refreshMemoryShareSummary(sessionId = this.getSessionId()) {
+        if (!this.memoryShareSummary) return;
+        const sid = String(sessionId || '').trim();
+        if (!sid) {
+            this.memoryShareSummary.textContent = '';
+            return;
+        }
+        this.memoryShareSummary.textContent = '正在计算注入记忆...';
+        const context = await this.buildMemoryShareContext(sid).catch(() => null);
+        if (!context) {
+            this.memoryShareSummary.textContent = '记忆共享状态读取失败';
+            return;
+        }
+        const enabledEntries = context.entries.filter((entry) => entry.enabled);
+        if (!enabledEntries.length) {
+            this.memoryShareSummary.textContent = `${context.summarySourceText}；未启用跨模式记忆注入`;
+            return;
+        }
+        const parts = enabledEntries.map((entry) => `${entry.shortLabel}${entry.actualCount}条`);
+        this.memoryShareSummary.textContent = `${context.summarySourceText}；注入记忆：${parts.join('、')}`;
+    }
+
+    ensureMemoryShareModal() {
+        if (this.memorySharePanel) return;
+        this.memoryShareOverlay = document.createElement('div');
+        this.memoryShareOverlay.style.cssText = 'display:none; position:fixed; inset:0; background:rgba(0,0,0,0.45); z-index:22000;';
+        this.memoryShareOverlay.addEventListener('click', () => this.closeMemoryShareManager());
+
+        this.memorySharePanel = document.createElement('div');
+        this.memorySharePanel.style.cssText = `
+            display:none; position:fixed;
+            left: calc(12px + env(safe-area-inset-left, 0px));
+            right: calc(12px + env(safe-area-inset-right, 0px));
+            bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+            max-height: calc(100dvh - 24px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+            background:#fff; border-radius:14px; box-shadow:0 10px 40px rgba(0,0,0,0.28);
+            z-index:23000; overflow:hidden; display:flex; flex-direction:column;
+        `;
+        this.memorySharePanel.addEventListener('click', (e) => e.stopPropagation());
+        this.memorySharePanel.innerHTML = `
+            <div style="padding:12px 14px; border-bottom:1px solid rgba(0,0,0,0.06); display:flex; align-items:center; justify-content:space-between; gap:10px;">
+                <div style="font-weight:900; color:#0f172a;">记忆共享</div>
+                <button data-role="close" style="border:none; background:transparent; font-size:22px; cursor:pointer; color:#0f172a;">×</button>
+            </div>
+            <div style="padding:12px 14px; flex:1; min-height:0; overflow:auto;">
+                <div data-role="hint" style="font-size:12px; color:#64748b; line-height:1.5; margin-bottom:12px;"></div>
+                <label data-role="source-wrap" style="display:block; margin-bottom:12px;">
+                    <div style="font-size:12px; color:#475569; margin-bottom:6px;">来源聊天 / 群聊</div>
+                    <select data-role="source" style="width:100%; padding:8px; border:1px solid #e2e8f0; border-radius:10px; font-size:12px; background:#fff;"></select>
+                </label>
+                <div data-role="source-static" style="display:none; margin-bottom:12px; padding:10px 12px; border:1px solid #e2e8f0; border-radius:12px; background:#f8fafc; color:#334155; font-size:12px; line-height:1.5;"></div>
+                <div data-role="rows" style="display:flex; flex-direction:column; gap:10px;"></div>
+            </div>
+            <div style="padding:12px 14px; border-top:1px solid rgba(0,0,0,0.06); background:rgba(248,250,252,0.92); display:flex; gap:10px;">
+                <button data-role="cancel" style="flex:1; padding:10px 12px; border:1px solid #e2e8f0; border-radius:12px; background:#fff; cursor:pointer;">取消</button>
+                <button data-role="save" style="flex:1; padding:10px 12px; border:none; border-radius:12px; background:#019aff; color:#fff; cursor:pointer; font-weight:900;">保存</button>
+            </div>
+        `;
+        document.body.appendChild(this.memoryShareOverlay);
+        document.body.appendChild(this.memorySharePanel);
+
+        this.memoryShareSourceSelect = this.memorySharePanel.querySelector('[data-role="source"]');
+        this.memoryShareRows = this.memorySharePanel.querySelector('[data-role="rows"]');
+        this.memoryShareSaveBtn = this.memorySharePanel.querySelector('[data-role="save"]');
+
+        this.memorySharePanel.querySelector('[data-role="close"]').onclick = () => this.closeMemoryShareManager();
+        this.memorySharePanel.querySelector('[data-role="cancel"]').onclick = () => this.closeMemoryShareManager();
+        this.memoryShareSourceSelect?.addEventListener('change', () => {
+            if (!this.memoryShareDraft) return;
+            this.memoryShareDraft.sourceId = String(this.memoryShareSourceSelect?.value || '').trim();
+            this.renderMemoryShareManager().catch((err) => {
+                logger.warn('render memory share manager failed', err);
+            });
+        });
+        this.memoryShareSaveBtn?.addEventListener('click', () => {
+            this.saveMemoryShareManager().catch((err) => {
+                logger.warn('save memory share manager failed', err);
+                window.toastr?.error?.('保存记忆共享失败');
+            });
+        });
+    }
+
+    closeMemoryShareManager() {
+        if (this.memoryShareOverlay) this.memoryShareOverlay.style.display = 'none';
+        if (this.memorySharePanel) this.memorySharePanel.style.display = 'none';
+        this.memoryShareDraft = null;
+    }
+
+    async renderMemoryShareManager() {
+        if (!this.memoryShareDraft || !this.memoryShareSourceSelect || !this.memoryShareRows) return;
+        const sessionId = String(this.memoryShareDraft.sessionId || '').trim();
+        const isRpTarget = isRpSessionId(sessionId);
+        const hint = this.memorySharePanel?.querySelector('[data-role="hint"]');
+        const sourceWrap = this.memorySharePanel?.querySelector('[data-role="source-wrap"]');
+        const sourceStatic = this.memorySharePanel?.querySelector('[data-role="source-static"]');
+        if (hint) {
+            hint.textContent = isRpTarget
+                ? '真正全局的用户档案会自动共享；这里仅管理聊天 / 群聊注入到当前 RP 会话的额外记忆。'
+                : '真正全局的用户档案会自动共享；这里仅管理当前角色的 RP 会话注入到本聊天的额外记忆。';
+        }
+        if (sourceWrap) sourceWrap.style.display = isRpTarget ? 'block' : 'none';
+        if (sourceStatic) sourceStatic.style.display = isRpTarget ? 'none' : 'block';
+        if (isRpTarget) {
+            const sessionIds = this.listSocialSessions();
+            this.memoryShareSourceSelect.innerHTML = '';
+            const appendOption = (value, label) => {
+                const option = document.createElement('option');
+                option.value = value;
+                option.textContent = label;
+                this.memoryShareSourceSelect.appendChild(option);
+            };
+            appendOption('', '所有聊天室（默认仅注入大纲）');
+            sessionIds.forEach((id) => appendOption(id, this.getSessionDisplayName(id)));
+            this.memoryShareSourceSelect.value = String(this.memoryShareDraft.sourceId || '').trim();
+        } else if (sourceStatic) {
+            const sourceId = this.getDefaultRpBridgeSourceId(sessionId);
+            const sourceLabel = sourceId ? (this.getRpDisplayName(sourceId) || sourceId) : '当前为空';
+            sourceStatic.textContent = `来源 RP 会话：${sourceLabel}`;
+        }
+
+        const context = await this.buildMemoryShareContext(
+            sessionId,
+            this.memoryShareDraft.sourceId,
+            this.memoryShareDraft.tableSettings,
+        );
+        this.memoryShareRows.innerHTML = '';
+        if (!context.entries.length) {
+            const empty = document.createElement('div');
+            empty.style.cssText = 'padding:10px; border:1px dashed #e2e8f0; border-radius:12px; color:#94a3b8; font-size:12px;';
+            empty.textContent = '当前来源没有可配置的跨模式记忆表格。';
+            this.memoryShareRows.appendChild(empty);
+            return;
+        }
+        context.entries.forEach((entry) => {
+            const row = document.createElement('div');
+            row.style.cssText = 'padding:10px; border:1px solid #e2e8f0; border-radius:12px; background:#fff;';
+            row.innerHTML = `
+                <label style="display:flex; align-items:center; justify-content:space-between; gap:10px; cursor:pointer;">
+                    <span style="font-weight:700; color:#0f172a;">${entry.shortLabel}</span>
+                    <input type="checkbox" data-role="enabled" style="width:18px; height:18px;">
+                </label>
+                <div style="color:#64748b; font-size:12px; margin-top:6px;">当前可注入 ${entry.rowCount} 条；0 代表全部注入。</div>
+                <label style="display:flex; align-items:center; justify-content:space-between; gap:8px; font-size:12px; color:#475569; margin-top:10px;">
+                    <span>注入条数</span>
+                    <input type="number" data-role="limit" min="0" step="1"
+                           style="width:88px; padding:4px 6px; border:1px solid #e2e8f0; border-radius:8px; font-size:12px; text-align:right;">
+                </label>
+            `;
+            const toggle = row.querySelector('[data-role="enabled"]');
+            const limitInput = row.querySelector('[data-role="limit"]');
+            toggle.checked = entry.enabled;
+            limitInput.value = String(entry.limit);
+            limitInput.disabled = entry.enabled !== true;
+            toggle.addEventListener('change', () => {
+                const current = this.memoryShareDraft.tableSettings?.[entry.tableId] || {};
+                this.memoryShareDraft.tableSettings = {
+                    ...(this.memoryShareDraft.tableSettings || {}),
+                    [entry.tableId]: {
+                        ...current,
+                        enabled: toggle.checked === true,
+                        limit: normalizeBridgeLimit(current.limit, entry.limit),
+                    },
+                };
+                limitInput.disabled = toggle.checked !== true;
+            });
+            limitInput.addEventListener('input', () => {
+                const safe = normalizeBridgeLimit(limitInput.value, 0);
+                limitInput.value = String(safe);
+                const current = this.memoryShareDraft.tableSettings?.[entry.tableId] || {};
+                this.memoryShareDraft.tableSettings = {
+                    ...(this.memoryShareDraft.tableSettings || {}),
+                    [entry.tableId]: {
+                        ...current,
+                        enabled: current.enabled === true,
+                        limit: safe,
+                    },
+                };
+            });
+            this.memoryShareRows.appendChild(row);
+        });
+    }
+
+    async openMemoryShareManager() {
+        const sessionId = this.getSessionId();
+        this.ensureMemoryShareModal();
+        const sessionSettings = this.chatStore?.getSessionSettings?.(sessionId) || {};
+        const isRpTarget = isRpSessionId(sessionId);
+        const sourceId = isRpTarget ? String(sessionSettings.chatBridgeSourceSessionId || '').trim() : '';
+        this.memoryShareDraft = {
+            sessionId,
+            sourceId,
+            tableSettings: {
+                ...(
+                    isRpTarget
+                        ? (
+                            sourceId
+                                ? (sessionSettings.chatBridgeTableSettings && typeof sessionSettings.chatBridgeTableSettings === 'object'
+                                    ? sessionSettings.chatBridgeTableSettings
+                                    : {})
+                                : (sessionSettings.chatBridgeAllSocialTableSettings && typeof sessionSettings.chatBridgeAllSocialTableSettings === 'object'
+                                    ? sessionSettings.chatBridgeAllSocialTableSettings
+                                    : {})
+                        )
+                        : (sessionSettings.rpBridgeTableSettings && typeof sessionSettings.rpBridgeTableSettings === 'object'
+                            ? sessionSettings.rpBridgeTableSettings
+                            : {})
+                ),
+            },
+        };
+        await this.renderMemoryShareManager();
+        if (this.memoryShareOverlay) this.memoryShareOverlay.style.display = 'block';
+        if (this.memorySharePanel) this.memorySharePanel.style.display = 'flex';
+    }
+
+    async saveMemoryShareManager() {
+        if (!this.memoryShareDraft) return;
+        const sessionId = String(this.memoryShareDraft.sessionId || '').trim();
+        if (!sessionId) return;
+        const sessionSettings = this.chatStore?.getSessionSettings?.(sessionId) || {};
+        if (isRpSessionId(sessionId)) {
+            const sourceId = String(this.memoryShareDraft.sourceId || '').trim();
+            const { sourceMode, sourceIsGroup } = getChatToRpBridgeSourceMeta(sourceId);
+            if (sourceMode === 'all_social') {
+                const normalizedAllSocialTableSettings = {
+                    ...(sessionSettings.chatBridgeAllSocialTableSettings && typeof sessionSettings.chatBridgeAllSocialTableSettings === 'object'
+                        ? sessionSettings.chatBridgeAllSocialTableSettings
+                        : {}),
+                    ...pruneChatToRpBridgeTableSettings(this.memoryShareDraft.tableSettings || {}, { sourceMode }),
+                };
+                const resolvedTableSettings = resolveChatToRpBridgeTableSettings({
+                    sessionSettings: {
+                        ...sessionSettings,
+                        chatBridgeSourceSessionId: '',
+                        chatBridgeAllSocialTableSettings: normalizedAllSocialTableSettings,
+                    },
+                    sourceMode,
+                    fallbackEnabled: appSettings.get().memoryBridgeChatToRpEnabled !== false,
+                    fallbackLimit: 0,
+                });
+                sessionSettings.chatBridgeSourceSessionId = '';
+                sessionSettings.chatBridgeAllSocialTableSettings = normalizedAllSocialTableSettings;
+                sessionSettings.chatBridgeEnabled = Object.values(resolvedTableSettings).some((entry) => entry?.enabled === true);
+                sessionSettings.chatBridgeOutlineLimit = Math.max(
+                    normalizeBridgeLimit(resolvedTableSettings?.chat_outline?.limit, 0),
+                    normalizeBridgeLimit(resolvedTableSettings?.group_outline?.limit, 0),
+                );
+            } else {
+                const normalizedTableSettings = {
+                    ...(sessionSettings.chatBridgeTableSettings && typeof sessionSettings.chatBridgeTableSettings === 'object'
+                        ? sessionSettings.chatBridgeTableSettings
+                        : {}),
+                    ...pruneChatToRpBridgeTableSettings(this.memoryShareDraft.tableSettings || {}, { sourceIsGroup, sourceMode }),
+                };
+                const resolvedTableSettings = resolveChatToRpBridgeTableSettings({
+                    sessionSettings: {
+                        ...sessionSettings,
+                        chatBridgeSourceSessionId: sourceId,
+                        chatBridgeTableSettings: normalizedTableSettings,
+                    },
+                    sourceIsGroup,
+                    sourceMode,
+                    fallbackEnabled: appSettings.get().memoryBridgeChatToRpEnabled !== false,
+                    fallbackLimit: 0,
+                });
+                const outlineTableId = sourceIsGroup ? 'group_outline' : 'chat_outline';
+                sessionSettings.chatBridgeSourceSessionId = sourceId;
+                sessionSettings.chatBridgeTableSettings = normalizedTableSettings;
+                sessionSettings.chatBridgeEnabled = Object.values(resolvedTableSettings).some((entry) => entry?.enabled === true);
+                sessionSettings.chatBridgeOutlineLimit = normalizeBridgeLimit(resolvedTableSettings?.[outlineTableId]?.limit, 0);
+            }
+        } else {
+            const normalizedTableSettings = {
+                ...(sessionSettings.rpBridgeTableSettings && typeof sessionSettings.rpBridgeTableSettings === 'object'
+                    ? sessionSettings.rpBridgeTableSettings
+                    : {}),
+                ...pruneRpToChatBridgeTableSettings(this.memoryShareDraft.tableSettings || {}),
+            };
+            const resolvedTableSettings = resolveRpToChatBridgeTableSettings({
+                sessionSettings: {
+                    ...sessionSettings,
+                    rpBridgeTableSettings: normalizedTableSettings,
+                },
+                fallbackEnabled: appSettings.get().memoryBridgeRpToChatEnabled !== false,
+                fallbackLimit: normalizeBridgeLimit(appSettings.get().memoryBridgeRpToChatLimit, 0),
+            });
+            sessionSettings.rpBridgeTableSettings = normalizedTableSettings;
+            sessionSettings.rpBridgeEnabled = Object.values(resolvedTableSettings).some((entry) => entry?.enabled === true);
+            sessionSettings.rpBridgeOutlineLimit = normalizeBridgeLimit(resolvedTableSettings?.rp_outline?.limit, 0);
+        }
+        this.chatStore?.setSessionSettings?.(sessionId, sessionSettings);
+        this.closeMemoryShareManager();
+        await this.refreshMemoryShareSummary(sessionId);
+        window.toastr?.success?.('已保存记忆共享设置');
+    }
+
     populate() {
         const sessionId = this.getSessionId();
         const c = this.contactsStore?.getContact?.(sessionId) || { id: sessionId, name: sessionId, avatar: '' };
+        const isRpSession = isRpSessionId(sessionId);
+        const rpDisplayName = isRpSession ? this.getRpDisplayName(sessionId) : '';
         // Ensure it exists (so save works)
         this.contactsStore?.upsertContact?.(c);
+        const title = this.panel.querySelector('#contact-settings-title');
+        if (title) title.textContent = isRpSession ? '设置' : '好友设置';
         const sub = this.panel.querySelector('#contact-settings-sub');
         if (sub) sub.textContent = `会话：${sessionId}`;
         this.currentAvatar = c.avatar || '';
         if (this.avatarPreview) {
-            const nameForAvatar = String(c?.name || sessionId || '好友').trim() || '好友';
+            const savedName = String(c?.name || '').trim();
+            const nameForAvatar = isRpSession
+                ? (rpDisplayName || (savedName && !savedName.startsWith('rp:') ? savedName : '') || sessionId || '角色')
+                : (savedName || sessionId || '好友');
             const tags = Array.isArray(c?.libraryTags) && c.libraryTags.length
                 ? c.libraryTags
                 : Array.isArray(c?.labels)
@@ -1080,7 +1667,12 @@ export class ContactSettingsPanel {
                 size: 96,
             });
         }
-        if (this.nameInput) this.nameInput.value = c.name || sessionId;
+        if (this.nameInput) {
+            const savedName = String(c?.name || '').trim();
+            this.nameInput.value = isRpSession
+                ? (savedName && !savedName.startsWith('rp:') ? savedName : (rpDisplayName || savedName || sessionId))
+                : (savedName || sessionId);
+        }
         if (this.labelsInput) {
             const labels = Array.isArray(c.labels) ? c.labels : [];
             this.labelsInput.value = labels.join(', ');
@@ -1097,6 +1689,14 @@ export class ContactSettingsPanel {
                 ? sessionSettings.scriptEnabled
                 : (globalSettings.scriptEnabled === true);
         }
+        const bridgeBlockTitle = this.panel.querySelector('#contact-bridge-block-title');
+        if (bridgeBlockTitle) bridgeBlockTitle.style.display = isRpSession ? 'none' : 'block';
+        if (this.rpBridgeSection) this.rpBridgeSection.style.display = 'none';
+        if (this.memoryShareSection) this.memoryShareSection.style.display = 'block';
+        this.refreshMemoryShareSummary(sessionId).catch((err) => {
+            logger.warn('refresh memory share summary failed', err);
+            if (this.memoryShareSummary) this.memoryShareSummary.textContent = '记忆共享状态读取失败';
+        });
     }
 
     save() {
@@ -1118,7 +1718,7 @@ export class ContactSettingsPanel {
             if (this.scriptToggle) sessionSettings.scriptEnabled = Boolean(this.scriptToggle.checked);
             this.chatStore?.setSessionSettings?.(sessionId, sessionSettings);
             this.contactsStore?.upsertContact?.({ ...prev, id: sessionId, name, avatar, labels });
-            window.toastr?.success?.('已保存好友设置');
+            window.toastr?.success?.(isRpSessionId(sessionId) ? '已保存设置' : '已保存好友设置');
             this.onSaved?.({ id: sessionId, name, avatar, labels });
             this.hide();
         } catch (err) {

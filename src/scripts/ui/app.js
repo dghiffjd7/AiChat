@@ -1,6 +1,7 @@
 import { LLMClient } from '../api/client.js';
 import { extractTableEditBlocks, stripTableEditBlocks } from '../memory/memory-edit-parser.js';
 import { isSummaryTableId, normalizeMemoryUpdateMode } from '../memory/memory-prompt-utils.js';
+import { getMemoryContextType, resolveMemorySessionMode, tableMatchesMemoryContext } from '../memory/memory-context-utils.js';
 import { appSettings } from '../storage/app-settings.js';
 import { renderTemplateTextAsync, templateSettings } from '../plugins/template-engine.js';
 import { ScriptRuntime } from '../plugins/script-runtime.js';
@@ -766,6 +767,23 @@ const initApp = async () => {
   let lastSocialState = { activePage: 'chat', sessionId: '', inChatRoom: false };
   let lastSocialSendMode = '';
   try {
+    window.appBridge.getRpSessionIdForActivePersona = () => getRpSessionId(activePersonaId);
+    window.appBridge.getRpSessionIdForSession = (sessionId = '') => {
+      const sid = String(sessionId || chatStore.getCurrent() || '').trim();
+      return getRpSessionId(getEffectivePersona(sid)?.id || activePersonaId);
+    };
+    window.appBridge.getActivePersonaId = () => String(activePersonaId || '').trim();
+    window.appBridge.getLastSocialSessionId = () => String(lastSocialState?.sessionId || '').trim();
+    window.appBridge.getRpCharacterNameForSession = (sessionId = '') => {
+      const sid = String(sessionId || getRpSessionId(activePersonaId) || '').trim();
+      const persona = getEffectivePersona(sid) || {};
+      const source = persona?.source && typeof persona.source === 'object' ? persona.source : {};
+      const sourceName = String(source?.characterName || source?.cardName || '').trim();
+      if (source?.type === 'character_card' && sourceName) return sourceName;
+      return String(persona?.name || '').trim() || '角色';
+    };
+  } catch {}
+  try {
     sessionPanel.getSocialSessionId = () => String(lastSocialState?.sessionId || '').trim();
   } catch {}
   const loadUiMode = () => {
@@ -909,12 +927,8 @@ const initApp = async () => {
     return false;
   };
 
-  const isSharedMemorySession = (sessionId = chatStore.getCurrent()) => {
-    if (uiMode === 'rp') return true;
-    const sid = String(sessionId || '').trim();
-    if (!sid) return false;
-    const settings = chatStore.getSessionSettings?.(sid) || {};
-    if (typeof settings.sharedMemory === 'boolean') return settings.sharedMemory;
+  const isSharedMemorySession = (_sessionId = chatStore.getCurrent()) => {
+    // Legacy compatibility only: session memory no longer promotes contact tables into persona-global scope.
     return false;
   };
   try {
@@ -11948,7 +11962,7 @@ Phase G（Frame 36）：循环衔接
     if (typeof chatStore._ensureSession === 'function') {
       chatStore._ensureSession(rpSessionId);
       const settings = chatStore.getSessionSettings?.(rpSessionId) || {};
-      chatStore.setSessionSettings?.(rpSessionId, { ...settings, sharedVariables: true, sharedMemory: true });
+      chatStore.setSessionSettings?.(rpSessionId, { ...settings, sharedVariables: true, sharedMemory: false });
       chatStore._persist?.();
     }
     applyMvuSchemaDefaults(rpSessionId, { reason: 'rp_enter' });
@@ -12909,7 +12923,6 @@ Phase G（Frame 36）：循环衔接
     const contact = contactsStore.getContact(sessionId);
     const isRpMode = uiMode === 'rp';
     const sharedVariables = isSharedVariableSession(sessionId);
-    const sharedMemory = isSharedMemorySession(sessionId);
     const activeUser = getActiveUserProfile();
     const activePersona = getEffectivePersona(sessionId);
     const promptUserName = String(activeUser?.name || '').trim() || '我';
@@ -13631,13 +13644,14 @@ Phase G（Frame 36）：循环衔接
       const schema = memoryTemplateStore?.toTemplateDefinition?.(record) || record?.schema || {};
       return { record, template: schema };
     };
-    const buildTableMaps = template => {
+    const buildTableMaps = (template, filterOptions = null) => {
       const tableById = new Map();
       const tableNameMap = new Map();
       const tableOrder = [];
       (template?.tables || []).forEach(table => {
         const id = String(table?.id || '').trim();
         if (!id) return;
+        if (filterOptions && !tableMatchesMemoryContext(table, filterOptions)) return;
         tableById.set(id, table);
         tableOrder.push(id);
         const name = String(table?.name || '').trim();
@@ -13683,12 +13697,19 @@ Phase G（Frame 36）：循环衔接
       if (!templateInfo?.record) return null;
       const templateId = String(templateInfo.record?.id || '').trim();
       const template = templateInfo.template || {};
-      const { tableById, tableNameMap, tableOrder: templateOrder } = buildTableMaps(template);
+      const contextType = getMemoryContextType({ sessionId, isGroup });
+      const sessionMode = resolveMemorySessionMode({ uiMode, sessionId, contextType });
+      const { tableById, tableNameMap, tableOrder: templateOrder } = buildTableMaps(template, {
+        sessionId,
+        isGroup,
+        contextType,
+        uiMode: sessionMode === 'rp' ? 'rp' : uiMode,
+      });
       const planOrder = Array.isArray(plan?.tableOrder) ? plan.tableOrder : [];
       const tableOrder = planOrder.length ? planOrder : templateOrder;
       const rowIndexMap = plan?.rowIndexMap && typeof plan.rowIndexMap === 'object' ? plan.rowIndexMap : {};
 
-      const useSharedGlobalScope = sharedMemory && !isGroup;
+      const useSharedGlobalScope = false;
       let scopedRows = [];
       if (!useSharedGlobalScope) {
         scopedRows = isGroup
@@ -14032,9 +14053,16 @@ Phase G（Frame 36）：循环衔接
       const templateId = String(templateInfo.record?.id || '').trim();
       if (!templateId) return false;
       const template = templateInfo.template || {};
-      const { tableById, tableNameMap, tableOrder } = buildTableMaps(template);
       const isGroupScope = String(sessionId || '').startsWith('group:');
-      const useSharedGlobalScope = sharedMemory && !isGroupScope;
+      const contextType = getMemoryContextType({ sessionId, isGroup: isGroupScope });
+      const sessionMode = resolveMemorySessionMode({ uiMode, sessionId, contextType });
+      const { tableById, tableNameMap, tableOrder } = buildTableMaps(template, {
+        sessionId,
+        isGroup: isGroupScope,
+        contextType,
+        uiMode: sessionMode === 'rp' ? 'rp' : uiMode,
+      });
+      const useSharedGlobalScope = false;
       const resolveTableId = action => {
         const rawId = String(action?.tableId || '').trim();
         if (rawId && tableById.has(rawId)) return rawId;
@@ -14265,9 +14293,6 @@ Phase G（Frame 36）：循环衔接
       return parts.join('\n\n');
     };
     const handleMemoryEditsFromRaw = async (raw, { sessionId, isGroup, force = false, requestPrompt } = {}) => {
-      if (uiMode === 'rp') {
-        return { text: raw, blocks: [], actions: [] };
-      }
       if (!force && !isMemoryAutoExtractInline()) {
         return { text: raw, blocks: [], actions: [] };
       }
@@ -14389,7 +14414,6 @@ Phase G（Frame 36）：循环衔接
       return runtime;
     };
     const runMemoryUpdateAfterChat = async (sessionId, isGroup, baseContext) => {
-      if (uiMode === 'rp') return;
       if (!isMemoryAutoExtractSeparate()) return;
       if (!sessionId) return;
       if (memoryUpdateRunning.has(sessionId)) return;
@@ -15648,9 +15672,13 @@ Phase G（Frame 36）：循环衔接
           disablePhoneFormat: Boolean(creativeMode),
           uiMode,
           useGlobalVariables: Boolean(sharedVariables),
-          sharedMemory: Boolean(sharedMemory),
-          memoryStorageMode: isRpMode ? (isMemoryEnabled() ? 'summary' : 'off') : getMemoryStorageMode(),
-          memoryAutoExtract: isRpMode ? false : isMemoryAutoExtractInline(),
+          sharedMemory: false,
+          defaultRpBridgeSessionId: !isRpMode
+            ? getRpSessionId(getEffectivePersona(sessionId)?.id || activePersonaId)
+            : '',
+          defaultChatBridgeSessionId: isRpMode ? String(lastSocialState?.sessionId || '').trim() : '',
+          memoryStorageMode: getMemoryStorageMode(),
+          memoryAutoExtract: isMemoryAutoExtractInline(),
           memoryInjectPosition,
           memoryInjectDepth,
           userAttachmentParts: attachmentParts,
