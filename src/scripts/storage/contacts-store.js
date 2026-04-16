@@ -164,6 +164,13 @@ export class ContactsStore {
                     }
                 }
                 logger.info('contacts store hydrated from disk');
+                try {
+                    const contacts = Object.values(this.state.contacts || {});
+                    const groupCount = contacts.filter(item => item && (item.isGroup || String(item.id || '').startsWith('group:'))).length;
+                    logger.info(
+                        `[contacts-store] hydrate scope=${scopeId || 'default'} contacts=${contacts.length} groups=${groupCount}`
+                    );
+                } catch {}
                 logger.info(
                     `[Persona_test] contactsStore.hydrated scope=${scopeId || 'default'} key=${storeKey} contacts=${
                         Object.keys(this.state.contacts || {}).length
@@ -293,6 +300,16 @@ export class ContactsStore {
             isUserCreated: contact.isUserCreated ?? prev.isUserCreated ?? true,
             updatedAt: Date.now(),
         };
+        try {
+            const next = this.state.contacts[id];
+            if (next?.isGroup || String(id).startsWith('group:')) {
+                const members = Array.isArray(next?.members) ? next.members.length : 0;
+                const avatarLen = String(next?.avatar || '').trim().length;
+                logger.info(
+                    `[contacts-store] upsert group scope=${this.scopeId || 'default'} id=${id} name=${String(next?.name || '')} members=${members} avatarLen=${avatarLen}`
+                );
+            }
+        } catch {}
         this._persist();
     }
 
@@ -304,12 +321,17 @@ export class ContactsStore {
     /**
      * 確保所有現有 session 都在联系人里可见（不会覆盖已有资料）
      */
-    ensureFromSessions(sessionIds = [], { defaultAvatar = '' } = {}) {
+    ensureFromSessions(sessionIds = [], { defaultAvatar = '', includeGroups = false } = {}) {
         let changed = false;
         const added = [];
+        const skippedGroups = [];
         sessionIds.forEach((sid) => {
             const id = normalizeId(sid);
             if (!id) return;
+            if (id.startsWith('group:') && includeGroups !== true) {
+                skippedGroups.push(id);
+                return;
+            }
             if (!this.state.contacts[id]) {
                 this.state.contacts[id] = {
                     id,
@@ -332,6 +354,13 @@ export class ContactsStore {
                 `[Persona_test] contactsStore.ensureFromSessions added=${added.length} scope=${this.scopeId || 'default'} ids=${preview}${suffix}`
             );
             this._persist();
+        }
+        if (skippedGroups.length) {
+            const preview = skippedGroups.slice(0, 6).join(', ');
+            const suffix = skippedGroups.length > 6 ? '...' : '';
+            logger.info(
+                `[contacts-store] ensureFromSessions skippedGroups=${skippedGroups.length} scope=${this.scopeId || 'default'} ids=${preview}${suffix}`
+            );
         }
     }
 

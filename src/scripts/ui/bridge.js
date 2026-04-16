@@ -881,9 +881,31 @@ class AppBridge {
       const pushSpacer = () => {
         if (parts.length && parts[parts.length - 1] !== '') parts.push('');
       };
+      const resolvePromptSortKeyForTable = (row, tableId, fallback = 0) => {
+        const normalizedTableId = String(tableId || '').trim();
+        if (!isSummaryTableId(normalizedTableId)) return fallback;
+        const timeText = normalizeMemoryCell(row?.row_data?.time).replace(/\s*\r?\n\s*/g, ' / ').trim();
+        const match = timeText.match(/第\s*(\d+)\s*轮/);
+        if (!match) return fallback;
+        const round = Number(match[1]);
+        return Number.isFinite(round) ? round : fallback;
+      };
+      const sortRowsForPrompt = (rows = [], tableId = '') => {
+        const list = Array.isArray(rows) ? rows.slice() : [];
+        list.sort((a, b) => {
+          const af = resolveRowSortKey(a, 0);
+          const bf = resolveRowSortKey(b, 0);
+          const ak = resolvePromptSortKeyForTable(a, tableId, af);
+          const bk = resolvePromptSortKeyForTable(b, tableId, bf);
+          if (ak !== bk) return ak - bk;
+          if (af !== bf) return af - bf;
+          return String(a?.id || '').localeCompare(String(b?.id || ''));
+        });
+        return list;
+      };
       const getRowText = (row, table) => {
         if (!table) return '';
-        return formatMemoryRowText(row?.row_data || {}, table?.columns || []);
+        return formatMemoryRowText(row?.row_data || {}, table?.columns || [], table?.id || '');
       };
       const normalizeId = (cid) => String(cid || '').trim();
       const resolveContactName = (cid) => {
@@ -891,9 +913,8 @@ class AppBridge {
         return String(c?.name || cid || '').trim();
       };
       const clampBridgeLimit = (raw, fallback) => normalizeBridgeLimit(raw, fallback);
-      const pickNewestRows = (rows = [], limit = 0) => {
-        const list = Array.isArray(rows) ? rows.slice() : [];
-        list.sort((a, b) => resolveRowSortKey(a, 0) - resolveRowSortKey(b, 0));
+      const pickNewestRows = (rows = [], limit = 0, tableId = '') => {
+        const list = sortRowsForPrompt(rows, tableId);
         if (limit > 0 && list.length > limit) return list.slice(-limit);
         return list;
       };
@@ -905,7 +926,7 @@ class AppBridge {
         limit = 0,
       } = {}) => {
         if (!table || !rows.length) return;
-        const selectedRows = pickNewestRows(rows, limit);
+        const selectedRows = pickNewestRows(rows, limit, table?.id || '');
         if (!selectedRows.length) return;
         pushSpacer();
         if (!pushLine(header)) return;
@@ -934,10 +955,9 @@ class AppBridge {
               group_id: groupId,
               template_id: templateId,
             }).catch(() => []);
-            const outlineRows = (Array.isArray(groupRows) ? groupRows : [])
+            const outlineRows = sortRowsForPrompt((Array.isArray(groupRows) ? groupRows : [])
               .filter(row => row && row.is_active !== false)
-              .filter(row => String(row?.table_id || '').trim() === 'group_outline')
-              .sort((a, b) => resolveRowSortKey(a, 0) - resolveRowSortKey(b, 0));
+              .filter(row => String(row?.table_id || '').trim() === 'group_outline'), 'group_outline');
             if (!outlineRows.length) continue;
             pushSpacer();
             if (!pushLine(`【${groupName}】`)) break;
@@ -991,8 +1011,8 @@ class AppBridge {
               const label = String(table?.name || tableId).trim() || tableId;
               const header = autoExtract ? `【${label}｜${tableId}】` : `【${label}】`;
               if (!pushLine(header)) return { text: parts.join('\n').trim(), tokens: used };
-              tableRows.sort((a, b) => resolveRowSortKey(a, 0) - resolveRowSortKey(b, 0));
-              for (const row of tableRows) {
+              const orderedRows = sortRowsForPrompt(tableRows, tableId);
+              for (const row of orderedRows) {
                 const rowText = getRowText(row, table);
                 if (!rowText) continue;
                 if (!pushLine(`- ${rowText}`)) return { text: parts.join('\n').trim(), tokens: used };
@@ -1002,8 +1022,8 @@ class AppBridge {
               const outlineLabel = String(outlineTable?.name || outlineTableId).trim() || outlineTableId;
               const header = autoExtract ? `【${outlineLabel}｜${outlineTableId}】` : `【${outlineLabel}】`;
               if (!pushLine(header)) return { text: parts.join('\n').trim(), tokens: used };
-              outlineRows.sort((a, b) => resolveRowSortKey(a, 0) - resolveRowSortKey(b, 0));
-              for (const row of outlineRows) {
+              const orderedOutlineRows = sortRowsForPrompt(outlineRows, outlineTableId);
+              for (const row of orderedOutlineRows) {
                 const rowText = getRowText(row, outlineTable);
                 if (!rowText) continue;
                 if (!pushLine(`- ${rowText}`)) return { text: parts.join('\n').trim(), tokens: used };
@@ -1035,10 +1055,9 @@ class AppBridge {
                 group_id: groupId,
                 template_id: templateId,
               }).catch(() => []);
-              const outlineRows = (Array.isArray(groupRows) ? groupRows : [])
+              const outlineRows = sortRowsForPrompt((Array.isArray(groupRows) ? groupRows : [])
                 .filter(row => row && row.is_active !== false)
-                .filter(row => normalizeId(row?.table_id) === 'group_outline')
-                .sort((a, b) => resolveRowSortKey(a, 0) - resolveRowSortKey(b, 0));
+                .filter(row => normalizeId(row?.table_id) === 'group_outline'), 'group_outline');
               if (!outlineRows.length) continue;
               const unknownMembers = members.filter(memberId => !item.groupMembers.includes(memberId));
               const unknownNames = unknownMembers.map(memberId => resolveContactName(memberId) || memberId).filter(Boolean);
@@ -1083,7 +1102,7 @@ class AppBridge {
             const rowsForTable = activeRpRows.filter((row) => normalizeId(row?.table_id) === tableId);
             if (!rowsForTable.length) return;
             const limit = clampBridgeLimit(rpTableSettings?.[tableId]?.limit, 0);
-            const selectedRows = pickNewestRows(rowsForTable, limit);
+            const selectedRows = pickNewestRows(rowsForTable, limit, tableId);
             if (!selectedRows.length) return;
             if (blockLines.length === 0) {
               blockLines.push(`【跨模式参考｜RP剧情记忆：${sourceName}】`);
@@ -1159,7 +1178,15 @@ class AppBridge {
                   });
               });
               if (!collectedRows.length) return;
-              collectedRows.sort((a, b) => resolveRowSortKey(a?.row, 0) - resolveRowSortKey(b?.row, 0));
+              collectedRows.sort((a, b) => {
+                const af = resolveRowSortKey(a?.row, 0);
+                const bf = resolveRowSortKey(b?.row, 0);
+                const ak = resolvePromptSortKeyForTable(a?.row, tableId, af);
+                const bk = resolvePromptSortKeyForTable(b?.row, tableId, bf);
+                if (ak !== bk) return ak - bk;
+                if (af !== bf) return af - bf;
+                return String(a?.sourceId || '').localeCompare(String(b?.sourceId || ''));
+              });
               const limit = normalizeBridgeLimit(tableSettings?.[tableId]?.limit, 0);
               const selectedRows = limit > 0 && collectedRows.length > limit
                 ? collectedRows.slice(-limit)
@@ -1208,7 +1235,7 @@ class AppBridge {
             const rowsForTable = activeSourceRows.filter((row) => normalizeId(row?.table_id) === tableId);
             if (!rowsForTable.length) return;
             const limit = normalizeBridgeLimit(tableSettings?.[tableId]?.limit, 0);
-            const selectedRows = pickNewestRows(rowsForTable, limit);
+            const selectedRows = pickNewestRows(rowsForTable, limit, tableId);
             if (!selectedRows.length) return;
             if (blockLines.length === 0) {
               blockLines.push(`【跨模式参考｜聊天互动记忆：${sourceName}】`);
@@ -2313,10 +2340,12 @@ class AppBridge {
       ? { content: memoryPromptContent, positions: memoryPromptPositions, role: memoryPromptRole, depth: memoryPromptDepth }
       : null;
     const disableScenarioHint = Boolean(context?.meta?.disableScenarioHint);
+    const replyPromptHint = String(context?.meta?.replyPromptHint || '').trim();
     const overrideLastUserMessageRaw = (typeof context?.meta?.overrideLastUserMessage === 'string')
       ? String(context.meta.overrideLastUserMessage)
       : '';
-    const scenarioHint = (() => {
+    const scenarioHintBase = (() => {
+      if (disableScenarioHint) return '';
       if (isMomentCommentTask) {
         const isReply = Boolean(context?.task?.replyToAuthor) || Boolean(context?.task?.replyToCommentId) || Boolean(context?.task?.isReplyToComment);
         return isReply ? '在动态评论回复，注意动态评论格式' : '在动态评论，注意动态评论格式';
@@ -2330,15 +2359,21 @@ class AppBridge {
       const privateTargetName = String(sessionName || characterName || context?.session?.id || '当前对象').trim();
       return `正在与${privateTargetName}私聊，请遵循私聊格式`;
     })();
-    const pendingUserText = pendingUserTextRaw && !disableScenarioHint
-      ? `${pendingUserTextRaw}（${scenarioHint}）`
-      : pendingUserTextRaw;
+    const scenarioHints = [scenarioHintBase, replyPromptHint].filter(Boolean);
+    const scenarioHint = scenarioHints.join('；');
+    const pendingUserText = (() => {
+      if (!pendingUserTextRaw) {
+        return scenarioHint ? `（${scenarioHint}）` : '';
+      }
+      return scenarioHint ? `${pendingUserTextRaw}（${scenarioHint}）` : pendingUserTextRaw;
+    })();
     const lastUserMessageRe = /{{\s*(?:lastUserMessage|userLastMessage|user_last_message)\s*}}/i;
     const hasLastUserMessagePlaceholder = (raw) => lastUserMessageRe.test(String(raw || ''));
     let usedLastUserMessageForPendingInput = false;
     const pendingUserPrompt = (() => {
-      if (!pendingUserTextRaw) return '';
-      const baseText = disableScenarioHint ? String(rawUserMessage ?? '') : pendingUserText;
+      if (!pendingUserTextRaw && !String(pendingUserText || '').trim()) return '';
+      const shouldBypassHint = disableScenarioHint && !replyPromptHint;
+      const baseText = shouldBypassHint ? String(rawUserMessage ?? '') : pendingUserText;
       if (context?.meta?.skipInputRegex === true) return String(baseText ?? '');
       return this.regex.apply(baseText, this.getRegexContext(), regex_placement.USER_INPUT, {
         isMarkdown: true,
@@ -4391,6 +4426,18 @@ const stringifyMessageContent = (content) => {
     } catch (err) {
       logger.warn('delete persona card failed', err);
       return false;
+    }
+  }
+
+  async cleanupPersonaScopedData(keepPersonaIds = [], deletePersonaIds = []) {
+    try {
+      return await safeInvoke('cleanup_persona_scoped_data', {
+        keepPersonaIds: Array.isArray(keepPersonaIds) ? keepPersonaIds : [],
+        deletePersonaIds: Array.isArray(deletePersonaIds) ? deletePersonaIds : [],
+      });
+    } catch (err) {
+      logger.warn('cleanup persona scoped data failed', err);
+      return { deletedScopes: [], deletedPaths: [], failedScopes: [] };
     }
   }
 

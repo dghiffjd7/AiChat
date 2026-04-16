@@ -23,6 +23,7 @@ export class DebugPanel {
         this.memoryInspectBtn = null;
         this.stickerDebugBtn = null;
         this.variableInspectBtn = null;
+        this.groupAvatarInspectBtn = null;
         this.templateLogBtn = null;
         this.promptPreviewBtn = null;
         this.errorLogBtn = null;
@@ -45,6 +46,11 @@ export class DebugPanel {
         this.variableInspectorMeta = null;
         this.variableInspectorText = null;
         this.variableInspectorRefresh = null;
+        this.groupAvatarOverlay = null;
+        this.groupAvatarPanel = null;
+        this.groupAvatarMeta = null;
+        this.groupAvatarText = null;
+        this.groupAvatarRefresh = null;
         this.templateLogOverlay = null;
         this.templateLogPanel = null;
         this.templateLogMeta = null;
@@ -177,6 +183,23 @@ export class DebugPanel {
         variableInspectBtn.onclick = () => this.showVariableInspector();
         this.variableInspectBtn = variableInspectBtn;
         this.controls.appendChild(variableInspectBtn);
+
+        const groupAvatarInspectBtn = document.createElement('button');
+        groupAvatarInspectBtn.type = 'button';
+        groupAvatarInspectBtn.textContent = '群聊头像';
+        groupAvatarInspectBtn.style.cssText = `
+            padding: 2px 6px;
+            background: rgba(0, 0, 0, 0.8);
+            color: #00ff00;
+            border: 1px solid #00ff00;
+            border-radius: 4px;
+            font-size: 10px;
+            font-family: monospace;
+            cursor: pointer;
+        `;
+        groupAvatarInspectBtn.onclick = () => this.showGroupAvatarInspector();
+        this.groupAvatarInspectBtn = groupAvatarInspectBtn;
+        this.controls.appendChild(groupAvatarInspectBtn);
 
         const templateLogBtn = document.createElement('button');
         templateLogBtn.type = 'button';
@@ -1051,6 +1074,129 @@ export class DebugPanel {
             this.variableInspectorOverlay.style.display = 'block';
         }
         await this.refreshVariableInspector();
+    }
+
+    ensureGroupAvatarInspector() {
+        if (this.groupAvatarOverlay) return;
+        const overlay = document.createElement('div');
+        overlay.id = 'debug-group-avatar-overlay';
+        overlay.style.cssText = `
+            display:none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.38);
+            z-index: 22050;
+            padding: calc(10px + env(safe-area-inset-top, 0px)) 10px calc(10px + env(safe-area-inset-bottom, 0px)) 10px;
+            box-sizing: border-box;
+        `;
+        const panel = document.createElement('div');
+        panel.id = 'debug-group-avatar-panel';
+        panel.style.cssText = `
+            width: 100%;
+            height: 100%;
+            background: #fff;
+            border-radius: 14px;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        `;
+        panel.addEventListener('click', e => e.stopPropagation());
+        panel.innerHTML = `
+            <div style="display:flex; align-items:center; gap:10px; padding:12px; background:#f3f4f6; border-bottom:1px solid #e5e7eb;">
+                <div style="font-weight:900;">群聊头像 / Scope 调试</div>
+                <div id="debug-group-avatar-meta" style="margin-left:auto; font-size:12px; color:#64748b; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"></div>
+                <button id="debug-group-avatar-refresh" style="border:1px solid #e5e7eb; background:#fff; border-radius:10px; padding:6px 10px;">刷新</button>
+                <button id="debug-group-avatar-copy" style="border:1px solid #e5e7eb; background:#fff; border-radius:10px; padding:6px 10px;">复制</button>
+                <button id="debug-group-avatar-close" style="border:1px solid #e5e7eb; background:#fff; border-radius:10px; padding:6px 10px;">关闭</button>
+            </div>
+            <div style="flex:1; min-height:0; overflow:auto; -webkit-overflow-scrolling:touch; padding:10px;">
+                <textarea id="debug-group-avatar-text" readonly style="
+                    width:100%;
+                    height:100%;
+                    min-height: 100%;
+                    resize:none;
+                    border:1px solid rgba(0,0,0,0.10);
+                    border-radius:12px;
+                    padding:12px;
+                    font-size:12px;
+                    line-height:1.4;
+                    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+                    white-space: pre;
+                    box-sizing:border-box;
+                    outline:none;
+                "></textarea>
+            </div>
+        `;
+        overlay.appendChild(panel);
+        overlay.addEventListener('click', () => this.hideGroupAvatarInspector());
+        document.body.appendChild(overlay);
+
+        this.groupAvatarOverlay = overlay;
+        this.groupAvatarPanel = panel;
+        this.groupAvatarMeta = panel.querySelector('#debug-group-avatar-meta');
+        this.groupAvatarText = panel.querySelector('#debug-group-avatar-text');
+        this.groupAvatarRefresh = panel.querySelector('#debug-group-avatar-refresh');
+
+        panel.querySelector('#debug-group-avatar-close')?.addEventListener('click', () => this.hideGroupAvatarInspector());
+        panel.querySelector('#debug-group-avatar-refresh')?.addEventListener('click', () => this.refreshGroupAvatarInspector());
+        panel.querySelector('#debug-group-avatar-copy')?.addEventListener('click', async () => {
+            const text = String(this.groupAvatarText?.value || '');
+            if (!text) {
+                window.toastr?.warning?.('暂无内容可复制');
+                return;
+            }
+            try {
+                await navigator.clipboard.writeText(text);
+                window.toastr?.success?.('已复制');
+            } catch {
+                try {
+                    this.groupAvatarText?.select?.();
+                    document.execCommand?.('copy');
+                    window.toastr?.success?.('已复制');
+                } catch {
+                    window.toastr?.error?.('复制失败');
+                }
+            }
+        });
+    }
+
+    hideGroupAvatarInspector() {
+        if (this.groupAvatarOverlay) {
+            this.groupAvatarOverlay.style.display = 'none';
+        }
+    }
+
+    formatGroupAvatarSnapshot(snapshot) {
+        if (!snapshot || typeof snapshot !== 'object') return '暂无调试快照';
+        return JSON.stringify(snapshot, null, 2);
+    }
+
+    async refreshGroupAvatarInspector() {
+        if (!this.groupAvatarOverlay || !this.groupAvatarText) return;
+        try {
+            const loader = window.appBridge?.getGroupAvatarDebugSnapshot;
+            if (typeof loader !== 'function') throw new Error('getGroupAvatarDebugSnapshot not available');
+            const snapshot = await loader();
+            const sessionId = String(snapshot?.session?.id || '').trim() || '未选择会话';
+            const scope = String(snapshot?.storeScopes?.contacts || '').trim() || 'default';
+            if (this.groupAvatarMeta) {
+                this.groupAvatarMeta.textContent = `session=${sessionId} | scope=${scope}`;
+            }
+            this.groupAvatarText.value = this.formatGroupAvatarSnapshot(snapshot);
+        } catch (err) {
+            const msg = err?.message ? String(err.message) : String(err || '');
+            if (this.groupAvatarMeta) this.groupAvatarMeta.textContent = `加载失败: ${msg || 'unknown error'}`;
+            this.groupAvatarText.value = `群聊头像调试加载失败\n\n${msg || 'unknown error'}`;
+            this.log(`群聊头像调试加载失败: ${msg || 'unknown error'}`, 'warn');
+        }
+    }
+
+    async showGroupAvatarInspector() {
+        this.ensureGroupAvatarInspector();
+        if (this.groupAvatarOverlay) {
+            this.groupAvatarOverlay.style.display = 'block';
+        }
+        await this.refreshGroupAvatarInspector();
     }
 
     ensureTemplateLogViewer() {

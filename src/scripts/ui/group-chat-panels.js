@@ -499,6 +499,9 @@ export class GroupCreatePanel {
             if (members.length < 2) return;
 
             const id = genGroupId();
+            logger.info(
+                `[group-chat] create scope=${this.contactsStore?.scopeId || 'default'} id=${id} name=${name} members=${members.length} avatarLen=${String(this.avatar || '').trim().length}`
+            );
             this.contactsStore?.upsertContact?.({
                 id,
                 name,
@@ -1787,6 +1790,9 @@ export class GroupSettingsPanel {
 
             const beforeMembers = Array.isArray(prev.members) ? prev.members.map(normalize).filter(Boolean) : [];
             const afterMembers = [...new Set(this.members.map(normalize).filter(Boolean))];
+            logger.info(
+                `[group-chat] save scope=${this.contactsStore?.scopeId || 'default'} id=${this.groupId} prevName=${String(prev.name || '')} nextName=${nextName} beforeMembers=${beforeMembers.length} afterMembers=${afterMembers.length} avatarLen=${String(this.avatar || '').trim().length}`
+            );
             this.chatStore?.setSessionSettings?.(this.groupId, sessionSettings);
             this.contactsStore?.upsertContact?.({
                 ...prev,

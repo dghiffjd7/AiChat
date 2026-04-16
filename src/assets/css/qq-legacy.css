@@ -728,6 +728,166 @@ body[data-ui-mode='rp'] .qq-avatar {
   white-space: pre-wrap;
 }
 
+.chat-bubble-stack {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.chat-bubble-stack.is-user {
+  align-items: flex-end;
+}
+
+.chat-message-stack {
+  min-width: 0;
+}
+
+.chat-reply-preview {
+  width: 100%;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  border: none;
+  border-radius: 12px;
+  background: rgba(15, 23, 42, 0.06);
+  padding: 8px 10px;
+  margin-bottom: 8px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.chat-reply-preview:active {
+  opacity: 0.85;
+}
+
+.chat-reply-preview-avatar {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.chat-reply-preview-text {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.chat-reply-preview-author {
+  font-size: 12px;
+  line-height: 1.2;
+  color: #0f766e;
+  font-weight: 700;
+}
+
+.chat-reply-preview-snippet {
+  font-size: 12px;
+  line-height: 1.35;
+  color: #475569;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chat-reaction-trigger {
+  position: absolute;
+  top: 50%;
+  right: -30px;
+  transform: translateY(-50%);
+  width: 18px;
+  height: 18px;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  color: rgba(100, 116, 139, 0.72);
+  box-shadow: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+}
+
+.chat-reaction-trigger:active {
+  opacity: 0.8;
+}
+
+.QQ_chat_mymsg .chat-reaction-trigger {
+  left: -30px;
+  right: auto;
+}
+
+.chat-reaction-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.chat-reaction-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.9);
+  padding: 3px 8px;
+  font-size: 12px;
+  color: #334155;
+  cursor: pointer;
+}
+
+.chat-reaction-chip.is-self {
+  background: rgba(220, 252, 231, 0.9);
+  border-color: rgba(34, 197, 94, 0.18);
+  color: #166534;
+}
+
+.chat-reaction-chip:active {
+  opacity: 0.82;
+}
+
+.chat-reaction-chip-count {
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.chat-reaction-option {
+  width: 34px;
+  height: 34px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+}
+
+.chat-reaction-option:active {
+  background: rgba(15, 23, 42, 0.08);
+}
+
+.chat-reaction-option.is-active {
+  background: rgba(220, 252, 231, 0.9);
+}
+
+.message-pending .chat-reaction-trigger {
+  display: none;
+}
+
+body[data-ui-mode='rp'] .chat-reaction-trigger,
+body[data-ui-mode='rp'] .chat-reply-draft {
+  display: none !important;
+}
+
 .QQ_chat_charmsg.chat-jump-focus-line,
 .QQ_chat_mymsg.chat-jump-focus-line,
 .QQ_chat_sysmsg.chat-jump-focus-line {
@@ -1035,6 +1195,71 @@ body[data-ui-mode='rp'] .qq-avatar {
 
 .chat-attachment-preview.is-active {
   display: flex;
+}
+
+.chat-reply-draft {
+  display: flex;
+  align-items: stretch;
+  padding: 8px 10px;
+  border-radius: 16px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 4px 18px rgba(15, 23, 42, 0.08);
+}
+
+.chat-reply-draft-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  width: 100%;
+}
+
+.chat-reply-draft-avatar {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.chat-reply-draft-text {
+  min-width: 0;
+  flex: 1;
+}
+
+.chat-reply-draft-author {
+  font-size: 12px;
+  line-height: 1.2;
+  color: #0f766e;
+  font-weight: 700;
+  margin-bottom: 2px;
+}
+
+.chat-reply-draft-snippet {
+  font-size: 12px;
+  line-height: 1.35;
+  color: #475569;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chat-reply-draft-cancel {
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: #ef4444;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.chat-reply-draft-cancel:active {
+  background: rgba(239, 68, 68, 0.08);
 }
 
 .chat-attachment-item {

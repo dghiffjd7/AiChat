@@ -7,6 +7,14 @@ import { stickerPackStore } from '../../storage/sticker-pack-store.js';
 import { cleanupRichText, renderRichText, setupIframeResizeListener } from './rich-text-renderer.js';
 import { appSettings } from '../../storage/app-settings.js';
 import { logger } from '../../utils/logger.js';
+import {
+  DEFAULT_REACTION_EMOJIS,
+  SELF_REACTION_ACTOR,
+  countReactionActors,
+  hasReactionActor,
+  normalizeReactionEntries,
+  normalizeReplyTarget,
+} from './message-interaction-utils.js';
 
 const resolveMediaUrl = (kind, value) => {
   const resolved = resolveMediaAsset(kind, value);
@@ -165,12 +173,15 @@ const toastOnce = (message, level = 'warning', ttl = 8000) => {
     if (toastOnce._cache.get(key) === now) toastOnce._cache.delete(key);
   }, ttl);
 };
+const DEFAULT_REPLY_AVATAR = './assets/external/feather-default.png';
 
 export class ChatUI {
   constructor() {
     this.scrollEl = document.getElementById('chat-scroll');
     this.inputEl = document.getElementById('composer-input');
     this.sendBtn = document.getElementById('send-button');
+    this.inputContainer = document.querySelector('.chat-input-container');
+    this.composerAttachmentsEl = document.getElementById('composer-attachments');
     this.configBtn = document.getElementById('config-button');
     this.worldBtn = document.getElementById('world-button');
     this.sessionBtn = document.getElementById('session-button');
@@ -183,8 +194,10 @@ export class ChatUI {
     this.isStreaming = false;
     this.isSending = false;
     this.contextMenu = this.createContextMenu();
+    this.reactionPicker = this.createReactionPicker();
     this.longPressTimer = null;
     this.actionHandler = null;
+    this.replyCancelHandler = null;
     this.selectionMode = false;
     this.selectedMessageIds = new Set();
     this.selectionBar = null;
@@ -196,8 +209,10 @@ export class ChatUI {
     this.scrollBottomButtonRaf = 0;
     this.scrollBottomButtonImmediate = false;
     this.scrollBottomButtonResizeObserver = null;
+    this.replyDraftEl = null;
 
     setupIframeResizeListener();
+    this.initReplyDraftBar();
     this.initScrollDateBadge();
     this.initScrollBottomButton();
     this.bindIframeLongPressForwarding();
@@ -208,6 +223,19 @@ export class ChatUI {
     this.bindScrollBottomButton();
     this.bindNetworkEvents();
     this.bindReasoningSettings();
+  }
+
+  decorateMessage(message, context = {}) {
+    if (!message || typeof message !== 'object') return message;
+    const decorator = this.messageDecorator;
+    if (typeof decorator !== 'function') return message;
+    try {
+      const next = decorator(message, context);
+      return next && typeof next === 'object' ? next : message;
+    } catch (err) {
+      logger.warn('message decoration failed', err);
+      return message;
+    }
   }
 
   isTypingDotsEnabled() {
@@ -305,16 +333,123 @@ export class ChatUI {
   }
 
   prepareTextContainer(bubble, message) {
+    const replyEl = this.buildReplyPreviewElement(message);
     const greetingEl = this.buildGreetingSwitch(message);
     const reasoningEl = this.buildReasoningElement(message);
-    if (!greetingEl && !reasoningEl) return bubble;
+    if (!replyEl && !greetingEl && !reasoningEl) return bubble;
     bubble.innerHTML = '';
+    if (replyEl) bubble.appendChild(replyEl);
     if (greetingEl) bubble.appendChild(greetingEl);
     if (reasoningEl) bubble.appendChild(reasoningEl);
     const content = document.createElement('div');
     content.className = 'chat-message-content';
     bubble.appendChild(content);
     return content;
+  }
+
+  buildReplyPreviewElement(message) {
+    const replyTo = normalizeReplyTarget(message?.meta?.replyTo);
+    if (!replyTo) return null;
+    const box = document.createElement('button');
+    box.type = 'button';
+    box.className = 'chat-reply-preview';
+    box.setAttribute('aria-label', `查看回复原消息：${replyTo.author || '消息'}`);
+    const avatar = document.createElement('img');
+    avatar.className = 'chat-reply-preview-avatar';
+    avatar.src = replyTo.avatar || DEFAULT_REPLY_AVATAR;
+    avatar.alt = '';
+    const textWrap = document.createElement('span');
+    textWrap.className = 'chat-reply-preview-text';
+    const author = document.createElement('span');
+    author.className = 'chat-reply-preview-author';
+    author.textContent = replyTo.author || '消息';
+    const snippet = document.createElement('span');
+    snippet.className = 'chat-reply-preview-snippet';
+    snippet.textContent = replyTo.content || '...';
+    textWrap.appendChild(author);
+    textWrap.appendChild(snippet);
+    box.appendChild(avatar);
+    box.appendChild(textWrap);
+    box.addEventListener('click', async e => {
+      e.preventDefault();
+      e.stopPropagation();
+      const handled = await this.actionHandler?.('jump-reply-target', message, {
+        targetId: replyTo.id,
+        sessionId: replyTo.sessionId || message?.sessionId || this.resolveMessageSessionId(message),
+        keyword: replyTo.content || '',
+      });
+      if (handled) return;
+      if (replyTo.id && this.scrollToMessage(replyTo.id, { keyword: replyTo.content || '', kind: 'anchor' })) return;
+      window.toastr?.warning?.('未找到被回复的消息');
+    });
+    return box;
+  }
+
+  buildReactionSummaryElement(message) {
+    if (!this.isThreadingEnabledForMessage(message)) return null;
+    const reactions = normalizeReactionEntries(message?.meta?.reactions);
+    if (!reactions.length) return null;
+    const wrap = document.createElement('div');
+    wrap.className = 'chat-reaction-summary';
+    reactions.forEach((entry) => {
+      const chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = 'chat-reaction-chip';
+      if (hasReactionActor(entry, SELF_REACTION_ACTOR)) chip.classList.add('is-self');
+      const emoji = document.createElement('span');
+      emoji.className = 'chat-reaction-chip-emoji';
+      emoji.textContent = entry.emoji;
+      const count = document.createElement('span');
+      count.className = 'chat-reaction-chip-count';
+      count.textContent = String(countReactionActors(entry));
+      chip.appendChild(emoji);
+      chip.appendChild(count);
+      chip.setAttribute('aria-label', `${entry.emoji} ${countReactionActors(entry)}个反应`);
+      chip.addEventListener('click', e => {
+        e.preventDefault();
+        e.stopPropagation();
+        this.actionHandler?.('toggle-reaction', message, { emoji: entry.emoji });
+      });
+      wrap.appendChild(chip);
+    });
+    return wrap;
+  }
+
+  showReactionPicker(anchor, message) {
+    if (!this.reactionPicker || !anchor || !this.isThreadingEnabledForMessage(message)) return;
+    this.contextMenu.style.display = 'none';
+    this.reactionPicker.innerHTML = '';
+    const currentReactions = normalizeReactionEntries(message?.meta?.reactions);
+    DEFAULT_REACTION_EMOJIS.forEach((emoji) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'chat-reaction-option';
+      if (currentReactions.some((entry) => entry.emoji === emoji && hasReactionActor(entry, SELF_REACTION_ACTOR))) {
+        btn.classList.add('is-active');
+      }
+      btn.textContent = emoji;
+      btn.setAttribute('aria-label', `使用${emoji}回应`);
+      btn.addEventListener('click', e => {
+        e.preventDefault();
+        e.stopPropagation();
+        this.hideReactionPicker();
+        this.actionHandler?.('toggle-reaction', message, { emoji });
+      });
+      this.reactionPicker.appendChild(btn);
+    });
+    this.reactionPicker.style.display = 'flex';
+    this.reactionPicker.style.visibility = 'hidden';
+    const rect = anchor.getBoundingClientRect();
+    const pickerW = this.reactionPicker.offsetWidth || 240;
+    const pickerH = this.reactionPicker.offsetHeight || 48;
+    const padding = 8;
+    let left = rect.left + rect.width / 2 - pickerW / 2;
+    let top = rect.top - pickerH - 10;
+    left = Math.max(padding, Math.min(left, window.innerWidth - pickerW - padding));
+    if (top < padding) top = Math.min(window.innerHeight - pickerH - padding, rect.bottom + 10);
+    this.reactionPicker.style.left = `${left}px`;
+    this.reactionPicker.style.top = `${Math.max(padding, top)}px`;
+    this.reactionPicker.style.visibility = 'visible';
   }
 
   bindReasoningSettings() {
@@ -698,6 +833,7 @@ export class ChatUI {
     this.scrollEl.addEventListener(
       'scroll',
       () => {
+        this.hideReactionPicker();
         this.scheduleScrollBottomButtonRefresh();
       },
       { passive: true },
@@ -958,6 +1094,7 @@ export class ChatUI {
   clearMessages() {
     this.cleanupRichTextMounts(this.scrollEl);
     this.scrollEl.innerHTML = '';
+    this.hideReactionPicker();
     this.hideScrollDateBadge({ immediate: true });
     this.hideScrollBottomButton({ immediate: true });
   }
@@ -1052,6 +1189,7 @@ export class ChatUI {
    * @param {string} message.time - 时间戳
    */
   addMessage(message) {
+    message = this.decorateMessage(message, { phase: 'add' });
     if (message && !message.id) {
       message.id = `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
     }
@@ -1418,6 +1556,26 @@ export class ChatUI {
         }
     }
 
+    const bubbleStack = document.createElement('div');
+    bubbleStack.className = 'chat-bubble-stack';
+    if (isUser) bubbleStack.classList.add('is-user');
+    bubbleStack.appendChild(bubble);
+    const reactionSummaryEl = this.buildReactionSummaryElement(message);
+    if (reactionSummaryEl) bubbleStack.appendChild(reactionSummaryEl);
+    if (this.isThreadingEnabledForMessage(message)) {
+      const reactionBtn = document.createElement('button');
+      reactionBtn.type = 'button';
+      reactionBtn.className = 'chat-reaction-trigger';
+      reactionBtn.setAttribute('aria-label', '添加回应');
+      reactionBtn.textContent = '☺';
+      reactionBtn.addEventListener('click', e => {
+        e.preventDefault();
+        e.stopPropagation();
+        this.showReactionPicker(reactionBtn, message);
+      });
+      bubbleStack.appendChild(reactionBtn);
+    }
+
     // 时间戳
     const timeEl = document.createElement('span');
     timeEl.className = 'QQ_chat_time';
@@ -1425,22 +1583,26 @@ export class ChatUI {
 
     // 组装 DOM - 符合 QQ 原版结构
     if (isUser) {
-      // 我的消息：气泡 + 头像 + 时间（grid布局自动处理）
-      wrapper.appendChild(bubble);
+      const contentWrap = document.createElement('div');
+      contentWrap.className = 'chat-message-stack';
+      contentWrap.style.cssText = 'grid-column: 1; display:flex; flex-direction:column; align-items:flex-end; gap:4px; min-width:0;';
+      contentWrap.appendChild(bubbleStack);
+      contentWrap.appendChild(timeEl);
+      wrapper.appendChild(contentWrap);
       wrapper.appendChild(avatarImg);
-      wrapper.appendChild(timeEl);
     } else {
       // 别人的消息：头像 +（可选名字）+ 气泡 + 时间
       const contentWrap = document.createElement('div');
+      contentWrap.className = 'chat-message-stack';
       contentWrap.style.cssText =
-        'grid-column: 2; display:flex; flex-direction:column; align-items:flex-start; gap:2px;';
+        'grid-column: 2; display:flex; flex-direction:column; align-items:flex-start; gap:4px; min-width:0;';
       if (message?.meta?.showName && message.name) {
         const nameEl = document.createElement('div');
         nameEl.className = 'QQ_chat_name';
         nameEl.textContent = String(message.name || '');
         contentWrap.appendChild(nameEl);
       }
-      contentWrap.appendChild(bubble);
+      contentWrap.appendChild(bubbleStack);
       contentWrap.appendChild(timeEl);
 
       wrapper.appendChild(avatarImg);
@@ -1780,7 +1942,10 @@ export class ChatUI {
       String(newMessage?.sessionId || '').trim()
       || String(prev?.sessionId || '').trim()
       || this.resolveMessageSessionId(prev);
-    const next = { ...prev, ...(newMessage || {}), id: msgId, sessionId: resolvedSessionId };
+    const next = this.decorateMessage(
+      { ...prev, ...(newMessage || {}), id: msgId, sessionId: resolvedSessionId },
+      { phase: 'update', previous: prev },
+    );
     if (this.tryPatchMessageElement(existing, next)) {
       this.refreshScrollDateBadge();
       this.scheduleScrollBottomButtonRefresh({ immediate: true });
@@ -1815,8 +1980,11 @@ export class ChatUI {
       reasoningDisplay: typeof meta.reasoningDisplay === 'string' ? meta.reasoningDisplay : '',
       reasoningHidden: meta.reasoningHidden === true,
       summary: typeof meta.summary === 'string' ? meta.summary : '',
+      replyTo: normalizeReplyTarget(meta.replyTo),
+      reactions: normalizeReactionEntries(meta.reactions),
       name: typeof msg.name === 'string' ? msg.name : '',
       badge: typeof msg.badge === 'string' ? msg.badge : '',
+      status: typeof msg.status === 'string' ? msg.status : '',
     });
   }
 
@@ -2091,6 +2259,106 @@ export class ChatUI {
     return menu;
   }
 
+  createReactionPicker() {
+    const picker = document.createElement('div');
+    picker.id = 'msg-reaction-picker';
+    picker.style.cssText = `
+            position: fixed;
+            display: none;
+            z-index: 20010;
+            padding: 6px;
+            border-radius: 999px;
+            border: 1px solid rgba(15, 23, 42, 0.08);
+            background: rgba(255, 255, 255, 0.98);
+            box-shadow: 0 10px 28px rgba(15, 23, 42, 0.16);
+            gap: 4px;
+            align-items: center;
+        `;
+    document.body.appendChild(picker);
+    document.addEventListener(
+      'pointerdown',
+      e => {
+        if (picker.style.display === 'none') return;
+        if (picker.contains(e.target)) return;
+        this.hideReactionPicker();
+      },
+      { passive: true },
+    );
+    return picker;
+  }
+
+  hideReactionPicker() {
+    if (!this.reactionPicker) return;
+    this.reactionPicker.style.display = 'none';
+    this.reactionPicker.innerHTML = '';
+  }
+
+  isThreadingEnabledForMessage(message) {
+    if (!message || typeof message !== 'object') return false;
+    if (message.role !== 'user' && message.role !== 'assistant') return false;
+    if (message.status === 'pending' || message.status === 'sending') return false;
+    const sessionId = this.resolveMessageSessionId(message);
+    if (String(sessionId || '').trim().startsWith('rp:')) return false;
+    if (document?.body?.dataset?.uiMode === 'rp') return false;
+    return true;
+  }
+
+  initReplyDraftBar() {
+    if (!this.inputContainer || this.replyDraftEl) return;
+    const bar = document.createElement('div');
+    bar.className = 'chat-reply-draft';
+    bar.style.display = 'none';
+    this.inputContainer.insertBefore(bar, this.composerAttachmentsEl || this.inputContainer.firstChild || null);
+    this.replyDraftEl = bar;
+  }
+
+  setReplyTarget(target) {
+    if (!this.replyDraftEl) return;
+    const next = normalizeReplyTarget(target);
+    if (!next) {
+      this.replyDraftEl.style.display = 'none';
+      this.replyDraftEl.innerHTML = '';
+      return;
+    }
+    const avatar = next.avatar || DEFAULT_REPLY_AVATAR;
+    this.replyDraftEl.style.display = '';
+    this.replyDraftEl.innerHTML = '';
+    const main = document.createElement('div');
+    main.className = 'chat-reply-draft-main';
+    const avatarEl = document.createElement('img');
+    avatarEl.className = 'chat-reply-draft-avatar';
+    avatarEl.src = avatar;
+    avatarEl.alt = '';
+    const textWrap = document.createElement('div');
+    textWrap.className = 'chat-reply-draft-text';
+    const author = document.createElement('div');
+    author.className = 'chat-reply-draft-author';
+    author.textContent = next.author || '消息';
+    const snippet = document.createElement('div');
+    snippet.className = 'chat-reply-draft-snippet';
+    snippet.textContent = next.content || '...';
+    textWrap.appendChild(author);
+    textWrap.appendChild(snippet);
+    const cancelBtn = document.createElement('button');
+    cancelBtn.type = 'button';
+    cancelBtn.className = 'chat-reply-draft-cancel';
+    cancelBtn.setAttribute('aria-label', '取消回复');
+    cancelBtn.textContent = '×';
+    main.appendChild(avatarEl);
+    main.appendChild(textWrap);
+    main.appendChild(cancelBtn);
+    this.replyDraftEl.appendChild(main);
+    cancelBtn.addEventListener('click', e => {
+      e.preventDefault();
+      e.stopPropagation();
+      this.replyCancelHandler?.();
+    });
+  }
+
+  onReplyCancel(handler) {
+    this.replyCancelHandler = typeof handler === 'function' ? handler : null;
+  }
+
   getPoint(e) {
     if (e?.touches?.[0]) return { x: e.touches[0].clientX, y: e.touches[0].clientY };
     if (e?.changedTouches?.[0]) return { x: e.changedTouches[0].clientX, y: e.changedTouches[0].clientY };
@@ -2290,6 +2558,7 @@ export class ChatUI {
   showContextMenu(evt, message) {
     if (this.selectionMode) return;
     if (!this.contextMenu) return;
+    this.hideReactionPicker();
     const actions = [];
     const target = evt?.target;
     const wrapper =
@@ -2303,6 +2572,9 @@ export class ChatUI {
     const fallbackCodeBlock = directCodeBlock || wrapper?.querySelector?.('.chat-codeblock') || null;
     const codeBlock = fallbackCodeBlock;
     const hasCode = !!(codeBlock && typeof codeBlock.__chatappCode === 'string' && codeBlock.__chatappCode.length);
+    if (this.isThreadingEnabledForMessage(msg)) {
+      actions.push({ key: 'reply', label: '回复' });
+    }
     if (hasCode) {
       actions.push({ key: 'view-code', label: '✏' });
     }
@@ -2375,6 +2647,10 @@ export class ChatUI {
           this.copyToClipboard(text).then(ok =>
             ok ? window.toastr?.success?.('已复制') : window.toastr?.warning?.('复制失败'),
           );
+          return;
+        }
+        if (act.key === 'reply') {
+          this.actionHandler?.('reply', msg, { wrapper });
           return;
         }
         if (act.key === 'edit') {

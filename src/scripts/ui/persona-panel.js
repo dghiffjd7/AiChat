@@ -2,6 +2,7 @@
 import { MediaPicker } from './media-picker.js';
 import { avatarDataUrlFromFile } from '../utils/image.js';
 import { appConfirm } from './app-confirm.js';
+import { appSettings } from '../storage/app-settings.js';
 import { CharacterCardImporter } from './character-card-importer.js';
 import { getCharacterCardDisplayName, getCharacterCardSource } from '../utils/character-card-display.js';
 
@@ -871,21 +872,27 @@ export class PersonaPanel {
 
     async deleteCurrent() {
         if (!this.editingId) return;
-        const persona = this.store.get(this.editingId);
+        const deleteId = String(this.editingId || '').trim();
+        const persona = this.store.get(deleteId);
         const options = await this.promptDeleteOptions(persona);
         if (!options?.confirm) return;
 
-        const success = await this.store.delete(this.editingId);
+        const success = await this.store.delete(deleteId);
         if (success) {
             try {
-                await window.appBridge?.deletePersonaCard?.(this.editingId);
+                await this.onPersonaChanged?.();
+            } catch {}
+            try {
+                await window.appBridge?.deletePersonaCard?.(deleteId);
             } catch {}
             try {
                 await this.cleanupPersonaBindings(persona, options);
             } catch {}
+            try {
+                await this.cleanupPersonaData(persona, { remainingPersonas: this.store.getAll?.() || [] });
+            } catch {}
             this.closeEdit();
             this.renderList();
-            if (this.onPersonaChanged) this.onPersonaChanged();
         } else {
             alert('无法删除（至少保留一个角色卡）');
         }
@@ -908,8 +915,9 @@ export class PersonaPanel {
         const hasWorld = Boolean(worldId);
         const hasRegex = Boolean(regexSetId);
         const hasScripts = scriptCount > 0;
+        const preciseScopeCleanup = appSettings.get().personaBindContacts !== false;
 
-        if (!hasWorld && !hasRegex && !hasScripts) {
+        if (!hasWorld && !hasRegex && !hasScripts && preciseScopeCleanup) {
             const ok = await appConfirm({ title: '删除角色卡', message: '确定要删除此角色卡吗？', danger: true });
             return { confirm: ok, deleteWorld: false, deleteRegex: false, deleteScripts: false };
         }
@@ -927,6 +935,11 @@ export class PersonaPanel {
             const data = await window.appBridge?.getWorldInfo?.(worldId);
             if (data?.name) worldName = data.name;
         } catch {}
+        const sharedCleanupNote = preciseScopeCleanup ? '' : `
+            <div style="margin-top:12px; padding:10px 12px; border-radius:10px; background:#fff7ed; color:#9a3412; font-size:12px; line-height:1.5;">
+                当前联系人未按角色隔离。本次会清理角色卡文件、绑定资源、该角色的 RP 会话，以及可识别的旧残留 scope；不会删除共享聊天或共享联系人数据。
+            </div>
+        `;
 
         return new Promise((resolve) => {
             const overlay = document.createElement('div');
@@ -964,6 +977,7 @@ export class PersonaPanel {
                             </label>
                         ` : ''}
                     </div>
+                    ${sharedCleanupNote}
                 </div>
                 <div class="app-confirm-actions">
                     <button type="button" class="app-confirm-btn app-confirm-cancel">取消</button>
@@ -1001,6 +1015,125 @@ export class PersonaPanel {
             document.body.appendChild(modal);
             requestAnimationFrame(() => okBtn?.focus());
         });
+    }
+
+    cleanupScopedLocalStorage(scopes = []) {
+        const scopeList = Array.isArray(scopes)
+            ? scopes.map(scope => String(scope || '').trim()).filter(Boolean)
+            : [];
+        if (!scopeList.length) return;
+        const scopedKeys = [
+            'contacts_store_v1',
+            'contact_groups_v1',
+            'chat_store_v1',
+            'moments_store_v1',
+            'moment_summary_store_v1',
+            'rp_session_v1',
+            'world_session_map_v1',
+            'global_world_id_v1',
+            'world_global_settings_v1',
+        ];
+        try {
+            scopeList.forEach((scope) => {
+                scopedKeys.forEach((base) => {
+                    localStorage.removeItem(`${base}__${scope}`);
+                });
+            });
+        } catch {}
+    }
+
+    collectScopedLocalStorageCandidates(keepPersonaIds = [], explicitDeleteIds = []) {
+        const scopedKeys = [
+            'contacts_store_v1',
+            'contact_groups_v1',
+            'chat_store_v1',
+            'moments_store_v1',
+            'moment_summary_store_v1',
+            'rp_session_v1',
+            'world_session_map_v1',
+            'global_world_id_v1',
+            'world_global_settings_v1',
+        ];
+        const keepSet = new Set(
+            (Array.isArray(keepPersonaIds) ? keepPersonaIds : [])
+                .map(id => String(id || '').trim())
+                .filter(Boolean),
+        );
+        const explicitSet = new Set(
+            (Array.isArray(explicitDeleteIds) ? explicitDeleteIds : [])
+                .map(id => String(id || '').trim())
+                .filter(Boolean),
+        );
+        const scopes = new Set();
+        try {
+            for (let i = 0; i < localStorage.length; i += 1) {
+                const key = String(localStorage.key(i) || '').trim();
+                if (!key) continue;
+                scopedKeys.forEach((base) => {
+                    const prefix = `${base}__`;
+                    if (!key.startsWith(prefix)) return;
+                    const scope = String(key.slice(prefix.length) || '').trim();
+                    if (!scope || keepSet.has(scope)) return;
+                    if (explicitSet.has(scope) || scope.startsWith('persona_')) {
+                        scopes.add(scope);
+                    }
+                });
+            }
+        } catch {}
+        return Array.from(scopes);
+    }
+
+    async cleanupPersonaData(persona, { remainingPersonas = [] } = {}) {
+        const personaId = String(persona?.id || '').trim();
+        if (!personaId) return;
+
+        this.cleanupSharedPersonaArtifacts(personaId);
+
+        const keepPersonaIds = (Array.isArray(remainingPersonas) ? remainingPersonas : [])
+            .map(item => String(item?.id || '').trim())
+            .filter(Boolean);
+        let deletedScopes = [];
+        try {
+            const result = await window.appBridge?.cleanupPersonaScopedData?.(keepPersonaIds, [personaId]);
+            deletedScopes = Array.isArray(result?.deletedScopes)
+                ? result.deletedScopes.map(scope => String(scope || '').trim()).filter(Boolean)
+                : [];
+        } catch {}
+
+        const localOnlyScopes = this.collectScopedLocalStorageCandidates(keepPersonaIds, [personaId]);
+        if (localOnlyScopes.length) {
+            deletedScopes = Array.from(new Set([...(deletedScopes || []), ...localOnlyScopes]));
+        }
+
+        if (!deletedScopes.length && personaId.startsWith('persona_')) {
+            deletedScopes = [personaId];
+        }
+        this.cleanupScopedLocalStorage(deletedScopes);
+    }
+
+    cleanupSharedPersonaArtifacts(personaId) {
+        const pid = String(personaId || '').trim();
+        if (!pid) return;
+        const rpSessionId = `rp:${pid}`;
+        try {
+            this.chatStore?.delete?.(rpSessionId);
+        } catch {}
+        try {
+            const sessionIds = this.chatStore?.listSessions?.() || [];
+            sessionIds.forEach((sessionId) => {
+                const lockId = String(this.chatStore?.getPersonaLock?.(sessionId) || '').trim();
+                if (lockId === pid) {
+                    this.chatStore?.clearPersonaLock?.(sessionId);
+                }
+            });
+        } catch {}
+        try {
+            const map = window.appBridge?.worldSessionMap;
+            if (map && Object.prototype.hasOwnProperty.call(map, rpSessionId)) {
+                delete map[rpSessionId];
+                window.appBridge?.persistWorldSessionMap?.();
+            }
+        } catch {}
     }
 
     async cleanupPersonaBindings(persona, options) {

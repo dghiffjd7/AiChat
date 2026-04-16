@@ -1,6 +1,7 @@
 const MEMORY_PROMPT_POSITIONS = new Set(['after_persona', 'system_end', 'before_chat', 'history_depth']);
 const SUMMARY_TABLE_IDS = new Set(['chat_summary', 'group_summary', 'chat_outline', 'group_outline', 'rp_summary', 'rp_outline']);
 const SUMMARY_LIMIT_TABLE_IDS = new Set(['chat_summary', 'group_summary', 'rp_summary']);
+const TIMELINE_ROUND_RE = /第\s*(\d+)\s*轮/;
 
 export const isSummaryTableId = (tableId) => {
   const id = String(tableId || '').trim();
@@ -78,14 +79,59 @@ export const normalizeMemoryCell = (value) => {
   }
 };
 
-export const formatMemoryRowText = (rowData, columns) => {
+const normalizePromptCellText = (value) => normalizeMemoryCell(value).replace(/\s*\r?\n\s*/g, ' / ').trim();
+
+const extractTimelineRound = (value) => {
+  const text = normalizePromptCellText(value);
+  if (!text) return null;
+  const match = text.match(TIMELINE_ROUND_RE);
+  if (!match) return null;
+  const round = Number(match[1]);
+  return Number.isFinite(round) ? round : null;
+};
+
+const extractTimelineRoundLabel = (value) => {
+  const round = extractTimelineRound(value);
+  if (Number.isFinite(round)) return `第${round}轮`;
+  return normalizePromptCellText(value);
+};
+
+const extractTimelineContentText = (rowData, columns) => {
+  const summary = normalizePromptCellText(rowData?.summary);
+  if (summary) return summary;
+  const outline = normalizePromptCellText(rowData?.outline);
+  if (outline) return outline;
+  for (const col of Array.isArray(columns) ? columns : []) {
+    const colId = String(col?.id || '').trim();
+    if (!colId || colId === 'time') continue;
+    const text = normalizePromptCellText(rowData?.[colId]);
+    if (text) return text;
+  }
+  return '';
+};
+
+const resolveSummaryTablePromptOrderKey = (row, fallback = 0) => {
+  const round = extractTimelineRound(row?.row_data?.time ?? row?.rowData?.time ?? row?.time);
+  if (Number.isFinite(round)) return round;
+  return fallback;
+};
+
+export const formatMemoryRowText = (rowData, columns, tableId = '') => {
+  const id = String(tableId || '').trim();
+  if (SUMMARY_TABLE_IDS.has(id)) {
+    const roundLabel = extractTimelineRoundLabel(rowData?.time);
+    const content = extractTimelineContentText(rowData, columns);
+    if (roundLabel && content) return `${roundLabel}：${content}`;
+    if (content) return content;
+    if (roundLabel) return roundLabel;
+    return '（未填写）';
+  }
   const parts = [];
   for (const col of Array.isArray(columns) ? columns : []) {
     const colId = String(col?.id || '').trim();
     if (!colId) continue;
     const label = String(col?.name || colId).trim();
-    const raw = normalizeMemoryCell(rowData?.[colId]);
-    const text = raw.replace(/\s*\r?\n\s*/g, ' / ').trim();
+    const text = normalizePromptCellText(rowData?.[colId]);
     if (!text) continue;
     parts.push(label ? `${label}: ${text}` : text);
   }
@@ -115,7 +161,7 @@ export const buildMemoryTablePlan = ({
       if (!nextTableOrder.includes(tableId)) nextTableOrder.push(tableId);
     }
     const table = nextTableById.get(tableId);
-    const rowText = formatMemoryRowText(row?.row_data || {}, table?.columns || []);
+    const rowText = formatMemoryRowText(row?.row_data || {}, table?.columns || [], tableId);
     items.push({
       id: String(row?.id || ''),
       tableId,
@@ -178,7 +224,19 @@ export const buildMemoryTablePlan = ({
     const table = nextTableById.get(tableId) || { id: tableId, name: tableId };
     const tableLabel = String(table?.name || tableId);
     tableParts.push(autoExtract ? `【${tableLabel}｜${tableId}】` : `【${tableLabel}】`);
-    rowsForTable.forEach((row, index) => {
+    const orderedRows = rowsForTable.slice();
+    if (SUMMARY_TABLE_IDS.has(tableId)) {
+      orderedRows.sort((a, b) => {
+        const ak = resolveSummaryTablePromptOrderKey(a, Number(a?.updatedAt) || 0);
+        const bk = resolveSummaryTablePromptOrderKey(b, Number(b?.updatedAt) || 0);
+        if (ak !== bk) return ak - bk;
+        const au = Number(a?.updatedAt) || 0;
+        const bu = Number(b?.updatedAt) || 0;
+        if (au !== bu) return au - bu;
+        return String(a?.id || '').localeCompare(String(b?.id || ''));
+      });
+    }
+    orderedRows.forEach((row, index) => {
       const line = String(row?.rowText || '').trim();
       const prefix = autoExtract ? `- [${index}] ` : '- ';
       tableParts.push(`${prefix}${line || '（未填写）'}`);

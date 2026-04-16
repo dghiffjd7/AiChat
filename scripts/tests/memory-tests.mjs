@@ -143,6 +143,61 @@ test('buildMemoryTablePlan: max_tokens truncation', () => {
   assert.equal(plan.truncated[0].reason, 'max_tokens');
 });
 
+test('buildMemoryTablePlan: summary rows use round-first text and oldest-to-newest order', () => {
+  const tableById = new Map([
+    ['chat_summary', {
+      id: 'chat_summary',
+      name: '私聊摘要',
+      columns: [
+        { id: 'time', name: '时间/轮次', type: 'text' },
+        { id: 'summary', name: '摘要', type: 'multiline' },
+      ],
+    }],
+  ]);
+  const rows = [
+    {
+      id: 'sum_3',
+      table_id: 'chat_summary',
+      row_data: { time: '第6轮 2026/04/16 15:35', summary: '第六轮摘要' },
+      is_pinned: false,
+      priority: 0,
+      updated_at: 30,
+      contact_id: 'c1',
+    },
+    {
+      id: 'sum_2',
+      table_id: 'chat_summary',
+      row_data: { time: '第5轮 2026/04/16 10:42', summary: '第五轮摘要' },
+      is_pinned: false,
+      priority: 0,
+      updated_at: 20,
+      contact_id: 'c1',
+    },
+    {
+      id: 'sum_1',
+      table_id: 'chat_summary',
+      row_data: { time: '第4轮 2026/04/16 10:40', summary: '第四轮摘要' },
+      is_pinned: false,
+      priority: 0,
+      updated_at: 10,
+      contact_id: 'c1',
+    },
+  ];
+  const plan = buildMemoryTablePlan({
+    rows,
+    tableById,
+    tableOrder: ['chat_summary'],
+    autoExtract: true,
+    maxRows: 10,
+    tokenBudgetData: 999,
+    tokenMode: 'rough',
+  });
+  assert.match(plan.tableData, /- \[0\] 第4轮：第四轮摘要/);
+  assert.match(plan.tableData, /- \[1\] 第5轮：第五轮摘要/);
+  assert.match(plan.tableData, /- \[2\] 第6轮：第六轮摘要/);
+  assert.deepEqual(plan.rowIndexMap.chat_summary, ['sum_1', 'sum_2', 'sum_3']);
+});
+
 test('getChatToRpBridgeSourceMeta: empty source defaults to all_social', () => {
   const meta = getChatToRpBridgeSourceMeta('');
   assert.deepEqual(meta, {

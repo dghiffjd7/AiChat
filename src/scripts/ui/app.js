@@ -37,6 +37,14 @@ import { safeInvoke } from '../utils/tauri.js';
 import './bridge.js';
 import { ChatUI } from './chat/chat-ui.js';
 import { DialogueStreamParser } from './chat/dialogue-stream-parser.js';
+import {
+  SELF_REACTION_ACTOR,
+  buildReplyTargetSnapshot,
+  getMessagePreviewText,
+  normalizeReplyTarget,
+  normalizeReactionEntries,
+  toggleReactionActor,
+} from './chat/message-interaction-utils.js';
 import { parseSpecialMessage } from './chat/message-parser.js';
 import { runCommand, getCommandList } from './command-runner.js';
 import { ConfigPanel } from './config-panel.js';
@@ -735,8 +743,10 @@ const initApp = async () => {
   };
 
   const SEND_MODE_KEY = 'chat_send_mode_v1';
+  const SOCIAL_SEND_MODE_SWITCH_ENABLED = false;
   let sendMode = 'chat';
   const loadSendMode = () => {
+    if (!SOCIAL_SEND_MODE_SWITCH_ENABLED) return 'chat';
     try {
       const raw = localStorage.getItem(SEND_MODE_KEY);
       if (raw === 'creative' || raw === 'chat') return raw;
@@ -2057,6 +2067,36 @@ ${listPart || '-（无）'}
     return raw.replace(/[^a-z0-9\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]/g, '');
   };
 
+  const normalizeSpeakerName = speakerName =>
+    String(speakerName || '')
+      .trim()
+      .replace(/[：:]/g, '')
+      .trim();
+
+  const isSystemSpeakerLabel = speakerName => {
+    const raw = normalizeSpeakerName(speakerName);
+    if (!raw) return false;
+    const key = normalizeLooseName(raw);
+    const lower = key.toLowerCase();
+    return (
+      key === '系统' ||
+      key === '系统消息' ||
+      key === '系统提示' ||
+      lower === 'system' ||
+      lower === 'systemmessage' ||
+      lower === 'systemmsg'
+    );
+  };
+
+  const isActiveUserSpeakerName = speakerName => {
+    const raw = normalizeSpeakerName(speakerName);
+    if (!raw) return false;
+    const user = normalizeSpeakerName(getActiveUserName());
+    if (!user) return false;
+    if (raw === user) return true;
+    return normalizeLooseName(raw) === normalizeLooseName(user);
+  };
+
   const resolveContactByDisplayName = displayName => {
     const raw = String(displayName || '').trim();
     if (!raw) return null;
@@ -2068,6 +2108,212 @@ ${listPart || '-（无）'}
     return fuzzy || null;
   };
 
+  const resolveGroupSpeakerContact = (speakerName, groupSessionId = '', contactHint = null) => {
+    try {
+      const speaker = String(speakerName || '').trim();
+      if (!speaker || isActiveUserSpeakerName(speaker) || isSystemSpeakerLabel(speaker) || speaker === '助手') return null;
+      const speakerKey = normalizeLooseName(speaker);
+      const sid = String(groupSessionId || '').trim();
+      const group = sid ? contactsStore.getContact(sid) : null;
+      const memberContacts = Array.isArray(group?.members)
+        ? group.members.map(mid => contactsStore.getContact(mid)).filter(Boolean)
+        : [];
+      const hinted = contactHint && typeof contactHint === 'object' && contactHint.isGroup !== true ? contactHint : null;
+      const contact =
+        memberContacts.find(c => c && c.isGroup !== true && String(c?.name || c?.id || '').trim() === speaker) ||
+        memberContacts.find(c => c && c.isGroup !== true && normalizeLooseName(c?.name || c?.id) === speakerKey) ||
+        hinted ||
+        (() => {
+          const globalMatch = resolveContactByDisplayName(speaker);
+          return globalMatch && globalMatch.isGroup !== true ? globalMatch : null;
+        })() ||
+        (() => {
+          const direct = contactsStore.getContact(speaker);
+          return direct && direct.isGroup !== true ? direct : null;
+        })() ||
+        null;
+      return contact || null;
+    } catch {
+      return null;
+    }
+  };
+
+  const resolveGroupSpeakerAvatar = (speakerName, groupSessionId = '', contactHint = null) => {
+    try {
+      const speaker = String(speakerName || '').trim();
+      if (!speaker || isActiveUserSpeakerName(speaker) || isSystemSpeakerLabel(speaker) || speaker === '助手') return '';
+      const contact = resolveGroupSpeakerContact(speaker, groupSessionId, contactHint);
+      if (contact) return resolveAvatarForContact(contact.id, contact);
+      return resolveAvatarForContact(speaker, {
+        id: speaker,
+        name: speaker,
+        isGroup: false,
+        avatar: '',
+      });
+    } catch {
+      return '';
+    }
+  };
+
+  const resolveGroupSpeakerRenderAvatar = (speakerName, groupSessionId = '', speakerContactId = '') => {
+    try {
+      const speaker = String(speakerName || '').trim();
+      if (!speaker || isActiveUserSpeakerName(speaker) || isSystemSpeakerLabel(speaker) || speaker === '助手') return '';
+      const hintedId = String(speakerContactId || '').trim();
+      const hinted =
+        hintedId && !String(hintedId).startsWith('group:')
+          ? contactsStore.getContact(hintedId)
+          : null;
+      const avatar = resolveGroupSpeakerAvatar(speaker, groupSessionId, hinted);
+      if (avatar) return avatar;
+      return resolveAvatarForContact(hintedId || speaker, hinted || {
+        id: speaker,
+        name: speaker,
+        isGroup: false,
+        avatar: '',
+      });
+    } catch {
+      return '';
+    }
+  };
+
+  const summarizeDebugValue = (value, { max = 160 } = {}) => {
+    const raw = String(value || '').trim();
+    if (!raw) return '';
+    if (raw.startsWith('data:')) return `[data-url len=${raw.length}]`;
+    if (raw.length > max) return `${raw.slice(0, max)}... [len=${raw.length}]`;
+    return raw;
+  };
+
+  const buildDebugContactSnapshot = (contact, fallbackId = '') => {
+    const c = contact && typeof contact === 'object' ? contact : null;
+    const id = String(c?.id || fallbackId || '').trim();
+    return {
+      id,
+      name: String(c?.name || id || '').trim(),
+      isGroup: Boolean(c?.isGroup) || id.startsWith('group:'),
+      avatar: summarizeDebugValue(c?.avatar || ''),
+      avatarLen: String(c?.avatar || '').trim().length,
+      members: Array.isArray(c?.members) ? c.members.map(v => String(v || '').trim()).filter(Boolean) : [],
+      description: summarizeDebugValue(c?.description || '', { max: 120 }),
+      updatedAt: Number(c?.updatedAt || 0) || 0,
+      addedAt: Number(c?.addedAt || 0) || 0,
+    };
+  };
+
+  const buildGroupAvatarDebugSnapshot = async (sessionId = chatStore.getCurrent()) => {
+    const sid = String(sessionId || chatStore.getCurrent() || '').trim();
+    const sessionContact = sid ? contactsStore.getContact(sid) : null;
+    const isGroupSession = sid.startsWith('group:') || Boolean(sessionContact?.isGroup);
+    const activePersona = personaStore.getActive?.() || null;
+    const personas = Array.isArray(personaStore.getAll?.()) ? personaStore.getAll() : [];
+    const scopeCandidates = Array.from(
+      new Set(
+        [
+          'default',
+          normalizeScopeId(activePersonaScopeKey || ''),
+          normalizeScopeId(chatStore.scopeId || ''),
+          normalizeScopeId(contactsStore.scopeId || ''),
+          normalizeScopeId(groupStore.scopeId || ''),
+          ...personas.map(p => normalizeScopeId(getPersonaScopeKey(p?.id) || p?.id || '')),
+        ].filter(Boolean),
+      ),
+    );
+    let persistedScopes = [];
+    try {
+      const payload = await safeInvoke('list_contacts_by_scopes', {
+        scopes: scopeCandidates,
+        limitPerScope: 400,
+      });
+      const entries = Array.isArray(payload) ? payload : [];
+      persistedScopes = entries.map(entry => {
+        const scopeId = String(entry?.scopeId || entry?.scope || '').trim() || 'default';
+        const contacts = Array.isArray(entry?.contacts) ? entry.contacts : [];
+        const byId = sid ? contacts.find(c => String(c?.id || '').trim() === sid) : null;
+        const byName =
+          !byId && sessionContact?.name
+            ? contacts.find(c => String(c?.name || '').trim() === String(sessionContact?.name || '').trim())
+            : null;
+        return {
+          scopeId,
+          contactCount: contacts.length,
+          hitById: byId ? buildDebugContactSnapshot(byId, sid) : null,
+          hitByName: byName ? buildDebugContactSnapshot(byName, String(byName?.id || '')) : null,
+        };
+      });
+    } catch (err) {
+      persistedScopes = [
+        {
+          scopeId: 'error',
+          contactCount: 0,
+          error: String(err?.message || err || ''),
+        },
+      ];
+    }
+
+    const currentMembers = Array.isArray(sessionContact?.members) ? sessionContact.members : [];
+    const currentGroupMembers = currentMembers.map(memberId => {
+      const contact = contactsStore.getContact(memberId);
+      return {
+        memberId: String(memberId || '').trim(),
+        exists: Boolean(contact),
+        contact: buildDebugContactSnapshot(contact, memberId),
+        renderAvatar: summarizeDebugValue(resolveAvatarForContact(memberId, contact)),
+      };
+    });
+
+    const messages = sid ? chatStore.getMessages(sid) || [] : [];
+    const recentMessages = messages.slice(-12).map((message, index) => {
+      const role = String(message?.role || '').trim();
+      const name = String(message?.name || '').trim();
+      const speakerContactId = String(message?.meta?.speakerContactId || '').trim();
+      const speakerContact = speakerContactId ? contactsStore.getContact(speakerContactId) : null;
+      const resolvedSpeakerContact =
+        isGroupSession && role === 'assistant' ? resolveGroupSpeakerContact(name, sid, speakerContact) : null;
+      const resolvedSpeakerAvatar =
+        isGroupSession && role === 'assistant' ? resolveGroupSpeakerRenderAvatar(name, sid, speakerContactId) : '';
+      return {
+        index: messages.length - Math.min(messages.length, 12) + index,
+        id: String(message?.id || '').trim(),
+        role,
+        type: String(message?.type || '').trim() || 'text',
+        name,
+        content: summarizeDebugValue(message?.content || message?.raw || '', { max: 120 }),
+        messageAvatar: summarizeDebugValue(message?.avatar || ''),
+        metaSpeakerContactId: speakerContactId,
+        resolvedSpeakerContactId: String(resolvedSpeakerContact?.id || '').trim(),
+        resolvedSpeakerContactName: String(resolvedSpeakerContact?.name || '').trim(),
+        resolvedSpeakerAvatar: summarizeDebugValue(resolvedSpeakerAvatar),
+        resolvedFinalAvatar: summarizeDebugValue(resolveAvatarForMessage(message, sid)),
+      };
+    });
+
+    return {
+      at: new Date().toISOString(),
+      activePersonaId: String(activePersonaId || '').trim(),
+      activePersonaStoreId: String(activePersona?.id || '').trim(),
+      activePersonaName: String(activePersona?.name || '').trim(),
+      personaBindContacts: appSettings.get().personaBindContacts !== false,
+      activePersonaScopeKey: String(activePersonaScopeKey || '').trim() || 'default',
+      storeScopes: {
+        chat: String(chatStore.scopeId || '').trim() || 'default',
+        contacts: String(contactsStore.scopeId || '').trim() || 'default',
+        groups: String(groupStore.scopeId || '').trim() || 'default',
+        moments: String(momentsStore.scopeId || '').trim() || 'default',
+      },
+      session: {
+        id: sid,
+        existsInChatStore: sid ? Boolean(chatStore.hasSession?.(sid)) : false,
+        sessionCount: chatStore.listSessions?.().length || 0,
+        currentContact: buildDebugContactSnapshot(sessionContact, sid),
+        isGroupSession,
+      },
+      currentGroupMembers,
+      persistedScopes,
+      recentMessages,
+    };
+  };
+
   const resolveAvatarForMessage = (message, sessionId) => {
     try {
       if (!message || typeof message !== 'object') return '';
@@ -2077,17 +2323,10 @@ ${listPart || '-（无）'}
       const sid = String(sessionId || '').trim();
       const isGroup = sid.startsWith('group:') || Boolean(contactsStore.getContact(sid)?.isGroup);
       if (isGroup && message.role === 'assistant') {
-        const speaker = String(message.name || '').trim();
-        if (speaker && speaker !== '助手') {
-          try {
-            const byName = resolveContactByDisplayName(speaker);
-            if (byName?.avatar) return byName.avatar;
-          } catch {}
-          try {
-            const byId = contactsStore.getContact(speaker);
-            if (byId?.avatar) return byId.avatar;
-          } catch {}
-        }
+        const speakerContactId = String(message?.meta?.speakerContactId || '').trim();
+        const speakerAvatar = resolveGroupSpeakerRenderAvatar(message.name, sid, speakerContactId);
+        if (speakerAvatar) return speakerAvatar;
+        return '';
       }
 
       if (message.role === 'assistant') return getAssistantAvatarForSession(sid);
@@ -2127,7 +2366,7 @@ ${listPart || '-（无）'}
       const sid = String(sessionId || '').trim();
       const base = typeof m.raw === 'string' ? m.raw : typeof m.content === 'string' ? m.content : '';
       if (!base) return m;
-      const avatar = m.avatar || resolveAvatarForMessage(m, sessionId);
+      const avatar = resolveAvatarForMessage(m, sessionId) || m.avatar || '';
       const j = convPos.has(i) ? convPos.get(i) : null;
       const depth = j === null ? undefined : total - 1 - j;
       const rawSource =
@@ -2224,6 +2463,23 @@ ${listPart || '-（无）'}
     });
   };
 
+  ui.messageDecorator = (message, { previous } = {}) => {
+    if (!message || typeof message !== 'object') return message;
+    const sid =
+      String(message?.sessionId || '').trim() ||
+      String(previous?.sessionId || '').trim() ||
+      String(chatStore.getCurrent() || '').trim();
+    if (!sid) return message;
+    const [decorated] = decorateMessagesForDisplay([{ ...message, sessionId: sid }], { sessionId: sid });
+    return decorated || { ...message, sessionId: sid };
+  };
+
+  try {
+    window.appBridge.getGroupAvatarDebugSnapshot = async (sessionId = '') => {
+      return await buildGroupAvatarDebugSnapshot(sessionId);
+    };
+  } catch {}
+
   const injectUnreadDivider = (messages = [], firstUnreadId = '') => {
     const list = Array.isArray(messages) ? messages.slice() : [];
     const targetId = String(firstUnreadId || '').trim();
@@ -2259,32 +2515,7 @@ ${listPart || '-（无）'}
 
   const snippetFromMessage = msg => {
     if (!msg) return '尚无聊天';
-    if (msg.role === 'assistant' && (msg.type === 'text' || !msg.type)) {
-      const summary = String(msg?.meta?.summary || '')
-        .replace(/\s+/g, ' ')
-        .trim();
-      if (summary) return summary.slice(0, 32);
-    }
-    switch (msg.type) {
-      case 'image':
-        return '[图片]';
-      case 'audio':
-        return '[语音]';
-      case 'music':
-        return `[音乐] ${msg.content || ''}`.trim();
-      case 'transfer':
-        return `[转账] ${msg.content || ''}`.trim();
-      case 'sticker':
-        return '[表情]';
-      case 'document':
-        return `[文件] ${msg.content || ''}`.trim();
-      default: {
-        const text = String(msg.content || '')
-          .replace(/\s+/g, ' ')
-          .trim();
-        return text.slice(0, 32) || '...';
-      }
-    }
+    return getMessagePreviewText(msg, { maxLength: 32, fallback: '...' });
   };
 
   const formatSessionName = (sessionId, contact) => {
@@ -2431,6 +2662,89 @@ ${listPart || '-（无）'}
     if (message.type === 'audio') return '[语音]';
     if (message.type === 'document') return `[文件] ${message.content || ''}`.trim();
     return String(message.content || '').trim();
+  };
+
+  const draftReplyTargets = new Map();
+
+  const resolveMessageDisplayName = (message, sessionId = chatStore.getCurrent()) => {
+    if (!message || typeof message !== 'object') return '';
+    if (message.role === 'user') return getActiveUserName();
+    const sid = String(sessionId || '').trim();
+    if (message.role === 'assistant' && String(message.name || '').trim()) return String(message.name || '').trim();
+    const contact = contactsStore.getContact(sid);
+    if (contact?.name) return String(contact.name || '').trim();
+    return String(message.name || '').trim() || '对方';
+  };
+
+  const getReplyTargetForSession = (sessionId = chatStore.getCurrent()) => {
+    const sid = String(sessionId || '').trim();
+    if (!sid) return null;
+    return normalizeReplyTarget(draftReplyTargets.get(sid));
+  };
+
+  const syncReplyTargetComposer = (sessionId = chatStore.getCurrent()) => {
+    const sid = String(sessionId || '').trim();
+    ui.setReplyTarget(sid ? getReplyTargetForSession(sid) : null);
+  };
+
+  const setReplyTargetForSession = (sessionId = chatStore.getCurrent(), target = null) => {
+    const sid = String(sessionId || '').trim();
+    if (!sid) {
+      ui.setReplyTarget(null);
+      return null;
+    }
+    const next = normalizeReplyTarget(target);
+    if (next) draftReplyTargets.set(sid, next);
+    else draftReplyTargets.delete(sid);
+    if (String(chatStore.getCurrent() || '').trim() === sid) {
+      ui.setReplyTarget(next);
+    }
+    return next;
+  };
+
+  const clearReplyTargetForSession = (sessionId = chatStore.getCurrent()) => {
+    setReplyTargetForSession(sessionId, null);
+  };
+
+  const buildChatReplyTargetFromMessage = (message, sessionId = chatStore.getCurrent()) => {
+    const sid = String(sessionId || '').trim();
+    const author = resolveMessageDisplayName(message, sid);
+    const avatar = resolveAvatarForMessage(message, sid) || String(message?.avatar || '').trim();
+    return buildReplyTargetSnapshot(message, { author, avatar, sessionId: sid });
+  };
+
+  const attachReplyTargetToMessage = (message, replyTarget) => {
+    const msg = message && typeof message === 'object' ? message : null;
+    const nextReply = normalizeReplyTarget(replyTarget);
+    if (!msg || !nextReply) return msg;
+    const meta = msg.meta && typeof msg.meta === 'object' ? { ...msg.meta } : {};
+    meta.replyTo = nextReply;
+    return { ...msg, meta };
+  };
+
+  const buildOutgoingReplyContexts = (messages = []) => {
+    const list = Array.isArray(messages) ? messages : [];
+    return list
+      .map((message) => {
+        const replyTo = normalizeReplyTarget(message?.meta?.replyTo);
+        if (!replyTo) return null;
+        return {
+          userMessage: getMessagePreviewText(message, { maxLength: 80, fallback: '[消息]' }),
+          replyTo,
+        };
+      })
+      .filter(Boolean);
+  };
+
+  const buildReplyPromptHint = (contexts = []) => {
+    const list = Array.isArray(contexts) ? contexts.filter(Boolean) : [];
+    if (!list.length) return '';
+    const toReplyHintLine = (item) =>
+      `${item.userMessage || '[消息]'}（回复了${item.replyTo.author || '消息'}：${item.replyTo.content || '...'}）`;
+    if (list.length === 1) {
+      return toReplyHintLine(list[0]);
+    }
+    return list.map((item, index) => `${index + 1}. ${toReplyHintLine(item)}`).join('；');
   };
 
   const insertStickerToken = keyword => {
@@ -4521,7 +4835,10 @@ Phase G（Frame 36）：循环衔接
       return;
     }
     const socialSessions = chatStore.listSessions().filter(id => !isRpSessionId(id));
-    contactsStore.ensureFromSessions(socialSessions, { defaultAvatar: FEATHER_DEFAULT });
+    contactsStore.ensureFromSessions(socialSessions, {
+      defaultAvatar: FEATHER_DEFAULT,
+      includeGroups: false,
+    });
     renderChatList();
     renderGroupsList();
     renderContactsUngrouped();
@@ -9632,6 +9949,7 @@ Phase G（Frame 36）：循环衔接
       const draft = chatStore.getDraft(sid);
       ui.setInputText(draft || '');
     } catch {}
+    syncReplyTargetComposer(sid);
     ui.setSessionLabel(sid);
     return true;
   };
@@ -11194,6 +11512,7 @@ Phase G（Frame 36）：循环衔接
         if (tmp) ui.setInputText(tmp);
       } catch {}
     }
+    syncReplyTargetComposer(sessionId);
     ui.setSessionLabel(sessionId);
     if (uiStateArmed) saveUiState();
     updatePendingFloat(sessionId);
@@ -11212,6 +11531,7 @@ Phase G（Frame 36）：循环衔接
     stageTimeline?.render?.('');
     setStickerPanelOpen(false);
     setActionPanelOpen(false);
+    ui.setReplyTarget(null);
     scheduleModeSwitchSync();
     scheduleWallpaperIdle();
 
@@ -11942,7 +12262,7 @@ Phase G（Frame 36）：循环衔接
         sessionId: chatStore.getCurrent(),
         inChatRoom: isChatRoomVisible(),
       };
-      lastSocialSendMode = sendMode;
+      lastSocialSendMode = SOCIAL_SEND_MODE_SWITCH_ENABLED ? sendMode : 'chat';
     }
     uiMode = 'rp';
     persistUiMode();
@@ -11981,8 +12301,12 @@ Phase G（Frame 36）：循环衔接
     uiMode = 'social';
     persistUiMode();
     applyUiModeUI();
-    if (lastSocialSendMode) {
-      setSendMode(lastSocialSendMode, { silent: true });
+    if (SOCIAL_SEND_MODE_SWITCH_ENABLED) {
+      if (lastSocialSendMode) {
+        setSendMode(lastSocialSendMode, { silent: true });
+      }
+    } else if (sendMode !== 'chat') {
+      setSendMode('chat', { silent: true });
     }
     if (rpToolbar) rpToolbar.style.display = 'none';
     if (backToListBtn) backToListBtn.style.display = '';
@@ -12742,6 +13066,7 @@ Phase G（Frame 36）：循环衔接
     const sessionId = chatStore.getCurrent();
     const activeUser = getActiveUserProfile();
     const stickerKey = text && isStickerAllowed() ? parseStickerToken(text) : '';
+    const replyTarget = getReplyTargetForSession(sessionId);
     const attachmentSummary = () => {
       const images = composerAttachments.filter(a => a?.kind === 'image').length;
       const docs = composerAttachments.filter(a => a?.kind === 'document').length;
@@ -12765,6 +13090,12 @@ Phase G（Frame 36）：循环衔接
     if (!text && hasAttachments && !stickerKey) {
       pendingMessage.meta = { attachmentsOnly: true };
     }
+    if (replyTarget) {
+      pendingMessage.meta = {
+        ...(pendingMessage.meta || {}),
+        replyTo: replyTarget,
+      };
+    }
 
     // 添加到聊天历史（作为 pending 状态的消息）
     const saved = chatStore.appendMessage(pendingMessage, sessionId);
@@ -12774,6 +13105,7 @@ Phase G（Frame 36）：循环衔接
 
     // 清空输入框
     ui.clearInput();
+    if (replyTarget) clearReplyTargetForSession(sessionId);
 
     // 提示用户
     const pendingCount = chatStore.getMessages(sessionId).filter(m => m.status === 'pending').length;
@@ -12813,6 +13145,7 @@ Phase G（Frame 36）：循环衔接
     const attachmentQueue = includeAttachments ? composerAttachments.slice() : [];
     const hasAttachments = attachmentQueue.length > 0;
     const sessionId = chatStore.getCurrent();
+    let outgoingReplyContexts = [];
     let generationId = 0;
     if (activeGeneration && !activeGeneration.cancelled) {
       window.toastr?.warning?.('正在生成中，请稍候...');
@@ -12865,6 +13198,7 @@ Phase G（Frame 36）：循环衔接
         if (currentInput) {
           const activeUser = getActiveUserProfile();
           const stickerKey = isStickerAllowed() ? parseStickerToken(currentInput) : '';
+          const replyTarget = getReplyTargetForSession(sessionId);
           const newPendingMsg = {
             role: 'user',
             type: stickerKey ? 'sticker' : 'text',
@@ -12875,10 +13209,14 @@ Phase G（Frame 36）：循环衔接
             name: String(activeUser?.name || '').trim() || '我',
             time: formatNowTime(),
           };
+          if (replyTarget) {
+            newPendingMsg.meta = { ...(newPendingMsg.meta || {}), replyTo: replyTarget };
+          }
           const saved = chatStore.appendMessage(newPendingMsg, sessionId);
           ui.addMessage(saved);
           messagesToSend.push(saved);
           ui.clearInput();
+          if (replyTarget) clearReplyTargetForSession(sessionId);
         }
       }
 
@@ -14467,7 +14805,10 @@ Phase G（Frame 36）：循环衔接
       } catch {}
       return { cleaned, reasoningParsed, finalSource, stored, display };
     };
-    const buildAssistantMessageFromText = async (rawText, { sessionId, time, name, avatar, showName, depth } = {}) => {
+    const buildAssistantMessageFromText = async (
+      rawText,
+      { sessionId, time, name, avatar, showName, depth, speakerContactId } = {},
+    ) => {
       const sessionKey = String(sessionId || '').trim();
       let displayText = String(rawText ?? '');
       let templateVars = null;
@@ -14527,17 +14868,39 @@ Phase G（Frame 36）：循环衔接
       const { reasoningParsed, finalSource, stored, display } = applyChatModeAssistantRegex(displayText, { depth });
       const parsed = parseSpecialMessage(display);
       const meta = { ...(parsed.meta || {}) };
+      const resolvedSpeakerContactId = String(speakerContactId || '').trim();
+      const sessionContact = sessionKey ? contactsStore.getContact(sessionKey) : null;
+      const isGroupSession = sessionKey.startsWith('group:') || Boolean(sessionContact?.isGroup);
+      const resolvedSpeakerName = String(name || '').trim();
       if (showName) meta.showName = true;
+      if (resolvedSpeakerContactId) meta.speakerContactId = resolvedSpeakerContactId;
       if (templateVars) meta.templateVars = templateVars;
       if (reasoningParsed.reasoning) {
         meta.reasoning = reasoningParsed.reasoning;
         meta.reasoningDisplay = reasoningParsed.reasoningDisplay;
       }
+      let resolvedAvatar = '';
+      if (isGroupSession && resolvedSpeakerName) {
+        resolvedAvatar = resolveGroupSpeakerRenderAvatar(resolvedSpeakerName, sessionKey, resolvedSpeakerContactId);
+      }
+      if (resolvedSpeakerContactId) {
+        const speakerContact = contactsStore.getContact(resolvedSpeakerContactId);
+        if (speakerContact && speakerContact.isGroup !== true) {
+          resolvedAvatar = resolveAvatarForContact(resolvedSpeakerContactId, speakerContact);
+        }
+      }
+      if (!resolvedAvatar && (!isGroupSession || !resolvedSpeakerName) && typeof avatar === 'string' && avatar.trim()) {
+        resolvedAvatar = avatar.trim();
+      }
+      if (!resolvedAvatar && (!isGroupSession || !resolvedSpeakerName)) {
+        resolvedAvatar = getAssistantAvatarForSession(sessionId);
+      }
       const next = {
         role: 'assistant',
         ...parsed,
         name: name || '助手',
-        avatar: avatar || getAssistantAvatarForSession(sessionId),
+        avatar: resolvedAvatar,
+        sessionId: sessionKey,
         time: time || formatNowTime(),
       };
       const rawValue = String(rawText ?? '');
@@ -15682,6 +16045,7 @@ Phase G（Frame 36）：循环衔接
           memoryInjectPosition,
           memoryInjectDepth,
           userAttachmentParts: attachmentParts,
+          replyPromptHint: buildReplyPromptHint(outgoingReplyContexts),
           extraPromptBlocks: [
             ...(stageManager?.getPromptBlocks?.(sessionId) || []),
             ...peekPromptInjections(sessionId),
@@ -15742,14 +16106,21 @@ Phase G（Frame 36）：循环衔接
     await maybePromptTemplateEnable({ sampleText: text });
     await maybePromptScriptAuthorization();
 
+    const currentDraftReplyTarget = getReplyTargetForSession(sessionId);
+    let consumedDraftReplyTarget = false;
+    const hasUserText = Boolean(String(text || '').trim());
     let attachmentMessages = [];
     let attachmentPrimaryId = '';
     if (hasAttachments) {
       attachmentMessages = buildAttachmentMessages(attachmentQueue, { name: userName, avatar: avatars.user });
+      if (currentDraftReplyTarget && !hasUserText && !suppressUserMessage && attachmentMessages.length) {
+        attachmentMessages[0] = attachReplyTargetToMessage(attachmentMessages[0], currentDraftReplyTarget);
+        consumedDraftReplyTarget = true;
+      }
       clearComposerAttachments();
-      attachmentMessages.forEach(msg => {
+      attachmentMessages = attachmentMessages.map(msg => {
         ui.addMessage(msg);
-        chatStore.appendMessage(msg, sessionId);
+        return chatStore.appendMessage(msg, sessionId) || msg;
       });
       attachmentPrimaryId = attachmentMessages[0]?.id || '';
       const attachmentById = new Map(
@@ -15763,7 +16134,6 @@ Phase G（Frame 36）：循环衔接
       });
     }
     let appendedUserOutput = attachmentMessages.length > 0;
-    const hasUserText = Boolean(String(text || '').trim());
 
     // 只有在没有 pending 消息时，才创建新的用户消息气泡
     let userMsg = null;
@@ -15793,8 +16163,13 @@ Phase G（Frame 36）：循环衔接
             time: formatNowTime(),
           };
         }
+        if (currentDraftReplyTarget) {
+          userMsg = attachReplyTargetToMessage(userMsg, currentDraftReplyTarget);
+          consumedDraftReplyTarget = true;
+        }
         ui.addMessage(userMsg);
         const savedUser = chatStore.appendMessage(userMsg, sessionId);
+        userMsg = savedUser || userMsg;
         if (scriptRuntime && !skipScripts) {
           scriptRuntime.dispatchEvent('message.after_send', { message: savedUser || userMsg, sessionId }).catch(err => {
             logger.warn('script message.after_send failed', err);
@@ -15807,6 +16182,7 @@ Phase G（Frame 36）：循环衔接
         }
         appendedUserOutput = true;
       }
+      outgoingReplyContexts = buildOutgoingReplyContexts(userMsg ? [userMsg] : attachmentMessages);
       const primaryId = userMsg?.id || existingUserMessageId || attachmentPrimaryId || null;
       activeGeneration = {
         id: ++generationSequence,
@@ -15819,6 +16195,7 @@ Phase G（Frame 36）：循环衔接
       if (appendedUserOutput) refreshChatAndContacts();
       if (!suppressUserMessage && appendedUserOutput) ui.clearInput();
     } else {
+      outgoingReplyContexts = buildOutgoingReplyContexts([...pendingMessagesToConfirm, ...attachmentMessages]);
       // 有 pending 消息时，使用第一条 pending 消息的 ID
       activeGeneration = {
         id: ++generationSequence,
@@ -15831,6 +16208,7 @@ Phase G（Frame 36）：循环衔接
       if (attachmentMessages.length) refreshChatAndContacts();
       if (!suppressUserMessage && attachmentMessages.length) ui.clearInput();
     }
+    if (consumedDraftReplyTarget) clearReplyTargetForSession(sessionId);
     ui.setSendingState(true);
 
     const config = window.appBridge.config.get();
@@ -16017,14 +16395,15 @@ Phase G（Frame 36）：循环衔接
                   const isMe = isUserSpeakerName(speaker);
                   if (isMe && userEchoGuard.shouldDrop(content, speaker)) continue;
                   const role = isMe ? 'user' : 'assistant';
-                  const c = isMe ? null : resolveContactByDisplayName(speaker);
+                  const c = isMe ? null : resolveGroupSpeakerContact(speaker, targetGroupId);
                   const parsed =
                     role === 'assistant'
                       ? await buildAssistantMessageFromText(content, {
                           sessionId: targetGroupId,
                           time: m?.time || formatNowTime(),
                           name: speaker || '成员',
-                          avatar: resolveAvatarForContact(c?.id || speaker, c),
+                          avatar: resolveGroupSpeakerAvatar(speaker, targetGroupId, c),
+                          speakerContactId: c?.id || '',
                           showName: true,
                           depth: 0,
                         })
@@ -16152,14 +16531,15 @@ Phase G（Frame 36）：循环衔接
                       const isMe = isUserSpeakerName(speaker);
                       if (isMe && userEchoGuard.shouldDrop(content, speaker)) continue;
                       const role = isMe ? 'user' : 'assistant';
-                      const c = isMe ? null : resolveContactByDisplayName(speaker);
+                      const c = isMe ? null : resolveGroupSpeakerContact(speaker, targetGroupId);
                       const parsed =
                         role === 'assistant'
                           ? await buildAssistantMessageFromText(content, {
                               sessionId: targetGroupId,
                               time: m?.time || formatNowTime(),
                               name: speaker || '成员',
-                              avatar: resolveAvatarForContact(c?.id || speaker, c),
+                              avatar: resolveGroupSpeakerAvatar(speaker, targetGroupId, c),
+                              speakerContactId: c?.id || '',
                               showName: true,
                               depth: 0,
                             })
@@ -16261,14 +16641,15 @@ Phase G（Frame 36）：循环衔接
                         const isMe = isUserSpeakerName(speaker);
                         if (isMe && userEchoGuard.shouldDrop(content, speaker)) continue;
                         const role = isMe ? 'user' : 'assistant';
-                        const c = isMe ? null : resolveContactByDisplayName(speaker);
+                        const c = isMe ? null : resolveGroupSpeakerContact(speaker, targetGroupId);
                         const parsed =
                           role === 'assistant'
                             ? await buildAssistantMessageFromText(content, {
                                 sessionId: targetGroupId,
                                 time: m?.time || formatNowTime(),
                                 name: speaker || '成员',
-                                avatar: resolveAvatarForContact(c?.id || speaker, c),
+                                avatar: resolveGroupSpeakerAvatar(speaker, targetGroupId, c),
+                                speakerContactId: c?.id || '',
                                 showName: true,
                                 depth: 0,
                               })
@@ -16532,14 +16913,15 @@ Phase G（Frame 36）：循环衔接
                 const isMe = isUserSpeakerName(speaker);
                 if (isMe && userEchoGuard.shouldDrop(content, speaker)) continue;
                 const role = isMe ? 'user' : 'assistant';
-                const c = isMe ? null : resolveContactByDisplayName(speaker);
+                const c = isMe ? null : resolveGroupSpeakerContact(speaker, targetGroupId);
                 const parsed =
                   role === 'assistant'
                     ? await buildAssistantMessageFromText(content, {
                         sessionId: targetGroupId,
                         time: m?.time || formatNowTime(),
                         name: speaker || '成员',
-                        avatar: resolveAvatarForContact(c?.id || speaker, c),
+                        avatar: resolveGroupSpeakerAvatar(speaker, targetGroupId, c),
+                        speakerContactId: c?.id || '',
                         showName: true,
                         depth: 0,
                       })
@@ -16645,14 +17027,15 @@ Phase G（Frame 36）：循环衔接
                     const isMe = isUserSpeakerName(speaker);
                     if (isMe && userEchoGuard.shouldDrop(content, speaker)) continue;
                     const role = isMe ? 'user' : 'assistant';
-                    const c = isMe ? null : resolveContactByDisplayName(speaker);
+                    const c = isMe ? null : resolveGroupSpeakerContact(speaker, targetGroupId);
                     const parsed =
                       role === 'assistant'
                         ? await buildAssistantMessageFromText(content, {
                             sessionId: targetGroupId,
                             time: m?.time || formatNowTime(),
                             name: speaker || '成员',
-                            avatar: resolveAvatarForContact(c?.id || speaker, c),
+                            avatar: resolveGroupSpeakerAvatar(speaker, targetGroupId, c),
+                            speakerContactId: c?.id || '',
                             showName: true,
                             depth: 0,
                           })
@@ -16741,14 +17124,15 @@ Phase G（Frame 36）：循环衔接
                       const isMe = isUserSpeakerName(speaker);
                       if (isMe && userEchoGuard.shouldDrop(content, speaker)) continue;
                       const role = isMe ? 'user' : 'assistant';
-                      const c = isMe ? null : resolveContactByDisplayName(speaker);
+                      const c = isMe ? null : resolveGroupSpeakerContact(speaker, targetGroupId);
                       const parsed =
                         role === 'assistant'
                           ? await buildAssistantMessageFromText(content, {
                               sessionId: targetGroupId,
                               time: m?.time || formatNowTime(),
                               name: speaker || '成员',
-                              avatar: resolveAvatarForContact(c?.id || speaker, c),
+                              avatar: resolveGroupSpeakerAvatar(speaker, targetGroupId, c),
+                              speakerContactId: c?.id || '',
                               showName: true,
                               depth: 0,
                             })
@@ -16976,9 +17360,23 @@ Phase G（Frame 36）：循环衔接
       handleSend();
     },
   });
+  ui.onReplyCancel(() => {
+    clearReplyTargetForSession(chatStore.getCurrent());
+  });
 
   // Long-press send button to switch mode
   (() => {
+    if (!SOCIAL_SEND_MODE_SWITCH_ENABLED) {
+      try {
+        ui.setSendClickGuard(null);
+      } catch {}
+      if (sendMode !== 'chat') {
+        setSendMode('chat', { silent: true });
+      } else {
+        applySendModeUI();
+      }
+      return;
+    }
     const sendBtn = document.getElementById('send-button');
     if (!sendBtn) return;
     let pressTimer = null;
@@ -17220,6 +17618,41 @@ Phase G（Frame 36）：循环衔接
       await handleSend(message.id);
       return;
     }
+    if (action === 'reply') {
+      const target = buildChatReplyTargetFromMessage(message, sessionId);
+      if (!target) return;
+      setReplyTargetForSession(sessionId, target);
+      try {
+        ui.inputEl?.focus?.();
+      } catch {}
+      return true;
+    }
+    if (action === 'jump-reply-target') {
+      const targetId = String(payload?.targetId || message?.meta?.replyTo?.id || '').trim();
+      if (!targetId) return true;
+      const ok = await ensureMessageVisibleInCurrentChat(
+        String(payload?.sessionId || sessionId || '').trim() || sessionId,
+        targetId,
+        String(payload?.keyword || '').trim(),
+      );
+      if (!ok) window.toastr?.warning?.('未找到被回复的消息');
+      return true;
+    }
+    if (action === 'toggle-reaction') {
+      const emoji = String(payload?.emoji || '').trim();
+      if (!emoji) return true;
+      const current = chatStore.findMessage(message.id, sessionId) || message;
+      const baseMeta = current?.meta && typeof current.meta === 'object' ? { ...current.meta } : {};
+      baseMeta.reactions = toggleReactionActor(baseMeta.reactions, emoji, SELF_REACTION_ACTOR);
+      if (!baseMeta.reactions.length) delete baseMeta.reactions;
+      else baseMeta.reactions = normalizeReactionEntries(baseMeta.reactions);
+      const updated = chatStore.updateMessage(message.id, { meta: baseMeta }, sessionId);
+      const finalMessage = updated || { ...current, meta: baseMeta };
+      const [decorated] = decorateMessagesForDisplay([finalMessage], { sessionId });
+      ui.updateMessage(message.id, decorated || finalMessage);
+      refreshChatAndContacts({ immediate: true });
+      return true;
+    }
     if (action === 'view-code') {
       let raw = typeof message?.rawOriginal === 'string' ? message.rawOriginal : '';
       if (!raw.trim()) {
@@ -17267,10 +17700,12 @@ Phase G（Frame 36）：循环衔接
     if (action === 'delete-selected') {
       const ids = Array.isArray(payload?.ids) ? payload.ids.map(String).filter(Boolean) : [];
       if (!ids.length) return;
+      const currentReplyTarget = getReplyTargetForSession(sessionId);
       ids.forEach(id => {
         chatStore.deleteMessage(id, sessionId);
         ui.removeMessage(id);
       });
+      if (currentReplyTarget?.id && ids.includes(currentReplyTarget.id)) clearReplyTargetForSession(sessionId);
       refreshChatAndContacts();
       return;
     }
@@ -17280,14 +17715,18 @@ Phase G（Frame 36）：循环衔接
       if (pending) {
         cancelActiveGeneration('retract');
       }
+      const currentReplyTarget = getReplyTargetForSession(sessionId);
       chatStore.deleteMessage(message.id, sessionId);
       ui.removeMessage(message.id);
+      if (currentReplyTarget?.id === String(message.id || '')) clearReplyTargetForSession(sessionId);
       refreshChatAndContacts();
       return;
     }
     if (action === 'delete') {
+      const currentReplyTarget = getReplyTargetForSession(sessionId);
       chatStore.deleteMessage(message.id, sessionId);
       ui.removeMessage(message.id);
+      if (currentReplyTarget?.id === String(message.id || '')) clearReplyTargetForSession(sessionId);
       refreshChatAndContacts();
       return;
     }
@@ -17513,6 +17952,7 @@ Phase G（Frame 36）：循环衔接
         chatRenderState.set(id, { start });
       }
       ui.setInputText(draft || '');
+      syncReplyTargetComposer(id);
       ui.setSessionLabel(id);
       applyMvuSchemaDefaults(id, { reason: 'session' });
       if (uiMode === 'rp') {

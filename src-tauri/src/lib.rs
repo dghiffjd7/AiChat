@@ -4,8 +4,8 @@ mod commands;
 mod memory_db;
 mod storage;
 
-use tauri::Manager;
 use commands::{AttachmentStreamState, HttpAbortState, WallpaperStreamState};
+use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -29,6 +29,7 @@ pub fn run() {
             commands::save_kv,
             commands::load_kv,
             commands::list_contacts_by_scopes,
+            commands::cleanup_persona_scoped_data,
             commands::chat_store_v2_read_index,
             commands::chat_store_v2_write_index,
             commands::chat_store_v2_read_part,
