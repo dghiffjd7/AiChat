@@ -139,6 +139,37 @@ test('analyzeWorldEntryActivation expands history to satisfy minActivations', ()
   );
 });
 
+test('analyzeWorldEntryActivation matches green-light entries against group member names', () => {
+  const baseEntries = prepareWorldEntries({
+    worldId: 'world_group_members',
+    data: {
+      entries: [
+        { id: 'member_alice', key: ['Alice'], content: 'member Alice lore' },
+        { id: 'member_boris', key: ['Boris'], content: 'member Boris lore' },
+      ],
+    },
+    loadWorld: () => null,
+  });
+
+  const activation = analyzeWorldEntryActivation({
+    baseEntries,
+    matchText: 'hello group',
+    matchContext: {
+      userMessage: 'hello group',
+      history: [],
+      fullHistory: [],
+      groupMemberNames: ['Alice', 'Cara'],
+      personaText: '',
+      character: {},
+    },
+  });
+
+  assert.deepEqual(
+    activation.activeEntries.map((entry) => entry._entryId),
+    ['member_alice'],
+  );
+});
+
 let failed = 0;
 for (const t of tests) {
   try {

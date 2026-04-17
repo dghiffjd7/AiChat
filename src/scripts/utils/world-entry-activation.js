@@ -54,6 +54,10 @@ const buildMatchTextForEntry = (entry, matchText, matchContext) => {
   const parts = [];
   const sessionName = String(matchContext.sessionName || '').trim();
   if (sessionName) parts.push(sessionName);
+  const groupMemberNames = Array.isArray(matchContext.groupMemberNames)
+    ? matchContext.groupMemberNames.map((name) => String(name || '').trim()).filter(Boolean)
+    : [];
+  if (groupMemberNames.length) parts.push(...groupMemberNames);
   const userText = String(matchContext.userMessage || '').trim();
   if (userText) parts.push(userText);
   const history = Array.isArray(matchContext.history) ? matchContext.history : [];
@@ -75,6 +79,10 @@ const buildMatchTextForEntry = (entry, matchText, matchContext) => {
 export const hasWorldMatchInput = (matchText, matchContext) => {
   if (String(matchText || '').trim()) return true;
   if (!matchContext) return false;
+  const groupMemberNames = Array.isArray(matchContext.groupMemberNames)
+    ? matchContext.groupMemberNames.map((name) => String(name || '').trim()).filter(Boolean)
+    : [];
+  if (groupMemberNames.length) return true;
   const userText = String(matchContext.userMessage || '').trim();
   const history = Array.isArray(matchContext.history) ? matchContext.history : [];
   if (userText) return true;

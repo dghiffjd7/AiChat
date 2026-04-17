@@ -3,6 +3,7 @@
  */
 
 import { LLMClient } from '../api/client.js';
+import { buildReasoningRequestOptions, getReasoningSamplerPolicy } from '../api/model-capabilities.js';
 import {
   BUILTIN_PHONE_FORMAT_CHAT_PROMPT_SPECS,
   BUILTIN_PHONE_FORMAT_WORLDBOOK,
@@ -2499,6 +2500,9 @@ class AppBridge {
     const groupName = String(context?.group?.name || '').trim();
     const groupMemberIds = Array.isArray(context?.group?.members) ? context.group.members.map(String) : [];
     const groupMemberNames = Array.isArray(context?.group?.memberNames) ? context.group.memberNames.map(String) : [];
+    if (groupMemberNames.length) {
+      matchContext.groupMemberNames = groupMemberNames;
+    }
     const membersText = groupMemberNames.filter(Boolean).join(',');
     const resolvedWorldState = this.getResolvedWorldState(sessionId || this.activeSessionId, {
       uiMode,
@@ -4246,6 +4250,7 @@ const stringifyMessageContent = (content) => {
 
       const num = v => (typeof v === 'number' && Number.isFinite(v) ? v : undefined);
       const int = v => (typeof v === 'number' && Number.isFinite(v) ? Math.trunc(v) : undefined);
+      const runtimeConfig = this.config.get?.() || {};
 
       const base = {
         temperature: num(p.temperature),
@@ -4258,7 +4263,23 @@ const stringifyMessageContent = (content) => {
       };
 
       const maxTokens = int(p.openai_max_tokens);
-      const provider = this.config.get()?.provider;
+      const provider = runtimeConfig?.provider;
+      const model = runtimeConfig?.model;
+      const samplerPolicy = getReasoningSamplerPolicy({
+        provider,
+        model,
+        requestReasoning: p.request_reasoning === true,
+      });
+      const reasoningOptions = buildReasoningRequestOptions({
+        provider,
+        model,
+        requestReasoning: p.request_reasoning === true,
+        reasoningEffort: p.reasoning_effort,
+        maxOutputTokens: maxTokens,
+      });
+      if (samplerPolicy.disabledFields.includes('temperature')) delete base.temperature;
+      if (samplerPolicy.disabledFields.includes('top_p')) delete base.top_p;
+      if (samplerPolicy.disabledFields.includes('top_k')) delete base.top_k;
 
       // Provider-specific mapping
       if (provider === 'gemini' || provider === 'makersuite' || provider === 'vertexai') {
@@ -4267,6 +4288,7 @@ const stringifyMessageContent = (content) => {
           top_p: base.top_p,
           top_k: base.top_k,
           maxTokens,
+          ...reasoningOptions,
         };
       }
 
@@ -4277,6 +4299,7 @@ const stringifyMessageContent = (content) => {
           top_p: base.top_p,
           top_k: base.top_k,
           maxTokens,
+          ...reasoningOptions,
         };
       }
 
@@ -4288,6 +4311,7 @@ const stringifyMessageContent = (content) => {
         frequency_penalty: base.frequency_penalty,
         seed: base.seed,
         n: base.n,
+        ...reasoningOptions,
       };
       if (typeof maxTokens === 'number') options.max_tokens = maxTokens;
       return options;
@@ -5032,6 +5056,9 @@ const stringifyMessageContent = (content) => {
         sessionId,
         sessionName,
         uiMode,
+        groupMemberNames: Array.isArray(ctx?.group?.memberNames)
+          ? ctx.group.memberNames.map(String).filter(Boolean)
+          : [],
         character: {
           description: String(ctx?.character?.description || ''),
           personality: String(ctx?.character?.personality || ''),
@@ -5109,6 +5136,7 @@ const stringifyMessageContent = (content) => {
     const sourceFields = [];
     if (String(effectiveMatchContext?.userMessage || '').trim()) sourceFields.push('用户输入');
     if (Array.isArray(effectiveMatchContext?.history) && effectiveMatchContext.history.some(line => String(line || '').trim())) sourceFields.push('聊天历史');
+    if (Array.isArray(effectiveMatchContext?.groupMemberNames) && effectiveMatchContext.groupMemberNames.some(name => String(name || '').trim())) sourceFields.push('群成员');
     if (targetEntry?.matchPersonaDescription && String(effectiveMatchContext?.personaText || '').trim()) sourceFields.push('Persona 描述');
     if (targetEntry?.matchCharacterDescription && String(effectiveMatchContext?.character?.description || '').trim()) sourceFields.push('角色描述');
     if (targetEntry?.matchCharacterPersonality && String(effectiveMatchContext?.character?.personality || '').trim()) sourceFields.push('角色性格');

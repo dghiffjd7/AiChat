@@ -241,7 +241,10 @@ export class AnthropicProvider {
             requestId,
         });
 
-        return data?.content?.[0]?.text || '';
+        const textBlocks = Array.isArray(data?.content)
+            ? data.content.filter((block) => block?.type === 'text' && typeof block?.text === 'string')
+            : [];
+        return textBlocks.map((block) => block.text).join('') || '';
     }
 
     /**

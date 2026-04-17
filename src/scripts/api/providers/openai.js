@@ -103,12 +103,16 @@ export class OpenAIProvider {
   normalizeOptions(options = {}) {
     const src = (options && typeof options === 'object') ? options : {};
     const out = {};
+    const isDeepSeek = String(this.provider || '').toLowerCase() === 'deepseek';
 
     // Common OpenAI-compatible parameters
     if (typeof src.temperature === 'number') out.temperature = src.temperature;
     if (typeof src.top_p === 'number') out.top_p = src.top_p;
     if (typeof src.presence_penalty === 'number') out.presence_penalty = src.presence_penalty;
     if (typeof src.frequency_penalty === 'number') out.frequency_penalty = src.frequency_penalty;
+    if (!isDeepSeek && typeof src.reasoning_effort === 'string' && src.reasoning_effort.trim()) {
+      out.reasoning_effort = String(src.reasoning_effort).trim();
+    }
 
     // Token limits
     if (Number.isFinite(src.max_tokens)) out.max_tokens = Math.trunc(src.max_tokens);
@@ -118,10 +122,11 @@ export class OpenAIProvider {
     if (typeof src.stop === 'string' || Array.isArray(src.stop)) out.stop = src.stop;
 
     // Some servers reject unsupported fields (DeepSeek is stricter).
-    const isDeepSeek = String(this.provider || '').toLowerCase() === 'deepseek';
     if (!isDeepSeek) {
       if (Number.isFinite(src.n)) out.n = Math.trunc(src.n);
       if (Number.isFinite(src.seed)) out.seed = Math.trunc(src.seed);
+    } else if (src.thinking && typeof src.thinking === 'object' && src.thinking.type === 'enabled') {
+      out.thinking = { type: 'enabled' };
     }
 
     return out;

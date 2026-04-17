@@ -8,6 +8,7 @@ import {
     BUILTIN_PHONE_FORMAT_CHAT_PROMPT_SPECS,
     getBuiltinPhoneFormatPromptSeed,
 } from './builtin-worldbooks.js';
+import { normalizeReasoningEffort } from '../api/model-capabilities.js';
 import { logger } from '../utils/logger.js';
 
 const safeInvoke = async (cmd, args) => {
@@ -22,6 +23,16 @@ const safeInvoke = async (cmd, args) => {
 const STORE_KEY = 'prompt_preset_store_v1';
 
 const genId = (prefix) => `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+
+const normalizeBoolean = (value, fallback = false) => {
+    if (typeof value === 'boolean') return value;
+    if (typeof value === 'string') {
+        const next = value.trim().toLowerCase();
+        if (next === 'true') return true;
+        if (next === 'false') return false;
+    }
+    return fallback;
+};
 
 // 对话模式（私聊）提示词：
 // - 预设的优势：可按场景（私聊/群聊/动态评论）自动注入不同提示词块（见 bridge.js A/B/C）。
@@ -214,6 +225,8 @@ const normalizeResponseTarget = (value, fallback = 'character') => {
 const normalizeOpenAIPreset = (preset) => {
     if (!preset || typeof preset !== 'object') return;
 
+    preset.request_reasoning = normalizeBoolean(preset.request_reasoning, false);
+    preset.reasoning_effort = normalizeReasoningEffort(preset.reasoning_effort, 'high');
     preset.response_target_chat = normalizeResponseTarget(preset.response_target_chat, 'character');
     preset.response_target_rp = normalizeResponseTarget(preset.response_target_rp, 'user');
     if (typeof preset.impersonation_prompt !== 'string' || !preset.impersonation_prompt.trim()) {

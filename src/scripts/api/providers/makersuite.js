@@ -205,6 +205,16 @@ export class MakersuiteProvider {
       },
     };
 
+    if (Number.isFinite(options.thinkingBudget) || typeof options.thinkingLevel === 'string') {
+      body.generationConfig.thinkingConfig = {};
+      if (Number.isFinite(options.thinkingBudget)) {
+        body.generationConfig.thinkingConfig.thinkingBudget = Math.trunc(options.thinkingBudget);
+      }
+      if (typeof options.thinkingLevel === 'string' && options.thinkingLevel.trim()) {
+        body.generationConfig.thinkingConfig.thinkingLevel = String(options.thinkingLevel).trim();
+      }
+    }
+
     // Add system instruction if present
     if (systemInstruction) {
       body.systemInstruction = {

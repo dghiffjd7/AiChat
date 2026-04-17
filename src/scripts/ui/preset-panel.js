@@ -7,6 +7,7 @@
 
 import { PresetStore } from '../storage/preset-store.js';
 import { appSettings } from '../storage/app-settings.js';
+import { getReasoningCapability, getReasoningSamplerPolicy, normalizeReasoningEffort } from '../api/model-capabilities.js';
 import { LLMClient } from '../api/client.js';
 import { logger } from '../utils/logger.js';
 import { safeInvoke } from '../utils/tauri.js';
@@ -87,6 +88,21 @@ const getInt = (val, fallback) => {
 };
 
 const setValue = (el, val) => { if (el) el.value = (val ?? '').toString(); };
+const escapeHtml = (value) => String(value ?? '').replace(/[&<>"]/g, (ch) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+}[ch]));
+
+const REASONING_EFFORT_LABELS = Object.freeze({
+    auto: '自动',
+    minimal: '极低',
+    low: '低',
+    medium: '中',
+    high: '高',
+    xhigh: '极高',
+});
 
 /* ── icons ── */
 const chevronRightSvg = `<svg viewBox="0 0 24 24" style="width:16px;height:16px;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;fill:none;"><polyline points="9 6 15 12 9 18"/></svg>`;
@@ -544,11 +560,189 @@ export class PresetPanel {
         this.detailScrollEl = null;
         this.currentSectionId = null;
         this.drafts = new Map();
+        this.customSelectMenuEl = null;
+        this.customSelectMenuCleanup = null;
+        this.customSelectMenuAnchor = null;
     }
 
     getTypeLabel(type) {
         const hit = SECTIONS.find(t => t.id === type);
         return hit?.label || String(type || '');
+    }
+
+    getBoundProfileForPreset(preset) {
+        const cm = window.appBridge?.config;
+        if (!cm) return null;
+        const boundId = String(preset?.boundProfileId || '').trim();
+        if (boundId) return cm.getProfileById?.(boundId) || null;
+        return cm.getActiveProfile?.() || cm.get?.() || null;
+    }
+
+    getReasoningCapabilityForPreset(preset) {
+        const profile = this.getBoundProfileForPreset(preset) || {};
+        const requestReasoning = preset?.request_reasoning === true;
+        return {
+            provider: String(profile?.provider || '').trim(),
+            model: String(profile?.model || '').trim(),
+            capability: getReasoningCapability({
+                provider: profile?.provider,
+                model: profile?.model,
+            }),
+            samplerPolicy: getReasoningSamplerPolicy({
+                provider: profile?.provider,
+                model: profile?.model,
+                requestReasoning,
+            }),
+        };
+    }
+
+    ensureCustomSelectMenu() {
+        if (this.customSelectMenuEl) return this.customSelectMenuEl;
+        const menu = document.createElement('div');
+        menu.className = 'world-app-select-menu';
+        menu.style.display = 'none';
+        menu.addEventListener('click', (e) => e.stopPropagation());
+        document.body.appendChild(menu);
+        this.customSelectMenuEl = menu;
+        return menu;
+    }
+
+    closeCustomSelectMenu() {
+        if (typeof this.customSelectMenuCleanup === 'function') {
+            try { this.customSelectMenuCleanup(); } catch {}
+        }
+        this.customSelectMenuCleanup = null;
+        this.customSelectMenuAnchor = null;
+        if (this.customSelectMenuEl) {
+            this.customSelectMenuEl.style.display = 'none';
+            this.customSelectMenuEl.innerHTML = '';
+        }
+    }
+
+    openCustomSelectMenu({ anchorEl, options = [], currentValue = '', onSelect = null } = {}) {
+        if (!anchorEl) return;
+        const isSameAnchorOpen =
+            this.customSelectMenuAnchor === anchorEl &&
+            this.customSelectMenuEl &&
+            this.customSelectMenuEl.style.display !== 'none';
+        if (isSameAnchorOpen) {
+            this.closeCustomSelectMenu();
+            return;
+        }
+        const menu = this.ensureCustomSelectMenu();
+        const current = String(currentValue ?? '').trim();
+        const opts = Array.isArray(options) ? options : [];
+        menu.innerHTML = opts.map((opt) => {
+            const value = String(opt?.value ?? '');
+            const label = escapeHtml(String(opt?.label ?? value));
+            const selected = value === current;
+            return `
+                <button type="button" class="world-app-select-item ${selected ? 'is-selected' : ''}" data-value="${value.replace(/"/g, '&quot;')}">
+                    <span class="world-app-select-item-label">${label}</span>
+                    <span class="world-app-select-item-check">${selected ? '✓' : ''}</span>
+                </button>
+            `;
+        }).join('');
+
+        menu.querySelectorAll('.world-app-select-item').forEach((item) => {
+            item.addEventListener('click', () => {
+                const value = String(item.dataset.value ?? '');
+                if (typeof onSelect === 'function') onSelect(value);
+                this.closeCustomSelectMenu();
+            });
+        });
+
+        menu.style.display = 'block';
+        menu.style.visibility = 'hidden';
+        menu.style.minWidth = `${Math.max(170, Math.round(anchorEl.getBoundingClientRect().width))}px`;
+        menu.style.left = '0px';
+        menu.style.top = '0px';
+
+        const anchorRect = anchorEl.getBoundingClientRect();
+        const menuRect = menu.getBoundingClientRect();
+        const gap = 6;
+        let left = anchorRect.left;
+        let top = anchorRect.bottom + gap;
+        if (left + menuRect.width > window.innerWidth - 8) {
+            left = Math.max(8, window.innerWidth - menuRect.width - 8);
+        }
+        if (top + menuRect.height > window.innerHeight - 8) {
+            top = Math.max(8, anchorRect.top - menuRect.height - gap);
+        }
+        menu.style.left = `${Math.round(left)}px`;
+        menu.style.top = `${Math.round(top)}px`;
+        menu.style.visibility = 'visible';
+
+        const onDocClick = (ev) => {
+            const target = ev?.target;
+            if (!target) return;
+            if (menu.contains(target) || anchorEl.contains(target)) return;
+            this.closeCustomSelectMenu();
+        };
+        const onResize = () => this.closeCustomSelectMenu();
+        const onScroll = (ev) => {
+            const target = ev?.target;
+            if (target && (menu.contains(target) || anchorEl.contains(target))) return;
+            this.closeCustomSelectMenu();
+        };
+        document.addEventListener('mousedown', onDocClick, true);
+        document.addEventListener('touchstart', onDocClick, true);
+        window.addEventListener('resize', onResize);
+        window.addEventListener('scroll', onScroll, true);
+        this.customSelectMenuCleanup = () => {
+            document.removeEventListener('mousedown', onDocClick, true);
+            document.removeEventListener('touchstart', onDocClick, true);
+            window.removeEventListener('resize', onResize);
+            window.removeEventListener('scroll', onScroll, true);
+        };
+        this.customSelectMenuAnchor = anchorEl;
+    }
+
+    refreshCustomSelect(selectOrId, root = null) {
+        const scope = root || this.element || document;
+        const select = typeof selectOrId === 'string'
+            ? scope.querySelector(`#${selectOrId}`)
+            : selectOrId;
+        if (!select) return;
+        const button = scope.querySelector(`[data-select-id="${select.id}"]`);
+        if (!button) return;
+        const labelEl = button.querySelector('.pp-custom-select-label');
+        const current = Array.from(select.options || []).find((opt) => opt.value === select.value) || select.options?.[select.selectedIndex] || null;
+        if (labelEl) {
+            labelEl.textContent = current?.textContent?.trim() || button.dataset.placeholder || '请选择';
+        }
+    }
+
+    bindCustomSelect(selectId, root = null) {
+        const scope = root || this.element || document;
+        const select = scope.querySelector(`#${selectId}`);
+        const button = scope.querySelector(`[data-select-id="${selectId}"]`);
+        if (!select || !button || button.dataset.bound === 'true') return;
+
+        button.dataset.bound = 'true';
+        button.addEventListener('click', () => {
+            if (button.disabled) return;
+            const options = Array.from(select.options || []).map((opt) => ({
+                value: opt.value,
+                label: opt.textContent || opt.value,
+            }));
+            this.openCustomSelectMenu({
+                anchorEl: button,
+                options,
+                currentValue: select.value,
+                onSelect: (value) => {
+                    if (select.value !== value) {
+                        select.value = value;
+                        select.dispatchEvent(new Event('change', { bubbles: true }));
+                    } else {
+                        this.refreshCustomSelect(select, scope);
+                    }
+                },
+            });
+        });
+
+        select.addEventListener('change', () => this.refreshCustomSelect(select, scope));
+        this.refreshCustomSelect(select, scope);
     }
 
     async applyBoundConfigIfAny() {
@@ -582,6 +776,7 @@ export class PresetPanel {
     }
 
     hide() {
+        this.closeCustomSelectMenu();
         if (this.element) this.element.style.display = 'none';
         if (this.overlayElement) this.overlayElement.style.display = 'none';
     }
@@ -743,7 +938,10 @@ export class PresetPanel {
         if (sec.id === 'openai') {
             const t = p.temperature ?? 1;
             const tp = p.top_p ?? 0.98;
-            return `temp ${t} · top_p ${tp}`;
+            const reasoning = p.request_reasoning === true
+                ? ` · 推理 ${REASONING_EFFORT_LABELS[normalizeReasoningEffort(p.reasoning_effort, 'high')] || '高'}`
+                : '';
+            return `temp ${t} · top_p ${tp}${reasoning}`;
         }
         if (sec.id === 'custom') {
             const prompts = Array.isArray(p.prompts) ? p.prompts : [];
@@ -1455,6 +1653,136 @@ export class PresetPanel {
             { label: 'frequency_penalty', el: frequency },
         ]));
 
+        const { provider, model, capability, samplerPolicy } = this.getReasoningCapabilityForPreset(p);
+        const normalizedReasoningEffort = normalizeReasoningEffort(p.reasoning_effort, 'high');
+        const capabilityLabel = provider && model
+            ? `${provider} / ${model}`
+            : (provider || model || '未绑定可识别模型');
+
+        if (capability.supported && capability.requestControl) {
+            const reasoningCard = document.createElement('div');
+            reasoningCard.style.cssText = 'margin-top:12px; border:1px solid #dbe7ff; border-radius:14px; background:linear-gradient(180deg,#f8fbff 0%,#f1f6ff 100%); padding:12px;';
+            const title = document.createElement('div');
+            title.className = 'pp-field-label';
+            title.textContent = '推理请求';
+            reasoningCard.appendChild(title);
+
+            const meta = document.createElement('div');
+            meta.style.cssText = 'color:#64748b; font-size:12px; margin-top:4px; line-height:1.5;';
+            meta.textContent = `当前模型：${capabilityLabel}`;
+            reasoningCard.appendChild(meta);
+
+            const requestLabel = document.createElement('label');
+            requestLabel.style.cssText = 'display:flex; gap:10px; align-items:flex-start; margin-top:10px; cursor:pointer;';
+            const requestReasoning = document.createElement('input');
+            requestReasoning.id = 'gen-request-reasoning';
+            requestReasoning.type = 'checkbox';
+            requestReasoning.checked = p.request_reasoning === true;
+            requestReasoning.style.marginTop = '2px';
+            requestLabel.appendChild(requestReasoning);
+
+            const requestTextWrap = document.createElement('div');
+            requestTextWrap.style.flex = '1';
+            const requestText = document.createElement('div');
+            requestText.style.cssText = 'font-weight:700; color:#0f172a;';
+            requestText.textContent = '请求推理';
+            requestTextWrap.appendChild(requestText);
+            const requestDesc = document.createElement('div');
+            requestDesc.style.cssText = 'color:#64748b; font-size:12px; line-height:1.5; margin-top:4px;';
+            requestDesc.textContent = '按当前模型支持的接口显式附加推理参数；关闭时不额外请求。';
+            requestTextWrap.appendChild(requestDesc);
+            requestLabel.appendChild(requestTextWrap);
+            reasoningCard.appendChild(requestLabel);
+
+            let reasoningEffort = null;
+            const effortWrap = document.createElement('div');
+            effortWrap.style.marginTop = '10px';
+            if (capability.effortControl) {
+                const effortSelectWrap = document.createElement('div');
+                effortSelectWrap.style.width = '100%';
+                reasoningEffort = document.createElement('select');
+                reasoningEffort.id = 'gen-reasoning-effort';
+                reasoningEffort.style.display = 'none';
+                capability.effortOptions.forEach((item) => {
+                    const opt = document.createElement('option');
+                    opt.value = item.value;
+                    opt.textContent = item.label;
+                    reasoningEffort.appendChild(opt);
+                });
+                reasoningEffort.value = capability.effortOptions.some((item) => item.value === normalizedReasoningEffort)
+                    ? normalizedReasoningEffort
+                    : (capability.effortOptions[0]?.value || 'high');
+                const effortButton = document.createElement('button');
+                effortButton.type = 'button';
+                effortButton.className = 'world-app-select-btn';
+                effortButton.dataset.selectId = 'gen-reasoning-effort';
+                effortButton.style.marginTop = '2px';
+                effortButton.innerHTML = `
+                    <span class="pp-custom-select-label">请选择推理强度</span>
+                    <span class="world-app-select-btn-chevron">▾</span>
+                `;
+                effortSelectWrap.appendChild(reasoningEffort);
+                effortSelectWrap.appendChild(effortButton);
+                effortWrap.appendChild(this.renderInputRow([
+                    { label: '推理强度', el: effortSelectWrap },
+                ]));
+                this.bindCustomSelect('gen-reasoning-effort', effortWrap);
+            }
+            reasoningCard.appendChild(effortWrap);
+
+            const reasoningHint = document.createElement('div');
+            reasoningHint.style.cssText = 'color:#64748b; font-size:12px; margin-top:10px; line-height:1.5;';
+            reasoningCard.appendChild(reasoningHint);
+
+            const samplingControls = {
+                temperature,
+                top_p: topP,
+                top_k: topK,
+            };
+
+            const syncReasoningUi = () => {
+                const effortButton = effortWrap.querySelector('[data-select-id="gen-reasoning-effort"]');
+                if (reasoningEffort) reasoningEffort.disabled = requestReasoning.checked !== true;
+                if (effortButton) effortButton.disabled = requestReasoning.checked !== true;
+                const activeSamplerPolicy = getReasoningSamplerPolicy({
+                    provider,
+                    model,
+                    requestReasoning: requestReasoning.checked === true,
+                });
+                Object.entries(samplingControls).forEach(([field, el]) => {
+                    if (!el) return;
+                    el.disabled = activeSamplerPolicy.disabledFields.includes(field);
+                });
+                const disabledFieldLabels = [];
+                if (activeSamplerPolicy.disabledFields.includes('temperature')) disabledFieldLabels.push('temperature');
+                if (activeSamplerPolicy.disabledFields.includes('top_p')) disabledFieldLabels.push('top_p');
+                if (activeSamplerPolicy.disabledFields.includes('top_k')) disabledFieldLabels.push('top_k');
+                const disabledText = disabledFieldLabels.length
+                    ? ` 已自动停用：${disabledFieldLabels.join(' / ')}。`
+                    : '';
+                reasoningHint.textContent = `${capability.hint || ''}${disabledText}`.trim();
+            };
+            requestReasoning.addEventListener('change', () => {
+                if (
+                    requestReasoning.checked === true &&
+                    reasoningEffort &&
+                    reasoningEffort.value === 'auto' &&
+                    capability.effortOptions.some((item) => item.value === 'high')
+                ) {
+                    reasoningEffort.value = 'high';
+                }
+                syncReasoningUi();
+            });
+            Object.entries(samplingControls).forEach(([field, el]) => {
+                if (!el) return;
+                if (samplerPolicy.disabledFields.includes(field)) {
+                    el.disabled = true;
+                }
+            });
+            syncReasoningUi();
+            wrap.appendChild(reasoningCard);
+        }
+
         const viewHint = document.createElement('div');
         viewHint.style.cssText = 'color:#64748b; font-size:12px; margin:10px 0 4px;';
         viewHint.textContent = '默认回复视角。聊天与 RP 分开保存；不额外增加聊天区按钮。';
@@ -1769,6 +2097,14 @@ export class PresetPanel {
             current.openai_max_tokens = getInt(root.querySelector('#gen-max-tokens')?.value, current.openai_max_tokens ?? 8192);
             current.presence_penalty = getNum(root.querySelector('#gen-presence')?.value, current.presence_penalty ?? 0);
             current.frequency_penalty = getNum(root.querySelector('#gen-frequency')?.value, current.frequency_penalty ?? 0);
+            if (root.querySelector('#gen-request-reasoning')) {
+                current.request_reasoning = Boolean(root.querySelector('#gen-request-reasoning')?.checked);
+            }
+            if (root.querySelector('#gen-reasoning-effort')) {
+                current.reasoning_effort = normalizeReasoningEffort(root.querySelector('#gen-reasoning-effort')?.value, current.reasoning_effort ?? 'high');
+            } else {
+                current.reasoning_effort = normalizeReasoningEffort(current.reasoning_effort, 'high');
+            }
             current.response_target_chat = root.querySelector('#gen-response-target-chat')?.value === 'user' ? 'user' : 'character';
             current.response_target_rp = root.querySelector('#gen-response-target-rp')?.value === 'character' ? 'character' : 'user';
             current.boundProfileId = window.appBridge?.config?.getActiveProfileId?.() || current.boundProfileId || null;
