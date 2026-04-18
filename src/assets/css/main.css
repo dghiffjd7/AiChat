@@ -3816,6 +3816,8 @@ body.chat-room-active .bottom-nav {
 
 .world-manage-body {
   padding: 12px 16px 16px;
+  flex: 1 1 auto;
+  min-height: 0;
   overflow: auto;
   display: flex;
   flex-direction: column;
@@ -3854,8 +3856,8 @@ body.chat-room-active .bottom-nav {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  max-height: 360px;
-  overflow: auto;
+  max-height: none;
+  overflow: visible;
   padding: 2px;
 }
 
@@ -4100,14 +4102,31 @@ body.chat-room-active .bottom-nav {
 }
 
 @media (max-width: 640px) {
+  .world-editor-popup {
+    overflow-y: auto;
+  }
   .world-editor-body {
     flex-direction: column;
+    flex: none;
+    min-height: auto;
   }
   .world-entries-column {
     width: 100%;
-    min-height: 160px;
+    min-height: auto;
     border-right: none;
     border-bottom: 1px solid #eee;
+  }
+  .world-entries-list {
+    max-height: none;
+  }
+  .world-entry-page-list {
+    max-height: none;
+    overflow: visible;
+  }
+  .world-entry-editor {
+    flex: none;
+    min-height: auto;
+    overflow: visible;
   }
 }
 

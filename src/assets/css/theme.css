@@ -1,0 +1,274 @@
+:root {
+  --app-surface-page: #f4f5f6;
+  --app-surface-page-alt: #e6e9f0;
+  --app-surface-card: rgba(255, 255, 255, 0.96);
+  --app-surface-panel: rgba(255, 255, 255, 0.92);
+  --app-surface-topbar: rgba(255, 255, 255, 0.92);
+  --app-surface-input: rgba(255, 255, 255, 0.92);
+  --app-surface-overlay: rgba(15, 23, 42, 0.42);
+  --app-text-primary: #0f172a;
+  --app-text-secondary: #475569;
+  --app-text-muted: #94a3b8;
+  --app-text-inverse: #ffffff;
+  --app-text-quote: #475569;
+  --app-text-link: #2563eb;
+  --app-accent-primary: #199aff;
+  --app-accent-strong: #0b66c2;
+  --app-accent-soft: rgba(25, 154, 255, 0.14);
+  --app-border-subtle: rgba(15, 23, 42, 0.08);
+  --app-border-default: rgba(148, 163, 184, 0.32);
+  --app-border-strong: rgba(15, 23, 42, 0.16);
+  --app-bubble-user: #199aff;
+  --app-bubble-assistant: #ffffff;
+  --app-bubble-assistant-alt: #c9c9c9;
+  --app-bubble-meta: rgba(255, 255, 255, 0.76);
+  --app-shadow-sm: 0 1px 4px rgba(15, 23, 42, 0.08);
+  --app-shadow-md: 0 12px 34px rgba(15, 23, 42, 0.18);
+  --app-shadow-bubble: 0 8px 18px rgba(15, 23, 42, 0.1);
+  --app-shadow-color: rgba(15, 23, 42, 0.18);
+  --app-radius-sm: 8px;
+  --app-radius-md: 12px;
+  --app-radius-lg: 18px;
+  --app-radius-pill: 999px;
+  --app-avatar-radius: 18px;
+  --app-font-scale: 1;
+}
+
+body[data-theme-mode='dark'] {
+  background: linear-gradient(135deg, var(--app-surface-page) 0%, var(--app-surface-page-alt) 100%) !important;
+  color: var(--app-text-primary) !important;
+  color-scheme: dark;
+}
+
+body[data-theme-mode='light'] {
+  color-scheme: light;
+}
+
+body[data-avatar-style='round'] {
+  --app-avatar-radius: 50%;
+}
+
+body[data-avatar-style='rounded'] {
+  --app-avatar-radius: 18px;
+}
+
+body[data-avatar-style='rectangular'] {
+  --app-avatar-radius: 14px;
+}
+
+body[data-avatar-style='square'] {
+  --app-avatar-radius: 10px;
+}
+
+body[data-reduced-motion='on'] *,
+body[data-reduced-motion='on'] *::before,
+body[data-reduced-motion='on'] *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+  scroll-behavior: auto !important;
+}
+
+body[data-font-scale='custom'],
+body[data-font-scale='custom'] input,
+body[data-font-scale='custom'] textarea,
+body[data-font-scale='custom'] select,
+body[data-font-scale='custom'] button {
+  font-size: calc(14px * var(--app-font-scale));
+}
+
+body[data-avatar-style]:not([data-avatar-style='system']) .QQ_chat_head,
+body[data-avatar-style]:not([data-avatar-style='system']) .user_avatar,
+body[data-avatar-style]:not([data-avatar-style='system']) .qq-avatar,
+body[data-avatar-style]:not([data-avatar-style='system']) .chat-avatar,
+body[data-avatar-style]:not([data-avatar-style='system']) .chat-item-avatar,
+body[data-avatar-style]:not([data-avatar-style='system']) .contact-avatar,
+body[data-avatar-style]:not([data-avatar-style='system']) .moment-avatar,
+body[data-avatar-style]:not([data-avatar-style='system']) .user-avatar-btn,
+body[data-avatar-style]:not([data-avatar-style='system']) .user-avatar-btn img,
+body[data-avatar-style]:not([data-avatar-style='system']) .chat-reply-preview-avatar,
+body[data-avatar-style]:not([data-avatar-style='system']) .chat-reply-draft-avatar,
+body[data-avatar-style]:not([data-avatar-style='system']) .persona-switcher-avatar,
+body[data-avatar-style]:not([data-avatar-style='system']) .session-avatar-preview,
+body[data-avatar-style]:not([data-avatar-style='system']) .session-recommend-avatar,
+body[data-avatar-style]:not([data-avatar-style='system']) .sticker-bind-avatar {
+  border-radius: var(--app-avatar-radius) !important;
+}
+
+body[data-hide-chat-avatars='on'] .QQ_chat_head,
+body[data-hide-chat-avatars='on'] .user_avatar,
+body[data-hide-chat-avatars='on'] .qq-avatar,
+body[data-hide-chat-avatars='on'] .chat-avatar {
+  display: none !important;
+}
+
+body[data-hide-chat-avatars='on'] .QQ_chat_charmsg,
+body[data-hide-chat-avatars='on'] .QQ_chat_mymsg {
+  grid-template-columns: 1fr !important;
+}
+
+body[data-compact-input='on'] .chat-input-container {
+  padding-top: 4px !important;
+  padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 4px) !important;
+}
+
+body[data-compact-input='on'] .chat-input-row {
+  gap: 6px !important;
+}
+
+body[data-compact-input='on'] .chat-input-wrap,
+body[data-compact-input='on'] .chat-input {
+  min-height: 0 !important;
+}
+
+body[data-chat-display='bubble'] .QQ_chat_msgdiv,
+body[data-chat-display='bubble'] .bubble {
+  border-radius: 22px !important;
+  box-shadow: var(--app-shadow-bubble) !important;
+}
+
+body[data-chat-display='document'] .QQ_chat_msgdiv,
+body[data-chat-display='document'] .bubble {
+  border-radius: 14px !important;
+  box-shadow: none !important;
+}
+
+body[data-chat-display='document'] .chat-body {
+  max-width: min(100%, 94%) !important;
+}
+
+body[data-chat-display='document'] .QQ_chat_charmsg[data-creative='1'],
+body[data-chat-display='document'] .QQ_chat_mymsg[data-creative='1'] {
+  width: 100% !important;
+}
+
+body[data-chat-display='document'] .QQ_chat_msgdiv {
+  max-width: min(100%, 92vw) !important;
+}
+
+.persona-switcher-tabs button.is-active {
+  background: #0f172a !important;
+  color: #ffffff !important;
+  border-color: #0f172a !important;
+}
+
+body[data-theme-mode='dark'] .bg-legacy {
+  background-image: none !important;
+}
+
+body[data-theme-mode='dark'] .topbar,
+body[data-theme-mode='dark'] .chat-room-topbar,
+body[data-theme-mode='dark'] .search-box-wrapper,
+body[data-theme-mode='dark'] .sheet,
+body[data-theme-mode='dark'] .chat-search-session-item,
+body[data-theme-mode='dark'] .chat-search-message-item,
+body[data-theme-mode='dark'] .moment-card,
+body[data-theme-mode='dark'] .world-app-select-menu,
+body[data-theme-mode='dark'] #general-settings-panel .general-settings-modal,
+body[data-theme-mode='dark'] #general-settings-panel .general-settings-card,
+body[data-theme-mode='dark'] #general-settings-panel .general-settings-subcard,
+body[data-theme-mode='dark'] #general-settings-panel .general-settings-input-row,
+body[data-theme-mode='dark'] #general-settings-panel .general-settings-toggle-row,
+body[data-theme-mode='dark'] #general-settings-panel #general-template-options,
+body[data-theme-mode='dark'] #general-settings-panel #general-script-options,
+body[data-theme-mode='dark'] #general-settings-panel #general-memory-auto-options,
+body[data-theme-mode='dark'] #general-settings-panel #general-memory-budget-block {
+  background: var(--app-surface-panel) !important;
+  color: var(--app-text-primary) !important;
+  border-color: var(--app-border-subtle) !important;
+  box-shadow: var(--app-shadow-sm) !important;
+}
+
+body[data-theme-mode='dark'] #general-settings-overlay {
+  background: var(--app-surface-overlay) !important;
+}
+
+body[data-theme-mode='dark'] .topbar,
+body[data-theme-mode='dark'] .chat-room-topbar {
+  background: var(--app-surface-topbar) !important;
+  border-color: var(--app-border-subtle) !important;
+}
+
+body[data-theme-mode='dark'] .topbar::before {
+  background: linear-gradient(180deg, rgba(15, 23, 42, 0.5) 0%, transparent 100%) !important;
+}
+
+body[data-theme-mode='dark'] .chat-list-item,
+body[data-theme-mode='dark'] .contact-item,
+body[data-theme-mode='dark'] .contact-group-title,
+body[data-theme-mode='dark'] .chat-search-detail-head,
+body[data-theme-mode='dark'] .search-box-wrapper,
+body[data-theme-mode='dark'] .search-box-wrapper-inner,
+body[data-theme-mode='dark'] .icon-button-small,
+body[data-theme-mode='dark'] .sheet button,
+body[data-theme-mode='dark'] .world-app-select-item,
+body[data-theme-mode='dark'] .world-app-select-btn {
+  color: var(--app-text-primary) !important;
+  border-color: var(--app-border-subtle) !important;
+}
+
+body[data-theme-mode='dark'] .search-box-wrapper {
+  background: var(--app-surface-panel) !important;
+}
+
+body[data-theme-mode='dark'] .search-box-wrapper-inner {
+  background: var(--app-surface-card) !important;
+}
+
+body[data-theme-mode='dark'] .chat-item-name,
+body[data-theme-mode='dark'] .contact-name,
+body[data-theme-mode='dark'] .moments-title,
+body[data-theme-mode='dark'] .sheet .sheet-header,
+body[data-theme-mode='dark'] .chat-search-detail-title,
+body[data-theme-mode='dark'] .chat-search-message-name,
+body[data-theme-mode='dark'] #general-settings-panel .general-settings-title,
+body[data-theme-mode='dark'] #general-settings-panel .general-settings-row-title,
+body[data-theme-mode='dark'] #general-settings-panel .general-settings-card-title,
+body[data-theme-mode='dark'] #general-settings-panel .general-settings-subcard-title {
+  color: var(--app-text-primary) !important;
+}
+
+body[data-theme-mode='dark'] .chat-item-preview,
+body[data-theme-mode='dark'] .contact-desc,
+body[data-theme-mode='dark'] .chat-item-time,
+body[data-theme-mode='dark'] .contact-time,
+body[data-theme-mode='dark'] .sheet .sheet-desc,
+body[data-theme-mode='dark'] .chat-search-summary,
+body[data-theme-mode='dark'] .chat-search-session-meta,
+body[data-theme-mode='dark'] .chat-search-detail-note,
+body[data-theme-mode='dark'] .chat-search-message-time,
+body[data-theme-mode='dark'] #general-settings-panel .general-settings-subtitle,
+body[data-theme-mode='dark'] #general-settings-panel .general-settings-card-note,
+body[data-theme-mode='dark'] #general-settings-panel .general-settings-row-desc,
+body[data-theme-mode='dark'] #general-settings-panel .general-settings-inline-hint,
+body[data-theme-mode='dark'] #general-settings-panel .general-settings-subcard-note {
+  color: var(--app-text-secondary) !important;
+}
+
+body[data-theme-mode='dark'] .chat-list-item:active,
+body[data-theme-mode='dark'] .contact-item:active,
+body[data-theme-mode='dark'] .sheet button:hover,
+body[data-theme-mode='dark'] .world-app-select-item:hover {
+  background: rgba(148, 163, 184, 0.12) !important;
+}
+
+body[data-theme-mode='dark'] .contact-group-title,
+body[data-theme-mode='dark'] .chat-search-detail-head {
+  background: rgba(15, 23, 42, 0.72) !important;
+}
+
+body[data-theme-mode='dark'] .search-clear-btn,
+body[data-theme-mode='dark'] .icon-button-small {
+  background: rgba(148, 163, 184, 0.14) !important;
+  color: var(--app-text-primary) !important;
+}
+
+body[data-theme-mode='dark'] .name-badge.tone-gray {
+  color: #e2e8f0 !important;
+  background: rgba(148, 163, 184, 0.16) !important;
+  border-color: rgba(148, 163, 184, 0.22) !important;
+}
+
+body[data-theme-mode='dark'] #toast-container > div {
+  box-shadow: var(--app-shadow-md) !important;
+}

@@ -486,11 +486,12 @@ export class ContactSettingsPanel {
                     </div>
 	                </div>
 
-                <div style="margin-top:14px; display:flex; gap:10px; flex-wrap:wrap; justify-content:flex-end;">
-                    <button id="contact-avatar-clear" type="button" style="padding:10px 12px; border:1px solid #e2e8f0; border-radius:10px; background:#fff; cursor:pointer;">清除头像</button>
-                    <button id="contact-settings-cancel" type="button" style="padding:10px 18px; border:1px solid #e2e8f0; border-radius:10px; background:#f8fafc; cursor:pointer;">取消</button>
-                    <button id="contact-settings-save" type="button" style="padding:10px 18px; border:none; border-radius:10px; background:#019aff; color:#fff; cursor:pointer; font-weight:700;">保存</button>
-                </div>
+            </div>
+
+            <div style="padding:14px 16px calc(14px + env(safe-area-inset-bottom, 0px)); border-top:1px solid rgba(0,0,0,0.06); background:rgba(248,250,252,0.92); display:flex; align-items:center; gap:10px;">
+                <button id="contact-avatar-clear" type="button" style="padding:10px 12px; border:1px solid #e2e8f0; border-radius:10px; background:#fff; cursor:pointer; white-space:nowrap;">清除头像</button>
+                <button id="contact-settings-cancel" type="button" style="flex:1; padding:10px 14px; border:1px solid #e2e8f0; border-radius:10px; background:#f8fafc; cursor:pointer;">取消</button>
+                <button id="contact-settings-save" type="button" style="flex:1; padding:10px 14px; border:none; border-radius:10px; background:#019aff; color:#fff; cursor:pointer; font-weight:700;">保存</button>
             </div>
         `;
 

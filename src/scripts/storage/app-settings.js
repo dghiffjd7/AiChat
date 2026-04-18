@@ -40,6 +40,15 @@ const defaults = {
   memoryAutoStepByStep: false,
   chatDefaultBubbleColor: '#c9c9c9',
   chatDefaultTextColor: '#1F2937',
+  uiThemePresetId: 'classic-light',
+  uiThemeAvatarStyle: 'system',
+  uiThemeChatDisplay: 'default',
+  uiThemeToastrPosition: 'toast-top-right',
+  uiThemeFontScale: 1,
+  uiThemeReducedMotion: false,
+  uiThemeCompactInput: false,
+  uiThemeHideChatAvatars: false,
+  uiThemeSchemaVersion: 2,
 };
 
 const readSettings = () => {
@@ -65,6 +74,12 @@ const migrateSettings = (settings = {}) => {
     const raw = Math.trunc(Number(next.memoryUpdateContextCount));
     const safe = Number.isFinite(raw) ? Math.max(0, raw) : defaults.memoryUpdateContextRounds;
     next.memoryUpdateContextRounds = safe;
+  }
+  if (next.uiThemeSchemaVersion == null) {
+    if (String(next.uiThemeAvatarStyle || '').trim().toLowerCase() === 'rounded') {
+      next.uiThemeAvatarStyle = 'system';
+    }
+    next.uiThemeSchemaVersion = defaults.uiThemeSchemaVersion;
   }
   return next;
 };

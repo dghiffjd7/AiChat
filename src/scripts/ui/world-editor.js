@@ -764,8 +764,8 @@ export class WorldEditorModal {
         this.selectEntry(0);
         this.applyDebugFocus(options);
         this.updateRefModeUI();
-        this.overlay.style.display = 'block';
-        this.modal.style.display = 'block';
+        this.overlay.style.display = 'flex';
+        this.modal.style.display = 'flex';
     }
 
     hide() {
@@ -1077,16 +1077,26 @@ export class WorldEditorModal {
         this.overlay.style.inset = '0';
         this.overlay.style.background = 'rgba(0,0,0,0.45)';
         this.overlay.style.zIndex = '22000';
-        this.overlay.onclick = () => this.hide();
+        this.overlay.style.padding = 'calc(10px + env(safe-area-inset-top, 0px)) calc(10px + env(safe-area-inset-right, 0px)) calc(10px + env(safe-area-inset-bottom, 0px)) calc(10px + env(safe-area-inset-left, 0px))';
+        this.overlay.style.boxSizing = 'border-box';
+        this.overlay.style.alignItems = 'center';
+        this.overlay.style.justifyContent = 'center';
+        this.overlay.onclick = (e) => {
+            if (e.target === this.overlay) this.hide();
+        };
 
         this.modal = document.createElement('div');
         this.modal.id = 'world-editor-modal';
         this.modal.className = 'world-editor-popup';
         this.modal.style.display = 'none';
-        this.modal.style.position = 'fixed';
-        this.modal.style.top = '50%';
-        this.modal.style.left = '50%';
-        this.modal.style.transform = 'translate(-50%, -50%)';
+        this.modal.style.position = 'relative';
+        this.modal.style.top = 'auto';
+        this.modal.style.left = 'auto';
+        this.modal.style.transform = 'none';
+        this.modal.style.width = 'min(900px, 100%)';
+        this.modal.style.maxWidth = '100%';
+        this.modal.style.height = 'min(90vh, 100%)';
+        this.modal.style.maxHeight = '100%';
         this.modal.style.zIndex = '23000';
         this.modal.onclick = (e) => e.stopPropagation();
 
@@ -1177,8 +1187,8 @@ export class WorldEditorModal {
             });
         }
 
+        this.overlay.appendChild(this.modal);
         document.body.appendChild(this.overlay);
-        document.body.appendChild(this.modal);
         this.createAiModal();
         this.createManageModal();
     }

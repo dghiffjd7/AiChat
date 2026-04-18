@@ -2,6 +2,13 @@ import { appSettings } from '../storage/app-settings.js';
 import { ConfigManager } from '../storage/config.js';
 import { safeInvoke } from '../utils/tauri.js';
 import { appConfirm } from './app-confirm.js';
+import {
+  THEME_AVATAR_STYLE_OPTIONS,
+  THEME_CHAT_DISPLAY_OPTIONS,
+  THEME_TOAST_POSITION_OPTIONS,
+  themeManager,
+} from './theme-manager.js';
+import { themeStore } from '../storage/theme-store.js';
 
 const GENERAL_SETTINGS_ICONS = Object.freeze({
   reply: `
@@ -115,6 +122,15 @@ const GENERAL_SETTINGS_ICONS = Object.freeze({
       <circle cx="11" cy="18" r="2"></circle>
     </svg>
   `.trim(),
+  palette: `
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M12 4a8 8 0 1 0 0 16h1.2a2.3 2.3 0 0 0 0-4.6H12a1.2 1.2 0 0 1 0-2.4h3.3A4.7 4.7 0 0 0 20 8.3 8.3 8.3 0 0 0 12 4z"></path>
+      <circle cx="7.5" cy="10" r="1"></circle>
+      <circle cx="10" cy="7.5" r="1"></circle>
+      <circle cx="14" cy="7.5" r="1"></circle>
+      <circle cx="16.5" cy="10.5" r="1"></circle>
+    </svg>
+  `.trim(),
 });
 
 export class GeneralSettingsPanel {
@@ -122,6 +138,23 @@ export class GeneralSettingsPanel {
     this.element = null;
     this.overlayElement = null;
     this.modalElement = null;
+    this.themePresetSelect = null;
+    this.themePresetButton = null;
+    this.themeAvatarStyleSelect = null;
+    this.themeAvatarStyleButton = null;
+    this.themeChatDisplaySelect = null;
+    this.themeChatDisplayButton = null;
+    this.themeToastPositionSelect = null;
+    this.themeToastPositionButton = null;
+    this.themeFontScaleInput = null;
+    this.themeFontScaleValue = null;
+    this.themeReducedMotionToggle = null;
+    this.themeCompactInputToggle = null;
+    this.themeHideAvatarsToggle = null;
+    this.themeImportBtn = null;
+    this.themeExportBtn = null;
+    this.themeStatus = null;
+    this.themeImportInput = null;
     this.debugToggle = null;
     this.debugLogToggle = null;
     this.typingDotsToggle = null;
@@ -211,6 +244,40 @@ export class GeneralSettingsPanel {
     if (this.debugToggle) {
       this.debugToggle.checked = Boolean(settings.showDebugToggle);
     }
+    this.refreshThemePresetOptions();
+    if (this.themePresetSelect) {
+      this.themePresetSelect.value = String(settings.uiThemePresetId || 'classic-light');
+    }
+    this.refreshThemeSelectButton(this.themePresetButton, this.themePresetSelect, '选择主题…');
+    if (this.themeAvatarStyleSelect) {
+      this.themeAvatarStyleSelect.value = String(settings.uiThemeAvatarStyle || 'rounded');
+    }
+    this.refreshThemeSelectButton(this.themeAvatarStyleButton, this.themeAvatarStyleSelect, '头像样式');
+    if (this.themeChatDisplaySelect) {
+      this.themeChatDisplaySelect.value = String(settings.uiThemeChatDisplay || 'default');
+    }
+    this.refreshThemeSelectButton(this.themeChatDisplayButton, this.themeChatDisplaySelect, '聊天风格');
+    if (this.themeToastPositionSelect) {
+      this.themeToastPositionSelect.value = String(settings.uiThemeToastrPosition || 'toast-top-right');
+    }
+    this.refreshThemeSelectButton(this.themeToastPositionButton, this.themeToastPositionSelect, '通知位置');
+    if (this.themeFontScaleInput) {
+      const scale = Number.isFinite(Number(settings.uiThemeFontScale))
+        ? Math.round(Number(settings.uiThemeFontScale) * 100)
+        : 100;
+      this.themeFontScaleInput.value = String(Math.max(85, Math.min(135, scale)));
+    }
+    this.updateThemeFontScaleValue();
+    if (this.themeReducedMotionToggle) {
+      this.themeReducedMotionToggle.checked = settings.uiThemeReducedMotion === true;
+    }
+    if (this.themeCompactInputToggle) {
+      this.themeCompactInputToggle.checked = settings.uiThemeCompactInput === true;
+    }
+    if (this.themeHideAvatarsToggle) {
+      this.themeHideAvatarsToggle.checked = settings.uiThemeHideChatAvatars === true;
+    }
+    this.updateThemeStatus();
     if (this.debugLogToggle) {
       this.debugLogToggle.checked = settings.debugExecutionLogs === true;
     }
@@ -360,6 +427,85 @@ export class GeneralSettingsPanel {
     } else {
       delete document.body.dataset.creativeWide;
     }
+  }
+
+  getThemeButtonLabel(selectEl, fallback = '请选择') {
+    const current = Array.from(selectEl?.options || []).find((opt) => opt.value === selectEl?.value)
+      || selectEl?.options?.[selectEl?.selectedIndex]
+      || null;
+    return current?.textContent?.trim() || fallback;
+  }
+
+  refreshThemeSelectButton(buttonEl, selectEl, fallback = '请选择') {
+    if (!buttonEl || !selectEl) return;
+    const labelEl = buttonEl.querySelector('.general-settings-custom-select-label');
+    if (labelEl) labelEl.textContent = this.getThemeButtonLabel(selectEl, fallback);
+  }
+
+  populateThemeSelect(selectEl, options = [], currentValue = '') {
+    if (!selectEl) return;
+    const current = String(currentValue ?? selectEl.value ?? '').trim();
+    selectEl.innerHTML = '';
+    options.forEach((item) => {
+      const option = document.createElement('option');
+      option.value = String(item?.value ?? '');
+      option.textContent = String(item?.label ?? option.value);
+      if (option.value === current) option.selected = true;
+      selectEl.appendChild(option);
+    });
+    if (selectEl.options.length && !Array.from(selectEl.options).some((opt) => opt.selected)) {
+      selectEl.options[0].selected = true;
+    }
+  }
+
+  refreshThemePresetOptions() {
+    if (!this.themePresetSelect) return;
+    const list = themeStore.listThemes().map((item) => ({
+      value: item.id,
+      label: `${item.name}${themeStore.isBuiltin(item.id) ? ' · 内建' : ''}`,
+    }));
+    this.populateThemeSelect(this.themePresetSelect, list, this.themePresetSelect.value || appSettings.get().uiThemePresetId);
+  }
+
+  openThemeSelectMenu(buttonEl, selectEl, fallback = '请选择') {
+    if (!buttonEl || !selectEl) return;
+    const options = Array.from(selectEl.options || []).map((opt) => ({
+      value: opt.value,
+      label: opt.textContent || opt.value,
+    }));
+    this.openCustomSelectMenu({
+      anchorEl: buttonEl,
+      options,
+      currentValue: selectEl.value,
+      onSelect: (value) => {
+        if (selectEl.value !== value) {
+          selectEl.value = value;
+          selectEl.dispatchEvent(new Event('change', { bubbles: true }));
+        } else {
+          this.refreshThemeSelectButton(buttonEl, selectEl, fallback);
+        }
+      },
+    });
+  }
+
+  updateThemeFontScaleValue() {
+    if (!this.themeFontScaleValue || !this.themeFontScaleInput) return;
+    const raw = Math.trunc(Number(this.themeFontScaleInput.value));
+    const safe = Number.isFinite(raw) ? Math.max(85, Math.min(135, raw)) : 100;
+    this.themeFontScaleValue.textContent = `${safe}%`;
+  }
+
+  updateThemeStatus(text = '') {
+    if (!this.themeStatus) return;
+    if (text) {
+      this.themeStatus.textContent = text;
+      return;
+    }
+    const preset = themeStore.getTheme(this.themePresetSelect?.value || appSettings.get().uiThemePresetId);
+    const kind = themeStore.isBuiltin(preset?.id) ? '内建主题' : '自定义主题';
+    const mode = String(preset?.mode || 'light') === 'dark' ? '深色' : '浅色';
+    const source = String(preset?.source || '').trim() === 'sillytavern' ? ' · ST 导入' : '';
+    this.themeStatus.textContent = `${kind} · ${mode}${source}`;
   }
 
   updateMemoryAutoVisibility() {
@@ -863,6 +1009,27 @@ export class GeneralSettingsPanel {
         opacity: 0.6;
         cursor: default;
       }
+      #general-settings-panel .general-settings-theme-actions .general-settings-manage-btn {
+        min-width: 56px;
+      }
+      #general-settings-panel .general-settings-range-wrap {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+      #general-settings-panel .general-settings-range {
+        flex: 1 1 auto;
+        width: 100%;
+        accent-color: #0ea5e9;
+      }
+      #general-settings-panel .general-settings-range-value {
+        flex: 0 0 auto;
+        min-width: 48px;
+        text-align: right;
+        color: #2563eb;
+        font-size: 12px;
+        font-weight: 800;
+      }
       #general-settings-panel .general-settings-manage-btn {
         flex: 0 0 auto;
         min-width: 62px;
@@ -1315,6 +1482,107 @@ export class GeneralSettingsPanel {
         <div class="general-settings-card">
           <div class="general-settings-card-head">
             <div>
+              <div class="general-settings-card-title">外观与主题</div>
+              <div class="general-settings-card-note">内建明暗主题、主题导入导出，以及基础显示风格。</div>
+            </div>
+          </div>
+
+          <div class="general-settings-setting-list">
+            ${this.renderInputRow({
+              title: '当前主题',
+              description: '切换内建主题或已导入主题，导入 ST 主题会自动映射到当前 APP。',
+              icon: 'palette',
+              control: `
+                <select id="general-theme-preset-select" class="general-settings-select" style="display:none;"></select>
+                <div class="general-settings-inline-actions general-settings-theme-actions">
+                  <button type="button" id="general-theme-preset-btn" class="world-app-select-btn" style="margin-top:0;">
+                    <span class="general-settings-custom-select-label">选择主题…</span>
+                    <span class="world-app-select-btn-chevron">▾</span>
+                  </button>
+                  <button type="button" id="general-theme-import" class="general-settings-manage-btn">导入</button>
+                  <button type="button" id="general-theme-export" class="general-settings-manage-btn">导出</button>
+                </div>
+                <div id="general-theme-status" class="general-settings-inline-hint">内建主题 · 浅色</div>
+                <input type="file" id="general-theme-file" accept=".json,application/json" style="display:none;">
+              `,
+            })}
+            ${this.renderInputRow({
+              title: '头像样式',
+              description: '控制聊天、联系人等头像的圆角形态。',
+              icon: 'sliders',
+              control: `
+                <select id="general-theme-avatar-style-select" class="general-settings-select" style="display:none;"></select>
+                <div class="general-settings-inline-actions">
+                  <button type="button" id="general-theme-avatar-style-btn" class="world-app-select-btn" style="margin-top:0;">
+                    <span class="general-settings-custom-select-label">头像样式</span>
+                    <span class="world-app-select-btn-chevron">▾</span>
+                  </button>
+                </div>
+              `,
+            })}
+            ${this.renderInputRow({
+              title: '聊天风格',
+              description: '控制气泡型或更偏文档型的显示方式。',
+              icon: 'expand',
+              control: `
+                <select id="general-theme-chat-display-select" class="general-settings-select" style="display:none;"></select>
+                <div class="general-settings-inline-actions">
+                  <button type="button" id="general-theme-chat-display-btn" class="world-app-select-btn" style="margin-top:0;">
+                    <span class="general-settings-custom-select-label">聊天风格</span>
+                    <span class="world-app-select-btn-chevron">▾</span>
+                  </button>
+                </div>
+              `,
+            })}
+            ${this.renderInputRow({
+              title: '通知位置',
+              description: '控制 Toastr 提示消息出现的位置。',
+              icon: 'reply',
+              control: `
+                <select id="general-theme-toast-position-select" class="general-settings-select" style="display:none;"></select>
+                <div class="general-settings-inline-actions">
+                  <button type="button" id="general-theme-toast-position-btn" class="world-app-select-btn" style="margin-top:0;">
+                    <span class="general-settings-custom-select-label">通知位置</span>
+                    <span class="world-app-select-btn-chevron">▾</span>
+                  </button>
+                </div>
+              `,
+            })}
+            ${this.renderInputRow({
+              title: '字体缩放',
+              description: '调大或调小主要界面的字号比例。',
+              icon: 'history',
+              control: `
+                <div class="general-settings-range-wrap">
+                  <input type="range" id="general-theme-font-scale" class="general-settings-range" min="85" max="135" step="1" value="100">
+                  <span id="general-theme-font-scale-value" class="general-settings-range-value">100%</span>
+                </div>
+              `,
+            })}
+            ${this.renderSettingRow({
+              id: 'general-theme-reduced-motion',
+              title: '降低动画强度',
+              description: '减少过渡和动画，偏向更稳的视觉反馈。',
+              icon: 'reply',
+            })}
+            ${this.renderSettingRow({
+              id: 'general-theme-compact-input',
+              title: '紧凑输入区',
+              description: '压缩输入栏高度，接近 ST 的 compact input area 逻辑。',
+              icon: 'expand',
+            })}
+            ${this.renderSettingRow({
+              id: 'general-theme-hide-avatars',
+              title: '隐藏聊天头像',
+              description: '隐藏对话气泡中的头像，仅保留消息内容。',
+              icon: 'palette',
+            })}
+          </div>
+        </div>
+
+        <div class="general-settings-card">
+          <div class="general-settings-card-head">
+            <div>
               <div class="general-settings-card-title">界面与调试</div>
               <div class="general-settings-card-note">显示、动画与调试辅助选项。</div>
             </div>
@@ -1683,6 +1951,23 @@ export class GeneralSettingsPanel {
     this.element.onclick = (e) => e.stopPropagation();
     this.modalElement = this.element.querySelector('.general-settings-modal');
 
+    this.themePresetSelect = this.element.querySelector('#general-theme-preset-select');
+    this.themePresetButton = this.element.querySelector('#general-theme-preset-btn');
+    this.themeAvatarStyleSelect = this.element.querySelector('#general-theme-avatar-style-select');
+    this.themeAvatarStyleButton = this.element.querySelector('#general-theme-avatar-style-btn');
+    this.themeChatDisplaySelect = this.element.querySelector('#general-theme-chat-display-select');
+    this.themeChatDisplayButton = this.element.querySelector('#general-theme-chat-display-btn');
+    this.themeToastPositionSelect = this.element.querySelector('#general-theme-toast-position-select');
+    this.themeToastPositionButton = this.element.querySelector('#general-theme-toast-position-btn');
+    this.themeFontScaleInput = this.element.querySelector('#general-theme-font-scale');
+    this.themeFontScaleValue = this.element.querySelector('#general-theme-font-scale-value');
+    this.themeReducedMotionToggle = this.element.querySelector('#general-theme-reduced-motion');
+    this.themeCompactInputToggle = this.element.querySelector('#general-theme-compact-input');
+    this.themeHideAvatarsToggle = this.element.querySelector('#general-theme-hide-avatars');
+    this.themeImportBtn = this.element.querySelector('#general-theme-import');
+    this.themeExportBtn = this.element.querySelector('#general-theme-export');
+    this.themeStatus = this.element.querySelector('#general-theme-status');
+    this.themeImportInput = this.element.querySelector('#general-theme-file');
     this.debugToggle = this.element.querySelector('#general-debug-toggle');
     this.debugLogToggle = this.element.querySelector('#general-debug-logs');
     this.typingDotsToggle = this.element.querySelector('#general-typing-dots');
@@ -1743,6 +2028,10 @@ export class GeneralSettingsPanel {
     this.bundleStatus = this.element.querySelector('#general-bundle-status');
     this.bundleImportInput = this.element.querySelector('#general-bundle-file');
 
+    this.populateThemeSelect(this.themeAvatarStyleSelect, THEME_AVATAR_STYLE_OPTIONS, appSettings.get().uiThemeAvatarStyle);
+    this.populateThemeSelect(this.themeChatDisplaySelect, THEME_CHAT_DISPLAY_OPTIONS, appSettings.get().uiThemeChatDisplay);
+    this.populateThemeSelect(this.themeToastPositionSelect, THEME_TOAST_POSITION_OPTIONS, appSettings.get().uiThemeToastrPosition);
+
     this.initSelectableCards();
     this.updateShortcutButtons();
     this.openSessionBtn?.addEventListener('click', () => {
@@ -1761,6 +2050,180 @@ export class GeneralSettingsPanel {
       const target = e?.target;
       if (target instanceof HTMLInputElement && (target.type === 'checkbox' || target.type === 'radio')) {
         this.updateSelectableCards();
+      }
+    });
+
+    const applyThemeSetting = (key, value) => {
+      appSettings.update({ [key]: value });
+      window.dispatchEvent(new CustomEvent('app-settings-changed', { detail: { key, value } }));
+    };
+    const hasTauriRuntime = () => {
+      const g = typeof globalThis !== 'undefined' ? globalThis : window;
+      return Boolean(g?.__TAURI__ || g?.__TAURI_INTERNALS__ || g?.__TAURI_INVOKE__);
+    };
+    const encodeTextBase64 = (text) => {
+      const bytes = new TextEncoder().encode(String(text || ''));
+      let binary = '';
+      const chunkSize = 0x8000;
+      for (let i = 0; i < bytes.length; i += chunkSize) {
+        const slice = bytes.subarray(i, i + chunkSize);
+        binary += String.fromCharCode(...slice);
+      }
+      return btoa(binary);
+    };
+    const sanitizeThemeFileName = (value) => {
+      const raw = String(value || '').trim();
+      const cleaned = raw.replace(/[\\/:*?"<>|]+/g, '_');
+      return `${cleaned || 'theme'}.json`;
+    };
+    const downloadThemeFallback = (text, fileName) => {
+      const blob = new Blob([text], { type: 'application/json;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = fileName;
+      link.style.display = 'none';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 0);
+    };
+
+    this.themePresetSelect?.addEventListener('change', async (e) => {
+      const value = String(e?.target?.value || 'classic-light').trim() || 'classic-light';
+      await themeManager.activateThemeById(value, { syncAppearance: true });
+      this.refreshThemePresetOptions();
+      const settings = appSettings.get();
+      if (this.themePresetSelect) this.themePresetSelect.value = settings.uiThemePresetId;
+      if (this.themeAvatarStyleSelect) this.themeAvatarStyleSelect.value = settings.uiThemeAvatarStyle;
+      if (this.themeChatDisplaySelect) this.themeChatDisplaySelect.value = settings.uiThemeChatDisplay;
+      if (this.themeToastPositionSelect) this.themeToastPositionSelect.value = settings.uiThemeToastrPosition;
+      if (this.themeFontScaleInput) this.themeFontScaleInput.value = String(Math.round(Number(settings.uiThemeFontScale || 1) * 100));
+      if (this.themeReducedMotionToggle) this.themeReducedMotionToggle.checked = settings.uiThemeReducedMotion === true;
+      if (this.themeCompactInputToggle) this.themeCompactInputToggle.checked = settings.uiThemeCompactInput === true;
+      if (this.themeHideAvatarsToggle) this.themeHideAvatarsToggle.checked = settings.uiThemeHideChatAvatars === true;
+      this.refreshThemeSelectButton(this.themePresetButton, this.themePresetSelect, '选择主题…');
+      this.refreshThemeSelectButton(this.themeAvatarStyleButton, this.themeAvatarStyleSelect, '头像样式');
+      this.refreshThemeSelectButton(this.themeChatDisplayButton, this.themeChatDisplaySelect, '聊天风格');
+      this.refreshThemeSelectButton(this.themeToastPositionButton, this.themeToastPositionSelect, '通知位置');
+      this.updateThemeFontScaleValue();
+      this.updateThemeStatus();
+    });
+    this.themePresetButton?.addEventListener('click', () => {
+      this.refreshThemePresetOptions();
+      this.openThemeSelectMenu(this.themePresetButton, this.themePresetSelect, '选择主题…');
+    });
+    this.themeAvatarStyleSelect?.addEventListener('change', (e) => {
+      const value = String(e?.target?.value || 'rounded').trim() || 'rounded';
+      applyThemeSetting('uiThemeAvatarStyle', value);
+      this.refreshThemeSelectButton(this.themeAvatarStyleButton, this.themeAvatarStyleSelect, '头像样式');
+    });
+    this.themeAvatarStyleButton?.addEventListener('click', () => {
+      this.openThemeSelectMenu(this.themeAvatarStyleButton, this.themeAvatarStyleSelect, '头像样式');
+    });
+    this.themeChatDisplaySelect?.addEventListener('change', (e) => {
+      const value = String(e?.target?.value || 'default').trim() || 'default';
+      applyThemeSetting('uiThemeChatDisplay', value);
+      this.refreshThemeSelectButton(this.themeChatDisplayButton, this.themeChatDisplaySelect, '聊天风格');
+    });
+    this.themeChatDisplayButton?.addEventListener('click', () => {
+      this.openThemeSelectMenu(this.themeChatDisplayButton, this.themeChatDisplaySelect, '聊天风格');
+    });
+    this.themeToastPositionSelect?.addEventListener('change', (e) => {
+      const value = String(e?.target?.value || 'toast-top-right').trim() || 'toast-top-right';
+      applyThemeSetting('uiThemeToastrPosition', value);
+      this.refreshThemeSelectButton(this.themeToastPositionButton, this.themeToastPositionSelect, '通知位置');
+    });
+    this.themeToastPositionButton?.addEventListener('click', () => {
+      this.openThemeSelectMenu(this.themeToastPositionButton, this.themeToastPositionSelect, '通知位置');
+    });
+    this.themeFontScaleInput?.addEventListener('input', (e) => {
+      const raw = Math.trunc(Number(e?.target?.value));
+      const safe = Number.isFinite(raw) ? Math.max(85, Math.min(135, raw)) : 100;
+      if (e?.target) e.target.value = String(safe);
+      applyThemeSetting('uiThemeFontScale', safe / 100);
+      this.updateThemeFontScaleValue();
+    });
+    this.themeReducedMotionToggle?.addEventListener('change', (e) => {
+      applyThemeSetting('uiThemeReducedMotion', Boolean(e?.target?.checked));
+    });
+    this.themeCompactInputToggle?.addEventListener('change', (e) => {
+      applyThemeSetting('uiThemeCompactInput', Boolean(e?.target?.checked));
+    });
+    this.themeHideAvatarsToggle?.addEventListener('change', (e) => {
+      applyThemeSetting('uiThemeHideChatAvatars', Boolean(e?.target?.checked));
+    });
+    this.themeImportBtn?.addEventListener('click', () => {
+      if (this.themeImportInput) this.themeImportInput.value = '';
+      this.themeImportInput?.click();
+    });
+    this.themeImportInput?.addEventListener('change', async () => {
+      const file = this.themeImportInput?.files?.[0];
+      if (!file) return;
+      try {
+        const text = await file.text();
+        const parsed = JSON.parse(text);
+        const preset = await themeManager.importThemeObject(parsed);
+        this.refreshThemePresetOptions();
+        const settings = appSettings.get();
+        if (this.themePresetSelect) this.themePresetSelect.value = preset.id;
+        if (this.themeAvatarStyleSelect) this.themeAvatarStyleSelect.value = settings.uiThemeAvatarStyle;
+        if (this.themeChatDisplaySelect) this.themeChatDisplaySelect.value = settings.uiThemeChatDisplay;
+        if (this.themeToastPositionSelect) this.themeToastPositionSelect.value = settings.uiThemeToastrPosition;
+        if (this.themeFontScaleInput) this.themeFontScaleInput.value = String(Math.round(Number(settings.uiThemeFontScale || 1) * 100));
+        if (this.themeReducedMotionToggle) this.themeReducedMotionToggle.checked = settings.uiThemeReducedMotion === true;
+        if (this.themeCompactInputToggle) this.themeCompactInputToggle.checked = settings.uiThemeCompactInput === true;
+        if (this.themeHideAvatarsToggle) this.themeHideAvatarsToggle.checked = settings.uiThemeHideChatAvatars === true;
+        this.refreshThemeSelectButton(this.themePresetButton, this.themePresetSelect, '选择主题…');
+        this.refreshThemeSelectButton(this.themeAvatarStyleButton, this.themeAvatarStyleSelect, '头像样式');
+        this.refreshThemeSelectButton(this.themeChatDisplayButton, this.themeChatDisplaySelect, '聊天风格');
+        this.refreshThemeSelectButton(this.themeToastPositionButton, this.themeToastPositionSelect, '通知位置');
+        this.updateThemeFontScaleValue();
+        this.updateThemeStatus(`已导入并启用：${preset.name}`);
+        window.toastr?.success?.(`主题导入成功：${preset.name}`);
+      } catch (err) {
+        const message = String(err?.message || err || '导入失败').trim();
+        this.updateThemeStatus(`导入失败：${message}`);
+        window.toastr?.error?.(`主题导入失败：${message}`);
+      }
+    });
+    this.themeExportBtn?.addEventListener('click', async () => {
+      const preset = themeManager.buildCurrentExport();
+      const text = JSON.stringify(preset, null, 2);
+      const fileName = sanitizeThemeFileName(preset?.name || 'theme');
+      try {
+        let savedPath = '';
+        try {
+          const { save } = await import('@tauri-apps/plugin-dialog');
+          const result = await save({
+            defaultPath: fileName,
+            filters: [{ name: 'JSON', extensions: ['json'] }],
+          });
+          if (result) {
+            await safeInvoke('write_text_file', { path: result, text });
+            savedPath = String(result);
+          }
+        } catch {}
+        if (!savedPath && hasTauriRuntime()) {
+          const resp = await safeInvoke('save_attachment_bytes', {
+            sessionId: 'theme-export',
+            base64: encodeTextBase64(text),
+            fileName,
+          });
+          savedPath = String(resp?.path || '').trim();
+        }
+        if (!savedPath) {
+          downloadThemeFallback(text, fileName);
+          this.updateThemeStatus(`已导出：${fileName}`);
+          window.toastr?.success?.(`主题已导出：${fileName}`);
+          return;
+        }
+        this.updateThemeStatus(`已导出：${savedPath}`);
+        window.toastr?.success?.(`主题已导出：${savedPath}`);
+      } catch (err) {
+        const message = String(err?.message || err || '导出失败').trim();
+        this.updateThemeStatus(`导出失败：${message}`);
+        window.toastr?.error?.(`主题导出失败：${message}`);
       }
     });
 

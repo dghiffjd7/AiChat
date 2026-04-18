@@ -183,6 +183,16 @@ fn write_bytes_file(path: &Path, bytes: &[u8]) -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+pub async fn write_text_file(path: String, text: String) -> Result<(), String> {
+    let raw = path.trim();
+    if raw.is_empty() {
+        return Err("path empty".to_string());
+    }
+    let file = PathBuf::from(raw);
+    write_bytes_file(&file, text.as_bytes())
+}
+
 fn decode_data_url(data_url: &str) -> Result<(Vec<u8>, Option<String>), String> {
     let raw = data_url.trim();
     if !raw.starts_with("data:") {

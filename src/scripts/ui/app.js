@@ -90,6 +90,7 @@ import { WorldInfoIndicator } from './worldinfo-indicator.js';
 import { buildRoleWorldBindingsImpl } from './world-role-binding-utils.js';
 import { appConfirm, appChoice } from './app-confirm.js';
 import { PluginRuntime } from '../plugins/plugin-runtime.js';
+import { themeManager } from './theme-manager.js';
 
 let appRuntimeReady = false;
 let lastRuntimeNoticeKey = '';
@@ -19074,5 +19075,8 @@ Phase G（Frame 36）：循环衔接
 };
 
 document.addEventListener('DOMContentLoaded', () => {
-  initApp().catch(err => reportFatalError(err, 'App init failed'));
+  (async () => {
+    await themeManager.init();
+    await initApp();
+  })().catch(err => reportFatalError(err, 'App init failed'));
 });
