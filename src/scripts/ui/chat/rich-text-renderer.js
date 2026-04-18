@@ -3355,6 +3355,636 @@ const splitFencedCodeBlocks = (text) => {
     return out;
 };
 
+const RICH_FRAGMENT_SCOPE_ATTR = 'data-chat-rich-scope';
+const RICH_FRAGMENT_CLASS_PREFIX = 'chat-rich-';
+const RICH_FRAGMENT_ID_PREFIX = 'chat-rich-id-';
+const RICH_FRAGMENT_TAG_NAMES = [
+    'a', 'article', 'blockquote', 'br', 'code', 'del', 'details', 'div', 'em', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+    'hr', 'i', 'ins', 'kbd', 'li', 'main', 'mark', 'ol', 'p', 'pre', 's', 'section', 'small', 'span', 'strong',
+    'sub', 'summary', 'sup', 'table', 'tbody', 'td', 'th', 'thead', 'tr', 'u', 'ul', 'style',
+];
+const RICH_FRAGMENT_ALLOWED_TAGS = new Set(RICH_FRAGMENT_TAG_NAMES);
+const RICH_FRAGMENT_DROP_TAGS = new Set(['script', 'iframe', 'object', 'embed', 'link', 'meta', 'base', 'form', 'input', 'button', 'textarea', 'select', 'option']);
+const RICH_FRAGMENT_RAW_TEXT_TAGS = new Set(['pre', 'code']);
+const RICH_FRAGMENT_INLINE_MODE_TAGS = new Set(['a', 'code', 'del', 'em', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'i', 'ins', 'kbd', 'mark', 'p', 's', 'small', 'span', 'strong', 'sub', 'summary', 'sup', 'th', 'td', 'u']);
+const RICH_FRAGMENT_VOID_TAGS = new Set(['br', 'hr']);
+const RICH_FRAGMENT_ALLOWED_STYLE_PROPS = new Set([
+    'align-items',
+    'align-self',
+    'aspect-ratio',
+    'background',
+    'background-color',
+    'border',
+    'border-bottom',
+    'border-bottom-color',
+    'border-bottom-left-radius',
+    'border-bottom-right-radius',
+    'border-bottom-style',
+    'border-bottom-width',
+    'border-color',
+    'border-left',
+    'border-left-color',
+    'border-left-style',
+    'border-left-width',
+    'border-radius',
+    'border-right',
+    'border-right-color',
+    'border-right-style',
+    'border-right-width',
+    'border-style',
+    'border-top',
+    'border-top-color',
+    'border-top-left-radius',
+    'border-top-right-radius',
+    'border-top-style',
+    'border-top-width',
+    'border-width',
+    'box-shadow',
+    'box-sizing',
+    'color',
+    'column-gap',
+    'display',
+    'flex',
+    'flex-basis',
+    'flex-direction',
+    'flex-grow',
+    'flex-shrink',
+    'flex-wrap',
+    'font-family',
+    'font-size',
+    'font-style',
+    'font-weight',
+    'gap',
+    'height',
+    'justify-content',
+    'letter-spacing',
+    'line-height',
+    'list-style',
+    'list-style-position',
+    'list-style-type',
+    'margin',
+    'margin-bottom',
+    'margin-left',
+    'margin-right',
+    'margin-top',
+    'max-height',
+    'max-width',
+    'min-height',
+    'min-width',
+    'opacity',
+    'overflow',
+    'overflow-x',
+    'overflow-y',
+    'padding',
+    'padding-bottom',
+    'padding-left',
+    'padding-right',
+    'padding-top',
+    'position',
+    'row-gap',
+    'text-align',
+    'text-decoration',
+    'text-indent',
+    'text-transform',
+    'vertical-align',
+    'white-space',
+    'width',
+    'word-break',
+]);
+const RICH_FRAGMENT_TAG_RE = new RegExp(`<(${RICH_FRAGMENT_TAG_NAMES.join('|')})\\b`, 'i');
+const RICH_FRAGMENT_ESCAPED_TAG_RE = new RegExp(`&lt;(${RICH_FRAGMENT_TAG_NAMES.join('|')})\\b`, 'i');
+const RICH_FRAGMENT_ESCAPED_CLOSE_RE = new RegExp(`&lt;\\/(${RICH_FRAGMENT_TAG_NAMES.join('|')})\\b`, 'i');
+const RICH_INTERACTIVE_HTML_RE = /<!doctype\s+html|<(script|iframe|html|body)\b/i;
+const RICH_INTERACTIVE_ESCAPED_HTML_RE = /&lt;!doctype\s+html|&lt;(script|iframe|html|body)\b/i;
+const RICH_MARKDOWN_BLOCK_HINT_RE = /(^|\n)\s*(#{1,6}\s+\S|>+\s*\S|[-*+]\s+\S|\d+\.\s+\S|(?:-{3,}|_{3,}|\*{3,})\s*$)/m;
+const RICH_MARKDOWN_INLINE_HINT_RE = /(\*\*[^*]+\*\*|__[^_]+__|~~[^~]+~~|`[^`]+`|\[[^\]]+\]\(([^)]+)\))/;
+const RICH_INLINE_MD_RE = /(`[^`]+`|\[[^\]]+\]\(([^)]+)\)|\*\*[\s\S]+?\*\*|__[\s\S]+?__|~~[\s\S]+?~~|\*[^*\n]+\*|_[^_\n]+_)/g;
+
+const decodeBasicHtmlEntities = (input) => {
+    const s = String(input ?? '');
+    if (!s.includes('&')) return s;
+    return s
+        .replace(/&lt;/gi, '<')
+        .replace(/&gt;/gi, '>')
+        .replace(/&quot;/gi, '"')
+        .replace(/&#39;|&#x27;/gi, '\'')
+        .replace(/&amp;/gi, '&');
+};
+
+const maybeDecodeRichFragmentEntities = (input) => {
+    const raw = String(input ?? '');
+    if (!raw) return raw;
+    if (RICH_FRAGMENT_ESCAPED_TAG_RE.test(raw) && (RICH_FRAGMENT_ESCAPED_CLOSE_RE.test(raw) || /&lt;br\b/i.test(raw))) {
+        return decodeBasicHtmlEntities(raw);
+    }
+    if (RICH_INTERACTIVE_ESCAPED_HTML_RE.test(raw)) {
+        return decodeBasicHtmlEntities(raw);
+    }
+    return raw;
+};
+
+const hasInteractiveHtmlHint = (input) => {
+    const raw = String(input ?? '');
+    return Boolean(raw) && (RICH_INTERACTIVE_HTML_RE.test(raw) || RICH_INTERACTIVE_ESCAPED_HTML_RE.test(raw));
+};
+
+const hasRichFragmentHint = (input) => {
+    const decoded = maybeDecodeRichFragmentEntities(input);
+    if (!decoded) return false;
+    if (hasInteractiveHtmlHint(decoded)) return true;
+    return RICH_FRAGMENT_TAG_RE.test(decoded) ||
+        RICH_FRAGMENT_ESCAPED_TAG_RE.test(String(input ?? '')) ||
+        RICH_MARKDOWN_BLOCK_HINT_RE.test(decoded) ||
+        RICH_MARKDOWN_INLINE_HINT_RE.test(decoded);
+};
+
+const prefixRichFragmentClassName = (name) => {
+    const raw = String(name || '').trim();
+    if (!raw) return '';
+    return raw.startsWith(RICH_FRAGMENT_CLASS_PREFIX) ? raw : `${RICH_FRAGMENT_CLASS_PREFIX}${raw}`;
+};
+
+const prefixRichFragmentId = (name) => {
+    const raw = String(name || '').trim();
+    if (!raw) return '';
+    return raw.startsWith(RICH_FRAGMENT_ID_PREFIX) ? raw : `${RICH_FRAGMENT_ID_PREFIX}${raw}`;
+};
+
+const normalizeRichFragmentClassList = (raw) => String(raw || '')
+    .split(/\s+/)
+    .map((name) => name.trim())
+    .filter((name) => /^[_a-zA-Z][\w-]{0,79}$/.test(name))
+    .map(prefixRichFragmentClassName)
+    .filter(Boolean)
+    .join(' ');
+
+const normalizeRichFragmentId = (raw) => {
+    const id = String(raw || '').trim();
+    if (!/^[_a-zA-Z][\w-]{0,79}$/.test(id)) return '';
+    return prefixRichFragmentId(id);
+};
+
+const sanitizeFragmentUrl = (raw) => {
+    const value = String(raw || '').trim();
+    if (!value) return '';
+    if (value.startsWith('#')) {
+        const fragId = normalizeRichFragmentId(value.slice(1));
+        return fragId ? `#${fragId}` : '';
+    }
+    if (/^(https?:|mailto:|tel:)/i.test(value)) return value;
+    return '';
+};
+
+const sanitizeRichFragmentCssValue = (property, rawValue) => {
+    const prop = String(property || '').trim().toLowerCase();
+    if (!RICH_FRAGMENT_ALLOWED_STYLE_PROPS.has(prop)) return '';
+    const value = String(rawValue || '').trim();
+    if (!value) return '';
+    if (/url\s*\(|expression\s*\(|javascript:|@import|-moz-binding|behavior\s*:|<\/?style/i.test(value)) return '';
+    if (prop === 'position' && !/^(static|relative)$/i.test(value)) return '';
+    return value.replace(/\s+/g, ' ').trim();
+};
+
+const sanitizeInlineStyleAttribute = (rawStyle) => {
+    const src = String(rawStyle || '').trim();
+    if (!src) return '';
+    const out = [];
+    src.split(';').forEach((chunk) => {
+        const idx = chunk.indexOf(':');
+        if (idx <= 0) return;
+        const prop = chunk.slice(0, idx).trim().toLowerCase();
+        const value = chunk.slice(idx + 1).trim();
+        const nextValue = sanitizeRichFragmentCssValue(prop, value);
+        if (!nextValue) return;
+        out.push(`${prop}: ${nextValue}`);
+    });
+    return out.join('; ');
+};
+
+const splitCssSelectorList = (selectorText) => {
+    const src = String(selectorText || '');
+    const out = [];
+    let current = '';
+    let parenDepth = 0;
+    let bracketDepth = 0;
+    let quote = '';
+    for (let i = 0; i < src.length; i += 1) {
+        const ch = src[i];
+        const prev = i > 0 ? src[i - 1] : '';
+        if (quote) {
+            current += ch;
+            if (ch === quote && prev !== '\\') quote = '';
+            continue;
+        }
+        if (ch === '\'' || ch === '"') {
+            quote = ch;
+            current += ch;
+            continue;
+        }
+        if (ch === '(') {
+            parenDepth += 1;
+            current += ch;
+            continue;
+        }
+        if (ch === ')') {
+            parenDepth = Math.max(0, parenDepth - 1);
+            current += ch;
+            continue;
+        }
+        if (ch === '[') {
+            bracketDepth += 1;
+            current += ch;
+            continue;
+        }
+        if (ch === ']') {
+            bracketDepth = Math.max(0, bracketDepth - 1);
+            current += ch;
+            continue;
+        }
+        if (ch === ',' && parenDepth === 0 && bracketDepth === 0) {
+            if (current.trim()) out.push(current.trim());
+            current = '';
+            continue;
+        }
+        current += ch;
+    }
+    if (current.trim()) out.push(current.trim());
+    return out;
+};
+
+const prefixRichFragmentSelectorClasses = (selector) => String(selector || '')
+    .replace(/\.([_a-zA-Z][\w-]*)/g, (_, name) => `.${prefixRichFragmentClassName(name)}`)
+    .replace(/#([_a-zA-Z][\w-]*)/g, (_, name) => `#${prefixRichFragmentId(name)}`);
+
+const scopeRichFragmentSelector = (selector, scopeSelector) => {
+    let next = prefixRichFragmentSelectorClasses(String(selector || '').trim());
+    if (!next) return '';
+    next = next.replace(/\b(:root|html|body)\b/gi, ' ').replace(/\s+/g, ' ').trim();
+    next = next.replace(/^[>+~\s]+/, '').trim();
+    if (!next) return scopeSelector;
+    if (next.startsWith(scopeSelector)) return next;
+    return `${scopeSelector} ${next}`;
+};
+
+const collectSanitizedCssDeclarations = (styleDecl) => {
+    const out = [];
+    if (!styleDecl) return out;
+    for (let i = 0; i < styleDecl.length; i += 1) {
+        const prop = styleDecl[i];
+        const value = styleDecl.getPropertyValue(prop);
+        const sanitized = sanitizeRichFragmentCssValue(prop, value);
+        if (!sanitized) continue;
+        const important = String(styleDecl.getPropertyPriority(prop) || '').toLowerCase() === 'important';
+        out.push(`${prop}: ${sanitized}${important ? ' !important' : ''}`);
+    }
+    return out;
+};
+
+const sanitizeScopedCssText = (cssText, { scopeSelector = '' } = {}) => {
+    const raw = String(cssText || '').trim();
+    const scope = String(scopeSelector || '').trim();
+    if (!raw || !scope) return '';
+    if (typeof document === 'undefined' || !document.implementation?.createHTMLDocument) return '';
+    const STYLE_RULE = typeof CSSRule !== 'undefined' ? CSSRule.STYLE_RULE : 1;
+    const MEDIA_RULE = typeof CSSRule !== 'undefined' ? CSSRule.MEDIA_RULE : 4;
+    try {
+        const doc = document.implementation.createHTMLDocument('chat-rich-style');
+        const styleEl = doc.createElement('style');
+        styleEl.textContent = raw;
+        doc.head.appendChild(styleEl);
+        const renderRule = (rule) => {
+            if (!rule) return '';
+            if (rule.type === STYLE_RULE) {
+                const selectors = splitCssSelectorList(rule.selectorText)
+                    .map((selector) => scopeRichFragmentSelector(selector, scope))
+                    .filter(Boolean);
+                const declarations = collectSanitizedCssDeclarations(rule.style);
+                if (!selectors.length || !declarations.length) return '';
+                return `${selectors.join(', ')} { ${declarations.join('; ')}; }`;
+            }
+            if (rule.type === MEDIA_RULE) {
+                const children = Array.from(rule.cssRules || [])
+                    .map(renderRule)
+                    .filter(Boolean)
+                    .join('\n');
+                if (!children) return '';
+                return `@media ${rule.conditionText} {\n${children}\n}`;
+            }
+            return '';
+        };
+        const cssRules = Array.from(styleEl.sheet?.cssRules || [])
+            .map(renderRule)
+            .filter(Boolean)
+            .join('\n');
+        styleEl.remove();
+        return cssRules.trim();
+    } catch (err) {
+        logger.warn('rich fragment style sanitize failed', err);
+        return '';
+    }
+};
+
+const renderInlineMarkdownHtml = (text) => {
+    const src = String(text ?? '');
+    if (!src) return '';
+    const inlineRe = new RegExp(RICH_INLINE_MD_RE.source, 'g');
+    let out = '';
+    let last = 0;
+    let match;
+    while ((match = inlineRe.exec(src))) {
+        if (match.index > last) {
+            out += escapeHtmlText(src.slice(last, match.index));
+        }
+        const token = String(match[0] || '');
+        if (token.startsWith('`') && token.endsWith('`')) {
+            out += `<code>${escapeHtmlText(token.slice(1, -1))}</code>`;
+        } else if (token.startsWith('[') && token.includes('](') && token.endsWith(')')) {
+            const linkMatch = token.match(/^\[([\s\S]+)\]\(([^)]+)\)$/);
+            const href = sanitizeFragmentUrl(linkMatch?.[2] || '');
+            const label = renderInlineMarkdownHtml(linkMatch?.[1] || '');
+            out += href ? `<a href="${escapeHtmlText(href)}" target="_blank" rel="noopener noreferrer">${label}</a>` : label;
+        } else if ((token.startsWith('**') && token.endsWith('**')) || (token.startsWith('__') && token.endsWith('__'))) {
+            out += `<strong>${renderInlineMarkdownHtml(token.slice(2, -2))}</strong>`;
+        } else if ((token.startsWith('~~') && token.endsWith('~~'))) {
+            out += `<s>${renderInlineMarkdownHtml(token.slice(2, -2))}</s>`;
+        } else if ((token.startsWith('*') && token.endsWith('*')) || (token.startsWith('_') && token.endsWith('_'))) {
+            out += `<em>${renderInlineMarkdownHtml(token.slice(1, -1))}</em>`;
+        } else {
+            out += escapeHtmlText(token);
+        }
+        last = inlineRe.lastIndex;
+    }
+    if (last < src.length) {
+        out += escapeHtmlText(src.slice(last));
+    }
+    return out;
+};
+
+const renderMarkdownBlocksHtml = (text) => {
+    const lines = String(text ?? '').replace(/\r\n?/g, '\n').split('\n');
+    const out = [];
+    const isBlank = (line) => !String(line || '').trim();
+    const isHr = (line) => /^\s*(?:-{3,}|_{3,}|\*{3,})\s*$/.test(line);
+    const isHeading = (line) => /^\s{0,3}#{1,6}\s+\S/.test(line);
+    const isBlockquote = (line) => /^\s*>+\s*/.test(line);
+    const isUnordered = (line) => /^\s*[-*+]\s+\S/.test(line);
+    const isOrdered = (line) => /^\s*\d+\.\s+\S/.test(line);
+    const renderLinesInline = (parts) => parts.map((line) => renderInlineMarkdownHtml(line)).join('<br>');
+    let i = 0;
+    while (i < lines.length) {
+        const line = lines[i];
+        if (isBlank(line)) {
+            i += 1;
+            continue;
+        }
+        if (isHr(line)) {
+            out.push('<hr>');
+            i += 1;
+            continue;
+        }
+        if (isHeading(line)) {
+            const m = line.match(/^\s{0,3}(#{1,6})\s+([\s\S]+)$/);
+            const level = Math.max(1, Math.min(6, String(m?.[1] || '').length || 1));
+            out.push(`<h${level}>${renderInlineMarkdownHtml(m?.[2] || '')}</h${level}>`);
+            i += 1;
+            continue;
+        }
+        if (isBlockquote(line)) {
+            const quoteLines = [];
+            while (i < lines.length && (isBlockquote(lines[i]) || isBlank(lines[i]))) {
+                const current = lines[i];
+                quoteLines.push(isBlank(current) ? '' : current.replace(/^\s*>+\s?/, ''));
+                i += 1;
+            }
+            out.push(`<blockquote>${renderMarkdownBlocksHtml(quoteLines.join('\n'))}</blockquote>`);
+            continue;
+        }
+        if (isUnordered(line) || isOrdered(line)) {
+            const ordered = isOrdered(line);
+            const tag = ordered ? 'ol' : 'ul';
+            const items = [];
+            while (i < lines.length) {
+                const current = lines[i];
+                const itemMatch = ordered
+                    ? current.match(/^\s*\d+\.\s+([\s\S]+)$/)
+                    : current.match(/^\s*[-*+]\s+([\s\S]+)$/);
+                if (itemMatch) {
+                    items.push([itemMatch[1]]);
+                    i += 1;
+                    continue;
+                }
+                if (isBlank(current)) break;
+                if (items.length && /^\s{2,}\S/.test(current)) {
+                    items[items.length - 1].push(current.trim());
+                    i += 1;
+                    continue;
+                }
+                break;
+            }
+            out.push(`<${tag}>${items.map((parts) => `<li>${renderLinesInline(parts)}</li>`).join('')}</${tag}>`);
+            continue;
+        }
+        const paraLines = [];
+        while (i < lines.length && !isBlank(lines[i]) && !isHr(lines[i]) && !isHeading(lines[i]) && !isBlockquote(lines[i]) && !isUnordered(lines[i]) && !isOrdered(lines[i])) {
+            paraLines.push(lines[i]);
+            i += 1;
+        }
+        if (paraLines.length) {
+            out.push(`<p>${renderLinesInline(paraLines)}</p>`);
+        }
+    }
+    return out.join('');
+};
+
+const appendHtmlFragment = (parent, html) => {
+    const raw = String(html || '').trim();
+    if (!parent || !raw) return;
+    const temp = document.createElement('div');
+    temp.innerHTML = raw;
+    while (temp.firstChild) {
+        parent.appendChild(temp.firstChild);
+    }
+};
+
+const appendMarkdownText = (parent, text, { blockMode = true, allowStatusCards = true, resolveStatusCard = null } = {}) => {
+    const raw = String(text ?? '');
+    if (!raw) return;
+    const segments = raw.split('__CHATAPP_STATUS__');
+    segments.forEach((segment, index) => {
+        const html = blockMode
+            ? renderMarkdownBlocksHtml(segment)
+            : renderInlineMarkdownHtml(segment).replace(/\r\n?/g, '\n').replace(/\n/g, '<br>');
+        if (html.trim()) appendHtmlFragment(parent, html);
+        if (allowStatusCards && index !== segments.length - 1) {
+            const card = typeof resolveStatusCard === 'function' ? resolveStatusCard() : null;
+            if (card) parent.appendChild(card);
+        }
+    });
+};
+
+const ensureRichFragmentScope = (containerEl, messageId = '') => {
+    if (!containerEl) return '';
+    let scopeId = String(containerEl.getAttribute(RICH_FRAGMENT_SCOPE_ATTR) || '').trim();
+    if (!scopeId) {
+        const base = String(messageId || '').trim().replace(/[^\w-]+/g, '-');
+        scopeId = base ? `msg-${base}` : `frag-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+        containerEl.setAttribute(RICH_FRAGMENT_SCOPE_ATTR, scopeId);
+    }
+    containerEl.classList.add('chat-rich-fragment');
+    return scopeId;
+};
+
+const sanitizeRichFragmentAttributes = (sourceEl, targetEl) => {
+    Array.from(sourceEl.attributes || []).forEach((attr) => {
+        const name = String(attr?.name || '').toLowerCase();
+        const value = String(attr?.value || '');
+        if (!name) return;
+        if (name === 'class') {
+            const next = normalizeRichFragmentClassList(value);
+            if (next) targetEl.setAttribute('class', next);
+            return;
+        }
+        if (name === 'id') {
+            const next = normalizeRichFragmentId(value);
+            if (next) targetEl.setAttribute('id', next);
+            return;
+        }
+        if (name === 'style') {
+            const next = sanitizeInlineStyleAttribute(value);
+            if (next) targetEl.setAttribute('style', next);
+            return;
+        }
+        if (name.startsWith('data-') || name.startsWith('aria-')) {
+            targetEl.setAttribute(name, value);
+            return;
+        }
+        if (name === 'title') {
+            targetEl.setAttribute(name, value);
+            return;
+        }
+        if (targetEl.tagName === 'A' && name === 'href') {
+            const next = sanitizeFragmentUrl(value);
+            if (next) targetEl.setAttribute('href', next);
+            return;
+        }
+        if (targetEl.tagName === 'A' && name === 'target') {
+            if (String(value || '').toLowerCase() === '_blank') targetEl.setAttribute('target', '_blank');
+            return;
+        }
+        if (targetEl.tagName === 'A' && name === 'rel') {
+            targetEl.setAttribute('rel', 'noopener noreferrer');
+            return;
+        }
+        if (targetEl.tagName === 'DETAILS' && name === 'open') {
+            targetEl.setAttribute('open', '');
+            return;
+        }
+        if ((targetEl.tagName === 'TD' || targetEl.tagName === 'TH') && (name === 'colspan' || name === 'rowspan')) {
+            const num = Math.max(1, Math.min(24, Math.trunc(Number(value) || 1)));
+            targetEl.setAttribute(name, String(num));
+            return;
+        }
+        if (targetEl.tagName === 'TH' && name === 'scope') {
+            const scope = String(value || '').toLowerCase();
+            if (scope === 'col' || scope === 'row') targetEl.setAttribute('scope', scope);
+            return;
+        }
+    });
+    if (targetEl.tagName === 'A' && targetEl.getAttribute('href') && !targetEl.getAttribute('target')) {
+        targetEl.setAttribute('target', '_blank');
+        targetEl.setAttribute('rel', 'noopener noreferrer');
+    }
+};
+
+const appendRichFragmentNode = (sourceNode, targetParent, state, mode = 'block') => {
+    if (!sourceNode || !targetParent) return;
+    const doc = targetParent.ownerDocument || document;
+    if (mode === 'raw') {
+        const text = String(sourceNode.textContent || '');
+        if (text) targetParent.appendChild(doc.createTextNode(text));
+        return;
+    }
+    if (sourceNode.nodeType === Node.TEXT_NODE) {
+        const text = String(sourceNode.textContent || '');
+        if (!text) return;
+        appendMarkdownText(targetParent, text, {
+            blockMode: mode !== 'inline',
+            allowStatusCards: state.allowStatusCards,
+            resolveStatusCard: state.resolveStatusCard,
+        });
+        return;
+    }
+    if (sourceNode.nodeType !== Node.ELEMENT_NODE) return;
+    const tag = String(sourceNode.tagName || '').toLowerCase();
+    if (!tag) return;
+    if (RICH_FRAGMENT_DROP_TAGS.has(tag)) return;
+    if (tag === 'style') {
+        const scopedCss = sanitizeScopedCssText(sourceNode.textContent || '', { scopeSelector: state.scopeSelector });
+        if (scopedCss) state.styles.push(scopedCss);
+        return;
+    }
+    if (!RICH_FRAGMENT_ALLOWED_TAGS.has(tag)) {
+        Array.from(sourceNode.childNodes || []).forEach((child) => appendRichFragmentNode(child, targetParent, state, mode));
+        return;
+    }
+    const nextEl = doc.createElement(tag);
+    sanitizeRichFragmentAttributes(sourceNode, nextEl);
+    if (RICH_FRAGMENT_VOID_TAGS.has(tag)) {
+        targetParent.appendChild(nextEl);
+        return;
+    }
+    const childMode = RICH_FRAGMENT_RAW_TEXT_TAGS.has(tag)
+        ? 'raw'
+        : (RICH_FRAGMENT_INLINE_MODE_TAGS.has(tag) ? 'inline' : 'block');
+    Array.from(sourceNode.childNodes || []).forEach((child) => appendRichFragmentNode(child, nextEl, state, childMode));
+    targetParent.appendChild(nextEl);
+};
+
+const renderScopedRichFragment = (
+    containerEl,
+    text,
+    { messageId = '', resolveStatusCard = null, allowStatusCards = true, debugTag = '', source = 'message' } = {},
+) => {
+    if (!containerEl) return false;
+    const normalized = maybeDecodeRichFragmentEntities(text);
+    if (!normalized.trim()) return false;
+    if (typeof DOMParser === 'undefined') return false;
+    try {
+        const scopeId = ensureRichFragmentScope(containerEl, messageId);
+        const scopeSelector = `[${RICH_FRAGMENT_SCOPE_ATTR}="${escapeHtmlText(scopeId)}"]`;
+        const parser = new DOMParser();
+        const parsed = parser.parseFromString(`<div>${normalized}</div>`, 'text/html');
+        const root = parsed.body?.firstElementChild;
+        if (!root) return false;
+        const fragment = document.createDocumentFragment();
+        const state = {
+            styles: [],
+            scopeSelector,
+            allowStatusCards,
+            resolveStatusCard,
+        };
+        Array.from(root.childNodes || []).forEach((node) => appendRichFragmentNode(node, fragment, state, 'block'));
+        if (state.styles.length) {
+            const styleEl = document.createElement('style');
+            styleEl.className = 'chat-rich-scoped-style';
+            styleEl.textContent = state.styles.join('\n');
+            fragment.insertBefore(styleEl, fragment.firstChild || null);
+        }
+        if (!fragment.childNodes.length) return false;
+        containerEl.classList.add('chat-rich-fragment');
+        containerEl.appendChild(fragment);
+        if (Boolean(debugTag) || shouldLogRichDebug()) {
+            const info = `fragment source=${source} msg=${String(messageId || '')} len=${normalized.length} styles=${state.styles.length}${debugTag ? ` tag=${debugTag}` : ''}`;
+            emitDebugLog({ source: 'rich', type: 'info', message: info, force: true });
+            logger.info(`[rich] ${info}`);
+        }
+        return true;
+    } catch (err) {
+        logger.warn('render rich fragment failed', err);
+        return false;
+    }
+};
+
 const copyToClipboard = async (text) => {
     const s = String(text ?? '');
     try {
@@ -5820,6 +6450,8 @@ const makeCodeBlock = ({ lang, code, messageId, preserveHtmlNewlines = false, se
         /<div[\s>]/i.test(code);
     const allowScripts = allowRichIframeScripts();
     const shouldRenderHtml = looksLikeHtmlDoc || isHtmlLang || looksLikeHtmlSnippet;
+    const hasInteractiveHtml = hasInteractiveHtmlHint(code);
+    const shouldRenderScopedFragment = shouldRenderHtml && !hasInteractiveHtml && !looksLikeHtmlDoc;
     const directBodyLoadUrl = shouldRenderHtml ? detectBodyLoadUrl(code) : '';
     const forceMvuCompat = Boolean(directBodyLoadUrl);
     const needsMvuCompat = allowScripts && (forceMvuCompat || shouldEnableMvuCompat(code));
@@ -5923,7 +6555,7 @@ const makeCodeBlock = ({ lang, code, messageId, preserveHtmlNewlines = false, se
         const hasHtmlHint = /<\s*(style|details|div|body|html|table|section|article|main|svg|iframe)\b/i.test(code) ||
             /&lt;\s*(style|details|div|body|html|table|section|article|main|svg|iframe)\b/i.test(code);
         if (hasHtmlHint || shouldRenderHtml) {
-            const msg = `codeblock html?=${shouldRenderHtml} lang=${lang || 'none'} len=${String(code || '').length} msg=${String(messageId || '')} scripts=${allowScripts ? 1 : 0} mvu=${needsMvuCompat ? 1 : 0} forceMvu=${forceMvuCompat ? 1 : 0}${debugTag ? ` tag=${debugTag}` : ''}`;
+            const msg = `codeblock html?=${shouldRenderHtml} fragment=${shouldRenderScopedFragment ? 1 : 0} lang=${lang || 'none'} len=${String(code || '').length} msg=${String(messageId || '')} scripts=${allowScripts ? 1 : 0} mvu=${needsMvuCompat ? 1 : 0} forceMvu=${forceMvuCompat ? 1 : 0}${debugTag ? ` tag=${debugTag}` : ''}`;
             emitDebugLog({ source: 'rich', type: shouldRenderHtml ? 'info' : 'warn', message: msg, force: true });
             logger.info(`[rich] ${msg}`);
             const compatMsg = `compat-profile=${sourceCompat.profile} flags=${summarizeCompatFlags(sourceCompat.flags) || 'none'}${debugTag ? ` tag=${debugTag}` : ''}`;
@@ -6007,6 +6639,21 @@ const makeCodeBlock = ({ lang, code, messageId, preserveHtmlNewlines = false, se
                 emitDebugLog({ source: 'rich', type: 'info', message: bodyLoadMsg, force: true });
                 logger.info(`[rich] ${bodyLoadMsg}`);
             }
+        }
+    }
+    if (shouldRenderScopedFragment) {
+        const previewWrap = document.createElement('div');
+        previewWrap.style.cssText = 'background:#fff; padding:12px 14px;';
+        const rendered = renderScopedRichFragment(previewWrap, code, {
+            messageId: String(messageId || 'code'),
+            resolveStatusCard: null,
+            allowStatusCards: false,
+            debugTag,
+            source: 'codeblock',
+        });
+        if (rendered) {
+            wrap.appendChild(previewWrap);
+            return wrap;
         }
     }
     if (shouldRenderHtml) {
@@ -7186,13 +7833,14 @@ export const renderRichText = (
     };
     // 酒馆助手/正则常见用法：
     // - 直接把可渲染的 HTML 片段塞进消息（例如把 <thinking> 替换为 <style>+<details>）
-    // 我们保持默认安全文本渲染，但对“明显是 HTML 的整段消息”提供 iframe 渲染（沙盒）
+    // - 普通 markdown / HTML 片段走“消息内安全渲染”
+    // - 带 <script>/<body>/<html>/<iframe> 的完整页面仍走 iframe 沙盒
     const trimmed = htmlCandidateText.trim();
-    const htmlTagRe = /<(style|details|div|body|html|table|section|article|main|svg|iframe)\b/i;
-    const htmlCloseRe = /<\/(style|details|div|body|html|table|section|article|main|svg|iframe)\b/i;
-    const hasHtmlTag = htmlTagRe.test(trimmed) || /^\s*<!doctype\s+html/i.test(trimmed);
-    const hasHtmlClose = htmlCloseRe.test(trimmed) || /<\/html\s*>/i.test(trimmed);
-    const wholeLooksLikeHtml = hasHtmlTag && hasHtmlClose;
+    const htmlDocTagRe = /<(script|body|html|iframe)\b/i;
+    const htmlDocCloseRe = /<\/(script|body|html|iframe)\b/i;
+    const hasHtmlDocTag = htmlDocTagRe.test(trimmed) || /^\s*<!doctype\s+html/i.test(trimmed);
+    const hasHtmlDocClose = htmlDocCloseRe.test(trimmed) || /<\/html\s*>/i.test(trimmed) || /<\/body\s*>/i.test(trimmed);
+    const wholeLooksLikeHtml = hasHtmlDocTag && (hasHtmlDocClose || /<script[\s>]/i.test(trimmed));
     const textWithBreaks = rawText
         .replace(/&lt;br\s*\/?&gt;/gi, '\n')
         .replace(/<br\s*\/?>/gi, '\n');
@@ -7201,25 +7849,24 @@ export const renderRichText = (
         : wholeLooksLikeHtml
             ? [{ type: 'code', lang: 'html', code: trimmed }]
             : [{ type: 'text', text: textWithBreaks }]);
-    const hasHtmlLikeText = (val) => {
+    const hasInteractiveHtmlLikeText = (val) => {
         const raw = String(val || '');
         if (!raw) return false;
-        const hasTag = htmlTagRe.test(raw) && htmlCloseRe.test(raw);
-        const escapedTag = htmlEntityTagRe.test(raw) && htmlEntityCloseRe.test(raw);
+        const hasTag = htmlDocTagRe.test(raw) && htmlDocCloseRe.test(raw);
+        const escapedTag = RICH_INTERACTIVE_ESCAPED_HTML_RE.test(raw);
         return hasTag || escapedTag;
     };
     if (hasCodeFence) {
         parts = parts.flatMap((p) => {
             if (p.type !== 'text') return [p];
-            if (!hasHtmlLikeText(p.text)) return [p];
+            if (!hasInteractiveHtmlLikeText(p.text)) return [p];
             const decoded = decodeHtmlEntities(p.text);
             return [{ type: 'code', lang: 'html', code: decoded }];
         });
     }
     if (Boolean(debugTag) || shouldLogRichDebug()) {
-        const htmlHint = /<\s*(style|details|div|body|html|table|section|article|main|svg|iframe)\b/i.test(htmlCandidateText) ||
-            /&lt;\s*(style|details|div|body|html|table|section|article|main|svg|iframe)\b/i.test(rawText);
-        if (htmlHint || hasCodeFence || wholeLooksLikeHtml) {
+        const fragmentHint = hasRichFragmentHint(htmlCandidateText);
+        if (fragmentHint || hasCodeFence || wholeLooksLikeHtml) {
             const msg = `render msg=${String(messageId || '')} codeFence=${hasCodeFence} html=${wholeLooksLikeHtml} escaped=${hasEscapedHtml} parts=${parts.length}${debugTag ? ` tag=${debugTag}` : ''}`;
             emitDebugLog({ source: 'rich', type: 'info', message: msg, force: true });
             logger.info(`[rich] ${msg}`);
@@ -7267,6 +7914,16 @@ export const renderRichText = (
 
         // Plain text: preserve newlines safely
         const chunk = String(p.text || '');
+        if (hasRichFragmentHint(chunk) && !hasInteractiveHtmlHint(chunk)) {
+            const rendered = renderScopedRichFragment(containerEl, chunk, {
+                messageId,
+                resolveStatusCard,
+                allowStatusCards: true,
+                debugTag,
+                source: 'message',
+            });
+            if (rendered) return;
+        }
         const lines = chunk.split(/\n/);
         lines.forEach((line, idx) => {
             const segments = line.split(STATUS_TOKEN);

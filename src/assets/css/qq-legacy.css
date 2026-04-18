@@ -748,6 +748,126 @@ body[data-ui-mode='rp'] .qq-avatar {
   white-space: pre-wrap;
 }
 
+.QQ_chat_msgdiv.chat-rich-fragment,
+.QQ_chat_msgdiv .chat-rich-fragment {
+  white-space: normal;
+}
+
+.QQ_chat_msgdiv.chat-rich-fragment > :first-child,
+.QQ_chat_msgdiv .chat-rich-fragment > :first-child {
+  margin-top: 0 !important;
+}
+
+.QQ_chat_msgdiv.chat-rich-fragment > :last-child,
+.QQ_chat_msgdiv .chat-rich-fragment > :last-child {
+  margin-bottom: 0 !important;
+}
+
+.QQ_chat_msgdiv.chat-rich-fragment p,
+.QQ_chat_msgdiv.chat-rich-fragment ul,
+.QQ_chat_msgdiv.chat-rich-fragment ol,
+.QQ_chat_msgdiv.chat-rich-fragment blockquote,
+.QQ_chat_msgdiv.chat-rich-fragment pre,
+.QQ_chat_msgdiv.chat-rich-fragment table,
+.QQ_chat_msgdiv.chat-rich-fragment h1,
+.QQ_chat_msgdiv.chat-rich-fragment h2,
+.QQ_chat_msgdiv.chat-rich-fragment h3,
+.QQ_chat_msgdiv.chat-rich-fragment h4,
+.QQ_chat_msgdiv.chat-rich-fragment h5,
+.QQ_chat_msgdiv.chat-rich-fragment h6,
+.QQ_chat_msgdiv .chat-rich-fragment p,
+.QQ_chat_msgdiv .chat-rich-fragment ul,
+.QQ_chat_msgdiv .chat-rich-fragment ol,
+.QQ_chat_msgdiv .chat-rich-fragment blockquote,
+.QQ_chat_msgdiv .chat-rich-fragment pre,
+.QQ_chat_msgdiv .chat-rich-fragment table,
+.QQ_chat_msgdiv .chat-rich-fragment h1,
+.QQ_chat_msgdiv .chat-rich-fragment h2,
+.QQ_chat_msgdiv .chat-rich-fragment h3,
+.QQ_chat_msgdiv .chat-rich-fragment h4,
+.QQ_chat_msgdiv .chat-rich-fragment h5,
+.QQ_chat_msgdiv .chat-rich-fragment h6 {
+  margin: 0 0 0.72em;
+}
+
+.QQ_chat_msgdiv.chat-rich-fragment ul,
+.QQ_chat_msgdiv.chat-rich-fragment ol,
+.QQ_chat_msgdiv .chat-rich-fragment ul,
+.QQ_chat_msgdiv .chat-rich-fragment ol {
+  padding-left: 1.25em;
+}
+
+.QQ_chat_msgdiv.chat-rich-fragment blockquote,
+.QQ_chat_msgdiv .chat-rich-fragment blockquote {
+  margin-left: 0;
+  padding-left: 0.85em;
+  border-left: 3px solid rgba(148, 163, 184, 0.55);
+  color: #475569;
+}
+
+.QQ_chat_msgdiv.chat-rich-fragment pre,
+.QQ_chat_msgdiv .chat-rich-fragment pre {
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: rgba(15, 23, 42, 0.06);
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+
+.QQ_chat_msgdiv.chat-rich-fragment code,
+.QQ_chat_msgdiv .chat-rich-fragment code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.94em;
+  background: rgba(15, 23, 42, 0.08);
+  border-radius: 6px;
+  padding: 0.08em 0.32em;
+}
+
+.QQ_chat_msgdiv.chat-rich-fragment pre code,
+.QQ_chat_msgdiv .chat-rich-fragment pre code {
+  background: transparent;
+  padding: 0;
+  border-radius: 0;
+}
+
+.QQ_chat_msgdiv.chat-rich-fragment a,
+.QQ_chat_msgdiv .chat-rich-fragment a {
+  color: #2563eb;
+  text-decoration: underline;
+  word-break: break-all;
+}
+
+.QQ_chat_msgdiv.chat-rich-fragment table,
+.QQ_chat_msgdiv .chat-rich-fragment table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.96em;
+}
+
+.QQ_chat_msgdiv.chat-rich-fragment th,
+.QQ_chat_msgdiv.chat-rich-fragment td,
+.QQ_chat_msgdiv .chat-rich-fragment th,
+.QQ_chat_msgdiv .chat-rich-fragment td {
+  border: 1px solid rgba(148, 163, 184, 0.38);
+  padding: 6px 8px;
+  vertical-align: top;
+}
+
+.QQ_chat_msgdiv.chat-rich-fragment details,
+.QQ_chat_msgdiv .chat-rich-fragment details {
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 10px;
+  background: rgba(248, 250, 252, 0.72);
+  padding: 8px 10px;
+}
+
+.QQ_chat_msgdiv.chat-rich-fragment summary,
+.QQ_chat_msgdiv .chat-rich-fragment summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
 .chat-bubble-stack {
   position: relative;
   display: flex;
