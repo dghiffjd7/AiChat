@@ -140,6 +140,8 @@ export class GeneralSettingsPanel {
     this.memoryUpdateApiChat = null;
     this.memoryUpdateApiProfile = null;
     this.memoryUpdateProfileSelect = null;
+    this.memoryUpdateProfileButton = null;
+    this.memoryUpdateProfileManageBtn = null;
     this.memoryUpdateApiBlock = null;
     this.memoryUpdateContextInput = null;
     this.memoryBudgetBlock = null;
@@ -182,7 +184,11 @@ export class GeneralSettingsPanel {
     this.externalActions = {
       openSession: null,
       openMemoryTemplates: null,
+      openConfig: null,
     };
+    this.customSelectMenuEl = null;
+    this.customSelectMenuCleanup = null;
+    this.customSelectMenuAnchor = null;
     this.configManager = new ConfigManager();
     this.setExternalActions(actions);
   }
@@ -192,6 +198,8 @@ export class GeneralSettingsPanel {
       typeof actions.openSession === 'function' ? actions.openSession : null;
     this.externalActions.openMemoryTemplates =
       typeof actions.openMemoryTemplates === 'function' ? actions.openMemoryTemplates : null;
+    this.externalActions.openConfig =
+      typeof actions.openConfig === 'function' ? actions.openConfig : null;
     this.updateShortcutButtons();
   }
 
@@ -255,6 +263,7 @@ export class GeneralSettingsPanel {
     }
     if (this.memoryUpdateProfileSelect) {
       this.memoryUpdateProfileSelect.value = String(settings.memoryUpdateProfileId || '');
+      this.refreshMemoryUpdateProfileSelectButton();
     }
     if (this.memoryUpdateContextInput) {
       const raw = Math.trunc(Number(settings.memoryUpdateContextRounds ?? settings.memoryUpdateContextCount));
@@ -330,6 +339,7 @@ export class GeneralSettingsPanel {
   }
 
   hide() {
+    this.closeCustomSelectMenu();
     if (this.element) this.element.style.display = 'none';
     if (this.overlayElement) this.overlayElement.style.display = 'none';
   }
@@ -376,6 +386,14 @@ export class GeneralSettingsPanel {
     const apiMode = String(settings.memoryUpdateApiMode || 'chat').toLowerCase();
     if (this.memoryUpdateProfileSelect) {
       this.memoryUpdateProfileSelect.disabled = !showApi || apiMode !== 'profile';
+    }
+    if (this.memoryUpdateProfileButton) {
+      this.memoryUpdateProfileButton.disabled = !showApi || apiMode !== 'profile';
+      this.memoryUpdateProfileButton.classList.toggle('is-disabled', this.memoryUpdateProfileButton.disabled);
+    }
+    if (this.memoryUpdateProfileManageBtn) {
+      this.memoryUpdateProfileManageBtn.disabled =
+        !showApi || apiMode !== 'profile' || typeof this.externalActions.openConfig !== 'function';
     }
     if (this.memoryBudgetBlock) {
       this.memoryBudgetBlock.style.display = showMemoryTable ? 'block' : 'none';
@@ -436,6 +454,125 @@ export class GeneralSettingsPanel {
     }
     if (this.openMemoryTemplatesBtn) {
       this.openMemoryTemplatesBtn.disabled = typeof this.externalActions.openMemoryTemplates !== 'function';
+    }
+  }
+
+  ensureCustomSelectMenu() {
+    if (this.customSelectMenuEl) return this.customSelectMenuEl;
+    const menu = document.createElement('div');
+    menu.className = 'world-app-select-menu';
+    menu.style.display = 'none';
+    menu.addEventListener('click', (e) => e.stopPropagation());
+    document.body.appendChild(menu);
+    this.customSelectMenuEl = menu;
+    return menu;
+  }
+
+  closeCustomSelectMenu() {
+    if (typeof this.customSelectMenuCleanup === 'function') {
+      try { this.customSelectMenuCleanup(); } catch {}
+    }
+    this.customSelectMenuCleanup = null;
+    this.customSelectMenuAnchor = null;
+    if (this.customSelectMenuEl) {
+      this.customSelectMenuEl.style.display = 'none';
+      this.customSelectMenuEl.innerHTML = '';
+    }
+  }
+
+  openCustomSelectMenu({ anchorEl, options = [], currentValue = '', onSelect = null } = {}) {
+    if (!anchorEl) return;
+    const isSameAnchorOpen =
+      this.customSelectMenuAnchor === anchorEl &&
+      this.customSelectMenuEl &&
+      this.customSelectMenuEl.style.display !== 'none';
+    if (isSameAnchorOpen) {
+      this.closeCustomSelectMenu();
+      return;
+    }
+
+    const menu = this.ensureCustomSelectMenu();
+    const current = String(currentValue ?? '').trim();
+    const opts = Array.isArray(options) ? options : [];
+    menu.innerHTML = opts.map((opt) => {
+      const value = String(opt?.value ?? '');
+      const label = String(opt?.label ?? value).replace(/[&<>"]/g, (ch) => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+      }[ch]));
+      const selected = value === current;
+      return `
+        <button type="button" class="world-app-select-item ${selected ? 'is-selected' : ''}" data-value="${value.replace(/"/g, '&quot;')}">
+          <span class="world-app-select-item-label">${label}</span>
+          <span class="world-app-select-item-check">${selected ? '✓' : ''}</span>
+        </button>
+      `;
+    }).join('');
+
+    menu.querySelectorAll('.world-app-select-item').forEach((item) => {
+      item.addEventListener('click', () => {
+        const value = String(item.dataset.value ?? '');
+        if (typeof onSelect === 'function') onSelect(value);
+        this.closeCustomSelectMenu();
+      });
+    });
+
+    menu.style.display = 'block';
+    menu.style.visibility = 'hidden';
+    menu.style.minWidth = `${Math.max(170, Math.round(anchorEl.getBoundingClientRect().width))}px`;
+    menu.style.left = '0px';
+    menu.style.top = '0px';
+
+    const anchorRect = anchorEl.getBoundingClientRect();
+    const menuRect = menu.getBoundingClientRect();
+    const gap = 6;
+    let left = anchorRect.left;
+    let top = anchorRect.bottom + gap;
+    if (left + menuRect.width > window.innerWidth - 8) {
+      left = Math.max(8, window.innerWidth - menuRect.width - 8);
+    }
+    if (top + menuRect.height > window.innerHeight - 8) {
+      top = Math.max(8, anchorRect.top - menuRect.height - gap);
+    }
+    menu.style.left = `${Math.round(left)}px`;
+    menu.style.top = `${Math.round(top)}px`;
+    menu.style.visibility = 'visible';
+
+    const onDocClick = (ev) => {
+      const target = ev?.target;
+      if (!target) return;
+      if (menu.contains(target) || anchorEl.contains(target)) return;
+      this.closeCustomSelectMenu();
+    };
+    const onResize = () => this.closeCustomSelectMenu();
+    const onScroll = (ev) => {
+      const target = ev?.target;
+      if (target && (menu.contains(target) || anchorEl.contains(target))) return;
+      this.closeCustomSelectMenu();
+    };
+    document.addEventListener('mousedown', onDocClick, true);
+    document.addEventListener('touchstart', onDocClick, true);
+    window.addEventListener('resize', onResize);
+    window.addEventListener('scroll', onScroll, true);
+    this.customSelectMenuCleanup = () => {
+      document.removeEventListener('mousedown', onDocClick, true);
+      document.removeEventListener('touchstart', onDocClick, true);
+      window.removeEventListener('resize', onResize);
+      window.removeEventListener('scroll', onScroll, true);
+    };
+    this.customSelectMenuAnchor = anchorEl;
+  }
+
+  refreshMemoryUpdateProfileSelectButton() {
+    if (!this.memoryUpdateProfileButton || !this.memoryUpdateProfileSelect) return;
+    const labelEl = this.memoryUpdateProfileButton.querySelector('.general-settings-custom-select-label');
+    const current = Array.from(this.memoryUpdateProfileSelect.options || []).find((opt) => opt.value === this.memoryUpdateProfileSelect.value)
+      || this.memoryUpdateProfileSelect.options?.[this.memoryUpdateProfileSelect.selectedIndex]
+      || null;
+    if (labelEl) {
+      labelEl.textContent = current?.textContent?.trim() || this.memoryUpdateProfileButton.dataset.placeholder || '请选择';
     }
   }
 
@@ -575,6 +712,7 @@ export class GeneralSettingsPanel {
         this.memoryUpdateProfileSelect.appendChild(option);
       });
     } catch {}
+    this.refreshMemoryUpdateProfileSelectButton();
   }
 
   ensureStyles() {
@@ -710,6 +848,36 @@ export class GeneralSettingsPanel {
         border-radius: 14px;
         border: 1px solid #e2e8f0;
         background: #f8fafc;
+      }
+      #general-settings-panel .general-settings-inline-actions {
+        display: flex;
+        align-items: stretch;
+        gap: 8px;
+        margin-top: 4px;
+      }
+      #general-settings-panel .general-settings-inline-actions .world-app-select-btn {
+        flex: 1 1 auto;
+        min-width: 0;
+      }
+      #general-settings-panel .general-settings-inline-actions .world-app-select-btn.is-disabled {
+        opacity: 0.6;
+        cursor: default;
+      }
+      #general-settings-panel .general-settings-manage-btn {
+        flex: 0 0 auto;
+        min-width: 62px;
+        padding: 0 12px;
+        border-radius: 12px;
+        border: 1px solid #dbe2ea;
+        background: #fff;
+        color: #334155;
+        font-size: 12px;
+        font-weight: 700;
+        cursor: pointer;
+      }
+      #general-settings-panel .general-settings-manage-btn:disabled {
+        opacity: 0.45;
+        cursor: not-allowed;
       }
       #general-settings-panel .general-settings-fold-btn {
         min-width: auto;
@@ -1303,7 +1471,14 @@ export class GeneralSettingsPanel {
                 <input type="radio" name="general-memory-update-api" id="general-memory-update-profile" value="profile">
                 <span>选择 API 配置</span>
               </label>
-              <select id="general-memory-update-profile-select" style="width:100%; padding:6px 8px; border:1px solid #e2e8f0; border-radius:8px; font-size:12px; margin-top:4px;"></select>
+              <select id="general-memory-update-profile-select" style="display:none;"></select>
+              <div class="general-settings-inline-actions">
+                <button type="button" id="general-memory-update-profile-btn" class="world-app-select-btn" data-select-id="general-memory-update-profile-select" style="margin-top:0;">
+                  <span class="general-settings-custom-select-label">选择 API 配置…</span>
+                  <span class="world-app-select-btn-chevron">▾</span>
+                </button>
+                <button type="button" id="general-memory-update-profile-manage" class="general-settings-manage-btn">管理</button>
+              </div>
               <small style="color:#94a3b8; display:block; margin-top:6px;">可在 API 配置中新增多个配置</small>
               <div id="general-memory-update-context" style="margin-top: 10px;">
                 <label style="display:flex; align-items:center; justify-content:space-between; gap:8px; font-size:12px; font-weight:700; color:#0f172a;">
@@ -1530,6 +1705,8 @@ export class GeneralSettingsPanel {
     this.memoryUpdateApiChat = this.element.querySelector('#general-memory-update-chat');
     this.memoryUpdateApiProfile = this.element.querySelector('#general-memory-update-profile');
     this.memoryUpdateProfileSelect = this.element.querySelector('#general-memory-update-profile-select');
+    this.memoryUpdateProfileButton = this.element.querySelector('#general-memory-update-profile-btn');
+    this.memoryUpdateProfileManageBtn = this.element.querySelector('#general-memory-update-profile-manage');
     this.memoryUpdateApiBlock = this.element.querySelector('#general-memory-update-api');
     this.memoryUpdateContextInput = this.element.querySelector('#general-memory-update-context-rounds');
     this.memoryBudgetBlock = this.element.querySelector('#general-memory-budget-block');
@@ -1768,6 +1945,40 @@ export class GeneralSettingsPanel {
       const value = String(e?.target?.value || '').trim();
       appSettings.update({ memoryUpdateProfileId: value });
       window.dispatchEvent(new CustomEvent('app-settings-changed', { detail: { key: 'memoryUpdateProfileId', value } }));
+      this.refreshMemoryUpdateProfileSelectButton();
+    });
+    this.memoryUpdateProfileButton?.addEventListener('click', () => {
+      if (!this.memoryUpdateProfileSelect || this.memoryUpdateProfileButton?.disabled) return;
+      const options = Array.from(this.memoryUpdateProfileSelect.options || []).map((opt) => ({
+        value: opt.value,
+        label: opt.textContent || opt.value,
+      }));
+      this.openCustomSelectMenu({
+        anchorEl: this.memoryUpdateProfileButton,
+        options,
+        currentValue: this.memoryUpdateProfileSelect.value,
+        onSelect: (value) => {
+          if (this.memoryUpdateProfileSelect.value !== value) {
+            this.memoryUpdateProfileSelect.value = value;
+            this.memoryUpdateProfileSelect.dispatchEvent(new Event('change', { bubbles: true }));
+          } else {
+            this.refreshMemoryUpdateProfileSelectButton();
+          }
+        },
+      });
+    });
+    this.memoryUpdateProfileManageBtn?.addEventListener('click', () => {
+      const fn = this.externalActions.openConfig;
+      if (typeof fn !== 'function') return;
+      this.closeCustomSelectMenu();
+      this.hide();
+      fn({
+        tab: 'chat',
+        onHide: async () => {
+          await this.refreshMemoryUpdateProfiles().catch(() => {});
+          this.show();
+        },
+      });
     });
     this.memoryUpdateContextInput?.addEventListener('input', (e) => {
       const raw = Math.trunc(Number(e?.target?.value));

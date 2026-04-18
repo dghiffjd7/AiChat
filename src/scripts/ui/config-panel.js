@@ -41,18 +41,20 @@ export class ConfigPanel {
         this.customSelectMenuCleanup = null;
         this.customSelectMenuAnchor = null;
         this.transportExpanded = false;
+        this.openOptions = {};
     }
 
     /**
      * 初始化并显示配置面板
      */
     async show(options = {}) {
+        this.openOptions = options && typeof options === 'object' ? { ...options } : {};
         if (!this.element) {
             this.createUI();
         }
 
-        if (options?.tab) {
-            await this.setActiveTab(options.tab, { skipLoad: true });
+        if (this.openOptions?.tab) {
+            await this.setActiveTab(this.openOptions.tab, { skipLoad: true });
         }
         this.updateTabUI();
 
@@ -76,6 +78,15 @@ export class ConfigPanel {
         if (this.element) {
             this.element.style.display = 'none';
             this.overlayElement.style.display = 'none';
+        }
+        const options = this.openOptions || {};
+        this.openOptions = {};
+        if (typeof options.onHide === 'function') {
+            try {
+                options.onHide();
+            } catch (err) {
+                logger.warn('config panel onHide failed', err);
+            }
         }
     }
 

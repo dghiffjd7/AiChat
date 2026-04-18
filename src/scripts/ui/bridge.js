@@ -49,6 +49,7 @@ import {
 } from '../memory/memory-bridge-utils.js';
 import { logger } from '../utils/logger.js';
 import { MacroEngine } from '../utils/macro-engine.js';
+import { emitDebugLog } from '../utils/debug-log.js';
 import { listMediaAssets } from '../utils/media-assets.js';
 import { isRetryableError, retryWithBackoff } from '../utils/retry.js';
 import { safeInvoke } from '../utils/tauri.js';
@@ -2173,7 +2174,10 @@ class AppBridge {
         }
       }
       const config = this.config.get();
-      const genOptions = this.getGenerationOptions();
+      const genOptions = this.getGenerationOptions({
+        sessionId: String(nextContext?.session?.id || this.activeSessionId || '').trim(),
+        uiMode: String(nextContext?.meta?.uiMode || nextContext?.uiMode || '').trim().toLowerCase() === 'rp' ? 'rp' : 'chat',
+      });
       const requestOptions = {
         ...(genOptions || {}),
         signal: abortController.signal,
@@ -2248,7 +2252,14 @@ class AppBridge {
     if (!msgs.length) throw new Error('messages 不能为空');
 
     // Use the same generation options mapping as normal chat, but allow caller overrides.
-    const genOptions = { ...this.getGenerationOptions(), ...(options || {}) };
+    const { presetContext = null, ...requestOverrides } = options || {};
+    const genOptions = {
+      ...this.getGenerationOptions(presetContext || {
+        sessionId: String(this.activeSessionId || '').trim(),
+        uiMode: String(this.activeSessionId || '').trim().startsWith('rp:') ? 'rp' : 'chat',
+      }),
+      ...requestOverrides,
+    };
     return this.client.chat(msgs, genOptions);
   }
 
@@ -2368,9 +2379,54 @@ class AppBridge {
       }
       return scenarioHint ? `${pendingUserTextRaw}（${scenarioHint}）` : pendingUserTextRaw;
     })();
-    const lastUserMessageRe = /{{\s*(?:lastUserMessage|userLastMessage|user_last_message)\s*}}/i;
-    const hasLastUserMessagePlaceholder = (raw) => lastUserMessageRe.test(String(raw || ''));
-    let usedLastUserMessageForPendingInput = false;
+    const provider = String(this.config?.get?.()?.provider || '').trim().toLowerCase();
+	    const providerUsesDetachedSystemPrompt =
+	      provider === 'anthropic' ||
+	      provider === 'gemini' ||
+	      provider === 'makersuite' ||
+	      provider === 'vertexai';
+	    const providerRejectsAssistantPrefill = provider === 'anthropic';
+	    const lastUserMessageRe = /{{\s*(?:lastUserMessage|userLastMessage|user_last_message)\s*}}/i;
+	    const hasLastUserMessagePlaceholder = (raw) => lastUserMessageRe.test(String(raw || ''));
+	    let usedLastUserMessageForPendingInput = false;
+	    let anthropicSyntheticAssistantDowngradeCount = 0;
+	    const normalizeRequestRole = (role) => {
+	      const normalizedRole = String(role || '').trim().toLowerCase();
+	      return normalizedRole === 'user' || normalizedRole === 'assistant' || normalizedRole === 'system'
+	        ? normalizedRole
+	        : 'system';
+	    };
+	    const normalizeSyntheticRoleForCheck = (role) => {
+	      const normalizedRole = normalizeRequestRole(role);
+	      if (providerRejectsAssistantPrefill && normalizedRole === 'assistant') return 'system';
+	      return normalizedRole;
+	    };
+	    const normalizeSyntheticRole = (role) => {
+	      const normalizedRole = normalizeRequestRole(role);
+	      if (providerRejectsAssistantPrefill && normalizedRole === 'assistant') {
+	        anthropicSyntheticAssistantDowngradeCount += 1;
+	        return 'system';
+	      }
+	      return normalizedRole;
+	    };
+	    const buildSyntheticMessage = (role, content) => ({
+	      role: normalizeSyntheticRole(role),
+	      content,
+	    });
+	    const normalizeSyntheticMessageList = (list) => {
+	      const arr = Array.isArray(list) ? list : [];
+	      return arr.map((msg) => {
+	        if (!msg || typeof msg !== 'object') return msg;
+	        return {
+	          ...msg,
+	          role: normalizeSyntheticRole(msg.role || 'system'),
+	        };
+	      });
+	    };
+	    const canPlaceholderConsumePendingUser = (role, { synthetic = false } = {}) => {
+	      const normalizedRole = synthetic ? normalizeSyntheticRoleForCheck(role) : normalizeRequestRole(role);
+	      return normalizedRole !== 'system' || !providerUsesDetachedSystemPrompt;
+	    };
     const pendingUserPrompt = (() => {
       if (!pendingUserTextRaw && !String(pendingUserText || '').trim()) return '';
       const shouldBypassHint = disableScenarioHint && !replyPromptHint;
@@ -2599,10 +2655,11 @@ class AppBridge {
     const useSysprompt = Boolean(presetState?.enabled?.sysprompt);
     const useContext = Boolean(presetState?.enabled?.context);
     const useOpenAIPreset = Boolean(presetState?.enabled?.openai);
-    const syspActive = this.presets.getActive('sysprompt') || null;
+    const presetContext = { sessionId, uiMode };
+    const syspActive = this.presets.getResolvedActive('sysprompt', presetContext)?.preset || null;
     const sysp = useSysprompt ? syspActive : null;
-    const ctxp = useContext ? this.presets.getActive('context') : null;
-    const activeOpenAIPreset = this.presets.getActive('openai') || null;
+    const ctxp = useContext ? (this.presets.getResolvedActive('context', presetContext)?.preset || null) : null;
+    const activeOpenAIPreset = this.presets.getResolvedActive('openai', presetContext)?.preset || null;
     const openp = useOpenAIPreset ? activeOpenAIPreset : null;
 
     // 对话模式：额外注入对话协议提示词（保存于 sysprompt 预设）
@@ -3744,14 +3801,16 @@ const stringifyMessageContent = (content) => {
         content = processTextMacrosWithPendingFlag(content, macroContext);
         if (!content) continue;
 
-        const role = String(pr?.role || 'system').toLowerCase();
-        const mappedRole = role === 'user' || role === 'assistant' || role === 'system' ? role : 'system';
-        if (!usedLastUserMessageForPendingInput && rawHadLastUser) {
-          usedLastUserMessageForPendingInput = true;
-          removePendingUserFromHistory();
-        }
-        messages.push({ role: mappedRole, content });
-      }
+	        const role = String(pr?.role || 'system').toLowerCase();
+	        const mappedRole = pr?.system_prompt === true
+	          ? 'system'
+	          : normalizeSyntheticRoleForCheck(role);
+	        if (!usedLastUserMessageForPendingInput && rawHadLastUser && canPlaceholderConsumePendingUser(mappedRole, { synthetic: true })) {
+	          usedLastUserMessageForPendingInput = true;
+	          removePendingUserFromHistory();
+	        }
+	        messages.push(buildSyntheticMessage(mappedRole, content));
+	      }
 
       // Flush any world buckets that didn't find their markers to avoid dropping entries.
       appendWorldBucket('beforeChar');
@@ -3788,18 +3847,18 @@ const stringifyMessageContent = (content) => {
     const memoryInserted = new Set();
     const canInsertMemoryAt = (pos) =>
       Boolean(memoryPrompt && memoryPrompt.positions.includes(pos) && !memoryInserted.has(pos));
-    const insertMemoryPromptAt = (pos) => {
-      if (!canInsertMemoryAt(pos)) return;
-      messages.push({ role: memoryPrompt.role, content: memoryPrompt.content });
-      memoryInserted.add(pos);
-    };
-    const insertMemoryPromptIntoHistory = (history) => {
-      if (!canInsertMemoryAt('history_depth')) return;
-      const depth = Math.max(0, Math.trunc(Number(memoryPrompt?.depth || 0)));
-      const idx = Math.max(0, history.length - depth);
-      history.splice(idx, 0, { role: memoryPrompt.role, content: memoryPrompt.content });
-      memoryInserted.add('history_depth');
-    };
+	    const insertMemoryPromptAt = (pos) => {
+	      if (!canInsertMemoryAt(pos)) return;
+	      messages.push(buildSyntheticMessage(memoryPrompt.role, memoryPrompt.content));
+	      memoryInserted.add(pos);
+	    };
+	    const insertMemoryPromptIntoHistory = (history) => {
+	      if (!canInsertMemoryAt('history_depth')) return;
+	      const depth = Math.max(0, Math.trunc(Number(memoryPrompt?.depth || 0)));
+	      const idx = Math.max(0, history.length - depth);
+	      history.splice(idx, 0, buildSyntheticMessage(memoryPrompt.role, memoryPrompt.content));
+	      memoryInserted.add('history_depth');
+	    };
     const chatGuideContent = chatGuidePlan.promptContent;
     const chatGuideBeforePromptContent = chatGuidePlan.beforePromptContent;
     const chatGuideDepthContent = chatGuidePlan.depthContent;
@@ -3895,14 +3954,14 @@ const stringifyMessageContent = (content) => {
       ...(worldPromptMessages.afterScenario || []),
       ...(worldPromptMessages.afterExamples || []),
     ];
-    const flushWorldMessages = (queue) => {
-      const list = Array.isArray(queue) ? queue : [];
-      list.forEach(msg => {
-        if (!msg?.content) return;
-        messages.push({ role: msg.role || 'system', content: msg.content });
-      });
-      list.length = 0;
-    };
+	    const flushWorldMessages = (queue) => {
+	      const list = Array.isArray(queue) ? queue : [];
+	      list.forEach(msg => {
+	        if (!msg?.content) return;
+	        messages.push(buildSyntheticMessage(msg.role || 'system', msg.content));
+	      });
+	      list.length = 0;
+	    };
     const insertWorldAround = (fn) => {
       flushWorldMessages(worldMessagesBefore);
       fn();
@@ -4016,30 +4075,35 @@ const stringifyMessageContent = (content) => {
     } catch {}
 
     // Persona Description (SillyTavern-like): AT_DEPTH=4 injects into chat history
-    if (personaText && personaPosition === 4) {
-      const roleMap = { 0: 'system', 1: 'user', 2: 'assistant' };
-      const role = roleMap[personaRole] || 'system';
-      const idx = Math.max(0, history.length - personaDepth);
-      history.splice(idx, 0, { role, content: personaText });
-    }
+	    if (personaText && personaPosition === 4) {
+	      const roleMap = { 0: 'system', 1: 'user', 2: 'assistant' };
+	      const role = roleMap[personaRole] || 'system';
+	      const idx = Math.max(0, history.length - personaDepth);
+	      history.splice(idx, 0, buildSyntheticMessage(role, personaText));
+	    }
 
     // IN_CHAT: inject story string into history (depth + role)
-    if (combinedStoryString && position === 1) {
-      const roleMap = { 0: 'system', 1: 'user', 2: 'assistant' };
-      const role = roleMap[injectRole] || 'system';
-      const idx = Math.max(0, history.length - injectDepth);
-      history.splice(idx, 0, { role, content: combinedStoryString });
-    }
-    const depthPromptMessages = mergeDepthMessages(depthWorldMessages, chatGuidePlan.depthMessages);
-    insertDepthMessages(history, depthPromptMessages);
-    insertMemoryPromptIntoHistory(history);
-	    // 聊天提示词的 SYSTEM_DEPTH_1 由 <chat_guide> 承载，不落入 <history>。
-    const postHistoryRaw = useSysprompt ? sysp?.post_history || '' : '';
-    const extraPromptBlocksRaw = Array.isArray(context?.meta?.extraPromptBlocks) ? context.meta.extraPromptBlocks : [];
-    const extraHasLastUser = extraPromptBlocksRaw.some(b => hasLastUserMessagePlaceholder(b?.content));
-    if (!usedLastUserMessageForPendingInput && (extraHasLastUser || hasLastUserMessagePlaceholder(postHistoryRaw))) {
-      usedLastUserMessageForPendingInput = true;
-    }
+	    if (combinedStoryString && position === 1) {
+	      const roleMap = { 0: 'system', 1: 'user', 2: 'assistant' };
+	      const role = roleMap[injectRole] || 'system';
+	      const idx = Math.max(0, history.length - injectDepth);
+	      history.splice(idx, 0, buildSyntheticMessage(role, combinedStoryString));
+	    }
+	    const depthPromptMessages = mergeDepthMessages(depthWorldMessages, chatGuidePlan.depthMessages);
+	    insertDepthMessages(history, depthPromptMessages);
+	    insertMemoryPromptIntoHistory(history);
+		    // 聊天提示词的 SYSTEM_DEPTH_1 由 <chat_guide> 承载，不落入 <history>。
+	    const postHistoryRaw = useSysprompt ? sysp?.post_history || '' : '';
+	    const extraPromptBlocksRaw = Array.isArray(context?.meta?.extraPromptBlocks) ? context.meta.extraPromptBlocks : [];
+	    const extraConsumesLastUser = extraPromptBlocksRaw.some((b) => {
+	      if (!hasLastUserMessagePlaceholder(b?.content)) return false;
+	      return canPlaceholderConsumePendingUser(String(b?.role || 'system'), { synthetic: true });
+	    });
+	    const postHistoryConsumesLastUser =
+	      hasLastUserMessagePlaceholder(postHistoryRaw) && canPlaceholderConsumePendingUser('user');
+	    if (!usedLastUserMessageForPendingInput && (extraConsumesLastUser || postHistoryConsumesLastUser)) {
+	      usedLastUserMessageForPendingInput = true;
+	    }
 
 		    insertMemoryPromptAt('before_chat');
         if (timeContextBlock) messages.push(timeContextBlock);
@@ -4150,23 +4214,23 @@ const stringifyMessageContent = (content) => {
       for (const b of blocks) {
         if (!b || typeof b !== 'object') continue;
         const raw = String(b.content ?? '').trim();
-        if (!raw) continue;
-        const roleRaw = String(b.role || 'system').toLowerCase();
-        const role = (roleRaw === 'user' || roleRaw === 'assistant' || roleRaw === 'system') ? roleRaw : 'system';
-        if (!usedLastUserMessageForPendingInput && lastUserMessageRe.test(raw)) {
-          usedLastUserMessageForPendingInput = true;
-        }
-        const content = processTextMacrosWithPendingFlag(raw, {
-          user: name1,
-          char: name2,
+	        if (!raw) continue;
+	        const roleRaw = String(b.role || 'system').toLowerCase();
+	        const role = normalizeSyntheticRoleForCheck(roleRaw);
+	        if (!usedLastUserMessageForPendingInput && lastUserMessageRe.test(raw) && canPlaceholderConsumePendingUser(role, { synthetic: true })) {
+	          usedLastUserMessageForPendingInput = true;
+	        }
+	        const content = processTextMacrosWithPendingFlag(raw, {
+	          user: name1,
+	          char: name2,
           group: groupName || name2,
           members: membersText,
-        });
-        const rendered = String(content || '').trim();
-        if (!rendered) continue;
-        messages.push({ role, content: rendered });
-      }
-    } catch {}
+	        });
+	        const rendered = String(content || '').trim();
+	        if (!rendered) continue;
+	        messages.push(buildSyntheticMessage(role, rendered));
+	      }
+	    } catch {}
 
     // ST-style user POV reply target: keep it close to the final turn so it can override
     // the default "reply as character" framing without adding extra main-UI controls.
@@ -4191,12 +4255,13 @@ const stringifyMessageContent = (content) => {
           }
           return -1;
         };
-        const insertAt = (idx, list) => {
-          if (!list || !list.length) return 0;
-          const safe = Math.max(0, Math.min(messages.length, idx));
-          messages.splice(safe, 0, ...list);
-          return list.length;
-        };
+	        const insertAt = (idx, list) => {
+	          if (!list || !list.length) return 0;
+	          const safe = Math.max(0, Math.min(messages.length, idx));
+	          const normalizedList = normalizeSyntheticMessageList(list);
+	          messages.splice(safe, 0, ...normalizedList);
+	          return normalizedList.length;
+	        };
         if (Array.isArray(inject.generateBefore) && inject.generateBefore.length) {
           insertAt(0, inject.generateBefore);
         }
@@ -4231,21 +4296,45 @@ const stringifyMessageContent = (content) => {
           });
         }
       }
-    } catch (err) {
-      logger.warn('template inject apply failed', err);
-    }
-    return messages;
-  }
+	    } catch (err) {
+	      logger.warn('template inject apply failed', err);
+	    }
+	    if (providerRejectsAssistantPrefill) {
+	      const summarizeTailRoles = (limit = 6) =>
+	        messages
+	          .slice(-limit)
+	          .map((msg) => {
+	            const role = normalizeRequestRole(msg?.role || 'system');
+	            const preview = stringifyMessageContent(msg?.content).replace(/\s+/g, ' ').trim().slice(0, 40) || '(empty)';
+	            return `${role}:${preview}`;
+	          })
+	          .join(' | ');
+	      if (anthropicSyntheticAssistantDowngradeCount > 0) {
+	        const compatMsg = `Anthropic 兼容：已将 ${anthropicSyntheticAssistantDowngradeCount} 个合成 assistant 提示词改为 system。tail=${summarizeTailRoles()}`;
+	        logger.debug(compatMsg);
+	        emitDebugLog({ source: 'prompt', type: 'info', message: compatMsg });
+	      }
+	      const lastNonSystem = [...messages].reverse().find((msg) => normalizeRequestRole(msg?.role || 'system') !== 'system');
+	      if (normalizeRequestRole(lastNonSystem?.role || 'system') === 'assistant') {
+	        messages.push({ role: 'user', content: ' ' });
+	        const fallbackMsg = `Anthropic 兼容：检测到尾部 assistant 消息，已补空白 user turn。tail=${summarizeTailRoles()}`;
+	        logger.warn(fallbackMsg);
+	        emitDebugLog({ source: 'prompt', type: 'warn', message: fallbackMsg });
+	      }
+	    }
+	    return messages;
+	  }
 
   /**
    * SillyTavern-like generation parameters (from OpenAI preset)
    * We store the full OpenAI preset JSON, but only map common fields into provider options.
    */
-  getGenerationOptions() {
+  getGenerationOptions(presetContext = {}) {
     try {
       const state = this.presets?.getState?.();
       if (!state?.enabled?.openai) return {};
-      const p = this.presets.getActive('openai');
+      const resolved = this.presets.getResolvedActive('openai', presetContext || {});
+      const p = resolved?.preset;
       if (!p || typeof p !== 'object') return {};
 
       const num = v => (typeof v === 'number' && Number.isFinite(v) ? v : undefined);
@@ -5342,7 +5431,10 @@ const stringifyMessageContent = (content) => {
     const insertionStrategy = normalizeWorldInsertionStrategy(worldSettings.insertionStrategy, 'role_first');
     const resolvedWorldState = this.getResolvedWorldState(this.activeSessionId);
     const collectEntries = worldId => this.collectWorldEntries(worldId, { matchText: '' });
-    const syspActive = this.presets.getActive('sysprompt') || null;
+    const syspActive = this.presets.getResolvedActive('sysprompt', {
+      sessionId: this.activeSessionId,
+      uiMode: String(this.activeSessionId || '').trim().startsWith('rp:') ? 'rp' : 'chat',
+    })?.preset || null;
     const builtinEntries = this.buildPhoneFormatPromptEntries(syspActive);
     const builtinPart = builtinEntries.map(e => e.content).join('\n\n');
     const globalEntries = resolvedWorldState.globalWorldId ? collectEntries(resolvedWorldState.globalWorldId) : [];

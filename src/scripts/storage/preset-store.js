@@ -205,13 +205,58 @@ const clone = (v) => {
     }
 };
 
+const PRESET_TYPES = ['sysprompt', 'context', 'instruct', 'openai', 'reasoning'];
+const PRESET_BINDING_MODES = ['chat', 'rp'];
+
 const normalizeType = (type) => {
     const t = String(type || '').toLowerCase();
-    if (t === 'sysprompt' || t === 'context' || t === 'instruct' || t === 'openai' || t === 'reasoning') return t;
+    if (PRESET_TYPES.includes(t)) return t;
     throw new Error(`Unknown preset type: ${type}`);
 };
 
 const ensureObj = (v, fallback) => (v && typeof v === 'object') ? v : fallback;
+
+const normalizeBindingMode = (mode, { sessionId = '' } = {}) => {
+    const raw = String(mode || '').trim().toLowerCase();
+    if (raw === 'rp' || raw === 'creative') return 'rp';
+    if (raw === 'chat' || raw === 'social') return 'chat';
+    const sid = String(sessionId || '').trim().toLowerCase();
+    return sid.startsWith('rp:') ? 'rp' : 'chat';
+};
+
+const makeEmptyBindingBucket = () => ({
+    modes: { chat: '', rp: '' },
+    sessions: {},
+});
+
+const normalizeBindingBucket = (raw) => {
+    const source = raw && typeof raw === 'object' ? raw : {};
+    const next = makeEmptyBindingBucket();
+    const modesRaw = source.modes && typeof source.modes === 'object' ? source.modes : {};
+    const sessionsRaw = source.sessions && typeof source.sessions === 'object' ? source.sessions : {};
+
+    for (const mode of PRESET_BINDING_MODES) {
+        next.modes[mode] = String(modesRaw[mode] || '').trim();
+    }
+    for (const [sid, presetId] of Object.entries(sessionsRaw)) {
+        const sessionId = String(sid || '').trim();
+        const boundId = String(presetId || '').trim();
+        if (!sessionId || !boundId) continue;
+        next.sessions[sessionId] = boundId;
+    }
+
+    return next;
+};
+
+const normalizeBindingsState = (raw) => {
+    const source = raw && typeof raw === 'object' ? raw : {};
+    const byTypeSource = source.byType && typeof source.byType === 'object' ? source.byType : source;
+    const byType = {};
+    for (const type of PRESET_TYPES) {
+        byType[type] = normalizeBindingBucket(byTypeSource[type]);
+    }
+    return { byType };
+};
 
 const DEFAULT_OPENAI_IMPERSONATION_PROMPT = '[Write your next reply from the point of view of {{user}}, using the chat history so far as a guideline for the writing style of {{user}}. Don\'t write as {{char}} or system. Don\'t describe actions of {{char}}.]';
 
@@ -416,7 +461,8 @@ const makeDefaultState = (defaultsByType) => {
             instruct: false,
             openai: true,
             reasoning: true,
-        }
+        },
+        bindings: normalizeBindingsState(),
     };
 };
 
@@ -547,8 +593,9 @@ export class PresetStore {
             state.enabled = ensureObj(state.enabled, {});
             state.active = ensureObj(state.active, {});
             state.presets = ensureObj(state.presets, {});
+            state.bindings = normalizeBindingsState(state.bindings);
 
-            for (const type of ['sysprompt', 'context', 'instruct', 'openai', 'reasoning']) {
+            for (const type of PRESET_TYPES) {
                 state.presets[type] = ensureObj(state.presets[type], {});
                 for (const [id, data] of Object.entries(defaults[type] || {})) {
                     if (!state.presets[type][id]) state.presets[type][id] = data;
@@ -675,7 +722,7 @@ export class PresetStore {
         }
 
         // merge: overwrite by id, keep existing otherwise
-        for (const t of ['sysprompt', 'context', 'instruct', 'openai', 'reasoning']) {
+        for (const t of PRESET_TYPES) {
             next.presets ||= {};
             next.presets[t] ||= {};
             const incoming = imported.presets?.[t];
@@ -689,6 +736,14 @@ export class PresetStore {
             if (typeof imported.enabled?.[t] === 'boolean') {
                 next.enabled ||= {};
                 next.enabled[t] = imported.enabled[t];
+            }
+        }
+
+        if (imported.bindings && typeof imported.bindings === 'object') {
+            const incomingBindings = normalizeBindingsState(imported.bindings);
+            next.bindings = normalizeBindingsState(next.bindings);
+            for (const t of PRESET_TYPES) {
+                next.bindings.byType[t] = incomingBindings.byType[t];
             }
         }
 
@@ -730,6 +785,56 @@ export class PresetStore {
         return id ? clone(this.state?.presets?.[t]?.[id] || null) : null;
     }
 
+    getBindings(type) {
+        const t = normalizeType(type);
+        return clone(normalizeBindingBucket(this.state?.bindings?.byType?.[t]));
+    }
+
+    getModeBindingId(type, mode) {
+        const t = normalizeType(type);
+        const m = normalizeBindingMode(mode);
+        return String(this.state?.bindings?.byType?.[t]?.modes?.[m] || '').trim() || null;
+    }
+
+    getSessionBindingId(type, sessionId) {
+        const t = normalizeType(type);
+        const sid = String(sessionId || '').trim();
+        if (!sid) return null;
+        return String(this.state?.bindings?.byType?.[t]?.sessions?.[sid] || '').trim() || null;
+    }
+
+    getResolvedActiveId(type, context = {}) {
+        const t = normalizeType(type);
+        const presets = this.state?.presets?.[t] || {};
+        const bucket = normalizeBindingBucket(this.state?.bindings?.byType?.[t]);
+        const sessionId = String(context?.sessionId || '').trim();
+        const mode = normalizeBindingMode(context?.uiMode, { sessionId });
+        const hasPreset = (id) => Boolean(id && presets?.[id]);
+
+        const sessionBoundId = sessionId ? String(bucket.sessions?.[sessionId] || '').trim() : '';
+        if (sessionBoundId && hasPreset(sessionBoundId)) {
+            return { presetId: sessionBoundId, source: 'session', sessionId, mode };
+        }
+
+        const modeBoundId = String(bucket.modes?.[mode] || '').trim();
+        if (modeBoundId && hasPreset(modeBoundId)) {
+            return { presetId: modeBoundId, source: 'mode', sessionId, mode };
+        }
+
+        const globalId = String(this.state?.active?.[t] || '').trim();
+        return { presetId: globalId || null, source: 'global', sessionId, mode };
+    }
+
+    getResolvedActive(type, context = {}) {
+        const t = normalizeType(type);
+        const resolved = this.getResolvedActiveId(t, context);
+        const presetId = String(resolved?.presetId || '').trim();
+        return {
+            ...resolved,
+            preset: presetId ? clone(this.state?.presets?.[t]?.[presetId] || null) : null,
+        };
+    }
+
     async setActive(type, id) {
         await this.ready;
         const t = normalizeType(type);
@@ -737,6 +842,44 @@ export class PresetStore {
         this.state.active[t] = id;
         await this.persist();
         return this.getState();
+    }
+
+    async setModeBinding(type, mode, presetId = '') {
+        await this.ready;
+        const t = normalizeType(type);
+        const m = normalizeBindingMode(mode);
+        const nextId = String(presetId || '').trim();
+        if (nextId && !this.state?.presets?.[t]?.[nextId]) return this.getBindings(t);
+        this.state.bindings ||= normalizeBindingsState();
+        this.state.bindings.byType ||= {};
+        this.state.bindings.byType[t] = normalizeBindingBucket(this.state.bindings.byType[t]);
+        this.state.bindings.byType[t].modes[m] = nextId;
+        await this.persist();
+        return this.getBindings(t);
+    }
+
+    async clearModeBinding(type, mode) {
+        return this.setModeBinding(type, mode, '');
+    }
+
+    async setSessionBinding(type, sessionId, presetId = '') {
+        await this.ready;
+        const t = normalizeType(type);
+        const sid = String(sessionId || '').trim();
+        if (!sid) return this.getBindings(t);
+        const nextId = String(presetId || '').trim();
+        if (nextId && !this.state?.presets?.[t]?.[nextId]) return this.getBindings(t);
+        this.state.bindings ||= normalizeBindingsState();
+        this.state.bindings.byType ||= {};
+        this.state.bindings.byType[t] = normalizeBindingBucket(this.state.bindings.byType[t]);
+        if (nextId) this.state.bindings.byType[t].sessions[sid] = nextId;
+        else delete this.state.bindings.byType[t].sessions[sid];
+        await this.persist();
+        return this.getBindings(t);
+    }
+
+    async clearSessionBinding(type, sessionId) {
+        return this.setSessionBinding(type, sessionId, '');
     }
 
     async upsert(type, { id, name, data, makeActive } = {}) {
@@ -769,6 +912,17 @@ export class PresetStore {
         const t = normalizeType(type);
         if (!id || !this.state?.presets?.[t]?.[id]) return;
         delete this.state.presets[t][id];
+        this.state.bindings ||= normalizeBindingsState();
+        this.state.bindings.byType ||= {};
+        this.state.bindings.byType[t] = normalizeBindingBucket(this.state.bindings.byType[t]);
+        for (const mode of PRESET_BINDING_MODES) {
+            if (this.state.bindings.byType[t].modes[mode] === id) {
+                this.state.bindings.byType[t].modes[mode] = '';
+            }
+        }
+        for (const [sid, presetId] of Object.entries(this.state.bindings.byType[t].sessions || {})) {
+            if (presetId === id) delete this.state.bindings.byType[t].sessions[sid];
+        }
         const ids = Object.keys(this.state.presets[t]);
         if (this.state.active[t] === id) {
             this.state.active[t] = ids[0] || null;

@@ -631,6 +631,26 @@ body[data-ui-mode='rp'] .QQ_chat_charmsg {
   margin-left: 8px;
 }
 
+body[data-ui-mode='rp'] .QQ_chat_charmsg .chat-message-stack,
+body[data-ui-mode='rp'] .QQ_chat_charmsg .chat-bubble-stack {
+  width: 100%;
+}
+
+body[data-ui-mode='rp'] .QQ_chat_charmsg .chat-bubble-stack {
+  align-items: stretch;
+}
+
+body[data-ui-mode='rp'] .QQ_chat_charmsg .QQ_chat_msgdiv {
+  width: 100%;
+}
+
+body[data-ui-mode='rp'] .QQ_chat_charmsg .chat-message-content,
+body[data-ui-mode='rp'] .QQ_chat_charmsg .chat-lazy-rich-placeholder,
+body[data-ui-mode='rp'] .QQ_chat_charmsg iframe {
+  width: 100%;
+  max-width: 100%;
+}
+
 body[data-ui-mode='rp'] .QQ_chat_mymsg {
   grid-template-columns: 1fr 0;
   column-gap: 0;

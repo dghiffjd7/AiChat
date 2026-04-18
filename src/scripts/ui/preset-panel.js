@@ -11,7 +11,7 @@ import { getReasoningCapability, getReasoningSamplerPolicy, normalizeReasoningEf
 import { LLMClient } from '../api/client.js';
 import { logger } from '../utils/logger.js';
 import { safeInvoke } from '../utils/tauri.js';
-import { appConfirm } from './app-confirm.js';
+import { appConfirm, appChoice } from './app-confirm.js';
 
 const canInitClient = (cfg) => {
     const c = cfg || {};
@@ -179,6 +179,19 @@ const PANEL_CSS = `
     color: #64748b;
     line-height: 1.45;
 }
+.pp-manager-context {
+    margin-top: 8px;
+    padding: 8px 10px;
+    border-radius: 12px;
+    background: rgba(255,255,255,0.84);
+    border: 1px solid rgba(59,130,246,0.12);
+    font-size: 12px;
+    color: #475569;
+    line-height: 1.5;
+}
+.pp-manager-context strong {
+    color: #0f172a;
+}
 .pp-enabled-chip {
     flex-shrink: 0;
     display: inline-flex;
@@ -323,18 +336,21 @@ const PANEL_CSS = `
     position: relative;
 }
 .pp-pages {
-    width: 200%;
+    width: 300%;
     height: 100%;
     display: flex;
     transition: transform 260ms cubic-bezier(.2,.9,.2,1);
     transform: translateX(0);
 }
 .pp-pages[data-view="detail"] {
-    transform: translateX(-50%);
+    transform: translateX(-33.333333%);
+}
+.pp-pages[data-view="bindings"] {
+    transform: translateX(-66.666667%);
 }
 .pp-page {
-    width: 50%;
-    min-width: 50%;
+    width: 33.333333%;
+    min-width: 33.333333%;
     min-height: 0;
     display: flex;
     flex-direction: column;
@@ -438,6 +454,129 @@ const PANEL_CSS = `
     align-items: center;
     justify-content: center;
     flex-shrink: 0;
+}
+
+/* ── binding page ── */
+.pp-binding-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+.pp-binding-card {
+    border: 1px solid #e2e8f0;
+    border-radius: 16px;
+    background: #fff;
+    box-shadow: 0 4px 18px rgba(15,23,42,0.04);
+    padding: 12px;
+}
+.pp-binding-card-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 10px;
+}
+.pp-binding-card-title {
+    font-size: 14px;
+    font-weight: 800;
+    color: #0f172a;
+    line-height: 1.35;
+}
+.pp-binding-card-sub {
+    margin-top: 4px;
+    font-size: 12px;
+    color: #64748b;
+    line-height: 1.5;
+}
+.pp-binding-chip {
+    display: inline-flex;
+    align-items: center;
+    min-height: 24px;
+    padding: 0 10px;
+    border-radius: 999px;
+    background: #eff6ff;
+    color: #1d4ed8;
+    font-size: 11px;
+    font-weight: 800;
+    white-space: nowrap;
+}
+.pp-binding-actions {
+    margin-top: 10px;
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+.pp-binding-btn {
+    appearance: none;
+    -webkit-appearance: none;
+    min-height: 34px;
+    padding: 8px 12px;
+    border-radius: 10px;
+    border: 1px solid #dbe2ea;
+    background: #fff;
+    color: #334155;
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+}
+.pp-binding-btn.is-primary {
+    background: #eff6ff;
+    border-color: #bfdbfe;
+    color: #1d4ed8;
+}
+.pp-binding-btn.is-muted {
+    background: #f8fafc;
+    color: #64748b;
+}
+.pp-binding-btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+.pp-binding-list {
+    margin-top: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+.pp-binding-item {
+    border: 1px solid #e2e8f0;
+    border-radius: 14px;
+    background: #f8fafc;
+    padding: 10px 12px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+}
+.pp-binding-item-main {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+.pp-binding-item-title {
+    font-size: 13px;
+    font-weight: 700;
+    color: #0f172a;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.pp-binding-item-sub {
+    font-size: 12px;
+    color: #64748b;
+    line-height: 1.45;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.pp-binding-empty {
+    padding: 12px;
+    border: 1px dashed #cbd5e1;
+    border-radius: 14px;
+    background: #f8fafc;
+    font-size: 12px;
+    color: #64748b;
+    line-height: 1.5;
 }
 
 /* ── form helpers ── */
@@ -558,11 +697,44 @@ export class PresetPanel {
         this.detailSubtitleEl = null;
         this.detailEditorEl = null;
         this.detailScrollEl = null;
+        this.bindingTitleEl = null;
+        this.bindingSubtitleEl = null;
+        this.bindingEditorEl = null;
+        this.bindingScrollEl = null;
         this.currentSectionId = null;
+        this.currentPage = 'root';
+        this.bindingStoreType = '';
+        this.bindingPresetId = '';
         this.drafts = new Map();
         this.customSelectMenuEl = null;
         this.customSelectMenuCleanup = null;
         this.customSelectMenuAnchor = null;
+        this.runtimeContext = {
+            chatStore: null,
+            contactsStore: null,
+            personaStore: null,
+            getUiMode: null,
+        };
+    }
+
+    setRuntimeContext(context = {}) {
+        this.runtimeContext.chatStore = context.chatStore || this.runtimeContext.chatStore || null;
+        this.runtimeContext.contactsStore = context.contactsStore || this.runtimeContext.contactsStore || null;
+        this.runtimeContext.personaStore = context.personaStore || this.runtimeContext.personaStore || null;
+        this.runtimeContext.getUiMode = typeof context.getUiMode === 'function'
+            ? context.getUiMode
+            : this.runtimeContext.getUiMode;
+    }
+
+    getCurrentPresetContext() {
+        const sessionId = String(this.runtimeContext.chatStore?.getCurrent?.() || '').trim();
+        const uiMode = typeof this.runtimeContext.getUiMode === 'function'
+            ? this.runtimeContext.getUiMode()
+            : (sessionId.startsWith('rp:') ? 'rp' : 'chat');
+        return {
+            sessionId,
+            uiMode: String(uiMode || '').trim().toLowerCase() === 'rp' ? 'rp' : 'chat',
+        };
     }
 
     getTypeLabel(type) {
@@ -594,6 +766,63 @@ export class PresetPanel {
                 requestReasoning,
             }),
         };
+    }
+
+    getResolvedPresetInfo(storeType, context = null) {
+        return this.store.getResolvedActive(storeType, context || this.getCurrentPresetContext());
+    }
+
+    getPresetNameById(storeType, presetId = '') {
+        const sid = String(presetId || '').trim();
+        if (!sid) return '';
+        const list = this.store.list(storeType);
+        const hit = list.find((item) => String(item.id || '') === sid);
+        return String(hit?.name || sid);
+    }
+
+    getBindingSourceLabel(source, mode = 'chat') {
+        if (source === 'session') return '会话绑定';
+        if (source === 'mode') return mode === 'rp' ? '创意写作默认' : '聊天对话默认';
+        return '全局默认';
+    }
+
+    describeResolvedPreset(storeType, context = null) {
+        const resolved = this.getResolvedPresetInfo(storeType, context);
+        const name = String(resolved?.preset?.name || this.getPresetNameById(storeType, resolved?.presetId) || '').trim();
+        if (!name) return '';
+        return `${name} · ${this.getBindingSourceLabel(resolved?.source, resolved?.mode)}`;
+    }
+
+    buildPresetBindingSessionEntries() {
+        const chatStore = this.runtimeContext.chatStore;
+        const contactsStore = this.runtimeContext.contactsStore;
+        const personaStore = this.runtimeContext.personaStore;
+        const sessionIds = Array.isArray(chatStore?.listSessions?.()) ? chatStore.listSessions() : [];
+        return sessionIds.map((sid) => {
+            const sessionId = String(sid || '').trim();
+            if (!sessionId) return null;
+            const isRp = sessionId.startsWith('rp:');
+            const contact = contactsStore?.getContact?.(sessionId) || null;
+            const personaId = isRp ? sessionId.slice(3) : '';
+            const persona = personaId ? personaStore?.get?.(personaId) : null;
+            const name = (() => {
+                if (isRp) {
+                    return String(persona?.name || persona?.title || personaId || sessionId).trim() || sessionId;
+                }
+                return String(contact?.name || sessionId).trim() || sessionId;
+            })();
+            const meta = (() => {
+                if (isRp) return '创意写作';
+                if (contact?.isGroup) return '群聊';
+                return '聊天室';
+            })();
+            return {
+                id: sessionId,
+                name,
+                meta,
+                group: isRp ? 'rp' : 'chat',
+            };
+        }).filter(Boolean);
     }
 
     ensureCustomSelectMenu() {
@@ -745,8 +974,12 @@ export class PresetPanel {
         this.refreshCustomSelect(select, scope);
     }
 
-    async applyBoundConfigIfAny() {
-        const preset = this.store.getActive('openai') || {};
+    async applyBoundConfigIfAny(context = null, { onlyIfBoundOverride = false } = {}) {
+        const resolved = context
+            ? this.store.getResolvedActive('openai', context)
+            : this.store.getResolvedActive('openai', {});
+        if (onlyIfBoundOverride && resolved?.source === 'global') return;
+        const preset = resolved?.preset || {};
         const boundId = preset?.boundProfileId;
         if (!boundId) return;
         const cm = window.appBridge?.config;
@@ -766,10 +999,17 @@ export class PresetPanel {
         }
     }
 
+    async applyBoundConfigForCurrentContext(options = {}) {
+        return this.applyBoundConfigIfAny(this.getCurrentPresetContext(), options);
+    }
+
     async show() {
         await this.store.ready;
         if (!this.element) this.createUI();
         this.currentSectionId = null;
+        this.currentPage = 'root';
+        this.bindingStoreType = '';
+        this.bindingPresetId = '';
         this.renderAllSections();
         this.element.style.display = 'flex';
         this.overlayElement.style.display = 'block';
@@ -842,6 +1082,19 @@ export class PresetPanel {
                                 <div class="pp-section-editor" id="preset-detail-editor"></div>
                             </div>
                         </section>
+                        <section class="pp-page">
+                            <div class="pp-detail-topbar">
+                                <button type="button" class="pp-back-btn" id="preset-binding-back">
+                                    ${chevronLeftSvg}
+                                    <span>返回</span>
+                                </button>
+                                <div class="pp-detail-heading" id="preset-binding-title"></div>
+                                <div class="pp-detail-subheading" id="preset-binding-subtitle"></div>
+                            </div>
+                            <div class="pp-page-scroll" id="preset-binding-scroll">
+                                <div class="pp-section-editor" id="preset-binding-editor"></div>
+                            </div>
+                        </section>
                     </div>
                 </div>
             </div>
@@ -863,10 +1116,15 @@ export class PresetPanel {
         this.detailSubtitleEl = this.element.querySelector('#preset-detail-subtitle');
         this.detailEditorEl = this.element.querySelector('#preset-detail-editor');
         this.detailScrollEl = this.element.querySelector('#preset-detail-scroll');
+        this.bindingTitleEl = this.element.querySelector('#preset-binding-title');
+        this.bindingSubtitleEl = this.element.querySelector('#preset-binding-subtitle');
+        this.bindingEditorEl = this.element.querySelector('#preset-binding-editor');
+        this.bindingScrollEl = this.element.querySelector('#preset-binding-scroll');
         this.element.querySelector('#preset-close').onclick = () => this.hide();
         this.element.querySelector('#preset-cancel').onclick = () => this.hide();
         this.element.querySelector('#preset-save').onclick = () => this.onSave();
         this.element.querySelector('#preset-back').onclick = () => this.showRootPage();
+        this.element.querySelector('#preset-binding-back').onclick = () => this.showDetailPage();
 
         /* hidden file input for import */
         const importInput = document.createElement('input');
@@ -896,11 +1154,18 @@ export class PresetPanel {
         this.renderMainList();
         if (this.currentSectionId) {
             const sec = this.getSectionById(this.currentSectionId);
-            if (sec) this.renderDetailSection(sec);
+            if (sec) {
+                this.renderDetailSection(sec);
+                if (this.currentPage === 'bindings') this.renderBindingSection(sec);
+                else this.clearBindingSection();
+            }
             else this.currentSectionId = null;
         }
-        if (!this.currentSectionId) this.clearDetailSection();
-        this.setPageView(this.currentSectionId ? 'detail' : 'root');
+        if (!this.currentSectionId) {
+            this.clearDetailSection();
+            this.clearBindingSection();
+        }
+        this.setPageView(this.currentPage);
     }
 
     getSectionById(id) {
@@ -959,6 +1224,7 @@ export class PresetPanel {
         const presets = this.store.list(storeType);
         const activeId = this.store.getActiveId(storeType);
         const enabledReadonly = this.isEnabledToggleReadonly(storeType);
+        const effectiveText = this.describeResolvedPreset(storeType);
 
         this.managerEl.innerHTML = `
             <div class="pp-manager-card">
@@ -966,6 +1232,7 @@ export class PresetPanel {
                     <div style="min-width:0;">
                         <div class="pp-manager-title">预设方案</div>
                         <div class="pp-manager-sub">当前分类：${this.getStoreTypeSectionsLabel(storeType) || sec.label}</div>
+                        <div class="pp-manager-context"><strong>当前会话实际使用：</strong>${escapeHtml(effectiveText || '未启用')}</div>
                     </div>
                     <div class="pp-enabled-chip ${enabledReadonly ? 'pp-readonly' : ''}">
                         <span class="pp-enabled-text">启用</span>
@@ -984,6 +1251,7 @@ export class PresetPanel {
                 <div class="pp-manager-actions">
                     <button type="button" class="pp-manager-btn" id="preset-manager-new">新建</button>
                     <button type="button" class="pp-manager-btn" id="preset-manager-rename">重命名</button>
+                    <button type="button" class="pp-manager-btn" id="preset-manager-bindings">使用位置</button>
                     <button type="button" class="pp-manager-btn pp-danger" id="preset-manager-delete">删除</button>
                 </div>
             </div>
@@ -992,6 +1260,7 @@ export class PresetPanel {
         const select = this.managerEl.querySelector('#preset-manager-select');
         const enabledCb = this.managerEl.querySelector('#preset-manager-enabled');
         const renameBtn = this.managerEl.querySelector('#preset-manager-rename');
+        const bindingsBtn = this.managerEl.querySelector('#preset-manager-bindings');
         const deleteBtn = this.managerEl.querySelector('#preset-manager-delete');
 
         presets.forEach((preset) => {
@@ -1005,6 +1274,7 @@ export class PresetPanel {
         enabledCb.checked = this.store.getEnabled(storeType);
         enabledCb.disabled = enabledReadonly;
         renameBtn.disabled = !activeId;
+        bindingsBtn.disabled = !activeId;
         deleteBtn.disabled = !activeId;
 
         select.onchange = async () => {
@@ -1026,6 +1296,7 @@ export class PresetPanel {
 
         this.managerEl.querySelector('#preset-manager-new').onclick = () => this.onNewForStoreType(storeType);
         renameBtn.onclick = () => this.onRenameForStoreType(storeType);
+        bindingsBtn.onclick = () => this.openBindingsPage(storeType, activeId);
         deleteBtn.onclick = () => this.onDeleteForStoreType(storeType);
     }
 
@@ -1057,21 +1328,52 @@ export class PresetPanel {
         if (!sec) return;
         this.captureCurrentDetailDraft();
         this.currentSectionId = sec.id;
+        this.currentPage = 'detail';
         this.renderAllSections();
         this.setPageView('detail');
         if (this.detailScrollEl) this.detailScrollEl.scrollTop = 0;
     }
 
+    openBindingsPage(storeType, presetId = '') {
+        const st = String(storeType || '').trim();
+        const section = SECTIONS.find((item) => item.storeType === st) || this.getCurrentContextSection();
+        if (!section) return;
+        const nextPresetId = String(presetId || this.store.getActiveId(st) || '').trim();
+        this.captureCurrentDetailDraft();
+        this.currentSectionId = section.id;
+        this.currentPage = 'bindings';
+        this.bindingStoreType = st;
+        this.bindingPresetId = nextPresetId;
+        this.renderAllSections();
+        this.setPageView('bindings');
+        if (this.bindingScrollEl) this.bindingScrollEl.scrollTop = 0;
+    }
+
     showRootPage({ capture = true } = {}) {
         if (capture) this.captureCurrentDetailDraft();
         this.currentSectionId = null;
+        this.currentPage = 'root';
+        this.bindingStoreType = '';
+        this.bindingPresetId = '';
         this.renderAllSections();
         this.setPageView('root');
     }
 
+    showDetailPage({ capture = true } = {}) {
+        if (capture) this.captureCurrentDetailDraft();
+        if (!this.currentSectionId) {
+            this.showRootPage({ capture: false });
+            return;
+        }
+        this.currentPage = 'detail';
+        this.renderAllSections();
+        this.setPageView('detail');
+    }
+
     setPageView(view) {
         if (!this.pagesEl) return;
-        this.pagesEl.dataset.view = view === 'detail' ? 'detail' : 'root';
+        const next = view === 'bindings' ? 'bindings' : (view === 'detail' ? 'detail' : 'root');
+        this.pagesEl.dataset.view = next;
     }
 
     renderDetailSection(sec) {
@@ -1086,6 +1388,34 @@ export class PresetPanel {
         if (this.detailTitleEl) this.detailTitleEl.textContent = '';
         if (this.detailSubtitleEl) this.detailSubtitleEl.textContent = '';
         if (this.detailEditorEl) this.detailEditorEl.innerHTML = '';
+    }
+
+    renderBindingSection(sec) {
+        if (!this.bindingEditorEl || !this.bindingTitleEl || !this.bindingSubtitleEl) return;
+        const storeType = this.bindingStoreType || sec.storeType;
+        const fallbackPresetId = String(this.store.getActiveId(storeType) || '').trim();
+        const requestedPresetId = String(this.bindingPresetId || fallbackPresetId || '').trim();
+        const preset = requestedPresetId
+            ? (this.store.list(storeType).find((item) => String(item.id || '') === requestedPresetId) || null)
+            : null;
+        const presetId = String(preset?.id || fallbackPresetId || '').trim();
+        this.bindingPresetId = presetId;
+        this.bindingTitleEl.textContent = `${this.getStoreTypeSectionsLabel(storeType) || this.getTypeLabel(sec.id)} · 使用位置`;
+        this.bindingSubtitleEl.textContent = preset?.name
+            ? `为「${preset.name}」设定模式默认与会话覆盖；未设定时继续使用全局默认。`
+            : '为当前预设设定模式默认与会话覆盖；未设定时继续使用全局默认。';
+        this.bindingEditorEl.innerHTML = '';
+        this.renderBindingEditor({
+            storeType,
+            presetId,
+            presetName: String(preset?.name || presetId || '').trim(),
+        }, this.bindingEditorEl);
+    }
+
+    clearBindingSection() {
+        if (this.bindingTitleEl) this.bindingTitleEl.textContent = '';
+        if (this.bindingSubtitleEl) this.bindingSubtitleEl.textContent = '';
+        if (this.bindingEditorEl) this.bindingEditorEl.innerHTML = '';
     }
 
     captureCurrentDetailDraft() {
@@ -1125,6 +1455,221 @@ export class PresetPanel {
             case 'instruct': root.appendChild(this.renderInstructEditor(p)); break;
             case 'reasoning': root.appendChild(this.renderReasoningEditor(p)); break;
         }
+    }
+
+    async commitBindingChange(task, message = '已更新使用位置') {
+        try {
+            await task();
+            this.renderAllSections();
+            this.showStatus(message, 'success');
+            window.dispatchEvent(new CustomEvent('preset-changed'));
+        } catch (err) {
+            logger.warn('更新预设使用位置失败', err);
+            this.showStatus(err?.message || '更新使用位置失败', 'error');
+        }
+    }
+
+    renderBindingEditor({ storeType, presetId, presetName }, root) {
+        const wrap = document.createElement('div');
+        wrap.className = 'pp-binding-stack';
+
+        const currentContext = this.getCurrentPresetContext();
+        const currentSessionId = String(currentContext?.sessionId || '').trim();
+        const currentSessionResolved = currentSessionId
+            ? this.store.getResolvedActive(storeType, currentContext)
+            : null;
+        const modeBindings = this.store.getBindings(storeType);
+        const sessionEntries = this.buildPresetBindingSessionEntries();
+
+        const makeCard = ({ title, subtitle, chip = '', actions = [] } = {}) => {
+            const card = document.createElement('div');
+            card.className = 'pp-binding-card';
+
+            const head = document.createElement('div');
+            head.className = 'pp-binding-card-head';
+
+            const main = document.createElement('div');
+            const titleEl = document.createElement('div');
+            titleEl.className = 'pp-binding-card-title';
+            titleEl.textContent = title || '';
+            main.appendChild(titleEl);
+
+            if (subtitle) {
+                const subEl = document.createElement('div');
+                subEl.className = 'pp-binding-card-sub';
+                subEl.textContent = subtitle;
+                main.appendChild(subEl);
+            }
+            head.appendChild(main);
+
+            if (chip) {
+                const chipEl = document.createElement('div');
+                chipEl.className = 'pp-binding-chip';
+                chipEl.textContent = chip;
+                head.appendChild(chipEl);
+            }
+
+            card.appendChild(head);
+
+            if (actions.length) {
+                const actionsWrap = document.createElement('div');
+                actionsWrap.className = 'pp-binding-actions';
+                actions.forEach((cfg) => {
+                    const btn = document.createElement('button');
+                    btn.type = 'button';
+                    btn.className = `pp-binding-btn ${cfg.tone ? `is-${cfg.tone}` : ''}`.trim();
+                    btn.textContent = cfg.label || '';
+                    btn.disabled = cfg.disabled === true;
+                    if (typeof cfg.onClick === 'function') {
+                        btn.addEventListener('click', cfg.onClick);
+                    }
+                    actionsWrap.appendChild(btn);
+                });
+                card.appendChild(actionsWrap);
+            }
+
+            return card;
+        };
+
+        wrap.appendChild(makeCard({
+            title: '全局默认',
+            subtitle: '顶部“当前预设”就是这个分类的全局默认。未设置模式默认和会话覆盖时，会继续沿用这里。',
+            chip: presetName || '当前预设',
+        }));
+
+        if (currentSessionId) {
+            const currentSessionEntry = sessionEntries.find((item) => item.id === currentSessionId) || null;
+            const currentBoundId = this.store.getSessionBindingId(storeType, currentSessionId);
+            const currentIsBound = currentBoundId === presetId;
+            const currentLabel = currentSessionEntry?.name || currentSessionId;
+            const resolvedName = String(currentSessionResolved?.preset?.name || this.getPresetNameById(storeType, currentSessionResolved?.presetId) || '').trim();
+            const resolvedSource = this.getBindingSourceLabel(currentSessionResolved?.source, currentSessionResolved?.mode);
+            wrap.appendChild(makeCard({
+                title: `当前会话：${currentLabel}`,
+                subtitle: currentIsBound
+                    ? '当前预设已绑定到这个会话。'
+                    : `当前使用：${resolvedName || '未设置'}（${resolvedSource}）`,
+                chip: currentSessionEntry?.meta || '当前',
+                actions: currentIsBound
+                    ? [{
+                        label: '取消当前会话绑定',
+                        tone: 'muted',
+                        onClick: () => this.commitBindingChange(
+                            () => this.store.clearSessionBinding(storeType, currentSessionId),
+                        ),
+                    }]
+                    : [{
+                        label: '绑定当前预设到此会话',
+                        tone: 'primary',
+                        onClick: () => this.commitBindingChange(
+                            () => this.store.setSessionBinding(storeType, currentSessionId, presetId),
+                        ),
+                    }],
+            }));
+        }
+
+        const buildModeCard = (mode, label) => {
+            const boundId = String(modeBindings?.modes?.[mode] || '').trim();
+            const isCurrent = boundId === presetId;
+            const boundName = boundId ? this.getPresetNameById(storeType, boundId) : '';
+            return makeCard({
+                title: `${label}默认`,
+                subtitle: isCurrent
+                    ? '当前预设已设为这个界面的默认预设。'
+                    : (boundName
+                        ? `当前默认：${boundName}`
+                        : '未单独设置时，将回退到全局默认。'),
+                chip: label,
+                actions: isCurrent
+                    ? [{
+                        label: '取消默认绑定',
+                        tone: 'muted',
+                        onClick: () => this.commitBindingChange(
+                            () => this.store.clearModeBinding(storeType, mode),
+                        ),
+                    }]
+                    : [{
+                        label: `设为${label}默认`,
+                        tone: 'primary',
+                        onClick: () => this.commitBindingChange(
+                            () => this.store.setModeBinding(storeType, mode, presetId),
+                        ),
+                    }],
+            });
+        };
+
+        wrap.appendChild(buildModeCard('chat', '聊天对话'));
+        wrap.appendChild(buildModeCard('rp', '创意写作'));
+
+        const renderSessionGroup = (group, title) => {
+            const card = document.createElement('div');
+            card.className = 'pp-binding-card';
+            const head = document.createElement('div');
+            head.className = 'pp-binding-card-head';
+            head.innerHTML = `
+                <div>
+                    <div class="pp-binding-card-title">${title}</div>
+                    <div class="pp-binding-card-sub">会话级绑定优先于模式默认；不设置时会继续回退。</div>
+                </div>
+            `;
+            card.appendChild(head);
+
+            const list = document.createElement('div');
+            list.className = 'pp-binding-list';
+            const items = sessionEntries.filter((item) => item.group === group);
+            if (!items.length) {
+                const empty = document.createElement('div');
+                empty.className = 'pp-binding-empty';
+                empty.textContent = group === 'rp' ? '还没有创意写作会话。' : '还没有聊天室或群聊。';
+                card.appendChild(empty);
+                return card;
+            }
+
+            items.forEach((item) => {
+                const boundId = this.store.getSessionBindingId(storeType, item.id);
+                const isCurrent = boundId === presetId;
+                const resolved = this.store.getResolvedActive(storeType, {
+                    sessionId: item.id,
+                    uiMode: item.group === 'rp' ? 'rp' : 'chat',
+                });
+                const resolvedName = String(resolved?.preset?.name || this.getPresetNameById(storeType, resolved?.presetId) || '').trim();
+                const subtitle = isCurrent
+                    ? `${item.meta} · 已绑定到当前预设`
+                    : (boundId
+                        ? `${item.meta} · 当前绑定：${this.getPresetNameById(storeType, boundId)}`
+                        : `${item.meta} · 当前使用：${resolvedName || '未设置'}（${this.getBindingSourceLabel(resolved?.source, resolved?.mode)}）`);
+
+                const row = document.createElement('div');
+                row.className = 'pp-binding-item';
+                row.innerHTML = `
+                    <div class="pp-binding-item-main">
+                        <div class="pp-binding-item-title">${escapeHtml(item.name)}</div>
+                        <div class="pp-binding-item-sub">${escapeHtml(subtitle)}</div>
+                    </div>
+                `;
+                const actionBtn = document.createElement('button');
+                actionBtn.type = 'button';
+                actionBtn.className = `pp-binding-btn ${isCurrent ? 'is-muted' : 'is-primary'}`.trim();
+                actionBtn.textContent = isCurrent ? '取消绑定' : (boundId ? '改绑为当前预设' : '绑定当前预设');
+                actionBtn.addEventListener('click', () => {
+                    this.commitBindingChange(() => (
+                        isCurrent
+                            ? this.store.clearSessionBinding(storeType, item.id)
+                            : this.store.setSessionBinding(storeType, item.id, presetId)
+                    ));
+                });
+                row.appendChild(actionBtn);
+                list.appendChild(row);
+            });
+
+            card.appendChild(list);
+            return card;
+        };
+
+        wrap.appendChild(renderSessionGroup('chat', '聊天对话会话'));
+        wrap.appendChild(renderSessionGroup('rp', '创意写作会话'));
+
+        root.appendChild(wrap);
     }
 
     /* ── helpers ── */
@@ -2266,6 +2811,22 @@ export class PresetPanel {
             }
         } catch {}
 
+        try {
+            const scriptStore = window.appBridge?.scriptStore;
+            if (scriptStore?.ready) await scriptStore.ready;
+            const scripts = scriptStore?.getScripts?.('preset', id) || [];
+            if (Array.isArray(scripts) && scripts.length) {
+                const delScripts = await appConfirm({
+                    title: '删除脚本', danger: true,
+                    message: `检测到该预设绑定了 ${scripts.length} 条脚本。是否一并删除？`,
+                    confirmText: '一并删除', cancelText: '仅删除预设',
+                });
+                if (delScripts) {
+                    await scriptStore.setScripts('preset', id, []);
+                }
+            }
+        } catch {}
+
         await this.store.remove(storeType, id);
         const key = this.getDraftKey(storeType, id);
         if (key) this.drafts.delete(key);
@@ -2328,6 +2889,58 @@ export class PresetPanel {
         }).filter(Boolean);
     }
 
+    extractPresetRegexScripts(obj) {
+        const ext = obj?.extensions && typeof obj.extensions === 'object' ? obj.extensions : {};
+        const list = [];
+        const push = (val) => {
+            if (!Array.isArray(val)) return;
+            val.forEach((item) => {
+                if (item && typeof item === 'object') list.push(item);
+            });
+        };
+        push(ext.regex_scripts);
+        push(ext.regexScripts);
+        push(ext.regex);
+        push(ext.regexes);
+        return list;
+    }
+
+    extractPresetScripts(obj) {
+        const out = [];
+        const seen = new Set();
+        const push = (val) => {
+            if (!Array.isArray(val)) return;
+            val.forEach((item) => {
+                if (!item || typeof item !== 'object') return;
+                const id = String(item?.id || '').trim();
+                const name = String(item?.name || '').trim();
+                const content = String(item?.content || '');
+                const sig = id || `${name}\u0000${content}`;
+                if (!sig || seen.has(sig)) return;
+                seen.add(sig);
+                out.push(deepClone(item));
+            });
+        };
+        push(obj?.boundScripts);
+        push(obj?.bound_scripts);
+        const candidates = [
+            obj?.tavern_helper,
+            obj?.tavernHelper,
+            obj?.tavern_helper_scripts,
+            obj?.tavernHelperScripts,
+            obj?.extensions?.tavern_helper,
+            obj?.extensions?.tavernHelper,
+            obj?.extensions?.tavern_helper_scripts,
+            obj?.extensions?.tavernHelperScripts,
+        ];
+        candidates.forEach((raw) => {
+            if (!raw || typeof raw !== 'object') return;
+            const th = Array.isArray(raw) ? Object.fromEntries(raw) : raw;
+            push(th?.scripts);
+        });
+        return out;
+    }
+
     getRuleSignature(r) {
         const findRegex = String(r?.findRegex || '').trim();
         const replaceString = String(r?.replaceString ?? '');
@@ -2362,6 +2975,17 @@ export class PresetPanel {
     extractStRegexBindingSets(obj) {
         const out = [];
         const seenScriptIds = new Set();
+        const seenRuleSigs = new Set();
+        const appendRules = (rules = [], name = 'RegexBinding') => {
+            const unique = [];
+            (Array.isArray(rules) ? rules : []).forEach((rule) => {
+                const sig = this.getRuleSignature(rule);
+                if (!sig || seenRuleSigs.has(sig)) return;
+                seenRuleSigs.add(sig);
+                unique.push(rule);
+            });
+            if (unique.length) out.push({ name, enabled: true, rules: unique });
+        };
         const tryAddRegexes = (container) => {
             const regexes = container?.RegexBinding?.regexes;
             if (!Array.isArray(regexes) || !regexes.length) return;
@@ -2373,23 +2997,37 @@ export class PresetPanel {
                 return true;
             });
             if (!filtered.length) return;
-            const rules = this.convertStRegexScriptsToRules(filtered);
-            if (rules.length) out.push({ name: 'RegexBinding', enabled: true, rules });
+            appendRules(this.convertStRegexScriptsToRules(filtered), 'RegexBinding');
+        };
+        const tryAddExtensionRegexes = (container) => {
+            const regexes = this.extractPresetRegexScripts(container);
+            if (!regexes.length) return;
+            appendRules(this.convertStRegexScriptsToRules(regexes), 'Regex Scripts');
         };
         const tryParseJsonString = (s) => {
             const raw = String(s || '').trim();
             if (!raw || !raw.includes('RegexBinding') || !(raw.startsWith('{') || raw.startsWith('['))) return null;
             try { return JSON.parse(raw); } catch { return null; }
         };
+        tryAddExtensionRegexes(obj);
+        tryAddRegexes(obj);
         const walk = (node, depth = 0) => {
             if (!node || depth > 18) return;
             if (typeof node === 'string') {
                 const parsed = tryParseJsonString(node);
-                if (parsed && typeof parsed === 'object') { tryAddRegexes(parsed); walk(parsed, depth + 1); }
+                if (parsed && typeof parsed === 'object') {
+                    tryAddExtensionRegexes(parsed);
+                    tryAddRegexes(parsed);
+                    walk(parsed, depth + 1);
+                }
                 return;
             }
             if (Array.isArray(node)) { node.forEach(v => walk(v, depth + 1)); return; }
-            if (typeof node === 'object') { tryAddRegexes(node); for (const v of Object.values(node)) walk(v, depth + 1); }
+            if (typeof node === 'object') {
+                tryAddExtensionRegexes(node);
+                tryAddRegexes(node);
+                for (const v of Object.values(node)) walk(v, depth + 1);
+            }
         };
         walk(obj, 0);
         return out;
@@ -2415,7 +3053,52 @@ export class PresetPanel {
                     const bound = sets
                         .filter(s => s?.bind?.type === 'preset' && s.bind.presetType === type && s.bind.presetId === bindId)
                         .map(s => ({ name: s.name, enabled: s.enabled !== false, rules: s.rules || [] }));
-                    if (bound.length) payload.boundRegexSets = bound;
+                    if (bound.length) {
+                        payload.boundRegexSets = bound;
+                        payload.extensions = payload.extensions && typeof payload.extensions === 'object'
+                            ? deepClone(payload.extensions)
+                            : {};
+                        const flatRegexScripts = [];
+                        const seenRegexSigs = new Set();
+                        bound.forEach((set) => {
+                            (Array.isArray(set?.rules) ? set.rules : []).forEach((rule) => {
+                                const sig = this.getRuleSignature(rule);
+                                if (!sig || seenRegexSigs.has(sig)) return;
+                                seenRegexSigs.add(sig);
+                                flatRegexScripts.push(deepClone(rule));
+                            });
+                        });
+                        if (flatRegexScripts.length) {
+                            payload.extensions.regex_scripts = flatRegexScripts;
+                            const sp = payload.extensions.SPreset && typeof payload.extensions.SPreset === 'object'
+                                ? deepClone(payload.extensions.SPreset)
+                                : {};
+                            sp.RegexBinding = { regexes: deepClone(flatRegexScripts) };
+                            payload.extensions.SPreset = sp;
+                        }
+                    }
+                }
+            } catch {}
+
+            try {
+                const scriptStore = window.appBridge?.scriptStore;
+                if (scriptStore?.ready) await scriptStore.ready;
+                const bindId = this.store.getActiveId(type);
+                const boundScripts = bindId && scriptStore?.getScripts
+                    ? (scriptStore.getScripts('preset', bindId) || [])
+                    : [];
+                if (Array.isArray(boundScripts) && boundScripts.length) {
+                    payload.boundScripts = deepClone(boundScripts);
+                    payload.extensions = payload.extensions && typeof payload.extensions === 'object'
+                        ? deepClone(payload.extensions)
+                        : {};
+                    const rawHelper = payload.extensions.tavern_helper;
+                    const helper = Array.isArray(rawHelper)
+                        ? Object.fromEntries(rawHelper)
+                        : (rawHelper && typeof rawHelper === 'object' ? deepClone(rawHelper) : {});
+                    helper.scripts = deepClone(boundScripts);
+                    if (!helper.variables || typeof helper.variables !== 'object') helper.variables = {};
+                    payload.extensions.tavern_helper = helper;
                 }
             } catch {}
 
@@ -2465,14 +3148,15 @@ export class PresetPanel {
         }
 
         const fileBaseName = String(file?.name || '').replace(/\.[^/.]+$/, '').trim();
-        const defaultName = String(json?.name || '').trim() || fileBaseName || '导入预设';
-        const name = prompt('导入预设名称', defaultName);
-        if (!name) return;
+        const name = fileBaseName || String(json?.name || '').trim() || '导入预设';
 
         let boundSets = json?.boundRegexSets || json?.bound_regex_sets || null;
+        let boundScripts = this.extractPresetScripts(json);
         const data = { ...json, name };
         delete data.boundRegexSets;
         delete data.bound_regex_sets;
+        delete data.boundScripts;
+        delete data.bound_scripts;
 
         if (!Array.isArray(boundSets) || !boundSets.length) {
             const stSets = this.extractStRegexBindingSets(json);
@@ -2510,6 +3194,45 @@ export class PresetPanel {
                     window.dispatchEvent(new CustomEvent('regex-changed'));
                 }
             } catch (err) { logger.warn('导入绑定正则失败', err); }
+        }
+
+        if (Array.isArray(boundScripts) && boundScripts.length) {
+            try {
+                const ok = await appConfirm({
+                    title: '导入脚本',
+                    message: `检测到预设包含绑定脚本（${boundScripts.length} 条）。是否一并导入并绑定？`,
+                    confirmText: '一并导入', cancelText: '仅导入预设',
+                });
+                if (ok) {
+                    const scriptStore = window.appBridge?.scriptStore;
+                    if (scriptStore?.ready) await scriptStore.ready;
+                    const result = await scriptStore?.importTavernHelperScripts?.({
+                        scripts: boundScripts,
+                        scope: 'preset',
+                        scopeId: presetId,
+                        source: 'preset',
+                    });
+                    if (result?.count) {
+                        const settings = appSettings.get();
+                        const choice = await appChoice({
+                            title: '脚本授权',
+                            message: `已导入 ${result.count} 条绑定脚本。\n脚本可能需要权限：\n- 读取聊天记录：${settings.scriptAllowReadMessages !== false ? '允许' : '禁用'}\n- 修改变量：${settings.scriptAllowModifyVariables !== false ? '允许' : '禁用'}\n- 访问网络：${settings.scriptAllowNetwork === true ? '允许' : '禁用'}`,
+                            actions: [
+                                { id: 'allow', label: '允许并启用', primary: true },
+                                { id: 'later', label: '稍后处理' },
+                            ],
+                            defaultActionId: 'allow',
+                        });
+                        if (choice === 'allow') {
+                            if (settings.scriptEnabled !== true) appSettings.update({ scriptEnabled: true });
+                            const ids = Array.isArray(result.ids) ? result.ids : [];
+                            await Promise.all(ids.map((id) => scriptStore.toggleScript('preset', presetId, id, true)));
+                        } else {
+                            window.toastr?.info?.('脚本已导入到该预设，尚未启用');
+                        }
+                    }
+                }
+            } catch (err) { logger.warn('导入绑定脚本失败', err); }
         }
 
         this.renderAllSections();

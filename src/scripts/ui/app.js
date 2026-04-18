@@ -560,6 +560,12 @@ const initApp = async () => {
   let lastMomentRawMeta = null;
   const worldPanel = new WorldPanel({ contactsStore, getSessionId: () => chatStore.getCurrent() });
   const scriptPanel = new ScriptPanel({ store: scriptStore, personaStore, presetStore: window.appBridge?.presets });
+  presetPanel.setRuntimeContext({
+    chatStore,
+    contactsStore,
+    personaStore,
+    getUiMode: () => (uiMode === 'rp' ? 'rp' : 'chat'),
+  });
   await personaStore.ready;
   await userStore.ready;
   if (userStore.createdFromEmpty) {
@@ -630,6 +636,7 @@ const initApp = async () => {
   generalSettingsPanel.setExternalActions({
     openSession: () => sessionPanel.show(),
     openMemoryTemplates: () => memoryTemplatePanel.show(),
+    openConfig: (options = {}) => configPanel.show({ tab: 'chat', ...(options || {}) }),
   });
   const extensionsPanel = new ExtensionsPanel({
     regexPanel,
@@ -1898,9 +1905,13 @@ ${listPart || '-（无）'}
   const normalizePlainText = text => normalizeCreativeLineBreaks(String(text ?? ''));
 
   const escapeRegex = input => String(input ?? '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const getPresetContext = () => ({
+    sessionId: String(chatStore.getCurrent?.() || '').trim(),
+    uiMode: uiMode === 'rp' ? 'rp' : 'chat',
+  });
   const getReasoningPreset = () => {
     try {
-      return window.appBridge?.presets?.getActive?.('reasoning') || {};
+      return window.appBridge?.presets?.getResolvedActive?.('reasoning', getPresetContext())?.preset || {};
     } catch {
       return {};
     }
@@ -15916,7 +15927,7 @@ Phase G（Frame 36）：循环衔接
         history.splice(0, history.length - 50);
       }
       try {
-        const openaiPreset = window?.appBridge?.presets?.getActive?.('openai') || {};
+        const openaiPreset = window?.appBridge?.presets?.getResolvedActive?.('openai', getPresetContext())?.preset || {};
         const maxContext = Number(openaiPreset?.openai_max_context);
         const maxOut = Number(openaiPreset?.openai_max_tokens);
         const ctxTokens = Number.isFinite(maxContext) ? Math.max(0, Math.trunc(maxContext)) : 0;
@@ -16221,7 +16232,7 @@ Phase G（Frame 36）：循环衔接
         const assistantAvatar = getAssistantAvatarForSession(sessionId);
         const presetState = window.appBridge?.presets?.getState?.() || null;
         const sysp = Boolean(presetState?.enabled?.sysprompt)
-          ? (window.appBridge?.presets?.getActive?.('sysprompt') || {})
+          ? (window.appBridge?.presets?.getResolvedActive?.('sysprompt', getPresetContext())?.preset || {})
           : {};
         const privateEnabled = Boolean(sysp?.dialogue_enabled) && String(sysp?.dialogue_rules || '').trim().length > 0;
         const groupEnabled = Boolean(sysp?.group_enabled) && String(sysp?.group_rules || '').trim().length > 0;
@@ -16784,7 +16795,7 @@ Phase G（Frame 36）：循环衔接
         const assistantAvatar = getAssistantAvatarForSession(sessionId);
         const presetState = window.appBridge?.presets?.getState?.() || null;
         const sysp = Boolean(presetState?.enabled?.sysprompt)
-          ? (window.appBridge?.presets?.getActive?.('sysprompt') || {})
+          ? (window.appBridge?.presets?.getResolvedActive?.('sysprompt', getPresetContext())?.preset || {})
           : {};
         const privateEnabled = Boolean(sysp?.dialogue_enabled) && String(sysp?.dialogue_rules || '').trim().length > 0;
         const groupEnabled = Boolean(sysp?.group_enabled) && String(sysp?.group_rules || '').trim().length > 0;

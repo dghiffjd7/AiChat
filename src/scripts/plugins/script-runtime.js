@@ -9,7 +9,7 @@ const SCRIPT_PAYLOAD_LIMIT = 1200000;
 
 const buildWorkerScript = () => `
 const scripts = new Map();
-let currentContext = { sessionId: '', personaId: '', presetId: '', worldId: '', worldIds: [] };
+let currentContext = { sessionId: '', personaId: '', presetId: '', presetIds: [], worldId: '', worldIds: [] };
 let currentSettings = { allowReadMessages: true, allowModifyVariables: true, allowNetwork: false };
 const DISPATCH_RESULT_LIMIT = ${SCRIPT_PAYLOAD_LIMIT};
 let seq = 0;
@@ -1705,6 +1705,7 @@ export class ScriptRuntime {
       sessionId: '',
       personaId: '',
       presetId: '',
+      presetIds: [],
       worldId: '',
       worldIds: [],
     };
@@ -1828,6 +1829,7 @@ export class ScriptRuntime {
 
   buildContext(sessionId) {
     const sid = String(sessionId || this.chatStore?.getCurrent?.() || this.context.sessionId || '').trim();
+    const uiMode = sid.startsWith('rp:') ? 'rp' : 'chat';
     let personaId = '';
     let personaName = '';
     if (sid && this.getEffectivePersona) {
@@ -1836,12 +1838,37 @@ export class ScriptRuntime {
       personaName = String(persona?.name || '').trim();
     }
     let presetId = '';
-    if (this.presets?.getState) {
+    const presetIds = [];
+    const pushPresetId = (value) => {
+      const id = String(value || '').trim();
+      if (!id || presetIds.includes(id)) return;
+      presetIds.push(id);
+    };
+    if (this.presets?.getResolvedActiveId) {
+      const presetContext = { sessionId: sid, uiMode };
+      const resolvedOpenAI = this.presets.getResolvedActiveId('openai', presetContext);
+      const resolvedSysPrompt = this.presets.getResolvedActiveId('sysprompt', presetContext);
+      const resolvedContext = this.presets.getResolvedActiveId('context', presetContext);
+      const resolvedInstruct = this.presets.getResolvedActiveId('instruct', presetContext);
+      const resolvedReasoning = this.presets.getResolvedActiveId('reasoning', presetContext);
+      presetId = String(resolvedSysPrompt?.presetId || resolvedOpenAI?.presetId || '').trim();
+      pushPresetId(resolvedOpenAI?.presetId);
+      pushPresetId(resolvedSysPrompt?.presetId);
+      pushPresetId(resolvedContext?.presetId);
+      pushPresetId(resolvedInstruct?.presetId);
+      pushPresetId(resolvedReasoning?.presetId);
+    } else if (this.presets?.getState) {
       const state = this.presets.getState();
-      presetId = String(state?.active?.sysprompt || '') || '';
+      presetId = String(state?.active?.sysprompt || state?.active?.openai || '').trim();
+      pushPresetId(state?.active?.openai);
+      pushPresetId(state?.active?.sysprompt);
+      pushPresetId(state?.active?.context);
+      pushPresetId(state?.active?.instruct);
+      pushPresetId(state?.active?.reasoning);
     }
+    if (!presetId && presetIds.length) presetId = presetIds[0];
     const resolvedWorldState = this.bridge?.getResolvedWorldState?.(sid, {
-      uiMode: sid.startsWith('rp:') ? 'rp' : 'chat',
+      uiMode,
     }) || null;
     const worldIds = Array.isArray(resolvedWorldState?.worldIds) && resolvedWorldState.worldIds.length
       ? resolvedWorldState.worldIds.slice()
@@ -1852,6 +1879,7 @@ export class ScriptRuntime {
       personaId,
       personaName,
       presetId,
+      presetIds,
       worldId,
       worldIds,
     };
@@ -1920,7 +1948,11 @@ export class ScriptRuntime {
     };
     push('global', 'global');
     if (this.context.personaId) push('character', this.context.personaId);
-    if (this.context.presetId) push('preset', this.context.presetId);
+    const activePresetIds = Array.isArray(this.context.presetIds)
+      ? this.context.presetIds.map(id => String(id || '').trim()).filter(Boolean)
+      : [];
+    if (!activePresetIds.length && this.context.presetId) activePresetIds.push(String(this.context.presetId || '').trim());
+    activePresetIds.forEach((id) => push('preset', id));
     let totalSize = 0;
     const filtered = [];
     const skipped = [];

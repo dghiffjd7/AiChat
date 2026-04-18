@@ -9,6 +9,14 @@ const SOURCE_LABELS = {
   import: '导入',
 };
 
+const PRESET_TYPE_LABELS = {
+  openai: '生成参数',
+  sysprompt: '系统提示词',
+  context: '上下文模板',
+  instruct: 'Instruct',
+  reasoning: '推理格式',
+};
+
 const normalizeScope = (scope) => (scope === 'preset' || scope === 'character') ? scope : 'global';
 
 const createOption = (value, label) => {
@@ -200,7 +208,14 @@ export class ScriptPanel {
 
   getActivePresetId() {
     const state = this.presetStore?.getState?.() || {};
-    return String(state?.active?.sysprompt || '');
+    return String(
+      state?.active?.openai ||
+      state?.active?.sysprompt ||
+      state?.active?.context ||
+      state?.active?.instruct ||
+      state?.active?.reasoning ||
+      ''
+    );
   }
 
   buildScopeSelectors() {
@@ -222,12 +237,22 @@ export class ScriptPanel {
     if (this.tab === 'preset') {
       const select = document.createElement('select');
       select.style.cssText = 'min-width:160px;padding:6px 10px;border:1px solid #e2e8f0;border-radius:10px;font-size:12px;';
-      const presets = this.presetStore?.getState?.()?.presets?.sysprompt || {};
-      Object.entries(presets).forEach(([id, preset]) => {
-        const name = preset?.name || id;
-        select.appendChild(createOption(id, name));
+      const presetBuckets = this.presetStore?.getState?.()?.presets || {};
+      const options = [];
+      ['openai', 'sysprompt', 'context', 'instruct', 'reasoning'].forEach((type) => {
+        const presets = presetBuckets?.[type] || {};
+        Object.entries(presets).forEach(([id, preset]) => {
+          const name = preset?.name || id;
+          const prefix = PRESET_TYPE_LABELS[type] || type;
+          options.push({ id, label: `[${prefix}] ${name}` });
+        });
       });
-      select.value = this.getActivePresetId();
+      options.forEach(({ id, label }) => {
+        select.appendChild(createOption(id, label));
+      });
+      const activePresetId = this.getActivePresetId();
+      if (activePresetId) select.value = activePresetId;
+      if (!select.value && options[0]?.id) select.value = options[0].id;
       select.addEventListener('change', () => this.refresh());
       this.body.appendChild(select);
       this.presetSelect = select;
