@@ -3432,3 +3432,928 @@ body[data-theme-mode='dark'] :is(
   color: #08131f !important;
   font-weight: 700 !important;
 }
+
+/* ═══════════════════════════════════════════════════════════
+   Dark Theme Batch Fix — 2026-04-20
+   Covers audit issues: general-settings, preset, regex/script,
+   plugin, avatar, world-panel, chat-settings, memory-table,
+   contact/group panels, world-editor forms
+   ═══════════════════════════════════════════════════════════ */
+
+/* ── 1. General Settings Panel (inline styles in JS) ────── */
+
+body[data-theme-mode='dark'] #general-settings-panel .general-settings-close {
+  background: rgba(205, 217, 229, 0.08) !important;
+  color: var(--app-text-primary) !important;
+  border-color: var(--app-border-default) !important;
+}
+
+body[data-theme-mode='dark'] #general-settings-panel .general-settings-row-icon {
+  background: rgba(205, 217, 229, 0.08) !important;
+  color: var(--app-text-secondary) !important;
+}
+
+body[data-theme-mode='dark'] #general-settings-panel .general-settings-toggle-row.is-on .general-settings-row-icon {
+  background: rgba(121, 192, 255, 0.18) !important;
+  color: var(--app-accent-primary) !important;
+}
+
+body[data-theme-mode='dark'] #general-settings-panel .general-settings-toggle-row.has-risk.is-on .general-settings-row-icon {
+  background: rgba(248, 81, 73, 0.18) !important;
+  color: #ffb4aa !important;
+}
+
+body[data-theme-mode='dark'] #general-settings-panel .general-settings-control.general-settings-radio {
+  background: rgba(205, 217, 229, 0.08) !important;
+  border-color: var(--app-border-default) !important;
+}
+
+body[data-theme-mode='dark'] #general-settings-panel .general-settings-toggle-row.is-on .general-settings-control.general-settings-radio {
+  background: var(--app-accent-primary) !important;
+}
+
+body[data-theme-mode='dark'] #general-settings-panel .general-settings-switch {
+  background: rgba(139, 152, 167, 0.34) !important;
+}
+
+body[data-theme-mode='dark'] #general-settings-panel .general-settings-toggle-row.is-on .general-settings-switch {
+  background: var(--app-accent-primary) !important;
+}
+
+body[data-theme-mode='dark'] #general-settings-panel :is(#general-bundle-status, #general-clean-wallpapers-status) {
+  color: var(--app-text-secondary) !important;
+}
+
+/* ── 2. Preset Panel (inline styles in JS) ──────────────── */
+
+body[data-theme-mode='dark'] #preset-panel :is(#preset-import, #preset-export) {
+  background: rgba(205, 217, 229, 0.06) !important;
+  color: var(--app-text-primary) !important;
+  border-color: var(--app-border-default) !important;
+}
+
+body[data-theme-mode='dark'] #preset-panel .pp-manager-context {
+  background: rgba(205, 217, 229, 0.06) !important;
+  color: var(--app-text-secondary) !important;
+  border-color: var(--app-border-default) !important;
+}
+
+body[data-theme-mode='dark'] #preset-panel .pp-manager-context strong {
+  color: var(--app-text-primary) !important;
+}
+
+body[data-theme-mode='dark'] #preset-panel .pp-enabled-chip {
+  background: rgba(205, 217, 229, 0.08) !important;
+  border-color: var(--app-border-default) !important;
+}
+
+body[data-theme-mode='dark'] #preset-panel .pp-enabled-chip.pp-readonly {
+  background: rgba(205, 217, 229, 0.05) !important;
+  border-color: var(--app-border-default) !important;
+}
+
+body[data-theme-mode='dark'] #preset-panel .pp-enabled-text {
+  color: var(--app-text-primary) !important;
+}
+
+body[data-theme-mode='dark'] #preset-panel .pp-manager-label {
+  color: var(--app-text-secondary) !important;
+}
+
+body[data-theme-mode='dark'] #preset-panel .pp-manager-select {
+  background: rgba(205, 217, 229, 0.06) !important;
+  color: var(--app-text-primary) !important;
+  border-color: var(--app-border-default) !important;
+}
+
+/* ── 3. Regex / Script / Extension panels (inline styles in JS) ── */
+
+body[data-theme-mode='dark'] .regex-tab {
+  color: var(--app-text-secondary) !important;
+}
+
+body[data-theme-mode='dark'] .regex-tab[style*='background'] {
+  background: rgba(205, 217, 229, 0.08) !important;
+  color: var(--app-text-primary) !important;
+}
+
+body[data-theme-mode='dark'] .script-tab {
+  color: var(--app-text-secondary) !important;
+}
+
+body[data-theme-mode='dark'] .script-tab[style*='background'] {
+  background: rgba(205, 217, 229, 0.08) !important;
+  color: var(--app-text-primary) !important;
+}
+
+body[data-theme-mode='dark'] .chevron {
+  color: var(--app-text-secondary) !important;
+}
+
+body[data-theme-mode='dark'] #re-global-save,
+body[data-theme-mode='dark'] #re-local-save {
+  color: #fff !important;
+}
+
+/* ── 4. Plugin panel ─────────────────────────────────────── */
+
+body[data-theme-mode='dark'] #plugin-android-tip {
+  background: rgba(251, 191, 36, 0.14) !important;
+  color: #fcd34d !important;
+  border-color: rgba(251, 191, 36, 0.28) !important;
+}
+
+/* ── 5. Avatar preview (user-panel, persona-panel) ───────── */
+
+body[data-theme-mode='dark'] #edit-avatar-preview {
+  background-color: rgba(205, 217, 229, 0.08) !important;
+  border-color: var(--app-border-default) !important;
+}
+
+/* ── 6. World Panel ─────────────────────────────────────── */
+
+body[data-theme-mode='dark'] #world-global-settings {
+  background: rgba(205, 217, 229, 0.05) !important;
+  border-color: var(--app-border-default) !important;
+}
+
+body[data-theme-mode='dark'] #world-global-settings,
+body[data-theme-mode='dark'] #world-global-settings-header,
+body[data-theme-mode='dark'] #world-global-settings-toggle {
+  color: var(--app-text-primary) !important;
+}
+
+body[data-theme-mode='dark'] #world-library-toggle {
+  background: rgba(205, 217, 229, 0.06) !important;
+  color: var(--app-text-primary) !important;
+  border-color: var(--app-border-default) !important;
+}
+
+body[data-theme-mode='dark'] #world-new {
+  color: #fff !important;
+}
+
+/* ── 7. Chat Settings ────────────────────────────────────── */
+
+body[data-theme-mode='dark'] #cancel-setting-btn {
+  background: rgba(205, 217, 229, 0.08) !important;
+  color: var(--app-text-primary) !important;
+  border-color: var(--app-border-default) !important;
+}
+
+body[data-theme-mode='dark'] #random-setting-btn {
+  background: rgba(121, 192, 255, 0.18) !important;
+  color: var(--app-text-primary) !important;
+  border-color: var(--app-border-default) !important;
+}
+
+body[data-theme-mode='dark'] #save-setting-btn {
+  color: #fff !important;
+}
+
+body[data-theme-mode='dark'] #wallpaper-zoom,
+body[data-theme-mode='dark'] #wallpaper-rotate {
+  accent-color: var(--app-accent-primary) !important;
+}
+
+/* ── 8. Memory Table Row Summary (inline color:#0f172a) ── */
+
+body[data-theme-mode='dark'] .memory-table-row-summary {
+  color: var(--app-text-primary) !important;
+}
+
+body[data-theme-mode='dark'] .memory-table-row-item {
+  background: rgba(205, 217, 229, 0.05) !important;
+  border-color: var(--app-border-default) !important;
+}
+
+/* ── 9. Contact Settings / Group Settings ────────────────── */
+
+body[data-theme-mode='dark'] #contact-bridge-block-title {
+  color: var(--app-text-primary) !important;
+}
+
+body[data-theme-mode='dark'] #group-name-hint {
+  color: var(--app-text-secondary) !important;
+}
+
+body[data-theme-mode='dark'] :is(
+  #group-create-panel,
+  #group-settings-panel,
+  #group-add-panel,
+  #contact-settings-panel
+) :is(
+  [style*='color:#0f172a'],
+  [style*='color: #0f172a'],
+  [style*='color:#334155'],
+  [style*='color: #334155']
+) {
+  color: var(--app-text-primary) !important;
+}
+
+body[data-theme-mode='dark'] :is(
+  #group-create-panel,
+  #group-settings-panel,
+  #group-add-panel,
+  #contact-settings-panel
+) :is(
+  [style*='color:#64748b'],
+  [style*='color: #64748b']
+) {
+  color: var(--app-text-secondary) !important;
+}
+
+body[data-theme-mode='dark'] :is(
+  #group-create-panel,
+  #group-settings-panel,
+  #group-add-panel,
+  #contact-settings-panel
+) :is(
+  [style*='background:#f8fafc'],
+  [style*='background: #f8fafc'],
+  [style*='background:#f1f5f9'],
+  [style*='background: #f1f5f9'],
+  [style*='background-color:#f8fafc'],
+  [style*='background-color: #f8fafc']
+) {
+  background: rgba(205, 217, 229, 0.04) !important;
+}
+
+body[data-theme-mode='dark'] :is(
+  #group-create-panel,
+  #group-settings-panel,
+  #group-add-panel,
+  #contact-settings-panel
+) :is(
+  [style*='background:#fef3c7'],
+  [style*='background: #fef3c7']
+) {
+  background: rgba(251, 191, 36, 0.14) !important;
+  color: #fcd34d !important;
+}
+
+body[data-theme-mode='dark'] :is(#group-settings-members, #group-contacts, #group-add-list) > div,
+body[data-theme-mode='dark'] :is(#group-settings-members, #group-contacts, #group-add-list) > button {
+  color: var(--app-text-primary) !important;
+}
+
+body[data-theme-mode='dark'] :is(#group-settings-members, #group-contacts, #group-add-list) > div div,
+body[data-theme-mode='dark'] :is(#group-settings-members, #group-contacts, #group-add-list) > button div {
+  color: var(--app-text-primary) !important;
+}
+
+/* Memory share source row */
+body[data-theme-mode='dark'] .memory-share-row :is(
+  [style*='background:#f8fafc'],
+  [style*='background: #f8fafc']
+) {
+  background: rgba(205, 217, 229, 0.04) !important;
+}
+
+/* ── 10. World Editor form area (screenshots 67271/67272) ── */
+
+body[data-theme-mode='dark'] .world-editor-popup {
+  background: linear-gradient(180deg, rgba(26, 30, 36, 0.98) 0%, rgba(34, 39, 46, 0.98) 100%) !important;
+  color: var(--app-text-primary) !important;
+  border-color: var(--app-border-subtle) !important;
+}
+
+body[data-theme-mode='dark'] .world-entry-card {
+  background: rgba(205, 217, 229, 0.05) !important;
+  border-color: var(--app-border-default) !important;
+}
+
+body[data-theme-mode='dark'] .world-entry-item {
+  border-color: var(--app-border-default) !important;
+}
+
+body[data-theme-mode='dark'] .world-entry-item.active {
+  background: rgba(205, 217, 229, 0.06) !important;
+}
+
+body[data-theme-mode='dark'] .world-entry-item.is-disabled {
+  background: rgba(139, 152, 167, 0.06) !important;
+}
+
+body[data-theme-mode='dark'] .world-entry-advanced {
+  background: rgba(205, 217, 229, 0.04) !important;
+  border-color: var(--app-border-default) !important;
+}
+
+body[data-theme-mode='dark'] .world-entry-advanced > summary {
+  color: var(--app-text-primary) !important;
+}
+
+body[data-theme-mode='dark'] .world-entry-card-title {
+  color: var(--app-text-primary) !important;
+}
+
+body[data-theme-mode='dark'] .world-entry-actions button {
+  background: rgba(205, 217, 229, 0.06) !important;
+  color: var(--app-text-primary) !important;
+  border-color: var(--app-border-default) !important;
+}
+
+body[data-theme-mode='dark'] .world-entry-inline-check {
+  color: var(--app-text-primary) !important;
+}
+
+body[data-theme-mode='dark'] .world-entry-toggle-grid label {
+  color: var(--app-text-primary) !important;
+}
+
+body[data-theme-mode='dark'] :is(
+  .world-entry-activation-title,
+  .world-entry-activation-value,
+  .world-block-settings-title,
+  .world-cond-overview-title
+) {
+  color: var(--app-text-primary) !important;
+}
+
+body[data-theme-mode='dark'] :is(
+  .world-cond-summary-var,
+  .world-cond-overview-var-name,
+  .world-node-summary-main,
+  .world-node-text-input,
+  .world-node-inspector-title,
+  .world-block-manage-modal-title,
+  .world-block-manage-modal-page,
+  .world-ai-title,
+  .world-ai-btn,
+  .world-var-browser-title,
+  .world-var-browser-item-name,
+  .world-var-browser-detail-name,
+  .world-var-title,
+  .world-manage-title,
+  .world-manage-item-title,
+  .world-manage-btn
+) {
+  color: var(--app-text-primary) !important;
+}
+
+body[data-theme-mode='dark'] .world-app-select-btn {
+  background: rgba(205, 217, 229, 0.06) !important;
+}
+
+body[data-theme-mode='dark'] :is(
+  .world-editor-actions button,
+  .world-ai-btn,
+  .world-manage-btn
+) {
+  background: rgba(205, 217, 229, 0.06) !important;
+  border-color: var(--app-border-default) !important;
+}
+
+body[data-theme-mode='dark'] .world-block-manage-modal {
+  background: linear-gradient(180deg, rgba(26, 30, 36, 0.98) 0%, rgba(34, 39, 46, 0.98) 100%) !important;
+  color: var(--app-text-primary) !important;
+  border-color: var(--app-border-subtle) !important;
+  box-shadow: var(--app-shadow-md) !important;
+}
+
+body[data-theme-mode='dark'] :is(
+  .world-cond-summary-group-reason,
+  .world-cond-summary-logic,
+  .world-block-manage-modal-pill.subtle
+) {
+  background: rgba(205, 217, 229, 0.06) !important;
+  color: var(--app-text-secondary) !important;
+}
+
+body[data-theme-mode='dark'] :is(
+  .world-cond-overview-pill.warn,
+  .world-block-manage-modal-pill.warn
+) {
+  background: rgba(251, 191, 36, 0.14) !important;
+  color: #fcd34d !important;
+}
+
+body[data-theme-mode='dark'] .world-manage-btn-group-divider {
+  background: var(--app-border-default) !important;
+}
+
+body[data-theme-mode='dark'] .world-var-browser-item {
+  background: rgba(205, 217, 229, 0.05) !important;
+  border-color: var(--app-border-default) !important;
+}
+
+body[data-theme-mode='dark'] :is(
+  .world-entry-item input,
+  .world-entry-item textarea,
+  .world-entry-item select,
+  .world-entry-card input,
+  .world-entry-card textarea,
+  .world-entry-card select,
+  .world-entry-advanced input,
+  .world-entry-advanced textarea,
+  .world-entry-advanced select,
+  .world-editor-popup input,
+  .world-editor-popup textarea,
+  .world-editor-popup select
+) {
+  background: rgba(205, 217, 229, 0.06) !important;
+  color: var(--app-text-primary) !important;
+  border-color: var(--app-border-default) !important;
+}
+
+body[data-theme-mode='dark'] :is(
+  .world-entry-item,
+  .world-entry-card,
+  .world-entry-advanced,
+  .world-editor-popup
+) :is(input, textarea, select)::placeholder {
+  color: var(--app-text-muted) !important;
+}
+
+/* ── 11. Secondary text color (#334155) in all contexts ── */
+
+body[data-theme-mode='dark'] :is(
+  .world-entry-item,
+  .world-entry-card,
+  .world-entry-advanced,
+  .world-editor-popup,
+  .world-block-manage-modal,
+  .world-ai-modal
+) :is(
+  [style*='color:#334155'],
+  [style*='color: #334155']
+) {
+  color: var(--app-text-secondary) !important;
+}
+
+/* ── 12. Memory Template Editor (low-contrast-text x11) ── */
+
+body[data-theme-mode='dark'] .memory-template-editor-panel :is(summary, div, label) {
+  color: var(--app-text-primary) !important;
+}
+
+body[data-theme-mode='dark'] .memory-template-editor-panel :is(small, .memory-template-hint) {
+  color: var(--app-text-secondary) !important;
+}
+
+body[data-theme-mode='dark'] .memory-template-editor-panel :is(input, textarea, select) {
+  background: rgba(205, 217, 229, 0.06) !important;
+  color: var(--app-text-primary) !important;
+  border-color: var(--app-border-default) !important;
+}
+
+/* ── 13. Moment Summary Panel ────────────────────────────── */
+
+body[data-theme-mode='dark'] .moment-summary-panel-shell div {
+  color: var(--app-text-primary) !important;
+}
+
+/* ── 14. Raw Reply / Prompt Preview meta ─────────────────── */
+
+body[data-theme-mode='dark'] :is(#raw-reply-meta, #prompt-preview-meta, #world-debug-locator-meta) {
+  color: var(--app-text-secondary) !important;
+}
+
+body[data-theme-mode='dark'] #world-debug-locator-list > button div,
+body[data-theme-mode='dark'] #world-debug-locator-list > div div {
+  color: var(--app-text-primary) !important;
+}
+
+body[data-theme-mode='dark'] #world-debug-locator-list :is(
+  [style*='color:#475569'],
+  [style*='color: #475569'],
+  [style*='color:#64748b'],
+  [style*='color: #64748b']
+) {
+  color: var(--app-text-secondary) !important;
+}
+
+/* ── 15. Session Panel — friend list items (screenshot 67259) ── */
+
+body[data-theme-mode='dark'] .session-panel :is(
+  [style*='background:#fff'],
+  [style*='background: #fff'],
+  [style*='background:white'],
+  [style*='background: white'],
+  [style*='background-color:#fff'],
+  [style*='background-color: #fff']
+) {
+  background: rgba(205, 217, 229, 0.06) !important;
+}
+
+body[data-theme-mode='dark'] .session-panel :is(
+  [style*='color:#0f172a'],
+  [style*='color: #0f172a']
+) {
+  color: var(--app-text-primary) !important;
+}
+
+body[data-theme-mode='dark'] .session-panel :is(
+  [style*='color:#64748b'],
+  [style*='color: #64748b'],
+  [style*='color:#334155'],
+  [style*='color: #334155']
+) {
+  color: var(--app-text-secondary) !important;
+}
+
+/* ── 16. Persona Panel — header/current section (screenshot 67261) ── */
+
+body[data-theme-mode='dark'] :is(.persona-panel-shell, .user-panel-shell) :is(
+  [style*='background:#fff'],
+  [style*='background: #fff'],
+  [style*='background:white'],
+  [style*='background: white'],
+  [style*='background-color:#fff'],
+  [style*='background-color: #fff'],
+  [style*='background:#f8fafc'],
+  [style*='background: #f8fafc']
+) {
+  background: rgba(205, 217, 229, 0.06) !important;
+}
+
+body[data-theme-mode='dark'] :is(.persona-panel-shell, .user-panel-shell) :is(
+  [style*='color:#0f172a'],
+  [style*='color: #0f172a'],
+  [style*='color:#334155'],
+  [style*='color: #334155']
+) {
+  color: var(--app-text-primary) !important;
+}
+
+body[data-theme-mode='dark'] :is(.persona-panel-shell, .user-panel-shell) :is(
+  [style*='color:#64748b'],
+  [style*='color: #64748b']
+) {
+  color: var(--app-text-secondary) !important;
+}
+
+/* ── 17. Generic: catch-all for hardcoded light colors in any dark-mode panel ── */
+
+body[data-theme-mode='dark'] :is(
+  #general-settings-panel,
+  #preset-panel,
+  #config-panel,
+  #extensions-panel,
+  .regex-panel-shell,
+  .script-panel-shell,
+  .plugin-panel-shell,
+  .memory-template-panel-shell,
+  .memory-template-editor-panel,
+  .chat-setting-popup
+) :is(
+  [style*='color:#0f172a'],
+  [style*='color: #0f172a']
+) {
+  color: var(--app-text-primary) !important;
+}
+
+body[data-theme-mode='dark'] :is(
+  #general-settings-panel,
+  #preset-panel,
+  #config-panel,
+  #extensions-panel,
+  .regex-panel-shell,
+  .script-panel-shell,
+  .plugin-panel-shell,
+  .memory-template-panel-shell,
+  .memory-template-editor-panel,
+  .chat-setting-popup
+) :is(
+  [style*='color:#334155'],
+  [style*='color: #334155'],
+  [style*='color:#64748b'],
+  [style*='color: #64748b']
+) {
+  color: var(--app-text-secondary) !important;
+}
+
+body[data-theme-mode='dark'] :is(
+  #general-settings-panel,
+  #preset-panel,
+  #config-panel,
+  #extensions-panel,
+  .regex-panel-shell,
+  .script-panel-shell,
+  .plugin-panel-shell,
+  .memory-template-panel-shell,
+  .memory-template-editor-panel,
+  .chat-setting-popup
+) :is(
+  [style*='background:#fff'],
+  [style*='background: #fff'],
+  [style*='background:white'],
+  [style*='background: white'],
+  [style*='background-color:#fff'],
+  [style*='background-color: #fff'],
+  [style*='background-color:white'],
+  [style*='background-color: white']
+) {
+  background: rgba(205, 217, 229, 0.06) !important;
+}
+
+body[data-theme-mode='dark'] :is(
+  #general-settings-panel,
+  #preset-panel,
+  #config-panel,
+  #extensions-panel,
+  .regex-panel-shell,
+  .script-panel-shell,
+  .plugin-panel-shell,
+  .memory-template-panel-shell,
+  .memory-template-editor-panel,
+  .chat-setting-popup
+) :is(
+  [style*='background:#f8fafc'],
+  [style*='background: #f8fafc'],
+  [style*='background:#f1f5f9'],
+  [style*='background: #f1f5f9'],
+  [style*='background:#f5f5f5'],
+  [style*='background: #f5f5f5'],
+  [style*='background-color:#f5f5f5'],
+  [style*='background-color: #f5f5f5'],
+  [style*='background:#eee'],
+  [style*='background: #eee'],
+  [style*='background-color:#eee'],
+  [style*='background-color: #eee']
+) {
+  background: rgba(205, 217, 229, 0.04) !important;
+}
+
+body[data-theme-mode='dark'] :is(
+  #general-settings-panel,
+  #preset-panel,
+  #config-panel,
+  #extensions-panel,
+  .regex-panel-shell,
+  .script-panel-shell,
+  .plugin-panel-shell,
+  .memory-template-panel-shell,
+  .memory-template-editor-panel,
+  .chat-setting-popup
+) :is(
+  [style*='background:#fef3c7'],
+  [style*='background: #fef3c7'],
+  [style*='background-color:#fef3c7'],
+  [style*='background-color: #fef3c7']
+) {
+  background: rgba(251, 191, 36, 0.14) !important;
+  color: #fcd34d !important;
+  border-color: rgba(251, 191, 36, 0.28) !important;
+}
+
+body[data-theme-mode='dark'] :is(
+  #general-settings-panel,
+  #preset-panel,
+  #config-panel,
+  #extensions-panel,
+  .regex-panel-shell,
+  .script-panel-shell,
+  .plugin-panel-shell,
+  .memory-template-panel-shell,
+  .memory-template-editor-panel,
+  .chat-setting-popup
+) :is(
+  [style*='border:1px solid #e2e8f0'],
+  [style*='border: 1px solid #e2e8f0'],
+  [style*='border:1px solid #cbd5e1'],
+  [style*='border: 1px solid #cbd5e1']
+) {
+  border-color: var(--app-border-default) !important;
+}
+
+/* ── 18. World entry CSS backgrounds (from main.css hardcoded values) ── */
+
+body[data-theme-mode='dark'] :is(
+  .world-entry-item input[type='text'],
+  .world-entry-item input[type='number'],
+  .world-entry-item textarea,
+  .world-entry-item select
+) {
+  caret-color: var(--app-accent-primary) !important;
+}
+
+body[data-theme-mode='dark'] .world-entry-enable-toggle {
+  background: rgba(139, 152, 167, 0.28) !important;
+  border-color: var(--app-border-default) !important;
+}
+
+/* ── 19. Persona switcher active tab ─────────────────────── */
+
+body[data-theme-mode='dark'] .persona-switcher-tabs button.is-active {
+  background: var(--app-accent-primary) !important;
+  color: #fff !important;
+  border-color: var(--app-accent-primary) !important;
+}
+
+/* ── 20. World flip card back — the root cause of 67271/67272 ── */
+
+body[data-theme-mode='dark'] .world-flip-card .world-flip-card-back {
+  background: linear-gradient(180deg, rgba(30, 35, 42, 0.98) 0%, rgba(26, 30, 36, 0.98) 100%) !important;
+  border-color: var(--app-border-subtle) !important;
+  color: var(--app-text-primary) !important;
+}
+
+body[data-theme-mode='dark'] .world-flip-card-back :is(
+  [style*='color:#0f172a'],
+  [style*='color: #0f172a']
+) {
+  color: var(--app-text-primary) !important;
+}
+
+body[data-theme-mode='dark'] .world-flip-card-back :is(
+  [style*='color:#334155'],
+  [style*='color: #334155'],
+  [style*='color:#475569'],
+  [style*='color: #475569'],
+  [style*='color:#64748b'],
+  [style*='color: #64748b']
+) {
+  color: var(--app-text-secondary) !important;
+}
+
+body[data-theme-mode='dark'] .world-flip-card-back :is(
+  [style*='background:#fff'],
+  [style*='background: #fff'],
+  [style*='background:#ffffff'],
+  [style*='background: #ffffff'],
+  [style*='background:white'],
+  [style*='background: white']
+) {
+  background: rgba(205, 217, 229, 0.06) !important;
+}
+
+body[data-theme-mode='dark'] .world-flip-card-back :is(
+  [style*='background:#f8fafc'],
+  [style*='background: #f8fafc'],
+  [style*='background:#f1f5f9'],
+  [style*='background: #f1f5f9'],
+  [style*='background:#f8fbff'],
+  [style*='background: #f8fbff'],
+  [style*='background:linear-gradient(180deg,#f8fafc'],
+  [style*='background: linear-gradient(180deg, #f8fafc'],
+  [style*='background:linear-gradient(180deg,#f8fbff'],
+  [style*='background: linear-gradient(180deg, #f8fbff']
+) {
+  background: rgba(205, 217, 229, 0.04) !important;
+}
+
+body[data-theme-mode='dark'] .world-flip-card-back :is(
+  [style*='border:1px solid #e2e8f0'],
+  [style*='border: 1px solid #e2e8f0'],
+  [style*='border:1px solid #eef2f7'],
+  [style*='border: 1px solid #eef2f7'],
+  [style*='border:1px solid #cbd5e1'],
+  [style*='border: 1px solid #cbd5e1'],
+  [style*='border:1px solid #dbe7ff'],
+  [style*='border: 1px solid #dbe7ff'],
+  [style*='border-bottom:1px solid #eef2f7'],
+  [style*='border-bottom: 1px solid #eef2f7']
+) {
+  border-color: var(--app-border-default) !important;
+}
+
+body[data-theme-mode='dark'] .world-flip-card-back :is(
+  [style*='background:#fef3c7'],
+  [style*='background: #fef3c7']
+) {
+  background: rgba(251, 191, 36, 0.14) !important;
+  color: #fcd34d !important;
+}
+
+body[data-theme-mode='dark'] .world-flip-card-back input,
+body[data-theme-mode='dark'] .world-flip-card-back textarea,
+body[data-theme-mode='dark'] .world-flip-card-back select {
+  background: rgba(205, 217, 229, 0.06) !important;
+  color: var(--app-text-primary) !important;
+  border-color: var(--app-border-default) !important;
+}
+
+body[data-theme-mode='dark'] .world-flip-card-back :is(input, textarea, select)::placeholder {
+  color: var(--app-text-muted) !important;
+}
+
+body[data-theme-mode='dark'] .world-flip-card-back label {
+  color: var(--app-text-primary) !important;
+}
+
+body[data-theme-mode='dark'] .world-flip-card-back button {
+  background: rgba(205, 217, 229, 0.06) !important;
+  color: var(--app-text-primary) !important;
+  border-color: var(--app-border-default) !important;
+}
+
+body[data-theme-mode='dark'] .world-flip-card-back .world-block-back-nav-btn.primary,
+body[data-theme-mode='dark'] .world-flip-card-back .world-block-back-save-btn {
+  background: var(--app-accent-primary) !important;
+  color: #fff !important;
+  border-color: var(--app-accent-primary) !important;
+}
+
+/* ── 21. Preset Panel — 推理请求 reasoning card (inline styles) ── */
+
+body[data-theme-mode='dark'] #preset-panel :is(
+  [style*='background:linear-gradient(180deg,#f8fbff'],
+  [style*='background: linear-gradient(180deg,#f8fbff'],
+  [style*='background:linear-gradient(180deg, #f8fbff'],
+  [style*='background: linear-gradient(180deg, #f8fbff']
+) {
+  background: rgba(121, 192, 255, 0.08) !important;
+  border-color: rgba(121, 192, 255, 0.22) !important;
+}
+
+body[data-theme-mode='dark'] #preset-panel :is(
+  [style*='border:1px solid #dbe7ff'],
+  [style*='border: 1px solid #dbe7ff']
+) {
+  border-color: rgba(121, 192, 255, 0.22) !important;
+}
+
+body[data-theme-mode='dark'] #preset-panel :is(
+  [style*='color:#0f172a'],
+  [style*='color: #0f172a']
+) {
+  color: var(--app-text-primary) !important;
+}
+
+body[data-theme-mode='dark'] #preset-panel :is(
+  [style*='color:#64748b'],
+  [style*='color: #64748b']
+) {
+  color: var(--app-text-secondary) !important;
+}
+
+/* ── 22. Universal catch-all for .app-themed-panel inline colors ── */
+
+body[data-theme-mode='dark'] .app-themed-panel :is(
+  [style*='color:#0f172a'],
+  [style*='color: #0f172a']
+) {
+  color: var(--app-text-primary) !important;
+}
+
+body[data-theme-mode='dark'] .app-themed-panel :is(
+  [style*='color:#334155'],
+  [style*='color: #334155']
+) {
+  color: var(--app-text-secondary) !important;
+}
+
+body[data-theme-mode='dark'] .app-themed-panel :is(
+  [style*='color:#64748b'],
+  [style*='color: #64748b']
+) {
+  color: var(--app-text-secondary) !important;
+}
+
+body[data-theme-mode='dark'] .app-themed-panel :is(
+  [style*='background:#fff;'],
+  [style*='background: #fff;'],
+  [style*='background:#ffffff'],
+  [style*='background: #ffffff'],
+  [style*='background:white'],
+  [style*='background: white'],
+  [style*='background-color:#fff'],
+  [style*='background-color: #fff'],
+  [style*='background-color:white'],
+  [style*='background-color: white']
+) {
+  background: rgba(205, 217, 229, 0.06) !important;
+}
+
+body[data-theme-mode='dark'] .app-themed-panel :is(
+  [style*='background:#f8fafc'],
+  [style*='background: #f8fafc'],
+  [style*='background:#f1f5f9'],
+  [style*='background: #f1f5f9'],
+  [style*='background:#f5f5f5'],
+  [style*='background: #f5f5f5'],
+  [style*='background:#eee'],
+  [style*='background: #eee'],
+  [style*='background-color:#f8fafc'],
+  [style*='background-color: #f8fafc'],
+  [style*='background-color:#f5f5f5'],
+  [style*='background-color: #f5f5f5'],
+  [style*='background-color:#eee'],
+  [style*='background-color: #eee']
+) {
+  background: rgba(205, 217, 229, 0.04) !important;
+}
+
+body[data-theme-mode='dark'] .app-themed-panel :is(
+  [style*='background:#fef3c7'],
+  [style*='background: #fef3c7'],
+  [style*='background-color:#fef3c7'],
+  [style*='background-color: #fef3c7']
+) {
+  background: rgba(251, 191, 36, 0.14) !important;
+  color: #fcd34d !important;
+  border-color: rgba(251, 191, 36, 0.28) !important;
+}
+
+body[data-theme-mode='dark'] .app-themed-panel :is(
+  [style*='border:1px solid #e2e8f0'],
+  [style*='border: 1px solid #e2e8f0'],
+  [style*='border:1px solid #cbd5e1'],
+  [style*='border: 1px solid #cbd5e1'],
+  [style*='border-bottom:1px solid #e2e8f0'],
+  [style*='border-bottom: 1px solid #e2e8f0']
+) {
+  border-color: var(--app-border-default) !important;
+}
