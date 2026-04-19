@@ -1487,6 +1487,7 @@ export class ContactSettingsPanel {
         this.memoryShareRows.innerHTML = '';
         if (!context.entries.length) {
             const empty = document.createElement('div');
+            empty.className = 'memory-share-empty';
             empty.style.cssText = 'padding:10px; border:1px dashed #e2e8f0; border-radius:12px; color:#94a3b8; font-size:12px;';
             empty.textContent = '当前来源没有可配置的跨模式记忆表格。';
             this.memoryShareRows.appendChild(empty);
@@ -1494,17 +1495,18 @@ export class ContactSettingsPanel {
         }
         context.entries.forEach((entry) => {
             const row = document.createElement('div');
-            row.style.cssText = 'padding:10px; border:1px solid #e2e8f0; border-radius:12px; background:#fff;';
+            row.className = 'memory-share-row';
+            row.style.cssText = 'padding:10px; border:1px solid var(--app-border-default); border-radius:12px; background:var(--app-surface-card);';
             row.innerHTML = `
                 <label style="display:flex; align-items:center; justify-content:space-between; gap:10px; cursor:pointer;">
-                    <span style="font-weight:700; color:#0f172a;">${entry.shortLabel}</span>
+                    <span class="memory-share-row-title" style="font-weight:700; color:var(--app-text-primary);">${entry.shortLabel}</span>
                     <input type="checkbox" data-role="enabled" style="width:18px; height:18px;">
                 </label>
-                <div style="color:#64748b; font-size:12px; margin-top:6px;">当前可注入 ${entry.rowCount} 条；0 代表全部注入。</div>
-                <label style="display:flex; align-items:center; justify-content:space-between; gap:8px; font-size:12px; color:#475569; margin-top:10px;">
-                    <span>注入条数</span>
+                <div class="memory-share-row-desc" style="color:var(--app-text-secondary); font-size:12px; margin-top:6px;">当前可注入 ${entry.rowCount} 条；0 代表全部注入。</div>
+                <label class="memory-share-row-limit" style="display:flex; align-items:center; justify-content:space-between; gap:8px; font-size:12px; color:var(--app-text-secondary); margin-top:10px;">
+                    <span class="memory-share-row-limit-label">注入条数</span>
                     <input type="number" data-role="limit" min="0" step="1"
-                           style="width:88px; padding:4px 6px; border:1px solid #e2e8f0; border-radius:8px; font-size:12px; text-align:right;">
+                           style="width:88px; padding:4px 6px; border:1px solid var(--app-border-default); border-radius:8px; font-size:12px; text-align:right; background:var(--app-surface-input); color:var(--app-text-primary);">
                 </label>
             `;
             const toggle = row.querySelector('[data-role="enabled"]');

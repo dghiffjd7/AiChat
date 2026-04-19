@@ -257,10 +257,10 @@ export class VariablePanel {
             </div>
 
             <div style="padding:10px 12px; border-bottom:1px solid rgba(0,0,0,0.06);">
-                <div style="display:flex; align-items:center; gap:8px; padding:10px 12px; border:1px solid rgba(0,0,0,0.10); border-radius:14px; background:#fff;">
-                    <span style="color:#94a3b8;">🔍</span>
+                <div class="variable-panel-search-box" style="display:flex; align-items:center; gap:8px; padding:10px 12px; border:1px solid var(--app-border-default); border-radius:14px; background:var(--app-surface-card);">
+                    <span class="variable-panel-search-icon" style="color:var(--app-text-muted);">🔍</span>
                     <input id="var-search" type="text" placeholder="搜索变量名..." style="flex:1; border:none; outline:none; font-size:14px; background:transparent;">
-                    <button id="var-clear-search" type="button" aria-label="清除搜索" style="display:none; width:28px; height:28px; border:none; border-radius:8px; background:#f1f5f9; cursor:pointer; font-size:14px;">×</button>
+                    <button id="var-clear-search" type="button" aria-label="清除搜索" style="display:none; width:28px; height:28px; border:none; border-radius:8px; background:var(--app-surface-panel); cursor:pointer; font-size:14px; color:var(--app-text-primary);">×</button>
                 </div>
                 <div style="margin-top:10px; display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
                     <button id="var-add" style="border:none; background:#2563eb; color:#fff; border-radius:10px; padding:8px 14px; font-size:13px; cursor:pointer; display:flex; align-items:center; gap:6px;">
@@ -270,8 +270,8 @@ export class VariablePanel {
                     <button id="var-rules" style="border:1px solid #e2e8f0; background:#fff; border-radius:10px; padding:8px 12px; font-size:13px; cursor:pointer;">规则</button>
                     <button id="var-more" style="border:1px solid #e2e8f0; background:#fff; border-radius:10px; padding:8px 12px; font-size:13px; cursor:pointer;" title="更多操作">⋮ 更多</button>
                 </div>
-                <div style="margin-top:10px; padding:8px 10px; background:#f8fafc; border-radius:8px; font-size:11px; color:#64748b;">
-                    💡 提示词中使用 <code style="background:#e2e8f0; padding:2px 6px; border-radius:4px;">{{getvar::name}}</code> 引用变量
+                <div class="variable-panel-usage-hint" style="margin-top:10px; padding:8px 10px; background:var(--app-surface-panel); border-radius:8px; font-size:11px; color:var(--app-text-secondary);">
+                    💡 提示词中使用 <code class="variable-panel-inline-code" style="padding:2px 6px; border-radius:4px;">{{getvar::name}}</code> 引用变量
                 </div>
                 <div style="margin-top:10px; display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
                     <div style="font-size:12px; color:#64748b;">视图</div>
@@ -1849,7 +1849,7 @@ export class VariablePanel {
                     <button class="var-del" style="border:1px solid rgba(239,68,68,0.35); background:#fff; color:#b91c1c; border-radius:10px; padding:6px 10px; cursor:pointer;">删除</button>
                 </div>
                 <div style="margin-top:8px; font-size:12px; color:#475569;">
-                    <code>{{getvar::${k}}}</code>
+                    <code class="variable-panel-inline-code" style="padding:2px 6px; border-radius:4px;">{{getvar::${k}}}</code>
                 </div>
             `;
             row.querySelector('.var-schema')?.addEventListener('click', () => this.promptSchema(k));

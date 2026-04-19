@@ -1650,6 +1650,7 @@ export class MemoryTemplatePanel {
     const template = this.templateEditorData;
     const meta = template.meta || {};
     const metaBlock = document.createElement('div');
+    metaBlock.className = 'memory-template-meta-card';
     metaBlock.style.cssText = 'border:1px solid #e2e8f0; border-radius:12px; padding:12px; margin-bottom:12px; background:#fff;';
     metaBlock.innerHTML = `
       <div style="font-weight:700; color:#0f172a; margin-bottom:8px;">模板信息</div>
@@ -1683,6 +1684,7 @@ export class MemoryTemplatePanel {
     const tables = Array.isArray(template.tables) ? template.tables : [];
     if (!tables.length) {
       const empty = document.createElement('div');
+      empty.className = 'memory-template-empty-hint';
       empty.style.cssText = 'font-size:12px; color:#94a3b8; padding:8px;';
       empty.textContent = '暂无表格，请点击“新增表”。';
       this.templateEditorBody.appendChild(empty);
@@ -1692,9 +1694,11 @@ export class MemoryTemplatePanel {
     tables.forEach((table, idx) => {
       ensureTableConfigDefaults(table);
       const details = document.createElement('details');
+      details.className = 'memory-template-table-card';
       details.open = true;
       details.style.cssText = 'border:1px solid #e2e8f0; border-radius:12px; padding:10px; margin-bottom:12px; background:#fff;';
       const summary = document.createElement('summary');
+      summary.className = 'memory-template-table-summary';
       summary.style.cssText = 'cursor:pointer; font-weight:700; color:#0f172a;';
       summary.textContent = `${table.name || table.id || '未命名表格'} · ${table.scope || 'contact'} · ${getMemoryTableUsageLabel(table.usage)}`;
       details.appendChild(summary);

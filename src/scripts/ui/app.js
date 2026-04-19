@@ -1266,6 +1266,62 @@ const initApp = async () => {
     getSessionId: () => chatStore.getCurrent(),
     getVariableScope: sid => (isSharedVariableSession(sid) ? 'global' : 'session'),
   });
+  const patchDebugUiRegistry = (mutator) => {
+    try {
+      if (!window.appBridge || typeof mutator !== 'function') return;
+      if (!window.appBridge.debugUiRegistry || typeof window.appBridge.debugUiRegistry !== 'object') {
+        window.appBridge.debugUiRegistry = { panels: {}, stores: {}, actions: {} };
+      }
+      const registry = window.appBridge.debugUiRegistry;
+      if (!registry.panels || typeof registry.panels !== 'object') registry.panels = {};
+      if (!registry.stores || typeof registry.stores !== 'object') registry.stores = {};
+      if (!registry.actions || typeof registry.actions !== 'object') registry.actions = {};
+      mutator(registry);
+    } catch {}
+  };
+  try {
+    patchDebugUiRegistry((registry) => {
+      Object.assign(registry, {
+        panels: {
+          configPanel,
+          generalSettingsPanel,
+          presetPanel,
+          regexPanel,
+          pluginPanel,
+          memoryTemplatePanel,
+          worldPanel,
+          scriptPanel,
+          sessionPanel,
+          regexSessionPanel,
+          contactSettingsPanel,
+          groupCreatePanel,
+          groupSettingsPanel,
+          groupPanel,
+          personaPanel,
+          userPanel,
+          variablePanel,
+          extensionsPanel,
+          stickerPicker,
+        },
+        stores: {
+          chatStore,
+          contactsStore,
+          memoryTableStore,
+          memoryTemplateStore,
+          personaStore,
+          userStore,
+          groupStore,
+          rpSessionStore,
+          momentSummaryStore,
+          pluginStore,
+          scriptStore,
+        },
+        actions: {
+          ...(registry.actions || {}),
+        },
+      });
+    });
+  } catch {}
 
   const getContactCountN = () => {
     try {
@@ -1811,6 +1867,9 @@ ${listPart || '-（无）'}
   const momentSummaryPanel = new MomentSummaryPanel({
     store: momentSummaryStore,
     onRunCompaction: opts => requestMomentSummaryCompaction(opts),
+  });
+  patchDebugUiRegistry((registry) => {
+    registry.panels.momentSummaryPanel = momentSummaryPanel;
   });
 
   const formatTime = ts => {
@@ -10011,6 +10070,9 @@ Phase G（Frame 36）：循环衔接
     uiLog('switchPage', { activePage });
     scheduleModeSwitchSync();
   };
+  patchDebugUiRegistry((registry) => {
+    registry.actions.switchPage = switchPage;
+  });
 
   const readCssVarPx = (name, fallback) => {
     try {
@@ -10256,6 +10318,10 @@ Phase G（Frame 36）：循环衔接
 
     return { show, hide };
   })();
+  patchDebugUiRegistry((registry) => {
+    registry.actions.showRawReplyModal = (text = '', meta = '') => rawReplyModal.show(text, meta);
+    registry.actions.hideRawReplyModal = () => rawReplyModal.hide();
+  });
 
   const showMomentRawReply = () => {
     const raw = String(lastMomentRawReply || '').trim();
@@ -10394,6 +10460,10 @@ Phase G（Frame 36）：循环衔接
 
     return { show, hide };
   })();
+  patchDebugUiRegistry((registry) => {
+    registry.actions.showPromptPreviewModal = (text = '', meta = '', options = {}) => promptPreviewModal.show(text, meta, options);
+    registry.actions.hidePromptPreviewModal = () => promptPreviewModal.hide();
+  });
 
   const worldDebugLocatorModal = (() => {
     let overlay = null;
@@ -10512,6 +10582,10 @@ Phase G（Frame 36）：循环衔接
 
     return { show, hide };
   })();
+  patchDebugUiRegistry((registry) => {
+    registry.actions.showWorldDebugLocatorModal = (items = [], options = {}) => worldDebugLocatorModal.show(items, options);
+    registry.actions.hideWorldDebugLocatorModal = () => worldDebugLocatorModal.hide();
+  });
 
   const buildWorldDebugLocatorCandidates = (worldDebug = null) => {
     if (!worldDebug || typeof worldDebug !== 'object') return [];
@@ -10873,6 +10947,9 @@ Phase G（Frame 36）：循环衔接
     if (gd) gd.style.display = 'none';
     pendingFloatMenu?.classList.add('hidden');
   };
+  patchDebugUiRegistry((registry) => {
+    registry.actions.hideMenus = hideMenus;
+  });
 
   const positionSheet = (menuEl, anchorEl, offsetX = 0, offsetY = 0, alignRight = false) => {
     if (!menuEl || !anchorEl) return;
@@ -11563,6 +11640,10 @@ Phase G（Frame 36）：循环衔接
     if (uiStateArmed) saveUiState();
     uiLog('exitChatRoom', { activePage, sessionId: chatStore.getCurrent() });
   };
+  patchDebugUiRegistry((registry) => {
+    registry.actions.enterChatRoom = enterChatRoom;
+    registry.actions.exitChatRoom = exitChatRoom;
+  });
 
   const rpCharacterNameCache = new Map();
   const getRpCharacterName = (persona = null) => {
@@ -18845,6 +18926,10 @@ Phase G（Frame 36）：循环衔接
     chatSettingsOverlay.style.display = 'none';
     chatSettingsModal.style.display = 'none';
   }
+  patchDebugUiRegistry((registry) => {
+    registry.actions.openChatSettings = openChatSettings;
+    registry.actions.closeChatSettings = closeChatSettings;
+  });
 
   function loadChatSettings(sessionId) {
     const raw = chatStore.getSessionSettings(sessionId) || {};

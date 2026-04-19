@@ -3,6 +3,7 @@
  */
 
 import { appSettings } from '../storage/app-settings.js';
+import { safeInvoke } from '../utils/tauri.js';
 
 export class DebugPanel {
     constructor() {
@@ -28,6 +29,7 @@ export class DebugPanel {
         this.promptPreviewBtn = null;
         this.errorLogBtn = null;
         this.heightDiagBtn = null;
+        this.themeAuditBtn = null;
         this.filterInput = null;
         this.filterClearBtn = null;
         this.copyLogBtn = null;
@@ -63,6 +65,22 @@ export class DebugPanel {
         this.errorLogText = null;
         this.errorLogRefresh = null;
         this.errorLogExport = null;
+        this.themeAuditOverlay = null;
+        this.themeAuditPanel = null;
+        this.themeAuditMeta = null;
+        this.themeAuditSummary = null;
+        this.themeAuditList = null;
+        this.themeAuditListTitle = null;
+        this.themeAuditRefresh = null;
+        this.themeAuditBatchBtn = null;
+        this.themeAuditReport = null;
+        this.themeAuditIssues = [];
+        this.themeAuditLastReportText = '';
+        this.themeAuditCopyText = '';
+        this.themeAuditModule = null;
+        this.themeAuditBatchModule = null;
+        this.themeAuditMode = 'single';
+        this.themeAuditBatchResult = null;
         this.debugLogListener = null;
     }
 
@@ -268,6 +286,23 @@ export class DebugPanel {
         heightDiagBtn.onclick = () => this.toggleHeightDiagnosticsFilter();
         this.heightDiagBtn = heightDiagBtn;
         this.controls.appendChild(heightDiagBtn);
+
+        const themeAuditBtn = document.createElement('button');
+        themeAuditBtn.type = 'button';
+        themeAuditBtn.textContent = '主题审计';
+        themeAuditBtn.style.cssText = `
+            padding: 2px 6px;
+            background: rgba(0, 0, 0, 0.8);
+            color: #00ff00;
+            border: 1px solid #00ff00;
+            border-radius: 4px;
+            font-size: 10px;
+            font-family: monospace;
+            cursor: pointer;
+        `;
+        themeAuditBtn.onclick = () => this.showThemeAuditViewer();
+        this.themeAuditBtn = themeAuditBtn;
+        this.controls.appendChild(themeAuditBtn);
 
         const filterWrap = document.createElement('div');
         filterWrap.style.cssText = `
@@ -1478,6 +1513,404 @@ export class DebugPanel {
             this.log(`导出失败: ${msg || 'unknown error'}`, 'warn');
             window.toastr?.error?.('导出失败');
         }
+    }
+
+    async getThemeAuditModule() {
+        if (!this.themeAuditModule) {
+            this.themeAuditModule = import('./theme-dark-audit.js');
+        }
+        return this.themeAuditModule;
+    }
+
+    async getThemeBatchAuditModule() {
+        if (!this.themeAuditBatchModule) {
+            this.themeAuditBatchModule = import('./theme-dark-batch-audit.js');
+        }
+        return this.themeAuditBatchModule;
+    }
+
+    ensureThemeAuditViewer() {
+        if (this.themeAuditOverlay) return;
+        const overlay = document.createElement('div');
+        overlay.id = 'debug-theme-audit-overlay';
+        overlay.setAttribute('data-debug-panel-root', 'true');
+        overlay.setAttribute('data-theme-dark-audit-root', 'true');
+        overlay.style.cssText = `
+            display:none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.42);
+            z-index: 22050;
+            padding: calc(10px + env(safe-area-inset-top, 0px)) 10px calc(10px + env(safe-area-inset-bottom, 0px)) 10px;
+            box-sizing: border-box;
+        `;
+        const panel = document.createElement('div');
+        panel.id = 'debug-theme-audit-panel';
+        panel.style.cssText = `
+            width: 100%;
+            height: 100%;
+            background: #0f172a;
+            color: #e2e8f0;
+            border-radius: 14px;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            box-shadow: 0 18px 48px rgba(0, 0, 0, 0.35);
+        `;
+        panel.addEventListener('click', e => e.stopPropagation());
+        panel.innerHTML = `
+            <div style="display:flex; align-items:center; gap:10px; padding:12px; background:#111827; border-bottom:1px solid rgba(148,163,184,0.24); flex-wrap:wrap;">
+                <div style="font-weight:900; color:#f8fafc;">Dark Theme 审计</div>
+                <div id="debug-theme-audit-meta" style="margin-left:auto; font-size:12px; color:#94a3b8; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"></div>
+                <button id="debug-theme-audit-refresh" style="border:1px solid rgba(148,163,184,0.3); background:#1e293b; color:#e2e8f0; border-radius:10px; padding:6px 10px;">刷新</button>
+                <button id="debug-theme-audit-batch" style="border:1px solid rgba(148,163,184,0.3); background:#1e293b; color:inherit; border-radius:10px; padding:6px 10px;">批量</button>
+                <button id="debug-theme-audit-highlight" style="border:1px solid rgba(148,163,184,0.3); background:#1e293b; color:#e2e8f0; border-radius:10px; padding:6px 10px;">高亮</button>
+                <button id="debug-theme-audit-clear" style="border:1px solid rgba(148,163,184,0.3); background:#1e293b; color:#e2e8f0; border-radius:10px; padding:6px 10px;">清除</button>
+                <button id="debug-theme-audit-copy" style="border:1px solid rgba(148,163,184,0.3); background:#1e293b; color:#e2e8f0; border-radius:10px; padding:6px 10px;">复制</button>
+                <button id="debug-theme-audit-export" style="border:1px solid rgba(148,163,184,0.3); background:#1e293b; color:inherit; border-radius:10px; padding:6px 10px;">TXT</button>
+                <button id="debug-theme-audit-close" style="border:1px solid rgba(148,163,184,0.3); background:#1e293b; color:#e2e8f0; border-radius:10px; padding:6px 10px;">关闭</button>
+            </div>
+            <div style="padding:10px 12px; border-bottom:1px solid rgba(148,163,184,0.18); display:flex; flex-direction:column; gap:6px; background:#0b1220;">
+                <div id="debug-theme-audit-summary" style="font-size:12px; line-height:1.5; color:#cbd5e1;"></div>
+                <div style="font-size:11px; color:inherit; opacity:0.72;">刷新会扫当前场景，批量会尝试自动打开已接入的页面与弹窗。源码硬编码请用 npm run audit:theme / npm run audit:theme:update。</div>
+            </div>
+            <div style="flex:1; min-height:0; display:grid; grid-template-columns:minmax(0, 1.1fr) minmax(280px, 0.9fr);">
+                <div style="min-height:0; border-right:1px solid rgba(148,163,184,0.18); display:flex; flex-direction:column;">
+                    <div style="padding:10px 12px; font-size:12px; font-weight:700; color:#e2e8f0; border-bottom:1px solid rgba(148,163,184,0.18);">报告</div>
+                    <textarea id="debug-theme-audit-report" readonly style="
+                        flex:1;
+                        width:100%;
+                        min-height:100%;
+                        resize:none;
+                        border:none;
+                        background:#0b1220;
+                        color:#dbeafe;
+                        padding:12px;
+                        font-size:12px;
+                        line-height:1.45;
+                        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+                        box-sizing:border-box;
+                        outline:none;
+                    "></textarea>
+                </div>
+                <div style="min-height:0; display:flex; flex-direction:column;">
+                    <div id="debug-theme-audit-list-title" style="padding:10px 12px; font-size:12px; font-weight:700; color:#e2e8f0; border-bottom:1px solid rgba(148,163,184,0.18);">问题列表</div>
+                    <div id="debug-theme-audit-list" style="flex:1; min-height:0; overflow:auto; -webkit-overflow-scrolling:touch; padding:10px; display:flex; flex-direction:column; gap:8px; background:#111827;"></div>
+                </div>
+            </div>
+        `;
+        overlay.appendChild(panel);
+        overlay.addEventListener('click', () => this.hideThemeAuditViewer());
+        document.body.appendChild(overlay);
+
+        this.themeAuditOverlay = overlay;
+        this.themeAuditPanel = panel;
+        this.themeAuditMeta = panel.querySelector('#debug-theme-audit-meta');
+        this.themeAuditSummary = panel.querySelector('#debug-theme-audit-summary');
+        this.themeAuditList = panel.querySelector('#debug-theme-audit-list');
+        this.themeAuditListTitle = panel.querySelector('#debug-theme-audit-list-title');
+        this.themeAuditRefresh = panel.querySelector('#debug-theme-audit-refresh');
+        this.themeAuditBatchBtn = panel.querySelector('#debug-theme-audit-batch');
+        this.themeAuditReport = panel.querySelector('#debug-theme-audit-report');
+
+        panel.querySelector('#debug-theme-audit-close')?.addEventListener('click', () => this.hideThemeAuditViewer());
+        panel.querySelector('#debug-theme-audit-refresh')?.addEventListener('click', () => this.refreshThemeAuditViewer());
+        panel.querySelector('#debug-theme-audit-batch')?.addEventListener('click', () => this.runBatchThemeAuditViewer());
+        panel.querySelector('#debug-theme-audit-highlight')?.addEventListener('click', () => this.highlightThemeAuditIssues());
+        panel.querySelector('#debug-theme-audit-clear')?.addEventListener('click', () => this.clearThemeAuditHighlights());
+        panel.querySelector('#debug-theme-audit-copy')?.addEventListener('click', () => this.copyThemeAuditReport());
+        panel.querySelector('#debug-theme-audit-export')?.addEventListener('click', () => this.exportThemeAuditReport());
+        this.themeAuditList?.addEventListener('click', (event) => {
+            if (this.themeAuditMode !== 'single') return;
+            const button = event.target?.closest?.('[data-theme-audit-index]');
+            if (!button) return;
+            const index = Number(button.getAttribute('data-theme-audit-index'));
+            if (!Number.isFinite(index) || index < 0) return;
+            this.focusThemeAuditIssue(index);
+        });
+    }
+
+    hideThemeAuditViewer() {
+        if (this.themeAuditOverlay) {
+            this.themeAuditOverlay.style.display = 'none';
+        }
+    }
+
+    setThemeAuditMode(mode = 'single') {
+        this.themeAuditMode = mode === 'batch' ? 'batch' : 'single';
+        if (this.themeAuditListTitle) {
+            this.themeAuditListTitle.textContent = this.themeAuditMode === 'batch' ? '场景列表' : '问题列表';
+        }
+    }
+
+    setThemeAuditBusy(isBusy, {
+        refreshLabel = '刷新',
+        batchLabel = '批量',
+    } = {}) {
+        if (this.themeAuditRefresh) {
+            this.themeAuditRefresh.disabled = isBusy;
+            this.themeAuditRefresh.textContent = refreshLabel;
+            this.themeAuditRefresh.style.opacity = isBusy ? '0.7' : '1';
+            this.themeAuditRefresh.style.cursor = isBusy ? 'progress' : 'pointer';
+        }
+        if (this.themeAuditBatchBtn) {
+            this.themeAuditBatchBtn.disabled = isBusy;
+            this.themeAuditBatchBtn.textContent = batchLabel;
+            this.themeAuditBatchBtn.style.opacity = isBusy ? '0.7' : '1';
+            this.themeAuditBatchBtn.style.cursor = isBusy ? 'progress' : 'pointer';
+        }
+    }
+
+    async refreshThemeAuditViewer() {
+        if (!this.themeAuditOverlay) return;
+        this.setThemeAuditMode('single');
+        this.themeAuditBatchResult = null;
+        this.themeAuditCopyText = '';
+        this.setThemeAuditBusy(true, { refreshLabel: '刷新中…' });
+        try {
+            const audit = await this.getThemeAuditModule();
+            const report = audit.runDarkThemeDomAudit();
+            this.themeAuditIssues = Array.isArray(report?.issues) ? report.issues : [];
+            this.themeAuditLastReportText = audit.formatDarkThemeAuditReport(report);
+            this.themeAuditCopyText = this.themeAuditLastReportText;
+
+            if (this.themeAuditMeta) {
+                this.themeAuditMeta.textContent = `mode=${report.mode} · visible=${report.scannedElements} · issues=${report.summary?.total || 0}`;
+            }
+            if (this.themeAuditSummary) {
+                const categorySummary = Object.entries(report.summary?.byCategory || {})
+                    .sort((a, b) => a[0].localeCompare(b[0]))
+                    .map(([key, count]) => `${key}: ${count}`)
+                    .join(' · ');
+                this.themeAuditSummary.textContent = categorySummary
+                    ? `${report.message ? `${report.message} · ` : ''}${categorySummary}`
+                    : (report.message || '当前视口没有发现明显问题。');
+            }
+            if (this.themeAuditReport) {
+                this.themeAuditReport.value = this.themeAuditLastReportText;
+            }
+            if (this.themeAuditList) {
+                if (!this.themeAuditIssues.length) {
+                    this.themeAuditList.innerHTML = '<div style="padding:12px; border:1px dashed rgba(148,163,184,0.24); border-radius:12px; color:#94a3b8; background:#0b1220;">当前视口没有发现可报告的问题。</div>';
+                } else {
+                    this.themeAuditList.innerHTML = this.themeAuditIssues
+                        .map((issue, index) => audit.renderDarkThemeAuditIssueHtml(issue, index))
+                        .join('');
+                }
+            }
+        } catch (err) {
+            const msg = err?.message ? String(err.message) : String(err || '');
+            if (this.themeAuditMeta) this.themeAuditMeta.textContent = `加载失败: ${msg || 'unknown error'}`;
+            if (this.themeAuditSummary) this.themeAuditSummary.textContent = '运行时主题审计加载失败。';
+            if (this.themeAuditReport) this.themeAuditReport.value = `运行时主题审计加载失败\n\n${msg || 'unknown error'}`;
+            if (this.themeAuditList) {
+                this.themeAuditList.innerHTML = `<div style="padding:12px; border:1px solid rgba(239,68,68,0.35); border-radius:12px; color:#fecaca; background:rgba(127,29,29,0.35);">${msg || 'unknown error'}</div>`;
+            }
+            this.log(`主题审计加载失败: ${msg || 'unknown error'}`, 'warn');
+        } finally {
+            this.setThemeAuditBusy(false);
+        }
+    }
+
+    async runBatchThemeAuditViewer() {
+        if (!this.themeAuditOverlay) return;
+        this.setThemeAuditMode('batch');
+        this.themeAuditIssues = [];
+        this.themeAuditCopyText = '';
+        this.setThemeAuditBusy(true, { batchLabel: '执行中…' });
+        try {
+            const batchAudit = await this.getThemeBatchAuditModule();
+            const result = await batchAudit.runBatchDarkThemeAudit();
+            this.themeAuditBatchResult = result;
+            this.themeAuditLastReportText = batchAudit.formatBatchDarkThemeAuditReport(result);
+            this.themeAuditCopyText = this.themeAuditLastReportText;
+
+            if (this.themeAuditMeta) {
+                this.themeAuditMeta.textContent = `mode=${result.mode} · scenes=${result.sceneCount || 0} · audited=${result.auditedSceneCount || 0} · issues=${result.totalIssues || 0}`;
+            }
+            if (this.themeAuditSummary) {
+                const categorySummary = Object.entries(result.summary?.byCategory || {})
+                    .sort((a, b) => a[0].localeCompare(b[0]))
+                    .map(([key, count]) => `${key}: ${count}`)
+                    .join(' · ');
+                const sceneSummary = [`已审计 ${result.auditedSceneCount || 0}`, `跳过 ${result.skippedSceneCount || 0}`, `失败 ${result.errorSceneCount || 0}`].join(' · ');
+                this.themeAuditSummary.textContent = [result.message || '', sceneSummary, categorySummary].filter(Boolean).join(' · ');
+            }
+            if (this.themeAuditReport) {
+                this.themeAuditReport.value = this.themeAuditLastReportText;
+            }
+            if (this.themeAuditList) {
+                const scenes = Array.isArray(result.scenes) ? result.scenes : [];
+                this.themeAuditList.innerHTML = scenes.length
+                    ? scenes.map((scene, index) => batchAudit.renderBatchDarkThemeAuditSceneHtml(scene, index)).join('')
+                    : '<div style="padding:12px; border:1px dashed rgba(148,163,184,0.24); border-radius:12px; color:inherit; opacity:0.72; background:#0b1220;">没有可审计的场景。</div>';
+            }
+        } catch (err) {
+            const msg = err?.message ? String(err.message) : String(err || '');
+            if (this.themeAuditMeta) this.themeAuditMeta.textContent = `批量执行失败: ${msg || 'unknown error'}`;
+            if (this.themeAuditSummary) this.themeAuditSummary.textContent = '批量主题审计执行失败。';
+            if (this.themeAuditReport) this.themeAuditReport.value = `批量主题审计执行失败\n\n${msg || 'unknown error'}`;
+            if (this.themeAuditList) {
+                this.themeAuditList.innerHTML = `<div style="padding:12px; border:1px solid rgba(239,68,68,0.35); border-radius:12px; color:#fecaca; background:rgba(127,29,29,0.35);">${msg || 'unknown error'}</div>`;
+            }
+            this.log(`批量主题审计执行失败: ${msg || 'unknown error'}`, 'warn');
+        } finally {
+            this.setThemeAuditBusy(false);
+        }
+    }
+
+    async highlightThemeAuditIssues() {
+        if (this.themeAuditMode === 'batch') {
+            window.toastr?.info?.('批量结果不支持直接高亮，请改用单页刷新后高亮');
+            return;
+        }
+        try {
+            const audit = await this.getThemeAuditModule();
+            const count = audit.highlightDarkThemeAuditIssues(this.themeAuditIssues);
+            window.toastr?.success?.(`已高亮 ${count} 个问题节点`);
+        } catch (err) {
+            const msg = err?.message ? String(err.message) : String(err || '');
+            this.log(`主题审计高亮失败: ${msg || 'unknown error'}`, 'warn');
+            window.toastr?.error?.('主题审计高亮失败');
+        }
+    }
+
+    async clearThemeAuditHighlights() {
+        try {
+            const audit = await this.getThemeAuditModule();
+            const count = audit.clearDarkThemeAuditHighlights();
+            window.toastr?.success?.(`已清除 ${count} 个高亮`);
+        } catch (err) {
+            const msg = err?.message ? String(err.message) : String(err || '');
+            this.log(`清除主题审计高亮失败: ${msg || 'unknown error'}`, 'warn');
+            window.toastr?.error?.('清除主题审计高亮失败');
+        }
+    }
+
+    async focusThemeAuditIssue(index) {
+        if (this.themeAuditMode !== 'single') return;
+        try {
+            const audit = await this.getThemeAuditModule();
+            const issue = this.themeAuditIssues?.[index];
+            if (!issue) return;
+            audit.highlightDarkThemeAuditIssues([issue], { limit: 1 });
+            audit.focusDarkThemeAuditIssue(issue);
+        } catch (err) {
+            const msg = err?.message ? String(err.message) : String(err || '');
+            this.log(`定位主题审计节点失败: ${msg || 'unknown error'}`, 'warn');
+        }
+    }
+
+    async copyThemeAuditReport() {
+        const text = String(this.themeAuditCopyText || this.themeAuditLastReportText || this.themeAuditReport?.value || '');
+        if (!text) {
+            window.toastr?.warning?.('暂无主题审计结果可复制');
+            return;
+        }
+        try {
+            await navigator.clipboard.writeText(text);
+            window.toastr?.success?.('主题审计结果已复制');
+        } catch {
+            try {
+                this.themeAuditReport?.select?.();
+                document.execCommand?.('copy');
+                window.toastr?.success?.('主题审计结果已复制');
+            } catch {
+                window.toastr?.error?.('复制失败');
+            }
+        }
+    }
+
+    async exportThemeAuditReport() {
+        try {
+            const text = String(this.themeAuditCopyText || this.themeAuditLastReportText || this.themeAuditReport?.value || '');
+            if (!text.trim()) {
+                window.toastr?.warning?.('暂无主题审计结果可导出');
+                return;
+            }
+            const ts = new Date();
+            const pad = (n) => String(n).padStart(2, '0');
+            const mode = this.themeAuditMode === 'batch' ? 'batch' : 'single';
+            const filename = `theme-audit-${mode}-${ts.getFullYear()}${pad(ts.getMonth() + 1)}${pad(ts.getDate())}-${pad(ts.getHours())}${pad(ts.getMinutes())}${pad(ts.getSeconds())}.txt`;
+            const hasTauriRuntime = (() => {
+                const g = typeof globalThis !== 'undefined' ? globalThis : window;
+                return Boolean(g?.__TAURI__ || g?.__TAURI_INTERNALS__ || g?.__TAURI_INVOKE__);
+            })();
+            const isAndroid = (() => {
+                try {
+                    return /android/i.test(navigator.userAgent || '');
+                } catch {
+                    return false;
+                }
+            })();
+            const buildTextDataUrl = (value) => {
+                const bytes = new TextEncoder().encode(String(value || ''));
+                let binary = '';
+                const chunkSize = 0x8000;
+                for (let i = 0; i < bytes.length; i += chunkSize) {
+                    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+                }
+                return `data:text/plain;charset=utf-8;base64,${btoa(binary)}`;
+            };
+
+            if (!hasTauriRuntime) {
+                const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = filename;
+                link.style.display = 'none';
+                document.body.appendChild(link);
+                link.click();
+                link.remove();
+                URL.revokeObjectURL(url);
+                window.toastr?.success?.(`主题审计 TXT 已导出：${filename}`);
+                return;
+            }
+
+            let savedPath = '';
+            if (!isAndroid) {
+                try {
+                    const { save } = await import('@tauri-apps/plugin-dialog');
+                    const result = await save({
+                        defaultPath: filename,
+                        filters: [{ name: 'Text', extensions: ['txt'] }],
+                    });
+                    if (result) {
+                        const resp = await safeInvoke('export_attachment', {
+                            dataUrl: buildTextDataUrl(text),
+                            fileName: filename,
+                            path: result,
+                        });
+                        savedPath = String(resp?.path || result || '').trim();
+                    } else {
+                        return;
+                    }
+                } catch {}
+            }
+
+            if (!savedPath) {
+                const resp = await safeInvoke('export_attachment', {
+                    dataUrl: buildTextDataUrl(text),
+                    fileName: filename,
+                });
+                savedPath = String(resp?.path || '').trim();
+            }
+
+            window.toastr?.success?.(`主题审计 TXT 已导出：${savedPath || filename}`);
+        } catch (err) {
+            const msg = err?.message ? String(err.message) : String(err || '');
+            this.log(`主题审计导出失败: ${msg || 'unknown error'}`, 'warn');
+            window.toastr?.error?.('主题审计导出失败');
+        }
+    }
+
+    async showThemeAuditViewer() {
+        this.ensureThemeAuditViewer();
+        if (this.themeAuditOverlay) {
+            this.themeAuditOverlay.style.display = 'block';
+        }
+        await this.refreshThemeAuditViewer();
     }
 
     showConfigStatus(configManager) {

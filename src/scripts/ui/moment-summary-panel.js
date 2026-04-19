@@ -30,10 +30,12 @@ export class MomentSummaryPanel {
     ensure() {
         if (this.panel) return;
         this.overlay = document.createElement('div');
+        this.overlay.className = 'app-themed-overlay moment-summary-overlay';
         this.overlay.style.cssText = 'display:none; position:fixed; inset:0; background:rgba(0,0,0,0.45); z-index:22000;';
         this.overlay.addEventListener('click', () => this.hide());
 
         this.panel = document.createElement('div');
+        this.panel.className = 'app-themed-panel moment-summary-panel-shell';
         this.panel.style.cssText = `
             display:none;
             position:fixed;
@@ -161,10 +163,12 @@ export class MomentSummaryPanel {
     ensureSummaryEditModal() {
         if (this.summaryEditPanel) return;
         this.summaryEditOverlay = document.createElement('div');
+        this.summaryEditOverlay.className = 'app-themed-overlay moment-summary-inline-overlay';
         this.summaryEditOverlay.style.cssText = 'display:none; position:fixed; inset:0; background:rgba(0,0,0,0.45); z-index:23000;';
         this.summaryEditOverlay.addEventListener('click', () => this.closeSummaryEditModal());
 
         this.summaryEditPanel = document.createElement('div');
+        this.summaryEditPanel.className = 'app-themed-panel moment-summary-inline-panel';
         this.summaryEditPanel.style.cssText = `
             display:none;
             position:fixed;
@@ -307,8 +311,10 @@ export class MomentSummaryPanel {
         if (this.__compactedRawReady) return;
         this.__compactedRawReady = true;
         const overlay = document.createElement('div');
+        overlay.className = 'app-themed-overlay moment-summary-inline-overlay';
         overlay.style.cssText = 'display:none; position:fixed; inset:0; background:rgba(0,0,0,0.45); z-index:23000;';
         const panel = document.createElement('div');
+        panel.className = 'app-themed-panel moment-summary-inline-panel';
         panel.style.cssText = `
             display:none;
             position:fixed;

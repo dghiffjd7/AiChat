@@ -436,6 +436,7 @@ export class MomentsPanel {
     this.listEl.innerHTML = '';
     if (!moments.length) {
       const empty = document.createElement('div');
+      empty.className = 'moments-empty-state';
       empty.style.cssText = 'padding:16px; color:#64748b; text-align:center;';
       empty.textContent = '（暂无动态）';
       this.listEl.appendChild(empty);

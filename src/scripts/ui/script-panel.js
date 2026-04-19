@@ -28,8 +28,10 @@ const createOption = (value, label) => {
 
 const openScriptEditor = ({ script, title = '编辑脚本' } = {}) => new Promise((resolve) => {
   const overlay = document.createElement('div');
+  overlay.className = 'app-themed-overlay script-editor-overlay';
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:22000;display:flex;align-items:center;justify-content:center;padding:16px;';
   const panel = document.createElement('div');
+  panel.className = 'app-themed-panel script-editor-panel';
   panel.style.cssText = 'width:min(92vw,520px);max-height:86vh;background:#fff;border-radius:14px;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 18px 50px rgba(15,23,42,0.2);';
   panel.innerHTML = `
     <div style="padding:14px 16px;border-bottom:1px solid rgba(0,0,0,0.06);background:#f8fafc;display:flex;align-items:center;justify-content:space-between;gap:10px;">
@@ -117,11 +119,13 @@ export class ScriptPanel {
 
   createUI() {
     this.overlay = document.createElement('div');
+    this.overlay.className = 'app-themed-overlay script-panel-overlay';
     this.overlay.style.cssText = 'display:none;position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:20000;';
     this.overlay.addEventListener('click', () => this.hide());
 
     this.panel = document.createElement('div');
     this.panel.id = 'script-panel';
+    this.panel.className = 'app-themed-panel script-panel-shell';
     this.panel.style.cssText = `
       display:none; position:fixed;
       inset: 6vh 6vw;
@@ -363,6 +367,7 @@ export class ScriptPanel {
     this.scriptList.innerHTML = '';
     if (!Array.isArray(scripts) || scripts.length === 0) {
       const empty = document.createElement('div');
+      empty.className = 'script-panel-empty';
       empty.textContent = '暂无脚本';
       empty.style.cssText = 'padding:16px;text-align:center;color:#94a3b8;font-size:12px;';
       this.scriptList.appendChild(empty);

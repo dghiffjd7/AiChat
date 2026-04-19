@@ -892,12 +892,11 @@ export class WorldPanel {
 
         filtered.forEach(item => {
             const row = document.createElement('div');
-            row.className = 'sticker-bind-row';
+            row.className = 'sticker-bind-row world-library-row';
             row.style.justifyContent = 'space-between';
             row.style.alignItems = 'center';
             if (boundSet.has(item.name)) {
-                row.style.borderColor = 'rgba(25, 154, 255, 0.45)';
-                row.style.background = 'rgba(25, 154, 255, 0.08)';
+                row.classList.add('is-bound');
             }
 
             const info = document.createElement('div');
@@ -913,12 +912,14 @@ export class WorldPanel {
             info.appendChild(meta);
 
             const actions = document.createElement('div');
+            actions.className = 'world-library-row-actions';
             actions.style.display = 'flex';
             actions.style.alignItems = 'center';
             actions.style.gap = '6px';
 
             const editBtn = document.createElement('button');
             editBtn.type = 'button';
+            editBtn.className = 'world-library-btn world-library-btn-neutral';
             editBtn.textContent = '编辑';
             editBtn.style.cssText = 'padding:4px 8px;border:1px solid #e2e8f0;border-radius:999px;background:#fff;font-size:12px;cursor:pointer;';
             editBtn.onclick = async (e) => {
@@ -980,6 +981,7 @@ export class WorldPanel {
             });
 
             const deleteBtn = document.createElement('button');
+            deleteBtn.className = 'world-library-btn world-library-btn-danger';
             deleteBtn.textContent = '删除';
             deleteBtn.style.cssText = 'padding:4px 8px;border:1px solid #fecaca;border-radius:6px;background:#fff;color:#b91c1c;cursor:pointer;';
             deleteBtn.onclick = async () => {
@@ -1063,6 +1065,7 @@ export class WorldPanel {
     createUI() {
         this.overlay = document.createElement('div');
         this.overlay.id = 'world-overlay';
+        this.overlay.className = 'app-themed-overlay world-panel-overlay';
         this.overlay.style.cssText = `
             display: none;
             position: fixed;
@@ -1074,6 +1077,7 @@ export class WorldPanel {
 
         this.panel = document.createElement('div');
         this.panel.id = 'world-panel';
+        this.panel.className = 'app-themed-panel world-panel-shell';
         this.panel.style.cssText = `
             display: none;
             position: fixed;
@@ -1351,7 +1355,7 @@ export class WorldPanel {
 
         this.libraryOverlay = document.createElement('div');
         this.libraryOverlay.id = 'world-library-overlay';
-        this.libraryOverlay.className = 'sticker-bind-overlay world-library-overlay';
+        this.libraryOverlay.className = 'app-themed-overlay sticker-bind-overlay world-library-overlay';
         this.libraryOverlay.innerHTML = `
             <div class="sticker-bind-modal world-library-modal">
                 <div class="sticker-bind-header">
@@ -1389,7 +1393,10 @@ export class WorldPanel {
             </div>
         `;
         this.libraryModal = this.libraryOverlay.querySelector('.world-library-modal');
-        if (this.libraryModal) this.libraryModal.id = 'world-library-modal';
+        if (this.libraryModal) {
+            this.libraryModal.id = 'world-library-modal';
+            this.libraryModal.classList.add('app-themed-panel', 'world-library-shell');
+        }
         this.libraryListEl = this.libraryOverlay.querySelector('#world-library-list');
         this.librarySearchEl = this.libraryOverlay.querySelector('#world-library-search');
         this.librarySortEl = this.libraryOverlay.querySelector('#world-library-sort');

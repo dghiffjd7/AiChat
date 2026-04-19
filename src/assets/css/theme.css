@@ -3154,3 +3154,281 @@ body[data-theme-mode='dark'] .world-block-manage-modal-item.is-active {
   background: rgba(121, 192, 255, 0.14) !important;
   border-color: rgba(121, 192, 255, 0.28) !important;
 }
+
+body[data-theme-mode='dark'] :is(
+  #regex-panel,
+  #script-panel,
+  #plugin-panel,
+  .plugin-ui-panel,
+  .script-editor-panel,
+  .moment-summary-panel-shell,
+  .moment-summary-inline-panel,
+  #world-library-modal
+) {
+  background: linear-gradient(180deg, rgba(26, 30, 36, 0.98) 0%, rgba(34, 39, 46, 0.98) 100%) !important;
+  color: var(--app-text-primary) !important;
+  border-color: var(--app-border-subtle) !important;
+  box-shadow: var(--app-shadow-md) !important;
+}
+
+body[data-theme-mode='dark'] :is(
+  #regex-panel,
+  #script-panel,
+  #plugin-panel,
+  .plugin-ui-panel,
+  .script-editor-panel,
+  .moment-summary-panel-shell,
+  .moment-summary-inline-panel
+) :is(
+  .script-panel-empty,
+  .plugin-panel-empty
+) {
+  color: var(--app-text-secondary) !important;
+}
+
+body[data-theme-mode='dark'] #world-library-modal :is(
+  .sticker-bind-header,
+  .sticker-bind-toolbar,
+  .sticker-bind-footer
+) {
+  background: rgba(205, 217, 229, 0.04) !important;
+  border-color: var(--app-border-subtle) !important;
+}
+
+body[data-theme-mode='dark'] #world-library-modal .sticker-bind-search {
+  background: transparent !important;
+}
+
+body[data-theme-mode='dark'] #world-library-modal .sticker-bind-search input {
+  background: rgba(205, 217, 229, 0.06) !important;
+  color: var(--app-text-primary) !important;
+  border-color: var(--app-border-default) !important;
+}
+
+body[data-theme-mode='dark'] #world-library-modal :is(
+  .sticker-bind-title,
+  .sticker-bind-name
+) {
+  color: var(--app-text-primary) !important;
+}
+
+body[data-theme-mode='dark'] #world-library-modal :is(
+  .sticker-bind-subtitle,
+  .sticker-bind-toolbar,
+  .sticker-bind-meta,
+  .sticker-bind-empty
+) {
+  color: var(--app-text-secondary) !important;
+}
+
+body[data-theme-mode='dark'] #world-library-modal .sticker-bind-close {
+  background: rgba(205, 217, 229, 0.08) !important;
+  color: var(--app-text-primary) !important;
+  border: 1px solid var(--app-border-default) !important;
+}
+
+body[data-theme-mode='dark'] #world-library-modal .sticker-bind-avatar {
+  background: rgba(205, 217, 229, 0.1) !important;
+}
+
+body[data-theme-mode='dark'] #world-library-modal :is(
+  .sticker-bind-actions button,
+  .sticker-bind-footer button,
+  .world-library-btn
+) {
+  background: rgba(205, 217, 229, 0.06) !important;
+  color: var(--app-text-primary) !important;
+  border-color: var(--app-border-default) !important;
+}
+
+body[data-theme-mode='dark'] #world-library-modal .world-library-btn-danger {
+  background: rgba(248, 81, 73, 0.14) !important;
+  color: #ffb4aa !important;
+  border-color: rgba(248, 81, 73, 0.28) !important;
+}
+
+body[data-theme-mode='dark'] #world-library-modal :is(
+  .sticker-bind-row,
+  .world-library-row
+) {
+  background: rgba(205, 217, 229, 0.05) !important;
+  border-color: var(--app-border-default) !important;
+  box-shadow: none !important;
+}
+
+body[data-theme-mode='dark'] #world-library-modal .world-library-row.is-bound {
+  background: rgba(121, 192, 255, 0.14) !important;
+  border-color: rgba(121, 192, 255, 0.28) !important;
+}
+
+body[data-theme-mode='dark'] :is(
+  .memory-template-meta-card,
+  .memory-template-table-card,
+  .memory-table-prompt-wrap,
+  .memory-table-block,
+  .memory-table-row-item,
+  .memory-share-row
+) {
+  background: rgba(205, 217, 229, 0.05) !important;
+  border-color: var(--app-border-default) !important;
+  color: var(--app-text-primary) !important;
+  box-shadow: none !important;
+}
+
+body[data-theme-mode='dark'] :is(
+  .memory-template-empty-hint,
+  .memory-table-empty,
+  .memory-share-empty
+) {
+  color: var(--app-text-secondary) !important;
+}
+
+body[data-theme-mode='dark'] :is(
+  .memory-template-table-summary,
+  .memory-table-prompt-summary,
+  .memory-table-prompt-label,
+  .memory-table-block-title,
+  .memory-table-row-main,
+  .memory-share-row-title
+) {
+  color: var(--app-text-primary) !important;
+}
+
+body[data-theme-mode='dark'] :is(
+  .memory-table-block-meta,
+  .memory-table-row-meta,
+  .memory-share-row-desc,
+  .memory-share-row-limit,
+  .memory-share-row-limit-label
+) {
+  color: var(--app-text-secondary) !important;
+}
+
+body[data-theme-mode='dark'] :is(
+  .memory-table-action-btn,
+  .memory-table-row-btn
+) {
+  background: rgba(205, 217, 229, 0.06) !important;
+  color: var(--app-text-primary) !important;
+  border-color: var(--app-border-default) !important;
+}
+
+body[data-theme-mode='dark'] :is(
+  .memory-table-action-btn-primary,
+  .memory-table-action-btn-accent
+) {
+  background: rgba(121, 192, 255, 0.2) !important;
+  color: #08131f !important;
+  border-color: rgba(121, 192, 255, 0.28) !important;
+}
+
+body[data-theme-mode='dark'] .memory-table-row-btn-danger {
+  background: rgba(248, 81, 73, 0.14) !important;
+  color: #ffb4aa !important;
+  border-color: rgba(248, 81, 73, 0.28) !important;
+}
+
+body[data-theme-mode='dark'] .memory-share-row input[type='number'] {
+  background: rgba(205, 217, 229, 0.06) !important;
+  color: var(--app-text-primary) !important;
+  border-color: var(--app-border-default) !important;
+}
+
+body[data-theme-mode='dark'] .variable-panel-search-box {
+  background: rgba(205, 217, 229, 0.06) !important;
+  border-color: var(--app-border-default) !important;
+}
+
+body[data-theme-mode='dark'] .variable-panel-search-icon {
+  color: var(--app-text-secondary) !important;
+}
+
+body[data-theme-mode='dark'] .variable-panel-usage-hint {
+  background: rgba(205, 217, 229, 0.05) !important;
+  color: var(--app-text-secondary) !important;
+  border: 1px solid var(--app-border-default) !important;
+}
+
+body[data-theme-mode='dark'] .variable-panel-inline-code {
+  background: rgba(205, 217, 229, 0.1) !important;
+  color: var(--app-text-primary) !important;
+  border: 1px solid rgba(139, 152, 167, 0.22) !important;
+}
+
+body[data-theme-mode='dark'] :is(
+  .world-entry-enable-toggle.is-on,
+  .world-entry-enable-toggle.is-off
+) {
+  box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.08) !important;
+}
+
+body[data-theme-mode='dark'] .world-entry-enable-toggle.is-on {
+  background: #2ea043 !important;
+  border-color: rgba(126, 231, 135, 0.42) !important;
+}
+
+body[data-theme-mode='dark'] .world-entry-enable-toggle.is-off {
+  background: rgba(139, 152, 167, 0.28) !important;
+  border-color: rgba(139, 152, 167, 0.36) !important;
+}
+
+body[data-theme-mode='dark'] .world-block-dot {
+  background: rgba(139, 152, 167, 0.56) !important;
+}
+
+body[data-theme-mode='dark'] .world-block-dot.active {
+  background: #79c0ff !important;
+}
+
+body[data-theme-mode='dark'] .world-content-title {
+  color: var(--app-text-secondary) !important;
+}
+
+body[data-theme-mode='dark'] .world-app-select-btn-chevron {
+  color: var(--app-text-primary) !important;
+  opacity: 0.88 !important;
+}
+
+body[data-theme-mode='dark'] .world-app-select-menu {
+  background: linear-gradient(180deg, rgba(26, 30, 36, 0.98) 0%, rgba(34, 39, 46, 0.98) 100%) !important;
+  border-color: var(--app-border-subtle) !important;
+  box-shadow: var(--app-shadow-md) !important;
+}
+
+body[data-theme-mode='dark'] .world-app-select-item {
+  color: var(--app-text-primary) !important;
+}
+
+body[data-theme-mode='dark'] .world-app-select-item:hover {
+  background: rgba(148, 163, 184, 0.12) !important;
+}
+
+body[data-theme-mode='dark'] .world-app-select-item.is-selected {
+  background: rgba(121, 192, 255, 0.16) !important;
+  color: var(--app-text-primary) !important;
+}
+
+body[data-theme-mode='dark'] .world-app-select-item-check {
+  color: var(--app-accent-primary) !important;
+}
+
+body[data-theme-mode='dark'] .moments-empty-state {
+  color: var(--app-text-secondary) !important;
+}
+
+body[data-theme-mode='dark'] .user-avatar-btn {
+  color: #08131f !important;
+  border: 1px solid rgba(15, 23, 42, 0.22) !important;
+}
+
+body[data-theme-mode='dark'] :is(
+  #general-settings-done,
+  #config-save,
+  #var-add,
+  #save-chat-settings-btn,
+  #random-setting-btn,
+  #memory-template-edit-structure
+) {
+  color: #08131f !important;
+  font-weight: 700 !important;
+}

@@ -102,11 +102,13 @@ export class RegexPanel {
     createUI() {
         this.overlay = document.createElement('div');
         this.overlay.id = 'regex-overlay';
+        this.overlay.className = 'app-themed-overlay regex-panel-overlay';
         this.overlay.style.cssText = 'display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:20000;';
         this.overlay.onclick = () => this.hide();
 
         this.element = document.createElement('div');
         this.element.id = 'regex-panel';
+        this.element.className = 'app-themed-panel regex-panel-shell';
         this.element.style.cssText = `
             display:none; position:fixed;
             top: calc(10px + env(safe-area-inset-top, 0px));

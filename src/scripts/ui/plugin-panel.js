@@ -60,6 +60,7 @@ export class PluginPanel {
   createUI() {
     this.overlayElement = document.createElement('div');
     this.overlayElement.id = 'plugin-panel-overlay';
+    this.overlayElement.className = 'app-themed-overlay plugin-panel-overlay';
     this.overlayElement.style.cssText = `
       display: none;
       position: fixed;
@@ -71,6 +72,7 @@ export class PluginPanel {
 
     this.element = document.createElement('div');
     this.element.id = 'plugin-panel';
+    this.element.className = 'app-themed-panel plugin-panel-shell';
     this.element.style.cssText = `
       display: none;
       position: fixed;
@@ -169,6 +171,7 @@ export class PluginPanel {
   createUiManagerUI() {
     if (this.uiManagePanel || this.uiManageOverlay) return;
     const overlay = document.createElement('div');
+    overlay.className = 'app-themed-overlay plugin-ui-overlay';
     overlay.style.cssText = `
       position: fixed;
       inset: 0;
@@ -179,6 +182,7 @@ export class PluginPanel {
     overlay.addEventListener('click', () => this.hideUiManager());
 
     const panel = document.createElement('div');
+    panel.className = 'app-themed-panel plugin-ui-panel';
     panel.style.cssText = `
       position: fixed;
       inset: 10vh 8vw;
@@ -250,6 +254,7 @@ export class PluginPanel {
     this.uiManageList.innerHTML = '';
     if (!uiManager) {
       const empty = document.createElement('div');
+      empty.className = 'plugin-panel-empty';
       empty.style.cssText = 'padding:24px;text-align:center;color:#94a3b8;font-size:13px;';
       empty.textContent = '当前环境不支持 UI 管理';
       this.uiManageList.appendChild(empty);
@@ -299,6 +304,7 @@ export class PluginPanel {
 
     if (!sidebars.length && !cards.length && !modal) {
       const empty = document.createElement('div');
+      empty.className = 'plugin-panel-empty';
       empty.style.cssText = 'padding:24px;text-align:center;color:#94a3b8;font-size:13px;';
       empty.textContent = '暂无插件 UI 注入';
       this.uiManageList.appendChild(empty);
@@ -813,6 +819,7 @@ export class PluginPanel {
     this.listEl.innerHTML = '';
     if (!items.length) {
       const empty = document.createElement('div');
+      empty.className = 'plugin-panel-empty';
       empty.style.cssText = 'padding:24px;text-align:center;color:#94a3b8;font-size:13px;';
       empty.textContent = this.isAndroid
         ? '暂无插件，点击上方“导入插件 ZIP”开始。'

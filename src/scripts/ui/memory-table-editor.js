@@ -359,11 +359,13 @@ export class MemoryTableEditor {
     promptWrap.className = 'memory-table-prompt-wrap';
     promptWrap.style.cssText = 'border:1px solid #e2e8f0; border-radius:12px; padding:10px; margin-bottom:10px; background:#f8fafc;';
     const promptSummary = document.createElement('summary');
+    promptSummary.className = 'memory-table-prompt-summary';
     promptSummary.style.cssText = 'cursor:pointer; font-weight:800; color:#0f172a;';
     promptSummary.textContent = '记忆表格提示词（可编辑）';
     const promptBody = document.createElement('div');
     promptBody.style.cssText = 'margin-top:10px; display:flex; flex-direction:column; gap:10px;';
     const templateLabel = document.createElement('div');
+    templateLabel.className = 'memory-table-prompt-label';
     templateLabel.style.cssText = 'font-size:12px; font-weight:700; color:#0f172a;';
     templateLabel.textContent = '模板（使用 {{tableData}} 插入表格内容）';
     const templateInput = document.createElement('textarea');
@@ -371,6 +373,7 @@ export class MemoryTableEditor {
     templateInput.placeholder = '{{tableData}}';
     templateInput.style.cssText = 'width:100%; padding:8px; border:1px solid #e2e8f0; border-radius:10px; font-size:12px; font-family: monospace; resize: vertical;';
     const wrapperLabel = document.createElement('div');
+    wrapperLabel.className = 'memory-table-prompt-label';
     wrapperLabel.style.cssText = 'font-size:12px; font-weight:700; color:#0f172a;';
     wrapperLabel.textContent = '包裹模板（可选）';
     const wrapperInput = document.createElement('textarea');
@@ -380,6 +383,7 @@ export class MemoryTableEditor {
     const positionRow = document.createElement('div');
     positionRow.style.cssText = 'display:flex; align-items:center; gap:8px; flex-wrap:wrap;';
     const positionLabel = document.createElement('div');
+    positionLabel.className = 'memory-table-prompt-label';
     positionLabel.style.cssText = 'font-size:12px; font-weight:700; color:#0f172a;';
     positionLabel.textContent = '注入位置';
     const positionSelect = document.createElement('select');
@@ -397,17 +401,22 @@ export class MemoryTableEditor {
     positionRow.appendChild(positionLabel);
     positionRow.appendChild(positionSelect);
     const promptActions = document.createElement('div');
+    promptActions.className = 'memory-table-prompt-actions';
     promptActions.style.cssText = 'display:flex; gap:8px; justify-content:flex-end;';
     const promptRefresh = document.createElement('button');
+    promptRefresh.className = 'memory-table-action-btn';
     promptRefresh.textContent = '刷新预览';
     promptRefresh.style.cssText = 'padding:6px 10px; border:1px solid #e2e8f0; border-radius:8px; background:#fff; cursor:pointer; font-size:12px;';
     const promptLastRaw = document.createElement('button');
+    promptLastRaw.className = 'memory-table-action-btn';
     promptLastRaw.textContent = '查看最近写表原始输出';
     promptLastRaw.style.cssText = 'padding:6px 10px; border:1px solid #e2e8f0; border-radius:8px; background:#fff; cursor:pointer; font-size:12px;';
     const promptLastPrompt = document.createElement('button');
+    promptLastPrompt.className = 'memory-table-action-btn';
     promptLastPrompt.textContent = '查看最近写表请求提示词';
     promptLastPrompt.style.cssText = 'padding:6px 10px; border:1px solid #e2e8f0; border-radius:8px; background:#fff; cursor:pointer; font-size:12px;';
     const promptSave = document.createElement('button');
+    promptSave.className = 'memory-table-action-btn memory-table-action-btn-primary';
     promptSave.textContent = '保存模板';
     promptSave.style.cssText = 'padding:6px 10px; border:none; border-radius:8px; background:#019aff; color:#fff; cursor:pointer; font-size:12px; font-weight:700;';
     promptActions.appendChild(promptRefresh);
@@ -415,6 +424,7 @@ export class MemoryTableEditor {
     promptActions.appendChild(promptLastPrompt);
     promptActions.appendChild(promptSave);
     const previewLabel = document.createElement('div');
+    previewLabel.className = 'memory-table-prompt-label';
     previewLabel.style.cssText = 'font-size:12px; font-weight:700; color:#0f172a;';
     previewLabel.textContent = '当前会发送的提示词（预览）';
     const previewInput = document.createElement('textarea');
@@ -863,9 +873,11 @@ export class MemoryTableEditor {
     const header = document.createElement('div');
     header.style.cssText = 'display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:8px;';
     const title = document.createElement('div');
+    title.className = 'memory-table-block-title';
     title.style.cssText = 'font-weight:800; color:#0f172a;';
     title.textContent = table.name || table.id || '记忆表格';
     const meta = document.createElement('div');
+    meta.className = 'memory-table-block-meta';
     meta.style.cssText = 'font-size:11px; color:#64748b;';
     const allRows = this.memories.filter(row => String(row.table_id || '') === String(table.id || ''));
     const scopedRows = filterRowsByScope(allRows, table, ctx);
@@ -875,6 +887,7 @@ export class MemoryTableEditor {
     titleWrap.appendChild(title);
     titleWrap.appendChild(meta);
     const addBtn = document.createElement('button');
+    addBtn.className = 'memory-table-action-btn memory-table-action-btn-soft';
     addBtn.textContent = '新增';
     addBtn.style.cssText = 'padding:6px 12px; border:1px solid #e2e8f0; border-radius:10px; background:#f8fafc; cursor:pointer; font-size:12px;';
     if (table.maxRows && scopedRows.length >= table.maxRows) {
@@ -884,10 +897,12 @@ export class MemoryTableEditor {
     }
     addBtn.onclick = () => this.openEditor({ table, ctx, row: null });
     const pushBtn = document.createElement('button');
+    pushBtn.className = 'memory-table-action-btn';
     pushBtn.textContent = '推送';
     pushBtn.style.cssText = 'padding:6px 10px; border:1px solid #e2e8f0; border-radius:10px; background:#fff; cursor:pointer; font-size:12px;';
     pushBtn.onclick = () => this.pushTableToChat(table, scopedRows, ctx);
     const exportBtn = document.createElement('button');
+    exportBtn.className = 'memory-table-action-btn memory-table-action-btn-accent';
     exportBtn.textContent = '导出世界书';
     exportBtn.style.cssText = 'padding:6px 10px; border:1px solid #bae6fd; border-radius:10px; background:#e0f2fe; cursor:pointer; font-size:12px;';
     exportBtn.onclick = () => this.exportTableToWorldbook(table, scopedRows, ctx);
@@ -905,6 +920,7 @@ export class MemoryTableEditor {
     const rows = this.filterRows(scopedRows);
     if (!rows.length) {
       const empty = document.createElement('div');
+      empty.className = 'memory-table-empty';
       empty.style.cssText = 'font-size:12px; color:#94a3b8; padding:6px 4px;';
       empty.textContent = this.searchTerm ? '无匹配内容' : '暂无记忆条目';
       list.appendChild(empty);
@@ -936,9 +952,11 @@ export class MemoryTableEditor {
     item.style.cssText =
       'border:1px solid #e2e8f0; border-radius:10px; padding:8px; background:#f8fafc; display:flex; gap:8px; align-items:flex-start; justify-content:space-between;';
     const summary = document.createElement('div');
+    summary.className = 'memory-table-row-summary';
     summary.style.cssText = 'font-size:12px; color:#0f172a; line-height:1.4; flex:1; min-width:0;';
     const summaryText = formatRowSummary(row.row_data || {}, table.columns || []);
     const summaryMain = document.createElement('div');
+    summaryMain.className = 'memory-table-row-main';
     summaryMain.textContent = summaryText;
     summary.appendChild(summaryMain);
     const metaParts = [];
@@ -947,6 +965,7 @@ export class MemoryTableEditor {
     if (typeof row.priority === 'number' && row.priority !== 0) metaParts.push(`优先级 ${row.priority}`);
     if (metaParts.length) {
       const metaLine = document.createElement('div');
+      metaLine.className = 'memory-table-row-meta';
       metaLine.style.cssText = 'color:#64748b; font-size:11px; margin-top:4px;';
       metaLine.textContent = metaParts.join(' · ');
       summary.appendChild(metaLine);
@@ -992,10 +1011,12 @@ export class MemoryTableEditor {
       this.render().catch(() => {});
     };
     const editBtn = document.createElement('button');
+    editBtn.className = 'memory-table-row-btn';
     editBtn.textContent = '编辑';
     editBtn.style.cssText = 'padding:4px 8px; border:1px solid #e2e8f0; border-radius:8px; background:#fff; cursor:pointer; font-size:12px;';
     editBtn.onclick = () => this.openEditor({ table, ctx, row });
     const deleteBtn = document.createElement('button');
+    deleteBtn.className = 'memory-table-row-btn memory-table-row-btn-danger';
     deleteBtn.textContent = '删除';
     deleteBtn.style.cssText = 'padding:4px 8px; border:1px solid #fecaca; border-radius:8px; background:#fff; cursor:pointer; font-size:12px; color:#b91c1c;';
     deleteBtn.onclick = async () => {
