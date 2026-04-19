@@ -46,7 +46,7 @@ export class UserPanel {
         if (this.overlay) return;
 
         this.overlay = document.createElement('div');
-        this.overlay.className = 'panel-overlay';
+        this.overlay.className = 'panel-overlay app-themed-overlay user-panel-overlay';
         this.overlay.style.cssText = `
             display:none;
             position:fixed;
@@ -63,7 +63,7 @@ export class UserPanel {
         });
 
         this.panel = document.createElement('div');
-        this.panel.className = 'panel-content';
+        this.panel.className = 'panel-content app-themed-panel user-panel-shell';
         this.panel.style.cssText = `
             position:relative;
             display:flex;
@@ -290,6 +290,7 @@ export class UserPanel {
     ensureBindingModal() {
         if (this.bindingModal) return;
         const overlay = document.createElement('div');
+        overlay.className = 'app-themed-overlay user-binding-overlay';
         overlay.style.cssText = `
             display:none; position:fixed; inset:0;
             background: rgba(0,0,0,0.38);
@@ -302,6 +303,7 @@ export class UserPanel {
         });
 
         const panel = document.createElement('div');
+        panel.className = 'app-themed-panel user-binding-panel';
         panel.style.cssText = `
             width: min(96vw, 520px);
             height: min(86vh, 720px);

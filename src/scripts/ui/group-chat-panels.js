@@ -62,12 +62,14 @@ const resolveDefaultMemoryTemplateDefinition = async () => {
 
 const askMemoryTableNewChatMode = () => new Promise((resolve) => {
     const overlay = document.createElement('div');
+    overlay.className = 'app-themed-overlay memory-table-dialog-overlay';
     overlay.style.cssText = `
         position:fixed; inset:0; background:rgba(15,23,42,0.45);
         display:flex; align-items:center; justify-content:center;
         padding:16px; z-index:22000;
     `;
     const panel = document.createElement('div');
+    panel.className = 'app-themed-panel memory-table-dialog-panel';
     panel.style.cssText = `
         width:min(360px, 92vw);
         background:#fff; border-radius:14px;
@@ -83,6 +85,7 @@ const askMemoryTableNewChatMode = () => new Promise((resolve) => {
     const buildBtn = (text, style) => {
         const btn = document.createElement('button');
         btn.type = 'button';
+        btn.className = 'memory-table-dialog-btn';
         btn.textContent = text;
         btn.style.cssText = `
             padding:10px 12px; border-radius:10px; border:1px solid #e2e8f0;
@@ -312,10 +315,14 @@ export class GroupCreatePanel {
 
     createUI() {
         this.overlay = document.createElement('div');
+        this.overlay.id = 'group-create-overlay';
+        this.overlay.className = 'app-themed-overlay';
         this.overlay.style.cssText = 'display:none; position:fixed; inset:0; background:rgba(0,0,0,0.45); z-index:20000;';
         this.overlay.addEventListener('click', () => this.hide());
 
         this.panel = document.createElement('div');
+        this.panel.id = 'group-create-panel';
+        this.panel.className = 'app-themed-panel';
         this.panel.style.cssText = `
             display:none; position:fixed;
             top: calc(10px + env(safe-area-inset-top, 0px));
@@ -608,10 +615,14 @@ export class GroupSettingsPanel {
 
     createUI() {
         this.overlay = document.createElement('div');
+        this.overlay.id = 'group-settings-overlay';
+        this.overlay.className = 'app-themed-overlay';
         this.overlay.style.cssText = 'display:none; position:fixed; inset:0; background:rgba(0,0,0,0.45); z-index:20000;';
         this.overlay.addEventListener('click', () => this.hide());
 
         this.panel = document.createElement('div');
+        this.panel.id = 'group-settings-panel';
+        this.panel.className = 'app-themed-panel';
         this.panel.style.cssText = `
             display:none; position:fixed;
             top: calc(10px + env(safe-area-inset-top, 0px));
@@ -842,8 +853,10 @@ export class GroupSettingsPanel {
 	        this.__compactedRawReady = true;
 
 	        const overlay = document.createElement('div');
+	        overlay.className = 'app-themed-overlay group-inline-modal-overlay';
 	        overlay.style.cssText = 'display:none; position:fixed; inset:0; background:rgba(0,0,0,0.45); z-index:22000;';
 	        const panel = document.createElement('div');
+	        panel.className = 'app-themed-panel group-inline-modal-panel';
 	        panel.style.cssText = `
 	            display:none; position:fixed;
 	            left: calc(12px + env(safe-area-inset-left, 0px));
@@ -915,9 +928,11 @@ export class GroupSettingsPanel {
 	        this.__compactedEditReady = true;
 
 	        const overlay = document.createElement('div');
+	        overlay.className = 'app-themed-overlay group-inline-modal-overlay';
 	        overlay.style.cssText = 'display:none; position:fixed; inset:0; background:rgba(0,0,0,0.45); z-index:22000;';
 	        overlay.addEventListener('click', () => close());
 	        const panel = document.createElement('div');
+	        panel.className = 'app-themed-panel group-inline-modal-panel';
 	        panel.style.cssText = `
 	            display:none; position:fixed;
 	            left: calc(12px + env(safe-area-inset-left, 0px));
@@ -999,10 +1014,12 @@ export class GroupSettingsPanel {
     ensureSummaryEditModal() {
         if (this.summaryEditPanel) return;
         this.summaryEditOverlay = document.createElement('div');
+        this.summaryEditOverlay.className = 'app-themed-overlay group-inline-modal-overlay';
         this.summaryEditOverlay.style.cssText = 'display:none; position:fixed; inset:0; background:rgba(0,0,0,0.45); z-index:22000;';
         this.summaryEditOverlay.addEventListener('click', () => this.closeSummaryEditModal());
 
         this.summaryEditPanel = document.createElement('div');
+        this.summaryEditPanel.className = 'app-themed-panel group-inline-modal-panel';
         this.summaryEditPanel.style.cssText = `
             display:none; position:fixed;
             left: calc(12px + env(safe-area-inset-left, 0px));
@@ -1270,10 +1287,12 @@ export class GroupSettingsPanel {
     ensureMemoryShareModal() {
         if (this.memorySharePanel) return;
         this.memoryShareOverlay = document.createElement('div');
+        this.memoryShareOverlay.className = 'app-themed-overlay group-inline-modal-overlay';
         this.memoryShareOverlay.style.cssText = 'display:none; position:fixed; inset:0; background:rgba(0,0,0,0.45); z-index:22000;';
         this.memoryShareOverlay.addEventListener('click', () => this.closeMemoryShareManager());
 
         this.memorySharePanel = document.createElement('div');
+        this.memorySharePanel.className = 'app-themed-panel group-inline-modal-panel';
         this.memorySharePanel.style.cssText = `
             display:none; position:fixed;
             left: calc(12px + env(safe-area-inset-left, 0px));
@@ -1632,10 +1651,14 @@ export class GroupSettingsPanel {
     ensureAddModal() {
         if (this.addPanel) return;
         this.addOverlay = document.createElement('div');
+        this.addOverlay.id = 'group-add-overlay';
+        this.addOverlay.className = 'app-themed-overlay';
         this.addOverlay.style.cssText = 'display:none; position:fixed; inset:0; background:rgba(0,0,0,0.45); z-index:22000;';
         this.addOverlay.addEventListener('click', () => this.closeAddModal());
 
         this.addPanel = document.createElement('div');
+        this.addPanel.id = 'group-add-panel';
+        this.addPanel.className = 'app-themed-panel';
         this.addPanel.style.cssText = `
             display:none; position:fixed;
             top: calc(18px + env(safe-area-inset-top, 0px));

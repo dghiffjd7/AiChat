@@ -356,6 +356,7 @@ export class MemoryTableEditor {
     if (!this.container || this.toolbarWrap) return;
     this.container.innerHTML = '';
     const promptWrap = document.createElement('details');
+    promptWrap.className = 'memory-table-prompt-wrap';
     promptWrap.style.cssText = 'border:1px solid #e2e8f0; border-radius:12px; padding:10px; margin-bottom:10px; background:#f8fafc;';
     const promptSummary = document.createElement('summary');
     promptSummary.style.cssText = 'cursor:pointer; font-weight:800; color:#0f172a;';
@@ -758,9 +759,11 @@ export class MemoryTableEditor {
   ensureLastUpdateModal() {
     if (this.lastUpdatePanel) return;
     const overlay = document.createElement('div');
+    overlay.className = 'app-themed-overlay memory-last-update-overlay';
     overlay.style.cssText = 'display:none; position:fixed; inset:0; background:rgba(0,0,0,0.45); z-index:22000;';
     overlay.addEventListener('click', () => this.hideLastUpdateModal());
     const panel = document.createElement('div');
+    panel.className = 'app-themed-panel memory-last-update-panel';
     panel.style.cssText = `
       display:none; position:fixed;
       left: calc(12px + env(safe-area-inset-left, 0px));
@@ -855,6 +858,7 @@ export class MemoryTableEditor {
 
   renderTableBlock(table, ctx) {
     const block = document.createElement('div');
+    block.className = 'memory-table-block';
     block.style.cssText = 'border:1px solid #e2e8f0; border-radius:12px; padding:10px; margin-bottom:12px; background:#fff;';
     const header = document.createElement('div');
     header.style.cssText = 'display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:8px;';
@@ -928,6 +932,7 @@ export class MemoryTableEditor {
 
   renderRowItem(row, table, ctx) {
     const item = document.createElement('div');
+    item.className = 'memory-table-row-item';
     item.style.cssText =
       'border:1px solid #e2e8f0; border-radius:10px; padding:8px; background:#f8fafc; display:flex; gap:8px; align-items:flex-start; justify-content:space-between;';
     const summary = document.createElement('div');
@@ -1071,9 +1076,11 @@ export class MemoryTableEditor {
   ensureEditorModal() {
     if (this.modalPanel) return;
     this.modalOverlay = document.createElement('div');
+    this.modalOverlay.className = 'app-themed-overlay memory-editor-overlay';
     this.modalOverlay.style.cssText = 'display:none; position:fixed; inset:0; background:rgba(0,0,0,0.45); z-index:22000;';
     this.modalOverlay.addEventListener('click', () => this.closeEditor());
     this.modalPanel = document.createElement('div');
+    this.modalPanel.className = 'app-themed-panel memory-editor-panel';
     this.modalPanel.style.cssText = `
       display:none; position:fixed;
       left: calc(12px + env(safe-area-inset-left, 0px));

@@ -131,10 +131,12 @@ export class MemoryTemplatePanel {
 
   createUI() {
     this.overlay = document.createElement('div');
+    this.overlay.className = 'app-themed-overlay memory-template-overlay';
     this.overlay.style.cssText = 'display:none; position:fixed; inset:0; background:rgba(0,0,0,0.45); z-index:20000;';
     this.overlay.addEventListener('click', () => this.hide());
 
     this.panel = document.createElement('div');
+    this.panel.className = 'app-themed-panel memory-template-panel-shell';
     this.panel.style.cssText = `
       display:none; position:fixed;
       top: calc(10px + env(safe-area-inset-top, 0px));
@@ -578,8 +580,10 @@ export class MemoryTemplatePanel {
   ensureDataDialog() {
     if (this.dataDialogOverlay) return;
     const overlay = document.createElement('div');
+    overlay.className = 'app-themed-overlay memory-template-dialog-overlay';
     overlay.style.cssText = 'display:none; position:fixed; inset:0; background:rgba(0,0,0,0.45); z-index:24000;';
     const panel = document.createElement('div');
+    panel.className = 'app-themed-panel memory-template-dialog-panel';
     panel.style.cssText = `
       display:none; position:fixed;
       left: calc(16px + env(safe-area-inset-left, 0px));
@@ -1547,8 +1551,10 @@ export class MemoryTemplatePanel {
   ensureTemplateEditor() {
     if (this.templateEditorOverlay) return;
     const overlay = document.createElement('div');
+    overlay.className = 'app-themed-overlay memory-template-editor-overlay';
     overlay.style.cssText = 'display:none; position:fixed; inset:0; background:rgba(0,0,0,0.45); z-index:24000;';
     const panel = document.createElement('div');
+    panel.className = 'app-themed-panel memory-template-editor-panel';
     panel.style.cssText = `
       display:none; position:fixed;
       left: calc(12px + env(safe-area-inset-left, 0px));

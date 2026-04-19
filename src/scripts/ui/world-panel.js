@@ -302,6 +302,7 @@ export class WorldPanel {
             const createTextButton = (label, variant = 'neutral') => {
                 const btn = document.createElement('button');
                 btn.type = 'button';
+                btn.className = `world-panel-inline-btn world-panel-inline-btn-${variant}`;
                 const palette = variant === 'danger'
                     ? 'border:1px solid #fecaca;background:#fff;color:#b91c1c;'
                     : variant === 'primary'
@@ -313,29 +314,37 @@ export class WorldPanel {
             };
             const createSection = ({ title, description = '' } = {}) => {
                 const host = document.createElement('li');
+                host.className = 'world-panel-section-item';
                 host.style.listStyle = 'none';
                 host.style.marginBottom = '10px';
 
                 const box = document.createElement('div');
+                box.className = 'world-panel-section-card';
                 box.style.cssText = 'padding:12px; border:1px solid #e2e8f0; border-radius:14px; background:linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);';
 
                 const header = document.createElement('div');
+                header.className = 'world-panel-section-head';
                 header.style.cssText = 'display:flex; align-items:flex-start; justify-content:space-between; gap:12px;';
 
                 const titleWrap = document.createElement('div');
+                titleWrap.className = 'world-panel-section-copy';
                 const titleEl = document.createElement('div');
+                titleEl.className = 'world-panel-section-title';
                 titleEl.textContent = title;
                 titleEl.style.cssText = 'font-weight:800; color:#0f172a;';
                 const descEl = document.createElement('div');
+                descEl.className = 'world-panel-section-desc';
                 descEl.textContent = description;
                 descEl.style.cssText = 'font-size:12px; color:#64748b; margin-top:4px;';
                 titleWrap.appendChild(titleEl);
                 if (description) titleWrap.appendChild(descEl);
 
                 const actions = document.createElement('div');
+                actions.className = 'world-panel-section-actions';
                 actions.style.cssText = 'display:flex; align-items:center; gap:6px; flex-wrap:wrap; justify-content:flex-end;';
 
                 const body = document.createElement('div');
+                body.className = 'world-panel-section-body';
                 body.style.cssText = 'margin-top:10px; display:flex; flex-direction:column; gap:8px;';
 
                 header.appendChild(titleWrap);
@@ -370,24 +379,30 @@ export class WorldPanel {
                 const worldData = await getWorldData(worldId);
                 const displayName = worldData?.name || worldId;
                 const card = document.createElement('div');
+                card.className = 'world-panel-world-card';
                 card.style.cssText = 'padding:10px; border:1px solid #dbe4ee; border-radius:12px; background:#fff;';
 
                 const header = document.createElement('div');
+                header.className = 'world-panel-world-card-head';
                 header.style.cssText = 'display:flex; flex-direction:column; gap:8px;';
 
                 const titleWrap = document.createElement('div');
+                titleWrap.className = 'world-panel-world-card-copy';
                 titleWrap.style.cssText = 'display:flex; flex-direction:column; gap:2px; min-width:0; flex:1;';
                 const title = document.createElement('button');
                 title.type = 'button';
+                title.className = 'world-panel-world-card-title';
                 title.textContent = displayName;
                 title.style.cssText = 'padding:0; border:none; background:none; text-align:left; font-weight:700; color:#0f172a; cursor:pointer; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;';
                 const meta = document.createElement('div');
+                meta.className = 'world-panel-world-card-meta';
                 meta.textContent = subtitle || '点击标题展开条目';
                 meta.style.cssText = 'font-size:12px; color:#64748b;';
                 titleWrap.appendChild(title);
                 titleWrap.appendChild(meta);
 
                 const actions = document.createElement('div');
+                actions.className = 'world-panel-world-card-actions';
                 actions.style.cssText = 'display:flex; align-items:center; gap:6px; flex-wrap:wrap; justify-content:flex-start;';
 
                 const editBtn = createTextButton('编辑');
@@ -419,6 +434,7 @@ export class WorldPanel {
                 actions.appendChild(deleteBtn);
 
                 const entriesWrap = document.createElement('div');
+                entriesWrap.className = 'world-panel-world-card-entries';
                 entriesWrap.style.cssText = 'display:none; margin-top:8px; padding-top:8px; border-top:1px dashed #e2e8f0; max-height:220px; overflow:auto;';
                 let entriesLoaded = false;
 
@@ -435,9 +451,11 @@ export class WorldPanel {
                         }
                         entries.forEach((entry, idx) => {
                             const row = document.createElement('div');
+                            row.className = 'world-panel-world-entry-row';
                             row.style.cssText = 'display:flex; align-items:center; justify-content:space-between; gap:10px; padding:6px 0;';
                             const label = String(entry?.comment || entry?.title || entry?.id || `entry-${idx}`);
                             const nameEl = document.createElement('div');
+                            nameEl.className = 'world-panel-world-entry-name';
                             nameEl.textContent = label;
                             nameEl.style.cssText = `font-size:12px; color:${entry?.disable ? '#94a3b8' : '#0f172a'}; flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;`;
                             const entryToggle = buildToggle({
@@ -549,8 +567,10 @@ export class WorldPanel {
                     for (const binding of roleBindings) {
                         if (!binding?.hasWorld) {
                             const row = document.createElement('div');
+                            row.className = 'world-panel-empty-bind-row';
                             row.style.cssText = 'display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px; border:1px dashed #dbe4ee; border-radius:12px; background:#fff;';
                             const info = document.createElement('div');
+                            info.className = 'world-panel-empty-bind-copy';
                             info.style.cssText = 'min-width:0; flex:1;';
                             info.innerHTML = `
                                 <div style="font-weight:700; color:#0f172a;">${binding.personaName} · 当前角色卡</div>
@@ -624,6 +644,7 @@ export class WorldPanel {
                         const bound = (window.appBridge?.getWorldIdsForSession?.(memberId) || []).filter((id) => id !== BUILTIN_PHONE_FORMAT_WORLDBOOK_ID);
 
                         const row = document.createElement('div');
+                        row.className = 'world-panel-member-row';
                         row.style.cssText = 'display:flex; align-items:center; gap:10px; padding:10px; border:1px solid #dbe4ee; border-radius:12px; background:#fff;';
                         row.innerHTML = `
                             <img src="${avatar}" alt="" style="width:34px; height:34px; border-radius:50%; object-fit:cover;">
@@ -678,8 +699,10 @@ export class WorldPanel {
                     for (const binding of roleBindings) {
                         if (!binding?.hasWorld) {
                             const row = document.createElement('div');
+                            row.className = 'world-panel-empty-bind-row';
                             row.style.cssText = 'display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px; border:1px dashed #dbe4ee; border-radius:12px; background:#fff;';
                             const info = document.createElement('div');
+                            info.className = 'world-panel-empty-bind-copy';
                             info.style.cssText = 'min-width:0; flex:1;';
                             info.innerHTML = `
                                 <div style="font-weight:700; color:#0f172a;">${binding.personaName} · 当前角色卡</div>
@@ -1327,6 +1350,7 @@ export class WorldPanel {
         }
 
         this.libraryOverlay = document.createElement('div');
+        this.libraryOverlay.id = 'world-library-overlay';
         this.libraryOverlay.className = 'sticker-bind-overlay world-library-overlay';
         this.libraryOverlay.innerHTML = `
             <div class="sticker-bind-modal world-library-modal">
@@ -1365,6 +1389,7 @@ export class WorldPanel {
             </div>
         `;
         this.libraryModal = this.libraryOverlay.querySelector('.world-library-modal');
+        if (this.libraryModal) this.libraryModal.id = 'world-library-modal';
         this.libraryListEl = this.libraryOverlay.querySelector('#world-library-list');
         this.librarySearchEl = this.libraryOverlay.querySelector('#world-library-search');
         this.librarySortEl = this.libraryOverlay.querySelector('#world-library-sort');

@@ -287,10 +287,14 @@ export class ContactGroupRenderer {
     ensureBatchAddModal() {
         if (this.batchAddPanel) return;
         this.batchAddOverlay = document.createElement('div');
+        this.batchAddOverlay.id = 'contact-group-add-overlay';
+        this.batchAddOverlay.className = 'app-themed-overlay';
         this.batchAddOverlay.style.cssText = 'display:none; position:fixed; inset:0; background:rgba(0,0,0,0.45); z-index:22000;';
         this.batchAddOverlay.addEventListener('click', () => this.closeBatchAddModal());
 
         this.batchAddPanel = document.createElement('div');
+        this.batchAddPanel.id = 'contact-group-add-panel';
+        this.batchAddPanel.className = 'app-themed-panel';
         this.batchAddPanel.style.cssText = `
             display:none; position:fixed;
             top: calc(18px + env(safe-area-inset-top, 0px));

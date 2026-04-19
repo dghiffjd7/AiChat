@@ -1070,7 +1070,7 @@ export class WorldEditorModal {
     createUI() {
         this.overlay = document.createElement('div');
         this.overlay.id = 'world-editor-overlay';
-        this.overlay.className = 'popup-overlay';
+        this.overlay.className = 'popup-overlay app-themed-overlay';
         this.overlay.style.display = 'none';
         // Ensure editor sits above world management panel
         this.overlay.style.position = 'fixed';
@@ -1087,7 +1087,7 @@ export class WorldEditorModal {
 
         this.modal = document.createElement('div');
         this.modal.id = 'world-editor-modal';
-        this.modal.className = 'world-editor-popup';
+        this.modal.className = 'world-editor-popup app-themed-panel';
         this.modal.style.display = 'none';
         this.modal.style.position = 'relative';
         this.modal.style.top = 'auto';

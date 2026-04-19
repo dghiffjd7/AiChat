@@ -52,7 +52,7 @@ export class PersonaPanel {
         if (this.overlay) return;
 
         this.overlay = document.createElement('div');
-        this.overlay.className = 'panel-overlay';
+        this.overlay.className = 'panel-overlay app-themed-overlay persona-panel-overlay';
         this.overlay.style.display = 'none';
         this.overlay.style.zIndex = '21000'; // High z-index to sit on top
         this.overlay.style.position = 'fixed';
@@ -67,7 +67,7 @@ export class PersonaPanel {
         });
 
         this.panel = document.createElement('div');
-        this.panel.className = 'panel-content';
+        this.panel.className = 'panel-content app-themed-panel persona-panel-shell';
         this.panel.style.cssText = `
             position: relative;
             display: flex; flex-direction: column;
@@ -206,6 +206,7 @@ export class PersonaPanel {
     ensureImportModal() {
         if (this.importOverlay) return;
         const overlay = document.createElement('div');
+        overlay.className = 'app-themed-overlay persona-import-overlay';
         overlay.style.cssText = `
             display:none; position:fixed; inset:0;
             background: rgba(0,0,0,0.38);
@@ -220,6 +221,7 @@ export class PersonaPanel {
         });
 
         const modal = document.createElement('div');
+        modal.className = 'app-themed-panel persona-import-panel';
         modal.style.cssText = `
             width: min(92vw, 420px);
             background: #fff;
@@ -308,6 +310,7 @@ export class PersonaPanel {
     ensureBulkModal() {
         if (this.bulkModal) return;
         const overlay = document.createElement('div');
+        overlay.className = 'app-themed-overlay persona-bulk-overlay';
         overlay.style.cssText = `
             display:none; position:fixed; inset:0;
             background: rgba(0,0,0,0.38);
@@ -320,6 +323,7 @@ export class PersonaPanel {
         });
 
         const panel = document.createElement('div');
+        panel.className = 'app-themed-panel persona-bulk-panel';
         panel.style.cssText = `
             width: min(96vw, 520px);
             height: min(86vh, 720px);

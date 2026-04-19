@@ -1111,11 +1111,11 @@ export class SessionPanel {
 
   createUI() {
     this.overlay = document.createElement('div');
-    this.overlay.className = 'session-panel-overlay';
+    this.overlay.className = 'session-panel-overlay app-themed-overlay';
     this.overlay.onclick = () => this.hide();
 
     this.panel = document.createElement('div');
-    this.panel.className = 'session-panel';
+    this.panel.className = 'session-panel app-themed-panel';
     this.panel.onclick = e => e.stopPropagation();
 
     this.panel.innerHTML = `

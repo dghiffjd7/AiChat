@@ -75,12 +75,14 @@ export class StickerPicker {
 
   createUI() {
     this.overlay = document.createElement('div');
+    this.overlay.className = 'app-themed-overlay sticker-picker-overlay';
     this.overlay.style.cssText = `
             display:none; position:fixed; inset:0; background:rgba(0,0,0,0.4); z-index:9000;
         `;
     this.overlay.onclick = () => this.hide();
 
     this.panel = document.createElement('div');
+    this.panel.className = 'app-themed-panel sticker-picker-panel';
     this.panel.style.cssText = `
             display:none; position:fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
             background: #fff; border-radius: 12px; box-shadow: 0 8px 30px rgba(0,0,0,0.2);

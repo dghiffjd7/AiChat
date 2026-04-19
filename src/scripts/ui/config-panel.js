@@ -148,7 +148,7 @@ export class ConfigPanel {
         this.element = document.createElement('div');
         this.element.id = 'config-panel';
         this.element.innerHTML = `
-            <div style="padding: 20px; background: white; border-radius: 10px; box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+            <div class="config-modal" style="padding: 20px; background: white; border-radius: 10px; box-shadow: 0 4px 20px rgba(0,0,0,0.3);
                         width: 96vw; max-width: 760px; max-height: calc(100vh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - 20px); overflow-y: auto;">
                 <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:6px;">
                     <h2 id="config-title" style="margin: 0; color: #0f172a;">聊天模型配置</h2>
@@ -1285,10 +1285,14 @@ export class ConfigPanel {
 
     createKeyManagerUI() {
         this.keyOverlay = document.createElement('div');
+        this.keyOverlay.id = 'config-key-overlay';
+        this.keyOverlay.className = 'app-themed-overlay';
         this.keyOverlay.style.cssText = 'display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index: 20000;';
         this.keyOverlay.onclick = () => this.closeKeyManager();
 
         this.keyModal = document.createElement('div');
+        this.keyModal.id = 'config-key-modal';
+        this.keyModal.className = 'app-themed-panel';
         this.keyModal.style.cssText = `
             display:none; position:fixed; top:50%; left:50%; transform:translate(-50%,-50%);
             width:min(560px,92vw); max-height:80vh; overflow:auto;

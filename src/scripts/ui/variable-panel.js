@@ -223,6 +223,7 @@ export class VariablePanel {
         if (this.overlay) return;
 
         const overlay = document.createElement('div');
+        overlay.className = 'app-themed-overlay variable-panel-overlay';
         overlay.style.cssText = `
             display:none; position:fixed; inset:0;
             background: rgba(0,0,0,0.38);
@@ -235,6 +236,7 @@ export class VariablePanel {
         });
 
         const panel = document.createElement('div');
+        panel.className = 'app-themed-panel variable-panel-shell';
         panel.style.cssText = `
             width: min(96vw, 520px);
             height: min(86vh, 720px);
@@ -332,6 +334,7 @@ export class VariablePanel {
         if (this.schemaOverlay) return;
 
         const overlay = document.createElement('div');
+        overlay.className = 'app-themed-overlay variable-panel-overlay variable-schema-overlay';
         overlay.style.cssText = `
             display:none; position:fixed; inset:0;
             background: rgba(0,0,0,0.45);
@@ -344,6 +347,7 @@ export class VariablePanel {
         });
 
         const panel = document.createElement('div');
+        panel.className = 'app-themed-panel variable-panel-shell variable-schema-panel';
         panel.style.cssText = `
             width: min(94vw, 520px);
             max-height: 86vh;
@@ -465,6 +469,7 @@ export class VariablePanel {
         if (this.ruleOverlay) return;
 
         const overlay = document.createElement('div');
+        overlay.className = 'app-themed-overlay variable-panel-overlay variable-rules-overlay';
         overlay.style.cssText = `
             display:none; position:fixed; inset:0;
             background: rgba(0,0,0,0.45);
@@ -477,6 +482,7 @@ export class VariablePanel {
         });
 
         const panel = document.createElement('div');
+        panel.className = 'app-themed-panel variable-panel-shell variable-rules-panel';
         panel.style.cssText = `
             width: min(94vw, 560px);
             max-height: 86vh;
@@ -517,6 +523,7 @@ export class VariablePanel {
     ensureRuleEditorUI() {
         if (this.ruleEditorOverlay) return;
         const overlay = document.createElement('div');
+        overlay.className = 'app-themed-overlay variable-panel-overlay variable-rule-editor-overlay';
         overlay.style.cssText = `
             display:none; position:fixed; inset:0;
             background: rgba(0,0,0,0.52);
@@ -529,6 +536,7 @@ export class VariablePanel {
         });
 
         const panel = document.createElement('div');
+        panel.className = 'app-themed-panel variable-panel-shell variable-rule-editor-panel';
         panel.style.cssText = `
             width: min(94vw, 560px);
             max-height: 88vh;
@@ -748,6 +756,7 @@ export class VariablePanel {
     ensureTemplateUI() {
         if (this.templateOverlay) return;
         const overlay = document.createElement('div');
+        overlay.className = 'app-themed-overlay variable-panel-overlay variable-template-overlay';
         overlay.style.cssText = `
             display:none; position:fixed; inset:0;
             background: rgba(0,0,0,0.45);
@@ -760,6 +769,7 @@ export class VariablePanel {
         });
 
         const panel = document.createElement('div');
+        panel.className = 'app-themed-panel variable-panel-shell variable-template-panel';
         panel.style.cssText = `
             width: min(92vw, 520px);
             max-height: 86vh;
@@ -790,6 +800,7 @@ export class VariablePanel {
     ensureDataUI() {
         if (this.dataOverlay) return;
         const overlay = document.createElement('div');
+        overlay.className = 'app-themed-overlay variable-panel-overlay variable-data-overlay';
         overlay.style.cssText = `
             display:none; position:fixed; inset:0;
             background: rgba(0,0,0,0.45);
@@ -802,6 +813,7 @@ export class VariablePanel {
         });
 
         const panel = document.createElement('div');
+        panel.className = 'app-themed-panel variable-panel-shell variable-data-panel';
         panel.style.cssText = `
             width: min(94vw, 620px);
             max-height: 88vh;
@@ -1592,6 +1604,7 @@ export class VariablePanel {
 
         list.forEach(rule => {
             const row = document.createElement('div');
+            row.className = 'var-rule-card';
             row.style.cssText = `
                 padding:10px 12px;
                 border:1px solid rgba(15,23,42,0.08);
@@ -1700,6 +1713,7 @@ export class VariablePanel {
         const { sid, vars } = this.getVars();
         templates.forEach(tpl => {
             const card = document.createElement('div');
+            card.className = 'var-template-card';
             card.style.cssText = 'border:1px solid rgba(15,23,42,0.08); border-radius:12px; padding:10px; background:#fff; display:flex; align-items:center; gap:10px;';
             const meta = document.createElement('div');
             meta.style.cssText = 'flex:1;';
@@ -1811,6 +1825,7 @@ export class VariablePanel {
 
         entries.forEach(({ k, v }) => {
             const row = document.createElement('div');
+            row.className = 'var-row-card';
             row.style.cssText = `
                 padding:10px 10px;
                 border: 1px solid rgba(0,0,0,0.06);
@@ -1875,6 +1890,7 @@ export class VariablePanel {
                 const clamped = Number.isFinite(num) ? Math.max(min, Math.min(max, num)) : min;
                 const percent = max > min ? Math.round(((clamped - min) / (max - min)) * 100) : 0;
                 const card = document.createElement('div');
+                card.className = 'var-summary-card';
                 card.style.cssText = 'flex:1 1 140px; min-width:120px; padding:10px; border-radius:12px; border:1px solid rgba(15,23,42,0.08); background:#fff;';
                 card.innerHTML = `
                     <div style="font-size:12px; color:#64748b; margin-bottom:6px;">${label}</div>
@@ -1896,6 +1912,7 @@ export class VariablePanel {
             }
 
             const card = document.createElement('div');
+            card.className = 'var-summary-card';
             card.style.cssText = 'flex:1 1 140px; min-width:120px; padding:10px; border-radius:12px; border:1px solid rgba(15,23,42,0.08); background:#fff;';
             card.innerHTML = `
                 <div style="font-size:12px; color:#64748b;">${label}</div>

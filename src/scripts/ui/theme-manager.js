@@ -317,7 +317,7 @@ export class ThemeManager {
       ? 'dark'
       : 'light';
     const shadowColor = String(stTheme.shadow_color || (baseMode === 'dark'
-      ? 'rgba(2, 6, 23, 0.36)'
+      ? 'rgba(0, 0, 0, 0.34)'
       : 'rgba(15, 23, 42, 0.18)'));
     const shadowWidth = clamp(stTheme.shadow_width, 0, 8, 1);
     return normalizeThemePreset({
@@ -327,37 +327,37 @@ export class ThemeManager {
       mode: baseMode === 'dark' ? 'dark' : 'light',
       tokens: {
         surface: {
-          page: stTheme.blur_tint_color || (baseMode === 'dark' ? '#0b1220' : '#f4f5f6'),
-          pageAlt: stTheme.chat_tint_color || stTheme.blur_tint_color || (baseMode === 'dark' ? '#131c2e' : '#e6e9f0'),
-          card: stTheme.chat_tint_color || (baseMode === 'dark' ? 'rgba(15, 23, 42, 0.92)' : 'rgba(255, 255, 255, 0.96)'),
-          panel: stTheme.chat_tint_color || stTheme.blur_tint_color || (baseMode === 'dark' ? 'rgba(15, 23, 42, 0.84)' : 'rgba(255, 255, 255, 0.92)'),
-          topbar: stTheme.blur_tint_color || (baseMode === 'dark' ? 'rgba(15, 23, 42, 0.88)' : 'rgba(255, 255, 255, 0.92)'),
-          input: stTheme.blur_tint_color || (baseMode === 'dark' ? 'rgba(15, 23, 42, 0.76)' : 'rgba(255, 255, 255, 0.92)'),
-          overlay: baseMode === 'dark' ? 'rgba(2, 6, 23, 0.62)' : 'rgba(15, 23, 42, 0.42)',
+          page: stTheme.blur_tint_color || (baseMode === 'dark' ? '#1b1f24' : '#f4f5f6'),
+          pageAlt: stTheme.chat_tint_color || stTheme.blur_tint_color || (baseMode === 'dark' ? '#22272e' : '#e6e9f0'),
+          card: stTheme.chat_tint_color || (baseMode === 'dark' ? 'rgba(34, 39, 46, 0.96)' : 'rgba(255, 255, 255, 0.96)'),
+          panel: stTheme.chat_tint_color || stTheme.blur_tint_color || (baseMode === 'dark' ? 'rgba(45, 51, 59, 0.94)' : 'rgba(255, 255, 255, 0.92)'),
+          topbar: stTheme.blur_tint_color || (baseMode === 'dark' ? 'rgba(27, 31, 36, 0.94)' : 'rgba(255, 255, 255, 0.92)'),
+          input: stTheme.blur_tint_color || (baseMode === 'dark' ? 'rgba(34, 39, 46, 0.96)' : 'rgba(255, 255, 255, 0.92)'),
+          overlay: baseMode === 'dark' ? 'rgba(7, 10, 15, 0.74)' : 'rgba(15, 23, 42, 0.42)',
         },
         text: {
-          primary: stTheme.main_text_color || (baseMode === 'dark' ? '#e5eef9' : '#0f172a'),
-          secondary: stTheme.italics_text_color || (baseMode === 'dark' ? '#cbd5e1' : '#475569'),
-          muted: stTheme.underline_text_color || (baseMode === 'dark' ? '#94a3b8' : '#94a3b8'),
-          inverse: baseMode === 'dark' ? '#0b1220' : '#ffffff',
-          quote: stTheme.quote_text_color || stTheme.italics_text_color || (baseMode === 'dark' ? '#cbd5e1' : '#475569'),
-          link: baseMode === 'dark' ? '#7dd3fc' : '#2563eb',
+          primary: stTheme.main_text_color || (baseMode === 'dark' ? '#e6edf3' : '#0f172a'),
+          secondary: stTheme.italics_text_color || (baseMode === 'dark' ? '#adbac7' : '#475569'),
+          muted: stTheme.underline_text_color || (baseMode === 'dark' ? '#768390' : '#94a3b8'),
+          inverse: baseMode === 'dark' ? '#161b22' : '#ffffff',
+          quote: stTheme.quote_text_color || stTheme.italics_text_color || (baseMode === 'dark' ? '#9da7b3' : '#475569'),
+          link: baseMode === 'dark' ? '#7ab7ff' : '#2563eb',
         },
         accent: {
-          primary: baseMode === 'dark' ? '#38bdf8' : '#199aff',
-          strong: baseMode === 'dark' ? '#0ea5e9' : '#0b66c2',
-          soft: baseMode === 'dark' ? 'rgba(56, 189, 248, 0.18)' : 'rgba(25, 154, 255, 0.14)',
+          primary: baseMode === 'dark' ? '#6cb6ff' : '#199aff',
+          strong: baseMode === 'dark' ? '#539bf5' : '#0b66c2',
+          soft: baseMode === 'dark' ? 'rgba(83, 155, 245, 0.18)' : 'rgba(25, 154, 255, 0.14)',
         },
         border: {
-          subtle: stTheme.border_color || (baseMode === 'dark' ? 'rgba(148, 163, 184, 0.14)' : 'rgba(15, 23, 42, 0.08)'),
-          default: stTheme.border_color || (baseMode === 'dark' ? 'rgba(148, 163, 184, 0.24)' : 'rgba(148, 163, 184, 0.32)'),
-          strong: stTheme.border_color || (baseMode === 'dark' ? 'rgba(226, 232, 240, 0.2)' : 'rgba(15, 23, 42, 0.16)'),
+          subtle: stTheme.border_color || (baseMode === 'dark' ? 'rgba(205, 217, 229, 0.1)' : 'rgba(15, 23, 42, 0.08)'),
+          default: stTheme.border_color || (baseMode === 'dark' ? 'rgba(68, 76, 86, 0.9)' : 'rgba(148, 163, 184, 0.32)'),
+          strong: stTheme.border_color || (baseMode === 'dark' ? 'rgba(118, 131, 144, 0.92)' : 'rgba(15, 23, 42, 0.16)'),
         },
         bubble: {
-          user: stTheme.user_mes_blur_tint_color || (baseMode === 'dark' ? '#2563eb' : '#199aff'),
-          assistant: stTheme.bot_mes_blur_tint_color || (baseMode === 'dark' ? 'rgba(15, 23, 42, 0.98)' : '#ffffff'),
-          assistantAlt: stTheme.bot_mes_blur_tint_color || (baseMode === 'dark' ? 'rgba(30, 41, 59, 0.96)' : '#c9c9c9'),
-          meta: stTheme.chat_tint_color || (baseMode === 'dark' ? 'rgba(15, 23, 42, 0.72)' : 'rgba(255, 255, 255, 0.76)'),
+          user: stTheme.user_mes_blur_tint_color || (baseMode === 'dark' ? '#316dca' : '#199aff'),
+          assistant: stTheme.bot_mes_blur_tint_color || (baseMode === 'dark' ? 'rgba(34, 39, 46, 0.98)' : '#ffffff'),
+          assistantAlt: stTheme.bot_mes_blur_tint_color || (baseMode === 'dark' ? 'rgba(45, 51, 59, 0.98)' : '#c9c9c9'),
+          meta: stTheme.chat_tint_color || (baseMode === 'dark' ? 'rgba(34, 39, 46, 0.78)' : 'rgba(255, 255, 255, 0.76)'),
         },
         shadow: {
           sm: stTheme.noShadows ? 'none' : scaleShadow(Math.max(1, shadowWidth * 0.75), shadowColor),

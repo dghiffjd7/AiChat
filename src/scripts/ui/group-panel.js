@@ -40,10 +40,12 @@ export class GroupPanel {
 
     createUI() {
         this.overlay = document.createElement('div');
+        this.overlay.className = 'app-themed-overlay group-panel-overlay';
         this.overlay.style.cssText = 'display:none; position:fixed; inset:0; background:rgba(0,0,0,0.4); z-index:20000;';
         this.overlay.onclick = () => this.hide();
 
         this.panel = document.createElement('div');
+        this.panel.className = 'app-themed-panel group-panel-shell';
         this.panel.style.cssText = `
             display:none; position:fixed;
             top: calc(10px + env(safe-area-inset-top, 0px));
@@ -285,10 +287,12 @@ export class GroupPanel {
     ensureParentPicker() {
         if (this.parentPickerPanel) return;
         this.parentPickerOverlay = document.createElement('div');
+        this.parentPickerOverlay.className = 'app-themed-overlay group-parent-overlay';
         this.parentPickerOverlay.style.cssText = 'display:none; position:fixed; inset:0; background:rgba(0,0,0,0.45); z-index:22000;';
         this.parentPickerOverlay.addEventListener('click', () => this.closeParentPicker());
 
         this.parentPickerPanel = document.createElement('div');
+        this.parentPickerPanel.className = 'app-themed-panel group-parent-panel';
         this.parentPickerPanel.style.cssText = `
             display:none; position:fixed;
             top: calc(30px + env(safe-area-inset-top, 0px));

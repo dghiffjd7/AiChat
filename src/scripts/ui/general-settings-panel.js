@@ -140,6 +140,8 @@ export class GeneralSettingsPanel {
     this.modalElement = null;
     this.themePresetSelect = null;
     this.themePresetButton = null;
+    this.themeAdvancedToggle = null;
+    this.themeAdvancedWrap = null;
     this.themeAvatarStyleSelect = null;
     this.themeAvatarStyleButton = null;
     this.themeChatDisplaySelect = null;
@@ -250,7 +252,7 @@ export class GeneralSettingsPanel {
     }
     this.refreshThemeSelectButton(this.themePresetButton, this.themePresetSelect, '选择主题…');
     if (this.themeAvatarStyleSelect) {
-      this.themeAvatarStyleSelect.value = String(settings.uiThemeAvatarStyle || 'rounded');
+      this.themeAvatarStyleSelect.value = String(settings.uiThemeAvatarStyle || 'system');
     }
     this.refreshThemeSelectButton(this.themeAvatarStyleButton, this.themeAvatarStyleSelect, '头像样式');
     if (this.themeChatDisplaySelect) {
@@ -739,6 +741,7 @@ export class GeneralSettingsPanel {
       }
     };
     applyFold(this.uiAdvancedToggle, this.uiAdvancedWrap);
+    applyFold(this.themeAdvancedToggle, this.themeAdvancedWrap);
     applyFold(this.memoryAdvancedToggle, this.memoryAdvancedWrap);
     applyFold(this.templateAdvancedToggle, this.templateAdvancedWrap);
     applyFold(this.scriptAdvancedToggle, this.scriptAdvancedWrap);
@@ -1485,6 +1488,7 @@ export class GeneralSettingsPanel {
               <div class="general-settings-card-title">外观与主题</div>
               <div class="general-settings-card-note">内建明暗主题、主题导入导出，以及基础显示风格。</div>
             </div>
+            ${this.renderFoldButton('general-theme-advanced-toggle', '更多外观')}
           </div>
 
           <div class="general-settings-setting-list">
@@ -1506,6 +1510,10 @@ export class GeneralSettingsPanel {
                 <input type="file" id="general-theme-file" accept=".json,application/json" style="display:none;">
               `,
             })}
+          </div>
+
+          <div id="general-theme-advanced" class="general-settings-fold-content" style="display:none;">
+            <div class="general-settings-setting-list">
             ${this.renderInputRow({
               title: '头像样式',
               description: '控制聊天、联系人等头像的圆角形态。',
@@ -1577,6 +1585,7 @@ export class GeneralSettingsPanel {
               description: '隐藏对话气泡中的头像，仅保留消息内容。',
               icon: 'palette',
             })}
+            </div>
           </div>
         </div>
 
@@ -1953,6 +1962,8 @@ export class GeneralSettingsPanel {
 
     this.themePresetSelect = this.element.querySelector('#general-theme-preset-select');
     this.themePresetButton = this.element.querySelector('#general-theme-preset-btn');
+    this.themeAdvancedToggle = this.element.querySelector('#general-theme-advanced-toggle');
+    this.themeAdvancedWrap = this.element.querySelector('#general-theme-advanced');
     this.themeAvatarStyleSelect = this.element.querySelector('#general-theme-avatar-style-select');
     this.themeAvatarStyleButton = this.element.querySelector('#general-theme-avatar-style-btn');
     this.themeChatDisplaySelect = this.element.querySelector('#general-theme-chat-display-select');
@@ -2113,8 +2124,11 @@ export class GeneralSettingsPanel {
       this.refreshThemePresetOptions();
       this.openThemeSelectMenu(this.themePresetButton, this.themePresetSelect, '选择主题…');
     });
+    this.themeAdvancedToggle?.addEventListener('click', () => {
+      this.toggleAdvancedSection(this.themeAdvancedToggle, this.themeAdvancedWrap);
+    });
     this.themeAvatarStyleSelect?.addEventListener('change', (e) => {
-      const value = String(e?.target?.value || 'rounded').trim() || 'rounded';
+      const value = String(e?.target?.value || 'system').trim() || 'system';
       applyThemeSetting('uiThemeAvatarStyle', value);
       this.refreshThemeSelectButton(this.themeAvatarStyleButton, this.themeAvatarStyleSelect, '头像样式');
     });

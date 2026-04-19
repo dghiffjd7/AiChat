@@ -11160,6 +11160,7 @@ Phase G（Frame 36）：循环衔接
     if (el) return el;
     el = document.createElement('div');
     el.id = 'group-management-dropdown';
+    el.className = 'group-management-dropdown';
     el.style.cssText = `
             display:none;
             position: fixed;
@@ -11184,11 +11185,11 @@ Phase G（Frame 36）：循环衔接
     const members = Array.isArray(g?.members) ? g.members : [];
     const title = `${g?.name || '群聊'} · ${members.length}人`;
     el.innerHTML = `
-            <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 12px; border-bottom:1px solid rgba(0,0,0,0.06); background:rgba(248,250,252,0.92); border-radius:12px 12px 0 0;">
-                <div style="font-weight:900; color:#0f172a; font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${title}</div>
-                <button id="group-dd-settings" style="border:1px solid #e2e8f0; background:#fff; border-radius:10px; padding:6px 10px; cursor:pointer;">⚙</button>
+            <div class="group-dd-header" style="display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 12px; border-bottom:1px solid rgba(0,0,0,0.06); background:rgba(248,250,252,0.92); border-radius:12px 12px 0 0;">
+                <div class="group-dd-title" style="font-weight:900; color:#0f172a; font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${title}</div>
+                <button id="group-dd-settings" class="group-dd-settings" style="border:1px solid #e2e8f0; background:#fff; border-radius:10px; padding:6px 10px; cursor:pointer;">⚙</button>
             </div>
-            <div style="padding:8px 0;">
+            <div class="group-dd-list" style="padding:8px 0;">
                 ${
                   members
                     .map(mid => {
@@ -11198,14 +11199,14 @@ Phase G（Frame 36）：循环衔接
                       return `
                         <button class="group-dd-member" data-mid="${mid}" style="width:100%; display:flex; align-items:center; gap:10px; padding:10px 12px; border:none; background:transparent; cursor:pointer; text-align:left;">
                             <img src="${avatar}" alt="" style="width:32px; height:32px; border-radius:50%; object-fit:cover;">
-                            <div style="flex:1; min-width:0;">
-                                <div style="font-weight:700; color:#0f172a; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${name}</div>
-                                <div style="color:#64748b; font-size:12px;">点击进入私聊</div>
+                            <div class="group-dd-member-meta" style="flex:1; min-width:0;">
+                                <div class="group-dd-member-name" style="font-weight:700; color:#0f172a; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${name}</div>
+                                <div class="group-dd-member-sub" style="color:#64748b; font-size:12px;">点击进入私聊</div>
                             </div>
                         </button>
                     `;
                     })
-                    .join('') || `<div style="color:#94a3b8; font-size:13px; padding:10px 12px;">暂无成员</div>`
+                    .join('') || `<div class="group-dd-empty" style="color:#94a3b8; font-size:13px; padding:10px 12px;">暂无成员</div>`
                 }
             </div>
         `;
