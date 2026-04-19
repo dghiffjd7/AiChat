@@ -1323,7 +1323,7 @@ const buildMvuCompatBridge = ({ iframeId, sessionId, debugTag, messageId, messag
         const frame = document.createElement('iframe');
         frame.src = absUrl;
         frame.setAttribute('referrerpolicy', 'no-referrer');
-        frame.style.cssText = 'width:100%; border:0; display:block; min-height:360px; height:70vh; max-height:720px; background:#fff;';
+        frame.style.cssText = 'width:100%; border:0; display:block; min-height:360px; height:70vh; max-height:720px; background:var(--app-surface-card);';
         node.innerHTML = '';
         node.appendChild(frame);
         mounted = true;
@@ -6290,7 +6290,7 @@ const buildLazyRichPlaceholder = (onActivate) => {
         'padding:12px 14px',
         'min-height:84px',
         'background:linear-gradient(180deg, rgba(248,250,252,0.96), rgba(241,245,249,0.96))',
-        'color:#0f172a',
+        'color:var(--app-text-primary)',
     ].join(';');
 
     const textWrap = document.createElement('div');
@@ -6299,7 +6299,7 @@ const buildLazyRichPlaceholder = (onActivate) => {
     title.style.cssText = 'font-size:13px; font-weight:700;';
     title.textContent = '复杂卡片待加载';
     const desc = document.createElement('div');
-    desc.style.cssText = 'font-size:12px; line-height:1.45; color:#475569;';
+    desc.style.cssText = 'font-size:12px; line-height:1.45; color:var(--app-text-secondary);';
     desc.textContent = '滚动到可见区域会自动加载；点击右侧也可立即展开。';
     textWrap.appendChild(title);
     textWrap.appendChild(desc);
@@ -6310,8 +6310,8 @@ const buildLazyRichPlaceholder = (onActivate) => {
     button.style.cssText = [
         'flex:0 0 auto',
         'border:1px solid rgba(15,23,42,0.14)',
-        'background:#fff',
-        'color:#0f172a',
+        'background:var(--app-surface-card)',
+        'color:var(--app-text-primary)',
         'border-radius:10px',
         'padding:8px 12px',
         'font-size:12px',
@@ -6643,7 +6643,7 @@ const makeCodeBlock = ({ lang, code, messageId, preserveHtmlNewlines = false, se
     }
     if (shouldRenderScopedFragment) {
         const previewWrap = document.createElement('div');
-        previewWrap.style.cssText = 'background:#fff; padding:12px 14px;';
+        previewWrap.style.cssText = 'background:var(--app-surface-card); padding:12px 14px;';
         const rendered = renderScopedRichFragment(previewWrap, code, {
             messageId: String(messageId || 'code'),
             resolveStatusCard: null,
@@ -6658,7 +6658,7 @@ const makeCodeBlock = ({ lang, code, messageId, preserveHtmlNewlines = false, se
     }
     if (shouldRenderHtml) {
         const previewWrap = document.createElement('div');
-        previewWrap.style.cssText = 'background:#fff;';
+        previewWrap.style.cssText = 'background:var(--app-surface-card);';
         const iframe = document.createElement('iframe');
         const iframeId = `msg-${String(messageId || 'x')}-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
         iframe.dataset.iframeId = iframeId;
@@ -6670,7 +6670,7 @@ const makeCodeBlock = ({ lang, code, messageId, preserveHtmlNewlines = false, se
         iframe.dataset.iframeAuthority = IFRAME_AUTHORITY_HOST;
         iframe.dataset.iframeLock = '0';
         iframe.dataset.iframeMode = 'document';
-        iframe.style.cssText = 'width:100%; border:0; display:block; height:240px; background:#fff;';
+        iframe.style.cssText = 'width:100%; border:0; display:block; height:240px; background:var(--app-surface-card);';
         if (!allowScripts) {
             iframe.setAttribute('sandbox', 'allow-scripts');
         }

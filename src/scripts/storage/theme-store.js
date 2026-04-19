@@ -81,6 +81,8 @@ const DEFAULT_TOKENS = Object.freeze({
     topbar: 'rgba(255, 255, 255, 0.92)',
     input: 'rgba(255, 255, 255, 0.92)',
     overlay: 'rgba(15, 23, 42, 0.42)',
+    subtle: '#f8fafc',
+    hover: '#f1f5f9',
   },
   text: {
     primary: '#0f172a',
@@ -162,6 +164,8 @@ const BUILTIN_THEMES = Object.freeze([
         topbar: 'rgba(26, 30, 36, 0.96)',
         input: 'rgba(29, 34, 41, 0.98)',
         overlay: 'rgba(4, 8, 12, 0.76)',
+        subtle: 'rgba(26, 32, 39, 0.92)',
+        hover: 'rgba(34, 42, 51, 0.88)',
       },
       text: {
         primary: '#f0f6fc',

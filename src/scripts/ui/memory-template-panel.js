@@ -144,7 +144,7 @@ export class MemoryTemplatePanel {
       right: calc(10px + env(safe-area-inset-right, 0px));
       height: calc(100vh - 20px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
       height: calc(100dvh - 20px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
-      background:#fff; border-radius:12px; box-shadow:0 10px 40px rgba(0,0,0,0.25);
+      background:var(--app-surface-card); border-radius:12px; box-shadow:0 10px 40px rgba(0,0,0,0.25);
       z-index:21000;
       overflow:hidden;
       display:flex; flex-direction:column;
@@ -153,37 +153,37 @@ export class MemoryTemplatePanel {
     this.panel.innerHTML = `
       <div style="padding:14px 16px; border-bottom:1px solid rgba(0,0,0,0.06); background:rgba(248,250,252,0.92); display:flex; align-items:center; justify-content:space-between; gap:10px;">
         <div>
-          <div style="font-weight:800; color:#0f172a;">记忆表格管理</div>
-          <div style="color:#64748b; font-size:12px;">模板导入 / 导出与默认模板切换</div>
+          <div style="font-weight:800; color:var(--app-text-primary);">记忆表格管理</div>
+          <div style="color:var(--app-text-muted); font-size:12px;">模板导入 / 导出与默认模板切换</div>
         </div>
-        <button id="memory-template-close" style="border:none; background:transparent; font-size:22px; cursor:pointer; color:#0f172a;">×</button>
+        <button id="memory-template-close" style="border:none; background:transparent; font-size:22px; cursor:pointer; color:var(--app-text-primary);">×</button>
       </div>
       <div style="padding:14px 16px; overflow:auto; flex:1; min-height:0; -webkit-overflow-scrolling:touch;">
-        <div style="border:1px solid #e2e8f0; border-radius:12px; padding:12px; background:#fff;">
-          <div style="font-weight:700; color:#0f172a; margin-bottom:6px;">全局记忆</div>
-          <div style="font-size:12px; color:#64748b; margin-bottom:8px;">全局表格仅在此处编辑</div>
+        <div style="border:1px solid var(--app-border-default); border-radius:12px; padding:12px; background:var(--app-surface-card);">
+          <div style="font-weight:700; color:var(--app-text-primary); margin-bottom:6px;">全局记忆</div>
+          <div style="font-size:12px; color:var(--app-text-muted); margin-bottom:8px;">全局表格仅在此处编辑</div>
           <div id="memory-template-global-editor"></div>
         </div>
-        <div style="border:1px solid #e2e8f0; border-radius:12px; padding:12px; background:#f8fafc;">
-          <div style="font-weight:700; color:#0f172a; margin-bottom:6px;">当前默认模板</div>
-          <div id="memory-template-current" style="font-size:12px; color:#64748b;"></div>
+        <div style="border:1px solid var(--app-border-default); border-radius:12px; padding:12px; background:var(--app-surface-subtle);">
+          <div style="font-weight:700; color:var(--app-text-primary); margin-bottom:6px;">当前默认模板</div>
+          <div id="memory-template-current" style="font-size:12px; color:var(--app-text-muted);"></div>
           <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:10px;">
-            <button id="memory-template-export" style="padding:8px 12px; border:1px solid #e2e8f0; border-radius:10px; background:#fff; cursor:pointer;">导出当前模板</button>
-            <button id="memory-template-import" style="padding:8px 12px; border:1px solid #e2e8f0; border-radius:10px; background:#fff; cursor:pointer;">导入模板</button>
-            <button id="memory-template-refresh" style="padding:8px 12px; border:1px solid #e2e8f0; border-radius:10px; background:#fff; cursor:pointer;">刷新列表</button>
+            <button id="memory-template-export" style="padding:8px 12px; border:1px solid var(--app-border-default); border-radius:10px; background:var(--app-surface-card); cursor:pointer;">导出当前模板</button>
+            <button id="memory-template-import" style="padding:8px 12px; border:1px solid var(--app-border-default); border-radius:10px; background:var(--app-surface-card); cursor:pointer;">导入模板</button>
+            <button id="memory-template-refresh" style="padding:8px 12px; border:1px solid var(--app-border-default); border-radius:10px; background:var(--app-surface-card); cursor:pointer;">刷新列表</button>
             <button id="memory-template-edit-structure" style="padding:8px 12px; border:1px solid #bae6fd; border-radius:10px; background:#e0f2fe; cursor:pointer;">编辑模板结构</button>
           </div>
         </div>
-        <div style="border:1px solid #e2e8f0; border-radius:12px; padding:12px; background:#fff; margin-top:12px;">
-          <div style="font-weight:700; color:#0f172a; margin-bottom:6px;">数据导入导出</div>
-          <div id="memory-data-status" style="font-size:12px; color:#64748b; margin-bottom:8px;">未开始操作</div>
+        <div style="border:1px solid var(--app-border-default); border-radius:12px; padding:12px; background:var(--app-surface-card); margin-top:12px;">
+          <div style="font-weight:700; color:var(--app-text-primary); margin-bottom:6px;">数据导入导出</div>
+          <div id="memory-data-status" style="font-size:12px; color:var(--app-text-muted); margin-bottom:8px;">未开始操作</div>
           <div style="display:flex; gap:8px; flex-wrap:wrap;">
-            <button id="memory-data-export" style="padding:8px 12px; border:1px solid #e2e8f0; border-radius:10px; background:#fff; cursor:pointer;">导出记忆数据</button>
-            <button id="memory-data-import" style="padding:8px 12px; border:1px solid #e2e8f0; border-radius:10px; background:#fff; cursor:pointer;">导入记忆数据</button>
+            <button id="memory-data-export" style="padding:8px 12px; border:1px solid var(--app-border-default); border-radius:10px; background:var(--app-surface-card); cursor:pointer;">导出记忆数据</button>
+            <button id="memory-data-import" style="padding:8px 12px; border:1px solid var(--app-border-default); border-radius:10px; background:var(--app-surface-card); cursor:pointer;">导入记忆数据</button>
           </div>
         </div>
         <div style="margin-top:14px;">
-          <div style="font-weight:700; color:#0f172a; margin-bottom:6px;">模板列表</div>
+          <div style="font-weight:700; color:var(--app-text-primary); margin-bottom:6px;">模板列表</div>
           <div id="memory-template-list" style="display:flex; flex-direction:column; gap:10px;"></div>
         </div>
       </div>
@@ -379,7 +379,7 @@ export class MemoryTemplatePanel {
     const templates = Array.isArray(this.templates) ? this.templates : [];
     if (!templates.length) {
       const empty = document.createElement('div');
-      empty.style.cssText = 'font-size:12px; color:#94a3b8;';
+      empty.style.cssText = 'font-size:12px; color:var(--app-text-muted);';
       empty.textContent = '暂无模板';
       this.listEl.appendChild(empty);
       return;
@@ -392,14 +392,14 @@ export class MemoryTemplatePanel {
 
   renderTemplateSection(titleText, records, emptyText) {
     const wrap = document.createElement('div');
-    wrap.style.cssText = 'border:1px dashed #e2e8f0; border-radius:12px; padding:10px; background:#fff;';
+    wrap.style.cssText = 'border:1px dashed var(--app-border-default); border-radius:12px; padding:10px; background:var(--app-surface-card);';
     const title = document.createElement('div');
-    title.style.cssText = 'font-weight:700; color:#0f172a; margin-bottom:8px;';
+    title.style.cssText = 'font-weight:700; color:var(--app-text-primary); margin-bottom:8px;';
     title.textContent = titleText;
     wrap.appendChild(title);
     if (!records.length) {
       const empty = document.createElement('div');
-      empty.style.cssText = 'font-size:12px; color:#94a3b8;';
+      empty.style.cssText = 'font-size:12px; color:var(--app-text-muted);';
       empty.textContent = emptyText;
       wrap.appendChild(empty);
       return wrap;
@@ -413,14 +413,14 @@ export class MemoryTemplatePanel {
 
   renderTemplateItem(record) {
     const item = document.createElement('div');
-    item.style.cssText = 'border:1px solid #e2e8f0; border-radius:12px; padding:10px; background:#fff; display:flex; align-items:flex-start; justify-content:space-between; gap:12px;';
+    item.style.cssText = 'border:1px solid var(--app-border-default); border-radius:12px; padding:10px; background:var(--app-surface-card); display:flex; align-items:flex-start; justify-content:space-between; gap:12px;';
     const info = document.createElement('div');
     info.style.cssText = 'flex:1; min-width:0;';
     const title = document.createElement('div');
-    title.style.cssText = 'font-weight:700; color:#0f172a; margin-bottom:4px;';
+    title.style.cssText = 'font-weight:700; color:var(--app-text-primary); margin-bottom:4px;';
     title.textContent = record.name || record.id;
     const meta = document.createElement('div');
-    meta.style.cssText = 'font-size:12px; color:#64748b;';
+    meta.style.cssText = 'font-size:12px; color:var(--app-text-muted);';
     const tags = [];
     if (record.version) tags.push(`v${record.version}`);
     if (record.is_builtin) tags.push('内置');
@@ -433,14 +433,14 @@ export class MemoryTemplatePanel {
     actions.style.cssText = 'display:flex; flex-direction:column; gap:6px;';
     const exportBtn = document.createElement('button');
     exportBtn.textContent = '导出';
-    exportBtn.style.cssText = 'padding:6px 10px; border:1px solid #e2e8f0; border-radius:10px; background:#fff; cursor:pointer; font-size:12px;';
+    exportBtn.style.cssText = 'padding:6px 10px; border:1px solid var(--app-border-default); border-radius:10px; background:var(--app-surface-card); cursor:pointer; font-size:12px;';
     exportBtn.onclick = () => this.exportTemplate(record);
     actions.appendChild(exportBtn);
 
     if (!record.is_default) {
       const setBtn = document.createElement('button');
       setBtn.textContent = '设为默认';
-      setBtn.style.cssText = 'padding:6px 10px; border:1px solid #e2e8f0; border-radius:10px; background:#fff; cursor:pointer; font-size:12px;';
+      setBtn.style.cssText = 'padding:6px 10px; border:1px solid var(--app-border-default); border-radius:10px; background:var(--app-surface-card); cursor:pointer; font-size:12px;';
       setBtn.onclick = async () => {
         await this.handleDefaultTemplateSwitch(record);
       };
@@ -450,7 +450,7 @@ export class MemoryTemplatePanel {
     if (!record.is_builtin) {
       const deleteBtn = document.createElement('button');
       deleteBtn.textContent = '删除';
-      deleteBtn.style.cssText = 'padding:6px 10px; border:1px solid #fecaca; border-radius:10px; background:#fff; cursor:pointer; font-size:12px; color:#b91c1c;';
+      deleteBtn.style.cssText = 'padding:6px 10px; border:1px solid #fecaca; border-radius:10px; background:var(--app-surface-card); cursor:pointer; font-size:12px; color:#b91c1c;';
       deleteBtn.onclick = async () => {
         const ok = await appConfirm({ title: '删除模板', message: '确定删除该模板吗？', danger: true });
         if (!ok) return;
@@ -572,7 +572,7 @@ export class MemoryTemplatePanel {
 
   setDataStatus(text, { tone = 'muted' } = {}) {
     if (!this.dataStatusEl) return;
-    const color = tone === 'error' ? '#ef4444' : tone === 'success' ? '#16a34a' : '#64748b';
+    const color = tone === 'error' ? '#ef4444' : tone === 'success' ? '#16a34a' : 'var(--app-text-muted)';
     this.dataStatusEl.style.color = color;
     this.dataStatusEl.textContent = text || '';
   }
@@ -589,7 +589,7 @@ export class MemoryTemplatePanel {
       left: calc(16px + env(safe-area-inset-left, 0px));
       right: calc(16px + env(safe-area-inset-right, 0px));
       top: calc(14px + env(safe-area-inset-top, 0px));
-      background:#fff; border-radius:14px; box-shadow:0 10px 40px rgba(0,0,0,0.28);
+      background:var(--app-surface-card); border-radius:14px; box-shadow:0 10px 40px rgba(0,0,0,0.28);
       z-index:25000;
       max-height: calc(100vh - 28px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
       max-height: calc(100dvh - 28px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
@@ -598,16 +598,16 @@ export class MemoryTemplatePanel {
     `;
     panel.addEventListener('click', (e) => e.stopPropagation());
     panel.innerHTML = `
-      <div style="padding:12px 14px; border-bottom:1px solid rgba(0,0,0,0.06); background:#f8fafc; display:flex; align-items:center; justify-content:space-between; gap:10px;">
-        <div id="memory-data-dialog-title" style="font-weight:800; color:#0f172a;">导入确认</div>
-        <button id="memory-data-dialog-close" style="border:none; background:transparent; font-size:22px; cursor:pointer; color:#0f172a;">×</button>
+      <div style="padding:12px 14px; border-bottom:1px solid rgba(0,0,0,0.06); background:var(--app-surface-subtle); display:flex; align-items:center; justify-content:space-between; gap:10px;">
+        <div id="memory-data-dialog-title" style="font-weight:800; color:var(--app-text-primary);">导入确认</div>
+        <button id="memory-data-dialog-close" style="border:none; background:transparent; font-size:22px; cursor:pointer; color:var(--app-text-primary);">×</button>
       </div>
       <div style="padding:14px; overflow:auto; flex:1; min-height:0; -webkit-overflow-scrolling:touch; display:flex; flex-direction:column; gap:12px;">
-        <div id="memory-data-dialog-body" style="font-size:13px; color:#0f172a; white-space:pre-wrap;"></div>
+        <div id="memory-data-dialog-body" style="font-size:13px; color:var(--app-text-primary); white-space:pre-wrap;"></div>
         <div id="memory-data-dialog-options" style="display:flex; flex-direction:column; gap:8px;"></div>
         <div style="display:flex; justify-content:flex-end; gap:8px;">
-          <button id="memory-data-dialog-cancel" style="padding:8px 12px; border:1px solid #e2e8f0; border-radius:10px; background:#f8fafc; cursor:pointer;">取消</button>
-          <button id="memory-data-dialog-confirm" style="padding:8px 12px; border:1px solid #0ea5e9; border-radius:10px; background:#0ea5e9; color:#fff; cursor:pointer;">确定</button>
+          <button id="memory-data-dialog-cancel" style="padding:8px 12px; border:1px solid var(--app-border-default); border-radius:10px; background:var(--app-surface-subtle); cursor:pointer;">取消</button>
+          <button id="memory-data-dialog-confirm" style="padding:8px 12px; border:1px solid #0ea5e9; border-radius:10px; background:#0ea5e9; color:var(--app-text-inverse); cursor:pointer;">确定</button>
         </div>
       </div>
     `;
@@ -679,7 +679,7 @@ export class MemoryTemplatePanel {
             : options.slice();
           filtered.forEach((opt, idx) => {
             const label = document.createElement('label');
-            label.style.cssText = 'display:flex; align-items:center; gap:8px; font-size:13px; color:#0f172a;';
+            label.style.cssText = 'display:flex; align-items:center; gap:8px; font-size:13px; color:var(--app-text-primary);';
             const input = document.createElement('input');
             input.type = 'radio';
             input.name = groupName;
@@ -695,7 +695,7 @@ export class MemoryTemplatePanel {
           });
           if (!filtered.length) {
             const empty = document.createElement('div');
-            empty.style.cssText = 'font-size:12px; color:#94a3b8;';
+            empty.style.cssText = 'font-size:12px; color:var(--app-text-muted);';
             empty.textContent = '未找到匹配项';
             listWrap.appendChild(empty);
           }
@@ -704,7 +704,7 @@ export class MemoryTemplatePanel {
           const search = document.createElement('input');
           search.type = 'text';
           search.placeholder = searchPlaceholder;
-          search.style.cssText = 'width:100%; padding:8px 10px; border:1px solid #e2e8f0; border-radius:10px; font-size:13px;';
+          search.style.cssText = 'width:100%; padding:8px 10px; border:1px solid var(--app-border-default); border-radius:10px; font-size:13px;';
           search.addEventListener('input', () => renderList(search.value));
           this.dataDialogOptions.appendChild(search);
         }
@@ -737,7 +737,7 @@ export class MemoryTemplatePanel {
     input.type = 'text';
     input.placeholder = placeholder;
     input.value = String(defaultValue || '');
-    input.style.cssText = 'width:100%; padding:8px 10px; border:1px solid #e2e8f0; border-radius:10px; font-size:13px;';
+    input.style.cssText = 'width:100%; padding:8px 10px; border:1px solid var(--app-border-default); border-radius:10px; font-size:13px;';
     if (this.dataDialogBody) {
       const wrap = document.createElement('div');
       wrap.style.cssText = 'margin-top:8px;';
@@ -1561,19 +1561,19 @@ export class MemoryTemplatePanel {
       right: calc(12px + env(safe-area-inset-right, 0px));
       top: calc(12px + env(safe-area-inset-top, 0px));
       bottom: calc(12px + env(safe-area-inset-bottom, 0px));
-      background:#fff; border-radius:14px; box-shadow:0 10px 40px rgba(0,0,0,0.28);
+      background:var(--app-surface-card); border-radius:14px; box-shadow:0 10px 40px rgba(0,0,0,0.28);
       z-index:25000;
       overflow:hidden;
       display:flex; flex-direction:column;
     `;
     panel.addEventListener('click', (e) => e.stopPropagation());
     panel.innerHTML = `
-      <div style="padding:12px 14px; border-bottom:1px solid rgba(0,0,0,0.06); background:#f8fafc; display:flex; align-items:center; justify-content:space-between; gap:10px;">
-        <div style="font-weight:800; color:#0f172a;">模板结构编辑</div>
+      <div style="padding:12px 14px; border-bottom:1px solid rgba(0,0,0,0.06); background:var(--app-surface-subtle); display:flex; align-items:center; justify-content:space-between; gap:10px;">
+        <div style="font-weight:800; color:var(--app-text-primary);">模板结构编辑</div>
         <div style="display:flex; gap:8px; align-items:center;">
-          <button id="memory-template-add-table" style="padding:6px 10px; border:1px solid #e2e8f0; border-radius:10px; background:#fff; cursor:pointer; font-size:12px;">新增表</button>
-          <button id="memory-template-save-structure" style="padding:6px 10px; border:1px solid #0ea5e9; border-radius:10px; background:#0ea5e9; color:#fff; cursor:pointer; font-size:12px;">保存</button>
-          <button id="memory-template-close-structure" style="border:none; background:transparent; font-size:22px; cursor:pointer; color:#0f172a;">×</button>
+          <button id="memory-template-add-table" style="padding:6px 10px; border:1px solid var(--app-border-default); border-radius:10px; background:var(--app-surface-card); cursor:pointer; font-size:12px;">新增表</button>
+          <button id="memory-template-save-structure" style="padding:6px 10px; border:1px solid #0ea5e9; border-radius:10px; background:#0ea5e9; color:var(--app-text-inverse); cursor:pointer; font-size:12px;">保存</button>
+          <button id="memory-template-close-structure" style="border:none; background:transparent; font-size:22px; cursor:pointer; color:var(--app-text-primary);">×</button>
         </div>
       </div>
       <div id="memory-template-structure-body" style="padding:14px; overflow:auto; flex:1; min-height:0; -webkit-overflow-scrolling:touch;"></div>
@@ -1651,20 +1651,20 @@ export class MemoryTemplatePanel {
     const meta = template.meta || {};
     const metaBlock = document.createElement('div');
     metaBlock.className = 'memory-template-meta-card';
-    metaBlock.style.cssText = 'border:1px solid #e2e8f0; border-radius:12px; padding:12px; margin-bottom:12px; background:#fff;';
+    metaBlock.style.cssText = 'border:1px solid var(--app-border-default); border-radius:12px; padding:12px; margin-bottom:12px; background:var(--app-surface-card);';
     metaBlock.innerHTML = `
-      <div style="font-weight:700; color:#0f172a; margin-bottom:8px;">模板信息</div>
+      <div style="font-weight:700; color:var(--app-text-primary); margin-bottom:8px;">模板信息</div>
       <div style="display:flex; flex-wrap:wrap; gap:8px; align-items:center;">
-        <label style="font-size:12px; color:#64748b;">ID</label>
-        <input id="memory-template-meta-id" type="text" disabled style="flex:1; min-width:200px; padding:6px 8px; border:1px solid #e2e8f0; border-radius:8px; font-size:12px;">
+        <label style="font-size:12px; color:var(--app-text-muted);">ID</label>
+        <input id="memory-template-meta-id" type="text" disabled style="flex:1; min-width:200px; padding:6px 8px; border:1px solid var(--app-border-default); border-radius:8px; font-size:12px;">
       </div>
       <div style="display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-top:8px;">
-        <label style="font-size:12px; color:#64748b;">名称</label>
-        <input id="memory-template-meta-name" type="text" style="flex:1; min-width:200px; padding:6px 8px; border:1px solid #e2e8f0; border-radius:8px; font-size:12px;">
+        <label style="font-size:12px; color:var(--app-text-muted);">名称</label>
+        <input id="memory-template-meta-name" type="text" style="flex:1; min-width:200px; padding:6px 8px; border:1px solid var(--app-border-default); border-radius:8px; font-size:12px;">
       </div>
       <div style="margin-top:8px;">
-        <label style="font-size:12px; color:#64748b;">描述</label>
-        <textarea id="memory-template-meta-desc" rows="2" style="width:100%; padding:6px 8px; border:1px solid #e2e8f0; border-radius:8px; font-size:12px;"></textarea>
+        <label style="font-size:12px; color:var(--app-text-muted);">描述</label>
+        <textarea id="memory-template-meta-desc" rows="2" style="width:100%; padding:6px 8px; border:1px solid var(--app-border-default); border-radius:8px; font-size:12px;"></textarea>
       </div>
     `;
     this.templateEditorBody.appendChild(metaBlock);
@@ -1685,7 +1685,7 @@ export class MemoryTemplatePanel {
     if (!tables.length) {
       const empty = document.createElement('div');
       empty.className = 'memory-template-empty-hint';
-      empty.style.cssText = 'font-size:12px; color:#94a3b8; padding:8px;';
+      empty.style.cssText = 'font-size:12px; color:var(--app-text-muted); padding:8px;';
       empty.textContent = '暂无表格，请点击“新增表”。';
       this.templateEditorBody.appendChild(empty);
       return;
@@ -1696,10 +1696,10 @@ export class MemoryTemplatePanel {
       const details = document.createElement('details');
       details.className = 'memory-template-table-card';
       details.open = true;
-      details.style.cssText = 'border:1px solid #e2e8f0; border-radius:12px; padding:10px; margin-bottom:12px; background:#fff;';
+      details.style.cssText = 'border:1px solid var(--app-border-default); border-radius:12px; padding:10px; margin-bottom:12px; background:var(--app-surface-card);';
       const summary = document.createElement('summary');
       summary.className = 'memory-template-table-summary';
-      summary.style.cssText = 'cursor:pointer; font-weight:700; color:#0f172a;';
+      summary.style.cssText = 'cursor:pointer; font-weight:700; color:var(--app-text-primary);';
       summary.textContent = `${table.name || table.id || '未命名表格'} · ${table.scope || 'contact'} · ${getMemoryTableUsageLabel(table.usage)}`;
       details.appendChild(summary);
 
@@ -1709,24 +1709,24 @@ export class MemoryTemplatePanel {
       const baseRow = document.createElement('div');
       baseRow.style.cssText = 'display:flex; flex-wrap:wrap; gap:8px; align-items:center;';
       baseRow.innerHTML = `
-        <label style="font-size:12px; color:#64748b;">表 ID</label>
-        <input type="text" class="memory-table-id" style="min-width:120px; padding:6px 8px; border:1px solid #e2e8f0; border-radius:8px; font-size:12px;">
-        <label style="font-size:12px; color:#64748b;">名称</label>
-        <input type="text" class="memory-table-name" style="min-width:120px; padding:6px 8px; border:1px solid #e2e8f0; border-radius:8px; font-size:12px;">
-        <label style="font-size:12px; color:#64748b;">范围</label>
-        <select class="memory-table-scope" style="padding:6px 8px; border:1px solid #e2e8f0; border-radius:8px; font-size:12px;">
+        <label style="font-size:12px; color:var(--app-text-muted);">表 ID</label>
+        <input type="text" class="memory-table-id" style="min-width:120px; padding:6px 8px; border:1px solid var(--app-border-default); border-radius:8px; font-size:12px;">
+        <label style="font-size:12px; color:var(--app-text-muted);">名称</label>
+        <input type="text" class="memory-table-name" style="min-width:120px; padding:6px 8px; border:1px solid var(--app-border-default); border-radius:8px; font-size:12px;">
+        <label style="font-size:12px; color:var(--app-text-muted);">范围</label>
+        <select class="memory-table-scope" style="padding:6px 8px; border:1px solid var(--app-border-default); border-radius:8px; font-size:12px;">
           <option value="global">全局</option>
           <option value="contact">私聊</option>
           <option value="group">群聊</option>
         </select>
-        <label style="font-size:12px; color:#64748b;">模式</label>
-        <select class="memory-table-usage" style="padding:6px 8px; border:1px solid #e2e8f0; border-radius:8px; font-size:12px;">
+        <label style="font-size:12px; color:var(--app-text-muted);">模式</label>
+        <select class="memory-table-usage" style="padding:6px 8px; border:1px solid var(--app-border-default); border-radius:8px; font-size:12px;">
           <option value="all">通用</option>
           <option value="chat">聊天</option>
           <option value="rp">RP</option>
         </select>
-        <label style="font-size:12px; color:#64748b;">最大行数</label>
-        <input type="number" class="memory-table-max-rows" min="0" step="1" style="width:90px; padding:6px 8px; border:1px solid #e2e8f0; border-radius:8px; font-size:12px;">
+        <label style="font-size:12px; color:var(--app-text-muted);">最大行数</label>
+        <input type="number" class="memory-table-max-rows" min="0" step="1" style="width:90px; padding:6px 8px; border:1px solid var(--app-border-default); border-radius:8px; font-size:12px;">
       `;
       const idInput = baseRow.querySelector('.memory-table-id');
       const nameInput = baseRow.querySelector('.memory-table-name');
@@ -1764,7 +1764,7 @@ export class MemoryTemplatePanel {
       actionsRow.style.cssText = 'display:flex; gap:8px; flex-wrap:wrap;';
       const moveUp = document.createElement('button');
       moveUp.textContent = '上移';
-      moveUp.style.cssText = 'padding:4px 8px; border:1px solid #e2e8f0; border-radius:8px; background:#fff; cursor:pointer; font-size:12px;';
+      moveUp.style.cssText = 'padding:4px 8px; border:1px solid var(--app-border-default); border-radius:8px; background:var(--app-surface-card); cursor:pointer; font-size:12px;';
       moveUp.disabled = idx === 0;
       moveUp.onclick = () => {
         if (idx <= 0) return;
@@ -1774,7 +1774,7 @@ export class MemoryTemplatePanel {
       };
       const moveDown = document.createElement('button');
       moveDown.textContent = '下移';
-      moveDown.style.cssText = 'padding:4px 8px; border:1px solid #e2e8f0; border-radius:8px; background:#fff; cursor:pointer; font-size:12px;';
+      moveDown.style.cssText = 'padding:4px 8px; border:1px solid var(--app-border-default); border-radius:8px; background:var(--app-surface-card); cursor:pointer; font-size:12px;';
       moveDown.disabled = idx >= tables.length - 1;
       moveDown.onclick = () => {
         if (idx >= tables.length - 1) return;
@@ -1784,7 +1784,7 @@ export class MemoryTemplatePanel {
       };
       const deleteBtn = document.createElement('button');
       deleteBtn.textContent = '删除表';
-      deleteBtn.style.cssText = 'padding:4px 8px; border:1px solid #fecaca; border-radius:8px; background:#fff; cursor:pointer; font-size:12px; color:#b91c1c;';
+      deleteBtn.style.cssText = 'padding:4px 8px; border:1px solid #fecaca; border-radius:8px; background:var(--app-surface-card); cursor:pointer; font-size:12px; color:#b91c1c;';
       deleteBtn.onclick = async () => {
         const ok = await appConfirm({ title: '删除表格', message: '确定删除该表格吗？', danger: true });
         if (!ok) return;
@@ -1796,24 +1796,24 @@ export class MemoryTemplatePanel {
       actionsRow.appendChild(deleteBtn);
 
       const columnsBlock = document.createElement('div');
-      columnsBlock.style.cssText = 'border-top:1px dashed #e2e8f0; padding-top:10px;';
+      columnsBlock.style.cssText = 'border-top:1px dashed var(--app-border-default); padding-top:10px;';
       const columnsTitle = document.createElement('div');
-      columnsTitle.style.cssText = 'font-size:12px; font-weight:700; color:#0f172a; margin-bottom:6px;';
+      columnsTitle.style.cssText = 'font-size:12px; font-weight:700; color:var(--app-text-primary); margin-bottom:6px;';
       columnsTitle.textContent = '列定义';
       columnsBlock.appendChild(columnsTitle);
       (table.columns || []).forEach((col, cidx) => {
         const colRow = document.createElement('div');
         colRow.style.cssText = 'display:flex; flex-wrap:wrap; gap:6px; align-items:center; margin-bottom:6px;';
         colRow.innerHTML = `
-          <input type="text" class="memory-col-id" placeholder="列ID" style="min-width:100px; padding:4px 6px; border:1px solid #e2e8f0; border-radius:6px; font-size:12px;">
-          <input type="text" class="memory-col-name" placeholder="列名" style="min-width:120px; padding:4px 6px; border:1px solid #e2e8f0; border-radius:6px; font-size:12px;">
-          <select class="memory-col-type" style="padding:4px 6px; border:1px solid #e2e8f0; border-radius:6px; font-size:12px;">
+          <input type="text" class="memory-col-id" placeholder="列ID" style="min-width:100px; padding:4px 6px; border:1px solid var(--app-border-default); border-radius:6px; font-size:12px;">
+          <input type="text" class="memory-col-name" placeholder="列名" style="min-width:120px; padding:4px 6px; border:1px solid var(--app-border-default); border-radius:6px; font-size:12px;">
+          <select class="memory-col-type" style="padding:4px 6px; border:1px solid var(--app-border-default); border-radius:6px; font-size:12px;">
             <option value="text">text</option>
             <option value="multiline">multiline</option>
             <option value="select">select</option>
             <option value="number">number</option>
           </select>
-          <button class="memory-col-delete" style="padding:4px 6px; border:1px solid #fecaca; border-radius:6px; background:#fff; cursor:pointer; font-size:12px; color:#b91c1c;">删除</button>
+          <button class="memory-col-delete" style="padding:4px 6px; border:1px solid #fecaca; border-radius:6px; background:var(--app-surface-card); cursor:pointer; font-size:12px; color:#b91c1c;">删除</button>
         `;
         const colId = colRow.querySelector('.memory-col-id');
         const colName = colRow.querySelector('.memory-col-name');
@@ -1839,7 +1839,7 @@ export class MemoryTemplatePanel {
       });
       const addColBtn = document.createElement('button');
       addColBtn.textContent = '新增列';
-      addColBtn.style.cssText = 'padding:4px 8px; border:1px solid #e2e8f0; border-radius:6px; background:#fff; cursor:pointer; font-size:12px;';
+      addColBtn.style.cssText = 'padding:4px 8px; border:1px solid var(--app-border-default); border-radius:6px; background:var(--app-surface-card); cursor:pointer; font-size:12px;';
       addColBtn.onclick = () => {
         table.columns.push({ id: `col${table.columns.length + 1}`, name: `字段${table.columns.length + 1}`, type: 'text' });
         this.renderTemplateEditor();
@@ -1847,10 +1847,10 @@ export class MemoryTemplatePanel {
       columnsBlock.appendChild(addColBtn);
 
       const rulesDetails = document.createElement('details');
-      rulesDetails.style.cssText = 'border-top:1px dashed #e2e8f0; padding-top:10px;';
+      rulesDetails.style.cssText = 'border-top:1px dashed var(--app-border-default); padding-top:10px;';
       rulesDetails.open = false;
       const rulesSummary = document.createElement('summary');
-      rulesSummary.style.cssText = 'cursor:pointer; font-size:12px; font-weight:700; color:#0f172a;';
+      rulesSummary.style.cssText = 'cursor:pointer; font-size:12px; font-weight:700; color:var(--app-text-primary);';
       rulesSummary.textContent = '规则字段';
       rulesDetails.appendChild(rulesSummary);
       const rulesBody = document.createElement('div');
@@ -1865,8 +1865,8 @@ export class MemoryTemplatePanel {
       ruleFields.forEach((rule) => {
         const wrap = document.createElement('div');
         wrap.innerHTML = `
-          <div style="font-size:12px; color:#64748b; margin-bottom:4px;">${rule.label}</div>
-          <textarea rows="2" style="width:100%; padding:6px 8px; border:1px solid #e2e8f0; border-radius:8px; font-size:12px;"></textarea>
+          <div style="font-size:12px; color:var(--app-text-muted); margin-bottom:4px;">${rule.label}</div>
+          <textarea rows="2" style="width:100%; padding:6px 8px; border:1px solid var(--app-border-default); border-radius:8px; font-size:12px;"></textarea>
         `;
         const input = wrap.querySelector('textarea');
         if (input) input.value = String(table.sourceData?.[rule.key] || '');
@@ -1878,10 +1878,10 @@ export class MemoryTemplatePanel {
       rulesDetails.appendChild(rulesBody);
 
       const updateDetails = document.createElement('details');
-      updateDetails.style.cssText = 'border-top:1px dashed #e2e8f0; padding-top:10px;';
+      updateDetails.style.cssText = 'border-top:1px dashed var(--app-border-default); padding-top:10px;';
       updateDetails.open = false;
       const updateSummary = document.createElement('summary');
-      updateSummary.style.cssText = 'cursor:pointer; font-size:12px; font-weight:700; color:#0f172a;';
+      updateSummary.style.cssText = 'cursor:pointer; font-size:12px; font-weight:700; color:var(--app-text-primary);';
       updateSummary.textContent = '更新配置';
       updateDetails.appendChild(updateSummary);
       const updateBody = document.createElement('div');
@@ -1894,12 +1894,12 @@ export class MemoryTemplatePanel {
       ];
       updateFields.forEach((field) => {
         const wrap = document.createElement('label');
-        wrap.style.cssText = 'display:flex; flex-direction:column; gap:4px; font-size:12px; color:#64748b;';
+        wrap.style.cssText = 'display:flex; flex-direction:column; gap:4px; font-size:12px; color:var(--app-text-muted);';
         wrap.textContent = field.label;
         const input = document.createElement('input');
         input.type = 'number';
         input.step = '1';
-        input.style.cssText = 'width:110px; padding:4px 6px; border:1px solid #e2e8f0; border-radius:6px; font-size:12px;';
+        input.style.cssText = 'width:110px; padding:4px 6px; border:1px solid var(--app-border-default); border-radius:6px; font-size:12px;';
         const raw = table.updateConfig?.[field.key];
         input.value = raw == null ? '' : String(raw);
         input.addEventListener('input', () => {
@@ -1913,16 +1913,16 @@ export class MemoryTemplatePanel {
       updateDetails.appendChild(updateBody);
 
       const exportDetails = document.createElement('details');
-      exportDetails.style.cssText = 'border-top:1px dashed #e2e8f0; padding-top:10px;';
+      exportDetails.style.cssText = 'border-top:1px dashed var(--app-border-default); padding-top:10px;';
       exportDetails.open = false;
       const exportSummary = document.createElement('summary');
-      exportSummary.style.cssText = 'cursor:pointer; font-size:12px; font-weight:700; color:#0f172a;';
+      exportSummary.style.cssText = 'cursor:pointer; font-size:12px; font-weight:700; color:var(--app-text-primary);';
       exportSummary.textContent = '导出配置';
       exportDetails.appendChild(exportSummary);
       const exportBody = document.createElement('div');
       exportBody.style.cssText = 'margin-top:8px; display:flex; flex-direction:column; gap:8px;';
       const enabledRow = document.createElement('label');
-      enabledRow.style.cssText = 'display:flex; align-items:center; gap:8px; font-size:12px; color:#0f172a;';
+      enabledRow.style.cssText = 'display:flex; align-items:center; gap:8px; font-size:12px; color:var(--app-text-primary);';
       const enabledInput = document.createElement('input');
       enabledInput.type = 'checkbox';
       enabledInput.checked = table.exportConfig?.enabled === true;
@@ -1934,7 +1934,7 @@ export class MemoryTemplatePanel {
       exportBody.appendChild(enabledRow);
 
       const splitRow = document.createElement('label');
-      splitRow.style.cssText = 'display:flex; align-items:center; gap:8px; font-size:12px; color:#0f172a;';
+      splitRow.style.cssText = 'display:flex; align-items:center; gap:8px; font-size:12px; color:var(--app-text-primary);';
       const splitInput = document.createElement('input');
       splitInput.type = 'checkbox';
       splitInput.checked = table.exportConfig?.splitByRow === true;
@@ -1947,8 +1947,8 @@ export class MemoryTemplatePanel {
 
       const entryWrap = document.createElement('div');
       entryWrap.innerHTML = `
-        <div style="font-size:12px; color:#64748b; margin-bottom:4px;">条目名称</div>
-        <input type="text" class="export-entry-name" style="width:100%; padding:6px 8px; border:1px solid #e2e8f0; border-radius:8px; font-size:12px;">
+        <div style="font-size:12px; color:var(--app-text-muted); margin-bottom:4px;">条目名称</div>
+        <input type="text" class="export-entry-name" style="width:100%; padding:6px 8px; border:1px solid var(--app-border-default); border-radius:8px; font-size:12px;">
       `;
       const entryInput = entryWrap.querySelector('.export-entry-name');
       if (entryInput) entryInput.value = String(table.exportConfig?.entryName || '');
@@ -1959,8 +1959,8 @@ export class MemoryTemplatePanel {
 
       const keywordWrap = document.createElement('div');
       keywordWrap.innerHTML = `
-        <div style="font-size:12px; color:#64748b; margin-bottom:4px;">触发关键词（逗号分隔）</div>
-        <input type="text" class="export-keywords" style="width:100%; padding:6px 8px; border:1px solid #e2e8f0; border-radius:8px; font-size:12px;">
+        <div style="font-size:12px; color:var(--app-text-muted); margin-bottom:4px;">触发关键词（逗号分隔）</div>
+        <input type="text" class="export-keywords" style="width:100%; padding:6px 8px; border:1px solid var(--app-border-default); border-radius:8px; font-size:12px;">
       `;
       const keywordInput = keywordWrap.querySelector('.export-keywords');
       if (keywordInput) keywordInput.value = String(table.exportConfig?.keywords || '');
@@ -1971,9 +1971,9 @@ export class MemoryTemplatePanel {
 
       const tplWrap = document.createElement('div');
       tplWrap.innerHTML = `
-        <div style="font-size:12px; color:#64748b; margin-bottom:4px;">导出模板</div>
-        <textarea rows="3" class="export-template" style="width:100%; padding:6px 8px; border:1px solid #e2e8f0; border-radius:8px; font-size:12px;"></textarea>
-        <small style="color:#94a3b8;">支持 {{tableName}} / {{tableId}} / {{tableData}} / {{rowText}} / {{rowIndex}}</small>
+        <div style="font-size:12px; color:var(--app-text-muted); margin-bottom:4px;">导出模板</div>
+        <textarea rows="3" class="export-template" style="width:100%; padding:6px 8px; border:1px solid var(--app-border-default); border-radius:8px; font-size:12px;"></textarea>
+        <small style="color:var(--app-text-muted);">支持 {{tableName}} / {{tableId}} / {{tableData}} / {{rowText}} / {{rowIndex}}</small>
       `;
       const tplInput = tplWrap.querySelector('.export-template');
       if (tplInput) tplInput.value = String(table.exportConfig?.injectionTemplate || '');

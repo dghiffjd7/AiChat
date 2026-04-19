@@ -139,7 +139,7 @@ export class ContactGroupRenderer {
         if (ungroupedContacts.length === 0) {
             const empty = document.createElement('div');
             empty.textContent = '暂无未分组联系人';
-            empty.style.cssText = 'padding:8px 16px; font-size:12px; color:#94a3b8;';
+            empty.style.cssText = 'padding:8px 16px; font-size:12px; color:var(--app-text-muted);';
             contentEl.appendChild(empty);
         } else {
             ungroupedContacts.forEach(contact => {
@@ -302,7 +302,7 @@ export class ContactGroupRenderer {
             right: calc(18px + env(safe-area-inset-right, 0px));
             height: calc(100vh - 36px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
             height: calc(100dvh - 36px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
-            background:#fff; border-radius:14px; box-shadow:0 10px 40px rgba(0,0,0,0.25);
+            background:var(--app-surface-card); border-radius:14px; box-shadow:0 10px 40px rgba(0,0,0,0.25);
             z-index:23000;
             overflow:hidden;
             flex-direction:column;
@@ -311,20 +311,20 @@ export class ContactGroupRenderer {
         this.batchAddPanel.innerHTML = `
             <div style="padding:14px 16px; border-bottom:1px solid rgba(0,0,0,0.06); background:linear-gradient(135deg, rgba(25,154,255,0.10), rgba(0,102,204,0.08)); display:flex; align-items:center; justify-content:space-between; gap:10px;">
                 <div style="min-width:0;">
-                    <div id="contact-group-add-title" style="font-weight:900; color:#0f172a;">添加联系人</div>
-                    <div style="color:#64748b; font-size:12px;">长按分组名称快速批量加入</div>
+                    <div id="contact-group-add-title" style="font-weight:900; color:var(--app-text-primary);">添加联系人</div>
+                    <div style="color:var(--app-text-muted); font-size:12px;">长按分组名称快速批量加入</div>
                 </div>
-                <button id="contact-group-add-close" style="border:none; background:transparent; font-size:22px; cursor:pointer; color:#0f172a;">×</button>
+                <button id="contact-group-add-close" style="border:none; background:transparent; font-size:22px; cursor:pointer; color:var(--app-text-primary);">×</button>
             </div>
 
             <div style="padding:14px 16px; overflow:auto; flex:1; min-height:0; -webkit-overflow-scrolling:touch;">
-                <input id="contact-group-add-search" style="width:100%; padding:10px 12px; border:1px solid #e2e8f0; border-radius:10px; font-size:14px; box-sizing:border-box;" placeholder="搜索联系人...">
+                <input id="contact-group-add-search" style="width:100%; padding:10px 12px; border:1px solid var(--app-border-default); border-radius:10px; font-size:14px; box-sizing:border-box;" placeholder="搜索联系人...">
                 <div id="contact-group-add-list" style="margin-top:10px; display:flex; flex-direction:column; gap:8px;"></div>
             </div>
 
             <div style="padding:14px 16px; border-top:1px solid rgba(0,0,0,0.06); background:rgba(248,250,252,0.92); display:flex; gap:10px;">
-                <button id="contact-group-add-cancel" style="flex:1; padding:10px 14px; border:1px solid #e2e8f0; border-radius:10px; background:#fff; cursor:pointer;">取消</button>
-                <button id="contact-group-add-confirm" style="flex:1; padding:10px 14px; border:none; border-radius:10px; background:#019aff; color:#fff; cursor:pointer; font-weight:800;">添加</button>
+                <button id="contact-group-add-cancel" style="flex:1; padding:10px 14px; border:1px solid var(--app-border-default); border-radius:10px; background:var(--app-surface-card); cursor:pointer;">取消</button>
+                <button id="contact-group-add-confirm" style="flex:1; padding:10px 14px; border:none; border-radius:10px; background:#019aff; color:var(--app-text-inverse); cursor:pointer; font-weight:800;">添加</button>
             </div>
         `;
 
@@ -377,7 +377,7 @@ export class ContactGroupRenderer {
         if (!filtered.length) {
             const empty = document.createElement('div');
             empty.textContent = '暂无可添加联系人';
-            empty.style.cssText = 'color:#94a3b8; font-size:13px; padding:10px 6px;';
+            empty.style.cssText = 'color:var(--app-text-muted); font-size:13px; padding:10px 6px;';
             listEl.appendChild(empty);
             return;
         }
@@ -393,8 +393,8 @@ export class ContactGroupRenderer {
             row.style.cssText = `
                 display:flex; align-items:center; gap:10px;
                 padding:10px 10px;
-                border:1px solid ${selected ? '#93c5fd' : '#e2e8f0'};
-                background:${selected ? 'rgba(59,130,246,0.08)' : '#fff'};
+                border:1px solid ${selected ? '#93c5fd' : 'var(--app-border-default)'};
+                background:${selected ? 'rgba(59,130,246,0.08)' : 'var(--app-surface-card)'};
                 border-radius:12px;
                 cursor:${already ? 'not-allowed' : 'pointer'};
                 text-align:left;
@@ -417,7 +417,7 @@ export class ContactGroupRenderer {
             img.style.cssText = 'width:36px; height:36px; border-radius:50%; object-fit:cover;';
             const name = document.createElement('div');
             name.textContent = c?.name || id;
-            name.style.cssText = 'font-weight:700; color:#0f172a; flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;';
+            name.style.cssText = 'font-weight:700; color:var(--app-text-primary); flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;';
             const tag = document.createElement('div');
             tag.textContent = already ? '已在分组' : (selected ? '已选' : '');
             tag.style.cssText = 'font-size:12px; color:#2563eb;';

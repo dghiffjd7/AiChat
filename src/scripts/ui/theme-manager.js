@@ -170,6 +170,8 @@ export class ThemeManager {
     setCssVar('--app-surface-topbar', surface.topbar || surface.panel || surface.card);
     setCssVar('--app-surface-input', surface.input || surface.card);
     setCssVar('--app-surface-overlay', surface.overlay);
+    setCssVar('--app-surface-subtle', surface.subtle || surface.card);
+    setCssVar('--app-surface-hover', surface.hover || surface.panel || surface.card);
 
     setCssVar('--app-text-primary', text.primary);
     setCssVar('--app-text-secondary', text.secondary);

@@ -71,23 +71,23 @@ export class UserPanel {
             width:min(94vw, 420px);
             height:min(82vh, 640px);
             max-height:calc(100% - 8px);
-            background:#fff;
+            background:var(--app-surface-card);
             border-radius:12px;
             overflow:hidden;
             box-shadow:0 8px 32px rgba(0,0,0,0.2);
         `;
 
         this.panel.innerHTML = `
-            <div class="panel-header" style="padding:15px; border-bottom:1px solid #eee; display:flex; justify-content:space-between; align-items:center; background:#f8f9fa;">
+            <div class="panel-header" style="padding:15px; border-bottom:1px solid var(--app-border-subtle); display:flex; justify-content:space-between; align-items:center; background:var(--app-surface-subtle);">
                 <span style="font-weight:bold; font-size:16px;">👤 用户管理</span>
-                <button class="close-btn" style="border:none; background:transparent; font-size:20px; cursor:pointer; color:#666;">×</button>
+                <button class="close-btn" style="border:none; background:transparent; font-size:20px; cursor:pointer; color:var(--app-text-secondary);">×</button>
             </div>
             <div id="user-list-container" style="flex:1; overflow-y:auto; padding:10px;"></div>
-            <div class="panel-footer" style="padding:15px; border-top:1px solid #eee; background:#fff; text-align:center;">
+            <div class="panel-footer" style="padding:15px; border-top:1px solid var(--app-border-subtle); background:var(--app-surface-card); text-align:center;">
                 <button id="create-user-btn" style="
                     width:100%;
                     background:#007bff;
-                    color:white;
+                    color:var(--app-text-inverse);
                     border:none;
                     padding:10px 16px;
                     border-radius:18px;
@@ -103,11 +103,11 @@ export class UserPanel {
                 left:0;
                 width:100%;
                 height:100%;
-                background:#fff;
+                background:var(--app-surface-card);
                 z-index:10;
                 flex-direction:column;
             ">
-                <div style="padding:12px 12px; border-bottom:1px solid #eee; display:flex; align-items:center; gap:8px; background:#f8f9fa;">
+                <div style="padding:12px 12px; border-bottom:1px solid var(--app-border-subtle); display:flex; align-items:center; gap:8px; background:var(--app-surface-subtle);">
                     <button id="edit-back-btn" aria-label="返回" style="
                         width:44px;
                         height:44px;
@@ -128,38 +128,38 @@ export class UserPanel {
                             width:80px;
                             height:80px;
                             border-radius:50%;
-                            background:#eee;
+                            background-color:var(--app-surface-hover);
                             margin:0 auto 10px;
                             background-size:cover;
                             background-position:center;
-                            border:2px solid #fff;
+                            border:2px solid var(--app-surface-card);
                             box-shadow:0 2px 8px rgba(0,0,0,0.1);
                             cursor:pointer;
                         "></div>
-                        <button id="edit-avatar-btn" style="font-size:12px; padding:4px 10px; background:#eee; border:none; border-radius:10px; color:#333;">更换头像</button>
+                        <button id="edit-avatar-btn" style="font-size:12px; padding:4px 10px; background:var(--app-surface-hover); border:none; border-radius:10px; color:var(--app-text-primary);">更换头像</button>
                     </div>
                     <div style="margin-bottom:15px;">
-                        <label style="display:block; font-size:12px; color:#666; margin-bottom:5px;">名称 ({{user}})</label>
-                        <input type="text" id="edit-name" style="width:100%; padding:10px; border:1px solid #ddd; border-radius:8px; box-sizing:border-box;">
+                        <label style="display:block; font-size:12px; color:var(--app-text-secondary); margin-bottom:5px;">名称 ({{user}})</label>
+                        <input type="text" id="edit-name" style="width:100%; padding:10px; border:1px solid var(--app-border-default); border-radius:8px; box-sizing:border-box;">
                     </div>
                     <div style="margin-bottom:15px;">
-                        <label style="display:block; font-size:12px; color:#666; margin-bottom:5px;">用户气泡颜色</label>
+                        <label style="display:block; font-size:12px; color:var(--app-text-secondary); margin-bottom:5px;">用户气泡颜色</label>
                         <div style="display:flex; align-items:center; gap:10px;">
-                            <input type="text" id="edit-bubble-color-input" value="#E8F0FE" style="flex:1; padding:10px; border:1px solid #ddd; border-radius:8px; box-sizing:border-box;">
-                            <input type="color" id="edit-bubble-color" value="#E8F0FE" style="width:44px; height:44px; border:1px solid #ddd; border-radius:8px; padding:0; cursor:pointer;">
+                            <input type="text" id="edit-bubble-color-input" value="#E8F0FE" style="flex:1; padding:10px; border:1px solid var(--app-border-default); border-radius:8px; box-sizing:border-box;">
+                            <input type="color" id="edit-bubble-color" value="#E8F0FE" style="width:44px; height:44px; border:1px solid var(--app-border-default); border-radius:8px; padding:0; cursor:pointer;">
                         </div>
-                        <div style="margin-top:6px; font-size:11px; color:#94a3b8;">仅影响“我”的气泡背景，字体颜色跟随聊天设置</div>
+                        <div style="margin-top:6px; font-size:11px; color:var(--app-text-muted);">仅影响“我”的气泡背景，字体颜色跟随聊天设置</div>
                     </div>
                     <div style="margin-bottom:15px;">
-                        <label style="display:block; font-size:12px; color:#666; margin-bottom:5px;">
+                        <label style="display:block; font-size:12px; color:var(--app-text-secondary); margin-bottom:5px;">
                             用户人设 ({{persona}})
-                            <span style="color:#999; font-size:11px; margin-left:5px;">注入到 System Prompt 或 Character Card 中</span>
+                            <span style="color:var(--app-text-muted); font-size:11px; margin-left:5px;">注入到 System Prompt 或 Character Card 中</span>
                         </label>
                         <textarea id="edit-desc" style="
                             width:100%;
                             height:120px;
                             padding:10px;
-                            border:1px solid #ddd;
+                            border:1px solid var(--app-border-default);
                             border-radius:8px;
                             resize:none;
                             box-sizing:border-box;
@@ -167,10 +167,10 @@ export class UserPanel {
                         " placeholder="例如：我是一个富有冒险精神的旅行者..."></textarea>
                     </div>
                     <div style="margin-bottom:15px; padding:12px; border:1px solid rgba(0,0,0,0.06); border-radius:10px; background:rgba(248,250,252,0.8);">
-                        <div style="font-size:12px; font-weight:700; color:#334155; margin-bottom:8px;">注入设置（参考 SillyTavern）</div>
+                        <div style="font-size:12px; font-weight:700; color:var(--app-text-secondary); margin-bottom:8px;">注入设置（参考 SillyTavern）</div>
                         <div style="margin-bottom:10px;">
-                            <label style="display:block; font-size:12px; color:#666; margin-bottom:5px;">插入位置</label>
-                            <select id="edit-position" style="width:100%; padding:10px; border:1px solid #ddd; border-radius:8px; box-sizing:border-box;">
+                            <label style="display:block; font-size:12px; color:var(--app-text-secondary); margin-bottom:5px;">插入位置</label>
+                            <select id="edit-position" style="width:100%; padding:10px; border:1px solid var(--app-border-default); border-radius:8px; box-sizing:border-box;">
                                 <option value="0">IN_PROMPT（作为 system prompt 注入）</option>
                                 <option value="4">AT_DEPTH（插入到聊天历史指定深度）</option>
                                 <option value="9">NONE（不注入）</option>
@@ -178,12 +178,12 @@ export class UserPanel {
                         </div>
                         <div id="edit-depth-wrap" style="display:none; gap:10px;">
                             <div style="flex:1;">
-                                <label style="display:block; font-size:12px; color:#666; margin-bottom:5px;">深度（0=最后一条）</label>
-                                <input type="number" id="edit-depth" min="0" step="1" style="width:100%; padding:10px; border:1px solid #ddd; border-radius:8px; box-sizing:border-box;" />
+                                <label style="display:block; font-size:12px; color:var(--app-text-secondary); margin-bottom:5px;">深度（0=最后一条）</label>
+                                <input type="number" id="edit-depth" min="0" step="1" style="width:100%; padding:10px; border:1px solid var(--app-border-default); border-radius:8px; box-sizing:border-box;" />
                             </div>
                             <div style="flex:1;">
-                                <label style="display:block; font-size:12px; color:#666; margin-bottom:5px;">注入角色</label>
-                                <select id="edit-role" style="width:100%; padding:10px; border:1px solid #ddd; border-radius:8px; box-sizing:border-box;">
+                                <label style="display:block; font-size:12px; color:var(--app-text-secondary); margin-bottom:5px;">注入角色</label>
+                                <select id="edit-role" style="width:100%; padding:10px; border:1px solid var(--app-border-default); border-radius:8px; box-sizing:border-box;">
                                     <option value="0">system</option>
                                     <option value="1">user</option>
                                     <option value="2">assistant</option>
@@ -193,8 +193,8 @@ export class UserPanel {
                     </div>
                     <button id="delete-user-btn" style="width:100%; padding:12px; background:#fee2e2; color:#dc2626; border:none; border-radius:8px; margin-top:20px; cursor:pointer;">删除此用户</button>
                 </div>
-                <div style="padding:15px; border-top:1px solid #eee; background:#fff;">
-                    <button id="save-user-btn" style="width:100%; padding:12px; background:#007bff; color:white; border:none; border-radius:8px; font-weight:bold; cursor:pointer;">保存</button>
+                <div style="padding:15px; border-top:1px solid var(--app-border-subtle); background:var(--app-surface-card);">
+                    <button id="save-user-btn" style="width:100%; padding:12px; background:#007bff; color:var(--app-text-inverse); border:none; border-radius:8px; font-weight:bold; cursor:pointer;">保存</button>
                 </div>
             </div>
         `;
@@ -307,7 +307,7 @@ export class UserPanel {
         panel.style.cssText = `
             width: min(96vw, 520px);
             height: min(86vh, 720px);
-            background: #fff;
+            background: var(--app-surface-card);
             border-radius: 14px;
             overflow: hidden;
             display:flex;
@@ -316,29 +316,29 @@ export class UserPanel {
         `;
         panel.addEventListener('click', (e) => e.stopPropagation());
         panel.innerHTML = `
-            <div style="display:flex; align-items:center; gap:10px; padding:12px; background:#f3f4f6; border-bottom:1px solid #e5e7eb;">
+            <div style="display:flex; align-items:center; gap:10px; padding:12px; background:var(--app-surface-page); border-bottom:1px solid var(--app-border-default);">
                 <button id="user-binding-back" style="width:44px; height:44px; border:none; background:transparent; border-radius:12px; font-size:22px; display:flex; align-items:center; justify-content:center; cursor:pointer;">←</button>
                 <div style="font-weight:900;">绑定角色卡</div>
-                <div id="user-binding-meta" style="margin-left:auto; font-size:12px; color:#64748b; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"></div>
+                <div id="user-binding-meta" style="margin-left:auto; font-size:12px; color:var(--app-text-muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"></div>
             </div>
 
             <div style="padding:10px 12px; border-bottom:1px solid rgba(0,0,0,0.06);">
-                <div id="user-binding-search-box" style="display:flex; align-items:center; gap:8px; padding:10px 12px; border:1px solid rgba(0,0,0,0.10); border-radius:14px; background:#fff;">
+                <div id="user-binding-search-box" style="display:flex; align-items:center; gap:8px; padding:10px 12px; border:1px solid rgba(0,0,0,0.10); border-radius:14px; background:var(--app-surface-card);">
                     <input id="user-binding-search" type="text" placeholder="搜索角色卡..." style="flex:1; border:none; outline:none; font-size:14px; background:transparent;">
-                    <button id="user-binding-clear" type="button" aria-label="清除搜索" style="display:none; width:32px; height:32px; border:none; border-radius:10px; background:#f1f5f9; cursor:pointer;">×</button>
+                    <button id="user-binding-clear" type="button" aria-label="清除搜索" style="display:none; width:32px; height:32px; border:none; border-radius:10px; background:var(--app-surface-hover); cursor:pointer;">×</button>
                 </div>
                 <div style="margin-top:8px; display:flex; gap:8px; align-items:center;">
-                    <button id="user-binding-select-all" style="border:1px solid #e2e8f0; background:#fff; border-radius:10px; padding:8px 10px; font-size:13px; cursor:pointer;">全选</button>
-                    <button id="user-binding-select-none" style="border:1px solid #e2e8f0; background:#fff; border-radius:10px; padding:8px 10px; font-size:13px; cursor:pointer;">全不选</button>
-                    <div id="user-binding-count" style="margin-left:auto; color:#64748b; font-size:12px;"></div>
+                    <button id="user-binding-select-all" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:8px 10px; font-size:13px; cursor:pointer;">全选</button>
+                    <button id="user-binding-select-none" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:8px 10px; font-size:13px; cursor:pointer;">全不选</button>
+                    <div id="user-binding-count" style="margin-left:auto; color:var(--app-text-muted); font-size:12px;"></div>
                 </div>
             </div>
 
             <div id="user-binding-list" style="flex:1; min-height:0; overflow:auto; -webkit-overflow-scrolling:touch; padding:10px 12px;"></div>
 
             <div style="padding:12px; border-top:1px solid rgba(0,0,0,0.08); display:flex; gap:10px;">
-                <button id="user-binding-cancel" style="flex:1; border:1px solid #e2e8f0; background:#fff; border-radius:12px; padding:12px; font-weight:700; cursor:pointer;">取消</button>
-                <button id="user-binding-save" style="flex:2; border:none; background:#2563eb; color:#fff; border-radius:12px; padding:12px; font-weight:900; cursor:pointer;">保存绑定</button>
+                <button id="user-binding-cancel" style="flex:1; border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:12px; padding:12px; font-weight:700; cursor:pointer;">取消</button>
+                <button id="user-binding-save" style="flex:2; border:none; background:#2563eb; color:var(--app-text-inverse); border-radius:12px; padding:12px; font-weight:900; cursor:pointer;">保存绑定</button>
             </div>
         `;
         overlay.appendChild(panel);
@@ -437,7 +437,7 @@ export class UserPanel {
         if (countEl) countEl.textContent = `已选 ${this.bindingState.selected.size} / ${this.getCharacterCards().length}`;
         listEl.innerHTML = '';
         if (!cards.length) {
-            listEl.innerHTML = '<div style="padding:18px 10px; color:#94a3b8; text-align:center;">未找到匹配的角色卡</div>';
+            listEl.innerHTML = '<div style="padding:18px 10px; color:var(--app-text-muted); text-align:center;">未找到匹配的角色卡</div>';
             return;
         }
         cards.forEach((item) => {
@@ -454,15 +454,15 @@ export class UserPanel {
                 border:1px solid ${checked ? 'rgba(37,99,235,0.22)' : 'rgba(0,0,0,0.08)'};
                 border-radius:12px;
                 margin-bottom:8px;
-                background:${checked ? 'rgba(37,99,235,0.06)' : '#fff'};
+                background:${checked ? 'rgba(37,99,235,0.06)' : 'var(--app-surface-card)'};
                 cursor:pointer;
             `;
             row.innerHTML = `
                 <input class="user-binding-check" type="checkbox" ${checked ? 'checked' : ''} style="width:18px; height:18px;">
-                <img src="${escapeHtml(item.avatar)}" alt="" style="width:36px; height:36px; border-radius:12px; object-fit:cover; background:#eee;">
+                <img src="${escapeHtml(item.avatar)}" alt="" style="width:36px; height:36px; border-radius:12px; object-fit:cover; background:var(--app-surface-hover);">
                 <div style="flex:1; min-width:0;">
-                    <div style="font-weight:800; color:#0f172a; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${escapeHtml(item.name)}</div>
-                    <div style="font-size:12px; color:#64748b; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${subtitle}</div>
+                    <div style="font-weight:800; color:var(--app-text-primary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${escapeHtml(item.name)}</div>
+                    <div style="font-size:12px; color:var(--app-text-muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${subtitle}</div>
                 </div>
             `;
             const toggle = () => {
@@ -497,9 +497,9 @@ export class UserPanel {
                 align-items:center;
                 gap:10px;
                 padding:12px;
-                border-bottom:1px solid #f0f0f0;
+                border-bottom:1px solid var(--app-border-subtle);
                 cursor:pointer;
-                background:${user.id === activeId ? '#f0f9ff' : 'white'};
+                background:${user.id === activeId ? '#f0f9ff' : 'var(--app-surface-card)'};
                 border-radius:8px;
                 margin-bottom:5px;
                 border:1px solid ${user.id === activeId ? '#bae6fd' : 'transparent'};
@@ -507,15 +507,15 @@ export class UserPanel {
             const avatarUrl = user.avatar || './assets/external/feather-default.png';
             item.innerHTML = `
                 <div style="position:relative;">
-                    <img src="${avatarUrl}" style="width:40px; height:40px; border-radius:50%; object-fit:cover; background:#eee;">
-                    ${user.id === activeId ? '<div style="position:absolute; bottom:0; right:0; width:14px; height:14px; background:#007bff; border-radius:50%; border:2px solid white;"></div>' : ''}
+                    <img src="${avatarUrl}" style="width:40px; height:40px; border-radius:50%; object-fit:cover; background:var(--app-surface-hover);">
+                    ${user.id === activeId ? '<div style="position:absolute; bottom:0; right:0; width:14px; height:14px; background:#007bff; border-radius:50%; border:2px solid var(--app-surface-card);"></div>' : ''}
                 </div>
                 <div style="flex:1; min-width:0;">
-                    <div style="font-weight:bold; color:#333; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${user.name || '我'}</div>
-                    <div style="font-size:12px; color:#999; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${this.getBoundCharacterSummary(user.id)}</div>
+                    <div style="font-weight:bold; color:var(--app-text-primary); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${user.name || '我'}</div>
+                    <div style="font-size:12px; color:var(--app-text-muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${this.getBoundCharacterSummary(user.id)}</div>
                 </div>
-                <button class="bind-btn" title="绑定角色卡" style="padding:8px; border:none; background:transparent; color:${this.getBoundCharacterCards(user.id).length ? '#d4a100' : '#999'}; cursor:pointer; font-size:16px;">🔒</button>
-                <button class="edit-btn" style="padding:8px; border:none; background:transparent; color:#999; cursor:pointer; font-size:16px;">✎</button>
+                <button class="bind-btn" title="绑定角色卡" style="padding:8px; border:none; background:transparent; color:${this.getBoundCharacterCards(user.id).length ? '#d4a100' : 'var(--app-text-muted)'}; cursor:pointer; font-size:16px;">🔒</button>
+                <button class="edit-btn" style="padding:8px; border:none; background:transparent; color:var(--app-text-muted); cursor:pointer; font-size:16px;">✎</button>
             `;
 
             item.addEventListener('click', async (event) => {

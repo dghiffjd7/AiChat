@@ -117,29 +117,29 @@ const PANEL_CSS = `
 #preset-panel {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
     font-size: 14px;
-    color: #1e293b;
+    color: var(--app-text-primary);
 }
 
 /* ── header ── */
 .pp-header {
     padding: 14px 16px;
-    border-bottom: 1px solid #e2e8f0;
+    border-bottom: 1px solid var(--app-border-default);
     background: rgba(248,250,252,0.92);
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 10px;
 }
-.pp-header-title { font-weight: 800; color: #0f172a; font-size: 16px; }
-.pp-header-sub { color: #64748b; font-size: 12px; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pp-header-title { font-weight: 800; color: var(--app-text-primary); font-size: 16px; }
+.pp-header-sub { color: var(--app-text-muted); font-size: 12px; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pp-header-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
 .pp-header-actions button {
-    border: 1px solid #e2e8f0; background: #fff; padding: 6px 10px;
-    border-radius: 10px; cursor: pointer; font-size: 12px; color: #334155;
+    border: 1px solid var(--app-border-default); background: var(--app-surface-card); padding: 6px 10px;
+    border-radius: 10px; cursor: pointer; font-size: 12px; color: var(--app-text-secondary);
 }
 .pp-close {
     border: none !important; background: transparent !important;
-    font-size: 22px !important; color: #0f172a !important; padding: 4px 6px !important;
+    font-size: 22px !important; color: var(--app-text-primary) !important; padding: 4px 6px !important;
 }
 
 /* ── body shell ── */
@@ -148,12 +148,12 @@ const PANEL_CSS = `
     min-height: 0;
     display: flex;
     flex-direction: column;
-    background: linear-gradient(180deg, #f8fbff 0%, #ffffff 100%);
+    background: linear-gradient(180deg, #f8fbff 0%, var(--app-surface-card) 100%);
 }
 
 .pp-manager {
     padding: 12px 16px 14px;
-    border-bottom: 1px solid #e2e8f0;
+    border-bottom: 1px solid var(--app-border-default);
     background: rgba(255,255,255,0.96);
     backdrop-filter: blur(12px);
     flex-shrink: 0;
@@ -172,11 +172,11 @@ const PANEL_CSS = `
     gap: 10px;
     margin-bottom: 10px;
 }
-.pp-manager-title { font-size: 14px; font-weight: 800; color: #0f172a; }
+.pp-manager-title { font-size: 14px; font-weight: 800; color: var(--app-text-primary); }
 .pp-manager-sub {
     margin-top: 4px;
     font-size: 12px;
-    color: #64748b;
+    color: var(--app-text-muted);
     line-height: 1.45;
 }
 .pp-manager-context {
@@ -186,11 +186,11 @@ const PANEL_CSS = `
     background: rgba(255,255,255,0.84);
     border: 1px solid rgba(59,130,246,0.12);
     font-size: 12px;
-    color: #475569;
+    color: var(--app-text-secondary);
     line-height: 1.5;
 }
 .pp-manager-context strong {
-    color: #0f172a;
+    color: var(--app-text-primary);
 }
 .pp-enabled-chip {
     flex-shrink: 0;
@@ -212,7 +212,7 @@ const PANEL_CSS = `
     color: #1e40af;
 }
 .pp-enabled-chip.pp-readonly .pp-enabled-text {
-    color: #64748b;
+    color: var(--app-text-muted);
 }
 .pp-switch {
     position: relative;
@@ -235,7 +235,7 @@ const PANEL_CSS = `
     width: 100%;
     height: 100%;
     border-radius: 999px;
-    background: #cbd5e1;
+    background: var(--app-border-strong);
     transition: background 180ms ease;
     position: relative;
 }
@@ -247,7 +247,7 @@ const PANEL_CSS = `
     width: 18px;
     height: 18px;
     border-radius: 50%;
-    background: #fff;
+    background: var(--app-surface-card);
     box-shadow: 0 1px 2px rgba(15,23,42,0.18);
     transition: transform 180ms ease;
 }
@@ -264,10 +264,10 @@ const PANEL_CSS = `
     background: #d1d5db;
 }
 .pp-enabled-chip.pp-readonly .pp-switch input:checked + .pp-switch-track {
-    background: #cbd5e1;
+    background: var(--app-border-strong);
 }
 .pp-enabled-chip.pp-readonly .pp-switch-track::after {
-    background: #f8fafc;
+    background: var(--app-surface-subtle);
     box-shadow: 0 1px 2px rgba(100,116,139,0.22);
 }
 .pp-manager-select-row {
@@ -285,7 +285,7 @@ const PANEL_CSS = `
     margin-bottom: 6px;
     font-size: 12px;
     font-weight: 700;
-    color: #334155;
+    color: var(--app-text-secondary);
 }
 .pp-manager-select {
     appearance: none;
@@ -293,10 +293,10 @@ const PANEL_CSS = `
     width: 100%;
     min-height: 42px;
     padding: 10px 12px;
-    border: 1px solid #cbd5e1;
+    border: 1px solid var(--app-border-strong);
     border-radius: 12px;
-    background: #fff;
-    color: #0f172a;
+    background: var(--app-surface-card);
+    color: var(--app-text-primary);
     font-size: 14px;
 }
 .pp-manager-actions {
@@ -312,8 +312,8 @@ const PANEL_CSS = `
     padding: 8px 12px;
     border: 1px solid #dbe2ea;
     border-radius: 10px;
-    background: #fff;
-    color: #334155;
+    background: var(--app-surface-card);
+    color: var(--app-text-secondary);
     font-size: 12px;
     font-weight: 700;
     cursor: pointer;
@@ -386,12 +386,12 @@ const PANEL_CSS = `
     margin-bottom: 2px;
     font-size: 18px;
     font-weight: 800;
-    color: #0f172a;
+    color: var(--app-text-primary);
     line-height: 1.2;
 }
 .pp-detail-subheading {
     font-size: 12px;
-    color: #64748b;
+    color: var(--app-text-muted);
     line-height: 1.45;
 }
 
@@ -405,9 +405,9 @@ const PANEL_CSS = `
     appearance: none;
     -webkit-appearance: none;
     width: 100%;
-    border: 1px solid #e2e8f0;
+    border: 1px solid var(--app-border-default);
     border-radius: 16px;
-    background: #fff;
+    background: var(--app-surface-card);
     padding: 14px 16px;
     display: flex;
     align-items: center;
@@ -429,12 +429,12 @@ const PANEL_CSS = `
 .pp-nav-item-title {
     font-size: 15px;
     font-weight: 800;
-    color: #0f172a;
+    color: var(--app-text-primary);
     line-height: 1.35;
 }
 .pp-nav-item-sub {
     font-size: 12px;
-    color: #64748b;
+    color: var(--app-text-muted);
     line-height: 1.45;
     white-space: nowrap;
     overflow: hidden;
@@ -442,14 +442,14 @@ const PANEL_CSS = `
 }
 .pp-nav-item.pp-disabled .pp-nav-item-title,
 .pp-nav-item.pp-disabled .pp-nav-item-sub {
-    color: #94a3b8;
+    color: var(--app-text-muted);
 }
 .pp-nav-item-arrow {
     width: 30px;
     height: 30px;
     border-radius: 10px;
-    background: #f8fafc;
-    color: #94a3b8;
+    background: var(--app-surface-subtle);
+    color: var(--app-text-muted);
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -463,9 +463,9 @@ const PANEL_CSS = `
     gap: 12px;
 }
 .pp-binding-card {
-    border: 1px solid #e2e8f0;
+    border: 1px solid var(--app-border-default);
     border-radius: 16px;
-    background: #fff;
+    background: var(--app-surface-card);
     box-shadow: 0 4px 18px rgba(15,23,42,0.04);
     padding: 12px;
 }
@@ -478,13 +478,13 @@ const PANEL_CSS = `
 .pp-binding-card-title {
     font-size: 14px;
     font-weight: 800;
-    color: #0f172a;
+    color: var(--app-text-primary);
     line-height: 1.35;
 }
 .pp-binding-card-sub {
     margin-top: 4px;
     font-size: 12px;
-    color: #64748b;
+    color: var(--app-text-muted);
     line-height: 1.5;
 }
 .pp-binding-chip {
@@ -512,8 +512,8 @@ const PANEL_CSS = `
     padding: 8px 12px;
     border-radius: 10px;
     border: 1px solid #dbe2ea;
-    background: #fff;
-    color: #334155;
+    background: var(--app-surface-card);
+    color: var(--app-text-secondary);
     font-size: 12px;
     font-weight: 700;
     cursor: pointer;
@@ -524,8 +524,8 @@ const PANEL_CSS = `
     color: #1d4ed8;
 }
 .pp-binding-btn.is-muted {
-    background: #f8fafc;
-    color: #64748b;
+    background: var(--app-surface-subtle);
+    color: var(--app-text-muted);
 }
 .pp-binding-btn:disabled {
     opacity: 0.45;
@@ -538,9 +538,9 @@ const PANEL_CSS = `
     gap: 8px;
 }
 .pp-binding-item {
-    border: 1px solid #e2e8f0;
+    border: 1px solid var(--app-border-default);
     border-radius: 14px;
-    background: #f8fafc;
+    background: var(--app-surface-subtle);
     padding: 10px 12px;
     display: flex;
     align-items: center;
@@ -556,14 +556,14 @@ const PANEL_CSS = `
 .pp-binding-item-title {
     font-size: 13px;
     font-weight: 700;
-    color: #0f172a;
+    color: var(--app-text-primary);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
 }
 .pp-binding-item-sub {
     font-size: 12px;
-    color: #64748b;
+    color: var(--app-text-muted);
     line-height: 1.45;
     white-space: nowrap;
     overflow: hidden;
@@ -571,40 +571,40 @@ const PANEL_CSS = `
 }
 .pp-binding-empty {
     padding: 12px;
-    border: 1px dashed #cbd5e1;
+    border: 1px dashed var(--app-border-strong);
     border-radius: 14px;
-    background: #f8fafc;
+    background: var(--app-surface-subtle);
     font-size: 12px;
-    color: #64748b;
+    color: var(--app-text-muted);
     line-height: 1.5;
 }
 
 /* ── form helpers ── */
-.pp-field-label { font-weight: 700; color: #0f172a; margin-bottom: 6px; font-size: 13px; }
+.pp-field-label { font-weight: 700; color: var(--app-text-primary); margin-bottom: 6px; font-size: 13px; }
 .pp-textarea {
     width: 100%; min-height: 140px; resize: vertical;
-    border: 1px solid #e2e8f0; border-radius: 10px; padding: 10px;
+    border: 1px solid var(--app-border-default); border-radius: 10px; padding: 10px;
     font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
     font-size: 12px; line-height: 1.45;
-    background: #ffffff; color: #0f172a; box-sizing: border-box;
+    background: var(--app-surface-card); color: var(--app-text-primary); box-sizing: border-box;
 }
 .pp-input {
-    width: 100%; padding: 10px; border: 1px solid #e2e8f0;
-    border-radius: 10px; font-size: 14px; background: #fff; color: #0f172a;
+    width: 100%; padding: 10px; border: 1px solid var(--app-border-default);
+    border-radius: 10px; font-size: 14px; background: var(--app-surface-card); color: var(--app-text-primary);
 }
 .pp-row { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 10px; }
 .pp-row > div { flex: 1; min-width: 140px; }
 .pp-flags { margin-top: 10px; display: flex; gap: 12px; flex-wrap: wrap; }
 .pp-flags label {
     display: flex; align-items: center; gap: 8px;
-    font-size: 13px; color: #334155; cursor: pointer;
+    font-size: 13px; color: var(--app-text-secondary); cursor: pointer;
 }
 .pp-flags input[type="checkbox"] { width: 16px; height: 16px; }
 
 /* ── openai blocks ── */
 .pp-block {
     border: 1px solid rgba(0,0,0,0.08); border-radius: 12px;
-    background: #fff; overflow: hidden;
+    background: var(--app-surface-card); overflow: hidden;
 }
 .pp-block-header {
     display: flex; align-items: center; justify-content: space-between;
@@ -612,11 +612,11 @@ const PANEL_CSS = `
     cursor: pointer; user-select: none;
 }
 .pp-block-left { display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1; }
-.pp-block-toggle { font-size: 16px; color: #64748b; user-select: none; width: 18px; }
-.pp-block-drag { font-size: 16px; color: #64748b; cursor: grab; user-select: none; }
+.pp-block-toggle { font-size: 16px; color: var(--app-text-muted); user-select: none; width: 18px; }
+.pp-block-drag { font-size: 16px; color: var(--app-text-muted); cursor: grab; user-select: none; }
 .pp-block-main { min-width: 0; display: flex; flex-direction: column; gap: 5px; }
-.pp-block-title { font-weight: 800; color: #0f172a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.pp-block-sub { color: #64748b; font-size: 12px; }
+.pp-block-title { font-weight: 800; color: var(--app-text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pp-block-sub { color: var(--app-text-muted); font-size: 12px; }
 .pp-block-meta {
     display: flex;
     align-items: center;
@@ -643,7 +643,7 @@ const PANEL_CSS = `
 .pp-meta-chip.is-placement {
     background: rgba(148,163,184,0.12);
     border-color: rgba(148,163,184,0.2);
-    color: #475569;
+    color: var(--app-text-secondary);
 }
 .pp-meta-chip.is-dynamic {
     background: rgba(245,158,11,0.12);
@@ -657,8 +657,8 @@ const PANEL_CSS = `
 }
 .pp-block-right { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
 .pp-block-body { padding: 10px 12px; display: none; flex-direction: column; gap: 10px; }
-.pp-block.pp-block-disabled { opacity: 0.62; filter: grayscale(1); background: #f1f5f9; }
-.pp-block.pp-block-disabled .pp-block-header { background: #e2e8f0; }
+.pp-block.pp-block-disabled { opacity: 0.62; filter: grayscale(1); background: var(--app-surface-hover); }
+.pp-block.pp-block-disabled .pp-block-header { background: var(--app-border-default); }
 
 /* ── status ── */
 .pp-status {
@@ -670,7 +670,7 @@ const PANEL_CSS = `
 /* ── footer ── */
 .pp-footer {
     display: flex; align-items: center; justify-content: flex-end; gap: 10px;
-    padding: 12px 16px; border-top: 1px solid #e2e8f0;
+    padding: 12px 16px; border-top: 1px solid var(--app-border-default);
     flex-shrink: 0;
 }
 
@@ -679,8 +679,8 @@ const PANEL_CSS = `
 .pp-footer button {
     padding: 10px 18px; border-radius: 10px; cursor: pointer; font-size: 14px;
 }
-.pp-btn-cancel { border: 1px solid #e2e8f0; background: #f8fafc; color: #334155; }
-.pp-btn-save { border: none; background: #3b82f6; color: #fff; font-weight: 700; }
+.pp-btn-cancel { border: 1px solid var(--app-border-default); background: var(--app-surface-subtle); color: var(--app-text-secondary); }
+.pp-btn-save { border: none; background: #3b82f6; color: var(--app-text-inverse); font-weight: 700; }
 .pp-btn-save:active { background: #2563eb; }
 `;
 
@@ -1041,7 +1041,7 @@ export class PresetPanel {
             left: calc(10px + env(safe-area-inset-left, 0px));
             right: calc(10px + env(safe-area-inset-right, 0px));
             box-sizing: border-box;
-            background:#fff; border-radius:12px; box-shadow:0 10px 40px rgba(0,0,0,0.25);
+            background:var(--app-surface-card); border-radius:12px; box-shadow:0 10px 40px rgba(0,0,0,0.25);
             z-index: 21000; flex-direction: column; overflow: hidden;
         `;
         this.element.onclick = (e) => e.stopPropagation();
@@ -1711,7 +1711,7 @@ export class PresetPanel {
     renderChatPromptsEditor(p) {
         const wrap = document.createElement('div');
         const desc = document.createElement('div');
-        desc.style.cssText = 'color:#64748b; font-size:12px; margin-bottom:8px;';
+        desc.style.cssText = 'color:var(--app-text-muted); font-size:12px; margin-bottom:8px;';
         desc.textContent = '这里统一编辑聊天提示词。下方标签表示区块的适用链路、注入位置与动态替换关系，不代表当前聊天室的实时状态。';
         wrap.appendChild(desc);
 
@@ -1770,7 +1770,7 @@ export class PresetPanel {
             const right = document.createElement('div');
             right.className = 'pp-block-right';
             const enabledWrap = document.createElement('label');
-            enabledWrap.style.cssText = 'display:flex; align-items:center; gap:6px; font-size:12px; color:#334155; cursor:pointer;';
+            enabledWrap.style.cssText = 'display:flex; align-items:center; gap:6px; font-size:12px; color:var(--app-text-secondary); cursor:pointer;';
             enabledWrap.innerHTML = `<input id="${cfg.idPrefix}-enabled" type="checkbox" style="width:16px; height:16px;">启用`;
             const enabledInput = enabledWrap.querySelector('input');
             enabledInput.checked = isEnabled;
@@ -1974,7 +1974,7 @@ export class PresetPanel {
     renderContextEditor(p) {
         const wrap = document.createElement('div');
         const desc = document.createElement('div');
-        desc.style.cssText = 'color:#64748b; font-size:12px; margin-bottom:4px;';
+        desc.style.cssText = 'color:var(--app-text-muted); font-size:12px; margin-bottom:4px;';
         desc.textContent = 'ST 的 story_string 模板，支持 {{#if}} 与变量';
         wrap.appendChild(desc);
 
@@ -2041,7 +2041,7 @@ export class PresetPanel {
     renderInstructEditor(p) {
         const wrap = document.createElement('div');
         const desc = document.createElement('div');
-        desc.style.cssText = 'color:#64748b; font-size:12px; margin-bottom:4px;';
+        desc.style.cssText = 'color:var(--app-text-muted); font-size:12px; margin-bottom:4px;';
         desc.textContent = '控制序列/包裹/宏（目前仅保存，暂未用于 prompt 构建）';
         wrap.appendChild(desc);
 
@@ -2181,7 +2181,7 @@ export class PresetPanel {
                 <div style="flex:2; min-width:200px;" id="gen-max-context-range-wrap"></div>
                 <div style="flex:1; min-width:140px;" id="gen-max-context-num-wrap"></div>
             </div>
-            <div style="color:#64748b; font-size:12px; margin-top:4px;">用于限制可用上下文窗口。</div>
+            <div style="color:var(--app-text-muted); font-size:12px; margin-top:4px;">用于限制可用上下文窗口。</div>
         `;
         ctxBlock.querySelector('#gen-max-context-range-wrap').appendChild(maxContext);
         ctxBlock.querySelector('#gen-max-context-num-wrap').appendChild(maxContextNum);
@@ -2213,7 +2213,7 @@ export class PresetPanel {
             reasoningCard.appendChild(title);
 
             const meta = document.createElement('div');
-            meta.style.cssText = 'color:#64748b; font-size:12px; margin-top:4px; line-height:1.5;';
+            meta.style.cssText = 'color:var(--app-text-muted); font-size:12px; margin-top:4px; line-height:1.5;';
             meta.textContent = `当前模型：${capabilityLabel}`;
             reasoningCard.appendChild(meta);
 
@@ -2229,11 +2229,11 @@ export class PresetPanel {
             const requestTextWrap = document.createElement('div');
             requestTextWrap.style.flex = '1';
             const requestText = document.createElement('div');
-            requestText.style.cssText = 'font-weight:700; color:#0f172a;';
+            requestText.style.cssText = 'font-weight:700; color:var(--app-text-primary);';
             requestText.textContent = '请求推理';
             requestTextWrap.appendChild(requestText);
             const requestDesc = document.createElement('div');
-            requestDesc.style.cssText = 'color:#64748b; font-size:12px; line-height:1.5; margin-top:4px;';
+            requestDesc.style.cssText = 'color:var(--app-text-muted); font-size:12px; line-height:1.5; margin-top:4px;';
             requestDesc.textContent = '按当前模型支持的接口显式附加推理参数；关闭时不额外请求。';
             requestTextWrap.appendChild(requestDesc);
             requestLabel.appendChild(requestTextWrap);
@@ -2276,7 +2276,7 @@ export class PresetPanel {
             reasoningCard.appendChild(effortWrap);
 
             const reasoningHint = document.createElement('div');
-            reasoningHint.style.cssText = 'color:#64748b; font-size:12px; margin-top:10px; line-height:1.5;';
+            reasoningHint.style.cssText = 'color:var(--app-text-muted); font-size:12px; margin-top:10px; line-height:1.5;';
             reasoningCard.appendChild(reasoningHint);
 
             const samplingControls = {
@@ -2329,7 +2329,7 @@ export class PresetPanel {
         }
 
         const viewHint = document.createElement('div');
-        viewHint.style.cssText = 'color:#64748b; font-size:12px; margin:10px 0 4px;';
+        viewHint.style.cssText = 'color:var(--app-text-muted); font-size:12px; margin:10px 0 4px;';
         viewHint.textContent = '默认回复视角。聊天与 RP 分开保存；不额外增加聊天区按钮。';
         wrap.appendChild(viewHint);
 
@@ -2378,8 +2378,8 @@ export class PresetPanel {
         const headRow = document.createElement('div');
         headRow.style.cssText = 'display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:8px;';
         headRow.innerHTML = `
-            <div style="color:#64748b; font-size:12px;">区块默认折叠，点击展开；可拖拽排序</div>
-            <button type="button" id="openai-add-block" style="padding:6px 10px; border:1px solid #e2e8f0; border-radius:10px; background:#fff; cursor:pointer; font-size:12px;">+ 新增区块</button>
+            <div style="color:var(--app-text-muted); font-size:12px;">区块默认折叠，点击展开；可拖拽排序</div>
+            <button type="button" id="openai-add-block" style="padding:6px 10px; border:1px solid var(--app-border-default); border-radius:10px; background:var(--app-surface-card); cursor:pointer; font-size:12px;">+ 新增区块</button>
         `;
         wrap.appendChild(headRow);
 
@@ -2418,7 +2418,7 @@ export class PresetPanel {
             const right = document.createElement('div');
             right.className = 'pp-block-right';
             const enabledWrap = document.createElement('label');
-            enabledWrap.style.cssText = 'display:flex; align-items:center; gap:6px; font-size:12px; color:#334155; cursor:pointer;';
+            enabledWrap.style.cssText = 'display:flex; align-items:center; gap:6px; font-size:12px; color:var(--app-text-secondary); cursor:pointer;';
             enabledWrap.innerHTML = `<input type="checkbox" class="block-enabled" style="width:16px; height:16px;">启用`;
             const enabledInput = enabledWrap.querySelector('input');
             enabledInput.checked = enabled !== false;
@@ -2467,7 +2467,7 @@ export class PresetPanel {
                 roleSel.value = roleName;
 
                 const sysChkWrap = document.createElement('label');
-                sysChkWrap.style.cssText = 'display:flex; align-items:center; gap:8px; font-size:13px; color:#334155; cursor:pointer;';
+                sysChkWrap.style.cssText = 'display:flex; align-items:center; gap:8px; font-size:13px; color:var(--app-text-secondary); cursor:pointer;';
                 sysChkWrap.innerHTML = `<input type="checkbox" class="block-system" style="width:16px; height:16px;">system_prompt`;
                 sysChkWrap.querySelector('input').checked = sysPrompt;
 
@@ -2493,7 +2493,7 @@ export class PresetPanel {
             } else {
                 const hint = document.createElement('div');
                 hint.className = 'pp-block-body';
-                hint.style.cssText = 'display:none; padding:10px 12px; color:#64748b; font-size:12px;';
+                hint.style.cssText = 'display:none; padding:10px 12px; color:var(--app-text-muted); font-size:12px;';
                 hint.textContent = '该区块为 marker，将在构建 prompt 时自动填充内容。';
                 card.appendChild(hint);
             }

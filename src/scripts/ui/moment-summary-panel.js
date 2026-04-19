@@ -46,7 +46,7 @@ export class MomentSummaryPanel {
             width:96vw;
             max-width:760px;
             height:86vh;
-            background:#fff;
+            background:var(--app-surface-card);
             border-radius:14px;
             box-shadow: 0 10px 24px rgba(0,0,0,0.18);
             overflow:hidden;
@@ -56,38 +56,38 @@ export class MomentSummaryPanel {
         this.panel.addEventListener('click', (e) => e.stopPropagation());
 
         this.panel.innerHTML = `
-            <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; padding:12px 14px; border-bottom:1px solid #e5e7eb; background:#f8fafc;">
+            <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; padding:12px 14px; border-bottom:1px solid var(--app-border-default); background:var(--app-surface-subtle);">
                 <div style="font-weight:900;">动态摘要</div>
-                <button id="moment-summary-close" style="border:1px solid #e5e7eb; background:#fff; border-radius:10px; padding:6px 10px; cursor:pointer;">关闭</button>
+                <button id="moment-summary-close" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:6px 10px; cursor:pointer;">关闭</button>
             </div>
             <div style="padding:12px 14px; overflow:auto; flex:1;">
                 <div>
                     <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:6px;">
-                        <div style="font-size:12px; color:#64748b;">摘要列表</div>
+                        <div style="font-size:12px; color:var(--app-text-muted);">摘要列表</div>
                         <div style="display:flex; align-items:center; gap:8px;">
-                            <button id="moment-summaries-batch" type="button" title="批量操作" style="width:32px; height:28px; border:1px solid #e2e8f0; border-radius:10px; background:#fff; cursor:pointer; font-size:16px;">☑</button>
-                            <button id="moment-summaries-clear" type="button" title="清空" style="width:32px; height:28px; border:1px solid #fecaca; border-radius:10px; background:#fff; cursor:pointer; color:#b91c1c; font-size:16px;">🗑</button>
+                            <button id="moment-summaries-batch" type="button" title="批量操作" style="width:32px; height:28px; border:1px solid var(--app-border-default); border-radius:10px; background:var(--app-surface-card); cursor:pointer; font-size:16px;">☑</button>
+                            <button id="moment-summaries-clear" type="button" title="清空" style="width:32px; height:28px; border:1px solid #fecaca; border-radius:10px; background:var(--app-surface-card); cursor:pointer; color:#b91c1c; font-size:16px;">🗑</button>
                         </div>
                     </div>
                     <div id="moment-summaries-batchbar" style="display:none; align-items:center; justify-content:flex-end; gap:8px; margin:6px 0 8px;">
-                        <button id="moment-summaries-batch-edit" type="button" title="批量编辑" style="width:34px; height:30px; border:1px solid #e2e8f0; border-radius:10px; background:#fff; cursor:pointer; color:#0f172a; font-size:16px;">✎</button>
-                        <button id="moment-summaries-batch-delete" type="button" title="批量删除" style="width:34px; height:30px; border:1px solid #fecaca; border-radius:10px; background:#fff; cursor:pointer; color:#b91c1c; font-size:16px;">🗑</button>
-                        <button id="moment-summaries-batch-cancel" type="button" title="退出批量" style="width:34px; height:30px; border:1px solid #e2e8f0; border-radius:10px; background:#fff; cursor:pointer; color:#0f172a; font-size:18px;">×</button>
+                        <button id="moment-summaries-batch-edit" type="button" title="批量编辑" style="width:34px; height:30px; border:1px solid var(--app-border-default); border-radius:10px; background:var(--app-surface-card); cursor:pointer; color:var(--app-text-primary); font-size:16px;">✎</button>
+                        <button id="moment-summaries-batch-delete" type="button" title="批量删除" style="width:34px; height:30px; border:1px solid #fecaca; border-radius:10px; background:var(--app-surface-card); cursor:pointer; color:#b91c1c; font-size:16px;">🗑</button>
+                        <button id="moment-summaries-batch-cancel" type="button" title="退出批量" style="width:34px; height:30px; border:1px solid var(--app-border-default); border-radius:10px; background:var(--app-surface-card); cursor:pointer; color:var(--app-text-primary); font-size:18px;">×</button>
                     </div>
-                    <div id="moment-summaries-list" style="max-height:200px; overflow-y:auto; border:1px solid #eee; border-radius:8px; background:#fff; padding:0;"></div>
+                    <div id="moment-summaries-list" style="max-height:200px; overflow-y:auto; border:1px solid var(--app-border-subtle); border-radius:8px; background:var(--app-surface-card); padding:0;"></div>
                 </div>
 
                 <div style="margin-top:14px;">
                     <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:6px;">
-                        <div style="font-size:12px; color:#64748b;">大总结（自动生成）</div>
+                        <div style="font-size:12px; color:var(--app-text-muted);">大总结（自动生成）</div>
                         <div style="display:flex; align-items:center; gap:8px;">
-                            <button id="moment-compacted-raw" type="button" title="查看原始回复" style="width:32px; height:28px; border:1px solid #e2e8f0; border-radius:10px; background:#fff; cursor:pointer; color:#0f172a; font-size:16px; line-height:1;">📄</button>
-                            <button id="moment-compacted-edit" type="button" title="编辑" style="width:32px; height:28px; border:1px solid #e2e8f0; border-radius:10px; background:#fff; cursor:pointer; color:#0f172a; font-size:16px; line-height:1;">✎</button>
-                            <button id="moment-compacted-run" type="button" title="手动生成/刷新" style="width:32px; height:28px; border:1px solid #e2e8f0; border-radius:10px; background:#fff; cursor:pointer; color:#0f172a; font-size:16px; line-height:1;">↻</button>
-                            <button id="moment-compacted-clear" type="button" title="删除" style="width:32px; height:28px; border:1px solid #fecaca; border-radius:10px; background:#fff; cursor:pointer; color:#b91c1c; font-size:16px; line-height:1;">🗑</button>
+                            <button id="moment-compacted-raw" type="button" title="查看原始回复" style="width:32px; height:28px; border:1px solid var(--app-border-default); border-radius:10px; background:var(--app-surface-card); cursor:pointer; color:var(--app-text-primary); font-size:16px; line-height:1;">📄</button>
+                            <button id="moment-compacted-edit" type="button" title="编辑" style="width:32px; height:28px; border:1px solid var(--app-border-default); border-radius:10px; background:var(--app-surface-card); cursor:pointer; color:var(--app-text-primary); font-size:16px; line-height:1;">✎</button>
+                            <button id="moment-compacted-run" type="button" title="手动生成/刷新" style="width:32px; height:28px; border:1px solid var(--app-border-default); border-radius:10px; background:var(--app-surface-card); cursor:pointer; color:var(--app-text-primary); font-size:16px; line-height:1;">↻</button>
+                            <button id="moment-compacted-clear" type="button" title="删除" style="width:32px; height:28px; border:1px solid #fecaca; border-radius:10px; background:var(--app-surface-card); cursor:pointer; color:#b91c1c; font-size:16px; line-height:1;">🗑</button>
                         </div>
                     </div>
-                    <div id="moment-compacted-summary" style="max-height:240px; overflow-y:auto; border:1px solid #eee; border-radius:8px; background:#fff; padding:0;"></div>
+                    <div id="moment-compacted-summary" style="max-height:240px; overflow-y:auto; border:1px solid var(--app-border-subtle); border-radius:8px; background:var(--app-surface-card); padding:0;"></div>
                 </div>
             </div>
         `;
@@ -178,7 +178,7 @@ export class MomentSummaryPanel {
             transform:translate(-50%, -50%);
             width:92vw;
             max-width:640px;
-            background:#fff;
+            background:var(--app-surface-card);
             border-radius:12px;
             padding:12px;
             box-shadow: 0 12px 24px rgba(0,0,0,0.18);
@@ -187,12 +187,12 @@ export class MomentSummaryPanel {
         this.summaryEditPanel.innerHTML = `
             <div style="display:flex; align-items:center; gap:10px; margin-bottom:8px;">
                 <div style="font-weight:800;">编辑摘要</div>
-                <button data-role="close" style="margin-left:auto; border:1px solid #e5e7eb; background:#fff; border-radius:8px; padding:4px 8px;">关闭</button>
+                <button data-role="close" style="margin-left:auto; border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:8px; padding:4px 8px;">关闭</button>
             </div>
-            <textarea data-role="textarea" style="width:100%; min-height:180px; border:1px solid #e2e8f0; border-radius:10px; padding:10px; font-size:13px; line-height:1.4; resize:vertical;"></textarea>
+            <textarea data-role="textarea" style="width:100%; min-height:180px; border:1px solid var(--app-border-default); border-radius:10px; padding:10px; font-size:13px; line-height:1.4; resize:vertical;"></textarea>
             <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:10px;">
-                <button data-role="cancel" style="padding:8px 12px; border:1px solid #e2e8f0; border-radius:10px; background:#f8fafc; cursor:pointer;">取消</button>
-                <button data-role="save" style="padding:8px 14px; border:none; border-radius:10px; background:#019aff; color:#fff; cursor:pointer; font-weight:700;">保存</button>
+                <button data-role="cancel" style="padding:8px 12px; border:1px solid var(--app-border-default); border-radius:10px; background:var(--app-surface-subtle); cursor:pointer;">取消</button>
+                <button data-role="save" style="padding:8px 14px; border:none; border-radius:10px; background:#019aff; color:var(--app-text-inverse); cursor:pointer; font-weight:700;">保存</button>
             </div>
         `;
 
@@ -325,7 +325,7 @@ export class MomentSummaryPanel {
             width:92vw;
             max-width:720px;
             height:80vh;
-            background:#fff;
+            background:var(--app-surface-card);
             border-radius:12px;
             overflow:hidden;
             display:flex;
@@ -333,9 +333,9 @@ export class MomentSummaryPanel {
         `;
         panel.addEventListener('click', (e) => e.stopPropagation());
         panel.innerHTML = `
-            <div style="display:flex; align-items:center; gap:10px; padding:12px; background:#f3f4f6; border-bottom:1px solid #e5e7eb;">
+            <div style="display:flex; align-items:center; gap:10px; padding:12px; background:#f3f4f6; border-bottom:1px solid var(--app-border-default);">
                 <div style="font-weight:900;">动态大总结原始回复</div>
-                <button data-role="close" style="margin-left:auto; border:1px solid #e5e7eb; background:#fff; border-radius:8px; padding:4px 8px;">关闭</button>
+                <button data-role="close" style="margin-left:auto; border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:8px; padding:4px 8px;">关闭</button>
             </div>
             <div style="flex:1; min-height:0; overflow:auto; -webkit-overflow-scrolling:touch; padding:10px;">
                 <textarea data-role="text" readonly style="
@@ -410,7 +410,7 @@ export class MomentSummaryPanel {
         const summaries = Array.isArray(list) ? list.slice().reverse() : [];
         this.summariesList.innerHTML = '';
         if (!summaries.length) {
-            this.summariesList.innerHTML = '<div style="padding:12px; color:#94a3b8; text-align:center; font-size:12px;">暂无摘要</div>';
+            this.summariesList.innerHTML = '<div style="padding:12px; color:var(--app-text-muted); text-align:center; font-size:12px;">暂无摘要</div>';
             return;
         }
         summaries.slice(0, 60).forEach((it) => {
@@ -422,12 +422,12 @@ export class MomentSummaryPanel {
             const row = document.createElement('div');
             if (this.summaryBatchMode) {
                 const selected = this.summarySelectedKeys.has(key);
-                row.style.cssText = `padding:10px 10px; border-bottom:1px solid rgba(0,0,0,0.06); display:flex; gap:10px; align-items:flex-start; cursor:pointer; background:${selected ? 'rgba(59,130,246,0.06)' : '#fff'};`;
+                row.style.cssText = `padding:10px 10px; border-bottom:1px solid rgba(0,0,0,0.06); display:flex; gap:10px; align-items:flex-start; cursor:pointer; background:${selected ? 'rgba(59,130,246,0.06)' : 'var(--app-surface-card)'};`;
                 row.innerHTML = `
-                    <div style="width:20px; height:20px; border-radius:999px; border:2px solid ${selected ? '#2563eb' : 'rgba(0,0,0,0.20)'}; margin-top:2px; display:flex; align-items:center; justify-content:center; color:#fff; font-weight:900; font-size:12px; background:${selected ? '#2563eb' : 'transparent'}; box-sizing:border-box;">${selected ? '✓' : ''}</div>
+                    <div style="width:20px; height:20px; border-radius:999px; border:2px solid ${selected ? '#2563eb' : 'rgba(0,0,0,0.20)'}; margin-top:2px; display:flex; align-items:center; justify-content:center; color:var(--app-text-inverse); font-weight:900; font-size:12px; background:${selected ? '#2563eb' : 'transparent'}; box-sizing:border-box;">${selected ? '✓' : ''}</div>
                     <div style="flex:1; min-width:0;">
-                        <div style="color:#0f172a; font-size:13px; line-height:1.35; white-space:pre-wrap; word-break:break-word;">${text.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div>
-                        ${time ? `<div style="color:#94a3b8; font-size:11px; margin-top:6px;">${time}</div>` : ''}
+                        <div style="color:var(--app-text-primary); font-size:13px; line-height:1.35; white-space:pre-wrap; word-break:break-word;">${text.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div>
+                        ${time ? `<div style="color:var(--app-text-muted); font-size:11px; margin-top:6px;">${time}</div>` : ''}
                     </div>
                 `;
                 row.addEventListener('click', () => {
@@ -438,8 +438,8 @@ export class MomentSummaryPanel {
             } else {
                 row.style.cssText = 'padding:10px 10px; border-bottom:1px solid rgba(0,0,0,0.06);';
                 row.innerHTML = `
-                    <div style="color:#0f172a; font-size:13px; line-height:1.35; white-space:pre-wrap; word-break:break-word;">${text.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div>
-                    ${time ? `<div style="color:#94a3b8; font-size:11px; margin-top:6px;">${time}</div>` : ''}
+                    <div style="color:var(--app-text-primary); font-size:13px; line-height:1.35; white-space:pre-wrap; word-break:break-word;">${text.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div>
+                    ${time ? `<div style="color:var(--app-text-muted); font-size:11px; margin-top:6px;">${time}</div>` : ''}
                 `;
                 row.addEventListener('click', async () => {
                     try {
@@ -458,7 +458,7 @@ export class MomentSummaryPanel {
         this.compactedList.innerHTML = '';
         const text = String(cs?.text || '').trim();
         if (!text) {
-            this.compactedList.innerHTML = '<div style="padding:12px; color:#94a3b8; text-align:center; font-size:12px;">暂无大总结</div>';
+            this.compactedList.innerHTML = '<div style="padding:12px; color:var(--app-text-muted); text-align:center; font-size:12px;">暂无大总结</div>';
             return;
         }
         const at = Number(cs?.at || 0) || 0;
@@ -466,8 +466,8 @@ export class MomentSummaryPanel {
         const row = document.createElement('div');
         row.style.cssText = 'padding:10px 10px; border-bottom:1px solid rgba(0,0,0,0.06); cursor:pointer;';
         row.innerHTML = `
-            <div style="color:#0f172a; font-size:13px; line-height:1.35; white-space:pre-wrap;">${text.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div>
-            ${time ? `<div style="color:#94a3b8; font-size:11px; margin-top:6px;">${time}</div>` : ''}
+            <div style="color:var(--app-text-primary); font-size:13px; line-height:1.35; white-space:pre-wrap;">${text.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div>
+            ${time ? `<div style="color:var(--app-text-muted); font-size:11px; margin-top:6px;">${time}</div>` : ''}
         `;
         row.addEventListener('click', async () => {
             try {

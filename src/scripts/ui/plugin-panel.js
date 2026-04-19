@@ -77,7 +77,7 @@ export class PluginPanel {
       display: none;
       position: fixed;
       inset: 5vh 6vw;
-      background: #fff;
+      background: var(--app-surface-card);
       border-radius: 16px;
       box-shadow: 0 18px 50px rgba(15, 23, 42, 0.2);
       z-index: 20001;
@@ -89,27 +89,27 @@ export class PluginPanel {
     this.element.innerHTML = `
       <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid rgba(15,23,42,0.08);">
         <div>
-          <div style="font-size:16px;font-weight:700;color:#0f172a;">插件管理</div>
-          <div style="font-size:12px;color:#94a3b8;margin-top:2px;">管理已安装的插件</div>
+          <div style="font-size:16px;font-weight:700;color:var(--app-text-primary);">插件管理</div>
+          <div style="font-size:12px;color:var(--app-text-muted);margin-top:2px;">管理已安装的插件</div>
         </div>
         <button id="plugin-panel-close" style="border:none;background:rgba(15,23,42,0.08);width:28px;height:28px;border-radius:10px;cursor:pointer;font-size:16px;">×</button>
       </div>
       <div id="plugin-android-tip" style="display:none;background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;padding:8px 12px;margin:12px 16px 0;font-size:12px;color:#92400e;">
         <span style="margin-right:6px;">⚠️</span>安卓端仅支持 ZIP 导入
       </div>
-      <div style="padding:12px 16px;border-bottom:1px solid rgba(148,163,184,0.15);background:#f8fafc;">
+      <div style="padding:12px 16px;border-bottom:1px solid rgba(148,163,184,0.15);background:var(--app-surface-subtle);">
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-          <button id="plugin-import-btn" style="padding:8px 14px;border-radius:10px;border:none;background:#2563eb;color:#fff;font-size:13px;cursor:pointer;display:flex;align-items:center;gap:6px;">
+          <button id="plugin-import-btn" style="padding:8px 14px;border-radius:10px;border:none;background:#2563eb;color:var(--app-text-inverse);font-size:13px;cursor:pointer;display:flex;align-items:center;gap:6px;">
             <span style="font-size:14px;">📁</span>导入插件
           </button>
-          <button id="plugin-install-url-btn" style="padding:8px 14px;border-radius:10px;border:1px solid rgba(15,23,42,0.12);background:#fff;font-size:13px;cursor:pointer;display:flex;align-items:center;gap:6px;">
+          <button id="plugin-install-url-btn" style="padding:8px 14px;border-radius:10px;border:1px solid rgba(15,23,42,0.12);background:var(--app-surface-card);font-size:13px;cursor:pointer;display:flex;align-items:center;gap:6px;">
             <span style="font-size:14px;">🔗</span>链接安装
           </button>
-          <button id="plugin-refresh-btn" style="padding:8px 12px;border-radius:10px;border:1px solid rgba(15,23,42,0.12);background:#fff;font-size:13px;cursor:pointer;" title="刷新列表">↻</button>
-          <button id="plugin-ui-manage-btn" style="padding:8px 12px;border-radius:10px;border:1px solid rgba(15,23,42,0.12);background:#fff;font-size:13px;cursor:pointer;" title="UI 注入管理">⚙️</button>
-          <div id="plugin-status" style="margin-left:auto;font-size:12px;color:#64748b;"></div>
+          <button id="plugin-refresh-btn" style="padding:8px 12px;border-radius:10px;border:1px solid rgba(15,23,42,0.12);background:var(--app-surface-card);font-size:13px;cursor:pointer;" title="刷新列表">↻</button>
+          <button id="plugin-ui-manage-btn" style="padding:8px 12px;border-radius:10px;border:1px solid rgba(15,23,42,0.12);background:var(--app-surface-card);font-size:13px;cursor:pointer;" title="UI 注入管理">⚙️</button>
+          <div id="plugin-status" style="margin-left:auto;font-size:12px;color:var(--app-text-muted);"></div>
         </div>
-        <div style="margin-top:8px;font-size:11px;color:#64748b;">
+        <div style="margin-top:8px;font-size:11px;color:var(--app-text-muted);">
           <span id="plugin-import-hint">桌面端可导入文件夹或 ZIP，安卓端使用 ZIP</span>
         </div>
       </div>
@@ -186,7 +186,7 @@ export class PluginPanel {
     panel.style.cssText = `
       position: fixed;
       inset: 10vh 8vw;
-      background: #fff;
+      background: var(--app-surface-card);
       border-radius: 16px;
       box-shadow: 0 18px 50px rgba(15, 23, 42, 0.2);
       z-index: 21001;
@@ -197,7 +197,7 @@ export class PluginPanel {
     panel.addEventListener('click', (e) => e.stopPropagation());
     panel.innerHTML = `
       <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid rgba(15,23,42,0.08);">
-        <div style="font-size:16px;font-weight:700;color:#0f172a;">UI 注入管理</div>
+        <div style="font-size:16px;font-weight:700;color:var(--app-text-primary);">UI 注入管理</div>
         <button id="plugin-ui-close" style="border:none;background:rgba(15,23,42,0.08);width:28px;height:28px;border-radius:10px;cursor:pointer;font-size:16px;">×</button>
       </div>
       <div id="plugin-ui-list" style="flex:1;overflow:auto;padding:16px;display:flex;flex-direction:column;gap:12px;"></div>
@@ -255,7 +255,7 @@ export class PluginPanel {
     if (!uiManager) {
       const empty = document.createElement('div');
       empty.className = 'plugin-panel-empty';
-      empty.style.cssText = 'padding:24px;text-align:center;color:#94a3b8;font-size:13px;';
+      empty.style.cssText = 'padding:24px;text-align:center;color:var(--app-text-muted);font-size:13px;';
       empty.textContent = '当前环境不支持 UI 管理';
       this.uiManageList.appendChild(empty);
       return;
@@ -267,7 +267,7 @@ export class PluginPanel {
     const addSection = (title) => {
       const header = document.createElement('div');
       header.textContent = title;
-      header.style.cssText = 'font-size:13px;font-weight:700;color:#0f172a;margin-top:4px;';
+      header.style.cssText = 'font-size:13px;font-weight:700;color:var(--app-text-primary);margin-top:4px;';
       this.uiManageList.appendChild(header);
     };
 
@@ -281,11 +281,11 @@ export class PluginPanel {
         padding:10px 12px;
         border:1px solid rgba(148,163,184,0.2);
         border-radius:12px;
-        background:#fff;
+        background:var(--app-surface-card);
       `;
       const text = document.createElement('div');
       text.textContent = label;
-      text.style.cssText = 'font-size:12px;color:#334155;line-height:1.4;';
+      text.style.cssText = 'font-size:12px;color:var(--app-text-secondary);line-height:1.4;';
       const btn = document.createElement('button');
       btn.textContent = actionText;
       btn.style.cssText = `
@@ -294,7 +294,7 @@ export class PluginPanel {
         padding: 6px 10px;
         font-size: 12px;
         cursor: pointer;
-        background: #fff;
+        background: var(--app-surface-card);
       `;
       btn.addEventListener('click', onAction);
       row.appendChild(text);
@@ -305,7 +305,7 @@ export class PluginPanel {
     if (!sidebars.length && !cards.length && !modal) {
       const empty = document.createElement('div');
       empty.className = 'plugin-panel-empty';
-      empty.style.cssText = 'padding:24px;text-align:center;color:#94a3b8;font-size:13px;';
+      empty.style.cssText = 'padding:24px;text-align:center;color:var(--app-text-muted);font-size:13px;';
       empty.textContent = '暂无插件 UI 注入';
       this.uiManageList.appendChild(empty);
       return;
@@ -353,7 +353,7 @@ export class PluginPanel {
     menu.className = 'plugin-import-menu';
     menu.style.cssText = `
       position: absolute;
-      background: #fff;
+      background: var(--app-surface-card);
       border: 1px solid rgba(15,23,42,0.1);
       border-radius: 12px;
       box-shadow: 0 8px 24px rgba(15,23,42,0.15);
@@ -386,7 +386,7 @@ export class PluginPanel {
     document.body.appendChild(menu);
     // hover 样式
     menu.querySelectorAll('.import-menu-item').forEach(btn => {
-      btn.addEventListener('mouseenter', () => btn.style.background = '#f1f5f9');
+      btn.addEventListener('mouseenter', () => btn.style.background = 'var(--app-surface-hover)');
       btn.addEventListener('mouseleave', () => btn.style.background = 'transparent');
       btn.addEventListener('click', () => {
         const nextType = btn.dataset.type;
@@ -820,7 +820,7 @@ export class PluginPanel {
     if (!items.length) {
       const empty = document.createElement('div');
       empty.className = 'plugin-panel-empty';
-      empty.style.cssText = 'padding:24px;text-align:center;color:#94a3b8;font-size:13px;';
+      empty.style.cssText = 'padding:24px;text-align:center;color:var(--app-text-muted);font-size:13px;';
       empty.textContent = this.isAndroid
         ? '暂无插件，点击上方“导入插件 ZIP”开始。'
         : '暂无插件，点击上方“导入插件文件夹”开始。';
@@ -834,7 +834,7 @@ export class PluginPanel {
         border: 1px solid rgba(148,163,184,0.2);
         border-radius: 12px;
         padding: 12px;
-        background: #fff;
+        background: var(--app-surface-card);
         box-shadow: 0 4px 12px rgba(15,23,42,0.05);
         display: flex;
         flex-direction: column;
@@ -859,10 +859,10 @@ export class PluginPanel {
       title.style.cssText = 'flex:1;min-width:0;';
       const name = document.createElement('div');
       name.textContent = `${manifest.name || item.id}`;
-      name.style.cssText = 'font-weight:700;color:#0f172a;font-size:14px;';
+      name.style.cssText = 'font-weight:700;color:var(--app-text-primary);font-size:14px;';
       const idLine = document.createElement('div');
-      idLine.style.cssText = 'font-size:11px;color:#64748b;margin-top:2px;';
-      idLine.innerHTML = `${item.id}${manifest.version ? ` <span style="color:#94a3b8;">v${manifest.version}</span>` : ''}`;
+      idLine.style.cssText = 'font-size:11px;color:var(--app-text-muted);margin-top:2px;';
+      idLine.innerHTML = `${item.id}${manifest.version ? ` <span style="color:var(--app-text-muted);">v${manifest.version}</span>` : ''}`;
       title.appendChild(name);
       title.appendChild(idLine);
 
@@ -876,8 +876,8 @@ export class PluginPanel {
         padding: 4px 10px;
         font-size: 16px;
         cursor: pointer;
-        background: #fff;
-        color: #64748b;
+        background: var(--app-surface-card);
+        color: var(--app-text-muted);
       `;
       moreBtn.onclick = (e) => {
         e.stopPropagation();
@@ -892,7 +892,7 @@ export class PluginPanel {
       if (manifest.description) {
         const desc = document.createElement('div');
         desc.textContent = String(manifest.description || '');
-        desc.style.cssText = 'font-size:12px;color:#475569;line-height:1.4;';
+        desc.style.cssText = 'font-size:12px;color:var(--app-text-secondary);line-height:1.4;';
         card.appendChild(desc);
       }
 
@@ -939,7 +939,7 @@ export class PluginPanel {
       if (backupCount > 0) {
         const backupTag = document.createElement('span');
         backupTag.textContent = `可回滚 ${backupCount}`;
-        backupTag.style.cssText = 'padding:2px 8px;border-radius:999px;background:rgba(15,23,42,0.08);color:#475569;font-size:10px;';
+        backupTag.style.cssText = 'padding:2px 8px;border-radius:999px;background:rgba(15,23,42,0.08);color:var(--app-text-secondary);font-size:10px;';
         metaRow.appendChild(backupTag);
       }
       card.appendChild(metaRow);
@@ -971,7 +971,7 @@ export class PluginPanel {
       // 运行状态文字
       const statusInfo = this.runtime?.getStatus?.(item.id);
       const statusText = document.createElement('div');
-      statusText.style.cssText = 'font-size:11px;color:#64748b;';
+      statusText.style.cssText = 'font-size:11px;color:var(--app-text-muted);';
       if (isBlocked) {
         statusText.textContent = disabledReason || '已禁用（拉黑）';
         statusText.style.color = '#ef4444';
@@ -1007,7 +1007,7 @@ export class PluginPanel {
         width: 40px;
         height: 22px;
         border-radius: 11px;
-        background: ${enabled ? '#16a34a' : '#e2e8f0'};
+        background: ${enabled ? '#16a34a' : 'var(--app-border-default)'};
         position: relative;
         transition: background 0.2s;
       `;
@@ -1016,7 +1016,7 @@ export class PluginPanel {
         width: 18px;
         height: 18px;
         border-radius: 50%;
-        background: #fff;
+        background: var(--app-surface-card);
         position: absolute;
         top: 2px;
         left: ${enabled ? '20px' : '2px'};
@@ -1071,7 +1071,7 @@ export class PluginPanel {
     menu._anchorId = item.id; // 标记属于哪个插件
     menu.style.cssText = `
       position: fixed;
-      background: #fff;
+      background: var(--app-surface-card);
       border: 1px solid rgba(15,23,42,0.1);
       border-radius: 12px;
       box-shadow: 0 8px 24px rgba(15,23,42,0.18);
@@ -1237,10 +1237,10 @@ export class PluginPanel {
         cursor: pointer;
         font-size: 13px;
         text-align: left;
-        color: ${danger ? '#ef4444' : '#334155'};
+        color: ${danger ? '#ef4444' : 'var(--app-text-secondary)'};
       `;
       btn.innerHTML = `<span style="font-size:14px;">${icon}</span><span>${label}</span>`;
-      btn.addEventListener('mouseenter', () => btn.style.background = danger ? 'rgba(239,68,68,0.08)' : '#f1f5f9');
+      btn.addEventListener('mouseenter', () => btn.style.background = danger ? 'rgba(239,68,68,0.08)' : 'var(--app-surface-hover)');
       btn.addEventListener('mouseleave', () => btn.style.background = 'transparent');
       btn.addEventListener('click', () => {
         this.closeMoreMenu();

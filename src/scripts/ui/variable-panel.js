@@ -139,7 +139,7 @@ const renderTreeNode = (node, term, depth = 0) => {
         wrap.style.cssText = `margin-left:${depth ? 12 : 0}px; padding:2px 0;`;
 
         const summary = document.createElement('summary');
-        summary.style.cssText = 'cursor:pointer; display:flex; align-items:center; gap:8px; font-size:13px; color:#0f172a;';
+        summary.style.cssText = 'cursor:pointer; display:flex; align-items:center; gap:8px; font-size:13px; color:var(--app-text-primary);';
 
         const nameEl = document.createElement('span');
         nameEl.textContent = node.name || '(root)';
@@ -149,13 +149,13 @@ const renderTreeNode = (node, term, depth = 0) => {
         if (valueText) {
             const valueEl = document.createElement('span');
             valueEl.textContent = valueText;
-            valueEl.style.cssText = 'font-size:11px; color:#64748b;';
+            valueEl.style.cssText = 'font-size:11px; color:var(--app-text-muted);';
             summary.appendChild(valueEl);
         }
 
         const countEl = document.createElement('span');
         countEl.textContent = `(${node.children.size})`;
-        countEl.style.cssText = 'font-size:11px; color:#94a3b8;';
+        countEl.style.cssText = 'font-size:11px; color:var(--app-text-muted);';
         summary.appendChild(countEl);
 
         wrap.appendChild(summary);
@@ -176,12 +176,12 @@ const renderTreeNode = (node, term, depth = 0) => {
 
     const nameEl = document.createElement('span');
     nameEl.textContent = node.name || '';
-    nameEl.style.cssText = 'flex:1; min-width:0; font-size:13px; color:#0f172a;';
+    nameEl.style.cssText = 'flex:1; min-width:0; font-size:13px; color:var(--app-text-primary);';
     row.appendChild(nameEl);
 
     const valueEl = document.createElement('span');
     valueEl.textContent = valueText || '（空）';
-    valueEl.style.cssText = 'font-size:12px; color:#64748b; white-space:nowrap;';
+    valueEl.style.cssText = 'font-size:12px; color:var(--app-text-muted); white-space:nowrap;';
     row.appendChild(valueEl);
 
     return row;
@@ -240,7 +240,7 @@ export class VariablePanel {
         panel.style.cssText = `
             width: min(96vw, 520px);
             height: min(86vh, 720px);
-            background: #fff;
+            background: var(--app-surface-card);
             border-radius: 14px;
             overflow: hidden;
             display:flex;
@@ -250,10 +250,10 @@ export class VariablePanel {
         panel.addEventListener('click', (e) => e.stopPropagation());
 
         panel.innerHTML = `
-            <div style="display:flex; align-items:center; gap:10px; padding:12px 14px; background:#f3f4f6; border-bottom:1px solid #e5e7eb;">
+            <div style="display:flex; align-items:center; gap:10px; padding:12px 14px; background:#f3f4f6; border-bottom:1px solid var(--app-border-default);">
                 <div style="font-weight:900; font-size:15px;">变量管理器</div>
-                <div id="var-meta" style="margin-left:auto; font-size:12px; color:#64748b; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:160px;"></div>
-                <button id="var-close" style="border:1px solid #e5e7eb; background:#fff; border-radius:10px; padding:6px 12px; cursor:pointer;">关闭</button>
+                <div id="var-meta" style="margin-left:auto; font-size:12px; color:var(--app-text-muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:160px;"></div>
+                <button id="var-close" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:6px 12px; cursor:pointer;">关闭</button>
             </div>
 
             <div style="padding:10px 12px; border-bottom:1px solid rgba(0,0,0,0.06);">
@@ -263,21 +263,21 @@ export class VariablePanel {
                     <button id="var-clear-search" type="button" aria-label="清除搜索" style="display:none; width:28px; height:28px; border:none; border-radius:8px; background:var(--app-surface-panel); cursor:pointer; font-size:14px; color:var(--app-text-primary);">×</button>
                 </div>
                 <div style="margin-top:10px; display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-                    <button id="var-add" style="border:none; background:#2563eb; color:#fff; border-radius:10px; padding:8px 14px; font-size:13px; cursor:pointer; display:flex; align-items:center; gap:6px;">
+                    <button id="var-add" style="border:none; background:#2563eb; color:var(--app-text-inverse); border-radius:10px; padding:8px 14px; font-size:13px; cursor:pointer; display:flex; align-items:center; gap:6px;">
                         <span style="font-size:14px;">+</span>新增
                     </button>
-                    <button id="var-templates" style="border:1px solid #e2e8f0; background:#fff; border-radius:10px; padding:8px 12px; font-size:13px; cursor:pointer;">模板</button>
-                    <button id="var-rules" style="border:1px solid #e2e8f0; background:#fff; border-radius:10px; padding:8px 12px; font-size:13px; cursor:pointer;">规则</button>
-                    <button id="var-more" style="border:1px solid #e2e8f0; background:#fff; border-radius:10px; padding:8px 12px; font-size:13px; cursor:pointer;" title="更多操作">⋮ 更多</button>
+                    <button id="var-templates" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:8px 12px; font-size:13px; cursor:pointer;">模板</button>
+                    <button id="var-rules" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:8px 12px; font-size:13px; cursor:pointer;">规则</button>
+                    <button id="var-more" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:8px 12px; font-size:13px; cursor:pointer;" title="更多操作">⋮ 更多</button>
                 </div>
                 <div class="variable-panel-usage-hint" style="margin-top:10px; padding:8px 10px; background:var(--app-surface-panel); border-radius:8px; font-size:11px; color:var(--app-text-secondary);">
                     💡 提示词中使用 <code class="variable-panel-inline-code" style="padding:2px 6px; border-radius:4px;">{{getvar::name}}</code> 引用变量
                 </div>
                 <div style="margin-top:10px; display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
-                    <div style="font-size:12px; color:#64748b;">视图</div>
-                    <div id="var-view-toggle" style="display:flex; gap:6px; padding:2px; background:#f1f5f9; border-radius:999px;">
-                        <button id="var-view-list" type="button" style="border:1px solid #e2e8f0; background:#0f172a; color:#fff; border-radius:999px; padding:4px 10px; font-size:12px; cursor:pointer;">文本</button>
-                        <button id="var-view-tree" type="button" style="border:1px solid #e2e8f0; background:#fff; color:#0f172a; border-radius:999px; padding:4px 10px; font-size:12px; cursor:pointer;">树状</button>
+                    <div style="font-size:12px; color:var(--app-text-muted);">视图</div>
+                    <div id="var-view-toggle" style="display:flex; gap:6px; padding:2px; background:var(--app-surface-hover); border-radius:999px;">
+                        <button id="var-view-list" type="button" style="border:1px solid var(--app-border-default); background:var(--app-text-primary); color:var(--app-text-inverse); border-radius:999px; padding:4px 10px; font-size:12px; cursor:pointer;">文本</button>
+                        <button id="var-view-tree" type="button" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); color:var(--app-text-primary); border-radius:999px; padding:4px 10px; font-size:12px; cursor:pointer;">树状</button>
                     </div>
                 </div>
             </div>
@@ -351,7 +351,7 @@ export class VariablePanel {
         panel.style.cssText = `
             width: min(94vw, 520px);
             max-height: 86vh;
-            background: #fff;
+            background: var(--app-surface-card);
             border-radius: 14px;
             overflow: hidden;
             display:flex;
@@ -361,20 +361,20 @@ export class VariablePanel {
         panel.addEventListener('click', (e) => e.stopPropagation());
 
         panel.innerHTML = `
-            <div style="display:flex; align-items:center; gap:10px; padding:12px; background:#f8fafc; border-bottom:1px solid #e5e7eb;">
+            <div style="display:flex; align-items:center; gap:10px; padding:12px; background:var(--app-surface-subtle); border-bottom:1px solid var(--app-border-default);">
                 <div style="font-weight:900;">变量配置</div>
-                <div id="schema-title" style="margin-left:auto; font-size:12px; color:#64748b;"></div>
-                <button id="schema-close" style="border:1px solid #e5e7eb; background:#fff; border-radius:10px; padding:6px 10px;">关闭</button>
+                <div id="schema-title" style="margin-left:auto; font-size:12px; color:var(--app-text-muted);"></div>
+                <button id="schema-close" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:6px 10px;">关闭</button>
             </div>
             <div style="padding:12px; overflow:auto; display:flex; flex-direction:column; gap:10px;">
-                <label style="font-size:12px; color:#64748b;">变量名</label>
-                <input id="schema-key" type="text" style="padding:8px 10px; border:1px solid #e2e8f0; border-radius:10px;">
+                <label style="font-size:12px; color:var(--app-text-muted);">变量名</label>
+                <input id="schema-key" type="text" style="padding:8px 10px; border:1px solid var(--app-border-default); border-radius:10px;">
 
-                <label style="font-size:12px; color:#64748b;">当前值</label>
-                <input id="schema-value" type="text" style="padding:8px 10px; border:1px solid #e2e8f0; border-radius:10px;">
+                <label style="font-size:12px; color:var(--app-text-muted);">当前值</label>
+                <input id="schema-value" type="text" style="padding:8px 10px; border:1px solid var(--app-border-default); border-radius:10px;">
 
-                <label style="font-size:12px; color:#64748b;">类型</label>
-                <select id="schema-type" style="padding:8px 10px; border:1px solid #e2e8f0; border-radius:10px;">
+                <label style="font-size:12px; color:var(--app-text-muted);">类型</label>
+                <select id="schema-type" style="padding:8px 10px; border:1px solid var(--app-border-default); border-radius:10px;">
                     <option value="">（无）</option>
                     <option value="number">number</option>
                     <option value="string">string</option>
@@ -384,44 +384,44 @@ export class VariablePanel {
                     <option value="object">object</option>
                 </select>
 
-                <label style="font-size:12px; color:#64748b;">默认值</label>
-                <input id="schema-default" type="text" style="padding:8px 10px; border:1px solid #e2e8f0; border-radius:10px;">
+                <label style="font-size:12px; color:var(--app-text-muted);">默认值</label>
+                <input id="schema-default" type="text" style="padding:8px 10px; border:1px solid var(--app-border-default); border-radius:10px;">
 
                 <div id="schema-range" style="display:none; gap:8px;">
                     <div style="flex:1;">
-                        <label style="font-size:12px; color:#64748b;">最小值</label>
-                        <input id="schema-min" type="number" style="padding:8px 10px; border:1px solid #e2e8f0; border-radius:10px; width:100%;">
+                        <label style="font-size:12px; color:var(--app-text-muted);">最小值</label>
+                        <input id="schema-min" type="number" style="padding:8px 10px; border:1px solid var(--app-border-default); border-radius:10px; width:100%;">
                     </div>
                     <div style="flex:1;">
-                        <label style="font-size:12px; color:#64748b;">最大值</label>
-                        <input id="schema-max" type="number" style="padding:8px 10px; border:1px solid #e2e8f0; border-radius:10px; width:100%;">
+                        <label style="font-size:12px; color:var(--app-text-muted);">最大值</label>
+                        <input id="schema-max" type="number" style="padding:8px 10px; border:1px solid var(--app-border-default); border-radius:10px; width:100%;">
                     </div>
                 </div>
 
                 <div id="schema-options" style="display:none;">
-                    <label style="font-size:12px; color:#64748b;">枚举选项（逗号分隔）</label>
-                    <input id="schema-options-input" type="text" style="padding:8px 10px; border:1px solid #e2e8f0; border-radius:10px; width:100%;">
+                    <label style="font-size:12px; color:var(--app-text-muted);">枚举选项（逗号分隔）</label>
+                    <input id="schema-options-input" type="text" style="padding:8px 10px; border:1px solid var(--app-border-default); border-radius:10px; width:100%;">
                 </div>
 
-                <label style="font-size:12px; color:#64748b;">展示</label>
-                <select id="schema-display" style="padding:8px 10px; border:1px solid #e2e8f0; border-radius:10px;">
+                <label style="font-size:12px; color:var(--app-text-muted);">展示</label>
+                <select id="schema-display" style="padding:8px 10px; border:1px solid var(--app-border-default); border-radius:10px;">
                     <option value="card">card</option>
                     <option value="badge">badge</option>
                     <option value="progress">progress</option>
                     <option value="hidden">hidden</option>
                 </select>
 
-                <label style="font-size:12px; color:#64748b;">颜色</label>
-                <input id="schema-color" type="text" placeholder="#ff6b6b" style="padding:8px 10px; border:1px solid #e2e8f0; border-radius:10px;">
+                <label style="font-size:12px; color:var(--app-text-muted);">颜色</label>
+                <input id="schema-color" type="text" placeholder="#ff6b6b" style="padding:8px 10px; border:1px solid var(--app-border-default); border-radius:10px;">
 
-                <label style="font-size:12px; color:#64748b;">格式（例：{value}/100）</label>
-                <input id="schema-format" type="text" style="padding:8px 10px; border:1px solid #e2e8f0; border-radius:10px;">
+                <label style="font-size:12px; color:var(--app-text-muted);">格式（例：{value}/100）</label>
+                <input id="schema-format" type="text" style="padding:8px 10px; border:1px solid var(--app-border-default); border-radius:10px;">
             </div>
             <div style="display:flex; gap:8px; padding:12px; border-top:1px solid #eef2f7;">
-                <button id="schema-delete" style="border:1px solid rgba(239,68,68,0.35); background:#fff; color:#b91c1c; border-radius:10px; padding:8px 10px;">删除配置</button>
+                <button id="schema-delete" style="border:1px solid rgba(239,68,68,0.35); background:var(--app-surface-card); color:#b91c1c; border-radius:10px; padding:8px 10px;">删除配置</button>
                 <div style="flex:1;"></div>
-                <button id="schema-cancel" style="border:1px solid #e2e8f0; background:#fff; border-radius:10px; padding:8px 10px;">取消</button>
-                <button id="schema-save" style="border:none; background:#0ea5e9; color:#fff; border-radius:10px; padding:8px 12px;">保存</button>
+                <button id="schema-cancel" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:8px 10px;">取消</button>
+                <button id="schema-save" style="border:none; background:#0ea5e9; color:var(--app-text-inverse); border-radius:10px; padding:8px 12px;">保存</button>
             </div>
         `;
 
@@ -486,7 +486,7 @@ export class VariablePanel {
         panel.style.cssText = `
             width: min(94vw, 560px);
             max-height: 86vh;
-            background: #fff;
+            background: var(--app-surface-card);
             border-radius: 14px;
             overflow: hidden;
             display:flex;
@@ -495,15 +495,15 @@ export class VariablePanel {
         `;
         panel.addEventListener('click', (e) => e.stopPropagation());
         panel.innerHTML = `
-            <div style="display:flex; align-items:center; gap:10px; padding:12px; background:#f8fafc; border-bottom:1px solid #e5e7eb;">
+            <div style="display:flex; align-items:center; gap:10px; padding:12px; background:var(--app-surface-subtle); border-bottom:1px solid var(--app-border-default);">
                 <div style="font-weight:900;">规则管理</div>
-                <div style="margin-left:auto; font-size:12px; color:#64748b;">当前会话规则</div>
-                <button id="rule-close" style="border:1px solid #e5e7eb; background:#fff; border-radius:10px; padding:6px 10px;">关闭</button>
+                <div style="margin-left:auto; font-size:12px; color:var(--app-text-muted);">当前会话规则</div>
+                <button id="rule-close" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:6px 10px;">关闭</button>
             </div>
             <div style="padding:12px; display:flex; gap:8px; align-items:center; border-bottom:1px solid rgba(0,0,0,0.06);">
-                <button id="rule-add" style="border:1px solid #e2e8f0; background:#fff; border-radius:10px; padding:8px 10px; font-size:13px;">新增规则</button>
-                <button id="rule-json" style="border:1px solid #e2e8f0; background:#fff; border-radius:10px; padding:8px 10px; font-size:13px;">JSON</button>
-                <button id="rule-run" style="border:1px solid #e2e8f0; background:#fff; border-radius:10px; padding:8px 10px; font-size:13px;">运行规则</button>
+                <button id="rule-add" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:8px 10px; font-size:13px;">新增规则</button>
+                <button id="rule-json" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:8px 10px; font-size:13px;">JSON</button>
+                <button id="rule-run" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:8px 10px; font-size:13px;">运行规则</button>
             </div>
             <div id="rule-list" style="padding:12px; overflow:auto; flex:1; display:flex; flex-direction:column; gap:10px;"></div>
         `;
@@ -540,7 +540,7 @@ export class VariablePanel {
         panel.style.cssText = `
             width: min(94vw, 560px);
             max-height: 88vh;
-            background: #fff;
+            background: var(--app-surface-card);
             border-radius: 14px;
             overflow: hidden;
             display:flex;
@@ -549,27 +549,27 @@ export class VariablePanel {
         `;
         panel.addEventListener('click', (e) => e.stopPropagation());
         panel.innerHTML = `
-            <div style="display:flex; align-items:center; gap:10px; padding:12px; background:#f8fafc; border-bottom:1px solid #e5e7eb;">
+            <div style="display:flex; align-items:center; gap:10px; padding:12px; background:var(--app-surface-subtle); border-bottom:1px solid var(--app-border-default);">
                 <div style="font-weight:900;">规则编辑</div>
-                <div id="rule-title" style="margin-left:auto; font-size:12px; color:#64748b;"></div>
-                <button id="rule-editor-close" style="border:1px solid #e5e7eb; background:#fff; border-radius:10px; padding:6px 10px;">关闭</button>
+                <div id="rule-title" style="margin-left:auto; font-size:12px; color:var(--app-text-muted);"></div>
+                <button id="rule-editor-close" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:6px 10px;">关闭</button>
             </div>
             <div style="padding:12px; overflow:auto; display:flex; flex-direction:column; gap:10px;">
-                <label style="font-size:12px; color:#64748b;">规则名</label>
-                <input id="rule-name" type="text" style="padding:8px 10px; border:1px solid #e2e8f0; border-radius:10px;">
+                <label style="font-size:12px; color:var(--app-text-muted);">规则名</label>
+                <input id="rule-name" type="text" style="padding:8px 10px; border:1px solid var(--app-border-default); border-radius:10px;">
 
                 <div style="display:flex; gap:12px; align-items:center;">
-                    <label style="font-size:12px; color:#64748b;">
+                    <label style="font-size:12px; color:var(--app-text-muted);">
                         <input id="rule-enabled" type="checkbox" style="margin-right:6px;">启用
                     </label>
-                    <label style="font-size:12px; color:#64748b;">
+                    <label style="font-size:12px; color:var(--app-text-muted);">
                         优先级
-                        <input id="rule-priority" type="number" value="0" style="margin-left:6px; padding:6px 8px; width:90px; border:1px solid #e2e8f0; border-radius:8px;">
+                        <input id="rule-priority" type="number" value="0" style="margin-left:6px; padding:6px 8px; width:90px; border:1px solid var(--app-border-default); border-radius:8px;">
                     </label>
                 </div>
 
-                <label style="font-size:12px; color:#64748b;">触发类型</label>
-                <select id="rule-trigger-type" style="padding:8px 10px; border:1px solid #e2e8f0; border-radius:10px;">
+                <label style="font-size:12px; color:var(--app-text-muted);">触发类型</label>
+                <select id="rule-trigger-type" style="padding:8px 10px; border:1px solid var(--app-border-default); border-radius:10px;">
                     <option value="every_turn">每轮</option>
                     <option value="every_n_turns">每 N 轮</option>
                     <option value="keyword">关键词</option>
@@ -578,26 +578,26 @@ export class VariablePanel {
                 </select>
 
                 <div id="rule-trigger-n-wrap" style="display:none;">
-                    <label style="font-size:12px; color:#64748b;">N（每 N 轮）</label>
-                    <input id="rule-trigger-n" type="number" min="1" value="1" style="padding:8px 10px; border:1px solid #e2e8f0; border-radius:10px; width:100%;">
+                    <label style="font-size:12px; color:var(--app-text-muted);">N（每 N 轮）</label>
+                    <input id="rule-trigger-n" type="number" min="1" value="1" style="padding:8px 10px; border:1px solid var(--app-border-default); border-radius:10px; width:100%;">
                 </div>
 
                 <div id="rule-trigger-keywords-wrap" style="display:none;">
-                    <label style="font-size:12px; color:#64748b;">关键词（逗号分隔）</label>
-                    <input id="rule-trigger-keywords" type="text" style="padding:8px 10px; border:1px solid #e2e8f0; border-radius:10px;">
-                    <label style="font-size:12px; color:#64748b; margin-top:6px;">
+                    <label style="font-size:12px; color:var(--app-text-muted);">关键词（逗号分隔）</label>
+                    <input id="rule-trigger-keywords" type="text" style="padding:8px 10px; border:1px solid var(--app-border-default); border-radius:10px;">
+                    <label style="font-size:12px; color:var(--app-text-muted); margin-top:6px;">
                         <input id="rule-trigger-case" type="checkbox" style="margin-right:6px;">区分大小写
                     </label>
                 </div>
 
                 <div id="rule-trigger-expr-wrap" style="display:none;">
-                    <label style="font-size:12px; color:#64748b;">条件表达式（安全子集：变量、括号、逻辑/比较/四则运算）</label>
-                    <textarea id="rule-trigger-expr" rows="2" style="padding:8px 10px; border:1px solid #e2e8f0; border-radius:10px;"></textarea>
+                    <label style="font-size:12px; color:var(--app-text-muted);">条件表达式（安全子集：变量、括号、逻辑/比较/四则运算）</label>
+                    <textarea id="rule-trigger-expr" rows="2" style="padding:8px 10px; border:1px solid var(--app-border-default); border-radius:10px;"></textarea>
                     <div id="rule-trigger-expr-status" style="display:none; font-size:12px; line-height:1.4; margin-top:6px;"></div>
                 </div>
 
-                <label style="font-size:12px; color:#64748b;">动作类型</label>
-                <select id="rule-action-type" style="padding:8px 10px; border:1px solid #e2e8f0; border-radius:10px;">
+                <label style="font-size:12px; color:var(--app-text-muted);">动作类型</label>
+                <select id="rule-action-type" style="padding:8px 10px; border:1px solid var(--app-border-default); border-radius:10px;">
                     <option value="set_value">设置数值</option>
                     <option value="increment">递增</option>
                     <option value="decrement">递减</option>
@@ -610,35 +610,35 @@ export class VariablePanel {
                     <option value="inject_prompt">注入提示词</option>
                 </select>
 
-                <label style="font-size:12px; color:#64748b;">目标变量</label>
-                <input id="rule-action-target" list="rule-target-list" type="text" style="padding:8px 10px; border:1px solid #e2e8f0; border-radius:10px;">
+                <label style="font-size:12px; color:var(--app-text-muted);">目标变量</label>
+                <input id="rule-action-target" list="rule-target-list" type="text" style="padding:8px 10px; border:1px solid var(--app-border-default); border-radius:10px;">
                 <datalist id="rule-target-list"></datalist>
 
                 <div id="rule-action-value-wrap">
-                    <label id="rule-action-value-label" style="font-size:12px; color:#64748b;">设置值</label>
-                    <input id="rule-action-value" type="text" style="padding:8px 10px; border:1px solid #e2e8f0; border-radius:10px;">
+                    <label id="rule-action-value-label" style="font-size:12px; color:var(--app-text-muted);">设置值</label>
+                    <input id="rule-action-value" type="text" style="padding:8px 10px; border:1px solid var(--app-border-default); border-radius:10px;">
                 </div>
 
                 <div id="rule-action-delta-wrap" style="display:none;">
-                    <label style="font-size:12px; color:#64748b;">增量</label>
-                    <input id="rule-action-delta" type="number" value="1" style="padding:8px 10px; border:1px solid #e2e8f0; border-radius:10px;">
+                    <label style="font-size:12px; color:var(--app-text-muted);">增量</label>
+                    <input id="rule-action-delta" type="number" value="1" style="padding:8px 10px; border:1px solid var(--app-border-default); border-radius:10px;">
                 </div>
 
                 <div id="rule-action-ai-wrap" style="display:none;">
-                    <label style="font-size:12px; color:#64748b;">AI 评估提示词</label>
-                    <textarea id="rule-action-prompt" rows="4" style="padding:8px 10px; border:1px solid #e2e8f0; border-radius:10px;"></textarea>
-                    <label style="font-size:12px; color:#64748b;">应用方式</label>
-                    <select id="rule-action-mode" style="padding:8px 10px; border:1px solid #e2e8f0; border-radius:10px;">
+                    <label style="font-size:12px; color:var(--app-text-muted);">AI 评估提示词</label>
+                    <textarea id="rule-action-prompt" rows="4" style="padding:8px 10px; border:1px solid var(--app-border-default); border-radius:10px;"></textarea>
+                    <label style="font-size:12px; color:var(--app-text-muted);">应用方式</label>
+                    <select id="rule-action-mode" style="padding:8px 10px; border:1px solid var(--app-border-default); border-radius:10px;">
                         <option value="delta">增量</option>
                         <option value="set">直接赋值</option>
                     </select>
                 </div>
 
                 <div id="rule-action-message-wrap" style="display:none;">
-                    <label style="font-size:12px; color:#64748b;">通知内容</label>
-                    <input id="rule-action-message" type="text" style="padding:8px 10px; border:1px solid #e2e8f0; border-radius:10px;">
-                    <label style="font-size:12px; color:#64748b;">通知级别</label>
-                    <select id="rule-action-message-style" style="padding:8px 10px; border:1px solid #e2e8f0; border-radius:10px;">
+                    <label style="font-size:12px; color:var(--app-text-muted);">通知内容</label>
+                    <input id="rule-action-message" type="text" style="padding:8px 10px; border:1px solid var(--app-border-default); border-radius:10px;">
+                    <label style="font-size:12px; color:var(--app-text-muted);">通知级别</label>
+                    <select id="rule-action-message-style" style="padding:8px 10px; border:1px solid var(--app-border-default); border-radius:10px;">
                         <option value="info">info</option>
                         <option value="success">success</option>
                         <option value="warning">warning</option>
@@ -647,15 +647,15 @@ export class VariablePanel {
                 </div>
 
                 <div id="rule-action-persona-wrap" style="display:none;">
-                    <label style="font-size:12px; color:#64748b;">角色卡 ID / 名称</label>
-                    <input id="rule-action-persona" type="text" style="padding:8px 10px; border:1px solid #e2e8f0; border-radius:10px;">
+                    <label style="font-size:12px; color:var(--app-text-muted);">角色卡 ID / 名称</label>
+                    <input id="rule-action-persona" type="text" style="padding:8px 10px; border:1px solid var(--app-border-default); border-radius:10px;">
                 </div>
 
                 <div id="rule-action-inject-wrap" style="display:none;">
-                    <label style="font-size:12px; color:#64748b;">注入提示词</label>
-                    <textarea id="rule-action-inject" rows="4" style="padding:8px 10px; border:1px solid #e2e8f0; border-radius:10px;"></textarea>
-                    <label style="font-size:12px; color:#64748b;">注入角色</label>
-                    <select id="rule-action-inject-role" style="padding:8px 10px; border:1px solid #e2e8f0; border-radius:10px;">
+                    <label style="font-size:12px; color:var(--app-text-muted);">注入提示词</label>
+                    <textarea id="rule-action-inject" rows="4" style="padding:8px 10px; border:1px solid var(--app-border-default); border-radius:10px;"></textarea>
+                    <label style="font-size:12px; color:var(--app-text-muted);">注入角色</label>
+                    <select id="rule-action-inject-role" style="padding:8px 10px; border:1px solid var(--app-border-default); border-radius:10px;">
                         <option value="system">system</option>
                         <option value="user">user</option>
                         <option value="assistant">assistant</option>
@@ -663,10 +663,10 @@ export class VariablePanel {
                 </div>
             </div>
             <div style="display:flex; gap:8px; padding:12px; border-top:1px solid #eef2f7;">
-                <button id="rule-delete" style="border:1px solid rgba(239,68,68,0.35); background:#fff; color:#b91c1c; border-radius:10px; padding:8px 10px;">删除</button>
+                <button id="rule-delete" style="border:1px solid rgba(239,68,68,0.35); background:var(--app-surface-card); color:#b91c1c; border-radius:10px; padding:8px 10px;">删除</button>
                 <div style="flex:1;"></div>
-                <button id="rule-cancel" style="border:1px solid #e2e8f0; background:#fff; border-radius:10px; padding:8px 10px;">取消</button>
-                <button id="rule-save" style="border:none; background:#0ea5e9; color:#fff; border-radius:10px; padding:8px 12px;">保存</button>
+                <button id="rule-cancel" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:8px 10px;">取消</button>
+                <button id="rule-save" style="border:none; background:#0ea5e9; color:var(--app-text-inverse); border-radius:10px; padding:8px 12px;">保存</button>
             </div>
         `;
 
@@ -773,7 +773,7 @@ export class VariablePanel {
         panel.style.cssText = `
             width: min(92vw, 520px);
             max-height: 86vh;
-            background: #fff;
+            background: var(--app-surface-card);
             border-radius: 14px;
             overflow: hidden;
             display:flex;
@@ -782,10 +782,10 @@ export class VariablePanel {
         `;
         panel.addEventListener('click', (e) => e.stopPropagation());
         panel.innerHTML = `
-            <div style="display:flex; align-items:center; gap:10px; padding:12px; background:#f8fafc; border-bottom:1px solid #e5e7eb;">
+            <div style="display:flex; align-items:center; gap:10px; padding:12px; background:var(--app-surface-subtle); border-bottom:1px solid var(--app-border-default);">
                 <div style="font-weight:900;">变量模板</div>
-                <div style="margin-left:auto; font-size:12px; color:#64748b;">一键创建常用变量</div>
-                <button id="tpl-close" style="border:1px solid #e5e7eb; background:#fff; border-radius:10px; padding:6px 10px;">关闭</button>
+                <div style="margin-left:auto; font-size:12px; color:var(--app-text-muted);">一键创建常用变量</div>
+                <button id="tpl-close" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:6px 10px;">关闭</button>
             </div>
             <div id="tpl-list" style="padding:12px; overflow:auto; display:flex; flex-direction:column; gap:10px;"></div>
         `;
@@ -817,7 +817,7 @@ export class VariablePanel {
         panel.style.cssText = `
             width: min(94vw, 620px);
             max-height: 88vh;
-            background: #fff;
+            background: var(--app-surface-card);
             border-radius: 14px;
             overflow: hidden;
             display:flex;
@@ -826,19 +826,19 @@ export class VariablePanel {
         `;
         panel.addEventListener('click', (e) => e.stopPropagation());
         panel.innerHTML = `
-            <div style="display:flex; align-items:center; gap:10px; padding:12px; background:#f8fafc; border-bottom:1px solid #e5e7eb;">
+            <div style="display:flex; align-items:center; gap:10px; padding:12px; background:var(--app-surface-subtle); border-bottom:1px solid var(--app-border-default);">
                 <div id="data-title" style="font-weight:900;">导入/导出</div>
                 <div style="margin-left:auto;"></div>
-                <button id="data-close" style="border:1px solid #e5e7eb; background:#fff; border-radius:10px; padding:6px 10px;">关闭</button>
+                <button id="data-close" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:6px 10px;">关闭</button>
             </div>
             <div style="padding:12px; flex:1; display:flex; flex-direction:column; gap:10px;">
-                <textarea id="data-text" rows="12" style="flex:1; min-height:200px; padding:10px; border:1px solid #e2e8f0; border-radius:12px; font-size:12px; line-height:1.5;"></textarea>
+                <textarea id="data-text" rows="12" style="flex:1; min-height:200px; padding:10px; border:1px solid var(--app-border-default); border-radius:12px; font-size:12px; line-height:1.5;"></textarea>
             </div>
             <div style="display:flex; gap:8px; padding:12px; border-top:1px solid #eef2f7;">
-                <button id="data-copy" style="border:1px solid #e2e8f0; background:#fff; border-radius:10px; padding:8px 10px;">复制</button>
+                <button id="data-copy" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:8px 10px;">复制</button>
                 <div style="flex:1;"></div>
-                <button id="data-merge" style="border:1px solid #0ea5e9; background:#fff; color:#0284c7; border-radius:10px; padding:8px 10px;">合并导入</button>
-                <button id="data-overwrite" style="border:none; background:#0ea5e9; color:#fff; border-radius:10px; padding:8px 12px;">覆盖导入</button>
+                <button id="data-merge" style="border:1px solid #0ea5e9; background:var(--app-surface-card); color:#0284c7; border-radius:10px; padding:8px 10px;">合并导入</button>
+                <button id="data-overwrite" style="border:none; background:#0ea5e9; color:var(--app-text-inverse); border-radius:10px; padding:8px 12px;">覆盖导入</button>
             </div>
         `;
 
@@ -974,7 +974,7 @@ export class VariablePanel {
         if (!fields?.triggerExpr || !fields?.triggerExprStatus) return { ok: true, error: '' };
         const isCondition = String(fields.triggerType?.value || '') === 'condition';
         if (!isCondition) {
-            fields.triggerExpr.style.borderColor = '#e2e8f0';
+            fields.triggerExpr.style.borderColor = 'var(--app-border-default)';
             fields.triggerExprStatus.style.display = 'none';
             fields.triggerExprStatus.textContent = '';
             return { ok: true, error: '' };
@@ -1596,7 +1596,7 @@ export class VariablePanel {
         this.ruleList.innerHTML = '';
         if (!list.length) {
             const empty = document.createElement('div');
-            empty.style.cssText = 'padding:16px; color:#94a3b8; text-align:center;';
+            empty.style.cssText = 'padding:16px; color:var(--app-text-muted); text-align:center;';
             empty.textContent = '暂无规则';
             this.ruleList.appendChild(empty);
             return;
@@ -1609,7 +1609,7 @@ export class VariablePanel {
                 padding:10px 12px;
                 border:1px solid rgba(15,23,42,0.08);
                 border-radius:12px;
-                background:#fff;
+                background:var(--app-surface-card);
                 display:flex;
                 flex-direction:column;
                 gap:6px;
@@ -1618,7 +1618,7 @@ export class VariablePanel {
             title.style.cssText = 'display:flex; align-items:center; gap:8px;';
             const name = document.createElement('div');
             name.textContent = rule.name || rule.id;
-            name.style.cssText = 'font-weight:700; color:#0f172a; font-size:13px;';
+            name.style.cssText = 'font-weight:700; color:var(--app-text-primary); font-size:13px;';
             const diagnostic = diagnosticsByRuleId[rule.id] || null;
             const warning = diagnostic ? document.createElement('span') : null;
             if (warning) {
@@ -1627,7 +1627,7 @@ export class VariablePanel {
                 warning.style.cssText = 'font-size:11px; color:#b45309; background:#fef3c7; border:1px solid #fcd34d; border-radius:999px; padding:2px 7px;';
             }
             const toggle = document.createElement('label');
-            toggle.style.cssText = 'margin-left:auto; font-size:12px; color:#64748b;';
+            toggle.style.cssText = 'margin-left:auto; font-size:12px; color:var(--app-text-muted);';
             toggle.innerHTML = `<input type="checkbox" ${rule.enabled ? 'checked' : ''} style="margin-right:6px;">启用`;
             toggle.querySelector('input')?.addEventListener('change', (e) => {
                 const enabled = e.target.checked;
@@ -1645,7 +1645,7 @@ export class VariablePanel {
             title.appendChild(toggle);
 
             const summary = document.createElement('div');
-            summary.style.cssText = 'font-size:12px; color:#475569;';
+            summary.style.cssText = 'font-size:12px; color:var(--app-text-secondary);';
             summary.textContent = `${this.describeRuleTrigger(rule)} → ${this.describeRuleAction(rule)}`;
             if (diagnostic) summary.title = formatUnsupportedExpressionMessage(diagnostic, { prefix: '当前不支持这条条件语法' });
 
@@ -1659,11 +1659,11 @@ export class VariablePanel {
             actions.style.cssText = 'display:flex; gap:8px; flex-wrap:wrap;';
             const editBtn = document.createElement('button');
             editBtn.textContent = '编辑';
-            editBtn.style.cssText = 'border:1px solid #e2e8f0; background:#fff; border-radius:10px; padding:6px 10px; cursor:pointer;';
+            editBtn.style.cssText = 'border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:6px 10px; cursor:pointer;';
             editBtn.addEventListener('click', () => this.showRuleEditor(rule));
             const delBtn = document.createElement('button');
             delBtn.textContent = '删除';
-            delBtn.style.cssText = 'border:1px solid rgba(239,68,68,0.35); background:#fff; color:#b91c1c; border-radius:10px; padding:6px 10px; cursor:pointer;';
+            delBtn.style.cssText = 'border:1px solid rgba(239,68,68,0.35); background:var(--app-surface-card); color:#b91c1c; border-radius:10px; padding:6px 10px; cursor:pointer;';
             delBtn.addEventListener('click', () => this.deleteRuleById(rule.id));
             actions.appendChild(editBtn);
             actions.appendChild(delBtn);
@@ -1671,7 +1671,7 @@ export class VariablePanel {
             if (String(rule.trigger?.type || '') === 'manual') {
                 const runBtn = document.createElement('button');
                 runBtn.textContent = '运行';
-                runBtn.style.cssText = 'border:1px solid #e2e8f0; background:#fff; border-radius:10px; padding:6px 10px; cursor:pointer;';
+                runBtn.style.cssText = 'border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:6px 10px; cursor:pointer;';
                 runBtn.addEventListener('click', () => this.runRule(rule.id));
                 actions.appendChild(runBtn);
             }
@@ -1714,15 +1714,15 @@ export class VariablePanel {
         templates.forEach(tpl => {
             const card = document.createElement('div');
             card.className = 'var-template-card';
-            card.style.cssText = 'border:1px solid rgba(15,23,42,0.08); border-radius:12px; padding:10px; background:#fff; display:flex; align-items:center; gap:10px;';
+            card.style.cssText = 'border:1px solid rgba(15,23,42,0.08); border-radius:12px; padding:10px; background:var(--app-surface-card); display:flex; align-items:center; gap:10px;';
             const meta = document.createElement('div');
             meta.style.cssText = 'flex:1;';
             const count = Array.isArray(tpl.variables) ? tpl.variables.length : 0;
             const desc = tpl.desc ? `${tpl.desc}${count ? ` · ${count} 变量` : ''}` : (count ? `${count} 变量` : '');
-            meta.innerHTML = `<div style="font-weight:700; color:#0f172a;">${tpl.name}</div><div style="font-size:12px; color:#64748b; margin-top:4px;">${desc}</div>`;
+            meta.innerHTML = `<div style="font-weight:700; color:var(--app-text-primary);">${tpl.name}</div><div style="font-size:12px; color:var(--app-text-muted); margin-top:4px;">${desc}</div>`;
             const btn = document.createElement('button');
             btn.textContent = '应用';
-            btn.style.cssText = 'border:1px solid #e2e8f0; background:#fff; border-radius:10px; padding:6px 10px; cursor:pointer;';
+            btn.style.cssText = 'border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:6px 10px; cursor:pointer;';
             btn.addEventListener('click', async () => {
                 if (!sid) return;
                 const keys = Array.isArray(tpl.variables) ? tpl.variables.map(v => String(v?.id || v?.name || '').trim()).filter(Boolean) : [];
@@ -1765,9 +1765,9 @@ export class VariablePanel {
         const { list, tree } = this.viewButtons;
         const applyStyle = (btn, active) => {
             if (!btn) return;
-            btn.style.background = active ? '#0f172a' : '#fff';
-            btn.style.color = active ? '#fff' : '#0f172a';
-            btn.style.border = active ? '1px solid #0f172a' : '1px solid #e2e8f0';
+            btn.style.background = active ? 'var(--app-text-primary)' : 'var(--app-surface-card)';
+            btn.style.color = active ? 'var(--app-text-inverse)' : 'var(--app-text-primary)';
+            btn.style.border = active ? '1px solid var(--app-text-primary)' : '1px solid var(--app-border-default)';
         };
         applyStyle(list, this.viewMode === 'list');
         applyStyle(tree, this.viewMode === 'tree');
@@ -1782,7 +1782,7 @@ export class VariablePanel {
         listEl.innerHTML = '';
         if (!nodes.length) {
             const empty = document.createElement('div');
-            empty.style.cssText = 'padding:18px 10px; color:#94a3b8; text-align:center;';
+            empty.style.cssText = 'padding:18px 10px; color:var(--app-text-muted); text-align:center;';
             empty.textContent = this.getVars().sid ? '暂无变量' : '未选择会话';
             listEl.appendChild(empty);
             return;
@@ -1817,7 +1817,7 @@ export class VariablePanel {
         listEl.innerHTML = '';
         if (!entries.length) {
             const empty = document.createElement('div');
-            empty.style.cssText = 'padding:18px 10px; color:#94a3b8; text-align:center;';
+            empty.style.cssText = 'padding:18px 10px; color:var(--app-text-muted); text-align:center;';
             empty.textContent = this.getVars().sid ? '暂无变量' : '未选择会话';
             listEl.appendChild(empty);
             return;
@@ -1831,24 +1831,24 @@ export class VariablePanel {
                 border: 1px solid rgba(0,0,0,0.06);
                 border-radius: 12px;
                 margin-bottom: 8px;
-                background: #fff;
+                background: var(--app-surface-card);
             `;
             const schema = this.getSchema(k);
             const typeLabel = schema?.type ? String(schema.type) : '';
             row.innerHTML = `
                 <div style="display:flex; align-items:center; gap:10px;">
                     <div style="flex:1; min-width:0;">
-                        <div style="display:flex; align-items:center; gap:6px; font-weight:900; color:#0f172a; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
+                        <div style="display:flex; align-items:center; gap:6px; font-weight:900; color:var(--app-text-primary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
                             <span>${k}</span>
                             ${typeLabel ? `<span style="font-size:10px; padding:2px 6px; border-radius:999px; background:rgba(14,165,233,0.12); color:#0369a1;">${typeLabel}</span>` : ''}
                         </div>
-                        <div style="color:#64748b; font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${v || '（空）'}</div>
+                        <div style="color:var(--app-text-muted); font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${v || '（空）'}</div>
                     </div>
-                    <button class="var-schema" style="border:1px solid #e2e8f0; background:#fff; border-radius:10px; padding:6px 10px; cursor:pointer;">配置</button>
-                    <button class="var-edit" style="border:1px solid #e2e8f0; background:#fff; border-radius:10px; padding:6px 10px; cursor:pointer;">编辑</button>
-                    <button class="var-del" style="border:1px solid rgba(239,68,68,0.35); background:#fff; color:#b91c1c; border-radius:10px; padding:6px 10px; cursor:pointer;">删除</button>
+                    <button class="var-schema" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:6px 10px; cursor:pointer;">配置</button>
+                    <button class="var-edit" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:6px 10px; cursor:pointer;">编辑</button>
+                    <button class="var-del" style="border:1px solid rgba(239,68,68,0.35); background:var(--app-surface-card); color:#b91c1c; border-radius:10px; padding:6px 10px; cursor:pointer;">删除</button>
                 </div>
-                <div style="margin-top:8px; font-size:12px; color:#475569;">
+                <div style="margin-top:8px; font-size:12px; color:var(--app-text-secondary);">
                     <code class="variable-panel-inline-code" style="padding:2px 6px; border-radius:4px;">{{getvar::${k}}}</code>
                 </div>
             `;
@@ -1891,10 +1891,10 @@ export class VariablePanel {
                 const percent = max > min ? Math.round(((clamped - min) / (max - min)) * 100) : 0;
                 const card = document.createElement('div');
                 card.className = 'var-summary-card';
-                card.style.cssText = 'flex:1 1 140px; min-width:120px; padding:10px; border-radius:12px; border:1px solid rgba(15,23,42,0.08); background:#fff;';
+                card.style.cssText = 'flex:1 1 140px; min-width:120px; padding:10px; border-radius:12px; border:1px solid rgba(15,23,42,0.08); background:var(--app-surface-card);';
                 card.innerHTML = `
-                    <div style="font-size:12px; color:#64748b; margin-bottom:6px;">${label}</div>
-                    <div style="font-size:14px; font-weight:700; color:#0f172a; margin-bottom:6px;">${rendered || clamped}</div>
+                    <div style="font-size:12px; color:var(--app-text-muted); margin-bottom:6px;">${label}</div>
+                    <div style="font-size:14px; font-weight:700; color:var(--app-text-primary); margin-bottom:6px;">${rendered || clamped}</div>
                     <div style="height:6px; background:rgba(15,23,42,0.08); border-radius:999px; overflow:hidden;">
                         <div style="height:100%; width:${percent}%; background:${color};"></div>
                     </div>
@@ -1913,10 +1913,10 @@ export class VariablePanel {
 
             const card = document.createElement('div');
             card.className = 'var-summary-card';
-            card.style.cssText = 'flex:1 1 140px; min-width:120px; padding:10px; border-radius:12px; border:1px solid rgba(15,23,42,0.08); background:#fff;';
+            card.style.cssText = 'flex:1 1 140px; min-width:120px; padding:10px; border-radius:12px; border:1px solid rgba(15,23,42,0.08); background:var(--app-surface-card);';
             card.innerHTML = `
-                <div style="font-size:12px; color:#64748b;">${label}</div>
-                <div style="font-size:14px; font-weight:700; color:#0f172a; margin-top:4px;">${rendered || '-'}</div>
+                <div style="font-size:12px; color:var(--app-text-muted);">${label}</div>
+                <div style="font-size:14px; font-weight:700; color:var(--app-text-primary); margin-top:4px;">${rendered || '-'}</div>
             `;
             cardsEl.appendChild(card);
         });
@@ -2008,7 +2008,7 @@ export class VariablePanel {
         menu.className = 'var-more-menu';
         menu.style.cssText = `
             position: absolute;
-            background: #fff;
+            background: var(--app-surface-card);
             border: 1px solid rgba(15,23,42,0.1);
             border-radius: 12px;
             box-shadow: 0 8px 24px rgba(15,23,42,0.15);
@@ -2038,10 +2038,10 @@ export class VariablePanel {
                 cursor: pointer;
                 font-size: 13px;
                 text-align: left;
-                color: ${danger ? '#ef4444' : '#334155'};
+                color: ${danger ? '#ef4444' : 'var(--app-text-secondary)'};
             `;
             btn.innerHTML = `<span style="font-size:14px;">${icon}</span><span>${label}</span>`;
-            btn.addEventListener('mouseenter', () => btn.style.background = danger ? 'rgba(239,68,68,0.08)' : '#f1f5f9');
+            btn.addEventListener('mouseenter', () => btn.style.background = danger ? 'rgba(239,68,68,0.08)' : 'var(--app-surface-hover)');
             btn.addEventListener('mouseleave', () => btn.style.background = 'transparent');
             btn.addEventListener('click', () => {
                 this.closeMoreMenu();

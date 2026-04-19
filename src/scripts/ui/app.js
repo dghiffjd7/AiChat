@@ -4506,7 +4506,7 @@ Phase G（Frame 36）：循环衔接
       if (color) {
         btn.style.background = color;
         btn.style.borderColor = color;
-        btn.style.color = '#fff';
+        btn.style.color = 'var(--app-text-inverse)';
       }
       const iconUrl = resolveStickerMediaUrl({ dataUrl: pack.iconDataUrl, path: pack.iconPath });
       const showNumber = idx >= STICKER_PACK_COLORS.length;
@@ -4745,7 +4745,7 @@ Phase G（Frame 36）：循环衔接
     el.innerHTML = '';
     if (!ids.length) {
       const empty = document.createElement('div');
-      empty.style.cssText = 'padding:20px 12px; color:#94a3b8; text-align:center;';
+      empty.style.cssText = 'padding:20px 12px; color:var(--app-text-muted); text-align:center;';
       empty.textContent = '暂无聊天记录';
       el.appendChild(empty);
       return;
@@ -4761,14 +4761,14 @@ Phase G（Frame 36）：循环衔接
       const unread = chatStore.getUnreadCount(id);
       const unreadBadge =
         unread > 0
-          ? `<span style="margin-left:8px; min-width:18px; height:18px; padding:0 6px; display:inline-flex; align-items:center; justify-content:center; border-radius:999px; background:#ef4444; color:#fff; font-size:11px; font-weight:800; line-height:18px;">${unread}</span>`
+          ? `<span style="margin-left:8px; min-width:18px; height:18px; padding:0 6px; display:inline-flex; align-items:center; justify-content:center; border-radius:999px; background:#ef4444; color:var(--app-text-inverse); font-size:11px; font-weight:800; line-height:18px;">${unread}</span>`
           : '';
 
       // 蓝点：显示 pending 消息数量
       const pendingCount = getPendingCountForSession(id);
       const pendingBadge =
         pendingCount > 0
-          ? `<span style="margin-left:8px; min-width:18px; height:18px; padding:0 6px; display:inline-flex; align-items:center; justify-content:center; border-radius:999px; background:#199AFF; color:#fff; font-size:11px; font-weight:800; line-height:18px;">${pendingCount}</span>`
+          ? `<span style="margin-left:8px; min-width:18px; height:18px; padding:0 6px; display:inline-flex; align-items:center; justify-content:center; border-radius:999px; background:#199AFF; color:var(--app-text-inverse); font-size:11px; font-weight:800; line-height:18px;">${pendingCount}</span>`
           : '';
 
       const item = document.createElement('div');
@@ -4811,14 +4811,14 @@ Phase G（Frame 36）：循环衔接
       const unread = chatStore.getUnreadCount(id);
       const unreadBadge =
         unread > 0
-          ? `<span style="margin-left:8px; min-width:18px; height:18px; padding:0 6px; display:inline-flex; align-items:center; justify-content:center; border-radius:999px; background:#ef4444; color:#fff; font-size:11px; font-weight:800; line-height:18px;">${unread}</span>`
+          ? `<span style="margin-left:8px; min-width:18px; height:18px; padding:0 6px; display:inline-flex; align-items:center; justify-content:center; border-radius:999px; background:#ef4444; color:var(--app-text-inverse); font-size:11px; font-weight:800; line-height:18px;">${unread}</span>`
           : '';
 
       // 蓝点：显示 pending 消息数量
       const pendingCount = getPendingCountForSession(id);
       const pendingBadge =
         pendingCount > 0
-          ? `<span style="margin-left:8px; min-width:18px; height:18px; padding:0 6px; display:inline-flex; align-items:center; justify-content:center; border-radius:999px; background:#199AFF; color:#fff; font-size:11px; font-weight:800; line-height:18px;">${pendingCount}</span>`
+          ? `<span style="margin-left:8px; min-width:18px; height:18px; padding:0 6px; display:inline-flex; align-items:center; justify-content:center; border-radius:999px; background:#199AFF; color:var(--app-text-inverse); font-size:11px; font-weight:800; line-height:18px;">${pendingCount}</span>`
           : '';
 
       const item = document.createElement('div');
@@ -4844,7 +4844,7 @@ Phase G（Frame 36）：循环衔接
     if (!contacts.length) {
       el.innerHTML = '';
       const empty = document.createElement('div');
-      empty.style.cssText = 'padding:12px 6px; color:#94a3b8; font-size:13px;';
+      empty.style.cssText = 'padding:12px 6px; color:var(--app-text-muted); font-size:13px;';
       empty.textContent = '（暂无联系人）';
       el.appendChild(empty);
       return;
@@ -4860,7 +4860,7 @@ Phase G（Frame 36）：循环衔接
     el.innerHTML = '';
     if (!groups.length) {
       const empty = document.createElement('div');
-      empty.style.cssText = 'padding:12px 6px; color:#94a3b8; font-size:13px;';
+      empty.style.cssText = 'padding:12px 6px; color:var(--app-text-muted); font-size:13px;';
       empty.textContent = '（暂无群聊）';
       el.appendChild(empty);
       return;
@@ -4877,7 +4877,7 @@ Phase G（Frame 36）：循环衔接
       const unread = chatStore.getUnreadCount(id);
       const unreadBadge =
         unread > 0
-          ? `<span style="margin-left:8px; min-width:18px; height:18px; padding:0 6px; display:inline-flex; align-items:center; justify-content:center; border-radius:999px; background:#ef4444; color:#fff; font-size:11px; font-weight:800; line-height:18px;">${unread}</span>`
+          ? `<span style="margin-left:8px; min-width:18px; height:18px; padding:0 6px; display:inline-flex; align-items:center; justify-content:center; border-radius:999px; background:#ef4444; color:var(--app-text-inverse); font-size:11px; font-weight:800; line-height:18px;">${unread}</span>`
           : '';
 
       const item = document.createElement('div');
@@ -10243,7 +10243,7 @@ Phase G（Frame 36）：循环衔接
       panel.style.cssText = `
                 width: 100%;
                 height: 100%;
-                background: #fff;
+                background: var(--app-surface-card);
                 border-radius: 14px;
                 overflow: hidden;
                 display:flex;
@@ -10252,11 +10252,11 @@ Phase G（Frame 36）：循环衔接
       panel.addEventListener('click', e => e.stopPropagation());
 
       panel.innerHTML = `
-                <div style="display:flex; align-items:center; gap:10px; padding:12px; background:#f3f4f6; border-bottom:1px solid #e5e7eb;">
+                <div style="display:flex; align-items:center; gap:10px; padding:12px; background:#f3f4f6; border-bottom:1px solid var(--app-border-default);">
                     <div style="font-weight:900;">原始回复</div>
-                    <div id="raw-reply-meta" style="margin-left:auto; font-size:12px; color:#64748b; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"></div>
-                    <button id="raw-reply-copy" style="border:1px solid #e5e7eb; background:#fff; border-radius:10px; padding:6px 10px;">复制</button>
-                    <button id="raw-reply-close" style="border:1px solid #e5e7eb; background:#fff; border-radius:10px; padding:6px 10px;">关闭</button>
+                    <div id="raw-reply-meta" style="margin-left:auto; font-size:12px; color:var(--app-text-muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"></div>
+                    <button id="raw-reply-copy" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:6px 10px;">复制</button>
+                    <button id="raw-reply-close" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:6px 10px;">关闭</button>
                 </div>
                 <div style="flex:1; min-height:0; overflow:auto; -webkit-overflow-scrolling:touch; padding:10px;">
                     <textarea id="raw-reply-text" readonly style="
@@ -10362,7 +10362,7 @@ Phase G（Frame 36）：循环衔接
       panel.style.cssText = `
                 width: 100%;
                 height: 100%;
-                background: #fff;
+                background: var(--app-surface-card);
                 border-radius: 14px;
                 overflow: hidden;
                 display:flex;
@@ -10371,12 +10371,12 @@ Phase G（Frame 36）：循环衔接
       panel.addEventListener('click', e => e.stopPropagation());
 
       panel.innerHTML = `
-                <div style="display:flex; align-items:center; gap:10px; padding:12px; background:#f3f4f6; border-bottom:1px solid #e5e7eb;">
+                <div style="display:flex; align-items:center; gap:10px; padding:12px; background:#f3f4f6; border-bottom:1px solid var(--app-border-default);">
                     <div style="font-weight:900;">本次 Prompt</div>
-                    <div id="prompt-preview-meta" style="margin-left:auto; font-size:12px; color:#64748b; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"></div>
-                    <button id="prompt-preview-locate" style="border:1px solid #e5e7eb; background:#fff; border-radius:10px; padding:6px 10px;">定位世界书</button>
-                    <button id="prompt-preview-copy" style="border:1px solid #e5e7eb; background:#fff; border-radius:10px; padding:6px 10px;">复制</button>
-                    <button id="prompt-preview-close" style="border:1px solid #e5e7eb; background:#fff; border-radius:10px; padding:6px 10px;">关闭</button>
+                    <div id="prompt-preview-meta" style="margin-left:auto; font-size:12px; color:var(--app-text-muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"></div>
+                    <button id="prompt-preview-locate" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:6px 10px;">定位世界书</button>
+                    <button id="prompt-preview-copy" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:6px 10px;">复制</button>
+                    <button id="prompt-preview-close" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:6px 10px;">关闭</button>
                 </div>
                 <div style="flex:1; min-height:0; overflow:auto; -webkit-overflow-scrolling:touch; padding:10px;">
                     <textarea id="prompt-preview-text" readonly style="
@@ -10492,7 +10492,7 @@ Phase G（Frame 36）：循环衔接
                 max-width: 680px;
                 height: min(78vh, 760px);
                 margin: 0 auto;
-                background: #fff;
+                background: var(--app-surface-card);
                 border-radius: 14px;
                 overflow: hidden;
                 display:flex;
@@ -10500,12 +10500,12 @@ Phase G（Frame 36）：循环衔接
             `;
       panel.addEventListener('click', e => e.stopPropagation());
       panel.innerHTML = `
-                <div style="display:flex; align-items:center; gap:10px; padding:12px; background:#f3f4f6; border-bottom:1px solid #e5e7eb;">
+                <div style="display:flex; align-items:center; gap:10px; padding:12px; background:#f3f4f6; border-bottom:1px solid var(--app-border-default);">
                     <div style="font-weight:900;">定位世界书</div>
-                    <div id="world-debug-locator-meta" style="margin-left:auto; font-size:12px; color:#64748b; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"></div>
-                    <button id="world-debug-locator-close" style="border:1px solid #e5e7eb; background:#fff; border-radius:10px; padding:6px 10px;">关闭</button>
+                    <div id="world-debug-locator-meta" style="margin-left:auto; font-size:12px; color:var(--app-text-muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"></div>
+                    <button id="world-debug-locator-close" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:6px 10px;">关闭</button>
                 </div>
-                <div style="padding:10px 12px; font-size:12px; color:#64748b; border-bottom:1px solid #eef2f7;">选择一条记录可直接打开对应世界书并定位到条目/分页。</div>
+                <div style="padding:10px 12px; font-size:12px; color:var(--app-text-muted); border-bottom:1px solid #eef2f7;">选择一条记录可直接打开对应世界书并定位到条目/分页。</div>
                 <div id="world-debug-locator-list" style="flex:1; min-height:0; overflow:auto; -webkit-overflow-scrolling:touch; padding:10px; display:flex; flex-direction:column; gap:8px;"></div>
             `;
 
@@ -10542,7 +10542,7 @@ Phase G（Frame 36）：循环衔接
         listEl.innerHTML = '';
         if (!candidates.length) {
           const empty = document.createElement('div');
-          empty.style.cssText = 'padding:14px 12px; color:#64748b; border:1px dashed #dbe3ee; border-radius:10px; background:#f8fafc;';
+          empty.style.cssText = 'padding:14px 12px; color:var(--app-text-muted); border:1px dashed var(--app-border-default); border-radius:10px; background:var(--app-surface-subtle);';
           empty.textContent = '本次请求没有可定位的世界书记录。';
           listEl.appendChild(empty);
         } else {
@@ -10550,18 +10550,18 @@ Phase G（Frame 36）：循环衔接
             const row = document.createElement('button');
             row.type = 'button';
             row.dataset.index = String(index);
-            row.style.cssText = 'text-align:left; border:1px solid #dbe3ee; border-radius:10px; background:#fff; padding:10px 12px; cursor:pointer; display:flex; flex-direction:column; gap:6px;';
+            row.style.cssText = 'text-align:left; border:1px solid var(--app-border-default); border-radius:10px; background:var(--app-surface-card); padding:10px 12px; cursor:pointer; display:flex; flex-direction:column; gap:6px;';
             const title = document.createElement('div');
-            title.style.cssText = 'font-size:13px; font-weight:700; color:#0f172a;';
+            title.style.cssText = 'font-size:13px; font-weight:700; color:var(--app-text-primary);';
             title.textContent = `${item.title || '未命名条目'} (${item.sourceKindLabel || '未知来源'})`;
             const metaLine = document.createElement('div');
-            metaLine.style.cssText = 'font-size:12px; color:#475569;';
+            metaLine.style.cssText = 'font-size:12px; color:var(--app-text-secondary);';
             const blockId = String(item.blockId || 'legacy').trim() || 'legacy';
             const blockTitle = String(item.blockTitle || '').trim();
             const blockLabel = blockTitle && blockTitle !== blockId ? `${blockId} (${blockTitle})` : blockId;
             metaLine.textContent = `${item.worldId} / ${item.entryId} / ${blockLabel}`;
             const extra = document.createElement('div');
-            extra.style.cssText = 'font-size:12px; color:#64748b;';
+            extra.style.cssText = 'font-size:12px; color:var(--app-text-muted);';
             extra.textContent = `${item.sectionLabel || '命中记录'} · ${item.positionLabel || '默认 Prompt'} · ${item.role || 'system'}`;
             row.appendChild(title);
             row.appendChild(metaLine);
@@ -11263,8 +11263,8 @@ Phase G（Frame 36）：循环衔接
     const title = `${g?.name || '群聊'} · ${members.length}人`;
     el.innerHTML = `
             <div class="group-dd-header" style="display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 12px; border-bottom:1px solid rgba(0,0,0,0.06); background:rgba(248,250,252,0.92); border-radius:12px 12px 0 0;">
-                <div class="group-dd-title" style="font-weight:900; color:#0f172a; font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${title}</div>
-                <button id="group-dd-settings" class="group-dd-settings" style="border:1px solid #e2e8f0; background:#fff; border-radius:10px; padding:6px 10px; cursor:pointer;">⚙</button>
+                <div class="group-dd-title" style="font-weight:900; color:var(--app-text-primary); font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${title}</div>
+                <button id="group-dd-settings" class="group-dd-settings" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:6px 10px; cursor:pointer;">⚙</button>
             </div>
             <div class="group-dd-list" style="padding:8px 0;">
                 ${
@@ -11277,13 +11277,13 @@ Phase G（Frame 36）：循环衔接
                         <button class="group-dd-member" data-mid="${mid}" style="width:100%; display:flex; align-items:center; gap:10px; padding:10px 12px; border:none; background:transparent; cursor:pointer; text-align:left;">
                             <img src="${avatar}" alt="" style="width:32px; height:32px; border-radius:50%; object-fit:cover;">
                             <div class="group-dd-member-meta" style="flex:1; min-width:0;">
-                                <div class="group-dd-member-name" style="font-weight:700; color:#0f172a; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${name}</div>
-                                <div class="group-dd-member-sub" style="color:#64748b; font-size:12px;">点击进入私聊</div>
+                                <div class="group-dd-member-name" style="font-weight:700; color:var(--app-text-primary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${name}</div>
+                                <div class="group-dd-member-sub" style="color:var(--app-text-muted); font-size:12px;">点击进入私聊</div>
                             </div>
                         </button>
                     `;
                     })
-                    .join('') || `<div class="group-dd-empty" style="color:#94a3b8; font-size:13px; padding:10px 12px;">暂无成员</div>`
+                    .join('') || `<div class="group-dd-empty" style="color:var(--app-text-muted); font-size:13px; padding:10px 12px;">暂无成员</div>`
                 }
             </div>
         `;

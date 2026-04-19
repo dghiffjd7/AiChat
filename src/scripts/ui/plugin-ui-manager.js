@@ -17,7 +17,7 @@ const countByPlugin = (map, pluginId) => {
 
 const wrapShadowContent = (content) => `
   <style>
-    :host { display: block; font-family: "PingFang SC", "Noto Sans SC", "Microsoft YaHei", sans-serif; color: #0f172a; }
+    :host { display: block; font-family: "PingFang SC", "Noto Sans SC", "Microsoft YaHei", sans-serif; color: var(--app-text-primary); }
     .plugin-root { box-sizing: border-box; font-size: 13px; line-height: 1.5; }
     .plugin-root * { box-sizing: border-box; }
   </style>
@@ -32,7 +32,7 @@ const wrapIframeContent = (content, frameId) => `
       <meta name="viewport" content="width=device-width,initial-scale=1" />
       <style>
         html, body { margin: 0; padding: 0; }
-        body { font-family: "PingFang SC", "Noto Sans SC", "Microsoft YaHei", sans-serif; font-size: 13px; line-height: 1.5; color: #0f172a; }
+        body { font-family: "PingFang SC", "Noto Sans SC", "Microsoft YaHei", sans-serif; font-size: 13px; line-height: 1.5; color: var(--app-text-primary); }
         * { box-sizing: border-box; }
       </style>
     </head>
@@ -144,7 +144,7 @@ export class PluginUiManager {
       top: 12px;
       bottom: 12px;
       width: min(86vw, 360px);
-      background: #fff;
+      background: var(--app-surface-card);
       border-radius: 16px;
       box-shadow: 0 18px 50px rgba(15, 23, 42, 0.2);
       z-index: 20001;
@@ -155,7 +155,7 @@ export class PluginUiManager {
     panel.addEventListener('click', (e) => e.stopPropagation());
     panel.innerHTML = `
       <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border-bottom:1px solid rgba(15,23,42,0.08);">
-        <div id="plugin-sidebar-title" style="font-size:14px;font-weight:700;color:#0f172a;">插件面板</div>
+        <div id="plugin-sidebar-title" style="font-size:14px;font-weight:700;color:var(--app-text-primary);">插件面板</div>
         <button id="plugin-sidebar-close" style="border:none;background:rgba(15,23,42,0.08);width:28px;height:28px;border-radius:10px;cursor:pointer;font-size:16px;">×</button>
       </div>
       <div id="plugin-sidebar-body" style="flex:1;overflow:auto;"></div>
@@ -195,7 +195,7 @@ export class PluginUiManager {
       transform: translate(-50%, -50%);
       width: min(90vw, 420px);
       max-height: 78vh;
-      background: #fff;
+      background: var(--app-surface-card);
       border-radius: 16px;
       box-shadow: 0 24px 60px rgba(15, 23, 42, 0.28);
       z-index: 22001;
@@ -206,7 +206,7 @@ export class PluginUiManager {
     panel.addEventListener('click', (e) => e.stopPropagation());
     panel.innerHTML = `
       <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border-bottom:1px solid rgba(15,23,42,0.08);">
-        <div id="plugin-modal-title" style="font-size:14px;font-weight:700;color:#0f172a;">插件弹窗</div>
+        <div id="plugin-modal-title" style="font-size:14px;font-weight:700;color:var(--app-text-primary);">插件弹窗</div>
         <button id="plugin-modal-close" style="border:none;background:rgba(15,23,42,0.08);width:28px;height:28px;border-radius:10px;cursor:pointer;font-size:16px;">×</button>
       </div>
       <div id="plugin-modal-body" style="flex:1;overflow:auto;padding:12px;"></div>
@@ -434,7 +434,7 @@ export class PluginUiManager {
         height: 36px;
         border-radius: 12px;
         border: 1px solid rgba(15,23,42,0.12);
-        background: #fff;
+        background: var(--app-surface-card);
         cursor: pointer;
         font-size: 16px;
         box-shadow: 0 6px 14px rgba(15,23,42,0.12);
@@ -485,7 +485,7 @@ export class PluginUiManager {
         border-radius: 12px;
         overflow: hidden;
         border: 1px solid rgba(148,163,184,0.2);
-        background: #fff;
+        background: var(--app-surface-card);
       `;
       slot.appendChild(host);
       card.host = host;

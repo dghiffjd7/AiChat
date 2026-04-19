@@ -73,18 +73,18 @@ const promptImportOptions = ({ displayName, fileName, worldCount, greetingCount,
     `;
     const panel = document.createElement('div');
     panel.style.cssText = `
-      width: min(92vw, 420px); background: #fff; border-radius: 14px; overflow: hidden;
+      width: min(92vw, 420px); background: var(--app-surface-card); border-radius: 14px; overflow: hidden;
       box-shadow: 0 12px 40px rgba(0,0,0,0.2); display:flex; flex-direction:column;
     `;
     const titleText = displayName ? `导入角色卡：${displayName}` : '导入角色卡';
     const fileText = fileName ? `文件：${fileName}` : '';
     panel.innerHTML = `
-      <div style="padding:14px 16px; border-bottom:1px solid #e5e7eb; background:#f8fafc;">
+      <div style="padding:14px 16px; border-bottom:1px solid var(--app-border-default); background:var(--app-surface-subtle);">
         <div style="font-weight:800; font-size:15px;">${titleText}</div>
-        ${fileText ? `<div style="margin-top:4px; font-size:12px; color:#64748b;">${fileText}</div>` : ''}
+        ${fileText ? `<div style="margin-top:4px; font-size:12px; color:var(--app-text-muted);">${fileText}</div>` : ''}
       </div>
       <div style="padding:14px 16px; display:flex; flex-direction:column; gap:10px; font-size:13px;">
-        <div style="font-weight:700; color:#0f172a;">导入选项</div>
+        <div style="font-weight:700; color:var(--app-text-primary);">导入选项</div>
         <label style="display:flex; align-items:center; gap:8px;">
           <input type="checkbox" id="cc-opt-world" ${worldCount ? 'checked' : ''} ${worldCount ? '' : 'disabled'}>
           <span>导入世界书（${worldCount} 条）</span>
@@ -106,9 +106,9 @@ const promptImportOptions = ({ displayName, fileName, worldCount, greetingCount,
           <span>导入脚本（${scriptCount} 条）</span>
         </label>
       </div>
-      <div style="display:flex; gap:8px; justify-content:flex-end; padding:12px 16px; border-top:1px solid #e5e7eb; background:#fff;">
-        <button id="cc-opt-cancel" style="border:1px solid #e2e8f0; background:#fff; border-radius:10px; padding:8px 12px;">取消</button>
-        <button id="cc-opt-confirm" style="border:none; background:#0f172a; color:#fff; border-radius:10px; padding:8px 14px;">导入</button>
+      <div style="display:flex; gap:8px; justify-content:flex-end; padding:12px 16px; border-top:1px solid var(--app-border-default); background:var(--app-surface-card);">
+        <button id="cc-opt-cancel" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:8px 12px;">取消</button>
+        <button id="cc-opt-confirm" style="border:none; background:var(--app-text-primary); color:var(--app-text-inverse); border-radius:10px; padding:8px 14px;">导入</button>
       </div>
     `;
     overlay.appendChild(panel);

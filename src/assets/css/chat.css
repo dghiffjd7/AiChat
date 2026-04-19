@@ -1,15 +1,15 @@
 /* Chat layout and theming (mobile-first) */
 
 :root {
-    --bg-gradient-start: #f4f5f6;
+    --bg-gradient-start: var(--app-surface-page);
     --bg-gradient-end: #e6e9f0;
     --accent: #2f88ff;
     --accent-strong: #1f6ed6;
     --bubble-user: #2f88ff;
-    --bubble-assistant: #ffffff;
+    --bubble-assistant: var(--app-surface-card);
     --bubble-shadow: rgba(0, 0, 0, 0.06);
-    --text-primary: #0f172a;
-    --text-secondary: #4b5563;
+    --text-primary: var(--app-text-primary);
+    --text-secondary: var(--app-text-secondary);
     --border-subtle: rgba(0, 0, 0, 0.08);
     --safe-top: env(safe-area-inset-top);
     --safe-bottom: env(safe-area-inset-bottom);
@@ -119,14 +119,14 @@ body {
     width: 36px;
     height: 36px;
     border-radius: 50%;
-    background: #cbd5e1;
+    background: var(--app-border-strong);
     overflow: hidden;
     flex-shrink: 0;
     display: flex;
     align-items: center;
     justify-content: center;
     font-weight: 700;
-    color: #475569;
+    color: var(--app-text-secondary);
     box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
 }
 
@@ -191,7 +191,7 @@ body {
 
 .user .bubble {
     background: var(--bubble-user);
-    color: #ffffff;
+    color: var(--app-text-inverse);
     border-bottom-right-radius: 6px;
 }
 
@@ -260,7 +260,7 @@ body {
 
 .card-button {
     border: 1px solid var(--border-subtle);
-    background: #fff;
+    background: var(--app-surface-card);
     border-radius: 10px;
     padding: 6px 10px;
     font-size: 13px;

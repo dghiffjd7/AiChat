@@ -53,7 +53,7 @@ export class GroupPanel {
             right: calc(10px + env(safe-area-inset-right, 0px));
             height: calc(100vh - 20px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
             height: calc(100dvh - 20px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
-            background:#fff; border-radius:12px; box-shadow:0 10px 40px rgba(0,0,0,0.25);
+            background:var(--app-surface-card); border-radius:12px; box-shadow:0 10px 40px rgba(0,0,0,0.25);
             z-index:21000;
             overflow:hidden;
             display:flex; flex-direction:column;
@@ -63,26 +63,26 @@ export class GroupPanel {
         this.panel.innerHTML = `
             <div style="padding:14px 16px; border-bottom:1px solid rgba(0,0,0,0.06); background:rgba(248,250,252,0.92); display:flex; align-items:center; justify-content:space-between; gap:10px;">
                 <div style="min-width:0;">
-                    <div style="font-weight:800; color:#0f172a;">联系人分组</div>
-                    <div style="color:#64748b; font-size:12px;">管理你的联系人分组</div>
+                    <div style="font-weight:800; color:var(--app-text-primary);">联系人分组</div>
+                    <div style="color:var(--app-text-muted); font-size:12px;">管理你的联系人分组</div>
                 </div>
-                <button id="group-panel-close" style="border:none; background:transparent; font-size:22px; cursor:pointer; color:#0f172a;">×</button>
+                <button id="group-panel-close" style="border:none; background:transparent; font-size:22px; cursor:pointer; color:var(--app-text-primary);">×</button>
             </div>
 
-            <div style="padding:14px 16px; border-bottom:1px solid rgba(0,0,0,0.06); background:#fafbfc;">
-                <div style="font-weight:700; color:#0f172a; margin-bottom:8px;">新建分组</div>
+            <div style="padding:14px 16px; border-bottom:1px solid rgba(0,0,0,0.06); background:var(--app-surface-subtle);">
+                <div style="font-weight:700; color:var(--app-text-primary); margin-bottom:8px;">新建分组</div>
                 <div style="display:flex; gap:8px;">
-                    <input id="group-name-input" type="text" placeholder="输入分组名称" maxlength="15" style="flex:1; padding:10px; border:1px solid #e2e8f0; border-radius:10px; font-size:14px;">
-                    <button id="group-create-btn" style="padding:10px 18px; border:none; border-radius:10px; background:#019aff; color:#fff; cursor:pointer; font-weight:700; white-space:nowrap;">创建</button>
+                    <input id="group-name-input" type="text" placeholder="输入分组名称" maxlength="15" style="flex:1; padding:10px; border:1px solid var(--app-border-default); border-radius:10px; font-size:14px;">
+                    <button id="group-create-btn" style="padding:10px 18px; border:none; border-radius:10px; background:#019aff; color:var(--app-text-inverse); cursor:pointer; font-weight:700; white-space:nowrap;">创建</button>
                 </div>
                 <div style="margin-top:10px;">
-                    <div style="font-size:12px; color:#64748b; margin-bottom:6px;">上级分组（可选）</div>
-                    <select id="group-parent-select" style="width:100%; padding:9px 10px; border:1px solid #e2e8f0; border-radius:10px; font-size:14px; background:#fff;"></select>
+                    <div style="font-size:12px; color:var(--app-text-muted); margin-bottom:6px;">上级分组（可选）</div>
+                    <select id="group-parent-select" style="width:100%; padding:9px 10px; border:1px solid var(--app-border-default); border-radius:10px; font-size:14px; background:var(--app-surface-card);"></select>
                 </div>
             </div>
 
             <div style="flex:1; overflow:auto; -webkit-overflow-scrolling:touch; padding:14px 16px;">
-                <div style="font-weight:700; color:#0f172a; margin-bottom:10px;">已有分组</div>
+                <div style="font-weight:700; color:var(--app-text-primary); margin-bottom:10px;">已有分组</div>
                 <div id="group-list"></div>
             </div>
         `;
@@ -114,7 +114,7 @@ export class GroupPanel {
         const groups = this.groupStore?.listGroups?.() || [];
 
         if (groups.length === 0) {
-            listEl.innerHTML = '<div style="color:#94a3b8; text-align:center; padding:20px;">暂无分组</div>';
+            listEl.innerHTML = '<div style="color:var(--app-text-muted); text-align:center; padding:20px;">暂无分组</div>';
             this.refreshParentSelect();
             return;
         }
@@ -149,13 +149,13 @@ export class GroupPanel {
         const parentName = parentId ? (tree.byId.get(parentId)?.name || parentId) : '';
         const parentLabel = parentName ? ` · 上级：${this.escapeHtml(parentName)}` : '';
         return `
-            <div style="display:flex; align-items:center; gap:10px; padding:12px; border:1px solid #e2e8f0; border-radius:10px; margin-bottom:8px; background:#fafbfc; margin-left:${indent}px;">
+            <div style="display:flex; align-items:center; gap:10px; padding:12px; border:1px solid var(--app-border-default); border-radius:10px; margin-bottom:8px; background:var(--app-surface-subtle); margin-left:${indent}px;">
                 <div style="flex:1; min-width:0;">
-                    <div style="font-weight:600; color:#0f172a;">${this.escapeHtml(group.name)}</div>
-                    <div style="font-size:12px; color:#64748b;">${count} 个联系人${parentLabel}</div>
+                    <div style="font-weight:600; color:var(--app-text-primary);">${this.escapeHtml(group.name)}</div>
+                    <div style="font-size:12px; color:var(--app-text-muted);">${count} 个联系人${parentLabel}</div>
                 </div>
-                <button data-group-parent="${group.id}" style="padding:6px 12px; border:1px solid #e2e8f0; border-radius:8px; background:#fff; cursor:pointer; font-size:12px;">上级</button>
-                <button data-group-edit="${group.id}" style="padding:6px 12px; border:1px solid #e2e8f0; border-radius:8px; background:#fff; cursor:pointer; font-size:12px;">重命名</button>
+                <button data-group-parent="${group.id}" style="padding:6px 12px; border:1px solid var(--app-border-default); border-radius:8px; background:var(--app-surface-card); cursor:pointer; font-size:12px;">上级</button>
+                <button data-group-edit="${group.id}" style="padding:6px 12px; border:1px solid var(--app-border-default); border-radius:8px; background:var(--app-surface-card); cursor:pointer; font-size:12px;">重命名</button>
                 <button data-group-delete="${group.id}" style="padding:6px 12px; border:1px solid #fca5a5; border-radius:8px; background:#fef2f2; color:#dc2626; cursor:pointer; font-size:12px;">删除</button>
             </div>
         `;
@@ -298,7 +298,7 @@ export class GroupPanel {
             top: calc(30px + env(safe-area-inset-top, 0px));
             left: calc(22px + env(safe-area-inset-left, 0px));
             right: calc(22px + env(safe-area-inset-right, 0px));
-            background:#fff; border-radius:14px; box-shadow:0 10px 40px rgba(0,0,0,0.25);
+            background:var(--app-surface-card); border-radius:14px; box-shadow:0 10px 40px rgba(0,0,0,0.25);
             z-index:23000;
             overflow:hidden;
         `;
@@ -306,17 +306,17 @@ export class GroupPanel {
         this.parentPickerPanel.innerHTML = `
             <div style="padding:14px 16px; border-bottom:1px solid rgba(0,0,0,0.06); background:rgba(248,250,252,0.92); display:flex; align-items:center; justify-content:space-between; gap:10px;">
                 <div style="min-width:0;">
-                    <div id="group-parent-title" style="font-weight:800; color:#0f172a;">设置上级分组</div>
-                    <div style="color:#64748b; font-size:12px;">选择一个上级分组（可选）</div>
+                    <div id="group-parent-title" style="font-weight:800; color:var(--app-text-primary);">设置上级分组</div>
+                    <div style="color:var(--app-text-muted); font-size:12px;">选择一个上级分组（可选）</div>
                 </div>
-                <button id="group-parent-close" style="border:none; background:transparent; font-size:22px; cursor:pointer; color:#0f172a;">×</button>
+                <button id="group-parent-close" style="border:none; background:transparent; font-size:22px; cursor:pointer; color:var(--app-text-primary);">×</button>
             </div>
             <div style="padding:14px 16px;">
-                <select id="group-parent-select-modal" style="width:100%; padding:10px; border:1px solid #e2e8f0; border-radius:10px; font-size:14px; background:#fff;"></select>
+                <select id="group-parent-select-modal" style="width:100%; padding:10px; border:1px solid var(--app-border-default); border-radius:10px; font-size:14px; background:var(--app-surface-card);"></select>
             </div>
             <div style="padding:14px 16px; border-top:1px solid rgba(0,0,0,0.06); background:rgba(248,250,252,0.92); display:flex; gap:10px;">
-                <button id="group-parent-cancel" style="flex:1; padding:10px 14px; border:1px solid #e2e8f0; border-radius:10px; background:#fff; cursor:pointer;">取消</button>
-                <button id="group-parent-confirm" style="flex:1; padding:10px 14px; border:none; border-radius:10px; background:#019aff; color:#fff; cursor:pointer; font-weight:800;">保存</button>
+                <button id="group-parent-cancel" style="flex:1; padding:10px 14px; border:1px solid var(--app-border-default); border-radius:10px; background:var(--app-surface-card); cursor:pointer;">取消</button>
+                <button id="group-parent-confirm" style="flex:1; padding:10px 14px; border:none; border-radius:10px; background:#019aff; color:var(--app-text-inverse); cursor:pointer; font-weight:800;">保存</button>
             </div>
         `;
 

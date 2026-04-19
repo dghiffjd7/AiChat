@@ -52,7 +52,7 @@ export class StickerPicker {
       const btn = document.createElement('button');
       btn.textContent = label;
       btn.style.cssText = `
-          padding: 10px 8px; border: 1px solid #eee; border-radius: 10px; background: #f8fafc;
+          padding: 10px 8px; border: 1px solid var(--app-border-subtle); border-radius: 10px; background: var(--app-surface-subtle);
           cursor: pointer; font-size: 14px;
       `;
       btn.onclick = () => {
@@ -67,7 +67,7 @@ export class StickerPicker {
     if (this.recent.length) {
       this.recent.forEach((s) => renderBtn(gridRecent, s));
     } else {
-      gridRecent.innerHTML = '<span style="color:#94a3b8;font-size:12px;">无最近使用</span>';
+      gridRecent.innerHTML = '<span style="color:var(--app-text-muted);font-size:12px;">无最近使用</span>';
     }
 
     DEFAULT_STICKERS.forEach((s) => renderBtn(gridAll, s));
@@ -85,7 +85,7 @@ export class StickerPicker {
     this.panel.className = 'app-themed-panel sticker-picker-panel';
     this.panel.style.cssText = `
             display:none; position:fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
-            background: #fff; border-radius: 12px; box-shadow: 0 8px 30px rgba(0,0,0,0.2);
+            background: var(--app-surface-card); border-radius: 12px; box-shadow: 0 8px 30px rgba(0,0,0,0.2);
             padding: 10px; z-index: 10000; width: min(360px, 90vw);
         `;
     this.panel.onclick = (e) => e.stopPropagation();

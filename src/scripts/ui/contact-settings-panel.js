@@ -77,13 +77,13 @@ const askMemoryTableNewChatMode = () => new Promise((resolve) => {
     panel.className = 'app-themed-panel memory-table-dialog-panel';
     panel.style.cssText = `
         width:min(360px, 92vw);
-        background:#fff; border-radius:14px;
+        background:var(--app-surface-card); border-radius:14px;
         padding:16px; box-shadow:0 20px 60px rgba(0,0,0,0.3);
         display:flex; flex-direction:column; gap:10px;
     `;
     panel.innerHTML = `
-        <div style="font-weight:800; color:#0f172a;">记忆表格：开启新聊天</div>
-        <div style="font-size:12px; color:#64748b;">请选择新聊天处理方式</div>
+        <div style="font-weight:800; color:var(--app-text-primary);">记忆表格：开启新聊天</div>
+        <div style="font-size:12px; color:var(--app-text-muted);">请选择新聊天处理方式</div>
     `;
     const btnWrap = document.createElement('div');
     btnWrap.style.cssText = 'display:flex; flex-direction:column; gap:8px;';
@@ -93,15 +93,15 @@ const askMemoryTableNewChatMode = () => new Promise((resolve) => {
         btn.className = 'memory-table-dialog-btn';
         btn.textContent = text;
         btn.style.cssText = `
-            padding:10px 12px; border-radius:10px; border:1px solid #e2e8f0;
-            background:#fff; font-weight:700; cursor:pointer; text-align:left;
+            padding:10px 12px; border-radius:10px; border:1px solid var(--app-border-default);
+            background:var(--app-surface-card); font-weight:700; cursor:pointer; text-align:left;
             ${style || ''}
         `;
         return btn;
     };
-    const keepBtn = buildBtn('保留其他表格（仅清空摘要/大纲）', 'color:#0f172a;');
+    const keepBtn = buildBtn('保留其他表格（仅清空摘要/大纲）', 'color:var(--app-text-primary);');
     const clearBtn = buildBtn('清空全部记忆表格', 'color:#ef4444; border-color:#fecaca; background:#fff5f5;');
-    const cancelBtn = buildBtn('取消', 'color:#475569; background:#f8fafc;');
+    const cancelBtn = buildBtn('取消', 'color:var(--app-text-secondary); background:var(--app-surface-subtle);');
     const done = (value) => {
         overlay.remove();
         resolve(value);
@@ -355,7 +355,7 @@ export class ContactSettingsPanel {
             right: calc(10px + env(safe-area-inset-right, 0px));
             height: calc(100vh - 20px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
             height: calc(100dvh - 20px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
-            background:#fff; border-radius:12px; box-shadow:0 10px 40px rgba(0,0,0,0.25);
+            background:var(--app-surface-card); border-radius:12px; box-shadow:0 10px 40px rgba(0,0,0,0.25);
             z-index:21000;
             overflow:hidden;
             display:flex; flex-direction:column;
@@ -381,36 +381,36 @@ export class ContactSettingsPanel {
         this.panel.innerHTML = `
             <div style="padding:14px 16px; border-bottom:1px solid rgba(0,0,0,0.06); background:rgba(248,250,252,0.92); display:flex; align-items:center; justify-content:space-between; gap:10px;">
                 <div style="min-width:0;">
-                    <div id="contact-settings-title" style="font-weight:800; color:#0f172a;">好友设置</div>
-                    <div id="contact-settings-sub" style="color:#64748b; font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"></div>
+                    <div id="contact-settings-title" style="font-weight:800; color:var(--app-text-primary);">好友设置</div>
+                    <div id="contact-settings-sub" style="color:var(--app-text-muted); font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"></div>
                 </div>
-                <button id="contact-settings-close" style="border:none; background:transparent; font-size:22px; cursor:pointer; color:#0f172a;">×</button>
+                <button id="contact-settings-close" style="border:none; background:transparent; font-size:22px; cursor:pointer; color:var(--app-text-primary);">×</button>
             </div>
 
             <div style="padding:14px 16px; overflow:auto; flex:1; min-height:0; -webkit-overflow-scrolling:touch;">
                 <div style="display:flex; gap:14px; align-items:center; flex-wrap:wrap;">
-                    <button id="contact-avatar-btn" type="button" style="width:72px; height:72px; border-radius:18px; border:1px solid #e2e8f0; background:#fff; padding:0; overflow:hidden; cursor:pointer;">
+                    <button id="contact-avatar-btn" type="button" style="width:72px; height:72px; border-radius:18px; border:1px solid var(--app-border-default); background:var(--app-surface-card); padding:0; overflow:hidden; cursor:pointer;">
                         <img id="contact-avatar-preview" alt="" style="width:100%; height:100%; object-fit:cover; display:block;">
                     </button>
                     <div style="flex:1; min-width:220px;">
-                        <div style="font-weight:700; color:#0f172a; margin-bottom:6px;">名称</div>
-                        <input id="contact-name-input" style="width:100%; padding:10px; border:1px solid #e2e8f0; border-radius:10px; font-size:14px;">
-                        <div style="color:#64748b; font-size:12px; margin-top:6px;">仅修改显示名称，不会改变聊天室 ID。</div>
+                        <div style="font-weight:700; color:var(--app-text-primary); margin-bottom:6px;">名称</div>
+                        <input id="contact-name-input" style="width:100%; padding:10px; border:1px solid var(--app-border-default); border-radius:10px; font-size:14px;">
+                        <div style="color:var(--app-text-muted); font-size:12px; margin-top:6px;">仅修改显示名称，不会改变聊天室 ID。</div>
                     </div>
                 </div>
 
                 <div style="margin-top:12px;">
-                    <div style="font-weight:700; color:#0f172a; margin-bottom:6px;">标签</div>
+                    <div style="font-weight:700; color:var(--app-text-primary); margin-bottom:6px;">标签</div>
                     <input
                         id="contact-labels-input"
                         placeholder="用逗号分隔，如：重制版, SG线"
-                        style="width:100%; padding:10px; border:1px solid #e2e8f0; border-radius:10px; font-size:14px;"
+                        style="width:100%; padding:10px; border:1px solid var(--app-border-default); border-radius:10px; font-size:14px;"
                     >
-                    <div style="color:#64748b; font-size:12px; margin-top:6px;">用于展示标签；不设置则界面保持原样。</div>
+                    <div style="color:var(--app-text-muted); font-size:12px; margin-top:6px;">用于展示标签；不设置则界面保持原样。</div>
                 </div>
 
-	                <div style="margin-top:16px; border-top:1px solid #eee; padding-top:14px;">
-	                    <div style="font-weight:700; color:#0f172a; margin-bottom:10px;">模板与脚本（本会话）</div>
+	                <div style="margin-top:16px; border-top:1px solid var(--app-border-subtle); padding-top:14px;">
+	                    <div style="font-weight:700; color:var(--app-text-primary); margin-bottom:10px;">模板与脚本（本会话）</div>
                     <label style="display:flex; align-items:center; gap:8px; cursor:pointer; margin-bottom:8px;">
                         <input type="checkbox" id="contact-template-enabled" style="width:18px; height:18px;">
                         <span>启用模板处理</span>
@@ -419,76 +419,76 @@ export class ContactSettingsPanel {
                         <input type="checkbox" id="contact-script-enabled" style="width:18px; height:18px;">
                         <span>启用脚本</span>
                     </label>
-                    <button id="contact-reset-vars" type="button" style="padding:8px 12px; border:1px solid #e2e8f0; border-radius:10px; background:#fff; cursor:pointer; font-size:12px;">
+                    <button id="contact-reset-vars" type="button" style="padding:8px 12px; border:1px solid var(--app-border-default); border-radius:10px; background:var(--app-surface-card); cursor:pointer; font-size:12px;">
                         重置本会话变量
                     </button>
-	                    <div style="color:#64748b; font-size:12px; margin-top:6px;">仅清空本会话 local 变量，不影响全局变量。</div>
+	                    <div style="color:var(--app-text-muted); font-size:12px; margin-top:6px;">仅清空本会话 local 变量，不影响全局变量。</div>
 	                </div>
 
-                    <div style="margin-top:16px; border-top:1px solid #eee; padding-top:14px;">
-                        <div id="contact-bridge-block-title" style="font-weight:700; color:#0f172a; margin-bottom:10px;">聊天 / RP 桥接（当前会话）</div>
-                        <div id="contact-rp-bridge-section" style="display:none; padding:10px; border:1px solid #e2e8f0; border-radius:12px; background:#fff; margin-bottom:10px;">
+                    <div style="margin-top:16px; border-top:1px solid var(--app-border-subtle); padding-top:14px;">
+                        <div id="contact-bridge-block-title" style="font-weight:700; color:var(--app-text-primary); margin-bottom:10px;">聊天 / RP 桥接（当前会话）</div>
+                        <div id="contact-rp-bridge-section" style="display:none; padding:10px; border:1px solid var(--app-border-default); border-radius:12px; background:var(--app-surface-card); margin-bottom:10px;">
                             <label style="display:flex; align-items:center; justify-content:space-between; gap:10px; cursor:pointer;">
-                                <span style="font-weight:700; color:#0f172a;">注入 RP 总体大纲</span>
+                                <span style="font-weight:700; color:var(--app-text-primary);">注入 RP 总体大纲</span>
                                 <input type="checkbox" id="contact-rp-bridge-enabled" style="width:18px; height:18px;">
                             </label>
-                            <div style="color:#64748b; font-size:12px; margin-top:6px;">默认来源为当前角色的 RP 会话。</div>
-                            <div id="contact-rp-bridge-source-note" style="color:#475569; font-size:12px; margin-top:6px;"></div>
-                            <label style="display:flex; align-items:center; justify-content:space-between; gap:8px; font-size:12px; color:#475569; margin-top:10px;">
+                            <div style="color:var(--app-text-muted); font-size:12px; margin-top:6px;">默认来源为当前角色的 RP 会话。</div>
+                            <div id="contact-rp-bridge-source-note" style="color:var(--app-text-secondary); font-size:12px; margin-top:6px;"></div>
+                            <label style="display:flex; align-items:center; justify-content:space-between; gap:8px; font-size:12px; color:var(--app-text-secondary); margin-top:10px;">
                                 <span>注入条数（0=全部）</span>
                                 <input type="number" id="contact-rp-bridge-limit" min="0" step="1"
-                                       style="width:88px; padding:4px 6px; border:1px solid #e2e8f0; border-radius:8px; font-size:12px; text-align:right;">
+                                       style="width:88px; padding:4px 6px; border:1px solid var(--app-border-default); border-radius:8px; font-size:12px; text-align:right;">
                             </label>
                         </div>
                         <div id="contact-memory-share-section" style="display:none;">
-                            <button id="contact-memory-share-manage" type="button" style="width:100%; padding:10px 12px; border:1px solid #e2e8f0; border-radius:12px; background:#fff; color:#0f172a; font-weight:800; cursor:pointer;">
+                            <button id="contact-memory-share-manage" type="button" style="width:100%; padding:10px 12px; border:1px solid var(--app-border-default); border-radius:12px; background:var(--app-surface-card); color:var(--app-text-primary); font-weight:800; cursor:pointer;">
                                 记忆共享
                             </button>
-                            <div id="contact-memory-share-summary" style="color:#64748b; font-size:12px; line-height:1.5; margin-top:8px;"></div>
+                            <div id="contact-memory-share-summary" style="color:var(--app-text-muted); font-size:12px; line-height:1.5; margin-top:8px;"></div>
                         </div>
                     </div>
 
-	                <div style="margin-top:20px; border-top:1px solid #eee; padding-top:14px;">
-                    <div style="font-weight:700; color:#0f172a; margin-bottom:10px;">聊天管理</div>
-                    <button id="contact-new-chat" style="width:100%; padding:10px; border:1px solid #ddd; border-radius:8px; background:#fff; color:#019aff; font-weight:700; margin-bottom:10px; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:6px;">
+	                <div style="margin-top:20px; border-top:1px solid var(--app-border-subtle); padding-top:14px;">
+                    <div style="font-weight:700; color:var(--app-text-primary); margin-bottom:10px;">聊天管理</div>
+                    <button id="contact-new-chat" style="width:100%; padding:10px; border:1px solid var(--app-border-default); border-radius:8px; background:var(--app-surface-card); color:#019aff; font-weight:700; margin-bottom:10px; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:6px;">
                         <span>✨</span> 开启新聊天（存档当前）
                     </button>
-                    <div style="font-size:12px; color:#64748b; margin-bottom:6px;">历史存档（点击加载）</div>
-                    <div id="contact-archives-list" style="max-height:160px; overflow-y:auto; border:1px solid #eee; border-radius:8px; background:#f9f9f9; padding:0;"></div>
+                    <div style="font-size:12px; color:var(--app-text-muted); margin-bottom:6px;">历史存档（点击加载）</div>
+                    <div id="contact-archives-list" style="max-height:160px; overflow-y:auto; border:1px solid var(--app-border-subtle); border-radius:8px; background:var(--app-surface-subtle); padding:0;"></div>
 
                     <div id="contact-summary-section">
 	                    <div style="margin-top:14px;">
 	                        <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:6px;">
-	                            <div style="font-size:12px; color:#64748b;">摘要（每次对话保存一条）</div>
+	                            <div style="font-size:12px; color:var(--app-text-muted);">摘要（每次对话保存一条）</div>
                                 <div style="display:flex; align-items:center; gap:8px;">
-	                                <button id="contact-summaries-batch" type="button" title="批量操作" style="width:32px; height:28px; border:1px solid #e2e8f0; border-radius:10px; background:#fff; cursor:pointer; color:#0f172a; font-size:16px; line-height:1;">☰</button>
-	                                <button id="contact-summaries-clear" type="button" style="padding:6px 10px; border:1px solid #e2e8f0; border-radius:10px; background:#fff; cursor:pointer; color:#ef4444;">清空</button>
+	                                <button id="contact-summaries-batch" type="button" title="批量操作" style="width:32px; height:28px; border:1px solid var(--app-border-default); border-radius:10px; background:var(--app-surface-card); cursor:pointer; color:var(--app-text-primary); font-size:16px; line-height:1;">☰</button>
+	                                <button id="contact-summaries-clear" type="button" style="padding:6px 10px; border:1px solid var(--app-border-default); border-radius:10px; background:var(--app-surface-card); cursor:pointer; color:#ef4444;">清空</button>
                                 </div>
 	                        </div>
                             <div id="contact-summaries-batchbar" style="display:none; align-items:center; justify-content:flex-end; gap:8px; margin:6px 0 8px;">
-                                <button id="contact-summaries-batch-edit" type="button" title="批量编辑" style="width:34px; height:30px; border:1px solid #e2e8f0; border-radius:10px; background:#fff; cursor:pointer; color:#0f172a; font-size:16px;">✎</button>
-                                <button id="contact-summaries-batch-delete" type="button" title="批量删除" style="width:34px; height:30px; border:1px solid #fecaca; border-radius:10px; background:#fff; cursor:pointer; color:#b91c1c; font-size:16px;">🗑</button>
-                                <button id="contact-summaries-batch-cancel" type="button" title="退出批量" style="width:34px; height:30px; border:1px solid #e2e8f0; border-radius:10px; background:#fff; cursor:pointer; color:#0f172a; font-size:18px;">×</button>
+                                <button id="contact-summaries-batch-edit" type="button" title="批量编辑" style="width:34px; height:30px; border:1px solid var(--app-border-default); border-radius:10px; background:var(--app-surface-card); cursor:pointer; color:var(--app-text-primary); font-size:16px;">✎</button>
+                                <button id="contact-summaries-batch-delete" type="button" title="批量删除" style="width:34px; height:30px; border:1px solid #fecaca; border-radius:10px; background:var(--app-surface-card); cursor:pointer; color:#b91c1c; font-size:16px;">🗑</button>
+                                <button id="contact-summaries-batch-cancel" type="button" title="退出批量" style="width:34px; height:30px; border:1px solid var(--app-border-default); border-radius:10px; background:var(--app-surface-card); cursor:pointer; color:var(--app-text-primary); font-size:18px;">×</button>
                             </div>
-	                        <div id="contact-summaries-list" style="max-height:160px; overflow-y:auto; border:1px solid #eee; border-radius:8px; background:#fff; padding:0;"></div>
+	                        <div id="contact-summaries-list" style="max-height:160px; overflow-y:auto; border:1px solid var(--app-border-subtle); border-radius:8px; background:var(--app-surface-card); padding:0;"></div>
 	                    </div>
 
                         <div style="margin-top:14px;">
                             <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:6px;">
-                                <div style="font-size:12px; color:#64748b;">大总结（自动生成）</div>
+                                <div style="font-size:12px; color:var(--app-text-muted);">大总结（自动生成）</div>
                                 <div style="display:flex; align-items:center; gap:8px;">
-                                    <button id="contact-compacted-raw" type="button" title="查看原始回复" style="width:32px; height:28px; border:1px solid #e2e8f0; border-radius:10px; background:#fff; cursor:pointer; color:#0f172a; font-size:16px; line-height:1;">📄</button>
-                                    <button id="contact-compacted-edit" type="button" title="编辑" style="width:32px; height:28px; border:1px solid #e2e8f0; border-radius:10px; background:#fff; cursor:pointer; color:#0f172a; font-size:16px; line-height:1;">✎</button>
-                                    <button id="contact-compacted-run" type="button" title="手动生成/刷新" style="width:32px; height:28px; border:1px solid #e2e8f0; border-radius:10px; background:#fff; cursor:pointer; color:#0f172a; font-size:16px; line-height:1;">↻</button>
-                                    <button id="contact-compacted-clear" type="button" title="删除" style="width:32px; height:28px; border:1px solid #fecaca; border-radius:10px; background:#fff; cursor:pointer; color:#b91c1c; font-size:16px; line-height:1;">🗑</button>
+                                    <button id="contact-compacted-raw" type="button" title="查看原始回复" style="width:32px; height:28px; border:1px solid var(--app-border-default); border-radius:10px; background:var(--app-surface-card); cursor:pointer; color:var(--app-text-primary); font-size:16px; line-height:1;">📄</button>
+                                    <button id="contact-compacted-edit" type="button" title="编辑" style="width:32px; height:28px; border:1px solid var(--app-border-default); border-radius:10px; background:var(--app-surface-card); cursor:pointer; color:var(--app-text-primary); font-size:16px; line-height:1;">✎</button>
+                                    <button id="contact-compacted-run" type="button" title="手动生成/刷新" style="width:32px; height:28px; border:1px solid var(--app-border-default); border-radius:10px; background:var(--app-surface-card); cursor:pointer; color:var(--app-text-primary); font-size:16px; line-height:1;">↻</button>
+                                    <button id="contact-compacted-clear" type="button" title="删除" style="width:32px; height:28px; border:1px solid #fecaca; border-radius:10px; background:var(--app-surface-card); cursor:pointer; color:#b91c1c; font-size:16px; line-height:1;">🗑</button>
                                 </div>
                             </div>
-                            <div id="contact-compacted-summary" style="max-height:200px; overflow-y:auto; border:1px solid #eee; border-radius:8px; background:#fff; padding:0;"></div>
+                            <div id="contact-compacted-summary" style="max-height:200px; overflow-y:auto; border:1px solid var(--app-border-subtle); border-radius:8px; background:var(--app-surface-card); padding:0;"></div>
                         </div>
                     </div>
 
-                    <div id="contact-memory-table-section" style="display:none; margin-top:14px; padding:12px; border:1px dashed #e2e8f0; border-radius:12px; background:#f8fafc;">
-                        <div style="font-weight:700; color:#0f172a; margin-bottom:6px;">记忆表格</div>
+                    <div id="contact-memory-table-section" style="display:none; margin-top:14px; padding:12px; border:1px dashed var(--app-border-default); border-radius:12px; background:var(--app-surface-subtle);">
+                        <div style="font-weight:700; color:var(--app-text-primary); margin-bottom:6px;">记忆表格</div>
                         <div id="contact-memory-table-content"></div>
                     </div>
 	                </div>
@@ -496,9 +496,9 @@ export class ContactSettingsPanel {
             </div>
 
             <div style="padding:14px 16px calc(14px + env(safe-area-inset-bottom, 0px)); border-top:1px solid rgba(0,0,0,0.06); background:rgba(248,250,252,0.92); display:flex; align-items:center; gap:10px;">
-                <button id="contact-avatar-clear" type="button" style="padding:10px 12px; border:1px solid #e2e8f0; border-radius:10px; background:#fff; cursor:pointer; white-space:nowrap;">清除头像</button>
-                <button id="contact-settings-cancel" type="button" style="flex:1; padding:10px 14px; border:1px solid #e2e8f0; border-radius:10px; background:#f8fafc; cursor:pointer;">取消</button>
-                <button id="contact-settings-save" type="button" style="flex:1; padding:10px 14px; border:none; border-radius:10px; background:#019aff; color:#fff; cursor:pointer; font-weight:700;">保存</button>
+                <button id="contact-avatar-clear" type="button" style="padding:10px 12px; border:1px solid var(--app-border-default); border-radius:10px; background:var(--app-surface-card); cursor:pointer; white-space:nowrap;">清除头像</button>
+                <button id="contact-settings-cancel" type="button" style="flex:1; padding:10px 14px; border:1px solid var(--app-border-default); border-radius:10px; background:var(--app-surface-subtle); cursor:pointer;">取消</button>
+                <button id="contact-settings-save" type="button" style="flex:1; padding:10px 14px; border:none; border-radius:10px; background:#019aff; color:var(--app-text-inverse); cursor:pointer; font-weight:700;">保存</button>
             </div>
         `;
 
@@ -666,7 +666,7 @@ export class ContactSettingsPanel {
             right: calc(12px + env(safe-area-inset-right, 0px));
             bottom: calc(12px + env(safe-area-inset-bottom, 0px));
             max-height: calc(100dvh - 24px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
-            background:#fff; border-radius:14px; box-shadow:0 10px 40px rgba(0,0,0,0.28);
+            background:var(--app-surface-card); border-radius:14px; box-shadow:0 10px 40px rgba(0,0,0,0.28);
             z-index:23000;
             overflow:hidden;
             display:flex; flex-direction:column;
@@ -674,15 +674,15 @@ export class ContactSettingsPanel {
         panel.addEventListener('click', (e) => e.stopPropagation());
         panel.innerHTML = `
             <div style="padding:12px 14px; border-bottom:1px solid rgba(0,0,0,0.06); display:flex; align-items:center; justify-content:space-between; gap:10px;">
-                <div style="font-weight:900; color:#0f172a;">大总结原始回复</div>
-                <button data-role="close" style="border:none; background:transparent; font-size:22px; cursor:pointer; color:#0f172a;">×</button>
+                <div style="font-weight:900; color:var(--app-text-primary);">大总结原始回复</div>
+                <button data-role="close" style="border:none; background:transparent; font-size:22px; cursor:pointer; color:var(--app-text-primary);">×</button>
             </div>
             <div style="padding:12px 14px; flex:1; min-height:0; overflow:auto;">
-                <textarea data-role="textarea" readonly style="width:100%; min-height:220px; resize:vertical; padding:10px; border:1px solid #e2e8f0; border-radius:12px; font-size:13px; line-height:1.4; box-sizing:border-box; white-space:pre-wrap;"></textarea>
+                <textarea data-role="textarea" readonly style="width:100%; min-height:220px; resize:vertical; padding:10px; border:1px solid var(--app-border-default); border-radius:12px; font-size:13px; line-height:1.4; box-sizing:border-box; white-space:pre-wrap;"></textarea>
             </div>
             <div style="padding:12px 14px; border-top:1px solid rgba(0,0,0,0.06); background:rgba(248,250,252,0.92); display:flex; gap:10px;">
-                <button data-role="copy" style="flex:1; padding:10px 12px; border:1px solid #e2e8f0; border-radius:12px; background:#fff; cursor:pointer;">复制</button>
-                <button data-role="ok" style="flex:1; padding:10px 12px; border:none; border-radius:12px; background:#019aff; color:#fff; cursor:pointer; font-weight:900;">关闭</button>
+                <button data-role="copy" style="flex:1; padding:10px 12px; border:1px solid var(--app-border-default); border-radius:12px; background:var(--app-surface-card); cursor:pointer;">复制</button>
+                <button data-role="ok" style="flex:1; padding:10px 12px; border:none; border-radius:12px; background:#019aff; color:var(--app-text-inverse); cursor:pointer; font-weight:900;">关闭</button>
             </div>
         `;
         document.body.appendChild(overlay);
@@ -742,7 +742,7 @@ export class ContactSettingsPanel {
             right: calc(12px + env(safe-area-inset-right, 0px));
             bottom: calc(12px + env(safe-area-inset-bottom, 0px));
             max-height: calc(100dvh - 24px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
-            background:#fff; border-radius:14px; box-shadow:0 10px 40px rgba(0,0,0,0.28);
+            background:var(--app-surface-card); border-radius:14px; box-shadow:0 10px 40px rgba(0,0,0,0.28);
             z-index:23000;
             overflow:hidden;
             display:flex; flex-direction:column;
@@ -750,15 +750,15 @@ export class ContactSettingsPanel {
         panel.addEventListener('click', (e) => e.stopPropagation());
         panel.innerHTML = `
             <div style="padding:12px 14px; border-bottom:1px solid rgba(0,0,0,0.06); display:flex; align-items:center; justify-content:space-between; gap:10px;">
-                <div style="font-weight:900; color:#0f172a;">编辑大总结</div>
-                <button data-role="close" style="border:none; background:transparent; font-size:22px; cursor:pointer; color:#0f172a;">×</button>
+                <div style="font-weight:900; color:var(--app-text-primary);">编辑大总结</div>
+                <button data-role="close" style="border:none; background:transparent; font-size:22px; cursor:pointer; color:var(--app-text-primary);">×</button>
             </div>
             <div style="padding:12px 14px; flex:1; min-height:0; overflow:auto;">
-                <textarea data-role="textarea" style="width:100%; min-height:200px; resize:vertical; padding:10px; border:1px solid #e2e8f0; border-radius:12px; font-size:13px; line-height:1.4; box-sizing:border-box;"></textarea>
+                <textarea data-role="textarea" style="width:100%; min-height:200px; resize:vertical; padding:10px; border:1px solid var(--app-border-default); border-radius:12px; font-size:13px; line-height:1.4; box-sizing:border-box;"></textarea>
             </div>
             <div style="padding:12px 14px; border-top:1px solid rgba(0,0,0,0.06); background:rgba(248,250,252,0.92); display:flex; gap:10px;">
-                <button data-role="cancel" style="flex:1; padding:10px 12px; border:1px solid #e2e8f0; border-radius:12px; background:#fff; cursor:pointer;">取消</button>
-                <button data-role="save" style="flex:1; padding:10px 12px; border:none; border-radius:12px; background:#019aff; color:#fff; cursor:pointer; font-weight:900;">保存</button>
+                <button data-role="cancel" style="flex:1; padding:10px 12px; border:1px solid var(--app-border-default); border-radius:12px; background:var(--app-surface-card); cursor:pointer;">取消</button>
+                <button data-role="save" style="flex:1; padding:10px 12px; border:none; border-radius:12px; background:#019aff; color:var(--app-text-inverse); cursor:pointer; font-weight:900;">保存</button>
             </div>
         `;
         document.body.appendChild(overlay);
@@ -837,7 +837,7 @@ export class ContactSettingsPanel {
             right: calc(12px + env(safe-area-inset-right, 0px));
             bottom: calc(12px + env(safe-area-inset-bottom, 0px));
             max-height: calc(100dvh - 24px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
-            background:#fff; border-radius:14px; box-shadow:0 10px 40px rgba(0,0,0,0.28);
+            background:var(--app-surface-card); border-radius:14px; box-shadow:0 10px 40px rgba(0,0,0,0.28);
             z-index:23000;
             overflow:hidden;
             display:flex; flex-direction:column;
@@ -845,16 +845,16 @@ export class ContactSettingsPanel {
         this.summaryEditPanel.addEventListener('click', (e) => e.stopPropagation());
         this.summaryEditPanel.innerHTML = `
             <div style="padding:12px 14px; border-bottom:1px solid rgba(0,0,0,0.06); display:flex; align-items:center; justify-content:space-between; gap:10px;">
-                <div style="font-weight:900; color:#0f172a;">批量编辑摘要</div>
-                <button data-role="close" style="border:none; background:transparent; font-size:22px; cursor:pointer; color:#0f172a;">×</button>
+                <div style="font-weight:900; color:var(--app-text-primary);">批量编辑摘要</div>
+                <button data-role="close" style="border:none; background:transparent; font-size:22px; cursor:pointer; color:var(--app-text-primary);">×</button>
             </div>
             <div style="padding:12px 14px; flex:1; min-height:0; overflow:auto;">
-                <div style="font-size:12px; color:#64748b; margin-bottom:8px;">每行一条摘要（顺序对应所选摘要）。</div>
-                <textarea data-role="textarea" style="width:100%; min-height:180px; resize:vertical; padding:10px; border:1px solid #e2e8f0; border-radius:12px; font-size:13px; line-height:1.4; box-sizing:border-box;"></textarea>
+                <div style="font-size:12px; color:var(--app-text-muted); margin-bottom:8px;">每行一条摘要（顺序对应所选摘要）。</div>
+                <textarea data-role="textarea" style="width:100%; min-height:180px; resize:vertical; padding:10px; border:1px solid var(--app-border-default); border-radius:12px; font-size:13px; line-height:1.4; box-sizing:border-box;"></textarea>
             </div>
             <div style="padding:12px 14px; border-top:1px solid rgba(0,0,0,0.06); background:rgba(248,250,252,0.92); display:flex; gap:10px;">
-                <button data-role="cancel" style="flex:1; padding:10px 12px; border:1px solid #e2e8f0; border-radius:12px; background:#fff; cursor:pointer;">取消</button>
-                <button data-role="save" style="flex:1; padding:10px 12px; border:none; border-radius:12px; background:#019aff; color:#fff; cursor:pointer; font-weight:900;">保存</button>
+                <button data-role="cancel" style="flex:1; padding:10px 12px; border:1px solid var(--app-border-default); border-radius:12px; background:var(--app-surface-card); cursor:pointer;">取消</button>
+                <button data-role="save" style="flex:1; padding:10px 12px; border:none; border-radius:12px; background:#019aff; color:var(--app-text-inverse); cursor:pointer; font-weight:900;">保存</button>
             </div>
         `;
         document.body.appendChild(this.summaryEditOverlay);
@@ -991,7 +991,7 @@ export class ContactSettingsPanel {
         this.archivesList.innerHTML = '';
         
         if (!archives.length) {
-            this.archivesList.innerHTML = '<div style="padding:12px; color:#94a3b8; text-align:center; font-size:12px;">暂无历史存档</div>';
+            this.archivesList.innerHTML = '<div style="padding:12px; color:var(--app-text-muted); text-align:center; font-size:12px;">暂无历史存档</div>';
             return;
         }
 
@@ -1000,13 +1000,13 @@ export class ContactSettingsPanel {
             const msgCount = Number(arc.messageCount || (Array.isArray(arc.messages) ? arc.messages.length : 0)) || 0;
             const isCurrent = arc.id === currentId;
             const row = document.createElement('div');
-            row.style.cssText = `display:flex; align-items:center; justify-content:space-between; padding:8px 10px; border-bottom:1px solid #eee; background:${isCurrent ? '#eff6ff' : '#fff'}; border-left:${isCurrent ? '3px solid #019aff' : 'none'};`;
+            row.style.cssText = `display:flex; align-items:center; justify-content:space-between; padding:8px 10px; border-bottom:1px solid var(--app-border-subtle); background:${isCurrent ? '#eff6ff' : 'var(--app-surface-card)'}; border-left:${isCurrent ? '3px solid #019aff' : 'none'};`;
             
             const info = document.createElement('div');
             info.style.cssText = 'flex:1; cursor:pointer; min-width:0;';
             info.innerHTML = `
-                <div style="font-weight:600; color:#334155; font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${arc.name || '未命名存档'} ${isCurrent ? '(当前)' : ''}</div>
-                <div style="color:#94a3b8; font-size:11px;">${dateStr} · ${msgCount}条消息</div>
+                <div style="font-weight:600; color:var(--app-text-secondary); font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${arc.name || '未命名存档'} ${isCurrent ? '(当前)' : ''}</div>
+                <div style="color:var(--app-text-muted); font-size:11px;">${dateStr} · ${msgCount}条消息</div>
             `;
             info.onclick = async () => {
                 if (isCurrent) return;
@@ -1036,7 +1036,7 @@ export class ContactSettingsPanel {
 
             const delBtn = document.createElement('button');
             delBtn.textContent = '×';
-            delBtn.style.cssText = 'padding:4px 8px; border:none; background:transparent; color:#94a3b8; font-size:16px; cursor:pointer; margin-left:6px;';
+            delBtn.style.cssText = 'padding:4px 8px; border:none; background:transparent; color:var(--app-text-muted); font-size:16px; cursor:pointer; margin-left:6px;';
             delBtn.onclick = async (e) => {
                 e.stopPropagation();
                 const ok = await appConfirm({
@@ -1062,7 +1062,7 @@ export class ContactSettingsPanel {
         const summaries = Array.isArray(list) ? list.slice().reverse() : [];
         this.summariesList.innerHTML = '';
         if (!summaries.length) {
-            this.summariesList.innerHTML = '<div style="padding:12px; color:#94a3b8; text-align:center; font-size:12px;">暂无摘要</div>';
+            this.summariesList.innerHTML = '<div style="padding:12px; color:var(--app-text-muted); text-align:center; font-size:12px;">暂无摘要</div>';
             return;
         }
         summaries.slice(0, 50).forEach((it) => {
@@ -1074,12 +1074,12 @@ export class ContactSettingsPanel {
             const row = document.createElement('div');
             if (this.summaryBatchMode) {
                 const selected = this.summarySelectedKeys.has(key);
-                row.style.cssText = `padding:10px 10px; border-bottom:1px solid rgba(0,0,0,0.06); display:flex; gap:10px; align-items:flex-start; cursor:pointer; background:${selected ? 'rgba(59,130,246,0.06)' : '#fff'};`;
+                row.style.cssText = `padding:10px 10px; border-bottom:1px solid rgba(0,0,0,0.06); display:flex; gap:10px; align-items:flex-start; cursor:pointer; background:${selected ? 'rgba(59,130,246,0.06)' : 'var(--app-surface-card)'};`;
                 row.innerHTML = `
-                    <div style="width:20px; height:20px; border-radius:999px; border:2px solid ${selected ? '#2563eb' : 'rgba(0,0,0,0.20)'}; margin-top:2px; display:flex; align-items:center; justify-content:center; color:#fff; font-weight:900; font-size:12px; background:${selected ? '#2563eb' : 'transparent'}; box-sizing:border-box;">${selected ? '✓' : ''}</div>
+                    <div style="width:20px; height:20px; border-radius:999px; border:2px solid ${selected ? '#2563eb' : 'rgba(0,0,0,0.20)'}; margin-top:2px; display:flex; align-items:center; justify-content:center; color:var(--app-text-inverse); font-weight:900; font-size:12px; background:${selected ? '#2563eb' : 'transparent'}; box-sizing:border-box;">${selected ? '✓' : ''}</div>
                     <div style="flex:1; min-width:0;">
-                        <div style="color:#0f172a; font-size:13px; line-height:1.35; white-space:pre-wrap; word-break:break-word;">${text.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div>
-                        ${time ? `<div style="color:#94a3b8; font-size:11px; margin-top:6px;">${time}</div>` : ''}
+                        <div style="color:var(--app-text-primary); font-size:13px; line-height:1.35; white-space:pre-wrap; word-break:break-word;">${text.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div>
+                        ${time ? `<div style="color:var(--app-text-muted); font-size:11px; margin-top:6px;">${time}</div>` : ''}
                     </div>
                 `;
                 row.addEventListener('click', () => {
@@ -1090,8 +1090,8 @@ export class ContactSettingsPanel {
             } else {
                 row.style.cssText = 'padding:10px 10px; border-bottom:1px solid rgba(0,0,0,0.06);';
                 row.innerHTML = `
-                    <div style="color:#0f172a; font-size:13px; line-height:1.35; white-space:pre-wrap; word-break:break-word;">${text.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div>
-                    ${time ? `<div style="color:#94a3b8; font-size:11px; margin-top:6px;">${time}</div>` : ''}
+                    <div style="color:var(--app-text-primary); font-size:13px; line-height:1.35; white-space:pre-wrap; word-break:break-word;">${text.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div>
+                    ${time ? `<div style="color:var(--app-text-muted); font-size:11px; margin-top:6px;">${time}</div>` : ''}
                 `;
                 row.addEventListener('click', async () => {
                     try {
@@ -1111,7 +1111,7 @@ export class ContactSettingsPanel {
         this.compactedList.innerHTML = '';
         const text = String(cs?.text || '').trim();
         if (!text) {
-            this.compactedList.innerHTML = '<div style="padding:12px; color:#94a3b8; text-align:center; font-size:12px;">暂无大总结</div>';
+            this.compactedList.innerHTML = '<div style="padding:12px; color:var(--app-text-muted); text-align:center; font-size:12px;">暂无大总结</div>';
             return;
         }
         const at = Number(cs?.at || 0) || 0;
@@ -1119,8 +1119,8 @@ export class ContactSettingsPanel {
         const row = document.createElement('div');
         row.style.cssText = 'padding:10px 10px; border-bottom:1px solid rgba(0,0,0,0.06); cursor:pointer;';
         row.innerHTML = `
-            <div style="color:#0f172a; font-size:13px; line-height:1.35; white-space:pre-wrap;">${text.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div>
-            ${time ? `<div style="color:#94a3b8; font-size:11px; margin-top:6px;">${time}</div>` : ''}
+            <div style="color:var(--app-text-primary); font-size:13px; line-height:1.35; white-space:pre-wrap;">${text.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div>
+            ${time ? `<div style="color:var(--app-text-muted); font-size:11px; margin-top:6px;">${time}</div>` : ''}
         `;
         row.addEventListener('click', async () => {
             try {
@@ -1394,27 +1394,27 @@ export class ContactSettingsPanel {
             right: calc(12px + env(safe-area-inset-right, 0px));
             bottom: calc(12px + env(safe-area-inset-bottom, 0px));
             max-height: calc(100dvh - 24px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
-            background:#fff; border-radius:14px; box-shadow:0 10px 40px rgba(0,0,0,0.28);
+            background:var(--app-surface-card); border-radius:14px; box-shadow:0 10px 40px rgba(0,0,0,0.28);
             z-index:23000; overflow:hidden; display:flex; flex-direction:column;
         `;
         this.memorySharePanel.addEventListener('click', (e) => e.stopPropagation());
         this.memorySharePanel.innerHTML = `
             <div style="padding:12px 14px; border-bottom:1px solid rgba(0,0,0,0.06); display:flex; align-items:center; justify-content:space-between; gap:10px;">
-                <div style="font-weight:900; color:#0f172a;">记忆共享</div>
-                <button data-role="close" style="border:none; background:transparent; font-size:22px; cursor:pointer; color:#0f172a;">×</button>
+                <div style="font-weight:900; color:var(--app-text-primary);">记忆共享</div>
+                <button data-role="close" style="border:none; background:transparent; font-size:22px; cursor:pointer; color:var(--app-text-primary);">×</button>
             </div>
             <div style="padding:12px 14px; flex:1; min-height:0; overflow:auto;">
-                <div data-role="hint" style="font-size:12px; color:#64748b; line-height:1.5; margin-bottom:12px;"></div>
+                <div data-role="hint" style="font-size:12px; color:var(--app-text-muted); line-height:1.5; margin-bottom:12px;"></div>
                 <label data-role="source-wrap" style="display:block; margin-bottom:12px;">
-                    <div style="font-size:12px; color:#475569; margin-bottom:6px;">来源聊天 / 群聊</div>
-                    <select data-role="source" style="width:100%; padding:8px; border:1px solid #e2e8f0; border-radius:10px; font-size:12px; background:#fff;"></select>
+                    <div style="font-size:12px; color:var(--app-text-secondary); margin-bottom:6px;">来源聊天 / 群聊</div>
+                    <select data-role="source" style="width:100%; padding:8px; border:1px solid var(--app-border-default); border-radius:10px; font-size:12px; background:var(--app-surface-card);"></select>
                 </label>
-                <div data-role="source-static" style="display:none; margin-bottom:12px; padding:10px 12px; border:1px solid #e2e8f0; border-radius:12px; background:#f8fafc; color:#334155; font-size:12px; line-height:1.5;"></div>
+                <div data-role="source-static" style="display:none; margin-bottom:12px; padding:10px 12px; border:1px solid var(--app-border-default); border-radius:12px; background:var(--app-surface-subtle); color:var(--app-text-secondary); font-size:12px; line-height:1.5;"></div>
                 <div data-role="rows" style="display:flex; flex-direction:column; gap:10px;"></div>
             </div>
             <div style="padding:12px 14px; border-top:1px solid rgba(0,0,0,0.06); background:rgba(248,250,252,0.92); display:flex; gap:10px;">
-                <button data-role="cancel" style="flex:1; padding:10px 12px; border:1px solid #e2e8f0; border-radius:12px; background:#fff; cursor:pointer;">取消</button>
-                <button data-role="save" style="flex:1; padding:10px 12px; border:none; border-radius:12px; background:#019aff; color:#fff; cursor:pointer; font-weight:900;">保存</button>
+                <button data-role="cancel" style="flex:1; padding:10px 12px; border:1px solid var(--app-border-default); border-radius:12px; background:var(--app-surface-card); cursor:pointer;">取消</button>
+                <button data-role="save" style="flex:1; padding:10px 12px; border:none; border-radius:12px; background:#019aff; color:var(--app-text-inverse); cursor:pointer; font-weight:900;">保存</button>
             </div>
         `;
         document.body.appendChild(this.memoryShareOverlay);
@@ -1488,7 +1488,7 @@ export class ContactSettingsPanel {
         if (!context.entries.length) {
             const empty = document.createElement('div');
             empty.className = 'memory-share-empty';
-            empty.style.cssText = 'padding:10px; border:1px dashed #e2e8f0; border-radius:12px; color:#94a3b8; font-size:12px;';
+            empty.style.cssText = 'padding:10px; border:1px dashed var(--app-border-default); border-radius:12px; color:var(--app-text-muted); font-size:12px;';
             empty.textContent = '当前来源没有可配置的跨模式记忆表格。';
             this.memoryShareRows.appendChild(empty);
             return;

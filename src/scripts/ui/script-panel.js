@@ -32,29 +32,29 @@ const openScriptEditor = ({ script, title = '编辑脚本' } = {}) => new Promis
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:22000;display:flex;align-items:center;justify-content:center;padding:16px;';
   const panel = document.createElement('div');
   panel.className = 'app-themed-panel script-editor-panel';
-  panel.style.cssText = 'width:min(92vw,520px);max-height:86vh;background:#fff;border-radius:14px;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 18px 50px rgba(15,23,42,0.2);';
+  panel.style.cssText = 'width:min(92vw,520px);max-height:86vh;background:var(--app-surface-card);border-radius:14px;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 18px 50px rgba(15,23,42,0.2);';
   panel.innerHTML = `
-    <div style="padding:14px 16px;border-bottom:1px solid rgba(0,0,0,0.06);background:#f8fafc;display:flex;align-items:center;justify-content:space-between;gap:10px;">
-      <div style="font-weight:800;color:#0f172a;">${title}</div>
+    <div style="padding:14px 16px;border-bottom:1px solid rgba(0,0,0,0.06);background:var(--app-surface-subtle);display:flex;align-items:center;justify-content:space-between;gap:10px;">
+      <div style="font-weight:800;color:var(--app-text-primary);">${title}</div>
       <button id="script-editor-close" style="border:none;background:rgba(15,23,42,0.08);width:28px;height:28px;border-radius:10px;cursor:pointer;font-size:16px;">×</button>
     </div>
     <div style="padding:14px 16px;overflow:auto;display:flex;flex-direction:column;gap:12px;">
       <div>
-        <div style="font-weight:700;color:#0f172a;margin-bottom:6px;">脚本名称</div>
-        <input id="script-editor-name" style="width:100%;padding:10px;border:1px solid #e2e8f0;border-radius:10px;font-size:14px;">
+        <div style="font-weight:700;color:var(--app-text-primary);margin-bottom:6px;">脚本名称</div>
+        <input id="script-editor-name" style="width:100%;padding:10px;border:1px solid var(--app-border-default);border-radius:10px;font-size:14px;">
       </div>
       <div>
-        <div style="font-weight:700;color:#0f172a;margin-bottom:6px;">脚本内容</div>
-        <textarea id="script-editor-content" rows="8" style="width:100%;padding:10px;border:1px solid #e2e8f0;border-radius:10px;font-size:13px;font-family:monospace;"></textarea>
+        <div style="font-weight:700;color:var(--app-text-primary);margin-bottom:6px;">脚本内容</div>
+        <textarea id="script-editor-content" rows="8" style="width:100%;padding:10px;border:1px solid var(--app-border-default);border-radius:10px;font-size:13px;font-family:monospace;"></textarea>
       </div>
       <div>
-        <div style="font-weight:700;color:#0f172a;margin-bottom:6px;">作者备注</div>
-        <textarea id="script-editor-info" rows="3" style="width:100%;padding:10px;border:1px solid #e2e8f0;border-radius:10px;font-size:13px;"></textarea>
+        <div style="font-weight:700;color:var(--app-text-primary);margin-bottom:6px;">作者备注</div>
+        <textarea id="script-editor-info" rows="3" style="width:100%;padding:10px;border:1px solid var(--app-border-default);border-radius:10px;font-size:13px;"></textarea>
       </div>
     </div>
     <div style="padding:12px 16px;border-top:1px solid rgba(0,0,0,0.06);display:flex;justify-content:flex-end;gap:8px;">
-      <button id="script-editor-cancel" style="padding:8px 14px;border-radius:10px;border:1px solid #e2e8f0;background:#fff;">取消</button>
-      <button id="script-editor-save" style="padding:8px 14px;border-radius:10px;border:none;background:#0f172a;color:#fff;">保存</button>
+      <button id="script-editor-cancel" style="padding:8px 14px;border-radius:10px;border:1px solid var(--app-border-default);background:var(--app-surface-card);">取消</button>
+      <button id="script-editor-save" style="padding:8px 14px;border-radius:10px;border:none;background:var(--app-text-primary);color:var(--app-text-inverse);">保存</button>
     </div>
   `;
   overlay.appendChild(panel);
@@ -129,26 +129,26 @@ export class ScriptPanel {
     this.panel.style.cssText = `
       display:none; position:fixed;
       inset: 6vh 6vw;
-      background:#fff; border-radius:16px; box-shadow:0 18px 50px rgba(15,23,42,0.2);
+      background:var(--app-surface-card); border-radius:16px; box-shadow:0 18px 50px rgba(15,23,42,0.2);
       z-index:20001; overflow:hidden; flex-direction:column;
     `;
     this.panel.addEventListener('click', (e) => e.stopPropagation());
 
     this.panel.innerHTML = `
-      <div style="padding:14px 16px; border-bottom:1px solid rgba(0,0,0,0.06); background:#f8fafc; display:flex; align-items:center; justify-content:space-between; gap:12px;">
+      <div style="padding:14px 16px; border-bottom:1px solid rgba(0,0,0,0.06); background:var(--app-surface-subtle); display:flex; align-items:center; justify-content:space-between; gap:12px;">
         <div>
-          <div style="font-weight:800;color:#0f172a;">脚本管理</div>
-          <div style="font-size:12px;color:#64748b;margin-top:2px;">管理全局 / 角色 / 预设脚本（默认关闭）</div>
+          <div style="font-weight:800;color:var(--app-text-primary);">脚本管理</div>
+          <div style="font-size:12px;color:var(--app-text-muted);margin-top:2px;">管理全局 / 角色 / 预设脚本（默认关闭）</div>
         </div>
         <button id="script-panel-close" style="border:none;background:rgba(15,23,42,0.08);width:28px;height:28px;border-radius:10px;cursor:pointer;font-size:16px;">×</button>
       </div>
       <div style="padding:10px 16px;border-bottom:1px solid rgba(0,0,0,0.06);display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
         <div style="display:flex;gap:8px;flex-wrap:wrap;">
-          <button class="script-tab" data-tab="global" style="border:none;background:transparent;padding:8px 12px;border-radius:10px;cursor:pointer;font-size:14px;color:#334155;">全局</button>
-          <button class="script-tab" data-tab="character" style="border:none;background:transparent;padding:8px 12px;border-radius:10px;cursor:pointer;font-size:14px;color:#334155;">角色</button>
-          <button class="script-tab" data-tab="preset" style="border:none;background:transparent;padding:8px 12px;border-radius:10px;cursor:pointer;font-size:14px;color:#334155;">预设</button>
+          <button class="script-tab" data-tab="global" style="border:none;background:transparent;padding:8px 12px;border-radius:10px;cursor:pointer;font-size:14px;color:var(--app-text-secondary);">全局</button>
+          <button class="script-tab" data-tab="character" style="border:none;background:transparent;padding:8px 12px;border-radius:10px;cursor:pointer;font-size:14px;color:var(--app-text-secondary);">角色</button>
+          <button class="script-tab" data-tab="preset" style="border:none;background:transparent;padding:8px 12px;border-radius:10px;cursor:pointer;font-size:14px;color:var(--app-text-secondary);">预设</button>
         </div>
-        <label style="margin-left:auto;display:flex;align-items:center;gap:8px;font-size:12px;color:#475569;">
+        <label style="margin-left:auto;display:flex;align-items:center;gap:8px;font-size:12px;color:var(--app-text-secondary);">
           <input type="checkbox" id="script-global-toggle" style="width:18px;height:18px;">
           <span>脚本总开关</span>
         </label>
@@ -156,8 +156,8 @@ export class ScriptPanel {
       <div style="padding:10px 16px;border-bottom:1px solid rgba(0,0,0,0.06);display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
         <div id="script-scope-selects" style="display:flex;gap:8px;flex-wrap:wrap;"></div>
         <div style="margin-left:auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-          <button id="script-import-btn" style="padding:8px 12px;border-radius:10px;border:1px solid #e2e8f0;background:#fff;font-size:13px;cursor:pointer;">导入脚本</button>
-          <button id="script-add-btn" style="padding:8px 12px;border-radius:10px;border:none;background:#0f172a;color:#fff;font-size:13px;cursor:pointer;">新增脚本</button>
+          <button id="script-import-btn" style="padding:8px 12px;border-radius:10px;border:1px solid var(--app-border-default);background:var(--app-surface-card);font-size:13px;cursor:pointer;">导入脚本</button>
+          <button id="script-add-btn" style="padding:8px 12px;border-radius:10px;border:none;background:var(--app-text-primary);color:var(--app-text-inverse);font-size:13px;cursor:pointer;">新增脚本</button>
         </div>
       </div>
       <div style="padding:12px 16px;overflow:auto;flex:1;min-height:0;">
@@ -227,7 +227,7 @@ export class ScriptPanel {
     this.body.innerHTML = '';
     if (this.tab === 'character') {
       const select = document.createElement('select');
-      select.style.cssText = 'min-width:160px;padding:6px 10px;border:1px solid #e2e8f0;border-radius:10px;font-size:12px;';
+      select.style.cssText = 'min-width:160px;padding:6px 10px;border:1px solid var(--app-border-default);border-radius:10px;font-size:12px;';
       const list = Array.isArray(this.personaStore?.getAll?.()) ? this.personaStore.getAll() : [];
       list.forEach(p => {
         select.appendChild(createOption(p.id, getCharacterCardDisplayName(p, p.id)));
@@ -240,7 +240,7 @@ export class ScriptPanel {
     }
     if (this.tab === 'preset') {
       const select = document.createElement('select');
-      select.style.cssText = 'min-width:160px;padding:6px 10px;border:1px solid #e2e8f0;border-radius:10px;font-size:12px;';
+      select.style.cssText = 'min-width:160px;padding:6px 10px;border:1px solid var(--app-border-default);border-radius:10px;font-size:12px;';
       const presetBuckets = this.presetStore?.getState?.()?.presets || {};
       const options = [];
       ['openai', 'sysprompt', 'context', 'instruct', 'reasoning'].forEach((type) => {
@@ -274,7 +274,7 @@ export class ScriptPanel {
     this.panel.querySelectorAll('.script-tab').forEach(btn => {
       const active = normalizeScope(btn.dataset.tab) === this.tab;
       btn.style.background = active ? 'rgba(15,23,42,0.08)' : 'transparent';
-      btn.style.color = active ? '#0f172a' : '#334155';
+      btn.style.color = active ? 'var(--app-text-primary)' : 'var(--app-text-secondary)';
     });
     this.buildScopeSelectors();
     const scopeId = this.getScopeId();
@@ -291,7 +291,7 @@ export class ScriptPanel {
       return;
     }
     let background = 'rgba(15,23,42,0.08)';
-    let color = '#334155';
+    let color = 'var(--app-text-secondary)';
     if (type === 'error') {
       background = 'rgba(254,226,226,0.9)';
       color = '#b91c1c';
@@ -369,22 +369,22 @@ export class ScriptPanel {
       const empty = document.createElement('div');
       empty.className = 'script-panel-empty';
       empty.textContent = '暂无脚本';
-      empty.style.cssText = 'padding:16px;text-align:center;color:#94a3b8;font-size:12px;';
+      empty.style.cssText = 'padding:16px;text-align:center;color:var(--app-text-muted);font-size:12px;';
       this.scriptList.appendChild(empty);
       return;
     }
     scripts.forEach(script => {
       const card = document.createElement('div');
-      card.style.cssText = 'border:1px solid #e2e8f0;border-radius:12px;padding:12px;display:flex;gap:10px;align-items:center;justify-content:space-between;';
+      card.style.cssText = 'border:1px solid var(--app-border-default);border-radius:12px;padding:12px;display:flex;gap:10px;align-items:center;justify-content:space-between;';
       const left = document.createElement('div');
       left.style.cssText = 'min-width:0;flex:1;';
       const title = document.createElement('div');
       title.textContent = script.name || '未命名脚本';
-      title.style.cssText = 'font-weight:700;color:#0f172a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+      title.style.cssText = 'font-weight:700;color:var(--app-text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
       const meta = document.createElement('div');
       const sourceLabel = SOURCE_LABELS[script.source] || script.source || '脚本';
       meta.textContent = `${sourceLabel}${script.authorized ? '' : ' · 未授权'}`;
-      meta.style.cssText = 'font-size:12px;color:#64748b;margin-top:4px;';
+      meta.style.cssText = 'font-size:12px;color:var(--app-text-muted);margin-top:4px;';
       left.appendChild(title);
       left.appendChild(meta);
       const actions = document.createElement('div');
@@ -412,11 +412,11 @@ export class ScriptPanel {
       });
       const editBtn = document.createElement('button');
       editBtn.textContent = '编辑';
-      editBtn.style.cssText = 'padding:6px 10px;border-radius:8px;border:1px solid #e2e8f0;background:#fff;font-size:12px;cursor:pointer;';
+      editBtn.style.cssText = 'padding:6px 10px;border-radius:8px;border:1px solid var(--app-border-default);background:var(--app-surface-card);font-size:12px;cursor:pointer;';
       editBtn.addEventListener('click', () => this.handleEdit(script, scopeId));
       const delBtn = document.createElement('button');
       delBtn.textContent = '删除';
-      delBtn.style.cssText = 'padding:6px 10px;border-radius:8px;border:1px solid #fecaca;background:#fff;color:#b91c1c;font-size:12px;cursor:pointer;';
+      delBtn.style.cssText = 'padding:6px 10px;border-radius:8px;border:1px solid #fecaca;background:var(--app-surface-card);color:#b91c1c;font-size:12px;cursor:pointer;';
       delBtn.addEventListener('click', () => this.handleDelete(script, scopeId));
       actions.appendChild(toggle);
       actions.appendChild(editBtn);

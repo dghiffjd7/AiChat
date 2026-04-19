@@ -247,7 +247,7 @@ export class SessionPanel {
         const unread = this.store.getUnreadCount(id);
         const unreadBadge =
           unread > 0
-            ? `<span style="margin-left:8px; min-width:18px; height:18px; padding:0 6px; display:inline-flex; align-items:center; justify-content:center; border-radius:999px; background:#ef4444; color:#fff; font-size:11px; font-weight:800; line-height:18px;">${unread}</span>`
+            ? `<span style="margin-left:8px; min-width:18px; height:18px; padding:0 6px; display:inline-flex; align-items:center; justify-content:center; border-radius:999px; background:#ef4444; color:var(--app-text-inverse); font-size:11px; font-weight:800; line-height:18px;">${unread}</span>`
             : '';
         const badge = isGroup
           ? `<span style="padding:2px 6px; border-radius:8px; background:#e0f2fe; color:#0369a1; font-size:11px; margin-left:4px;">群</span>`

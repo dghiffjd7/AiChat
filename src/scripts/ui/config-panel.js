@@ -118,9 +118,9 @@ export class ConfigPanel {
                 btn.style.borderColor = '#38bdf8';
                 btn.style.color = '#0369a1';
             } else {
-                btn.style.background = '#fff';
-                btn.style.borderColor = '#e2e8f0';
-                btn.style.color = '#1f2937';
+                btn.style.background = 'var(--app-surface-card)';
+                btn.style.borderColor = 'var(--app-border-default)';
+                btn.style.color = 'var(--app-text-primary)';
             }
         });
     }
@@ -151,16 +151,16 @@ export class ConfigPanel {
             <div class="config-modal" style="padding: 20px; background: white; border-radius: 10px; box-shadow: 0 4px 20px rgba(0,0,0,0.3);
                         width: 96vw; max-width: 760px; max-height: calc(100vh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - 20px); overflow-y: auto;">
                 <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:6px;">
-                    <h2 id="config-title" style="margin: 0; color: #0f172a;">聊天模型配置</h2>
-                    <span style="color:#64748b; font-size:12px;">(保存后立即生效)</span>
+                    <h2 id="config-title" style="margin: 0; color: var(--app-text-primary);">聊天模型配置</h2>
+                    <span style="color:var(--app-text-muted); font-size:12px;">(保存后立即生效)</span>
                 </div>
                 <div style="display:flex; gap:8px; margin: 8px 0 16px;">
                     <button type="button" class="config-tab is-active" data-tab="chat"
-                            style="border:1px solid #e2e8f0; background:#fff; padding:6px 12px; border-radius:999px; font-size:12px; cursor:pointer;">
+                            style="border:1px solid var(--app-border-default); background:var(--app-surface-card); padding:6px 12px; border-radius:999px; font-size:12px; cursor:pointer;">
                         聊天模型
                     </button>
                     <button type="button" class="config-tab" data-tab="image"
-                            style="border:1px solid #e2e8f0; background:#fff; padding:6px 12px; border-radius:999px; font-size:12px; cursor:pointer;">
+                            style="border:1px solid var(--app-border-default); background:var(--app-surface-card); padding:6px 12px; border-radius:999px; font-size:12px; cursor:pointer;">
                         图片模型
                     </button>
                 </div>
@@ -169,8 +169,8 @@ export class ConfigPanel {
                     <label style="display: flex; align-items:center; justify-content:space-between; margin-bottom: 5px; font-weight: bold;">
                         <span>连线设置档</span>
                         <div style="display:flex; gap:6px;">
-                            <button id="profile-new" title="新建设置档" style="font-size:12px; border:none; background:#f5f5f5; padding:4px 8px; border-radius:6px; cursor:pointer;">＋</button>
-                            <button id="profile-rename" title="重命名" style="font-size:12px; border:none; background:#f5f5f5; padding:4px 8px; border-radius:6px; cursor:pointer;">✎</button>
+                            <button id="profile-new" title="新建设置档" style="font-size:12px; border:none; background:var(--app-surface-subtle); padding:4px 8px; border-radius:6px; cursor:pointer;">＋</button>
+                            <button id="profile-rename" title="重命名" style="font-size:12px; border:none; background:var(--app-surface-subtle); padding:4px 8px; border-radius:6px; cursor:pointer;">✎</button>
                             <button id="profile-delete" title="删除" style="font-size:12px; border:none; background:#fee2e2; color:#b91c1c; padding:4px 8px; border-radius:6px; cursor:pointer;">🗑</button>
                         </div>
                     </label>
@@ -179,7 +179,7 @@ export class ConfigPanel {
                         <span class="config-custom-select-label">请选择设置档</span>
                         <span class="world-app-select-btn-chevron">▾</span>
                     </button>
-                    <small style="color: #666;">可保存多个配置并快速切换（清除缓存也不丢）</small>
+                    <small style="color: var(--app-text-secondary);">可保存多个配置并快速切换（清除缓存也不丢）</small>
                 </div>
 
                 <div style="margin-bottom: 15px;">
@@ -201,21 +201,21 @@ export class ConfigPanel {
                 <div id="config-baseurl-section" style="margin-bottom: 15px;">
                     <label style="display: block; margin-bottom: 5px; font-weight: bold;">API Base URL</label>
                     <input type="text" id="config-baseurl" placeholder="https://api.openai.com/v1"
-                           style="width: 100%; padding: 10px; border-radius: 5px; border: 1px solid #ddd; font-size: 14px; box-sizing: border-box;">
-                    <small style="color: #666;">仅自定义 API 需要填写；内建服务商会自动使用默认协议地址</small>
+                           style="width: 100%; padding: 10px; border-radius: 5px; border: 1px solid var(--app-border-default); font-size: 14px; box-sizing: border-box;">
+                    <small style="color: var(--app-text-secondary);">仅自定义 API 需要填写；内建服务商会自动使用默认协议地址</small>
                 </div>
 
                 <div style="margin-bottom: 15px;">
                     <label style="display: flex; align-items:center; justify-content:space-between; margin-bottom: 5px; font-weight: bold;">
                         <span>API Key</span>
                         <div style="display:flex; gap:6px; align-items:center;">
-                            <button id="toggle-apikey" style="font-size:12px; border:none; background:#f5f5f5; padding:4px 8px; border-radius:6px; cursor:pointer;">显示</button>
-                            <button id="manage-keys" title="管理已保存的 Key" style="font-size:12px; border:none; background:#f5f5f5; padding:4px 8px; border-radius:6px; cursor:pointer;">🔑</button>
+                            <button id="toggle-apikey" style="font-size:12px; border:none; background:var(--app-surface-subtle); padding:4px 8px; border-radius:6px; cursor:pointer;">显示</button>
+                            <button id="manage-keys" title="管理已保存的 Key" style="font-size:12px; border:none; background:var(--app-surface-subtle); padding:4px 8px; border-radius:6px; cursor:pointer;">🔑</button>
                         </div>
                     </label>
                     <input type="password" id="config-apikey" placeholder="sk-..."
-                           style="width: 100%; padding: 10px; border-radius: 5px; border: 1px solid #ddd; font-size: 14px; box-sizing: border-box;">
-                    <small id="apikey-help" style="color: #666;">保存后 Key 以遮罩显示（不可复制）；用 🔑 管理多个 Key</small>
+                           style="width: 100%; padding: 10px; border-radius: 5px; border: 1px solid var(--app-border-default); font-size: 14px; box-sizing: border-box;">
+                    <small id="apikey-help" style="color: var(--app-text-secondary);">保存后 Key 以遮罩显示（不可复制）；用 🔑 管理多个 Key</small>
                 </div>
 
                 <div id="vertexai-fields" style="display: none;">
@@ -232,17 +232,17 @@ export class ConfigPanel {
                             <span class="config-custom-select-label">请选择 Region</span>
                             <span class="world-app-select-btn-chevron">▾</span>
                         </button>
-                        <small style="color: #666;">Vertex AI 区域</small>
+                        <small style="color: var(--app-text-secondary);">Vertex AI 区域</small>
                     </div>
 
                     <div style="margin-bottom: 15px;">
                         <label style="display: flex; align-items:center; justify-content:space-between; margin-bottom: 5px; font-weight: bold;">
                             <span>Service Account JSON</span>
-                            <button id="toggle-sa" style="font-size:12px; border:none; background:#f5f5f5; padding:4px 8px; border-radius:6px; cursor:pointer;">显示</button>
+                            <button id="toggle-sa" style="font-size:12px; border:none; background:var(--app-surface-subtle); padding:4px 8px; border-radius:6px; cursor:pointer;">显示</button>
                         </label>
                         <textarea id="config-serviceaccount" placeholder='{"type": "service_account", "project_id": "your-project", ...}'
-                                  style="width: 100%; padding: 10px; border-radius: 5px; border: 1px solid #ddd; font-size: 12px; box-sizing: border-box; font-family: monospace; min-height: 100px; resize: vertical;"></textarea>
-                        <small style="color: #666;">GCP Service Account JSON（Project ID 会自动从 JSON 中提取）。不填则使用 API Key（快速模式）</small>
+                                  style="width: 100%; padding: 10px; border-radius: 5px; border: 1px solid var(--app-border-default); font-size: 12px; box-sizing: border-box; font-family: monospace; min-height: 100px; resize: vertical;"></textarea>
+                        <small style="color: var(--app-text-secondary);">GCP Service Account JSON（Project ID 会自动从 JSON 中提取）。不填则使用 API Key（快速模式）</small>
                     </div>
                 </div>
 
@@ -255,13 +255,13 @@ export class ConfigPanel {
                     </label>
                     <div style="position: relative; display: flex; flex-direction: column; gap: 8px;">
                         <input type="text" id="config-model" list="model-list" placeholder="gpt-3.5-turbo"
-                               style="width: 100%; padding: 10px 12px; border-radius: 5px; border: 1px solid #ddd; font-size: 14px; box-sizing: border-box;">
+                               style="width: 100%; padding: 10px 12px; border-radius: 5px; border: 1px solid var(--app-border-default); font-size: 14px; box-sizing: border-box;">
                         <datalist id="model-list"></datalist>
                         <div id="model-options"
-                             style="display:none; max-height: 180px; overflow-y: auto; padding:8px; border:1px solid #e5e7eb; border-radius:6px; background:#f8fafc; gap:6px; flex-wrap: wrap;">
+                             style="display:none; max-height: 180px; overflow-y: auto; padding:8px; border:1px solid var(--app-border-default); border-radius:6px; background:var(--app-surface-subtle); gap:6px; flex-wrap: wrap;">
                         </div>
                     </div>
-                    <small id="model-help" style="color: #666;">要使用的模型 ID（可输入或从列表选择）</small>
+                    <small id="model-help" style="color: var(--app-text-secondary);">要使用的模型 ID（可输入或从列表选择）</small>
                 </div>
 
                 <div style="margin-bottom: 20px;">
@@ -269,26 +269,26 @@ export class ConfigPanel {
                         <input type="checkbox" id="config-stream" style="width: 18px; height: 18px;">
                         <span style="font-weight: bold;">启用流式响应</span>
                     </label>
-                    <small style="color: #666; margin-left: 26px;">实时显示 AI 的回复过程</small>
+                    <small style="color: var(--app-text-secondary); margin-left: 26px;">实时显示 AI 的回复过程</small>
                 </div>
 
                 <div style="margin-bottom: 20px;">
                     <label style="display:flex; align-items:center; justify-content:space-between; gap:10px; font-weight:bold; margin-bottom:6px;">
                         <span>请求超时（秒）</span>
                         <input id="config-timeout" type="number" min="10" max="9000" step="5" value="60" inputmode="numeric"
-                               style="width: 120px; padding: 8px 10px; border-radius: 8px; border: 1px solid #ddd; font-size: 14px; text-align:right;">
+                               style="width: 120px; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--app-border-default); font-size: 14px; text-align:right;">
                     </label>
-                    <small style="color:#666;">超过该时间将中止请求并报错（10–9000 秒）</small>
+                    <small style="color:var(--app-text-secondary);">超过该时间将中止请求并报错（10–9000 秒）</small>
                 </div>
 
-                <div style="margin-bottom: 18px; border:1px solid #e2e8f0; border-radius: 12px; background:#f8fafc;">
+                <div style="margin-bottom: 18px; border:1px solid var(--app-border-default); border-radius: 12px; background:var(--app-surface-subtle);">
                     <button type="button" id="config-transport-toggle"
                             style="width:100%; display:flex; align-items:center; justify-content:space-between; gap:12px; border:none; background:transparent; padding:12px 14px; cursor:pointer; text-align:left;">
                         <div style="display:flex; flex-direction:column; gap:2px;">
-                            <span style="font-weight:800; color:#0f172a;">高级连线与反代</span>
-                            <span id="config-transport-summary" style="font-size:12px; color:#64748b;">默认直连，只有需要代理出口时再展开</span>
+                            <span style="font-weight:800; color:var(--app-text-primary);">高级连线与反代</span>
+                            <span id="config-transport-summary" style="font-size:12px; color:var(--app-text-muted);">默认直连，只有需要代理出口时再展开</span>
                         </div>
-                        <span id="config-transport-chevron" style="color:#64748b; font-size:12px;">▾</span>
+                        <span id="config-transport-chevron" style="color:var(--app-text-muted); font-size:12px;">▾</span>
                     </button>
                     <div id="config-transport-content" style="display:none; padding:0 14px 14px;">
                         <div style="margin-bottom: 14px;">
@@ -301,35 +301,35 @@ export class ConfigPanel {
                                 <span class="config-custom-select-label">直连</span>
                                 <span class="world-app-select-btn-chevron">▾</span>
                             </button>
-                            <small style="color:#666;">大多数情况下保持直连；只有需要走代理出口时再改这里。</small>
+                            <small style="color:var(--app-text-secondary);">大多数情况下保持直连；只有需要走代理出口时再改这里。</small>
                         </div>
 
                         <div id="config-proxy-fields" style="display:none;">
                             <div style="margin-bottom: 14px;">
                                 <label style="display:block; margin-bottom:5px; font-weight:bold;">反代 URL</label>
                                 <input type="text" id="config-proxy-baseurl" placeholder="https://proxy.example.com/llm"
-                                       style="width:100%; padding:10px; border-radius:5px; border:1px solid #ddd; font-size:14px; box-sizing:border-box;">
-                                <small style="color:#666;">通常只需填写这里；上方 API Key 继续照原本方式填写，程序会保留当前服务商协议并改走这个出口。</small>
+                                       style="width:100%; padding:10px; border-radius:5px; border:1px solid var(--app-border-default); font-size:14px; box-sizing:border-box;">
+                                <small style="color:var(--app-text-secondary);">通常只需填写这里；上方 API Key 继续照原本方式填写，程序会保留当前服务商协议并改走这个出口。</small>
                             </div>
 
                             <div id="config-proxy-auth-header-row" style="margin-bottom: 14px; display:none;">
                                 <label style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:5px; font-weight:bold;">
                                     <span>代理鉴权 Header</span>
-                                    <span style="font-size:12px; color:#94a3b8; font-weight:600;">可选</span>
+                                    <span style="font-size:12px; color:var(--app-text-muted); font-weight:600;">可选</span>
                                 </label>
                                 <input type="text" id="config-proxy-auth-header" placeholder="X-Proxy-Auth / Authorization"
-                                       style="width:100%; padding:10px; border-radius:5px; border:1px solid #ddd; font-size:14px; box-sizing:border-box;">
-                                <small style="color:#666;">如你的反代需要额外密钥，可填写自定义 Header 名。</small>
+                                       style="width:100%; padding:10px; border-radius:5px; border:1px solid var(--app-border-default); font-size:14px; box-sizing:border-box;">
+                                <small style="color:var(--app-text-secondary);">如你的反代需要额外密钥，可填写自定义 Header 名。</small>
                             </div>
 
                             <div id="config-proxy-auth-token-row" style="margin-bottom: 14px; display:none;">
                                 <label style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:5px; font-weight:bold;">
                                     <span>代理鉴权 Token</span>
-                                    <button id="toggle-proxy-token" type="button" style="font-size:12px; border:none; background:#f1f5f9; padding:4px 8px; border-radius:6px; cursor:pointer;">显示</button>
+                                    <button id="toggle-proxy-token" type="button" style="font-size:12px; border:none; background:var(--app-surface-hover); padding:4px 8px; border-radius:6px; cursor:pointer;">显示</button>
                                 </label>
                                 <input type="password" id="config-proxy-auth-token" placeholder="可选"
-                                       style="width:100%; padding:10px; border-radius:5px; border:1px solid #ddd; font-size:14px; box-sizing:border-box;">
-                                <small style="color:#666;">若反代不要求单独鉴权，这里留空即可。</small>
+                                       style="width:100%; padding:10px; border-radius:5px; border:1px solid var(--app-border-default); font-size:14px; box-sizing:border-box;">
+                                <small style="color:var(--app-text-secondary);">若反代不要求单独鉴权，这里留空即可。</small>
                             </div>
 
                             <div id="config-forward-provider-auth-row" style="margin-bottom: 2px; display:none;">
@@ -337,7 +337,7 @@ export class ConfigPanel {
                                     <input type="checkbox" id="config-forward-provider-auth" checked style="width:18px; height:18px;">
                                     <span style="font-weight:700;">同时转发原服务商鉴权信息</span>
                                 </label>
-                                <small style="color:#666; margin-left:26px;">关闭后，会移除原本的 API Key / Authorization，仅保留反代鉴权。</small>
+                                <small style="color:var(--app-text-secondary); margin-left:26px;">关闭后，会移除原本的 API Key / Authorization，仅保留反代鉴权。</small>
                             </div>
                         </div>
                     </div>
@@ -347,24 +347,24 @@ export class ConfigPanel {
 
                 <!-- 调试信息按钮（左上角小按钮） -->
                 <div style="margin-bottom: 10px;">
-                    <button id="config-debug" style="padding: 6px 12px; border-radius: 6px; border: 1px solid #e2e8f0;
-                                                     background: #f8fafc; cursor: pointer; font-size: 12px; color: #64748b;">
+                    <button id="config-debug" style="padding: 6px 12px; border-radius: 6px; border: 1px solid var(--app-border-default);
+                                                     background: var(--app-surface-subtle); cursor: pointer; font-size: 12px; color: var(--app-text-muted);">
                         🔍 调试信息
                     </button>
                 </div>
 
                 <!-- 主要操作按钮 -->
                 <div style="display: flex; gap: 8px; justify-content: flex-end;">
-                    <button id="config-test" style="padding: 10px 16px; border-radius: 8px; border: 1px solid #e2e8f0;
-                                                     background: #ffffff; cursor: pointer; font-size: 14px; color: #475569; min-width: 90px;">
+                    <button id="config-test" style="padding: 10px 16px; border-radius: 8px; border: 1px solid var(--app-border-default);
+                                                     background: var(--app-surface-card); cursor: pointer; font-size: 14px; color: var(--app-text-secondary); min-width: 90px;">
                         测试连接
                     </button>
-                    <button id="config-cancel" style="padding: 10px 16px; border-radius: 8px; border: 1px solid #e2e8f0;
-                                                       background: #f8fafc; cursor: pointer; font-size: 14px; color: #475569; min-width: 70px;">
+                    <button id="config-cancel" style="padding: 10px 16px; border-radius: 8px; border: 1px solid var(--app-border-default);
+                                                       background: var(--app-surface-subtle); cursor: pointer; font-size: 14px; color: var(--app-text-secondary); min-width: 70px;">
                         取消
                     </button>
                     <button id="config-save" style="padding: 10px 16px; border-radius: 8px; border: none;
-                                                     background: #019aff; color: white; cursor: pointer; font-size: 14px; font-weight: 600; min-width: 70px;">
+                                                     background: #019aff; color: var(--app-text-inverse); cursor: pointer; font-size: 14px; font-weight: 600; min-width: 70px;">
                         保存
                     </button>
                 </div>
@@ -774,8 +774,8 @@ export class ConfigPanel {
             chip.textContent = modelId;
             chip.type = 'button';
             chip.style.cssText = `
-                border: 1px solid #cbd5e1;
-                background: white;
+                border: 1px solid var(--app-border-strong);
+                background: var(--app-surface-card);
                 border-radius: 6px;
                 padding: 6px 10px;
                 font-size: 12px;
@@ -1296,29 +1296,29 @@ export class ConfigPanel {
         this.keyModal.style.cssText = `
             display:none; position:fixed; top:50%; left:50%; transform:translate(-50%,-50%);
             width:min(560px,92vw); max-height:80vh; overflow:auto;
-            background:#fff; border-radius:12px; box-shadow:0 10px 40px rgba(0,0,0,0.25);
+            background:var(--app-surface-card); border-radius:12px; box-shadow:0 10px 40px rgba(0,0,0,0.25);
             z-index: 21000; padding:16px;
         `;
         this.keyModal.onclick = (e) => e.stopPropagation();
         this.keyModal.innerHTML = `
             <div style="display:flex; align-items:center; justify-content:space-between; gap:8px;">
                 <div>
-                    <div style="font-weight:800; color:#0f172a;">🔑 Key 管理</div>
-                    <div style="color:#64748b; font-size:12px;">Key 以遮罩显示，不可复制；可保存多个并切换当前使用</div>
+                    <div style="font-weight:800; color:var(--app-text-primary);">🔑 Key 管理</div>
+                    <div style="color:var(--app-text-muted); font-size:12px;">Key 以遮罩显示，不可复制；可保存多个并切换当前使用</div>
                 </div>
                 <button id="keymgr-close" style="font-size:18px; border:none; background:transparent; cursor:pointer;">×</button>
             </div>
-            <div style="margin-top:12px; border-top:1px solid #eee; padding-top:12px;">
+            <div style="margin-top:12px; border-top:1px solid var(--app-border-subtle); padding-top:12px;">
                 <div style="font-weight:700; margin-bottom:6px;">已保存的 Keys</div>
-                <ul id="keymgr-list" style="list-style:none; padding:0; margin:0; border:1px solid #eee; border-radius:10px; overflow:hidden;"></ul>
+                <ul id="keymgr-list" style="list-style:none; padding:0; margin:0; border:1px solid var(--app-border-subtle); border-radius:10px; overflow:hidden;"></ul>
             </div>
-            <div style="margin-top:12px; border-top:1px solid #eee; padding-top:12px;">
+            <div style="margin-top:12px; border-top:1px solid var(--app-border-subtle); padding-top:12px;">
                 <div style="font-weight:700; margin-bottom:6px;">新增 Key</div>
                 <div style="display:flex; gap:8px; align-items:center;">
-                    <input id="keymgr-input" type="password" placeholder="贴上 API Key" style="flex:1; padding:10px; border:1px solid #ddd; border-radius:10px;">
-                    <button id="keymgr-add" style="padding:10px 12px; border:1px solid #ddd; border-radius:10px; background:#f5f5f5; cursor:pointer;">保存</button>
+                    <input id="keymgr-input" type="password" placeholder="贴上 API Key" style="flex:1; padding:10px; border:1px solid var(--app-border-default); border-radius:10px;">
+                    <button id="keymgr-add" style="padding:10px 12px; border:1px solid var(--app-border-default); border-radius:10px; background:var(--app-surface-subtle); cursor:pointer;">保存</button>
                 </div>
-                <small style="color:#94a3b8;">保存后将自動设为当前 Key</small>
+                <small style="color:var(--app-text-muted);">保存后将自動设为当前 Key</small>
             </div>
         `;
 
@@ -1374,17 +1374,17 @@ export class ConfigPanel {
         list.innerHTML = '';
         if (!keys.length) {
             const li = document.createElement('li');
-            li.style.cssText = 'padding:10px 12px; color:#94a3b8;';
+            li.style.cssText = 'padding:10px 12px; color:var(--app-text-muted);';
             li.textContent = '（尚无 Key）';
             list.appendChild(li);
             return;
         }
         keys.forEach((k) => {
             const li = document.createElement('li');
-            li.style.cssText = 'padding:10px 12px; border-bottom:1px solid #f1f5f9; display:flex; align-items:center; justify-content:space-between; gap:10px;';
+            li.style.cssText = 'padding:10px 12px; border-bottom:1px solid var(--app-surface-hover); display:flex; align-items:center; justify-content:space-between; gap:10px;';
             const left = document.createElement('div');
             const isActive = active?.activeKeyId === k.id;
-            left.innerHTML = `<div style="font-weight:700; color:#0f172a;">${k.preview || '••••'}</div><div style="color:#64748b; font-size:12px;">${k.label || 'API Key'}${isActive ? ' · 当前' : ''}</div>`;
+            left.innerHTML = `<div style="font-weight:700; color:var(--app-text-primary);">${k.preview || '••••'}</div><div style="color:var(--app-text-muted); font-size:12px;">${k.label || 'API Key'}${isActive ? ' · 当前' : ''}</div>`;
             const right = document.createElement('div');
             right.style.display = 'flex';
             right.style.gap = '6px';
@@ -1392,7 +1392,7 @@ export class ConfigPanel {
             const useBtn = document.createElement('button');
             useBtn.textContent = isActive ? '当前' : '使用';
             useBtn.disabled = isActive;
-            useBtn.style.cssText = 'padding:6px 10px; border:1px solid #ddd; border-radius:10px; background:#f5f5f5; cursor:pointer;';
+            useBtn.style.cssText = 'padding:6px 10px; border:1px solid var(--app-border-default); border-radius:10px; background:var(--app-surface-subtle); cursor:pointer;';
             useBtn.onclick = async () => {
                 await this.configManager.setActiveKey(active?.id, k.id);
                 this.refreshKeyManagerList();
@@ -1686,7 +1686,7 @@ export class ConfigPanel {
             // 3秒后恢复原始提示
             setTimeout(() => {
                 modelHelp.textContent = originalHelpText;
-                modelHelp.style.color = '#666';
+                modelHelp.style.color = 'var(--app-text-secondary)';
             }, 3000);
 
         } catch (e) {
@@ -1698,7 +1698,7 @@ export class ConfigPanel {
             // 5秒后恢复原始提示
             setTimeout(() => {
                 modelHelp.textContent = originalHelpText;
-                modelHelp.style.color = '#666';
+                modelHelp.style.color = 'var(--app-text-secondary)';
             }, 5000);
         } finally {
             refreshBtn.textContent = originalText;

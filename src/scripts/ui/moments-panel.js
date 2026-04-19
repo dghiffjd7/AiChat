@@ -437,7 +437,7 @@ export class MomentsPanel {
     if (!moments.length) {
       const empty = document.createElement('div');
       empty.className = 'moments-empty-state';
-      empty.style.cssText = 'padding:16px; color:#64748b; text-align:center;';
+      empty.style.cssText = 'padding:16px; color:var(--app-text-muted); text-align:center;';
       empty.textContent = '（暂无动态）';
       this.listEl.appendChild(empty);
       this.visibleCount = this.pageSize;
@@ -547,7 +547,7 @@ export class MomentsPanel {
                 }">
                     <div class="moment-replying" style="${
                       replyTarget ? '' : 'display:none;'
-                    } padding:8px 10px; margin-bottom:10px; border:1px solid rgba(0,0,0,0.08); border-radius:12px; background:rgba(248,250,252,0.92); font-size:12px; color:#334155;">
+                    } padding:8px 10px; margin-bottom:10px; border:1px solid rgba(0,0,0,0.08); border-radius:12px; background:rgba(248,250,252,0.92); font-size:12px; color:var(--app-text-secondary);">
                         <div style="display:flex; gap:10px; align-items:flex-start;">
                             <div style="flex:1; min-width:0; white-space:normal; overflow-wrap:anywhere; word-break:break-word; line-height:1.35;">
                                 回复 <b>${esc(replyTarget?.author || '')}</b>：${esc(resolveMomentDisplayText(replyTarget).slice(0, 120))}
@@ -794,7 +794,7 @@ export class MomentsPanel {
                 border: 1px solid rgba(0,0,0,0.10);
                 border-radius: 12px;
                 background: rgba(255,255,255,0.92);
-                color: #0f172a;
+                color: var(--app-text-primary);
                 font-weight: 800;
                 cursor: pointer;
             `;
@@ -825,7 +825,7 @@ export class MomentsPanel {
     const panel = document.createElement('div');
     panel.style.cssText = `
             height: 100%;
-            background: #fff;
+            background: var(--app-surface-card);
             border-radius: 14px;
             overflow: hidden;
             display: flex;
@@ -833,15 +833,15 @@ export class MomentsPanel {
         `;
     panel.addEventListener('click', e => e.stopPropagation());
     panel.innerHTML = `
-            <div style="display:flex; align-items:center; gap:10px; padding:12px; background:#f3f4f6; border-bottom:1px solid #e5e7eb;">
+            <div style="display:flex; align-items:center; gap:10px; padding:12px; background:#f3f4f6; border-bottom:1px solid var(--app-border-default);">
                 <div style="font-weight:800;">动态</div>
-                <div id="moment-detail-meta" style="margin-left:auto; font-size:12px; color:#64748b;"></div>
-                <button id="moment-detail-close" style="border:1px solid #e5e7eb; background:#fff; border-radius:10px; padding:6px 10px;">关闭</button>
+                <div id="moment-detail-meta" style="margin-left:auto; font-size:12px; color:var(--app-text-muted);"></div>
+                <button id="moment-detail-close" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:6px 10px;">关闭</button>
             </div>
             <div id="moment-detail-body" style="flex:1; overflow:auto; -webkit-overflow-scrolling:touch; padding:12px;"></div>
-            <div style="padding:10px; border-top:1px solid #e5e7eb; display:flex; gap:10px;">
-                <input id="moment-comment-input" type="text" placeholder="写评论..." style="flex:1; padding:10px; border:1px solid #e2e8f0; border-radius:999px;">
-                <button id="moment-comment-send" style="padding:10px 14px; border:none; border-radius:999px; background:#019aff; color:#fff; font-weight:800;">发送</button>
+            <div style="padding:10px; border-top:1px solid var(--app-border-default); display:flex; gap:10px;">
+                <input id="moment-comment-input" type="text" placeholder="写评论..." style="flex:1; padding:10px; border:1px solid var(--app-border-default); border-radius:999px;">
+                <button id="moment-comment-send" style="padding:10px 14px; border:none; border-radius:999px; background:#019aff; color:var(--app-text-inverse); font-weight:800;">发送</button>
             </div>
         `;
     overlay.appendChild(panel);
@@ -872,7 +872,7 @@ export class MomentsPanel {
                     <img src="${esc(avatar)}" style="width:42px; height:42px; border-radius:999px; object-fit:cover;">
                     <div style="flex:1;">
                         <div style="font-weight:800;">${esc(m.author || '角色')}</div>
-                        <div style="color:#64748b; font-size:12px; margin-top:2px;">${esc(m.time || '')} · 👁 ${Number(
+                        <div style="color:var(--app-text-muted); font-size:12px; margin-top:2px;">${esc(m.time || '')} · 👁 ${Number(
         m.views || 0,
       )} · 👍 ${Number(m.likes || 0)}</div>
                         <div class="moment-detail-text" style="margin-top:10px; overflow-wrap:anywhere;"></div>
@@ -885,14 +885,14 @@ export class MomentsPanel {
                         ? comments
                             .map(
                               c => `
-                        <div class="moment-detail-comment" data-comment-id="${esc(c.id || '')}" style="border:1px solid #e5e7eb; border-radius:12px; padding:10px;">
+                        <div class="moment-detail-comment" data-comment-id="${esc(c.id || '')}" style="border:1px solid var(--app-border-default); border-radius:12px; padding:10px;">
                             <div class="moment-detail-author" role="button" tabindex="0" data-comment-id="${esc(c.id || '')}" style="font-weight:800; font-size:13px; cursor:pointer;">${esc(c.author || '')}</div>
                             <div style="margin-top:6px; overflow-wrap:anywhere;">${renderTextWithStickers(resolveMomentDisplayText(c))}</div>
                         </div>
                     `,
                             )
                             .join('')
-                        : `<div style="color:#64748b;">（暂无评论）</div>`
+                        : `<div style="color:var(--app-text-muted);">（暂无评论）</div>`
                     }
                 </div>
             `;

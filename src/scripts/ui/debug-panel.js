@@ -712,7 +712,7 @@ export class DebugPanel {
         panel.style.cssText = `
             width: 100%;
             height: 100%;
-            background: #fff;
+            background: var(--app-surface-card);
             border-radius: 14px;
             overflow: hidden;
             display: flex;
@@ -720,15 +720,15 @@ export class DebugPanel {
         `;
         panel.addEventListener('click', e => e.stopPropagation());
         panel.innerHTML = `
-            <div style="display:flex; align-items:center; gap:10px; padding:12px; background:#f3f4f6; border-bottom:1px solid #e5e7eb;">
+            <div style="display:flex; align-items:center; gap:10px; padding:12px; background:#f3f4f6; border-bottom:1px solid var(--app-border-default);">
                 <div style="font-weight:900;">记忆检查器</div>
-                <div id="memory-inspector-meta" style="margin-left:auto; font-size:12px; color:#64748b; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"></div>
-                <button id="memory-inspector-refresh" style="border:1px solid #e5e7eb; background:#fff; border-radius:10px; padding:6px 10px;">刷新</button>
-                <button id="memory-inspector-copy" style="border:1px solid #e5e7eb; background:#fff; border-radius:10px; padding:6px 10px;">复制</button>
-                <button id="memory-inspector-close" style="border:1px solid #e5e7eb; background:#fff; border-radius:10px; padding:6px 10px;">关闭</button>
+                <div id="memory-inspector-meta" style="margin-left:auto; font-size:12px; color:var(--app-text-muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"></div>
+                <button id="memory-inspector-refresh" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:6px 10px;">刷新</button>
+                <button id="memory-inspector-copy" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:6px 10px;">复制</button>
+                <button id="memory-inspector-close" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:6px 10px;">关闭</button>
             </div>
             <div style="flex:1; min-height:0; overflow:auto; -webkit-overflow-scrolling:touch; padding:12px; display:flex; flex-direction:column; gap:12px;">
-                <div id="memory-inspector-tokens" style="font-size:12px; color:#475569;"></div>
+                <div id="memory-inspector-tokens" style="font-size:12px; color:var(--app-text-secondary);"></div>
                 <div>
                     <div style="font-weight:700; margin-bottom:6px;">将注入的记忆</div>
                     <div id="memory-inspector-included" style="display:flex; flex-direction:column; gap:6px; font-size:12px;"></div>
@@ -813,7 +813,7 @@ export class DebugPanel {
         const addEmpty = (el, text) => {
             if (!el) return;
             const div = document.createElement('div');
-            div.style.cssText = 'color:#94a3b8;';
+            div.style.cssText = 'color:var(--app-text-muted);';
             div.textContent = text;
             el.appendChild(div);
         };
@@ -834,7 +834,7 @@ export class DebugPanel {
             }
             list.forEach(item => {
                 const row = document.createElement('div');
-                row.style.cssText = `color:${dimmed ? '#94a3b8' : '#0f172a'}; line-height:1.4;`;
+                row.style.cssText = `color:${dimmed ? 'var(--app-text-muted)' : 'var(--app-text-primary)'}; line-height:1.4;`;
                 const flags = [];
                 if (item?.isPinned) flags.push('📌');
                 if (Number.isFinite(Number(item?.priority)) && Number(item.priority) !== 0) flags.push(`P${Number(item.priority)}`);
@@ -906,7 +906,7 @@ export class DebugPanel {
         } else {
             truncatedWithReason.forEach(item => {
                 const row = document.createElement('div');
-                row.style.cssText = 'color:#94a3b8; line-height:1.4;';
+                row.style.cssText = 'color:var(--app-text-muted); line-height:1.4;';
                 row.textContent = `[${item?.tableName || item?.tableId || '记忆'}] ${item?.rowSummary || item?.rowText || ''}（${item?._reasonLabel || '因预算截断'}）`;
                 truncatedEl.appendChild(row);
             });
@@ -974,7 +974,7 @@ export class DebugPanel {
         panel.style.cssText = `
             width: 100%;
             height: 100%;
-            background: #fff;
+            background: var(--app-surface-card);
             border-radius: 14px;
             overflow: hidden;
             display: flex;
@@ -982,12 +982,12 @@ export class DebugPanel {
         `;
         panel.addEventListener('click', e => e.stopPropagation());
         panel.innerHTML = `
-            <div style="display:flex; align-items:center; gap:10px; padding:12px; background:#f3f4f6; border-bottom:1px solid #e5e7eb;">
+            <div style="display:flex; align-items:center; gap:10px; padding:12px; background:#f3f4f6; border-bottom:1px solid var(--app-border-default);">
                 <div style="font-weight:900;">变量查看器</div>
-                <div id="debug-variable-meta" style="margin-left:auto; font-size:12px; color:#64748b; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"></div>
-                <button id="debug-variable-refresh" style="border:1px solid #e5e7eb; background:#fff; border-radius:10px; padding:6px 10px;">刷新</button>
-                <button id="debug-variable-copy" style="border:1px solid #e5e7eb; background:#fff; border-radius:10px; padding:6px 10px;">复制</button>
-                <button id="debug-variable-close" style="border:1px solid #e5e7eb; background:#fff; border-radius:10px; padding:6px 10px;">关闭</button>
+                <div id="debug-variable-meta" style="margin-left:auto; font-size:12px; color:var(--app-text-muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"></div>
+                <button id="debug-variable-refresh" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:6px 10px;">刷新</button>
+                <button id="debug-variable-copy" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:6px 10px;">复制</button>
+                <button id="debug-variable-close" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:6px 10px;">关闭</button>
             </div>
             <div style="flex:1; min-height:0; overflow:auto; -webkit-overflow-scrolling:touch; padding:10px;">
                 <textarea id="debug-variable-text" readonly style="
@@ -1129,7 +1129,7 @@ export class DebugPanel {
         panel.style.cssText = `
             width: 100%;
             height: 100%;
-            background: #fff;
+            background: var(--app-surface-card);
             border-radius: 14px;
             overflow: hidden;
             display: flex;
@@ -1137,12 +1137,12 @@ export class DebugPanel {
         `;
         panel.addEventListener('click', e => e.stopPropagation());
         panel.innerHTML = `
-            <div style="display:flex; align-items:center; gap:10px; padding:12px; background:#f3f4f6; border-bottom:1px solid #e5e7eb;">
+            <div style="display:flex; align-items:center; gap:10px; padding:12px; background:#f3f4f6; border-bottom:1px solid var(--app-border-default);">
                 <div style="font-weight:900;">群聊头像 / Scope 调试</div>
-                <div id="debug-group-avatar-meta" style="margin-left:auto; font-size:12px; color:#64748b; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"></div>
-                <button id="debug-group-avatar-refresh" style="border:1px solid #e5e7eb; background:#fff; border-radius:10px; padding:6px 10px;">刷新</button>
-                <button id="debug-group-avatar-copy" style="border:1px solid #e5e7eb; background:#fff; border-radius:10px; padding:6px 10px;">复制</button>
-                <button id="debug-group-avatar-close" style="border:1px solid #e5e7eb; background:#fff; border-radius:10px; padding:6px 10px;">关闭</button>
+                <div id="debug-group-avatar-meta" style="margin-left:auto; font-size:12px; color:var(--app-text-muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"></div>
+                <button id="debug-group-avatar-refresh" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:6px 10px;">刷新</button>
+                <button id="debug-group-avatar-copy" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:6px 10px;">复制</button>
+                <button id="debug-group-avatar-close" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:6px 10px;">关闭</button>
             </div>
             <div style="flex:1; min-height:0; overflow:auto; -webkit-overflow-scrolling:touch; padding:10px;">
                 <textarea id="debug-group-avatar-text" readonly style="
@@ -1252,7 +1252,7 @@ export class DebugPanel {
         panel.style.cssText = `
             width: 100%;
             height: 100%;
-            background: #fff;
+            background: var(--app-surface-card);
             border-radius: 14px;
             overflow: hidden;
             display: flex;
@@ -1260,13 +1260,13 @@ export class DebugPanel {
         `;
         panel.addEventListener('click', e => e.stopPropagation());
         panel.innerHTML = `
-            <div style="display:flex; align-items:center; gap:10px; padding:12px; background:#f3f4f6; border-bottom:1px solid #e5e7eb;">
+            <div style="display:flex; align-items:center; gap:10px; padding:12px; background:#f3f4f6; border-bottom:1px solid var(--app-border-default);">
                 <div style="font-weight:900;">模板执行日志</div>
-                <div id="debug-template-log-meta" style="margin-left:auto; font-size:12px; color:#64748b; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"></div>
-                <button id="debug-template-log-refresh" style="border:1px solid #e5e7eb; background:#fff; border-radius:10px; padding:6px 10px;">刷新</button>
-                <button id="debug-template-log-clear" style="border:1px solid #e5e7eb; background:#fff; border-radius:10px; padding:6px 10px;">清空</button>
-                <button id="debug-template-log-copy" style="border:1px solid #e5e7eb; background:#fff; border-radius:10px; padding:6px 10px;">复制</button>
-                <button id="debug-template-log-close" style="border:1px solid #e5e7eb; background:#fff; border-radius:10px; padding:6px 10px;">关闭</button>
+                <div id="debug-template-log-meta" style="margin-left:auto; font-size:12px; color:var(--app-text-muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"></div>
+                <button id="debug-template-log-refresh" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:6px 10px;">刷新</button>
+                <button id="debug-template-log-clear" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:6px 10px;">清空</button>
+                <button id="debug-template-log-copy" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:6px 10px;">复制</button>
+                <button id="debug-template-log-close" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:6px 10px;">关闭</button>
             </div>
             <div style="flex:1; min-height:0; overflow:auto; -webkit-overflow-scrolling:touch; padding:10px;">
                 <textarea id="debug-template-log-text" readonly style="
@@ -1392,7 +1392,7 @@ export class DebugPanel {
         panel.style.cssText = `
             width: 100%;
             height: 100%;
-            background: #fff;
+            background: var(--app-surface-card);
             border-radius: 14px;
             overflow: hidden;
             display: flex;
@@ -1400,13 +1400,13 @@ export class DebugPanel {
         `;
         panel.addEventListener('click', e => e.stopPropagation());
         panel.innerHTML = `
-            <div style="display:flex; align-items:center; gap:10px; padding:12px; background:#f3f4f6; border-bottom:1px solid #e5e7eb;">
+            <div style="display:flex; align-items:center; gap:10px; padding:12px; background:#f3f4f6; border-bottom:1px solid var(--app-border-default);">
                 <div style="font-weight:900;">错误日志</div>
-                <div id="debug-error-log-meta" style="margin-left:auto; font-size:12px; color:#64748b; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"></div>
-                <button id="debug-error-log-refresh" style="border:1px solid #e5e7eb; background:#fff; border-radius:10px; padding:6px 10px;">刷新</button>
-                <button id="debug-error-log-export" style="border:1px solid #e5e7eb; background:#fff; border-radius:10px; padding:6px 10px;">导出</button>
-                <button id="debug-error-log-copy" style="border:1px solid #e5e7eb; background:#fff; border-radius:10px; padding:6px 10px;">复制</button>
-                <button id="debug-error-log-close" style="border:1px solid #e5e7eb; background:#fff; border-radius:10px; padding:6px 10px;">关闭</button>
+                <div id="debug-error-log-meta" style="margin-left:auto; font-size:12px; color:var(--app-text-muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"></div>
+                <button id="debug-error-log-refresh" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:6px 10px;">刷新</button>
+                <button id="debug-error-log-export" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:6px 10px;">导出</button>
+                <button id="debug-error-log-copy" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:6px 10px;">复制</button>
+                <button id="debug-error-log-close" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:6px 10px;">关闭</button>
             </div>
             <div style="flex:1; min-height:0; overflow:auto; -webkit-overflow-scrolling:touch; padding:10px;">
                 <textarea id="debug-error-log-text" readonly style="

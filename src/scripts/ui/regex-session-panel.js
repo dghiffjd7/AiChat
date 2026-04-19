@@ -97,7 +97,7 @@ export class RegexSessionPanel {
             right: calc(10px + env(safe-area-inset-right, 0px));
             height: calc(100vh - 20px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
             height: calc(100dvh - 20px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
-            background:#fff; border-radius:12px; box-shadow:0 10px 40px rgba(0,0,0,0.25);
+            background:var(--app-surface-card); border-radius:12px; box-shadow:0 10px 40px rgba(0,0,0,0.25);
             z-index:21000;
             flex-direction:column;
             overflow:hidden;
@@ -107,21 +107,21 @@ export class RegexSessionPanel {
         this.element.innerHTML = `
             <div style="padding:14px 16px; border-bottom:1px solid rgba(0,0,0,0.06); background:rgba(248,250,252,0.92); display:flex; align-items:center; justify-content:space-between; gap:10px;">
                 <div style="min-width:0;">
-                    <div style="font-weight:800; color:#0f172a;">正规表达式（聊天室）</div>
-                    <div id="re-session-sub" style="color:#64748b; font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"></div>
+                    <div style="font-weight:800; color:var(--app-text-primary);">正规表达式（聊天室）</div>
+                    <div id="re-session-sub" style="color:var(--app-text-muted); font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"></div>
                 </div>
-                <button id="re-session-close" style="border:none; background:transparent; font-size:22px; cursor:pointer; color:#0f172a;">×</button>
+                <button id="re-session-close" style="border:none; background:transparent; font-size:22px; cursor:pointer; color:var(--app-text-primary);">×</button>
             </div>
 
             <div id="re-session-scroll" style="padding:14px 16px; overflow:auto; flex:1; min-height:0; -webkit-overflow-scrolling:touch;">
                 <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;">
-                    <label style="display:flex; align-items:center; gap:8px; font-size:13px; color:#334155; cursor:pointer;">
+                    <label style="display:flex; align-items:center; gap:8px; font-size:13px; color:var(--app-text-secondary); cursor:pointer;">
                         <input id="re-session-enabled" type="checkbox" style="width:16px; height:16px;">
                         启用本聊天室正则
                     </label>
                     <div style="display:flex; gap:8px; flex-wrap:wrap;">
-                        <button type="button" id="re-session-add" style="padding:10px 12px; border:1px solid #e2e8f0; border-radius:10px; background:#fff; cursor:pointer;">＋ 新增规则</button>
-                        <button type="button" id="re-session-save" style="padding:10px 12px; border:none; border-radius:10px; background:#019aff; color:#fff; cursor:pointer; font-weight:700;">保存</button>
+                        <button type="button" id="re-session-add" style="padding:10px 12px; border:1px solid var(--app-border-default); border-radius:10px; background:var(--app-surface-card); cursor:pointer;">＋ 新增规则</button>
+                        <button type="button" id="re-session-save" style="padding:10px 12px; border:none; border-radius:10px; background:#019aff; color:var(--app-text-inverse); cursor:pointer; font-weight:700;">保存</button>
                     </div>
                 </div>
 
@@ -176,7 +176,7 @@ export class RegexSessionPanel {
         card.className = 'regex-rule';
         card.dataset.ruleId = r.id;
         card.dataset.collapsed = 'true';
-        card.style.cssText = 'border:1px solid rgba(0,0,0,0.08); border-radius:12px; background:#fff; overflow:hidden;';
+        card.style.cssText = 'border:1px solid rgba(0,0,0,0.08); border-radius:12px; background:var(--app-surface-card); overflow:hidden;';
 
         const header = document.createElement('div');
         header.className = 're-header';
@@ -185,10 +185,10 @@ export class RegexSessionPanel {
         const left = document.createElement('div');
         left.style.cssText = 'display:flex; align-items:center; gap:10px; min-width:0;';
         left.innerHTML = `
-            <div class="re-toggle" style="font-size:16px; color:#64748b; user-select:none; width:18px;">▸</div>
+            <div class="re-toggle" style="font-size:16px; color:var(--app-text-muted); user-select:none; width:18px;">▸</div>
             <div style="min-width:0;">
-                <div class="re-title" style="font-weight:800; color:#0f172a; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"></div>
-                <div class="re-sub" style="color:#64748b; font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"></div>
+                <div class="re-title" style="font-weight:800; color:var(--app-text-primary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"></div>
+                <div class="re-sub" style="color:var(--app-text-muted); font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"></div>
             </div>
         `;
         header.appendChild(left);
@@ -196,7 +196,7 @@ export class RegexSessionPanel {
         const right = document.createElement('div');
         right.style.cssText = 'display:flex; align-items:center; gap:10px;';
         const enabledWrap = document.createElement('label');
-        enabledWrap.style.cssText = 'display:flex; align-items:center; gap:6px; font-size:12px; color:#334155; cursor:pointer;';
+        enabledWrap.style.cssText = 'display:flex; align-items:center; gap:6px; font-size:12px; color:var(--app-text-secondary); cursor:pointer;';
         enabledWrap.innerHTML = `<input type="checkbox" class="re-enabled" style="width:16px; height:16px;">启用`;
         right.appendChild(enabledWrap);
         const del = document.createElement('button');
@@ -213,30 +213,30 @@ export class RegexSessionPanel {
         body.innerHTML = `
             <div style="display:flex; gap:10px; flex-wrap:wrap;">
                 <div style="flex:1; min-width: 220px;">
-                    <div style="font-weight:700; color:#0f172a; margin-bottom:6px;">脚本名称</div>
-                    <input class="re-name" style="width:100%; padding:10px; border:1px solid #e2e8f0; border-radius:10px; font-size:13px;">
+                    <div style="font-weight:700; color:var(--app-text-primary); margin-bottom:6px;">脚本名称</div>
+                    <input class="re-name" style="width:100%; padding:10px; border:1px solid var(--app-border-default); border-radius:10px; font-size:13px;">
                 </div>
                 <div style="flex:1; min-width: 280px;">
-                    <div style="font-weight:700; color:#0f172a; margin-bottom:6px;">Find Regex</div>
-                    <input class="re-find" spellcheck="false" style="width:100%; padding:10px; border:1px solid #e2e8f0; border-radius:10px; font-size:13px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;">
+                    <div style="font-weight:700; color:var(--app-text-primary); margin-bottom:6px;">Find Regex</div>
+                    <input class="re-find" spellcheck="false" style="width:100%; padding:10px; border:1px solid var(--app-border-default); border-radius:10px; font-size:13px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;">
                 </div>
             </div>
 
             <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;">
                 <div style="flex:1; min-width: 260px;">
-                    <div style="font-weight:700; color:#0f172a; margin-bottom:6px;">Replace With</div>
-                    <textarea class="re-repl" rows="3" spellcheck="false" style="width:100%; padding:10px; border:1px solid #e2e8f0; border-radius:10px; font-size:13px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;"></textarea>
+                    <div style="font-weight:700; color:var(--app-text-primary); margin-bottom:6px;">Replace With</div>
+                    <textarea class="re-repl" rows="3" spellcheck="false" style="width:100%; padding:10px; border:1px solid var(--app-border-default); border-radius:10px; font-size:13px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;"></textarea>
                 </div>
                 <div style="flex:1; min-width: 260px;">
-                    <div style="font-weight:700; color:#0f172a; margin-bottom:6px;">Trim Out（每行一个）</div>
-                    <textarea class="re-trim" rows="3" spellcheck="false" style="width:100%; padding:10px; border:1px solid #e2e8f0; border-radius:10px; font-size:13px;"></textarea>
+                    <div style="font-weight:700; color:var(--app-text-primary); margin-bottom:6px;">Trim Out（每行一个）</div>
+                    <textarea class="re-trim" rows="3" spellcheck="false" style="width:100%; padding:10px; border:1px solid var(--app-border-default); border-radius:10px; font-size:13px;"></textarea>
                 </div>
             </div>
 
             <div style="display:flex; gap:14px; flex-wrap:wrap; margin-top:12px;">
                 <div style="flex:1; min-width: 260px; border:1px solid rgba(0,0,0,0.06); border-radius:12px; padding:10px;">
-                    <div style="font-weight:800; color:#0f172a; margin-bottom:8px;">影响条目（Affects）</div>
-                    <div style="display:flex; gap:12px; flex-wrap:wrap; color:#334155; font-size:13px;">
+                    <div style="font-weight:800; color:var(--app-text-primary); margin-bottom:8px;">影响条目（Affects）</div>
+                    <div style="display:flex; gap:12px; flex-wrap:wrap; color:var(--app-text-secondary); font-size:13px;">
                         <label style="display:flex; gap:6px; align-items:center; cursor:pointer;"><input type="checkbox" class="re-place" value="1">用户输入</label>
                         <label style="display:flex; gap:6px; align-items:center; cursor:pointer;"><input type="checkbox" class="re-place" value="2">AI输出</label>
                         <label style="display:flex; gap:6px; align-items:center; cursor:pointer;"><input type="checkbox" class="re-place" value="3">Slash</label>
@@ -244,27 +244,27 @@ export class RegexSessionPanel {
                         <label style="display:flex; gap:6px; align-items:center; cursor:pointer;"><input type="checkbox" class="re-place" value="6">推理</label>
                     </div>
                     <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px; align-items:center;">
-                        <div style="font-size:13px; color:#334155; font-weight:700;">深度</div>
-                        <input class="re-min-depth" type="number" min="-1" max="9999" placeholder="Min" style="width:120px; padding:8px 10px; border:1px solid #e2e8f0; border-radius:10px;">
-                        <input class="re-max-depth" type="number" min="0" max="9999" placeholder="Max" style="width:120px; padding:8px 10px; border:1px solid #e2e8f0; border-radius:10px;">
+                        <div style="font-size:13px; color:var(--app-text-secondary); font-weight:700;">深度</div>
+                        <input class="re-min-depth" type="number" min="-1" max="9999" placeholder="Min" style="width:120px; padding:8px 10px; border:1px solid var(--app-border-default); border-radius:10px;">
+                        <input class="re-max-depth" type="number" min="0" max="9999" placeholder="Max" style="width:120px; padding:8px 10px; border:1px solid var(--app-border-default); border-radius:10px;">
                     </div>
                 </div>
 
                 <div style="flex:1; min-width: 260px; border:1px solid rgba(0,0,0,0.06); border-radius:12px; padding:10px;">
-                    <div style="font-weight:800; color:#0f172a; margin-bottom:8px;">其他选项</div>
-                    <div style="display:flex; flex-direction:column; gap:8px; color:#334155; font-size:13px;">
+                    <div style="font-weight:800; color:var(--app-text-primary); margin-bottom:8px;">其他选项</div>
+                    <div style="display:flex; flex-direction:column; gap:8px; color:var(--app-text-secondary); font-size:13px;">
                         <label style="display:flex; gap:8px; align-items:center; cursor:pointer;"><input type="checkbox" class="re-disabled">停用（Disabled）</label>
                         <label style="display:flex; gap:8px; align-items:center; cursor:pointer;"><input type="checkbox" class="re-run-on-edit">编辑消息时执行（Run On Edit）</label>
                         <label style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
                             <span style="font-weight:700;">Find Regex 宏</span>
-                            <select class="re-substitute" style="padding:8px 10px; border:1px solid #e2e8f0; border-radius:10px;">
+                            <select class="re-substitute" style="padding:8px 10px; border:1px solid var(--app-border-default); border-radius:10px;">
                                 <option value="0">不替换</option>
                                 <option value="1">替换（raw）</option>
                                 <option value="2">替换（escaped）</option>
                             </select>
                         </label>
                         <div style="margin-top:6px;">
-                            <div style="font-weight:700; color:#0f172a; margin-bottom:6px;">暂时性（Ephemerality）</div>
+                            <div style="font-weight:700; color:var(--app-text-primary); margin-bottom:6px;">暂时性（Ephemerality）</div>
                             <label style="display:flex; gap:8px; align-items:center; cursor:pointer; margin-bottom:6px;">
                                 <input type="checkbox" class="re-md-only">仅影响聊天显示（不改存档）
                             </label>

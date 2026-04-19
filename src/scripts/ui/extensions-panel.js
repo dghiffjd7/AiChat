@@ -70,8 +70,8 @@ export class ExtensionsPanel {
       #extensions-panel .extensions-modal {
         padding: 16px;
         border-radius: 16px;
-        border: 1px solid #e2e8f0;
-        background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+        border: 1px solid var(--app-border-default);
+        background: linear-gradient(180deg, var(--app-surface-card) 0%, var(--app-surface-subtle) 100%);
         box-shadow: 0 12px 34px rgba(15, 23, 42, 0.24);
         max-height: calc(100vh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - 24px);
         overflow-y: auto;
@@ -85,37 +85,37 @@ export class ExtensionsPanel {
       }
       #extensions-panel .extensions-title {
         margin: 0;
-        color: #0f172a;
+        color: var(--app-text-primary);
         font-size: 18px;
         font-weight: 800;
       }
       #extensions-panel .extensions-close {
         width: 30px;
         height: 30px;
-        border: 1px solid #e2e8f0;
+        border: 1px solid var(--app-border-default);
         border-radius: 10px;
-        background: #fff;
-        color: #0f172a;
+        background: var(--app-surface-card);
+        color: var(--app-text-primary);
         font-size: 18px;
         cursor: pointer;
       }
       #extensions-panel .extensions-subtitle {
-        color: #64748b;
+        color: var(--app-text-muted);
         font-size: 12px;
         margin-bottom: 12px;
       }
       #extensions-panel .extensions-item {
         margin-bottom: 10px;
-        border: 1px solid #e2e8f0;
+        border: 1px solid var(--app-border-default);
         border-radius: 12px;
-        background: #fff;
+        background: var(--app-surface-card);
         overflow: hidden;
       }
       #extensions-panel .extensions-toggle {
         width: 100%;
         border: none;
-        background: #f8fafc;
-        color: #0f172a;
+        background: var(--app-surface-subtle);
+        color: var(--app-text-primary);
         font-size: 14px;
         font-weight: 700;
         padding: 11px 12px;
@@ -125,7 +125,7 @@ export class ExtensionsPanel {
         cursor: pointer;
       }
       #extensions-panel .extensions-toggle .chevron {
-        color: #64748b;
+        color: var(--app-text-muted);
         transition: transform 180ms ease;
       }
       #extensions-panel .extensions-toggle[data-expanded='1'] .chevron {
@@ -134,13 +134,13 @@ export class ExtensionsPanel {
       #extensions-panel .extensions-body {
         display: none;
         padding: 12px;
-        border-top: 1px dashed #e2e8f0;
+        border-top: 1px dashed var(--app-border-default);
       }
       #extensions-panel .extensions-host {
         min-height: 92px;
       }
       #extensions-panel .extensions-loading {
-        color: #64748b;
+        color: var(--app-text-muted);
         font-size: 12px;
       }
       #extensions-panel .extensions-footer {
@@ -151,7 +151,7 @@ export class ExtensionsPanel {
         border: 1px solid #0ea5e9;
         border-radius: 10px;
         background: #0ea5e9;
-        color: #fff;
+        color: var(--app-text-inverse);
         font-weight: 700;
         font-size: 14px;
         padding: 8px 14px;

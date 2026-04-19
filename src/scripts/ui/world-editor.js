@@ -1104,7 +1104,7 @@ export class WorldEditorModal {
             <div class="world-editor-header">
                 <div class="world-editor-title">
                     <span style="margin-right:6px;">世界书</span>
-                    <input id="world-editor-name" type="text" placeholder="名称" style="font-weight:700; font-size:14px; color:#111827; border:1px solid #e2e8f0; border-radius:8px; padding:4px 8px; min-width:140px; max-width:260px;">
+                    <input id="world-editor-name" type="text" placeholder="名称" style="font-weight:700; font-size:14px; color:var(--app-text-primary); border:1px solid var(--app-border-default); border-radius:8px; padding:4px 8px; min-width:140px; max-width:260px;">
                 </div>
                 <div class="world-editor-actions">
                     <button id="world-editor-save">保存</button>

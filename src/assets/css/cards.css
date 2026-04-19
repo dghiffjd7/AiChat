@@ -25,7 +25,7 @@
 
 .card-button {
     border: 1px solid var(--border-subtle, rgba(0, 0, 0, 0.08));
-    background: #fff;
+    background: var(--app-surface-card);
     border-radius: 10px;
     padding: 6px 10px;
     font-size: 13px;
@@ -34,13 +34,13 @@
 
 .card-status {
     margin-top: 4px;
-    color: #64748b;
+    color: var(--app-text-muted);
     font-size: 12px;
 }
 
 .card-progress {
     margin-top: 4px;
-    color: #475569;
+    color: var(--app-text-secondary);
     font-size: 12px;
     font-family: "JetBrains Mono", "SFMono-Regular", Menlo, Consolas, monospace;
 }

@@ -296,7 +296,7 @@ export class WorldPanel {
             const appendEmpty = (container, text) => {
                 const empty = document.createElement('div');
                 empty.textContent = text;
-                empty.style.cssText = 'font-size:12px; color:#94a3b8; padding:6px 0;';
+                empty.style.cssText = 'font-size:12px; color:var(--app-text-muted); padding:6px 0;';
                 container.appendChild(empty);
             };
             const createTextButton = (label, variant = 'neutral') => {
@@ -304,10 +304,10 @@ export class WorldPanel {
                 btn.type = 'button';
                 btn.className = `world-panel-inline-btn world-panel-inline-btn-${variant}`;
                 const palette = variant === 'danger'
-                    ? 'border:1px solid #fecaca;background:#fff;color:#b91c1c;'
+                    ? 'border:1px solid #fecaca;background:var(--app-surface-card);color:#b91c1c;'
                     : variant === 'primary'
                         ? 'border:1px solid rgba(14,116,144,0.18);background:#ecfeff;color:#0f766e;'
-                        : 'border:1px solid #e2e8f0;background:#fff;color:#0f172a;';
+                        : 'border:1px solid var(--app-border-default);background:var(--app-surface-card);color:var(--app-text-primary);';
                 btn.style.cssText = `padding:4px 8px;border-radius:999px;font-size:12px;cursor:pointer;${palette}`;
                 btn.textContent = label;
                 return btn;
@@ -320,7 +320,7 @@ export class WorldPanel {
 
                 const box = document.createElement('div');
                 box.className = 'world-panel-section-card';
-                box.style.cssText = 'padding:12px; border:1px solid #e2e8f0; border-radius:14px; background:linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);';
+                box.style.cssText = 'padding:12px; border:1px solid var(--app-border-default); border-radius:14px; background:linear-gradient(180deg, var(--app-surface-card) 0%, var(--app-surface-subtle) 100%);';
 
                 const header = document.createElement('div');
                 header.className = 'world-panel-section-head';
@@ -331,11 +331,11 @@ export class WorldPanel {
                 const titleEl = document.createElement('div');
                 titleEl.className = 'world-panel-section-title';
                 titleEl.textContent = title;
-                titleEl.style.cssText = 'font-weight:800; color:#0f172a;';
+                titleEl.style.cssText = 'font-weight:800; color:var(--app-text-primary);';
                 const descEl = document.createElement('div');
                 descEl.className = 'world-panel-section-desc';
                 descEl.textContent = description;
-                descEl.style.cssText = 'font-size:12px; color:#64748b; margin-top:4px;';
+                descEl.style.cssText = 'font-size:12px; color:var(--app-text-muted); margin-top:4px;';
                 titleWrap.appendChild(titleEl);
                 if (description) titleWrap.appendChild(descEl);
 
@@ -380,7 +380,7 @@ export class WorldPanel {
                 const displayName = worldData?.name || worldId;
                 const card = document.createElement('div');
                 card.className = 'world-panel-world-card';
-                card.style.cssText = 'padding:10px; border:1px solid #dbe4ee; border-radius:12px; background:#fff;';
+                card.style.cssText = 'padding:10px; border:1px solid var(--app-border-default); border-radius:12px; background:var(--app-surface-card);';
 
                 const header = document.createElement('div');
                 header.className = 'world-panel-world-card-head';
@@ -393,11 +393,11 @@ export class WorldPanel {
                 title.type = 'button';
                 title.className = 'world-panel-world-card-title';
                 title.textContent = displayName;
-                title.style.cssText = 'padding:0; border:none; background:none; text-align:left; font-weight:700; color:#0f172a; cursor:pointer; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;';
+                title.style.cssText = 'padding:0; border:none; background:none; text-align:left; font-weight:700; color:var(--app-text-primary); cursor:pointer; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;';
                 const meta = document.createElement('div');
                 meta.className = 'world-panel-world-card-meta';
                 meta.textContent = subtitle || '点击标题展开条目';
-                meta.style.cssText = 'font-size:12px; color:#64748b;';
+                meta.style.cssText = 'font-size:12px; color:var(--app-text-muted);';
                 titleWrap.appendChild(title);
                 titleWrap.appendChild(meta);
 
@@ -435,7 +435,7 @@ export class WorldPanel {
 
                 const entriesWrap = document.createElement('div');
                 entriesWrap.className = 'world-panel-world-card-entries';
-                entriesWrap.style.cssText = 'display:none; margin-top:8px; padding-top:8px; border-top:1px dashed #e2e8f0; max-height:220px; overflow:auto;';
+                entriesWrap.style.cssText = 'display:none; margin-top:8px; padding-top:8px; border-top:1px dashed var(--app-border-default); max-height:220px; overflow:auto;';
                 let entriesLoaded = false;
 
                 const renderEntries = async () => {
@@ -457,7 +457,7 @@ export class WorldPanel {
                             const nameEl = document.createElement('div');
                             nameEl.className = 'world-panel-world-entry-name';
                             nameEl.textContent = label;
-                            nameEl.style.cssText = `font-size:12px; color:${entry?.disable ? '#94a3b8' : '#0f172a'}; flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;`;
+                            nameEl.style.cssText = `font-size:12px; color:${entry?.disable ? 'var(--app-text-muted)' : 'var(--app-text-primary)'}; flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;`;
                             const entryToggle = buildToggle({
                                 enabled: !entry?.disable,
                                 labelOn: '已启用',
@@ -490,7 +490,7 @@ export class WorldPanel {
                                     }
                                     await window.appBridge.saveWorldInfo(targetWorldId, { ...latestWorld, entries: nextEntries });
                                     entry.disable = !entry?.disable;
-                                    nameEl.style.color = entry?.disable ? '#94a3b8' : '#0f172a';
+                                    nameEl.style.color = entry?.disable ? 'var(--app-text-muted)' : 'var(--app-text-primary)';
                                     entryToggle.classList.toggle('is-enabled', !entry?.disable);
                                     entryToggle.classList.toggle('is-disabled', Boolean(entry?.disable));
                                     entryToggle.setAttribute('aria-pressed', entry?.disable ? 'false' : 'true');
@@ -568,13 +568,13 @@ export class WorldPanel {
                         if (!binding?.hasWorld) {
                             const row = document.createElement('div');
                             row.className = 'world-panel-empty-bind-row';
-                            row.style.cssText = 'display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px; border:1px dashed #dbe4ee; border-radius:12px; background:#fff;';
+                            row.style.cssText = 'display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px; border:1px dashed var(--app-border-default); border-radius:12px; background:var(--app-surface-card);';
                             const info = document.createElement('div');
                             info.className = 'world-panel-empty-bind-copy';
                             info.style.cssText = 'min-width:0; flex:1;';
                             info.innerHTML = `
-                                <div style="font-weight:700; color:#0f172a;">${binding.personaName} · 当前角色卡</div>
-                                <div style="font-size:12px; color:#64748b; margin-top:2px;">未绑定角色世界书</div>
+                                <div style="font-weight:700; color:var(--app-text-primary);">${binding.personaName} · 当前角色卡</div>
+                                <div style="font-size:12px; color:var(--app-text-muted); margin-top:2px;">未绑定角色世界书</div>
                             `;
                             const actions = document.createElement('div');
                             actions.style.cssText = 'display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end;';
@@ -645,12 +645,12 @@ export class WorldPanel {
 
                         const row = document.createElement('div');
                         row.className = 'world-panel-member-row';
-                        row.style.cssText = 'display:flex; align-items:center; gap:10px; padding:10px; border:1px solid #dbe4ee; border-radius:12px; background:#fff;';
+                        row.style.cssText = 'display:flex; align-items:center; gap:10px; padding:10px; border:1px solid var(--app-border-default); border-radius:12px; background:var(--app-surface-card);';
                         row.innerHTML = `
                             <img src="${avatar}" alt="" style="width:34px; height:34px; border-radius:50%; object-fit:cover;">
                             <div style="flex:1; min-width:0;">
-                                <div style="font-weight:700; color:#0f172a; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${name}</div>
-                                <div style="font-size:12px; color:${bound.length ? '#475569' : '#94a3b8'}; margin-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
+                                <div style="font-weight:700; color:var(--app-text-primary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${name}</div>
+                                <div style="font-size:12px; color:${bound.length ? 'var(--app-text-secondary)' : 'var(--app-text-muted)'}; margin-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
                                     ${bound.length ? `已绑定：${bound.join(' + ')}` : '未设置成员附加世界书'}
                                 </div>
                             </div>
@@ -700,13 +700,13 @@ export class WorldPanel {
                         if (!binding?.hasWorld) {
                             const row = document.createElement('div');
                             row.className = 'world-panel-empty-bind-row';
-                            row.style.cssText = 'display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px; border:1px dashed #dbe4ee; border-radius:12px; background:#fff;';
+                            row.style.cssText = 'display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px; border:1px dashed var(--app-border-default); border-radius:12px; background:var(--app-surface-card);';
                             const info = document.createElement('div');
                             info.className = 'world-panel-empty-bind-copy';
                             info.style.cssText = 'min-width:0; flex:1;';
                             info.innerHTML = `
-                                <div style="font-weight:700; color:#0f172a;">${binding.personaName} · 当前角色卡</div>
-                                <div style="font-size:12px; color:#64748b; margin-top:2px;">未绑定角色世界书</div>
+                                <div style="font-weight:700; color:var(--app-text-primary);">${binding.personaName} · 当前角色卡</div>
+                                <div style="font-size:12px; color:var(--app-text-muted); margin-top:2px;">未绑定角色世界书</div>
                             `;
                             const actions = document.createElement('div');
                             actions.style.cssText = 'display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end;';
@@ -921,7 +921,7 @@ export class WorldPanel {
             editBtn.type = 'button';
             editBtn.className = 'world-library-btn world-library-btn-neutral';
             editBtn.textContent = '编辑';
-            editBtn.style.cssText = 'padding:4px 8px;border:1px solid #e2e8f0;border-radius:999px;background:#fff;font-size:12px;cursor:pointer;';
+            editBtn.style.cssText = 'padding:4px 8px;border:1px solid var(--app-border-default);border-radius:999px;background:var(--app-surface-card);font-size:12px;cursor:pointer;';
             editBtn.onclick = async (e) => {
                 e.stopPropagation();
                 await this.openEditor(item.name);
@@ -983,7 +983,7 @@ export class WorldPanel {
             const deleteBtn = document.createElement('button');
             deleteBtn.className = 'world-library-btn world-library-btn-danger';
             deleteBtn.textContent = '删除';
-            deleteBtn.style.cssText = 'padding:4px 8px;border:1px solid #fecaca;border-radius:6px;background:#fff;color:#b91c1c;cursor:pointer;';
+            deleteBtn.style.cssText = 'padding:4px 8px;border:1px solid #fecaca;border-radius:6px;background:var(--app-surface-card);color:#b91c1c;cursor:pointer;';
             deleteBtn.onclick = async () => {
                 const ok = await appConfirm({
                     title: '删除世界书',
@@ -1084,7 +1084,7 @@ export class WorldPanel {
             top: 50%;
             left: 50%;
             transform: translate(-50%, -50%);
-            background: #fff;
+            background: var(--app-surface-card);
             border-radius: 12px;
             box-shadow: 0 10px 40px rgba(0,0,0,0.2);
             padding: 16px;
@@ -1096,80 +1096,80 @@ export class WorldPanel {
         this.panel.onclick = (e) => e.stopPropagation();
 
         this.panel.innerHTML = `
-            <h3 style="margin: 0 0 12px; color: #0f172a;">世界书管理</h3>
-            <div id="world-current" style="margin: -4px 0 12px; color:#475569; font-size:13px;">当前：未启用</div>
-            <div id="world-global-settings" style="display:none; margin: 0 0 12px; padding:10px; border:1px dashed #e2e8f0; border-radius:12px; background:#f8fafc;">
+            <h3 style="margin: 0 0 12px; color: var(--app-text-primary);">世界书管理</h3>
+            <div id="world-current" style="margin: -4px 0 12px; color:var(--app-text-secondary); font-size:13px;">当前：未启用</div>
+            <div id="world-global-settings" style="display:none; margin: 0 0 12px; padding:10px; border:1px dashed var(--app-border-default); border-radius:12px; background:var(--app-surface-subtle);">
                 <div id="world-global-settings-header" style="display:flex; align-items:center; justify-content:space-between; cursor:pointer;">
                     <div style="font-weight:700;">全局设置</div>
-                    <div id="world-global-settings-toggle" style="font-size:12px; color:#64748b;">▼</div>
+                    <div id="world-global-settings-toggle" style="font-size:12px; color:var(--app-text-muted);">▼</div>
                 </div>
                 <div id="world-global-settings-body" style="display:none; margin-top:8px;">
                     <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-                        <span style="font-size:12px; color:#475569;">扫描深度</span>
-                        <input id="world-global-scan-depth" type="number" min="0" step="1" placeholder="默认2" style="width:120px; padding:6px 8px; border:1px solid #e2e8f0; border-radius:8px; font-size:12px;">
-                        <span style="font-size:11px; color:#94a3b8;">0 = 不扫描历史</span>
+                        <span style="font-size:12px; color:var(--app-text-secondary);">扫描深度</span>
+                        <input id="world-global-scan-depth" type="number" min="0" step="1" placeholder="默认2" style="width:120px; padding:6px 8px; border:1px solid var(--app-border-default); border-radius:8px; font-size:12px;">
+                        <span style="font-size:11px; color:var(--app-text-muted);">0 = 不扫描历史</span>
                     </div>
                     <div style="display:flex; gap:8px; align-items:center; margin-top:8px; flex-wrap:wrap;">
-                        <span style="font-size:12px; color:#475569;">上下文百分比</span>
-                        <input id="world-global-context-percent" type="number" min="0" max="100" step="1" placeholder="默认" style="width:120px; padding:6px 8px; border:1px solid #e2e8f0; border-radius:8px; font-size:12px;">
-                        <span style="font-size:11px; color:#94a3b8;">%（用于世界书预算）</span>
+                        <span style="font-size:12px; color:var(--app-text-secondary);">上下文百分比</span>
+                        <input id="world-global-context-percent" type="number" min="0" max="100" step="1" placeholder="默认" style="width:120px; padding:6px 8px; border:1px solid var(--app-border-default); border-radius:8px; font-size:12px;">
+                        <span style="font-size:11px; color:var(--app-text-muted);">%（用于世界书预算）</span>
                     </div>
                     <div style="display:flex; gap:8px; align-items:center; margin-top:8px; flex-wrap:wrap;">
-                        <span style="font-size:12px; color:#475569;">预算上限</span>
-                        <input id="world-global-budget-cap" type="number" min="0" step="1" placeholder="0 = 不限制" style="width:120px; padding:6px 8px; border:1px solid #e2e8f0; border-radius:8px; font-size:12px;">
-                        <span style="font-size:11px; color:#94a3b8;">tokens（优先级高于百分比）</span>
+                        <span style="font-size:12px; color:var(--app-text-secondary);">预算上限</span>
+                        <input id="world-global-budget-cap" type="number" min="0" step="1" placeholder="0 = 不限制" style="width:120px; padding:6px 8px; border:1px solid var(--app-border-default); border-radius:8px; font-size:12px;">
+                        <span style="font-size:11px; color:var(--app-text-muted);">tokens（优先级高于百分比）</span>
                     </div>
                     <div style="display:flex; gap:8px; align-items:center; margin-top:8px; flex-wrap:wrap;">
-                        <span style="font-size:12px; color:#475569;">最小启动次数</span>
-                        <input id="world-global-min-activations" type="number" min="0" step="1" placeholder="0 = 关闭" style="width:120px; padding:6px 8px; border:1px solid #e2e8f0; border-radius:8px; font-size:12px;">
-                        <span style="font-size:11px; color:#94a3b8;">自动加深扫描</span>
+                        <span style="font-size:12px; color:var(--app-text-secondary);">最小启动次数</span>
+                        <input id="world-global-min-activations" type="number" min="0" step="1" placeholder="0 = 关闭" style="width:120px; padding:6px 8px; border:1px solid var(--app-border-default); border-radius:8px; font-size:12px;">
+                        <span style="font-size:11px; color:var(--app-text-muted);">自动加深扫描</span>
                     </div>
                     <div style="display:flex; gap:8px; align-items:center; margin-top:8px; flex-wrap:wrap;">
-                        <span style="font-size:12px; color:#475569;">最大深度</span>
-                        <input id="world-global-max-depth" type="number" min="0" step="1" placeholder="0 = 不限制" style="width:120px; padding:6px 8px; border:1px solid #e2e8f0; border-radius:8px; font-size:12px;">
+                        <span style="font-size:12px; color:var(--app-text-secondary);">最大深度</span>
+                        <input id="world-global-max-depth" type="number" min="0" step="1" placeholder="0 = 不限制" style="width:120px; padding:6px 8px; border:1px solid var(--app-border-default); border-radius:8px; font-size:12px;">
                     </div>
                     <div style="display:flex; gap:8px; align-items:center; margin-top:8px; flex-wrap:wrap;">
-                        <span style="font-size:12px; color:#475569;">最大递归步数</span>
-                        <input id="world-global-max-recursion" type="number" min="0" step="1" placeholder="0 = 不限制" style="width:120px; padding:6px 8px; border:1px solid #e2e8f0; border-radius:8px; font-size:12px;">
+                        <span style="font-size:12px; color:var(--app-text-secondary);">最大递归步数</span>
+                        <input id="world-global-max-recursion" type="number" min="0" step="1" placeholder="0 = 不限制" style="width:120px; padding:6px 8px; border:1px solid var(--app-border-default); border-radius:8px; font-size:12px;">
                     </div>
                     <div style="display:flex; gap:8px; align-items:center; margin-top:8px; flex-wrap:wrap;">
-                        <span style="font-size:12px; color:#475569;">插入策略</span>
-                        <select id="world-global-strategy" style="border:1px solid #e2e8f0; border-radius:8px; padding:6px 8px; font-size:12px; background:#fff;">
+                        <span style="font-size:12px; color:var(--app-text-secondary);">插入策略</span>
+                        <select id="world-global-strategy" style="border:1px solid var(--app-border-default); border-radius:8px; padding:6px 8px; font-size:12px; background:var(--app-surface-card);">
                             <option value="role_first">角色世界书优先</option>
                             <option value="global_first">全局世界书优先</option>
                             <option value="even">平均混合</option>
                         </select>
                     </div>
                     <div style="display:flex; gap:8px; align-items:center; margin-top:8px; flex-wrap:wrap;">
-                        <span style="font-size:12px; color:#475569;">变量自动建立</span>
-                        <select id="world-global-variable-define-strategy" style="border:1px solid #e2e8f0; border-radius:8px; padding:6px 8px; font-size:12px; background:#fff;">
+                        <span style="font-size:12px; color:var(--app-text-secondary);">变量自动建立</span>
+                        <select id="world-global-variable-define-strategy" style="border:1px solid var(--app-border-default); border-radius:8px; padding:6px 8px; font-size:12px; background:var(--app-surface-card);">
                             <option value="legacy_eager">请求前自动建立（旧行为）</option>
                             <option value="first_hit">命中条目后再建立</option>
                             <option value="off">关闭运行时自动建立</option>
                         </select>
                     </div>
                     <div style="display:flex; gap:12px; align-items:center; margin-top:8px; flex-wrap:wrap;">
-                        <label style="display:flex; align-items:center; gap:6px; font-size:12px; color:#475569;">
+                        <label style="display:flex; align-items:center; gap:6px; font-size:12px; color:var(--app-text-secondary);">
                             <input id="world-global-include-names" type="checkbox">
                             包含说话人名称
                         </label>
-                        <label style="display:flex; align-items:center; gap:6px; font-size:12px; color:#475569;">
+                        <label style="display:flex; align-items:center; gap:6px; font-size:12px; color:var(--app-text-secondary);">
                             <input id="world-global-recursive-scan" type="checkbox">
                             递归扫描
                         </label>
-                        <label style="display:flex; align-items:center; gap:6px; font-size:12px; color:#475569;">
+                        <label style="display:flex; align-items:center; gap:6px; font-size:12px; color:var(--app-text-secondary);">
                             <input id="world-global-case-sensitive" type="checkbox">
                             区分大小写
                         </label>
-                        <label style="display:flex; align-items:center; gap:6px; font-size:12px; color:#475569;">
+                        <label style="display:flex; align-items:center; gap:6px; font-size:12px; color:var(--app-text-secondary);">
                             <input id="world-global-full-match" type="checkbox">
                             完全配对
                         </label>
-                        <label style="display:flex; align-items:center; gap:6px; font-size:12px; color:#475569;">
+                        <label style="display:flex; align-items:center; gap:6px; font-size:12px; color:var(--app-text-secondary);">
                             <input id="world-global-group-scoring" type="checkbox">
                             使用群组评分
                         </label>
-                        <label style="display:flex; align-items:center; gap:6px; font-size:12px; color:#475569;">
+                        <label style="display:flex; align-items:center; gap:6px; font-size:12px; color:var(--app-text-secondary);">
                             <input id="world-global-overflow-warning" type="checkbox">
                             溢位时警告
                         </label>
@@ -1181,21 +1181,21 @@ export class WorldPanel {
                     <div id="world-list-title" style="font-weight:700; margin-bottom:6px;">已绑定</div>
                     <ul id="world-list" style="list-style:none; padding:0; border:none; border-radius:0; max-height:none; overflow:visible; margin:0; display:flex; flex-direction:column; gap:10px;"></ul>
                     <div style="display:flex; gap:8px; margin-top:8px; flex-wrap: wrap;">
-                        <button id="world-new" style="flex:1; min-width:120px; padding:8px 10px; border:1px solid #ddd; border-radius:8px; background:#019aff; color:#fff; font-weight:700;">新增</button>
-                        <button id="world-library-toggle" style="flex:1; min-width:120px; padding:8px 10px; border:1px solid #ddd; border-radius:8px; background:#f5f5f5;">世界书库</button>
+                        <button id="world-new" style="flex:1; min-width:120px; padding:8px 10px; border:1px solid var(--app-border-default); border-radius:8px; background:#019aff; color:var(--app-text-inverse); font-weight:700;">新增</button>
+                        <button id="world-library-toggle" style="flex:1; min-width:120px; padding:8px 10px; border:1px solid var(--app-border-default); border-radius:8px; background:var(--app-surface-subtle);">世界书库</button>
                     </div>
                 </div>
                 <div style="flex:1 1 45%; min-width: 200px;">
                     <div style="font-weight:700; margin-bottom:6px;">导入世界书</div>
                     <div style="display:flex; gap:8px; align-items:center; margin-bottom:8px;">
-                        <button id="world-file-btn" type="button" style="padding:6px 10px; border-radius:8px; border:1px solid #ddd; background:#f5f5f5; cursor:pointer;">选择文件</button>
-                        <span id="world-file-name" style="font-size:12px; color:#64748b;">未选择文件</span>
+                        <button id="world-file-btn" type="button" style="padding:6px 10px; border-radius:8px; border:1px solid var(--app-border-default); background:var(--app-surface-subtle); cursor:pointer;">选择文件</button>
+                        <span id="world-file-name" style="font-size:12px; color:var(--app-text-muted);">未选择文件</span>
                     </div>
                     <input id="world-file" type="file" accept=".json,application/json" style="display:none;">
-                    <div style="color:#94a3b8; font-size:12px; margin:6px 0;">名称将取自 JSON 的 name 或文件名（无需手动填写）</div>
+                    <div style="color:var(--app-text-muted); font-size:12px; margin:6px 0;">名称将取自 JSON 的 name 或文件名（无需手动填写）</div>
                     <div style="display:flex; gap:8px; margin-top:8px; justify-content:flex-end;">
-                        <button id="world-import" style="padding:8px 14px; border-radius:8px; border:1px solid #ddd; background:#f5f5f5;">导入</button>
-                        <button id="world-close" style="padding:8px 14px; border-radius:8px; border:1px solid #ddd; background:#f5f5f5;">关闭</button>
+                        <button id="world-import" style="padding:8px 14px; border-radius:8px; border:1px solid var(--app-border-default); background:var(--app-surface-subtle);">导入</button>
+                        <button id="world-close" style="padding:8px 14px; border-radius:8px; border:1px solid var(--app-border-default); background:var(--app-surface-subtle);">关闭</button>
                     </div>
                 </div>
             </div>
@@ -1368,17 +1368,17 @@ export class WorldPanel {
                 <div class="sticker-bind-search">
                     <div style="display:flex; gap:8px; align-items:center;">
                         <input type="text" id="world-library-search" placeholder="搜索世界书" style="flex:1;">
-                        <button type="button" id="world-library-reset" style="border:1px solid rgba(148,163,184,0.45); background:#fff; border-radius:999px; padding:5px 10px; font-size:12px; cursor:pointer;">清除</button>
+                        <button type="button" id="world-library-reset" style="border:1px solid rgba(148,163,184,0.45); background:var(--app-surface-card); border-radius:999px; padding:5px 10px; font-size:12px; cursor:pointer;">清除</button>
                     </div>
                 </div>
                 <div class="sticker-bind-toolbar" style="flex-wrap:wrap;">
                     <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-                        <span style="font-size:12px; color:#475569;">排序</span>
-                        <select id="world-library-sort" style="border:1px solid rgba(148,163,184,0.45); border-radius:10px; padding:5px 8px; font-size:12px; background:#fff;">
+                        <span style="font-size:12px; color:var(--app-text-secondary);">排序</span>
+                        <select id="world-library-sort" style="border:1px solid rgba(148,163,184,0.45); border-radius:10px; padding:5px 8px; font-size:12px; background:var(--app-surface-card);">
                             <option value="time">时间</option>
                             <option value="name">字母</option>
                         </select>
-                        <button type="button" id="world-library-sort-dir" aria-label="切换排序方向" style="border:1px solid rgba(148,163,184,0.45); background:#fff; border-radius:999px; width:28px; height:28px; font-size:12px; cursor:pointer; display:flex; align-items:center; justify-content:center;">
+                        <button type="button" id="world-library-sort-dir" aria-label="切换排序方向" style="border:1px solid rgba(148,163,184,0.45); background:var(--app-surface-card); border-radius:999px; width:28px; height:28px; font-size:12px; cursor:pointer; display:flex; align-items:center; justify-content:center;">
                             <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" style="display:block; transform: translateY(1px);">
                                 <path d="M8 2L11 5H9V7H7V5H5L8 2Z" fill="rgba(15,23,42,0.35)"></path>
                                 <path d="M8 14L5 11H7V9H9V11H11L8 14Z" fill="rgba(15,23,42,0.75)"></path>

@@ -72,29 +72,29 @@ export class PersonaPanel {
             position: relative;
             display: flex; flex-direction: column;
             width: min(94vw, 420px); height: min(82vh, 640px); max-height: calc(100% - 8px);
-            background: #fff; border-radius: 12px; overflow: hidden;
+            background: var(--app-surface-card); border-radius: 12px; overflow: hidden;
             box-shadow: 0 8px 32px rgba(0,0,0,0.2);
         `;
 
         this.panel.innerHTML = `
-            <div class="panel-header" style="padding: 15px; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; align-items: center; background: #f8f9fa;">
+            <div class="panel-header" style="padding: 15px; border-bottom: 1px solid var(--app-border-subtle); display: flex; justify-content: space-between; align-items: center; background: var(--app-surface-subtle);">
                 <span style="font-weight: bold; font-size: 16px;">🎭 角色卡管理</span>
-                <button class="close-btn" style="border: none; background: transparent; font-size: 20px; cursor: pointer; color: #666;">×</button>
+                <button class="close-btn" style="border: none; background: transparent; font-size: 20px; cursor: pointer; color: var(--app-text-secondary);">×</button>
             </div>
-            <div id="persona-session-lock-bar" style="padding: 10px 15px; border-bottom: 1px solid rgba(0,0,0,0.06); background: #fff; display:none;">
+            <div id="persona-session-lock-bar" style="padding: 10px 15px; border-bottom: 1px solid rgba(0,0,0,0.06); background: var(--app-surface-card); display:none;">
                 <!-- Filled dynamically -->
             </div>
             <div id="persona-list-container" style="flex: 1; overflow-y: auto; padding: 10px;">
                 <!-- List goes here -->
             </div>
-            <div class="panel-footer" style="padding: 15px; border-top: 1px solid #eee; background: #fff; text-align: center;">
+            <div class="panel-footer" style="padding: 15px; border-top: 1px solid var(--app-border-subtle); background: var(--app-surface-card); text-align: center;">
                 <div style="display:flex; gap:8px;">
                     <button id="import-card-btn" style="
-                        background: #0f172a; color: white; border: none; padding: 10px 16px;
+                        background: #0f172a; color: var(--app-text-inverse); border: none; padding: 10px 16px;
                         border-radius: 18px; font-size: 13px; cursor: pointer; flex: 1;
                     ">导入角色卡</button>
                     <button id="create-persona-btn" style="
-                        background: #007bff; color: white; border: none; padding: 10px 16px; 
+                        background: #007bff; color: var(--app-text-inverse); border: none; padding: 10px 16px; 
                         border-radius: 18px; font-size: 13px; cursor: pointer; flex: 1;
                         box-shadow: 0 2px 5px rgba(0,123,255,0.3);
                     ">+ 新建角色卡</button>
@@ -105,9 +105,9 @@ export class PersonaPanel {
             <!-- Edit View (Hidden by default) -->
             <div id="persona-edit-view" style="
                 display: none; position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-                background: #fff; z-index: 10; flex-direction: column;
+                background: var(--app-surface-card); z-index: 10; flex-direction: column;
             ">
-                <div style="padding: 12px 12px; border-bottom: 1px solid #eee; display: flex; align-items: center; gap: 8px; background: #f8f9fa;">
+                <div style="padding: 12px 12px; border-bottom: 1px solid var(--app-border-subtle); display: flex; align-items: center; gap: 8px; background: var(--app-surface-subtle);">
                     <button id="edit-back-btn" aria-label="返回" style="
                         width: 44px; height: 44px;
                         border: none; background: transparent;
@@ -120,34 +120,34 @@ export class PersonaPanel {
                 <div style="flex: 1; overflow-y: auto; padding: 20px;">
                     <div style="text-align: center; margin-bottom: 20px;">
                         <div id="edit-avatar-preview" style="
-                            width: 80px; height: 80px; border-radius: 50%; background: #eee; 
+                            width: 80px; height: 80px; border-radius: 50%; background-color: var(--app-surface-hover);
                             margin: 0 auto 10px; background-size: cover; background-position: center;
-                            border: 2px solid #fff; box-shadow: 0 2px 8px rgba(0,0,0,0.1); cursor: pointer;
+                            border: 2px solid var(--app-surface-card); box-shadow: 0 2px 8px rgba(0,0,0,0.1); cursor: pointer;
                         "></div>
-                        <button id="edit-avatar-btn" style="font-size: 12px; padding: 4px 10px; background: #eee; border: none; border-radius: 10px; color: #333;">更换头像</button>
+                        <button id="edit-avatar-btn" style="font-size: 12px; padding: 4px 10px; background: var(--app-surface-hover); border: none; border-radius: 10px; color: var(--app-text-primary);">更换头像</button>
                     </div>
 
                     <div style="margin-bottom: 15px;">
-                        <label style="display: block; font-size: 12px; color: #666; margin-bottom: 5px;">角色卡名称</label>
-                        <input type="text" id="edit-name" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 8px; box-sizing: border-box;">
+                        <label style="display: block; font-size: 12px; color: var(--app-text-secondary); margin-bottom: 5px;">角色卡名称</label>
+                        <input type="text" id="edit-name" style="width: 100%; padding: 10px; border: 1px solid var(--app-border-default); border-radius: 8px; box-sizing: border-box;">
                     </div>
 
                     <div style="margin-bottom: 15px;">
-                        <label style="display: block; font-size: 12px; color: #666; margin-bottom: 5px;">
+                        <label style="display: block; font-size: 12px; color: var(--app-text-secondary); margin-bottom: 5px;">
                             角色描述
-                            <span style="color:#999; font-size:11px; margin-left:5px;">可用于手动补充角色卡设定</span>
+                            <span style="color:var(--app-text-muted); font-size:11px; margin-left:5px;">可用于手动补充角色卡设定</span>
                         </label>
                         <textarea id="edit-desc" style="
-                            width: 100%; height: 120px; padding: 10px; border: 1px solid #ddd; 
+                            width: 100%; height: 120px; padding: 10px; border: 1px solid var(--app-border-default); 
                             border-radius: 8px; resize: none; box-sizing: border-box; font-family: inherit;
                         " placeholder="例如：外表冷淡、说话简短，但会在关键时刻保护同伴。"></textarea>
                     </div>
 
                     <div style="margin-bottom: 15px; padding: 12px; border: 1px solid rgba(0,0,0,0.06); border-radius: 10px; background: rgba(248,250,252,0.8);">
-                        <div style="font-size: 12px; font-weight: 700; color: #334155; margin-bottom: 8px;">注入设置</div>
+                        <div style="font-size: 12px; font-weight: 700; color: var(--app-text-secondary); margin-bottom: 8px;">注入设置</div>
                         <div style="margin-bottom: 10px;">
-                            <label style="display:block; font-size:12px; color:#666; margin-bottom:5px;">插入位置</label>
-                            <select id="edit-position" style="width:100%; padding:10px; border:1px solid #ddd; border-radius:8px; box-sizing:border-box;">
+                            <label style="display:block; font-size:12px; color:var(--app-text-secondary); margin-bottom:5px;">插入位置</label>
+                            <select id="edit-position" style="width:100%; padding:10px; border:1px solid var(--app-border-default); border-radius:8px; box-sizing:border-box;">
                                 <option value="0">IN_PROMPT（作为 system prompt 注入）</option>
                                 <option value="4">AT_DEPTH（插入到聊天历史指定深度）</option>
                                 <option value="9">NONE（不注入）</option>
@@ -155,27 +155,27 @@ export class PersonaPanel {
                         </div>
                         <div id="edit-depth-wrap" style="display:none; gap:10px;">
                             <div style="flex:1;">
-                                <label style="display:block; font-size:12px; color:#666; margin-bottom:5px;">深度（0=最后一条）</label>
-                                <input type="number" id="edit-depth" min="0" step="1" style="width:100%; padding:10px; border:1px solid #ddd; border-radius:8px; box-sizing:border-box;" />
+                                <label style="display:block; font-size:12px; color:var(--app-text-secondary); margin-bottom:5px;">深度（0=最后一条）</label>
+                                <input type="number" id="edit-depth" min="0" step="1" style="width:100%; padding:10px; border:1px solid var(--app-border-default); border-radius:8px; box-sizing:border-box;" />
                             </div>
                             <div style="flex:1;">
-                                <label style="display:block; font-size:12px; color:#666; margin-bottom:5px;">注入角色</label>
-                                <select id="edit-role" style="width:100%; padding:10px; border:1px solid #ddd; border-radius:8px; box-sizing:border-box;">
+                                <label style="display:block; font-size:12px; color:var(--app-text-secondary); margin-bottom:5px;">注入角色</label>
+                                <select id="edit-role" style="width:100%; padding:10px; border:1px solid var(--app-border-default); border-radius:8px; box-sizing:border-box;">
                                     <option value="0">system</option>
                                     <option value="1">user</option>
                                     <option value="2">assistant</option>
                                 </select>
                             </div>
                         </div>
-                        <div style="margin-top:10px; font-size:11px; color:#64748b; line-height:1.4;">
+                        <div style="margin-top:10px; font-size:11px; color:var(--app-text-muted); line-height:1.4;">
                             当前仍沿用旧字段结构，后续会继续调整角色卡编辑内容。
                         </div>
                     </div>
 
                     <button id="delete-persona-btn" style="width: 100%; padding: 12px; background: #fee2e2; color: #dc2626; border: none; border-radius: 8px; margin-top: 20px; cursor: pointer;">删除此角色卡</button>
                 </div>
-                <div style="padding: 15px; border-top: 1px solid #eee; background: #fff;">
-                    <button id="save-persona-btn" style="width: 100%; padding: 12px; background: #007bff; color: white; border: none; border-radius: 8px; font-weight: bold; cursor: pointer;">保存</button>
+                <div style="padding: 15px; border-top: 1px solid var(--app-border-subtle); background: var(--app-surface-card);">
+                    <button id="save-persona-btn" style="width: 100%; padding: 12px; background: #007bff; color: var(--app-text-inverse); border: none; border-radius: 8px; font-weight: bold; cursor: pointer;">保存</button>
                 </div>
             </div>
         `;
@@ -224,7 +224,7 @@ export class PersonaPanel {
         modal.className = 'app-themed-panel persona-import-panel';
         modal.style.cssText = `
             width: min(92vw, 420px);
-            background: #fff;
+            background: var(--app-surface-card);
             border-radius: 14px;
             overflow: hidden;
             display:flex;
@@ -235,19 +235,19 @@ export class PersonaPanel {
         modal.addEventListener('click', (e) => e.stopPropagation());
 
         modal.innerHTML = `
-            <div style="display:flex; align-items:center; gap:10px; padding:12px 14px; background:#f8fafc; border-bottom:1px solid #e5e7eb;">
+            <div style="display:flex; align-items:center; gap:10px; padding:12px 14px; background:var(--app-surface-subtle); border-bottom:1px solid var(--app-border-default);">
                 <div style="font-weight:800;">导入角色卡</div>
                 <button id="persona-import-close" style="margin-left:auto; width:36px; height:36px; border:none; background:transparent; font-size:20px; border-radius:10px; cursor:pointer;">×</button>
             </div>
             <div style="padding:14px; display:flex; flex-direction:column; gap:12px;">
                 <div>
-                    <div style="font-size:12px; color:#64748b; margin-bottom:6px;">本地文件</div>
-                    <button id="persona-import-file" style="width:100%; padding:10px 12px; border:1px solid #e2e8f0; border-radius:10px; background:#fff; cursor:pointer; font-size:14px;">选择文件（PNG / JSON）</button>
+                    <div style="font-size:12px; color:var(--app-text-muted); margin-bottom:6px;">本地文件</div>
+                    <button id="persona-import-file" style="width:100%; padding:10px 12px; border:1px solid var(--app-border-default); border-radius:10px; background:var(--app-surface-card); cursor:pointer; font-size:14px;">选择文件（PNG / JSON）</button>
                 </div>
-                <div style="border-top:1px dashed #e5e7eb; padding-top:12px;">
-                    <div style="font-size:12px; color:#64748b; margin-bottom:6px;">链接导入</div>
-                    <input id="persona-import-url" type="url" placeholder="粘贴 PNG/JSON 链接" style="width:100%; padding:8px 10px; border:1px solid #e2e8f0; border-radius:10px; box-sizing:border-box;">
-                    <button id="persona-import-url-btn" style="margin-top:8px; width:100%; padding:9px 12px; border:none; border-radius:10px; background:#0f172a; color:#fff; cursor:pointer; font-size:14px;">导入链接</button>
+                <div style="border-top:1px dashed var(--app-border-default); padding-top:12px;">
+                    <div style="font-size:12px; color:var(--app-text-muted); margin-bottom:6px;">链接导入</div>
+                    <input id="persona-import-url" type="url" placeholder="粘贴 PNG/JSON 链接" style="width:100%; padding:8px 10px; border:1px solid var(--app-border-default); border-radius:10px; box-sizing:border-box;">
+                    <button id="persona-import-url-btn" style="margin-top:8px; width:100%; padding:9px 12px; border:none; border-radius:10px; background:#0f172a; color:var(--app-text-inverse); cursor:pointer; font-size:14px;">导入链接</button>
                 </div>
             </div>
         `;
@@ -327,7 +327,7 @@ export class PersonaPanel {
         panel.style.cssText = `
             width: min(96vw, 520px);
             height: min(86vh, 720px);
-            background: #fff;
+            background: var(--app-surface-card);
             border-radius: 14px;
             overflow: hidden;
             display:flex;
@@ -337,29 +337,29 @@ export class PersonaPanel {
         panel.addEventListener('click', (e) => e.stopPropagation());
 
         panel.innerHTML = `
-            <div style="display:flex; align-items:center; gap:10px; padding:12px; background:#f3f4f6; border-bottom:1px solid #e5e7eb;">
+            <div style="display:flex; align-items:center; gap:10px; padding:12px; background:var(--app-surface-page); border-bottom:1px solid var(--app-border-default);">
                 <button id="persona-bulk-back" style="width:44px; height:44px; border:none; background:transparent; border-radius:12px; font-size:22px; display:flex; align-items:center; justify-content:center; cursor:pointer;">←</button>
                 <div style="font-weight:900;">批量绑定角色卡</div>
-                <div id="persona-bulk-meta" style="margin-left:auto; font-size:12px; color:#64748b; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"></div>
+                <div id="persona-bulk-meta" style="margin-left:auto; font-size:12px; color:var(--app-text-muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"></div>
             </div>
 
             <div style="padding:10px 12px; border-bottom:1px solid rgba(0,0,0,0.06);">
-                <div id="persona-bulk-search-box" style="display:flex; align-items:center; gap:8px; padding:10px 12px; border:1px solid rgba(0,0,0,0.10); border-radius:14px; background:#fff;">
+                <div id="persona-bulk-search-box" style="display:flex; align-items:center; gap:8px; padding:10px 12px; border:1px solid rgba(0,0,0,0.10); border-radius:14px; background:var(--app-surface-card);">
                     <input id="persona-bulk-search" type="text" placeholder="搜索联系人/群组..." style="flex:1; border:none; outline:none; font-size:14px; background:transparent;">
-                    <button id="persona-bulk-clear" type="button" aria-label="清除搜索" style="display:none; width:32px; height:32px; border:none; border-radius:10px; background:#f1f5f9; cursor:pointer;">×</button>
+                    <button id="persona-bulk-clear" type="button" aria-label="清除搜索" style="display:none; width:32px; height:32px; border:none; border-radius:10px; background:var(--app-surface-hover); cursor:pointer;">×</button>
                 </div>
                 <div style="margin-top:8px; display:flex; gap:8px; align-items:center;">
-                    <button id="persona-bulk-select-all" style="border:1px solid #e2e8f0; background:#fff; border-radius:10px; padding:8px 10px; font-size:13px; cursor:pointer;">全选</button>
-                    <button id="persona-bulk-select-none" style="border:1px solid #e2e8f0; background:#fff; border-radius:10px; padding:8px 10px; font-size:13px; cursor:pointer;">全不选</button>
-                    <div id="persona-bulk-count" style="margin-left:auto; color:#64748b; font-size:12px;"></div>
+                    <button id="persona-bulk-select-all" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:8px 10px; font-size:13px; cursor:pointer;">全选</button>
+                    <button id="persona-bulk-select-none" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:8px 10px; font-size:13px; cursor:pointer;">全不选</button>
+                    <div id="persona-bulk-count" style="margin-left:auto; color:var(--app-text-muted); font-size:12px;"></div>
                 </div>
             </div>
 
             <div id="persona-bulk-list" style="flex:1; min-height:0; overflow:auto; -webkit-overflow-scrolling:touch; padding:10px 12px;"></div>
 
             <div style="padding:12px; border-top:1px solid rgba(0,0,0,0.08); display:flex; gap:10px;">
-                <button id="persona-bulk-cancel" style="flex:1; border:1px solid #e2e8f0; background:#fff; border-radius:12px; padding:12px; font-weight:700; cursor:pointer;">取消</button>
-                <button id="persona-bulk-save" style="flex:2; border:none; background:#2563eb; color:#fff; border-radius:12px; padding:12px; font-weight:900; cursor:pointer;">保存绑定</button>
+                <button id="persona-bulk-cancel" style="flex:1; border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:12px; padding:12px; font-weight:700; cursor:pointer;">取消</button>
+                <button id="persona-bulk-save" style="flex:2; border:none; background:#2563eb; color:var(--app-text-inverse); border-radius:12px; padding:12px; font-weight:900; cursor:pointer;">保存绑定</button>
             </div>
         `;
 
@@ -492,7 +492,7 @@ export class PersonaPanel {
         listEl.innerHTML = '';
         if (!items.length) {
             const empty = document.createElement('div');
-            empty.style.cssText = 'padding:18px 10px; color:#94a3b8; text-align:center;';
+            empty.style.cssText = 'padding:18px 10px; color:var(--app-text-muted); text-align:center;';
             empty.textContent = '未找到匹配的联系人/群组';
             listEl.appendChild(empty);
         } else {
@@ -505,17 +505,17 @@ export class PersonaPanel {
                     border: 1px solid rgba(0,0,0,0.06);
                     border-radius: 12px;
                     margin-bottom: 8px;
-                    background: ${checked ? 'rgba(37,99,235,0.06)' : '#fff'};
+                    background: ${checked ? 'rgba(37,99,235,0.06)' : 'var(--app-surface-card)'};
                 `;
                 const avatarUrl = it.avatar || (it.isGroup ? './assets/external/feather-default.png' : './assets/external/feather-default.png');
                 row.innerHTML = `
                     <input class="persona-bulk-check" type="checkbox" ${checked ? 'checked' : ''} style="width:18px; height:18px;">
-                    <img src="${avatarUrl}" alt="" style="width:36px; height:36px; border-radius:12px; object-fit:cover; background:#eee;">
+                    <img src="${avatarUrl}" alt="" style="width:36px; height:36px; border-radius:12px; object-fit:cover; background:var(--app-surface-hover);">
                     <div style="flex:1; min-width:0;">
-                        <div style="font-weight:800; color:#0f172a; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
+                        <div style="font-weight:800; color:var(--app-text-primary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
                             ${it.name}${it.isGroup ? ' · 群组' : ''}
                         </div>
-                        <div style="color:#64748b; font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${it.id}</div>
+                        <div style="color:var(--app-text-muted); font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${it.id}</div>
                     </div>
                 `;
                 const checkbox = row.querySelector('.persona-bulk-check');
@@ -635,12 +635,12 @@ export class PersonaPanel {
         bar.innerHTML = `
             <div style="display:flex; align-items:center; gap:10px;">
                 <div style="flex:1; min-width:0;">
-                    <div style="font-weight:800; color:#0f172a; font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">当前会话：${sessionId}</div>
-                    <div style="color:#64748b; font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
+                    <div style="font-weight:800; color:var(--app-text-primary); font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">当前会话：${sessionId}</div>
+                    <div style="color:var(--app-text-muted); font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
                         ${lockPersonaId ? `已锁定角色卡：${lockedName}` : '未锁定（使用全局角色卡）'}
                     </div>
                 </div>
-                ${lockPersonaId ? `<button id="persona-unlock-btn" style="border:1px solid #e2e8f0; background:#fff; border-radius:10px; padding:6px 10px; cursor:pointer;">解除锁定</button>` : ''}
+                ${lockPersonaId ? `<button id="persona-unlock-btn" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:6px 10px; cursor:pointer;">解除锁定</button>` : ''}
             </div>
         `;
         bar.querySelector('#persona-unlock-btn')?.addEventListener('click', (e) => {
@@ -679,8 +679,8 @@ export class PersonaPanel {
             const item = document.createElement('div');
             item.style.cssText = `
                 display: flex; align-items: center; gap: 10px; padding: 12px;
-                border-bottom: 1px solid #f0f0f0; cursor: pointer;
-                background: ${p.id === activeId ? '#f0f9ff' : 'white'};
+                border-bottom: 1px solid var(--app-border-subtle); cursor: pointer;
+                background: ${p.id === activeId ? '#f0f9ff' : 'var(--app-surface-card)'};
                 border-radius: 8px; margin-bottom: 5px;
                 border: 1px solid ${p.id === activeId ? '#bae6fd' : 'transparent'};
             `;
@@ -692,16 +692,16 @@ export class PersonaPanel {
 
             item.innerHTML = `
                 <div style="position: relative;">
-                    <img src="${avatarUrl}" style="width: 40px; height: 40px; border-radius: 50%; object-fit: cover; background: #eee;">
-                    ${p.id === activeId ? '<div style="position: absolute; bottom: 0; right: 0; width: 14px; height: 14px; background: #007bff; border-radius: 50%; border: 2px solid white;"></div>' : ''}
-                    ${isLockedForSession ? '<div title="此会话已锁定" style="position:absolute; top:-4px; right:-4px; width:18px; height:18px; background:#0f172a; color:#fff; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:11px; border:2px solid #fff;">🔒</div>' : ''}
+                    <img src="${avatarUrl}" style="width: 40px; height: 40px; border-radius: 50%; object-fit: cover; background: var(--app-surface-hover);">
+                    ${p.id === activeId ? '<div style="position: absolute; bottom: 0; right: 0; width: 14px; height: 14px; background: #007bff; border-radius: 50%; border: 2px solid var(--app-surface-card);"></div>' : ''}
+                    ${isLockedForSession ? '<div title="此会话已锁定" style="position:absolute; top:-4px; right:-4px; width:18px; height:18px; background:#0f172a; color:var(--app-text-inverse); border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:11px; border:2px solid var(--app-surface-card);">🔒</div>' : ''}
                 </div>
                 <div style="flex: 1; min-width: 0;">
-                    <div style="font-weight: bold; color: #333; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${cardName}</div>
-                    <div style="font-size: 12px; color: #999; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${subtitle}</div>
+                    <div style="font-weight: bold; color: var(--app-text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${cardName}</div>
+                    <div style="font-size: 12px; color: var(--app-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${subtitle}</div>
                 </div>
                 <button class="edit-btn" style="
-                    padding: 8px; border: none; background: transparent; color: #999; cursor: pointer;
+                    padding: 8px; border: none; background: transparent; color: var(--app-text-muted); cursor: pointer;
                     font-size: 16px;
                 ">✎</button>
             `;

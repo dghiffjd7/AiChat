@@ -263,7 +263,7 @@ export function createVariableBrowserModalImpl(deps = {}) {
                         <input id="world-var-browser-initial" class="world-var-input" type="text" value="" placeholder="初始值">
                     </div>
                 </div>
-                <div id="world-var-browser-hint" style="font-size:12px; line-height:1.5; color:#64748b;">
+                <div id="world-var-browser-hint" style="font-size:12px; line-height:1.5; color:var(--app-text-muted);">
                     ${WORLD_CONDITION_VARIABLE_HINT}
                 </div>
                 <div class="world-var-browser-actions">

@@ -116,7 +116,7 @@ export class RegexPanel {
             right: calc(10px + env(safe-area-inset-right, 0px));
             height: calc(100vh - 20px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
             height: calc(100dvh - 20px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
-            background:#fff; border-radius:12px; box-shadow:0 10px 40px rgba(0,0,0,0.25);
+            background:var(--app-surface-card); border-radius:12px; box-shadow:0 10px 40px rgba(0,0,0,0.25);
             z-index:21000;
             flex-direction:column;
             overflow:hidden;
@@ -126,18 +126,18 @@ export class RegexPanel {
         this.element.innerHTML = `
             <div style="padding:14px 16px; border-bottom:1px solid rgba(0,0,0,0.06); background:rgba(248,250,252,0.92); display:flex; align-items:center; justify-content:space-between; gap:10px;">
                 <div style="min-width:0;">
-                    <div style="font-weight:800; color:#0f172a;">正规表达式</div>
-                    <div style="color:#64748b; font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
+                    <div style="font-weight:800; color:var(--app-text-primary);">正规表达式</div>
+                    <div style="color:var(--app-text-muted); font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
                         参考 ST：按规则替换输入/输出文本；支持全局与绑定预设/世界书的局部规则
                     </div>
                 </div>
-                <button id="regex-close" style="border:none; background:transparent; font-size:22px; cursor:pointer; color:#0f172a;">×</button>
+                <button id="regex-close" style="border:none; background:transparent; font-size:22px; cursor:pointer; color:var(--app-text-primary);">×</button>
             </div>
 
             <div style="padding:10px 16px; border-bottom:1px solid rgba(0,0,0,0.06); display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;">
                 <div style="display:flex; gap:8px; flex-wrap:wrap;">
-                    <button class="regex-tab" data-tab="global" style="border:none; background:transparent; padding:10px 12px; border-radius:10px; cursor:pointer; font-size:14px; color:#334155;">全局正则</button>
-                    <button class="regex-tab" data-tab="local" style="border:none; background:transparent; padding:10px 12px; border-radius:10px; cursor:pointer; font-size:14px; color:#334155;">局部正则</button>
+                    <button class="regex-tab" data-tab="global" style="border:none; background:transparent; padding:10px 12px; border-radius:10px; cursor:pointer; font-size:14px; color:var(--app-text-secondary);">全局正则</button>
+                    <button class="regex-tab" data-tab="local" style="border:none; background:transparent; padding:10px 12px; border-radius:10px; cursor:pointer; font-size:14px; color:var(--app-text-secondary);">局部正则</button>
                 </div>
                 <div id="regex-tools" style="display:flex; gap:8px; flex-wrap:wrap;"></div>
             </div>
@@ -164,8 +164,8 @@ export class RegexPanel {
     setActiveTabStyles() {
         this.element?.querySelectorAll('.regex-tab')?.forEach(btn => {
             const isActive = btn.dataset.tab === this.activeTab;
-            btn.style.background = isActive ? '#e2e8f0' : 'transparent';
-            btn.style.color = isActive ? '#0f172a' : '#334155';
+            btn.style.background = isActive ? 'var(--app-border-default)' : 'transparent';
+            btn.style.color = isActive ? 'var(--app-text-primary)' : 'var(--app-text-secondary)';
             btn.style.fontWeight = isActive ? '800' : '600';
         });
     }
@@ -192,7 +192,7 @@ export class RegexPanel {
         card.className = 'regex-rule';
         card.dataset.ruleId = r.id;
         card.dataset.collapsed = 'true';
-        card.style.cssText = 'border:1px solid rgba(0,0,0,0.08); border-radius:12px; background:#fff; overflow:hidden;';
+        card.style.cssText = 'border:1px solid rgba(0,0,0,0.08); border-radius:12px; background:var(--app-surface-card); overflow:hidden;';
 
         const header = document.createElement('div');
         header.className = 're-header';
@@ -201,10 +201,10 @@ export class RegexPanel {
         const left = document.createElement('div');
         left.style.cssText = 'display:flex; align-items:center; gap:10px; min-width:0;';
         left.innerHTML = `
-            <div class="re-toggle" style="font-size:16px; color:#64748b; user-select:none; width:18px;">▸</div>
+            <div class="re-toggle" style="font-size:16px; color:var(--app-text-muted); user-select:none; width:18px;">▸</div>
             <div style="min-width:0;">
-                <div class="re-title" style="font-weight:800; color:#0f172a; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"></div>
-                <div class="re-sub" style="color:#64748b; font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"></div>
+                <div class="re-title" style="font-weight:800; color:var(--app-text-primary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"></div>
+                <div class="re-sub" style="color:var(--app-text-muted); font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"></div>
             </div>
         `;
         header.appendChild(left);
@@ -212,7 +212,7 @@ export class RegexPanel {
         const right = document.createElement('div');
         right.style.cssText = 'display:flex; align-items:center; gap:10px;';
         const enabledWrap = document.createElement('label');
-        enabledWrap.style.cssText = 'display:flex; align-items:center; gap:6px; font-size:12px; color:#334155; cursor:pointer;';
+        enabledWrap.style.cssText = 'display:flex; align-items:center; gap:6px; font-size:12px; color:var(--app-text-secondary); cursor:pointer;';
         enabledWrap.innerHTML = `<input type="checkbox" class="re-enabled" style="width:16px; height:16px;">启用`;
         right.appendChild(enabledWrap);
         const del = document.createElement('button');
@@ -230,31 +230,31 @@ export class RegexPanel {
         body.innerHTML = `
             <div style="display:flex; gap:10px; flex-wrap:wrap;">
                 <div style="flex:1; min-width: 220px;">
-                    <div style="font-weight:700; color:#0f172a; margin-bottom:6px;">脚本名称</div>
-                    <input class="re-name" style="width:100%; padding:10px; border:1px solid #e2e8f0; border-radius:10px; font-size:13px;">
+                    <div style="font-weight:700; color:var(--app-text-primary); margin-bottom:6px;">脚本名称</div>
+                    <input class="re-name" style="width:100%; padding:10px; border:1px solid var(--app-border-default); border-radius:10px; font-size:13px;">
                 </div>
                 <div style="flex:1; min-width: 280px;">
-                    <div style="font-weight:700; color:#0f172a; margin-bottom:6px;">Find Regex</div>
-                    <input class="re-find" spellcheck="false" style="width:100%; padding:10px; border:1px solid #e2e8f0; border-radius:10px; font-size:13px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;">
+                    <div style="font-weight:700; color:var(--app-text-primary); margin-bottom:6px;">Find Regex</div>
+                    <input class="re-find" spellcheck="false" style="width:100%; padding:10px; border:1px solid var(--app-border-default); border-radius:10px; font-size:13px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;">
                 </div>
             </div>
 
             <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;">
                 <div style="flex:1; min-width: 260px;">
-                    <div style="font-weight:700; color:#0f172a; margin-bottom:6px;">Replace With</div>
-                    <textarea class="re-repl" rows="3" spellcheck="false" style="width:100%; padding:10px; border:1px solid #e2e8f0; border-radius:10px; font-size:13px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;"></textarea>
-                    <div style="color:#64748b; font-size:12px; margin-top:6px;">支持 {{match}}、$1/$2…、$&lt;name&gt;。</div>
+                    <div style="font-weight:700; color:var(--app-text-primary); margin-bottom:6px;">Replace With</div>
+                    <textarea class="re-repl" rows="3" spellcheck="false" style="width:100%; padding:10px; border:1px solid var(--app-border-default); border-radius:10px; font-size:13px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;"></textarea>
+                    <div style="color:var(--app-text-muted); font-size:12px; margin-top:6px;">支持 {{match}}、$1/$2…、$&lt;name&gt;。</div>
                 </div>
                 <div style="flex:1; min-width: 260px;">
-                    <div style="font-weight:700; color:#0f172a; margin-bottom:6px;">Trim Out（每行一个）</div>
-                    <textarea class="re-trim" rows="3" spellcheck="false" style="width:100%; padding:10px; border:1px solid #e2e8f0; border-radius:10px; font-size:13px;"></textarea>
+                    <div style="font-weight:700; color:var(--app-text-primary); margin-bottom:6px;">Trim Out（每行一个）</div>
+                    <textarea class="re-trim" rows="3" spellcheck="false" style="width:100%; padding:10px; border:1px solid var(--app-border-default); border-radius:10px; font-size:13px;"></textarea>
                 </div>
             </div>
 
             <div style="display:flex; gap:14px; flex-wrap:wrap; margin-top:12px;">
                 <div style="flex:1; min-width: 260px; border:1px solid rgba(0,0,0,0.06); border-radius:12px; padding:10px;">
-                    <div style="font-weight:800; color:#0f172a; margin-bottom:8px;">影响条目（Affects）</div>
-                    <div style="display:flex; gap:12px; flex-wrap:wrap; color:#334155; font-size:13px;">
+                    <div style="font-weight:800; color:var(--app-text-primary); margin-bottom:8px;">影响条目（Affects）</div>
+                    <div style="display:flex; gap:12px; flex-wrap:wrap; color:var(--app-text-secondary); font-size:13px;">
                         <label style="display:flex; gap:6px; align-items:center; cursor:pointer;"><input type="checkbox" class="re-place" value="1">用户输入</label>
                         <label style="display:flex; gap:6px; align-items:center; cursor:pointer;"><input type="checkbox" class="re-place" value="2">AI输出</label>
                         <label style="display:flex; gap:6px; align-items:center; cursor:pointer;"><input type="checkbox" class="re-place" value="3">Slash</label>
@@ -262,35 +262,35 @@ export class RegexPanel {
                         <label style="display:flex; gap:6px; align-items:center; cursor:pointer;"><input type="checkbox" class="re-place" value="6">推理</label>
                     </div>
                     <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px; align-items:center;">
-                        <div style="font-size:13px; color:#334155; font-weight:700;">深度</div>
-                        <input class="re-min-depth" type="number" min="-1" max="9999" placeholder="Min" style="width:120px; padding:8px 10px; border:1px solid #e2e8f0; border-radius:10px;">
-                        <input class="re-max-depth" type="number" min="0" max="9999" placeholder="Max" style="width:120px; padding:8px 10px; border:1px solid #e2e8f0; border-radius:10px;">
-                        <div style="color:#64748b; font-size:12px;">0=最后一条，1=倒数第二条…</div>
+                        <div style="font-size:13px; color:var(--app-text-secondary); font-weight:700;">深度</div>
+                        <input class="re-min-depth" type="number" min="-1" max="9999" placeholder="Min" style="width:120px; padding:8px 10px; border:1px solid var(--app-border-default); border-radius:10px;">
+                        <input class="re-max-depth" type="number" min="0" max="9999" placeholder="Max" style="width:120px; padding:8px 10px; border:1px solid var(--app-border-default); border-radius:10px;">
+                        <div style="color:var(--app-text-muted); font-size:12px;">0=最后一条，1=倒数第二条…</div>
                     </div>
                 </div>
 
                 <div style="flex:1; min-width: 260px; border:1px solid rgba(0,0,0,0.06); border-radius:12px; padding:10px;">
-                    <div style="font-weight:800; color:#0f172a; margin-bottom:8px;">其他选项</div>
-                    <div style="display:flex; flex-direction:column; gap:8px; color:#334155; font-size:13px;">
+                    <div style="font-weight:800; color:var(--app-text-primary); margin-bottom:8px;">其他选项</div>
+                    <div style="display:flex; flex-direction:column; gap:8px; color:var(--app-text-secondary); font-size:13px;">
                         <label style="display:flex; gap:8px; align-items:center; cursor:pointer;"><input type="checkbox" class="re-disabled">停用（Disabled）</label>
                         <label style="display:flex; gap:8px; align-items:center; cursor:pointer;"><input type="checkbox" class="re-run-on-edit">编辑消息时执行（Run On Edit）</label>
                         <label style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
                             <span style="font-weight:700;">Find Regex 宏</span>
-                            <select class="re-substitute" style="padding:8px 10px; border:1px solid #e2e8f0; border-radius:10px;">
+                            <select class="re-substitute" style="padding:8px 10px; border:1px solid var(--app-border-default); border-radius:10px;">
                                 <option value="0">不替换</option>
                                 <option value="1">替换（raw）</option>
                                 <option value="2">替换（escaped）</option>
                             </select>
                         </label>
                         <div style="margin-top:6px;">
-                            <div style="font-weight:700; color:#0f172a; margin-bottom:6px;">暂时性（Ephemerality）</div>
+                            <div style="font-weight:700; color:var(--app-text-primary); margin-bottom:6px;">暂时性（Ephemerality）</div>
                             <label style="display:flex; gap:8px; align-items:center; cursor:pointer; margin-bottom:6px;">
                                 <input type="checkbox" class="re-md-only">仅影响聊天显示（不改存档）
                             </label>
                             <label style="display:flex; gap:8px; align-items:center; cursor:pointer;">
                                 <input type="checkbox" class="re-prompt-only">仅影响发送给 LLM 的 prompt（不改存档）
                             </label>
-                            <div style="color:#64748b; font-size:12px; margin-top:6px;">两者都不勾选：将直接修改聊天存档内容（不可逆）。</div>
+                            <div style="color:var(--app-text-muted); font-size:12px; margin-top:6px;">两者都不勾选：将直接修改聊天存档内容（不可逆）。</div>
                         </div>
                     </div>
                 </div>
@@ -414,13 +414,13 @@ export class RegexPanel {
         const head = document.createElement('div');
         head.style.cssText = 'display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;';
         head.innerHTML = `
-            <label style="display:flex; align-items:center; gap:8px; font-size:13px; color:#334155; cursor:pointer;">
+            <label style="display:flex; align-items:center; gap:8px; font-size:13px; color:var(--app-text-secondary); cursor:pointer;">
                 <input id="re-global-enabled" type="checkbox" style="width:16px; height:16px;">
                 启用全局正则
             </label>
             <div style="display:flex; gap:8px; flex-wrap:wrap;">
-                <button type="button" id="re-global-add" style="padding:10px 12px; border:1px solid #e2e8f0; border-radius:10px; background:#fff; cursor:pointer;">＋ 新增规则</button>
-                <button type="button" id="re-global-save" style="padding:10px 12px; border:none; border-radius:10px; background:#019aff; color:#fff; cursor:pointer; font-weight:700;">保存</button>
+                <button type="button" id="re-global-add" style="padding:10px 12px; border:1px solid var(--app-border-default); border-radius:10px; background:var(--app-surface-card); cursor:pointer;">＋ 新增规则</button>
+                <button type="button" id="re-global-save" style="padding:10px 12px; border:none; border-radius:10px; background:#019aff; color:var(--app-text-inverse); cursor:pointer; font-weight:700;">保存</button>
             </div>
         `;
         head.querySelector('#re-global-enabled').checked = g.enabled !== false;
@@ -469,9 +469,9 @@ export class RegexPanel {
         const left = document.createElement('div');
         left.style.cssText = 'flex:1; min-width: 220px; max-width: 320px;';
         left.innerHTML = `
-            <div style="font-weight:800; color:#0f172a; margin-bottom:8px;">局部正则集合</div>
+            <div style="font-weight:800; color:var(--app-text-primary); margin-bottom:8px;">局部正则集合</div>
             <div style="display:flex; gap:8px; margin-bottom:8px;">
-                <button type="button" id="re-local-new" style="flex:1; padding:10px 12px; border:1px solid #e2e8f0; border-radius:10px; background:#fff; cursor:pointer;">＋ 新建</button>
+                <button type="button" id="re-local-new" style="flex:1; padding:10px 12px; border:1px solid var(--app-border-default); border-radius:10px; background:var(--app-surface-card); cursor:pointer;">＋ 新建</button>
                 <button type="button" id="re-local-del" style="padding:10px 12px; border:1px solid #fecaca; border-radius:10px; background:#fee2e2; color:#b91c1c; cursor:pointer;">删除</button>
             </div>
             <div id="re-local-setlist" style="border:1px solid rgba(0,0,0,0.08); border-radius:12px; overflow:hidden;"></div>
@@ -493,7 +493,7 @@ export class RegexPanel {
             setlist.innerHTML = '';
             if (!sets.length) {
                 const empty = document.createElement('div');
-                empty.style.cssText = 'padding:12px; color:#94a3b8; text-align:center;';
+                empty.style.cssText = 'padding:12px; color:var(--app-text-muted); text-align:center;';
                 empty.textContent = '暂无局部正则集合';
                 setlist.appendChild(empty);
                 return;
@@ -501,13 +501,13 @@ export class RegexPanel {
             sets.forEach(s => {
                 const item = document.createElement('button');
                 item.type = 'button';
-                item.style.cssText = 'width:100%; text-align:left; padding:10px 12px; border:none; cursor:pointer; background:#fff; border-bottom:1px solid rgba(0,0,0,0.06);';
+                item.style.cssText = 'width:100%; text-align:left; padding:10px 12px; border:none; cursor:pointer; background:var(--app-surface-card); border-bottom:1px solid rgba(0,0,0,0.06);';
                 item.innerHTML = `
-                    <div style="font-weight:800; color:#0f172a;">${s.name || s.id}</div>
-                    <div style="font-size:12px; color:#64748b; margin-top:2px;">${s.bind ? this.formatBind(s.bind) : '未绑定（不会自动启用）'}</div>
+                    <div style="font-weight:800; color:var(--app-text-primary);">${s.name || s.id}</div>
+                    <div style="font-size:12px; color:var(--app-text-muted); margin-top:2px;">${s.bind ? this.formatBind(s.bind) : '未绑定（不会自动启用）'}</div>
                 `;
                 if (s.id === this.activeLocalSetId) {
-                    item.style.background = '#e2e8f0';
+                    item.style.background = 'var(--app-border-default)';
                 }
                 item.onclick = async () => {
                     this.activeLocalSetId = s.id;
@@ -561,7 +561,7 @@ export class RegexPanel {
         const s = setObj ? deepClone(setObj) : null;
         if (!s) {
             const empty = document.createElement('div');
-            empty.style.cssText = 'padding:12px; color:#94a3b8;';
+            empty.style.cssText = 'padding:12px; color:var(--app-text-muted);';
             empty.textContent = '请选择或新建一个局部正则集合';
             return empty;
         }
@@ -574,29 +574,29 @@ export class RegexPanel {
         head.innerHTML = `
             <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;">
                 <div style="flex:1; min-width:220px;">
-                    <div style="font-weight:800; color:#0f172a;">局部正则：${s.name}</div>
-                    <div style="color:#64748b; font-size:12px; margin-top:4px;">绑定到预设或世界书后，切换到对应对象时自动生效</div>
+                    <div style="font-weight:800; color:var(--app-text-primary);">局部正则：${s.name}</div>
+                    <div style="color:var(--app-text-muted); font-size:12px; margin-top:4px;">绑定到预设或世界书后，切换到对应对象时自动生效</div>
                 </div>
                 <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
-                    <button type="button" id="re-local-rename" style="padding:10px 12px; border:1px solid #e2e8f0; border-radius:10px; background:#fff; cursor:pointer;">✎ 重命名</button>
-                    <button type="button" id="re-local-save" style="padding:10px 12px; border:none; border-radius:10px; background:#019aff; color:#fff; cursor:pointer; font-weight:700;">保存</button>
+                    <button type="button" id="re-local-rename" style="padding:10px 12px; border:1px solid var(--app-border-default); border-radius:10px; background:var(--app-surface-card); cursor:pointer;">✎ 重命名</button>
+                    <button type="button" id="re-local-save" style="padding:10px 12px; border:none; border-radius:10px; background:#019aff; color:var(--app-text-inverse); cursor:pointer; font-weight:700;">保存</button>
                 </div>
             </div>
             <div style="margin-top:10px; display:flex; gap:12px; flex-wrap:wrap; align-items:center;">
-                <label style="display:flex; align-items:center; gap:8px; font-size:13px; color:#334155; cursor:pointer;">
+                <label style="display:flex; align-items:center; gap:8px; font-size:13px; color:var(--app-text-secondary); cursor:pointer;">
                     <input id="re-local-enabled" type="checkbox" style="width:16px; height:16px;">
                     启用集合
                 </label>
                 <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
-                    <div style="font-size:13px; color:#334155; font-weight:700;">绑定</div>
-                    <select id="re-bind-type" style="padding:8px 10px; border:1px solid #e2e8f0; border-radius:10px; font-size:13px;">
+                    <div style="font-size:13px; color:var(--app-text-secondary); font-weight:700;">绑定</div>
+                    <select id="re-bind-type" style="padding:8px 10px; border:1px solid var(--app-border-default); border-radius:10px; font-size:13px;">
                         <option value="">不绑定</option>
                         <option value="preset">绑定预设</option>
                         <option value="world">绑定世界书</option>
                     </select>
-                    <select id="re-bind-preset-type" style="display:none; padding:8px 10px; border:1px solid #e2e8f0; border-radius:10px; font-size:13px;"></select>
-                    <select id="re-bind-preset-id" style="display:none; padding:8px 10px; border:1px solid #e2e8f0; border-radius:10px; font-size:13px; min-width: 220px;"></select>
-                    <select id="re-bind-world" style="display:none; padding:8px 10px; border:1px solid #e2e8f0; border-radius:10px; font-size:13px; min-width: 220px;"></select>
+                    <select id="re-bind-preset-type" style="display:none; padding:8px 10px; border:1px solid var(--app-border-default); border-radius:10px; font-size:13px;"></select>
+                    <select id="re-bind-preset-id" style="display:none; padding:8px 10px; border:1px solid var(--app-border-default); border-radius:10px; font-size:13px; min-width: 220px;"></select>
+                    <select id="re-bind-world" style="display:none; padding:8px 10px; border:1px solid var(--app-border-default); border-radius:10px; font-size:13px; min-width: 220px;"></select>
                 </div>
             </div>
         `;
@@ -666,8 +666,8 @@ export class RegexPanel {
         const rulesWrap = document.createElement('div');
         rulesWrap.style.cssText = 'display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;';
         rulesWrap.innerHTML = `
-            <div style="font-weight:800; color:#0f172a;">规则</div>
-            <button type="button" id="re-local-add" style="padding:10px 12px; border:1px solid #e2e8f0; border-radius:10px; background:#fff; cursor:pointer;">＋ 新增规则</button>
+            <div style="font-weight:800; color:var(--app-text-primary);">规则</div>
+            <button type="button" id="re-local-add" style="padding:10px 12px; border:1px solid var(--app-border-default); border-radius:10px; background:var(--app-surface-card); cursor:pointer;">＋ 新增规则</button>
         `;
         wrap.appendChild(rulesWrap);
 

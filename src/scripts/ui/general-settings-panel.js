@@ -878,8 +878,8 @@ export class GeneralSettingsPanel {
       }
       #general-settings-panel .general-settings-modal {
         padding: 16px;
-        background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
-        border: 1px solid #e2e8f0;
+        background: linear-gradient(180deg, var(--app-surface-card) 0%, var(--app-surface-subtle) 100%);
+        border: 1px solid var(--app-border-default);
         border-radius: 16px;
         box-shadow: 0 12px 34px rgba(15, 23, 42, 0.22);
         max-height: calc(100vh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - 20px);
@@ -894,7 +894,7 @@ export class GeneralSettingsPanel {
       }
       #general-settings-panel .general-settings-title {
         margin: 0;
-        color: #0f172a;
+        color: var(--app-text-primary);
         font-size: 18px;
         font-weight: 800;
         letter-spacing: 0.2px;
@@ -902,22 +902,22 @@ export class GeneralSettingsPanel {
       #general-settings-panel .general-settings-close {
         width: 30px;
         height: 30px;
-        border: 1px solid #e2e8f0;
+        border: 1px solid var(--app-border-default);
         border-radius: 10px;
-        background: #fff;
-        color: #0f172a;
+        background: var(--app-surface-card);
+        color: var(--app-text-primary);
         font-size: 18px;
         cursor: pointer;
       }
       #general-settings-panel .general-settings-subtitle {
-        color: #64748b;
+        color: var(--app-text-muted);
         font-size: 12px;
         margin-bottom: 12px;
       }
       #general-settings-panel .general-settings-card {
         margin: 8px 0 12px;
         padding: 14px;
-        border: 1px solid #e2e8f0;
+        border: 1px solid var(--app-border-default);
         border-radius: 16px;
         background: rgba(255, 255, 255, 0.96);
         box-shadow: 0 8px 24px rgba(15, 23, 42, 0.04);
@@ -931,22 +931,22 @@ export class GeneralSettingsPanel {
       }
       #general-settings-panel .general-settings-card-title {
         font-size: 13px;
-        color: #334155;
+        color: var(--app-text-secondary);
         font-weight: 700;
         margin-bottom: 0;
       }
       #general-settings-panel .general-settings-card-note {
         margin-top: 4px;
-        color: #94a3b8;
+        color: var(--app-text-muted);
         font-size: 12px;
         line-height: 1.45;
       }
       #general-settings-panel .general-settings-subcard {
         margin-top: 10px;
         padding: 12px;
-        border: 1px solid #e2e8f0;
+        border: 1px solid var(--app-border-default);
         border-radius: 14px;
-        background: #f8fafc;
+        background: var(--app-surface-subtle);
       }
       #general-settings-panel .general-settings-subcard + .general-settings-subcard {
         margin-top: 10px;
@@ -954,12 +954,12 @@ export class GeneralSettingsPanel {
       #general-settings-panel .general-settings-subcard-title {
         font-size: 12px;
         line-height: 1.4;
-        color: #475569;
+        color: var(--app-text-secondary);
         font-weight: 700;
       }
       #general-settings-panel .general-settings-subcard-note {
         margin-top: 4px;
-        color: #94a3b8;
+        color: var(--app-text-muted);
         font-size: 12px;
         line-height: 1.45;
       }
@@ -982,7 +982,7 @@ export class GeneralSettingsPanel {
         line-height: 20px;
         border-radius: 999px;
         border: none;
-        color: #ffffff;
+        color: var(--app-text-inverse);
         background: #ef4444;
         font-weight: 800;
         letter-spacing: 0.2px;
@@ -995,8 +995,8 @@ export class GeneralSettingsPanel {
         margin-top: 10px !important;
         padding: 12px;
         border-radius: 14px;
-        border: 1px solid #e2e8f0;
-        background: #f8fafc;
+        border: 1px solid var(--app-border-default);
+        background: var(--app-surface-subtle);
       }
       #general-settings-panel .general-settings-inline-actions {
         display: flex;
@@ -1038,9 +1038,9 @@ export class GeneralSettingsPanel {
         min-width: 62px;
         padding: 0 12px;
         border-radius: 12px;
-        border: 1px solid #dbe2ea;
-        background: #fff;
-        color: #334155;
+        border: 1px solid var(--app-border-default);
+        background: var(--app-surface-card);
+        color: var(--app-text-secondary);
         font-size: 12px;
         font-weight: 700;
         cursor: pointer;
@@ -1056,10 +1056,10 @@ export class GeneralSettingsPanel {
         align-items: center;
         justify-content: center;
         gap: 6px;
-        border: 1px solid #dbe3ee;
+        border: 1px solid var(--app-border-default);
         border-radius: 999px;
-        background: #f8fafc;
-        color: #64748b;
+        background: var(--app-surface-subtle);
+        color: var(--app-text-muted);
         padding: 0 10px;
         cursor: pointer;
         font-size: 12px;
@@ -1118,15 +1118,15 @@ export class GeneralSettingsPanel {
       #general-settings-panel .general-settings-fold-content {
         margin-top: 12px;
         padding-top: 12px;
-        border-top: 1px dashed #e2e8f0;
+        border-top: 1px dashed var(--app-border-default);
       }
       #general-settings-panel .general-settings-toggle-row {
         position: relative;
         user-select: none;
-        border: 1px solid #e2e8f0;
+        border: 1px solid var(--app-border-default);
         border-radius: 14px;
         padding: 12px;
-        background: #ffffff;
+        background: var(--app-surface-card);
         display: flex;
         align-items: center;
         justify-content: space-between;
@@ -1137,7 +1137,7 @@ export class GeneralSettingsPanel {
           box-shadow 300ms ease-in-out;
       }
       #general-settings-panel .general-settings-toggle-row:hover {
-        border-color: #cbd5e1;
+        border-color: var(--app-border-strong);
       }
       #general-settings-panel .general-settings-toggle-row.is-on {
         background: #f8fbff;
@@ -1145,8 +1145,8 @@ export class GeneralSettingsPanel {
         box-shadow: 0 8px 18px rgba(37, 99, 235, 0.06);
       }
       #general-settings-panel .general-settings-toggle-row.is-off {
-        background: #ffffff;
-        border-color: #e2e8f0;
+        background: var(--app-surface-card);
+        border-color: var(--app-border-default);
       }
       #general-settings-panel .general-settings-toggle-row.is-on.has-risk {
         background: #fff7f7;
@@ -1172,8 +1172,8 @@ export class GeneralSettingsPanel {
         width: 36px;
         height: 36px;
         border-radius: 12px;
-        background: #f1f5f9;
-        color: #64748b;
+        background: var(--app-surface-hover);
+        color: var(--app-text-muted);
         display: inline-flex;
         align-items: center;
         justify-content: center;
@@ -1210,13 +1210,13 @@ export class GeneralSettingsPanel {
         align-items: center;
         flex-wrap: wrap;
         gap: 8px;
-        color: #0f172a;
+        color: var(--app-text-primary);
         font-size: 14px;
         font-weight: 700;
         line-height: 1.35;
       }
       #general-settings-panel .general-settings-row-desc {
-        color: #64748b;
+        color: var(--app-text-muted);
         font-size: 12px;
         line-height: 1.45;
       }
@@ -1231,7 +1231,7 @@ export class GeneralSettingsPanel {
         width: 44px;
         height: 26px;
         border-radius: 999px;
-        background: #cbd5e1;
+        background: var(--app-border-strong);
         transition: background 200ms ease;
       }
       #general-settings-panel .general-settings-switch::after {
@@ -1242,7 +1242,7 @@ export class GeneralSettingsPanel {
         width: 20px;
         height: 20px;
         border-radius: 999px;
-        background: #ffffff;
+        background: var(--app-surface-card);
         box-shadow: 0 1px 3px rgba(15, 23, 42, 0.22);
         transition: transform 180ms ease;
       }
@@ -1257,8 +1257,8 @@ export class GeneralSettingsPanel {
         width: 22px;
         height: 22px;
         border-radius: 999px;
-        border: 2px solid #cbd5e1;
-        background: #ffffff;
+        border: 2px solid var(--app-border-strong);
+        background: var(--app-surface-card);
         box-sizing: border-box;
       }
       #general-settings-panel .general-settings-radio::after {
@@ -1285,10 +1285,10 @@ export class GeneralSettingsPanel {
         flex-direction: column;
         align-items: stretch;
         gap: 12px;
-        border: 1px solid #e2e8f0;
+        border: 1px solid var(--app-border-default);
         border-radius: 14px;
         padding: 12px;
-        background: #ffffff;
+        background: var(--app-surface-card);
       }
       #general-settings-panel .general-settings-input-control {
         flex: 0 0 auto;
@@ -1302,15 +1302,15 @@ export class GeneralSettingsPanel {
       #general-settings-panel .general-settings-select {
         width: 100%;
         padding: 8px 10px;
-        border: 1px solid #dbe3ee;
+        border: 1px solid var(--app-border-default);
         border-radius: 10px;
         font-size: 13px;
-        background: #ffffff;
-        color: #0f172a;
+        background: var(--app-surface-card);
+        color: var(--app-text-primary);
       }
       #general-settings-panel .general-settings-inline-hint {
         margin-top: 8px;
-        color: #94a3b8;
+        color: var(--app-text-muted);
         font-size: 12px;
         line-height: 1.45;
       }
@@ -1320,14 +1320,14 @@ export class GeneralSettingsPanel {
       #general-settings-panel .general-settings-field-label {
         display: block;
         margin-bottom: 6px;
-        color: #0f172a;
+        color: var(--app-text-primary);
         font-size: 12px;
         font-weight: 700;
       }
       #general-settings-panel .general-settings-field-help {
         display: block;
         margin-top: 6px;
-        color: #94a3b8;
+        color: var(--app-text-muted);
         font-size: 12px;
         line-height: 1.45;
       }
@@ -1342,8 +1342,8 @@ export class GeneralSettingsPanel {
       }
       #general-settings-panel input[type='number'],
       #general-settings-panel select {
-        border-color: #dbe3ee !important;
-        background: #fff;
+        border-color: var(--app-border-default) !important;
+        background: var(--app-surface-card);
       }
       #general-settings-panel .general-settings-shortcut-grid {
         display: grid;
@@ -1351,10 +1351,10 @@ export class GeneralSettingsPanel {
         gap: 8px;
       }
       #general-settings-panel .general-settings-shortcut-btn {
-        border: 1px solid #dbe3ee !important;
+        border: 1px solid var(--app-border-default) !important;
         border-radius: 10px !important;
-        background: #fff !important;
-        color: #0f172a !important;
+        background: var(--app-surface-card) !important;
+        color: var(--app-text-primary) !important;
         font-weight: 700;
         padding: 8px 10px !important;
         cursor: pointer;
@@ -1366,10 +1366,10 @@ export class GeneralSettingsPanel {
       }
       #general-settings-panel button[id^='general-bundle-'],
       #general-settings-panel #general-clean-wallpapers {
-        border: 1px solid #dbe3ee !important;
+        border: 1px solid var(--app-border-default) !important;
         border-radius: 10px !important;
-        background: #fff !important;
-        color: #0f172a !important;
+        background: var(--app-surface-card) !important;
+        color: var(--app-text-primary) !important;
         font-weight: 600;
         padding: 7px 12px !important;
       }
@@ -1381,7 +1381,7 @@ export class GeneralSettingsPanel {
       #general-settings-panel #general-settings-done {
         border-color: #0ea5e9 !important;
         background: #0ea5e9 !important;
-        color: #fff !important;
+        color: var(--app-text-inverse) !important;
         font-weight: 700;
       }
     `;
@@ -1717,7 +1717,7 @@ export class GeneralSettingsPanel {
             </div>
 
             <div id="general-memory-auto-options" style="margin-left: 26px; margin-top: 6px; display: none;">
-            <div style="font-size:12px; color:#64748b; margin-bottom:8px;">写表方式</div>
+            <div style="font-size:12px; color:var(--app-text-muted); margin-bottom:8px;">写表方式</div>
             <label style="display:flex; align-items:center; gap:8px; cursor:pointer; margin-bottom:6px;">
               <input type="radio" name="general-memory-auto-mode" id="general-memory-auto-inline" value="inline">
               <span>随聊天回复一起（同一请求）</span>
@@ -1735,11 +1735,11 @@ export class GeneralSettingsPanel {
                 <input type="checkbox" id="general-memory-auto-step" style="width: 16px; height: 16px;">
                 <span>逐条执行（每条指令确认）</span>
               </label>
-              <small style="color:#94a3b8;">逐条执行会依次弹窗确认每条指令</small>
+              <small style="color:var(--app-text-muted);">逐条执行会依次弹窗确认每条指令</small>
             </div>
 
-            <div id="general-memory-update-api" style="margin-top: 10px; padding: 8px; border: 1px dashed #e2e8f0; border-radius: 10px; display: none;">
-              <div style="font-size:12px; color:#64748b; margin-bottom:8px;">记忆更新 API</div>
+            <div id="general-memory-update-api" style="margin-top: 10px; padding: 8px; border: 1px dashed var(--app-border-default); border-radius: 10px; display: none;">
+              <div style="font-size:12px; color:var(--app-text-muted); margin-bottom:8px;">记忆更新 API</div>
               <label style="display:flex; align-items:center; gap:8px; cursor:pointer; margin-bottom:6px;">
                 <input type="radio" name="general-memory-update-api" id="general-memory-update-chat" value="chat">
                 <span>使用聊天配置</span>
@@ -1756,24 +1756,24 @@ export class GeneralSettingsPanel {
                 </button>
                 <button type="button" id="general-memory-update-profile-manage" class="general-settings-manage-btn">管理</button>
               </div>
-              <small style="color:#94a3b8; display:block; margin-top:6px;">可在 API 配置中新增多个配置</small>
+              <small style="color:var(--app-text-muted); display:block; margin-top:6px;">可在 API 配置中新增多个配置</small>
               <div id="general-memory-update-context" style="margin-top: 10px;">
-                <label style="display:flex; align-items:center; justify-content:space-between; gap:8px; font-size:12px; font-weight:700; color:#0f172a;">
+                <label style="display:flex; align-items:center; justify-content:space-between; gap:8px; font-size:12px; font-weight:700; color:var(--app-text-primary);">
                   <span>记忆更新上下文轮数</span>
                   <input type="number" id="general-memory-update-context-rounds" min="0" step="1"
-                         style="width: 90px; padding: 4px 6px; border:1px solid #e2e8f0; border-radius:8px; font-size:12px; text-align:right;">
+                         style="width: 90px; padding: 4px 6px; border:1px solid var(--app-border-default); border-radius:8px; font-size:12px; text-align:right;">
                 </label>
-                <small style="color:#94a3b8; display:block; margin-top:4px;">默认 6 轮（用户+助手），0 表示不发送历史</small>
+                <small style="color:var(--app-text-muted); display:block; margin-top:4px;">默认 6 轮（用户+助手），0 表示不发送历史</small>
               </div>
             </div>
             </div>
 
-            <div id="general-memory-budget-block" style="margin-left: 26px; margin-top: 10px; padding: 8px; border: 1px dashed #e2e8f0; border-radius: 10px; display: none;">
-            <div style="font-size:12px; color:#64748b; margin-bottom:8px;">记忆注入设置</div>
+            <div id="general-memory-budget-block" style="margin-left: 26px; margin-top: 10px; padding: 8px; border: 1px dashed var(--app-border-default); border-radius: 10px; display: none;">
+            <div style="font-size:12px; color:var(--app-text-muted); margin-bottom:8px;">记忆注入设置</div>
 
             <div style="margin-top: 10px;">
-              <div style="font-size:12px; color:#64748b; margin-bottom:6px;">记忆注入位置</div>
-              <select id="general-memory-inject-position" style="width:100%; padding:6px 8px; border:1px solid #e2e8f0; border-radius:8px; font-size:12px;">
+              <div style="font-size:12px; color:var(--app-text-muted); margin-bottom:6px;">记忆注入位置</div>
+              <select id="general-memory-inject-position" style="width:100%; padding:6px 8px; border:1px solid var(--app-border-default); border-radius:8px; font-size:12px;">
                 <option value="template">跟随模板</option>
                 <option value="after_persona">角色设定后</option>
                 <option value="system_end">系统提示末尾</option>
@@ -1781,46 +1781,46 @@ export class GeneralSettingsPanel {
                 <option value="history_depth">深度注入（插入到聊天记录）</option>
                 <option value="system_end+before_chat">双重注入（系统末尾 + 对话前）</option>
               </select>
-              <small style="color:#94a3b8; display:block; margin-top:4px;">可覆盖模板注入位置</small>
+              <small style="color:var(--app-text-muted); display:block; margin-top:4px;">可覆盖模板注入位置</small>
             </div>
 
 	            <div id="general-memory-inject-depth-wrap" style="margin-top: 10px; display:none;">
-	              <label style="display:flex; align-items:center; justify-content:space-between; gap:8px; font-size:12px; font-weight:700; color:#0f172a;">
+	              <label style="display:flex; align-items:center; justify-content:space-between; gap:8px; font-size:12px; font-weight:700; color:var(--app-text-primary);">
 	                <span>深度注入位置</span>
 	                <input type="number" id="general-memory-inject-depth" min="0" step="1"
-	                       style="width: 90px; padding: 4px 6px; border:1px solid #e2e8f0; border-radius:8px; font-size:12px; text-align:right;">
+	                       style="width: 90px; padding: 4px 6px; border:1px solid var(--app-border-default); border-radius:8px; font-size:12px; text-align:right;">
 	              </label>
-	              <small style="color:#94a3b8; display:block; margin-top:4px;">距聊天末尾 N 条插入，0 表示追加到末尾</small>
+	              <small style="color:var(--app-text-muted); display:block; margin-top:4px;">距聊天末尾 N 条插入，0 表示追加到末尾</small>
 	            </div>
 	          </div>
 
-              <div id="general-memory-bridge-block" style="margin-left: 26px; margin-top: 10px; padding: 8px; border: 1px dashed #e2e8f0; border-radius: 10px; display: none;">
-                <div style="font-size:12px; color:#64748b; margin-bottom:8px;">聊天 / RP 桥接默认规则</div>
+              <div id="general-memory-bridge-block" style="margin-left: 26px; margin-top: 10px; padding: 8px; border: 1px dashed var(--app-border-default); border-radius: 10px; display: none;">
+                <div style="font-size:12px; color:var(--app-text-muted); margin-bottom:8px;">聊天 / RP 桥接默认规则</div>
                 <div style="display:flex; flex-direction:column; gap:10px;">
-                  <div style="padding:8px; border:1px solid #e2e8f0; border-radius:10px; background:#fff;">
-                    <label style="display:flex; align-items:center; justify-content:space-between; gap:10px; font-size:12px; font-weight:700; color:#0f172a;">
+                  <div style="padding:8px; border:1px solid var(--app-border-default); border-radius:10px; background:var(--app-surface-card);">
+                    <label style="display:flex; align-items:center; justify-content:space-between; gap:10px; font-size:12px; font-weight:700; color:var(--app-text-primary);">
                       <span>RP 大纲 -> 聊天模式</span>
                       <input type="checkbox" id="general-memory-bridge-rp-to-chat" style="width:16px; height:16px;">
                     </label>
-                    <label style="display:flex; align-items:center; justify-content:space-between; gap:10px; font-size:12px; color:#475569; margin-top:8px;">
+                    <label style="display:flex; align-items:center; justify-content:space-between; gap:10px; font-size:12px; color:var(--app-text-secondary); margin-top:8px;">
                       <span>默认注入条数（0=全部）</span>
                       <input type="number" id="general-memory-bridge-rp-to-chat-limit" min="0" step="1"
-                             style="width: 90px; padding: 4px 6px; border:1px solid #e2e8f0; border-radius:8px; font-size:12px; text-align:right;">
+                             style="width: 90px; padding: 4px 6px; border:1px solid var(--app-border-default); border-radius:8px; font-size:12px; text-align:right;">
                     </label>
                   </div>
-                  <div style="padding:8px; border:1px solid #e2e8f0; border-radius:10px; background:#fff;">
-                    <label style="display:flex; align-items:center; justify-content:space-between; gap:10px; font-size:12px; font-weight:700; color:#0f172a;">
+                  <div style="padding:8px; border:1px solid var(--app-border-default); border-radius:10px; background:var(--app-surface-card);">
+                    <label style="display:flex; align-items:center; justify-content:space-between; gap:10px; font-size:12px; font-weight:700; color:var(--app-text-primary);">
                       <span>聊天大纲 -> RP 模式</span>
                       <input type="checkbox" id="general-memory-bridge-chat-to-rp" style="width:16px; height:16px;">
                     </label>
-                    <label style="display:flex; align-items:center; justify-content:space-between; gap:10px; font-size:12px; color:#475569; margin-top:8px;">
+                    <label style="display:flex; align-items:center; justify-content:space-between; gap:10px; font-size:12px; color:var(--app-text-secondary); margin-top:8px;">
                       <span>默认注入条数（0=全部）</span>
                       <input type="number" id="general-memory-bridge-chat-to-rp-limit" min="0" step="1"
-                             style="width: 90px; padding: 4px 6px; border:1px solid #e2e8f0; border-radius:8px; font-size:12px; text-align:right;">
+                             style="width: 90px; padding: 4px 6px; border:1px solid var(--app-border-default); border-radius:8px; font-size:12px; text-align:right;">
                     </label>
                   </div>
                 </div>
-                <small style="color:#94a3b8; display:block; margin-top:6px;">当前默认只桥接双方“总体大纲”，不桥接原始消息。</small>
+                <small style="color:var(--app-text-muted); display:block; margin-top:6px;">当前默认只桥接双方“总体大纲”，不桥接原始消息。</small>
               </div>
 	          </div>
 	        </div>
@@ -1913,18 +1913,18 @@ export class GeneralSettingsPanel {
           <div class="general-settings-card-title">资料迁移</div>
           <div style="display:flex; align-items:center; gap:8px; flex-wrap: wrap;">
             <button id="general-bundle-export"
-                    style="padding: 6px 10px; border-radius: 8px; border: 1px solid #e2e8f0; background: #fff; cursor: pointer; font-size: 12px; color: #0f172a;">
+                    style="padding: 6px 10px; border-radius: 8px; border: 1px solid var(--app-border-default); background: var(--app-surface-card); cursor: pointer; font-size: 12px; color: var(--app-text-primary);">
               一键打包
             </button>
             <button id="general-bundle-import"
-                    style="padding: 6px 10px; border-radius: 8px; border: 1px solid #e2e8f0; background: #fff; cursor: pointer; font-size: 12px; color: #0f172a;">
+                    style="padding: 6px 10px; border-radius: 8px; border: 1px solid var(--app-border-default); background: var(--app-surface-card); cursor: pointer; font-size: 12px; color: var(--app-text-primary);">
               导入资料包
             </button>
-            <span id="general-bundle-status" style="font-size: 12px; color:#64748b;">
+            <span id="general-bundle-status" style="font-size: 12px; color:var(--app-text-muted);">
               打包聊天与资源（不含 API 配置）
             </span>
           </div>
-          <small style="color:#94a3b8; display:block; margin-top:6px;">导入会覆盖当前资料。</small>
+          <small style="color:var(--app-text-muted); display:block; margin-top:6px;">导入会覆盖当前资料。</small>
           <input type="file" id="general-bundle-file" accept=".zip,application/zip" style="display:none;">
         </div>
 
@@ -1932,18 +1932,18 @@ export class GeneralSettingsPanel {
           <div class="general-settings-card-title">存储清理</div>
           <div style="display:flex; align-items:center; gap:8px; flex-wrap: wrap;">
             <button id="general-clean-wallpapers"
-                    style="padding: 6px 10px; border-radius: 8px; border: 1px solid #e2e8f0; background: #fff; cursor: pointer; font-size: 12px; color: #0f172a;">
+                    style="padding: 6px 10px; border-radius: 8px; border: 1px solid var(--app-border-default); background: var(--app-surface-card); cursor: pointer; font-size: 12px; color: var(--app-text-primary);">
               清理壁纸残留
             </button>
-            <span id="general-clean-wallpapers-status" style="font-size: 12px; color:#64748b;">
+            <span id="general-clean-wallpapers-status" style="font-size: 12px; color:var(--app-text-muted);">
               清理未引用旧文件
             </span>
           </div>
         </div>
 
         <div style="display: flex; justify-content: flex-end; gap: 8px;">
-          <button id="general-settings-done" style="padding: 8px 14px; border-radius: 8px; border: 1px solid #e2e8f0;
-                                                   background: #f8fafc; cursor: pointer; font-size: 14px; color: #475569;">
+          <button id="general-settings-done" style="padding: 8px 14px; border-radius: 8px; border: 1px solid var(--app-border-default);
+                                                   background: var(--app-surface-subtle); cursor: pointer; font-size: 14px; color: var(--app-text-secondary);">
             完成
           </button>
         </div>

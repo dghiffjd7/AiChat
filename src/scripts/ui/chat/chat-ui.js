@@ -2081,9 +2081,9 @@ export class ChatUI {
             box-sizing: border-box;
         `;
     bar.innerHTML = `
-            <button data-role="cancel" style="border:1px solid rgba(0,0,0,0.10); background:#fff; border-radius:12px; padding:8px 12px;">取消</button>
-            <div data-role="count" style="flex:1; font-weight:800; color:#0f172a;">已选择 0 条</div>
-            <button data-role="delete" style="border:none; background:#ef4444; color:#fff; border-radius:12px; padding:8px 14px; font-weight:800;">删除</button>
+            <button data-role="cancel" style="border:1px solid rgba(0,0,0,0.10); background:var(--app-surface-card); border-radius:12px; padding:8px 12px;">取消</button>
+            <div data-role="count" style="flex:1; font-weight:800; color:var(--app-text-primary);">已选择 0 条</div>
+            <button data-role="delete" style="border:none; background:#ef4444; color:var(--app-text-inverse); border-radius:12px; padding:8px 14px; font-weight:800;">删除</button>
         `;
     bar.querySelector('[data-role="cancel"]')?.addEventListener('click', e => {
       e.stopPropagation();
@@ -2156,7 +2156,7 @@ export class ChatUI {
                 align-items:center;
                 justify-content:center;
                 font-size: 14px;
-                color: #fff;
+                color: var(--app-text-inverse);
                 pointer-events: none;
                 box-sizing: border-box;
             `;
@@ -2237,8 +2237,8 @@ export class ChatUI {
     menu.id = 'msg-context-menu';
     menu.style.cssText = `
             position: fixed;
-            background: #fff;
-            border: 1px solid #e5e7eb;
+            background: var(--app-surface-card);
+            border: 1px solid var(--app-border-default);
             border-radius: 10px;
             box-shadow: 0 8px 30px rgba(0,0,0,0.12);
             padding: 6px;
@@ -2425,7 +2425,7 @@ export class ChatUI {
       const panel = document.createElement('div');
       panel.style.cssText = `
                 height: 100%;
-                background: #fff;
+                background: var(--app-surface-card);
                 border-radius: 14px;
                 box-shadow: 0 18px 50px rgba(0,0,0,0.18);
                 overflow: hidden;
@@ -2442,10 +2442,10 @@ export class ChatUI {
                 gap: 10px;
                 padding: 12px 12px;
                 background: #f3f4f6;
-                border-bottom: 1px solid #e5e7eb;
+                border-bottom: 1px solid var(--app-border-default);
             `;
       const title = document.createElement('div');
-      title.style.cssText = 'font-size:14px; font-weight:700; color:#111827;';
+      title.style.cssText = 'font-size:14px; font-weight:700; color:var(--app-text-primary);';
       title.textContent = '原回复';
 
       const hint = document.createElement('div');
@@ -2458,9 +2458,9 @@ export class ChatUI {
       closeBtn.type = 'button';
       closeBtn.textContent = '取消';
       closeBtn.style.cssText = `
-                border: 1px solid #e5e7eb;
-                background: #fff;
-                color: #111827;
+                border: 1px solid var(--app-border-default);
+                background: var(--app-surface-card);
+                color: var(--app-text-primary);
                 border-radius: 10px;
                 padding: 6px 10px;
                 font-size: 13px;
@@ -2473,7 +2473,7 @@ export class ChatUI {
       saveBtn.style.cssText = `
                 border: 1px solid #3b82f6;
                 background: #3b82f6;
-                color: #fff;
+                color: var(--app-text-inverse);
                 border-radius: 10px;
                 padding: 6px 10px;
                 font-size: 13px;
@@ -2615,7 +2615,7 @@ export class ChatUI {
                 cursor: pointer;
                 font-size: 14px;
             `;
-      btn.onmouseenter = () => (btn.style.background = '#f1f5f9');
+      btn.onmouseenter = () => (btn.style.background = 'var(--app-surface-hover)');
       btn.onmouseleave = () => (btn.style.background = 'transparent');
       btn.onclick = async e => {
         e.stopPropagation();
@@ -2704,7 +2704,7 @@ export class ChatUI {
             font: inherit;
             resize: none;
             outline: none;
-            background: #fff;
+            background: var(--app-surface-card);
             color: #000;
             box-sizing: border-box;
         `;
@@ -2778,7 +2778,7 @@ export class ChatUI {
       const btn = document.createElement('button');
       btn.textContent = action.label || '重试';
       btn.style.cssText =
-        'margin-left:8px; padding:4px 10px; border:1px solid #ef4444; background:#fff; color:#b91c1c; border-radius:6px; cursor:pointer;';
+        'margin-left:8px; padding:4px 10px; border:1px solid #ef4444; background:var(--app-surface-card); color:#b91c1c; border-radius:6px; cursor:pointer;';
       btn.onclick = () => action.handler();
       this.errorBanner.appendChild(btn);
     }

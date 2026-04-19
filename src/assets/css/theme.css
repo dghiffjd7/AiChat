@@ -6,6 +6,8 @@
   --app-surface-topbar: rgba(255, 255, 255, 0.92);
   --app-surface-input: rgba(255, 255, 255, 0.92);
   --app-surface-overlay: rgba(15, 23, 42, 0.42);
+  --app-surface-subtle: #f8fafc;
+  --app-surface-hover: #f1f5f9;
   --app-text-primary: #0f172a;
   --app-text-secondary: #475569;
   --app-text-muted: #94a3b8;
