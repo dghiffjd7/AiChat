@@ -196,7 +196,7 @@ body {
 }
 
 .bubble.meta {
-    background: rgba(255, 255, 255, 0.75);
+    background: var(--app-bubble-meta);
     color: var(--text-secondary);
     font-size: 13px;
     box-shadow: none;

@@ -1323,7 +1323,7 @@ const buildMvuCompatBridge = ({ iframeId, sessionId, debugTag, messageId, messag
         const frame = document.createElement('iframe');
         frame.src = absUrl;
         frame.setAttribute('referrerpolicy', 'no-referrer');
-        frame.style.cssText = 'width:100%; border:0; display:block; min-height:360px; height:70vh; max-height:720px; background:var(--app-surface-card);';
+        frame.style.cssText = 'width:100%; border:0; display:block; min-height:360px; height:70vh; max-height:720px; background:transparent;';
         node.innerHTML = '';
         node.appendChild(frame);
         mounted = true;
@@ -4088,11 +4088,17 @@ const buildIframeSrcDoc = (
         }
     }
 
+    // Detect current theme mode from parent document
+    const isDarkMode = document?.body?.dataset?.themeMode === 'dark';
+    const themeColorScheme = isDarkMode ? 'dark' : 'light';
+
     // Base style: avoid overflowing the phone width; keep layout modern and readable
+    // Inject theme-aware defaults so iframe content inherits the correct color scheme
     const baseStyle = `
 <style id="__chatapp_base">
+  html { color-scheme: ${themeColorScheme}; }
   html, body { margin:0; padding:0; max-width:100% !important; width:100% !important; min-height:0 !important; height:auto !important; overflow-x:hidden !important; box-sizing:border-box; -webkit-user-select:none; user-select:none; -webkit-touch-callout:none; }
-  body { padding: 12px; background: transparent; transform-origin: top left; overflow-x:hidden !important; -webkit-user-select:none; user-select:none; -webkit-touch-callout:none; display:block !important; align-items:flex-start !important; justify-content:flex-start !important; }
+  body { padding: 12px; background: transparent; color: ${isDarkMode ? '#e2e8f0' : 'inherit'}; transform-origin: top left; overflow-x:hidden !important; -webkit-user-select:none; user-select:none; -webkit-touch-callout:none; display:block !important; align-items:flex-start !important; justify-content:flex-start !important; }
   *, *::before, *::after { box-sizing: border-box; max-width: 100% !important; min-width: 0 !important; }
   details, summary { max-width: 100% !important; }
   details[open] { max-height: none !important; overflow: visible !important; }
@@ -6643,7 +6649,7 @@ const makeCodeBlock = ({ lang, code, messageId, preserveHtmlNewlines = false, se
     }
     if (shouldRenderScopedFragment) {
         const previewWrap = document.createElement('div');
-        previewWrap.style.cssText = 'background:var(--app-surface-card); padding:12px 14px;';
+        previewWrap.style.cssText = 'background:transparent; padding:12px 14px;';
         const rendered = renderScopedRichFragment(previewWrap, code, {
             messageId: String(messageId || 'code'),
             resolveStatusCard: null,
@@ -6658,7 +6664,7 @@ const makeCodeBlock = ({ lang, code, messageId, preserveHtmlNewlines = false, se
     }
     if (shouldRenderHtml) {
         const previewWrap = document.createElement('div');
-        previewWrap.style.cssText = 'background:var(--app-surface-card);';
+        previewWrap.style.cssText = 'background:transparent;';
         const iframe = document.createElement('iframe');
         const iframeId = `msg-${String(messageId || 'x')}-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
         iframe.dataset.iframeId = iframeId;
@@ -6670,7 +6676,7 @@ const makeCodeBlock = ({ lang, code, messageId, preserveHtmlNewlines = false, se
         iframe.dataset.iframeAuthority = IFRAME_AUTHORITY_HOST;
         iframe.dataset.iframeLock = '0';
         iframe.dataset.iframeMode = 'document';
-        iframe.style.cssText = 'width:100%; border:0; display:block; height:240px; background:var(--app-surface-card);';
+        iframe.style.cssText = 'width:100%; border:0; display:block; height:240px; background:transparent;';
         if (!allowScripts) {
             iframe.setAttribute('sandbox', 'allow-scripts');
         }
