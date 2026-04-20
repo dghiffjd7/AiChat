@@ -42,12 +42,23 @@
 body[data-typing-dots="off"] .typing-dot {
   animation: none !important;
   opacity: 0.55;
-  transform: translateY(0) !important;
+  transform: none !important;
+  filter: none !important;
+  border-radius: 50% !important;
 }
 body[data-typing-dots="off"] .typing,
 body[data-typing-dots="off"] #typing-indicator,
 body[data-typing-dots="off"] [data-typing-placeholder="1"] {
   display: none !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  .typing-dot {
+    animation: none !important;
+    opacity: 0.55;
+    transform: none !important;
+    filter: none !important;
+    border-radius: 50% !important;
+  }
 }
 
 /* 背景占位（若需要使用已下载外部背景） */

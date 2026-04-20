@@ -2248,6 +2248,45 @@ ${listPart || '-（无）'}
     }
   };
 
+  /** 获取群组已读选项 */
+  const getGroupReadOptions = (sessionId) => {
+    if (!sessionId || !sessionId.startsWith('group:')) return {};
+    const group = contactsStore.getContact(sessionId);
+    const count = Array.isArray(group?.members) ? group.members.length : 0;
+    return count > 0 ? { groupMemberCount: count } : {};
+  };
+
+  /** AI 回复到达时：快进送达序列（确保已读已显示） */
+  const fastForwardDelivery = (sessionId) => {
+    ui.fastForwardDeliverySequence(getGroupReadOptions(sessionId));
+  };
+
+  /**
+   * 启动完整送达时序：✔ 已送出 → 已读 → typing dots
+   * 替代直接调用 showTyping，用于每次发送的初始调用
+   */
+  const startDeliveryAndTyping = (sessionId, avatarUrl) => {
+    const typingOpts = getGroupTypingMembers(sessionId) || {};
+    const readOpts = getGroupReadOptions(sessionId);
+    ui.startDeliverySequence(avatarUrl, typingOpts, readOpts);
+  };
+
+  /** 获取群聊成员列表用于多人输入指示器 */
+  const getGroupTypingMembers = (sessionId) => {
+    if (!sessionId || !sessionId.startsWith('group:')) return null;
+    const group = contactsStore.getContact(sessionId);
+    if (!group || !Array.isArray(group.members) || group.members.length === 0) return null;
+    const members = group.members
+      .map(mid => {
+        const c = contactsStore.getContact(mid);
+        if (!c || c.isGroup) return null;
+        const avatar = resolveAvatarForContact(mid, c);
+        return { name: c.name || c.id, avatar: avatar || '' };
+      })
+      .filter(Boolean);
+    return members.length > 0 ? { groupMembers: members } : null;
+  };
+
   const summarizeDebugValue = (value, { max = 160 } = {}) => {
     const raw = String(value || '').trim();
     if (!raw) return '';
@@ -2741,10 +2780,13 @@ ${listPart || '-（无）'}
     if (!message || typeof message !== 'object') return '';
     if (message.role === 'user') return getActiveUserName();
     const sid = String(sessionId || '').trim();
-    if (message.role === 'assistant' && String(message.name || '').trim()) return String(message.name || '').trim();
+    const msgName = String(message.name || '').trim();
+    // 如果消息有具体名字（非通用占位符），直接使用
+    if (message.role === 'assistant' && msgName && msgName !== '助手') return msgName;
+    // 否则从联系人获取真实名字
     const contact = contactsStore.getContact(sid);
     if (contact?.name) return String(contact.name || '').trim();
-    return String(message.name || '').trim() || '对方';
+    return msgName || '对方';
   };
 
   const getReplyTargetForSession = (sessionId = chatStore.getCurrent()) => {
@@ -11607,7 +11649,7 @@ Phase G（Frame 36）：循环衔接
     if (uiStateArmed) saveUiState();
     updatePendingFloat(sessionId);
     if (activeGeneration && !activeGeneration.cancelled && activeGeneration.sessionId === sessionId) {
-      ui.showTyping(getAssistantAvatarForSession(sessionId));
+      ui.showTyping(getAssistantAvatarForSession(sessionId), getGroupTypingMembers(sessionId) || {});
     }
     uiLog('enterChatRoom', { sessionId, originPage: chatOriginPage });
     return { jumpedToTarget };
@@ -12657,6 +12699,22 @@ Phase G（Frame 36）：循环衔接
     titleEl.appendChild(sessionBadge);
     worldIndicator.mount(titleEl);
   }
+
+  // @Mention: resolve group members for mention dropdown
+  ui.setMentionMemberResolver(() => {
+    const sid = chatStore.getCurrent();
+    if (!sid || !sid.startsWith('group:')) return [];
+    const group = contactsStore.getContact(sid);
+    if (!group || !Array.isArray(group.members)) return [];
+    return group.members
+      .map(mid => {
+        const c = contactsStore.getContact(mid);
+        if (!c || c.isGroup) return null;
+        const avatar = resolveAvatarForContact(mid, c);
+        return { id: c.id, name: c.name || c.id, avatar: avatar || '' };
+      })
+      .filter(Boolean);
+  });
 
   // Button: open config
   ui.onConfig(() => configPanel.show());
@@ -16287,6 +16345,7 @@ Phase G（Frame 36）：循环衔接
       };
       generationId = activeGeneration.id;
       if (appendedUserOutput) refreshChatAndContacts();
+      if (appendedUserOutput) ui.showDeliveryStatus();
       if (!suppressUserMessage && appendedUserOutput) ui.clearInput();
     } else {
       outgoingReplyContexts = buildOutgoingReplyContexts([...pendingMessagesToConfirm, ...attachmentMessages]);
@@ -16304,6 +16363,8 @@ Phase G（Frame 36）：循环衔接
     }
     if (consumedDraftReplyTarget) clearReplyTargetForSession(sessionId);
     ui.setSendingState(true);
+    // 显示已送出状态（对 pending 消息在 flush 后也生效）
+    ui.showDeliveryStatus();
 
     const config = window.appBridge.config.get();
 
@@ -16327,7 +16388,7 @@ Phase G（Frame 36）：循环衔接
 
         if (creativeMode) {
           // 创意写作模式：完整长文输出，不解析线上格式
-          if (isSessionActive(sessionId)) ui.showTyping(assistantAvatar);
+          if (isSessionActive(sessionId)) startDeliveryAndTyping(sessionId, assistantAvatar);
           consumePromptInjections(sessionId);
           const stream = await window.appBridge.generate(text, llmContext(text));
           let full = '';
@@ -16338,6 +16399,7 @@ Phase G（Frame 36）：循环衔接
             if (!streamCtrl) {
               if (isSessionActive(sessionId)) {
                 ui.hideTyping();
+                fastForwardDelivery(sessionId);
                 streamCtrl = ui.startAssistantStream({
                   avatar: assistantAvatar,
                   name: '助手',
@@ -16425,8 +16487,8 @@ Phase G（Frame 36）：循环衔接
           refreshChatAndContacts();
           sendSucceeded = true;
         } else if (protocolEnabled) {
-          // 对话模式（流式）：不逐字显示 AI 原文；只在捕获到完整的“有效标签”后输出解析结果
-          if (isSessionActive(sessionId)) ui.showTyping(assistantAvatar);
+          // 对话模式（流式）：不逐字显示 AI 原文；只在捕获到完整的”有效标签”后输出解析结果
+          if (isSessionActive(sessionId)) startDeliveryAndTyping(sessionId, assistantAvatar);
           const parser = createDialogueParser();
           consumePromptInjections(sessionId);
           const stream = await window.appBridge.generate(text, llmContext(text));
@@ -16462,7 +16524,7 @@ Phase G（Frame 36）：循环衔接
                 continue;
               }
               if (ev.type === 'group_chat') {
-                if (isSessionActive(sessionId)) ui.hideTyping();
+                if (isSessionActive(sessionId)) { ui.hideTyping(); fastForwardDelivery(sessionId); }
                 const targetGroupId = resolveGroupChatTargetSessionId(ev.groupName);
                 if (!targetGroupId) {
                   window.toastr?.warning?.('对话回复格式错误：群聊标签未匹配任何已存在群组，已丢弃');
@@ -16509,11 +16571,11 @@ Phase G（Frame 36）：循环衔接
                 }
                 didAnything = true;
                 refreshChatAndContacts();
-                if (isSessionActive(sessionId)) ui.showTyping(assistantAvatar);
+                if (isSessionActive(sessionId)) ui.showTyping(assistantAvatar, getGroupTypingMembers(sessionId) || {});
                 continue;
               }
               if (ev.type !== 'private_chat') continue;
-              if (isSessionActive(sessionId)) ui.hideTyping();
+              if (isSessionActive(sessionId)) { ui.hideTyping(); fastForwardDelivery(sessionId); }
 
               // 默认路由到当前 session；若标签指向其他私聊，则创建/写入对应会话（后续群聊/动态会扩展）
               const targetSessionId = resolvePrivateChatTargetSessionId(ev.otherName || characterName);
@@ -16546,11 +16608,11 @@ Phase G（Frame 36）：循环衔接
               refreshChatAndContacts();
 
               // Continue waiting animation until stream ends / next tag arrives
-              if (isSessionActive(sessionId)) ui.showTyping(assistantAvatar);
+              if (isSessionActive(sessionId)) ui.showTyping(assistantAvatar, getGroupTypingMembers(sessionId) || {});
             }
           }
           if (isGenerationInterrupted(generationId)) return;
-          if (isSessionActive(sessionId)) ui.hideTyping();
+          if (isSessionActive(sessionId)) { ui.hideTyping(); fastForwardDelivery(sessionId); }
           chatStore.setLastRawResponse(fullRaw, sessionId);
           if (isSummaryMemoryEnabled()) {
             const { summary: protocolSummary } = extractSummaryBlock(fullRaw);
@@ -16888,7 +16950,7 @@ Phase G（Frame 36）：循环衔接
         // Always include summary request prompt; summary (if present) will be extracted from raw response.
         disableSummaryForThis = !isSummaryMemoryEnabled();
 
-        if (isSessionActive(sessionId)) ui.showTyping(assistantAvatar);
+        if (isSessionActive(sessionId)) startDeliveryAndTyping(sessionId, assistantAvatar);
         consumePromptInjections(sessionId);
         const resultRaw = await window.appBridge.generate(text, llmContext(text));
         if (isGenerationInterrupted(generationId)) {
@@ -16896,7 +16958,7 @@ Phase G（Frame 36）：循环衔接
           return;
         }
         sendSucceeded = true;
-        if (isSessionActive(sessionId)) ui.hideTyping();
+        if (isSessionActive(sessionId)) { ui.hideTyping(); fastForwardDelivery(sessionId); }
         chatStore.setLastRawResponse(resultRaw, sessionId);
         let stripped = resultRaw;
         if (!protocolEnabled) {

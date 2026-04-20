@@ -210,6 +210,11 @@ export class ChatUI {
     this.scrollBottomButtonImmediate = false;
     this.scrollBottomButtonResizeObserver = null;
     this.replyDraftEl = null;
+    this.mentionDropdown = null;
+    this.mentionMemberResolver = null;
+    this.mentionQuery = '';
+    this.mentionStartPos = -1;
+    this.mentionSelectedIndex = 0;
 
     setupIframeResizeListener();
     this.initReplyDraftBar();
@@ -223,6 +228,7 @@ export class ChatUI {
     this.bindScrollBottomButton();
     this.bindNetworkEvents();
     this.bindReasoningSettings();
+    this.bindMentionDetection();
   }
 
   decorateMessage(message, context = {}) {
@@ -1079,6 +1085,168 @@ export class ChatUI {
     }
   }
 
+  // ── @Mention system ──────────────────────────────────────────────
+
+  setMentionMemberResolver(resolver) {
+    this.mentionMemberResolver = resolver;
+  }
+
+  bindMentionDetection() {
+    if (!this.inputEl) return;
+    this.inputEl.addEventListener('input', () => this.handleMentionInput());
+    this.inputEl.addEventListener('keydown', (e) => this.handleMentionKeydown(e));
+    document.addEventListener('click', (e) => {
+      if (this.mentionDropdown && !this.mentionDropdown.contains(e.target) && e.target !== this.inputEl) {
+        this.hideMentionDropdown();
+      }
+    });
+  }
+
+  handleMentionInput() {
+    const el = this.inputEl;
+    const pos = el.selectionStart;
+    const text = el.value;
+    // find the '@' before cursor that starts a mention query
+    let atPos = -1;
+    for (let i = pos - 1; i >= 0; i--) {
+      const ch = text[i];
+      if (ch === '@') { atPos = i; break; }
+      if (ch === ' ' || ch === '\n') break;
+    }
+    if (atPos < 0 || (atPos > 0 && text[atPos - 1] !== ' ' && text[atPos - 1] !== '\n')) {
+      this.hideMentionDropdown();
+      return;
+    }
+    const query = text.slice(atPos + 1, pos).toLowerCase();
+    this.mentionStartPos = atPos;
+    this.mentionQuery = query;
+    this.showMentionDropdown(query);
+  }
+
+  handleMentionKeydown(e) {
+    if (!this.mentionDropdown || this.mentionDropdown.style.display === 'none') return;
+    const items = this.mentionDropdown.querySelectorAll('.mention-item');
+    if (!items.length) return;
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      this.mentionSelectedIndex = Math.min(this.mentionSelectedIndex + 1, items.length - 1);
+      this.updateMentionSelection(items);
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      this.mentionSelectedIndex = Math.max(this.mentionSelectedIndex - 1, 0);
+      this.updateMentionSelection(items);
+    } else if (e.key === 'Enter' && !e.shiftKey) {
+      const selected = items[this.mentionSelectedIndex];
+      if (selected) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        this.insertMention(selected.dataset.memberName);
+      }
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      this.hideMentionDropdown();
+    }
+  }
+
+  updateMentionSelection(items) {
+    items.forEach((item, i) => {
+      item.style.background = i === this.mentionSelectedIndex ? 'var(--app-accent-soft)' : 'transparent';
+    });
+    const active = items[this.mentionSelectedIndex];
+    if (active) active.scrollIntoView({ block: 'nearest' });
+  }
+
+  showMentionDropdown(query) {
+    if (typeof this.mentionMemberResolver !== 'function') return;
+    const members = this.mentionMemberResolver();
+    if (!members || !members.length) { this.hideMentionDropdown(); return; }
+    const filtered = query
+      ? members.filter(m => (m.name || '').toLowerCase().includes(query) || (m.id || '').toLowerCase().includes(query))
+      : members;
+    if (!filtered.length) { this.hideMentionDropdown(); return; }
+    if (!this.mentionDropdown) {
+      this.mentionDropdown = document.createElement('div');
+      this.mentionDropdown.className = 'mention-dropdown';
+      this.mentionDropdown.style.cssText = [
+        'position:absolute', 'z-index:15000',
+        'background:var(--app-surface-card)', 'border:1px solid var(--app-border-default)',
+        'border-radius:12px', 'box-shadow:var(--app-shadow-md)',
+        'max-height:220px', 'overflow-y:auto', 'overflow-x:hidden',
+        'padding:4px 0', 'min-width:180px', 'max-width:280px',
+      ].join(';');
+      document.body.appendChild(this.mentionDropdown);
+    }
+    this.mentionSelectedIndex = 0;
+    this.mentionDropdown.innerHTML = '';
+    filtered.forEach((m, idx) => {
+      const item = document.createElement('div');
+      item.className = 'mention-item';
+      item.dataset.memberName = m.name || m.id;
+      item.style.cssText = [
+        'display:flex', 'align-items:center', 'gap:8px',
+        'padding:8px 12px', 'cursor:pointer', 'font-size:14px',
+        'color:var(--app-text-primary)', 'transition:background 0.1s',
+        idx === 0 ? 'background:var(--app-accent-soft)' : 'background:transparent',
+      ].join(';');
+      if (m.avatar) {
+        const img = document.createElement('img');
+        img.src = m.avatar;
+        img.style.cssText = 'width:28px;height:28px;border-radius:50%;object-fit:cover;flex-shrink:0';
+        img.onerror = () => { img.style.display = 'none'; };
+        item.appendChild(img);
+      }
+      const nameEl = document.createElement('span');
+      nameEl.textContent = m.name || m.id;
+      nameEl.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0';
+      item.appendChild(nameEl);
+      item.addEventListener('pointerenter', () => {
+        this.mentionSelectedIndex = idx;
+        this.updateMentionSelection(this.mentionDropdown.querySelectorAll('.mention-item'));
+      });
+      item.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        this.insertMention(m.name || m.id);
+      });
+      this.mentionDropdown.appendChild(item);
+    });
+    // position above input
+    this.positionMentionDropdown();
+    this.mentionDropdown.style.display = 'block';
+  }
+
+  positionMentionDropdown() {
+    if (!this.mentionDropdown || !this.inputContainer) return;
+    const rect = this.inputContainer.getBoundingClientRect();
+    this.mentionDropdown.style.left = `${rect.left + 8}px`;
+    this.mentionDropdown.style.bottom = `${window.innerHeight - rect.top + 4}px`;
+    this.mentionDropdown.style.top = 'auto';
+  }
+
+  insertMention(name) {
+    const el = this.inputEl;
+    const before = el.value.slice(0, this.mentionStartPos);
+    const after = el.value.slice(el.selectionStart);
+    const mention = `@${name} `;
+    el.value = before + mention + after;
+    const newPos = before.length + mention.length;
+    el.setSelectionRange(newPos, newPos);
+    el.focus();
+    this.hideMentionDropdown();
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+
+  hideMentionDropdown() {
+    if (this.mentionDropdown) {
+      this.mentionDropdown.style.display = 'none';
+    }
+    this.mentionStartPos = -1;
+    this.mentionQuery = '';
+    this.mentionSelectedIndex = 0;
+  }
+
+  // ── End @Mention system ────────────────────────────────────────
+
   onInputChange(handler) {
     let timer = null;
     this.inputEl.addEventListener('input', () => {
@@ -1587,7 +1755,15 @@ export class ChatUI {
       contentWrap.className = 'chat-message-stack';
       contentWrap.style.cssText = 'grid-column: 1; display:flex; flex-direction:column; align-items:flex-end; gap:4px; min-width:0;';
       contentWrap.appendChild(bubbleStack);
-      contentWrap.appendChild(timeEl);
+      // 时间 + 送达状态行
+      const timeRow = document.createElement('div');
+      timeRow.className = 'chat-time-row';
+      const statusEl = document.createElement('span');
+      statusEl.className = 'chat-delivery-status';
+      // 默认不显示，由 showDeliveryStatus() 触发
+      timeRow.appendChild(statusEl);
+      timeRow.appendChild(timeEl);
+      contentWrap.appendChild(timeRow);
       wrapper.appendChild(contentWrap);
       wrapper.appendChild(avatarImg);
     } else {
@@ -1651,42 +1827,217 @@ export class ChatUI {
     return wrapper;
   }
 
-  showTyping(avatarUrl = '') {
+  /**
+   * @param {string} avatarUrl - 单聊头像
+   * @param {object} options
+   * @param {Array<{name:string, avatar:string}>} [options.groupMembers] - 群聊成员列表，提供时启用多人输入样式
+   */
+  showTyping(avatarUrl = '', options = {}) {
     if (!this.isTypingDotsEnabled()) return;
+    // RP/创意写作模式不显示输入指示器
+    if (document.body.dataset.uiMode === 'rp') return;
     if (this.typingEl) return;
+
+    // 清理之前的动态定时器
+    this._clearTypingTimers();
+
     const wrap = document.createElement('div');
-    wrap.className = 'QQ_chat_charmsg';
+    wrap.className = 'typing-indicator-wrap';
     wrap.id = 'typing-indicator';
 
-    // 头像（使用默认助手头像）
-    const avatar = document.createElement('img');
-    avatar.className = 'QQ_chat_head';
-    avatar.src = avatarUrl || './assets/external/feather-default.png';
+    const { groupMembers } = options;
 
-    // 气泡
-    const bubble = document.createElement('div');
-    bubble.className = 'QQ_chat_msgdiv';
-    bubble.innerHTML = `
-            <div class="typing">
-                <span class="typing-dot"></span>
-                <span class="typing-dot"></span>
-                <span class="typing-dot"></span>
-            </div>
-        `;
+    if (Array.isArray(groupMembers) && groupMembers.length > 0) {
+      // 群聊多人输入模式：动态随机切换成员
+      const avatarStack = document.createElement('div');
+      avatarStack.className = 'typing-avatar-stack';
 
-    wrap.appendChild(avatar);
-    wrap.appendChild(bubble);
+      const labelEl = document.createElement('span');
+      labelEl.className = 'typing-group-label';
+
+      const dotsEl = document.createElement('div');
+      dotsEl.className = 'typing';
+      dotsEl.innerHTML = '<span class="typing-dot"></span><span class="typing-dot"></span><span class="typing-dot"></span>';
+
+      const contentWrap = document.createElement('div');
+      contentWrap.className = 'typing-group-content';
+      contentWrap.appendChild(labelEl);
+      contentWrap.appendChild(dotsEl);
+
+      wrap.appendChild(avatarStack);
+      wrap.appendChild(contentWrap);
+
+      // 初始化 + 动态切换逻辑
+      const members = [...groupMembers];
+      const cycleMembers = () => {
+        const shuffled = members.sort(() => Math.random() - 0.5);
+        const count = Math.min(shuffled.length, Math.floor(Math.random() * 3) + 1);
+        const selected = shuffled.slice(0, count);
+
+        // 更新头像堆叠（带淡入淡出）
+        avatarStack.classList.add('typing-avatar-fade');
+        setTimeout(() => {
+          avatarStack.innerHTML = '';
+          selected.forEach((m, i) => {
+            const img = document.createElement('img');
+            img.className = 'typing-avatar-item';
+            img.src = m.avatar || './assets/external/feather-default.png';
+            img.style.zIndex = String(selected.length - i);
+            if (i > 0) img.style.marginLeft = '-8px';
+            avatarStack.appendChild(img);
+          });
+          avatarStack.classList.remove('typing-avatar-fade');
+        }, 200);
+
+        // 更新文字
+        const names = selected.map(m => m.name).join('、');
+        labelEl.textContent = `${names} 正在输入`;
+      };
+
+      cycleMembers(); // 立即执行一次
+
+      // 动态切换定时器 (0.5-3秒随机间隔，参考手机流式.html)
+      const scheduleCycle = () => {
+        this._typingCycleTimer = setTimeout(() => {
+          cycleMembers();
+          scheduleCycle();
+        }, Math.random() * 2500 + 500);
+      };
+      scheduleCycle();
+    } else {
+      // 单聊模式：头像 + 裸dots（无气泡包裹）
+      const avatar = document.createElement('img');
+      avatar.className = 'typing-avatar-single';
+      avatar.src = avatarUrl || './assets/external/feather-default.png';
+
+      const dotsEl = document.createElement('div');
+      dotsEl.className = 'typing';
+      dotsEl.innerHTML = '<span class="typing-dot"></span><span class="typing-dot"></span><span class="typing-dot"></span>';
+
+      wrap.appendChild(avatar);
+      wrap.appendChild(dotsEl);
+    }
+
     this.scrollEl.appendChild(wrap);
     this.typingEl = wrap;
     this.scrollToBottom();
   }
 
   hideTyping() {
+    this._clearDeliverySequence();
+    this._clearTypingTimers();
     if (this.typingEl) {
       this.typingEl.remove();
       this.typingEl = null;
       this.scheduleScrollBottomButtonRefresh({ immediate: true });
     }
+  }
+
+  _clearTypingTimers() {
+    if (this._typingCycleTimer) {
+      clearTimeout(this._typingCycleTimer);
+      this._typingCycleTimer = null;
+    }
+    if (this._readCountTimer) {
+      clearTimeout(this._readCountTimer);
+      this._readCountTimer = null;
+    }
+  }
+
+  _clearDeliverySequence() {
+    if (this._deliveryReadTimer) {
+      clearTimeout(this._deliveryReadTimer);
+      this._deliveryReadTimer = null;
+    }
+    if (this._deliveryTypingTimer) {
+      clearTimeout(this._deliveryTypingTimer);
+      this._deliveryTypingTimer = null;
+    }
+  }
+
+  /**
+   * 对最近发送的用户消息显示「✔ 已送出」
+   */
+  showDeliveryStatus() {
+    const statusEls = this.scrollEl?.querySelectorAll?.('.chat-delivery-status') || [];
+    [...statusEls].forEach(el => {
+      if (!el.textContent.trim()) {
+        el.textContent = '✔ 已送出';
+      }
+    });
+  }
+
+  /**
+   * 完整送达时序：✔ 已送出 → 已读 → typing dots
+   * 已送出/已读 始终显示（与回复动画开关无关）
+   * typing dots 受 isTypingDotsEnabled() 控制
+   * @param {string} avatarUrl
+   * @param {object} typingOptions - 传给 showTyping 的 options
+   * @param {object} readOptions - { groupMemberCount }
+   */
+  startDeliverySequence(avatarUrl = '', typingOptions = {}, readOptions = {}) {
+    this._clearDeliverySequence();
+    this._deliverySequenceDone = false;
+
+    // 阶段1：0.8-2秒后 → 已读
+    const readDelay = Math.random() * 1200 + 800;
+    this._deliveryReadTimer = setTimeout(() => {
+      this._deliveryReadTimer = null;
+      this._markAsRead(readOptions);
+
+      // 阶段2：已读后 0.3-1秒 → typing dots（仅在启用时）
+      const typingDelay = Math.random() * 700 + 300;
+      this._deliveryTypingTimer = setTimeout(() => {
+        this._deliveryTypingTimer = null;
+        this._deliverySequenceDone = true;
+        this.showTyping(avatarUrl, typingOptions);
+      }, typingDelay);
+    }, readDelay);
+  }
+
+  /**
+   * 将「✔ 已送出」标记为「已读」
+   */
+  _markAsRead(options = {}) {
+    const statusEls = this.scrollEl?.querySelectorAll?.('.chat-delivery-status') || [];
+    const targets = [...statusEls].filter(el => {
+      const txt = el.textContent.trim();
+      return txt === '✔ 已送出';
+    });
+    if (!targets.length) return;
+
+    const { groupMemberCount } = options;
+
+    if (groupMemberCount && groupMemberCount > 1) {
+      let current = 1;
+      const max = groupMemberCount;
+      targets.forEach(el => { el.textContent = `已读${current}`; });
+
+      const scheduleIncrement = () => {
+        if (current >= max) return;
+        this._readCountTimer = setTimeout(() => {
+          current = Math.min(current + Math.floor(Math.random() * 2) + 1, max);
+          targets.forEach(el => { el.textContent = `已读${current}`; });
+          scheduleIncrement();
+        }, Math.random() * 2000 + 800);
+      };
+      scheduleIncrement();
+    } else {
+      targets.forEach(el => { el.textContent = '已读'; });
+    }
+  }
+
+  /**
+   * 快进送达序列：如果 AI 回复在序列完成前就到达，
+   * 立刻显示「已读」并跳过 typing dots
+   */
+  fastForwardDeliverySequence(readOptions = {}) {
+    const wasRunning = !!(this._deliveryReadTimer || this._deliveryTypingTimer);
+    this._clearDeliverySequence();
+    if (wasRunning || !this._deliverySequenceDone) {
+      this._markAsRead(readOptions);
+    }
+    this._deliverySequenceDone = true;
   }
 
   /**
@@ -2004,6 +2355,13 @@ export class ChatUI {
     } else {
       existing.classList.remove('message-pending');
       delete existing.dataset.status;
+      // 状态从 pending/sending 变为已发送时，显示"✔ 已送出"
+      if (next.role === 'user') {
+        const statusEl = existing.querySelector('.chat-delivery-status');
+        if (statusEl && !statusEl.textContent && existing.dataset.trackDelivery) {
+          statusEl.textContent = '✔ 已送出';
+        }
+      }
     }
     this.applyCreativeBubbleState(existing, next);
 
@@ -2602,6 +2960,28 @@ export class ChatUI {
       actions.push({ key: 'delete', label: '删除' });
     }
     this.contextMenu.innerHTML = '';
+    // 手机端：在选单上方显示表情反应列（仅在threading启用时）
+    if (this.isThreadingEnabledForMessage(msg)) {
+      const reactionRow = document.createElement('div');
+      reactionRow.style.cssText = 'display:flex; justify-content:center; gap:4px; padding:6px 8px; border-bottom:1px solid var(--app-border-light);';
+      const currentReactions = normalizeReactionEntries(msg?.meta?.reactions);
+      DEFAULT_REACTION_EMOJIS.forEach(emoji => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'chat-reaction-option';
+        if (currentReactions.some(e => e.emoji === emoji && hasReactionActor(e, SELF_REACTION_ACTOR))) {
+          btn.classList.add('is-active');
+        }
+        btn.textContent = emoji;
+        btn.onclick = ev => {
+          ev.stopPropagation();
+          this.contextMenu.style.display = 'none';
+          this.actionHandler?.('toggle-reaction', msg, { emoji });
+        };
+        reactionRow.appendChild(btn);
+      });
+      this.contextMenu.appendChild(reactionRow);
+    }
     actions.forEach(act => {
       const btn = document.createElement('button');
       btn.textContent = act.label;
