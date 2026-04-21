@@ -3365,7 +3365,7 @@ export class ChatUI {
             resize: none;
             outline: none;
             background: var(--app-surface-card);
-            color: #000;
+            color: var(--app-text-primary);
             box-sizing: border-box;
         `;
 
