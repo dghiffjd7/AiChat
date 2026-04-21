@@ -740,6 +740,10 @@ export class ChatUI {
     this.scrollEl.addEventListener(
       'scroll',
       () => {
+        if (this._programmaticScroll) {
+          this._programmaticScroll = false;
+          return;
+        }
         if (rafId) return;
         const schedule =
           typeof requestAnimationFrame === 'function'
@@ -820,6 +824,14 @@ export class ChatUI {
     const shouldShow = visible ? distance > hide : distance > show;
     if (shouldShow) this.showScrollBottomButton({ immediate });
     else this.hideScrollBottomButton({ immediate });
+    // 悬浮输入指示器：滚到底部时移除，离开底部时显示
+    if (this.typingEl) {
+      if (this.isNearBottom()) {
+        if (this._floatingTypingEl) { this._floatingTypingEl.remove(); this._floatingTypingEl = null; }
+      } else if (!this._floatingTypingEl) {
+        this._showFloatingTyping(this.typingEl);
+      }
+    }
   }
 
   scheduleScrollBottomButtonRefresh({ immediate = false } = {}) {
@@ -1324,6 +1336,7 @@ export class ChatUI {
   }
 
   scrollToBottom() {
+    this._programmaticScroll = true;
     this.scrollEl.scrollTop = this.scrollEl.scrollHeight;
     this.scheduleScrollBottomButtonRefresh({ immediate: true });
   }
@@ -1777,7 +1790,11 @@ export class ChatUI {
       timeRow.className = 'chat-time-row';
       const statusEl = document.createElement('span');
       statusEl.className = 'chat-delivery-status';
-      // 默认不显示，由 showDeliveryStatus() 触发
+      // 已发送的历史消息：从 meta.deliveryText 恢复，或默认「已读」
+      if (message.status !== 'pending' && message.status !== 'sending') {
+        const saved = message.meta?.deliveryText;
+        statusEl.textContent = typeof saved === 'string' && saved ? saved : '已读';
+      }
       timeRow.appendChild(statusEl);
       timeRow.appendChild(timeEl);
       contentWrap.appendChild(timeRow);
@@ -1922,27 +1939,56 @@ export class ChatUI {
       };
       scheduleCycle();
     } else {
-      // 单聊模式：头像 + 裸dots（无气泡包裹）
-      const avatar = document.createElement('img');
-      avatar.className = 'typing-avatar-single';
-      avatar.src = avatarUrl || './assets/external/feather-default.png';
+      // 单聊模式：「输入中」文字 + dots（不显示头像）
+      const labelEl = document.createElement('span');
+      labelEl.className = 'typing-private-label';
+      labelEl.textContent = '输入中';
 
       const dotsEl = document.createElement('div');
       dotsEl.className = 'typing';
       dotsEl.innerHTML = '<span class="typing-dot"></span><span class="typing-dot"></span><span class="typing-dot"></span>';
 
-      wrap.appendChild(avatar);
+      wrap.appendChild(labelEl);
       wrap.appendChild(dotsEl);
+
+      // 私聊等待时随机思考停顿
+      const scheduleThinkPause = () => {
+        const interval = 2500 + Math.random() * 4000;
+        this._typingThinkTimer = setTimeout(() => {
+          if (!this.typingEl || Math.random() > 0.35) {
+            scheduleThinkPause();
+            return;
+          }
+          const nearBefore = this.isNearBottom();
+          this._applyThinkPause();
+          this._typingThinkResumeTimer = setTimeout(() => {
+            if (this.typingEl) {
+              this._removeThinkPause();
+              if (nearBefore) requestAnimationFrame(() => this.scrollToBottom());
+            }
+            scheduleThinkPause();
+          }, 600 + Math.random() * 900);
+        }, interval);
+      };
+      scheduleThinkPause();
     }
 
+    // 首次创建时抑制 transition，避免 height 的「闪入」
+    wrap.style.transition = 'none';
     const wasNearBottom = this.isNearBottom();
     this.scrollEl.appendChild(wrap);
     this.typingEl = wrap;
+    this._typingNaturalHeight = wrap.offsetHeight;
+    wrap.style.transition = '';
+
+    // 不在底部时：在输入框上方显示半透明悬浮版
+    if (!wasNearBottom) {
+      this._showFloatingTyping(wrap);
+    }
     if (wasNearBottom) this.scrollToBottom();
   }
 
   hideTyping() {
-    this._clearDeliverySequence();
     this._clearTypingTimers();
     this._clearMessageQueueTimer();
     this._removeTypingElement();
@@ -1953,8 +1999,37 @@ export class ChatUI {
     if (this.typingEl) {
       this.typingEl.remove();
       this.typingEl = null;
+      if (this._floatingTypingEl) {
+        this._floatingTypingEl.remove();
+        this._floatingTypingEl = null;
+      }
       this.scheduleScrollBottomButtonRefresh({ immediate: true });
     }
+  }
+
+  _applyThinkPause() {
+    if (!this.typingEl) return;
+    this.typingEl.style.height = this.typingEl.offsetHeight + 'px';
+    this.typingEl.offsetHeight;
+    this.typingEl.classList.add('typing-think-pause');
+  }
+
+  _removeThinkPause() {
+    if (!this.typingEl) return;
+    this.typingEl.classList.remove('typing-think-pause');
+    this.typingEl.style.height = (this._typingNaturalHeight || 36) + 'px';
+    setTimeout(() => { if (this.typingEl) this.typingEl.style.height = ''; }, 200);
+  }
+
+  _showFloatingTyping(sourceWrap) {
+    if (this._floatingTypingEl) { this._floatingTypingEl.remove(); this._floatingTypingEl = null; }
+    const host = this.scrollEl?.parentElement;
+    if (!host) return;
+    const clone = sourceWrap.cloneNode(true);
+    clone.removeAttribute('id');
+    clone.className = 'typing-indicator-floating';
+    host.appendChild(clone);
+    this._floatingTypingEl = clone;
   }
 
   _clearTypingTimers() {
@@ -1962,9 +2037,13 @@ export class ChatUI {
       clearTimeout(this._typingCycleTimer);
       this._typingCycleTimer = null;
     }
-    if (this._readCountTimer) {
-      clearTimeout(this._readCountTimer);
-      this._readCountTimer = null;
+    if (this._typingThinkTimer) {
+      clearTimeout(this._typingThinkTimer);
+      this._typingThinkTimer = null;
+    }
+    if (this._typingThinkResumeTimer) {
+      clearTimeout(this._typingThinkResumeTimer);
+      this._typingThinkResumeTimer = null;
     }
   }
 
@@ -2019,40 +2098,64 @@ export class ChatUI {
     }, readDelay);
   }
 
+  _syncDeliveryTextToMessages(targets, text) {
+    targets.forEach(el => {
+      el.textContent = text;
+      const wrapper = el.closest?.('[data-msg-id]');
+      if (!wrapper) return;
+      if (wrapper.__chatappMessage) {
+        if (!wrapper.__chatappMessage.meta) wrapper.__chatappMessage.meta = {};
+        wrapper.__chatappMessage.meta.deliveryText = text;
+      }
+      const msgId = wrapper.dataset.msgId;
+      if (msgId && this._onDeliveryTextChange) {
+        try { this._onDeliveryTextChange(msgId, text); } catch {}
+      }
+    });
+  }
+
+  onDeliveryTextChange(handler) {
+    this._onDeliveryTextChange = typeof handler === 'function' ? handler : null;
+  }
+
   /**
    * 将「✔ 已送出」标记为「已读」
    */
   _markAsRead(options = {}) {
     const statusEls = this.scrollEl?.querySelectorAll?.('.chat-delivery-status') || [];
+    // 匹配「✔ 已送出」或已经是「已读X」的元素
     const targets = [...statusEls].filter(el => {
       const txt = el.textContent.trim();
-      return txt === '✔ 已送出';
+      return txt === '✔ 已送出' || txt.startsWith('已读');
     });
     if (!targets.length) return;
 
     const { groupMemberCount } = options;
 
     if (groupMemberCount && groupMemberCount > 1) {
-      // 群聊：初始已读1，缓慢递增，上限先设为总人数的30-60%（真实感）
-      let current = 1;
-      const softMax = Math.max(2, Math.ceil(groupMemberCount * (0.3 + Math.random() * 0.3)));
+      // 群聊：如果已有计数就保留，否则从1开始
+      const existing = this._readCountCurrent || 0;
+      let current = Math.max(1, existing);
+      const softMax = Math.max(current + 1, Math.ceil(groupMemberCount * (0.3 + Math.random() * 0.3)));
       this._readCountCurrent = current;
       this._readCountTargets = targets;
       this._readCountMax = groupMemberCount;
-      targets.forEach(el => { el.textContent = `已读${current}`; });
+      this._syncDeliveryTextToMessages(targets, `已读${current}`);
 
+      // 清除旧的递增定时器，重新启动
+      if (this._readCountTimer) { clearTimeout(this._readCountTimer); this._readCountTimer = null; }
       const scheduleIncrement = () => {
         if (current >= softMax) return;
         this._readCountTimer = setTimeout(() => {
           current = Math.min(current + 1, softMax);
           this._readCountCurrent = current;
-          targets.forEach(el => { el.textContent = `已读${current}`; });
+          this._syncDeliveryTextToMessages(targets, `已读${current}`);
           scheduleIncrement();
         }, Math.random() * 3000 + 1500);
       };
       scheduleIncrement();
     } else {
-      targets.forEach(el => { el.textContent = '已读'; });
+      this._syncDeliveryTextToMessages(targets, '已读');
     }
   }
 
@@ -2063,7 +2166,6 @@ export class ChatUI {
   bumpReadCount(speakerCount) {
     if (!this._readCountTargets?.length || !speakerCount) return;
     const minCount = Math.max(speakerCount, this._readCountCurrent || 1);
-    if (minCount <= this._readCountCurrent) return;
 
     // 清除旧定时器
     if (this._readCountTimer) {
@@ -2072,7 +2174,7 @@ export class ChatUI {
     }
 
     this._readCountCurrent = minCount;
-    this._readCountTargets.forEach(el => { el.textContent = `已读${minCount}`; });
+    this._syncDeliveryTextToMessages(this._readCountTargets, `已读${minCount}`);
 
     // 继续缓慢递增，上限为 speakerCount + 随机少量（模拟旁观者也在看）
     const max = Math.min(
@@ -2085,7 +2187,7 @@ export class ChatUI {
       this._readCountTimer = setTimeout(() => {
         current = Math.min(current + 1, max);
         this._readCountCurrent = current;
-        this._readCountTargets.forEach(el => { el.textContent = `已读${current}`; });
+        this._syncDeliveryTextToMessages(this._readCountTargets, `已读${current}`);
         scheduleMore();
       }, Math.random() * 4000 + 2000);
     };
@@ -2097,11 +2199,8 @@ export class ChatUI {
    * 立刻显示「已读」并跳过 typing dots
    */
   fastForwardDeliverySequence(readOptions = {}) {
-    const wasRunning = !!(this._deliveryReadTimer || this._deliveryTypingTimer);
     this._clearDeliverySequence();
-    if (wasRunning || !this._deliverySequenceDone) {
-      this._markAsRead(readOptions);
-    }
+    this._markAsRead(readOptions);
     this._deliverySequenceDone = true;
   }
 
@@ -2142,11 +2241,40 @@ export class ChatUI {
         if (i > 0) {
           const prevContent = String(items[i - 1]?.message?.content || '');
           const delay = calcDelay(prevContent.length);
+          const isPrivate = !Array.isArray(options.typingOptions?.groupMembers) || options.typingOptions.groupMembers.length === 0;
 
           this.showTyping(options.avatarUrl || '', options.typingOptions || {});
-          await new Promise(r => { this._messageQueueTimer = setTimeout(r, delay); });
+          // 清除 showTyping 自带的思考停顿定时器，enqueue 自己管理停顿节奏
+          if (this._typingThinkTimer) { clearTimeout(this._typingThinkTimer); this._typingThinkTimer = null; }
+          if (this._typingThinkResumeTimer) { clearTimeout(this._typingThinkResumeTimer); this._typingThinkResumeTimer = null; }
+
+          // 私聊 + 延迟够长时，随机插入 1-2 次「思考停顿」（淡出下沉 → 淡入浮现）
+          if (isPrivate && delay >= 1500 && Math.random() < 0.3) {
+            const pauseCount = delay >= 3000 && Math.random() < 0.4 ? 2 : 1;
+            const segments = pauseCount + 1;
+            const segmentBase = delay / (segments + pauseCount * 0.4);
+
+            for (let p = 0; p < pauseCount; p++) {
+              if (cancelled) break;
+              const nearBottom = this.isNearBottom();
+              const typingTime = segmentBase * (0.8 + Math.random() * 0.4);
+              await new Promise(r => { this._messageQueueTimer = setTimeout(r, typingTime); });
+              if (cancelled) break;
+              this._applyThinkPause();
+              const pauseTime = 600 + Math.random() * 900;
+              await new Promise(r => { this._messageQueueTimer = setTimeout(r, pauseTime); });
+              if (cancelled) break;
+              this._removeThinkPause();
+              if (nearBottom) requestAnimationFrame(() => this.scrollToBottom());
+            }
+            if (!cancelled) {
+              const remaining = segmentBase * (0.8 + Math.random() * 0.4);
+              await new Promise(r => { this._messageQueueTimer = setTimeout(r, remaining); });
+            }
+          } else {
+            await new Promise(r => { this._messageQueueTimer = setTimeout(r, delay); });
+          }
           if (cancelled) break;
-          // dots 移除和消息插入在同一帧，避免高度跳动
           this._removeTypingElement();
         }
 
@@ -2163,7 +2291,11 @@ export class ChatUI {
         if (!cancelled) {
           this.showTyping(options.avatarUrl || '', options.typingOptions || {});
           await new Promise(r => { this._messageQueueTimer = setTimeout(r, 1500 + Math.random() * 2500); });
-          if (!cancelled) this.hideTyping();
+          if (!cancelled) {
+            this._applyThinkPause();
+            await new Promise(r => { this._messageQueueTimer = setTimeout(r, 200); });
+            this.hideTyping();
+          }
         }
       }
     })();
@@ -2473,7 +2605,6 @@ export class ChatUI {
       reactions: normalizeReactionEntries(meta.reactions),
       name: typeof msg.name === 'string' ? msg.name : '',
       badge: typeof msg.badge === 'string' ? msg.badge : '',
-      status: typeof msg.status === 'string' ? msg.status : '',
     });
   }
 

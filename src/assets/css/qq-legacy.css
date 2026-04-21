@@ -4098,7 +4098,7 @@ body[data-ui-mode='rp'] .QQ_chat_page.sticker-preview-active .msgcontent {
   box-shadow:
     inset 0 1px 2px rgba(255, 255, 255, 0.3),
     0 2px 4px rgba(0, 0, 0, 0.1);
-  animation: liquidFlowMerge 3s infinite ease-in-out;
+  animation: liquidFlowMerge 1.4s infinite ease-in-out;
 }
 
 .typing-dot:nth-child(1) {
@@ -4107,15 +4107,15 @@ body[data-ui-mode='rp'] .QQ_chat_page.sticker-preview-active .msgcontent {
 }
 
 .typing-dot:nth-child(2) {
-  animation-delay: 0.4s;
-  animation: liquidFlowMerge 3.2s infinite ease-in-out,
-             liquidMergeEffect 4s infinite ease-in-out;
+  animation-delay: 0.2s;
+  animation: liquidFlowMerge 1.5s infinite ease-in-out,
+             liquidMergeEffect 1.8s infinite ease-in-out;
   z-index: 2;
 }
 
 .typing-dot:nth-child(3) {
-  animation-delay: 0.8s;
-  animation-duration: 2.8s;
+  animation-delay: 0.4s;
+  animation-duration: 1.3s;
   z-index: 1;
 }
 
@@ -4189,15 +4189,56 @@ body[data-ui-mode='rp'] .QQ_chat_page.sticker-preview-active .msgcontent {
   gap: 8px;
   padding: 8px 12px 8px 16px;
   min-height: 36px;
+  transition: opacity 0.18s cubic-bezier(0.4, 0, 0.2, 1),
+              transform 0.18s cubic-bezier(0.4, 0, 0.2, 1),
+              height 0.18s cubic-bezier(0.4, 0, 0.2, 1),
+              padding 0.18s cubic-bezier(0.4, 0, 0.2, 1);
+  overflow: hidden;
+  will-change: opacity, transform, height;
 }
 
-/* 单聊头像 */
-.typing-avatar-single {
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  object-fit: cover;
-  flex-shrink: 0;
+.typing-indicator-wrap.typing-think-pause {
+  opacity: 0;
+  transform: translateY(6px);
+  height: 0 !important;
+  min-height: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+/* 不在底部时的悬浮输入指示器 */
+.typing-indicator-floating {
+  position: absolute;
+  left: 12px;
+  bottom: calc(64px + env(safe-area-inset-bottom, 0px));
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  opacity: 0.55;
+  transform: scale(0.82);
+  transform-origin: bottom left;
+  pointer-events: none;
+  z-index: 5;
+}
+
+.QQ_chat_page.sticker-panel-open .typing-indicator-floating {
+  bottom: calc(64px + var(--qq-size-sticker-panel) + env(safe-area-inset-bottom, 0px));
+}
+
+.QQ_chat_page.sticker-preview-active .typing-indicator-floating {
+  bottom: calc(64px + var(--qq-size-sticker-preview) + env(safe-area-inset-bottom, 0px));
+}
+
+.QQ_chat_page.sticker-panel-open.sticker-preview-active .typing-indicator-floating {
+  bottom: calc(64px + var(--qq-size-sticker-panel) + var(--qq-size-sticker-preview) + env(safe-area-inset-bottom, 0px));
+}
+
+/* 私聊「输入中」文字 */
+.typing-private-label {
+  font-size: 12px;
+  color: var(--app-text-muted);
+  white-space: nowrap;
 }
 
 /* 群聊多头像堆叠 */

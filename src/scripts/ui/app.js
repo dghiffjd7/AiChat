@@ -2252,6 +2252,7 @@ ${listPart || '-（无）'}
   const getGroupReadOptions = (sessionId) => {
     if (!sessionId || !sessionId.startsWith('group:')) return {};
     const group = contactsStore.getContact(sessionId);
+    // members 列表不含用户自己，直接使用 length
     const count = Array.isArray(group?.members) ? group.members.length : 0;
     return count > 0 ? { groupMemberCount: count } : {};
   };
@@ -12716,6 +12717,17 @@ Phase G（Frame 36）：循环衔接
       .filter(Boolean);
   });
 
+  // 已读状态持久化到 store
+  ui.onDeliveryTextChange((msgId, text) => {
+    const sid = chatStore.getCurrent();
+    if (!sid) return;
+    const msgs = chatStore.getMessages(sid);
+    const msg = msgs.find(m => String(m?.id || '') === msgId);
+    if (!msg) return;
+    if (!msg.meta) msg.meta = {};
+    msg.meta.deliveryText = text;
+  });
+
   // Button: open config
   ui.onConfig(() => configPanel.show());
   // Button: open world
@@ -17009,7 +17021,7 @@ Phase G（Frame 36）：循环衔接
         consumePromptInjections(sessionId);
         const resultRaw = await window.appBridge.generate(text, llmContext(text));
         if (isGenerationInterrupted(generationId)) {
-          if (isSessionActive(sessionId)) ui.hideTyping();
+          if (isSessionActive(sessionId)) { ui.hideTyping(); fastForwardDelivery(sessionId); }
           return;
         }
         sendSucceeded = true;
@@ -17491,7 +17503,7 @@ Phase G（Frame 36）：循环衔接
       if (activeGeneration?._messageQueue) {
         try { activeGeneration._messageQueue.cancel(); } catch {}
       }
-      if (!generationInterrupted && isSessionActive(sessionId)) ui.hideTyping();
+      if (!generationInterrupted && isSessionActive(sessionId)) { ui.hideTyping(); fastForwardDelivery(sessionId); }
       if (isCancelled) {
         suppressErrorUI = true;
       }
