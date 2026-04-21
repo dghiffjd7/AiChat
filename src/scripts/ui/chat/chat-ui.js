@@ -754,6 +754,10 @@ export class ChatUI {
     );
   }
 
+  isNearBottom(threshold = 120) {
+    return this.getScrollDistanceFromBottom() <= threshold;
+  }
+
   getScrollDistanceFromBottom() {
     if (!this.scrollEl) return 0;
     const scrollHeight = Number(this.scrollEl.scrollHeight || 0);
@@ -1356,10 +1360,21 @@ export class ChatUI {
    * @param {string} message.name - 发送者名称
    * @param {string} message.time - 时间戳
    */
-  addMessage(message) {
+  /**
+   * @param {object} message
+   * @param {object} [options]
+   * @param {boolean} [options.autoScroll] - 是否自动滚动，默认true。
+   *   true = 仅在用户已在底部时滚动（Discord风格）。false = 不滚动。
+   */
+  addMessage(message, options = {}) {
+    const original = message;
     message = this.decorateMessage(message, { phase: 'add' });
     if (message && !message.id) {
       message.id = `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+    }
+    // 将生成的 id 同步回原始对象，确保 store 和 DOM 使用同一 id
+    if (original && message && original !== message && message.id && !original.id) {
+      original.id = message.id;
     }
     const runtime = typeof window !== 'undefined' ? window.appBridge?.pluginRuntime : null;
     const scriptRuntime = typeof window !== 'undefined' ? window.appBridge?.scriptRuntime : null;
@@ -1373,10 +1388,12 @@ export class ChatUI {
         logger.warn('script message.before_render failed', err);
       });
     }
+    const wasNearBottom = this.isNearBottom();
     const el = this.buildMessageElement(message);
     if (el) {
       this.scrollEl.appendChild(el);
-      this.scrollToBottom();
+      const shouldScroll = options.autoScroll !== false && wasNearBottom;
+      if (shouldScroll) this.scrollToBottom();
     }
     if (runtime && el) {
       runtime.dispatchEvent('message.after_render', { message, elementId: message?.id || '' }).catch(err => {
@@ -1918,14 +1935,21 @@ export class ChatUI {
       wrap.appendChild(dotsEl);
     }
 
+    const wasNearBottom = this.isNearBottom();
     this.scrollEl.appendChild(wrap);
     this.typingEl = wrap;
-    this.scrollToBottom();
+    if (wasNearBottom) this.scrollToBottom();
   }
 
   hideTyping() {
     this._clearDeliverySequence();
     this._clearTypingTimers();
+    this._clearMessageQueueTimer();
+    this._removeTypingElement();
+  }
+
+  /** 仅移除 typing DOM，不清除定时器（供 enqueueMessages 在同一帧替换用） */
+  _removeTypingElement() {
     if (this.typingEl) {
       this.typingEl.remove();
       this.typingEl = null;
@@ -2009,22 +2033,63 @@ export class ChatUI {
     const { groupMemberCount } = options;
 
     if (groupMemberCount && groupMemberCount > 1) {
+      // 群聊：初始已读1，缓慢递增，上限先设为总人数的30-60%（真实感）
       let current = 1;
-      const max = groupMemberCount;
+      const softMax = Math.max(2, Math.ceil(groupMemberCount * (0.3 + Math.random() * 0.3)));
+      this._readCountCurrent = current;
+      this._readCountTargets = targets;
+      this._readCountMax = groupMemberCount;
       targets.forEach(el => { el.textContent = `已读${current}`; });
 
       const scheduleIncrement = () => {
-        if (current >= max) return;
+        if (current >= softMax) return;
         this._readCountTimer = setTimeout(() => {
-          current = Math.min(current + Math.floor(Math.random() * 2) + 1, max);
+          current = Math.min(current + 1, softMax);
+          this._readCountCurrent = current;
           targets.forEach(el => { el.textContent = `已读${current}`; });
           scheduleIncrement();
-        }, Math.random() * 2000 + 800);
+        }, Math.random() * 3000 + 1500);
       };
       scheduleIncrement();
     } else {
       targets.forEach(el => { el.textContent = '已读'; });
     }
+  }
+
+  /**
+   * AI 回复后：根据回复中出现的不同说话者数量提升已读计数
+   * @param {number} speakerCount - 本次回复中不同说话者数量
+   */
+  bumpReadCount(speakerCount) {
+    if (!this._readCountTargets?.length || !speakerCount) return;
+    const minCount = Math.max(speakerCount, this._readCountCurrent || 1);
+    if (minCount <= this._readCountCurrent) return;
+
+    // 清除旧定时器
+    if (this._readCountTimer) {
+      clearTimeout(this._readCountTimer);
+      this._readCountTimer = null;
+    }
+
+    this._readCountCurrent = minCount;
+    this._readCountTargets.forEach(el => { el.textContent = `已读${minCount}`; });
+
+    // 继续缓慢递增，上限为 speakerCount + 随机少量（模拟旁观者也在看）
+    const max = Math.min(
+      this._readCountMax || 999,
+      minCount + Math.floor(Math.random() * Math.max(3, Math.ceil(minCount * 0.3))) + 1
+    );
+    let current = minCount;
+    const scheduleMore = () => {
+      if (current >= max) return;
+      this._readCountTimer = setTimeout(() => {
+        current = Math.min(current + 1, max);
+        this._readCountCurrent = current;
+        this._readCountTargets.forEach(el => { el.textContent = `已读${current}`; });
+        scheduleMore();
+      }, Math.random() * 4000 + 2000);
+    };
+    scheduleMore();
   }
 
   /**
@@ -2038,6 +2103,79 @@ export class ChatUI {
       this._markAsRead(readOptions);
     }
     this._deliverySequenceDone = true;
+  }
+
+  /**
+   * 逐条延迟输出消息队列（模拟真人逐条发送）
+   * @param {Array<{message: object, callback?: function}>} items - 消息 + 可选回调
+   * @param {object} [options]
+   * @param {string} [options.avatarUrl] - typing dots 头像
+   * @param {object} [options.typingOptions] - showTyping 的 options
+   * @returns {{ cancel: function, promise: Promise }}
+   */
+  enqueueMessages(items, options = {}) {
+    let cancelled = false;
+    const cancel = () => {
+      cancelled = true;
+      this._clearMessageQueueTimer();
+      this.hideTyping();
+    };
+
+    // 模拟真人打字延迟：
+    // 手机中文平均 ~35字/分钟 ≈ 1.7秒/字，但用户不会逐字感知
+    // 模拟的是"读+想+打+发送"的完整周期
+    const calcDelay = (charCount) => {
+      // 短句(<20字)：1.5-3.5秒（快速回复）
+      // 中句(20-60字)：3-5.5秒（正常打字）
+      // 长句(>60字)：4.5-7秒（需要打比较久，但封顶避免太慢）
+      const base = Math.min(charCount * 60, 5500) + 1200;
+      const jitter = (Math.random() - 0.5) * 1200;
+      return Math.max(1500, base + jitter);
+    };
+
+    const promise = (async () => {
+      for (let i = 0; i < items.length; i++) {
+        if (cancelled) break;
+        const item = items[i];
+        const isLast = i === items.length - 1;
+
+        if (i > 0) {
+          const prevContent = String(items[i - 1]?.message?.content || '');
+          const delay = calcDelay(prevContent.length);
+
+          this.showTyping(options.avatarUrl || '', options.typingOptions || {});
+          await new Promise(r => { this._messageQueueTimer = setTimeout(r, delay); });
+          if (cancelled) break;
+          // dots 移除和消息插入在同一帧，避免高度跳动
+          this._removeTypingElement();
+        }
+
+        this.addMessage(item.message);
+        if (typeof item.callback === 'function') {
+          try { item.callback(item.message); } catch {}
+        }
+      }
+
+      // 彩蛋：~20% 概率在最后一条消息后短暂出现 typing dots 再消失
+      // 模拟「对方正在打字…算了不发了」的真实社交体验
+      if (!cancelled && items.length > 1 && Math.random() < 0.2) {
+        await new Promise(r => { this._messageQueueTimer = setTimeout(r, 800 + Math.random() * 1500); });
+        if (!cancelled) {
+          this.showTyping(options.avatarUrl || '', options.typingOptions || {});
+          await new Promise(r => { this._messageQueueTimer = setTimeout(r, 1500 + Math.random() * 2500); });
+          if (!cancelled) this.hideTyping();
+        }
+      }
+    })();
+
+    return { cancel, promise };
+  }
+
+  _clearMessageQueueTimer() {
+    if (this._messageQueueTimer) {
+      clearTimeout(this._messageQueueTimer);
+      this._messageQueueTimer = null;
+    }
   }
 
   /**
@@ -2102,7 +2240,7 @@ export class ChatUI {
           }
           messageEl.textContent = this.normalizeAssistantLineBreaks(next);
           messageEl.style.whiteSpace = 'pre-wrap';
-          this.scrollToBottom();
+          if (this.isNearBottom()) this.scrollToBottom();
         });
       },
       finish: finalMessage => {
