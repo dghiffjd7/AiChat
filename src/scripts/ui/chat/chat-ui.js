@@ -1281,6 +1281,16 @@ export class ChatUI {
     this.hideReactionPicker();
     this.hideScrollDateBadge({ immediate: true });
     this.hideScrollBottomButton({ immediate: true });
+    // 切换会话时重置所有送达/已读状态
+    this._clearDeliverySequence();
+    this._clearTypingTimers();
+    if (this._readCountTimer) { clearTimeout(this._readCountTimer); this._readCountTimer = null; }
+    this._readCountCurrent = 0;
+    this._readCountMax = 0;
+    this._readCountTargets = null;
+    this._deliverySequenceDone = false;
+    this.typingEl = null;
+    if (this._floatingTypingEl) { this._floatingTypingEl.remove(); this._floatingTypingEl = null; }
   }
 
   cleanupRichTextMounts(rootEl) {
@@ -2136,7 +2146,7 @@ export class ChatUI {
       // 群聊：如果已有计数就保留，否则从1开始
       const existing = this._readCountCurrent || 0;
       let current = Math.max(1, existing);
-      const softMax = Math.max(current + 1, Math.ceil(groupMemberCount * (0.3 + Math.random() * 0.3)));
+      const softMax = Math.min(groupMemberCount, Math.max(current + 1, Math.ceil(groupMemberCount * (0.3 + Math.random() * 0.3))));
       this._readCountCurrent = current;
       this._readCountTargets = targets;
       this._readCountMax = groupMemberCount;
@@ -2165,7 +2175,8 @@ export class ChatUI {
    */
   bumpReadCount(speakerCount) {
     if (!this._readCountTargets?.length || !speakerCount) return;
-    const minCount = Math.max(speakerCount, this._readCountCurrent || 1);
+    const ceiling = this._readCountMax || 999;
+    const minCount = Math.min(ceiling, Math.max(speakerCount, this._readCountCurrent || 1));
 
     // 清除旧定时器
     if (this._readCountTimer) {

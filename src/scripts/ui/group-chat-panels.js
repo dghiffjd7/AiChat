@@ -445,7 +445,7 @@ export class GroupCreatePanel {
         const listEl = this.panel?.querySelector('#group-contacts');
         if (!listEl) return;
         const q = normalizeKey(this.panel.querySelector('#group-search')?.value);
-        const friends = this.contactsStore?.listFriends?.() || [];
+        const friends = (this.contactsStore?.listFriends?.() || []).filter(f => !String(f?.id || '').startsWith('rp:'));
         const filtered = q
             ? friends.filter(c => normalizeKey(c?.name || c?.id).includes(q))
             : friends;
@@ -1722,7 +1722,7 @@ export class GroupSettingsPanel {
         if (!listEl) return;
         const q = normalizeKey(this.addPanel.querySelector('#group-add-search')?.value);
         const friends = this.contactsStore?.listFriends?.() || [];
-        const candidates = friends.filter(f => f?.id && !this.members.includes(f.id));
+        const candidates = friends.filter(f => f?.id && !this.members.includes(f.id) && !String(f.id).startsWith('rp:'));
         const filtered = q
             ? candidates.filter(c => normalizeKey(c?.name || c?.id).includes(q))
             : candidates;
