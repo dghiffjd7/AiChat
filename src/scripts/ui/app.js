@@ -12814,6 +12814,196 @@ Phase G（Frame 36）：循环衔接
     msg.meta.deliveryText = text;
   });
 
+  const cloneSwipePlainObject = value => {
+    if (value === null || value === undefined) return value;
+    try {
+      return JSON.parse(JSON.stringify(value));
+    } catch {
+      return value && typeof value === 'object' ? { ...value } : value;
+    }
+  };
+  const cloneSwipeMemoryUpdateEntry = entry => {
+    if (!entry || typeof entry !== 'object') return null;
+    const cloned = cloneSwipePlainObject(entry) || {};
+    const clip = (value, max = 20000) => {
+      const text = typeof value === 'string' ? value : '';
+      if (!text) return '';
+      return text.length > max ? `${text.slice(0, max)}\n...[truncated]` : text;
+    };
+    return {
+      at: cloned.at || 0,
+      mode: cloned.mode,
+      sessionId: cloned.sessionId,
+      tableEditRaw: clip(cloned.tableEditRaw),
+      raw: clip(cloned.raw),
+      requestPrompt: clip(cloned.requestPrompt),
+      actions: Array.isArray(cloned.actions) ? cloneSwipePlainObject(cloned.actions) : [],
+      rollback: cloned.rollback ? cloneSwipePlainObject(cloned.rollback) : null,
+      rollbackAt: cloned.rollbackAt || 0,
+    };
+  };
+  let activeSwipeMemoryStateKey = '';
+  const getSwipeMemoryStateKey = (sessionId, msgId, index) => {
+    const sid = String(sessionId || '').trim();
+    const mid = String(msgId || '').trim();
+    const idx = Math.trunc(Number(index));
+    if (!sid || !mid || !Number.isFinite(idx) || idx < 0) return '';
+    return `${sid}:${mid}:${idx}`;
+  };
+  const markActiveSwipeMemoryState = (sessionId, msgId, index) => {
+    activeSwipeMemoryStateKey = getSwipeMemoryStateKey(sessionId, msgId, index);
+  };
+  const canPersistOutgoingSwipeMemoryState = (sessionId, msgId, index, branch) => {
+    const key = getSwipeMemoryStateKey(sessionId, msgId, index);
+    if (!key) return false;
+    if (activeSwipeMemoryStateKey === key) return true;
+    // Avoid overwriting an existing branch snapshot when the table state was not
+    // explicitly applied from that branch in this runtime.
+    return !branch?.memoryTableSnapshot;
+  };
+  const resolveSwipeMemoryTemplateId = async () => {
+    if (!memoryTemplateStore) return '';
+    try {
+      const list = await memoryTemplateStore.getTemplates({ is_default: true });
+      if (Array.isArray(list) && list.length) return String(list[0]?.id || '').trim();
+    } catch {}
+    try {
+      const fallback = await memoryTemplateStore.getTemplates({ id: 'default-v1' });
+      if (Array.isArray(fallback) && fallback.length) return String(fallback[0]?.id || '').trim();
+    } catch {}
+    return '';
+  };
+  const buildSwipeMemoryTableSnapshot = async (sessionId, { isGroup } = {}) => {
+    if (getMemoryStorageMode() !== 'table') return null;
+    if (!memoryTableStore?.getMemories || !memoryTemplateStore) return null;
+    const sid = String(sessionId || '').trim();
+    if (!sid) return null;
+    const templateId = await resolveSwipeMemoryTemplateId();
+    if (!templateId) return null;
+    const groupScope = Boolean(isGroup);
+    let rows = [];
+    try {
+      rows = await memoryTableStore.getMemories({
+        scope: groupScope ? 'group' : 'contact',
+        group_id: groupScope ? sid : undefined,
+        contact_id: groupScope ? undefined : sid,
+        template_id: templateId,
+      });
+    } catch {
+      rows = [];
+    }
+    const picked = (Array.isArray(rows) ? rows : [])
+      .map(row => {
+        const tableId = String(row?.table_id || '').trim();
+        if (!tableId) return null;
+        return {
+          id: String(row?.id || '').trim(),
+          template_id: String(row?.template_id || templateId).trim() || templateId,
+          table_id: tableId,
+          contact_id: groupScope ? null : sid,
+          group_id: groupScope ? sid : null,
+          row_data: cloneSwipePlainObject(row?.row_data || {}),
+          is_active: row?.is_active !== false,
+          is_pinned: Boolean(row?.is_pinned),
+          priority: Number.isFinite(Number(row?.priority)) ? Number(row.priority) : 0,
+          sort_order: Number.isFinite(Number(row?.sort_order)) ? Number(row.sort_order) : 0,
+        };
+      })
+      .filter(Boolean);
+    return {
+      templateId,
+      scope: groupScope ? 'group' : 'contact',
+      rows: picked,
+      capturedAt: Date.now(),
+    };
+  };
+  const applySwipeMemoryTableSnapshot = async (sessionId, snapshot, { isGroup } = {}) => {
+    if (getMemoryStorageMode() !== 'table') return false;
+    if (!snapshot || !memoryTableStore?.getMemories) return false;
+    const sid = String(sessionId || '').trim();
+    if (!sid) return false;
+    const groupScope = Boolean(isGroup);
+    const templateId = String(snapshot?.templateId || '').trim() || await resolveSwipeMemoryTemplateId();
+    if (!templateId) return false;
+    let existing = [];
+    try {
+      existing = await memoryTableStore.getMemories({
+        scope: groupScope ? 'group' : 'contact',
+        group_id: groupScope ? sid : undefined,
+        contact_id: groupScope ? undefined : sid,
+        template_id: templateId,
+      });
+    } catch {
+      existing = [];
+    }
+    const ids = (Array.isArray(existing) ? existing : [])
+      .map(row => String(row?.id || '').trim())
+      .filter(Boolean);
+    if (ids.length) {
+      try {
+        await memoryTableStore.batchDeleteMemories?.(ids);
+      } catch {
+        for (const id of ids) {
+          try {
+            await memoryTableStore.deleteMemory?.(id);
+          } catch {}
+        }
+      }
+    }
+    const inputs = (Array.isArray(snapshot?.rows) ? snapshot.rows : [])
+      .map(row => {
+        const tableId = String(row?.table_id || '').trim();
+        if (!tableId) return null;
+        return {
+          id: row?.id ? String(row.id) : undefined,
+          template_id: templateId,
+          table_id: tableId,
+          contact_id: groupScope ? null : sid,
+          group_id: groupScope ? sid : null,
+          row_data: cloneSwipePlainObject(row?.row_data || {}),
+          is_active: row?.is_active !== false,
+          is_pinned: Boolean(row?.is_pinned),
+          priority: Number.isFinite(Number(row?.priority)) ? Number(row.priority) : 0,
+          sort_order: Number.isFinite(Number(row?.sort_order)) ? Number(row.sort_order) : 0,
+        };
+      })
+      .filter(Boolean);
+    if (inputs.length) {
+      try {
+        await memoryTableStore.batchCreateMemories?.(inputs);
+      } catch {
+        for (const input of inputs) {
+          try {
+            await memoryTableStore.createMemory?.(input);
+          } catch {}
+        }
+      }
+    }
+    window.dispatchEvent(new CustomEvent('memory-rows-updated', { detail: { sessionId: sid, templateId } }));
+    return true;
+  };
+  const persistSwipeBranchMemoryState = async (branches, index, sessionId, { isGroup } = {}) => {
+    if (getMemoryStorageMode() !== 'table') return false;
+    if (!Array.isArray(branches) || index < 0 || index >= branches.length) return false;
+    const branch = branches[index] && typeof branches[index] === 'object' ? branches[index] : null;
+    if (!branch || branch.draft === true) return false;
+    const snapshot = await buildSwipeMemoryTableSnapshot(sessionId, { isGroup });
+    if (!snapshot) return false;
+    branch.memoryTableSnapshot = snapshot;
+    branch.memoryUpdateEntry = cloneSwipeMemoryUpdateEntry(window.appBridge?.getLastMemoryUpdate?.(sessionId));
+    return true;
+  };
+  const applySwipeBranchMemoryState = async (sessionId, branch, { isGroup } = {}) => {
+    if (getMemoryStorageMode() !== 'table') return false;
+    if (!branch || typeof branch !== 'object' || !branch.memoryTableSnapshot) return false;
+    const applied = await applySwipeMemoryTableSnapshot(sessionId, branch.memoryTableSnapshot, { isGroup });
+    if (applied) {
+      const entry = cloneSwipeMemoryUpdateEntry(branch.memoryUpdateEntry);
+      window.appBridge?.setLastMemoryUpdate?.(sessionId, entry || null);
+    }
+    return applied;
+  };
+
   ui.onSwipeChange(async ({ msgId, message, index, previousIndex }) => {
     const sid = chatStore.getCurrent();
     if (!sid || !msgId) return;
@@ -12825,6 +13015,16 @@ Phase G（Frame 36）：循环衔接
       ...(Array.isArray(renderMeta.swipes) ? { swipes: renderMeta.swipes, activeSwipe: renderMeta.activeSwipe } : {}),
     };
     const swipes = Array.isArray(sourceMeta.swipes) ? sourceMeta.swipes.map(branch => ({ ...(branch || {}) })) : [];
+    if (swipes.length) {
+      const messageMemorySnapshot = storedMeta.memoryTableSnapshot || renderMeta.memoryTableSnapshot || null;
+      const messageMemoryUpdateEntry = storedMeta.memoryUpdateEntry || renderMeta.memoryUpdateEntry || null;
+      if (messageMemorySnapshot && !swipes[0]?.memoryTableSnapshot) {
+        swipes[0].memoryTableSnapshot = cloneSwipePlainObject(messageMemorySnapshot);
+      }
+      if (messageMemoryUpdateEntry && swipes[0]?.memoryUpdateEntry === undefined) {
+        swipes[0].memoryUpdateEntry = cloneSwipeMemoryUpdateEntry(messageMemoryUpdateEntry);
+      }
+    }
     const activeBranch = swipes[index] || null;
     const isDraftBranch = activeBranch?.draft === true;
     const contact = contactsStore.getContact(sid);
@@ -12833,7 +13033,12 @@ Phase G（Frame 36）：循环衔接
     const previousSafe = Number.isFinite(previousRaw)
       ? Math.min(Math.max(0, previousRaw), Math.max(0, swipes.length - 1))
       : -1;
-    if (previousSafe !== -1 && previousSafe !== index) {
+    const previousBranch = previousSafe !== -1 ? swipes[previousSafe] : null;
+    if (
+      previousSafe !== -1 &&
+      previousSafe !== index &&
+      canPersistOutgoingSwipeMemoryState(sid, msgId, previousSafe, previousBranch)
+    ) {
       try {
         await persistSwipeBranchMemoryState(swipes, previousSafe, sid, { isGroup: isGroupScope });
       } catch (err) {
@@ -12842,7 +13047,17 @@ Phase G（Frame 36）：循环衔接
     }
     if (!isDraftBranch) {
       try {
-        await applySwipeBranchMemoryState(sid, activeBranch, { isGroup: isGroupScope });
+        const applied = await applySwipeBranchMemoryState(sid, activeBranch, { isGroup: isGroupScope });
+        if (applied) {
+          markActiveSwipeMemoryState(sid, msgId, index);
+        } else {
+          logger.debug('swipe memory state not applied', {
+            sessionId: sid,
+            msgId,
+            index,
+            hasSnapshot: Boolean(activeBranch?.memoryTableSnapshot),
+          });
+        }
       } catch (err) {
         logger.warn('apply swipe memory state failed', err);
       }
@@ -12893,6 +13108,16 @@ Phase G（Frame 36）：循环衔接
     const swipesBefore = Array.isArray(sourceMeta.swipes) && sourceMeta.swipes.length
       ? sourceMeta.swipes.map(s => ({ ...s }))
       : [{ content: storedMsg?.content ?? message?.content ?? '', raw: storedMsg?.raw ?? message?.raw }];
+    if (swipesBefore.length) {
+      const messageMemorySnapshot = storedMeta.memoryTableSnapshot || renderMeta.memoryTableSnapshot || null;
+      const messageMemoryUpdateEntry = storedMeta.memoryUpdateEntry || renderMeta.memoryUpdateEntry || null;
+      if (messageMemorySnapshot && !swipesBefore[0]?.memoryTableSnapshot) {
+        swipesBefore[0].memoryTableSnapshot = cloneSwipePlainObject(messageMemorySnapshot);
+      }
+      if (messageMemoryUpdateEntry && swipesBefore[0]?.memoryUpdateEntry === undefined) {
+        swipesBefore[0].memoryUpdateEntry = cloneSwipeMemoryUpdateEntry(messageMemoryUpdateEntry);
+      }
+    }
     const beforeIds = new Set((msgs || []).map(m => String(m?.id || '')).filter(Boolean));
     const previousActive = Math.min(
       Math.max(0, Number(sourceMeta.activeSwipe) || 0),
@@ -12926,7 +13151,7 @@ Phase G（Frame 36）：循环衔接
       const wrapper = ui.scrollEl?.querySelector(`[data-msg-id="${CSS.escape(msgId)}"]`);
       if (wrapper && wrapper.isConnected) {
         wrapper.__chatappMessage = updated;
-        ui._applySwipe(wrapper, updated, draftIndex);
+        ui._applySwipe(wrapper, updated, draftIndex, { emitChange: false });
       }
       return updated;
     };
@@ -12942,8 +13167,8 @@ Phase G（Frame 36）：循环衔接
       const newBranch = { content, raw };
       if (partial) newBranch.partial = true;
       if (cancelled) newBranch.cancelled = true;
-      if (memoryTableSnapshot) newBranch.memoryTableSnapshot = clonePlainObject(memoryTableSnapshot);
-      if (memoryUpdateEntry !== undefined) newBranch.memoryUpdateEntry = cloneMemoryUpdateEntry(memoryUpdateEntry);
+      if (memoryTableSnapshot) newBranch.memoryTableSnapshot = cloneSwipePlainObject(memoryTableSnapshot);
+      if (memoryUpdateEntry !== undefined) newBranch.memoryUpdateEntry = cloneSwipeMemoryUpdateEntry(memoryUpdateEntry);
       const merged = [...swipesBefore, newBranch];
       const nextMeta = { ...sourceMeta, swipes: merged, activeSwipe: merged.length - 1 };
       const updated = chatStore.updateMessage(msgId, {
@@ -12959,7 +13184,7 @@ Phase G（Frame 36）：循环衔接
       const wrapper = ui.scrollEl?.querySelector(`[data-msg-id="${CSS.escape(msgId)}"]`);
       if (wrapper && wrapper.isConnected) {
         wrapper.__chatappMessage = updated;
-        ui._applySwipe(wrapper, updated, merged.length - 1);
+        ui._applySwipe(wrapper, updated, merged.length - 1, { emitChange: false });
       }
       return true;
     };
@@ -12968,7 +13193,8 @@ Phase G（Frame 36）：循环衔接
       const branch = swipesBefore[previousActive] || swipesBefore[0] || {};
       delete restoredMeta.swipeRegenerating;
       try {
-        await applySwipeBranchMemoryState(sid, branch, { isGroup: isGroupScope });
+        const applied = await applySwipeBranchMemoryState(sid, branch, { isGroup: isGroupScope });
+        if (applied) markActiveSwipeMemoryState(sid, msgId, previousActive);
       } catch (err) {
         logger.warn('restore swipe memory state failed', err);
       }
@@ -12986,7 +13212,7 @@ Phase G（Frame 36）：循环衔接
       const wrapper = ui.scrollEl?.querySelector(`[data-msg-id="${CSS.escape(msgId)}"]`);
       if (wrapper && wrapper.isConnected) {
         wrapper.__chatappMessage = restored;
-        ui._applySwipe(wrapper, restored, previousActive);
+        ui._applySwipe(wrapper, restored, previousActive, { emitChange: false });
       }
     };
     const contact = contactsStore.getContact(sid);
@@ -12994,6 +13220,7 @@ Phase G（Frame 36）：循环衔接
     if (getMemoryStorageMode() === 'table') {
       try {
         await persistSwipeBranchMemoryState(swipesBefore, previousActive, sid, { isGroup: isGroupScope });
+        markActiveSwipeMemoryState(sid, msgId, previousActive);
       } catch (err) {
         logger.warn('persist swipe memory state before regen failed', err);
       }
@@ -13051,6 +13278,7 @@ Phase G（Frame 36）：循环衔接
               memoryTableSnapshot: baselineMemorySnapshot,
               memoryUpdateEntry: baselineMemoryUpdateEntry,
             });
+            if (partialCommitted) markActiveSwipeMemoryState(sid, msgId, swipesBefore.length);
             return partialCommitted;
           },
         },
@@ -13084,7 +13312,7 @@ Phase G（Frame 36）：循环衔接
       if (getMemoryStorageMode() === 'table') {
         try {
           branchMemorySnapshot = await buildSwipeMemoryTableSnapshot(sid, { isGroup: isGroupScope });
-          branchMemoryUpdateEntry = cloneMemoryUpdateEntry(window.appBridge?.getLastMemoryUpdate?.(sid));
+          branchMemoryUpdateEntry = cloneSwipeMemoryUpdateEntry(window.appBridge?.getLastMemoryUpdate?.(sid));
         } catch (err) {
           logger.warn('capture swipe memory state failed', err);
         }
@@ -13093,10 +13321,25 @@ Phase G（Frame 36）：循环衔接
         memoryTableSnapshot: branchMemorySnapshot,
         memoryUpdateEntry: branchMemoryUpdateEntry,
       });
+      markActiveSwipeMemoryState(sid, msgId, swipesBefore.length);
       generatedAssistants.forEach(m => {
         ui.removeMessage(m.id);
         chatStore.deleteMessage(m.id, sid);
       });
+    } catch (err) {
+      logger.warn('swipe regeneration failed; restoring previous branch', err);
+      try {
+        const msgsAfterError = chatStore.getMessages(sid);
+        const generatedAssistants = (msgsAfterError || []).filter(m => {
+          const id = String(m?.id || '');
+          return id && !beforeIds.has(id) && m?.role === 'assistant' && !m?.meta?.isGreeting;
+        });
+        generatedAssistants.forEach(m => {
+          ui.removeMessage(m.id);
+          chatStore.deleteMessage(m.id, sid);
+        });
+      } catch {}
+      await restorePreviousBranch();
     } finally {
       ui.setSwipeRegenerating?.(msgId, false);
       ui.setStreamingState?.(false);
@@ -14752,6 +14995,24 @@ Phase G（Frame 36）：循环衔接
         window.appBridge?.setLastMemoryUpdate?.(sessionId, entry || null);
       }
       return applied;
+    };
+    const captureAssistantMemoryState = async (sessionId, { isGroup } = {}) => {
+      if (getMemoryStorageMode() !== 'table') return null;
+      const snapshot = await buildSwipeMemoryTableSnapshot(sessionId, { isGroup });
+      if (!snapshot) return null;
+      return {
+        memoryTableSnapshot: clonePlainObject(snapshot),
+        memoryUpdateEntry: cloneMemoryUpdateEntry(window.appBridge?.getLastMemoryUpdate?.(sessionId)),
+      };
+    };
+    const attachAssistantMemoryStateToMeta = (meta, memoryState) => {
+      if (!meta || typeof meta !== 'object') return meta;
+      if (!memoryState || !memoryState.memoryTableSnapshot) return meta;
+      meta.memoryTableSnapshot = clonePlainObject(memoryState.memoryTableSnapshot);
+      if (memoryState.memoryUpdateEntry !== undefined) {
+        meta.memoryUpdateEntry = cloneMemoryUpdateEntry(memoryState.memoryUpdateEntry);
+      }
+      return meta;
     };
     const rowDataEquals = (a, b) => {
       const left = a && typeof a === 'object' ? a : {};
@@ -17219,7 +17480,10 @@ Phase G（Frame 36）：循环衔接
             updateActiveGenerationStreamCache(display, streamMeta);
             if (isStreamCtrlConnected(streamCtrl)) streamCtrl.update(display);
           } catch {}
-          const meta = { renderRich: true };
+          const memoryState = isRpMode
+            ? await captureAssistantMemoryState(sessionId, { isGroup: isGroupChat })
+            : null;
+          const meta = attachAssistantMemoryStateToMeta({ renderRich: true }, memoryState);
           if (summary) meta.summary = summary;
           if (reasoningParsed.reasoning) {
             meta.reasoning = reasoningParsed.reasoning;
@@ -17818,7 +18082,10 @@ Phase G（Frame 36）：循环衔接
             stored = normalizeCreativeLineBreaks(window.appBridge.applyOutputStoredRegex(finalSource, { depth: 0 }));
             display = normalizeCreativeLineBreaks(window.appBridge.applyOutputDisplayRegex(stored, { depth: 0 }));
           } catch {}
-          const meta = { renderRich: true };
+          const memoryState = isRpMode
+            ? await captureAssistantMemoryState(sessionId, { isGroup: isGroupChat })
+            : null;
+          const meta = attachAssistantMemoryStateToMeta({ renderRich: true }, memoryState);
           if (protocolSummary) meta.summary = protocolSummary;
           if (reasoningParsed.reasoning) {
             meta.reasoning = reasoningParsed.reasoning;

@@ -271,9 +271,10 @@ export class ChatUI {
     });
   }
 
-  _applySwipe(wrapper, msg, newIndex) {
+  _applySwipe(wrapper, msg, newIndex, options = {}) {
     const swipes = msg.meta?.swipes;
     if (!swipes || newIndex < 0 || newIndex >= swipes.length) return;
+    const emitChange = options?.emitChange !== false;
     const previousIndexRaw = Math.trunc(Number(msg.meta.activeSwipe));
     const previousIndex = Number.isFinite(previousIndexRaw)
       ? Math.min(Math.max(0, previousIndexRaw), swipes.length - 1)
@@ -288,7 +289,7 @@ export class ChatUI {
     this._renderSwipeContent(wrapper, msg, String(branch.content ?? ''), { streaming: false, placeholder });
     this._syncSwipeIndicator(wrapper, newIndex, swipes.length, { generating });
 
-    if (this._swipeChangeHandler) {
+    if (emitChange && this._swipeChangeHandler) {
       this._swipeChangeHandler({ msgId: msg.id, message: msg, index: newIndex, previousIndex });
     }
   }
