@@ -274,6 +274,10 @@ export class ChatUI {
   _applySwipe(wrapper, msg, newIndex) {
     const swipes = msg.meta?.swipes;
     if (!swipes || newIndex < 0 || newIndex >= swipes.length) return;
+    const previousIndexRaw = Math.trunc(Number(msg.meta.activeSwipe));
+    const previousIndex = Number.isFinite(previousIndexRaw)
+      ? Math.min(Math.max(0, previousIndexRaw), swipes.length - 1)
+      : 0;
     msg.meta.activeSwipe = newIndex;
     const branch = swipes[newIndex];
     msg.content = branch.content;
@@ -285,7 +289,7 @@ export class ChatUI {
     this._syncSwipeIndicator(wrapper, newIndex, swipes.length, { generating });
 
     if (this._swipeChangeHandler) {
-      this._swipeChangeHandler({ msgId: msg.id, message: msg, index: newIndex });
+      this._swipeChangeHandler({ msgId: msg.id, message: msg, index: newIndex, previousIndex });
     }
   }
 
@@ -461,6 +465,7 @@ export class ChatUI {
 
     return {
       id: streamId,
+      isConnected: () => Boolean(wrapper?.isConnected),
       update: text => {
         pendingText = String(text ?? '');
         if (updateHandle != null) return;
@@ -2771,6 +2776,7 @@ export class ChatUI {
 
     return {
       id,
+      isConnected: () => Boolean(wrapperEl?.isConnected && messageEl?.isConnected),
       update: (text) => {
         pendingText = String(text ?? '');
         this.messageBuffer[bufferIndex] = {
@@ -2875,6 +2881,7 @@ export class ChatUI {
     this.setStreamingState(true);
     return {
       id: msgId,
+      isConnected: () => Boolean(wrapperEl?.isConnected && messageEl?.isConnected),
       update: text => {
         // Keep streaming lightweight (avoid re-parsing markdown/code each token)
         pendingText = String(text ?? '');

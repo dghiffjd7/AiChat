@@ -9,13 +9,13 @@ use gif::{Encoder as GifEncoder, Frame as GifFrame, Repeat as GifRepeat};
 use image::imageops::overlay;
 use image::RgbaImage;
 use serde_json::Value;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
 use std::fs::OpenOptions;
 use std::io::Cursor;
 use std::io::{Read, Seek, Write};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Manager, State};
 use zip::write::FileOptions;
 use zip::{CompressionMethod, ZipArchive, ZipWriter};
@@ -361,7 +361,22 @@ struct AttachmentStreamEntry {
 
 #[derive(Default)]
 pub struct HttpAbortState {
-    inner: Mutex<HashMap<String, tokio::task::AbortHandle>>,
+    inner: Arc<Mutex<HashMap<String, tokio::task::AbortHandle>>>,
+}
+
+#[derive(Default)]
+pub struct HttpStreamState {
+    inner: Arc<Mutex<HashMap<String, HttpStreamEntry>>>,
+}
+
+#[derive(Default)]
+struct HttpStreamEntry {
+    status: Option<u16>,
+    ok: Option<bool>,
+    headers: Option<HashMap<String, String>>,
+    chunks: VecDeque<String>,
+    done: bool,
+    error: Option<String>,
 }
 
 #[derive(serde::Serialize)]
@@ -387,6 +402,16 @@ pub struct DataBundleResult {
     pub path: String,
     pub bytes: u64,
     pub files: usize,
+}
+
+#[derive(serde::Serialize)]
+pub struct HttpStreamReadResult {
+    pub status: Option<u16>,
+    pub ok: Option<bool>,
+    pub headers: Option<HashMap<String, String>>,
+    pub chunks: Vec<String>,
+    pub done: bool,
+    pub error: Option<String>,
 }
 
 #[derive(serde::Serialize)]
@@ -3096,6 +3121,106 @@ pub struct HttpResponse {
     pub body: String,
 }
 
+fn set_http_stream_meta(
+    state: &Arc<Mutex<HashMap<String, HttpStreamEntry>>>,
+    request_id: &str,
+    status: u16,
+    ok: bool,
+    headers: HashMap<String, String>,
+) {
+    if let Ok(mut map) = state.lock() {
+        if let Some(entry) = map.get_mut(request_id) {
+            entry.status = Some(status);
+            entry.ok = Some(ok);
+            entry.headers = Some(headers);
+        }
+    }
+}
+
+fn push_http_stream_chunk(
+    state: &Arc<Mutex<HashMap<String, HttpStreamEntry>>>,
+    request_id: &str,
+    chunk: String,
+) {
+    if chunk.is_empty() {
+        return;
+    }
+    if let Ok(mut map) = state.lock() {
+        if let Some(entry) = map.get_mut(request_id) {
+            entry.chunks.push_back(chunk);
+        }
+    }
+}
+
+fn push_http_stream_utf8_bytes(
+    state: &Arc<Mutex<HashMap<String, HttpStreamEntry>>>,
+    request_id: &str,
+    pending: &mut Vec<u8>,
+    bytes: &[u8],
+) {
+    if !bytes.is_empty() {
+        pending.extend_from_slice(bytes);
+    }
+    loop {
+        match std::str::from_utf8(pending) {
+            Ok(text) => {
+                if !text.is_empty() {
+                    push_http_stream_chunk(state, request_id, text.to_string());
+                }
+                pending.clear();
+                break;
+            }
+            Err(err) => {
+                let valid_up_to = err.valid_up_to();
+                if valid_up_to > 0 {
+                    if let Ok(text) = std::str::from_utf8(&pending[..valid_up_to]) {
+                        push_http_stream_chunk(state, request_id, text.to_string());
+                    }
+                    pending.drain(..valid_up_to);
+                    continue;
+                }
+                if err.error_len().is_none() {
+                    break;
+                }
+                push_http_stream_chunk(state, request_id, "\u{FFFD}".to_string());
+                let drain_len = err.error_len().unwrap_or(1).min(pending.len());
+                pending.drain(..drain_len);
+                if pending.is_empty() {
+                    break;
+                }
+            }
+        }
+    }
+}
+
+fn finish_http_stream_utf8_bytes(
+    state: &Arc<Mutex<HashMap<String, HttpStreamEntry>>>,
+    request_id: &str,
+    pending: &mut Vec<u8>,
+) {
+    if pending.is_empty() {
+        return;
+    }
+    let text = String::from_utf8_lossy(pending).to_string();
+    pending.clear();
+    push_http_stream_chunk(state, request_id, text);
+}
+
+fn finish_http_stream(
+    state: &Arc<Mutex<HashMap<String, HttpStreamEntry>>>,
+    request_id: &str,
+    error: Option<String>,
+) {
+    if let Ok(mut map) = state.lock() {
+        if let Some(entry) = map.get_mut(request_id) {
+            if let Some(err) = error {
+                entry.error = Some(err);
+            }
+            entry.done = true;
+        }
+    }
+}
+
 /// Native HTTP request to bypass WebView CORS (used by OpenAI-compatible providers like DeepSeek).
 #[tauri::command]
 pub async fn http_request(
@@ -3179,9 +3304,166 @@ pub async fn http_request(
 }
 
 #[tauri::command]
+pub async fn http_stream_request_start(
+    url: String,
+    method: String,
+    headers: HashMap<String, String>,
+    body: Option<String>,
+    timeout_ms: Option<u64>,
+    request_id: String,
+    abort_state: State<'_, HttpAbortState>,
+    stream_state: State<'_, HttpStreamState>,
+) -> Result<bool, String> {
+    let key = validate_safe_key(&request_id, "request_id")?;
+
+    if let Ok(mut map) = abort_state.inner.lock() {
+        if let Some(prev) = map.remove(&key) {
+            prev.abort();
+        }
+    }
+    if let Ok(mut map) = stream_state.inner.lock() {
+        map.insert(key.clone(), HttpStreamEntry::default());
+    }
+
+    let abort_map = abort_state.inner.clone();
+    let stream_map = stream_state.inner.clone();
+    let request_key = key.clone();
+    let task = tokio::spawn(async move {
+        let result: Result<(), String> = async {
+            let method =
+                reqwest::Method::from_bytes(method.as_bytes()).map_err(|e| e.to_string())?;
+
+            let mut header_map = reqwest::header::HeaderMap::new();
+            for (k, v) in headers {
+                let name = reqwest::header::HeaderName::from_bytes(k.as_bytes())
+                    .map_err(|e| e.to_string())?;
+                let value =
+                    reqwest::header::HeaderValue::from_str(&v).map_err(|e| e.to_string())?;
+                header_map.insert(name, value);
+            }
+
+            let mut builder = reqwest::Client::builder();
+            if let Some(ms) = timeout_ms {
+                builder = builder.timeout(std::time::Duration::from_millis(ms));
+            }
+            let client = builder.build().map_err(|e| e.to_string())?;
+
+            let mut req = client.request(method, url).headers(header_map);
+            if let Some(body) = body {
+                req = req.body(body);
+            }
+
+            let mut resp = req.send().await.map_err(|e| e.to_string())?;
+            let status = resp.status();
+            let mut out_headers: HashMap<String, String> = HashMap::new();
+            for (k, v) in resp.headers().iter() {
+                if let Ok(vs) = v.to_str() {
+                    out_headers.insert(k.as_str().to_string(), vs.to_string());
+                }
+            }
+            set_http_stream_meta(
+                &stream_map,
+                &request_key,
+                status.as_u16(),
+                status.is_success(),
+                out_headers,
+            );
+
+            let mut utf8_pending: Vec<u8> = Vec::new();
+            while let Some(chunk) = resp.chunk().await.map_err(|e| e.to_string())? {
+                push_http_stream_utf8_bytes(
+                    &stream_map,
+                    &request_key,
+                    &mut utf8_pending,
+                    chunk.as_ref(),
+                );
+            }
+            finish_http_stream_utf8_bytes(&stream_map, &request_key, &mut utf8_pending);
+            Ok(())
+        }
+        .await;
+
+        finish_http_stream(&stream_map, &request_key, result.err());
+        if let Ok(mut map) = abort_map.lock() {
+            map.remove(&request_key);
+        }
+    });
+
+    let abort_handle = task.abort_handle();
+    let mut map = abort_state
+        .inner
+        .lock()
+        .map_err(|_| "http abort state lock poisoned".to_string())?;
+    if let Some(prev) = map.insert(key, abort_handle) {
+        prev.abort();
+    }
+    Ok(true)
+}
+
+#[tauri::command]
+pub async fn http_stream_request_read(
+    request_id: String,
+    max_chunks: Option<usize>,
+    stream_state: State<'_, HttpStreamState>,
+) -> Result<HttpStreamReadResult, String> {
+    let key = validate_safe_key(&request_id, "request_id")?;
+    let take_limit = max_chunks.unwrap_or(32).max(1);
+    let mut map = stream_state
+        .inner
+        .lock()
+        .map_err(|_| "http stream state lock poisoned".to_string())?;
+    let (result, should_remove) = {
+        let entry = map
+            .get_mut(&key)
+            .ok_or_else(|| "http stream request not found".to_string())?;
+
+        let mut chunks = Vec::new();
+        for _ in 0..take_limit {
+            if let Some(chunk) = entry.chunks.pop_front() {
+                chunks.push(chunk);
+            } else {
+                break;
+            }
+        }
+
+        (
+            HttpStreamReadResult {
+                status: entry.status,
+                ok: entry.ok,
+                headers: entry.headers.clone(),
+                chunks,
+                done: entry.done,
+                error: entry.error.clone(),
+            },
+            entry.done && entry.chunks.is_empty(),
+        )
+    };
+
+    if should_remove {
+        map.remove(&key);
+    }
+
+    Ok(result)
+}
+
+#[tauri::command]
+pub async fn http_stream_request_close(
+    request_id: String,
+    stream_state: State<'_, HttpStreamState>,
+) -> Result<bool, String> {
+    let key = validate_safe_key(&request_id, "request_id")?;
+    let mut map = stream_state
+        .inner
+        .lock()
+        .map_err(|_| "http stream state lock poisoned".to_string())?;
+    Ok(map.remove(&key).is_some())
+}
+
+#[tauri::command]
 pub async fn http_abort_request(
     request_id: String,
     abort_state: State<'_, HttpAbortState>,
+    stream_state: State<'_, HttpStreamState>,
 ) -> Result<bool, String> {
     let key = validate_safe_key(&request_id, "request_id")?;
     let handle = {
@@ -3193,6 +3475,7 @@ pub async fn http_abort_request(
     };
     if let Some(handle) = handle {
         handle.abort();
+        finish_http_stream(&stream_state.inner, &key, Some("aborted".to_string()));
         return Ok(true);
     }
     Ok(false)

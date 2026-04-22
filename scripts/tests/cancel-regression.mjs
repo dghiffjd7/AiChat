@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import { setTimeout as delay } from 'node:timers/promises';
 import { OpenAIProvider } from '../../src/scripts/api/providers/openai.js';
+import { AnthropicProvider } from '../../src/scripts/api/providers/anthropic.js';
 import { splitRequestOptions } from '../../src/scripts/api/abort.js';
 
 const tests = [];
@@ -168,7 +169,7 @@ test('openai stream: abort should stop further chunks', async () => {
   });
 });
 
-test('openai native http: should pass request_id and support external abort', async () => {
+test('openai native http: should pass requestId and support external abort', async () => {
   const prevTauri = globalThis.__TAURI__;
   const pendingById = new Map();
   let seenRequestId = '';
@@ -177,13 +178,13 @@ test('openai native http: should pass request_id and support external abort', as
       core: {
         invoke: async (cmd, args = {}) => {
           if (cmd === 'http_request') {
-            seenRequestId = String(args?.request_id || '');
+            seenRequestId = String(args?.requestId || '');
             return await new Promise((resolve, reject) => {
               pendingById.set(seenRequestId, { resolve, reject });
             });
           }
           if (cmd === 'http_abort_request') {
-            const id = String(args?.request_id || '');
+            const id = String(args?.requestId || '');
             const pending = pendingById.get(id);
             if (!pending) return false;
             pendingById.delete(id);
@@ -207,11 +208,83 @@ test('openai native http: should pass request_id and support external abort', as
       nativeRequestId: 'native_abort_case',
     });
     setTimeout(() => {
-      globalThis.__TAURI__.core.invoke('http_abort_request', { request_id: 'native_abort_case' }).catch(() => {});
+      globalThis.__TAURI__.core.invoke('http_abort_request', { requestId: 'native_abort_case' }).catch(() => {});
     }, 30);
 
     await assert.rejects(pending, /native http_request failed: aborted/i);
     assert.equal(seenRequestId, 'native_abort_case');
+  } finally {
+    globalThis.__TAURI__ = prevTauri;
+  }
+});
+
+test('anthropic native stream: should yield incremental deltas from tauri stream commands', async () => {
+  const prevTauri = globalThis.__TAURI__;
+  const readQueue = [
+    {
+      status: 200,
+      ok: true,
+      headers: { 'content-type': 'text/event-stream' },
+      chunks: ['data: {"type":"content_block_delta","delta":{"text":"A"}}\n\n'],
+      done: false,
+      error: null,
+    },
+    {
+      status: 200,
+      ok: true,
+      headers: null,
+      chunks: ['data: {"type":"content_block_delta","delta":{"text":"B"}}\n\n'],
+      done: true,
+      error: null,
+    },
+  ];
+  let startedRequestId = '';
+  let closedRequestId = '';
+  try {
+    globalThis.__TAURI__ = {
+      core: {
+        invoke: async (cmd, args = {}) => {
+          if (cmd === 'http_stream_request_start') {
+            startedRequestId = String(args?.requestId || '');
+            return true;
+          }
+          if (cmd === 'http_stream_request_read') {
+            return readQueue.shift() || {
+              status: 200,
+              ok: true,
+              headers: null,
+              chunks: [],
+              done: true,
+              error: null,
+            };
+          }
+          if (cmd === 'http_stream_request_close') {
+            closedRequestId = String(args?.requestId || '');
+            return true;
+          }
+          throw new Error(`unexpected invoke command: ${cmd}`);
+        },
+      },
+    };
+
+    const provider = new AnthropicProvider({
+      provider: 'anthropic',
+      apiKey: 'test-key',
+      baseUrl: 'https://example.invalid/v1',
+      model: 'claude-test',
+      timeout: 5000,
+    });
+
+    const chunks = [];
+    for await (const chunk of provider.streamChat([{ role: 'user', content: 'go' }], {
+      nativeRequestId: 'anthropic_native_stream_case',
+    })) {
+      chunks.push(chunk);
+    }
+
+    assert.deepEqual(chunks, ['A', 'B']);
+    assert.equal(startedRequestId, 'anthropic_native_stream_case');
+    assert.equal(closedRequestId, 'anthropic_native_stream_case');
   } finally {
     globalThis.__TAURI__ = prevTauri;
   }

@@ -96,8 +96,8 @@ const request = async ({
       method,
       headers: prepared.headers,
       body: typeof body === 'string' ? body : body == null ? null : String(body),
-      timeout_ms: timeoutMs,
-      request_id: requestId || null,
+      timeoutMs,
+      requestId: requestId || null,
     });
   }
 

@@ -5,6 +5,7 @@
 import { handleSSE } from '../stream.js';
 import { createLinkedAbortController, splitRequestOptions } from '../abort.js';
 import { prepareTransportRequest } from '../transport.js';
+import { emitDebugLog } from '../../utils/debug-log.js';
 
 const getTauriInvoker = () => {
     const g = typeof globalThis !== 'undefined' ? globalThis : undefined;
@@ -44,6 +45,68 @@ const makeAbortError = () => {
     err.name = 'AbortError';
     return err;
 };
+
+const summarizeUrlForLog = (value) => {
+    try {
+        const parsed = new URL(String(value || ''));
+        return `${parsed.origin}${parsed.pathname}`;
+    } catch (_e) {
+        return String(value || '');
+    }
+};
+
+const logStreamDebug = (message, type = 'info') => {
+    const text = String(message || '').trim();
+    if (!text) return;
+    emitDebugLog({ source: 'anthropic-stream', type, message: text, force: true });
+    try {
+        const fn = type === 'warn' || type === 'error' ? console.warn : console.info;
+        fn(`[anthropic-stream] ${text}`);
+    } catch (_e) {}
+};
+
+const isFetchNetworkFailure = (error) => {
+    const name = String(error?.name || '').trim();
+    const message = String(error?.message || '').trim();
+    return name === 'TypeError' && /failed to fetch|load failed|networkerror/i.test(message);
+};
+
+const describeFetchFailure = (url, error) => {
+    let origin = '';
+    let originProtocol = '';
+    let targetOrigin = '';
+    let targetProtocol = '';
+    let sameOrigin = false;
+    let mixedContentRisk = false;
+    let secureContext = false;
+    try {
+        const g = typeof globalThis !== 'undefined' ? globalThis : undefined;
+        origin = String(g?.location?.origin || '');
+        originProtocol = String(g?.location?.protocol || '');
+        secureContext = Boolean(g?.isSecureContext);
+        const parsed = new URL(String(url || ''));
+        targetOrigin = parsed.origin;
+        targetProtocol = parsed.protocol;
+        sameOrigin = Boolean(origin && parsed.origin === origin);
+        mixedContentRisk = originProtocol === 'https:' && parsed.protocol === 'http:';
+    } catch (_e) {}
+    const name = String(error?.name || '').trim() || 'Error';
+    const message = String(error?.message || '').trim() || String(error || '');
+    return [
+        `name=${name}`,
+        `message=${message}`,
+        `origin=${origin || 'unknown'}`,
+        `target=${targetOrigin || summarizeUrlForLog(url)}`,
+        `originProtocol=${originProtocol || 'unknown'}`,
+        `targetProtocol=${targetProtocol || 'unknown'}`,
+        `sameOrigin=${sameOrigin ? 1 : 0}`,
+        `mixedContentRisk=${mixedContentRisk ? 1 : 0}`,
+        `secureContext=${secureContext ? 1 : 0}`,
+        `tauri=${isTauriWebview() ? 1 : 0}`,
+    ].join(' ');
+};
+
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export class AnthropicProvider {
     constructor(config) {
@@ -99,8 +162,8 @@ export class AnthropicProvider {
                     method,
                     headers: mergedHeaders,
                     body: typeof body === 'string' ? body : body == null ? null : String(body),
-                    timeout_ms: this.timeout,
-                    request_id: requestId || null,
+                    timeoutMs: this.timeout,
+                    requestId: requestId || null,
                 });
             } catch (err) {
                 if (isTauriWebview()) {
@@ -266,40 +329,140 @@ export class AnthropicProvider {
             ...payloadOptions
         });
 
-        if (this.canUseNativeHttp()) {
-            if (signal?.aborted) throw makeAbortError();
-            const res = await this.request({
-                url: `${this.baseUrl}/messages`,
-                method: 'POST',
-                headers: { ...this.getHeaders(), Accept: 'text/event-stream' },
-                body: payload,
-                signal,
-                requestId,
-            });
-            if (!res.ok) {
-                const detail = this.extractErrorDetail(res.body);
-                const error = new Error(`Anthropic API Error: ${res.status}${detail ? ` - ${detail}` : ''}`);
-                error.status = res.status;
-                error.response = res.body;
-                throw error;
+        const prepared = prepareTransportRequest({
+            config: this.transportConfig,
+            provider: 'anthropic',
+            url: `${this.baseUrl}/messages`,
+            headers: { ...this.getHeaders(), Accept: 'text/event-stream' },
+        });
+        const useFetchStreaming = prepared.connectionMode === 'reverse_proxy';
+        let deltaCount = 0;
+        let totalChars = 0;
+        let sawFirstDelta = false;
+
+        const emitDelta = function* (data, transportLabel) {
+            if (data?.type !== 'content_block_delta') return;
+            const content = data.delta?.text;
+            if (!content) return;
+            deltaCount += 1;
+            totalChars += content.length;
+            if (!sawFirstDelta) {
+                sawFirstDelta = true;
+                logStreamDebug(
+                    `first-delta transport=${transportLabel} mode=${prepared.connectionMode || 'direct'} chars=${content.length}`,
+                );
             }
-            for (const data of parseSSEText(res.body)) {
-                if (data.type === 'content_block_delta') {
-                    const content = data.delta?.text;
-                    if (content) yield content;
+            yield content;
+        };
+
+        if (this.canUseNativeHttp()) {
+            const invoker = getTauriInvoker();
+            const nativeStreamRequestId = String(
+                requestId || `http_stream_${Date.now().toString(36)}_${Math.random().toString(16).slice(2, 10)}`,
+            ).trim();
+            let started = false;
+            let rawErrorBody = '';
+            let sseBuffer = '';
+            let responseStatus = null;
+            let responseOk = null;
+            const flushSseBuffer = function* (transportLabel, final = false) {
+                const lines = String(sseBuffer || '').split('\n');
+                sseBuffer = final ? '' : (lines.pop() || '');
+                for (const line of lines) {
+                    if (!line.startsWith('data: ')) continue;
+                    const payloadText = line.slice(6).trim();
+                    if (!payloadText || payloadText === '[DONE]') continue;
+                    try {
+                        const data = JSON.parse(payloadText);
+                        yield* emitDelta(data, transportLabel);
+                    } catch (_e) {}
+                }
+            };
+            try {
+                logStreamDebug(
+                    `transport=native-stream mode=${prepared.connectionMode || 'direct'} url=${summarizeUrlForLog(prepared.url)}`,
+                );
+                await invoker('http_stream_request_start', {
+                    url: prepared.url,
+                    method: 'POST',
+                    headers: prepared.headers,
+                    body: payload,
+                    timeoutMs: this.timeout,
+                    requestId: nativeStreamRequestId,
+                });
+                started = true;
+
+                while (true) {
+                    if (signal?.aborted) throw makeAbortError();
+                    const batch = await invoker('http_stream_request_read', {
+                        requestId: nativeStreamRequestId,
+                        maxChunks: 32,
+                    });
+                    if (Number.isFinite(Number(batch?.status))) {
+                        responseStatus = Number(batch.status);
+                    }
+                    if (typeof batch?.ok === 'boolean') {
+                        responseOk = batch.ok;
+                    }
+                    const chunks = Array.isArray(batch?.chunks) ? batch.chunks.map((chunk) => String(chunk || '')) : [];
+                    if (responseOk === false) {
+                        rawErrorBody += chunks.join('');
+                    } else {
+                        for (const chunk of chunks) {
+                            sseBuffer += chunk;
+                            yield* flushSseBuffer('native-stream', false);
+                        }
+                    }
+
+                    const nativeError = String(batch?.error || '').trim();
+                    if (nativeError) {
+                        if (/aborted/i.test(nativeError)) throw makeAbortError();
+                        const error = new Error(`native http_stream_request failed: ${nativeError}`);
+                        error.status = Number.isFinite(responseStatus) ? responseStatus : 0;
+                        error.response = rawErrorBody;
+                        throw error;
+                    }
+
+                    if (batch?.done) {
+                        if (responseOk === false) {
+                            const detail = this.extractErrorDetail(rawErrorBody);
+                            const error = new Error(
+                                `Anthropic API Error: ${responseStatus || 0}${detail ? ` - ${detail}` : ''}`,
+                            );
+                            error.status = responseStatus || 0;
+                            error.response = rawErrorBody;
+                            throw error;
+                        }
+                        yield* flushSseBuffer('native-stream', true);
+                        logStreamDebug(
+                            `complete transport=native-stream mode=${prepared.connectionMode || 'direct'} deltas=${deltaCount} chars=${totalChars}`,
+                        );
+                        return;
+                    }
+
+                    if (!chunks.length) {
+                        await delay(20);
+                    }
+                }
+            } finally {
+                if (started) {
+                    invoker('http_stream_request_close', { requestId: nativeStreamRequestId }).catch(() => {});
                 }
             }
-            return;
+
         }
 
+        if (!useFetchStreaming) {
+            logStreamDebug(
+                `transport=fetch mode=${prepared.connectionMode || 'direct'} url=${summarizeUrlForLog(prepared.url)}`,
+            );
+        } else {
+            logStreamDebug(
+                `transport=fetch mode=${prepared.connectionMode || 'direct'} url=${summarizeUrlForLog(prepared.url)}`,
+            );
+        }
         const { controller, cleanup } = createLinkedAbortController({ timeoutMs: this.timeout, signal });
         try {
-            const prepared = prepareTransportRequest({
-                config: this.transportConfig,
-                provider: 'anthropic',
-                url: `${this.baseUrl}/messages`,
-                headers: { ...this.getHeaders(), Accept: 'text/event-stream' },
-            });
             const response = await fetch(prepared.url, {
                 method: 'POST',
                 headers: prepared.headers,
@@ -317,13 +480,25 @@ export class AnthropicProvider {
             }
 
             for await (const data of handleSSE(response)) {
-                if (data.type === 'content_block_delta') {
-                    const content = data.delta?.text;
-                    if (content) {
-                        yield content;
-                    }
-                }
+                yield* emitDelta(data, 'fetch');
             }
+            logStreamDebug(
+                `complete transport=fetch mode=${prepared.connectionMode || 'direct'} deltas=${deltaCount} chars=${totalChars}`,
+            );
+            return;
+        } catch (error) {
+            if (useFetchStreaming && isFetchNetworkFailure(error)) {
+                logStreamDebug(
+                    `fetch-failed mode=${prepared.connectionMode || 'direct'} url=${summarizeUrlForLog(prepared.url)} ${describeFetchFailure(prepared.url, error)}`,
+                    'warn',
+                );
+            } else if (useFetchStreaming) {
+                logStreamDebug(
+                    `fetch-stream-error mode=${prepared.connectionMode || 'direct'} url=${summarizeUrlForLog(prepared.url)} name=${String(error?.name || 'Error')} message=${String(error?.message || error || '')}`,
+                    'warn',
+                );
+            }
+            throw error;
         } finally {
             cleanup();
         }

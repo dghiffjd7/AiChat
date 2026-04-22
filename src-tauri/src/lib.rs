@@ -4,7 +4,7 @@ mod commands;
 mod memory_db;
 mod storage;
 
-use commands::{AttachmentStreamState, HttpAbortState, WallpaperStreamState};
+use commands::{AttachmentStreamState, HttpAbortState, HttpStreamState, WallpaperStreamState};
 use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -59,6 +59,9 @@ pub fn run() {
             commands::import_data_bundle,
             commands::import_data_bundle_bytes,
             commands::http_request,
+            commands::http_stream_request_start,
+            commands::http_stream_request_read,
+            commands::http_stream_request_close,
             commands::http_abort_request,
             commands::log_js,
             commands::save_raw_reply,
@@ -85,6 +88,7 @@ pub fn run() {
             _app.manage(WallpaperStreamState::default());
             _app.manage(AttachmentStreamState::default());
             _app.manage(HttpAbortState::default());
+            _app.manage(HttpStreamState::default());
             #[cfg(all(debug_assertions, not(any(target_os = "android", target_os = "ios"))))]
             {
                 use tauri::Manager;

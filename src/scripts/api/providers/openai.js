@@ -266,8 +266,8 @@ export class OpenAIProvider {
           method,
           headers: mergedHeaders,
           body: typeof body === 'string' ? body : body == null ? null : String(body),
-          timeout_ms: this.timeout,
-          request_id: requestId || null,
+          timeoutMs: this.timeout,
+          requestId: requestId || null,
         });
       } catch (err) {
         if (isTauriWebview()) {

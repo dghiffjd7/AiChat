@@ -496,7 +496,7 @@ class AppBridge {
       }
     } catch {}
     if (requestId) {
-      safeInvoke('http_abort_request', { request_id: requestId }).catch(() => {});
+      safeInvoke('http_abort_request', { requestId }).catch(() => {});
     }
   }
 

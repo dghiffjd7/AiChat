@@ -11700,7 +11700,16 @@ Phase G（Frame 36）：循环衔接
     if (uiStateArmed) saveUiState();
     updatePendingFloat(sessionId);
     if (activeGeneration && !activeGeneration.cancelled && activeGeneration.sessionId === sessionId) {
-      ui.showTyping(getAssistantAvatarForSession(sessionId), getGroupTypingMembers(sessionId) || {});
+      let reattached = false;
+      const hasStreamText = String(activeGeneration.streamText || '').trim().length > 0;
+      if (hasStreamText && typeof activeGeneration.reattachStream === 'function') {
+        try {
+          reattached = activeGeneration.reattachStream() === true;
+        } catch (err) {
+          logger.warn('assistant stream reattach failed', err);
+        }
+      }
+      if (!reattached) ui.showTyping(getAssistantAvatarForSession(sessionId), getGroupTypingMembers(sessionId) || {});
     }
     uiLog('enterChatRoom', { sessionId, originPage: chatOriginPage });
     return { jumpedToTarget };
@@ -12805,12 +12814,40 @@ Phase G（Frame 36）：循环衔接
     msg.meta.deliveryText = text;
   });
 
-  ui.onSwipeChange(({ msgId, message, index }) => {
+  ui.onSwipeChange(async ({ msgId, message, index, previousIndex }) => {
     const sid = chatStore.getCurrent();
     if (!sid || !msgId) return;
-    const activeBranch = Array.isArray(message?.meta?.swipes) ? message.meta.swipes[index] : null;
+    const stored = chatStore.findMessage(msgId, sid) || message;
+    const storedMeta = stored?.meta && typeof stored.meta === 'object' ? stored.meta : {};
+    const renderMeta = message?.meta && typeof message.meta === 'object' ? message.meta : {};
+    const sourceMeta = {
+      ...storedMeta,
+      ...(Array.isArray(renderMeta.swipes) ? { swipes: renderMeta.swipes, activeSwipe: renderMeta.activeSwipe } : {}),
+    };
+    const swipes = Array.isArray(sourceMeta.swipes) ? sourceMeta.swipes.map(branch => ({ ...(branch || {}) })) : [];
+    const activeBranch = swipes[index] || null;
     const isDraftBranch = activeBranch?.draft === true;
-    const nextMeta = { ...message.meta, activeSwipe: index };
+    const contact = contactsStore.getContact(sid);
+    const isGroupScope = sid.startsWith('group:') || Boolean(contact?.isGroup);
+    const previousRaw = Math.trunc(Number(previousIndex));
+    const previousSafe = Number.isFinite(previousRaw)
+      ? Math.min(Math.max(0, previousRaw), Math.max(0, swipes.length - 1))
+      : -1;
+    if (previousSafe !== -1 && previousSafe !== index) {
+      try {
+        await persistSwipeBranchMemoryState(swipes, previousSafe, sid, { isGroup: isGroupScope });
+      } catch (err) {
+        logger.warn('persist swipe memory state failed', err);
+      }
+    }
+    if (!isDraftBranch) {
+      try {
+        await applySwipeBranchMemoryState(sid, activeBranch, { isGroup: isGroupScope });
+      } catch (err) {
+        logger.warn('apply swipe memory state failed', err);
+      }
+    }
+    const nextMeta = { ...sourceMeta, swipes, activeSwipe: index };
     if (nextMeta && typeof nextMeta === 'object' && 'activeSwipeDraft' in nextMeta) {
       delete nextMeta.activeSwipeDraft;
     }
@@ -12818,8 +12855,8 @@ Phase G（Frame 36）：循环衔接
       meta: nextMeta,
     };
     if (!isDraftBranch) {
-      payload.content = message.content;
-      payload.raw = message.raw;
+      payload.content = activeBranch?.content ?? message.content;
+      payload.raw = activeBranch?.raw !== undefined ? activeBranch.raw : message.raw;
     }
     chatStore.updateMessage(msgId, payload, sid);
   });
@@ -12867,6 +12904,8 @@ Phase G（Frame 36）：循环衔接
     const draftLabel = '生成新回复中...';
     let partialCommitted = false;
     let swipeStreamCtrl = null;
+    let baselineMemorySnapshot = null;
+    let baselineMemoryUpdateEntry = null;
     const showDraftBranch = () => {
       const branch = { content: '', raw: '', draft: true, label: draftLabel };
       const nextMeta = {
@@ -12891,13 +12930,20 @@ Phase G（Frame 36）：循环衔接
       }
       return updated;
     };
-    const commitBranch = (source, { partial = false, cancelled = false } = {}) => {
+    const commitBranch = (source, {
+      partial = false,
+      cancelled = false,
+      memoryTableSnapshot = null,
+      memoryUpdateEntry = undefined,
+    } = {}) => {
       const content = String(source?.content ?? '');
       const raw = typeof source?.raw === 'string' ? source.raw : content;
       if (!content.trim() && !raw.trim()) return false;
       const newBranch = { content, raw };
       if (partial) newBranch.partial = true;
       if (cancelled) newBranch.cancelled = true;
+      if (memoryTableSnapshot) newBranch.memoryTableSnapshot = clonePlainObject(memoryTableSnapshot);
+      if (memoryUpdateEntry !== undefined) newBranch.memoryUpdateEntry = cloneMemoryUpdateEntry(memoryUpdateEntry);
       const merged = [...swipesBefore, newBranch];
       const nextMeta = { ...sourceMeta, swipes: merged, activeSwipe: merged.length - 1 };
       const updated = chatStore.updateMessage(msgId, {
@@ -12917,10 +12963,15 @@ Phase G（Frame 36）：循环衔接
       }
       return true;
     };
-    const restorePreviousBranch = () => {
+    const restorePreviousBranch = async () => {
       const restoredMeta = { ...sourceMeta, swipes: swipesBefore, activeSwipe: previousActive };
       const branch = swipesBefore[previousActive] || swipesBefore[0] || {};
       delete restoredMeta.swipeRegenerating;
+      try {
+        await applySwipeBranchMemoryState(sid, branch, { isGroup: isGroupScope });
+      } catch (err) {
+        logger.warn('restore swipe memory state failed', err);
+      }
       const restoredBase = chatStore.findMessage(msgId, sid) || storedMsg || message;
       const restored = chatStore.updateMessage(msgId, {
         content: branch.content ?? '',
@@ -12938,7 +12989,27 @@ Phase G（Frame 36）：循环衔接
         ui._applySwipe(wrapper, restored, previousActive);
       }
     };
+    const contact = contactsStore.getContact(sid);
+    const isGroupScope = sid.startsWith('group:') || Boolean(contact?.isGroup);
+    if (getMemoryStorageMode() === 'table') {
+      try {
+        await persistSwipeBranchMemoryState(swipesBefore, previousActive, sid, { isGroup: isGroupScope });
+      } catch (err) {
+        logger.warn('persist swipe memory state before regen failed', err);
+      }
+    }
     showDraftBranch();
+    if (getMemoryStorageMode() === 'table') {
+      try {
+        const rollbackFn = window.appBridge?.rollbackLastMemoryUpdate;
+        if (typeof rollbackFn === 'function') await rollbackFn(sid);
+        window.appBridge?.setLastMemoryUpdate?.(sid, null);
+        baselineMemorySnapshot = await buildSwipeMemoryTableSnapshot(sid, { isGroup: isGroupScope });
+        baselineMemoryUpdateEntry = null;
+      } catch (err) {
+        logger.warn('rollback swipe memory state failed', err);
+      }
+    }
     swipeStreamCtrl = ui.startSwipeGenerationStream?.(msgId, {
       id: streamId,
       index: draftIndex,
@@ -12957,7 +13028,12 @@ Phase G（Frame 36）：循环衔接
         suppressAssistantDom: true,
         excludeMessageIds: [msgId],
         createAssistantStream: meta => {
-          if (swipeStreamCtrl) return swipeStreamCtrl;
+          if (
+            swipeStreamCtrl &&
+            (typeof swipeStreamCtrl.isConnected !== 'function' || swipeStreamCtrl.isConnected() !== false)
+          ) {
+            return swipeStreamCtrl;
+          }
           swipeStreamCtrl = ui.startSwipeGenerationStream?.(msgId, {
             ...meta,
             id: streamId,
@@ -12969,7 +13045,12 @@ Phase G（Frame 36）：循环衔接
         },
         swipeTarget: {
           onPartial: partial => {
-            partialCommitted = commitBranch(partial, { partial: true, cancelled: true });
+            partialCommitted = commitBranch(partial, {
+              partial: true,
+              cancelled: true,
+              memoryTableSnapshot: baselineMemorySnapshot,
+              memoryUpdateEntry: baselineMemoryUpdateEntry,
+            });
             return partialCommitted;
           },
         },
@@ -12994,11 +13075,24 @@ Phase G（Frame 36）：循环衔接
           chatStore.deleteMessage(m.id, sid);
         });
         if (sendOk && !newAiMsg) window.toastr?.warning?.('未取得新的回复分支');
-        restorePreviousBranch();
+        await restorePreviousBranch();
         return;
       }
 
-      commitBranch(newAiMsg);
+      let branchMemorySnapshot = null;
+      let branchMemoryUpdateEntry = undefined;
+      if (getMemoryStorageMode() === 'table') {
+        try {
+          branchMemorySnapshot = await buildSwipeMemoryTableSnapshot(sid, { isGroup: isGroupScope });
+          branchMemoryUpdateEntry = cloneMemoryUpdateEntry(window.appBridge?.getLastMemoryUpdate?.(sid));
+        } catch (err) {
+          logger.warn('capture swipe memory state failed', err);
+        }
+      }
+      commitBranch(newAiMsg, {
+        memoryTableSnapshot: branchMemorySnapshot,
+        memoryUpdateEntry: branchMemoryUpdateEntry,
+      });
       generatedAssistants.forEach(m => {
         ui.removeMessage(m.id);
         chatStore.deleteMessage(m.id, sid);
@@ -13060,6 +13154,27 @@ Phase G（Frame 36）：循环衔接
     try {
       partial = generation.streamCtrl?.cancel?.({ keepPartial: reason === 'user' }) || null;
     } catch {}
+    if (!partial && reason === 'user') {
+      const rawText = String(generation.streamText || '');
+      if (rawText.trim()) {
+        const meta = generation.streamMeta && typeof generation.streamMeta === 'object' ? generation.streamMeta : {};
+        partial = {
+          role: 'assistant',
+          type: 'text',
+          id: meta.id || generation.streamCtrl?.id,
+          name: meta.name || '助手',
+          avatar: meta.avatar || getAssistantAvatarForSession(generation.sessionId),
+          time: meta.time || formatNowTime(),
+          content: rawText,
+          raw: rawText,
+          rawOriginal: rawText,
+          meta: {
+            partial: true,
+            cancelled: true,
+          },
+        };
+      }
+    }
     if (reason === 'user') {
       try {
         const sessionId = String(generation.sessionId || '').trim();
@@ -14473,6 +14588,170 @@ Phase G（Frame 36）：循环衔接
         if (name) tableNameMap.set(name.toLowerCase(), id);
       });
       return { tableById, tableNameMap, tableOrder };
+    };
+    const clonePlainObject = value => {
+      if (value === null || value === undefined) return value;
+      try {
+        return JSON.parse(JSON.stringify(value));
+      } catch {
+        return value && typeof value === 'object' ? { ...value } : value;
+      }
+    };
+    const cloneMemoryUpdateEntry = entry => {
+      if (!entry || typeof entry !== 'object') return null;
+      const cloned = clonePlainObject(entry) || {};
+      const clip = (value, max = 20000) => {
+        const text = typeof value === 'string' ? value : '';
+        if (!text) return '';
+        return text.length > max ? `${text.slice(0, max)}\n...[truncated]` : text;
+      };
+      return {
+        at: cloned.at || 0,
+        mode: cloned.mode,
+        sessionId: cloned.sessionId,
+        tableEditRaw: clip(cloned.tableEditRaw),
+        raw: clip(cloned.raw),
+        requestPrompt: clip(cloned.requestPrompt),
+        actions: Array.isArray(cloned.actions) ? clonePlainObject(cloned.actions) : [],
+        rollback: cloned.rollback ? clonePlainObject(cloned.rollback) : null,
+        rollbackAt: cloned.rollbackAt || 0,
+      };
+    };
+    const buildSwipeMemoryTableSnapshot = async (sessionId, { isGroup } = {}) => {
+      if (getMemoryStorageMode() !== 'table') return null;
+      if (!memoryTableStore?.getMemories || !memoryTemplateStore) return null;
+      const sid = String(sessionId || '').trim();
+      if (!sid) return null;
+      let templateInfo = null;
+      try {
+        templateInfo = await loadTemplateDefinition();
+      } catch {
+        templateInfo = null;
+      }
+      const templateId = String(templateInfo?.record?.id || '').trim();
+      if (!templateId) return null;
+      const groupScope = Boolean(isGroup);
+      let rows = [];
+      try {
+        rows = await memoryTableStore.getMemories({
+          scope: groupScope ? 'group' : 'contact',
+          group_id: groupScope ? sid : undefined,
+          contact_id: groupScope ? undefined : sid,
+          template_id: templateId,
+        });
+      } catch {
+        rows = [];
+      }
+      const picked = (Array.isArray(rows) ? rows : [])
+        .map(row => {
+          const tableId = String(row?.table_id || '').trim();
+          if (!tableId) return null;
+          return {
+            id: String(row?.id || '').trim(),
+            template_id: String(row?.template_id || templateId).trim() || templateId,
+            table_id: tableId,
+            contact_id: groupScope ? null : sid,
+            group_id: groupScope ? sid : null,
+            row_data: clonePlainObject(row?.row_data || {}),
+            is_active: row?.is_active !== false,
+            is_pinned: Boolean(row?.is_pinned),
+            priority: Number.isFinite(Number(row?.priority)) ? Number(row.priority) : 0,
+            sort_order: Number.isFinite(Number(row?.sort_order)) ? Number(row.sort_order) : 0,
+          };
+        })
+        .filter(Boolean);
+      return {
+        templateId,
+        scope: groupScope ? 'group' : 'contact',
+        rows: picked,
+        capturedAt: Date.now(),
+      };
+    };
+    const applySwipeMemoryTableSnapshot = async (sessionId, snapshot, { isGroup } = {}) => {
+      if (getMemoryStorageMode() !== 'table') return false;
+      if (!snapshot || !memoryTableStore?.getMemories) return false;
+      const sid = String(sessionId || '').trim();
+      if (!sid) return false;
+      const groupScope = Boolean(isGroup);
+      const templateId = String(snapshot?.templateId || '').trim();
+      if (!templateId) return false;
+      let existing = [];
+      try {
+        existing = await memoryTableStore.getMemories({
+          scope: groupScope ? 'group' : 'contact',
+          group_id: groupScope ? sid : undefined,
+          contact_id: groupScope ? undefined : sid,
+          template_id: templateId,
+        });
+      } catch {
+        existing = [];
+      }
+      const ids = (Array.isArray(existing) ? existing : [])
+        .map(row => String(row?.id || '').trim())
+        .filter(Boolean);
+      if (ids.length) {
+        try {
+          await memoryTableStore.batchDeleteMemories?.(ids);
+        } catch {
+          for (const id of ids) {
+            try {
+              await memoryTableStore.deleteMemory?.(id);
+            } catch {}
+          }
+        }
+      }
+      const inputs = (Array.isArray(snapshot?.rows) ? snapshot.rows : [])
+        .map(row => {
+          const tableId = String(row?.table_id || '').trim();
+          if (!tableId) return null;
+          return {
+            id: row?.id ? String(row.id) : undefined,
+            template_id: templateId,
+            table_id: tableId,
+            contact_id: groupScope ? null : sid,
+            group_id: groupScope ? sid : null,
+            row_data: clonePlainObject(row?.row_data || {}),
+            is_active: row?.is_active !== false,
+            is_pinned: Boolean(row?.is_pinned),
+            priority: Number.isFinite(Number(row?.priority)) ? Number(row.priority) : 0,
+            sort_order: Number.isFinite(Number(row?.sort_order)) ? Number(row.sort_order) : 0,
+          };
+        })
+        .filter(Boolean);
+      if (inputs.length) {
+        try {
+          await memoryTableStore.batchCreateMemories?.(inputs);
+        } catch {
+          for (const input of inputs) {
+            try {
+              await memoryTableStore.createMemory?.(input);
+            } catch {}
+          }
+        }
+      }
+      window.dispatchEvent(new CustomEvent('memory-rows-updated', { detail: { sessionId: sid, templateId } }));
+      return true;
+    };
+    const persistSwipeBranchMemoryState = async (branches, index, sessionId, { isGroup } = {}) => {
+      if (getMemoryStorageMode() !== 'table') return false;
+      if (!Array.isArray(branches) || index < 0 || index >= branches.length) return false;
+      const branch = branches[index] && typeof branches[index] === 'object' ? branches[index] : null;
+      if (!branch || branch.draft === true) return false;
+      const snapshot = await buildSwipeMemoryTableSnapshot(sessionId, { isGroup });
+      if (!snapshot) return false;
+      branch.memoryTableSnapshot = snapshot;
+      branch.memoryUpdateEntry = cloneMemoryUpdateEntry(window.appBridge?.getLastMemoryUpdate?.(sessionId));
+      return true;
+    };
+    const applySwipeBranchMemoryState = async (sessionId, branch, { isGroup } = {}) => {
+      if (getMemoryStorageMode() !== 'table') return false;
+      if (!branch || typeof branch !== 'object' || !branch.memoryTableSnapshot) return false;
+      const applied = await applySwipeMemoryTableSnapshot(sessionId, branch.memoryTableSnapshot, { isGroup });
+      if (applied) {
+        const entry = cloneMemoryUpdateEntry(branch.memoryUpdateEntry);
+        window.appBridge?.setLastMemoryUpdate?.(sessionId, entry || null);
+      }
+      return applied;
     };
     const rowDataEquals = (a, b) => {
       const left = a && typeof a === 'object' ? a : {};
@@ -16637,6 +16916,81 @@ Phase G（Frame 36）：循环衔接
       }
       return ui.startAssistantStream(meta);
     };
+    const isStreamCtrlConnected = ctrl => {
+      if (!ctrl) return false;
+      if (typeof ctrl.isConnected !== 'function') return true;
+      try {
+        return ctrl.isConnected() !== false;
+      } catch {
+        return false;
+      }
+    };
+    const updateActiveGenerationStreamCache = (text, meta = {}) => {
+      if (!activeGeneration || activeGeneration.id !== generationId || activeGeneration.sessionId !== sessionId) return;
+      activeGeneration.streamText = String(text ?? '');
+      activeGeneration.streamMeta = {
+        ...((activeGeneration.streamMeta && typeof activeGeneration.streamMeta === 'object') ? activeGeneration.streamMeta : {}),
+        ...((meta && typeof meta === 'object') ? meta : {}),
+      };
+    };
+    const ensureAssistantStreamCtrl = (meta = {}) => {
+      if (isGenerationInterrupted(generationId)) return null;
+      if (isStreamCtrlConnected(streamCtrl)) return streamCtrl;
+      if (streamCtrl && !isStreamCtrlConnected(streamCtrl)) streamCtrl = null;
+      const sharedCtrl =
+        activeGeneration?.id === generationId && activeGeneration?.sessionId === sessionId
+          ? activeGeneration.streamCtrl
+          : null;
+      if (sharedCtrl && sharedCtrl !== streamCtrl && isStreamCtrlConnected(sharedCtrl)) {
+        streamCtrl = sharedCtrl;
+        return streamCtrl;
+      }
+      if (!isSessionActive(sessionId)) {
+        if (activeGeneration?.id === generationId && activeGeneration?.sessionId === sessionId) {
+          activeGeneration.streamCtrl = null;
+        }
+        return null;
+      }
+      try {
+        ui.hideTyping();
+      } catch {}
+      try {
+        fastForwardDelivery(sessionId);
+      } catch {}
+      const nextCtrl = createAssistantStreamCtrl(meta);
+      if (nextCtrl) {
+        streamCtrl = nextCtrl;
+        if (activeGeneration?.id === generationId && activeGeneration?.sessionId === sessionId) {
+          activeGeneration.streamCtrl = nextCtrl;
+          activeGeneration.streamMeta = {
+            ...((activeGeneration.streamMeta && typeof activeGeneration.streamMeta === 'object') ? activeGeneration.streamMeta : {}),
+            ...((meta && typeof meta === 'object') ? meta : {}),
+          };
+        }
+      }
+      return streamCtrl;
+    };
+    const pushAssistantStreamText = (text, meta = {}) => {
+      const renderedText = String(text ?? '');
+      updateActiveGenerationStreamCache(renderedText, meta);
+      const ctrl = ensureAssistantStreamCtrl(meta);
+      if (ctrl) ctrl.update(renderedText);
+      return ctrl;
+    };
+    const bindActiveGenerationReattach = () => {
+      if (!activeGeneration || activeGeneration.id !== generationId || activeGeneration.sessionId !== sessionId) return;
+      activeGeneration.reattachStream = () => {
+        if (isGenerationInterrupted(generationId)) return false;
+        const meta =
+          activeGeneration?.streamMeta && typeof activeGeneration.streamMeta === 'object'
+            ? activeGeneration.streamMeta
+            : {};
+        const text = String(activeGeneration?.streamText ?? '');
+        const ctrl = ensureAssistantStreamCtrl(meta);
+        if (ctrl && text) ctrl.update(text);
+        return Boolean(ctrl);
+      };
+    };
     const commitContinuationMessage = (message, { partial = false } = {}) => {
       const targetId = String(continueTarget?.messageId || '').trim();
       if (!targetId || !message) return null;
@@ -16758,11 +17112,15 @@ Phase G（Frame 36）：循环衔接
         sessionId,
         userMsgId: primaryId,
         streamCtrl: null,
+        streamText: '',
+        streamMeta: null,
+        reattachStream: null,
         partialCommitHandler: resolvedPartialCommitHandler,
         swipeTarget,
         cancelled: false,
       };
       generationId = activeGeneration.id;
+      bindActiveGenerationReattach();
       if (appendedUserOutput) refreshChatAndContacts();
       if (appendedUserOutput) ui.showDeliveryStatus();
       if (!suppressUserMessage && appendedUserOutput) ui.clearInput();
@@ -16774,11 +17132,15 @@ Phase G（Frame 36）：循环衔接
         sessionId,
         userMsgId: pendingMessagesToConfirm[0]?.id,
         streamCtrl: null,
+        streamText: '',
+        streamMeta: null,
+        reattachStream: null,
         partialCommitHandler: resolvedPartialCommitHandler,
         swipeTarget,
         cancelled: false,
       };
       generationId = activeGeneration.id;
+      bindActiveGenerationReattach();
       if (attachmentMessages.length) refreshChatAndContacts();
       if (!suppressUserMessage && attachmentMessages.length) ui.clearInput();
     }
@@ -16810,39 +17172,24 @@ Phase G（Frame 36）：循环衔接
           const stream = await window.appBridge.generate(text, llmContext(text));
           let full = '';
           streamCtrl = null;
+          const streamMeta = {
+            avatar: assistantAvatar,
+            name: '助手',
+            time: formatNowTime(),
+            typing: false,
+          };
           for await (const chunk of stream) {
             if (isGenerationInterrupted(generationId)) break;
             full += chunk;
-            if (!streamCtrl) {
-              if (isSessionActive(sessionId)) {
-                ui.hideTyping();
-                fastForwardDelivery(sessionId);
-                streamCtrl = createAssistantStreamCtrl({
-                  avatar: assistantAvatar,
-                  name: '助手',
-                  time: formatNowTime(),
-                  typing: false,
-                });
-                if (activeGeneration && activeGeneration.id === generationId && activeGeneration.sessionId === sessionId)
-                  activeGeneration.streamCtrl = streamCtrl;
-              }
-            }
             const streamText = (!isRpMode && isMemoryAutoExtractInline()) ? stripTableEditBlocks(full) : full;
-            if (streamCtrl) streamCtrl.update(streamText);
+            streamCtrl = pushAssistantStreamText(streamText, streamMeta);
           }
           if (isGenerationInterrupted(generationId)) return;
           if (isSessionActive(sessionId)) ui.hideTyping();
-          if (!streamCtrl && isSessionActive(sessionId)) {
-            streamCtrl = createAssistantStreamCtrl({
-              avatar: assistantAvatar,
-              name: '助手',
-              time: formatNowTime(),
-              typing: false,
-            });
-            if (activeGeneration && activeGeneration.id === generationId && activeGeneration.sessionId === sessionId)
-              activeGeneration.streamCtrl = streamCtrl;
+          if (!isStreamCtrlConnected(streamCtrl) && isSessionActive(sessionId)) {
+            streamCtrl = ensureAssistantStreamCtrl(streamMeta);
             const streamText = (!isRpMode && isMemoryAutoExtractInline()) ? stripTableEditBlocks(full) : full;
-            streamCtrl.update(streamText);
+            if (streamCtrl) streamCtrl.update(streamText);
           }
           chatStore.setLastRawResponse(full, sessionId);
           const memoryParsed = await handleMemoryEditsFromRaw(full, { sessionId, isGroup: isGroupChat });
@@ -16869,7 +17216,8 @@ Phase G（Frame 36）：循环衔接
           try {
             stored = normalizeCreativeLineBreaks(window.appBridge.applyOutputStoredRegex(finalSource, { depth: 0 }));
             display = normalizeCreativeLineBreaks(window.appBridge.applyOutputDisplayRegex(stored, { depth: 0 }));
-            if (streamCtrl) streamCtrl.update(display);
+            updateActiveGenerationStreamCache(display, streamMeta);
+            if (isStreamCtrlConnected(streamCtrl)) streamCtrl.update(display);
           } catch {}
           const meta = { renderRich: true };
           if (summary) meta.summary = summary;
@@ -16891,9 +17239,12 @@ Phase G（Frame 36）：循环衔接
             content: display,
             meta,
           };
-          if (streamCtrl) {
+          if (!isStreamCtrlConnected(streamCtrl) && isSessionActive(sessionId)) {
+            streamCtrl = ensureAssistantStreamCtrl(streamMeta);
+          }
+          if (isStreamCtrlConnected(streamCtrl)) {
             streamCtrl.finish(parsed);
-          } else if (isSessionActive(sessionId) && !continueTarget) {
+          } else if (isSessionActive(sessionId) && !suppressAssistantDom && !continueTarget) {
             ui.addMessage(parsed);
           }
           {
@@ -17334,17 +17685,13 @@ Phase G（Frame 36）：循环衔接
           sendSucceeded = true;
         } else {
           // 兼容旧逻辑（流式逐字）
-          streamCtrl = isSessionActive(sessionId)
-            ? createAssistantStreamCtrl({
-                avatar: assistantAvatar,
-                name: '助手',
-                time: formatNowTime(),
-                typing: true,
-              })
-            : null;
-          if (streamCtrl && activeGeneration && activeGeneration.id === generationId && activeGeneration.sessionId === sessionId) {
-            activeGeneration.streamCtrl = streamCtrl;
-          }
+          const streamMeta = {
+            avatar: assistantAvatar,
+            name: '助手',
+            time: formatNowTime(),
+            typing: true,
+          };
+          streamCtrl = isSessionActive(sessionId) ? ensureAssistantStreamCtrl(streamMeta) : null;
           consumePromptInjections(sessionId);
           const stream = await window.appBridge.generate(text, llmContext(text));
           let full = '';
@@ -17352,7 +17699,7 @@ Phase G（Frame 36）：循环衔接
             if (isGenerationInterrupted(generationId)) break;
             full += chunk;
             const streamText = (!isRpMode && isMemoryAutoExtractInline()) ? stripTableEditBlocks(full) : full;
-            if (streamCtrl) streamCtrl.update(streamText);
+            streamCtrl = pushAssistantStreamText(streamText, streamMeta);
           }
           if (isGenerationInterrupted(generationId)) return;
           chatStore.setLastRawResponse(full, sessionId);
@@ -17397,7 +17744,14 @@ Phase G（Frame 36）：循环衔接
             ...parseSpecialMessage(display),
             meta: Object.keys(meta).length ? meta : undefined,
           };
-          if (streamCtrl) {
+          updateActiveGenerationStreamCache(display, streamMeta);
+          if (isStreamCtrlConnected(streamCtrl)) {
+            streamCtrl.update(display);
+          } else if (isSessionActive(sessionId)) {
+            streamCtrl = ensureAssistantStreamCtrl(streamMeta);
+            if (streamCtrl) streamCtrl.update(display);
+          }
+          if (isStreamCtrlConnected(streamCtrl)) {
             streamCtrl.finish(parsed);
           } else if (isSessionActive(sessionId)) {
             ui.addMessage(parsed);
