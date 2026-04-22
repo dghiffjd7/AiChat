@@ -229,6 +229,273 @@ export class ChatUI {
     this.bindNetworkEvents();
     this.bindReasoningSettings();
     this.bindMentionDetection();
+    this._swipeRegenHandler = null;
+    this._swipeChangeHandler = null;
+    this._bindSwipeEvents();
+  }
+
+  _bindSwipeEvents() {
+    if (!this.scrollEl) return;
+    this.scrollEl.addEventListener('click', (e) => {
+      const btn = e.target.closest('.rp-swipe-prev, .rp-swipe-next');
+      if (!btn) return;
+      e.stopPropagation();
+      const indicator = btn.closest('.rp-swipe-indicator');
+      if (!indicator) return;
+      const busyWrapper = indicator.closest('.QQ_chat_charmsg.is-rp-regenerating');
+      if (busyWrapper) return;
+      const msgId = indicator.dataset.msgId;
+      if (!msgId) return;
+      const wrapper = this.scrollEl.querySelector(`[data-msg-id="${CSS.escape(msgId)}"]`);
+      const msg = wrapper?.__chatappMessage;
+      if (!msg) return;
+
+      if (!msg.meta) msg.meta = {};
+      if (!Array.isArray(msg.meta.swipes)) {
+        msg.meta.swipes = [{ content: msg.content, raw: msg.raw }];
+        msg.meta.activeSwipe = 0;
+      }
+      const total = msg.meta.swipes.length;
+      const active = msg.meta.activeSwipe || 0;
+
+      if (btn.classList.contains('rp-swipe-prev')) {
+        if (active <= 0) return;
+        this._applySwipe(wrapper, msg, active - 1);
+      } else {
+        if (active >= total - 1) {
+          if (this._swipeRegenHandler) this._swipeRegenHandler({ msgId, message: msg });
+          return;
+        }
+        this._applySwipe(wrapper, msg, active + 1);
+      }
+    });
+  }
+
+  _applySwipe(wrapper, msg, newIndex) {
+    const swipes = msg.meta?.swipes;
+    if (!swipes || newIndex < 0 || newIndex >= swipes.length) return;
+    msg.meta.activeSwipe = newIndex;
+    const branch = swipes[newIndex];
+    msg.content = branch.content;
+    if (branch.raw !== undefined) msg.raw = branch.raw;
+
+    this._renderSwipeContent(wrapper, msg, String(branch.content ?? ''), { streaming: false });
+    this._syncSwipeIndicator(wrapper, newIndex, swipes.length);
+
+    if (this._swipeChangeHandler) {
+      this._swipeChangeHandler({ msgId: msg.id, message: msg, index: newIndex });
+    }
+  }
+
+  resolveActiveSwipeMessage(message) {
+    if (!message || typeof message !== 'object') return message;
+    const meta = message.meta && typeof message.meta === 'object' ? message.meta : null;
+    const swipes = Array.isArray(meta?.swipes) && meta.swipes.length ? meta.swipes : null;
+    if (!swipes) return message;
+    const rawIndex = Math.trunc(Number(meta.activeSwipe));
+    const active = Number.isFinite(rawIndex)
+      ? Math.min(Math.max(0, rawIndex), swipes.length - 1)
+      : 0;
+    const branch = swipes[active] || {};
+    const next = {
+      ...message,
+      content: branch.content ?? message.content ?? '',
+      meta: meta.activeSwipe === active ? meta : { ...meta, activeSwipe: active },
+    };
+    if (branch.raw !== undefined) next.raw = branch.raw;
+    else if (branch.content !== undefined) next.raw = branch.content;
+    return next;
+  }
+
+  _renderSwipeContent(wrapper, msg, content, { streaming = false, placeholder = '' } = {}) {
+    const bubble = wrapper?.querySelector?.('.QQ_chat_msgdiv');
+    if (!bubble) return false;
+    this.cleanupRichTextMounts(bubble);
+    bubble.classList.remove('rp-swipe-draft-placeholder');
+    bubble.style.removeProperty('white-space');
+    bubble.innerHTML = '';
+    const renderMsg = {
+      ...(msg || {}),
+      content: String(content ?? ''),
+    };
+    const target = this.prepareTextContainer(bubble, renderMsg);
+    target.classList.remove('rp-swipe-draft-placeholder');
+    target.style.removeProperty('white-space');
+    const text = String(content ?? '');
+    if (!text.trim() && placeholder) {
+      target.classList.add('rp-swipe-draft-placeholder');
+      const dots = document.createElement('span');
+      dots.className = 'typing';
+      dots.setAttribute('aria-hidden', 'true');
+      for (let i = 0; i < 3; i += 1) {
+        const dot = document.createElement('span');
+        dot.className = 'typing-dot';
+        dots.appendChild(dot);
+      }
+      const label = document.createElement('span');
+      label.textContent = placeholder;
+      target.appendChild(dots);
+      target.appendChild(label);
+      return true;
+    }
+    if (!streaming && renderMsg.meta?.renderRich) {
+      renderRichText(target, text, {
+        messageId: renderMsg.id,
+        preserveHtmlNewlines: true,
+        sessionId: renderMsg.sessionId,
+      });
+      return true;
+    }
+    const normalized = this.normalizeAssistantLineBreaks(text);
+    if (!this.renderTextWithStickers(target, normalized)) {
+      target.textContent = normalized;
+      target.style.whiteSpace = 'pre-wrap';
+    }
+    return true;
+  }
+
+  _syncSwipeIndicator(wrapper, index, total, { generating = false } = {}) {
+    const indicator = wrapper?.querySelector?.('.rp-swipe-indicator');
+    if (!indicator) return;
+    const safeTotal = Math.max(1, Number(total) || 1);
+    const safeIndex = Math.min(Math.max(0, Number(index) || 0), safeTotal - 1);
+    const counter = indicator.querySelector('.rp-swipe-counter');
+    if (counter) counter.textContent = `${safeIndex + 1}/${safeTotal}`;
+    const prevBtn = indicator.querySelector('.rp-swipe-prev');
+    if (prevBtn) {
+      prevBtn.disabled = generating || safeIndex <= 0;
+      prevBtn.setAttribute('aria-label', '上一条回复');
+      prevBtn.title = '上一条回复';
+    }
+    const nextBtn = indicator.querySelector('.rp-swipe-next');
+    if (nextBtn) {
+      nextBtn.disabled = generating;
+      const label = generating ? '生成中' : (safeIndex >= safeTotal - 1 ? '生成新回复' : '下一条回复');
+      nextBtn.setAttribute('aria-label', label);
+      nextBtn.title = label;
+    }
+  }
+
+  addSwipeBranch(msgId, content, raw) {
+    const id = String(msgId || '').trim();
+    if (!id || !this.scrollEl) return;
+    const wrapper = this.scrollEl.querySelector(`[data-msg-id="${CSS.escape(id)}"]`);
+    const msg = wrapper?.__chatappMessage;
+    if (!msg) return;
+    if (!msg.meta) msg.meta = {};
+    if (!Array.isArray(msg.meta.swipes)) {
+      msg.meta.swipes = [{ content: msg.content, raw: msg.raw }];
+    }
+    msg.meta.swipes.push({ content, raw });
+    const newIdx = msg.meta.swipes.length - 1;
+    this._applySwipe(wrapper, msg, newIdx);
+  }
+
+  onSwipeRegen(handler) { this._swipeRegenHandler = handler; }
+  onSwipeChange(handler) { this._swipeChangeHandler = handler; }
+
+  setSwipeRegenerating(msgId, active, label = '生成中...') {
+    const id = String(msgId || '').trim();
+    if (!id || !this.scrollEl) return false;
+    const wrapper = this.scrollEl.querySelector(`[data-msg-id="${CSS.escape(id)}"]`);
+    if (!wrapper) return false;
+    wrapper.classList.toggle('is-rp-regenerating', Boolean(active));
+    wrapper.setAttribute('aria-busy', active ? 'true' : 'false');
+    const bubble = wrapper.querySelector('.QQ_chat_msgdiv');
+    if (bubble) {
+      if (active) bubble.dataset.rpRegeneratingLabel = String(label || '生成中...');
+      else delete bubble.dataset.rpRegeneratingLabel;
+    }
+    return true;
+  }
+
+  startSwipeGenerationStream(msgId, meta = {}) {
+    const id = String(msgId || '').trim();
+    if (!id || !this.scrollEl) return null;
+    const wrapper = this.scrollEl.querySelector(`[data-msg-id="${CSS.escape(id)}"]`);
+    const msg = wrapper?.__chatappMessage;
+    if (!wrapper || !msg) return null;
+    const streamId = String(meta.id || `swipe-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`);
+    const total = Math.max(1, Number(meta.total) || 1);
+    const index = Math.min(Math.max(0, Number(meta.index) || total - 1), total - 1);
+    const label = String(meta.label || '生成新回复中...');
+    const raf = cb => {
+      try {
+        if (typeof window !== 'undefined' && window.requestAnimationFrame) return window.requestAnimationFrame(cb);
+      } catch {}
+      return setTimeout(cb, 16);
+    };
+    const caf = handle => {
+      try {
+        if (typeof window !== 'undefined' && window.cancelAnimationFrame) return window.cancelAnimationFrame(handle);
+      } catch {}
+      clearTimeout(handle);
+    };
+    let updateHandle = null;
+    let pendingText = '';
+    this.setSwipeRegenerating(id, true, label);
+    this._syncSwipeIndicator(wrapper, index, total, { generating: true });
+    this._renderSwipeContent(wrapper, msg, '', { streaming: true, placeholder: label });
+    this.setStreamingState(true);
+
+    const flush = (text, { final = false, finalMessage = null } = {}) => {
+      if (!wrapper.isConnected) return;
+      const renderMsg = finalMessage ? { ...msg, ...finalMessage, id: msg.id } : msg;
+      this._renderSwipeContent(wrapper, renderMsg, text, { streaming: !final, placeholder: label });
+      if (this.isNearBottom()) this.scrollToBottom();
+    };
+
+    return {
+      id: streamId,
+      update: text => {
+        pendingText = String(text ?? '');
+        if (updateHandle != null) return;
+        updateHandle = raf(() => {
+          updateHandle = null;
+          flush(pendingText, { final: false });
+        });
+      },
+      finish: finalMessage => {
+        this.setStreamingState(false);
+        if (updateHandle != null) {
+          caf(updateHandle);
+          updateHandle = null;
+        }
+        const finalText = String(finalMessage?.content ?? pendingText ?? '');
+        pendingText = finalText;
+        flush(finalText, { final: true, finalMessage });
+      },
+      cancel: (options = {}) => {
+        const keepPartial = Boolean(options && options.keepPartial);
+        if (updateHandle != null) {
+          caf(updateHandle);
+          updateHandle = null;
+        }
+        this.setStreamingState(false);
+        const rawText = String(pendingText ?? '');
+        if (keepPartial && rawText.trim()) {
+          const content = this.normalizeAssistantLineBreaks(rawText);
+          flush(content, { final: false });
+          return {
+            role: 'assistant',
+            type: 'text',
+            id: streamId,
+            name: meta.name || msg.name || '助手',
+            avatar: meta.avatar || msg.avatar,
+            time: meta.time || msg.time,
+            content,
+            raw: rawText,
+            rawOriginal: rawText,
+            meta: {
+              renderRich: msg.meta?.renderRich === true,
+              partial: true,
+              cancelled: true,
+            },
+          };
+        }
+        return null;
+      },
+    };
   }
 
   decorateMessage(message, context = {}) {
@@ -1291,6 +1558,79 @@ export class ChatUI {
     this._deliverySequenceDone = false;
     this.typingEl = null;
     if (this._floatingTypingEl) { this._floatingTypingEl.remove(); this._floatingTypingEl = null; }
+    this._rpFloorCount = 0;
+  }
+
+  _createRpFloorMarker(message) {
+    if (document.body?.dataset?.uiMode !== 'rp') return null;
+    const role = message?.role;
+    if (role === 'system') return null;
+
+    let floor = null;
+    if (message?.meta?.isGreeting) {
+      this._rpFloorCount = 0;
+      floor = 0;
+    } else if (role === 'user') {
+      this._rpFloorCount = (this._rpFloorCount || 0) + 1;
+      floor = this._rpFloorCount;
+    } else {
+      const cur = this._rpFloorCount || 0;
+      if (!message.meta) message.meta = {};
+      message.meta.floor = cur;
+      return null;
+    }
+
+    if (!message.meta) message.meta = {};
+    message.meta.floor = floor;
+
+    const marker = document.createElement('div');
+    marker.className = 'rp-floor-marker';
+    marker.dataset.floor = String(floor);
+    const label = document.createElement('span');
+    label.className = 'rp-floor-label';
+    label.textContent = floor === 0 ? '#0 序章' : `# ${floor}`;
+    marker.appendChild(label);
+    return marker;
+  }
+
+  _refreshAllRpFloorMarkers() {
+    if (!this.scrollEl) return;
+    this.scrollEl.querySelectorAll('.rp-floor-marker').forEach(el => el.remove());
+    if (document.body?.dataset?.uiMode !== 'rp') return;
+
+    let floor = -1;
+    const wrappers = this.scrollEl.querySelectorAll('.QQ_chat_mymsg, .QQ_chat_charmsg');
+    for (const w of wrappers) {
+      const msg = w.__chatappMessage;
+      if (!msg) continue;
+
+      let isNewFloor = false;
+      if (msg?.meta?.isGreeting) {
+        floor = 0;
+        isNewFloor = true;
+      } else if (msg.role === 'user') {
+        floor = Math.max(floor, 0) + 1;
+        isNewFloor = true;
+      }
+
+      if (floor >= 0) {
+        if (!msg.meta) msg.meta = {};
+        msg.meta.floor = floor;
+        w.dataset.rpFloor = String(floor);
+      }
+
+      if (isNewFloor) {
+        const marker = document.createElement('div');
+        marker.className = 'rp-floor-marker';
+        marker.dataset.floor = String(floor);
+        const label = document.createElement('span');
+        label.className = 'rp-floor-label';
+        label.textContent = floor === 0 ? '#0 序章' : `# ${floor}`;
+        marker.appendChild(label);
+        w.parentNode.insertBefore(marker, w);
+      }
+    }
+    this._rpFloorCount = Math.max(floor, 0);
   }
 
   cleanupRichTextMounts(rootEl) {
@@ -1343,6 +1683,8 @@ export class ChatUI {
     } else {
       this.sendBtn.classList.add('is-offline');
     }
+    const contBtn = document.getElementById('rp-continue-btn');
+    if (contBtn) contBtn.disabled = isBusy || disabled;
   }
 
   scrollToBottom() {
@@ -1412,9 +1754,12 @@ export class ChatUI {
       });
     }
     const wasNearBottom = this.isNearBottom();
+    const floorMarker = this._createRpFloorMarker(message);
     const el = this.buildMessageElement(message);
     if (el) {
+      if (floorMarker) this.scrollEl.appendChild(floorMarker);
       this.scrollEl.appendChild(el);
+      if (message?.meta?.floor != null) el.dataset.rpFloor = String(message.meta.floor);
       const shouldScroll = options.autoScroll !== false && wasNearBottom;
       if (shouldScroll) this.scrollToBottom();
     }
@@ -1432,6 +1777,7 @@ export class ChatUI {
   }
 
   buildMessageElement(message) {
+    message = this.resolveActiveSwipeMessage(message);
     if (!message?.content && !message?.type) {
       return null;
     }
@@ -1523,6 +1869,7 @@ export class ChatUI {
       delete wrapper.dataset.timestamp;
     }
     wrapper.__chatappMessage = message;
+    if (message?.meta?.floor != null) wrapper.dataset.rpFloor = String(message.meta.floor);
     this.applyCreativeBubbleState(wrapper, message);
 
     // 添加 pending/sending 状态标记
@@ -1823,6 +2170,37 @@ export class ChatUI {
         contentWrap.appendChild(nameEl);
       }
       contentWrap.appendChild(bubbleStack);
+
+      if (document.body?.dataset?.uiMode === 'rp' && message.role === 'assistant' && !message?.meta?.isGreeting) {
+        const swipes = Array.isArray(message.meta?.swipes) ? message.meta.swipes : null;
+        const total = swipes ? swipes.length : 1;
+        const active = swipes ? Math.min(message.meta.activeSwipe || 0, total - 1) : 0;
+        const swipeWrap = document.createElement('div');
+        swipeWrap.className = 'rp-swipe-indicator';
+        swipeWrap.dataset.msgId = message.id;
+        const prevBtn = document.createElement('button');
+        prevBtn.type = 'button';
+        prevBtn.className = 'rp-swipe-prev';
+        prevBtn.textContent = '◀';
+        prevBtn.disabled = active <= 0;
+        prevBtn.setAttribute('aria-label', '上一条回复');
+        prevBtn.title = '上一条回复';
+        const counter = document.createElement('span');
+        counter.className = 'rp-swipe-counter';
+        counter.textContent = `${active + 1}/${total}`;
+        const nextBtn = document.createElement('button');
+        nextBtn.type = 'button';
+        nextBtn.className = 'rp-swipe-next';
+        nextBtn.textContent = '▶';
+        const nextLabel = active >= total - 1 ? '生成新回复' : '下一条回复';
+        nextBtn.setAttribute('aria-label', nextLabel);
+        nextBtn.title = nextLabel;
+        swipeWrap.appendChild(prevBtn);
+        swipeWrap.appendChild(counter);
+        swipeWrap.appendChild(nextBtn);
+        contentWrap.appendChild(swipeWrap);
+      }
+
       contentWrap.appendChild(timeEl);
 
       wrapper.appendChild(avatarImg);
@@ -2479,9 +2857,14 @@ export class ChatUI {
     if (!list.length || !this.scrollEl) return;
     const eagerTailCount = 8;
     const eagerStart = Math.max(0, list.length - eagerTailCount);
+    const isRp = document.body?.dataset?.uiMode === 'rp';
     const fragment = document.createDocumentFragment();
     for (let idx = 0; idx < list.length; idx += 1) {
       const msg = list[idx];
+      if (isRp) {
+        const fm = this._createRpFloorMarker(msg);
+        if (fm) fragment.appendChild(fm);
+      }
       const el = this.buildMessageElement({
         role: msg.role === 'system' ? 'system' : msg.role === 'user' ? 'user' : 'assistant',
         type: msg.type || 'text',
@@ -2497,7 +2880,10 @@ export class ChatUI {
         sessionId: msg.sessionId,
         __lazyRichMount: Boolean(msg?.meta?.renderRich) && idx < eagerStart,
       });
-      if (el) fragment.appendChild(el);
+      if (el) {
+        if (isRp && msg.meta?.floor != null) el.dataset.rpFloor = String(msg.meta.floor);
+        fragment.appendChild(el);
+      }
     }
     this.scrollEl.appendChild(fragment);
     if (!keepScroll) this.scrollToBottom();
@@ -2534,6 +2920,8 @@ export class ChatUI {
     const first = this.scrollEl.firstChild;
     if (first) this.scrollEl.insertBefore(fragment, first);
     else this.scrollEl.appendChild(fragment);
+
+    if (document.body?.dataset?.uiMode === 'rp') this._refreshAllRpFloorMarkers();
 
     const afterHeight = this.scrollEl.scrollHeight;
     const delta = afterHeight - beforeHeight;
@@ -2574,10 +2962,10 @@ export class ChatUI {
       String(newMessage?.sessionId || '').trim()
       || String(prev?.sessionId || '').trim()
       || this.resolveMessageSessionId(prev);
-    const next = this.decorateMessage(
+    const next = this.resolveActiveSwipeMessage(this.decorateMessage(
       { ...prev, ...(newMessage || {}), id: msgId, sessionId: resolvedSessionId },
       { phase: 'update', previous: prev },
-    );
+    ));
     if (this.tryPatchMessageElement(existing, next)) {
       this.refreshScrollDateBadge();
       this.scheduleScrollBottomButtonRefresh({ immediate: true });
@@ -2593,18 +2981,21 @@ export class ChatUI {
   }
 
   getMessageRenderSignature(message) {
-    const msg = message && typeof message === 'object' ? message : {};
+    const msg = this.resolveActiveSwipeMessage(message && typeof message === 'object' ? message : {});
     const meta = msg.meta && typeof msg.meta === 'object' ? msg.meta : {};
     const rawSource =
       typeof msg.rawSource === 'string'
         ? msg.rawSource
         : (typeof msg.raw_source === 'string' ? msg.raw_source : '');
+    const swipes = Array.isArray(meta.swipes) ? meta.swipes : null;
     return JSON.stringify({
       role: String(msg.role || ''),
       type: String(msg.type || 'text'),
       content: typeof msg.content === 'string' ? msg.content : '',
       raw: typeof msg.raw === 'string' ? msg.raw : '',
       rawSource,
+      activeSwipe: swipes ? Math.min(Math.max(0, Math.trunc(Number(meta.activeSwipe)) || 0), swipes.length - 1) : 0,
+      swipeCount: swipes ? swipes.length : 0,
       renderRich: meta.renderRich === true,
       isGreeting: meta.isGreeting === true,
       showName: meta.showName === true,

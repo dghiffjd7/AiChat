@@ -625,29 +625,76 @@ body[data-theme-mode='dark'] .rp-toolbar {
   border-bottom-color: var(--app-border-subtle) !important;
 }
 
-body[data-theme-mode='dark'] :is(.rp-label, .rp-greeting-switch-label) {
+body[data-theme-mode='dark'] .rp-greeting-trigger {
+  background: rgba(205, 217, 229, 0.06) !important;
+  border-color: var(--app-border-default) !important;
+}
+
+body[data-theme-mode='dark'] .rp-greeting-trigger:active {
+  background: rgba(205, 217, 229, 0.12) !important;
+}
+
+body[data-theme-mode='dark'] :is(.rp-greeting-switch-label) {
   color: var(--app-text-primary) !important;
 }
 
-body[data-theme-mode='dark'] :is(.rp-greeting select, #rp-greeting-select, .rp-greeting-switch-select) {
+body[data-theme-mode='dark'] :is(.rp-greeting-switch-select) {
   background: rgba(205, 217, 229, 0.06) !important;
   color: var(--app-text-primary) !important;
   border-color: var(--app-border-default) !important;
 }
 
-body[data-theme-mode='dark'] :is(.rp-greeting select, #rp-greeting-select, .rp-greeting-switch-select) option {
+body[data-theme-mode='dark'] :is(.rp-greeting-switch-select) option {
   background: #22272e !important;
   color: var(--app-text-primary) !important;
 }
 
-body[data-theme-mode='dark'] .rp-actions button {
-  background: rgba(205, 217, 229, 0.06) !important;
-  color: var(--app-text-primary) !important;
-  border-color: var(--app-border-default) !important;
-}
-
 body[data-theme-mode='dark'] .rp-greeting-switch {
   border-bottom-color: rgba(139, 152, 167, 0.24) !important;
+}
+
+body[data-theme-mode='dark'] .rp-greeting-sheet {
+  background: #1d2129 !important;
+  box-shadow: 0 -4px 24px rgba(0, 0, 0, 0.4) !important;
+}
+
+body[data-theme-mode='dark'] .rp-greeting-sheet-handle {
+  background: rgba(139, 152, 167, 0.3) !important;
+}
+
+body[data-theme-mode='dark'] .rp-greeting-sheet-item:active {
+  background: rgba(205, 217, 229, 0.08) !important;
+}
+
+body[data-theme-mode='dark'] .rp-greeting-sheet-item.active {
+  background: rgba(59, 130, 246, 0.12) !important;
+}
+
+body[data-theme-mode='dark'] .rp-greeting-sheet-footer {
+  border-top-color: rgba(139, 152, 167, 0.12) !important;
+}
+
+body[data-theme-mode='dark'] .rp-greeting-sheet-footer button {
+  background: rgba(239, 68, 68, 0.12) !important;
+}
+
+body[data-theme-mode='dark'] .rp-swipe-prev,
+body[data-theme-mode='dark'] .rp-swipe-next {
+  background: rgba(205, 217, 229, 0.08) !important;
+}
+
+body[data-theme-mode='dark'] .rp-swipe-prev:active,
+body[data-theme-mode='dark'] .rp-swipe-next:active {
+  background: rgba(205, 217, 229, 0.16) !important;
+}
+
+body[data-theme-mode='dark'] .rp-continue-btn {
+  background: rgba(59, 130, 246, 0.1) !important;
+  border-color: rgba(59, 130, 246, 0.25) !important;
+}
+
+body[data-theme-mode='dark'] .rp-continue-btn:active {
+  background: rgba(59, 130, 246, 0.2) !important;
 }
 
 body[data-theme-mode='dark'] .chat-input-container {
@@ -4249,6 +4296,22 @@ body[data-theme-mode='dark'] .world-flip-card-back .world-block-back-save-btn {
 }
 
 /* ── 21. Preset Panel — 推理请求 reasoning card (inline styles) ── */
+
+body[data-theme-mode='dark'] #preset-panel .pp-reasoning-card {
+  background: rgba(121, 192, 255, 0.08) !important;
+  border-color: rgba(121, 192, 255, 0.22) !important;
+  box-shadow: none !important;
+}
+
+body[data-theme-mode='dark'] #preset-panel .pp-reasoning-card :is(.pp-input, .world-app-select-btn) {
+  background: rgba(205, 217, 229, 0.06) !important;
+  color: var(--app-text-primary) !important;
+  border-color: var(--app-border-default) !important;
+}
+
+body[data-theme-mode='dark'] #preset-panel .pp-reasoning-card :is(.pp-field-label, [style*='font-weight:700']) {
+  color: var(--app-text-primary) !important;
+}
 
 body[data-theme-mode='dark'] #preset-panel :is(
   [style*='background:linear-gradient(180deg,#f8fbff'],

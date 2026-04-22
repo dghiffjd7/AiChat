@@ -600,6 +600,13 @@ const PANEL_CSS = `
     font-size: 13px; color: var(--app-text-secondary); cursor: pointer;
 }
 .pp-flags input[type="checkbox"] { width: 16px; height: 16px; }
+.pp-reasoning-card {
+    margin-top: 12px;
+    border: 1px solid #dbe7ff;
+    border-radius: 14px;
+    background: linear-gradient(180deg, #f8fbff 0%, #f1f6ff 100%);
+    padding: 12px;
+}
 
 /* ── openai blocks ── */
 .pp-block {
@@ -2206,7 +2213,7 @@ export class PresetPanel {
 
         if (capability.supported && capability.requestControl) {
             const reasoningCard = document.createElement('div');
-            reasoningCard.style.cssText = 'margin-top:12px; border:1px solid #dbe7ff; border-radius:14px; background:linear-gradient(180deg,#f8fbff 0%,#f1f6ff 100%); padding:12px;';
+            reasoningCard.className = 'pp-reasoning-card';
             const title = document.createElement('div');
             title.className = 'pp-field-label';
             title.textContent = '推理请求';

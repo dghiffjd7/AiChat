@@ -304,50 +304,190 @@ body[data-ui-mode='rp'] .bottom-nav {
 .rp-toolbar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 8px 12px;
+  padding: 6px 12px;
   background: rgba(248, 250, 252, 0.92);
   border-bottom: 1px solid rgba(15, 23, 42, 0.08);
 }
 
-.rp-greeting {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex: 1;
-}
-
-.rp-greeting select {
-  flex: 1;
-  min-width: 120px;
-  padding: 6px 10px;
-  border: 1px solid rgba(15, 23, 42, 0.12);
-  border-radius: 10px;
-  background: var(--app-surface-card);
-  font-size: 12px;
-}
-
-.rp-label {
-  font-size: 12px;
-  color: var(--app-text-primary);
-  font-weight: 700;
-}
-
-.rp-actions {
+.rp-greeting-trigger {
   display: flex;
   align-items: center;
   gap: 6px;
+  width: 100%;
+  padding: 6px 10px;
+  border: 1px solid rgba(15, 23, 42, 0.10);
+  border-radius: 10px;
+  background: var(--app-surface-card, #fff);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
 }
 
-.rp-actions button {
-  border: 1px solid rgba(15, 23, 42, 0.12);
-  background: var(--app-surface-card);
-  color: var(--app-text-primary);
-  border-radius: 10px;
-  padding: 6px 10px;
+.rp-greeting-trigger:active {
+  background: rgba(15, 23, 42, 0.04);
+}
+
+.rp-greeting-trigger-label {
+  font-size: 11px;
+  color: var(--app-text-muted, #999);
+  white-space: nowrap;
+}
+
+.rp-greeting-trigger-name {
+  flex: 1;
   font-size: 12px;
+  color: var(--app-text-primary);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+}
+
+.rp-greeting-trigger-arrow {
+  font-size: 10px;
+  color: var(--app-text-muted, #999);
+  margin-left: auto;
+}
+
+.rp-greeting-trigger[disabled] {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+/* RP 开场白底部面板 */
+.rp-greeting-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  z-index: 900;
+  opacity: 1;
+  transition: opacity 0.2s ease;
+}
+
+.rp-greeting-overlay.hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.rp-greeting-sheet {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  max-height: 60vh;
+  background: var(--app-surface-card, #fff);
+  border-radius: 16px 16px 0 0;
+  box-shadow: 0 -4px 24px rgba(0, 0, 0, 0.12);
+  z-index: 901;
+  display: flex;
+  flex-direction: column;
+  transform: translateY(0);
+  transition: transform 0.28s cubic-bezier(0.32, 0.72, 0, 1);
+  overflow: hidden;
+}
+
+.rp-greeting-sheet.hidden {
+  transform: translateY(100%);
+  pointer-events: none;
+}
+
+.rp-greeting-sheet-handle {
+  width: 36px;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(15, 23, 42, 0.15);
+  margin: 10px auto 4px;
+  flex-shrink: 0;
+}
+
+.rp-greeting-sheet-header {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--app-text-primary);
+  padding: 4px 16px 10px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.rp-greeting-sheet-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0 8px;
+  -webkit-overflow-scrolling: touch;
+}
+
+.rp-greeting-sheet-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 12px;
+  margin: 2px 0;
+  border-radius: 10px;
   cursor: pointer;
+  border: none;
+  background: none;
+  width: 100%;
+  text-align: left;
+  -webkit-tap-highlight-color: transparent;
+  transition: background 0.15s ease;
+}
+
+.rp-greeting-sheet-item:active {
+  background: rgba(15, 23, 42, 0.06);
+}
+
+.rp-greeting-sheet-item.active {
+  background: rgba(59, 130, 246, 0.08);
+}
+
+.rp-greeting-sheet-item-check {
+  width: 20px;
+  font-size: 14px;
+  color: #3b82f6;
+  flex-shrink: 0;
+  text-align: center;
+}
+
+.rp-greeting-sheet-item-text {
+  flex: 1;
+  font-size: 13px;
+  color: var(--app-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rp-greeting-sheet-item.active .rp-greeting-sheet-item-text {
+  font-weight: 600;
+  color: #3b82f6;
+}
+
+.rp-greeting-sheet-item[disabled] {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+.rp-greeting-sheet-footer {
+  padding: 8px 12px 16px;
+  flex-shrink: 0;
+  border-top: 1px solid rgba(15, 23, 42, 0.06);
+}
+
+.rp-greeting-sheet-footer button {
+  width: 100%;
+  padding: 10px;
+  border: none;
+  border-radius: 10px;
+  background: rgba(239, 68, 68, 0.08);
+  color: #ef4444;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.rp-greeting-sheet-footer button:active {
+  background: rgba(239, 68, 68, 0.15);
 }
 
 .rp-greeting-switch {
@@ -619,10 +759,11 @@ body[data-creative-wide='on'] .QQ_chat_charmsg[data-creative='1'] .QQ_chat_msgdi
   width: 100%;
 }
 
-/* RP 模式：气泡加宽 + 隐藏头像 */
+/* RP 模式：气泡加宽 + 隐藏头像 + 阅读优化 */
 body[data-ui-mode='rp'] .QQ_chat_charmsg,
 body[data-ui-mode='rp'] .QQ_chat_mymsg {
   max-width: calc(100% - 16px);
+  margin-bottom: 4px;
 }
 
 body[data-ui-mode='rp'] .QQ_chat_charmsg {
@@ -642,6 +783,8 @@ body[data-ui-mode='rp'] .QQ_chat_charmsg .chat-bubble-stack {
 
 body[data-ui-mode='rp'] .QQ_chat_charmsg .QQ_chat_msgdiv {
   width: 100%;
+  line-height: 1.75;
+  padding: 10px 14px;
 }
 
 body[data-ui-mode='rp'] .QQ_chat_charmsg .chat-message-content,
@@ -657,10 +800,129 @@ body[data-ui-mode='rp'] .QQ_chat_mymsg {
   margin-right: 8px;
 }
 
+body[data-ui-mode='rp'] .QQ_chat_mymsg .QQ_chat_msgdiv {
+  line-height: 1.75;
+  padding: 10px 14px;
+}
+
 body[data-ui-mode='rp'] .QQ_chat_head,
 body[data-ui-mode='rp'] .user_avatar,
 body[data-ui-mode='rp'] .qq-avatar {
   display: none;
+}
+
+/* RP 楼层标记 */
+.rp-floor-marker {
+  display: none;
+}
+
+body[data-ui-mode='rp'] .rp-floor-marker {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 18px 20px 6px;
+  user-select: none;
+  pointer-events: none;
+}
+
+body[data-ui-mode='rp'] .rp-floor-marker::before,
+body[data-ui-mode='rp'] .rp-floor-marker::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--app-border-color, rgba(0, 0, 0, 0.08));
+}
+
+.rp-floor-label {
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--app-text-muted, #999);
+  letter-spacing: 0.5px;
+  font-weight: 500;
+}
+
+/* RP 滑动切换指示器 */
+.rp-swipe-indicator {
+  display: none;
+}
+
+body[data-ui-mode='rp'] .rp-swipe-indicator {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 4px 0 2px;
+  user-select: none;
+}
+
+.rp-swipe-prev,
+.rp-swipe-next {
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(15, 23, 42, 0.05);
+  color: var(--app-text-muted, #999);
+  font-size: 11px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  -webkit-tap-highlight-color: transparent;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.rp-swipe-prev:active,
+.rp-swipe-next:active {
+  background: rgba(15, 23, 42, 0.12);
+  color: var(--app-text-primary);
+}
+
+.rp-swipe-prev:disabled,
+.rp-swipe-next:disabled {
+  opacity: 0.3;
+  pointer-events: none;
+}
+
+.rp-swipe-counter {
+  font-size: 11px;
+  color: var(--app-text-muted, #999);
+  font-variant-numeric: tabular-nums;
+  min-width: 28px;
+  text-align: center;
+}
+
+.QQ_chat_charmsg.is-rp-regenerating .QQ_chat_msgdiv {
+  border-color: color-mix(in srgb, var(--app-accent) 34%, var(--app-border-default));
+}
+
+.QQ_chat_charmsg.is-rp-regenerating .rp-swipe-prev,
+.QQ_chat_charmsg.is-rp-regenerating .rp-swipe-next {
+  opacity: 0.35;
+  pointer-events: none;
+}
+
+.QQ_chat_charmsg.is-rp-regenerating .rp-swipe-counter {
+  color: var(--app-accent);
+  font-weight: 700;
+}
+
+.rp-swipe-draft-placeholder {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--app-text-secondary);
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.rp-swipe-draft-placeholder .typing {
+  width: auto;
+  min-width: 30px;
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 /* 5.2 我的消息 - .QQ_chat_mymsg */
@@ -866,6 +1128,15 @@ body[data-ui-mode='rp'] .qq-avatar {
 .QQ_chat_msgdiv .chat-rich-fragment summary {
   cursor: pointer;
   font-weight: 600;
+}
+
+.QQ_chat_msgdiv.chat-rich-fragment img,
+.QQ_chat_msgdiv .chat-rich-fragment img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 6px;
+  display: block;
+  margin: 4px 0;
 }
 
 .chat-bubble-stack {
@@ -1585,6 +1856,39 @@ body[data-ui-mode='rp'] .chat-reply-draft {
 
 body[data-ui-mode='rp'] .chat-sticker-btn {
   display: none;
+}
+
+/* RP 续写按钮 */
+.rp-continue-btn {
+  display: none;
+  height: 36px;
+  padding: 0 12px;
+  border-radius: 18px;
+  border: 1.5px solid rgba(59, 130, 246, 0.3);
+  background: rgba(59, 130, 246, 0.06);
+  color: #3b82f6;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  flex-shrink: 0;
+  white-space: nowrap;
+  -webkit-tap-highlight-color: transparent;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+body[data-ui-mode='rp'] .rp-continue-btn {
+  display: inline-flex;
+  align-items: center;
+}
+
+.rp-continue-btn:active {
+  background: rgba(59, 130, 246, 0.14);
+  border-color: rgba(59, 130, 246, 0.5);
+}
+
+.rp-continue-btn:disabled {
+  opacity: 0.4;
+  pointer-events: none;
 }
 
 .chat-send-btn {

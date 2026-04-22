@@ -5602,9 +5602,12 @@ Phase G（Frame 36）：循环衔接
   const chatSearchBox = document.getElementById('chat_search_box');
   chatRoom = document.getElementById('chat-room');
   const rpToolbar = document.getElementById('rp-toolbar');
-  const rpGreetingSelect = document.getElementById('rp-greeting-select');
-  const rpResetBtn = document.getElementById('rp-reset-btn');
-  const rpVarsBtn = document.getElementById('rp-vars-btn');
+  const rpGreetingTrigger = document.getElementById('rp-greeting-trigger');
+  const rpGreetingName = document.getElementById('rp-greeting-name');
+  const rpGreetingOverlay = document.getElementById('rp-greeting-overlay');
+  const rpGreetingSheet = document.getElementById('rp-greeting-sheet');
+  const rpGreetingSheetList = document.getElementById('rp-greeting-sheet-list');
+  const rpGreetingSheetReset = document.getElementById('rp-greeting-sheet-reset');
   const chatScroll = document.getElementById('chat-scroll');
   const composerInput = document.getElementById('composer-input');
   const chatInputContainer = document.querySelector('.chat-input-container');
@@ -10989,6 +10992,8 @@ Phase G（Frame 36）：循环衔接
     const gd = document.getElementById('group-management-dropdown');
     if (gd) gd.style.display = 'none';
     pendingFloatMenu?.classList.add('hidden');
+    rpGreetingOverlay?.classList.add('hidden');
+    rpGreetingSheet?.classList.add('hidden');
   };
   patchDebugUiRegistry((registry) => {
     registry.actions.hideMenus = hideMenus;
@@ -11778,26 +11783,17 @@ Phase G（Frame 36）：循环衔接
   };
 
   const renderRpToolbar = () => {
-    if (!rpGreetingSelect) return;
+    if (!rpGreetingName) return;
     const list = getRpGreetings();
-    rpGreetingSelect.innerHTML = '';
     if (!list.length) {
-      const opt = document.createElement('option');
-      opt.value = '';
-      opt.textContent = '无开场白';
-      rpGreetingSelect.appendChild(opt);
-      rpGreetingSelect.disabled = true;
+      rpGreetingName.textContent = '无开场白';
+      if (rpGreetingTrigger) rpGreetingTrigger.disabled = true;
       return;
     }
-    list.forEach((g, idx) => {
-      const opt = document.createElement('option');
-      opt.value = g.id;
-      opt.textContent = g.title || `开场白 ${idx + 1}`;
-      rpGreetingSelect.appendChild(opt);
-    });
-    rpGreetingSelect.disabled = false;
     const active = ensureRpGreetingActive();
-    if (active?.id) rpGreetingSelect.value = active.id;
+    const idx = list.findIndex(g => String(g?.id || '') === String(active?.id || ''));
+    rpGreetingName.textContent = active?.title || `开场白 ${idx >= 0 ? idx + 1 : 1}`;
+    if (rpGreetingTrigger) rpGreetingTrigger.disabled = false;
   };
 
   const refreshRpToolbar = (sessionId = getRpSessionId(activePersonaId)) => {
@@ -11810,13 +11806,48 @@ Phase G（Frame 36）：循环衔接
     renderRpToolbar();
     const list = getRpGreetings();
     const locked = hasRpConversation(sessionId);
-    if (rpGreetingSelect) {
-      if (!list.length) {
-        rpGreetingSelect.disabled = true;
-      } else {
-        rpGreetingSelect.disabled = locked;
-      }
+    if (rpGreetingTrigger) {
+      rpGreetingTrigger.disabled = !list.length || locked;
     }
+  };
+
+  const openRpGreetingSheet = () => {
+    if (!rpGreetingSheet || !rpGreetingSheetList) return;
+    const list = getRpGreetings();
+    const activeId = String(rpSessionStore.getActiveGreetingId?.() || '').trim();
+    const sessionId = getRpSessionId(activePersonaId);
+    const locked = hasRpConversation(sessionId);
+    rpGreetingSheetList.innerHTML = '';
+    list.forEach((g, idx) => {
+      const id = String(g?.id || '').trim();
+      const isActive = id === activeId;
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'rp-greeting-sheet-item' + (isActive ? ' active' : '');
+      if (locked) btn.disabled = true;
+      const check = document.createElement('span');
+      check.className = 'rp-greeting-sheet-item-check';
+      check.textContent = isActive ? '✓' : '';
+      const text = document.createElement('span');
+      text.className = 'rp-greeting-sheet-item-text';
+      text.textContent = g?.title || `开场白 ${idx + 1}`;
+      btn.appendChild(check);
+      btn.appendChild(text);
+      btn.addEventListener('click', async () => {
+        if (locked || isActive) { closeRpGreetingSheet(); return; }
+        closeRpGreetingSheet();
+        await setRpGreeting(id, sessionId);
+      });
+      rpGreetingSheetList.appendChild(btn);
+    });
+    if (rpGreetingSheetReset) rpGreetingSheetReset.style.display = locked ? '' : 'none';
+    rpGreetingOverlay?.classList.remove('hidden');
+    rpGreetingSheet.classList.remove('hidden');
+  };
+
+  const closeRpGreetingSheet = () => {
+    rpGreetingOverlay?.classList.add('hidden');
+    rpGreetingSheet?.classList.add('hidden');
   };
 
   const getRpGreetingState = (sessionId = getRpSessionId(activePersonaId)) => {
@@ -12540,14 +12571,20 @@ Phase G（Frame 36）：循环衔接
     }
   });
 
-  rpGreetingSelect?.addEventListener('change', async () => {
-    const nextId = String(rpGreetingSelect.value || '').trim();
-    if (!nextId) return;
-    await setRpGreeting(nextId, getRpSessionId(activePersonaId));
+  rpGreetingTrigger?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (rpGreetingSheet?.classList.contains('hidden')) {
+      openRpGreetingSheet();
+    } else {
+      closeRpGreetingSheet();
+    }
   });
 
-  rpResetBtn?.addEventListener('click', async () => {
+  rpGreetingOverlay?.addEventListener('click', () => closeRpGreetingSheet());
+
+  rpGreetingSheetReset?.addEventListener('click', async () => {
     if (uiMode !== 'rp') return;
+    closeRpGreetingSheet();
     const ok = await appConfirm({
       title: '重置创意写作剧情',
       message: '将清空当前创意写作历史并重新插入开场白，是否继续？',
@@ -12557,11 +12594,6 @@ Phase G（Frame 36）：循环衔接
     });
     if (!ok) return;
     await resetRpHistory(getRpSessionId(activePersonaId));
-  });
-
-  rpVarsBtn?.addEventListener('click', () => {
-    blurComposerInput();
-    variablePanel.show();
   });
 
   quickMenu?.querySelectorAll('button').forEach(btn => {
@@ -12728,6 +12760,170 @@ Phase G（Frame 36）：循环衔接
     msg.meta.deliveryText = text;
   });
 
+  ui.onSwipeChange(({ msgId, message, index }) => {
+    const sid = chatStore.getCurrent();
+    if (!sid || !msgId) return;
+    chatStore.updateMessage(msgId, {
+      content: message.content,
+      raw: message.raw,
+      meta: { ...message.meta, activeSwipe: index },
+    }, sid);
+  });
+
+  ui.onSwipeRegen(async ({ msgId, message }) => {
+    if (uiMode !== 'rp') return;
+    if (activeGeneration && !activeGeneration.cancelled) {
+      window.toastr?.warning?.('正在生成中，请稍候...');
+      return;
+    }
+    const sid = chatStore.getCurrent();
+    if (!sid) return;
+    const msgs = chatStore.getMessages(sid);
+    const msgIdx = msgs.findIndex(m => String(m?.id || '') === String(msgId || ''));
+    if (msgIdx === -1) return;
+    let userIdx = -1;
+    for (let i = msgIdx - 1; i >= 0; i--) {
+      if (msgs[i]?.role === 'user') { userIdx = i; break; }
+    }
+    if (userIdx === -1) {
+      window.toastr?.warning?.('未找到对应的用户消息');
+      return;
+    }
+    const userMsg = msgs[userIdx];
+    const storedMsg = chatStore.findMessage(msgId, sid) || message;
+    const storedMeta = storedMsg?.meta && typeof storedMsg.meta === 'object' ? storedMsg.meta : {};
+    const renderMeta = message?.meta && typeof message.meta === 'object' ? message.meta : {};
+    const sourceMeta = {
+      ...storedMeta,
+      ...(Array.isArray(renderMeta.swipes) && !Array.isArray(storedMeta.swipes)
+        ? { swipes: renderMeta.swipes, activeSwipe: renderMeta.activeSwipe }
+        : {}),
+    };
+    const swipesBefore = Array.isArray(sourceMeta.swipes) && sourceMeta.swipes.length
+      ? sourceMeta.swipes.map(s => ({ ...s }))
+      : [{ content: storedMsg?.content ?? message?.content ?? '', raw: storedMsg?.raw ?? message?.raw }];
+    const beforeIds = new Set((msgs || []).map(m => String(m?.id || '')).filter(Boolean));
+    const previousActive = Math.min(
+      Math.max(0, Number(sourceMeta.activeSwipe) || 0),
+      Math.max(0, swipesBefore.length - 1),
+    );
+    const draftIndex = swipesBefore.length;
+    const draftTotal = swipesBefore.length + 1;
+    const streamId = `swipe-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+    let partialCommitted = false;
+    let swipeStreamCtrl = null;
+    const commitBranch = (source, { partial = false, cancelled = false } = {}) => {
+      const content = String(source?.content ?? '');
+      const raw = typeof source?.raw === 'string' ? source.raw : content;
+      if (!content.trim() && !raw.trim()) return false;
+      const newBranch = { content, raw };
+      if (partial) newBranch.partial = true;
+      if (cancelled) newBranch.cancelled = true;
+      const merged = [...swipesBefore, newBranch];
+      const nextMeta = { ...sourceMeta, swipes: merged, activeSwipe: merged.length - 1 };
+      const updated = chatStore.updateMessage(msgId, {
+        content: newBranch.content,
+        raw: newBranch.raw,
+        meta: nextMeta,
+      }, sid) || {
+        ...storedMsg,
+        content: newBranch.content,
+        raw: newBranch.raw,
+        meta: nextMeta,
+      };
+      const wrapper = ui.scrollEl?.querySelector(`[data-msg-id="${CSS.escape(msgId)}"]`);
+      if (wrapper && wrapper.isConnected) {
+        wrapper.__chatappMessage = updated;
+        ui._applySwipe(wrapper, updated, merged.length - 1);
+      }
+      return true;
+    };
+    const restorePreviousBranch = () => {
+      const restoredMeta = { ...sourceMeta, swipes: swipesBefore, activeSwipe: previousActive };
+      const branch = swipesBefore[previousActive] || swipesBefore[0] || {};
+      const restored = {
+        ...(chatStore.findMessage(msgId, sid) || storedMsg || message),
+        content: branch.content ?? '',
+        raw: branch.raw,
+        meta: restoredMeta,
+      };
+      const wrapper = ui.scrollEl?.querySelector(`[data-msg-id="${CSS.escape(msgId)}"]`);
+      if (wrapper && wrapper.isConnected) {
+        wrapper.__chatappMessage = restored;
+        ui._applySwipe(wrapper, restored, previousActive);
+      }
+    };
+    swipeStreamCtrl = ui.startSwipeGenerationStream?.(msgId, {
+      id: streamId,
+      index: draftIndex,
+      total: draftTotal,
+      label: '生成新回复中...',
+    }) || null;
+    try {
+      const resendText = String(userMsg?.content ?? '').trim() || '[Continue]';
+      const sendOk = await handleSend(null, {
+        overrideText: resendText,
+        suppressUserMessage: true,
+        ignorePending: true,
+        skipInputRegex: true,
+        existingUserMessageId: userMsg.id,
+        includeAttachments: false,
+        suppressAssistantDom: true,
+        excludeMessageIds: [msgId],
+        createAssistantStream: meta => {
+          if (swipeStreamCtrl) return swipeStreamCtrl;
+          swipeStreamCtrl = ui.startSwipeGenerationStream?.(msgId, {
+            ...meta,
+            id: streamId,
+            index: draftIndex,
+            total: draftTotal,
+            label: '生成新回复中...',
+          }) || null;
+          return swipeStreamCtrl;
+        },
+        swipeTarget: {
+          onPartial: partial => {
+            partialCommitted = commitBranch(partial, { partial: true, cancelled: true });
+            return partialCommitted;
+          },
+        },
+      });
+
+      const msgsAfter = chatStore.getMessages(sid);
+      const generatedAssistants = (msgsAfter || []).filter(m => {
+        const id = String(m?.id || '');
+        return id && !beforeIds.has(id) && m?.role === 'assistant' && !m?.meta?.isGreeting;
+      });
+      const newAiMsg = generatedAssistants[generatedAssistants.length - 1] || null;
+      if (partialCommitted) {
+        generatedAssistants.forEach(m => {
+          ui.removeMessage(m.id);
+          chatStore.deleteMessage(m.id, sid);
+        });
+        return;
+      }
+      if (!sendOk || !newAiMsg) {
+        generatedAssistants.forEach(m => {
+          ui.removeMessage(m.id);
+          chatStore.deleteMessage(m.id, sid);
+        });
+        if (sendOk && !newAiMsg) window.toastr?.warning?.('未取得新的回复分支');
+        restorePreviousBranch();
+        return;
+      }
+
+      commitBranch(newAiMsg);
+      generatedAssistants.forEach(m => {
+        ui.removeMessage(m.id);
+        chatStore.deleteMessage(m.id, sid);
+      });
+    } finally {
+      ui.setSwipeRegenerating?.(msgId, false);
+      ui.setStreamingState?.(false);
+      refreshChatAndContacts();
+    }
+  });
+
   // Button: open config
   ui.onConfig(() => configPanel.show());
   // Button: open world
@@ -12783,7 +12979,16 @@ Phase G（Frame 36）：循环衔接
         const sessionId = String(generation.sessionId || '').trim();
         const content = String(partial?.content || '').trim();
         const msgId = String(partial?.id || '').trim();
-        if (sessionId && content) {
+        let handledPartial = false;
+        const swipeTarget = generation.swipeTarget && typeof generation.swipeTarget === 'object' ? generation.swipeTarget : null;
+        if (sessionId && content && typeof swipeTarget?.onPartial === 'function') {
+          try {
+            handledPartial = swipeTarget.onPartial(partial) === true;
+          } catch (err) {
+            logger.warn('swipe partial commit failed', err);
+          }
+        }
+        if (sessionId && content && !handledPartial) {
           const exists = msgId ? Boolean(chatStore.findMessage(msgId, sessionId)) : false;
           if (!exists) {
             chatStore.appendMessage(
@@ -13304,6 +13509,15 @@ Phase G（Frame 36）：循环衔接
     const skipInputRegex = Boolean(options.skipInputRegex);
     const skipTemplate = Boolean(options.skipTemplate);
     const skipScripts = Boolean(options.skipScripts);
+    const suppressAssistantDom = Boolean(options.suppressAssistantDom);
+    const assistantStreamFactory =
+      typeof options.createAssistantStream === 'function' ? options.createAssistantStream : null;
+    const swipeTarget = options.swipeTarget && typeof options.swipeTarget === 'object' ? options.swipeTarget : null;
+    const excludeMessageIds = new Set(
+      Array.isArray(options.excludeMessageIds)
+        ? options.excludeMessageIds.map(id => String(id || '')).filter(Boolean)
+        : [],
+    );
     const creativeMode = sendMode === 'creative' || uiMode === 'rp';
     const includeAttachments = options.includeAttachments !== false;
     const attachmentQueue = includeAttachments ? composerAttachments.slice() : [];
@@ -15977,6 +16191,7 @@ Phase G（Frame 36）：循环衔接
       };
       let history = all
         .filter(m => m && m.status !== 'pending' && m.status !== 'sending')
+        .filter(m => !excludeMessageIds.has(String(m?.id || '')))
         .filter(m => {
           if (!m || typeof m.content !== 'string') return false;
           if (m.role === 'user' || m.role === 'assistant') return true;
@@ -16353,6 +16568,7 @@ Phase G（Frame 36）：循环衔接
         sessionId,
         userMsgId: primaryId,
         streamCtrl: null,
+        swipeTarget,
         cancelled: false,
       };
       generationId = activeGeneration.id;
@@ -16367,6 +16583,7 @@ Phase G（Frame 36）：循环衔接
         sessionId,
         userMsgId: pendingMessagesToConfirm[0]?.id,
         streamCtrl: null,
+        swipeTarget,
         cancelled: false,
       };
       generationId = activeGeneration.id;
@@ -16383,6 +16600,17 @@ Phase G（Frame 36）：循环衔接
     let streamCtrl = null;
     let sendSucceeded = false;
     let suppressErrorUI = false;
+    const createAssistantStreamCtrl = (meta = {}) => {
+      if (assistantStreamFactory) {
+        try {
+          const customCtrl = assistantStreamFactory(meta);
+          if (customCtrl) return customCtrl;
+        } catch (err) {
+          logger.warn('assistant stream factory failed', err);
+        }
+      }
+      return ui.startAssistantStream(meta);
+    };
     try {
       if (config.stream) {
         const assistantAvatar = getAssistantAvatarForSession(sessionId);
@@ -16412,7 +16640,7 @@ Phase G（Frame 36）：循环衔接
               if (isSessionActive(sessionId)) {
                 ui.hideTyping();
                 fastForwardDelivery(sessionId);
-                streamCtrl = ui.startAssistantStream({
+                streamCtrl = createAssistantStreamCtrl({
                   avatar: assistantAvatar,
                   name: '助手',
                   time: formatNowTime(),
@@ -16428,7 +16656,7 @@ Phase G（Frame 36）：循环衔接
           if (isGenerationInterrupted(generationId)) return;
           if (isSessionActive(sessionId)) ui.hideTyping();
           if (!streamCtrl && isSessionActive(sessionId)) {
-            streamCtrl = ui.startAssistantStream({
+            streamCtrl = createAssistantStreamCtrl({
               avatar: assistantAvatar,
               name: '助手',
               time: formatNowTime(),
@@ -16928,7 +17156,7 @@ Phase G（Frame 36）：循环衔接
         } else {
           // 兼容旧逻辑（流式逐字）
           streamCtrl = isSessionActive(sessionId)
-            ? ui.startAssistantStream({
+            ? createAssistantStreamCtrl({
                 avatar: assistantAvatar,
                 name: '助手',
                 time: formatNowTime(),
@@ -17076,7 +17304,7 @@ Phase G（Frame 36）：循环衔接
             content: display,
             meta,
           };
-          if (isSessionActive(sessionId)) ui.addMessage(parsed);
+          if (isSessionActive(sessionId) && !suppressAssistantDom) ui.addMessage(parsed);
           {
             const saved = chatStore.appendMessage(parsed, sessionId);
             autoMarkReadIfActive(sessionId, saved?.id || parsed?.id || '');
@@ -17614,6 +17842,22 @@ Phase G（Frame 36）：循环衔接
   });
   ui.onReplyCancel(() => {
     clearReplyTargetForSession(chatStore.getCurrent());
+  });
+
+  const rpContinueBtn = document.getElementById('rp-continue-btn');
+  rpContinueBtn?.addEventListener('click', () => {
+    if (uiMode !== 'rp') return;
+    if (activeGeneration && !activeGeneration.cancelled) {
+      cancelActiveGeneration('user');
+      return;
+    }
+    handleSend(null, {
+      overrideText: '[Continue]',
+      suppressUserMessage: true,
+      ignorePending: true,
+      skipInputRegex: true,
+      includeAttachments: false,
+    });
   });
 
   // Long-press send button to switch mode

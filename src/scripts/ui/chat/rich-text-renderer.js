@@ -3360,14 +3360,14 @@ const RICH_FRAGMENT_CLASS_PREFIX = 'chat-rich-';
 const RICH_FRAGMENT_ID_PREFIX = 'chat-rich-id-';
 const RICH_FRAGMENT_TAG_NAMES = [
     'a', 'article', 'blockquote', 'br', 'code', 'del', 'details', 'div', 'em', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
-    'hr', 'i', 'ins', 'kbd', 'li', 'main', 'mark', 'ol', 'p', 'pre', 's', 'section', 'small', 'span', 'strong',
+    'hr', 'i', 'img', 'ins', 'kbd', 'li', 'main', 'mark', 'ol', 'p', 'pre', 's', 'section', 'small', 'span', 'strong',
     'sub', 'summary', 'sup', 'table', 'tbody', 'td', 'th', 'thead', 'tr', 'u', 'ul', 'style',
 ];
 const RICH_FRAGMENT_ALLOWED_TAGS = new Set(RICH_FRAGMENT_TAG_NAMES);
 const RICH_FRAGMENT_DROP_TAGS = new Set(['script', 'iframe', 'object', 'embed', 'link', 'meta', 'base', 'form', 'input', 'button', 'textarea', 'select', 'option']);
 const RICH_FRAGMENT_RAW_TEXT_TAGS = new Set(['pre', 'code']);
 const RICH_FRAGMENT_INLINE_MODE_TAGS = new Set(['a', 'code', 'del', 'em', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'i', 'ins', 'kbd', 'mark', 'p', 's', 'small', 'span', 'strong', 'sub', 'summary', 'sup', 'th', 'td', 'u']);
-const RICH_FRAGMENT_VOID_TAGS = new Set(['br', 'hr']);
+const RICH_FRAGMENT_VOID_TAGS = new Set(['br', 'hr', 'img']);
 const RICH_FRAGMENT_ALLOWED_STYLE_PROPS = new Set([
     'align-items',
     'align-self',
@@ -3877,6 +3877,19 @@ const sanitizeRichFragmentAttributes = (sourceEl, targetEl) => {
         }
         if (targetEl.tagName === 'DETAILS' && name === 'open') {
             targetEl.setAttribute('open', '');
+            return;
+        }
+        if (targetEl.tagName === 'IMG' && name === 'src') {
+            const trimmed = value.trim();
+            if (/^(https?:|data:image\/)/i.test(trimmed)) {
+                targetEl.setAttribute('src', trimmed);
+            } else if (trimmed && !/^(javascript:|vbscript:)/i.test(trimmed) && !trimmed.includes('<')) {
+                targetEl.setAttribute('src', trimmed);
+            }
+            return;
+        }
+        if (targetEl.tagName === 'IMG' && name === 'alt') {
+            targetEl.setAttribute('alt', value);
             return;
         }
         if ((targetEl.tagName === 'TD' || targetEl.tagName === 'TH') && (name === 'colspan' || name === 'rowspan')) {
