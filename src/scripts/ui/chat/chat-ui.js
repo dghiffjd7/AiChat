@@ -278,9 +278,11 @@ export class ChatUI {
     const branch = swipes[newIndex];
     msg.content = branch.content;
     if (branch.raw !== undefined) msg.raw = branch.raw;
+    const generating = Boolean(branch?.draft) || msg.meta?.swipeRegenerating === true;
+    const placeholder = branch?.draft ? String(branch?.label || '生成新回复中...') : '';
 
-    this._renderSwipeContent(wrapper, msg, String(branch.content ?? ''), { streaming: false });
-    this._syncSwipeIndicator(wrapper, newIndex, swipes.length);
+    this._renderSwipeContent(wrapper, msg, String(branch.content ?? ''), { streaming: false, placeholder });
+    this._syncSwipeIndicator(wrapper, newIndex, swipes.length, { generating });
 
     if (this._swipeChangeHandler) {
       this._swipeChangeHandler({ msgId: msg.id, message: msg, index: newIndex });
@@ -297,14 +299,39 @@ export class ChatUI {
       ? Math.min(Math.max(0, rawIndex), swipes.length - 1)
       : 0;
     const branch = swipes[active] || {};
+    const activeSwipeDraft = branch?.draft
+      ? { active: true, label: String(branch?.label || '生成新回复中...') }
+      : null;
+    const nextMeta = { ...(meta || {}) };
+    if (meta.activeSwipe !== active) nextMeta.activeSwipe = active;
+    if (activeSwipeDraft) nextMeta.activeSwipeDraft = activeSwipeDraft;
+    else delete nextMeta.activeSwipeDraft;
     const next = {
       ...message,
       content: branch.content ?? message.content ?? '',
-      meta: meta.activeSwipe === active ? meta : { ...meta, activeSwipe: active },
+      meta: nextMeta,
     };
     if (branch.raw !== undefined) next.raw = branch.raw;
     else if (branch.content !== undefined) next.raw = branch.content;
     return next;
+  }
+
+  renderSwipeDraftPlaceholder(target, label = '生成新回复中...') {
+    if (!target) return false;
+    target.classList.add('rp-swipe-draft-placeholder');
+    const dots = document.createElement('span');
+    dots.className = 'rp-static-dots';
+    dots.setAttribute('aria-hidden', 'true');
+    for (let i = 0; i < 3; i += 1) {
+      const dot = document.createElement('span');
+      dot.className = 'rp-static-dot';
+      dots.appendChild(dot);
+    }
+    const text = document.createElement('span');
+    text.textContent = String(label || '生成新回复中...');
+    target.appendChild(dots);
+    target.appendChild(text);
+    return true;
   }
 
   _renderSwipeContent(wrapper, msg, content, { streaming = false, placeholder = '' } = {}) {
@@ -323,20 +350,7 @@ export class ChatUI {
     target.style.removeProperty('white-space');
     const text = String(content ?? '');
     if (!text.trim() && placeholder) {
-      target.classList.add('rp-swipe-draft-placeholder');
-      const dots = document.createElement('span');
-      dots.className = 'typing';
-      dots.setAttribute('aria-hidden', 'true');
-      for (let i = 0; i < 3; i += 1) {
-        const dot = document.createElement('span');
-        dot.className = 'typing-dot';
-        dots.appendChild(dot);
-      }
-      const label = document.createElement('span');
-      label.textContent = placeholder;
-      target.appendChild(dots);
-      target.appendChild(label);
-      return true;
+      return this.renderSwipeDraftPlaceholder(target, placeholder);
     }
     if (!streaming && renderMsg.meta?.renderRich) {
       renderRichText(target, text, {
@@ -1778,7 +1792,8 @@ export class ChatUI {
 
   buildMessageElement(message) {
     message = this.resolveActiveSwipeMessage(message);
-    if (!message?.content && !message?.type) {
+    const activeSwipeDraft = Boolean(message?.meta?.activeSwipeDraft?.active);
+    if (!message?.content && !message?.type && !activeSwipeDraft) {
       return null;
     }
     if (!message.id) {
@@ -1870,6 +1885,10 @@ export class ChatUI {
     }
     wrapper.__chatappMessage = message;
     if (message?.meta?.floor != null) wrapper.dataset.rpFloor = String(message.meta.floor);
+    if (message?.meta?.swipeRegenerating === true) {
+      wrapper.classList.add('is-rp-regenerating');
+      wrapper.setAttribute('aria-busy', 'true');
+    }
     this.applyCreativeBubbleState(wrapper, message);
 
     // 添加 pending/sending 状态标记
@@ -2100,6 +2119,11 @@ export class ChatUI {
         }
         // === 对话模式（纯文本）===
         {
+          if (message?.meta?.activeSwipeDraft?.active === true) {
+            const target = this.prepareTextContainer(bubble, message);
+            this.renderSwipeDraftPlaceholder(target, message?.meta?.activeSwipeDraft?.label || '生成新回复中...');
+            break;
+          }
           const baseText = typeof message.raw === 'string' ? message.raw : message.content;
           const normalized =
             message.role === 'assistant' ? this.normalizeAssistantLineBreaks(baseText) : String(baseText ?? '');
@@ -2175,6 +2199,7 @@ export class ChatUI {
         const swipes = Array.isArray(message.meta?.swipes) ? message.meta.swipes : null;
         const total = swipes ? swipes.length : 1;
         const active = swipes ? Math.min(message.meta.activeSwipe || 0, total - 1) : 0;
+        const generating = message?.meta?.swipeRegenerating === true || message?.meta?.activeSwipeDraft?.active === true;
         const swipeWrap = document.createElement('div');
         swipeWrap.className = 'rp-swipe-indicator';
         swipeWrap.dataset.msgId = message.id;
@@ -2182,7 +2207,7 @@ export class ChatUI {
         prevBtn.type = 'button';
         prevBtn.className = 'rp-swipe-prev';
         prevBtn.textContent = '◀';
-        prevBtn.disabled = active <= 0;
+        prevBtn.disabled = generating || active <= 0;
         prevBtn.setAttribute('aria-label', '上一条回复');
         prevBtn.title = '上一条回复';
         const counter = document.createElement('span');
@@ -2192,7 +2217,8 @@ export class ChatUI {
         nextBtn.type = 'button';
         nextBtn.className = 'rp-swipe-next';
         nextBtn.textContent = '▶';
-        const nextLabel = active >= total - 1 ? '生成新回复' : '下一条回复';
+        nextBtn.disabled = generating;
+        const nextLabel = generating ? '生成中' : (active >= total - 1 ? '生成新回复' : '下一条回复');
         nextBtn.setAttribute('aria-label', nextLabel);
         nextBtn.title = nextLabel;
         swipeWrap.appendChild(prevBtn);
@@ -2697,6 +2723,108 @@ export class ChatUI {
       clearTimeout(this._messageQueueTimer);
       this._messageQueueTimer = null;
     }
+  }
+
+  startAssistantContinuationStream(msgId, meta = {}) {
+    const id = String(msgId || '').trim();
+    if (!id || !this.scrollEl) return null;
+    const wrapperEl = this.scrollEl.querySelector(`[data-msg-id="${CSS.escape(id)}"]`);
+    const baseMessage = wrapperEl?.__chatappMessage;
+    const messageEl = wrapperEl?.querySelector?.('.QQ_chat_msgdiv');
+    if (!wrapperEl || !baseMessage || !messageEl) return null;
+    const placeholder = {
+      ...baseMessage,
+      id,
+      content: String(meta.initialContent ?? baseMessage.content ?? ''),
+    };
+    const originalMessage = {
+      ...baseMessage,
+      id,
+    };
+    const raf = cb => {
+      try {
+        if (typeof window !== 'undefined' && window.requestAnimationFrame) return window.requestAnimationFrame(cb);
+      } catch {}
+      return setTimeout(cb, 16);
+    };
+    const caf = handle => {
+      try {
+        if (typeof window !== 'undefined' && window.cancelAnimationFrame) return window.cancelAnimationFrame(handle);
+      } catch {}
+      clearTimeout(handle);
+    };
+    let updateHandle = null;
+    let pendingText = String(placeholder.content ?? '');
+    const bufferIndex = this.messageBuffer.push({ ...placeholder }) - 1;
+    this.setStreamingState(true);
+    wrapperEl.setAttribute('aria-busy', 'true');
+
+    const renderText = (text) => {
+      const normalized = this.normalizeAssistantLineBreaks(text);
+      const target = this.prepareTextContainer(messageEl, placeholder);
+      target.textContent = normalized;
+      target.style.whiteSpace = 'pre-wrap';
+      if (this.isNearBottom()) this.scrollToBottom();
+    };
+
+    renderText(pendingText);
+
+    return {
+      id,
+      update: (text) => {
+        pendingText = String(text ?? '');
+        this.messageBuffer[bufferIndex] = {
+          ...(this.messageBuffer[bufferIndex] || placeholder),
+          content: pendingText,
+        };
+        if (updateHandle != null) return;
+        updateHandle = raf(() => {
+          updateHandle = null;
+          if (!messageEl.isConnected) return;
+          renderText(pendingText);
+        });
+      },
+      finish: (finalMessage) => {
+        this.setStreamingState(false);
+        wrapperEl.setAttribute('aria-busy', 'false');
+        if (updateHandle != null) {
+          caf(updateHandle);
+          updateHandle = null;
+        }
+        this.finishMessageDom(messageEl, wrapperEl, finalMessage, bufferIndex, id, meta, originalMessage);
+      },
+      cancel: (options = {}) => {
+        const keepPartial = Boolean(options && options.keepPartial);
+        if (updateHandle != null) {
+          caf(updateHandle);
+          updateHandle = null;
+        }
+        this.setStreamingState(false);
+        wrapperEl.setAttribute('aria-busy', 'false');
+        const rawText = String(this.messageBuffer?.[bufferIndex]?.content ?? pendingText ?? '');
+        const hasText = rawText.trim().length > 0;
+        if (keepPartial && hasText) {
+          const partial = {
+            ...(this.messageBuffer?.[bufferIndex] || placeholder),
+            id,
+            role: 'assistant',
+            type: 'text',
+            content: this.normalizeAssistantLineBreaks(rawText),
+            raw: rawText,
+            rawOriginal: rawText,
+            meta: {
+              ...(originalMessage?.meta || {}),
+              partial: true,
+              cancelled: true,
+            },
+          };
+          this.finishMessageDom(messageEl, wrapperEl, partial, bufferIndex, id, meta, originalMessage);
+          return partial;
+        }
+        this.finishMessageDom(messageEl, wrapperEl, originalMessage, bufferIndex, id, meta, originalMessage);
+        return null;
+      },
+    };
   }
 
   /**

@@ -1,4 +1,5 @@
 import { LLMClient } from '../api/client.js';
+import { isDeepSeekApiRequest } from '../api/providers/deepseek-compat.js';
 import { extractTableEditBlocks, stripTableEditBlocks } from '../memory/memory-edit-parser.js';
 import { isSummaryTableId, normalizeMemoryUpdateMode } from '../memory/memory-prompt-utils.js';
 import { getMemoryContextType, resolveMemorySessionMode, tableMatchesMemoryContext } from '../memory/memory-context-utils.js';
@@ -1969,6 +1970,50 @@ ${listPart || '-（无）'}
     sessionId: String(chatStore.getCurrent?.() || '').trim(),
     uiMode: uiMode === 'rp' ? 'rp' : 'chat',
   });
+  const getOpenAIPreset = () => {
+    try {
+      return window.appBridge?.presets?.getResolvedActive?.('openai', getPresetContext())?.preset || {};
+    } catch {
+      return {};
+    }
+  };
+  const canUseDeepSeekPrefixCompletion = () => {
+    const cfg = window.appBridge?.config?.get?.() || {};
+    if (String(cfg?.provider || '').trim().toLowerCase() === 'custom') return false;
+    return isDeepSeekApiRequest({
+      provider: cfg?.provider,
+      model: cfg?.model,
+      baseUrl: cfg?.baseUrl,
+    });
+  };
+  const canUseDeepSeekContinuePrefill = () => {
+    const preset = getOpenAIPreset();
+    return canUseDeepSeekPrefixCompletion() && preset?.continue_prefill === true;
+  };
+  const getActiveSwipeBranch = (message) => {
+    const swipes = Array.isArray(message?.meta?.swipes) ? message.meta.swipes : null;
+    if (!swipes?.length) return null;
+    const rawIndex = Math.trunc(Number(message?.meta?.activeSwipe));
+    const index = Number.isFinite(rawIndex) ? Math.min(Math.max(0, rawIndex), swipes.length - 1) : swipes.length - 1;
+    return swipes[index] || null;
+  };
+  const getAssistantContinuationSource = (message) => {
+    const branch = getActiveSwipeBranch(message);
+    const raw = branch?.raw ?? message?.raw ?? message?.rawSource ?? message?.content ?? '';
+    return String(raw ?? '');
+  };
+  const getLastContinuableAssistantMessage = (sessionId) => {
+    const sid = String(sessionId || '').trim();
+    if (!sid) return null;
+    const messages = chatStore.getMessages(sid) || [];
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      const msg = messages[i];
+      if (!msg || msg.role !== 'assistant') continue;
+      if (msg.status === 'pending' || msg.status === 'sending') continue;
+      return msg;
+    }
+    return null;
+  };
   const getReasoningPreset = () => {
     try {
       return window.appBridge?.presets?.getResolvedActive?.('reasoning', getPresetContext())?.preset || {};
@@ -12763,11 +12808,20 @@ Phase G（Frame 36）：循环衔接
   ui.onSwipeChange(({ msgId, message, index }) => {
     const sid = chatStore.getCurrent();
     if (!sid || !msgId) return;
-    chatStore.updateMessage(msgId, {
-      content: message.content,
-      raw: message.raw,
-      meta: { ...message.meta, activeSwipe: index },
-    }, sid);
+    const activeBranch = Array.isArray(message?.meta?.swipes) ? message.meta.swipes[index] : null;
+    const isDraftBranch = activeBranch?.draft === true;
+    const nextMeta = { ...message.meta, activeSwipe: index };
+    if (nextMeta && typeof nextMeta === 'object' && 'activeSwipeDraft' in nextMeta) {
+      delete nextMeta.activeSwipeDraft;
+    }
+    const payload = {
+      meta: nextMeta,
+    };
+    if (!isDraftBranch) {
+      payload.content = message.content;
+      payload.raw = message.raw;
+    }
+    chatStore.updateMessage(msgId, payload, sid);
   });
 
   ui.onSwipeRegen(async ({ msgId, message }) => {
@@ -12810,8 +12864,33 @@ Phase G（Frame 36）：循环衔接
     const draftIndex = swipesBefore.length;
     const draftTotal = swipesBefore.length + 1;
     const streamId = `swipe-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+    const draftLabel = '生成新回复中...';
     let partialCommitted = false;
     let swipeStreamCtrl = null;
+    const showDraftBranch = () => {
+      const branch = { content: '', raw: '', draft: true, label: draftLabel };
+      const nextMeta = {
+        ...sourceMeta,
+        swipes: [...swipesBefore, branch],
+        activeSwipe: draftIndex,
+        swipeRegenerating: true,
+      };
+      const current = chatStore.findMessage(msgId, sid) || storedMsg || message;
+      const updated = chatStore.updateMessage(msgId, {
+        content: current?.content ?? storedMsg?.content ?? message?.content ?? '',
+        raw: current?.raw ?? storedMsg?.raw ?? message?.raw ?? '',
+        meta: nextMeta,
+      }, sid) || {
+        ...current,
+        meta: nextMeta,
+      };
+      const wrapper = ui.scrollEl?.querySelector(`[data-msg-id="${CSS.escape(msgId)}"]`);
+      if (wrapper && wrapper.isConnected) {
+        wrapper.__chatappMessage = updated;
+        ui._applySwipe(wrapper, updated, draftIndex);
+      }
+      return updated;
+    };
     const commitBranch = (source, { partial = false, cancelled = false } = {}) => {
       const content = String(source?.content ?? '');
       const raw = typeof source?.raw === 'string' ? source.raw : content;
@@ -12841,8 +12920,14 @@ Phase G（Frame 36）：循环衔接
     const restorePreviousBranch = () => {
       const restoredMeta = { ...sourceMeta, swipes: swipesBefore, activeSwipe: previousActive };
       const branch = swipesBefore[previousActive] || swipesBefore[0] || {};
-      const restored = {
-        ...(chatStore.findMessage(msgId, sid) || storedMsg || message),
+      delete restoredMeta.swipeRegenerating;
+      const restoredBase = chatStore.findMessage(msgId, sid) || storedMsg || message;
+      const restored = chatStore.updateMessage(msgId, {
+        content: branch.content ?? '',
+        raw: branch.raw,
+        meta: restoredMeta,
+      }, sid) || {
+        ...restoredBase,
         content: branch.content ?? '',
         raw: branch.raw,
         meta: restoredMeta,
@@ -12853,11 +12938,12 @@ Phase G（Frame 36）：循环衔接
         ui._applySwipe(wrapper, restored, previousActive);
       }
     };
+    showDraftBranch();
     swipeStreamCtrl = ui.startSwipeGenerationStream?.(msgId, {
       id: streamId,
       index: draftIndex,
       total: draftTotal,
-      label: '生成新回复中...',
+      label: draftLabel,
     }) || null;
     try {
       const resendText = String(userMsg?.content ?? '').trim() || '[Continue]';
@@ -12877,7 +12963,7 @@ Phase G（Frame 36）：循环衔接
             id: streamId,
             index: draftIndex,
             total: draftTotal,
-            label: '生成新回复中...',
+            label: draftLabel,
           }) || null;
           return swipeStreamCtrl;
         },
@@ -12980,6 +13066,15 @@ Phase G（Frame 36）：循环衔接
         const content = String(partial?.content || '').trim();
         const msgId = String(partial?.id || '').trim();
         let handledPartial = false;
+        const partialCommitHandler =
+          typeof generation.partialCommitHandler === 'function' ? generation.partialCommitHandler : null;
+        if (sessionId && content && partialCommitHandler) {
+          try {
+            handledPartial = partialCommitHandler(partial) === true;
+          } catch (err) {
+            logger.warn('assistant partial commit failed', err);
+          }
+        }
         const swipeTarget = generation.swipeTarget && typeof generation.swipeTarget === 'object' ? generation.swipeTarget : null;
         if (sessionId && content && typeof swipeTarget?.onPartial === 'function') {
           try {
@@ -13512,12 +13607,16 @@ Phase G（Frame 36）：循环衔接
     const suppressAssistantDom = Boolean(options.suppressAssistantDom);
     const assistantStreamFactory =
       typeof options.createAssistantStream === 'function' ? options.createAssistantStream : null;
+    const continueTarget = options.continueTarget && typeof options.continueTarget === 'object' ? options.continueTarget : null;
+    const partialCommitHandler =
+      typeof options.partialCommitHandler === 'function' ? options.partialCommitHandler : null;
     const swipeTarget = options.swipeTarget && typeof options.swipeTarget === 'object' ? options.swipeTarget : null;
     const excludeMessageIds = new Set(
       Array.isArray(options.excludeMessageIds)
         ? options.excludeMessageIds.map(id => String(id || '')).filter(Boolean)
         : [],
     );
+    if (continueTarget?.messageId) excludeMessageIds.add(String(continueTarget.messageId));
     const creativeMode = sendMode === 'creative' || uiMode === 'rp';
     const includeAttachments = options.includeAttachments !== false;
     const attachmentQueue = includeAttachments ? composerAttachments.slice() : [];
@@ -13634,7 +13733,7 @@ Phase G（Frame 36）：循环衔接
     } else {
       // 没有 pending 消息，使用输入框内容（兼容旧行为）
       text = overrideText || ui.getInputText();
-      if (!text && !hasAttachments) return false;
+      if (!text && !hasAttachments && !continueTarget) return false;
     }
     const contact = contactsStore.getContact(sessionId);
     const isRpMode = uiMode === 'rp';
@@ -16407,6 +16506,8 @@ Phase G（Frame 36）：循环衔接
           // Keep summary prompt on; creative mode restricts chat guide to summary-only.
           disableSummary: Boolean(disableSummaryForThis),
           skipInputRegex: Boolean(skipInputRegex),
+          appendUserToHistory: continueTarget ? false : undefined,
+          suppressPendingUserTurn: Boolean(continueTarget),
           chatGuideMode: creativeMode ? 'summary-only' : 'full',
           disableChatGuide: false,
           disableScenarioHint: Boolean(creativeMode),
@@ -16429,6 +16530,15 @@ Phase G（Frame 36）：循环衔接
             ...(stageManager?.getPromptBlocks?.(sessionId) || []),
             ...peekPromptInjections(sessionId),
           ],
+          ...(continueTarget
+            ? {
+                assistantContinuation: {
+                  enabled: true,
+                  messageId: continueTarget.messageId,
+                  prefix: String(continueTarget.prefix || ''),
+                },
+              }
+            : {}),
           ...metaOverrides,
         },
         group: isGroupChat
@@ -16513,6 +16623,86 @@ Phase G（Frame 36）：循环衔接
       });
     }
     let appendedUserOutput = attachmentMessages.length > 0;
+    let streamCtrl = null;
+    let sendSucceeded = false;
+    let suppressErrorUI = false;
+    const createAssistantStreamCtrl = (meta = {}) => {
+      if (assistantStreamFactory) {
+        try {
+          const customCtrl = assistantStreamFactory(meta);
+          if (customCtrl) return customCtrl;
+        } catch (err) {
+          logger.warn('assistant stream factory failed', err);
+        }
+      }
+      return ui.startAssistantStream(meta);
+    };
+    const commitContinuationMessage = (message, { partial = false } = {}) => {
+      const targetId = String(continueTarget?.messageId || '').trim();
+      if (!targetId || !message) return null;
+      const existing = chatStore.findMessage(targetId, sessionId) || continueTarget?.message || null;
+      if (!existing) return null;
+      const raw = typeof message.raw === 'string' ? message.raw : String(message.content || '');
+      const nextMeta = {
+        ...((existing?.meta && typeof existing.meta === 'object') ? existing.meta : {}),
+        ...((message?.meta && typeof message.meta === 'object') ? message.meta : {}),
+      };
+      if (partial) {
+        nextMeta.partial = true;
+        nextMeta.cancelled = true;
+      } else {
+        delete nextMeta.partial;
+        delete nextMeta.cancelled;
+      }
+      if (Array.isArray(existing?.meta?.swipes) && existing.meta.swipes.length) {
+        const swipes = existing.meta.swipes.map(entry => ({ ...(entry || {}) }));
+        const rawIndex = Math.trunc(Number(existing?.meta?.activeSwipe));
+        const activeIndex = Number.isFinite(rawIndex)
+          ? Math.min(Math.max(0, rawIndex), swipes.length - 1)
+          : swipes.length - 1;
+        if (swipes[activeIndex]) {
+          swipes[activeIndex] = {
+            ...swipes[activeIndex],
+            content: String(message.content || ''),
+            raw,
+          };
+        }
+        nextMeta.swipes = swipes;
+        nextMeta.activeSwipe = activeIndex;
+      }
+      const updatePayload = {
+        ...existing,
+        ...message,
+        id: targetId,
+        role: 'assistant',
+        type: message?.type || existing?.type || 'text',
+        name: message?.name || existing?.name || '助手',
+        avatar: message?.avatar || existing?.avatar,
+        time: message?.time || existing?.time || formatNowTime(),
+        content: String(message?.content || ''),
+        raw,
+        rawOriginal:
+          typeof message?.rawOriginal === 'string'
+            ? message.rawOriginal
+            : (typeof existing?.rawOriginal === 'string' ? existing.rawOriginal : raw),
+        rawSource:
+          typeof message?.rawSource === 'string'
+            ? message.rawSource
+            : (typeof existing?.rawSource === 'string' ? existing.rawSource : undefined),
+        meta: nextMeta,
+      };
+      const saved = chatStore.updateMessage(targetId, updatePayload, sessionId) || { ...existing, ...updatePayload };
+      if (isSessionActive(sessionId)) ui.updateMessage(targetId, saved);
+      return saved;
+    };
+    const resolvedPartialCommitHandler =
+      partialCommitHandler ||
+      (continueTarget
+        ? (partial => {
+            commitContinuationMessage(partial, { partial: true });
+            return true;
+          })
+        : null);
 
     // 只有在没有 pending 消息时，才创建新的用户消息气泡
     let userMsg = null;
@@ -16568,6 +16758,7 @@ Phase G（Frame 36）：循环衔接
         sessionId,
         userMsgId: primaryId,
         streamCtrl: null,
+        partialCommitHandler: resolvedPartialCommitHandler,
         swipeTarget,
         cancelled: false,
       };
@@ -16583,6 +16774,7 @@ Phase G（Frame 36）：循环衔接
         sessionId,
         userMsgId: pendingMessagesToConfirm[0]?.id,
         streamCtrl: null,
+        partialCommitHandler: resolvedPartialCommitHandler,
         swipeTarget,
         cancelled: false,
       };
@@ -16596,21 +16788,6 @@ Phase G（Frame 36）：循环衔接
     ui.showDeliveryStatus();
 
     const config = window.appBridge.config.get();
-
-    let streamCtrl = null;
-    let sendSucceeded = false;
-    let suppressErrorUI = false;
-    const createAssistantStreamCtrl = (meta = {}) => {
-      if (assistantStreamFactory) {
-        try {
-          const customCtrl = assistantStreamFactory(meta);
-          if (customCtrl) return customCtrl;
-        } catch (err) {
-          logger.warn('assistant stream factory failed', err);
-        }
-      }
-      return ui.startAssistantStream(meta);
-    };
     try {
       if (config.stream) {
         const assistantAvatar = getAssistantAvatarForSession(sessionId);
@@ -16716,11 +16893,13 @@ Phase G（Frame 36）：循环衔接
           };
           if (streamCtrl) {
             streamCtrl.finish(parsed);
-          } else if (isSessionActive(sessionId)) {
+          } else if (isSessionActive(sessionId) && !continueTarget) {
             ui.addMessage(parsed);
           }
           {
-            const saved = chatStore.appendMessage(parsed, sessionId);
+            const saved = continueTarget
+              ? commitContinuationMessage(parsed)
+              : chatStore.appendMessage(parsed, sessionId);
             autoMarkReadIfActive(sessionId, saved?.id || parsed?.id || '');
             emitPluginAfterReceive(saved, sessionId);
           }
@@ -17304,9 +17483,11 @@ Phase G（Frame 36）：循环衔接
             content: display,
             meta,
           };
-          if (isSessionActive(sessionId) && !suppressAssistantDom) ui.addMessage(parsed);
+          if (isSessionActive(sessionId) && !suppressAssistantDom && !continueTarget) ui.addMessage(parsed);
           {
-            const saved = chatStore.appendMessage(parsed, sessionId);
+            const saved = continueTarget
+              ? commitContinuationMessage(parsed)
+              : chatStore.appendMessage(parsed, sessionId);
             autoMarkReadIfActive(sessionId, saved?.id || parsed?.id || '');
             emitPluginAfterReceive(saved, sessionId);
           }
@@ -17850,6 +18031,30 @@ Phase G（Frame 36）：循环衔接
     if (activeGeneration && !activeGeneration.cancelled) {
       cancelActiveGeneration('user');
       return;
+    }
+    if (canUseDeepSeekContinuePrefill()) {
+      const sessionId = chatStore.getCurrent();
+      const targetMessage = getLastContinuableAssistantMessage(sessionId);
+      const prefix = getAssistantContinuationSource(targetMessage);
+      if (targetMessage?.id && prefix) {
+        handleSend(null, {
+          overrideText: '',
+          suppressUserMessage: true,
+          ignorePending: true,
+          skipInputRegex: true,
+          includeAttachments: false,
+          continueTarget: {
+            messageId: String(targetMessage.id),
+            message: targetMessage,
+            prefix,
+          },
+          createAssistantStream: meta => ui.startAssistantContinuationStream(targetMessage.id, {
+            ...meta,
+            initialContent: String(targetMessage.content || ''),
+          }),
+        });
+        return;
+      }
     }
     handleSend(null, {
       overrideText: '[Continue]',

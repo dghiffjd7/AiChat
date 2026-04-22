@@ -5,6 +5,13 @@
 import { handleSSE } from '../stream.js';
 import { createLinkedAbortController, splitRequestOptions } from '../abort.js';
 import { prepareTransportRequest } from '../transport.js';
+import {
+  ensureTailAssistantPrefillUserTurn,
+  isDeepSeekApiRequest,
+  normalizeChatRole,
+  normalizeDeepSeekReasonerMessages,
+  resolveDeepSeekBetaBaseUrl,
+} from './deepseek-compat.js';
 
 const getTauriInvoker = () => {
   const g = typeof globalThis !== 'undefined' ? globalThis : undefined;
@@ -75,6 +82,47 @@ const estimateOpenAIRequestChars = ({ model, messages, stream, options } = {}) =
   return n;
 };
 
+const normalizeDeepSeekPrefixRequest = (raw) => {
+  const src = raw && typeof raw === 'object' ? raw : null;
+  if (!src) return null;
+  const prefix = typeof src.prefix === 'string' ? src.prefix : '';
+  if (!prefix) return null;
+  const reasoningContent = typeof src.reasoningContent === 'string' ? src.reasoningContent : '';
+  const mode = String(src.mode || 'assistant_prefill').trim().toLowerCase() || 'assistant_prefill';
+  return {
+    mode,
+    prefix,
+    reasoningContent,
+  };
+};
+
+const buildMessageRoleWindow = (messages, index, radius = 4) => {
+  const arr = Array.isArray(messages) ? messages : [];
+  const idx = Math.trunc(Number(index));
+  if (!Number.isFinite(idx) || idx < 0 || idx >= arr.length) return '';
+  const start = Math.max(0, idx - radius);
+  const end = Math.min(arr.length, idx + radius + 1);
+  return arr
+    .slice(start, end)
+    .map((msg, offset) => {
+      const absolute = start + offset;
+      const marker = absolute === idx ? '*' : '';
+      return `${marker}${absolute}:${normalizeChatRole(msg?.role || 'system')}`;
+    })
+    .join(' | ');
+};
+
+const attachMessageIndexDiagnostics = (error, messages) => {
+  const text = String(error?.message || '');
+  const match = text.match(/message index\s+(\d+)/i);
+  if (!match) return error;
+  const roleWindow = buildMessageRoleWindow(messages, Number(match[1]));
+  if (!roleWindow) return error;
+  error.message = `${text} [payload roles: ${roleWindow}]`;
+  error.requestMessageRoles = roleWindow;
+  return error;
+};
+
 export class OpenAIProvider {
   constructor(config) {
     this.transportConfig = config || {};
@@ -103,7 +151,11 @@ export class OpenAIProvider {
   normalizeOptions(options = {}) {
     const src = (options && typeof options === 'object') ? options : {};
     const out = {};
-    const isDeepSeek = String(this.provider || '').toLowerCase() === 'deepseek';
+    const isDeepSeek = isDeepSeekApiRequest({
+      provider: this.provider,
+      model: this.model,
+      baseUrl: this.baseUrl,
+    });
 
     // Common OpenAI-compatible parameters
     if (typeof src.temperature === 'number') out.temperature = src.temperature;
@@ -141,6 +193,60 @@ export class OpenAIProvider {
       if (msg) return String(msg);
     } catch (_e) {}
     return raw.length > 400 ? `${raw.slice(0, 400)}…` : raw;
+  }
+
+  prepareChatRequest(messages, options = {}) {
+    const { signal, requestId, options: rawPayloadOptions } = splitRequestOptions(options);
+    const payloadOptions = (rawPayloadOptions && typeof rawPayloadOptions === 'object') ? { ...rawPayloadOptions } : {};
+    const deepseekPrefix = normalizeDeepSeekPrefixRequest(payloadOptions.deepseekPrefix);
+    delete payloadOptions.deepseekPrefix;
+
+    const normalizedOptions = this.normalizeOptions(payloadOptions);
+    const requestInfo = {
+      provider: this.provider,
+      model: this.model,
+      baseUrl: this.baseUrl,
+    };
+    const reasonerCompat = normalizeDeepSeekReasonerMessages(messages, requestInfo);
+    let payloadMessages = Array.isArray(reasonerCompat.messages) ? reasonerCompat.messages.slice() : [];
+    let prefixCompat = { inserted: false };
+    let requestBaseUrl = this.baseUrl;
+    let responsePrefix = '';
+
+    if (deepseekPrefix && isDeepSeekApiRequest(requestInfo)) {
+      requestBaseUrl = resolveDeepSeekBetaBaseUrl(this.baseUrl);
+      responsePrefix = deepseekPrefix.prefix;
+      payloadMessages.push({
+        role: 'assistant',
+        content: deepseekPrefix.prefix,
+        prefix: true,
+        ...(deepseekPrefix.reasoningContent ? { reasoning_content: deepseekPrefix.reasoningContent } : {}),
+      });
+      prefixCompat = ensureTailAssistantPrefillUserTurn(payloadMessages);
+      payloadMessages = prefixCompat.messages;
+    }
+
+    const payload = {
+      model: this.model,
+      messages: payloadMessages,
+      ...normalizedOptions,
+    };
+
+    return {
+      signal,
+      requestId,
+      url: `${requestBaseUrl}/chat/completions`,
+      payload,
+      messages: payloadMessages,
+      normalizedOptions,
+      responsePrefix,
+      compat: {
+        reasoner: reasonerCompat,
+        prefix: prefixCompat,
+        prefixMode: deepseekPrefix?.mode || '',
+        usesDeepSeekPrefix: Boolean(deepseekPrefix && isDeepSeekApiRequest(requestInfo)),
+      },
+    };
   }
 
   async request({ url, method = 'GET', headers = {}, body = undefined, signal, requestId = '' } = {}) {
@@ -215,8 +321,18 @@ export class OpenAIProvider {
    * 发送聊天消息（非流式）
    */
   async chat(messages, options = {}) {
-    const { signal, requestId, options: payloadOptions } = splitRequestOptions(options);
-    const normalized = this.normalizeOptions(payloadOptions);
+    const prepared = this.prepareChatRequest(messages, options);
+    const { signal, requestId } = prepared;
+    messages = prepared.messages;
+    const normalized = prepared.normalizedOptions;
+    if (prepared.compat.reasoner.changed) {
+      console.warn(
+        `DeepSeek reasoner request normalized: merged=${prepared.compat.reasoner.merged}, separated=${prepared.compat.reasoner.separated}, systemToUser=${prepared.compat.reasoner.systemToUser}`,
+      );
+    }
+    if (prepared.compat.prefix.inserted) {
+      console.warn('DeepSeek prefix completion inserted a blank user turn before tail assistant prefill');
+    }
     const estimatedChars = estimateOpenAIRequestChars({
       model: this.model,
       messages,
@@ -228,19 +344,22 @@ export class OpenAIProvider {
         `请求过大（约 ${Math.round(estimatedChars / 1024)} KB），可能导致 Android WebView OOM；请减少历史/摘要/世界书注入或清理该聊天室。`,
       );
     }
-    const data = await this.requestJson({
-      url: `${this.baseUrl}/chat/completions`,
-      method: 'POST',
-      headers: this.getHeaders(),
-      body: JSON.stringify({
-        model: this.model,
-        messages: messages,
-        stream: false,
-        ...normalized,
-      }),
-      signal,
-      requestId,
-    });
+    let data;
+    try {
+      data = await this.requestJson({
+        url: prepared.url,
+        method: 'POST',
+        headers: this.getHeaders(),
+        body: JSON.stringify({
+          ...prepared.payload,
+          stream: false,
+        }),
+        signal,
+        requestId,
+      });
+    } catch (error) {
+      throw attachMessageIndexDiagnostics(error, messages);
+    }
 
     return data.choices?.[0]?.message?.content ?? '';
   }
@@ -249,8 +368,18 @@ export class OpenAIProvider {
    * 流式聊天
    */
   async *streamChat(messages, options = {}) {
-    const { signal, requestId, options: payloadOptions } = splitRequestOptions(options);
-    const normalized = this.normalizeOptions(payloadOptions);
+    const prepared = this.prepareChatRequest(messages, options);
+    const { signal, requestId } = prepared;
+    messages = prepared.messages;
+    const normalized = prepared.normalizedOptions;
+    if (prepared.compat.reasoner.changed) {
+      console.warn(
+        `DeepSeek reasoner stream request normalized: merged=${prepared.compat.reasoner.merged}, separated=${prepared.compat.reasoner.separated}, systemToUser=${prepared.compat.reasoner.systemToUser}`,
+      );
+    }
+    if (prepared.compat.prefix.inserted) {
+      console.warn('DeepSeek prefix completion inserted a blank user turn before tail assistant prefill');
+    }
     const estimatedChars = estimateOpenAIRequestChars({
       model: this.model,
       messages,
@@ -262,17 +391,15 @@ export class OpenAIProvider {
         `请求过大（约 ${Math.round(estimatedChars / 1024)} KB），可能导致 Android WebView OOM；请减少历史/摘要/世界书注入或清理该聊天室。`,
       );
     }
-      const payload = JSON.stringify({
-      model: this.model,
-      messages: messages,
+    const payload = JSON.stringify({
+      ...prepared.payload,
       stream: true,
-      ...normalized,
     });
 
     if (this.canUseNativeHttp()) {
       if (signal?.aborted) throw makeAbortError();
       const res = await this.request({
-        url: `${this.baseUrl}/chat/completions`,
+        url: prepared.url,
         method: 'POST',
         headers: { ...this.getHeaders(), Accept: 'text/event-stream' },
         body: payload,
@@ -284,7 +411,7 @@ export class OpenAIProvider {
         const error = new Error(`OpenAI API Error: ${res.status}${detail ? ` - ${detail}` : ''}`);
         error.status = res.status;
         error.response = res.body;
-        throw error;
+        throw attachMessageIndexDiagnostics(error, messages);
       }
       for (const data of parseSSEText(res.body)) {
         const content = data.choices?.[0]?.delta?.content;
@@ -295,15 +422,15 @@ export class OpenAIProvider {
 
     const { controller, cleanup } = createLinkedAbortController({ timeoutMs: this.timeout, signal });
     try {
-      const prepared = prepareTransportRequest({
+      const transport = prepareTransportRequest({
         config: this.transportConfig,
         provider: this.provider,
-        url: `${this.baseUrl}/chat/completions`,
+        url: prepared.url,
         headers: { ...this.getHeaders(), Accept: 'text/event-stream' },
       });
-      const response = await fetch(prepared.url, {
+      const response = await fetch(transport.url, {
         method: 'POST',
-        headers: prepared.headers,
+        headers: transport.headers,
         signal: controller.signal,
         body: payload,
       });
@@ -314,7 +441,7 @@ export class OpenAIProvider {
         const error = new Error(`OpenAI API Error: ${response.status}${detail ? ` - ${detail}` : ''}`);
         error.status = response.status;
         error.response = txt;
-        throw error;
+        throw attachMessageIndexDiagnostics(error, messages);
       }
 
       for await (const data of handleSSE(response)) {

@@ -925,6 +925,24 @@ body[data-ui-mode='rp'] .rp-swipe-indicator {
   box-shadow: none;
 }
 
+.rp-swipe-draft-placeholder .rp-static-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: 0 0 auto;
+}
+
+.rp-swipe-draft-placeholder .rp-static-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--app-text-secondary);
+  opacity: 0.8;
+  box-shadow: none;
+  animation: none !important;
+  transform: none !important;
+}
+
 /* 5.2 我的消息 - .QQ_chat_mymsg */
 .QQ_chat_mymsg {
   /* 布局 */

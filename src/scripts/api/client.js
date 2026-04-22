@@ -58,6 +58,13 @@ export class LLMClient {
         yield* this.provider.streamChat(messages, options);
     }
 
+    prepareChatRequest(messages, options = {}) {
+        if (typeof this.provider?.prepareChatRequest === 'function') {
+            return this.provider.prepareChatRequest(messages, options);
+        }
+        return null;
+    }
+
     /**
      * 获取可用模型列表
      * @returns {Promise<Array<string>>} 模型 ID 列表

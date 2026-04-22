@@ -5,6 +5,10 @@
 import { LLMClient } from '../api/client.js';
 import { buildReasoningRequestOptions, getReasoningSamplerPolicy } from '../api/model-capabilities.js';
 import {
+  isDeepSeekApiRequest,
+  shouldUseDeepSeekReasonerCompatibility,
+} from '../api/providers/deepseek-compat.js';
+import {
   BUILTIN_PHONE_FORMAT_CHAT_PROMPT_SPECS,
   BUILTIN_PHONE_FORMAT_WORLDBOOK,
   BUILTIN_PHONE_FORMAT_WORLDBOOK_ID,
@@ -2002,6 +2006,117 @@ class AppBridge {
     }
   }
 
+  getRequestPresetContext(context = {}) {
+    return {
+      sessionId: String(context?.session?.id || this.activeSessionId || '').trim(),
+      uiMode: String(context?.meta?.uiMode || context?.uiMode || '').trim().toLowerCase() === 'rp' ? 'rp' : 'chat',
+    };
+  }
+
+  buildProviderRequestDirectives(context = {}, presetContext = {}) {
+    const cfg = this.config?.get?.() || {};
+    if (String(cfg?.provider || '').trim().toLowerCase() === 'custom') {
+      return {};
+    }
+    if (!isDeepSeekApiRequest({ provider: cfg?.provider, model: cfg?.model, baseUrl: cfg?.baseUrl })) {
+      return {};
+    }
+    const state = this.presets?.getState?.();
+    if (!state?.enabled?.openai) return {};
+    const openp = this.presets?.getResolvedActive?.('openai', presetContext || {})?.preset || null;
+    if (!openp || typeof openp !== 'object') return {};
+
+    const uiMode = presetContext?.uiMode === 'rp' ? 'rp' : 'chat';
+    const responseTarget = resolvePresetReplyTarget(openp, uiMode, context?.meta?.responseTarget);
+    if (responseTarget === 'user') return {};
+
+    const continuation = context?.meta?.assistantContinuation;
+    if (continuation?.enabled === true) {
+      if (openp.continue_prefill !== true) return {};
+      const prefixBase = typeof continuation.prefix === 'string' ? continuation.prefix : '';
+      if (!prefixBase) return {};
+      const postfixRaw = typeof openp?.continue_postfix === 'string' ? openp.continue_postfix : ' ';
+      const macroContext = {
+        sessionId: presetContext?.sessionId || '',
+        uiMode,
+        user: context?.user?.name || 'user',
+        char: context?.character?.name || 'assistant',
+        group: context?.group?.name || context?.character?.name || 'assistant',
+        members: Array.isArray(context?.group?.memberNames) ? context.group.memberNames.map(String).filter(Boolean).join(',') : '',
+        lastUserMessage: String(context?.meta?.overrideLastUserMessage || context?.meta?.rawUserMessage || ''),
+        useGlobalVariables: context?.meta?.useGlobalVariables === true,
+      };
+      let postfix = postfixRaw;
+      try {
+        postfix = this.processTextMacros(postfixRaw, macroContext);
+      } catch {}
+      return {
+        deepseekPrefix: {
+          mode: 'continue',
+          prefix: `${prefixBase}${String(postfix ?? '')}`,
+        },
+      };
+    }
+
+    const assistantPrefillRaw = String(openp?.assistant_prefill || '');
+    if (!assistantPrefillRaw.trim()) return {};
+    const macroContext = {
+      sessionId: presetContext?.sessionId || '',
+      uiMode,
+      user: context?.user?.name || 'user',
+      char: context?.character?.name || 'assistant',
+      group: context?.group?.name || context?.character?.name || 'assistant',
+      members: Array.isArray(context?.group?.memberNames) ? context.group.memberNames.map(String).filter(Boolean).join(',') : '',
+      lastUserMessage: String(context?.meta?.overrideLastUserMessage || context?.meta?.rawUserMessage || ''),
+      useGlobalVariables: context?.meta?.useGlobalVariables === true,
+    };
+    let assistantPrefill = assistantPrefillRaw;
+    try {
+      assistantPrefill = this.processTextMacros(assistantPrefillRaw, macroContext);
+    } catch {}
+    if (!String(assistantPrefill || '').trim()) return {};
+    return {
+      deepseekPrefix: {
+        mode: 'assistant_prefill',
+        prefix: String(assistantPrefill),
+      },
+    };
+  }
+
+  mergeAssistantPrefillResponse(prefix, response) {
+    const prefill = String(prefix ?? '');
+    const text = String(response ?? '');
+    if (!prefill) return text;
+    if (!text) return prefill;
+    return text.startsWith(prefill) ? text : `${prefill}${text}`;
+  }
+
+  async *applyAssistantPrefillToStream(stream, prefix = '') {
+    const prefill = String(prefix ?? '');
+    if (!prefill) {
+      yield* stream;
+      return;
+    }
+    let suppress = prefill;
+    yield prefill;
+    for await (const chunk of stream) {
+      const text = String(chunk ?? '');
+      if (!text) continue;
+      let out = '';
+      for (let i = 0; i < text.length; i += 1) {
+        const ch = text[i];
+        if (suppress && ch === suppress[0]) {
+          suppress = suppress.slice(1);
+          continue;
+        }
+        suppress = '';
+        out += text.slice(i);
+        break;
+      }
+      if (out) yield out;
+    }
+  }
+
   /**
    * 生成 AI 回复
    * @param {string} userMessage - 用户消息
@@ -2174,33 +2289,40 @@ class AppBridge {
         }
       }
       const config = this.config.get();
-      const genOptions = this.getGenerationOptions({
-        sessionId: String(nextContext?.session?.id || this.activeSessionId || '').trim(),
-        uiMode: String(nextContext?.meta?.uiMode || nextContext?.uiMode || '').trim().toLowerCase() === 'rp' ? 'rp' : 'chat',
-      });
+      messages = this.normalizeOutgoingProviderMessages(messages, config);
+      const presetContext = this.getRequestPresetContext(nextContext);
+      const genOptions = this.getGenerationOptions(presetContext);
+      const providerDirectives = this.buildProviderRequestDirectives(nextContext, presetContext);
       const requestOptions = {
         ...(genOptions || {}),
+        ...(providerDirectives || {}),
         signal: abortController.signal,
         nativeRequestId,
       };
+      const preparedRequest = this.client?.prepareChatRequest?.(messages, requestOptions) || null;
+      const responsePrefix = String(preparedRequest?.responsePrefix || '');
 
       logger.debug('发送消息到 LLM:', { messageCount: messages.length, stream: config.stream });
       // Debug: keep the exact request payload used for the latest generation
       this.lastRequest = {
         at: Date.now(),
         provider: config?.provider,
-        baseUrl: config?.baseUrl,
+        baseUrl: preparedRequest?.url ? String(preparedRequest.url).replace(/\/chat\/completions$/, '') : config?.baseUrl,
         model: config?.model,
         stream: Boolean(config?.stream),
-        options: genOptions,
-        messages,
+        options: preparedRequest?.normalizedOptions || genOptions,
+        requestOptions: {
+          ...(genOptions || {}),
+          ...(providerDirectives || {}),
+        },
+        messages: preparedRequest?.messages || messages,
+        responsePrefix,
         worldDebug: this.lastWorldInjectionDebug || null,
       };
 
       if (config.stream) {
         streaming = true;
-        const inner = this.generateStream(messages, requestOptions, originalInput);
-        const self = this;
+        const inner = this.generateStream(messages, requestOptions, originalInput, { responsePrefix });
         return (async function* () {
           try {
             yield* inner;
@@ -2216,10 +2338,11 @@ class AppBridge {
         if (abortController.signal.aborted) {
           throw makeCancelledError('user');
         }
+        const finalResponse = this.mergeAssistantPrefillResponse(responsePrefix, response);
 
         // 保存到历史记录
-        await this.saveToHistory(originalInput, response);
-        return response;
+        await this.saveToHistory(originalInput, finalResponse);
+        return finalResponse;
       }
     } catch (error) {
       if (abortController.signal.aborted) {
@@ -2260,17 +2383,21 @@ class AppBridge {
       }),
       ...requestOverrides,
     };
-    return this.client.chat(msgs, genOptions);
+    const config = this.config.get?.() || {};
+    const normalizedMsgs = this.normalizeOutgoingProviderMessages(msgs, config);
+    return this.client.chat(normalizedMsgs, genOptions);
   }
 
   /**
    * 流式生成
    */
-  async *generateStream(messages, genOptions = {}, originalUserMessage = '') {
+  async *generateStream(messages, genOptions = {}, originalUserMessage = '', streamMeta = {}) {
     let fullResponse = '';
+    const responsePrefix = String(streamMeta?.responsePrefix || '');
 
     try {
-      for await (const chunk of this.client.streamChat(messages, genOptions)) {
+      const stream = this.client.streamChat(messages, genOptions);
+      for await (const chunk of this.applyAssistantPrefillToStream(stream, responsePrefix)) {
         fullResponse += chunk;
         yield chunk;
       }
@@ -2307,6 +2434,67 @@ class AppBridge {
     }
   }
 
+  normalizeOutgoingProviderMessages(messages, config = null, meta = {}) {
+    const list = Array.isArray(messages) ? messages : [];
+    if (!list.length) return list;
+
+    const cfg = config || this.config?.get?.() || {};
+    const provider = String(cfg?.provider || '').trim().toLowerCase();
+    const providerRejectsAssistantPrefill = provider === 'anthropic';
+    const providerCompatLabel = provider === 'anthropic' ? 'Anthropic' : (provider || 'Provider');
+    const syntheticAssistantDowngradeCount = Math.max(0, Math.trunc(Number(meta?.syntheticAssistantDowngradeCount) || 0));
+
+    if (!providerRejectsAssistantPrefill && syntheticAssistantDowngradeCount <= 0) {
+      return list;
+    }
+
+    const normalizeRole = (role) => {
+      const r = String(role || '').trim().toLowerCase();
+      return r === 'user' || r === 'assistant' || r === 'system' ? r : 'system';
+    };
+    const stringifyContent = (content) => {
+      if (Array.isArray(content)) {
+        return content
+          .map(part => (part?.type === 'text' ? String(part.text || '') : ''))
+          .filter(Boolean)
+          .join('\n');
+      }
+      return String(content ?? '');
+    };
+    const trimEdgeBlankLines = (text) =>
+      String(text ?? '').replace(/^(?:[ \t]*\r?\n)+/, '').replace(/(?:\r?\n[ \t]*)+$/, '');
+    const joinBlocks = (blocks = []) => {
+      const parts = Array.isArray(blocks) ? blocks : [blocks];
+      return parts.map(trimEdgeBlankLines).filter(s => String(s || '').trim().length > 0).join('\n\n');
+    };
+    const summarizeTailRoles = (limit = 8) =>
+      list
+        .slice(-limit)
+        .map((msg, idx) => {
+          const absoluteIdx = Math.max(0, list.length - limit) + idx;
+          const role = normalizeRole(msg?.role || 'system');
+          const preview = stringifyContent(msg?.content).replace(/\s+/g, ' ').trim().slice(0, 40) || '(empty)';
+          return `${absoluteIdx}:${role}:${preview}`;
+        })
+        .join(' | ');
+
+    if (syntheticAssistantDowngradeCount > 0) {
+      const compatMsg = `${providerCompatLabel} 兼容：已将 ${syntheticAssistantDowngradeCount} 个合成 assistant 提示词改为 system。tail=${summarizeTailRoles()}`;
+      logger.debug(compatMsg);
+      emitDebugLog({ source: 'prompt', type: 'info', message: compatMsg });
+    }
+
+    const lastNonSystem = [...list].reverse().find((msg) => normalizeRole(msg?.role || 'system') !== 'system');
+    if (providerRejectsAssistantPrefill && normalizeRole(lastNonSystem?.role || 'system') === 'assistant') {
+      list.push({ role: 'user', content: ' ' });
+      const fallbackMsg = `${providerCompatLabel} 兼容：检测到尾部 assistant 消息，已补空白 user turn。tail=${summarizeTailRoles()}`;
+      logger.warn(fallbackMsg);
+      emitDebugLog({ source: 'prompt', type: 'warn', message: fallbackMsg });
+    }
+
+    return list;
+  }
+
   /**
    * 构建消息数组
    */
@@ -2317,10 +2505,11 @@ class AppBridge {
     const name1 = context?.user?.name || 'user';
     const name2 = context?.character?.name || 'assistant';
     const sessionIdForSummary = String(context?.session?.id || this.activeSessionId || 'default');
+    const suppressPendingUserTurn = context?.meta?.suppressPendingUserTurn === true;
     const rawUserMessage = (typeof context?.meta?.rawUserMessage === 'string')
       ? String(context.meta.rawUserMessage)
       : String(userMessage ?? '');
-    const pendingUserTextRaw = String(rawUserMessage ?? '').trim();
+    const pendingUserTextRaw = suppressPendingUserTurn ? '' : String(rawUserMessage ?? '').trim();
     const appendUserToHistory = context?.meta?.appendUserToHistory !== false;
     const isMomentCommentTask = String(context?.task?.type || '').toLowerCase() === 'moment_comment';
     const isGroupChat = Boolean(context?.session?.isGroup) || String(context?.session?.id || '').startsWith('group:');
@@ -2374,12 +2563,20 @@ class AppBridge {
     const scenarioHints = [scenarioHintBase, replyPromptHint].filter(Boolean);
     const scenarioHint = scenarioHints.join('；');
     const pendingUserText = (() => {
+      if (suppressPendingUserTurn) return '';
       if (!pendingUserTextRaw) {
         return scenarioHint ? `（${scenarioHint}）` : '';
       }
       return scenarioHint ? `${pendingUserTextRaw}（${scenarioHint}）` : pendingUserTextRaw;
     })();
-    const provider = String(this.config?.get?.()?.provider || '').trim().toLowerCase();
+    const requestConfig = this.config?.get?.() || {};
+    const provider = String(requestConfig?.provider || '').trim().toLowerCase();
+    const requestModel = String(requestConfig?.model || '').trim().toLowerCase();
+    const providerNeedsExplicitUserTurn = shouldUseDeepSeekReasonerCompatibility({
+      provider,
+      model: requestModel,
+      baseUrl: requestConfig?.baseUrl,
+    });
 	    const providerUsesDetachedSystemPrompt =
 	      provider === 'anthropic' ||
 	      provider === 'gemini' ||
@@ -2389,7 +2586,7 @@ class AppBridge {
 	    const lastUserMessageRe = /{{\s*(?:lastUserMessage|userLastMessage|user_last_message)\s*}}/i;
 	    const hasLastUserMessagePlaceholder = (raw) => lastUserMessageRe.test(String(raw || ''));
 	    let usedLastUserMessageForPendingInput = false;
-	    let anthropicSyntheticAssistantDowngradeCount = 0;
+	    let syntheticAssistantDowngradeCount = 0;
 	    const normalizeRequestRole = (role) => {
 	      const normalizedRole = String(role || '').trim().toLowerCase();
 	      return normalizedRole === 'user' || normalizedRole === 'assistant' || normalizedRole === 'system'
@@ -2401,10 +2598,10 @@ class AppBridge {
 	      if (providerRejectsAssistantPrefill && normalizedRole === 'assistant') return 'system';
 	      return normalizedRole;
 	    };
-	    const normalizeSyntheticRole = (role) => {
+	    const normalizeSyntheticRole = (role, { count = true } = {}) => {
 	      const normalizedRole = normalizeRequestRole(role);
 	      if (providerRejectsAssistantPrefill && normalizedRole === 'assistant') {
-	        anthropicSyntheticAssistantDowngradeCount += 1;
+	        if (count) syntheticAssistantDowngradeCount += 1;
 	        return 'system';
 	      }
 	      return normalizedRole;
@@ -2425,6 +2622,7 @@ class AppBridge {
 	    };
 	    const canPlaceholderConsumePendingUser = (role, { synthetic = false } = {}) => {
 	      const normalizedRole = synthetic ? normalizeSyntheticRoleForCheck(role) : normalizeRequestRole(role);
+	      if (providerNeedsExplicitUserTurn) return normalizedRole === 'user';
 	      return normalizedRole !== 'system' || !providerUsesDetachedSystemPrompt;
 	    };
     const pendingUserPrompt = (() => {
@@ -2897,6 +3095,11 @@ const stringifyMessageContent = (content) => {
   }
   return String(content ?? '');
 };
+    const finalizeProviderMessages = () => {
+      return this.normalizeOutgoingProviderMessages(messages, requestConfig, {
+        syntheticAssistantDowngradeCount,
+      });
+    };
 	    const buildChatGuidePlan = () => {
 	      const mode = String(context?.meta?.chatGuideMode || '').trim().toLowerCase();
 	      if (Boolean(context?.meta?.disableChatGuide) || mode === 'none') {
@@ -3515,7 +3718,7 @@ const stringifyMessageContent = (content) => {
           });
         let offset = 0;
         inserts.forEach(item => {
-          history.splice(item._index + offset, 0, { role: item.role, content: item.content });
+          history.splice(item._index + offset, 0, buildSyntheticMessage(item.role, item.content));
           offset += 1;
         });
       };
@@ -3526,14 +3729,14 @@ const stringifyMessageContent = (content) => {
         Boolean(memoryPrompt && memoryPrompt.positions.includes(pos) && !memoryInserted.has(pos));
       const insertMemoryPromptAt = (pos) => {
         if (!canInsertMemoryAt(pos)) return;
-        messages.push({ role: memoryPrompt.role, content: memoryPrompt.content });
+        messages.push(buildSyntheticMessage(memoryPrompt.role, memoryPrompt.content));
         memoryInserted.add(pos);
       };
       const insertMemoryPromptIntoHistory = (history) => {
         if (!canInsertMemoryAt('history_depth')) return;
         const depth = Math.max(0, Math.trunc(Number(memoryPrompt?.depth || 0)));
         const idx = Math.max(0, history.length - depth);
-        history.splice(idx, 0, { role: memoryPrompt.role, content: memoryPrompt.content });
+        history.splice(idx, 0, buildSyntheticMessage(memoryPrompt.role, memoryPrompt.content));
         memoryInserted.add('history_depth');
       };
       const historyRaw = Array.isArray(context.history) ? context.history.slice() : [];
@@ -3582,7 +3785,7 @@ const stringifyMessageContent = (content) => {
         const roleMap = { 0: 'system', 1: 'user', 2: 'assistant' };
         const role = roleMap[personaRole] || 'system';
         const idx = Math.max(0, history.length - personaDepth);
-        history.splice(idx, 0, { role, content: personaText });
+        history.splice(idx, 0, buildSyntheticMessage(role, personaText));
       }
       const prompts = Array.isArray(openp.prompts) ? openp.prompts : [];
       const byId = new Map();
@@ -3625,7 +3828,7 @@ const stringifyMessageContent = (content) => {
       const appendWorldBucket = key => {
         const bucket = worldPromptMessages[key];
         if (!bucket || !bucket.length) return;
-        bucket.forEach(msg => messages.push({ role: msg.role, content: msg.content }));
+        bucket.forEach(msg => messages.push(buildSyntheticMessage(msg.role || 'system', msg.content)));
         worldPromptMessages[key] = [];
       };
 
@@ -3809,7 +4012,7 @@ const stringifyMessageContent = (content) => {
 	          usedLastUserMessageForPendingInput = true;
 	          removePendingUserFromHistory();
 	        }
-	        messages.push(buildSyntheticMessage(mappedRole, content));
+	        messages.push(buildSyntheticMessage(pr?.system_prompt === true ? 'system' : role, content));
 	      }
 
       // Flush any world buckets that didn't find their markers to avoid dropping entries.
@@ -3841,7 +4044,7 @@ const stringifyMessageContent = (content) => {
       if (hasUserAttachments && !attachmentsInserted && attachmentOnlyContent) {
         messages.push({ role: 'user', content: attachmentOnlyContent });
       }
-      return messages;
+      return finalizeProviderMessages();
     }
 
     const memoryInserted = new Set();
@@ -4228,7 +4431,7 @@ const stringifyMessageContent = (content) => {
 	        });
 	        const rendered = String(content || '').trim();
 	        if (!rendered) continue;
-	        messages.push(buildSyntheticMessage(role, rendered));
+	        messages.push(buildSyntheticMessage(roleRaw, rendered));
 	      }
 	    } catch {}
 
@@ -4299,30 +4502,7 @@ const stringifyMessageContent = (content) => {
 	    } catch (err) {
 	      logger.warn('template inject apply failed', err);
 	    }
-	    if (providerRejectsAssistantPrefill) {
-	      const summarizeTailRoles = (limit = 6) =>
-	        messages
-	          .slice(-limit)
-	          .map((msg) => {
-	            const role = normalizeRequestRole(msg?.role || 'system');
-	            const preview = stringifyMessageContent(msg?.content).replace(/\s+/g, ' ').trim().slice(0, 40) || '(empty)';
-	            return `${role}:${preview}`;
-	          })
-	          .join(' | ');
-	      if (anthropicSyntheticAssistantDowngradeCount > 0) {
-	        const compatMsg = `Anthropic 兼容：已将 ${anthropicSyntheticAssistantDowngradeCount} 个合成 assistant 提示词改为 system。tail=${summarizeTailRoles()}`;
-	        logger.debug(compatMsg);
-	        emitDebugLog({ source: 'prompt', type: 'info', message: compatMsg });
-	      }
-	      const lastNonSystem = [...messages].reverse().find((msg) => normalizeRequestRole(msg?.role || 'system') !== 'system');
-	      if (normalizeRequestRole(lastNonSystem?.role || 'system') === 'assistant') {
-	        messages.push({ role: 'user', content: ' ' });
-	        const fallbackMsg = `Anthropic 兼容：检测到尾部 assistant 消息，已补空白 user turn。tail=${summarizeTailRoles()}`;
-	        logger.warn(fallbackMsg);
-	        emitDebugLog({ source: 'prompt', type: 'warn', message: fallbackMsg });
-	      }
-	    }
-	    return messages;
+	    return finalizeProviderMessages();
 	  }
 
   /**

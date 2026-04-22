@@ -39,6 +39,58 @@ test('splitRequestOptions: nativeRequestId should map to requestId', () => {
   assert.deepEqual(options.options, { temperature: 0.7 });
 });
 
+test('deepseek reasoner prepareChatRequest should normalize mid-chat system and use beta prefix completion', () => {
+  const provider = new OpenAIProvider({
+    provider: 'deepseek',
+    apiKey: 'test-key',
+    baseUrl: 'https://api.deepseek.com/v1',
+    model: 'deepseek-reasoner',
+    timeout: 5000,
+  });
+  const prepared = provider.prepareChatRequest([
+    { role: 'system', content: 'sys' },
+    { role: 'user', content: 'hello' },
+    { role: 'assistant', content: 'reply' },
+    { role: 'system', content: 'late sys' },
+  ], {
+    deepseekPrefix: {
+      mode: 'assistant_prefill',
+      prefix: '<prefill>',
+    },
+  });
+
+  assert.equal(prepared.url, 'https://api.deepseek.com/beta/chat/completions');
+  assert.deepEqual(
+    prepared.messages.map(msg => msg.role),
+    ['system', 'user', 'assistant', 'user', 'assistant'],
+  );
+  assert.equal(prepared.messages[3].content, 'late sys');
+  assert.equal(prepared.messages[4].prefix, true);
+  assert.equal(prepared.responsePrefix, '<prefill>');
+});
+
+test('deepseek chat prepareChatRequest should stay unchanged unless prefix mode is explicitly requested', () => {
+  const provider = new OpenAIProvider({
+    provider: 'deepseek',
+    apiKey: 'test-key',
+    baseUrl: 'https://api.deepseek.com/v1',
+    model: 'deepseek-chat',
+    timeout: 5000,
+  });
+  const prepared = provider.prepareChatRequest([
+    { role: 'system', content: 'sys' },
+    { role: 'user', content: 'hello' },
+    { role: 'system', content: 'late sys' },
+  ], {});
+
+  assert.equal(prepared.url, 'https://api.deepseek.com/v1/chat/completions');
+  assert.deepEqual(
+    prepared.messages.map(msg => msg.role),
+    ['system', 'user', 'system'],
+  );
+  assert.equal(prepared.compat.reasoner.changed, false);
+});
+
 test('openai non-stream: abort signal should cancel request', async () => {
   await withServer(async (req, res) => {
     if (req.url !== '/chat/completions' || req.method !== 'POST') {
