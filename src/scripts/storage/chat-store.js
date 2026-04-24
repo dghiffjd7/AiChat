@@ -970,6 +970,7 @@ export class ChatStore {
     this._lsDisabled = false;
     this._lsQuotaWarned = false;
     this._hydrateRetryCount = 0;
+    this._lastArchiveTransition = null;
   }
 
   _isScopeStale(token, scopeId) {
@@ -1396,6 +1397,33 @@ export class ChatStore {
     this.state.sessions[sid].messages = older.concat(current);
     this.state.sessions[sid]._loadedThreadKey = threadKey;
     return older;
+  }
+
+  async exportThreadMessages(id = this.currentId, archiveId = '') {
+    const sid = String(id || '').trim();
+    if (!sid) return [];
+    this._ensureSession(sid);
+    const aid = String(archiveId || '').trim();
+    const session = this.state.sessions[sid];
+    if (!this._useV2) {
+      if (!aid) return Array.isArray(session?.messages) ? session.messages.slice() : [];
+      const archive = Array.isArray(session?.archives)
+        ? session.archives.find(item => String(item?.id || '').trim() === aid)
+        : null;
+      return Array.isArray(archive?.messages) ? archive.messages.slice() : [];
+    }
+    const entry = this._v2.ensureSession(sid);
+    const thread = this._v2.getThread(sid, aid);
+    if (!entry || !thread || !Array.isArray(thread.parts) || !thread.parts.length) return [];
+    const messages = [];
+    for (const part of thread.parts) {
+      const partId = String(part?.id || '').trim();
+      if (!partId) continue;
+      const existing = await this._v2.readPart(entry, thread, partId);
+      const list = Array.isArray(existing) ? existing : [];
+      messages.push(...list);
+    }
+    return messages;
   }
 
   _persist() {
@@ -2365,6 +2393,7 @@ export class ChatStore {
       ? this._v2.getThreadTotal(sid, currentArchiveId)
       : messages.length;
     if (!totalMessages) return null;
+    this._lastArchiveTransition = null;
 
     if (!session.archives) {
       session.archives = [];
@@ -2394,6 +2423,12 @@ export class ChatStore {
           // Append suffix only if no timestamp looks present
           session.archives[idx].name = clean.match(/\d{4}\/\d{2}\/\d{2}/) ? clean : clean + suffix;
         }
+        this._lastArchiveTransition = {
+          sessionId: sid,
+          archivedCurrentId: currentArchiveId,
+          mode: 'update_existing',
+          timestamp,
+        };
         this._persist();
         return currentArchiveId;
       }
@@ -2490,6 +2525,12 @@ export class ChatStore {
     }
 
     this._persist();
+    this._lastArchiveTransition = {
+      sessionId: sid,
+      archivedCurrentId: archiveId,
+      mode: 'create_new',
+      timestamp,
+    };
     return archiveId;
   }
 
@@ -2547,15 +2588,17 @@ export class ChatStore {
 
     const archive = session.archives.find(a => a.id === archiveId);
     if (!archive) return false;
+    this._lastArchiveTransition = null;
 
     // Save current state before switching
     const totalMessages = this._useV2
       ? this._v2.getThreadTotal(sid, session.currentArchiveId)
       : (session.messages || []).length;
+    let archivedCurrentId = '';
     if (totalMessages > 0) {
       const isDetached = !session.currentArchiveId;
       const autoName = isDetached ? '自动存档' : '';
-      this.archiveCurrentMessages(sid, autoName, false, options);
+      archivedCurrentId = String(this.archiveCurrentMessages(sid, autoName, false, options) || '').trim();
     }
 
     session.currentArchiveId = archiveId;
@@ -2565,6 +2608,13 @@ export class ChatStore {
       session.messages = Array.isArray(archive.messages) ? [...archive.messages] : [];
     }
     if (this._isScopeStale(token, scopeId)) return false;
+    this._lastArchiveTransition = {
+      sessionId: sid,
+      loadedArchiveId: String(archiveId || '').trim(),
+      archivedCurrentId,
+      mode: 'load_archive',
+      timestamp: Date.now(),
+    };
     this._persist();
     return true;
   }
@@ -2595,6 +2645,18 @@ export class ChatStore {
       const sid = String(id || '').trim();
       if (!sid) return null;
       return this.state.sessions[sid]?.currentArchiveId || null;
+    } catch {
+      return null;
+    }
+  }
+
+  getLastArchiveTransition(id = this.currentId) {
+    try {
+      const sid = String(id || '').trim();
+      if (!sid) return null;
+      const detail = this._lastArchiveTransition;
+      if (!detail || String(detail.sessionId || '').trim() !== sid) return null;
+      return { ...detail };
     } catch {
       return null;
     }

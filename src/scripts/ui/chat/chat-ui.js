@@ -296,9 +296,36 @@ export class ChatUI {
 
   resolveActiveSwipeMessage(message) {
     if (!message || typeof message !== 'object') return message;
-    const meta = message.meta && typeof message.meta === 'object' ? message.meta : null;
-    const swipes = Array.isArray(meta?.swipes) && meta.swipes.length ? meta.swipes : null;
+    let meta = message.meta && typeof message.meta === 'object' ? message.meta : null;
+    let swipes = Array.isArray(meta?.swipes) && meta.swipes.length ? meta.swipes : null;
     if (!swipes) return message;
+    if (swipes.some(branch => branch?.draft)) {
+      let keepDraft = false;
+      try {
+        const activeSwipeGenerationMsgId = String(document.body?.dataset?.activeSwipeGenerationMsgId || '');
+        keepDraft =
+          meta?.swipeRegenerating === true &&
+          activeSwipeGenerationMsgId &&
+          activeSwipeGenerationMsgId === String(message?.id || '');
+      } catch {}
+      if (!keepDraft) {
+        const cleanedSwipes = swipes.filter(branch => !branch?.draft);
+        swipes = cleanedSwipes.length
+          ? cleanedSwipes
+          : [{ content: message.content ?? '', raw: message.raw }];
+        const rawIndex = Math.trunc(Number(meta.activeSwipe));
+        const activeIndex = Number.isFinite(rawIndex)
+          ? Math.min(Math.max(0, rawIndex), swipes.length - 1)
+          : Math.max(0, swipes.length - 1);
+        meta = {
+          ...meta,
+          swipes,
+          activeSwipe: activeIndex,
+        };
+        delete meta.swipeRegenerating;
+        delete meta.activeSwipeDraft;
+      }
+    }
     const rawIndex = Math.trunc(Number(meta.activeSwipe));
     const active = Number.isFinite(rawIndex)
       ? Math.min(Math.max(0, rawIndex), swipes.length - 1)

@@ -1613,7 +1613,7 @@ export class GeneralSettingsPanel {
             })}
             ${this.renderInputRow({
               title: '创意写作注入条数',
-              description: '控制 chat_history 中保留的创意写作回复数量。',
+              description: '控制 chat_history 中保留的创意写作历史轮数；0 表示全部注入。',
               icon: 'history',
               control: '<input type="number" id="general-creative-history" min="0" step="1" class="general-settings-number-input">',
             })}

@@ -1,7 +1,8 @@
+import { extractMemoryTimelineRound, resolveMemoryRowOrderKey } from './memory-row-order.js';
+
 const MEMORY_PROMPT_POSITIONS = new Set(['after_persona', 'system_end', 'before_chat', 'history_depth']);
 const SUMMARY_TABLE_IDS = new Set(['chat_summary', 'group_summary', 'chat_outline', 'group_outline', 'rp_summary', 'rp_outline']);
 const SUMMARY_LIMIT_TABLE_IDS = new Set(['chat_summary', 'group_summary', 'rp_summary']);
-const TIMELINE_ROUND_RE = /第\s*(\d+)\s*轮/;
 
 export const isSummaryTableId = (tableId) => {
   const id = String(tableId || '').trim();
@@ -81,14 +82,7 @@ export const normalizeMemoryCell = (value) => {
 
 const normalizePromptCellText = (value) => normalizeMemoryCell(value).replace(/\s*\r?\n\s*/g, ' / ').trim();
 
-const extractTimelineRound = (value) => {
-  const text = normalizePromptCellText(value);
-  if (!text) return null;
-  const match = text.match(TIMELINE_ROUND_RE);
-  if (!match) return null;
-  const round = Number(match[1]);
-  return Number.isFinite(round) ? round : null;
-};
+const extractTimelineRound = (value) => extractMemoryTimelineRound(normalizePromptCellText(value));
 
 const extractTimelineRoundLabel = (value) => {
   const round = extractTimelineRound(value);
@@ -111,9 +105,7 @@ const extractTimelineContentText = (rowData, columns) => {
 };
 
 const resolveSummaryTablePromptOrderKey = (row, fallback = 0) => {
-  const round = extractTimelineRound(row?.row_data?.time ?? row?.rowData?.time ?? row?.time);
-  if (Number.isFinite(round)) return round;
-  return fallback;
+  return resolveMemoryRowOrderKey(row, row?.table_id || row?.tableId || '', fallback);
 };
 
 export const formatMemoryRowText = (rowData, columns, tableId = '') => {

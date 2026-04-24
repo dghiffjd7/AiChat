@@ -5,6 +5,7 @@
 import { logger } from '../utils/logger.js';
 import { avatarDataUrlFromFile } from '../utils/image.js';
 import { appSettings } from '../storage/app-settings.js';
+import { sortMemoryRowsForSnapshot } from '../memory/memory-row-order.js';
 import { getSummaryTableIdsForContext, isRpSessionId } from '../memory/memory-context-utils.js';
 import {
     getBridgeTableShortLabel,
@@ -137,8 +138,7 @@ const buildMemoryTableSnapshot = async ({ sessionId, isGroup } = {}) => {
     } catch {
         return null;
     }
-    const picked = Array.isArray(rows)
-        ? rows
+    const picked = sortMemoryRowsForSnapshot(Array.isArray(rows) ? rows : [])
               .map((row) => {
                   const tableId = String(row?.table_id || '').trim();
                   if (!tableId) return null;
@@ -152,8 +152,7 @@ const buildMemoryTableSnapshot = async ({ sessionId, isGroup } = {}) => {
                       sort_order: Number.isFinite(Number(row?.sort_order)) ? Number(row.sort_order) : 0,
                   };
               })
-              .filter(Boolean)
-        : [];
+              .filter(Boolean);
     return { templateId, rows: picked };
 };
 
@@ -188,7 +187,7 @@ const applyMemoryTableSnapshot = async ({ sessionId, isGroup, snapshot } = {}) =
             }
         }
     }
-    const rows = Array.isArray(snapshot?.rows) ? snapshot.rows : [];
+    const rows = sortMemoryRowsForSnapshot(Array.isArray(snapshot?.rows) ? snapshot.rows : []);
     const inputs = rows
         .map((row) => {
             const tableId = String(row?.table_id || '').trim();
@@ -1017,16 +1016,47 @@ export class ContactSettingsPanel {
                 if (!ok) return;
                 const memoryTableOn = getMemoryStorageMode() === 'table';
                 let currentSnapshot = null;
+                let currentArchivePointer = null;
                 if (memoryTableOn) {
                     currentSnapshot = await buildMemoryTableSnapshot({ sessionId: sid, isGroup: false });
+                    try {
+                        currentArchivePointer = await window.appBridge?.buildArchivePointerFromCurrentThread?.(sid, {
+                            fallbackSnapshot: currentSnapshot,
+                            source: 'contact_archive_switch_capture',
+                        });
+                    } catch (err) {
+                        logger.warn('build archive pointer before contact archive switch failed', err);
+                    }
                 }
                 const targetSnapshot = arc?.memoryTableSnapshot;
                 const loaded = await this.chatStore.loadArchivedMessages(arc.id, sid, { memoryTableSnapshot: currentSnapshot });
+                const transition = this.chatStore.getLastArchiveTransition?.(sid) || null;
+                const archivedCurrentId = String(transition?.archivedCurrentId || '').trim();
+                if (loaded && archivedCurrentId && currentArchivePointer) {
+                    try {
+                        await window.appBridge?.setArchivePointerForArchive?.(sid, archivedCurrentId, currentArchivePointer, {
+                            fallbackSnapshot: currentSnapshot,
+                            source: 'contact_archive_switch_save_previous',
+                        });
+                    } catch (err) {
+                        logger.warn('persist previous contact archive pointer failed', err);
+                    }
+                }
                 if (loaded && memoryTableOn && targetSnapshot) {
                     try {
                         await applyMemoryTableSnapshot({ sessionId: sid, isGroup: false, snapshot: targetSnapshot });
                     } catch (err) {
                         logger.warn('apply memory table snapshot failed', err);
+                    }
+                }
+                if (loaded) {
+                    try {
+                        await window.appBridge?.restoreArchivePointerForLoadedThread?.(sid, {
+                            refreshBaselineWhenNoTail: true,
+                            source: 'archive_load_contact',
+                        });
+                    } catch (err) {
+                        logger.warn('restore checkpoint memory after archive load failed', err);
                     }
                 }
                 window.toastr?.success('已加载存档');
@@ -1045,6 +1075,11 @@ export class ContactSettingsPanel {
                     danger: true,
                 });
                 if (!ok) return;
+                try {
+                    await window.appBridge?.deleteArchiveTurnCheckpointState?.(sid, arc.id);
+                } catch (err) {
+                    logger.warn('delete archive turn checkpoint state failed', err);
+                }
                 this.chatStore.deleteArchive(arc.id, sid);
                 this.renderArchives();
             };
@@ -1136,6 +1171,7 @@ export class ContactSettingsPanel {
         const sid = this.getSessionId();
         let keepNonSummary = false;
         let memoryTableSnapshot = null;
+        let archivePointer = null;
         const isRpSession = isRpSessionId(sid);
         if (getMemoryStorageMode() === 'table') {
             const choice = await askMemoryTableNewChatMode();
@@ -1147,6 +1183,14 @@ export class ContactSettingsPanel {
         if (getMemoryStorageMode() === 'table') {
             memoryTableSnapshot = await buildMemoryTableSnapshot({ sessionId: sid, isGroup: false });
             try {
+                archivePointer = await window.appBridge?.buildArchivePointerFromCurrentThread?.(sid, {
+                    fallbackSnapshot: memoryTableSnapshot,
+                    source: 'contact_start_new_chat_capture',
+                });
+            } catch (err) {
+                logger.warn('build archive pointer before new chat failed', err);
+            }
+            try {
                 await clearSessionMemoriesForNewChat({
                     sessionId: sid,
                     isGroup: false,
@@ -1157,7 +1201,25 @@ export class ContactSettingsPanel {
                 logger.warn('clear memory tables for new chat failed', err);
             }
         }
-        this.chatStore.startNewChat(sid, raw.trim(), { memoryTableSnapshot });
+        const archiveId = this.chatStore.startNewChat(sid, raw.trim(), { memoryTableSnapshot });
+        if (archiveId && archivePointer) {
+            try {
+                await window.appBridge?.setArchivePointerForArchive?.(sid, archiveId, archivePointer, {
+                    fallbackSnapshot: memoryTableSnapshot,
+                    source: 'contact_start_new_chat_save_archive',
+                });
+            } catch (err) {
+                logger.warn('persist archive pointer for new chat archive failed', err);
+            }
+        }
+        try {
+            await window.appBridge?.restoreMemoryForActiveThread?.(sid, {
+                refreshBaselineWhenNoTail: true,
+                source: 'start_new_chat_contact',
+            });
+        } catch (err) {
+            logger.warn('refresh turn checkpoint baseline after new chat failed', err);
+        }
         window.toastr?.success('已开启新聊天');
         this.onSaved?.({ id: sid, forceRefresh: true });
         this.hide();

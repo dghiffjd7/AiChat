@@ -393,7 +393,12 @@ impl MemoryDb {
                 sql.push_str(" WHERE ");
                 sql.push_str(&clauses.join(" AND "));
             }
-            sql.push_str(" ORDER BY is_pinned DESC, priority DESC, updated_at DESC");
+            sql.push_str(
+                " ORDER BY is_pinned DESC, priority DESC,
+                  CASE WHEN sort_order IS NULL OR sort_order = 0 THEN created_at ELSE sort_order END ASC,
+                  created_at ASC,
+                  id ASC",
+            );
 
             let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
             let rows = stmt

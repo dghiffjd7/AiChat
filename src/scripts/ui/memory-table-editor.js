@@ -3,6 +3,14 @@ import {
   isRpSessionId,
   tableMatchesMemoryContext,
 } from '../memory/memory-context-utils.js';
+import {
+  buildMemoryTimelineLabel,
+  computeNextMemoryRowSortOrder,
+  extractMemoryTimelineRound,
+  getMemoryRowSortOrder,
+  isTimelineMemoryTableId,
+  sortMemoryRows,
+} from '../memory/memory-row-order.js';
 import { logger } from '../utils/logger.js';
 import { appConfirm } from './app-confirm.js';
 
@@ -90,6 +98,38 @@ const filterRowsByScope = (rows, table, ctx = null) => {
   }
   if (scope === 'group') return rows.filter(row => row?.group_id);
   return rows;
+};
+
+const resolveRowSortOrderForSave = ({ tableId = '', rowData = {}, existingRow = null, siblingRows = [] } = {}) => {
+  const normalizedTableId = String(tableId || '').trim();
+  if (isTimelineMemoryTableId(normalizedTableId)) {
+    const round = extractMemoryTimelineRound(rowData?.time);
+    if (round !== null) return round;
+    const existingOrder = getMemoryRowSortOrder(existingRow);
+    if (existingOrder !== null) return existingOrder;
+    return computeNextMemoryRowSortOrder(siblingRows, normalizedTableId);
+  }
+  if (existingRow) {
+    const existingOrder = getMemoryRowSortOrder(existingRow);
+    if (existingOrder !== null) return existingOrder;
+    return null;
+  }
+  return computeNextMemoryRowSortOrder(siblingRows, normalizedTableId);
+};
+
+const normalizeTimelineRowDataForSave = (tableId, rowData = {}, fallbackTurn = null) => {
+  if (!isTimelineMemoryTableId(tableId)) return rowData;
+  const next = { ...(rowData || {}) };
+  const round = extractMemoryTimelineRound(next.time);
+  if (round !== null) {
+    next.time = buildMemoryTimelineLabel(round);
+    return next;
+  }
+  const fallbackRound = Math.trunc(Number(fallbackTurn));
+  if (Number.isFinite(fallbackRound) && fallbackRound >= 0) {
+    next.time = buildMemoryTimelineLabel(fallbackRound);
+  }
+  return next;
 };
 
 const buildWorldbookEntriesForTable = (table, rows) => {
@@ -918,14 +958,15 @@ export class MemoryTableEditor {
     const list = document.createElement('div');
     list.style.cssText = 'display:flex; flex-direction:column; gap:8px; max-height:220px; overflow-y:auto; padding-right:4px;';
     const rows = this.filterRows(scopedRows);
-    if (!rows.length) {
+    const orderedRows = sortMemoryRows(rows, { tableId: table.id });
+    if (!orderedRows.length) {
       const empty = document.createElement('div');
       empty.className = 'memory-table-empty';
       empty.style.cssText = 'font-size:12px; color:var(--app-text-muted); padding:6px 4px;';
       empty.textContent = this.searchTerm ? '无匹配内容' : '暂无记忆条目';
       list.appendChild(empty);
     } else {
-      for (const row of rows) {
+      for (const row of orderedRows) {
         if (row?.id) this.visibleIds.add(row.id);
         list.appendChild(this.renderRowItem(row, table, ctx));
       }
@@ -1186,10 +1227,20 @@ export class MemoryTableEditor {
 
     this.modalMeta = { activeInput, pinInput, priorityInput };
     this.__onSave = async () => {
-      const rowData = {};
+      const rawRowData = {};
       for (const field of this.modalFields) {
-        rowData[field.id] = field.getValue();
+        rawRowData[field.id] = field.getValue();
       }
+      const allRows = this.memories.filter(item => String(item?.table_id || '') === String(table?.id || ''));
+      const scopedRows = filterRowsByScope(allRows, table, ctx).filter(item => String(item?.id || '') !== String(row?.id || ''));
+      const fallbackTurn = isTimelineMemoryTableId(table?.id) ? scopedRows.length + (row ? 0 : 1) : null;
+      const rowData = normalizeTimelineRowDataForSave(table?.id, rawRowData, fallbackTurn);
+      const sortOrder = resolveRowSortOrderForSave({
+        tableId: table?.id,
+        rowData,
+        existingRow: row,
+        siblingRows: scopedRows,
+      });
       const contactId = table.scope === 'contact' ? String(ctx.contactId || '') : null;
       const groupId = table.scope === 'group' ? String(ctx.groupId || '') : null;
       const payload = {
@@ -1201,6 +1252,7 @@ export class MemoryTableEditor {
         is_active: Boolean(activeInput.checked),
         is_pinned: Boolean(pinInput.checked),
         priority: Number(priorityInput.value || 0) || 0,
+        ...(Number.isFinite(Number(sortOrder)) && Number(sortOrder) > 0 ? { sort_order: Number(sortOrder) } : {}),
       };
       try {
         if (row) {
@@ -1210,6 +1262,7 @@ export class MemoryTableEditor {
             is_active: Boolean(activeInput.checked),
             is_pinned: Boolean(pinInput.checked),
             priority: Number(priorityInput.value || 0) || 0,
+            ...(Number.isFinite(Number(sortOrder)) && Number(sortOrder) > 0 ? { sort_order: Number(sortOrder) } : {}),
           });
         } else {
           await this.memoryStore.createMemory(payload);

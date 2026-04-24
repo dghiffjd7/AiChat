@@ -35,6 +35,7 @@ import {
   normalizeTokenMode,
   parseMemoryPromptPositions,
 } from '../memory/memory-prompt-utils.js';
+import { resolveMemoryRowOrderKey } from '../memory/memory-row-order.js';
 import {
   getMemoryContextType,
   getSummaryTableIdsForContext,
@@ -256,6 +257,106 @@ const buildTimeContextText = () => {
   return `<TimeContext:当前真实时间是${date} ${weekday} ${time}（24小时制），现在是${period}时段，${season}。注意：仅在开启新话题、或对话长时间中断后、或对方主动问候时，才适合使用时间问候语。否则请将此信息作为背景自然融入对话。>`;
 };
 
+const PROMPT_CACHE_DEBUG_PREVIEW_CHARS = 72;
+const PROMPT_CACHE_DEBUG_PREFIX_CHAR_BUDGET = 12000;
+
+const hashPromptCacheDebugText = (value = '') => {
+  const input = String(value || '');
+  let hash = 2166136261;
+  for (let i = 0; i < input.length; i += 1) {
+    hash ^= input.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36);
+};
+
+const stringifyPromptCacheDebugContent = (content) => {
+  if (Array.isArray(content)) {
+    return content
+      .map((part) => {
+        if (!part || typeof part !== 'object') return '';
+        if (part.type === 'text') return String(part.text || '');
+        if (part.type === 'image_url') return '[image_url]';
+        if (part.type === 'input_audio') return '[input_audio]';
+        return part.type ? `[${String(part.type)}]` : '';
+      })
+      .filter(Boolean)
+      .join('\n');
+  }
+  return String(content ?? '');
+};
+
+const normalizePromptCacheDebugText = (value = '') =>
+  String(value || '').replace(/\s+/g, ' ').trim();
+
+const buildPromptCacheDebugSnapshot = (messages = []) => {
+  const items = [];
+  let totalChars = 0;
+  let prefixChars = 0;
+  let prefixSource = '';
+  const list = Array.isArray(messages) ? messages : [];
+  list.forEach((msg, index) => {
+    const role = String(msg?.role || 'system').trim().toLowerCase() || 'system';
+    const name = String(msg?.name || '').trim();
+    const text = normalizePromptCacheDebugText(stringifyPromptCacheDebugContent(msg?.content));
+    const len = text.length;
+    const hash = hashPromptCacheDebugText(text);
+    const preview = text.slice(0, PROMPT_CACHE_DEBUG_PREVIEW_CHARS);
+    items.push({ index, role, name, len, hash, preview });
+    totalChars += len;
+    if (prefixChars < PROMPT_CACHE_DEBUG_PREFIX_CHAR_BUDGET) {
+      const remaining = PROMPT_CACHE_DEBUG_PREFIX_CHAR_BUDGET - prefixChars;
+      const chunk = text.slice(0, remaining);
+      prefixSource += `#${index}:${role}:${name}:${chunk}\n`;
+      prefixChars += chunk.length;
+    }
+  });
+  return {
+    messageCount: items.length,
+    totalChars,
+    prefixHash: hashPromptCacheDebugText(prefixSource),
+    items,
+  };
+};
+
+const comparePromptCacheDebugSnapshot = (prev, next) => {
+  const prevItems = Array.isArray(prev?.items) ? prev.items : [];
+  const nextItems = Array.isArray(next?.items) ? next.items : [];
+  const max = Math.max(prevItems.length, nextItems.length);
+  let stablePrefixChars = 0;
+  for (let i = 0; i < max; i += 1) {
+    const left = prevItems[i] || null;
+    const right = nextItems[i] || null;
+    const same = Boolean(
+      left &&
+      right &&
+      left.role === right.role &&
+      left.name === right.name &&
+      left.len === right.len &&
+      left.hash === right.hash
+    );
+    if (!same) {
+      return {
+        identical: false,
+        firstDiffIndex: i,
+        stablePrefixMessages: i,
+        stablePrefixChars,
+        prev: left,
+        next: right,
+      };
+    }
+    stablePrefixChars += Number(left?.len || 0);
+  }
+  return {
+    identical: true,
+    firstDiffIndex: -1,
+    stablePrefixMessages: prevItems.length,
+    stablePrefixChars,
+    prev: null,
+    next: null,
+  };
+};
+
 const formatSince = (ts) => {
   const t = Number(ts || 0);
   if (!Number.isFinite(t) || t <= 0) return '';
@@ -323,6 +424,7 @@ class AppBridge {
     this.lastMemoryUpdateBySession = {};
     this.lastWorldBudgetWarningAt = 0;
     this.lastWorldInjectionDebug = null;
+    this.lastPromptCacheDebugBySession = new Map();
     this.hydrateWorldSessionMap();
     this.hydrateGlobalWorldId();
     this.hydrateWorldGlobalSettings();
@@ -479,6 +581,38 @@ class AppBridge {
       ...extraContext,
     };
     return this.macroEngine.process(text, ctx);
+  }
+
+  emitPromptCacheDebug(sessionId, messages, { provider = '', model = '', stream = false, requestId = '' } = {}) {
+    const sid = String(sessionId || this.activeSessionId || 'default').trim() || 'default';
+    const snapshot = buildPromptCacheDebugSnapshot(messages);
+    const prev = this.lastPromptCacheDebugBySession.get(sid) || null;
+    const diff = comparePromptCacheDebugSnapshot(prev, snapshot);
+    const mode = prev ? (diff.identical ? 'unchanged' : 'changed') : 'baseline';
+    emitDebugLog({
+      source: 'prompt-cache',
+      type: 'info',
+      message:
+        `session=${sid} provider=${String(provider || '').trim() || '-'} model=${String(model || '').trim() || '-'} ` +
+        `stream=${stream ? 1 : 0} requestId=${String(requestId || '').trim() || '-'} msgs=${snapshot.messageCount} ` +
+        `chars=${snapshot.totalChars} prefixHash=${snapshot.prefixHash} mode=${mode}` +
+        (prev ? ` stablePrefixMsgs=${diff.stablePrefixMessages} stablePrefixChars=${diff.stablePrefixChars}` : ''),
+    });
+    if (prev && !diff.identical) {
+      const prevItem = diff.prev
+        ? `${diff.prev.role}[len=${diff.prev.len},hash=${diff.prev.hash}] ${diff.prev.preview}`
+        : '(none)';
+      const nextItem = diff.next
+        ? `${diff.next.role}[len=${diff.next.len},hash=${diff.next.hash}] ${diff.next.preview}`
+        : '(none)';
+      emitDebugLog({
+        source: 'prompt-cache',
+        type: 'warn',
+        message: `firstDiffIndex=${diff.firstDiffIndex} prev=${prevItem} | next=${nextItem}`,
+      });
+    }
+    this.lastPromptCacheDebugBySession.set(sid, snapshot);
+    return snapshot;
   }
 
   cancelCurrentGeneration(reason = 'user') {
@@ -812,17 +946,7 @@ class AppBridge {
         const table = tableById.get(tableId);
         return table ? rowMatchesTableScope(row, table) : false;
       });
-    const resolveRowSortKey = (row, fallback = 0) => {
-      const updatedAt = Number(row?.updated_at);
-      if (Number.isFinite(updatedAt) && updatedAt > 0) return updatedAt;
-      const createdAt = Number(row?.created_at);
-      if (Number.isFinite(createdAt) && createdAt > 0) return createdAt;
-      const updatedAlt = Number(row?.updatedAt);
-      if (Number.isFinite(updatedAlt) && updatedAlt > 0) return updatedAlt;
-      const createdAlt = Number(row?.createdAt);
-      if (Number.isFinite(createdAlt) && createdAlt > 0) return createdAlt;
-      return fallback;
-    };
+    const resolveRowSortKey = (row, tableId = '', fallback = 0) => resolveMemoryRowOrderKey(row, tableId, fallback);
     const limitedRows = (() => {
       const grouped = new Map();
       const kept = [];
@@ -842,8 +966,9 @@ class AppBridge {
           return;
         }
         list.sort((a, b) => {
-          const ak = resolveRowSortKey(a.row, a.index);
-          const bk = resolveRowSortKey(b.row, b.index);
+          const tableId = String(a.row?.table_id || b.row?.table_id || '').trim();
+          const ak = resolveRowSortKey(a.row, tableId, a.index);
+          const bk = resolveRowSortKey(b.row, tableId, b.index);
           if (ak !== bk) return ak - bk;
           return a.index - b.index;
         });
@@ -888,13 +1013,7 @@ class AppBridge {
         if (parts.length && parts[parts.length - 1] !== '') parts.push('');
       };
       const resolvePromptSortKeyForTable = (row, tableId, fallback = 0) => {
-        const normalizedTableId = String(tableId || '').trim();
-        if (!isSummaryTableId(normalizedTableId)) return fallback;
-        const timeText = normalizeMemoryCell(row?.row_data?.time).replace(/\s*\r?\n\s*/g, ' / ').trim();
-        const match = timeText.match(/第\s*(\d+)\s*轮/);
-        if (!match) return fallback;
-        const round = Number(match[1]);
-        return Number.isFinite(round) ? round : fallback;
+        return resolveMemoryRowOrderKey(row, tableId, fallback);
       };
       const sortRowsForPrompt = (rows = [], tableId = '') => {
         const list = Array.isArray(rows) ? rows.slice() : [];
@@ -2301,6 +2420,7 @@ class AppBridge {
       };
       const preparedRequest = this.client?.prepareChatRequest?.(messages, requestOptions) || null;
       const responsePrefix = String(preparedRequest?.responsePrefix || '');
+      const sessionId = String(nextContext?.session?.id || this.activeSessionId || 'default').trim() || 'default';
 
       logger.debug('发送消息到 LLM:', { messageCount: messages.length, stream: config.stream });
       // Debug: keep the exact request payload used for the latest generation
@@ -2319,6 +2439,16 @@ class AppBridge {
         responsePrefix,
         worldDebug: this.lastWorldInjectionDebug || null,
       };
+      this.lastRequest.promptCacheDebug = this.emitPromptCacheDebug(
+        sessionId,
+        preparedRequest?.messages || messages,
+        {
+          provider: config?.provider,
+          model: config?.model,
+          stream: Boolean(config?.stream),
+          requestId: nativeRequestId,
+        },
+      );
 
       if (config.stream) {
         streaming = true;
@@ -2587,6 +2717,12 @@ class AppBridge {
 	    const hasLastUserMessagePlaceholder = (raw) => lastUserMessageRe.test(String(raw || ''));
 	    let usedLastUserMessageForPendingInput = false;
 	    let syntheticAssistantDowngradeCount = 0;
+      let timeContextAfterHistoryInserted = false;
+      const insertTimeContextAfterHistory = () => {
+        if (timeContextAfterHistoryInserted || !timeContextBlock) return;
+        messages.push(timeContextBlock);
+        timeContextAfterHistoryInserted = true;
+      };
 	    const normalizeRequestRole = (role) => {
 	      const normalizedRole = String(role || '').trim().toLowerCase();
 	      return normalizedRole === 'user' || normalizedRole === 'assistant' || normalizedRole === 'system'
@@ -3871,7 +4007,6 @@ const stringifyMessageContent = (content) => {
       })();
       const historyRecallBlocks = (() => {
 	        const blocks = [];
-          if (timeContextBlock) blocks.push(timeContextBlock);
           blocks.push({ role: 'system', content: HISTORY_RECALL_NOTICE });
 	        const momentData = buildMomentCommentDataBlock();
 	        if (momentData) blocks.push(momentData);
@@ -3940,6 +4075,7 @@ const stringifyMessageContent = (content) => {
           insertMemoryPromptAt('before_chat');
           messages.push(...historyRecallBlocks);
           if (history.length) messages.push(...history);
+          insertTimeContextAfterHistory();
           insertPendingUserIntoHistory();
           insertChatGuideAfterHistory();
           historyInserted = true;
@@ -4029,6 +4165,7 @@ const stringifyMessageContent = (content) => {
         insertMemoryPromptAt('before_chat');
         messages.push(...historyRecallBlocks);
         if (history.length) messages.push(...history);
+        insertTimeContextAfterHistory();
         insertPendingUserIntoHistory();
         insertChatGuideAfterHistory();
       }
@@ -4309,7 +4446,6 @@ const stringifyMessageContent = (content) => {
 	    }
 
 		    insertMemoryPromptAt('before_chat');
-        if (timeContextBlock) messages.push(timeContextBlock);
 		    messages.push({ role: 'system', content: HISTORY_RECALL_NOTICE });
 	    try {
 	      const momentData = buildMomentCommentDataBlock();
@@ -4395,6 +4531,7 @@ const stringifyMessageContent = (content) => {
 	      });
 	      messages.push(...historyForSend);
 	    }
+    insertTimeContextAfterHistory();
     if (chatGuideDepthContent) {
       messages.push({ role: 'system', content: chatGuideDepthContent });
     }

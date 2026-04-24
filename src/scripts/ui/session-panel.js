@@ -352,6 +352,9 @@ export class SessionPanel {
 
     // 迁移聊天记录
     this.store.rename(id, nextId);
+    window.appBridge?.renameSessionTurnCheckpointState?.(id, nextId).catch?.(err => {
+      logger.warn('rename session checkpoint state failed', err);
+    });
 
     this.switchTo(nextId);
     this.refresh();
@@ -415,6 +418,9 @@ export class SessionPanel {
     }
 
     this.store.delete(id);
+    window.appBridge?.clearSessionTurnCheckpointState?.(id).catch?.(err => {
+      logger.warn('clear session checkpoint state failed', err);
+    });
     this.contactsStore?.removeContact?.(id);
     this.refresh();
     const current = this.store.getCurrent();

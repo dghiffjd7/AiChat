@@ -5,6 +5,7 @@
 import { handleSSE } from '../stream.js';
 import { createLinkedAbortController, splitRequestOptions } from '../abort.js';
 import { prepareTransportRequest } from '../transport.js';
+import { emitDebugLog } from '../../utils/debug-log.js';
 import {
   ensureTailAssistantPrefillUserTurn,
   isDeepSeekApiRequest,
@@ -53,6 +54,88 @@ const makeAbortError = () => {
   const err = new Error('Aborted');
   err.name = 'AbortError';
   return err;
+};
+
+const CACHE_DEBUG_RESPONSE_HEADER_KEYS = [
+  'cf-cache-status',
+  'x-cache',
+  'x-cache-status',
+  'x-request-id',
+  'request-id',
+  'x-openai-request-id',
+];
+
+const pickCacheDebugHeaders = (headers = {}) => {
+  const src = headers && typeof headers === 'object' ? headers : {};
+  const out = {};
+  Object.entries(src).forEach(([rawKey, rawValue]) => {
+    const key = String(rawKey || '').trim().toLowerCase();
+    if (!key) return;
+    if (CACHE_DEBUG_RESPONSE_HEADER_KEYS.includes(key) || key.includes('cache')) {
+      out[key] = String(rawValue ?? '').trim();
+    }
+  });
+  return out;
+};
+
+const extractCacheDebugUsage = (body = {}) => {
+  const usage = body?.usage && typeof body.usage === 'object' ? body.usage : {};
+  const promptTokensDetails =
+    usage?.prompt_tokens_details && typeof usage.prompt_tokens_details === 'object'
+      ? usage.prompt_tokens_details
+      : {};
+  const metrics = {};
+  const assign = (key, value) => {
+    const num = Number(value);
+    if (!Number.isFinite(num)) return;
+    metrics[key] = num;
+  };
+  assign('prompt_tokens', usage?.prompt_tokens);
+  assign('completion_tokens', usage?.completion_tokens);
+  assign('total_tokens', usage?.total_tokens);
+  assign('prompt_cache_hit_tokens', usage?.prompt_cache_hit_tokens);
+  assign('prompt_cache_miss_tokens', usage?.prompt_cache_miss_tokens);
+  assign('cache_creation_input_tokens', usage?.cache_creation_input_tokens);
+  assign('cache_read_input_tokens', usage?.cache_read_input_tokens);
+  assign('cached_tokens', usage?.cached_tokens);
+  assign('prompt_cached_tokens', promptTokensDetails?.cached_tokens);
+  assign('input_cached_tokens', usage?.input_cached_tokens);
+  return metrics;
+};
+
+const formatCacheDebugHeaders = (headers = {}) => {
+  const entries = Object.entries(headers || {}).filter(([, value]) => String(value || '').trim());
+  if (!entries.length) return 'none';
+  return entries.map(([key, value]) => `${key}=${value}`).join(', ');
+};
+
+const formatCacheDebugUsage = (usage = {}) => {
+  const entries = Object.entries(usage || {}).filter(([, value]) => Number.isFinite(Number(value)));
+  if (!entries.length) return 'none';
+  return entries.map(([key, value]) => `${key}=${value}`).join(', ');
+};
+
+const emitOpenAICacheDebug = ({
+  phase = 'response',
+  provider = '',
+  model = '',
+  url = '',
+  stream = false,
+  requestId = '',
+  status = 0,
+  headers = {},
+  body = null,
+} = {}) => {
+  const pickedHeaders = pickCacheDebugHeaders(headers);
+  const usage = extractCacheDebugUsage(body);
+  emitDebugLog({
+    source: 'llm-cache',
+    type: 'info',
+    message:
+      `phase=${phase} provider=${String(provider || '').trim() || '-'} model=${String(model || '').trim() || '-'} ` +
+      `stream=${stream ? 1 : 0} status=${Number(status || 0)} requestId=${String(requestId || '').trim() || '-'} ` +
+      `url=${String(url || '').trim() || '-'} headers=${formatCacheDebugHeaders(pickedHeaders)} usage=${formatCacheDebugUsage(usage)}`,
+  });
 };
 
 const estimateOpenAIRequestChars = ({ model, messages, stream, options } = {}) => {
@@ -344,9 +427,10 @@ export class OpenAIProvider {
         `请求过大（约 ${Math.round(estimatedChars / 1024)} KB），可能导致 Android WebView OOM；请减少历史/摘要/世界书注入或清理该聊天室。`,
       );
     }
+    let res;
     let data;
     try {
-      data = await this.requestJson({
+      res = await this.request({
         url: prepared.url,
         method: 'POST',
         headers: this.getHeaders(),
@@ -357,9 +441,35 @@ export class OpenAIProvider {
         signal,
         requestId,
       });
+      if (!res.ok) {
+        const detail = this.extractErrorDetail(res.body);
+        const error = new Error(`OpenAI API Error: ${res.status}${detail ? ` - ${detail}` : ''}`);
+        error.status = res.status;
+        error.response = res.body;
+        throw error;
+      }
+      try {
+        data = JSON.parse(res.body || '{}');
+      } catch (e) {
+        const error = new Error(`Invalid JSON response: ${e.message}`);
+        error.status = res.status;
+        error.response = res.body;
+        throw error;
+      }
     } catch (error) {
       throw attachMessageIndexDiagnostics(error, messages);
     }
+    emitOpenAICacheDebug({
+      phase: 'chat',
+      provider: this.provider,
+      model: this.model,
+      url: prepared.url,
+      stream: false,
+      requestId,
+      status: res?.status,
+      headers: res?.headers,
+      body: data,
+    });
 
     return data.choices?.[0]?.message?.content ?? '';
   }
@@ -413,10 +523,23 @@ export class OpenAIProvider {
         error.response = res.body;
         throw attachMessageIndexDiagnostics(error, messages);
       }
+      let lastUsage = null;
       for (const data of parseSSEText(res.body)) {
+        if (data?.usage && typeof data.usage === 'object') lastUsage = data;
         const content = data.choices?.[0]?.delta?.content;
         if (content) yield content;
       }
+      emitOpenAICacheDebug({
+        phase: 'stream-native',
+        provider: this.provider,
+        model: this.model,
+        url: prepared.url,
+        stream: true,
+        requestId,
+        status: res?.status,
+        headers: res?.headers,
+        body: lastUsage,
+      });
       return;
     }
 
@@ -444,12 +567,29 @@ export class OpenAIProvider {
         throw attachMessageIndexDiagnostics(error, messages);
       }
 
+      const responseHeaders = {};
+      response.headers.forEach((value, key) => {
+        responseHeaders[key] = value;
+      });
+      let lastUsage = null;
       for await (const data of handleSSE(response)) {
+        if (data?.usage && typeof data.usage === 'object') lastUsage = data;
         const content = data.choices?.[0]?.delta?.content;
         if (content) {
           yield content;
         }
       }
+      emitOpenAICacheDebug({
+        phase: 'stream-fetch',
+        provider: this.provider,
+        model: this.model,
+        url: transport.url,
+        stream: true,
+        requestId,
+        status: response?.status,
+        headers: responseHeaders,
+        body: lastUsage,
+      });
     } finally {
       cleanup();
     }

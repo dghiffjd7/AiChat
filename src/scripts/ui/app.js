@@ -2,6 +2,14 @@ import { LLMClient } from '../api/client.js';
 import { isDeepSeekApiRequest } from '../api/providers/deepseek-compat.js';
 import { extractTableEditBlocks, stripTableEditBlocks } from '../memory/memory-edit-parser.js';
 import { isSummaryTableId, normalizeMemoryUpdateMode } from '../memory/memory-prompt-utils.js';
+import {
+  buildMemoryTimelineLabel,
+  computeNextMemoryRowSortOrder,
+  extractMemoryTimelineRound,
+  getMemoryRowSortOrder,
+  isTimelineMemoryTableId,
+  sortMemoryRowsForSnapshot,
+} from '../memory/memory-row-order.js';
 import { getMemoryContextType, resolveMemorySessionMode, tableMatchesMemoryContext } from '../memory/memory-context-utils.js';
 import { appSettings } from '../storage/app-settings.js';
 import { renderTemplateTextAsync, templateSettings } from '../plugins/template-engine.js';
@@ -11,12 +19,14 @@ import { ConfigManager } from '../storage/config.js';
 import { ContactsStore } from '../storage/contacts-store.js';
 import { GroupStore } from '../storage/group-store.js';
 import { MemoryTableStore } from '../storage/memory-table-store.js';
+import { MemorySnapshotStore } from '../storage/memory-snapshot-store.js';
 import { MemoryTemplateStore } from '../storage/memory-template-store.js';
 import { MomentSummaryStore } from '../storage/moment-summary-store.js';
 import { MomentsStore } from '../storage/moments-store.js';
 import { PersonaStore } from '../storage/persona-store.js';
 import { PluginStore } from '../storage/plugin-store.js';
 import { RpSessionStore } from '../storage/rp-session-store.js';
+import { TurnCheckpointStore, collectCheckpointSnapshotIds } from '../storage/turn-checkpoint-store.js';
 import { UserStore } from '../storage/user-store.js';
 import { stickerPackStore } from '../storage/sticker-pack-store.js';
 import { normalizeScopeId } from '../storage/store-scope.js';
@@ -535,9 +545,17 @@ const initApp = async () => {
   try {
     window.appBridge.setMemoryTableStore?.(memoryTableStore);
   } catch {}
+  const memorySnapshotStore = new MemorySnapshotStore();
+  try {
+    window.appBridge.memorySnapshotStore = memorySnapshotStore;
+  } catch {}
   const memoryTemplateStore = new MemoryTemplateStore();
   try {
     window.appBridge.setMemoryTemplateStore?.(memoryTemplateStore);
+  } catch {}
+  const turnCheckpointStore = new TurnCheckpointStore();
+  try {
+    window.appBridge.turnCheckpointStore = turnCheckpointStore;
   } catch {}
   const memoryTemplatePanel = new MemoryTemplatePanel({
     templateStore: memoryTemplateStore,
@@ -604,6 +622,8 @@ const initApp = async () => {
     const results = await Promise.allSettled([
       memoryTableStore.setScope?.(initialScopeKey),
       memoryTemplateStore.setScope?.(initialScopeKey),
+      memorySnapshotStore.setScope?.(initialScopeKey),
+      turnCheckpointStore.setScope?.(initialScopeKey),
     ]);
     const failed = results.filter(item => item?.status === 'rejected');
     if (failed.length) {
@@ -1138,6 +1158,8 @@ const initApp = async () => {
       rpSessionStore.setScope?.(nextKey),
       memoryTableStore.setScope?.(nextKey),
       memoryTemplateStore.setScope?.(nextKey),
+      memorySnapshotStore.setScope?.(nextKey),
+      turnCheckpointStore.setScope?.(nextKey),
     ]);
     try {
       await memoryTemplateStore.ensureDefaultTemplate?.();
@@ -2677,6 +2699,24 @@ ${listPart || '-（无）'}
   const formatSessionName = (sessionId, contact) => {
     const id = String(sessionId || '');
     const c = contact || contactsStore.getContact(id);
+    if (isRpSessionId(id)) {
+      let bridgedName = '';
+      try {
+        bridgedName = String(window.appBridge?.getRpCharacterNameForSession?.(id) || '').trim();
+        if (bridgedName && bridgedName !== '角色') return bridgedName;
+      } catch {}
+      try {
+        const personaId = id.slice(RP_SESSION_PREFIX.length);
+        const persona = personaStore.get?.(personaId) || getEffectivePersona(id) || {};
+        const source = persona?.source && typeof persona.source === 'object' ? persona.source : {};
+        const sourceName = String(source?.characterName || source?.cardName || '').trim();
+        if (sourceName) return sourceName;
+        const personaName = String(persona?.name || '').trim();
+        if (personaName) return personaName;
+      } catch {}
+      if (bridgedName) return bridgedName;
+      return '角色';
+    }
     const base = c?.name || (id.startsWith('group:') ? id.replace(/^group:/, '') : id);
     const isGroup = Boolean(c?.isGroup) || id.startsWith('group:');
     if (!isGroup) return base;
@@ -11613,6 +11653,22 @@ Phase G（Frame 36）：循环衔接
     ui.clearMessages();
     ui.hideTyping();
     ui.preloadHistory(decorateMessagesForDisplay(initialWithDivider, { sessionId }), { keepScroll: true });
+    hydrateTurnCheckpointsFromLoadedMessages(sessionId, { onlyMissing: true }).catch(err => {
+      logger.warn('hydrate turn checkpoints from loaded messages failed', err);
+    });
+    const currentArchiveId = getCurrentArchiveIdForSession(sessionId);
+    const restoreOnEnter = currentArchiveId
+      ? restoreArchivePointerForLoadedThread(sessionId, {
+          refreshBaselineWhenNoTail: true,
+          source: 'enter_chat_room_archive',
+        })
+      : restoreMemoryFromCurrentTailAssistant(sessionId, {
+          refreshBaselineWhenNoTail: true,
+          source: 'enter_chat_room',
+        });
+    Promise.resolve(restoreOnEnter).catch(err => {
+      logger.warn('restore tail assistant memory state on enter failed', err);
+    });
     chatStore.prefetchRawOriginals?.(sessionId).catch(() => {});
     // Keep a render cursor so we can lazy-load earlier messages when scrolling up.
     chatRenderState.set(sessionId, { start });
@@ -12892,7 +12948,7 @@ Phase G（Frame 36）：循环衔接
     } catch {
       rows = [];
     }
-    const picked = (Array.isArray(rows) ? rows : [])
+    const picked = sortMemoryRowsForSnapshot(Array.isArray(rows) ? rows : [])
       .map(row => {
         const tableId = String(row?.table_id || '').trim();
         if (!tableId) return null;
@@ -12950,7 +13006,7 @@ Phase G（Frame 36）：循环衔接
         }
       }
     }
-    const inputs = (Array.isArray(snapshot?.rows) ? snapshot.rows : [])
+    const inputs = sortMemoryRowsForSnapshot(Array.isArray(snapshot?.rows) ? snapshot.rows : [])
       .map(row => {
         const tableId = String(row?.table_id || '').trim();
         if (!tableId) return null;
@@ -13003,6 +13059,657 @@ Phase G（Frame 36）：循环衔接
     }
     return applied;
   };
+  const isTurnCheckpointSessionEnabled = sessionId => {
+    const sid = String(sessionId || '').trim();
+    if (!sid) return false;
+    if (getMemoryStorageMode() !== 'table') return false;
+    if (!memoryTableStore?.getMemories || !memoryTemplateStore) return false;
+    return true;
+  };
+  const getTurnCheckpointSessionScope = sessionId => {
+    const sid = String(sessionId || '').trim();
+    const contact = contactsStore.getContact(sid);
+    return {
+      isGroup: sid.startsWith('group:') || Boolean(contact?.isGroup),
+    };
+  };
+  const isCheckpointTrackedAssistantMessage = (message, sessionId = '') => {
+    if (!message || message.role !== 'assistant') return false;
+    if (message.status === 'pending' || message.status === 'sending') return false;
+    const sid = String(sessionId || message?.sessionId || chatStore.getCurrent() || '').trim();
+    if (!isTurnCheckpointSessionEnabled(sid)) return false;
+    const meta = message?.meta && typeof message.meta === 'object' ? message.meta : {};
+    if (meta.isGreeting) return false;
+    if (String(meta.kind || '').trim() === 'memory-table-push') return false;
+    return true;
+  };
+  const normalizeCheckpointSwipeState = message => {
+    const meta = message?.meta && typeof message.meta === 'object' ? message.meta : {};
+    let swipes = Array.isArray(meta.swipes) && meta.swipes.length
+      ? meta.swipes.map(branch => (branch && typeof branch === 'object' ? cloneSwipePlainObject(branch) : {}))
+      : [{
+          content: String(message?.content ?? ''),
+          raw: typeof message?.raw === 'string' ? message.raw : String(message?.content ?? ''),
+        }];
+    if (!swipes.length) {
+      swipes = [{
+        content: String(message?.content ?? ''),
+        raw: typeof message?.raw === 'string' ? message.raw : String(message?.content ?? ''),
+      }];
+    }
+    if (meta.memoryTableSnapshot && !swipes[0]?.memoryTableSnapshot) {
+      swipes[0].memoryTableSnapshot = cloneSwipePlainObject(meta.memoryTableSnapshot);
+    }
+    if (meta.memoryUpdateEntry && swipes[0]?.memoryUpdateEntry === undefined) {
+      swipes[0].memoryUpdateEntry = cloneSwipeMemoryUpdateEntry(meta.memoryUpdateEntry);
+    }
+    const rawActive = Math.trunc(Number(meta.activeSwipe));
+    const activeSwipeIndex = Number.isFinite(rawActive)
+      ? Math.min(Math.max(0, rawActive), Math.max(0, swipes.length - 1))
+      : 0;
+    return {
+      meta: cloneSwipePlainObject(meta) || {},
+      swipes,
+      activeSwipeIndex,
+    };
+  };
+  const findPreviousUserMessageIdForAssistant = (sessionId, assistantMessageId) => {
+    const sid = String(sessionId || '').trim();
+    const aid = String(assistantMessageId || '').trim();
+    if (!sid || !aid) return '';
+    const messages = chatStore.getMessages(sid) || [];
+    const idx = messages.findIndex(message => String(message?.id || '') === aid);
+    if (idx === -1) return '';
+    for (let i = idx - 1; i >= 0; i -= 1) {
+      const item = messages[i];
+      if (!item || item.role !== 'user') continue;
+      if (item?.meta?.generatedByAssistant === true) continue;
+      return String(item.id || '').trim();
+    }
+    return '';
+  };
+  const resolveTurnIndexForAssistant = (sessionId, assistantMessageId, userMessageId = '') => {
+    const sid = String(sessionId || '').trim();
+    const aid = String(assistantMessageId || '').trim();
+    if (!sid || !aid) return 0;
+    const messages = chatStore.getMessages(sid) || [];
+    let targetUserId = String(userMessageId || '').trim();
+    if (!targetUserId) targetUserId = findPreviousUserMessageIdForAssistant(sid, aid);
+    if (!targetUserId) return 0;
+    let count = 0;
+    for (const item of messages) {
+      if (!item || item.role !== 'user' || item?.meta?.generatedByAssistant === true) continue;
+      count += 1;
+      if (String(item.id || '') === targetUserId) return count;
+    }
+    return count;
+  };
+  const resolveAssistantFloorForCheckpoint = (sessionId, assistantMessageId) => {
+    const sid = String(sessionId || '').trim();
+    const aid = String(assistantMessageId || '').trim();
+    if (!sid || !aid) return 0;
+    const messages = chatStore.getMessages(sid) || [];
+    let count = 0;
+    for (const item of messages) {
+      if (!isCheckpointTrackedAssistantMessage(item, sid)) continue;
+      count += 1;
+      if (String(item?.id || '') === aid) return count;
+    }
+    return count;
+  };
+  const findTailTrackedAssistantMessage = sessionId => {
+    const sid = String(sessionId || '').trim();
+    if (!sid) return null;
+    const messages = chatStore.getMessages(sid) || [];
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      if (isCheckpointTrackedAssistantMessage(messages[i], sid)) return messages[i];
+    }
+    return null;
+  };
+  const getCurrentArchiveIdForSession = sessionId => {
+    try {
+      return String(chatStore.getCurrentArchiveId?.(sessionId) || '').trim();
+    } catch {
+      return '';
+    }
+  };
+  const refreshTurnCheckpointSnapshotReachability = async (sessionId, { prune = false } = {}) => {
+    const sid = String(sessionId || '').trim();
+    if (!sid || !isTurnCheckpointSessionEnabled(sid)) return [];
+    const state = await turnCheckpointStore.getSessionState(sid);
+    const reachable = new Set(collectCheckpointSnapshotIds(state));
+    const baselineId = String(state?.baselineSnapshotId || '').trim();
+    if (baselineId) reachable.add(baselineId);
+    const ids = Array.from(reachable);
+    if (prune) return memorySnapshotStore.pruneUnreachable(sid, ids);
+    await memorySnapshotStore.markReachable(sid, ids);
+    return ids;
+  };
+  const ensureSessionBaselineCheckpointSnapshot = async (sessionId, { force = false, snapshot = null } = {}) => {
+    const sid = String(sessionId || '').trim();
+    if (!sid || !isTurnCheckpointSessionEnabled(sid)) return '';
+    if (!force) {
+      const existingId = await turnCheckpointStore.getBaselineSnapshotId(sid);
+      if (existingId) return existingId;
+    }
+    const { isGroup } = getTurnCheckpointSessionScope(sid);
+    const sourceSnapshot = snapshot || await buildSwipeMemoryTableSnapshot(sid, { isGroup });
+    if (!sourceSnapshot) return '';
+    const persisted = await memorySnapshotStore.persistSnapshot(sid, sourceSnapshot);
+    const snapshotId = String(persisted?.id || '').trim();
+    if (!snapshotId) return '';
+    await turnCheckpointStore.setBaselineSnapshotId(sid, snapshotId);
+    await refreshTurnCheckpointSnapshotReachability(sid);
+    return snapshotId;
+  };
+  const hydrateTurnCheckpointsFromLoadedMessages = async (sessionId, { onlyMissing = true } = {}) => {
+    const sid = String(sessionId || '').trim();
+    if (!sid || !isTurnCheckpointSessionEnabled(sid)) return 0;
+    const messages = chatStore.getMessages(sid) || [];
+    let migrated = 0;
+    for (const message of messages) {
+      if (!isCheckpointTrackedAssistantMessage(message, sid)) continue;
+      const messageId = String(message?.id || '').trim();
+      if (!messageId) continue;
+      if (onlyMissing) {
+        const existing = await turnCheckpointStore.getCheckpoint(sid, messageId);
+        if (existing) continue;
+      }
+      const meta = message?.meta && typeof message.meta === 'object' ? message.meta : {};
+      const hasInlineSnapshot =
+        Boolean(meta.memoryTableSnapshot) ||
+        (Array.isArray(meta.swipes) && meta.swipes.some(branch => branch && branch.memoryTableSnapshot));
+      if (!hasInlineSnapshot) continue;
+      await syncTurnCheckpointForMessage(sid, message, { setPointer: false });
+      migrated += 1;
+    }
+    await ensureSessionBaselineCheckpointSnapshot(sid);
+    return migrated;
+  };
+  const restoreCheckpointBranchMemoryState = async (sessionId, branch, { isGroup, fallbackSnapshot = null } = {}) => {
+    const sid = String(sessionId || '').trim();
+    if (!sid || getMemoryStorageMode() !== 'table') return false;
+    const source = branch && typeof branch === 'object' ? branch : {};
+    const snapshotId = String(source.memorySnapshotId || '').trim();
+    let snapshot = source.memoryTableSnapshot || null;
+    if (!snapshot && snapshotId) {
+      try {
+        snapshot = await memorySnapshotStore.getSnapshot(snapshotId);
+      } catch (err) {
+        logger.warn('load checkpoint memory snapshot failed', err);
+      }
+    }
+    if (!snapshot && fallbackSnapshot) snapshot = fallbackSnapshot;
+    if (!snapshot) return false;
+    const applied = await applySwipeMemoryTableSnapshot(sid, snapshot, { isGroup });
+    if (applied) {
+      const entry = cloneSwipeMemoryUpdateEntry(source.memoryUpdateEntry);
+      window.appBridge?.setLastMemoryUpdate?.(sid, entry || null);
+    }
+    return applied;
+  };
+  const syncTurnCheckpointForMessage = async (sessionId, messageOrId, {
+    setPointer = true,
+    captureCurrentActiveState = false,
+    forcePointer = false,
+  } = {}) => {
+    const sid = String(sessionId || '').trim();
+    if (!sid || !isTurnCheckpointSessionEnabled(sid)) return null;
+    const message = typeof messageOrId === 'string'
+      ? chatStore.findMessage(messageOrId, sid)
+      : (messageOrId && typeof messageOrId === 'object' ? (chatStore.findMessage(messageOrId.id, sid) || messageOrId) : null);
+    if (!isCheckpointTrackedAssistantMessage(message, sid)) return null;
+    const messageId = String(message?.id || '').trim();
+    if (!messageId) return null;
+    const { isGroup } = getTurnCheckpointSessionScope(sid);
+    const normalizedState = normalizeCheckpointSwipeState(message);
+    const nextMeta = normalizedState.meta || {};
+    const nextSwipes = Array.isArray(normalizedState.swipes)
+      ? normalizedState.swipes.map(branch => cloneSwipePlainObject(branch) || {})
+      : [];
+    const activeSwipeIndex = Math.min(
+      Math.max(0, Number(normalizedState.activeSwipeIndex || 0)),
+      Math.max(0, nextSwipes.length - 1),
+    );
+    let currentSnapshot = null;
+    let currentMemoryEntry = null;
+    if (captureCurrentActiveState) {
+      currentSnapshot = await buildSwipeMemoryTableSnapshot(sid, { isGroup });
+      currentMemoryEntry = cloneSwipeMemoryUpdateEntry(window.appBridge?.getLastMemoryUpdate?.(sid));
+      if (currentSnapshot && nextSwipes[activeSwipeIndex]) {
+        nextSwipes[activeSwipeIndex].memoryTableSnapshot = cloneSwipePlainObject(currentSnapshot);
+        nextSwipes[activeSwipeIndex].memoryUpdateEntry = cloneSwipeMemoryUpdateEntry(currentMemoryEntry);
+        if (activeSwipeIndex === 0) {
+          nextMeta.memoryTableSnapshot = cloneSwipePlainObject(currentSnapshot);
+          nextMeta.memoryUpdateEntry = cloneSwipeMemoryUpdateEntry(currentMemoryEntry);
+        }
+      }
+    }
+    if (!nextSwipes.some(branch => branch && branch.draft !== true)) return null;
+    for (let index = 0; index < nextSwipes.length; index += 1) {
+      const branch = nextSwipes[index];
+      if (!branch || branch.draft === true) continue;
+      const snapshot = branch.memoryTableSnapshot || null;
+      if (snapshot) {
+        try {
+          const persisted = await memorySnapshotStore.persistSnapshot(sid, snapshot);
+          const snapshotId = String(persisted?.id || '').trim();
+          if (snapshotId) {
+            branch.memorySnapshotId = snapshotId;
+            if (index === 0) nextMeta.memorySnapshotId = snapshotId;
+          }
+        } catch (err) {
+          logger.warn('persist turn checkpoint snapshot failed', err);
+        }
+      }
+      if (branch.memoryUpdateEntry !== undefined && index === 0) {
+        nextMeta.memoryUpdateEntry = cloneSwipeMemoryUpdateEntry(branch.memoryUpdateEntry);
+      }
+      if (branch.memoryTableSnapshot && index === 0) {
+        nextMeta.memoryTableSnapshot = cloneSwipePlainObject(branch.memoryTableSnapshot);
+      }
+    }
+    nextMeta.swipes = nextSwipes;
+    nextMeta.activeSwipe = activeSwipeIndex;
+    chatStore.updateMessage(messageId, { meta: nextMeta }, sid);
+    const nonDraftBranches = nextSwipes
+      .map((branch, index) => ({ branch, index }))
+      .filter(item => item.branch && item.branch.draft !== true)
+      .map(({ branch, index }) => ({
+        swipeIndex: index,
+        state: branch?.draft === true ? 'provisional' : 'final',
+        replyState:
+          branch?.cancelled === true && String(branch?.content || branch?.raw || '').trim()
+            ? 'partial_cancelled'
+            : (branch?.failed === true ? 'failed' : 'complete'),
+        messageContent: String(branch?.content ?? ''),
+        messageRaw: typeof branch?.raw === 'string' ? branch.raw : String(branch?.content ?? ''),
+        memorySnapshotId: String(branch?.memorySnapshotId || '').trim(),
+        memoryUpdateEntry: cloneSwipeMemoryUpdateEntry(branch?.memoryUpdateEntry),
+        updatedAt: Date.now(),
+      }));
+    const userMessageId = findPreviousUserMessageIdForAssistant(sid, messageId);
+    const checkpoint = await turnCheckpointStore.upsertCheckpoint(sid, {
+      sessionId: sid,
+      assistantMessageId: messageId,
+      userMessageId,
+      turnIndex: resolveTurnIndexForAssistant(sid, messageId, userMessageId),
+      aiFloor: resolveAssistantFloorForCheckpoint(sid, messageId),
+      updatedAt: Date.now(),
+      activeSwipeIndex,
+      state: 'final',
+      branches: nonDraftBranches,
+    });
+    const tailAssistant = findTailTrackedAssistantMessage(sid);
+    if (setPointer && checkpoint && (forcePointer || String(tailAssistant?.id || '') === messageId)) {
+      await turnCheckpointStore.setPointer(sid, {
+        sessionId: sid,
+        tailAssistantMessageId: messageId,
+        tailSwipeIndex: activeSwipeIndex,
+        restoredAt: Date.now(),
+        source: forcePointer ? 'explicit_sync' : 'tail_sync',
+      });
+      const currentArchiveId = getCurrentArchiveIdForSession(sid);
+      if (currentArchiveId) {
+        const activeBranch = nextSwipes[activeSwipeIndex] || nextSwipes[0] || {};
+        await turnCheckpointStore.setArchivePointer(sid, currentArchiveId, {
+          sessionId: sid,
+          archiveId: currentArchiveId,
+          tailAssistantMessageId: messageId,
+          tailSwipeIndex: activeSwipeIndex,
+          memorySnapshotId: String(activeBranch?.memorySnapshotId || nextMeta.memorySnapshotId || '').trim(),
+          restoredAt: Date.now(),
+          source: forcePointer ? 'archive_explicit_sync' : 'archive_tail_sync',
+        });
+      }
+    }
+    await refreshTurnCheckpointSnapshotReachability(sid);
+    return checkpoint;
+  };
+  const restoreMemoryFromCurrentTailAssistant = async (sessionId, {
+    refreshBaselineWhenNoTail = false,
+    source = 'tail_restore',
+  } = {}) => {
+    const sid = String(sessionId || '').trim();
+    if (!sid || !isTurnCheckpointSessionEnabled(sid)) return false;
+    const { isGroup } = getTurnCheckpointSessionScope(sid);
+    const tailMessage = findTailTrackedAssistantMessage(sid);
+    if (!tailMessage) {
+      const baselineId = await ensureSessionBaselineCheckpointSnapshot(sid, { force: refreshBaselineWhenNoTail });
+      if (!baselineId) {
+        window.appBridge?.setLastMemoryUpdate?.(sid, null);
+        await turnCheckpointStore.clearPointer(sid);
+        return false;
+      }
+      const baselineSnapshot = await memorySnapshotStore.getSnapshot(baselineId);
+      const applied = await restoreCheckpointBranchMemoryState(sid, { memorySnapshotId: baselineId }, {
+        isGroup,
+        fallbackSnapshot: baselineSnapshot,
+      });
+      window.appBridge?.setLastMemoryUpdate?.(sid, null);
+      await turnCheckpointStore.clearPointer(sid);
+      return applied;
+    }
+    const messageId = String(tailMessage.id || '').trim();
+    const normalizedState = normalizeCheckpointSwipeState(tailMessage);
+    const checkpoint = await turnCheckpointStore.getCheckpoint(sid, messageId);
+    const activeSwipeIndex = Math.min(
+      Math.max(0, Number(normalizedState.activeSwipeIndex || 0)),
+      Math.max(0, normalizedState.swipes.length - 1),
+    );
+    const checkpointBranch = Array.isArray(checkpoint?.branches)
+      ? checkpoint.branches.find(branch => Number(branch?.swipeIndex) === activeSwipeIndex)
+      : null;
+    const inlineBranch = normalizedState.swipes[activeSwipeIndex] || normalizedState.swipes[0] || null;
+    const fallbackSnapshot =
+      inlineBranch?.memoryTableSnapshot ||
+      (activeSwipeIndex === 0 ? tailMessage?.meta?.memoryTableSnapshot || null : null);
+    let applied = await restoreCheckpointBranchMemoryState(
+      sid,
+      { ...(inlineBranch || {}), ...(checkpointBranch || {}) },
+      { isGroup, fallbackSnapshot },
+    );
+    if (!applied && !checkpoint && !fallbackSnapshot) {
+      try {
+        await syncTurnCheckpointForMessage(sid, tailMessage, {
+          setPointer: false,
+          captureCurrentActiveState: true,
+        });
+        const refreshedCheckpoint = await turnCheckpointStore.getCheckpoint(sid, messageId);
+        const refreshedBranch = Array.isArray(refreshedCheckpoint?.branches)
+          ? refreshedCheckpoint.branches.find(branch => Number(branch?.swipeIndex) === activeSwipeIndex)
+          : null;
+        if (refreshedBranch?.memorySnapshotId) {
+          applied = await restoreCheckpointBranchMemoryState(sid, refreshedBranch, { isGroup });
+        }
+      } catch (err) {
+        logger.warn('backfill tail turn checkpoint from current memory state failed', err);
+      }
+    }
+    if (applied) {
+      if (!checkpoint && (inlineBranch?.memoryTableSnapshot || fallbackSnapshot)) {
+        await syncTurnCheckpointForMessage(sid, tailMessage, { setPointer: false }).catch(err => {
+          logger.warn('hydrate tail turn checkpoint from inline snapshot failed', err);
+        });
+      }
+      await turnCheckpointStore.setPointer(sid, {
+        sessionId: sid,
+        tailAssistantMessageId: messageId,
+        tailSwipeIndex: activeSwipeIndex,
+        restoredAt: Date.now(),
+        source,
+      });
+    }
+    await ensureSessionBaselineCheckpointSnapshot(sid);
+    return applied;
+  };
+  const removeTurnCheckpointsForMessages = async (sessionId, messages = [], { prune = false } = {}) => {
+    const sid = String(sessionId || '').trim();
+    if (!sid || !isTurnCheckpointSessionEnabled(sid)) return false;
+    const list = Array.isArray(messages) ? messages : [messages];
+    const assistantIds = list
+      .map(item => {
+        if (!item) return '';
+        if (typeof item === 'string') return item;
+        if (item.role === 'assistant') return String(item.id || '').trim();
+        return '';
+      })
+      .filter(Boolean);
+    if (!assistantIds.length) return false;
+    await Promise.all(assistantIds.map(messageId => turnCheckpointStore.removeCheckpoint(sid, messageId)));
+    await refreshTurnCheckpointSnapshotReachability(sid, { prune });
+    return true;
+  };
+  const clearSessionTurnCheckpointState = async sessionId => {
+    const sid = String(sessionId || '').trim();
+    if (!sid) return false;
+    await turnCheckpointStore.clearSession(sid);
+    await memorySnapshotStore.clearSession(sid);
+    return true;
+  };
+  const renameSessionTurnCheckpointState = async (oldSessionId, newSessionId) => {
+    const from = String(oldSessionId || '').trim();
+    const to = String(newSessionId || '').trim();
+    if (!from || !to || from === to) return false;
+    await turnCheckpointStore.renameSession(from, to);
+    await memorySnapshotStore.renameSession(from, to);
+    return true;
+  };
+  const deleteArchiveTurnCheckpointState = async (sessionId, archiveId) => {
+    const sid = String(sessionId || '').trim();
+    const aid = String(archiveId || '').trim();
+    if (!sid || !aid || !isTurnCheckpointSessionEnabled(sid)) return false;
+    const messages = await chatStore.exportThreadMessages?.(sid, aid);
+    if (Array.isArray(messages) && messages.length) {
+      await removeTurnCheckpointsForMessages(sid, messages, { prune: true });
+    }
+    await turnCheckpointStore.removeArchivePointer(sid, aid);
+    await refreshTurnCheckpointSnapshotReachability(sid, { prune: true });
+    return true;
+  };
+  const buildArchivePointerFromCurrentThread = async (sessionId, { fallbackSnapshot = null, source = 'archive_capture' } = {}) => {
+    const sid = String(sessionId || '').trim();
+    if (!sid || !isTurnCheckpointSessionEnabled(sid)) return null;
+    const { isGroup } = getTurnCheckpointSessionScope(sid);
+    const tailMessage = findTailTrackedAssistantMessage(sid);
+    let memorySnapshotId = '';
+    if (tailMessage) {
+      await syncTurnCheckpointForMessage(sid, tailMessage, { setPointer: false });
+      const refreshedMessage = chatStore.findMessage(tailMessage.id, sid) || tailMessage;
+      const normalizedState = normalizeCheckpointSwipeState(refreshedMessage);
+      const activeSwipeIndex = Math.min(
+        Math.max(0, Number(normalizedState.activeSwipeIndex || 0)),
+        Math.max(0, normalizedState.swipes.length - 1),
+      );
+      const activeBranch = normalizedState.swipes[activeSwipeIndex] || normalizedState.swipes[0] || {};
+      memorySnapshotId = String(activeBranch?.memorySnapshotId || refreshedMessage?.meta?.memorySnapshotId || '').trim();
+      if (!memorySnapshotId && activeBranch?.memoryTableSnapshot) {
+        const persisted = await memorySnapshotStore.persistSnapshot(sid, activeBranch.memoryTableSnapshot);
+        memorySnapshotId = String(persisted?.id || '').trim();
+      }
+      return {
+        sessionId: sid,
+        tailAssistantMessageId: String(refreshedMessage?.id || '').trim(),
+        tailSwipeIndex: activeSwipeIndex,
+        memorySnapshotId,
+        restoredAt: Date.now(),
+        source,
+      };
+    }
+    const snapshot = fallbackSnapshot || await buildSwipeMemoryTableSnapshot(sid, { isGroup });
+    if (!snapshot) return {
+      sessionId: sid,
+      tailAssistantMessageId: '',
+      tailSwipeIndex: 0,
+      memorySnapshotId: '',
+      restoredAt: Date.now(),
+      source,
+    };
+    const persisted = await memorySnapshotStore.persistSnapshot(sid, snapshot);
+    memorySnapshotId = String(persisted?.id || '').trim();
+    return {
+      sessionId: sid,
+      tailAssistantMessageId: '',
+      tailSwipeIndex: 0,
+      memorySnapshotId,
+      restoredAt: Date.now(),
+      source,
+    };
+  };
+  const setArchivePointerForArchive = async (sessionId, archiveId, pointer = null, { fallbackSnapshot = null, source = 'archive_capture' } = {}) => {
+    const sid = String(sessionId || '').trim();
+    const aid = String(archiveId || '').trim();
+    if (!sid || !aid || !isTurnCheckpointSessionEnabled(sid)) return null;
+    const nextPointer = pointer || await buildArchivePointerFromCurrentThread(sid, { fallbackSnapshot, source });
+    if (!nextPointer) return null;
+    return turnCheckpointStore.setArchivePointer(sid, aid, {
+      ...nextPointer,
+      sessionId: sid,
+      archiveId: aid,
+      source,
+      restoredAt: Date.now(),
+    });
+  };
+  const syncCurrentArchivePointerFromLoadedThread = async (sessionId, { fallbackSnapshot = null, source = 'archive_sync' } = {}) => {
+    const sid = String(sessionId || '').trim();
+    const archiveId = getCurrentArchiveIdForSession(sid);
+    if (!sid || !archiveId) return null;
+    return setArchivePointerForArchive(sid, archiveId, null, { fallbackSnapshot, source });
+  };
+  const restoreArchivePointerForLoadedThread = async (sessionId, {
+    refreshBaselineWhenNoTail = true,
+    source = 'archive_restore',
+  } = {}) => {
+    const sid = String(sessionId || '').trim();
+    const archiveId = getCurrentArchiveIdForSession(sid);
+    if (!sid || !archiveId || !isTurnCheckpointSessionEnabled(sid)) {
+      return restoreMemoryFromCurrentTailAssistant(sid, { refreshBaselineWhenNoTail, source });
+    }
+    const { isGroup } = getTurnCheckpointSessionScope(sid);
+    const pointer = await turnCheckpointStore.getArchivePointer(sid, archiveId);
+    if (pointer) {
+      const targetId = String(pointer.tailAssistantMessageId || '').trim();
+      if (targetId) {
+        const targetMessage = chatStore.findMessage(targetId, sid);
+        if (isCheckpointTrackedAssistantMessage(targetMessage, sid)) {
+          const normalizedState = normalizeCheckpointSwipeState(targetMessage);
+          const desiredIndex = Math.min(
+            Math.max(0, Number(pointer.tailSwipeIndex || 0)),
+            Math.max(0, normalizedState.swipes.length - 1),
+          );
+          if (desiredIndex !== normalizedState.activeSwipeIndex) {
+            const swipes = normalizedState.swipes.map(branch => cloneSwipePlainObject(branch) || {});
+            const branch = swipes[desiredIndex] || swipes[0] || {};
+            const nextMeta = { ...(normalizedState.meta || {}), swipes, activeSwipe: desiredIndex };
+            if (nextMeta && typeof nextMeta === 'object' && 'activeSwipeDraft' in nextMeta) {
+              delete nextMeta.activeSwipeDraft;
+            }
+            const payload = { meta: nextMeta };
+            if (branch?.draft !== true) {
+              payload.content = branch?.content ?? targetMessage.content;
+              payload.raw = branch?.raw !== undefined ? branch.raw : targetMessage.raw;
+            }
+            const saved = chatStore.updateMessage(targetId, payload, sid) || { ...targetMessage, ...payload };
+            if (isSessionActive(sid)) {
+              const [decorated] = decorateMessagesForDisplay([saved], { sessionId: sid });
+              ui.updateMessage(targetId, decorated || saved);
+            }
+          }
+          const refreshedTarget = chatStore.findMessage(targetId, sid) || targetMessage;
+          const refreshedState = normalizeCheckpointSwipeState(refreshedTarget);
+          const activeSwipeIndex = Math.min(
+            Math.max(0, Number(pointer.tailSwipeIndex || 0)),
+            Math.max(0, refreshedState.swipes.length - 1),
+          );
+          const checkpoint = await turnCheckpointStore.getCheckpoint(sid, targetId);
+          const checkpointBranch = Array.isArray(checkpoint?.branches)
+            ? checkpoint.branches.find(branch => Number(branch?.swipeIndex) === activeSwipeIndex)
+            : null;
+          const inlineBranch = refreshedState.swipes[activeSwipeIndex] || refreshedState.swipes[0] || null;
+          let fallbackLoadedSnapshot = null;
+          const fallbackSnapshotId = String(pointer.memorySnapshotId || '').trim();
+          if (fallbackSnapshotId) {
+            fallbackLoadedSnapshot = await memorySnapshotStore.getSnapshot(fallbackSnapshotId);
+          }
+          const applied = await restoreCheckpointBranchMemoryState(
+            sid,
+            {
+              ...(inlineBranch || {}),
+              ...(checkpointBranch || {}),
+              memorySnapshotId: String(
+                checkpointBranch?.memorySnapshotId || inlineBranch?.memorySnapshotId || fallbackSnapshotId || ''
+              ).trim(),
+            },
+            { isGroup, fallbackSnapshot: fallbackLoadedSnapshot },
+          );
+          if (applied) {
+            await turnCheckpointStore.setPointer(sid, {
+              sessionId: sid,
+              tailAssistantMessageId: targetId,
+              tailSwipeIndex: activeSwipeIndex,
+              restoredAt: Date.now(),
+              source,
+            });
+            await turnCheckpointStore.setArchivePointer(sid, archiveId, {
+              ...pointer,
+              archiveId,
+              sessionId: sid,
+              tailAssistantMessageId: targetId,
+              tailSwipeIndex: activeSwipeIndex,
+              restoredAt: Date.now(),
+              source,
+            });
+            return true;
+          }
+        }
+      }
+      if (pointer.memorySnapshotId) {
+        const fallbackLoadedSnapshot = await memorySnapshotStore.getSnapshot(pointer.memorySnapshotId);
+        if (fallbackLoadedSnapshot) {
+          const applied = await restoreCheckpointBranchMemoryState(
+            sid,
+            { memorySnapshotId: pointer.memorySnapshotId },
+            { isGroup, fallbackSnapshot: fallbackLoadedSnapshot },
+          );
+          if (applied) {
+            window.appBridge?.setLastMemoryUpdate?.(sid, null);
+            await turnCheckpointStore.clearPointer(sid);
+            await turnCheckpointStore.setArchivePointer(sid, archiveId, {
+              ...pointer,
+              archiveId,
+              sessionId: sid,
+              restoredAt: Date.now(),
+              source,
+            });
+            return true;
+          }
+        }
+      }
+    }
+    const applied = await restoreMemoryFromCurrentTailAssistant(sid, {
+      refreshBaselineWhenNoTail,
+      source: `${source}_fallback`,
+    });
+    const fallbackSnapshot = !findTailTrackedAssistantMessage(sid)
+      ? await buildSwipeMemoryTableSnapshot(sid, { isGroup })
+      : null;
+    await syncCurrentArchivePointerFromLoadedThread(sid, {
+      fallbackSnapshot,
+      source: `${source}_fallback_sync`,
+    });
+    return applied;
+  };
+  const restoreMemoryForActiveThread = async (sessionId, options = {}) => {
+    const sid = String(sessionId || '').trim();
+    if (!sid) return false;
+    const archiveId = getCurrentArchiveIdForSession(sid);
+    if (!archiveId) {
+      return restoreMemoryFromCurrentTailAssistant(sid, options);
+    }
+    const applied = await restoreMemoryFromCurrentTailAssistant(sid, options);
+    const { isGroup } = getTurnCheckpointSessionScope(sid);
+    const fallbackSnapshot = !findTailTrackedAssistantMessage(sid)
+      ? await buildSwipeMemoryTableSnapshot(sid, { isGroup })
+      : null;
+    await syncCurrentArchivePointerFromLoadedThread(sid, {
+      fallbackSnapshot,
+      source: String(options?.source || 'active_archive_sync'),
+    });
+    return applied;
+  };
+  if (window.appBridge) {
+    window.appBridge.restoreMemoryFromCurrentTailAssistant = restoreMemoryFromCurrentTailAssistant;
+    window.appBridge.ensureSessionBaselineCheckpointSnapshot = ensureSessionBaselineCheckpointSnapshot;
+    window.appBridge.syncTurnCheckpointForMessage = syncTurnCheckpointForMessage;
+    window.appBridge.hydrateTurnCheckpointsFromLoadedMessages = hydrateTurnCheckpointsFromLoadedMessages;
+    window.appBridge.clearSessionTurnCheckpointState = clearSessionTurnCheckpointState;
+    window.appBridge.renameSessionTurnCheckpointState = renameSessionTurnCheckpointState;
+    window.appBridge.deleteArchiveTurnCheckpointState = deleteArchiveTurnCheckpointState;
+    window.appBridge.buildArchivePointerFromCurrentThread = buildArchivePointerFromCurrentThread;
+    window.appBridge.setArchivePointerForArchive = setArchivePointerForArchive;
+    window.appBridge.restoreArchivePointerForLoadedThread = restoreArchivePointerForLoadedThread;
+    window.appBridge.restoreMemoryForActiveThread = restoreMemoryForActiveThread;
+  }
 
   ui.onSwipeChange(async ({ msgId, message, index, previousIndex }) => {
     const sid = chatStore.getCurrent();
@@ -13073,7 +13780,12 @@ Phase G（Frame 36）：循环衔接
       payload.content = activeBranch?.content ?? message.content;
       payload.raw = activeBranch?.raw !== undefined ? activeBranch.raw : message.raw;
     }
-    chatStore.updateMessage(msgId, payload, sid);
+    const saved = chatStore.updateMessage(msgId, payload, sid) || { ...stored, ...payload };
+    if (!isDraftBranch) {
+      syncTurnCheckpointForMessage(sid, saved).catch(err => {
+        logger.warn('sync turn checkpoint after swipe change failed', err);
+      });
+    }
   });
 
   ui.onSwipeRegen(async ({ msgId, message }) => {
@@ -13101,13 +13813,17 @@ Phase G（Frame 36）：循环衔接
     const renderMeta = message?.meta && typeof message.meta === 'object' ? message.meta : {};
     const sourceMeta = {
       ...storedMeta,
-      ...(Array.isArray(renderMeta.swipes) && !Array.isArray(storedMeta.swipes)
-        ? { swipes: renderMeta.swipes, activeSwipe: renderMeta.activeSwipe }
-        : {}),
+      ...(Array.isArray(renderMeta.swipes) ? { swipes: renderMeta.swipes, activeSwipe: renderMeta.activeSwipe } : {}),
     };
-    const swipesBefore = Array.isArray(sourceMeta.swipes) && sourceMeta.swipes.length
+    let swipesBefore = Array.isArray(sourceMeta.swipes) && sourceMeta.swipes.length
       ? sourceMeta.swipes.map(s => ({ ...s }))
       : [{ content: storedMsg?.content ?? message?.content ?? '', raw: storedMsg?.raw ?? message?.raw }];
+    if (swipesBefore.some(branch => branch?.draft)) {
+      swipesBefore = swipesBefore.filter(branch => !branch?.draft);
+      if (!swipesBefore.length) {
+        swipesBefore = [{ content: storedMsg?.content ?? message?.content ?? '', raw: storedMsg?.raw ?? message?.raw }];
+      }
+    }
     if (swipesBefore.length) {
       const messageMemorySnapshot = storedMeta.memoryTableSnapshot || renderMeta.memoryTableSnapshot || null;
       const messageMemoryUpdateEntry = storedMeta.memoryUpdateEntry || renderMeta.memoryUpdateEntry || null;
@@ -13128,9 +13844,27 @@ Phase G（Frame 36）：循环衔接
     const streamId = `swipe-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
     const draftLabel = '生成新回复中...';
     let partialCommitted = false;
+    let branchFinalized = false;
     let swipeStreamCtrl = null;
     let baselineMemorySnapshot = null;
     let baselineMemoryUpdateEntry = null;
+    const clearActiveSwipeGenerationMarker = () => {
+      try {
+        if (document.body?.dataset?.activeSwipeGenerationMsgId === String(msgId || '')) {
+          delete document.body.dataset.activeSwipeGenerationMsgId;
+        }
+      } catch {}
+    };
+    const markActiveSwipeGeneration = () => {
+      try {
+        if (document.body?.dataset) document.body.dataset.activeSwipeGenerationMsgId = String(msgId || '');
+      } catch {}
+    };
+    const cancelSwipePlaceholderStream = () => {
+      try {
+        swipeStreamCtrl?.cancel?.({ keepPartial: false });
+      } catch {}
+    };
     const showDraftBranch = () => {
       const branch = { content: '', raw: '', draft: true, label: draftLabel };
       const nextMeta = {
@@ -13139,6 +13873,7 @@ Phase G（Frame 36）：循环衔接
         activeSwipe: draftIndex,
         swipeRegenerating: true,
       };
+      markActiveSwipeGeneration();
       const current = chatStore.findMessage(msgId, sid) || storedMsg || message;
       const updated = chatStore.updateMessage(msgId, {
         content: current?.content ?? storedMsg?.content ?? message?.content ?? '',
@@ -13171,6 +13906,8 @@ Phase G（Frame 36）：循环衔接
       if (memoryUpdateEntry !== undefined) newBranch.memoryUpdateEntry = cloneSwipeMemoryUpdateEntry(memoryUpdateEntry);
       const merged = [...swipesBefore, newBranch];
       const nextMeta = { ...sourceMeta, swipes: merged, activeSwipe: merged.length - 1 };
+      delete nextMeta.swipeRegenerating;
+      delete nextMeta.activeSwipeDraft;
       const updated = chatStore.updateMessage(msgId, {
         content: newBranch.content,
         raw: newBranch.raw,
@@ -13186,15 +13923,27 @@ Phase G（Frame 36）：循环衔接
         wrapper.__chatappMessage = updated;
         ui._applySwipe(wrapper, updated, merged.length - 1, { emitChange: false });
       }
+      branchFinalized = true;
+      clearActiveSwipeGenerationMarker();
+      syncTurnCheckpointForMessage(sid, updated).catch(err => {
+        logger.warn('sync turn checkpoint after swipe commit failed', err);
+      });
       return true;
     };
     const restorePreviousBranch = async () => {
-      const restoredMeta = { ...sourceMeta, swipes: swipesBefore, activeSwipe: previousActive };
-      const branch = swipesBefore[previousActive] || swipesBefore[0] || {};
+      cancelSwipePlaceholderStream();
+      const cleanSwipes = swipesBefore.filter(branch => !branch?.draft);
+      const restoredSwipes = cleanSwipes.length
+        ? cleanSwipes
+        : [{ content: storedMsg?.content ?? message?.content ?? '', raw: storedMsg?.raw ?? message?.raw }];
+      const restoredActive = Math.min(Math.max(0, previousActive), Math.max(0, restoredSwipes.length - 1));
+      const restoredMeta = { ...sourceMeta, swipes: restoredSwipes, activeSwipe: restoredActive };
+      const branch = restoredSwipes[restoredActive] || restoredSwipes[0] || {};
       delete restoredMeta.swipeRegenerating;
+      delete restoredMeta.activeSwipeDraft;
       try {
         const applied = await applySwipeBranchMemoryState(sid, branch, { isGroup: isGroupScope });
-        if (applied) markActiveSwipeMemoryState(sid, msgId, previousActive);
+        if (applied) markActiveSwipeMemoryState(sid, msgId, restoredActive);
       } catch (err) {
         logger.warn('restore swipe memory state failed', err);
       }
@@ -13211,9 +13960,15 @@ Phase G（Frame 36）：循环衔接
       };
       const wrapper = ui.scrollEl?.querySelector(`[data-msg-id="${CSS.escape(msgId)}"]`);
       if (wrapper && wrapper.isConnected) {
+        ui.setSwipeRegenerating?.(msgId, false);
         wrapper.__chatappMessage = restored;
-        ui._applySwipe(wrapper, restored, previousActive, { emitChange: false });
+        ui._applySwipe(wrapper, restored, restoredActive, { emitChange: false });
       }
+      branchFinalized = true;
+      clearActiveSwipeGenerationMarker();
+      await syncTurnCheckpointForMessage(sid, restored).catch(err => {
+        logger.warn('sync turn checkpoint after swipe restore failed', err);
+      });
     };
     const contact = contactsStore.getContact(sid);
     const isGroupScope = sid.startsWith('group:') || Boolean(contact?.isGroup);
@@ -13271,6 +14026,7 @@ Phase G（Frame 36）：循环衔接
           return swipeStreamCtrl;
         },
         swipeTarget: {
+          msgId,
           onPartial: partial => {
             partialCommitted = commitBranch(partial, {
               partial: true,
@@ -13339,10 +14095,12 @@ Phase G（Frame 36）：循环衔接
           chatStore.deleteMessage(m.id, sid);
         });
       } catch {}
-      await restorePreviousBranch();
+      if (!partialCommitted) await restorePreviousBranch();
     } finally {
+      if (!branchFinalized) await restorePreviousBranch();
       ui.setSwipeRegenerating?.(msgId, false);
       ui.setStreamingState?.(false);
+      clearActiveSwipeGenerationMarker();
       refreshChatAndContacts();
     }
   });
@@ -14885,7 +15643,7 @@ Phase G（Frame 36）：循环衔接
       } catch {
         rows = [];
       }
-      const picked = (Array.isArray(rows) ? rows : [])
+      const picked = sortMemoryRowsForSnapshot(Array.isArray(rows) ? rows : [])
         .map(row => {
           const tableId = String(row?.table_id || '').trim();
           if (!tableId) return null;
@@ -14943,7 +15701,7 @@ Phase G（Frame 36）：循环衔接
           }
         }
       }
-      const inputs = (Array.isArray(snapshot?.rows) ? snapshot.rows : [])
+      const inputs = sortMemoryRowsForSnapshot(Array.isArray(snapshot?.rows) ? snapshot.rows : [])
         .map(row => {
           const tableId = String(row?.table_id || '').trim();
           if (!tableId) return null;
@@ -15152,6 +15910,41 @@ Phase G（Frame 36）：循环衔接
           : { key: 'contact', contactId: sessionId, groupId: null };
       };
 
+      const resolveSessionAssistantTurnNumber = (sid) => {
+        const targetSessionId = String(sid || '').trim();
+        if (!targetSessionId) return 0;
+        const messages = chatStore.getMessages(targetSessionId) || [];
+        let count = 0;
+        for (const message of messages) {
+          if (!message || message.role !== 'assistant') continue;
+          if (message.status === 'pending' || message.status === 'sending') continue;
+          const meta = message?.meta && typeof message.meta === 'object' ? message.meta : {};
+          if (meta.isGreeting) continue;
+          if (String(meta.kind || '').trim() === 'memory-table-push') continue;
+          count += 1;
+        }
+        return count;
+      };
+      const currentTurnNumber = resolveSessionAssistantTurnNumber(sessionId);
+      const normalizeTimelineMemoryActionData = (tableId, rowData) => {
+        const next = rowData && typeof rowData === 'object' ? { ...rowData } : {};
+        if (!isTimelineMemoryTableId(tableId)) return next;
+        if (currentTurnNumber > 0) {
+          next.time = buildMemoryTimelineLabel(currentTurnNumber);
+          return next;
+        }
+        const round = extractMemoryTimelineRound(next.time);
+        if (round !== null) next.time = buildMemoryTimelineLabel(round);
+        return next;
+      };
+      const resolveInsertSortOrder = (tableId, existingRows = [], rowData = {}) => {
+        if (isTimelineMemoryTableId(tableId)) {
+          const round = extractMemoryTimelineRound(rowData?.time);
+          if (round !== null) return round;
+        }
+        return computeNextMemoryRowSortOrder(existingRows, tableId);
+      };
+
       const createInputs = [];
       let updated = 0;
       let deleted = 0;
@@ -15161,26 +15954,32 @@ Phase G（Frame 36）：循环衔接
         const countKey = `${tableId}:${scopeKey}`;
         const maxRows = Number.isFinite(Number(table?.maxRows)) ? Math.max(0, Math.trunc(Number(table.maxRows))) : 0;
         const existingRows = rowsByTableScope.get(countKey) || [];
+        const nextData = normalizeTimelineMemoryActionData(tableId, data);
         if (maxRows && existingRows.length >= maxRows) {
           skipped += 1;
           return false;
         }
         if (!allowDuplicate) {
-          const duplicate = existingRows.some(row => rowDataEquals(row?.row_data || {}, data));
+          const duplicate = existingRows.some(row => rowDataEquals(row?.row_data || {}, nextData));
           if (duplicate) {
             skipped += 1;
             return false;
           }
         }
+        const sortOrder = resolveInsertSortOrder(tableId, existingRows, nextData);
         createInputs.push({
           template_id: templateId,
           table_id: tableId,
           contact_id: contactId,
           group_id: groupId,
-          row_data: data,
+          row_data: nextData,
           is_active: true,
+          ...(Number.isFinite(Number(sortOrder)) && Number(sortOrder) > 0 ? { sort_order: Number(sortOrder) } : {}),
         });
-        existingRows.push({ row_data: data });
+        existingRows.push({
+          row_data: nextData,
+          sort_order: Number.isFinite(Number(sortOrder)) ? Number(sortOrder) : 0,
+        });
         rowsByTableScope.set(countKey, existingRows);
         return true;
       };
@@ -15210,6 +16009,7 @@ Phase G（Frame 36）：循环衔接
                 is_active: Boolean(row?.is_active),
                 is_pinned: Boolean(row?.is_pinned),
                 priority: Number.isFinite(Number(row?.priority)) ? Number(row.priority) : 0,
+                sort_order: Number.isFinite(Number(row?.sort_order)) ? Number(row.sort_order) : 0,
               }))
               .filter(row => row.id),
           });
@@ -15571,6 +16371,7 @@ Phase G（Frame 36）：循环衔接
             is_active: Boolean(snap?.is_active),
             is_pinned: Boolean(snap?.is_pinned),
             priority: Number.isFinite(Number(snap?.priority)) ? Number(snap.priority) : 0,
+            sort_order: Number.isFinite(Number(snap?.sort_order)) ? Number(snap.sort_order) : 0,
           };
           if (current) {
             try {
@@ -15578,7 +16379,8 @@ Phase G（Frame 36）：循环衔接
               const sameActive = Boolean(current?.is_active) === payload.is_active;
               const samePinned = Boolean(current?.is_pinned) === payload.is_pinned;
               const samePriority = Number.isFinite(Number(current?.priority)) ? Number(current.priority) : 0;
-              if (!sameData || !sameActive || !samePinned || samePriority !== payload.priority) {
+              const sameSortOrder = Number.isFinite(Number(current?.sort_order)) ? Number(current.sort_order) : 0;
+              if (!sameData || !sameActive || !samePinned || samePriority !== payload.priority || sameSortOrder !== payload.sort_order) {
                 await memoryTableStore.updateMemory({ id, ...payload });
                 changed += 1;
               }
@@ -15768,9 +16570,10 @@ Phase G（Frame 36）：循环衔接
       const runtime = await memoryUpdateConfigManager.getRuntimeConfigByProfileId(profileId);
       return runtime;
     };
-    const runMemoryUpdateAfterChat = async (sessionId, isGroup, baseContext) => {
+    const runMemoryUpdateAfterChat = async (sessionId, isGroup, baseContext, options = {}) => {
       if (!isMemoryAutoExtractSeparate()) return;
       if (!sessionId) return;
+      const checkpointMessageId = String(options?.checkpointMessageId || '').trim();
       if (memoryUpdateRunning.has(sessionId)) return;
       memoryUpdateRunning.add(sessionId);
       try {
@@ -15804,6 +16607,11 @@ Phase G（Frame 36）：循环衔接
           { role: 'user', content: userText },
         ]);
         await handleMemoryEditsFromRaw(response, { sessionId, isGroup, force: true, requestPrompt });
+        if (checkpointMessageId) {
+          await syncTurnCheckpointForMessage(sessionId, checkpointMessageId, {
+            captureCurrentActiveState: true,
+          });
+        }
       } catch (err) {
         logger.warn('memory update failed', err);
       } finally {
@@ -16838,7 +17646,9 @@ Phase G（Frame 36）：循环衔接
         })
         .map((m, idx) => {
           const depth = getDepthForIndex(idx);
-          const isCreativeReply = m?.role === 'assistant' && Boolean(m?.meta?.renderRich);
+          const isCreativeReply =
+            m?.role === 'assistant' &&
+            (Boolean(m?.meta?.renderRich) || isRpMode);
           if (isGroupChat && m.role === 'system') {
             const raw = String(m.content || '').trim();
             if (!raw) return null;
@@ -16959,15 +17769,20 @@ Phase G（Frame 36）：循环衔接
       if (creativeMode) {
         const rawLimit = Number(appSettings.get().creativeHistoryMax);
         const creativeLimit = Number.isFinite(rawLimit) ? Math.max(0, Math.trunc(rawLimit)) : 3;
-        const creativeIdx = [];
+        const creativeAssistantIdx = [];
         history.forEach((m, idx) => {
-          if (m?.__creative) creativeIdx.push(idx);
+          if (m?.__creative && m?.role === 'assistant') creativeAssistantIdx.push(idx);
         });
-        if (creativeLimit <= 0) {
-          history = history.filter(m => !m?.__creative);
-        } else if (creativeIdx.length > creativeLimit) {
-          const keep = new Set(creativeIdx.slice(-creativeLimit));
-          history = history.filter((m, idx) => !m?.__creative || keep.has(idx));
+        if (creativeLimit > 0 && creativeAssistantIdx.length > creativeLimit) {
+          const firstAssistantToKeep = creativeAssistantIdx[creativeAssistantIdx.length - creativeLimit];
+          let keepStart = firstAssistantToKeep;
+          for (let i = firstAssistantToKeep - 1; i >= 0; i -= 1) {
+            if (history[i]?.role === 'user') {
+              keepStart = i;
+              break;
+            }
+          }
+          history = history.slice(keepStart);
         }
       }
       try {
@@ -17134,6 +17949,13 @@ Phase G（Frame 36）：循环衔接
 
     await maybePromptTemplateEnable({ sampleText: text });
     await maybePromptScriptAuthorization();
+    if (isTurnCheckpointSessionEnabled(sessionId) && !findTailTrackedAssistantMessage(sessionId)) {
+      try {
+        await ensureSessionBaselineCheckpointSnapshot(sessionId);
+      } catch (err) {
+        logger.warn('ensure baseline checkpoint before send failed', err);
+      }
+    }
 
     const currentDraftReplyTarget = getReplyTargetForSession(sessionId);
     let consumedDraftReplyTarget = false;
@@ -17166,6 +17988,7 @@ Phase G（Frame 36）：循环衔接
     let streamCtrl = null;
     let sendSucceeded = false;
     let suppressErrorUI = false;
+    let checkpointTargetMessageId = String(swipeTarget?.msgId || continueTarget?.messageId || '').trim();
     const createAssistantStreamCtrl = (meta = {}) => {
       if (assistantStreamFactory) {
         try {
@@ -17515,8 +18338,18 @@ Phase G（Frame 36）：循环衔接
             const saved = continueTarget
               ? commitContinuationMessage(parsed)
               : chatStore.appendMessage(parsed, sessionId);
+            checkpointTargetMessageId = String(
+              swipeTarget?.msgId || saved?.id || parsed?.id || continueTarget?.messageId || '',
+            ).trim();
             autoMarkReadIfActive(sessionId, saved?.id || parsed?.id || '');
             emitPluginAfterReceive(saved, sessionId);
+            if (isTurnCheckpointSessionEnabled(sessionId) && !swipeTarget) {
+              syncTurnCheckpointForMessage(sessionId, saved || parsed, {
+                captureCurrentActiveState: true,
+              }).catch(err => {
+                logger.warn('sync turn checkpoint after assistant save failed', err);
+              });
+            }
           }
           refreshChatAndContacts();
           sendSucceeded = true;
@@ -18109,8 +18942,18 @@ Phase G（Frame 36）：循环衔接
             const saved = continueTarget
               ? commitContinuationMessage(parsed)
               : chatStore.appendMessage(parsed, sessionId);
+            checkpointTargetMessageId = String(
+              swipeTarget?.msgId || saved?.id || parsed?.id || continueTarget?.messageId || '',
+            ).trim();
             autoMarkReadIfActive(sessionId, saved?.id || parsed?.id || '');
             emitPluginAfterReceive(saved, sessionId);
+            if (isTurnCheckpointSessionEnabled(sessionId) && !swipeTarget) {
+              syncTurnCheckpointForMessage(sessionId, saved || parsed, {
+                captureCurrentActiveState: true,
+              }).catch(err => {
+                logger.warn('sync turn checkpoint after buffered assistant save failed', err);
+              });
+            }
           }
           refreshChatAndContacts();
           return;
@@ -18552,7 +19395,9 @@ Phase G（Frame 36）：循环衔接
         movePendingFromHistoryToQueue(sessionId);
         refreshChatAndContacts();
         scriptRuntime?.consumeOnce?.(sessionId);
-        runMemoryUpdateAfterChat(sessionId, isGroupChat, llmContext('')).catch(() => {});
+        runMemoryUpdateAfterChat(sessionId, isGroupChat, llmContext(''), {
+          checkpointMessageId: checkpointTargetMessageId,
+        }).catch(() => {});
       }
       updatePendingFloat(sessionId);
       if (!activeGeneration || activeGeneration.id === generationId) {
@@ -18903,21 +19748,20 @@ Phase G（Frame 36）：循环衔接
           chatStore.deleteMessage(m.id, sessionId);
           ui.removeMessage(m.id);
         });
+        await removeTurnCheckpointsForMessages(sessionId, regenMessages, { prune: true }).catch(err => {
+          logger.warn('remove turn checkpoints for regenerated messages failed', err);
+        });
         refreshChatAndContacts();
       }
       chatStore.removeLastSummary?.(sessionId);
       if (getMemoryStorageMode() === 'table') {
         try {
-          logger.debug('memory rollback: start', { sessionId, messageId: prevUser?.id || '' });
-          const rollbackFn = window.appBridge?.rollbackLastMemoryUpdate;
-          if (typeof rollbackFn === 'function') {
-            const rolled = await rollbackFn(sessionId);
-            logger.debug('memory rollback: done', { sessionId, messageId: prevUser?.id || '', rolled });
-          } else {
-            logger.warn('memory rollback: missing handler', { sessionId, messageId: prevUser?.id || '' });
-          }
+          await restoreMemoryForActiveThread(sessionId, {
+            refreshBaselineWhenNoTail: false,
+            source: 'regenerate_from_user_index',
+          });
         } catch (err) {
-          logger.warn('rollback memory update failed', err);
+          logger.warn('restore memory after regenerate failed', err);
         }
       }
       const resendText = getMessageSendText(prevUser);
@@ -19023,11 +19867,23 @@ Phase G（Frame 36）：循环衔接
       const ids = Array.isArray(payload?.ids) ? payload.ids.map(String).filter(Boolean) : [];
       if (!ids.length) return;
       const currentReplyTarget = getReplyTargetForSession(sessionId);
+      const removedMessages = ids
+        .map(id => chatStore.findMessage(id, sessionId))
+        .filter(Boolean);
       ids.forEach(id => {
         chatStore.deleteMessage(id, sessionId);
         ui.removeMessage(id);
       });
       if (currentReplyTarget?.id && ids.includes(currentReplyTarget.id)) clearReplyTargetForSession(sessionId);
+      await removeTurnCheckpointsForMessages(sessionId, removedMessages, { prune: true }).catch(err => {
+        logger.warn('remove turn checkpoints after delete-selected failed', err);
+      });
+      await restoreMemoryForActiveThread(sessionId, {
+        refreshBaselineWhenNoTail: false,
+        source: 'delete_selected',
+      }).catch(err => {
+        logger.warn('restore memory after delete-selected failed', err);
+      });
       refreshChatAndContacts();
       return;
     }
@@ -19041,14 +19897,30 @@ Phase G（Frame 36）：循环衔接
       chatStore.deleteMessage(message.id, sessionId);
       ui.removeMessage(message.id);
       if (currentReplyTarget?.id === String(message.id || '')) clearReplyTargetForSession(sessionId);
+      await restoreMemoryForActiveThread(sessionId, {
+        refreshBaselineWhenNoTail: false,
+        source: 'retract_user_message',
+      }).catch(err => {
+        logger.warn('restore memory after retract failed', err);
+      });
       refreshChatAndContacts();
       return;
     }
     if (action === 'delete') {
       const currentReplyTarget = getReplyTargetForSession(sessionId);
+      const removedMessage = chatStore.findMessage(message.id, sessionId) || message;
       chatStore.deleteMessage(message.id, sessionId);
       ui.removeMessage(message.id);
       if (currentReplyTarget?.id === String(message.id || '')) clearReplyTargetForSession(sessionId);
+      await removeTurnCheckpointsForMessages(sessionId, [removedMessage], { prune: true }).catch(err => {
+        logger.warn('remove turn checkpoint after delete failed', err);
+      });
+      await restoreMemoryForActiveThread(sessionId, {
+        refreshBaselineWhenNoTail: false,
+        source: 'delete_message',
+      }).catch(err => {
+        logger.warn('restore memory after delete failed', err);
+      });
       refreshChatAndContacts();
       return;
     }
