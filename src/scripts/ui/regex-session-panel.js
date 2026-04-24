@@ -58,6 +58,12 @@ const placementLabels = {
     [regex_placement.REASONING]: '推理',
 };
 
+const PANEL_HEADER_STYLE = 'padding:14px 16px; border-bottom:1px solid var(--app-border-subtle); background:var(--app-surface-panel); display:flex; align-items:center; justify-content:space-between; gap:10px;';
+const RULE_CARD_STYLE = 'border:1px solid var(--app-border-default); border-radius:12px; background:var(--app-surface-card); overflow:hidden;';
+const RULE_HEADER_STYLE = 'display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 12px; background:var(--app-surface-subtle); border-bottom:1px solid var(--app-border-subtle); cursor:pointer;';
+const SECTION_BOX_STYLE = 'flex:1; min-width: 260px; border:1px solid var(--app-border-subtle); border-radius:12px; padding:10px; background:var(--app-surface-subtle);';
+const DANGER_BUTTON_STYLE = 'padding:6px 10px; border:1px solid rgba(239,68,68,0.35); border-radius:10px; background:var(--app-surface-card); color:#f87171; cursor:pointer; font-size:12px;';
+
 export class RegexSessionPanel {
     constructor(getSessionId) {
         this.store = window.appBridge?.regex || new RegexStore();
@@ -105,7 +111,7 @@ export class RegexSessionPanel {
         this.element.onclick = (e) => e.stopPropagation();
 
         this.element.innerHTML = `
-            <div style="padding:14px 16px; border-bottom:1px solid rgba(0,0,0,0.06); background:rgba(248,250,252,0.92); display:flex; align-items:center; justify-content:space-between; gap:10px;">
+            <div style="${PANEL_HEADER_STYLE}">
                 <div style="min-width:0;">
                     <div style="font-weight:800; color:var(--app-text-primary);">正规表达式（聊天室）</div>
                     <div id="re-session-sub" style="color:var(--app-text-muted); font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"></div>
@@ -158,9 +164,9 @@ export class RegexSessionPanel {
         const el = this.statusEl;
         if (!el) return;
         const colors = {
-            success: { bg: '#dcfce7', fg: '#166534' },
-            error: { bg: '#fee2e2', fg: '#991b1b' },
-            info: { bg: '#dbeafe', fg: '#1e40af' }
+            success: { bg: 'rgba(16,185,129,0.16)', fg: '#bbf7d0' },
+            error: { bg: 'rgba(239,68,68,0.16)', fg: '#fecaca' },
+            info: { bg: 'rgba(59,130,246,0.16)', fg: '#bfdbfe' }
         };
         const c = colors[type] || colors.info;
         el.style.display = 'block';
@@ -176,11 +182,11 @@ export class RegexSessionPanel {
         card.className = 'regex-rule';
         card.dataset.ruleId = r.id;
         card.dataset.collapsed = 'true';
-        card.style.cssText = 'border:1px solid rgba(0,0,0,0.08); border-radius:12px; background:var(--app-surface-card); overflow:hidden;';
+        card.style.cssText = RULE_CARD_STYLE;
 
         const header = document.createElement('div');
         header.className = 're-header';
-        header.style.cssText = 'display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 12px; background:rgba(248,250,252,0.85); cursor:pointer;';
+        header.style.cssText = RULE_HEADER_STYLE;
 
         const left = document.createElement('div');
         left.style.cssText = 'display:flex; align-items:center; gap:10px; min-width:0;';
@@ -203,7 +209,7 @@ export class RegexSessionPanel {
         del.type = 'button';
         del.className = 're-del';
         del.textContent = '删除';
-        del.style.cssText = 'padding:6px 10px; border:1px solid #fecaca; border-radius:10px; background:#fee2e2; color:#b91c1c; cursor:pointer; font-size:12px;';
+        del.style.cssText = DANGER_BUTTON_STYLE;
         right.appendChild(del);
         header.appendChild(right);
 
@@ -234,7 +240,7 @@ export class RegexSessionPanel {
             </div>
 
             <div style="display:flex; gap:14px; flex-wrap:wrap; margin-top:12px;">
-                <div style="flex:1; min-width: 260px; border:1px solid rgba(0,0,0,0.06); border-radius:12px; padding:10px;">
+                <div style="${SECTION_BOX_STYLE}">
                     <div style="font-weight:800; color:var(--app-text-primary); margin-bottom:8px;">影响条目（Affects）</div>
                     <div style="display:flex; gap:12px; flex-wrap:wrap; color:var(--app-text-secondary); font-size:13px;">
                         <label style="display:flex; gap:6px; align-items:center; cursor:pointer;"><input type="checkbox" class="re-place" value="1">用户输入</label>
@@ -250,7 +256,7 @@ export class RegexSessionPanel {
                     </div>
                 </div>
 
-                <div style="flex:1; min-width: 260px; border:1px solid rgba(0,0,0,0.06); border-radius:12px; padding:10px;">
+                <div style="${SECTION_BOX_STYLE}">
                     <div style="font-weight:800; color:var(--app-text-primary); margin-bottom:8px;">其他选项</div>
                     <div style="display:flex; flex-direction:column; gap:8px; color:var(--app-text-secondary); font-size:13px;">
                         <label style="display:flex; gap:8px; align-items:center; cursor:pointer;"><input type="checkbox" class="re-disabled">停用（Disabled）</label>

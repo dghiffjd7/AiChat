@@ -1988,9 +1988,13 @@ ${listPart || '-（无）'}
   const normalizePlainText = text => normalizeCreativeLineBreaks(String(text ?? ''));
 
   const escapeRegex = input => String(input ?? '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const getEffectivePresetUiMode = () => ((uiMode === 'rp' || sendMode === 'creative') ? 'rp' : 'chat');
+  try {
+    window.appBridge.getUiModeContext = getEffectivePresetUiMode;
+  } catch {}
   const getPresetContext = () => ({
     sessionId: String(chatStore.getCurrent?.() || '').trim(),
-    uiMode: uiMode === 'rp' ? 'rp' : 'chat',
+    uiMode: getEffectivePresetUiMode(),
   });
   const getOpenAIPreset = () => {
     try {
@@ -17768,7 +17772,7 @@ Phase G（Frame 36）：循环衔接
       } catch {}
       if (creativeMode) {
         const rawLimit = Number(appSettings.get().creativeHistoryMax);
-        const creativeLimit = Number.isFinite(rawLimit) ? Math.max(0, Math.trunc(rawLimit)) : 3;
+        const creativeLimit = Number.isFinite(rawLimit) ? Math.max(0, Math.trunc(rawLimit)) : 5;
         const creativeAssistantIdx = [];
         history.forEach((m, idx) => {
           if (m?.__creative && m?.role === 'assistant') creativeAssistantIdx.push(idx);
@@ -17868,7 +17872,7 @@ Phase G（Frame 36）：循环衔接
           disableScenarioHint: Boolean(creativeMode),
           disableMomentSummary: Boolean(creativeMode),
           disablePhoneFormat: Boolean(creativeMode),
-          uiMode,
+          uiMode: getEffectivePresetUiMode(),
           useGlobalVariables: Boolean(sharedVariables),
           sharedMemory: false,
           defaultRpBridgeSessionId: !isRpMode

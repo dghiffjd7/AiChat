@@ -76,6 +76,16 @@ const PRESET_TYPES = [
     { id: 'reasoning', label: '推理格式' },
 ];
 
+const PANEL_HEADER_STYLE = 'padding:14px 16px; border-bottom:1px solid var(--app-border-subtle); background:var(--app-surface-panel); display:flex; align-items:center; justify-content:space-between; gap:10px;';
+const PANEL_SUBHEADER_STYLE = 'padding:10px 16px; border-bottom:1px solid var(--app-border-subtle); background:var(--app-surface-card); display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;';
+const RULE_CARD_STYLE = 'border:1px solid var(--app-border-default); border-radius:12px; background:var(--app-surface-card); overflow:hidden;';
+const RULE_HEADER_STYLE = 'display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 12px; background:var(--app-surface-subtle); border-bottom:1px solid var(--app-border-subtle); cursor:pointer;';
+const SECTION_BOX_STYLE = 'flex:1; min-width: 260px; border:1px solid var(--app-border-subtle); border-radius:12px; padding:10px; background:var(--app-surface-subtle);';
+const LOCAL_SETLIST_STYLE = 'border:1px solid var(--app-border-default); border-radius:12px; overflow:hidden; background:var(--app-surface-card);';
+const LOCAL_EDITOR_HEAD_STYLE = 'border:1px solid var(--app-border-default); border-radius:12px; padding:12px; background:linear-gradient(180deg, var(--app-surface-panel) 0%, var(--app-surface-subtle) 100%);';
+const DANGER_BUTTON_STYLE = 'padding:6px 10px; border:1px solid rgba(239,68,68,0.35); border-radius:10px; background:var(--app-surface-card); color:#f87171; cursor:pointer; font-size:12px;';
+const DANGER_ACTION_STYLE = 'padding:10px 12px; border:1px solid rgba(239,68,68,0.35); border-radius:10px; background:var(--app-surface-card); color:#f87171; cursor:pointer;';
+
 export class RegexPanel {
     constructor() {
         this.store = window.appBridge?.regex || new RegexStore();
@@ -124,7 +134,7 @@ export class RegexPanel {
         this.element.onclick = (e) => e.stopPropagation();
 
         this.element.innerHTML = `
-            <div style="padding:14px 16px; border-bottom:1px solid rgba(0,0,0,0.06); background:rgba(248,250,252,0.92); display:flex; align-items:center; justify-content:space-between; gap:10px;">
+            <div style="${PANEL_HEADER_STYLE}">
                 <div style="min-width:0;">
                     <div style="font-weight:800; color:var(--app-text-primary);">正规表达式</div>
                     <div style="color:var(--app-text-muted); font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
@@ -134,7 +144,7 @@ export class RegexPanel {
                 <button id="regex-close" style="border:none; background:transparent; font-size:22px; cursor:pointer; color:var(--app-text-primary);">×</button>
             </div>
 
-            <div style="padding:10px 16px; border-bottom:1px solid rgba(0,0,0,0.06); display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;">
+            <div style="${PANEL_SUBHEADER_STYLE}">
                 <div style="display:flex; gap:8px; flex-wrap:wrap;">
                     <button class="regex-tab" data-tab="global" style="border:none; background:transparent; padding:10px 12px; border-radius:10px; cursor:pointer; font-size:14px; color:var(--app-text-secondary);">全局正则</button>
                     <button class="regex-tab" data-tab="local" style="border:none; background:transparent; padding:10px 12px; border-radius:10px; cursor:pointer; font-size:14px; color:var(--app-text-secondary);">局部正则</button>
@@ -174,9 +184,9 @@ export class RegexPanel {
         const el = this.statusEl;
         if (!el) return;
         const colors = {
-            success: { bg: '#dcfce7', fg: '#166534' },
-            error: { bg: '#fee2e2', fg: '#991b1b' },
-            info: { bg: '#dbeafe', fg: '#1e40af' }
+            success: { bg: 'rgba(16,185,129,0.16)', fg: '#bbf7d0' },
+            error: { bg: 'rgba(239,68,68,0.16)', fg: '#fecaca' },
+            info: { bg: 'rgba(59,130,246,0.16)', fg: '#bfdbfe' }
         };
         const c = colors[type] || colors.info;
         el.style.display = 'block';
@@ -192,11 +202,11 @@ export class RegexPanel {
         card.className = 'regex-rule';
         card.dataset.ruleId = r.id;
         card.dataset.collapsed = 'true';
-        card.style.cssText = 'border:1px solid rgba(0,0,0,0.08); border-radius:12px; background:var(--app-surface-card); overflow:hidden;';
+        card.style.cssText = RULE_CARD_STYLE;
 
         const header = document.createElement('div');
         header.className = 're-header';
-        header.style.cssText = 'display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 12px; background:rgba(248,250,252,0.85); cursor:pointer;';
+        header.style.cssText = RULE_HEADER_STYLE;
 
         const left = document.createElement('div');
         left.style.cssText = 'display:flex; align-items:center; gap:10px; min-width:0;';
@@ -219,7 +229,7 @@ export class RegexPanel {
         del.type = 'button';
         del.className = 're-del';
         del.textContent = '删除';
-        del.style.cssText = 'padding:6px 10px; border:1px solid #fecaca; border-radius:10px; background:#fee2e2; color:#b91c1c; cursor:pointer; font-size:12px;';
+        del.style.cssText = DANGER_BUTTON_STYLE;
         right.appendChild(del);
         header.appendChild(right);
 
@@ -252,7 +262,7 @@ export class RegexPanel {
             </div>
 
             <div style="display:flex; gap:14px; flex-wrap:wrap; margin-top:12px;">
-                <div style="flex:1; min-width: 260px; border:1px solid rgba(0,0,0,0.06); border-radius:12px; padding:10px;">
+                <div style="${SECTION_BOX_STYLE}">
                     <div style="font-weight:800; color:var(--app-text-primary); margin-bottom:8px;">影响条目（Affects）</div>
                     <div style="display:flex; gap:12px; flex-wrap:wrap; color:var(--app-text-secondary); font-size:13px;">
                         <label style="display:flex; gap:6px; align-items:center; cursor:pointer;"><input type="checkbox" class="re-place" value="1">用户输入</label>
@@ -269,7 +279,7 @@ export class RegexPanel {
                     </div>
                 </div>
 
-                <div style="flex:1; min-width: 260px; border:1px solid rgba(0,0,0,0.06); border-radius:12px; padding:10px;">
+                <div style="${SECTION_BOX_STYLE}">
                     <div style="font-weight:800; color:var(--app-text-primary); margin-bottom:8px;">其他选项</div>
                     <div style="display:flex; flex-direction:column; gap:8px; color:var(--app-text-secondary); font-size:13px;">
                         <label style="display:flex; gap:8px; align-items:center; cursor:pointer;"><input type="checkbox" class="re-disabled">停用（Disabled）</label>
@@ -472,9 +482,9 @@ export class RegexPanel {
             <div style="font-weight:800; color:var(--app-text-primary); margin-bottom:8px;">局部正则集合</div>
             <div style="display:flex; gap:8px; margin-bottom:8px;">
                 <button type="button" id="re-local-new" style="flex:1; padding:10px 12px; border:1px solid var(--app-border-default); border-radius:10px; background:var(--app-surface-card); cursor:pointer;">＋ 新建</button>
-                <button type="button" id="re-local-del" style="padding:10px 12px; border:1px solid #fecaca; border-radius:10px; background:#fee2e2; color:#b91c1c; cursor:pointer;">删除</button>
+                <button type="button" id="re-local-del" style="${DANGER_ACTION_STYLE}">删除</button>
             </div>
-            <div id="re-local-setlist" style="border:1px solid rgba(0,0,0,0.08); border-radius:12px; overflow:hidden;"></div>
+            <div id="re-local-setlist" style="${LOCAL_SETLIST_STYLE}"></div>
         `;
 
         const right = document.createElement('div');
@@ -501,7 +511,7 @@ export class RegexPanel {
             sets.forEach(s => {
                 const item = document.createElement('button');
                 item.type = 'button';
-                item.style.cssText = 'width:100%; text-align:left; padding:10px 12px; border:none; cursor:pointer; background:var(--app-surface-card); border-bottom:1px solid rgba(0,0,0,0.06);';
+                item.style.cssText = 'width:100%; text-align:left; padding:10px 12px; border:none; cursor:pointer; background:var(--app-surface-card); border-bottom:1px solid var(--app-border-subtle);';
                 item.innerHTML = `
                     <div style="font-weight:800; color:var(--app-text-primary);">${s.name || s.id}</div>
                     <div style="font-size:12px; color:var(--app-text-muted); margin-top:2px;">${s.bind ? this.formatBind(s.bind) : '未绑定（不会自动启用）'}</div>
@@ -570,7 +580,7 @@ export class RegexPanel {
         wrap.style.cssText = 'display:flex; flex-direction:column; gap:12px;';
 
         const head = document.createElement('div');
-        head.style.cssText = 'border:1px solid rgba(0,0,0,0.06); border-radius:12px; padding:12px; background:rgba(248,250,252,0.6);';
+        head.style.cssText = LOCAL_EDITOR_HEAD_STYLE;
         head.innerHTML = `
             <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;">
                 <div style="flex:1; min-width:220px;">
@@ -603,7 +613,7 @@ export class RegexPanel {
         wrap.appendChild(head);
 
         const enabledEl = head.querySelector('#re-local-enabled');
-        enabledEl.checked = s.enabled !== false;
+        enabledEl.checked = s.manualEnabled !== false;
 
         const bindType = head.querySelector('#re-bind-type');
         const presetType = head.querySelector('#re-bind-preset-type');
@@ -696,9 +706,9 @@ export class RegexPanel {
             const name = prompt('重命名局部正则', s.name || '局部正则');
             if (!name) return;
             s.name = name;
-            await this.store.upsertLocalSet({ ...s, name });
-            await this.refreshAll();
-            this.showStatus('已重命名', 'success');
+                await this.store.upsertLocalSet({ ...s, name });
+                await this.refreshAll();
+                this.showStatus('已重命名', 'success');
             window.dispatchEvent(new CustomEvent('regex-changed'));
         };
 

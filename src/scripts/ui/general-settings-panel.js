@@ -248,7 +248,7 @@ export class GeneralSettingsPanel {
     }
     this.refreshThemePresetOptions();
     if (this.themePresetSelect) {
-      this.themePresetSelect.value = String(settings.uiThemePresetId || 'classic-light');
+      this.themePresetSelect.value = String(settings.uiThemePresetId || 'classic-dark');
     }
     this.refreshThemeSelectButton(this.themePresetButton, this.themePresetSelect, '选择主题…');
     if (this.themeAvatarStyleSelect) {
@@ -291,7 +291,7 @@ export class GeneralSettingsPanel {
     }
     if (this.creativeHistoryInput) {
       const n = Number(settings.creativeHistoryMax);
-      this.creativeHistoryInput.value = String(Number.isFinite(n) ? Math.max(0, Math.trunc(n)) : 3);
+      this.creativeHistoryInput.value = String(Number.isFinite(n) ? Math.max(0, Math.trunc(n)) : 5);
     }
     if (this.creativeWideToggle) {
       this.creativeWideToggle.checked = Boolean(settings.creativeWideBubble);
@@ -2101,7 +2101,7 @@ export class GeneralSettingsPanel {
     };
 
     this.themePresetSelect?.addEventListener('change', async (e) => {
-      const value = String(e?.target?.value || 'classic-light').trim() || 'classic-light';
+      const value = String(e?.target?.value || 'classic-dark').trim() || 'classic-dark';
       await themeManager.activateThemeById(value, { syncAppearance: true });
       this.refreshThemePresetOptions();
       const settings = appSettings.get();
@@ -2283,7 +2283,7 @@ export class GeneralSettingsPanel {
     this.creativeHistoryInput?.addEventListener('input', (e) => {
       const raw = e?.target?.value;
       const n = Math.trunc(Number(raw));
-      const safe = Number.isFinite(n) ? Math.max(0, n) : 3;
+      const safe = Number.isFinite(n) ? Math.max(0, n) : 5;
       if (e?.target) e.target.value = String(safe);
       appSettings.update({ creativeHistoryMax: safe });
     });

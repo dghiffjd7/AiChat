@@ -107,12 +107,23 @@ const normalizeRule = (r = {}) => {
 const normalizeLocalSet = (s = {}) => ({
     id: s.id || genId('re-set'),
     name: String(s.name || '未命名正则').trim() || '未命名正则',
-    enabled: s.enabled !== false,
     // bind: null | { type:'preset', presetType, presetId } | { type:'world', worldId }
     bind: (s.bind && typeof s.bind === 'object') ? s.bind : null,
+    // Legacy note:
+    // older sync logic rewrote `enabled` for bound sets based on the currently active preset/world,
+    // which breaks mode/session-bound matching. Persist a dedicated manual switch and treat old bound
+    // records as enabled-by-default unless the user explicitly saved `manualEnabled`.
+    enabled:
+        (typeof s.manualEnabled === 'boolean')
+            ? s.manualEnabled
+            : (((s.bind && typeof s.bind === 'object') ? true : (s.enabled !== false))),
+    manualEnabled:
+        (typeof s.manualEnabled === 'boolean')
+            ? s.manualEnabled
+            : (((s.bind && typeof s.bind === 'object') ? true : (s.enabled !== false))),
     rules: ensureArr(s.rules).map(normalizeRule),
-    createdAt: s.createdAt || Date.now(),
-    updatedAt: Date.now(),
+    createdAt: Number.isFinite(Number(s.createdAt)) ? Number(s.createdAt) : Date.now(),
+    updatedAt: Number.isFinite(Number(s.updatedAt)) ? Number(s.updatedAt) : Date.now(),
 });
 
 const makeDefaultState = () => ({
@@ -261,7 +272,16 @@ export class RegexStore {
 
     async upsertLocalSet({ id, name, enabled, bind, rules }) {
         await this.ready;
-        const next = normalizeLocalSet({ id, name, enabled, bind, rules });
+        const prev = id ? this.state?.local?.sets?.[id] : null;
+        const next = normalizeLocalSet({
+            ...(prev || {}),
+            id,
+            name,
+            bind,
+            rules,
+            manualEnabled: enabled !== false,
+            updatedAt: Date.now(),
+        });
         this.state.local ||= { order: [], sets: {} };
         this.state.local.sets ||= {};
         this.state.local.order ||= [];
@@ -373,7 +393,7 @@ export class RegexStore {
         const order = ensureArr(this.state?.local?.order);
         for (const id of order) {
             const s = sets[id];
-            if (!s || s.enabled === false) continue;
+            if (!s || s.manualEnabled === false) continue;
             const bind = s.bind;
             // local set without bind: treat as disabled by default (to keep "局部"语义清晰)
             if (!bind) continue;

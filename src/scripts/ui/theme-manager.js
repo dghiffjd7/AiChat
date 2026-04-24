@@ -90,7 +90,7 @@ const mapStChatDisplay = (value) => {
 const toThemeSettingsPatch = (preset = {}) => {
   const appearance = normalizeAppearance(preset.appearance || {});
   return {
-    uiThemePresetId: String(preset.id || 'classic-light'),
+    uiThemePresetId: String(preset.id || 'classic-dark'),
     uiThemeAvatarStyle: appearance.avatarStyle,
     uiThemeChatDisplay: appearance.chatDisplay,
     uiThemeToastrPosition: appearance.toastrPosition,
@@ -127,7 +127,7 @@ export class ThemeManager {
 
   resolveCurrentTheme() {
     const settings = appSettings.get();
-    const preset = themeStore.getTheme(settings.uiThemePresetId || 'classic-light');
+    const preset = themeStore.getTheme(settings.uiThemePresetId || 'classic-dark');
     const appearance = normalizeAppearance({
       avatarStyle: settings.uiThemeAvatarStyle,
       chatDisplay: settings.uiThemeChatDisplay,
@@ -151,7 +151,7 @@ export class ThemeManager {
   }
 
   applyThemePreset({ preset, appearance, mode } = {}) {
-    const theme = normalizeThemePreset(preset || themeStore.getTheme('classic-light'));
+    const theme = normalizeThemePreset(preset || themeStore.getTheme('classic-dark'));
     const resolvedAppearance = normalizeAppearance(appearance || {}, theme.appearance || {});
     const nextMode = mode || (prefersDark(theme) ? 'dark' : 'light');
     const tokens = theme.tokens || {};
@@ -233,7 +233,7 @@ export class ThemeManager {
 
     const body = document.body;
     body.dataset.themeMode = nextMode;
-    body.dataset.themePreset = String(theme.id || 'classic-light');
+    body.dataset.themePreset = String(theme.id || 'classic-dark');
     if (resolvedAppearance.avatarStyle && resolvedAppearance.avatarStyle !== 'system') {
       body.dataset.avatarStyle = resolvedAppearance.avatarStyle;
     } else {
@@ -277,7 +277,7 @@ export class ThemeManager {
     const preset = themeStore.getTheme(id);
     const patch = syncAppearance
       ? toThemeSettingsPatch(preset)
-      : { uiThemePresetId: String(preset.id || 'classic-light') };
+      : { uiThemePresetId: String(preset.id || 'classic-dark') };
     appSettings.update(patch);
     dispatchSettingsPatch(patch);
     this.applyCurrentTheme();

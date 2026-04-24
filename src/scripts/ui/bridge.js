@@ -1947,19 +1947,30 @@ class AppBridge {
   }
 
   getRegexContext(options = {}) {
+    const sid = String(options?.sessionId || this.activeSessionId || '').trim();
+    const uiModeRaw = String(
+      options?.uiMode
+        || this.getUiModeContext?.()
+        || '',
+    ).trim().toLowerCase();
+    const uiMode = uiModeRaw === 'rp' ? 'rp' : (sid.startsWith('rp:') ? 'rp' : 'chat');
     const presetState = this.presets?.getState?.() || {};
     const activePresets = (() => {
-      const active = presetState?.active || {};
       const enabled = presetState?.enabled || {};
       const out = {};
-      for (const [type, id] of Object.entries(active)) {
-        if (!id) continue;
+      const presetTypes = ['sysprompt', 'context', 'instruct', 'openai', 'reasoning'];
+      for (const type of presetTypes) {
         if (enabled && enabled[type] === false) continue;
-        out[type] = id;
+        const resolvedId = String(
+          this.presets?.getResolvedActiveId?.(type, { sessionId: sid, uiMode })?.presetId
+          || presetState?.active?.[type]
+          || '',
+        ).trim();
+        if (!resolvedId) continue;
+        out[type] = resolvedId;
       }
       return out;
     })();
-    const sid = String(options?.sessionId || this.activeSessionId || '').trim();
     const resolvedWorldState = this.getResolvedWorldState(sid, options);
     const worldIds = Array.isArray(resolvedWorldState?.worldIds) ? resolvedWorldState.worldIds : [];
     let localVars = {};
@@ -1976,6 +1987,7 @@ class AppBridge {
     const baseVars = isShared ? globalVars : localVars;
     return {
       sessionId: sid,
+      uiMode,
       worldId: String(this.currentWorldId || '').trim() || worldIds[0] || '',
       worldIds,
       activePresets,
@@ -2128,7 +2140,12 @@ class AppBridge {
   getRequestPresetContext(context = {}) {
     return {
       sessionId: String(context?.session?.id || this.activeSessionId || '').trim(),
-      uiMode: String(context?.meta?.uiMode || context?.uiMode || '').trim().toLowerCase() === 'rp' ? 'rp' : 'chat',
+      uiMode: String(
+        context?.meta?.uiMode
+        || context?.uiMode
+        || this.getUiModeContext?.()
+        || '',
+      ).trim().toLowerCase() === 'rp' ? 'rp' : 'chat',
     };
   }
 
