@@ -214,9 +214,22 @@ const withSpeakerPrefix = (content, speaker) => {
   return `${name}: ${text}`;
 };
 
-const normalizeHistoryLineBreaks = (content, role) => {
+const normalizeHistoryLineBreaks = (content, role, { preserveParagraphs = false } = {}) => {
   if (role !== 'assistant') return content;
   const text = String(content ?? '');
+  if (preserveParagraphs) {
+    let out = text
+      .replace(/&lt;br\s*\/?&gt;/gi, '\n')
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/\r\n/g, '\n')
+      .replace(/\r/g, '\n');
+    // Some regex replacements emit literal "\n". Decode them only on prompt history path.
+    if (!out.includes('\n') && out.includes('\\n') && !out.includes('```')) {
+      out = out.replace(/\\n/g, '\n');
+    }
+    out = out.replace(/\n{4,}/g, '\n\n\n');
+    return out;
+  }
   if (!text.includes('\n') && !text.includes('\r')) return text;
   return text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').replace(/\n/g, '<br>');
 };
@@ -658,9 +671,13 @@ class AppBridge {
       tokenBudgetData: Math.floor(DEFAULT_MEMORY_BUDGET.maxTokens * DEFAULT_MEMORY_BUDGET.safetyRatio),
       overheadTokens: 0,
       maxRows: DEFAULT_MEMORY_BUDGET.maxRows,
-      position: 'after_persona',
-      injectDepth: 4,
+      position: 'history_after',
+      injectDepth: 0,
       promptText: '',
+      dataPromptText: '',
+      guidePromptText: '',
+      guidePosition: 'history_before',
+      guideInjectDepth: 0,
       tableData: '',
       updateMode,
       templateId: '',
@@ -724,16 +741,18 @@ class AppBridge {
     const wrapperRaw = typeof injection?.wrapper === 'string' ? injection.wrapper : '<memories>\n{{tableData}}\n</memories>';
     const overridePositionRaw = String(context?.meta?.memoryInjectPosition || '').trim().toLowerCase();
     const overridePositions =
-      overridePositionRaw && overridePositionRaw !== 'template'
+      overridePositionRaw
         ? parseMemoryPromptPositions(overridePositionRaw)
         : [];
-    const injectionPositions = parseMemoryPromptPositions(injection?.position);
     const positions = overridePositions.length
       ? overridePositions
-      : injectionPositions.length
-        ? injectionPositions
-        : ['after_persona'];
+      : ['history_after'];
     const position = positions.join('+');
+    const guidePositionRaw = String(context?.meta?.memoryGuidePosition || '').trim().toLowerCase();
+    const guidePositions = guidePositionRaw ? parseMemoryPromptPositions(guidePositionRaw) : [];
+    const guidePosition = (guidePositions.length ? guidePositions : ['history_before']).join('+');
+    const guideInjectDepthRaw = Math.trunc(Number(context?.meta?.memoryGuideDepth));
+    const guideInjectDepth = Number.isFinite(guideInjectDepthRaw) ? Math.max(0, guideInjectDepthRaw) : 0;
 
     const tables = Array.isArray(template?.tables) ? template.tables : [];
     const tableByIdAll = new Map();
@@ -773,7 +792,7 @@ class AppBridge {
       : maxTokens;
     const tokenMode = 'rough';
     const injectDepthRaw = Math.trunc(Number(context?.meta?.memoryInjectDepth));
-    const injectDepth = Number.isFinite(injectDepthRaw) ? Math.max(0, injectDepthRaw) : 4;
+    const injectDepth = Number.isFinite(injectDepthRaw) ? Math.max(0, injectDepthRaw) : 0;
 
     const buildMemoryEditGuide = (requiredHints = []) => {
       const lines = [];
@@ -911,17 +930,17 @@ class AppBridge {
       : emptyTemplate;
     const overheadTokens = estimateTokens(emptyWrapped, tokenMode) + (editGuide ? estimateTokens(editGuide, tokenMode) : 0);
     const tokenBudgetData = Math.max(0, tokenBudgetSafety - overheadTokens);
-    const buildPromptText = (tableData) => {
+    const buildDataPromptText = (tableData) => {
       const renderedTemplate = renderStTemplate(templateRaw, { ...macroVars, tableData });
       const wrapped = wrapperRaw
         ? renderStTemplate(wrapperRaw, { ...macroVars, tableData: renderedTemplate })
         : renderedTemplate;
       const processed = this.processTextMacros(wrapped, { ...macroVars, sessionId });
-      let promptText = String(processed || '').trim();
-      if (autoExtract && editGuide) {
-        promptText = promptText ? `${promptText}\n\n${editGuide}` : editGuide;
-      }
-      return promptText;
+      return String(processed || '').trim();
+    };
+    const buildPromptText = (tableData) => {
+      const dataPromptText = buildDataPromptText(tableData);
+      return [dataPromptText, autoExtract ? editGuide : ''].filter(Boolean).join('\n\n').trim();
     };
 
     const activeTableIds = new Set(tableOrder);
@@ -1395,6 +1414,8 @@ class AppBridge {
     if (!selected.length && !truncated.length && !combinedTableData) {
       const promptText = autoExtract ? buildPromptText('') : '';
       const tokenTotal = promptText ? estimateTokens(promptText, tokenMode) : 0;
+      const dataPromptText = autoExtract ? buildDataPromptText('') : '';
+      const guidePromptText = autoExtract ? editGuide : '';
       return {
         enabled: true,
         reason: 'empty',
@@ -1409,6 +1430,10 @@ class AppBridge {
         position,
         injectDepth,
         promptText,
+        dataPromptText,
+        guidePromptText,
+        guidePosition,
+        guideInjectDepth,
         tableData: '',
         updateMode,
         templateId,
@@ -1425,6 +1450,8 @@ class AppBridge {
     if (!selected.length && !combinedTableData) {
       const promptText = autoExtract ? buildPromptText('') : '';
       const tokenTotal = promptText ? estimateTokens(promptText, tokenMode) : 0;
+      const dataPromptText = autoExtract ? buildDataPromptText('') : '';
+      const guidePromptText = autoExtract ? editGuide : '';
       return {
         enabled: true,
         reason: 'budget_empty',
@@ -1439,6 +1466,10 @@ class AppBridge {
         position,
         injectDepth,
         promptText,
+        dataPromptText,
+        guidePromptText,
+        guidePosition,
+        guideInjectDepth,
         tableData: '',
         updateMode,
         templateId,
@@ -1452,7 +1483,9 @@ class AppBridge {
       };
     }
 
-    const promptText = buildPromptText(combinedTableData);
+    const dataPromptText = buildDataPromptText(combinedTableData);
+    const guidePromptText = autoExtract ? editGuide : '';
+    const promptText = [dataPromptText, guidePromptText].filter(Boolean).join('\n\n').trim();
     const tokenTotal = estimateTokens(promptText, tokenMode);
 
     return {
@@ -1469,6 +1502,10 @@ class AppBridge {
       position,
       injectDepth,
       promptText,
+      dataPromptText,
+      guidePromptText,
+      guidePosition,
+      guideInjectDepth,
       tableData,
       updateMode,
       templateId,
@@ -2335,15 +2372,25 @@ class AppBridge {
       try {
         const memoryPlan = await this.buildMemoryPromptPlan(nextContext);
         this.lastMemoryPlan = memoryPlan;
-        if (memoryPlan?.enabled && memoryPlan.promptText) {
-          nextContext.meta = {
+        if (memoryPlan?.enabled && (memoryPlan.dataPromptText || memoryPlan.guidePromptText)) {
+          const nextMeta = {
             ...(nextContext.meta || {}),
-            memoryPrompt: {
-              content: memoryPlan.promptText,
+          };
+          if (memoryPlan.dataPromptText) {
+            nextMeta.memoryPrompt = {
+              content: memoryPlan.dataPromptText,
               position: memoryPlan.position,
               depth: memoryPlan.injectDepth,
-            },
-          };
+            };
+          }
+          if (memoryPlan.guidePromptText) {
+            nextMeta.memoryGuidePrompt = {
+              content: memoryPlan.guidePromptText,
+              position: memoryPlan.guidePosition || 'history_before',
+              depth: memoryPlan.guideInjectDepth,
+            };
+          }
+          nextContext.meta = nextMeta;
         }
       } catch (err) {
         logger.warn('memory prompt plan failed', err);
@@ -2660,6 +2707,7 @@ class AppBridge {
     const appendUserToHistory = context?.meta?.appendUserToHistory !== false;
     const isMomentCommentTask = String(context?.task?.type || '').toLowerCase() === 'moment_comment';
     const isGroupChat = Boolean(context?.session?.isGroup) || String(context?.session?.id || '').startsWith('group:');
+    const preserveCreativeHistoryParagraphs = String(context?.meta?.uiMode || '').trim().toLowerCase() === 'rp';
     const memoryMode = String(context?.meta?.memoryStorageMode || '').trim().toLowerCase();
     const useSummaryMemory = memoryMode === 'summary' && !Boolean(context?.meta?.disableSummary);
     const includeTimeContext = (() => {
@@ -2672,21 +2720,23 @@ class AppBridge {
       }
     })();
     const timeContextBlock = includeTimeContext ? { role: 'system', content: buildTimeContextText() } : null;
-    const memoryPromptRaw = context?.meta?.memoryPrompt;
-    const memoryPromptContent = typeof memoryPromptRaw?.content === 'string' ? String(memoryPromptRaw.content).trim() : '';
-    const memoryPromptPositionRaw = memoryPromptRaw?.position ?? '';
-    const parsedPositions = parseMemoryPromptPositions(memoryPromptPositionRaw);
-    const memoryPromptPositions = parsedPositions.length ? parsedPositions : ['after_persona'];
-    const memoryPromptDepthRaw = Math.trunc(Number(memoryPromptRaw?.depth));
-    const memoryPromptDepth = Number.isFinite(memoryPromptDepthRaw) ? Math.max(0, memoryPromptDepthRaw) : 4;
-    const memoryPromptRoleRaw = String(memoryPromptRaw?.role || 'system').toLowerCase();
-    const memoryPromptRole =
-      memoryPromptRoleRaw === 'user' || memoryPromptRoleRaw === 'assistant' || memoryPromptRoleRaw === 'system'
-        ? memoryPromptRoleRaw
-        : 'system';
-    const memoryPrompt = memoryPromptContent
-      ? { content: memoryPromptContent, positions: memoryPromptPositions, role: memoryPromptRole, depth: memoryPromptDepth }
-      : null;
+    const parseInjectedPrompt = (rawPrompt, fallbackPositions = ['after_persona'], fallbackDepth = 0) => {
+      const content = typeof rawPrompt?.content === 'string' ? String(rawPrompt.content).trim() : '';
+      if (!content) return null;
+      const positionRaw = rawPrompt?.position ?? '';
+      const parsed = parseMemoryPromptPositions(positionRaw);
+      const positions = parsed.length ? parsed : fallbackPositions;
+      const depthRaw = Math.trunc(Number(rawPrompt?.depth));
+      const depth = Number.isFinite(depthRaw) ? Math.max(0, depthRaw) : fallbackDepth;
+      const roleRaw = String(rawPrompt?.role || 'system').toLowerCase();
+      const role =
+        roleRaw === 'user' || roleRaw === 'assistant' || roleRaw === 'system'
+          ? roleRaw
+          : 'system';
+      return { content, positions, role, depth };
+    };
+    const memoryGuidePrompt = parseInjectedPrompt(context?.meta?.memoryGuidePrompt, ['history_before'], 0);
+    const memoryPrompt = parseInjectedPrompt(context?.meta?.memoryPrompt, ['history_after'], 0);
     const disableScenarioHint = Boolean(context?.meta?.disableScenarioHint);
     const replyPromptHint = String(context?.meta?.replyPromptHint || '').trim();
     const overrideLastUserMessageRaw = (typeof context?.meta?.overrideLastUserMessage === 'string')
@@ -2763,6 +2813,46 @@ class AppBridge {
 	      role: normalizeSyntheticRole(role),
 	      content,
 	    });
+    const createSyntheticPromptInjector = (prompt) => {
+      const inserted = new Set();
+      return {
+        insertAt(pos) {
+          if (!prompt || !prompt.positions.includes(pos) || inserted.has(pos)) return;
+          messages.push(buildSyntheticMessage(prompt.role, prompt.content));
+          inserted.add(pos);
+        },
+        insertIntoHistory(history) {
+          if (!prompt || !prompt.positions.includes('history_depth') || inserted.has('history_depth')) return;
+          const depth = Math.max(0, Math.trunc(Number(prompt?.depth || 0)));
+          const idx = Math.max(0, history.length - depth);
+          history.splice(idx, 0, buildSyntheticMessage(prompt.role, prompt.content));
+          inserted.add('history_depth');
+        },
+        insertHistoryBoundary(pos) {
+          if (!prompt || !prompt.positions.includes(pos) || inserted.has(pos)) return;
+          messages.push(buildSyntheticMessage(prompt.role, prompt.content));
+          inserted.add(pos);
+        },
+      };
+    };
+    const memoryGuideInjector = createSyntheticPromptInjector(memoryGuidePrompt);
+    const memoryDataInjector = createSyntheticPromptInjector(memoryPrompt);
+    const insertMemoryPromptAt = (pos) => {
+      memoryGuideInjector.insertAt(pos);
+      memoryDataInjector.insertAt(pos);
+    };
+    const insertMemoryPromptIntoHistory = (history) => {
+      memoryGuideInjector.insertIntoHistory(history);
+      memoryDataInjector.insertIntoHistory(history);
+    };
+    const insertMemoryPromptBeforeHistory = () => {
+      memoryGuideInjector.insertHistoryBoundary('history_before');
+      memoryDataInjector.insertHistoryBoundary('history_before');
+    };
+    const insertMemoryPromptAfterHistory = () => {
+      memoryGuideInjector.insertHistoryBoundary('history_after');
+      memoryDataInjector.insertHistoryBoundary('history_after');
+    };
 	    const normalizeSyntheticMessageList = (list) => {
 	      const arr = Array.isArray(list) ? list : [];
 	      return arr.map((msg) => {
@@ -3162,7 +3252,7 @@ class AppBridge {
 	        const role = roleMap[item?.role] || 'system';
 	        let finalContent = content;
 	        if (role !== 'system') {
-	          const normalized = normalizeHistoryLineBreaks(content, role);
+	          const normalized = normalizeHistoryLineBreaks(content, role, { preserveParagraphs: preserveCreativeHistoryParagraphs });
 	          const speaker = role === 'assistant' ? name2 : name1;
 	          finalContent = withSpeakerPrefix(normalized, speaker);
 	        }
@@ -3691,7 +3781,7 @@ const stringifyMessageContent = (content) => {
             const role = roleMap[entry?.role] || 'system';
             let finalContent = content;
             if (forHistory && role !== 'system') {
-              const normalized = normalizeHistoryLineBreaks(content, role);
+              const normalized = normalizeHistoryLineBreaks(content, role, { preserveParagraphs: preserveCreativeHistoryParagraphs });
               const speaker = role === 'assistant' ? name2 : name1;
               finalContent = withSpeakerPrefix(normalized, speaker);
             }
@@ -3877,21 +3967,6 @@ const stringifyMessageContent = (content) => {
       };
 
 		    if (useOpenAIPreset && openp && openaiOrder && openaiOrder.length) {
-      const memoryInserted = new Set();
-      const canInsertMemoryAt = (pos) =>
-        Boolean(memoryPrompt && memoryPrompt.positions.includes(pos) && !memoryInserted.has(pos));
-      const insertMemoryPromptAt = (pos) => {
-        if (!canInsertMemoryAt(pos)) return;
-        messages.push(buildSyntheticMessage(memoryPrompt.role, memoryPrompt.content));
-        memoryInserted.add(pos);
-      };
-      const insertMemoryPromptIntoHistory = (history) => {
-        if (!canInsertMemoryAt('history_depth')) return;
-        const depth = Math.max(0, Math.trunc(Number(memoryPrompt?.depth || 0)));
-        const idx = Math.max(0, history.length - depth);
-        history.splice(idx, 0, buildSyntheticMessage(memoryPrompt.role, memoryPrompt.content));
-        memoryInserted.add('history_depth');
-      };
       const historyRaw = Array.isArray(context.history) ? context.history.slice() : [];
       // ST promptOnly scripts: apply to outgoing prompt only
       const history = historyRaw.map((m, idx) => {
@@ -3908,7 +3983,7 @@ const stringifyMessageContent = (content) => {
         const speaker = role === 'assistant' && isGroupChat
           ? (String(m?.name || '').trim() || name2)
           : (role === 'user' ? name1 : name2);
-        const normalized = normalizeHistoryLineBreaks(out, role);
+        const normalized = normalizeHistoryLineBreaks(out, role, { preserveParagraphs: preserveCreativeHistoryParagraphs });
         return { role, content: withSpeakerPrefix(normalized, speaker) };
       });
 
@@ -4090,8 +4165,10 @@ const stringifyMessageContent = (content) => {
           insertMemoryPromptAt('after_persona');
           insertMemoryPromptAt('system_end');
           insertMemoryPromptAt('before_chat');
+          insertMemoryPromptBeforeHistory();
           messages.push(...historyRecallBlocks);
           if (history.length) messages.push(...history);
+          insertMemoryPromptAfterHistory();
           insertTimeContextAfterHistory();
           insertPendingUserIntoHistory();
           insertChatGuideAfterHistory();
@@ -4180,8 +4257,10 @@ const stringifyMessageContent = (content) => {
         insertMemoryPromptAt('after_persona');
         insertMemoryPromptAt('system_end');
         insertMemoryPromptAt('before_chat');
+        insertMemoryPromptBeforeHistory();
         messages.push(...historyRecallBlocks);
         if (history.length) messages.push(...history);
+        insertMemoryPromptAfterHistory();
         insertTimeContextAfterHistory();
         insertPendingUserIntoHistory();
         insertChatGuideAfterHistory();
@@ -4201,21 +4280,6 @@ const stringifyMessageContent = (content) => {
       return finalizeProviderMessages();
     }
 
-    const memoryInserted = new Set();
-    const canInsertMemoryAt = (pos) =>
-      Boolean(memoryPrompt && memoryPrompt.positions.includes(pos) && !memoryInserted.has(pos));
-	    const insertMemoryPromptAt = (pos) => {
-	      if (!canInsertMemoryAt(pos)) return;
-	      messages.push(buildSyntheticMessage(memoryPrompt.role, memoryPrompt.content));
-	      memoryInserted.add(pos);
-	    };
-	    const insertMemoryPromptIntoHistory = (history) => {
-	      if (!canInsertMemoryAt('history_depth')) return;
-	      const depth = Math.max(0, Math.trunc(Number(memoryPrompt?.depth || 0)));
-	      const idx = Math.max(0, history.length - depth);
-	      history.splice(idx, 0, buildSyntheticMessage(memoryPrompt.role, memoryPrompt.content));
-	      memoryInserted.add('history_depth');
-	    };
     const chatGuideContent = chatGuidePlan.promptContent;
     const chatGuideBeforePromptContent = chatGuidePlan.beforePromptContent;
     const chatGuideDepthContent = chatGuidePlan.depthContent;
@@ -4426,7 +4490,7 @@ const stringifyMessageContent = (content) => {
         const speaker = m.role === 'assistant' && isGroupChat
           ? (String(m?.name || '').trim() || name2)
           : (m.role === 'user' ? name1 : name2);
-        m.content = normalizeHistoryLineBreaks(contentText, m.role);
+        m.content = normalizeHistoryLineBreaks(contentText, m.role, { preserveParagraphs: preserveCreativeHistoryParagraphs });
         m.content = withSpeakerPrefix(m.content, speaker);
       }
     } catch {}
@@ -4462,8 +4526,9 @@ const stringifyMessageContent = (content) => {
 	      usedLastUserMessageForPendingInput = true;
 	    }
 
-		    insertMemoryPromptAt('before_chat');
-		    messages.push({ role: 'system', content: HISTORY_RECALL_NOTICE });
+	    insertMemoryPromptAt('before_chat');
+      insertMemoryPromptBeforeHistory();
+	    messages.push({ role: 'system', content: HISTORY_RECALL_NOTICE });
 	    try {
 	      const momentData = buildMomentCommentDataBlock();
 	      if (momentData) messages.push(momentData);
@@ -4548,7 +4613,8 @@ const stringifyMessageContent = (content) => {
 	      });
 	      messages.push(...historyForSend);
 	    }
-    insertTimeContextAfterHistory();
+      insertMemoryPromptAfterHistory();
+	    insertTimeContextAfterHistory();
     if (chatGuideDepthContent) {
       messages.push({ role: 'system', content: chatGuideDepthContent });
     }

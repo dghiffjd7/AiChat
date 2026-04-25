@@ -48,7 +48,12 @@ const readLocalJson = key => {
 
 const writeLocalJson = (key, value) => {
   try {
-    globalThis?.localStorage?.setItem?.(key, JSON.stringify(value));
+    const json = JSON.stringify(value);
+    if (json.length > LOCAL_BOOTSTRAP_JSON_SOFT_LIMIT) {
+      try { globalThis?.localStorage?.removeItem?.(key); } catch {}
+      return false;
+    }
+    globalThis?.localStorage?.setItem?.(key, json);
     return true;
   } catch {
     return false;

@@ -56,6 +56,8 @@ const makeAbortError = () => {
   return err;
 };
 
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 const CACHE_DEBUG_RESPONSE_HEADER_KEYS = [
   'cf-cache-status',
   'x-cache',
@@ -505,52 +507,117 @@ export class OpenAIProvider {
       ...prepared.payload,
       stream: true,
     });
+    const transport = prepareTransportRequest({
+      config: this.transportConfig,
+      provider: this.provider,
+      url: prepared.url,
+      headers: { ...this.getHeaders(), Accept: 'text/event-stream' },
+    });
 
     if (this.canUseNativeHttp()) {
-      if (signal?.aborted) throw makeAbortError();
-      const res = await this.request({
-        url: prepared.url,
-        method: 'POST',
-        headers: { ...this.getHeaders(), Accept: 'text/event-stream' },
-        body: payload,
-        signal,
-        requestId,
-      });
-      if (!res.ok) {
-        const detail = this.extractErrorDetail(res.body);
-        const error = new Error(`OpenAI API Error: ${res.status}${detail ? ` - ${detail}` : ''}`);
-        error.status = res.status;
-        error.response = res.body;
-        throw attachMessageIndexDiagnostics(error, messages);
-      }
+      const invoker = getTauriInvoker();
+      const nativeStreamRequestId = String(
+        requestId || `http_stream_${Date.now().toString(36)}_${Math.random().toString(16).slice(2, 10)}`,
+      ).trim();
+      let started = false;
+      let responseStatus = null;
+      let responseOk = null;
+      let rawErrorBody = '';
+      let sseBuffer = '';
       let lastUsage = null;
-      for (const data of parseSSEText(res.body)) {
-        if (data?.usage && typeof data.usage === 'object') lastUsage = data;
-        const content = data.choices?.[0]?.delta?.content;
-        if (content) yield content;
+      const flushSseBuffer = function* (final = false) {
+        const lines = String(sseBuffer || '').split('\n');
+        sseBuffer = final ? '' : (lines.pop() || '');
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue;
+          const payloadText = line.slice(6).trim();
+          if (!payloadText || payloadText === '[DONE]') continue;
+          try {
+            const data = JSON.parse(payloadText);
+            if (data?.usage && typeof data.usage === 'object') lastUsage = data;
+            const content = data.choices?.[0]?.delta?.content;
+            if (content) yield content;
+          } catch (_e) {}
+        }
+      };
+      try {
+        if (signal?.aborted) throw makeAbortError();
+        await invoker('http_stream_request_start', {
+          url: transport.url,
+          method: 'POST',
+          headers: transport.headers,
+          body: payload,
+          timeoutMs: this.timeout,
+          requestId: nativeStreamRequestId,
+        });
+        started = true;
+
+        while (true) {
+          if (signal?.aborted) throw makeAbortError();
+          const batch = await invoker('http_stream_request_read', {
+            requestId: nativeStreamRequestId,
+            maxChunks: 32,
+          });
+          if (Number.isFinite(Number(batch?.status))) responseStatus = Number(batch.status);
+          if (typeof batch?.ok === 'boolean') responseOk = batch.ok;
+
+          const chunks = Array.isArray(batch?.chunks) ? batch.chunks.map((chunk) => String(chunk || '')) : [];
+          if (responseOk === false) {
+            rawErrorBody += chunks.join('');
+          } else {
+            for (const chunk of chunks) {
+              sseBuffer += chunk;
+              yield* flushSseBuffer(false);
+            }
+          }
+
+          const nativeError = String(batch?.error || '').trim();
+          if (nativeError) {
+            if (/aborted/i.test(nativeError)) throw makeAbortError();
+            const error = new Error(`native http_stream_request failed: ${nativeError}`);
+            error.status = Number.isFinite(responseStatus) ? responseStatus : 0;
+            error.response = rawErrorBody;
+            throw error;
+          }
+
+          if (batch?.done) {
+            if (responseOk === false) {
+              const detail = this.extractErrorDetail(rawErrorBody);
+              const error = new Error(`OpenAI API Error: ${responseStatus || 0}${detail ? ` - ${detail}` : ''}`);
+              error.status = responseStatus || 0;
+              error.response = rawErrorBody;
+              throw error;
+            }
+            yield* flushSseBuffer(true);
+            emitOpenAICacheDebug({
+              phase: 'stream-native',
+              provider: this.provider,
+              model: this.model,
+              url: transport.url,
+              stream: true,
+              requestId: nativeStreamRequestId,
+              status: responseStatus || 0,
+              headers: {},
+              body: lastUsage,
+            });
+            return;
+          }
+
+          if (!chunks.length) {
+            await delay(20);
+          }
+        }
+      } catch (error) {
+        throw attachMessageIndexDiagnostics(error, messages);
+      } finally {
+        if (started) {
+          invoker('http_stream_request_close', { requestId: nativeStreamRequestId }).catch(() => {});
+        }
       }
-      emitOpenAICacheDebug({
-        phase: 'stream-native',
-        provider: this.provider,
-        model: this.model,
-        url: prepared.url,
-        stream: true,
-        requestId,
-        status: res?.status,
-        headers: res?.headers,
-        body: lastUsage,
-      });
-      return;
     }
 
     const { controller, cleanup } = createLinkedAbortController({ timeoutMs: this.timeout, signal });
     try {
-      const transport = prepareTransportRequest({
-        config: this.transportConfig,
-        provider: this.provider,
-        url: prepared.url,
-        headers: { ...this.getHeaders(), Accept: 'text/event-stream' },
-      });
       const response = await fetch(transport.url, {
         method: 'POST',
         headers: transport.headers,

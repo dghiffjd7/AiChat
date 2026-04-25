@@ -2360,6 +2360,110 @@ export class PresetPanel {
             { label: 'RP模式回复视角', el: rpTarget },
         ]));
 
+        const makeMemoryDataPositionSelect = (id, value) => {
+            const el = document.createElement('select');
+            el.id = id;
+            el.className = 'pp-input';
+            el.innerHTML = `
+                <option value="">跟随通用设定</option>
+                <option value="after_persona">角色设定后</option>
+                <option value="system_end">系统提示末尾</option>
+                <option value="before_chat">对话前</option>
+                <option value="history_before">History 前</option>
+                <option value="history_after">History 后</option>
+                <option value="history_depth">深度注入（History 内）</option>
+                <option value="system_end+before_chat">双重注入（系统末尾 + 对话前）</option>
+            `;
+            const allowed = new Set(['after_persona', 'system_end', 'before_chat', 'history_before', 'history_after', 'history_depth', 'system_end+before_chat']);
+            const next = String(value || '').trim().toLowerCase();
+            el.value = allowed.has(next) ? next : '';
+            return el;
+        };
+
+        const memoryDataPosition = makeMemoryDataPositionSelect('gen-memory-data-position', p.memory_data_position);
+        const memoryDataDepth = document.createElement('input');
+        memoryDataDepth.id = 'gen-memory-data-depth';
+        memoryDataDepth.className = 'pp-input';
+        memoryDataDepth.type = 'number';
+        memoryDataDepth.min = '0';
+        memoryDataDepth.step = '1';
+        {
+            const raw = Math.trunc(Number(p.memory_data_depth));
+            const safe = Number.isFinite(raw) ? Math.max(0, raw) : 0;
+            memoryDataDepth.value = String(safe);
+        }
+
+        const memoryHint = document.createElement('div');
+        memoryHint.style.cssText = 'color:var(--app-text-muted); font-size:12px; margin:10px 0 4px; line-height:1.5;';
+        memoryHint.textContent = '动态记忆表格内容默认建议放在 history 后；写表指导位置可在下方单独控制。';
+        wrap.appendChild(memoryHint);
+
+        wrap.appendChild(this.renderInputRow([
+            { label: '记忆表格内容位置', el: memoryDataPosition },
+        ]));
+
+        const memoryDepthRow = this.renderInputRow([
+            { label: '记忆表格深度', el: memoryDataDepth },
+        ]);
+        memoryDepthRow.style.marginTop = '8px';
+        wrap.appendChild(memoryDepthRow);
+
+        const memoryDepthHint = document.createElement('div');
+        memoryDepthHint.style.cssText = 'color:var(--app-text-muted); font-size:12px; margin:4px 0 0; line-height:1.5;';
+        memoryDepthHint.textContent = '仅在“深度注入（History 内）”时生效。要放在 history 后，请直接选择“History 后”。';
+        wrap.appendChild(memoryDepthHint);
+
+        const syncMemoryDataUi = () => {
+            const showDepth = memoryDataPosition.value === 'history_depth';
+            memoryDataDepth.disabled = !showDepth;
+            memoryDepthRow.style.display = showDepth ? '' : 'none';
+            memoryDepthHint.style.display = showDepth ? '' : 'none';
+        };
+        memoryDataPosition.addEventListener('change', syncMemoryDataUi);
+        syncMemoryDataUi();
+
+        const guideHint = document.createElement('div');
+        guideHint.style.cssText = 'color:var(--app-text-muted); font-size:12px; margin:12px 0 4px; line-height:1.5;';
+        guideHint.textContent = '写表指导提示词可单独定位；默认放在 history 前。';
+        wrap.appendChild(guideHint);
+
+        const memoryGuidePosition = makeMemoryDataPositionSelect('gen-memory-guide-position', p.memory_guide_position);
+        const memoryGuideDepth = document.createElement('input');
+        memoryGuideDepth.id = 'gen-memory-guide-depth';
+        memoryGuideDepth.className = 'pp-input';
+        memoryGuideDepth.type = 'number';
+        memoryGuideDepth.min = '0';
+        memoryGuideDepth.step = '1';
+        {
+            const raw = Math.trunc(Number(p.memory_guide_depth));
+            const safe = Number.isFinite(raw) ? Math.max(0, raw) : 0;
+            memoryGuideDepth.value = String(safe);
+        }
+
+        wrap.appendChild(this.renderInputRow([
+            { label: '写表指导位置', el: memoryGuidePosition },
+        ]));
+
+        const guideDepthRow = this.renderInputRow([
+            { label: '写表指导深度', el: memoryGuideDepth },
+        ]);
+        guideDepthRow.style.marginTop = '8px';
+        wrap.appendChild(guideDepthRow);
+
+        const guideDepthHint = document.createElement('div');
+        guideDepthHint.style.cssText = 'color:var(--app-text-muted); font-size:12px; margin:4px 0 0; line-height:1.5;';
+        guideDepthHint.textContent = '仅在深度注入时生效。通常不需要改。';
+        wrap.appendChild(guideDepthHint);
+
+        const syncGuideUi = () => {
+            const showDepth = memoryGuidePosition.value === 'history_depth';
+            memoryGuideDepth.disabled = !showDepth;
+            guideDepthRow.style.display = showDepth ? '' : 'none';
+            guideDepthHint.style.display = showDepth ? '' : 'none';
+        };
+        memoryGuidePosition.addEventListener('change', syncGuideUi);
+        syncGuideUi();
+
         return wrap;
     }
 
@@ -2659,6 +2763,10 @@ export class PresetPanel {
             }
             current.response_target_chat = root.querySelector('#gen-response-target-chat')?.value === 'user' ? 'user' : 'character';
             current.response_target_rp = root.querySelector('#gen-response-target-rp')?.value === 'character' ? 'character' : 'user';
+            current.memory_data_position = String(root.querySelector('#gen-memory-data-position')?.value || '').trim().toLowerCase();
+            current.memory_data_depth = getInt(root.querySelector('#gen-memory-data-depth')?.value, current.memory_data_depth ?? 0);
+            current.memory_guide_position = String(root.querySelector('#gen-memory-guide-position')?.value || '').trim().toLowerCase();
+            current.memory_guide_depth = getInt(root.querySelector('#gen-memory-guide-depth')?.value, current.memory_guide_depth ?? 0);
             current.boundProfileId = window.appBridge?.config?.getActiveProfileId?.() || current.boundProfileId || null;
             return current;
         }

@@ -5,6 +5,7 @@ import { makeScopedKey, normalizeScopeId } from './store-scope.js';
 const BASE_STORE_KEY = 'turn_checkpoint_v1';
 const LOCAL_BOOTSTRAP_JSON_SOFT_LIMIT = 320_000;
 const MAX_BRANCH_TEXT_CHARS = 220_000;
+const COMPACT_RECENT_TURNS = 30;
 const ALLOWED_CHECKPOINT_STATES = new Set(['provisional', 'final']);
 const ALLOWED_REPLY_STATES = new Set(['complete', 'partial_cancelled', 'failed', 'restored']);
 
@@ -29,7 +30,12 @@ const readLocalJson = key => {
 
 const writeLocalJson = (key, value) => {
   try {
-    globalThis?.localStorage?.setItem?.(key, JSON.stringify(value));
+    const json = JSON.stringify(value);
+    if (json.length > LOCAL_BOOTSTRAP_JSON_SOFT_LIMIT) {
+      try { globalThis?.localStorage?.removeItem?.(key); } catch {}
+      return false;
+    }
+    globalThis?.localStorage?.setItem?.(key, json);
     return true;
   } catch {
     return false;
@@ -236,11 +242,34 @@ export class TurnCheckpointStore {
     return next;
   }
 
+  _compactOldBranches(state) {
+    const checkpoints = state?.checkpoints;
+    if (!checkpoints || typeof checkpoints !== 'object') return;
+    const entries = Object.entries(checkpoints);
+    if (entries.length <= COMPACT_RECENT_TURNS) return;
+    const sorted = entries
+      .map(([id, cp]) => ({
+        id,
+        order: Number(cp.aiFloor || cp.turnIndex || 0) || (Number(cp.createdAt || 0) / 1e10),
+      }))
+      .sort((a, b) => b.order - a.order);
+    for (let i = COMPACT_RECENT_TURNS; i < sorted.length; i += 1) {
+      const cp = checkpoints[sorted[i].id];
+      if (!cp || !Array.isArray(cp.branches)) continue;
+      for (const branch of cp.branches) {
+        if (!branch) continue;
+        if (branch.messageContent) branch.messageContent = '';
+        if (branch.messageRaw) branch.messageRaw = '';
+      }
+    }
+  }
+
   async _persistSession(sessionId = '') {
     const sid = String(sessionId || '').trim();
     if (!sid) return false;
     const state = await this._loadSession(sid);
     state.updatedAt = Date.now();
+    this._compactOldBranches(state);
     const key = this._getStoreKey(sid);
     writeLocalJson(key, state);
     try {

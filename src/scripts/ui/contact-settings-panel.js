@@ -281,6 +281,7 @@ export class ContactSettingsPanel {
         this.compactedList = null;
         this.summarySection = null;
         this.memoryTableSection = null;
+        this.memoryFeaturesSection = null;
         this.memoryTableContent = null;
         this.memoryTableEditor = null;
         this.currentAvatar = '';
@@ -331,10 +332,13 @@ export class ContactSettingsPanel {
     }
 
     applyMemoryMode() {
-        const summaryOn = getMemoryStorageMode() === 'summary';
-        if (this.summarySection) this.summarySection.style.display = summaryOn ? 'block' : 'none';
-        if (this.memoryTableSection) this.memoryTableSection.style.display = !summaryOn ? 'block' : 'none';
-        if (!summaryOn) this.memoryTableEditor?.render?.();
+        const memoryMode = getMemoryStorageMode();
+        const memoryOn = memoryMode !== 'off';
+        const summaryOn = memoryMode === 'summary';
+        if (this.memoryFeaturesSection) this.memoryFeaturesSection.style.display = memoryOn ? 'block' : 'none';
+        if (this.summarySection) this.summarySection.style.display = memoryOn && summaryOn ? 'block' : 'none';
+        if (this.memoryTableSection) this.memoryTableSection.style.display = memoryOn && !summaryOn ? 'block' : 'none';
+        if (memoryOn && !summaryOn) this.memoryTableEditor?.render?.();
     }
 
     createUI() {
@@ -424,7 +428,7 @@ export class ContactSettingsPanel {
 	                    <div style="color:var(--app-text-muted); font-size:12px; margin-top:6px;">仅清空本会话 local 变量，不影响全局变量。</div>
 	                </div>
 
-                    <div style="margin-top:16px; border-top:1px solid var(--app-border-subtle); padding-top:14px;">
+                    <div id="contact-memory-features-section" style="margin-top:16px; border-top:1px solid var(--app-border-subtle); padding-top:14px;">
                         <div id="contact-bridge-block-title" style="font-weight:700; color:var(--app-text-primary); margin-bottom:10px;">聊天 / RP 桥接（当前会话）</div>
                         <div id="contact-rp-bridge-section" style="display:none; padding:10px; border:1px solid var(--app-border-default); border-radius:12px; background:var(--app-surface-card); margin-bottom:10px;">
                             <label style="display:flex; align-items:center; justify-content:space-between; gap:10px; cursor:pointer;">
@@ -513,6 +517,7 @@ export class ContactSettingsPanel {
         this.compactedList = this.panel.querySelector('#contact-compacted-summary');
         this.summarySection = this.panel.querySelector('#contact-summary-section');
         this.memoryTableSection = this.panel.querySelector('#contact-memory-table-section');
+        this.memoryFeaturesSection = this.panel.querySelector('#contact-memory-features-section');
         this.memoryTableContent = this.panel.querySelector('#contact-memory-table-content');
         this.summariesBatchBar = this.panel.querySelector('#contact-summaries-batchbar');
         this.templateToggle = this.panel.querySelector('#contact-template-enabled');

@@ -1,6 +1,13 @@
 import { extractMemoryTimelineRound, resolveMemoryRowOrderKey } from './memory-row-order.js';
 
-const MEMORY_PROMPT_POSITIONS = new Set(['after_persona', 'system_end', 'before_chat', 'history_depth']);
+const MEMORY_PROMPT_POSITIONS = new Set([
+  'after_persona',
+  'system_end',
+  'before_chat',
+  'history_before',
+  'history_after',
+  'history_depth',
+]);
 const SUMMARY_TABLE_IDS = new Set(['chat_summary', 'group_summary', 'chat_outline', 'group_outline', 'rp_summary', 'rp_outline']);
 const SUMMARY_LIMIT_TABLE_IDS = new Set(['chat_summary', 'group_summary', 'rp_summary']);
 

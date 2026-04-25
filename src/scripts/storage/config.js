@@ -63,27 +63,39 @@ const isLikelyPlainApiKey = (val) => {
     return true;
 };
 
-const normalizeProfile = (p = {}) => ({
-    id: p.id || genId('profile'),
-    name: p.name || '未命名',
-    provider: p.provider || 'openai',
-    baseUrl: p.baseUrl || 'https://api.openai.com/v1',
-    connectionMode: p.connectionMode === 'reverse_proxy' ? 'reverse_proxy' : 'direct',
-    proxyBaseUrl: typeof p.proxyBaseUrl === 'string' ? p.proxyBaseUrl : '',
-    proxyAuthHeaderName: typeof p.proxyAuthHeaderName === 'string' ? p.proxyAuthHeaderName : '',
-    proxyAuthToken: typeof p.proxyAuthToken === 'string' ? p.proxyAuthToken : '',
-    forwardProviderAuth: p.forwardProviderAuth !== false,
-    model: p.model || 'gpt-3.5-turbo',
-    stream: p.stream !== false,
-    timeout: typeof p.timeout === 'number' ? p.timeout : 60000,
-    maxRetries: typeof p.maxRetries === 'number' ? p.maxRetries : 3,
-    vertexaiRegion: p.vertexaiRegion,
-    vertexaiServiceAccount: p.vertexaiServiceAccount,
-    _saEncrypted: Boolean(p._saEncrypted),
-    activeKeyId: p.activeKeyId || null,
-    createdAt: p.createdAt || Date.now(),
-    updatedAt: Date.now(),
-});
+const normalizeTimestamp = (value, fallback = Date.now()) => {
+    const raw = Number(value);
+    return Number.isFinite(raw) && raw > 0 ? raw : fallback;
+};
+
+const normalizeProfile = (p = {}, { touchUpdatedAt = false } = {}) => {
+    const now = Date.now();
+    const createdAt = normalizeTimestamp(p.createdAt, now);
+    const updatedAt = touchUpdatedAt
+        ? now
+        : normalizeTimestamp(p.updatedAt, createdAt);
+    return {
+        id: p.id || genId('profile'),
+        name: p.name || '未命名',
+        provider: p.provider || 'openai',
+        baseUrl: p.baseUrl || 'https://api.openai.com/v1',
+        connectionMode: p.connectionMode === 'reverse_proxy' ? 'reverse_proxy' : 'direct',
+        proxyBaseUrl: typeof p.proxyBaseUrl === 'string' ? p.proxyBaseUrl : '',
+        proxyAuthHeaderName: typeof p.proxyAuthHeaderName === 'string' ? p.proxyAuthHeaderName : '',
+        proxyAuthToken: typeof p.proxyAuthToken === 'string' ? p.proxyAuthToken : '',
+        forwardProviderAuth: p.forwardProviderAuth !== false,
+        model: p.model || 'gpt-3.5-turbo',
+        stream: p.stream !== false,
+        timeout: typeof p.timeout === 'number' ? p.timeout : 60000,
+        maxRetries: typeof p.maxRetries === 'number' ? p.maxRetries : 3,
+        vertexaiRegion: p.vertexaiRegion,
+        vertexaiServiceAccount: p.vertexaiServiceAccount,
+        _saEncrypted: Boolean(p._saEncrypted),
+        activeKeyId: p.activeKeyId || null,
+        createdAt,
+        updatedAt,
+    };
+};
 
 export class ConfigManager {
     constructor(options = {}) {
@@ -146,7 +158,7 @@ export class ConfigManager {
             id: active.id,
             name: active.name,
             updatedAt: Date.now(),
-        });
+        }, { touchUpdatedAt: true });
 
         // 如果传入 apiKey（代表用户新输入），保存到 keyring 并设为当前 key
         if (typeof config.apiKey === 'string' && config.apiKey.trim()) {
@@ -423,8 +435,8 @@ export class ConfigManager {
         const id = this.getActiveProfileId();
         const p = id ? this.profileStore?.profiles?.[id] : null;
         if (p) return normalizeProfile(p);
-        const firstId = Object.keys(this.profileStore?.profiles || {})[0];
-        return firstId ? normalizeProfile(this.profileStore.profiles[firstId]) : normalizeProfile({ name: '默认' });
+        const profileList = this.getProfiles();
+        return profileList[0] || normalizeProfile({ name: '默认' });
     }
 
     getProfileById(profileId) {
@@ -440,6 +452,7 @@ export class ConfigManager {
             logger.warn(`尝试切换到不存在的配置: ${profileId}`);
             return;
         }
+        this.profileStore.profiles[profileId] = normalizeProfile(this.profileStore.profiles[profileId], { touchUpdatedAt: true });
         this.profileStore.activeProfileId = profileId;
         await this.persistProfiles();
         const p = this.getActiveProfile();

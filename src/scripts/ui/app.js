@@ -17837,9 +17837,40 @@ Phase G（Frame 36）：循环衔接
     const attachmentParts = hasAttachments ? buildAttachmentParts(attachmentQueue) : [];
     const llmContext = pendingUserText => {
       const settings = appSettings.get();
-      const memoryInjectPosition = String(settings.memoryInjectPosition || 'template').toLowerCase();
-      const memoryInjectDepthRaw = Math.trunc(Number(settings.memoryInjectDepth));
-      const memoryInjectDepth = Number.isFinite(memoryInjectDepthRaw) ? Math.max(0, memoryInjectDepthRaw) : 4;
+      const openaiPreset = getOpenAIPreset();
+      const normalizeRuntimeMemoryPosition = (positionRaw, depthRaw, fallback = '') => {
+        const token = String(positionRaw || '').trim().toLowerCase();
+        const depthNum = Math.trunc(Number(depthRaw));
+        const depth = Number.isFinite(depthNum) ? Math.max(0, depthNum) : 0;
+        if (!token || token === 'template') return String(fallback || '').trim().toLowerCase();
+        if (token === 'history_depth' && depth === 0) return 'history_after';
+        return token;
+      };
+      const presetMemoryInjectDepthRaw = Math.trunc(Number(openaiPreset?.memory_data_depth));
+      const presetMemoryInjectDepth = Number.isFinite(presetMemoryInjectDepthRaw) ? Math.max(0, presetMemoryInjectDepthRaw) : 0;
+      const presetMemoryInjectPosition = normalizeRuntimeMemoryPosition(
+        openaiPreset?.memory_data_position,
+        presetMemoryInjectDepth,
+        '',
+      );
+      const settingsMemoryInjectDepthRaw = Math.trunc(Number(settings.memoryInjectDepth));
+      const settingsMemoryInjectDepth = Number.isFinite(settingsMemoryInjectDepthRaw) ? Math.max(0, settingsMemoryInjectDepthRaw) : 0;
+      const settingsMemoryInjectPosition = normalizeRuntimeMemoryPosition(
+        settings.memoryInjectPosition || 'history_after',
+        settingsMemoryInjectDepth,
+        'history_after',
+      );
+      const memoryInjectPosition = presetMemoryInjectPosition || settingsMemoryInjectPosition;
+      const memoryInjectDepth = presetMemoryInjectPosition && Number.isFinite(presetMemoryInjectDepthRaw)
+        ? Math.max(0, presetMemoryInjectDepthRaw)
+        : settingsMemoryInjectDepth;
+      const presetMemoryGuideDepthRaw = Math.trunc(Number(openaiPreset?.memory_guide_depth));
+      const presetMemoryGuidePosition = normalizeRuntimeMemoryPosition(
+        openaiPreset?.memory_guide_position,
+        presetMemoryGuideDepthRaw,
+        '',
+      );
+      const memoryGuideDepth = Number.isFinite(presetMemoryGuideDepthRaw) ? Math.max(0, presetMemoryGuideDepthRaw) : 0;
       const metaOverrides = {};
       if (skipTemplate) metaOverrides.templateEnabled = false;
       if (skipScripts) metaOverrides.skipScripts = true;
@@ -17883,6 +17914,8 @@ Phase G（Frame 36）：循环衔接
           memoryAutoExtract: isMemoryAutoExtractInline(),
           memoryInjectPosition,
           memoryInjectDepth,
+          memoryGuidePosition: presetMemoryGuidePosition,
+          memoryGuideDepth,
           userAttachmentParts: attachmentParts,
           replyPromptHint: buildReplyPromptHint(outgoingReplyContexts),
           extraPromptBlocks: [

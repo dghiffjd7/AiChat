@@ -30,8 +30,8 @@ const defaults = {
   memoryUpdateApiMode: 'chat',
   memoryUpdateProfileId: '',
   memoryUpdateContextRounds: 6,
-  memoryInjectPosition: 'template',
-  memoryInjectDepth: 4,
+  memoryInjectPosition: 'history_after',
+  memoryInjectDepth: 0,
   memoryBridgeRpToChatEnabled: true,
   memoryBridgeRpToChatLimit: 0,
   memoryBridgeChatToRpEnabled: true,
@@ -74,6 +74,18 @@ const migrateSettings = (settings = {}) => {
     const raw = Math.trunc(Number(next.memoryUpdateContextCount));
     const safe = Number.isFinite(raw) ? Math.max(0, raw) : defaults.memoryUpdateContextRounds;
     next.memoryUpdateContextRounds = safe;
+  }
+  const injectPositionRaw = String(next.memoryInjectPosition || '').trim().toLowerCase();
+  if (!injectPositionRaw || injectPositionRaw === 'template') {
+    next.memoryInjectPosition = defaults.memoryInjectPosition;
+  } else if (injectPositionRaw === 'history_depth') {
+    const injectDepthRaw = Math.trunc(Number(next.memoryInjectDepth));
+    const injectDepth = Number.isFinite(injectDepthRaw) ? Math.max(0, injectDepthRaw) : defaults.memoryInjectDepth;
+    if (injectDepth === 0) next.memoryInjectPosition = 'history_after';
+  }
+  const injectDepthRaw = Math.trunc(Number(next.memoryInjectDepth));
+  if (!Number.isFinite(injectDepthRaw) || injectDepthRaw < 0) {
+    next.memoryInjectDepth = defaults.memoryInjectDepth;
   }
   if (next.uiThemeSchemaVersion == null) {
     if (String(next.uiThemeAvatarStyle || '').trim().toLowerCase() === 'rounded') {

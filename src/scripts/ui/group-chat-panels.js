@@ -554,6 +554,7 @@ export class GroupSettingsPanel {
         this.compactedList = null;
         this.summarySection = null;
         this.memoryTableSection = null;
+        this.memoryFeaturesSection = null;
         this.memoryTableContent = null;
         this.memoryTableEditor = null;
         this.summaryBatchMode = false;
@@ -606,10 +607,13 @@ export class GroupSettingsPanel {
     }
 
     applyMemoryMode() {
-        const summaryOn = getMemoryStorageMode() === 'summary';
-        if (this.summarySection) this.summarySection.style.display = summaryOn ? 'block' : 'none';
-        if (this.memoryTableSection) this.memoryTableSection.style.display = summaryOn ? 'none' : 'block';
-        if (!summaryOn) this.memoryTableEditor?.render?.();
+        const memoryMode = getMemoryStorageMode();
+        const memoryOn = memoryMode !== 'off';
+        const summaryOn = memoryMode === 'summary';
+        if (this.memoryFeaturesSection) this.memoryFeaturesSection.style.display = memoryOn ? 'block' : 'none';
+        if (this.summarySection) this.summarySection.style.display = memoryOn && summaryOn ? 'block' : 'none';
+        if (this.memoryTableSection) this.memoryTableSection.style.display = memoryOn && !summaryOn ? 'block' : 'none';
+        if (memoryOn && !summaryOn) this.memoryTableEditor?.render?.();
     }
 
     createUI() {
@@ -674,7 +678,7 @@ export class GroupSettingsPanel {
                         <div id="group-archives-list" style="max-height:160px; overflow-y:auto; border:1px solid var(--app-border-subtle); border-radius:8px; background:var(--app-surface-subtle); padding:0;"></div>
                     </div>
 
-                    <div style="margin-top:18px; border-top:1px solid rgba(0,0,0,0.06); padding-top:14px;">
+                    <div id="group-memory-features-section" style="margin-top:18px; border-top:1px solid rgba(0,0,0,0.06); padding-top:14px;">
                         <div style="font-weight:800; color:var(--app-text-primary); margin-bottom:10px;">聊天 / RP 桥接（当前会话）</div>
                         <div id="group-rp-bridge-section" style="display:none;"></div>
                         <div id="group-memory-share-section">
@@ -752,6 +756,7 @@ export class GroupSettingsPanel {
         this.compactedList = this.panel.querySelector('#group-compacted-summary');
         this.summarySection = this.panel.querySelector('#group-summary-section');
         this.memoryTableSection = this.panel.querySelector('#group-memory-table-section');
+        this.memoryFeaturesSection = this.panel.querySelector('#group-memory-features-section');
         this.memoryTableContent = this.panel.querySelector('#group-memory-table-content');
         this.summariesBatchBar = this.panel.querySelector('#group-summaries-batchbar');
         this.rpBridgeSection = this.panel.querySelector('#group-rp-bridge-section');

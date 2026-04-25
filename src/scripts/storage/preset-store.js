@@ -267,6 +267,33 @@ const normalizeResponseTarget = (value, fallback = 'character') => {
     return String(fallback || '').trim().toLowerCase() === 'user' ? 'user' : 'character';
 };
 
+const MEMORY_DATA_POSITIONS = new Set([
+    'after_persona',
+    'system_end',
+    'before_chat',
+    'history_before',
+    'history_after',
+    'history_depth',
+]);
+
+const normalizeMemoryDataPosition = (value) => {
+    const token = String(value || '').trim().toLowerCase();
+    if (!token || token === 'follow_global' || token === 'inherit') return '';
+    const parts = token.split(/[+,]/).map((part) => part.trim()).filter(Boolean);
+    if (!parts.length) return '';
+    const out = [];
+    for (const part of parts) {
+        if (!MEMORY_DATA_POSITIONS.has(part)) return '';
+        if (!out.includes(part)) out.push(part);
+    }
+    return out.join('+');
+};
+
+const normalizeNonNegativeInt = (value, fallback = 0) => {
+    const raw = Math.trunc(Number(value));
+    return Number.isFinite(raw) ? Math.max(0, raw) : Math.max(0, Math.trunc(Number(fallback) || 0));
+};
+
 const normalizeOpenAIPreset = (preset) => {
     if (!preset || typeof preset !== 'object') return;
 
@@ -274,6 +301,10 @@ const normalizeOpenAIPreset = (preset) => {
     preset.reasoning_effort = normalizeReasoningEffort(preset.reasoning_effort, 'high');
     preset.response_target_chat = normalizeResponseTarget(preset.response_target_chat, 'character');
     preset.response_target_rp = normalizeResponseTarget(preset.response_target_rp, 'user');
+    preset.memory_data_position = normalizeMemoryDataPosition(preset.memory_data_position);
+    preset.memory_data_depth = normalizeNonNegativeInt(preset.memory_data_depth, 0);
+    preset.memory_guide_position = normalizeMemoryDataPosition(preset.memory_guide_position);
+    preset.memory_guide_depth = normalizeNonNegativeInt(preset.memory_guide_depth, 0);
     if (typeof preset.impersonation_prompt !== 'string' || !preset.impersonation_prompt.trim()) {
         preset.impersonation_prompt = DEFAULT_OPENAI_IMPERSONATION_PROMPT;
     }
