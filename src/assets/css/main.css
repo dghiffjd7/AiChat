@@ -5165,6 +5165,243 @@ body,
 
 /* page 底部留白由高度计算处理，避免重复叠加 */
 
+/* ========================================
+   统一 Press Feedback（按钮点击反馈）
+   ======================================== */
+
+.bottom-nav .nav-btn {
+  position: relative;
+  transition: transform 0.12s ease, opacity 0.12s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.bottom-nav .nav-btn:active {
+  transform: scale(0.90);
+  opacity: 0.7;
+}
+
+.icon-button:active,
+.topbar-plus-btn:active,
+.user-settings-btn:active {
+  transform: scale(0.90) !important;
+  opacity: 0.7;
+}
+
+.chat-list-item {
+  transition: background 0.15s ease, transform 0.15s ease;
+}
+
+.chat-list-item:active {
+  transform: scale(0.995);
+}
+
+.contact-item {
+  transition: background 0.15s ease, transform 0.15s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.contact-item:active {
+  background: rgba(0, 0, 0, 0.04);
+  transform: scale(0.995);
+}
+
+.chat-send-btn:active {
+  transform: scale(0.88);
+}
+
+.rp-continue-btn:active {
+  transform: scale(0.95);
+}
+
+.chat-back-btn:active,
+.chat-menu-btn:active {
+  transform: scale(0.88);
+  opacity: 0.7;
+}
+
+.voice-btn:active {
+  transform: scale(0.90);
+  opacity: 0.7;
+}
+
+.chat-sticker-btn:active {
+  transform: scale(0.90);
+  opacity: 0.7;
+}
+
+.chat-action-btn:active {
+  transform: scale(0.90);
+  opacity: 0.7;
+}
+
+.user-avatar-btn:active {
+  transform: scale(0.93);
+  opacity: 0.85;
+}
+
+.sheet button:active {
+  transform: scale(0.97);
+  opacity: 0.85;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .icon-button:active,
+  .topbar-plus-btn:active,
+  .user-settings-btn:active,
+  .chat-list-item:active,
+  .contact-item:active,
+  .chat-send-btn:active,
+  .rp-continue-btn:active,
+  .chat-back-btn:active,
+  .chat-menu-btn:active,
+  .voice-btn:active,
+  .chat-sticker-btn:active,
+  .chat-action-btn:active,
+  .user-avatar-btn:active,
+  .bottom-nav .nav-btn:active,
+  .sheet button:active {
+    transform: none !important;
+    opacity: 1 !important;
+  }
+}
+
+/* ========================================
+   页面切换过渡（Page Transition）
+   ======================================== */
+
+@keyframes pageFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.page.active {
+  animation: pageFadeIn 0.15s ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .page.active {
+    animation: none;
+  }
+}
+
+/* ========================================
+   聊天气泡入场动画（Bubble Entrance）
+   ======================================== */
+
+@keyframes bubbleIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+[data-msg-id][data-new-msg] .QQ_chat_msgdiv {
+  animation: bubbleIn 0.2s ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-msg-id][data-new-msg] .QQ_chat_msgdiv {
+    animation: none;
+  }
+}
+
+/* ========================================
+   骨架屏（Skeleton Loading）
+   ======================================== */
+
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.skeleton-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 10px;
+}
+
+.skeleton-avatar {
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+  background: linear-gradient(90deg,
+    rgba(0,0,0,0.06) 25%,
+    rgba(0,0,0,0.1) 50%,
+    rgba(0,0,0,0.06) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.5s ease-in-out infinite;
+  flex-shrink: 0;
+}
+
+.skeleton-lines {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 6px;
+}
+
+.skeleton-line {
+  height: 14px;
+  border-radius: 4px;
+  background: linear-gradient(90deg,
+    rgba(0,0,0,0.06) 25%,
+    rgba(0,0,0,0.1) 50%,
+    rgba(0,0,0,0.06) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.5s ease-in-out infinite;
+}
+
+.skeleton-line:first-child {
+  width: 60%;
+}
+
+.skeleton-line:last-child {
+  width: 85%;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton-avatar,
+  .skeleton-line {
+    animation: none;
+  }
+}
+
+/* ========================================
+   空状态提示（Empty State）
+   ======================================== */
+
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 48px 24px;
+  color: var(--app-text-muted, rgba(0,0,0,0.35));
+  font-size: 14px;
+  text-align: center;
+  gap: 8px;
+}
+
+.empty-state-icon {
+  font-size: 36px;
+  opacity: 0.5;
+  margin-bottom: 4px;
+}
+
 /* 响应式 */
 @media (max-width: 768px) {
   .message-bubble {

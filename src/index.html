@@ -19,6 +19,18 @@
     <link rel="stylesheet" href="./assets/css/theme.css" />
   </head>
   <body class="bg-legacy">
+    <div id="app-splash" style="
+      position:fixed; inset:0; z-index:99999;
+      display:flex; align-items:center; justify-content:center; flex-direction:column;
+      background:#0a0f1a;
+      transition: opacity 0.4s ease;
+    ">
+      <img src="./assets/external/feather-default.png" width="64" height="64"
+           style="border-radius:16px; opacity:0.9;" />
+      <div style="margin-top:16px; color:rgba(255,255,255,0.5); font-size:13px; letter-spacing:1px;">
+        loading...
+      </div>
+    </div>
     <div id="app">
       <div id="mode-switch" class="mode-switch" data-mode="social">
         <button type="button" class="mode-switch-btn" aria-pressed="false" aria-label="切换到创意写作" title="切换到创意写作">
@@ -61,20 +73,9 @@
 
         <!-- 聊天列表：头像+名字+预览+时间 -->
         <div id="chat-list" class="chat-list">
-          <div class="chat-list-item" data-session="default">
-            <img
-              src="./assets/external/feather-default.png"
-              alt=""
-              class="chat-item-avatar"
-            />
-            <div class="chat-item-content">
-              <div class="chat-item-header">
-                <div class="chat-item-name">默认会话</div>
-                <div class="chat-item-time">00:00</div>
-              </div>
-              <div class="chat-item-preview">点击进入聊天</div>
-            </div>
-          </div>
+          <div class="skeleton-item"><div class="skeleton-avatar"></div><div class="skeleton-lines"><div class="skeleton-line"></div><div class="skeleton-line"></div></div></div>
+          <div class="skeleton-item"><div class="skeleton-avatar"></div><div class="skeleton-lines"><div class="skeleton-line"></div><div class="skeleton-line"></div></div></div>
+          <div class="skeleton-item"><div class="skeleton-avatar"></div><div class="skeleton-lines"><div class="skeleton-line"></div><div class="skeleton-line"></div></div></div>
         </div>
 
         <!-- QQ 风格聊天室 - 使用原版结构 -->

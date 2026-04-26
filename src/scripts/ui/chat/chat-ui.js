@@ -843,6 +843,8 @@ export class ChatUI {
         const img = document.createElement('img');
         img.alt = keyword || 'sticker';
         img.className = 'previewable sticker-image sticker-inline';
+        img.loading = 'lazy';
+        img.decoding = 'async';
         const frames = resolveStickerFrames(resolved, keyword);
         const fps = resolveStickerFps(resolved, keyword);
         const loaded = applyImageFallback(img, resolved, {
@@ -1825,10 +1827,12 @@ export class ChatUI {
     const el = this.buildMessageElement(message);
     if (el) {
       if (floorMarker) this.scrollEl.appendChild(floorMarker);
+      el.dataset.newMsg = '1';
       this.scrollEl.appendChild(el);
       if (message?.meta?.floor != null) el.dataset.rpFloor = String(message.meta.floor);
       const shouldScroll = options.autoScroll !== false && wasNearBottom;
       if (shouldScroll) this.scrollToBottom();
+      setTimeout(() => { try { delete el.dataset.newMsg; } catch {} }, 300);
     }
     if (runtime && el) {
       runtime.dispatchEvent('message.after_render', { message, elementId: message?.id || '' }).catch(err => {
@@ -1955,6 +1959,8 @@ export class ChatUI {
     avatarImg.className = 'QQ_chat_head';
     avatarImg.src = message.avatar || './assets/external/feather-default.png';
     avatarImg.alt = message.name || '';
+    avatarImg.loading = 'lazy';
+    avatarImg.decoding = 'async';
 
     // 消息气泡
     const bubble = document.createElement('div');
@@ -3880,6 +3886,7 @@ export class ChatUI {
   showContextMenu(evt, message) {
     if (this.selectionMode) return;
     if (!this.contextMenu) return;
+    try { navigator.vibrate?.(5); } catch {}
     this.hideReactionPicker();
     const actions = [];
     const target = evt?.target;

@@ -214,7 +214,8 @@
   opacity: 0;
 }
 
-.mode-switch.is-dragging {
+.mode-switch.is-dragging,
+.mode-switch.is-bouncing {
   transition: none;
 }
 
@@ -280,6 +281,14 @@
 
 .mode-switch.is-dragging .mode-switch-btn {
   cursor: grabbing;
+  transform: scale(1.08);
+  box-shadow: 0 12px 28px rgba(2, 6, 23, 0.6), inset 0 0 8px rgba(0, 0, 0, 0.65);
+  transition: transform 0.1s ease, box-shadow 0.1s ease;
+}
+
+.mode-switch.is-settling .mode-switch-btn {
+  transform: scale(1.0);
+  transition: transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
 @keyframes modeRingSpin {
@@ -291,9 +300,20 @@
   }
 }
 
+.mode-switch.is-bouncing .mode-switch-btn::before {
+  animation-duration: 0.8s;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .mode-switch-btn::before {
     animation: none;
+  }
+  .mode-switch.is-settling .mode-switch-btn {
+    transition: none;
+  }
+  .mode-switch.is-dragging .mode-switch-btn {
+    transition: none;
+    transform: none;
   }
 }
 
@@ -578,6 +598,7 @@ body[data-ui-mode='rp'] .bottom-nav {
   /* 布局 */
   flex: 1;
   overflow-y: auto;
+  will-change: scroll-position;
 
   /* 间距 */
   padding-left: 8px;

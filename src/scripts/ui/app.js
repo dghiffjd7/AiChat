@@ -4895,8 +4895,8 @@ Phase G（Frame 36）：循环衔接
     el.innerHTML = '';
     if (!ids.length) {
       const empty = document.createElement('div');
-      empty.style.cssText = 'padding:20px 12px; color:var(--app-text-muted); text-align:center;';
-      empty.textContent = '暂无聊天记录';
+      empty.className = 'empty-state';
+      empty.innerHTML = '<div class="empty-state-icon">💬</div><div>还没有对话</div><div style="font-size:12px;">试试添加一个好友开始聊天</div>';
       el.appendChild(empty);
       return;
     }
@@ -10334,7 +10334,21 @@ Phase G（Frame 36）：循环衔接
   if (typeof window !== 'undefined') {
     window.addEventListener('resize', scheduleModeSwitchSync);
   }
-  navBtns.forEach(btn => btn.addEventListener('click', () => switchPage(btn.dataset.page)));
+  let navLastTap = { page: '', time: 0 };
+  navBtns.forEach(btn => btn.addEventListener('click', () => {
+    const page = btn.dataset.page;
+    const now = Date.now();
+    if (page === navLastTap.page && page === activePage && now - navLastTap.time < 350) {
+      const scrollTargets = {
+        chat: document.getElementById('chat-list'),
+        contacts: document.querySelector('.contacts-list'),
+        moments: document.getElementById('moments-list'),
+      };
+      scrollTargets[page]?.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+    navLastTap = { page, time: now };
+    switchPage(page);
+  }));
 
   // 搜索框初始化（联系人页 / 聊天内容搜索）
   initContactSearch();
@@ -12564,6 +12578,7 @@ Phase G（Frame 36）：循环衔接
       };
     }
     uiMode = 'rp';
+    try { navigator.vibrate?.(10); } catch {}
     persistUiMode();
     applyUiModeUI();
     try {
@@ -12595,6 +12610,7 @@ Phase G（Frame 36）：循环衔接
   const exitRpMode = () => {
     if (uiMode !== 'rp') return;
     uiMode = 'chat';
+    try { navigator.vibrate?.(10); } catch {}
     persistUiMode();
     applyUiModeUI();
     if (rpToolbar) rpToolbar.style.display = 'none';
@@ -12624,11 +12640,68 @@ Phase G（Frame 36）：循环衔接
     exitChatRoom();
   });
 
+  let modeSwitchBounceRAF = null;
+  const cancelModeSwitchBounce = () => {
+    if (modeSwitchBounceRAF) {
+      cancelAnimationFrame(modeSwitchBounceRAF);
+      modeSwitchBounceRAF = null;
+    }
+    modeSwitch?.classList.remove('is-bouncing');
+  };
+  const animateModeSwitchBounce = (startX, startY, vx, vy) => {
+    if (!modeSwitch) return;
+    const prefersReduced = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)')?.matches;
+    if (prefersReduced) {
+      modeSwitchPinned = true;
+      saveModeSwitchPos();
+      return;
+    }
+    cancelModeSwitchBounce();
+    modeSwitch.classList.add('is-bouncing');
+    const BOUNCE_ELASTICITY = 0.7;
+    const AIR_FRICTION = 0.992;
+    const MIN_VELOCITY = 0.8;
+    let x = startX;
+    let y = startY;
+    const step = () => {
+      const { w, h } = getViewportSize();
+      if (!w || !h) { modeSwitchBounceRAF = null; modeSwitch.classList.remove('is-bouncing'); return; }
+      const halfSize = modeSwitchSize / 2;
+      vx *= AIR_FRICTION;
+      vy *= AIR_FRICTION;
+      x += vx;
+      y += vy;
+      let hitBound = false;
+      if (x < halfSize) { x = halfSize; vx = -vx * BOUNCE_ELASTICITY; hitBound = true; }
+      else if (x > w - halfSize) { x = w - halfSize; vx = -vx * BOUNCE_ELASTICITY; hitBound = true; }
+      if (y < halfSize) { y = halfSize; vy = -vy * BOUNCE_ELASTICITY; hitBound = true; }
+      else if (y > h - halfSize) { y = h - halfSize; vy = -vy * BOUNCE_ELASTICITY; hitBound = true; }
+      if (hitBound) {
+        try { navigator.vibrate?.(15); } catch {}
+      }
+      modeSwitch.style.left = `${Math.round(x)}px`;
+      modeSwitch.style.top = `${Math.round(y)}px`;
+      modeSwitchPos = normalizeModeSwitchPos(x, y);
+      if (Math.hypot(vx, vy) < MIN_VELOCITY) {
+        modeSwitchBounceRAF = null;
+        modeSwitch.classList.remove('is-bouncing');
+        modeSwitchPinned = true;
+        saveModeSwitchPos();
+        modeSwitch.classList.add('is-settling');
+        setTimeout(() => modeSwitch.classList.remove('is-settling'), 250);
+        return;
+      }
+      modeSwitchBounceRAF = requestAnimationFrame(step);
+    };
+    modeSwitchBounceRAF = requestAnimationFrame(step);
+  };
+
   const startModeSwitchDrag = event => {
     if (!modeSwitch || !modeSwitchBtn) return;
     if (event.pointerType === 'mouse' && event.button !== 0) return;
     event.preventDefault();
     event.stopPropagation();
+    cancelModeSwitchBounce();
     wakeModeSwitch();
     const rect = modeSwitch.getBoundingClientRect();
     const originX = rect.left + rect.width / 2;
@@ -12640,6 +12713,12 @@ Phase G（Frame 36）：循环衔接
       originX,
       originY,
       moved: false,
+      prevX: originX,
+      prevY: originY,
+      prevTime: performance.now(),
+      lastX: originX,
+      lastY: originY,
+      lastTime: performance.now(),
     };
     modeSwitch.classList.add('is-dragging');
     modeSwitchBtn.setPointerCapture?.(event.pointerId);
@@ -12660,6 +12739,12 @@ Phase G（Frame 36）：循环衔接
     modeSwitch.style.pointerEvents = 'auto';
     modeSwitchPinned = true;
     modeSwitchPos = normalizeModeSwitchPos(x, y);
+    modeSwitchDrag.prevX = modeSwitchDrag.lastX;
+    modeSwitchDrag.prevY = modeSwitchDrag.lastY;
+    modeSwitchDrag.prevTime = modeSwitchDrag.lastTime;
+    modeSwitchDrag.lastX = x;
+    modeSwitchDrag.lastY = y;
+    modeSwitchDrag.lastTime = performance.now();
   };
   const endModeSwitchDrag = event => {
     if (!modeSwitchDrag || !modeSwitch) return;
@@ -12668,14 +12753,24 @@ Phase G（Frame 36）：循环衔接
     modeSwitch.classList.remove('is-dragging');
     if (modeSwitchDrag.moved) {
       modeSwitchSuppressClick = true;
-      saveModeSwitchPos();
+      const dt = Math.max(1, modeSwitchDrag.lastTime - modeSwitchDrag.prevTime);
+      const vx = (modeSwitchDrag.lastX - modeSwitchDrag.prevX) / dt * 16;
+      const vy = (modeSwitchDrag.lastY - modeSwitchDrag.prevY) / dt * 16;
+      const speed = Math.hypot(vx, vy);
+      if (speed > 8) {
+        animateModeSwitchBounce(modeSwitchDrag.lastX, modeSwitchDrag.lastY, vx, vy);
+      } else {
+        saveModeSwitchPos();
+        modeSwitch.classList.add('is-settling');
+        setTimeout(() => modeSwitch.classList.remove('is-settling'), 250);
+      }
       setTimeout(() => {
         modeSwitchSuppressClick = false;
       }, 220);
     }
     modeSwitchDrag = null;
     wakeModeSwitch();
-    scheduleModeSwitchSync();
+    if (!modeSwitchBounceRAF) scheduleModeSwitchSync();
   };
   let modeSwitchDrag = null;
   modeSwitchBtn?.addEventListener('pointerdown', startModeSwitchDrag);
@@ -21286,6 +21381,12 @@ Phase G（Frame 36）：循环衔接
 
   appRuntimeReady = true;
   logger.info('✅ Chat UI 初始化完成');
+
+  const splash = document.getElementById('app-splash');
+  if (splash) {
+    splash.style.opacity = '0';
+    setTimeout(() => splash.remove(), 400);
+  }
 };
 
 document.addEventListener('DOMContentLoaded', () => {
