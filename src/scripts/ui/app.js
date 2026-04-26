@@ -47,6 +47,7 @@ import {
 import { safeInvoke } from '../utils/tauri.js';
 import './bridge.js';
 import { ChatUI } from './chat/chat-ui.js';
+import { CreativeStreamProcessor } from './chat/creative-stream-processor.js';
 import { DialogueStreamParser } from './chat/dialogue-stream-parser.js';
 import {
   SELF_REACTION_ACTOR,
@@ -2085,6 +2086,41 @@ ${listPart || '-（无）'}
     if (!parsed.reasoning) return { content: parsed.content, reasoning: '', reasoningDisplay: '' };
     const { stored, display } = applyReasoningRegex(parsed.reasoning, { depth });
     return { content: parsed.content, reasoning: stored, reasoningDisplay: display };
+  };
+  const extractStreamingReasoningFromContent = (content, { depth, final = false } = {}) => {
+    const raw = normalizeCreativeLineBreaks(content);
+    const parsed = extractReasoningFromContent(raw, { depth, strict: false });
+    if (parsed.reasoning || final) return parsed;
+    const settings = appSettings.get();
+    if (settings.reasoningAutoParse !== true) {
+      return { content: raw, reasoning: '', reasoningDisplay: '' };
+    }
+    const preset = getReasoningPreset();
+    const prefix = String(preset?.prefix ?? '');
+    const suffix = String(preset?.suffix ?? '');
+    if (!prefix || !suffix) {
+      return { content: raw, reasoning: '', reasoningDisplay: '' };
+    }
+    const start = raw.indexOf(prefix);
+    if (start < 0) {
+      return { content: raw, reasoning: '', reasoningDisplay: '' };
+    }
+    const bodyStart = start + prefix.length;
+    const suffixIndex = raw.indexOf(suffix, bodyStart);
+    if (suffixIndex >= 0) {
+      return extractReasoningFromContent(raw, { depth, strict: false });
+    }
+    const reasoningRaw = raw.slice(bodyStart).trim();
+    const visible = raw.slice(0, start).replace(/\n{3,}/g, '\n\n').trimEnd();
+    if (!reasoningRaw) {
+      return { content: visible, reasoning: '', reasoningDisplay: '' };
+    }
+    const { stored, display } = applyReasoningRegex(reasoningRaw, { depth });
+    return {
+      content: visible,
+      reasoning: stored,
+      reasoningDisplay: display,
+    };
   };
 
   const resolveMessagePlainText = (message, { depth, preferRawSource = false } = {}) => {
@@ -18046,9 +18082,13 @@ Phase G（Frame 36）：循环衔接
         return false;
       }
     };
-    const updateActiveGenerationStreamCache = (text, meta = {}) => {
+    const updateActiveGenerationStreamCache = (text, meta = {}, payload = null) => {
       if (!activeGeneration || activeGeneration.id !== generationId || activeGeneration.sessionId !== sessionId) return;
       activeGeneration.streamText = String(text ?? '');
+      activeGeneration.streamPayload =
+        payload && typeof payload === 'object'
+          ? { ...payload }
+          : null;
       activeGeneration.streamMeta = {
         ...((activeGeneration.streamMeta && typeof activeGeneration.streamMeta === 'object') ? activeGeneration.streamMeta : {}),
         ...((meta && typeof meta === 'object') ? meta : {}),
@@ -18091,11 +18131,15 @@ Phase G（Frame 36）：循环衔接
       }
       return streamCtrl;
     };
-    const pushAssistantStreamText = (text, meta = {}) => {
-      const renderedText = String(text ?? '');
-      updateActiveGenerationStreamCache(renderedText, meta);
+    const pushAssistantStreamText = (value, meta = {}) => {
+      const payload =
+        value && typeof value === 'object' && !Array.isArray(value)
+          ? { ...value }
+          : null;
+      const renderedText = payload ? String(payload.content ?? '') : String(value ?? '');
+      updateActiveGenerationStreamCache(renderedText, meta, payload);
       const ctrl = ensureAssistantStreamCtrl(meta);
-      if (ctrl) ctrl.update(renderedText);
+      if (ctrl) ctrl.update(payload || renderedText);
       return ctrl;
     };
     const bindActiveGenerationReattach = () => {
@@ -18106,9 +18150,13 @@ Phase G（Frame 36）：循环衔接
           activeGeneration?.streamMeta && typeof activeGeneration.streamMeta === 'object'
             ? activeGeneration.streamMeta
             : {};
+        const payload =
+          activeGeneration?.streamPayload && typeof activeGeneration.streamPayload === 'object'
+            ? { ...activeGeneration.streamPayload }
+            : null;
         const text = String(activeGeneration?.streamText ?? '');
         const ctrl = ensureAssistantStreamCtrl(meta);
-        if (ctrl && text) ctrl.update(text);
+        if (ctrl && (payload || text)) ctrl.update(payload || text);
         return Boolean(ctrl);
       };
     };
@@ -18234,6 +18282,7 @@ Phase G（Frame 36）：循环衔接
         userMsgId: primaryId,
         streamCtrl: null,
         streamText: '',
+        streamPayload: null,
         streamMeta: null,
         reattachStream: null,
         partialCommitHandler: resolvedPartialCommitHandler,
@@ -18254,6 +18303,7 @@ Phase G（Frame 36）：循环衔接
         userMsgId: pendingMessagesToConfirm[0]?.id,
         streamCtrl: null,
         streamText: '',
+        streamPayload: null,
         streamMeta: null,
         reattachStream: null,
         partialCommitHandler: resolvedPartialCommitHandler,
@@ -18298,20 +18348,56 @@ Phase G（Frame 36）：循环衔接
             name: '助手',
             time: formatNowTime(),
             typing: false,
+            renderRich: true,
+            streamMode: 'creative',
           };
+          const creativeStreamProcessor = new CreativeStreamProcessor({
+            fps: 18,
+            normalizeText: normalizeCreativeLineBreaks,
+            stripRaw: source => ((!isRpMode && isMemoryAutoExtractInline()) ? stripTableEditBlocks(source) : source),
+            extractReasoning: (source, { final = false } = {}) =>
+              extractStreamingReasoningFromContent(source, { depth: 0, final }),
+            applyStored: source =>
+              normalizeCreativeLineBreaks(window.appBridge.applyOutputStoredRegex(source, { depth: 0 })),
+            applyDisplay: source =>
+              normalizeCreativeLineBreaks(window.appBridge.applyOutputDisplayRegex(source, { depth: 0 })),
+          });
           for await (const chunk of stream) {
             if (isGenerationInterrupted(generationId)) break;
             full += chunk;
-            const streamText = (!isRpMode && isMemoryAutoExtractInline()) ? stripTableEditBlocks(full) : full;
-            streamCtrl = pushAssistantStreamText(streamText, streamMeta);
+            const preview = creativeStreamProcessor.append(chunk);
+            if (!preview) continue;
+            const previewMeta = {
+              renderRich: true,
+              ...(preview.reasoning
+                ? {
+                    reasoning: preview.reasoning,
+                    reasoningDisplay: preview.reasoningDisplay,
+                  }
+                : {}),
+            };
+            streamCtrl = pushAssistantStreamText(
+              {
+                content: preview.display,
+                raw: preview.stored,
+                rawSource: preview.contentSource,
+                rawOriginal: preview.raw,
+                reasoning: preview.reasoning,
+                reasoningDisplay: preview.reasoningDisplay,
+                meta: previewMeta,
+              },
+              {
+                ...streamMeta,
+                raw: preview.stored,
+                rawSource: preview.contentSource,
+                rawOriginal: preview.raw,
+                reasoning: preview.reasoning,
+                reasoningDisplay: preview.reasoningDisplay,
+              },
+            );
           }
           if (isGenerationInterrupted(generationId)) return;
           if (isSessionActive(sessionId)) ui.hideTyping();
-          if (!isStreamCtrlConnected(streamCtrl) && isSessionActive(sessionId)) {
-            streamCtrl = ensureAssistantStreamCtrl(streamMeta);
-            const streamText = (!isRpMode && isMemoryAutoExtractInline()) ? stripTableEditBlocks(full) : full;
-            if (streamCtrl) streamCtrl.update(streamText);
-          }
           chatStore.setLastRawResponse(full, sessionId);
           const memoryParsed = await handleMemoryEditsFromRaw(full, { sessionId, isGroup: isGroupChat });
           let stripped = memoryParsed.text;
@@ -18337,9 +18423,33 @@ Phase G（Frame 36）：循环衔接
           try {
             stored = normalizeCreativeLineBreaks(window.appBridge.applyOutputStoredRegex(finalSource, { depth: 0 }));
             display = normalizeCreativeLineBreaks(window.appBridge.applyOutputDisplayRegex(stored, { depth: 0 }));
-            updateActiveGenerationStreamCache(display, streamMeta);
-            if (isStreamCtrlConnected(streamCtrl)) streamCtrl.update(display);
           } catch {}
+          const finalStreamMeta = {
+            ...streamMeta,
+            raw: stored,
+            rawSource: finalSource,
+            rawOriginal: full,
+            reasoning: reasoningParsed.reasoning,
+            reasoningDisplay: reasoningParsed.reasoningDisplay,
+          };
+          const finalStreamPayload = {
+            content: display,
+            raw: stored,
+            rawSource: finalSource,
+            rawOriginal: full,
+            reasoning: reasoningParsed.reasoning,
+            reasoningDisplay: reasoningParsed.reasoningDisplay,
+            meta: {
+              renderRich: true,
+              ...(reasoningParsed.reasoning
+                ? {
+                    reasoning: reasoningParsed.reasoning,
+                    reasoningDisplay: reasoningParsed.reasoningDisplay,
+                  }
+                : {}),
+            },
+          };
+          streamCtrl = pushAssistantStreamText(finalStreamPayload, finalStreamMeta);
           const memoryState = isRpMode
             ? await captureAssistantMemoryState(sessionId, { isGroup: isGroupChat })
             : null;

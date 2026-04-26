@@ -2864,7 +2864,80 @@ export class ChatUI {
   /**
    * Start a streaming assistant bubble
    */
+  buildAssistantStreamMessage(placeholder, meta, msgId, state = {}) {
+    const streamState = state && typeof state === 'object' ? state : { content: state };
+    const content = String(streamState.content ?? '');
+    const raw = typeof streamState.raw === 'string' ? streamState.raw : content;
+    const rawOriginal =
+      typeof streamState.rawOriginal === 'string'
+        ? streamState.rawOriginal
+        : (typeof streamState.raw === 'string' ? streamState.raw : content);
+    const rawSource =
+      typeof streamState.rawSource === 'string'
+        ? streamState.rawSource
+        : (typeof streamState.raw === 'string' ? streamState.raw : content);
+    const nextMeta = {
+      ...((placeholder?.meta && typeof placeholder.meta === 'object') ? placeholder.meta : {}),
+      ...((meta?.meta && typeof meta.meta === 'object') ? meta.meta : {}),
+      ...((streamState.meta && typeof streamState.meta === 'object') ? streamState.meta : {}),
+    };
+    if (typeof streamState.reasoning === 'string') nextMeta.reasoning = streamState.reasoning;
+    if (typeof streamState.reasoningDisplay === 'string') nextMeta.reasoningDisplay = streamState.reasoningDisplay;
+    if (meta?.renderRich === true || meta?.streamMode === 'creative') nextMeta.renderRich = true;
+    return {
+      ...(placeholder || {}),
+      role: 'assistant',
+      type: 'text',
+      id: msgId || streamState.id || placeholder?.id || '',
+      avatar: streamState.avatar || meta?.avatar || placeholder?.avatar,
+      name: streamState.name || meta?.name || placeholder?.name,
+      time: streamState.time || meta?.time || placeholder?.time,
+      content,
+      raw,
+      rawOriginal,
+      rawSource,
+      meta: nextMeta,
+    };
+  }
+
+  renderAssistantStreamState(messageEl, wrapperEl, msgId, meta, placeholder, state = {}) {
+    const nextMessage = this.buildAssistantStreamMessage(placeholder, meta, msgId, state);
+    if (wrapperEl?.dataset?.typingPlaceholder) {
+      delete wrapperEl.dataset.typingPlaceholder;
+    }
+    this.cleanupRichTextMounts(messageEl);
+    const target = this.prepareTextContainer(messageEl, nextMessage);
+    const text = String(nextMessage.content ?? '');
+    if (nextMessage?.meta?.renderRich) {
+      try {
+        renderRichText(target, text, {
+          messageId: msgId || nextMessage.id,
+          preserveHtmlNewlines: true,
+          sessionId: nextMessage.sessionId,
+          debugTag: nextMessage?.meta?.isGreeting ? 'rp-greeting' : '',
+          lazyMount: false,
+        });
+      } catch {
+        const normalized = this.normalizeAssistantLineBreaks(text);
+        target.textContent = normalized;
+        target.style.whiteSpace = 'pre-wrap';
+      }
+    } else {
+      const normalized = this.normalizeAssistantLineBreaks(text);
+      if (!this.renderTextWithStickers(target, normalized)) {
+        target.textContent = normalized;
+        target.style.whiteSpace = 'pre-wrap';
+      }
+    }
+    if (wrapperEl) {
+      wrapperEl.__chatappMessage = nextMessage;
+      this.applyCreativeBubbleState(wrapperEl, nextMessage);
+    }
+    return nextMessage;
+  }
+
   startAssistantStream(meta = {}) {
+    const isCreativeRichStream = meta?.renderRich === true || meta?.streamMode === 'creative';
     const placeholder = {
       role: 'assistant',
       type: 'text',
@@ -2872,6 +2945,7 @@ export class ChatUI {
       avatar: meta.avatar,
       name: meta.name,
       time: meta.time,
+      meta: isCreativeRichStream ? { renderRich: true } : undefined,
     };
     const messageEl = this.addMessage(placeholder);
     const wrapperEl = messageEl?.closest?.('.QQ_chat_charmsg, .QQ_chat_mymsg') || messageEl?.parentElement || null;
@@ -2904,26 +2978,23 @@ export class ChatUI {
       clearTimeout(id);
     };
     let updateHandle = null;
-    let pendingText = '';
-    const bufferIndex = this.messageBuffer.push({ role: 'assistant', type: 'text', content: '' }) - 1;
+    let pendingState = { content: '' };
+    const bufferIndex = this.messageBuffer.push({ role: 'assistant', type: 'text', content: '', meta: placeholder.meta }) - 1;
     this.setStreamingState(true);
     return {
       id: msgId,
       isConnected: () => Boolean(wrapperEl?.isConnected && messageEl?.isConnected),
-      update: text => {
-        // Keep streaming lightweight (avoid re-parsing markdown/code each token)
-        pendingText = String(text ?? '');
-        this.messageBuffer[bufferIndex].content = pendingText;
+      update: payload => {
+        pendingState = payload && typeof payload === 'object'
+          ? { ...payload }
+          : { content: String(payload ?? '') };
+        const bufferedMessage = this.buildAssistantStreamMessage(placeholder, meta, msgId, pendingState);
+        this.messageBuffer[bufferIndex] = bufferedMessage;
         if (updateHandle != null) return;
         updateHandle = raf(() => {
-          const next = pendingText;
           updateHandle = null;
           if (!messageEl || !messageEl.isConnected) return;
-          if (wrapperEl?.dataset?.typingPlaceholder) {
-            delete wrapperEl.dataset.typingPlaceholder;
-          }
-          messageEl.textContent = this.normalizeAssistantLineBreaks(next);
-          messageEl.style.whiteSpace = 'pre-wrap';
+          this.renderAssistantStreamState(messageEl, wrapperEl, msgId, meta, placeholder, pendingState);
           if (this.isNearBottom()) this.scrollToBottom();
         });
       },
@@ -2941,19 +3012,34 @@ export class ChatUI {
           caf(updateHandle);
           updateHandle = null;
         }
-        const rawText = String(this.messageBuffer?.[bufferIndex]?.content ?? pendingText ?? '');
-        const hasText = rawText.trim().length > 0;
+        const buffered = this.messageBuffer?.[bufferIndex] || this.buildAssistantStreamMessage(placeholder, meta, msgId, pendingState);
+        const displayText = String(buffered?.content ?? pendingState?.content ?? '');
+        const rawText =
+          typeof buffered?.rawOriginal === 'string'
+            ? buffered.rawOriginal
+            : (typeof buffered?.raw === 'string' ? buffered.raw : displayText);
+        const hasText = displayText.trim().length > 0;
         if (keepPartial && hasText) {
           const partial = {
-            ...(this.messageBuffer?.[bufferIndex] || placeholder),
+            ...(buffered || placeholder),
             role: 'assistant',
             type: 'text',
-            id: msgId || this.messageBuffer?.[bufferIndex]?.id || placeholder.id,
-            content: this.normalizeAssistantLineBreaks(rawText),
-            raw: rawText,
-            rawOriginal: rawText,
+            id: msgId || buffered?.id || placeholder.id,
+            content: String(buffered?.content ?? this.normalizeAssistantLineBreaks(rawText)),
+            raw:
+              typeof buffered?.raw === 'string'
+                ? buffered.raw
+                : rawText,
+            rawOriginal:
+              typeof buffered?.rawOriginal === 'string'
+                ? buffered.rawOriginal
+                : rawText,
+            rawSource:
+              typeof buffered?.rawSource === 'string'
+                ? buffered.rawSource
+                : (typeof buffered?.raw === 'string' ? buffered.raw : rawText),
             meta: {
-              ...((this.messageBuffer?.[bufferIndex] && this.messageBuffer[bufferIndex].meta) || {}),
+              ...((buffered && buffered.meta) || {}),
               partial: true,
               cancelled: true,
             },
