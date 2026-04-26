@@ -5270,33 +5270,31 @@ body,
    页面切换过渡（Page Transition — Book Flip）
    ======================================== */
 
-/* --- enter: new page slides in --- */
+/* --- forward: both pages slide left together --- */
 @keyframes pageEnterForward {
   from { transform: translateX(100%); }
   to   { transform: translateX(0); }
 }
+@keyframes pageExitForward {
+  from { transform: translateX(0); }
+  to   { transform: translateX(-100%); }
+}
+
+/* --- backward: both pages slide right together --- */
 @keyframes pageEnterBackward {
   from { transform: translateX(-100%); }
   to   { transform: translateX(0); }
 }
-
-/* --- exit: old page slides out --- */
-@keyframes pageExitForward {
-  from { transform: translateX(0); opacity: 1; }
-  to   { transform: translateX(-35%); opacity: 0; }
-}
 @keyframes pageExitBackward {
-  from { transform: translateX(0); opacity: 1; }
-  to   { transform: translateX(35%); opacity: 0; }
+  from { transform: translateX(0); }
+  to   { transform: translateX(100%); }
 }
 
 .page.active[data-page-dir="forward"] {
-  animation: pageEnterForward 0.3s cubic-bezier(0.22, 1, 0.36, 1);
-  z-index: 2;
+  animation: pageEnterForward 0.28s cubic-bezier(0.25, 1, 0.5, 1);
 }
 .page.active[data-page-dir="backward"] {
-  animation: pageEnterBackward 0.3s cubic-bezier(0.22, 1, 0.36, 1);
-  z-index: 2;
+  animation: pageEnterBackward 0.28s cubic-bezier(0.25, 1, 0.5, 1);
 }
 
 .page.page-exiting {
@@ -5308,13 +5306,12 @@ body,
   height: calc(100dvh - 56px);
   overflow: hidden;
   pointer-events: none;
-  z-index: 1;
 }
 .page.page-exiting[data-page-dir="forward"] {
-  animation: pageExitForward 0.3s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  animation: pageExitForward 0.28s cubic-bezier(0.25, 1, 0.5, 1) forwards;
 }
 .page.page-exiting[data-page-dir="backward"] {
-  animation: pageExitBackward 0.3s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  animation: pageExitBackward 0.28s cubic-bezier(0.25, 1, 0.5, 1) forwards;
 }
 
 @media (prefers-reduced-motion: reduce) {
