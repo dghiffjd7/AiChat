@@ -244,7 +244,7 @@ const clearSessionMemoriesForNewChat = async ({ sessionId, isGroup, keepNonSumma
         sessionId: sid,
         isGroup,
         contextType: isRpSessionId(sid) ? 'rp' : (isGroup ? 'group' : 'contact'),
-        uiMode: sessionMode === 'rp' || isRpSessionId(sid) ? 'rp' : 'social',
+        uiMode: sessionMode === 'rp' || isRpSessionId(sid) ? 'rp' : 'chat',
     });
     const summaryTableIds = new Set([summaryTableId, outlineTableId]);
     const ids = rows

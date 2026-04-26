@@ -4,7 +4,7 @@ export const DEFAULT_MEMORY_TEMPLATE = {
     name: '通用记忆模板',
     version: '1.1.1',
     author: '官方',
-    description: '适用于聊天模式与 RP 模式的基础记忆表格模板。',
+    description: '适用于聊天界面与 RP 界面的基础记忆表格模板。',
     tags: ['通用', '聊天', 'RP'],
   },
   tables: [

@@ -1800,7 +1800,7 @@ export class GeneralSettingsPanel {
                 <div style="display:flex; flex-direction:column; gap:10px;">
                   <div style="padding:8px; border:1px solid var(--app-border-default); border-radius:10px; background:var(--app-surface-card);">
                     <label style="display:flex; align-items:center; justify-content:space-between; gap:10px; font-size:12px; font-weight:700; color:var(--app-text-primary);">
-                      <span>RP 大纲 -> 聊天模式</span>
+                      <span>RP 大纲 -> 聊天界面</span>
                       <input type="checkbox" id="general-memory-bridge-rp-to-chat" style="width:16px; height:16px;">
                     </label>
                     <label style="display:flex; align-items:center; justify-content:space-between; gap:10px; font-size:12px; color:var(--app-text-secondary); margin-top:8px;">

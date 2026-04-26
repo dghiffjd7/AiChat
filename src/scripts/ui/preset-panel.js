@@ -2337,7 +2337,7 @@ export class PresetPanel {
 
         const viewHint = document.createElement('div');
         viewHint.style.cssText = 'color:var(--app-text-muted); font-size:12px; margin:10px 0 4px;';
-        viewHint.textContent = '默认回复视角。聊天与 RP 分开保存；不额外增加聊天区按钮。';
+        viewHint.textContent = '默认回复视角。聊天界面与 RP（创意写作）界面分开保存；不额外增加聊天区按钮。';
         wrap.appendChild(viewHint);
 
         const makeTargetSelect = (id, value, fallback) => {
@@ -2356,8 +2356,8 @@ export class PresetPanel {
         const chatTarget = makeTargetSelect('gen-response-target-chat', p.response_target_chat, 'character');
         const rpTarget = makeTargetSelect('gen-response-target-rp', p.response_target_rp, 'user');
         wrap.appendChild(this.renderInputRow([
-            { label: '聊天模式回复视角', el: chatTarget },
-            { label: 'RP模式回复视角', el: rpTarget },
+            { label: '聊天界面回复视角', el: chatTarget },
+            { label: 'RP界面回复视角', el: rpTarget },
         ]));
 
         const makeMemoryDataPositionSelect = (id, value) => {

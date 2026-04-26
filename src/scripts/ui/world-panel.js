@@ -529,7 +529,7 @@ export class WorldPanel {
             if (this.scope === 'global') {
                 const globalSection = createSection({
                     title: '全局世界书',
-                    description: '全局世界书在聊天模式与 RP 模式共用，深度和预算配置由下面的全局设置统一控制。',
+                    description: '全局世界书在聊天界面与 RP 界面共用，深度和预算配置由下面的全局设置统一控制。',
                 });
                 if (!normalizedGlobalId) {
                     appendEmpty(globalSection.body, '尚未启用全局世界书。');
@@ -548,7 +548,7 @@ export class WorldPanel {
             } else if (isGroupSession) {
                 const roleSection = createSection({
                     title: '角色世界书',
-                    description: '当前角色卡的角色世界书在聊天模式与 RP 模式共用。',
+                    description: '当前角色卡的角色世界书在聊天界面与 RP 界面共用。',
                 });
                 const activeEmptyBinding = roleBindings.find((item) => item?.isActive && !item?.hasWorld);
                 if (activeEmptyBinding) {
@@ -680,7 +680,7 @@ export class WorldPanel {
             } else {
                 const roleSection = createSection({
                     title: '角色世界书',
-                    description: '当前角色卡的角色世界书在聊天模式与 RP 模式共用。',
+                    description: '当前角色卡的角色世界书在聊天界面与 RP 界面共用。',
                 });
                 const activeEmptyBinding = roleBindings.find((item) => item?.isActive && !item?.hasWorld);
                 if (activeEmptyBinding) {
@@ -754,8 +754,8 @@ export class WorldPanel {
                 const sessionSection = createSection({
                     title: '聊天室附加世界书',
                     description: isRpSession
-                        ? 'RP 模式不读取聊天室附加世界书。'
-                        : '只对当前聊天室生效；不会影响 RP 或其他聊天。',
+                        ? 'RP 会话不读取聊天室附加世界书。'
+                        : '只对当前聊天室生效；不会影响 RP 会话或其他聊天。',
                 });
                 if (isRpSession) {
                     appendEmpty(sessionSection.body, '当前为 RP 会话，附加世界书暂停生效。');

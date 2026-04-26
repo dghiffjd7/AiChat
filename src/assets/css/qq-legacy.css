@@ -1974,31 +1974,6 @@ body[data-ui-mode='rp'] .rp-continue-btn {
   transition: filter 0.2s ease, transform 0.2s ease;
 }
 
-.chat-send-btn.is-creative .chat-send-icon {
-  filter: brightness(0) saturate(100%) invert(69%) sepia(86%) saturate(1548%) hue-rotate(338deg) brightness(100%)
-    contrast(101%);
-}
-
-.send-mode-popover {
-  position: fixed;
-  z-index: 26000;
-  padding: 6px 10px;
-  border-radius: 10px;
-  background: rgba(0, 0, 0, 0.55);
-  color: var(--app-text-inverse);
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.2px;
-  cursor: pointer;
-  user-select: none;
-  white-space: nowrap;
-  writing-mode: horizontal-tb;
-  text-orientation: mixed;
-  text-align: center;
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
-}
-
 .slash-command-menu {
   position: fixed;
   z-index: 26000;

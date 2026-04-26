@@ -88,7 +88,7 @@ const calculateStaggerDelay = (index = 0) => {
 };
 
 export class SessionPanel {
-  constructor(chatStore, contactsStore, ui, { onUpdated, personaStore, getPersonaScopeKey, getSocialSessionId } = {}) {
+  constructor(chatStore, contactsStore, ui, { onUpdated, personaStore, getPersonaScopeKey, getChatSessionId, getSocialSessionId } = {}) {
     this.store = chatStore;
     this.contactsStore = contactsStore;
     this.ui = ui;
@@ -101,7 +101,9 @@ export class SessionPanel {
     this.onUpdated = typeof onUpdated === 'function' ? onUpdated : null;
     this.personaStore = personaStore || null;
     this.getPersonaScopeKey = typeof getPersonaScopeKey === 'function' ? getPersonaScopeKey : null;
-    this.getSocialSessionId = typeof getSocialSessionId === 'function' ? getSocialSessionId : null;
+    this.getChatSessionId =
+      typeof getChatSessionId === 'function' ? getChatSessionId : typeof getSocialSessionId === 'function' ? getSocialSessionId : null;
+    this.getSocialSessionId = typeof getSocialSessionId === 'function' ? getSocialSessionId : this.getChatSessionId;
     this.otherContacts = [];
     this.sharedLoading = false;
     this.sharedHardLoading = false;
@@ -136,7 +138,7 @@ export class SessionPanel {
     this.recommendPullLoading = false;
     this.recommendRequestToken = 0;
     this.recommendPointerDownAt = 0;
-    this.lastSocialSessionId = '';
+    this.lastChatSessionId = '';
   }
 
   formatTime(ts) {
@@ -204,14 +206,14 @@ export class SessionPanel {
     }
     const currentIdRaw = this.store.getCurrent();
     if (currentIdRaw && !isRpSessionId(currentIdRaw)) {
-      this.lastSocialSessionId = currentIdRaw;
-    } else if (isRpSessionId(currentIdRaw) && !this.lastSocialSessionId && this.getSocialSessionId) {
-      const fromSocial = String(this.getSocialSessionId() || '').trim();
-      if (fromSocial && !isRpSessionId(fromSocial)) {
-        this.lastSocialSessionId = fromSocial;
+      this.lastChatSessionId = currentIdRaw;
+    } else if (isRpSessionId(currentIdRaw) && !this.lastChatSessionId && this.getChatSessionId) {
+      const fromChat = String(this.getChatSessionId() || '').trim();
+      if (fromChat && !isRpSessionId(fromChat)) {
+        this.lastChatSessionId = fromChat;
       }
     }
-    const currentId = isRpSessionId(currentIdRaw) ? this.lastSocialSessionId : currentIdRaw;
+    const currentId = isRpSessionId(currentIdRaw) ? this.lastChatSessionId : currentIdRaw;
     const visibleContacts = contacts.filter(c => c && !isRpSessionId(c.id));
     if (!visibleContacts.length) {
       const empty = document.createElement('div');

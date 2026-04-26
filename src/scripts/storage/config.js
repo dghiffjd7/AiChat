@@ -97,6 +97,98 @@ const normalizeProfile = (p = {}, { touchUpdatedAt = false } = {}) => {
     };
 };
 
+const normalizeProfileStore = (raw) => {
+    if (!raw || typeof raw !== 'object') return null;
+    const sourceProfiles = raw.profiles && typeof raw.profiles === 'object' ? raw.profiles : null;
+    if (!sourceProfiles) return null;
+    const profiles = {};
+    Object.entries(sourceProfiles).forEach(([id, profile]) => {
+        const normalized = normalizeProfile({ ...(profile || {}), id: profile?.id || id });
+        profiles[normalized.id] = normalized;
+    });
+    const rawActiveId = String(raw.activeProfileId || '').trim();
+    const activeProfileId = rawActiveId || null;
+    return {
+        activeProfileId,
+        profiles,
+        savedAt: normalizeTimestamp(raw.savedAt, 0),
+    };
+};
+
+const getLatestProfileUpdatedAt = (store) => {
+    const list = Object.values(store?.profiles || {});
+    let latest = 0;
+    list.forEach((profile) => {
+        latest = Math.max(latest, normalizeTimestamp(profile?.updatedAt, 0));
+    });
+    return latest;
+};
+
+const getActiveProfileUpdatedAt = (store) => {
+    const activeId = String(store?.activeProfileId || '').trim();
+    if (!activeId) return 0;
+    return normalizeTimestamp(store?.profiles?.[activeId]?.updatedAt, 0);
+};
+
+const choosePreferredProfileStore = (a, b) => {
+    if (!a) return b;
+    if (!b) return a;
+    const aSavedAt = normalizeTimestamp(a.savedAt, 0);
+    const bSavedAt = normalizeTimestamp(b.savedAt, 0);
+    if (aSavedAt !== bSavedAt) return aSavedAt > bSavedAt ? a : b;
+    const aActiveUpdatedAt = getActiveProfileUpdatedAt(a);
+    const bActiveUpdatedAt = getActiveProfileUpdatedAt(b);
+    if (aActiveUpdatedAt !== bActiveUpdatedAt) return aActiveUpdatedAt > bActiveUpdatedAt ? a : b;
+    const aLatest = getLatestProfileUpdatedAt(a);
+    const bLatest = getLatestProfileUpdatedAt(b);
+    if (aLatest !== bLatest) return aLatest > bLatest ? a : b;
+    const aCount = Object.keys(a.profiles || {}).length;
+    const bCount = Object.keys(b.profiles || {}).length;
+    return aCount >= bCount ? a : b;
+};
+
+const mergeProfileStores = (a, b) => {
+    if (!a) return b;
+    if (!b) return a;
+    const profiles = {};
+    const ids = new Set([
+        ...Object.keys(a.profiles || {}),
+        ...Object.keys(b.profiles || {}),
+    ]);
+    ids.forEach((id) => {
+        const left = a.profiles?.[id] || null;
+        const right = b.profiles?.[id] || null;
+        if (left && right) {
+            const leftUpdatedAt = normalizeTimestamp(left.updatedAt, 0);
+            const rightUpdatedAt = normalizeTimestamp(right.updatedAt, 0);
+            profiles[id] = leftUpdatedAt >= rightUpdatedAt ? left : right;
+            return;
+        }
+        profiles[id] = left || right;
+    });
+    const preferred = choosePreferredProfileStore(a, b);
+    const activeCandidates = [
+        preferred?.activeProfileId,
+        a?.activeProfileId,
+        b?.activeProfileId,
+    ];
+    const activeProfileId =
+        activeCandidates.find((id) => {
+            const sid = String(id || '').trim();
+            return sid && profiles[sid];
+        }) || null;
+    return {
+        activeProfileId,
+        profiles,
+        savedAt: Math.max(
+            normalizeTimestamp(a.savedAt, 0),
+            normalizeTimestamp(b.savedAt, 0),
+            getLatestProfileUpdatedAt(a),
+            getLatestProfileUpdatedAt(b),
+        ),
+    };
+};
+
 export class ConfigManager {
     constructor(options = {}) {
         const scope = String(options.scope || 'chat').trim().toLowerCase();
@@ -286,15 +378,27 @@ export class ConfigManager {
         }
 
         // fallback localStorage for non-tauri
+        let localProfiles = null;
         if (!profiles) {
             try {
                 const raw = localStorage.getItem(this.profileStoreKey);
                 if (raw) {
-                    profiles = JSON.parse(raw);
+                    localProfiles = JSON.parse(raw);
+                    profiles = localProfiles;
                     logger.info(`localStorage profiles 加载成功（备份）: activeProfileId=${profiles.activeProfileId}, profiles数量=${Object.keys(profiles.profiles || {}).length}`);
                 }
             } catch (err) {
                 logger.error('localStorage profiles 加载失败', err);
+            }
+        } else {
+            try {
+                const raw = localStorage.getItem(this.profileStoreKey);
+                if (raw) {
+                    localProfiles = JSON.parse(raw);
+                    logger.info(`localStorage profiles 对比加载成功（备份）: activeProfileId=${localProfiles.activeProfileId}, profiles数量=${Object.keys(localProfiles.profiles || {}).length}`);
+                }
+            } catch (err) {
+                logger.error('localStorage profiles 对比加载失败', err);
             }
         }
         if (!keyring) {
@@ -310,11 +414,10 @@ export class ConfigManager {
         }
 
         // init store
-        if (!profiles || !profiles.profiles) {
-            profiles = { activeProfileId: null, profiles: {} };
-        }
-        // 确保 activeProfileId 字段存在（防止 undefined）
-        if (!profiles.hasOwnProperty('activeProfileId')) {
+        const normalizedProfiles = normalizeProfileStore(profiles);
+        const normalizedLocalProfiles = normalizeProfileStore(localProfiles);
+        profiles = mergeProfileStores(normalizedProfiles, normalizedLocalProfiles) || { activeProfileId: null, profiles: {}, savedAt: 0 };
+        if (!Object.prototype.hasOwnProperty.call(profiles, 'activeProfileId')) {
             profiles.activeProfileId = null;
         }
         if (!keyring || !keyring.keysByProfile) {
@@ -347,6 +450,15 @@ export class ConfigManager {
             this.profileStore.activeProfileId = profileList[0]?.id || null;
             if (this.profileStore.activeProfileId) {
                 logger.info(`自动选择最近使用的配置: ${profileList[0]?.name}`);
+                await this.persistProfiles(this.profileStore);
+            }
+        }
+
+        if (normalizedProfiles && normalizedLocalProfiles) {
+            const preferredStore = choosePreferredProfileStore(normalizedProfiles, normalizedLocalProfiles);
+            const preferredActive = String(preferredStore?.activeProfileId || '').trim();
+            const currentActive = String(this.profileStore?.activeProfileId || '').trim();
+            if ((preferredActive && preferredActive !== currentActive) || preferredStore?.savedAt !== this.profileStore?.savedAt) {
                 await this.persistProfiles(this.profileStore);
             }
         }
@@ -388,10 +500,14 @@ export class ConfigManager {
     }
 
     async persistProfiles(next = this.profileStore) {
-        this.profileStore = next;
+        this.profileStore = {
+            ...(next || {}),
+            savedAt: Date.now(),
+        };
         const toSave = {
             activeProfileId: this.profileStore.activeProfileId,
-            profiles: this.profileStore.profiles
+            profiles: this.profileStore.profiles,
+            savedAt: this.profileStore.savedAt,
         };
         logger.info(`持久化配置: activeProfileId=${toSave.activeProfileId}, profiles数量=${Object.keys(toSave.profiles || {}).length}`);
 

@@ -440,6 +440,11 @@ export class ChatUI {
   onSwipeRegen(handler) { this._swipeRegenHandler = handler; }
   onSwipeChange(handler) { this._swipeChangeHandler = handler; }
 
+  normalizeAssistantStreamState(state = {}) {
+    if (state && typeof state === 'object' && !Array.isArray(state)) return { ...state };
+    return { content: String(state ?? '') };
+  }
+
   setSwipeRegenerating(msgId, active, label = '生成中...') {
     const id = String(msgId || '').trim();
     if (!id || !this.scrollEl) return false;
@@ -478,15 +483,19 @@ export class ChatUI {
       clearTimeout(handle);
     };
     let updateHandle = null;
-    let pendingText = '';
+    let pendingState = { content: '' };
     this.setSwipeRegenerating(id, true, label);
     this._syncSwipeIndicator(wrapper, index, total, { generating: true });
     this._renderSwipeContent(wrapper, msg, '', { streaming: true, placeholder: label });
     this.setStreamingState(true);
 
-    const flush = (text, { final = false, finalMessage = null } = {}) => {
+    const flush = (state, { final = false, finalMessage = null } = {}) => {
       if (!wrapper.isConnected) return;
-      const renderMsg = finalMessage ? { ...msg, ...finalMessage, id: msg.id } : msg;
+      const renderMsg = finalMessage
+        ? { ...msg, ...finalMessage, id: msg.id }
+        : this.buildAssistantStreamMessage(msg, meta, msg.id || streamId, this.normalizeAssistantStreamState(state));
+      const text = String(renderMsg?.content ?? '');
+      wrapper.__chatappMessage = renderMsg;
       this._renderSwipeContent(wrapper, renderMsg, text, { streaming: !final, placeholder: label });
       if (this.isNearBottom()) this.scrollToBottom();
     };
@@ -494,12 +503,12 @@ export class ChatUI {
     return {
       id: streamId,
       isConnected: () => Boolean(wrapper?.isConnected),
-      update: text => {
-        pendingText = String(text ?? '');
+      update: payload => {
+        pendingState = this.normalizeAssistantStreamState(payload);
         if (updateHandle != null) return;
         updateHandle = raf(() => {
           updateHandle = null;
-          flush(pendingText, { final: false });
+          flush(pendingState, { final: false });
         });
       },
       finish: finalMessage => {
@@ -508,9 +517,8 @@ export class ChatUI {
           caf(updateHandle);
           updateHandle = null;
         }
-        const finalText = String(finalMessage?.content ?? pendingText ?? '');
-        pendingText = finalText;
-        flush(finalText, { final: true, finalMessage });
+        pendingState = finalMessage ? this.normalizeAssistantStreamState(finalMessage) : pendingState;
+        flush(pendingState, { final: true, finalMessage });
       },
       cancel: (options = {}) => {
         const keepPartial = Boolean(options && options.keepPartial);
@@ -519,22 +527,34 @@ export class ChatUI {
           updateHandle = null;
         }
         this.setStreamingState(false);
-        const rawText = String(pendingText ?? '');
-        if (keepPartial && rawText.trim()) {
-          const content = this.normalizeAssistantLineBreaks(rawText);
-          flush(content, { final: false });
+        const buffered = this.buildAssistantStreamMessage(msg, meta, msg.id || streamId, pendingState);
+        const displayText = String(buffered?.content ?? '');
+        const rawText =
+          typeof buffered?.rawOriginal === 'string'
+            ? buffered.rawOriginal
+            : (typeof buffered?.raw === 'string' ? buffered.raw : displayText);
+        if (keepPartial && displayText.trim()) {
+          flush(buffered, { final: false });
           return {
+            ...(buffered || msg),
             role: 'assistant',
             type: 'text',
-            id: streamId,
-            name: meta.name || msg.name || '助手',
-            avatar: meta.avatar || msg.avatar,
-            time: meta.time || msg.time,
-            content,
-            raw: rawText,
-            rawOriginal: rawText,
+            id: msg.id || streamId,
+            content: displayText,
+            raw:
+              typeof buffered?.raw === 'string'
+                ? buffered.raw
+                : rawText,
+            rawOriginal:
+              typeof buffered?.rawOriginal === 'string'
+                ? buffered.rawOriginal
+                : rawText,
+            rawSource:
+              typeof buffered?.rawSource === 'string'
+                ? buffered.rawSource
+                : (typeof buffered?.raw === 'string' ? buffered.raw : rawText),
             meta: {
-              renderRich: msg.meta?.renderRich === true,
+              ...((buffered && buffered.meta) || {}),
               partial: true,
               cancelled: true,
             },
@@ -2132,7 +2152,7 @@ export class ChatUI {
         break;
       case 'text':
       default:
-        // === 创意写作模式===
+        // === RP/创意写作界面===
         // Safe rich rendering (code fences + html iframe preview)
         if (message?.meta?.renderRich) {
           const target = this.prepareTextContainer(bubble, message);
@@ -2315,7 +2335,7 @@ export class ChatUI {
    */
   showTyping(avatarUrl = '', options = {}) {
     if (!this.isTypingDotsEnabled()) return;
-    // RP/创意写作模式不显示输入指示器
+    // RP/创意写作界面不显示输入指示器
     if (document.body.dataset.uiMode === 'rp') return;
     if (this.typingEl) return;
 
@@ -2787,35 +2807,43 @@ export class ChatUI {
       clearTimeout(handle);
     };
     let updateHandle = null;
-    let pendingText = String(placeholder.content ?? '');
-    const bufferIndex = this.messageBuffer.push({ ...placeholder }) - 1;
+    let pendingState = this.normalizeAssistantStreamState({
+      content: String(placeholder.content ?? ''),
+      raw:
+        typeof baseMessage?.raw === 'string'
+          ? baseMessage.raw
+          : String(placeholder.content ?? ''),
+      rawOriginal:
+        typeof baseMessage?.rawOriginal === 'string'
+          ? baseMessage.rawOriginal
+          : (typeof baseMessage?.raw === 'string' ? baseMessage.raw : String(placeholder.content ?? '')),
+      rawSource:
+        typeof baseMessage?.rawSource === 'string'
+          ? baseMessage.rawSource
+          : undefined,
+      meta: {
+        ...((baseMessage?.meta && typeof baseMessage.meta === 'object') ? baseMessage.meta : {}),
+      },
+    });
+    const bufferIndex =
+      this.messageBuffer.push(this.buildAssistantStreamMessage(placeholder, meta, id, pendingState)) - 1;
     this.setStreamingState(true);
     wrapperEl.setAttribute('aria-busy', 'true');
-
-    const renderText = (text) => {
-      const normalized = this.normalizeAssistantLineBreaks(text);
-      const target = this.prepareTextContainer(messageEl, placeholder);
-      target.textContent = normalized;
-      target.style.whiteSpace = 'pre-wrap';
-      if (this.isNearBottom()) this.scrollToBottom();
-    };
-
-    renderText(pendingText);
+    this.renderAssistantStreamState(messageEl, wrapperEl, id, meta, placeholder, pendingState);
+    if (this.isNearBottom()) this.scrollToBottom();
 
     return {
       id,
       isConnected: () => Boolean(wrapperEl?.isConnected && messageEl?.isConnected),
-      update: (text) => {
-        pendingText = String(text ?? '');
-        this.messageBuffer[bufferIndex] = {
-          ...(this.messageBuffer[bufferIndex] || placeholder),
-          content: pendingText,
-        };
+      update: (payload) => {
+        pendingState = this.normalizeAssistantStreamState(payload);
+        this.messageBuffer[bufferIndex] = this.buildAssistantStreamMessage(placeholder, meta, id, pendingState);
         if (updateHandle != null) return;
         updateHandle = raf(() => {
           updateHandle = null;
           if (!messageEl.isConnected) return;
-          renderText(pendingText);
+          this.renderAssistantStreamState(messageEl, wrapperEl, id, meta, placeholder, pendingState);
+          if (this.isNearBottom()) this.scrollToBottom();
         });
       },
       finish: (finalMessage) => {
@@ -2835,19 +2863,35 @@ export class ChatUI {
         }
         this.setStreamingState(false);
         wrapperEl.setAttribute('aria-busy', 'false');
-        const rawText = String(this.messageBuffer?.[bufferIndex]?.content ?? pendingText ?? '');
-        const hasText = rawText.trim().length > 0;
+        const buffered =
+          this.messageBuffer?.[bufferIndex] || this.buildAssistantStreamMessage(placeholder, meta, id, pendingState);
+        const displayText = String(buffered?.content ?? '');
+        const rawText =
+          typeof buffered?.rawOriginal === 'string'
+            ? buffered.rawOriginal
+            : (typeof buffered?.raw === 'string' ? buffered.raw : displayText);
+        const hasText = displayText.trim().length > 0;
         if (keepPartial && hasText) {
           const partial = {
-            ...(this.messageBuffer?.[bufferIndex] || placeholder),
+            ...(buffered || placeholder),
             id,
             role: 'assistant',
             type: 'text',
-            content: this.normalizeAssistantLineBreaks(rawText),
-            raw: rawText,
-            rawOriginal: rawText,
+            content: displayText,
+            raw:
+              typeof buffered?.raw === 'string'
+                ? buffered.raw
+                : rawText,
+            rawOriginal:
+              typeof buffered?.rawOriginal === 'string'
+                ? buffered.rawOriginal
+                : rawText,
+            rawSource:
+              typeof buffered?.rawSource === 'string'
+                ? buffered.rawSource
+                : (typeof buffered?.raw === 'string' ? buffered.raw : rawText),
             meta: {
-              ...(originalMessage?.meta || {}),
+              ...((buffered?.meta && typeof buffered.meta === 'object') ? buffered.meta : {}),
               partial: true,
               cancelled: true,
             },

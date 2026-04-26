@@ -376,7 +376,7 @@ export class MemoryTableEditor {
         sessionId,
         contextType: ctx?.type,
         isGroup: ctx?.type === 'group',
-        uiMode: ctx?.type === 'rp' || isRpSessionId(sessionId) ? 'rp' : 'social',
+        uiMode: ctx?.type === 'rp' || isRpSessionId(sessionId) ? 'rp' : 'chat',
       });
     }).filter(table => {
       if (!includeGlobal && table.scope === 'global') return false;
@@ -638,9 +638,11 @@ export class MemoryTableEditor {
         memoryInjectPosition,
         memoryInjectDepth,
         sharedMemory: false,
-        uiMode: isRp ? 'rp' : 'social',
+        uiMode: isRp ? 'rp' : 'chat',
         defaultRpBridgeSessionId: !isRp ? String(window.appBridge?.getRpSessionIdForActivePersona?.() || '').trim() : '',
-        defaultChatBridgeSessionId: isRp ? String(window.appBridge?.getLastSocialSessionId?.() || '').trim() : '',
+        defaultChatBridgeSessionId: isRp
+          ? String(window.appBridge?.getLastChatSessionId?.() || window.appBridge?.getLastSocialSessionId?.() || '').trim()
+          : '',
       },
       group: isGroup ? { id: sessionId, name: characterName, members: [], memberNames: [] } : null,
       history: [],

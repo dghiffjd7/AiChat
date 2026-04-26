@@ -772,40 +772,20 @@ const initApp = async () => {
     assistant: './assets/external/feather-default.png',
   };
 
-  const SEND_MODE_KEY = 'chat_send_mode_v1';
-  const SOCIAL_SEND_MODE_SWITCH_ENABLED = false;
-  let sendMode = 'chat';
-  const loadSendMode = () => {
-    if (!SOCIAL_SEND_MODE_SWITCH_ENABLED) return 'chat';
+  const UI_MODE_KEY = 'chat_ui_mode_v1';
+  const LEGACY_SEND_MODE_KEY = 'chat_send_mode_v1';
+  let uiMode = 'chat';
+  let lastChatState = { activePage: 'chat', sessionId: '', inChatRoom: false };
+  const clearLegacySendModeState = () => {
     try {
-      const raw = localStorage.getItem(SEND_MODE_KEY);
-      if (raw === 'creative' || raw === 'chat') return raw;
+      localStorage.removeItem(LEGACY_SEND_MODE_KEY);
     } catch {}
-    return 'chat';
-  };
-  const applySendModeUI = () => {
     const btn = document.getElementById('send-button');
     if (!btn) return;
-    btn.classList.toggle('is-creative', sendMode === 'creative');
-    btn.dataset.mode = sendMode;
+    btn.classList.remove('is-creative');
+    delete btn.dataset.mode;
   };
-  const setSendMode = (mode, { silent = false } = {}) => {
-    sendMode = mode === 'creative' ? 'creative' : 'chat';
-    try {
-      localStorage.setItem(SEND_MODE_KEY, sendMode);
-    } catch {}
-    applySendModeUI();
-    if (!silent) {
-      const label = sendMode === 'creative' ? '已切换到创意写作模式' : '已切换到聊天对话模式';
-      window.toastr?.info?.(label);
-    }
-  };
-  setSendMode(loadSendMode(), { silent: true });
-
-  const UI_MODE_KEY = 'chat_ui_mode_v1';
-  let uiMode = 'social';
-  let lastSocialState = { activePage: 'chat', sessionId: '', inChatRoom: false };
-  let lastSocialSendMode = '';
+  clearLegacySendModeState();
   try {
     window.appBridge.getRpSessionIdForActivePersona = () => getRpSessionId(activePersonaId);
     window.appBridge.getRpSessionIdForSession = (sessionId = '') => {
@@ -813,7 +793,8 @@ const initApp = async () => {
       return getRpSessionId(getEffectivePersona(sid)?.id || activePersonaId);
     };
     window.appBridge.getActivePersonaId = () => String(activePersonaId || '').trim();
-    window.appBridge.getLastSocialSessionId = () => String(lastSocialState?.sessionId || '').trim();
+    window.appBridge.getLastChatSessionId = () => String(lastChatState?.sessionId || '').trim();
+    window.appBridge.getLastSocialSessionId = () => String(lastChatState?.sessionId || '').trim();
     window.appBridge.getRpCharacterNameForSession = (sessionId = '') => {
       const sid = String(sessionId || getRpSessionId(activePersonaId) || '').trim();
       const persona = getEffectivePersona(sid) || {};
@@ -824,14 +805,15 @@ const initApp = async () => {
     };
   } catch {}
   try {
-    sessionPanel.getSocialSessionId = () => String(lastSocialState?.sessionId || '').trim();
+    sessionPanel.getChatSessionId = () => String(lastChatState?.sessionId || '').trim();
+    sessionPanel.getSocialSessionId = sessionPanel.getChatSessionId;
   } catch {}
   const loadUiMode = () => {
     try {
       const raw = localStorage.getItem(UI_MODE_KEY);
-      return raw === 'rp' ? 'rp' : 'social';
+      return raw === 'rp' ? 'rp' : 'chat';
     } catch {
-      return 'social';
+      return 'chat';
     }
   };
   const persistUiMode = () => {
@@ -1989,7 +1971,7 @@ ${listPart || '-（无）'}
   const normalizePlainText = text => normalizeCreativeLineBreaks(String(text ?? ''));
 
   const escapeRegex = input => String(input ?? '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const getEffectivePresetUiMode = () => ((uiMode === 'rp' || sendMode === 'creative') ? 'rp' : 'chat');
+  const getEffectivePresetUiMode = () => (uiMode === 'rp' ? 'rp' : 'chat');
   try {
     window.appBridge.getUiModeContext = getEffectivePresetUiMode;
   } catch {}
@@ -12575,19 +12557,15 @@ Phase G（Frame 36）：循环衔接
   const enterRpMode = async ({ captureSocial = true } = {}) => {
     if (uiMode === 'rp') return;
     if (captureSocial) {
-      lastSocialState = {
+      lastChatState = {
         activePage,
         sessionId: chatStore.getCurrent(),
         inChatRoom: isChatRoomVisible(),
       };
-      lastSocialSendMode = SOCIAL_SEND_MODE_SWITCH_ENABLED ? sendMode : 'chat';
     }
     uiMode = 'rp';
     persistUiMode();
     applyUiModeUI();
-    if (sendMode !== 'creative') {
-      setSendMode('creative', { silent: true });
-    }
     try {
       await rpSessionStore?.ready;
     } catch {}
@@ -12616,22 +12594,15 @@ Phase G（Frame 36）：循环衔接
 
   const exitRpMode = () => {
     if (uiMode !== 'rp') return;
-    uiMode = 'social';
+    uiMode = 'chat';
     persistUiMode();
     applyUiModeUI();
-    if (SOCIAL_SEND_MODE_SWITCH_ENABLED) {
-      if (lastSocialSendMode) {
-        setSendMode(lastSocialSendMode, { silent: true });
-      }
-    } else if (sendMode !== 'chat') {
-      setSendMode('chat', { silent: true });
-    }
     if (rpToolbar) rpToolbar.style.display = 'none';
     if (backToListBtn) backToListBtn.style.display = '';
 
-    const restorePage = lastSocialState.activePage || 'chat';
-    const restoreSession = String(lastSocialState.sessionId || '').trim();
-    const restoreInRoom = Boolean(lastSocialState.inChatRoom);
+    const restorePage = lastChatState.activePage || 'chat';
+    const restoreSession = String(lastChatState.sessionId || '').trim();
+    const restoreInRoom = Boolean(lastChatState.inChatRoom);
 
     chatOriginPage = restorePage;
     exitChatRoom();
@@ -12836,7 +12807,7 @@ Phase G（Frame 36）：循环衔接
     },
     sticker: async () => {
       if (!isStickerAllowed()) {
-        window.toastr?.info?.('创意写作模式不支持贴图');
+        window.toastr?.info?.('RP界面不支持贴图');
         return;
       }
       setStickerPanelOpen(true);
@@ -14773,7 +14744,7 @@ Phase G（Frame 36）：循环衔接
         : [],
     );
     if (continueTarget?.messageId) excludeMessageIds.add(String(continueTarget.messageId));
-    const creativeMode = sendMode === 'creative' || uiMode === 'rp';
+    const rpUiMode = uiMode === 'rp';
     const includeAttachments = options.includeAttachments !== false;
     const attachmentQueue = includeAttachments ? composerAttachments.slice() : [];
     const hasAttachments = attachmentQueue.length > 0;
@@ -17745,7 +17716,7 @@ Phase G（Frame 36）：循环衔接
               __reasoning: reasoning,
             };
           }
-          if (creativeMode && (m.role === 'assistant' || m.role === 'user')) {
+          if (rpUiMode && (m.role === 'assistant' || m.role === 'user')) {
             const plain = resolveMessagePlainText(m, {
               depth,
               preferRawSource: isCreativeReply,
@@ -17806,7 +17777,7 @@ Phase G（Frame 36）：循环衔接
           total -= typeof dropped?.content === 'string' ? dropped.content.length : 0;
         }
       } catch {}
-      if (creativeMode) {
+      if (rpUiMode) {
         const rawLimit = Number(appSettings.get().creativeHistoryMax);
         const creativeLimit = Number.isFinite(rawLimit) ? Math.max(0, Math.trunc(rawLimit)) : 5;
         const creativeAssistantIdx = [];
@@ -17929,23 +17900,23 @@ Phase G（Frame 36）：循环衔接
           settings: chatStore.getSessionSettings?.(sessionId) || {},
         },
         meta: {
-          // Keep summary prompt on; creative mode restricts chat guide to summary-only.
+          // Keep summary prompt on; RP/创意写作界面 restricts chat guide to summary-only.
           disableSummary: Boolean(disableSummaryForThis),
           skipInputRegex: Boolean(skipInputRegex),
           appendUserToHistory: continueTarget ? false : undefined,
           suppressPendingUserTurn: Boolean(continueTarget),
-          chatGuideMode: creativeMode ? 'summary-only' : 'full',
+          chatGuideMode: rpUiMode ? 'summary-only' : 'full',
           disableChatGuide: false,
-          disableScenarioHint: Boolean(creativeMode),
-          disableMomentSummary: Boolean(creativeMode),
-          disablePhoneFormat: Boolean(creativeMode),
+          disableScenarioHint: Boolean(rpUiMode),
+          disableMomentSummary: Boolean(rpUiMode),
+          disablePhoneFormat: Boolean(rpUiMode),
           uiMode: getEffectivePresetUiMode(),
           useGlobalVariables: Boolean(sharedVariables),
           sharedMemory: false,
           defaultRpBridgeSessionId: !isRpMode
             ? getRpSessionId(getEffectivePersona(sessionId)?.id || activePersonaId)
             : '',
-          defaultChatBridgeSessionId: isRpMode ? String(lastSocialState?.sessionId || '').trim() : '',
+          defaultChatBridgeSessionId: isRpMode ? String(lastChatState?.sessionId || '').trim() : '',
           memoryStorageMode: getMemoryStorageMode(),
           memoryAutoExtract: isMemoryAutoExtractInline(),
           memoryInjectPosition,
@@ -18332,12 +18303,12 @@ Phase G（Frame 36）：循环衔接
         const groupEnabled = Boolean(sysp?.group_enabled) && String(sysp?.group_rules || '').trim().length > 0;
         const momentCreateEnabled =
           Boolean(sysp?.moment_create_enabled) && String(sysp?.moment_create_rules || '').trim().length > 0;
-        const protocolEnabled = !creativeMode && (momentCreateEnabled || (isGroupChat ? groupEnabled : privateEnabled));
+        const protocolEnabled = !rpUiMode && (momentCreateEnabled || (isGroupChat ? groupEnabled : privateEnabled));
         // Always include summary request prompt; summary (if present) will be extracted from raw response.
         disableSummaryForThis = !isSummaryMemoryEnabled();
 
-        if (creativeMode) {
-          // 创意写作模式：完整长文输出，不解析线上格式
+        if (rpUiMode) {
+          // RP/创意写作界面：完整长文输出，不解析线上格式
           if (isSessionActive(sessionId)) startDeliveryAndTyping(sessionId, assistantAvatar);
           consumePromptInjections(sessionId);
           const stream = await window.appBridge.generate(text, llmContext(text));
@@ -18970,7 +18941,7 @@ Phase G（Frame 36）：循环衔接
             meta.reasoning = reasoningParsed.reasoning;
             meta.reasoningDisplay = reasoningParsed.reasoningDisplay;
           }
-          // === 创意写作模式===
+          // === RP/创意写作界面===
           // try {
           //     stored = window.appBridge.applyOutputStoredRegex(full);
           //     display = window.appBridge.applyOutputDisplayRegex(stored, { depth: 0 });
@@ -19018,7 +18989,7 @@ Phase G（Frame 36）：循环衔接
         const groupEnabled = Boolean(sysp?.group_enabled) && String(sysp?.group_rules || '').trim().length > 0;
         const momentCreateEnabled =
           Boolean(sysp?.moment_create_enabled) && String(sysp?.moment_create_rules || '').trim().length > 0;
-        const protocolEnabled = !creativeMode && (momentCreateEnabled || (isGroupChat ? groupEnabled : privateEnabled));
+        const protocolEnabled = !rpUiMode && (momentCreateEnabled || (isGroupChat ? groupEnabled : privateEnabled));
         // Always include summary request prompt; summary (if present) will be extracted from raw response.
         disableSummaryForThis = !isSummaryMemoryEnabled();
 
@@ -19044,7 +19015,7 @@ Phase G（Frame 36）：循环衔接
           protocolSummary = parsedSummary.summary;
         }
         const summarySessionIds = new Set([sessionId]);
-        if (creativeMode) {
+        if (rpUiMode) {
           if (protocolSummary) {
             try {
               chatStore.addSummary(protocolSummary, sessionId);
@@ -19470,7 +19441,7 @@ Phase G（Frame 36）：循环衔接
             for (const sid of summarySessionIds) requestSummaryCompaction(sid);
           } catch {}
         }
-        // === 创意写作模式===
+        // === RP/创意写作界面===
         // const stored = window.appBridge.applyOutputStoredRegex(resultRaw);
         // const display = window.appBridge.applyOutputDisplayRegex(stored, { depth: 0 });
         const summary = protocolSummary;
@@ -19678,102 +19649,12 @@ Phase G（Frame 36）：循环衔接
     });
   });
 
-  // Long-press send button to switch mode
+  // Legacy send-mode cleanup: RP/创意写作只保留界面切换，不再保留聊天区长按发送模式切换。
   (() => {
-    if (!SOCIAL_SEND_MODE_SWITCH_ENABLED) {
-      try {
-        ui.setSendClickGuard(null);
-      } catch {}
-      if (sendMode !== 'chat') {
-        setSendMode('chat', { silent: true });
-      } else {
-        applySendModeUI();
-      }
-      return;
-    }
-    const sendBtn = document.getElementById('send-button');
-    if (!sendBtn) return;
-    let pressTimer = null;
-    let pressTriggered = false;
-    let suppressNextSend = false;
-
-    const popover = document.createElement('div');
-    popover.className = 'send-mode-popover';
-    popover.style.display = 'none';
-    document.body.appendChild(popover);
-
-    const hidePopover = () => {
-      popover.style.display = 'none';
-    };
-    const showPopover = () => {
-      const targetMode = sendMode === 'creative' ? 'chat' : 'creative';
-      popover.textContent = targetMode === 'creative' ? '创意写作模式' : '聊天对话模式';
-      const rect = sendBtn.getBoundingClientRect();
-      popover.style.display = 'block';
-      popover.style.visibility = 'hidden';
-      popover.style.top = '0';
-      popover.style.left = '0';
-      const height = popover.offsetHeight || 32;
-      const top = Math.max(12, rect.top - height - 8);
-      const left = rect.left + rect.width / 2;
-      popover.style.top = `${top}px`;
-      popover.style.left = `${left}px`;
-      popover.style.transform = 'translateX(-50%)';
-      popover.style.visibility = 'visible';
-    };
-
-    popover.addEventListener('click', e => {
-      e.preventDefault();
-      e.stopPropagation();
-      if (uiMode === 'rp') {
-        window.toastr?.info?.('创意写作模式已固定为创意写作');
-        hidePopover();
-        return;
-      }
-      const next = sendMode === 'creative' ? 'chat' : 'creative';
-      setSendMode(next);
-      hidePopover();
-    });
-
-    const clearTimer = () => {
-      if (pressTimer) {
-        clearTimeout(pressTimer);
-        pressTimer = null;
-      }
-    };
-
-    sendBtn.addEventListener('pointerdown', e => {
-      if (e.button !== 0) return;
-      if (uiMode === 'rp') return;
-      if (activeGeneration && !activeGeneration.cancelled) return;
-      pressTriggered = false;
-      clearTimer();
-      pressTimer = setTimeout(() => {
-        pressTriggered = true;
-        suppressNextSend = true;
-        showPopover();
-      }, 420);
-    });
-
-    sendBtn.addEventListener('pointerup', () => {
-      clearTimer();
-    });
-    sendBtn.addEventListener('pointerleave', clearTimer);
-    sendBtn.addEventListener('pointercancel', clearTimer);
-
-    document.addEventListener('pointerdown', e => {
-      if (popover.style.display === 'none') return;
-      if (popover.contains(e.target) || sendBtn.contains(e.target)) return;
-      hidePopover();
-    });
-
-    ui.setSendClickGuard(() => {
-      if (!suppressNextSend) return false;
-      suppressNextSend = false;
-      return true;
-    });
-
-    applySendModeUI();
+    try {
+      ui.setSendClickGuard(null);
+    } catch {}
+    clearLegacySendModeState();
   })();
 
   ui.onInputChange(text => {
@@ -20319,7 +20200,7 @@ Phase G（Frame 36）：循环衔接
   refreshChatAndContacts();
   applyUiModeUI();
   if (initialUiMode === 'rp') {
-    uiMode = 'social';
+    uiMode = 'chat';
     persistUiMode();
     applyUiModeUI();
   }
@@ -20444,7 +20325,7 @@ Phase G（Frame 36）：循环衔接
 
   function handleSticker(tag) {
     if (!isStickerAllowed()) {
-      window.toastr?.info?.('创意写作模式不支持贴图');
+      window.toastr?.info?.('RP界面不支持贴图');
       return;
     }
     const sessionId = chatStore.getCurrent();
