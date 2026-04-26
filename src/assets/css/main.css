@@ -242,6 +242,7 @@ body[data-typing-dots="off"] [data-typing-placeholder="1"] {
 .page.active {
     display: flex;
     flex-direction: column;
+    position: relative;
 }
 
 #chat-page.chat-room-active #message-topbar {
@@ -4201,7 +4202,9 @@ body.chat-room-active .bottom-nav {
 
 body,
 #app {
+  position: relative;
   min-height: 100vh;
+  overflow: hidden;
   /* 不添加 padding，让内容从0开始，状态栏透明显示 */
   padding-top: 0;
   padding-bottom: env(safe-area-inset-bottom, 0px);
@@ -5225,8 +5228,7 @@ body,
 }
 
 .chat-sticker-btn:active {
-  transform: scale(0.90);
-  opacity: 0.7;
+  opacity: 0.6;
 }
 
 .chat-action-btn:active {
@@ -5255,7 +5257,6 @@ body,
   .chat-back-btn:active,
   .chat-menu-btn:active,
   .voice-btn:active,
-  .chat-sticker-btn:active,
   .chat-action-btn:active,
   .user-avatar-btn:active,
   .bottom-nav .nav-btn:active,
@@ -5266,26 +5267,61 @@ body,
 }
 
 /* ========================================
-   页面切换过渡（Page Transition）
+   页面切换过渡（Page Transition — Book Flip）
    ======================================== */
 
-@keyframes pageFadeIn {
-  from {
-    opacity: 0;
-    transform: translateY(4px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+/* --- enter: new page slides in --- */
+@keyframes pageEnterForward {
+  from { transform: translateX(100%); }
+  to   { transform: translateX(0); }
+}
+@keyframes pageEnterBackward {
+  from { transform: translateX(-100%); }
+  to   { transform: translateX(0); }
 }
 
-.page.active {
-  animation: pageFadeIn 0.15s ease-out;
+/* --- exit: old page slides out --- */
+@keyframes pageExitForward {
+  from { transform: translateX(0); opacity: 1; }
+  to   { transform: translateX(-35%); opacity: 0; }
+}
+@keyframes pageExitBackward {
+  from { transform: translateX(0); opacity: 1; }
+  to   { transform: translateX(35%); opacity: 0; }
+}
+
+.page.active[data-page-dir="forward"] {
+  animation: pageEnterForward 0.3s cubic-bezier(0.22, 1, 0.36, 1);
+  z-index: 2;
+}
+.page.active[data-page-dir="backward"] {
+  animation: pageEnterBackward 0.3s cubic-bezier(0.22, 1, 0.36, 1);
+  z-index: 2;
+}
+
+.page.page-exiting {
+  display: flex !important;
+  flex-direction: column;
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: calc(100vh - 56px);
+  height: calc(100dvh - 56px);
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 1;
+}
+.page.page-exiting[data-page-dir="forward"] {
+  animation: pageExitForward 0.3s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+.page.page-exiting[data-page-dir="backward"] {
+  animation: pageExitBackward 0.3s cubic-bezier(0.22, 1, 0.36, 1) forwards;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .page.active {
+  .page.active[data-page-dir="forward"],
+  .page.active[data-page-dir="backward"],
+  .page.page-exiting[data-page-dir="forward"],
+  .page.page-exiting[data-page-dir="backward"] {
     animation: none;
   }
 }
@@ -5294,23 +5330,44 @@ body,
    聊天气泡入场动画（Bubble Entrance）
    ======================================== */
 
-@keyframes bubbleIn {
+@keyframes bubbleInLeft {
   from {
     opacity: 0;
-    transform: translateY(8px) scale(0.97);
+    transform: translateX(-12px) scale(0.96);
   }
   to {
     opacity: 1;
-    transform: translateY(0) scale(1);
+    transform: translateX(0) scale(1);
   }
 }
 
+@keyframes bubbleInRight {
+  from {
+    opacity: 0;
+    transform: translateX(12px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+}
+
+.QQ_chat_charmsg[data-new-msg] .QQ_chat_msgdiv {
+  animation: bubbleInLeft 0.2s ease-out;
+}
+
+.QQ_chat_mymsg[data-new-msg] .QQ_chat_msgdiv {
+  animation: bubbleInRight 0.2s ease-out;
+}
+
 [data-msg-id][data-new-msg] .QQ_chat_msgdiv {
-  animation: bubbleIn 0.2s ease-out;
+  animation: bubbleInLeft 0.2s ease-out;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  [data-msg-id][data-new-msg] .QQ_chat_msgdiv {
+  [data-msg-id][data-new-msg] .QQ_chat_msgdiv,
+  .QQ_chat_charmsg[data-new-msg] .QQ_chat_msgdiv,
+  .QQ_chat_mymsg[data-new-msg] .QQ_chat_msgdiv {
     animation: none;
   }
 }

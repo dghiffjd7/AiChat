@@ -8,6 +8,7 @@ import { ContactsStore } from '../storage/contacts-store.js';
 import { makeScopedKey, normalizeScopeId } from '../storage/store-scope.js';
 import { avatarDataUrlFromFile } from '../utils/image.js';
 import { FEATHER_DEFAULT, resolveLineAvatar } from '../utils/line-avatar.js';
+import { getDefaultAppIcon } from '../utils/default-icon.js';
 import { logger } from '../utils/logger.js';
 import { buildNameWithBadgesHtml, escapeHtml, getAutoBadgeFromName, getContactBadges } from '../utils/name-badges.js';
 import { safeInvoke } from '../utils/tauri.js';
@@ -1136,7 +1137,7 @@ export class SessionPanel {
             </div>
             <div class="session-panel-form">
                 <button id="session-avatar-btn" type="button" title="设置好友头像" class="session-avatar-btn">
-                    <img id="session-avatar-preview" alt="" class="session-avatar-preview" src="./assets/external/feather-default.png">
+                    <img id="session-avatar-preview" alt="" class="session-avatar-preview" src="${getDefaultAppIcon()}">
                 </button>
                 <input id="session-name" placeholder="新好友名称" class="session-name-input">
                 <button id="session-add" class="session-btn">添加</button>
@@ -1334,7 +1335,7 @@ export class SessionPanel {
     this.nameInput.value = '';
     this.newAvatar = '';
     const img = this.panel?.querySelector('#session-avatar-preview');
-    if (img) img.src = './assets/external/feather-default.png';
+    if (img) img.src = getDefaultAppIcon();
     this.switchTo(name);
     this.refresh();
     this.onUpdated?.();

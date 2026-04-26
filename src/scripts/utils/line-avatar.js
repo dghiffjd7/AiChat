@@ -5,8 +5,9 @@
  */
 
 import { parseNameBadge } from './name-badges.js';
+import { getDefaultAppIcon } from './default-icon.js';
 
-const FEATHER_DEFAULT = './assets/external/feather-default.png';
+const getFeatherDefault = () => getDefaultAppIcon();
 
 const TAG_COLOR_SCHEMES = {
   // Gender / vibe
@@ -111,15 +112,16 @@ export const getLineAvatarDataUrl = ({ name = '', tags = [], size = 96 } = {}) =
 export const isDefaultAvatar = (avatar) => {
   const raw = String(avatar || '').trim();
   if (!raw) return true;
-  return raw === FEATHER_DEFAULT;
+  return raw.includes('feather-default') || raw.includes('app-icon-dark') || raw.includes('app-icon-light');
 };
 
 export const resolveLineAvatar = ({ avatar = '', name = '', tags = [], size = 96 } = {}) => {
   const raw = String(avatar || '').trim();
   if (raw && !isDefaultAvatar(raw)) return raw;
   const generated = getLineAvatarDataUrl({ name, tags, size });
-  return generated || raw || FEATHER_DEFAULT;
+  return generated || raw || getFeatherDefault();
 };
 
+const FEATHER_DEFAULT = getFeatherDefault();
 export { FEATHER_DEFAULT, TAG_COLOR_SCHEMES };
 

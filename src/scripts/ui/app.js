@@ -103,6 +103,7 @@ import { buildRoleWorldBindingsImpl } from './world-role-binding-utils.js';
 import { appConfirm, appChoice } from './app-confirm.js';
 import { PluginRuntime } from '../plugins/plugin-runtime.js';
 import { themeManager } from './theme-manager.js';
+import { getDefaultAppIcon } from '../utils/default-icon.js';
 
 let appRuntimeReady = false;
 let lastRuntimeNoticeKey = '';
@@ -768,8 +769,8 @@ const initApp = async () => {
   });
 
   const avatars = {
-    user: './assets/external/feather-default.png',
-    assistant: './assets/external/feather-default.png',
+    user: getDefaultAppIcon(),
+    assistant: getDefaultAppIcon(),
   };
 
   const UI_MODE_KEY = 'chat_ui_mode_v1';
@@ -824,7 +825,7 @@ const initApp = async () => {
 
   const getActiveUserProfile = () => userStore.getActive?.() || { id: 'default', name: '我', avatar: '', description: '' };
   const getActiveUserName = () => String(getActiveUserProfile()?.name || '').trim() || '我';
-  const getActiveUserAvatar = () => String(getActiveUserProfile()?.avatar || '').trim() || './assets/external/feather-default.png';
+  const getActiveUserAvatar = () => String(getActiveUserProfile()?.avatar || '').trim() || getDefaultAppIcon();
   const getCharacterCardName = (card = null, fallback = '角色') => getCharacterCardDisplayName(card, fallback);
   const getBoundUserIdForCharacterCard = (card = null) => readCharacterCardBoundUserId(card);
 
@@ -1264,6 +1265,11 @@ const initApp = async () => {
     }
     if (key === 'memoryStorageMode' || key === 'memoryEnabled') {
       refreshChatAndContacts({ immediate: true });
+    }
+    if (key === 'uiThemePresetId') {
+      avatars.user = getActiveUserAvatar();
+      avatars.assistant = getDefaultAppIcon();
+      syncUserPersonaUI();
     }
   });
 
@@ -4639,7 +4645,7 @@ Phase G（Frame 36）：循环衔接
     def.dataset.tab = 'default';
     def.title = '默认贴图';
     const defIcon = buildStickerTabIcon({
-      url: './assets/external/feather-default.png',
+      url: getDefaultAppIcon(),
       alt: '默认贴图',
     });
     if (defIcon) def.appendChild(defIcon);
@@ -10198,13 +10204,44 @@ Phase G（Frame 36）：循环衔接
       return false;
     }
   };
+  const pageOrder = { chat: 0, contacts: 1, moments: 2 };
+  const pageNames = ['chat', 'contacts', 'moments'];
   const switchPage = name => {
+    const prev = activePage;
+    if (prev === name) return;
+    const dir = (pageOrder[name] ?? 0) > (pageOrder[prev] ?? 0) ? 'forward' : 'backward';
     activePage = name;
     navBtns.forEach(t => t.classList.toggle('active', t.dataset.page === name));
-    Object.entries(pages).forEach(([k, el]) => {
-      if (el) el.classList.toggle('active', k === name);
+
+    const oldEl = pages[prev];
+    const newEl = pages[name];
+
+    Object.values(pages).forEach(p => {
+      if (p) { p.classList.remove('page-exiting'); delete p.dataset.pageDir; }
     });
-    // 返回聊天列表视图（非聊天室）以贴合原始切换逻辑
+
+    if (oldEl && newEl && !document.body.dataset.reducedMotion) {
+      oldEl.classList.remove('active');
+      oldEl.classList.add('page-exiting');
+      oldEl.dataset.pageDir = dir;
+      newEl.classList.add('active');
+      newEl.dataset.pageDir = dir;
+
+      const cleanupOld = () => {
+        oldEl.classList.remove('page-exiting');
+        delete oldEl.dataset.pageDir;
+      };
+      const cleanupNew = () => { delete newEl.dataset.pageDir; };
+      oldEl.addEventListener('animationend', cleanupOld, { once: true });
+      newEl.addEventListener('animationend', cleanupNew, { once: true });
+      setTimeout(cleanupOld, 350);
+      setTimeout(cleanupNew, 350);
+    } else {
+      Object.entries(pages).forEach(([k, el]) => {
+        if (el) el.classList.toggle('active', k === name);
+      });
+    }
+
     if (name !== 'chat') {
       chatRoom?.classList.add('hidden');
       chatList?.classList.remove('hidden');
@@ -10349,6 +10386,38 @@ Phase G（Frame 36）：循环衔接
     navLastTap = { page, time: now };
     switchPage(page);
   }));
+
+  // 页面滑动切换手势
+  {
+    const appEl = document.getElementById('app');
+    let swipeStartX = 0, swipeStartY = 0, swipeLocked = false;
+    const SWIPE_THRESHOLD = 60;
+    const isInChatRoom = () => chatRoom && !chatRoom.classList.contains('hidden');
+    appEl?.addEventListener('touchstart', e => {
+      if (isInChatRoom() || uiMode === 'rp') return;
+      swipeStartX = e.touches[0].clientX;
+      swipeStartY = e.touches[0].clientY;
+      swipeLocked = false;
+    }, { passive: true });
+    appEl?.addEventListener('touchend', e => {
+      if (isInChatRoom() || uiMode === 'rp' || swipeLocked) return;
+      const dx = e.changedTouches[0].clientX - swipeStartX;
+      const dy = e.changedTouches[0].clientY - swipeStartY;
+      if (Math.abs(dx) < SWIPE_THRESHOLD || Math.abs(dy) > Math.abs(dx)) return;
+      const idx = pageOrder[activePage] ?? 0;
+      if (dx < 0 && idx < pageNames.length - 1) {
+        switchPage(pageNames[idx + 1]);
+      } else if (dx > 0 && idx > 0) {
+        switchPage(pageNames[idx - 1]);
+      }
+    }, { passive: true });
+    appEl?.addEventListener('touchmove', e => {
+      if (swipeLocked) return;
+      const dy = Math.abs(e.touches[0].clientY - swipeStartY);
+      const dx = Math.abs(e.touches[0].clientX - swipeStartX);
+      if (dy > 10 && dy > dx) swipeLocked = true;
+    }, { passive: true });
+  }
 
   // 搜索框初始化（联系人页 / 聊天内容搜索）
   initContactSearch();
@@ -11205,7 +11274,7 @@ Phase G（Frame 36）：循环衔接
         if (!userId) return '';
         if (userId === String(activeUser?.id || '').trim()) return '';
         const accent = getPersonaAccent(user);
-        const avatar = escapeHtml(String(user?.avatar || '').trim() || './assets/external/feather-default.png');
+        const avatar = escapeHtml(String(user?.avatar || '').trim() || getDefaultAppIcon());
         const name = escapeHtml(String(user?.name || '').trim() || '我');
         return `
           <button
@@ -11250,7 +11319,7 @@ Phase G（Frame 36）：循环衔接
     const lockPersonaId = String(chatStore.getPersonaLock?.(sessionId) || '').trim();
     const personas = Array.isArray(personaStore.getAll?.()) ? personaStore.getAll() : [];
     const currentAccent = getPersonaAccent(effectivePersona);
-    const currentAvatar = escapeHtml(String(effectivePersona?.avatar || '').trim() || './assets/external/feather-default.png');
+    const currentAvatar = escapeHtml(String(effectivePersona?.avatar || '').trim() || getDefaultAppIcon());
     const currentName = escapeHtml(getCharacterCardName(effectivePersona, '角色卡'));
     const currentSub = lockPersonaId
       ? '当前会话使用此角色卡'
@@ -11260,7 +11329,7 @@ Phase G（Frame 36）：循环衔接
       if (!personaId) return '';
       if (personaId === String(effectivePersona?.id || '').trim()) return '';
       const accent = getPersonaAccent(persona);
-      const avatar = escapeHtml(String(persona?.avatar || '').trim() || './assets/external/feather-default.png');
+      const avatar = escapeHtml(String(persona?.avatar || '').trim() || getDefaultAppIcon());
       const name = escapeHtml(getCharacterCardName(persona, personaId));
       const isActive = personaId === String(activePersona?.id || '').trim();
       const isLocked = personaId === lockPersonaId;
@@ -16680,13 +16749,12 @@ Phase G（Frame 36）：循环衔接
       if (!isMemoryAutoExtractSeparate()) return;
       if (!sessionId) return;
       const checkpointMessageId = String(options?.checkpointMessageId || '').trim();
-      if (memoryUpdateRunning.has(sessionId)) return;
-      memoryUpdateRunning.add(sessionId);
+      const runId = `${sessionId}:${checkpointMessageId || Date.now()}`;
+      memoryUpdateRunning.add(runId);
       try {
         if (typeof navigator !== 'undefined' && !navigator.onLine) return;
         const plan = await buildMemoryUpdatePlan(sessionId, isGroup, baseContext);
         if (window.appBridge) {
-          // Keep the separate updater and write-back path on the same plan/session.
           window.appBridge.lastMemoryPlan = plan || null;
         }
         if (!plan?.enabled || !plan.promptText) return;
@@ -16721,7 +16789,7 @@ Phase G（Frame 36）：循环衔接
       } catch (err) {
         logger.warn('memory update failed', err);
       } finally {
-        memoryUpdateRunning.delete(sessionId);
+        memoryUpdateRunning.delete(runId);
       }
     };
     const applyChatModeAssistantRegex = (text, { depth } = {}) => {
@@ -17845,9 +17913,10 @@ Phase G（Frame 36）：循环衔接
       ) {
         history.pop();
       }
-      // Limit outgoing history to the latest 50 messages to reduce distraction/tokens.
-      if (history.length > 50) {
-        history.splice(0, history.length - 50);
+      const rawChatLimit = Number(appSettings.get().chatHistoryMax);
+      const chatHistoryLimit = Number.isFinite(rawChatLimit) ? Math.max(0, Math.trunc(rawChatLimit)) : 0;
+      if (chatHistoryLimit > 0 && history.length > chatHistoryLimit) {
+        history.splice(0, history.length - chatHistoryLimit);
       }
       try {
         const openaiPreset = window?.appBridge?.presets?.getResolvedActive?.('openai', getPresetContext())?.preset || {};
@@ -17874,7 +17943,7 @@ Phase G（Frame 36）：循环衔接
       } catch {}
       if (rpUiMode) {
         const rawLimit = Number(appSettings.get().creativeHistoryMax);
-        const creativeLimit = Number.isFinite(rawLimit) ? Math.max(0, Math.trunc(rawLimit)) : 5;
+        const creativeLimit = Number.isFinite(rawLimit) ? Math.max(0, Math.trunc(rawLimit)) : 0;
         const creativeAssistantIdx = [];
         history.forEach((m, idx) => {
           if (m?.__creative && m?.role === 'assistant') creativeAssistantIdx.push(idx);

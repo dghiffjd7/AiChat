@@ -161,6 +161,7 @@ export class GeneralSettingsPanel {
     this.debugLogToggle = null;
     this.typingDotsToggle = null;
     this.richIframeScriptsToggle = null;
+    this.chatHistoryMaxInput = null;
     this.creativeHistoryInput = null;
     this.creativeWideToggle = null;
     this.personaBindToggle = null;
@@ -289,9 +290,13 @@ export class GeneralSettingsPanel {
     if (this.richIframeScriptsToggle) {
       this.richIframeScriptsToggle.checked = Boolean(settings.allowRichIframeScripts);
     }
+    if (this.chatHistoryMaxInput) {
+      const n = Number(settings.chatHistoryMax);
+      this.chatHistoryMaxInput.value = String(Number.isFinite(n) ? Math.max(0, Math.trunc(n)) : 0);
+    }
     if (this.creativeHistoryInput) {
       const n = Number(settings.creativeHistoryMax);
-      this.creativeHistoryInput.value = String(Number.isFinite(n) ? Math.max(0, Math.trunc(n)) : 5);
+      this.creativeHistoryInput.value = String(Number.isFinite(n) ? Math.max(0, Math.trunc(n)) : 0);
     }
     if (this.creativeWideToggle) {
       this.creativeWideToggle.checked = Boolean(settings.creativeWideBubble);
@@ -1612,6 +1617,12 @@ export class GeneralSettingsPanel {
               icon: 'expand',
             })}
             ${this.renderInputRow({
+              title: '聊天前文注入条数',
+              description: '控制发送请求时注入的历史消息条数；0 表示全部注入（由 token 预算自动裁剪）。',
+              icon: 'history',
+              control: '<input type="number" id="general-chat-history-max" min="0" step="1" class="general-settings-number-input">',
+            })}
+            ${this.renderInputRow({
               title: '创意写作注入条数',
               description: '控制 chat_history 中保留的创意写作历史轮数；0 表示全部注入。',
               icon: 'history',
@@ -1984,6 +1995,7 @@ export class GeneralSettingsPanel {
     this.debugLogToggle = this.element.querySelector('#general-debug-logs');
     this.typingDotsToggle = this.element.querySelector('#general-typing-dots');
     this.richIframeScriptsToggle = this.element.querySelector('#general-rich-iframe-scripts');
+    this.chatHistoryMaxInput = this.element.querySelector('#general-chat-history-max');
     this.creativeHistoryInput = this.element.querySelector('#general-creative-history');
     this.creativeWideToggle = this.element.querySelector('#general-creative-wide');
     this.uiAdvancedToggle = this.element.querySelector('#general-ui-advanced-toggle');
@@ -2280,6 +2292,13 @@ export class GeneralSettingsPanel {
       const enabled = Boolean(e?.target?.checked);
       const settings = appSettings.update({ creativeWideBubble: enabled });
       this.applyCreativeWideSetting(Boolean(settings.creativeWideBubble));
+    });
+    this.chatHistoryMaxInput?.addEventListener('input', (e) => {
+      const raw = e?.target?.value;
+      const n = Math.trunc(Number(raw));
+      const safe = Number.isFinite(n) ? Math.max(0, n) : 0;
+      if (e?.target) e.target.value = String(safe);
+      appSettings.update({ chatHistoryMax: safe });
     });
     this.creativeHistoryInput?.addEventListener('input', (e) => {
       const raw = e?.target?.value;

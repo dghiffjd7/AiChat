@@ -7,6 +7,7 @@ import { stickerPackStore } from '../../storage/sticker-pack-store.js';
 import { cleanupRichText, renderRichText, setupIframeResizeListener } from './rich-text-renderer.js';
 import { appSettings } from '../../storage/app-settings.js';
 import { logger } from '../../utils/logger.js';
+import { getDefaultAppIcon } from '../../utils/default-icon.js';
 import {
   DEFAULT_REACTION_EMOJIS,
   SELF_REACTION_ACTOR,
@@ -173,7 +174,7 @@ const toastOnce = (message, level = 'warning', ttl = 8000) => {
     if (toastOnce._cache.get(key) === now) toastOnce._cache.delete(key);
   }, ttl);
 };
-const DEFAULT_REPLY_AVATAR = './assets/external/feather-default.png';
+const getDefaultReplyAvatar = () => getDefaultAppIcon();
 
 export class ChatUI {
   constructor() {
@@ -696,7 +697,7 @@ export class ChatUI {
     box.setAttribute('aria-label', `查看回复原消息：${replyTo.author || '消息'}`);
     const avatar = document.createElement('img');
     avatar.className = 'chat-reply-preview-avatar';
-    avatar.src = replyTo.avatar || DEFAULT_REPLY_AVATAR;
+    avatar.src = replyTo.avatar || getDefaultReplyAvatar();
     avatar.alt = '';
     const textWrap = document.createElement('span');
     textWrap.className = 'chat-reply-preview-text';
@@ -1957,7 +1958,7 @@ export class ChatUI {
     // 头像
     const avatarImg = document.createElement('img');
     avatarImg.className = 'QQ_chat_head';
-    avatarImg.src = message.avatar || './assets/external/feather-default.png';
+    avatarImg.src = message.avatar || getDefaultAppIcon();
     avatarImg.alt = message.name || '';
     avatarImg.loading = 'lazy';
     avatarImg.decoding = 'async';
@@ -2388,7 +2389,7 @@ export class ChatUI {
           selected.forEach((m, i) => {
             const img = document.createElement('img');
             img.className = 'typing-avatar-item';
-            img.src = m.avatar || './assets/external/feather-default.png';
+            img.src = m.avatar || getDefaultAppIcon();
             img.style.zIndex = String(selected.length - i);
             if (i > 0) img.style.marginLeft = '-8px';
             avatarStack.appendChild(img);
@@ -3648,7 +3649,7 @@ export class ChatUI {
       this.replyDraftEl.innerHTML = '';
       return;
     }
-    const avatar = next.avatar || DEFAULT_REPLY_AVATAR;
+    const avatar = next.avatar || getDefaultReplyAvatar();
     this.replyDraftEl.style.display = '';
     this.replyDraftEl.innerHTML = '';
     const main = document.createElement('div');

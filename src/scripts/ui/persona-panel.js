@@ -5,6 +5,7 @@ import { appConfirm } from './app-confirm.js';
 import { appSettings } from '../storage/app-settings.js';
 import { CharacterCardImporter } from './character-card-importer.js';
 import { getCharacterCardDisplayName, getCharacterCardSource } from '../utils/character-card-display.js';
+import { getDefaultAppIcon } from '../utils/default-icon.js';
 
 export class PersonaPanel {
     constructor({ personaStore, userStore = null, chatStore = null, contactsStore = null, rpSessionStore = null, getSessionId = null, onPersonaChanged }) {
@@ -507,7 +508,7 @@ export class PersonaPanel {
                     margin-bottom: 8px;
                     background: ${checked ? 'rgba(37,99,235,0.06)' : 'var(--app-surface-card)'};
                 `;
-                const avatarUrl = it.avatar || (it.isGroup ? './assets/external/feather-default.png' : './assets/external/feather-default.png');
+                const avatarUrl = it.avatar || getDefaultAppIcon();
                 row.innerHTML = `
                     <input class="persona-bulk-check" type="checkbox" ${checked ? 'checked' : ''} style="width:18px; height:18px;">
                     <img src="${avatarUrl}" alt="" style="width:36px; height:36px; border-radius:12px; object-fit:cover; background:var(--app-surface-hover);">
@@ -685,7 +686,7 @@ export class PersonaPanel {
                 border: 1px solid ${p.id === activeId ? '#bae6fd' : 'transparent'};
             `;
 
-            const avatarUrl = p.avatar || './assets/external/feather-default.png'; // Default user avatar
+            const avatarUrl = p.avatar || getDefaultAppIcon(); // Default user avatar
             const isLockedForSession = lockPersonaId && p.id === lockPersonaId;
             const cardName = this.getCharacterCardName(p);
             const subtitle = p.description || '未设置角色描述';
@@ -785,7 +786,7 @@ export class PersonaPanel {
     updateAvatarPreview(url) {
         const div = this.panel.querySelector('#edit-avatar-preview');
         // If no URL, use default image for preview context
-        const safeUrl = url || './assets/external/feather-default.png';
+        const safeUrl = url || getDefaultAppIcon();
         div.style.backgroundImage = `url("${safeUrl}")`;
         div.dataset.url = url || '';
     }
@@ -801,7 +802,7 @@ export class PersonaPanel {
         if (useFile) {
             await this.mediaPicker.pickFile('image');
         } else {
-            await this.mediaPicker.pickUrl('请输入头像地址', './assets/external/feather-default.png');
+            await this.mediaPicker.pickUrl('请输入头像地址', getDefaultAppIcon());
         }
     }
 

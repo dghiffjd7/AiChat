@@ -2,6 +2,7 @@ import { MediaPicker } from './media-picker.js';
 import { avatarDataUrlFromFile } from '../utils/image.js';
 import { appConfirm } from './app-confirm.js';
 import { getCharacterCardBoundUserId, getCharacterCardDisplayName, getCharacterCardSource } from '../utils/character-card-display.js';
+import { getDefaultAppIcon } from '../utils/default-icon.js';
 
 const DEFAULT_USER_BUBBLE_COLOR = '#E8F0FE';
 
@@ -235,7 +236,7 @@ export class UserPanel {
     updateAvatarPreview(url) {
         const div = this.panel?.querySelector?.('#edit-avatar-preview');
         if (!div) return;
-        const safeUrl = url || './assets/external/feather-default.png';
+        const safeUrl = url || getDefaultAppIcon();
         div.style.backgroundImage = `url("${safeUrl}")`;
         div.dataset.url = url || '';
     }
@@ -251,7 +252,7 @@ export class UserPanel {
             await this.mediaPicker.pickFile('image');
             return;
         }
-        await this.mediaPicker.pickUrl('请输入头像地址', './assets/external/feather-default.png');
+        await this.mediaPicker.pickUrl('请输入头像地址', getDefaultAppIcon());
     }
 
     async show() {
@@ -429,7 +430,7 @@ export class UserPanel {
                 card,
                 id: String(card?.id || '').trim(),
                 name: getCharacterCardDisplayName(card, '角色卡'),
-                avatar: String(card?.avatar || '').trim() || './assets/external/feather-default.png',
+                avatar: String(card?.avatar || '').trim() || getDefaultAppIcon(),
             }))
             .filter(item => item.id)
             .filter(item => !term || `${item.name} ${item.id}`.toLowerCase().includes(term))
@@ -504,7 +505,7 @@ export class UserPanel {
                 margin-bottom:5px;
                 border:1px solid ${user.id === activeId ? '#bae6fd' : 'transparent'};
             `;
-            const avatarUrl = user.avatar || './assets/external/feather-default.png';
+            const avatarUrl = user.avatar || getDefaultAppIcon();
             item.innerHTML = `
                 <div style="position:relative;">
                     <img src="${avatarUrl}" style="width:40px; height:40px; border-radius:50%; object-fit:cover; background:var(--app-surface-hover);">
