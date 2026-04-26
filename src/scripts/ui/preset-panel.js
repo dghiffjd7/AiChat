@@ -102,6 +102,7 @@ const REASONING_EFFORT_LABELS = Object.freeze({
     medium: '中',
     high: '高',
     xhigh: '极高',
+    max: '最大',
 });
 
 /* ── icons ── */

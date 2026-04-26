@@ -10577,9 +10577,162 @@ Phase G（Frame 36）：循环衔接
     let overlay = null;
     let panel = null;
     let textarea = null;
+    let apiContentEl = null;
     let metaEl = null;
     let locateBtn = null;
     let locateHandler = null;
+    let tabPromptBtn = null;
+    let tabApiBtn = null;
+    let promptView = null;
+    let apiView = null;
+    let activeTab = 'prompt';
+    let apiPlainText = '';
+
+    const escHtml = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+    const truncateBase64 = (str) => {
+      if (typeof str !== 'string') return str;
+      return str.replace(/data:[^;]+;base64,[A-Za-z0-9+/=]{100,}/g, (match) => {
+        const ci = match.indexOf(',');
+        if (ci < 0) return match;
+        return `${match.slice(0, ci + 1)}...(${match.length - ci - 1} chars)`;
+      });
+    };
+
+    const stringifyContent = (content) => {
+      if (content === null || content === undefined) return '';
+      if (typeof content === 'string') return content;
+      if (Array.isArray(content)) {
+        return content.map(p => {
+          if (!p || typeof p !== 'object') return '';
+          if (p.type === 'text') return String(p.text || '');
+          if (p.type === 'image_url') {
+            const u = String(p.image_url?.url || '');
+            return u.startsWith('data:') ? '[image: base64]' : `[image: ${u}]`;
+          }
+          if (p.type === 'input_audio') return '[audio]';
+          try { return JSON.stringify(p); } catch { return '[content_part]'; }
+        }).filter(Boolean).join('\n');
+      }
+      try { return JSON.stringify(content, null, 2); } catch { return String(content); }
+    };
+
+    const fmtVal = (val) => {
+      const S = { str: '#f1fa8c', num: '#bd93f9', bool: '#ff5555', muted: '#6272a4', label: '#ff79c6', val: '#f8f8f2' };
+      if (val === null || val === undefined) return { h: `<span style="color:${S.muted}">null</span>`, p: 'null' };
+      if (typeof val === 'boolean') return { h: `<span style="color:${S.bool}">${val}</span>`, p: String(val) };
+      if (typeof val === 'number') return { h: `<span style="color:${S.num}">${val}</span>`, p: String(val) };
+      if (typeof val === 'string') return { h: `<span style="color:${S.str}">"${escHtml(val)}"</span>`, p: `"${val}"` };
+      if (typeof val === 'object') {
+        try {
+          const j = JSON.stringify(val, null, 2);
+          return { h: `<span style="color:${S.muted}">${escHtml(j)}</span>`, p: j };
+        } catch { return { h: `<span style="color:${S.muted}">[object]</span>`, p: '[object]' }; }
+      }
+      return { h: `<span style="color:${S.val}">${escHtml(String(val))}</span>`, p: String(val) };
+    };
+
+    const buildApiPayloadHtml = (req) => {
+      if (!req) return { html: '', plain: '' };
+      const sec = 'margin:0 0 2px 0; padding:8px 12px; font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace; font-size:12px; line-height:1.5;';
+      const lbl = 'color:#ff79c6; font-weight:bold;';
+      const mt = 'color:#6272a4;';
+      const sv = 'color:#f8f8f2;';
+      const ss = 'color:#f1fa8c;';
+      const sb = 'color:#ff5555;';
+      const rc = { system: '#ff79c6', user: '#50fa7b', assistant: '#8be9fd', tool: '#ffb86c' };
+      const parts = [], plain = [];
+      const at = req.at ? new Date(req.at).toLocaleString('zh-CN', { hour12: false }) : 'N/A';
+
+      let h = `<div style="${sec} background:#0f0f23; border-bottom:1px solid #282a36;">`;
+      h += `<span style="${mt}">// Request at ${escHtml(at)}</span><br>`;
+      h += `<span style="${lbl}">provider</span><span style="${mt}">: </span><span style="${ss}">"${escHtml(req.provider || '')}"</span><br>`;
+      h += `<span style="${lbl}">model</span><span style="${mt}">: </span><span style="${ss}">"${escHtml(req.model || '')}"</span><br>`;
+      if (req.baseUrl) h += `<span style="${lbl}">base_url</span><span style="${mt}">: </span><span style="${ss}">"${escHtml(req.baseUrl)}"</span><br>`;
+      h += `<span style="${lbl}">stream</span><span style="${mt}">: </span><span style="${sb}">${req.stream ? 'true' : 'false'}</span></div>`;
+      parts.push(h);
+      let hp = `// Request at ${at}\nprovider: "${req.provider || ''}"\nmodel: "${req.model || ''}"`;
+      if (req.baseUrl) hp += `\nbase_url: "${req.baseUrl}"`;
+      hp += `\nstream: ${req.stream}`;
+      plain.push(hp);
+
+      const allParams = { ...(req.options || {}), ...(req.requestOptions || {}) };
+      const skip = new Set(['signal', 'nativeRequestId']);
+      const entries = Object.entries(allParams).filter(([k, v]) => v !== undefined && !skip.has(k));
+      if (entries.length) {
+        let ph = `<div style="${sec} background:#1a1a2e; border-bottom:1px solid #282a36;"><span style="${mt}">// Generation Parameters</span><br>`;
+        let pp = '// Generation Parameters';
+        for (const [k, v] of entries) {
+          const f = fmtVal(v);
+          ph += `<span style="${lbl}">${escHtml(k)}</span><span style="${mt}">: </span>${f.h}<br>`;
+          pp += `\n${k}: ${f.p}`;
+        }
+        ph += '</div>';
+        parts.push(ph);
+        plain.push(pp);
+      }
+
+      const msgs = Array.isArray(req.messages) ? req.messages : [];
+      if (msgs.length) {
+        let mh = `<div style="${sec} background:#1a1a2e;"><span style="${mt}">// Messages (${msgs.length})</span><br><br>`;
+        let mp = `// Messages (${msgs.length})`;
+        for (let i = 0; i < msgs.length; i++) {
+          const m = msgs[i];
+          const role = String(m?.role || 'unknown');
+          const color = rc[role] || '#f8f8f2';
+          const txt = truncateBase64(stringifyContent(m?.content));
+          mh += `<div style="margin-bottom:12px; padding:8px; background:rgba(255,255,255,0.03); border-radius:6px; border-left:3px solid ${color};">`;
+          mh += `<div style="margin-bottom:4px;"><span style="color:${color}; font-weight:bold;">[${escHtml(role)}]</span> <span style="${mt}">#${i}</span></div>`;
+          mh += `<div style="${sv} white-space:pre-wrap; word-break:break-all;">${escHtml(txt)}</div></div>`;
+          mp += `\n\n[${role}] #${i}\n${txt}`;
+        }
+        mh += '</div>';
+        parts.push(mh);
+        plain.push(mp);
+      }
+
+      if (req.responsePrefix) {
+        let rh = `<div style="${sec} background:#1a1a2e; border-top:1px solid #282a36;">`;
+        rh += `<span style="${mt}">// Response Prefix</span><br><span style="${ss}">"${escHtml(truncateBase64(req.responsePrefix))}"</span></div>`;
+        parts.push(rh);
+        plain.push(`// Response Prefix\n"${req.responsePrefix}"`);
+      }
+
+      return { html: parts.join(''), plain: plain.join('\n\n') };
+    };
+
+    const switchTab = (tab) => {
+      activeTab = tab;
+      if (!promptView || !apiView || !tabPromptBtn || !tabApiBtn) return;
+      const active = 'font-weight:700; opacity:1; border-bottom:2px solid var(--app-text-primary, #333);';
+      const inactive = 'font-weight:400; opacity:0.6; border-bottom:2px solid transparent;';
+      if (tab === 'prompt') {
+        promptView.style.display = '';
+        apiView.style.display = 'none';
+        tabPromptBtn.style.cssText = tabPromptBtn.style.cssText.replace(/font-weight:[^;]+;/, '').replace(/opacity:[^;]+;/, '').replace(/border-bottom:[^;]+;/, '') + active;
+        tabApiBtn.style.cssText = tabApiBtn.style.cssText.replace(/font-weight:[^;]+;/, '').replace(/opacity:[^;]+;/, '').replace(/border-bottom:[^;]+;/, '') + inactive;
+        if (locateBtn) locateBtn.style.display = '';
+      } else {
+        promptView.style.display = 'none';
+        apiView.style.display = '';
+        tabApiBtn.style.cssText = tabApiBtn.style.cssText.replace(/font-weight:[^;]+;/, '').replace(/opacity:[^;]+;/, '').replace(/border-bottom:[^;]+;/, '') + active;
+        tabPromptBtn.style.cssText = tabPromptBtn.style.cssText.replace(/font-weight:[^;]+;/, '').replace(/opacity:[^;]+;/, '').replace(/border-bottom:[^;]+;/, '') + inactive;
+        if (locateBtn) locateBtn.style.display = 'none';
+        refreshApiView();
+      }
+    };
+
+    const refreshApiView = () => {
+      const req = window.appBridge?.lastRequest;
+      if (!req) {
+        if (apiContentEl) apiContentEl.innerHTML = '<div style="padding:20px; color:#6272a4; font-family:monospace; font-size:13px; text-align:center;">暂无 API 请求记录<br><span style="font-size:11px;">请先发送一次消息</span></div>';
+        apiPlainText = '';
+        return;
+      }
+      const { html, plain } = buildApiPayloadHtml(req);
+      if (apiContentEl) apiContentEl.innerHTML = html;
+      apiPlainText = plain;
+    };
 
     const ensure = () => {
       if (panel) return;
@@ -10608,13 +10761,18 @@ Phase G（Frame 36）：循环衔接
 
       panel.innerHTML = `
                 <div style="display:flex; align-items:center; gap:10px; padding:12px; background:#f3f4f6; border-bottom:1px solid var(--app-border-default);">
-                    <div style="font-weight:900;">本次 Prompt</div>
+                    <div style="font-weight:900;">本次请求</div>
                     <div id="prompt-preview-meta" style="margin-left:auto; font-size:12px; color:var(--app-text-muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"></div>
                     <button id="prompt-preview-locate" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:6px 10px;">定位世界书</button>
                     <button id="prompt-preview-copy" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:6px 10px;">复制</button>
                     <button id="prompt-preview-close" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:6px 10px;">关闭</button>
                 </div>
-                <div style="flex:1; min-height:0; overflow:auto; -webkit-overflow-scrolling:touch; padding:10px;">
+                <div id="prompt-preview-tabs" style="display:flex; gap:0; background:#f3f4f6; border-bottom:1px solid var(--app-border-default); padding:0 12px;">
+                    <button id="prompt-tab-api" type="button" style="padding:8px 16px; background:none; border:none; border-bottom:2px solid var(--app-text-primary, #333); font-size:13px; font-weight:700; cursor:pointer; color:var(--app-text-primary, #333); opacity:1;">请求参数</button>
+                    <button id="prompt-tab-prompt" type="button" style="padding:8px 16px; background:none; border:none; border-bottom:2px solid transparent; font-size:13px; font-weight:400; cursor:pointer; color:var(--app-text-primary, #333); opacity:0.6;">完整 Prompt</button>
+                </div>
+                <div id="prompt-view-api" style="flex:1; min-height:0; overflow:auto; -webkit-overflow-scrolling:touch; background:#1a1a2e;"></div>
+                <div id="prompt-view-prompt" style="flex:1; min-height:0; overflow:auto; -webkit-overflow-scrolling:touch; padding:10px; display:none;">
                     <textarea id="prompt-preview-text" readonly style="
                         width:100%;
                         height:100%;
@@ -10638,8 +10796,17 @@ Phase G（Frame 36）：循环衔接
       document.body.appendChild(overlay);
 
       textarea = panel.querySelector('#prompt-preview-text');
+      apiContentEl = panel.querySelector('#prompt-view-api');
       metaEl = panel.querySelector('#prompt-preview-meta');
       locateBtn = panel.querySelector('#prompt-preview-locate');
+      promptView = panel.querySelector('#prompt-view-prompt');
+      apiView = panel.querySelector('#prompt-view-api');
+      tabPromptBtn = panel.querySelector('#prompt-tab-prompt');
+      tabApiBtn = panel.querySelector('#prompt-tab-api');
+
+      tabPromptBtn?.addEventListener('click', () => switchTab('prompt'));
+      tabApiBtn?.addEventListener('click', () => switchTab('api'));
+
       locateBtn?.addEventListener('click', async () => {
         if (typeof locateHandler !== 'function') {
           window.toastr?.info?.('本次请求没有可定位的世界书条目');
@@ -10654,7 +10821,7 @@ Phase G（Frame 36）：循环衔接
       });
       panel.querySelector('#prompt-preview-close')?.addEventListener('click', hide);
       panel.querySelector('#prompt-preview-copy')?.addEventListener('click', async () => {
-        const text = String(textarea?.value || '');
+        const text = activeTab === 'api' ? apiPlainText : String(textarea?.value || '');
         if (!text) {
           window.toastr?.warning?.('暂无内容可复制');
           return;
@@ -10664,8 +10831,19 @@ Phase G（Frame 36）：循环衔接
           window.toastr?.success?.('已复制');
         } catch {
           try {
-            textarea?.select?.();
-            document.execCommand?.('copy');
+            if (activeTab === 'prompt' && textarea) {
+              textarea.select();
+              document.execCommand?.('copy');
+            } else {
+              const ta = document.createElement('textarea');
+              ta.value = text;
+              ta.style.cssText = 'position:fixed;left:-9999px;top:0;';
+              ta.setAttribute('readonly', 'true');
+              document.body.appendChild(ta);
+              ta.select();
+              document.execCommand?.('copy');
+              ta.remove();
+            }
             window.toastr?.success?.('已复制');
           } catch {
             window.toastr?.error?.('复制失败');
@@ -10674,7 +10852,7 @@ Phase G（Frame 36）：循环衔接
       });
     };
 
-    const show = (text, meta = '', { onLocate = null } = {}) => {
+    const show = (text, meta = '', { onLocate = null, initialTab = 'api' } = {}) => {
       ensure();
       if (!overlay || !panel || !textarea) return;
       locateHandler = typeof onLocate === 'function' ? onLocate : null;
@@ -10686,6 +10864,7 @@ Phase G（Frame 36）：循环衔接
       textarea.value = String(text || '');
       if (metaEl) metaEl.textContent = meta || '';
       overlay.style.display = 'block';
+      switchTab(initialTab);
     };
 
     const hide = () => {

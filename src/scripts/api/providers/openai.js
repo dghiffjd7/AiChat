@@ -247,7 +247,7 @@ export class OpenAIProvider {
     if (typeof src.top_p === 'number') out.top_p = src.top_p;
     if (typeof src.presence_penalty === 'number') out.presence_penalty = src.presence_penalty;
     if (typeof src.frequency_penalty === 'number') out.frequency_penalty = src.frequency_penalty;
-    if (!isDeepSeek && typeof src.reasoning_effort === 'string' && src.reasoning_effort.trim()) {
+    if (typeof src.reasoning_effort === 'string' && src.reasoning_effort.trim()) {
       out.reasoning_effort = String(src.reasoning_effort).trim();
     }
 

@@ -5,6 +5,7 @@ const REASONING_EFFORT_OPTIONS = Object.freeze([
   { value: 'medium', label: '中' },
   { value: 'high', label: '高' },
   { value: 'xhigh', label: '极高' },
+  { value: 'max', label: '最大' },
 ]);
 
 const OPENAI_GPT51_REASONING_OPTIONS = Object.freeze([
@@ -22,6 +23,11 @@ const GEMINI_LEVEL_REASONING_OPTIONS = Object.freeze([
   { value: 'auto', label: '自动' },
   { value: 'low', label: '低' },
   { value: 'high', label: '高' },
+]);
+
+const DEEPSEEK_REASONING_OPTIONS = Object.freeze([
+  { value: 'high', label: '高' },
+  { value: 'max', label: '最大' },
 ]);
 
 const KNOWN_REASONING_EFFORTS = new Set(
@@ -86,6 +92,12 @@ const geminiLevelFromEffort = (effort) => {
   return 'low';
 };
 
+const deepSeekEffortFromSetting = (effort) => {
+  const normalized = normalizeReasoningEffort(effort, 'high');
+  if (normalized === 'max') return 'max';
+  return 'high';
+};
+
 const openAIReasoningEffortFromSetting = ({ model, effort }) => {
   const normalized = normalizeReasoningEffort(effort, 'high');
   if (normalized === 'auto') return null;
@@ -139,9 +151,9 @@ export const getReasoningCapability = ({ provider, model } = {}) => {
       supported: true,
       strategy: 'deepseek-thinking',
       requestControl: true,
-      effortControl: false,
-      effortOptions: [],
-      hint: 'DeepSeek 当前只支持请求推理模式，不提供强度档位。',
+      effortControl: true,
+      effortOptions: DEEPSEEK_REASONING_OPTIONS,
+      hint: 'DeepSeek 推理强度：高（默认）/ 最大；low/medium 会被映射为 high。思考模式下 temperature 等采样参数会被忽略。',
     };
   }
 
@@ -166,9 +178,9 @@ export const getReasoningCapability = ({ provider, model } = {}) => {
         supported: true,
         strategy: 'deepseek-thinking',
         requestControl: true,
-        effortControl: false,
-        effortOptions: [],
-        hint: '自定义 OpenAI 兼容端点当前按 DeepSeek thinking 参数发送。',
+        effortControl: true,
+        effortOptions: DEEPSEEK_REASONING_OPTIONS,
+        hint: 'DeepSeek 推理强度：高（默认）/ 最大；思考模式下 temperature 等采样参数会被忽略。',
       };
     }
     if (isOpenAIReasoningModel(m)) {
@@ -224,8 +236,10 @@ export const buildReasoningRequestOptions = ({
       const thinkingLevel = geminiLevelFromEffort(reasoningEffort);
       return thinkingLevel ? { thinkingLevel } : {};
     }
-    case 'deepseek-thinking':
-      return { thinking: { type: 'enabled' } };
+    case 'deepseek-thinking': {
+      const dsEffort = deepSeekEffortFromSetting(reasoningEffort);
+      return { thinking: { type: 'enabled' }, reasoning_effort: dsEffort };
+    }
     default:
       return {};
   }
@@ -250,8 +264,8 @@ export const getReasoningSamplerPolicy = ({
   // - OpenAI reasoning models are treated as managed reasoning requests and hide classic
   //   sampling controls while reasoning is requested.
   // - Google thinking models keep their sampling controls.
-  // - DeepSeek currently keeps sampling controls available in ST.
-  if (capability.strategy === 'anthropic-budget' || capability.strategy === 'openai-effort') {
+  // - DeepSeek thinking mode ignores temperature/top_p/presence_penalty/frequency_penalty.
+  if (capability.strategy === 'anthropic-budget' || capability.strategy === 'openai-effort' || capability.strategy === 'deepseek-thinking') {
     disabledFields.add('temperature');
     disabledFields.add('top_p');
     disabledFields.add('top_k');
