@@ -10293,6 +10293,28 @@ Phase G（Frame 36）：循环衔接
     modeSwitchSlot = readCssVarPx('--mode-switch-slot', modeSwitchSlot);
   };
   const clamp = (val, min, max) => Math.min(max, Math.max(min, val));
+  let _safeInsets = { top: 0, bottom: 0, left: 0, right: 0 };
+  const _refreshSafeAreaInsets = () => {
+    try {
+      const probe = document.createElement('div');
+      probe.style.cssText = 'position:fixed;left:0;top:0;width:0;height:0;visibility:hidden;' +
+        'padding-top:env(safe-area-inset-top,0px);' +
+        'padding-bottom:env(safe-area-inset-bottom,0px);' +
+        'padding-left:env(safe-area-inset-left,0px);' +
+        'padding-right:env(safe-area-inset-right,0px);';
+      document.body.appendChild(probe);
+      const cs = getComputedStyle(probe);
+      _safeInsets = {
+        top: parseFloat(cs.paddingTop) || 0,
+        bottom: parseFloat(cs.paddingBottom) || 0,
+        left: parseFloat(cs.paddingLeft) || 0,
+        right: parseFloat(cs.paddingRight) || 0,
+      };
+      probe.remove();
+    } catch {}
+  };
+  _refreshSafeAreaInsets();
+  window.addEventListener('resize', _refreshSafeAreaInsets);
   const getViewportSize = () => {
     try {
       const w = window.innerWidth || document.documentElement.clientWidth || 0;
@@ -10311,9 +10333,9 @@ Phase G（Frame 36）：循环衔接
     if (!modeSwitchPos) return null;
     const { w, h } = getViewportSize();
     if (!w || !h) return null;
-    const margin = 8 + modeSwitchSize / 2;
-    const x = clamp(modeSwitchPos.xRatio * w, margin, w - margin);
-    const y = clamp(modeSwitchPos.yRatio * h, margin, h - margin);
+    const base = 8 + modeSwitchSize / 2;
+    const x = clamp(modeSwitchPos.xRatio * w, base + _safeInsets.left, w - base - _safeInsets.right);
+    const y = clamp(modeSwitchPos.yRatio * h, base + _safeInsets.top, h - base - _safeInsets.bottom);
     return { x, y };
   };
 
@@ -10407,6 +10429,7 @@ Phase G（Frame 36）：循环衔接
     const isInChatRoom = () => chatRoom && !chatRoom.classList.contains('hidden');
     appEl?.addEventListener('touchstart', e => {
       if (isInChatRoom() || uiMode === 'rp') return;
+      if (e.target?.closest?.('#mode-switch')) { swipeLocked = true; return; }
       swipeStartX = e.touches[0].clientX;
       swipeStartY = e.touches[0].clientY;
       swipeLocked = false;
@@ -12918,6 +12941,60 @@ Phase G（Frame 36）：循环衔接
   });
 
   let modeSwitchBounceRAF = null;
+  let maidBounceCount = 0;
+  let maidBounceLastTime = 0;
+  const MAID_TUMBLE_SRC = 'assets/media/maid-tumble.webp';
+  const MAID_W = 102;
+  const MAID_H = 114;
+  const MAID_DURATION = 3900;
+
+  const spawnMaidTumble = (sx, sy, ballVx, ballVy) => {
+    const img = document.createElement('img');
+    img.src = MAID_TUMBLE_SRC;
+    img.style.cssText = `position:fixed; width:${MAID_W}px; height:${MAID_H}px; z-index:26100; pointer-events:none; object-fit:contain; image-rendering:auto;`;
+    document.body.appendChild(img);
+
+    let mx = sx - MAID_W / 2;
+    let my = sy - MAID_H / 2;
+    let mvx = ballVx * 0.5 + (Math.random() - 0.5) * 6;
+    let mvy = ballVy * 0.5 - 3;
+    let angle = 0;
+    const GRAVITY = 0.35;
+    const BOUNCE_E = 0.45;
+    const DRAG = 0.993;
+    const startTime = performance.now();
+
+    img.style.left = `${Math.round(mx)}px`;
+    img.style.top = `${Math.round(my)}px`;
+
+    let fadeStarted = false;
+    const step = () => {
+      const elapsed = performance.now() - startTime;
+      if (!fadeStarted && elapsed > MAID_DURATION - 300) {
+        fadeStarted = true;
+        img.style.transition = 'opacity 0.3s ease';
+        img.style.opacity = '0';
+        setTimeout(() => img.remove(), 350);
+      }
+      if (elapsed > MAID_DURATION) return;
+      const { w, h } = getViewportSize();
+      mvx *= DRAG;
+      mvy = mvy * DRAG + GRAVITY;
+      mx += mvx;
+      my += mvy;
+
+      if (mx < 0) { mx = 0; mvx = -mvx * BOUNCE_E; }
+      else if (mx + MAID_W > w) { mx = w - MAID_W; mvx = -mvx * BOUNCE_E; }
+      if (my < 0) { my = 0; mvy = -mvy * BOUNCE_E; }
+      else if (my + MAID_H > h) { my = h - MAID_H; mvy = -mvy * BOUNCE_E; }
+
+      img.style.left = `${Math.round(mx)}px`;
+      img.style.top = `${Math.round(my)}px`;
+      requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  };
+
   const cancelModeSwitchBounce = () => {
     if (modeSwitchBounceRAF) {
       cancelAnimationFrame(modeSwitchBounceRAF);
@@ -12934,6 +13011,15 @@ Phase G（Frame 36）：循环衔接
       return;
     }
     cancelModeSwitchBounce();
+
+    const now = performance.now();
+    if (now - maidBounceLastTime > 5000) maidBounceCount = 0;
+    maidBounceLastTime = now;
+    maidBounceCount++;
+    if (maidBounceCount >= 6) {
+      maidBounceCount = 0;
+      spawnMaidTumble(startX, startY, vx, vy);
+    }
     modeSwitch.classList.add('is-bouncing');
     const BOUNCE_ELASTICITY = 0.7;
     const AIR_FRICTION = 0.992;
@@ -12944,15 +13030,19 @@ Phase G（Frame 36）：循环衔接
       const { w, h } = getViewportSize();
       if (!w || !h) { modeSwitchBounceRAF = null; modeSwitch.classList.remove('is-bouncing'); return; }
       const halfSize = modeSwitchSize / 2;
+      const minX = halfSize + _safeInsets.left;
+      const maxX = w - halfSize - _safeInsets.right;
+      const minY = halfSize + _safeInsets.top;
+      const maxY = h - halfSize - _safeInsets.bottom;
       vx *= AIR_FRICTION;
       vy *= AIR_FRICTION;
       x += vx;
       y += vy;
       let hitBound = false;
-      if (x < halfSize) { x = halfSize; vx = -vx * BOUNCE_ELASTICITY; hitBound = true; }
-      else if (x > w - halfSize) { x = w - halfSize; vx = -vx * BOUNCE_ELASTICITY; hitBound = true; }
-      if (y < halfSize) { y = halfSize; vy = -vy * BOUNCE_ELASTICITY; hitBound = true; }
-      else if (y > h - halfSize) { y = h - halfSize; vy = -vy * BOUNCE_ELASTICITY; hitBound = true; }
+      if (x < minX) { x = minX; vx = -vx * BOUNCE_ELASTICITY; hitBound = true; }
+      else if (x > maxX) { x = maxX; vx = -vx * BOUNCE_ELASTICITY; hitBound = true; }
+      if (y < minY) { y = minY; vy = -vy * BOUNCE_ELASTICITY; hitBound = true; }
+      else if (y > maxY) { y = maxY; vy = -vy * BOUNCE_ELASTICITY; hitBound = true; }
       if (hitBound) {
         try { navigator.vibrate?.(15); } catch {}
       }
@@ -13008,9 +13098,9 @@ Phase G（Frame 36）：循环衔接
     if (!modeSwitchDrag.moved && Math.hypot(dx, dy) > 4) modeSwitchDrag.moved = true;
     const { w, h } = getViewportSize();
     if (!w || !h) return;
-    const margin = 8 + modeSwitchSize / 2;
-    const x = clamp(modeSwitchDrag.originX + dx, margin, w - margin);
-    const y = clamp(modeSwitchDrag.originY + dy, margin, h - margin);
+    const base = 8 + modeSwitchSize / 2;
+    const x = clamp(modeSwitchDrag.originX + dx, base + _safeInsets.left, w - base - _safeInsets.right);
+    const y = clamp(modeSwitchDrag.originY + dy, base + _safeInsets.top, h - base - _safeInsets.bottom);
     modeSwitch.style.left = `${Math.round(x)}px`;
     modeSwitch.style.top = `${Math.round(y)}px`;
     modeSwitch.style.pointerEvents = 'auto';
