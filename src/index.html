@@ -15,8 +15,8 @@
         padding: calc(8px + env(safe-area-inset-top, 0px)) 8px 8px 8px;
       }
       #toast-container > div {
-        width: calc(100vw - 24px);
-        max-width: 360px;
+        width: auto;
+        max-width: calc(100vw - 24px);
         padding: 12px 14px 12px 42px;
         border-radius: 14px;
         border: 1px solid rgba(255,255,255,0.12);
@@ -43,19 +43,19 @@
         opacity: 0.92;
       }
       #toast-container > .toast-success {
-        background-color: rgba(34, 139, 34, 0.88);
+        background-color: rgba(34, 139, 34, 0.5);
         border-color: rgba(60, 180, 60, 0.25);
       }
       #toast-container > .toast-error {
-        background-color: rgba(185, 45, 40, 0.9);
+        background-color: rgba(185, 45, 40, 0.5);
         border-color: rgba(230, 80, 70, 0.25);
       }
       #toast-container > .toast-warning {
-        background-color: rgba(210, 125, 10, 0.9);
+        background-color: rgba(210, 125, 10, 0.5);
         border-color: rgba(240, 170, 50, 0.25);
       }
       #toast-container > .toast-info {
-        background-color: rgba(40, 120, 180, 0.88);
+        background-color: rgba(40, 120, 180, 0.5);
         border-color: rgba(70, 160, 220, 0.25);
       }
       .toast-progress {
@@ -70,6 +70,12 @@
         text-shadow: none;
         top: 0;
         right: 0;
+      }
+      @media all and (max-width:480px) {
+        #toast-container > div { width: auto; }
+      }
+      @media all and (min-width:481px) and (max-width:768px) {
+        #toast-container > div { width: auto; }
       }
     </style>
     <link rel="stylesheet" href="./assets/css/main.css" />

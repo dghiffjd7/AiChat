@@ -110,6 +110,18 @@ let appRuntimeReady = false;
 let lastRuntimeNoticeKey = '';
 let lastRuntimeNoticeAt = 0;
 
+if (window.toastr) {
+  const _origToastr = { error: window.toastr.error, warning: window.toastr.warning, success: window.toastr.success, info: window.toastr.info };
+  const _guard = (fn) => function (...args) {
+    if (appSettings.get().toastEnabled === false) return;
+    return fn.apply(this, args);
+  };
+  window.toastr.error = _guard(_origToastr.error);
+  window.toastr.warning = _guard(_origToastr.warning);
+  window.toastr.success = _guard(_origToastr.success);
+  window.toastr.info = _guard(_origToastr.info);
+}
+
 const getRuntimeErrorMessage = (err) => {
   if (err?.message) return String(err.message);
   return String(err || 'unknown error');

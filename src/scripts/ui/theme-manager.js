@@ -274,9 +274,7 @@ export class ThemeManager {
         const title = el?.querySelector?.('.toast-title')?.textContent?.trim() || '';
         const text = title ? `${title}\n${msg}` : msg;
         if (text) {
-          navigator.clipboard?.writeText(text).then(() => {
-            window.toastr?.success?.('已复制', '', { timeOut: 1200, preventDuplicates: false });
-          }).catch(() => {});
+          navigator.clipboard?.writeText(text).catch(() => {});
         }
       };
     }

@@ -159,6 +159,7 @@ export class GeneralSettingsPanel {
     this.themeImportInput = null;
     this.debugToggle = null;
     this.debugLogToggle = null;
+    this.toastEnabledToggle = null;
     this.typingDotsToggle = null;
     this.richIframeScriptsToggle = null;
     this.chatHistoryMaxInput = null;
@@ -286,6 +287,9 @@ export class GeneralSettingsPanel {
     }
     if (this.richIframeScriptsToggle) {
       this.richIframeScriptsToggle.checked = Boolean(settings.allowRichIframeScripts);
+    }
+    if (this.toastEnabledToggle) {
+      this.toastEnabledToggle.checked = settings.toastEnabled !== false;
     }
     if (this.chatHistoryMaxInput) {
       const n = Number(settings.chatHistoryMax);
@@ -1631,6 +1635,13 @@ export class GeneralSettingsPanel {
                   nested: true,
                   risk: true,
                 })}
+                ${this.renderSettingRow({
+                  id: 'general-toast-enabled',
+                  title: '显示通知提示',
+                  description: '关闭后将不再弹出右上角的通知消息。',
+                  icon: 'bell',
+                  nested: true,
+                })}
               </div>
             </div>
           </div>
@@ -1952,6 +1963,7 @@ export class GeneralSettingsPanel {
     this.debugLogToggle = this.element.querySelector('#general-debug-logs');
     this.typingDotsToggle = this.element.querySelector('#general-typing-dots');
     this.richIframeScriptsToggle = this.element.querySelector('#general-rich-iframe-scripts');
+    this.toastEnabledToggle = this.element.querySelector('#general-toast-enabled');
     this.chatHistoryMaxInput = this.element.querySelector('#general-chat-history-max');
     this.creativeHistoryInput = this.element.querySelector('#general-creative-history');
     this.creativeWideToggle = this.element.querySelector('#general-creative-wide');
@@ -2241,6 +2253,10 @@ export class GeneralSettingsPanel {
         }
       }
       appSettings.update({ allowRichIframeScripts: enabled });
+    });
+    this.toastEnabledToggle?.addEventListener('change', (e) => {
+      const enabled = Boolean(e?.target?.checked);
+      appSettings.update({ toastEnabled: enabled });
     });
     this.creativeWideToggle?.addEventListener('change', (e) => {
       const enabled = Boolean(e?.target?.checked);
