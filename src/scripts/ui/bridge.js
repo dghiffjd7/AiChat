@@ -4741,6 +4741,19 @@ const stringifyMessageContent = (content) => {
       const int = v => (typeof v === 'number' && Number.isFinite(v) ? Math.trunc(v) : undefined);
       const runtimeConfig = this.config.get?.() || {};
 
+      const sessionId = String(presetContext?.sessionId || '').trim();
+      const sessionReasoning = sessionId
+          ? this.presets.getSessionReasoning?.('openai', sessionId)
+          : null;
+      const modeForReasoning = sessionId?.startsWith('rp:') ? 'rp' : (presetContext?.uiMode || 'chat');
+      const modeReasoning = this.presets.getModeReasoning?.('openai', modeForReasoning) || null;
+      const overrideReasoning = sessionReasoning || modeReasoning;
+      const effectiveRequestReasoning = overrideReasoning
+          ? overrideReasoning.request_reasoning === true
+          : p.request_reasoning === true;
+      const effectiveReasoningEffort = overrideReasoning?.reasoning_effort
+          || p.reasoning_effort;
+
       const base = {
         temperature: num(p.temperature),
         top_p: num(p.top_p),
@@ -4757,13 +4770,13 @@ const stringifyMessageContent = (content) => {
       const samplerPolicy = getReasoningSamplerPolicy({
         provider,
         model,
-        requestReasoning: p.request_reasoning === true,
+        requestReasoning: effectiveRequestReasoning,
       });
       const reasoningOptions = buildReasoningRequestOptions({
         provider,
         model,
-        requestReasoning: p.request_reasoning === true,
-        reasoningEffort: p.reasoning_effort,
+        requestReasoning: effectiveRequestReasoning,
+        reasoningEffort: effectiveReasoningEffort,
         maxOutputTokens: maxTokens,
       });
       if (samplerPolicy.disabledFields.includes('temperature')) delete base.temperature;

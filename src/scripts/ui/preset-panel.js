@@ -537,24 +537,6 @@ const PANEL_CSS = `
     display: flex;
     flex-direction: column;
     gap: 8px;
-    max-height: 320px;
-    overflow-y: auto;
-    -webkit-overflow-scrolling: touch;
-}
-.pp-binding-filter {
-    width: 100%;
-    padding: 8px 10px;
-    border: 1px solid var(--app-border-default);
-    border-radius: 10px;
-    font-size: 13px;
-    background: var(--app-surface-card);
-    color: var(--app-text-primary);
-    box-sizing: border-box;
-    margin-top: 10px;
-    outline: none;
-}
-.pp-binding-filter::placeholder {
-    color: var(--app-text-muted);
 }
 .pp-binding-item {
     border: 1px solid var(--app-border-default);
@@ -1006,7 +988,11 @@ export class PresetPanel {
             : this.store.getResolvedActive('openai', {});
         if (onlyIfBoundOverride && resolved?.source === 'global') return;
         const preset = resolved?.preset || {};
-        const boundId = preset?.boundProfileId;
+        const sessionId = String(context?.sessionId || '').trim();
+        const sessionProfileId = sessionId ? this.store.getSessionProfileId('openai', sessionId) : null;
+        const modeForProfile = sessionId?.startsWith('rp:') ? 'rp' : (context?.uiMode || 'chat');
+        const modeProfileId = this.store.getModeProfileId?.('openai', modeForProfile) || null;
+        const boundId = sessionProfileId || modeProfileId || preset?.boundProfileId;
         if (!boundId) return;
         const cm = window.appBridge?.config;
         if (!cm?.setActiveProfile) return;
@@ -1627,7 +1613,9 @@ export class PresetPanel {
         wrap.appendChild(buildModeCard('chat', '聊天对话'));
         wrap.appendChild(buildModeCard('rp', '创意写作'));
 
-        const renderSessionGroup = (group, title) => {
+        const renderSessionSummary = (group, title) => {
+            const items = sessionEntries.filter((item) => item.group === group);
+            const boundItems = items.filter((item) => this.store.getSessionBindingId(storeType, item.id) === presetId);
             const card = document.createElement('div');
             card.className = 'pp-binding-card';
             const head = document.createElement('div');
@@ -1635,78 +1623,30 @@ export class PresetPanel {
             head.innerHTML = `
                 <div>
                     <div class="pp-binding-card-title">${title}</div>
-                    <div class="pp-binding-card-sub">会话级绑定优先于模式默认；不设置时会继续回退。</div>
+                    <div class="pp-binding-card-sub">${boundItems.length
+                        ? `已绑定 ${boundItems.length} 个会话：${boundItems.map((i) => i.name).join('、')}`
+                        : '暂无会话绑定此预设'}</div>
                 </div>
             `;
             card.appendChild(head);
-
-            const list = document.createElement('div');
-            list.className = 'pp-binding-list';
-            const items = sessionEntries.filter((item) => item.group === group);
-            if (!items.length) {
-                const empty = document.createElement('div');
-                empty.className = 'pp-binding-empty';
-                empty.textContent = group === 'rp' ? '还没有创意写作会话。' : '还没有聊天室或群聊。';
-                card.appendChild(empty);
-                return card;
-            }
-
-            const filterInput = document.createElement('input');
-            filterInput.type = 'text';
-            filterInput.className = 'pp-binding-filter';
-            filterInput.placeholder = '筛选会话…';
-            filterInput.addEventListener('input', () => {
-                const keyword = filterInput.value.trim().toLowerCase();
-                list.querySelectorAll('.pp-binding-item').forEach((row) => {
-                    const name = (row.querySelector('.pp-binding-item-title')?.textContent || '').toLowerCase();
-                    row.style.display = (!keyword || name.includes(keyword)) ? '' : 'none';
-                });
-            });
-            card.appendChild(filterInput);
-
-            items.forEach((item) => {
-                const boundId = this.store.getSessionBindingId(storeType, item.id);
-                const isCurrent = boundId === presetId;
-                const resolved = this.store.getResolvedActive(storeType, {
-                    sessionId: item.id,
-                    uiMode: item.group === 'rp' ? 'rp' : 'chat',
-                });
-                const resolvedName = String(resolved?.preset?.name || this.getPresetNameById(storeType, resolved?.presetId) || '').trim();
-                const subtitle = isCurrent
-                    ? `${item.meta} · 已绑定到当前预设`
-                    : (boundId
-                        ? `${item.meta} · 当前绑定：${this.getPresetNameById(storeType, boundId)}`
-                        : `${item.meta} · 当前使用：${resolvedName || '未设置'}（${this.getBindingSourceLabel(resolved?.source, resolved?.mode)}）`);
-
-                const row = document.createElement('div');
-                row.className = 'pp-binding-item';
-                row.innerHTML = `
-                    <div class="pp-binding-item-main">
-                        <div class="pp-binding-item-title">${escapeHtml(item.name)}</div>
-                        <div class="pp-binding-item-sub">${escapeHtml(subtitle)}</div>
-                    </div>
-                `;
-                const actionBtn = document.createElement('button');
-                actionBtn.type = 'button';
-                actionBtn.className = `pp-binding-btn ${isCurrent ? 'is-muted' : 'is-primary'}`.trim();
-                actionBtn.textContent = isCurrent ? '取消绑定' : (boundId ? '改绑为当前预设' : '绑定当前预设');
-                actionBtn.addEventListener('click', () => {
-                    this.commitBindingChange(() => (
-                        isCurrent
-                            ? this.store.clearSessionBinding(storeType, item.id)
-                            : this.store.setSessionBinding(storeType, item.id, presetId)
-                    ));
-                });
-                row.appendChild(actionBtn);
-                list.appendChild(row);
-            });
-
-            card.appendChild(list);
             return card;
         };
 
-        wrap.appendChild(renderSessionGroup('chat', '聊天对话会话'));
-        wrap.appendChild(renderSessionGroup('rp', '创意写作会话'));
+        wrap.appendChild(renderSessionSummary('chat', '聊天对话会话'));
+        wrap.appendChild(renderSessionSummary('rp', '创意写作会话'));
+
+        const openConfigHint = document.createElement('div');
+        openConfigHint.style.cssText = 'text-align:center; margin-top:12px;';
+        const openConfigBtn = document.createElement('button');
+        openConfigBtn.type = 'button';
+        openConfigBtn.className = 'pp-binding-btn is-primary';
+        openConfigBtn.style.cssText = 'padding:8px 20px;';
+        openConfigBtn.textContent = '打开会话配置管理';
+        openConfigBtn.addEventListener('click', () => {
+            window.dispatchEvent(new CustomEvent('open-session-config'));
+        });
+        openConfigHint.appendChild(openConfigBtn);
+        wrap.appendChild(openConfigHint);
 
         root.appendChild(wrap);
     }

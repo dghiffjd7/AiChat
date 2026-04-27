@@ -78,6 +78,7 @@ import { PluginPanel } from './plugin-panel.js';
 import { PluginUiManager } from './plugin-ui-manager.js';
 import { RegexPanel } from './regex-panel.js';
 import { RegexSessionPanel } from './regex-session-panel.js';
+import { SessionConfigPanel } from './session-config-panel.js';
 import { SessionPanel } from './session-panel.js';
 import { StickerPicker } from './sticker-picker.js';
 import { UserPanel } from './user-panel.js';
@@ -272,6 +273,7 @@ const initApp = async () => {
   const memoryUpdateQueues = new Map();
   const memoryFillSessionCounters = new Map();
   const generalSettingsPanel = new GeneralSettingsPanel();
+  const sessionConfigPanel = new SessionConfigPanel();
   const pluginStore = new PluginStore();
   const pluginRuntime =
     typeof Worker === 'undefined' ? null : new PluginRuntime(pluginStore);
@@ -586,6 +588,12 @@ const initApp = async () => {
   const worldPanel = new WorldPanel({ contactsStore, getSessionId: () => chatStore.getCurrent() });
   const scriptPanel = new ScriptPanel({ store: scriptStore, personaStore, presetStore: window.appBridge?.presets });
   presetPanel.setRuntimeContext({
+    chatStore,
+    contactsStore,
+    personaStore,
+    getUiMode: () => (uiMode === 'rp' ? 'rp' : 'chat'),
+  });
+  sessionConfigPanel.setRuntimeContext({
     chatStore,
     contactsStore,
     personaStore,
@@ -11260,6 +11268,7 @@ Phase G（Frame 36）：循环衔接
   const settingsBtns = document.querySelectorAll('.qq-message-topbar .user-settings-btn');
   const plusBtns = document.querySelectorAll('.qq-message-topbar .topbar-plus-btn');
   const chatMenuBtn = document.getElementById('chat-menu-btn');
+  const chatSessionConfigBtn = document.getElementById('chat-session-config-btn');
   const chatroomMenu = document.getElementById('chatroom-menu');
   const rpChatroomMenu = document.getElementById('rp-chatroom-menu');
   const momentsSettingsBtn = document.getElementById('moments-settings-btn');
@@ -11602,6 +11611,11 @@ Phase G（Frame 36）：循环衔接
     settingsMenu?.classList.add('hidden');
     quickMenu?.classList.add('hidden');
   });
+  chatSessionConfigBtn?.addEventListener('click', e => {
+    e.stopPropagation();
+    hideMenus();
+    sessionConfigPanel.show({ sessionId: chatStore.getCurrent() });
+  });
   document.addEventListener('click', hideMenus);
 
   settingsMenu?.querySelectorAll('button').forEach(btn => {
@@ -11612,6 +11626,7 @@ Phase G（Frame 36）：循环衔接
       if (action === 'world-global') worldPanel.show({ scope: 'global' });
       if (action === 'extensions') extensionsPanel.show();
       if (action === 'config') configPanel.show();
+      if (action === 'session-config') sessionConfigPanel.show();
       hideMenus();
     });
   });
@@ -11685,7 +11700,10 @@ Phase G（Frame 36）：循环衔接
     el.innerHTML = `
             <div class="group-dd-header" style="display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 12px; border-bottom:1px solid rgba(0,0,0,0.06); background:rgba(248,250,252,0.92); border-radius:12px 12px 0 0;">
                 <div class="group-dd-title" style="font-weight:900; color:var(--app-text-primary); font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${title}</div>
-                <button id="group-dd-settings" class="group-dd-settings" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:6px 10px; cursor:pointer;">⚙</button>
+                <div style="display:flex; align-items:center; gap:6px; flex-shrink:0;">
+                    <button id="group-dd-session-config" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:6px 10px; cursor:pointer; font-size:14px;">📋</button>
+                    <button id="group-dd-settings" class="group-dd-settings" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:6px 10px; cursor:pointer;">⚙</button>
+                </div>
             </div>
             <div class="group-dd-list" style="padding:8px 0;">
                 ${
@@ -11712,6 +11730,10 @@ Phase G（Frame 36）：循环衔接
     positionSheet(el, anchorEl, 0, 6, false);
     el.style.display = 'block';
 
+    el.querySelector('#group-dd-session-config')?.addEventListener('click', () => {
+      el.style.display = 'none';
+      sessionConfigPanel.show({ sessionId: chatStore.getCurrent() });
+    });
     el.querySelector('#group-dd-settings')?.addEventListener('click', () => {
       el.style.display = 'none';
       groupSettingsPanel.show(groupId);
@@ -11722,7 +11744,7 @@ Phase G（Frame 36）：循环衔接
         if (!mid) return;
         const c = contactsStore.getContact(mid);
         el.style.display = 'none';
-        switchPage('chat');
+        switchPage('chat', { animate: false });
         enterChatRoom(mid, c?.name || mid, 'chat');
       });
     });
@@ -11746,6 +11768,7 @@ Phase G（Frame 36）：循环衔接
     btn.addEventListener('click', () => {
       const action = btn.dataset.action;
       if (action === 'contact-settings') contactSettingsPanel.show();
+      if (action === 'session-config') sessionConfigPanel.show({ sessionId: chatStore.getCurrent() });
       hideMenus();
     });
   });
@@ -11909,6 +11932,8 @@ Phase G（Frame 36）：循环衔接
     const contact = contactsStore.getContact(sessionId);
     if (currentChatTitle)
       currentChatTitle.innerHTML = renderSessionNameHtml(sessionId, contact);
+    const isGroupSession = Boolean(contact?.isGroup) || String(sessionId || '').startsWith('group:');
+    if (chatSessionConfigBtn) chatSessionConfigBtn.style.display = isGroupSession ? 'none' : '';
     // 切换会话
     chatStore.switchSession(sessionId);
     stageManager?.setSession?.(sessionId);
@@ -12079,7 +12104,7 @@ Phase G（Frame 36）：循环衔接
     updateChatContentSearchVisibility();
 
     if (chatOriginPage && chatOriginPage !== 'chat') {
-      switchPage(chatOriginPage, options);
+      switchPage(chatOriginPage, { ...options, animate: false });
     }
     chatOriginPage = 'chat';
     updatePendingFloat();
@@ -13091,7 +13116,7 @@ Phase G（Frame 36）：循环衔接
     const id = item.dataset.session;
     const name = item.dataset.name || id;
     const origin = activePage;
-    switchPage('chat');
+    switchPage('chat', { animate: false });
     enterChatRoom(id, name, origin);
   });
 
@@ -13102,7 +13127,7 @@ Phase G（Frame 36）：循环衔接
     const id = item.dataset.session;
     const name = item.dataset.name || id;
     const origin = activePage;
-    switchPage('chat');
+    switchPage('chat', { animate: false });
     enterChatRoom(id, name, origin);
   });
 
@@ -20542,6 +20567,7 @@ Phase G（Frame 36）：循环衔接
     autoMarkReadIfActive(sessionId, saved?.id || msg?.id || '');
     refreshChatAndContacts();
   });
+  window.addEventListener('open-session-config', () => sessionConfigPanel.show());
   window.addEventListener('preset-changed', async () => {
     try {
       await window.appBridge?.syncPresetRegexBindings?.();

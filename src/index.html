@@ -85,7 +85,10 @@
           <div class="chat-room-topbar">
             <button id="back-to-list" class="chat-back-btn">‹</button>
             <div class="chat-room-title" id="current-chat-title">default</div>
-            <button id="chat-menu-btn" class="chat-menu-btn">≡</button>
+            <div style="display:flex; align-items:center; gap:2px; flex-shrink:0;">
+              <button id="chat-session-config-btn" class="chat-menu-btn" style="font-size:16px;">📋</button>
+              <button id="chat-menu-btn" class="chat-menu-btn">≡</button>
+            </div>
           </div>
           <div id="rp-toolbar" class="rp-toolbar" style="display:none;">
             <button type="button" id="rp-greeting-trigger" class="rp-greeting-trigger">
@@ -203,6 +206,7 @@
         <button data-action="world-global">🌐 世界书</button>
         <button data-action="extensions">🧩 扩展</button>
         <button data-action="config">🔌 API设定</button>
+        <button data-action="session-config">📋 会话配置</button>
       </div>
 
       <!-- Chat room menu (top-right ≡) -->
@@ -232,6 +236,7 @@
         <div class="sheet-header">会话</div>
         <div class="sheet-desc">当前好友/群组设置</div>
         <button data-action="contact-settings">⚙ 设置</button>
+        <button data-action="session-config">📋 会话配置</button>
       </div>
 
       <!-- Plus quick menu -->

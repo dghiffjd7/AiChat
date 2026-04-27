@@ -227,6 +227,10 @@ const normalizeBindingMode = (mode, { sessionId = '' } = {}) => {
 const makeEmptyBindingBucket = () => ({
     modes: { chat: '', rp: '' },
     sessions: {},
+    sessionProfiles: {},
+    sessionReasoning: {},
+    modeProfiles: { chat: '', rp: '' },
+    modeReasoning: {},
 });
 
 const normalizeBindingBucket = (raw) => {
@@ -243,6 +247,39 @@ const normalizeBindingBucket = (raw) => {
         const boundId = String(presetId || '').trim();
         if (!sessionId || !boundId) continue;
         next.sessions[sessionId] = boundId;
+    }
+
+    const profilesRaw = source.sessionProfiles && typeof source.sessionProfiles === 'object' ? source.sessionProfiles : {};
+    for (const [sid, pid] of Object.entries(profilesRaw)) {
+        const sessionId = String(sid || '').trim();
+        const profileId = String(pid || '').trim();
+        if (sessionId && profileId) next.sessionProfiles[sessionId] = profileId;
+    }
+
+    const reasoningRaw = source.sessionReasoning && typeof source.sessionReasoning === 'object' ? source.sessionReasoning : {};
+    for (const [sid, val] of Object.entries(reasoningRaw)) {
+        const sessionId = String(sid || '').trim();
+        if (!sessionId || !val || typeof val !== 'object') continue;
+        next.sessionReasoning[sessionId] = {
+            request_reasoning: val.request_reasoning === true,
+            reasoning_effort: normalizeReasoningEffort(val.reasoning_effort, 'high'),
+        };
+    }
+
+    const modeProfilesRaw = source.modeProfiles && typeof source.modeProfiles === 'object' ? source.modeProfiles : {};
+    for (const mode of PRESET_BINDING_MODES) {
+        next.modeProfiles[mode] = String(modeProfilesRaw[mode] || '').trim();
+    }
+
+    const modeReasoningRaw = source.modeReasoning && typeof source.modeReasoning === 'object' ? source.modeReasoning : {};
+    for (const mode of PRESET_BINDING_MODES) {
+        const val = modeReasoningRaw[mode];
+        if (val && typeof val === 'object') {
+            next.modeReasoning[mode] = {
+                request_reasoning: val.request_reasoning === true,
+                reasoning_effort: normalizeReasoningEffort(val.reasoning_effort, 'high'),
+            };
+        }
     }
 
     return next;
@@ -911,6 +948,138 @@ export class PresetStore {
 
     async clearSessionBinding(type, sessionId) {
         return this.setSessionBinding(type, sessionId, '');
+    }
+
+    getSessionProfileId(type, sessionId) {
+        const t = normalizeType(type);
+        const sid = String(sessionId || '').trim();
+        if (!sid) return null;
+        return String(this.state?.bindings?.byType?.[t]?.sessionProfiles?.[sid] || '').trim() || null;
+    }
+
+    async setSessionProfile(type, sessionId, profileId = '') {
+        await this.ready;
+        const t = normalizeType(type);
+        const sid = String(sessionId || '').trim();
+        if (!sid) return this.getBindings(t);
+        const nextId = String(profileId || '').trim();
+        this.state.bindings ||= normalizeBindingsState();
+        this.state.bindings.byType ||= {};
+        this.state.bindings.byType[t] = normalizeBindingBucket(this.state.bindings.byType[t]);
+        if (nextId) this.state.bindings.byType[t].sessionProfiles[sid] = nextId;
+        else {
+            delete this.state.bindings.byType[t].sessionProfiles[sid];
+            delete this.state.bindings.byType[t].sessionReasoning[sid];
+        }
+        await this.persist();
+        return this.getBindings(t);
+    }
+
+    async clearSessionProfile(type, sessionId) {
+        return this.setSessionProfile(type, sessionId, '');
+    }
+
+    getSessionReasoning(type, sessionId) {
+        const t = normalizeType(type);
+        const sid = String(sessionId || '').trim();
+        if (!sid) return null;
+        const val = this.state?.bindings?.byType?.[t]?.sessionReasoning?.[sid];
+        if (!val || typeof val !== 'object') return null;
+        return {
+            request_reasoning: val.request_reasoning === true,
+            reasoning_effort: normalizeReasoningEffort(val.reasoning_effort, 'high'),
+        };
+    }
+
+    async setSessionReasoning(type, sessionId, reasoning = {}) {
+        await this.ready;
+        const t = normalizeType(type);
+        const sid = String(sessionId || '').trim();
+        if (!sid) return this.getBindings(t);
+        this.state.bindings ||= normalizeBindingsState();
+        this.state.bindings.byType ||= {};
+        this.state.bindings.byType[t] = normalizeBindingBucket(this.state.bindings.byType[t]);
+        this.state.bindings.byType[t].sessionReasoning[sid] = {
+            request_reasoning: reasoning?.request_reasoning === true,
+            reasoning_effort: normalizeReasoningEffort(reasoning?.reasoning_effort, 'high'),
+        };
+        await this.persist();
+        return this.getBindings(t);
+    }
+
+    async clearSessionReasoning(type, sessionId) {
+        await this.ready;
+        const t = normalizeType(type);
+        const sid = String(sessionId || '').trim();
+        if (!sid) return this.getBindings(t);
+        this.state.bindings ||= normalizeBindingsState();
+        this.state.bindings.byType ||= {};
+        this.state.bindings.byType[t] = normalizeBindingBucket(this.state.bindings.byType[t]);
+        delete this.state.bindings.byType[t].sessionReasoning[sid];
+        await this.persist();
+        return this.getBindings(t);
+    }
+
+    getModeProfileId(type, mode) {
+        const t = normalizeType(type);
+        const m = normalizeBindingMode(mode);
+        return String(this.state?.bindings?.byType?.[t]?.modeProfiles?.[m] || '').trim() || null;
+    }
+
+    async setModeProfile(type, mode, profileId = '') {
+        await this.ready;
+        const t = normalizeType(type);
+        const m = normalizeBindingMode(mode);
+        const nextId = String(profileId || '').trim();
+        this.state.bindings ||= normalizeBindingsState();
+        this.state.bindings.byType ||= {};
+        this.state.bindings.byType[t] = normalizeBindingBucket(this.state.bindings.byType[t]);
+        this.state.bindings.byType[t].modeProfiles[m] = nextId;
+        if (!nextId) delete this.state.bindings.byType[t].modeReasoning[m];
+        await this.persist();
+        return this.getBindings(t);
+    }
+
+    async clearModeProfile(type, mode) {
+        return this.setModeProfile(type, mode, '');
+    }
+
+    getModeReasoning(type, mode) {
+        const t = normalizeType(type);
+        const m = normalizeBindingMode(mode);
+        const val = this.state?.bindings?.byType?.[t]?.modeReasoning?.[m];
+        if (!val || typeof val !== 'object') return null;
+        return {
+            request_reasoning: val.request_reasoning === true,
+            reasoning_effort: normalizeReasoningEffort(val.reasoning_effort, 'high'),
+        };
+    }
+
+    async setModeReasoning(type, mode, reasoning = {}) {
+        await this.ready;
+        const t = normalizeType(type);
+        const m = normalizeBindingMode(mode);
+        this.state.bindings ||= normalizeBindingsState();
+        this.state.bindings.byType ||= {};
+        this.state.bindings.byType[t] = normalizeBindingBucket(this.state.bindings.byType[t]);
+        this.state.bindings.byType[t].modeReasoning[m] = {
+            request_reasoning: reasoning?.request_reasoning === true,
+            reasoning_effort: normalizeReasoningEffort(reasoning?.reasoning_effort, 'high'),
+        };
+        await this.persist();
+        return this.getBindings(t);
+    }
+
+    async clearModeReasoning(type, mode) {
+        await this.ready;
+        const t = normalizeType(type);
+        const m = normalizeBindingMode(mode);
+        this.state.bindings ||= normalizeBindingsState();
+        this.state.bindings.byType ||= {};
+        this.state.bindings.byType[t] = normalizeBindingBucket(this.state.bindings.byType[t]);
+        delete this.state.bindings.byType[t].modeReasoning[m];
+        await this.persist();
+        return this.getBindings(t);
     }
 
     async upsert(type, { id, name, data, makeActive } = {}) {
