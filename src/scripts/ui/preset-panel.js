@@ -537,6 +537,24 @@ const PANEL_CSS = `
     display: flex;
     flex-direction: column;
     gap: 8px;
+    max-height: 320px;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+}
+.pp-binding-filter {
+    width: 100%;
+    padding: 8px 10px;
+    border: 1px solid var(--app-border-default);
+    border-radius: 10px;
+    font-size: 13px;
+    background: var(--app-surface-card);
+    color: var(--app-text-primary);
+    box-sizing: border-box;
+    margin-top: 10px;
+    outline: none;
+}
+.pp-binding-filter::placeholder {
+    color: var(--app-text-muted);
 }
 .pp-binding-item {
     border: 1px solid var(--app-border-default);
@@ -1632,6 +1650,19 @@ export class PresetPanel {
                 card.appendChild(empty);
                 return card;
             }
+
+            const filterInput = document.createElement('input');
+            filterInput.type = 'text';
+            filterInput.className = 'pp-binding-filter';
+            filterInput.placeholder = '筛选会话…';
+            filterInput.addEventListener('input', () => {
+                const keyword = filterInput.value.trim().toLowerCase();
+                list.querySelectorAll('.pp-binding-item').forEach((row) => {
+                    const name = (row.querySelector('.pp-binding-item-title')?.textContent || '').toLowerCase();
+                    row.style.display = (!keyword || name.includes(keyword)) ? '' : 'none';
+                });
+            });
+            card.appendChild(filterInput);
 
             items.forEach((item) => {
                 const boundId = this.store.getSessionBindingId(storeType, item.id);

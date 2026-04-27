@@ -268,6 +268,9 @@ const initApp = async () => {
   const imageConfigManager = new ConfigManager({ scope: 'image' });
   const memoryUpdateConfigManager = new ConfigManager();
   const memoryUpdateRunning = new Set();
+  const memoryUpdateAbortControllers = new Map();
+  const memoryUpdateQueues = new Map();
+  const memoryFillSessionCounters = new Map();
   const generalSettingsPanel = new GeneralSettingsPanel();
   const pluginStore = new PluginStore();
   const pluginRuntime =
@@ -10206,9 +10209,10 @@ Phase G（Frame 36）：循环衔接
   };
   const pageOrder = { chat: 0, contacts: 1, moments: 2 };
   const pageNames = ['chat', 'contacts', 'moments'];
-  const switchPage = name => {
+  const switchPage = (name, options) => {
     const prev = activePage;
     if (prev === name) return;
+    const animate = (!options || options.animate !== false) && !document.body.dataset.reducedMotion;
     const dir = (pageOrder[name] ?? 0) > (pageOrder[prev] ?? 0) ? 'forward' : 'backward';
     activePage = name;
     navBtns.forEach(t => t.classList.toggle('active', t.dataset.page === name));
@@ -10220,7 +10224,7 @@ Phase G（Frame 36）：循环衔接
       if (p) { p.classList.remove('page-exiting'); delete p.dataset.pageDir; }
     });
 
-    if (oldEl && newEl && !document.body.dataset.reducedMotion) {
+    if (oldEl && newEl && animate) {
       oldEl.classList.remove('active');
       oldEl.classList.add('page-exiting');
       oldEl.dataset.pageDir = dir;
@@ -10763,13 +10767,13 @@ Phase G（Frame 36）：循环衔接
                 <div style="display:flex; align-items:center; gap:10px; padding:12px; background:#f3f4f6; border-bottom:1px solid var(--app-border-default);">
                     <div style="font-weight:900;">本次请求</div>
                     <div id="prompt-preview-meta" style="margin-left:auto; font-size:12px; color:var(--app-text-muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"></div>
-                    <button id="prompt-preview-locate" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:6px 10px;">定位世界书</button>
                     <button id="prompt-preview-copy" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:6px 10px;">复制</button>
                     <button id="prompt-preview-close" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:6px 10px;">关闭</button>
                 </div>
-                <div id="prompt-preview-tabs" style="display:flex; gap:0; background:#f3f4f6; border-bottom:1px solid var(--app-border-default); padding:0 12px;">
+                <div id="prompt-preview-tabs" style="display:flex; align-items:center; gap:0; background:#f3f4f6; border-bottom:1px solid var(--app-border-default); padding:0 12px;">
                     <button id="prompt-tab-api" type="button" style="padding:8px 16px; background:none; border:none; border-bottom:2px solid var(--app-text-primary, #333); font-size:13px; font-weight:700; cursor:pointer; color:var(--app-text-primary, #333); opacity:1;">请求参数</button>
                     <button id="prompt-tab-prompt" type="button" style="padding:8px 16px; background:none; border:none; border-bottom:2px solid transparent; font-size:13px; font-weight:400; cursor:pointer; color:var(--app-text-primary, #333); opacity:0.6;">完整 Prompt</button>
+                    <button id="prompt-preview-locate" style="margin-left:auto; border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:5px 10px; font-size:12px; cursor:pointer; display:none;">定位世界书</button>
                 </div>
                 <div id="prompt-view-api" style="flex:1; min-height:0; overflow:auto; -webkit-overflow-scrolling:touch; background:#1a1a2e;"></div>
                 <div id="prompt-view-prompt" style="flex:1; min-height:0; overflow:auto; -webkit-overflow-scrolling:touch; padding:10px; display:none;">
@@ -12055,7 +12059,7 @@ Phase G（Frame 36）：循环衔接
     return { jumpedToTarget };
   };
 
-  const exitChatRoom = () => {
+  const exitChatRoom = (options) => {
     chatRoom?.classList.add('hidden');
     chatList?.classList.remove('hidden');
     pages.chat?.classList.remove('chat-room-active');
@@ -12075,7 +12079,7 @@ Phase G（Frame 36）：循环衔接
     updateChatContentSearchVisibility();
 
     if (chatOriginPage && chatOriginPage !== 'chat') {
-      switchPage(chatOriginPage);
+      switchPage(chatOriginPage, options);
     }
     chatOriginPage = 'chat';
     updatePendingFloat();
@@ -12835,7 +12839,7 @@ Phase G（Frame 36）：循环衔接
     setStickerPanelOpen(false);
     setActionPanelOpen(false);
     if (activePage !== 'chat') {
-      switchPage('chat');
+      switchPage('chat', { animate: false });
     }
     const rpSessionId = getRpSessionId(activePersonaId);
     if (typeof chatStore._ensureSession === 'function') {
@@ -12869,14 +12873,14 @@ Phase G（Frame 36）：循环衔接
     const restoreInRoom = Boolean(lastChatState.inChatRoom);
 
     chatOriginPage = restorePage;
-    exitChatRoom();
+    exitChatRoom({ animate: false });
 
     if (restoreInRoom && restoreSession) {
       const c = contactsStore.getContact(restoreSession);
-      switchPage(restorePage);
+      switchPage(restorePage, { animate: false });
       enterChatRoom(restoreSession, c?.name || restoreSession, restorePage);
     } else {
-      switchPage(restorePage);
+      switchPage(restorePage, { animate: false });
     }
   };
 
@@ -14501,6 +14505,10 @@ Phase G（Frame 36）：循环衔接
     const generation = activeGeneration;
     try {
       generation.cancelled = true;
+    } catch {}
+    try {
+      const sid = String(generation.sessionId || '').trim();
+      if (sid) abortMemoryUpdate(sid);
     } catch {}
     try {
       window.appBridge.cancelCurrentGeneration(reason);
@@ -16924,19 +16932,25 @@ Phase G（Frame 36）：循环衔接
       const runtime = await memoryUpdateConfigManager.getRuntimeConfigByProfileId(profileId);
       return runtime;
     };
-    const runMemoryUpdateAfterChat = async (sessionId, isGroup, baseContext, options = {}) => {
-      if (!isMemoryAutoExtractSeparate()) return;
-      if (!sessionId) return;
-      const checkpointMessageId = String(options?.checkpointMessageId || '').trim();
+    const abortMemoryUpdate = (sessionId) => {
+      const ac = memoryUpdateAbortControllers.get(sessionId);
+      if (ac) {
+        try { ac.abort(); } catch {}
+        memoryUpdateAbortControllers.delete(sessionId);
+      }
+    };
+    const runMemoryUpdateTask = async (sessionId, isGroup, baseContext, checkpointMessageId, signal) => {
       const runId = `${sessionId}:${checkpointMessageId || Date.now()}`;
       memoryUpdateRunning.add(runId);
       try {
+        if (signal?.aborted) return;
         if (typeof navigator !== 'undefined' && !navigator.onLine) return;
         const plan = await buildMemoryUpdatePlan(sessionId, isGroup, baseContext);
         if (window.appBridge) {
           window.appBridge.lastMemoryPlan = plan || null;
         }
         if (!plan?.enabled || !plan.promptText) return;
+        if (signal?.aborted) return;
         const historyText = buildMemoryUpdateHistoryText(sessionId);
         if (!historyText.trim()) return;
         const config = await resolveMemoryUpdateConfig();
@@ -16944,6 +16958,7 @@ Phase G（Frame 36）：循环衔接
           logger.warn('memory update config missing or invalid');
           return;
         }
+        if (signal?.aborted) return;
         const systemText = String(plan.promptText || '').trim();
         const userText = [
           '请根据以下聊天记录更新记忆表格。',
@@ -16958,7 +16973,8 @@ Phase G（Frame 36）：循环衔接
         const response = await client.chat([
           { role: 'system', content: systemText },
           { role: 'user', content: userText },
-        ]);
+        ], { signal });
+        if (signal?.aborted) return;
         await handleMemoryEditsFromRaw(response, { sessionId, isGroup, force: true, requestPrompt });
         if (checkpointMessageId) {
           await syncTurnCheckpointForMessage(sessionId, checkpointMessageId, {
@@ -16966,10 +16982,52 @@ Phase G（Frame 36）：循环衔接
           });
         }
       } catch (err) {
+        if (err?.name === 'AbortError') {
+          logger.info('memory update aborted', sessionId);
+          return;
+        }
         logger.warn('memory update failed', err);
       } finally {
         memoryUpdateRunning.delete(runId);
       }
+    };
+    const enqueueMemoryUpdate = (sessionId, isGroup, baseContext, checkpointMessageId) => {
+      let queue = memoryUpdateQueues.get(sessionId);
+      if (!queue) {
+        queue = { running: false, pending: [] };
+        memoryUpdateQueues.set(sessionId, queue);
+      }
+      queue.pending.push({ isGroup, baseContext, checkpointMessageId });
+      if (!queue.running) drainMemoryQueue(sessionId);
+    };
+    const drainMemoryQueue = async (sessionId) => {
+      const queue = memoryUpdateQueues.get(sessionId);
+      if (!queue || queue.running) return;
+      queue.running = true;
+      while (queue.pending.length > 0) {
+        const task = queue.pending.shift();
+        const ac = new AbortController();
+        memoryUpdateAbortControllers.set(sessionId, ac);
+        await runMemoryUpdateTask(sessionId, task.isGroup, task.baseContext, task.checkpointMessageId, ac.signal);
+        if (memoryUpdateAbortControllers.get(sessionId) === ac) {
+          memoryUpdateAbortControllers.delete(sessionId);
+        }
+      }
+      queue.running = false;
+    };
+    const runMemoryUpdateAfterChat = async (sessionId, isGroup, baseContext, options = {}) => {
+      if (!isMemoryAutoExtractSeparate()) return;
+      if (!sessionId) return;
+      const settings = appSettings.get();
+      const everyN = Math.max(1, Math.trunc(Number(settings.memoryFillEveryN)) || 1);
+      const counter = (memoryFillSessionCounters.get(sessionId) || 0) + 1;
+      if (counter < everyN) {
+        memoryFillSessionCounters.set(sessionId, counter);
+        return;
+      }
+      memoryFillSessionCounters.set(sessionId, 0);
+      const checkpointMessageId = String(options?.checkpointMessageId || '').trim();
+      enqueueMemoryUpdate(sessionId, isGroup, baseContext, checkpointMessageId);
     };
     const applyChatModeAssistantRegex = (text, { depth } = {}) => {
       const cleaned = sanitizeAssistantReplyText(text, promptUserName);

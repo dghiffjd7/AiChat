@@ -185,12 +185,9 @@ export class GeneralSettingsPanel {
     this.memoryInjectDepthWrap = null;
     this.memoryInjectDepthInput = null;
     this.memoryBridgeBlock = null;
-    this.memoryBridgeRpToChatToggle = null;
-    this.memoryBridgeRpToChatLimitInput = null;
-    this.memoryBridgeChatToRpToggle = null;
-    this.memoryBridgeChatToRpLimitInput = null;
     this.memoryAutoConfirmToggle = null;
     this.memoryAutoStepToggle = null;
+    this.memoryFillEveryNInput = null;
     this.templateEnabledToggle = null;
     this.templateBeforeToggle = null;
     this.templateAfterToggle = null;
@@ -350,6 +347,11 @@ export class GeneralSettingsPanel {
     if (this.memoryAutoStepToggle) {
       this.memoryAutoStepToggle.checked = settings.memoryAutoStepByStep === true;
     }
+    if (this.memoryFillEveryNInput) {
+      const rawN = Math.trunc(Number(settings.memoryFillEveryN));
+      const safeN = Number.isFinite(rawN) && rawN >= 1 ? rawN : 1;
+      this.memoryFillEveryNInput.value = String(safeN);
+    }
     if (this.memoryInjectPositionSelect) {
       const raw = String(settings.memoryInjectPosition || 'history_after').toLowerCase();
       const allowed = new Set(['after_persona', 'system_end', 'before_chat', 'history_before', 'history_after', 'history_depth', 'system_end+before_chat']);
@@ -359,22 +361,6 @@ export class GeneralSettingsPanel {
       const raw = Math.trunc(Number(settings.memoryInjectDepth));
       const safe = Number.isFinite(raw) ? Math.max(0, raw) : 0;
       this.memoryInjectDepthInput.value = String(safe);
-    }
-    if (this.memoryBridgeRpToChatToggle) {
-      this.memoryBridgeRpToChatToggle.checked = settings.memoryBridgeRpToChatEnabled !== false;
-    }
-    if (this.memoryBridgeRpToChatLimitInput) {
-      const raw = Math.trunc(Number(settings.memoryBridgeRpToChatLimit));
-      const safe = Number.isFinite(raw) ? Math.max(0, raw) : 5;
-      this.memoryBridgeRpToChatLimitInput.value = String(safe);
-    }
-    if (this.memoryBridgeChatToRpToggle) {
-      this.memoryBridgeChatToRpToggle.checked = settings.memoryBridgeChatToRpEnabled !== false;
-    }
-    if (this.memoryBridgeChatToRpLimitInput) {
-      const raw = Math.trunc(Number(settings.memoryBridgeChatToRpLimit));
-      const safe = Number.isFinite(raw) ? Math.max(0, raw) : 5;
-      this.memoryBridgeChatToRpLimitInput.value = String(safe);
     }
     if (this.templateEnabledToggle) {
       this.templateEnabledToggle.checked = settings.templateEnabled !== false;
@@ -564,18 +550,6 @@ export class GeneralSettingsPanel {
     }
     if (this.memoryBridgeBlock) {
       this.memoryBridgeBlock.style.display = showMemoryTable ? 'block' : 'none';
-    }
-    if (this.memoryBridgeRpToChatToggle) {
-      this.memoryBridgeRpToChatToggle.disabled = !showMemoryTable;
-    }
-    if (this.memoryBridgeRpToChatLimitInput) {
-      this.memoryBridgeRpToChatLimitInput.disabled = !showMemoryTable || this.memoryBridgeRpToChatToggle?.checked === false;
-    }
-    if (this.memoryBridgeChatToRpToggle) {
-      this.memoryBridgeChatToRpToggle.disabled = !showMemoryTable;
-    }
-    if (this.memoryBridgeChatToRpLimitInput) {
-      this.memoryBridgeChatToRpLimitInput.disabled = !showMemoryTable || this.memoryBridgeChatToRpToggle?.checked === false;
     }
     this.updateSelectableCards();
   }
@@ -1748,6 +1722,14 @@ export class GeneralSettingsPanel {
               </label>
               <small style="color:var(--app-text-muted);">逐条执行会依次弹窗确认每条指令</small>
             </div>
+            <div style="margin-top: 10px;">
+              <label style="display:flex; align-items:center; justify-content:space-between; gap:8px; font-size:12px; font-weight:700; color:var(--app-text-primary);">
+                <span>每 N 轮填表一次</span>
+                <input type="number" id="general-memory-fill-every-n" min="1" step="1"
+                       style="width: 90px; padding: 4px 6px; border:1px solid var(--app-border-default); border-radius:8px; font-size:12px; text-align:right;">
+              </label>
+              <small style="color:var(--app-text-muted); display:block; margin-top:4px;">默认 1（每轮对话都填写），设 3 表示每 3 轮对话填写一次</small>
+            </div>
 
             <div id="general-memory-update-api" style="margin-top: 10px; padding: 8px; border: 1px dashed var(--app-border-default); border-radius: 10px; display: none;">
               <div style="font-size:12px; color:var(--app-text-muted); margin-bottom:8px;">记忆更新 API</div>
@@ -1806,33 +1788,8 @@ export class GeneralSettingsPanel {
 	            </div>
 	          </div>
 
-              <div id="general-memory-bridge-block" style="margin-left: 26px; margin-top: 10px; padding: 8px; border: 1px dashed var(--app-border-default); border-radius: 10px; display: none;">
-                <div style="font-size:12px; color:var(--app-text-muted); margin-bottom:8px;">聊天 / RP 桥接默认规则</div>
-                <div style="display:flex; flex-direction:column; gap:10px;">
-                  <div style="padding:8px; border:1px solid var(--app-border-default); border-radius:10px; background:var(--app-surface-card);">
-                    <label style="display:flex; align-items:center; justify-content:space-between; gap:10px; font-size:12px; font-weight:700; color:var(--app-text-primary);">
-                      <span>RP 大纲 -> 聊天界面</span>
-                      <input type="checkbox" id="general-memory-bridge-rp-to-chat" style="width:16px; height:16px;">
-                    </label>
-                    <label style="display:flex; align-items:center; justify-content:space-between; gap:10px; font-size:12px; color:var(--app-text-secondary); margin-top:8px;">
-                      <span>默认注入条数（0=全部）</span>
-                      <input type="number" id="general-memory-bridge-rp-to-chat-limit" min="0" step="1"
-                             style="width: 90px; padding: 4px 6px; border:1px solid var(--app-border-default); border-radius:8px; font-size:12px; text-align:right;">
-                    </label>
-                  </div>
-                  <div style="padding:8px; border:1px solid var(--app-border-default); border-radius:10px; background:var(--app-surface-card);">
-                    <label style="display:flex; align-items:center; justify-content:space-between; gap:10px; font-size:12px; font-weight:700; color:var(--app-text-primary);">
-                      <span>聊天大纲 -> RP 模式</span>
-                      <input type="checkbox" id="general-memory-bridge-chat-to-rp" style="width:16px; height:16px;">
-                    </label>
-                    <label style="display:flex; align-items:center; justify-content:space-between; gap:10px; font-size:12px; color:var(--app-text-secondary); margin-top:8px;">
-                      <span>默认注入条数（0=全部）</span>
-                      <input type="number" id="general-memory-bridge-chat-to-rp-limit" min="0" step="1"
-                             style="width: 90px; padding: 4px 6px; border:1px solid var(--app-border-default); border-radius:8px; font-size:12px; text-align:right;">
-                    </label>
-                  </div>
-                </div>
-                <small style="color:var(--app-text-muted); display:block; margin-top:6px;">当前默认只桥接双方“总体大纲”，不桥接原始消息。</small>
+              <div id=”general-memory-bridge-block” style=”margin-left: 26px; margin-top: 10px; padding: 8px; border: 1px dashed var(--app-border-default); border-radius: 10px; display: none;”>
+                <small style=”color:var(--app-text-muted); line-height:1.6;”>聊天 / RP 记忆桥接请在各会话的「好友设置 → 记忆共享」中配置，可针对每张表格单独开关与限条。</small>
               </div>
 	          </div>
 	        </div>
@@ -2023,12 +1980,9 @@ export class GeneralSettingsPanel {
     this.memoryInjectDepthWrap = this.element.querySelector('#general-memory-inject-depth-wrap');
     this.memoryInjectDepthInput = this.element.querySelector('#general-memory-inject-depth');
     this.memoryBridgeBlock = this.element.querySelector('#general-memory-bridge-block');
-    this.memoryBridgeRpToChatToggle = this.element.querySelector('#general-memory-bridge-rp-to-chat');
-    this.memoryBridgeRpToChatLimitInput = this.element.querySelector('#general-memory-bridge-rp-to-chat-limit');
-    this.memoryBridgeChatToRpToggle = this.element.querySelector('#general-memory-bridge-chat-to-rp');
-    this.memoryBridgeChatToRpLimitInput = this.element.querySelector('#general-memory-bridge-chat-to-rp-limit');
     this.memoryAutoConfirmToggle = this.element.querySelector('#general-memory-auto-confirm');
     this.memoryAutoStepToggle = this.element.querySelector('#general-memory-auto-step');
+    this.memoryFillEveryNInput = this.element.querySelector('#general-memory-fill-every-n');
     this.templateEnabledToggle = this.element.querySelector('#general-template-enabled');
     this.templateBeforeToggle = this.element.querySelector('#general-template-before');
     this.templateAfterToggle = this.element.querySelector('#general-template-after');
@@ -2494,6 +2448,13 @@ export class GeneralSettingsPanel {
       appSettings.update({ memoryAutoStepByStep: enabled });
       window.dispatchEvent(new CustomEvent('app-settings-changed', { detail: { key: 'memoryAutoStepByStep', value: enabled } }));
     });
+    this.memoryFillEveryNInput?.addEventListener('input', (e) => {
+      const raw = Math.trunc(Number(e?.target?.value));
+      const safe = Number.isFinite(raw) && raw >= 1 ? raw : 1;
+      if (e?.target) e.target.value = String(safe);
+      appSettings.update({ memoryFillEveryN: safe });
+      window.dispatchEvent(new CustomEvent('app-settings-changed', { detail: { key: 'memoryFillEveryN', value: safe } }));
+    });
 
     const setBundleStatus = (text) => {
       if (this.bundleStatus) this.bundleStatus.textContent = text;
@@ -2668,32 +2629,6 @@ export class GeneralSettingsPanel {
       if (e?.target) e.target.value = String(safe);
       appSettings.update({ memoryInjectDepth: safe });
       window.dispatchEvent(new CustomEvent('app-settings-changed', { detail: { key: 'memoryInjectDepth', value: safe } }));
-    });
-    this.memoryBridgeRpToChatToggle?.addEventListener('change', (e) => {
-      const enabled = Boolean(e?.target?.checked);
-      appSettings.update({ memoryBridgeRpToChatEnabled: enabled });
-      window.dispatchEvent(new CustomEvent('app-settings-changed', { detail: { key: 'memoryBridgeRpToChatEnabled', value: enabled } }));
-      this.updateMemoryAutoVisibility();
-    });
-    this.memoryBridgeRpToChatLimitInput?.addEventListener('input', (e) => {
-      const raw = Math.trunc(Number(e?.target?.value));
-      const safe = Number.isFinite(raw) ? Math.max(0, raw) : 5;
-      if (e?.target) e.target.value = String(safe);
-      appSettings.update({ memoryBridgeRpToChatLimit: safe });
-      window.dispatchEvent(new CustomEvent('app-settings-changed', { detail: { key: 'memoryBridgeRpToChatLimit', value: safe } }));
-    });
-    this.memoryBridgeChatToRpToggle?.addEventListener('change', (e) => {
-      const enabled = Boolean(e?.target?.checked);
-      appSettings.update({ memoryBridgeChatToRpEnabled: enabled });
-      window.dispatchEvent(new CustomEvent('app-settings-changed', { detail: { key: 'memoryBridgeChatToRpEnabled', value: enabled } }));
-      this.updateMemoryAutoVisibility();
-    });
-    this.memoryBridgeChatToRpLimitInput?.addEventListener('input', (e) => {
-      const raw = Math.trunc(Number(e?.target?.value));
-      const safe = Number.isFinite(raw) ? Math.max(0, raw) : 5;
-      if (e?.target) e.target.value = String(safe);
-      appSettings.update({ memoryBridgeChatToRpLimit: safe });
-      window.dispatchEvent(new CustomEvent('app-settings-changed', { detail: { key: 'memoryBridgeChatToRpLimit', value: safe } }));
     });
     this.memoryModeTable?.addEventListener('change', async (e) => {
       const target = e?.target;

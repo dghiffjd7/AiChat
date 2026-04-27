@@ -39,6 +39,7 @@ const defaults = {
   memoryBridgeChatToRpLimit: 5,
   memoryAutoConfirm: false,
   memoryAutoStepByStep: false,
+  memoryFillEveryN: 1,
   chatDefaultBubbleColor: '#c9c9c9',
   chatDefaultTextColor: '#1F2937',
   uiThemePresetId: 'classic-dark',
