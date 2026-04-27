@@ -10,6 +10,68 @@
     <title>Chat App</title>
 
     <link rel="stylesheet" href="./assets/css/toastr.min.css" />
+    <style id="toastr-override">
+      #toast-container {
+        padding: calc(8px + env(safe-area-inset-top, 0px)) 8px 8px 8px;
+      }
+      #toast-container > div {
+        width: calc(100vw - 24px);
+        max-width: 360px;
+        padding: 12px 14px 12px 42px;
+        border-radius: 14px;
+        border: 1px solid rgba(255,255,255,0.12);
+        box-shadow: 0 4px 20px rgba(0,0,0,0.12), 0 1px 4px rgba(0,0,0,0.06);
+        backdrop-filter: blur(16px) saturate(1.4);
+        -webkit-backdrop-filter: blur(16px) saturate(1.4);
+        opacity: 1;
+        font-size: 13px;
+        line-height: 1.45;
+        background-size: 18px;
+        background-position: 12px center;
+      }
+      #toast-container > div:hover {
+        box-shadow: 0 6px 28px rgba(0,0,0,0.18), 0 2px 6px rgba(0,0,0,0.08);
+      }
+      .toast-title {
+        font-size: 13px;
+        font-weight: 700;
+        margin-bottom: 2px;
+      }
+      .toast-message {
+        font-size: 12.5px;
+        font-weight: 400;
+        opacity: 0.92;
+      }
+      #toast-container > .toast-success {
+        background-color: rgba(34, 139, 34, 0.88);
+        border-color: rgba(60, 180, 60, 0.25);
+      }
+      #toast-container > .toast-error {
+        background-color: rgba(185, 45, 40, 0.9);
+        border-color: rgba(230, 80, 70, 0.25);
+      }
+      #toast-container > .toast-warning {
+        background-color: rgba(210, 125, 10, 0.9);
+        border-color: rgba(240, 170, 50, 0.25);
+      }
+      #toast-container > .toast-info {
+        background-color: rgba(40, 120, 180, 0.88);
+        border-color: rgba(70, 160, 220, 0.25);
+      }
+      .toast-progress {
+        height: 3px;
+        border-radius: 0 0 14px 14px;
+        opacity: 0.3;
+      }
+      .toast-close-button {
+        font-size: 16px;
+        font-weight: 400;
+        opacity: 0.6;
+        text-shadow: none;
+        top: 0;
+        right: 0;
+      }
+    </style>
     <link rel="stylesheet" href="./assets/css/main.css" />
     <link rel="stylesheet" href="./assets/css/qq-legacy.css" />
     <link rel="stylesheet" href="./assets/css/cards.css" />
@@ -85,10 +147,7 @@
           <div class="chat-room-topbar">
             <button id="back-to-list" class="chat-back-btn">‹</button>
             <div class="chat-room-title" id="current-chat-title">default</div>
-            <div style="display:flex; align-items:center; gap:2px; flex-shrink:0;">
-              <button id="chat-session-config-btn" class="chat-menu-btn" style="font-size:16px;">📋</button>
-              <button id="chat-menu-btn" class="chat-menu-btn">≡</button>
-            </div>
+            <button id="chat-menu-btn" class="chat-menu-btn">≡</button>
           </div>
           <div id="rp-toolbar" class="rp-toolbar" style="display:none;">
             <button type="button" id="rp-greeting-trigger" class="rp-greeting-trigger">

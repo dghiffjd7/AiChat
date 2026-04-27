@@ -266,6 +266,19 @@ export class ThemeManager {
     if (toastrOptions) {
       toastrOptions.positionClass = resolvedAppearance.toastrPosition || 'toast-top-right';
       toastrOptions.preventDuplicates = true;
+      toastrOptions.progressBar = true;
+      toastrOptions.timeOut = 4000;
+      toastrOptions.onclick = function (e) {
+        const el = e.currentTarget;
+        const msg = el?.querySelector?.('.toast-message')?.textContent?.trim() || '';
+        const title = el?.querySelector?.('.toast-title')?.textContent?.trim() || '';
+        const text = title ? `${title}\n${msg}` : msg;
+        if (text) {
+          navigator.clipboard?.writeText(text).then(() => {
+            window.toastr?.success?.('已复制', '', { timeOut: 1200, preventDuplicates: false });
+          }).catch(() => {});
+        }
+      };
     }
     const toastContainer = document.getElementById('toast-container');
     if (toastContainer) {

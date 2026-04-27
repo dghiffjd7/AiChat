@@ -7,7 +7,8 @@ const escapeHtml = (value) => String(value ?? '').replace(/[&<>"]/g, (ch) => ({
 })[ch] || ch);
 
 const SC_PANEL_CSS = `
-.pp-binding-stack { display:flex; flex-direction:column; gap:12px; }
+.pp-binding-stack { display:block; }
+.pp-binding-stack > * + * { margin-top:12px; }
 .pp-binding-card {
     border:1px solid var(--app-border-default); border-radius:16px;
     background:var(--app-surface-card); box-shadow:0 4px 18px rgba(15,23,42,0.04); padding:12px;

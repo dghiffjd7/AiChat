@@ -11291,7 +11291,6 @@ Phase G（Frame 36）：循环衔接
   const settingsBtns = document.querySelectorAll('.qq-message-topbar .user-settings-btn');
   const plusBtns = document.querySelectorAll('.qq-message-topbar .topbar-plus-btn');
   const chatMenuBtn = document.getElementById('chat-menu-btn');
-  const chatSessionConfigBtn = document.getElementById('chat-session-config-btn');
   const chatroomMenu = document.getElementById('chatroom-menu');
   const rpChatroomMenu = document.getElementById('rp-chatroom-menu');
   const momentsSettingsBtn = document.getElementById('moments-settings-btn');
@@ -11634,11 +11633,6 @@ Phase G（Frame 36）：循环衔接
     settingsMenu?.classList.add('hidden');
     quickMenu?.classList.add('hidden');
   });
-  chatSessionConfigBtn?.addEventListener('click', e => {
-    e.stopPropagation();
-    hideMenus();
-    sessionConfigPanel.show({ sessionId: chatStore.getCurrent() });
-  });
   document.addEventListener('click', hideMenus);
 
   settingsMenu?.querySelectorAll('button').forEach(btn => {
@@ -11956,7 +11950,6 @@ Phase G（Frame 36）：循环衔接
     if (currentChatTitle)
       currentChatTitle.innerHTML = renderSessionNameHtml(sessionId, contact);
     const isGroupSession = Boolean(contact?.isGroup) || String(sessionId || '').startsWith('group:');
-    if (chatSessionConfigBtn) chatSessionConfigBtn.style.display = isGroupSession ? 'none' : '';
     // 切换会话
     chatStore.switchSession(sessionId);
     stageManager?.setSession?.(sessionId);
