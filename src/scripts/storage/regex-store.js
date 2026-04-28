@@ -159,6 +159,14 @@ const matchBind = (bind, ctx) => {
     return false;
 };
 
+export const isLocalRegexSetAutoActive = (set, ctx = {}) => {
+    if (!set || typeof set !== 'object') return false;
+    if (set.manualEnabled === false) return false;
+    const bind = set.bind;
+    if (!bind || typeof bind !== 'object') return false;
+    return matchBind(bind, ctx);
+};
+
 export class RegexStore {
     constructor() {
         this.state = null;

@@ -3,7 +3,7 @@
  * - Global rules always apply
  * - Local sets apply when their bound preset/world is active
  */
-import { RegexStore, regex_placement, substitute_find_regex } from '../storage/regex-store.js';
+import { RegexStore, isLocalRegexSetAutoActive, regex_placement, substitute_find_regex } from '../storage/regex-store.js';
 import { logger } from '../utils/logger.js';
 import { appConfirm } from './app-confirm.js';
 
@@ -515,6 +515,7 @@ export class RegexPanel {
                 item.innerHTML = `
                     <div style="font-weight:800; color:var(--app-text-primary);">${s.name || s.id}</div>
                     <div style="font-size:12px; color:var(--app-text-muted); margin-top:2px;">${s.bind ? this.formatBind(s.bind) : '未绑定（不会自动启用）'}</div>
+                    <div style="font-size:12px; color:var(--app-text-secondary); margin-top:4px;">${this.formatLocalSetRuntimeState(s)}</div>
                 `;
                 if (s.id === this.activeLocalSetId) {
                     item.style.background = 'var(--app-border-default)';
@@ -567,6 +568,20 @@ export class RegexPanel {
         return '绑定：未知';
     }
 
+    getActiveRegexContext() {
+        return window.appBridge?.getRegexContext?.() || {};
+    }
+
+    formatLocalSetRuntimeState(setObj) {
+        const s = setObj && typeof setObj === 'object' ? setObj : null;
+        if (!s) return '运行状态未知';
+        if (s.manualEnabled === false) return '当前不会生效：手动停用';
+        if (!s.bind) return '当前不会自动生效：未绑定';
+        return isLocalRegexSetAutoActive(s, this.getActiveRegexContext())
+            ? '当前已生效：绑定对象命中'
+            : '当前未生效：等待切换到对应绑定对象';
+    }
+
     renderLocalEditor(setObj) {
         const s = setObj ? deepClone(setObj) : null;
         if (!s) {
@@ -578,6 +593,7 @@ export class RegexPanel {
 
         const wrap = document.createElement('div');
         wrap.style.cssText = 'display:flex; flex-direction:column; gap:12px;';
+        const runtimeStateText = this.formatLocalSetRuntimeState(s);
 
         const head = document.createElement('div');
         head.style.cssText = LOCAL_EDITOR_HEAD_STYLE;
@@ -585,7 +601,8 @@ export class RegexPanel {
             <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;">
                 <div style="flex:1; min-width:220px;">
                     <div style="font-weight:800; color:var(--app-text-primary);">局部正则：${s.name}</div>
-                    <div style="color:var(--app-text-muted); font-size:12px; margin-top:4px;">绑定到预设或世界书后，切换到对应对象时自动生效</div>
+                    <div style="color:var(--app-text-muted); font-size:12px; margin-top:4px;">“启用集合”只表示手动允许；真正是否生效取决于当前是否命中绑定对象。</div>
+                    <div style="color:var(--app-text-secondary); font-size:12px; margin-top:4px;">${runtimeStateText}</div>
                 </div>
                 <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
                     <button type="button" id="re-local-rename" style="padding:10px 12px; border:1px solid var(--app-border-default); border-radius:10px; background:var(--app-surface-card); cursor:pointer;">✎ 重命名</button>

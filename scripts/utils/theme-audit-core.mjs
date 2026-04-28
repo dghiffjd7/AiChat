@@ -69,10 +69,19 @@ const DARK_TEXT_TOKENS = [
 
 const escapeRegex = (value = '') => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
+const buildTokenRegex = (token = '') => {
+  const raw = String(token || '');
+  if (!raw) return '';
+  if (/^[a-z]+$/i.test(raw)) {
+    return `(?<![a-z-])${escapeRegex(raw)}(?![a-z-])`;
+  }
+  return escapeRegex(raw);
+};
+
 const buildTokenPattern = (tokens = []) => tokens
   .slice()
   .sort((a, b) => String(b).length - String(a).length)
-  .map((item) => escapeRegex(item))
+  .map((item) => buildTokenRegex(item))
   .join('|');
 
 const LIGHT_BACKGROUND_PATTERN = buildTokenPattern(LIGHT_BACKGROUND_TOKENS);
@@ -133,6 +142,25 @@ const getLineText = (content = '', lineNumber = 1) => {
   return lines[Math.max(0, lineNumber - 1)] || '';
 };
 
+const isThemeVarFallbackToken = (lineText = '', token = '') => {
+  const line = String(lineText || '').toLowerCase();
+  const value = String(token || '').trim().toLowerCase();
+  if (!line || !value) return false;
+  let start = line.indexOf('var(');
+  while (start >= 0) {
+    const end = line.indexOf(')', start + 4);
+    if (end < 0) break;
+    const chunk = line.slice(start, end + 1);
+    const commaIndex = chunk.indexOf(',');
+    if (chunk.startsWith('var(--app-') && commaIndex >= 0) {
+      const fallback = chunk.slice(commaIndex + 1);
+      if (fallback.includes(value)) return true;
+    }
+    start = line.indexOf('var(', start + 4);
+  }
+  return false;
+};
+
 const shouldSkipFile = (relativePath = '', excludePatterns = DEFAULT_EXCLUDE_PATTERNS) =>
   (excludePatterns || []).some((pattern) => pattern.test(relativePath));
 
@@ -172,6 +200,10 @@ export function analyzeThemeAuditContent(content = '', {
       const pos = indexToLineColumn(lineStarts, tokenIndex >= 0 ? tokenIndex : match.index);
       const lineText = getLineText(source, pos.line);
       if (lineText.includes(THEME_AUDIT_IGNORE_DIRECTIVE)) {
+        match = regex.exec(source);
+        continue;
+      }
+      if (isThemeVarFallbackToken(lineText, token)) {
         match = regex.exec(source);
         continue;
       }

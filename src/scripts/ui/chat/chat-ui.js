@@ -2967,6 +2967,7 @@ export class ChatUI {
           sessionId: nextMessage.sessionId,
           debugTag: nextMessage?.meta?.isGreeting ? 'rp-greeting' : '',
           lazyMount: false,
+          deferSandboxExecution: true,
         });
       } catch {
         const normalized = this.normalizeAssistantLineBreaks(text);

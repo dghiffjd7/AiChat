@@ -24,6 +24,20 @@ import {
 }
 
 {
+  const findings = analyzeThemeAuditContent(`
+    .card { background: var(--app-surface-card, #fff); color: var(--app-text-primary, #333); }
+  `, { filePath: 'src/assets/css/demo.css' });
+  assert.equal(findings.length, 0);
+}
+
+{
+  const findings = analyzeThemeAuditContent(`
+    .title { background:none; white-space: nowrap; }
+  `, { filePath: 'src/assets/css/demo.css' });
+  assert.equal(findings.length, 0);
+}
+
+{
   const current = [
     { fingerprint: 'a' },
     { fingerprint: 'b' },

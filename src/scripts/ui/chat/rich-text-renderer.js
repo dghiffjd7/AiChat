@@ -11,6 +11,13 @@ import { serializeForInlineScript } from '../../utils/inline-script.js';
 import { buildVariableStatusSnapshot } from '../variable-status-card.js';
 import { buildVariableContext } from '../../variables/variable-path-utils.js';
 import {
+    detectPlainTextRichRoute,
+    detectRichCodeBlockRoute,
+    RICH_RENDER_EXECUTION,
+    RICH_RENDER_LEVELS,
+} from './rich-render-routing.js';
+import { mergeRichCompatInputText } from './rich-input-compat.js';
+import {
     buildMvuCompatWindowContext,
     cloneMvuCompatValue,
     deleteMvuCompatScopedVariable,
@@ -33,6 +40,18 @@ const iframeDebugState = new Map();
 const directLoadCache = new Map();
 const DIRECT_LOAD_CACHE_TTL = 5 * 60 * 1000;
 const DIRECT_LOAD_CACHE_LIMIT = 6;
+const COMPAT_SEND_TEXTAREA_ID = 'send_textarea';
+const COMPAT_SEND_BUTTON_ID = 'send_but';
+const compatInputProxyState = {
+    boundInput: null,
+    boundSendButton: null,
+    proxyInputListener: null,
+    proxyFocusListener: null,
+    proxyClickListener: null,
+    inputSyncListener: null,
+    sendProxyListener: null,
+    syncing: false,
+};
 const MVU_IFRAME_VARIABLE_COMPAT_SOURCE = `
 ${cloneMvuCompatValue.toString()}
 ${isMvuCompatContainer.toString()}
@@ -75,6 +94,132 @@ const writeDirectLoadCache = (url, html) => {
         .sort((a, b) => Number(a?.[1]?.at || 0) - Number(b?.[1]?.at || 0))
         .slice(0, Math.max(0, directLoadCache.size - DIRECT_LOAD_CACHE_LIMIT));
     oldest.forEach(([k]) => directLoadCache.delete(k));
+};
+const resolveCompatComposerInput = () =>
+    window.appBridge?.chatUI?.inputEl || document.getElementById('composer-input');
+const resolveCompatComposerSendButton = () =>
+    window.appBridge?.chatUI?.sendBtn || document.getElementById('send-button');
+const applyCompatInputText = ({ text, options = {} } = {}) => {
+    const ui = window.appBridge?.chatUI;
+    const inputEl = resolveCompatComposerInput();
+    if (!inputEl) return { ok: false, reason: 'missing-composer-input' };
+    const current = String(inputEl.value || '');
+    const next = mergeRichCompatInputText(current, text, options);
+    if (typeof ui?.setInputText === 'function') ui.setInputText(next);
+    else inputEl.value = next;
+    try {
+        inputEl.setSelectionRange(next.length, next.length);
+    } catch {}
+    try {
+        inputEl.dispatchEvent(new Event('input', { bubbles: true }));
+    } catch {}
+    if (options?.focus !== false) {
+        try {
+            inputEl.focus();
+        } catch {}
+    }
+    return { ok: true, value: next, mode: String(options?.mode || 'replace') };
+};
+const ensureCompatSendTextareaProxy = () => {
+    const inputEl = resolveCompatComposerInput();
+    if (!inputEl || typeof document === 'undefined') return false;
+    let proxy = document.getElementById(COMPAT_SEND_TEXTAREA_ID);
+    if (!(proxy instanceof HTMLTextAreaElement)) {
+        proxy = document.createElement('textarea');
+        proxy.id = COMPAT_SEND_TEXTAREA_ID;
+        proxy.setAttribute('aria-hidden', 'true');
+        proxy.tabIndex = -1;
+        proxy.style.cssText = [
+            'position:fixed',
+            'left:-9999px',
+            'top:-9999px',
+            'width:1px',
+            'height:1px',
+            'opacity:0',
+            'pointer-events:none',
+        ].join(';');
+        document.body.appendChild(proxy);
+    }
+    let sendProxy = document.getElementById(COMPAT_SEND_BUTTON_ID);
+    if (!(sendProxy instanceof HTMLButtonElement)) {
+        sendProxy = document.createElement('button');
+        sendProxy.id = COMPAT_SEND_BUTTON_ID;
+        sendProxy.type = 'button';
+        sendProxy.setAttribute('aria-hidden', 'true');
+        sendProxy.tabIndex = -1;
+        sendProxy.style.cssText = [
+            'position:fixed',
+            'left:-9999px',
+            'top:-9999px',
+            'width:1px',
+            'height:1px',
+            'opacity:0',
+            'pointer-events:none',
+        ].join(';');
+        document.body.appendChild(sendProxy);
+    }
+
+    const state = compatInputProxyState;
+    const syncProxyFromInput = () => {
+        if (state.syncing) return;
+        state.syncing = true;
+        proxy.value = String(inputEl.value || '');
+        state.syncing = false;
+    };
+    const applyProxyToInput = () => {
+        if (state.syncing) return;
+        state.syncing = true;
+        applyCompatInputText({
+            text: proxy.value,
+            options: { mode: 'replace', focus: document.activeElement === proxy },
+        });
+        state.syncing = false;
+    };
+    const focusRealInput = () => {
+        try {
+            inputEl.focus();
+        } catch {}
+    };
+    const clickSend = () => {
+        const sendBtn = resolveCompatComposerSendButton();
+        if (!sendBtn) return;
+        try {
+            sendBtn.click();
+        } catch {}
+    };
+
+    if (state.boundInput && state.inputSyncListener && state.boundInput !== inputEl) {
+        state.boundInput.removeEventListener('input', state.inputSyncListener);
+    }
+    if (state.proxyInputListener) {
+        proxy.removeEventListener('input', state.proxyInputListener);
+        proxy.removeEventListener('change', state.proxyInputListener);
+    }
+    if (state.proxyFocusListener) {
+        proxy.removeEventListener('focus', state.proxyFocusListener);
+    }
+    if (state.boundSendButton && state.sendProxyListener && state.boundSendButton !== sendProxy) {
+        state.boundSendButton.removeEventListener('click', state.sendProxyListener);
+    }
+    if (state.proxyClickListener) {
+        sendProxy.removeEventListener('click', state.proxyClickListener);
+    }
+
+    state.boundInput = inputEl;
+    state.boundSendButton = sendProxy;
+    state.proxyInputListener = applyProxyToInput;
+    state.proxyFocusListener = focusRealInput;
+    state.proxyClickListener = clickSend;
+    state.inputSyncListener = syncProxyFromInput;
+    state.sendProxyListener = clickSend;
+
+    inputEl.addEventListener('input', syncProxyFromInput);
+    proxy.addEventListener('input', applyProxyToInput);
+    proxy.addEventListener('change', applyProxyToInput);
+    proxy.addEventListener('focus', focusRealInput);
+    sendProxy.addEventListener('click', clickSend);
+    syncProxyFromInput();
+    return true;
 };
 
 const getIframeState = (id, init) => {
@@ -4150,6 +4295,32 @@ const buildIframeSrcDoc = (
       parent.postMessage({ type: 'chatapp:iframe-debug', id, level: String(level || 'info'), message: String(message || '') }, '*');
     } catch {}
   };
+  const postInputText = (text, options = {}) => {
+    try {
+      parent.postMessage({
+        type: 'chatapp:set-input-text',
+        id,
+        text: String(text ?? ''),
+        options: options && typeof options === 'object' ? options : {},
+      }, '*');
+      return true;
+    } catch (err) {
+      sendDebug('warn', 'set-input-text-failed err=' + String(err?.message || err || 'post-failed'));
+      return false;
+    }
+  };
+  if (!window.ChatAppRichCompat || typeof window.ChatAppRichCompat !== 'object') {
+    window.ChatAppRichCompat = {};
+  }
+  if (typeof window.ChatAppRichCompat.setInputText !== 'function') {
+    window.ChatAppRichCompat.setInputText = (text, options = {}) => postInputText(text, options);
+  }
+  if (typeof window.setInputText !== 'function') {
+    window.setInputText = (text, options = {}) => postInputText(text, options);
+  }
+  if (typeof window.appendInputText !== 'function') {
+    window.appendInputText = (text, options = {}) => postInputText(text, { ...(options || {}), mode: 'append' });
+  }
 
   const readMetaPolicy = () => {
     try {
@@ -6452,7 +6623,15 @@ const scheduleLazyRichMount = (containerEl, text, options = {}) => {
     enqueueLazyRichMount(containerEl);
 };
 
-const makeCodeBlock = ({ lang, code, messageId, preserveHtmlNewlines = false, sessionId, debugTag = '' } = {}) => {
+const makeCodeBlock = ({
+    lang,
+    code,
+    messageId,
+    preserveHtmlNewlines = false,
+    sessionId,
+    debugTag = '',
+    deferSandboxExecution = false,
+} = {}) => {
     const wrap = document.createElement('div');
     wrap.className = 'chat-codeblock';
     wrap.style.cssText = 'border:1px solid rgba(0,0,0,0.10); border-radius:12px; overflow:hidden; margin:8px 0;';
@@ -6460,21 +6639,28 @@ const makeCodeBlock = ({ lang, code, messageId, preserveHtmlNewlines = false, se
     wrap.__chatappCode = String(code ?? '');
     wrap.__chatappLang = String(lang || '');
 
-    // HTML preview (ST 酒馆助手：包含 <body> 且 </body> 才自动渲染)
-    const looksLikeHtmlDoc = /<body[\s>]/i.test(code) && /<\/body>/i.test(code);
-    const isHtmlLang = lang === 'html' || lang === 'htm';
-    const looksLikeHtmlSnippet = /<\/(style|div|details|main|section|article|table|ul|ol|p|span|pre|code)>/i.test(code) ||
-        /<style[\s>]/i.test(code) ||
-        /<details[\s>]/i.test(code) ||
-        /<div[\s>]/i.test(code);
     const allowScripts = allowRichIframeScripts();
-    const shouldRenderHtml = looksLikeHtmlDoc || isHtmlLang || looksLikeHtmlSnippet;
-    const hasInteractiveHtml = hasInteractiveHtmlHint(code);
-    const shouldRenderScopedFragment = shouldRenderHtml && !hasInteractiveHtml && !looksLikeHtmlDoc;
-    const directBodyLoadUrl = shouldRenderHtml ? detectBodyLoadUrl(code) : '';
-    const forceMvuCompat = Boolean(directBodyLoadUrl);
-    const needsMvuCompat = allowScripts && (forceMvuCompat || shouldEnableMvuCompat(code));
-    const needsFrameworkShim = allowScripts && shouldInjectFrameworkShim(code, { directLoad: Boolean(directBodyLoadUrl) });
+    const renderRoute = detectRichCodeBlockRoute({ lang, code, allowScripts });
+    const {
+        execution: renderExecution,
+        hasInteractiveHtml,
+        isHtmlLang,
+        level: renderLevel,
+        looksLikeHtmlDoc,
+        shouldRenderHtml,
+        shouldRenderScopedFragment,
+    } = renderRoute;
+    const shouldDeferSandbox = deferSandboxExecution
+        && renderLevel === RICH_RENDER_LEVELS.SANDBOX
+        && renderExecution === RICH_RENDER_EXECUTION.EXECUTE;
+    wrap.dataset.richRenderLevel = renderLevel;
+    wrap.dataset.richRenderExecution = shouldDeferSandbox ? 'deferred' : renderExecution;
+    wrap.dataset.richRenderKind = 'codeblock';
+    const directBodyLoadUrl = renderLevel === RICH_RENDER_LEVELS.SANDBOX ? detectBodyLoadUrl(code) : '';
+    const forceMvuCompat = renderLevel === RICH_RENDER_LEVELS.SANDBOX && Boolean(directBodyLoadUrl);
+    const effectiveAllowScripts = allowScripts && !shouldDeferSandbox;
+    const needsMvuCompat = renderLevel === RICH_RENDER_LEVELS.SANDBOX && effectiveAllowScripts && (forceMvuCompat || shouldEnableMvuCompat(code));
+    const needsFrameworkShim = renderLevel === RICH_RENDER_LEVELS.SANDBOX && effectiveAllowScripts && shouldInjectFrameworkShim(code, { directLoad: Boolean(directBodyLoadUrl) });
     const resolvedSessionId = (() => {
         try {
             const explicitSid = String(sessionId || '').trim();
@@ -6557,6 +6743,29 @@ const makeCodeBlock = ({ lang, code, messageId, preserveHtmlNewlines = false, se
             return null;
         }
     })();
+    if (shouldDeferSandbox) {
+        const deferredWrap = document.createElement('div');
+        deferredWrap.style.cssText = [
+            'padding:14px 16px',
+            'display:flex',
+            'flex-direction:column',
+            'gap:6px',
+            'background:linear-gradient(180deg, rgba(15,23,42,0.03), rgba(15,23,42,0.01))',
+        ].join(';');
+        deferredWrap.dataset.richRenderLevel = renderLevel;
+        deferredWrap.dataset.richRenderExecution = 'deferred';
+        deferredWrap.dataset.richRenderDeferred = '1';
+        const title = document.createElement('div');
+        title.style.cssText = 'font-size:13px; font-weight:700; color:var(--app-text-primary);';
+        title.textContent = '交互渲染将在输出完成后加载';
+        const desc = document.createElement('div');
+        desc.style.cssText = 'font-size:12px; line-height:1.45; color:var(--app-text-secondary);';
+        desc.textContent = '流式输出阶段暂不执行脚本，避免卡片反复重建、闪烁或空白。';
+        deferredWrap.appendChild(title);
+        deferredWrap.appendChild(desc);
+        wrap.appendChild(deferredWrap);
+        return wrap;
+    }
     if (debugTag === 'rp-greeting' && !String(sessionId || '').trim() && resolvedSessionId) {
         const sidMsg = `rp-greeting session-fallback sid=${resolvedSessionId}`;
         emitDebugLog({ source: 'rich', type: 'info', message: sidMsg, force: true });
@@ -6565,7 +6774,7 @@ const makeCodeBlock = ({ lang, code, messageId, preserveHtmlNewlines = false, se
     const useLegacyMvuBridge = !directBodyLoadUrl;
     const mvuBridgeBuilder = useLegacyMvuBridge ? buildMvuCompatBridgeLegacy : buildMvuCompatBridge;
     const sourceCompat = analyzeCompatProfile(code, { directLoad: Boolean(directBodyLoadUrl) });
-    if (debugTag === 'rp-greeting' && !allowScripts) {
+    if (debugTag === 'rp-greeting' && renderLevel === RICH_RENDER_LEVELS.SANDBOX && !allowScripts) {
         const tip = 'rp-greeting scripts-disabled: enable `allowRichIframeScripts` to run <script> / $.load()';
         emitDebugLog({ source: 'rich', type: 'warn', message: tip, force: true });
         logger.warn(`[rich] ${tip}`);
@@ -6574,7 +6783,7 @@ const makeCodeBlock = ({ lang, code, messageId, preserveHtmlNewlines = false, se
         const hasHtmlHint = /<\s*(style|details|div|body|html|table|section|article|main|svg|iframe)\b/i.test(code) ||
             /&lt;\s*(style|details|div|body|html|table|section|article|main|svg|iframe)\b/i.test(code);
         if (hasHtmlHint || shouldRenderHtml) {
-            const msg = `codeblock html?=${shouldRenderHtml} fragment=${shouldRenderScopedFragment ? 1 : 0} lang=${lang || 'none'} len=${String(code || '').length} msg=${String(messageId || '')} scripts=${allowScripts ? 1 : 0} mvu=${needsMvuCompat ? 1 : 0} forceMvu=${forceMvuCompat ? 1 : 0}${debugTag ? ` tag=${debugTag}` : ''}`;
+            const msg = `codeblock route=${renderLevel} exec=${renderExecution} html?=${shouldRenderHtml} fragment=${shouldRenderScopedFragment ? 1 : 0} lang=${lang || 'none'} len=${String(code || '').length} msg=${String(messageId || '')} scripts=${allowScripts ? 1 : 0} mvu=${needsMvuCompat ? 1 : 0} forceMvu=${forceMvuCompat ? 1 : 0}${debugTag ? ` tag=${debugTag}` : ''}`;
             emitDebugLog({ source: 'rich', type: shouldRenderHtml ? 'info' : 'warn', message: msg, force: true });
             logger.info(`[rich] ${msg}`);
             const compatMsg = `compat-profile=${sourceCompat.profile} flags=${summarizeCompatFlags(sourceCompat.flags) || 'none'}${debugTag ? ` tag=${debugTag}` : ''}`;
@@ -6660,9 +6869,11 @@ const makeCodeBlock = ({ lang, code, messageId, preserveHtmlNewlines = false, se
             }
         }
     }
-    if (shouldRenderScopedFragment) {
+    if (renderLevel === RICH_RENDER_LEVELS.CARD) {
         const previewWrap = document.createElement('div');
         previewWrap.style.cssText = 'background:transparent; padding:12px 14px;';
+        previewWrap.dataset.richRenderLevel = renderLevel;
+        previewWrap.dataset.richRenderExecution = renderExecution;
         const rendered = renderScopedRichFragment(previewWrap, code, {
             messageId: String(messageId || 'code'),
             resolveStatusCard: null,
@@ -6675,22 +6886,27 @@ const makeCodeBlock = ({ lang, code, messageId, preserveHtmlNewlines = false, se
             return wrap;
         }
     }
-    if (shouldRenderHtml) {
+    if (renderLevel === RICH_RENDER_LEVELS.SANDBOX) {
+        if (effectiveAllowScripts) ensureCompatSendTextareaProxy();
         const previewWrap = document.createElement('div');
         previewWrap.style.cssText = 'background:transparent;';
+        previewWrap.dataset.richRenderLevel = renderLevel;
+        previewWrap.dataset.richRenderExecution = renderExecution;
         const iframe = document.createElement('iframe');
         const iframeId = `msg-${String(messageId || 'x')}-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
         iframe.dataset.iframeId = iframeId;
         iframe.dataset.msgId = String(messageId || '');
         if (resolvedSessionId) iframe.dataset.sessionId = String(resolvedSessionId || '');
         iframe.dataset.iframeSource = 'host';
-        iframe.dataset.iframeAllowScripts = allowScripts ? '1' : '0';
+        iframe.dataset.iframeAllowScripts = renderExecution === RICH_RENDER_EXECUTION.EXECUTE ? '1' : '0';
         iframe.dataset.iframeMvuCompat = needsMvuCompat ? '1' : '0';
         iframe.dataset.iframeAuthority = IFRAME_AUTHORITY_HOST;
         iframe.dataset.iframeLock = '0';
         iframe.dataset.iframeMode = 'document';
+        iframe.dataset.richRenderLevel = renderLevel;
+        iframe.dataset.richRenderExecution = renderExecution;
         iframe.style.cssText = 'width:100%; border:0; display:block; height:240px; background:transparent;';
-        if (!allowScripts) {
+        if (!effectiveAllowScripts) {
             iframe.setAttribute('sandbox', 'allow-scripts');
         }
         getIframeState(iframeId, {
@@ -6715,7 +6931,7 @@ const makeCodeBlock = ({ lang, code, messageId, preserveHtmlNewlines = false, se
         // Keep full HTML documents byte-stable: injecting <br> into text nodes can
         // break card scripts that parse <content>/<state_bar> by raw line breaks.
         let html = (preserveHtmlNewlines && !looksLikeHtmlDoc) ? injectHtmlNewlines(code) : code;
-        if (allowScripts) {
+        if (effectiveAllowScripts) {
             html = stripInlineCspMeta(html);
             const rewriteResult = maybeRewriteMvuInlineHelpers(html, { needsMvuCompat, directLoad: Boolean(directBodyLoadUrl) });
             html = rewriteResult.html;
@@ -6734,7 +6950,7 @@ const makeCodeBlock = ({ lang, code, messageId, preserveHtmlNewlines = false, se
         const hasJsVhUsage = /\d+vh/.test(html);
         const needsVhHandling = hasMinVh || hasJsVhUsage;
         if (needsVhHandling) html = processAllVhUnits(html);
-        const previewHtml = allowScripts ? html : stripScriptsForPreview(html);
+        const previewHtml = effectiveAllowScripts ? html : stripScriptsForPreview(html);
         const staticHtml = stripScriptsForPreview(html);
         const hostDoc = buildIframeSrcDoc(previewHtml, {
             iframeId,
@@ -6756,14 +6972,14 @@ const makeCodeBlock = ({ lang, code, messageId, preserveHtmlNewlines = false, se
             preserveNewlines: false,
             injectBridgeScript: false,
             styleInBody: false,
-            baseHref: allowScripts ? `${window.location.origin}/` : '',
+            baseHref: effectiveAllowScripts ? `${window.location.origin}/` : '',
         });
         setIframeStaticFallbackDoc(iframeId, staticDoc);
         const bridgeScriptUrl = '';
-        const baseHref = allowScripts ? `${window.location.origin}/` : '';
+        const baseHref = effectiveAllowScripts ? `${window.location.origin}/` : '';
         const vueRuntimePreference = detectVueRuntimePreference(html);
-        const needsZodShim = allowScripts && shouldInjectZodShim(html);
-        const dollarShim = allowScripts
+        const needsZodShim = effectiveAllowScripts && shouldInjectZodShim(html);
+        const dollarShim = effectiveAllowScripts
             ? buildDollarGlobalShim({
                 iframeId,
                 debugTag,
@@ -6774,7 +6990,7 @@ const makeCodeBlock = ({ lang, code, messageId, preserveHtmlNewlines = false, se
                 seedMessages: compatSeedMessages,
             })
             : '';
-        const frameworkShim = (allowScripts && !useLegacyMvuBridge && needsFrameworkShim)
+        const frameworkShim = (effectiveAllowScripts && !useLegacyMvuBridge && needsFrameworkShim)
             ? buildFrameworkGlobalShim({ iframeId, debugTag, vueMajor: vueRuntimePreference, appOrigin: window.location.origin })
             : '';
         const mvuCompatBridge = needsMvuCompat
@@ -6795,22 +7011,44 @@ const makeCodeBlock = ({ lang, code, messageId, preserveHtmlNewlines = false, se
             bridgeScriptUrl,
             headPrepend: `${dollarShim}${frameworkShim}${mvuCompatBridge}`,
         });
-        if (allowScripts) {
+        if (effectiveAllowScripts) {
             setIframeDynamicDoc(iframeId, scriptDoc, directBodyLoadUrl ? 'direct-scriptdoc' : 'inline-scriptdoc');
         }
         previewWrap.appendChild(iframe);
         if (directBodyLoadUrl) {
             iframe.dataset.directLoadUrl = String(directBodyLoadUrl || '');
-            iframe.dataset.iframeSource = 'direct-load';
-            iframe.dataset.iframeDocSent = '1';
+            iframe.dataset.iframeSource = 'direct-host';
+            iframe.dataset.iframeDocSent = '0';
             iframe.style.height = '260px';
             iframe.style.minHeight = '220px';
             iframe.style.maxHeight = '760px';
+            let directDocToSend = '';
+            let directAllowScripts = false;
+            let directHostLoaded = false;
             const logDirect = (type, message) => {
                 const msg = String(message || '');
                 emitDebugLog({ source: 'iframe', type, message: msg, force: true });
                 if (type === 'warn') warnIframe('direct-load', iframeId, `msg=${msg}`);
                 else logger.info(`[iframe] ${msg}`);
+            };
+            const postDirectDocToHost = (sourceLabel) => {
+                if (!directHostLoaded || !directDocToSend || iframe.dataset.iframeDocSent === '1') return false;
+                try {
+                    iframe.contentWindow?.postMessage({
+                        type: 'chatapp:iframe-load',
+                        id: iframeId,
+                        doc: directDocToSend,
+                        allowScripts: directAllowScripts,
+                    }, '*');
+                    iframe.dataset.iframeDocSent = '1';
+                    iframe.dataset.iframeSource = sourceLabel;
+                    logDirect('info', `direct-load-host-posted id=${iframeId} source=${sourceLabel} scripts=${directAllowScripts ? 1 : 0}`);
+                    return true;
+                } catch (err) {
+                    const msg = err?.message ? String(err.message) : String(err || 'post-failed');
+                    logDirect('warn', `direct-load-host-post-failed id=${iframeId} err=${msg}`);
+                    return false;
+                }
             };
             const onDirectReady = (kind) => {
                 const curSrc = String(iframe.currentSrc || iframe.src || '').trim();
@@ -6828,7 +7066,19 @@ const makeCodeBlock = ({ lang, code, messageId, preserveHtmlNewlines = false, se
                 const msg = `direct-load-${kind} id=${iframeId} source=${String(iframe.dataset.iframeSource || '')} url=${directBodyLoadUrl}`;
                 logDirect(kind === 'error' ? 'warn' : 'info', msg);
             };
-            iframe.addEventListener('load', () => onDirectReady('load'), { once: false });
+            iframe.src = getIframeHostUrl();
+            iframe.addEventListener('load', () => {
+                directHostLoaded = true;
+                iframe.dataset.iframeLoaded = '1';
+                const st = getIframeState(iframeId, { messageId: String(messageId || ''), createdAt: Date.now() });
+                if (st) st.loadedAt = Date.now();
+                const posted = postDirectDocToHost('direct-host');
+                if (posted || iframe.dataset.iframeDocSent === '1') {
+                    onDirectReady('load');
+                } else {
+                    logDirect('info', `direct-load-host-ready id=${iframeId} waiting-doc=1`);
+                }
+            }, { once: false });
             iframe.addEventListener('error', () => onDirectReady('error'), { once: false });
             const runDirectLoad = async () => {
                 const baseHref = (() => {
@@ -6892,8 +7142,14 @@ const makeCodeBlock = ({ lang, code, messageId, preserveHtmlNewlines = false, se
                         baseHref,
                     });
                     setIframeStaticFallbackDoc(iframeId, directStaticDoc);
-                    iframe.dataset.iframeSource = 'direct-srcdoc';
-                    iframe.srcdoc = directDoc;
+                    directDocToSend = directDoc;
+                    directAllowScripts = effectiveAllowScripts;
+                    if (!postDirectDocToHost('direct-host-cache')) {
+                        iframe.dataset.iframeSource = 'direct-srcdoc-fallback';
+                        iframe.dataset.iframeDocSent = '1';
+                        iframe.removeAttribute('src');
+                        iframe.srcdoc = directDoc;
+                    }
                     logDirect('info', `direct-load-cache-hit id=${iframeId} len=${directHtml.length} rewrite=${rewriteResult.replaced} base=${baseHref}`);
                     return;
                 }
@@ -6961,8 +7217,14 @@ const makeCodeBlock = ({ lang, code, messageId, preserveHtmlNewlines = false, se
                         baseHref,
                     });
                     setIframeStaticFallbackDoc(iframeId, directStaticDoc);
-                    iframe.dataset.iframeSource = 'direct-srcdoc';
-                    iframe.srcdoc = directDoc;
+                    directDocToSend = directDoc;
+                    directAllowScripts = effectiveAllowScripts;
+                    if (!postDirectDocToHost('direct-host-fetch')) {
+                        iframe.dataset.iframeSource = 'direct-srcdoc-fallback';
+                        iframe.dataset.iframeDocSent = '1';
+                        iframe.removeAttribute('src');
+                        iframe.srcdoc = directDoc;
+                    }
                     logDirect('info', `direct-load-fetch-success id=${iframeId} len=${directHtml.length} rewrite=${rewriteResult.replaced} base=${baseHref}`);
                     return;
                 } catch (err) {
@@ -6974,28 +7236,35 @@ const makeCodeBlock = ({ lang, code, messageId, preserveHtmlNewlines = false, se
                 logDirect('warn', `direct-load-fallback-src id=${iframeId} url=${directBodyLoadUrl}`);
             };
             runDirectLoad();
-        } else if (allowScripts) {
-            let blobUrl = '';
-            const onLoad = () => {
+        } else if (effectiveAllowScripts) {
+            iframe.dataset.iframeSource = 'host-script';
+            iframe.src = getIframeHostUrl();
+            iframe.addEventListener('load', () => {
                 iframe.dataset.iframeLoaded = '1';
                 const st = getIframeState(iframeId, { messageId: String(messageId || ''), createdAt: Date.now() });
                 if (st) st.loadedAt = Date.now();
-                if (blobUrl) {
-                    try { URL.revokeObjectURL(blobUrl); } catch {}
-                }
-            };
-            iframe.dataset.iframeDocSent = '1';
-            try {
-                const blob = new Blob([scriptDoc], { type: 'text/html' });
-                blobUrl = URL.createObjectURL(blob);
-                iframe.dataset.iframeSource = 'blob';
-                iframe.src = blobUrl;
-                iframe.addEventListener('load', onLoad, { once: true });
-            } catch {
-                iframe.dataset.iframeSource = 'srcdoc';
-                iframe.srcdoc = scriptDoc;
-                iframe.addEventListener('load', onLoad, { once: true });
-            }
+                if (iframe.dataset.iframeDocSent === '1') return;
+                iframe.dataset.iframeDocSent = '1';
+                try {
+                    iframe.contentWindow?.postMessage({
+                        type: 'chatapp:iframe-load',
+                        id: iframeId,
+                        doc: scriptDoc,
+                        allowScripts: true,
+                    }, '*');
+                } catch {}
+            }, { once: false });
+            iframe.addEventListener('error', () => {
+                const st = getIframeState(iframeId, { messageId: String(messageId || ''), createdAt: Date.now() });
+                if (st) st.error = st.error || 'script-host-load-error';
+                warnIframe('script-host-load-error', iframeId);
+                try {
+                    iframe.dataset.iframeSource = 'script-srcdoc-fallback';
+                    iframe.dataset.iframeDocSent = '1';
+                    iframe.removeAttribute('src');
+                    iframe.srcdoc = scriptDoc;
+                } catch {}
+            });
         } else {
             iframe.src = getIframeHostUrl();
             iframe.addEventListener('load', () => {
@@ -7009,7 +7278,7 @@ const makeCodeBlock = ({ lang, code, messageId, preserveHtmlNewlines = false, se
                         type: 'chatapp:iframe-load',
                         id: iframeId,
                         doc: hostDoc,
-                        allowScripts,
+                        allowScripts: effectiveAllowScripts,
                     }, '*');
                 } catch {}
             }, { once: false });
@@ -7041,7 +7310,7 @@ const makeCodeBlock = ({ lang, code, messageId, preserveHtmlNewlines = false, se
         }, 900);
 
         // Fallback: some WebViews choke on srcdoc; retry via srcdoc if host never reports ready.
-        if (!allowScripts) {
+        if (renderExecution !== RICH_RENDER_EXECUTION.EXECUTE) {
             setTimeout(() => {
                 if (!isLiveIframe(iframe, iframeId)) return;
                 if (iframe.dataset.iframeReady === '1') return;
@@ -7054,6 +7323,19 @@ const makeCodeBlock = ({ lang, code, messageId, preserveHtmlNewlines = false, se
                     iframe.srcdoc = fallbackDoc;
                 } catch {}
             }, 1200);
+        } else {
+            setTimeout(() => {
+                if (!isLiveIframe(iframe, iframeId)) return;
+                if (iframe.dataset.iframeReady === '1') return;
+                if (iframe.dataset.iframeFallbackAttempted === '1') return;
+                iframe.dataset.iframeFallbackAttempted = '1';
+                if (iframe.dataset.iframeLoaded !== '1') return;
+                try {
+                    iframe.dataset.iframeSource = 'script-srcdoc-fallback';
+                    iframe.removeAttribute('src');
+                    iframe.srcdoc = scriptDoc;
+                } catch {}
+            }, 1600);
         }
         setTimeout(() => {
             if (!isLiveIframe(iframe, iframeId)) return;
@@ -7116,7 +7398,7 @@ const makeCodeBlock = ({ lang, code, messageId, preserveHtmlNewlines = false, se
     }
 
     // Default code block (mobile wrapped, no horizontal scrolling)
-    if (!(looksLikeHtmlDoc || isHtmlLang)) {
+    if (renderLevel === RICH_RENDER_LEVELS.SAFE && !(looksLikeHtmlDoc || isHtmlLang)) {
         const body = document.createElement('div');
         body.style.cssText = 'padding:10px; color:#e2e8f0; background:#0b1220;';
         const pre = document.createElement('pre');
@@ -7343,6 +7625,18 @@ export const setupIframeResizeListener = () => {
         if (!input || typeof input !== 'object') return {};
         return { ...input };
     };
+    const applyCompatSetInputText = ({ text, options = {} } = {}) => {
+        ensureCompatSendTextareaProxy();
+        const mode = String(options?.mode || '').trim().toLowerCase() === 'append' ? 'append' : 'replace';
+        return applyCompatInputText({
+            text,
+            options: {
+                ...options,
+                mode,
+                focus: options?.focus !== false,
+            },
+        });
+    };
     const resolveCompatSessionId = (iframe, sessionId) => {
         const sid = String(sessionId || iframe?.dataset?.sessionId || window.appBridge?.activeSessionId || '').trim();
         return sid;
@@ -7511,6 +7805,25 @@ export const setupIframeResizeListener = () => {
         const data = e?.data;
         if (!data || typeof data !== 'object') return;
         const esc = (CSS && typeof CSS.escape === 'function') ? CSS.escape : (s) => String(s).replace(/[^a-zA-Z0-9_-]/g, '\\$&');
+        if (data.type === 'chatapp:set-input-text') {
+            const id = String(data.id || '');
+            if (!id) return;
+            const iframe = document.querySelector(`iframe[data-iframe-id="${esc(id)}"]`);
+            if (!iframe) return;
+            const result = applyCompatSetInputText({
+                text: data.text,
+                options: data.options,
+            });
+            emitDebugLog({
+                source: 'iframe',
+                type: result?.ok ? 'info' : 'warn',
+                message:
+                    `set-input-text id=${id} ok=${result?.ok ? 1 : 0} ` +
+                    `mode=${String(result?.mode || data?.options?.mode || 'replace')}`,
+                force: true,
+            });
+            return;
+        }
         if (data.type === 'chatapp:set-chat-message') {
             const id = String(data.id || '');
             if (!id) return;
@@ -7604,6 +7917,15 @@ export const setupIframeResizeListener = () => {
                         `sid=${sid || 'none'} scope=${String(result?.scopeType || '')} keys=${count}`,
                     force: true,
                 });
+                if (result?.ok) {
+                    if (String(result?.scopeType || '') === 'global') {
+                        broadcastMvuVars('', { includeAll: true });
+                    } else if (sid) {
+                        broadcastMvuVars(sid);
+                    } else {
+                        postMvuVarsToIframe(iframe, '');
+                    }
+                }
                 try {
                     e.source?.postMessage({
                         type: `${data.type}-result`,
@@ -7802,7 +8124,14 @@ export const setupIframeResizeListener = () => {
 export const renderRichText = (
     containerEl,
     text,
-    { messageId, preserveHtmlNewlines = false, sessionId, debugTag = '', lazyMount = false } = {},
+    {
+        messageId,
+        preserveHtmlNewlines = false,
+        sessionId,
+        debugTag = '',
+        lazyMount = false,
+        deferSandboxExecution = false,
+    } = {},
 ) => {
     if (!containerEl) return;
     cancelLazyRichMount(containerEl);
@@ -7812,6 +8141,7 @@ export const renderRichText = (
             preserveHtmlNewlines,
             sessionId,
             debugTag,
+            deferSandboxExecution,
         });
         return;
     }
@@ -7927,13 +8257,15 @@ export const renderRichText = (
                 preserveHtmlNewlines,
                 sessionId,
                 debugTag,
+                deferSandboxExecution,
             }));
             return;
         }
 
         // Plain text: preserve newlines safely
         const chunk = String(p.text || '');
-        if (hasRichFragmentHint(chunk) && !hasInteractiveHtmlHint(chunk)) {
+        const chunkRoute = detectPlainTextRichRoute(chunk);
+        if (hasRichFragmentHint(chunk) && chunkRoute.level === RICH_RENDER_LEVELS.CARD) {
             const rendered = renderScopedRichFragment(containerEl, chunk, {
                 messageId,
                 resolveStatusCard,
@@ -7941,7 +8273,14 @@ export const renderRichText = (
                 debugTag,
                 source: 'message',
             });
-            if (rendered) return;
+            if (rendered) {
+                if (Boolean(debugTag) || shouldLogRichDebug()) {
+                    const msg = `text route=${chunkRoute.level} interactive=${chunkRoute.hasInteractiveHtml ? 1 : 0} len=${chunk.length}${debugTag ? ` tag=${debugTag}` : ''}`;
+                    emitDebugLog({ source: 'rich', type: 'info', message: msg, force: true });
+                    logger.info(`[rich] ${msg}`);
+                }
+                return;
+            }
         }
         const lines = chunk.split(/\n/);
         lines.forEach((line, idx) => {

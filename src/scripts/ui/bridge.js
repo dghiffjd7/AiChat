@@ -24,6 +24,7 @@ import { stickerPackStore } from '../storage/sticker-pack-store.js';
 import { makeScopedKey, normalizeScopeId } from '../storage/store-scope.js';
 import { appSettings } from '../storage/app-settings.js';
 import { renderTemplateMessages, templateSettings } from '../plugins/template-engine.js';
+import { mergeRichCompatInputText, parseRichCompatSlashCommand } from './chat/rich-input-compat.js';
 import {
   buildMemoryTablePlan,
   estimateTokens,
@@ -5944,8 +5945,25 @@ window.appBridge = new AppBridge();
 // 兼容层：提供类似 SillyTavern 的全局函数
 window.triggerSlash = async command => {
   logger.info('执行命令:', command);
-  // TODO: 解析并执行命令
-  // 例如: /echo -> 显示消息, /gen -> 生成, /clear -> 清空
+  const parsed = parseRichCompatSlashCommand(command);
+  if (!parsed) return false;
+  const ui = window.appBridge?.chatUI;
+  const inputEl = ui?.inputEl || document.getElementById('composer-input');
+  if (!inputEl) return false;
+  const current = String(inputEl.value || '');
+  const next = mergeRichCompatInputText(current, parsed.text, parsed);
+  if (typeof ui?.setInputText === 'function') ui.setInputText(next);
+  else inputEl.value = next;
+  try {
+    inputEl.setSelectionRange(next.length, next.length);
+  } catch {}
+  try {
+    inputEl.dispatchEvent(new Event('input', { bubbles: true }));
+  } catch {}
+  try {
+    inputEl.focus();
+  } catch {}
+  return true;
 };
 
 window.getWorldInfoSettings = async () => {
