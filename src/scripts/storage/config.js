@@ -289,6 +289,15 @@ export class ConfigManager {
         this.isLoaded = true;
     }
 
+    async reload() {
+        this.isLoaded = false;
+        this.storesEnsured = false;
+        this.profileStore = null;
+        this.keyringStore = null;
+        this.config = null;
+        return this.load();
+    }
+
     /**
      * 获取默认配置
      */

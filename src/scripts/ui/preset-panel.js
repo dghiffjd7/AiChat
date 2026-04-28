@@ -1155,6 +1155,10 @@ export class PresetPanel {
             if (file) await this.importFromFile(file);
         };
         this.element.querySelector('#preset-export').onclick = () => this.exportCurrent();
+
+        window.addEventListener('config-profile-changed', () => {
+            if (this.element?.style.display !== 'none') this.renderAllSections();
+        });
     }
 
     /* ════════════════════════════════════════
@@ -1292,7 +1296,6 @@ export class PresetPanel {
         select.onchange = async () => {
             this.captureCurrentDetailDraft();
             await this.store.setActive(storeType, select.value);
-            if (storeType === 'openai') await this.applyBoundConfigIfAny();
             this.renderAllSections();
             window.dispatchEvent(new CustomEvent('preset-changed'));
         };
@@ -1944,6 +1947,72 @@ export class PresetPanel {
                 { label: '记忆表格模式会替代', tone: 'replace' },
             ],
         }));
+
+        // DeepSeek format reminder block
+        {
+            const card = document.createElement('div');
+            card.className = 'pp-block';
+            card.dataset.collapsed = 'true';
+            const isEnabled = p.ds_format_enabled !== false;
+            if (!isEnabled) card.classList.add('pp-block-disabled');
+
+            const header = document.createElement('div');
+            header.className = 'pp-block-header';
+            const left = document.createElement('div');
+            left.className = 'pp-block-left';
+            const toggle = document.createElement('div');
+            toggle.className = 'pp-block-toggle';
+            toggle.innerHTML = '&#9656;';
+            left.appendChild(toggle);
+            const main = document.createElement('div');
+            main.className = 'pp-block-main';
+            const title = document.createElement('div');
+            title.className = 'pp-block-title';
+            title.textContent = 'DeepSeek 格式提醒';
+            main.appendChild(title);
+            const meta = document.createElement('div');
+            meta.className = 'pp-block-meta';
+            [
+                { label: '仅 DeepSeek 模型', tone: 'scope' },
+                { label: '私聊/群聊/动态评论', tone: 'scope' },
+                { label: '末尾 user 角色', tone: 'placement' },
+            ].forEach(chip => {
+                const el = document.createElement('span');
+                el.className = `pp-meta-chip is-${chip.tone}`;
+                el.textContent = chip.label;
+                meta.appendChild(el);
+            });
+            main.appendChild(meta);
+            left.appendChild(main);
+            header.appendChild(left);
+            const right = document.createElement('div');
+            right.className = 'pp-block-right';
+            const enabledWrap = document.createElement('label');
+            enabledWrap.style.cssText = 'display:flex; align-items:center; gap:6px; font-size:12px; color:var(--app-text-secondary); cursor:pointer;';
+            enabledWrap.innerHTML = '<input id="ds-format-enabled" type="checkbox" style="width:16px; height:16px;">启用';
+            const enabledInput = enabledWrap.querySelector('input');
+            enabledInput.checked = isEnabled;
+            enabledInput.addEventListener('click', (e) => e.stopPropagation());
+            enabledInput.addEventListener('change', () => card.classList.toggle('pp-block-disabled', !enabledInput.checked));
+            right.appendChild(enabledWrap);
+            header.appendChild(right);
+            card.appendChild(header);
+
+            const body = document.createElement('div');
+            body.className = 'pp-block-body';
+            body.appendChild(this.renderTextarea('格式提醒内容', 'ds-format-rules', p.ds_format_rules || '', '格式提醒'));
+            card.appendChild(body);
+
+            const setCollapsed = (collapsed) => {
+                card.dataset.collapsed = collapsed ? 'true' : 'false';
+                const t = header.querySelector('.pp-block-toggle');
+                if (t) t.innerHTML = collapsed ? '&#9656;' : '&#9662;';
+                body.style.display = collapsed ? 'none' : 'block';
+            };
+            header.addEventListener('click', () => setCollapsed(card.dataset.collapsed !== 'true'));
+            setCollapsed(true);
+            list.appendChild(card);
+        }
 
         wrap.appendChild(list);
         return wrap;
@@ -2682,6 +2751,8 @@ export class PresetPanel {
             current.summary_enabled = Boolean(root.querySelector('#summary-enabled')?.checked);
             current.summary_position = getInt(root.querySelector('#summary-position')?.value, current.summary_position ?? EXT_PROMPT_TYPES.SYSTEM_DEPTH_1);
             current.summary_rules = root.querySelector('#summary-rules')?.value ?? '';
+            current.ds_format_enabled = Boolean(root.querySelector('#ds-format-enabled')?.checked);
+            current.ds_format_rules = root.querySelector('#ds-format-rules')?.value ?? '';
             return current;
         }
 
@@ -2840,7 +2911,6 @@ export class PresetPanel {
         for (const k of Array.from(this.drafts.keys())) {
             if (String(k).startsWith(`${storeType}:`)) this.drafts.delete(k);
         }
-        if (storeType === 'openai') await this.applyBoundConfigIfAny();
         this.renderAllSections();
         this.showStatus('已新建', 'success');
         window.dispatchEvent(new CustomEvent('preset-changed'));

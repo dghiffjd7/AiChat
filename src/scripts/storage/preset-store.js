@@ -173,6 +173,9 @@ const DEFAULT_SUMMARY_RULES = [
     '用一句话概括本条回复的内容，禁止不必要的总结和升华',
 ].join('\n').trim();
 
+const LEGACY_DEFAULT_DS_FORMAT_RULES = '回顾前文所提的格式要求为？确保标签不遗漏，否则视为无效回复。';
+const DEFAULT_DS_FORMAT_RULES = '回顾前面所提及的格式为？确保标签不遗漏且正确闭合，否则视为无效回复。';
+
 const DEFAULT_PHONE_FORMAT_PROMPTS = getBuiltinPhoneFormatPromptSeed();
 
 const ensurePhoneFormatPromptFields = (preset, seed = DEFAULT_PHONE_FORMAT_PROMPTS) => {
@@ -650,6 +653,15 @@ export class PresetStore {
                 if (typeof p.summary_rules !== 'string' || !p.summary_rules.trim()) {
                     p.summary_rules = DEFAULT_SUMMARY_RULES;
                 }
+
+                if (typeof p.ds_format_enabled !== 'boolean') p.ds_format_enabled = true;
+                if (typeof p.ds_format_rules !== 'string' || !p.ds_format_rules.trim()) p.ds_format_rules = DEFAULT_DS_FORMAT_RULES;
+                try {
+                    const cur = String(p.ds_format_rules || '').trim();
+                    if (cur && cur === LEGACY_DEFAULT_DS_FORMAT_RULES.trim()) {
+                        p.ds_format_rules = DEFAULT_DS_FORMAT_RULES;
+                    }
+                } catch {}
             }
             try {
                 for (const p of Object.values(state.presets.openai || {})) normalizeOpenAIPreset(p);
@@ -747,6 +759,15 @@ export class PresetStore {
                 if (typeof p.summary_rules !== 'string' || !p.summary_rules.trim()) {
                     p.summary_rules = DEFAULT_SUMMARY_RULES;
                 }
+
+                if (typeof p.ds_format_enabled !== 'boolean') p.ds_format_enabled = true;
+                if (typeof p.ds_format_rules !== 'string' || !p.ds_format_rules.trim()) p.ds_format_rules = DEFAULT_DS_FORMAT_RULES;
+                try {
+                    const cur = String(p.ds_format_rules || '').trim();
+                    if (cur && cur === LEGACY_DEFAULT_DS_FORMAT_RULES.trim()) {
+                        p.ds_format_rules = DEFAULT_DS_FORMAT_RULES;
+                    }
+                } catch {}
             }
             try {
                 for (const p of Object.values(state.presets.openai || {})) normalizeOpenAIPreset(p);

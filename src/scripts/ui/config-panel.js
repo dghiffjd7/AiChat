@@ -1479,7 +1479,7 @@ export class ConfigPanel {
             if (window.appBridge && this.activeTab === 'chat') {
                 const runtime = await this.configManager.load();
                 window.appBridge.client = canInitClient(runtime) ? new LLMClient(runtime) : null;
-                window.appBridge.config.set(runtime);
+                await window.appBridge.config.reload();
 
                 // 若保存后仍拿不到 key（解密/保存失败），給出明確提示并不自動关闭
                 if (!canInitClient(runtime)) {
@@ -1490,6 +1490,7 @@ export class ConfigPanel {
 
             this.showStatus('配置保存成功！', 'success');
             logger.info('配置保存成功');
+            window.dispatchEvent(new CustomEvent('config-profile-changed'));
 
             setTimeout(() => this.hide(), 1500);
         } catch (e) {

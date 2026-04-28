@@ -1,6 +1,6 @@
 {
   "productName": "ChatApp",
-  "version": "0.5.1",
+  "version": "0.5.3",
   "identifier": "com.chatapp.dev",
   "build": {
     "beforeDevCommand": "",
@@ -39,6 +39,7 @@
         "enable": true,
         "scope": ["$APPDATA/**"]
       },
+      "dangerousDisableAssetCspModification": ["style-src"],
       "csp": {
         "default-src": "'self'",
         "connect-src": [

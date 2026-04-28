@@ -268,12 +268,16 @@ export class ThemeManager {
       toastrOptions.preventDuplicates = true;
       toastrOptions.progressBar = true;
       toastrOptions.timeOut = 4000;
+      const _trivialToastRe = /^(网[络路]已[连連]接|.*保存成功.*|已保存|已删除.*|已停用.*|已开启.*|已加载.*|已重命名|设置已保存|连接成功|Key 已保存.*)$/;
       toastrOptions.onclick = function (e) {
         const el = e.currentTarget;
+        if (!el || el.dataset.toastClicked) return;
+        el.dataset.toastClicked = '1';
+        el.style.pointerEvents = 'none';
         const msg = el?.querySelector?.('.toast-message')?.textContent?.trim() || '';
         const title = el?.querySelector?.('.toast-title')?.textContent?.trim() || '';
         const text = title ? `${title}\n${msg}` : msg;
-        if (text) {
+        if (text && !_trivialToastRe.test(msg)) {
           navigator.clipboard?.writeText(text).catch(() => {});
         }
       };

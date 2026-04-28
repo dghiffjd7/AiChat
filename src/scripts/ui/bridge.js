@@ -437,6 +437,7 @@ class AppBridge {
     this.lastMemoryUpdateBySession = {};
     this.lastWorldBudgetWarningAt = 0;
     this.lastWorldInjectionDebug = null;
+    this.lastDeepSeekFormatDebug = null;
     this.lastPromptCacheDebugBySession = new Map();
     this.hydrateWorldSessionMap();
     this.hydrateGlobalWorldId();
@@ -2502,6 +2503,7 @@ class AppBridge {
         messages: preparedRequest?.messages || messages,
         responsePrefix,
         worldDebug: this.lastWorldInjectionDebug || null,
+        deepSeekFormatDebug: this.lastDeepSeekFormatDebug || null,
       };
       this.lastRequest.promptCacheDebug = this.emitPromptCacheDebug(
         sessionId,
@@ -2695,6 +2697,7 @@ class AppBridge {
 	  buildMessages(userMessage, context = {}) {
 	    const messages = [];
     this.lastWorldInjectionDebug = null;
+    this.lastDeepSeekFormatDebug = null;
 
     const name1 = context?.user?.name || 'user';
     const name2 = context?.character?.name || 'assistant';
@@ -3097,10 +3100,12 @@ class AppBridge {
     const useContext = Boolean(presetState?.enabled?.context);
     const useOpenAIPreset = Boolean(presetState?.enabled?.openai);
     const presetContext = { sessionId, uiMode };
-    const syspActive = this.presets.getResolvedActive('sysprompt', presetContext)?.preset || null;
+    const syspResolved = this.presets.getResolvedActive('sysprompt', presetContext) || null;
+    const syspActive = syspResolved?.preset || null;
     const sysp = useSysprompt ? syspActive : null;
     const ctxp = useContext ? (this.presets.getResolvedActive('context', presetContext)?.preset || null) : null;
-    const activeOpenAIPreset = this.presets.getResolvedActive('openai', presetContext)?.preset || null;
+    const openaiResolved = this.presets.getResolvedActive('openai', presetContext) || null;
+    const activeOpenAIPreset = openaiResolved?.preset || null;
     const openp = useOpenAIPreset ? activeOpenAIPreset : null;
 
     // 对话模式：额外注入对话协议提示词（保存于 sysprompt 预设）
@@ -3342,6 +3347,59 @@ const stringifyMessageContent = (content) => {
       return this.normalizeOutgoingProviderMessages(messages, requestConfig, {
         syntheticAssistantDowngradeCount,
       });
+    };
+    const appendDeepSeekFormatReminder = () => {
+      const isDeepSeek = isDeepSeekApiRequest({
+        provider,
+        model: requestModel,
+        baseUrl: requestConfig?.baseUrl,
+      });
+      const activeOpenAIPresetId = String(openaiResolved?.presetId || '').trim();
+      const activeOpenAIPresetName = String(activeOpenAIPreset?.name || '').trim();
+      const isDefaultOpenAIPreset =
+        activeOpenAIPresetId.toLowerCase() === 'default'
+        || activeOpenAIPresetName.toLowerCase() === 'default';
+      const activeSyspromptPresetId = String(syspResolved?.presetId || '').trim();
+      const activeSyspromptPresetName = String(syspActive?.name || '').trim();
+      const rawDsFormatRules = String(syspActive?.ds_format_rules || '').trim();
+      const dsFormatEnabled =
+        isDeepSeek
+        && isDefaultOpenAIPreset
+        && syspActive?.ds_format_enabled !== false;
+      const isChatMode = uiMode !== 'rp';
+      this.lastDeepSeekFormatDebug = {
+        provider,
+        model: requestModel,
+        baseUrl: String(requestConfig?.baseUrl || '').trim(),
+        uiMode,
+        isChatMode,
+        isDeepSeekApiRequest: isDeepSeek,
+        openaiPresetId: activeOpenAIPresetId,
+        openaiPresetName: activeOpenAIPresetName,
+        openaiPresetSource: String(openaiResolved?.source || '').trim(),
+        isDefaultOpenAIPreset,
+        syspromptPresetId: activeSyspromptPresetId,
+        syspromptPresetName: activeSyspromptPresetName,
+        syspromptPresetSource: String(syspResolved?.source || '').trim(),
+        dsFormatEnabledFlag: syspActive?.ds_format_enabled !== false,
+        dsFormatRulesPresent: Boolean(rawDsFormatRules),
+        dsFormatEnabled,
+        dsFormatInjected: false,
+        dsFormatInjectedRole: '',
+        dsFormatTextPreview: '',
+      };
+      if (!dsFormatEnabled || !isChatMode || !rawDsFormatRules) return;
+      const dsText = processTextMacrosWithPendingFlag(rawDsFormatRules, {
+        user: name1,
+        char: name2,
+        group: groupName || name2,
+        members: membersText,
+      });
+      if (!dsText) return;
+      messages.push({ role: 'user', content: dsText });
+      this.lastDeepSeekFormatDebug.dsFormatInjected = true;
+      this.lastDeepSeekFormatDebug.dsFormatInjectedRole = 'user';
+      this.lastDeepSeekFormatDebug.dsFormatTextPreview = String(dsText).replace(/\s+/g, ' ').trim().slice(0, 160);
     };
 	    const buildChatGuidePlan = () => {
 	      const mode = String(context?.meta?.chatGuideMode || '').trim().toLowerCase();
@@ -4277,6 +4335,7 @@ const stringifyMessageContent = (content) => {
       if (hasUserAttachments && !attachmentsInserted && attachmentOnlyContent) {
         messages.push({ role: 'user', content: attachmentOnlyContent });
       }
+      appendDeepSeekFormatReminder();
       return finalizeProviderMessages();
     }
 
@@ -4722,6 +4781,9 @@ const stringifyMessageContent = (content) => {
 	    } catch (err) {
 	      logger.warn('template inject apply failed', err);
 	    }
+
+    appendDeepSeekFormatReminder();
+
 	    return finalizeProviderMessages();
 	  }
 
