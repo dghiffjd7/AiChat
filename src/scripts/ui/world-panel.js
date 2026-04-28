@@ -1088,7 +1088,7 @@ export class WorldPanel {
             border-radius: 12px;
             box-shadow: 0 10px 40px rgba(0,0,0,0.2);
             padding: 16px;
-            width: min(520px, 92vw);
+            width: min(560px, 92vw);
             max-height: 80vh;
             overflow: auto;
             z-index: 21000;
@@ -1177,7 +1177,7 @@ export class WorldPanel {
                 </div>
             </div>
             <div style="display:flex; gap:12px; flex-wrap: wrap;">
-                <div style="flex:1 1 45%; min-width: 200px;">
+                <div style="flex:1 1 100%; min-width: 0;">
                     <div id="world-list-title" style="font-weight:700; margin-bottom:6px;">已绑定</div>
                     <ul id="world-list" style="list-style:none; padding:0; border:none; border-radius:0; max-height:none; overflow:visible; margin:0; display:flex; flex-direction:column; gap:10px;"></ul>
                     <div style="display:flex; gap:8px; margin-top:8px; flex-wrap: wrap;">
@@ -1185,7 +1185,7 @@ export class WorldPanel {
                         <button id="world-library-toggle" style="flex:1; min-width:120px; padding:8px 10px; border:1px solid var(--app-border-default); border-radius:8px; background:var(--app-surface-subtle);">世界书库</button>
                     </div>
                 </div>
-                <div style="flex:1 1 45%; min-width: 200px;">
+                <div style="flex:1 1 100%; min-width: 0;">
                     <div style="font-weight:700; margin-bottom:6px;">导入世界书</div>
                     <div style="display:flex; gap:8px; align-items:center; margin-bottom:8px;">
                         <button id="world-file-btn" type="button" style="padding:6px 10px; border-radius:8px; border:1px solid var(--app-border-default); background:var(--app-surface-subtle); cursor:pointer;">选择文件</button>

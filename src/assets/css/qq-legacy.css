@@ -2351,6 +2351,16 @@ body[data-ui-mode='rp'] .sticker-panel {
   scroll-snap-stop: always;
 }
 
+@media (min-width: 600px) {
+  .sticker-page {
+    grid-template-columns: repeat(auto-fill, minmax(70px, 100px));
+    grid-template-rows: auto auto;
+    align-content: center;
+    justify-content: center;
+    gap: 10px;
+  }
+}
+
 .sticker-dots {
   display: flex;
   align-items: center;

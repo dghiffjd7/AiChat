@@ -10485,6 +10485,28 @@ Phase G（Frame 36）：循环衔接
     scheduleModeSwitchSync();
   });
 
+  if (window.visualViewport && chatRoom) {
+    let _vvPatchActive = false;
+    const _applyVVPatch = () => {
+      const vv = window.visualViewport;
+      const fullH = window.innerHeight;
+      const vvH = vv.height;
+      const diff = fullH - vvH;
+      if (diff > 50) {
+        chatRoom.style.height = `${vvH}px`;
+        _vvPatchActive = true;
+        requestAnimationFrame(() => {
+          chatScroll?.scrollTo?.({ top: chatScroll.scrollHeight, behavior: 'instant' });
+        });
+      } else if (_vvPatchActive) {
+        chatRoom.style.height = '';
+        _vvPatchActive = false;
+      }
+    };
+    window.visualViewport.addEventListener('resize', _applyVVPatch);
+    window.visualViewport.addEventListener('scroll', _applyVVPatch);
+  }
+
   // Mirror composer draft to sessionStorage to avoid losing the last few keystrokes on reload/update.
   try {
     const el = document.getElementById('composer-input');
