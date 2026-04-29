@@ -128,6 +128,7 @@ const ensureCompatSendTextareaProxy = () => {
         proxy = document.createElement('textarea');
         proxy.id = COMPAT_SEND_TEXTAREA_ID;
         proxy.setAttribute('aria-hidden', 'true');
+        proxy.setAttribute('data-chatapp-layout-ignore', '1');
         proxy.tabIndex = -1;
         proxy.style.cssText = [
             'position:fixed',
@@ -146,6 +147,7 @@ const ensureCompatSendTextareaProxy = () => {
         sendProxy.id = COMPAT_SEND_BUTTON_ID;
         sendProxy.type = 'button';
         sendProxy.setAttribute('aria-hidden', 'true');
+        sendProxy.setAttribute('data-chatapp-layout-ignore', '1');
         sendProxy.tabIndex = -1;
         sendProxy.style.cssText = [
             'position:fixed',
@@ -2618,9 +2620,44 @@ const buildIframeBridgeScript = () => `
         const rect = body.getBoundingClientRect();
         return rect ? rect.height : 0;
       }
+      const shouldIgnore = (el) => {
+        try {
+          if (!(el instanceof HTMLElement)) return true;
+          if (String(el.dataset?.chatappLayoutIgnore || '') === '1') return true;
+          const style = getComputedStyle(el);
+          if (style.display === 'none' || style.visibility === 'hidden') return true;
+          const position = String(style.position || '').trim().toLowerCase();
+          if (position === 'fixed' || position === 'absolute') {
+            const left = parseFloat(style.left || '0') || 0;
+            const top = parseFloat(style.top || '0') || 0;
+            const width = parseFloat(style.width || '0') || 0;
+            const height = parseFloat(style.height || '0') || 0;
+            const offscreenProxy = left <= -9000 || top <= -9000;
+            if (offscreenProxy && width <= 2 && height <= 2) return true;
+          }
+          return false;
+        } catch {
+          return false;
+        }
+      };
+      const isInFlow = (el) => {
+        try {
+          const position = String(getComputedStyle(el).position || '').trim().toLowerCase();
+          return position !== 'fixed' && position !== 'absolute';
+        } catch {
+          return true;
+        }
+      };
+      const visibleKids = kids.filter((el) => !shouldIgnore(el));
+      const measuredKids = visibleKids.filter((el) => isInFlow(el));
+      const targets = measuredKids.length ? measuredKids : visibleKids;
+      if (!targets.length) {
+        const rect = body.getBoundingClientRect();
+        return rect ? rect.height : 0;
+      }
       let minTop = null;
       let maxBottom = null;
-      kids.forEach((el) => {
+      targets.forEach((el) => {
         const rect = el.getBoundingClientRect();
         if (!rect || rect.height <= 0) return;
         if (minTop === null || rect.top < minTop) minTop = rect.top;
@@ -4374,9 +4411,44 @@ const buildIframeSrcDoc = (
         const rect = body.getBoundingClientRect();
         return rect ? rect.height : 0;
       }
+      const shouldIgnore = (el) => {
+        try {
+          if (!(el instanceof HTMLElement)) return true;
+          if (String(el.dataset?.chatappLayoutIgnore || '') === '1') return true;
+          const style = getComputedStyle(el);
+          if (style.display === 'none' || style.visibility === 'hidden') return true;
+          const position = String(style.position || '').trim().toLowerCase();
+          if (position === 'fixed' || position === 'absolute') {
+            const left = parseFloat(style.left || '0') || 0;
+            const top = parseFloat(style.top || '0') || 0;
+            const width = parseFloat(style.width || '0') || 0;
+            const height = parseFloat(style.height || '0') || 0;
+            const offscreenProxy = left <= -9000 || top <= -9000;
+            if (offscreenProxy && width <= 2 && height <= 2) return true;
+          }
+          return false;
+        } catch {
+          return false;
+        }
+      };
+      const isInFlow = (el) => {
+        try {
+          const position = String(getComputedStyle(el).position || '').trim().toLowerCase();
+          return position !== 'fixed' && position !== 'absolute';
+        } catch {
+          return true;
+        }
+      };
+      const visibleKids = kids.filter((el) => !shouldIgnore(el));
+      const measuredKids = visibleKids.filter((el) => isInFlow(el));
+      const targets = measuredKids.length ? measuredKids : visibleKids;
+      if (!targets.length) {
+        const rect = body.getBoundingClientRect();
+        return rect ? rect.height : 0;
+      }
       let minTop = null;
       let maxBottom = null;
-      kids.forEach((el) => {
+      targets.forEach((el) => {
         const rect = el.getBoundingClientRect();
         if (!rect || rect.height <= 0) return;
         if (minTop === null || rect.top < minTop) minTop = rect.top;
@@ -5203,15 +5275,40 @@ const buildFrameworkGlobalShim = ({ iframeId = '', debugTag = '', vueMajor = 3, 
       log('info', readyMsg + '-existing');
       return;
     }
-    for (let i = 0; i < urls.length; i += 1) {
-      if (window[name]) break;
-      const u = String(urls[i] || '');
-      if (!u) continue;
-      log('info', 'compat-load-attempt name=' + name + ' url=' + u);
-      document.write('<script src="' + u + '"><\\/script>');
+    const root = document.head || document.documentElement || document.body;
+    if (!root) {
+      log('warn', missMsg + '-no-root');
+      return;
     }
-    if (window[name]) log('info', readyMsg);
-    else log('warn', missMsg);
+    const loadScript = (url) => new Promise((resolve) => {
+      try {
+        const s = document.createElement('script');
+        s.src = String(url || '');
+        s.async = false;
+        s.onload = () => resolve(true);
+        s.onerror = () => resolve(false);
+        root.appendChild(s);
+      } catch {
+        resolve(false);
+      }
+    });
+    Promise.resolve().then(async () => {
+      for (let i = 0; i < urls.length; i += 1) {
+        if (window[name]) break;
+        const u = String(urls[i] || '');
+        if (!u) continue;
+        log('info', 'compat-load-attempt-late name=' + name + ' url=' + u);
+        try { await loadScript(u); } catch {}
+        if (window[name]) {
+          log('info', readyMsg);
+          return;
+        }
+      }
+      if (window[name]) log('info', readyMsg);
+      else log('warn', missMsg);
+    }).catch(() => {
+      log('warn', missMsg);
+    });
   };
   const ensureGlobalAsync = async (name, urls, readyMsg, missMsg) => {
     if (window[name]) {
@@ -5345,14 +5442,12 @@ const buildDollarGlobalShim = ({
     const seed = Array.isArray(seedMessages) ? seedMessages : [];
     const lodashUrls = [
         origin ? `${origin}/lib/lodash.min.js` : '',
-        origin ? `${origin}/src/lib/lodash.min.js` : '',
         'https://testingcf.jsdelivr.net/npm/lodash@4.17.21/lodash.min.js',
         'https://cdn.jsdelivr.net/npm/lodash@4.17.21/lodash.min.js',
         'https://unpkg.com/lodash@4.17.21/lodash.min.js',
     ];
     const zodUrls = [
         origin ? `${origin}/lib/zod.min.js` : '',
-        origin ? `${origin}/src/lib/zod.min.js` : '',
         'https://testingcf.jsdelivr.net/npm/zod@3.22.4/lib/index.umd.min.js',
         'https://cdn.jsdelivr.net/npm/zod@3.22.4/lib/index.umd.min.js',
         'https://unpkg.com/zod@3.22.4/lib/index.umd.min.js',
@@ -5987,15 +6082,40 @@ const buildDollarGlobalShim = ({
       log('info', readyMsg + '-existing');
       return;
     }
-    for (let i = 0; i < urls.length; i += 1) {
-      if (window[name]) break;
-      const u = String(urls[i] || '');
-      if (!u) continue;
-      log('info', 'compat-load-attempt name=' + name + ' url=' + u);
-      document.write('<script src="' + u + '"><\\/script>');
+    const root = document.head || document.documentElement || document.body;
+    if (!root) {
+      log('warn', missMsg + '-no-root');
+      return;
     }
-    if (window[name]) log('info', readyMsg);
-    else log('warn', missMsg);
+    const loadScript = (url) => new Promise((resolve) => {
+      try {
+        const s = document.createElement('script');
+        s.src = String(url || '');
+        s.async = false;
+        s.onload = () => resolve(true);
+        s.onerror = () => resolve(false);
+        root.appendChild(s);
+      } catch {
+        resolve(false);
+      }
+    });
+    Promise.resolve().then(async () => {
+      for (let i = 0; i < urls.length; i += 1) {
+        if (window[name]) break;
+        const u = String(urls[i] || '');
+        if (!u) continue;
+        log('info', 'compat-load-attempt-late name=' + name + ' url=' + u);
+        try { await loadScript(u); } catch {}
+        if (window[name]) {
+          log('info', readyMsg);
+          return;
+        }
+      }
+      if (window[name]) log('info', readyMsg);
+      else log('warn', missMsg);
+    }).catch(() => {
+      log('warn', missMsg);
+    });
   };
   ensureGlobal('_', ${serializeForInlineScript(lodashUrls)}, 'lodash-shim-ready', 'lodash-shim-missing');
   if (${serializeForInlineScript(Boolean(needsZodShim))}) {
@@ -7001,6 +7121,17 @@ const makeCodeBlock = ({
             emitDebugLog({ source: 'rich', type: 'info', message: modeMsg, force: true });
             logger.info(`[rich] ${modeMsg}`);
         }
+        const scriptHeadPrepend = `${dollarShim}${frameworkShim}${mvuCompatBridge}`;
+        const scriptHostDoc = buildIframeSrcDoc(html, {
+            iframeId,
+            needsVhHandling,
+            preserveNewlines: false,
+            injectBridgeScript: false,
+            styleInBody: false,
+            baseHref,
+            bridgeScriptUrl,
+            headPrepend: scriptHeadPrepend,
+        });
         const scriptDoc = buildIframeSrcDoc(html, {
             iframeId,
             needsVhHandling,
@@ -7009,7 +7140,7 @@ const makeCodeBlock = ({
             styleInBody: false,
             baseHref,
             bridgeScriptUrl,
-            headPrepend: `${dollarShim}${frameworkShim}${mvuCompatBridge}`,
+            headPrepend: scriptHeadPrepend,
         });
         if (effectiveAllowScripts) {
             setIframeDynamicDoc(iframeId, scriptDoc, directBodyLoadUrl ? 'direct-scriptdoc' : 'inline-scriptdoc');
@@ -7122,6 +7253,16 @@ const makeCodeBlock = ({
                     const directMvuBridge = needsMvuCompat
                         ? buildMvuCompatBridge({ iframeId, sessionId: resolvedSessionId, debugTag, messageId, messageIndex, seedVars: compatSeedVars || {} })
                         : '';
+                    const directHeadPrepend = `${directDollarShim}${directFrameworkShim}${directMvuBridge}`;
+                    const directHostDoc = buildIframeSrcDoc(directHtml, {
+                        iframeId,
+                        needsVhHandling: fetchedNeedsVh,
+                        preserveNewlines: false,
+                        injectBridgeScript: false,
+                        styleInBody: false,
+                        baseHref,
+                        headPrepend: directHeadPrepend,
+                    });
                     const directDoc = buildIframeSrcDoc(directHtml, {
                         iframeId,
                         needsVhHandling: fetchedNeedsVh,
@@ -7129,7 +7270,7 @@ const makeCodeBlock = ({
                         injectBridgeScript: true,
                         styleInBody: false,
                         baseHref,
-                        headPrepend: `${directDollarShim}${directFrameworkShim}${directMvuBridge}`,
+                        headPrepend: directHeadPrepend,
                     });
                     setIframeDynamicDoc(iframeId, directDoc, 'direct-srcdoc');
                     const directStaticHtml = stripScriptsForPreview(directHtml);
@@ -7142,7 +7283,7 @@ const makeCodeBlock = ({
                         baseHref,
                     });
                     setIframeStaticFallbackDoc(iframeId, directStaticDoc);
-                    directDocToSend = directDoc;
+                    directDocToSend = directHostDoc;
                     directAllowScripts = effectiveAllowScripts;
                     if (!postDirectDocToHost('direct-host-cache')) {
                         iframe.dataset.iframeSource = 'direct-srcdoc-fallback';
@@ -7197,6 +7338,16 @@ const makeCodeBlock = ({
                     const directMvuBridge = needsMvuCompat
                         ? buildMvuCompatBridge({ iframeId, sessionId: resolvedSessionId, debugTag, messageId, messageIndex, seedVars: compatSeedVars || {} })
                         : '';
+                    const directHeadPrepend = `${directDollarShim}${directFrameworkShim}${directMvuBridge}`;
+                    const directHostDoc = buildIframeSrcDoc(directHtml, {
+                        iframeId,
+                        needsVhHandling: fetchedNeedsVh,
+                        preserveNewlines: false,
+                        injectBridgeScript: false,
+                        styleInBody: false,
+                        baseHref,
+                        headPrepend: directHeadPrepend,
+                    });
                     const directDoc = buildIframeSrcDoc(directHtml, {
                         iframeId,
                         needsVhHandling: fetchedNeedsVh,
@@ -7204,7 +7355,7 @@ const makeCodeBlock = ({
                         injectBridgeScript: true,
                         styleInBody: false,
                         baseHref,
-                        headPrepend: `${directDollarShim}${directFrameworkShim}${directMvuBridge}`,
+                        headPrepend: directHeadPrepend,
                     });
                     setIframeDynamicDoc(iframeId, directDoc, 'direct-srcdoc');
                     const directStaticHtml = stripScriptsForPreview(directHtml);
@@ -7217,7 +7368,7 @@ const makeCodeBlock = ({
                         baseHref,
                     });
                     setIframeStaticFallbackDoc(iframeId, directStaticDoc);
-                    directDocToSend = directDoc;
+                    directDocToSend = directHostDoc;
                     directAllowScripts = effectiveAllowScripts;
                     if (!postDirectDocToHost('direct-host-fetch')) {
                         iframe.dataset.iframeSource = 'direct-srcdoc-fallback';
@@ -7249,7 +7400,7 @@ const makeCodeBlock = ({
                     iframe.contentWindow?.postMessage({
                         type: 'chatapp:iframe-load',
                         id: iframeId,
-                        doc: scriptDoc,
+                        doc: scriptHostDoc,
                         allowScripts: true,
                     }, '*');
                 } catch {}
@@ -7820,6 +7971,26 @@ export const setupIframeResizeListener = () => {
                 message:
                     `set-input-text id=${id} ok=${result?.ok ? 1 : 0} ` +
                     `mode=${String(result?.mode || data?.options?.mode || 'replace')}`,
+                force: true,
+            });
+            return;
+        }
+        if (data.type === 'chatapp:trigger-send') {
+            const id = String(data.id || '');
+            if (!id) return;
+            const iframe = document.querySelector(`iframe[data-iframe-id="${esc(id)}"]`);
+            if (!iframe) return;
+            const sendBtn = resolveCompatComposerSendButton();
+            const ok = Boolean(sendBtn);
+            if (sendBtn) {
+                try {
+                    sendBtn.click();
+                } catch {}
+            }
+            emitDebugLog({
+                source: 'iframe',
+                type: ok ? 'info' : 'warn',
+                message: `trigger-send id=${id} ok=${ok ? 1 : 0}`,
                 force: true,
             });
             return;
