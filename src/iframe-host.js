@@ -612,6 +612,11 @@
       const attrPresets = parseCsvAttr(node?.getAttribute?.('data-presets'));
       const attrPlugins = parseCsvAttr(node?.getAttribute?.('data-plugins'));
       const rawType = String(descriptor?.type || '').trim().toLowerCase();
+      const parserPlugins = rawType.includes('tsx')
+        ? ['jsx', 'typescript', 'classProperties', 'classPrivateProperties', 'classPrivateMethods', 'optionalChaining', 'nullishCoalescingOperator', 'objectRestSpread', 'topLevelAwait']
+        : rawType.includes('typescript')
+          ? ['typescript', 'classProperties', 'classPrivateProperties', 'classPrivateMethods', 'optionalChaining', 'nullishCoalescingOperator', 'objectRestSpread', 'topLevelAwait']
+          : ['jsx', 'classProperties', 'classPrivateProperties', 'classPrivateMethods', 'optionalChaining', 'nullishCoalescingOperator', 'objectRestSpread', 'topLevelAwait'];
       const defaultPresets = rawType.includes('tsx')
         ? ['typescript', 'react']
         : rawType.includes('typescript')
@@ -625,7 +630,40 @@
         `  const __chatappBabelSource = ${JSON.stringify(source)};`,
         `  const __chatappBabelPresets = ${JSON.stringify(presets)};`,
         `  const __chatappBabelPlugins = ${JSON.stringify(plugins)};`,
+        `  const __chatappBabelParserPlugins = ${JSON.stringify(parserPlugins)};`,
         `  const __chatappBabelLabel = ${JSON.stringify(label)};`,
+        '  const resolveNamedEntry = (table, entry) => {',
+        '    if (typeof entry !== "string") return entry;',
+        '    const key = String(entry || "").trim();',
+        '    if (!key) return entry;',
+        '    try {',
+        '      if (table && typeof table === "object" && Object.prototype.hasOwnProperty.call(table, key) && table[key]) return table[key];',
+        '    } catch {}',
+        '    return entry;',
+        '  };',
+        '  const resolvePresetEntries = () => __chatappBabelPresets.map((entry) => resolveNamedEntry(window.Babel && window.Babel.availablePresets, entry));',
+        '  const resolvePluginEntries = () => __chatappBabelPlugins.map((entry) => resolveNamedEntry(window.Babel && window.Babel.availablePlugins, entry));',
+        '  const buildExcerpt = (line, column) => {',
+        '    try {',
+        '      const rows = String(__chatappBabelSource || "").replace(/\\r\\n?/g, "\\n").split("\\n");',
+        '      const idx = Math.max(0, Number(line || 1) - 1);',
+        '      const pick = (offset) => {',
+        '        const value = rows[idx + offset];',
+        '        return typeof value === "string" ? value : "";',
+        '      };',
+        '      const prev = pick(-1).trim();',
+        '      const target = pick(0).trim();',
+        '      const next = pick(1).trim();',
+        '      return [',
+        '        line ? ("loc=" + Number(line || 0) + ":" + Number(column || 0)) : "",',
+        '        prev ? ("prev=" + prev) : "",',
+        '        target ? ("line=" + target) : "",',
+        '        next ? ("next=" + next) : "",',
+        '      ].filter(Boolean).join(" ");',
+        '    } catch {',
+        '      return "";',
+        '    }',
+        '  };',
         '  const runCompiled = (compiledCode) => {',
         '    const js = String(compiledCode || "").trim();',
         '    if (!js) throw new Error("empty-babel-output");',
@@ -652,9 +690,12 @@
         '  };',
         '  const tryCompile = () => {',
         '    if (!window.Babel || typeof window.Babel.transform !== "function") return false;',
+        '    const resolvedPresets = resolvePresetEntries();',
+        '    const resolvedPlugins = resolvePluginEntries();',
         '    const result = window.Babel.transform(__chatappBabelSource, {',
-        '      presets: __chatappBabelPresets,',
-        '      plugins: __chatappBabelPlugins,',
+        '      presets: resolvedPresets,',
+        '      plugins: resolvedPlugins,',
+        '      parserOpts: { plugins: __chatappBabelParserPlugins },',
         '      sourceType: "script",',
         '      filename: __chatappBabelLabel || "chatapp-babel-inline.jsx",',
         '    });',
@@ -666,7 +707,8 @@
         '    try {',
         '      if (tryCompile()) return;',
         '    } catch (err) {',
-        '      console.error("[iframe] babel-transform-failed", __chatappBabelLabel, err);',
+        '      const excerpt = buildExcerpt(err?.loc?.line, err?.loc?.column);',
+        '      console.error("[iframe] babel-transform-failed", __chatappBabelLabel, "presets=" + JSON.stringify(__chatappBabelPresets), "plugins=" + JSON.stringify(__chatappBabelPlugins), "parser=" + JSON.stringify(__chatappBabelParserPlugins), excerpt, err);',
         '      return;',
         '    }',
         '    if (retries-- <= 0) {',
@@ -1301,11 +1343,14 @@
       const viewportH = Math.max(window.innerHeight || 0, docEl.clientHeight || 0);
       const bodyH = Math.max(body.scrollHeight || 0, body.offsetHeight || 0, body.clientHeight || 0);
       const docH = Math.max(docEl.scrollHeight || 0, docEl.offsetHeight || 0, docEl.clientHeight || 0);
+      const dominantHeight = Math.max(bodyH, docH);
       const closeToViewport = viewportH > 0 &&
         Math.abs(bodyH - viewportH) <= 28 &&
         Math.abs(docH - viewportH) <= 28;
-      if (overflowHidden && (fixedBody || hasVhDecl || closeToViewport)) return true;
-      if (fixedBody && closeToViewport) return true;
+      const viewportSized = viewportH > 0 && dominantHeight >= (viewportH * 0.72);
+      if (closeToViewport) return true;
+      if (overflowHidden && fixedBody && viewportSized) return true;
+      if (overflowHidden && hasVhDecl && viewportSized) return true;
       return false;
     } catch {
       return false;
@@ -1394,7 +1439,10 @@
   const postHeight = ({ source = 'bridge', force = false } = {}) => {
     try {
       const meta = readMetaPolicy();
-      const mode = meta.mode || (detectViewportMode() ? 'viewport' : 'document');
+      // Auto-detecting viewport mode inside chat iframes creates a feedback loop:
+      // once the outer iframe grows, innerHeight grows with it and the next resize
+      // message asks for an even taller iframe. Only honor explicit meta policy.
+      const mode = meta.mode || 'document';
       const lock = Boolean(meta.lock);
       const measured = meta.height > 0
         ? meta.height

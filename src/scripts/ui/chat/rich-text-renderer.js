@@ -2593,11 +2593,11 @@ const buildIframeBridgeScript = () => `
       return { height: 0, mode: '', lock: false };
     }
   };
-  const detectViewportMode = () => {
-    try {
-      const body = document.body;
-      const docEl = document.documentElement;
-      if (!body || !docEl) return false;
+    const detectViewportMode = () => {
+      try {
+        const body = document.body;
+        const docEl = document.documentElement;
+        if (!body || !docEl) return false;
       const bodyStyle = getComputedStyle(body);
       const docStyle = getComputedStyle(docEl);
       const overflowHidden = /hidden|clip/i.test(String(bodyStyle.overflowY || '')) ||
@@ -2606,17 +2606,20 @@ const buildIframeBridgeScript = () => `
       const vhDecl = String(body.style.height || '') + ';' + String(body.style.minHeight || '') +
         ';' + String(docEl.style.height || '') + ';' + String(docEl.style.minHeight || '');
       const hasVhDecl = /\\b\\d+(?:\\.\\d+)?vh\\b/i.test(vhDecl);
-      const viewportH = Math.max(window.innerHeight || 0, docEl.clientHeight || 0);
-      const bodyH = Math.max(body.scrollHeight || 0, body.offsetHeight || 0, body.clientHeight || 0);
-      const docH = Math.max(docEl.scrollHeight || 0, docEl.offsetHeight || 0, docEl.clientHeight || 0);
-      const closeToViewport = viewportH > 0 && Math.abs(bodyH - viewportH) <= 28 && Math.abs(docH - viewportH) <= 28;
-      if (overflowHidden && (fixedBody || hasVhDecl || closeToViewport)) return true;
-      if (fixedBody && closeToViewport) return true;
-      return false;
-    } catch {
-      return false;
-    }
-  };
+        const viewportH = Math.max(window.innerHeight || 0, docEl.clientHeight || 0);
+        const bodyH = Math.max(body.scrollHeight || 0, body.offsetHeight || 0, body.clientHeight || 0);
+        const docH = Math.max(docEl.scrollHeight || 0, docEl.offsetHeight || 0, docEl.clientHeight || 0);
+        const dominantHeight = Math.max(bodyH, docH);
+        const closeToViewport = viewportH > 0 && Math.abs(bodyH - viewportH) <= 28 && Math.abs(docH - viewportH) <= 28;
+        const viewportSized = viewportH > 0 && dominantHeight >= (viewportH * 0.72);
+        if (closeToViewport) return true;
+        if (overflowHidden && fixedBody && viewportSized) return true;
+        if (overflowHidden && hasVhDecl && viewportSized) return true;
+        return false;
+      } catch {
+        return false;
+      }
+    };
   const measureDocumentHeight = () => {
     try {
       const body = document.body;
@@ -2696,7 +2699,10 @@ const buildIframeBridgeScript = () => `
   const postResize = ({ source = 'bridge', force = false } = {}) => {
     try {
       const meta = readMetaPolicy();
-      const mode = meta.mode || (detectViewportMode() ? 'viewport' : 'document');
+      // Auto-detecting viewport mode inside chat iframes creates a feedback loop:
+      // once the outer iframe grows, innerHeight grows with it and the next resize
+      // message asks for an even taller iframe. Only honor explicit meta policy.
+      const mode = meta.mode || 'document';
       const lock = Boolean(meta.lock);
       const measured = meta.height > 0
         ? meta.height
@@ -3464,17 +3470,7 @@ const adjustIframeHeight = (iframe) => {
         const currentApplied = parseFloat(iframe.style.height || '') || 0;
         const selfMeasured = currentApplied > 0 && Math.abs(newHeight - currentApplied) <= 2;
         if (selfMeasured) {
-            const freezeRaw = Math.max(IFRAME_HEIGHT_MIN, currentApplied - IFRAME_HEIGHT_PAD);
-            const nextHits = Number(st?.selfMeasureHits || 0) + 1;
-            if (st) st.selfMeasureHits = nextHits;
-            applyIframeResizeUpdate(iframe, {
-                rawHeight: freezeRaw,
-                source: 'observer',
-                mode: nextHits >= 2 ? 'viewport' : 'document',
-                lock: nextHits >= 2,
-                ts: Date.now(),
-                canTakeAuthority: false,
-            });
+            if (st) st.selfMeasureHits = 0;
             return;
         }
         if (st) st.selfMeasureHits = 0;
@@ -3541,6 +3537,28 @@ const splitFencedCodeBlocks = (text) => {
     }
     if (last < src.length) out.push({ type: 'text', text: src.slice(last) });
     return out;
+};
+
+const collapseStreamingInteractiveTail = (text) => {
+    const src = String(text ?? '');
+    if (!src.includes('```')) return src;
+    const fenceCount = (src.match(/```/g) || []).length;
+    if (fenceCount % 2 === 0) return src;
+    const openerRe = /```([^\n`]*)\r?\n/g;
+    let opener = null;
+    let match;
+    while ((match = openerRe.exec(src))) opener = match;
+    if (!opener || !Number.isFinite(opener.index)) return src;
+    const tail = src.slice(opener.index);
+    const lang = String(opener[1] || '').trim().toLowerCase();
+    const htmlLike = /<(script|html|body|style|div|section|main|svg|iframe)\b/i.test(tail)
+        || /&lt;(script|html|body|style|div|section|main|svg|iframe)\b/i.test(tail);
+    const codeLikeLang = /^(html?|xml|jsx?|tsx?|vue|svelte)$/i.test(lang);
+    const largeTail = tail.length >= 1200;
+    if (!(htmlLike || codeLikeLang || largeTail)) return src;
+    const prefix = src.slice(0, opener.index).replace(/\s+$/, '');
+    const placeholder = '[交互卡片生成中，输出完成后自动渲染]';
+    return prefix ? `${prefix}\n\n${placeholder}` : placeholder;
 };
 
 const RICH_FRAGMENT_SCOPE_ATTR = 'data-chat-rich-scope';
@@ -4383,11 +4401,11 @@ const buildIframeSrcDoc = (
     }
   };
 
-  const detectViewportMode = () => {
-    try {
-      const body = document.body;
-      const docEl = document.documentElement;
-      if (!body || !docEl) return false;
+    const detectViewportMode = () => {
+      try {
+        const body = document.body;
+        const docEl = document.documentElement;
+        if (!body || !docEl) return false;
       const bodyStyle = getComputedStyle(body);
       const docStyle = getComputedStyle(docEl);
       const overflowHidden = /hidden|clip/i.test(String(bodyStyle.overflowY || '')) ||
@@ -4396,17 +4414,20 @@ const buildIframeSrcDoc = (
       const vhDecl = String(body.style.height || '') + ';' + String(body.style.minHeight || '') +
         ';' + String(docEl.style.height || '') + ';' + String(docEl.style.minHeight || '');
       const hasVhDecl = /\\b\\d+(?:\\.\\d+)?vh\\b/i.test(vhDecl);
-      const viewportH = Math.max(window.innerHeight || 0, docEl.clientHeight || 0);
-      const bodyH = Math.max(body.scrollHeight || 0, body.offsetHeight || 0, body.clientHeight || 0);
-      const docH = Math.max(docEl.scrollHeight || 0, docEl.offsetHeight || 0, docEl.clientHeight || 0);
-      const closeToViewport = viewportH > 0 && Math.abs(bodyH - viewportH) <= 28 && Math.abs(docH - viewportH) <= 28;
-      if (overflowHidden && (fixedBody || hasVhDecl || closeToViewport)) return true;
-      if (fixedBody && closeToViewport) return true;
-      return false;
-    } catch {
-      return false;
-    }
-  };
+        const viewportH = Math.max(window.innerHeight || 0, docEl.clientHeight || 0);
+        const bodyH = Math.max(body.scrollHeight || 0, body.offsetHeight || 0, body.clientHeight || 0);
+        const docH = Math.max(docEl.scrollHeight || 0, docEl.offsetHeight || 0, docEl.clientHeight || 0);
+        const dominantHeight = Math.max(bodyH, docH);
+        const closeToViewport = viewportH > 0 && Math.abs(bodyH - viewportH) <= 28 && Math.abs(docH - viewportH) <= 28;
+        const viewportSized = viewportH > 0 && dominantHeight >= (viewportH * 0.72);
+        if (closeToViewport) return true;
+        if (overflowHidden && fixedBody && viewportSized) return true;
+        if (overflowHidden && hasVhDecl && viewportSized) return true;
+        return false;
+      } catch {
+        return false;
+      }
+    };
 
   const measureContentHeight = () => {
     try {
@@ -4489,7 +4510,10 @@ const buildIframeSrcDoc = (
   const post = ({ source = 'bridge', force = false } = {}) => {
     try {
       const meta = readMetaPolicy();
-      const mode = meta.mode || (detectViewportMode() ? 'viewport' : 'document');
+      // Auto-detecting viewport mode inside chat iframes creates a feedback loop:
+      // once the outer iframe grows, innerHeight grows with it and the next resize
+      // message asks for an even taller iframe. Only honor explicit meta policy.
+      const mode = meta.mode || 'document';
       const lock = Boolean(meta.lock);
       const measured = meta.height > 0
         ? meta.height
@@ -6757,6 +6781,7 @@ const makeCodeBlock = ({
     sessionId,
     debugTag = '',
     deferSandboxExecution = false,
+    streaming = false,
 } = {}) => {
     const wrap = document.createElement('div');
     wrap.className = 'chat-codeblock';
@@ -6869,6 +6894,29 @@ const makeCodeBlock = ({
             return null;
         }
     })();
+    if (streaming && renderLevel === RICH_RENDER_LEVELS.SANDBOX) {
+        const deferredWrap = document.createElement('div');
+        deferredWrap.style.cssText = [
+            'padding:14px 16px',
+            'display:flex',
+            'flex-direction:column',
+            'gap:6px',
+            'background:linear-gradient(180deg, rgba(15,23,42,0.03), rgba(15,23,42,0.01))',
+        ].join(';');
+        deferredWrap.dataset.richRenderLevel = renderLevel;
+        deferredWrap.dataset.richRenderExecution = 'streaming-placeholder';
+        deferredWrap.dataset.richRenderDeferred = '1';
+        const title = document.createElement('div');
+        title.style.cssText = 'font-size:13px; font-weight:700; color:var(--app-text-primary);';
+        title.textContent = '交互卡片生成中，输出完成后自动渲染';
+        const desc = document.createElement('div');
+        desc.style.cssText = 'font-size:12px; line-height:1.45; color:var(--app-text-secondary);';
+        desc.textContent = '流式输出阶段仅保留占位，避免大段代码块干扰阅读。';
+        deferredWrap.appendChild(title);
+        deferredWrap.appendChild(desc);
+        wrap.appendChild(deferredWrap);
+        return wrap;
+    }
     if (shouldDeferSandbox) {
         const deferredWrap = document.createElement('div');
         deferredWrap.style.cssText = [
@@ -8315,6 +8363,7 @@ export const renderRichText = (
         debugTag = '',
         lazyMount = false,
         deferSandboxExecution = false,
+        streaming = false,
     } = {},
 ) => {
     if (!containerEl) return;
@@ -8332,7 +8381,7 @@ export const renderRichText = (
     containerEl.innerHTML = '';
 
     const STATUS_TOKEN = '__CHATAPP_STATUS__';
-    const rawText = String(text ?? '');
+    const rawText = streaming ? collapseStreamingInteractiveTail(String(text ?? '')) : String(text ?? '');
     const decodeHtmlEntities = (input) => {
         const s = String(input ?? '');
         if (!s.includes('&')) return s;
@@ -8442,6 +8491,7 @@ export const renderRichText = (
                 sessionId,
                 debugTag,
                 deferSandboxExecution,
+                streaming,
             }));
             return;
         }

@@ -2968,6 +2968,7 @@ export class ChatUI {
           debugTag: nextMessage?.meta?.isGreeting ? 'rp-greeting' : '',
           lazyMount: false,
           deferSandboxExecution: true,
+          streaming: true,
         });
       } catch {
         const normalized = this.normalizeAssistantLineBreaks(text);

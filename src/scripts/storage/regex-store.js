@@ -459,6 +459,19 @@ export class RegexStore {
         const raw = String(text ?? '');
         if (!raw) return '';
         const normalizeKey = (val) => String(val || '').trim();
+        const isMacroLookupKey = (val) => {
+            const rawKey = normalizeKey(val);
+            if (!rawKey) return false;
+            const lower = rawKey.toLowerCase();
+            const lookupBody = lower.startsWith('getvar::')
+                ? rawKey.slice(8)
+                : lower.startsWith('getvar:')
+                    ? rawKey.slice(7)
+                    : rawKey;
+            const body = String(lookupBody || '').trim();
+            if (!body) return false;
+            return /^(?:[\p{L}_$][\p{L}\p{N}_$]*|\d+)(?:(?:\.(?:[\p{L}_$][\p{L}\p{N}_$]*|\d+))|(?:\[(?:\d+|["'][^"'\\]+["'])\]))*$/u.test(body);
+        };
         const toPath = (val) => {
             const rawKey = normalizeKey(val);
             if (!rawKey) return [];
@@ -495,9 +508,12 @@ export class RegexStore {
                 return String(value);
             }
         };
-        return raw.replace(/{{\s*([^}]+)\s*}}/g, (_m, rawKey) => {
+        return raw.replace(/{{\s*([^}]+)\s*}}/g, (full, rawKey) => {
             const key = normalizeKey(rawKey);
             if (!key) return '';
+            // Only expand variable-like lookup keys. Preserve JSX / CSS object literals
+            // such as `style={{flex: 1}}` or `style={{fontSize:'10px'}}`.
+            if (!isMacroLookupKey(key)) return full;
             const lower = key.toLowerCase();
             let lookupKey = key;
             if (lower.startsWith('getvar::')) lookupKey = key.slice(8);
