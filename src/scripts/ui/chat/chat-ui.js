@@ -385,11 +385,13 @@ export class ChatUI {
     if (!text.trim() && placeholder) {
       return this.renderSwipeDraftPlaceholder(target, placeholder);
     }
-    if (!streaming && renderMsg.meta?.renderRich) {
+    if (renderMsg.meta?.renderRich) {
       renderRichText(target, text, {
         messageId: renderMsg.id,
         preserveHtmlNewlines: true,
         sessionId: renderMsg.sessionId,
+        deferSandboxExecution: streaming === true,
+        streaming: streaming === true,
       });
       return true;
     }
@@ -3982,8 +3984,24 @@ export class ChatUI {
               if (handled) return;
             } catch {}
           }
+          const branch =
+            Array.isArray(msg?.meta?.swipes) && msg.meta.swipes.length
+              ? msg.meta.swipes[
+                Number.isFinite(Math.trunc(Number(msg?.meta?.activeSwipe)))
+                  ? Math.min(Math.max(0, Math.trunc(Number(msg.meta.activeSwipe))), msg.meta.swipes.length - 1)
+                  : msg.meta.swipes.length - 1
+              ]
+              : null;
           const raw =
-            msg?.rawOriginal ?? msg?.rawSource ?? msg?.raw_source ?? msg?.source ?? msg?.raw ?? msg?.content ?? '';
+            branch?.rawOriginal ??
+            branch?.rawSource ??
+            branch?.raw ??
+            msg?.rawOriginal ??
+            msg?.rawSource ??
+            msg?.raw_source ??
+            msg?.source ??
+            msg?.raw ??
+            msg?.content ?? '';
           this.openCodeViewer({ message: msg, text: raw });
           return;
         }

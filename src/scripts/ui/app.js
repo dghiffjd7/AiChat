@@ -14502,6 +14502,8 @@ Phase G（Frame 36）：循环衔接
       index: draftIndex,
       total: draftTotal,
       label: draftLabel,
+      renderRich: true,
+      streamMode: 'creative',
     }) || null;
     try {
       const resendText = String(userMsg?.content ?? '').trim() || '[Continue]';
@@ -14527,6 +14529,8 @@ Phase G（Frame 36）：循环衔接
             index: draftIndex,
             total: draftTotal,
             label: draftLabel,
+            renderRich: true,
+            streamMode: 'creative',
           }) || null;
           return swipeStreamCtrl;
         },
@@ -20396,7 +20400,11 @@ Phase G（Frame 36）：循环衔接
       return true;
     }
     if (action === 'view-code') {
-      let raw = typeof message?.rawOriginal === 'string' ? message.rawOriginal : '';
+      const activeBranch = getActiveSwipeBranch(message);
+      let raw = typeof activeBranch?.rawOriginal === 'string' ? activeBranch.rawOriginal : '';
+      if (!raw.trim()) raw = typeof activeBranch?.rawSource === 'string' ? activeBranch.rawSource : '';
+      if (!raw.trim()) raw = typeof activeBranch?.raw === 'string' ? activeBranch.raw : '';
+      if (!raw.trim()) raw = typeof message?.rawOriginal === 'string' ? message.rawOriginal : '';
       if (!raw.trim()) {
         raw = (await chatStore.loadRawOriginal?.(message, sessionId)) || '';
       }
