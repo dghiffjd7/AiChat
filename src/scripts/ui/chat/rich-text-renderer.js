@@ -364,7 +364,7 @@ const inspectIframeBlankState = (iframe) => {
         const doc = win?.document;
         const body = doc?.body;
         const docEl = doc?.documentElement;
-        if (!body || !docEl) return { isBlank: false, reason: 'doc-unavailable' };
+        if (!body || !docEl) return { isBlank: false, reason: 'doc-unavailable', htmlLen: 0, textLen: 0, scrollH: 0, hasVisualNode: false };
 
         let bodyStyle = null;
         let docElStyle = null;
@@ -384,7 +384,7 @@ const inspectIframeBlankState = (iframe) => {
                 Number.parseFloat(docElStyle.opacity || '1') <= 0.01
             ))
         );
-        if (hidden) return { isBlank: true, reason: 'hidden-root' };
+        if (hidden) return { isBlank: true, reason: 'hidden-root', htmlLen: 0, textLen: 0, scrollH: 0, hasVisualNode: false };
 
         const rawHtml = String(body.innerHTML || docEl.innerHTML || '');
         const rawText = String(body.innerText || docEl.innerText || '')
@@ -406,21 +406,21 @@ const inspectIframeBlankState = (iframe) => {
         );
 
         if (isLikelyBlankStaticDoc(rawHtml)) {
-            return { isBlank: true, reason: 'blank-markup' };
+            return { isBlank: true, reason: 'blank-markup', htmlLen: rawHtml.length, textLen: rawText.length, scrollH, hasVisualNode };
         }
         if (!hasVisualNode && rawText.length === 0 && scrollH <= 140) {
-            return { isBlank: true, reason: 'empty-no-content' };
+            return { isBlank: true, reason: 'empty-no-content', htmlLen: rawHtml.length, textLen: rawText.length, scrollH, hasVisualNode };
         }
         if (!hasVisualNode && rawText.length <= 4 && scrollH <= 100) {
-            return { isBlank: true, reason: 'tiny-content' };
+            return { isBlank: true, reason: 'tiny-content', htmlLen: rawHtml.length, textLen: rawText.length, scrollH, hasVisualNode };
         }
-        return { isBlank: false, reason: 'ok' };
+        return { isBlank: false, reason: 'ok', htmlLen: rawHtml.length, textLen: rawText.length, scrollH, hasVisualNode };
     } catch (err) {
         const msg = String(err?.message || err || 'inspect-error');
         if (/cross-origin|permission denied|securityerror|blocked a frame/i.test(msg)) {
-            return { isBlank: false, reason: 'cross-origin' };
+            return { isBlank: false, reason: 'cross-origin', htmlLen: 0, textLen: 0, scrollH: 0, hasVisualNode: false };
         }
-        return { isBlank: false, reason: 'inspect-error' };
+        return { isBlank: false, reason: 'inspect-error', htmlLen: 0, textLen: 0, scrollH: 0, hasVisualNode: false };
     }
 };
 const applyIframeBlankFallbackIfNeeded = (
@@ -443,7 +443,13 @@ const applyIframeBlankFallbackIfNeeded = (
 
     const shortReason = String(reason || '').trim();
     const detailReason = blankState?.reason ? `blank=${blankState.reason}` : 'blank=unknown';
-    const finalReason = [shortReason, detailReason].filter(Boolean).join(' ').slice(0, 180);
+    const probeDetail = [
+        blankState && Number.isFinite(blankState.htmlLen) ? `htmlLen=${Number(blankState.htmlLen || 0)}` : '',
+        blankState && Number.isFinite(blankState.textLen) ? `textLen=${Number(blankState.textLen || 0)}` : '',
+        blankState && Number.isFinite(blankState.scrollH) ? `scrollH=${Number(blankState.scrollH || 0)}` : '',
+        blankState?.hasVisualNode ? 'visual=1' : 'visual=0',
+    ].filter(Boolean).join(' ');
+    const finalReason = [shortReason, detailReason, probeDetail].filter(Boolean).join(' ').slice(0, 260);
 
     if (tryDirectRecover && String(iframe.dataset.iframeSource || '') === 'direct-srcdoc') {
         const recovered = tryRecoverDirectLoadFallback(iframe, id, finalReason.slice(0, 120));

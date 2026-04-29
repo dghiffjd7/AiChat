@@ -10,6 +10,7 @@ const TEMPLATE_OUTPUT_LIMIT = 120000;
 const TEMPLATE_PAYLOAD_LIMIT = 1200000;
 const TEMPLATE_RENDER_CHUNK_SIZE = 8192;
 const TEMPLATE_RENDER_RESULT_LIMIT = 3000000;
+const TEMPLATE_WORKER_SOURCE_URL = 'chatapp-template-worker.js';
 const templateCache = new Map();
 const templateExecutionLogs = [];
 let templateWorkerInstance = null;
@@ -168,17 +169,17 @@ const compileTemplate = (template) => {
   if (cached) return cached;
   const re = /<%([=#-]?)([\\s\\S]*?)%>/g;
   let cursor = 0;
-  let src = "let __out = '';\n";
-  src += 'const __emit = typeof ctx.__emit === "function" ? ctx.__emit : null;\n';
-  src += 'const __chunkLimit = typeof ctx.__chunkLimit === "number" ? ctx.__chunkLimit : 0;\n';
-  src += 'const __flush = () => { if (!__emit || !__chunkLimit) return; if (__out.length >= __chunkLimit) { __emit(__out); __out = ""; } };\n';
-  src += 'const __outLimit = typeof ctx.__outLimit === "number" ? ctx.__outLimit : ' + TEMPLATE_OUTPUT_LIMIT + ';\n';
-  src += 'const __ensureOut = () => { if (__out.length > __outLimit) throw new Error("模板输出过大"); };\n';
-  src += 'const print = (...args) => { __out += args.join(""); __ensureOut(); __flush(); };\n';
-  src += 'const __escape = __esc;\n';
-  src += 'const __guard = ctx.__guard;\n';
-  src += 'if (__guard) __guard();\n';
-  const guardLine = '__guard && __guard();\n';
+  let src = "let __out = '';\\n";
+  src += 'const __emit = typeof ctx.__emit === "function" ? ctx.__emit : null;\\n';
+  src += 'const __chunkLimit = typeof ctx.__chunkLimit === "number" ? ctx.__chunkLimit : 0;\\n';
+  src += 'const __flush = () => { if (!__emit || !__chunkLimit) return; if (__out.length >= __chunkLimit) { __emit(__out); __out = ""; } };\\n';
+  src += 'const __outLimit = typeof ctx.__outLimit === "number" ? ctx.__outLimit : ' + TEMPLATE_OUTPUT_LIMIT + ';\\n';
+  src += 'const __ensureOut = () => { if (__out.length > __outLimit) throw new Error("模板输出过大"); };\\n';
+  src += 'const print = (...args) => { __out += args.join(""); __ensureOut(); __flush(); };\\n';
+  src += 'const __escape = __esc;\\n';
+  src += 'const __guard = ctx.__guard;\\n';
+  src += 'if (__guard) __guard();\\n';
+  const guardLine = '__guard && __guard();\\n';
   template.replace(re, (match, flag, code, index) => {
     const text = template.slice(cursor, index);
     if (text) src += '__out += ' + JSON.stringify(text) + ';\\n__ensureOut();\\n__flush();\\n';
@@ -638,7 +639,50 @@ self.onmessage = (event) => {
     self.postMessage({ type: 'render_error', id, error: String(err?.message || err || 'unknown error') });
   }
 };
+//# sourceURL=${TEMPLATE_WORKER_SOURCE_URL}
 `;
+
+const buildScriptErrorExcerpt = (source, line = 0, col = 0) => {
+  try {
+    const lines = String(source || '').replace(/\r\n?/g, '\n').split('\n');
+    const idx = Math.max(0, Number(line || 1) - 1);
+    const prev = lines[idx - 1] || '';
+    const cur = lines[idx] || '';
+    const next = lines[idx + 1] || '';
+    return [
+      prev ? `prev=${truncateText(prev, 240)}` : '',
+      cur ? `line=${truncateText(cur, 240)}` : '',
+      next ? `next=${truncateText(next, 240)}` : '',
+      col ? `col=${Number(col || 0)}` : '',
+    ].filter(Boolean).join(' ');
+  } catch {
+    return '';
+  }
+};
+
+const parseWorkerSyntaxLocation = (err) => {
+  try {
+    const stack = String(err?.stack || err?.message || '');
+    const m = stack.match(/<anonymous>:(\d+):(\d+)/) || stack.match(/:(\d+):(\d+)/);
+    return {
+      line: m ? Number(m[1] || 0) : 0,
+      col: m ? Number(m[2] || 0) : 0,
+    };
+  } catch {
+    return { line: 0, col: 0 };
+  }
+};
+
+const validateTemplateWorkerScript = (source) => {
+  try {
+    // Parse the generated worker script before spawning a blob worker so syntax
+    // regressions do not surface as opaque blob runtime errors on Android.
+    new Function(String(source || ''));
+    return null;
+  } catch (err) {
+    return err instanceof Error ? err : new Error(String(err || 'worker-parse-failed'));
+  }
+};
 
 class TemplateWorker {
   constructor() {
@@ -651,15 +695,43 @@ class TemplateWorker {
   start() {
     if (typeof Worker === 'undefined') return;
     try {
-      const blob = new Blob([buildTemplateWorkerScript()], { type: 'application/javascript' });
+      const source = buildTemplateWorkerScript();
+      const syntaxErr = validateTemplateWorkerScript(source);
+      if (syntaxErr) {
+        const loc = parseWorkerSyntaxLocation(syntaxErr);
+        const excerpt = buildScriptErrorExcerpt(source, loc.line, loc.col);
+        logger.error('template worker source invalid', syntaxErr, excerpt);
+        emitDebugLog({
+          source: 'template',
+          type: 'error',
+          message: `template-worker-source-invalid ${String(syntaxErr?.message || syntaxErr)}${excerpt ? ` ${excerpt}` : ''}`,
+          force: true,
+        });
+        this.worker = null;
+        return;
+      }
+      const blob = new Blob([source], { type: 'application/javascript' });
       const url = URL.createObjectURL(blob);
       this.worker = new Worker(url);
       URL.revokeObjectURL(url);
       this.worker.onmessage = (e) => this.handleMessage(e?.data || {});
-      this.worker.onerror = () => {
+      this.worker.onerror = (event) => {
+        logger.warn('template worker onerror', {
+          message: String(event?.message || ''),
+          filename: String(event?.filename || ''),
+          lineno: Number(event?.lineno || 0),
+          colno: Number(event?.colno || 0),
+        });
+        emitDebugLog({
+          source: 'template',
+          type: 'warn',
+          message: `template-worker-onerror ${String(event?.message || 'worker error')} file=${String(event?.filename || '')} line=${Number(event?.lineno || 0)} col=${Number(event?.colno || 0)}`,
+          force: true,
+        });
         this.restart('模板 Worker 异常重启');
       };
-    } catch {
+    } catch (err) {
+      logger.warn('template worker start failed', err);
       this.worker = null;
     }
   }

@@ -25,6 +25,8 @@
   const managedScriptMeta = new WeakMap();
   const managedBlobUrls = new Set();
   const nestedSrcdocBlobUrls = new Set();
+  const externalizedBlobMeta = new Map();
+  const remoteScriptTextCache = new Map();
 
   const normalizeSource = (source) => {
     const raw = String(source || '').trim().toLowerCase();
@@ -60,6 +62,55 @@
         id: currentId,
         message: String(message || 'iframe-error'),
       }, '*');
+    } catch {}
+  };
+
+  const getBlobDebugName = (descriptor = {}) => {
+    try {
+      const label = String(descriptor?.label || 'inline-script')
+        .replace(/[^a-z0-9._-]+/gi, '-')
+        .replace(/^-+|-+$/g, '')
+        .slice(0, 80);
+      return label || 'inline-script';
+    } catch {
+      return 'inline-script';
+    }
+  };
+
+  const buildBlobDebugExcerpt = (code, line, col) => {
+    try {
+      const lines = String(code || '').replace(/\r\n?/g, '\n').split('\n');
+      const idx = Math.max(0, Number(line || 1) - 1);
+      const pick = (i) => {
+        if (i < 0 || i >= lines.length) return '';
+        return compactText(lines[i], 220);
+      };
+      const target = pick(idx);
+      const prev = pick(idx - 1);
+      const next = pick(idx + 1);
+      return [
+        prev ? ('prev=' + prev) : '',
+        target ? ('line=' + target) : '',
+        next ? ('next=' + next) : '',
+        col ? ('col=' + Number(col || 0)) : '',
+      ].filter(Boolean).join(' ');
+    } catch {
+      return '';
+    }
+  };
+
+  const rememberBlobMeta = (url, descriptor, code) => {
+    try {
+      const key = String(url || '').trim();
+      if (!key) return;
+      externalizedBlobMeta.set(key, {
+        label: String(descriptor?.label || ''),
+        kind: String(descriptor?.kind || ''),
+        type: String(descriptor?.type || ''),
+        module: descriptor?.isModule ? 1 : 0,
+        babel: descriptor?.isBabel ? 1 : 0,
+        code: String(code || ''),
+      });
     } catch {}
   };
 
@@ -201,6 +252,10 @@
       };
     });
     window.console = c;
+    window.__CHATAPP_registerRuntimeBlobMeta = (url, descriptor = {}, code = '') => {
+      rememberBlobMeta(url, descriptor, code);
+      return url;
+    };
 
     window.addEventListener('error', (ev) => {
       try {
@@ -217,6 +272,22 @@
         const lineno = Number(ev?.lineno || 0);
         const colno = Number(ev?.colno || 0);
         const file = String(ev?.filename || '');
+        try {
+          if (file && externalizedBlobMeta.has(file)) {
+            const meta = externalizedBlobMeta.get(file) || {};
+            const excerpt = buildBlobDebugExcerpt(meta.code || '', lineno, colno);
+            const parts = [
+              'blob-script-error',
+              meta.label ? ('label=' + compactText(meta.label, 120)) : '',
+              meta.kind ? ('kind=' + compactText(meta.kind, 40)) : '',
+              meta.type ? ('type=' + compactText(meta.type, 40)) : '',
+              meta.module ? 'module=1' : '',
+              meta.babel ? 'babel=1' : '',
+              excerpt,
+            ].filter(Boolean).join(' ');
+            sendDebug('warn', parts);
+          }
+        } catch {}
         const extra = [
           file ? ('file=' + file) : '',
           lineno ? ('line=' + lineno) : '',
@@ -413,6 +484,7 @@
     try {
       Array.from(bucket || []).forEach((url) => {
         try { URL.revokeObjectURL(url); } catch {}
+        try { externalizedBlobMeta.delete(String(url || '')); } catch {}
       });
       bucket?.clear?.();
     } catch {}
@@ -421,9 +493,84 @@
   const toBlobScriptUrl = (code, descriptor, bucket = managedBlobUrls) => {
     try {
       const mime = descriptor?.isModule ? 'text/javascript' : 'text/javascript';
-      return rememberBlobUrl(URL.createObjectURL(new Blob([String(code || '')], { type: mime })), bucket);
+      const source = String(code || '');
+      const trailer = `\n//# sourceURL=chatapp-${getBlobDebugName(descriptor)}.js`;
+      const blobUrl = rememberBlobUrl(URL.createObjectURL(new Blob([source + trailer], { type: mime })), bucket);
+      rememberBlobMeta(blobUrl, descriptor, source);
+      return blobUrl;
     } catch {
       return '';
+    }
+  };
+
+  const shouldPreferFetchedRemoteScript = (url, descriptor = {}) => {
+    try {
+      if (descriptor?.isModule) return false;
+      const parsed = new URL(String(url || ''), window.location.href);
+      if (!/^https?:$/i.test(parsed.protocol)) return false;
+      const host = String(parsed.hostname || '').trim().toLowerCase();
+      if (!host) return false;
+      return host === 'drive.baibai.cv';
+    } catch {
+      return false;
+    }
+  };
+
+  const fetchRemoteScriptText = async (url) => {
+    const key = String(url || '').trim();
+    if (!key) throw new Error('empty-remote-script-url');
+    if (remoteScriptTextCache.has(key)) return remoteScriptTextCache.get(key);
+    const task = (async () => {
+      const response = await fetch(key, {
+        method: 'GET',
+        mode: 'cors',
+        credentials: 'omit',
+        cache: 'default',
+      });
+      if (!response.ok) throw new Error(`http-${response.status}`);
+      const contentType = String(response.headers.get('content-type') || '').trim().toLowerCase();
+      const text = await response.text();
+      const trimmed = String(text || '').trim();
+      if (!trimmed) throw new Error('empty-remote-script-body');
+      if (/text\/html|application\/json/.test(contentType)) {
+        throw new Error(`unexpected-content-type:${contentType}`);
+      }
+      if (/^<(?:!doctype|html|head|body)\b/i.test(trimmed)) {
+        throw new Error('unexpected-html-body');
+      }
+      return text;
+    })();
+    remoteScriptTextCache.set(key, task);
+    try {
+      return await task;
+    } catch (err) {
+      remoteScriptTextCache.delete(key);
+      throw err;
+    }
+  };
+
+  const resolveRemoteScriptSrc = async (url, descriptor, bucket = managedBlobUrls) => {
+    const rawUrl = String(url || '').trim();
+    if (!rawUrl) return { src: '', proxied: false };
+    if (!shouldPreferFetchedRemoteScript(rawUrl, descriptor)) {
+      return { src: rawUrl, proxied: false };
+    }
+    try {
+      const source = await fetchRemoteScriptText(rawUrl);
+      const blobUrl = toBlobScriptUrl(source, {
+        ...descriptor,
+        kind: 'external-fetched',
+        type: 'text/javascript',
+        isModule: false,
+      }, bucket);
+      if (!blobUrl) throw new Error('blob-url-create-failed');
+      return { src: blobUrl, proxied: true };
+    } catch (err) {
+      return {
+        src: rawUrl,
+        proxied: false,
+        error: err instanceof Error ? err : new Error(String(err || 'remote-script-proxy-failed')),
+      };
     }
   };
 
@@ -482,15 +629,25 @@
         '  const runCompiled = (compiledCode) => {',
         '    const js = String(compiledCode || "").trim();',
         '    if (!js) throw new Error("empty-babel-output");',
-        '    const blobUrl = URL.createObjectURL(new Blob([js + "\\n//# sourceURL=chatapp-babel-compiled.js"], { type: "text/javascript" }));',
+        '    console.info("[iframe] babel-transform-ok", __chatappBabelLabel, "compiledLen=" + js.length);',
+        '    const blobUrl = URL.createObjectURL(new Blob([js + "\\n//# sourceURL=chatapp-babel-compiled-" + (__chatappBabelLabel || "inline") + ".js"], { type: "text/javascript" }));',
+        '    try {',
+        '      if (typeof window.__CHATAPP_registerRuntimeBlobMeta === "function") {',
+        '        window.__CHATAPP_registerRuntimeBlobMeta(blobUrl, { label: __chatappBabelLabel + ":compiled", kind: "babel-compiled", type: "text/javascript", isBabel: true }, js);',
+        '      }',
+        '    } catch {}',
         '    const script = document.createElement("script");',
         '    script.async = false;',
         '    script.src = blobUrl;',
-        '    script.addEventListener("load", () => { try { URL.revokeObjectURL(blobUrl); } catch {} }, { once: true });',
+        '    script.addEventListener("load", () => {',
+        '      console.info("[iframe] babel-compiled-load-ok", __chatappBabelLabel);',
+        '      try { URL.revokeObjectURL(blobUrl); } catch {}',
+        '    }, { once: true });',
         '    script.addEventListener("error", () => {',
         '      try { URL.revokeObjectURL(blobUrl); } catch {}',
         '      console.error("[iframe] babel-compiled-load-failed", __chatappBabelLabel);',
         '    }, { once: true });',
+        '    console.info("[iframe] babel-compiled-append", __chatappBabelLabel);',
         '    (document.body || document.documentElement || document.head).appendChild(script);',
         '  };',
         '  const tryCompile = () => {',
@@ -836,6 +993,9 @@
         if (attr.name === 'src') return;
         try { script.setAttribute(attr.name, attr.value); } catch {}
       });
+      if (!descriptor.src && isExecutableScriptType(descriptor.type)) {
+        script.type = descriptor.isModule ? 'module' : 'text/javascript';
+      }
       managedScriptMeta.set(script, createManagedWriteMeta(script, target, descriptor));
       if (descriptor.src) {
         if (!isAllowedResourceUrl(descriptor.src, { allowRemoteHttp: true })) {
@@ -843,20 +1003,41 @@
           sendDebug('warn', 'script-src-blocked ' + descriptor.label);
           return;
         }
-        script.src = descriptor.src;
-        if (script.type !== 'module') script.async = false;
-        sendDebug('info', 'script-load-start ' + descriptor.label);
         scriptTasks.push(new Promise((resolve) => {
+          let finalized = false;
+          const finalize = (ok) => {
+            if (finalized) return;
+            finalized = true;
+            resolve(ok);
+          };
           script.addEventListener('load', () => {
             if (scriptStats) scriptStats.loaded += 1;
-            sendDebug('info', 'script-load-ok ' + descriptor.label);
-            resolve(true);
+            sendDebug('info', 'script-load-ok ' + descriptor.label + (script.dataset.chatappRemoteProxy === '1' ? ' proxied=1' : ''));
+            finalize(true);
           }, { once: true });
           script.addEventListener('error', () => {
             if (scriptStats) scriptStats.failed += 1;
             sendIframeError('resource-load-failed tag=script ' + descriptor.label);
-            resolve(false);
+            finalize(false);
           }, { once: true });
+          (async () => {
+            const resolved = await resolveRemoteScriptSrc(descriptor.src, descriptor);
+            if (resolved?.proxied) {
+              if (scriptStats) scriptStats.externalized += 1;
+              script.dataset.chatappRemoteProxy = '1';
+              sendDebug('info', 'script-remote-proxied ' + descriptor.label + ' src=' + compactText(descriptor.src, 220));
+            } else if (resolved?.error) {
+              sendDebug('warn', 'script-remote-proxy-failed ' + descriptor.label + ' err=' + compactText(resolved.error?.message || resolved.error || 'unknown', 220));
+            }
+            script.src = String(resolved?.src || descriptor.src || '');
+            if (script.type !== 'module') script.async = false;
+            sendDebug('info', 'script-load-start ' + descriptor.label + (resolved?.proxied ? ' proxied=1' : ''));
+          })().catch((err) => {
+            sendDebug('warn', 'script-load-prepare-failed ' + descriptor.label + ' err=' + compactText(err?.message || err || 'unknown', 220));
+            script.src = descriptor.src;
+            if (script.type !== 'module') script.async = false;
+            sendDebug('info', 'script-load-start ' + descriptor.label);
+          });
         }));
       } else {
         const rawCode = String(node.textContent || '');
