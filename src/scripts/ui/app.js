@@ -10490,15 +10490,20 @@ Phase G（Frame 36）：循环衔接
     const _applyVVPatch = () => {
       const vv = window.visualViewport;
       const fullH = window.innerHeight;
-      const vvH = vv.height;
+      const vvH = Math.max(0, Math.round(Number(vv?.height) || 0));
+      const vvTop = Math.max(0, Math.round(Number(vv?.offsetTop) || 0));
       const diff = fullH - vvH;
-      if (diff > 50) {
+      if (diff > 50 || vvTop > 0) {
+        chatRoom.style.top = `${vvTop}px`;
+        chatRoom.style.bottom = 'auto';
         chatRoom.style.height = `${vvH}px`;
         _vvPatchActive = true;
         requestAnimationFrame(() => {
           chatScroll?.scrollTo?.({ top: chatScroll.scrollHeight, behavior: 'instant' });
         });
       } else if (_vvPatchActive) {
+        chatRoom.style.top = '';
+        chatRoom.style.bottom = '';
         chatRoom.style.height = '';
         _vvPatchActive = false;
       }

@@ -7532,13 +7532,20 @@ const makeCodeBlock = ({
                 try { iframe.contentWindow?.postMessage({ type: 'chatapp:ping' }, '*'); } catch {}
             }
         }, 2200);
+        const postLoadBlankProbeDelay = (
+            /<script\b[^>]*type\s*=\s*["']text\/babel["']/i.test(code) ||
+            sourceCompat.flags.externalScript ||
+            sourceCompat.flags.jqueryLoad ||
+            sourceCompat.flags.externalEsmImport ||
+            /ReactDOM\.createRoot|SearchMusic|Music\.js/i.test(code)
+        ) ? 7000 : 3200;
         setTimeout(() => {
             if (!isLiveIframe(iframe, iframeId)) return;
             applyIframeBlankFallbackIfNeeded(iframe, iframeId, 'post-load-blank-probe', {
                 requireLoaded: true,
                 tryDirectRecover: true,
             });
-        }, 3200);
+        }, postLoadBlankProbeDelay);
 
         // notify iframe about viewport height changes (for vh handling)
         if (needsVhHandling) {

@@ -427,6 +427,105 @@
     }
   };
 
+  const normalizeExecutableScriptSource = (code) => {
+    try {
+      const lines = String(code || '').replace(/\r\n?/g, '\n').split('\n');
+      const normalized = [];
+      let previousNonEmpty = '';
+      // Only guard true ASI hazards like a new-line IIFE / array / template literal.
+      // Do not treat leading "." as risky: that breaks合法的链式调用（.then/.finally/.classList...）。
+      const riskyStartRe = /^[([`]/;
+      const safePrevEndRe = /(?:[;{[(,:?=><!&|/^~]|(?:\+\+|--))\s*$/;
+      const keywordPrevRe = /\b(?:return|throw|case|delete|typeof|void|new|in|instanceof|await|yield)\s*$/;
+      lines.forEach((line) => {
+        const trimmed = String(line || '').trim();
+        if (trimmed && riskyStartRe.test(trimmed) && previousNonEmpty) {
+          const prev = previousNonEmpty.replace(/\s+$/, '');
+          if (!safePrevEndRe.test(prev) && !keywordPrevRe.test(prev)) {
+            normalized.push(';');
+          }
+        }
+        normalized.push(line);
+        if (trimmed) previousNonEmpty = line;
+      });
+      return normalized.join('\n');
+    } catch {
+      return String(code || '');
+    }
+  };
+
+  const parseCsvAttr = (value) => String(value || '')
+    .split(/[,\s]+/)
+    .map((item) => String(item || '').trim())
+    .filter(Boolean);
+
+  const buildBabelBootstrapCode = (code, descriptor, node) => {
+    try {
+      const source = normalizeExecutableScriptSource(code);
+      const attrPresets = parseCsvAttr(node?.getAttribute?.('data-presets'));
+      const attrPlugins = parseCsvAttr(node?.getAttribute?.('data-plugins'));
+      const rawType = String(descriptor?.type || '').trim().toLowerCase();
+      const defaultPresets = rawType.includes('tsx')
+        ? ['typescript', 'react']
+        : rawType.includes('typescript')
+          ? ['typescript']
+          : ['react'];
+      const presets = attrPresets.length ? attrPresets : defaultPresets;
+      const plugins = attrPlugins;
+      const label = String(descriptor?.label || 'babel-script');
+      return [
+        '(() => {',
+        `  const __chatappBabelSource = ${JSON.stringify(source)};`,
+        `  const __chatappBabelPresets = ${JSON.stringify(presets)};`,
+        `  const __chatappBabelPlugins = ${JSON.stringify(plugins)};`,
+        `  const __chatappBabelLabel = ${JSON.stringify(label)};`,
+        '  const runCompiled = (compiledCode) => {',
+        '    const js = String(compiledCode || "").trim();',
+        '    if (!js) throw new Error("empty-babel-output");',
+        '    const blobUrl = URL.createObjectURL(new Blob([js + "\\n//# sourceURL=chatapp-babel-compiled.js"], { type: "text/javascript" }));',
+        '    const script = document.createElement("script");',
+        '    script.async = false;',
+        '    script.src = blobUrl;',
+        '    script.addEventListener("load", () => { try { URL.revokeObjectURL(blobUrl); } catch {} }, { once: true });',
+        '    script.addEventListener("error", () => {',
+        '      try { URL.revokeObjectURL(blobUrl); } catch {}',
+        '      console.error("[iframe] babel-compiled-load-failed", __chatappBabelLabel);',
+        '    }, { once: true });',
+        '    (document.body || document.documentElement || document.head).appendChild(script);',
+        '  };',
+        '  const tryCompile = () => {',
+        '    if (!window.Babel || typeof window.Babel.transform !== "function") return false;',
+        '    const result = window.Babel.transform(__chatappBabelSource, {',
+        '      presets: __chatappBabelPresets,',
+        '      plugins: __chatappBabelPlugins,',
+        '      sourceType: "script",',
+        '      filename: __chatappBabelLabel || "chatapp-babel-inline.jsx",',
+        '    });',
+        '    runCompiled(result?.code || "");',
+        '    return true;',
+        '  };',
+        '  let retries = 120;',
+        '  const tick = () => {',
+        '    try {',
+        '      if (tryCompile()) return;',
+        '    } catch (err) {',
+        '      console.error("[iframe] babel-transform-failed", __chatappBabelLabel, err);',
+        '      return;',
+        '    }',
+        '    if (retries-- <= 0) {',
+        '      console.error("[iframe] babel-runtime-timeout", __chatappBabelLabel);',
+        '      return;',
+        '    }',
+        '    setTimeout(tick, 50);',
+        '  };',
+        '  tick();',
+        '})();',
+      ].join('\n');
+    } catch {
+      return String(code || '');
+    }
+  };
+
   const createManagedWriteMeta = (script, parent, descriptor) => ({
     script,
     parent,
@@ -760,7 +859,10 @@
           }, { once: true });
         }));
       } else {
-        const code = String(node.textContent || '');
+        const rawCode = String(node.textContent || '');
+        const code = descriptor.isBabel
+          ? buildBabelBootstrapCode(rawCode, descriptor, node)
+          : normalizeExecutableScriptSource(rawCode);
         const executable = isExecutableScriptType(descriptor.type);
         if (executable && code) {
           const blobUrl = toBlobScriptUrl(code, descriptor);
@@ -1350,8 +1452,11 @@
     } catch {}
     Promise.allSettled(Array.isArray(scriptTasks) ? scriptTasks : []).finally(() => {
       sendDebug('info', 'script-settled ' + formatScriptStats(scriptStats));
-      sendDebug('info', 'synthetic-ready-dispatch ' + formatScriptStats(scriptStats));
-      dispatchSyntheticReadyEvents();
+      const shouldDispatchSyntheticReady = Number(scriptStats?.babel || 0) <= 0;
+      sendDebug('info', `synthetic-ready-dispatch enabled=${shouldDispatchSyntheticReady ? 1 : 0} ` + formatScriptStats(scriptStats));
+      if (shouldDispatchSyntheticReady) {
+        dispatchSyntheticReadyEvents();
+      }
       forceNextResize = true;
       requestLayout('observer', true);
     });

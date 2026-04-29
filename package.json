@@ -1,6 +1,6 @@
 {
   "name": "tauri-chat-app",
-  "version": "0.5.12",
+  "version": "0.5.14",
   "description": "A cross-platform chat application with LLM integration",
   "type": "module",
   "scripts": {

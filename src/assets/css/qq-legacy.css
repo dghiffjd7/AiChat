@@ -105,6 +105,7 @@
 
   /* 滚动 */
   overflow: hidden; /* 仅消息列表滚动，避免键盘引发整页滚动把顶栏推出 */
+  overscroll-behavior: none;
 
   /* 隐藏滚动条 */
   scrollbar-width: none;
@@ -599,6 +600,7 @@ body[data-ui-mode='rp'] .bottom-nav {
   flex: 1;
   overflow-y: auto;
   will-change: scroll-position;
+  overscroll-behavior-y: contain;
 
   /* 间距 */
   padding-left: 8px;
