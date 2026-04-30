@@ -982,6 +982,24 @@ export class PresetPanel {
         this.refreshCustomSelect(select, scope);
     }
 
+    wrapSelectWithCustomUI(select, placeholder = '请选择') {
+        if (!select || !select.id) return select;
+        select.style.display = 'none';
+        const wrap = document.createElement('div');
+        wrap.style.width = '100%';
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'world-app-select-btn';
+        button.dataset.selectId = select.id;
+        button.innerHTML = `
+            <span class="pp-custom-select-label">${placeholder}</span>
+            <span class="world-app-select-btn-chevron">▾</span>
+        `;
+        wrap.appendChild(select);
+        wrap.appendChild(button);
+        return wrap;
+    }
+
     async applyBoundConfigIfAny(context = null, { onlyIfBoundOverride = false } = {}) {
         const resolved = context
             ? this.store.getResolvedActive('openai', context)
@@ -1261,7 +1279,11 @@ export class PresetPanel {
                 <div class="pp-manager-select-row">
                     <div class="pp-manager-select-wrap">
                         <label class="pp-manager-label" for="preset-manager-select">当前预设</label>
-                        <select class="pp-manager-select" id="preset-manager-select"></select>
+                        <select class="pp-manager-select" id="preset-manager-select" style="display:none;"></select>
+                        <button type="button" class="world-app-select-btn" data-select-id="preset-manager-select">
+                            <span class="pp-custom-select-label">请选择</span>
+                            <span class="world-app-select-btn-chevron">▾</span>
+                        </button>
                     </div>
                 </div>
                 <div class="pp-manager-actions">
@@ -1299,6 +1321,7 @@ export class PresetPanel {
             this.renderAllSections();
             window.dispatchEvent(new CustomEvent('preset-changed'));
         };
+        this.bindCustomSelect('preset-manager-select', this.managerEl);
 
         if (!enabledReadonly) {
             enabledCb.onchange = async () => {
@@ -1781,6 +1804,7 @@ export class PresetPanel {
             pos.innerHTML = opts.map(o => `<option value="${o.v}">${o.t}</option>`).join('');
             const fallbackPos = opts.some(o => o.v === EXT_PROMPT_TYPES.SYSTEM_DEPTH_1) ? EXT_PROMPT_TYPES.SYSTEM_DEPTH_1 : EXT_PROMPT_TYPES.IN_PROMPT;
             pos.value = String(p[cfg.positionKey] ?? fallbackPos);
+            const posWrap = this.wrapSelectWithCustomUI(pos, '注入位置');
 
             const depth = document.createElement('input');
             depth.id = `${cfg.idPrefix}-depth`;
@@ -1797,6 +1821,7 @@ export class PresetPanel {
                 <option value="${EXT_PROMPT_ROLES.ASSISTANT}">ASSISTANT</option>
             `;
             role.value = String(p[cfg.roleKey] ?? EXT_PROMPT_ROLES.SYSTEM);
+            const roleWrap = this.wrapSelectWithCustomUI(role, '角色');
 
             if (cfg.showPlacementControls === false) {
                 const fixedHint = document.createElement('div');
@@ -1804,19 +1829,24 @@ export class PresetPanel {
                 fixedHint.textContent = cfg.fixedHint || '固定注入位置';
                 body.appendChild(fixedHint);
             } else if (cfg.showDepthRole !== false) {
-                body.appendChild(this.renderInputRow([
-                    { label: '注入位置', el: pos },
+                const row = this.renderInputRow([
+                    { label: '注入位置', el: posWrap },
                     { label: '深度（IN_CHAT）', el: depth },
-                    { label: '角色（IN_CHAT）', el: role },
-                ]));
+                    { label: '角色（IN_CHAT）', el: roleWrap },
+                ]);
+                body.appendChild(row);
+                this.bindCustomSelect(pos.id, row);
+                this.bindCustomSelect(role.id, row);
             } else {
                 depth.disabled = true;
-                role.disabled = true;
-                body.appendChild(this.renderInputRow([
-                    { label: '注入位置', el: pos },
+                const row = this.renderInputRow([
+                    { label: '注入位置', el: posWrap },
                     { label: '深度（固定）', el: depth },
-                    { label: '角色（固定）', el: role },
-                ]));
+                    { label: '角色（固定）', el: roleWrap },
+                ]);
+                body.appendChild(row);
+                this.bindCustomSelect(pos.id, row);
+                this.bindCustomSelect(role.id, row);
             }
 
             body.appendChild(this.renderTextarea('规则内容', `${cfg.idPrefix}-rules`, p[cfg.rulesKey] || '', cfg.placeholder));
@@ -2037,6 +2067,7 @@ export class PresetPanel {
             <option value="${EXT_PROMPT_TYPES.NONE}">NONE（不注入）</option>
         `;
         pos.value = String(p.story_string_position ?? EXT_PROMPT_TYPES.IN_PROMPT);
+        const posWrap = this.wrapSelectWithCustomUI(pos, '注入位置');
 
         const depth = document.createElement('input');
         depth.id = 'context-depth'; depth.type = 'number'; depth.inputMode = 'numeric'; depth.min = '0';
@@ -2050,12 +2081,16 @@ export class PresetPanel {
             <option value="${EXT_PROMPT_ROLES.ASSISTANT}">ASSISTANT</option>
         `;
         role.value = String(p.story_string_role ?? EXT_PROMPT_ROLES.SYSTEM);
+        const roleWrap = this.wrapSelectWithCustomUI(role, '角色');
 
-        wrap.appendChild(this.renderInputRow([
-            { label: '注入位置', el: pos },
+        const ctxRow = this.renderInputRow([
+            { label: '注入位置', el: posWrap },
             { label: '深度（IN_CHAT）', el: depth },
-            { label: '角色（IN_CHAT）', el: role },
-        ]));
+            { label: '角色（IN_CHAT）', el: roleWrap },
+        ]);
+        wrap.appendChild(ctxRow);
+        this.bindCustomSelect('context-position', ctxRow);
+        this.bindCustomSelect('context-role', ctxRow);
 
         const exSep = document.createElement('input');
         exSep.id = 'context-example-sep'; exSep.type = 'text'; exSep.className = 'pp-input';
@@ -2395,11 +2430,16 @@ export class PresetPanel {
         };
 
         const chatTarget = makeTargetSelect('gen-response-target-chat', p.response_target_chat, 'character');
+        const chatTargetWrap = this.wrapSelectWithCustomUI(chatTarget, '回复视角');
         const rpTarget = makeTargetSelect('gen-response-target-rp', p.response_target_rp, 'user');
-        wrap.appendChild(this.renderInputRow([
-            { label: '聊天界面回复视角', el: chatTarget },
-            { label: 'RP界面回复视角', el: rpTarget },
-        ]));
+        const rpTargetWrap = this.wrapSelectWithCustomUI(rpTarget, '回复视角');
+        const targetRow = this.renderInputRow([
+            { label: '聊天界面回复视角', el: chatTargetWrap },
+            { label: 'RP界面回复视角', el: rpTargetWrap },
+        ]);
+        wrap.appendChild(targetRow);
+        this.bindCustomSelect('gen-response-target-chat', targetRow);
+        this.bindCustomSelect('gen-response-target-rp', targetRow);
 
         const makeMemoryDataPositionSelect = (id, value) => {
             const el = document.createElement('select');
@@ -2422,6 +2462,7 @@ export class PresetPanel {
         };
 
         const memoryDataPosition = makeMemoryDataPositionSelect('gen-memory-data-position', p.memory_data_position);
+        const memoryDataPosWrap = this.wrapSelectWithCustomUI(memoryDataPosition, '记忆表格位置');
         const memoryDataDepth = document.createElement('input');
         memoryDataDepth.id = 'gen-memory-data-depth';
         memoryDataDepth.className = 'pp-input';
@@ -2439,9 +2480,11 @@ export class PresetPanel {
         memoryHint.textContent = '动态记忆表格内容默认建议放在 history 后；写表指导位置可在下方单独控制。';
         wrap.appendChild(memoryHint);
 
-        wrap.appendChild(this.renderInputRow([
-            { label: '记忆表格内容位置', el: memoryDataPosition },
-        ]));
+        const memDataRow = this.renderInputRow([
+            { label: '记忆表格内容位置', el: memoryDataPosWrap },
+        ]);
+        wrap.appendChild(memDataRow);
+        this.bindCustomSelect('gen-memory-data-position', memDataRow);
 
         const memoryDepthRow = this.renderInputRow([
             { label: '记忆表格深度', el: memoryDataDepth },
@@ -2469,6 +2512,7 @@ export class PresetPanel {
         wrap.appendChild(guideHint);
 
         const memoryGuidePosition = makeMemoryDataPositionSelect('gen-memory-guide-position', p.memory_guide_position);
+        const memGuideWrap = this.wrapSelectWithCustomUI(memoryGuidePosition, '写表指导位置');
         const memoryGuideDepth = document.createElement('input');
         memoryGuideDepth.id = 'gen-memory-guide-depth';
         memoryGuideDepth.className = 'pp-input';
@@ -2481,9 +2525,11 @@ export class PresetPanel {
             memoryGuideDepth.value = String(safe);
         }
 
-        wrap.appendChild(this.renderInputRow([
-            { label: '写表指导位置', el: memoryGuidePosition },
-        ]));
+        const memGuideRow = this.renderInputRow([
+            { label: '写表指导位置', el: memGuideWrap },
+        ]);
+        wrap.appendChild(memGuideRow);
+        this.bindCustomSelect('gen-memory-guide-position', memGuideRow);
 
         const guideDepthRow = this.renderInputRow([
             { label: '写表指导深度', el: memoryGuideDepth },
@@ -2613,10 +2659,13 @@ export class PresetPanel {
                 nameInput.type = 'text'; nameInput.className = 'block-name pp-input';
                 nameInput.placeholder = '区块名称'; nameInput.value = pr?.name || title;
 
+                const roleSelId = `openai-block-role-${identifier.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
                 const roleSel = document.createElement('select');
+                roleSel.id = roleSelId;
                 roleSel.className = 'block-role pp-input';
                 roleSel.innerHTML = `<option value="system">system</option><option value="user">user</option><option value="assistant">assistant</option>`;
                 roleSel.value = roleName;
+                const roleSelWrapped = this.wrapSelectWithCustomUI(roleSel, 'role');
 
                 const sysChkWrap = document.createElement('label');
                 sysChkWrap.style.cssText = 'display:flex; align-items:center; gap:8px; font-size:13px; color:var(--app-text-secondary); cursor:pointer;';
@@ -2630,11 +2679,12 @@ export class PresetPanel {
                 leftCell.appendChild(nameInput);
                 const rightCell = document.createElement('div');
                 rightCell.style.cssText = 'flex:1; min-width:180px; display:flex; flex-direction:column; gap:8px;';
-                rightCell.appendChild(roleSel);
+                rightCell.appendChild(roleSelWrapped);
                 rightCell.appendChild(sysChkWrap);
                 metaRow.appendChild(leftCell);
                 metaRow.appendChild(rightCell);
                 body.appendChild(metaRow);
+                this.bindCustomSelect(roleSelId, metaRow);
 
                 const taId = `openai-block-content-${identifier.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
                 const taBlock = this.renderTextarea(identifier, taId, pr?.content || '', '');

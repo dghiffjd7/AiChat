@@ -5,6 +5,7 @@ import { getCharacterCardBoundUserId, getCharacterCardDisplayName, getCharacterC
 import { getDefaultAppIcon } from '../utils/default-icon.js';
 
 const DEFAULT_USER_BUBBLE_COLOR = '#E8F0FE';
+const USER_BUBBLE_COLOR_SWATCHES = ['#000000', '#1f2937', '#334155', '#475569', '#c9c9c9', '#f59e0b', '#dc2626', '#2563eb', '#10b981'];
 
 const normalizeHexColor = (value, fallback = DEFAULT_USER_BUBBLE_COLOR) => {
     const raw = String(value || '').trim();
@@ -145,9 +146,12 @@ export class UserPanel {
                     </div>
                     <div style="margin-bottom:15px;">
                         <label style="display:block; font-size:12px; color:var(--app-text-secondary); margin-bottom:5px;">用户气泡颜色</label>
-                        <div style="display:flex; align-items:center; gap:10px;">
-                            <input type="text" id="edit-bubble-color-input" value="#E8F0FE" style="flex:1; padding:10px; border:1px solid var(--app-border-default); border-radius:8px; box-sizing:border-box;">
-                            <input type="color" id="edit-bubble-color" value="#E8F0FE" style="width:44px; height:44px; border:1px solid var(--app-border-default); border-radius:8px; padding:0; cursor:pointer;">
+                        <div class="chat-setting-color-field">
+                            <div class="chat-setting-color-inputs" style="display:flex; align-items:center; gap:10px;">
+                                <input type="text" id="edit-bubble-color-input" value="#E8F0FE" style="flex:1; padding:10px; border:1px solid var(--app-border-default); border-radius:8px; box-sizing:border-box;">
+                                <button type="button" id="edit-bubble-color" class="color-picker" aria-label="用户气泡颜色快速切换"></button>
+                            </div>
+                            <div id="edit-bubble-color-swatches" class="chat-setting-color-swatches" aria-label="用户气泡颜色快速切换"></div>
                         </div>
                         <div style="margin-top:6px; font-size:11px; color:var(--app-text-muted);">仅影响“我”的气泡背景，字体颜色跟随聊天设置</div>
                     </div>
@@ -214,16 +218,69 @@ export class UserPanel {
 
         const bubbleInput = this.panel.querySelector('#edit-bubble-color-input');
         const bubblePicker = this.panel.querySelector('#edit-bubble-color');
-        bubblePicker?.addEventListener('input', (event) => {
-            const color = event.target?.value || DEFAULT_USER_BUBBLE_COLOR;
-            if (bubbleInput) bubbleInput.value = color;
+        this.renderBubbleColorSwatches();
+        bubblePicker?.addEventListener('click', (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            this.toggleBubbleColorSwatches();
         });
         bubbleInput?.addEventListener('input', (event) => {
-            const color = String(event.target?.value || '').trim();
-            if (/^#[0-9A-F]{6}$/i.test(color) && bubblePicker) {
-                bubblePicker.value = color;
+            this.setBubbleColorValue(String(event.target?.value || '').trim());
+        });
+        this.panel.addEventListener('click', (event) => {
+            if (!event.target.closest('#edit-bubble-color') && !event.target.closest('#edit-bubble-color-swatches')) {
+                this.closeBubbleColorSwatches();
             }
         });
+    }
+
+    setBubbleColorValue(value) {
+        const color = normalizeHexColor(value);
+        const bubbleInput = this.panel?.querySelector?.('#edit-bubble-color-input');
+        const bubblePicker = this.panel?.querySelector?.('#edit-bubble-color');
+        if (bubbleInput) bubbleInput.value = color;
+        if (bubblePicker) {
+            bubblePicker.dataset.color = color;
+            bubblePicker.style.setProperty('--color-picker-bg', color);
+        }
+        this.panel?.querySelectorAll?.('#edit-bubble-color-swatches .chat-setting-color-swatch')?.forEach?.((btn) => {
+            btn.classList.toggle('is-active', String(btn.dataset.color || '').toLowerCase() === color.toLowerCase());
+        });
+        return color;
+    }
+
+    closeBubbleColorSwatches() {
+        this.panel?.querySelector?.('#edit-bubble-color-swatches')?.classList?.remove('is-open');
+    }
+
+    toggleBubbleColorSwatches(force = null) {
+        const container = this.panel?.querySelector?.('#edit-bubble-color-swatches');
+        if (!container) return;
+        const willOpen = force == null ? !container.classList.contains('is-open') : Boolean(force);
+        container.classList.toggle('is-open', willOpen);
+    }
+
+    renderBubbleColorSwatches() {
+        const container = this.panel?.querySelector?.('#edit-bubble-color-swatches');
+        if (!container) return;
+        container.innerHTML = '';
+        USER_BUBBLE_COLOR_SWATCHES.forEach((color) => {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'chat-setting-color-swatch';
+            btn.dataset.color = color;
+            btn.title = color;
+            btn.setAttribute('aria-label', `用户气泡颜色 ${color}`);
+            btn.style.setProperty('--chat-swatch-bg', color);
+            btn.addEventListener('click', (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                this.setBubbleColorValue(color);
+                this.closeBubbleColorSwatches();
+            });
+            container.appendChild(btn);
+        });
+        this.setBubbleColorValue(this.panel?.querySelector?.('#edit-bubble-color-input')?.value || DEFAULT_USER_BUBBLE_COLOR);
     }
 
     updateInjectionUi() {
@@ -562,8 +619,7 @@ export class UserPanel {
             if (depthEl) depthEl.value = String(Number.isFinite(Number(user.depth)) ? Math.max(0, Math.trunc(Number(user.depth))) : 2);
             if (roleEl) roleEl.value = String(Number.isFinite(Number(user.role)) ? Math.max(0, Math.min(2, Math.trunc(Number(user.role)))) : 0);
             const bubble = normalizeHexColor(user.userBubbleColor);
-            if (bubbleInput) bubbleInput.value = bubble;
-            if (bubblePicker) bubblePicker.value = bubble;
+            this.setBubbleColorValue(bubble);
             this.updateAvatarPreview(user.avatar);
             if (deleteBtn) deleteBtn.style.display = this.store.getAll().length <= 1 ? 'none' : 'block';
             if (title) title.textContent = '编辑用户';
@@ -573,8 +629,7 @@ export class UserPanel {
             if (posEl) posEl.value = '0';
             if (depthEl) depthEl.value = '2';
             if (roleEl) roleEl.value = '0';
-            if (bubbleInput) bubbleInput.value = DEFAULT_USER_BUBBLE_COLOR;
-            if (bubblePicker) bubblePicker.value = DEFAULT_USER_BUBBLE_COLOR;
+            this.setBubbleColorValue(DEFAULT_USER_BUBBLE_COLOR);
             this.updateAvatarPreview('');
             if (deleteBtn) deleteBtn.style.display = 'none';
             if (title) title.textContent = '新建用户';

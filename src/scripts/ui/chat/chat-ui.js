@@ -3867,13 +3867,20 @@ export class ChatUI {
       window.addEventListener('keydown', e => {
         if (overlay.style.display !== 'none' && e.key === 'Escape') hide();
       });
-      saveBtn.addEventListener('click', () => {
+      saveBtn.addEventListener('click', async () => {
         const m = overlay.__chatappMessage;
-        if (!m || m.role !== 'assistant') return;
+        if (!m || m.role !== 'assistant' || typeof this.actionHandler !== 'function') return;
         const codeEl = overlay.querySelector('[data-role="code"]');
         const nextText = String(codeEl?.value ?? '');
-        this.actionHandler?.('edit-assistant-raw', m, { text: nextText, regexEditMode: false });
-        hide();
+        saveBtn.disabled = true;
+        closeBtn.disabled = true;
+        try {
+          await this.actionHandler('edit-assistant-raw', m, { text: nextText, regexEditMode: false });
+          hide();
+        } finally {
+          saveBtn.disabled = false;
+          closeBtn.disabled = false;
+        }
       });
 
       document.body.appendChild(overlay);

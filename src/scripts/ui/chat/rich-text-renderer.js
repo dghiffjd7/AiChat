@@ -3541,29 +3541,31 @@ const splitFencedCodeBlocks = (text) => {
     return out;
 };
 
-const collapseStreamingInteractiveTail = (text) => {
-    const src = String(text ?? '');
-    if (!src.includes('```')) return src;
-    const fenceCount = (src.match(/```/g) || []).length;
-    if (fenceCount % 2 === 0) return src;
-    const openerRe = /```([^\n`]*)\r?\n/g;
-    let opener = null;
-    let match;
-    while ((match = openerRe.exec(src))) opener = match;
-    if (!opener || !Number.isFinite(opener.index)) return src;
-    const tail = src.slice(opener.index);
-    const lang = String(opener[1] || '').trim().toLowerCase();
-    const htmlLike = /<(script|html|body|style|div|section|main|svg|iframe)\b/i.test(tail)
-        || /&lt;(script|html|body|style|div|section|main|svg|iframe)\b/i.test(tail);
-    const codeLikeLang = /^(html?|xml|jsx?|tsx?|vue|svelte)$/i.test(lang);
-    const largeTail = tail.length >= 1200;
-    if (!(htmlLike || codeLikeLang || largeTail)) return src;
-    const prefix = src.slice(0, opener.index).replace(/\s+$/, '');
-    const placeholder = '[交互卡片生成中，输出完成后自动渲染]';
-    return prefix ? `${prefix}\n\n${placeholder}` : placeholder;
-};
-
 const STREAMING_INTERACTIVE_CODE_PLACEHOLDER = '[已隐藏重型交互代码块，输出完成后自动渲染]';
+
+const splitWholeHtmlDocumentParts = (text) => {
+    const source = String(text ?? '');
+    if (!source.trim()) return null;
+    const openerRe = /<!doctype\s+html|<(script|body|html|iframe)\b/i;
+    const closeRe = /<\/(?:html|body|iframe|script)\s*>/ig;
+    const opener = openerRe.exec(source);
+    if (!opener || !Number.isFinite(opener.index)) return null;
+    let closer = null;
+    let match;
+    while ((match = closeRe.exec(source))) closer = match;
+    if (!closer || !Number.isFinite(closer.index)) return null;
+    const start = opener.index;
+    const end = closer.index + closer[0].length;
+    if (end <= start) return null;
+    const prefix = source.slice(0, start);
+    const code = source.slice(start, end);
+    const tail = source.slice(end);
+    const parts = [];
+    if (String(prefix || '').trim()) parts.push({ type: 'text', text: prefix });
+    if (String(code || '').trim()) parts.push({ type: 'code', lang: 'html', code });
+    if (String(tail || '').trim()) parts.push({ type: 'text', text: tail });
+    return parts.length ? parts : null;
+};
 
 const shouldHideStreamingSandboxCodeBlock = ({ lang, code } = {}) => {
     const source = String(code ?? '');
@@ -8406,7 +8408,7 @@ export const renderRichText = (
     containerEl.innerHTML = '';
 
     const STATUS_TOKEN = '__CHATAPP_STATUS__';
-    const rawText = streaming ? collapseStreamingInteractiveTail(String(text ?? '')) : String(text ?? '');
+    const rawText = String(text ?? '');
     const decodeHtmlEntities = (input) => {
         const s = String(input ?? '');
         if (!s.includes('&')) return s;
@@ -8452,10 +8454,13 @@ export const renderRichText = (
         .replace(/&lt;br\s*\/?&gt;/gi, '\n')
         .replace(/<br\s*\/?>/gi, '\n');
     const hasCodeFence = /```/.test(htmlCandidateText);
+    const wholeHtmlParts = streaming && !hasCodeFence && wholeLooksLikeHtml ? splitWholeHtmlDocumentParts(htmlCandidateText) : null;
     let parts = (hasCodeFence ? splitFencedCodeBlocks(htmlCandidateText)
-        : wholeLooksLikeHtml
-            ? [{ type: 'code', lang: 'html', code: trimmed }]
-            : [{ type: 'text', text: textWithBreaks }]);
+        : wholeHtmlParts?.length
+            ? wholeHtmlParts
+            : wholeLooksLikeHtml
+                ? [{ type: 'code', lang: 'html', code: trimmed }]
+                : [{ type: 'text', text: textWithBreaks }]);
     const hasInteractiveHtmlLikeText = (val) => {
         const raw = String(val || '');
         if (!raw) return false;
@@ -8485,7 +8490,7 @@ export const renderRichText = (
     if (hasCodeFence) {
         const firstCodeIdx = parts.findIndex(p => p.type === 'code' && (p.lang === 'html' || p.lang === 'htm'));
         const hasOtherCode = parts.some((p, idx) => p.type === 'code' && idx !== firstCodeIdx);
-        if (firstCodeIdx === 0 && !hasOtherCode) {
+        if (!streaming && firstCodeIdx === 0 && !hasOtherCode) {
             const tailText = parts
                 .slice(1)
                 .map(p => (p.type === 'text' ? p.text : ''))

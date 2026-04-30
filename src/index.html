@@ -321,13 +321,23 @@
         <div class="chat-setting-content">
           <div class="setting-item">
             <span>气泡颜色</span>
-            <input type="text" id="bubble-color-input" value="#c9c9c9" />
-            <input type="color" id="bubble-color" class="color-picker" value="#c9c9c9" />
+            <div class="chat-setting-color-field">
+              <div class="chat-setting-color-inputs">
+                <input type="text" id="bubble-color-input" value="#c9c9c9" />
+                <button type="button" id="bubble-color" class="color-picker" aria-label="气泡颜色快速切换"></button>
+              </div>
+              <div id="bubble-color-swatches" class="chat-setting-color-swatches" aria-label="气泡颜色快速切换"></div>
+            </div>
           </div>
           <div class="setting-item">
             <span>字体颜色</span>
-            <input type="text" id="text-color-input" value="#1F2937" />
-            <input type="color" id="text-color" class="color-picker" value="#1F2937" />
+            <div class="chat-setting-color-field">
+              <div class="chat-setting-color-inputs">
+                <input type="text" id="text-color-input" value="#1F2937" />
+                <button type="button" id="text-color" class="color-picker" aria-label="字体颜色快速切换"></button>
+              </div>
+              <div id="text-color-swatches" class="chat-setting-color-swatches" aria-label="字体颜色快速切换"></div>
+            </div>
           </div>
           <div class="setting-item setting-scope">
             <span>应用范围</span>

@@ -25,8 +25,10 @@
     "windows": [
       {
         "title": "Chat App",
-        "width": 390,
-        "height": 844,
+        "width": 1200,
+        "height": 800,
+        "minWidth": 480,
+        "minHeight": 600,
         "resizable": true,
         "fullscreen": false,
         "decorations": true,

@@ -1793,6 +1793,22 @@ body[data-theme-mode='dark'] .sticker-ai-preview img.is-selected {
   box-shadow: 0 0 0 2px rgba(121, 192, 255, 0.18) !important;
 }
 
+body[data-theme-mode='dark'] .sticker-ai-guide-stage {
+  background: linear-gradient(180deg, rgba(121, 192, 255, 0.08), rgba(205, 217, 229, 0.04)) !important;
+  border-color: var(--app-border-default) !important;
+}
+
+body[data-theme-mode='dark'] :is(.sticker-ai-guide-step, .sticker-ai-guide-rotation-box input[type='number']) {
+  background: rgba(205, 217, 229, 0.06) !important;
+  color: var(--app-text-primary) !important;
+  border-color: var(--app-border-default) !important;
+}
+
+body[data-theme-mode='dark'] .sticker-ai-guide-angle {
+  background: rgba(121, 192, 255, 0.14) !important;
+  color: #8ecbff !important;
+}
+
 body[data-theme-mode='dark'] .var-more-menu {
   background: linear-gradient(180deg, rgba(31, 36, 43, 0.98) 0%, rgba(38, 44, 52, 0.98) 100%) !important;
   border-color: var(--app-border-subtle) !important;
@@ -2571,6 +2587,14 @@ body[data-theme-mode='dark'] :is(.user-panel-shell, .persona-panel-shell) :is(
   border-color: var(--app-border-default) !important;
 }
 
+body[data-theme-mode='dark'] .user-panel-shell #user-edit-view .chat-setting-color-swatch {
+  background: transparent !important;
+}
+
+body[data-theme-mode='dark'] .user-panel-shell #user-edit-view #edit-bubble-color.color-picker {
+  background: rgba(205, 217, 229, 0.06) !important;
+}
+
 body[data-theme-mode='dark'] :is(.user-panel-shell, .persona-panel-shell) :is(
   #user-edit-view,
   #persona-edit-view
@@ -2950,8 +2974,8 @@ body[data-theme-mode='dark'] .wallpaper-drop.is-dragover {
 }
 
 body[data-theme-mode='dark'] :is(#chat-setting-preview, .wallpaper-preview-bubble) {
-  background: rgba(205, 217, 229, 0.12) !important;
-  color: var(--app-text-primary) !important;
+  background: var(--chat-setting-preview-bg, rgba(205, 217, 229, 0.12)) !important;
+  color: var(--chat-setting-preview-text, var(--app-text-primary)) !important;
 }
 
 body[data-theme-mode='dark'] :is(#random-setting-btn, #save-chat-settings-btn) {

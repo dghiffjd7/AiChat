@@ -32,6 +32,13 @@ import { UserStore } from '../storage/user-store.js';
 import { stickerPackStore } from '../storage/sticker-pack-store.js';
 import { normalizeScopeId } from '../storage/store-scope.js';
 import { avatarDataUrlFromFile, compressImageDataUrl, isGifFile } from '../utils/image.js';
+import {
+  buildGuideRects,
+  buildGuideStateFromSettings,
+  guideStateSignature,
+  moveGuideInState,
+  normalizeGuideState,
+} from '../utils/sticker-slice-guides.js';
 import { getCharacterCardBoundUserId as readCharacterCardBoundUserId, getCharacterCardDisplayName, getCharacterCardSource } from '../utils/character-card-display.js';
 import { logger } from '../utils/logger.js';
 import { buildNameWithBadgesHtml, escapeHtml, getContactBadges } from '../utils/name-badges.js';
@@ -6709,6 +6716,35 @@ Phase G（Frame 36）：循环衔接
         <div class="sticker-ai-status" id="sticker-ai-status"></div>
         <div class="sticker-ai-preview" id="sticker-ai-preview"></div>
 
+        <label class="sticker-ai-label">手动切线校正</label>
+        <div class="sticker-ai-guide-editor">
+          <div class="sticker-ai-guide-toolbar">
+            <div class="sticker-ai-guide-hint">拖拽蓝色切线微调切割区域，旋转用于校正整张图的轻微歪斜。</div>
+            <div class="sticker-ai-guide-actions">
+              <button type="button" class="sticker-ai-btn ghost" id="sticker-ai-guides-rebuild">重建切线</button>
+              <button type="button" class="sticker-ai-btn ghost" id="sticker-ai-guides-reset-rotation">重置角度</button>
+            </div>
+          </div>
+          <div class="sticker-ai-guide-stage" id="sticker-ai-guide-stage">
+            <div class="sticker-ai-guide-placeholder" id="sticker-ai-guide-placeholder">选择一张源图后，可直接拖动切线微调。</div>
+            <div class="sticker-ai-guide-media" id="sticker-ai-guide-media">
+              <img id="sticker-ai-guide-image" alt="切线编辑预览">
+              <svg id="sticker-ai-guide-overlay" class="sticker-ai-guide-overlay" aria-label="切线编辑器"></svg>
+            </div>
+          </div>
+          <div class="sticker-ai-guide-controls">
+            <label>网格旋转
+              <input type="range" id="sticker-ai-guide-rotation" min="-180" max="180" step="0.1" value="0">
+            </label>
+            <div class="sticker-ai-guide-rotation-box">
+              <button type="button" class="sticker-ai-guide-step" id="sticker-ai-guide-rotate-minus">-1</button>
+              <input type="number" id="sticker-ai-guide-rotation-input" min="-180" max="180" step="0.1" value="0">
+              <button type="button" class="sticker-ai-guide-step" id="sticker-ai-guide-rotate-plus">+1</button>
+              <div class="sticker-ai-guide-angle" id="sticker-ai-guide-angle">0.0°</div>
+            </div>
+          </div>
+        </div>
+
         <label class="sticker-ai-label">切割设置</label>
         <div class="sticker-ai-slice-settings">
           <label>行数<input type="number" id="sticker-ai-rows" min="1" value="4"></label>
@@ -6779,6 +6815,18 @@ Phase G（Frame 36）：循环衔接
     const finalInput = modal.querySelector('#sticker-ai-final');
     const statusEl = modal.querySelector('#sticker-ai-status');
     const previewEl = modal.querySelector('#sticker-ai-preview');
+    const guideStageEl = modal.querySelector('#sticker-ai-guide-stage');
+    const guidePlaceholderEl = modal.querySelector('#sticker-ai-guide-placeholder');
+    const guideMediaEl = modal.querySelector('#sticker-ai-guide-media');
+    const guideImageEl = modal.querySelector('#sticker-ai-guide-image');
+    const guideOverlayEl = modal.querySelector('#sticker-ai-guide-overlay');
+    const guideRotationInput = modal.querySelector('#sticker-ai-guide-rotation');
+    const guideRotationNumberInput = modal.querySelector('#sticker-ai-guide-rotation-input');
+    const guideRotateMinusBtn = modal.querySelector('#sticker-ai-guide-rotate-minus');
+    const guideRotatePlusBtn = modal.querySelector('#sticker-ai-guide-rotate-plus');
+    const guideAngleEl = modal.querySelector('#sticker-ai-guide-angle');
+    const guidesRebuildBtn = modal.querySelector('#sticker-ai-guides-rebuild');
+    const guidesResetRotationBtn = modal.querySelector('#sticker-ai-guides-reset-rotation');
     const continueBtn = modal.querySelector('#sticker-ai-continue');
     const refAddBtn = modal.querySelector('#sticker-ai-ref-add');
     const refListEl = modal.querySelector('#sticker-ai-ref-list');
@@ -6825,8 +6873,13 @@ Phase G（Frame 36）：循环衔接
     let animPreviewFrameIndex = 0;
     const sliceSettingsCacheByMode = { sticker: new Map(), sprite: new Map() };
     const autoSliceCacheByMode = { sticker: new Map(), sprite: new Map() };
+    const manualGuideCacheByMode = { sticker: new Map(), sprite: new Map() };
     let sliceSettingsCache = sliceSettingsCacheByMode.sticker;
     let autoSliceCache = autoSliceCacheByMode.sticker;
+    let manualGuideCache = manualGuideCacheByMode.sticker;
+    let guideEditorImageInfo = null;
+    let guideEditorLoadToken = 0;
+    let guideDragState = null;
 
     const loadStickerAiState = () => {
       try {
@@ -7208,12 +7261,19 @@ Phase G（Frame 36）：循环衔接
       };
     };
 
+    const normalizeManualGuideEntry = (value) => {
+      const normalized = normalizeGuideState(value);
+      return normalized?.enabled === false ? { ...normalized, enabled: false } : normalized;
+    };
+
     const setModeCaches = (mode) => {
       const key = mode === 'sprite' ? 'sprite' : 'sticker';
       if (!sliceSettingsCacheByMode[key]) sliceSettingsCacheByMode[key] = new Map();
       if (!autoSliceCacheByMode[key]) autoSliceCacheByMode[key] = new Map();
+      if (!manualGuideCacheByMode[key]) manualGuideCacheByMode[key] = new Map();
       sliceSettingsCache = sliceSettingsCacheByMode[key];
       autoSliceCache = autoSliceCacheByMode[key];
+      manualGuideCache = manualGuideCacheByMode[key];
     };
 
     const restoreSliceSettingsCache = (sliceSettings, mode = stickerAiMode) => {
@@ -7238,6 +7298,28 @@ Phase G（Frame 36）：循环衔接
       return payload;
     };
 
+    const restoreManualGuideCache = (manualGuides, mode = stickerAiMode) => {
+      const target = new Map();
+      const raw = manualGuides && typeof manualGuides === 'object' ? manualGuides : null;
+      if (raw) {
+        Object.entries(raw).forEach(([key, value]) => {
+          const normalized = normalizeManualGuideEntry(value);
+          if (normalized) target.set(key, normalized);
+        });
+      }
+      manualGuideCacheByMode[mode] = target;
+      if (mode === stickerAiMode) manualGuideCache = target;
+    };
+
+    const serializeManualGuideCache = () => {
+      const payload = {};
+      manualGuideCache.forEach((value, key) => {
+        const normalized = normalizeManualGuideEntry(value);
+        if (normalized) payload[key] = normalized;
+      });
+      return payload;
+    };
+
     const pruneSliceSettingsCache = (images = []) => {
       const keys = new Set();
       images.forEach((item, idx) => {
@@ -7245,6 +7327,16 @@ Phase G（Frame 36）：循环衔接
       });
       sliceSettingsCache.forEach((_, key) => {
         if (!keys.has(key)) sliceSettingsCache.delete(key);
+      });
+    };
+
+    const pruneManualGuideCache = (images = []) => {
+      const keys = new Set();
+      images.forEach((item, idx) => {
+        keys.add(getStickerAiImageKey(item, idx));
+      });
+      manualGuideCache.forEach((_, key) => {
+        if (!keys.has(key)) manualGuideCache.delete(key);
       });
     };
 
@@ -7263,6 +7355,26 @@ Phase G（Frame 36）：循环衔接
       sliceSettingsCache.set(key, normalized);
     };
 
+    const getCurrentManualGuideState = () => {
+      const key = getCurrentStickerAiImageKey();
+      if (!key) return null;
+      return normalizeManualGuideEntry(manualGuideCache.get(key));
+    };
+
+    const rememberManualGuideState = (state) => {
+      const key = getCurrentStickerAiImageKey();
+      if (!key) return;
+      const normalized = normalizeManualGuideEntry(state);
+      if (!normalized) return;
+      manualGuideCache.set(key, normalized);
+    };
+
+    const clearCurrentManualGuideState = () => {
+      const key = getCurrentStickerAiImageKey();
+      if (!key) return;
+      manualGuideCache.delete(key);
+    };
+
     const normalizeAssetState = (asset) => {
       const normalized = asset && typeof asset === 'object' ? asset : {};
       const images = Array.isArray(normalized.generated) ? normalized.generated.map(normalizeStickerAiImage) : [];
@@ -7277,6 +7389,7 @@ Phase G（Frame 36）：循环衔接
         slices: filteredSlices,
         selectedIndex: Math.max(0, Math.min(maxIndex, nextIndex)),
         sliceSettings: normalized.sliceSettings && typeof normalized.sliceSettings === 'object' ? normalized.sliceSettings : {},
+        manualGuides: normalized.manualGuides && typeof normalized.manualGuides === 'object' ? normalized.manualGuides : {},
       };
     };
     const getAssetStateFromState = (state, mode) => {
@@ -7299,6 +7412,7 @@ Phase G（Frame 36）：循环衔接
       slices: sliceItems.map(serializeStickerAiSlice),
       selectedIndex: selectedGeneratedIndex,
       sliceSettings: serializeSliceSettingsCache(),
+      manualGuides: serializeManualGuideCache(),
     });
     const writeAssetStateForMode = (state, mode, assetState) => {
       if (!state || typeof state !== 'object') return;
@@ -7309,6 +7423,7 @@ Phase G（Frame 36）：循环衔接
         state.slices = assetState.slices;
         state.selectedIndex = assetState.selectedIndex;
         state.sliceSettings = assetState.sliceSettings;
+        state.manualGuides = assetState.manualGuides;
       }
     };
     const applyAssetState = (assetState, mode) => {
@@ -7318,7 +7433,9 @@ Phase G（Frame 36）：循环衔接
       sliceItems = normalized.slices;
       selectedGeneratedIndex = normalized.selectedIndex;
       restoreSliceSettingsCache(normalized.sliceSettings, mode);
+      restoreManualGuideCache(normalized.manualGuides, mode);
       pruneSliceSettingsCache(generatedImages);
+      pruneManualGuideCache(generatedImages);
       sliceSettingsTouched = false;
       lastSlicePreviewKey = '';
     };
@@ -7466,6 +7583,7 @@ Phase G（Frame 36）：循环衔接
       setModeCaches(stickerAiMode);
       sliceSettingsCache.clear();
       autoSliceCache.clear();
+      manualGuideCache.clear();
       lastSlicePreviewKey = '';
       sliceSettingsTouched = false;
       const prevState = loadStickerAiState() || {};
@@ -7598,6 +7716,12 @@ Phase G（Frame 36）：循环衔接
       if (autoSliceBtn) autoSliceBtn.disabled = busy;
       if (saveBtn) saveBtn.disabled = busy;
       if (downloadZipBtn) downloadZipBtn.disabled = busy;
+      if (guideRotationInput) guideRotationInput.disabled = busy;
+      if (guideRotationNumberInput) guideRotationNumberInput.disabled = busy;
+      if (guideRotateMinusBtn) guideRotateMinusBtn.disabled = busy;
+      if (guideRotatePlusBtn) guideRotatePlusBtn.disabled = busy;
+      if (guidesRebuildBtn) guidesRebuildBtn.disabled = busy;
+      if (guidesResetRotationBtn) guidesResetRotationBtn.disabled = busy;
     };
 
     const updateStateFromStickerInputs = state => {
@@ -7743,11 +7867,15 @@ Phase G（Frame 36）：循环衔接
         setModeCaches(stickerAiMode);
         sliceSettingsCache.clear();
         autoSliceCache.clear();
+        manualGuideCache.clear();
         applySliceDefaultsForMode(stickerAiMode);
         renderSliceList();
       }
       previewEl.innerHTML = '';
-      if (!generatedImages.length) return;
+      if (!generatedImages.length) {
+        loadGuideEditorForCurrentSelection();
+        return;
+      }
       generatedImages.forEach((item, idx) => {
         const src = getStickerAiImageSource(item);
         if (!src) return;
@@ -7790,6 +7918,198 @@ Phase G（Frame 36）：循环衔接
       if (Array.isArray(items) && generatedImages.length) {
         scheduleSlicePreview({ immediate: true, auto: true });
       }
+      loadGuideEditorForCurrentSelection();
+    };
+
+    const updateGuideRotationUI = (value = 0) => {
+      const raw = Number(value);
+      const safe = Number.isFinite(raw) ? Math.max(-180, Math.min(180, raw)) : 0;
+      if (guideRotationInput) guideRotationInput.value = String(safe);
+      if (guideRotationNumberInput) guideRotationNumberInput.value = String(safe);
+      if (guideAngleEl) guideAngleEl.textContent = `${safe.toFixed(1)}°`;
+    };
+
+    const setGuideRotationValue = (value, { commit = false } = {}) => {
+      const current = getCurrentManualGuideState();
+      const safe = Number.isFinite(Number(value)) ? Math.max(-180, Math.min(180, Number(value))) : 0;
+      if (!current) {
+        updateGuideRotationUI(safe);
+        return;
+      }
+      const next = { ...current, rotation: safe };
+      rememberManualGuideState(next);
+      sliceSettingsTouched = true;
+      renderGuideEditor(guideEditorImageInfo);
+      if (commit) {
+        scheduleSliceSettingsSave(true);
+        scheduleSlicePreview({ immediate: true, auto: false });
+      } else {
+        scheduleSliceSettingsSave();
+      }
+    };
+
+    const getGuideSettingsShape = () => {
+      const settings = readSliceSettings();
+      return {
+        rows: Math.max(1, Number(settings.rows) || 1),
+        cols: Math.max(1, Number(settings.cols) || 1),
+      };
+    };
+
+    const isGuideStateCompatible = (state, imageInfo) => {
+      const normalized = normalizeGuideState(state);
+      if (!normalized || !imageInfo) return false;
+      const { rows, cols } = getGuideSettingsShape();
+      return normalized.width === imageInfo.width
+        && normalized.height === imageInfo.height
+        && normalized.xGuides.length === cols + 1
+        && normalized.yGuides.length === rows + 1;
+    };
+
+    const buildGuideStateForSelection = (imageInfo, { preserveRotation = true } = {}) => {
+      if (!imageInfo) return null;
+      const settings = readSliceSettings();
+      const current = preserveRotation ? getCurrentManualGuideState() : null;
+      return buildGuideStateFromSettings({
+        width: imageInfo.width,
+        height: imageInfo.height,
+        rows: settings.rows,
+        cols: settings.cols,
+        margin: settings.margin,
+        gap: settings.gap,
+        rotation: current?.rotation || 0,
+      });
+    };
+
+    const ensureGuideStateForSelection = (imageInfo, { forceFromSettings = false, preserveRotation = true } = {}) => {
+      if (!imageInfo) return null;
+      const current = getCurrentManualGuideState();
+      if (!forceFromSettings && isGuideStateCompatible(current, imageInfo)) return current;
+      const next = buildGuideStateForSelection(imageInfo, { preserveRotation });
+      if (next) rememberManualGuideState(next);
+      return next;
+    };
+
+    const layoutGuideEditorMedia = (imageInfo, guideState) => {
+      if (!guideStageEl || !guideMediaEl || !guideImageEl || !guideOverlayEl || !imageInfo) return;
+      const rect = guideStageEl.getBoundingClientRect();
+      const maxW = Math.max(120, rect.width - 12);
+      const maxH = Math.max(120, rect.height - 12);
+      const scale = Math.max(0.01, Math.min(maxW / imageInfo.width, maxH / imageInfo.height));
+      guideMediaEl.style.width = `${Math.round(imageInfo.width * scale)}px`;
+      guideMediaEl.style.height = `${Math.round(imageInfo.height * scale)}px`;
+      guideImageEl.style.transform = `rotate(${Number(guideState?.rotation || 0)}deg)`;
+      guideOverlayEl.setAttribute('viewBox', `0 0 ${imageInfo.width} ${imageInfo.height}`);
+    };
+
+    const paintGuideOverlay = (guideState, imageInfo) => {
+      if (!guideOverlayEl || !guideMediaEl || !guideImageEl || !guidePlaceholderEl) return;
+      if (!guideState || !imageInfo) {
+        guideOverlayEl.innerHTML = '';
+        guideMediaEl.classList.remove('is-active');
+        guidePlaceholderEl.style.display = 'flex';
+        return;
+      }
+      layoutGuideEditorMedia(imageInfo, guideState);
+      guideOverlayEl.innerHTML = '';
+      guidePlaceholderEl.style.display = 'none';
+      guideMediaEl.classList.add('is-active');
+      const createLine = (axis, index, value, isEdge) => {
+        const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+        line.setAttribute('class', `sticker-ai-guide-line ${axis === 'x' ? 'is-vertical' : 'is-horizontal'}${isEdge ? ' is-edge' : ''}`);
+        if (axis === 'x') {
+          line.setAttribute('x1', String(value));
+          line.setAttribute('x2', String(value));
+          line.setAttribute('y1', '0');
+          line.setAttribute('y2', String(imageInfo.height));
+        } else {
+          line.setAttribute('x1', '0');
+          line.setAttribute('x2', String(imageInfo.width));
+          line.setAttribute('y1', String(value));
+          line.setAttribute('y2', String(value));
+        }
+        line.dataset.axis = axis;
+        line.dataset.index = String(index);
+        guideOverlayEl.appendChild(line);
+      };
+      guideState.xGuides.forEach((value, index) => createLine('x', index, value, index === 0 || index === guideState.xGuides.length - 1));
+      guideState.yGuides.forEach((value, index) => createLine('y', index, value, index === 0 || index === guideState.yGuides.length - 1));
+    };
+
+    const renderGuideEditor = (imageInfo = guideEditorImageInfo) => {
+      const state = ensureGuideStateForSelection(imageInfo);
+      updateGuideRotationUI(state?.rotation || 0);
+      paintGuideOverlay(state, imageInfo);
+    };
+
+    const loadGuideEditorForCurrentSelection = async () => {
+      if (!guideImageEl || !guideOverlayEl || !guidePlaceholderEl || !guideMediaEl) return;
+      const current = generatedImages[selectedGeneratedIndex];
+      const source = getStickerAiImageSource(current);
+      if (!source) {
+        guideEditorLoadToken += 1;
+        guideEditorImageInfo = null;
+        updateGuideRotationUI(0);
+        paintGuideOverlay(null, null);
+        return;
+      }
+      const token = ++guideEditorLoadToken;
+      try {
+        const img = await loadImageElement(source);
+        if (token !== guideEditorLoadToken) return;
+        guideEditorImageInfo = {
+          src: source,
+          width: img.naturalWidth || img.width || 1,
+          height: img.naturalHeight || img.height || 1,
+        };
+        if (guideImageEl.src !== source) guideImageEl.src = source;
+        renderGuideEditor(guideEditorImageInfo);
+      } catch {
+        if (token !== guideEditorLoadToken) return;
+        guideEditorImageInfo = null;
+        updateGuideRotationUI(0);
+        paintGuideOverlay(null, null);
+      }
+    };
+
+    const getGuidePointerPoint = event => {
+      if (!guideOverlayEl || !guideEditorImageInfo) return null;
+      const rect = guideOverlayEl.getBoundingClientRect();
+      if (!rect.width || !rect.height) return null;
+      if (typeof guideOverlayEl.createSVGPoint === 'function' && typeof guideOverlayEl.getScreenCTM === 'function') {
+        const pt = guideOverlayEl.createSVGPoint();
+        pt.x = event.clientX;
+        pt.y = event.clientY;
+        const ctm = guideOverlayEl.getScreenCTM();
+        if (ctm) {
+          const local = pt.matrixTransform(ctm.inverse());
+          return { x: local.x, y: local.y };
+        }
+      }
+      const x = ((event.clientX - rect.left) / rect.width) * guideEditorImageInfo.width;
+      const y = ((event.clientY - rect.top) / rect.height) * guideEditorImageInfo.height;
+      return { x, y };
+    };
+
+    const findNearestGuide = point => {
+      const state = getCurrentManualGuideState();
+      if (!state || !point || !guideOverlayEl) return null;
+      const rect = guideOverlayEl.getBoundingClientRect();
+      if (!rect.width || !rect.height) return null;
+      const thresholdX = Math.max(8, (14 * state.width) / rect.width);
+      const thresholdY = Math.max(8, (14 * state.height) / rect.height);
+      let best = null;
+      state.xGuides.forEach((value, index) => {
+        const dist = Math.abs(point.x - value);
+        if (dist > thresholdX) return;
+        if (!best || dist < best.distance) best = { axis: 'x', index, distance: dist };
+      });
+      state.yGuides.forEach((value, index) => {
+        const dist = Math.abs(point.y - value);
+        if (dist > thresholdY) return;
+        if (!best || dist < best.distance) best = { axis: 'y', index, distance: dist };
+      });
+      return best;
     };
 
     const renderReferenceList = () => {
@@ -8295,7 +8615,7 @@ Phase G（Frame 36）：循环衔接
       return Object.keys(result).length ? result : null;
     };
 
-    const buildSlicePreviewKey = (imageKey, settings) => [
+    const buildSlicePreviewKey = (imageKey, settings, guideState = null) => [
       imageKey,
       settings.rows,
       settings.cols,
@@ -8304,6 +8624,7 @@ Phase G（Frame 36）：循环衔接
       settings.tolerance,
       settings.shrink,
       settings.feather,
+      guideStateSignature(guideState),
     ].join('|');
 
     const buildBackgroundMask = (data, width, height, baseColor, tolerance) => {
@@ -8398,6 +8719,69 @@ Phase G（Frame 36）：循环衔接
         }
       }
       return imageData;
+    };
+
+    const rotateSliceCanvas = (sourceCanvas, rotation) => {
+      const angle = Number(rotation) || 0;
+      if (Math.abs(angle) < 0.01) return sourceCanvas;
+      const outCanvas = document.createElement('canvas');
+      outCanvas.width = sourceCanvas.width;
+      outCanvas.height = sourceCanvas.height;
+      const outCtx = outCanvas.getContext('2d');
+      outCtx.translate(outCanvas.width / 2, outCanvas.height / 2);
+      outCtx.rotate((angle * Math.PI) / 180);
+      outCtx.drawImage(sourceCanvas, -sourceCanvas.width / 2, -sourceCanvas.height / 2);
+      return outCanvas;
+    };
+
+    const sliceStickerSheetByGuides = (canvas, guideState, options = {}) => {
+      const normalized = normalizeGuideState(guideState, { width: canvas.width, height: canvas.height });
+      if (!normalized) throw new Error('手动切线不可用');
+      const keepFullFrame = Boolean(options.keepFullFrame);
+      const rects = buildGuideRects(normalized);
+      if (!rects.length) return [];
+      const ctx = canvas.getContext('2d');
+      const slices = [];
+      rects.forEach((rect) => {
+        const cellData = ctx.getImageData(rect.x, rect.y, rect.width, rect.height);
+        let minX = rect.width;
+        let minY = rect.height;
+        let maxX = -1;
+        let maxY = -1;
+        for (let cy = 0; cy < rect.height; cy++) {
+          for (let cx = 0; cx < rect.width; cx++) {
+            const idx = (cy * rect.width + cx) * 4 + 3;
+            if (cellData.data[idx] > 5) {
+              if (cx < minX) minX = cx;
+              if (cy < minY) minY = cy;
+              if (cx > maxX) maxX = cx;
+              if (cy > maxY) maxY = cy;
+            }
+          }
+        }
+        if (maxX < 0) return;
+        const trimW = maxX - minX + 1;
+        const trimH = maxY - minY + 1;
+        const cellCanvas = document.createElement('canvas');
+        cellCanvas.width = rect.width;
+        cellCanvas.height = rect.height;
+        const cellCtx = cellCanvas.getContext('2d');
+        cellCtx.putImageData(cellData, 0, 0);
+        const outCanvas = document.createElement('canvas');
+        outCanvas.width = trimW;
+        outCanvas.height = trimH;
+        const outCtx = outCanvas.getContext('2d');
+        outCtx.drawImage(cellCanvas, minX, minY, trimW, trimH, 0, 0, trimW, trimH);
+        slices.push({
+          dataUrl: outCanvas.toDataURL('image/png'),
+          fullDataUrl: keepFullFrame ? cellCanvas.toDataURL('image/png') : '',
+          name: '',
+          keyword: '',
+          defaultName: `贴图${slices.length + 1}`,
+          selected: true,
+        });
+      });
+      return slices;
     };
 
     const sliceStickerSheet = (canvas, settings, options = {}) => {
@@ -8498,28 +8882,37 @@ Phase G（Frame 36）：循环衔接
           if (autoSettings) applySliceSettings(autoSettings);
         }
         const settings = readSliceSettings();
+        const manualGuideState = ensureGuideStateForSelection(
+          { src: source, width: canvas.width, height: canvas.height },
+          { forceFromSettings: false, preserveRotation: true },
+        );
         rememberSliceSettings(settings);
         scheduleSliceSettingsSave(true);
-        const previewKey = buildSlicePreviewKey(imageKey, settings);
+        const previewKey = buildSlicePreviewKey(imageKey, settings, manualGuideState);
         if (silent && previewKey === lastSlicePreviewKey) return;
         const baseColor = sampleCornerColor(imageData.data, canvas.width, canvas.height, 6);
         const mask = buildBackgroundMask(imageData.data, canvas.width, canvas.height, baseColor, settings.tolerance);
         const refinedMask = dilateMask(mask, canvas.width, canvas.height, settings.shrink);
         const processed = applyMaskToImage(imageData, refinedMask, canvas.width, canvas.height, settings.feather);
         ctx.putImageData(processed, 0, 0);
-        sliceItems = sliceStickerSheet(
-          canvas,
-          {
-            rows: settings.rows,
-            cols: settings.cols,
-            margin: settings.margin,
-            gap: settings.gap,
-            alphaThreshold: 5,
-          },
-          {
-            keepFullFrame: stickerAiMode === 'sprite',
-          },
-        );
+        const workingCanvas = manualGuideState ? rotateSliceCanvas(canvas, manualGuideState.rotation) : canvas;
+        sliceItems = manualGuideState
+          ? sliceStickerSheetByGuides(workingCanvas, manualGuideState, {
+              keepFullFrame: stickerAiMode === 'sprite',
+            })
+          : sliceStickerSheet(
+              workingCanvas,
+              {
+                rows: settings.rows,
+                cols: settings.cols,
+                margin: settings.margin,
+                gap: settings.gap,
+                alphaThreshold: 5,
+              },
+              {
+                keepFullFrame: stickerAiMode === 'sprite',
+              },
+            );
         renderSliceList();
         await persistStickerAiSlices(sliceItems);
         if (!silent) setStatus(`切割完成：${sliceItems.length} 张`, 'success');
@@ -8576,6 +8969,11 @@ Phase G（Frame 36）：循环衔接
         autoSliceCache.set(imageKey, autoSettings);
         applySliceSettings(autoSettings);
         sliceSettingsTouched = true;
+        ensureGuideStateForSelection(
+          { src: source, width: canvas.width, height: canvas.height },
+          { forceFromSettings: true, preserveRotation: true },
+        );
+        renderGuideEditor({ src: source, width: canvas.width, height: canvas.height });
         rememberSliceSettings(readSliceSettings());
         scheduleSliceSettingsSave(true);
         lastSlicePreviewKey = '';
@@ -9127,10 +9525,110 @@ Phase G（Frame 36）：循环衔接
     saveBtn?.addEventListener('click', () => handleSaveSlices());
     closeBtn?.addEventListener('click', () => hide());
 
-    const handleSliceSettingsInput = () => {
+    const rebuildGuidesFromCurrentSettings = ({ preserveRotation = true } = {}) => {
+      if (!guideEditorImageInfo) return null;
+      const next = ensureGuideStateForSelection(guideEditorImageInfo, {
+        forceFromSettings: true,
+        preserveRotation,
+      });
+      if (next) {
+        renderGuideEditor(guideEditorImageInfo);
+        scheduleSliceSettingsSave(true);
+      }
+      return next;
+    };
+
+    const handleGuidePointerDown = event => {
+      const point = getGuidePointerPoint(event);
+      const hit = findNearestGuide(point);
+      if (!point || !hit) return;
+      guideDragState = {
+        axis: hit.axis,
+        index: hit.index,
+        pointerId: event.pointerId,
+      };
+      guideOverlayEl?.setPointerCapture?.(event.pointerId);
+      guideOverlayEl?.classList.add('is-dragging');
+      event.preventDefault();
+    };
+
+    const handleGuidePointerMove = event => {
+      if (!guideDragState) return;
+      const point = getGuidePointerPoint(event);
+      const current = getCurrentManualGuideState();
+      if (!point || !current) return;
+      const nextValue = guideDragState.axis === 'x' ? point.x : point.y;
+      const next = moveGuideInState(current, guideDragState.axis, guideDragState.index, nextValue);
+      if (!next) return;
+      guideDragState = { ...guideDragState };
+      rememberManualGuideState(next);
+      sliceSettingsTouched = true;
+      paintGuideOverlay(next, guideEditorImageInfo);
+      updateGuideRotationUI(next.rotation);
+      event.preventDefault();
+    };
+
+    const finalizeGuideDrag = event => {
+      if (!guideDragState) return;
+      if (event?.pointerId != null) {
+        guideOverlayEl?.releasePointerCapture?.(event.pointerId);
+      }
+      guideOverlayEl?.classList.remove('is-dragging');
+      guideDragState = null;
+      scheduleSliceSettingsSave(true);
+      scheduleSlicePreview({ immediate: true, auto: false });
+    };
+
+    guideOverlayEl?.addEventListener('pointerdown', handleGuidePointerDown);
+    guideOverlayEl?.addEventListener('pointermove', handleGuidePointerMove);
+    guideOverlayEl?.addEventListener('pointerup', finalizeGuideDrag);
+    guideOverlayEl?.addEventListener('pointercancel', finalizeGuideDrag);
+    guideOverlayEl?.addEventListener('pointerleave', event => {
+      if (guideDragState) finalizeGuideDrag(event);
+    });
+
+    guideRotationInput?.addEventListener('input', event => {
+      setGuideRotationValue(event.target?.value, { commit: false });
+    });
+    guideRotationInput?.addEventListener('change', event => {
+      setGuideRotationValue(event.target?.value, { commit: true });
+    });
+    guideRotationNumberInput?.addEventListener('input', event => {
+      setGuideRotationValue(event.target?.value, { commit: false });
+    });
+    guideRotationNumberInput?.addEventListener('change', event => {
+      setGuideRotationValue(event.target?.value, { commit: true });
+    });
+    guideRotateMinusBtn?.addEventListener('click', () => {
+      const current = getCurrentManualGuideState();
+      const next = (current?.rotation || 0) - 1;
+      setGuideRotationValue(next, { commit: true });
+    });
+    guideRotatePlusBtn?.addEventListener('click', () => {
+      const current = getCurrentManualGuideState();
+      const next = (current?.rotation || 0) + 1;
+      setGuideRotationValue(next, { commit: true });
+    });
+    guidesRebuildBtn?.addEventListener('click', () => {
+      rebuildGuidesFromCurrentSettings({ preserveRotation: true });
+      scheduleSlicePreview({ immediate: true, auto: false });
+    });
+    guidesResetRotationBtn?.addEventListener('click', () => {
+      const current = getCurrentManualGuideState();
+      if (!current) return;
+      rememberManualGuideState({ ...current, rotation: 0 });
+      renderGuideEditor(guideEditorImageInfo);
+      scheduleSliceSettingsSave(true);
+      scheduleSlicePreview({ immediate: true, auto: false });
+    });
+
+    const handleSliceSettingsInput = event => {
       if (!suppressSliceSettingsTouch) sliceSettingsTouched = true;
       const settings = readSliceSettings();
       rememberSliceSettings(settings);
+      if (event?.target === rowsInput || event?.target === colsInput || event?.target === marginInput || event?.target === gapInput) {
+        rebuildGuidesFromCurrentSettings({ preserveRotation: true });
+      }
       scheduleSliceSettingsSave();
       scheduleSlicePreview({ auto: false });
     };
@@ -9153,6 +9651,10 @@ Phase G（Frame 36）：循环衔接
         const target = String(btn.dataset.target || '');
         openZoom(target);
       });
+    });
+
+    window.addEventListener('resize', () => {
+      if (guideEditorImageInfo) renderGuideEditor(guideEditorImageInfo);
     });
 
     document.body.appendChild(overlay);
@@ -11460,6 +11962,8 @@ Phase G（Frame 36）：循环衔接
   const bubbleColorPicker = document.getElementById('bubble-color');
   const textColorInput = document.getElementById('text-color-input');
   const textColorPicker = document.getElementById('text-color');
+  const bubbleColorSwatches = document.getElementById('bubble-color-swatches');
+  const textColorSwatches = document.getElementById('text-color-swatches');
   const chatWallpaperFile = document.getElementById('chat-wallpaper-file');
   const chatWallpaperDrop = document.getElementById('chat-wallpaper-drop');
   const chatWallpaperStatus = document.getElementById('wallpaper-status');
@@ -20706,6 +21210,32 @@ Phase G（Frame 36）：循环衔接
           };
         }
       }
+      const sourceMeta = message?.meta && typeof message.meta === 'object' ? message.meta : null;
+      const sourceSwipes = Array.isArray(sourceMeta?.swipes) ? sourceMeta.swipes : null;
+      if (sourceSwipes?.length) {
+        const swipes = sourceSwipes.map((entry) => (entry && typeof entry === 'object' ? { ...entry } : {}));
+        const rawIndex = Math.trunc(Number(sourceMeta?.activeSwipe));
+        const activeIndex = Number.isFinite(rawIndex)
+          ? Math.min(Math.max(0, rawIndex), swipes.length - 1)
+          : Math.max(0, swipes.length - 1);
+        const activeBranch = swipes[activeIndex] || {};
+        swipes[activeIndex] = {
+          ...activeBranch,
+          rawOriginal: next,
+          rawSource: typeof updater?.rawSource === 'string' ? updater.rawSource : activeBranch.rawSource,
+          raw: typeof updater?.raw === 'string' ? updater.raw : activeBranch.raw,
+          content: typeof updater?.content === 'string' ? updater.content : activeBranch.content,
+        };
+        updater = {
+          ...updater,
+          meta: {
+            ...(sourceMeta || {}),
+            ...((updater?.meta && typeof updater.meta === 'object') ? updater.meta : {}),
+            swipes,
+            activeSwipe: activeIndex,
+          },
+        };
+      }
       const updated = chatStore.updateMessage(message.id, updater, sessionId);
       if (updated) {
         let finalMessage = updated;
@@ -21075,16 +21605,133 @@ Phase G（Frame 36）：循环衔接
     bubbleColor: '#c9c9c9',
     textColor: '#1F2937',
   };
+  const DARK_CHAT_DEFAULTS = {
+    bubbleColor: '#000000',
+    textColor: '#ffffff',
+  };
+  const CHAT_COLOR_SWATCHES = {
+    bubble: ['#000000', '#1f2937', '#334155', '#475569', '#c9c9c9', '#f59e0b', '#dc2626', '#2563eb', '#10b981'],
+    text: ['#ffffff', '#111827', '#4b5563', '#2563eb', '#059669', '#dc2626', '#7c3aed', '#b45309', '#db2777'],
+  };
+  const isDarkThemeMode = () => String(document?.body?.dataset?.themeMode || '').trim().toLowerCase() === 'dark';
+  const isLegacyLightDefaultColor = (value, kind = 'bubble') => {
+    const raw = String(value || '').trim().toLowerCase();
+    return kind === 'text'
+      ? raw === ORIGINAL_CHAT_DEFAULTS.textColor.toLowerCase()
+      : raw === ORIGINAL_CHAT_DEFAULTS.bubbleColor.toLowerCase();
+  };
+  const getThemeAwareChatDefaults = () => (isDarkThemeMode() ? { ...DARK_CHAT_DEFAULTS } : { ...ORIGINAL_CHAT_DEFAULTS });
+  const readStoredChatColorDefaults = () => {
+    const raw = typeof appSettings.getStored === 'function' ? appSettings.getStored() : {};
+    return {
+      bubbleColor: String(raw?.chatDefaultBubbleColor || '').trim(),
+      textColor: String(raw?.chatDefaultTextColor || '').trim(),
+    };
+  };
+  const setColorTriggerColor = (el, color) => {
+    if (!el) return;
+    const safe = String(color || '').trim();
+    el.dataset.color = safe;
+    el.style.setProperty('--color-picker-bg', safe || 'transparent');
+  };
   const getGlobalChatDefaults = () => {
-    const settings = appSettings.get();
-    const bubble = String(settings.chatDefaultBubbleColor || '').trim() || ORIGINAL_CHAT_DEFAULTS.bubbleColor;
-    const text = String(settings.chatDefaultTextColor || '').trim() || ORIGINAL_CHAT_DEFAULTS.textColor;
+    const settings = readStoredChatColorDefaults();
+    const themeDefaults = getThemeAwareChatDefaults();
+    const bubble = (isDarkThemeMode() && isLegacyLightDefaultColor(settings.bubbleColor, 'bubble'))
+      ? themeDefaults.bubbleColor
+      : (settings.bubbleColor || themeDefaults.bubbleColor);
+    const text = (isDarkThemeMode() && isLegacyLightDefaultColor(settings.textColor, 'text'))
+      ? themeDefaults.textColor
+      : (settings.textColor || themeDefaults.textColor);
     return { bubbleColor: bubble, textColor: text };
   };
 
   const getChatSettingDefaults = () => {
     const globalDefaults = getGlobalChatDefaults();
     return { ...globalDefaults, wallpaper: null };
+  };
+
+  const syncChatColorSwatchState = () => {
+    const bubble = String(bubbleColorInput?.value || '').trim().toLowerCase();
+    const text = String(textColorInput?.value || '').trim().toLowerCase();
+    bubbleColorSwatches?.querySelectorAll?.('.chat-setting-color-swatch')?.forEach?.((btn) => {
+      btn.classList.toggle('is-active', String(btn.dataset.color || '').toLowerCase() === bubble);
+    });
+    textColorSwatches?.querySelectorAll?.('.chat-setting-color-swatch')?.forEach?.((btn) => {
+      btn.classList.toggle('is-active', String(btn.dataset.color || '').toLowerCase() === text);
+    });
+  };
+
+  const updatePreview = (bubbleColor, textColor) => {
+    const bubble = String(bubbleColor || '').trim();
+    const text = String(textColor || '').trim();
+    chatSettingPreview.style.setProperty('--chat-setting-preview-bg', bubble);
+    chatSettingPreview.style.setProperty('--chat-setting-preview-text', text);
+    chatSettingPreview.style.backgroundColor = bubble;
+    const span = chatSettingPreview.querySelector('span');
+    if (span) span.style.color = text;
+    const previewBubble = wallpaperPreview?.querySelector('.wallpaper-preview-bubble');
+    if (previewBubble) {
+      previewBubble.style.setProperty('--chat-setting-preview-bg', bubble);
+      previewBubble.style.setProperty('--chat-setting-preview-text', text);
+      previewBubble.style.backgroundColor = bubble;
+      previewBubble.style.color = text;
+    }
+    syncChatColorSwatchState();
+  };
+
+  const closeChatColorSwatches = (except = null) => {
+    [bubbleColorSwatches, textColorSwatches].forEach((el) => {
+      if (!el || el === except) return;
+      el.classList.remove('is-open');
+    });
+  };
+
+  const toggleChatColorSwatches = (kind, force = null) => {
+    const target = kind === 'bubble' ? bubbleColorSwatches : textColorSwatches;
+    if (!target) return;
+    const willOpen = force == null ? !target.classList.contains('is-open') : Boolean(force);
+    closeChatColorSwatches(willOpen ? target : null);
+    target.classList.toggle('is-open', willOpen);
+  };
+
+  const applyChatColorValue = (kind, color) => {
+    const safe = String(color || '').trim();
+    if (!/^#[0-9A-F]{6}$/i.test(safe)) return false;
+    if (kind === 'bubble') {
+      if (bubbleColorInput) bubbleColorInput.value = safe;
+      setColorTriggerColor(bubbleColorPicker, safe);
+      updatePreview(safe, textColorInput?.value || getGlobalChatDefaults().textColor);
+      return true;
+    }
+    if (textColorInput) textColorInput.value = safe;
+    setColorTriggerColor(textColorPicker, safe);
+    updatePreview(bubbleColorInput?.value || getGlobalChatDefaults().bubbleColor, safe);
+    return true;
+  };
+
+  const renderChatColorSwatches = () => {
+    const build = (container, colors, kind) => {
+      if (!container) return;
+      container.innerHTML = '';
+      colors.forEach((color) => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'chat-setting-color-swatch';
+        btn.dataset.color = color;
+        btn.title = color;
+        btn.setAttribute('aria-label', `${kind === 'bubble' ? '气泡' : '字体'}颜色 ${color}`);
+        btn.style.setProperty('--chat-swatch-bg', color);
+        btn.addEventListener('click', () => {
+          applyChatColorValue(kind, color);
+          toggleChatColorSwatches(kind, false);
+        });
+        container.appendChild(btn);
+      });
+    };
+    build(bubbleColorSwatches, CHAT_COLOR_SWATCHES.bubble, 'bubble');
+    build(textColorSwatches, CHAT_COLOR_SWATCHES.text, 'text');
+    syncChatColorSwatchState();
   };
 
   const wallpaperState = {
@@ -21256,6 +21903,19 @@ Phase G（Frame 36）：循环衔接
 
   const normalizeChatSettings = raw => {
     const base = { ...getChatSettingDefaults(), ...(raw || {}) };
+    const storedDefaults = readStoredChatColorDefaults();
+    const rawBubble = String(raw?.bubbleColor || '').trim();
+    const rawText = String(raw?.textColor || '').trim();
+    if (isDarkThemeMode()) {
+      if ((!storedDefaults.bubbleColor || isLegacyLightDefaultColor(storedDefaults.bubbleColor, 'bubble'))
+        && (!rawBubble || isLegacyLightDefaultColor(rawBubble, 'bubble'))) {
+        base.bubbleColor = DARK_CHAT_DEFAULTS.bubbleColor;
+      }
+      if ((!storedDefaults.textColor || isLegacyLightDefaultColor(storedDefaults.textColor, 'text'))
+        && (!rawText || isLegacyLightDefaultColor(rawText, 'text'))) {
+        base.textColor = DARK_CHAT_DEFAULTS.textColor;
+      }
+    }
     if (raw?.wallpaper && typeof raw.wallpaper === 'object') {
       base.wallpaper = { ...raw.wallpaper };
       return base;
@@ -21743,9 +22403,10 @@ Phase G（Frame 36）：循环衔接
     const settings = normalizeChatSettings(raw);
     setChatSettingScope('current');
     bubbleColorInput.value = settings.bubbleColor;
-    bubbleColorPicker.value = settings.bubbleColor;
     textColorInput.value = settings.textColor;
-    textColorPicker.value = settings.textColor;
+    setColorTriggerColor(bubbleColorPicker, settings.bubbleColor);
+    setColorTriggerColor(textColorPicker, settings.textColor);
+    closeChatColorSwatches();
     updatePreview(settings.bubbleColor, settings.textColor);
     loadWallpaperEditor(sessionId, settings);
   }
@@ -21792,17 +22453,6 @@ Phase G（Frame 36）：循环衔接
     closeChatSettings();
   }
 
-  function updatePreview(bubbleColor, textColor) {
-    chatSettingPreview.style.backgroundColor = bubbleColor;
-    const span = chatSettingPreview.querySelector('span');
-    if (span) span.style.color = textColor;
-    const previewBubble = wallpaperPreview?.querySelector('.wallpaper-preview-bubble');
-    if (previewBubble) {
-      previewBubble.style.backgroundColor = bubbleColor;
-      previewBubble.style.color = textColor;
-    }
-  }
-
   function randomChatSettings() {
     const randomColor = () =>
       '#' +
@@ -21811,13 +22461,8 @@ Phase G（Frame 36）：循环衔接
         .padStart(6, '0');
     const bubble = randomColor();
     const text = randomColor();
-
-    bubbleColorInput.value = bubble;
-    bubbleColorPicker.value = bubble;
-    textColorInput.value = text;
-    textColorPicker.value = text;
-
-    updatePreview(bubble, text);
+    applyChatColorValue('bubble', bubble);
+    applyChatColorValue('text', text);
   }
 
   // Event listeners for chat settings
@@ -21829,40 +22474,41 @@ Phase G（Frame 36）：循环衔接
   });
   randomSettingBtn?.addEventListener('click', randomChatSettings);
   restoreSettingBtn?.addEventListener('click', () => {
-    bubbleColorInput.value = ORIGINAL_CHAT_DEFAULTS.bubbleColor;
-    bubbleColorPicker.value = ORIGINAL_CHAT_DEFAULTS.bubbleColor;
-    textColorInput.value = ORIGINAL_CHAT_DEFAULTS.textColor;
-    textColorPicker.value = ORIGINAL_CHAT_DEFAULTS.textColor;
-    updatePreview(ORIGINAL_CHAT_DEFAULTS.bubbleColor, ORIGINAL_CHAT_DEFAULTS.textColor);
+    const defaults = getThemeAwareChatDefaults();
+    applyChatColorValue('bubble', defaults.bubbleColor);
+    applyChatColorValue('text', defaults.textColor);
   });
 
   bubbleColorPicker?.addEventListener('input', e => {
-    const color = e.target.value;
-    bubbleColorInput.value = color;
-    updatePreview(color, textColorInput.value);
+    applyChatColorValue('bubble', e.target.value);
+  });
+  bubbleColorPicker?.addEventListener('click', e => {
+    e.preventDefault();
+    e.stopPropagation();
+    toggleChatColorSwatches('bubble');
   });
 
   bubbleColorInput?.addEventListener('input', e => {
-    const color = e.target.value;
-    if (/^#[0-9A-F]{6}$/i.test(color)) {
-      bubbleColorPicker.value = color;
-      updatePreview(color, textColorInput.value);
-    }
+    applyChatColorValue('bubble', e.target.value);
   });
 
   textColorPicker?.addEventListener('input', e => {
-    const color = e.target.value;
-    textColorInput.value = color;
-    updatePreview(bubbleColorInput.value, color);
+    applyChatColorValue('text', e.target.value);
+  });
+  textColorPicker?.addEventListener('click', e => {
+    e.preventDefault();
+    e.stopPropagation();
+    toggleChatColorSwatches('text');
   });
 
   textColorInput?.addEventListener('input', e => {
-    const color = e.target.value;
-    if (/^#[0-9A-F]{6}$/i.test(color)) {
-      textColorPicker.value = color;
-      updatePreview(bubbleColorInput.value, color);
-    }
+    applyChatColorValue('text', e.target.value);
   });
+
+  renderChatColorSwatches();
+  bubbleColorSwatches?.addEventListener('click', e => e.stopPropagation());
+  textColorSwatches?.addEventListener('click', e => e.stopPropagation());
+  document.addEventListener('click', () => closeChatColorSwatches());
 
   chatWallpaperDrop?.addEventListener('click', () => {
     chatWallpaperFile?.click();

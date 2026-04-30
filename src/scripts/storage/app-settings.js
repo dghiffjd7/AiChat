@@ -102,6 +102,9 @@ export const appSettings = {
   get() {
     return { ...defaults, ...migrateSettings(readSettings()) };
   },
+  getStored() {
+    return migrateSettings(readSettings());
+  },
   update(patch = {}) {
     const next = { ...defaults, ...migrateSettings(readSettings()), ...patch };
     writeSettings(next);

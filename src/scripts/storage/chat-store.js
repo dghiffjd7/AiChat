@@ -26,11 +26,40 @@ const isDataUrl = s => typeof s === 'string' && s.startsWith('data:') && s.lengt
 const isCreativeAssistant = msg => msg?.role === 'assistant' && msg?.meta?.renderRich;
 const DEFAULT_CHAT_BUBBLE_COLOR = '#c9c9c9';
 const DEFAULT_CHAT_TEXT_COLOR = '#1F2937';
+const DEFAULT_DARK_CHAT_BUBBLE_COLOR = '#000000';
+const DEFAULT_DARK_CHAT_TEXT_COLOR = '#ffffff';
+
+const isDarkThemeMode = () => String(document?.body?.dataset?.themeMode || '').trim().toLowerCase() === 'dark';
+const isLegacyLightDefaultColor = (value, kind = 'bubble') => {
+  const raw = String(value || '').trim().toLowerCase();
+  return kind === 'text'
+    ? raw === DEFAULT_CHAT_TEXT_COLOR.toLowerCase()
+    : raw === DEFAULT_CHAT_BUBBLE_COLOR.toLowerCase();
+};
+
+const getThemeAwareChatDefaults = () => (
+  isDarkThemeMode()
+    ? {
+        bubbleColor: DEFAULT_DARK_CHAT_BUBBLE_COLOR,
+        textColor: DEFAULT_DARK_CHAT_TEXT_COLOR,
+      }
+    : {
+        bubbleColor: DEFAULT_CHAT_BUBBLE_COLOR,
+        textColor: DEFAULT_CHAT_TEXT_COLOR,
+      }
+);
 
 const getGlobalChatColorDefaults = () => {
-  const settings = appSettings.get();
-  const bubble = String(settings.chatDefaultBubbleColor || '').trim() || DEFAULT_CHAT_BUBBLE_COLOR;
-  const text = String(settings.chatDefaultTextColor || '').trim() || DEFAULT_CHAT_TEXT_COLOR;
+  const settings = typeof appSettings.getStored === 'function' ? appSettings.getStored() : {};
+  const themeDefaults = getThemeAwareChatDefaults();
+  const bubbleRaw = String(settings.chatDefaultBubbleColor || '').trim();
+  const textRaw = String(settings.chatDefaultTextColor || '').trim();
+  const bubble = (isDarkThemeMode() && isLegacyLightDefaultColor(bubbleRaw, 'bubble'))
+    ? themeDefaults.bubbleColor
+    : (bubbleRaw || themeDefaults.bubbleColor);
+  const text = (isDarkThemeMode() && isLegacyLightDefaultColor(textRaw, 'text'))
+    ? themeDefaults.textColor
+    : (textRaw || themeDefaults.textColor);
   return { bubbleColor: bubble, textColor: text };
 };
 
