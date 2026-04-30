@@ -5,6 +5,7 @@
 
 import { handleSSE } from '../stream.js';
 import { createLinkedAbortController, splitRequestOptions } from '../abort.js';
+import { createReasoningStreamEvent, extractGeminiStreamParts } from '../native-reasoning.js';
 import { prepareTransportRequest } from '../transport.js';
 
 const getTauriInvoker = () => {
@@ -314,17 +315,13 @@ export class MakersuiteProvider {
 
       // Handle SSE stream
       for await (const data of handleSSE(response)) {
-        // Extract text from each chunk
         const candidates = data?.candidates;
         if (candidates && candidates.length > 0) {
-          const content = candidates[0].content;
-          if (content?.parts) {
-            for (const part of content.parts) {
-              if (part.text) {
-                yield part.text;
-              }
-            }
+          const parts = extractGeminiStreamParts(candidates[0].content);
+          if (parts.reasoning) {
+            yield createReasoningStreamEvent(parts.reasoning, { provider: 'makersuite' });
           }
+          if (parts.content) yield parts.content;
         }
       }
     } finally {

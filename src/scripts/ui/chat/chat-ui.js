@@ -621,16 +621,16 @@ export class ChatUI {
   buildReasoningElement(message) {
     const meta = message?.meta;
     if (!meta || typeof meta !== 'object') return null;
-    if (meta.reasoningHidden === true && appSettings.get().reasoningShowHidden !== true) return null;
     const text = this.getReasoningText(message);
+    const label = String(meta.reasoningLabel || '').trim() || '推理';
     if (!text) return null;
     const details = document.createElement('details');
     details.className = 'chat-reasoning';
     if (meta.reasoningHidden === true) details.dataset.hidden = '1';
-    if (appSettings.get().reasoningAutoExpand === true) details.open = true;
+    if (appSettings.get().reasoningAutoExpand === true && meta.reasoningHidden !== true) details.open = true;
     const summary = document.createElement('summary');
     summary.className = 'chat-reasoning-summary';
-    summary.textContent = '推理';
+    summary.textContent = label;
     const content = document.createElement('div');
     content.className = 'chat-reasoning-content';
     content.textContent = text;
@@ -800,11 +800,12 @@ export class ChatUI {
     this.__chatappReasoningBound = true;
     const updateAll = () => {
       const autoExpand = appSettings.get().reasoningAutoExpand === true;
+      const showHidden = appSettings.get().reasoningShowHidden === true;
       document.querySelectorAll('details.chat-reasoning').forEach((el) => {
         if (!(el instanceof HTMLDetailsElement)) return;
-        el.open = autoExpand;
+        el.open = autoExpand && (showHidden || el.dataset.hidden !== '1');
         if (el.dataset.hidden === '1') {
-          el.style.display = appSettings.get().reasoningShowHidden === true ? '' : 'none';
+          el.style.display = '';
         }
       });
     };
@@ -2936,6 +2937,9 @@ export class ChatUI {
     };
     if (typeof streamState.reasoning === 'string') nextMeta.reasoning = streamState.reasoning;
     if (typeof streamState.reasoningDisplay === 'string') nextMeta.reasoningDisplay = streamState.reasoningDisplay;
+    if (typeof streamState.reasoningLabel === 'string') nextMeta.reasoningLabel = streamState.reasoningLabel;
+    if (typeof streamState.reasoningSource === 'string') nextMeta.reasoningSource = streamState.reasoningSource;
+    if (typeof streamState.reasoningHidden === 'boolean') nextMeta.reasoningHidden = streamState.reasoningHidden;
     if (meta?.renderRich === true || meta?.streamMode === 'creative') nextMeta.renderRich = true;
     return {
       ...(placeholder || {}),
@@ -3305,6 +3309,8 @@ export class ChatUI {
       showName: meta.showName === true,
       reasoning: typeof meta.reasoning === 'string' ? meta.reasoning : '',
       reasoningDisplay: typeof meta.reasoningDisplay === 'string' ? meta.reasoningDisplay : '',
+      reasoningLabel: typeof meta.reasoningLabel === 'string' ? meta.reasoningLabel : '',
+      reasoningSource: typeof meta.reasoningSource === 'string' ? meta.reasoningSource : '',
       reasoningHidden: meta.reasoningHidden === true,
       summary: typeof meta.summary === 'string' ? meta.summary : '',
       replyTo: normalizeReplyTarget(meta.replyTo),

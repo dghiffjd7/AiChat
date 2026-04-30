@@ -2933,13 +2933,15 @@ const buildIframeBridgeScript = () => `
     document.addEventListener('transitionend', (ev) => {
       const target = ev?.target;
       if (!target || typeof target.closest !== 'function') return;
-      if (!target.closest('details')) return;
+      const details = target.closest('details');
+      if (!details || details.open !== true) return;
       triggerBurstLayout('observer');
     }, true);
     document.addEventListener('animationend', (ev) => {
       const target = ev?.target;
       if (!target || typeof target.closest !== 'function') return;
-      if (!target.closest('details')) return;
+      const details = target.closest('details');
+      if (!details || details.open !== true) return;
       triggerBurstLayout('observer');
     }, true);
 
@@ -3559,6 +3561,50 @@ const collapseStreamingInteractiveTail = (text) => {
     const prefix = src.slice(0, opener.index).replace(/\s+$/, '');
     const placeholder = '[交互卡片生成中，输出完成后自动渲染]';
     return prefix ? `${prefix}\n\n${placeholder}` : placeholder;
+};
+
+const STREAMING_INTERACTIVE_CODE_PLACEHOLDER = '[已隐藏重型交互代码块，输出完成后自动渲染]';
+
+const shouldHideStreamingSandboxCodeBlock = ({ lang, code } = {}) => {
+    const source = String(code ?? '');
+    if (!source.trim()) return false;
+    const route = detectRichCodeBlockRoute({
+        lang,
+        code: source,
+        allowScripts: allowRichIframeScripts(),
+    });
+    if (route.level !== RICH_RENDER_LEVELS.SANDBOX) return false;
+    const lineCount = source.split(/\r?\n/).length;
+    const hasDocShell = /<(script|html|body|head|iframe|svg|style|section|article|main)\b/i.test(source)
+        || /&lt;(script|html|body|head|iframe|svg|style|section|article|main)\b/i.test(source);
+    const hasHeavyRuntime = /<script\b|\bReactDOM\b|\bcreateRoot\b|\bBabel\b|\bMusic\.js\b|\$\.(load|ajax|get|post)\b|\bimport\s*\(|\bimport\s+[\w*\s{},]+\s+from\s+["']/i.test(source);
+    const hasBodyLoad = Boolean(detectBodyLoadUrl(source));
+    const isLarge = source.length >= 900 || lineCount >= 24;
+    return hasBodyLoad || (hasDocShell && hasHeavyRuntime) || (hasDocShell && isLarge) || (hasHeavyRuntime && isLarge);
+};
+
+const collapseStreamingInteractiveCodeParts = (parts = []) => {
+    const input = Array.isArray(parts) ? parts : [];
+    const out = [];
+    let hiddenRun = 0;
+    const flushHidden = () => {
+        if (!hiddenRun) return;
+        out.push({
+            type: 'text',
+            text: `${STREAMING_INTERACTIVE_CODE_PLACEHOLDER}\n`,
+        });
+        hiddenRun = 0;
+    };
+    for (const part of input) {
+        if (part?.type === 'code' && shouldHideStreamingSandboxCodeBlock({ lang: part.lang, code: part.code })) {
+            hiddenRun += 1;
+            continue;
+        }
+        flushHidden();
+        out.push(part);
+    }
+    flushHidden();
+    return out;
 };
 
 const RICH_FRAGMENT_SCOPE_ATTR = 'data-chat-rich-scope';
@@ -4783,13 +4829,15 @@ const buildIframeSrcDoc = (
     document.addEventListener('transitionend', (ev) => {
       const target = ev?.target;
       if (!target || typeof target.closest !== 'function') return;
-      if (!target.closest('details')) return;
+      const details = target.closest('details');
+      if (!details || details.open !== true) return;
       triggerBurstLayout('observer');
     }, true);
     document.addEventListener('animationend', (ev) => {
       const target = ev?.target;
       if (!target || typeof target.closest !== 'function') return;
-      if (!target.closest('details')) return;
+      const details = target.closest('details');
+      if (!details || details.open !== true) return;
       triggerBurstLayout('observer');
     }, true);
 
@@ -6894,29 +6942,6 @@ const makeCodeBlock = ({
             return null;
         }
     })();
-    if (streaming && renderLevel === RICH_RENDER_LEVELS.SANDBOX) {
-        const deferredWrap = document.createElement('div');
-        deferredWrap.style.cssText = [
-            'padding:14px 16px',
-            'display:flex',
-            'flex-direction:column',
-            'gap:6px',
-            'background:linear-gradient(180deg, rgba(15,23,42,0.03), rgba(15,23,42,0.01))',
-        ].join(';');
-        deferredWrap.dataset.richRenderLevel = renderLevel;
-        deferredWrap.dataset.richRenderExecution = 'streaming-placeholder';
-        deferredWrap.dataset.richRenderDeferred = '1';
-        const title = document.createElement('div');
-        title.style.cssText = 'font-size:13px; font-weight:700; color:var(--app-text-primary);';
-        title.textContent = '交互卡片生成中，输出完成后自动渲染';
-        const desc = document.createElement('div');
-        desc.style.cssText = 'font-size:12px; line-height:1.45; color:var(--app-text-secondary);';
-        desc.textContent = '流式输出阶段仅保留占位，避免大段代码块干扰阅读。';
-        deferredWrap.appendChild(title);
-        deferredWrap.appendChild(desc);
-        wrap.appendChild(deferredWrap);
-        return wrap;
-    }
     if (shouldDeferSandbox) {
         const deferredWrap = document.createElement('div');
         deferredWrap.style.cssText = [
@@ -8445,6 +8470,9 @@ export const renderRichText = (
             const decoded = decodeHtmlEntities(p.text);
             return [{ type: 'code', lang: 'html', code: decoded }];
         });
+    }
+    if (streaming) {
+        parts = collapseStreamingInteractiveCodeParts(parts);
     }
     if (Boolean(debugTag) || shouldLogRichDebug()) {
         const fragmentHint = hasRichFragmentHint(htmlCandidateText);

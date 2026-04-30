@@ -1592,14 +1592,16 @@
     document.addEventListener('transitionend', (ev) => {
       const target = ev?.target;
       if (!target || typeof target.closest !== 'function') return;
-      if (!target.closest('details')) return;
+      const details = target.closest('details');
+      if (!details || details.open !== true) return;
       forceNextResize = true;
       triggerBurstLayout('observer');
     }, true);
     document.addEventListener('animationend', (ev) => {
       const target = ev?.target;
       if (!target || typeof target.closest !== 'function') return;
-      if (!target.closest('details')) return;
+      const details = target.closest('details');
+      if (!details || details.open !== true) return;
       forceNextResize = true;
       triggerBurstLayout('observer');
     }, true);

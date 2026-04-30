@@ -337,7 +337,7 @@ const normalizeNonNegativeInt = (value, fallback = 0) => {
 const normalizeOpenAIPreset = (preset) => {
     if (!preset || typeof preset !== 'object') return;
 
-    preset.request_reasoning = normalizeBoolean(preset.request_reasoning, false);
+    preset.request_reasoning = normalizeBoolean(preset.request_reasoning, true);
     preset.reasoning_effort = normalizeReasoningEffort(preset.reasoning_effort, 'high');
     preset.response_target_chat = normalizeResponseTarget(preset.response_target_chat, 'character');
     preset.response_target_rp = normalizeResponseTarget(preset.response_target_rp, 'user');

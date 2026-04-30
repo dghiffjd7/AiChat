@@ -1,4 +1,5 @@
 import { LLMClient } from '../api/client.js';
+import { normalizeAssistantStreamChunk } from '../api/native-reasoning.js';
 import { isDeepSeekApiRequest } from '../api/providers/deepseek-compat.js';
 import { extractTableEditBlocks, stripTableEditBlocks } from '../memory/memory-edit-parser.js';
 import { isSummaryTableId, normalizeMemoryUpdateMode } from '../memory/memory-prompt-utils.js';
@@ -1785,8 +1786,10 @@ ${listPart || '-（无）'}
         if (config.stream) {
           const stream = await window.appBridge.generate(userComment, ctx);
           for await (const chunk of stream) {
-            fullRaw += chunk;
-            const events = parser.push(chunk);
+            const normalizedChunk = normalizeAssistantStreamChunk(chunk);
+            if (!normalizedChunk.content) continue;
+            fullRaw += normalizedChunk.content;
+            const events = parser.push(normalizedChunk.content);
             const res = applyEvents(events);
             if (res?.touchedMoments) sawMomentReply = true;
           }
@@ -2131,6 +2134,57 @@ ${listPart || '-（无）'}
       content: visible,
       reasoning: stored,
       reasoningDisplay: display,
+    };
+  };
+  const createNativeReasoningState = () => ({
+    raw: '',
+    stored: '',
+    display: '',
+    hidden: false,
+    label: '',
+    startedAt: 0,
+    provider: '',
+  });
+  const appendNativeReasoningChunk = (state, chunk, { depth } = {}) => {
+    const next = state && typeof state === 'object' ? state : createNativeReasoningState();
+    const delta = String(chunk?.reasoning || '').trim();
+    if (!delta) return next;
+    next.raw += delta;
+    next.hidden = next.hidden || chunk?.reasoningHidden === true;
+    if (!next.startedAt) next.startedAt = Date.now();
+    if (!next.label && typeof chunk?.reasoningLabel === 'string' && chunk.reasoningLabel.trim()) {
+      next.label = chunk.reasoningLabel.trim();
+    }
+    if (!next.provider && typeof chunk?.provider === 'string' && chunk.provider.trim()) {
+      next.provider = chunk.provider.trim();
+    }
+    const { stored, display } = applyReasoningRegex(next.raw, { depth });
+    next.stored = stored || next.raw;
+    next.display = display || next.raw;
+    return next;
+  };
+  const resolveReasoningState = (parsed = {}, nativeState = null, { finalize = false } = {}) => {
+    const native = nativeState && typeof nativeState === 'object' ? nativeState : null;
+    if (native && String(native.raw || '').trim()) {
+      let label = String(native.label || '').trim();
+      if (!label && finalize && Number.isFinite(Number(native.startedAt)) && native.startedAt > 0) {
+        const sec = Math.max(1, Math.round((Date.now() - native.startedAt) / 1000));
+        label = `Thought for ${sec} 秒`;
+      }
+      return {
+        reasoning: String(native.stored || native.raw || ''),
+        reasoningDisplay: String(native.display || native.raw || ''),
+        reasoningHidden: native.hidden === true,
+        reasoningLabel: label,
+        reasoningSource: native.provider ? `native:${native.provider}` : 'native',
+      };
+    }
+    return {
+      reasoning: String(parsed?.reasoning || ''),
+      reasoningDisplay: String(parsed?.reasoningDisplay || parsed?.reasoning || ''),
+      reasoningHidden: false,
+      reasoningLabel: '',
+      reasoningSource: '',
     };
   };
 
@@ -18885,37 +18939,61 @@ Phase G（Frame 36）：循环衔接
             applyDisplay: source =>
               normalizeCreativeLineBreaks(window.appBridge.applyOutputDisplayRegex(source, { depth: 0 })),
           });
+          const nativeReasoningState = createNativeReasoningState();
           for await (const chunk of stream) {
             if (isGenerationInterrupted(generationId)) break;
-            full += chunk;
-            const preview = creativeStreamProcessor.append(chunk);
-            if (!preview) continue;
+            const normalizedChunk = normalizeAssistantStreamChunk(chunk);
+            if (normalizedChunk.reasoning) {
+              appendNativeReasoningChunk(nativeReasoningState, normalizedChunk, { depth: 0 });
+            }
+            if (normalizedChunk.content) {
+              full += normalizedChunk.content;
+            }
+            const preview = normalizedChunk.content
+              ? creativeStreamProcessor.append(normalizedChunk.content)
+              : (creativeStreamProcessor.lastSnapshot || null);
+            if (!preview && !normalizedChunk.reasoning) continue;
+            const currentPreview = preview || {
+              display: '',
+              stored: '',
+              contentSource: '',
+              raw: full,
+              reasoning: '',
+              reasoningDisplay: '',
+            };
+            const reasoningState = resolveReasoningState(currentPreview, nativeReasoningState, { finalize: false });
             const previewMeta = {
               renderRich: true,
-              ...(preview.reasoning
+              ...(reasoningState.reasoning
                 ? {
-                    reasoning: preview.reasoning,
-                    reasoningDisplay: preview.reasoningDisplay,
+                    reasoning: reasoningState.reasoning,
+                    reasoningDisplay: reasoningState.reasoningDisplay,
+                    reasoningHidden: reasoningState.reasoningHidden,
+                    reasoningLabel: reasoningState.reasoningLabel,
+                    reasoningSource: reasoningState.reasoningSource,
                   }
                 : {}),
             };
             streamCtrl = pushAssistantStreamText(
               {
-                content: preview.display,
-                raw: preview.stored,
-                rawSource: preview.contentSource,
-                rawOriginal: preview.raw,
-                reasoning: preview.reasoning,
-                reasoningDisplay: preview.reasoningDisplay,
+                content: currentPreview.display,
+                raw: currentPreview.stored,
+                rawSource: currentPreview.contentSource,
+                rawOriginal: currentPreview.raw,
+                reasoning: reasoningState.reasoning,
+                reasoningDisplay: reasoningState.reasoningDisplay,
                 meta: previewMeta,
               },
               {
                 ...streamMeta,
-                raw: preview.stored,
-                rawSource: preview.contentSource,
-                rawOriginal: preview.raw,
-                reasoning: preview.reasoning,
-                reasoningDisplay: preview.reasoningDisplay,
+                raw: currentPreview.stored,
+                rawSource: currentPreview.contentSource,
+                rawOriginal: currentPreview.raw,
+                reasoning: reasoningState.reasoning,
+                reasoningDisplay: reasoningState.reasoningDisplay,
+                reasoningHidden: reasoningState.reasoningHidden,
+                reasoningLabel: reasoningState.reasoningLabel,
+                reasoningSource: reasoningState.reasoningSource,
               },
             );
           }
@@ -18940,6 +19018,7 @@ Phase G（Frame 36）：循环衔接
           }
           const rawSource = normalizeCreativeLineBreaks(stripped);
           const reasoningParsed = extractReasoningFromContent(rawSource, { depth: 0, strict: true });
+          const resolvedReasoning = resolveReasoningState(reasoningParsed, nativeReasoningState, { finalize: true });
           const finalSource = normalizeCreativeLineBreaks(reasoningParsed.content || '');
           let stored = finalSource;
           let display = finalSource;
@@ -18952,22 +19031,28 @@ Phase G（Frame 36）：循环衔接
             raw: stored,
             rawSource: finalSource,
             rawOriginal: full,
-            reasoning: reasoningParsed.reasoning,
-            reasoningDisplay: reasoningParsed.reasoningDisplay,
+            reasoning: resolvedReasoning.reasoning,
+            reasoningDisplay: resolvedReasoning.reasoningDisplay,
+            reasoningHidden: resolvedReasoning.reasoningHidden,
+            reasoningLabel: resolvedReasoning.reasoningLabel,
+            reasoningSource: resolvedReasoning.reasoningSource,
           };
           const finalStreamPayload = {
             content: display,
             raw: stored,
             rawSource: finalSource,
             rawOriginal: full,
-            reasoning: reasoningParsed.reasoning,
-            reasoningDisplay: reasoningParsed.reasoningDisplay,
+            reasoning: resolvedReasoning.reasoning,
+            reasoningDisplay: resolvedReasoning.reasoningDisplay,
             meta: {
               renderRich: true,
-              ...(reasoningParsed.reasoning
+              ...(resolvedReasoning.reasoning
                 ? {
-                    reasoning: reasoningParsed.reasoning,
-                    reasoningDisplay: reasoningParsed.reasoningDisplay,
+                    reasoning: resolvedReasoning.reasoning,
+                    reasoningDisplay: resolvedReasoning.reasoningDisplay,
+                    reasoningHidden: resolvedReasoning.reasoningHidden,
+                    reasoningLabel: resolvedReasoning.reasoningLabel,
+                    reasoningSource: resolvedReasoning.reasoningSource,
                   }
                 : {}),
             },
@@ -18978,9 +19063,12 @@ Phase G（Frame 36）：循环衔接
             : null;
           const meta = attachAssistantMemoryStateToMeta({ renderRich: true }, memoryState);
           if (summary) meta.summary = summary;
-          if (reasoningParsed.reasoning) {
-            meta.reasoning = reasoningParsed.reasoning;
-            meta.reasoningDisplay = reasoningParsed.reasoningDisplay;
+          if (resolvedReasoning.reasoning) {
+            meta.reasoning = resolvedReasoning.reasoning;
+            meta.reasoningDisplay = resolvedReasoning.reasoningDisplay;
+            if (resolvedReasoning.reasoningHidden) meta.reasoningHidden = true;
+            if (resolvedReasoning.reasoningLabel) meta.reasoningLabel = resolvedReasoning.reasoningLabel;
+            if (resolvedReasoning.reasoningSource) meta.reasoningSource = resolvedReasoning.reasoningSource;
           }
           const parsed = {
             role: 'assistant',
@@ -19035,8 +19123,10 @@ Phase G（Frame 36）：循环衔接
           const summarySessionIds = new Set([sessionId]);
           for await (const chunk of stream) {
             if (isGenerationInterrupted(generationId)) break;
-            fullRaw += chunk;
-            const events = parser.push(chunk);
+            const normalizedChunk = normalizeAssistantStreamChunk(chunk);
+            if (!normalizedChunk.content) continue;
+            fullRaw += normalizedChunk.content;
+            const events = parser.push(normalizedChunk.content);
             for (const ev of events) {
               if (ev.type === 'moments') {
                 try {
@@ -19462,11 +19552,39 @@ Phase G（Frame 36）：循环衔接
           consumePromptInjections(sessionId);
           const stream = await window.appBridge.generate(text, llmContext(text));
           let full = '';
+          const nativeReasoningState = createNativeReasoningState();
           for await (const chunk of stream) {
             if (isGenerationInterrupted(generationId)) break;
-            full += chunk;
+            const normalizedChunk = normalizeAssistantStreamChunk(chunk);
+            if (normalizedChunk.reasoning) {
+              appendNativeReasoningChunk(nativeReasoningState, normalizedChunk, { depth: 0 });
+            }
+            if (!normalizedChunk.content && !normalizedChunk.reasoning) continue;
+            full += normalizedChunk.content;
             const streamText = (!isRpMode && isMemoryAutoExtractInline()) ? stripTableEditBlocks(full) : full;
-            streamCtrl = pushAssistantStreamText(streamText, streamMeta);
+            const reasoningState = resolveReasoningState(null, nativeReasoningState, { finalize: false });
+            const streamPayload = reasoningState.reasoning
+              ? {
+                  content: streamText,
+                  raw: streamText,
+                  rawOriginal: full,
+                  reasoning: reasoningState.reasoning,
+                  reasoningDisplay: reasoningState.reasoningDisplay,
+                  meta: {
+                    reasoningHidden: reasoningState.reasoningHidden,
+                    reasoningLabel: reasoningState.reasoningLabel,
+                    reasoningSource: reasoningState.reasoningSource,
+                  },
+                }
+              : streamText;
+            streamCtrl = pushAssistantStreamText(streamPayload, {
+              ...streamMeta,
+              reasoning: reasoningState.reasoning,
+              reasoningDisplay: reasoningState.reasoningDisplay,
+              reasoningHidden: reasoningState.reasoningHidden,
+              reasoningLabel: reasoningState.reasoningLabel,
+              reasoningSource: reasoningState.reasoningSource,
+            });
           }
           if (isGenerationInterrupted(generationId)) return;
           chatStore.setLastRawResponse(full, sessionId);
@@ -19488,10 +19606,14 @@ Phase G（Frame 36）：循环衔接
           // stored = reasoningParsed.content || '';
           // let display = stored;
           const { reasoningParsed, finalSource, stored, display } = applyChatModeAssistantRegex(stripped, { depth: 0 });
+          const resolvedReasoning = resolveReasoningState(reasoningParsed, nativeReasoningState, { finalize: true });
           const meta = {};
-          if (reasoningParsed.reasoning) {
-            meta.reasoning = reasoningParsed.reasoning;
-            meta.reasoningDisplay = reasoningParsed.reasoningDisplay;
+          if (resolvedReasoning.reasoning) {
+            meta.reasoning = resolvedReasoning.reasoning;
+            meta.reasoningDisplay = resolvedReasoning.reasoningDisplay;
+            if (resolvedReasoning.reasoningHidden) meta.reasoningHidden = true;
+            if (resolvedReasoning.reasoningLabel) meta.reasoningLabel = resolvedReasoning.reasoningLabel;
+            if (resolvedReasoning.reasoningSource) meta.reasoningSource = resolvedReasoning.reasoningSource;
           }
           // === RP/创意写作界面===
           // try {

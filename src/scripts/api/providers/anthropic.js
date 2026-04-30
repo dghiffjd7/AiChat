@@ -4,6 +4,7 @@
 
 import { handleSSE } from '../stream.js';
 import { createLinkedAbortController, splitRequestOptions } from '../abort.js';
+import { createReasoningStreamEvent, extractAnthropicStreamParts } from '../native-reasoning.js';
 import { prepareTransportRequest } from '../transport.js';
 import { emitDebugLog } from '../../utils/debug-log.js';
 
@@ -339,20 +340,23 @@ export class AnthropicProvider {
         let deltaCount = 0;
         let totalChars = 0;
         let sawFirstDelta = false;
+        const blockKinds = new Map();
 
         const emitDelta = function* (data, transportLabel) {
-            if (data?.type !== 'content_block_delta') return;
-            const content = data.delta?.text;
-            if (!content) return;
+            const parts = extractAnthropicStreamParts(data, blockKinds);
+            if (parts.reasoning) {
+                yield createReasoningStreamEvent(parts.reasoning, { provider: 'anthropic' });
+            }
+            if (!parts.content) return;
             deltaCount += 1;
-            totalChars += content.length;
+            totalChars += parts.content.length;
             if (!sawFirstDelta) {
                 sawFirstDelta = true;
                 logStreamDebug(
-                    `first-delta transport=${transportLabel} mode=${prepared.connectionMode || 'direct'} chars=${content.length}`,
+                    `first-delta transport=${transportLabel} mode=${prepared.connectionMode || 'direct'} chars=${parts.content.length}`,
                 );
             }
-            yield content;
+            yield parts.content;
         };
 
         if (this.canUseNativeHttp()) {

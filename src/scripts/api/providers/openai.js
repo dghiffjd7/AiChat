@@ -4,6 +4,10 @@
 
 import { handleSSE } from '../stream.js';
 import { createLinkedAbortController, splitRequestOptions } from '../abort.js';
+import {
+  createReasoningStreamEvent,
+  extractOpenAICompatibleStreamParts,
+} from '../native-reasoning.js';
 import { prepareTransportRequest } from '../transport.js';
 import { emitDebugLog } from '../../utils/debug-log.js';
 import {
@@ -525,6 +529,16 @@ export class OpenAIProvider {
       let rawErrorBody = '';
       let sseBuffer = '';
       let lastUsage = null;
+      const emitParsedDelta = function* (data) {
+        if (data?.usage && typeof data.usage === 'object') lastUsage = data;
+        const parts = extractOpenAICompatibleStreamParts(data);
+        if (parts.reasoning) {
+          yield createReasoningStreamEvent(parts.reasoning, { provider: 'openai' });
+        }
+        if (parts.content) {
+          yield parts.content;
+        }
+      };
       const flushSseBuffer = function* (final = false) {
         const lines = String(sseBuffer || '').split('\n');
         sseBuffer = final ? '' : (lines.pop() || '');
@@ -534,9 +548,7 @@ export class OpenAIProvider {
           if (!payloadText || payloadText === '[DONE]') continue;
           try {
             const data = JSON.parse(payloadText);
-            if (data?.usage && typeof data.usage === 'object') lastUsage = data;
-            const content = data.choices?.[0]?.delta?.content;
-            if (content) yield content;
+            yield* emitParsedDelta(data);
           } catch (_e) {}
         }
       };
@@ -641,10 +653,11 @@ export class OpenAIProvider {
       let lastUsage = null;
       for await (const data of handleSSE(response)) {
         if (data?.usage && typeof data.usage === 'object') lastUsage = data;
-        const content = data.choices?.[0]?.delta?.content;
-        if (content) {
-          yield content;
+        const parts = extractOpenAICompatibleStreamParts(data);
+        if (parts.reasoning) {
+          yield createReasoningStreamEvent(parts.reasoning, { provider: 'openai' });
         }
+        if (parts.content) yield parts.content;
       }
       emitOpenAICacheDebug({
         phase: 'stream-fetch',

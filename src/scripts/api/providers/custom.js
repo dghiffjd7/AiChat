@@ -5,6 +5,10 @@
 
 import { handleSSE } from '../stream.js';
 import { createLinkedAbortController, splitRequestOptions } from '../abort.js';
+import {
+    createReasoningStreamEvent,
+    extractOpenAICompatibleStreamParts,
+} from '../native-reasoning.js';
 import { prepareTransportRequest } from '../transport.js';
 
 const getTauriInvoker = () => {
@@ -200,12 +204,11 @@ export class CustomProvider {
                 throw error;
             }
             for (const data of parseSSEText(res.body)) {
-                const content =
-                    data.choices?.[0]?.delta?.content ||
-                    data.choices?.[0]?.text ||
-                    data.delta?.content ||
-                    data.content;
-                if (content) yield content;
+                const parts = extractOpenAICompatibleStreamParts(data);
+                if (parts.reasoning) {
+                    yield createReasoningStreamEvent(parts.reasoning, { provider: this.provider || 'custom' });
+                }
+                if (parts.content) yield parts.content;
             }
             return;
         }
@@ -239,15 +242,11 @@ export class CustomProvider {
             }
 
             for await (const data of handleSSE(response)) {
-                const content =
-                    data.choices?.[0]?.delta?.content ||
-                    data.choices?.[0]?.text ||
-                    data.delta?.content ||
-                    data.content;
-
-                if (content) {
-                    yield content;
+                const parts = extractOpenAICompatibleStreamParts(data);
+                if (parts.reasoning) {
+                    yield createReasoningStreamEvent(parts.reasoning, { provider: this.provider || 'custom' });
                 }
+                if (parts.content) yield parts.content;
             }
         } finally {
             cleanup();

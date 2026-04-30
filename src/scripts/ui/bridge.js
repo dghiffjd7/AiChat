@@ -4,6 +4,7 @@
 
 import { LLMClient } from '../api/client.js';
 import { buildReasoningRequestOptions, getReasoningSamplerPolicy } from '../api/model-capabilities.js';
+import { isReasoningStreamEvent } from '../api/native-reasoning.js';
 import {
   isDeepSeekApiRequest,
   shouldUseDeepSeekReasonerCompatibility,
@@ -2275,6 +2276,10 @@ class AppBridge {
     let suppress = prefill;
     yield prefill;
     for await (const chunk of stream) {
+      if (isReasoningStreamEvent(chunk)) {
+        yield chunk;
+        continue;
+      }
       const text = String(chunk ?? '');
       if (!text) continue;
       let out = '';
@@ -2595,7 +2600,9 @@ class AppBridge {
     try {
       const stream = this.client.streamChat(messages, genOptions);
       for await (const chunk of this.applyAssistantPrefillToStream(stream, responsePrefix)) {
-        fullResponse += chunk;
+        if (!isReasoningStreamEvent(chunk)) {
+          fullResponse += String(chunk ?? '');
+        }
         yield chunk;
       }
 

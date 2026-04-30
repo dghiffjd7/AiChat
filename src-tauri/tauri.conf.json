@@ -1,6 +1,6 @@
 {
   "productName": "ChatApp",
-  "version": "0.5.21",
+  "version": "0.5.23",
   "identifier": "com.chatapp.dev",
   "build": {
     "beforeDevCommand": "",
