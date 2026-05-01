@@ -7,6 +7,7 @@
 
 import { logger } from '../utils/logger.js';
 import { appConfirm } from './app-confirm.js';
+import { bindCustomSelectButton, closeCustomSelectMenu, refreshCustomSelectButton } from './custom-select.js';
 
 export class GroupPanel {
     constructor({ groupStore, onGroupChanged } = {}) {
@@ -16,10 +17,12 @@ export class GroupPanel {
         this.panel = null;
         this.nameInput = null;
         this.parentSelect = null;
+        this.parentSelectButton = null;
         this.parentPickerOverlay = null;
         this.parentPickerPanel = null;
         this.parentPickerTitle = null;
         this.parentPickerSelect = null;
+        this.parentPickerSelectButton = null;
         this.parentPickerGroupId = '';
     }
 
@@ -34,6 +37,7 @@ export class GroupPanel {
     }
 
     hide() {
+        closeCustomSelectMenu();
         if (this.overlay) this.overlay.style.display = 'none';
         if (this.panel) this.panel.style.display = 'none';
     }
@@ -77,7 +81,11 @@ export class GroupPanel {
                 </div>
                 <div style="margin-top:10px;">
                     <div style="font-size:12px; color:var(--app-text-muted); margin-bottom:6px;">上级分组（可选）</div>
-                    <select id="group-parent-select" style="width:100%; padding:9px 10px; border:1px solid var(--app-border-default); border-radius:10px; font-size:14px; background:var(--app-surface-card);"></select>
+                    <select id="group-parent-select" style="display:none;"></select>
+                    <button type="button" id="group-parent-select-btn" class="world-app-select-btn" style="width:100%;">
+                        <span class="pp-custom-select-label" data-custom-select-label>无上级</span>
+                        <span class="world-app-select-btn-chevron">▾</span>
+                    </button>
                 </div>
             </div>
 
@@ -92,6 +100,12 @@ export class GroupPanel {
 
         this.nameInput = this.panel.querySelector('#group-name-input');
         this.parentSelect = this.panel.querySelector('#group-parent-select');
+        this.parentSelectButton = this.panel.querySelector('#group-parent-select-btn');
+        bindCustomSelectButton({
+            buttonEl: this.parentSelectButton,
+            selectEl: this.parentSelect,
+            fallback: '无上级',
+        });
 
         this.panel.querySelector('#group-panel-close').onclick = () => this.hide();
         this.panel.querySelector('#group-create-btn').onclick = () => this.createGroup();
@@ -264,6 +278,7 @@ export class GroupPanel {
         };
         (tree.roots || []).forEach(g => pushOption(g, 0));
         this.parentSelect.innerHTML = options.join('');
+        refreshCustomSelectButton(this.parentSelectButton, this.parentSelect, '无上级');
     }
 
     openParentPicker(groupId) {
@@ -280,6 +295,7 @@ export class GroupPanel {
     }
 
     closeParentPicker() {
+        closeCustomSelectMenu();
         if (this.parentPickerOverlay) this.parentPickerOverlay.style.display = 'none';
         if (this.parentPickerPanel) this.parentPickerPanel.style.display = 'none';
     }
@@ -312,7 +328,11 @@ export class GroupPanel {
                 <button id="group-parent-close" style="border:none; background:transparent; font-size:22px; cursor:pointer; color:var(--app-text-primary);">×</button>
             </div>
             <div style="padding:14px 16px;">
-                <select id="group-parent-select-modal" style="width:100%; padding:10px; border:1px solid var(--app-border-default); border-radius:10px; font-size:14px; background:var(--app-surface-card);"></select>
+                <select id="group-parent-select-modal" style="display:none;"></select>
+                <button type="button" id="group-parent-select-modal-btn" class="world-app-select-btn" style="width:100%;">
+                    <span class="pp-custom-select-label" data-custom-select-label>无上级</span>
+                    <span class="world-app-select-btn-chevron">▾</span>
+                </button>
             </div>
             <div style="padding:14px 16px; border-top:1px solid rgba(0,0,0,0.06); background:rgba(248,250,252,0.92); display:flex; gap:10px;">
                 <button id="group-parent-cancel" style="flex:1; padding:10px 14px; border:1px solid var(--app-border-default); border-radius:10px; background:var(--app-surface-card); cursor:pointer;">取消</button>
@@ -325,6 +345,12 @@ export class GroupPanel {
 
         this.parentPickerTitle = this.parentPickerPanel.querySelector('#group-parent-title');
         this.parentPickerSelect = this.parentPickerPanel.querySelector('#group-parent-select-modal');
+        this.parentPickerSelectButton = this.parentPickerPanel.querySelector('#group-parent-select-modal-btn');
+        bindCustomSelectButton({
+            buttonEl: this.parentPickerSelectButton,
+            selectEl: this.parentPickerSelect,
+            fallback: '无上级',
+        });
 
         this.parentPickerPanel.querySelector('#group-parent-close').onclick = () => this.closeParentPicker();
         this.parentPickerPanel.querySelector('#group-parent-cancel').onclick = () => this.closeParentPicker();
@@ -372,6 +398,7 @@ export class GroupPanel {
         (tree.roots || []).forEach(g => pushOption(g, 0));
         this.parentPickerSelect.innerHTML = options.join('');
         this.parentPickerSelect.value = currentParentId || '';
+        refreshCustomSelectButton(this.parentPickerSelectButton, this.parentPickerSelect, '无上级');
     }
 
     escapeHtml(str) {

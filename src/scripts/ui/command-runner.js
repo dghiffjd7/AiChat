@@ -4,6 +4,93 @@
 
 import { logger } from '../utils/logger.js';
 
+const RP_HIDE_META_KEY = 'hiddenFromRpPrompt';
+
+const resolveUiMode = (ctx = {}) => {
+  const direct = String(ctx?.uiMode || '').trim();
+  if (direct) return direct;
+  const fromGetter = typeof ctx?.getUiMode === 'function' ? String(ctx.getUiMode() || '').trim() : '';
+  if (fromGetter) return fromGetter;
+  if (typeof document !== 'undefined') {
+    return String(document.body?.dataset?.uiMode || '').trim();
+  }
+  return '';
+};
+
+const isRpMode = (ctx = {}) => resolveUiMode(ctx) === 'rp';
+
+const parseIndexRange = (token, maxIndex) => {
+  const upper = Number.isFinite(maxIndex) ? Number(maxIndex) : -1;
+  if (upper < 0) return null;
+  const raw = String(token || '').trim();
+  if (!raw) return { start: upper, end: upper };
+  const single = raw.match(/^(\d+)$/);
+  if (single) {
+    const index = Number(single[1]);
+    if (!Number.isFinite(index) || index < 0 || index > upper) return null;
+    return { start: index, end: index };
+  }
+  const range = raw.match(/^(\d+)\s*-\s*(\d+)$/);
+  if (!range) return null;
+  const start = Number(range[1]);
+  const end = Number(range[2]);
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
+  if (start < 0 || end < 0 || start > end || end > upper) return null;
+  return { start, end };
+};
+
+const getPromptEligibleMessages = (chatStore) => {
+  const sessionId = chatStore?.getCurrent?.();
+  const messages = chatStore?.getMessages?.(sessionId) || [];
+  return messages.filter(msg =>
+    msg &&
+    msg.status !== 'pending' &&
+    msg.status !== 'sending' &&
+    (msg.role === 'user' || msg.role === 'assistant')
+  );
+};
+
+const setPromptHiddenState = ({ chatStore, ui, reloadCurrentSession }, token, hidden) => {
+  const sessionId = String(chatStore?.getCurrent?.() || '').trim();
+  if (!sessionId) {
+    window.toastr?.warning?.('未找到当前会话');
+    return;
+  }
+  const eligible = getPromptEligibleMessages(chatStore);
+  if (!eligible.length) {
+    window.toastr?.info?.('当前会话暂无可处理的消息');
+    return;
+  }
+  const range = parseIndexRange(token, eligible.length - 1);
+  if (!range) {
+    window.toastr?.warning?.('请使用 /hide、/hide 3 或 /hide 2-5');
+    return;
+  }
+  let changed = 0;
+  for (let index = range.start; index <= range.end; index += 1) {
+    const target = eligible[index];
+    if (!target?.id) continue;
+    const meta = target.meta && typeof target.meta === 'object' ? { ...target.meta } : {};
+    if (Boolean(meta[RP_HIDE_META_KEY]) === hidden) continue;
+    meta[RP_HIDE_META_KEY] = hidden;
+    chatStore.updateMessage(target.id, { meta }, sessionId);
+    changed += 1;
+  }
+  if (!changed) {
+    window.toastr?.info?.(hidden ? '指定消息已处于隐藏状态' : '指定消息未被隐藏');
+    return;
+  }
+  if (typeof reloadCurrentSession === 'function') {
+    try { reloadCurrentSession(); } catch {}
+  }
+  const label = range.start === range.end ? `${range.start}` : `${range.start}-${range.end}`;
+  window.toastr?.success?.(
+    hidden
+      ? `已隐藏消息 ${label}，后续创意写作提示词将忽略它`
+      : `已恢复消息 ${label} 到创意写作提示词`
+  );
+};
+
 const COMMANDS = {
   '/clear': {
     desc: '清空当前会话',
@@ -112,10 +199,24 @@ const COMMANDS = {
       window.toastr?.success(`会话已重命名为 ${newId}`);
     }
   },
+  '/hide': {
+    desc: '/hide [消息索引或范围] 隐藏消息，不参与创意写作提示词',
+    rpOnly: true,
+    run: async (ctx, args) => {
+      setPromptHiddenState(ctx, args[1], true);
+    }
+  },
+  '/unhide': {
+    desc: '/unhide [消息索引或范围] 恢复消息到创意写作提示词',
+    rpOnly: true,
+    run: async (ctx, args) => {
+      setPromptHiddenState(ctx, args[1], false);
+    }
+  },
   '/help': {
     desc: '列出可用命令',
-    run: async () => {
-      const list = Object.entries(COMMANDS).map(([k, v]) => `${k} - ${v.desc || ''}`).join('\n');
+    run: async (ctx) => {
+      const list = getCommandList(ctx).map(({ key, desc }) => `${key} - ${desc || ''}`).join('\n');
       alert(`可用命令：\n${list}`);
     }
   }
@@ -127,6 +228,10 @@ export function runCommand(input, ctx) {
   const cmdKey = parts[0];
   const cmd = COMMANDS[cmdKey];
   if (!cmd) return false;
+  if (cmd?.rpOnly && !isRpMode(ctx)) {
+    window.toastr?.info?.('该命令只在创意写作中可用');
+    return true;
+  }
   const handler = COMMANDS[cmdKey];
   try {
     handler.run(ctx, parts);
@@ -141,9 +246,14 @@ export function registerCommand(key, desc, runner) {
   COMMANDS[key] = { desc, run: runner };
 }
 
-export function getCommandList() {
+export function getCommandList(ctx = {}) {
+  const rpMode = isRpMode(ctx);
   return Object.entries(COMMANDS).map(([key, value]) => ({
     key,
     desc: value?.desc || '',
-  }));
+  })).filter(item => {
+    const config = COMMANDS[item.key];
+    if (config?.rpOnly && !rpMode) return false;
+    return true;
+  });
 }

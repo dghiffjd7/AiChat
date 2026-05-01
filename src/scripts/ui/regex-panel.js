@@ -6,6 +6,7 @@
 import { RegexStore, isLocalRegexSetAutoActive, regex_placement, substitute_find_regex } from '../storage/regex-store.js';
 import { logger } from '../utils/logger.js';
 import { appConfirm } from './app-confirm.js';
+import { bindCustomSelectButton, closeCustomSelectMenu, refreshCustomSelectButton } from './custom-select.js';
 
 const deepClone = (v) => {
     try {
@@ -105,6 +106,7 @@ export class RegexPanel {
     }
 
     hide() {
+        closeCustomSelectMenu();
         if (this.element) this.element.style.display = 'none';
         if (this.overlay) this.overlay.style.display = 'none';
     }
@@ -286,11 +288,15 @@ export class RegexPanel {
                         <label style="display:flex; gap:8px; align-items:center; cursor:pointer;"><input type="checkbox" class="re-run-on-edit">编辑消息时执行（Run On Edit）</label>
                         <label style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
                             <span style="font-weight:700;">Find Regex 宏</span>
-                            <select class="re-substitute" style="padding:8px 10px; border:1px solid var(--app-border-default); border-radius:10px;">
+                            <select class="re-substitute" style="display:none;">
                                 <option value="0">不替换</option>
                                 <option value="1">替换（raw）</option>
                                 <option value="2">替换（escaped）</option>
                             </select>
+                            <button type="button" class="world-app-select-btn re-substitute-btn" style="min-width:170px;">
+                                <span class="pp-custom-select-label" data-custom-select-label>不替换</span>
+                                <span class="world-app-select-btn-chevron">▾</span>
+                            </button>
                         </label>
                         <div style="margin-top:6px;">
                             <div style="font-weight:700; color:var(--app-text-primary); margin-bottom:6px;">暂时性（Ephemerality）</div>
@@ -318,6 +324,11 @@ export class RegexPanel {
         body.querySelector('.re-md-only').checked = Boolean(r.markdownOnly);
         body.querySelector('.re-prompt-only').checked = Boolean(r.promptOnly);
         body.querySelector('.re-substitute').value = String(Number(r.substituteRegex ?? 0));
+        bindCustomSelectButton({
+            buttonEl: body.querySelector('.re-substitute-btn'),
+            selectEl: body.querySelector('.re-substitute'),
+            fallback: '不替换',
+        });
         body.querySelector('.re-min-depth').value = (r.minDepth === null || r.minDepth === undefined || Number.isNaN(Number(r.minDepth))) ? '' : String(Number(r.minDepth));
         body.querySelector('.re-max-depth').value = (r.maxDepth === null || r.maxDepth === undefined || Number.isNaN(Number(r.maxDepth))) ? '' : String(Number(r.maxDepth));
         const placeSet = new Set((Array.isArray(r.placement) ? r.placement : []).map((n) => Number(n)).filter(Number.isFinite));
@@ -616,14 +627,30 @@ export class RegexPanel {
                 </label>
                 <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
                     <div style="font-size:13px; color:var(--app-text-secondary); font-weight:700;">绑定</div>
-                    <select id="re-bind-type" style="padding:8px 10px; border:1px solid var(--app-border-default); border-radius:10px; font-size:13px;">
+                    <select id="re-bind-type" style="display:none;">
                         <option value="">不绑定</option>
                         <option value="preset">绑定预设</option>
                         <option value="world">绑定世界书</option>
                     </select>
-                    <select id="re-bind-preset-type" style="display:none; padding:8px 10px; border:1px solid var(--app-border-default); border-radius:10px; font-size:13px;"></select>
-                    <select id="re-bind-preset-id" style="display:none; padding:8px 10px; border:1px solid var(--app-border-default); border-radius:10px; font-size:13px; min-width: 220px;"></select>
-                    <select id="re-bind-world" style="display:none; padding:8px 10px; border:1px solid var(--app-border-default); border-radius:10px; font-size:13px; min-width: 220px;"></select>
+                    <button type="button" id="re-bind-type-btn" class="world-app-select-btn" style="min-width:150px;">
+                        <span class="pp-custom-select-label" data-custom-select-label>不绑定</span>
+                        <span class="world-app-select-btn-chevron">▾</span>
+                    </button>
+                    <select id="re-bind-preset-type" style="display:none;"></select>
+                    <button type="button" id="re-bind-preset-type-btn" class="world-app-select-btn" style="display:none; min-width:170px;">
+                        <span class="pp-custom-select-label" data-custom-select-label>系统提示词</span>
+                        <span class="world-app-select-btn-chevron">▾</span>
+                    </button>
+                    <select id="re-bind-preset-id" style="display:none;"></select>
+                    <button type="button" id="re-bind-preset-id-btn" class="world-app-select-btn" style="display:none; min-width:220px;">
+                        <span class="pp-custom-select-label" data-custom-select-label>选择预设</span>
+                        <span class="world-app-select-btn-chevron">▾</span>
+                    </button>
+                    <select id="re-bind-world" style="display:none;"></select>
+                    <button type="button" id="re-bind-world-btn" class="world-app-select-btn" style="display:none; min-width:220px;">
+                        <span class="pp-custom-select-label" data-custom-select-label>选择世界书</span>
+                        <span class="world-app-select-btn-chevron">▾</span>
+                    </button>
                 </div>
             </div>
         `;
@@ -633,14 +660,23 @@ export class RegexPanel {
         enabledEl.checked = s.manualEnabled !== false;
 
         const bindType = head.querySelector('#re-bind-type');
+        const bindTypeBtn = head.querySelector('#re-bind-type-btn');
         const presetType = head.querySelector('#re-bind-preset-type');
+        const presetTypeBtn = head.querySelector('#re-bind-preset-type-btn');
         const presetId = head.querySelector('#re-bind-preset-id');
+        const presetIdBtn = head.querySelector('#re-bind-preset-id-btn');
         const worldSel = head.querySelector('#re-bind-world');
+        const worldSelBtn = head.querySelector('#re-bind-world-btn');
 
         presetType.innerHTML = PRESET_TYPES.map(t => `<option value="${t.id}">${t.label}</option>`).join('');
+        bindCustomSelectButton({ buttonEl: bindTypeBtn, selectEl: bindType, fallback: '不绑定' });
+        bindCustomSelectButton({ buttonEl: presetTypeBtn, selectEl: presetType, fallback: '系统提示词' });
+        bindCustomSelectButton({ buttonEl: presetIdBtn, selectEl: presetId, fallback: '选择预设' });
+        bindCustomSelectButton({ buttonEl: worldSelBtn, selectEl: worldSel, fallback: '选择世界书' });
 
         const updatePresetList = () => {
             const pt = presetType.value;
+            const currentPresetId = String(presetId.value || '').trim();
             const presets = window.appBridge?.presets?.list?.(pt) || [];
             presetId.innerHTML = '';
             presets.forEach(p => {
@@ -649,11 +685,16 @@ export class RegexPanel {
                 opt.textContent = p.name || p.id;
                 presetId.appendChild(opt);
             });
+            if (currentPresetId) {
+                presetId.value = currentPresetId;
+            }
+            refreshCustomSelectButton(presetIdBtn, presetId, '选择预设');
         };
         updatePresetList();
 
         const updateWorldList = async () => {
             const ws = window.appBridge?.worldStore;
+            const currentWorldId = String(worldSel.value || '').trim();
             await ws?.ready;
             const list = ws?.list?.() || [];
             worldSel.innerHTML = '';
@@ -663,14 +704,18 @@ export class RegexPanel {
                 opt.textContent = name;
                 worldSel.appendChild(opt);
             });
+            if (currentWorldId) {
+                worldSel.value = currentWorldId;
+            }
+            refreshCustomSelectButton(worldSelBtn, worldSel, '选择世界书');
         };
         updateWorldList().catch(() => {});
 
         const applyBindUI = () => {
             const t = bindType.value;
-            presetType.style.display = t === 'preset' ? '' : 'none';
-            presetId.style.display = t === 'preset' ? '' : 'none';
-            worldSel.style.display = t === 'world' ? '' : 'none';
+            presetTypeBtn.style.display = t === 'preset' ? '' : 'none';
+            presetIdBtn.style.display = t === 'preset' ? '' : 'none';
+            worldSelBtn.style.display = t === 'world' ? '' : 'none';
         };
 
         // init bind values
@@ -685,10 +730,20 @@ export class RegexPanel {
         } else {
             bindType.value = '';
         }
+        refreshCustomSelectButton(bindTypeBtn, bindType, '不绑定');
+        refreshCustomSelectButton(presetTypeBtn, presetType, '系统提示词');
+        refreshCustomSelectButton(presetIdBtn, presetId, '选择预设');
+        refreshCustomSelectButton(worldSelBtn, worldSel, '选择世界书');
         applyBindUI();
 
-        bindType.onchange = () => applyBindUI();
-        presetType.onchange = () => { updatePresetList(); };
+        bindType.onchange = () => {
+            refreshCustomSelectButton(bindTypeBtn, bindType, '不绑定');
+            applyBindUI();
+        };
+        presetType.onchange = () => {
+            refreshCustomSelectButton(presetTypeBtn, presetType, '系统提示词');
+            updatePresetList();
+        };
 
         const rulesWrap = document.createElement('div');
         rulesWrap.style.cssText = 'display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;';

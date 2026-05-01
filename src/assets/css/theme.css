@@ -2591,7 +2591,7 @@ body[data-theme-mode='dark'] .user-panel-shell #user-edit-view .chat-setting-col
   background: transparent !important;
 }
 
-body[data-theme-mode='dark'] .user-panel-shell #user-edit-view #edit-bubble-color.color-picker {
+body[data-theme-mode='dark'] .user-panel-shell #user-edit-view :is(#edit-bubble-color, #edit-text-color).color-picker {
   background: rgba(205, 217, 229, 0.06) !important;
 }
 
@@ -3483,6 +3483,25 @@ body[data-theme-mode='dark'] .world-app-select-item.is-selected {
 
 body[data-theme-mode='dark'] .world-app-select-item-check {
   color: var(--app-accent-primary) !important;
+}
+
+body[data-theme-mode='dark'] .slash-command-menu {
+  background: rgba(9, 14, 26, 0.96) !important;
+  border-color: rgba(96, 165, 250, 0.28) !important;
+  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.42) !important;
+}
+
+body[data-theme-mode='dark'] .slash-command-item:hover,
+body[data-theme-mode='dark'] .slash-command-item.is-active {
+  background: rgba(59, 130, 246, 0.16) !important;
+}
+
+body[data-theme-mode='dark'] .slash-command-key {
+  color: #f8fafc !important;
+}
+
+body[data-theme-mode='dark'] .slash-command-desc {
+  color: rgba(203, 213, 225, 0.9) !important;
 }
 
 body[data-theme-mode='dark'] .moments-empty-state {

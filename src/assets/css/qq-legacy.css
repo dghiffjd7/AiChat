@@ -1488,6 +1488,7 @@ body[data-ui-mode='rp'] .chat-reply-draft {
 /* 我的消息气泡（如有自定义背景色） */
 .QQ_chat_mymsg .QQ_chat_msgdiv {
   background-color: var(--chat-user-bubble-color, var(--chat-bubble-color, var(--qq-color-bubble-default)));
+  color: var(--chat-user-text-color, var(--chat-text-color, var(--qq-color-text-primary)));
   text-align: left; /* 保持文本左对齐 */
 }
 
@@ -1917,9 +1918,9 @@ body[data-ui-mode='rp'] .chat-sticker-btn {
   transition: background 0.15s ease, border-color 0.15s ease;
 }
 
+/* 暂时隐藏 RP/创意写作的续写入口，后续版本再恢复。 */
 body[data-ui-mode='rp'] .rp-continue-btn {
-  display: inline-flex;
-  align-items: center;
+  display: none;
 }
 
 .rp-continue-btn:active {

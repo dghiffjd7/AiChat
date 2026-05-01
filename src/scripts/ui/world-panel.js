@@ -10,6 +10,7 @@ import { logger } from '../utils/logger.js';
 import { FEATHER_DEFAULT, resolveLineAvatar } from '../utils/line-avatar.js';
 import { WorldEditorModal } from './world-editor.js';
 import { appConfirm } from './app-confirm.js';
+import { bindCustomSelectButton, closeCustomSelectMenu, refreshCustomSelectButton } from './custom-select.js';
 
 export class WorldPanel {
     constructor({ contactsStore = null, getSessionId = null } = {}) {
@@ -22,6 +23,7 @@ export class WorldPanel {
         this.libraryToggleBtn = null;
         this.librarySearchEl = null;
         this.librarySortEl = null;
+        this.librarySortButton = null;
         this.libraryResetBtn = null;
         this.librarySortDirBtn = null;
         this.globalSettingsEl = null;
@@ -29,7 +31,9 @@ export class WorldPanel {
         this.globalSettingsToggle = null;
         this.globalScanInput = null;
         this.globalStrategySelect = null;
+        this.globalStrategyButton = null;
         this.globalVariableDefineStrategySelect = null;
+        this.globalVariableDefineStrategyButton = null;
         this.globalContextInput = null;
         this.globalIncludeNames = null;
         this.globalBudgetInput = null;
@@ -70,6 +74,7 @@ export class WorldPanel {
     }
 
     hide() {
+        closeCustomSelectMenu();
         if (this.overlay) this.overlay.style.display = 'none';
         if (this.panel) this.panel.style.display = 'none';
         this.libraryOverlay?.classList.remove('is-active');
@@ -252,12 +257,22 @@ export class WorldPanel {
                 const maxRecursion = Number.isFinite(Number(settings.maxRecursionSteps)) ? Number(settings.maxRecursionSteps) : '';
                 if (this.globalMaxRecursionInput) this.globalMaxRecursionInput.value = maxRecursion === '' ? '' : String(maxRecursion);
                 const strategy = String(settings.insertionStrategy || 'role_first');
-                if (this.globalStrategySelect) this.globalStrategySelect.value = strategy;
+                if (this.globalStrategySelect) {
+                    this.globalStrategySelect.value = strategy;
+                    if (this.globalStrategyButton) {
+                        refreshCustomSelectButton(this.globalStrategyButton, this.globalStrategySelect, '角色世界书优先');
+                    }
+                }
                 const strategyRaw = String(settings.variableDefineStrategy || 'legacy_eager');
                 const variableDefineStrategy = ['legacy_eager', 'first_hit', 'off'].includes(strategyRaw)
                     ? strategyRaw
                     : 'legacy_eager';
-                if (this.globalVariableDefineStrategySelect) this.globalVariableDefineStrategySelect.value = variableDefineStrategy;
+                if (this.globalVariableDefineStrategySelect) {
+                    this.globalVariableDefineStrategySelect.value = variableDefineStrategy;
+                    if (this.globalVariableDefineStrategyButton) {
+                        refreshCustomSelectButton(this.globalVariableDefineStrategyButton, this.globalVariableDefineStrategySelect, '请求前自动建立（旧行为）');
+                    }
+                }
                 if (this.globalIncludeNames) this.globalIncludeNames.checked = settings.includeNames === true;
                 if (this.globalRecursiveScan) this.globalRecursiveScan.checked = settings.recursiveScan !== false;
                 if (this.globalCaseSensitive) this.globalCaseSensitive.checked = settings.caseSensitive === true;
@@ -819,6 +834,9 @@ export class WorldPanel {
         }
         if (this.librarySortEl && this.librarySortEl.value !== this.librarySort) {
             this.librarySortEl.value = this.librarySort || 'time';
+            if (this.librarySortButton) {
+                refreshCustomSelectButton(this.librarySortButton, this.librarySortEl, '时间');
+            }
         }
         if (this.librarySortDirBtn) {
             const isAsc = this.librarySortDir === 'asc';
@@ -1134,19 +1152,27 @@ export class WorldPanel {
                     </div>
                     <div style="display:flex; gap:8px; align-items:center; margin-top:8px; flex-wrap:wrap;">
                         <span style="font-size:12px; color:var(--app-text-secondary);">插入策略</span>
-                        <select id="world-global-strategy" style="border:1px solid var(--app-border-default); border-radius:8px; padding:6px 8px; font-size:12px; background:var(--app-surface-card);">
+                        <select id="world-global-strategy" style="display:none;">
                             <option value="role_first">角色世界书优先</option>
                             <option value="global_first">全局世界书优先</option>
                             <option value="even">平均混合</option>
                         </select>
+                        <button type="button" id="world-global-strategy-btn" class="world-app-select-btn" style="min-width:180px;">
+                            <span class="pp-custom-select-label" data-custom-select-label>角色世界书优先</span>
+                            <span class="world-app-select-btn-chevron">▾</span>
+                        </button>
                     </div>
                     <div style="display:flex; gap:8px; align-items:center; margin-top:8px; flex-wrap:wrap;">
                         <span style="font-size:12px; color:var(--app-text-secondary);">变量自动建立</span>
-                        <select id="world-global-variable-define-strategy" style="border:1px solid var(--app-border-default); border-radius:8px; padding:6px 8px; font-size:12px; background:var(--app-surface-card);">
+                        <select id="world-global-variable-define-strategy" style="display:none;">
                             <option value="legacy_eager">请求前自动建立（旧行为）</option>
                             <option value="first_hit">命中条目后再建立</option>
                             <option value="off">关闭运行时自动建立</option>
                         </select>
+                        <button type="button" id="world-global-variable-define-strategy-btn" class="world-app-select-btn" style="min-width:220px;">
+                            <span class="pp-custom-select-label" data-custom-select-label>请求前自动建立（旧行为）</span>
+                            <span class="world-app-select-btn-chevron">▾</span>
+                        </button>
                     </div>
                     <div style="display:flex; gap:12px; align-items:center; margin-top:8px; flex-wrap:wrap;">
                         <label style="display:flex; align-items:center; gap:6px; font-size:12px; color:var(--app-text-secondary);">
@@ -1211,7 +1237,9 @@ export class WorldPanel {
         this.globalSettingsToggle = this.panel.querySelector('#world-global-settings-toggle');
         this.globalScanInput = this.panel.querySelector('#world-global-scan-depth');
         this.globalStrategySelect = this.panel.querySelector('#world-global-strategy');
+        this.globalStrategyButton = this.panel.querySelector('#world-global-strategy-btn');
         this.globalVariableDefineStrategySelect = this.panel.querySelector('#world-global-variable-define-strategy');
+        this.globalVariableDefineStrategyButton = this.panel.querySelector('#world-global-variable-define-strategy-btn');
         this.globalContextInput = this.panel.querySelector('#world-global-context-percent');
         this.globalIncludeNames = this.panel.querySelector('#world-global-include-names');
         this.globalBudgetInput = this.panel.querySelector('#world-global-budget-cap');
@@ -1223,6 +1251,16 @@ export class WorldPanel {
         this.globalMatchWholeWords = this.panel.querySelector('#world-global-full-match');
         this.globalUseGroupScoring = this.panel.querySelector('#world-global-group-scoring');
         this.globalOverflowWarning = this.panel.querySelector('#world-global-overflow-warning');
+        bindCustomSelectButton({
+            buttonEl: this.globalStrategyButton,
+            selectEl: this.globalStrategySelect,
+            fallback: '角色世界书优先',
+        });
+        bindCustomSelectButton({
+            buttonEl: this.globalVariableDefineStrategyButton,
+            selectEl: this.globalVariableDefineStrategySelect,
+            fallback: '请求前自动建立（旧行为）',
+        });
 
         this.panel.querySelector('#world-close').onclick = () => this.hide();
         this.panel.querySelector('#world-import').onclick = () => this.onImport();
@@ -1296,12 +1334,14 @@ export class WorldPanel {
         if (this.globalStrategySelect) {
             this.globalStrategySelect.onchange = () => {
                 const value = String(this.globalStrategySelect.value || 'role_first');
+                refreshCustomSelectButton(this.globalStrategyButton, this.globalStrategySelect, '角色世界书优先');
                 window.appBridge?.setWorldGlobalSettings?.({ insertionStrategy: value });
             };
         }
         if (this.globalVariableDefineStrategySelect) {
             this.globalVariableDefineStrategySelect.onchange = () => {
                 const value = String(this.globalVariableDefineStrategySelect.value || 'legacy_eager');
+                refreshCustomSelectButton(this.globalVariableDefineStrategyButton, this.globalVariableDefineStrategySelect, '请求前自动建立（旧行为）');
                 window.appBridge?.setWorldGlobalSettings?.({ variableDefineStrategy: value });
             };
         }
@@ -1374,10 +1414,14 @@ export class WorldPanel {
                 <div class="sticker-bind-toolbar" style="flex-wrap:wrap;">
                     <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
                         <span style="font-size:12px; color:var(--app-text-secondary);">排序</span>
-                        <select id="world-library-sort" style="border:1px solid rgba(148,163,184,0.45); border-radius:10px; padding:5px 8px; font-size:12px; background:var(--app-surface-card);">
+                        <select id="world-library-sort" style="display:none;">
                             <option value="time">时间</option>
                             <option value="name">字母</option>
                         </select>
+                        <button type="button" id="world-library-sort-btn" class="world-app-select-btn" style="min-width:120px;">
+                            <span class="pp-custom-select-label" data-custom-select-label>时间</span>
+                            <span class="world-app-select-btn-chevron">▾</span>
+                        </button>
                         <button type="button" id="world-library-sort-dir" aria-label="切换排序方向" style="border:1px solid rgba(148,163,184,0.45); background:var(--app-surface-card); border-radius:999px; width:28px; height:28px; font-size:12px; cursor:pointer; display:flex; align-items:center; justify-content:center;">
                             <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" style="display:block; transform: translateY(1px);">
                                 <path d="M8 2L11 5H9V7H7V5H5L8 2Z" fill="rgba(15,23,42,0.35)"></path>
@@ -1400,10 +1444,17 @@ export class WorldPanel {
         this.libraryListEl = this.libraryOverlay.querySelector('#world-library-list');
         this.librarySearchEl = this.libraryOverlay.querySelector('#world-library-search');
         this.librarySortEl = this.libraryOverlay.querySelector('#world-library-sort');
+        this.librarySortButton = this.libraryOverlay.querySelector('#world-library-sort-btn');
         this.libraryResetBtn = this.libraryOverlay.querySelector('#world-library-reset');
         this.librarySortDirBtn = this.libraryOverlay.querySelector('#world-library-sort-dir');
+        bindCustomSelectButton({
+            buttonEl: this.librarySortButton,
+            selectEl: this.librarySortEl,
+            fallback: '时间',
+        });
 
         const closeLibrary = () => {
+            closeCustomSelectMenu();
             this.libraryOverlay?.classList.remove('is-active');
         };
 
@@ -1427,6 +1478,7 @@ export class WorldPanel {
         });
         this.librarySortEl?.addEventListener('change', () => {
             this.librarySort = String(this.librarySortEl?.value || 'time') || 'time';
+            refreshCustomSelectButton(this.librarySortButton, this.librarySortEl, '时间');
             this.refreshList();
         });
         this.librarySortDirBtn?.addEventListener('click', () => {
@@ -1439,6 +1491,9 @@ export class WorldPanel {
             this.librarySortDir = 'desc';
             if (this.librarySearchEl) this.librarySearchEl.value = '';
             if (this.librarySortEl) this.librarySortEl.value = 'time';
+            if (this.librarySortButton && this.librarySortEl) {
+                refreshCustomSelectButton(this.librarySortButton, this.librarySortEl, '时间');
+            }
             this.refreshList();
         });
 

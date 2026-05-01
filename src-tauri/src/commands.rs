@@ -1127,38 +1127,54 @@ pub async fn ensure_media_bundle(app: AppHandle) -> Result<MediaBundleInfo, Stri
 
     let mut copied = false;
     let mut warning = None;
-
-    if !manifest_path.exists() {
-        match app.path().resource_dir() {
-            Ok(resource_dir) => {
-                let candidates = [
-                    resource_dir.join("media"),
-                    resource_dir.join("resources").join("media"),
-                    resource_dir
-                        .join("src-tauri")
-                        .join("resources")
-                        .join("media"),
-                ];
-                let mut picked = None;
-                for dir in candidates {
-                    if dir.exists() {
-                        picked = Some(dir);
-                        break;
-                    }
-                }
-                if let Some(src_dir) = picked {
-                    if let Err(err) = copy_dir_recursive(&src_dir, &target_dir) {
-                        warning = Some(format!("copy media bundle failed: {}", err));
-                    } else {
-                        copied = true;
-                    }
-                } else {
-                    warning = Some("media bundle not found in resources".to_string());
+    match app.path().resource_dir() {
+        Ok(resource_dir) => {
+            let candidates = [
+                resource_dir.join("media"),
+                resource_dir.join("resources").join("media"),
+                resource_dir
+                    .join("src-tauri")
+                    .join("resources")
+                    .join("media"),
+            ];
+            let mut picked = None;
+            for dir in candidates {
+                if dir.exists() {
+                    picked = Some(dir);
+                    break;
                 }
             }
-            Err(err) => {
-                warning = Some(format!("resource_dir unavailable: {}", err));
+            if let Some(src_dir) = picked {
+                let src_manifest_path = src_dir.join("manifest.json");
+                let src_manifest_text = fs::read_to_string(&src_manifest_path).ok();
+                let dst_manifest_text = fs::read_to_string(&manifest_path).ok();
+                let should_refresh = !manifest_path.exists()
+                    || matches!(
+                        (src_manifest_text.as_deref(), dst_manifest_text.as_deref()),
+                        (Some(src), Some(dst)) if src != dst
+                    );
+                if should_refresh {
+                    if target_dir.exists() {
+                        if let Err(err) = fs::remove_dir_all(&target_dir) {
+                            warning = Some(format!("remove media bundle failed: {}", err));
+                        }
+                    }
+                    if warning.is_none() {
+                        if let Err(err) = fs::create_dir_all(&target_dir) {
+                            warning = Some(format!("create media bundle dir failed: {}", err));
+                        } else if let Err(err) = copy_dir_recursive(&src_dir, &target_dir) {
+                            warning = Some(format!("copy media bundle failed: {}", err));
+                        } else {
+                            copied = true;
+                        }
+                    }
+                }
+            } else {
+                warning = Some("media bundle not found in resources".to_string());
             }
+        }
+        Err(err) => {
+            warning = Some(format!("resource_dir unavailable: {}", err));
         }
     }
 

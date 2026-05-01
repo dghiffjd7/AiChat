@@ -183,6 +183,7 @@ export class GeneralSettingsPanel {
     this.memoryUpdateContextInput = null;
     this.memoryBudgetBlock = null;
     this.memoryInjectPositionSelect = null;
+    this.memoryInjectPositionButton = null;
     this.memoryInjectDepthWrap = null;
     this.memoryInjectDepthInput = null;
     this.memoryBridgeBlock = null;
@@ -360,6 +361,7 @@ export class GeneralSettingsPanel {
       const raw = String(settings.memoryInjectPosition || 'history_after').toLowerCase();
       const allowed = new Set(['after_persona', 'system_end', 'before_chat', 'history_before', 'history_after', 'history_depth', 'system_end+before_chat']);
       this.memoryInjectPositionSelect.value = allowed.has(raw) ? raw : 'history_after';
+      this.refreshThemeSelectButton(this.memoryInjectPositionButton, this.memoryInjectPositionSelect, '注入位置');
     }
     if (this.memoryInjectDepthInput) {
       const raw = Math.trunc(Number(settings.memoryInjectDepth));
@@ -543,6 +545,10 @@ export class GeneralSettingsPanel {
     }
     if (this.memoryInjectPositionSelect) {
       this.memoryInjectPositionSelect.disabled = !showMemoryTable;
+    }
+    if (this.memoryInjectPositionButton) {
+      this.memoryInjectPositionButton.disabled = !showMemoryTable;
+      this.memoryInjectPositionButton.classList.toggle('is-disabled', this.memoryInjectPositionButton.disabled);
     }
     const position = String(settings.memoryInjectPosition || 'history_after').toLowerCase();
     const showDepth = showMemoryTable && position === 'history_depth';
@@ -1777,7 +1783,7 @@ export class GeneralSettingsPanel {
 
             <div style="margin-top: 10px;">
               <div style="font-size:12px; color:var(--app-text-muted); margin-bottom:6px;">记忆表格内容注入位置</div>
-              <select id="general-memory-inject-position" style="width:100%; padding:6px 8px; border:1px solid var(--app-border-default); border-radius:8px; font-size:12px;">
+              <select id="general-memory-inject-position" style="display:none;">
                 <option value="after_persona">角色设定后</option>
                 <option value="system_end">系统提示末尾</option>
                 <option value="before_chat">对话前</option>
@@ -1786,6 +1792,12 @@ export class GeneralSettingsPanel {
                 <option value="history_depth">深度注入（插入到 History 内）</option>
                 <option value="system_end+before_chat">双重注入（系统末尾 + 对话前）</option>
               </select>
+              <div class="general-settings-inline-actions">
+                <button type="button" id="general-memory-inject-position-btn" class="world-app-select-btn" style="margin-top:0;">
+                  <span class="general-settings-custom-select-label">注入位置</span>
+                  <span class="world-app-select-btn-chevron">▾</span>
+                </button>
+              </div>
               <small style="color:var(--app-text-muted); display:block; margin-top:4px;">只控制动态记忆表格内容；稳定写表指导固定保留在系统提示末尾</small>
             </div>
 
@@ -1989,6 +2001,7 @@ export class GeneralSettingsPanel {
     this.memoryUpdateContextInput = this.element.querySelector('#general-memory-update-context-rounds');
     this.memoryBudgetBlock = this.element.querySelector('#general-memory-budget-block');
     this.memoryInjectPositionSelect = this.element.querySelector('#general-memory-inject-position');
+    this.memoryInjectPositionButton = this.element.querySelector('#general-memory-inject-position-btn');
     this.memoryInjectDepthWrap = this.element.querySelector('#general-memory-inject-depth-wrap');
     this.memoryInjectDepthInput = this.element.querySelector('#general-memory-inject-depth');
     this.memoryBridgeBlock = this.element.querySelector('#general-memory-bridge-block');
@@ -2637,7 +2650,28 @@ export class GeneralSettingsPanel {
       const next = allowed.has(raw) ? raw : 'history_after';
       appSettings.update({ memoryInjectPosition: next });
       window.dispatchEvent(new CustomEvent('app-settings-changed', { detail: { key: 'memoryInjectPosition', value: next } }));
+      this.refreshThemeSelectButton(this.memoryInjectPositionButton, this.memoryInjectPositionSelect, '注入位置');
       this.updateMemoryAutoVisibility();
+    });
+    this.memoryInjectPositionButton?.addEventListener('click', () => {
+      if (!this.memoryInjectPositionSelect || this.memoryInjectPositionButton?.disabled) return;
+      const options = Array.from(this.memoryInjectPositionSelect.options || []).map((opt) => ({
+        value: opt.value,
+        label: opt.textContent || opt.value,
+      }));
+      this.openCustomSelectMenu({
+        anchorEl: this.memoryInjectPositionButton,
+        options,
+        currentValue: this.memoryInjectPositionSelect.value,
+        onSelect: (value) => {
+          if (this.memoryInjectPositionSelect.value !== value) {
+            this.memoryInjectPositionSelect.value = value;
+            this.memoryInjectPositionSelect.dispatchEvent(new Event('change', { bubbles: true }));
+          } else {
+            this.refreshThemeSelectButton(this.memoryInjectPositionButton, this.memoryInjectPositionSelect, '注入位置');
+          }
+        },
+      });
     });
     this.memoryInjectDepthInput?.addEventListener('input', (e) => {
       const raw = Math.trunc(Number(e?.target?.value));

@@ -6,6 +6,7 @@ import { appSettings } from '../storage/app-settings.js';
 import { CharacterCardImporter } from './character-card-importer.js';
 import { getCharacterCardDisplayName, getCharacterCardSource } from '../utils/character-card-display.js';
 import { getDefaultAppIcon } from '../utils/default-icon.js';
+import { bindCustomSelectButton, closeCustomSelectMenu, refreshCustomSelectButton } from './custom-select.js';
 
 export class PersonaPanel {
     constructor({ personaStore, userStore = null, chatStore = null, contactsStore = null, rpSessionStore = null, getSessionId = null, onPersonaChanged }) {
@@ -148,11 +149,15 @@ export class PersonaPanel {
                         <div style="font-size: 12px; font-weight: 700; color: var(--app-text-secondary); margin-bottom: 8px;">注入设置</div>
                         <div style="margin-bottom: 10px;">
                             <label style="display:block; font-size:12px; color:var(--app-text-secondary); margin-bottom:5px;">插入位置</label>
-                            <select id="edit-position" style="width:100%; padding:10px; border:1px solid var(--app-border-default); border-radius:8px; box-sizing:border-box;">
+                            <select id="edit-position" style="display:none;">
                                 <option value="0">IN_PROMPT（作为 system prompt 注入）</option>
                                 <option value="4">AT_DEPTH（插入到聊天历史指定深度）</option>
                                 <option value="9">NONE（不注入）</option>
                             </select>
+                            <button type="button" id="edit-position-btn" class="world-app-select-btn" style="width:100%; margin-top:0;">
+                                <span data-custom-select-label>插入位置</span>
+                                <span class="world-app-select-btn-chevron">▾</span>
+                            </button>
                         </div>
                         <div id="edit-depth-wrap" style="display:none; gap:10px;">
                             <div style="flex:1;">
@@ -161,11 +166,15 @@ export class PersonaPanel {
                             </div>
                             <div style="flex:1;">
                                 <label style="display:block; font-size:12px; color:var(--app-text-secondary); margin-bottom:5px;">注入角色</label>
-                                <select id="edit-role" style="width:100%; padding:10px; border:1px solid var(--app-border-default); border-radius:8px; box-sizing:border-box;">
+                                <select id="edit-role" style="display:none;">
                                     <option value="0">system</option>
                                     <option value="1">user</option>
                                     <option value="2">assistant</option>
                                 </select>
+                                <button type="button" id="edit-role-btn" class="world-app-select-btn" style="width:100%; margin-top:0;">
+                                    <span data-custom-select-label>注入角色</span>
+                                    <span class="world-app-select-btn-chevron">▾</span>
+                                </button>
                             </div>
                         </div>
                         <div style="margin-top:10px; font-size:11px; color:var(--app-text-muted); line-height:1.4;">
@@ -201,6 +210,16 @@ export class PersonaPanel {
         this.panel.querySelector('#save-persona-btn').addEventListener('click', () => this.saveEdit());
         this.panel.querySelector('#delete-persona-btn').addEventListener('click', () => this.deleteCurrent());
         this.panel.querySelector('#edit-position').addEventListener('change', () => this.updateInjectionUi());
+        bindCustomSelectButton({
+            buttonEl: this.panel.querySelector('#edit-position-btn'),
+            selectEl: this.panel.querySelector('#edit-position'),
+            fallback: '插入位置',
+        });
+        bindCustomSelectButton({
+            buttonEl: this.panel.querySelector('#edit-role-btn'),
+            selectEl: this.panel.querySelector('#edit-role'),
+            fallback: '注入角色',
+        });
 
     }
 
@@ -663,6 +682,7 @@ export class PersonaPanel {
     }
 
     hide() {
+        closeCustomSelectMenu();
         if (this.overlay) this.overlay.style.display = 'none';
         this.closeEdit();
     }
@@ -734,6 +754,8 @@ export class PersonaPanel {
         const posEl = this.panel.querySelector('#edit-position');
         const depthEl = this.panel.querySelector('#edit-depth');
         const roleEl = this.panel.querySelector('#edit-role');
+        const posBtn = this.panel.querySelector('#edit-position-btn');
+        const roleBtn = this.panel.querySelector('#edit-role-btn');
         const deleteBtn = this.panel.querySelector('#delete-persona-btn');
         const title = view.querySelector('span');
 
@@ -764,6 +786,8 @@ export class PersonaPanel {
             title.textContent = '新建角色卡';
         }
 
+        refreshCustomSelectButton(posBtn, posEl, '插入位置');
+        refreshCustomSelectButton(roleBtn, roleEl, '注入角色');
         this.updateInjectionUi();
 
         view.style.display = 'flex';
@@ -778,6 +802,7 @@ export class PersonaPanel {
     }
 
     closeEdit() {
+        closeCustomSelectMenu();
         const view = this.panel.querySelector('#persona-edit-view');
         view.style.display = 'none';
         this.editingId = null;

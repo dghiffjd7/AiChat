@@ -3,6 +3,7 @@ import { getMemoryTableUsageLabel, normalizeMemoryTableUsage } from '../memory/m
 import { MemoryTableEditor } from './memory-table-editor.js';
 import { logger } from '../utils/logger.js';
 import { appConfirm } from './app-confirm.js';
+import { bindCustomSelectButton, closeCustomSelectMenu, createCustomSelectWrapper, refreshCustomSelectButton } from './custom-select.js';
 
 const sanitizeFileName = (name) => {
   const raw = String(name || '').trim();
@@ -125,6 +126,7 @@ export class MemoryTemplatePanel {
   }
 
   hide() {
+    closeCustomSelectMenu();
     if (this.overlay) this.overlay.style.display = 'none';
     if (this.panel) this.panel.style.display = 'none';
   }
@@ -1733,10 +1735,38 @@ export class MemoryTemplatePanel {
       const scopeSelect = baseRow.querySelector('.memory-table-scope');
       const usageSelect = baseRow.querySelector('.memory-table-usage');
       const maxRowsInput = baseRow.querySelector('.memory-table-max-rows');
+      const scopeWrap = createCustomSelectWrapper(scopeSelect, {
+        placeholder: '私聊',
+        wrapperStyle: 'min-width:120px;',
+        buttonStyle: 'min-width:120px;',
+      });
+      if (scopeWrap) {
+        scopeSelect.parentNode?.replaceChild(scopeWrap, scopeSelect);
+        bindCustomSelectButton({
+          buttonEl: scopeWrap.querySelector('button'),
+          selectEl: scopeSelect,
+          fallback: '私聊',
+        });
+      }
+      const usageWrap = createCustomSelectWrapper(usageSelect, {
+        placeholder: '通用',
+        wrapperStyle: 'min-width:120px;',
+        buttonStyle: 'min-width:120px;',
+      });
+      if (usageWrap) {
+        usageSelect.parentNode?.replaceChild(usageWrap, usageSelect);
+        bindCustomSelectButton({
+          buttonEl: usageWrap.querySelector('button'),
+          selectEl: usageSelect,
+          fallback: '通用',
+        });
+      }
       if (idInput) idInput.value = String(table.id || '');
       if (nameInput) nameInput.value = String(table.name || '');
       if (scopeSelect) scopeSelect.value = String(table.scope || 'contact');
       if (usageSelect) usageSelect.value = normalizeMemoryTableUsage(table.usage);
+      if (scopeWrap) refreshCustomSelectButton(scopeWrap.querySelector('button'), scopeSelect, '私聊');
+      if (usageWrap) refreshCustomSelectButton(usageWrap.querySelector('button'), usageSelect, '通用');
       if (maxRowsInput) maxRowsInput.value = table.maxRows != null ? String(table.maxRows) : '';
 
       idInput?.addEventListener('input', () => {
@@ -1819,9 +1849,23 @@ export class MemoryTemplatePanel {
         const colName = colRow.querySelector('.memory-col-name');
         const colType = colRow.querySelector('.memory-col-type');
         const colDelete = colRow.querySelector('.memory-col-delete');
+        const colTypeWrap = createCustomSelectWrapper(colType, {
+          placeholder: 'text',
+          wrapperStyle: 'min-width:110px;',
+          buttonStyle: 'min-width:110px;',
+        });
+        if (colTypeWrap) {
+          colType.parentNode?.replaceChild(colTypeWrap, colType);
+          bindCustomSelectButton({
+            buttonEl: colTypeWrap.querySelector('button'),
+            selectEl: colType,
+            fallback: 'text',
+          });
+        }
         if (colId) colId.value = String(col?.id || '');
         if (colName) colName.value = String(col?.name || '');
         if (colType) colType.value = String(col?.type || 'text');
+        if (colTypeWrap) refreshCustomSelectButton(colTypeWrap.querySelector('button'), colType, 'text');
         colId?.addEventListener('input', () => {
           col.id = String(colId.value || '').trim();
         });

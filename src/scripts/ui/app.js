@@ -110,6 +110,7 @@ import { WorldPanel } from './world-panel.js';
 import { WorldInfoIndicator } from './worldinfo-indicator.js';
 import { buildRoleWorldBindingsImpl } from './world-role-binding-utils.js';
 import { appConfirm, appChoice } from './app-confirm.js';
+import { bindCustomSelectButton, createCustomSelectWrapper, refreshCustomSelectButton } from './custom-select.js';
 import { PluginRuntime } from '../plugins/plugin-runtime.js';
 import { themeManager } from './theme-manager.js';
 import { getDefaultAppIcon } from '../utils/default-icon.js';
@@ -631,6 +632,7 @@ const initApp = async () => {
         depth: currentCard?.depth,
         role: currentCard?.role,
         userBubbleColor: currentCard?.userBubbleColor,
+        userTextColor: currentCard?.userTextColor,
       };
       if (source?.type !== 'character_card') {
         nextPatch.name = String(currentCard?.name || '').trim() || '我';
@@ -1080,6 +1082,9 @@ const initApp = async () => {
   };
 
   const DEFAULT_USER_BUBBLE_COLOR = '#E8F0FE';
+  const DEFAULT_USER_TEXT_COLOR = '#1F2937';
+  const DEFAULT_DARK_USER_BUBBLE_COLOR = '#2F3C52';
+  const DEFAULT_DARK_USER_TEXT_COLOR = '#F8FAFC';
 
   const normalizeHexColor = (value, fallback) => {
     const raw = String(value || '').trim();
@@ -1107,17 +1112,49 @@ const initApp = async () => {
     };
   };
 
-  const getUserBubbleColor = (sessionId = chatStore.getCurrent()) => {
-    const user = getActiveUserProfile();
-    return normalizeHexColor(user?.userBubbleColor, DEFAULT_USER_BUBBLE_COLOR);
+  const isLegacyUserDefaultColor = (value, kind = 'bubble') => {
+    const raw = String(value || '').trim().toLowerCase();
+    return kind === 'text'
+      ? raw === DEFAULT_USER_TEXT_COLOR.toLowerCase()
+      : raw === DEFAULT_USER_BUBBLE_COLOR.toLowerCase();
   };
 
-  const applyUserBubbleColor = (sessionId = chatStore.getCurrent()) => {
+  const getThemeAwareUserDefaults = () => (
+    isDarkThemeMode()
+      ? {
+          bubbleColor: DEFAULT_DARK_USER_BUBBLE_COLOR,
+          textColor: DEFAULT_DARK_USER_TEXT_COLOR,
+        }
+      : {
+          bubbleColor: DEFAULT_USER_BUBBLE_COLOR,
+          textColor: DEFAULT_USER_TEXT_COLOR,
+        }
+  );
+
+  const getUserBubbleColor = (sessionId = chatStore.getCurrent()) => {
+    const user = getActiveUserProfile();
+    const defaults = getThemeAwareUserDefaults();
+    const raw = String(user?.userBubbleColor || '').trim();
+    if (isDarkThemeMode() && isLegacyUserDefaultColor(raw, 'bubble')) return defaults.bubbleColor;
+    return normalizeHexColor(raw, defaults.bubbleColor);
+  };
+
+  const getUserTextColor = (sessionId = chatStore.getCurrent()) => {
+    const user = getActiveUserProfile();
+    const defaults = getThemeAwareUserDefaults();
+    const raw = String(user?.userTextColor || '').trim();
+    if (!raw) return defaults.textColor;
+    if (isDarkThemeMode() && isLegacyUserDefaultColor(raw, 'text')) return defaults.textColor;
+    return normalizeHexColor(raw, defaults.textColor);
+  };
+
+  const applyUserMessageColors = (sessionId = chatStore.getCurrent()) => {
     if (!chatRoom) return;
     const currentId = String(chatStore.getCurrent() || '');
     const sid = String(sessionId || '');
     if (!sid || sid !== currentId) return;
     chatRoom.style.setProperty('--chat-user-bubble-color', getUserBubbleColor(sessionId));
+    chatRoom.style.setProperty('--chat-user-text-color', getUserTextColor(sessionId));
   };
 
   const syncUserPersonaUI = (sessionId = chatStore.getCurrent()) => {
@@ -1144,7 +1181,7 @@ const initApp = async () => {
     try {
       momentsPanel?.setUserAvatar?.(url);
     } catch {}
-    applyUserBubbleColor(sessionId);
+    applyUserMessageColors(sessionId);
   };
 
   const applyPersonaScope = async ({ personaId = null, force = false } = {}) => {
@@ -5901,7 +5938,7 @@ Phase G（Frame 36）：循环衔接
 
     const filterCommands = (token) => {
       const query = String(token || '').toLowerCase();
-      const list = getCommandList();
+      const list = getCommandList({ uiMode });
       if (!query || query === '/') return list;
       return list.filter(item => String(item.key || '').toLowerCase().startsWith(query));
     };
@@ -6575,7 +6612,7 @@ Phase G（Frame 36）：循环衔接
         <div class="sticker-ai-mode sticker-ai-mode-sprite" data-mode="sprite">
           <div class="sticker-ai-form-grid">
             <label>主题类型
-              <select id="sprite-theme">
+              <select id="sprite-theme" style="display:none;">
                 <option value="">不指定</option>
                 <option value="角色动画">角色动画</option>
                 <option value="物体动画">物体动画</option>
@@ -6589,7 +6626,7 @@ Phase G（Frame 36）：循环衔接
               <input type="text" id="sprite-theme-custom" placeholder="自填（可选）">
             </label>
             <label>叙事感
-              <select id="sprite-narrative">
+              <select id="sprite-narrative" style="display:none;">
                 <option value="">不指定</option>
                 <option value="强">强</option>
                 <option value="中">中</option>
@@ -6610,7 +6647,7 @@ Phase G（Frame 36）：循环衔接
           </div>
           <div class="sticker-ai-form-grid">
             <label>表现关键词
-              <select id="sprite-expression">
+              <select id="sprite-expression" style="display:none;">
                 <option value="">不指定</option>
                 <option value="力量">力量</option>
                 <option value="速度">速度</option>
@@ -6630,7 +6667,7 @@ Phase G（Frame 36）：循环衔接
               <input type="text" id="sprite-expression-custom" placeholder="可自填">
             </label>
             <label>色彩基调
-              <select id="sprite-tone">
+              <select id="sprite-tone" style="display:none;">
                 <option value="">不指定</option>
                 <option value="鲜艳">鲜艳</option>
                 <option value="冷色">冷色</option>
@@ -6642,7 +6679,7 @@ Phase G（Frame 36）：循环衔接
           </div>
           <div class="sticker-ai-form-grid">
             <label>像素等级
-              <select id="sprite-pixel">
+              <select id="sprite-pixel" style="display:none;">
                 <option value="">不指定</option>
                 <option value="16px">16px</option>
                 <option value="32px" selected>32px</option>
@@ -6651,13 +6688,13 @@ Phase G（Frame 36）：循环衔接
               </select>
             </label>
             <label>背景
-              <select id="sprite-bg">
+              <select id="sprite-bg" style="display:none;">
                 <option value="纯白" selected>纯白</option>
                 <option value="自订">自订</option>
               </select>
             </label>
             <label>动画结构
-              <select id="sprite-structure">
+              <select id="sprite-structure" style="display:none;">
                 <option value="7 阶段" selected>7 阶段结构</option>
                 <option value="简化">简化结构</option>
               </select>
@@ -6783,7 +6820,7 @@ Phase G（Frame 36）：循环衔接
         <div class="sticker-ai-slice-actions">
           <button type="button" class="sticker-ai-btn ghost" id="sticker-ai-select-all">全选</button>
           <button type="button" class="sticker-ai-btn ghost" id="sticker-ai-select-none">全不选</button>
-          <select id="sticker-ai-pack"></select>
+          <select id="sticker-ai-pack" style="display:none;"></select>
           <button type="button" class="sticker-ai-btn primary" id="sticker-ai-save">保存到贴图包</button>
           <button type="button" class="sticker-ai-btn" id="sticker-ai-download-zip">下载ZIP</button>
         </div>
@@ -6854,6 +6891,33 @@ Phase G（Frame 36）：循环衔接
     const uploadBtn = modal.querySelector('#sticker-ai-upload');
     const closeBtn = modal.querySelector('.sticker-ai-close');
     const downloadZipBtn = modal.querySelector('#sticker-ai-download-zip');
+    const stickerAiSelectButtons = {};
+    const attachStickerAiCustomSelect = (selectEl, key, fallback, { minWidth = '140px', width = '', wrapperStyle = '' } = {}) => {
+      if (!(selectEl instanceof HTMLElement)) return null;
+      const wrap = createCustomSelectWrapper(selectEl, {
+        placeholder: fallback,
+        wrapperStyle: wrapperStyle || (width ? `width:${width};` : `min-width:${minWidth};`),
+        buttonStyle: width ? `width:${width};` : `min-width:${minWidth};`,
+      });
+      if (!(wrap instanceof HTMLElement)) return null;
+      const button = wrap.querySelector('button');
+      selectEl.parentNode?.replaceChild(wrap, selectEl);
+      bindCustomSelectButton({
+        buttonEl: button,
+        selectEl,
+        fallback,
+      });
+      stickerAiSelectButtons[key] = button;
+      return button;
+    };
+    attachStickerAiCustomSelect(spriteThemeInput, 'theme', '不指定');
+    attachStickerAiCustomSelect(spriteNarrativeInput, 'narrative', '不指定');
+    attachStickerAiCustomSelect(spriteExpressionInput, 'expression', '不指定');
+    attachStickerAiCustomSelect(spriteToneInput, 'tone', '不指定');
+    attachStickerAiCustomSelect(spritePixelInput, 'pixel', '32px');
+    attachStickerAiCustomSelect(spriteBgInput, 'background', '纯白');
+    attachStickerAiCustomSelect(spriteStructureInput, 'structure', '7 阶段结构');
+    attachStickerAiCustomSelect(packSelectEl, 'pack', '新建贴图包', { width: '100%', wrapperStyle: 'flex:1; min-width:160px;' });
 
     let referenceImages = [];
     let generatedImages = [];
@@ -7099,6 +7163,13 @@ Phase G（Frame 36）：循环衔接
       if (spriteFpsInput) spriteFpsInput.value = normalized.fps;
       if (spriteTransparentInput) spriteTransparentInput.checked = normalized.transparent;
       if (spriteExtraInput) spriteExtraInput.value = normalized.extraText;
+      refreshCustomSelectButton(stickerAiSelectButtons.theme, spriteThemeInput, '不指定');
+      refreshCustomSelectButton(stickerAiSelectButtons.narrative, spriteNarrativeInput, '不指定');
+      refreshCustomSelectButton(stickerAiSelectButtons.expression, spriteExpressionInput, '不指定');
+      refreshCustomSelectButton(stickerAiSelectButtons.tone, spriteToneInput, '不指定');
+      refreshCustomSelectButton(stickerAiSelectButtons.pixel, spritePixelInput, '32px');
+      refreshCustomSelectButton(stickerAiSelectButtons.background, spriteBgInput, '纯白');
+      refreshCustomSelectButton(stickerAiSelectButtons.structure, spriteStructureInput, '7 阶段结构');
     };
     const resolveSpriteOption = (value, custom) => {
       const raw = normalizeSpriteText(value);
@@ -8153,11 +8224,13 @@ Phase G（Frame 36）：循环衔接
       const candidate = nextPreferred || currentValue;
       if (candidate && candidate !== '__new__' && packs.some(pack => String(pack?.id || '') === candidate)) {
         packSelectEl.value = candidate;
+        refreshCustomSelectButton(stickerAiSelectButtons.pack, packSelectEl, '新建贴图包');
         return;
       }
       if (currentValue && currentValue !== '__new__') {
         packSelectEl.value = '__new__';
       }
+      refreshCustomSelectButton(stickerAiSelectButtons.pack, packSelectEl, '新建贴图包');
     };
 
     const stopAnimationPreview = () => {
@@ -9734,7 +9807,7 @@ Phase G（Frame 36）：循环衔接
             </div>
           </div>
           <div class="sticker-pack-move">
-            <select id="sticker-pack-move-target"></select>
+            <select id="sticker-pack-move-target" style="display:none;"></select>
             <button type="button" id="sticker-pack-move-btn">移动</button>
             <button type="button" id="sticker-pack-download-btn">批量下载</button>
           </div>
@@ -9770,6 +9843,20 @@ Phase G（Frame 36）：循环衔接
     const selectNoneBtn = modal.querySelector('#sticker-pack-select-none');
     const deleteSelectedBtn = modal.querySelector('#sticker-pack-delete-selected');
     const moveSelect = modal.querySelector('#sticker-pack-move-target');
+    const moveSelectWrap = createCustomSelectWrapper(moveSelect, {
+      placeholder: '新建贴图包',
+      wrapperStyle: 'flex:1; min-width:160px;',
+      buttonStyle: 'width:100%;',
+    });
+    const moveSelectButton = moveSelectWrap?.querySelector('button') || null;
+    if (moveSelectWrap) {
+      moveSelect.parentNode?.replaceChild(moveSelectWrap, moveSelect);
+      bindCustomSelectButton({
+        buttonEl: moveSelectButton,
+        selectEl: moveSelect,
+        fallback: '新建贴图包',
+      });
+    }
     const moveBtn = modal.querySelector('#sticker-pack-move-btn');
     const downloadBtn = modal.querySelector('#sticker-pack-download-btn');
     const keywordInput = modal.querySelector('#sticker-pack-keywords-input');
@@ -10061,6 +10148,7 @@ Phase G（Frame 36）：循环衔接
         moveSelect.appendChild(option);
       });
       if (currentValue) moveSelect.value = currentValue;
+      refreshCustomSelectButton(moveSelectButton, moveSelect, '新建贴图包');
     };
 
     const syncSelectedCount = () => {
@@ -18760,6 +18848,10 @@ Phase G（Frame 36）：循环衔接
         .filter(m => m && m.status !== 'pending' && m.status !== 'sending')
         .filter(m => !excludeMessageIds.has(String(m?.id || '')))
         .filter(m => {
+          if (!isRpMode) return true;
+          return m?.meta?.hiddenFromRpPrompt !== true;
+        })
+        .filter(m => {
           if (!m || typeof m.content !== 'string') return false;
           if (m.role === 'user' || m.role === 'assistant') return true;
           return isGroupChat && m.role === 'system';
@@ -19070,9 +19162,16 @@ Phase G（Frame 36）：循环衔接
       const handled = runCommand(text, {
         chatStore,
         ui,
+        uiMode,
+        getUiMode: () => uiMode,
         sessionPanel,
         worldPanel,
         appBridge: window.appBridge,
+        reloadCurrentSession: () => {
+          const currentId = String(chatStore.getCurrent() || '').trim();
+          if (!currentId) return;
+          window.dispatchEvent(new CustomEvent('session-changed', { detail: { id: currentId } }));
+        },
         sendMessage: (content, opts = {}) =>
           handleSend(null, { overrideText: String(content ?? ''), ignorePending: true, ...opts }),
       });
@@ -20772,16 +20871,24 @@ Phase G（Frame 36）：循环衔接
   };
   window.appBridge.sendMessageFromPlugin = sendMessageFromPlugin;
 
-  // 使用新的分离模式：Enter 缓存，发送按钮真正发送
+  const handleComposerSend = () => {
+    if (ui?.isSending || ui?.isStreaming || (activeGeneration && !activeGeneration.cancelled)) {
+      cancelActiveGeneration('user');
+      return;
+    }
+    handleSend();
+  };
+
+  // 普通聊天沿用 Enter 缓存；RP/创意写作界面 Enter 直接发送。
   ui.onSendWithMode({
-    onEnter: handleEnter,
-    onSendButton: () => {
-      if (ui?.isSending || ui?.isStreaming || (activeGeneration && !activeGeneration.cancelled)) {
-        cancelActiveGeneration('user');
+    onEnter: () => {
+      if (uiMode === 'rp') {
+        handleComposerSend();
         return;
       }
-      handleSend();
+      handleEnter();
     },
+    onSendButton: handleComposerSend,
   });
   ui.onReplyCancel(() => {
     clearReplyTargetForSession(chatStore.getCurrent());
@@ -22193,7 +22300,7 @@ Phase G（Frame 36）：循环衔接
     } else {
       chatRoom.style.removeProperty('--chat-text-color');
     }
-    applyUserBubbleColor(sessionId);
+    applyUserMessageColors(sessionId);
     applyWallpaperToChatRoom(settings);
   }
 

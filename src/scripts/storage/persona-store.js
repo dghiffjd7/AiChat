@@ -18,10 +18,32 @@ export const persona_description_positions = {
 const DEFAULT_DEPTH = 2;
 const DEFAULT_ROLE = 0; // 0=system, 1=user, 2=assistant
 const DEFAULT_USER_BUBBLE_COLOR = '#E8F0FE';
+const DEFAULT_USER_TEXT_COLOR = '#1F2937';
+const DEFAULT_DARK_USER_BUBBLE_COLOR = '#2F3C52';
+const DEFAULT_DARK_USER_TEXT_COLOR = '#F8FAFC';
 
-const normalizeBubbleColor = (value) => {
+const isDarkThemeMode = () => String(document?.body?.dataset?.themeMode || '').trim().toLowerCase() === 'dark';
+
+const getThemeAwareUserDefaults = () => (
+    isDarkThemeMode()
+        ? {
+            bubbleColor: DEFAULT_DARK_USER_BUBBLE_COLOR,
+            textColor: DEFAULT_DARK_USER_TEXT_COLOR,
+        }
+        : {
+            bubbleColor: DEFAULT_USER_BUBBLE_COLOR,
+            textColor: DEFAULT_USER_TEXT_COLOR,
+        }
+);
+
+const normalizeBubbleColor = (value, fallback = DEFAULT_USER_BUBBLE_COLOR) => {
     const raw = String(value || '').trim();
-    return /^#[0-9A-F]{6}$/i.test(raw) ? raw : DEFAULT_USER_BUBBLE_COLOR;
+    return /^#[0-9A-F]{6}$/i.test(raw) ? raw : fallback;
+};
+
+const normalizeTextColor = (value, fallback = DEFAULT_USER_TEXT_COLOR) => {
+    const raw = String(value || '').trim();
+    return /^#[0-9A-F]{6}$/i.test(raw) ? raw : fallback;
 };
 
 const isLargeDataUrl = (value) => {
@@ -95,6 +117,7 @@ export class PersonaStore {
                     avatar: typeof obj.avatar === 'string' ? obj.avatar : '',
                     description: typeof obj.description === 'string' ? obj.description : '',
                     userBubbleColor: normalizeBubbleColor(obj.userBubbleColor),
+                    userTextColor: normalizeTextColor(obj.userTextColor),
                     position,
                     depth,
                     role,
@@ -109,6 +132,7 @@ export class PersonaStore {
                     normalized.avatar !== obj.avatar ||
                     normalized.description !== obj.description ||
                     normalized.userBubbleColor !== obj.userBubbleColor ||
+                    normalized.userTextColor !== obj.userTextColor ||
                     normalized.position !== obj.position ||
                     normalized.depth !== obj.depth ||
                     normalized.role !== obj.role ||
@@ -147,12 +171,14 @@ export class PersonaStore {
     }
 
     createDefaultPersona() {
+        const defaults = getThemeAwareUserDefaults();
         return {
             id: this.defaultId,
             name: this.defaultName,
             avatar: '', // Will fallback to app default in UI
             description: '',
-            userBubbleColor: DEFAULT_USER_BUBBLE_COLOR,
+            userBubbleColor: defaults.bubbleColor,
+            userTextColor: defaults.textColor,
             position: persona_description_positions.IN_PROMPT,
             depth: DEFAULT_DEPTH,
             role: DEFAULT_ROLE,
@@ -294,7 +320,8 @@ export class PersonaStore {
             name: data.name || this.defaultName,
             avatar: data.avatar || '',
             description: data.description || '',
-            userBubbleColor: normalizeBubbleColor(data.userBubbleColor),
+            userBubbleColor: normalizeBubbleColor(data.userBubbleColor, getThemeAwareUserDefaults().bubbleColor),
+            userTextColor: normalizeTextColor(data.userTextColor, getThemeAwareUserDefaults().textColor),
             position,
             depth,
             role,
@@ -327,6 +354,9 @@ export class PersonaStore {
         }
         if (data && Object.prototype.hasOwnProperty.call(data, 'userBubbleColor')) {
             next.userBubbleColor = normalizeBubbleColor(data.userBubbleColor);
+        }
+        if (data && Object.prototype.hasOwnProperty.call(data, 'userTextColor')) {
+            next.userTextColor = normalizeTextColor(data.userTextColor);
         }
         if (data && Object.prototype.hasOwnProperty.call(data, 'source')) {
             next.source = (data.source && typeof data.source === 'object') ? data.source : null;

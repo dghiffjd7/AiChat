@@ -1,4 +1,5 @@
 import { appConfirm } from './app-confirm.js';
+import { bindCustomSelectButton, closeCustomSelectMenu, refreshCustomSelectButton } from './custom-select.js';
 import { applyTemplate, listVariableTemplates } from '../variables/variable-templates.js';
 import {
     buildRuleConditionDiagnostics,
@@ -374,7 +375,7 @@ export class VariablePanel {
                 <input id="schema-value" type="text" style="padding:8px 10px; border:1px solid var(--app-border-default); border-radius:10px;">
 
                 <label style="font-size:12px; color:var(--app-text-muted);">类型</label>
-                <select id="schema-type" style="padding:8px 10px; border:1px solid var(--app-border-default); border-radius:10px;">
+                <select id="schema-type" style="display:none;">
                     <option value="">（无）</option>
                     <option value="number">number</option>
                     <option value="string">string</option>
@@ -383,6 +384,10 @@ export class VariablePanel {
                     <option value="array">array</option>
                     <option value="object">object</option>
                 </select>
+                <button id="schema-type-btn" type="button" class="world-app-select-btn" style="width:100%;">
+                    <span class="pp-custom-select-label" data-custom-select-label>（无）</span>
+                    <span class="world-app-select-btn-chevron">▾</span>
+                </button>
 
                 <label style="font-size:12px; color:var(--app-text-muted);">默认值</label>
                 <input id="schema-default" type="text" style="padding:8px 10px; border:1px solid var(--app-border-default); border-radius:10px;">
@@ -404,12 +409,16 @@ export class VariablePanel {
                 </div>
 
                 <label style="font-size:12px; color:var(--app-text-muted);">展示</label>
-                <select id="schema-display" style="padding:8px 10px; border:1px solid var(--app-border-default); border-radius:10px;">
+                <select id="schema-display" style="display:none;">
                     <option value="card">card</option>
                     <option value="badge">badge</option>
                     <option value="progress">progress</option>
                     <option value="hidden">hidden</option>
                 </select>
+                <button id="schema-display-btn" type="button" class="world-app-select-btn" style="width:100%;">
+                    <span class="pp-custom-select-label" data-custom-select-label>card</span>
+                    <span class="world-app-select-btn-chevron">▾</span>
+                </button>
 
                 <label style="font-size:12px; color:var(--app-text-muted);">颜色</label>
                 <input id="schema-color" type="text" placeholder="#ff6b6b" style="padding:8px 10px; border:1px solid var(--app-border-default); border-radius:10px;">
@@ -431,6 +440,7 @@ export class VariablePanel {
             key: q('#schema-key'),
             value: q('#schema-value'),
             type: q('#schema-type'),
+            typeBtn: q('#schema-type-btn'),
             def: q('#schema-default'),
             rangeWrap: q('#schema-range'),
             min: q('#schema-min'),
@@ -438,6 +448,7 @@ export class VariablePanel {
             optionsWrap: q('#schema-options'),
             options: q('#schema-options-input'),
             display: q('#schema-display'),
+            displayBtn: q('#schema-display-btn'),
             color: q('#schema-color'),
             format: q('#schema-format'),
             save: q('#schema-save'),
@@ -445,6 +456,8 @@ export class VariablePanel {
             close: q('#schema-close'),
             del: q('#schema-delete'),
         };
+        bindCustomSelectButton({ buttonEl: fields.typeBtn, selectEl: fields.type, fallback: '（无）' });
+        bindCustomSelectButton({ buttonEl: fields.displayBtn, selectEl: fields.display, fallback: 'card' });
 
         const updateTypeUI = () => {
             const type = String(fields.type?.value || '').trim();
@@ -569,13 +582,17 @@ export class VariablePanel {
                 </div>
 
                 <label style="font-size:12px; color:var(--app-text-muted);">触发类型</label>
-                <select id="rule-trigger-type" style="padding:8px 10px; border:1px solid var(--app-border-default); border-radius:10px;">
+                <select id="rule-trigger-type" style="display:none;">
                     <option value="every_turn">每轮</option>
                     <option value="every_n_turns">每 N 轮</option>
                     <option value="keyword">关键词</option>
                     <option value="condition">条件表达式</option>
                     <option value="manual">手动</option>
                 </select>
+                <button id="rule-trigger-type-btn" type="button" class="world-app-select-btn" style="width:100%;">
+                    <span class="pp-custom-select-label" data-custom-select-label>每轮</span>
+                    <span class="world-app-select-btn-chevron">▾</span>
+                </button>
 
                 <div id="rule-trigger-n-wrap" style="display:none;">
                     <label style="font-size:12px; color:var(--app-text-muted);">N（每 N 轮）</label>
@@ -597,7 +614,7 @@ export class VariablePanel {
                 </div>
 
                 <label style="font-size:12px; color:var(--app-text-muted);">动作类型</label>
-                <select id="rule-action-type" style="padding:8px 10px; border:1px solid var(--app-border-default); border-radius:10px;">
+                <select id="rule-action-type" style="display:none;">
                     <option value="set_value">设置数值</option>
                     <option value="increment">递增</option>
                     <option value="decrement">递减</option>
@@ -609,6 +626,10 @@ export class VariablePanel {
                     <option value="switch_persona">切换角色卡</option>
                     <option value="inject_prompt">注入提示词</option>
                 </select>
+                <button id="rule-action-type-btn" type="button" class="world-app-select-btn" style="width:100%;">
+                    <span class="pp-custom-select-label" data-custom-select-label>设置数值</span>
+                    <span class="world-app-select-btn-chevron">▾</span>
+                </button>
 
                 <label style="font-size:12px; color:var(--app-text-muted);">目标变量</label>
                 <input id="rule-action-target" list="rule-target-list" type="text" style="padding:8px 10px; border:1px solid var(--app-border-default); border-radius:10px;">
@@ -628,22 +649,30 @@ export class VariablePanel {
                     <label style="font-size:12px; color:var(--app-text-muted);">AI 评估提示词</label>
                     <textarea id="rule-action-prompt" rows="4" style="padding:8px 10px; border:1px solid var(--app-border-default); border-radius:10px;"></textarea>
                     <label style="font-size:12px; color:var(--app-text-muted);">应用方式</label>
-                    <select id="rule-action-mode" style="padding:8px 10px; border:1px solid var(--app-border-default); border-radius:10px;">
+                    <select id="rule-action-mode" style="display:none;">
                         <option value="delta">增量</option>
                         <option value="set">直接赋值</option>
                     </select>
+                    <button id="rule-action-mode-btn" type="button" class="world-app-select-btn" style="width:100%;">
+                        <span class="pp-custom-select-label" data-custom-select-label>增量</span>
+                        <span class="world-app-select-btn-chevron">▾</span>
+                    </button>
                 </div>
 
                 <div id="rule-action-message-wrap" style="display:none;">
                     <label style="font-size:12px; color:var(--app-text-muted);">通知内容</label>
                     <input id="rule-action-message" type="text" style="padding:8px 10px; border:1px solid var(--app-border-default); border-radius:10px;">
                     <label style="font-size:12px; color:var(--app-text-muted);">通知级别</label>
-                    <select id="rule-action-message-style" style="padding:8px 10px; border:1px solid var(--app-border-default); border-radius:10px;">
+                    <select id="rule-action-message-style" style="display:none;">
                         <option value="info">info</option>
                         <option value="success">success</option>
                         <option value="warning">warning</option>
                         <option value="error">error</option>
                     </select>
+                    <button id="rule-action-message-style-btn" type="button" class="world-app-select-btn" style="width:100%;">
+                        <span class="pp-custom-select-label" data-custom-select-label>info</span>
+                        <span class="world-app-select-btn-chevron">▾</span>
+                    </button>
                 </div>
 
                 <div id="rule-action-persona-wrap" style="display:none;">
@@ -655,11 +684,15 @@ export class VariablePanel {
                     <label style="font-size:12px; color:var(--app-text-muted);">注入提示词</label>
                     <textarea id="rule-action-inject" rows="4" style="padding:8px 10px; border:1px solid var(--app-border-default); border-radius:10px;"></textarea>
                     <label style="font-size:12px; color:var(--app-text-muted);">注入角色</label>
-                    <select id="rule-action-inject-role" style="padding:8px 10px; border:1px solid var(--app-border-default); border-radius:10px;">
+                    <select id="rule-action-inject-role" style="display:none;">
                         <option value="system">system</option>
                         <option value="user">user</option>
                         <option value="assistant">assistant</option>
                     </select>
+                    <button id="rule-action-inject-role-btn" type="button" class="world-app-select-btn" style="width:100%;">
+                        <span class="pp-custom-select-label" data-custom-select-label>system</span>
+                        <span class="world-app-select-btn-chevron">▾</span>
+                    </button>
                 </div>
             </div>
             <div style="display:flex; gap:8px; padding:12px; border-top:1px solid #eef2f7;">
@@ -677,6 +710,7 @@ export class VariablePanel {
             enabled: q('#rule-enabled'),
             priority: q('#rule-priority'),
             triggerType: q('#rule-trigger-type'),
+            triggerTypeBtn: q('#rule-trigger-type-btn'),
             triggerNWrap: q('#rule-trigger-n-wrap'),
             triggerN: q('#rule-trigger-n'),
             triggerKeywordsWrap: q('#rule-trigger-keywords-wrap'),
@@ -686,6 +720,7 @@ export class VariablePanel {
             triggerExpr: q('#rule-trigger-expr'),
             triggerExprStatus: q('#rule-trigger-expr-status'),
             actionType: q('#rule-action-type'),
+            actionTypeBtn: q('#rule-action-type-btn'),
             actionTarget: q('#rule-action-target'),
             actionValueWrap: q('#rule-action-value-wrap'),
             actionValueLabel: q('#rule-action-value-label'),
@@ -695,20 +730,28 @@ export class VariablePanel {
             actionAiWrap: q('#rule-action-ai-wrap'),
             actionPrompt: q('#rule-action-prompt'),
             actionMode: q('#rule-action-mode'),
+            actionModeBtn: q('#rule-action-mode-btn'),
             actionMessageWrap: q('#rule-action-message-wrap'),
             actionMessage: q('#rule-action-message'),
             actionMessageStyle: q('#rule-action-message-style'),
+            actionMessageStyleBtn: q('#rule-action-message-style-btn'),
             actionPersonaWrap: q('#rule-action-persona-wrap'),
             actionPersona: q('#rule-action-persona'),
             actionInjectWrap: q('#rule-action-inject-wrap'),
             actionInject: q('#rule-action-inject'),
             actionInjectRole: q('#rule-action-inject-role'),
+            actionInjectRoleBtn: q('#rule-action-inject-role-btn'),
             targetList: q('#rule-target-list'),
             save: q('#rule-save'),
             cancel: q('#rule-cancel'),
             close: q('#rule-editor-close'),
             del: q('#rule-delete'),
         };
+        bindCustomSelectButton({ buttonEl: fields.triggerTypeBtn, selectEl: fields.triggerType, fallback: '每轮' });
+        bindCustomSelectButton({ buttonEl: fields.actionTypeBtn, selectEl: fields.actionType, fallback: '设置数值' });
+        bindCustomSelectButton({ buttonEl: fields.actionModeBtn, selectEl: fields.actionMode, fallback: '增量' });
+        bindCustomSelectButton({ buttonEl: fields.actionMessageStyleBtn, selectEl: fields.actionMessageStyle, fallback: 'info' });
+        bindCustomSelectButton({ buttonEl: fields.actionInjectRoleBtn, selectEl: fields.actionInjectRole, fallback: 'system' });
 
         const updateTriggerUI = () => {
             const type = String(fields.triggerType?.value || '');
@@ -873,6 +916,7 @@ export class VariablePanel {
     }
 
     hide() {
+        closeCustomSelectMenu();
         if (this.overlay) this.overlay.style.display = 'none';
         this.closeMoreMenu();
     }
@@ -902,6 +946,7 @@ export class VariablePanel {
     }
 
     hideRules() {
+        closeCustomSelectMenu();
         if (this.ruleOverlay) this.ruleOverlay.style.display = 'none';
     }
 
@@ -916,11 +961,13 @@ export class VariablePanel {
         if (fields.enabled) fields.enabled.checked = normalized.enabled !== false;
         if (fields.priority) fields.priority.value = Number(normalized.priority || 0);
         if (fields.triggerType) fields.triggerType.value = normalized.trigger.type || 'every_turn';
+        refreshCustomSelectButton(fields.triggerTypeBtn, fields.triggerType, '每轮');
         if (fields.triggerN) fields.triggerN.value = normalized.trigger.n || 1;
         if (fields.triggerKeywords) fields.triggerKeywords.value = (normalized.trigger.keywords || []).join(', ');
         if (fields.triggerCase) fields.triggerCase.checked = Boolean(normalized.trigger.caseSensitive);
         if (fields.triggerExpr) fields.triggerExpr.value = normalized.trigger.expr || '';
         if (fields.actionType) fields.actionType.value = normalized.action.type || 'set_value';
+        refreshCustomSelectButton(fields.actionTypeBtn, fields.actionType, '设置数值');
         if (fields.actionTarget) fields.actionTarget.value = normalized.action.target || '';
         if (fields.actionValue) fields.actionValue.value =
             normalized.action.value === undefined || normalized.action.value === null
@@ -929,11 +976,14 @@ export class VariablePanel {
         if (fields.actionDelta) fields.actionDelta.value = Number.isFinite(Number(normalized.action.value)) ? Number(normalized.action.value) : 1;
         if (fields.actionPrompt) fields.actionPrompt.value = normalized.action.prompt || '';
         if (fields.actionMode) fields.actionMode.value = normalized.action.mode || 'delta';
+        refreshCustomSelectButton(fields.actionModeBtn, fields.actionMode, '增量');
         if (fields.actionMessage) fields.actionMessage.value = normalized.action.message || '';
         if (fields.actionMessageStyle) fields.actionMessageStyle.value = normalized.action.style || 'info';
+        refreshCustomSelectButton(fields.actionMessageStyleBtn, fields.actionMessageStyle, 'info');
         if (fields.actionPersona) fields.actionPersona.value = normalized.action.persona || '';
         if (fields.actionInject) fields.actionInject.value = normalized.action.prompt || '';
         if (fields.actionInjectRole) fields.actionInjectRole.value = normalized.action.role || 'system';
+        refreshCustomSelectButton(fields.actionInjectRoleBtn, fields.actionInjectRole, 'system');
 
         const { vars } = this.getVars();
         if (fields.targetList) {
@@ -952,6 +1002,7 @@ export class VariablePanel {
     }
 
     hideRuleEditor() {
+        closeCustomSelectMenu();
         if (this.ruleEditorOverlay) this.ruleEditorOverlay.style.display = 'none';
         this.editingRuleId = '';
     }
@@ -1250,6 +1301,7 @@ export class VariablePanel {
         }
         const type = schemaObj?.type ? String(schemaObj.type) : '';
         if (fields.type) fields.type.value = type;
+        refreshCustomSelectButton(fields.typeBtn, fields.type, '（无）');
 
         if (fields.def) {
             const defVal = schemaObj?.default;
@@ -1269,6 +1321,7 @@ export class VariablePanel {
         if (fields.max) fields.max.value = schemaObj?.range?.max ?? '';
         if (fields.options) fields.options.value = Array.isArray(schemaObj?.options) ? schemaObj.options.join(',') : '';
         if (fields.display) fields.display.value = schemaObj?.ui?.display || 'card';
+        refreshCustomSelectButton(fields.displayBtn, fields.display, 'card');
         if (fields.color) fields.color.value = schemaObj?.ui?.color || '';
         if (fields.format) fields.format.value = schemaObj?.ui?.format || '';
         if (fields.del) fields.del.style.display = schemaObj?.type ? 'inline-flex' : 'none';
@@ -1285,6 +1338,7 @@ export class VariablePanel {
     }
 
     hideSchemaModal() {
+        closeCustomSelectMenu();
         if (this.schemaOverlay) this.schemaOverlay.style.display = 'none';
     }
 

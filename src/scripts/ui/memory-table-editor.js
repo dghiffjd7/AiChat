@@ -13,6 +13,7 @@ import {
 } from '../memory/memory-row-order.js';
 import { logger } from '../utils/logger.js';
 import { appConfirm } from './app-confirm.js';
+import { bindCustomSelectButton, createCustomSelectWrapper, refreshCustomSelectButton } from './custom-select.js';
 
 const scopeLabelMap = {
   global: '全局',
@@ -235,6 +236,7 @@ export class MemoryTableEditor {
     this.promptTemplateInput = null;
     this.promptWrapperInput = null;
     this.promptPositionSelect = null;
+    this.promptPositionSelectButton = null;
     this.promptPreviewInput = null;
     this.promptSaveBtn = null;
     this.promptRefreshBtn = null;
@@ -439,7 +441,21 @@ export class MemoryTableEditor {
       positionSelect.appendChild(option);
     });
     positionRow.appendChild(positionLabel);
-    positionRow.appendChild(positionSelect);
+    const positionWrap = createCustomSelectWrapper(positionSelect, {
+      placeholder: '角色设定后',
+      wrapperStyle: 'min-width:160px;',
+      buttonStyle: 'min-width:160px;',
+    });
+    if (positionWrap) {
+      bindCustomSelectButton({
+        buttonEl: positionWrap.querySelector('button'),
+        selectEl: positionSelect,
+        fallback: '角色设定后',
+      });
+      positionRow.appendChild(positionWrap);
+    } else {
+      positionRow.appendChild(positionSelect);
+    }
     const promptActions = document.createElement('div');
     promptActions.className = 'memory-table-prompt-actions';
     promptActions.style.cssText = 'display:flex; gap:8px; justify-content:flex-end;';
@@ -488,6 +504,7 @@ export class MemoryTableEditor {
     this.promptTemplateInput = templateInput;
     this.promptWrapperInput = wrapperInput;
     this.promptPositionSelect = positionSelect;
+    this.promptPositionSelectButton = positionWrap?.querySelector('button') || null;
     this.promptPreviewInput = previewInput;
     this.promptSaveBtn = promptSave;
     this.promptRefreshBtn = promptRefresh;
@@ -600,6 +617,9 @@ export class MemoryTableEditor {
     this.promptTemplateInput.value = templateText;
     this.promptWrapperInput.value = wrapperText;
     this.promptPositionSelect.value = position;
+    if (this.promptPositionSelectButton) {
+      refreshCustomSelectButton(this.promptPositionSelectButton, this.promptPositionSelect, '角色设定后');
+    }
     if (this.promptSaveBtn) {
       this.promptSaveBtn.onclick = () => this.savePromptTemplate(ctx);
     }
@@ -1297,6 +1317,7 @@ export class MemoryTableEditor {
     wrapper.appendChild(label);
 
     let input;
+    let selectWrap = null;
     if (column.type === 'multiline') {
       input = document.createElement('textarea');
       input.style.cssText = 'width:100%; min-height:80px; resize:vertical; padding:8px; border:1px solid var(--app-border-default); border-radius:10px; font-size:12px;';
@@ -1321,13 +1342,30 @@ export class MemoryTableEditor {
           input.appendChild(opt);
         }
       }
+      selectWrap = createCustomSelectWrapper(input, {
+        placeholder: '请选择',
+        wrapperStyle: 'width:100%;',
+        buttonStyle: 'width:100%;',
+      });
+      if (selectWrap) {
+        bindCustomSelectButton({
+          buttonEl: selectWrap.querySelector('button'),
+          selectEl: input,
+          fallback: '请选择',
+        });
+      }
     } else {
       input = document.createElement('input');
       input.type = column.type === 'number' ? 'number' : 'text';
       input.style.cssText = 'width:100%; padding:8px; border:1px solid var(--app-border-default); border-radius:10px; font-size:12px;';
     }
     input.value = value !== undefined && value !== null ? String(value) : '';
-    wrapper.appendChild(input);
+    if (selectWrap) {
+      refreshCustomSelectButton(selectWrap.querySelector('button'), input, '请选择');
+      wrapper.appendChild(selectWrap);
+    } else {
+      wrapper.appendChild(input);
+    }
 
     return {
       wrapper,

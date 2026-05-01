@@ -23,6 +23,7 @@ import { MemoryTableEditor } from './memory-table-editor.js';
 import { appConfirm } from './app-confirm.js';
 import { normalizeBadgeList } from '../utils/name-badges.js';
 import { FEATHER_DEFAULT, resolveLineAvatar } from '../utils/line-avatar.js';
+import { bindCustomSelectButton, closeCustomSelectMenu, refreshCustomSelectButton } from './custom-select.js';
 
 const getMemoryStorageMode = () => {
     if (appSettings.get().memoryEnabled === false) return 'off';
@@ -307,6 +308,7 @@ export class ContactSettingsPanel {
         this.memoryShareOverlay = null;
         this.memorySharePanel = null;
         this.memoryShareSourceSelect = null;
+        this.memoryShareSourceButton = null;
         this.memoryShareRows = null;
         this.memoryShareSaveBtn = null;
         this.memoryShareDraft = null;
@@ -1474,7 +1476,11 @@ export class ContactSettingsPanel {
                 <div data-role="hint" style="font-size:12px; color:var(--app-text-muted); line-height:1.5; margin-bottom:12px;"></div>
                 <label data-role="source-wrap" style="display:block; margin-bottom:12px;">
                     <div style="font-size:12px; color:var(--app-text-secondary); margin-bottom:6px;">来源聊天 / 群聊</div>
-                    <select data-role="source" style="width:100%; padding:8px; border:1px solid var(--app-border-default); border-radius:10px; font-size:12px; background:var(--app-surface-card);"></select>
+                    <select data-role="source" style="display:none;"></select>
+                    <button type="button" data-role="source-btn" class="world-app-select-btn" style="width:100%;">
+                        <span class="pp-custom-select-label" data-custom-select-label>所有聊天室（默认仅注入大纲）</span>
+                        <span class="world-app-select-btn-chevron">▾</span>
+                    </button>
                 </label>
                 <div data-role="source-static" style="display:none; margin-bottom:12px; padding:10px 12px; border:1px solid var(--app-border-default); border-radius:12px; background:var(--app-surface-subtle); color:var(--app-text-secondary); font-size:12px; line-height:1.5;"></div>
                 <div data-role="rows" style="display:flex; flex-direction:column; gap:10px;"></div>
@@ -1488,8 +1494,14 @@ export class ContactSettingsPanel {
         document.body.appendChild(this.memorySharePanel);
 
         this.memoryShareSourceSelect = this.memorySharePanel.querySelector('[data-role="source"]');
+        this.memoryShareSourceButton = this.memorySharePanel.querySelector('[data-role="source-btn"]');
         this.memoryShareRows = this.memorySharePanel.querySelector('[data-role="rows"]');
         this.memoryShareSaveBtn = this.memorySharePanel.querySelector('[data-role="save"]');
+        bindCustomSelectButton({
+            buttonEl: this.memoryShareSourceButton,
+            selectEl: this.memoryShareSourceSelect,
+            fallback: '所有聊天室（默认仅注入大纲）',
+        });
 
         this.memorySharePanel.querySelector('[data-role="close"]').onclick = () => this.closeMemoryShareManager();
         this.memorySharePanel.querySelector('[data-role="cancel"]').onclick = () => this.closeMemoryShareManager();
@@ -1509,6 +1521,7 @@ export class ContactSettingsPanel {
     }
 
     closeMemoryShareManager() {
+        closeCustomSelectMenu();
         if (this.memoryShareOverlay) this.memoryShareOverlay.style.display = 'none';
         if (this.memorySharePanel) this.memorySharePanel.style.display = 'none';
         this.memoryShareDraft = null;
@@ -1540,6 +1553,7 @@ export class ContactSettingsPanel {
             appendOption('', '所有聊天室（默认仅注入大纲）');
             sessionIds.forEach((id) => appendOption(id, this.getSessionDisplayName(id)));
             this.memoryShareSourceSelect.value = String(this.memoryShareDraft.sourceId || '').trim();
+            refreshCustomSelectButton(this.memoryShareSourceButton, this.memoryShareSourceSelect, '所有聊天室（默认仅注入大纲）');
         } else if (sourceStatic) {
             const sourceId = this.getDefaultRpBridgeSourceId(sessionId);
             const sourceLabel = sourceId ? (this.getRpDisplayName(sourceId) || sourceId) : '当前为空';

@@ -1,6 +1,7 @@
 import { appSettings } from '../storage/app-settings.js';
 import { appConfirm } from './app-confirm.js';
 import { getCharacterCardDisplayName } from '../utils/character-card-display.js';
+import { bindCustomSelectButton, closeCustomSelectMenu, createCustomSelectWrapper } from './custom-select.js';
 
 const SOURCE_LABELS = {
   user: '手动创建',
@@ -113,6 +114,7 @@ export class ScriptPanel {
   }
 
   hide() {
+    closeCustomSelectMenu();
     if (this.panel) this.panel.style.display = 'none';
     if (this.overlay) this.overlay.style.display = 'none';
   }
@@ -234,7 +236,17 @@ export class ScriptPanel {
       });
       select.value = String(this.personaStore?.getActive?.()?.id || '');
       select.addEventListener('change', () => this.refresh());
-      this.body.appendChild(select);
+      const wrap = createCustomSelectWrapper(select, {
+        placeholder: '选择角色卡',
+        wrapperStyle: 'min-width:200px;',
+        buttonStyle: 'margin-top:0;',
+      });
+      this.body.appendChild(wrap);
+      bindCustomSelectButton({
+        buttonEl: wrap?.querySelector?.('.world-app-select-btn'),
+        selectEl: select,
+        fallback: '选择角色卡',
+      });
       this.personaSelect = select;
       return;
     }
@@ -258,7 +270,17 @@ export class ScriptPanel {
       if (activePresetId) select.value = activePresetId;
       if (!select.value && options[0]?.id) select.value = options[0].id;
       select.addEventListener('change', () => this.refresh());
-      this.body.appendChild(select);
+      const wrap = createCustomSelectWrapper(select, {
+        placeholder: '选择预设',
+        wrapperStyle: 'min-width:240px;',
+        buttonStyle: 'margin-top:0;',
+      });
+      this.body.appendChild(wrap);
+      bindCustomSelectButton({
+        buttonEl: wrap?.querySelector?.('.world-app-select-btn'),
+        selectEl: select,
+        fallback: '选择预设',
+      });
       this.presetSelect = select;
       return;
     }
@@ -268,6 +290,7 @@ export class ScriptPanel {
 
   async refresh() {
     if (!this.panel || !this.store) return;
+    closeCustomSelectMenu();
     const settings = appSettings.get();
     const toggle = this.panel.querySelector('#script-global-toggle');
     if (toggle) toggle.checked = settings.scriptEnabled === true;

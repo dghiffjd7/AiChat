@@ -4,6 +4,7 @@
  */
 import { RegexStore, regex_placement, substitute_find_regex } from '../storage/regex-store.js';
 import { logger } from '../utils/logger.js';
+import { bindCustomSelectButton, closeCustomSelectMenu } from './custom-select.js';
 
 const genId = (prefix) => `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
 
@@ -82,6 +83,7 @@ export class RegexSessionPanel {
     }
 
     hide() {
+        closeCustomSelectMenu();
         if (this.element) this.element.style.display = 'none';
         if (this.overlay) this.overlay.style.display = 'none';
     }
@@ -263,11 +265,15 @@ export class RegexSessionPanel {
                         <label style="display:flex; gap:8px; align-items:center; cursor:pointer;"><input type="checkbox" class="re-run-on-edit">编辑消息时执行（Run On Edit）</label>
                         <label style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
                             <span style="font-weight:700;">Find Regex 宏</span>
-                            <select class="re-substitute" style="padding:8px 10px; border:1px solid var(--app-border-default); border-radius:10px;">
+                            <select class="re-substitute" style="display:none;">
                                 <option value="0">不替换</option>
                                 <option value="1">替换（raw）</option>
                                 <option value="2">替换（escaped）</option>
                             </select>
+                            <button type="button" class="world-app-select-btn re-substitute-btn" style="min-width:170px;">
+                                <span class="pp-custom-select-label" data-custom-select-label>不替换</span>
+                                <span class="world-app-select-btn-chevron">▾</span>
+                            </button>
                         </label>
                         <div style="margin-top:6px;">
                             <div style="font-weight:700; color:var(--app-text-primary); margin-bottom:6px;">暂时性（Ephemerality）</div>
@@ -294,6 +300,11 @@ export class RegexSessionPanel {
         body.querySelector('.re-md-only').checked = Boolean(r.markdownOnly);
         body.querySelector('.re-prompt-only').checked = Boolean(r.promptOnly);
         body.querySelector('.re-substitute').value = String(Number(r.substituteRegex ?? 0));
+        bindCustomSelectButton({
+            buttonEl: body.querySelector('.re-substitute-btn'),
+            selectEl: body.querySelector('.re-substitute'),
+            fallback: '不替换',
+        });
         body.querySelector('.re-min-depth').value = (r.minDepth === null || r.minDepth === undefined || Number.isNaN(Number(r.minDepth))) ? '' : String(Number(r.minDepth));
         body.querySelector('.re-max-depth').value = (r.maxDepth === null || r.maxDepth === undefined || Number.isNaN(Number(r.maxDepth))) ? '' : String(Number(r.maxDepth));
         const placeSet = new Set((Array.isArray(r.placement) ? r.placement : []).map((n) => Number(n)).filter(Number.isFinite));

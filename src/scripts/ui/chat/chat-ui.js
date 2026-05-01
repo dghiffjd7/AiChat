@@ -8,6 +8,7 @@ import { cleanupRichText, renderRichText, setupIframeResizeListener } from './ri
 import { appSettings } from '../../storage/app-settings.js';
 import { logger } from '../../utils/logger.js';
 import { getDefaultAppIcon } from '../../utils/default-icon.js';
+import { bindCustomSelectButton, createCustomSelectWrapper } from '../custom-select.js';
 import {
   DEFAULT_REACTION_EMOJIS,
   SELF_REACTION_ACTOR,
@@ -671,7 +672,22 @@ export class ChatUI {
       bridge.setRpGreeting?.(nextId, state?.sessionId || bridge.activeSessionId);
     });
     wrap.appendChild(label);
-    wrap.appendChild(select);
+    const selectWrap = createCustomSelectWrapper(select, {
+      placeholder: '选择开场白',
+      wrapperStyle: 'min-width:160px;',
+      buttonStyle: 'min-width:160px;',
+    });
+    if (selectWrap) {
+      const button = selectWrap.querySelector('button');
+      bindCustomSelectButton({
+        buttonEl: button,
+        selectEl: select,
+        fallback: '选择开场白',
+      });
+      wrap.appendChild(selectWrap);
+    } else {
+      wrap.appendChild(select);
+    }
     return wrap;
   }
 

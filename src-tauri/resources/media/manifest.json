@@ -4,554 +4,286 @@
   "items": [
     {
       "kind": "sticker",
-      "id": "CPU烧了",
-      "file": "sticker_001.png",
-      "aliases": [
-        "CPU烧了.png"
-      ]
-    },
-    {
-      "kind": "sticker",
-      "id": "不要 (2)",
-      "file": "sticker_002.png",
-      "aliases": [
-        "不要 (2).png"
-      ]
-    },
-    {
-      "kind": "sticker",
-      "id": "不要",
-      "file": "sticker_003.png",
-      "aliases": [
-        "不要.png"
-      ]
-    },
-    {
-      "kind": "sticker",
-      "id": "举牌",
-      "file": "sticker_004.png",
-      "aliases": [
-        "举牌.png"
-      ]
-    },
-    {
-      "kind": "sticker",
-      "id": "买买买",
-      "file": "sticker_005.png",
-      "aliases": [
-        "买买买.png"
-      ]
-    },
-    {
-      "kind": "sticker",
-      "id": "亲亲",
-      "file": "sticker_006.png",
-      "aliases": [
-        "亲亲.png"
-      ]
-    },
-    {
-      "kind": "sticker",
-      "id": "优雅",
-      "file": "sticker_007.png",
-      "aliases": [
-        "优雅.png"
-      ]
-    },
-    {
-      "kind": "sticker",
-      "id": "伸懒腰",
-      "file": "sticker_008.png",
-      "aliases": [
-        "伸懒腰.png"
-      ]
-    },
-    {
-      "kind": "sticker",
-      "id": "充电",
-      "file": "sticker_009.png",
-      "aliases": [
-        "充电.png"
-      ]
-    },
-    {
-      "kind": "sticker",
-      "id": "兴奋",
-      "file": "sticker_010.png",
-      "aliases": [
-        "兴奋.png"
-      ]
-    },
-    {
-      "kind": "sticker",
-      "id": "吃惊",
-      "file": "sticker_011.png",
-      "aliases": [
-        "吃惊.png"
-      ]
-    },
-    {
-      "kind": "sticker",
-      "id": "吃瓜",
-      "file": "sticker_012.png",
-      "aliases": [
-        "吃瓜.png"
-      ]
-    },
-    {
-      "kind": "sticker",
-      "id": "吐血",
-      "file": "sticker_013.png",
-      "aliases": [
-        "吐血.png"
-      ]
-    },
-    {
-      "kind": "sticker",
-      "id": "哭",
-      "file": "sticker_014.png",
-      "aliases": [
-        "哭.png"
-      ]
-    },
-    {
-      "kind": "sticker",
-      "id": "困",
-      "file": "sticker_015.png",
-      "aliases": [
-        "困.png"
-      ]
-    },
-    {
-      "kind": "sticker",
-      "id": "奶茶",
-      "file": "sticker_016.png",
-      "aliases": [
-        "奶茶.png"
-      ]
-    },
-    {
-      "kind": "sticker",
-      "id": "孤独",
-      "file": "sticker_017.png",
-      "aliases": [
-        "孤独.png"
-      ]
-    },
-    {
-      "kind": "sticker",
-      "id": "安静",
-      "file": "sticker_018.png",
-      "aliases": [
-        "安静.png"
-      ]
-    },
-    {
-      "kind": "sticker",
-      "id": "害怕",
-      "file": "sticker_019.png",
-      "aliases": [
-        "害怕.png"
-      ]
-    },
-    {
-      "kind": "sticker",
-      "id": "尬聊",
-      "file": "sticker_020.png",
-      "aliases": [
-        "尬聊.png"
-      ]
-    },
-    {
-      "kind": "sticker",
-      "id": "带不动",
-      "file": "sticker_021.png",
-      "aliases": [
-        "带不动.png"
-      ]
-    },
-    {
-      "kind": "sticker",
-      "id": "干饭",
-      "file": "sticker_022.png",
-      "aliases": [
-        "干饭.png"
-      ]
-    },
-    {
-      "kind": "sticker",
-      "id": "庆祝",
-      "file": "sticker_023.png",
-      "aliases": [
-        "庆祝.png"
-      ]
-    },
-    {
-      "kind": "sticker",
-      "id": "思考",
-      "file": "sticker_024.png",
-      "aliases": [
-        "思考.png"
-      ]
-    },
-    {
-      "kind": "sticker",
-      "id": "惊喜",
-      "file": "sticker_025.png",
-      "aliases": [
-        "惊喜.png"
-      ]
-    },
-    {
-      "kind": "sticker",
-      "id": "我不听",
-      "file": "sticker_026.png",
-      "aliases": [
-        "我不听.png"
-      ]
-    },
-    {
-      "kind": "sticker",
-      "id": "我不理解",
-      "file": "sticker_027.png",
-      "aliases": [
-        "我不理解.png"
-      ]
-    },
-    {
-      "kind": "sticker",
-      "id": "打call",
-      "file": "sticker_028.png",
-      "aliases": [
-        "打call.png"
-      ]
-    },
-    {
-      "kind": "sticker",
-      "id": "抓狂",
-      "file": "sticker_029.png",
-      "aliases": [
-        "抓狂.png"
-      ]
-    },
-    {
-      "kind": "sticker",
-      "id": "抱抱",
-      "file": "sticker_030.png",
-      "aliases": [
-        "抱抱.png"
-      ]
-    },
-    {
-      "kind": "sticker",
-      "id": "招手",
-      "file": "sticker_031.png",
-      "aliases": [
-        "招手.png"
-      ]
-    },
-    {
-      "kind": "sticker",
-      "id": "拜托",
-      "file": "sticker_032.png",
-      "aliases": [
-        "拜托.png"
-      ]
-    },
-    {
-      "kind": "sticker",
-      "id": "拿刀",
-      "file": "sticker_033.png",
-      "aliases": [
-        "拿刀.png"
-      ]
-    },
-    {
-      "kind": "sticker",
-      "id": "掐人中",
-      "file": "sticker_034.png",
-      "aliases": [
-        "掐人中.png"
-      ]
-    },
-    {
-      "kind": "sticker",
-      "id": "搬砖中",
-      "file": "sticker_035.png",
-      "aliases": [
-        "搬砖中.png"
-      ]
-    },
-    {
-      "kind": "sticker",
-      "id": "摆烂",
-      "file": "sticker_036.png",
-      "aliases": [
-        "摆烂.png"
-      ]
-    },
-    {
-      "kind": "sticker",
-      "id": "摸头",
-      "file": "sticker_037.png",
-      "aliases": [
-        "摸头.png"
-      ]
-    },
-    {
-      "kind": "sticker",
-      "id": "摸鱼",
-      "file": "sticker_038.png",
-      "aliases": [
-        "摸鱼.png"
-      ]
-    },
-    {
-      "kind": "sticker",
-      "id": "擦汗",
-      "file": "sticker_039.png",
-      "aliases": [
-        "擦汗.png"
-      ]
-    },
-    {
-      "kind": "sticker",
-      "id": "收到",
-      "file": "sticker_040.png",
-      "aliases": [
-        "收到.png"
-      ]
-    },
-    {
-      "kind": "sticker",
-      "id": "无语",
-      "file": "sticker_041.png",
-      "aliases": [
-        "无语.png"
-      ]
-    },
-    {
-      "kind": "sticker",
-      "id": "晕",
-      "file": "sticker_042.png",
-      "aliases": [
-        "晕.png"
-      ]
-    },
-    {
-      "kind": "sticker",
-      "id": "晚安",
-      "file": "sticker_043.png",
-      "aliases": [
-        "晚安.png"
-      ]
-    },
-    {
-      "kind": "sticker",
-      "id": "晚安抱抱",
-      "file": "sticker_044.png",
-      "aliases": [
-        "晚安抱抱.png"
-      ]
-    },
-    {
-      "kind": "sticker",
       "id": "暗中观察",
-      "file": "sticker_045.png",
+      "file": "default_sticker_001.png",
       "aliases": [
         "暗中观察.png"
       ]
     },
     {
       "kind": "sticker",
-      "id": "有瓜",
-      "file": "sticker_046.png",
+      "id": "抱抱",
+      "file": "default_sticker_002.png",
       "aliases": [
-        "有瓜.png"
+        "抱抱.png"
       ]
     },
     {
       "kind": "sticker",
-      "id": "比心",
-      "file": "sticker_047.png",
+      "id": "沉默",
+      "file": "default_sticker_003.png",
       "aliases": [
-        "比心.png"
+        "沉默.png"
       ]
     },
     {
       "kind": "sticker",
-      "id": "汗",
-      "file": "sticker_048.png",
+      "id": "蛋糕",
+      "file": "default_sticker_004.png",
       "aliases": [
-        "汗.png"
+        "蛋糕.png"
       ]
     },
     {
       "kind": "sticker",
-      "id": "汗流浃背",
-      "file": "sticker_049.png",
+      "id": "盯",
+      "file": "default_sticker_005.png",
       "aliases": [
-        "汗流浃背.png"
+        "盯.png"
       ]
     },
     {
       "kind": "sticker",
-      "id": "没钱了",
-      "file": "sticker_050.png",
+      "id": "盯——",
+      "file": "default_sticker_006.png",
       "aliases": [
-        "没钱了.png"
+        "盯——.png"
       ]
     },
     {
       "kind": "sticker",
-      "id": "溜了",
-      "file": "sticker_051.png",
+      "id": "对了！",
+      "file": "default_sticker_007.png",
       "aliases": [
-        "溜了.png"
+        "对了！.png",
+        "对了"
       ]
     },
     {
       "kind": "sticker",
-      "id": "炸毛",
-      "file": "sticker_052.png",
+      "id": "疯狂",
+      "file": "default_sticker_008.png",
       "aliases": [
-        "炸毛.png"
+        "疯狂.png"
       ]
     },
     {
       "kind": "sticker",
-      "id": "熬夜",
-      "file": "sticker_053.png",
+      "id": "恭喜",
+      "file": "default_sticker_009.png",
       "aliases": [
-        "熬夜.png"
+        "恭喜.png"
       ]
     },
     {
       "kind": "sticker",
-      "id": "甚至",
-      "file": "sticker_054.png",
+      "id": "观察",
+      "file": "default_sticker_010.png",
       "aliases": [
-        "甚至.png"
+        "观察.png"
       ]
     },
     {
       "kind": "sticker",
-      "id": "疑惑",
-      "file": "sticker_055.png",
+      "id": "好吃",
+      "file": "default_sticker_011.png",
       "aliases": [
-        "疑惑.png"
+        "好吃.png"
       ]
     },
     {
       "kind": "sticker",
-      "id": "破防",
-      "file": "sticker_056.png",
+      "id": "好厉害！",
+      "file": "default_sticker_012.png",
       "aliases": [
-        "破防.png"
+        "好厉害！.png",
+        "好厉害"
       ]
     },
     {
       "kind": "sticker",
-      "id": "给我嘛",
-      "file": "sticker_057.png",
+      "id": "嘿嘿~",
+      "file": "default_sticker_013.png",
       "aliases": [
-        "给我嘛.png"
+        "嘿嘿~.png",
+        "嘿嘿"
       ]
     },
     {
       "kind": "sticker",
-      "id": "翻白眼",
-      "file": "sticker_058.png",
+      "id": "哼",
+      "file": "default_sticker_014.png",
       "aliases": [
-        "翻白眼.png"
+        "哼.png"
       ]
     },
     {
       "kind": "sticker",
-      "id": "自拍",
-      "file": "sticker_059.png",
+      "id": "怀疑",
+      "file": "default_sticker_015.png",
       "aliases": [
-        "自拍.png"
+        "怀疑.png"
       ]
     },
     {
       "kind": "sticker",
-      "id": "裂开",
-      "file": "sticker_060.png",
+      "id": "慌",
+      "file": "default_sticker_016.png",
       "aliases": [
-        "裂开.png"
+        "慌.png"
       ]
     },
     {
       "kind": "sticker",
-      "id": "记仇",
-      "file": "sticker_061.png",
+      "id": "骄傲",
+      "file": "default_sticker_017.png",
       "aliases": [
-        "记仇.png"
+        "骄傲.png"
       ]
     },
     {
       "kind": "sticker",
-      "id": "贴贴",
-      "file": "sticker_062.png",
+      "id": "惊讶",
+      "file": "default_sticker_018.png",
       "aliases": [
-        "贴贴.png"
+        "惊讶.png"
       ]
     },
     {
       "kind": "sticker",
-      "id": "躺平",
-      "file": "sticker_063.png",
+      "id": "举手",
+      "file": "default_sticker_019.png",
       "aliases": [
-        "躺平.png"
+        "举手.png"
       ]
     },
     {
       "kind": "sticker",
-      "id": "迷茫",
-      "file": "sticker_064.png",
+      "id": "拒绝",
+      "file": "default_sticker_020.png",
       "aliases": [
-        "迷茫.png"
+        "拒绝.png"
       ]
     },
     {
       "kind": "sticker",
-      "id": "追剧",
-      "file": "sticker_065.png",
+      "id": "困惑",
+      "file": "default_sticker_021.png",
       "aliases": [
-        "追剧.png"
+        "困惑.png"
       ]
     },
     {
       "kind": "sticker",
-      "id": "退散",
-      "file": "sticker_066.png",
+      "id": "脸红",
+      "file": "default_sticker_022.png",
       "aliases": [
-        "退散.png"
+        "脸红.png"
       ]
     },
     {
       "kind": "sticker",
-      "id": "送花",
-      "file": "sticker_067.png",
+      "id": "墨镜",
+      "file": "default_sticker_023.png",
       "aliases": [
-        "送花.png"
+        "墨镜.png"
       ]
     },
     {
       "kind": "sticker",
-      "id": "阴暗爬行",
-      "file": "sticker_068.png",
+      "id": "呐",
+      "file": "default_sticker_024.png",
       "aliases": [
-        "阴暗爬行.png"
+        "呐.png"
       ]
     },
     {
       "kind": "sticker",
-      "id": "鼓掌",
-      "file": "sticker_069.png",
+      "id": "期待",
+      "file": "default_sticker_025.png",
       "aliases": [
-        "鼓掌.png"
+        "期待.png"
+      ]
+    },
+    {
+      "kind": "sticker",
+      "id": "气噗噗",
+      "file": "default_sticker_026.png",
+      "aliases": [
+        "气噗噗.png"
+      ]
+    },
+    {
+      "kind": "sticker",
+      "id": "生气",
+      "file": "default_sticker_027.png",
+      "aliases": [
+        "生气.png"
+      ]
+    },
+    {
+      "kind": "sticker",
+      "id": "睡觉",
+      "file": "default_sticker_028.png",
+      "aliases": [
+        "睡觉.png"
+      ]
+    },
+    {
+      "kind": "sticker",
+      "id": "叹气",
+      "file": "default_sticker_029.png",
+      "aliases": [
+        "叹气.png"
+      ]
+    },
+    {
+      "kind": "sticker",
+      "id": "唐笑",
+      "file": "default_sticker_030.png",
+      "aliases": [
+        "唐笑.png"
+      ]
+    },
+    {
+      "kind": "sticker",
+      "id": "哇！",
+      "file": "default_sticker_031.png",
+      "aliases": [
+        "哇！.png",
+        "哇"
+      ]
+    },
+    {
+      "kind": "sticker",
+      "id": "晚安",
+      "file": "default_sticker_032.png",
+      "aliases": [
+        "晚安.png"
+      ]
+    },
+    {
+      "kind": "sticker",
+      "id": "无语",
+      "file": "default_sticker_033.png",
+      "aliases": [
+        "无语.png"
+      ]
+    },
+    {
+      "kind": "sticker",
+      "id": "喜欢",
+      "file": "default_sticker_034.png",
+      "aliases": [
+        "喜欢.png"
+      ]
+    },
+    {
+      "kind": "sticker",
+      "id": "阴暗笑容",
+      "file": "default_sticker_035.png",
+      "aliases": [
+        "阴暗笑容.png"
       ]
     }
   ]
