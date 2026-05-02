@@ -213,6 +213,44 @@ const reportGlobalRuntimeIssue = (err, label = 'Runtime error') => {
   reportFatalError(err, label);
 };
 
+const normalizeMomentStoredText = (text, { regexMode = 'output', depth = 0 } = {}) => {
+  const source = String(text ?? '');
+  const mode = String(regexMode || '').trim().toLowerCase() === 'input' ? 'input' : 'output';
+  try {
+    if (mode === 'input' && typeof window.appBridge?.applyInputStoredRegex === 'function') {
+      return window.appBridge.applyInputStoredRegex(source, { isEdit: false, depth });
+    }
+    if (typeof window.appBridge?.applyOutputStoredRegex === 'function') {
+      return window.appBridge.applyOutputStoredRegex(source, { isEdit: false, depth });
+    }
+  } catch {}
+  return source;
+};
+
+const normalizeMomentCommentForStore = (comment, { regexMode = 'output', depth = 0 } = {}) => {
+  if (!comment || typeof comment !== 'object') return comment;
+  const mode = String(regexMode || '').trim().toLowerCase() === 'input' ? 'input' : 'output';
+  return {
+    ...(comment || {}),
+    content: normalizeMomentStoredText(comment?.content, { regexMode: mode, depth }),
+    regexMode: mode,
+  };
+};
+
+const normalizeMomentCommentsForStore = (comments = [], opts = {}) =>
+  (Array.isArray(comments) ? comments : []).map(comment => normalizeMomentCommentForStore(comment, opts));
+
+const normalizeMomentRecordForStore = (moment, { regexMode = 'output', depth = 0 } = {}) => {
+  if (!moment || typeof moment !== 'object') return moment;
+  const mode = String(regexMode || '').trim().toLowerCase() === 'input' ? 'input' : 'output';
+  return {
+    ...(moment || {}),
+    content: normalizeMomentStoredText(moment?.content, { regexMode: mode, depth }),
+    comments: normalizeMomentCommentsForStore(moment?.comments, { regexMode: mode, depth }),
+    regexMode: mode,
+  };
+};
+
 try {
   localStorage.removeItem('chatapp_renderer_lifecycle_v1');
   localStorage.removeItem('chatapp_rich_script_guard_v1');

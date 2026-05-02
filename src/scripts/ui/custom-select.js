@@ -86,11 +86,22 @@ export const openCustomSelectMenu = ({ anchorEl, options = [], currentValue = ''
     `;
   }).join('');
 
-  menu.querySelectorAll('.world-app-select-item').forEach((item) => {
-    item.addEventListener('click', () => {
+  let didSelect = false;
+  const chooseItem = (item) => {
+    if (didSelect || !(item instanceof HTMLElement)) return;
+    didSelect = true;
       const value = String(item.dataset.value ?? '');
       if (typeof onSelect === 'function') onSelect(value);
       closeCustomSelectMenu();
+  };
+  menu.querySelectorAll('.world-app-select-item').forEach((item) => {
+    item.addEventListener('mousedown', (event) => {
+      if (event.button !== 0) return;
+      event.preventDefault();
+      chooseItem(item);
+    });
+    item.addEventListener('click', () => {
+      chooseItem(item);
     });
   });
 
@@ -182,7 +193,6 @@ export const createCustomSelectWrapper = (selectEl, {
 } = {}) => {
   if (!(selectEl instanceof HTMLElement)) return null;
   ensureCustomSelectId(selectEl);
-  selectEl.style.display = 'none';
   const wrap = document.createElement('div');
   wrap.style.cssText = wrapperStyle;
   const button = document.createElement('button');
@@ -194,7 +204,17 @@ export const createCustomSelectWrapper = (selectEl, {
     <span class="${labelClass}" data-custom-select-label>${placeholder}</span>
     <span class="world-app-select-btn-chevron">▾</span>
   `;
-  wrap.appendChild(selectEl);
   wrap.appendChild(button);
+  // Do not move the <select> into the wrapper immediately.
+  // Most call sites still do `parent.replaceChild(wrap, selectEl)`. If we append the
+  // select first, its parent becomes `wrap`, and `replaceChild(wrap, selectEl)` throws:
+  // "The new child element contains the parent."
+  queueMicrotask(() => {
+    if (!(wrap instanceof HTMLElement) || !(selectEl instanceof HTMLElement)) return;
+    if (!wrap.isConnected) return;
+    if (selectEl.parentNode === wrap) return;
+    selectEl.style.display = 'none';
+    wrap.prepend(selectEl);
+  });
   return wrap;
 };

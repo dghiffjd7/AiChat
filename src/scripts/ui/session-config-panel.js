@@ -1,6 +1,7 @@
 import { PresetStore } from '../storage/preset-store.js';
 import { getReasoningCapability } from '../api/model-capabilities.js';
 import { logger } from '../utils/logger.js';
+import { closeCustomSelectMenu as closeSharedCustomSelectMenu, openCustomSelectMenu } from './custom-select.js';
 
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>"]/g, (ch) => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;',
@@ -52,6 +53,126 @@ const SC_PANEL_CSS = `
 }
 .pp-binding-filter::placeholder { color:var(--app-text-muted); }
 .pp-binding-filter:focus { border-color:var(--app-accent-primary); }
+.sc-session-list {
+    margin-top:10px;
+    display:flex;
+    flex-direction:column;
+    gap:10px;
+    max-height:42vh;
+    overflow-y:auto;
+    -webkit-overflow-scrolling:touch;
+    overscroll-behavior:contain;
+}
+.sc-session-list > * + * { margin-top:0 !important; }
+.sc-session-entry {
+    border:1px solid var(--app-border-default);
+    border-radius:14px;
+    background:var(--app-surface-subtle);
+    overflow:visible;
+    display:flex;
+    flex-direction:column;
+    flex:0 0 auto;
+    min-height:118px;
+    padding:12px;
+    box-sizing:border-box;
+    gap:10px;
+}
+.sc-session-head {
+    display:flex;
+    align-items:flex-start;
+    justify-content:space-between;
+    gap:12px;
+}
+.sc-session-main {
+    min-width:0;
+    flex:1;
+    display:flex;
+    flex-direction:column;
+    gap:6px;
+}
+.sc-session-titleline {
+    display:flex;
+    align-items:center;
+    gap:8px;
+    min-width:0;
+}
+.sc-session-meta {
+    flex-shrink:0;
+    display:inline-flex;
+    align-items:center;
+    min-height:22px;
+    padding:0 8px;
+    border-radius:999px;
+    border:1px solid var(--app-border-default);
+    background:var(--app-surface-card);
+    font-size:11px;
+    font-weight:700;
+    color:var(--app-text-muted);
+}
+.sc-session-sub {
+    font-size:12px;
+    color:var(--app-text-muted);
+    line-height:1.5;
+}
+.sc-session-chiprow {
+    display:flex;
+    align-items:center;
+    gap:6px;
+    flex-wrap:wrap;
+}
+.sc-session-chip {
+    display:inline-flex;
+    align-items:center;
+    min-height:24px;
+    padding:0 8px;
+    border-radius:999px;
+    border:1px solid var(--app-border-default);
+    background:var(--app-surface-card);
+    font-size:11px;
+    font-weight:700;
+    color:var(--app-text-secondary);
+}
+.sc-session-actions {
+    flex:0 0 auto;
+    display:flex;
+    align-items:flex-start;
+}
+.sc-session-extras {
+    border-top:1px dashed var(--app-border-default);
+    padding-top:10px;
+    display:flex;
+    flex-direction:column;
+    gap:10px;
+}
+.sc-reasoning-row {
+    display:flex;
+    align-items:flex-start;
+    gap:8px;
+    flex-wrap:wrap;
+}
+.sc-reasoning-label {
+    font-size:12px;
+    color:var(--app-text-muted);
+    white-space:nowrap;
+    flex-shrink:0;
+    padding-top:6px;
+}
+.sc-reasoning-controls {
+    flex:1 1 220px;
+    min-width:0;
+    display:flex;
+    align-items:center;
+    gap:8px;
+    flex-wrap:wrap;
+}
+@media (min-width: 900px) {
+    .sc-reasoning-controls {
+        flex-wrap:nowrap;
+    }
+}
+@media (min-width: 900px) {
+    .sc-session-entry { padding:14px 16px; }
+}
 `;
 
 export class SessionConfigPanel {
@@ -68,9 +189,8 @@ export class SessionConfigPanel {
             personaStore: null,
             getUiMode: null,
         };
-        this.customSelectMenuEl = null;
-        this.customSelectMenuCleanup = null;
-        this.customSelectMenuAnchor = null;
+        this.expandedSessionByGroup = { chat: '', rp: '' };
+        this.groupScrollTop = { chat: 0, rp: 0 };
     }
 
     setRuntimeContext(ctx = {}) {
@@ -125,13 +245,17 @@ export class SessionConfigPanel {
     show(options = {}) {
         if (!this.panel) this.createUI();
         this.focusSessionId = options.sessionId || null;
+        if (this.focusSessionId) {
+            const group = this.focusSessionId.startsWith('rp:') ? 'rp' : 'chat';
+            this.expandedSessionByGroup[group] = this.focusSessionId;
+        }
         this.render();
         this.overlay.style.display = 'block';
         this.panel.style.display = 'flex';
 
         if (this.focusSessionId) {
             requestAnimationFrame(() => {
-                const el = this.editorEl.querySelector(`[data-session-id="${this.focusSessionId}"]`);
+                const el = this.findSessionElement(this.focusSessionId);
                 if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
             });
         }
@@ -168,13 +292,89 @@ export class SessionConfigPanel {
     }
 
     getPresetList() {
-        const presets = Object.values(this.store.getState()?.presets?.openai || {});
-        return presets.map((p) => ({ value: p.id || '', label: p.name || p.id || '' }));
+        const presets = Object.entries(this.store.getState()?.presets?.openai || {});
+        return presets.map(([id, p]) => ({ value: id, label: p?.name || id }));
     }
 
     getPresetName(presetId) {
         const p = this.store.getState()?.presets?.openai?.[presetId];
         return String(p?.name || '').trim() || presetId || '';
+    }
+
+    getProfileName(profileId) {
+        const profile = profileId ? window.appBridge?.config?.getProfileById?.(profileId) : null;
+        return String(profile?.name || '').trim() || (profileId || '');
+    }
+
+    findSessionElement(sessionId) {
+        const id = String(sessionId || '').trim();
+        if (!id || !this.editorEl) return null;
+        try {
+            return this.editorEl.querySelector(`[data-session-id="${CSS.escape(id)}"]`);
+        } catch {
+            return null;
+        }
+    }
+
+    findSessionList(group) {
+        const key = String(group || '').trim();
+        if (!key || !this.editorEl) return null;
+        try {
+            return this.editorEl.querySelector(`[data-session-group="${CSS.escape(key)}"]`);
+        } catch {
+            return null;
+        }
+    }
+
+    captureScrollState(anchorSessionId = '') {
+        const scrollEl = this.scrollEl;
+        if (!scrollEl) return null;
+        const sessionId = String(anchorSessionId || '').trim();
+        const state = {
+            scrollTop: Number(scrollEl.scrollTop || 0),
+            anchorSessionId: sessionId,
+            anchorOffsetTop: null,
+            groupScrollTop: { ...this.groupScrollTop },
+        };
+        ['chat', 'rp'].forEach((group) => {
+            const listEl = this.findSessionList(group);
+            if (listEl) state.groupScrollTop[group] = Number(listEl.scrollTop || 0);
+        });
+        if (sessionId) {
+            const anchorEl = this.findSessionElement(sessionId);
+            if (anchorEl) {
+                state.anchorOffsetTop = anchorEl.getBoundingClientRect().top - scrollEl.getBoundingClientRect().top;
+            }
+        }
+        return state;
+    }
+
+    restoreScrollState(state) {
+        if (!state || !this.scrollEl) return;
+        requestAnimationFrame(() => {
+            if (!this.scrollEl) return;
+            this.scrollEl.scrollTop = Number.isFinite(state.scrollTop) ? state.scrollTop : 0;
+            ['chat', 'rp'].forEach((group) => {
+                const listEl = this.findSessionList(group);
+                if (listEl) {
+                    const nextTop = Number(state.groupScrollTop?.[group] || 0);
+                    listEl.scrollTop = Number.isFinite(nextTop) ? nextTop : 0;
+                }
+            });
+            if (state.anchorSessionId && Number.isFinite(state.anchorOffsetTop)) {
+                const anchorEl = this.findSessionElement(state.anchorSessionId);
+                if (anchorEl) {
+                    const nextOffsetTop = anchorEl.getBoundingClientRect().top - this.scrollEl.getBoundingClientRect().top;
+                    this.scrollEl.scrollTop += (nextOffsetTop - state.anchorOffsetTop);
+                }
+            }
+        });
+    }
+
+    rerender(options = {}) {
+        const scrollState = this.captureScrollState(options.focusSessionId || this.focusSessionId || '');
+        this.render();
+        this.restoreScrollState(scrollState);
     }
 
     /* ── render ── */
@@ -276,6 +476,9 @@ export class SessionConfigPanel {
         card.appendChild(head);
 
         const entries = this.getSessionEntries().filter((e) => e.group === group);
+        if (this.expandedSessionByGroup[group] && !entries.some((entry) => entry.id === this.expandedSessionByGroup[group])) {
+            this.expandedSessionByGroup[group] = '';
+        }
         if (!entries.length) {
             const empty = document.createElement('div');
             empty.className = 'pp-binding-empty';
@@ -286,8 +489,12 @@ export class SessionConfigPanel {
         }
 
         const list = document.createElement('div');
-        list.className = 'pp-binding-list';
-        list.style.cssText = 'max-height:45vh; overflow-y:auto; -webkit-overflow-scrolling:touch; overscroll-behavior:contain;';
+        list.className = 'pp-binding-list sc-session-list';
+        list.dataset.sessionGroup = group;
+        list.scrollTop = Number(this.groupScrollTop[group] || 0);
+        list.addEventListener('scroll', () => {
+            this.groupScrollTop[group] = Number(list.scrollTop || 0);
+        });
         entries.forEach((entry) => this.renderSessionItem(list, entry, profiles, presetList));
         card.appendChild(list);
         wrap.appendChild(card);
@@ -296,7 +503,7 @@ export class SessionConfigPanel {
     renderSessionItem(list, entry, profiles, presetList) {
         const itemWrap = document.createElement('div');
         itemWrap.dataset.sessionId = entry.id;
-        itemWrap.style.cssText = 'border:1px solid var(--app-border-default); border-radius:14px; background:var(--app-surface-subtle); overflow:hidden;';
+        itemWrap.className = 'sc-session-entry';
 
         const boundPresetId = this.store.getSessionBindingId('openai', entry.id) || '';
         const resolved = this.store.getResolvedActive('openai', {
@@ -304,20 +511,37 @@ export class SessionConfigPanel {
             uiMode: entry.group === 'rp' ? 'rp' : 'chat',
         });
         const resolvedName = String(resolved?.preset?.name || '').trim();
-        const subtitle = boundPresetId
-            ? `${entry.meta} · 已绑定：${this.getPresetName(boundPresetId)}`
-            : `${entry.meta} · 当前使用：${resolvedName || '未设置'}`;
-
         const presetOptions = [{ value: '', label: '跟随默认' }, ...presetList];
+        const currentProfileId = this.store.getSessionProfileId('openai', entry.id) || '';
+        const currentProfileName = currentProfileId ? (this.getProfileName(currentProfileId) || currentProfileId) : '跟随全局';
+        const subtitle = boundPresetId
+            ? `已绑定预设：${this.getPresetName(boundPresetId)}`
+            : `当前预设：${resolvedName || '未设置'}`;
 
-        const row = document.createElement('div');
-        row.className = 'pp-binding-item';
-        row.innerHTML = `
-            <div class="pp-binding-item-main">
+        const head = document.createElement('div');
+        head.className = 'sc-session-head';
+
+        const main = document.createElement('div');
+        main.className = 'sc-session-main';
+        main.innerHTML = `
+            <div class="sc-session-titleline">
                 <div class="pp-binding-item-title">${escapeHtml(entry.name)}</div>
-                <div class="pp-binding-item-sub">${escapeHtml(subtitle)}</div>
+                <span class="sc-session-meta">${escapeHtml(entry.meta)}</span>
             </div>
+            <div class="sc-session-sub">${escapeHtml(subtitle)}</div>
         `;
+        const chipRow = document.createElement('div');
+        chipRow.className = 'sc-session-chiprow';
+        chipRow.innerHTML = `<span class="sc-session-chip">${escapeHtml(`连线 ${currentProfileName}`)}</span>`;
+        const reasoningSummary = this.getSessionReasoningSummary(entry, currentProfileId, resolved?.preset || {});
+        if (reasoningSummary) {
+            const chip = document.createElement('span');
+            chip.className = 'sc-session-chip';
+            chip.textContent = reasoningSummary;
+            chipRow.appendChild(chip);
+        }
+        main.appendChild(chipRow);
+
         const presetBtn = document.createElement('button');
         presetBtn.type = 'button';
         presetBtn.className = `pp-binding-btn ${boundPresetId ? 'is-muted' : 'is-primary'}`;
@@ -326,23 +550,29 @@ export class SessionConfigPanel {
             this.openSelectMenu(presetBtn, presetOptions, boundPresetId, (val) => {
                 this.runTask(() => val
                     ? this.store.setSessionBinding('openai', entry.id, val)
-                    : this.store.clearSessionBinding('openai', entry.id));
+                    : this.store.clearSessionBinding('openai', entry.id), {
+                    focusSessionId: entry.id,
+                });
             });
         });
-        row.appendChild(presetBtn);
-        itemWrap.appendChild(row);
+        const actionWrap = document.createElement('div');
+        actionWrap.className = 'sc-session-actions';
+        actionWrap.appendChild(presetBtn);
+        head.appendChild(main);
+        head.appendChild(actionWrap);
+        itemWrap.appendChild(head);
 
         const extras = document.createElement('div');
-        extras.style.cssText = 'padding:8px 12px 10px; border-top:1px dashed var(--app-border-default); display:flex; flex-direction:column; gap:8px;';
+        extras.className = 'sc-session-extras';
 
         this.renderProfileRow(extras, profiles, {
             getId: () => this.store.getSessionProfileId('openai', entry.id) || '',
             onSelect: (val) => val
                 ? this.store.setSessionProfile('openai', entry.id, val)
                 : this.store.clearSessionProfile('openai', entry.id),
+            focusSessionId: entry.id,
         });
 
-        const currentProfileId = this.store.getSessionProfileId('openai', entry.id) || '';
         if (currentProfileId) {
             this.renderReasoningControls(extras, currentProfileId, {
                 sessionId: entry.id,
@@ -350,6 +580,7 @@ export class SessionConfigPanel {
                 getReasoning: () => this.store.getSessionReasoning('openai', entry.id),
                 setReasoning: (r) => this.store.setSessionReasoning('openai', entry.id, r),
                 clearReasoning: () => this.store.clearSessionReasoning('openai', entry.id),
+                focusSessionId: entry.id,
             });
         }
 
@@ -359,7 +590,48 @@ export class SessionConfigPanel {
 
     /* ── shared field renderers ── */
 
-    renderProfileRow(container, profiles, { getId, onSelect }) {
+    getSessionReasoningSummary(entry, currentProfileId, resolvedPreset = {}) {
+        if (!currentProfileId) return '';
+        const profile = window.appBridge?.config?.getProfileById?.(currentProfileId);
+        if (!profile) return '';
+        const cap = getReasoningCapability({ provider: profile.provider, model: profile.model });
+        if (!cap.supported || !cap.requestControl) return '';
+        const currentReasoning = this.store.getSessionReasoning('openai', entry.id) || null;
+        const enabled = resolvedPreset.request_reasoning === true || currentReasoning?.request_reasoning === true;
+        if (!enabled) return '推理 关闭';
+        if (!cap.effortControl) return '推理 已启用';
+        const effortValue = currentReasoning?.reasoning_effort || resolvedPreset.reasoning_effort || cap.effortOptions?.[0]?.value || '';
+        const effortLabel = cap.effortOptions?.find((option) => option.value === effortValue)?.label || effortValue || '已启用';
+        return `推理 ${effortLabel}`;
+    }
+
+    renderPresetRow(container, { currentPresetId, options, onSelect, focusSessionId = '' }) {
+        const row = document.createElement('div');
+        row.style.cssText = 'display:flex; align-items:center; gap:8px;';
+        const label = document.createElement('span');
+        label.style.cssText = 'font-size:12px; color:var(--app-text-muted); white-space:nowrap; flex-shrink:0;';
+        label.textContent = '会话预设';
+        row.appendChild(label);
+
+        const current = options.find((option) => option.value === currentPresetId) || options[0];
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'world-app-select-btn';
+        btn.style.cssText = 'flex:1; min-width:0; min-height:32px; padding:5px 10px; font-size:12px;';
+        btn.innerHTML = `
+            <span class="pp-custom-select-label">${escapeHtml(current?.label || '跟随默认')}</span>
+            <span class="world-app-select-btn-chevron">▾</span>
+        `;
+        btn.addEventListener('click', () => {
+            this.openSelectMenu(btn, options, currentPresetId, (val) => {
+                this.runTask(() => onSelect(val), { focusSessionId });
+            });
+        });
+        row.appendChild(btn);
+        container.appendChild(row);
+    }
+
+    renderProfileRow(container, profiles, { getId, onSelect, focusSessionId = '' }) {
         const currentProfileId = getId();
         const profileOptions = [
             { value: '', label: '跟随全局' },
@@ -384,7 +656,7 @@ export class SessionConfigPanel {
         `;
         btn.addEventListener('click', () => {
             this.openSelectMenu(btn, profileOptions, currentProfileId, (val) => {
-                this.runTask(() => onSelect(val));
+                this.runTask(() => onSelect(val), { focusSessionId });
             });
         });
         row.appendChild(btn);
@@ -405,14 +677,14 @@ export class SessionConfigPanel {
         const currentR = ctx.getReasoning();
 
         const row = document.createElement('div');
-        row.style.cssText = 'display:flex; align-items:center; gap:8px;';
+        row.className = 'sc-reasoning-row';
         const rl = document.createElement('span');
-        rl.style.cssText = 'font-size:12px; color:var(--app-text-muted); white-space:nowrap; flex-shrink:0;';
+        rl.className = 'sc-reasoning-label';
         rl.textContent = '推理请求';
         row.appendChild(rl);
 
         const controlWrap = document.createElement('div');
-        controlWrap.style.cssText = 'flex:1; display:flex; align-items:center; gap:8px;';
+        controlWrap.className = 'sc-reasoning-controls';
 
         if (!globalEnabled) {
             const cbLabel = document.createElement('label');
@@ -425,19 +697,31 @@ export class SessionConfigPanel {
             controlWrap.appendChild(cbLabel);
 
             if (cap.effortControl && currentR?.request_reasoning === true) {
-                this.appendEffortButton(controlWrap, cap, currentR?.reasoning_effort || 'high', (v) =>
-                    ctx.setReasoning({ request_reasoning: true, reasoning_effort: v }));
+                this.appendEffortButton(
+                    controlWrap,
+                    cap,
+                    currentR?.reasoning_effort || 'high',
+                    (v) => ctx.setReasoning({ request_reasoning: true, reasoning_effort: v }),
+                    ctx.focusSessionId,
+                );
             }
 
             cb.addEventListener('change', () => {
                 this.runTask(() => cb.checked
                     ? ctx.setReasoning({ request_reasoning: true, reasoning_effort: currentR?.reasoning_effort || 'high' })
-                    : ctx.clearReasoning());
+                    : ctx.clearReasoning(), {
+                    focusSessionId: ctx.focusSessionId,
+                });
             });
         } else if (cap.effortControl) {
             const effortVal = currentR?.reasoning_effort || resolvedPreset.reasoning_effort || 'high';
-            this.appendEffortButton(controlWrap, cap, effortVal, (v) =>
-                ctx.setReasoning({ request_reasoning: true, reasoning_effort: v }));
+            this.appendEffortButton(
+                controlWrap,
+                cap,
+                effortVal,
+                (v) => ctx.setReasoning({ request_reasoning: true, reasoning_effort: v }),
+                ctx.focusSessionId,
+            );
 
             if (currentR) {
                 const resetBtn = document.createElement('button');
@@ -446,7 +730,7 @@ export class SessionConfigPanel {
                 resetBtn.style.cssText = 'padding:3px 8px; min-height:26px; font-size:11px;';
                 resetBtn.textContent = '重置';
                 resetBtn.addEventListener('click', () => {
-                    this.runTask(() => ctx.clearReasoning());
+                    this.runTask(() => ctx.clearReasoning(), { focusSessionId: ctx.focusSessionId });
                 });
                 controlWrap.appendChild(resetBtn);
             }
@@ -456,7 +740,7 @@ export class SessionConfigPanel {
         container.appendChild(row);
     }
 
-    appendEffortButton(container, cap, effortVal, onEffortChange) {
+    appendEffortButton(container, cap, effortVal, onEffortChange, focusSessionId = '') {
         const effortOptions = cap.effortOptions.map((o) => ({ value: o.value, label: o.label }));
         const effortCur = effortOptions.find((o) => o.value === effortVal) || effortOptions[0];
         const btn = document.createElement('button');
@@ -469,7 +753,7 @@ export class SessionConfigPanel {
         `;
         btn.addEventListener('click', () => {
             this.openSelectMenu(btn, effortOptions, effortVal, (v) => {
-                this.runTask(() => onEffortChange(v));
+                this.runTask(() => onEffortChange(v), { focusSessionId });
             });
         });
         container.appendChild(btn);
@@ -477,10 +761,17 @@ export class SessionConfigPanel {
 
     /* ── task ── */
 
-    async runTask(fn) {
+    async runTask(fn, options = {}) {
+        const focusSessionId = String(options?.focusSessionId || this.focusSessionId || '').trim();
+        if (focusSessionId) {
+            const group = focusSessionId.startsWith('rp:') ? 'rp' : 'chat';
+            this.expandedSessionByGroup[group] = focusSessionId;
+        }
+        const scrollState = this.captureScrollState(focusSessionId);
         try {
             await fn();
             this.render();
+            this.restoreScrollState(scrollState);
             window.dispatchEvent(new CustomEvent('preset-changed'));
         } catch (err) {
             logger.warn('session-config task failed', err);
@@ -491,97 +782,20 @@ export class SessionConfigPanel {
     /* ── custom select menu ── */
 
     ensureSelectMenu() {
-        if (this.customSelectMenuEl) return this.customSelectMenuEl;
-        const menu = document.createElement('div');
-        menu.className = 'world-app-select-menu';
-        menu.style.display = 'none';
-        menu.addEventListener('click', (e) => e.stopPropagation());
-        document.body.appendChild(menu);
-        this.customSelectMenuEl = menu;
-        return menu;
+        return null;
     }
 
     closeCustomSelectMenu() {
-        if (typeof this.customSelectMenuCleanup === 'function') {
-            try { this.customSelectMenuCleanup(); } catch {}
-        }
-        this.customSelectMenuCleanup = null;
-        this.customSelectMenuAnchor = null;
-        if (this.customSelectMenuEl) {
-            this.customSelectMenuEl.style.display = 'none';
-            this.customSelectMenuEl.innerHTML = '';
-        }
+        closeSharedCustomSelectMenu();
     }
 
     openSelectMenu(anchorEl, options, currentValue, onSelect) {
         if (!anchorEl) return;
-        if (this.customSelectMenuAnchor === anchorEl &&
-            this.customSelectMenuEl?.style.display !== 'none') {
-            this.closeCustomSelectMenu();
-            return;
-        }
-        const menu = this.ensureSelectMenu();
-        const current = String(currentValue ?? '').trim();
-        menu.innerHTML = options.map((opt) => {
-            const value = String(opt?.value ?? '');
-            const label = escapeHtml(String(opt?.label ?? value));
-            const selected = value === current;
-            return `
-                <button type="button" class="world-app-select-item ${selected ? 'is-selected' : ''}" data-value="${value.replace(/"/g, '&quot;')}">
-                    <span class="world-app-select-item-label">${label}</span>
-                    <span class="world-app-select-item-check">${selected ? '✓' : ''}</span>
-                </button>
-            `;
-        }).join('');
-
-        menu.querySelectorAll('.world-app-select-item').forEach((item) => {
-            item.addEventListener('click', () => {
-                if (typeof onSelect === 'function') onSelect(String(item.dataset.value ?? ''));
-                this.closeCustomSelectMenu();
-            });
+        openCustomSelectMenu({
+            anchorEl,
+            options,
+            currentValue,
+            onSelect,
         });
-
-        menu.style.display = 'block';
-        menu.style.visibility = 'hidden';
-        menu.style.minWidth = `${Math.max(170, Math.round(anchorEl.getBoundingClientRect().width))}px`;
-        menu.style.left = '0px';
-        menu.style.top = '0px';
-
-        const anchorRect = anchorEl.getBoundingClientRect();
-        const menuRect = menu.getBoundingClientRect();
-        const gap = 6;
-        let left = anchorRect.left;
-        let top = anchorRect.bottom + gap;
-        if (left + menuRect.width > window.innerWidth - 8) {
-            left = Math.max(8, window.innerWidth - menuRect.width - 8);
-        }
-        if (top + menuRect.height > window.innerHeight - 8) {
-            top = Math.max(8, anchorRect.top - menuRect.height - gap);
-        }
-        menu.style.left = `${Math.round(left)}px`;
-        menu.style.top = `${Math.round(top)}px`;
-        menu.style.visibility = 'visible';
-
-        const onDocClick = (ev) => {
-            if (!ev?.target) return;
-            if (menu.contains(ev.target) || anchorEl.contains(ev.target)) return;
-            this.closeCustomSelectMenu();
-        };
-        const onResize = () => this.closeCustomSelectMenu();
-        const onScroll = (ev) => {
-            if (ev?.target && (menu.contains(ev.target) || anchorEl.contains(ev.target))) return;
-            this.closeCustomSelectMenu();
-        };
-        document.addEventListener('mousedown', onDocClick, true);
-        document.addEventListener('touchstart', onDocClick, true);
-        window.addEventListener('resize', onResize);
-        window.addEventListener('scroll', onScroll, true);
-        this.customSelectMenuCleanup = () => {
-            document.removeEventListener('mousedown', onDocClick, true);
-            document.removeEventListener('touchstart', onDocClick, true);
-            window.removeEventListener('resize', onResize);
-            window.removeEventListener('scroll', onScroll, true);
-        };
-        this.customSelectMenuAnchor = anchorEl;
     }
 }
