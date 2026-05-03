@@ -1,12 +1,22 @@
 /**
- * Regex panel (Global + Local, ST-like)
+ * Regex panel (Global / Character / Preset)
  * - Global rules always apply
- * - Local sets apply when their bound preset/world is active
+ * - Character sets apply when their bound world book is active
+ * - Preset sets apply when their bound preset is active
  */
-import { RegexStore, isLocalRegexSetAutoActive, regex_placement, substitute_find_regex } from '../storage/regex-store.js';
+import { RegexStore, isLocalRegexSetAutoActive, regex_placement } from '../storage/regex-store.js';
 import { logger } from '../utils/logger.js';
 import { appConfirm } from './app-confirm.js';
-import { bindCustomSelectButton, closeCustomSelectMenu, refreshCustomSelectButton } from './custom-select.js';
+import { bindCustomSelectButton, closeCustomSelectMenu } from './custom-select.js';
+import {
+    downloadJsonFile,
+    flattenRegexImportRules,
+    genRegexId,
+    getRegexImportSetName,
+    normalizeRegexScript,
+    parseRegexImportText,
+    pickJsonFileText,
+} from '../utils/regex-transfer.js';
 
 const deepClone = (v) => {
     try {
@@ -14,51 +24,6 @@ const deepClone = (v) => {
     } catch {
         return JSON.parse(JSON.stringify(v));
     }
-};
-
-const genId = (prefix) => `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
-
-const normalizeScript = (r = {}) => {
-    // Legacy support
-    if (!('findRegex' in r) && (('pattern' in r) || ('when' in r) || ('replacement' in r))) {
-        const when = (r.when === 'input' || r.when === 'output' || r.when === 'both') ? r.when : 'both';
-        const pattern = String(r.pattern || '');
-        const flags = (r.flags === undefined || r.flags === null) ? 'g' : String(r.flags);
-        const placement = [];
-        if (when === 'input' || when === 'both') placement.push(regex_placement.USER_INPUT);
-        if (when === 'output' || when === 'both') placement.push(regex_placement.AI_OUTPUT);
-        return {
-            id: r.id || genId('re'),
-            scriptName: String(r.name || '').trim(),
-            findRegex: pattern ? `/${pattern}/${flags}` : '',
-            replaceString: String(r.replacement ?? ''),
-            trimStrings: [],
-            placement,
-            disabled: r.enabled === false,
-            markdownOnly: false,
-            promptOnly: false,
-            runOnEdit: false,
-            substituteRegex: substitute_find_regex.NONE,
-            minDepth: null,
-            maxDepth: null,
-        };
-    }
-
-    return {
-        id: r.id || genId('re'),
-        scriptName: String(r.scriptName || r.name || '').trim(),
-        findRegex: String(r.findRegex || ''),
-        replaceString: String(r.replaceString ?? r.replacement ?? ''),
-        trimStrings: Array.isArray(r.trimStrings) ? r.trimStrings.map((s) => String(s || '')).filter(Boolean) : [],
-        placement: Array.isArray(r.placement) ? r.placement.map((n) => Number(n)).filter(Number.isFinite) : [],
-        disabled: Boolean(r.disabled),
-        markdownOnly: Boolean(r.markdownOnly),
-        promptOnly: Boolean(r.promptOnly),
-        runOnEdit: Boolean(r.runOnEdit),
-        substituteRegex: (r.substituteRegex === 1 || r.substituteRegex === 2) ? Number(r.substituteRegex) : 0,
-        minDepth: (r.minDepth === '' || r.minDepth === undefined) ? null : (r.minDepth === null ? null : Number(r.minDepth)),
-        maxDepth: (r.maxDepth === '' || r.maxDepth === undefined) ? null : (r.maxDepth === null ? null : Number(r.maxDepth)),
-    };
 };
 
 const placementLabels = {
@@ -92,8 +57,9 @@ export class RegexPanel {
         this.store = window.appBridge?.regex || new RegexStore();
         this.element = null;
         this.overlay = null;
-        this.activeTab = 'global'; // global | local
-        this.activeLocalSetId = null;
+        this.activeTab = 'global'; // global | character | preset
+        this.activeCharSetId = null;
+        this.activePresetSetId = null;
         this.statusEl = null;
     }
 
@@ -140,7 +106,7 @@ export class RegexPanel {
                 <div style="min-width:0;">
                     <div style="font-weight:800; color:var(--app-text-primary);">正规表达式</div>
                     <div style="color:var(--app-text-muted); font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
-                        参考 ST：按规则替换输入/输出文本；支持全局与绑定预设/世界书的局部规则
+                        按规则替换输入/输出文本；全局始终生效，角色/预设按绑定对象生效
                     </div>
                 </div>
                 <button id="regex-close" style="border:none; background:transparent; font-size:22px; cursor:pointer; color:var(--app-text-primary);">×</button>
@@ -148,8 +114,9 @@ export class RegexPanel {
 
             <div style="${PANEL_SUBHEADER_STYLE}">
                 <div style="display:flex; gap:8px; flex-wrap:wrap;">
-                    <button class="regex-tab" data-tab="global" style="border:none; background:transparent; padding:10px 12px; border-radius:10px; cursor:pointer; font-size:14px; color:var(--app-text-secondary);">全局正则</button>
-                    <button class="regex-tab" data-tab="local" style="border:none; background:transparent; padding:10px 12px; border-radius:10px; cursor:pointer; font-size:14px; color:var(--app-text-secondary);">局部正则</button>
+                    <button class="regex-tab" data-tab="global" style="border:none; background:transparent; padding:10px 12px; border-radius:10px; cursor:pointer; font-size:14px; color:var(--app-text-secondary);">全局</button>
+                    <button class="regex-tab" data-tab="character" style="border:none; background:transparent; padding:10px 12px; border-radius:10px; cursor:pointer; font-size:14px; color:var(--app-text-secondary);">角色</button>
+                    <button class="regex-tab" data-tab="preset" style="border:none; background:transparent; padding:10px 12px; border-radius:10px; cursor:pointer; font-size:14px; color:var(--app-text-secondary);">预设</button>
                 </div>
                 <div id="regex-tools" style="display:flex; gap:8px; flex-wrap:wrap;"></div>
             </div>
@@ -199,7 +166,7 @@ export class RegexPanel {
     }
 
     renderRuleCard(rule) {
-        const r = normalizeScript(rule);
+        const r = normalizeRegexScript(rule);
         const card = document.createElement('div');
         card.className = 'regex-rule';
         card.dataset.ruleId = r.id;
@@ -384,14 +351,14 @@ export class RegexPanel {
     collectRules(container) {
         const rules = [];
         container.querySelectorAll('.regex-rule').forEach(el => {
-            const id = el.dataset.ruleId || genId('re');
+            const id = el.dataset.ruleId || genRegexId('re');
             const placement = Array.from(el.querySelectorAll('.re-place'))
                 .filter(cb => cb.checked)
                 .map(cb => Number(cb.value))
                 .filter(Number.isFinite);
             const minDepthRaw = el.querySelector('.re-min-depth')?.value;
             const maxDepthRaw = el.querySelector('.re-max-depth')?.value;
-            rules.push(normalizeScript({
+            rules.push(normalizeRegexScript({
                 id,
                 scriptName: el.querySelector('.re-name')?.value || '',
                 findRegex: el.querySelector('.re-find')?.value || '',
@@ -422,9 +389,11 @@ export class RegexPanel {
 
         if (this.activeTab === 'global') {
             body.appendChild(this.renderGlobal());
-            return;
+        } else if (this.activeTab === 'character') {
+            body.appendChild(this.renderScoped('world'));
+        } else if (this.activeTab === 'preset') {
+            body.appendChild(this.renderScoped('preset'));
         }
-        body.appendChild(await this.renderLocal());
     }
 
     renderGlobal() {
@@ -440,6 +409,8 @@ export class RegexPanel {
                 启用全局正则
             </label>
             <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                <button type="button" id="re-global-import" style="padding:10px 12px; border:1px solid var(--app-border-default); border-radius:10px; background:var(--app-surface-card); cursor:pointer;">导入</button>
+                <button type="button" id="re-global-export" style="padding:10px 12px; border:1px solid var(--app-border-default); border-radius:10px; background:var(--app-surface-card); cursor:pointer;">导出</button>
                 <button type="button" id="re-global-add" style="padding:10px 12px; border:1px solid var(--app-border-default); border-radius:10px; background:var(--app-surface-card); cursor:pointer;">＋ 新增规则</button>
                 <button type="button" id="re-global-save" style="padding:10px 12px; border:none; border-radius:10px; background:#019aff; color:var(--app-text-inverse); cursor:pointer; font-weight:700;">保存</button>
             </div>
@@ -460,6 +431,33 @@ export class RegexPanel {
                 runOnEdit: true,
                 disabled: false,
             }));
+        };
+        head.querySelector('#re-global-import').onclick = async () => {
+            try {
+                const text = await pickJsonFileText();
+                if (!text) return;
+                const parsed = parseRegexImportText(text);
+                const rules = flattenRegexImportRules(parsed);
+                if (!rules.length) { this.showStatus('未找到可导入的正则规则', 'info'); return; }
+                rules.forEach(r => list.appendChild(this.renderRuleCard(r)));
+                this.showStatus(`已导入 ${rules.length} 条规则（请点保存确认）`, 'success');
+            } catch (err) {
+                logger.error('导入正则失败', err);
+                this.showStatus(err.message || '导入失败', 'error');
+            }
+        };
+        head.querySelector('#re-global-export').onclick = async () => {
+            try {
+                const rules = this.collectRules(list);
+                if (!rules.length) { this.showStatus('没有可导出的规则', 'info'); return; }
+                const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+                const result = await downloadJsonFile({ version: 1, type: 'regex-rules', scope: 'global', rules }, `regex-global-${ts}.json`);
+                if (result?.cancelled) return;
+                this.showStatus(`已导出 ${rules.length} 条规则`, 'success');
+            } catch (err) {
+                logger.error('导出正则失败', err);
+                this.showStatus(err.message || '导出失败', 'error');
+            }
         };
         list.addEventListener('click', (e) => {
             const del = e.target.closest('.re-del');
@@ -483,100 +481,13 @@ export class RegexPanel {
         return wrap;
     }
 
-    async renderLocal() {
-        const wrap = document.createElement('div');
-        wrap.style.cssText = 'display:flex; gap:12px; align-items:stretch; flex-wrap:wrap;';
-
-        const left = document.createElement('div');
-        left.style.cssText = 'flex:1; min-width: 220px; max-width: 320px;';
-        left.innerHTML = `
-            <div style="font-weight:800; color:var(--app-text-primary); margin-bottom:8px;">局部正则集合</div>
-            <div style="display:flex; gap:8px; margin-bottom:8px;">
-                <button type="button" id="re-local-new" style="flex:1; padding:10px 12px; border:1px solid var(--app-border-default); border-radius:10px; background:var(--app-surface-card); cursor:pointer;">＋ 新建</button>
-                <button type="button" id="re-local-del" style="${DANGER_ACTION_STYLE}">删除</button>
-            </div>
-            <div id="re-local-setlist" style="${LOCAL_SETLIST_STYLE}"></div>
-        `;
-
-        const right = document.createElement('div');
-        right.style.cssText = 'flex:3; min-width: 280px;';
-        right.innerHTML = `<div id="re-local-editor"></div>`;
-
-        wrap.appendChild(left);
-        wrap.appendChild(right);
-
-        const sets = this.store.listLocalSets();
-        if (!this.activeLocalSetId && sets[0]?.id) this.activeLocalSetId = sets[0].id;
-
-        const setlist = left.querySelector('#re-local-setlist');
-        const editor = right.querySelector('#re-local-editor');
-        const renderSetList = () => {
-            setlist.innerHTML = '';
-            if (!sets.length) {
-                const empty = document.createElement('div');
-                empty.style.cssText = 'padding:12px; color:var(--app-text-muted); text-align:center;';
-                empty.textContent = '暂无局部正则集合';
-                setlist.appendChild(empty);
-                return;
-            }
-            sets.forEach(s => {
-                const item = document.createElement('button');
-                item.type = 'button';
-                item.style.cssText = 'width:100%; text-align:left; padding:10px 12px; border:none; cursor:pointer; background:var(--app-surface-card); border-bottom:1px solid var(--app-border-subtle);';
-                item.innerHTML = `
-                    <div style="font-weight:800; color:var(--app-text-primary);">${s.name || s.id}</div>
-                    <div style="font-size:12px; color:var(--app-text-muted); margin-top:2px;">${s.bind ? this.formatBind(s.bind) : '未绑定（不会自动启用）'}</div>
-                    <div style="font-size:12px; color:var(--app-text-secondary); margin-top:4px;">${this.formatLocalSetRuntimeState(s)}</div>
-                `;
-                if (s.id === this.activeLocalSetId) {
-                    item.style.background = 'var(--app-border-default)';
-                }
-                item.onclick = async () => {
-                    this.activeLocalSetId = s.id;
-                    await this.refreshAll();
-                };
-                setlist.appendChild(item);
-            });
-        };
-        renderSetList();
-
-        const setObj = this.activeLocalSetId ? this.store.getLocalSet(this.activeLocalSetId) : null;
-        editor.innerHTML = '';
-        editor.appendChild(this.renderLocalEditor(setObj));
-
-        left.querySelector('#re-local-new').onclick = async () => {
-            const name = prompt('新建局部正则名称', '新正则');
-            if (!name) return;
-            const id = await this.store.upsertLocalSet({ name, enabled: true, bind: null, rules: [] });
-            this.activeLocalSetId = id;
-            await this.refreshAll();
-            this.showStatus('已新建', 'success');
-            window.dispatchEvent(new CustomEvent('regex-changed'));
-        };
-        left.querySelector('#re-local-del').onclick = async () => {
-            if (!this.activeLocalSetId) return;
-            const cur = this.store.getLocalSet(this.activeLocalSetId);
-            const ok = await appConfirm({
-                title: '删除正则',
-                message: `删除局部正则「${cur?.name || this.activeLocalSetId}」？`,
-                danger: true,
-            });
-            if (!ok) return;
-            await this.store.removeLocalSet(this.activeLocalSetId);
-            this.activeLocalSetId = null;
-            await this.refreshAll();
-            this.showStatus('已删除', 'success');
-            window.dispatchEvent(new CustomEvent('regex-changed'));
-        };
-
-        return wrap;
+    getActiveSetIdForScope(scope) {
+        return scope === 'world' ? this.activeCharSetId : this.activePresetSetId;
     }
 
-    formatBind(bind) {
-        if (!bind) return '';
-        if (bind.type === 'world') return `绑定世界书：${bind.worldId || ''}`;
-        if (bind.type === 'preset') return `绑定预设：${bind.presetType || ''}/${bind.presetId || ''}`;
-        return '绑定：未知';
+    setActiveSetIdForScope(scope, id) {
+        if (scope === 'world') this.activeCharSetId = id;
+        else this.activePresetSetId = id;
     }
 
     getActiveRegexContext() {
@@ -593,173 +504,404 @@ export class RegexPanel {
             : '当前未生效：等待切换到对应绑定对象';
     }
 
-    renderLocalEditor(setObj) {
+    formatBind(bind) {
+        if (!bind) return '';
+        if (bind.type === 'world') return `绑定世界书：${bind.worldId || ''}`;
+        if (bind.type === 'preset') {
+            const ptLabel = PRESET_TYPES.find(t => t.id === bind.presetType)?.label || bind.presetType || '';
+            return `绑定预设：${ptLabel} / ${bind.presetId || ''}`;
+        }
+        return '绑定：未知';
+    }
+
+    getLocalSetVisualState(setObj) {
+        const s = setObj && typeof setObj === 'object' ? setObj : {};
+        if (s.manualEnabled === false) {
+            return {
+                label: '手动停用',
+                color: '#ef4444',
+                glow: 'rgba(239,68,68,0.22)',
+                opacity: '0.58',
+            };
+        }
+        if (!s.bind) {
+            return {
+                label: '未绑定',
+                color: '#94a3b8',
+                glow: 'rgba(148,163,184,0.18)',
+                opacity: '0.72',
+            };
+        }
+        if (isLocalRegexSetAutoActive(s, this.getActiveRegexContext())) {
+            return {
+                label: '当前生效',
+                color: '#10b981',
+                glow: 'rgba(16,185,129,0.28)',
+                opacity: '1',
+            };
+        }
+        return {
+            label: '当前未生效',
+            color: '#f59e0b',
+            glow: 'rgba(245,158,11,0.22)',
+            opacity: '0.86',
+        };
+    }
+
+    renderScopedSetItem(setObj, { activeId, scope }) {
+        const item = document.createElement('button');
+        const s = setObj && typeof setObj === 'object' ? setObj : {};
+        const isActive = s.id === activeId;
+        const visual = this.getLocalSetVisualState(s);
+        const name = String(s.name || s.id || '未命名正则').trim() || '未命名正则';
+        item.type = 'button';
+        item.title = `${name} · ${visual.label}`;
+        item.setAttribute('aria-label', `${name}，${visual.label}`);
+        const rowBg = isActive ? 'var(--app-border-default)' : 'var(--app-surface-card)';
+        item.style.cssText = `
+            width:100%;
+            min-height:46px;
+            text-align:left;
+            padding:8px 10px;
+            border:none;
+            cursor:pointer;
+            display:flex;
+            align-items:center;
+            gap:10px;
+            background:${rowBg};
+            border-bottom:1px solid var(--app-border-subtle);
+            opacity:${isActive ? '1' : visual.opacity};
+            box-shadow:${isActive ? 'inset 0 0 0 1px var(--app-border-strong, var(--app-border-default))' : 'none'};
+        `;
+
+        const badgeBg = isActive ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.08)';
+        const badgeBorder = isActive ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.08)';
+        const badge = document.createElement('span');
+        badge.style.cssText = `
+            min-width:0;
+            max-width:100%;
+            flex:1 1 auto;
+            display:inline-flex;
+            align-items:center;
+            position:relative;
+            overflow:hidden;
+            border-radius:999px;
+            padding:2px 9px 2px 12px;
+            background:${badgeBg};
+            border:1px solid ${badgeBorder};
+            box-shadow:inset 3px 0 0 ${visual.color}, 0 1px 2px rgba(0,0,0,0.2);
+        `;
+
+        const title = document.createElement('span');
+        title.textContent = name;
+        title.style.cssText = `
+            min-width:0;
+            flex:1 1 auto;
+            display:block;
+            position:relative;
+            z-index:1;
+            color:var(--app-text-primary);
+            font-weight:${isActive ? '900' : '800'};
+            white-space:nowrap;
+            overflow:hidden;
+            text-overflow:ellipsis;
+        `;
+
+        badge.appendChild(title);
+        item.appendChild(badge);
+        item.onclick = async () => {
+            this.setActiveSetIdForScope(scope, s.id);
+            await this.refreshAll();
+        };
+        return item;
+    }
+
+    renderScoped(scope) {
+        const scopeLabel = scope === 'world' ? '角色' : '预设';
+        const wrap = document.createElement('div');
+        wrap.style.cssText = 'display:flex; gap:12px; align-items:stretch; flex-wrap:wrap;';
+
+        const left = document.createElement('div');
+        left.style.cssText = 'flex:1; min-width: 220px; max-width: 320px;';
+
+        const setlistEl = document.createElement('div');
+        setlistEl.id = 're-scoped-setlist';
+        setlistEl.style.cssText = LOCAL_SETLIST_STYLE;
+
+        const btnRow = document.createElement('div');
+        btnRow.style.cssText = 'display:flex; gap:8px; margin-bottom:8px;';
+        btnRow.innerHTML = `
+            <button type="button" id="re-scoped-new" style="flex:1; padding:10px 12px; border:1px solid var(--app-border-default); border-radius:10px; background:var(--app-surface-card); cursor:pointer;">＋ 新建</button>
+            <button type="button" id="re-scoped-import" style="flex:1; padding:10px 12px; border:1px solid var(--app-border-default); border-radius:10px; background:var(--app-surface-card); cursor:pointer;">导入</button>
+            <button type="button" id="re-scoped-del" style="${DANGER_ACTION_STYLE}">删除</button>
+        `;
+
+        const titleEl = document.createElement('div');
+        titleEl.style.cssText = 'font-weight:800; color:var(--app-text-primary); margin-bottom:8px;';
+        titleEl.textContent = `${scopeLabel}正则集合`;
+
+        left.appendChild(titleEl);
+        left.appendChild(btnRow);
+        left.appendChild(setlistEl);
+
+        const editorEl = document.createElement('div');
+        editorEl.id = 're-scoped-editor';
+
+        const right = document.createElement('div');
+        right.style.cssText = 'flex:3; min-width: 280px;';
+        right.appendChild(editorEl);
+
+        wrap.appendChild(left);
+        wrap.appendChild(right);
+
+        const allSets = this.store.listLocalSets();
+        const sets = allSets.filter(s => s.bind?.type === scope);
+        const unboundSets = allSets.filter(s => !s.bind);
+        const visibleSets = [...sets, ...unboundSets];
+
+        let activeId = this.getActiveSetIdForScope(scope);
+        if (!activeId || !visibleSets.find(s => s.id === activeId)) {
+            activeId = sets[0]?.id || unboundSets[0]?.id || null;
+            this.setActiveSetIdForScope(scope, activeId);
+        }
+
+        const setlist = setlistEl;
+        const editor = editorEl;
+
+        const renderSetList = () => {
+            setlist.innerHTML = '';
+            if (!sets.length && !unboundSets.length) {
+                const empty = document.createElement('div');
+                empty.style.cssText = 'padding:12px; color:var(--app-text-muted); text-align:center;';
+                empty.textContent = `暂无${scopeLabel}正则集合`;
+                setlist.appendChild(empty);
+                return;
+            }
+            visibleSets.forEach(s => {
+                setlist.appendChild(this.renderScopedSetItem(s, { activeId, scope }));
+            });
+        };
+        renderSetList();
+
+        const setObj = activeId ? this.store.getLocalSet(activeId) : null;
+        editor.innerHTML = '';
+        editor.appendChild(this.renderScopedEditor(setObj, scope));
+
+        btnRow.querySelector('#re-scoped-new').onclick = async () => {
+            const name = prompt(`新建${scopeLabel}正则名称`, '新正则');
+            if (!name) return;
+            const bind = scope === 'world'
+                ? await this.pickWorld()
+                : await this.pickPreset();
+            const id = await this.store.upsertLocalSet({ name, enabled: true, bind, rules: [] });
+            this.setActiveSetIdForScope(scope, id);
+            await this.refreshAll();
+            this.showStatus('已新建', 'success');
+            window.dispatchEvent(new CustomEvent('regex-changed'));
+        };
+        btnRow.querySelector('#re-scoped-import').onclick = async () => {
+            try {
+                const text = await pickJsonFileText();
+                if (!text) return;
+                const parsed = parseRegexImportText(text);
+                const importedSets = parsed.sets?.length
+                    ? parsed.sets
+                    : [{ name: getRegexImportSetName(parsed.name, parsed.rules, ''), enabled: true, rules: parsed.rules || [] }];
+                const validSets = importedSets.filter(s => Array.isArray(s?.rules) && s.rules.length);
+                if (!validSets.length) { this.showStatus('未找到可导入的正则规则', 'info'); return; }
+                const bind = scope === 'world'
+                    ? await this.pickWorld()
+                    : await this.pickPreset();
+                let lastId = '';
+                for (const s of validSets) {
+                    lastId = await this.store.upsertLocalSet({
+                        name: getRegexImportSetName(s.name, s.rules, `导入正则 ${new Date().toLocaleString()}`),
+                        enabled: s.enabled !== false,
+                        bind,
+                        rules: s.rules,
+                    });
+                }
+                if (lastId) this.setActiveSetIdForScope(scope, lastId);
+                await this.refreshAll();
+                const count = validSets.reduce((sum, s) => sum + (Array.isArray(s.rules) ? s.rules.length : 0), 0);
+                this.showStatus(`已导入 ${validSets.length} 组 / ${count} 条规则`, 'success');
+                window.dispatchEvent(new CustomEvent('regex-changed'));
+            } catch (err) {
+                logger.error(`导入${scopeLabel}正则失败`, err);
+                this.showStatus(err.message || '导入失败', 'error');
+            }
+        };
+        btnRow.querySelector('#re-scoped-del').onclick = async () => {
+            const curId = this.getActiveSetIdForScope(scope);
+            if (!curId) return;
+            const cur = this.store.getLocalSet(curId);
+            const ok = await appConfirm({
+                title: '删除正则',
+                message: `删除${scopeLabel}正则「${cur?.name || curId}」？`,
+                danger: true,
+            });
+            if (!ok) return;
+            await this.store.removeLocalSet(curId);
+            this.setActiveSetIdForScope(scope, null);
+            await this.refreshAll();
+            this.showStatus('已删除', 'success');
+            window.dispatchEvent(new CustomEvent('regex-changed'));
+        };
+
+        return wrap;
+    }
+
+    async pickWorld() {
+        const ws = window.appBridge?.worldStore;
+        await ws?.ready;
+        const list = ws?.list?.() || [];
+        if (!list.length) return null;
+        const name = prompt(`选择绑定的世界书（输入名称）：\n${list.join('\n')}`, list[0]);
+        if (!name || !list.includes(name)) return null;
+        return { type: 'world', worldId: name };
+    }
+
+    async pickPreset() {
+        const labels = PRESET_TYPES.map((t, i) => `${i + 1}. ${t.label}`).join('\n');
+        const choice = prompt(`选择预设类型：\n${labels}`, '1');
+        if (!choice) return null;
+        const idx = parseInt(choice, 10) - 1;
+        const pt = PRESET_TYPES[idx];
+        if (!pt) return null;
+        const presets = window.appBridge?.presets?.list?.(pt.id) || [];
+        if (!presets.length) { this.showStatus(`${pt.label} 无可用预设`, 'info'); return null; }
+        const presetLabels = presets.map((p, i) => `${i + 1}. ${p.name || p.id}`).join('\n');
+        const pChoice = prompt(`选择 ${pt.label} 预设：\n${presetLabels}`, '1');
+        if (!pChoice) return null;
+        const pIdx = parseInt(pChoice, 10) - 1;
+        const p = presets[pIdx];
+        if (!p) return null;
+        return { type: 'preset', presetType: pt.id, presetId: p.id };
+    }
+
+    renderScopedEditor(setObj, scope) {
+        const scopeLabel = scope === 'world' ? '角色' : '预设';
         const s = setObj ? deepClone(setObj) : null;
         if (!s) {
             const empty = document.createElement('div');
             empty.style.cssText = 'padding:12px; color:var(--app-text-muted);';
-            empty.textContent = '请选择或新建一个局部正则集合';
+            empty.textContent = `请选择或新建一个${scopeLabel}正则集合`;
             return empty;
         }
 
         const wrap = document.createElement('div');
         wrap.style.cssText = 'display:flex; flex-direction:column; gap:12px;';
         const runtimeStateText = this.formatLocalSetRuntimeState(s);
+        const bindText = s.bind ? this.formatBind(s.bind) : '未绑定';
 
         const head = document.createElement('div');
         head.style.cssText = LOCAL_EDITOR_HEAD_STYLE;
-        head.innerHTML = `
-            <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;">
-                <div style="flex:1; min-width:220px;">
-                    <div style="font-weight:800; color:var(--app-text-primary);">局部正则：${s.name}</div>
-                    <div style="color:var(--app-text-muted); font-size:12px; margin-top:4px;">“启用集合”只表示手动允许；真正是否生效取决于当前是否命中绑定对象。</div>
-                    <div style="color:var(--app-text-secondary); font-size:12px; margin-top:4px;">${runtimeStateText}</div>
-                </div>
-                <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
-                    <button type="button" id="re-local-rename" style="padding:10px 12px; border:1px solid var(--app-border-default); border-radius:10px; background:var(--app-surface-card); cursor:pointer;">✎ 重命名</button>
-                    <button type="button" id="re-local-save" style="padding:10px 12px; border:none; border-radius:10px; background:#019aff; color:var(--app-text-inverse); cursor:pointer; font-weight:700;">保存</button>
-                </div>
-            </div>
-            <div style="margin-top:10px; display:flex; gap:12px; flex-wrap:wrap; align-items:center;">
-                <label style="display:flex; align-items:center; gap:8px; font-size:13px; color:var(--app-text-secondary); cursor:pointer;">
-                    <input id="re-local-enabled" type="checkbox" style="width:16px; height:16px;">
-                    启用集合
-                </label>
-                <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
-                    <div style="font-size:13px; color:var(--app-text-secondary); font-weight:700;">绑定</div>
-                    <select id="re-bind-type" style="display:none;">
-                        <option value="">不绑定</option>
-                        <option value="preset">绑定预设</option>
-                        <option value="world">绑定世界书</option>
-                    </select>
-                    <button type="button" id="re-bind-type-btn" class="world-app-select-btn" style="min-width:150px;">
-                        <span class="pp-custom-select-label" data-custom-select-label>不绑定</span>
-                        <span class="world-app-select-btn-chevron">▾</span>
-                    </button>
-                    <select id="re-bind-preset-type" style="display:none;"></select>
-                    <button type="button" id="re-bind-preset-type-btn" class="world-app-select-btn" style="display:none; min-width:170px;">
-                        <span class="pp-custom-select-label" data-custom-select-label>系统提示词</span>
-                        <span class="world-app-select-btn-chevron">▾</span>
-                    </button>
-                    <select id="re-bind-preset-id" style="display:none;"></select>
-                    <button type="button" id="re-bind-preset-id-btn" class="world-app-select-btn" style="display:none; min-width:220px;">
-                        <span class="pp-custom-select-label" data-custom-select-label>选择预设</span>
-                        <span class="world-app-select-btn-chevron">▾</span>
-                    </button>
-                    <select id="re-bind-world" style="display:none;"></select>
-                    <button type="button" id="re-bind-world-btn" class="world-app-select-btn" style="display:none; min-width:220px;">
-                        <span class="pp-custom-select-label" data-custom-select-label>选择世界书</span>
-                        <span class="world-app-select-btn-chevron">▾</span>
-                    </button>
-                </div>
-            </div>
-        `;
+
+        // --- row 1: title + action buttons ---
+        const row1 = document.createElement('div');
+        row1.style.cssText = 'display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;';
+
+        const infoCol = document.createElement('div');
+        infoCol.style.cssText = 'flex:1; min-width:220px;';
+        const titleDiv = document.createElement('div');
+        titleDiv.style.cssText = 'font-weight:800; color:var(--app-text-primary);';
+        titleDiv.textContent = `${scopeLabel}正则：${s.name}`;
+        const hintDiv = document.createElement('div');
+        hintDiv.style.cssText = 'color:var(--app-text-muted); font-size:12px; margin-top:4px;';
+        hintDiv.textContent = '“启用集合”只表示手动允许；真正是否生效取决于当前是否命中绑定对象。';
+        const stateDiv = document.createElement('div');
+        stateDiv.style.cssText = 'color:var(--app-text-secondary); font-size:12px; margin-top:4px;';
+        stateDiv.textContent = runtimeStateText;
+        infoCol.appendChild(titleDiv);
+        infoCol.appendChild(hintDiv);
+        infoCol.appendChild(stateDiv);
+
+        const btnCol = document.createElement('div');
+        btnCol.style.cssText = 'display:flex; gap:8px; flex-wrap:wrap; align-items:center;';
+        const btnExport = document.createElement('button');
+        btnExport.type = 'button';
+        btnExport.textContent = '导出';
+        btnExport.style.cssText = 'padding:10px 12px; border:1px solid var(--app-border-default); border-radius:10px; background:var(--app-surface-card); cursor:pointer;';
+        const btnRename = document.createElement('button');
+        btnRename.type = 'button';
+        btnRename.textContent = '✎ 重命名';
+        btnRename.style.cssText = 'padding:10px 12px; border:1px solid var(--app-border-default); border-radius:10px; background:var(--app-surface-card); cursor:pointer;';
+        const btnSave = document.createElement('button');
+        btnSave.type = 'button';
+        btnSave.textContent = '保存';
+        btnSave.style.cssText = 'padding:10px 12px; border:none; border-radius:10px; background:#019aff; color:var(--app-text-inverse); cursor:pointer; font-weight:700;';
+        btnCol.appendChild(btnExport);
+        btnCol.appendChild(btnRename);
+        btnCol.appendChild(btnSave);
+
+        row1.appendChild(infoCol);
+        row1.appendChild(btnCol);
+
+        // --- row 2: enabled checkbox + bind info ---
+        const row2 = document.createElement('div');
+        row2.style.cssText = 'margin-top:10px; display:flex; gap:12px; flex-wrap:wrap; align-items:center;';
+
+        const enabledLabel = document.createElement('label');
+        enabledLabel.style.cssText = 'display:flex; align-items:center; gap:8px; font-size:13px; color:var(--app-text-secondary); cursor:pointer;';
+        const enabledEl = document.createElement('input');
+        enabledEl.type = 'checkbox';
+        enabledEl.style.cssText = 'width:16px; height:16px;';
+        enabledEl.checked = s.manualEnabled !== false;
+        enabledLabel.appendChild(enabledEl);
+        enabledLabel.appendChild(document.createTextNode('启用集合'));
+
+        const bindDiv = document.createElement('div');
+        bindDiv.style.cssText = 'display:flex; gap:10px; flex-wrap:wrap; align-items:center;';
+        const bindLabel = document.createElement('div');
+        bindLabel.style.cssText = 'font-size:13px; color:var(--app-text-secondary);';
+        bindLabel.textContent = bindText;
+        const btnRebind = document.createElement('button');
+        btnRebind.type = 'button';
+        btnRebind.textContent = '换绑';
+        btnRebind.style.cssText = 'padding:6px 10px; border:1px solid var(--app-border-default); border-radius:8px; background:var(--app-surface-card); cursor:pointer; font-size:12px;';
+        bindDiv.appendChild(bindLabel);
+        bindDiv.appendChild(btnRebind);
+
+        row2.appendChild(enabledLabel);
+        row2.appendChild(bindDiv);
+
+        head.appendChild(row1);
+        head.appendChild(row2);
         wrap.appendChild(head);
 
-        const enabledEl = head.querySelector('#re-local-enabled');
-        enabledEl.checked = s.manualEnabled !== false;
-
-        const bindType = head.querySelector('#re-bind-type');
-        const bindTypeBtn = head.querySelector('#re-bind-type-btn');
-        const presetType = head.querySelector('#re-bind-preset-type');
-        const presetTypeBtn = head.querySelector('#re-bind-preset-type-btn');
-        const presetId = head.querySelector('#re-bind-preset-id');
-        const presetIdBtn = head.querySelector('#re-bind-preset-id-btn');
-        const worldSel = head.querySelector('#re-bind-world');
-        const worldSelBtn = head.querySelector('#re-bind-world-btn');
-
-        presetType.innerHTML = PRESET_TYPES.map(t => `<option value="${t.id}">${t.label}</option>`).join('');
-        bindCustomSelectButton({ buttonEl: bindTypeBtn, selectEl: bindType, fallback: '不绑定' });
-        bindCustomSelectButton({ buttonEl: presetTypeBtn, selectEl: presetType, fallback: '系统提示词' });
-        bindCustomSelectButton({ buttonEl: presetIdBtn, selectEl: presetId, fallback: '选择预设' });
-        bindCustomSelectButton({ buttonEl: worldSelBtn, selectEl: worldSel, fallback: '选择世界书' });
-
-        const updatePresetList = () => {
-            const pt = presetType.value;
-            const currentPresetId = String(presetId.value || '').trim();
-            const presets = window.appBridge?.presets?.list?.(pt) || [];
-            presetId.innerHTML = '';
-            presets.forEach(p => {
-                const opt = document.createElement('option');
-                opt.value = p.id;
-                opt.textContent = p.name || p.id;
-                presetId.appendChild(opt);
-            });
-            if (currentPresetId) {
-                presetId.value = currentPresetId;
-            }
-            refreshCustomSelectButton(presetIdBtn, presetId, '选择预设');
-        };
-        updatePresetList();
-
-        const updateWorldList = async () => {
-            const ws = window.appBridge?.worldStore;
-            const currentWorldId = String(worldSel.value || '').trim();
-            await ws?.ready;
-            const list = ws?.list?.() || [];
-            worldSel.innerHTML = '';
-            list.forEach(name => {
-                const opt = document.createElement('option');
-                opt.value = name;
-                opt.textContent = name;
-                worldSel.appendChild(opt);
-            });
-            if (currentWorldId) {
-                worldSel.value = currentWorldId;
-            }
-            refreshCustomSelectButton(worldSelBtn, worldSel, '选择世界书');
-        };
-        updateWorldList().catch(() => {});
-
-        const applyBindUI = () => {
-            const t = bindType.value;
-            presetTypeBtn.style.display = t === 'preset' ? '' : 'none';
-            presetIdBtn.style.display = t === 'preset' ? '' : 'none';
-            worldSelBtn.style.display = t === 'world' ? '' : 'none';
+        // --- rebind handler ---
+        btnRebind.onclick = async () => {
+            const newBind = scope === 'world'
+                ? await this.pickWorld()
+                : await this.pickPreset();
+            if (!newBind) return;
+            s.bind = newBind;
+            await this.store.upsertLocalSet({ ...s });
+            await this.refreshAll();
+            this.showStatus('已换绑', 'success');
+            window.dispatchEvent(new CustomEvent('regex-changed'));
         };
 
-        // init bind values
-        if (s.bind?.type === 'preset') {
-            bindType.value = 'preset';
-            presetType.value = s.bind.presetType || 'openai';
-            updatePresetList();
-            presetId.value = s.bind.presetId || '';
-        } else if (s.bind?.type === 'world') {
-            bindType.value = 'world';
-            worldSel.value = s.bind.worldId || '';
-        } else {
-            bindType.value = '';
-        }
-        refreshCustomSelectButton(bindTypeBtn, bindType, '不绑定');
-        refreshCustomSelectButton(presetTypeBtn, presetType, '系统提示词');
-        refreshCustomSelectButton(presetIdBtn, presetId, '选择预设');
-        refreshCustomSelectButton(worldSelBtn, worldSel, '选择世界书');
-        applyBindUI();
-
-        bindType.onchange = () => {
-            refreshCustomSelectButton(bindTypeBtn, bindType, '不绑定');
-            applyBindUI();
-        };
-        presetType.onchange = () => {
-            refreshCustomSelectButton(presetTypeBtn, presetType, '系统提示词');
-            updatePresetList();
-        };
-
-        const rulesWrap = document.createElement('div');
-        rulesWrap.style.cssText = 'display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;';
-        rulesWrap.innerHTML = `
-            <div style="font-weight:800; color:var(--app-text-primary);">规则</div>
-            <button type="button" id="re-local-add" style="padding:10px 12px; border:1px solid var(--app-border-default); border-radius:10px; background:var(--app-surface-card); cursor:pointer;">＋ 新增规则</button>
-        `;
-        wrap.appendChild(rulesWrap);
+        // --- rules section ---
+        const rulesHeader = document.createElement('div');
+        rulesHeader.style.cssText = 'display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;';
+        const rulesTitle = document.createElement('div');
+        rulesTitle.style.cssText = 'font-weight:800; color:var(--app-text-primary);';
+        rulesTitle.textContent = '规则';
+        const btnAdd = document.createElement('button');
+        btnAdd.type = 'button';
+        btnAdd.textContent = '＋ 新增规则';
+        btnAdd.style.cssText = 'padding:10px 12px; border:1px solid var(--app-border-default); border-radius:10px; background:var(--app-surface-card); cursor:pointer;';
+        rulesHeader.appendChild(rulesTitle);
+        rulesHeader.appendChild(btnAdd);
+        wrap.appendChild(rulesHeader);
 
         const list = document.createElement('div');
-        list.id = 're-local-rules';
         list.style.cssText = 'display:flex; flex-direction:column; gap:10px;';
         (Array.isArray(s.rules) ? s.rules : []).forEach(r => list.appendChild(this.renderRuleCard(r)));
         wrap.appendChild(list);
 
-        rulesWrap.querySelector('#re-local-add').onclick = () => {
+        btnAdd.onclick = () => {
             list.appendChild(this.renderRuleCard({
                 placement: [regex_placement.USER_INPUT],
                 markdownOnly: true,
@@ -774,33 +916,39 @@ export class RegexPanel {
             if (card) card.remove();
         });
 
-        head.querySelector('#re-local-rename').onclick = async () => {
-            const name = prompt('重命名局部正则', s.name || '局部正则');
+        btnExport.onclick = async () => {
+            try {
+                const rules = this.collectRules(list);
+                if (!rules.length) { this.showStatus('没有可导出的规则', 'info'); return; }
+                const safeName = (s.name || scopeLabel).replace(/[^a-zA-Z0-9一-鿿_-]/g, '_');
+                const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+                const result = await downloadJsonFile({ version: 1, type: 'regex-rules', scope, name: s.name, rules }, `regex-${safeName}-${ts}.json`);
+                if (result?.cancelled) return;
+                this.showStatus(`已导出 ${rules.length} 条规则`, 'success');
+            } catch (err) {
+                logger.error(`导出${scopeLabel}正则失败`, err);
+                this.showStatus(err.message || '导出失败', 'error');
+            }
+        };
+        btnRename.onclick = async () => {
+            const name = prompt(`重命名${scopeLabel}正则`, s.name || `${scopeLabel}正则`);
             if (!name) return;
             s.name = name;
-                await this.store.upsertLocalSet({ ...s, name });
-                await this.refreshAll();
-                this.showStatus('已重命名', 'success');
+            await this.store.upsertLocalSet({ ...s, name });
+            await this.refreshAll();
+            this.showStatus('已重命名', 'success');
             window.dispatchEvent(new CustomEvent('regex-changed'));
         };
 
-        head.querySelector('#re-local-save').onclick = async () => {
+        btnSave.onclick = async () => {
             try {
                 const enabled = enabledEl.checked !== false;
                 const rules = this.collectRules(list);
-
-                let bind = null;
-                if (bindType.value === 'preset') {
-                    bind = { type: 'preset', presetType: presetType.value, presetId: presetId.value };
-                } else if (bindType.value === 'world') {
-                    bind = { type: 'world', worldId: worldSel.value };
-                }
-
-                await this.store.upsertLocalSet({ id: s.id, name: s.name, enabled, bind, rules });
-                this.showStatus('已保存局部正则', 'success');
+                await this.store.upsertLocalSet({ id: s.id, name: s.name, enabled, bind: s.bind, rules });
+                this.showStatus(`已保存${scopeLabel}正则`, 'success');
                 window.dispatchEvent(new CustomEvent('regex-changed'));
             } catch (err) {
-                logger.error('保存局部正则失败', err);
+                logger.error(`保存${scopeLabel}正则失败`, err);
                 this.showStatus(err.message || '保存失败', 'error');
             }
         };

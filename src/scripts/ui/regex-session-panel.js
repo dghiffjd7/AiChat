@@ -2,54 +2,17 @@
  * Regex panel (Session scoped)
  * - Only applies in the current chat session
  */
-import { RegexStore, regex_placement, substitute_find_regex } from '../storage/regex-store.js';
+import { RegexStore, regex_placement } from '../storage/regex-store.js';
 import { logger } from '../utils/logger.js';
 import { bindCustomSelectButton, closeCustomSelectMenu } from './custom-select.js';
-
-const genId = (prefix) => `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
-
-const normalizeScript = (r = {}) => {
-    // Legacy support
-    if (!('findRegex' in r) && (('pattern' in r) || ('when' in r) || ('replacement' in r))) {
-        const when = (r.when === 'input' || r.when === 'output' || r.when === 'both') ? r.when : 'both';
-        const pattern = String(r.pattern || '');
-        const flags = (r.flags === undefined || r.flags === null) ? 'g' : String(r.flags);
-        const placement = [];
-        if (when === 'input' || when === 'both') placement.push(regex_placement.USER_INPUT);
-        if (when === 'output' || when === 'both') placement.push(regex_placement.AI_OUTPUT);
-        return {
-            id: r.id || genId('re'),
-            scriptName: String(r.name || '').trim(),
-            findRegex: pattern ? `/${pattern}/${flags}` : '',
-            replaceString: String(r.replacement ?? ''),
-            trimStrings: [],
-            placement,
-            disabled: r.enabled === false,
-            markdownOnly: false,
-            promptOnly: false,
-            runOnEdit: false,
-            substituteRegex: substitute_find_regex.NONE,
-            minDepth: null,
-            maxDepth: null,
-        };
-    }
-
-    return {
-        id: r.id || genId('re'),
-        scriptName: String(r.scriptName || r.name || '').trim(),
-        findRegex: String(r.findRegex || ''),
-        replaceString: String(r.replaceString ?? r.replacement ?? ''),
-        trimStrings: Array.isArray(r.trimStrings) ? r.trimStrings.map((s) => String(s || '')).filter(Boolean) : [],
-        placement: Array.isArray(r.placement) ? r.placement.map((n) => Number(n)).filter(Number.isFinite) : [],
-        disabled: Boolean(r.disabled),
-        markdownOnly: Boolean(r.markdownOnly),
-        promptOnly: Boolean(r.promptOnly),
-        runOnEdit: Boolean(r.runOnEdit),
-        substituteRegex: (r.substituteRegex === 1 || r.substituteRegex === 2) ? Number(r.substituteRegex) : 0,
-        minDepth: (r.minDepth === '' || r.minDepth === undefined) ? null : (r.minDepth === null ? null : Number(r.minDepth)),
-        maxDepth: (r.maxDepth === '' || r.maxDepth === undefined) ? null : (r.maxDepth === null ? null : Number(r.maxDepth)),
-    };
-};
+import {
+    downloadJsonFile,
+    flattenRegexImportRules,
+    genRegexId,
+    normalizeRegexScript,
+    parseRegexImportText,
+    pickJsonFileText,
+} from '../utils/regex-transfer.js';
 
 const placementLabels = {
     [regex_placement.USER_INPUT]: '用户输入',
@@ -129,6 +92,8 @@ export class RegexSessionPanel {
                     </label>
                     <div style="display:flex; gap:8px; flex-wrap:wrap;">
                         <button type="button" id="re-session-add" style="padding:10px 12px; border:1px solid var(--app-border-default); border-radius:10px; background:var(--app-surface-card); cursor:pointer;">＋ 新增规则</button>
+                        <button type="button" id="re-session-import" style="padding:10px 12px; border:1px solid var(--app-border-default); border-radius:10px; background:var(--app-surface-card); cursor:pointer;">导入</button>
+                        <button type="button" id="re-session-export" style="padding:10px 12px; border:1px solid var(--app-border-default); border-radius:10px; background:var(--app-surface-card); cursor:pointer;">导出</button>
                         <button type="button" id="re-session-save" style="padding:10px 12px; border:none; border-radius:10px; background:#019aff; color:var(--app-text-inverse); cursor:pointer; font-weight:700;">保存</button>
                     </div>
                 </div>
@@ -153,6 +118,8 @@ export class RegexSessionPanel {
                 disabled: false,
             }));
         };
+        this.element.querySelector('#re-session-import').onclick = async () => this.importRules();
+        this.element.querySelector('#re-session-export').onclick = async () => this.exportRules();
         this.element.querySelector('#re-session-list').addEventListener('click', (e) => {
             const del = e.target.closest('.re-del');
             if (!del) return;
@@ -179,7 +146,7 @@ export class RegexSessionPanel {
     }
 
     renderRuleCard(rule) {
-        const r = normalizeScript(rule);
+        const r = normalizeRegexScript(rule);
         const card = document.createElement('div');
         card.className = 'regex-rule';
         card.dataset.ruleId = r.id;
@@ -360,14 +327,14 @@ export class RegexSessionPanel {
         const root = this.element.querySelector('#re-session-list');
         const rules = [];
         root.querySelectorAll('.regex-rule').forEach(el => {
-            const id = el.dataset.ruleId || genId('re');
+            const id = el.dataset.ruleId || genRegexId('re');
             const placement = Array.from(el.querySelectorAll('.re-place'))
                 .filter(cb => cb.checked)
                 .map(cb => Number(cb.value))
                 .filter(Number.isFinite);
             const minDepthRaw = el.querySelector('.re-min-depth')?.value;
             const maxDepthRaw = el.querySelector('.re-max-depth')?.value;
-            rules.push(normalizeScript({
+            rules.push(normalizeRegexScript({
                 id,
                 scriptName: el.querySelector('.re-name')?.value || '',
                 findRegex: el.querySelector('.re-find')?.value || '',
@@ -410,6 +377,40 @@ export class RegexSessionPanel {
         } catch (err) {
             logger.error('保存聊天室正则失败', err);
             this.showStatus(err.message || '保存失败', 'error');
+        }
+    }
+
+    async importRules() {
+        try {
+            const text = await pickJsonFileText();
+            if (!text) return;
+            const parsed = parseRegexImportText(text);
+            const rules = flattenRegexImportRules(parsed);
+            if (!rules.length) { this.showStatus('未找到可导入的正则规则', 'info'); return; }
+            const list = this.element.querySelector('#re-session-list');
+            rules.forEach(rule => list.appendChild(this.renderRuleCard(rule)));
+            this.showStatus(`已导入 ${rules.length} 条规则（请点保存确认）`, 'success');
+        } catch (err) {
+            logger.error('导入聊天室正则失败', err);
+            this.showStatus(err.message || '导入失败', 'error');
+        }
+    }
+
+    async exportRules() {
+        try {
+            const rules = this.collectRules();
+            if (!rules.length) { this.showStatus('没有可导出的规则', 'info'); return; }
+            const sid = String(this.getSessionId() || 'session').replace(/[^a-zA-Z0-9_-]/g, '_');
+            const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+            const result = await downloadJsonFile(
+                { version: 1, type: 'regex-rules', scope: 'session', sessionId: sid, rules },
+                `regex-session-${sid}-${ts}.json`,
+            );
+            if (result?.cancelled) return;
+            this.showStatus(`已导出 ${rules.length} 条规则`, 'success');
+        } catch (err) {
+            logger.error('导出聊天室正则失败', err);
+            this.showStatus(err.message || '导出失败', 'error');
         }
     }
 }

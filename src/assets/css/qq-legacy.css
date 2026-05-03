@@ -1622,6 +1622,10 @@ body[data-ui-mode='rp'] .chat-reply-draft {
   border-top: 1px solid rgba(0, 0, 0, 0.08);
 }
 
+.QQ_chat_page.keyboard-visible .chat-input-container {
+  padding-bottom: 8px;
+}
+
 .chat-input-row {
   display: flex;
   align-items: center;

@@ -11179,6 +11179,7 @@ Phase G（Frame 36）：循环衔接
         chatRoom.style.top = `${vvTop}px`;
         chatRoom.style.bottom = 'auto';
         chatRoom.style.height = `${vvH}px`;
+        chatRoom.classList.add('keyboard-visible');
         _vvPatchActive = true;
         requestAnimationFrame(() => {
           chatScroll?.scrollTo?.({ top: chatScroll.scrollHeight, behavior: 'instant' });
@@ -11187,6 +11188,7 @@ Phase G（Frame 36）：循环衔接
         chatRoom.style.top = '';
         chatRoom.style.bottom = '';
         chatRoom.style.height = '';
+        chatRoom.classList.remove('keyboard-visible');
         _vvPatchActive = false;
       }
     };

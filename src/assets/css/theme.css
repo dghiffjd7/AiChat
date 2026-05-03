@@ -1622,7 +1622,7 @@ body[data-theme-mode='dark'] :is(
 }
 
 body[data-theme-mode='dark'] .QQ_chat_page::before {
-  background: linear-gradient(180deg, rgba(9, 13, 19, 0.82) 0%, rgba(18, 24, 31, 0.02) 100%) !important;
+  background: linear-gradient(180deg, rgba(9, 13, 19, 0.85) 0%, rgba(27, 31, 36, 0.94) 100%) !important;
 }
 
 body[data-theme-mode='dark'] :is(.action-panel, .sticker-panel, .sticker-preview) {

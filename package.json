@@ -8,7 +8,7 @@
     "dev": "tauri dev",
     "build": "tauri build",
     "tauri": "tauri",
-    "test:chat": "node scripts/tests/chat-message-interaction-tests.mjs && node scripts/tests/rich-render-routing-tests.mjs && node scripts/tests/rich-input-compat-tests.mjs && node scripts/tests/regex-store-macro-tests.mjs && node scripts/tests/native-reasoning-tests.mjs && node scripts/tests/sticker-slice-guides-tests.mjs",
+    "test:chat": "node scripts/tests/chat-message-interaction-tests.mjs && node scripts/tests/rich-render-routing-tests.mjs && node scripts/tests/rich-input-compat-tests.mjs && node scripts/tests/regex-store-macro-tests.mjs && node scripts/tests/regex-transfer-tests.mjs && node scripts/tests/native-reasoning-tests.mjs && node scripts/tests/sticker-slice-guides-tests.mjs",
     "test:memory": "node scripts/tests/memory-tests.mjs && node scripts/tests/memory-integration.mjs && node scripts/tests/turn-checkpoint-store-tests.mjs && node scripts/tests/memory-row-order-tests.mjs",
     "test:variables": "node scripts/tests/world-condition-tests.mjs && node scripts/tests/world-variable-browser-tests.mjs && node scripts/tests/world-role-binding-tests.mjs && node scripts/tests/variable-path-utils-tests.mjs && node scripts/tests/world-entry-activation-tests.mjs && node scripts/tests/safe-expression-evaluator-tests.mjs && node scripts/tests/expression-compat-diagnostics-tests.mjs && node scripts/tests/iframe-variable-compat-tests.mjs && node scripts/tests/variable-expression-context-tests.mjs && node scripts/tests/inline-script-utils-tests.mjs",
     "test:cancel": "node scripts/tests/cancel-regression.mjs",
