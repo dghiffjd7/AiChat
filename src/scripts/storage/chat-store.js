@@ -36,6 +36,14 @@ const isLegacyLightDefaultColor = (value, kind = 'bubble') => {
     ? raw === DEFAULT_CHAT_TEXT_COLOR.toLowerCase()
     : raw === DEFAULT_CHAT_BUBBLE_COLOR.toLowerCase();
 };
+const isLegacyDarkDefaultColor = (value, kind = 'bubble') => {
+  const raw = String(value || '').trim().toLowerCase();
+  return kind === 'text'
+    ? raw === DEFAULT_DARK_CHAT_TEXT_COLOR.toLowerCase()
+    : raw === DEFAULT_DARK_CHAT_BUBBLE_COLOR.toLowerCase();
+};
+const isThemeManagedChatDefaultColor = (value, kind = 'bubble') =>
+  isLegacyLightDefaultColor(value, kind) || isLegacyDarkDefaultColor(value, kind);
 
 const getThemeAwareChatDefaults = () => (
   isDarkThemeMode()
@@ -54,12 +62,12 @@ const getGlobalChatColorDefaults = () => {
   const themeDefaults = getThemeAwareChatDefaults();
   const bubbleRaw = String(settings.chatDefaultBubbleColor || '').trim();
   const textRaw = String(settings.chatDefaultTextColor || '').trim();
-  const bubble = (isDarkThemeMode() && isLegacyLightDefaultColor(bubbleRaw, 'bubble'))
-    ? themeDefaults.bubbleColor
-    : (bubbleRaw || themeDefaults.bubbleColor);
-  const text = (isDarkThemeMode() && isLegacyLightDefaultColor(textRaw, 'text'))
-    ? themeDefaults.textColor
-    : (textRaw || themeDefaults.textColor);
+  const bubble = (bubbleRaw && !isThemeManagedChatDefaultColor(bubbleRaw, 'bubble'))
+    ? bubbleRaw
+    : themeDefaults.bubbleColor;
+  const text = (textRaw && !isThemeManagedChatDefaultColor(textRaw, 'text'))
+    ? textRaw
+    : themeDefaults.textColor;
   return { bubbleColor: bubble, textColor: text };
 };
 

@@ -1376,6 +1376,14 @@ const initApp = async () => {
       avatars.user = getActiveUserAvatar();
       avatars.assistant = getDefaultAppIcon();
       syncUserPersonaUI();
+      try {
+        const sid = chatStore.getCurrent();
+        const settings = normalizeChatSettings(chatStore.getSessionSettings(sid) || {});
+        applyChatSettings(sid, settings);
+        if (chatSettingsOverlay?.style?.display === 'block') loadChatSettings(sid);
+      } catch (err) {
+        logger.warn('主题切换后刷新聊天配色失败', err);
+      }
     }
   });
 
@@ -21767,6 +21775,14 @@ Phase G（Frame 36）：循环衔接
       ? raw === ORIGINAL_CHAT_DEFAULTS.textColor.toLowerCase()
       : raw === ORIGINAL_CHAT_DEFAULTS.bubbleColor.toLowerCase();
   };
+  const isLegacyDarkDefaultColor = (value, kind = 'bubble') => {
+    const raw = String(value || '').trim().toLowerCase();
+    return kind === 'text'
+      ? raw === DARK_CHAT_DEFAULTS.textColor.toLowerCase()
+      : raw === DARK_CHAT_DEFAULTS.bubbleColor.toLowerCase();
+  };
+  const isThemeManagedChatDefaultColor = (value, kind = 'bubble') =>
+    isLegacyLightDefaultColor(value, kind) || isLegacyDarkDefaultColor(value, kind);
   const getThemeAwareChatDefaults = () => (isDarkThemeMode() ? { ...DARK_CHAT_DEFAULTS } : { ...ORIGINAL_CHAT_DEFAULTS });
   const readStoredChatColorDefaults = () => {
     const raw = typeof appSettings.getStored === 'function' ? appSettings.getStored() : {};
@@ -21784,12 +21800,12 @@ Phase G（Frame 36）：循环衔接
   const getGlobalChatDefaults = () => {
     const settings = readStoredChatColorDefaults();
     const themeDefaults = getThemeAwareChatDefaults();
-    const bubble = (isDarkThemeMode() && isLegacyLightDefaultColor(settings.bubbleColor, 'bubble'))
-      ? themeDefaults.bubbleColor
-      : (settings.bubbleColor || themeDefaults.bubbleColor);
-    const text = (isDarkThemeMode() && isLegacyLightDefaultColor(settings.textColor, 'text'))
-      ? themeDefaults.textColor
-      : (settings.textColor || themeDefaults.textColor);
+    const bubble = (settings.bubbleColor && !isThemeManagedChatDefaultColor(settings.bubbleColor, 'bubble'))
+      ? settings.bubbleColor
+      : themeDefaults.bubbleColor;
+    const text = (settings.textColor && !isThemeManagedChatDefaultColor(settings.textColor, 'text'))
+      ? settings.textColor
+      : themeDefaults.textColor;
     return { bubbleColor: bubble, textColor: text };
   };
 
@@ -22053,15 +22069,14 @@ Phase G（Frame 36）：循环衔接
     const storedDefaults = readStoredChatColorDefaults();
     const rawBubble = String(raw?.bubbleColor || '').trim();
     const rawText = String(raw?.textColor || '').trim();
-    if (isDarkThemeMode()) {
-      if ((!storedDefaults.bubbleColor || isLegacyLightDefaultColor(storedDefaults.bubbleColor, 'bubble'))
-        && (!rawBubble || isLegacyLightDefaultColor(rawBubble, 'bubble'))) {
-        base.bubbleColor = DARK_CHAT_DEFAULTS.bubbleColor;
-      }
-      if ((!storedDefaults.textColor || isLegacyLightDefaultColor(storedDefaults.textColor, 'text'))
-        && (!rawText || isLegacyLightDefaultColor(rawText, 'text'))) {
-        base.textColor = DARK_CHAT_DEFAULTS.textColor;
-      }
+    const themeDefaults = getThemeAwareChatDefaults();
+    if ((!storedDefaults.bubbleColor || isThemeManagedChatDefaultColor(storedDefaults.bubbleColor, 'bubble'))
+      && (!rawBubble || isThemeManagedChatDefaultColor(rawBubble, 'bubble'))) {
+      base.bubbleColor = themeDefaults.bubbleColor;
+    }
+    if ((!storedDefaults.textColor || isThemeManagedChatDefaultColor(storedDefaults.textColor, 'text'))
+      && (!rawText || isThemeManagedChatDefaultColor(rawText, 'text'))) {
+      base.textColor = themeDefaults.textColor;
     }
     if (raw?.wallpaper && typeof raw.wallpaper === 'object') {
       base.wallpaper = { ...raw.wallpaper };
