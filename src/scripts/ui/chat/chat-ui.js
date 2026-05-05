@@ -211,6 +211,8 @@ export class ChatUI {
     this.scrollBottomButtonRaf = 0;
     this.scrollBottomButtonImmediate = false;
     this.scrollBottomButtonResizeObserver = null;
+    this.streamAutoFollow = false;
+    this._programmaticStreamFollowScroll = false;
     this.replyDraftEl = null;
     this.mentionDropdown = null;
     this.mentionMemberResolver = null;
@@ -492,16 +494,18 @@ export class ChatUI {
     this._syncSwipeIndicator(wrapper, index, total, { generating: true });
     this._renderSwipeContent(wrapper, msg, '', { streaming: true, placeholder: label });
     this.setStreamingState(true);
+    this.streamAutoFollow = this.isNearBottom(24);
 
     const flush = (state, { final = false, finalMessage = null } = {}) => {
       if (!wrapper.isConnected) return;
       const renderMsg = finalMessage
         ? { ...msg, ...finalMessage, id: msg.id }
         : this.buildAssistantStreamMessage(msg, meta, msg.id || streamId, this.normalizeAssistantStreamState(state));
+      this.applyReasoningUiState(renderMsg, wrapper.__chatappMessage || msg);
       const text = String(renderMsg?.content ?? '');
       wrapper.__chatappMessage = renderMsg;
       this._renderSwipeContent(wrapper, renderMsg, text, { streaming: !final, placeholder: label });
-      if (this.isNearBottom()) this.scrollToBottom();
+      if (this.streamAutoFollow) this.scrollToBottom();
     };
 
     return {
@@ -619,6 +623,37 @@ export class ChatUI {
     return String(raw ?? '').trim();
   }
 
+  getReasoningUiState(message) {
+    const meta = message?.meta;
+    if (!meta || typeof meta !== 'object') return null;
+    return {
+      reasoningCollapsed: meta.reasoningCollapsed === true,
+      reasoningExpanded: meta.reasoningExpanded === true,
+    };
+  }
+
+  applyReasoningUiState(targetMessage, sourceMessage) {
+    if (!targetMessage || typeof targetMessage !== 'object') return targetMessage;
+    const sourceState = this.getReasoningUiState(sourceMessage);
+    if (!sourceState) return targetMessage;
+    if (!targetMessage.meta || typeof targetMessage.meta !== 'object') {
+      targetMessage.meta = {};
+    }
+    if (targetMessage.meta.reasoningCollapsed !== true && targetMessage.meta.reasoningExpanded !== true) {
+      if (sourceState.reasoningCollapsed) targetMessage.meta.reasoningCollapsed = true;
+      if (sourceState.reasoningExpanded) targetMessage.meta.reasoningExpanded = true;
+    }
+    return targetMessage;
+  }
+
+  resolveReasoningOpenState(message) {
+    const meta = message?.meta;
+    if (!meta || typeof meta !== 'object') return false;
+    if (meta.reasoningExpanded === true) return true;
+    if (meta.reasoningCollapsed === true) return false;
+    return appSettings.get().reasoningAutoExpand === true && meta.reasoningHidden !== true;
+  }
+
   buildReasoningElement(message) {
     const meta = message?.meta;
     if (!meta || typeof meta !== 'object') return null;
@@ -628,7 +663,7 @@ export class ChatUI {
     const details = document.createElement('details');
     details.className = 'chat-reasoning';
     if (meta.reasoningHidden === true) details.dataset.hidden = '1';
-    if (appSettings.get().reasoningAutoExpand === true && meta.reasoningHidden !== true) details.open = true;
+    details.open = this.resolveReasoningOpenState(message);
     const summary = document.createElement('summary');
     summary.className = 'chat-reasoning-summary';
     summary.textContent = label;
@@ -637,6 +672,17 @@ export class ChatUI {
     content.textContent = text;
     details.appendChild(summary);
     details.appendChild(content);
+    details.addEventListener('toggle', () => {
+      const host = details.closest('.QQ_chat_charmsg, .QQ_chat_mymsg');
+      const targetMessage =
+        host?.__chatappMessage && typeof host.__chatappMessage === 'object'
+          ? host.__chatappMessage
+          : message;
+      if (!targetMessage || typeof targetMessage !== 'object') return;
+      if (!targetMessage.meta || typeof targetMessage.meta !== 'object') targetMessage.meta = {};
+      targetMessage.meta.reasoningExpanded = details.open === true;
+      targetMessage.meta.reasoningCollapsed = details.open !== true;
+    });
     return details;
   }
 
@@ -1211,6 +1257,13 @@ export class ChatUI {
     this.scrollEl.addEventListener(
       'scroll',
       () => {
+        if (this._programmaticStreamFollowScroll) {
+          this._programmaticStreamFollowScroll = false;
+        } else if (this.isStreaming) {
+          const distance = this.getScrollDistanceFromBottom();
+          if (distance <= 8) this.streamAutoFollow = true;
+          else if (distance >= 12) this.streamAutoFollow = false;
+        }
         this.hideReactionPicker();
         this.scheduleScrollBottomButtonRefresh();
       },
@@ -1825,6 +1878,7 @@ export class ChatUI {
 
   setStreamingState(isStreaming) {
     this.isStreaming = Boolean(isStreaming);
+    if (!this.isStreaming) this.streamAutoFollow = false;
     this.updateSendButtonState();
   }
 
@@ -1852,7 +1906,9 @@ export class ChatUI {
 
   scrollToBottom() {
     this._programmaticScroll = true;
+    this._programmaticStreamFollowScroll = true;
     this.scrollEl.scrollTop = this.scrollEl.scrollHeight;
+    if (this.isStreaming) this.streamAutoFollow = true;
     this.scheduleScrollBottomButtonRefresh({ immediate: true });
   }
 
@@ -1864,6 +1920,7 @@ export class ChatUI {
     const el = this.scrollEl.querySelector(`[data-msg-id="${esc(id)}"]`);
     if (!el) return false;
     const top = el.offsetTop - 12;
+    this._programmaticStreamFollowScroll = true;
     this.scrollEl.scrollTop = Math.max(0, top);
     this.scheduleScrollBottomButtonRefresh({ immediate: true });
     const autoClearMs = Number.isFinite(Number(options?.autoClearMs))
@@ -2928,9 +2985,10 @@ export class ChatUI {
     const bufferIndex =
       this.messageBuffer.push(this.buildAssistantStreamMessage(placeholder, meta, id, pendingState)) - 1;
     this.setStreamingState(true);
+    this.streamAutoFollow = this.isNearBottom(24);
     wrapperEl.setAttribute('aria-busy', 'true');
     this.renderAssistantStreamState(messageEl, wrapperEl, id, meta, placeholder, pendingState);
-    if (this.isNearBottom()) this.scrollToBottom();
+    if (this.streamAutoFollow) this.scrollToBottom();
 
     return {
       id,
@@ -2943,7 +3001,7 @@ export class ChatUI {
           updateHandle = null;
           if (!messageEl.isConnected) return;
           this.renderAssistantStreamState(messageEl, wrapperEl, id, meta, placeholder, pendingState);
-          if (this.isNearBottom()) this.scrollToBottom();
+          if (this.streamAutoFollow) this.scrollToBottom();
         });
       },
       finish: (finalMessage) => {
@@ -3049,6 +3107,7 @@ export class ChatUI {
 
   renderAssistantStreamState(messageEl, wrapperEl, msgId, meta, placeholder, state = {}) {
     const nextMessage = this.buildAssistantStreamMessage(placeholder, meta, msgId, state);
+    this.applyReasoningUiState(nextMessage, wrapperEl?.__chatappMessage || placeholder);
     if (wrapperEl?.dataset?.typingPlaceholder) {
       delete wrapperEl.dataset.typingPlaceholder;
     }
@@ -3130,6 +3189,7 @@ export class ChatUI {
     let pendingState = { content: '' };
     const bufferIndex = this.messageBuffer.push({ role: 'assistant', type: 'text', content: '', meta: placeholder.meta }) - 1;
     this.setStreamingState(true);
+    this.streamAutoFollow = this.isNearBottom(24);
     return {
       id: msgId,
       isConnected: () => Boolean(wrapperEl?.isConnected && messageEl?.isConnected),
@@ -3144,7 +3204,7 @@ export class ChatUI {
           updateHandle = null;
           if (!messageEl || !messageEl.isConnected) return;
           this.renderAssistantStreamState(messageEl, wrapperEl, msgId, meta, placeholder, pendingState);
-          if (this.isNearBottom()) this.scrollToBottom();
+          if (this.streamAutoFollow) this.scrollToBottom();
         });
       },
       finish: finalMessage => {
@@ -3198,8 +3258,7 @@ export class ChatUI {
           return partial;
         }
 
-        this.isStreaming = false;
-        this.updateSendButtonState();
+        this.setStreamingState(false);
         try {
           wrapperEl?.remove?.();
         } catch {}
@@ -3220,6 +3279,7 @@ export class ChatUI {
       return;
     }
     const fm = finalMessage || this.messageBuffer[bufferIndex];
+    this.applyReasoningUiState(fm, wrapperEl?.__chatappMessage || placeholder);
     if (wrapperEl) {
       wrapperEl.__chatappMessage = {
         ...(wrapperEl.__chatappMessage || placeholder),

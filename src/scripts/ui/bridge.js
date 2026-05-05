@@ -99,6 +99,17 @@ const makeCancelledError = (reason = 'user') => {
   return e;
 };
 
+const isRecoverableNativeStreamTailError = (error, fullResponse = '') => {
+  const text = String(fullResponse || '');
+  if (!text.trim()) return false;
+  const message = String(error?.message || error || '').trim().toLowerCase();
+  if (!message) return false;
+  return (
+    message.includes('native http_stream_request failed') &&
+    message.includes('error decoding response body')
+  );
+};
+
 const truthy = v => {
   if (v === null || v === undefined) return false;
   if (typeof v === 'string') return v.trim().length > 0;
@@ -2676,6 +2687,11 @@ class AppBridge {
         } catch {}
         return error;
       })();
+      if (isRecoverableNativeStreamTailError(normalized, fullResponse)) {
+        logger.warn('流式收尾解码失败，但已收到正文；保留已生成内容', normalized?.message);
+        await this.saveToHistory(originalUserMessage || '', fullResponse);
+        return;
+      }
       logger.error('流式生成失败:', normalized?.name, normalized?.message, normalized);
       throw normalized;
     }

@@ -3511,7 +3511,7 @@ pub async fn http_request(
 pub async fn http_stream_request_start(
     url: String,
     method: String,
-    headers: HashMap<String, String>,
+    mut headers: HashMap<String, String>,
     body: Option<String>,
     timeout_ms: Option<u64>,
     request_id: String,
@@ -3534,6 +3534,12 @@ pub async fn http_stream_request_start(
     let request_key = key.clone();
     let task = tokio::spawn(async move {
         let result: Result<(), String> = async {
+            let has_accept_encoding = headers
+                .keys()
+                .any(|name| name.eq_ignore_ascii_case("accept-encoding"));
+            if !has_accept_encoding {
+                headers.insert("accept-encoding".to_string(), "identity".to_string());
+            }
             let method =
                 reqwest::Method::from_bytes(method.as_bytes()).map_err(|e| e.to_string())?;
 

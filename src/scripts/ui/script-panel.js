@@ -10,14 +10,6 @@ const SOURCE_LABELS = {
   import: '导入',
 };
 
-const PRESET_TYPE_LABELS = {
-  openai: '生成参数',
-  sysprompt: '系统提示词',
-  context: '上下文模板',
-  instruct: 'Instruct',
-  reasoning: '推理格式',
-};
-
 const normalizeScope = (scope) => (scope === 'preset' || scope === 'character') ? scope : 'global';
 
 const createOption = (value, label) => {
@@ -99,6 +91,8 @@ export class ScriptPanel {
     this.tab = 'global';
     this.personaSelect = null;
     this.presetSelect = null;
+    this.personaScopeId = '';
+    this.presetScopeId = '';
     this.scriptList = null;
     this.statusEl = null;
     this.importInput = null;
@@ -204,24 +198,22 @@ export class ScriptPanel {
 
   getScopeId() {
     if (this.tab === 'character') {
-      return String(this.personaSelect?.value || this.personaStore?.getActive?.()?.id || '');
+      return String(
+        this.personaSelect?.value ||
+        this.personaScopeId ||
+        this.personaStore?.getActive?.()?.id ||
+        ''
+      );
     }
     if (this.tab === 'preset') {
-      return String(this.presetSelect?.value || this.getActivePresetId());
+      return String(this.presetSelect?.value || this.presetScopeId || this.getActiveOpenAIPresetId());
     }
     return 'global';
   }
 
-  getActivePresetId() {
+  getActiveOpenAIPresetId() {
     const state = this.presetStore?.getState?.() || {};
-    return String(
-      state?.active?.openai ||
-      state?.active?.sysprompt ||
-      state?.active?.context ||
-      state?.active?.instruct ||
-      state?.active?.reasoning ||
-      ''
-    );
+    return String(state?.active?.openai || '');
   }
 
   buildScopeSelectors() {
@@ -234,8 +226,15 @@ export class ScriptPanel {
       list.forEach(p => {
         select.appendChild(createOption(p.id, getCharacterCardDisplayName(p, p.id)));
       });
-      select.value = String(this.personaStore?.getActive?.()?.id || '');
-      select.addEventListener('change', () => this.refresh());
+      const activePersonaId = String(this.personaStore?.getActive?.()?.id || '');
+      const preferredPersonaId = String(this.personaScopeId || activePersonaId || list[0]?.id || '');
+      if (preferredPersonaId) select.value = preferredPersonaId;
+      if (!select.value && list[0]?.id) select.value = String(list[0].id);
+      this.personaScopeId = String(select.value || '');
+      select.addEventListener('change', () => {
+        this.personaScopeId = String(select.value || '');
+        this.refresh();
+      });
       const wrap = createCustomSelectWrapper(select, {
         placeholder: '选择角色卡',
         wrapperStyle: 'min-width:200px;',
@@ -253,25 +252,25 @@ export class ScriptPanel {
     if (this.tab === 'preset') {
       const select = document.createElement('select');
       select.style.cssText = 'min-width:160px;padding:6px 10px;border:1px solid var(--app-border-default);border-radius:10px;font-size:12px;';
-      const presetBuckets = this.presetStore?.getState?.()?.presets || {};
-      const options = [];
-      ['openai', 'sysprompt', 'context', 'instruct', 'reasoning'].forEach((type) => {
-        const presets = presetBuckets?.[type] || {};
-        Object.entries(presets).forEach(([id, preset]) => {
-          const name = preset?.name || id;
-          const prefix = PRESET_TYPE_LABELS[type] || type;
-          options.push({ id, label: `[${prefix}] ${name}` });
-        });
-      });
+      const openaiPresets = this.presetStore?.getState?.()?.presets?.openai || {};
+      const options = Object.entries(openaiPresets).map(([id, preset]) => ({
+        id,
+        label: String(preset?.name || id),
+      }));
       options.forEach(({ id, label }) => {
         select.appendChild(createOption(id, label));
       });
-      const activePresetId = this.getActivePresetId();
-      if (activePresetId) select.value = activePresetId;
+      const activePresetId = this.getActiveOpenAIPresetId();
+      const preferredPresetId = String(this.presetScopeId || activePresetId || options[0]?.id || '');
+      if (preferredPresetId) select.value = preferredPresetId;
       if (!select.value && options[0]?.id) select.value = options[0].id;
-      select.addEventListener('change', () => this.refresh());
+      this.presetScopeId = String(select.value || '');
+      select.addEventListener('change', () => {
+        this.presetScopeId = String(select.value || '');
+        this.refresh();
+      });
       const wrap = createCustomSelectWrapper(select, {
-        placeholder: '选择预设',
+        placeholder: '选择生成参数预设',
         wrapperStyle: 'min-width:240px;',
         buttonStyle: 'margin-top:0;',
       });
@@ -279,7 +278,7 @@ export class ScriptPanel {
       bindCustomSelectButton({
         buttonEl: wrap?.querySelector?.('.world-app-select-btn'),
         selectEl: select,
-        fallback: '选择预设',
+        fallback: '选择生成参数预设',
       });
       this.presetSelect = select;
       return;
