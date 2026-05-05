@@ -12921,26 +12921,11 @@ Phase G（Frame 36）：循环衔接
     ui.setSessionLabel(sid);
     updatePendingFloat(sid);
   };
-
-  const CHAT_ENTER_DIAG_HISTORY_LIMIT = 24;
   const nowPerfMs = () => {
     try {
       if (typeof performance !== 'undefined' && typeof performance.now === 'function') return performance.now();
     } catch {}
     return Date.now();
-  };
-  const publishChatEnterDiagnostics = (snapshot) => {
-    const payload = snapshot && typeof snapshot === 'object' ? JSON.parse(JSON.stringify(snapshot)) : null;
-    if (!payload) return;
-    patchDebugUiRegistry((registry) => {
-      const current = registry.stores?.chatEnterDiagnostics;
-      const history = Array.isArray(current?.history) ? current.history.slice() : [];
-      history.unshift(payload);
-      registry.stores.chatEnterDiagnostics = {
-        last: payload,
-        history: history.slice(0, CHAT_ENTER_DIAG_HISTORY_LIMIT),
-      };
-    });
   };
   const renderInitialHistoryProgressive = (sessionId, messages = [], {
     keepScroll = true,
@@ -13227,28 +13212,6 @@ Phase G（Frame 36）：循环衔接
       }
         if (!reattached) ui.showTyping(getAssistantAvatarForSession(sessionId), getGroupTypingMembers(sessionId) || {});
     }
-    publishChatEnterDiagnostics({
-      at: new Date().toISOString(),
-      sessionId: String(sessionId || '').trim(),
-      sessionName: String(sessionName || contact?.name || '').trim(),
-      isGroupSession,
-      isAndroid: isLikelyAndroidDevice(),
-      counts: {
-        loadedMessages: history.length,
-        renderedMessages: initialWithDivider.length,
-        unreadCount: Number(chatStore.getUnreadCount(sessionId) || 0) || 0,
-      },
-      pageSize: PAGE,
-      phases: {
-        loadHistoryMs,
-        decorateMs,
-        preloadMs,
-        deferredInitialRender: renderMetrics.deferred === true,
-        deferredInitialMessages: Number(renderMetrics.deferredCount || 0),
-        refreshMs,
-        syncEnterMs: Math.round(nowPerfMs() - enterPerfStart),
-      },
-    });
     uiLog('enterChatRoom', { sessionId, originPage: chatOriginPage });
     return { jumpedToTarget };
   };
@@ -13350,7 +13313,15 @@ Phase G（Frame 36）：循环衔接
     if (oneLine.length <= maxLen) return oneLine;
     return `${oneLine.slice(0, maxLen)}...`;
   };
+  const shouldLogGreetingDiagnostics = () => {
+    try {
+      return appSettings.get().debugExecutionLogs === true;
+    } catch {
+      return false;
+    }
+  };
   const logRpGreetingDebug = (stage, fields = {}) => {
+    if (!shouldLogGreetingDiagnostics()) return;
     try {
       const detail = Object.entries(fields)
         .map(([key, value]) => `${key}=${String(value ?? '')}`)
@@ -13753,7 +13724,7 @@ Phase G（Frame 36）：循环衔接
       if (!sessionId) return false;
       const meta = {};
       const normalized = normalizeInitVarData(data, sessionId, meta) || {};
-      if (logger?.info) {
+      if (logger?.info && shouldLogGreetingDiagnostics()) {
         const rawKeys = meta.rawKeys || Object.keys(data || {});
         const normalizedKeys = meta.normalizedKeys || Object.keys(normalized || {});
         const mappedLeaf = Array.isArray(meta.mappedLeaf) ? meta.mappedLeaf : [];
@@ -13813,7 +13784,7 @@ Phase G（Frame 36）：循环衔接
         }
         changed = true;
       });
-      if (preferInit && hasExisting && logger?.info) {
+      if (preferInit && hasExisting && logger?.info && shouldLogGreetingDiagnostics()) {
         const applied = Object.keys(mergedUpdates);
         if (applied.length) {
           logger.info(`[initvar] session=${sessionId} source=${source || 'unknown'} applied=${applied.length} (respecting user changes)`);

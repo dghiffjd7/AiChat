@@ -1,5 +1,6 @@
 import { validateTemplate } from '../memory/template-schema.js';
 import { getMemoryTableUsageLabel, normalizeMemoryTableUsage } from '../memory/memory-context-utils.js';
+import { appSettings } from '../storage/app-settings.js';
 import { MemoryTableEditor } from './memory-table-editor.js';
 import { logger } from '../utils/logger.js';
 import { hasTauriRuntime, pickSavePath } from '../utils/save-dialog.js';
@@ -73,6 +74,11 @@ export class MemoryTemplatePanel {
   }
 
   async logDebug(message, type = 'info') {
+    try {
+      if (appSettings.get().debugExecutionLogs !== true) return;
+    } catch {
+      return;
+    }
     try {
       const { getDebugPanel } = await import('./debug-panel.js');
       const panel = getDebugPanel();

@@ -1663,15 +1663,15 @@ export class GeneralSettingsPanel {
               <div class="general-settings-setting-list general-settings-setting-list-sub">
                 ${this.renderSettingRow({
                   id: 'general-debug-toggle',
-                  title: '显示 Debug 按钮',
-                  description: '在界面中显示调试入口，便于快速查看运行状态。',
+                  title: '显示诊断按钮',
+                  description: '在界面中显示诊断入口，用于导出资料包和错误日志信息。',
                   icon: 'bug',
                   nested: true,
                 })}
                 ${this.renderSettingRow({
                   id: 'general-debug-logs',
-                  title: '记录执行日志',
-                  description: '保留更多执行日志，方便定位异常链路。',
+                  title: '记录诊断日志',
+                  description: '仅在需要排查问题时开启，保留更多运行日志。',
                   icon: 'log',
                   nested: true,
                 })}

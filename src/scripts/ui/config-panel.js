@@ -5,7 +5,6 @@
 import { ConfigManager } from '../storage/config.js';
 import { LLMClient } from '../api/client.js';
 import { logger } from '../utils/logger.js';
-import { logStickerDebugInfo } from '../utils/sticker-debug.js';
 import { appConfirm } from './app-confirm.js';
 
 const canInitClient = (cfg) => {
@@ -344,15 +343,6 @@ export class ConfigPanel {
                 </div>
 
                 <div id="config-status" style="margin-bottom: 15px; padding: 10px; border-radius: 5px; display: none;"></div>
-
-                <!-- 调试信息按钮（左上角小按钮） -->
-                <div style="margin-bottom: 10px;">
-                    <button id="config-debug" style="padding: 6px 12px; border-radius: 6px; border: 1px solid var(--app-border-default);
-                                                     background: var(--app-surface-subtle); cursor: pointer; font-size: 12px; color: var(--app-text-muted);">
-                        🔍 调试信息
-                    </button>
-                </div>
-
                 <!-- 主要操作按钮 -->
                 <div style="display: flex; gap: 8px; justify-content: flex-end;">
                     <button id="config-test" style="padding: 10px 16px; border-radius: 8px; border: 1px solid var(--app-border-default);
@@ -398,7 +388,6 @@ export class ConfigPanel {
         this.saveButton.onclick = () => this.onSave();
         this.element.querySelector('#config-cancel').onclick = () => this.hide();
         this.testButton.onclick = () => this.onTest();
-        this.element.querySelector('#config-debug').onclick = () => this.showDebugInfo();
         this.element.querySelector('#toggle-apikey').onclick = () => this.toggleApiKey();
         this.element.querySelector('#manage-keys').onclick = () => this.openKeyManager();
         this.element.querySelector('#profile-new').onclick = () => this.createProfile();
@@ -1554,45 +1543,6 @@ export class ConfigPanel {
             this.testButton.disabled = false;
         }
     }
-
-    async showDebugInfo() {
-        try {
-            const { getDebugPanel } = await import('./debug-panel.js');
-            const panel = getDebugPanel();
-            const runId = Math.random().toString(36).slice(2, 6);
-            panel.filterText = '';
-            if (panel.filterInput) panel.filterInput.value = '';
-            panel.render?.();
-
-            panel.log('=== 配置调试信息 ===');
-            panel.showConfigStatus(this.configManager);
-
-            // 显示 localStorage 和 Tauri KV 的状态
-            try {
-                const storeKey = this.configManager.profileStoreKey || 'llm_profiles_v1';
-                const lsData = localStorage.getItem(storeKey);
-                if (lsData) {
-                    const parsed = JSON.parse(lsData);
-                    panel.log(`localStorage ${storeKey} activeProfileId: ${parsed.activeProfileId || '无'}`);
-                } else {
-                    panel.log(`localStorage ${storeKey}: 无数据`, 'warn');
-                }
-            } catch (err) {
-                panel.log(`localStorage 读取失败: ${err.message}`, 'error');
-            }
-
-            await logStickerDebugInfo(panel, runId);
-
-            panel.log('=== 调试面板已打开 ===');
-            panel.toggle(); // 确保面板显示
-
-            window.toastr?.success('调试信息已输出到屏幕底部');
-        } catch (err) {
-            window.toastr?.error('显示调试信息失败');
-            logger.error('显示调试信息失败:', err);
-        }
-    }
-
 
     setLoading(isLoading) {
         if (!this.saveButton) return;
