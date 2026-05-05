@@ -52,6 +52,7 @@ pub fn run() {
             commands::save_attachment_stream_finish,
             commands::delete_attachment,
             commands::export_attachment,
+            commands::pick_save_path,
             commands::write_text_file,
             commands::export_sticker_gif,
             commands::export_sticker_zip,

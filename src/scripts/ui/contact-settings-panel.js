@@ -267,11 +267,12 @@ const clearSessionMemoriesForNewChat = async ({ sessionId, isGroup, keepNonSumma
 };
 
 export class ContactSettingsPanel {
-    constructor({ contactsStore, chatStore, getSessionId, onSaved } = {}) {
+    constructor({ contactsStore, chatStore, getSessionId, onSaved, onExportExperiencePack } = {}) {
         this.contactsStore = contactsStore;
         this.chatStore = chatStore;
         this.getSessionId = typeof getSessionId === 'function' ? getSessionId : () => 'default';
         this.onSaved = typeof onSaved === 'function' ? onSaved : null;
+        this.onExportExperiencePack = typeof onExportExperiencePack === 'function' ? onExportExperiencePack : null;
         this.overlay = null;
         this.panel = null;
         this.fileInput = null;
@@ -312,6 +313,7 @@ export class ContactSettingsPanel {
         this.memoryShareRows = null;
         this.memoryShareSaveBtn = null;
         this.memoryShareDraft = null;
+        this.exportExperiencePackBtn = null;
     }
 
     show() {
@@ -458,6 +460,9 @@ export class ContactSettingsPanel {
                     <button id="contact-new-chat" style="width:100%; padding:10px; border:1px solid var(--app-border-default); border-radius:8px; background:var(--app-surface-card); color:#019aff; font-weight:700; margin-bottom:10px; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:6px;">
                         <span>✨</span> 开启新聊天（存档当前）
                     </button>
+                    <button id="contact-export-experience-pack" type="button" style="width:100%; padding:10px; border:1px solid var(--app-border-default); border-radius:8px; background:var(--app-surface-card); color:var(--app-text-primary); font-weight:700; margin-bottom:10px; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:6px;">
+                        <span>📦</span> 导出角色体验包
+                    </button>
                     <div style="font-size:12px; color:var(--app-text-muted); margin-bottom:6px;">历史存档（点击加载）</div>
                     <div id="contact-archives-list" style="max-height:160px; overflow-y:auto; border:1px solid var(--app-border-subtle); border-radius:8px; background:var(--app-surface-subtle); padding:0;"></div>
 
@@ -532,6 +537,7 @@ export class ContactSettingsPanel {
         this.memoryShareSection = this.panel.querySelector('#contact-memory-share-section');
         this.memoryShareButton = this.panel.querySelector('#contact-memory-share-manage');
         this.memoryShareSummary = this.panel.querySelector('#contact-memory-share-summary');
+        this.exportExperiencePackBtn = this.panel.querySelector('#contact-export-experience-pack');
         const syncBridgeControls = () => {
             if (this.rpBridgeLimitInput) {
                 this.rpBridgeLimitInput.disabled = this.rpBridgeToggle?.checked === false;
@@ -540,6 +546,19 @@ export class ContactSettingsPanel {
 
         this.panel.querySelector('#contact-settings-close').onclick = () => this.hide();
         this.panel.querySelector('#contact-settings-cancel').onclick = () => this.hide();
+        this.exportExperiencePackBtn?.addEventListener('click', async () => {
+            const sid = String(this.getSessionId?.() || '').trim();
+            if (!sid || typeof this.onExportExperiencePack !== 'function') return;
+            if (this.exportExperiencePackBtn) this.exportExperiencePackBtn.disabled = true;
+            try {
+                await this.onExportExperiencePack(sid);
+            } catch (err) {
+                logger.error('导出角色体验包失败', err);
+                window.toastr?.error?.(err?.message || '导出体验包失败');
+            } finally {
+                if (this.exportExperiencePackBtn) this.exportExperiencePackBtn.disabled = false;
+            }
+        });
         this.panel.querySelector('#contact-avatar-btn').onclick = () => {
             this.fileInput.value = '';
             this.fileInput.click();
@@ -1792,6 +1811,12 @@ export class ContactSettingsPanel {
         if (bridgeBlockTitle) bridgeBlockTitle.style.display = isRpSession ? 'none' : 'block';
         if (this.rpBridgeSection) this.rpBridgeSection.style.display = 'none';
         if (this.memoryShareSection) this.memoryShareSection.style.display = 'block';
+        if (this.exportExperiencePackBtn) {
+            const isGroup = c?.isGroup === true;
+            const canExport = !isRpSession && !isGroup && typeof this.onExportExperiencePack === 'function';
+            this.exportExperiencePackBtn.style.display = canExport ? 'flex' : 'none';
+            this.exportExperiencePackBtn.disabled = !canExport;
+        }
         this.refreshMemoryShareSummary(sessionId).catch((err) => {
             logger.warn('refresh memory share summary failed', err);
             if (this.memoryShareSummary) this.memoryShareSummary.textContent = '记忆共享状态读取失败';

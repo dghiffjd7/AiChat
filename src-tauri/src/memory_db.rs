@@ -1,13 +1,13 @@
-use rusqlite::{params, params_from_iter, Connection, OpenFlags, OptionalExtension};
 use rusqlite::types::Value as SqlValue;
+use rusqlite::{params, params_from_iter, Connection, OpenFlags, OptionalExtension};
 use serde::{Deserialize, Serialize};
 #[cfg(not(target_os = "android"))]
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 #[cfg(not(target_os = "android"))]
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Manager};
 
@@ -116,10 +116,7 @@ pub struct MemoryDb {
 
 impl MemoryDb {
     pub fn new(app: &AppHandle) -> Result<Self, String> {
-        let data_dir = app
-            .path()
-            .app_data_dir()
-            .map_err(|e| e.to_string())?;
+        let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
         Ok(Self {
             base_dir: data_dir,
             #[cfg(not(target_os = "android"))]
@@ -140,7 +137,11 @@ impl MemoryDb {
         self.with_conn(scope_id, |_| Ok(()))
     }
 
-    pub fn create_memory(&self, scope_id: Option<String>, input: MemoryCreateInput) -> Result<String, String> {
+    pub fn create_memory(
+        &self,
+        scope_id: Option<String>,
+        input: MemoryCreateInput,
+    ) -> Result<String, String> {
         self.with_conn(scope_id, |conn| {
             let now = now_ms();
             let id = input
@@ -178,7 +179,11 @@ impl MemoryDb {
         })
     }
 
-    pub fn save_template(&self, scope_id: Option<String>, input: TemplateInput) -> Result<(), String> {
+    pub fn save_template(
+        &self,
+        scope_id: Option<String>,
+        input: TemplateInput,
+    ) -> Result<(), String> {
         self.with_conn(scope_id, |conn| {
             let now = now_ms();
             let schema = serde_json::to_string(&input.schema).map_err(|e| e.to_string())?;
@@ -221,7 +226,11 @@ impl MemoryDb {
         })
     }
 
-    pub fn get_templates(&self, scope_id: Option<String>, query: TemplateQuery) -> Result<Vec<TemplateRecord>, String> {
+    pub fn get_templates(
+        &self,
+        scope_id: Option<String>,
+        query: TemplateQuery,
+    ) -> Result<Vec<TemplateRecord>, String> {
         self.with_conn(scope_id, |conn| {
             let mut sql = String::from(
                 "SELECT id, name, author, version, description, schema, injection, created_at, updated_at, is_default, is_builtin FROM templates",
@@ -289,7 +298,11 @@ impl MemoryDb {
         })
     }
 
-    pub fn update_memory(&self, scope_id: Option<String>, input: MemoryUpdateInput) -> Result<(), String> {
+    pub fn update_memory(
+        &self,
+        scope_id: Option<String>,
+        input: MemoryUpdateInput,
+    ) -> Result<(), String> {
         self.with_conn(scope_id, |conn| {
             let mut sets: Vec<String> = Vec::new();
             let mut values: Vec<SqlValue> = Vec::new();
@@ -347,7 +360,11 @@ impl MemoryDb {
         })
     }
 
-    pub fn get_memories(&self, scope_id: Option<String>, query: MemoryQuery) -> Result<Vec<MemoryRecord>, String> {
+    pub fn get_memories(
+        &self,
+        scope_id: Option<String>,
+        query: MemoryQuery,
+    ) -> Result<Vec<MemoryRecord>, String> {
         self.with_conn(scope_id, |conn| {
             let mut sql = String::from(
                 "SELECT id, template_id, table_id, contact_id, group_id, row_data, is_active, is_pinned, priority, sort_order, created_at, updated_at FROM memories",
@@ -429,7 +446,11 @@ impl MemoryDb {
         })
     }
 
-    pub fn batch_create_memories(&self, scope_id: Option<String>, memories: Vec<MemoryCreateInput>) -> Result<usize, String> {
+    pub fn batch_create_memories(
+        &self,
+        scope_id: Option<String>,
+        memories: Vec<MemoryCreateInput>,
+    ) -> Result<usize, String> {
         self.with_conn(scope_id, |conn| {
             let tx = conn.transaction().map_err(|e| e.to_string())?;
             let mut count = 0;
@@ -477,7 +498,11 @@ impl MemoryDb {
         })
     }
 
-    pub fn batch_delete_memories(&self, scope_id: Option<String>, ids: Vec<String>) -> Result<usize, String> {
+    pub fn batch_delete_memories(
+        &self,
+        scope_id: Option<String>,
+        ids: Vec<String>,
+    ) -> Result<usize, String> {
         self.with_conn(scope_id, |conn| {
             let tx = conn.transaction().map_err(|e| e.to_string())?;
             let mut count = 0;
@@ -621,7 +646,11 @@ fn now_ms() -> i64 {
 }
 
 fn bool_to_int(value: bool) -> i64 {
-    if value { 1 } else { 0 }
+    if value {
+        1
+    } else {
+        0
+    }
 }
 
 fn parse_row_data(raw: String) -> serde_json::Value {
@@ -679,8 +708,7 @@ fn run_migrations(
             backed_up = true;
         }
         let tx = conn.transaction().map_err(|e| e.to_string())?;
-        tx.execute_batch(migration.sql)
-            .map_err(|e| e.to_string())?;
+        tx.execute_batch(migration.sql).map_err(|e| e.to_string())?;
         tx.execute(
             "INSERT OR REPLACE INTO schema_info (key, value) VALUES (?, ?)",
             params![SCHEMA_KEY, next_version.to_string()],
@@ -742,7 +770,12 @@ mod tests {
             .unwrap_or_default()
             .as_millis();
         let mut dir = std::env::temp_dir();
-        dir.push(format!("memdb_test_{}_{}_{}", tag, stamp, std::process::id()));
+        dir.push(format!(
+            "memdb_test_{}_{}_{}",
+            tag,
+            stamp,
+            std::process::id()
+        ));
         fs::create_dir_all(&dir).unwrap();
         dir
     }

@@ -441,6 +441,9 @@ class AppBridge {
     this.lastWorldInjectionDebug = null;
     this.lastDeepSeekFormatDebug = null;
     this.lastPromptCacheDebugBySession = new Map();
+    this.worldBootstrapScheduled = false;
+    this.worldBootstrapCompleted = false;
+    this._worldBootstrapPromise = null;
     this.hydrateWorldSessionMap();
     this.hydrateGlobalWorldId();
     this.hydrateWorldGlobalSettings();
@@ -1658,6 +1661,40 @@ class AppBridge {
     }
   }
 
+  scheduleDeferredWorldBootstrap({ delayMs = 220 } = {}) {
+    if (this.worldBootstrapCompleted || this.worldBootstrapScheduled) return;
+    this.worldBootstrapScheduled = true;
+    const runner = () => {
+      this.worldBootstrapScheduled = false;
+      this.runDeferredWorldBootstrap().catch((err) => {
+        logger.warn('世界书后台启动迁移失败', err);
+      });
+    };
+    try {
+      const g = typeof globalThis !== 'undefined' ? globalThis : window;
+      if (typeof g?.requestIdleCallback === 'function') {
+        g.requestIdleCallback(() => runner(), { timeout: Math.max(200, delayMs) });
+        return;
+      }
+    } catch {}
+    setTimeout(runner, Math.max(80, delayMs));
+  }
+
+  async runDeferredWorldBootstrap() {
+    if (this.worldBootstrapCompleted) return;
+    if (this._worldBootstrapPromise) return this._worldBootstrapPromise;
+    this._worldBootstrapPromise = (async () => {
+      try {
+        await this.ensureBuiltinWorldbooks();
+        await this.ensurePhoneFormatChatPromptMigration();
+        this.worldBootstrapCompleted = true;
+      } finally {
+        this.worldBootstrapScheduled = false;
+      }
+    })();
+    return this._worldBootstrapPromise;
+  }
+
   getWorldSessionMapKey() {
     return makeScopedKey('world_session_map_v1', this.scopeId);
   }
@@ -1907,8 +1944,8 @@ class AppBridge {
       // 加载配置
       await this.presets.ready;
       await this.regex.ready;
-      await this.ensureBuiltinWorldbooks();
-      await this.ensurePhoneFormatChatPromptMigration();
+      this.worldStore.prewarm?.();
+      this.scheduleDeferredWorldBootstrap();
       let config = await this.config.load();
       // 注意：不要在启动时强制用“预设绑定连接”覆盖用户最后一次使用的连接配置。
       // 预设绑定仅在用户切换预设时应用（由 preset-panel 调用 applyBoundConfigIfAny），否则会导致
@@ -2306,6 +2343,12 @@ class AppBridge {
   async generate(userMessage, context = {}) {
     if (!this.initialized) {
       await this.init();
+    }
+    if (this.worldStore?.ready) {
+      await this.worldStore.ready;
+    }
+    if (!this.worldBootstrapCompleted) {
+      await this.runDeferredWorldBootstrap();
     }
 
     if (!this.isConfigured()) {
@@ -4966,6 +5009,9 @@ const stringifyMessageContent = (content) => {
   async saveWorldInfo(characterId, data) {
     try {
       const id = characterId || this.currentCharacterId;
+      if (this.worldStore.ready) {
+        await this.worldStore.ready;
+      }
       const now = Date.now();
       const base = (data && typeof data === 'object') ? data : { name: id, entries: [] };
       const existing = this.worldStore.load(id);

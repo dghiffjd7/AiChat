@@ -2,6 +2,8 @@ import { validateTemplate } from '../memory/template-schema.js';
 import { getMemoryTableUsageLabel, normalizeMemoryTableUsage } from '../memory/memory-context-utils.js';
 import { MemoryTableEditor } from './memory-table-editor.js';
 import { logger } from '../utils/logger.js';
+import { hasTauriRuntime, pickSavePath } from '../utils/save-dialog.js';
+import { safeInvoke } from '../utils/tauri.js';
 import { appConfirm } from './app-confirm.js';
 import { bindCustomSelectButton, closeCustomSelectMenu, createCustomSelectWrapper, refreshCustomSelectButton } from './custom-select.js';
 
@@ -481,7 +483,7 @@ export class MemoryTemplatePanel {
     this.exportTemplate(this.currentTemplate);
   }
 
-  exportTemplate(record) {
+  async exportTemplate(record) {
     if (!record) return;
     const template = this.templateStore.toTemplateDefinition(record);
     if (!template) {
@@ -490,17 +492,8 @@ export class MemoryTemplatePanel {
     }
     const name = sanitizeFileName(record.name || record.id);
     const version = record.version ? `_v${sanitizeFileName(record.version)}` : '';
-    const json = JSON.stringify(template, null, 2);
-    const blob = new Blob([json], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${name}${version}.json`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
-    window.toastr?.success?.('模板已导出');
+    const saved = await this.downloadJson(template, `${name}${version}.json`);
+    if (saved) window.toastr?.success?.('模板已导出');
   }
 
   async importTemplateFile(file) {
@@ -1014,7 +1007,11 @@ export class MemoryTemplatePanel {
         this.setDataStatus('导出失败：未生成数据', { tone: 'error' });
         return;
       }
-      this.downloadJson(payload, this.buildExportFileName(record, range, targetId));
+      const saved = await this.downloadJson(payload, this.buildExportFileName(record, range, targetId));
+      if (!saved) {
+        this.setDataStatus('已取消导出', { tone: 'muted' });
+        return;
+      }
       const count = Array.isArray(payload.memories) ? payload.memories.length : 0;
       this.setDataStatus(`导出完成：${count} 条`, { tone: 'success' });
     } catch (err) {
@@ -1031,8 +1028,28 @@ export class MemoryTemplatePanel {
     return `${name}${suffix}${target}.json`;
   }
 
-  downloadJson(payload, filename) {
+  async downloadJson(payload, filename) {
     const json = JSON.stringify(payload, null, 2);
+    if (hasTauriRuntime()) {
+      const pick = await pickSavePath({
+        defaultName: filename || 'memory-data.json',
+        filters: [{ name: 'JSON', extensions: ['json'] }],
+      });
+      if (pick.cancelled) return false;
+      const bytes = new TextEncoder().encode(json);
+      let binary = '';
+      const chunkSize = 0x8000;
+      for (let i = 0; i < bytes.length; i += chunkSize) {
+        binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+      }
+      const dataUrl = `data:application/json;base64,${btoa(binary)}`;
+      if (pick.fallback) {
+        await safeInvoke('export_attachment', { dataUrl, fileName: filename || 'memory-data.json' });
+      } else {
+        await safeInvoke('export_attachment', { dataUrl, fileName: filename || 'memory-data.json', path: pick.path });
+      }
+      return true;
+    }
     const blob = new Blob([json], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -1042,6 +1059,7 @@ export class MemoryTemplatePanel {
     a.click();
     a.remove();
     URL.revokeObjectURL(url);
+    return true;
   }
 
   async buildExportPayload({ record, range = 'all', targetId = '', includeGlobal = true } = {}) {
@@ -1473,7 +1491,7 @@ export class MemoryTemplatePanel {
     if (!template) return;
     const payload = { template, memories: Array.isArray(memories) ? memories : [] };
     const name = sanitizeFileName(record?.name || record?.id || 'memory-data');
-    this.downloadJson(payload, `${name}_backup.json`);
+    await this.downloadJson(payload, `${name}_backup.json`);
   }
 
   async handleDefaultTemplateSwitch(record, { silentConfirm = false } = {}) {

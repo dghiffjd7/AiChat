@@ -1,6 +1,7 @@
 import { appConfirm } from './app-confirm.js';
 import { safeInvoke } from '../utils/tauri.js';
 import { logger } from '../utils/logger.js';
+import { pickSavePath } from '../utils/save-dialog.js';
 import { BUILTIN_PHONE_FORMAT_WORLDBOOK_ID } from '../storage/builtin-worldbooks.js';
 
 const hasTauriRuntime = () => {
@@ -12,17 +13,6 @@ const sanitizeExportName = (value, fallback = 'download') => {
   const raw = String(value || '').trim();
   const cleaned = raw.replace(/[\\/:*?"<>|]+/g, '_');
   return cleaned || fallback;
-};
-
-const pickSavePath = async ({ defaultName, filters }) => {
-  try {
-    const { save } = await import('@tauri-apps/plugin-dialog');
-    const result = await save({ defaultPath: defaultName, filters });
-    if (!result) return { path: '', cancelled: true };
-    return { path: result, cancelled: false };
-  } catch {
-    return { path: '', cancelled: false };
-  }
 };
 
 const readFileAsArrayBuffer = file => {

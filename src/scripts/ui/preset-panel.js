@@ -10,6 +10,7 @@ import { appSettings } from '../storage/app-settings.js';
 import { getReasoningCapability, getReasoningSamplerPolicy, normalizeReasoningEffort } from '../api/model-capabilities.js';
 import { LLMClient } from '../api/client.js';
 import { logger } from '../utils/logger.js';
+import { pickSavePath as pickNativeSavePath } from '../utils/save-dialog.js';
 import { safeInvoke } from '../utils/tauri.js';
 import { appConfirm, appChoice } from './app-confirm.js';
 
@@ -3458,16 +3459,10 @@ export class PresetPanel {
     }
 
     async pickSavePath(defaultName) {
-        if (this.isAndroid()) return { path: '', cancelled: false, fallback: true };
-        try {
-            const { save } = await import('@tauri-apps/plugin-dialog');
-            const result = await save({ defaultPath: defaultName, filters: [{ name: 'JSON', extensions: ['json'] }] });
-            if (!result) return { path: '', cancelled: true, fallback: false };
-            return { path: result, cancelled: false, fallback: false };
-        } catch (err) {
-            logger.warn('预设导出：保存对话框不可用', err);
-            return { path: '', cancelled: false, fallback: true };
-        }
+        return pickNativeSavePath({
+            defaultName,
+            filters: [{ name: 'JSON', extensions: ['json'] }],
+        });
     }
 
     buildJsonDataUrl(payload) {

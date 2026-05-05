@@ -1,4 +1,38 @@
 const SETTINGS_KEY = 'app_settings_v1';
+const LEGACY_LIGHT_CHAT_DEFAULTS = Object.freeze({
+  bubbleColor: '#c9c9c9',
+  textColor: '#1F2937',
+});
+const LEGACY_DARK_CHAT_DEFAULTS = Object.freeze({
+  bubbleColor: '#000000',
+  textColor: '#ffffff',
+});
+
+const normalizeChatColorMode = (value, fallback = 'theme') => {
+  const raw = String(value || '').trim().toLowerCase();
+  return raw === 'custom' ? 'custom' : fallback;
+};
+
+const isThemeManagedChatDefaultColor = (value, kind = 'bubble') => {
+  const raw = String(value || '').trim().toLowerCase();
+  if (!raw) return true;
+  return kind === 'text'
+    ? raw === LEGACY_LIGHT_CHAT_DEFAULTS.textColor.toLowerCase()
+      || raw === LEGACY_DARK_CHAT_DEFAULTS.textColor.toLowerCase()
+    : raw === LEGACY_LIGHT_CHAT_DEFAULTS.bubbleColor.toLowerCase()
+      || raw === LEGACY_DARK_CHAT_DEFAULTS.bubbleColor.toLowerCase();
+};
+
+const inferChatColorMode = (input = {}, fallback = 'theme') => {
+  const explicit = String(input?.chatDefaultColorMode || '').trim().toLowerCase();
+  if (explicit === 'custom' || explicit === 'theme') return explicit;
+  const bubble = String(input?.chatDefaultBubbleColor || '').trim();
+  const text = String(input?.chatDefaultTextColor || '').trim();
+  if (!bubble && !text) return fallback;
+  return isThemeManagedChatDefaultColor(bubble, 'bubble') && isThemeManagedChatDefaultColor(text, 'text')
+    ? 'theme'
+    : 'custom';
+};
 
 const defaults = {
   showDebugToggle: false,
@@ -40,6 +74,7 @@ const defaults = {
   memoryAutoConfirm: false,
   memoryAutoStepByStep: false,
   memoryFillEveryN: 1,
+  chatDefaultColorMode: 'theme',
   chatDefaultBubbleColor: '#c9c9c9',
   chatDefaultTextColor: '#1F2937',
   uiThemePresetId: 'classic-dark',
@@ -95,6 +130,7 @@ const migrateSettings = (settings = {}) => {
     }
     next.uiThemeSchemaVersion = defaults.uiThemeSchemaVersion;
   }
+  next.chatDefaultColorMode = inferChatColorMode(next, defaults.chatDefaultColorMode);
   return next;
 };
 

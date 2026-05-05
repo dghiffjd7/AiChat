@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use base64::Engine;
+use serde::{Deserialize, Serialize};
 
 #[allow(dead_code)]
 #[derive(Debug, Serialize, Deserialize, Clone)]

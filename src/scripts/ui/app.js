@@ -52,6 +52,7 @@ import {
   resolveMediaAsset,
   setCustomMediaItems,
 } from '../utils/media-assets.js';
+import { pickSavePath } from '../utils/save-dialog.js';
 import { safeInvoke } from '../utils/tauri.js';
 import './bridge.js';
 import { ChatUI } from './chat/chat-ui.js';
@@ -72,7 +73,9 @@ import { ContactDragManager } from './contact-drag-manager.js';
 import { ContactGroupRenderer } from './contact-group-renderer.js';
 import { ScriptPanel } from './script-panel.js';
 import { ContactSettingsPanel } from './contact-settings-panel.js';
+import { CustomBundleExporter } from './custom-bundle-exporter.js';
 import { ExtensionsPanel } from './extensions-panel.js';
+import { ExperiencePackTransfer } from './experience-pack-transfer.js';
 import { GeneralSettingsPanel } from './general-settings-panel.js';
 import { GroupCreatePanel, GroupSettingsPanel } from './group-chat-panels.js';
 import { GroupPanel } from './group-panel.js';
@@ -630,6 +633,14 @@ const initApp = async () => {
   const personaStore = new PersonaStore();
   const userStore = new UserStore();
   const rpSessionStore = new RpSessionStore();
+  const experiencePackTransfer = new ExperiencePackTransfer({
+    chatStore,
+    contactsStore,
+    memoryTableStore,
+    memoryTemplateStore,
+    personaStore,
+    appBridge: window.appBridge,
+  });
   let activePersonaScopeKey = '';
   let activePersonaId = 'default';
   let chatRoom = null;
@@ -642,6 +653,17 @@ const initApp = async () => {
     const raw = personaId || personaStore.getActive?.()?.id || 'default';
     return normalizeScopeId(raw);
   };
+  const customBundleExporter = new CustomBundleExporter({
+    personaStore,
+    appBridge: window.appBridge,
+    getPersonaScopeKey,
+    chatStore,
+    contactsStore,
+    rpSessionStore,
+    memoryTableStore,
+    momentsStore,
+    momentSummaryStore,
+  });
   let lastMomentRawReply = '';
   let lastMomentRawMeta = null;
   const worldPanel = new WorldPanel({ contactsStore, getSessionId: () => chatStore.getCurrent() });
@@ -732,6 +754,19 @@ const initApp = async () => {
     openSession: () => sessionPanel.show(),
     openMemoryTemplates: () => memoryTemplatePanel.show(),
     openConfig: (options = {}) => configPanel.show({ tab: 'chat', ...(options || {}) }),
+    importExperiencePackFile: async (file) => {
+      const imported = file
+        ? await experiencePackTransfer.importFromFile(file)
+        : await experiencePackTransfer.openImportPicker();
+      if (imported) refreshChatAndContacts({ immediate: true });
+      return imported;
+    },
+    importCustomBundleFile: async (file, options = {}) => {
+      const imported = await customBundleExporter.importFromFile(file, options);
+      if (imported) refreshChatAndContacts({ immediate: true });
+      return imported;
+    },
+    exportCustomBundle: () => customBundleExporter.openExportWizard(),
   });
   const extensionsPanel = new ExtensionsPanel({
     regexPanel,
@@ -742,6 +777,7 @@ const initApp = async () => {
     contactsStore,
     chatStore,
     getSessionId: () => chatStore.getCurrent(),
+    onExportExperiencePack: (sessionId) => experiencePackTransfer.exportExperiencePack(sessionId),
     onSaved: async ({ forceRefresh } = {}) => {
       refreshChatAndContacts();
       const id = chatStore.getCurrent();
@@ -1373,6 +1409,7 @@ const initApp = async () => {
       refreshChatAndContacts({ immediate: true });
     }
     if (key === 'uiThemePresetId') {
+      clearMessageDecorationCache();
       avatars.user = getActiveUserAvatar();
       avatars.assistant = getDefaultAppIcon();
       syncUserPersonaUI();
@@ -2430,15 +2467,180 @@ ${listPart || '-（无）'}
     return normalizeLooseName(raw) === normalizeLooseName(user);
   };
 
+  const groupSpeakerContactCache = new Map();
+  const groupSpeakerAvatarCache = new Map();
+  const groupMemberLookupCache = new Map();
+  const initialHistoryFillJobs = new Map();
+  let contactDisplayLookupCache = null;
+  let messageDecorationCache = new WeakMap();
+  let messageDecorationCacheEpoch = 0;
+
+  const isLikelyAndroidDevice = () => {
+    try {
+      return /android/i.test(globalThis?.navigator?.userAgent || '');
+    } catch {
+      return false;
+    }
+  };
+
+  const clearGroupSpeakerCaches = () => {
+    groupSpeakerContactCache.clear();
+    groupSpeakerAvatarCache.clear();
+    groupMemberLookupCache.clear();
+    contactDisplayLookupCache = null;
+  };
+
+  const clearMessageDecorationCache = () => {
+    messageDecorationCache = new WeakMap();
+    messageDecorationCacheEpoch += 1;
+  };
+
+  const cancelInitialHistoryFill = (sessionId = '') => {
+    const sid = String(sessionId || '').trim();
+    if (!sid) return;
+    const job = initialHistoryFillJobs.get(sid);
+    if (job) job.cancelled = true;
+    initialHistoryFillJobs.delete(sid);
+  };
+
+  const cancelAllInitialHistoryFillJobs = () => {
+    initialHistoryFillJobs.forEach((job) => {
+      if (job) job.cancelled = true;
+    });
+    initialHistoryFillJobs.clear();
+  };
+
+  const scheduleUiChunk = (runner) => {
+    if (typeof runner !== 'function') return;
+    try {
+      if (typeof requestAnimationFrame === 'function') {
+        requestAnimationFrame(() => setTimeout(runner, 0));
+        return;
+      }
+    } catch {}
+    setTimeout(runner, 0);
+  };
+
+  const fastFingerprint = (value = '') => {
+    const text = String(value || '');
+    let hash = 2166136261;
+    for (let i = 0; i < text.length; i += 1) {
+      hash ^= text.charCodeAt(i);
+      hash = Math.imul(hash, 16777619);
+    }
+    return (hash >>> 0).toString(36);
+  };
+
+  const buildMessageDecorationSignature = (message, sessionId, { depth, avatar } = {}) => {
+    const meta = message?.meta && typeof message.meta === 'object' ? message.meta : {};
+    const rawSource =
+      typeof message?.rawSource === 'string'
+        ? message.rawSource
+        : (typeof message?.raw_source === 'string' ? message.raw_source : '');
+    const payload = [
+      String(sessionId || ''),
+      String(message?.id || ''),
+      String(message?.role || ''),
+      String(message?.type || ''),
+      String(message?.name || ''),
+      String(message?.status || ''),
+      String(message?.time || ''),
+      String(message?.timestamp || ''),
+      String(message?.avatar || ''),
+      String(avatar || ''),
+      String(meta?.speakerContactId || ''),
+      String(meta?.reasoning || ''),
+      String(meta?.localPath || ''),
+      meta?.renderRich === true ? '1' : '0',
+      meta?.expired === true ? '1' : '0',
+      meta?.partial === true ? '1' : '0',
+      meta?.cancelled === true ? '1' : '0',
+      String(depth ?? ''),
+      rawSource,
+      typeof message?.raw === 'string' ? message.raw : '',
+      typeof message?.content === 'string' ? message.content : '',
+    ].join('\u0001');
+    return `${messageDecorationCacheEpoch}:${fastFingerprint(payload)}`;
+  };
+
+  const getCachedDecoratedMessage = (message, sessionId, signature) => {
+    if (!message || typeof message !== 'object') return null;
+    const variants = messageDecorationCache.get(message);
+    if (!variants) return null;
+    const cached = variants.get(String(sessionId || '').trim() || 'default');
+    if (!cached) return null;
+    if (cached.epoch !== messageDecorationCacheEpoch || cached.signature !== signature) return null;
+    return cached.value || null;
+  };
+
+  const setCachedDecoratedMessage = (message, sessionId, signature, value) => {
+    if (!message || typeof message !== 'object' || !value || typeof value !== 'object') return value;
+    const key = String(sessionId || '').trim() || 'default';
+    let variants = messageDecorationCache.get(message);
+    if (!variants) {
+      variants = new Map();
+      messageDecorationCache.set(message, variants);
+    }
+    variants.set(key, {
+      epoch: messageDecorationCacheEpoch,
+      signature,
+      value,
+    });
+    return value;
+  };
+
+  const getContactDisplayLookup = () => {
+    const scopeKey = normalizeScopeId(contactsStore.scopeId || '');
+    const list = contactsStore.listContacts?.() || [];
+    const signature = `${scopeKey}|${list.length}`;
+    if (contactDisplayLookupCache?.signature === signature) return contactDisplayLookupCache;
+    const exact = new Map();
+    const loose = new Map();
+    list.forEach((contact) => {
+      if (!contact || contact.isGroup === true) return;
+      const exactKey = String(contact?.name || contact?.id || '').trim();
+      const looseKey = normalizeLooseName(contact?.name || contact?.id);
+      if (exactKey && !exact.has(exactKey)) exact.set(exactKey, contact);
+      if (looseKey && !loose.has(looseKey)) loose.set(looseKey, contact);
+      const idKey = String(contact?.id || '').trim();
+      if (idKey && !exact.has(idKey)) exact.set(idKey, contact);
+    });
+    contactDisplayLookupCache = { signature, exact, loose };
+    return contactDisplayLookupCache;
+  };
+
+  const getGroupMemberLookup = (groupSessionId = '') => {
+    const sid = String(groupSessionId || '').trim();
+    const scopeKey = normalizeScopeId(contactsStore.scopeId || '');
+    const cacheKey = `${scopeKey}::${sid}`;
+    const group = sid ? contactsStore.getContact(sid) : null;
+    const members = Array.isArray(group?.members) ? group.members : [];
+    const memberSignature = members.join('|');
+    const cached = groupMemberLookupCache.get(cacheKey);
+    if (cached?.signature === memberSignature) return cached;
+    const exact = new Map();
+    const loose = new Map();
+    members.forEach((memberId) => {
+      const contact = contactsStore.getContact(memberId);
+      if (!contact || contact.isGroup === true) return;
+      const exactKey = String(contact?.name || contact?.id || '').trim();
+      const looseKey = normalizeLooseName(contact?.name || contact?.id);
+      if (exactKey && !exact.has(exactKey)) exact.set(exactKey, contact);
+      if (looseKey && !loose.has(looseKey)) loose.set(looseKey, contact);
+      const idKey = String(contact?.id || '').trim();
+      if (idKey && !exact.has(idKey)) exact.set(idKey, contact);
+    });
+    const lookup = { signature: memberSignature, exact, loose };
+    groupMemberLookupCache.set(cacheKey, lookup);
+    return lookup;
+  };
+
   const resolveContactByDisplayName = displayName => {
     const raw = String(displayName || '').trim();
     if (!raw) return null;
     const key = normalizeLooseName(raw);
-    const list = contactsStore.listContacts?.() || [];
-    const exact = list.find(c => String(c?.name || c?.id || '').trim() === raw);
-    if (exact) return exact;
-    const fuzzy = list.find(c => normalizeLooseName(c?.name || c?.id) === key);
-    return fuzzy || null;
+    const lookup = getContactDisplayLookup();
+    return lookup.exact.get(raw) || lookup.loose.get(key) || null;
   };
 
   const resolveGroupSpeakerContact = (speakerName, groupSessionId = '', contactHint = null) => {
@@ -2447,14 +2649,16 @@ ${listPart || '-（无）'}
       if (!speaker || isActiveUserSpeakerName(speaker) || isSystemSpeakerLabel(speaker) || speaker === '助手') return null;
       const speakerKey = normalizeLooseName(speaker);
       const sid = String(groupSessionId || '').trim();
-      const group = sid ? contactsStore.getContact(sid) : null;
-      const memberContacts = Array.isArray(group?.members)
-        ? group.members.map(mid => contactsStore.getContact(mid)).filter(Boolean)
-        : [];
       const hinted = contactHint && typeof contactHint === 'object' && contactHint.isGroup !== true ? contactHint : null;
+      const hintedId = String(hinted?.id || '').trim();
+      const cacheKey = `${normalizeScopeId(contactsStore.scopeId || '')}::${sid}::${speakerKey}::${hintedId}`;
+      if (groupSpeakerContactCache.has(cacheKey)) {
+        return groupSpeakerContactCache.get(cacheKey) || null;
+      }
+      const memberLookup = getGroupMemberLookup(sid);
       const contact =
-        memberContacts.find(c => c && c.isGroup !== true && String(c?.name || c?.id || '').trim() === speaker) ||
-        memberContacts.find(c => c && c.isGroup !== true && normalizeLooseName(c?.name || c?.id) === speakerKey) ||
+        memberLookup.exact.get(speaker) ||
+        memberLookup.loose.get(speakerKey) ||
         hinted ||
         (() => {
           const globalMatch = resolveContactByDisplayName(speaker);
@@ -2465,6 +2669,7 @@ ${listPart || '-（无）'}
           return direct && direct.isGroup !== true ? direct : null;
         })() ||
         null;
+      groupSpeakerContactCache.set(cacheKey, contact || null);
       return contact || null;
     } catch {
       return null;
@@ -2493,18 +2698,27 @@ ${listPart || '-（无）'}
       const speaker = String(speakerName || '').trim();
       if (!speaker || isActiveUserSpeakerName(speaker) || isSystemSpeakerLabel(speaker) || speaker === '助手') return '';
       const hintedId = String(speakerContactId || '').trim();
+      const cacheKey = `${normalizeScopeId(contactsStore.scopeId || '')}::${String(groupSessionId || '').trim()}::${normalizeLooseName(speaker)}::${hintedId}`;
+      if (groupSpeakerAvatarCache.has(cacheKey)) {
+        return groupSpeakerAvatarCache.get(cacheKey) || '';
+      }
       const hinted =
         hintedId && !String(hintedId).startsWith('group:')
           ? contactsStore.getContact(hintedId)
           : null;
       const avatar = resolveGroupSpeakerAvatar(speaker, groupSessionId, hinted);
-      if (avatar) return avatar;
-      return resolveAvatarForContact(hintedId || speaker, hinted || {
+      if (avatar) {
+        groupSpeakerAvatarCache.set(cacheKey, avatar);
+        return avatar;
+      }
+      const fallback = resolveAvatarForContact(hintedId || speaker, hinted || {
         id: speaker,
         name: speaker,
         isGroup: false,
         avatar: '',
       });
+      groupSpeakerAvatarCache.set(cacheKey, fallback);
+      return fallback;
     } catch {
       return '';
     }
@@ -2711,6 +2925,13 @@ ${listPart || '-（无）'}
 
   const decorateMessagesForDisplay = (messages = [], { sessionId } = {}) => {
     const list = Array.isArray(messages) ? messages : [];
+    const sid = String(sessionId || '').trim();
+    const sessionContact = sid ? contactsStore.getContact(sid) : null;
+    const isGroupSession = sid.startsWith('group:') || Boolean(sessionContact?.isGroup);
+    const isRpSession = sid && isRpSessionId(sid);
+    const batchAvatarCache = new Map();
+    const assistantAvatar = !isGroupSession ? getAssistantAvatarForSession(sid) : '';
+    const userAvatar = avatars.user;
     const convPos = new Map(); // index -> conversation order
     list.forEach((m, i) => {
       if (m && (m.role === 'user' || m.role === 'assistant')) convPos.set(i, convPos.size);
@@ -2736,17 +2957,36 @@ ${listPart || '-（无）'}
 
     return list.map((m, i) => {
       if (!m || typeof m !== 'object') return m;
-      const sid = String(sessionId || '').trim();
       const base = typeof m.raw === 'string' ? m.raw : typeof m.content === 'string' ? m.content : '';
-      if (!base) return m;
-      const avatar = resolveAvatarForMessage(m, sessionId) || m.avatar || '';
+      let avatar = '';
+      if (m.role === 'user') {
+        avatar = userAvatar;
+      } else if (m.role === 'assistant' && isGroupSession) {
+        const speakerName = String(m?.name || '').trim();
+        const speakerContactId = String(m?.meta?.speakerContactId || '').trim();
+        const cacheKey = `group:${speakerContactId}:${normalizeLooseName(speakerName)}`;
+        if (batchAvatarCache.has(cacheKey)) {
+          avatar = batchAvatarCache.get(cacheKey) || '';
+        } else {
+          avatar = resolveGroupSpeakerRenderAvatar(speakerName, sid, speakerContactId) || '';
+          batchAvatarCache.set(cacheKey, avatar);
+        }
+      } else if (m.role === 'assistant') {
+        avatar = assistantAvatar;
+      }
+      avatar = avatar || m.avatar || '';
       const j = convPos.has(i) ? convPos.get(i) : null;
       const depth = j === null ? undefined : total - 1 - j;
       const rawSource =
         typeof m.rawSource === 'string' ? m.rawSource : typeof m.raw_source === 'string' ? m.raw_source : '';
+      const decorationSignature = buildMessageDecorationSignature(m, sid, { depth, avatar });
+      const cachedDecorated = getCachedDecoratedMessage(m, sid, decorationSignature);
+      if (cachedDecorated) return cachedDecorated;
+      if (!base && m.type !== 'image') {
+        return setCachedDecoratedMessage(m, sid, decorationSignature, { ...m, avatar, status: m.status, sessionId: sid });
+      }
       const creativeSource = rawSource ? normalizeCreativeLineBreaks(rawSource) : '';
       const creativeBase = creativeSource || base;
-      const isRpSession = sessionId && isRpSessionId(sessionId);
       let meta = m?.meta && typeof m.meta === 'object' ? { ...m.meta } : m?.meta;
       if (isRpSession && m.role === 'assistant' && (m.type === 'text' || !m.type)) {
         if (!meta || typeof meta !== 'object') {
@@ -2774,7 +3014,7 @@ ${listPart || '-（无）'}
             try {
               display = normalizeCreativeLineBreaks(window.appBridge.applyOutputDisplayRegex(stored, { depth }));
             } catch {}
-            return {
+            return setCachedDecoratedMessage(m, sid, decorationSignature, {
               ...m,
               avatar,
               raw: stored,
@@ -2782,32 +3022,32 @@ ${listPart || '-（无）'}
               status: m.status,
               sessionId: sid,
               meta,
-            };
+            });
           }
-          return {
+          return setCachedDecoratedMessage(m, sid, decorationSignature, {
             ...m,
             avatar,
             content: normalizeCreativeLineBreaks(window.appBridge.applyOutputDisplayRegex(creativeBase, { depth })),
             status: m.status,
             sessionId: sid,
             meta,
-          };
+          });
         }
         let display = base;
         try {
           display = window.appBridge.applyOutputDisplayRegex(base, { depth });
         } catch {}
-        return { ...m, avatar, content: display, status: m.status, sessionId: sid, meta }; // 保留 status 字段
+        return setCachedDecoratedMessage(m, sid, decorationSignature, { ...m, avatar, content: display, status: m.status, sessionId: sid, meta }); // 保留 status 字段
       }
       if (m.role === 'user' && (m.type === 'text' || !m.type)) {
-        return {
+        return setCachedDecoratedMessage(m, sid, decorationSignature, {
           ...m,
           avatar,
           content: window.appBridge.applyInputDisplayRegex(base, { depth }),
           status: m.status,
           sessionId: sid,
           meta,
-        }; // 保留 status 字段
+        }); // 保留 status 字段
       }
       if (m.type === 'image') {
         const content = typeof m.content === 'string' ? m.content : '';
@@ -2815,7 +3055,7 @@ ${listPart || '-（无）'}
         if (isAttachmentExpired(meta)) {
           if (localPath) queueAttachmentCleanup(localPath, sessionId);
           const expiredMeta = meta && typeof meta === 'object' ? { ...meta, expired: true } : { expired: true };
-          return {
+          return setCachedDecoratedMessage(m, sid, decorationSignature, {
             ...m,
             type: 'text',
             content: '[图片已过期]',
@@ -2823,16 +3063,16 @@ ${listPart || '-（无）'}
             status: m.status,
             sessionId: sid,
             meta: expiredMeta,
-          };
+          });
         }
         if (localPath && (!content || content === '[binary omitted]')) {
           const localUrl = resolveLocalAttachmentUrl(localPath);
           if (localUrl) {
-            return { ...m, avatar, content: localUrl, status: m.status, sessionId: sid, meta };
+            return setCachedDecoratedMessage(m, sid, decorationSignature, { ...m, avatar, content: localUrl, status: m.status, sessionId: sid, meta });
           }
         }
       }
-      return { ...m, avatar, status: m.status, sessionId: sid, meta }; // 保留 status 字段
+      return setCachedDecoratedMessage(m, sid, decorationSignature, { ...m, avatar, status: m.status, sessionId: sid, meta }); // 保留 status 字段
     });
   };
 
@@ -3392,17 +3632,6 @@ Phase G（Frame 36）：循环衔接
     const raw = String(value || '').trim();
     const cleaned = raw.replace(/[\\/:*?"<>|]+/g, '_');
     return cleaned || fallback;
-  };
-
-  const pickSavePath = async ({ defaultName, filters }) => {
-    try {
-      const { save } = await import('@tauri-apps/plugin-dialog');
-      const result = await save({ defaultPath: defaultName, filters });
-      if (!result) return { path: '', cancelled: true };
-      return { path: result, cancelled: false };
-    } catch {
-      return { path: '', cancelled: false };
-    }
   };
 
   const exportAttachmentFile = async ({
@@ -5277,7 +5506,11 @@ Phase G（Frame 36）：循环衔接
     });
   };
   sessionPanel.onUpdated = refreshChatAndContacts;
-  window.addEventListener('contacts-updated', () => refreshChatAndContacts({ immediate: true }));
+  window.addEventListener('contacts-updated', () => {
+    clearGroupSpeakerCaches();
+    clearMessageDecorationCache();
+    refreshChatAndContacts({ immediate: true });
+  });
 
   /* ---------------- 联系人搜索（参照手机流式.html） ---------------- */
   const contactsSearch = {
@@ -12650,13 +12883,139 @@ Phase G（Frame 36）：循环衔接
     if (!isChatRoomVisible()) return false;
     return String(chatStore.getCurrent() || '').trim() === sid;
   };
+  let chatEnterRequestToken = 0;
+  const beginChatEnterRequest = (sessionId = '') => {
+    const sid = String(sessionId || '').trim();
+    chatEnterRequestToken += 1;
+    return {
+      token: chatEnterRequestToken,
+      sessionId: sid,
+    };
+  };
+  const isChatEnterRequestStale = (request) => {
+    const token = Number(request?.token || 0);
+    const sid = String(request?.sessionId || '').trim();
+    if (!token || !sid) return true;
+    if (token !== chatEnterRequestToken) return true;
+    if (String(chatStore.getCurrent() || '').trim() !== sid) return true;
+    return false;
+  };
+  const applyChatRoomLoadingState = (sessionId, contact = null, sessionName = '') => {
+    const sid = String(sessionId || '').trim();
+    const displayName = String(contact?.name || sessionName || sid).trim();
+    ui.showConversationLoading({
+      title: displayName,
+      isGroup: Boolean(contact?.isGroup) || sid.startsWith('group:'),
+    });
+    const draft = chatStore.getDraft(sid);
+    if (draft) {
+      ui.setInputText(draft);
+    } else {
+      try {
+        ui.setInputText(sessionStorage.getItem(`phone_draft_${sid}`) || '');
+      } catch {
+        ui.setInputText('');
+      }
+    }
+    syncReplyTargetComposer(sid);
+    ui.setSessionLabel(sid);
+    updatePendingFloat(sid);
+  };
 
+  const CHAT_ENTER_DIAG_HISTORY_LIMIT = 24;
+  const nowPerfMs = () => {
+    try {
+      if (typeof performance !== 'undefined' && typeof performance.now === 'function') return performance.now();
+    } catch {}
+    return Date.now();
+  };
+  const publishChatEnterDiagnostics = (snapshot) => {
+    const payload = snapshot && typeof snapshot === 'object' ? JSON.parse(JSON.stringify(snapshot)) : null;
+    if (!payload) return;
+    patchDebugUiRegistry((registry) => {
+      const current = registry.stores?.chatEnterDiagnostics;
+      const history = Array.isArray(current?.history) ? current.history.slice() : [];
+      history.unshift(payload);
+      registry.stores.chatEnterDiagnostics = {
+        last: payload,
+        history: history.slice(0, CHAT_ENTER_DIAG_HISTORY_LIMIT),
+      };
+    });
+  };
+  const renderInitialHistoryProgressive = (sessionId, messages = [], {
+    keepScroll = true,
+    recentCount = 24,
+    chunkSize = 12,
+  } = {}) => {
+    const sid = String(sessionId || '').trim();
+    const list = Array.isArray(messages) ? messages : [];
+    if (!sid || !list.length) {
+      ui.preloadHistory([], { keepScroll });
+      return {
+        decorateMs: 0,
+        preloadMs: 0,
+        deferred: false,
+        deferredCount: 0,
+      };
+    }
+    const recentLimit = Math.max(1, recentCount);
+    const prependChunkSize = Math.max(1, chunkSize);
+    const splitAt = Math.max(0, list.length - recentLimit);
+    const older = list.slice(0, splitAt);
+    const recent = list.slice(splitAt);
+    const decorateStart = nowPerfMs();
+    const decoratedRecent = decorateMessagesForDisplay(recent, { sessionId: sid });
+    const decorateMs = Math.round(nowPerfMs() - decorateStart);
+    const preloadStart = nowPerfMs();
+    ui.preloadHistory(decoratedRecent, { keepScroll });
+    const preloadMs = Math.round(nowPerfMs() - preloadStart);
+    if (!older.length) {
+      return {
+        decorateMs,
+        preloadMs,
+        deferred: false,
+        deferredCount: 0,
+      };
+    }
+    cancelInitialHistoryFill(sid);
+    const queue = [];
+    for (let end = older.length; end > 0; end -= prependChunkSize) {
+      const start = Math.max(0, end - prependChunkSize);
+      queue.push(older.slice(start, end));
+    }
+    const job = { cancelled: false };
+    initialHistoryFillJobs.set(sid, job);
+    const pump = () => {
+      if (job.cancelled || String(chatStore.getCurrent() || '').trim() !== sid) {
+        initialHistoryFillJobs.delete(sid);
+        return;
+      }
+      const nextChunk = queue.shift();
+      if (!nextChunk?.length) {
+        initialHistoryFillJobs.delete(sid);
+        return;
+      }
+      ui.prependHistory(decorateMessagesForDisplay(nextChunk, { sessionId: sid }));
+      if (queue.length) scheduleUiChunk(pump);
+      else initialHistoryFillJobs.delete(sid);
+    };
+    scheduleUiChunk(pump);
+    return {
+      decorateMs,
+      preloadMs,
+      deferred: true,
+      deferredCount: older.length,
+    };
+  };
   const enterChatRoom = async (sessionId, sessionName, originPage = activePage, options = {}) => {
+    const enterPerfStart = nowPerfMs();
+    const enterRequest = beginChatEnterRequest(sessionId);
     const suppressInitialAutoScroll = options?.suppressInitialAutoScroll === true;
     const jumpTargetMessageId = String(options?.jumpTargetMessageId || '').trim();
     const jumpKeyword = String(options?.jumpKeyword || '').trim();
     const jumpKind = String(options?.jumpKind || (jumpKeyword ? 'search' : 'anchor')).trim() || 'anchor';
     chatOriginPage = originPage || 'chat';
+    cancelAllInitialHistoryFillJobs();
     chatList?.classList.add('hidden');
     chatRoom?.classList.remove('hidden');
     pages.chat?.classList.add('chat-room-active');
@@ -12699,10 +13058,16 @@ Phase G（Frame 36）：循环衔接
     } else {
       pendingChatSettingsSessionId = sessionId;
     }
+    applyChatRoomLoadingState(sessionId, contact, sessionName);
     // 加载历史
+    const loadStart = nowPerfMs();
     const history = await chatStore.ensureRecentMessagesLoaded(sessionId);
+    if (isChatEnterRequestStale(enterRequest)) return { jumpedToTarget: false, stale: true };
+    const loadHistoryMs = Math.round(nowPerfMs() - loadStart);
     const firstUnreadId = chatStore.getFirstUnreadMessageId(sessionId);
-    const PAGE = 90;
+    const PAGE = isGroupSession
+      ? (isLikelyAndroidDevice() ? 56 : 72)
+      : 90;
     let start = Math.max(0, history.length - PAGE);
     if (firstUnreadId) {
       const idx = history.findIndex(m => String(m?.id || '') === String(firstUnreadId));
@@ -12714,9 +13079,40 @@ Phase G（Frame 36）：循环衔接
     const { list: initialWithDivider, dividerId } = injectUnreadDivider(initial, firstUnreadId);
     ui.clearMessages();
     ui.hideTyping();
-    ui.preloadHistory(decorateMessagesForDisplay(initialWithDivider, { sessionId }), { keepScroll: true });
-    hydrateTurnCheckpointsFromLoadedMessages(sessionId, { onlyMissing: true }).catch(err => {
-      logger.warn('hydrate turn checkpoints from loaded messages failed', err);
+    const useProgressiveInitialRender =
+      isGroupSession &&
+      isLikelyAndroidDevice() &&
+      !jumpTargetMessageId &&
+      !firstUnreadId &&
+      initialWithDivider.length > 28;
+    const renderMetrics = useProgressiveInitialRender
+      ? renderInitialHistoryProgressive(sessionId, initialWithDivider, {
+          keepScroll: true,
+          recentCount: 24,
+          chunkSize: 12,
+        })
+      : (() => {
+          const decorateStart = nowPerfMs();
+          const decoratedInitial = decorateMessagesForDisplay(initialWithDivider, { sessionId });
+          const decorateMs = Math.round(nowPerfMs() - decorateStart);
+          const preloadStart = nowPerfMs();
+          ui.preloadHistory(decoratedInitial, { keepScroll: true });
+          const preloadMs = Math.round(nowPerfMs() - preloadStart);
+          return {
+            decorateMs,
+            preloadMs,
+            deferred: false,
+            deferredCount: 0,
+          };
+        })();
+    const decorateMs = renderMetrics.decorateMs;
+    const preloadMs = renderMetrics.preloadMs;
+    cancelScheduledTurnCheckpointHydration(sessionId);
+    scheduleHydrateTurnCheckpointsFromLoadedMessages(sessionId, {
+      onlyMissing: true,
+      delayMs: isGroupSession ? 720 : 480,
+    }).catch(err => {
+      logger.warn('schedule hydrate turn checkpoints from loaded messages failed', err);
     });
     const currentArchiveId = getCurrentArchiveIdForSession(sessionId);
     const restoreOnEnter = currentArchiveId
@@ -12802,7 +13198,9 @@ Phase G（Frame 36）：循环衔接
     try {
       chatStore.markRead(sessionId);
     } catch {}
+    const refreshStart = nowPerfMs();
     refreshChatAndContacts();
+    const refreshMs = Math.round(nowPerfMs() - refreshStart);
     const draft = chatStore.getDraft(sessionId);
     if (draft) {
       ui.setInputText(draft);
@@ -12827,13 +13225,37 @@ Phase G（Frame 36）：循环衔接
           logger.warn('assistant stream reattach failed', err);
         }
       }
-      if (!reattached) ui.showTyping(getAssistantAvatarForSession(sessionId), getGroupTypingMembers(sessionId) || {});
+        if (!reattached) ui.showTyping(getAssistantAvatarForSession(sessionId), getGroupTypingMembers(sessionId) || {});
     }
+    publishChatEnterDiagnostics({
+      at: new Date().toISOString(),
+      sessionId: String(sessionId || '').trim(),
+      sessionName: String(sessionName || contact?.name || '').trim(),
+      isGroupSession,
+      isAndroid: isLikelyAndroidDevice(),
+      counts: {
+        loadedMessages: history.length,
+        renderedMessages: initialWithDivider.length,
+        unreadCount: Number(chatStore.getUnreadCount(sessionId) || 0) || 0,
+      },
+      pageSize: PAGE,
+      phases: {
+        loadHistoryMs,
+        decorateMs,
+        preloadMs,
+        deferredInitialRender: renderMetrics.deferred === true,
+        deferredInitialMessages: Number(renderMetrics.deferredCount || 0),
+        refreshMs,
+        syncEnterMs: Math.round(nowPerfMs() - enterPerfStart),
+      },
+    });
     uiLog('enterChatRoom', { sessionId, originPage: chatOriginPage });
     return { jumpedToTarget };
   };
 
   const exitChatRoom = (options) => {
+    beginChatEnterRequest('');
+    cancelAllInitialHistoryFillJobs();
     chatRoom?.classList.add('hidden');
     chatList?.classList.remove('hidden');
     pages.chat?.classList.remove('chat-room-active');
@@ -14372,6 +14794,28 @@ Phase G（Frame 36）：循环衔接
       return '';
     }
   };
+  const turnCheckpointHydrationJobs = new Map();
+  const turnCheckpointHydrationCompletedThreads = new Set();
+  const getTurnCheckpointHydrationThreadKey = sessionId => {
+    const sid = String(sessionId || '').trim();
+    if (!sid) return '';
+    return `${sid}::${getCurrentArchiveIdForSession(sid)}`;
+  };
+  const cancelScheduledTurnCheckpointHydration = (keepSessionId = '') => {
+    const keep = String(keepSessionId || '').trim();
+    for (const [sid, job] of turnCheckpointHydrationJobs.entries()) {
+      if (keep && sid === keep) continue;
+      if (job) job.cancelled = true;
+      turnCheckpointHydrationJobs.delete(sid);
+    }
+  };
+  const waitForTurnCheckpointHydrationIdle = () => new Promise(resolve => {
+    if (typeof requestIdleCallback === 'function') {
+      requestIdleCallback(resolve, { timeout: 240 });
+      return;
+    }
+    setTimeout(() => resolve({ didTimeout: true, timeRemaining: () => 0 }), 16);
+  });
   const refreshTurnCheckpointSnapshotReachability = async (sessionId, { prune = false } = {}) => {
     const sid = String(sessionId || '').trim();
     if (!sid || !isTurnCheckpointSessionEnabled(sid)) return [];
@@ -14424,6 +14868,93 @@ Phase G（Frame 36）：循环衔接
     }
     await ensureSessionBaselineCheckpointSnapshot(sid);
     return migrated;
+  };
+  const scheduleHydrateTurnCheckpointsFromLoadedMessages = (sessionId, {
+    onlyMissing = true,
+    delayMs = 480,
+  } = {}) => {
+    const sid = String(sessionId || '').trim();
+    if (!sid || !isTurnCheckpointSessionEnabled(sid)) return Promise.resolve(0);
+    const threadKey = getTurnCheckpointHydrationThreadKey(sid);
+    if (turnCheckpointHydrationCompletedThreads.has(threadKey)) return Promise.resolve(0);
+    const existingJob = turnCheckpointHydrationJobs.get(sid);
+    if (existingJob?.threadKey === threadKey) return existingJob.promise;
+    if (existingJob) existingJob.cancelled = true;
+
+    const job = {
+      sessionId: sid,
+      threadKey,
+      cancelled: false,
+      promise: null,
+    };
+    job.promise = (async () => {
+      if (delayMs > 0) {
+        await new Promise(resolve => setTimeout(resolve, delayMs));
+      }
+      if (job.cancelled) return 0;
+      const messages = chatStore.getMessages(sid) || [];
+      const candidates = messages.filter((message) => {
+        if (!isCheckpointTrackedAssistantMessage(message, sid)) return false;
+        const meta = message?.meta && typeof message.meta === 'object' ? message.meta : {};
+        return Boolean(meta.memoryTableSnapshot)
+          || (Array.isArray(meta.swipes) && meta.swipes.some(branch => branch && branch.memoryTableSnapshot));
+      });
+      if (!candidates.length) {
+        await ensureSessionBaselineCheckpointSnapshot(sid);
+        turnCheckpointHydrationCompletedThreads.add(threadKey);
+        return 0;
+      }
+
+      let migrated = 0;
+      let cursor = 0;
+      while (cursor < candidates.length) {
+        if (job.cancelled) return migrated;
+        const deadline = await waitForTurnCheckpointHydrationIdle();
+        if (job.cancelled) return migrated;
+        const sliceStart = (typeof performance !== 'undefined' && typeof performance.now === 'function')
+          ? performance.now()
+          : Date.now();
+        let wroteCheckpoint = false;
+        while (cursor < candidates.length) {
+          const message = candidates[cursor];
+          cursor += 1;
+          const messageId = String(message?.id || '').trim();
+          if (!messageId) continue;
+          if (onlyMissing) {
+            const existing = await turnCheckpointStore.getCheckpoint(sid, messageId);
+            if (existing) continue;
+          }
+          await syncTurnCheckpointForMessage(sid, message, { setPointer: false });
+          migrated += 1;
+          wroteCheckpoint = true;
+          break;
+        }
+        if (cursor >= candidates.length) break;
+        const timeRemaining = typeof deadline?.timeRemaining === 'function' ? deadline.timeRemaining() : 0;
+        const elapsed = ((typeof performance !== 'undefined' && typeof performance.now === 'function')
+          ? performance.now()
+          : Date.now()) - sliceStart;
+        if (wroteCheckpoint || elapsed > 12 || timeRemaining < 4) {
+          await new Promise(resolve => setTimeout(resolve, 0));
+        }
+      }
+      if (job.cancelled) return migrated;
+      await ensureSessionBaselineCheckpointSnapshot(sid);
+      turnCheckpointHydrationCompletedThreads.add(threadKey);
+      return migrated;
+    })()
+      .catch((err) => {
+        logger.warn('schedule hydrate turn checkpoints from loaded messages failed', err);
+        return 0;
+      })
+      .finally(() => {
+        const active = turnCheckpointHydrationJobs.get(sid);
+        if (active === job) {
+          turnCheckpointHydrationJobs.delete(sid);
+        }
+      });
+    turnCheckpointHydrationJobs.set(sid, job);
+    return job.promise;
   };
   const restoreCheckpointBranchMemoryState = async (sessionId, branch, { isGroup, fallbackSnapshot = null } = {}) => {
     const sid = String(sessionId || '').trim();
@@ -21469,6 +22000,7 @@ Phase G（Frame 36）：循环衔接
     try {
       const id = chatStore.getCurrent();
       const msgs = await chatStore.ensureRecentMessagesLoaded(id);
+      cancelInitialHistoryFill(id);
       ui.clearMessages();
       const PAGE = 90;
       const start = Math.max(0, msgs.length - PAGE);
@@ -21513,6 +22045,7 @@ Phase G（Frame 36）：循环衔接
     rerenderCurrentSession();
   });
   window.addEventListener('regex-changed', () => {
+    clearMessageDecorationCache();
     rerenderCurrentSession();
   });
   window.addEventListener('session-panel-closed', (event) => {
@@ -21523,12 +22056,16 @@ Phase G（Frame 36）：循环衔接
   window.addEventListener('session-changed', async e => {
     const id = e.detail?.id;
     if (id) {
+      const enterRequest = beginChatEnterRequest(id);
+      cancelAllInitialHistoryFillJobs();
       window.appBridge.setActiveSession(id);
       scriptRuntime?.syncContext?.({ sessionId: id }).catch(() => {});
       const c = contactsStore.getContact(id);
       if (currentChatTitle) currentChatTitle.innerHTML = renderSessionNameHtml(id, c);
       syncUserPersonaUI(id);
+      applyChatRoomLoadingState(id, c, c?.name || id);
       const msgs = await chatStore.ensureRecentMessagesLoaded(id);
+      if (isChatEnterRequestStale(enterRequest)) return;
       const draft = chatStore.getDraft(id);
       ui.clearMessages();
       {
@@ -21764,9 +22301,14 @@ Phase G（Frame 36）：循环衔接
     bubbleColor: '#000000',
     textColor: '#ffffff',
   };
+  let chatColorModeDraft = 'theme';
   const CHAT_COLOR_SWATCHES = {
     bubble: ['#000000', '#1f2937', '#334155', '#475569', '#c9c9c9', '#f59e0b', '#dc2626', '#2563eb', '#10b981'],
     text: ['#ffffff', '#111827', '#4b5563', '#2563eb', '#059669', '#dc2626', '#7c3aed', '#b45309', '#db2777'],
+  };
+  const normalizeChatColorMode = (value, fallback = 'theme') => {
+    const raw = String(value || '').trim().toLowerCase();
+    return raw === 'custom' ? 'custom' : fallback;
   };
   const isDarkThemeMode = () => String(document?.body?.dataset?.themeMode || '').trim().toLowerCase() === 'dark';
   const isLegacyLightDefaultColor = (value, kind = 'bubble') => {
@@ -21783,10 +22325,21 @@ Phase G（Frame 36）：循环衔接
   };
   const isThemeManagedChatDefaultColor = (value, kind = 'bubble') =>
     isLegacyLightDefaultColor(value, kind) || isLegacyDarkDefaultColor(value, kind);
+  const inferChatColorMode = (input = {}, fallback = 'theme') => {
+    const explicit = String(input?.chatColorMode || input?.chatDefaultColorMode || '').trim().toLowerCase();
+    if (explicit === 'custom' || explicit === 'theme') return explicit;
+    const bubble = String(input?.bubbleColor || input?.chatDefaultBubbleColor || '').trim();
+    const text = String(input?.textColor || input?.chatDefaultTextColor || '').trim();
+    if (!bubble && !text) return fallback;
+    return isThemeManagedChatDefaultColor(bubble, 'bubble') && isThemeManagedChatDefaultColor(text, 'text')
+      ? 'theme'
+      : 'custom';
+  };
   const getThemeAwareChatDefaults = () => (isDarkThemeMode() ? { ...DARK_CHAT_DEFAULTS } : { ...ORIGINAL_CHAT_DEFAULTS });
   const readStoredChatColorDefaults = () => {
     const raw = typeof appSettings.getStored === 'function' ? appSettings.getStored() : {};
     return {
+      chatColorMode: inferChatColorMode(raw, 'theme'),
       bubbleColor: String(raw?.chatDefaultBubbleColor || '').trim(),
       textColor: String(raw?.chatDefaultTextColor || '').trim(),
     };
@@ -21800,13 +22353,13 @@ Phase G（Frame 36）：循环衔接
   const getGlobalChatDefaults = () => {
     const settings = readStoredChatColorDefaults();
     const themeDefaults = getThemeAwareChatDefaults();
-    const bubble = (settings.bubbleColor && !isThemeManagedChatDefaultColor(settings.bubbleColor, 'bubble'))
+    const bubble = (settings.chatColorMode === 'custom' && settings.bubbleColor)
       ? settings.bubbleColor
       : themeDefaults.bubbleColor;
-    const text = (settings.textColor && !isThemeManagedChatDefaultColor(settings.textColor, 'text'))
+    const text = (settings.chatColorMode === 'custom' && settings.textColor)
       ? settings.textColor
       : themeDefaults.textColor;
-    return { bubbleColor: bubble, textColor: text };
+    return { chatColorMode: settings.chatColorMode, bubbleColor: bubble, textColor: text };
   };
 
   const getChatSettingDefaults = () => {
@@ -21858,9 +22411,10 @@ Phase G（Frame 36）：循环衔接
     target.classList.toggle('is-open', willOpen);
   };
 
-  const applyChatColorValue = (kind, color) => {
+  const applyChatColorValue = (kind, color, { markCustom = true } = {}) => {
     const safe = String(color || '').trim();
     if (!/^#[0-9A-F]{6}$/i.test(safe)) return false;
+    if (markCustom) chatColorModeDraft = 'custom';
     if (kind === 'bubble') {
       if (bubbleColorInput) bubbleColorInput.value = safe;
       setColorTriggerColor(bubbleColorPicker, safe);
@@ -22066,16 +22620,11 @@ Phase G（Frame 36）：循环衔接
 
   const normalizeChatSettings = raw => {
     const base = { ...getChatSettingDefaults(), ...(raw || {}) };
-    const storedDefaults = readStoredChatColorDefaults();
-    const rawBubble = String(raw?.bubbleColor || '').trim();
-    const rawText = String(raw?.textColor || '').trim();
+    const mode = inferChatColorMode(raw, base.chatColorMode || 'theme');
     const themeDefaults = getThemeAwareChatDefaults();
-    if ((!storedDefaults.bubbleColor || isThemeManagedChatDefaultColor(storedDefaults.bubbleColor, 'bubble'))
-      && (!rawBubble || isThemeManagedChatDefaultColor(rawBubble, 'bubble'))) {
+    base.chatColorMode = mode;
+    if (mode === 'theme') {
       base.bubbleColor = themeDefaults.bubbleColor;
-    }
-    if ((!storedDefaults.textColor || isThemeManagedChatDefaultColor(storedDefaults.textColor, 'text'))
-      && (!rawText || isThemeManagedChatDefaultColor(rawText, 'text'))) {
       base.textColor = themeDefaults.textColor;
     }
     if (raw?.wallpaper && typeof raw.wallpaper === 'object') {
@@ -22563,6 +23112,7 @@ Phase G（Frame 36）：循环衔接
   function loadChatSettings(sessionId) {
     const raw = chatStore.getSessionSettings(sessionId) || {};
     const settings = normalizeChatSettings(raw);
+    chatColorModeDraft = normalizeChatColorMode(settings.chatColorMode, 'theme');
     setChatSettingScope('current');
     bubbleColorInput.value = settings.bubbleColor;
     textColorInput.value = settings.textColor;
@@ -22579,6 +23129,7 @@ Phase G（Frame 36）：循环衔接
     const base = normalizeChatSettings(chatStore.getSessionSettings(sessionId) || {});
     const settings = {
       ...base,
+      chatColorMode: normalizeChatColorMode(chatColorModeDraft, base.chatColorMode || 'theme'),
       bubbleColor: bubbleColorInput.value,
       textColor: textColorInput.value,
     };
@@ -22595,6 +23146,7 @@ Phase G（Frame 36）：循环衔接
     chatStore.setSessionSettings(sessionId, settings);
     if (scope === 'all') {
       appSettings.update({
+        chatDefaultColorMode: settings.chatColorMode,
         chatDefaultBubbleColor: settings.bubbleColor,
         chatDefaultTextColor: settings.textColor,
       });
@@ -22604,6 +23156,7 @@ Phase G（Frame 36）：循环衔接
         const existing = normalizeChatSettings(chatStore.getSessionSettings(sid) || {});
         const next = {
           ...existing,
+          chatColorMode: settings.chatColorMode,
           bubbleColor: settings.bubbleColor,
           textColor: settings.textColor,
         };
@@ -22637,8 +23190,9 @@ Phase G（Frame 36）：循环衔接
   randomSettingBtn?.addEventListener('click', randomChatSettings);
   restoreSettingBtn?.addEventListener('click', () => {
     const defaults = getThemeAwareChatDefaults();
-    applyChatColorValue('bubble', defaults.bubbleColor);
-    applyChatColorValue('text', defaults.textColor);
+    chatColorModeDraft = 'theme';
+    applyChatColorValue('bubble', defaults.bubbleColor, { markCustom: false });
+    applyChatColorValue('text', defaults.textColor, { markCustom: false });
   });
 
   bubbleColorPicker?.addEventListener('input', e => {

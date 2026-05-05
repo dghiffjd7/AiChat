@@ -8,6 +8,7 @@
 import { LLMClient } from '../api/client.js';
 import { ConfigManager } from '../storage/config.js';
 import { logger } from '../utils/logger.js';
+import { pickSavePath as pickNativeSavePath } from '../utils/save-dialog.js';
 import { safeInvoke } from '../utils/tauri.js';
 import {
     genNodeId,
@@ -4579,21 +4580,10 @@ export class WorldEditorModal {
     }
 
     async pickSavePath(defaultName) {
-        if (isAndroid()) {
-            return { path: '', cancelled: false, fallback: true };
-        }
-        try {
-            const { save } = await import('@tauri-apps/plugin-dialog');
-            const result = await save({
-                defaultPath: defaultName,
-                filters: [{ name: 'JSON', extensions: ['json'] }],
-            });
-            if (!result) return { path: '', cancelled: true, fallback: false };
-            return { path: result, cancelled: false, fallback: false };
-        } catch (err) {
-            logger.warn('世界书导出：保存对话框不可用', err);
-            return { path: '', cancelled: false, fallback: true };
-        }
+        return pickNativeSavePath({
+            defaultName,
+            filters: [{ name: 'JSON', extensions: ['json'] }],
+        });
     }
 
     async exportWorld() {

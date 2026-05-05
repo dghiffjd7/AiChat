@@ -1,4 +1,5 @@
 import { regex_placement, substitute_find_regex } from '../storage/regex-store.js';
+import { hasTauriRuntime, isAndroidDevice, pickSavePath } from './save-dialog.js';
 import { safeInvoke } from './tauri.js';
 
 export const genRegexId = (prefix = 're') =>
@@ -288,19 +289,6 @@ export const flattenRegexImportRules = (parsed = {}) => {
   return out;
 };
 
-const hasTauriRuntime = () => {
-  const g = typeof globalThis !== 'undefined' ? globalThis : window;
-  return Boolean(g?.__TAURI__ || g?.__TAURI_INTERNALS__ || g?.__TAURI_INVOKE__);
-};
-
-const isAndroid = () => {
-  try {
-    return /android/i.test(globalThis?.navigator?.userAgent || '');
-  } catch {
-    return false;
-  }
-};
-
 const bytesToBase64 = (bytes) => {
   const chunkSize = 0x8000;
   let binary = '';
@@ -316,17 +304,8 @@ const buildJsonDataUrl = (text) => {
   return `data:application/json;base64,${bytesToBase64(bytes)}`;
 };
 
-const pickJsonSavePath = async (defaultName) => {
-  if (!hasTauriRuntime() || isAndroid()) return { path: '', cancelled: false, fallback: true };
-  try {
-    const { save } = await import('@tauri-apps/plugin-dialog');
-    const result = await save({ defaultPath: defaultName, filters: [{ name: 'JSON', extensions: ['json'] }] });
-    if (!result) return { path: '', cancelled: true, fallback: false };
-    return { path: result, cancelled: false, fallback: false };
-  } catch {
-    return { path: '', cancelled: false, fallback: true };
-  }
-};
+const pickJsonSavePath = async (defaultName) =>
+  pickSavePath({ defaultName, filters: [{ name: 'JSON', extensions: ['json'] }] });
 
 const browserDownloadJsonFile = (text, filename) => {
   const blob = new Blob([text], { type: 'application/json;charset=utf-8' });
@@ -342,7 +321,7 @@ const browserDownloadJsonFile = (text, filename) => {
 
 export const downloadJsonFile = async (data, filename = 'regex.json') => {
   const text = JSON.stringify(data, null, 2);
-  if (!hasTauriRuntime() || isAndroid()) {
+  if (!hasTauriRuntime() || isAndroidDevice()) {
     browserDownloadJsonFile(text, filename);
     return { saved: true, cancelled: false, path: filename };
   }

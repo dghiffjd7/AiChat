@@ -29,6 +29,11 @@ const DEFAULT_CHAT_TEXT_COLOR = '#1F2937';
 const DEFAULT_DARK_CHAT_BUBBLE_COLOR = '#000000';
 const DEFAULT_DARK_CHAT_TEXT_COLOR = '#ffffff';
 
+const normalizeChatColorMode = (value, fallback = 'theme') => {
+  const raw = String(value || '').trim().toLowerCase();
+  return raw === 'custom' ? 'custom' : fallback;
+};
+
 const isDarkThemeMode = () => String(document?.body?.dataset?.themeMode || '').trim().toLowerCase() === 'dark';
 const isLegacyLightDefaultColor = (value, kind = 'bubble') => {
   const raw = String(value || '').trim().toLowerCase();
@@ -45,6 +50,17 @@ const isLegacyDarkDefaultColor = (value, kind = 'bubble') => {
 const isThemeManagedChatDefaultColor = (value, kind = 'bubble') =>
   isLegacyLightDefaultColor(value, kind) || isLegacyDarkDefaultColor(value, kind);
 
+const inferChatColorMode = (input = {}, fallback = 'theme') => {
+  const explicit = String(input?.chatColorMode || input?.chatDefaultColorMode || '').trim().toLowerCase();
+  if (explicit === 'custom' || explicit === 'theme') return explicit;
+  const bubble = String(input?.bubbleColor || input?.chatDefaultBubbleColor || '').trim();
+  const text = String(input?.textColor || input?.chatDefaultTextColor || '').trim();
+  if (!bubble && !text) return fallback;
+  return isThemeManagedChatDefaultColor(bubble, 'bubble') && isThemeManagedChatDefaultColor(text, 'text')
+    ? 'theme'
+    : 'custom';
+};
+
 const getThemeAwareChatDefaults = () => (
   isDarkThemeMode()
     ? {
@@ -60,15 +76,16 @@ const getThemeAwareChatDefaults = () => (
 const getGlobalChatColorDefaults = () => {
   const settings = typeof appSettings.getStored === 'function' ? appSettings.getStored() : {};
   const themeDefaults = getThemeAwareChatDefaults();
+  const mode = inferChatColorMode(settings, 'theme');
   const bubbleRaw = String(settings.chatDefaultBubbleColor || '').trim();
   const textRaw = String(settings.chatDefaultTextColor || '').trim();
-  const bubble = (bubbleRaw && !isThemeManagedChatDefaultColor(bubbleRaw, 'bubble'))
+  const bubble = (mode === 'custom' && bubbleRaw)
     ? bubbleRaw
     : themeDefaults.bubbleColor;
-  const text = (textRaw && !isThemeManagedChatDefaultColor(textRaw, 'text'))
+  const text = (mode === 'custom' && textRaw)
     ? textRaw
     : themeDefaults.textColor;
-  return { bubbleColor: bubble, textColor: text };
+  return { bubbleColor: bubble, textColor: text, chatColorMode: mode };
 };
 
 const makeShardKey = (prefix = 't') => {
@@ -1004,6 +1021,7 @@ export class ChatStore {
     this._v2 = new ChatStoreV2({ scopeId: this.scopeId });
     this._v2ThreadState = new Map();
     this._v2Ready = this._hydrateV2FromDisk();
+    this.fullyReady = Promise.allSettled([this.ready, this._v2Ready]);
     this._lsDisabled = false;
     this._lsQuotaWarned = false;
     this._hydrateRetryCount = 0;
@@ -1017,8 +1035,8 @@ export class ChatStore {
   _ensureSession(id) {
     const sid = String(id || '').trim();
     if (!sid) return null;
+    const defaults = getGlobalChatColorDefaults();
     if (!this.state.sessions[sid]) {
-      const defaults = getGlobalChatColorDefaults();
       this.state.sessions[sid] = {
         messages: [],
         draft: '',
@@ -1028,7 +1046,8 @@ export class ChatStore {
         variableSchemas: {},
         variableRules: [],
         stageSchema: null,
-        settings: {
+      settings: {
+          chatColorMode: defaults.chatColorMode,
           bubbleColor: defaults.bubbleColor,
           textColor: defaults.textColor,
         },
@@ -1052,6 +1071,9 @@ export class ChatStore {
     if (!Array.isArray(s.variableRules)) s.variableRules = [];
     if (!('stageSchema' in s)) s.stageSchema = null;
     if (!s.settings) s.settings = {};
+    if (!s.settings.chatColorMode) {
+      s.settings.chatColorMode = inferChatColorMode(s.settings, defaults.chatColorMode || 'theme');
+    }
     if (!Array.isArray(s.detachedSummaries)) s.detachedSummaries = [];
     if (typeof s.compactedSummary !== 'object') s.compactedSummary = null;
     if (typeof s.compactedSummaryLastRaw !== 'object') s.compactedSummaryLastRaw = null;
@@ -1209,18 +1231,11 @@ export class ChatStore {
     }
     try {
       if (this._isScopeStale(token, scopeId)) return false;
-      const current = String(this.getCurrent() || '').trim();
-      if (current) {
-        await this._loadRecentMessages(current, '', { token, scopeId });
-      }
-      if (this._isScopeStale(token, scopeId)) return false;
       for (const sid of Object.keys(this.state.sessions || {})) {
-        if (sid !== current) {
-          this.state.sessions[sid].messages = [];
-        }
+        this.state.sessions[sid].messages = [];
       }
     } catch (err) {
-      logger.warn('chat store v2 load recent failed', err);
+      logger.warn('chat store v2 reset hydrated thread cache failed', err);
     }
     try {
       window.dispatchEvent(new CustomEvent('store-hydrated', { detail: { store: 'chat' } }));
@@ -1548,7 +1563,7 @@ export class ChatStore {
 
   async setScope(scopeId = '') {
     const nextScope = normalizeScopeId(scopeId);
-    if (nextScope === this.scopeId) return this.ready;
+    if (nextScope === this.scopeId) return this.fullyReady || this.ready;
     const prevScope = this.scopeId;
     const prevKey = this.storeKey;
     logger.info(
@@ -1568,7 +1583,6 @@ export class ChatStore {
     this._skipMessagePersist = false;
     this._v2ThreadState.clear();
     this._v2 = new ChatStoreV2({ scopeId: this.scopeId });
-    this._v2Ready = this._hydrateV2FromDisk();
     this._lsDisabled = false;
     this._lsQuotaWarned = false;
     this._hydrateRetryCount = 0;
@@ -1576,7 +1590,9 @@ export class ChatStore {
     this.currentId = resolveCurrentId(this.state);
     this.state.currentId = this.currentId;
     this.ready = this._hydrateFromDisk();
-    const ready = this.ready;
+    this._v2Ready = this._hydrateV2FromDisk();
+    this.fullyReady = Promise.allSettled([this.ready, this._v2Ready]);
+    const ready = this.fullyReady;
     ready
       .then(() => {
         logger.info(

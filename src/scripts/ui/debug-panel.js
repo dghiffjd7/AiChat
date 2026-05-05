@@ -3,6 +3,7 @@
  */
 
 import { appSettings } from '../storage/app-settings.js';
+import { pickSavePath as pickNativeSavePath } from '../utils/save-dialog.js';
 import { safeInvoke } from '../utils/tauri.js';
 
 export class DebugPanel {
@@ -25,6 +26,8 @@ export class DebugPanel {
         this.stickerDebugBtn = null;
         this.variableInspectBtn = null;
         this.groupAvatarInspectBtn = null;
+        this.customBundleInspectBtn = null;
+        this.chatEnterInspectBtn = null;
         this.templateLogBtn = null;
         this.promptPreviewBtn = null;
         this.errorLogBtn = null;
@@ -53,6 +56,18 @@ export class DebugPanel {
         this.groupAvatarMeta = null;
         this.groupAvatarText = null;
         this.groupAvatarRefresh = null;
+        this.customBundleOverlay = null;
+        this.customBundlePanel = null;
+        this.customBundleMeta = null;
+        this.customBundleText = null;
+        this.customBundleRefresh = null;
+        this.customBundleExport = null;
+        this.chatEnterOverlay = null;
+        this.chatEnterPanel = null;
+        this.chatEnterMeta = null;
+        this.chatEnterText = null;
+        this.chatEnterRefresh = null;
+        this.chatEnterExport = null;
         this.templateLogOverlay = null;
         this.templateLogPanel = null;
         this.templateLogMeta = null;
@@ -218,6 +233,40 @@ export class DebugPanel {
         groupAvatarInspectBtn.onclick = () => this.showGroupAvatarInspector();
         this.groupAvatarInspectBtn = groupAvatarInspectBtn;
         this.controls.appendChild(groupAvatarInspectBtn);
+
+        const customBundleInspectBtn = document.createElement('button');
+        customBundleInspectBtn.type = 'button';
+        customBundleInspectBtn.textContent = '资料包';
+        customBundleInspectBtn.style.cssText = `
+            padding: 2px 6px;
+            background: rgba(0, 0, 0, 0.8);
+            color: #00ff00;
+            border: 1px solid #00ff00;
+            border-radius: 4px;
+            font-size: 10px;
+            font-family: monospace;
+            cursor: pointer;
+        `;
+        customBundleInspectBtn.onclick = () => this.showCustomBundleInspector();
+        this.customBundleInspectBtn = customBundleInspectBtn;
+        this.controls.appendChild(customBundleInspectBtn);
+
+        const chatEnterInspectBtn = document.createElement('button');
+        chatEnterInspectBtn.type = 'button';
+        chatEnterInspectBtn.textContent = '进房';
+        chatEnterInspectBtn.style.cssText = `
+            padding: 2px 6px;
+            background: rgba(0, 0, 0, 0.8);
+            color: #00ff00;
+            border: 1px solid #00ff00;
+            border-radius: 4px;
+            font-size: 10px;
+            font-family: monospace;
+            cursor: pointer;
+        `;
+        chatEnterInspectBtn.onclick = () => this.showChatEnterInspector();
+        this.chatEnterInspectBtn = chatEnterInspectBtn;
+        this.controls.appendChild(chatEnterInspectBtn);
 
         const templateLogBtn = document.createElement('button');
         templateLogBtn.type = 'button';
@@ -1234,6 +1283,332 @@ export class DebugPanel {
         await this.refreshGroupAvatarInspector();
     }
 
+    ensureCustomBundleInspector() {
+        if (this.customBundleOverlay) return;
+        const overlay = document.createElement('div');
+        overlay.id = 'debug-custom-bundle-overlay';
+        overlay.style.cssText = `
+            display:none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.38);
+            z-index: 22050;
+            padding: calc(10px + env(safe-area-inset-top, 0px)) 10px calc(10px + env(safe-area-inset-bottom, 0px)) 10px;
+            box-sizing: border-box;
+        `;
+        const panel = document.createElement('div');
+        panel.id = 'debug-custom-bundle-panel';
+        panel.style.cssText = `
+            width: 100%;
+            height: 100%;
+            background: var(--app-surface-card);
+            border-radius: 14px;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        `;
+        panel.addEventListener('click', e => e.stopPropagation());
+        panel.innerHTML = `
+            <div style="display:flex; align-items:center; gap:10px; padding:12px; background:#f3f4f6; border-bottom:1px solid var(--app-border-default);">
+                <div style="font-weight:900;">资料包导入诊断</div>
+                <div id="debug-custom-bundle-meta" style="margin-left:auto; font-size:12px; color:var(--app-text-muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"></div>
+                <button id="debug-custom-bundle-refresh" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:6px 10px;">刷新</button>
+                <button id="debug-custom-bundle-export" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:6px 10px;">导出</button>
+                <button id="debug-custom-bundle-close" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:6px 10px;">关闭</button>
+            </div>
+            <div style="flex:1; min-height:0; overflow:auto; -webkit-overflow-scrolling:touch; padding:10px;">
+                <textarea id="debug-custom-bundle-text" readonly style="
+                    width:100%;
+                    height:100%;
+                    min-height: 100%;
+                    resize:none;
+                    border:1px solid rgba(0,0,0,0.10);
+                    border-radius:12px;
+                    padding:12px;
+                    font-size:12px;
+                    line-height:1.4;
+                    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+                    white-space: pre;
+                    box-sizing:border-box;
+                    outline:none;
+                "></textarea>
+            </div>
+        `;
+        overlay.appendChild(panel);
+        overlay.addEventListener('click', () => this.hideCustomBundleInspector());
+        document.body.appendChild(overlay);
+
+        this.customBundleOverlay = overlay;
+        this.customBundlePanel = panel;
+        this.customBundleMeta = panel.querySelector('#debug-custom-bundle-meta');
+        this.customBundleText = panel.querySelector('#debug-custom-bundle-text');
+        this.customBundleRefresh = panel.querySelector('#debug-custom-bundle-refresh');
+        this.customBundleExport = panel.querySelector('#debug-custom-bundle-export');
+
+        panel.querySelector('#debug-custom-bundle-close')?.addEventListener('click', () => this.hideCustomBundleInspector());
+        panel.querySelector('#debug-custom-bundle-refresh')?.addEventListener('click', () => this.refreshCustomBundleInspector());
+        panel.querySelector('#debug-custom-bundle-export')?.addEventListener('click', () => this.exportCustomBundleDiagnostics());
+    }
+
+    hideCustomBundleInspector() {
+        if (this.customBundleOverlay) {
+            this.customBundleOverlay.style.display = 'none';
+        }
+    }
+
+    formatCustomBundleDiagnostics(snapshot) {
+        if (!snapshot || typeof snapshot !== 'object') return '暂无自定义资料包导入诊断';
+        try {
+            return JSON.stringify(snapshot, null, 2);
+        } catch {
+            return String(snapshot || '');
+        }
+    }
+
+    async exportTextFile(text, filename, successLabel = 'TXT 已导出') {
+        const content = String(text || '');
+        if (!content.trim()) return false;
+        const hasTauriRuntime = (() => {
+            const g = typeof globalThis !== 'undefined' ? globalThis : window;
+            return Boolean(g?.__TAURI__ || g?.__TAURI_INTERNALS__ || g?.__TAURI_INVOKE__);
+        })();
+        const isAndroid = (() => {
+            try {
+                return /android/i.test(navigator.userAgent || '');
+            } catch {
+                return false;
+            }
+        })();
+        const buildTextDataUrl = (value) => {
+            const bytes = new TextEncoder().encode(String(value || ''));
+            let binary = '';
+            const chunkSize = 0x8000;
+            for (let i = 0; i < bytes.length; i += chunkSize) {
+                binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+            }
+            return `data:text/plain;charset=utf-8;base64,${btoa(binary)}`;
+        };
+
+        if (!hasTauriRuntime) {
+            const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = filename;
+            link.style.display = 'none';
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+            URL.revokeObjectURL(url);
+            window.toastr?.success?.(`${successLabel}：${filename}`);
+            return true;
+        }
+
+        let savedPath = '';
+        if (!isAndroid) {
+            const pick = await pickNativeSavePath({
+                defaultName: filename,
+                filters: [{ name: 'Text', extensions: ['txt'] }],
+            });
+            if (pick.cancelled) return false;
+            if (!pick.fallback && pick.path) {
+                const resp = await safeInvoke('export_attachment', {
+                    dataUrl: buildTextDataUrl(content),
+                    fileName: filename,
+                    path: pick.path,
+                });
+                savedPath = String(resp?.path || pick.path || '').trim();
+            }
+        }
+
+        if (!savedPath) {
+            const resp = await safeInvoke('export_attachment', {
+                dataUrl: buildTextDataUrl(content),
+                fileName: filename,
+            });
+            savedPath = String(resp?.path || '').trim();
+        }
+        window.toastr?.success?.(`${successLabel}：${savedPath || filename}`);
+        return true;
+    }
+
+    async exportCustomBundleDiagnostics() {
+        try {
+            const text = String(this.customBundleText?.value || '');
+            if (!text.trim()) {
+                window.toastr?.warning?.('暂无资料包导入诊断可导出');
+                return;
+            }
+            const ts = new Date();
+            const pad = (n) => String(n).padStart(2, '0');
+            const filename = `custom-bundle-import-${ts.getFullYear()}${pad(ts.getMonth() + 1)}${pad(ts.getDate())}-${pad(ts.getHours())}${pad(ts.getMinutes())}${pad(ts.getSeconds())}.txt`;
+            await this.exportTextFile(text, filename, '资料包诊断已导出');
+        } catch (err) {
+            const msg = err?.message ? String(err.message) : String(err || '');
+            this.log(`资料包诊断导出失败: ${msg || 'unknown error'}`, 'warn');
+            window.toastr?.error?.('资料包诊断导出失败');
+        }
+    }
+
+    async refreshCustomBundleInspector() {
+        if (!this.customBundleOverlay || !this.customBundleText) return;
+        try {
+            const registry = window.appBridge?.debugUiRegistry;
+            const snapshot = registry?.stores?.customBundleDiagnostics || null;
+            const lastImport = snapshot?.lastImport || null;
+            const historyCount = Array.isArray(snapshot?.history) ? snapshot.history.length : 0;
+            const fileName = String(lastImport?.fileName || '').trim() || '未命名';
+            const phase = String(lastImport?.phase || '').trim() || 'none';
+            const durationMs = Number(lastImport?.durationMs || 0) || 0;
+            if (this.customBundleMeta) {
+                this.customBundleMeta.textContent = `phase=${phase} · duration=${durationMs}ms · history=${historyCount} · file=${fileName}`;
+            }
+            this.customBundleText.value = this.formatCustomBundleDiagnostics(snapshot);
+        } catch (err) {
+            const msg = err?.message ? String(err.message) : String(err || '');
+            if (this.customBundleMeta) this.customBundleMeta.textContent = `加载失败: ${msg || 'unknown error'}`;
+            if (this.customBundleText) this.customBundleText.value = `资料包导入诊断加载失败\n\n${msg || 'unknown error'}`;
+            this.log(`资料包导入诊断加载失败: ${msg || 'unknown error'}`, 'warn');
+        }
+    }
+
+    async showCustomBundleInspector() {
+        this.ensureCustomBundleInspector();
+        if (this.customBundleOverlay) {
+            this.customBundleOverlay.style.display = 'block';
+        }
+        await this.refreshCustomBundleInspector();
+    }
+
+    ensureChatEnterInspector() {
+        if (this.chatEnterOverlay) return;
+        const overlay = document.createElement('div');
+        overlay.id = 'debug-chat-enter-overlay';
+        overlay.style.cssText = `
+            display:none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.38);
+            z-index: 22050;
+            padding: calc(10px + env(safe-area-inset-top, 0px)) 10px calc(10px + env(safe-area-inset-bottom, 0px)) 10px;
+            box-sizing: border-box;
+        `;
+        const panel = document.createElement('div');
+        panel.id = 'debug-chat-enter-panel';
+        panel.style.cssText = `
+            width: 100%;
+            height: 100%;
+            background: var(--app-surface-card);
+            border-radius: 14px;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        `;
+        panel.addEventListener('click', e => e.stopPropagation());
+        panel.innerHTML = `
+            <div style="display:flex; align-items:center; gap:10px; padding:12px; background:#f3f4f6; border-bottom:1px solid var(--app-border-default);">
+                <div style="font-weight:900;">进房耗时诊断</div>
+                <div id="debug-chat-enter-meta" style="margin-left:auto; font-size:12px; color:var(--app-text-muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"></div>
+                <button id="debug-chat-enter-refresh" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:6px 10px;">刷新</button>
+                <button id="debug-chat-enter-export" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:6px 10px;">导出</button>
+                <button id="debug-chat-enter-close" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:6px 10px;">关闭</button>
+            </div>
+            <div style="flex:1; min-height:0; overflow:auto; -webkit-overflow-scrolling:touch; padding:10px;">
+                <textarea id="debug-chat-enter-text" readonly style="
+                    width:100%;
+                    height:100%;
+                    min-height: 100%;
+                    resize:none;
+                    border:1px solid rgba(0,0,0,0.10);
+                    border-radius:12px;
+                    padding:12px;
+                    font-size:12px;
+                    line-height:1.4;
+                    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+                    white-space: pre;
+                    box-sizing:border-box;
+                    outline:none;
+                "></textarea>
+            </div>
+        `;
+        overlay.appendChild(panel);
+        overlay.addEventListener('click', () => this.hideChatEnterInspector());
+        document.body.appendChild(overlay);
+
+        this.chatEnterOverlay = overlay;
+        this.chatEnterPanel = panel;
+        this.chatEnterMeta = panel.querySelector('#debug-chat-enter-meta');
+        this.chatEnterText = panel.querySelector('#debug-chat-enter-text');
+        this.chatEnterRefresh = panel.querySelector('#debug-chat-enter-refresh');
+        this.chatEnterExport = panel.querySelector('#debug-chat-enter-export');
+
+        panel.querySelector('#debug-chat-enter-close')?.addEventListener('click', () => this.hideChatEnterInspector());
+        panel.querySelector('#debug-chat-enter-refresh')?.addEventListener('click', () => this.refreshChatEnterInspector());
+        panel.querySelector('#debug-chat-enter-export')?.addEventListener('click', () => this.exportChatEnterDiagnostics());
+    }
+
+    hideChatEnterInspector() {
+        if (this.chatEnterOverlay) {
+            this.chatEnterOverlay.style.display = 'none';
+        }
+    }
+
+    formatChatEnterDiagnostics(snapshot) {
+        if (!snapshot || typeof snapshot !== 'object') return '暂无进房耗时诊断';
+        try {
+            return JSON.stringify(snapshot, null, 2);
+        } catch {
+            return String(snapshot || '');
+        }
+    }
+
+    async exportChatEnterDiagnostics() {
+        try {
+            const text = String(this.chatEnterText?.value || '');
+            if (!text.trim()) {
+                window.toastr?.warning?.('暂无进房耗时诊断可导出');
+                return;
+            }
+            const ts = new Date();
+            const pad = (n) => String(n).padStart(2, '0');
+            const filename = `chat-enter-diagnostics-${ts.getFullYear()}${pad(ts.getMonth() + 1)}${pad(ts.getDate())}-${pad(ts.getHours())}${pad(ts.getMinutes())}${pad(ts.getSeconds())}.txt`;
+            await this.exportTextFile(text, filename, '进房耗时诊断已导出');
+        } catch (err) {
+            const msg = err?.message ? String(err.message) : String(err || '');
+            this.log(`进房耗时诊断导出失败: ${msg || 'unknown error'}`, 'warn');
+            window.toastr?.error?.('进房耗时诊断导出失败');
+        }
+    }
+
+    async refreshChatEnterInspector() {
+        if (!this.chatEnterOverlay || !this.chatEnterText) return;
+        try {
+            const registry = window.appBridge?.debugUiRegistry;
+            const snapshot = registry?.stores?.chatEnterDiagnostics || null;
+            const last = snapshot?.last || null;
+            const sessionId = String(last?.sessionId || '').trim() || '未记录';
+            const totalMs = Number(last?.phases?.syncEnterMs || 0) || 0;
+            const rendered = Number(last?.counts?.renderedMessages || 0) || 0;
+            if (this.chatEnterMeta) {
+                this.chatEnterMeta.textContent = `session=${sessionId} · sync=${totalMs}ms · render=${rendered}`;
+            }
+            this.chatEnterText.value = this.formatChatEnterDiagnostics(snapshot);
+        } catch (err) {
+            const msg = err?.message ? String(err.message) : String(err || '');
+            if (this.chatEnterMeta) this.chatEnterMeta.textContent = `加载失败: ${msg || 'unknown error'}`;
+            if (this.chatEnterText) this.chatEnterText.value = `进房耗时诊断加载失败\n\n${msg || 'unknown error'}`;
+            this.log(`进房耗时诊断加载失败: ${msg || 'unknown error'}`, 'warn');
+        }
+    }
+
+    async showChatEnterInspector() {
+        this.ensureChatEnterInspector();
+        if (this.chatEnterOverlay) {
+            this.chatEnterOverlay.style.display = 'block';
+        }
+        await this.refreshChatEnterInspector();
+    }
+
     ensureTemplateLogViewer() {
         if (this.templateLogOverlay) return;
         const overlay = document.createElement('div');
@@ -1870,23 +2245,21 @@ export class DebugPanel {
 
             let savedPath = '';
             if (!isAndroid) {
-                try {
-                    const { save } = await import('@tauri-apps/plugin-dialog');
-                    const result = await save({
-                        defaultPath: filename,
-                        filters: [{ name: 'Text', extensions: ['txt'] }],
+                const pick = await pickNativeSavePath({
+                    defaultName: filename,
+                    filters: [{ name: 'Text', extensions: ['txt'] }],
+                });
+                if (pick.cancelled) {
+                    return;
+                }
+                if (!pick.fallback && pick.path) {
+                    const resp = await safeInvoke('export_attachment', {
+                        dataUrl: buildTextDataUrl(text),
+                        fileName: filename,
+                        path: pick.path,
                     });
-                    if (result) {
-                        const resp = await safeInvoke('export_attachment', {
-                            dataUrl: buildTextDataUrl(text),
-                            fileName: filename,
-                            path: result,
-                        });
-                        savedPath = String(resp?.path || result || '').trim();
-                    } else {
-                        return;
-                    }
-                } catch {}
+                    savedPath = String(resp?.path || pick.path || '').trim();
+                }
             }
 
             if (!savedPath) {

@@ -16,7 +16,7 @@ use std::io::Cursor;
 use std::io::{Read, Seek, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Manager, State, Window};
 use zip::write::FileOptions;
 use zip::{CompressionMethod, ZipArchive, ZipWriter};
 
@@ -55,6 +55,43 @@ fn sanitize_segment(input: &str) -> String {
         cleaned.truncate(MAX_LEN);
     }
     cleaned
+}
+
+fn sanitize_zip_entry_name(input: &str) -> String {
+    let normalized = input.replace('\\', "/");
+    let mut parts: Vec<String> = Vec::new();
+    for raw_part in normalized.split('/') {
+        let part = raw_part.trim();
+        if part.is_empty() || part == "." || part == ".." {
+            continue;
+        }
+        let mut cleaned = String::with_capacity(part.len());
+        for ch in part.chars() {
+            if matches!(
+                ch,
+                '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' | '\0'
+            ) || ch.is_control()
+            {
+                cleaned.push('_');
+            } else {
+                cleaned.push(ch);
+            }
+        }
+        let trimmed = cleaned
+            .trim_matches(|ch: char| ch.is_whitespace() || ch == '.')
+            .trim_matches('_')
+            .to_string();
+        parts.push(if trimmed.is_empty() {
+            "entry".to_string()
+        } else {
+            trimmed
+        });
+    }
+    if parts.is_empty() {
+        "entry".to_string()
+    } else {
+        parts.join("/")
+    }
 }
 
 fn sanitize_download_name(input: &str) -> String {
@@ -336,8 +373,15 @@ pub struct StickerZipEntry {
     pub name: String,
     #[serde(rename = "path")]
     pub path: Option<String>,
-    #[serde(rename = "dataUrl")]
+    #[serde(rename = "dataUrl", alias = "data_url")]
     pub data_url: Option<String>,
+}
+
+#[derive(serde::Deserialize)]
+pub struct SaveDialogFilter {
+    pub name: String,
+    #[serde(default)]
+    pub extensions: Vec<String>,
 }
 
 #[derive(Default)]
@@ -989,13 +1033,107 @@ fn is_sensitive_bundle_path(path: &Path) -> bool {
         Some(value) => value,
         None => return false,
     };
-    matches!(
-        name,
-        "config.json"
-            | "llm_profiles_v1.json"
-            | "llm_keyring_v1.json"
-            | "llm_keyring_master_v1.json"
-    )
+    name == "config.json"
+        || is_profile_store_file_name(name)
+        || is_keyring_store_file_name(name)
+        || is_keyring_master_store_file_name(name)
+}
+
+fn is_profile_store_file_name(name: &str) -> bool {
+    let lower = name.trim().to_ascii_lowercase();
+    lower == "llm_profiles_v1.json"
+        || (lower.starts_with("llm_profiles_") && lower.ends_with("_v1.json"))
+}
+
+fn is_keyring_store_file_name(name: &str) -> bool {
+    let lower = name.trim().to_ascii_lowercase();
+    lower == "llm_keyring_v1.json"
+        || (lower.starts_with("llm_keyring_")
+            && lower.ends_with("_v1.json")
+            && !lower.starts_with("llm_keyring_master_"))
+}
+
+fn is_keyring_master_store_file_name(name: &str) -> bool {
+    let lower = name.trim().to_ascii_lowercase();
+    lower == "llm_keyring_master_v1.json"
+        || (lower.starts_with("llm_keyring_master_") && lower.ends_with("_v1.json"))
+}
+
+fn sanitize_profile_store_value(mut value: Value) -> Value {
+    if let Some(root) = value.as_object_mut() {
+        if let Some(profiles_value) = root.get_mut("profiles") {
+            if let Some(profiles) = profiles_value.as_object_mut() {
+                for profile in profiles.values_mut() {
+                    if let Some(obj) = profile.as_object_mut() {
+                        obj.insert("activeKeyId".to_string(), Value::Null);
+                        obj.insert("proxyAuthToken".to_string(), Value::String(String::new()));
+                        obj.insert(
+                            "vertexaiServiceAccount".to_string(),
+                            Value::String(String::new()),
+                        );
+                        obj.insert("_saEncrypted".to_string(), Value::Bool(false));
+                    }
+                }
+            }
+        }
+    }
+    value
+}
+
+fn add_sanitized_profile_stores_to_zip<W: Write + Seek>(
+    writer: &mut ZipWriter<W>,
+    data_dir: &Path,
+    options: FileOptions,
+) -> Result<usize, String> {
+    let mut count = 0usize;
+    for entry in fs::read_dir(data_dir).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let file_name = match path.file_name().and_then(|s| s.to_str()) {
+            Some(value) => value,
+            None => continue,
+        };
+        if !is_profile_store_file_name(file_name) {
+            continue;
+        }
+        let json = match fs::read_to_string(&path) {
+            Ok(value) => value,
+            Err(err) => {
+                eprintln!(
+                    "[export_data_bundle] skip profile store (read failed): {:?}, {}",
+                    path, err
+                );
+                continue;
+            }
+        };
+        let raw_value: Value = match serde_json::from_str(&json) {
+            Ok(value) => value,
+            Err(err) => {
+                eprintln!(
+                    "[export_data_bundle] skip profile store (parse failed): {:?}, {}",
+                    path, err
+                );
+                continue;
+            }
+        };
+        let safe_value = sanitize_profile_store_value(raw_value);
+        let safe_json = serde_json::to_string_pretty(&safe_value).map_err(|e| e.to_string())?;
+        let rel = path
+            .strip_prefix(data_dir)
+            .map_err(|_| "invalid profile store path".to_string())?;
+        let zip_name = rel.to_string_lossy().replace('\\', "/");
+        writer
+            .start_file(zip_name, options)
+            .map_err(|e| e.to_string())?;
+        writer
+            .write_all(safe_json.as_bytes())
+            .map_err(|e| e.to_string())?;
+        count += 1;
+    }
+    Ok(count)
 }
 
 fn add_dir_to_zip<W: Write + Seek>(
@@ -1711,6 +1849,53 @@ pub async fn export_attachment(
     })
 }
 
+#[tauri::command]
+pub async fn pick_save_path(
+    app: AppHandle,
+    #[allow(unused_variables)] window: Window,
+    default_name: Option<String>,
+    filters: Option<Vec<SaveDialogFilter>>,
+) -> Result<Option<String>, String> {
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    {
+        let _ = app;
+        let _ = window;
+        let _ = default_name;
+        let _ = filters;
+        return Ok(None);
+    }
+
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    {
+        use tauri_plugin_dialog::DialogExt;
+
+        let safe_name = sanitize_download_name(default_name.as_deref().unwrap_or("download"));
+        let mut dialog = app.dialog().file().set_file_name(safe_name);
+        #[cfg(any(windows, target_os = "macos"))]
+        {
+            dialog = dialog.set_parent(&window);
+        }
+        for filter in filters.unwrap_or_default() {
+            let extensions: Vec<&str> = filter
+                .extensions
+                .iter()
+                .map(|ext| ext.trim())
+                .filter(|ext| !ext.is_empty())
+                .collect();
+            if extensions.is_empty() {
+                continue;
+            }
+            let name = filter.name.trim();
+            dialog = dialog.add_filter(if name.is_empty() { "Files" } else { name }, &extensions);
+        }
+        let path = dialog
+            .blocking_save_file()
+            .and_then(|file_path| file_path.into_path().ok())
+            .map(|path| path.to_string_lossy().to_string());
+        Ok(path)
+    }
+}
+
 /// 导出贴图帧序列为 GIF
 #[tauri::command]
 pub async fn export_sticker_gif(
@@ -1849,7 +2034,7 @@ pub async fn export_sticker_zip(
         } else {
             entry.name.trim().to_string()
         };
-        let entry_name = sanitize_segment(&name_raw);
+        let entry_name = sanitize_zip_entry_name(&name_raw);
         let payload = if let Some(path) = &entry.path {
             let src = PathBuf::from(path.trim());
             if !src.exists() {
@@ -1993,9 +2178,11 @@ pub async fn export_data_bundle(
         "appVersion": env!("CARGO_PKG_VERSION"),
         "excluded": [
             "config.json",
-            "llm_profiles_v1.json",
             "llm_keyring_v1.json",
             "llm_keyring_master_v1.json"
+        ],
+        "redactedIncluded": [
+            "llm_profiles*_v1.json"
         ]
     });
     writer
@@ -2005,13 +2192,14 @@ pub async fn export_data_bundle(
         .write_all(manifest.to_string().as_bytes())
         .map_err(|e| e.to_string())?;
 
-    let files = add_dir_to_zip(
+    let mut files = add_dir_to_zip(
         &mut writer,
         &data_dir,
         &data_dir,
         options,
         Some(&output_path),
     )?;
+    files += add_sanitized_profile_stores_to_zip(&mut writer, &data_dir, options)?;
     writer.finish().map_err(|e| e.to_string())?;
     let bytes = fs::metadata(&output_path).map_err(|e| e.to_string())?.len();
     let mut result_path = output_path.to_string_lossy().to_string();

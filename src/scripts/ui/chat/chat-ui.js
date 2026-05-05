@@ -1650,6 +1650,80 @@ export class ChatUI {
     this._rpFloorCount = 0;
   }
 
+  showConversationLoading({ title = '', isGroup = false } = {}) {
+    if (!this.scrollEl) return;
+    this.clearMessages();
+    const wrapper = document.createElement('div');
+    wrapper.style.display = 'flex';
+    wrapper.style.flexDirection = 'column';
+    wrapper.style.gap = '12px';
+    wrapper.style.padding = '16px 14px 22px';
+    wrapper.style.pointerEvents = 'none';
+
+    const header = document.createElement('div');
+    header.style.display = 'flex';
+    header.style.alignItems = 'center';
+    header.style.gap = '8px';
+    header.style.color = 'var(--app-text-muted)';
+    header.style.fontSize = '12px';
+    header.style.padding = '2px 4px 8px';
+    header.textContent = title ? `正在载入 ${title}` : `正在载入${isGroup ? '群聊' : '聊天'}`;
+    wrapper.appendChild(header);
+
+    const buildRow = (align = 'left', width = '72%') => {
+      const row = document.createElement('div');
+      row.style.display = 'flex';
+      row.style.justifyContent = align === 'right' ? 'flex-end' : 'flex-start';
+      row.style.alignItems = 'flex-end';
+      row.style.gap = '8px';
+
+      if (align === 'left') {
+        const avatar = document.createElement('div');
+        avatar.style.width = '30px';
+        avatar.style.height = '30px';
+        avatar.style.borderRadius = '999px';
+        avatar.style.background = 'rgba(255,255,255,0.08)';
+        avatar.style.flex = '0 0 auto';
+        row.appendChild(avatar);
+      }
+
+      const bubble = document.createElement('div');
+      bubble.style.width = width;
+      bubble.style.maxWidth = '78%';
+      bubble.style.background = 'rgba(255,255,255,0.05)';
+      bubble.style.border = '1px solid rgba(255,255,255,0.06)';
+      bubble.style.borderRadius = '16px';
+      bubble.style.padding = '12px 14px';
+      bubble.style.display = 'flex';
+      bubble.style.flexDirection = 'column';
+      bubble.style.gap = '8px';
+
+      const lineA = document.createElement('div');
+      lineA.style.height = '10px';
+      lineA.style.width = '82%';
+      lineA.style.borderRadius = '999px';
+      lineA.style.background = 'rgba(255,255,255,0.12)';
+      bubble.appendChild(lineA);
+
+      const lineB = document.createElement('div');
+      lineB.style.height = '10px';
+      lineB.style.width = align === 'right' ? '58%' : '66%';
+      lineB.style.borderRadius = '999px';
+      lineB.style.background = 'rgba(255,255,255,0.08)';
+      bubble.appendChild(lineB);
+
+      row.appendChild(bubble);
+      wrapper.appendChild(row);
+    };
+
+    buildRow('left', '68%');
+    buildRow('right', '56%');
+    buildRow('left', '74%');
+    this.scrollEl.appendChild(wrapper);
+    this.scrollEl.scrollTop = 0;
+    this.scheduleScrollBottomButtonRefresh({ immediate: true });
+  }
+
   _createRpFloorMarker(message) {
     if (document.body?.dataset?.uiMode !== 'rp') return null;
     const role = message?.role;

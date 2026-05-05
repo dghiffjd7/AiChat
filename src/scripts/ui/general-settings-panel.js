@@ -1,5 +1,6 @@
 import { appSettings } from '../storage/app-settings.js';
 import { ConfigManager } from '../storage/config.js';
+import { pickSavePath } from '../utils/save-dialog.js';
 import { safeInvoke } from '../utils/tauri.js';
 import { appConfirm } from './app-confirm.js';
 import {
@@ -212,7 +213,11 @@ export class GeneralSettingsPanel {
     this.cleanWallpapersStatus = null;
     this.bundleExportBtn = null;
     this.bundleImportBtn = null;
+    this.customBundleExportBtn = null;
     this.bundleStatus = null;
+    this.bundleProgressWrap = null;
+    this.bundleProgressBar = null;
+    this.bundleProgressText = null;
     this.bundleImportInput = null;
     this.openSessionBtn = null;
     this.openMemoryTemplatesBtn = null;
@@ -220,6 +225,9 @@ export class GeneralSettingsPanel {
       openSession: null,
       openMemoryTemplates: null,
       openConfig: null,
+      importExperiencePackFile: null,
+      importCustomBundleFile: null,
+      exportCustomBundle: null,
     };
     this.customSelectMenuEl = null;
     this.customSelectMenuCleanup = null;
@@ -235,7 +243,38 @@ export class GeneralSettingsPanel {
       typeof actions.openMemoryTemplates === 'function' ? actions.openMemoryTemplates : null;
     this.externalActions.openConfig =
       typeof actions.openConfig === 'function' ? actions.openConfig : null;
+    this.externalActions.importExperiencePackFile =
+      typeof actions.importExperiencePackFile === 'function' ? actions.importExperiencePackFile : null;
+    this.externalActions.importCustomBundleFile =
+      typeof actions.importCustomBundleFile === 'function' ? actions.importCustomBundleFile : null;
+    this.externalActions.exportCustomBundle =
+      typeof actions.exportCustomBundle === 'function' ? actions.exportCustomBundle : null;
     this.updateShortcutButtons();
+  }
+
+  setBundleProgress({ visible = false, progress = 0, text = '', indeterminate = false, tone = 'normal' } = {}) {
+    if (this.bundleProgressWrap) {
+      this.bundleProgressWrap.style.display = visible ? 'flex' : 'none';
+    }
+    if (this.bundleProgressBar) {
+      const pct = Math.max(0, Math.min(100, Number(progress || 0) || 0));
+      this.bundleProgressBar.style.width = indeterminate ? '32%' : `${pct}%`;
+      this.bundleProgressBar.style.transition = 'width 180ms ease';
+      this.bundleProgressBar.style.transform = 'translateX(0)';
+      this.bundleProgressBar.style.opacity = indeterminate ? '0.92' : '1';
+      this.bundleProgressBar.style.background = tone === 'error'
+        ? 'linear-gradient(90deg, rgba(239,68,68,0.92), rgba(248,113,113,0.92))'
+        : tone === 'success'
+          ? 'linear-gradient(90deg, rgba(34,197,94,0.92), rgba(74,222,128,0.92))'
+          : 'linear-gradient(90deg, rgba(59,130,246,0.92), rgba(96,165,250,0.92))';
+    }
+    if (this.bundleProgressText) {
+      this.bundleProgressText.textContent = String(text || '').trim();
+    }
+  }
+
+  resetBundleProgress() {
+    this.setBundleProgress({ visible: false, progress: 0, text: '', indeterminate: false, tone: 'normal' });
   }
 
   show() {
@@ -591,6 +630,9 @@ export class GeneralSettingsPanel {
     }
     if (this.openMemoryTemplatesBtn) {
       this.openMemoryTemplatesBtn.disabled = typeof this.externalActions.openMemoryTemplates !== 'function';
+    }
+    if (this.customBundleExportBtn) {
+      this.customBundleExportBtn.disabled = typeof this.externalActions.exportCustomBundle !== 'function';
     }
   }
 
@@ -1906,18 +1948,28 @@ export class GeneralSettingsPanel {
           <div style="display:flex; align-items:center; gap:8px; flex-wrap: wrap;">
             <button id="general-bundle-export"
                     style="padding: 6px 10px; border-radius: 8px; border: 1px solid var(--app-border-default); background: var(--app-surface-card); cursor: pointer; font-size: 12px; color: var(--app-text-primary);">
-              一键打包
+              完整备份
             </button>
             <button id="general-bundle-import"
                     style="padding: 6px 10px; border-radius: 8px; border: 1px solid var(--app-border-default); background: var(--app-surface-card); cursor: pointer; font-size: 12px; color: var(--app-text-primary);">
-              导入资料包
+              导入
+            </button>
+            <button id="general-custom-bundle-export"
+                    style="padding: 6px 10px; border-radius: 8px; border: 1px solid var(--app-border-default); background: var(--app-surface-card); cursor: pointer; font-size: 12px; color: var(--app-text-primary);">
+              自定义导出
             </button>
             <span id="general-bundle-status" style="font-size: 12px; color:var(--app-text-muted);">
-              打包聊天与资源（不含 API 配置）
+              完整备份聊天与资源（含连线配置，不含 API Key）
             </span>
           </div>
-          <small style="color:var(--app-text-muted); display:block; margin-top:6px;">导入会覆盖当前资料。</small>
-          <input type="file" id="general-bundle-file" accept=".zip,application/zip" style="display:none;">
+          <small style="color:var(--app-text-muted); display:block; margin-top:6px;">导入会自动识别完整资料包、体验包与自定义资料包；完整资料包导入会覆盖当前资料。</small>
+          <div id="general-bundle-progress-wrap" style="display:none; flex-direction:column; gap:6px; margin-top:8px;">
+            <div style="height:8px; border-radius:999px; background:rgba(148,163,184,0.18); overflow:hidden; position:relative;">
+              <div id="general-bundle-progress-bar" style="width:0%; height:100%; border-radius:999px; background:linear-gradient(90deg, rgba(59,130,246,0.92), rgba(96,165,250,0.92)); transition:width 180ms ease;"></div>
+            </div>
+            <div id="general-bundle-progress-text" style="font-size:12px; color:var(--app-text-muted);">正在处理...</div>
+          </div>
+          <input type="file" id="general-bundle-file" accept=".zip,.aicpack,application/zip" style="display:none;">
         </div>
 
         <div class="general-settings-card">
@@ -2028,8 +2080,13 @@ export class GeneralSettingsPanel {
     this.cleanWallpapersStatus = this.element.querySelector('#general-clean-wallpapers-status');
     this.bundleExportBtn = this.element.querySelector('#general-bundle-export');
     this.bundleImportBtn = this.element.querySelector('#general-bundle-import');
+    this.customBundleExportBtn = this.element.querySelector('#general-custom-bundle-export');
     this.bundleStatus = this.element.querySelector('#general-bundle-status');
+    this.bundleProgressWrap = this.element.querySelector('#general-bundle-progress-wrap');
+    this.bundleProgressBar = this.element.querySelector('#general-bundle-progress-bar');
+    this.bundleProgressText = this.element.querySelector('#general-bundle-progress-text');
     this.bundleImportInput = this.element.querySelector('#general-bundle-file');
+    this.resetBundleProgress();
 
     this.populateThemeSelect(this.themeAvatarStyleSelect, THEME_AVATAR_STYLE_OPTIONS, appSettings.get().uiThemeAvatarStyle);
     this.populateThemeSelect(this.themeChatDisplaySelect, THEME_CHAT_DISPLAY_OPTIONS, appSettings.get().uiThemeChatDisplay);
@@ -2049,10 +2106,43 @@ export class GeneralSettingsPanel {
       this.hide();
       fn();
     });
+    this.customBundleExportBtn?.addEventListener('click', async () => {
+      const fn = this.externalActions.exportCustomBundle;
+      if (typeof fn !== 'function') return;
+      this.hide();
+      try {
+        await fn();
+      } catch (err) {
+        window.toastr?.error?.(err?.message || '自定义导出失败');
+      }
+    });
     this.element.addEventListener('change', (e) => {
       const target = e?.target;
       if (target instanceof HTMLInputElement && (target.type === 'checkbox' || target.type === 'radio')) {
         this.updateSelectableCards();
+      }
+    });
+    window.addEventListener('custom-bundle-import-progress', (event) => {
+      const detail = event?.detail || {};
+      if (String(detail?.kind || '').trim() !== 'custom-bundle-import') return;
+      const statusText = String(detail?.status || '').trim();
+      const progress = Math.max(0, Math.min(100, Number(detail?.progress || 0) || 0));
+      const done = detail?.done === true;
+      const tone = detail?.error ? 'error' : (done ? 'success' : 'normal');
+      this.setBundleProgress({
+        visible: !done || Boolean(statusText),
+        progress,
+        text: statusText || (done ? '导入完成' : '正在处理...'),
+        indeterminate: !done && progress <= 0,
+        tone,
+      });
+      if (statusText) {
+        if (this.bundleStatus) this.bundleStatus.textContent = statusText;
+      }
+      if (done && !detail?.error) {
+        setTimeout(() => {
+          this.resetBundleProgress();
+        }, 2400);
       }
     });
 
@@ -2199,17 +2289,15 @@ export class GeneralSettingsPanel {
       const fileName = sanitizeThemeFileName(preset?.name || 'theme');
       try {
         let savedPath = '';
-        try {
-          const { save } = await import('@tauri-apps/plugin-dialog');
-          const result = await save({
-            defaultPath: fileName,
-            filters: [{ name: 'JSON', extensions: ['json'] }],
-          });
-          if (result) {
-            await safeInvoke('write_text_file', { path: result, text });
-            savedPath = String(result);
-          }
-        } catch {}
+        const pick = await pickSavePath({
+          defaultName: fileName,
+          filters: [{ name: 'JSON', extensions: ['json'] }],
+        });
+        if (pick.cancelled) return;
+        if (!pick.fallback && pick.path) {
+          await safeInvoke('write_text_file', { path: pick.path, text });
+          savedPath = String(pick.path);
+        }
         if (!savedPath && hasTauriRuntime()) {
           const resp = await safeInvoke('save_attachment_bytes', {
             sessionId: 'theme-export',
@@ -2496,6 +2584,38 @@ export class GeneralSettingsPanel {
       reader.readAsDataURL(file);
     });
 
+    const readFileAsArrayBuffer = (file) => new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result || new ArrayBuffer(0));
+      reader.onerror = () => reject(reader.error || new Error('读取文件失败'));
+      reader.readAsArrayBuffer(file);
+    });
+
+    const base64ToText = (base64) => {
+      const raw = atob(String(base64 || ''));
+      const bytes = new Uint8Array(raw.length);
+      for (let i = 0; i < raw.length; i += 1) bytes[i] = raw.charCodeAt(i);
+      return new TextDecoder().decode(bytes);
+    };
+
+    const detectImportKind = async (file) => {
+      const buffer = await readFileAsArrayBuffer(file);
+      const bytes = Array.from(new Uint8Array(buffer));
+      const entries = await safeInvoke('read_zip_entries', { bytes });
+      const manifestEntry = (Array.isArray(entries) ? entries : []).find((entry) => String(entry?.name || '').replace(/\\/g, '/') === 'manifest.json');
+      if (!manifestEntry) return { kind: 'bundle', entries };
+      try {
+        const text = typeof manifestEntry.text === 'string' && manifestEntry.text.trim()
+          ? manifestEntry.text
+          : base64ToText(manifestEntry.base64 || '');
+        const manifest = JSON.parse(text);
+        const format = String(manifest?.format || '').trim();
+        if (format === 'chatapp.experience-pack.v1') return { kind: 'experience-pack', entries };
+        if (format === 'chatapp.custom-bundle.v1') return { kind: 'custom-bundle', entries };
+      } catch {}
+      return { kind: 'bundle', entries };
+    };
+
     const buildBundleFileName = () => {
       const now = new Date();
       const pad = (value) => String(value).padStart(2, '0');
@@ -2503,21 +2623,11 @@ export class GeneralSettingsPanel {
       return `chatapp_backup_${ts}.zip`;
     };
 
-    const pickBundleExportPath = async () => {
-      try {
-        const { save } = await import('@tauri-apps/plugin-dialog');
-        const fileName = buildBundleFileName();
-        const result = await save({
-          defaultPath: fileName,
-          filters: [{ name: 'ZIP', extensions: ['zip'] }],
-        });
-        if (!result) return { path: '', cancelled: true, fallback: false };
-        return { path: result, cancelled: false, fallback: false };
-      } catch (err) {
-        console.warn('bundle export: save dialog unavailable', err);
-        return { path: '', cancelled: false, fallback: true };
-      }
-    };
+    const pickBundleExportPath = async () =>
+      pickSavePath({
+        defaultName: buildBundleFileName(),
+        filters: [{ name: 'ZIP', extensions: ['zip'] }],
+      });
 
     this.bundleExportBtn?.addEventListener('click', async () => {
       if (this.bundleExportBtn) this.bundleExportBtn.disabled = true;
@@ -2552,13 +2662,6 @@ export class GeneralSettingsPanel {
     });
 
     this.bundleImportBtn?.addEventListener('click', async () => {
-      const confirmed = await appConfirm({
-        title: '导入资料包',
-        message:
-          '导入会覆盖当前所有资料（不包含 API 配置），且无法撤销。\n请确认资料包来源可信，避免泄露隐私。\n确定继续吗？',
-        danger: true,
-      });
-      if (!confirmed) return;
       if (this.bundleImportInput) this.bundleImportInput.value = '';
       this.bundleImportInput?.click();
     });
@@ -2567,8 +2670,74 @@ export class GeneralSettingsPanel {
       const file = this.bundleImportInput?.files?.[0];
       if (!file) return;
       if (this.bundleImportBtn) this.bundleImportBtn.disabled = true;
-      setBundleStatus('正在导入...');
       try {
+        setBundleStatus('正在识别导入包...');
+        this.setBundleProgress({
+          visible: true,
+          progress: 6,
+          text: '正在识别导入包...',
+          indeterminate: true,
+          tone: 'normal',
+        });
+        const detected = await detectImportKind(file);
+        const kind = String(detected?.kind || 'bundle').trim() || 'bundle';
+        if (kind === 'experience-pack') {
+          setBundleStatus('识别为体验包，正在导入...');
+          this.setBundleProgress({
+            visible: true,
+            progress: 14,
+            text: '识别为体验包，正在导入...',
+            indeterminate: true,
+            tone: 'normal',
+          });
+          const fn = this.externalActions.importExperiencePackFile;
+          if (typeof fn !== 'function') throw new Error('体验包导入器不可用');
+          const ok = await fn(file);
+          setBundleStatus(ok ? '体验包导入完成' : '已取消导入');
+          this.setBundleProgress({
+            visible: ok,
+            progress: ok ? 100 : 0,
+            text: ok ? '体验包导入完成' : '已取消导入',
+            indeterminate: false,
+            tone: ok ? 'success' : 'normal',
+          });
+          return;
+        }
+        if (kind === 'custom-bundle') {
+          setBundleStatus('识别为自定义资料包，正在导入...');
+          this.setBundleProgress({
+            visible: true,
+            progress: 12,
+            text: '识别为自定义资料包，准备导入...',
+            indeterminate: false,
+            tone: 'normal',
+          });
+          const fn = this.externalActions.importCustomBundleFile;
+          if (typeof fn !== 'function') throw new Error('自定义资料包导入器不可用');
+          const ok = await fn(file, { prefetchedEntries: detected?.entries || null });
+          setBundleStatus(ok ? '自定义资料包导入完成' : '已取消导入');
+          if (!ok) this.resetBundleProgress();
+          return;
+        }
+        const confirmed = await appConfirm({
+          title: '导入完整资料包',
+          message:
+            '识别为完整资料包。导入会覆盖当前所有资料（不包含 API 配置），且无法撤销。\n请确认资料包来源可信，避免泄露隐私。\n确定继续吗？',
+          danger: true,
+        });
+        if (!confirmed) {
+          setBundleStatus('已取消导入');
+          this.resetBundleProgress();
+          return;
+        }
+        setBundleStatus('正在导入完整资料包...');
+        this.setBundleProgress({
+          visible: true,
+          progress: 18,
+          text: '正在导入完整资料包...',
+          indeterminate: true,
+          tone: 'normal',
+        });
         const mode = 'replace';
         const filePath = typeof file.path === 'string' ? file.path : '';
         let result = null;
@@ -2587,7 +2756,14 @@ export class GeneralSettingsPanel {
         const skipped = Number(result?.skipped || 0);
         const suffix = skipped ? `（跳过 ${skipped} 项）` : '';
         setBundleStatus(`导入完成${suffix}，请重启应用以加载新资料`);
-        window.toastr?.success?.(`资料包导入完成${suffix}`);
+        this.setBundleProgress({
+          visible: true,
+          progress: 100,
+          text: `完整资料包导入完成${suffix}`,
+          indeterminate: false,
+          tone: 'success',
+        });
+        window.toastr?.success?.(`完整资料包导入完成${suffix}`);
         const restart = await appConfirm({
           title: '重启应用',
           message: '资料导入完成，是否立即重启应用？',
@@ -2598,7 +2774,14 @@ export class GeneralSettingsPanel {
       } catch (err) {
         const message = String(err?.message || err || '导入失败').trim();
         setBundleStatus(`导入失败: ${message}`);
-        window.toastr?.error?.('资料包导入失败');
+        this.setBundleProgress({
+          visible: true,
+          progress: 100,
+          text: `导入失败: ${message}`,
+          indeterminate: false,
+          tone: 'error',
+        });
+        window.toastr?.error?.('导入失败');
       } finally {
         if (this.bundleImportBtn) this.bundleImportBtn.disabled = false;
       }

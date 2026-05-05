@@ -8,6 +8,8 @@ import { convertSTWorld } from '../storage/worldinfo.js';
 import { BUILTIN_PHONE_FORMAT_WORLDBOOK_ID } from '../storage/builtin-worldbooks.js';
 import { logger } from '../utils/logger.js';
 import { FEATHER_DEFAULT, resolveLineAvatar } from '../utils/line-avatar.js';
+import { hasTauriRuntime, pickSavePath } from '../utils/save-dialog.js';
+import { safeInvoke } from '../utils/tauri.js';
 import { WorldEditorModal } from './world-editor.js';
 import { appConfirm } from './app-confirm.js';
 import { bindCustomSelectButton, closeCustomSelectMenu, refreshCustomSelectButton } from './custom-select.js';
@@ -104,8 +106,28 @@ export class WorldPanel {
         return safe || fallback;
     }
 
-    downloadJson(payload, filename) {
+    async downloadJson(payload, filename) {
         const json = JSON.stringify(payload, null, 2);
+        if (hasTauriRuntime()) {
+            const pick = await pickSavePath({
+                defaultName: filename || 'worldbook.json',
+                filters: [{ name: 'JSON', extensions: ['json'] }],
+            });
+            if (pick.cancelled) return false;
+            const bytes = new TextEncoder().encode(json);
+            let binary = '';
+            const chunkSize = 0x8000;
+            for (let i = 0; i < bytes.length; i += chunkSize) {
+                binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+            }
+            const dataUrl = `data:application/json;base64,${btoa(binary)}`;
+            if (pick.fallback) {
+                await safeInvoke('export_attachment', { dataUrl, fileName: filename || 'worldbook.json' });
+            } else {
+                await safeInvoke('export_attachment', { dataUrl, fileName: filename || 'worldbook.json', path: pick.path });
+            }
+            return true;
+        }
         const blob = new Blob([json], { type: 'application/json' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
@@ -115,6 +137,7 @@ export class WorldPanel {
         a.click();
         a.remove();
         setTimeout(() => URL.revokeObjectURL(url), 2000);
+        return true;
     }
 
     async resolveWorldEntries(data, { worldId = '' } = {}) {
@@ -1639,8 +1662,8 @@ export class WorldPanel {
         } catch {}
 
         const filename = `${this.sanitizeExportName(current, 'worldbook')}.json`;
-        this.downloadJson(payload, filename);
-        window.toastr?.success(`已导出：${filename}`);
+        const ok = await this.downloadJson(payload, filename);
+        if (ok) window.toastr?.success(`已导出：${filename}`);
     }
 
 }

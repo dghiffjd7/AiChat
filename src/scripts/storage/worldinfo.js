@@ -8,12 +8,80 @@ import { logger } from '../utils/logger.js';
 import { safeInvoke } from '../utils/tauri.js';
 
 const STORAGE_KEY = 'worldinfo_store';
+const INDEX_STORAGE_KEY = 'worldinfo_store_index_v1';
 const LOCALSTORAGE_SOFT_LIMIT = 3 * 1024 * 1024; // 3MB: avoid quota errors on mobile WebView
+const scheduleIdle = (runner, { timeout = 240 } = {}) => {
+    if (typeof runner !== 'function') return;
+    try {
+        const g = typeof globalThis !== 'undefined' ? globalThis : window;
+        if (typeof g?.requestIdleCallback === 'function') {
+            g.requestIdleCallback(() => runner(), { timeout });
+            return;
+        }
+    } catch {}
+    setTimeout(() => runner(), 180);
+};
 
 export class WorldInfoStore {
     constructor() {
         this.cache = {};
-        this.ready = this._loadCache();
+        this.index = this._loadIndexSnapshot();
+        this.hydrated = false;
+        this._readyPromise = null;
+        this._prewarmScheduled = false;
+    }
+
+    get ready() {
+        return this.ensureReady();
+    }
+
+    _loadIndexSnapshot() {
+        try {
+            const raw = localStorage.getItem(INDEX_STORAGE_KEY);
+            if (!raw) return [];
+            const parsed = JSON.parse(raw);
+            if (!Array.isArray(parsed)) return [];
+            return parsed
+                .map((item) => String(item || '').trim())
+                .filter(Boolean);
+        } catch (err) {
+            logger.debug('世界书索引读取失败，稍后走完整缓存', err);
+            return [];
+        }
+    }
+
+    _persistIndex() {
+        try {
+            localStorage.setItem(INDEX_STORAGE_KEY, JSON.stringify(this.index));
+        } catch (err) {
+            logger.warn('世界书索引写入失败，已跳过', err);
+        }
+    }
+
+    _replaceCache(next = {}) {
+        const data = next && typeof next === 'object' ? next : {};
+        this.cache = data;
+        this.index = Object.keys(data).map((item) => String(item || '').trim()).filter(Boolean);
+        this.hydrated = true;
+        this._persistIndex();
+    }
+
+    ensureReady() {
+        if (!this._readyPromise) {
+            this._readyPromise = this._loadCache();
+        }
+        return this._readyPromise;
+    }
+
+    prewarm() {
+        if (this.hydrated || this._prewarmScheduled || this._readyPromise) return;
+        this._prewarmScheduled = true;
+        scheduleIdle(() => {
+            this._prewarmScheduled = false;
+            this.ensureReady().catch((err) => {
+                logger.warn('世界书后台预热失败', err);
+            });
+        });
     }
 
     async _loadCache() {
@@ -21,8 +89,8 @@ export class WorldInfoStore {
             // 优先从 Tauri 持久化读取
             const kv = await safeInvoke('load_kv', { name: STORAGE_KEY });
             if (kv && typeof kv === 'object' && Object.keys(kv).length) {
-                this.cache = kv;
-                return kv;
+                this._replaceCache(kv);
+                return this.cache;
             }
         } catch (err) {
             logger.warn('世界书持久化读取失败，尝试 localStorage', err);
@@ -30,18 +98,19 @@ export class WorldInfoStore {
         try {
             const raw = localStorage.getItem(STORAGE_KEY);
             if (raw) {
-                this.cache = JSON.parse(raw);
+                this._replaceCache(JSON.parse(raw));
                 return this.cache;
             }
         } catch (err) {
             logger.warn('世界书缓存读取失败，重置为空', err);
         }
-        this.cache = {};
+        this._replaceCache({});
         return this.cache;
     }
 
     list() {
-        return Object.keys(this.cache);
+        if (this.hydrated || Object.keys(this.cache).length) return Object.keys(this.cache);
+        return Array.isArray(this.index) ? this.index.slice() : [];
     }
 
     load(name) {
@@ -68,7 +137,13 @@ export class WorldInfoStore {
     }
 
     async save(name, data) {
+        if (!this.hydrated) await this.ensureReady();
         this.cache[name] = data;
+        if (!this.index.includes(name)) {
+            this.index = Array.from(new Set(this.list().concat(name).filter(Boolean)));
+            this._persistIndex();
+        }
+        this.hydrated = true;
         this._persistLocal();
         try {
             await safeInvoke('save_kv', { name: STORAGE_KEY, data: this.cache });
@@ -78,7 +153,11 @@ export class WorldInfoStore {
     }
 
     async remove(name) {
+        if (!this.hydrated) await this.ensureReady();
         delete this.cache[name];
+        this.index = this.list().filter(item => item !== name);
+        this.hydrated = true;
+        this._persistIndex();
         this._persistLocal();
         try {
             await safeInvoke('save_kv', { name: STORAGE_KEY, data: this.cache });
@@ -88,7 +167,11 @@ export class WorldInfoStore {
     }
 
     async saveMany(map) {
+        if (!this.hydrated) await this.ensureReady();
         this.cache = { ...this.cache, ...map };
+        this.index = Object.keys(this.cache).map((item) => String(item || '').trim()).filter(Boolean);
+        this.hydrated = true;
+        this._persistIndex();
         this._persistLocal();
         try {
             await safeInvoke('save_kv', { name: STORAGE_KEY, data: this.cache });
