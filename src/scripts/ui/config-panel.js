@@ -4,15 +4,9 @@
 
 import { ConfigManager } from '../storage/config.js';
 import { LLMClient } from '../api/client.js';
+import { canInitClient } from '../api/client-config-utils.js';
 import { logger } from '../utils/logger.js';
 import { appConfirm } from './app-confirm.js';
-
-const canInitClient = (cfg) => {
-    const c = cfg || {};
-    const hasKey = typeof c.apiKey === 'string' && c.apiKey.trim().length > 0;
-    const hasVertexSa = c.provider === 'vertexai' && typeof c.vertexaiServiceAccount === 'string' && c.vertexaiServiceAccount.trim().length > 0;
-    return hasKey || hasVertexSa;
-};
 
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>"]/g, (ch) => ({
     '&': '&amp;',

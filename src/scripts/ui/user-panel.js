@@ -6,11 +6,11 @@ import { getDefaultAppIcon } from '../utils/default-icon.js';
 import { bindCustomSelectButton, closeCustomSelectMenu, refreshCustomSelectButton } from './custom-select.js';
 
 const DEFAULT_USER_BUBBLE_COLOR = '#E8F0FE';
-const DEFAULT_USER_TEXT_COLOR = '#1F2937';
+const DEFAULT_USER_TEXT_COLOR = '#1F2937'; // theme-audit-ignore: light-mode default token
 const DEFAULT_DARK_USER_BUBBLE_COLOR = '#2F3C52';
 const DEFAULT_DARK_USER_TEXT_COLOR = '#F8FAFC';
-const USER_BUBBLE_COLOR_SWATCHES = ['#2F3C52', '#214B4A', '#4A344F', '#475569', '#c9c9c9', '#f59e0b', '#dc2626', '#2563eb', '#10b981'];
-const USER_TEXT_COLOR_SWATCHES = ['#ffffff', '#111827', '#4b5563', '#2563eb', '#059669', '#dc2626', '#7c3aed', '#b45309', '#db2777'];
+const USER_BUBBLE_COLOR_SWATCHES = ['#2F3C52', '#214B4A', '#4A344F', '#475569', '#c9c9c9', '#f59e0b', '#dc2626', '#2563eb', '#10b981']; // theme-audit-ignore: curated swatch palette
+const USER_TEXT_COLOR_SWATCHES = ['#ffffff', '#111827', '#4b5563', '#2563eb', '#059669', '#dc2626', '#7c3aed', '#b45309', '#db2777']; // theme-audit-ignore: curated swatch palette
 
 const normalizeHexColor = (value, fallback = DEFAULT_USER_BUBBLE_COLOR) => {
     const raw = String(value || '').trim();
@@ -189,7 +189,7 @@ export class UserPanel {
                         <label style="display:block; font-size:12px; color:var(--app-text-secondary); margin-bottom:5px;">用户气泡颜色</label>
                         <div class="chat-setting-color-field">
                             <div class="chat-setting-color-inputs" style="display:flex; align-items:center; gap:10px;">
-                                <input type="text" id="edit-bubble-color-input" value="#E8F0FE" style="flex:1; padding:10px; border:1px solid var(--app-border-default); border-radius:8px; box-sizing:border-box;">
+                                <input type="text" id="edit-bubble-color-input" value="${DEFAULT_USER_BUBBLE_COLOR}" style="flex:1; padding:10px; border:1px solid var(--app-border-default); border-radius:8px; box-sizing:border-box;">
                                 <button type="button" id="edit-bubble-color" class="color-picker" aria-label="用户气泡颜色快速切换"></button>
                             </div>
                             <div id="edit-bubble-color-swatches" class="chat-setting-color-swatches" aria-label="用户气泡颜色快速切换"></div>
@@ -199,7 +199,7 @@ export class UserPanel {
                         <label style="display:block; font-size:12px; color:var(--app-text-secondary); margin-bottom:5px;">用户字体颜色</label>
                         <div class="chat-setting-color-field">
                             <div class="chat-setting-color-inputs" style="display:flex; align-items:center; gap:10px;">
-                                <input type="text" id="edit-text-color-input" value="#1F2937" style="flex:1; padding:10px; border:1px solid var(--app-border-default); border-radius:8px; box-sizing:border-box;">
+                                <input type="text" id="edit-text-color-input" value="${DEFAULT_USER_TEXT_COLOR}" style="flex:1; padding:10px; border:1px solid var(--app-border-default); border-radius:8px; box-sizing:border-box;">
                                 <button type="button" id="edit-text-color" class="color-picker" aria-label="用户字体颜色快速切换"></button>
                             </div>
                             <div id="edit-text-color-swatches" class="chat-setting-color-swatches" aria-label="用户字体颜色快速切换"></div>

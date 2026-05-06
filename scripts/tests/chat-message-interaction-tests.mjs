@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import {
   SELF_REACTION_ACTOR,
+  buildRpFloorAssignments,
   buildReplyTargetSnapshot,
   countReactionActors,
+  getRpFloorLabel,
   getMessagePreviewText,
   hasReactionActor,
   normalizeReactionEntries,
@@ -59,6 +61,44 @@ test('toggleReactionActor should add and remove self reactions', () => {
 
   next = toggleReactionActor(next, '😂');
   assert.deepEqual(next, []);
+});
+
+test('buildRpFloorAssignments should number greeting and dialogue turns consistently', () => {
+  const assignments = buildRpFloorAssignments([
+    { role: 'assistant', meta: { isGreeting: true } },
+    { role: 'assistant' },
+    { role: 'user' },
+    { role: 'assistant' },
+    { role: 'user' },
+    { role: 'assistant' },
+  ]);
+  assert.deepEqual(assignments, [
+    { floor: 0, marker: true },
+    { floor: 0, marker: false },
+    { floor: 1, marker: true },
+    { floor: 1, marker: false },
+    { floor: 2, marker: true },
+    { floor: 2, marker: false },
+  ]);
+  assert.equal(getRpFloorLabel(0), '#0 序章');
+  assert.equal(getRpFloorLabel(3), '# 3');
+});
+
+test('buildRpFloorAssignments should recompute later floors after a user turn is removed', () => {
+  const assignments = buildRpFloorAssignments([
+    { role: 'assistant', meta: { isGreeting: true } },
+    { role: 'assistant' },
+    { role: 'user' },
+    { role: 'assistant' },
+    { role: 'assistant' },
+  ]);
+  assert.deepEqual(assignments, [
+    { floor: 0, marker: true },
+    { floor: 0, marker: false },
+    { floor: 1, marker: true },
+    { floor: 1, marker: false },
+    { floor: 1, marker: false },
+  ]);
 });
 
 let failed = 0;

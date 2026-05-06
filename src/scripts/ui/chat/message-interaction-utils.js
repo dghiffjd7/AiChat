@@ -99,6 +99,36 @@ export const buildReplyTargetSnapshot = (message, { author = '', avatar = '', se
   );
 };
 
+export const getRpFloorLabel = (floor) => (Number(floor) === 0 ? '#0 序章' : `# ${Number(floor)}`);
+
+export const buildRpFloorAssignments = (messages = []) => {
+  let currentFloor = -1;
+  return (Array.isArray(messages) ? messages : []).map((message) => {
+    const msg = message && typeof message === 'object' ? message : null;
+    if (!msg || msg.role === 'system') {
+      return { floor: null, marker: false };
+    }
+
+    let marker = false;
+    if (msg?.meta?.isGreeting) {
+      currentFloor = 0;
+      marker = true;
+    } else if (msg.role === 'user') {
+      currentFloor = Math.max(currentFloor, 0) + 1;
+      marker = true;
+    }
+
+    if (currentFloor < 0) {
+      return { floor: null, marker: false };
+    }
+
+    return {
+      floor: currentFloor,
+      marker,
+    };
+  });
+};
+
 export const normalizeReactionEntries = (input) => {
   const list = Array.isArray(input) ? input : [];
   const byEmoji = new Map();

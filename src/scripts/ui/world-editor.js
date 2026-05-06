@@ -6,6 +6,7 @@
  */
 
 import { LLMClient } from '../api/client.js';
+import { canInitClient as canUseApiConfig } from '../api/client-config-utils.js';
 import { ConfigManager } from '../storage/config.js';
 import { logger } from '../utils/logger.js';
 import { pickSavePath as pickNativeSavePath } from '../utils/save-dialog.js';
@@ -292,16 +293,6 @@ const normalizePromptBlock = (raw = {}, index = 0, fallbackContent = '') => {
         nodeGraph: normalizedGraph,
         when: normalizedWhen,
     };
-};
-
-const canUseApiConfig = config => {
-    const cfg = config || {};
-    const hasKey = typeof cfg.apiKey === 'string' && cfg.apiKey.trim().length > 0;
-    const hasVertexSa =
-        cfg.provider === 'vertexai' &&
-        typeof cfg.vertexaiServiceAccount === 'string' &&
-        cfg.vertexaiServiceAccount.trim().length > 0;
-    return hasKey || hasVertexSa;
 };
 
 const normalizeArray = (val) => {

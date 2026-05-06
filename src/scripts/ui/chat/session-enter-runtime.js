@@ -1,0 +1,1097 @@
+import {
+  buildInitialHistorySlice,
+  buildEnterRestorePlan,
+  resolveEnterPageSize,
+  resolveEnterHydrationDelay,
+  resolveEnterScrollMode,
+  shouldUseProgressiveInitialRender,
+} from './session-enter-utils.js';
+
+export const activateSessionEnterView = ({
+  originPage = '',
+  setChatOriginPage = null,
+  cancelInitialHistoryFillJobs = null,
+  chatListEl = null,
+  chatRoomEl = null,
+  chatPageEl = null,
+  bodyEl = null,
+  setChatInputGapTweak = null,
+  setStickerPanelOpen = null,
+  scheduleModeSwitchSync = null,
+  syncChatInputOffset = null,
+  requestAnimationFrameFn = null,
+  setTimeoutFn = null,
+  messageTopbarEl = null,
+  bottomNavEl = null,
+} = {}) => {
+  const nextOriginPage = String(originPage || '').trim() || 'chat';
+  try {
+    setChatOriginPage?.(nextOriginPage);
+  } catch {}
+  try {
+    cancelInitialHistoryFillJobs?.();
+  } catch {}
+  try {
+    chatListEl?.classList?.add?.('hidden');
+  } catch {}
+  try {
+    chatRoomEl?.classList?.remove?.('hidden');
+  } catch {}
+  try {
+    chatPageEl?.classList?.add?.('chat-room-active');
+  } catch {}
+  try {
+    bodyEl?.classList?.add?.('chat-room-active');
+  } catch {}
+  try {
+    setChatInputGapTweak?.(0);
+  } catch {}
+  try {
+    setStickerPanelOpen?.(false);
+  } catch {}
+  try {
+    scheduleModeSwitchSync?.();
+  } catch {}
+  if (typeof requestAnimationFrameFn === 'function') {
+    try {
+      requestAnimationFrameFn(() => {
+        syncChatInputOffset?.();
+        requestAnimationFrameFn(syncChatInputOffset);
+      });
+    } catch {}
+  } else if (typeof setTimeoutFn === 'function') {
+    try {
+      setTimeoutFn(syncChatInputOffset, 0);
+    } catch {}
+  }
+  try {
+    if (messageTopbarEl?.style) messageTopbarEl.style.display = 'none';
+  } catch {}
+  try {
+    if (bottomNavEl?.style) bottomNavEl.style.display = 'none';
+  } catch {}
+  return nextOriginPage;
+};
+
+export const deactivateSessionEnterView = ({
+  resetEnterRequest = null,
+  cancelInitialHistoryFillJobs = null,
+  chatRoomEl = null,
+  chatListEl = null,
+  chatPageEl = null,
+  bodyEl = null,
+  clearStageTimeline = null,
+  setStickerPanelOpen = null,
+  setActionPanelOpen = null,
+  setReplyTarget = null,
+  scheduleModeSwitchSync = null,
+  scheduleWallpaperIdle = null,
+  messageTopbarEl = null,
+  bottomNavEl = null,
+  updateChatContentSearchVisibility = null,
+} = {}) => {
+  try {
+    resetEnterRequest?.('');
+  } catch {}
+  try {
+    cancelInitialHistoryFillJobs?.();
+  } catch {}
+  try {
+    chatRoomEl?.classList?.add?.('hidden');
+  } catch {}
+  try {
+    chatListEl?.classList?.remove?.('hidden');
+  } catch {}
+  try {
+    chatPageEl?.classList?.remove?.('chat-room-active');
+  } catch {}
+  try {
+    bodyEl?.classList?.remove?.('chat-room-active');
+  } catch {}
+  try {
+    clearStageTimeline?.('');
+  } catch {}
+  try {
+    setStickerPanelOpen?.(false);
+  } catch {}
+  try {
+    setActionPanelOpen?.(false);
+  } catch {}
+  try {
+    setReplyTarget?.(null);
+  } catch {}
+  try {
+    scheduleModeSwitchSync?.();
+  } catch {}
+  try {
+    scheduleWallpaperIdle?.();
+  } catch {}
+  try {
+    if (messageTopbarEl?.style) messageTopbarEl.style.display = '';
+  } catch {}
+  try {
+    if (bottomNavEl?.style) bottomNavEl.style.display = '';
+  } catch {}
+  try {
+    updateChatContentSearchVisibility?.();
+  } catch {}
+  return true;
+};
+
+export const applySessionEnterLoadingState = ({
+  sessionId = '',
+  contact = null,
+  sessionName = '',
+  showConversationLoading = null,
+  getDraft = null,
+  getMirrorDraft = null,
+  setInputText = null,
+  syncReplyTargetComposer = null,
+  setSessionLabel = null,
+  updatePendingFloat = null,
+} = {}) => {
+  const sid = String(sessionId || '').trim();
+  const displayName = String(contact?.name || sessionName || sid).trim();
+  try {
+    showConversationLoading?.({
+      title: displayName,
+      isGroup: Boolean(contact?.isGroup) || sid.startsWith('group:'),
+    });
+  } catch {}
+  try {
+    const draft = getDraft?.(sid);
+    if (draft) {
+      setInputText?.(draft);
+    } else {
+      setInputText?.(getMirrorDraft?.(sid) || '');
+    }
+  } catch {}
+  try {
+    syncReplyTargetComposer?.(sid);
+  } catch {}
+  try {
+    setSessionLabel?.(sid);
+  } catch {}
+  try {
+    updatePendingFloat?.(sid);
+  } catch {}
+  return displayName;
+};
+
+export const applySessionEnterChatSettings = ({
+  sessionId = '',
+  chatSettingsReady = false,
+  getSessionSettings = null,
+  normalizeChatSettings = null,
+  applyChatSettings = null,
+  setPendingChatSettingsSessionId = null,
+  logger = null,
+} = {}) => {
+  const sid = String(sessionId || '').trim();
+  if (!sid) return { applied: false, pending: false };
+  if (!chatSettingsReady) {
+    try {
+      setPendingChatSettingsSessionId?.(sid);
+    } catch {}
+    return { applied: false, pending: true };
+  }
+  try {
+    const raw = getSessionSettings?.(sid) || {};
+    const normalized = typeof normalizeChatSettings === 'function'
+      ? normalizeChatSettings(raw)
+      : raw;
+    applyChatSettings?.(sid, normalized);
+    return { applied: true, pending: false };
+  } catch (err) {
+    logger?.warn?.('应用会话聊天设置失败', err);
+  }
+  return { applied: false, pending: false };
+};
+
+export const runSessionEnterDeferredTasks = ({
+  sessionId = '',
+  isGroupSession = false,
+  currentArchiveId = '',
+  cancelScheduledHydration = null,
+  scheduleHydration = null,
+  restoreArchivePointer = null,
+  restoreTailMemory = null,
+  prefetchRawOriginals = null,
+  logger = null,
+} = {}) => {
+  const sid = String(sessionId || '').trim();
+  if (!sid) return { hydrateDelay: 0, restoreMode: '' };
+  const hydrateDelay = resolveEnterHydrationDelay({ isGroupSession });
+  try {
+    if (typeof cancelScheduledHydration === 'function') {
+      cancelScheduledHydration(sid);
+    }
+  } catch {}
+  try {
+    if (typeof scheduleHydration === 'function') {
+      Promise.resolve(scheduleHydration(sid, {
+        onlyMissing: true,
+        delayMs: hydrateDelay,
+      })).catch(err => {
+        logger?.warn?.('schedule hydrate turn checkpoints from loaded messages failed', err);
+      });
+    }
+  } catch {}
+  const restorePlan = buildEnterRestorePlan({ currentArchiveId });
+  try {
+    const restoreTask = restorePlan.mode === 'archive'
+      ? (typeof restoreArchivePointer === 'function'
+        ? restoreArchivePointer(sid, {
+          refreshBaselineWhenNoTail: restorePlan.refreshBaselineWhenNoTail,
+          source: restorePlan.source,
+        })
+        : null)
+      : (typeof restoreTailMemory === 'function'
+        ? restoreTailMemory(sid, {
+          refreshBaselineWhenNoTail: restorePlan.refreshBaselineWhenNoTail,
+          source: restorePlan.source,
+        })
+        : null);
+    Promise.resolve(restoreTask).catch(err => {
+      logger?.warn?.('restore tail assistant memory state on enter failed', err);
+    });
+  } catch {}
+  try {
+    Promise.resolve(prefetchRawOriginals?.(sid)).catch(() => {});
+  } catch {}
+  return {
+    hydrateDelay,
+    restoreMode: restorePlan.mode,
+  };
+};
+
+export const applySessionEnterScrollMode = (
+  mode,
+  {
+    jumpToUnread = null,
+    scrollToBottom = null,
+    syncChatBottomGap = null,
+    requestAnimationFrameFn = null,
+    setTimeoutFn = null,
+    windowObject = null,
+  } = {},
+) => {
+  const scheduleGap = () => {
+    try {
+      if (typeof requestAnimationFrameFn === 'function') {
+        requestAnimationFrameFn(syncChatBottomGap);
+      } else if (typeof setTimeoutFn === 'function') {
+        setTimeoutFn(syncChatBottomGap, 0);
+      }
+    } catch {
+      if (typeof setTimeoutFn === 'function') {
+        setTimeoutFn(syncChatBottomGap, 0);
+      }
+    }
+  };
+  if (mode === 'target' || mode === 'keep') {
+    scheduleGap();
+    return mode;
+  }
+  if (mode === 'unread') {
+    try {
+      if (windowObject && typeof windowObject.requestAnimationFrame === 'function') {
+        windowObject.requestAnimationFrame(() => {
+          if (typeof jumpToUnread === 'function' && !jumpToUnread() && typeof setTimeoutFn === 'function') {
+            setTimeoutFn(jumpToUnread, 80);
+          }
+          if (typeof requestAnimationFrameFn === 'function') {
+            requestAnimationFrameFn(syncChatBottomGap);
+          } else if (typeof setTimeoutFn === 'function') {
+            setTimeoutFn(syncChatBottomGap, 0);
+          }
+        });
+      } else if (typeof setTimeoutFn === 'function') {
+        setTimeoutFn(() => {
+          if (typeof jumpToUnread === 'function' && !jumpToUnread()) {
+            setTimeoutFn(jumpToUnread, 80);
+          }
+          setTimeoutFn(syncChatBottomGap, 0);
+        }, 0);
+      }
+    } catch {
+      if (typeof setTimeoutFn === 'function') {
+        setTimeoutFn(() => {
+          if (typeof jumpToUnread === 'function' && !jumpToUnread()) {
+            setTimeoutFn(jumpToUnread, 80);
+          }
+          setTimeoutFn(syncChatBottomGap, 0);
+        }, 0);
+      }
+    }
+    return mode;
+  }
+  if (typeof setTimeoutFn === 'function') {
+    setTimeoutFn(() => {
+      scrollToBottom?.();
+      if (typeof requestAnimationFrameFn === 'function') {
+        requestAnimationFrameFn(syncChatBottomGap);
+      } else if (typeof setTimeoutFn === 'function') {
+        setTimeoutFn(syncChatBottomGap, 0);
+      }
+    }, 0);
+  }
+  return 'bottom';
+};
+
+export const renderSessionEnterInitialHistory = ({
+  sessionId = '',
+  initialMessages = [],
+  useProgressiveInitialRender = false,
+  renderInitialHistoryProgressive = null,
+  decorateMessagesForDisplay = null,
+  preloadHistory = null,
+  nowPerfMs = () => 0,
+} = {}) => {
+  const sid = String(sessionId || '').trim();
+  const list = Array.isArray(initialMessages) ? initialMessages : [];
+  if (useProgressiveInitialRender && typeof renderInitialHistoryProgressive === 'function') {
+    return renderInitialHistoryProgressive(sid, list, {
+      keepScroll: true,
+      recentCount: 24,
+      chunkSize: 12,
+    });
+  }
+  const decorateStart = nowPerfMs();
+  const decoratedInitial = typeof decorateMessagesForDisplay === 'function'
+    ? decorateMessagesForDisplay(list, { sessionId: sid })
+    : list;
+  const decorateMs = Math.round(nowPerfMs() - decorateStart);
+  const preloadStart = nowPerfMs();
+  if (typeof preloadHistory === 'function') {
+    preloadHistory(decoratedInitial, { keepScroll: true });
+  }
+  const preloadMs = Math.round(nowPerfMs() - preloadStart);
+  return {
+    decorateMs,
+    preloadMs,
+    deferred: false,
+    deferredCount: 0,
+  };
+};
+
+export const loadSessionEnterHistoryStage = async ({
+  sessionId = '',
+  isGroupSession = false,
+  isAndroid = false,
+  jumpTargetMessageId = '',
+  ensureRecentMessagesLoaded = null,
+  isRequestStale = null,
+  getFirstUnreadMessageId = null,
+  injectUnreadDivider = null,
+  clearMessages = null,
+  hideTyping = null,
+  renderInitialHistoryProgressive = null,
+  decorateMessagesForDisplay = null,
+  preloadHistory = null,
+  nowPerfMs = () => 0,
+  currentArchiveId = '',
+  cancelScheduledHydration = null,
+  scheduleHydration = null,
+  restoreArchivePointer = null,
+  restoreTailMemory = null,
+  prefetchRawOriginals = null,
+  setRenderState = null,
+  logger = null,
+} = {}) => {
+  const sid = String(sessionId || '').trim();
+  if (!sid) {
+    return {
+      stale: false,
+      loadHistoryMs: 0,
+      firstUnreadId: '',
+      dividerId: '',
+      renderMetrics: {
+        decorateMs: 0,
+        preloadMs: 0,
+        deferred: false,
+        deferredCount: 0,
+      },
+    };
+  }
+  const loadStart = nowPerfMs();
+  const history = await Promise.resolve(ensureRecentMessagesLoaded?.(sid));
+  if (typeof isRequestStale === 'function' && isRequestStale() === true) {
+    return { stale: true };
+  }
+  const loadHistoryMs = Math.round(nowPerfMs() - loadStart);
+  const firstUnreadId = String(getFirstUnreadMessageId?.(sid) || '').trim();
+  const pageSize = resolveEnterPageSize({ isGroupSession, isAndroid });
+  const {
+    start,
+    list: initialWithDivider,
+    dividerId,
+  } = buildInitialHistorySlice(Array.isArray(history) ? history : [], {
+    firstUnreadId,
+    pageSize,
+    unreadLead: 10,
+    injectUnreadDivider,
+  });
+  try {
+    clearMessages?.();
+  } catch {}
+  try {
+    hideTyping?.();
+  } catch {}
+  const renderMetrics = renderSessionEnterInitialHistory({
+    sessionId: sid,
+    initialMessages: initialWithDivider,
+    useProgressiveInitialRender: shouldUseProgressiveInitialRender({
+      isGroupSession,
+      isAndroid,
+      jumpTargetMessageId,
+      firstUnreadId,
+      initialCount: initialWithDivider.length,
+    }),
+    renderInitialHistoryProgressive,
+    decorateMessagesForDisplay,
+    preloadHistory,
+    nowPerfMs,
+  });
+  runSessionEnterDeferredTasks({
+    sessionId: sid,
+    isGroupSession,
+    currentArchiveId,
+    cancelScheduledHydration,
+    scheduleHydration,
+    restoreArchivePointer,
+    restoreTailMemory,
+    prefetchRawOriginals,
+    logger,
+  });
+  try {
+    setRenderState?.(sid, { start });
+  } catch {}
+  return {
+    stale: false,
+    loadHistoryMs,
+    firstUnreadId,
+    dividerId,
+    renderMetrics,
+  };
+};
+
+export const renderSessionChangedHistoryStage = ({
+  sessionId = '',
+  messages = [],
+  pageSize = 90,
+  clearMessages = null,
+  decorateMessagesForDisplay = null,
+  preloadHistory = null,
+  setRenderState = null,
+  getDraft = null,
+  setInputText = null,
+  syncReplyTargetComposer = null,
+  setSessionLabel = null,
+  applyMvuSchemaDefaults = null,
+  uiMode = '',
+  refreshRpToolbar = null,
+  refreshChatAndContacts = null,
+} = {}) => {
+  const sid = String(sessionId || '').trim();
+  const list = Array.isArray(messages) ? messages : [];
+  try {
+    clearMessages?.();
+  } catch {}
+  const normalizedPageSize = Math.max(0, Number(pageSize) || 0);
+  const start = Math.max(0, list.length - normalizedPageSize);
+  try {
+    const decorated = typeof decorateMessagesForDisplay === 'function'
+      ? decorateMessagesForDisplay(list.slice(start), { sessionId: sid })
+      : list.slice(start);
+    preloadHistory?.(decorated);
+  } catch {}
+  try {
+    setRenderState?.(sid, { start });
+  } catch {}
+  try {
+    setInputText?.(getDraft?.(sid) || '');
+  } catch {}
+  try {
+    syncReplyTargetComposer?.(sid);
+  } catch {}
+  try {
+    setSessionLabel?.(sid);
+  } catch {}
+  try {
+    applyMvuSchemaDefaults?.(sid, { reason: 'session' });
+  } catch {}
+  try {
+    if (String(uiMode || '').trim() === 'rp') refreshRpToolbar?.(sid);
+  } catch {}
+  try {
+    refreshChatAndContacts?.();
+  } catch {}
+  return {
+    start,
+    renderedCount: Math.max(0, list.length - start),
+  };
+};
+
+export const applySavedUiRestoreState = ({
+  savedState = null,
+  hasPage = null,
+  switchPage = null,
+  restoreSessionShell = null,
+  uiLog = null,
+} = {}) => {
+  if (!savedState || typeof savedState !== 'object') {
+    return {
+      restored: false,
+      page: '',
+      sessionId: '',
+      inChatRoom: false,
+      sidKnown: false,
+    };
+  }
+  const page = String(savedState?.activePage || '').trim();
+  const sid = String(savedState?.sessionId || '').trim();
+  const inChatRoom = Boolean(savedState?.inChatRoom);
+  try {
+    uiLog?.('restoreUiState: picked', {
+      page,
+      sid,
+      inChatRoom,
+      at: savedState?.at || 0,
+    });
+  } catch {}
+  try {
+    if (page && hasPage?.(page)) switchPage?.(page);
+  } catch {}
+  const sidKnown = sid ? Boolean(restoreSessionShell?.(sid)) : false;
+  try {
+    if (sid && !sidKnown) {
+      uiLog?.('restoreUiState: sid not yet known (skip switchSession)', { sid });
+    }
+  } catch {}
+  return {
+    restored: true,
+    page,
+    sessionId: sid,
+    inChatRoom,
+    sidKnown,
+  };
+};
+
+export const reconcileHydratedStoreUiState = async ({
+  store = '',
+  refreshChatAndContacts = null,
+  getCurrentSessionId = null,
+  readSavedStateFast = null,
+  hasSession = null,
+  pickSavedUiState = null,
+  hasPage = null,
+  switchPage = null,
+  restoreSessionShell = null,
+  uiLog = null,
+} = {}) => {
+  const normalizedStore = String(store || '').trim();
+  if (!normalizedStore || (normalizedStore !== 'chat' && normalizedStore !== 'contacts')) {
+    return { handled: false, restored: false };
+  }
+  try {
+    uiLog?.('store-hydrated', { store: normalizedStore });
+  } catch {}
+  try {
+    refreshChatAndContacts?.();
+  } catch {}
+  const cur = String(getCurrentSessionId?.() || '').trim();
+  const fastState = (() => {
+    try {
+      return readSavedStateFast?.() || null;
+    } catch {}
+    return null;
+  })();
+  const want = String(fastState?.sessionId || '').trim();
+  const curKnown = Boolean(hasSession?.(cur));
+  try {
+    uiLog?.('store-hydrated: check restore', { cur, want, curKnown });
+  } catch {}
+  if (want && want !== cur && (cur === 'default' || !curKnown)) {
+    const saved = await Promise.resolve(pickSavedUiState?.());
+    const page = String(saved?.activePage || '').trim();
+    const inChatRoom = Boolean(saved?.inChatRoom);
+    try {
+      if (page && hasPage?.(page)) switchPage?.(page);
+    } catch {}
+    const shellRestored = Boolean(restoreSessionShell?.(want));
+    return {
+      handled: true,
+      restored: shellRestored,
+      page,
+      sessionId: want,
+      inChatRoom,
+    };
+  }
+  return {
+    handled: true,
+    restored: false,
+    page: '',
+    sessionId: want,
+    inChatRoom: false,
+  };
+};
+
+export const finalizeSessionEnterNavigation = ({
+  jumpTargetMessageId = '',
+  jumpKeyword = '',
+  jumpKind = 'anchor',
+  scrollToMessage = null,
+  dividerId = '',
+  firstUnreadId = '',
+  suppressInitialAutoScroll = false,
+  scrollToBottom = null,
+  syncChatBottomGap = null,
+  requestAnimationFrameFn = null,
+  setTimeoutFn = null,
+  windowObject = null,
+} = {}) => {
+  const targetId = String(jumpTargetMessageId || '').trim();
+  const keyword = String(jumpKeyword || '').trim();
+  const kind = String(jumpKind || '').trim() || 'anchor';
+  const normalizedDividerId = String(dividerId || '').trim();
+  const normalizedFirstUnreadId = String(firstUnreadId || '').trim();
+  const jumpedToTarget = targetId
+    ? Boolean(scrollToMessage?.(targetId, {
+      keyword,
+      kind,
+      dismissOnScroll: true,
+    }))
+    : false;
+  const jumpToUnread = () => {
+    if (normalizedDividerId && scrollToMessage?.(normalizedDividerId, { kind: 'unread', dismissOnScroll: true })) {
+      return true;
+    }
+    if (normalizedFirstUnreadId) {
+      return Boolean(scrollToMessage?.(normalizedFirstUnreadId, { kind: 'unread', dismissOnScroll: true }));
+    }
+    return false;
+  };
+  const scrollMode = resolveEnterScrollMode({
+    jumpedToTarget,
+    suppressInitialAutoScroll,
+    dividerId: normalizedDividerId,
+    firstUnreadId: normalizedFirstUnreadId,
+  });
+  applySessionEnterScrollMode(scrollMode, {
+    jumpToUnread,
+    scrollToBottom,
+    syncChatBottomGap,
+    requestAnimationFrameFn,
+    setTimeoutFn,
+    windowObject,
+  });
+  return { jumpedToTarget, scrollMode };
+};
+
+export const activateSessionShellState = ({
+  sessionId = '',
+  switchSession = null,
+  setStageSession = null,
+  setTimelineSession = null,
+  setActiveSession = null,
+  syncUserPersonaUI = null,
+  getContact = null,
+  renderSessionNameHtml = null,
+  setChatTitleHtml = null,
+  getDraft = null,
+  setInputText = null,
+  syncReplyTargetComposer = null,
+  setSessionLabel = null,
+  restoreDraft = false,
+} = {}) => {
+  const sid = String(sessionId || '').trim();
+  if (!sid) return false;
+  try {
+    switchSession?.(sid);
+  } catch {}
+  try {
+    setStageSession?.(sid);
+  } catch {}
+  try {
+    setTimelineSession?.(sid);
+  } catch {}
+  try {
+    setActiveSession?.(sid);
+  } catch {}
+  try {
+    syncUserPersonaUI?.(sid);
+  } catch {}
+  try {
+    const contact = typeof getContact === 'function' ? getContact(sid) : null;
+    if (typeof renderSessionNameHtml === 'function' && typeof setChatTitleHtml === 'function') {
+      setChatTitleHtml(renderSessionNameHtml(sid, contact));
+    }
+  } catch {}
+  if (restoreDraft) {
+    try {
+      const draft = typeof getDraft === 'function' ? getDraft(sid) : '';
+      setInputText?.(draft || '');
+    } catch {}
+  }
+  try {
+    syncReplyTargetComposer?.(sid);
+  } catch {}
+  try {
+    setSessionLabel?.(sid);
+  } catch {}
+  return true;
+};
+
+export const runSessionEnterFlow = async ({
+  sessionId = '',
+  sessionName = '',
+  originPage = '',
+  options = null,
+  contact = null,
+  isGroupSession = false,
+  activateView = null,
+  activateShellStateFn = null,
+  applyChatSettingsFn = null,
+  applyLoadingStateFn = null,
+  loadHistoryStageFn = null,
+  finalizeNavigationFn = null,
+  finalizeUiStateFn = null,
+  getChatOriginPage = null,
+  uiLog = null,
+} = {}) => {
+  const sid = String(sessionId || '').trim();
+  if (!sid) return { jumpedToTarget: false, stale: false };
+  const payload = options && typeof options === 'object' ? options : {};
+  const suppressInitialAutoScroll = payload.suppressInitialAutoScroll === true;
+  const jumpTargetMessageId = String(payload.jumpTargetMessageId || '').trim();
+  const jumpKeyword = String(payload.jumpKeyword || '').trim();
+  const jumpKind = String(payload.jumpKind || (jumpKeyword ? 'search' : 'anchor')).trim() || 'anchor';
+
+  try {
+    activateView?.({ originPage });
+  } catch {}
+  try {
+    activateShellStateFn?.({ sessionId: sid });
+  } catch {}
+  try {
+    applyChatSettingsFn?.({ sessionId: sid });
+  } catch {}
+  try {
+    applyLoadingStateFn?.({ sessionId: sid, contact, sessionName });
+  } catch {}
+
+  const historyStage = await Promise.resolve(loadHistoryStageFn?.({
+    sessionId: sid,
+    isGroupSession,
+    jumpTargetMessageId,
+  }));
+  if (historyStage?.stale) return { jumpedToTarget: false, stale: true };
+
+  const { jumpedToTarget = false } = finalizeNavigationFn?.({
+    jumpTargetMessageId,
+    jumpKeyword,
+    jumpKind,
+    dividerId: historyStage?.dividerId,
+    firstUnreadId: historyStage?.firstUnreadId,
+    suppressInitialAutoScroll,
+  }) || { jumpedToTarget: false };
+
+  try {
+    finalizeUiStateFn?.({ sessionId: sid });
+  } catch {}
+  try {
+    uiLog?.('enterChatRoom', {
+      sessionId: sid,
+      originPage: typeof getChatOriginPage === 'function' ? getChatOriginPage() : originPage,
+    });
+  } catch {}
+  return { jumpedToTarget };
+};
+
+export const runSessionExitFlow = ({
+  options = null,
+  deactivateView = null,
+  chatOriginPage = 'chat',
+  switchPage = null,
+  setChatOriginPage = null,
+  updatePendingFloat = null,
+  uiStateArmed = false,
+  saveUiState = null,
+  uiLog = null,
+  activePage = '',
+  getCurrentSessionId = null,
+} = {}) => {
+  try {
+    deactivateView?.();
+  } catch {}
+  const origin = String(chatOriginPage || '').trim() || 'chat';
+  if (origin && origin !== 'chat') {
+    try {
+      switchPage?.(origin, { ...(options || {}), animate: false });
+    } catch {}
+  }
+  try {
+    setChatOriginPage?.('chat');
+  } catch {}
+  try {
+    updatePendingFloat?.();
+  } catch {}
+  try {
+    if (uiStateArmed) saveUiState?.();
+  } catch {}
+  try {
+    uiLog?.('exitChatRoom', {
+      activePage,
+      sessionId: typeof getCurrentSessionId === 'function' ? getCurrentSessionId() : '',
+    });
+  } catch {}
+  return { originPage: origin };
+};
+
+export const runSessionChangedFlow = async ({
+  sessionId = '',
+  beginEnterRequest = null,
+  cancelInitialHistoryFillJobs = null,
+  syncScriptContext = null,
+  getContact = null,
+  activateShellStateFn = null,
+  applyLoadingStateFn = null,
+  ensureRecentMessagesLoaded = null,
+  isRequestStale = null,
+  renderChangedHistoryStageFn = null,
+} = {}) => {
+  const sid = String(sessionId || '').trim();
+  if (!sid) return { handled: false, stale: false, messageCount: 0 };
+  const enterRequest = beginEnterRequest?.(sid);
+  try {
+    cancelInitialHistoryFillJobs?.();
+  } catch {}
+  try {
+    Promise.resolve(syncScriptContext?.({ sessionId: sid })).catch(() => {});
+  } catch {}
+  const contact = (() => {
+    try {
+      return getContact?.(sid) || null;
+    } catch {
+      return null;
+    }
+  })();
+  try {
+    activateShellStateFn?.({ sessionId: sid, contact });
+  } catch {}
+  try {
+    applyLoadingStateFn?.({ sessionId: sid, contact, sessionName: contact?.name || sid });
+  } catch {}
+  const messages = await Promise.resolve(ensureRecentMessagesLoaded?.(sid));
+  if (typeof isRequestStale === 'function' && isRequestStale(enterRequest) === true) {
+    return {
+      handled: true,
+      stale: true,
+      messageCount: Array.isArray(messages) ? messages.length : 0,
+    };
+  }
+  try {
+    renderChangedHistoryStageFn?.({
+      sessionId: sid,
+      contact,
+      messages: Array.isArray(messages) ? messages : [],
+    });
+  } catch {}
+  return {
+    handled: true,
+    stale: false,
+    messageCount: Array.isArray(messages) ? messages.length : 0,
+  };
+};
+
+export const runSavedUiRestoreFlow = async ({
+  pickSavedUiState = null,
+  applySavedState = null,
+  uiLog = null,
+} = {}) => {
+  const savedState = await Promise.resolve(pickSavedUiState?.());
+  if (!savedState) {
+    try {
+      uiLog?.('restoreUiState: no saved state');
+    } catch {}
+    return { restored: false, missing: true };
+  }
+  const result = typeof applySavedState === 'function'
+    ? (applySavedState(savedState) || { restored: false })
+    : { restored: false };
+  return {
+    missing: false,
+    ...result,
+  };
+};
+
+export const runHydratedUiRestoreFlow = async ({
+  store = '',
+  reconcileHydratedState = null,
+} = {}) => {
+  return (await Promise.resolve(reconcileHydratedState?.({
+    store: String(store || '').trim(),
+  }))) || { handled: false, restored: false };
+};
+
+export const readSavedUiStateFastSnapshot = ({
+  key = '',
+  sessionStorageLike = null,
+  localStorageLike = null,
+} = {}) => {
+  const storageKey = String(key || '').trim();
+  if (!storageKey) return null;
+  try {
+    const raw = sessionStorageLike?.getItem?.(storageKey);
+    if (raw) return JSON.parse(raw);
+  } catch {}
+  try {
+    const raw = localStorageLike?.getItem?.(storageKey);
+    if (raw) return JSON.parse(raw);
+  } catch {}
+  return null;
+};
+
+export const pickSavedUiStateSnapshot = async ({
+  key = '',
+  sessionStorageLike = null,
+  localStorageLike = null,
+  loadDiskState = null,
+} = {}) => {
+  const fastState = readSavedUiStateFastSnapshot({
+    key,
+    sessionStorageLike,
+    localStorageLike,
+  });
+  if (fastState) return fastState;
+  try {
+    const diskState = await Promise.resolve(loadDiskState?.());
+    if (diskState && typeof diskState === 'object') return diskState;
+  } catch {}
+  return null;
+};
+
+export const saveUiStateSnapshot = ({
+  state = null,
+  key = '',
+  kvName = '',
+  sessionStorageLike = null,
+  localStorageLike = null,
+  clearTimerFn = null,
+  existingTimer = null,
+  setTimerFn = null,
+  persistDiskState = null,
+  uiLog = null,
+  delayMs = 400,
+} = {}) => {
+  if (!state || typeof state !== 'object') return existingTimer;
+  const storageKey = String(key || '').trim();
+  const diskKey = String(kvName || '').trim();
+  const raw = JSON.stringify(state);
+  try {
+    sessionStorageLike?.setItem?.(storageKey, raw);
+  } catch {}
+  try {
+    localStorageLike?.setItem?.(storageKey, raw);
+  } catch {}
+  try {
+    if (existingTimer != null) clearTimerFn?.(existingTimer);
+  } catch {}
+  let nextTimer = existingTimer;
+  if (typeof setTimerFn === 'function') {
+    nextTimer = setTimerFn(() => {
+      try {
+        persistDiskState?.({ name: diskKey, data: state });
+      } catch {}
+    }, Number(delayMs || 0));
+  }
+  try {
+    uiLog?.('saveUiState', state);
+  } catch {}
+  return nextTimer;
+};
+
+export const restoreSessionShellState = ({
+  sessionId = '',
+  hasKnownSession = null,
+  activateShellStateFn = null,
+} = {}) => {
+  const sid = String(sessionId || '').trim();
+  if (!sid) return false;
+  const known = typeof hasKnownSession === 'function' ? hasKnownSession(sid) : false;
+  if (!known) return false;
+  return activateShellStateFn?.(sid) === true;
+};
+
+export const finalizeSessionEnterUiState = ({
+  sessionId = '',
+  markRead = null,
+  refreshChatAndContacts = null,
+  nowPerfMs = () => 0,
+  getDraft = null,
+  getMirrorDraft = null,
+  setInputText = null,
+  syncReplyTargetComposer = null,
+  setSessionLabel = null,
+  uiStateArmed = false,
+  saveUiState = null,
+  updatePendingFloat = null,
+  activeGeneration = null,
+  showTyping = null,
+  getAssistantAvatarForSession = null,
+  getGroupTypingMembers = null,
+  logger = null,
+} = {}) => {
+  const sid = String(sessionId || '').trim();
+  if (!sid) return { refreshMs: 0, reattached: false };
+  try {
+    markRead?.(sid);
+  } catch {}
+  const refreshStart = nowPerfMs();
+  try {
+    refreshChatAndContacts?.();
+  } catch {}
+  const refreshMs = Math.round(nowPerfMs() - refreshStart);
+  try {
+    const draft = getDraft?.(sid);
+    if (draft) {
+      setInputText?.(draft);
+    } else {
+      const mirrorDraft = getMirrorDraft?.(sid) || '';
+      if (mirrorDraft) setInputText?.(mirrorDraft);
+    }
+  } catch {}
+  try {
+    syncReplyTargetComposer?.(sid);
+  } catch {}
+  try {
+    setSessionLabel?.(sid);
+  } catch {}
+  try {
+    if (uiStateArmed) saveUiState?.();
+  } catch {}
+  try {
+    updatePendingFloat?.(sid);
+  } catch {}
+  let reattached = false;
+  if (activeGeneration && !activeGeneration.cancelled && activeGeneration.sessionId === sid) {
+    const hasStreamText = String(activeGeneration.streamText || '').trim().length > 0;
+    if (hasStreamText && typeof activeGeneration.reattachStream === 'function') {
+      try {
+        reattached = activeGeneration.reattachStream() === true;
+      } catch (err) {
+        logger?.warn?.('assistant stream reattach failed', err);
+      }
+    }
+    if (!reattached) {
+      try {
+        showTyping?.(
+          typeof getAssistantAvatarForSession === 'function' ? getAssistantAvatarForSession(sid) : '',
+          typeof getGroupTypingMembers === 'function' ? (getGroupTypingMembers(sid) || {}) : {},
+        );
+      } catch {}
+    }
+  }
+  return { refreshMs, reattached };
+};

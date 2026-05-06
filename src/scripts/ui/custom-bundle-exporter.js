@@ -13,6 +13,7 @@ import { logger } from '../utils/logger.js';
 import { pickSavePath } from '../utils/save-dialog.js';
 import { safeInvoke } from '../utils/tauri.js';
 import { appConfirm } from './app-confirm.js';
+import { ensureDebugUiRegistry as ensureSharedDebugUiRegistry } from './debug-ui-registry-utils.js';
 import { normalizeWorldIdList } from './world-id-utils.js';
 
 const CUSTOM_BUNDLE_FORMAT = 'chatapp.custom-bundle.v1';
@@ -48,16 +49,7 @@ const roundDuration = (value) => {
 
 const ensureDebugUiRegistry = () => {
   try {
-    const bridge = window?.appBridge;
-    if (!bridge) return null;
-    if (!bridge.debugUiRegistry || typeof bridge.debugUiRegistry !== 'object') {
-      bridge.debugUiRegistry = { panels: {}, stores: {}, actions: {} };
-    }
-    const registry = bridge.debugUiRegistry;
-    if (!registry.panels || typeof registry.panels !== 'object') registry.panels = {};
-    if (!registry.stores || typeof registry.stores !== 'object') registry.stores = {};
-    if (!registry.actions || typeof registry.actions !== 'object') registry.actions = {};
-    return registry;
+    return ensureSharedDebugUiRegistry(window?.appBridge);
   } catch {
     return null;
   }

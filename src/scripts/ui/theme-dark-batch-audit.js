@@ -3,6 +3,7 @@ import {
   formatDarkThemeAuditReport,
   runDarkThemeDomAudit,
 } from './theme-dark-audit.js';
+import { getDebugUiRegistry } from './debug-ui-registry-utils.js';
 
 const STATUS_LABELS = {
   audited: '已审计',
@@ -59,9 +60,7 @@ const isVisibleElement = (element) => {
 };
 
 const getRegistry = () => {
-  const registry = window.appBridge?.debugUiRegistry;
-  if (!registry || typeof registry !== 'object') return null;
-  return registry;
+  return getDebugUiRegistry(window.appBridge);
 };
 
 const pickVisibleElement = (...candidates) => {

@@ -9,17 +9,12 @@ import { PresetStore } from '../storage/preset-store.js';
 import { appSettings } from '../storage/app-settings.js';
 import { getReasoningCapability, getReasoningSamplerPolicy, normalizeReasoningEffort } from '../api/model-capabilities.js';
 import { LLMClient } from '../api/client.js';
+import { canInitClient } from '../api/client-config-utils.js';
 import { logger } from '../utils/logger.js';
 import { pickSavePath as pickNativeSavePath } from '../utils/save-dialog.js';
 import { safeInvoke } from '../utils/tauri.js';
 import { appConfirm, appChoice } from './app-confirm.js';
-
-const canInitClient = (cfg) => {
-    const c = cfg || {};
-    const hasKey = typeof c.apiKey === 'string' && c.apiKey.trim().length > 0;
-    const hasVertexSa = c.provider === 'vertexai' && typeof c.vertexaiServiceAccount === 'string' && c.vertexaiServiceAccount.trim().length > 0;
-    return hasKey || hasVertexSa;
-};
+import { buildScriptAuthorizationMessage } from './script-authorization-utils.js';
 
 /* Section definitions — order matters for rendering */
 const SECTIONS = [
@@ -3424,7 +3419,10 @@ export class PresetPanel {
                         const settings = appSettings.get();
                         const choice = await appChoice({
                             title: '脚本授权',
-                            message: `已导入 ${result.count} 条绑定脚本。\n脚本可能需要权限：\n- 读取聊天记录：${settings.scriptAllowReadMessages !== false ? '允许' : '禁用'}\n- 修改变量：${settings.scriptAllowModifyVariables !== false ? '允许' : '禁用'}\n- 访问网络：${settings.scriptAllowNetwork === true ? '允许' : '禁用'}`,
+                            message: buildScriptAuthorizationMessage({
+                                leadText: `已导入 ${result.count} 条绑定脚本。`,
+                                settings,
+                            }),
                             actions: [
                                 { id: 'allow', label: '允许并启用', primary: true },
                                 { id: 'later', label: '稍后处理' },

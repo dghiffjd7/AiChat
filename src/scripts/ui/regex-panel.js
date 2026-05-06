@@ -527,7 +527,7 @@ export class RegexPanel {
         if (!s.bind) {
             return {
                 label: '未绑定',
-                color: '#94a3b8',
+                color: '#94a3b8', // theme-audit-ignore: semantic status color
                 glow: 'rgba(148,163,184,0.18)',
                 opacity: '0.72',
             };

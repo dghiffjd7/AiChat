@@ -12,7 +12,9 @@ import { bindCustomSelectButton, createCustomSelectWrapper } from '../custom-sel
 import {
   DEFAULT_REACTION_EMOJIS,
   SELF_REACTION_ACTOR,
+  buildRpFloorAssignments,
   countReactionActors,
+  getRpFloorLabel,
   hasReactionActor,
   normalizeReactionEntries,
   normalizeReplyTarget,
@@ -1735,7 +1737,7 @@ export class ChatUI {
         avatar.style.width = '30px';
         avatar.style.height = '30px';
         avatar.style.borderRadius = '999px';
-        avatar.style.background = 'rgba(255,255,255,0.08)';
+        avatar.style.background = 'rgba(255,255,255,0.08)'; // theme-audit-ignore: dark-shell skeleton placeholder
         avatar.style.flex = '0 0 auto';
         row.appendChild(avatar);
       }
@@ -1743,7 +1745,7 @@ export class ChatUI {
       const bubble = document.createElement('div');
       bubble.style.width = width;
       bubble.style.maxWidth = '78%';
-      bubble.style.background = 'rgba(255,255,255,0.05)';
+      bubble.style.background = 'rgba(255,255,255,0.05)'; // theme-audit-ignore: dark-shell skeleton placeholder
       bubble.style.border = '1px solid rgba(255,255,255,0.06)';
       bubble.style.borderRadius = '16px';
       bubble.style.padding = '12px 14px';
@@ -1755,14 +1757,14 @@ export class ChatUI {
       lineA.style.height = '10px';
       lineA.style.width = '82%';
       lineA.style.borderRadius = '999px';
-      lineA.style.background = 'rgba(255,255,255,0.12)';
+      lineA.style.background = 'rgba(255,255,255,0.12)'; // theme-audit-ignore: dark-shell skeleton placeholder
       bubble.appendChild(lineA);
 
       const lineB = document.createElement('div');
       lineB.style.height = '10px';
       lineB.style.width = align === 'right' ? '58%' : '66%';
       lineB.style.borderRadius = '999px';
-      lineB.style.background = 'rgba(255,255,255,0.08)';
+      lineB.style.background = 'rgba(255,255,255,0.08)'; // theme-audit-ignore: dark-shell skeleton placeholder
       bubble.appendChild(lineB);
 
       row.appendChild(bubble);
@@ -1804,7 +1806,7 @@ export class ChatUI {
     marker.dataset.floor = String(floor);
     const label = document.createElement('span');
     label.className = 'rp-floor-label';
-    label.textContent = floor === 0 ? '#0 序章' : `# ${floor}`;
+    label.textContent = getRpFloorLabel(floor);
     marker.appendChild(label);
     return marker;
   }
@@ -1814,39 +1816,38 @@ export class ChatUI {
     this.scrollEl.querySelectorAll('.rp-floor-marker').forEach(el => el.remove());
     if (document.body?.dataset?.uiMode !== 'rp') return;
 
-    let floor = -1;
-    const wrappers = this.scrollEl.querySelectorAll('.QQ_chat_mymsg, .QQ_chat_charmsg');
-    for (const w of wrappers) {
-      const msg = w.__chatappMessage;
-      if (!msg) continue;
+    const wrappers = Array.from(this.scrollEl.querySelectorAll('.QQ_chat_mymsg, .QQ_chat_charmsg'));
+    const assignments = buildRpFloorAssignments(wrappers.map(w => w.__chatappMessage));
+    let latestFloor = -1;
 
-      let isNewFloor = false;
-      if (msg?.meta?.isGreeting) {
-        floor = 0;
-        isNewFloor = true;
-      } else if (msg.role === 'user') {
-        floor = Math.max(floor, 0) + 1;
-        isNewFloor = true;
-      }
+    wrappers.forEach((wrapper, index) => {
+      const msg = wrapper.__chatappMessage;
+      const assignment = assignments[index] || { floor: null, marker: false };
+      const floor = Number.isFinite(Number(assignment.floor)) ? Number(assignment.floor) : null;
 
-      if (floor >= 0) {
+      if (floor != null) {
         if (!msg.meta) msg.meta = {};
         msg.meta.floor = floor;
-        w.dataset.rpFloor = String(floor);
+        wrapper.dataset.rpFloor = String(floor);
+        latestFloor = floor;
+      } else {
+        if (msg?.meta && typeof msg.meta === 'object') delete msg.meta.floor;
+        delete wrapper.dataset.rpFloor;
       }
 
-      if (isNewFloor) {
+      if (assignment.marker && floor != null && wrapper.parentNode) {
         const marker = document.createElement('div');
         marker.className = 'rp-floor-marker';
         marker.dataset.floor = String(floor);
         const label = document.createElement('span');
         label.className = 'rp-floor-label';
-        label.textContent = floor === 0 ? '#0 序章' : `# ${floor}`;
+        label.textContent = getRpFloorLabel(floor);
         marker.appendChild(label);
-        w.parentNode.insertBefore(marker, w);
+        wrapper.parentNode.insertBefore(marker, wrapper);
       }
-    }
-    this._rpFloorCount = Math.max(floor, 0);
+    });
+
+    this._rpFloorCount = Math.max(latestFloor, 0);
   }
 
   cleanupRichTextMounts(rootEl) {
@@ -3405,6 +3406,7 @@ export class ChatUI {
     if (el) {
       this.cleanupRichTextMounts(el);
       el.remove();
+      if (document.body?.dataset?.uiMode === 'rp') this._refreshAllRpFloorMarkers();
       this.refreshScrollDateBadge();
       this.scheduleScrollBottomButtonRefresh({ immediate: true });
     }

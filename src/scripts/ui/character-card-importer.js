@@ -7,6 +7,7 @@ import { safeInvoke } from '../utils/tauri.js';
 import { appSettings } from '../storage/app-settings.js';
 import { appConfirm, appChoice } from './app-confirm.js';
 import { MVUConverter } from '../import/mvu-converter.js';
+import { buildScriptAuthorizationMessage } from './script-authorization-utils.js';
 
 const buildGreetingList = (card = {}) => {
   const list = [];
@@ -524,14 +525,12 @@ export class CharacterCardImporter {
         });
         if (result?.count) {
           const settings = appSettings.get();
-          const perms = [
-            `读取聊天记录：${settings.scriptAllowReadMessages !== false ? '允许' : '禁用'}`,
-            `修改变量：${settings.scriptAllowModifyVariables !== false ? '允许' : '禁用'}`,
-            `访问网络：${settings.scriptAllowNetwork === true ? '允许' : '禁用'}`,
-          ];
           const choice = await appChoice({
             title: '脚本授权',
-            message: `检测到 ${result.count} 条脚本。\n脚本可能需要权限：\n- ${perms.join('\n- ')}`,
+            message: buildScriptAuthorizationMessage({
+              leadText: `检测到 ${result.count} 条脚本。`,
+              settings,
+            }),
             actions: [
               { id: 'allow', label: '允许并启用', primary: true },
               { id: 'once', label: '仅本次允许' },

@@ -1,16 +1,9 @@
 import { LLMClient } from '../api/client.js';
+import { canInitClient } from '../api/client-config-utils.js';
 import { normalizeAssistantStreamChunk } from '../api/native-reasoning.js';
 import { isDeepSeekApiRequest } from '../api/providers/deepseek-compat.js';
 import { extractTableEditBlocks, stripTableEditBlocks } from '../memory/memory-edit-parser.js';
 import { isSummaryTableId, normalizeMemoryUpdateMode } from '../memory/memory-prompt-utils.js';
-import {
-  buildMemoryTimelineLabel,
-  computeNextMemoryRowSortOrder,
-  extractMemoryTimelineRound,
-  getMemoryRowSortOrder,
-  isTimelineMemoryTableId,
-  sortMemoryRowsForSnapshot,
-} from '../memory/memory-row-order.js';
 import { getMemoryContextType, resolveMemorySessionMode, tableMatchesMemoryContext } from '../memory/memory-context-utils.js';
 import { appSettings } from '../storage/app-settings.js';
 import { renderTemplateTextAsync, templateSettings } from '../plugins/template-engine.js';
@@ -55,9 +48,210 @@ import {
 import { pickSavePath } from '../utils/save-dialog.js';
 import { safeInvoke } from '../utils/tauri.js';
 import './bridge.js';
+import {
+  ensureDebugUiRegistry,
+  registerMessageActionBridgeContract,
+  registerMemoryUpdateBridgeContract,
+  registerPersonaBridgeContract,
+  registerPromptInjectionBridgeContract,
+  registerRoleWorldBridgeContract,
+  registerRuntimeServiceBridgeContract,
+  registerSharedSessionBridgeContract,
+  registerTurnCheckpointBridgeContract,
+  registerUiUtilityBridgeContract,
+} from './app-bridge-contract.js';
 import { ChatUI } from './chat/chat-ui.js';
+import { createAssistantStreamRuntime, isStreamCtrlConnected } from './chat/assistant-stream-runtime.js';
+import { dispatchAfterReceiveEffects } from './chat/after-receive-dispatch-utils.js';
+import {
+  applyChatModeAssistantRegex as applyChatModeAssistantRegexCore,
+  buildAssistantMessageFromText as buildAssistantMessageFromTextCore,
+} from './chat/assistant-message-builder-utils.js';
+import { buildContinuationMessageUpdate } from './chat/continuation-message-utils.js';
 import { CreativeStreamProcessor } from './chat/creative-stream-processor.js';
+import { normalizeDialogueMessage as normalizeDialogueMessageCore } from './chat/dialogue-message-utils.js';
 import { DialogueStreamParser } from './chat/dialogue-stream-parser.js';
+import {
+  normalizeMomentCommentForStore,
+  normalizeMomentCommentsForStore,
+  normalizeMomentRecordForStore,
+  normalizeMomentStoredText,
+} from './chat/moment-store-normalize-utils.js';
+import {
+  applyMomentCommentEvents,
+  applyMomentSummaryFromRaw,
+  buildMomentCommentPromptData,
+  buildMomentCommentTaskContext,
+  buildMomentPrivateChatMessages,
+  buildMomentRecentCommentsText,
+  collectMomentCommentContactList,
+  createMomentSummaryCompactionRuntime,
+  resolveMomentReplyTarget,
+  resolvePrivateChatTargetSessionIdByName,
+  runMomentCommentGeneration,
+  runMomentReplyRetry,
+} from './chat/moments-runtime-utils.js';
+import {
+  applyOutputDisplayRegexSafe,
+  applyOutputRegexPairSafe,
+  applyOutputStoredRegexSafe,
+} from './chat/output-regex-utils.js';
+import {
+  createPresetRuntime,
+  buildReplyPromptHint as buildReplyPromptHintCore,
+  resolveEnabledPreset,
+} from './chat/prompt-context-utils.js';
+import {
+  buildWorldDebugLocatorCandidates,
+  formatPromptWorldDebug,
+} from './chat/prompt-world-debug-utils.js';
+import { createReasoningRuntime } from './chat/reasoning-runtime-utils.js';
+import {
+  createLlmContextBuilder,
+  createLlmHistoryBuilder,
+} from './chat/llm-context-runtime-utils.js';
+import {
+  buildPromptPreviewSnapshot,
+  buildMemoryUpdateHistoryText as buildMemoryUpdateHistoryTextCore,
+  buildRequestPromptText as buildRequestPromptTextCore,
+  resolveMemoryUpdateRequestPrompt,
+} from './chat/request-prompt-utils.js';
+import {
+  buildSummaryCompactionContext,
+  normalizeSummarySnapshotItems,
+  parseSummaryCompactionResult,
+  requestSummaryCompactionRaw,
+  shouldRunSummaryCompaction,
+} from './chat/summary-compaction-utils.js';
+import {
+  activateSessionEnterView,
+  activateSessionShellState,
+  applySavedUiRestoreState,
+  applySessionEnterChatSettings,
+  applySessionEnterLoadingState,
+  deactivateSessionEnterView,
+  finalizeSessionEnterNavigation,
+  finalizeSessionEnterUiState,
+  loadSessionEnterHistoryStage,
+  reconcileHydratedStoreUiState,
+  renderSessionChangedHistoryStage,
+  readSavedUiStateFastSnapshot,
+  restoreSessionShellState,
+  runSessionEnterFlow,
+  runSessionChangedFlow,
+  runSessionExitFlow,
+  runSavedUiRestoreFlow,
+  runHydratedUiRestoreFlow,
+  pickSavedUiStateSnapshot,
+  saveUiStateSnapshot,
+} from './chat/session-enter-runtime.js';
+import {
+  ingestMomentsForStore as ingestMomentsForStoreCore,
+  normalizeMomentAuthorDisplay as normalizeMomentAuthorDisplayCore,
+  resolveMomentAuthorId as resolveMomentAuthorIdCore,
+} from './chat/moment-ingest-utils.js';
+import {
+  buildCancelledAssistantPartial,
+  createActiveGenerationRecord,
+} from './chat/generation-state-utils.js';
+import { parseGroupSystemOps } from './chat/group-system-ops-utils.js';
+import {
+  buildMemoryConfirmText,
+  cloneMemoryUpdateEntry,
+  clonePlainObject,
+  extractSummaryBlock,
+  normalizeMemoryCellValue,
+  normalizeTableRowData,
+  rowDataEquals,
+} from './chat/memory-edit-utils.js';
+import {
+  countAssistantTurnsForMemoryTimeline,
+  normalizeTimelineMemoryActionData,
+  pickNewestMemoryRow,
+  resolveMemoryActionRowId,
+  resolveMemoryActionRowIdByData,
+  resolveMemoryActionTableId,
+  resolveMemoryInsertSortOrder,
+  resolveMemoryTableScope,
+} from './chat/memory-table-action-utils.js';
+import { createMemoryUpdateRuntime } from './chat/memory-update-runtime.js';
+import {
+  buildMemoryUpdatePlanInput,
+  resolveMemoryUpdateHistoryLimit,
+} from './chat/memory-update-runtime-utils.js';
+import {
+  buildScopedMemoryRowFields,
+  loadScopedMemories,
+  resolveSessionMemoryScopeKey,
+} from './chat/memory-table-scope-utils.js';
+import {
+  buildSwipeMemorySnapshot,
+  replaceScopedMemoriesWithSnapshot,
+} from './chat/swipe-memory-snapshot-utils.js';
+import {
+  applySwipeBranchMemoryState as applySwipeBranchMemoryStateCore,
+  attachAssistantMemoryStateToMeta as attachAssistantMemoryStateToMetaCore,
+  captureAssistantMemoryState as captureAssistantMemoryStateCore,
+  persistSwipeBranchMemoryState as persistSwipeBranchMemoryStateCore,
+} from './chat/swipe-memory-state-utils.js';
+import {
+  buildProtocolSystemMetaMessage,
+  buildProtocolRetryCandidates,
+  normalizeProtocolChatMessage,
+} from './chat/protocol-parse-utils.js';
+import {
+  commitProtocolSummary,
+  consumeProtocolRetryEvents,
+  consumeProtocolHandledResult,
+  finalizeProtocolHandledFlow,
+  flushProtocolMomentsIfNeeded,
+} from './chat/protocol-runtime-utils.js';
+import {
+  applyProtocolMomentEvent,
+  appendProtocolGroupChatEventImmediate,
+  appendProtocolPrivateChatEventImmediate,
+} from './chat/protocol-event-apply-utils.js';
+import {
+  buildProtocolGroupChatBatch,
+  buildProtocolPrivateChatBatch,
+  dispatchProtocolGroupChatBatch,
+  dispatchProtocolPrivateChatBatch,
+} from './chat/protocol-batch-utils.js';
+import {
+  extractUpdateVariableBlocks,
+  stripUpdateVariableBlocks,
+} from './chat/update-variable-block-utils.js';
+import {
+  registerUpdateVariableApplyFn,
+  resolveUpdateVariableApplyFn,
+} from './chat/update-variable-invoke-utils.js';
+import { applyUpdateVariableForMessageWithFallback } from './chat/update-variable-edit-utils.js';
+import {
+  createUpdateVariableCommandApplier,
+  createUpdateVariableMessageApplier,
+} from './chat/update-variable-runtime-utils.js';
+import { buildUpdateVariableParser } from './chat/update-variable-parser-utils.js';
+import {
+  normalizeHandleSendInvocation,
+  normalizeHandleSendOptions,
+  resolveSyspromptProtocolFlags,
+} from './chat/send-flow-utils.js';
+import {
+  createPendingUserMessage,
+  getMessageSendText,
+  resolvePendingMessagesToSend,
+} from './chat/pending-message-utils.js';
+import {
+  applyBeforeSendHooks,
+} from './chat/send-before-hook-utils.js';
+import {
+  dispatchAfterSendEvents,
+  markMessagesAsSending,
+} from './chat/send-side-effect-utils.js';
+import {
+  maybePromptScriptAuthorization,
+  maybePromptTemplateEnable,
+} from './chat/send-prompt-gates.js';
 import {
   SELF_REACTION_ACTOR,
   buildReplyTargetSnapshot,
@@ -96,15 +290,10 @@ import { UserPanel } from './user-panel.js';
 import { VariablePanel } from './variable-panel.js';
 import {
   buildVariableContext,
-  decodeJsonPointer,
   deleteValueAtPath,
   getValueAtPath,
-  normalizeVariablePathInput,
-  normalizeVariablePathParts,
   resolveExistingVariablePath,
   setValueAtPath,
-  stripKnownVariableRootPrefix,
-  toVariablePath,
 } from '../variables/variable-path-utils.js';
 import { VariableRuleEngine } from '../variables/variable-rule-engine.js';
 import { StageManager } from '../variables/stage-manager.js';
@@ -216,44 +405,6 @@ const reportGlobalRuntimeIssue = (err, label = 'Runtime error') => {
   reportFatalError(err, label);
 };
 
-const normalizeMomentStoredText = (text, { regexMode = 'output', depth = 0 } = {}) => {
-  const source = String(text ?? '');
-  const mode = String(regexMode || '').trim().toLowerCase() === 'input' ? 'input' : 'output';
-  try {
-    if (mode === 'input' && typeof window.appBridge?.applyInputStoredRegex === 'function') {
-      return window.appBridge.applyInputStoredRegex(source, { isEdit: false, depth });
-    }
-    if (typeof window.appBridge?.applyOutputStoredRegex === 'function') {
-      return window.appBridge.applyOutputStoredRegex(source, { isEdit: false, depth });
-    }
-  } catch {}
-  return source;
-};
-
-const normalizeMomentCommentForStore = (comment, { regexMode = 'output', depth = 0 } = {}) => {
-  if (!comment || typeof comment !== 'object') return comment;
-  const mode = String(regexMode || '').trim().toLowerCase() === 'input' ? 'input' : 'output';
-  return {
-    ...(comment || {}),
-    content: normalizeMomentStoredText(comment?.content, { regexMode: mode, depth }),
-    regexMode: mode,
-  };
-};
-
-const normalizeMomentCommentsForStore = (comments = [], opts = {}) =>
-  (Array.isArray(comments) ? comments : []).map(comment => normalizeMomentCommentForStore(comment, opts));
-
-const normalizeMomentRecordForStore = (moment, { regexMode = 'output', depth = 0 } = {}) => {
-  if (!moment || typeof moment !== 'object') return moment;
-  const mode = String(regexMode || '').trim().toLowerCase() === 'input' ? 'input' : 'output';
-  return {
-    ...(moment || {}),
-    content: normalizeMomentStoredText(moment?.content, { regexMode: mode, depth }),
-    comments: normalizeMomentCommentsForStore(moment?.comments, { regexMode: mode, depth }),
-    regexMode: mode,
-  };
-};
-
 try {
   localStorage.removeItem('chatapp_renderer_lifecycle_v1');
   localStorage.removeItem('chatapp_rich_script_guard_v1');
@@ -330,10 +481,6 @@ const initApp = async () => {
   const chatConfigManager = new ConfigManager();
   const imageConfigManager = new ConfigManager({ scope: 'image' });
   const memoryUpdateConfigManager = new ConfigManager();
-  const memoryUpdateRunning = new Set();
-  const memoryUpdateAbortControllers = new Map();
-  const memoryUpdateQueues = new Map();
-  const memoryFillSessionCounters = new Map();
   const generalSettingsPanel = new GeneralSettingsPanel();
   const sessionConfigPanel = new SessionConfigPanel();
   const pluginStore = new PluginStore();
@@ -357,10 +504,14 @@ const initApp = async () => {
   const chatStore = new ChatStore();
   window.appBridge.setChatStore(chatStore);
   const variableRuleEngine = new VariableRuleEngine({ chatStore, appBridge: window.appBridge });
-  window.appBridge.variableRuleEngine = variableRuleEngine;
-  window.appBridge.runVariableRules = (sessionId, ruleId) => variableRuleEngine.runManual(sessionId, ruleId);
+  registerRuntimeServiceBridgeContract(window.appBridge, {
+    variableRuleEngine,
+    runVariableRules: (sessionId, ruleId) => variableRuleEngine.runManual(sessionId, ruleId),
+  });
   stageManager = new StageManager({ chatStore, appBridge: window.appBridge });
-  window.appBridge.stageManager = stageManager;
+  registerRuntimeServiceBridgeContract(window.appBridge, {
+    stageManager,
+  });
   const promptInjectionQueue = new Map();
   const normalizePromptBlock = (input = {}) => {
     const raw = String(input?.content ?? input?.prompt ?? '').trim();
@@ -393,20 +544,24 @@ const initApp = async () => {
     promptInjectionQueue.delete(sid);
     return list.slice();
   };
-  window.appBridge.queuePromptInjection = queuePromptInjection;
-  window.appBridge.peekPromptInjections = peekPromptInjections;
-  window.appBridge.consumePromptInjections = consumePromptInjections;
-  window.appBridge.notify = (message, level = 'info') => {
-    const text = String(message || '').trim();
-    if (!text) return false;
-    const style = String(level || 'info').trim().toLowerCase();
-    const fn = window?.toastr?.[style] || window?.toastr?.info;
-    fn?.(text);
-    return true;
-  };
+  registerPromptInjectionBridgeContract(window.appBridge, {
+    queuePromptInjection,
+    peekPromptInjections,
+    consumePromptInjections,
+    notify: (message, level = 'info') => {
+      const text = String(message || '').trim();
+      if (!text) return false;
+      const style = String(level || 'info').trim().toLowerCase();
+      const fn = window?.toastr?.[style] || window?.toastr?.info;
+      fn?.(text);
+      return true;
+    },
+  });
   if (pluginRuntime) {
     pluginRuntime.setContext({ uiManager: pluginUiManager });
-    window.appBridge.pluginUiManager = pluginUiManager;
+    registerRuntimeServiceBridgeContract(window.appBridge, {
+      pluginUiManager,
+    });
     const emitVariableChanged = (name, oldValue, newValue, sessionId, scope = 'chat') => {
       const sid = String(sessionId || chatStore.getCurrent() || '').trim();
       if (!sid && scope !== 'global') return;
@@ -615,17 +770,17 @@ const initApp = async () => {
     window.appBridge.setMemoryTableStore?.(memoryTableStore);
   } catch {}
   const memorySnapshotStore = new MemorySnapshotStore();
-  try {
-    window.appBridge.memorySnapshotStore = memorySnapshotStore;
-  } catch {}
+  registerRuntimeServiceBridgeContract(window.appBridge, {
+    memorySnapshotStore,
+  });
   const memoryTemplateStore = new MemoryTemplateStore();
   try {
     window.appBridge.setMemoryTemplateStore?.(memoryTemplateStore);
   } catch {}
   const turnCheckpointStore = new TurnCheckpointStore();
-  try {
-    window.appBridge.turnCheckpointStore = turnCheckpointStore;
-  } catch {}
+  registerRuntimeServiceBridgeContract(window.appBridge, {
+    turnCheckpointStore,
+  });
   const memoryTemplatePanel = new MemoryTemplatePanel({
     templateStore: memoryTemplateStore,
     memoryStore: memoryTableStore,
@@ -895,22 +1050,24 @@ const initApp = async () => {
   };
   clearLegacySendModeState();
   try {
-    window.appBridge.getRpSessionIdForActivePersona = () => getRpSessionId(activePersonaId);
-    window.appBridge.getRpSessionIdForSession = (sessionId = '') => {
-      const sid = String(sessionId || chatStore.getCurrent() || '').trim();
-      return getRpSessionId(getEffectivePersona(sid)?.id || activePersonaId);
-    };
-    window.appBridge.getActivePersonaId = () => String(activePersonaId || '').trim();
-    window.appBridge.getLastChatSessionId = () => String(lastChatState?.sessionId || '').trim();
-    window.appBridge.getLastSocialSessionId = () => String(lastChatState?.sessionId || '').trim();
-    window.appBridge.getRpCharacterNameForSession = (sessionId = '') => {
-      const sid = String(sessionId || getRpSessionId(activePersonaId) || '').trim();
-      const persona = getEffectivePersona(sid) || {};
-      const source = persona?.source && typeof persona.source === 'object' ? persona.source : {};
-      const sourceName = String(source?.characterName || source?.cardName || '').trim();
-      if (source?.type === 'character_card' && sourceName) return sourceName;
-      return String(persona?.name || '').trim() || '角色';
-    };
+    registerPersonaBridgeContract(window.appBridge, {
+      getRpSessionIdForActivePersona: () => getRpSessionId(activePersonaId),
+      getRpSessionIdForSession: (sessionId = '') => {
+        const sid = String(sessionId || chatStore.getCurrent() || '').trim();
+        return getRpSessionId(getEffectivePersona(sid)?.id || activePersonaId);
+      },
+      getActivePersonaId: () => String(activePersonaId || '').trim(),
+      getLastChatSessionId: () => String(lastChatState?.sessionId || '').trim(),
+      getLastSocialSessionId: () => String(lastChatState?.sessionId || '').trim(),
+      getRpCharacterNameForSession: (sessionId = '') => {
+        const sid = String(sessionId || getRpSessionId(activePersonaId) || '').trim();
+        const persona = getEffectivePersona(sid) || {};
+        const source = persona?.source && typeof persona.source === 'object' ? persona.source : {};
+        const sourceName = String(source?.characterName || source?.cardName || '').trim();
+        if (source?.type === 'character_card' && sourceName) return sourceName;
+        return String(persona?.name || '').trim() || '角色';
+      },
+    });
   } catch {}
   try {
     sessionPanel.getChatSessionId = () => String(lastChatState?.sessionId || '').trim();
@@ -995,51 +1152,53 @@ const initApp = async () => {
   };
   try {
     if (window.appBridge) {
-      window.appBridge.setRoleWorldResolver?.((sessionId, options = {}) => buildRoleWorldBindingsForSession(sessionId, options));
-      window.appBridge.assignRoleWorldToPersona = async (personaId, worldId, { enabled = true } = {}) => {
-        return updatePersonaRoleWorldBinding(personaId, {
-          worldbookId: worldId,
-          worldbookEnabled: enabled,
-        });
-      };
-      window.appBridge.clearRoleWorldForPersona = async (personaId) => {
-        return updatePersonaRoleWorldBinding(personaId, {
-          worldbookId: '',
-          worldbookEnabled: true,
-        });
-      };
-      window.appBridge.setRoleWorldEnabled = async (personaId, enabled) => {
-        return updatePersonaRoleWorldBinding(personaId, {
-          worldbookEnabled: enabled !== false,
-        });
-      };
-      window.appBridge.setWorldLifecycleHandler?.(async (event = {}) => {
-        const type = String(event?.type || '').trim();
-        const from = String(event?.from || '').trim();
-        const to = String(event?.to || '').trim();
-        const targetWorldId = String(event?.worldId || '').trim();
-        const personas = personaStore.getAll?.() || [];
-        let changed = false;
-        for (const persona of personas) {
-          const pid = String(persona?.id || '').trim();
-          const source = persona?.source && typeof persona.source === 'object' ? { ...persona.source } : null;
-          const currentWorldId = String(source?.worldbookId || '').trim();
-          if (!pid || !source || !currentWorldId) continue;
-          if (type === 'rename' && currentWorldId === from && to) {
-            source.worldbookId = to;
-            await personaStore.update(pid, { source });
-            changed = true;
-            continue;
+      registerRoleWorldBridgeContract(window.appBridge, {
+        resolveRoleWorldBindings: (sessionId, options = {}) => buildRoleWorldBindingsForSession(sessionId, options),
+        assignRoleWorldToPersona: async (personaId, worldId, { enabled = true } = {}) => {
+          return updatePersonaRoleWorldBinding(personaId, {
+            worldbookId: worldId,
+            worldbookEnabled: enabled,
+          });
+        },
+        clearRoleWorldForPersona: async (personaId) => {
+          return updatePersonaRoleWorldBinding(personaId, {
+            worldbookId: '',
+            worldbookEnabled: true,
+          });
+        },
+        setRoleWorldEnabled: async (personaId, enabled) => {
+          return updatePersonaRoleWorldBinding(personaId, {
+            worldbookEnabled: enabled !== false,
+          });
+        },
+        handleWorldLifecycle: async (event = {}) => {
+          const type = String(event?.type || '').trim();
+          const from = String(event?.from || '').trim();
+          const to = String(event?.to || '').trim();
+          const targetWorldId = String(event?.worldId || '').trim();
+          const personas = personaStore.getAll?.() || [];
+          let changed = false;
+          for (const persona of personas) {
+            const pid = String(persona?.id || '').trim();
+            const source = persona?.source && typeof persona.source === 'object' ? { ...persona.source } : null;
+            const currentWorldId = String(source?.worldbookId || '').trim();
+            if (!pid || !source || !currentWorldId) continue;
+            if (type === 'rename' && currentWorldId === from && to) {
+              source.worldbookId = to;
+              await personaStore.update(pid, { source });
+              changed = true;
+              continue;
+            }
+            if (type === 'delete' && currentWorldId === targetWorldId) {
+              source.worldbookId = '';
+              source.worldbookEnabled = true;
+              await personaStore.update(pid, { source });
+              changed = true;
+            }
           }
-          if (type === 'delete' && currentWorldId === targetWorldId) {
-            source.worldbookId = '';
-            source.worldbookEnabled = true;
-            await personaStore.update(pid, { source });
-            changed = true;
-          }
-        }
-        if (changed) emitRoleWorldBindingsChanged({ lifecycleType: type });
-        return changed;
+          if (changed) emitRoleWorldBindingsChanged({ lifecycleType: type });
+          return changed;
+        },
       });
     }
   } catch {}
@@ -1062,10 +1221,10 @@ const initApp = async () => {
     return false;
   };
   try {
-    if (window.appBridge) {
-      window.appBridge.isSharedVariableSession = isSharedVariableSession;
-      window.appBridge.isSharedMemorySession = isSharedMemorySession;
-    }
+    registerSharedSessionBridgeContract(window.appBridge, {
+      isSharedVariableSession,
+      isSharedMemorySession,
+    });
   } catch {}
 
   const buildMvuVarsPayload = (sessionId, { useGlobal } = {}) => {
@@ -1156,7 +1315,7 @@ const initApp = async () => {
   };
 
   const DEFAULT_USER_BUBBLE_COLOR = '#E8F0FE';
-  const DEFAULT_USER_TEXT_COLOR = '#1F2937';
+  const DEFAULT_USER_TEXT_COLOR = '#1F2937'; // theme-audit-ignore: light-mode default token
   const DEFAULT_DARK_USER_BUBBLE_COLOR = '#2F3C52';
   const DEFAULT_DARK_USER_TEXT_COLOR = '#F8FAFC';
 
@@ -1374,7 +1533,6 @@ const initApp = async () => {
     refreshChatAndContacts();
     return true;
   };
-  window.appBridge.switchPersona = switchPersona;
   const switchUserProfile = async (userIdOrName) => {
     const raw = String(userIdOrName || '').trim();
     if (!raw) return false;
@@ -1392,7 +1550,10 @@ const initApp = async () => {
     refreshChatAndContacts();
     return true;
   };
-  window.appBridge.switchUserProfile = switchUserProfile;
+  registerPersonaBridgeContract(window.appBridge, {
+    switchPersona,
+    switchUserProfile,
+  });
   // Initial sync
   await syncBoundUserForCharacterCard(personaStore.getActive?.());
   syncUserPersonaUI(chatStore.getCurrent());
@@ -1432,13 +1593,8 @@ const initApp = async () => {
   const patchDebugUiRegistry = (mutator) => {
     try {
       if (!window.appBridge || typeof mutator !== 'function') return;
-      if (!window.appBridge.debugUiRegistry || typeof window.appBridge.debugUiRegistry !== 'object') {
-        window.appBridge.debugUiRegistry = { panels: {}, stores: {}, actions: {} };
-      }
-      const registry = window.appBridge.debugUiRegistry;
-      if (!registry.panels || typeof registry.panels !== 'object') registry.panels = {};
-      if (!registry.stores || typeof registry.stores !== 'object') registry.stores = {};
-      if (!registry.actions || typeof registry.actions !== 'object') registry.actions = {};
+      const registry = ensureDebugUiRegistry(window.appBridge);
+      if (!registry) return;
       mutator(registry);
     } catch {}
   };
@@ -1587,413 +1743,122 @@ const initApp = async () => {
             }
           : null;
       const isReplyToComment = Boolean(replyTo?.id);
-      const candidates = (contactsStore.listContacts?.() || [])
-        .filter(c => c && !c.isGroup)
-        .map(c => String(c.name || c.id || '').trim())
-        .filter(Boolean)
-        .filter(n => n !== '我' && n !== '用户' && n.toLowerCase() !== 'user');
-
-      const uniq = [];
-      [authorName, ...candidates].forEach(n => {
-        if (n && !uniq.includes(n)) uniq.push(n);
+      const listPart = collectMomentCommentContactList(contactsStore, {
+        authorName,
+        maxItems: 16,
       });
-      const listPart = uniq
-        .slice(0, 16)
-        .map(n => `- ${n}`)
-        .join('\n');
 
       const normalizeName = s => String(s || '').trim();
-      const resolvePrivateChatTargetSessionId = otherName => {
-        const other = normalizeName(otherName);
-        if (!other) return null;
+      const resolvePrivateChatTargetSessionId = otherName =>
+        resolvePrivateChatTargetSessionIdByName(otherName, {
+          contactsStore,
+          normalizeName,
+          fallbackSessionId: null,
+        });
 
-        const byId = contactsStore.getContact(other);
-        if (byId?.id) return byId.id;
+      const target = resolveMomentReplyTarget({
+        isReplyToComment,
+        replyTo,
+        authorName,
+        originSessionId,
+        resolvePrivateChatTargetSessionId,
+        normalizeName,
+      });
 
-        try {
-          const matches = (contactsStore.listContacts?.() || []).filter(c => normalizeName(c?.name || c?.id) === other);
-          if (matches.length === 1) return matches[0].id;
-        } catch {}
-
-        return null;
-      };
-
-      const target = (() => {
-        if (isReplyToComment) {
-          const n = normalizeName(replyTo?.author);
-          const sid =
-            resolvePrivateChatTargetSessionId(n) || (n === normalizeName(authorName) ? originSessionId : null);
-          return { name: n || authorName, sessionId: sid || '' };
-        }
-        const sid = String(originSessionId || '').trim() || resolvePrivateChatTargetSessionId(authorName) || '';
-        return { name: normalizeName(authorName) || '发布者', sessionId: sid };
-      })();
-
-      const recentComments = (() => {
-        const list = Array.isArray(m.comments) ? m.comments : [];
-        const tail = list.slice(-12);
-        return tail
-          .map(c => {
-            const a = String(c?.author || '').trim();
-            const normalized = normalizeStickerTextForPrompt(c?.content || '');
-            const content = String(normalized || '').replace(/\n/g, '<br>');
-            const rta = String(c?.replyToAuthor || '').trim();
-            const parts = [
-              a ? `author::${a}` : '',
-              rta ? `reply_to_author::${rta}` : '',
-              content ? `content::${content}` : '',
-            ].filter(Boolean);
-            return parts.length ? `- ${parts.join(' | ')}` : '';
-          })
-          .filter(Boolean)
-          .join('\n');
-      })();
+      const recentComments = buildMomentRecentCommentsText(m.comments, {
+        normalizeText: normalizeStickerTextForPrompt,
+      });
 
       const userLine = isReplyToComment
         ? `{{user}}回复了${replyTo.author}：{{lastUserMessage}}`
         : `{{user}}：{{lastUserMessage}}`;
 
       // 场景 C：动态评论（提示词规则由「预设 → 聊天提示词 → 动态评论回复提示词」注入；评论数据作为 system 注入，用户内容通过 {{lastUserMessage}} 填入）
-      const promptData = `
-【QQ空间动态评论回复（数据）】
-发布者: ${authorName}
-动态内容: ${String(normalizeStickerTextForPrompt(m.content || '') || '').trim()}
-动态时间: ${String(m.time || '').trim() || '（未知）'}
-
-【用户评论】
-${userLine}
-
-${
-  isReplyToComment
-    ? `【回复上下文】
-reply_to_author: ${replyTo.author}
-reply_to_content: ${String(normalizeStickerTextForPrompt(replyTo.content || '') || '').trim()}
-`
-    : ''
-}
-
-${
-  recentComments
-    ? `【当前评论列表（最近12条）】
-${recentComments}
-`
-    : ''
-}
-
-【可用联系人名单】
-${listPart || '-（无）'}
-`.trim();
+      const promptData = buildMomentCommentPromptData({
+        authorName,
+        content: String(normalizeStickerTextForPrompt(m.content || '') || '').trim(),
+        time: String(m.time || '').trim(),
+        userLine,
+        isReplyToComment,
+        replyTo: isReplyToComment
+          ? {
+              author: replyTo.author,
+              content: String(normalizeStickerTextForPrompt(replyTo.content || '') || '').trim(),
+            }
+          : null,
+        recentComments,
+        contactList: listPart || '-（无）',
+      });
 
       const applyEvents = (events = []) => {
-        let touchedMoments = false;
-        let touchedChats = false;
-        (Array.isArray(events) ? events : []).forEach(ev => {
-          if (!ev || typeof ev !== 'object') return;
-          if (ev.type === 'moments') {
-            const list = (ev.moments || []).map(mm => {
-              const stats = normalizeInitialMomentStats({ views: mm?.views, likes: mm?.likes }, n);
-              return normalizeMomentRecordForStore(
-                { ...(mm || {}), ...stats, originSessionId },
-                { regexMode: 'output', depth: 0 },
-              );
-            });
-            momentsStore.addMany(list);
-            touchedMoments = true;
-            return;
-          }
-          if (ev.type === 'moment_reply') {
-            const requestedId = String(ev.momentId || '').trim();
-            let mid = requestedId || id;
-            const incoming = Array.isArray(ev.comments) ? ev.comments : [];
-            let targetMoment = momentsStore.get(mid);
-            if (!targetMoment && id && id !== mid) {
-              const fallbackMoment = momentsStore.get(id);
-              if (fallbackMoment) {
-                try {
-                  logger.warn(
-                    'moment_reply target not found; fallback to current',
-                    JSON.stringify({
-                      momentId: mid,
-                      fallbackId: id,
-                      commentCount: incoming.length,
-                    }),
-                  );
-                } catch {}
-                mid = id;
-                targetMoment = fallbackMoment;
-              }
-            }
-            if (!targetMoment) {
-              try {
-                const list = (momentsStore.list?.() || []).map(m => String(m?.id || '')).filter(Boolean);
-                logger.warn(
-                  'moment_reply target not found',
-                  JSON.stringify({
-                    momentId: mid,
-                    requestedId,
-                    commentCount: incoming.length,
-                    knownCount: list.length,
-                    knownSample: list.slice(0, 6),
-                  }),
-                );
-              } catch {}
-              return;
-            }
-            const patched = (() => {
-              if (!isReplyToComment || !replyTo?.id) return incoming;
-              return incoming.map(c => {
-                if (!c || typeof c !== 'object') return c;
-                // If model didn't provide reply_to (because we no longer expose comment_id), attach it for the primary replier.
-                const author = String(c.author || '').trim();
-                const hasReplyTo = String(c.replyTo || '').trim().length > 0;
-                const isPrimaryReplier =
-                  author && (author === normalizeName(replyTo?.author) || author === normalizeName(target?.name));
-                if (hasReplyTo || !isPrimaryReplier) return c;
-                return { ...c, replyTo: String(replyTo.id || ''), replyToAuthor: String(replyTo.author || '') };
-              });
-            })();
-            const saved = momentsStore.addComments(
-              mid,
-              normalizeMomentCommentsForStore(patched, { regexMode: 'output', depth: 0 }),
-            );
-            if (!saved) {
-              try {
-                logger.warn(
-                  'moment_reply addComments failed',
-                  JSON.stringify({
-                    momentId: mid,
-                    commentCount: patched.length,
-                  }),
-                );
-              } catch {}
-              return;
-            }
-            try {
-              bumpMomentEngagement(mid, n);
-            } catch {}
-            touchedMoments = true;
-            return;
-          }
-          if (ev.type === 'private_chat') {
-            const targetSessionId = resolvePrivateChatTargetSessionId(ev.otherName);
-            if (!targetSessionId) return;
-            (ev.messages || []).forEach(msgText => {
-              const payload = msgText && typeof msgText === 'object' ? msgText : { content: msgText };
-              const speakerRaw = String(payload?.speaker || '').trim();
-              const content = String(payload?.content || '').trim();
-              if (!content) return;
-              const userDisplayName = getActiveUserName();
-              const speakerKey = normalizeName(speakerRaw).replace(/[：:]/g, '').trim();
-              const userKey = normalizeName(userDisplayName).replace(/[：:]/g, '').trim();
-              const isMe = Boolean(
-                speakerKey &&
-                  userKey &&
-                  (speakerKey === userKey || normalizeLooseName(speakerKey) === normalizeLooseName(userKey)),
-              );
-              const time =
-                String(payload?.time || '').trim() ||
-                new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-              if (isMe) {
-                const parsed = parseSpecialMessage(content);
-                const meta = { ...(parsed.meta || {}), generatedByAssistant: true };
-                const built = {
-                  role: 'user',
-                  type: 'text',
-                  ...parsed,
-                  name: userDisplayName,
-                  avatar: avatars.user,
-                  time,
-                  meta,
-                };
-                chatStore.appendMessage(built, targetSessionId);
-              } else {
-                const parsed = {
-                  role: 'assistant',
-                  type: 'text',
-                  ...parseSpecialMessage(content),
-                  name: '助手',
-                  avatar: resolveAvatarForContact(targetSessionId, contactsStore.getContact(targetSessionId)),
-                  time,
-                };
-                const saved = chatStore.appendMessage(parsed, targetSessionId);
-                autoMarkReadIfActive(targetSessionId, saved?.id || parsed?.id || '');
-              }
-              touchedChats = true;
-            });
-          }
+        return applyMomentCommentEvents(events, {
+          currentMomentId: id,
+          originSessionId,
+          engagementCount: n,
+          momentsStore,
+          logger,
+          normalizeInitialMomentStats,
+          normalizeMomentRecord: normalizeMomentRecordForStore,
+          normalizeMomentComments: normalizeMomentCommentsForStore,
+          addMoments: list => momentsStore.addMany(list),
+          addMomentComments: (momentId, comments) => momentsStore.addComments(momentId, comments),
+          isReplyToComment,
+          replyTo,
+          targetName: target?.name,
+          normalizeName,
+          bumpMomentEngagement,
+          resolvePrivateChatTargetSessionId,
+          buildPrivateChatMessages: (messages, targetSessionId) => buildMomentPrivateChatMessages(messages, {
+            getActiveUserName,
+            normalizeName,
+            normalizeLooseName,
+            parseSpecialMessage,
+            userAvatar: avatars.user,
+            assistantAvatar: resolveAvatarForContact(targetSessionId, contactsStore.getContact(targetSessionId)),
+            formatNowTime: () => new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
+          }),
+          appendPrivateChatMessage: (message, targetSessionId) => chatStore.appendMessage(message, targetSessionId),
+          autoMarkReadIfActive,
+          onTouchedChats: () => refreshChatAndContacts(),
+          onTouchedMoments: () => momentsPanel.render({ preserveScroll: true }),
         });
-        if (touchedChats) {
-          try {
-            refreshChatAndContacts();
-          } catch {}
-        }
-        if (touchedMoments) {
-          try {
-            momentsPanel.render({ preserveScroll: true });
-          } catch {}
-        }
-        return { touchedMoments, touchedChats };
-      };
-
-      const extractMomentSummary = text => {
-        const raw = String(text ?? '');
-        const re = /<details>\s*<summary>\s*摘要\s*<\/summary>\s*([\s\S]*?)<\/details>/gi;
-        let m;
-        let last = null;
-        while ((m = re.exec(raw))) last = m[1];
-        if (!last) return '';
-        const plain = String(last || '').replace(/<[^>]+>/g, ' ');
-        return plain
-          .trim()
-          .replace(/\s+/g, ' ')
-          .replace(/[A-Za-z]+/g, '')
-          .trim();
-      };
-
-      const applyMomentSummary = raw => {
-        const summary = extractMomentSummary(raw);
-        if (!summary) return;
-        try {
-          momentSummaryStore.addSummary(summary);
-        } catch {}
-        try {
-          requestMomentSummaryCompaction();
-        } catch {}
-        try {
-          window.dispatchEvent(new CustomEvent('moment-summaries-updated'));
-        } catch {}
-      };
-
-      const extractMomentReplySegments = text => {
-        const raw = String(text ?? '');
-        const lower = raw.toLowerCase();
-        const startMark = 'moment_reply_start';
-        const endMark = 'moment_reply_end';
-        const chunks = [];
-        let idx = 0;
-        while (true) {
-          const startIdx = lower.indexOf(startMark, idx);
-          if (startIdx === -1) break;
-          const endIdx = lower.indexOf(endMark, startIdx + startMark.length);
-          if (endIdx === -1) break;
-          chunks.push(raw.slice(startIdx, endIdx + endMark.length));
-          idx = endIdx + endMark.length;
-        }
-        return chunks.join('\n');
       };
 
       try {
         const config = window.appBridge.config.get();
-        const parser = new DialogueStreamParser({ userName: '我' });
-        let sawMomentReply = false;
-        let fullRaw = '';
 
-        const p = personaStore.getActive?.() || {};
         const userProfile = getActiveUserProfile();
-        const uName = String(userProfile?.name || '').trim() || '我';
-        const ctx = {
-          user: {
-            name: uName,
-            persona: String(userProfile?.description || ''),
-            personaPosition: userProfile?.position,
-            personaDepth: userProfile?.depth,
-            personaRole: userProfile?.role,
+        const ctx = buildMomentCommentTaskContext({
+          userProfile,
+          target,
+          authorName,
+          originSessionId,
+          promptData,
+          isReplyToComment,
+          replyTo,
+        });
+        const { fullRaw, sawMomentReply } = await runMomentCommentGeneration(userComment, ctx, {
+          stream: Boolean(config.stream),
+          generate: (text, payload) => window.appBridge.generate(text, payload),
+          createParser: () => new DialogueStreamParser({ userName: '我' }),
+          normalizeChunk: normalizeAssistantStreamChunk,
+          applyEvents,
+          saveRaw: async (raw) => {
+            lastMomentRawReply = raw;
+            lastMomentRawMeta = {
+              momentId: id,
+              author: authorName,
+              time: m?.time || '',
+              comment: userComment,
+            };
           },
-          character: { name: target.name || authorName },
-          history: [],
-          task: { type: 'moment_comment', targetSessionId: target.sessionId || '', targetName: target.name || '' },
-          session: { id: originSessionId, isGroup: false },
-        };
-        ctx.task.promptData = promptData;
-        if (isReplyToComment) {
-          ctx.task.isReplyToComment = true;
-          ctx.task.replyToCommentId = String(replyTo?.id || '').trim();
-          ctx.task.replyToAuthor = String(replyTo?.author || '').trim();
-        }
-        if (config.stream) {
-          const stream = await window.appBridge.generate(userComment, ctx);
-          for await (const chunk of stream) {
-            const normalizedChunk = normalizeAssistantStreamChunk(chunk);
-            if (!normalizedChunk.content) continue;
-            fullRaw += normalizedChunk.content;
-            const events = parser.push(normalizedChunk.content);
-            const res = applyEvents(events);
-            if (res?.touchedMoments) sawMomentReply = true;
-          }
-          if (fullRaw) {
-            lastMomentRawReply = fullRaw;
-            lastMomentRawMeta = { momentId: id, author: authorName, time: m?.time || '', comment: userComment };
-          }
-        } else {
-          const raw = await window.appBridge.generate(userComment, ctx);
-          fullRaw = raw;
-          const events = parser.push(raw);
-          const res = applyEvents(events);
-          if (res?.touchedMoments) sawMomentReply = true;
-          if (fullRaw) {
-            lastMomentRawReply = fullRaw;
-            lastMomentRawMeta = { momentId: id, author: authorName, time: m?.time || '', comment: userComment };
-          }
-        }
-
-        if (!sawMomentReply && fullRaw) {
-          try {
-            const sanitizeThinkingForMoment = text => {
-              const raw = String(text ?? '');
-              const lower = raw.toLowerCase();
-              const closeThinking = '</thinking>';
-              const closeThink = '</think>';
-              const i1 = lower.lastIndexOf(closeThinking);
-              const i2 = lower.lastIndexOf(closeThink);
-              const idx = Math.max(i1, i2);
-              if (idx === -1) return raw;
-              const cut = idx + (idx === i1 ? closeThinking.length : closeThink.length);
-              return raw.slice(cut);
-            };
-            const parseMomentReplyFrom = text => {
-              if (!text) return false;
-              const retryParser = new DialogueStreamParser({ userName: '我' });
-              const retryEvents = retryParser.push(text);
-              const res = applyEvents(retryEvents);
-              if (res?.touchedMoments) sawMomentReply = true;
-              return Boolean(res?.touchedMoments);
-            };
-
-            const retryText = sanitizeThinkingForMoment(fullRaw);
-            if (retryText && retryText !== fullRaw) {
-              try {
-                logger.debug(
-                  'moment_reply retry: stripped thinking',
-                  JSON.stringify({
-                    originalLen: String(fullRaw || '').length,
-                    retryLen: String(retryText || '').length,
-                  }),
-                );
-              } catch {}
-              parseMomentReplyFrom(retryText);
-            }
-            if (!sawMomentReply) {
-              const extracted = extractMomentReplySegments(retryText || fullRaw);
-              try {
-                logger.debug(
-                  'moment_reply retry: extracted segments',
-                  JSON.stringify({
-                    extractedLen: String(extracted || '').length,
-                    hasStart: String(retryText || fullRaw || '')
-                      .toLowerCase()
-                      .includes('moment_reply_start'),
-                    hasEnd: String(retryText || fullRaw || '')
-                      .toLowerCase()
-                      .includes('moment_reply_end'),
-                  }),
-                );
-              } catch {}
-              if (extracted) {
-                parseMomentReplyFrom(extracted);
-              }
-            }
-          } catch {}
-        }
+          retryUnhandledReply: (raw, parseText) =>
+            runMomentReplyRetry(raw, {
+              parseText,
+              logger,
+            }),
+          logger,
+        });
 
         if (sawMomentReply) {
           try {
@@ -2019,7 +1884,12 @@ ${listPart || '-（无）'}
         }
         if (fullRaw) {
           try {
-            applyMomentSummary(fullRaw);
+            await applyMomentSummaryFromRaw(fullRaw, {
+              addSummary: summary => momentSummaryStore.addSummary(summary),
+              runCompaction: () => requestMomentSummaryCompaction(),
+              notifyUpdated: () =>
+                window.dispatchEvent(new CustomEvent('moment-summaries-updated')),
+            });
           } catch {}
         }
       } catch (err) {
@@ -2128,36 +1998,21 @@ ${listPart || '-（无）'}
       .replace(/<[^>]+>/g, '');
 
   const normalizePlainText = text => normalizeCreativeLineBreaks(String(text ?? ''));
-
-  const escapeRegex = input => String(input ?? '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const getEffectivePresetUiMode = () => (uiMode === 'rp' ? 'rp' : 'chat');
-  try {
-    window.appBridge.getUiModeContext = getEffectivePresetUiMode;
-  } catch {}
-  const getPresetContext = () => ({
-    sessionId: String(chatStore.getCurrent?.() || '').trim(),
-    uiMode: getEffectivePresetUiMode(),
+  registerUiUtilityBridgeContract(window.appBridge, {
+    getUiModeContext: getEffectivePresetUiMode,
   });
-  const getOpenAIPreset = () => {
-    try {
-      return window.appBridge?.presets?.getResolvedActive?.('openai', getPresetContext())?.preset || {};
-    } catch {
-      return {};
-    }
-  };
-  const canUseDeepSeekPrefixCompletion = () => {
-    const cfg = window.appBridge?.config?.get?.() || {};
-    if (String(cfg?.provider || '').trim().toLowerCase() === 'custom') return false;
-    return isDeepSeekApiRequest({
-      provider: cfg?.provider,
-      model: cfg?.model,
-      baseUrl: cfg?.baseUrl,
-    });
-  };
-  const canUseDeepSeekContinuePrefill = () => {
-    const preset = getOpenAIPreset();
-    return canUseDeepSeekPrefixCompletion() && preset?.continue_prefill === true;
-  };
+  const {
+    getPresetContext,
+    getOpenAIPreset,
+    getReasoningPreset,
+    canUseDeepSeekContinuePrefill,
+  } = createPresetRuntime({
+    appBridge: window.appBridge,
+    getSessionId: () => chatStore.getCurrent?.(),
+    getUiMode: getEffectivePresetUiMode,
+    isDeepSeekRequest: isDeepSeekApiRequest,
+  });
   const getActiveSwipeBranch = (message) => {
     const swipes = Array.isArray(message?.meta?.swipes) ? message.meta.swipes : null;
     if (!swipes?.length) return null;
@@ -2182,35 +2037,6 @@ ${listPart || '-（无）'}
     }
     return null;
   };
-  const getReasoningPreset = () => {
-    try {
-      return window.appBridge?.presets?.getResolvedActive?.('reasoning', getPresetContext())?.preset || {};
-    } catch {
-      return {};
-    }
-  };
-  const parseReasoningBlock = (text, { strict = true } = {}) => {
-    const raw = String(text ?? '');
-    const settings = appSettings.get();
-    if (settings.reasoningAutoParse !== true) return { content: raw, reasoning: '' };
-    const preset = getReasoningPreset();
-    const prefix = String(preset?.prefix ?? '');
-    const suffix = String(preset?.suffix ?? '');
-    if (!prefix || !suffix) return { content: raw, reasoning: '' };
-    try {
-      const pattern = `${strict ? '^\\s*?' : ''}${escapeRegex(prefix)}([\\s\\S]*?)${escapeRegex(suffix)}`;
-      const regex = new RegExp(pattern, 's');
-      const match = raw.match(regex);
-      if (!match) return { content: raw, reasoning: '' };
-      const reasoning = String(match[1] ?? '').trim();
-      const content = (raw.slice(0, match.index) + raw.slice(match.index + match[0].length))
-        .replace(/\n{3,}/g, '\n\n')
-        .trim();
-      return { content, reasoning };
-    } catch {
-      return { content: raw, reasoning: '' };
-    }
-  };
   const applyReasoningRegex = (reasoning, { depth } = {}) => {
     const text = String(reasoning ?? '').trim();
     if (!text) return { stored: '', display: '' };
@@ -2222,47 +2048,16 @@ ${listPart || '-（无）'}
     } catch {}
     return { stored, display };
   };
-  const extractReasoningFromContent = (content, { depth, strict = true } = {}) => {
-    const parsed = parseReasoningBlock(content, { strict });
-    if (!parsed.reasoning) return { content: parsed.content, reasoning: '', reasoningDisplay: '' };
-    const { stored, display } = applyReasoningRegex(parsed.reasoning, { depth });
-    return { content: parsed.content, reasoning: stored, reasoningDisplay: display };
-  };
-  const extractStreamingReasoningFromContent = (content, { depth, final = false } = {}) => {
-    const raw = normalizeCreativeLineBreaks(content);
-    const parsed = extractReasoningFromContent(raw, { depth, strict: false });
-    if (parsed.reasoning || final) return parsed;
-    const settings = appSettings.get();
-    if (settings.reasoningAutoParse !== true) {
-      return { content: raw, reasoning: '', reasoningDisplay: '' };
-    }
-    const preset = getReasoningPreset();
-    const prefix = String(preset?.prefix ?? '');
-    const suffix = String(preset?.suffix ?? '');
-    if (!prefix || !suffix) {
-      return { content: raw, reasoning: '', reasoningDisplay: '' };
-    }
-    const start = raw.indexOf(prefix);
-    if (start < 0) {
-      return { content: raw, reasoning: '', reasoningDisplay: '' };
-    }
-    const bodyStart = start + prefix.length;
-    const suffixIndex = raw.indexOf(suffix, bodyStart);
-    if (suffixIndex >= 0) {
-      return extractReasoningFromContent(raw, { depth, strict: false });
-    }
-    const reasoningRaw = raw.slice(bodyStart).trim();
-    const visible = raw.slice(0, start).replace(/\n{3,}/g, '\n\n').trimEnd();
-    if (!reasoningRaw) {
-      return { content: visible, reasoning: '', reasoningDisplay: '' };
-    }
-    const { stored, display } = applyReasoningRegex(reasoningRaw, { depth });
-    return {
-      content: visible,
-      reasoning: stored,
-      reasoningDisplay: display,
-    };
-  };
+  const {
+    parseReasoningBlock,
+    extractReasoningFromContent,
+    extractStreamingReasoningFromContent,
+  } = createReasoningRuntime({
+    getSettings: () => appSettings.get(),
+    getPreset: getReasoningPreset,
+    normalizeLineBreaks: normalizeCreativeLineBreaks,
+    applyReasoningRegex,
+  });
   const createNativeReasoningState = () => ({
     raw: '',
     stored: '',
@@ -2333,35 +2128,29 @@ ${listPart || '-（无）'}
         ? extractReasoningFromContent(rawSource, { depth, strict: true }).content || rawSource
         : '';
       if (preferRawSource && rawSource) {
-        try {
-          const picked = pick(window.appBridge.applyOutputStoredRegex(filteredRawSource || rawSource, { depth }));
-          if (picked) return picked;
-        } catch {
-          const picked = pick(filteredRawSource || rawSource);
-          if (picked) return picked;
-        }
+        const picked = pick(applyOutputStoredRegexSafe(filteredRawSource || rawSource, {
+          appBridge: window.appBridge,
+          depth,
+        }));
+        if (picked) return picked;
       }
       const raw = typeof message.raw === 'string' ? message.raw : '';
       const rawPicked = pick(raw);
       if (rawPicked) return rawPicked;
       if (rawSource) {
-        try {
-          return pick(window.appBridge.applyOutputStoredRegex(filteredRawSource || rawSource, { depth }));
-        } catch {
-          return pick(filteredRawSource || rawSource);
-        }
+        return pick(applyOutputStoredRegexSafe(filteredRawSource || rawSource, {
+          appBridge: window.appBridge,
+          depth,
+        }));
       }
       const rawOriginal = typeof message.rawOriginal === 'string' ? message.rawOriginal : '';
       if (rawOriginal) {
-        try {
-          const filteredOriginal =
-            extractReasoningFromContent(rawOriginal, { depth, strict: true }).content || rawOriginal;
-          return pick(window.appBridge.applyOutputStoredRegex(filteredOriginal, { depth }));
-        } catch {
-          const filteredOriginal =
-            extractReasoningFromContent(rawOriginal, { depth, strict: true }).content || rawOriginal;
-          return pick(filteredOriginal);
-        }
+        const filteredOriginal =
+          extractReasoningFromContent(rawOriginal, { depth, strict: true }).content || rawOriginal;
+        return pick(applyOutputStoredRegexSafe(filteredOriginal, {
+          appBridge: window.appBridge,
+          depth,
+        }));
       }
       const content = typeof message.content === 'string' ? message.content : '';
       return content ? pick(stripSimpleHtml(content)) : '';
@@ -3006,14 +2795,11 @@ ${listPart || '-（无）'}
       if (m.role === 'assistant' && (m.type === 'text' || !m.type)) {
         if (m?.meta?.renderRich) {
           if (creativeSource) {
-            let stored = creativeSource;
-            try {
-              stored = normalizeCreativeLineBreaks(window.appBridge.applyOutputStoredRegex(creativeSource, { depth }));
-            } catch {}
-            let display = stored;
-            try {
-              display = normalizeCreativeLineBreaks(window.appBridge.applyOutputDisplayRegex(stored, { depth }));
-            } catch {}
+            const { stored, display } = applyOutputRegexPairSafe(creativeSource, {
+              appBridge: window.appBridge,
+              depth,
+              normalizeText: normalizeCreativeLineBreaks,
+            });
             return setCachedDecoratedMessage(m, sid, decorationSignature, {
               ...m,
               avatar,
@@ -3027,16 +2813,20 @@ ${listPart || '-（无）'}
           return setCachedDecoratedMessage(m, sid, decorationSignature, {
             ...m,
             avatar,
-            content: normalizeCreativeLineBreaks(window.appBridge.applyOutputDisplayRegex(creativeBase, { depth })),
+            content: applyOutputDisplayRegexSafe(creativeBase, {
+              appBridge: window.appBridge,
+              depth,
+              normalizeText: normalizeCreativeLineBreaks,
+            }),
             status: m.status,
             sessionId: sid,
             meta,
           });
         }
-        let display = base;
-        try {
-          display = window.appBridge.applyOutputDisplayRegex(base, { depth });
-        } catch {}
+        const display = applyOutputDisplayRegexSafe(base, {
+          appBridge: window.appBridge,
+          depth,
+        });
         return setCachedDecoratedMessage(m, sid, decorationSignature, { ...m, avatar, content: display, status: m.status, sessionId: sid, meta }); // 保留 status 字段
       }
       if (m.role === 'user' && (m.type === 'text' || !m.type)) {
@@ -3087,11 +2877,11 @@ ${listPart || '-（无）'}
     return decorated || { ...message, sessionId: sid };
   };
 
-  try {
-    window.appBridge.getGroupAvatarDebugSnapshot = async (sessionId = '') => {
+  registerUiUtilityBridgeContract(window.appBridge, {
+    getGroupAvatarDebugSnapshot: async (sessionId = '') => {
       return await buildGroupAvatarDebugSnapshot(sessionId);
-    };
-  } catch {}
+    },
+  });
 
   const injectUnreadDivider = (messages = [], firstUnreadId = '') => {
     const list = Array.isArray(messages) ? messages.slice() : [];
@@ -3279,22 +3069,6 @@ ${listPart || '-（无）'}
     return key ? buildStickerToken(key) : raw;
   };
 
-  const getMessageSendText = message => {
-    if (!message || typeof message !== 'object') return '';
-    const meta = message.meta && typeof message.meta === 'object' ? message.meta : null;
-    if (meta?.attachmentsOnly) return '';
-    const raw = typeof message.raw === 'string' ? message.raw.trim() : '';
-    if (raw) return raw;
-    if (message.type === 'sticker') {
-      const key = String(message.content || '').trim();
-      return key ? buildStickerToken(key) : '';
-    }
-    if (message.type === 'image') return '[图片]';
-    if (message.type === 'audio') return '[语音]';
-    if (message.type === 'document') return `[文件] ${message.content || ''}`.trim();
-    return String(message.content || '').trim();
-  };
-
   const draftReplyTargets = new Map();
 
   const resolveMessageDisplayName = (message, sessionId = chatStore.getCurrent()) => {
@@ -3370,16 +3144,7 @@ ${listPart || '-（无）'}
       .filter(Boolean);
   };
 
-  const buildReplyPromptHint = (contexts = []) => {
-    const list = Array.isArray(contexts) ? contexts.filter(Boolean) : [];
-    if (!list.length) return '';
-    const toReplyHintLine = (item) =>
-      `${item.userMessage || '[消息]'}（回复了${item.replyTo.author || '消息'}：${item.replyTo.content || '...'}）`;
-    if (list.length === 1) {
-      return toReplyHintLine(list[0]);
-    }
-    return list.map((item, index) => `${index + 1}. ${toReplyHintLine(item)}`).join('；');
-  };
+  const buildReplyPromptHint = (contexts = []) => buildReplyPromptHintCore(contexts);
 
   const insertStickerToken = keyword => {
     if (!composerInput) return;
@@ -3504,18 +3269,9 @@ Phase G（Frame 36）：循环衔接
 - 结尾必须包含：
 "Output as one single 6×6 sprite sheet image with thin grid lines."
 `;
-  const canUseApiConfig = config => {
-    const cfg = config || {};
-    const hasKey = typeof cfg.apiKey === 'string' && cfg.apiKey.trim().length > 0;
-    const hasVertexSa =
-      cfg.provider === 'vertexai' &&
-      typeof cfg.vertexaiServiceAccount === 'string' &&
-      cfg.vertexaiServiceAccount.trim().length > 0;
-    return hasKey || hasVertexSa;
-  };
   const ensureChatConfigReady = async () => {
     const config = await chatConfigManager.load();
-    if (!canUseApiConfig(config)) {
+    if (!canInitClient(config)) {
       window.toastr?.warning?.('请先配置聊天模型 API');
       try {
         stickerAiModal?.hide?.();
@@ -3527,7 +3283,7 @@ Phase G（Frame 36）：循环衔接
   };
   const ensureImageConfigReady = async () => {
     const config = await imageConfigManager.load();
-    if (!canUseApiConfig(config)) {
+    if (!canInitClient(config)) {
       window.toastr?.warning?.('请先配置图片生成 API');
       try {
         stickerAiModal?.hide?.();
@@ -11080,72 +10836,72 @@ Phase G（Frame 36）：循环衔接
         sessionId: chatStore.getCurrent(),
         at: Date.now(),
       };
-      const raw = JSON.stringify(state);
-      try {
-        sessionStorage.setItem(UI_STATE_KEY, raw);
-      } catch {}
-      try {
-        localStorage.setItem(UI_STATE_KEY, raw);
-      } catch {}
-      if (uiStateDiskTimer) clearTimeout(uiStateDiskTimer);
-      uiStateDiskTimer = setTimeout(() => {
-        safeInvoke('save_kv', { name: UI_STATE_KV, data: state }).catch(() => {});
-      }, 400);
-      uiLog('saveUiState', state);
+      uiStateDiskTimer = saveUiStateSnapshot({
+        state,
+        key: UI_STATE_KEY,
+        kvName: UI_STATE_KV,
+        sessionStorageLike: sessionStorage,
+        localStorageLike: localStorage,
+        clearTimerFn: timer => clearTimeout(timer),
+        existingTimer: uiStateDiskTimer,
+        setTimerFn: (fn, delay) => setTimeout(fn, delay),
+        persistDiskState: payload => safeInvoke('save_kv', payload).catch(() => {}),
+        uiLog,
+        delayMs: 400,
+      });
     } catch {}
   };
   const pickSavedUiState = async () => {
-    try {
-      const raw1 = sessionStorage.getItem(UI_STATE_KEY);
-      if (raw1) return JSON.parse(raw1);
-    } catch {}
-    try {
-      const raw2 = localStorage.getItem(UI_STATE_KEY);
-      if (raw2) return JSON.parse(raw2);
-    } catch {}
-    try {
-      const kv = await safeInvoke('load_kv', { name: UI_STATE_KV });
-      if (kv && typeof kv === 'object') return kv;
-    } catch {}
-    return null;
+    return pickSavedUiStateSnapshot({
+      key: UI_STATE_KEY,
+      sessionStorageLike: sessionStorage,
+      localStorageLike: localStorage,
+      loadDiskState: () => safeInvoke('load_kv', { name: UI_STATE_KV }),
+    });
   };
   const applyRestoredSessionShell = (sessionId) => {
-    const sid = String(sessionId || '').trim();
-    if (!sid) return false;
-    const known = chatStore.hasSession?.(sid) || contactsStore.getContact(sid);
-    if (!known) return false;
-    chatStore.switchSession(sid);
-    window.appBridge.setActiveSession(sid);
-    syncUserPersonaUI(sid);
-    try {
-      const contact = contactsStore.getContact(sid);
-      if (currentChatTitle) currentChatTitle.innerHTML = renderSessionNameHtml(sid, contact);
-    } catch {}
-    try {
-      const draft = chatStore.getDraft(sid);
-      ui.setInputText(draft || '');
-    } catch {}
-    syncReplyTargetComposer(sid);
-    ui.setSessionLabel(sid);
-    return true;
+    return restoreSessionShellState({
+      sessionId,
+      hasKnownSession: sid => chatStore.hasSession?.(sid) || contactsStore.getContact(sid),
+      activateShellStateFn: sid => activateSessionShellState({
+        sessionId: sid,
+        switchSession: nextSid => chatStore.switchSession(nextSid),
+        setActiveSession: nextSid => window.appBridge.setActiveSession(nextSid),
+        syncUserPersonaUI,
+        getContact: nextSid => contactsStore.getContact(nextSid),
+        renderSessionNameHtml,
+        setChatTitleHtml: html => {
+          if (currentChatTitle) currentChatTitle.innerHTML = html;
+        },
+        getDraft: nextSid => chatStore.getDraft(nextSid),
+        setInputText: value => ui.setInputText(value),
+        syncReplyTargetComposer,
+        setSessionLabel: nextSid => ui.setSessionLabel(nextSid),
+        restoreDraft: true,
+      }),
+    });
+  };
+  const readSavedUiStateFast = () => {
+    return readSavedUiStateFastSnapshot({
+      key: UI_STATE_KEY,
+      sessionStorageLike: sessionStorage,
+      localStorageLike: localStorage,
+    });
   };
   const restoreUiState = async () => {
     try {
-      const s = await pickSavedUiState();
-      if (!s) {
-        uiLog('restoreUiState: no saved state');
-        return false;
-      }
-      const page = String(s?.activePage || '').trim();
-      const sid = String(s?.sessionId || '').trim();
-      const inChatRoom = Boolean(s?.inChatRoom);
-      uiLog('restoreUiState: picked', { page, sid, inChatRoom, at: s?.at || 0 });
-      if (page && pages[page]) switchPage(page);
-      const sidKnown = applyRestoredSessionShell(sid);
-      if (sid && !sidKnown) {
-        uiLog('restoreUiState: sid not yet known (skip switchSession)', { sid });
-      }
-      return true;
+      const result = await runSavedUiRestoreFlow({
+        pickSavedUiState,
+        applySavedState: savedState => applySavedUiRestoreState({
+          savedState,
+          hasPage: page => Boolean(pages[page]),
+          switchPage,
+          restoreSessionShell: applyRestoredSessionShell,
+          uiLog,
+        }),
+        uiLog,
+      });
+      return result.restored === true;
     } catch {
       return false;
     }
@@ -12001,203 +11757,28 @@ Phase G（Frame 36）：循环衔接
     registry.actions.hideWorldDebugLocatorModal = () => worldDebugLocatorModal.hide();
   });
 
-  const buildWorldDebugLocatorCandidates = (worldDebug = null) => {
-    if (!worldDebug || typeof worldDebug !== 'object') return [];
-    const sourceKindLabel = {
-      builtin: '内置',
-      global: '全局',
-      role: '角色',
-      session: '会话',
-    };
-    const sections = [
-      { key: 'injectedEntries', label: '实际注入' },
-      { key: 'templateEntries', label: '模板注入' },
-      { key: 'initialVariableEntries', label: '仅变量初始化' },
-      { key: 'trimmedEntries', label: '预算裁剪' },
-      { key: 'mergedEntries', label: '合并后条目' },
-    ];
-    const seen = new Set();
-    const out = [];
-    sections.forEach((section) => {
-      const list = Array.isArray(worldDebug?.[section.key]) ? worldDebug[section.key] : [];
-      list.forEach((entry) => {
-        const worldId = String(entry?.worldId || '').trim();
-        const entryId = String(entry?.entryId || '').trim();
-        if (!worldId || !entryId) return;
-        const blockId = String(entry?.blockId || 'legacy').trim() || 'legacy';
-        const blockTitle = String(entry?.blockTitle || '').trim();
-        const focusNodeId = String(entry?.focusNodeId || '').trim();
-        const key = `${worldId}::${entryId}::${blockId}`;
-        if (seen.has(key)) return;
-        seen.add(key);
-        out.push({
-          key,
-          sectionLabel: section.label,
-          worldId,
-          entryId,
-          blockId,
-          blockTitle,
-          focusNodeId,
-          title: String(entry?.title || '').trim() || entryId,
-          sourceKind: String(entry?.sourceKind || '').trim() || 'session',
-          sourceKindLabel: sourceKindLabel[String(entry?.sourceKind || '').trim()] || String(entry?.sourceKind || '').trim() || '未知',
-          positionLabel: String(entry?.positionLabel || '').trim() || '默认 Prompt',
-          role: String(entry?.role || 'system').trim() || 'system',
-        });
-      });
-    });
-    return out;
-  };
-
-  const formatPromptWorldDebug = (worldDebug) => {
-    if (!worldDebug || typeof worldDebug !== 'object') return '';
-    const listOf = (value) => Array.isArray(value) ? value : [];
-    const previewOf = (entry) => String(entry?.contentPreview || '').trim();
-    const entryLabel = (entry) => {
-      const title = String(entry?.title || '').trim();
-      const worldId = String(entry?.worldId || '').trim() || 'unknown';
-      const entryId = String(entry?.entryId || '').trim() || 'unknown';
-      const blockId = String(entry?.blockId || '').trim() || 'legacy';
-      const blockTitle = String(entry?.blockTitle || '').trim();
-      const blockLabel = blockTitle && blockTitle !== blockId ? `${blockTitle}(${blockId})` : blockId;
-      return `${title} [${worldId} / ${entryId} / ${blockLabel}]`;
-    };
-    const sourceLabelMap = {
-      builtin: '内置',
-      global: '全局',
-      role: '角色',
-      session: '会话',
-    };
-    const sectionLines = [];
-    const pushSection = (title, rows) => {
-      const list = Array.isArray(rows) ? rows.filter(Boolean) : [];
-      if (!list.length) return;
-      sectionLines.push(title);
-      sectionLines.push(...list);
-    };
-    const renderEntryRows = (entries, {
-      includePosition = false,
-      includeTags = false,
-      emptyText = '',
-    } = {}) => {
-      const list = listOf(entries);
-      if (!list.length) return emptyText ? [`- ${emptyText}`] : [];
-      return list.map((entry) => {
-        const src = sourceLabelMap[String(entry?.sourceKind || '').trim()] || String(entry?.sourceKind || '').trim() || '未知';
-        const parts = [
-          `- ${src}`,
-          entryLabel(entry),
-          `${String(entry?.role || 'system')}`,
-        ];
-        if (includePosition) {
-          const pos = String(entry?.positionLabel || '').trim() || '默认 Prompt';
-          const depth = Number.isFinite(Number(entry?.depth)) ? Number(entry.depth) : 0;
-          parts.push(pos);
-          if (depth > 0) parts.push(`depth=${depth}`);
-        }
-        if (includeTags) {
-          const tags = listOf(entry?.tags)
-            .map((tag) => {
-              const stage = String(tag?.stage || '').trim();
-              const type = String(tag?.type || '').trim();
-              const mode = String(tag?.mode || '').trim();
-              const index = Number.isFinite(Number(tag?.index)) ? `:${Number(tag.index)}` : '';
-              const pattern = String(tag?.pattern || '').trim();
-              if (type === 'regex' && pattern) return `${stage}:${type}:${pattern}`;
-              return `${stage}:${type}${index}${mode ? `:${mode}` : ''}`;
-            })
-            .filter(Boolean);
-          if (tags.length) parts.push(tags.join(', '));
-        }
-        const preview = previewOf(entry);
-        return `${parts.join(' | ')}${preview ? ` | ${preview}` : ''}`;
-      });
-    };
-
-    const builtinEntries = listOf(worldDebug?.builtinEntries);
-    const globalEntries = listOf(worldDebug?.globalEntries);
-    const roleEntries = listOf(worldDebug?.roleEntries);
-    const sessionEntries = listOf(worldDebug?.sessionEntries);
-    const injectedEntries = listOf(worldDebug?.injectedEntries);
-    const templateEntries = listOf(worldDebug?.templateEntries);
-    const initialVariableEntries = listOf(worldDebug?.initialVariableEntries);
-    const trimmedEntries = listOf(worldDebug?.trimmedEntries);
-    const mergedEntries = listOf(worldDebug?.mergedEntries);
-
-    const budgetTokens = Number.isFinite(Number(worldDebug?.budgetTokens)) ? Number(worldDebug.budgetTokens) : null;
-    const usedTokens = Number.isFinite(Number(worldDebug?.usedTokens)) ? Number(worldDebug.usedTokens) : 0;
-    const strategy = String(worldDebug?.insertionStrategy || '').trim() || 'role_first';
-    const variableStrategyRaw = String(worldDebug?.variableDefineStrategy || '').trim();
-    const variableStrategy = (() => {
-      if (variableStrategyRaw === 'first_hit') return 'first_hit（命中后建立）';
-      if (variableStrategyRaw === 'off') return 'off（关闭自动建立）';
-      return 'legacy_eager（请求前建立）';
-    })();
-
-    const header = [
-      '[世界书调试]',
-      `- 插入策略: ${strategy}`,
-      `- 变量自动建立: ${variableStrategy}`,
-      `- 激活命中: 内置 ${builtinEntries.length} / 全局 ${globalEntries.length} / 角色 ${roleEntries.length} / 会话 ${sessionEntries.length}`,
-      `- 合并后条目: ${mergedEntries.length}（预算前）`,
-      `- 实际注入: 普通 ${injectedEntries.length} / 模板 ${templateEntries.length} / 仅变量初始化 ${initialVariableEntries.length}`,
-      budgetTokens != null
-        ? `- 预算: ${usedTokens}/${budgetTokens} tokens${worldDebug?.overflowed ? `，裁掉 ${trimmedEntries.length} 条` : ''}`
-        : '- 预算: 未限制',
-    ];
-
-    pushSection('激活条目', [
-      ...renderEntryRows(builtinEntries, { emptyText: '无内置命中' }),
-      ...renderEntryRows(globalEntries, { emptyText: '无全局命中' }),
-      ...renderEntryRows(roleEntries, { emptyText: '无角色命中' }),
-      ...renderEntryRows(sessionEntries, { emptyText: '无会话命中' }),
-    ]);
-    pushSection('合并后（预算前）', renderEntryRows(mergedEntries, { includePosition: true, emptyText: '无合并条目' }));
-    pushSection('实际注入', renderEntryRows(injectedEntries, { includePosition: true, emptyText: '无普通注入内容' }));
-    pushSection('模板注入', renderEntryRows(templateEntries, { includePosition: true, includeTags: true, emptyText: '无模板注入内容' }));
-    pushSection('仅变量初始化', renderEntryRows(initialVariableEntries, { emptyText: '无 InitialVariables 条目' }));
-    pushSection('预算裁掉', renderEntryRows(trimmedEntries, { includePosition: true, emptyText: '无预算裁剪' }));
-
-    return [...header, '', ...sectionLines].join('\n').trim();
-  };
-
   const showPromptPreview = () => {
     try {
       const sid = chatStore.getCurrent();
       const contact = contactsStore.getContact(sid);
       const name = contact?.name || sid;
       const req = window.appBridge?.lastRequest;
-      const msgs = Array.isArray(req?.messages) ? req.messages : null;
+      const {
+        meta,
+        head,
+        body,
+        messages: msgs,
+      } = buildPromptPreviewSnapshot({
+        request: req,
+        contactName: name,
+      });
       if (!msgs || !msgs.length) {
         window.toastr?.warning?.('暂无本次 Prompt 记录（请先发送一次）');
         return;
       }
-      const at = req?.at ? new Date(req.at).toLocaleString() : '';
-      const head = [
-        `provider: ${req?.provider || ''}`,
-        `model: ${req?.model || ''}`,
-        `baseUrl: ${req?.baseUrl || ''}`,
-        `stream: ${req?.stream ? 'true' : 'false'}`,
-        req?.options
-          ? `options: ${Object.entries(req.options)
-              .filter(([_, v]) => v !== undefined)
-              .map(([k, v]) => `${k}=${v}`)
-              .join(', ')}`
-          : '',
-      ]
-        .filter(Boolean)
-        .join('\n');
-      const body =
-        typeof buildRequestPromptText === 'function'
-          ? buildRequestPromptText(msgs)
-          : msgs
-              .map(m => String(m?.content ?? ''))
-              .filter(t => t.trim().length > 0)
-              .join('\n\n');
       const worldDebug = req?.worldDebug && typeof req.worldDebug === 'object' ? req.worldDebug : null;
       const worldDebugText = formatPromptWorldDebug(worldDebug);
       const locateCandidates = buildWorldDebugLocatorCandidates(worldDebug);
-      const meta = `${name}${at ? ` · ${at}` : ''}`;
       promptPreviewModal.show(
         [head, worldDebugText, body].filter(Boolean).join('\n\n').trim(),
         meta,
@@ -12226,9 +11807,9 @@ Phase G（Frame 36）：循环衔接
       window.toastr?.error?.('打开本次 Prompt 失败');
     }
   };
-  if (window.appBridge) {
-    window.appBridge.showPromptPreview = showPromptPreview;
-  }
+  registerUiUtilityBridgeContract(window.appBridge, {
+    showPromptPreview,
+  });
 
   /* ---------------- 头像设置菜单 ---------------- */
   const settingsMenu = document.getElementById('settings-menu');
@@ -12900,27 +12481,6 @@ Phase G（Frame 36）：循环衔接
     if (String(chatStore.getCurrent() || '').trim() !== sid) return true;
     return false;
   };
-  const applyChatRoomLoadingState = (sessionId, contact = null, sessionName = '') => {
-    const sid = String(sessionId || '').trim();
-    const displayName = String(contact?.name || sessionName || sid).trim();
-    ui.showConversationLoading({
-      title: displayName,
-      isGroup: Boolean(contact?.isGroup) || sid.startsWith('group:'),
-    });
-    const draft = chatStore.getDraft(sid);
-    if (draft) {
-      ui.setInputText(draft);
-    } else {
-      try {
-        ui.setInputText(sessionStorage.getItem(`phone_draft_${sid}`) || '');
-      } catch {
-        ui.setInputText('');
-      }
-    }
-    syncReplyTargetComposer(sid);
-    ui.setSessionLabel(sid);
-    updatePendingFloat(sid);
-  };
   const nowPerfMs = () => {
     try {
       if (typeof performance !== 'undefined' && typeof performance.now === 'function') return performance.now();
@@ -12995,255 +12555,184 @@ Phase G（Frame 36）：循环衔接
   const enterChatRoom = async (sessionId, sessionName, originPage = activePage, options = {}) => {
     const enterPerfStart = nowPerfMs();
     const enterRequest = beginChatEnterRequest(sessionId);
-    const suppressInitialAutoScroll = options?.suppressInitialAutoScroll === true;
-    const jumpTargetMessageId = String(options?.jumpTargetMessageId || '').trim();
-    const jumpKeyword = String(options?.jumpKeyword || '').trim();
-    const jumpKind = String(options?.jumpKind || (jumpKeyword ? 'search' : 'anchor')).trim() || 'anchor';
-    chatOriginPage = originPage || 'chat';
-    cancelAllInitialHistoryFillJobs();
-    chatList?.classList.add('hidden');
-    chatRoom?.classList.remove('hidden');
-    pages.chat?.classList.add('chat-room-active');
-    document.body?.classList.add('chat-room-active');
-    chatInputGapTweak = 0;
-    setStickerPanelOpen(false);
-    scheduleModeSwitchSync();
-    if (typeof requestAnimationFrame === 'function') {
-      requestAnimationFrame(() => {
-        syncChatInputOffset();
-        requestAnimationFrame(syncChatInputOffset);
-      });
-    } else {
-      setTimeout(syncChatInputOffset, 0);
-    }
-
-    // 隐藏消息界面顶部和底部导航栏
-    const messageTopbar = document.getElementById('message-topbar');
-    const bottomNav = document.querySelector('.bottom-nav');
-    if (messageTopbar) messageTopbar.style.display = 'none';
-    if (bottomNav) bottomNav.style.display = 'none';
-
     const contact = contactsStore.getContact(sessionId);
-    if (currentChatTitle)
-      currentChatTitle.innerHTML = renderSessionNameHtml(sessionId, contact);
     const isGroupSession = Boolean(contact?.isGroup) || String(sessionId || '').startsWith('group:');
-    // 切换会话
-    chatStore.switchSession(sessionId);
-    stageManager?.setSession?.(sessionId);
-    stageTimeline?.setSession?.(sessionId);
-    window.appBridge.setActiveSession(sessionId);
-    syncUserPersonaUI(sessionId);
-    if (chatSettingsReady) {
-      try {
-        const sessionSettings = normalizeChatSettings(chatStore.getSessionSettings(sessionId) || {});
-        applyChatSettings(sessionId, sessionSettings);
-      } catch (err) {
-        logger.warn('应用会话聊天设置失败', err);
-      }
-    } else {
-      pendingChatSettingsSessionId = sessionId;
-    }
-    applyChatRoomLoadingState(sessionId, contact, sessionName);
-    // 加载历史
-    const loadStart = nowPerfMs();
-    const history = await chatStore.ensureRecentMessagesLoaded(sessionId);
-    if (isChatEnterRequestStale(enterRequest)) return { jumpedToTarget: false, stale: true };
-    const loadHistoryMs = Math.round(nowPerfMs() - loadStart);
-    const firstUnreadId = chatStore.getFirstUnreadMessageId(sessionId);
-    const PAGE = isGroupSession
-      ? (isLikelyAndroidDevice() ? 56 : 72)
-      : 90;
-    let start = Math.max(0, history.length - PAGE);
-    if (firstUnreadId) {
-      const idx = history.findIndex(m => String(m?.id || '') === String(firstUnreadId));
-      if (idx !== -1 && idx < start) {
-        start = Math.max(0, idx - 10);
-      }
-    }
-    const initial = history.slice(start, start + PAGE);
-    const { list: initialWithDivider, dividerId } = injectUnreadDivider(initial, firstUnreadId);
-    ui.clearMessages();
-    ui.hideTyping();
-    const useProgressiveInitialRender =
-      isGroupSession &&
-      isLikelyAndroidDevice() &&
-      !jumpTargetMessageId &&
-      !firstUnreadId &&
-      initialWithDivider.length > 28;
-    const renderMetrics = useProgressiveInitialRender
-      ? renderInitialHistoryProgressive(sessionId, initialWithDivider, {
-          keepScroll: true,
-          recentCount: 24,
-          chunkSize: 12,
-        })
-      : (() => {
-          const decorateStart = nowPerfMs();
-          const decoratedInitial = decorateMessagesForDisplay(initialWithDivider, { sessionId });
-          const decorateMs = Math.round(nowPerfMs() - decorateStart);
-          const preloadStart = nowPerfMs();
-          ui.preloadHistory(decoratedInitial, { keepScroll: true });
-          const preloadMs = Math.round(nowPerfMs() - preloadStart);
-          return {
-            decorateMs,
-            preloadMs,
-            deferred: false,
-            deferredCount: 0,
-          };
-        })();
-    const decorateMs = renderMetrics.decorateMs;
-    const preloadMs = renderMetrics.preloadMs;
-    cancelScheduledTurnCheckpointHydration(sessionId);
-    scheduleHydrateTurnCheckpointsFromLoadedMessages(sessionId, {
-      onlyMissing: true,
-      delayMs: isGroupSession ? 720 : 480,
-    }).catch(err => {
-      logger.warn('schedule hydrate turn checkpoints from loaded messages failed', err);
+    return runSessionEnterFlow({
+      sessionId,
+      sessionName,
+      originPage,
+      options,
+      contact,
+      isGroupSession,
+      activateView: ({ originPage }) => activateSessionEnterView({
+        originPage,
+        setChatOriginPage: value => {
+          chatOriginPage = value;
+        },
+        cancelInitialHistoryFillJobs: cancelAllInitialHistoryFillJobs,
+        chatListEl: chatList,
+        chatRoomEl: chatRoom,
+        chatPageEl: pages.chat,
+        bodyEl: document.body,
+        setChatInputGapTweak: value => {
+          chatInputGapTweak = value;
+        },
+        setStickerPanelOpen,
+        scheduleModeSwitchSync,
+        syncChatInputOffset,
+        requestAnimationFrameFn: typeof requestAnimationFrame === 'function' ? requestAnimationFrame : null,
+        setTimeoutFn: typeof setTimeout === 'function' ? setTimeout : null,
+        messageTopbarEl: document.getElementById('message-topbar'),
+        bottomNavEl: document.querySelector('.bottom-nav'),
+      }),
+      activateShellStateFn: ({ sessionId }) => activateSessionShellState({
+        sessionId,
+        switchSession: sid => chatStore.switchSession(sid),
+        setStageSession: sid => stageManager?.setSession?.(sid),
+        setTimelineSession: sid => stageTimeline?.setSession?.(sid),
+        setActiveSession: sid => window.appBridge.setActiveSession(sid),
+        syncUserPersonaUI,
+        getContact: sid => contactsStore.getContact(sid),
+        renderSessionNameHtml,
+        setChatTitleHtml: html => {
+          if (currentChatTitle) currentChatTitle.innerHTML = html;
+        },
+        restoreDraft: false,
+      }),
+      applyChatSettingsFn: ({ sessionId }) => applySessionEnterChatSettings({
+        sessionId,
+        chatSettingsReady,
+        getSessionSettings: sid => chatStore.getSessionSettings(sid),
+        normalizeChatSettings,
+        applyChatSettings,
+        setPendingChatSettingsSessionId: sid => {
+          pendingChatSettingsSessionId = sid;
+        },
+        logger,
+      }),
+      applyLoadingStateFn: ({ sessionId, contact, sessionName }) => applySessionEnterLoadingState({
+        sessionId,
+        contact,
+        sessionName,
+        showConversationLoading: payload => ui.showConversationLoading(payload),
+        getDraft: sid => chatStore.getDraft(sid),
+        getMirrorDraft: sid => {
+          try {
+            return sessionStorage.getItem(`phone_draft_${sid}`) || '';
+          } catch {}
+          return '';
+        },
+        setInputText: value => ui.setInputText(value),
+        syncReplyTargetComposer,
+        setSessionLabel: sid => ui.setSessionLabel(sid),
+        updatePendingFloat,
+      }),
+      loadHistoryStageFn: ({ sessionId, isGroupSession, jumpTargetMessageId }) => loadSessionEnterHistoryStage({
+        sessionId,
+        isGroupSession,
+        isAndroid: isLikelyAndroidDevice(),
+        jumpTargetMessageId,
+        ensureRecentMessagesLoaded: sid => chatStore.ensureRecentMessagesLoaded(sid),
+        isRequestStale: () => isChatEnterRequestStale(enterRequest),
+        getFirstUnreadMessageId: sid => chatStore.getFirstUnreadMessageId(sid),
+        injectUnreadDivider,
+        clearMessages: () => ui.clearMessages(),
+        hideTyping: () => ui.hideTyping(),
+        renderInitialHistoryProgressive,
+        decorateMessagesForDisplay,
+        preloadHistory: (messages, options) => ui.preloadHistory(messages, options),
+        nowPerfMs,
+        currentArchiveId: getCurrentArchiveIdForSession(sessionId),
+        cancelScheduledHydration: cancelScheduledTurnCheckpointHydration,
+        scheduleHydration: scheduleHydrateTurnCheckpointsFromLoadedMessages,
+        restoreArchivePointer: restoreArchivePointerForLoadedThread,
+        restoreTailMemory: restoreMemoryFromCurrentTailAssistant,
+        prefetchRawOriginals: sid => chatStore.prefetchRawOriginals?.(sid),
+        setRenderState: (sid, state) => chatRenderState.set(sid, state),
+        logger,
+      }),
+      finalizeNavigationFn: ({
+        jumpTargetMessageId,
+        jumpKeyword,
+        jumpKind,
+        dividerId,
+        firstUnreadId,
+        suppressInitialAutoScroll,
+      }) => finalizeSessionEnterNavigation({
+        jumpTargetMessageId,
+        jumpKeyword,
+        jumpKind,
+        scrollToMessage: (messageId, options) => ui.scrollToMessage(messageId, options),
+        dividerId,
+        firstUnreadId,
+        suppressInitialAutoScroll,
+        scrollToBottom: () => ui.scrollToBottom(),
+        syncChatBottomGap,
+        requestAnimationFrameFn: typeof requestAnimationFrame === 'function' ? requestAnimationFrame : null,
+        setTimeoutFn: typeof setTimeout === 'function' ? setTimeout : null,
+        windowObject: typeof window !== 'undefined' ? window : null,
+      }),
+      finalizeUiStateFn: ({ sessionId }) => finalizeSessionEnterUiState({
+        sessionId,
+        markRead: sid => chatStore.markRead(sid),
+        refreshChatAndContacts,
+        nowPerfMs,
+        getDraft: sid => chatStore.getDraft(sid),
+        getMirrorDraft: sid => {
+          try {
+            return sessionStorage.getItem(`phone_draft_${sid}`) || '';
+          } catch {}
+          return '';
+        },
+        setInputText: value => ui.setInputText(value),
+        syncReplyTargetComposer,
+        setSessionLabel: sid => ui.setSessionLabel(sid),
+        uiStateArmed,
+        saveUiState,
+        updatePendingFloat,
+        activeGeneration,
+        showTyping: (avatar, members) => ui.showTyping(avatar, members),
+        getAssistantAvatarForSession,
+        getGroupTypingMembers,
+        logger,
+      }),
+      getChatOriginPage: () => chatOriginPage,
+      uiLog,
     });
-    const currentArchiveId = getCurrentArchiveIdForSession(sessionId);
-    const restoreOnEnter = currentArchiveId
-      ? restoreArchivePointerForLoadedThread(sessionId, {
-          refreshBaselineWhenNoTail: true,
-          source: 'enter_chat_room_archive',
-        })
-      : restoreMemoryFromCurrentTailAssistant(sessionId, {
-          refreshBaselineWhenNoTail: true,
-          source: 'enter_chat_room',
-        });
-    Promise.resolve(restoreOnEnter).catch(err => {
-      logger.warn('restore tail assistant memory state on enter failed', err);
-    });
-    chatStore.prefetchRawOriginals?.(sessionId).catch(() => {});
-    // Keep a render cursor so we can lazy-load earlier messages when scrolling up.
-    chatRenderState.set(sessionId, { start });
-    const jumpTargetNow = () => {
-      if (!jumpTargetMessageId) return false;
-      return ui.scrollToMessage(jumpTargetMessageId, {
-        keyword: jumpKeyword,
-        kind: jumpKind,
-        dismissOnScroll: true,
-      });
-    };
-    const jumpedToTarget = jumpTargetNow();
-
-    const jumpToUnread = () => {
-      if (dividerId && ui.scrollToMessage(dividerId, { kind: 'unread', dismissOnScroll: true })) return true;
-      if (firstUnreadId) return ui.scrollToMessage(firstUnreadId, { kind: 'unread', dismissOnScroll: true });
-      return false;
-    };
-    if (jumpedToTarget) {
-      try {
-        if (typeof requestAnimationFrame === 'function') {
-          requestAnimationFrame(syncChatBottomGap);
-        } else {
-          setTimeout(syncChatBottomGap, 0);
-        }
-      } catch {
-        setTimeout(syncChatBottomGap, 0);
-      }
-    } else if (suppressInitialAutoScroll) {
-      try {
-        if (typeof requestAnimationFrame === 'function') {
-          requestAnimationFrame(syncChatBottomGap);
-        } else {
-          setTimeout(syncChatBottomGap, 0);
-        }
-      } catch {
-        setTimeout(syncChatBottomGap, 0);
-      }
-    } else if (dividerId || firstUnreadId) {
-      try {
-        if (typeof window !== 'undefined' && window.requestAnimationFrame) {
-          window.requestAnimationFrame(() => {
-            if (!jumpToUnread()) setTimeout(jumpToUnread, 80);
-            requestAnimationFrame(syncChatBottomGap);
-          });
-        } else {
-          setTimeout(() => {
-            if (!jumpToUnread()) setTimeout(jumpToUnread, 80);
-            setTimeout(syncChatBottomGap, 0);
-          }, 0);
-        }
-      } catch {
-        setTimeout(() => {
-          if (!jumpToUnread()) setTimeout(jumpToUnread, 80);
-          setTimeout(syncChatBottomGap, 0);
-        }, 0);
-      }
-    } else {
-      setTimeout(() => {
-        ui.scrollToBottom();
-        if (typeof requestAnimationFrame === 'function') {
-          requestAnimationFrame(syncChatBottomGap);
-        } else {
-          setTimeout(syncChatBottomGap, 0);
-        }
-      }, 0);
-    }
-    // Mark read once user enters the chatroom
-    try {
-      chatStore.markRead(sessionId);
-    } catch {}
-    const refreshStart = nowPerfMs();
-    refreshChatAndContacts();
-    const refreshMs = Math.round(nowPerfMs() - refreshStart);
-    const draft = chatStore.getDraft(sessionId);
-    if (draft) {
-      ui.setInputText(draft);
-    } else {
-      // Fallback: sessionStorage draft mirror (survives hot reload)
-      try {
-        const tmp = sessionStorage.getItem(`phone_draft_${sessionId}`) || '';
-        if (tmp) ui.setInputText(tmp);
-      } catch {}
-    }
-    syncReplyTargetComposer(sessionId);
-    ui.setSessionLabel(sessionId);
-    if (uiStateArmed) saveUiState();
-    updatePendingFloat(sessionId);
-    if (activeGeneration && !activeGeneration.cancelled && activeGeneration.sessionId === sessionId) {
-      let reattached = false;
-      const hasStreamText = String(activeGeneration.streamText || '').trim().length > 0;
-      if (hasStreamText && typeof activeGeneration.reattachStream === 'function') {
-        try {
-          reattached = activeGeneration.reattachStream() === true;
-        } catch (err) {
-          logger.warn('assistant stream reattach failed', err);
-        }
-      }
-        if (!reattached) ui.showTyping(getAssistantAvatarForSession(sessionId), getGroupTypingMembers(sessionId) || {});
-    }
-    uiLog('enterChatRoom', { sessionId, originPage: chatOriginPage });
-    return { jumpedToTarget };
   };
 
   const exitChatRoom = (options) => {
-    beginChatEnterRequest('');
-    cancelAllInitialHistoryFillJobs();
-    chatRoom?.classList.add('hidden');
-    chatList?.classList.remove('hidden');
-    pages.chat?.classList.remove('chat-room-active');
-    document.body?.classList.remove('chat-room-active');
-    stageTimeline?.render?.('');
-    setStickerPanelOpen(false);
-    setActionPanelOpen(false);
-    ui.setReplyTarget(null);
-    scheduleModeSwitchSync();
-    scheduleWallpaperIdle();
-
-    // 恢复显示消息界面顶部和底部导航栏
-    const messageTopbar = document.getElementById('message-topbar');
-    const bottomNav = document.querySelector('.bottom-nav');
-    if (messageTopbar) messageTopbar.style.display = '';
-    if (bottomNav) bottomNav.style.display = '';
-    updateChatContentSearchVisibility();
-
-    if (chatOriginPage && chatOriginPage !== 'chat') {
-      switchPage(chatOriginPage, { ...options, animate: false });
-    }
-    chatOriginPage = 'chat';
-    updatePendingFloat();
-    if (uiStateArmed) saveUiState();
-    uiLog('exitChatRoom', { activePage, sessionId: chatStore.getCurrent() });
+    runSessionExitFlow({
+      options,
+      deactivateView: () => deactivateSessionEnterView({
+        resetEnterRequest: beginChatEnterRequest,
+        cancelInitialHistoryFillJobs: cancelAllInitialHistoryFillJobs,
+        chatRoomEl: chatRoom,
+        chatListEl: chatList,
+        chatPageEl: pages.chat,
+        bodyEl: document.body,
+        clearStageTimeline: value => stageTimeline?.render?.(value),
+        setStickerPanelOpen,
+        setActionPanelOpen,
+        setReplyTarget: value => ui.setReplyTarget(value),
+        scheduleModeSwitchSync,
+        scheduleWallpaperIdle,
+        messageTopbarEl: document.getElementById('message-topbar'),
+        bottomNavEl: document.querySelector('.bottom-nav'),
+        updateChatContentSearchVisibility,
+      }),
+      chatOriginPage,
+      switchPage,
+      setChatOriginPage: value => {
+        chatOriginPage = value;
+      },
+      updatePendingFloat,
+      uiStateArmed,
+      saveUiState,
+      uiLog,
+      activePage,
+      getCurrentSessionId: () => chatStore.getCurrent(),
+    });
   };
   patchDebugUiRegistry((registry) => {
     registry.actions.enterChatRoom = enterChatRoom;
@@ -13449,10 +12938,10 @@ Phase G（Frame 36）：循环衔接
   };
 
   try {
-    if (window.appBridge) {
-      window.appBridge.getRpGreetingState = getRpGreetingState;
-      window.appBridge.setRpGreeting = setRpGreeting;
-    }
+    registerPersonaBridgeContract(window.appBridge, {
+      getRpGreetingState,
+      setRpGreeting,
+    });
   } catch {}
 
   const buildRpGreetingMessage = (greeting, sessionId) => {
@@ -13880,12 +13369,11 @@ Phase G（Frame 36）：循环衔接
     }
     let stored = macroContent;
     let display = macroContent;
-    try {
-      stored = window.appBridge.applyOutputStoredRegex(macroContent, { depth: 0 });
-      display = window.appBridge.applyOutputDisplayRegex(stored, { depth: 0 });
-    } catch (err) {
-      logger.warn('[rp-greeting] regex-apply-failed', err);
-    }
+    ({ stored, display } = applyOutputRegexPairSafe(macroContent, {
+      appBridge: window.appBridge,
+      depth: 0,
+      onError: err => logger.warn('[rp-greeting] regex-apply-failed', err),
+    }));
     const parsed = parseSpecialMessage(display);
     logRpGreetingDebug('build-parse', {
       session: sessionId,
@@ -14462,34 +13950,8 @@ Phase G（Frame 36）：循环衔接
     msg.meta.deliveryText = text;
   });
 
-  const cloneSwipePlainObject = value => {
-    if (value === null || value === undefined) return value;
-    try {
-      return JSON.parse(JSON.stringify(value));
-    } catch {
-      return value && typeof value === 'object' ? { ...value } : value;
-    }
-  };
-  const cloneSwipeMemoryUpdateEntry = entry => {
-    if (!entry || typeof entry !== 'object') return null;
-    const cloned = cloneSwipePlainObject(entry) || {};
-    const clip = (value, max = 20000) => {
-      const text = typeof value === 'string' ? value : '';
-      if (!text) return '';
-      return text.length > max ? `${text.slice(0, max)}\n...[truncated]` : text;
-    };
-    return {
-      at: cloned.at || 0,
-      mode: cloned.mode,
-      sessionId: cloned.sessionId,
-      tableEditRaw: clip(cloned.tableEditRaw),
-      raw: clip(cloned.raw),
-      requestPrompt: clip(cloned.requestPrompt),
-      actions: Array.isArray(cloned.actions) ? cloneSwipePlainObject(cloned.actions) : [],
-      rollback: cloned.rollback ? cloneSwipePlainObject(cloned.rollback) : null,
-      rollbackAt: cloned.rollbackAt || 0,
-    };
-  };
+  const cloneSwipePlainObject = clonePlainObject;
+  const cloneSwipeMemoryUpdateEntry = cloneMemoryUpdateEntry;
   let activeSwipeMemoryStateKey = '';
   const getSwipeMemoryStateKey = (sessionId, msgId, index) => {
     const sid = String(sessionId || '').trim();
@@ -14529,41 +13991,21 @@ Phase G（Frame 36）：循环衔接
     const templateId = await resolveSwipeMemoryTemplateId();
     if (!templateId) return null;
     const groupScope = Boolean(isGroup);
-    let rows = [];
-    try {
-      rows = await memoryTableStore.getMemories({
-        scope: groupScope ? 'group' : 'contact',
-        group_id: groupScope ? sid : undefined,
-        contact_id: groupScope ? undefined : sid,
-        template_id: templateId,
-      });
-    } catch {
-      rows = [];
-    }
-    const picked = sortMemoryRowsForSnapshot(Array.isArray(rows) ? rows : [])
-      .map(row => {
-        const tableId = String(row?.table_id || '').trim();
-        if (!tableId) return null;
-        return {
-          id: String(row?.id || '').trim(),
-          template_id: String(row?.template_id || templateId).trim() || templateId,
-          table_id: tableId,
-          contact_id: groupScope ? null : sid,
-          group_id: groupScope ? sid : null,
-          row_data: cloneSwipePlainObject(row?.row_data || {}),
-          is_active: row?.is_active !== false,
-          is_pinned: Boolean(row?.is_pinned),
-          priority: Number.isFinite(Number(row?.priority)) ? Number(row.priority) : 0,
-          sort_order: Number.isFinite(Number(row?.sort_order)) ? Number(row.sort_order) : 0,
-        };
-      })
-      .filter(Boolean);
-    return {
+    const scopeKey = resolveSessionMemoryScopeKey({ isGroup: groupScope });
+    const scopeFields = buildScopedMemoryRowFields({ scopeKey, sessionId: sid });
+    const rows = await loadScopedMemories({
+      memoryTableStore,
+      scopeKey,
+      sessionId: sid,
+      templateId,
+    });
+    return buildSwipeMemorySnapshot({
+      rows,
       templateId,
       scope: groupScope ? 'group' : 'contact',
-      rows: picked,
-      capturedAt: Date.now(),
-    };
+      scopeFields,
+      cloneValue: cloneSwipePlainObject,
+    });
   };
   const applySwipeMemoryTableSnapshot = async (sessionId, snapshot, { isGroup } = {}) => {
     if (getMemoryStorageMode() !== 'table') return false;
@@ -14573,83 +14015,45 @@ Phase G（Frame 36）：循环衔接
     const groupScope = Boolean(isGroup);
     const templateId = String(snapshot?.templateId || '').trim() || await resolveSwipeMemoryTemplateId();
     if (!templateId) return false;
-    let existing = [];
-    try {
-      existing = await memoryTableStore.getMemories({
-        scope: groupScope ? 'group' : 'contact',
-        group_id: groupScope ? sid : undefined,
-        contact_id: groupScope ? undefined : sid,
-        template_id: templateId,
-      });
-    } catch {
-      existing = [];
-    }
-    const ids = (Array.isArray(existing) ? existing : [])
-      .map(row => String(row?.id || '').trim())
-      .filter(Boolean);
-    if (ids.length) {
-      try {
-        await memoryTableStore.batchDeleteMemories?.(ids);
-      } catch {
-        for (const id of ids) {
-          try {
-            await memoryTableStore.deleteMemory?.(id);
-          } catch {}
-        }
-      }
-    }
-    const inputs = sortMemoryRowsForSnapshot(Array.isArray(snapshot?.rows) ? snapshot.rows : [])
-      .map(row => {
-        const tableId = String(row?.table_id || '').trim();
-        if (!tableId) return null;
-        return {
-          id: row?.id ? String(row.id) : undefined,
-          template_id: templateId,
-          table_id: tableId,
-          contact_id: groupScope ? null : sid,
-          group_id: groupScope ? sid : null,
-          row_data: cloneSwipePlainObject(row?.row_data || {}),
-          is_active: row?.is_active !== false,
-          is_pinned: Boolean(row?.is_pinned),
-          priority: Number.isFinite(Number(row?.priority)) ? Number(row.priority) : 0,
-          sort_order: Number.isFinite(Number(row?.sort_order)) ? Number(row.sort_order) : 0,
-        };
-      })
-      .filter(Boolean);
-    if (inputs.length) {
-      try {
-        await memoryTableStore.batchCreateMemories?.(inputs);
-      } catch {
-        for (const input of inputs) {
-          try {
-            await memoryTableStore.createMemory?.(input);
-          } catch {}
-        }
-      }
-    }
+    const scopeKey = resolveSessionMemoryScopeKey({ isGroup: groupScope });
+    const scopeFields = buildScopedMemoryRowFields({ scopeKey, sessionId: sid });
+    const existing = await loadScopedMemories({
+      memoryTableStore,
+      scopeKey,
+      sessionId: sid,
+      templateId,
+    });
+    await replaceScopedMemoriesWithSnapshot({
+      memoryTableStore,
+      existingRows: existing,
+      snapshotRows: snapshot?.rows,
+      templateId,
+      scopeFields,
+      cloneValue: cloneSwipePlainObject,
+    });
     window.dispatchEvent(new CustomEvent('memory-rows-updated', { detail: { sessionId: sid, templateId } }));
     return true;
   };
   const persistSwipeBranchMemoryState = async (branches, index, sessionId, { isGroup } = {}) => {
     if (getMemoryStorageMode() !== 'table') return false;
-    if (!Array.isArray(branches) || index < 0 || index >= branches.length) return false;
-    const branch = branches[index] && typeof branches[index] === 'object' ? branches[index] : null;
-    if (!branch || branch.draft === true) return false;
-    const snapshot = await buildSwipeMemoryTableSnapshot(sessionId, { isGroup });
-    if (!snapshot) return false;
-    branch.memoryTableSnapshot = snapshot;
-    branch.memoryUpdateEntry = cloneSwipeMemoryUpdateEntry(window.appBridge?.getLastMemoryUpdate?.(sessionId));
-    return true;
+    return persistSwipeBranchMemoryStateCore({
+      branches,
+      index,
+      sessionId,
+      buildSnapshot: sid => buildSwipeMemoryTableSnapshot(sid, { isGroup }),
+      cloneEntry: cloneSwipeMemoryUpdateEntry,
+      getMemoryUpdateEntry: sid => window.appBridge?.getLastMemoryUpdate?.(sid),
+    });
   };
   const applySwipeBranchMemoryState = async (sessionId, branch, { isGroup } = {}) => {
     if (getMemoryStorageMode() !== 'table') return false;
-    if (!branch || typeof branch !== 'object' || !branch.memoryTableSnapshot) return false;
-    const applied = await applySwipeMemoryTableSnapshot(sessionId, branch.memoryTableSnapshot, { isGroup });
-    if (applied) {
-      const entry = cloneSwipeMemoryUpdateEntry(branch.memoryUpdateEntry);
-      window.appBridge?.setLastMemoryUpdate?.(sessionId, entry || null);
-    }
-    return applied;
+    return applySwipeBranchMemoryStateCore({
+      sessionId,
+      branch,
+      applySnapshot: (sid, snapshot) => applySwipeMemoryTableSnapshot(sid, snapshot, { isGroup }),
+      cloneEntry: cloneSwipeMemoryUpdateEntry,
+      setMemoryUpdateEntry: (sid, entry) => window.appBridge?.setLastMemoryUpdate?.(sid, entry),
+    });
   };
   const isTurnCheckpointSessionEnabled = sessionId => {
     const sid = String(sessionId || '').trim();
@@ -15398,19 +14802,19 @@ Phase G（Frame 36）：循环衔接
     });
     return applied;
   };
-  if (window.appBridge) {
-    window.appBridge.restoreMemoryFromCurrentTailAssistant = restoreMemoryFromCurrentTailAssistant;
-    window.appBridge.ensureSessionBaselineCheckpointSnapshot = ensureSessionBaselineCheckpointSnapshot;
-    window.appBridge.syncTurnCheckpointForMessage = syncTurnCheckpointForMessage;
-    window.appBridge.hydrateTurnCheckpointsFromLoadedMessages = hydrateTurnCheckpointsFromLoadedMessages;
-    window.appBridge.clearSessionTurnCheckpointState = clearSessionTurnCheckpointState;
-    window.appBridge.renameSessionTurnCheckpointState = renameSessionTurnCheckpointState;
-    window.appBridge.deleteArchiveTurnCheckpointState = deleteArchiveTurnCheckpointState;
-    window.appBridge.buildArchivePointerFromCurrentThread = buildArchivePointerFromCurrentThread;
-    window.appBridge.setArchivePointerForArchive = setArchivePointerForArchive;
-    window.appBridge.restoreArchivePointerForLoadedThread = restoreArchivePointerForLoadedThread;
-    window.appBridge.restoreMemoryForActiveThread = restoreMemoryForActiveThread;
-  }
+  registerTurnCheckpointBridgeContract(window.appBridge, {
+    restoreMemoryFromCurrentTailAssistant,
+    ensureSessionBaselineCheckpointSnapshot,
+    syncTurnCheckpointForMessage,
+    hydrateTurnCheckpointsFromLoadedMessages,
+    clearSessionTurnCheckpointState,
+    renameSessionTurnCheckpointState,
+    deleteArchiveTurnCheckpointState,
+    buildArchivePointerFromCurrentThread,
+    setArchivePointerForArchive,
+    restoreArchivePointerForLoadedThread,
+    restoreMemoryForActiveThread,
+  });
 
   ui.onSwipeChange(async ({ msgId, message, index, previousIndex }) => {
     const sid = chatStore.getCurrent();
@@ -15855,7 +15259,7 @@ Phase G（Frame 36）：循环衔接
     } catch {}
     try {
       const sid = String(generation.sessionId || '').trim();
-      if (sid) abortMemoryUpdate(sid);
+      if (sid) memoryUpdateRuntime.abortMemoryUpdate(sid);
     } catch {}
     try {
       window.appBridge.cancelCurrentGeneration(reason);
@@ -15865,25 +15269,11 @@ Phase G（Frame 36）：循环衔接
       partial = generation.streamCtrl?.cancel?.({ keepPartial: reason === 'user' }) || null;
     } catch {}
     if (!partial && reason === 'user') {
-      const rawText = String(generation.streamText || '');
-      if (rawText.trim()) {
-        const meta = generation.streamMeta && typeof generation.streamMeta === 'object' ? generation.streamMeta : {};
-        partial = {
-          role: 'assistant',
-          type: 'text',
-          id: meta.id || generation.streamCtrl?.id,
-          name: meta.name || '助手',
-          avatar: meta.avatar || getAssistantAvatarForSession(generation.sessionId),
-          time: meta.time || formatNowTime(),
-          content: rawText,
-          raw: rawText,
-          rawOriginal: rawText,
-          meta: {
-            partial: true,
-            cancelled: true,
-          },
-        };
-      }
+      partial = buildCancelledAssistantPartial({
+        generation,
+        assistantAvatar: getAssistantAvatarForSession(generation.sessionId),
+        fallbackTime: formatNowTime(),
+      });
     }
     if (reason === 'user') {
       try {
@@ -16002,21 +15392,6 @@ Phase G（Frame 36）：循环衔接
   bindChatScrollLazyLoad();
 
   // Summary compaction runner (used by auto-trigger and manual "↻" button in settings)
-  const normalizeSummarySnapshotItems = (items = []) =>
-    (Array.isArray(items) ? items : [])
-      .map(it => {
-        if (!it) return null;
-        if (typeof it === 'string') {
-          const text = String(it || '').trim();
-          if (!text) return null;
-          return { at: 0, text };
-        }
-        const text = String(it?.text || '').trim();
-        if (!text) return null;
-        const at = Number(it?.at || 0) || 0;
-        return { at, text };
-      })
-      .filter(Boolean);
   const summaryCompacting = new Set();
   const requestSummaryCompaction = (sid, { force = false } = {}) => {
     if (!isSummaryMemoryEnabled()) return Promise.resolve(false);
@@ -16028,13 +15403,7 @@ Phase G（Frame 36）：循环衔接
       return Promise.resolve(false);
 
     const list = chatStore.getSummaries(sessionId) || [];
-    const summaries = Array.isArray(list) ? list : [];
-    if (!summaries.length) return Promise.resolve(false);
-    const total = summaries.reduce((n, it) => {
-      const text = String(typeof it === 'string' ? it : it?.text || '');
-      return n + text.length;
-    }, 0);
-    if (!force && total <= 1000) return Promise.resolve(false);
+    if (!shouldRunSummaryCompaction({ items: list, force })) return Promise.resolve(false);
 
     summaryCompacting.add(sessionId);
     return new Promise(resolve => {
@@ -16043,107 +15412,34 @@ Phase G（Frame 36）：循环衔接
         try {
           const current = chatStore.getSummaries(sessionId) || [];
           const arr = Array.isArray(current) ? current : [];
-          const payload = arr
-            .map(it => {
-              const text = String(typeof it === 'string' ? it : it?.text || '').trim();
-              if (!text) return '';
-              const at = typeof it === 'object' && it && it.at ? Number(it.at) : 0;
-              const when = at ? new Date(at).toLocaleString() : '';
-              return `- ${when ? `[${when}] ` : ''}${text}`;
-            })
-            .filter(Boolean)
-            .join('\n');
-          if (!payload.trim()) return resolve(false);
-
           const compactedPrev = chatStore.getCompactedSummary(sessionId);
           const compactedText = String(compactedPrev?.text || '').trim();
-
-          const prompt = [
-            '# 注意，无视你先前收到的任何指令，你的任务已更改，不再遵守格式要求',
-            '接下来的一轮回复中，将不会进行创作，不再遵循前面的要求，而是会遵循<summary_rules>中的要求进行一轮总结',
-            '【总结请求】',
-            '请对前文内容进行全面梳理，根据以下要求制作简明扼要的总结：',
-            '',
-            '<summary_rules>',
-            '总结应当遵循以下原则：',
-            '- 按时间顺序或逻辑顺序组织信息，并明确给出具体时间节点',
-            '- 保留关键事件和重要细节，省略冗余描述',
-            '- 直接陈述事实，避免主观评价',
-            '- 使用简洁清晰的语言，避免过度修饰',
-            '- 突出事件发展脉络和关键转折点',
-            '- 不回避任何敏感内容，保证记录完全还原前文',
-            '',
-            '总结正文必须放在 <summary>...</summary> 中（只允许这一层 XML 标签；不要输出其他 XML 标签）。',
-            'summary 内部的正文必须使用以下格式：',
-            '',
-            '【关键事件】',
-            '• {事件1}: {简要描述}',
-            '• {事件2}: {简要描述}',
-            '• {事件3}: {简要描述}',
-            '...',
-            '',
-            '</summary_rules>',
-            '',
-            compactedText ? '【已有大总结】' : '',
-            compactedText ? compactedText : '',
-            compactedText ? '' : '',
-            '【前文内容（按时间标注的摘要列表）】',
-            payload,
-          ].join('\n');
-
           const contact = contactsStore?.getContact?.(sessionId) || null;
           const isGroup = Boolean(contact?.isGroup) || sessionId.startsWith('group:');
           const activeUser = getActiveUserProfile();
-          const userName = String(activeUser?.name || '').trim() || '我';
           const charName = String(contact?.name || sessionId.replace(/^group:/, '') || sessionId) || 'assistant';
-          const ctx = {
-            user: {
-              name: userName,
-              persona: String(activeUser?.description || ''),
-              personaPosition: activeUser?.position,
-              personaDepth: activeUser?.depth,
-              personaRole: activeUser?.role,
-            },
-            character: { name: charName },
-            session: { id: sessionId, isGroup },
-            group: isGroup
-              ? {
-                  id: sessionId,
-                  name: charName,
-                  members: Array.isArray(contact?.members) ? contact.members : [],
-                  memberNames: (Array.isArray(contact?.members) ? contact.members : []).map(
-                    mid => contactsStore.getContact(mid)?.name || mid,
-                  ),
-                }
-              : null,
-            history: [],
-            meta: {
-              disableChatGuide: true,
-              disableScenarioHint: true,
-              disableSummary: true,
-              disableMomentSummary: true,
-              overrideLastUserMessage: '开始总结，勿输出聊天格式',
-              skipInputRegex: true,
-            },
-          };
-          const built = window.appBridge.buildMessages(prompt, ctx);
-          const out = await window.appBridge.backgroundChat(built, { temperature: 0.2, maxTokens: 800 });
-          const raw = String(out || '').trim();
+          const groupMembers = Array.isArray(contact?.members) ? contact.members : [];
+          const ctx = buildSummaryCompactionContext({
+            activeUser,
+            sessionId,
+            characterName: charName,
+            isGroup,
+            groupMembers,
+            groupMemberNames: groupMembers.map(mid => contactsStore.getContact(mid)?.name || mid),
+          });
+          const raw = await requestSummaryCompactionRaw({
+            items: arr,
+            compactedText,
+            context: ctx,
+            buildMessages: window.appBridge.buildMessages,
+            backgroundChat: window.appBridge.backgroundChat,
+          });
           if (!raw) return resolve(false);
           try {
             chatStore.setCompactedSummaryRaw(raw, sessionId);
           } catch {}
 
-          const extractSummaryTag = s => {
-            const input = String(s || '');
-            const re = /<summary>([\s\S]*?)<\/summary>/gi;
-            let m;
-            let last = null;
-            while ((m = re.exec(input))) last = m[1];
-            const inner = String(last || '').trim();
-            return inner;
-          };
-          const text = extractSummaryTag(raw);
+          const { text, valid } = parseSummaryCompactionResult(raw);
           if (!text) {
             try {
               window.dispatchEvent(
@@ -16156,9 +15452,7 @@ Phase G（Frame 36）：循环衔接
           }
 
           // Validate output format so UI can rely on a recognizable "big summary".
-          const hasHeader = /【\s*关键事件\s*】/.test(text);
-          const hasBullet = /^[ \t]*[•\-]\s*\S+/m.test(text);
-          if (!hasHeader || !hasBullet) {
+          if (!valid) {
             try {
               window.dispatchEvent(
                 new CustomEvent('chatapp-summary-compaction-failed', {
@@ -16200,147 +15494,26 @@ Phase G（Frame 36）：循环衔接
   try {
     window.__chatappRequestSummaryCompaction = requestSummaryCompaction;
   } catch {}
-  try {
-    if (window?.appBridge) window.appBridge.requestSummaryCompaction = requestSummaryCompaction;
-  } catch {}
+  registerUiUtilityBridgeContract(window.appBridge, {
+    requestSummaryCompaction,
+  });
 
-  const momentSummaryCompacting = new Set();
-  requestMomentSummaryCompaction = ({ force = false } = {}) => {
-    if (momentSummaryCompacting.has('global')) return Promise.resolve(false);
-    if (!momentSummaryStore?.getSummaries || !momentSummaryStore?.setCompactedSummary) return Promise.resolve(false);
-    if (!window?.appBridge?.backgroundChat || !window?.appBridge?.buildMessages) return Promise.resolve(false);
-    if (typeof window.appBridge.isConfigured === 'function' && !window.appBridge.isConfigured())
-      return Promise.resolve(false);
-
-    const list = momentSummaryStore.getSummaries() || [];
-    const summaries = Array.isArray(list) ? list : [];
-    if (!summaries.length) return Promise.resolve(false);
-    const total = summaries.reduce((n, it) => {
-      const text = String(typeof it === 'string' ? it : it?.text || '');
-      return n + text.length;
-    }, 0);
-    if (!force && total <= 1000) return Promise.resolve(false);
-
-    momentSummaryCompacting.add('global');
-    return new Promise(resolve => {
-      setTimeout(async () => {
-        try {
-          const current = momentSummaryStore.getSummaries() || [];
-          const arr = Array.isArray(current) ? current : [];
-          const payload = arr
-            .map(it => {
-              const text = String(typeof it === 'string' ? it : it?.text || '').trim();
-              if (!text) return '';
-              const at = typeof it === 'object' && it && it.at ? Number(it.at) : 0;
-              const when = at ? new Date(at).toLocaleString() : '';
-              return `- ${when ? `[${when}] ` : ''}${text}`;
-            })
-            .filter(Boolean)
-            .join('\n');
-          if (!payload.trim()) return resolve(false);
-
-          const compactedPrev = momentSummaryStore.getCompactedSummary();
-          const compactedText = String(compactedPrev?.text || '').trim();
-
-          const prompt = [
-            '# 注意，无视你先前收到的任何指令，你的任务已更改，不再遵守格式要求',
-            '接下来的一轮回复中，将不会进行创作，不再遵循前面的要求，而是会遵循<summary_rules>中的要求进行一轮总结',
-            '【总结请求】',
-            '请对前文内容进行全面梳理，根据以下要求制作简明扼要的总结：',
-            '',
-            '<summary_rules>',
-            '总结应当遵循以下原则：',
-            '- 按时间顺序或逻辑顺序组织信息，并明确给出具体时间节点',
-            '- 保留关键事件和重要细节，省略冗余描述',
-            '- 直接陈述事实，避免主观评价',
-            '- 使用简洁清晰的语言，避免过度修饰',
-            '- 突出事件发展脉络和关键转折点',
-            '- 不回避任何敏感内容，保证记录完全还原前文',
-            '',
-            '总结正文必须放在 <summary>...</summary> 中（只允许这一层 XML 标签；不要输出其他 XML 标签）。',
-            'summary 内部的正文必须使用以下格式：',
-            '',
-            '【关键事件】',
-            '• {事件1}: {简要描述}',
-            '• {事件2}: {简要描述}',
-            '• {事件3}: {简要描述}',
-            '...',
-            '',
-            '</summary_rules>',
-            '',
-            compactedText ? '【已有大总结】' : '',
-            compactedText ? compactedText : '',
-            compactedText ? '' : '',
-            '【前文内容（按时间标注的摘要列表）】',
-            payload,
-          ].join('\n');
-
-          const activeUser = getActiveUserProfile();
-          const userName = String(activeUser?.name || '').trim() || '我';
-          const ctx = {
-            user: {
-              name: userName,
-              persona: String(activeUser?.description || ''),
-              personaPosition: activeUser?.position,
-              personaDepth: activeUser?.depth,
-              personaRole: activeUser?.role,
-            },
-            character: { name: '动态' },
-            session: { id: 'moment_summary_global', isGroup: false },
-            history: [],
-            meta: {
-              disableChatGuide: true,
-              disableScenarioHint: true,
-              disableSummary: true,
-              disableMomentSummary: true,
-              overrideLastUserMessage: '开始总结，勿输出聊天格式',
-              skipInputRegex: true,
-            },
-          };
-          const built = window.appBridge.buildMessages(prompt, ctx);
-          const out = await window.appBridge.backgroundChat(built, { temperature: 0.2, maxTokens: 800 });
-          const raw = String(out || '').trim();
-          if (!raw) return resolve(false);
-          try {
-            momentSummaryStore.setCompactedSummaryRaw(raw);
-          } catch {}
-
-          const extractSummaryTag = s => {
-            const input = String(s || '');
-            const re = /<summary>([\s\S]*?)<\/summary>/gi;
-            let m;
-            let last = null;
-            while ((m = re.exec(input))) last = m[1];
-            const inner = String(last || '').trim();
-            return inner;
-          };
-          const text = extractSummaryTag(raw);
-          if (!text) return resolve(false);
-
-          const hasHeader = /【\s*关键事件\s*】/.test(text);
-          const hasBullet = /^[ \t]*[•\-]\s*\S+/m.test(text);
-          if (!hasHeader || !hasBullet) return resolve(false);
-
-          try {
-            momentSummaryStore.setCompactedSummary(text, { raw });
-          } catch {}
-          try {
-            const keep = normalizeSummarySnapshotItems(momentSummaryStore.getSummaries()).slice(-2);
-            momentSummaryStore.setSummaries(keep);
-          } catch {}
-          try {
-            window.dispatchEvent(new CustomEvent('moment-summaries-updated'));
-          } catch {}
-          resolve(true);
-        } catch (err) {
-          logger.debug('moment summary compaction failed', err);
-          resolve(false);
-        } finally {
-          momentSummaryCompacting.delete('global');
-        }
-      }, 450);
-    });
-  };
+  requestMomentSummaryCompaction = createMomentSummaryCompactionRuntime({
+    momentSummaryStore,
+    getIsConfigured: () =>
+      typeof window.appBridge.isConfigured !== 'function' || window.appBridge.isConfigured(),
+    buildMessages: (...args) => window.appBridge.buildMessages(...args),
+    backgroundChat: (...args) => window.appBridge.backgroundChat(...args),
+    getActiveUserProfile,
+    buildContext: buildSummaryCompactionContext,
+    requestCompactionRaw: requestSummaryCompactionRaw,
+    parseCompactionResult: parseSummaryCompactionResult,
+    normalizeItems: normalizeSummarySnapshotItems,
+    shouldCompact: shouldRunSummaryCompaction,
+    dispatchUpdated: () => window.dispatchEvent(new CustomEvent('moment-summaries-updated')),
+    logger,
+    delayMs: 450,
+  });
 
   // ============ Pending Message Handlers ============
 
@@ -16366,25 +15539,16 @@ Phase G（Frame 36）：循环衔接
     };
 
     // 创建 pending 消息（status: 'pending'）
-    const pendingMessage = {
-      role: 'user',
-      type: stickerKey ? 'sticker' : 'text',
-      content: stickerKey || text || attachmentSummary() || '[附件]',
-      raw: stickerKey ? text : undefined,
-      status: 'pending', // 标记为待发送
+    const pendingMessage = createPendingUserMessage({
+      text,
+      stickerKey,
+      fallbackContent: attachmentSummary() || '[附件]',
       avatar: avatars.user,
-      name: String(activeUser?.name || '').trim() || '我',
+      userName: activeUser?.name,
       time: formatNowTime(),
-    };
-    if (!text && hasAttachments && !stickerKey) {
-      pendingMessage.meta = { attachmentsOnly: true };
-    }
-    if (replyTarget) {
-      pendingMessage.meta = {
-        ...(pendingMessage.meta || {}),
-        replyTo: replyTarget,
-      };
-    }
+      replyTarget,
+      attachmentsOnly: !text && hasAttachments && !stickerKey,
+    });
 
     // 添加到聊天历史（作为 pending 状态的消息）
     const saved = chatStore.appendMessage(pendingMessage, sessionId);
@@ -16410,40 +15574,25 @@ Phase G（Frame 36）：循环衔接
    * @param {string} targetMessageId - 可选，点击的 pending 消息 ID（发送到这里）
    */
   const handleSend = async (targetMessageId = null, options = {}) => {
-    if (targetMessageId && typeof targetMessageId === 'object') {
-      if (typeof targetMessageId.preventDefault === 'function') {
-        targetMessageId = null;
-        options = {};
-      } else {
-        options = targetMessageId;
-        targetMessageId = null;
-      }
-    }
-    if (!options || typeof options !== 'object') options = {};
-    const overrideTextRaw = typeof options.overrideText === 'string' ? options.overrideText : '';
-    const overrideText = overrideTextRaw.trim() ? overrideTextRaw : '';
-    const ignorePending = Boolean(options.ignorePending);
-    const suppressUserMessage = Boolean(options.suppressUserMessage);
-    const existingUserMessageId =
-      typeof options.existingUserMessageId === 'string' ? options.existingUserMessageId : '';
-    const skipInputRegex = Boolean(options.skipInputRegex);
-    const skipTemplate = Boolean(options.skipTemplate);
-    const skipScripts = Boolean(options.skipScripts);
-    const suppressAssistantDom = Boolean(options.suppressAssistantDom);
-    const assistantStreamFactory =
-      typeof options.createAssistantStream === 'function' ? options.createAssistantStream : null;
-    const continueTarget = options.continueTarget && typeof options.continueTarget === 'object' ? options.continueTarget : null;
-    const partialCommitHandler =
-      typeof options.partialCommitHandler === 'function' ? options.partialCommitHandler : null;
-    const swipeTarget = options.swipeTarget && typeof options.swipeTarget === 'object' ? options.swipeTarget : null;
-    const excludeMessageIds = new Set(
-      Array.isArray(options.excludeMessageIds)
-        ? options.excludeMessageIds.map(id => String(id || '')).filter(Boolean)
-        : [],
-    );
-    if (continueTarget?.messageId) excludeMessageIds.add(String(continueTarget.messageId));
+    ({ targetMessageId, options } = normalizeHandleSendInvocation(targetMessageId, options));
+    const {
+      overrideText,
+      ignorePending,
+      suppressUserMessage,
+      existingUserMessageId,
+      skipInputRegex,
+      skipTemplate,
+      skipScripts,
+      suppressAssistantDom,
+      assistantStreamFactory,
+      continueTarget,
+      partialCommitHandler,
+      swipeTarget,
+      excludeMessageIds: excludedMessageIds,
+      includeAttachments,
+    } = normalizeHandleSendOptions(options);
+    const excludeMessageIds = new Set(excludedMessageIds);
     const rpUiMode = uiMode === 'rp';
-    const includeAttachments = options.includeAttachments !== false;
     const attachmentQueue = includeAttachments ? composerAttachments.slice() : [];
     const hasAttachments = attachmentQueue.length > 0;
     const sessionId = chatStore.getCurrent();
@@ -16481,39 +15630,32 @@ Phase G（Frame 36）：循环衔接
 
     if (pendingMessages.length > 0) {
       // 有 pending 消息，根据 targetMessageId 决定发送范围
-      let messagesToSend = [];
+      let { messagesToSend, errorMessage } = resolvePendingMessagesToSend({
+        pendingMessages,
+        targetMessageId,
+      });
 
-      if (targetMessageId) {
-        // 点击了某条 pending 消息，发送从第1条到点击的这条
-        const targetIndex = pendingMessages.findIndex(m => m.id === targetMessageId);
-        if (targetIndex === -1) {
-          window.toastr?.error?.('未找到指定消息');
-          return false;
-        }
-        messagesToSend = pendingMessages.slice(0, targetIndex + 1);
-      } else {
+      if (errorMessage) {
+        window.toastr?.error?.(errorMessage);
+        return false;
+      }
+
+      if (!targetMessageId) {
         // 点击发送按钮（没有指定消息），发送所有 pending 消息
-        messagesToSend = pendingMessages;
-
         // 如果输入框也有内容，先将其添加为 pending 消息
         const currentInput = ui.getInputText().trim();
         if (currentInput) {
           const activeUser = getActiveUserProfile();
           const stickerKey = isStickerAllowed() ? parseStickerToken(currentInput) : '';
           const replyTarget = getReplyTargetForSession(sessionId);
-          const newPendingMsg = {
-            role: 'user',
-            type: stickerKey ? 'sticker' : 'text',
-            content: stickerKey || currentInput,
-            raw: stickerKey ? currentInput : undefined,
-            status: 'pending',
+          const newPendingMsg = createPendingUserMessage({
+            text: currentInput,
+            stickerKey,
             avatar: avatars.user,
-            name: String(activeUser?.name || '').trim() || '我',
+            userName: activeUser?.name,
             time: formatNowTime(),
-          };
-          if (replyTarget) {
-            newPendingMsg.meta = { ...(newPendingMsg.meta || {}), replyTo: replyTarget };
-          }
+            replyTarget,
+          });
           const saved = chatStore.appendMessage(newPendingMsg, sessionId);
           ui.addMessage(saved);
           messagesToSend.push(saved);
@@ -16523,7 +15665,10 @@ Phase G（Frame 36）：循环衔接
       }
 
       // 合并消息内容（换行分隔）
-      text = messagesToSend.map(getMessageSendText).filter(Boolean).join('\n');
+      text = messagesToSend
+        .map(message => getMessageSendText(message, buildStickerToken))
+        .filter(Boolean)
+        .join('\n');
       pendingMessagesToConfirm = messagesToSend;
 
       if (!text && !hasAttachments) {
@@ -16532,26 +15677,20 @@ Phase G（Frame 36）：循环衔接
       }
 
       // 标记这些消息为"发送中"（保持半透明，等待 AI 响应）
-      pendingMessagesToConfirm.forEach(m => {
-        chatStore.updateMessage(m.id, { status: 'sending' }, sessionId);
-        ui.updateMessage(m.id, { ...m, status: 'sending' });
+      pendingMessagesToConfirm = markMessagesAsSending({
+        messages: pendingMessagesToConfirm,
+        sessionId,
+        chatStore,
+        ui,
       });
-      if (scriptRuntime && !skipScripts) {
-        pendingMessagesToConfirm.forEach(m => {
-          const updated = chatStore.findMessage(m.id, sessionId) || { ...m, status: 'sending' };
-          scriptRuntime.dispatchEvent('message.after_send', { message: updated, sessionId }).catch(err => {
-            logger.warn('script message.after_send failed', err);
-          });
-        });
-      }
-      if (pluginRuntime) {
-        pendingMessagesToConfirm.forEach(m => {
-          const updated = chatStore.findMessage(m.id, sessionId) || { ...m, status: 'sending' };
-          pluginRuntime.dispatchEvent('message.after_send', { message: updated, sessionId }).catch(err => {
-            logger.warn('plugin message.after_send failed', err);
-          });
-        });
-      }
+      dispatchAfterSendEvents({
+        messages: pendingMessagesToConfirm,
+        sessionId,
+        scriptRuntime,
+        pluginRuntime,
+        skipScripts,
+        logger,
+      });
       // 立即刷新列表/浮层，避免发送中仍显示旧的 pending 计数
       refreshChatAndContacts({ immediate: true });
       updatePendingFloat(sessionId);
@@ -16573,178 +15712,56 @@ Phase G（Frame 36）：循环衔接
     const userEchoGuard = createUserEchoGuard(text, promptUserName);
     const isGroupChat = Boolean(contact?.isGroup) || sessionId.startsWith('group:');
     const groupMembers = isGroupChat ? (Array.isArray(contact?.members) ? contact.members : []) : [];
-    const containsTemplateSyntax = (value) => {
-      if (!value) return false;
-      if (typeof value === 'string') return value.includes('<%');
-      if (Array.isArray(value)) return value.some(containsTemplateSyntax);
-      if (typeof value === 'object') {
-        if (containsTemplateSyntax(value.content)) return true;
-        if (containsTemplateSyntax(value.text)) return true;
-      }
-      return false;
-    };
-    const hasTemplateInMessages = (messages) => {
-      if (!Array.isArray(messages)) return false;
-      return messages.some(msg => containsTemplateSyntax(msg?.content ?? msg));
-    };
-    const maybePromptTemplateEnable = async ({ sampleText = '' } = {}) => {
-      if (skipTemplate) return;
-      const settings = appSettings.get();
-      if (settings.templateEnabled !== false) return;
-      if (settings.templateDetectDisabled === true) return;
-      if (templatePromptedSessions.has(sessionId)) return;
-      let detected = containsTemplateSyntax(sampleText);
-      if (!detected && typeof window.appBridge?.buildMessages === 'function') {
-        try {
-          const preview = window.appBridge.buildMessages(sampleText || text, llmContext(sampleText || text));
-          detected = hasTemplateInMessages(preview);
-        } catch {}
-      }
-      if (!detected) return;
-      templatePromptedSessions.add(sessionId);
-      const choice = await appChoice({
-        title: '模板提示',
-        message: '检测到当前内容包含模板语法（<% %>）。\n启用后可获得完整变量驱动体验。',
-        actions: [
-          { id: 'enable', label: '启用模板', primary: true },
-          { id: 'later', label: '暂不' },
-          { id: 'never', label: '不再提示', variant: 'danger' },
-        ],
-        defaultActionId: 'enable',
-      });
-      if (choice === 'enable') {
-        appSettings.update({ templateEnabled: true });
-      } else if (choice === 'never') {
-        appSettings.update({ templateDetectDisabled: true });
-      }
-    };
-    const maybePromptScriptAuthorization = async () => {
-      if (skipScripts) return;
-      if (!scriptStore) return;
-      if (scriptPromptedSessions.has(sessionId)) return;
-      const personaId = String(activePersona?.id || '').trim();
-      if (!personaId) return;
-      const scripts = scriptStore.getScripts('character', personaId).filter(s => s && s.authorized !== true);
-      if (!scripts.length) return;
-      scriptPromptedSessions.add(sessionId);
-      const settings = appSettings.get();
-      const perms = [
-        `读取聊天记录：${settings.scriptAllowReadMessages !== false ? '允许' : '禁用'}`,
-        `修改变量：${settings.scriptAllowModifyVariables !== false ? '允许' : '禁用'}`,
-        `访问网络：${settings.scriptAllowNetwork === true ? '允许' : '禁用'}`,
-      ];
-      const choice = await appChoice({
-        title: '脚本授权',
-        message: `检测到此角色卡包含 ${scripts.length} 条脚本。\n脚本可能需要权限：\n- ${perms.join('\n- ')}`,
-        actions: [
-          { id: 'allow', label: '允许并启用', primary: true },
-          { id: 'once', label: '仅本次允许' },
-          { id: 'deny', label: '拒绝', variant: 'danger' },
-        ],
-        defaultActionId: 'allow',
-      });
-      if (choice === 'allow') {
-        if (settings.scriptEnabled !== true) appSettings.update({ scriptEnabled: true });
-        await Promise.all(scripts.map(s => scriptStore.toggleScript('character', personaId, s.id, true)));
-        await scriptRuntime?.syncScripts?.({ sessionId });
-      } else if (choice === 'once') {
-        scriptRuntime?.allowOnce?.(sessionId, scripts.map(s => s.id));
-      }
-    };
-    if (scriptRuntime && !skipScripts) {
-      try {
-        const payload = {
-          content: text,
-          sessionId,
-          userName,
-          isGroup: isGroupChat,
-          hasAttachments,
-        };
-        const updated = await scriptRuntime.dispatchEvent('message.before_send', payload);
-        if (
-          updated &&
-          typeof updated.content === 'string' &&
-          updated.content !== text &&
-          (!pendingMessagesToConfirm || pendingMessagesToConfirm.length === 0)
-        ) {
-          text = updated.content;
-        }
-      } catch (err) {
-        logger.warn('script message.before_send failed', err);
-      }
-    }
-    if (pluginRuntime) {
-      try {
-        const payload = {
-          content: text,
-          sessionId,
-          userName,
-          isGroup: isGroupChat,
-          hasAttachments,
-        };
-        const updated = await pluginRuntime.dispatchEvent('message.before_send', payload);
-        if (
-          updated &&
-          typeof updated.content === 'string' &&
-          updated.content !== text &&
-          (!pendingMessagesToConfirm || pendingMessagesToConfirm.length === 0)
-        ) {
-          text = updated.content;
-        }
-      } catch (err) {
-        logger.warn('plugin message.before_send failed', err);
-      }
-    }
+    const maybePromptTemplateGate = ({ sampleText = '' } = {}) => maybePromptTemplateEnable({
+      skipTemplate,
+      settingsStore: appSettings,
+      promptedSessions: templatePromptedSessions,
+      sessionId,
+      sampleText,
+      fallbackText: text,
+      buildMessages: window.appBridge?.buildMessages,
+      llmContext,
+      promptChoice: appChoice,
+    });
+    const maybePromptScriptAuthorizationGate = () => maybePromptScriptAuthorization({
+      skipScripts,
+      scriptStore,
+      scriptRuntime,
+      promptedSessions: scriptPromptedSessions,
+      sessionId,
+      personaId: activePersona?.id,
+      settingsStore: appSettings,
+      promptChoice: appChoice,
+    });
+    text = await applyBeforeSendHooks({
+      text,
+      sessionId,
+      userName,
+      isGroupChat,
+      hasAttachments,
+      allowTextOverride: !pendingMessagesToConfirm || pendingMessagesToConfirm.length === 0,
+      scriptRuntime,
+      pluginRuntime,
+      skipScripts,
+      logger,
+    });
     if (variableRuleEngine) {
       variableRuleEngine.handleBeforeSend({ sessionId, content: text, useGlobalVariables: sharedVariables }).catch(err => {
         logger.warn('variable rules before_send failed', err);
       });
     }
-    const normalizeName = s => String(s || '').trim();
-    const normalizeKey = s => normalizeName(s).toLowerCase().replace(/\s+/g, '');
-    // keep only letters/numbers/CJK to avoid emoji/punctuation differences
-    const normalizeLoose = s => normalizeKey(s).replace(/[^a-z0-9\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]/g, '');
-    const isSystemSpeaker = speakerName => {
-      const raw = normalizeName(speakerName).replace(/[：:]/g, '').trim();
-      if (!raw) return false;
-      const key = normalizeLoose(raw);
-      const lower = key.toLowerCase();
-      return (
-        key === '系统' ||
-        key === '系统消息' ||
-        key === '系统提示' ||
-        lower === 'system' ||
-        lower === 'systemmessage' ||
-        lower === 'systemmsg'
-      );
-    };
+    const normalizeName = normalizeSpeakerName;
+    const normalizeLoose = normalizeLooseName;
+    const isSystemSpeaker = isSystemSpeakerLabel;
     const isUserSpeakerName = speakerName => {
-      const raw = normalizeName(speakerName).replace(/[：:]/g, '').trim();
+      const raw = normalizeSpeakerName(speakerName);
       if (!raw) return false;
       const key = normalizeLoose(raw);
-      const lower = key.toLowerCase();
-      const userKey = normalizeLoose(userName);
+      const userKey = normalizeLoose(normalizeSpeakerName(userName));
       if (userName && (raw === userName || (userKey && key === userKey))) return true;
       return false;
     };
-    const normalizeDialogueMessage = msg => {
-      const payload =
-        msg && typeof msg === 'object'
-          ? {
-              speaker: String(msg?.speaker || '').trim(),
-              content: String(msg?.content || '').trim(),
-              time: String(msg?.time || '').trim(),
-            }
-          : { speaker: '', content: String(msg || '').trim(), time: '' };
-      if (!payload.speaker && payload.content) {
-        const m = payload.content.match(/^([^\s:：]{1,12})[:：]\s*(.+)$/);
-        if (m && isUserSpeakerName(m[1])) {
-          payload.speaker = m[1];
-          payload.content = m[2].trim();
-        }
-      }
-      return payload;
-    };
+    const normalizeDialogueMessage = msg => normalizeDialogueMessageCore(msg, { isUserSpeakerName });
     const buildUserMessageFromAI = (content, time) => {
       const parsed = parseSpecialMessage(content);
       const meta = { ...(parsed.meta || {}), generatedByAssistant: true };
@@ -16759,62 +15776,6 @@ Phase G（Frame 36）：循环衔接
       };
     };
     const isSyntheticUserMessage = msg => msg?.role === 'user' && msg?.meta?.generatedByAssistant === true;
-    const stripSystemMessagePrefix = content => {
-      return String(content || '')
-        .replace(/^系统消息[:：]?\s*/i, '')
-        .trim();
-    };
-    const splitSystemNames = (segment = '') => {
-      const cleaned = String(segment || '')
-        .replace(/[。.!！？]+/g, '')
-        .trim();
-      if (!cleaned) return [];
-      return cleaned
-        .split(/[、，,]+/)
-        .map(s => s.trim())
-        .filter(Boolean);
-    };
-    const parseGroupSystemOps = content => {
-      const text = stripSystemMessagePrefix(content).replace(/\s+/g, ' ').trim();
-      if (!text) return [];
-      const ops = [];
-      const inviteNames = new Set();
-      const inviteRe = /邀请(.+?)加入群聊/g;
-      let m = null;
-      while ((m = inviteRe.exec(text))) {
-        splitSystemNames(m[1]).forEach(name => inviteNames.add(name));
-      }
-      if (inviteNames.size > 0) {
-        ops.push({ type: 'invite', names: [...inviteNames] });
-      }
-      const removeNames = new Set();
-      const removePatterns = [
-        /将(.+?)(?:移出|移除|踢出)群聊/g,
-        /把(.+?)(?:移出|移除|踢出)群聊/g,
-        /(?:移出|移除|踢出)(.+?)(?:群聊|本群)/g,
-      ];
-      removePatterns.forEach(re => {
-        let rm = null;
-        while ((rm = re.exec(text))) {
-          splitSystemNames(rm[1]).forEach(name => removeNames.add(name));
-        }
-      });
-      if (removeNames.size > 0) {
-        ops.push({ type: 'remove', names: [...removeNames] });
-      }
-      if (!text.includes('邀请')) {
-        const joinNames = new Set();
-        const joinRe = /(.+?)加入群聊/g;
-        let jm = null;
-        while ((jm = joinRe.exec(text))) {
-          splitSystemNames(jm[1]).forEach(name => joinNames.add(name));
-        }
-        if (joinNames.size > 0) {
-          ops.push({ type: 'join', names: [...joinNames] });
-        }
-      }
-      return ops;
-    };
     const updateGroupMembers = (groupId, nextMembers) => {
       const gid = String(groupId || '').trim();
       if (!gid) return false;
@@ -16907,15 +15868,12 @@ Phase G（Frame 36）：循环衔接
       const currentId = normalizeName(sessionId);
       if (other === currentName || other === currentId) return sessionId;
 
-      // Prefer an existing contact with the same display name (avoid duplicates like "室友" vs internal id)
-      try {
-        const matches = (contactsStore.listContacts?.() || []).filter(c => normalizeName(c?.name || c?.id) === other);
-        if (matches.length === 1) return matches[0].id;
-      } catch {}
-
-      // If otherName itself is an existing contact id, reuse it
-      const byId = contactsStore.getContact(other);
-      if (byId?.id) return byId.id;
+      const resolved = resolvePrivateChatTargetSessionIdByName(other, {
+        contactsStore,
+        normalizeName,
+        fallbackSessionId: '',
+      });
+      if (resolved) return resolved;
 
       // Do NOT create a new chat on mismatch.
       // But in practice models may output alias/繁简体导致名字无法精确匹配。
@@ -16935,17 +15893,6 @@ Phase G（Frame 36）：循环衔接
       }
       const hit = contactsStore.findGroupIdByName?.(gname) || '';
       return hit;
-    };
-
-    const resolveContactByDisplayName = displayName => {
-      const raw = normalizeName(displayName);
-      if (!raw) return null;
-      const key = normalizeLoose(raw);
-      const list = contactsStore.listContacts?.() || [];
-      const exact = list.find(c => normalizeName(c?.name || c?.id) === raw);
-      if (exact) return exact;
-      const fuzzy = list.find(c => normalizeLoose(c?.name || c?.id) === key);
-      return fuzzy || null;
     };
     const resolveLooseGroupTagName = tagName => {
       const raw = normalizeName(tagName);
@@ -16988,194 +15935,30 @@ Phase G（Frame 36）：循环衔接
         resolveLooseGroupTag: resolveLooseGroupTagName,
         resolveLoosePrivateTag: resolveLoosePrivateTagName,
       });
-    const resolveMomentAuthorId = authorName => {
-      const raw = normalizeName(authorName);
-      if (!raw) return '';
-      if (raw === userName) return 'user';
-      // Common placeholders: treat as current chat character
-      if (raw === '发言人' || raw === '角色' || raw === '角色名' || raw === '作者') return sessionId;
-
-      // If authorName matches current chat character display name, bind to current session
-      const charLoose = normalizeLoose(characterName);
-      const rawLoose = normalizeLoose(raw);
-      if (
-        rawLoose &&
-        charLoose &&
-        (rawLoose === charLoose || rawLoose.includes(charLoose) || charLoose.includes(rawLoose))
-      ) {
-        return sessionId;
-      }
-
-      // Author might be an existing contact id
-      const byId = contactsStore.getContact(raw);
-      if (byId?.id) return byId.id;
-
-      const list = contactsStore.listContacts?.() || [];
-      // Exact match
-      const exact = list.find(c => normalizeName(c?.name) === raw);
-      if (exact?.id) return exact.id;
-
-      const key = normalizeLoose(raw);
-      // Fuzzy (normalized)
-      const fuzzy = list.find(c => normalizeLoose(c?.name) === key || normalizeLoose(c?.id) === key);
-      if (fuzzy?.id) return fuzzy.id;
-
-      // Substring heuristic (pick longest match)
-      let best = null;
-      let bestLen = 0;
-      for (const c of list) {
-        const cn = normalizeLoose(c?.name);
-        if (!cn) continue;
-        if (key.includes(cn) || cn.includes(key)) {
-          const len = Math.min(cn.length, key.length);
-          if (len > bestLen) {
-            bestLen = len;
-            best = c;
-          }
-        }
-      }
-      return best?.id || '';
-    };
-    const normalizeMomentAuthorDisplay = authorName => {
-      const raw = normalizeName(authorName);
-      if (!raw) return normalizeName(characterName) || '角色';
-      if (raw === userName) return userName;
-      if (raw === '发言人' || raw === '角色' || raw === '角色名' || raw === '作者')
-        return normalizeName(characterName) || raw;
-      return raw;
-    };
-    const normalizeMomentStoredText = (text, { regexMode = 'output', depth = 0 } = {}) => {
-      const source = String(text ?? '');
-      const mode = String(regexMode || '').trim().toLowerCase() === 'input' ? 'input' : 'output';
-      try {
-        if (mode === 'input' && typeof window.appBridge?.applyInputStoredRegex === 'function') {
-          return window.appBridge.applyInputStoredRegex(source, { isEdit: false, depth });
-        }
-        if (typeof window.appBridge?.applyOutputStoredRegex === 'function') {
-          return window.appBridge.applyOutputStoredRegex(source, { isEdit: false, depth });
-        }
-      } catch {}
-      return source;
-    };
-    const normalizeMomentCommentForStore = (comment, { regexMode = 'output', depth = 0 } = {}) => {
-      if (!comment || typeof comment !== 'object') return comment;
-      const mode = String(regexMode || '').trim().toLowerCase() === 'input' ? 'input' : 'output';
-      return {
-        ...(comment || {}),
-        content: normalizeMomentStoredText(comment?.content, { regexMode: mode, depth }),
-        regexMode: mode,
-      };
-    };
-    const normalizeMomentCommentsForStore = (comments = [], opts = {}) =>
-      (Array.isArray(comments) ? comments : []).map(comment => normalizeMomentCommentForStore(comment, opts));
-    const normalizeMomentRecordForStore = (moment, { regexMode = 'output', depth = 0 } = {}) => {
-      if (!moment || typeof moment !== 'object') return moment;
-      const mode = String(regexMode || '').trim().toLowerCase() === 'input' ? 'input' : 'output';
-      return {
-        ...(moment || {}),
-        content: normalizeMomentStoredText(moment?.content, { regexMode: mode, depth }),
-        comments: normalizeMomentCommentsForStore(moment?.comments, { regexMode: mode, depth }),
-        regexMode: mode,
-      };
-    };
-    const ingestMoments = (moments = []) => {
-      const list = Array.isArray(moments) ? moments : [];
-      const n = getContactCountN();
-      return list.map(m => {
-        const author = normalizeMomentAuthorDisplay(m?.author);
-        const authorId = resolveMomentAuthorId(author);
-        let authorAvatar = '';
-        if (authorId === 'user') authorAvatar = avatars.user;
-        else if (authorId) authorAvatar = resolveAvatarForContact(authorId, contactsStore.getContact(authorId));
-        const stats = normalizeInitialMomentStats({ views: m?.views, likes: m?.likes }, n);
-        return normalizeMomentRecordForStore(
-          { ...(m || {}), ...stats, author, authorId, authorAvatar, originSessionId: sessionId },
-          { regexMode: 'output', depth: 0 },
-        );
-      });
-    };
-    const extractSummaryBlock = text => {
-      const raw = String(text ?? '');
-      const re = /<details>\s*<summary>\s*摘要\s*<\/summary>\s*([\s\S]*?)<\/details>/gi;
-      let m;
-      let last = null;
-      while ((m = re.exec(raw))) last = { index: m.index, full: m[0], inner: m[1] };
-      if (!last) return { text: raw, summary: '' };
-      const inner = String(last.inner || '');
-      const plain = inner.replace(/<[^>]+>/g, ' ');
-      // Pure Chinese requirement: drop latin letters; keep digits/punctuation.
-      const summary = plain
-        .trim()
-        .replace(/\s+/g, ' ')
-        .replace(/[A-Za-z]+/g, '')
-        .trim();
-      const stripped = (raw.slice(0, last.index) + raw.slice(last.index + last.full.length))
-        .replace(/\n{3,}/g, '\n\n')
-        .trim();
-      return { text: stripped, summary };
-    };
-    const formatMemoryEditValue = (value, maxLen = 120) => {
-      if (value === null || value === undefined) return '';
-      let text = '';
-      if (typeof value === 'string') text = value.trim();
-      else if (typeof value === 'number' || typeof value === 'boolean') text = String(value);
-      else {
-        try {
-          text = JSON.stringify(value);
-        } catch {
-          text = String(value);
-        }
-      }
-      if (text.length > maxLen) return `${text.slice(0, maxLen)}…`;
-      return text;
-    };
-    const resolveActionTableLabel = (action, tableById, planOrder) => {
-      const explicit = String(action?.tableId || action?.tableName || '').trim();
-      let tableId = explicit;
-      if (!tableId) {
-        const index = Number.isFinite(Number(action?.tableIndex)) ? Math.trunc(Number(action.tableIndex)) : null;
-        if (index !== null && index >= 0 && index < planOrder.length) {
-          tableId = String(planOrder[index] || '').trim();
-        }
-      }
-      const tableName = tableId && tableById?.has(tableId) ? String(tableById.get(tableId)?.name || '').trim() : '';
-      if (tableName && tableId) return `${tableName} (${tableId})`;
-      if (tableId) return tableId;
-      const idx = Number.isFinite(Number(action?.tableIndex)) ? Math.trunc(Number(action.tableIndex)) : null;
-      if (idx !== null) return `table#${idx}`;
-      return 'table';
-    };
-    const buildMemoryActionLine = (action, index, tableById, planOrder) => {
-      const label = resolveActionTableLabel(action, tableById, planOrder);
-      const actionType = String(action?.action || '').toLowerCase();
-      const rowIndex = Number.isFinite(Number(action?.rowIndex)) ? Math.trunc(Number(action.rowIndex)) : null;
-      const rowId = String(action?.rowId || '').trim();
-      const data = action?.data && typeof action.data === 'object' ? action.data : null;
-      let detail = '';
-      if (actionType === 'delete') {
-        detail = rowIndex !== null ? `row_index=${rowIndex}` : rowId ? `row_id=${rowId}` : '';
-      } else if (actionType === 'insert') {
-        detail = data ? formatMemoryEditValue(data) : '';
-      } else if (actionType === 'update') {
-        const target = rowIndex !== null ? `row_index=${rowIndex}` : rowId ? `row_id=${rowId}` : '';
-        const payload = data ? formatMemoryEditValue(data) : '';
-        detail = [target, payload].filter(Boolean).join(' ');
-      }
-      return `${index}. ${actionType || 'edit'} -> ${label}${detail ? `: ${detail}` : ''}`;
-    };
-    const buildMemoryConfirmText = (actions, tableById, planOrder, { title, maxLines } = {}) => {
-      const lines = [];
-      lines.push(title || '检测到记忆表格写入指令：');
-      const limit = Number.isFinite(Number(maxLines)) ? Math.max(1, Math.trunc(Number(maxLines))) : 12;
-      actions.slice(0, limit).forEach((action, idx) => {
-        lines.push(buildMemoryActionLine(action, idx + 1, tableById, planOrder));
-      });
-      if (actions.length > limit) {
-        lines.push(`... 还有 ${actions.length - limit} 条`);
-      }
-      lines.push('继续执行这些写表指令吗？');
-      return lines.join('\n');
-    };
+    const resolveMomentAuthorId = authorName => resolveMomentAuthorIdCore(authorName, {
+      userName,
+      sessionId,
+      characterName,
+      normalizeName,
+      normalizeLoose,
+      getContactById: id => contactsStore.getContact(id),
+      listContacts: () => contactsStore.listContacts?.() || [],
+    });
+    const normalizeMomentAuthorDisplay = authorName => normalizeMomentAuthorDisplayCore(authorName, {
+      userName,
+      characterName,
+      normalizeName,
+    });
+    const ingestMoments = (moments = []) => ingestMomentsForStoreCore(moments, {
+      contactCount: getContactCountN(),
+      userAvatar: avatars.user,
+      sessionId,
+      normalizeAuthorDisplay: normalizeMomentAuthorDisplay,
+      resolveAuthorId: resolveMomentAuthorId,
+      resolveContactAvatar: authorId => resolveAvatarForContact(authorId, contactsStore.getContact(authorId)),
+      normalizeStats: normalizeInitialMomentStats,
+      normalizeMomentRecord: normalizeMomentRecordForStore,
+    });
     const confirmMemoryEditsIfNeeded = async actions => {
       const settings = appSettings.get();
       const confirmBefore = settings.memoryAutoConfirm === true;
@@ -17233,43 +16016,6 @@ Phase G（Frame 36）：循环衔接
       }
       return actions;
     };
-    const normalizeMemoryCellValue = value => {
-      if (value === null || value === undefined) return '';
-      if (typeof value === 'string') return value.trim();
-      if (typeof value === 'number' || typeof value === 'boolean') return value;
-      try {
-        return JSON.stringify(value);
-      } catch {
-        return String(value);
-      }
-    };
-    const normalizeTableRowData = (data, columns) => {
-      if (!data || typeof data !== 'object') return {};
-      const colIdMap = new Map();
-      const colNameMap = new Map();
-      const colIndexMap = new Map();
-      (columns || []).forEach((col, idx) => {
-        const id = String(col?.id || '').trim();
-        if (id) colIdMap.set(id.toLowerCase(), id);
-        const name = String(col?.name || '').trim();
-        if (name) colNameMap.set(name.toLowerCase(), id);
-        colIndexMap.set(String(idx), id);
-      });
-      const out = {};
-      for (const [rawKey, rawValue] of Object.entries(data)) {
-        const key = String(rawKey || '').trim();
-        if (!key) continue;
-        const lower = key.toLowerCase();
-        let colId = colIdMap.get(lower) || colNameMap.get(lower);
-        if (!colId && /^\d+$/.test(key)) {
-          colId = colIndexMap.get(key);
-        }
-        if (!colId) continue;
-        const value = normalizeMemoryCellValue(rawValue);
-        out[colId] = value;
-      }
-      return out;
-    };
     const resolveDefaultTemplate = async () => {
       if (!memoryTemplateStore) return null;
       const list = await memoryTemplateStore.getTemplates({ is_default: true });
@@ -17299,34 +16045,6 @@ Phase G（Frame 36）：循环衔接
       });
       return { tableById, tableNameMap, tableOrder };
     };
-    const clonePlainObject = value => {
-      if (value === null || value === undefined) return value;
-      try {
-        return JSON.parse(JSON.stringify(value));
-      } catch {
-        return value && typeof value === 'object' ? { ...value } : value;
-      }
-    };
-    const cloneMemoryUpdateEntry = entry => {
-      if (!entry || typeof entry !== 'object') return null;
-      const cloned = clonePlainObject(entry) || {};
-      const clip = (value, max = 20000) => {
-        const text = typeof value === 'string' ? value : '';
-        if (!text) return '';
-        return text.length > max ? `${text.slice(0, max)}\n...[truncated]` : text;
-      };
-      return {
-        at: cloned.at || 0,
-        mode: cloned.mode,
-        sessionId: cloned.sessionId,
-        tableEditRaw: clip(cloned.tableEditRaw),
-        raw: clip(cloned.raw),
-        requestPrompt: clip(cloned.requestPrompt),
-        actions: Array.isArray(cloned.actions) ? clonePlainObject(cloned.actions) : [],
-        rollback: cloned.rollback ? clonePlainObject(cloned.rollback) : null,
-        rollbackAt: cloned.rollbackAt || 0,
-      };
-    };
     const buildSwipeMemoryTableSnapshot = async (sessionId, { isGroup } = {}) => {
       if (getMemoryStorageMode() !== 'table') return null;
       if (!memoryTableStore?.getMemories || !memoryTemplateStore) return null;
@@ -17341,41 +16059,21 @@ Phase G（Frame 36）：循环衔接
       const templateId = String(templateInfo?.record?.id || '').trim();
       if (!templateId) return null;
       const groupScope = Boolean(isGroup);
-      let rows = [];
-      try {
-        rows = await memoryTableStore.getMemories({
-          scope: groupScope ? 'group' : 'contact',
-          group_id: groupScope ? sid : undefined,
-          contact_id: groupScope ? undefined : sid,
-          template_id: templateId,
-        });
-      } catch {
-        rows = [];
-      }
-      const picked = sortMemoryRowsForSnapshot(Array.isArray(rows) ? rows : [])
-        .map(row => {
-          const tableId = String(row?.table_id || '').trim();
-          if (!tableId) return null;
-          return {
-            id: String(row?.id || '').trim(),
-            template_id: String(row?.template_id || templateId).trim() || templateId,
-            table_id: tableId,
-            contact_id: groupScope ? null : sid,
-            group_id: groupScope ? sid : null,
-            row_data: clonePlainObject(row?.row_data || {}),
-            is_active: row?.is_active !== false,
-            is_pinned: Boolean(row?.is_pinned),
-            priority: Number.isFinite(Number(row?.priority)) ? Number(row.priority) : 0,
-            sort_order: Number.isFinite(Number(row?.sort_order)) ? Number(row.sort_order) : 0,
-          };
-        })
-        .filter(Boolean);
-      return {
+      const scopeKey = resolveSessionMemoryScopeKey({ isGroup: groupScope });
+      const scopeFields = buildScopedMemoryRowFields({ scopeKey, sessionId: sid });
+      const rows = await loadScopedMemories({
+        memoryTableStore,
+        scopeKey,
+        sessionId: sid,
+        templateId,
+      });
+      return buildSwipeMemorySnapshot({
+        rows,
         templateId,
         scope: groupScope ? 'group' : 'contact',
-        rows: picked,
-        capturedAt: Date.now(),
-      };
+        scopeFields,
+        cloneValue: clonePlainObject,
+      });
     };
     const applySwipeMemoryTableSnapshot = async (sessionId, snapshot, { isGroup } = {}) => {
       if (getMemoryStorageMode() !== 'table') return false;
@@ -17385,112 +16083,63 @@ Phase G（Frame 36）：循环衔接
       const groupScope = Boolean(isGroup);
       const templateId = String(snapshot?.templateId || '').trim();
       if (!templateId) return false;
-      let existing = [];
-      try {
-        existing = await memoryTableStore.getMemories({
-          scope: groupScope ? 'group' : 'contact',
-          group_id: groupScope ? sid : undefined,
-          contact_id: groupScope ? undefined : sid,
-          template_id: templateId,
-        });
-      } catch {
-        existing = [];
-      }
-      const ids = (Array.isArray(existing) ? existing : [])
-        .map(row => String(row?.id || '').trim())
-        .filter(Boolean);
-      if (ids.length) {
-        try {
-          await memoryTableStore.batchDeleteMemories?.(ids);
-        } catch {
-          for (const id of ids) {
-            try {
-              await memoryTableStore.deleteMemory?.(id);
-            } catch {}
-          }
-        }
-      }
-      const inputs = sortMemoryRowsForSnapshot(Array.isArray(snapshot?.rows) ? snapshot.rows : [])
-        .map(row => {
-          const tableId = String(row?.table_id || '').trim();
-          if (!tableId) return null;
-          return {
-            id: row?.id ? String(row.id) : undefined,
-            template_id: templateId,
-            table_id: tableId,
-            contact_id: groupScope ? null : sid,
-            group_id: groupScope ? sid : null,
-            row_data: clonePlainObject(row?.row_data || {}),
-            is_active: row?.is_active !== false,
-            is_pinned: Boolean(row?.is_pinned),
-            priority: Number.isFinite(Number(row?.priority)) ? Number(row.priority) : 0,
-            sort_order: Number.isFinite(Number(row?.sort_order)) ? Number(row.sort_order) : 0,
-          };
-        })
-        .filter(Boolean);
-      if (inputs.length) {
-        try {
-          await memoryTableStore.batchCreateMemories?.(inputs);
-        } catch {
-          for (const input of inputs) {
-            try {
-              await memoryTableStore.createMemory?.(input);
-            } catch {}
-          }
-        }
-      }
+      const scopeKey = resolveSessionMemoryScopeKey({ isGroup: groupScope });
+      const scopeFields = buildScopedMemoryRowFields({ scopeKey, sessionId: sid });
+      const existing = await loadScopedMemories({
+        memoryTableStore,
+        scopeKey,
+        sessionId: sid,
+        templateId,
+      });
+      await replaceScopedMemoriesWithSnapshot({
+        memoryTableStore,
+        existingRows: existing,
+        snapshotRows: snapshot?.rows,
+        templateId,
+        scopeFields,
+        cloneValue: clonePlainObject,
+      });
       window.dispatchEvent(new CustomEvent('memory-rows-updated', { detail: { sessionId: sid, templateId } }));
       return true;
     };
     const persistSwipeBranchMemoryState = async (branches, index, sessionId, { isGroup } = {}) => {
       if (getMemoryStorageMode() !== 'table') return false;
-      if (!Array.isArray(branches) || index < 0 || index >= branches.length) return false;
-      const branch = branches[index] && typeof branches[index] === 'object' ? branches[index] : null;
-      if (!branch || branch.draft === true) return false;
-      const snapshot = await buildSwipeMemoryTableSnapshot(sessionId, { isGroup });
-      if (!snapshot) return false;
-      branch.memoryTableSnapshot = snapshot;
-      branch.memoryUpdateEntry = cloneMemoryUpdateEntry(window.appBridge?.getLastMemoryUpdate?.(sessionId));
-      return true;
+      return persistSwipeBranchMemoryStateCore({
+        branches,
+        index,
+        sessionId,
+        buildSnapshot: sid => buildSwipeMemoryTableSnapshot(sid, { isGroup }),
+        cloneEntry: cloneMemoryUpdateEntry,
+        getMemoryUpdateEntry: sid => window.appBridge?.getLastMemoryUpdate?.(sid),
+      });
     };
     const applySwipeBranchMemoryState = async (sessionId, branch, { isGroup } = {}) => {
       if (getMemoryStorageMode() !== 'table') return false;
-      if (!branch || typeof branch !== 'object' || !branch.memoryTableSnapshot) return false;
-      const applied = await applySwipeMemoryTableSnapshot(sessionId, branch.memoryTableSnapshot, { isGroup });
-      if (applied) {
-        const entry = cloneMemoryUpdateEntry(branch.memoryUpdateEntry);
-        window.appBridge?.setLastMemoryUpdate?.(sessionId, entry || null);
-      }
-      return applied;
+      return applySwipeBranchMemoryStateCore({
+        sessionId,
+        branch,
+        applySnapshot: (sid, snapshot) => applySwipeMemoryTableSnapshot(sid, snapshot, { isGroup }),
+        cloneEntry: cloneMemoryUpdateEntry,
+        setMemoryUpdateEntry: (sid, entry) => window.appBridge?.setLastMemoryUpdate?.(sid, entry),
+      });
     };
     const captureAssistantMemoryState = async (sessionId, { isGroup } = {}) => {
       if (getMemoryStorageMode() !== 'table') return null;
-      const snapshot = await buildSwipeMemoryTableSnapshot(sessionId, { isGroup });
-      if (!snapshot) return null;
-      return {
-        memoryTableSnapshot: clonePlainObject(snapshot),
-        memoryUpdateEntry: cloneMemoryUpdateEntry(window.appBridge?.getLastMemoryUpdate?.(sessionId)),
-      };
+      return captureAssistantMemoryStateCore({
+        sessionId,
+        buildSnapshot: sid => buildSwipeMemoryTableSnapshot(sid, { isGroup }),
+        cloneSnapshot: clonePlainObject,
+        cloneEntry: cloneMemoryUpdateEntry,
+        getMemoryUpdateEntry: sid => window.appBridge?.getLastMemoryUpdate?.(sid),
+      });
     };
     const attachAssistantMemoryStateToMeta = (meta, memoryState) => {
-      if (!meta || typeof meta !== 'object') return meta;
-      if (!memoryState || !memoryState.memoryTableSnapshot) return meta;
-      meta.memoryTableSnapshot = clonePlainObject(memoryState.memoryTableSnapshot);
-      if (memoryState.memoryUpdateEntry !== undefined) {
-        meta.memoryUpdateEntry = cloneMemoryUpdateEntry(memoryState.memoryUpdateEntry);
-      }
-      return meta;
-    };
-    const rowDataEquals = (a, b) => {
-      const left = a && typeof a === 'object' ? a : {};
-      const right = b && typeof b === 'object' ? b : {};
-      const keys = new Set([...Object.keys(left), ...Object.keys(right)]);
-      for (const key of keys) {
-        const lv = normalizeMemoryCellValue(left[key]);
-        const rv = normalizeMemoryCellValue(right[key]);
-        if (String(lv ?? '') !== String(rv ?? '')) return false;
-      }
-      return true;
+      return attachAssistantMemoryStateToMetaCore({
+        meta,
+        memoryState,
+        cloneSnapshot: clonePlainObject,
+        cloneEntry: cloneMemoryUpdateEntry,
+      });
     };
     const applyMemoryEdits = async ({ actions, sessionId, isGroup }) => {
       if (!Array.isArray(actions) || actions.length === 0) return null;
@@ -17532,13 +16181,21 @@ Phase G（Frame 36）：循环衔接
       const rowIndexMap = plan?.rowIndexMap && typeof plan.rowIndexMap === 'object' ? plan.rowIndexMap : {};
 
       const useSharedGlobalScope = false;
-      let scopedRows = [];
-      if (!useSharedGlobalScope) {
-        scopedRows = isGroup
-          ? await memoryTableStore.getMemories({ scope: 'group', group_id: sessionId, template_id: templateId })
-          : await memoryTableStore.getMemories({ scope: 'contact', contact_id: sessionId, template_id: templateId });
-      }
-      const globalRows = await memoryTableStore.getMemories({ scope: 'global', template_id: templateId });
+      const sessionScopeKey = resolveSessionMemoryScopeKey({ isGroup, useSharedGlobalScope });
+      const scopedRows = useSharedGlobalScope
+        ? []
+        : await loadScopedMemories({
+          memoryTableStore,
+          scopeKey: sessionScopeKey,
+          sessionId,
+          templateId,
+        });
+      const globalRows = await loadScopedMemories({
+        memoryTableStore,
+        scopeKey: 'global',
+        sessionId,
+        templateId,
+      });
       const allRows = [
         ...(Array.isArray(globalRows) ? globalRows : []),
         ...(Array.isArray(scopedRows) ? scopedRows : []),
@@ -17557,102 +16214,32 @@ Phase G（Frame 36）：循环衔接
         rowsByTableScope.get(key).push(row);
       }
 
-      const resolveTableId = action => {
-        const rawId = String(action?.tableId || '').trim();
-        if (rawId && tableById.has(rawId)) return rawId;
-        const rawName = String(action?.tableName || '')
-          .trim()
-          .toLowerCase();
-        if (rawName && tableNameMap.has(rawName)) return tableNameMap.get(rawName);
-        const idxRaw = action?.tableIndex;
-        const idx = Number.isFinite(Number(idxRaw)) ? Math.trunc(Number(idxRaw)) : null;
-        if (idx !== null && idx >= 0 && idx < tableOrder.length) {
-          const id = String(tableOrder[idx] || '').trim();
-          if (id && tableById.has(id)) return id;
-        }
-        return '';
-      };
-      const resolveRowId = (action, tableId) => {
-        const rowId = String(action?.rowId || '').trim();
-        if (rowId) return rowId;
-        const rowIndexRaw = action?.rowIndex;
-        const rowIndex = Number.isFinite(Number(rowIndexRaw)) ? Math.trunc(Number(rowIndexRaw)) : null;
-        if (rowIndex === null || rowIndex < 0) return '';
-        const map = rowIndexMap?.[tableId];
-        if (Array.isArray(map) && rowIndex < map.length) return String(map[rowIndex] || '').trim();
-        return '';
-      };
-      const resolveRowIdByData = (tableId, scopeKey, data, table) => {
-        if (!data || typeof data !== 'object') return '';
-        const rows = rowsByTableScope.get(`${tableId}:${scopeKey}`) || [];
-        if (!rows.length) return '';
-        const normalize = value => String(normalizeMemoryCellValue(value ?? '')).trim();
-        const candidates = [];
-        const preferredKeys = ['name', 'time', 'title', 'id'];
-        preferredKeys.forEach(key => {
-          const v = normalize(data[key]);
-          if (v) candidates.push({ key, value: v });
-        });
-        if (!candidates.length) {
-          const firstColId = String(table?.columns?.[0]?.id || '').trim();
-          const v = normalize(firstColId ? data[firstColId] : '');
-          if (firstColId && v) candidates.push({ key: firstColId, value: v });
-        }
-        for (const candidate of candidates) {
-          const matches = rows.filter(row => normalize(row?.row_data?.[candidate.key]) === candidate.value);
-          if (matches.length === 1) return String(matches[0]?.id || '').trim();
-          if (matches.length > 1) return '';
-        }
-        if (rows.length === 1) return String(rows[0]?.id || '').trim();
-        return '';
-      };
-      const resolveScopeForTable = table => {
-        if (useSharedGlobalScope) return { key: 'global', contactId: null, groupId: null };
-        const scope = String(table?.scope || '')
-          .trim()
-          .toLowerCase();
-        if (scope === 'global') return { key: 'global', contactId: null, groupId: null };
-        if (scope === 'group') return { key: 'group', contactId: null, groupId: sessionId };
-        if (scope === 'contact') return { key: 'contact', contactId: sessionId, groupId: null };
-        return isGroup
-          ? { key: 'group', contactId: null, groupId: sessionId }
-          : { key: 'contact', contactId: sessionId, groupId: null };
-      };
+      const resolveTableId = action => resolveMemoryActionTableId({
+        action,
+        tableById,
+        tableNameMap,
+        tableOrder,
+      });
+      const resolveRowId = (action, tableId) => resolveMemoryActionRowId({
+        action,
+        tableId,
+        rowIndexMap,
+      });
+      const resolveRowIdByData = (tableId, scopeKey, data, table) => resolveMemoryActionRowIdByData({
+        tableId,
+        scopeKey,
+        data,
+        table,
+        rowsByTableScope,
+      });
+      const resolveScopeForTable = table => resolveMemoryTableScope({
+        table,
+        useSharedGlobalScope,
+        sessionId,
+        isGroup,
+      });
 
-      const resolveSessionAssistantTurnNumber = (sid) => {
-        const targetSessionId = String(sid || '').trim();
-        if (!targetSessionId) return 0;
-        const messages = chatStore.getMessages(targetSessionId) || [];
-        let count = 0;
-        for (const message of messages) {
-          if (!message || message.role !== 'assistant') continue;
-          if (message.status === 'pending' || message.status === 'sending') continue;
-          const meta = message?.meta && typeof message.meta === 'object' ? message.meta : {};
-          if (meta.isGreeting) continue;
-          if (String(meta.kind || '').trim() === 'memory-table-push') continue;
-          count += 1;
-        }
-        return count;
-      };
-      const currentTurnNumber = resolveSessionAssistantTurnNumber(sessionId);
-      const normalizeTimelineMemoryActionData = (tableId, rowData) => {
-        const next = rowData && typeof rowData === 'object' ? { ...rowData } : {};
-        if (!isTimelineMemoryTableId(tableId)) return next;
-        if (currentTurnNumber > 0) {
-          next.time = buildMemoryTimelineLabel(currentTurnNumber);
-          return next;
-        }
-        const round = extractMemoryTimelineRound(next.time);
-        if (round !== null) next.time = buildMemoryTimelineLabel(round);
-        return next;
-      };
-      const resolveInsertSortOrder = (tableId, existingRows = [], rowData = {}) => {
-        if (isTimelineMemoryTableId(tableId)) {
-          const round = extractMemoryTimelineRound(rowData?.time);
-          if (round !== null) return round;
-        }
-        return computeNextMemoryRowSortOrder(existingRows, tableId);
-      };
+      const currentTurnNumber = countAssistantTurnsForMemoryTimeline(chatStore.getMessages(sessionId) || []);
 
       const createInputs = [];
       let updated = 0;
@@ -17663,7 +16250,11 @@ Phase G（Frame 36）：循环衔接
         const countKey = `${tableId}:${scopeKey}`;
         const maxRows = Number.isFinite(Number(table?.maxRows)) ? Math.max(0, Math.trunc(Number(table.maxRows))) : 0;
         const existingRows = rowsByTableScope.get(countKey) || [];
-        const nextData = normalizeTimelineMemoryActionData(tableId, data);
+        const nextData = normalizeTimelineMemoryActionData({
+          tableId,
+          rowData: data,
+          currentTurnNumber,
+        });
         if (maxRows && existingRows.length >= maxRows) {
           skipped += 1;
           return false;
@@ -17675,7 +16266,11 @@ Phase G（Frame 36）：循环衔接
             return false;
           }
         }
-        const sortOrder = resolveInsertSortOrder(tableId, existingRows, nextData);
+        const sortOrder = resolveMemoryInsertSortOrder({
+          tableId,
+          existingRows,
+          rowData: nextData,
+        });
         createInputs.push({
           template_id: templateId,
           table_id: tableId,
@@ -17927,21 +16522,12 @@ Phase G（Frame 36）：循环衔接
         uiMode: sessionMode === 'rp' ? 'rp' : uiMode,
       });
       const useSharedGlobalScope = false;
-      const resolveTableId = action => {
-        const rawId = String(action?.tableId || '').trim();
-        if (rawId && tableById.has(rawId)) return rawId;
-        const rawName = String(action?.tableName || '')
-          .trim()
-          .toLowerCase();
-        if (rawName && tableNameMap.has(rawName)) return tableNameMap.get(rawName);
-        const idxRaw = action?.tableIndex;
-        const idx = Number.isFinite(Number(idxRaw)) ? Math.trunc(Number(idxRaw)) : null;
-        if (idx !== null && idx >= 0 && idx < tableOrder.length) {
-          const id = String(tableOrder[idx] || '').trim();
-          if (id && tableById.has(id)) return id;
-        }
-        return '';
-      };
+      const resolveTableId = action => resolveMemoryActionTableId({
+        action,
+        tableById,
+        tableNameMap,
+        tableOrder,
+      });
       const resolveScopeKey = table => {
         const scope = String(table?.scope || '')
           .trim()
@@ -17954,33 +16540,14 @@ Phase G（Frame 36）：循环衔接
       const scopeRowsCache = new Map();
       const getScopedRows = async scopeKey => {
         if (scopeRowsCache.has(scopeKey)) return scopeRowsCache.get(scopeKey);
-        let rows = [];
-        try {
-          if (scopeKey === 'global') {
-            rows = await memoryTableStore.getMemories({ scope: 'global', template_id: templateId });
-          } else if (scopeKey === 'group') {
-            rows = await memoryTableStore.getMemories({ scope: 'group', group_id: sessionId, template_id: templateId });
-          } else {
-            rows = await memoryTableStore.getMemories({
-              scope: 'contact',
-              contact_id: sessionId,
-              template_id: templateId,
-            });
-          }
-        } catch {
-          rows = [];
-        }
+        const rows = await loadScopedMemories({
+          memoryTableStore,
+          scopeKey,
+          sessionId,
+          templateId,
+        });
         scopeRowsCache.set(scopeKey, rows);
         return rows;
-      };
-      const pickNewestRow = (rows = []) => {
-        if (!rows.length) return null;
-        const scored = rows.map((row, idx) => {
-          const ts = Number(row?.updated_at || row?.created_at || 0);
-          return { row, ts: Number.isFinite(ts) ? ts : 0, idx };
-        });
-        scored.sort((a, b) => b.ts - a.ts || b.idx - a.idx);
-        return scored[0]?.row || null;
       };
       let changed = 0;
       for (const action of actions) {
@@ -18000,7 +16567,7 @@ Phase G（Frame 36）：循环衔接
         const shouldRollbackInsert = actionType === 'insert' || (isSummaryTable && actionType === 'update');
         if (!shouldRollbackInsert) continue;
         const matches = scopedRows.filter(row => rowDataEquals(row?.row_data || {}, data));
-        const target = pickNewestRow(matches);
+        const target = pickNewestMemoryRow(matches);
         if (!target) continue;
         try {
           await memoryTableStore.deleteMemory(String(target.id || ''));
@@ -18033,26 +16600,13 @@ Phase G（Frame 36）：循环衔接
         const tableId = String(tableSnap?.table_id || '').trim();
         const scopeKey = String(tableSnap?.scope || '').trim();
         if (!tableId || !scopeKey) continue;
-        let currentRows = [];
-        try {
-          if (scopeKey === 'global') {
-            currentRows = await memoryTableStore.getMemories({ scope: 'global', template_id: templateId });
-          } else if (scopeKey === 'group') {
-            currentRows = await memoryTableStore.getMemories({
-              scope: 'group',
-              group_id: sessionId,
-              template_id: templateId,
-            });
-          } else {
-            currentRows = await memoryTableStore.getMemories({
-              scope: 'contact',
-              contact_id: sessionId,
-              template_id: templateId,
-            });
-          }
-        } catch {
-          currentRows = [];
-        }
+        const scopeFields = buildScopedMemoryRowFields({ scopeKey, sessionId });
+        const currentRows = await loadScopedMemories({
+          memoryTableStore,
+          scopeKey,
+          sessionId,
+          templateId,
+        });
         const scopedCurrent = (Array.isArray(currentRows) ? currentRows : []).filter(
           row => String(row?.table_id || '').trim() === tableId,
         );
@@ -18099,8 +16653,8 @@ Phase G（Frame 36）：循环衔接
               await memoryTableStore.createMemory({
                 template_id: templateId,
                 table_id: tableId,
-                contact_id: snap?.contact_id ?? (scopeKey === 'contact' ? sessionId : null),
-                group_id: snap?.group_id ?? (scopeKey === 'group' ? sessionId : null),
+                contact_id: snap?.contact_id ?? scopeFields.contact_id,
+                group_id: snap?.group_id ?? scopeFields.group_id,
                 ...payload,
               });
               changed += 1;
@@ -18114,50 +16668,10 @@ Phase G（Frame 36）：循环衔接
       }
       return changed > 0;
     };
-    if (window.appBridge) {
-      window.appBridge.rollbackLastMemoryUpdate = rollbackLastMemoryUpdate;
-    }
-    const buildRequestPromptText = messages => {
-      if (!Array.isArray(messages)) return '';
-      const describeMediaToken = raw => {
-        const text = String(raw || '').trim();
-        if (!text) return '';
-        if (text.startsWith('data:image/')) {
-          const mime = text.slice('data:'.length).split(';')[0].toLowerCase();
-          if (mime.includes('gif')) return '[gif]';
-          return '[图片]';
-        }
-        if (text.startsWith('data:audio/')) return '[语音]';
-        return '';
-      };
-      const stringifyContent = content => {
-        if (Array.isArray(content)) {
-          const parts = content.map(part => {
-            if (!part || typeof part !== 'object') return '';
-            if (part.type === 'text') return String(part.text || '');
-            if (part.type === 'image_url') {
-              const url = String(part.image_url?.url || '').toLowerCase();
-              if (url.startsWith('data:image/gif')) return '[gif]';
-              return '[图片]';
-            }
-            if (part.type === 'input_audio') return '[语音]';
-            return '';
-          });
-          return parts.filter(Boolean).join('\n');
-        }
-        const raw = String(content ?? '');
-        return describeMediaToken(raw) || raw;
-      };
-      const parts = messages
-        .map(m => {
-          const role = String(m?.role || 'message');
-          const content = stringifyContent(m?.content).trim();
-          if (!content) return '';
-          return `${role}:\n${content}`;
-        })
-        .filter(Boolean);
-      return parts.join('\n\n');
-    };
+    registerMemoryUpdateBridgeContract(window.appBridge, {
+      rollbackLastMemoryUpdate,
+    });
+    const buildRequestPromptText = messages => buildRequestPromptTextCore(messages);
     const handleMemoryEditsFromRaw = async (raw, { sessionId, isGroup, force = false, requestPrompt } = {}) => {
       if (!force && !isMemoryAutoExtractInline()) {
         return { text: raw, blocks: [], actions: [] };
@@ -18167,14 +16681,12 @@ Phase G（Frame 36）：循环衔接
         const blocks = Array.isArray(parsed.blocks) ? parsed.blocks : [];
         const tableEditRaw = blocks.join('\n\n').trim();
         const lastEntry = window.appBridge?.getLastMemoryUpdate?.(sessionId);
-        let promptText = typeof requestPrompt === 'string' ? requestPrompt : '';
-        if (!promptText.trim()) {
-          const inferred = buildRequestPromptText(window.appBridge?.lastRequest?.messages);
-          if (inferred.trim()) promptText = inferred;
-        }
-        if (!promptText.trim() && lastEntry?.requestPrompt) {
-          promptText = String(lastEntry.requestPrompt || '');
-        }
+        const promptText = resolveMemoryUpdateRequestPrompt({
+          requestPrompt,
+          lastRequestMessages: window.appBridge?.lastRequest?.messages,
+          lastEntryRequestPrompt: lastEntry?.requestPrompt,
+          buildRequestPrompt: buildRequestPromptText,
+        });
         window.appBridge?.setLastMemoryUpdate?.(sessionId, {
           at: Date.now(),
           mode: force ? 'separate' : 'inline',
@@ -18196,1513 +16708,328 @@ Phase G（Frame 36）：循环衔接
       }
       return parsed;
     };
-    const canInitClient = cfg => {
-      const c = cfg || {};
-      const hasKey = typeof c.apiKey === 'string' && c.apiKey.trim().length > 0;
-      const hasVertexSa =
-        c.provider === 'vertexai' &&
-        typeof c.vertexaiServiceAccount === 'string' &&
-        c.vertexaiServiceAccount.trim().length > 0;
-      return hasKey || hasVertexSa;
-    };
     const buildMemoryUpdateHistoryText = sessionId => {
       const messages = chatStore.getMessages(sessionId) || [];
-      const lines = [];
-      const usable = messages.filter(m => m && (m.role === 'user' || m.role === 'assistant' || m.role === 'system'));
-      const settings = appSettings.get();
-      const rawLimit = Math.trunc(Number(settings.memoryUpdateContextRounds));
-      const limit = Number.isFinite(rawLimit) ? Math.max(0, rawLimit) : 6;
-      if (limit <= 0) return '';
-      const rounds = [];
-      let current = null;
-      usable.forEach(m => {
-        if (m?.status === 'pending' || m?.status === 'sending') return;
-        if (m?.role === 'user') {
-          current = { messages: [m] };
-          rounds.push(current);
-          return;
-        }
-        if (m?.role === 'assistant') {
-          if (!current) {
-            current = { messages: [] };
-            rounds.push(current);
-          }
-          current.messages.push(m);
-          return;
-        }
-        if (m?.role === 'system') {
-          if (!current) return;
-          current.messages.push(m);
-        }
+      const limit = resolveMemoryUpdateHistoryLimit(appSettings.get());
+      return buildMemoryUpdateHistoryTextCore(messages, {
+        limit,
+        stripAssistantText: text => stripTableEditBlocks(text),
       });
-      const selected = rounds.slice(-limit);
-      selected.forEach(round => {
-        (round.messages || []).forEach(m => {
-          const name = String(m?.name || (m?.role === 'assistant' ? '助手' : m?.role === 'user' ? '用户' : '系统'));
-          const rawText = String(m?.rawOriginal || m?.raw || m?.content || '');
-          let clean = m?.role === 'assistant' ? stripTableEditBlocks(rawText) : rawText;
-          if (m?.type === 'image' || rawText.startsWith('data:image')) clean = '[图片]';
-          if (m?.type === 'audio' || rawText.startsWith('data:audio')) clean = '[语音]';
-          if (m?.type === 'document') clean = `[文件] ${m?.content || ''}`.trim();
-          const clipped = clean.length > 4000 ? `${clean.slice(0, 4000)}…` : clean;
-          if (!clipped.trim()) return;
-          lines.push(`${name}: ${clipped}`);
-        });
-      });
-      return lines.join('\n');
     };
     const buildMemoryUpdatePlan = async (sessionId, isGroup, baseContext) => {
-      const ctx = baseContext || {};
-      const next = {
-        ...(ctx || {}),
-        session: { id: sessionId, isGroup },
-        meta: {
-          ...(ctx?.meta || {}),
-          memoryStorageMode: 'table',
-          memoryAutoExtract: true,
-        },
-        history: [],
-      };
+      const next = buildMemoryUpdatePlanInput(baseContext, { sessionId, isGroup });
       if (!window.appBridge?.buildMemoryPromptPlan) return null;
       return window.appBridge.buildMemoryPromptPlan(next);
     };
-    const resolveMemoryUpdateConfig = async () => {
-      const settings = appSettings.get();
-      const mode = String(settings.memoryUpdateApiMode || 'chat').toLowerCase();
-      if (mode !== 'profile') {
-        await window.appBridge.config.load();
-        return window.appBridge.config.get();
-      }
-      await memoryUpdateConfigManager.load();
-      const profileId = String(settings.memoryUpdateProfileId || memoryUpdateConfigManager.getActiveProfileId() || '');
-      if (!profileId) return null;
-      const runtime = await memoryUpdateConfigManager.getRuntimeConfigByProfileId(profileId);
-      return runtime;
-    };
-    const abortMemoryUpdate = (sessionId) => {
-      const ac = memoryUpdateAbortControllers.get(sessionId);
-      if (ac) {
-        try { ac.abort(); } catch {}
-        memoryUpdateAbortControllers.delete(sessionId);
-      }
-    };
-    const runMemoryUpdateTask = async (sessionId, isGroup, baseContext, checkpointMessageId, signal) => {
-      const runId = `${sessionId}:${checkpointMessageId || Date.now()}`;
-      memoryUpdateRunning.add(runId);
-      try {
-        if (signal?.aborted) return;
-        if (typeof navigator !== 'undefined' && !navigator.onLine) return;
-        const plan = await buildMemoryUpdatePlan(sessionId, isGroup, baseContext);
-        if (window.appBridge) {
-          window.appBridge.lastMemoryPlan = plan || null;
-        }
-        if (!plan?.enabled || !plan.promptText) return;
-        if (signal?.aborted) return;
-        const historyText = buildMemoryUpdateHistoryText(sessionId);
-        if (!historyText.trim()) return;
-        const config = await resolveMemoryUpdateConfig();
-        if (!config || !canInitClient(config)) {
-          logger.warn('memory update config missing or invalid');
-          return;
-        }
-        if (signal?.aborted) return;
-        const systemText = String(plan.promptText || '').trim();
-        const userText = [
-          '请根据以下聊天记录更新记忆表格。',
-          '只输出 <tableEdit>...</tableEdit>，不要输出任何解释。',
-          '',
-          '<chat_history>',
-          historyText,
-          '</chat_history>',
-        ].join('\n');
-        const requestPrompt = ['system:', systemText, '', 'user:', userText].join('\n');
-        const client = new LLMClient(config);
-        const response = await client.chat([
-          { role: 'system', content: systemText },
-          { role: 'user', content: userText },
-        ], { signal });
-        if (signal?.aborted) return;
-        await handleMemoryEditsFromRaw(response, { sessionId, isGroup, force: true, requestPrompt });
-        if (checkpointMessageId) {
-          await syncTurnCheckpointForMessage(sessionId, checkpointMessageId, {
-            captureCurrentActiveState: true,
-          });
-        }
-      } catch (err) {
-        if (err?.name === 'AbortError') {
-          logger.info('memory update aborted', sessionId);
-          return;
-        }
-        logger.warn('memory update failed', err);
-      } finally {
-        memoryUpdateRunning.delete(runId);
-      }
-    };
-    const enqueueMemoryUpdate = (sessionId, isGroup, baseContext, checkpointMessageId) => {
-      let queue = memoryUpdateQueues.get(sessionId);
-      if (!queue) {
-        queue = { running: false, pending: [] };
-        memoryUpdateQueues.set(sessionId, queue);
-      }
-      queue.pending.push({ isGroup, baseContext, checkpointMessageId });
-      if (!queue.running) drainMemoryQueue(sessionId);
-    };
-    const drainMemoryQueue = async (sessionId) => {
-      const queue = memoryUpdateQueues.get(sessionId);
-      if (!queue || queue.running) return;
-      queue.running = true;
-      while (queue.pending.length > 0) {
-        const task = queue.pending.shift();
-        const ac = new AbortController();
-        memoryUpdateAbortControllers.set(sessionId, ac);
-        await runMemoryUpdateTask(sessionId, task.isGroup, task.baseContext, task.checkpointMessageId, ac.signal);
-        if (memoryUpdateAbortControllers.get(sessionId) === ac) {
-          memoryUpdateAbortControllers.delete(sessionId);
-        }
-      }
-      queue.running = false;
-    };
-    const runMemoryUpdateAfterChat = async (sessionId, isGroup, baseContext, options = {}) => {
-      if (!isMemoryAutoExtractSeparate()) return;
-      if (!sessionId) return;
-      const settings = appSettings.get();
-      const everyN = Math.max(1, Math.trunc(Number(settings.memoryFillEveryN)) || 1);
-      const counter = (memoryFillSessionCounters.get(sessionId) || 0) + 1;
-      if (counter < everyN) {
-        memoryFillSessionCounters.set(sessionId, counter);
-        return;
-      }
-      memoryFillSessionCounters.set(sessionId, 0);
-      const checkpointMessageId = String(options?.checkpointMessageId || '').trim();
-      enqueueMemoryUpdate(sessionId, isGroup, baseContext, checkpointMessageId);
-    };
-    const applyChatModeAssistantRegex = (text, { depth } = {}) => {
-      const cleaned = sanitizeAssistantReplyText(text, promptUserName);
-      const reasoningParsed = extractReasoningFromContent(cleaned, { depth, strict: true });
-      const finalSource = String(reasoningParsed.content || '');
-      let stored = finalSource;
-      let display = finalSource;
-      try {
-        stored = window.appBridge.applyOutputStoredRegex(finalSource, { depth });
-        display = window.appBridge.applyOutputDisplayRegex(stored, { depth });
-      } catch {}
-      return { cleaned, reasoningParsed, finalSource, stored, display };
-    };
+    const memoryUpdateRuntime = createMemoryUpdateRuntime({
+      appBridge: window.appBridge,
+      appSettings,
+      buildMemoryUpdateHistoryText,
+      buildMemoryUpdatePlan,
+      canInitClient,
+      createClient: config => new LLMClient(config),
+      handleMemoryEditsFromRaw,
+      isMemoryAutoExtractSeparate,
+      logger,
+      memoryUpdateConfigManager,
+      syncTurnCheckpointForMessage,
+    });
+    const applyChatModeAssistantRegex = (text, { depth } = {}) => applyChatModeAssistantRegexCore(text, {
+      depth,
+      promptUserName,
+      sanitizeAssistantReplyText,
+      extractReasoningFromContent,
+      applyStoredRegex: (value, opts) => window.appBridge.applyOutputStoredRegex(value, opts),
+      applyDisplayRegex: (value, opts) => window.appBridge.applyOutputDisplayRegex(value, opts),
+    });
     const buildAssistantMessageFromText = async (
       rawText,
       { sessionId, time, name, avatar, showName, depth, speakerContactId } = {},
     ) => {
       const sessionKey = String(sessionId || '').trim();
-      let displayText = String(rawText ?? '');
-      let templateVars = null;
-      await maybePromptTemplateEnable({ sampleText: displayText });
-      const templateMeta = skipTemplate ? { templateEnabled: false } : undefined;
-      const templateAllowed = templateSettings.shouldRun('render', {
-        session: { id: sessionKey, settings: chatStore.getSessionSettings?.(sessionKey) || {} },
-        meta: templateMeta,
-      });
-      if (templateAllowed) {
-        try {
-          const membersText = Array.isArray(groupMembers)
-            ? groupMembers.map(mid => contactsStore.getContact(mid)?.name || mid).filter(Boolean).join(',')
-            : '';
-          const inject = window.appBridge?.getTemplateRenderInjections?.({
-            sessionId: sessionKey,
-            uiMode,
-            content: displayText,
-            userName: promptUserName,
-            characterName,
-            groupName: isGroupChat ? characterName : '',
-            membersText,
-          });
-          const before = Array.isArray(inject?.before) ? inject.before.filter(Boolean).join('\n\n') : '';
-          const after = Array.isArray(inject?.after) ? inject.after.filter(Boolean).join('\n\n') : '';
-          if (before) displayText = `${before}\n\n${displayText}`;
-          if (after) displayText = `${displayText}\n\n${after}`;
-        } catch (err) {
-          logger.warn('template render injection failed', err);
-        }
-        try {
-          const res = await renderTemplateTextAsync(displayText, {
-            stage: 'render',
-            chatStore,
-            sessionId: sessionKey,
-            context: {
-              session: { id: sessionKey },
-              user: { name: promptUserName },
-              meta: templateMeta,
-            },
-          });
-          if (!res.error) {
-            displayText = res.text;
-            if (res.messageVars && Object.keys(res.messageVars).length) {
-              templateVars = res.messageVars;
-            }
-          }
-        } catch (err) {
-          logger.warn('template render (message) failed', err);
-        }
-      }
-      // chat-mode-regex rollback marker:
-      // Old logic kept for comparison / easy rollback.
-      // const cleaned = sanitizeAssistantReplyText(displayText, promptUserName);
-      // const reasoningParsed = extractReasoningFromContent(cleaned, { depth, strict: true });
-      // const parsed = parseSpecialMessage(reasoningParsed.content || '');
-      const { reasoningParsed, finalSource, stored, display } = applyChatModeAssistantRegex(displayText, { depth });
-      const parsed = parseSpecialMessage(display);
-      const meta = { ...(parsed.meta || {}) };
-      const resolvedSpeakerContactId = String(speakerContactId || '').trim();
-      const sessionContact = sessionKey ? contactsStore.getContact(sessionKey) : null;
-      const isGroupSession = sessionKey.startsWith('group:') || Boolean(sessionContact?.isGroup);
-      const resolvedSpeakerName = String(name || '').trim();
-      if (showName) meta.showName = true;
-      if (resolvedSpeakerContactId) meta.speakerContactId = resolvedSpeakerContactId;
-      if (templateVars) meta.templateVars = templateVars;
-      if (reasoningParsed.reasoning) {
-        meta.reasoning = reasoningParsed.reasoning;
-        meta.reasoningDisplay = reasoningParsed.reasoningDisplay;
-      }
-      let resolvedAvatar = '';
-      if (isGroupSession && resolvedSpeakerName) {
-        resolvedAvatar = resolveGroupSpeakerRenderAvatar(resolvedSpeakerName, sessionKey, resolvedSpeakerContactId);
-      }
-      if (resolvedSpeakerContactId) {
-        const speakerContact = contactsStore.getContact(resolvedSpeakerContactId);
-        if (speakerContact && speakerContact.isGroup !== true) {
-          resolvedAvatar = resolveAvatarForContact(resolvedSpeakerContactId, speakerContact);
-        }
-      }
-      if (!resolvedAvatar && (!isGroupSession || !resolvedSpeakerName) && typeof avatar === 'string' && avatar.trim()) {
-        resolvedAvatar = avatar.trim();
-      }
-      if (!resolvedAvatar && (!isGroupSession || !resolvedSpeakerName)) {
-        resolvedAvatar = getAssistantAvatarForSession(sessionId);
-      }
-      const next = {
-        role: 'assistant',
-        ...parsed,
-        name: name || '助手',
-        avatar: resolvedAvatar,
+      const membersText = Array.isArray(groupMembers)
+        ? groupMembers.map(mid => contactsStore.getContact(mid)?.name || mid).filter(Boolean).join(',')
+        : '';
+      return buildAssistantMessageFromTextCore(rawText, {
         sessionId: sessionKey,
         time: time || formatNowTime(),
-      };
-      const rawValue = String(rawText ?? '');
-      if (rawValue) next.rawOriginal = rawValue;
-      if (finalSource && finalSource !== rawValue) next.rawSource = finalSource;
-      if (stored) next.raw = stored;
-      if (Object.keys(meta).length) next.meta = meta;
-      return next;
-    };
-    const stripUpdateVariableBlocks = (text) => {
-      let out = String(text || '');
-      if (!out) return out;
-      const openRe = /<\s*(update(?:variable)?|variableupdate)\b[^>]*>/i;
-      for (let i = 0; i < 20; i++) {
-        const open = openRe.exec(out);
-        if (!open) break;
-        const tag = String(open[1] || 'UpdateVariable');
-        const start = open.index;
-        const afterStart = start + open[0].length;
-        const tail = out.slice(afterStart);
-        const closeRe = new RegExp(`<\\s*\\/\\s*${tag}\\s*>`, 'i');
-        const close = closeRe.exec(tail);
-        if (!close) {
-          out = out.slice(0, start);
-          break;
-        }
-        const end = afterStart + close.index + close[0].length;
-        out = out.slice(0, start) + out.slice(end);
-      }
-      out = out
-        .replace(/<\s*\/?\s*(update(?:variable)?|variableupdate)\b[^>]*>/gi, '')
-        .replace(/\n{3,}/g, '\n\n')
-        .trimEnd();
-      return out;
-    };
-    // Backward-compatible aliases for historical typo variants used in old edit pipelines.
-    const stripUpdateVariableBloacks = stripUpdateVariableBlocks;
-    const stripupdatevariablebloacks = stripUpdateVariableBlocks;
-    const extractUpdateVariableBlocks = (text) => {
-      let out = String(text || '');
-      if (!out) return { blocks: [], cleaned: out };
-      const blocks = [];
-      const openRe = /<\s*(update(?:variable)?|variableupdate)\b[^>]*>/i;
-      for (let i = 0; i < 50; i += 1) {
-        const open = openRe.exec(out);
-        if (!open) break;
-        const tag = String(open[1] || 'UpdateVariable');
-        const start = open.index;
-        const afterStart = start + open[0].length;
-        const tail = out.slice(afterStart);
-        const closeRe = new RegExp(`<\\s*\\/\\s*${tag}\\s*>`, 'i');
-        const close = closeRe.exec(tail);
-        if (!close) {
-          blocks.push(out.slice(afterStart));
-          out = out.slice(0, start);
-          break;
-        }
-        const end = afterStart + close.index + close[0].length;
-        blocks.push(out.slice(afterStart, afterStart + close.index));
-        out = out.slice(0, start) + out.slice(end);
-      }
-      return { blocks, cleaned: out };
-    };
-    const buildUpdateVariableParser = () => {
-      const stripCodeFence = (text) => {
-        const raw = String(text || '').trim();
-        if (!raw) return '';
-        const withoutStart = raw.replace(/^```[a-z0-9_-]*\s*/i, '');
-        return withoutStart.replace(/```\s*$/i, '').trim();
-      };
-      const safeJsonParse = (text) => {
-        try {
-          return JSON.parse(text);
-        } catch {
-          return null;
-        }
-      };
-      const parseLooseJson = (text) => {
-        let raw = String(text || '').trim();
-        if (!raw) return null;
-        raw = raw.replace(/\/\*[\s\S]*?\*\//g, '');
-        raw = raw.replace(/(^|[^\\])\/\/.*$/gm, '$1');
-        raw = raw.replace(/,\s*([}\]])/g, '$1');
-        raw = raw.replace(/([{,]\s*)([A-Za-z0-9_-]+)\s*:/g, '$1"$2":');
-        raw = raw.replace(/'([^'\\]*(\\.[^'\\]*)*)'/g, (_m, body) => {
-          const cleaned = String(body || '').replace(/\\"/g, '"').replace(/"/g, '\\"');
-          return `"${cleaned}"`;
-        });
-        return safeJsonParse(raw);
-      };
-      const parseValue = (input) => {
-        const raw = String(input ?? '').trim();
-        if (!raw) return '';
-        if (raw === 'true') return true;
-        if (raw === 'false') return false;
-        if (raw === 'null') return null;
-        if (raw === 'undefined') return undefined;
-        if (/^[+-]?\d+(\.\d+)?$/.test(raw)) return Number(raw);
-        const quoted =
-          (raw.startsWith('"') && raw.endsWith('"')) ||
-          (raw.startsWith("'") && raw.endsWith("'")) ||
-          (raw.startsWith('`') && raw.endsWith('`'));
-        const unquoted = quoted ? raw.slice(1, -1) : raw;
-        if (unquoted.startsWith('{') || unquoted.startsWith('[')) {
-          const parsed = parseLooseJson(unquoted);
-          if (parsed !== null) return parsed;
-          const direct = safeJsonParse(unquoted);
-          if (direct !== null) return direct;
-        }
-        return unquoted;
-      };
-      const normalizePath = (raw) => normalizeVariablePathInput(raw);
-      const toPath = (raw) => toVariablePath(raw);
-      const findMatchingParen = (text, startIndex) => {
-        let depth = 1;
-        let inQuote = false;
-        let quoteChar = '';
-        for (let i = startIndex; i < text.length; i += 1) {
-          const ch = text[i];
-          const prev = i > 0 ? text[i - 1] : '';
-          if ((ch === '"' || ch === "'" || ch === '`') && prev !== '\\') {
-            if (inQuote && ch === quoteChar) {
-              inQuote = false;
-              quoteChar = '';
-            } else if (!inQuote) {
-              inQuote = true;
-              quoteChar = ch;
-            }
-          }
-          if (inQuote) continue;
-          if (ch === '(') depth += 1;
-          if (ch === ')') {
-            depth -= 1;
-            if (depth === 0) return i;
-          }
-        }
-        return -1;
-      };
-      const splitArgs = (text) => {
-        const args = [];
-        let buf = '';
-        let inQuote = false;
-        let quoteChar = '';
-        let paren = 0;
-        let bracket = 0;
-        let brace = 0;
-        for (let i = 0; i < text.length; i += 1) {
-          const ch = text[i];
-          const prev = i > 0 ? text[i - 1] : '';
-          if ((ch === '"' || ch === "'" || ch === '`') && prev !== '\\') {
-            if (inQuote && ch === quoteChar) {
-              inQuote = false;
-              quoteChar = '';
-            } else if (!inQuote) {
-              inQuote = true;
-              quoteChar = ch;
-            }
-          }
-          if (!inQuote) {
-            if (ch === '(') paren += 1;
-            if (ch === ')') paren -= 1;
-            if (ch === '[') bracket += 1;
-            if (ch === ']') bracket -= 1;
-            if (ch === '{') brace += 1;
-            if (ch === '}') brace -= 1;
-          }
-          if (ch === ',' && !inQuote && paren === 0 && bracket === 0 && brace === 0) {
-            const trimmed = buf.trim();
-            if (trimmed) args.push(trimmed);
-            buf = '';
-            continue;
-          }
-          buf += ch;
-        }
-        const trimmed = buf.trim();
-        if (trimmed) args.push(trimmed);
-        return args;
-      };
-      const stripKnownRootPrefix = (parts) => stripKnownVariableRootPrefix(parts);
-      const parseJsonPatchArray = (value, reason = 'json_patch') => {
-        if (!Array.isArray(value)) return [];
-        const commands = [];
-        value.forEach((op) => {
-          const action = String(op?.op || '').toLowerCase();
-          let pathParts = decodeJsonPointer(op?.path || op?.to || '');
-          pathParts = stripKnownRootPrefix(pathParts);
-          const path = normalizeVariablePathParts(pathParts);
-          if (!action || !path.length) return;
-          if (action === 'replace') {
-            commands.push({ type: 'set', path, value: op?.value, reason });
-            return;
-          }
-          if (action === 'delta') {
-            commands.push({ type: 'add', path, value: op?.value, reason });
-            return;
-          }
-          if (action === 'add' || action === 'insert') {
-            const key = path[path.length - 1];
-            const parentPath = path.slice(0, -1);
-            if (!parentPath.length) {
-              commands.push({ type: 'set', path, value: op?.value, reason });
-              return;
-            }
-            commands.push({ type: 'insert', path: parentPath, key, value: op?.value, reason });
-            return;
-          }
-          if (action === 'remove') {
-            commands.push({ type: 'delete', path, reason });
-            return;
-          }
-          if (action === 'move') {
-            let fromParts = decodeJsonPointer(op?.from || '');
-            fromParts = stripKnownRootPrefix(fromParts);
-            const from = normalizeVariablePathParts(fromParts);
-            if (!from.length) return;
-            commands.push({ type: 'move', from, to: path, reason });
-          }
-        });
-        return commands;
-      };
-      const parseJsonPatchCommands = (text) => {
-        const commands = [];
-        const re = /<(json_?patch)>(?:\s*```.*)?([\s\S]*?)(?:```\s*)?<\/\1>/gim;
-        let m;
-        while ((m = re.exec(text))) {
-          const body = stripCodeFence(m[2] || '');
-          if (!body) continue;
-          const parsed = parseLooseJson(body) ?? safeJsonParse(body);
-          commands.push(...parseJsonPatchArray(parsed, 'json_patch'));
-        }
-        return commands;
-      };
-      const parseInlineCommands = (text) => {
-        const commands = [];
-        let index = 0;
-        while (index < text.length) {
-          const match = text.substring(index).match(/_\.(set|insert|assign|remove|unset|delete|add)\(/);
-          if (!match || match.index === undefined) break;
-          const type = match[1];
-          const start = index + match.index + match[0].length;
-          const end = findMatchingParen(text, start);
-          if (end === -1) break;
-          const argsText = text.slice(start, end);
-          const args = splitArgs(argsText);
-          if (!args.length) {
-            index = end + 1;
-            continue;
-          }
-          const rawPath = normalizePath(args[0]);
-          const path = toPath(rawPath);
-          if (!path.length && rawPath !== '') {
-            index = end + 1;
-            continue;
-          }
-          if (type === 'set') {
-            if (args.length >= 3 && rawPath === '') {
-              const keyPathRaw = normalizePath(args[1]);
-              let keyPath = toPath(keyPathRaw);
-              if (!keyPath.length && keyPathRaw !== '') {
-                const parsedKey = parseValue(args[1]);
-                if (parsedKey !== undefined && parsedKey !== null && parsedKey !== '') {
-                  keyPath = [String(parsedKey)];
-                }
-              }
-              if (keyPath.length) commands.push({ type: 'set', path: keyPath, value: parseValue(args[args.length - 1]) });
-            } else if (args.length >= 2) {
-              commands.push({ type: 'set', path, value: parseValue(args[args.length - 1]) });
-            }
-          } else if (type === 'add') {
-            if (args.length >= 2) commands.push({ type: 'add', path, value: parseValue(args[1]) });
-          } else if (type === 'insert' || type === 'assign') {
-            if (args.length === 2) {
-              commands.push({ type: 'insert', path, key: null, value: parseValue(args[1]) });
-            } else if (args.length >= 3) {
-              commands.push({ type: 'insert', path, key: parseValue(args[1]), value: parseValue(args[2]) });
-            }
-          } else if (type === 'remove' || type === 'unset' || type === 'delete') {
-            if (args.length >= 2) {
-              commands.push({ type: 'remove', path, key: parseValue(args[1]) });
-            } else {
-              commands.push({ type: 'delete', path });
-            }
-          }
-          index = end + 1;
-        }
-        return commands;
-      };
-      const parseCommands = (text) => {
-        const stripped = String(text || '')
-          .replace(/<analysis>[\s\S]*?<\/analysis>/gi, '')
-          .replace(/<analyze>[\s\S]*?<\/analyze>/gi, '');
-        const commands = [];
-        const jsonCmds = parseJsonPatchCommands(stripped);
-        commands.push(...jsonCmds);
-        const cleaned = stripped.replace(/<(json_?patch)>(?:\s*```.*)?[\s\S]*?<\/\1>/gim, '');
-        commands.push(...parseInlineCommands(cleaned));
-        if (!commands.length) {
-          const body = stripCodeFence(stripped);
-          const parsed = parseLooseJson(body) ?? safeJsonParse(body);
-          commands.push(...parseJsonPatchArray(parsed, 'json_patch_raw'));
-        }
-        return commands;
-      };
-      return { parseCommands };
+        name,
+        avatar,
+        showName,
+        depth,
+        speakerContactId,
+        promptUserName,
+        isGroupChat,
+        maybePromptTemplateGate,
+        skipTemplate,
+        shouldRunTemplate: ({ meta }) => templateSettings.shouldRun('render', {
+          session: { id: sessionKey, settings: chatStore.getSessionSettings?.(sessionKey) || {} },
+          meta,
+        }),
+        getTemplateInjections: ({ content }) => window.appBridge?.getTemplateRenderInjections?.({
+          sessionId: sessionKey,
+          uiMode,
+          content,
+          userName: promptUserName,
+          characterName,
+          groupName: isGroupChat ? characterName : '',
+          membersText,
+        }),
+        renderTemplateText: (content, { meta }) => renderTemplateTextAsync(content, {
+          stage: 'render',
+          chatStore,
+          sessionId: sessionKey,
+          context: {
+            session: { id: sessionKey },
+            user: { name: promptUserName },
+            meta,
+          },
+        }),
+        applyChatModeAssistantRegex,
+        parseSpecialMessage,
+        getSessionContact: sid => contactsStore.getContact(sid),
+        getContactById: sid => contactsStore.getContact(sid),
+        resolveGroupSpeakerAvatar: ({ speakerName, sessionId: targetSessionId, speakerContactId: targetSpeakerContactId }) =>
+          resolveGroupSpeakerRenderAvatar(speakerName, targetSessionId, targetSpeakerContactId),
+        resolveContactAvatar: (sid, contact) => resolveAvatarForContact(sid, contact),
+        getAssistantAvatarForSession,
+        logger,
+      });
     };
     const updateParser = buildUpdateVariableParser();
-    const applyUpdateVariableCommands = (sessionId, commands, { useGlobal = false } = {}) => {
-      if (!Array.isArray(commands) || !commands.length) return false;
-      const sid = String(sessionId || '').trim();
-      if (!sid) return false;
-      const listVars = useGlobal
-        ? (chatStore.listGlobalVariables?.() || {})
-        : (chatStore.listVariables?.(sid) || {});
-      const clone = (v) => {
-        try {
-          return structuredClone(v);
-        } catch {
-          return JSON.parse(JSON.stringify(v));
-        }
-      };
-      const isPlainObject = (val) => val && typeof val === 'object' && !Array.isArray(val);
-      const isMvuWrappedScalar = (val) =>
-        Array.isArray(val) && val.length === 2 && typeof val[1] === 'string' && !Array.isArray(val[0]);
-      const deepEqual = (a, b) => {
-        if (Object.is(a, b)) return true;
-        if (typeof a !== typeof b) return false;
-        if (Array.isArray(a)) {
-          if (!Array.isArray(b) || a.length !== b.length) return false;
-          return a.every((v, i) => deepEqual(v, b[i]));
-        }
-        if (isPlainObject(a)) {
-          if (!isPlainObject(b)) return false;
-          const keysA = Object.keys(a);
-          const keysB = Object.keys(b);
-          if (keysA.length !== keysB.length) return false;
-          return keysA.every(k => deepEqual(a[k], b[k]));
-        }
-        return false;
-      };
-      const getAt = (obj, path) => getValueAtPath(obj, path, { allowDirectKey: false });
-      const setAt = (obj, path, value, options = {}) => setValueAtPath(obj, path, value, options);
-      const resolveExistingPath = (obj, path, options = {}) => resolveExistingVariablePath(obj, path, options);
-      const deleteAt = (obj, path) => deleteValueAtPath(obj, path);
-      const mergeObjects = (target, value) => {
-        if (!isPlainObject(target) || !isPlainObject(value)) return false;
-        Object.entries(value).forEach(([k, v]) => {
-          if (isPlainObject(v) && isPlainObject(target[k])) {
-            mergeObjects(target[k], v);
-          } else {
-            target[k] = v;
-          }
-        });
-        return true;
-      };
-      const pathToString = (path) => {
-        if (!Array.isArray(path) || !path.length) return '(root)';
-        return path.map(seg => String(seg)).join('.');
-      };
-      const previewValue = (value) => {
-        if (value === null || value === undefined) return String(value);
-        if (typeof value === 'string') return value.length > 120 ? `${value.slice(0, 117)}...` : value;
-        if (typeof value === 'number' || typeof value === 'boolean') return String(value);
-        try {
-          const text = JSON.stringify(value);
-          return text.length > 120 ? `${text.slice(0, 117)}...` : text;
-        } catch {
-          return '[unserializable]';
-        }
-      };
-      const toDateValue = (value) => {
-        if (value instanceof Date && !Number.isNaN(value.getTime())) return new Date(value.getTime());
-        if (typeof value !== 'string') return null;
-        const raw = value.trim();
-        if (!raw || Number.isFinite(Number(raw))) return null;
-        const dt = new Date(raw);
-        return Number.isNaN(dt.getTime()) ? null : dt;
-      };
-      const skipped = [];
-      const pushSkip = (cmd, reason) => {
-        if (skipped.length >= 12) return;
-        const type = String(cmd?.type || '').trim().toLowerCase() || 'unknown';
-        const path = Array.isArray(cmd?.path) ? cmd.path : (Array.isArray(cmd?.from) ? cmd.from : []);
-        skipped.push(`${type}@${pathToString(path)}:${reason}`);
-      };
-      let appliedCount = 0;
-      const shouldEmitStarted = shouldEmitMvuEvent('mag_variable_update_started');
-      const shouldEmitEnded =
-        shouldEmitMvuEvent('mag_variable_update_ended') || shouldEmitMvuEvent('mag_variable_update_ended_for_zod');
-      const updates = (shouldEmitStarted || shouldEmitEnded) ? {} : null;
-      let root = clone(listVars);
-      const original = clone(listVars);
-      commands.forEach((cmd) => {
-        const type = String(cmd?.type || '').trim().toLowerCase();
-        if (!type) return;
-        if (type === 'move') {
-          const from = Array.isArray(cmd.from) ? cmd.from : [];
-          const to = Array.isArray(cmd.to) ? cmd.to : [];
-          if (!from.length || !to.length) {
-            pushSkip(cmd, 'invalid move path');
-            return;
-          }
-          const resolvedFrom = resolveExistingPath(root, from, { allowLeaf: true });
-          if (!resolvedFrom || !resolvedFrom.length) {
-            pushSkip(cmd, 'move source not found');
-            return;
-          }
-          const value = clone(getAt(root, resolvedFrom));
-          const deleted = deleteAt(root, resolvedFrom);
-          if (!deleted.ok) {
-            pushSkip(cmd, 'move source delete failed');
-            return;
-          }
-          const moved = setAt(root, to, value, { create: true });
-          if (!moved.ok) {
-            pushSkip(cmd, 'move target set failed');
-            return;
-          }
-          appliedCount += 1;
-          return;
-        }
-        const path = Array.isArray(cmd.path) ? cmd.path : [];
-        if (type === 'set') {
-          if (!path.length) {
-            if (!cmd.value || typeof cmd.value !== 'object') {
-              pushSkip(cmd, 'root set requires object');
-              return;
-            }
-            root = clone(cmd.value);
-            appliedCount += 1;
-            return;
-          }
-          const resolvedPath = resolveExistingPath(root, path, { allowLeaf: true });
-          if (!resolvedPath || !resolvedPath.length) {
-            pushSkip(cmd, 'set path not found');
-            return;
-          }
-          const prev = getAt(root, resolvedPath);
-          if (isMvuWrappedScalar(prev) && (typeof prev[0] !== 'object' || prev[0] === null)) {
-            const nextWrapped = clone(prev);
-            let nextValue = cmd.value;
-            if (typeof prev[0] === 'number' && typeof cmd.value === 'string') {
-              const n = Number(cmd.value);
-              if (Number.isFinite(n)) nextValue = n;
-            }
-            nextWrapped[0] = nextValue;
-            const result = setAt(root, resolvedPath, nextWrapped, { create: false });
-            if (!result.ok) {
-              pushSkip(cmd, 'wrapped set failed');
-              return;
-            }
-            appliedCount += 1;
-            return;
-          }
-          const result = setAt(root, resolvedPath, cmd.value, { create: false });
-          if (!result.ok) {
-            pushSkip(cmd, 'set failed');
-            return;
-          }
-          appliedCount += 1;
-          return;
-        }
-        if (type === 'add') {
-          const resolvedPath = resolveExistingPath(root, path, { allowLeaf: true });
-          if (!resolvedPath || !resolvedPath.length) {
-            pushSkip(cmd, 'add path not found');
-            return;
-          }
-          const rawPathText = pathToString(path);
-          const resolvedPathText = pathToString(resolvedPath);
-          const currentRaw = getAt(root, resolvedPath);
-          const wrapped = isMvuWrappedScalar(currentRaw) && (typeof currentRaw[0] !== 'object' || currentRaw[0] === null);
-          const current = wrapped ? currentRaw[0] : currentRaw;
-          const delta = Number(cmd.value);
-          if (!Number.isFinite(delta)) {
-            pushSkip(cmd, 'add delta not number');
-            return;
-          }
-          let next = null;
-          const dateBase = toDateValue(current);
-          if (dateBase) {
-            next = new Date(dateBase.getTime() + delta).toISOString();
-          } else if (typeof current === 'number') {
-            next = parseFloat((current + delta).toPrecision(12));
-          } else if (typeof current === 'string') {
-            const baseNum = Number(current);
-            if (!Number.isFinite(baseNum)) {
-              pushSkip(cmd, 'add target is non-numeric string');
-              return;
-            }
-            next = parseFloat((baseNum + delta).toPrecision(12));
-          } else {
-            pushSkip(cmd, `add target unsupported type=${typeof current}`);
-            return;
-          }
-          if (wrapped) {
-            const nextWrapped = clone(currentRaw);
-            nextWrapped[0] = next;
-            const result = setAt(root, resolvedPath, nextWrapped, { create: false });
-            if (!result.ok) {
-              pushSkip(cmd, 'wrapped add failed');
-              return;
-            }
-          } else {
-            const result = setAt(root, resolvedPath, next, { create: false });
-            if (!result.ok) {
-              pushSkip(cmd, 'add set failed');
-              return;
-            }
-          }
-          logger.info(
-            `[update-variable] add-debug path=${rawPathText} resolved=${resolvedPathText} cur=${previewValue(current)} delta=${previewValue(cmd.value)} next=${previewValue(next)}`,
-          );
-          appliedCount += 1;
-          return;
-        }
-        if (type === 'insert') {
-          const key = cmd.key;
-          const target = path.length ? getAt(root, path) : root;
-          if (target === undefined || target === null || typeof target !== 'object') {
-            const created = typeof key === 'number' || key === '-' ? [] : {};
-            setAt(root, path, created, { create: true });
-          }
-          const container = path.length ? getAt(root, path) : root;
-          if (Array.isArray(container)) {
-            if (key === null || key === undefined || key === '-') {
-              container.push(cmd.value);
-              appliedCount += 1;
-            } else if (typeof key === 'number') {
-              const idx = Math.max(0, Math.min(container.length, key));
-              container.splice(idx, 0, cmd.value);
-              appliedCount += 1;
-            } else {
-              pushSkip(cmd, 'insert array key invalid');
-            }
-          } else if (isPlainObject(container)) {
-            if (key === null || key === undefined) {
-              if (!mergeObjects(container, cmd.value)) {
-                pushSkip(cmd, 'insert merge requires object');
-                return;
-              }
-            } else {
-              container[String(key)] = cmd.value;
-            }
-            appliedCount += 1;
-          } else {
-            pushSkip(cmd, 'insert target not object');
-          }
-          return;
-        }
-        if (type === 'remove') {
-          const key = cmd.key;
-          const target = path.length ? getAt(root, path) : root;
-          if (!target || typeof target !== 'object') {
-            pushSkip(cmd, 'remove target not object');
-            return;
-          }
-          if (Array.isArray(target)) {
-            if (typeof key === 'number') {
-              if (key >= 0 && key < target.length) {
-                target.splice(key, 1);
-                appliedCount += 1;
-              } else {
-                pushSkip(cmd, 'remove array index out of range');
-              }
-            } else {
-              const idx = target.findIndex(item => deepEqual(item, key));
-              if (idx >= 0) {
-                target.splice(idx, 1);
-                appliedCount += 1;
-              } else {
-                pushSkip(cmd, 'remove array item not found');
-              }
-            }
-            return;
-          }
-          if (isPlainObject(target)) {
-            if (typeof key === 'number') {
-              const keys = Object.keys(target);
-              if (key >= 0 && key < keys.length) {
-                delete target[keys[key]];
-                appliedCount += 1;
-              } else {
-                pushSkip(cmd, 'remove object index out of range');
-              }
-              return;
-            }
-            if (key === null || key === undefined) {
-              pushSkip(cmd, 'remove object key missing');
-              return;
-            }
-            const k = String(key);
-            if (!Object.prototype.hasOwnProperty.call(target, k)) {
-              pushSkip(cmd, 'remove object key not found');
-              return;
-            }
-            delete target[k];
-            appliedCount += 1;
-            return;
-          }
-          pushSkip(cmd, 'remove target unsupported');
-          return;
-        }
-        if (type === 'delete') {
-          const resolvedPath = resolveExistingPath(root, path, { allowLeaf: true });
-          if (!resolvedPath || !resolvedPath.length) {
-            pushSkip(cmd, 'delete path not found');
-            return;
-          }
-          const result = deleteAt(root, resolvedPath);
-          if (!result.ok) {
-            pushSkip(cmd, 'delete failed');
-            return;
-          }
-          appliedCount += 1;
-        }
-      });
-      if (!isPlainObject(root)) return false;
-      const setVar = useGlobal ? chatStore.setGlobalVariable?.bind(chatStore) : chatStore.setVariable?.bind(chatStore);
-      const delVar = useGlobal ? chatStore.deleteGlobalVariable?.bind(chatStore) : chatStore.deleteVariable?.bind(chatStore);
-      if (typeof setVar !== 'function') return false;
-      const allKeys = new Set([...Object.keys(original), ...Object.keys(root)]);
-      if (updates) {
-        for (const key of allKeys) {
-          const nextVal = root[key];
-          const prevVal = original[key];
-          if (nextVal === undefined) {
-            if (key in original) updates[key] = undefined;
-            continue;
-          }
-          if (!deepEqual(prevVal, nextVal)) updates[key] = nextVal;
-        }
-        if (Object.keys(updates).length && shouldEmitStarted) {
-          emitMvuUpdateStarted(sid, updates, { useGlobal });
-        }
-      }
-      let changed = false;
-      for (const key of allKeys) {
-        if (updates && !Object.prototype.hasOwnProperty.call(updates, key)) continue;
-        const nextVal = root[key];
-        const prevVal = original[key];
-        if (!updates && deepEqual(prevVal, nextVal)) continue;
-        if (nextVal === undefined) {
-          if (typeof delVar === 'function' && key in original) {
-            delVar(key, sid);
-            changed = true;
-          }
-          continue;
-        }
-        setVar(key, nextVal, sid);
-        changed = true;
-      }
-      if (changed && shouldEmitEnded) {
-        emitMvuUpdateEnded(sid, { useGlobal });
-      }
-      if (appliedCount || skipped.length) {
-        logger.info(
-          `[update-variable] apply session=${sid} total=${commands.length} applied=${appliedCount} skipped=${skipped.length}`,
-        );
-      }
-      if (skipped.length) {
-        logger.warn(`[update-variable] skipped-detail ${skipped.join(' | ')}`);
-      }
-      if (changed) {
-        const changedKeys = [];
-        for (const key of allKeys) {
-          const nextVal = root[key];
-          const prevVal = original[key];
-          if (!deepEqual(prevVal, nextVal)) changedKeys.push(String(key));
-          if (changedKeys.length >= 12) break;
-        }
-        if (changedKeys.length) logger.info(`[update-variable] changed-keys ${changedKeys.join(', ')}`);
-      }
-      return changed;
-    };
-    const applyUpdateVariableFromMessage = (message, targetSessionId) => {
-      if (!message || message.role !== 'assistant') return false;
-      const sid = String(targetSessionId || '').trim();
-      const isTavernMvuSession = (() => {
-        if (!sid) return false;
-        const persona = getEffectivePersona(sid);
-        const source = persona && typeof persona.source === 'object' ? persona.source : null;
-        if (!source || source.type !== 'character_card') return false;
-        const mvuSource = String(source.mvuSource || '').trim().toLowerCase();
-        const hasCardMvu = source.mvuConverted === true || (mvuSource && mvuSource !== 'none');
-        if (!hasCardMvu) return false;
-        const schemas = chatStore.listVariableSchemas?.(sid) || {};
-        return Object.keys(schemas).length > 0;
-      })();
-      const raw =
-        (typeof message.rawOriginal === 'string' && message.rawOriginal) ||
-        (typeof message.rawSource === 'string' && message.rawSource) ||
-        (typeof message.raw === 'string' && message.raw) ||
-        (typeof message.content === 'string' && message.content) ||
-        '';
-      if (!raw) return false;
-      const { blocks, cleaned: outsideUpdateBlocks } = extractUpdateVariableBlocks(raw);
-      const commands = [];
-      blocks.forEach((block) => {
-        const parsed = updateParser.parseCommands(block);
-        if (parsed.length) commands.push(...parsed);
-      });
-      if (outsideUpdateBlocks) {
-        const hasOutsideProtocol =
-          /<(json_?patch)\b/i.test(outsideUpdateBlocks) ||
-          /_\.(set|insert|assign|remove|unset|delete|add)\(/i.test(outsideUpdateBlocks);
-        if (hasOutsideProtocol) {
-          const parsedOutside = updateParser.parseCommands(outsideUpdateBlocks);
-          if (parsedOutside.length) commands.push(...parsedOutside);
-        }
-      }
-      if (!blocks.length && isTavernMvuSession && !commands.length) {
-        commands.push(...updateParser.parseCommands(raw));
-      }
-      if (!blocks.length && !commands.length && !isTavernMvuSession) return false;
-      if (blocks.length || commands.length) {
-        logger.info(
-          `[update-variable] parse messageId=${String(message?.id || '')} session=${sid} blocks=${blocks.length} commands=${commands.length}`,
-        );
-        const cmdPreview = commands
-          .slice(0, 8)
-          .map((cmd) => {
-            const type = String(cmd?.type || '');
-            const path = Array.isArray(cmd?.path) ? cmd.path.map(p => String(p)).join('.') : '';
-            const from = Array.isArray(cmd?.from) ? cmd.from.map(p => String(p)).join('.') : '';
-            if (type === 'move') return `move(${from}=>${path})`;
-            if (type === 'add' || type === 'set') return `${type}(${path})=${String(cmd?.value ?? '')}`;
-            if (type === 'insert') return `insert(${path},${String(cmd?.key ?? '-')})`;
-            if (type === 'remove') return `remove(${path},${String(cmd?.key ?? '-')})`;
-            if (type === 'delete') return `delete(${path})`;
-            return type || 'unknown';
-          })
-          .join(' | ');
-        if (cmdPreview) logger.info(`[update-variable] command-preview ${cmdPreview}`);
-      }
-      const useGlobal = isSharedVariableSession(targetSessionId);
-      const changed = commands.length ? applyUpdateVariableCommands(targetSessionId, commands, { useGlobal }) : false;
-      const rawHasPlaceholder = /<StatusPlaceHolderImpl\s*\/?>/i.test(raw);
-      const baseStoredRaw = typeof message.raw === 'string' ? message.raw : '';
-      const baseSource = typeof message.rawSource === 'string' ? message.rawSource : '';
-      const baseOriginal = typeof message.rawOriginal === 'string' ? message.rawOriginal : '';
-      const baseFallback = typeof message.content === 'string' ? message.content : '';
-      const sourceText = baseSource || baseOriginal || baseFallback;
-      const hasSourceText = Boolean(sourceText);
-      const sourceHasPlaceholder = /<StatusPlaceHolderImpl\s*\/?>/i.test(sourceText || '');
-      const storedHasPlaceholder = /<StatusPlaceHolderImpl\s*\/?>/i.test(baseStoredRaw || '');
-      let nextStored = baseStoredRaw ? stripUpdateVariableBlocks(baseStoredRaw) : '';
-      let nextSource = sourceText ? stripUpdateVariableBlocks(sourceText) : '';
-      let placeholderInjected = false;
-      if (!nextStored) {
-        const cleanedSource = nextSource;
-        if (window.appBridge?.applyOutputStoredRegex) {
-          try {
-            nextStored = window.appBridge.applyOutputStoredRegex(cleanedSource, { depth: 0 });
-          } catch {
-            nextStored = cleanedSource;
-          }
-        } else {
-          nextStored = cleanedSource;
-        }
-      }
-      const shouldAppendPlaceholder = isTavernMvuSession && !(rawHasPlaceholder || sourceHasPlaceholder || storedHasPlaceholder);
-      if (shouldAppendPlaceholder) {
-        nextStored = `${nextStored || ''}\n\n<StatusPlaceHolderImpl/>`.trim();
-        nextSource = `${nextSource || ''}\n\n<StatusPlaceHolderImpl/>`.trim();
-        placeholderInjected = true;
-      }
-      const nextDisplay = window.appBridge?.applyOutputDisplayRegex
-        ? window.appBridge.applyOutputDisplayRegex(nextStored, { depth: 0 })
-        : nextStored;
-      let nextMeta = message?.meta && typeof message.meta === 'object' ? { ...message.meta } : null;
-      if (isRpSessionId(targetSessionId)) {
-        if (!nextMeta) nextMeta = { renderRich: true };
-        else if (nextMeta.renderRich !== true) nextMeta.renderRich = true;
-      }
-      const updatePayload = { raw: nextStored, content: nextDisplay };
-      if (hasSourceText) updatePayload.rawSource = nextSource;
-      if (nextMeta) updatePayload.meta = nextMeta;
-      const sourceUnchanged = !hasSourceText || nextSource === sourceText;
-      const displayUnchanged = nextDisplay === (typeof message.content === 'string' ? message.content : '');
-      const storedUnchanged = nextStored === baseStoredRaw;
-      if (!changed && !placeholderInjected && storedUnchanged && sourceUnchanged && displayUnchanged) {
-        return false;
-      }
-      const updated =
-        chatStore.updateMessage(message.id, updatePayload, targetSessionId) || {
-          ...message,
-          raw: nextStored,
-          content: nextDisplay,
-          rawSource: hasSourceText ? nextSource : message.rawSource,
-          meta: nextMeta || message.meta,
-        };
-      if (placeholderInjected) {
-        logger.info(
-          `[update-variable] placeholder-injected messageId=${String(message?.id || '')} session=${sid} source=tavern-mvu`,
-        );
-      }
-      if (isSessionActive(targetSessionId)) ui.updateMessage(message.id, updated);
-      return changed || placeholderInjected;
-    };
-    if (typeof window !== 'undefined') {
-      window.__chatappApplyUpdateVariableFromMessage = applyUpdateVariableFromMessage;
-    }
+    const applyUpdateVariableCommands = createUpdateVariableCommandApplier({
+      chatStore,
+      getAt: (obj, path) => getValueAtPath(obj, path, { allowDirectKey: false }),
+      setAt: (obj, path, value, options = {}) => setValueAtPath(obj, path, value, options),
+      deleteAt: (obj, path) => deleteValueAtPath(obj, path),
+      resolveExistingPath: (obj, path, options = {}) => resolveExistingVariablePath(obj, path, options),
+      shouldEmitMvuEvent,
+      emitStarted: emitMvuUpdateStarted,
+      emitEnded: emitMvuUpdateEnded,
+      logger,
+    });
+    const applyUpdateVariableFromMessage = createUpdateVariableMessageApplier({
+      getEffectivePersona,
+      listVariableSchemas: id => chatStore.listVariableSchemas?.(id),
+      extractBlocks: extractUpdateVariableBlocks,
+      parseCommands: block => updateParser.parseCommands(block),
+      applyCommands: applyUpdateVariableCommands,
+      resolveUseGlobalVariables: targetSessionId => isSharedVariableSession(targetSessionId),
+      transformStored: cleanedSource => applyOutputStoredRegexSafe(cleanedSource, {
+        appBridge: window.appBridge,
+        depth: 0,
+      }),
+      transformDisplay: nextStored => applyOutputDisplayRegexSafe(nextStored, {
+        appBridge: window.appBridge,
+        depth: 0,
+      }),
+      resolveForceRenderRich: targetSessionId => isRpSessionId(targetSessionId),
+      updateMessage: (messageId, updatePayload, sessionId) => chatStore.updateMessage(messageId, updatePayload, sessionId),
+      isSessionActive,
+      updateUiMessage: (messageId, updated) => ui.updateMessage(messageId, updated),
+      logger,
+    });
+    registerUpdateVariableApplyFn(applyUpdateVariableFromMessage);
     const emitPluginAfterReceive = (message, targetSessionId, { skipScripts: skipThisScripts } = {}) => {
-      if (!message || message.role !== 'assistant') return;
-      const shouldSkipScripts = typeof skipThisScripts === 'boolean' ? skipThisScripts : skipScripts;
-      if (scriptRuntime && !shouldSkipScripts) {
-        const payload = { message, sessionId: targetSessionId };
-        scriptRuntime.dispatchEvent('message.after_receive', payload).catch(err => {
-          logger.warn('script message.after_receive failed', err);
-        });
-      }
-      if (pluginRuntime) {
-        const payload = { message, sessionId: targetSessionId };
-        pluginRuntime.dispatchEvent('message.after_receive', payload).catch(err => {
-          logger.warn('plugin message.after_receive failed', err);
-        });
-      }
-      const useGlobal = isSharedVariableSession(targetSessionId);
-      try {
-        const localFn = typeof applyUpdateVariableFromMessage === 'function' ? applyUpdateVariableFromMessage : null;
-        const globalFn =
-          typeof window !== 'undefined' && typeof window.__chatappApplyUpdateVariableFromMessage === 'function'
-            ? window.__chatappApplyUpdateVariableFromMessage
-            : null;
-        const fn = localFn || globalFn;
-        if (typeof fn === 'function') fn(message, targetSessionId);
-        else logger.warn('[update-variable] apply function unavailable');
-      } catch (err) {
-        logger.warn('UpdateVariable parse failed', err);
-      }
-      variableRuleEngine?.handleAfterReceive?.({ sessionId: targetSessionId, message, useGlobalVariables: useGlobal }).catch(err => {
-        logger.warn('variable rules after_receive failed', err);
+      dispatchAfterReceiveEffects({
+        message,
+        sessionId: targetSessionId,
+        skipScripts: skipThisScripts,
+        defaultSkipScripts: skipScripts,
+        scriptRuntime,
+        pluginRuntime,
+        logger,
+        applyUpdateVariable: resolveUpdateVariableApplyFn(applyUpdateVariableFromMessage),
+        handleVariableRules: payload => variableRuleEngine?.handleAfterReceive?.(payload),
+        useGlobalVariables: isSharedVariableSession(targetSessionId),
       });
     };
-    const sanitizeThinkingForProtocolParse = text => {
-      const raw = String(text ?? '');
-      // More tolerant fallback: if model echoed "<content>" inside (possibly unclosed) thinking,
-      // we drop everything before the last </thinking> or </think> then parse the remaining tail once.
-      const lower = raw.toLowerCase();
-      const closeThinking = '</thinking>';
-      const closeThink = '</think>';
-      const i1 = lower.lastIndexOf(closeThinking);
-      const i2 = lower.lastIndexOf(closeThink);
-      const idx = Math.max(i1, i2);
-      if (idx === -1) return raw;
-      const cut = idx + (idx === i1 ? closeThinking.length : closeThink.length);
-      return raw.slice(cut);
-    };
-    const normalizeMiPhoneMarkers = text => {
-      const raw = String(text ?? '');
-      if (!raw) return raw;
-      return raw
-        .replace(/&lt;\s*\/?\s*MiPhone_(start|end)\s*\/?\s*&gt;/gi, (_, token) => `MiPhone_${token}`)
-        .replace(/<\s*\/?\s*MiPhone_(start|end)\s*\/?\s*>/gi, (_, token) => `MiPhone_${token}`);
-    };
-    const extractMiPhoneBlock = text => {
-      const raw = String(text ?? '');
-      const startRe = /<\s*MiPhone_start\s*>|MiPhone_start/i;
-      const endRe = /<\s*MiPhone_end\s*>|MiPhone_end/i;
-      const start = startRe.exec(raw);
-      if (!start) return '';
-      const afterStart = raw.slice(start.index + start[0].length);
-      const end = endRe.exec(afterStart);
-      if (!end) return raw.slice(start.index);
-      const endIdx = start.index + start[0].length + end.index + end[0].length;
-      return raw.slice(start.index, endIdx);
-    };
-
-    const buildHistoryForLLM = pendingUserText => {
-      const all = chatStore.getMessages(sessionId) || [];
-      const convPos = new Map();
-      all.forEach((m, idx) => {
-        if (m && (m.role === 'user' || m.role === 'assistant')) convPos.set(idx, convPos.size);
-      });
-      const total = convPos.size;
-      const getDepthForIndex = idx => (convPos.has(idx) ? total - 1 - convPos.get(idx) : undefined);
-      const isPromptImageUrl = value => {
-        const raw = String(value || '').trim();
-        if (!raw) return false;
-        if (raw.startsWith('data:image/')) return true;
-        if (/^https?:\/\//i.test(raw)) return true;
-        return false;
-      };
-      const resolveImageAttachment = msg => {
-        if (!msg || typeof msg !== 'object') return '';
-        if (isAttachmentExpired(msg.meta)) return '';
-        if (msg.type === 'image' && typeof msg.content === 'string') {
-          const raw = String(msg.content || '').trim();
-          if (!raw || raw === '[binary omitted]' || raw === '[图片]') return '';
-          return isPromptImageUrl(raw) ? raw : '';
+    const processProtocolRetryEvent = async (ev, {
+      renderMoments = false,
+      refreshAfterAppend = false,
+    } = {}) => {
+      const finalizeResult = (result) => {
+        if (!result?.consumed) return result;
+        if (result.mutatedMoments && renderMoments && activePage === 'moments') {
+          momentsPanel.render();
         }
-        const raw = typeof msg.content === 'string' ? msg.content.trim() : '';
-        if (isPromptImageUrl(raw)) return raw;
-        return '';
+        if (result.didAnything && refreshAfterAppend) {
+          refreshChatAndContacts();
+        }
+        return result;
       };
-      const resolveCreativeHistorySummary = msg => {
-        const direct = String(msg?.meta?.summary || '').trim();
-        if (direct) return direct;
-        try {
-          const compacted = chatStore.getCompactedSummary?.(sessionId);
-          const compactedText = String(compacted?.text || '').trim();
-          if (compactedText) return compactedText;
-        } catch {}
-        try {
-          const list = chatStore.getSummaries?.(sessionId) || [];
-          const last = list[list.length - 1];
-          return String(typeof last === 'string' ? last : last?.text || '').trim();
-        } catch {}
-        return '';
-      };
-      let history = all
-        .filter(m => m && m.status !== 'pending' && m.status !== 'sending')
-        .filter(m => !excludeMessageIds.has(String(m?.id || '')))
-        .filter(m => {
-          if (!isRpMode) return true;
-          return m?.meta?.hiddenFromRpPrompt !== true;
-        })
-        .filter(m => {
-          if (!m || typeof m.content !== 'string') return false;
-          if (m.role === 'user' || m.role === 'assistant') return true;
-          return isGroupChat && m.role === 'system';
-        })
-        .map((m, idx) => {
-          const depth = getDepthForIndex(idx);
-          const isCreativeReply =
-            m?.role === 'assistant' &&
-            (Boolean(m?.meta?.renderRich) || isRpMode);
-          if (isGroupChat && m.role === 'system') {
-            const raw = String(m.content || '').trim();
-            if (!raw) return null;
-            const cleaned = raw.replace(/^系统消息[:：]?\s*/i, '').trim();
-            const systemLine = `系统消息（我们能解析的这种）：${cleaned || raw}`;
-            return {
-              role: 'assistant',
-              content: systemLine,
-              name: '系统',
-              __creative: false,
-            };
-          }
-          let content = typeof m.raw === 'string' ? m.raw : m.content;
-          const reasoning = m.role === 'assistant' && typeof m?.meta?.reasoning === 'string' ? m.meta.reasoning : '';
-          const imageUrl = resolveImageAttachment(m);
-          if (imageUrl) {
-            const out = {
-              role: m.role,
-              content: '[图片]',
-              name: typeof m.name === 'string' ? m.name : '',
-              __creative: isCreativeReply,
-              __reasoning: reasoning,
-            };
-            if (m.role === 'user') {
-              out.__mediaKind = 'image';
-              out.__mediaUrl = imageUrl;
-            }
-            return out;
-          }
-          if (m.type === 'image') {
-            return {
-              role: m.role,
-              content: '[图片]',
-              name: typeof m.name === 'string' ? m.name : '',
-              __creative: isCreativeReply,
-              __reasoning: reasoning,
-            };
-          }
-          if (m.type === 'audio' || (typeof content === 'string' && content.startsWith('data:audio'))) {
-            return {
-              role: m.role,
-              content: '[语音]',
-              name: typeof m.name === 'string' ? m.name : '',
-              __creative: isCreativeReply,
-              __reasoning: reasoning,
-            };
-          }
-          if (m.type === 'document') {
-            return {
-              role: m.role,
-              content: `[文件] ${m.content || ''}`.trim(),
-              name: typeof m.name === 'string' ? m.name : '',
-              __creative: isCreativeReply,
-              __reasoning: reasoning,
-            };
-          }
-          if (rpUiMode && (m.role === 'assistant' || m.role === 'user')) {
-            const plain = resolveMessagePlainText(m, {
-              depth,
-              preferRawSource: isCreativeReply,
-            });
-            if (plain) {
-              content = plain;
-            }
-          } else if (m.role === 'assistant' && m?.meta?.renderRich) {
-            const summary = resolveCreativeHistorySummary(m);
-            if (!summary) return null;
-            content = summary;
-          } else {
-            const key = resolveStickerKeywordForMessage(m);
-            if (key) content = buildStickerToken(key);
-          }
-          if (!String(content || '').trim()) return null;
-          return {
-            role: m.role,
-            content,
-            name: typeof m.name === 'string' ? m.name : '',
-            __creative: isCreativeReply,
-            __reasoning: reasoning,
-          };
-        })
-        .filter(Boolean);
-      const last = history[history.length - 1];
-      if (
-        pendingUserText &&
-        last?.role === 'user' &&
-        String(last.content || '').trim() === String(pendingUserText).trim()
-      ) {
-        history.pop();
-      }
-      const rawChatLimit = Number(appSettings.get().chatHistoryMax);
-      const chatHistoryLimit = Number.isFinite(rawChatLimit) ? Math.max(0, Math.trunc(rawChatLimit)) : 0;
-      if (chatHistoryLimit > 0 && history.length > chatHistoryLimit) {
-        history.splice(0, history.length - chatHistoryLimit);
-      }
+
       try {
-        const openaiPreset = window?.appBridge?.presets?.getResolvedActive?.('openai', getPresetContext())?.preset || {};
-        const maxContext = Number(openaiPreset?.openai_max_context);
-        const maxOut = Number(openaiPreset?.openai_max_tokens);
-        const ctxTokens = Number.isFinite(maxContext) ? Math.max(0, Math.trunc(maxContext)) : 0;
-        const outTokens = Number.isFinite(maxOut) ? Math.max(0, Math.trunc(maxOut)) : 0;
-        const inputBudgetTokens = Math.max(2000, ctxTokens ? ctxTokens - outTokens - 512 : 8000);
-        const maxChars = Math.min(140_000, Math.max(30_000, inputBudgetTokens * 4));
-
-        const capPerMessage = 40_000;
-        for (const m of history) {
-          if (m && typeof m.content === 'string' && m.content.length > capPerMessage) {
-            m.content = `${m.content.slice(0, capPerMessage)}…`;
-          }
-        }
-
-        let total = 0;
-        for (const m of history) total += typeof m?.content === 'string' ? m.content.length : 0;
-        while (history.length > 1 && total > maxChars) {
-          const dropped = history.shift();
-          total -= typeof dropped?.content === 'string' ? dropped.content.length : 0;
-        }
+        return finalizeResult(applyProtocolMomentEvent(ev, {
+          addMoments: items => momentsStore.addMany(ingestMoments(items)),
+          addMomentComments: (momentId, comments) => momentsStore.addComments(momentId, comments),
+          normalizeComments: comments => normalizeMomentCommentsForStore(comments, { regexMode: 'output', depth: 0 }),
+        }));
       } catch {}
-      if (rpUiMode) {
-        const rawLimit = Number(appSettings.get().creativeHistoryMax);
-        const creativeLimit = Number.isFinite(rawLimit) ? Math.max(0, Math.trunc(rawLimit)) : 0;
-        const creativeAssistantIdx = [];
-        history.forEach((m, idx) => {
-          if (m?.__creative && m?.role === 'assistant') creativeAssistantIdx.push(idx);
-        });
-        if (creativeLimit > 0 && creativeAssistantIdx.length > creativeLimit) {
-          const firstAssistantToKeep = creativeAssistantIdx[creativeAssistantIdx.length - creativeLimit];
-          let keepStart = firstAssistantToKeep;
-          for (let i = firstAssistantToKeep - 1; i >= 0; i -= 1) {
-            if (history[i]?.role === 'user') {
-              keepStart = i;
-              break;
-            }
-          }
-          history = history.slice(keepStart);
-        }
-      }
-      try {
-        const settings = appSettings.get();
-        const preset = getReasoningPreset();
-        const addToPrompts = settings.reasoningAddToPrompts === true;
-        const prefixRaw = String(preset?.prefix ?? '');
-        const suffixRaw = String(preset?.suffix ?? '');
-        const sepRaw = String(preset?.separator ?? '');
-          if (addToPrompts && (prefixRaw || suffixRaw || sepRaw)) {
-          const maxAdditions = Number.isFinite(Number(settings.reasoningMaxAdditions))
-            ? Math.max(0, Math.trunc(Number(settings.reasoningMaxAdditions)))
-            : 1;
-          if (maxAdditions > 0) {
-            const applyMacros = val => {
-              try {
-                return window.appBridge.processTextMacros(String(val ?? ''), { sessionId, useGlobalVariables: sharedVariables });
-              } catch {
-                return String(val ?? '');
-              }
-            };
-            const prefix = applyMacros(prefixRaw);
-            const suffix = applyMacros(suffixRaw);
-            const separator = applyMacros(sepRaw);
-            let added = 0;
-            for (let i = history.length - 1; i >= 0; i--) {
-              if (added >= maxAdditions) break;
-              const msg = history[i];
-              if (!msg || msg.role !== 'assistant') continue;
-              const reasoning = String(msg.__reasoning || '').trim();
-              if (!reasoning) continue;
-              const block = `${prefix}${reasoning}${suffix}${separator}`;
-              msg.content = `${block}${msg.content || ''}`;
-              added += 1;
-            }
-          }
-        }
-      } catch {}
-      history = history.map(m => {
-        if (!m || typeof m !== 'object') return m;
-        if (!('__creative' in m) && !('__reasoning' in m)) return m;
-        const { __creative, __reasoning, ...rest } = m;
-        return rest;
+
+      const groupResult = await appendProtocolGroupChatEventImmediate(ev, {
+        resolveTargetSessionId: resolveGroupChatTargetSessionId,
+        normalizeChatMessage: item => normalizeProtocolChatMessage(item, { normalizeSpeaker: normalizeName }),
+        isSystemSpeaker,
+        buildSystemMessage: ({ content, time, fallbackTime }) => buildProtocolSystemMetaMessage({
+          content,
+          time,
+          fallbackTime,
+          sanitizeContent: value => sanitizeAssistantReplyText(value, userName),
+        }),
+        isUserSpeakerName,
+        shouldDropUserEcho: (content, speaker) => userEchoGuard.shouldDrop(content, speaker),
+        resolveGroupSpeakerContact,
+        resolveGroupSpeakerAvatar,
+        buildAssistantMessageFromText,
+        buildUserMessageFromAI,
+        isSessionActive,
+        onAddUiMessage: parsed => ui.addMessage(parsed),
+        appendMessage: (parsed, targetSessionId) => chatStore.appendMessage(parsed, targetSessionId),
+        autoMarkReadIfActive,
+        emitPluginAfterReceive,
+        maybeApplyGroupSystemOps,
+        formatNowTime,
       });
-      return history;
+      if (groupResult.consumed) {
+        return finalizeResult(groupResult);
+      }
+
+      const privateResult = await appendProtocolPrivateChatEventImmediate(ev, {
+        resolveTargetSessionId: otherName => resolvePrivateChatTargetSessionId(otherName || characterName),
+        normalizeDialogueMessage,
+        shouldDropUserEcho: (content, speaker) => userEchoGuard.shouldDrop(content, speaker),
+        isUserSpeakerName,
+        buildUserMessageFromAI,
+        buildAssistantMessageFromText,
+        isSessionActive,
+        onAddUiMessage: parsed => ui.addMessage(parsed),
+        appendMessage: (parsed, targetSessionId) => chatStore.appendMessage(parsed, targetSessionId),
+        autoMarkReadIfActive,
+        emitPluginAfterReceive,
+        formatNowTime,
+      });
+      return finalizeResult(privateResult);
     };
+    const buildProtocolGroupBatch = (ev) => buildProtocolGroupChatBatch(ev, {
+      resolveTargetSessionId: resolveGroupChatTargetSessionId,
+      normalizeChatMessage: item => normalizeProtocolChatMessage(item, { normalizeSpeaker: normalizeName }),
+      isSystemSpeaker,
+      isUserSpeakerName,
+      shouldDropUserEcho: (content, speaker) => userEchoGuard.shouldDrop(content, speaker),
+      resolveGroupSpeakerContact,
+      resolveGroupSpeakerAvatar,
+      buildSystemMessage: ({ content, time, fallbackTime }) => buildProtocolSystemMetaMessage({
+        content,
+        time,
+        fallbackTime,
+        sanitizeContent: value => sanitizeAssistantReplyText(value, userName),
+      }),
+      buildAssistantMessageFromText,
+      buildUserMessageFromAI,
+      formatNowTime,
+    });
+    const buildProtocolPrivateBatch = (ev) => buildProtocolPrivateChatBatch(ev, {
+      resolveTargetSessionId: otherName => resolvePrivateChatTargetSessionId(otherName || characterName),
+      normalizeDialogueMessage,
+      shouldDropUserEcho: (content, speaker) => userEchoGuard.shouldDrop(content, speaker),
+      isUserSpeakerName,
+      buildUserMessageFromAI,
+      buildAssistantMessageFromText,
+      formatNowTime,
+    });
+    const dispatchProtocolGroupBatchToSession = (batch, {
+      animEnabled = false,
+      bumpReadCount = false,
+      onQueueCreated = null,
+      queueTypingOptions = {},
+    } = {}) => dispatchProtocolGroupChatBatch(batch, {
+      appendMessage: (parsed, targetSessionId) => chatStore.appendMessage(parsed, targetSessionId),
+      autoMarkReadIfActive,
+      bumpReadCount: bumpReadCount ? count => ui.bumpReadCount(count) : null,
+      emitPluginAfterReceive,
+      enqueueMessages: (...args) => ui.enqueueMessages(...args),
+      isActive: isSessionActive(batch?.targetSessionId || ''),
+      animEnabled,
+      maybeApplyGroupSystemOps,
+      onAddUiMessage: (parsed, options) => ui.addMessage(parsed, options),
+      onQueueCreated,
+      queueAvatarUrl: assistantAvatar,
+      queueTypingOptions,
+    });
+    const dispatchProtocolPrivateBatchToSession = (batch, {
+      animEnabled = false,
+      onQueueCreated = null,
+      queueTypingOptions = {},
+    } = {}) => dispatchProtocolPrivateChatBatch(batch, {
+      appendMessage: (parsed, targetSessionId) => chatStore.appendMessage(parsed, targetSessionId),
+      autoMarkReadIfActive,
+      emitPluginAfterReceive,
+      enqueueMessages: (...args) => ui.enqueueMessages(...args),
+      isActive: isSessionActive(batch?.targetSessionId || ''),
+      animEnabled,
+      onAddUiMessage: (parsed, options) => ui.addMessage(parsed, options),
+      onQueueCreated,
+      queueAvatarUrl: assistantAvatar,
+      queueTypingOptions,
+    });
+    const buildHistoryForLLM = createLlmHistoryBuilder({
+      sessionId,
+      getMessages: sid => chatStore.getMessages(sid),
+      getSettings: () => appSettings.get(),
+      getOpenAIPreset: getOpenAIPreset,
+      getReasoningPreset,
+      excludeMessageIds,
+      isRpMode,
+      isGroupChat,
+      rpUiMode,
+      getCompactedSummary: sid => chatStore.getCompactedSummary?.(sid),
+      getSummaries: sid => chatStore.getSummaries?.(sid),
+      isAttachmentExpired,
+      resolvePlainText: (message, options) => resolveMessagePlainText(message, options),
+      resolveStickerKeyword: resolveStickerKeywordForMessage,
+      buildStickerToken,
+      applyMacros: (value) => {
+        try {
+          return window.appBridge.processTextMacros(String(value ?? ''), { sessionId, useGlobalVariables: sharedVariables });
+        } catch {
+          return String(value ?? '');
+        }
+      },
+    });
     let disableSummaryForThis = false;
     const attachmentParts = hasAttachments ? buildAttachmentParts(attachmentQueue) : [];
-    const llmContext = pendingUserText => {
-      const settings = appSettings.get();
-      const openaiPreset = getOpenAIPreset();
-      const normalizeRuntimeMemoryPosition = (positionRaw, depthRaw, fallback = '') => {
-        const token = String(positionRaw || '').trim().toLowerCase();
-        const depthNum = Math.trunc(Number(depthRaw));
-        const depth = Number.isFinite(depthNum) ? Math.max(0, depthNum) : 0;
-        if (!token || token === 'template') return String(fallback || '').trim().toLowerCase();
-        if (token === 'history_depth' && depth === 0) return 'history_after';
-        return token;
-      };
-      const presetMemoryInjectDepthRaw = Math.trunc(Number(openaiPreset?.memory_data_depth));
-      const presetMemoryInjectDepth = Number.isFinite(presetMemoryInjectDepthRaw) ? Math.max(0, presetMemoryInjectDepthRaw) : 0;
-      const presetMemoryInjectPosition = normalizeRuntimeMemoryPosition(
-        openaiPreset?.memory_data_position,
-        presetMemoryInjectDepth,
-        '',
-      );
-      const settingsMemoryInjectDepthRaw = Math.trunc(Number(settings.memoryInjectDepth));
-      const settingsMemoryInjectDepth = Number.isFinite(settingsMemoryInjectDepthRaw) ? Math.max(0, settingsMemoryInjectDepthRaw) : 0;
-      const settingsMemoryInjectPosition = normalizeRuntimeMemoryPosition(
-        settings.memoryInjectPosition || 'history_after',
-        settingsMemoryInjectDepth,
-        'history_after',
-      );
-      const memoryInjectPosition = presetMemoryInjectPosition || settingsMemoryInjectPosition;
-      const memoryInjectDepth = presetMemoryInjectPosition && Number.isFinite(presetMemoryInjectDepthRaw)
-        ? Math.max(0, presetMemoryInjectDepthRaw)
-        : settingsMemoryInjectDepth;
-      const presetMemoryGuideDepthRaw = Math.trunc(Number(openaiPreset?.memory_guide_depth));
-      const presetMemoryGuidePosition = normalizeRuntimeMemoryPosition(
-        openaiPreset?.memory_guide_position,
-        presetMemoryGuideDepthRaw,
-        '',
-      );
-      const memoryGuideDepth = Number.isFinite(presetMemoryGuideDepthRaw) ? Math.max(0, presetMemoryGuideDepthRaw) : 0;
-      const metaOverrides = {};
-      if (skipTemplate) metaOverrides.templateEnabled = false;
-      if (skipScripts) metaOverrides.skipScripts = true;
-      return {
-        user: {
-          name: promptUserName,
-          persona: String(activeUser?.description || ''),
-          personaPosition: activeUser?.position,
-          personaDepth: activeUser?.depth,
-          personaRole: activeUser?.role,
-        },
-        character: {
-          name: characterName,
-          description: String(activePersona?.description || ''),
-        },
-        session: {
-          id: sessionId,
-          isGroup: isGroupChat,
-          name: characterName,
-          settings: chatStore.getSessionSettings?.(sessionId) || {},
-        },
-        meta: {
-          // Keep summary prompt on; RP/创意写作界面 restricts chat guide to summary-only.
-          disableSummary: Boolean(disableSummaryForThis),
-          skipInputRegex: Boolean(skipInputRegex),
-          appendUserToHistory: continueTarget ? false : undefined,
-          suppressPendingUserTurn: Boolean(continueTarget),
-          chatGuideMode: rpUiMode ? 'summary-only' : 'full',
-          disableChatGuide: false,
-          disableScenarioHint: Boolean(rpUiMode),
-          disableMomentSummary: Boolean(rpUiMode),
-          disablePhoneFormat: Boolean(rpUiMode),
-          uiMode: getEffectivePresetUiMode(),
-          useGlobalVariables: Boolean(sharedVariables),
-          sharedMemory: false,
-          defaultRpBridgeSessionId: !isRpMode
-            ? getRpSessionId(getEffectivePersona(sessionId)?.id || activePersonaId)
-            : '',
-          defaultChatBridgeSessionId: isRpMode ? String(lastChatState?.sessionId || '').trim() : '',
-          memoryStorageMode: getMemoryStorageMode(),
-          memoryAutoExtract: isMemoryAutoExtractInline(),
-          memoryInjectPosition,
-          memoryInjectDepth,
-          memoryGuidePosition: presetMemoryGuidePosition,
-          memoryGuideDepth,
-          userAttachmentParts: attachmentParts,
-          replyPromptHint: buildReplyPromptHint(outgoingReplyContexts),
-          extraPromptBlocks: [
-            ...(stageManager?.getPromptBlocks?.(sessionId) || []),
-            ...peekPromptInjections(sessionId),
-          ],
-          ...(continueTarget
-            ? {
-                assistantContinuation: {
-                  enabled: true,
-                  messageId: continueTarget.messageId,
-                  prefix: String(continueTarget.prefix || ''),
-                },
-              }
-            : {}),
-          ...metaOverrides,
-        },
-        group: isGroupChat
-          ? {
-              id: sessionId,
-              name: characterName,
-              members: groupMembers.slice(),
-              memberNames: groupMembers.map(mid => contactsStore.getContact(mid)?.name || mid),
-            }
-          : null,
-        history: buildHistoryForLLM(pendingUserText),
-      };
-    };
+    const llmContext = createLlmContextBuilder({
+      promptUserName,
+      activeUser,
+      characterName,
+      activePersona,
+      sessionId,
+      isGroupChat,
+      getSessionSettings: sid => chatStore.getSessionSettings?.(sid),
+      getDisableSummary: () => disableSummaryForThis,
+      skipInputRegex,
+      continueTarget,
+      rpUiMode,
+      getUiMode: getEffectivePresetUiMode,
+      sharedVariables,
+      isRpMode,
+      getRpBridgeSessionId: () => getRpSessionId(getEffectivePersona(sessionId)?.id || activePersonaId),
+      getLastChatBridgeSessionId: () => lastChatState?.sessionId,
+      getMemoryStorageMode,
+      isMemoryAutoExtractInline,
+      attachmentParts,
+      getOpenAIPreset: getOpenAIPreset,
+      getSettings: () => appSettings.get(),
+      getReplyPromptHint: () => buildReplyPromptHint(outgoingReplyContexts),
+      getStagePromptBlocks: () => stageManager?.getPromptBlocks?.(sessionId) || [],
+      getInjectedPromptBlocks: () => peekPromptInjections(sessionId),
+      skipTemplate,
+      skipScripts,
+      groupMembers,
+      getContactName: id => contactsStore.getContact(id)?.name || '',
+      buildHistory: buildHistoryForLLM,
+    });
     try {
       window.appBridge.setContextBuilder?.(llmContext);
     } catch {}
@@ -19750,8 +17077,8 @@ Phase G（Frame 36）：循环衔接
       return false;
     }
 
-    await maybePromptTemplateEnable({ sampleText: text });
-    await maybePromptScriptAuthorization();
+    await maybePromptTemplateGate({ sampleText: text });
+    await maybePromptScriptAuthorizationGate();
     if (isTurnCheckpointSessionEnabled(sessionId) && !findTailTrackedAssistantMessage(sessionId)) {
       try {
         await ensureSessionBaselineCheckpointSnapshot(sessionId);
@@ -19803,147 +17130,46 @@ Phase G（Frame 36）：循环衔接
       }
       return ui.startAssistantStream(meta);
     };
-    const isStreamCtrlConnected = ctrl => {
-      if (!ctrl) return false;
-      if (typeof ctrl.isConnected !== 'function') return true;
-      try {
-        return ctrl.isConnected() !== false;
-      } catch {
-        return false;
-      }
-    };
-    const updateActiveGenerationStreamCache = (text, meta = {}, payload = null) => {
-      if (!activeGeneration || activeGeneration.id !== generationId || activeGeneration.sessionId !== sessionId) return;
-      activeGeneration.streamText = String(text ?? '');
-      activeGeneration.streamPayload =
-        payload && typeof payload === 'object'
-          ? { ...payload }
-          : null;
-      activeGeneration.streamMeta = {
-        ...((activeGeneration.streamMeta && typeof activeGeneration.streamMeta === 'object') ? activeGeneration.streamMeta : {}),
-        ...((meta && typeof meta === 'object') ? meta : {}),
-      };
-    };
-    const ensureAssistantStreamCtrl = (meta = {}) => {
-      if (isGenerationInterrupted(generationId)) return null;
-      if (isStreamCtrlConnected(streamCtrl)) return streamCtrl;
-      if (streamCtrl && !isStreamCtrlConnected(streamCtrl)) streamCtrl = null;
-      const sharedCtrl =
-        activeGeneration?.id === generationId && activeGeneration?.sessionId === sessionId
-          ? activeGeneration.streamCtrl
-          : null;
-      if (sharedCtrl && sharedCtrl !== streamCtrl && isStreamCtrlConnected(sharedCtrl)) {
-        streamCtrl = sharedCtrl;
-        return streamCtrl;
-      }
-      if (!isSessionActive(sessionId)) {
-        if (activeGeneration?.id === generationId && activeGeneration?.sessionId === sessionId) {
-          activeGeneration.streamCtrl = null;
-        }
-        return null;
-      }
-      try {
-        ui.hideTyping();
-      } catch {}
-      try {
-        fastForwardDelivery(sessionId);
-      } catch {}
-      const nextCtrl = createAssistantStreamCtrl(meta);
-      if (nextCtrl) {
+    const {
+      updateActiveGenerationStreamCache,
+      ensureAssistantStreamCtrl,
+      pushAssistantStreamText,
+      bindActiveGenerationReattach,
+    } = createAssistantStreamRuntime({
+      generationId,
+      sessionId,
+      getStreamCtrl: () => streamCtrl,
+      setStreamCtrl: (nextCtrl) => {
         streamCtrl = nextCtrl;
-        if (activeGeneration?.id === generationId && activeGeneration?.sessionId === sessionId) {
-          activeGeneration.streamCtrl = nextCtrl;
-          activeGeneration.streamMeta = {
-            ...((activeGeneration.streamMeta && typeof activeGeneration.streamMeta === 'object') ? activeGeneration.streamMeta : {}),
-            ...((meta && typeof meta === 'object') ? meta : {}),
-          };
-        }
-      }
-      return streamCtrl;
-    };
-    const pushAssistantStreamText = (value, meta = {}) => {
-      const payload =
-        value && typeof value === 'object' && !Array.isArray(value)
-          ? { ...value }
-          : null;
-      const renderedText = payload ? String(payload.content ?? '') : String(value ?? '');
-      updateActiveGenerationStreamCache(renderedText, meta, payload);
-      const ctrl = ensureAssistantStreamCtrl(meta);
-      if (ctrl) ctrl.update(payload || renderedText);
-      return ctrl;
-    };
-    const bindActiveGenerationReattach = () => {
-      if (!activeGeneration || activeGeneration.id !== generationId || activeGeneration.sessionId !== sessionId) return;
-      activeGeneration.reattachStream = () => {
-        if (isGenerationInterrupted(generationId)) return false;
-        const meta =
-          activeGeneration?.streamMeta && typeof activeGeneration.streamMeta === 'object'
-            ? activeGeneration.streamMeta
-            : {};
-        const payload =
-          activeGeneration?.streamPayload && typeof activeGeneration.streamPayload === 'object'
-            ? { ...activeGeneration.streamPayload }
-            : null;
-        const text = String(activeGeneration?.streamText ?? '');
-        const ctrl = ensureAssistantStreamCtrl(meta);
-        if (ctrl && (payload || text)) ctrl.update(payload || text);
-        return Boolean(ctrl);
-      };
-    };
+        return streamCtrl;
+      },
+      getActiveGeneration: () => activeGeneration,
+      isGenerationInterrupted,
+      isSessionActive,
+      createAssistantStreamCtrl,
+      hideTyping: () => {
+        try {
+          ui.hideTyping();
+        } catch {}
+      },
+      fastForwardDelivery: (targetSessionId) => {
+        try {
+          fastForwardDelivery(targetSessionId);
+        } catch {}
+      },
+    });
     const commitContinuationMessage = (message, { partial = false } = {}) => {
       const targetId = String(continueTarget?.messageId || '').trim();
       if (!targetId || !message) return null;
       const existing = chatStore.findMessage(targetId, sessionId) || continueTarget?.message || null;
       if (!existing) return null;
-      const raw = typeof message.raw === 'string' ? message.raw : String(message.content || '');
-      const nextMeta = {
-        ...((existing?.meta && typeof existing.meta === 'object') ? existing.meta : {}),
-        ...((message?.meta && typeof message.meta === 'object') ? message.meta : {}),
-      };
-      if (partial) {
-        nextMeta.partial = true;
-        nextMeta.cancelled = true;
-      } else {
-        delete nextMeta.partial;
-        delete nextMeta.cancelled;
-      }
-      if (Array.isArray(existing?.meta?.swipes) && existing.meta.swipes.length) {
-        const swipes = existing.meta.swipes.map(entry => ({ ...(entry || {}) }));
-        const rawIndex = Math.trunc(Number(existing?.meta?.activeSwipe));
-        const activeIndex = Number.isFinite(rawIndex)
-          ? Math.min(Math.max(0, rawIndex), swipes.length - 1)
-          : swipes.length - 1;
-        if (swipes[activeIndex]) {
-          swipes[activeIndex] = {
-            ...swipes[activeIndex],
-            content: String(message.content || ''),
-            raw,
-          };
-        }
-        nextMeta.swipes = swipes;
-        nextMeta.activeSwipe = activeIndex;
-      }
-      const updatePayload = {
-        ...existing,
-        ...message,
-        id: targetId,
-        role: 'assistant',
-        type: message?.type || existing?.type || 'text',
-        name: message?.name || existing?.name || '助手',
-        avatar: message?.avatar || existing?.avatar,
-        time: message?.time || existing?.time || formatNowTime(),
-        content: String(message?.content || ''),
-        raw,
-        rawOriginal:
-          typeof message?.rawOriginal === 'string'
-            ? message.rawOriginal
-            : (typeof existing?.rawOriginal === 'string' ? existing.rawOriginal : raw),
-        rawSource:
-          typeof message?.rawSource === 'string'
-            ? message.rawSource
-            : (typeof existing?.rawSource === 'string' ? existing.rawSource : undefined),
-        meta: nextMeta,
-      };
+      const updatePayload = buildContinuationMessageUpdate({
+        existing,
+        message,
+        targetId,
+        fallbackTime: formatNowTime(),
+        partial,
+      });
       const saved = chatStore.updateMessage(targetId, updatePayload, sessionId) || { ...existing, ...updatePayload };
       if (isSessionActive(sessionId)) ui.updateMessage(targetId, saved);
       return saved;
@@ -19992,33 +17218,25 @@ Phase G（Frame 36）：循环衔接
         ui.addMessage(userMsg);
         const savedUser = chatStore.appendMessage(userMsg, sessionId);
         userMsg = savedUser || userMsg;
-        if (scriptRuntime && !skipScripts) {
-          scriptRuntime.dispatchEvent('message.after_send', { message: savedUser || userMsg, sessionId }).catch(err => {
-            logger.warn('script message.after_send failed', err);
-          });
-        }
-        if (pluginRuntime) {
-          pluginRuntime.dispatchEvent('message.after_send', { message: savedUser || userMsg, sessionId }).catch(err => {
-            logger.warn('plugin message.after_send failed', err);
-          });
-        }
+        dispatchAfterSendEvents({
+          messages: [savedUser || userMsg],
+          sessionId,
+          scriptRuntime,
+          pluginRuntime,
+          skipScripts,
+          logger,
+        });
         appendedUserOutput = true;
       }
       outgoingReplyContexts = buildOutgoingReplyContexts(userMsg ? [userMsg] : attachmentMessages);
       const primaryId = userMsg?.id || existingUserMessageId || attachmentPrimaryId || null;
-      activeGeneration = {
+      activeGeneration = createActiveGenerationRecord({
         id: ++generationSequence,
         sessionId,
         userMsgId: primaryId,
-        streamCtrl: null,
-        streamText: '',
-        streamPayload: null,
-        streamMeta: null,
-        reattachStream: null,
         partialCommitHandler: resolvedPartialCommitHandler,
         swipeTarget,
-        cancelled: false,
-      };
+      });
       generationId = activeGeneration.id;
       bindActiveGenerationReattach();
       if (appendedUserOutput) refreshChatAndContacts();
@@ -20027,19 +17245,13 @@ Phase G（Frame 36）：循环衔接
     } else {
       outgoingReplyContexts = buildOutgoingReplyContexts([...pendingMessagesToConfirm, ...attachmentMessages]);
       // 有 pending 消息时，使用第一条 pending 消息的 ID
-      activeGeneration = {
+      activeGeneration = createActiveGenerationRecord({
         id: ++generationSequence,
         sessionId,
         userMsgId: pendingMessagesToConfirm[0]?.id,
-        streamCtrl: null,
-        streamText: '',
-        streamPayload: null,
-        streamMeta: null,
-        reattachStream: null,
         partialCommitHandler: resolvedPartialCommitHandler,
         swipeTarget,
-        cancelled: false,
-      };
+      });
       generationId = activeGeneration.id;
       bindActiveGenerationReattach();
       if (attachmentMessages.length) refreshChatAndContacts();
@@ -20051,21 +17263,18 @@ Phase G（Frame 36）：循环衔接
     ui.showDeliveryStatus();
 
     const config = window.appBridge.config.get();
+    const assistantAvatar = getAssistantAvatarForSession(sessionId);
+    const sysp = resolveEnabledPreset(window.appBridge, 'sysprompt', getPresetContext());
+    const protocolFlags = resolveSyspromptProtocolFlags({
+      sysp,
+      rpUiMode,
+      isGroupChat,
+      summaryEnabled: isSummaryMemoryEnabled(),
+    });
+    const { protocolEnabled } = protocolFlags;
+    disableSummaryForThis = protocolFlags.disableSummaryForThis;
     try {
       if (config.stream) {
-        const assistantAvatar = getAssistantAvatarForSession(sessionId);
-        const presetState = window.appBridge?.presets?.getState?.() || null;
-        const sysp = Boolean(presetState?.enabled?.sysprompt)
-          ? (window.appBridge?.presets?.getResolvedActive?.('sysprompt', getPresetContext())?.preset || {})
-          : {};
-        const privateEnabled = Boolean(sysp?.dialogue_enabled) && String(sysp?.dialogue_rules || '').trim().length > 0;
-        const groupEnabled = Boolean(sysp?.group_enabled) && String(sysp?.group_rules || '').trim().length > 0;
-        const momentCreateEnabled =
-          Boolean(sysp?.moment_create_enabled) && String(sysp?.moment_create_rules || '').trim().length > 0;
-        const protocolEnabled = !rpUiMode && (momentCreateEnabled || (isGroupChat ? groupEnabled : privateEnabled));
-        // Always include summary request prompt; summary (if present) will be extracted from raw response.
-        disableSummaryForThis = !isSummaryMemoryEnabled();
-
         if (rpUiMode) {
           // RP/创意写作界面：完整长文输出，不解析线上格式
           if (isSessionActive(sessionId)) startDeliveryAndTyping(sessionId, assistantAvatar);
@@ -20087,10 +17296,16 @@ Phase G（Frame 36）：循环衔接
             stripRaw: source => ((!isRpMode && isMemoryAutoExtractInline()) ? stripTableEditBlocks(source) : source),
             extractReasoning: (source, { final = false } = {}) =>
               extractStreamingReasoningFromContent(source, { depth: 0, final }),
-            applyStored: source =>
-              normalizeCreativeLineBreaks(window.appBridge.applyOutputStoredRegex(source, { depth: 0 })),
-            applyDisplay: source =>
-              normalizeCreativeLineBreaks(window.appBridge.applyOutputDisplayRegex(source, { depth: 0 })),
+            applyStored: source => applyOutputStoredRegexSafe(source, {
+              appBridge: window.appBridge,
+              depth: 0,
+              normalizeText: normalizeCreativeLineBreaks,
+            }),
+            applyDisplay: source => applyOutputDisplayRegexSafe(source, {
+              appBridge: window.appBridge,
+              depth: 0,
+              normalizeText: normalizeCreativeLineBreaks,
+            }),
           });
           const nativeReasoningState = createNativeReasoningState();
           for await (const chunk of stream) {
@@ -20173,12 +17388,11 @@ Phase G（Frame 36）：循环衔接
           const reasoningParsed = extractReasoningFromContent(rawSource, { depth: 0, strict: true });
           const resolvedReasoning = resolveReasoningState(reasoningParsed, nativeReasoningState, { finalize: true });
           const finalSource = normalizeCreativeLineBreaks(reasoningParsed.content || '');
-          let stored = finalSource;
-          let display = finalSource;
-          try {
-            stored = normalizeCreativeLineBreaks(window.appBridge.applyOutputStoredRegex(finalSource, { depth: 0 }));
-            display = normalizeCreativeLineBreaks(window.appBridge.applyOutputDisplayRegex(stored, { depth: 0 }));
-          } catch {}
+          const { stored, display } = applyOutputRegexPairSafe(finalSource, {
+            appBridge: window.appBridge,
+            depth: 0,
+            normalizeText: normalizeCreativeLineBreaks,
+          });
           const finalStreamMeta = {
             ...streamMeta,
             raw: stored,
@@ -20281,102 +17495,46 @@ Phase G（Frame 36）：循环衔接
             fullRaw += normalizedChunk.content;
             const events = parser.push(normalizedChunk.content);
             for (const ev of events) {
-              if (ev.type === 'moments') {
-                try {
-                  momentsStore.addMany(ingestMoments(ev.moments || []));
-                  mutatedMoments = true;
-                  didAnything = true;
-                  if (activePage === 'moments') momentsPanel.render();
-                } catch {}
-                continue;
-              }
-              if (ev.type === 'moment_reply') {
-                try {
-                  const mid = String(ev.momentId || '').trim();
-                  if (!mid) return;
-                  // moments-regex rollback marker:
-                  // momentsStore.addComments(mid, ev.comments || []);
-                  momentsStore.addComments(mid, normalizeMomentCommentsForStore(ev.comments || [], { regexMode: 'output', depth: 0 }));
-                  mutatedMoments = true;
-                  didAnything = true;
-                  if (activePage === 'moments') momentsPanel.render();
-                } catch {}
+              const handledMoment = applyProtocolMomentEvent(ev, {
+                addMoments: items => momentsStore.addMany(ingestMoments(items)),
+                addMomentComments: (momentId, comments) => momentsStore.addComments(momentId, comments),
+                abortOnMissingMomentId: true,
+                normalizeComments: comments => normalizeMomentCommentsForStore(comments, { regexMode: 'output', depth: 0 }),
+              });
+              if (handledMoment?.abortFlow) return;
+              ({
+                didAnything,
+                mutatedMoments,
+              } = consumeProtocolHandledResult({
+                didAnything,
+                mutatedMoments,
+                summarySessionIds,
+              }, handledMoment));
+              if (handledMoment?.consumed) {
+                if (handledMoment.mutatedMoments && activePage === 'moments') {
+                  momentsPanel.render();
+                }
                 continue;
               }
               if (ev.type === 'group_chat') {
                 if (isSessionActive(sessionId)) { ui.hideTyping(); fastForwardDelivery(sessionId); }
-                const targetGroupId = resolveGroupChatTargetSessionId(ev.groupName);
-                if (!targetGroupId) {
+                const groupBatch = await buildProtocolGroupBatch(ev);
+                if (!groupBatch.targetSessionId) {
                   window.toastr?.warning?.('对话回复格式错误：群聊标签未匹配任何已存在群组，已丢弃');
                   continue;
                 }
-                summarySessionIds.add(targetGroupId);
-                // 先收集所有群聊消息
-                const groupBatch = [];
-                for (const m of (ev.messages || [])) {
-                  const speaker = normalizeName(m?.speaker);
-                  const content = String(m?.content || '').replace(/<br\s*\/?>/gi, '\n');
-                  if (isSystemSpeaker(speaker)) {
-                    groupBatch.push({
-                      parsed: {
-                        role: 'system', type: 'meta',
-                        content: sanitizeAssistantReplyText(content, userName),
-                        name: '系统', time: m?.time || formatNowTime(),
-                      },
-                      isSystem: true, isMe: false,
-                    });
-                    continue;
-                  }
-                  const isMe = isUserSpeakerName(speaker);
-                  if (isMe && userEchoGuard.shouldDrop(content, speaker)) continue;
-                  const role = isMe ? 'user' : 'assistant';
-                  const c = isMe ? null : resolveGroupSpeakerContact(speaker, targetGroupId);
-                  const parsed =
-                    role === 'assistant'
-                      ? await buildAssistantMessageFromText(content, {
-                          sessionId: targetGroupId,
-                          time: m?.time || formatNowTime(),
-                          name: speaker || '成员',
-                          avatar: resolveGroupSpeakerAvatar(speaker, targetGroupId, c),
-                          speakerContactId: c?.id || '',
-                          showName: true,
-                          depth: 0,
-                        })
-                      : buildUserMessageFromAI(content, m?.time || formatNowTime());
-                  groupBatch.push({ parsed, isMe, isSystem: false, role });
-                }
-
+                summarySessionIds.add(groupBatch.targetSessionId);
                 const grpAnimEnabled = document.body.dataset.typingDots !== 'off';
-                const grpIsActive = isSessionActive(targetGroupId);
-
-                if (grpIsActive && grpAnimEnabled && groupBatch.length > 1) {
-                  const queueItems = groupBatch.map(({ parsed, isMe, isSystem, role }) => ({
-                    message: parsed,
-                    callback: () => {
-                      const saved = chatStore.appendMessage(parsed, targetGroupId);
-                      if (isSystem) { emitPluginAfterReceive(saved, targetGroupId); maybeApplyGroupSystemOps(parsed.content, targetGroupId); }
-                      else { if (role === 'assistant') autoMarkReadIfActive(targetGroupId, saved?.id || parsed?.id || ''); emitPluginAfterReceive(saved, targetGroupId); }
-                    },
-                  }));
-                  const q = ui.enqueueMessages(queueItems, {
-                    avatarUrl: assistantAvatar,
-                    typingOptions: getGroupTypingMembers(sessionId) || {},
-                  });
-                  if (activeGeneration && activeGeneration.id === generationId)
-                    activeGeneration._messageQueue = q;
-                  await q.promise;
-                } else {
-                  for (const { parsed, isMe, isSystem, role } of groupBatch) {
-                    if (grpIsActive) ui.addMessage(parsed, { autoScroll: grpAnimEnabled });
-                    const saved = chatStore.appendMessage(parsed, targetGroupId);
-                    if (isSystem) { emitPluginAfterReceive(saved, targetGroupId); maybeApplyGroupSystemOps(parsed.content, targetGroupId); }
-                    else { if (role === 'assistant') autoMarkReadIfActive(targetGroupId, saved?.id || parsed?.id || ''); emitPluginAfterReceive(saved, targetGroupId); }
-                  }
-                }
-                if (grpIsActive) {
-                  const uniqueSpeakers = new Set(groupBatch.filter(b => b.role === 'assistant').map(b => b.parsed.name)).size;
-                  if (uniqueSpeakers > 0) ui.bumpReadCount(uniqueSpeakers);
-                }
+                await dispatchProtocolGroupBatchToSession(groupBatch, {
+                  animEnabled: grpAnimEnabled,
+                  bumpReadCount: true,
+                  onQueueCreated: q => {
+                    if (activeGeneration && activeGeneration.id === generationId) {
+                      activeGeneration._messageQueue = q;
+                    }
+                  },
+                  queueTypingOptions: getGroupTypingMembers(sessionId) || {},
+                });
                 didAnything = true;
                 refreshChatAndContacts();
                 if (isSessionActive(sessionId)) ui.showTyping(assistantAvatar, getGroupTypingMembers(sessionId) || {});
@@ -20386,59 +17544,22 @@ Phase G（Frame 36）：循环衔接
               if (isSessionActive(sessionId)) { ui.hideTyping(); fastForwardDelivery(sessionId); }
 
               // 默认路由到当前 session；若标签指向其他私聊，则创建/写入对应会话（后续群聊/动态会扩展）
-              const targetSessionId = resolvePrivateChatTargetSessionId(ev.otherName || characterName);
-              if (!targetSessionId) {
+              const privateBatch = await buildProtocolPrivateBatch(ev);
+              if (!privateBatch.targetSessionId) {
                 window.toastr?.warning?.('对话回复格式错误：私聊标签未匹配当前联系人，已丢弃');
                 continue;
               }
-              summarySessionIds.add(targetSessionId);
-
-              // 先收集所有消息
-              const parsedBatch = [];
-              for (const msgText of (ev.messages || [])) {
-                const { speaker, content, time } = normalizeDialogueMessage(msgText);
-                if (!content) continue;
-                if (userEchoGuard.shouldDrop(content, speaker)) continue;
-                const isMe = isUserSpeakerName(speaker);
-                const parsed = isMe
-                  ? buildUserMessageFromAI(content, time || formatNowTime())
-                  : await buildAssistantMessageFromText(content, {
-                      sessionId: targetSessionId,
-                      time: time || formatNowTime(),
-                      depth: 0,
-                    });
-                parsedBatch.push({ parsed, isMe });
-              }
-
+              summarySessionIds.add(privateBatch.targetSessionId);
               const animEnabled = document.body.dataset.typingDots !== 'off';
-              const isActive = isSessionActive(targetSessionId);
-
-              if (isActive && animEnabled && parsedBatch.length > 1) {
-                // 逐条延迟输出
-                const queueItems = parsedBatch.map(({ parsed, isMe }) => ({
-                  message: parsed,
-                  callback: () => {
-                    const saved = chatStore.appendMessage(parsed, targetSessionId);
-                    if (!isMe) autoMarkReadIfActive(targetSessionId, saved?.id || parsed?.id || '');
-                    emitPluginAfterReceive(saved, targetSessionId);
-                  },
-                }));
-                const q = ui.enqueueMessages(queueItems, {
-                  avatarUrl: assistantAvatar,
-                  typingOptions: getGroupTypingMembers(sessionId) || {},
-                });
-                if (activeGeneration && activeGeneration.id === generationId)
-                  activeGeneration._messageQueue = q;
-                await q.promise;
-              } else {
-                // 一次性输出（无动画或单条）
-                for (const { parsed, isMe } of parsedBatch) {
-                  if (isActive) ui.addMessage(parsed, { autoScroll: animEnabled });
-                  const saved = chatStore.appendMessage(parsed, targetSessionId);
-                  if (!isMe) autoMarkReadIfActive(targetSessionId, saved?.id || parsed?.id || '');
-                  emitPluginAfterReceive(saved, targetSessionId);
-                }
-              }
+              await dispatchProtocolPrivateBatchToSession(privateBatch, {
+                animEnabled,
+                onQueueCreated: q => {
+                  if (activeGeneration && activeGeneration.id === generationId) {
+                    activeGeneration._messageQueue = q;
+                  }
+                },
+                queueTypingOptions: getGroupTypingMembers(sessionId) || {},
+              });
               didAnything = true;
               refreshChatAndContacts();
 
@@ -20451,243 +17572,71 @@ Phase G（Frame 36）：循环衔接
           chatStore.setLastRawResponse(fullRaw, sessionId);
           if (isSummaryMemoryEnabled()) {
             const { summary: protocolSummary } = extractSummaryBlock(fullRaw);
-            if (protocolSummary) {
-              try {
-                for (const sid of summarySessionIds) chatStore.addSummary(protocolSummary, sid);
-              } catch {}
-              try {
-                for (const sid of summarySessionIds) requestSummaryCompaction(sid);
-              } catch {}
-            }
+            commitProtocolSummary(protocolSummary, summarySessionIds, {
+              addSummary: (summary, sid) => chatStore.addSummary(summary, sid),
+              requestSummaryCompaction,
+            });
           }
           await handleMemoryEditsFromRaw(fullRaw, { sessionId, isGroup: isGroupChat });
-          if (mutatedMoments) {
-            try {
-              await momentsStore.flush();
-            } catch {}
-          }
+          await flushProtocolMomentsIfNeeded(mutatedMoments, {
+            flushMoments: () => momentsStore.flush(),
+          });
           refreshChatAndContacts();
           if (!didAnything) {
             // Fallback: if <thinking>/<think> contains literal "<content>", first-pass parsing may start too early.
             // Retry once by stripping complete thinking blocks, then parsing again.
-            try {
-              const retryText = sanitizeThinkingForProtocolParse(fullRaw);
-              if (retryText && retryText !== fullRaw) {
-                const retryParser = createDialogueParser();
-                const retryEvents = retryParser.push(retryText);
-                for (const ev of retryEvents) {
-                  if (ev?.type === 'moments') {
-                    try {
-                      momentsStore.addMany(ingestMoments(ev.moments || []));
-                      mutatedMoments = true;
-                      didAnything = true;
-                      if (activePage === 'moments') momentsPanel.render();
-                    } catch {}
-                    continue;
-                  }
-                  if (ev?.type === 'moment_reply') {
-                    try {
-                      const mid = String(ev.momentId || '').trim();
-                      if (!mid) continue;
-                      // moments-regex rollback marker:
-                      // momentsStore.addComments(mid, ev.comments || []);
-                      momentsStore.addComments(mid, normalizeMomentCommentsForStore(ev.comments || [], { regexMode: 'output', depth: 0 }));
-                      mutatedMoments = true;
-                      didAnything = true;
-                      if (activePage === 'moments') momentsPanel.render();
-                    } catch {}
-                    continue;
-                  }
-                  if (ev?.type === 'group_chat') {
-                    const targetGroupId = resolveGroupChatTargetSessionId(ev.groupName);
-                    if (!targetGroupId) continue;
-                    summarySessionIds.add(targetGroupId);
-                    for (const m of (ev.messages || [])) {
-                      const speaker = normalizeName(m?.speaker);
-                      const content = String(m?.content || '').replace(/<br\s*\/?>/gi, '\n');
-                      if (isSystemSpeaker(speaker)) {
-                        const parsed = {
-                          role: 'system',
-                          type: 'meta',
-                          content: sanitizeAssistantReplyText(content, userName),
-                          name: '系统',
-                          time: m?.time || formatNowTime(),
-                        };
-                        if (isSessionActive(targetGroupId)) ui.addMessage(parsed);
-                        const saved = chatStore.appendMessage(parsed, targetGroupId);
-                        emitPluginAfterReceive(saved, targetGroupId);
-                        maybeApplyGroupSystemOps(parsed.content, targetGroupId);
-                        continue;
-                      }
-                      const isMe = isUserSpeakerName(speaker);
-                      if (isMe && userEchoGuard.shouldDrop(content, speaker)) continue;
-                      const role = isMe ? 'user' : 'assistant';
-                      const c = isMe ? null : resolveGroupSpeakerContact(speaker, targetGroupId);
-                      const parsed =
-                        role === 'assistant'
-                          ? await buildAssistantMessageFromText(content, {
-                              sessionId: targetGroupId,
-                              time: m?.time || formatNowTime(),
-                              name: speaker || '成员',
-                              avatar: resolveGroupSpeakerAvatar(speaker, targetGroupId, c),
-                              speakerContactId: c?.id || '',
-                              showName: true,
-                              depth: 0,
-                            })
-                          : buildUserMessageFromAI(content, m?.time || formatNowTime());
-                      if (isSessionActive(targetGroupId)) ui.addMessage(parsed);
-                      const saved = chatStore.appendMessage(parsed, targetGroupId);
-                      if (role === 'assistant') autoMarkReadIfActive(targetGroupId, saved?.id || parsed?.id || '');
-                      emitPluginAfterReceive(saved, targetGroupId);
-                    }
-                    didAnything = true;
-                    refreshChatAndContacts();
-                    continue;
-                  }
-                  if (ev?.type === 'private_chat') {
-                    const targetSessionId = resolvePrivateChatTargetSessionId(ev.otherName || characterName);
-                    if (!targetSessionId) continue;
-                    summarySessionIds.add(targetSessionId);
-                    for (const msgText of (ev.messages || [])) {
-                      const { speaker, content, time } = normalizeDialogueMessage(msgText);
-                      if (!content) continue;
-                      if (userEchoGuard.shouldDrop(content, speaker)) continue;
-                      const isMe = isUserSpeakerName(speaker);
-                      const parsed = isMe
-                        ? buildUserMessageFromAI(content, time || formatNowTime())
-                        : await buildAssistantMessageFromText(content, {
-                            sessionId: targetSessionId,
-                            time: time || formatNowTime(),
-                            depth: 0,
-                          });
-                      if (isSessionActive(targetSessionId)) ui.addMessage(parsed);
-                      const saved = chatStore.appendMessage(parsed, targetSessionId);
-                      if (!isMe) autoMarkReadIfActive(targetSessionId, saved?.id || parsed?.id || '');
-                      emitPluginAfterReceive(saved, targetSessionId);
-                    }
-                    didAnything = true;
-                    refreshChatAndContacts();
-                  }
-                }
-                if (mutatedMoments) {
-                  try {
-                    await momentsStore.flush();
-                  } catch {}
-                }
-                refreshChatAndContacts();
+	            try {
+	              const { retryText } = buildProtocolRetryCandidates(fullRaw);
+	              if (retryText && retryText !== fullRaw) {
+	                const retryParser = createDialogueParser();
+	                const retryEvents = retryParser.push(retryText);
+	                ({
+	                  didAnything,
+	                  mutatedMoments,
+	                } = await consumeProtocolRetryEvents(retryEvents, {
+	                  didAnything,
+	                  mutatedMoments,
+	                  summarySessionIds,
+	                }, {
+	                  handleEvent: ev => processProtocolRetryEvent(ev, {
+	                    renderMoments: true,
+	                    refreshAfterAppend: true,
+	                  }),
+	                }));
+	                await flushProtocolMomentsIfNeeded(mutatedMoments, {
+	                  flushMoments: () => momentsStore.flush(),
+	                });
+	                refreshChatAndContacts();
               }
             } catch {}
             if (!didAnything) {
-              try {
-                const baseText = sanitizeThinkingForProtocolParse(fullRaw);
-                const miPhoneText = normalizeMiPhoneMarkers(baseText);
-                const miPhoneBlock = extractMiPhoneBlock(miPhoneText);
-                if (miPhoneBlock) {
-                  const retryParser = createDialogueParser();
-                  const retryEvents = retryParser.push(miPhoneBlock);
-                  for (const ev of retryEvents) {
-                    if (ev?.type === 'moments') {
-                      try {
-                        momentsStore.addMany(ingestMoments(ev.moments || []));
-                        mutatedMoments = true;
-                        didAnything = true;
-                        if (activePage === 'moments') momentsPanel.render();
-                      } catch {}
-                      continue;
-                    }
-                    if (ev?.type === 'moment_reply') {
-                      try {
-                        const mid = String(ev.momentId || '').trim();
-                        if (!mid) continue;
-                        // moments-regex rollback marker:
-                        // momentsStore.addComments(mid, ev.comments || []);
-                        momentsStore.addComments(mid, normalizeMomentCommentsForStore(ev.comments || [], { regexMode: 'output', depth: 0 }));
-                        mutatedMoments = true;
-                        didAnything = true;
-                        if (activePage === 'moments') momentsPanel.render();
-                      } catch {}
-                      continue;
-                    }
-                    if (ev?.type === 'group_chat') {
-                      const targetGroupId = resolveGroupChatTargetSessionId(ev.groupName);
-                      if (!targetGroupId) continue;
-                      summarySessionIds.add(targetGroupId);
-                      for (const m of (ev.messages || [])) {
-                        const speaker = normalizeName(m?.speaker);
-                        const content = String(m?.content || '').replace(/<br\s*\/?>/gi, '\n');
-                        if (isSystemSpeaker(speaker)) {
-                          const parsed = {
-                            role: 'system',
-                            type: 'meta',
-                            content: sanitizeAssistantReplyText(content, userName),
-                            name: '系统',
-                            time: m?.time || formatNowTime(),
-                        };
-                        if (isSessionActive(targetGroupId)) ui.addMessage(parsed);
-                          const saved = chatStore.appendMessage(parsed, targetGroupId);
-                          emitPluginAfterReceive(saved, targetGroupId);
-                          maybeApplyGroupSystemOps(parsed.content, targetGroupId);
-                          continue;
-                        }
-                        const isMe = isUserSpeakerName(speaker);
-                        if (isMe && userEchoGuard.shouldDrop(content, speaker)) continue;
-                        const role = isMe ? 'user' : 'assistant';
-                        const c = isMe ? null : resolveGroupSpeakerContact(speaker, targetGroupId);
-                        const parsed =
-                          role === 'assistant'
-                            ? await buildAssistantMessageFromText(content, {
-                                sessionId: targetGroupId,
-                                time: m?.time || formatNowTime(),
-                                name: speaker || '成员',
-                                avatar: resolveGroupSpeakerAvatar(speaker, targetGroupId, c),
-                                speakerContactId: c?.id || '',
-                                showName: true,
-                                depth: 0,
-                              })
-                            : buildUserMessageFromAI(content, m?.time || formatNowTime());
-                        if (isSessionActive(targetGroupId)) ui.addMessage(parsed);
-                        const saved = chatStore.appendMessage(parsed, targetGroupId);
-                        if (role === 'assistant') autoMarkReadIfActive(targetGroupId, saved?.id || parsed?.id || '');
-                        emitPluginAfterReceive(saved, targetGroupId);
-                      }
-                      didAnything = true;
-                      refreshChatAndContacts();
-                      continue;
-                    }
-                    if (ev?.type === 'private_chat') {
-                      const targetSessionId = resolvePrivateChatTargetSessionId(ev.otherName || characterName);
-                      if (!targetSessionId) continue;
-                      summarySessionIds.add(targetSessionId);
-                      for (const msgText of (ev.messages || [])) {
-                        const { speaker, content, time } = normalizeDialogueMessage(msgText);
-                        if (!content) continue;
-                        if (userEchoGuard.shouldDrop(content, speaker)) continue;
-                        const isMe = isUserSpeakerName(speaker);
-                        const parsed = isMe
-                          ? buildUserMessageFromAI(content, time || formatNowTime())
-                          : await buildAssistantMessageFromText(content, {
-                              sessionId: targetSessionId,
-                              time: time || formatNowTime(),
-                              depth: 0,
-                            });
-                        if (isSessionActive(targetSessionId)) ui.addMessage(parsed);
-                        const saved = chatStore.appendMessage(parsed, targetSessionId);
-                        if (!isMe) autoMarkReadIfActive(targetSessionId, saved?.id || parsed?.id || '');
-                        emitPluginAfterReceive(saved, targetSessionId);
-                      }
-                      didAnything = true;
-                      refreshChatAndContacts();
-                    }
-                  }
-                  if (mutatedMoments) {
-                    try {
-                      await momentsStore.flush();
-                    } catch {}
-                  }
-                  refreshChatAndContacts();
-                }
-              } catch {}
-            }
+	              try {
+	                const { miPhoneBlock } = buildProtocolRetryCandidates(fullRaw);
+	                if (miPhoneBlock) {
+	                  const retryParser = createDialogueParser();
+	                  const retryEvents = retryParser.push(miPhoneBlock);
+	                  const retryState = await consumeProtocolRetryEvents(retryEvents, {
+	                    didAnything,
+	                    mutatedMoments,
+	                    summarySessionIds,
+	                  }, {
+	                    handleEvent: ev => processProtocolRetryEvent(ev, {
+	                      renderMoments: true,
+	                      refreshAfterAppend: true,
+	                    }),
+	                  });
+	                  if (retryState.abortFlow) return;
+	                  ({
+	                    didAnything,
+	                    mutatedMoments,
+	                  } = retryState);
+	                  await flushProtocolMomentsIfNeeded(mutatedMoments, {
+	                    flushMoments: () => momentsStore.flush(),
+	                  });
+	                  refreshChatAndContacts();
+	                }
+	            } catch {}
+	            }
             if (!didAnything) {
               window.toastr?.warning?.('未解析到有效对话标签，已丢弃（可在“三 > 原始回复”查看）');
             }
@@ -20807,19 +17756,6 @@ Phase G（Frame 36）：循环衔接
           sendSucceeded = true;
         }
       } else {
-        const assistantAvatar = getAssistantAvatarForSession(sessionId);
-        const presetState = window.appBridge?.presets?.getState?.() || null;
-        const sysp = Boolean(presetState?.enabled?.sysprompt)
-          ? (window.appBridge?.presets?.getResolvedActive?.('sysprompt', getPresetContext())?.preset || {})
-          : {};
-        const privateEnabled = Boolean(sysp?.dialogue_enabled) && String(sysp?.dialogue_rules || '').trim().length > 0;
-        const groupEnabled = Boolean(sysp?.group_enabled) && String(sysp?.group_rules || '').trim().length > 0;
-        const momentCreateEnabled =
-          Boolean(sysp?.moment_create_enabled) && String(sysp?.moment_create_rules || '').trim().length > 0;
-        const protocolEnabled = !rpUiMode && (momentCreateEnabled || (isGroupChat ? groupEnabled : privateEnabled));
-        // Always include summary request prompt; summary (if present) will be extracted from raw response.
-        disableSummaryForThis = !isSummaryMemoryEnabled();
-
         if (isSessionActive(sessionId)) startDeliveryAndTyping(sessionId, assistantAvatar);
         consumePromptInjections(sessionId);
         const resultRaw = await window.appBridge.generate(text, llmContext(text));
@@ -20854,12 +17790,11 @@ Phase G（Frame 36）：循环衔接
           const rawSource = normalizeCreativeLineBreaks(stripped);
           const reasoningParsed = extractReasoningFromContent(rawSource, { depth: 0, strict: true });
           const finalSource = normalizeCreativeLineBreaks(reasoningParsed.content || '');
-          let stored = finalSource;
-          let display = finalSource;
-          try {
-            stored = normalizeCreativeLineBreaks(window.appBridge.applyOutputStoredRegex(finalSource, { depth: 0 }));
-            display = normalizeCreativeLineBreaks(window.appBridge.applyOutputDisplayRegex(stored, { depth: 0 }));
-          } catch {}
+          const { stored, display } = applyOutputRegexPairSafe(finalSource, {
+            appBridge: window.appBridge,
+            depth: 0,
+            normalizeText: normalizeCreativeLineBreaks,
+          });
           const memoryState = isRpMode
             ? await captureAssistantMemoryState(sessionId, { isGroup: isGroupChat })
             : null;
@@ -20910,363 +17845,122 @@ Phase G（Frame 36）：循环衔接
           let mutatedMoments = false;
           handleMemoryEditsFromRaw(resultRaw, { sessionId, isGroup: isGroupChat }).catch(() => {});
           for (const ev of events) {
-            if (ev?.type === 'moments') {
-              momentsStore.addMany(ingestMoments(ev.moments || []));
-              didAnything = true;
-              mutatedMoments = true;
-              continue;
-            }
-            if (ev?.type === 'moment_reply') {
-              const mid = String(ev.momentId || '').trim();
-              if (!mid) continue;
-              // moments-regex rollback marker:
-              // momentsStore.addComments(mid, ev.comments || []);
-              momentsStore.addComments(mid, normalizeMomentCommentsForStore(ev.comments || [], { regexMode: 'output', depth: 0 }));
-              didAnything = true;
-              mutatedMoments = true;
+            const handledMoment = applyProtocolMomentEvent(ev, {
+              addMoments: items => momentsStore.addMany(ingestMoments(items)),
+              addMomentComments: (momentId, comments) => momentsStore.addComments(momentId, comments),
+              normalizeComments: comments => normalizeMomentCommentsForStore(comments, { regexMode: 'output', depth: 0 }),
+            });
+            ({
+              didAnything,
+              mutatedMoments,
+            } = consumeProtocolHandledResult({
+              didAnything,
+              mutatedMoments,
+              summarySessionIds,
+            }, handledMoment));
+            if (handledMoment?.consumed) {
               continue;
             }
             if (ev?.type === 'group_chat') {
-              const targetGroupId = resolveGroupChatTargetSessionId(ev.groupName);
-              if (!targetGroupId) {
+              const nsGroupBatch = await buildProtocolGroupBatch(ev);
+              if (!nsGroupBatch.targetSessionId) {
                 window.toastr?.warning?.('对话回复格式错误：群聊标签未匹配任何已存在群组，已丢弃');
                 continue;
               }
-              summarySessionIds.add(targetGroupId);
-              const nsBatch = [];
-              for (const m of (ev.messages || [])) {
-                const speaker = normalizeName(m?.speaker);
-                const content = String(m?.content || '').replace(/<br\s*\/?>/gi, '\n');
-                if (isSystemSpeaker(speaker)) {
-                  nsBatch.push({
-                    parsed: { role: 'system', type: 'meta', content: sanitizeAssistantReplyText(content, userName), name: '系统', time: m?.time || formatNowTime() },
-                    isSystem: true, isMe: false, role: 'system',
-                  });
-                  continue;
-                }
-                const isMe = isUserSpeakerName(speaker);
-                if (isMe && userEchoGuard.shouldDrop(content, speaker)) continue;
-                const role = isMe ? 'user' : 'assistant';
-                const c = isMe ? null : resolveGroupSpeakerContact(speaker, targetGroupId);
-                const parsed =
-                  role === 'assistant'
-                    ? await buildAssistantMessageFromText(content, {
-                        sessionId: targetGroupId, time: m?.time || formatNowTime(),
-                        name: speaker || '成员', avatar: resolveGroupSpeakerAvatar(speaker, targetGroupId, c),
-                        speakerContactId: c?.id || '', showName: true, depth: 0,
-                      })
-                    : buildUserMessageFromAI(content, m?.time || formatNowTime());
-                nsBatch.push({ parsed, isMe, isSystem: false, role });
-              }
+              summarySessionIds.add(nsGroupBatch.targetSessionId);
               const nsGrpAnim = document.body.dataset.typingDots !== 'off';
-              const nsGrpActive = isSessionActive(targetGroupId);
-              if (nsGrpActive && nsGrpAnim && nsBatch.length > 1) {
-                const qItems = nsBatch.map(({ parsed, isMe, isSystem, role }) => ({
-                  message: parsed,
-                  callback: () => {
-                    const saved = chatStore.appendMessage(parsed, targetGroupId);
-                    if (isSystem) { emitPluginAfterReceive(saved, targetGroupId); maybeApplyGroupSystemOps(parsed.content, targetGroupId); }
-                    else { if (role === 'assistant') autoMarkReadIfActive(targetGroupId, saved?.id || parsed?.id || ''); emitPluginAfterReceive(saved, targetGroupId); }
-                  },
-                }));
-                await ui.enqueueMessages(qItems, { avatarUrl: assistantAvatar, typingOptions: {} }).promise;
-              } else {
-                for (const { parsed, isMe, isSystem, role } of nsBatch) {
-                  if (nsGrpActive) ui.addMessage(parsed, { autoScroll: nsGrpAnim });
-                  const saved = chatStore.appendMessage(parsed, targetGroupId);
-                  if (isSystem) { emitPluginAfterReceive(saved, targetGroupId); maybeApplyGroupSystemOps(parsed.content, targetGroupId); }
-                  else { if (role === 'assistant') autoMarkReadIfActive(targetGroupId, saved?.id || parsed?.id || ''); emitPluginAfterReceive(saved, targetGroupId); }
-                }
-              }
-              if (nsGrpActive) {
-                const nsUniqueSpeakers = new Set(nsBatch.filter(b => b.role === 'assistant').map(b => b.parsed.name)).size;
-                if (nsUniqueSpeakers > 0) ui.bumpReadCount(nsUniqueSpeakers);
-              }
+              await dispatchProtocolGroupBatchToSession(nsGroupBatch, {
+                animEnabled: nsGrpAnim,
+                bumpReadCount: true,
+              });
               didAnything = true;
               continue;
             }
             if (ev?.type === 'private_chat') {
-              const targetSessionId = resolvePrivateChatTargetSessionId(ev.otherName || characterName);
-              if (!targetSessionId) {
+              const nsPrivateBatch = await buildProtocolPrivateBatch(ev);
+              if (!nsPrivateBatch.targetSessionId) {
                 window.toastr?.warning?.('对话回复格式错误：私聊标签未匹配当前联系人，已丢弃');
                 continue;
               }
-              summarySessionIds.add(targetSessionId);
-              const nsPvtBatch = [];
-              for (const msgText of (ev.messages || [])) {
-                const { speaker, content, time } = normalizeDialogueMessage(msgText);
-                if (!content) continue;
-                if (userEchoGuard.shouldDrop(content, speaker)) continue;
-                const isMe = isUserSpeakerName(speaker);
-                const parsed = isMe
-                  ? buildUserMessageFromAI(content, time || formatNowTime())
-                  : await buildAssistantMessageFromText(content, {
-                      sessionId: targetSessionId, time: time || formatNowTime(), depth: 0,
-                    });
-                nsPvtBatch.push({ parsed, isMe });
-              }
+              summarySessionIds.add(nsPrivateBatch.targetSessionId);
               const nsPvtAnim = document.body.dataset.typingDots !== 'off';
-              const nsPvtActive = isSessionActive(targetSessionId);
-              if (nsPvtActive && nsPvtAnim && nsPvtBatch.length > 1) {
-                const qItems = nsPvtBatch.map(({ parsed, isMe }) => ({
-                  message: parsed,
-                  callback: () => {
-                    const saved = chatStore.appendMessage(parsed, targetSessionId);
-                    if (!isMe) autoMarkReadIfActive(targetSessionId, saved?.id || parsed?.id || '');
-                    emitPluginAfterReceive(saved, targetSessionId);
-                  },
-                }));
-                await ui.enqueueMessages(qItems, { avatarUrl: assistantAvatar, typingOptions: {} }).promise;
-              } else {
-                for (const { parsed, isMe } of nsPvtBatch) {
-                  if (nsPvtActive) ui.addMessage(parsed, { autoScroll: nsPvtAnim });
-                  const saved = chatStore.appendMessage(parsed, targetSessionId);
-                  if (!isMe) autoMarkReadIfActive(targetSessionId, saved?.id || parsed?.id || '');
-                  emitPluginAfterReceive(saved, targetSessionId);
-                }
-              }
+              await dispatchProtocolPrivateBatchToSession(nsPrivateBatch, {
+                animEnabled: nsPvtAnim,
+              });
               didAnything = true;
             }
           }
-          if (didAnything) {
-            if (protocolSummary) {
-              try {
-                for (const sid of summarySessionIds) chatStore.addSummary(protocolSummary, sid);
-              } catch {}
-              try {
-                for (const sid of summarySessionIds) requestSummaryCompaction(sid);
-              } catch {}
-            }
-            refreshChatAndContacts();
-            if (activePage === 'moments') momentsPanel.render();
-            if (mutatedMoments) {
-              try {
-                await momentsStore.flush();
-              } catch {}
-            }
+          if (await finalizeProtocolHandledFlow({
+            didAnything,
+            mutatedMoments,
+            protocolSummary,
+            summarySessionIds,
+          }, {
+            addSummary: (summary, sid) => chatStore.addSummary(summary, sid),
+            requestSummaryCompaction,
+            refreshChatAndContacts,
+            renderMoments: activePage === 'moments'
+              ? () => momentsPanel.render()
+              : null,
+            flushMoments: () => momentsStore.flush(),
+          })) {
             return;
           }
           // Fallback: strip complete <thinking>/<think> blocks then parse once more.
           try {
-            const retryText = sanitizeThinkingForProtocolParse(resultRaw);
-            if (retryText && retryText !== resultRaw) {
-              const retryParser = createDialogueParser();
-              const retryEvents = retryParser.push(retryText);
-              for (const ev of retryEvents) {
-                if (ev?.type === 'moments') {
-                  momentsStore.addMany(ingestMoments(ev.moments || []));
-                  didAnything = true;
-                  mutatedMoments = true;
-                  continue;
-                }
-                if (ev?.type === 'moment_reply') {
-                  const mid = String(ev.momentId || '').trim();
-                  if (!mid) continue;
-                  // moments-regex rollback marker:
-                  // momentsStore.addComments(mid, ev.comments || []);
-                  momentsStore.addComments(mid, normalizeMomentCommentsForStore(ev.comments || [], { regexMode: 'output', depth: 0 }));
-                  didAnything = true;
-                  mutatedMoments = true;
-                  continue;
-                }
-                if (ev?.type === 'group_chat') {
-                  const targetGroupId = resolveGroupChatTargetSessionId(ev.groupName);
-                  if (!targetGroupId) continue;
-                  summarySessionIds.add(targetGroupId);
-                  for (const m of (ev.messages || [])) {
-                    const speaker = normalizeName(m?.speaker);
-                    const content = String(m?.content || '').replace(/<br\s*\/?>/gi, '\n');
-                    if (isSystemSpeaker(speaker)) {
-                      const parsed = {
-                        role: 'system',
-                        type: 'meta',
-                        content: sanitizeAssistantReplyText(content, userName),
-                        name: '系统',
-                        time: m?.time || formatNowTime(),
-                      };
-                      if (isSessionActive(targetGroupId)) ui.addMessage(parsed);
-                      const saved = chatStore.appendMessage(parsed, targetGroupId);
-                      emitPluginAfterReceive(saved, targetGroupId);
-                      maybeApplyGroupSystemOps(parsed.content, targetGroupId);
-                      didAnything = true;
-                      continue;
-                    }
-                    const isMe = isUserSpeakerName(speaker);
-                    if (isMe && userEchoGuard.shouldDrop(content, speaker)) continue;
-                    const role = isMe ? 'user' : 'assistant';
-                    const c = isMe ? null : resolveGroupSpeakerContact(speaker, targetGroupId);
-                    const parsed =
-                      role === 'assistant'
-                        ? await buildAssistantMessageFromText(content, {
-                            sessionId: targetGroupId,
-                            time: m?.time || formatNowTime(),
-                            name: speaker || '成员',
-                            avatar: resolveGroupSpeakerAvatar(speaker, targetGroupId, c),
-                            speakerContactId: c?.id || '',
-                            showName: true,
-                            depth: 0,
-                          })
-                        : buildUserMessageFromAI(content, m?.time || formatNowTime());
-                    if (isSessionActive(targetGroupId)) ui.addMessage(parsed);
-                    const saved = chatStore.appendMessage(parsed, targetGroupId);
-                    if (role === 'assistant') autoMarkReadIfActive(targetGroupId, saved?.id || parsed?.id || '');
-                    emitPluginAfterReceive(saved, targetGroupId);
-                    didAnything = true;
-                  }
-                  continue;
-                }
-                if (ev?.type === 'private_chat') {
-                  const targetSessionId = resolvePrivateChatTargetSessionId(ev.otherName || characterName);
-                  if (!targetSessionId) continue;
-                  summarySessionIds.add(targetSessionId);
-                  for (const msgText of (ev.messages || [])) {
-                    const { speaker, content, time } = normalizeDialogueMessage(msgText);
-                    if (!content) continue;
-                    if (userEchoGuard.shouldDrop(content, speaker)) continue;
-                    const isMe = isUserSpeakerName(speaker);
-                    const parsed = isMe
-                      ? buildUserMessageFromAI(content, time || formatNowTime())
-                      : await buildAssistantMessageFromText(content, {
-                          sessionId: targetSessionId,
-                          time: time || formatNowTime(),
-                          depth: 0,
-                        });
-                    if (isSessionActive(targetSessionId)) ui.addMessage(parsed);
-                    const saved = chatStore.appendMessage(parsed, targetSessionId);
-                    if (!isMe) autoMarkReadIfActive(targetSessionId, saved?.id || parsed?.id || '');
-                    emitPluginAfterReceive(saved, targetSessionId);
-                    didAnything = true;
-                  }
-                }
-              }
-            }
-          } catch {}
+            const { retryText } = buildProtocolRetryCandidates(resultRaw);
+	            if (retryText && retryText !== resultRaw) {
+	              const retryParser = createDialogueParser();
+	              const retryEvents = retryParser.push(retryText);
+	              ({
+	                didAnything,
+	                mutatedMoments,
+	              } = await consumeProtocolRetryEvents(retryEvents, {
+	                didAnything,
+	                mutatedMoments,
+	                summarySessionIds,
+	              }, {
+	                handleEvent: ev => processProtocolRetryEvent(ev),
+	              }));
+	            }
+	          } catch {}
           if (!didAnything) {
             try {
-              const baseText = sanitizeThinkingForProtocolParse(resultRaw);
-              const miPhoneText = normalizeMiPhoneMarkers(baseText);
-              const miPhoneBlock = extractMiPhoneBlock(miPhoneText);
-              if (miPhoneBlock) {
-                const retryParser = createDialogueParser();
-                const retryEvents = retryParser.push(miPhoneBlock);
-                for (const ev of retryEvents) {
-                  if (ev?.type === 'moments') {
-                    momentsStore.addMany(ingestMoments(ev.moments || []));
-                    didAnything = true;
-                    mutatedMoments = true;
-                    continue;
-                  }
-                  if (ev?.type === 'moment_reply') {
-                    const mid = String(ev.momentId || '').trim();
-                    if (!mid) continue;
-                    // moments-regex rollback marker:
-                    // momentsStore.addComments(mid, ev.comments || []);
-                    momentsStore.addComments(mid, normalizeMomentCommentsForStore(ev.comments || [], { regexMode: 'output', depth: 0 }));
-                    didAnything = true;
-                    mutatedMoments = true;
-                    continue;
-                  }
-                  if (ev?.type === 'group_chat') {
-                    const targetGroupId = resolveGroupChatTargetSessionId(ev.groupName);
-                    if (!targetGroupId) continue;
-                    summarySessionIds.add(targetGroupId);
-                    for (const m of (ev.messages || [])) {
-                      const speaker = normalizeName(m?.speaker);
-                      const content = String(m?.content || '').replace(/<br\s*\/?>/gi, '\n');
-                      if (isSystemSpeaker(speaker)) {
-                        const parsed = {
-                          role: 'system',
-                          type: 'meta',
-                          content: sanitizeAssistantReplyText(content, userName),
-                          name: '系统',
-                          time: m?.time || formatNowTime(),
-                        };
-                        if (isSessionActive(targetGroupId)) ui.addMessage(parsed);
-                        const saved = chatStore.appendMessage(parsed, targetGroupId);
-                        emitPluginAfterReceive(saved, targetGroupId);
-                        maybeApplyGroupSystemOps(parsed.content, targetGroupId);
-                        didAnything = true;
-                        continue;
-                      }
-                      const isMe = isUserSpeakerName(speaker);
-                      if (isMe && userEchoGuard.shouldDrop(content, speaker)) continue;
-                      const role = isMe ? 'user' : 'assistant';
-                      const c = isMe ? null : resolveGroupSpeakerContact(speaker, targetGroupId);
-                      const parsed =
-                        role === 'assistant'
-                          ? await buildAssistantMessageFromText(content, {
-                              sessionId: targetGroupId,
-                              time: m?.time || formatNowTime(),
-                              name: speaker || '成员',
-                              avatar: resolveGroupSpeakerAvatar(speaker, targetGroupId, c),
-                              speakerContactId: c?.id || '',
-                              showName: true,
-                              depth: 0,
-                            })
-                          : buildUserMessageFromAI(content, m?.time || formatNowTime());
-                      if (isSessionActive(targetGroupId)) ui.addMessage(parsed);
-                      const saved = chatStore.appendMessage(parsed, targetGroupId);
-                      if (role === 'assistant') autoMarkReadIfActive(targetGroupId, saved?.id || parsed?.id || '');
-                      emitPluginAfterReceive(saved, targetGroupId);
-                      didAnything = true;
-                    }
-                    continue;
-                  }
-                  if (ev?.type === 'private_chat') {
-                    const targetSessionId = resolvePrivateChatTargetSessionId(ev.otherName || characterName);
-                    if (!targetSessionId) continue;
-                    summarySessionIds.add(targetSessionId);
-                    for (const msgText of (ev.messages || [])) {
-                      const { speaker, content, time } = normalizeDialogueMessage(msgText);
-                      if (!content) continue;
-                      if (userEchoGuard.shouldDrop(content, speaker)) continue;
-                      const isMe = isUserSpeakerName(speaker);
-                      const parsed = isMe
-                        ? buildUserMessageFromAI(content, time || formatNowTime())
-                        : await buildAssistantMessageFromText(content, {
-                            sessionId: targetSessionId,
-                            time: time || formatNowTime(),
-                            depth: 0,
-                          });
-                    if (isSessionActive(targetSessionId)) ui.addMessage(parsed);
-                    const saved = chatStore.appendMessage(parsed, targetSessionId);
-                    if (!isMe) autoMarkReadIfActive(targetSessionId, saved?.id || parsed?.id || '');
-                    emitPluginAfterReceive(saved, targetSessionId);
-                    didAnything = true;
-                  }
-                  }
-                }
-              }
-            } catch {}
+              const { miPhoneBlock } = buildProtocolRetryCandidates(resultRaw);
+	              if (miPhoneBlock) {
+	                const retryParser = createDialogueParser();
+	                const retryEvents = retryParser.push(miPhoneBlock);
+	                ({
+	                  didAnything,
+	                  mutatedMoments,
+	                } = await consumeProtocolRetryEvents(retryEvents, {
+	                  didAnything,
+	                  mutatedMoments,
+	                  summarySessionIds,
+	                }, {
+	                  handleEvent: ev => processProtocolRetryEvent(ev),
+	                }));
+	              }
+	            } catch {}
           }
-          if (didAnything) {
-            if (protocolSummary) {
-              try {
-                for (const sid of summarySessionIds) chatStore.addSummary(protocolSummary, sid);
-              } catch {}
-              try {
-                for (const sid of summarySessionIds) requestSummaryCompaction(sid);
-              } catch {}
-            }
-            refreshChatAndContacts();
-            if (activePage === 'moments') momentsPanel.render();
-            if (mutatedMoments) {
-              try {
-                await momentsStore.flush();
-              } catch {}
-            }
+          if (await finalizeProtocolHandledFlow({
+            didAnything,
+            mutatedMoments,
+            protocolSummary,
+            summarySessionIds,
+          }, {
+            addSummary: (summary, sid) => chatStore.addSummary(summary, sid),
+            requestSummaryCompaction,
+            refreshChatAndContacts,
+            renderMoments: activePage === 'moments'
+              ? () => momentsPanel.render()
+              : null,
+            flushMoments: () => momentsStore.flush(),
+          })) {
             return;
           }
           window.toastr?.warning?.('未解析到有效对话标签，已丢弃（可在“三 > 原始回复”查看）');
           return;
-        }
-        if (protocolSummary) {
-          try {
-            for (const sid of summarySessionIds) chatStore.addSummary(protocolSummary, sid);
-          } catch {}
-          try {
-            for (const sid of summarySessionIds) requestSummaryCompaction(sid);
-          } catch {}
         }
         // === RP/创意写作界面===
         // const stored = window.appBridge.applyOutputStoredRegex(resultRaw);
@@ -21340,7 +18034,7 @@ Phase G（Frame 36）：循环衔接
         movePendingFromHistoryToQueue(sessionId);
         refreshChatAndContacts();
         scriptRuntime?.consumeOnce?.(sessionId);
-        runMemoryUpdateAfterChat(sessionId, isGroupChat, llmContext(''), {
+        memoryUpdateRuntime.runMemoryUpdateAfterChat(sessionId, isGroupChat, llmContext(''), {
           checkpointMessageId: checkpointTargetMessageId,
         }).catch(() => {});
       }
@@ -21399,14 +18093,13 @@ Phase G（Frame 36）：循环衔接
       if (isSessionActive(sessionId)) ui.addMessage(msg);
       const saved = chatStore.appendMessage(msg, sessionId);
       refreshChatAndContacts();
-      if (isUser && scriptRuntime) {
-        scriptRuntime.dispatchEvent('message.after_send', { message: saved || msg, sessionId }).catch(err => {
-          logger.warn('script message.after_send failed', err);
-        });
-      }
-      if (isUser && pluginRuntime) {
-        pluginRuntime.dispatchEvent('message.after_send', { message: saved || msg, sessionId }).catch(err => {
-          logger.warn('plugin message.after_send failed', err);
+      if (isUser) {
+        dispatchAfterSendEvents({
+          messages: [saved || msg],
+          sessionId,
+          scriptRuntime,
+          pluginRuntime,
+          logger,
         });
       }
       if (isAssistant) emitPluginAfterReceive(saved, sessionId);
@@ -21419,7 +18112,9 @@ Phase G（Frame 36）：循环衔接
     const lastUser = [...list].reverse().find(m => m && m.role === 'user');
     return lastUser || null;
   };
-  window.appBridge.sendMessageFromPlugin = sendMessageFromPlugin;
+  registerMessageActionBridgeContract(window.appBridge, {
+    sendMessageFromPlugin,
+  });
 
   const handleComposerSend = () => {
     if (ui?.isSending || ui?.isStreaming || (activeGeneration && !activeGeneration.cancelled)) {
@@ -21499,81 +18194,21 @@ Phase G（Frame 36）：循环衔接
   ui.onMessageAction(async (action, message, payload) => {
     const sessionId = chatStore.getCurrent();
     const applyUpdateVariableForMessageSafe = (targetMessage, targetSessionId) => {
-      const pickApplyFn = () => {
-        const localFn = typeof applyUpdateVariableFromMessage === 'function' ? applyUpdateVariableFromMessage : null;
-        const globalFn =
-          typeof window !== 'undefined' && typeof window.__chatappApplyUpdateVariableFromMessage === 'function'
-            ? window.__chatappApplyUpdateVariableFromMessage
-            : null;
-        return localFn || globalFn || null;
-      };
-      const stripSimple = (text) => {
-        const raw = String(text || '');
-        if (!raw) return raw;
-        return raw
-          .replace(/<\s*(update(?:variable)?|variableupdate)\b[^>]*>[\s\S]*?<\/\s*\1\s*>/gi, '')
-          .replace(/<\s*\/?\s*(update(?:variable)?|variableupdate)\b[^>]*>/gi, '')
-          .replace(/\n{3,}/g, '\n\n')
-          .trimEnd();
-      };
-      try {
-        const fn = pickApplyFn();
-        if (typeof fn === 'function') return Boolean(fn(targetMessage, targetSessionId));
-      } catch (err) {
-        logger.warn('edit-assistant-raw: update apply via function failed', err);
-      }
-      try {
-        const raw =
-          (typeof targetMessage?.rawOriginal === 'string' && targetMessage.rawOriginal) ||
-          (typeof targetMessage?.rawSource === 'string' && targetMessage.rawSource) ||
-          (typeof targetMessage?.raw === 'string' && targetMessage.raw) ||
-          (typeof targetMessage?.content === 'string' && targetMessage.content) ||
-          '';
-        if (!raw) return false;
-        const localStrip =
-          (typeof stripUpdateVariableBlocks === 'function' && stripUpdateVariableBlocks) ||
-          (typeof stripUpdateVariableBloacks === 'function' && stripUpdateVariableBloacks) ||
-          (typeof stripupdatevariablebloacks === 'function' && stripupdatevariablebloacks) ||
-          stripSimple;
-        const baseStoredRaw = typeof targetMessage?.raw === 'string' ? targetMessage.raw : '';
-        const baseSource = typeof targetMessage?.rawSource === 'string' ? targetMessage.rawSource : '';
-        const baseOriginal = typeof targetMessage?.rawOriginal === 'string' ? targetMessage.rawOriginal : '';
-        const baseFallback = typeof targetMessage?.content === 'string' ? targetMessage.content : '';
-        const sourceText = baseSource || baseOriginal || baseFallback;
-        let nextStored = localStrip(baseStoredRaw || raw);
-        let nextSource = localStrip(sourceText || raw);
-        const sid = String(targetSessionId || '').trim();
-        const isTavernMvuSession = (() => {
-          if (!sid) return false;
-          const persona = getEffectivePersona(sid);
-          const source = persona && typeof persona.source === 'object' ? persona.source : null;
-          if (!source || source.type !== 'character_card') return false;
-          const mvuSource = String(source.mvuSource || '').trim().toLowerCase();
-          const hasCardMvu = source.mvuConverted === true || (mvuSource && mvuSource !== 'none');
-          if (!hasCardMvu) return false;
-          const schemas = chatStore.listVariableSchemas?.(sid) || {};
-          return Object.keys(schemas).length > 0;
-        })();
-        const rawHasPlaceholder = /<StatusPlaceHolderImpl\s*\/?>/i.test(raw);
-        const sourceHasPlaceholder = /<StatusPlaceHolderImpl\s*\/?>/i.test(sourceText || '');
-        const storedHasPlaceholder = /<StatusPlaceHolderImpl\s*\/?>/i.test(baseStoredRaw || '');
-        if (isTavernMvuSession && !(rawHasPlaceholder || sourceHasPlaceholder || storedHasPlaceholder)) {
-          nextStored = `${nextStored || ''}\n\n<StatusPlaceHolderImpl/>`.trim();
-          nextSource = `${nextSource || ''}\n\n<StatusPlaceHolderImpl/>`.trim();
-        }
-        if (nextStored === (baseStoredRaw || raw) && nextSource === (sourceText || raw)) return false;
-        const nextDisplay = window.appBridge?.applyOutputDisplayRegex
-          ? window.appBridge.applyOutputDisplayRegex(nextStored, { depth: 0 })
-          : nextStored;
-        const patch = { raw: nextStored, content: nextDisplay };
-        if (sourceText) patch.rawSource = nextSource;
-        const updatedFallback = chatStore.updateMessage(targetMessage.id, patch, targetSessionId);
-        if (updatedFallback && isSessionActive(targetSessionId)) ui.updateMessage(targetMessage.id, updatedFallback);
-      } catch (err) {
-        logger.warn('edit-assistant-raw: update-variable fallback failed', err);
-      }
-      logger.info('[update-variable] apply function unavailable yet (fallback-strip-applied)');
-      return false;
+      return applyUpdateVariableForMessageWithFallback({
+        message: targetMessage,
+        sessionId: targetSessionId,
+        applyUpdateVariable: resolveUpdateVariableApplyFn(applyUpdateVariableFromMessage),
+        getEffectivePersona,
+        listVariableSchemas: id => chatStore.listVariableSchemas?.(id),
+        transformDisplay: nextStored => applyOutputDisplayRegexSafe(nextStored, {
+          appBridge: window.appBridge,
+          depth: 0,
+        }),
+        updateMessage: (messageId, updatePayload, sessionId) => chatStore.updateMessage(messageId, updatePayload, sessionId),
+        isSessionActive,
+        updateUiMessage: (messageId, updated) => ui.updateMessage(messageId, updated),
+        logger,
+      });
     };
     const isSyntheticUser = m => m?.role === 'user' && m?.meta?.generatedByAssistant === true;
     const regenerateFromUserIndex = async (userIdx, { allowEmpty = false } = {}) => {
@@ -21627,7 +18262,7 @@ Phase G（Frame 36）：循环衔接
           logger.warn('restore memory after regenerate failed', err);
         }
       }
-      const resendText = getMessageSendText(prevUser);
+      const resendText = getMessageSendText(prevUser, buildStickerToken);
       if (!String(resendText || '').trim()) {
         window.toastr?.warning('未找到对应的用户消息内容');
         return;
@@ -21794,12 +18429,7 @@ Phase G（Frame 36）：循环衔接
     if (action === 'edit-assistant-raw' && message.role === 'assistant') {
       const next = String(payload?.text ?? '');
       const regexEditMode = payload?.regexEditMode === true;
-      const stripFn =
-        (typeof stripUpdateVariableBlocks === 'function' && stripUpdateVariableBlocks) ||
-        (typeof stripUpdateVariableBloacks === 'function' && stripUpdateVariableBloacks) ||
-        (typeof stripupdatevariablebloacks === 'function' && stripupdatevariablebloacks) ||
-        (text => String(text ?? ''));
-      const cleanedForRender = stripFn(next);
+      const cleanedForRender = stripUpdateVariableBlocks(next);
       const hadUpdateVariableTag = /<\s*(update(?:variable)?|variableupdate)\b/i.test(next);
       if (hadUpdateVariableTag) {
         logger.info(
@@ -21814,16 +18444,12 @@ Phase G（Frame 36）：循环衔接
         const rawSource = normalizeCreativeLineBreaks(cleanedForRender);
         const reasoningParsed = extractReasoningFromContent(rawSource, { depth: 0, strict: true });
         const finalSource = normalizeCreativeLineBreaks(reasoningParsed.content || '');
-        let stored = finalSource;
-        let display = finalSource;
-        try {
-          stored = normalizeCreativeLineBreaks(
-            window.appBridge.applyOutputStoredRegex(finalSource, { isEdit: regexEditMode, depth: 0 }),
-          );
-          display = normalizeCreativeLineBreaks(
-            window.appBridge.applyOutputDisplayRegex(stored, { isEdit: regexEditMode, depth: 0 }),
-          );
-        } catch {}
+        const { stored, display } = applyOutputRegexPairSafe(finalSource, {
+          appBridge: window.appBridge,
+          depth: 0,
+          isEdit: regexEditMode,
+          normalizeText: normalizeCreativeLineBreaks,
+        });
         const nextMeta =
           message?.meta && typeof message.meta === 'object' ? { ...message.meta, renderRich: true } : { renderRich: true };
         if (reasoningParsed.reasoning) {
@@ -21842,12 +18468,11 @@ Phase G（Frame 36）：循环衔接
           meta: nextMeta,
         };
       } else {
-        let stored = cleanedForRender;
-        let display = cleanedForRender;
-        try {
-          stored = window.appBridge.applyOutputStoredRegex(cleanedForRender, { isEdit: regexEditMode, depth: 0 });
-          display = window.appBridge.applyOutputDisplayRegex(stored, { isEdit: regexEditMode, depth: 0 });
-        } catch {}
+        const { stored, display } = applyOutputRegexPairSafe(cleanedForRender, {
+          appBridge: window.appBridge,
+          depth: 0,
+          isEdit: regexEditMode,
+        });
         const parsed = parseSpecialMessage(display);
         const nextMeta = message?.meta && typeof message.meta === 'object' ? { ...message.meta } : undefined;
         if (parsed?.meta && typeof parsed.meta === 'object') {
@@ -22026,34 +18651,60 @@ Phase G（Frame 36）：循环衔接
   });
   window.addEventListener('session-changed', async e => {
     const id = e.detail?.id;
-    if (id) {
-      const enterRequest = beginChatEnterRequest(id);
-      cancelAllInitialHistoryFillJobs();
-      window.appBridge.setActiveSession(id);
-      scriptRuntime?.syncContext?.({ sessionId: id }).catch(() => {});
-      const c = contactsStore.getContact(id);
-      if (currentChatTitle) currentChatTitle.innerHTML = renderSessionNameHtml(id, c);
-      syncUserPersonaUI(id);
-      applyChatRoomLoadingState(id, c, c?.name || id);
-      const msgs = await chatStore.ensureRecentMessagesLoaded(id);
-      if (isChatEnterRequestStale(enterRequest)) return;
-      const draft = chatStore.getDraft(id);
-      ui.clearMessages();
-      {
-        const PAGE = 90;
-        const start = Math.max(0, msgs.length - PAGE);
-        ui.preloadHistory(decorateMessagesForDisplay(msgs.slice(start), { sessionId: id }));
-        chatRenderState.set(id, { start });
-      }
-      ui.setInputText(draft || '');
-      syncReplyTargetComposer(id);
-      ui.setSessionLabel(id);
-      applyMvuSchemaDefaults(id, { reason: 'session' });
-      if (uiMode === 'rp') {
-        refreshRpToolbar(id);
-      }
-      refreshChatAndContacts();
-    }
+    await runSessionChangedFlow({
+      sessionId: id,
+      beginEnterRequest: sid => beginChatEnterRequest(sid),
+      cancelInitialHistoryFillJobs: cancelAllInitialHistoryFillJobs,
+      syncScriptContext: payload => scriptRuntime?.syncContext?.(payload),
+      getContact: sid => contactsStore.getContact(sid),
+      activateShellStateFn: ({ sessionId }) => activateSessionShellState({
+        sessionId,
+        setActiveSession: sid => window.appBridge.setActiveSession(sid),
+        syncUserPersonaUI,
+        getContact: sid => contactsStore.getContact(sid),
+        renderSessionNameHtml,
+        setChatTitleHtml: html => {
+          if (currentChatTitle) currentChatTitle.innerHTML = html;
+        },
+        restoreDraft: false,
+      }),
+      applyLoadingStateFn: ({ sessionId, contact, sessionName }) => applySessionEnterLoadingState({
+        sessionId,
+        contact,
+        sessionName,
+        showConversationLoading: payload => ui.showConversationLoading(payload),
+        getDraft: sid => chatStore.getDraft(sid),
+        getMirrorDraft: sid => {
+          try {
+            return sessionStorage.getItem(`phone_draft_${sid}`) || '';
+          } catch {}
+          return '';
+        },
+        setInputText: value => ui.setInputText(value),
+        syncReplyTargetComposer,
+        setSessionLabel: sid => ui.setSessionLabel(sid),
+        updatePendingFloat,
+      }),
+      ensureRecentMessagesLoaded: sid => chatStore.ensureRecentMessagesLoaded(sid),
+      isRequestStale: request => isChatEnterRequestStale(request),
+      renderChangedHistoryStageFn: ({ sessionId, messages }) => renderSessionChangedHistoryStage({
+        sessionId,
+        messages,
+        pageSize: 90,
+        clearMessages: () => ui.clearMessages(),
+        decorateMessagesForDisplay,
+        preloadHistory: messages => ui.preloadHistory(messages),
+        setRenderState: (sid, state) => chatRenderState.set(sid, state),
+        getDraft: sid => chatStore.getDraft(sid),
+        setInputText: value => ui.setInputText(value),
+        syncReplyTargetComposer,
+        setSessionLabel: sid => ui.setSessionLabel(sid),
+        applyMvuSchemaDefaults,
+        uiMode,
+        refreshRpToolbar,
+        refreshChatAndContacts,
+      }),
+    });
   });
 
   try {
@@ -22083,36 +18734,22 @@ Phase G（Frame 36）：循环衔接
 
   // If stores hydrate later (e.g. after a WebView reload / offline resume), refresh UI without jumping to defaults.
   window.addEventListener('store-hydrated', async ev => {
-    const store = String(ev?.detail?.store || '').trim();
-    if (!store) return;
-    if (store !== 'chat' && store !== 'contacts') return;
-    uiLog('store-hydrated', { store });
     try {
-      refreshChatAndContacts();
-    } catch {}
-    try {
-      // If we are stuck on an empty/default session due to early hydration miss, restore the last UI state again.
-      const cur = String(chatStore.getCurrent() || '').trim();
-      const raw = (() => {
-        try {
-          return sessionStorage.getItem(UI_STATE_KEY);
-        } catch {}
-        try {
-          return localStorage.getItem(UI_STATE_KEY);
-        } catch {}
-        return '';
-      })();
-      const want = raw ? String(JSON.parse(raw)?.sessionId || '').trim() : '';
-      uiLog('store-hydrated: check restore', { cur, want, curKnown: chatStore.hasSession?.(cur) });
-      if (want && want !== cur && (cur === 'default' || !chatStore.hasSession?.(cur))) {
-        const saved = await pickSavedUiState();
-        const page = String(saved?.activePage || '').trim();
-        const inChatRoom = Boolean(saved?.inChatRoom);
-        if (page && pages[page]) switchPage(page);
-        if (applyRestoredSessionShell(want) && inChatRoom) {
-          // Preserve session/persona shell only; startup intentionally stays on main UI.
-        }
-      }
+      await runHydratedUiRestoreFlow({
+        store: ev?.detail?.store,
+        reconcileHydratedState: ({ store }) => reconcileHydratedStoreUiState({
+          store,
+          refreshChatAndContacts,
+          getCurrentSessionId: () => chatStore.getCurrent(),
+          readSavedStateFast: readSavedUiStateFast,
+          hasSession: sid => chatStore.hasSession?.(sid),
+          pickSavedUiState,
+          hasPage: page => Boolean(pages[page]),
+          switchPage,
+          restoreSessionShell: applyRestoredSessionShell,
+          uiLog,
+        }),
+      });
     } catch {}
   });
 

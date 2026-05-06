@@ -437,7 +437,6 @@ export class MomentsPanel {
     if (!moments.length) {
       const empty = document.createElement('div');
       empty.className = 'moments-empty-state';
-      empty.style.cssText = 'padding:16px; color:var(--app-text-muted); text-align:center;';
       empty.textContent = '（暂无动态）';
       this.listEl.appendChild(empty);
       this.visibleCount = this.pageSize;
@@ -491,8 +490,8 @@ export class MomentsPanel {
               const rcontent = resolveMomentDisplayText(r);
               const toName = String(r?.replyToAuthor || '').trim() || author;
               return `
-                        <div class="moment-comment moment-comment-reply" data-comment-id="${esc(rid)}" style="margin-left:20px; padding-left:10px; border-left:2px solid rgba(0,0,0,0.08);">
-                            <span class="comment-user"><span class="comment-author" role="button" tabindex="0" data-comment-id="${esc(rid)}" style="cursor:pointer; font-weight:800;">${esc(rauthor)}</span> 回复 <span class="comment-replyto" style="font-weight:800;">${esc(toName)}</span>：</span>
+                        <div class="moment-comment moment-comment-reply" data-comment-id="${esc(rid)}">
+                            <span class="comment-user"><span class="comment-author moment-comment-author" role="button" tabindex="0" data-comment-id="${esc(rid)}">${esc(rauthor)}</span> 回复 <span class="comment-replyto moment-comment-replyto">${esc(toName)}</span>：</span>
                             <span class="comment-text">${renderTextWithStickers(rcontent)}</span>
                         </div>
                     `;
@@ -500,7 +499,7 @@ export class MomentsPanel {
             .join('');
           return `
                         <div class="moment-comment" data-comment-id="${esc(cid)}">
-                            <span class="comment-user"><span class="comment-author" role="button" tabindex="0" data-comment-id="${esc(cid)}" style="cursor:pointer; font-weight:800;">${esc(author)}</span>：</span>
+                            <span class="comment-user"><span class="comment-author moment-comment-author" role="button" tabindex="0" data-comment-id="${esc(cid)}">${esc(author)}</span>：</span>
                             <span class="comment-text">${renderTextWithStickers(content)}</span>
                         </div>
                         ${replyHtml}
@@ -525,11 +524,9 @@ export class MomentsPanel {
                 </div>
                 <div class="moment-footer">
                     <span class="moment-likes">👍 ${Number(m.likes || 0)}人已赞</span>
-                    <button class="moment-action" data-action="comment" style="margin-left:auto; border:none; background:transparent; color:#2563eb; font-weight:700;">评论</button>
+                    <button class="moment-action" data-action="comment">评论</button>
                 </div>
-                <div class="moment-comments ${comments.length ? '' : 'empty'}" ${
-        comments.length ? '' : 'style="display:none;"'
-      }>
+                <div class="moment-comments ${comments.length ? '' : 'empty hidden'}">
                     ${
                       !expanded && hiddenCount > 0
                         ? `<div class="moment-comments-toggle" data-action="expand">展开查看更多评论 (${hiddenCount}条)</div>`
@@ -542,23 +539,17 @@ export class MomentsPanel {
                         : ''
                     }
                 </div>
-                <div class="moment-comment-composer" style="${
-                  showComposer ? 'display:flex; flex-direction:column; align-items:stretch; gap:10px;' : 'display:none;'
-                }">
-                    <div class="moment-replying" style="${
-                      replyTarget ? '' : 'display:none;'
-                    } padding:8px 10px; margin-bottom:10px; border:1px solid rgba(0,0,0,0.08); border-radius:12px; background:rgba(248,250,252,0.92); font-size:12px; color:var(--app-text-secondary);">
-                        <div style="display:flex; gap:10px; align-items:flex-start;">
-                            <div style="flex:1; min-width:0; white-space:normal; overflow-wrap:anywhere; word-break:break-word; line-height:1.35;">
+                <div class="moment-comment-composer${showComposer ? ' is-open' : ''}">
+                    <div class="moment-replying${replyTarget ? '' : ' hidden'}">
+                        <div class="moment-replying-body">
+                            <div class="moment-replying-text">
                                 回复 <b>${esc(replyTarget?.author || '')}</b>：${esc(resolveMomentDisplayText(replyTarget).slice(0, 120))}
                             </div>
-                            <button class="moment-reply-cancel" data-action="cancel-reply" type="button" style="border:none; background:transparent; color:#ef4444; font-weight:900; cursor:pointer; padding:0 4px; font-size:16px; line-height:1;">×</button>
+                            <button class="moment-reply-cancel" data-action="cancel-reply" type="button">×</button>
                         </div>
                     </div>
-                    <div class="moment-comment-input-row" style="display:flex; gap:10px; align-items:center;">
-                        <input class="moment-comment-input" type="text" placeholder="${
-                          replyTarget ? `回复 ${esc(replyTarget.author || '')}...` : '写评论...'
-                        }" style="flex:1; min-width:0;" ${pending ? 'disabled' : ''} />
+                    <div class="moment-comment-input-row">
+                        <input class="moment-comment-input" type="text" placeholder="${replyTarget ? `回复 ${esc(replyTarget.author || '')}...` : '写评论...'}" ${pending ? 'disabled' : ''} />
                         <button class="moment_comment" data-action="send" ${pending ? 'disabled' : ''}>${
           pending ? '发送中…' : '发送'
         }</button>
@@ -786,18 +777,8 @@ export class MomentsPanel {
     if (moments.length > visibleN) {
       const more = document.createElement('button');
       more.type = 'button';
+      more.className = 'moment-load-more';
       more.textContent = `展开更多`;
-      more.style.cssText = `
-                width: calc(100% - 24px);
-                margin: 6px 12px 16px;
-                padding: 10px 12px;
-                border: 1px solid rgba(0,0,0,0.10);
-                border-radius: 12px;
-                background: rgba(255,255,255,0.92);
-                color: var(--app-text-primary);
-                font-weight: 800;
-                cursor: pointer;
-            `;
       more.addEventListener('click', () => {
         this.visibleCount = Math.min(moments.length, visibleN + this.pageSize);
         this.render({ preserveScroll: true });
@@ -813,35 +794,20 @@ export class MomentsPanel {
     if (this.modal) return;
     const overlay = document.createElement('div');
     overlay.id = 'moments-detail-overlay';
-    overlay.style.cssText = `
-            position: fixed;
-            inset: 0;
-            z-index: 23000;
-            display: none;
-            background: rgba(0,0,0,0.32);
-            padding: calc(14px + env(safe-area-inset-top)) 14px calc(14px + env(safe-area-inset-bottom)) 14px;
-            box-sizing: border-box;
-        `;
+    overlay.className = 'moment-detail-overlay';
     const panel = document.createElement('div');
-    panel.style.cssText = `
-            height: 100%;
-            background: var(--app-surface-card);
-            border-radius: 14px;
-            overflow: hidden;
-            display: flex;
-            flex-direction: column;
-        `;
+    panel.className = 'moment-detail-panel';
     panel.addEventListener('click', e => e.stopPropagation());
     panel.innerHTML = `
-            <div style="display:flex; align-items:center; gap:10px; padding:12px; background:#f3f4f6; border-bottom:1px solid var(--app-border-default);">
-                <div style="font-weight:800;">动态</div>
-                <div id="moment-detail-meta" style="margin-left:auto; font-size:12px; color:var(--app-text-muted);"></div>
-                <button id="moment-detail-close" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:6px 10px;">关闭</button>
+            <div class="moment-detail-header">
+                <div class="moment-detail-title">动态</div>
+                <div id="moment-detail-meta" class="moment-detail-meta"></div>
+                <button id="moment-detail-close" class="moment-detail-close">关闭</button>
             </div>
-            <div id="moment-detail-body" style="flex:1; overflow:auto; -webkit-overflow-scrolling:touch; padding:12px;"></div>
-            <div style="padding:10px; border-top:1px solid var(--app-border-default); display:flex; gap:10px;">
-                <input id="moment-comment-input" type="text" placeholder="写评论..." style="flex:1; padding:10px; border:1px solid var(--app-border-default); border-radius:999px;">
-                <button id="moment-comment-send" style="padding:10px 14px; border:none; border-radius:999px; background:#019aff; color:var(--app-text-inverse); font-weight:800;">发送</button>
+            <div id="moment-detail-body" class="moment-detail-body"></div>
+            <div class="moment-detail-footer">
+                <input id="moment-comment-input" class="moment-detail-input" type="text" placeholder="写评论...">
+                <button id="moment-comment-send" class="moment-detail-send">发送</button>
             </div>
         `;
     overlay.appendChild(panel);
@@ -868,31 +834,31 @@ export class MomentsPanel {
       const avatar = this.getAvatarForMoment(m);
       const comments = Array.isArray(m.comments) ? m.comments : [];
       body.innerHTML = `
-                <div style="display:flex; gap:10px; align-items:flex-start;">
-                    <img src="${esc(avatar)}" style="width:42px; height:42px; border-radius:999px; object-fit:cover;">
-                    <div style="flex:1;">
-                        <div style="font-weight:800;">${esc(m.author || '角色')}</div>
-                        <div style="color:var(--app-text-muted); font-size:12px; margin-top:2px;">${esc(m.time || '')} · 👁 ${Number(
+                <div class="moment-detail-summary">
+                    <img src="${esc(avatar)}" class="moment-detail-summary-avatar">
+                    <div class="moment-detail-summary-main">
+                        <div class="moment-detail-summary-author">${esc(m.author || '角色')}</div>
+                        <div class="moment-detail-summary-meta">${esc(m.time || '')} · 👁 ${Number(
         m.views || 0,
       )} · 👍 ${Number(m.likes || 0)}</div>
-                        <div class="moment-detail-text" style="margin-top:10px; overflow-wrap:anywhere;"></div>
+                        <div class="moment-detail-text"></div>
                     </div>
                 </div>
-                <div style="margin-top:14px; font-weight:800;">评论</div>
-                <div style="margin-top:8px; display:flex; flex-direction:column; gap:8px;">
+                <div class="moment-detail-comments-title">评论</div>
+                <div class="moment-detail-comments-list">
                     ${
                       comments.length
                         ? comments
                             .map(
                               c => `
-                        <div class="moment-detail-comment" data-comment-id="${esc(c.id || '')}" style="border:1px solid var(--app-border-default); border-radius:12px; padding:10px;">
-                            <div class="moment-detail-author" role="button" tabindex="0" data-comment-id="${esc(c.id || '')}" style="font-weight:800; font-size:13px; cursor:pointer;">${esc(c.author || '')}</div>
-                            <div style="margin-top:6px; overflow-wrap:anywhere;">${renderTextWithStickers(resolveMomentDisplayText(c))}</div>
+                        <div class="moment-detail-comment" data-comment-id="${esc(c.id || '')}">
+                            <div class="moment-detail-author" role="button" tabindex="0" data-comment-id="${esc(c.id || '')}">${esc(c.author || '')}</div>
+                            <div class="moment-detail-comment-body">${renderTextWithStickers(resolveMomentDisplayText(c))}</div>
                         </div>
                     `,
                             )
                             .join('')
-                        : `<div style="color:var(--app-text-muted);">（暂无评论）</div>`
+                        : `<div class="moment-detail-empty">（暂无评论）</div>`
                     }
                 </div>
             `;
