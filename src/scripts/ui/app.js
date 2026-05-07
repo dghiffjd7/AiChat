@@ -60,6 +60,39 @@ import {
   registerTurnCheckpointBridgeContract,
   registerUiUtilityBridgeContract,
 } from './app-bridge-contract.js';
+import {
+  bindAppSessionEntryNavigation,
+  registerAppSessionEventListeners,
+} from './app-session-binding-runtime-utils.js';
+import {
+  applyMemoryTablePushEvent,
+  rerenderCurrentSessionHistory,
+} from './app-session-refresh-runtime-utils.js';
+import {
+  createChatAndContactsRefreshRuntime,
+  refreshChatAndContactsListNow,
+} from './app-list-refresh-runtime-utils.js';
+import {
+  createAppChatroomRuntime,
+} from './app-chatroom-runtime-utils.js';
+import {
+  createModeSwitchInteractionRuntime,
+} from './app-mode-switch-interaction-runtime-utils.js';
+import { createAppUiStateRuntime } from './app-ui-state-runtime-utils.js';
+import {
+  bindAppChatMenuToggle,
+  bindAppSheetToggleButtons,
+  bindChatroomMenuActions,
+  bindChatTitleMenuActions,
+  bindQuickMenuActions,
+  bindSettingsMenuActions,
+} from './app-menu-binding-runtime-utils.js';
+import { renderGroupManagementDropdown } from './app-group-dropdown-runtime-utils.js';
+import {
+  bindQuickActionButtons,
+  createQuickActionRuntime,
+  openSessionRawReplyFlow,
+} from './app-quick-action-runtime-utils.js';
 import { ChatUI } from './chat/chat-ui.js';
 import { createAssistantStreamRuntime, isStreamCtrlConnected } from './chat/assistant-stream-runtime.js';
 import { dispatchAfterReceiveEffects } from './chat/after-receive-dispatch-utils.js';
@@ -92,29 +125,41 @@ import {
   runMomentReplyRetry,
 } from './chat/moments-runtime-utils.js';
 import {
+  buildMvuVarsPayload as buildMvuVarsPayloadCore,
+  createMvuEventRuntime,
+} from './chat/mvu-event-runtime-utils.js';
+import {
   applyOutputDisplayRegexSafe,
   applyOutputRegexPairSafe,
   applyOutputStoredRegexSafe,
 } from './chat/output-regex-utils.js';
+import { createPromptInjectionRuntime } from './chat/prompt-injection-runtime-utils.js';
 import {
   createPresetRuntime,
   buildReplyPromptHint as buildReplyPromptHintCore,
   resolveEnabledPreset,
 } from './chat/prompt-context-utils.js';
+import { createPromptPreviewRuntime } from './chat/prompt-preview-runtime-utils.js';
 import {
   buildWorldDebugLocatorCandidates,
   formatPromptWorldDebug,
 } from './chat/prompt-world-debug-utils.js';
 import { createReasoningRuntime } from './chat/reasoning-runtime-utils.js';
 import {
+  runEnterRpModeFlow,
+  runExitRpModeFlow,
+} from './chat/rp-mode-runtime-utils.js';
+import {
   createLlmContextBuilder,
   createLlmHistoryBuilder,
 } from './chat/llm-context-runtime-utils.js';
 import {
+  createActiveSessionRuntime,
+  createPendingFloatRuntime,
+} from './chat/session-activity-runtime-utils.js';
+import {
   buildPromptPreviewSnapshot,
-  buildMemoryUpdateHistoryText as buildMemoryUpdateHistoryTextCore,
   buildRequestPromptText as buildRequestPromptTextCore,
-  resolveMemoryUpdateRequestPrompt,
 } from './chat/request-prompt-utils.js';
 import {
   buildSummaryCompactionContext,
@@ -123,10 +168,10 @@ import {
   requestSummaryCompactionRaw,
   shouldRunSummaryCompaction,
 } from './chat/summary-compaction-utils.js';
+import { createSessionSummaryCompactionRuntime } from './chat/summary-compaction-runtime-utils.js';
 import {
   activateSessionEnterView,
   activateSessionShellState,
-  applySavedUiRestoreState,
   applySessionEnterChatSettings,
   applySessionEnterLoadingState,
   deactivateSessionEnterView,
@@ -135,16 +180,16 @@ import {
   loadSessionEnterHistoryStage,
   reconcileHydratedStoreUiState,
   renderSessionChangedHistoryStage,
-  readSavedUiStateFastSnapshot,
-  restoreSessionShellState,
   runSessionEnterFlow,
   runSessionChangedFlow,
   runSessionExitFlow,
-  runSavedUiRestoreFlow,
   runHydratedUiRestoreFlow,
-  pickSavedUiStateSnapshot,
-  saveUiStateSnapshot,
 } from './chat/session-enter-runtime.js';
+import {
+  createSessionEnterProgressiveHistoryRuntime,
+  createSessionEnterRequestTracker,
+  readSessionEnterNowPerfMs,
+} from './chat/session-enter-progressive-runtime-utils.js';
 import {
   ingestMomentsForStore as ingestMomentsForStoreCore,
   normalizeMomentAuthorDisplay as normalizeMomentAuthorDisplayCore,
@@ -156,28 +201,27 @@ import {
 } from './chat/generation-state-utils.js';
 import { parseGroupSystemOps } from './chat/group-system-ops-utils.js';
 import {
-  buildMemoryConfirmText,
   cloneMemoryUpdateEntry,
   clonePlainObject,
   extractSummaryBlock,
   normalizeMemoryCellValue,
   normalizeTableRowData,
-  rowDataEquals,
 } from './chat/memory-edit-utils.js';
 import {
+  buildMemoryRollbackSnapshot,
   countAssistantTurnsForMemoryTimeline,
-  normalizeTimelineMemoryActionData,
-  pickNewestMemoryRow,
-  resolveMemoryActionRowId,
-  resolveMemoryActionRowIdByData,
-  resolveMemoryActionTableId,
-  resolveMemoryInsertSortOrder,
-  resolveMemoryTableScope,
+  deleteNewestMatchingMemoryRow,
+  executeMemoryActionMutationPlan,
+  restoreMemoryRowsFromRollbackSnapshot,
+  resolveMemoryActionMutationPlan,
 } from './chat/memory-table-action-utils.js';
 import { createMemoryUpdateRuntime } from './chat/memory-update-runtime.js';
 import {
-  buildMemoryUpdatePlanInput,
-  resolveMemoryUpdateHistoryLimit,
+  buildMemoryUpdateHistoryTextForSession,
+  buildMemoryUpdatePlanForSession,
+  confirmMemoryEditsWithUi,
+  handleMemoryEditsFromRawWithUi,
+  resolveMemoryUpdatePlanForSession,
 } from './chat/memory-update-runtime-utils.js';
 import {
   buildScopedMemoryRowFields,
@@ -194,6 +238,15 @@ import {
   captureAssistantMemoryState as captureAssistantMemoryStateCore,
   persistSwipeBranchMemoryState as persistSwipeBranchMemoryStateCore,
 } from './chat/swipe-memory-state-utils.js';
+import {
+  buildTurnCheckpointHydrationThreadKey as buildTurnCheckpointHydrationThreadKeyCore,
+  createSwipeMemoryStateTracker,
+  findPreviousUserMessageIdForAssistant as findPreviousUserMessageIdForAssistantCore,
+  findTailTrackedAssistantMessage as findTailTrackedAssistantMessageCore,
+  normalizeCheckpointSwipeState as normalizeCheckpointSwipeStateCore,
+  resolveAssistantFloorForCheckpoint as resolveAssistantFloorForCheckpointCore,
+  resolveTurnIndexForAssistant as resolveTurnIndexForAssistantCore,
+} from './chat/turn-checkpoint-message-runtime-utils.js';
 import {
   buildProtocolSystemMetaMessage,
   buildProtocolRetryCandidates,
@@ -271,6 +324,16 @@ import { CustomBundleExporter } from './custom-bundle-exporter.js';
 import { ExtensionsPanel } from './extensions-panel.js';
 import { ExperiencePackTransfer } from './experience-pack-transfer.js';
 import { GeneralSettingsPanel } from './general-settings-panel.js';
+import {
+  loadSessionMemoryActionContext,
+  resolveDefaultMemoryTemplateId,
+  resolveSessionMemoryTemplateContextSafe,
+} from './session-memory-table-utils.js';
+import {
+  notifyMemoryEditsApplied,
+  notifyMemoryEditsRolledBack,
+} from './session-memory-event-utils.js';
+import { batchCreateMemoriesWithFallback } from './session-memory-write-utils.js';
 import { GroupCreatePanel, GroupSettingsPanel } from './group-chat-panels.js';
 import { GroupPanel } from './group-panel.js';
 import { MediaPicker } from './media-picker.js';
@@ -278,6 +341,11 @@ import { MemoryTemplatePanel } from './memory-template-panel.js';
 import { MomentSummaryPanel } from './moment-summary-panel.js';
 import { MomentsPanel } from './moments-panel.js';
 import { PersonaPanel } from './persona-panel.js';
+import {
+  bindPageNavButtons,
+  bindPageSwipeNavigation,
+  createPageSwitchRuntime,
+} from './page-navigation-runtime-utils.js';
 import { PresetPanel } from './preset-panel.js';
 import { PluginPanel } from './plugin-panel.js';
 import { PluginUiManager } from './plugin-ui-manager.js';
@@ -285,6 +353,7 @@ import { RegexPanel } from './regex-panel.js';
 import { RegexSessionPanel } from './regex-session-panel.js';
 import { SessionConfigPanel } from './session-config-panel.js';
 import { SessionPanel } from './session-panel.js';
+import { createSheetMenuRuntime } from './sheet-menu-runtime-utils.js';
 import { StickerPicker } from './sticker-picker.js';
 import { UserPanel } from './user-panel.js';
 import { VariablePanel } from './variable-panel.js';
@@ -301,7 +370,13 @@ import { StageTimeline } from './stage-timeline.js';
 import { WorldPanel } from './world-panel.js';
 import { WorldInfoIndicator } from './worldinfo-indicator.js';
 import { buildRoleWorldBindingsImpl } from './world-role-binding-utils.js';
+import { createModeSwitchPositionRuntime } from './mode-switch-position-runtime-utils.js';
 import { appConfirm, appChoice } from './app-confirm.js';
+import {
+  registerHydratedUiRestoreListener,
+  registerUiLifecycleDiagnostics,
+  runAppBootRestoreFlow,
+} from './app-boot-runtime-utils.js';
 import { bindCustomSelectButton, createCustomSelectWrapper, refreshCustomSelectButton } from './custom-select.js';
 import { PluginRuntime } from '../plugins/plugin-runtime.js';
 import { themeManager } from './theme-manager.js';
@@ -512,38 +587,13 @@ const initApp = async () => {
   registerRuntimeServiceBridgeContract(window.appBridge, {
     stageManager,
   });
-  const promptInjectionQueue = new Map();
-  const normalizePromptBlock = (input = {}) => {
-    const raw = String(input?.content ?? input?.prompt ?? '').trim();
-    if (!raw) return null;
-    const roleRaw = String(input?.role || 'system').trim().toLowerCase();
-    const role = (roleRaw === 'user' || roleRaw === 'assistant' || roleRaw === 'system') ? roleRaw : 'system';
-    const position = String(input?.position || '').trim();
-    return { content: raw, role, position };
-  };
-  const queuePromptInjection = (sessionId, block) => {
-    const sid = String(sessionId || chatStore.getCurrent() || '').trim();
-    if (!sid) return false;
-    const normalized = normalizePromptBlock(block);
-    if (!normalized) return false;
-    const list = promptInjectionQueue.get(sid) || [];
-    list.push(normalized);
-    promptInjectionQueue.set(sid, list);
-    return true;
-  };
-  const peekPromptInjections = (sessionId) => {
-    const sid = String(sessionId || chatStore.getCurrent() || '').trim();
-    if (!sid) return [];
-    const list = promptInjectionQueue.get(sid) || [];
-    return list.slice();
-  };
-  const consumePromptInjections = (sessionId) => {
-    const sid = String(sessionId || chatStore.getCurrent() || '').trim();
-    if (!sid) return [];
-    const list = promptInjectionQueue.get(sid) || [];
-    promptInjectionQueue.delete(sid);
-    return list.slice();
-  };
+  const {
+    queuePromptInjection,
+    peekPromptInjections,
+    consumePromptInjections,
+  } = createPromptInjectionRuntime({
+    getCurrentSessionId: () => chatStore.getCurrent(),
+  });
   registerPromptInjectionBridgeContract(window.appBridge, {
     queuePromptInjection,
     peekPromptInjections,
@@ -952,6 +1002,31 @@ const initApp = async () => {
       } catch {}
     },
   });
+  const worldIndicator = new WorldInfoIndicator();
+  const appChatroomRuntime = createAppChatroomRuntime({
+    isStickerAllowed: (...args) => isStickerAllowed(...args),
+    showInfo: message => window.toastr?.info?.(message),
+    showWarning: message => window.toastr?.warning?.(message),
+    getCurrentSessionId: () => chatStore.getCurrent(),
+    bumpStickerUsage: (...args) => bumpStickerUsage(...args),
+    getActiveUserName: (...args) => getActiveUserName(...args),
+    getUserAvatar: () => avatars.user,
+    formatNowTime: (...args) => formatNowTime(...args),
+    formatFileSize: (...args) => formatFileSize(...args),
+    extractDocumentText: (...args) => extractDocumentText(...args),
+    readFileAsBase64: (...args) => readFileAsBase64(...args),
+    saveAttachmentBytes: payload => safeInvoke('save_attachment_bytes', payload),
+    addMessage: message => ui.addMessage(message),
+    appendMessage: (message, sessionId) => chatStore.appendMessage(message, sessionId),
+    addComposerAttachment: (...args) => addComposerAttachment(...args),
+    getBridge: () => window.appBridge,
+    setWorldIndicatorName: label => worldIndicator.setName(label),
+  });
+  const handleSticker = tag => appChatroomRuntime.handleSticker(tag);
+  const handleImage = (url, name = '') => appChatroomRuntime.handleImage(url, name);
+  const handleMusicFile = (dataUrl, name = '本地音频') => appChatroomRuntime.handleMusicFile(dataUrl, name);
+  const handleDocumentFile = file => appChatroomRuntime.handleDocumentFile(file);
+  const updateWorldIndicator = () => appChatroomRuntime.updateWorldIndicator();
   const stickerPicker = new StickerPicker(tag => handleSticker(tag));
   const mediaPicker = new MediaPicker({
     onUrl: url => handleImage(url),
@@ -980,7 +1055,6 @@ const initApp = async () => {
       handleImage(payload, file?.name);
     },
   });
-  const worldIndicator = new WorldInfoIndicator();
   const groupCreatePanel = new GroupCreatePanel({
     contactsStore,
     chatStore,
@@ -1226,55 +1300,24 @@ const initApp = async () => {
       isSharedMemorySession,
     });
   } catch {}
-
-  const buildMvuVarsPayload = (sessionId, { useGlobal } = {}) => {
-    const sid = String(sessionId || chatStore.getCurrent() || '').trim();
-    if (!sid) return null;
-    const localVars = chatStore.listVariables?.(sid) || {};
-    const globalVars = chatStore.listGlobalVariables?.() || {};
-    const shared = typeof useGlobal === 'boolean' ? useGlobal : isSharedVariableSession(sid);
-    const baseVars = shared ? globalVars : localVars;
-    return buildVariableContext({ baseVars, globalVars, localVars }).variableContext;
-  };
-
-  const shouldEmitMvuEvent = (name) => Boolean(scriptRuntime?.hasListener?.(name));
-
-  const emitMvuEvent = (eventName, payload) => {
-    if (!scriptRuntime) return;
-    scriptRuntime.dispatchEvent(eventName, payload, { allowMutate: false })
-      .catch(err => logger.warn('script mvu event failed', eventName, err));
-  };
-
-  const emitMvuInitialized = (sessionId, messageIndex = 0, { useGlobal } = {}) => {
-    if (!shouldEmitMvuEvent('mag_variable_initialized')) return false;
-    const vars = buildMvuVarsPayload(sessionId, { useGlobal });
-    if (!vars) return false;
-    const scope = useGlobal ? 'global' : 'chat';
-    emitMvuEvent('mag_variable_initialized', { scope, variables: vars, args: [vars, messageIndex] });
-    return true;
-  };
-
-  const emitMvuUpdateStarted = (sessionId, updates, { useGlobal } = {}) => {
-    if (!shouldEmitMvuEvent('mag_variable_update_started')) return false;
-    const scope = useGlobal ? 'global' : 'chat';
-    const payload = { scope, updates: updates || {} };
-    emitMvuEvent('mag_variable_update_started', { ...payload, args: [payload] });
-    return true;
-  };
-
-  const emitMvuUpdateEnded = (sessionId, { useGlobal } = {}) => {
-    const vars = buildMvuVarsPayload(sessionId, { useGlobal });
-    if (!vars) return false;
-    const scope = useGlobal ? 'global' : 'chat';
-    const payload = { scope, variables: vars };
-    if (shouldEmitMvuEvent('mag_variable_update_ended')) {
-      emitMvuEvent('mag_variable_update_ended', { ...payload, args: [vars] });
-    }
-    if (shouldEmitMvuEvent('mag_variable_update_ended_for_zod')) {
-      emitMvuEvent('mag_variable_update_ended_for_zod', { ...payload, args: [vars] });
-    }
-    return true;
-  };
+  const {
+    shouldEmitMvuEvent,
+    emitInitialized: emitMvuInitialized,
+    emitStarted: emitMvuUpdateStarted,
+    emitEnded: emitMvuUpdateEnded,
+  } = createMvuEventRuntime({
+    scriptRuntime,
+    logger,
+    buildVarsPayload: (sessionId, { useGlobal } = {}) => buildMvuVarsPayloadCore({
+      sessionId,
+      getCurrentSessionId: () => chatStore.getCurrent(),
+      listVariables: sid => chatStore.listVariables?.(sid) || {},
+      listGlobalVariables: () => chatStore.listGlobalVariables?.() || {},
+      isSharedVariableSession,
+      buildVariableContextFn: buildVariableContext,
+      useGlobal,
+    }),
+  });
 
   const applyMvuSchemaDefaults = (sessionId, { reason = '' } = {}) => {
     const sid = String(sessionId || chatStore.getCurrent() || '').trim();
@@ -2259,7 +2302,6 @@ const initApp = async () => {
   const groupSpeakerContactCache = new Map();
   const groupSpeakerAvatarCache = new Map();
   const groupMemberLookupCache = new Map();
-  const initialHistoryFillJobs = new Map();
   let contactDisplayLookupCache = null;
   let messageDecorationCache = new WeakMap();
   let messageDecorationCacheEpoch = 0;
@@ -2284,31 +2326,25 @@ const initApp = async () => {
     messageDecorationCacheEpoch += 1;
   };
 
-  const cancelInitialHistoryFill = (sessionId = '') => {
-    const sid = String(sessionId || '').trim();
-    if (!sid) return;
-    const job = initialHistoryFillJobs.get(sid);
-    if (job) job.cancelled = true;
-    initialHistoryFillJobs.delete(sid);
-  };
+  const sessionEnterRequestTracker = createSessionEnterRequestTracker({
+    getCurrentSessionId: () => chatStore.getCurrent(),
+  });
+  const beginChatEnterRequest = (sessionId = '') => sessionEnterRequestTracker.beginRequest(sessionId);
+  const isChatEnterRequestStale = (request) => sessionEnterRequestTracker.isStale(request);
 
-  const cancelAllInitialHistoryFillJobs = () => {
-    initialHistoryFillJobs.forEach((job) => {
-      if (job) job.cancelled = true;
-    });
-    initialHistoryFillJobs.clear();
-  };
-
-  const scheduleUiChunk = (runner) => {
-    if (typeof runner !== 'function') return;
-    try {
-      if (typeof requestAnimationFrame === 'function') {
-        requestAnimationFrame(() => setTimeout(runner, 0));
-        return;
-      }
-    } catch {}
-    setTimeout(runner, 0);
-  };
+  const sessionEnterProgressiveHistoryRuntime = createSessionEnterProgressiveHistoryRuntime({
+    getCurrentSessionId: () => chatStore.getCurrent(),
+    preloadHistory: (messages, options) => ui.preloadHistory(messages, options),
+    prependHistory: (messages) => ui.prependHistory(messages),
+    decorateMessagesForDisplay: (messages, options) => decorateMessagesForDisplay(messages, options),
+    nowPerfMs: readSessionEnterNowPerfMs,
+  });
+  const cancelInitialHistoryFill = (sessionId = '') =>
+    sessionEnterProgressiveHistoryRuntime.cancelSessionFill(sessionId);
+  const cancelAllInitialHistoryFillJobs = () => sessionEnterProgressiveHistoryRuntime.cancelAll();
+  const renderInitialHistoryProgressive = (sessionId, messages = [], options = {}) =>
+    sessionEnterProgressiveHistoryRuntime.renderHistory(sessionId, messages, options);
+  const nowPerfMs = () => readSessionEnterNowPerfMs();
 
   const fastFingerprint = (value = '') => {
     const text = String(value || '');
@@ -5204,63 +5240,30 @@ Phase G（Frame 36）：循环衔接
     });
   };
 
-  const refreshChatAndContactsNow = () => {
-    if (chatStore.scopeId !== contactsStore.scopeId) {
-      logger.info(
-        `[Persona_test] refreshChatAndContacts skip scope mismatch chat=${chatStore.scopeId || 'default'} contacts=${
-          contactsStore.scopeId || 'default'
-        }`,
-      );
-      return;
-    }
-    const socialSessions = chatStore.listSessions().filter(id => !isRpSessionId(id));
-    contactsStore.ensureFromSessions(socialSessions, {
-      defaultAvatar: FEATHER_DEFAULT,
-      includeGroups: false,
-    });
-    renderChatList();
-    renderGroupsList();
-    renderContactsUngrouped();
-    if (contactsSearch.term && String(contactsSearch.term).trim()) {
-      try {
-        applyContactsSearchFilter();
-      } catch {}
-    }
-    try {
-      updateChatContentSearchVisibility();
-    } catch {}
-  };
-
-  // Coalesce multiple refresh requests into a single paint cycle to reduce redundant re-renders.
-  let refreshChatAndContactsQueued = false;
-  let refreshChatAndContactsHandle = null;
-  const refreshChatAndContacts = ({ immediate = false } = {}) => {
-    if (immediate) {
-      refreshChatAndContactsQueued = false;
-      if (refreshChatAndContactsHandle != null) {
-        try {
-          if (typeof window !== 'undefined' && window.cancelAnimationFrame)
-            window.cancelAnimationFrame(refreshChatAndContactsHandle);
-          else clearTimeout(refreshChatAndContactsHandle);
-        } catch {}
-        refreshChatAndContactsHandle = null;
-      }
-      return refreshChatAndContactsNow();
-    }
-    if (refreshChatAndContactsQueued) return;
-    refreshChatAndContactsQueued = true;
-    const schedule = cb => {
-      try {
-        if (typeof window !== 'undefined' && window.requestAnimationFrame) return window.requestAnimationFrame(cb);
-      } catch {}
-      return setTimeout(cb, 16);
-    };
-    refreshChatAndContactsHandle = schedule(() => {
-      refreshChatAndContactsQueued = false;
-      refreshChatAndContactsHandle = null;
-      refreshChatAndContactsNow();
-    });
-  };
+  const refreshChatAndContactsNow = () => refreshChatAndContactsListNow({
+    chatScopeId: chatStore.scopeId,
+    contactsScopeId: contactsStore.scopeId,
+    logger,
+    listSessions: () => chatStore.listSessions(),
+    isRpSessionId,
+    ensureContactsFromSessions: (sessions, options) => contactsStore.ensureFromSessions(sessions, options),
+    defaultAvatar: FEATHER_DEFAULT,
+    renderChatList,
+    renderGroupsList,
+    renderContactsUngrouped,
+    contactsSearchTerm: contactsSearch.term,
+    applyContactsSearchFilter,
+    updateChatContentSearchVisibility,
+  });
+  const refreshChatAndContactsRuntime = createChatAndContactsRefreshRuntime({
+    refreshNow: refreshChatAndContactsNow,
+    requestAnimationFrameFn: typeof window !== 'undefined' ? window.requestAnimationFrame?.bind(window) : null,
+    cancelAnimationFrameFn: typeof window !== 'undefined' ? window.cancelAnimationFrame?.bind(window) : null,
+    setTimeoutFn: (fn, delay) => setTimeout(fn, delay),
+    clearTimeoutFn: (handle) => clearTimeout(handle),
+  });
+  const refreshChatAndContacts = ({ immediate = false } = {}) =>
+    refreshChatAndContactsRuntime.refresh({ immediate });
   sessionPanel.onUpdated = refreshChatAndContacts;
   window.addEventListener('contacts-updated', () => {
     clearGroupSpeakerCaches();
@@ -5799,7 +5802,6 @@ Phase G（Frame 36）：循环衔接
   const MODE_SWITCH_POS_KEY = 'phone_mode_switch_pos_v1';
   let modeSwitchPinned = false;
   let modeSwitchPos = null;
-  let modeSwitchSuppressClick = false;
   let modeSwitchDimTimer = null;
   const MODE_SWITCH_DIM_DELAY = 30_000;
   const loadModeSwitchPos = () => {
@@ -6457,7 +6459,6 @@ Phase G（Frame 36）：循环衔接
   const stickerToggleBtn = document.querySelector('.voice-btn');
   let chatSettingsReady = false;
   let pendingChatSettingsSessionId = '';
-  let pendingFloatActive = null;
   const pendingFloat = (() => {
     if (!chatRoom) return null;
     const wrap = document.createElement('div');
@@ -6469,17 +6470,6 @@ Phase G（Frame 36）：循环衔接
     `;
     const titleEl = wrap.querySelector('.pending-float-title');
     const listEl = wrap.querySelector('.pending-float-list');
-    wrap.addEventListener('click', event => {
-      const target = event?.target?.closest ? event.target.closest('[data-msg-id]') : null;
-      const msgId = target?.dataset?.msgId || '';
-      if (!msgId) return;
-      event.stopPropagation();
-      const sid = chatStore.getCurrent();
-      const pending = (chatStore.getPendingMessages(sid) || []).find(m => String(m?.id || '') === String(msgId));
-      if (!pending) return;
-      pendingFloatActive = pending;
-      if (pendingFloatMenu) toggleSheetAt(pendingFloatMenu, target, { alignRight: true, kind: 'pending-float' });
-    });
     chatRoom.appendChild(wrap);
     return { el: wrap, titleEl, listEl };
   })();
@@ -10775,21 +10765,6 @@ Phase G（Frame 36）：循环衔接
       <button data-action="send">发送</button>
       <button data-action="delete">删除</button>
     `;
-    menu.addEventListener('click', async event => {
-      event.stopPropagation();
-      const action = event?.target?.closest ? event.target.closest('button')?.dataset?.action : '';
-      if (!action || !pendingFloatActive) return;
-      const sid = chatStore.getCurrent();
-      if (action === 'send') {
-        await sendPendingFromFloat(pendingFloatActive, sid);
-      } else if (action === 'delete') {
-        chatStore.removePendingMessage(pendingFloatActive.id, sid);
-        pendingFloatActive = null;
-        updatePendingFloat(sid);
-        refreshChatAndContacts();
-      }
-      hideMenus();
-    });
     document.body.appendChild(menu);
     return menu;
   })();
@@ -10828,141 +10803,68 @@ Phase G（Frame 36）：循环衔接
       }
     } catch {}
   };
+  const appUiStateRuntime = createAppUiStateRuntime({
+    key: UI_STATE_KEY,
+    kvName: UI_STATE_KV,
+    sessionStorageLike: sessionStorage,
+    localStorageLike: localStorage,
+    clearTimerFn: timer => clearTimeout(timer),
+    setTimerFn: (fn, delay) => setTimeout(fn, delay),
+    persistDiskState: payload => safeInvoke('save_kv', payload).catch(() => {}),
+    loadDiskState: () => safeInvoke('load_kv', { name: UI_STATE_KV }),
+    uiLog,
+    getActivePage: () => activePage,
+    isChatRoomVisible: () => Boolean(chatRoom ? !chatRoom.classList.contains('hidden') : false),
+    getCurrentSessionId: () => chatStore.getCurrent(),
+    hasKnownSession: sid => chatStore.hasSession?.(sid) || contactsStore.getContact(sid),
+    activateShellStateFn: sid => activateSessionShellState({
+      sessionId: sid,
+      switchSession: nextSid => chatStore.switchSession(nextSid),
+      setActiveSession: nextSid => window.appBridge.setActiveSession(nextSid),
+      syncUserPersonaUI,
+      getContact: nextSid => contactsStore.getContact(nextSid),
+      renderSessionNameHtml,
+      setChatTitleHtml: html => {
+        if (currentChatTitle) currentChatTitle.innerHTML = html;
+      },
+      getDraft: nextSid => chatStore.getDraft(nextSid),
+      setInputText: value => ui.setInputText(value),
+      syncReplyTargetComposer,
+      setSessionLabel: nextSid => ui.setSessionLabel(nextSid),
+      restoreDraft: true,
+    }),
+    hasPage: page => Boolean(pages[page]),
+    switchPage: (...args) => switchPage(...args),
+  });
   const saveUiState = () => {
     try {
-      const state = {
-        activePage,
-        inChatRoom: chatRoom ? !chatRoom.classList.contains('hidden') : false,
-        sessionId: chatStore.getCurrent(),
-        at: Date.now(),
-      };
-      uiStateDiskTimer = saveUiStateSnapshot({
-        state,
-        key: UI_STATE_KEY,
-        kvName: UI_STATE_KV,
-        sessionStorageLike: sessionStorage,
-        localStorageLike: localStorage,
-        clearTimerFn: timer => clearTimeout(timer),
-        existingTimer: uiStateDiskTimer,
-        setTimerFn: (fn, delay) => setTimeout(fn, delay),
-        persistDiskState: payload => safeInvoke('save_kv', payload).catch(() => {}),
-        uiLog,
-        delayMs: 400,
-      });
+      uiStateDiskTimer = appUiStateRuntime.saveUiState(uiStateDiskTimer);
     } catch {}
   };
-  const pickSavedUiState = async () => {
-    return pickSavedUiStateSnapshot({
-      key: UI_STATE_KEY,
-      sessionStorageLike: sessionStorage,
-      localStorageLike: localStorage,
-      loadDiskState: () => safeInvoke('load_kv', { name: UI_STATE_KV }),
-    });
-  };
-  const applyRestoredSessionShell = (sessionId) => {
-    return restoreSessionShellState({
-      sessionId,
-      hasKnownSession: sid => chatStore.hasSession?.(sid) || contactsStore.getContact(sid),
-      activateShellStateFn: sid => activateSessionShellState({
-        sessionId: sid,
-        switchSession: nextSid => chatStore.switchSession(nextSid),
-        setActiveSession: nextSid => window.appBridge.setActiveSession(nextSid),
-        syncUserPersonaUI,
-        getContact: nextSid => contactsStore.getContact(nextSid),
-        renderSessionNameHtml,
-        setChatTitleHtml: html => {
-          if (currentChatTitle) currentChatTitle.innerHTML = html;
-        },
-        getDraft: nextSid => chatStore.getDraft(nextSid),
-        setInputText: value => ui.setInputText(value),
-        syncReplyTargetComposer,
-        setSessionLabel: nextSid => ui.setSessionLabel(nextSid),
-        restoreDraft: true,
-      }),
-    });
-  };
-  const readSavedUiStateFast = () => {
-    return readSavedUiStateFastSnapshot({
-      key: UI_STATE_KEY,
-      sessionStorageLike: sessionStorage,
-      localStorageLike: localStorage,
-    });
-  };
-  const restoreUiState = async () => {
-    try {
-      const result = await runSavedUiRestoreFlow({
-        pickSavedUiState,
-        applySavedState: savedState => applySavedUiRestoreState({
-          savedState,
-          hasPage: page => Boolean(pages[page]),
-          switchPage,
-          restoreSessionShell: applyRestoredSessionShell,
-          uiLog,
-        }),
-        uiLog,
-      });
-      return result.restored === true;
-    } catch {
-      return false;
-    }
-  };
+  const pickSavedUiState = async () => appUiStateRuntime.pickSavedUiState();
+  const applyRestoredSessionShell = (sessionId) => appUiStateRuntime.applyRestoredSessionShell(sessionId);
+  const readSavedUiStateFast = () => appUiStateRuntime.readSavedUiStateFast();
+  const restoreUiState = async () => appUiStateRuntime.restoreUiState();
   const pageOrder = { chat: 0, contacts: 1, moments: 2 };
   const pageNames = ['chat', 'contacts', 'moments'];
-  const switchPage = (name, options) => {
-    const prev = activePage;
-    if (prev === name) return;
-    const animate = (!options || options.animate !== false) && !document.body.dataset.reducedMotion;
-    const dir = (pageOrder[name] ?? 0) > (pageOrder[prev] ?? 0) ? 'forward' : 'backward';
-    activePage = name;
-    navBtns.forEach(t => t.classList.toggle('active', t.dataset.page === name));
-
-    const oldEl = pages[prev];
-    const newEl = pages[name];
-
-    Object.values(pages).forEach(p => {
-      if (p) { p.classList.remove('page-exiting'); delete p.dataset.pageDir; }
-    });
-
-    if (oldEl && newEl && animate) {
-      oldEl.classList.remove('active');
-      oldEl.classList.add('page-exiting');
-      oldEl.dataset.pageDir = dir;
-      newEl.classList.add('active');
-      newEl.dataset.pageDir = dir;
-
-      const cleanupOld = () => {
-        oldEl.classList.remove('page-exiting');
-        delete oldEl.dataset.pageDir;
-      };
-      const cleanupNew = () => { delete newEl.dataset.pageDir; };
-      oldEl.addEventListener('animationend', cleanupOld, { once: true });
-      newEl.addEventListener('animationend', cleanupNew, { once: true });
-      setTimeout(cleanupOld, 350);
-      setTimeout(cleanupNew, 350);
-    } else {
-      Object.entries(pages).forEach(([k, el]) => {
-        if (el) el.classList.toggle('active', k === name);
-      });
-    }
-
-    if (name !== 'chat') {
-      chatRoom?.classList.add('hidden');
-      chatList?.classList.remove('hidden');
-    }
-    if (name === 'moments') {
-      try {
-        momentsPanel.render();
-      } catch {}
-    }
-    if (name === 'chat') {
-      try {
-        updateChatContentSearchVisibility();
-      } catch {}
-    }
-    if (uiStateArmed) saveUiState();
-    uiLog('switchPage', { activePage });
-    scheduleModeSwitchSync();
-  };
+  const switchPage = createPageSwitchRuntime({
+    getActivePage: () => activePage,
+    setActivePage: value => {
+      activePage = value;
+    },
+    pageOrder,
+    navButtons: navBtns,
+    pages,
+    getReducedMotion: () => Boolean(document.body.dataset.reducedMotion),
+    chatRoomEl: chatRoom,
+    chatListEl: chatList,
+    renderMoments: () => momentsPanel.render(),
+    updateChatContentSearchVisibility,
+    isUiStateArmed: () => uiStateArmed,
+    saveUiState,
+    uiLog,
+    scheduleModeSwitchSync,
+  });
   patchDebugUiRegistry((registry) => {
     registry.actions.switchPage = switchPage;
   });
@@ -11015,73 +10917,37 @@ Phase G（Frame 36）：循环衔接
       return { w: 0, h: 0 };
     }
   };
-  const normalizeModeSwitchPos = (x, y) => {
-    const { w, h } = getViewportSize();
-    if (!w || !h) return null;
-    return { xRatio: x / w, yRatio: y / h };
-  };
-  const resolvePinnedModeSwitchPos = () => {
-    if (!modeSwitchPos) return null;
-    const { w, h } = getViewportSize();
-    if (!w || !h) return null;
-    const base = 8 + modeSwitchSize / 2;
-    const x = clamp(modeSwitchPos.xRatio * w, base + _safeInsets.left, w - base - _safeInsets.right);
-    const y = clamp(modeSwitchPos.yRatio * h, base + _safeInsets.top, h - base - _safeInsets.bottom);
-    return { x, y };
-  };
-
-  const resolveModeSwitchAnchor = () => {
-    if (document?.body?.classList.contains('chat-room-active') || uiMode === 'rp') {
-      return { rect: chatInputContainer?.getBoundingClientRect?.(), mode: 'input' };
-    }
-    const bottomNav = document.querySelector('.bottom-nav');
-    const contactsBtn = bottomNav?.querySelector?.('.nav-btn[data-page="contacts"]');
-    return {
-      rect: (contactsBtn || bottomNav)?.getBoundingClientRect?.(),
-      mode: 'dock',
-      dockRect: bottomNav?.getBoundingClientRect?.(),
-    };
-  };
-
-  syncModeSwitchPosition = () => {
-    if (!modeSwitch) return;
-    refreshModeSwitchMetrics();
-    if (modeSwitchPinned && modeSwitchPos) {
-      const pinned = resolvePinnedModeSwitchPos();
-      if (pinned) {
-        modeSwitch.style.left = `${Math.round(pinned.x)}px`;
-        modeSwitch.style.top = `${Math.round(pinned.y)}px`;
-        modeSwitch.style.pointerEvents = 'auto';
-        modeSwitch.classList.remove('is-hidden');
-        return;
-      }
-      modeSwitchPinned = false;
-    }
-    const { rect, mode, dockRect } = resolveModeSwitchAnchor();
-    if (!rect || !Number.isFinite(rect.width) || !Number.isFinite(rect.height)) {
-      modeSwitch.classList.add('is-hidden');
-      modeSwitch.style.pointerEvents = 'none';
-      return;
-    }
-    const x = rect.left + rect.width / 2;
-    let y = rect.top - 8 - modeSwitchSize / 2;
-    if (mode === 'dock') {
-      const baseTop = dockRect?.top ?? rect.top;
-      y = baseTop - modeSwitchSlot - modeSwitchSize / 2;
-    }
-    modeSwitch.style.left = `${Math.round(x)}px`;
-    modeSwitch.style.top = `${Math.round(y)}px`;
-    modeSwitch.style.pointerEvents = 'auto';
-    modeSwitch.classList.remove('is-hidden');
-  };
-
-  scheduleModeSwitchSync = () => {
-    if (typeof requestAnimationFrame === 'function') {
-      requestAnimationFrame(syncModeSwitchPosition);
-    } else {
-      setTimeout(syncModeSwitchPosition, 0);
-    }
-  };
+  const modeSwitchPositionRuntime = createModeSwitchPositionRuntime({
+    modeSwitchEl: modeSwitch,
+    readCssVarPx,
+    initialSize: modeSwitchSize,
+    initialSlot: modeSwitchSlot,
+    setMetrics: ({ size, slot }) => {
+      modeSwitchSize = size;
+      modeSwitchSlot = slot;
+    },
+    getSafeInsets: () => _safeInsets,
+    getModeSwitchPos: () => modeSwitchPos,
+    isModeSwitchPinned: () => modeSwitchPinned,
+    setModeSwitchPinned: value => {
+      modeSwitchPinned = Boolean(value);
+    },
+    isChatRoomActive: () => document?.body?.classList.contains('chat-room-active'),
+    getUiMode: () => uiMode,
+    getChatInputRect: () => chatInputContainer?.getBoundingClientRect?.(),
+    getBottomNavRect: () => document.querySelector('.bottom-nav')?.getBoundingClientRect?.(),
+    getContactsButtonRect: () => {
+      const bottomNav = document.querySelector('.bottom-nav');
+      const contactsBtn = bottomNav?.querySelector?.('.nav-btn[data-page="contacts"]');
+      return (contactsBtn || bottomNav)?.getBoundingClientRect?.();
+    },
+    getViewportSize,
+    requestAnimationFrameFn: typeof requestAnimationFrame === 'function' ? requestAnimationFrame : null,
+    setTimeoutFn: typeof setTimeout === 'function' ? setTimeout : null,
+  });
+  const normalizeModeSwitchPos = modeSwitchPositionRuntime.normalizeModeSwitchPos;
+  syncModeSwitchPosition = modeSwitchPositionRuntime.syncPosition;
+  scheduleModeSwitchSync = modeSwitchPositionRuntime.scheduleSync;
 
   if (modeSwitch) {
     const stored = loadModeSwitchPos();
@@ -11096,53 +10962,33 @@ Phase G（Frame 36）：循环衔接
   if (typeof window !== 'undefined') {
     window.addEventListener('resize', scheduleModeSwitchSync);
   }
-  let navLastTap = { page: '', time: 0 };
-  navBtns.forEach(btn => btn.addEventListener('click', () => {
-    const page = btn.dataset.page;
-    const now = Date.now();
-    if (page === navLastTap.page && page === activePage && now - navLastTap.time < 350) {
+  bindPageNavButtons({
+    navButtons: navBtns,
+    getActivePage: () => activePage,
+    switchPage,
+    getScrollTarget: (page) => {
       const scrollTargets = {
         chat: document.getElementById('chat-list'),
         contacts: document.querySelector('.contacts-list'),
         moments: document.getElementById('moments-list'),
       };
-      scrollTargets[page]?.scrollTo({ top: 0, behavior: 'smooth' });
-    }
-    navLastTap = { page, time: now };
-    switchPage(page);
-  }));
+      return scrollTargets[page] || null;
+    },
+  });
 
   // 页面滑动切换手势
   {
     const appEl = document.getElementById('app');
-    let swipeStartX = 0, swipeStartY = 0, swipeLocked = false;
-    const SWIPE_THRESHOLD = 60;
-    const isInChatRoom = () => chatRoom && !chatRoom.classList.contains('hidden');
-    appEl?.addEventListener('touchstart', e => {
-      if (isInChatRoom() || uiMode === 'rp') return;
-      if (e.target?.closest?.('#mode-switch')) { swipeLocked = true; return; }
-      swipeStartX = e.touches[0].clientX;
-      swipeStartY = e.touches[0].clientY;
-      swipeLocked = false;
-    }, { passive: true });
-    appEl?.addEventListener('touchend', e => {
-      if (isInChatRoom() || uiMode === 'rp' || swipeLocked) return;
-      const dx = e.changedTouches[0].clientX - swipeStartX;
-      const dy = e.changedTouches[0].clientY - swipeStartY;
-      if (Math.abs(dx) < SWIPE_THRESHOLD || Math.abs(dy) > Math.abs(dx)) return;
-      const idx = pageOrder[activePage] ?? 0;
-      if (dx < 0 && idx < pageNames.length - 1) {
-        switchPage(pageNames[idx + 1]);
-      } else if (dx > 0 && idx > 0) {
-        switchPage(pageNames[idx - 1]);
-      }
-    }, { passive: true });
-    appEl?.addEventListener('touchmove', e => {
-      if (swipeLocked) return;
-      const dy = Math.abs(e.touches[0].clientY - swipeStartY);
-      const dx = Math.abs(e.touches[0].clientX - swipeStartX);
-      if (dy > 10 && dy > dx) swipeLocked = true;
-    }, { passive: true });
+    bindPageSwipeNavigation({
+      appEl,
+      isChatRoomVisible: () => chatRoom && !chatRoom.classList.contains('hidden'),
+      getUiMode: () => uiMode,
+      getActivePage: () => activePage,
+      pageOrder,
+      pageNames,
+      switchPage,
+      isModeSwitchTarget: target => Boolean(target?.closest?.('#mode-switch')),
+    });
   }
 
   // 搜索框初始化（联系人页 / 聊天内容搜索）
@@ -11757,56 +11603,21 @@ Phase G（Frame 36）：循环衔接
     registry.actions.hideWorldDebugLocatorModal = () => worldDebugLocatorModal.hide();
   });
 
-  const showPromptPreview = () => {
-    try {
-      const sid = chatStore.getCurrent();
-      const contact = contactsStore.getContact(sid);
-      const name = contact?.name || sid;
-      const req = window.appBridge?.lastRequest;
-      const {
-        meta,
-        head,
-        body,
-        messages: msgs,
-      } = buildPromptPreviewSnapshot({
-        request: req,
-        contactName: name,
-      });
-      if (!msgs || !msgs.length) {
-        window.toastr?.warning?.('暂无本次 Prompt 记录（请先发送一次）');
-        return;
-      }
-      const worldDebug = req?.worldDebug && typeof req.worldDebug === 'object' ? req.worldDebug : null;
-      const worldDebugText = formatPromptWorldDebug(worldDebug);
-      const locateCandidates = buildWorldDebugLocatorCandidates(worldDebug);
-      promptPreviewModal.show(
-        [head, worldDebugText, body].filter(Boolean).join('\n\n').trim(),
-        meta,
-        {
-          onLocate: locateCandidates.length
-            ? async () => {
-                worldDebugLocatorModal.show(locateCandidates, {
-                  meta: `${meta} · ${locateCandidates.length} 条可定位记录`,
-                  onChoose: async (item) => {
-                    promptPreviewModal.hide();
-                    const worldId = String(item?.worldId || '').trim();
-                    if (!worldId) return;
-                    await worldPanel.openEditor(worldId, {
-                      entryId: String(item?.entryId || '').trim(),
-                      blockId: String(item?.blockId || '').trim(),
-                      nodeId: String(item?.focusNodeId || '').trim(),
-                    });
-                  },
-                });
-              }
-            : null,
-        },
-      );
-    } catch (err) {
-      logger.warn('prompt preview failed', err);
-      window.toastr?.error?.('打开本次 Prompt 失败');
-    }
-  };
+  const showPromptPreview = createPromptPreviewRuntime({
+    getCurrentSessionId: () => chatStore.getCurrent(),
+    getContactBySessionId: sid => contactsStore.getContact(sid),
+    getLastRequest: () => window.appBridge?.lastRequest,
+    buildPromptPreview: buildPromptPreviewSnapshot,
+    formatWorldDebugText: formatPromptWorldDebug,
+    buildWorldDebugCandidates: buildWorldDebugLocatorCandidates,
+    showPromptPreviewModal: (...args) => promptPreviewModal.show(...args),
+    hidePromptPreviewModal: () => promptPreviewModal.hide(),
+    showWorldDebugLocatorModal: (items, options) => worldDebugLocatorModal.show(items, options),
+    openWorldEditor: (worldId, options) => worldPanel.openEditor(worldId, options),
+    notifyWarning: (message) => window.toastr?.warning?.(message),
+    notifyError: (message) => window.toastr?.error?.(message),
+    logger,
+  });
   registerUiUtilityBridgeContract(window.appBridge, {
     showPromptPreview,
   });
@@ -11870,6 +11681,7 @@ Phase G（Frame 36）：循环衔接
         personaSwitcherTab = normalizePersonaSwitcherTab(tabBtn.dataset.tab);
         persistPersonaSwitcherTab();
         renderPersonaSwitcher();
+        const lastPersonaAnchor = getLastSheetAnchor('persona');
         if (lastPersonaAnchor) positionSheet(menu, lastPersonaAnchor, 0, 4, false);
         return;
       }
@@ -11949,69 +11761,15 @@ Phase G（Frame 36）：循环衔接
   patchDebugUiRegistry((registry) => {
     registry.actions.hideMenus = hideMenus;
   });
-
-  const positionSheet = (menuEl, anchorEl, offsetX = 0, offsetY = 0, alignRight = false) => {
-    if (!menuEl || !anchorEl) return;
-    const rect = anchorEl.getBoundingClientRect();
-    const viewportPad = 12;
-    const wasHidden = menuEl.classList.contains('hidden');
-    const prevVisibility = menuEl.style.visibility;
-    if (wasHidden) {
-      menuEl.classList.remove('hidden');
-      menuEl.style.visibility = 'hidden';
-    }
-    const menuWidth = menuEl.offsetWidth || 180;
-    const menuHeight = menuEl.offsetHeight || 120;
-    let top = rect.bottom + 1 + offsetY;
-    const maxTop = Math.max(viewportPad, window.innerHeight - menuHeight - viewportPad);
-    if (top > maxTop) {
-      top = rect.top - menuHeight - 8 + offsetY;
-    }
-    top = Math.min(Math.max(viewportPad, top), maxTop);
-    let left = alignRight ? (rect.right - menuWidth + offsetX) : (rect.left + offsetX);
-    const maxLeft = Math.max(viewportPad, window.innerWidth - menuWidth - viewportPad);
-    left = Math.min(Math.max(viewportPad, left), maxLeft);
-    menuEl.style.top = `${top}px`;
-    menuEl.style.left = `${left}px`;
-    menuEl.style.right = 'auto';
-    if (wasHidden) {
-      menuEl.classList.add('hidden');
-      menuEl.style.visibility = prevVisibility;
-    }
-  };
-
-  let lastSettingsAnchor = null;
-  let lastPersonaAnchor = null;
-  let lastQuickAnchor = null;
-  let lastMomentsAnchor = null;
-
-  const toggleSheetAt = (menuEl, anchorEl, { alignRight = false, kind = 'generic' } = {}) => {
-    if (!menuEl || !anchorEl) return;
-    const isVisible = !menuEl.classList.contains('hidden');
-    const lastAnchor =
-      kind === 'persona'
-        ? lastPersonaAnchor
-        : kind === 'settings'
-        ? lastSettingsAnchor
-        : kind === 'quick'
-        ? lastQuickAnchor
-        : kind === 'moments'
-        ? lastMomentsAnchor
-        : null;
-    const sameAnchor = lastAnchor === anchorEl;
-    hideMenus();
-    positionSheet(menuEl, anchorEl, 0, 4, alignRight);
-    // 若是同一个锚点且当前已显示，则视为 toggle 关闭；否则打开并重定位
-    if (!isVisible || !sameAnchor) {
-      menuEl.classList.remove('hidden');
-    } else {
-      menuEl.classList.add('hidden');
-    }
-    if (kind === 'persona') lastPersonaAnchor = anchorEl;
-    if (kind === 'settings') lastSettingsAnchor = anchorEl;
-    if (kind === 'quick') lastQuickAnchor = anchorEl;
-    if (kind === 'moments') lastMomentsAnchor = anchorEl;
-  };
+  const {
+    positionSheet,
+    toggleSheetAt,
+    getLastAnchor: getLastSheetAnchor,
+  } = createSheetMenuRuntime({
+    hideMenus,
+    getViewportWidth: () => window.innerWidth,
+    getViewportHeight: () => window.innerHeight,
+  });
 
   const renderPersonaSwitcher = () => {
     if (!personaSwitcherMenu) return;
@@ -12138,203 +11896,120 @@ Phase G（Frame 36）：循环衔接
     `;
   };
 
-  avatarBtns.forEach(btn => {
-    btn.addEventListener('click', e => {
-      e.stopPropagation();
-      renderPersonaSwitcher();
-      toggleSheetAt(personaSwitcherMenu, btn, { kind: 'persona' });
-    });
+  bindAppSheetToggleButtons({
+    avatarBtns,
+    settingsBtns,
+    plusBtns,
+    momentsSettingsBtn,
+    renderPersonaSwitcher,
+    toggleSheetAt,
+    personaSwitcherMenu,
+    settingsMenu,
+    quickMenu,
+    momentsMenu,
   });
-
-  settingsBtns.forEach(btn => {
-    btn.addEventListener('click', e => {
-      e.stopPropagation();
-      toggleSheetAt(settingsMenu, btn, { alignRight: true, kind: 'settings' });
-    });
-  });
-
-  plusBtns.forEach(btn => {
-    btn.addEventListener('click', e => {
-      e.stopPropagation();
-      toggleSheetAt(quickMenu, btn, { alignRight: true, kind: 'quick' });
-    });
-  });
-  if (momentsSettingsBtn) {
-    momentsSettingsBtn.addEventListener('click', e => {
-      e.stopPropagation();
-      toggleSheetAt(momentsMenu, momentsSettingsBtn, { alignRight: true, kind: 'moments' });
-    });
-  }
 
   // Mount moments list renderer
   try {
     const momentsListEl = document.getElementById('moments-list');
     if (momentsListEl) momentsPanel.mount(momentsListEl);
   } catch {}
-  chatMenuBtn?.addEventListener('click', e => {
-    e.stopPropagation();
-    const menu = uiMode === 'rp' ? rpChatroomMenu : chatroomMenu;
-    if (!menu) return;
-    positionSheet(menu, chatMenuBtn, 0, 4, true);
-    menu.classList.toggle('hidden');
-    settingsMenu?.classList.add('hidden');
-    quickMenu?.classList.add('hidden');
+  bindAppChatMenuToggle({
+    chatMenuBtn,
+    getActiveMenu: () => (uiMode === 'rp' ? rpChatroomMenu : chatroomMenu),
+    positionSheet,
+    settingsMenu,
+    quickMenu,
   });
   document.addEventListener('click', hideMenus);
 
-  settingsMenu?.querySelectorAll('button').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const action = btn.dataset.action;
-      if (action === 'settings') generalSettingsPanel.show();
-      if (action === 'preset') presetPanel.show();
-      if (action === 'world-global') worldPanel.show({ scope: 'global' });
-      if (action === 'extensions') extensionsPanel.show();
-      if (action === 'config') configPanel.show();
-      if (action === 'session-config') sessionConfigPanel.show();
-      hideMenus();
-    });
+  bindSettingsMenuActions({
+    settingsMenu,
+    openSettings: () => generalSettingsPanel.show(),
+    openPreset: () => presetPanel.show(),
+    openWorldGlobal: () => worldPanel.show({ scope: 'global' }),
+    openExtensions: () => extensionsPanel.show(),
+    openConfig: () => configPanel.show(),
+    openSessionConfig: () => sessionConfigPanel.show(),
+    hideMenus,
   });
-  const bindChatroomMenuActions = (menuEl) => {
-    menuEl?.querySelectorAll('button').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const action = btn.dataset.action;
-        if (action === 'world') worldPanel.show();
-        if (action === 'regex') regexSessionPanel.show();
-        if (action === 'vars') {
-          blurComposerInput();
-          variablePanel.show();
-        }
-        if (action === 'chat-settings') openChatSettings();
-        if (action === 'prompt-preview') {
-          showPromptPreview();
-        }
-        if (action === 'raw-reply') {
-          const sid = chatStore.getCurrent();
-          const contact = contactsStore.getContact(sid);
-          const name = contact?.name || sid;
-          const raw = chatStore.getLastRawResponse(sid);
-          const at = chatStore.getLastRawAt(sid);
-          if (!raw) {
-            window.toastr?.warning?.('暂无原始回复记录（请先让 AI 回复一次）');
-          } else {
-            const meta = `${name}${at ? ` · ${new Date(at).toLocaleString()}` : ''}`;
-            rawReplyModal.show(raw, meta);
-          }
-        }
-        hideMenus();
-      });
-    });
-  };
-  bindChatroomMenuActions(chatroomMenu);
-  bindChatroomMenuActions(rpChatroomMenu);
+  const openRawReplyFromMenu = () => openSessionRawReplyFlow({
+    sessionId: chatStore.getCurrent(),
+    getContact: (sessionId) => contactsStore.getContact(sessionId),
+    getLastRawResponse: (sessionId) => chatStore.getLastRawResponse(sessionId),
+    getLastRawAt: (sessionId) => chatStore.getLastRawAt(sessionId),
+    showRawReplyModal: (text, meta) => rawReplyModal.show(text, meta),
+    notifyWarning: (message) => window.toastr?.warning?.(message),
+  });
+  bindChatroomMenuActions({
+    menuEl: chatroomMenu,
+    openWorld: () => worldPanel.show(),
+    openRegex: () => regexSessionPanel.show(),
+    openVars: () => {
+      blurComposerInput();
+      variablePanel.show();
+    },
+    openChatSettings,
+    openPromptPreview: () => showPromptPreview(),
+    openRawReply: openRawReplyFromMenu,
+    hideMenus,
+  });
+  bindChatroomMenuActions({
+    menuEl: rpChatroomMenu,
+    openWorld: () => worldPanel.show(),
+    openRegex: () => regexSessionPanel.show(),
+    openVars: () => {
+      blurComposerInput();
+      variablePanel.show();
+    },
+    openChatSettings,
+    openPromptPreview: () => showPromptPreview(),
+    openRawReply: openRawReplyFromMenu,
+    hideMenus,
+  });
 
   // Chat title menu (click current title)
   const chatTitleMenu = document.getElementById('chat-title-menu');
   const currentChatTitle = document.getElementById('current-chat-title');
-
-  const ensureGroupDropdown = () => {
-    let el = document.getElementById('group-management-dropdown');
-    if (el) return el;
-    el = document.createElement('div');
-    el.id = 'group-management-dropdown';
-    el.className = 'group-management-dropdown';
-    el.style.cssText = `
-            display:none;
-            position: fixed;
-            background: white;
-            border: 1px solid rgba(0,0,0,0.10);
-            border-radius: 12px;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.18);
-            z-index: 15000;
-            max-height: min(320px, calc(100vh - 140px));
-            overflow: auto;
-            -webkit-overflow-scrolling: touch;
-            min-width: 240px;
-        `;
-    el.addEventListener('click', e => e.stopPropagation());
-    document.body.appendChild(el);
-    return el;
-  };
-
-  const renderGroupDropdown = (groupId, anchorEl) => {
-    const el = ensureGroupDropdown();
-    const g = contactsStore.getContact(groupId);
-    const members = Array.isArray(g?.members) ? g.members : [];
-    const title = `${g?.name || '群聊'} · ${members.length}人`;
-    el.innerHTML = `
-            <div class="group-dd-header" style="display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 12px; border-bottom:1px solid rgba(0,0,0,0.06); background:rgba(248,250,252,0.92); border-radius:12px 12px 0 0;">
-                <div class="group-dd-title" style="font-weight:900; color:var(--app-text-primary); font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${title}</div>
-                <div style="display:flex; align-items:center; gap:6px; flex-shrink:0;">
-                    <button id="group-dd-session-config" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:6px 10px; cursor:pointer; font-size:14px;">📋</button>
-                    <button id="group-dd-settings" class="group-dd-settings" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:6px 10px; cursor:pointer;">⚙</button>
-                </div>
-            </div>
-            <div class="group-dd-list" style="padding:8px 0;">
-                ${
-                  members
-                    .map(mid => {
-                      const c = contactsStore.getContact(mid);
-                      const name = c?.name || mid;
-                      const avatar = resolveAvatarForContact(mid, c);
-                      return `
-                        <button class="group-dd-member" data-mid="${mid}" style="width:100%; display:flex; align-items:center; gap:10px; padding:10px 12px; border:none; background:transparent; cursor:pointer; text-align:left;">
-                            <img src="${avatar}" alt="" style="width:32px; height:32px; border-radius:50%; object-fit:cover;">
-                            <div class="group-dd-member-meta" style="flex:1; min-width:0;">
-                                <div class="group-dd-member-name" style="font-weight:700; color:var(--app-text-primary); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${name}</div>
-                                <div class="group-dd-member-sub" style="color:var(--app-text-muted); font-size:12px;">点击进入私聊</div>
-                            </div>
-                        </button>
-                    `;
-                    })
-                    .join('') || `<div class="group-dd-empty" style="color:var(--app-text-muted); font-size:13px; padding:10px 12px;">暂无成员</div>`
-                }
-            </div>
-        `;
-
-    positionSheet(el, anchorEl, 0, 6, false);
-    el.style.display = 'block';
-
-    el.querySelector('#group-dd-session-config')?.addEventListener('click', () => {
-      el.style.display = 'none';
-      sessionConfigPanel.show({ sessionId: chatStore.getCurrent() });
-    });
-    el.querySelector('#group-dd-settings')?.addEventListener('click', () => {
-      el.style.display = 'none';
-      groupSettingsPanel.show(groupId);
-    });
-    el.querySelectorAll('.group-dd-member').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const mid = btn.dataset.mid;
-        if (!mid) return;
-        const c = contactsStore.getContact(mid);
-        el.style.display = 'none';
-        switchPage('chat', { animate: false });
-        enterChatRoom(mid, c?.name || mid, 'chat');
-      });
-    });
-  };
-
-  currentChatTitle?.addEventListener('click', e => {
-    e.stopPropagation();
-    const sid = chatStore.getCurrent();
-    const c = contactsStore.getContact(sid);
-    const isGroup = Boolean(c?.isGroup) || String(sid || '').startsWith('group:');
-    if (isGroup) {
-      const el = document.getElementById('group-management-dropdown');
-      const showing = el && el.style.display !== 'none';
-      hideMenus();
-      if (!showing) renderGroupDropdown(sid, currentChatTitle);
-      return;
-    }
-    toggleSheetAt(chatTitleMenu, currentChatTitle, { kind: 'title' });
+  const renderGroupDropdown = (groupId, anchorEl) => renderGroupManagementDropdown({
+    groupId,
+    anchorEl,
+    getGroupContact: (id) => contactsStore.getContact(id),
+    resolveAvatar: (id, contact) => resolveAvatarForContact(id, contact),
+    positionSheet,
+    openSessionConfig: (sessionId) => sessionConfigPanel.show({ sessionId }),
+    openGroupSettings: (targetGroupId) => groupSettingsPanel.show(targetGroupId),
+    openMemberChat: async (memberId, contact) => {
+      switchPage('chat', { animate: false });
+      await enterChatRoom(memberId, contact?.name || memberId, 'chat');
+    },
   });
-  chatTitleMenu?.querySelectorAll('button').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const action = btn.dataset.action;
-      if (action === 'contact-settings') contactSettingsPanel.show();
-      if (action === 'session-config') sessionConfigPanel.show({ sessionId: chatStore.getCurrent() });
-      hideMenus();
-    });
+
+  bindChatTitleMenuActions({
+    currentChatTitle,
+    chatTitleMenu,
+    getCurrentSessionMeta: () => {
+      const sessionId = chatStore.getCurrent();
+      const contact = contactsStore.getContact(sessionId);
+      return {
+        sessionId,
+        contact,
+        isGroup: Boolean(contact?.isGroup) || String(sessionId || '').startsWith('group:'),
+      };
+    },
+    hideMenus,
+    renderGroupDropdown,
+    toggleTitleMenu: () => toggleSheetAt(chatTitleMenu, currentChatTitle, { kind: 'title' }),
+    openContactSettings: () => contactSettingsPanel.show(),
+    openSessionConfig: () => sessionConfigPanel.show({ sessionId: chatStore.getCurrent() }),
+  });
+
+  bindQuickMenuActions({
+    quickMenu,
+    openAddFriend: () => sessionPanel.show(),
+    openCreateGroup: () => groupCreatePanel.show(),
+    openNewGroup: () => groupPanel.show(),
+    hideMenus,
   });
 
   /* ---------------- 聊天列表 <-> 聊天室切换 ---------------- */
@@ -12342,218 +12017,51 @@ Phase G（Frame 36）：循环衔接
   let chatOriginPage = 'chat';
   const chatRenderState = new Map(); // sessionId -> { start }
   const isChatRoomVisible = () => Boolean(chatRoom) && !chatRoom.classList.contains('hidden');
+  const activeSessionRuntime = createActiveSessionRuntime({
+    isChatRoomVisible,
+    getCurrentSessionId: () => chatStore.getCurrent(),
+    markRead: (sessionId, messageId) => chatStore.markRead(sessionId, messageId),
+  });
+  const isSessionActive = (sessionId) => activeSessionRuntime.isSessionActive(sessionId);
+  const autoMarkReadIfActive = (sessionId, messageId = '') =>
+    activeSessionRuntime.autoMarkReadIfActive(sessionId, messageId);
+  const pendingFloatRuntime = createPendingFloatRuntime({
+    pendingFloat,
+    pendingFloatMenu,
+    documentRef: document,
+    getCurrentSessionId: () => chatStore.getCurrent(),
+    getPendingMessages: (sessionId) => chatStore.getPendingMessages(sessionId),
+    getMessages: (sessionId) => chatStore.getMessages(sessionId),
+    addPendingMessage: (message, sessionId) => chatStore.addPendingMessage(message, sessionId),
+    deleteMessage: (messageId, sessionId) => chatStore.deleteMessage(messageId, sessionId),
+    removeMessageDom: (messageId) => ui.removeMessage(messageId),
+    refreshChatAndContacts: () => refreshChatAndContacts(),
+    updateMessage: (messageId, patch, sessionId) => chatStore.updateMessage(messageId, patch, sessionId),
+    updateMessageDom: (messageId, message) => ui.updateMessage(messageId, message),
+    appendMessage: (message, sessionId) => chatStore.appendMessage(message, sessionId),
+    addMessageDom: (message) => ui.addMessage(message),
+    removePendingMessage: (messageId, sessionId) => chatStore.removePendingMessage(messageId, sessionId),
+    isSessionActive,
+    isChatRoomVisible,
+    toggleSheetAt: (...args) => toggleSheetAt(...args),
+    hideMenus: () => hideMenus(),
+    notifyMissingContent: (message) => window.toastr?.warning?.(message),
+  });
+  pendingFloatRuntime.bindPendingFloatSelection();
+  pendingFloatRuntime.bindPendingFloatMenu();
   const updatePendingFloat = (sessionId = chatStore.getCurrent()) => {
-    if (!pendingFloat?.el) return;
-    if (!isChatRoomVisible()) {
-      pendingFloat.el.classList.remove('is-active');
-      return;
-    }
-    const sid = String(sessionId || '').trim();
-    if (!sid) {
-      pendingFloat.el.classList.remove('is-active');
-      return;
-    }
-    const pending = chatStore.getPendingMessages(sid) || [];
-    if (!pending.length) {
-      pendingFloatActive = null;
-      pendingFloat.el.classList.remove('is-active');
-      return;
-    }
-    const maxItems = 3;
-    pendingFloat.titleEl.textContent = `待发送 ${pending.length} 条`;
-    pendingFloat.listEl.innerHTML = '';
-    pending.slice(-maxItems).forEach(m => {
-      const item = document.createElement('button');
-      item.type = 'button';
-      item.className = 'pending-float-item';
-      item.dataset.msgId = String(m?.id || '');
-      const raw = String(m?.content ?? '')
-        .replace(/\s+/g, ' ')
-        .trim();
-      item.textContent = raw.length > 40 ? `${raw.slice(0, 40)}…` : raw || '(空)';
-      pendingFloat.listEl.appendChild(item);
-    });
-    if (pending.length > maxItems) {
-      const more = document.createElement('div');
-      more.className = 'pending-float-more';
-      more.textContent = `还有 ${pending.length - maxItems} 条`;
-      pendingFloat.listEl.appendChild(more);
-    }
-    pendingFloat.el.classList.add('is-active');
+    return pendingFloatRuntime.updatePendingFloat(sessionId);
   };
   const movePendingFromHistoryToQueue = (sessionId = chatStore.getCurrent()) => {
-    const sid = String(sessionId || '').trim();
-    if (!sid) return [];
-    const messages = chatStore.getMessages(sid) || [];
-    const pending = messages.filter(m => m?.status === 'pending');
-    if (!pending.length) return [];
-    const existing = new Set((chatStore.getPendingMessages(sid) || []).map(m => String(m?.id || '')));
-    pending.forEach(m => {
-      const id = String(m?.id || '').trim();
-      if (!id) return;
-      if (!existing.has(id)) {
-        chatStore.addPendingMessage(m, sid);
-        existing.add(id);
-      }
-      chatStore.deleteMessage(id, sid);
-      ui.removeMessage(id);
-    });
-    refreshChatAndContacts();
-    return pending;
+    return pendingFloatRuntime.movePendingFromHistoryToQueue(sessionId);
   };
   const finalizePendingMessages = (sessionId, sentMessages = []) => {
-    const sid = String(sessionId || '').trim();
-    if (!sid) return;
-    const ids = new Set(sentMessages.map(m => String(m?.id || '')).filter(Boolean));
-    if (!ids.size) return;
-    const history = chatStore.getMessages(sid) || [];
-    history.forEach(m => {
-      const mid = String(m?.id || '');
-      if (!ids.has(mid)) return;
-      const updated = chatStore.updateMessage(m.id, { status: 'sent' }, sid);
-      ui.updateMessage(m.id, updated || { ...m, status: 'sent' });
-    });
-    const pendingQueue = chatStore.getPendingMessages(sid) || [];
-    pendingQueue.forEach(m => {
-      const mid = String(m?.id || '');
-      if (!ids.has(mid)) return;
-      chatStore.removePendingMessage(m.id, sid);
-    });
+    return pendingFloatRuntime.finalizePendingMessages(sessionId, sentMessages);
   };
   const sendPendingFromFloat = async (pendingMsg, sessionId = chatStore.getCurrent()) => {
-    const sid = String(sessionId || '').trim();
-    if (!sid || !pendingMsg) return false;
-    const content = String(pendingMsg?.content ?? '').trim();
-    if (!content) {
-      window.toastr?.warning?.('未找到缓存内容');
-      return false;
-    }
-    const msgId = String(pendingMsg?.id || '').trim();
-    if (!msgId) return false;
-    const history = chatStore.getMessages(sid) || [];
-    const existing = history.find(m => String(m?.id || '') === msgId);
-    if (existing) {
-      const updated = chatStore.updateMessage(existing.id, { status: 'pending' }, sid);
-      if (isChatRoomVisible() && String(chatStore.getCurrent() || '') === sid) {
-        ui.updateMessage(existing.id, updated || { ...existing, status: 'pending' });
-      }
-    } else {
-      const saved = chatStore.appendMessage({ ...pendingMsg, status: 'pending' }, sid);
-      if (isChatRoomVisible() && String(chatStore.getCurrent() || '') === sid) {
-        ui.addMessage(saved);
-      }
-    }
-    chatStore.removePendingMessage(msgId, sid);
-    pendingFloatActive = null;
-    updatePendingFloat(sid);
-    refreshChatAndContacts();
-    return true;
-  };
-  const autoMarkReadIfActive = (sessionId, messageId = '') => {
-    try {
-      const sid = String(sessionId || '').trim();
-      if (!sid) return;
-      if (!isChatRoomVisible()) return;
-      if (String(chatStore.getCurrent() || '') !== sid) return;
-      chatStore.markRead(sid, messageId);
-    } catch {}
-  };
-  const isSessionActive = sessionId => {
-    const sid = String(sessionId || '').trim();
-    if (!sid) return false;
-    if (!isChatRoomVisible()) return false;
-    return String(chatStore.getCurrent() || '').trim() === sid;
-  };
-  let chatEnterRequestToken = 0;
-  const beginChatEnterRequest = (sessionId = '') => {
-    const sid = String(sessionId || '').trim();
-    chatEnterRequestToken += 1;
-    return {
-      token: chatEnterRequestToken,
-      sessionId: sid,
-    };
-  };
-  const isChatEnterRequestStale = (request) => {
-    const token = Number(request?.token || 0);
-    const sid = String(request?.sessionId || '').trim();
-    if (!token || !sid) return true;
-    if (token !== chatEnterRequestToken) return true;
-    if (String(chatStore.getCurrent() || '').trim() !== sid) return true;
-    return false;
-  };
-  const nowPerfMs = () => {
-    try {
-      if (typeof performance !== 'undefined' && typeof performance.now === 'function') return performance.now();
-    } catch {}
-    return Date.now();
-  };
-  const renderInitialHistoryProgressive = (sessionId, messages = [], {
-    keepScroll = true,
-    recentCount = 24,
-    chunkSize = 12,
-  } = {}) => {
-    const sid = String(sessionId || '').trim();
-    const list = Array.isArray(messages) ? messages : [];
-    if (!sid || !list.length) {
-      ui.preloadHistory([], { keepScroll });
-      return {
-        decorateMs: 0,
-        preloadMs: 0,
-        deferred: false,
-        deferredCount: 0,
-      };
-    }
-    const recentLimit = Math.max(1, recentCount);
-    const prependChunkSize = Math.max(1, chunkSize);
-    const splitAt = Math.max(0, list.length - recentLimit);
-    const older = list.slice(0, splitAt);
-    const recent = list.slice(splitAt);
-    const decorateStart = nowPerfMs();
-    const decoratedRecent = decorateMessagesForDisplay(recent, { sessionId: sid });
-    const decorateMs = Math.round(nowPerfMs() - decorateStart);
-    const preloadStart = nowPerfMs();
-    ui.preloadHistory(decoratedRecent, { keepScroll });
-    const preloadMs = Math.round(nowPerfMs() - preloadStart);
-    if (!older.length) {
-      return {
-        decorateMs,
-        preloadMs,
-        deferred: false,
-        deferredCount: 0,
-      };
-    }
-    cancelInitialHistoryFill(sid);
-    const queue = [];
-    for (let end = older.length; end > 0; end -= prependChunkSize) {
-      const start = Math.max(0, end - prependChunkSize);
-      queue.push(older.slice(start, end));
-    }
-    const job = { cancelled: false };
-    initialHistoryFillJobs.set(sid, job);
-    const pump = () => {
-      if (job.cancelled || String(chatStore.getCurrent() || '').trim() !== sid) {
-        initialHistoryFillJobs.delete(sid);
-        return;
-      }
-      const nextChunk = queue.shift();
-      if (!nextChunk?.length) {
-        initialHistoryFillJobs.delete(sid);
-        return;
-      }
-      ui.prependHistory(decorateMessagesForDisplay(nextChunk, { sessionId: sid }));
-      if (queue.length) scheduleUiChunk(pump);
-      else initialHistoryFillJobs.delete(sid);
-    };
-    scheduleUiChunk(pump);
-    return {
-      decorateMs,
-      preloadMs,
-      deferred: true,
-      deferredCount: older.length,
-    };
+    return pendingFloatRuntime.sendPendingFromFloat(pendingMsg, sessionId);
   };
   const enterChatRoom = async (sessionId, sessionName, originPage = activePage, options = {}) => {
-    const enterPerfStart = nowPerfMs();
     const enterRequest = beginChatEnterRequest(sessionId);
     const contact = contactsStore.getContact(sessionId);
     const isGroupSession = Boolean(contact?.isGroup) || String(sessionId || '').startsWith('group:');
@@ -13476,67 +12984,72 @@ Phase G（Frame 36）：循环衔接
   }
 
   const enterRpMode = async ({ captureSocial = true } = {}) => {
-    if (uiMode === 'rp') return;
-    if (captureSocial) {
-      lastChatState = {
-        activePage,
-        sessionId: chatStore.getCurrent(),
-        inChatRoom: isChatRoomVisible(),
-      };
-    }
-    uiMode = 'rp';
-    try { navigator.vibrate?.(10); } catch {}
-    persistUiMode();
-    applyUiModeUI();
-    try {
-      await rpSessionStore?.ready;
-    } catch {}
-    setStickerPanelOpen(false);
-    setActionPanelOpen(false);
-    if (activePage !== 'chat') {
-      switchPage('chat', { animate: false });
-    }
-    const rpSessionId = getRpSessionId(activePersonaId);
-    if (typeof chatStore._ensureSession === 'function') {
-      chatStore._ensureSession(rpSessionId);
-      const settings = chatStore.getSessionSettings?.(rpSessionId) || {};
-      chatStore.setSessionSettings?.(rpSessionId, { ...settings, sharedVariables: true, sharedMemory: false });
-      chatStore._persist?.();
-    }
-    applyMvuSchemaDefaults(rpSessionId, { reason: 'rp_enter' });
-    await enterChatRoom(rpSessionId, getRpTitle(), 'chat');
-    if (currentChatTitle) currentChatTitle.textContent = getRpTitle();
-    try {
-      await hydrateRpCharacterNameFromCard(personaStore.getActive?.());
-    } catch {}
-    await seedRpGreetingIfNeeded(rpSessionId);
-    refreshRpToolbar(rpSessionId);
-    if (backToListBtn) backToListBtn.style.display = 'none';
+    return runEnterRpModeFlow({
+      uiMode,
+      captureSocial,
+      activePage,
+      currentSessionId: chatStore.getCurrent(),
+      isChatRoomVisible,
+      setLastChatState: (value) => {
+        lastChatState = value;
+      },
+      setUiMode: (value) => {
+        uiMode = value;
+      },
+      vibrate: (value) => navigator.vibrate?.(value),
+      persistUiMode,
+      applyUiModeUI,
+      waitForRpSessionReady: async () => {
+        await rpSessionStore?.ready;
+      },
+      setStickerPanelOpen,
+      setActionPanelOpen,
+      switchPage,
+      getRpSessionId,
+      activePersonaId,
+      ensureSession: (sessionId) => chatStore._ensureSession?.(sessionId),
+      getSessionSettings: (sessionId) => chatStore.getSessionSettings?.(sessionId),
+      setSessionSettings: (sessionId, settings) => chatStore.setSessionSettings?.(sessionId, settings),
+      persistChatStore: () => chatStore._persist?.(),
+      applyMvuSchemaDefaults,
+      enterChatRoom,
+      getRpTitle,
+      setCurrentChatTitle: (value) => {
+        if (currentChatTitle) currentChatTitle.textContent = value;
+      },
+      hydrateRpCharacterName: async () => hydrateRpCharacterNameFromCard(personaStore.getActive?.()),
+      seedRpGreetingIfNeeded,
+      refreshRpToolbar,
+      setBackToListVisible: (visible) => {
+        if (backToListBtn) backToListBtn.style.display = visible ? '' : 'none';
+      },
+    });
   };
 
   const exitRpMode = () => {
-    if (uiMode !== 'rp') return;
-    uiMode = 'chat';
-    try { navigator.vibrate?.(10); } catch {}
-    persistUiMode();
-    applyUiModeUI();
-    if (rpToolbar) rpToolbar.style.display = 'none';
-    if (backToListBtn) backToListBtn.style.display = '';
-
-    const restorePage = lastChatState.activePage || 'chat';
-    const restoreSession = String(lastChatState.sessionId || '').trim();
-    const restoreInRoom = Boolean(lastChatState.inChatRoom);
-
-    chatOriginPage = restorePage;
-    exitChatRoom({ animate: false });
-
-    if (restoreInRoom && restoreSession) {
-      const c = contactsStore.getContact(restoreSession);
-      switchPage(restorePage, { animate: false });
-      enterChatRoom(restoreSession, c?.name || restoreSession, restorePage);
-    } else {
-      switchPage(restorePage, { animate: false });
-    }
+    return runExitRpModeFlow({
+      uiMode,
+      lastChatState,
+      setUiMode: (value) => {
+        uiMode = value;
+      },
+      vibrate: (value) => navigator.vibrate?.(value),
+      persistUiMode,
+      applyUiModeUI,
+      hideRpToolbar: () => {
+        if (rpToolbar) rpToolbar.style.display = 'none';
+      },
+      setBackToListVisible: (visible) => {
+        if (backToListBtn) backToListBtn.style.display = visible ? '' : 'none';
+      },
+      setChatOriginPage: (value) => {
+        chatOriginPage = value;
+      },
+      exitChatRoom,
+      getContact: (sessionId) => contactsStore.getContact(sessionId),
+      switchPage,
+      enterChatRoom,
+    });
   };
 
   backToListBtn?.addEventListener('click', () => {
@@ -13547,219 +13060,36 @@ Phase G（Frame 36）：循环衔接
     exitChatRoom();
   });
 
-  let modeSwitchBounceRAF = null;
-  let maidBounceCount = 0;
-  let maidBounceLastTime = 0;
-  const MAID_TUMBLE_SRC = 'assets/media/maid-tumble.webp';
-  const MAID_W = 102;
-  const MAID_H = 114;
-  const MAID_DURATION = 3900;
-
-  const spawnMaidTumble = (sx, sy, ballVx, ballVy) => {
-    const img = document.createElement('img');
-    img.src = MAID_TUMBLE_SRC;
-    img.style.cssText = `position:fixed; width:${MAID_W}px; height:${MAID_H}px; z-index:26100; pointer-events:none; object-fit:contain; image-rendering:auto;`;
-    document.body.appendChild(img);
-
-    let mx = sx - MAID_W / 2;
-    let my = sy - MAID_H / 2;
-    let mvx = ballVx * 0.5 + (Math.random() - 0.5) * 6;
-    let mvy = ballVy * 0.5 - 3;
-    let angle = 0;
-    const GRAVITY = 0.35;
-    const BOUNCE_E = 0.45;
-    const DRAG = 0.993;
-    const startTime = performance.now();
-
-    img.style.left = `${Math.round(mx)}px`;
-    img.style.top = `${Math.round(my)}px`;
-
-    let fadeStarted = false;
-    const step = () => {
-      const elapsed = performance.now() - startTime;
-      if (!fadeStarted && elapsed > MAID_DURATION - 300) {
-        fadeStarted = true;
-        img.style.transition = 'opacity 0.3s ease';
-        img.style.opacity = '0';
-        setTimeout(() => img.remove(), 350);
-      }
-      if (elapsed > MAID_DURATION) return;
-      const { w, h } = getViewportSize();
-      mvx *= DRAG;
-      mvy = mvy * DRAG + GRAVITY;
-      mx += mvx;
-      my += mvy;
-
-      if (mx < 0) { mx = 0; mvx = -mvx * BOUNCE_E; }
-      else if (mx + MAID_W > w) { mx = w - MAID_W; mvx = -mvx * BOUNCE_E; }
-      if (my < 0) { my = 0; mvy = -mvy * BOUNCE_E; }
-      else if (my + MAID_H > h) { my = h - MAID_H; mvy = -mvy * BOUNCE_E; }
-
-      img.style.left = `${Math.round(mx)}px`;
-      img.style.top = `${Math.round(my)}px`;
-      requestAnimationFrame(step);
-    };
-    requestAnimationFrame(step);
-  };
-
-  const cancelModeSwitchBounce = () => {
-    if (modeSwitchBounceRAF) {
-      cancelAnimationFrame(modeSwitchBounceRAF);
-      modeSwitchBounceRAF = null;
-    }
-    modeSwitch?.classList.remove('is-bouncing');
-  };
-  const animateModeSwitchBounce = (startX, startY, vx, vy) => {
-    if (!modeSwitch) return;
-    const prefersReduced = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)')?.matches;
-    if (prefersReduced) {
-      modeSwitchPinned = true;
-      saveModeSwitchPos();
-      return;
-    }
-    cancelModeSwitchBounce();
-
-    const now = performance.now();
-    if (now - maidBounceLastTime > 5000) maidBounceCount = 0;
-    maidBounceLastTime = now;
-    maidBounceCount++;
-    if (maidBounceCount >= 6) {
-      maidBounceCount = 0;
-      spawnMaidTumble(startX, startY, vx, vy);
-    }
-    modeSwitch.classList.add('is-bouncing');
-    const BOUNCE_ELASTICITY = 0.7;
-    const AIR_FRICTION = 0.992;
-    const MIN_VELOCITY = 0.8;
-    let x = startX;
-    let y = startY;
-    const step = () => {
-      const { w, h } = getViewportSize();
-      if (!w || !h) { modeSwitchBounceRAF = null; modeSwitch.classList.remove('is-bouncing'); return; }
-      const halfSize = modeSwitchSize / 2;
-      const minX = halfSize + _safeInsets.left;
-      const maxX = w - halfSize - _safeInsets.right;
-      const minY = halfSize + _safeInsets.top;
-      const maxY = h - halfSize - _safeInsets.bottom;
-      vx *= AIR_FRICTION;
-      vy *= AIR_FRICTION;
-      x += vx;
-      y += vy;
-      let hitBound = false;
-      if (x < minX) { x = minX; vx = -vx * BOUNCE_ELASTICITY; hitBound = true; }
-      else if (x > maxX) { x = maxX; vx = -vx * BOUNCE_ELASTICITY; hitBound = true; }
-      if (y < minY) { y = minY; vy = -vy * BOUNCE_ELASTICITY; hitBound = true; }
-      else if (y > maxY) { y = maxY; vy = -vy * BOUNCE_ELASTICITY; hitBound = true; }
-      if (hitBound) {
-        try { navigator.vibrate?.(15); } catch {}
-      }
-      modeSwitch.style.left = `${Math.round(x)}px`;
-      modeSwitch.style.top = `${Math.round(y)}px`;
-      modeSwitchPos = normalizeModeSwitchPos(x, y);
-      if (Math.hypot(vx, vy) < MIN_VELOCITY) {
-        modeSwitchBounceRAF = null;
-        modeSwitch.classList.remove('is-bouncing');
-        modeSwitchPinned = true;
-        saveModeSwitchPos();
-        modeSwitch.classList.add('is-settling');
-        setTimeout(() => modeSwitch.classList.remove('is-settling'), 250);
-        return;
-      }
-      modeSwitchBounceRAF = requestAnimationFrame(step);
-    };
-    modeSwitchBounceRAF = requestAnimationFrame(step);
-  };
-
-  const startModeSwitchDrag = event => {
-    if (!modeSwitch || !modeSwitchBtn) return;
-    if (event.pointerType === 'mouse' && event.button !== 0) return;
-    event.preventDefault();
-    event.stopPropagation();
-    cancelModeSwitchBounce();
-    wakeModeSwitch();
-    const rect = modeSwitch.getBoundingClientRect();
-    const originX = rect.left + rect.width / 2;
-    const originY = rect.top + rect.height / 2;
-    modeSwitchDrag = {
-      pointerId: event.pointerId,
-      startX: event.clientX,
-      startY: event.clientY,
-      originX,
-      originY,
-      moved: false,
-      prevX: originX,
-      prevY: originY,
-      prevTime: performance.now(),
-      lastX: originX,
-      lastY: originY,
-      lastTime: performance.now(),
-    };
-    modeSwitch.classList.add('is-dragging');
-    modeSwitchBtn.setPointerCapture?.(event.pointerId);
-  };
-  const updateModeSwitchDrag = event => {
-    if (!modeSwitchDrag || !modeSwitch) return;
-    if (event.pointerId !== modeSwitchDrag.pointerId) return;
-    const dx = event.clientX - modeSwitchDrag.startX;
-    const dy = event.clientY - modeSwitchDrag.startY;
-    if (!modeSwitchDrag.moved && Math.hypot(dx, dy) > 4) modeSwitchDrag.moved = true;
-    const { w, h } = getViewportSize();
-    if (!w || !h) return;
-    const base = 8 + modeSwitchSize / 2;
-    const x = clamp(modeSwitchDrag.originX + dx, base + _safeInsets.left, w - base - _safeInsets.right);
-    const y = clamp(modeSwitchDrag.originY + dy, base + _safeInsets.top, h - base - _safeInsets.bottom);
-    modeSwitch.style.left = `${Math.round(x)}px`;
-    modeSwitch.style.top = `${Math.round(y)}px`;
-    modeSwitch.style.pointerEvents = 'auto';
-    modeSwitchPinned = true;
-    modeSwitchPos = normalizeModeSwitchPos(x, y);
-    modeSwitchDrag.prevX = modeSwitchDrag.lastX;
-    modeSwitchDrag.prevY = modeSwitchDrag.lastY;
-    modeSwitchDrag.prevTime = modeSwitchDrag.lastTime;
-    modeSwitchDrag.lastX = x;
-    modeSwitchDrag.lastY = y;
-    modeSwitchDrag.lastTime = performance.now();
-  };
-  const endModeSwitchDrag = event => {
-    if (!modeSwitchDrag || !modeSwitch) return;
-    if (event.pointerId !== modeSwitchDrag.pointerId) return;
-    modeSwitchBtn?.releasePointerCapture?.(event.pointerId);
-    modeSwitch.classList.remove('is-dragging');
-    if (modeSwitchDrag.moved) {
-      modeSwitchSuppressClick = true;
-      const dt = Math.max(1, modeSwitchDrag.lastTime - modeSwitchDrag.prevTime);
-      const vx = (modeSwitchDrag.lastX - modeSwitchDrag.prevX) / dt * 16;
-      const vy = (modeSwitchDrag.lastY - modeSwitchDrag.prevY) / dt * 16;
-      const speed = Math.hypot(vx, vy);
-      if (speed > 8) {
-        animateModeSwitchBounce(modeSwitchDrag.lastX, modeSwitchDrag.lastY, vx, vy);
-      } else {
-        saveModeSwitchPos();
-        modeSwitch.classList.add('is-settling');
-        setTimeout(() => modeSwitch.classList.remove('is-settling'), 250);
-      }
-      setTimeout(() => {
-        modeSwitchSuppressClick = false;
-      }, 220);
-    }
-    modeSwitchDrag = null;
-    wakeModeSwitch();
-    if (!modeSwitchBounceRAF) scheduleModeSwitchSync();
-  };
-  let modeSwitchDrag = null;
-  modeSwitchBtn?.addEventListener('pointerdown', startModeSwitchDrag);
-  modeSwitchBtn?.addEventListener('pointermove', updateModeSwitchDrag);
-  modeSwitchBtn?.addEventListener('pointerup', endModeSwitchDrag);
-  modeSwitchBtn?.addEventListener('pointercancel', endModeSwitchDrag);
-  modeSwitchBtn?.addEventListener('click', () => {
-    if (modeSwitchSuppressClick) return;
-    wakeModeSwitch();
-    if (uiMode === 'rp') {
-      exitRpMode();
-    } else {
-      enterRpMode();
-    }
+  const modeSwitchInteractionRuntime = createModeSwitchInteractionRuntime({
+    documentRef: document,
+    modeSwitchEl: modeSwitch,
+    modeSwitchBtnEl: modeSwitchBtn,
+    getViewportSize,
+    getModeSwitchSize: () => modeSwitchSize,
+    getSafeInsets: () => _safeInsets,
+    normalizeModeSwitchPos,
+    setModeSwitchPos: value => {
+      modeSwitchPos = value;
+    },
+    setModeSwitchPinned: value => {
+      modeSwitchPinned = Boolean(value);
+    },
+    saveModeSwitchPos,
+    wakeModeSwitch,
+    scheduleModeSwitchSync,
+    enterRpMode,
+    exitRpMode,
+    getUiMode: () => uiMode,
+    requestAnimationFrameFn: typeof requestAnimationFrame === 'function' ? requestAnimationFrame : null,
+    cancelAnimationFrameFn: typeof cancelAnimationFrame === 'function' ? cancelAnimationFrame : null,
+    setTimeoutFn: typeof setTimeout === 'function' ? setTimeout : null,
+    clearTimeoutFn: typeof clearTimeout === 'function' ? clearTimeout : null,
+    matchMediaFn: typeof matchMedia === 'function' ? matchMedia : null,
+    nowFn: () => performance.now(),
+    randomFn: Math.random,
+    vibrate: value => navigator.vibrate?.(value),
   });
+  modeSwitchInteractionRuntime.bind();
 
   rpGreetingTrigger?.addEventListener('click', (e) => {
     e.stopPropagation();
@@ -13796,121 +13126,42 @@ Phase G（Frame 36）：循环衔接
     });
   });
 
-  /* ---------------- 列表入口共用会话 ---------------- */
-  chatList?.addEventListener('click', e => {
-    const item = e.target.closest('.chat-list-item');
-    if (!item) return;
-    const id = item.dataset.session || 'default';
-    const name = item.dataset.name || id;
-    enterChatRoom(id, name);
-    switchPage('chat');
-  });
-
   const contactsUngroupedEl = document.getElementById('contacts-ungrouped-list');
-  contactsUngroupedEl?.addEventListener('click', e => {
-    const item = e.target.closest('.contact-item');
-    if (!item || !item.dataset.session) return;
-    const id = item.dataset.session;
-    const name = item.dataset.name || id;
-    const origin = activePage;
-    switchPage('chat', { animate: false });
-    enterChatRoom(id, name, origin);
-  });
-
   const contactsGroupsEl = document.getElementById('contacts-groups-list');
-  contactsGroupsEl?.addEventListener('click', e => {
-    const item = e.target.closest('.contact-item');
-    if (!item || !item.dataset.session) return;
-    const id = item.dataset.session;
-    const name = item.dataset.name || id;
-    const origin = activePage;
-    switchPage('chat', { animate: false });
-    enterChatRoom(id, name, origin);
+  bindAppSessionEntryNavigation({
+    chatListEl: chatList,
+    contactsUngroupedEl,
+    contactsGroupsEl,
+    getActivePage: () => activePage,
+    switchPage,
+    enterChatRoom,
   });
 
   // Quick action buttons
-  const actionHandlers = {
-    image: async () => {
-      await mediaPicker.pickFile('image');
-    },
-    music: async () => {
-      const useFile = await appConfirm({
-        title: '音频来源',
-        message: '使用本地音频文件吗？',
-        confirmText: '本地文件',
-        cancelText: '使用 URL',
-      });
-      if (useFile) {
-        await mediaPicker.pickFile('audio');
-      } else {
-        const title = prompt('输入歌名', '未命名');
-        const artist = prompt('输入歌手', '');
-        const audioUrl = prompt('音源 URL（可留空）', '');
-        if (!title) return;
-        const msg = {
-          role: 'user',
-          type: 'music',
-          content: title,
-          meta: { artist, url: audioUrl },
-          name: getActiveUserName(),
-          avatar: avatars.user,
-          time: formatNowTime(),
-        };
-        ui.addMessage(msg);
-        chatStore.appendMessage(msg);
-      }
-    },
-    transfer: async () => {
-      const amount = prompt('输入金額（示例：520元）', '520元');
-      if (!amount) return;
-      const msg = {
-        role: 'user',
-        type: 'transfer',
-        content: amount,
-        name: getActiveUserName(),
-        avatar: avatars.user,
-        time: formatNowTime(),
-      };
-      ui.addMessage(msg);
-      chatStore.appendMessage(msg);
-    },
-    sticker: async () => {
-      if (!isStickerAllowed()) {
-        window.toastr?.info?.('RP界面不支持贴图');
-        return;
-      }
-      setStickerPanelOpen(true);
-    },
-    document: async () => {
-      await mediaPicker.pickFile('document');
-    },
-  };
-  const runQuickAction = action => {
-    const handler = actionHandlers[action];
-    if (handler) {
-      setActionPanelOpen(false);
-      handler();
-      return;
-    }
-    window.toastr?.info?.(`快捷操作占位：${action}`);
-  };
-
-  document.querySelectorAll('.chat-action-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const action = btn.dataset.action;
-      runQuickAction(action);
-    });
+  const quickActionRuntime = createQuickActionRuntime({
+    mediaPicker,
+    appConfirm,
+    promptFn: (...args) => prompt(...args),
+    addMessage: (message) => ui.addMessage(message),
+    appendMessage: (message) => chatStore.appendMessage(message),
+    getActiveUserName,
+    getActiveUserAvatar: () => avatars.user,
+    formatNowTime,
+    setStickerPanelOpen,
+    isStickerAllowed,
+    setActionPanelOpen,
+    notifyInfo: (message) => window.toastr?.info?.(message),
   });
+  const runQuickAction = quickActionRuntime.runQuickAction;
+
+  const chatActionButtons = Array.from(document.querySelectorAll('.chat-action-btn'));
   const chatStickerBtn = document.querySelector('.chat-sticker-btn');
-  chatStickerBtn?.addEventListener('click', () => {
-    runQuickAction('sticker');
-  });
-
-  document.querySelectorAll('.action-chip').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const action = btn.dataset.action;
-      runQuickAction(action);
-    });
+  const actionChips = Array.from(document.querySelectorAll('.action-chip'));
+  bindQuickActionButtons({
+    actionButtons: chatActionButtons,
+    chatStickerBtn,
+    actionChips,
+    runQuickAction,
   });
   // Support badge for grouping/role
   const sessionBadge = document.createElement('span');
@@ -13952,37 +13203,14 @@ Phase G（Frame 36）：循环衔接
 
   const cloneSwipePlainObject = clonePlainObject;
   const cloneSwipeMemoryUpdateEntry = cloneMemoryUpdateEntry;
-  let activeSwipeMemoryStateKey = '';
-  const getSwipeMemoryStateKey = (sessionId, msgId, index) => {
-    const sid = String(sessionId || '').trim();
-    const mid = String(msgId || '').trim();
-    const idx = Math.trunc(Number(index));
-    if (!sid || !mid || !Number.isFinite(idx) || idx < 0) return '';
-    return `${sid}:${mid}:${idx}`;
-  };
+  const swipeMemoryStateTracker = createSwipeMemoryStateTracker();
   const markActiveSwipeMemoryState = (sessionId, msgId, index) => {
-    activeSwipeMemoryStateKey = getSwipeMemoryStateKey(sessionId, msgId, index);
+    swipeMemoryStateTracker.markActive(sessionId, msgId, index);
   };
   const canPersistOutgoingSwipeMemoryState = (sessionId, msgId, index, branch) => {
-    const key = getSwipeMemoryStateKey(sessionId, msgId, index);
-    if (!key) return false;
-    if (activeSwipeMemoryStateKey === key) return true;
-    // Avoid overwriting an existing branch snapshot when the table state was not
-    // explicitly applied from that branch in this runtime.
-    return !branch?.memoryTableSnapshot;
+    return swipeMemoryStateTracker.canPersistOutgoing(sessionId, msgId, index, branch);
   };
-  const resolveSwipeMemoryTemplateId = async () => {
-    if (!memoryTemplateStore) return '';
-    try {
-      const list = await memoryTemplateStore.getTemplates({ is_default: true });
-      if (Array.isArray(list) && list.length) return String(list[0]?.id || '').trim();
-    } catch {}
-    try {
-      const fallback = await memoryTemplateStore.getTemplates({ id: 'default-v1' });
-      if (Array.isArray(fallback) && fallback.length) return String(fallback[0]?.id || '').trim();
-    } catch {}
-    return '';
-  };
+  const resolveSwipeMemoryTemplateId = async () => resolveDefaultMemoryTemplateId({ memoryTemplateStore });
   const buildSwipeMemoryTableSnapshot = async (sessionId, { isGroup } = {}) => {
     if (getMemoryStorageMode() !== 'table') return null;
     if (!memoryTableStore?.getMemories || !memoryTemplateStore) return null;
@@ -14031,7 +13259,7 @@ Phase G（Frame 36）：循环衔接
       scopeFields,
       cloneValue: cloneSwipePlainObject,
     });
-    window.dispatchEvent(new CustomEvent('memory-rows-updated', { detail: { sessionId: sid, templateId } }));
+    emitSharedMemoryRowsUpdated({ target: window, sessionId: sid, templateId });
     return true;
   };
   const persistSwipeBranchMemoryState = async (branches, index, sessionId, { isGroup } = {}) => {
@@ -14053,6 +13281,24 @@ Phase G（Frame 36）：循环衔接
       applySnapshot: (sid, snapshot) => applySwipeMemoryTableSnapshot(sid, snapshot, { isGroup }),
       cloneEntry: cloneSwipeMemoryUpdateEntry,
       setMemoryUpdateEntry: (sid, entry) => window.appBridge?.setLastMemoryUpdate?.(sid, entry),
+    });
+  };
+  const captureAssistantMemoryState = async (sessionId, { isGroup } = {}) => {
+    if (getMemoryStorageMode() !== 'table') return null;
+    return captureAssistantMemoryStateCore({
+      sessionId,
+      buildSnapshot: sid => buildSwipeMemoryTableSnapshot(sid, { isGroup }),
+      cloneSnapshot: cloneSwipePlainObject,
+      cloneEntry: cloneSwipeMemoryUpdateEntry,
+      getMemoryUpdateEntry: sid => window.appBridge?.getLastMemoryUpdate?.(sid),
+    });
+  };
+  const attachAssistantMemoryStateToMeta = (meta, memoryState) => {
+    return attachAssistantMemoryStateToMetaCore({
+      meta,
+      memoryState,
+      cloneSnapshot: cloneSwipePlainObject,
+      cloneEntry: cloneSwipeMemoryUpdateEntry,
     });
   };
   const isTurnCheckpointSessionEnabled = sessionId => {
@@ -14079,88 +13325,39 @@ Phase G（Frame 36）：循环衔接
     if (String(meta.kind || '').trim() === 'memory-table-push') return false;
     return true;
   };
-  const normalizeCheckpointSwipeState = message => {
-    const meta = message?.meta && typeof message.meta === 'object' ? message.meta : {};
-    let swipes = Array.isArray(meta.swipes) && meta.swipes.length
-      ? meta.swipes.map(branch => (branch && typeof branch === 'object' ? cloneSwipePlainObject(branch) : {}))
-      : [{
-          content: String(message?.content ?? ''),
-          raw: typeof message?.raw === 'string' ? message.raw : String(message?.content ?? ''),
-        }];
-    if (!swipes.length) {
-      swipes = [{
-        content: String(message?.content ?? ''),
-        raw: typeof message?.raw === 'string' ? message.raw : String(message?.content ?? ''),
-      }];
-    }
-    if (meta.memoryTableSnapshot && !swipes[0]?.memoryTableSnapshot) {
-      swipes[0].memoryTableSnapshot = cloneSwipePlainObject(meta.memoryTableSnapshot);
-    }
-    if (meta.memoryUpdateEntry && swipes[0]?.memoryUpdateEntry === undefined) {
-      swipes[0].memoryUpdateEntry = cloneSwipeMemoryUpdateEntry(meta.memoryUpdateEntry);
-    }
-    const rawActive = Math.trunc(Number(meta.activeSwipe));
-    const activeSwipeIndex = Number.isFinite(rawActive)
-      ? Math.min(Math.max(0, rawActive), Math.max(0, swipes.length - 1))
-      : 0;
-    return {
-      meta: cloneSwipePlainObject(meta) || {},
-      swipes,
-      activeSwipeIndex,
-    };
-  };
+  const normalizeCheckpointSwipeState = message => normalizeCheckpointSwipeStateCore(message, {
+    clonePlainObject: cloneSwipePlainObject,
+    cloneMemoryUpdateEntry: cloneSwipeMemoryUpdateEntry,
+  });
   const findPreviousUserMessageIdForAssistant = (sessionId, assistantMessageId) => {
     const sid = String(sessionId || '').trim();
     const aid = String(assistantMessageId || '').trim();
     if (!sid || !aid) return '';
-    const messages = chatStore.getMessages(sid) || [];
-    const idx = messages.findIndex(message => String(message?.id || '') === aid);
-    if (idx === -1) return '';
-    for (let i = idx - 1; i >= 0; i -= 1) {
-      const item = messages[i];
-      if (!item || item.role !== 'user') continue;
-      if (item?.meta?.generatedByAssistant === true) continue;
-      return String(item.id || '').trim();
-    }
-    return '';
+    return findPreviousUserMessageIdForAssistantCore(chatStore.getMessages(sid) || [], aid);
   };
   const resolveTurnIndexForAssistant = (sessionId, assistantMessageId, userMessageId = '') => {
     const sid = String(sessionId || '').trim();
     const aid = String(assistantMessageId || '').trim();
     if (!sid || !aid) return 0;
-    const messages = chatStore.getMessages(sid) || [];
-    let targetUserId = String(userMessageId || '').trim();
-    if (!targetUserId) targetUserId = findPreviousUserMessageIdForAssistant(sid, aid);
-    if (!targetUserId) return 0;
-    let count = 0;
-    for (const item of messages) {
-      if (!item || item.role !== 'user' || item?.meta?.generatedByAssistant === true) continue;
-      count += 1;
-      if (String(item.id || '') === targetUserId) return count;
-    }
-    return count;
+    return resolveTurnIndexForAssistantCore(chatStore.getMessages(sid) || [], aid, userMessageId);
   };
   const resolveAssistantFloorForCheckpoint = (sessionId, assistantMessageId) => {
     const sid = String(sessionId || '').trim();
     const aid = String(assistantMessageId || '').trim();
     if (!sid || !aid) return 0;
-    const messages = chatStore.getMessages(sid) || [];
-    let count = 0;
-    for (const item of messages) {
-      if (!isCheckpointTrackedAssistantMessage(item, sid)) continue;
-      count += 1;
-      if (String(item?.id || '') === aid) return count;
-    }
-    return count;
+    return resolveAssistantFloorForCheckpointCore(
+      chatStore.getMessages(sid) || [],
+      aid,
+      message => isCheckpointTrackedAssistantMessage(message, sid),
+    );
   };
   const findTailTrackedAssistantMessage = sessionId => {
     const sid = String(sessionId || '').trim();
     if (!sid) return null;
-    const messages = chatStore.getMessages(sid) || [];
-    for (let i = messages.length - 1; i >= 0; i -= 1) {
-      if (isCheckpointTrackedAssistantMessage(messages[i], sid)) return messages[i];
-    }
-    return null;
+    return findTailTrackedAssistantMessageCore(
+      chatStore.getMessages(sid) || [],
+      message => isCheckpointTrackedAssistantMessage(message, sid),
+    );
   };
   const getCurrentArchiveIdForSession = sessionId => {
     try {
@@ -14173,8 +13370,7 @@ Phase G（Frame 36）：循环衔接
   const turnCheckpointHydrationCompletedThreads = new Set();
   const getTurnCheckpointHydrationThreadKey = sessionId => {
     const sid = String(sessionId || '').trim();
-    if (!sid) return '';
-    return `${sid}::${getCurrentArchiveIdForSession(sid)}`;
+    return buildTurnCheckpointHydrationThreadKeyCore(sid, getCurrentArchiveIdForSession(sid));
   };
   const cancelScheduledTurnCheckpointHydration = (keepSessionId = '') => {
     const keep = String(keepSessionId || '').trim();
@@ -15392,102 +14588,42 @@ Phase G（Frame 36）：循环衔接
   bindChatScrollLazyLoad();
 
   // Summary compaction runner (used by auto-trigger and manual "↻" button in settings)
-  const summaryCompacting = new Set();
-  const requestSummaryCompaction = (sid, { force = false } = {}) => {
-    if (!isSummaryMemoryEnabled()) return Promise.resolve(false);
-    const sessionId = String(sid || '').trim();
-    if (!sessionId) return Promise.resolve(false);
-    if (summaryCompacting.has(sessionId)) return Promise.resolve(false);
-    if (!window?.appBridge?.backgroundChat || !window?.appBridge?.buildMessages) return Promise.resolve(false);
-    if (typeof window.appBridge.isConfigured === 'function' && !window.appBridge.isConfigured())
-      return Promise.resolve(false);
-
-    const list = chatStore.getSummaries(sessionId) || [];
-    if (!shouldRunSummaryCompaction({ items: list, force })) return Promise.resolve(false);
-
-    summaryCompacting.add(sessionId);
-    return new Promise(resolve => {
-      // Run in background with a short delay to avoid competing with user interactions.
-      setTimeout(async () => {
-        try {
-          const current = chatStore.getSummaries(sessionId) || [];
-          const arr = Array.isArray(current) ? current : [];
-          const compactedPrev = chatStore.getCompactedSummary(sessionId);
-          const compactedText = String(compactedPrev?.text || '').trim();
-          const contact = contactsStore?.getContact?.(sessionId) || null;
-          const isGroup = Boolean(contact?.isGroup) || sessionId.startsWith('group:');
-          const activeUser = getActiveUserProfile();
-          const charName = String(contact?.name || sessionId.replace(/^group:/, '') || sessionId) || 'assistant';
-          const groupMembers = Array.isArray(contact?.members) ? contact.members : [];
-          const ctx = buildSummaryCompactionContext({
-            activeUser,
-            sessionId,
-            characterName: charName,
-            isGroup,
-            groupMembers,
-            groupMemberNames: groupMembers.map(mid => contactsStore.getContact(mid)?.name || mid),
-          });
-          const raw = await requestSummaryCompactionRaw({
-            items: arr,
-            compactedText,
-            context: ctx,
-            buildMessages: window.appBridge.buildMessages,
-            backgroundChat: window.appBridge.backgroundChat,
-          });
-          if (!raw) return resolve(false);
-          try {
-            chatStore.setCompactedSummaryRaw(raw, sessionId);
-          } catch {}
-
-          const { text, valid } = parseSummaryCompactionResult(raw);
-          if (!text) {
-            try {
-              window.dispatchEvent(
-                new CustomEvent('chatapp-summary-compaction-failed', {
-                  detail: { sessionId, reason: 'missing_summary_tag' },
-                }),
-              );
-            } catch {}
-            return resolve(false);
-          }
-
-          // Validate output format so UI can rely on a recognizable "big summary".
-          if (!valid) {
-            try {
-              window.dispatchEvent(
-                new CustomEvent('chatapp-summary-compaction-failed', {
-                  detail: { sessionId, reason: 'format' },
-                }),
-              );
-            } catch {}
-            return resolve(false);
-          }
-
-          // Store compact summary below the normal summary list and keep only the latest 2 summaries.
-          try {
-            chatStore.setCompactedSummary(text, sessionId, { raw });
-          } catch {}
-          try {
-            const keep = normalizeSummarySnapshotItems(chatStore.getSummaries(sessionId)).slice(-2);
-            chatStore.setSummaries(keep, sessionId);
-          } catch {}
-
-          try {
-            refreshChatAndContacts();
-          } catch {}
-          try {
-            window.dispatchEvent(new CustomEvent('chatapp-summaries-updated', { detail: { sessionId } }));
-          } catch {}
-          resolve(true);
-        } catch (err) {
-          logger.debug('summary compaction failed', err);
-          resolve(false);
-        } finally {
-          summaryCompacting.delete(sessionId);
-        }
-      }, 450);
-    });
-  };
+  const requestSummaryCompaction = createSessionSummaryCompactionRuntime({
+    chatStore,
+    getIsSummaryMemoryEnabled: isSummaryMemoryEnabled,
+    getIsConfigured: () =>
+      typeof window.appBridge.isConfigured !== 'function' || window.appBridge.isConfigured(),
+    buildMessages: (...args) => window.appBridge.buildMessages(...args),
+    backgroundChat: (...args) => window.appBridge.backgroundChat(...args),
+    buildSessionContext: (sessionId) => {
+      const contact = contactsStore?.getContact?.(sessionId) || null;
+      const isGroup = Boolean(contact?.isGroup) || sessionId.startsWith('group:');
+      const activeUser = getActiveUserProfile();
+      const charName = String(contact?.name || sessionId.replace(/^group:/, '') || sessionId) || 'assistant';
+      const groupMembers = Array.isArray(contact?.members) ? contact.members : [];
+      return buildSummaryCompactionContext({
+        activeUser,
+        sessionId,
+        characterName: charName,
+        isGroup,
+        groupMembers,
+        groupMemberNames: groupMembers.map(mid => contactsStore.getContact(mid)?.name || mid),
+      });
+    },
+    requestCompactionRaw: requestSummaryCompactionRaw,
+    parseCompactionResult: parseSummaryCompactionResult,
+    normalizeItems: normalizeSummarySnapshotItems,
+    shouldCompact: shouldRunSummaryCompaction,
+    refreshChatAndContacts,
+    dispatchUpdated: (sessionId) =>
+      window.dispatchEvent(new CustomEvent('chatapp-summaries-updated', { detail: { sessionId } })),
+    dispatchFailed: (sessionId, reason) =>
+      window.dispatchEvent(new CustomEvent('chatapp-summary-compaction-failed', {
+        detail: { sessionId, reason },
+      })),
+    logger,
+    delayMs: 450,
+  });
   try {
     globalThis.__chatappRequestSummaryCompaction = requestSummaryCompaction;
   } catch {}
@@ -15959,285 +15095,63 @@ Phase G（Frame 36）：循环衔接
       normalizeStats: normalizeInitialMomentStats,
       normalizeMomentRecord: normalizeMomentRecordForStore,
     });
-    const confirmMemoryEditsIfNeeded = async actions => {
-      const settings = appSettings.get();
-      const confirmBefore = settings.memoryAutoConfirm === true;
-      const stepByStep = settings.memoryAutoStepByStep === true;
-      if (!confirmBefore && !stepByStep) return actions;
-      let tableById = new Map();
-      try {
-        const templateInfo = await loadTemplateDefinition();
-        const tables = Array.isArray(templateInfo?.template?.tables) ? templateInfo.template.tables : [];
-        tables.forEach(table => {
-          const id = String(table?.id || '').trim();
-          if (!id) return;
-          tableById.set(id, table);
-        });
-      } catch {}
-      const planOrder = Array.isArray(window.appBridge?.lastMemoryPlan?.tableOrder)
-        ? window.appBridge.lastMemoryPlan.tableOrder
-        : [];
-      if (stepByStep) {
-        if (confirmBefore) {
-          const ok = await appConfirm({
-            title: '写表确认',
-            message: buildMemoryConfirmText(actions, tableById, planOrder),
-          });
-          if (!ok) {
-            window.toastr?.info?.('已取消写表执行');
-            return [];
-          }
-        }
-        const confirmed = [];
-        for (let i = 0; i < actions.length; i++) {
-          const action = actions[i];
-          const ok = await appConfirm({
-            title: `写表确认（${i + 1}/${actions.length}）`,
-            message: buildMemoryConfirmText([action], tableById, planOrder, {
-              title: `写表确认（${i + 1}/${actions.length}）`,
-              maxLines: 1,
-            }),
-          });
-          if (!ok) {
-            window.toastr?.info?.('已停止后续写表执行');
-            break;
-          }
-          confirmed.push(action);
-        }
-        return confirmed;
-      }
-      const ok = await appConfirm({
-        title: '写表确认',
-        message: buildMemoryConfirmText(actions, tableById, planOrder),
-      });
-      if (!ok) {
-        window.toastr?.info?.('已取消写表执行');
-        return [];
-      }
-      return actions;
-    };
-    const resolveDefaultTemplate = async () => {
-      if (!memoryTemplateStore) return null;
-      const list = await memoryTemplateStore.getTemplates({ is_default: true });
-      if (Array.isArray(list) && list.length) return list[0];
-      const fallback = await memoryTemplateStore.getTemplates({ id: 'default-v1' });
-      if (Array.isArray(fallback) && fallback.length) return fallback[0];
-      return null;
-    };
-    const loadTemplateDefinition = async () => {
-      const record = await resolveDefaultTemplate();
-      if (!record) return null;
-      const schema = memoryTemplateStore?.toTemplateDefinition?.(record) || record?.schema || {};
-      return { record, template: schema };
-    };
-    const buildTableMaps = (template, filterOptions = null) => {
-      const tableById = new Map();
-      const tableNameMap = new Map();
-      const tableOrder = [];
-      (template?.tables || []).forEach(table => {
-        const id = String(table?.id || '').trim();
-        if (!id) return;
-        if (filterOptions && !tableMatchesMemoryContext(table, filterOptions)) return;
-        tableById.set(id, table);
-        tableOrder.push(id);
-        const name = String(table?.name || '').trim();
-        if (name) tableNameMap.set(name.toLowerCase(), id);
-      });
-      return { tableById, tableNameMap, tableOrder };
-    };
-    const buildSwipeMemoryTableSnapshot = async (sessionId, { isGroup } = {}) => {
-      if (getMemoryStorageMode() !== 'table') return null;
-      if (!memoryTableStore?.getMemories || !memoryTemplateStore) return null;
-      const sid = String(sessionId || '').trim();
-      if (!sid) return null;
-      let templateInfo = null;
-      try {
-        templateInfo = await loadTemplateDefinition();
-      } catch {
-        templateInfo = null;
-      }
-      const templateId = String(templateInfo?.record?.id || '').trim();
-      if (!templateId) return null;
-      const groupScope = Boolean(isGroup);
-      const scopeKey = resolveSessionMemoryScopeKey({ isGroup: groupScope });
-      const scopeFields = buildScopedMemoryRowFields({ scopeKey, sessionId: sid });
-      const rows = await loadScopedMemories({
-        memoryTableStore,
-        scopeKey,
-        sessionId: sid,
-        templateId,
-      });
-      return buildSwipeMemorySnapshot({
-        rows,
-        templateId,
-        scope: groupScope ? 'group' : 'contact',
-        scopeFields,
-        cloneValue: clonePlainObject,
-      });
-    };
-    const applySwipeMemoryTableSnapshot = async (sessionId, snapshot, { isGroup } = {}) => {
-      if (getMemoryStorageMode() !== 'table') return false;
-      if (!snapshot || !memoryTableStore?.getMemories) return false;
-      const sid = String(sessionId || '').trim();
-      if (!sid) return false;
-      const groupScope = Boolean(isGroup);
-      const templateId = String(snapshot?.templateId || '').trim();
-      if (!templateId) return false;
-      const scopeKey = resolveSessionMemoryScopeKey({ isGroup: groupScope });
-      const scopeFields = buildScopedMemoryRowFields({ scopeKey, sessionId: sid });
-      const existing = await loadScopedMemories({
-        memoryTableStore,
-        scopeKey,
-        sessionId: sid,
-        templateId,
-      });
-      await replaceScopedMemoriesWithSnapshot({
-        memoryTableStore,
-        existingRows: existing,
-        snapshotRows: snapshot?.rows,
-        templateId,
-        scopeFields,
-        cloneValue: clonePlainObject,
-      });
-      window.dispatchEvent(new CustomEvent('memory-rows-updated', { detail: { sessionId: sid, templateId } }));
-      return true;
-    };
-    const persistSwipeBranchMemoryState = async (branches, index, sessionId, { isGroup } = {}) => {
-      if (getMemoryStorageMode() !== 'table') return false;
-      return persistSwipeBranchMemoryStateCore({
-        branches,
-        index,
-        sessionId,
-        buildSnapshot: sid => buildSwipeMemoryTableSnapshot(sid, { isGroup }),
-        cloneEntry: cloneMemoryUpdateEntry,
-        getMemoryUpdateEntry: sid => window.appBridge?.getLastMemoryUpdate?.(sid),
-      });
-    };
-    const applySwipeBranchMemoryState = async (sessionId, branch, { isGroup } = {}) => {
-      if (getMemoryStorageMode() !== 'table') return false;
-      return applySwipeBranchMemoryStateCore({
-        sessionId,
-        branch,
-        applySnapshot: (sid, snapshot) => applySwipeMemoryTableSnapshot(sid, snapshot, { isGroup }),
-        cloneEntry: cloneMemoryUpdateEntry,
-        setMemoryUpdateEntry: (sid, entry) => window.appBridge?.setLastMemoryUpdate?.(sid, entry),
-      });
-    };
-    const captureAssistantMemoryState = async (sessionId, { isGroup } = {}) => {
-      if (getMemoryStorageMode() !== 'table') return null;
-      return captureAssistantMemoryStateCore({
-        sessionId,
-        buildSnapshot: sid => buildSwipeMemoryTableSnapshot(sid, { isGroup }),
-        cloneSnapshot: clonePlainObject,
-        cloneEntry: cloneMemoryUpdateEntry,
-        getMemoryUpdateEntry: sid => window.appBridge?.getLastMemoryUpdate?.(sid),
-      });
-    };
-    const attachAssistantMemoryStateToMeta = (meta, memoryState) => {
-      return attachAssistantMemoryStateToMetaCore({
-        meta,
-        memoryState,
-        cloneSnapshot: clonePlainObject,
-        cloneEntry: cloneMemoryUpdateEntry,
-      });
-    };
+    const loadMemoryTemplateContext = async ({
+      sessionId = '',
+      isGroup = false,
+      filterTables = true,
+    } = {}) => resolveSessionMemoryTemplateContextSafe({
+      memoryTemplateStore,
+      sessionId,
+      isGroup,
+      uiMode,
+      filterTables,
+    });
+    const confirmMemoryEditsIfNeeded = async actions => confirmMemoryEditsWithUi({
+      actions,
+      settings: appSettings.get(),
+      loadMemoryTemplateContext,
+      rawPlan: window.appBridge?.lastMemoryPlan,
+      appConfirm,
+      toastr: window.toastr,
+    });
     const applyMemoryEdits = async ({ actions, sessionId, isGroup }) => {
       if (!Array.isArray(actions) || actions.length === 0) return null;
       if (!memoryTableStore || !memoryTemplateStore) return null;
 
       const rawPlan = window.appBridge?.lastMemoryPlan || null;
-      const planTargetId = String(rawPlan?.targetId || '').trim();
-      const currentSessionId = String(sessionId || '').trim();
-      const plan =
-        rawPlan && (!planTargetId || planTargetId === currentSessionId)
-          ? rawPlan
-          : null;
-      if (rawPlan && planTargetId && planTargetId !== currentSessionId) {
+      const { plan, planTargetId, currentSessionId, isStaleTarget } =
+        resolveMemoryUpdatePlanForSession({ rawPlan, sessionId });
+      if (isStaleTarget) {
         logger.debug('memory apply: ignore stale plan target', {
           planTargetId,
           currentSessionId,
         });
       }
 
-      let templateInfo = null;
-      try {
-        templateInfo = await loadTemplateDefinition();
-      } catch {
-        templateInfo = null;
-      }
-      if (!templateInfo?.record) return null;
-      const templateId = String(templateInfo.record?.id || '').trim();
-      const template = templateInfo.template || {};
-      const contextType = getMemoryContextType({ sessionId, isGroup });
-      const sessionMode = resolveMemorySessionMode({ uiMode, sessionId, contextType });
-      const { tableById, tableNameMap, tableOrder: templateOrder } = buildTableMaps(template, {
+      const planOrder = Array.isArray(plan?.tableOrder) ? plan.tableOrder : [];
+      const rowIndexMap = plan?.rowIndexMap && typeof plan.rowIndexMap === 'object' ? plan.rowIndexMap : {};
+      const actionContext = await loadSessionMemoryActionContext({
+        memoryTemplateStore,
+        memoryTableStore,
         sessionId,
         isGroup,
-        contextType,
-        uiMode: sessionMode === 'rp' ? 'rp' : uiMode,
-      });
-      const planOrder = Array.isArray(plan?.tableOrder) ? plan.tableOrder : [];
-      const tableOrder = planOrder.length ? planOrder : templateOrder;
-      const rowIndexMap = plan?.rowIndexMap && typeof plan.rowIndexMap === 'object' ? plan.rowIndexMap : {};
-
-      const useSharedGlobalScope = false;
-      const sessionScopeKey = resolveSessionMemoryScopeKey({ isGroup, useSharedGlobalScope });
-      const scopedRows = useSharedGlobalScope
-        ? []
-        : await loadScopedMemories({
-          memoryTableStore,
-          scopeKey: sessionScopeKey,
-          sessionId,
-          templateId,
-        });
-      const globalRows = await loadScopedMemories({
-        memoryTableStore,
-        scopeKey: 'global',
-        sessionId,
-        templateId,
-      });
-      const allRows = [
-        ...(Array.isArray(globalRows) ? globalRows : []),
-        ...(Array.isArray(scopedRows) ? scopedRows : []),
-      ];
-      const rowsById = new Map();
-      const rowsByTableScope = new Map();
-      for (const row of allRows) {
-        const id = String(row?.id || '').trim();
-        if (!id) continue;
-        rowsById.set(id, row);
-        const tableId = String(row?.table_id || '').trim();
-        if (!tableId) continue;
-        const scopeKey = row?.contact_id ? 'contact' : row?.group_id ? 'group' : 'global';
-        const key = `${tableId}:${scopeKey}`;
-        if (!rowsByTableScope.has(key)) rowsByTableScope.set(key, []);
-        rowsByTableScope.get(key).push(row);
-      }
-
-      const resolveTableId = action => resolveMemoryActionTableId({
-        action,
-        tableById,
-        tableNameMap,
-        tableOrder,
-      });
-      const resolveRowId = (action, tableId) => resolveMemoryActionRowId({
-        action,
-        tableId,
+        uiMode,
+        filterTables: true,
+        tableOrderOverride: planOrder,
         rowIndexMap,
       });
-      const resolveRowIdByData = (tableId, scopeKey, data, table) => resolveMemoryActionRowIdByData({
-        tableId,
-        scopeKey,
-        data,
-        table,
+      if (!actionContext?.record) return null;
+      const {
+        tableById,
+        templateId,
+        rowsById,
         rowsByTableScope,
-      });
-      const resolveScopeForTable = table => resolveMemoryTableScope({
-        table,
-        useSharedGlobalScope,
-        sessionId,
-        isGroup,
-      });
+        resolveActionContext,
+        resolveRowId,
+        resolveRowIdByData,
+        resolveScopeForTable,
+        resolveTableId,
+      } = actionContext;
 
       const currentTurnNumber = countAssistantTurnsForMemoryTimeline(chatStore.getMessages(sessionId) || []);
 
@@ -16246,234 +15160,60 @@ Phase G（Frame 36）：循环衔接
       let deleted = 0;
       let skipped = 0;
 
-      const queueInsert = (tableId, table, scopeKey, contactId, groupId, data, { allowDuplicate = false } = {}) => {
-        const countKey = `${tableId}:${scopeKey}`;
-        const maxRows = Number.isFinite(Number(table?.maxRows)) ? Math.max(0, Math.trunc(Number(table.maxRows))) : 0;
-        const existingRows = rowsByTableScope.get(countKey) || [];
-        const nextData = normalizeTimelineMemoryActionData({
-          tableId,
-          rowData: data,
-          currentTurnNumber,
-        });
-        if (maxRows && existingRows.length >= maxRows) {
-          skipped += 1;
-          return false;
-        }
-        if (!allowDuplicate) {
-          const duplicate = existingRows.some(row => rowDataEquals(row?.row_data || {}, nextData));
-          if (duplicate) {
-            skipped += 1;
-            return false;
-          }
-        }
-        const sortOrder = resolveMemoryInsertSortOrder({
-          tableId,
-          existingRows,
-          rowData: nextData,
-        });
-        createInputs.push({
-          template_id: templateId,
-          table_id: tableId,
-          contact_id: contactId,
-          group_id: groupId,
-          row_data: nextData,
-          is_active: true,
-          ...(Number.isFinite(Number(sortOrder)) && Number(sortOrder) > 0 ? { sort_order: Number(sortOrder) } : {}),
-        });
-        existingRows.push({
-          row_data: nextData,
-          sort_order: Number.isFinite(Number(sortOrder)) ? Number(sortOrder) : 0,
-        });
-        rowsByTableScope.set(countKey, existingRows);
-        return true;
-      };
-
       const updateMode = normalizeMemoryUpdateMode(plan?.updateMode, 'full');
       const allowSummaryTables = updateMode === 'summary' || updateMode === 'full';
       const allowStandardTables = updateMode === 'standard' || updateMode === 'full';
-      const buildRollbackSnapshot = () => {
-        const tables = [];
-        const seen = new Set();
-        const collectRows = (tableId, scopeKey) => {
-          const key = `${tableId}:${scopeKey}`;
-          if (seen.has(key)) return;
-          seen.add(key);
-          const rows = rowsByTableScope.get(key) || [];
-          tables.push({
-            table_id: tableId,
-            scope: scopeKey,
-            rows: rows
-              .map(row => ({
-                id: String(row?.id || '').trim(),
-                table_id: String(row?.table_id || '').trim(),
-                template_id: row?.template_id || templateId,
-                contact_id: row?.contact_id ?? null,
-                group_id: row?.group_id ?? null,
-                row_data: row?.row_data || {},
-                is_active: Boolean(row?.is_active),
-                is_pinned: Boolean(row?.is_pinned),
-                priority: Number.isFinite(Number(row?.priority)) ? Number(row.priority) : 0,
-                sort_order: Number.isFinite(Number(row?.sort_order)) ? Number(row.sort_order) : 0,
-              }))
-              .filter(row => row.id),
-          });
-        };
-        actions.forEach(action => {
-          const tableId = resolveTableId(action);
-          if (!tableId) return;
-          const table = tableById.get(tableId);
-          if (!table) return;
-          const tableScope = String(table?.scope || '')
-            .trim()
-            .toLowerCase();
-          if (tableScope === 'group' && !isGroup) return;
-          if (tableScope === 'contact' && isGroup) return;
-          const effectiveScope = useSharedGlobalScope ? 'global' : (tableScope || (isGroup ? 'group' : 'contact'));
-          const isSummaryTable = isSummaryTableId(tableId);
-          if ((isSummaryTable && !allowSummaryTables) || (!isSummaryTable && !allowStandardTables)) return;
-          const { key: scopeKey } = resolveScopeForTable(table);
-          collectRows(tableId, scopeKey);
-        });
-        return tables.length ? { tables } : null;
-      };
-      const rollbackSnapshot = buildRollbackSnapshot();
+      const rollbackSnapshot = buildMemoryRollbackSnapshot({
+        actions,
+        templateId,
+        resolveTableId,
+        tableById,
+        resolveScopeForTable,
+        rowsByTableScope,
+        allowSummaryTables,
+        allowStandardTables,
+        isGroup,
+      });
       for (const action of actions) {
-        const tableId = resolveTableId(action);
-        if (!tableId) {
+        const actionContext = resolveActionContext({
+          action,
+          allowSummaryTables,
+          allowStandardTables,
+        });
+        if (!actionContext) {
           skipped += 1;
           continue;
         }
-        const table = tableById.get(tableId);
-        if (!table) {
-          skipped += 1;
-          continue;
-        }
-        const tableScope = String(table?.scope || '')
-          .trim()
-          .toLowerCase();
-        if (tableScope === 'group' && !isGroup) {
-          skipped += 1;
-          continue;
-        }
-        if (tableScope === 'contact' && isGroup) {
-          skipped += 1;
-          continue;
-        }
-        const effectiveScope = useSharedGlobalScope ? 'global' : (tableScope || (isGroup ? 'group' : 'contact'));
-        const { key: scopeKey, contactId, groupId } = resolveScopeForTable(table);
-        const isSummaryTable = isSummaryTableId(tableId);
-        if ((isSummaryTable && !allowSummaryTables) || (!isSummaryTable && !allowStandardTables)) {
-          skipped += 1;
-          continue;
-        }
-        if (action.action === 'insert' || action.action === 'init') {
-          const data = normalizeTableRowData(action.data, table.columns || []);
-          if (!Object.keys(data).length) {
-            skipped += 1;
-            continue;
-          }
-          if (action.action === 'init') {
-            const countKey = `${tableId}:${scopeKey}`;
-            const existingRows = rowsByTableScope.get(countKey) || [];
-            if (existingRows.length) {
-              skipped += 1;
-              continue;
-            }
-          }
-          const allowDuplicate = isSummaryTable && action.action === 'insert';
-          queueInsert(tableId, table, scopeKey, contactId, groupId, data, { allowDuplicate });
-        } else if (action.action === 'update') {
-          const data = normalizeTableRowData(action.data, table.columns || []);
-          if (!Object.keys(data).length) {
-            skipped += 1;
-            continue;
-          }
-          if (isSummaryTable) {
-            queueInsert(tableId, table, scopeKey, contactId, groupId, data, { allowDuplicate: true });
-            continue;
-          }
-          let rowId = resolveRowId(action, tableId);
-          if (!rowId) {
-            // Best-effort fallback when row_index is missing or truncated from prompt.
-            rowId = resolveRowIdByData(tableId, scopeKey, data, table);
-          }
-          if (!rowId) {
-            const countKey = `${tableId}:${scopeKey}`;
-            const existingRows = rowsByTableScope.get(countKey) || [];
-            if (!existingRows.length) {
-              queueInsert(tableId, table, scopeKey, contactId, groupId, data);
-            } else {
-              skipped += 1;
-            }
-            continue;
-          }
-          const row = rowsById.get(rowId);
-          if (!row) {
-            skipped += 1;
-            continue;
-          }
-          if (String(row?.table_id || '') !== tableId) {
-            skipped += 1;
-            continue;
-          }
-          if (row?.is_pinned) {
-            skipped += 1;
-            continue;
-          }
-          const merged = { ...(row?.row_data || {}), ...data };
-          if (rowDataEquals(row?.row_data || {}, merged)) {
-            skipped += 1;
-            continue;
-          }
-          await memoryTableStore.updateMemory({ id: rowId, row_data: merged });
-          rowsById.set(rowId, { ...row, row_data: merged });
-          updated += 1;
-        } else if (action.action === 'delete') {
-          const rowId = resolveRowId(action, tableId);
-          if (!rowId) {
-            skipped += 1;
-            continue;
-          }
-          const row = rowsById.get(rowId);
-          if (!row) {
-            skipped += 1;
-            continue;
-          }
-          if (String(row?.table_id || '') !== tableId) {
-            skipped += 1;
-            continue;
-          }
-          if (row?.is_pinned) {
-            skipped += 1;
-            continue;
-          }
-          await memoryTableStore.deleteMemory(rowId);
-          rowsById.delete(rowId);
-          {
-            const rowScopeKey = row?.contact_id ? 'contact' : row?.group_id ? 'group' : 'global';
-            const key = `${tableId}:${rowScopeKey}`;
-            const list = rowsByTableScope.get(key) || [];
-            rowsByTableScope.set(
-              key,
-              list.filter(item => String(item?.id || '') !== rowId),
-            );
-          }
-          deleted += 1;
-        }
+        const data = normalizeTableRowData(action.data, actionContext.table?.columns || []);
+        const plan = resolveMemoryActionMutationPlan({
+          action,
+          actionContext,
+          data,
+          rowsByTableScope,
+          resolveRowId,
+          resolveRowIdByData,
+          rowsById,
+        });
+        const result = await executeMemoryActionMutationPlan({
+          plan,
+          memoryTableStore,
+          createInputs,
+          rowsById,
+          rowsByTableScope,
+          templateId,
+          currentTurnNumber,
+        });
+        updated += Number(result?.updated || 0);
+        deleted += Number(result?.deleted || 0);
+        skipped += Number(result?.skipped || 0);
       }
 
       let inserted = 0;
       if (createInputs.length) {
-        try {
-          inserted = await memoryTableStore.batchCreateMemories(createInputs);
-        } catch {
-          for (const input of createInputs) {
-            try {
-              await memoryTableStore.createMemory(input);
-              inserted += 1;
-            } catch {}
-          }
-        }
+        inserted = await batchCreateMemoriesWithFallback({
+          memoryTableStore,
+          inputs: createInputs,
+        });
       }
 
       const changed = inserted + updated + deleted;
@@ -16488,12 +15228,15 @@ Phase G（Frame 36）：循环衔接
         } catch {}
       }
       if (changed > 0) {
-        window.dispatchEvent(new CustomEvent('memory-rows-updated', { detail: { sessionId, templateId } }));
-        const parts = [];
-        if (inserted) parts.push(`新增${inserted}`);
-        if (updated) parts.push(`更新${updated}`);
-        if (deleted) parts.push(`删除${deleted}`);
-        window.toastr?.info?.(`记忆表格已更新：${parts.join(' · ')}`);
+        notifyMemoryEditsApplied({
+          target: window,
+          sessionId,
+          templateId,
+          inserted,
+          updated,
+          deleted,
+          toastr: window.toastr,
+        });
       } else if (skipped > 0) {
         logger.debug('memory auto extract skipped actions', { skipped });
       }
@@ -16502,81 +15245,47 @@ Phase G（Frame 36）：循环衔接
     const rollbackLastMemoryUpdateFromActions = async (sessionId, actions = []) => {
       if (!memoryTableStore || !memoryTemplateStore) return false;
       if (!Array.isArray(actions) || actions.length === 0) return false;
-      let templateInfo = null;
-      try {
-        templateInfo = await loadTemplateDefinition();
-      } catch {
-        templateInfo = null;
-      }
-      if (!templateInfo?.record) return false;
-      const templateId = String(templateInfo.record?.id || '').trim();
-      if (!templateId) return false;
-      const template = templateInfo.template || {};
       const isGroupScope = String(sessionId || '').startsWith('group:');
-      const contextType = getMemoryContextType({ sessionId, isGroup: isGroupScope });
-      const sessionMode = resolveMemorySessionMode({ uiMode, sessionId, contextType });
-      const { tableById, tableNameMap, tableOrder } = buildTableMaps(template, {
+      const actionContext = await loadSessionMemoryActionContext({
+        memoryTemplateStore,
+        memoryTableStore,
         sessionId,
         isGroup: isGroupScope,
-        contextType,
-        uiMode: sessionMode === 'rp' ? 'rp' : uiMode,
+        uiMode,
       });
-      const useSharedGlobalScope = false;
-      const resolveTableId = action => resolveMemoryActionTableId({
-        action,
-        tableById,
-        tableNameMap,
-        tableOrder,
-      });
-      const resolveScopeKey = table => {
-        const scope = String(table?.scope || '')
-          .trim()
-          .toLowerCase();
-        if (scope === 'global') return 'global';
-        if (scope === 'group') return 'group';
-        if (scope === 'contact') return useSharedGlobalScope ? 'global' : 'contact';
-        return useSharedGlobalScope ? 'global' : '';
-      };
-      const scopeRowsCache = new Map();
-      const getScopedRows = async scopeKey => {
-        if (scopeRowsCache.has(scopeKey)) return scopeRowsCache.get(scopeKey);
-        const rows = await loadScopedMemories({
-          memoryTableStore,
-          scopeKey,
-          sessionId,
-          templateId,
-        });
-        scopeRowsCache.set(scopeKey, rows);
-        return rows;
-      };
+      if (!actionContext?.record) return false;
+      const {
+        templateId,
+        rowsByTableScope,
+        resolveActionContext,
+      } = actionContext;
       let changed = 0;
       for (const action of actions) {
-        const tableId = resolveTableId(action);
-        if (!tableId) continue;
-        const table = tableById.get(tableId);
-        if (!table) continue;
-        const scopeKey = resolveScopeKey(table) || (useSharedGlobalScope ? 'global' : (isGroupScope ? 'group' : 'contact'));
-        const currentRows = await getScopedRows(scopeKey);
-        const scopedRows = (Array.isArray(currentRows) ? currentRows : []).filter(
-          row => String(row?.table_id || '').trim() === tableId,
-        );
+        const actionContext = resolveActionContext({
+          action,
+        });
+        if (!actionContext) continue;
+        const { tableId, table, scopeKey, isSummaryTable } = actionContext;
+        const currentRows = rowsByTableScope.get(`${tableId}:${scopeKey}`) || [];
         const data = normalizeTableRowData(action?.data || {}, table.columns || []);
         if (!Object.keys(data).length) continue;
-        const isSummaryTable = isSummaryTableId(tableId);
         const actionType = String(action?.action || '').toLowerCase();
         const shouldRollbackInsert = actionType === 'insert' || (isSummaryTable && actionType === 'update');
         if (!shouldRollbackInsert) continue;
-        const matches = scopedRows.filter(row => rowDataEquals(row?.row_data || {}, data));
-        const target = pickNewestMemoryRow(matches);
-        if (!target) continue;
-        try {
-          await memoryTableStore.deleteMemory(String(target.id || ''));
-          changed += 1;
-        } catch {}
+        changed += await deleteNewestMatchingMemoryRow({
+          memoryTableStore,
+          currentRows,
+          tableId,
+          data,
+        });
       }
       if (changed > 0) {
-        window.dispatchEvent(new CustomEvent('memory-rows-updated', { detail: { sessionId, templateId } }));
-        window.toastr?.info?.('已回滚上一轮记忆表格写入');
+        notifyMemoryEditsRolledBack({
+          target: window,
+          sessionId,
+          templateId,
+          toastr: window.toastr,
+        });
       }
       return changed > 0;
     };
@@ -16587,13 +15296,12 @@ Phase G（Frame 36）：循环衔接
       if (!rollback || !Array.isArray(rollback.tables) || !rollback.tables.length) {
         return rollbackLastMemoryUpdateFromActions(sessionId, entry?.actions || []);
       }
-      let templateInfo = null;
-      try {
-        templateInfo = await loadTemplateDefinition();
-      } catch {
-        templateInfo = null;
-      }
-      const templateId = String(templateInfo?.record?.id || '').trim();
+      const templateContext = await loadMemoryTemplateContext({
+        sessionId,
+        isGroup: String(sessionId || '').startsWith('group:'),
+        filterTables: false,
+      });
+      const templateId = String(templateContext?.templateId || '').trim();
       if (!templateId) return false;
       let changed = 0;
       for (const tableSnap of rollback.tables) {
@@ -16611,116 +15319,56 @@ Phase G（Frame 36）：循环衔接
           row => String(row?.table_id || '').trim() === tableId,
         );
         const snapshotRows = Array.isArray(tableSnap?.rows) ? tableSnap.rows : [];
-        const snapshotById = new Map(snapshotRows.map(row => [String(row?.id || '').trim(), row]));
-        const currentById = new Map(scopedCurrent.map(row => [String(row?.id || '').trim(), row]));
-
-        for (const row of scopedCurrent) {
-          const id = String(row?.id || '').trim();
-          if (!id) continue;
-          if (!snapshotById.has(id)) {
-            try {
-              await memoryTableStore.deleteMemory(id);
-              changed += 1;
-            } catch {}
-          }
-        }
-
-        for (const snap of snapshotRows) {
-          const id = String(snap?.id || '').trim();
-          if (!id) continue;
-          const current = currentById.get(id);
-          const payload = {
-            row_data: snap?.row_data || {},
-            is_active: Boolean(snap?.is_active),
-            is_pinned: Boolean(snap?.is_pinned),
-            priority: Number.isFinite(Number(snap?.priority)) ? Number(snap.priority) : 0,
-            sort_order: Number.isFinite(Number(snap?.sort_order)) ? Number(snap.sort_order) : 0,
-          };
-          if (current) {
-            try {
-              const sameData = rowDataEquals(current?.row_data || {}, payload.row_data || {});
-              const sameActive = Boolean(current?.is_active) === payload.is_active;
-              const samePinned = Boolean(current?.is_pinned) === payload.is_pinned;
-              const samePriority = Number.isFinite(Number(current?.priority)) ? Number(current.priority) : 0;
-              const sameSortOrder = Number.isFinite(Number(current?.sort_order)) ? Number(current.sort_order) : 0;
-              if (!sameData || !sameActive || !samePinned || samePriority !== payload.priority || sameSortOrder !== payload.sort_order) {
-                await memoryTableStore.updateMemory({ id, ...payload });
-                changed += 1;
-              }
-            } catch {}
-          } else {
-            try {
-              await memoryTableStore.createMemory({
-                template_id: templateId,
-                table_id: tableId,
-                contact_id: snap?.contact_id ?? scopeFields.contact_id,
-                group_id: snap?.group_id ?? scopeFields.group_id,
-                ...payload,
-              });
-              changed += 1;
-            } catch {}
-          }
-        }
+        changed += await restoreMemoryRowsFromRollbackSnapshot({
+          memoryTableStore,
+          templateId,
+          tableId,
+          scopeFields,
+          currentRows: scopedCurrent,
+          snapshotRows,
+        });
       }
       if (changed > 0) {
-        window.dispatchEvent(new CustomEvent('memory-rows-updated', { detail: { sessionId, templateId } }));
-        window.toastr?.info?.('已回滚上一轮记忆表格写入');
+        notifyMemoryEditsRolledBack({
+          target: window,
+          sessionId,
+          templateId,
+          toastr: window.toastr,
+        });
       }
       return changed > 0;
     };
     registerMemoryUpdateBridgeContract(window.appBridge, {
       rollbackLastMemoryUpdate,
     });
-    const buildRequestPromptText = messages => buildRequestPromptTextCore(messages);
-    const handleMemoryEditsFromRaw = async (raw, { sessionId, isGroup, force = false, requestPrompt } = {}) => {
-      if (!force && !isMemoryAutoExtractInline()) {
-        return { text: raw, blocks: [], actions: [] };
-      }
-      const parsed = extractTableEditBlocks(raw);
-      try {
-        const blocks = Array.isArray(parsed.blocks) ? parsed.blocks : [];
-        const tableEditRaw = blocks.join('\n\n').trim();
-        const lastEntry = window.appBridge?.getLastMemoryUpdate?.(sessionId);
-        const promptText = resolveMemoryUpdateRequestPrompt({
-          requestPrompt,
-          lastRequestMessages: window.appBridge?.lastRequest?.messages,
-          lastEntryRequestPrompt: lastEntry?.requestPrompt,
-          buildRequestPrompt: buildRequestPromptText,
-        });
-        window.appBridge?.setLastMemoryUpdate?.(sessionId, {
-          at: Date.now(),
-          mode: force ? 'separate' : 'inline',
-          raw: String(raw ?? ''),
-          tableEditRaw,
-          actions: Array.isArray(parsed.actions) ? parsed.actions : [],
-          requestPrompt: promptText,
-        });
-      } catch {}
-      if (parsed.actions.length) {
-        try {
-          const confirmedActions = await confirmMemoryEditsIfNeeded(parsed.actions);
-          if (confirmedActions.length) {
-            await applyMemoryEdits({ actions: confirmedActions, sessionId, isGroup });
-          }
-        } catch (err) {
-          logger.warn('apply memory edits failed', err);
-        }
-      }
-      return parsed;
-    };
-    const buildMemoryUpdateHistoryText = sessionId => {
-      const messages = chatStore.getMessages(sessionId) || [];
-      const limit = resolveMemoryUpdateHistoryLimit(appSettings.get());
-      return buildMemoryUpdateHistoryTextCore(messages, {
-        limit,
-        stripAssistantText: text => stripTableEditBlocks(text),
+    const handleMemoryEditsFromRaw = async (raw, { sessionId, isGroup, force = false, requestPrompt } = {}) =>
+      handleMemoryEditsFromRawWithUi({
+        raw,
+        sessionId,
+        isGroup,
+        force,
+        requestPrompt,
+        isMemoryAutoExtractInline,
+        extractTableEditBlocks,
+        appBridge: window.appBridge,
+        buildRequestPrompt: buildRequestPromptTextCore,
+        confirmMemoryEdits: confirmMemoryEditsIfNeeded,
+        applyMemoryEdits,
+        logger,
       });
-    };
-    const buildMemoryUpdatePlan = async (sessionId, isGroup, baseContext) => {
-      const next = buildMemoryUpdatePlanInput(baseContext, { sessionId, isGroup });
-      if (!window.appBridge?.buildMemoryPromptPlan) return null;
-      return window.appBridge.buildMemoryPromptPlan(next);
-    };
+    const buildMemoryUpdateHistoryText = sessionId => buildMemoryUpdateHistoryTextForSession({
+      sessionId,
+      chatStore,
+      settings: appSettings.get(),
+      stripAssistantText: text => stripTableEditBlocks(text),
+    });
+    const buildMemoryUpdatePlan = async (sessionId, isGroup, baseContext) =>
+      buildMemoryUpdatePlanForSession({
+        sessionId,
+        isGroup,
+        baseContext,
+        buildPlan: next => window.appBridge?.buildMemoryPromptPlan?.(next) ?? null,
+      });
     const memoryUpdateRuntime = createMemoryUpdateRuntime({
       appBridge: window.appBridge,
       appSettings,
@@ -18592,19 +17240,17 @@ Phase G（Frame 36）：循环衔接
       return;
     }
   });
-  const rerenderCurrentSession = async () => {
-    try {
-      const id = chatStore.getCurrent();
-      const msgs = await chatStore.ensureRecentMessagesLoaded(id);
-      cancelInitialHistoryFill(id);
-      ui.clearMessages();
-      const PAGE = 90;
-      const start = Math.max(0, msgs.length - PAGE);
-      ui.preloadHistory(decorateMessagesForDisplay(msgs.slice(start), { sessionId: id }));
-      chatRenderState.set(id, { start });
-      refreshChatAndContacts();
-    } catch {}
-  };
+  const rerenderCurrentSession = async () => rerenderCurrentSessionHistory({
+    getCurrentSessionId: () => chatStore.getCurrent(),
+    ensureRecentMessagesLoaded: sid => chatStore.ensureRecentMessagesLoaded(sid),
+    cancelInitialHistoryFill,
+    clearMessages: () => ui.clearMessages(),
+    decorateMessagesForDisplay,
+    preloadHistory: messages => ui.preloadHistory(messages),
+    setRenderState: (sid, state) => chatRenderState.set(sid, state),
+    refreshChatAndContacts,
+    pageSize: 90,
+  });
 
   window.addEventListener('worldinfo-changed', () => {
     updateWorldIndicator();
@@ -18612,133 +17258,129 @@ Phase G（Frame 36）：循环衔接
     rerenderCurrentSession();
   });
   window.addEventListener('memory-table-push', ev => {
-    const detail = ev?.detail || {};
-    const sessionId = String(detail.sessionId || '').trim();
-    const content = String(detail.content || '').trim();
-    if (!sessionId || !content) return;
-    const msg = {
-      role: 'assistant',
-      type: 'text',
-      name: '助手',
-      avatar: getAssistantAvatarForSession(sessionId),
-      time: formatNowTime(),
-      content,
-      meta: { renderRich: true, kind: 'memory-table-push' },
-    };
-    if (String(chatStore.getCurrent() || '') === sessionId) {
-      ui.addMessage(msg);
-    }
-    const saved = chatStore.appendMessage(msg, sessionId);
-    autoMarkReadIfActive(sessionId, saved?.id || msg?.id || '');
-    refreshChatAndContacts();
-  });
-  window.addEventListener('open-session-config', () => sessionConfigPanel.show());
-  window.addEventListener('preset-changed', async () => {
-    try {
-      await window.appBridge?.syncPresetRegexBindings?.();
-    } catch {}
-    scriptRuntime?.syncContext?.().catch(() => {});
-    rerenderCurrentSession();
-  });
-  window.addEventListener('regex-changed', () => {
-    clearMessageDecorationCache();
-    rerenderCurrentSession();
-  });
-  window.addEventListener('session-panel-closed', (event) => {
-    if (event?.detail?.jumpToContacts) {
-      switchPage('contacts');
-    }
-  });
-  window.addEventListener('session-changed', async e => {
-    const id = e.detail?.id;
-    await runSessionChangedFlow({
-      sessionId: id,
-      beginEnterRequest: sid => beginChatEnterRequest(sid),
-      cancelInitialHistoryFillJobs: cancelAllInitialHistoryFillJobs,
-      syncScriptContext: payload => scriptRuntime?.syncContext?.(payload),
-      getContact: sid => contactsStore.getContact(sid),
-      activateShellStateFn: ({ sessionId }) => activateSessionShellState({
-        sessionId,
-        setActiveSession: sid => window.appBridge.setActiveSession(sid),
-        syncUserPersonaUI,
-        getContact: sid => contactsStore.getContact(sid),
-        renderSessionNameHtml,
-        setChatTitleHtml: html => {
-          if (currentChatTitle) currentChatTitle.innerHTML = html;
-        },
-        restoreDraft: false,
-      }),
-      applyLoadingStateFn: ({ sessionId, contact, sessionName }) => applySessionEnterLoadingState({
-        sessionId,
-        contact,
-        sessionName,
-        showConversationLoading: payload => ui.showConversationLoading(payload),
-        getDraft: sid => chatStore.getDraft(sid),
-        getMirrorDraft: sid => {
-          try {
-            return sessionStorage.getItem(`phone_draft_${sid}`) || '';
-          } catch {}
-          return '';
-        },
-        setInputText: value => ui.setInputText(value),
-        syncReplyTargetComposer,
-        setSessionLabel: sid => ui.setSessionLabel(sid),
-        updatePendingFloat,
-      }),
-      ensureRecentMessagesLoaded: sid => chatStore.ensureRecentMessagesLoaded(sid),
-      isRequestStale: request => isChatEnterRequestStale(request),
-      renderChangedHistoryStageFn: ({ sessionId, messages }) => renderSessionChangedHistoryStage({
-        sessionId,
-        messages,
-        pageSize: 90,
-        clearMessages: () => ui.clearMessages(),
-        decorateMessagesForDisplay,
-        preloadHistory: messages => ui.preloadHistory(messages),
-        setRenderState: (sid, state) => chatRenderState.set(sid, state),
-        getDraft: sid => chatStore.getDraft(sid),
-        setInputText: value => ui.setInputText(value),
-        syncReplyTargetComposer,
-        setSessionLabel: sid => ui.setSessionLabel(sid),
-        applyMvuSchemaDefaults,
-        uiMode,
-        refreshRpToolbar,
-        refreshChatAndContacts,
-      }),
+    applyMemoryTablePushEvent({
+      detail: ev?.detail || {},
+      getCurrentSessionId: () => chatStore.getCurrent(),
+      getAssistantAvatarForSession,
+      formatNowTime,
+      addMessage: message => ui.addMessage(message),
+      appendMessage: (message, sessionId) => chatStore.appendMessage(message, sessionId),
+      autoMarkReadIfActive,
+      refreshChatAndContacts,
     });
   });
-
-  try {
-    await restoreUiState();
-  } catch {}
-  if (!activePage) activePage = 'chat';
-  if (!pages[activePage]) activePage = 'chat';
-  if (!pages[activePage]?.classList.contains('active')) switchPage(activePage || 'chat');
-  uiLog('boot: after restore', {
-    activePage,
-    sessionId: chatStore.getCurrent(),
-    inChatRoom: chatRoom ? !chatRoom.classList.contains('hidden') : false,
+  registerAppSessionEventListeners({
+    windowLike: window,
+    onOpenSessionConfig: () => sessionConfigPanel.show(),
+    onPresetChanged: async () => {
+      try {
+        await window.appBridge?.syncPresetRegexBindings?.();
+      } catch {}
+      scriptRuntime?.syncContext?.().catch(() => {});
+      rerenderCurrentSession();
+    },
+    onRegexChanged: () => {
+      clearMessageDecorationCache();
+      rerenderCurrentSession();
+    },
+    onSessionPanelClosed: (detail) => {
+      if (detail?.jumpToContacts) {
+        switchPage('contacts');
+      }
+    },
+    onSessionChanged: async (id) => {
+      await runSessionChangedFlow({
+        sessionId: id,
+        beginEnterRequest: sid => beginChatEnterRequest(sid),
+        cancelInitialHistoryFillJobs: cancelAllInitialHistoryFillJobs,
+        syncScriptContext: payload => scriptRuntime?.syncContext?.(payload),
+        getContact: sid => contactsStore.getContact(sid),
+        activateShellStateFn: ({ sessionId }) => activateSessionShellState({
+          sessionId,
+          setActiveSession: sid => window.appBridge.setActiveSession(sid),
+          syncUserPersonaUI,
+          getContact: sid => contactsStore.getContact(sid),
+          renderSessionNameHtml,
+          setChatTitleHtml: html => {
+            if (currentChatTitle) currentChatTitle.innerHTML = html;
+          },
+          restoreDraft: false,
+        }),
+        applyLoadingStateFn: ({ sessionId, contact, sessionName }) => applySessionEnterLoadingState({
+          sessionId,
+          contact,
+          sessionName,
+          showConversationLoading: payload => ui.showConversationLoading(payload),
+          getDraft: sid => chatStore.getDraft(sid),
+          getMirrorDraft: sid => {
+            try {
+              return sessionStorage.getItem(`phone_draft_${sid}`) || '';
+            } catch {}
+            return '';
+          },
+          setInputText: value => ui.setInputText(value),
+          syncReplyTargetComposer,
+          setSessionLabel: sid => ui.setSessionLabel(sid),
+          updatePendingFloat,
+        }),
+        ensureRecentMessagesLoaded: sid => chatStore.ensureRecentMessagesLoaded(sid),
+        isRequestStale: request => isChatEnterRequestStale(request),
+        renderChangedHistoryStageFn: ({ sessionId, messages }) => renderSessionChangedHistoryStage({
+          sessionId,
+          messages,
+          pageSize: 90,
+          clearMessages: () => ui.clearMessages(),
+          decorateMessagesForDisplay,
+          preloadHistory: messages => ui.preloadHistory(messages),
+          setRenderState: (sid, state) => chatRenderState.set(sid, state),
+          getDraft: sid => chatStore.getDraft(sid),
+          setInputText: value => ui.setInputText(value),
+          syncReplyTargetComposer,
+          setSessionLabel: sid => ui.setSessionLabel(sid),
+          applyMvuSchemaDefaults,
+          uiMode,
+          refreshRpToolbar,
+          refreshChatAndContacts,
+        }),
+      });
+    },
   });
-  applyMvuSchemaDefaults(chatStore.getCurrent(), { reason: 'boot' });
-  updateWorldIndicator();
-  refreshChatAndContacts();
-  applyUiModeUI();
-  if (initialUiMode === 'rp') {
-    uiMode = 'chat';
-    persistUiMode();
-    applyUiModeUI();
-  }
-  uiStateArmed = true;
-  try {
-    saveUiState();
-  } catch {}
+
+  await runAppBootRestoreFlow({
+    restoreUiState,
+    getActivePage: () => activePage,
+    setActivePage: value => {
+      activePage = value;
+    },
+    hasPage: page => Boolean(pages[page]),
+    isPageActive: page => Boolean(pages[page]?.classList.contains('active')),
+    switchPage,
+    uiLog,
+    getCurrentSessionId: () => chatStore.getCurrent(),
+    isChatRoomVisible: () => Boolean(chatRoom ? !chatRoom.classList.contains('hidden') : false),
+    applyMvuSchemaDefaults,
+    updateWorldIndicator,
+    refreshChatAndContacts,
+    applyUiModeUI,
+    getInitialUiMode: () => initialUiMode,
+    setUiMode: value => {
+      uiMode = value;
+    },
+    persistUiMode,
+    setUiStateArmed: value => {
+      uiStateArmed = Boolean(value);
+    },
+    saveUiState,
+  });
 
   // If stores hydrate later (e.g. after a WebView reload / offline resume), refresh UI without jumping to defaults.
-  window.addEventListener('store-hydrated', async ev => {
-    try {
+  registerHydratedUiRestoreListener({
+    windowLike: window,
+    onHydrated: async (store) => {
       await runHydratedUiRestoreFlow({
-        store: ev?.detail?.store,
-        reconcileHydratedState: ({ store }) => reconcileHydratedStoreUiState({
-          store,
+        store,
+        reconcileHydratedState: ({ store: hydratedStore }) => reconcileHydratedStoreUiState({
+          store: hydratedStore,
           refreshChatAndContacts,
           getCurrentSessionId: () => chatStore.getCurrent(),
           readSavedStateFast: readSavedUiStateFast,
@@ -18750,155 +17392,16 @@ Phase G（Frame 36）：循环衔接
           uiLog,
         }),
       });
-    } catch {}
+    },
   });
 
   // Lifecycle diagnostics (helps confirm whether this is a real WebView reload/process restart)
-  try {
-    window.addEventListener('pageshow', e => uiLog('pageshow', { persisted: Boolean(e?.persisted) }));
-    window.addEventListener('pagehide', e => uiLog('pagehide', { persisted: Boolean(e?.persisted) }));
-    document.addEventListener('visibilitychange', () => uiLog('visibilitychange', { state: document.visibilityState }));
-    window.addEventListener('beforeunload', () => uiLog('beforeunload'));
-    window.addEventListener('unload', () => uiLog('unload'));
-    window.addEventListener('error', e => {
-      const err = e?.error;
-      const msg = String(e?.message || err?.message || err || '');
-      if (isIgnorableRuntimeNoise(msg)) return;
-      uiLog('window.error', {
-        msg,
-        file: e?.filename,
-        line: e?.lineno,
-        col: e?.colno,
-        stack: err?.stack || '',
-      });
-    });
-    window.addEventListener('unhandledrejection', e => {
-      const msg = String(e?.reason?.message || e?.reason || '');
-      if (isIgnorableRuntimeNoise(msg)) return;
-      uiLog('unhandledrejection', {
-        reason: msg,
-        stack: e?.reason?.stack || '',
-      });
-    });
-  } catch {}
-
-  async function handleDocumentFile(file) {
-    if (!file) {
-      window.toastr?.warning?.('未选择文档');
-      return;
-    }
-    const name = String(file?.name || '').trim() || '文件';
-    const mime = String(file?.type || '').trim();
-    const size = Number(file?.size || 0);
-    const sizeLabel = formatFileSize(size);
-    let text = '';
-    let textTruncated = false;
-    let supported = false;
-    let localPath = '';
-    let localBytes = 0;
-    try {
-      const extracted = await extractDocumentText(file);
-      text = extracted.text || '';
-      textTruncated = Boolean(extracted.truncated);
-      supported = Boolean(extracted.supported);
-    } catch {}
-    if (!supported && mime) {
-      window.toastr?.info?.('该文件类型暂不支持解析，将仅发送文件信息');
-    }
-    try {
-      const sessionId = String(chatStore.getCurrent() || '').trim();
-      const base64 = await readFileAsBase64(file);
-      if (sessionId && base64) {
-        const resp = await safeInvoke('save_attachment_bytes', {
-          sessionId,
-          base64,
-          fileName: name,
-        });
-        localPath = String(resp?.path || '').trim();
-        localBytes = Number(resp?.bytes || 0) || 0;
-      }
-    } catch {}
-    addComposerAttachment({
-      kind: 'document',
-      name,
-      mime,
-      size,
-      sizeLabel,
-      text,
-      textTruncated,
-      localPath,
-      localBytes,
-      originalName: name,
-    });
-  }
-
-  function handleSticker(tag) {
-    if (!isStickerAllowed()) {
-      window.toastr?.info?.('RP界面不支持贴图');
-      return;
-    }
-    const sessionId = chatStore.getCurrent();
-    bumpStickerUsage(tag);
-    const msg = {
-      role: 'user',
-      type: 'sticker',
-      content: tag,
-      name: getActiveUserName(),
-      avatar: avatars.user,
-      time: formatNowTime(),
-    };
-    ui.addMessage(msg);
-    chatStore.appendMessage(msg, sessionId);
-  }
-
-  function handleImage(url, name = '') {
-    const resolved = String(url || '').trim();
-    if (!resolved) return;
-    addComposerAttachment({
-      kind: 'image',
-      url: resolved,
-      name: String(name || '').trim(),
-    });
-  }
-
-  function handleMusicFile(dataUrl, name = '本地音频') {
-    const sessionId = chatStore.getCurrent();
-    const msg = {
-      role: 'user',
-      type: 'music',
-      content: name,
-      meta: { artist: '本地', url: dataUrl },
-      name: getActiveUserName(),
-      avatar: avatars.user,
-      time: formatNowTime(),
-    };
-    ui.addMessage(msg);
-    chatStore.appendMessage(msg, sessionId);
-  }
-
-  function updateWorldIndicator() {
-    const globalId = window.appBridge?.globalWorldId || '';
-    const roleIds = window.appBridge?.getRoleWorldIds?.(chatStore.getCurrent?.()) || [];
-    const currentIds = Array.isArray(window.appBridge?.currentWorldIds)
-      ? window.appBridge.currentWorldIds
-      : (window.appBridge?.currentWorldId ? [window.appBridge.currentWorldId] : []);
-    const roleLabel = (() => {
-      if (!Array.isArray(roleIds) || !roleIds.length) return '';
-      if (roleIds.length <= 2) return roleIds.join(' + ');
-      return `${roleIds[0]} + ${roleIds[1]} + ...`;
-    })();
-    const currentLabel = (() => {
-      if (!currentIds.length) return '';
-      if (currentIds.length <= 2) return currentIds.join(' + ');
-      return `${currentIds[0]} + ${currentIds[1]} + ...`;
-    })();
-    const parts = [];
-    if (globalId) parts.push(`全局:${globalId}`);
-    if (roleLabel) parts.push(`角色:${roleLabel}`);
-    if (currentLabel) parts.push(`会话:${currentLabel}`);
-    const label = parts.length ? parts.join(' / ') : '未启用';
-    worldIndicator.setName(label);
-  }
+  registerUiLifecycleDiagnostics({
+    windowLike: window,
+    documentLike: document,
+    uiLog,
+    isIgnorableRuntimeNoise,
+  });
 
   /* ---------------- 聊天设置功能 ---------------- */
   const ORIGINAL_CHAT_DEFAULTS = {

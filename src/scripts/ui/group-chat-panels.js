@@ -8,21 +8,46 @@ import { logger } from '../utils/logger.js';
 import { avatarDataUrlFromFile } from '../utils/image.js';
 import { FEATHER_DEFAULT, resolveLineAvatar } from '../utils/line-avatar.js';
 import { appSettings } from '../storage/app-settings.js';
-import {
-    getBridgeTableShortLabel,
-    getRpToChatBridgeTableIds,
-    normalizeBridgeLimit,
-    pruneRpToChatBridgeTableSettings,
-    resolveRpToChatBridgeTableSettings,
-} from '../memory/memory-bridge-utils.js';
 import { MemoryTableEditor } from './memory-table-editor.js';
 import { appConfirm } from './app-confirm.js';
 import { createSessionContactPickerModal } from './session-contact-picker-modal-utils.js';
+import { createGroupCreateRuntime } from './group-create-runtime-utils.js';
+import { createGroupMemoryShareRuntime } from './group-memory-share-runtime-utils.js';
+import { createGroupMemberManagementRuntime } from './group-member-management-runtime-utils.js';
+import { runGroupSettingsSaveFlow } from './group-settings-save-runtime-utils.js';
 import { createSessionPanelShell } from './session-panel-shell-utils.js';
 import {
-    clearSessionMemoriesForNewChat,
-    runStartNewChatFlow,
-} from './session-new-chat-utils.js';
+    applySessionPanelMemoryMode,
+    runSessionPanelShowFlow,
+} from './session-panel-display-runtime-utils.js';
+import {
+    buildSessionAvatarButtonStyle,
+    buildSessionBlockButtonStyle,
+    buildSessionCheckboxInputStyle,
+    buildSessionColumnStackStyle,
+    buildSessionCoverImageStyle,
+    buildSessionFlexRowStyle,
+    buildSessionFooterStyle,
+    buildSessionFieldLabelStyle,
+    buildSessionHelperTextStyle,
+    buildSessionIconButtonStyle,
+    buildSessionListContainerStyle,
+    buildSessionSurfaceBoxStyle,
+    buildSessionSectionStyle,
+    buildSessionSummaryRowStyle,
+    buildSessionTextInputStyle,
+    buildSessionTextActionButtonStyle,
+    buildSessionUtilityButtonStyle,
+    buildSessionWideActionButtonStyle,
+    SESSION_PANEL_STYLES,
+} from './session-panel-style-utils.js';
+import {
+    bindSessionMemoryShareButton,
+    bindSessionPanelSharedWindowEvents,
+    bindSessionSummarySectionControls,
+} from './session-panel-binding-utils.js';
+import { createSessionArchiveSectionRuntime } from './session-archive-section-runtime-utils.js';
+import { createSessionNewChatSectionRuntime } from './session-new-chat-section-runtime-utils.js';
 import { runArchiveSwitchFlow } from './session-archive-switch-utils.js';
 import { runArchiveDeleteFlow } from './session-archive-delete-utils.js';
 import {
@@ -34,29 +59,13 @@ import {
     resolveDefaultMemoryTemplateId as resolveSharedDefaultMemoryTemplateId,
 } from './session-memory-table-utils.js';
 import {
-    buildSelectedSummaryEntries,
     normalizeSummaryItems,
-    parseEditedSummaryLines,
     renderCompactedSummary,
     renderSummaryList,
 } from './session-summary-utils.js';
+import { emitMemoryRowsUpdated as emitSharedMemoryRowsUpdated } from './session-memory-event-utils.js';
+import { createSessionSummarySectionRuntime } from './session-summary-section-runtime-utils.js';
 import {
-    openCompactedRawFlow,
-    openCompactedSummaryEditFlow,
-    runCompactedSummaryGenerationFlow,
-    runDeleteSelectedSummariesFlow,
-    runEditSelectedSummariesFlow,
-} from './session-summary-runtime-utils.js';
-import {
-    createEditableTextareaModal,
-    createReadonlyTextareaModal,
-} from './session-summary-modal-utils.js';
-import {
-    createMemoryShareEntryRow,
-    createMemberManageRow,
-    createSelectableContactEmptyState,
-    createSelectableContactRow,
-    createSessionMemoryShareModal,
     createSessionArchiveEmptyState,
     createSessionArchiveRow,
 } from './session-shared-view-utils.js';
@@ -82,9 +91,8 @@ const applyMemoryTableSnapshot = async ({ sessionId, isGroup, snapshot } = {}) =
     snapshot,
     memoryTableStore: window.appBridge?.memoryTableStore,
     resolveDefaultMemoryTemplateId,
-    notifyRowsUpdated: ({ sessionId, templateId }) => {
-        window.dispatchEvent(new CustomEvent('memory-rows-updated', { detail: { sessionId, templateId } }));
-    },
+    notifyRowsUpdated: ({ sessionId, templateId }) =>
+        emitSharedMemoryRowsUpdated({ target: window, sessionId, templateId }),
 });
 
 const genGroupId = () => `group:${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
@@ -122,6 +130,7 @@ export class GroupCreatePanel {
 
         this.avatar = '';
         this.selected = new Set();
+        this.createRuntime = null;
     }
 
     show() {
@@ -142,17 +151,44 @@ export class GroupCreatePanel {
         if (this.panel) this.panel.style.display = 'none';
     }
 
+    ensureCreateRuntime() {
+        if (this.createRuntime) return this.createRuntime;
+        this.createRuntime = createGroupCreateRuntime({
+            getPanel: () => this.panel,
+            getSelected: () => this.selected,
+            getContactsStore: () => this.contactsStore,
+            getChatStore: () => this.chatStore,
+            getAvatar: () => this.avatar,
+            normalize,
+            normalizeKey,
+            resolveContactAvatar,
+            genGroupId,
+            hide: () => this.hide(),
+            onCreated: this.onCreated,
+            notifySuccess: (message) => window.toastr?.success?.(message),
+            notifyError: (message) => window.toastr?.error?.(message),
+            logger,
+        });
+        return this.createRuntime;
+    }
+
     createUI() {
+        const avatarButtonStyle = buildSessionAvatarButtonStyle();
+        const coverImageStyle = buildSessionCoverImageStyle();
+        const topRowStyle = buildSessionFlexRowStyle({ gap: 14, wrap: true, margin: '0 0 14px' });
+        const fieldLabelStyle = buildSessionFieldLabelStyle();
+        const fieldInputStyle = buildSessionTextInputStyle();
+        const helperTextStyle = buildSessionHelperTextStyle({ marginTop: 6 });
         const topContent = document.createElement('div');
         topContent.innerHTML = `
-            <div style="display:flex; gap:14px; align-items:center; flex-wrap:wrap; margin-bottom:14px;">
-                <button id="group-avatar-btn" type="button" style="width:72px; height:72px; border-radius:18px; border:1px solid var(--app-border-default); background:var(--app-surface-card); padding:0; overflow:hidden; cursor:pointer;">
-                    <img id="group-avatar-preview" alt="" style="width:100%; height:100%; object-fit:cover; display:block;">
+            <div style="${topRowStyle}">
+                <button id="group-avatar-btn" type="button" style="${avatarButtonStyle}">
+                    <img id="group-avatar-preview" alt="" style="${coverImageStyle}">
                 </button>
                 <div style="flex:1; min-width:220px;">
-                    <div style="font-weight:700; color:var(--app-text-primary); margin-bottom:6px;">群组名称</div>
-                    <input id="group-name" style="width:100%; padding:10px; border:1px solid var(--app-border-default); border-radius:10px; font-size:14px;" placeholder="请输入群组名称">
-                    <div id="group-name-hint" style="color:var(--app-text-muted); font-size:12px; margin-top:6px;"></div>
+                    <div style="${fieldLabelStyle}">群组名称</div>
+                    <input id="group-name" style="${fieldInputStyle}" placeholder="请输入群组名称">
+                    <div id="group-name-hint" style="${helperTextStyle}"></div>
                 </div>
             </div>
         `;
@@ -227,101 +263,15 @@ export class GroupCreatePanel {
     }
 
     updateCreateEnabled() {
-        if (!this.panel) return;
-        const btn = this.panel.querySelector('#group-create');
-        const hint = this.panel.querySelector('#group-name-hint');
-        const name = normalize(this.panel.querySelector('#group-name')?.value);
-        const membersCount = this.selected.size;
-        const nameKey = normalizeKey(name);
-
-        let error = '';
-        if (!name) error = '请输入群组名称';
-        else {
-            const groups = this.contactsStore?.listGroups?.() || [];
-            const dup = groups.find(g => normalizeKey(g?.name) === nameKey);
-            if (dup) error = '已存在同名群组';
-        }
-        if (!error && membersCount < 2) error = '请至少选择 2 位成员';
-
-        if (hint) {
-            hint.textContent = error ? error : `已选择 ${membersCount} 位成员`;
-            hint.style.color = error ? '#ef4444' : 'var(--app-text-muted)';
-        }
-        if (btn) btn.disabled = Boolean(error);
+        return this.ensureCreateRuntime().updateCreateEnabled();
     }
 
     renderContacts() {
-        const listEl = this.panel?.querySelector('#group-contacts');
-        if (!listEl) return;
-        const q = normalizeKey(this.panel.querySelector('#group-search')?.value);
-        const friends = (this.contactsStore?.listFriends?.() || []).filter(f => !String(f?.id || '').startsWith('rp:'));
-        const filtered = q
-            ? friends.filter(c => normalizeKey(c?.name || c?.id).includes(q))
-            : friends;
-
-        listEl.innerHTML = '';
-        if (!filtered.length) {
-            listEl.appendChild(createSelectableContactEmptyState());
-            this.updateCreateEnabled();
-            return;
-        }
-
-        filtered.forEach((c) => {
-            const id = normalize(c?.id);
-            if (!id) return;
-            const { row } = createSelectableContactRow({
-                id,
-                name: c?.name || id,
-                avatar: resolveContactAvatar(c, id),
-                selected: this.selected.has(id),
-                selectedText: '已选',
-                onClick: () => {
-                    if (this.selected.has(id)) this.selected.delete(id);
-                    else this.selected.add(id);
-                    this.renderContacts();
-                },
-            });
-            listEl.appendChild(row);
-        });
-        this.updateCreateEnabled();
+        return this.ensureCreateRuntime().renderContacts();
     }
 
     createGroup() {
-        try {
-            const name = normalize(this.panel?.querySelector('#group-name')?.value);
-            if (!name) return;
-            const members = [...this.selected].map(normalize).filter(Boolean);
-            if (members.length < 2) return;
-
-            const id = genGroupId();
-            logger.info(
-                `[group-chat] create scope=${this.contactsStore?.scopeId || 'default'} id=${id} name=${name} members=${members.length} avatarLen=${String(this.avatar || '').trim().length}`
-            );
-            this.contactsStore?.upsertContact?.({
-                id,
-                name,
-                avatar: this.avatar || '',
-                isGroup: true,
-                members,
-                addedAt: Date.now(),
-            });
-
-            // System messages
-            const memberNames = members
-                .map(mid => this.contactsStore?.getContact?.(mid)?.name || mid)
-                .filter(Boolean);
-            const sys1 = { role: 'system', type: 'meta', content: `你创建了群聊「${name}」`, name: '系统', avatar: '' , time: new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) };
-            const sys2 = { role: 'system', type: 'meta', content: `你邀请了：${memberNames.join('、')} 加入群聊`, name: '系统', avatar: '' , time: new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) };
-            this.chatStore?.appendMessage?.(sys1, id);
-            this.chatStore?.appendMessage?.(sys2, id);
-
-            this.hide();
-            window.toastr?.success?.('群组已创建');
-            this.onCreated?.({ id, name });
-        } catch (err) {
-            logger.error('创建群组失败', err);
-            window.toastr?.error?.(err.message || '创建失败');
-        }
+        return this.ensureCreateRuntime().createGroup();
     }
 }
 
@@ -339,6 +289,8 @@ export class GroupSettingsPanel {
         this.avatar = '';
         this.members = [];
         this.archivesList = null;
+        this.archiveRuntime = null;
+        this.newChatRuntime = null;
         this.summariesList = null;
         this.compactedList = null;
         this.summarySection = null;
@@ -348,6 +300,7 @@ export class GroupSettingsPanel {
         this.memoryTableEditor = null;
         this.summaryBatchMode = false;
         this.summarySelectedKeys = new Set();
+        this.summaryRuntime = null;
         this.summariesBatchBar = null;
         this.summaryEditOverlay = null;
         this.summaryEditPanel = null;
@@ -362,11 +315,8 @@ export class GroupSettingsPanel {
         this.memoryShareSection = null;
         this.memoryShareButton = null;
         this.memoryShareSummary = null;
-        this.memoryShareOverlay = null;
-        this.memorySharePanel = null;
-        this.memoryShareRows = null;
-        this.memoryShareSaveBtn = null;
-        this.memoryShareDraft = null;
+        this.memoryShareRuntime = null;
+        this.memberManagementRuntime = null;
 
         this.addOverlay = null;
         this.addPanel = null;
@@ -376,18 +326,23 @@ export class GroupSettingsPanel {
     show(groupId) {
         const id = normalize(groupId);
         if (!id) return;
-        if (!this.panel) this.createUI();
-        this.groupId = id;
-        this.applyMemoryMode();
-        this.populate();
-        this.renderArchives();
-        this.renderSummaries();
-        this.renderCompactedSummary();
-        if (getMemoryStorageMode() === 'table') {
-            this.memoryTableEditor?.render?.();
-        }
-        this.overlay.style.display = 'block';
-        this.panel.style.display = 'flex';
+        return runSessionPanelShowFlow({
+            ensureUi: () => {
+                if (!this.panel) this.createUI();
+            },
+            beforeShow: () => {
+                this.groupId = id;
+            },
+            applyMemoryMode: () => this.applyMemoryMode(),
+            populate: () => this.populate(),
+            renderArchives: () => this.renderArchives(),
+            renderSummaries: () => this.renderSummaries(),
+            renderCompactedSummary: () => this.renderCompactedSummary(),
+            getMemoryMode: getMemoryStorageMode,
+            renderMemoryTable: () => this.memoryTableEditor?.render?.(),
+            getOverlayEl: () => this.overlay,
+            getPanelEl: () => this.panel,
+        });
     }
 
     hide() {
@@ -396,13 +351,13 @@ export class GroupSettingsPanel {
     }
 
     applyMemoryMode() {
-        const memoryMode = getMemoryStorageMode();
-        const memoryOn = memoryMode !== 'off';
-        const summaryOn = memoryMode === 'summary';
-        if (this.memoryFeaturesSection) this.memoryFeaturesSection.style.display = memoryOn ? 'block' : 'none';
-        if (this.summarySection) this.summarySection.style.display = memoryOn && summaryOn ? 'block' : 'none';
-        if (this.memoryTableSection) this.memoryTableSection.style.display = memoryOn && !summaryOn ? 'block' : 'none';
-        if (memoryOn && !summaryOn) this.memoryTableEditor?.render?.();
+        return applySessionPanelMemoryMode({
+            memoryMode: getMemoryStorageMode(),
+            memoryFeaturesSection: this.memoryFeaturesSection,
+            summarySection: this.summarySection,
+            memoryTableSection: this.memoryTableSection,
+            renderMemoryTable: () => this.memoryTableEditor?.render?.(),
+        });
     }
 
     createUI() {
@@ -422,88 +377,123 @@ export class GroupSettingsPanel {
         this.overlay = shell.overlay;
         this.panel = shell.panel;
         this.overlay.addEventListener('click', () => this.hide());
+        const sectionStyle = buildSessionSectionStyle({ marginTop: 18, paddingTop: 14 });
+        const newChatButtonStyle = buildSessionWideActionButtonStyle({ accent: true, marginBottom: 10 });
+        const archiveListStyle = buildSessionListContainerStyle({ maxHeight: 160, radius: 8, background: 'var(--app-surface-subtle)' });
+        const toolbarIconButtonStyle = buildSessionIconButtonStyle();
+        const batchEditButtonStyle = buildSessionIconButtonStyle({ width: 34, height: 30, fontSize: 16 });
+        const batchDeleteButtonStyle = buildSessionIconButtonStyle({ danger: true, width: 34, height: 30, fontSize: 16 });
+        const batchCancelButtonStyle = buildSessionIconButtonStyle({ width: 34, height: 30, fontSize: 18 });
+        const compactedDangerButtonStyle = buildSessionIconButtonStyle({ danger: true });
+        const clearTextButtonStyle = buildSessionTextActionButtonStyle({ danger: true });
+        const addButtonStyle = buildSessionUtilityButtonStyle({ padding: '6px 10px', fontSize: 14 });
+        const summariesListStyle = buildSessionListContainerStyle({ maxHeight: 180, radius: 10 });
+        const compactedListStyle = buildSessionListContainerStyle({ maxHeight: 220, radius: 10 });
+        const footerStyle = buildSessionFooterStyle();
+        const avatarButtonStyle = buildSessionAvatarButtonStyle();
+        const coverImageStyle = buildSessionCoverImageStyle();
+        const topRowStyle = buildSessionFlexRowStyle({ gap: 14, wrap: true });
+        const headerRowStyle = buildSessionFlexRowStyle({ justify: 'space-between', gap: 10, margin: '0 0 6px' });
+        const actionsRowStyle = buildSessionFlexRowStyle({ gap: 8 });
+        const memberHeaderRowStyle = buildSessionFlexRowStyle({ justify: 'space-between', gap: 10 });
+        const memberListStyle = buildSessionColumnStackStyle({ gap: 8, margin: '10px 0 0' });
+        const batchBarStyle = buildSessionFlexRowStyle({ display: 'none', justify: 'flex-end', gap: 8, margin: '-2px 0 10px' });
+        const summaryHelperStyle = buildSessionHelperTextStyle({ marginBottom: 8 });
+        const memoryTableBoxStyle = buildSessionSurfaceBoxStyle({
+            display: 'none',
+            margin: '18px 0 0',
+            padding: 12,
+            borderStyle: 'dashed',
+            background: 'var(--app-surface-subtle)',
+        });
+        const fieldLabelStyle = buildSessionFieldLabelStyle({ weight: 800 });
+        const nameInputStyle = buildSessionTextInputStyle();
+        const helperTextStyle = buildSessionHelperTextStyle({ marginTop: 6 });
+        const helperCaptionStyle = buildSessionHelperTextStyle({ marginBottom: 6 });
+        const memoryShareButtonStyle = buildSessionBlockButtonStyle();
+        const memoryShareSummaryStyle = buildSessionHelperTextStyle({ marginTop: 8 });
         shell.body.innerHTML = `
-                <div style="display:flex; gap:14px; align-items:center; flex-wrap:wrap;">
-                    <button id="group-settings-avatar-btn" type="button" style="width:72px; height:72px; border-radius:18px; border:1px solid var(--app-border-default); background:var(--app-surface-card); padding:0; overflow:hidden; cursor:pointer;">
-                        <img id="group-settings-avatar-preview" alt="" style="width:100%; height:100%; object-fit:cover; display:block;">
+                <div style="${topRowStyle}">
+                    <button id="group-settings-avatar-btn" type="button" style="${avatarButtonStyle}">
+                        <img id="group-settings-avatar-preview" alt="" style="${coverImageStyle}">
                     </button>
                     <div style="flex:1; min-width:220px;">
-                        <div style="font-weight:700; color:var(--app-text-primary); margin-bottom:6px;">群组名称</div>
-                        <input id="group-settings-name" style="width:100%; padding:10px; border:1px solid var(--app-border-default); border-radius:10px; font-size:14px;">
-                        <div style="color:var(--app-text-muted); font-size:12px; margin-top:6px;">修改名称不会改变聊天室 ID。</div>
+                        <div style="${fieldLabelStyle}">群组名称</div>
+                        <input id="group-settings-name" style="${nameInputStyle}">
+                        <div style="${helperTextStyle}">修改名称不会改变聊天室 ID。</div>
                     </div>
                 </div>
 
 	                <div style="margin-top:14px;">
-	                    <div style="display:flex; align-items:center; justify-content:space-between; gap:10px;">
-	                        <div style="font-weight:800; color:var(--app-text-primary);">成员</div>
-	                        <button id="group-settings-add" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); padding:6px 10px; border-radius:10px; cursor:pointer;">＋ 添加</button>
+	                    <div style="${memberHeaderRowStyle}">
+	                        <div style="${fieldLabelStyle}">成员</div>
+	                        <button id="group-settings-add" style="${addButtonStyle}">＋ 添加</button>
 	                    </div>
-	                    <div id="group-settings-members" style="margin-top:10px; display:flex; flex-direction:column; gap:8px;"></div>
+	                    <div id="group-settings-members" style="${memberListStyle}"></div>
 	                </div>
 
-                    <div style="margin-top:18px; border-top:1px solid rgba(0,0,0,0.06); padding-top:14px;">
-                        <div style="font-weight:800; color:var(--app-text-primary); margin-bottom:8px;">聊天管理</div>
-                        <button id="group-new-chat" style="width:100%; padding:10px; border:1px solid var(--app-border-default); border-radius:8px; background:var(--app-surface-card); color:#019aff; font-weight:700; margin-bottom:10px; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:6px;">
+                    <div style="${sectionStyle}">
+                        <div style="${fieldLabelStyle}; margin-bottom:8px;">聊天管理</div>
+                        <button id="group-new-chat" style="${newChatButtonStyle}">
                             <span>✨</span> 开启新聊天（存档当前）
                         </button>
-                        <div style="font-size:12px; color:var(--app-text-muted); margin-bottom:6px;">历史存档（点击加载）</div>
-                        <div id="group-archives-list" style="max-height:160px; overflow-y:auto; border:1px solid var(--app-border-subtle); border-radius:8px; background:var(--app-surface-subtle); padding:0;"></div>
+                        <div style="${helperCaptionStyle}">历史存档（点击加载）</div>
+                        <div id="group-archives-list" style="${archiveListStyle}"></div>
                     </div>
 
-                    <div id="group-memory-features-section" style="margin-top:18px; border-top:1px solid rgba(0,0,0,0.06); padding-top:14px;">
-                        <div style="font-weight:800; color:var(--app-text-primary); margin-bottom:10px;">聊天 / RP 桥接（当前会话）</div>
+                    <div id="group-memory-features-section" style="${sectionStyle}">
+                        <div style="${fieldLabelStyle}; margin-bottom:10px;">聊天 / RP 桥接（当前会话）</div>
                         <div id="group-rp-bridge-section" style="display:none;"></div>
                         <div id="group-memory-share-section">
-                            <button id="group-memory-share-manage" type="button" style="width:100%; padding:10px 12px; border:1px solid var(--app-border-default); border-radius:12px; background:var(--app-surface-card); color:var(--app-text-primary); font-weight:800; cursor:pointer;">
+                            <button id="group-memory-share-manage" type="button" style="${memoryShareButtonStyle}">
                                 记忆共享
                             </button>
-                            <div id="group-memory-share-summary" style="color:var(--app-text-muted); font-size:12px; line-height:1.5; margin-top:8px;"></div>
+                            <div id="group-memory-share-summary" style="${memoryShareSummaryStyle}; line-height:1.5;"></div>
                         </div>
                     </div>
 
-                    <div id="group-summary-section" style="margin-top:18px; border-top:1px solid rgba(0,0,0,0.06); padding-top:14px;">
-                        <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:6px;">
-                            <div style="font-weight:800; color:var(--app-text-primary);">摘要</div>
-                            <div style="display:flex; align-items:center; gap:8px;">
-                                <button id="group-summaries-batch" type="button" title="批量操作" style="width:32px; height:28px; border:1px solid var(--app-border-default); border-radius:10px; background:var(--app-surface-card); cursor:pointer; color:var(--app-text-primary); font-size:16px; line-height:1;">☰</button>
-                                <button id="group-summaries-clear" type="button" style="padding:6px 10px; border:1px solid var(--app-border-default); border-radius:10px; background:var(--app-surface-card); cursor:pointer; color:#ef4444;">清空</button>
+                    <div id="group-summary-section" style="${sectionStyle}">
+                        <div style="${headerRowStyle}">
+                            <div style="${fieldLabelStyle}; margin-bottom:0;">摘要</div>
+                            <div style="${actionsRowStyle}">
+                                <button id="group-summaries-batch" type="button" title="批量操作" style="${toolbarIconButtonStyle}">☰</button>
+                                <button id="group-summaries-clear" type="button" style="${clearTextButtonStyle}">清空</button>
                             </div>
                         </div>
-                        <div style="font-size:12px; color:var(--app-text-muted); margin-bottom:8px;">该群聊每次互动保存一条摘要（与聊天存档绑定）</div>
-                        <div id="group-summaries-batchbar" style="display:none; align-items:center; justify-content:flex-end; gap:8px; margin:-2px 0 10px;">
-                            <button id="group-summaries-batch-edit" type="button" title="批量编辑" style="width:34px; height:30px; border:1px solid var(--app-border-default); border-radius:10px; background:var(--app-surface-card); cursor:pointer; color:var(--app-text-primary); font-size:16px;">✎</button>
-                            <button id="group-summaries-batch-delete" type="button" title="批量删除" style="width:34px; height:30px; border:1px solid #fecaca; border-radius:10px; background:var(--app-surface-card); cursor:pointer; color:#b91c1c; font-size:16px;">🗑</button>
-                            <button id="group-summaries-batch-cancel" type="button" title="退出批量" style="width:34px; height:30px; border:1px solid var(--app-border-default); border-radius:10px; background:var(--app-surface-card); cursor:pointer; color:var(--app-text-primary); font-size:18px;">×</button>
+                        <div style="${summaryHelperStyle}">该群聊每次互动保存一条摘要（与聊天存档绑定）</div>
+                        <div id="group-summaries-batchbar" style="${batchBarStyle}">
+                            <button id="group-summaries-batch-edit" type="button" title="批量编辑" style="${batchEditButtonStyle}">✎</button>
+                            <button id="group-summaries-batch-delete" type="button" title="批量删除" style="${batchDeleteButtonStyle}">🗑</button>
+                            <button id="group-summaries-batch-cancel" type="button" title="退出批量" style="${batchCancelButtonStyle}">×</button>
                         </div>
-                        <div id="group-summaries-list" style="max-height:180px; overflow-y:auto; border:1px solid var(--app-border-subtle); border-radius:10px; background:var(--app-surface-card); padding:0;"></div>
+                        <div id="group-summaries-list" style="${summariesListStyle}"></div>
 
 	                    <div style="margin-top:14px;">
-	                        <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:6px;">
-	                            <div style="font-weight:800; color:var(--app-text-primary);">大总结</div>
-	                            <div style="display:flex; align-items:center; gap:8px;">
-	                                <button id="group-compacted-raw" type="button" title="查看原始回复" style="width:32px; height:28px; border:1px solid var(--app-border-default); border-radius:10px; background:var(--app-surface-card); cursor:pointer; color:var(--app-text-primary); font-size:16px; line-height:1;">📄</button>
-	                                <button id="group-compacted-edit" type="button" title="编辑" style="width:32px; height:28px; border:1px solid var(--app-border-default); border-radius:10px; background:var(--app-surface-card); cursor:pointer; color:var(--app-text-primary); font-size:16px; line-height:1;">✎</button>
-	                                <button id="group-compacted-run" type="button" title="手动生成/刷新" style="width:32px; height:28px; border:1px solid var(--app-border-default); border-radius:10px; background:var(--app-surface-card); cursor:pointer; color:var(--app-text-primary); font-size:16px; line-height:1;">↻</button>
-	                                <button id="group-compacted-clear" type="button" title="删除" style="width:32px; height:28px; border:1px solid #fecaca; border-radius:10px; background:var(--app-surface-card); cursor:pointer; color:#b91c1c; font-size:16px; line-height:1;">🗑</button>
+	                        <div style="${headerRowStyle}">
+	                            <div style="${fieldLabelStyle}; margin-bottom:0;">大总结</div>
+	                            <div style="${actionsRowStyle}">
+	                                <button id="group-compacted-raw" type="button" title="查看原始回复" style="${toolbarIconButtonStyle}">📄</button>
+	                                <button id="group-compacted-edit" type="button" title="编辑" style="${toolbarIconButtonStyle}">✎</button>
+	                                <button id="group-compacted-run" type="button" title="手动生成/刷新" style="${toolbarIconButtonStyle}">↻</button>
+	                                <button id="group-compacted-clear" type="button" title="删除" style="${compactedDangerButtonStyle}">🗑</button>
 	                            </div>
 	                        </div>
-	                        <div style="font-size:12px; color:var(--app-text-muted); margin-bottom:8px;">摘要总字数超过阈值会自动生成大总结（与聊天存档绑定）</div>
-	                        <div id="group-compacted-summary" style="max-height:220px; overflow-y:auto; border:1px solid var(--app-border-subtle); border-radius:10px; background:var(--app-surface-card); padding:0;"></div>
+	                        <div style="${summaryHelperStyle}">摘要总字数超过阈值会自动生成大总结（与聊天存档绑定）</div>
+	                        <div id="group-compacted-summary" style="${compactedListStyle}"></div>
 	                    </div>
                     </div>
 
-                    <div id="group-memory-table-section" style="display:none; margin-top:18px; padding:12px; border:1px dashed var(--app-border-default); border-radius:12px; background:var(--app-surface-subtle);">
-                        <div style="font-weight:800; color:var(--app-text-primary); margin-bottom:6px;">记忆表格</div>
+                    <div id="group-memory-table-section" style="${memoryTableBoxStyle}">
+                        <div style="${fieldLabelStyle}">记忆表格</div>
                         <div id="group-memory-table-content"></div>
                     </div>
 	            </div>
         `;
         const footer = document.createElement('div');
-        footer.style.cssText = 'padding:14px 16px; border-top:1px solid rgba(0,0,0,0.06); background:var(--app-surface-subtle); display:flex; gap:10px;';
+        footer.style.cssText = footerStyle;
         footer.innerHTML = `
-            <button id="group-settings-cancel" style="flex:1; padding:10px 14px; border:1px solid var(--app-border-default); border-radius:10px; background:var(--app-surface-card); cursor:pointer;">取消</button>
-            <button id="group-settings-save" style="flex:1; padding:10px 14px; border:none; border-radius:10px; background:#019aff; color:var(--app-text-inverse); cursor:pointer; font-weight:800;">保存</button>
+            <button id="group-settings-cancel" style="${SESSION_PANEL_STYLES.secondaryActionButton}">取消</button>
+            <button id="group-settings-save" style="${SESSION_PANEL_STYLES.primaryActionButton}">保存</button>
         `;
         this.panel.appendChild(footer);
 
@@ -541,6 +531,15 @@ export class GroupSettingsPanel {
         this.memoryShareSection = this.panel.querySelector('#group-memory-share-section');
         this.memoryShareButton = this.panel.querySelector('#group-memory-share-manage');
         this.memoryShareSummary = this.panel.querySelector('#group-memory-share-summary');
+        const summariesClearButton = this.panel.querySelector('#group-summaries-clear');
+        const summariesBatchButton = this.panel.querySelector('#group-summaries-batch');
+        const summariesBatchCancelButton = this.panel.querySelector('#group-summaries-batch-cancel');
+        const summariesBatchDeleteButton = this.panel.querySelector('#group-summaries-batch-delete');
+        const summariesBatchEditButton = this.panel.querySelector('#group-summaries-batch-edit');
+        const compactedRawButton = this.panel.querySelector('#group-compacted-raw');
+        const compactedEditButton = this.panel.querySelector('#group-compacted-edit');
+        const compactedRunButton = this.panel.querySelector('#group-compacted-run');
+        const compactedClearButton = this.panel.querySelector('#group-compacted-clear');
 
         this.panel.querySelector('#group-settings-close').onclick = () => this.hide();
         this.panel.querySelector('#group-settings-cancel').onclick = () => this.hide();
@@ -550,46 +549,44 @@ export class GroupSettingsPanel {
         };
         this.panel.querySelector('#group-settings-add').onclick = () => this.openAddMembers();
         this.panel.querySelector('#group-settings-save').onclick = () => this.save();
-        this.memoryShareButton?.addEventListener('click', () => {
-            this.openMemoryShareManager().catch((err) => {
-                logger.warn('open group memory share manager failed', err);
-                window.toastr?.error?.('打开记忆共享失败');
-            });
+        bindSessionMemoryShareButton({
+            buttonEl: this.memoryShareButton,
+            openManager: () => this.openMemoryShareManager(),
+            logger,
+            warnMessage: 'open group memory share manager failed',
+            errorMessage: '打开记忆共享失败',
+            toastr: window.toastr,
         });
         this.panel.querySelector('#group-new-chat').onclick = () => this.startNewChat();
-        this.panel.querySelector('#group-summaries-clear').onclick = async () => {
-            const sid = this.groupId;
-            if (!sid) return;
-            const ok = await appConfirm({
-                title: '清空摘要',
-                message: '确定要清空该群聊当前存档/聊天的所有摘要吗？',
-                danger: true,
-            });
-            if (!ok) return;
-            try { this.chatStore?.clearSummaries?.(sid); } catch {}
-            this.summarySelectedKeys = new Set();
-            this.setSummaryBatchMode(false);
-            this.renderSummaries();
-        };
-        this.panel.querySelector('#group-summaries-batch').onclick = () => this.setSummaryBatchMode(!this.summaryBatchMode);
-	        this.panel.querySelector('#group-summaries-batch-cancel').onclick = () => this.setSummaryBatchMode(false);
-	        this.panel.querySelector('#group-summaries-batch-delete').onclick = () => this.deleteSelectedSummaries();
-	        this.panel.querySelector('#group-summaries-batch-edit').onclick = () => this.editSelectedSummaries();
-	        this.panel.querySelector('#group-compacted-raw').onclick = () => this.openCompactedRaw();
-	        this.panel.querySelector('#group-compacted-edit').onclick = () => this.editCompactedSummary();
-	        this.panel.querySelector('#group-compacted-run').onclick = () => this.runCompactedSummary();
-        this.panel.querySelector('#group-compacted-clear').onclick = async () => {
-            const sid = this.groupId;
-            if (!sid) return;
-            const ok = await appConfirm({
-                title: '清空大总结',
-                message: '确定要清空该群聊当前存档/聊天的大总结吗？',
-                danger: true,
-            });
-            if (!ok) return;
-            try { this.chatStore?.clearCompactedSummary?.(sid); } catch {}
-            this.renderCompactedSummary();
-        };
+        bindSessionSummarySectionControls({
+            clearButtonEl: summariesClearButton,
+            batchButtonEl: summariesBatchButton,
+            batchCancelButtonEl: summariesBatchCancelButton,
+            batchDeleteButtonEl: summariesBatchDeleteButton,
+            batchEditButtonEl: summariesBatchEditButton,
+            compactedRawButtonEl: compactedRawButton,
+            compactedEditButtonEl: compactedEditButton,
+            compactedRunButtonEl: compactedRunButton,
+            compactedClearButtonEl: compactedClearButton,
+            getSessionId: () => this.groupId,
+            getSummaryBatchMode: () => this.summaryBatchMode,
+            clearSelectedKeys: () => {
+                this.summarySelectedKeys = new Set();
+            },
+            setSummaryBatchMode: (enabled) => this.setSummaryBatchMode(enabled),
+            renderSummaries: () => this.renderSummaries(),
+            deleteSelectedSummaries: () => this.deleteSelectedSummaries(),
+            editSelectedSummaries: () => this.editSelectedSummaries(),
+            openCompactedRaw: () => this.openCompactedRaw(),
+            editCompactedSummary: () => this.editCompactedSummary(),
+            runCompactedSummary: () => this.runCompactedSummary(),
+            renderCompactedSummary: () => this.renderCompactedSummary(),
+            clearSummaries: (sessionId) => this.chatStore?.clearSummaries?.(sessionId),
+            clearCompactedSummary: (sessionId) => this.chatStore?.clearCompactedSummary?.(sessionId),
+            confirm: (options) => appConfirm(options),
+            summaryClearMessage: '确定要清空该群聊当前存档/聊天的所有摘要吗？',
+            compactedClearMessage: '确定要清空该群聊当前存档/聊天的大总结吗？',
+        });
 
         if (this.memoryTableContent && window.appBridge) {
             this.memoryTableEditor = new MemoryTableEditor({
@@ -601,172 +598,75 @@ export class GroupSettingsPanel {
             });
         }
 
-        window.addEventListener('memory-storage-mode-changed', () => {
-            try {
-                if (!this.panel || this.panel.style.display === 'none') return;
-                this.applyMemoryMode();
-            } catch {}
-        });
-        window.addEventListener('chatapp-summaries-updated', (ev) => {
-            try {
-                if (!this.panel || this.panel.style.display === 'none') return;
-                const sid = this.groupId;
-                const target = String(ev?.detail?.sessionId || '').trim();
-                if (!sid || !target || sid !== target) return;
-                this.renderSummaries();
-                this.renderCompactedSummary();
-            } catch {}
-        });
-    }
-
-	    setSummaryBatchMode(enabled) {
-	        const next = Boolean(enabled);
-	        this.summaryBatchMode = next;
-	        if (!next) this.summarySelectedKeys = new Set();
-	        if (this.summariesBatchBar) this.summariesBatchBar.style.display = next ? 'flex' : 'none';
-	        this.renderSummaries();
-	    }
-
-	    ensureCompactedRawModal() {
-	        if (this.__compactedRawReady) return;
-	        this.__compactedRawReady = true;
-	        this.__compactedRawModal = createReadonlyTextareaModal({
-	            overlayClass: 'app-themed-overlay group-inline-modal-overlay',
-	            panelClass: 'app-themed-panel group-inline-modal-panel',
-	            title: '大总结原始回复',
-	            copySuccessMessage: '已复制原始回复',
-	            copyText: async (text) => navigator.clipboard?.writeText?.(text),
-	            toastr: window.toastr,
-	        });
-	        this.__compactedRawOverlay = this.__compactedRawModal.overlay;
-	        this.__compactedRawPanel = this.__compactedRawModal.panel;
-	        this.__compactedRawTextarea = this.__compactedRawModal.textarea;
-	        this.__compactedRawClose = this.__compactedRawModal.close;
-	    }
-
-	    openCompactedRaw() {
-	        openCompactedRawFlow({
-	            sessionId: this.groupId,
-	            getCompactedSummaryRaw: (sessionId) => this.chatStore?.getCompactedSummaryRaw?.(sessionId),
-	            ensureModal: () => this.ensureCompactedRawModal(),
-	            setRawValue: (raw) => this.__compactedRawModal?.setValue?.(raw),
-	            showModal: () => this.__compactedRawModal?.show?.(),
-	            focusTextarea: () => this.__compactedRawModal?.focus?.(),
-	            toastr: window.toastr,
-	        });
-	    }
-
-	    ensureCompactedEditModal() {
-	        if (this.__compactedEditReady) return;
-	        this.__compactedEditReady = true;
-	        this.__compactedEditModal = createEditableTextareaModal({
-	            overlayClass: 'app-themed-overlay group-inline-modal-overlay',
-	            panelClass: 'app-themed-panel group-inline-modal-panel',
-	            title: '编辑大总结',
-	            minHeight: '200px',
-	        });
-	        this.__compactedEditOverlay = this.__compactedEditModal.overlay;
-	        this.__compactedEditPanel = this.__compactedEditModal.panel;
-	        this.__compactedEditTextarea = this.__compactedEditModal.textarea;
-	        this.__compactedEditClose = this.__compactedEditModal.close;
-	    }
-
-	    editCompactedSummary() {
-	        openCompactedSummaryEditFlow({
-	            sessionId: this.groupId,
-	            getCompactedSummary: (sessionId) => this.chatStore?.getCompactedSummary?.(sessionId),
-	            getCompactedSummaryRaw: (sessionId) => this.chatStore?.getCompactedSummaryRaw?.(sessionId),
-	            ensureModal: () => this.ensureCompactedEditModal(),
-	            setOnSave: (handler) => this.__compactedEditModal?.setOnSave?.(handler),
-	            setTextareaValue: (text) => this.__compactedEditModal?.setValue?.(text),
-	            showModal: () => this.__compactedEditModal?.show?.(),
-	            focusTextarea: () => this.__compactedEditModal?.focus?.(),
-	            setCompactedSummary: (text, sessionId, options) => this.chatStore?.setCompactedSummary?.(text, sessionId, options),
-	            renderCompactedSummary: () => this.renderCompactedSummary(),
-	            closeModal: () => this.__compactedEditClose?.(),
-	            dispatchUpdated: (sessionId) => {
-	                window.dispatchEvent(new CustomEvent('chatapp-summaries-updated', { detail: { sessionId } }));
-	            },
-	            toastr: window.toastr,
-	        });
-	    }
-
-    ensureSummaryEditModal() {
-        if (this.summaryEditPanel) return;
-        this.__summaryEditModal = createEditableTextareaModal({
-            overlayClass: 'app-themed-overlay group-inline-modal-overlay',
-            panelClass: 'app-themed-panel group-inline-modal-panel',
-            title: '批量编辑摘要',
-            helperText: '每行一条摘要（顺序对应所选摘要）。',
-            minHeight: '180px',
-        });
-        this.summaryEditOverlay = this.__summaryEditModal.overlay;
-        this.summaryEditPanel = this.__summaryEditModal.panel;
-        this.summaryEditTextarea = this.__summaryEditModal.textarea;
-        this.summaryEditSave = this.__summaryEditModal.saveButton;
-        this.summaryEditCancel = this.__summaryEditModal.cancelButton;
-    }
-
-    openSummaryEditModal(value, onSave) {
-        this.ensureSummaryEditModal();
-        this.__summaryEditModal?.setOnSave?.((valueRaw) => {
-            try { onSave?.(valueRaw); } catch {}
-        });
-        this.__summaryEditModal?.setValue?.(value);
-        this.__summaryEditModal?.show?.();
-        setTimeout(() => {
-            try { this.__summaryEditModal?.focus?.(); } catch {}
-        }, 0);
-    }
-
-    closeSummaryEditModal() {
-        this.__summaryEditModal?.close?.();
-    }
-
-    async deleteSelectedSummaries() {
-        await runDeleteSelectedSummariesFlow({
-            sessionId: this.groupId,
-            selectedKeys: [...this.summarySelectedKeys],
-            confirm: (options) => appConfirm(options),
-            buildSelectedSummaryEntries,
-            deleteSummaryItems: (items, sessionId) => this.chatStore?.deleteSummaryItems?.(items, sessionId),
-            setSummaryBatchMode: (enabled) => this.setSummaryBatchMode(enabled),
+        bindSessionPanelSharedWindowEvents({
+            target: window,
+            isPanelVisible: () => Boolean(this.panel && this.panel.style.display !== 'none'),
+            applyMemoryMode: () => this.applyMemoryMode(),
+            getSessionId: () => this.groupId,
             renderSummaries: () => this.renderSummaries(),
-            toastr: window.toastr,
+            renderCompactedSummary: () => this.renderCompactedSummary(),
         });
     }
 
-    editSelectedSummaries() {
-        runEditSelectedSummariesFlow({
-            sessionId: this.groupId,
-            selectedKeys: [...this.summarySelectedKeys],
-            buildSelectedSummaryEntries,
-            openSummaryEditModal: (value, onSave) => this.openSummaryEditModal(value, onSave),
-            parseEditedSummaryLines,
-            updateSummaryItems: (updates, sessionId) => this.chatStore?.updateSummaryItems?.(updates, sessionId),
-            closeSummaryEditModal: () => this.closeSummaryEditModal(),
-            setSummaryBatchMode: (enabled) => this.setSummaryBatchMode(enabled),
-            renderSummaries: () => this.renderSummaries(),
-            toastr: window.toastr,
-        });
-    }
-
-    async runCompactedSummary() {
-        await runCompactedSummaryGenerationFlow({
-            sessionId: this.groupId,
-            summaryCompacting: this.summaryCompacting,
+    ensureSummaryRuntime() {
+        if (this.summaryRuntime) return this.summaryRuntime;
+        this.summaryRuntime = createSessionSummarySectionRuntime({
+            variant: 'group',
+            getSessionId: () => this.groupId,
+            getChatStore: () => this.chatStore,
+            getSummariesContainer: () => this.summariesList,
+            getCompactedContainer: () => this.compactedList,
+            getBatchBar: () => this.summariesBatchBar,
+            getBatchMode: () => this.summaryBatchMode,
+            setBatchModeState: (value) => {
+                this.summaryBatchMode = Boolean(value);
+            },
+            getSelectedKeys: () => this.summarySelectedKeys,
+            setSelectedKeys: (value) => {
+                this.summarySelectedKeys = value instanceof Set ? value : new Set(value || []);
+            },
+            getSummaryCompacting: () => this.summaryCompacting,
             setSummaryCompacting: (value) => {
-                this.summaryCompacting = value;
+                this.summaryCompacting = Boolean(value);
+            },
+            confirm: (options) => appConfirm(options),
+            copyText: async (text) => navigator.clipboard?.writeText?.(text),
+            toastr: window.toastr,
+            logger,
+            getNormalRowStyle: () => buildSessionSummaryRowStyle({ clickable: true }),
+            dispatchUpdated: (sessionId) => {
+                window.dispatchEvent(new CustomEvent('chatapp-summaries-updated', { detail: { sessionId } }));
             },
             resolveRequestSummaryCompaction: () =>
                 globalThis?.__chatappRequestSummaryCompaction ||
                 window?.__chatappRequestSummaryCompaction ||
                 window?.appBridge?.requestSummaryCompaction,
-            renderSummaries: () => this.renderSummaries(),
-            renderCompactedSummary: () => this.renderCompactedSummary(),
-            logger,
-            toastr: window.toastr,
         });
+        return this.summaryRuntime;
+    }
+
+    setSummaryBatchMode(enabled) {
+        return this.ensureSummaryRuntime().setSummaryBatchMode(enabled);
+    }
+
+    openCompactedRaw() {
+        return this.ensureSummaryRuntime().openCompactedRaw();
+    }
+
+    editCompactedSummary() {
+        return this.ensureSummaryRuntime().editCompactedSummary();
+    }
+
+    async deleteSelectedSummaries() {
+        await this.ensureSummaryRuntime().deleteSelectedSummaries();
+    }
+
+    editSelectedSummaries() {
+        return this.ensureSummaryRuntime().editSelectedSummaries();
+    }
+
+    async runCompactedSummary() {
+        await this.ensureSummaryRuntime().runCompactedSummary();
     }
 
     populate() {
@@ -788,326 +688,170 @@ export class GroupSettingsPanel {
         this.renderMembers();
     }
 
-    getRpDisplayName(sessionId = '') {
-        const sid = normalize(sessionId);
-        if (!sid) return '';
-        const contact = this.contactsStore?.getContact?.(sid);
-        const saved = String(contact?.name || '').trim();
-        if (saved && !saved.startsWith('rp:')) return saved;
-        return window.appBridge?.getRpCharacterNameForSession?.(sid) || saved || sid || '角色';
-    }
-
-    getDefaultRpBridgeSourceId(sessionId = this.groupId) {
-        return normalize(
-            window.appBridge?.getRpSessionIdForSession?.(sessionId)
-            || window.appBridge?.getRpSessionIdForActivePersona?.()
-            || '',
-        );
-    }
-
-    async loadRpMemoryShareRows(sourceId = '', templateId = '') {
-        const sid = normalize(sourceId);
-        if (!sid || !templateId || !window.appBridge?.memoryTableStore?.getMemories) return [];
-        try {
-            const rows = await window.appBridge.memoryTableStore.getMemories({
-                scope: 'contact',
-                contact_id: sid,
-                template_id: templateId,
-            });
-            return Array.isArray(rows) ? rows.filter((row) => row && row.is_active !== false) : [];
-        } catch {
-            return [];
-        }
-    }
-
-    async buildMemoryShareContext(sessionId = this.groupId, rawTableSettings = null) {
-        const sid = normalize(sessionId);
-        const template = await resolveDefaultMemoryTemplateDefinition();
-        const templateId = await resolveDefaultMemoryTemplateId();
-        const tableMap = new Map((template?.tables || []).map((table) => [normalize(table?.id), table]));
-        const sessionSettings = this.chatStore?.getSessionSettings?.(sid) || {};
-        const sourceId = this.getDefaultRpBridgeSourceId(sid);
-        const mergedSessionSettings = { ...sessionSettings };
-        if (rawTableSettings && typeof rawTableSettings === 'object') {
-            mergedSessionSettings.rpBridgeTableSettings = rawTableSettings;
-        }
-        const tableSettings = resolveRpToChatBridgeTableSettings({
-            sessionSettings: mergedSessionSettings,
-            fallbackEnabled: appSettings.get().memoryBridgeRpToChatEnabled !== false,
-            fallbackLimit: normalizeBridgeLimit(appSettings.get().memoryBridgeRpToChatLimit, 0),
+    ensureMemoryShareRuntime() {
+        if (this.memoryShareRuntime) return this.memoryShareRuntime;
+        this.memoryShareRuntime = createGroupMemoryShareRuntime({
+            getSessionId: () => this.groupId,
+            getSummaryEl: () => this.memoryShareSummary,
+            getSessionSettings: (sessionId) => this.chatStore?.getSessionSettings?.(sessionId),
+            setSessionSettings: (sessionId, sessionSettings) => this.chatStore?.setSessionSettings?.(sessionId, sessionSettings),
+            getContact: (sessionId) => this.contactsStore?.getContact?.(sessionId),
+            memoryTableStore: window.appBridge?.memoryTableStore,
+            resolveTemplateDefinition: () => resolveDefaultMemoryTemplateDefinition(),
+            resolveTemplateId: () => resolveDefaultMemoryTemplateId(),
+            getRpCharacterNameForSession: (sessionId) => window.appBridge?.getRpCharacterNameForSession?.(sessionId),
+            getRpSessionIdForSession: (sessionId) => window.appBridge?.getRpSessionIdForSession?.(sessionId),
+            getRpSessionIdForActivePersona: () => window.appBridge?.getRpSessionIdForActivePersona?.(),
+            documentRef: document,
+            bodyEl: document.body,
+            getGlobalSettings: () => appSettings.get(),
+            notifySaveSuccess: () => window.toastr?.success?.('已保存记忆共享设置'),
+            notifySaveError: () => window.toastr?.error?.('保存记忆共享失败'),
+            logger,
         });
-        const activeRows = await this.loadRpMemoryShareRows(sourceId, templateId);
-        return {
-            sourceId,
-            sourceLabel: sourceId ? this.getRpDisplayName(sourceId) : '',
-            summarySourceText: sourceId
-                ? `来源：${this.getRpDisplayName(sourceId) || sourceId}`
-                : '来源：当前角色 RP 会话（当前为空）',
-            entries: getRpToChatBridgeTableIds().map((tableId) => {
-                const table = tableMap.get(tableId);
-                const rowCount = activeRows.filter((row) => normalize(row?.table_id) === tableId).length;
-                const limit = normalizeBridgeLimit(tableSettings?.[tableId]?.limit, 0);
-                return {
-                    tableId,
-                    shortLabel: getBridgeTableShortLabel(table || { id: tableId, name: tableId }),
-                    enabled: tableSettings?.[tableId]?.enabled === true,
-                    limit,
-                    rowCount,
-                    actualCount: limit > 0 ? Math.min(rowCount, limit) : rowCount,
-                };
-            }),
-        };
+        return this.memoryShareRuntime;
     }
 
     async refreshMemoryShareSummary(sessionId = this.groupId) {
-        if (!this.memoryShareSummary) return;
-        const sid = normalize(sessionId);
-        if (!sid) {
-            this.memoryShareSummary.textContent = '';
-            return;
-        }
-        this.memoryShareSummary.textContent = '正在计算注入记忆...';
-        const context = await this.buildMemoryShareContext(sid).catch(() => null);
-        if (!context) {
-            this.memoryShareSummary.textContent = '记忆共享状态读取失败';
-            return;
-        }
-        const enabledEntries = context.entries.filter((entry) => entry.enabled);
-        if (!enabledEntries.length) {
-            this.memoryShareSummary.textContent = `${context.summarySourceText}；未启用跨模式记忆注入`;
-            return;
-        }
-        const parts = enabledEntries.map((entry) => `${entry.shortLabel}${entry.actualCount}条`);
-        this.memoryShareSummary.textContent = `${context.summarySourceText}；注入记忆：${parts.join('、')}`;
+        return this.ensureMemoryShareRuntime().refreshMemoryShareSummary(sessionId);
     }
 
     ensureMemoryShareModal() {
-        if (this.memorySharePanel) return;
-        const modal = createSessionMemoryShareModal({
-            variant: 'group',
-            documentRef: document,
-            hintText: '真正全局的用户档案会自动共享；这里仅管理当前角色的 RP 会话注入到本群聊的额外记忆。',
-        });
-        this.memoryShareOverlay = modal.overlay;
-        this.memorySharePanel = modal.panel;
-        this.memoryShareSourceStatic = modal.sourceStatic;
-        this.memoryShareRows = modal.rows;
-        this.memoryShareSaveBtn = modal.saveButton;
-        this.memoryShareOverlay.addEventListener('click', () => this.closeMemoryShareManager());
-        document.body.appendChild(this.memoryShareOverlay);
-        document.body.appendChild(this.memorySharePanel);
-
-        modal.closeButton.onclick = () => this.closeMemoryShareManager();
-        modal.cancelButton.onclick = () => this.closeMemoryShareManager();
-        this.memoryShareSaveBtn?.addEventListener('click', () => {
-            this.saveMemoryShareManager().catch((err) => {
-                logger.warn('save group memory share manager failed', err);
-                window.toastr?.error?.('保存记忆共享失败');
-            });
-        });
+        return this.ensureMemoryShareRuntime().ensureMemoryShareModal();
     }
 
     closeMemoryShareManager() {
-        if (this.memoryShareOverlay) this.memoryShareOverlay.style.display = 'none';
-        if (this.memorySharePanel) this.memorySharePanel.style.display = 'none';
-        this.memoryShareDraft = null;
+        return this.ensureMemoryShareRuntime().closeMemoryShareManager();
     }
 
     async renderMemoryShareManager() {
-        if (!this.memoryShareDraft || !this.memoryShareRows) return;
-        const sessionId = normalize(this.memoryShareDraft.sessionId);
-        const sourceEl = this.memoryShareSourceStatic;
-        const sourceId = this.getDefaultRpBridgeSourceId(sessionId);
-        const sourceLabel = sourceId ? (this.getRpDisplayName(sourceId) || sourceId) : '当前为空';
-        if (sourceEl) sourceEl.textContent = `来源 RP 会话：${sourceLabel}`;
-
-        const context = await this.buildMemoryShareContext(sessionId, this.memoryShareDraft.tableSettings);
-        this.memoryShareRows.innerHTML = '';
-        context.entries.forEach((entry) => {
-            const { row } = createMemoryShareEntryRow({
-                entry,
-                onToggle: ({ toggle, limitInput }) => {
-                    const current = this.memoryShareDraft.tableSettings?.[entry.tableId] || {};
-                    this.memoryShareDraft.tableSettings = {
-                        ...(this.memoryShareDraft.tableSettings || {}),
-                        [entry.tableId]: {
-                            ...current,
-                            enabled: toggle.checked === true,
-                            limit: normalizeBridgeLimit(current.limit, entry.limit),
-                        },
-                    };
-                    limitInput.disabled = toggle.checked !== true;
-                },
-                onLimitInput: ({ limitInput }) => {
-                    const safe = normalizeBridgeLimit(limitInput.value, 0);
-                    limitInput.value = String(safe);
-                    const current = this.memoryShareDraft.tableSettings?.[entry.tableId] || {};
-                    this.memoryShareDraft.tableSettings = {
-                        ...(this.memoryShareDraft.tableSettings || {}),
-                        [entry.tableId]: {
-                            ...current,
-                            enabled: current.enabled === true,
-                            limit: safe,
-                        },
-                    };
-                },
-            });
-            this.memoryShareRows.appendChild(row);
-        });
+        return this.ensureMemoryShareRuntime().renderMemoryShareManager();
     }
 
     async openMemoryShareManager() {
-        this.ensureMemoryShareModal();
-        const sessionSettings = this.chatStore?.getSessionSettings?.(this.groupId) || {};
-        this.memoryShareDraft = {
-            sessionId: this.groupId,
-            tableSettings: {
-                ...(sessionSettings.rpBridgeTableSettings && typeof sessionSettings.rpBridgeTableSettings === 'object'
-                    ? sessionSettings.rpBridgeTableSettings
-                    : {}),
-            },
-        };
-        await this.renderMemoryShareManager();
-        if (this.memoryShareOverlay) this.memoryShareOverlay.style.display = 'block';
-        if (this.memorySharePanel) this.memorySharePanel.style.display = 'flex';
+        await this.ensureMemoryShareRuntime().openMemoryShareManager();
     }
 
     async saveMemoryShareManager() {
-        if (!this.memoryShareDraft) return;
-        const sessionSettings = this.chatStore?.getSessionSettings?.(this.groupId) || {};
-        const normalizedTableSettings = {
-            ...(sessionSettings.rpBridgeTableSettings && typeof sessionSettings.rpBridgeTableSettings === 'object'
-                ? sessionSettings.rpBridgeTableSettings
-                : {}),
-            ...pruneRpToChatBridgeTableSettings(this.memoryShareDraft.tableSettings || {}),
-        };
-        const resolvedTableSettings = resolveRpToChatBridgeTableSettings({
-            sessionSettings: {
-                ...sessionSettings,
-                rpBridgeTableSettings: normalizedTableSettings,
-            },
-            fallbackEnabled: appSettings.get().memoryBridgeRpToChatEnabled !== false,
-            fallbackLimit: normalizeBridgeLimit(appSettings.get().memoryBridgeRpToChatLimit, 0),
-        });
-        sessionSettings.rpBridgeTableSettings = normalizedTableSettings;
-        sessionSettings.rpBridgeEnabled = Object.values(resolvedTableSettings).some((entry) => entry?.enabled === true);
-        sessionSettings.rpBridgeOutlineLimit = normalizeBridgeLimit(resolvedTableSettings?.rp_outline?.limit, 0);
-        this.chatStore?.setSessionSettings?.(this.groupId, sessionSettings);
-        this.closeMemoryShareManager();
-        await this.refreshMemoryShareSummary();
-        window.toastr?.success?.('已保存记忆共享设置');
+        await this.ensureMemoryShareRuntime().saveMemoryShareManager();
     }
 
     renderSummaries() {
-        if (!this.summariesList || !this.chatStore) return;
-        const sid = this.groupId;
-        const items = normalizeSummaryItems(this.chatStore.getSummaries(sid) || []);
-        renderSummaryList({
-            container: this.summariesList,
-            items,
-            batchMode: this.summaryBatchMode,
-            selectedKeys: this.summarySelectedKeys,
-            onToggleSelected: (key) => {
-                if (this.summarySelectedKeys.has(key)) this.summarySelectedKeys.delete(key);
-                else this.summarySelectedKeys.add(key);
-                this.renderSummaries();
-            },
-            onCopyText: async (text) => {
-                await navigator.clipboard?.writeText?.(text);
-                window.toastr?.success?.('已复制摘要');
-            },
-            normalRowStyle: 'padding:10px 10px; border-bottom:1px solid rgba(0,0,0,0.06); cursor:pointer;',
-        });
+        return this.ensureSummaryRuntime().renderSummaries();
     }
 
     renderCompactedSummary() {
-        if (!this.compactedList || !this.chatStore) return;
-        const sid = this.groupId;
-        renderCompactedSummary({
-            container: this.compactedList,
-            compactedSummary: this.chatStore.getCompactedSummary?.(sid),
-            onCopyText: async (text) => {
-                await navigator.clipboard?.writeText?.(text);
-                window.toastr?.success?.('已复制大总结');
+        return this.ensureSummaryRuntime().renderCompactedSummary();
+    }
+
+    ensureNewChatRuntime() {
+        if (this.newChatRuntime) return this.newChatRuntime;
+        this.newChatRuntime = createSessionNewChatSectionRuntime({
+            getSessionId: () => this.groupId,
+            isGroup: true,
+            resolveSessionMode: () => 'chat',
+            getMemoryStorageMode,
+            askMemoryTableNewChatMode,
+            promptForArchiveName: () => prompt('请输入当前聊天的存档名称（留空将自动命名）：'),
+            buildMemoryTableSnapshot: ({ sessionId, isGroup }) => buildMemoryTableSnapshot({ sessionId, isGroup }),
+            captureArchivePointer: (sessionId, options) =>
+                window.appBridge?.buildArchivePointerFromCurrentThread?.(sessionId, options),
+            memoryTableStore: window.appBridge?.memoryTableStore,
+            resolveDefaultMemoryTemplateId,
+            resolveSummaryTableIds: ({ isGroup }) => [
+                isGroup ? 'group_summary' : 'chat_summary',
+                isGroup ? 'group_outline' : 'chat_outline',
+            ],
+            notifyRowsUpdated: ({ sessionId, templateId }) =>
+                emitSharedMemoryRowsUpdated({ target: window, sessionId, templateId }),
+            startNewChat: (sessionId, archiveName, options) => this.chatStore.startNewChat(sessionId, archiveName, options),
+            persistArchivePointer: (sessionId, archiveId, archivePointer, options) =>
+                window.appBridge?.setArchivePointerForArchive?.(sessionId, archiveId, archivePointer, options),
+            restoreMemoryForActiveThread: (sessionId, options) =>
+                window.appBridge?.restoreMemoryForActiveThread?.(sessionId, options),
+            logger,
+            sourcePrefix: 'group',
+            onStarted: ({ sessionId }) => {
+                window.toastr?.success('已开启新聊天');
+                this.onSaved?.({ id: sessionId, forceRefresh: true });
+                this.hide();
             },
         });
+        return this.newChatRuntime;
+    }
+
+    ensureArchiveRuntime() {
+        if (this.archiveRuntime) return this.archiveRuntime;
+        this.archiveRuntime = createSessionArchiveSectionRuntime({
+            getContainer: () => this.archivesList,
+            getSessionId: () => this.groupId,
+            getChatStore: () => this.chatStore,
+            isGroup: true,
+            getMemoryStorageMode,
+            buildMemoryTableSnapshot: ({ sessionId, isGroup }) => buildMemoryTableSnapshot({ sessionId, isGroup }),
+            captureArchivePointer: (sessionId, options) =>
+                window.appBridge?.buildArchivePointerFromCurrentThread?.(sessionId, options),
+            loadArchivedMessages: (archiveId, sessionId, options) =>
+                this.chatStore.loadArchivedMessages(archiveId, sessionId, options),
+            getLastArchiveTransition: (sessionId) => this.chatStore.getLastArchiveTransition?.(sessionId),
+            persistArchivePointer: (sessionId, archiveId, archivePointer, options) =>
+                window.appBridge?.setArchivePointerForArchive?.(sessionId, archiveId, archivePointer, options),
+            applyMemoryTableSnapshot: ({ sessionId, isGroup, snapshot }) =>
+                applyMemoryTableSnapshot({ sessionId, isGroup, snapshot }),
+            restoreArchivePointerForLoadedThread: (sessionId, options) =>
+                window.appBridge?.restoreArchivePointerForLoadedThread?.(sessionId, options),
+            logger,
+            appConfirmFn: appConfirm,
+            runArchiveSwitchFlow,
+            runArchiveDeleteFlow,
+            deleteArchiveTurnCheckpointState: (sessionId, archiveId) =>
+                window.appBridge?.deleteArchiveTurnCheckpointState?.(sessionId, archiveId),
+            deleteArchive: (archiveId, sessionId) => this.chatStore.deleteArchive(archiveId, sessionId),
+            onArchiveLoaded: (sessionId) => {
+                window.toastr?.success('已加载存档');
+                this.onSaved?.({ id: sessionId, forceRefresh: true });
+            },
+            onArchiveDeleted: () => this.renderArchives(),
+            onHide: () => this.hide(),
+            createEmptyState: () => createSessionArchiveEmptyState(),
+            createArchiveRow: (payload) => createSessionArchiveRow(payload),
+            sourcePrefix: 'group',
+            restoreWarnMessage: 'restore checkpoint memory after group archive load failed',
+            deleteWarnMessage: 'delete group archive turn checkpoint state failed',
+        });
+        return this.archiveRuntime;
     }
 
     renderArchives() {
-        if (!this.archivesList || !this.chatStore) return;
-        const sid = this.groupId;
-        const archives = this.chatStore.getArchives(sid);
-        const currentId = this.chatStore.state.sessions[sid]?.currentArchiveId;
-        this.archivesList.innerHTML = '';
+        return this.ensureArchiveRuntime().renderArchives();
+    }
 
-        if (!archives.length) {
-            this.archivesList.appendChild(createSessionArchiveEmptyState());
-            return;
-        }
-
-        archives.forEach(arc => {
-            const dateStr = new Date(arc.timestamp).toLocaleString();
-            const msgCount = Number(arc.messageCount || (Array.isArray(arc.messages) ? arc.messages.length : 0)) || 0;
-            const isCurrent = arc.id === currentId;
-            const { row } = createSessionArchiveRow({
-                archiveName: arc.name,
-                isCurrent,
-                dateText: dateStr,
-                messageCount: msgCount,
-                onSelect: async () => {
-                    if (isCurrent) return;
-                    const ok = await appConfirm({
-                        title: '加载存档',
-                        message: `确定要加载存档「${arc.name}」吗？\n当前聊天将被自动保存。`,
-                    });
-                    if (!ok) return;
-                    await runArchiveSwitchFlow({
-                        sessionId: sid,
-                        isGroup: true,
-                        archive: arc,
-                        getMemoryStorageMode,
-                        buildMemoryTableSnapshot: ({ sessionId, isGroup }) => buildMemoryTableSnapshot({ sessionId, isGroup }),
-                        captureArchivePointer: (sessionId, options) =>
-                            window.appBridge?.buildArchivePointerFromCurrentThread?.(sessionId, options),
-                        loadArchivedMessages: (archiveId, sessionId, options) =>
-                            this.chatStore.loadArchivedMessages(archiveId, sessionId, options),
-                        getLastArchiveTransition: (sessionId) => this.chatStore.getLastArchiveTransition?.(sessionId),
-                        persistArchivePointer: (sessionId, archiveId, archivePointer, options) =>
-                            window.appBridge?.setArchivePointerForArchive?.(sessionId, archiveId, archivePointer, options),
-                        applyMemoryTableSnapshot: ({ sessionId, isGroup, snapshot }) =>
-                            applyMemoryTableSnapshot({ sessionId, isGroup, snapshot }),
-                        restoreArchivePointerForLoadedThread: (sessionId, options) =>
-                            window.appBridge?.restoreArchivePointerForLoadedThread?.(sessionId, options),
-                        logger,
-                        sourcePrefix: 'group',
-                        restoreWarnMessage: 'restore checkpoint memory after group archive load failed',
-                    });
-                    window.toastr?.success('已加载存档');
-                    this.onSaved?.({ id: sid, forceRefresh: true });
-                    this.hide();
-                },
-                onDelete: async (e) => {
-                    e.stopPropagation();
-                    const ok = await appConfirm({
-                        title: '删除存档',
-                        message: '确定要删除这条存档吗？',
-                        danger: true,
-                    });
-                    if (!ok) return;
-                    await runArchiveDeleteFlow({
-                        sessionId: sid,
-                        archiveId: arc.id,
-                        deleteArchiveTurnCheckpointState: (sessionId, archiveId) =>
-                            window.appBridge?.deleteArchiveTurnCheckpointState?.(sessionId, archiveId),
-                        deleteArchive: (archiveId, sessionId) => this.chatStore.deleteArchive(archiveId, sessionId),
-                        renderArchives: () => this.renderArchives(),
-                        logger,
-                        warnMessage: 'delete group archive turn checkpoint state failed',
-                    });
-                },
-            });
-            this.archivesList.appendChild(row);
+    ensureMemberManagementRuntime() {
+        if (this.memberManagementRuntime) return this.memberManagementRuntime;
+        this.memberManagementRuntime = createGroupMemberManagementRuntime({
+            getPanel: () => this.panel,
+            getMembers: () => this.members,
+            setMembers: (nextMembers) => {
+                this.members = Array.isArray(nextMembers) ? nextMembers : [];
+            },
+            getContactsStore: () => this.contactsStore,
+            getAddOverlay: () => this.addOverlay,
+            setAddOverlay: (overlay) => {
+                this.addOverlay = overlay;
+            },
+            getAddPanel: () => this.addPanel,
+            setAddPanel: (panel) => {
+                this.addPanel = panel;
+            },
+            getAddSelected: () => this.addSelected,
+            documentRef: document,
+            bodyEl: document.body,
+            normalize,
+            normalizeKey,
+            resolveContactAvatar,
+            notifyInfo: (message) => window.toastr?.info?.(message),
         });
+        return this.memberManagementRuntime;
     }
 
     updateAvatarPreview() {
@@ -1123,219 +867,45 @@ export class GroupSettingsPanel {
     }
 
     renderMembers() {
-        const listEl = this.panel?.querySelector('#group-settings-members');
-        if (!listEl) return;
-        listEl.innerHTML = '';
-        listEl.style.maxHeight = '260px';
-        listEl.style.overflowY = 'auto';
-        listEl.style.paddingRight = '4px';
-        if (!this.members.length) {
-            listEl.appendChild(createSelectableContactEmptyState({ text: '暂无成员' }));
-            return;
-        }
-        this.members.forEach((mid) => {
-            const c = this.contactsStore?.getContact?.(mid);
-            const { row } = createMemberManageRow({
-                memberId: mid,
-                name: c?.name || mid,
-                avatar: resolveContactAvatar(c, mid),
-                onRemove: () => {
-                    this.members = this.members.filter(x => x !== mid);
-                    this.renderMembers();
-                },
-            });
-            listEl.appendChild(row);
-        });
+        return this.ensureMemberManagementRuntime().renderMembers();
     }
 
     openAddMembers() {
-        this.ensureAddModal();
-        this.addSelected.clear();
-        this.renderAddCandidates();
-        this.addOverlay.style.display = 'block';
-        this.addPanel.style.display = 'flex';
+        return this.ensureMemberManagementRuntime().openAddMembers();
     }
 
     ensureAddModal() {
-        if (this.addPanel) return;
-        const modal = createSessionContactPickerModal({
-            documentRef: document,
-            overlayId: 'group-add-overlay',
-            panelId: 'group-add-panel',
-            title: '添加成员',
-            subtitle: '从联系人中选择',
-            closeId: 'group-add-close',
-            cancelId: 'group-add-cancel',
-            confirmId: 'group-add-confirm',
-            confirmLabel: '添加',
-            searchId: 'group-add-search',
-            listId: 'group-add-list',
-            searchPlaceholder: '搜索联系人...',
-            headerBackground: 'linear-gradient(135deg, rgba(25,154,255,0.10), rgba(0,102,204,0.08))',
-            overlayOpacity: 0.45,
-            overlayZIndex: 22000,
-            panelZIndex: 23000,
-            inset: 18,
-            radius: 14,
-        });
-        this.addOverlay = modal.overlay;
-        this.addPanel = modal.panel;
-        this.addOverlay.addEventListener('click', () => this.closeAddModal());
-
-        document.body.appendChild(this.addOverlay);
-        document.body.appendChild(this.addPanel);
-
-        this.addPanel.querySelector('#group-add-close').onclick = () => this.closeAddModal();
-        this.addPanel.querySelector('#group-add-cancel').onclick = () => this.closeAddModal();
-        this.addPanel.querySelector('#group-add-search').addEventListener('input', () => this.renderAddCandidates());
-        this.addPanel.querySelector('#group-add-confirm').onclick = () => {
-            const picks = [...this.addSelected].map(normalize).filter(Boolean);
-            if (!picks.length) {
-                window.toastr?.info?.('未选择任何成员');
-                return;
-            }
-            const next = [...new Set([...this.members, ...picks])];
-            this.members = next;
-            this.renderMembers();
-            this.closeAddModal();
-        };
+        return this.ensureMemberManagementRuntime().ensureAddModal();
     }
 
     closeAddModal() {
-        if (this.addOverlay) this.addOverlay.style.display = 'none';
-        if (this.addPanel) this.addPanel.style.display = 'none';
+        return this.ensureMemberManagementRuntime().closeAddModal();
     }
 
     renderAddCandidates() {
-        const listEl = this.addPanel?.querySelector('#group-add-list');
-        if (!listEl) return;
-        const q = normalizeKey(this.addPanel.querySelector('#group-add-search')?.value);
-        const friends = this.contactsStore?.listFriends?.() || [];
-        const candidates = friends.filter(f => f?.id && !this.members.includes(f.id) && !String(f.id).startsWith('rp:'));
-        const filtered = q
-            ? candidates.filter(c => normalizeKey(c?.name || c?.id).includes(q))
-            : candidates;
-
-        listEl.innerHTML = '';
-        if (!filtered.length) {
-            listEl.appendChild(createSelectableContactEmptyState({ text: '暂无可添加联系人' }));
-            return;
-        }
-        filtered.forEach((c) => {
-            const id = normalize(c?.id);
-            if (!id) return;
-            const { row } = createSelectableContactRow({
-                id,
-                name: c?.name || id,
-                avatar: resolveContactAvatar(c, id),
-                selected: this.addSelected.has(id),
-                selectedText: '已选',
-                onClick: () => {
-                    if (this.addSelected.has(id)) this.addSelected.delete(id);
-                    else this.addSelected.add(id);
-                    this.renderAddCandidates();
-                },
-            });
-            listEl.appendChild(row);
-        });
+        return this.ensureMemberManagementRuntime().renderAddCandidates();
     }
 
     async startNewChat() {
         if (!this.chatStore) return;
-        const sid = this.groupId;
-        const result = await runStartNewChatFlow({
-            sessionId: sid,
-            isGroup: true,
-            sessionMode: 'chat',
-            getMemoryStorageMode,
-            askMemoryTableNewChatMode,
-            promptForArchiveName: () => prompt('请输入当前聊天的存档名称（留空将自动命名）：'),
-            buildMemoryTableSnapshot: ({ sessionId, isGroup }) => buildMemoryTableSnapshot({ sessionId, isGroup }),
-            captureArchivePointer: (sessionId, options) =>
-                window.appBridge?.buildArchivePointerFromCurrentThread?.(sessionId, options),
-            clearSessionMemories: ({ sessionId, isGroup, keepNonSummary }) =>
-                clearSessionMemoriesForNewChat({
-                    sessionId,
-                    isGroup,
-                    keepNonSummary,
-                    memoryTableStore: window.appBridge?.memoryTableStore,
-                    resolveDefaultMemoryTemplateId,
-                    resolveSummaryTableIds: ({ isGroup }) => [
-                        isGroup ? 'group_summary' : 'chat_summary',
-                        isGroup ? 'group_outline' : 'chat_outline',
-                    ],
-                    notifyRowsUpdated: ({ sessionId, templateId }) => {
-                        window.dispatchEvent(new CustomEvent('memory-rows-updated', { detail: { sessionId, templateId } }));
-                    },
-                }),
-            startNewChat: (sessionId, archiveName, options) => this.chatStore.startNewChat(sessionId, archiveName, options),
-            persistArchivePointer: (sessionId, archiveId, archivePointer, options) =>
-                window.appBridge?.setArchivePointerForArchive?.(sessionId, archiveId, archivePointer, options),
-            restoreMemoryForActiveThread: (sessionId, options) =>
-                window.appBridge?.restoreMemoryForActiveThread?.(sessionId, options),
-            logger,
-            sourcePrefix: 'group',
-        });
-        if (!result?.started) return;
-        window.toastr?.success('已开启新聊天');
-        this.onSaved?.({ id: sid, forceRefresh: true });
-        this.hide();
+        return this.ensureNewChatRuntime().startNewChat();
     }
 
     save() {
-        try {
-            const prev = this.contactsStore?.getContact?.(this.groupId);
-            if (!prev) return;
-            const sessionSettings = this.chatStore?.getSessionSettings?.(this.groupId) || {};
-            const nextName = normalize(this.panel?.querySelector('#group-settings-name')?.value) || prev.name;
-            const nextKey = normalizeKey(nextName);
-            const groups = this.contactsStore?.listGroups?.() || [];
-            const dup = groups.find(g => g?.id !== this.groupId && normalizeKey(g?.name) === nextKey);
-            if (dup) {
-                window.toastr?.error?.('已存在同名群组');
-                return;
-            }
-
-            const beforeMembers = Array.isArray(prev.members) ? prev.members.map(normalize).filter(Boolean) : [];
-            const afterMembers = [...new Set(this.members.map(normalize).filter(Boolean))];
-            logger.info(
-                `[group-chat] save scope=${this.contactsStore?.scopeId || 'default'} id=${this.groupId} prevName=${String(prev.name || '')} nextName=${nextName} beforeMembers=${beforeMembers.length} afterMembers=${afterMembers.length} avatarLen=${String(this.avatar || '').trim().length}`
-            );
-            this.chatStore?.setSessionSettings?.(this.groupId, sessionSettings);
-            this.contactsStore?.upsertContact?.({
-                ...prev,
-                id: this.groupId,
-                name: nextName,
-                avatar: this.avatar || '',
-                isGroup: true,
-                members: afterMembers,
-            });
-
-            const time = new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-            let didAppendSystem = false;
-            if (nextName !== prev.name) {
-                this.chatStore?.appendMessage?.({ role: 'system', type: 'meta', content: `群聊名称已更新：${prev.name} → ${nextName}`, name: '系统', time }, this.groupId);
-                didAppendSystem = true;
-            }
-            const added = afterMembers.filter(x => !beforeMembers.includes(x));
-            const removed = beforeMembers.filter(x => !afterMembers.includes(x));
-            if (added.length) {
-                const names = added.map(mid => this.contactsStore?.getContact?.(mid)?.name || mid).join('、');
-                this.chatStore?.appendMessage?.({ role: 'system', type: 'meta', content: `成员加入：${names}`, name: '系统', time }, this.groupId);
-                didAppendSystem = true;
-            }
-            if (removed.length) {
-                const names = removed.map(mid => this.contactsStore?.getContact?.(mid)?.name || mid).join('、');
-                this.chatStore?.appendMessage?.({ role: 'system', type: 'meta', content: `成员已移除：${names}`, name: '系统', time }, this.groupId);
-                didAppendSystem = true;
-            }
-
-            window.toastr?.success?.('已保存群聊设置');
-            this.onSaved?.({ id: this.groupId, forceRefresh: didAppendSystem });
-            this.hide();
-        } catch (err) {
-            logger.error('保存群聊设置失败', err);
-            window.toastr?.error?.(err.message || '保存失败');
-        }
+        return runGroupSettingsSaveFlow({
+            groupId: this.groupId,
+            panel: this.panel,
+            avatar: this.avatar,
+            members: this.members,
+            contactsStore: this.contactsStore,
+            chatStore: this.chatStore,
+            onSaved: this.onSaved,
+            hide: () => this.hide(),
+            normalize,
+            normalizeKey,
+            notifySuccess: (message) => window.toastr?.success?.(message),
+            notifyError: (message) => window.toastr?.error?.(message),
+            logger,
+        });
     }
 }

@@ -1,5 +1,19 @@
 import { appSettings } from '../storage/app-settings.js';
+import {
+  getMemoryContextType,
+  resolveMemorySessionMode,
+  tableMatchesMemoryContext,
+} from '../memory/memory-context-utils.js';
 import { sortMemoryRowsForSnapshot } from '../memory/memory-row-order.js';
+import {
+  buildMemoryRowsIndex,
+  createMemoryActionResolvers,
+} from './chat/memory-table-action-utils.js';
+import {
+  loadScopedMemories,
+  resolveSessionMemoryScopeKey,
+} from './chat/memory-table-scope-utils.js';
+import { batchCreateMemoriesWithFallback } from './session-memory-write-utils.js';
 
 export const getMemoryStorageMode = () => {
   if (appSettings.get().memoryEnabled === false) return 'off';
@@ -7,27 +21,7 @@ export const getMemoryStorageMode = () => {
   return mode === 'table' ? 'table' : 'summary';
 };
 
-export const resolveDefaultMemoryTemplateId = async ({
-  memoryTemplateStore = null,
-} = {}) => {
-  const store = memoryTemplateStore;
-  if (!store?.getTemplates) return '';
-  try {
-    const list = await store.getTemplates({ is_default: true });
-    if (Array.isArray(list) && list.length) {
-      return String(list[0]?.id || '').trim();
-    }
-  } catch {}
-  try {
-    const fallback = await store.getTemplates({ id: 'default-v1' });
-    if (Array.isArray(fallback) && fallback.length) {
-      return String(fallback[0]?.id || '').trim();
-    }
-  } catch {}
-  return '';
-};
-
-export const resolveDefaultMemoryTemplateDefinition = async ({
+const resolveDefaultMemoryTemplateRecord = async ({
   memoryTemplateStore = null,
 } = {}) => {
   const store = memoryTemplateStore;
@@ -35,16 +29,175 @@ export const resolveDefaultMemoryTemplateDefinition = async ({
   try {
     const list = await store.getTemplates({ is_default: true });
     if (Array.isArray(list) && list.length) {
-      return store.toTemplateDefinition?.(list[0]) || list[0]?.schema || null;
+      return list[0] || null;
     }
   } catch {}
   try {
     const fallback = await store.getTemplates({ id: 'default-v1' });
     if (Array.isArray(fallback) && fallback.length) {
-      return store.toTemplateDefinition?.(fallback[0]) || fallback[0]?.schema || null;
+      return fallback[0] || null;
     }
   } catch {}
   return null;
+};
+
+export const resolveDefaultMemoryTemplateId = async ({
+  memoryTemplateStore = null,
+} = {}) => {
+  const record = await resolveDefaultMemoryTemplateRecord({ memoryTemplateStore });
+  return String(record?.id || '').trim();
+};
+
+export const resolveDefaultMemoryTemplateRecordAndDefinition = async ({
+  memoryTemplateStore = null,
+} = {}) => {
+  const store = memoryTemplateStore;
+  const record = await resolveDefaultMemoryTemplateRecord({ memoryTemplateStore: store });
+  if (!record) return null;
+  return {
+    record,
+    template: store?.toTemplateDefinition?.(record) || record?.schema || null,
+  };
+};
+
+export const resolveDefaultMemoryTemplateDefinition = async ({
+  memoryTemplateStore = null,
+} = {}) => {
+  const resolved = await resolveDefaultMemoryTemplateRecordAndDefinition({ memoryTemplateStore });
+  return resolved?.template || null;
+};
+
+export const buildMemoryTemplateTableMaps = (template, filterOptions = null) => {
+  const tableById = new Map();
+  const tableNameMap = new Map();
+  const tableOrder = [];
+  (template?.tables || []).forEach(table => {
+    const id = String(table?.id || '').trim();
+    if (!id) return;
+    if (filterOptions && !tableMatchesMemoryContext(table, filterOptions)) return;
+    tableById.set(id, table);
+    tableOrder.push(id);
+    const name = String(table?.name || '').trim();
+    if (name) tableNameMap.set(name.toLowerCase(), id);
+  });
+  return { tableById, tableNameMap, tableOrder };
+};
+
+export const resolveSessionMemoryTemplateContext = async ({
+  memoryTemplateStore = null,
+  sessionId = '',
+  isGroup = false,
+  uiMode = '',
+  filterTables = true,
+} = {}) => {
+  const templateInfo = await resolveDefaultMemoryTemplateRecordAndDefinition({ memoryTemplateStore });
+  if (!templateInfo?.record) return null;
+  const templateId = String(templateInfo.record?.id || '').trim();
+  if (!templateId) return null;
+  const contextType = getMemoryContextType({ sessionId, isGroup });
+  const sessionMode = resolveMemorySessionMode({ uiMode, sessionId, contextType });
+  const filterOptions = filterTables
+    ? {
+      sessionId,
+      isGroup,
+      contextType,
+      uiMode: sessionMode === 'rp' ? 'rp' : uiMode,
+    }
+    : null;
+  const { tableById, tableNameMap, tableOrder } = buildMemoryTemplateTableMaps(
+    templateInfo.template || {},
+    filterOptions,
+  );
+  return {
+    ...templateInfo,
+    templateId,
+    contextType,
+    sessionMode,
+    tableById,
+    tableNameMap,
+    tableOrder,
+  };
+};
+
+export const resolveSessionMemoryTemplateContextSafe = async (options = {}) => {
+  try {
+    return await resolveSessionMemoryTemplateContext(options);
+  } catch {
+    return null;
+  }
+};
+
+export const loadSessionMemoryActionContext = async ({
+  memoryTemplateStore = null,
+  memoryTableStore = null,
+  sessionId = '',
+  isGroup = false,
+  uiMode = '',
+  filterTables = true,
+  useSharedGlobalScope = false,
+  tableOrderOverride = null,
+  rowIndexMap = null,
+} = {}) => {
+  const templateContext = await resolveSessionMemoryTemplateContextSafe({
+    memoryTemplateStore,
+    sessionId,
+    isGroup,
+    uiMode,
+    filterTables,
+  });
+  if (!templateContext?.record) return null;
+  const templateId = String(templateContext.templateId || '').trim();
+  if (!templateId) return null;
+
+  const overrideOrder = Array.isArray(tableOrderOverride) ? tableOrderOverride : [];
+  const tableOrder = overrideOrder.length
+    ? overrideOrder
+    : (Array.isArray(templateContext.tableOrder) ? templateContext.tableOrder : []);
+  const normalizedRowIndexMap = rowIndexMap && typeof rowIndexMap === 'object' ? rowIndexMap : {};
+
+  const sessionScopeKey = resolveSessionMemoryScopeKey({ isGroup, useSharedGlobalScope });
+  const scopedRows = useSharedGlobalScope
+    ? []
+    : await loadScopedMemories({
+      memoryTableStore,
+      scopeKey: sessionScopeKey,
+      sessionId,
+      templateId,
+    });
+  const globalRows = await loadScopedMemories({
+    memoryTableStore,
+    scopeKey: 'global',
+    sessionId,
+    templateId,
+  });
+  const allRows = [
+    ...(Array.isArray(globalRows) ? globalRows : []),
+    ...(Array.isArray(scopedRows) ? scopedRows : []),
+  ];
+  const { rowsById, rowsByTableScope } = buildMemoryRowsIndex(allRows);
+  const resolvers = createMemoryActionResolvers({
+    tableById: templateContext.tableById,
+    tableNameMap: templateContext.tableNameMap,
+    tableOrder,
+    rowIndexMap: normalizedRowIndexMap,
+    rowsByTableScope,
+    useSharedGlobalScope,
+    sessionId,
+    isGroup,
+  });
+  return {
+    ...templateContext,
+    templateId,
+    tableOrder,
+    rowIndexMap: normalizedRowIndexMap,
+    sessionScopeKey,
+    scopedRows,
+    globalRows,
+    allRows,
+    rowsById,
+    rowsByTableScope,
+    ...resolvers,
+  };
 };
 
 export const askMemoryTableNewChatMode = () => new Promise((resolve) => {
@@ -197,15 +350,7 @@ export const applyMemoryTableSnapshot = async ({
     })
     .filter(Boolean);
   if (inputs.length) {
-    try {
-      await memoryTableStore.batchCreateMemories?.(inputs);
-    } catch {
-      for (const input of inputs) {
-        try {
-          await memoryTableStore.createMemory?.(input);
-        } catch {}
-      }
-    }
+    await batchCreateMemoriesWithFallback({ memoryTableStore, inputs });
   }
   try {
     notifyRowsUpdated?.({ sessionId: sid, templateId });

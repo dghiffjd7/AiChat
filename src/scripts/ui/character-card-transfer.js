@@ -3,6 +3,8 @@ import { safeInvoke } from '../utils/tauri.js';
 import { logger } from '../utils/logger.js';
 import { pickSavePath } from '../utils/save-dialog.js';
 import { BUILTIN_PHONE_FORMAT_WORLDBOOK_ID } from '../storage/builtin-worldbooks.js';
+import { emitMemoryRowsUpdated } from './session-memory-event-utils.js';
+import { batchCreateMemoriesWithFallback } from './session-memory-write-utils.js';
 
 const hasTauriRuntime = () => {
   const g = typeof globalThis !== 'undefined' ? globalThis : window;
@@ -178,17 +180,9 @@ export class CharacterCardTransfer {
       };
     }).filter(Boolean);
     if (inputs.length) {
-      try {
-        await memoryTableStore.batchCreateMemories?.(inputs);
-      } catch {
-        for (const input of inputs) {
-          try { await memoryTableStore.createMemory?.(input); } catch {}
-        }
-      }
+      await batchCreateMemoriesWithFallback({ memoryTableStore, inputs });
     }
-    try {
-      window.dispatchEvent(new CustomEvent('memory-rows-updated', { detail: { sessionId: sid, templateId } }));
-    } catch {}
+    emitMemoryRowsUpdated({ target: window, sessionId: sid, templateId });
     return true;
   }
 

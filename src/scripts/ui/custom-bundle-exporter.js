@@ -14,6 +14,8 @@ import { pickSavePath } from '../utils/save-dialog.js';
 import { safeInvoke } from '../utils/tauri.js';
 import { appConfirm } from './app-confirm.js';
 import { ensureDebugUiRegistry as ensureSharedDebugUiRegistry } from './debug-ui-registry-utils.js';
+import { emitMemoryRowsUpdated } from './session-memory-event-utils.js';
+import { batchCreateMemoriesWithFallback } from './session-memory-write-utils.js';
 import { normalizeWorldIdList } from './world-id-utils.js';
 
 const CUSTOM_BUNDLE_FORMAT = 'chatapp.custom-bundle.v1';
@@ -2949,19 +2951,9 @@ export class CustomBundleExporter {
       };
     }).filter(Boolean);
     if (inputs.length) {
-      try {
-        await memoryTableStore.batchCreateMemories?.(inputs);
-      } catch {
-        for (const input of inputs) {
-          try {
-            await memoryTableStore.createMemory?.(input);
-          } catch {}
-        }
-      }
+      await batchCreateMemoriesWithFallback({ memoryTableStore, inputs });
     }
-    try {
-      window.dispatchEvent(new CustomEvent('memory-rows-updated', { detail: { sessionId: sid, templateId: nextTemplateId } }));
-    } catch {}
+    emitMemoryRowsUpdated({ target: window, sessionId: sid, templateId: nextTemplateId });
     return true;
   }
 

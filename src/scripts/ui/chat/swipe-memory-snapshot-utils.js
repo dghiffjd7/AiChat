@@ -1,4 +1,5 @@
 import { sortMemoryRowsForSnapshot } from '../../memory/memory-row-order.js';
+import { batchCreateMemoriesWithFallback } from '../session-memory-write-utils.js';
 
 const normalizeNumber = (value) => {
   const next = Number(value);
@@ -106,15 +107,7 @@ export const replaceScopedMemoriesWithSnapshot = async ({
     cloneValue,
   });
   if (inputs.length) {
-    try {
-      await memoryTableStore?.batchCreateMemories?.(inputs);
-    } catch {
-      for (const input of inputs) {
-        try {
-          await memoryTableStore?.createMemory?.(input);
-        } catch {}
-      }
-    }
+    await batchCreateMemoriesWithFallback({ memoryTableStore, inputs });
   }
 
   return { deletedIds: ids, inputs };

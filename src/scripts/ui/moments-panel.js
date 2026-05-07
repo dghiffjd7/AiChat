@@ -3,179 +3,60 @@
  */
 
 import { logger } from '../utils/logger.js';
-import { resolveMediaAsset, isLikelyUrl, isAssetRef } from '../utils/media-assets.js';
-import { FEATHER_DEFAULT, resolveLineAvatar } from '../utils/line-avatar.js';
 import { appConfirm } from './app-confirm.js';
+import { createMomentsMenuRuntime } from './moments-menu-runtime-utils.js';
+import { renderMomentDetailBody } from './moments-detail-runtime-utils.js';
+import { renderMomentCardContent } from './moments-card-view-utils.js';
+import {
+  ensureMomentDetailModalShell,
+  openMomentImagePreview,
+  showMomentDetailModal,
+} from './moments-modal-shell-utils.js';
+import {
+  activateMomentReplyTarget,
+  bindMomentCommentContextMenu,
+  focusMomentComposerInput,
+} from './moments-comment-interaction-utils.js';
+import {
+  bindMomentFeedCardInteractions,
+  clearMomentReplyTarget,
+  createMomentFeedSendHandler,
+  toggleMomentCommentsExpanded,
+  toggleMomentComposer,
+} from './moments-feed-interaction-utils.js';
+import {
+  applyMomentStoredRegex,
+  escapeMomentHtml as esc,
+  extractMomentMedia,
+  renderMomentTextWithStickers,
+  resolveMomentDisplayText,
+} from './moments-content-utils.js';
+import {
+  getMomentAvatarByName,
+  resolveMomentAvatar,
+  resolveMomentContactAvatar,
+} from './moments-avatar-utils.js';
+import { buildMomentThreadedComments } from './moments-thread-utils.js';
 
-const esc = s =>
-  String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-const normalizeInlineBreaks = (s) => String(s ?? '')
-  .replace(/&lt;br\s*\/?&gt;/gi, '\n')
-  .replace(/<br\s*\/?>/gi, '\n');
-
-const normalizeMomentRegexMode = (mode, fallback = 'output') => {
-  const raw = String(mode || '').trim().toLowerCase();
-  if (raw === 'input') return 'input';
-  if (raw === 'output') return 'output';
-  return String(fallback || '').trim().toLowerCase() === 'input' ? 'input' : 'output';
-};
-
-const applyMomentStoredRegex = (raw = '', { regexMode = 'output' } = {}) => {
-  const text = String(raw ?? '');
+const getMomentsDocumentRef = () => {
   try {
-    const bridge = window.appBridge;
-    const mode = normalizeMomentRegexMode(regexMode);
-    if (mode === 'input' && typeof bridge?.applyInputStoredRegex === 'function') {
-      return bridge.applyInputStoredRegex(text, { isEdit: false, depth: 0 });
-    }
-    if (typeof bridge?.applyOutputStoredRegex === 'function') {
-      return bridge.applyOutputStoredRegex(text, { isEdit: false, depth: 0 });
-    }
+    if (typeof document !== 'undefined') return document;
   } catch {}
-  return text;
+  return {
+    body: null,
+    documentElement: { clientWidth: 360, clientHeight: 640 },
+    addEventListener() {},
+    createElement() {
+      throw new Error('document is not available');
+    },
+  };
 };
 
-const applyMomentDisplayRegex = (raw = '', { regexMode = 'output' } = {}) => {
-  const text = String(raw ?? '');
+const getMomentsWindowRef = () => {
   try {
-    const bridge = window.appBridge;
-    const mode = normalizeMomentRegexMode(regexMode);
-    if (mode === 'input' && typeof bridge?.applyInputDisplayRegex === 'function') {
-      return bridge.applyInputDisplayRegex(text, { isEdit: false, depth: 0 });
-    }
-    if (typeof bridge?.applyOutputDisplayRegex === 'function') {
-      return bridge.applyOutputDisplayRegex(text, { isEdit: false, depth: 0 });
-    }
+    if (typeof window !== 'undefined') return window;
   } catch {}
-  return text;
-};
-
-const resolveMomentDisplayText = (record, { fallbackMode = 'output' } = {}) => {
-  const fallback = fallbackMode === 'input'
-    ? 'input'
-    : String(record?.author || '').trim() === '我'
-      ? 'input'
-      : 'output';
-  return applyMomentDisplayRegex(String(record?.content ?? ''), {
-    regexMode: normalizeMomentRegexMode(record?.regexMode, fallback),
-  });
-};
-
-const renderTextWithStickers = (raw = '') => {
-  const input = normalizeInlineBreaks(raw);
-  if (!input) return '';
-  const TOKEN_RE = /\[bqb-([\s\S]+?)\]/gi;
-  let output = '';
-  let lastIndex = 0;
-
-  const appendText = (text) => {
-    if (!text) return;
-    output += esc(text).replace(/\n/g, '<br>');
-  };
-
-  const appendSticker = (payload, fallback) => {
-    const resolved = resolveMediaAsset('sticker', payload);
-    const url = resolved?.url || '';
-    if (!url) {
-      appendText(fallback);
-      return;
-    }
-    if (output && !output.endsWith('<br>')) output += '<br>';
-    output += `<span class="moment-sticker-wrap"><img class="moment-sticker" src="${esc(url)}" alt="${esc(payload)}"></span>`;
-    output += '<br>';
-  };
-
-  let match;
-  while ((match = TOKEN_RE.exec(input))) {
-    appendText(input.slice(lastIndex, match.index));
-    const payload = String(match[1] || '').trim();
-    if (payload) appendSticker(payload, match[0]);
-    else appendText(match[0]);
-    lastIndex = TOKEN_RE.lastIndex;
-  }
-  appendText(input.slice(lastIndex));
-  return output;
-};
-
-const extractMomentMedia = (raw = '') => {
-  const text = normalizeInlineBreaks(raw);
-  const images = [];
-  const audios = [];
-  const TOKEN_RE = /\[(img|yy)-([\s\S]+?)\]|<img\s+[^>]*src=["']([^"']+)["'][^>]*>/gi;
-  let output = '';
-  let lastIndex = 0;
-
-  const pushImage = (payload, kind = 'image') => {
-    const resolved = resolveMediaAsset(kind, payload) || resolveMediaAsset('image', payload);
-    const url = resolved?.url || (isLikelyUrl(payload) ? payload : '');
-    if (!url) return false;
-    images.push({ url, label: String(payload || '').trim() });
-    return true;
-  };
-
-  const pushAudio = (payload) => {
-    const resolved = resolveMediaAsset('audio', payload);
-    const url = resolved?.url || (isLikelyUrl(payload) ? payload : '');
-    if (!url) return false;
-    audios.push({ url, label: String(payload || '').trim() });
-    return true;
-  };
-
-  let match;
-  while ((match = TOKEN_RE.exec(text))) {
-    const before = text.slice(lastIndex, match.index);
-    output += before;
-    lastIndex = TOKEN_RE.lastIndex;
-    if (match[3]) {
-      const ok = pushImage(match[3], 'image');
-      if (!ok) output += match[0];
-      continue;
-    }
-    const type = String(match[1] || '').toLowerCase();
-    const payload = String(match[2] || '').trim();
-    if (!payload) {
-      output += match[0];
-      continue;
-    }
-    if (type === 'yy') {
-      const ok = pushAudio(payload);
-      if (!ok) output += match[0];
-      continue;
-    }
-    const ok = pushImage(payload, 'image');
-    if (!ok) output += match[0];
-  }
-  output += text.slice(lastIndex);
-
-  const stripEmptyWrappers = (input = '') => {
-    let next = String(input ?? '');
-    let prev = '';
-    while (next !== prev) {
-      prev = next;
-      next = next
-        .replace(/<\s*(div|p|span|figure|center)\b[^>]*>\s*<\/\s*\1\s*>/gi, '')
-        .replace(/\n{3,}/g, '\n\n');
-    }
-    return next.trim();
-  };
-  output = stripEmptyWrappers(output);
-
-  const trimmed = output.trim();
-  if (trimmed && (isAssetRef(trimmed) || isLikelyUrl(trimmed))) {
-    const img = resolveMediaAsset('image', trimmed);
-    if (img?.url) {
-      images.push({ url: img.url, label: trimmed });
-      output = '';
-    } else {
-      const audio = resolveMediaAsset('audio', trimmed);
-      if (audio?.url) {
-        audios.push({ url: audio.url, label: trimmed });
-        output = '';
-      }
-    }
-  }
-
-  return { text: output, images, audios };
+  return { innerWidth: 360, innerHeight: 640 };
 };
 
 export class MomentsPanel {
@@ -196,27 +77,15 @@ export class MomentsPanel {
     this.commentMenuEl = null;
     this.visibleCount = 5;
     this.pageSize = 5;
+    this.menuRuntime = createMomentsMenuRuntime({
+      documentLike: getMomentsDocumentRef(),
+      windowLike: getMomentsWindowRef(),
+      appConfirmFn: appConfirm,
+    });
   }
 
   buildThreadedComments(comments = []) {
-    const list = Array.isArray(comments) ? comments.filter(Boolean) : [];
-    const byId = new Map();
-    list.forEach((c) => {
-      const id = String(c?.id || '').trim();
-      if (id) byId.set(id, c);
-    });
-    const repliesByParent = new Map();
-    const roots = [];
-    for (const c of list) {
-      const replyTo = String(c?.replyTo || '').trim();
-      if (replyTo && byId.has(replyTo)) {
-        if (!repliesByParent.has(replyTo)) repliesByParent.set(replyTo, []);
-        repliesByParent.get(replyTo).push(c);
-      } else {
-        roots.push(c);
-      }
-    }
-    return { roots, repliesByParent, byId };
+    return buildMomentThreadedComments(comments);
   }
 
   mount(listEl) {
@@ -230,202 +99,94 @@ export class MomentsPanel {
   }
 
   resolveContactAvatar(contact, fallbackName = '') {
-    const c = contact || {};
-    const name = String(c?.name || fallbackName || c?.id || '').trim() || '未知';
-    const tags = Array.isArray(c?.libraryTags) && c.libraryTags.length
-      ? c.libraryTags
-      : Array.isArray(c?.labels)
-        ? c.labels
-        : [];
-    return resolveLineAvatar({
-      avatar: c?.avatar || this.defaultAvatar || FEATHER_DEFAULT,
-      name,
-      tags,
-      size: 96,
+    return resolveMomentContactAvatar(contact, {
+      fallbackName,
+      defaultAvatar: this.defaultAvatar,
     });
   }
 
   getAvatarByName(name) {
-    const raw = String(name || '').trim();
-    const defaultAvatar = this.defaultAvatar || FEATHER_DEFAULT;
-    if (!raw) {
-      return resolveLineAvatar({ avatar: defaultAvatar, name: '未知', tags: [], size: 96 });
-    }
-    if (raw === '我' || raw.toLowerCase() === 'user' || raw === '用户') {
-      return this.userAvatar || defaultAvatar;
-    }
-    try {
-      const byId = this.contactsStore?.getContact?.(raw);
-      if (byId) return this.resolveContactAvatar(byId, raw);
-    } catch {}
-    const norm = s =>
-      String(s || '')
-        .trim()
-        .toLowerCase()
-        .replace(/\s+/g, '');
-    const loose = s => norm(s).replace(/[^a-z0-9\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]/g, '');
-    const key = norm(raw);
-    const looseKey = loose(raw);
-    try {
-      const list = this.contactsStore?.listContacts?.() || [];
-      const exact = list.find(x => String(x?.name || '').trim() === raw || String(x?.id || '').trim() === raw);
-      if (exact) return this.resolveContactAvatar(exact, raw);
-      const fuzzy = list.find(x => norm(x?.name) === key || norm(x?.id) === key);
-      if (fuzzy) return this.resolveContactAvatar(fuzzy, raw);
-      const f2 = list.find(x => loose(x?.name) === looseKey || loose(x?.id) === looseKey);
-      if (f2) return this.resolveContactAvatar(f2, raw);
-      return resolveLineAvatar({ avatar: defaultAvatar, name: raw, tags: [], size: 96 });
-    } catch {
-      return resolveLineAvatar({ avatar: defaultAvatar, name: raw, tags: [], size: 96 });
-    }
+    return getMomentAvatarByName(name, {
+      contactsStore: this.contactsStore,
+      defaultAvatar: this.defaultAvatar,
+      userAvatar: this.userAvatar,
+      resolveContactAvatar: (contact, options = {}) => resolveMomentContactAvatar(contact, {
+        ...options,
+        defaultAvatar: this.defaultAvatar,
+      }),
+    });
   }
 
   getAvatarForMoment(m) {
-    const snap = String(m?.authorAvatar || '').trim();
-    if (snap) {
-      return resolveLineAvatar({
-        avatar: snap,
-        name: m?.author || m?.authorId || m?.originSessionId || '',
-        tags: [],
-        size: 96,
-      });
-    }
-    const authorId = String(m?.authorId || '').trim();
-    const defaultAvatar = this.defaultAvatar || FEATHER_DEFAULT;
-    if (authorId === 'user') return this.userAvatar || defaultAvatar;
-    if (authorId) {
-      try {
-        const c = this.contactsStore?.getContact?.(authorId);
-        if (c) return this.resolveContactAvatar(c, authorId);
-      } catch {}
-    }
-    const origin = String(m?.originSessionId || '').trim();
-    if (origin) {
-      try {
-        const c = this.contactsStore?.getContact?.(origin);
-        if (c) return this.resolveContactAvatar(c, origin);
-      } catch {}
-    }
-    return this.getAvatarByName(m?.author);
+    return resolveMomentAvatar(m, {
+      contactsStore: this.contactsStore,
+      defaultAvatar: this.defaultAvatar,
+      userAvatar: this.userAvatar,
+      resolveContactAvatar: (contact, options = {}) => resolveMomentContactAvatar(contact, {
+        ...options,
+        defaultAvatar: this.defaultAvatar,
+      }),
+      getAvatarByName: (name) => getMomentAvatarByName(name, {
+        contactsStore: this.contactsStore,
+        defaultAvatar: this.defaultAvatar,
+        userAvatar: this.userAvatar,
+        resolveContactAvatar: (contact, options = {}) => resolveMomentContactAvatar(contact, {
+          ...options,
+          defaultAvatar: this.defaultAvatar,
+        }),
+      }),
+    });
   }
 
   ensureMenu() {
-    if (this.menuEl) return;
-    const el = document.createElement('div');
-    el.className = 'moment-menu-dropdown hidden';
-    el.innerHTML = `
-            <button class="moment-menu-item danger" data-action="delete">🗑️ 删除动态</button>
-            <button class="moment-menu-item" data-action="cancel">❌ 取消</button>
-        `;
-    el.addEventListener('click', e => e.stopPropagation());
-    document.addEventListener('click', () => this.hideMenu());
-    el.querySelectorAll('button').forEach(btn => {
-      btn.addEventListener('click', async () => {
-        const action = btn.dataset.action;
-        const momentId = el.dataset.momentId || '';
-        this.hideMenu();
-        if (action === 'delete' && momentId) {
-          const ok = await appConfirm({
-            title: '删除动态',
-            message: '删除后无法恢复，确定要删除这条动态吗？',
-            danger: true,
-          });
-          if (!ok) return;
-          const removed = this.store?.remove?.(momentId);
-          if (!removed) window.toastr?.warning('删除失败：未找到该动态');
-          else window.toastr?.success('已删除动态');
-          this.render({ preserveScroll: true });
-        }
-      });
+    this.menuEl = this.menuRuntime.ensureMomentMenu({
+      existingMenu: this.menuEl,
+      onDeleteMoment: async (momentId) => {
+        const removed = this.store?.remove?.(momentId);
+        if (!removed) window.toastr?.warning('删除失败：未找到该动态');
+        else window.toastr?.success('已删除动态');
+        this.render({ preserveScroll: true });
+      },
     });
-    document.body.appendChild(el);
-    this.menuEl = el;
   }
 
   hideMenu() {
-    if (!this.menuEl) return;
-    this.menuEl.classList.add('hidden');
-    this.menuEl.dataset.momentId = '';
+    this.menuRuntime.hideMomentMenu(this.menuEl);
   }
 
   showMenu(anchorEl, momentId) {
     this.ensureMenu();
-    if (!this.menuEl || !anchorEl) return;
-    const rect = anchorEl.getBoundingClientRect();
-    const el = this.menuEl;
-    el.dataset.momentId = String(momentId || '');
-    el.classList.remove('hidden');
-
-    // position after visible so we can measure width
-    const vw = window.innerWidth || document.documentElement.clientWidth || 360;
-    const vh = window.innerHeight || document.documentElement.clientHeight || 640;
-    const mw = el.offsetWidth || 140;
-    const mh = el.offsetHeight || 80;
-    const margin = 8;
-    const top = Math.min(vh - mh - margin, rect.bottom + 6);
-    const left = Math.max(margin, Math.min(vw - mw - margin, rect.right - mw));
-    el.style.top = `${Math.max(margin, top)}px`;
-    el.style.left = `${left}px`;
+    this.menuRuntime.showMomentMenu({
+      menuEl: this.menuEl,
+      anchorEl,
+      momentId,
+    });
   }
 
   ensureCommentMenu() {
-    if (this.commentMenuEl) return;
-    const el = document.createElement('div');
-    el.className = 'moment-menu-dropdown hidden';
-    el.innerHTML = `
-            <button class="moment-menu-item danger" data-action="delete-comment">🗑️ 删除评论</button>
-            <button class="moment-menu-item" data-action="cancel">❌ 取消</button>
-        `;
-    el.addEventListener('click', e => e.stopPropagation());
-    document.addEventListener('click', () => this.hideCommentMenu());
-    el.querySelectorAll('button').forEach(btn => {
-      btn.addEventListener('click', async () => {
-        const action = btn.dataset.action;
-        const momentId = el.dataset.momentId || '';
-        const commentId = el.dataset.commentId || '';
-        this.hideCommentMenu();
-        if (action === 'delete-comment' && momentId && commentId) {
-          const ok = await appConfirm({
-            title: '删除评论',
-            message: '删除这条评论？',
-            danger: true,
-          });
-          if (!ok) return;
-          const removed = this.store?.removeComment?.(momentId, commentId);
-          if (!removed) window.toastr?.warning?.('删除失败：未找到该评论');
-          else window.toastr?.success?.('已删除评论');
-          this.render({ preserveScroll: true });
-        }
-      });
+    this.commentMenuEl = this.menuRuntime.ensureCommentMenu({
+      existingMenu: this.commentMenuEl,
+      onDeleteComment: async (momentId, commentId) => {
+        const removed = this.store?.removeComment?.(momentId, commentId);
+        if (!removed) window.toastr?.warning?.('删除失败：未找到该评论');
+        else window.toastr?.success?.('已删除评论');
+        this.render({ preserveScroll: true });
+      },
     });
-    document.body.appendChild(el);
-    this.commentMenuEl = el;
   }
 
   hideCommentMenu() {
-    if (!this.commentMenuEl) return;
-    this.commentMenuEl.classList.add('hidden');
-    this.commentMenuEl.dataset.momentId = '';
-    this.commentMenuEl.dataset.commentId = '';
+    this.menuRuntime.hideCommentMenu(this.commentMenuEl);
   }
 
   showCommentMenu({ x, y }, momentId, commentId) {
     this.ensureCommentMenu();
-    const el = this.commentMenuEl;
-    if (!el) return;
-    el.dataset.momentId = String(momentId || '');
-    el.dataset.commentId = String(commentId || '');
-    el.classList.remove('hidden');
-
-    const vw = window.innerWidth || document.documentElement.clientWidth || 360;
-    const vh = window.innerHeight || document.documentElement.clientHeight || 640;
-    const mw = el.offsetWidth || 160;
-    const mh = el.offsetHeight || 88;
-    const margin = 8;
-    const left = Math.max(margin, Math.min(vw - mw - margin, Number(x || 0) - mw + 18));
-    const top = Math.max(margin, Math.min(vh - mh - margin, Number(y || 0) + 8));
-    el.style.left = `${left}px`;
-    el.style.top = `${top}px`;
+    this.menuRuntime.showCommentMenu({
+      menuEl: this.commentMenuEl,
+      point: { x, y },
+      momentId,
+      commentId,
+    });
   }
 
   render({ preserveScroll = false } = {}) {
@@ -475,300 +236,85 @@ export class MomentsPanel {
       const replyTarget = this.replyTargets.get(m.id) || null;
       const hiddenCount = comments.length > VISIBLE_COMMENTS ? comments.length - VISIBLE_COMMENTS : 0;
       const visibleComments = expanded ? comments : hiddenCount > 0 ? comments.slice(-VISIBLE_COMMENTS) : comments;
-      const { roots: commentRoots, repliesByParent } = this.buildThreadedComments(visibleComments);
       const pending = this.pendingComment.has(m.id);
-      const threadedHtml = commentRoots
-        .map((c) => {
-          const cid = String(c?.id || '').trim();
-          const author = String(c?.author || '').trim();
-          const content = resolveMomentDisplayText(c);
-          const replies = cid ? (repliesByParent.get(cid) || []) : [];
-          const replyHtml = replies
-            .map((r) => {
-              const rid = String(r?.id || '').trim();
-              const rauthor = String(r?.author || '').trim();
-              const rcontent = resolveMomentDisplayText(r);
-              const toName = String(r?.replyToAuthor || '').trim() || author;
-              return `
-                        <div class="moment-comment moment-comment-reply" data-comment-id="${esc(rid)}">
-                            <span class="comment-user"><span class="comment-author moment-comment-author" role="button" tabindex="0" data-comment-id="${esc(rid)}">${esc(rauthor)}</span> 回复 <span class="comment-replyto moment-comment-replyto">${esc(toName)}</span>：</span>
-                            <span class="comment-text">${renderTextWithStickers(rcontent)}</span>
-                        </div>
-                    `;
-            })
-            .join('');
-          return `
-                        <div class="moment-comment" data-comment-id="${esc(cid)}">
-                            <span class="comment-user"><span class="comment-author moment-comment-author" role="button" tabindex="0" data-comment-id="${esc(cid)}">${esc(author)}</span>：</span>
-                            <span class="comment-text">${renderTextWithStickers(content)}</span>
-                        </div>
-                        ${replyHtml}
-                    `;
-        })
-        .join('');
-      card.innerHTML = `
-                <div class="moment-header">
-                    <img src="${esc(avatar)}" alt="" class="moment-avatar">
-                    <div class="moment-user-info">
-                        <div class="moment-username">${esc(m.author || '角色')}</div>
-                        <div class="moment-time">${esc(m.time || '')}</div>
-                    </div>
-                    <button class="moment-more" aria-label="更多" title="更多">⋯</button>
-                </div>
-                <div class="moment-content">
-                    <div class="moment-text"></div>
-                </div>
-                <div class="moment-stats">
-                    <span>👁 浏览${Number(m.views || 0)}次</span>
-                    <span>💬 评论${comments.length}条</span>
-                </div>
-                <div class="moment-footer">
-                    <span class="moment-likes">👍 ${Number(m.likes || 0)}人已赞</span>
-                    <button class="moment-action" data-action="comment">评论</button>
-                </div>
-                <div class="moment-comments ${comments.length ? '' : 'empty hidden'}">
-                    ${
-                      !expanded && hiddenCount > 0
-                        ? `<div class="moment-comments-toggle" data-action="expand">展开查看更多评论 (${hiddenCount}条)</div>`
-                        : ''
-                    }
-                    ${threadedHtml}
-                    ${
-                      expanded && hiddenCount > 0
-                        ? `<div class="moment-comments-toggle" data-action="collapse">收起评论</div>`
-                        : ''
-                    }
-                </div>
-                <div class="moment-comment-composer${showComposer ? ' is-open' : ''}">
-                    <div class="moment-replying${replyTarget ? '' : ' hidden'}">
-                        <div class="moment-replying-body">
-                            <div class="moment-replying-text">
-                                回复 <b>${esc(replyTarget?.author || '')}</b>：${esc(resolveMomentDisplayText(replyTarget).slice(0, 120))}
-                            </div>
-                            <button class="moment-reply-cancel" data-action="cancel-reply" type="button">×</button>
-                        </div>
-                    </div>
-                    <div class="moment-comment-input-row">
-                        <input class="moment-comment-input" type="text" placeholder="${replyTarget ? `回复 ${esc(replyTarget.author || '')}...` : '写评论...'}" ${pending ? 'disabled' : ''} />
-                        <button class="moment_comment" data-action="send" ${pending ? 'disabled' : ''}>${
-          pending ? '发送中…' : '发送'
-        }</button>
-                    </div>
-                </div>
-            `;
-      const displayContent = resolveMomentDisplayText(m, { fallbackMode: 'output' });
-      const media = extractMomentMedia(displayContent || '');
-      const textEl = card.querySelector('.moment-text');
-      if (textEl) {
-        textEl.innerHTML = '';
-        const html = renderTextWithStickers(media.text || '');
-        textEl.innerHTML = html;
-        textEl.style.display = html ? '' : 'none';
-      }
-      const contentEl = card.querySelector('.moment-content');
-      if (contentEl) {
-        if (media.images.length) {
-          const grid = document.createElement('div');
-          grid.className = 'moment-images';
-          media.images.forEach((img) => {
-            const el = document.createElement('img');
-            el.src = img.url;
-            el.alt = img.label || '';
-            el.loading = 'lazy';
-            el.addEventListener('click', (e) => {
-              e.stopPropagation();
-              this.openImagePreview?.(img.url);
-            });
-            grid.appendChild(el);
-          });
-          contentEl.appendChild(grid);
-        }
-        if (media.audios.length) {
-          const list = document.createElement('div');
-          list.className = 'moment-audios';
-          media.audios.forEach((audio) => {
-            const wrap = document.createElement('div');
-            wrap.className = 'moment-audio-item';
-            wrap.innerHTML = `
-              <span class="moment-audio-label">语音</span>
-              <audio controls preload="none">
-                <source src="${audio.url}">
-              </audio>
-            `;
-            list.appendChild(wrap);
-          });
-          contentEl.appendChild(list);
-        }
-      }
-      const dotsBtn = card.querySelector('.moment-more');
-      dotsBtn?.addEventListener('click', e => {
-        e.stopPropagation();
-        this.showMenu(dotsBtn, m.id);
+      renderMomentCardContent({
+        cardEl: card,
+        moment: m,
+        avatar,
+        expanded,
+        showComposer,
+        replyTarget,
+        pending,
+        visibleComments,
+        documentLike: document,
+        buildThreadedComments: (items) => this.buildThreadedComments(items),
+        escapeHtml: esc,
+        renderMomentTextWithStickers,
+        resolveMomentDisplayText,
+        extractMomentMedia,
+        onOpenImage: (url) => this.openImagePreview?.(url),
       });
-
-      card.querySelector('[data-action="comment"]')?.addEventListener('click', e => {
-        e.stopPropagation();
-        if (this.openComposer.has(m.id)) this.openComposer.delete(m.id);
-        else this.openComposer.add(m.id);
-        this.replyTargets.delete(m.id);
-        this.render({ preserveScroll: true });
-        // focus input after rerender
-        setTimeout(() => {
-          const escId =
-            window.CSS && typeof window.CSS.escape === 'function'
-              ? window.CSS.escape(String(m.id))
-              : String(m.id).replace(/["\\]/g, '\\$&');
-          const next = this.listEl?.querySelector(`.moment-card[data-moment-id="${escId}"] .moment-comment-input`);
-          next?.focus?.();
-        }, 0);
-      });
-
-      card.querySelectorAll('.moment-comments-toggle').forEach(toggle => {
-        toggle.addEventListener('click', e => {
-          e.stopPropagation();
-          const act = toggle.dataset.action;
-          if (act === 'expand') this.expandedComments.add(m.id);
-          if (act === 'collapse') this.expandedComments.delete(m.id);
-          this.render({ preserveScroll: true });
-        });
-      });
-
-      // Long press on comment -> delete single comment
-      card.querySelectorAll('.moment-comment').forEach(commentEl => {
-        commentEl.style.userSelect = 'none';
-        commentEl.style.webkitUserSelect = 'none';
-        const cid = String(commentEl.dataset.commentId || '').trim();
-        let timer = null;
-        let startX = 0;
-        let startY = 0;
-        const clear = () => {
-          if (timer) clearTimeout(timer);
-          timer = null;
-        };
-        const schedule = (x, y) => {
-          clear();
-          startX = x;
-          startY = y;
-          timer = setTimeout(() => {
-            if (!cid) return;
-            this.showCommentMenu({ x: startX, y: startY }, m.id, cid);
-          }, 520);
-        };
-        commentEl.addEventListener('contextmenu', e => {
-          e.preventDefault();
-          e.stopPropagation();
-          if (!cid) return;
-          this.showCommentMenu({ x: e.clientX || 0, y: e.clientY || 0 }, m.id, cid);
-        });
-        commentEl.addEventListener(
-          'touchstart',
-          e => {
-            e.stopPropagation();
-            const t = e.touches?.[0];
-            if (!t) return;
-            schedule(t.clientX, t.clientY);
-          },
-          { passive: true },
-        );
-        commentEl.addEventListener('touchmove', clear, { passive: true });
-        commentEl.addEventListener('touchend', clear, { passive: true });
-        commentEl.addEventListener('touchcancel', clear, { passive: true });
-        // Desktop fallback
-        commentEl.addEventListener('mousedown', e => {
-          if (e.button !== 0) return;
-          schedule(e.clientX, e.clientY);
-        });
-        commentEl.addEventListener('mouseup', clear);
-        commentEl.addEventListener('mouseleave', clear);
-      });
-
-      // Click author name to reply (楼中楼)
-      card.querySelectorAll('.comment-author').forEach((el) => {
-        el.addEventListener('click', (e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          const cid = String(el.dataset.commentId || '').trim();
-          if (!cid) return;
-          const all = Array.isArray(m.comments) ? m.comments : [];
-          const target = all.find((x) => String(x?.id || '').trim() === cid) || null;
-          if (!target) return;
-          this.replyTargets.set(m.id, { id: cid, author: String(target.author || '').trim(), content: String(target.content || '') });
-          this.openComposer.add(m.id);
-          this.render({ preserveScroll: true });
-          setTimeout(() => {
-            const escId =
-              window.CSS && typeof window.CSS.escape === 'function'
-                ? window.CSS.escape(String(m.id))
-                : String(m.id).replace(/["\\]/g, '\\$&');
-            const next = this.listEl?.querySelector(`.moment-card[data-moment-id="${escId}"] .moment-comment-input`);
-            next?.focus?.();
-          }, 0);
-        });
-      });
-
-      card.querySelector('.moment-reply-cancel')?.addEventListener('click', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        this.replyTargets.delete(m.id);
-        this.render({ preserveScroll: true });
-        setTimeout(() => {
-          const escId =
-            window.CSS && typeof window.CSS.escape === 'function'
-              ? window.CSS.escape(String(m.id))
-              : String(m.id).replace(/["\\]/g, '\\$&');
-          const next = this.listEl?.querySelector(`.moment-card[data-moment-id="${escId}"] .moment-comment-input`);
-          next?.focus?.();
-        }, 0);
-      });
-
-      const sendBtn = card.querySelector('.moment_comment[data-action="send"]');
-      const inputEl = card.querySelector('.moment-comment-input');
-      const send = async () => {
-        if (pending) return;
-        const text = String(inputEl?.value || '').trim();
-        if (!text) return;
-        const reply = this.replyTargets.get(m.id) || null;
-        const userCommentId = `comment-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
-        this.store.addComments(m.id, [
-          {
-            id: userCommentId,
-            author: '我',
-            // moments-regex rollback marker:
-            // content: text,
-            content: applyMomentStoredRegex(text, { regexMode: 'input' }),
-            regexMode: 'input',
-            replyTo: String(reply?.id || '').trim(),
-            replyToAuthor: String(reply?.author || '').trim(),
-          },
-        ]);
-        this.openComposer.delete(m.id);
-        this.replyTargets.delete(m.id);
-        if (inputEl) inputEl.value = '';
-        this.pendingComment.add(m.id);
-        this.render({ preserveScroll: true });
-
-        try {
-          await this.onUserComment?.(m.id, text, {
-            userCommentId,
-            replyTo: reply ? { ...reply } : null,
-          });
-        } catch (err) {
-          logger.warn('onUserComment failed', err);
-        } finally {
-          this.pendingComment.delete(m.id);
-          this.render({ preserveScroll: true });
-        }
-      };
-      sendBtn?.addEventListener('click', e => {
-        e.stopPropagation();
-        send();
-      });
-      inputEl?.addEventListener('keydown', e => {
-        if (e.key === 'Enter') {
-          e.preventDefault();
-          e.stopPropagation();
-          send();
-        }
+      bindMomentFeedCardInteractions({
+        cardEl: card,
+        moment: m,
+        pending,
+        showMenu: (anchorEl, momentId) => this.showMenu(anchorEl, momentId),
+        bindCommentContextMenu: ({ commentEl, momentId, commentId }) => bindMomentCommentContextMenu({
+          commentEl,
+          momentId,
+          commentId,
+          showCommentMenu: (...args) => this.showCommentMenu(...args),
+        }),
+        activateReplyTarget: ({ momentId, commentId, comments }) => activateMomentReplyTarget({
+          momentId,
+          commentId,
+          comments,
+          replyTargets: this.replyTargets,
+          openComposer: this.openComposer,
+          render: (options) => this.render(options),
+          focusComposerInput: (nextMomentId) => focusMomentComposerInput({
+            listEl: this.listEl,
+            momentId: nextMomentId,
+          }),
+        }),
+        toggleComposer: (momentId) => toggleMomentComposer({
+          momentId,
+          openComposer: this.openComposer,
+          replyTargets: this.replyTargets,
+          render: (options) => this.render(options),
+          focusComposerInput: (nextMomentId) => focusMomentComposerInput({
+            listEl: this.listEl,
+            momentId: nextMomentId,
+          }),
+        }),
+        toggleExpanded: (momentId, action) => toggleMomentCommentsExpanded({
+          momentId,
+          action,
+          expandedComments: this.expandedComments,
+          render: (options) => this.render(options),
+        }),
+        clearReplyTarget: (momentId) => clearMomentReplyTarget({
+          momentId,
+          replyTargets: this.replyTargets,
+          render: (options) => this.render(options),
+          focusComposerInput: (nextMomentId) => focusMomentComposerInput({
+            listEl: this.listEl,
+            momentId: nextMomentId,
+          }),
+        }),
+        createSendHandler: ({ moment, inputEl, pending }) => createMomentFeedSendHandler({
+          moment,
+          inputEl,
+          pending,
+          replyTargets: this.replyTargets,
+          openComposer: this.openComposer,
+          pendingComment: this.pendingComment,
+          store: this.store,
+          applyMomentStoredRegex,
+          render: (options) => this.render(options),
+          onUserComment: this.onUserComment,
+          loggerWarn: (...args) => logger.warn(...args),
+        }),
       });
 
       this.listEl.appendChild(card);
@@ -791,35 +337,11 @@ export class MomentsPanel {
   }
 
   ensureModal() {
-    if (this.modal) return;
-    const overlay = document.createElement('div');
-    overlay.id = 'moments-detail-overlay';
-    overlay.className = 'moment-detail-overlay';
-    const panel = document.createElement('div');
-    panel.className = 'moment-detail-panel';
-    panel.addEventListener('click', e => e.stopPropagation());
-    panel.innerHTML = `
-            <div class="moment-detail-header">
-                <div class="moment-detail-title">动态</div>
-                <div id="moment-detail-meta" class="moment-detail-meta"></div>
-                <button id="moment-detail-close" class="moment-detail-close">关闭</button>
-            </div>
-            <div id="moment-detail-body" class="moment-detail-body"></div>
-            <div class="moment-detail-footer">
-                <input id="moment-comment-input" class="moment-detail-input" type="text" placeholder="写评论...">
-                <button id="moment-comment-send" class="moment-detail-send">发送</button>
-            </div>
-        `;
-    overlay.appendChild(panel);
-    overlay.addEventListener('click', () => {
-      overlay.style.display = 'none';
+    this.modal = ensureMomentDetailModalShell({
+      existingModal: this.modal,
+      documentLike: document,
+      onSendComment: () => this.addLocalComment(),
     });
-    panel.querySelector('#moment-detail-close')?.addEventListener('click', () => {
-      overlay.style.display = 'none';
-    });
-    panel.querySelector('#moment-comment-send')?.addEventListener('click', () => this.addLocalComment());
-    document.body.appendChild(overlay);
-    this.modal = overlay;
   }
 
   openDetail(momentId) {
@@ -832,164 +354,44 @@ export class MomentsPanel {
     const body = this.modal.querySelector('#moment-detail-body');
     if (body) {
       const avatar = this.getAvatarForMoment(m);
-      const comments = Array.isArray(m.comments) ? m.comments : [];
-      body.innerHTML = `
-                <div class="moment-detail-summary">
-                    <img src="${esc(avatar)}" class="moment-detail-summary-avatar">
-                    <div class="moment-detail-summary-main">
-                        <div class="moment-detail-summary-author">${esc(m.author || '角色')}</div>
-                        <div class="moment-detail-summary-meta">${esc(m.time || '')} · 👁 ${Number(
-        m.views || 0,
-      )} · 👍 ${Number(m.likes || 0)}</div>
-                        <div class="moment-detail-text"></div>
-                    </div>
-                </div>
-                <div class="moment-detail-comments-title">评论</div>
-                <div class="moment-detail-comments-list">
-                    ${
-                      comments.length
-                        ? comments
-                            .map(
-                              c => `
-                        <div class="moment-detail-comment" data-comment-id="${esc(c.id || '')}">
-                            <div class="moment-detail-author" role="button" tabindex="0" data-comment-id="${esc(c.id || '')}">${esc(c.author || '')}</div>
-                            <div class="moment-detail-comment-body">${renderTextWithStickers(resolveMomentDisplayText(c))}</div>
-                        </div>
-                    `,
-                            )
-                            .join('')
-                        : `<div class="moment-detail-empty">（暂无评论）</div>`
-                    }
-                </div>
-            `;
-      const displayContent = resolveMomentDisplayText(m, { fallbackMode: 'output' });
-      const media = extractMomentMedia(displayContent || '');
-      const detailText = body.querySelector('.moment-detail-text');
-      if (detailText) {
-        detailText.innerHTML = '';
-        const html = renderTextWithStickers(media.text || '');
-        detailText.innerHTML = html;
-        const hasMedia = media.images.length || media.audios.length;
-        detailText.style.display = html || hasMedia ? '' : 'none';
-      }
-      if (media.images.length) {
-        const grid = document.createElement('div');
-        grid.className = 'moment-images';
-        media.images.forEach((img) => {
-          const el = document.createElement('img');
-          el.src = img.url;
-          el.alt = img.label || '';
-          el.loading = 'lazy';
-          el.addEventListener('click', (e) => {
-            e.stopPropagation();
-            this.openImagePreview(img.url);
-          });
-          grid.appendChild(el);
-        });
-        detailText?.appendChild(grid);
-      }
-      if (media.audios.length) {
-        const list = document.createElement('div');
-        list.className = 'moment-audios';
-        media.audios.forEach((audio) => {
-          const wrap = document.createElement('div');
-          wrap.className = 'moment-audio-item';
-          wrap.innerHTML = `
-            <span class="moment-audio-label">语音</span>
-            <audio controls preload="none">
-              <source src="${audio.url}">
-            </audio>
-          `;
-          list.appendChild(wrap);
-        });
-        detailText?.appendChild(list);
-      }
-
-      // Long press / right click to delete comment in detail view too
-      const wrap = body;
-      wrap.querySelectorAll('.moment-detail-comment').forEach((commentEl) => {
-        commentEl.style.userSelect = 'none';
-        commentEl.style.webkitUserSelect = 'none';
-        const cid = String(commentEl.dataset.commentId || '').trim();
-        let timer = null;
-        let startX = 0;
-        let startY = 0;
-        const clear = () => {
-          if (timer) clearTimeout(timer);
-          timer = null;
-        };
-        const schedule = (x, y) => {
-          clear();
-          startX = x;
-          startY = y;
-          timer = setTimeout(() => {
-            if (!cid) return;
-            this.showCommentMenu({ x: startX, y: startY }, m.id, cid);
-          }, 520);
-        };
-        commentEl.addEventListener('contextmenu', (e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          if (!cid) return;
-          this.showCommentMenu({ x: e.clientX || 0, y: e.clientY || 0 }, m.id, cid);
-        });
-        commentEl.addEventListener(
-          'touchstart',
-          (e) => {
-            e.stopPropagation();
-            const t = e.touches?.[0];
-            if (!t) return;
-            schedule(t.clientX, t.clientY);
-          },
-          { passive: true },
-        );
-        commentEl.addEventListener('touchmove', clear, { passive: true });
-        commentEl.addEventListener('touchend', clear, { passive: true });
-        commentEl.addEventListener('touchcancel', clear, { passive: true });
-        commentEl.addEventListener('mousedown', (e) => {
-          if (e.button !== 0) return;
-          schedule(e.clientX, e.clientY);
-        });
-        commentEl.addEventListener('mouseup', clear);
-        commentEl.addEventListener('mouseleave', clear);
-      });
-
-      // Click author in detail view to reply (open composer on feed card)
-      wrap.querySelectorAll('.moment-detail-author').forEach((el) => {
-        el.addEventListener('click', (e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          const cid = String(el.dataset.commentId || '').trim();
-          if (!cid) return;
-          const all = Array.isArray(m.comments) ? m.comments : [];
-          const target = all.find((x) => String(x?.id || '').trim() === cid) || null;
-          if (!target) return;
-          this.replyTargets.set(m.id, { id: cid, author: String(target.author || '').trim(), content: String(target.content || '') });
-          this.openComposer.add(m.id);
-          this.render({ preserveScroll: true });
-          // Focus feed composer if visible
-          setTimeout(() => {
-            const escId =
-              window.CSS && typeof window.CSS.escape === 'function'
-                ? window.CSS.escape(String(m.id))
-                : String(m.id).replace(/["\\]/g, '\\$&');
-            const next = this.listEl?.querySelector(`.moment-card[data-moment-id="${escId}"] .moment-comment-input`);
-            next?.focus?.();
-          }, 0);
-        });
+      renderMomentDetailBody({
+        bodyEl: body,
+        moment: m,
+        avatar,
+        documentLike: document,
+        escapeHtml: esc,
+        renderMomentTextWithStickers,
+        resolveMomentDisplayText,
+        extractMomentMedia,
+        onOpenImage: (url) => this.openImagePreview(url),
+        bindCommentContextMenu: ({ commentEl, momentId, commentId }) => bindMomentCommentContextMenu({
+          commentEl,
+          momentId,
+          commentId,
+          showCommentMenu: (...args) => this.showCommentMenu(...args),
+        }),
+        activateReplyTarget: ({ momentId, commentId, comments }) => activateMomentReplyTarget({
+          momentId,
+          commentId,
+          comments,
+          replyTargets: this.replyTargets,
+          openComposer: this.openComposer,
+          render: (options) => this.render(options),
+          focusComposerInput: (nextMomentId) => focusMomentComposerInput({
+            listEl: this.listEl,
+            momentId: nextMomentId,
+          }),
+        }),
       });
     }
-    this.modal.style.display = 'block';
+    showMomentDetailModal(this.modal);
   }
 
   openImagePreview(url) {
-    const src = String(url || '').trim();
-    if (!src) return;
-    const overlay = document.createElement('div');
-    overlay.className = 'lightbox';
-    overlay.innerHTML = `<img src="${src}" alt="preview">`;
-    overlay.addEventListener('click', () => overlay.remove());
-    document.body.appendChild(overlay);
+    return openMomentImagePreview({
+      documentLike: document,
+      url,
+    });
   }
 
   addLocalComment() {

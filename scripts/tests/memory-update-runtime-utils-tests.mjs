@@ -1,8 +1,15 @@
 import assert from 'node:assert/strict';
 
 import {
+  buildMemoryUpdateHistoryTextForSession,
+  buildMemoryUpdateHistoryTextFromSettings,
+  buildMemoryUpdatePlanForSession,
+  confirmMemoryEditsWithUi,
+  buildMemoryUpdateLastEntry,
   buildMemoryUpdatePlanInput,
   buildMemoryUpdateRequest,
+  handleMemoryEditsFromRawWithUi,
+  resolveMemoryUpdatePlanForSession,
   resolveMemoryUpdateHistoryLimit,
   resolveMemoryUpdateTrigger,
 } from '../../src/scripts/ui/chat/memory-update-runtime-utils.js';
@@ -37,6 +44,42 @@ import {
 }
 
 {
+  const history = buildMemoryUpdateHistoryTextFromSettings({
+    messages: [
+      { role: 'user', content: 'hello' },
+      { role: 'assistant', content: '<tableEdit>x</tableEdit>reply' },
+    ],
+    settings: { memoryUpdateContextRounds: '1' },
+    stripAssistantText: text => String(text || '').replace('<tableEdit>x</tableEdit>', ''),
+  });
+  assert.equal(history, '用户: hello\n助手: reply');
+  console.log('ok - buildMemoryUpdateHistoryTextFromSettings applies configured limit and strip hook');
+}
+
+{
+  assert.deepEqual(resolveMemoryUpdatePlanForSession({ rawPlan: null, sessionId: 's1' }), {
+    planTargetId: '',
+    currentSessionId: 's1',
+    isStaleTarget: false,
+    plan: null,
+  });
+  const rawPlan = { targetId: 's2', tableOrder: ['a'] };
+  assert.deepEqual(resolveMemoryUpdatePlanForSession({ rawPlan, sessionId: 's1' }), {
+    planTargetId: 's2',
+    currentSessionId: 's1',
+    isStaleTarget: true,
+    plan: null,
+  });
+  assert.deepEqual(resolveMemoryUpdatePlanForSession({ rawPlan: { targetId: 's1', foo: true }, sessionId: 's1' }), {
+    planTargetId: 's1',
+    currentSessionId: 's1',
+    isStaleTarget: false,
+    plan: { targetId: 's1', foo: true },
+  });
+  console.log('ok - resolveMemoryUpdatePlanForSession keeps matching plans and flags stale targets');
+}
+
+{
   const request = buildMemoryUpdateRequest({
     promptText: '  system prompt  ',
     historyText: 'A: hi\nB: hello',
@@ -49,6 +92,31 @@ import {
     { role: 'user', content: request.userText },
   ]);
   console.log('ok - buildMemoryUpdateRequest composes system user and preview payloads');
+}
+
+{
+  const entry = buildMemoryUpdateLastEntry({
+    at: 123,
+    raw: '  raw text  ',
+    parsed: {
+      blocks: ['<tableEdit>a</tableEdit>', '<tableEdit>b</tableEdit>'],
+      actions: [{ action: 'insert' }],
+    },
+    force: true,
+    requestPrompt: '',
+    lastRequestMessages: [{ role: 'user', content: 'hello' }],
+    lastEntryRequestPrompt: 'fallback prompt',
+    buildRequestPrompt: messages => `built:${messages[0].content}`,
+  });
+  assert.deepEqual(entry, {
+    at: 123,
+    mode: 'separate',
+    raw: '  raw text  ',
+    tableEditRaw: '<tableEdit>a</tableEdit>\n\n<tableEdit>b</tableEdit>',
+    actions: [{ action: 'insert' }],
+    requestPrompt: 'built:hello',
+  });
+  console.log('ok - buildMemoryUpdateLastEntry composes persisted parse metadata and request prompt');
 }
 
 {
@@ -68,4 +136,146 @@ import {
     everyN: 1,
   });
   console.log('ok - resolveMemoryUpdateTrigger normalizes cadence and reset behavior');
+}
+
+{
+  const confirmed = await confirmMemoryEditsWithUi({
+    actions: [{ action: 'insert' }],
+    settings: { memoryAutoConfirm: false, memoryAutoStepByStep: false },
+  });
+  assert.deepEqual(confirmed, [{ action: 'insert' }]);
+  console.log('ok - confirmMemoryEditsWithUi returns actions directly when confirmation is disabled');
+}
+
+{
+  const prompts = [];
+  const infos = [];
+  const confirmed = await confirmMemoryEditsWithUi({
+    actions: [{ action: 'insert', tableId: 'profile', data: { title: 'A' } }],
+    settings: { memoryAutoConfirm: true, memoryAutoStepByStep: false },
+    loadMemoryTemplateContext: async () => ({
+      tableById: new Map([['profile', { id: 'profile', name: '角色表' }]]),
+    }),
+    rawPlan: { tableOrder: ['profile'] },
+    appConfirm: async (payload) => {
+      prompts.push(payload);
+      return false;
+    },
+    toastr: { info: message => infos.push(message) },
+  });
+  assert.deepEqual(confirmed, []);
+  assert.equal(prompts.length, 1);
+  assert.deepEqual(infos, ['已取消写表执行']);
+  console.log('ok - confirmMemoryEditsWithUi cancels batch confirmation and reports toast');
+}
+
+{
+  const prompts = [];
+  const infos = [];
+  const confirmed = await confirmMemoryEditsWithUi({
+    actions: [
+      { action: 'insert', tableId: 'profile', data: { title: 'A' } },
+      { action: 'update', tableId: 'profile', rowId: 'row-1', data: { title: 'B' } },
+    ],
+    settings: { memoryAutoConfirm: false, memoryAutoStepByStep: true },
+    loadMemoryTemplateContext: async () => ({
+      tableById: new Map([['profile', { id: 'profile', name: '角色表' }]]),
+    }),
+    rawPlan: { tableOrder: ['profile'] },
+    appConfirm: async (payload) => {
+      prompts.push(payload);
+      return prompts.length === 1;
+    },
+    toastr: { info: message => infos.push(message) },
+  });
+  assert.deepEqual(confirmed, [
+    { action: 'insert', tableId: 'profile', data: { title: 'A' } },
+  ]);
+  assert.equal(prompts.length, 2);
+  assert.deepEqual(infos, ['已停止后续写表执行']);
+  console.log('ok - confirmMemoryEditsWithUi supports step-by-step partial confirmation');
+}
+
+{
+  const history = buildMemoryUpdateHistoryTextForSession({
+    sessionId: 's1',
+    chatStore: {
+      getMessages: () => [
+        { role: 'user', content: 'hello' },
+        { role: 'assistant', content: 'reply' },
+      ],
+    },
+    settings: { memoryUpdateContextRounds: '2' },
+    stripAssistantText: text => text,
+  });
+  assert.equal(history, '用户: hello\n助手: reply');
+  console.log('ok - buildMemoryUpdateHistoryTextForSession reads session messages from chat store');
+}
+
+{
+  const plan = await buildMemoryUpdatePlanForSession({
+    sessionId: 's1',
+    isGroup: true,
+    baseContext: { meta: { keep: true } },
+    buildPlan: async next => next,
+  });
+  assert.deepEqual(plan, {
+    session: { id: 's1', isGroup: true },
+    meta: {
+      keep: true,
+      memoryAutoExtract: true,
+      memoryStorageMode: 'table',
+    },
+    history: [],
+  });
+  console.log('ok - buildMemoryUpdatePlanForSession composes plan input before delegating to builder');
+}
+
+{
+  const result = await handleMemoryEditsFromRawWithUi({
+    raw: 'raw text',
+    isMemoryAutoExtractInline: () => false,
+  });
+  assert.deepEqual(result, { text: 'raw text', blocks: [], actions: [] });
+  console.log('ok - handleMemoryEditsFromRawWithUi returns passthrough shape when inline extraction is disabled');
+}
+
+{
+  const applied = [];
+  const stored = [];
+  const parsed = await handleMemoryEditsFromRawWithUi({
+    raw: '<tableEdit>x</tableEdit>',
+    sessionId: 's1',
+    isGroup: true,
+    force: true,
+    requestPrompt: 'prompt',
+    isMemoryAutoExtractInline: () => false,
+    extractTableEditBlocks: () => ({
+      text: 'clean',
+      blocks: ['<tableEdit>x</tableEdit>'],
+      actions: [{ action: 'insert' }],
+    }),
+    appBridge: {
+      lastRequest: { messages: [{ role: 'user', content: 'hello' }] },
+      getLastMemoryUpdate: () => ({ requestPrompt: 'prev prompt' }),
+      setLastMemoryUpdate: (sessionId, entry) => stored.push([sessionId, entry]),
+    },
+    buildRequestPrompt: messages => `built:${messages[0].content}`,
+    confirmMemoryEdits: async actions => actions,
+    applyMemoryEdits: async payload => applied.push(payload),
+    logger: { warn: () => {} },
+  });
+  assert.deepEqual(parsed, {
+    text: 'clean',
+    blocks: ['<tableEdit>x</tableEdit>'],
+    actions: [{ action: 'insert' }],
+  });
+  assert.equal(stored.length, 1);
+  assert.equal(stored[0][0], 's1');
+  assert.deepEqual(applied, [{
+    actions: [{ action: 'insert' }],
+    sessionId: 's1',
+    isGroup: true,
+  }]);
+  console.log('ok - handleMemoryEditsFromRawWithUi records last entry and forwards confirmed edits');
 }

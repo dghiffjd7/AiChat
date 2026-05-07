@@ -1,7 +1,34 @@
+import {
+  buildMemoryUpdateHistoryText as buildMemoryUpdateHistoryTextCore,
+  resolveMemoryUpdateRequestPrompt,
+} from './request-prompt-utils.js';
+import { buildMemoryConfirmText } from './memory-edit-utils.js';
+
 export const resolveMemoryUpdateHistoryLimit = (settings) => {
   const rawLimit = Math.trunc(Number(settings?.memoryUpdateContextRounds));
   return Number.isFinite(rawLimit) ? Math.max(0, rawLimit) : 6;
 };
+
+export const buildMemoryUpdateHistoryTextFromSettings = ({
+  messages = [],
+  settings = null,
+  stripAssistantText,
+} = {}) =>
+  buildMemoryUpdateHistoryTextCore(messages, {
+    limit: resolveMemoryUpdateHistoryLimit(settings),
+    stripAssistantText,
+  });
+
+export const buildMemoryUpdateHistoryTextForSession = ({
+  sessionId = '',
+  chatStore = null,
+  settings = null,
+  stripAssistantText,
+} = {}) => buildMemoryUpdateHistoryTextFromSettings({
+  messages: chatStore?.getMessages?.(sessionId) || [],
+  settings,
+  stripAssistantText,
+});
 
 export const buildMemoryUpdatePlanInput = (baseContext, { sessionId, isGroup } = {}) => {
   const ctx = baseContext || {};
@@ -14,6 +41,34 @@ export const buildMemoryUpdatePlanInput = (baseContext, { sessionId, isGroup } =
       memoryAutoExtract: true,
     },
     history: [],
+  };
+};
+
+export const buildMemoryUpdatePlanForSession = async ({
+  sessionId = '',
+  isGroup = false,
+  baseContext = null,
+  buildPlan = null,
+} = {}) => {
+  if (typeof buildPlan !== 'function') return null;
+  const next = buildMemoryUpdatePlanInput(baseContext, { sessionId, isGroup });
+  return buildPlan(next);
+};
+
+export const resolveMemoryUpdatePlanForSession = ({
+  rawPlan = null,
+  sessionId = '',
+} = {}) => {
+  const planTargetId = String(rawPlan?.targetId || '').trim();
+  const currentSessionId = String(sessionId || '').trim();
+  return {
+    planTargetId,
+    currentSessionId,
+    isStaleTarget: Boolean(rawPlan && planTargetId && planTargetId !== currentSessionId),
+    plan:
+      rawPlan && (!planTargetId || planTargetId === currentSessionId)
+        ? rawPlan
+        : null,
   };
 };
 
@@ -38,6 +93,33 @@ export const buildMemoryUpdateRequest = ({ promptText, historyText } = {}) => {
   };
 };
 
+export const buildMemoryUpdateLastEntry = ({
+  at = Date.now(),
+  raw = '',
+  parsed = null,
+  force = false,
+  requestPrompt = '',
+  lastRequestMessages = null,
+  lastEntryRequestPrompt = '',
+  buildRequestPrompt,
+} = {}) => {
+  const blocks = Array.isArray(parsed?.blocks) ? parsed.blocks : [];
+  const actions = Array.isArray(parsed?.actions) ? parsed.actions : [];
+  return {
+    at,
+    mode: force ? 'separate' : 'inline',
+    raw: String(raw ?? ''),
+    tableEditRaw: blocks.join('\n\n').trim(),
+    actions,
+    requestPrompt: resolveMemoryUpdateRequestPrompt({
+      requestPrompt,
+      lastRequestMessages,
+      lastEntryRequestPrompt,
+      buildRequestPrompt,
+    }),
+  };
+};
+
 export const resolveMemoryUpdateTrigger = (settings, previousCounter = 0) => {
   const everyN = Math.max(1, Math.trunc(Number(settings?.memoryFillEveryN)) || 1);
   const nextCounter = Math.max(0, Math.trunc(Number(previousCounter)) || 0) + 1;
@@ -45,4 +127,114 @@ export const resolveMemoryUpdateTrigger = (settings, previousCounter = 0) => {
     return { shouldRun: false, nextCounter, everyN };
   }
   return { shouldRun: true, nextCounter: 0, everyN };
+};
+
+export const confirmMemoryEditsWithUi = async ({
+  actions = [],
+  settings = null,
+  loadMemoryTemplateContext = async () => null,
+  rawPlan = null,
+  appConfirm = async () => true,
+  toastr = null,
+} = {}) => {
+  const list = Array.isArray(actions) ? actions : [];
+  if (!list.length) return [];
+
+  const confirmBefore = settings?.memoryAutoConfirm === true;
+  const stepByStep = settings?.memoryAutoStepByStep === true;
+  if (!confirmBefore && !stepByStep) return list;
+
+  let tableById = new Map();
+  try {
+    const templateContext = await loadMemoryTemplateContext({ filterTables: false });
+    tableById = templateContext?.tableById || new Map();
+  } catch {}
+  const planOrder = Array.isArray(rawPlan?.tableOrder) ? rawPlan.tableOrder : [];
+
+  if (stepByStep) {
+    if (confirmBefore) {
+      const ok = await appConfirm({
+        title: '写表确认',
+        message: buildMemoryConfirmText(list, tableById, planOrder),
+      });
+      if (!ok) {
+        toastr?.info?.('已取消写表执行');
+        return [];
+      }
+    }
+    const confirmed = [];
+    for (let i = 0; i < list.length; i += 1) {
+      const action = list[i];
+      const title = `写表确认（${i + 1}/${list.length}）`;
+      const ok = await appConfirm({
+        title,
+        message: buildMemoryConfirmText([action], tableById, planOrder, {
+          title,
+          maxLines: 1,
+        }),
+      });
+      if (!ok) {
+        toastr?.info?.('已停止后续写表执行');
+        break;
+      }
+      confirmed.push(action);
+    }
+    return confirmed;
+  }
+
+  const ok = await appConfirm({
+    title: '写表确认',
+    message: buildMemoryConfirmText(list, tableById, planOrder),
+  });
+  if (!ok) {
+    toastr?.info?.('已取消写表执行');
+    return [];
+  }
+  return list;
+};
+
+export const handleMemoryEditsFromRawWithUi = async ({
+  raw = '',
+  sessionId = '',
+  isGroup = false,
+  force = false,
+  requestPrompt = '',
+  isMemoryAutoExtractInline = () => false,
+  extractTableEditBlocks = value => ({ text: String(value ?? ''), blocks: [], actions: [] }),
+  appBridge = null,
+  buildRequestPrompt = null,
+  confirmMemoryEdits = async (actions) => actions,
+  applyMemoryEdits = async () => null,
+  logger = null,
+} = {}) => {
+  if (!force && !isMemoryAutoExtractInline()) {
+    return { text: raw, blocks: [], actions: [] };
+  }
+  const parsed = extractTableEditBlocks(raw);
+  try {
+    const lastEntry = appBridge?.getLastMemoryUpdate?.(sessionId);
+    appBridge?.setLastMemoryUpdate?.(
+      sessionId,
+      buildMemoryUpdateLastEntry({
+        raw,
+        parsed,
+        force,
+        requestPrompt,
+        lastRequestMessages: appBridge?.lastRequest?.messages,
+        lastEntryRequestPrompt: lastEntry?.requestPrompt,
+        buildRequestPrompt,
+      }),
+    );
+  } catch {}
+  if (Array.isArray(parsed?.actions) && parsed.actions.length) {
+    try {
+      const confirmedActions = await confirmMemoryEdits(parsed.actions);
+      if (confirmedActions.length) {
+        await applyMemoryEdits({ actions: confirmedActions, sessionId, isGroup });
+      }
+    } catch (err) {
+      logger?.warn?.('apply memory edits failed', err);
+    }
+  }
+  return parsed;
 };

@@ -1,0 +1,213 @@
+const resolveHistoryRole = (message) => (
+  message?.role === 'system' ? 'system' : message?.role === 'user' ? 'user' : 'assistant'
+);
+
+export const buildHistoryRenderMessage = (message, { lazyRichMount = false } = {}) => ({
+  role: resolveHistoryRole(message),
+  type: message?.type || 'text',
+  content: message?.content,
+  name: message?.name,
+  avatar: message?.avatar,
+  time: message?.time,
+  timestamp: message?.timestamp,
+  meta: message?.meta,
+  badge: message?.badge,
+  id: message?.id,
+  status: message?.status,
+  sessionId: message?.sessionId,
+  __lazyRichMount: lazyRichMount,
+});
+
+export const addMessageCore = ({
+  message,
+  options = {},
+  decorateMessage,
+  ensureMessageId,
+  syncOriginalMessageId,
+  dispatchBeforeRender,
+  dispatchAfterRender,
+  isNearBottom,
+  createRpFloorMarker,
+  buildMessageElement,
+  scrollEl,
+  scrollToBottom,
+  schedule,
+} = {}) => {
+  const original = message;
+  const nextMessage = decorateMessage?.(message, { phase: 'add' }) || message;
+  const renderedMessage = ensureMessageId?.(nextMessage) || nextMessage;
+  syncOriginalMessageId?.(original, renderedMessage);
+  dispatchBeforeRender?.(renderedMessage);
+
+  const wasNearBottom = isNearBottom?.();
+  const floorMarker = createRpFloorMarker?.(renderedMessage);
+  const element = buildMessageElement?.(renderedMessage);
+  if (element) {
+    if (floorMarker) scrollEl?.appendChild?.(floorMarker);
+    element.dataset.newMsg = '1';
+    scrollEl?.appendChild?.(element);
+    if (renderedMessage?.meta?.floor != null) element.dataset.rpFloor = String(renderedMessage.meta.floor);
+    const shouldScroll = options.autoScroll !== false && wasNearBottom;
+    if (shouldScroll) scrollToBottom?.();
+    schedule?.(() => {
+      try {
+        delete element.dataset.newMsg;
+      } catch {}
+    }, 300);
+  }
+  dispatchAfterRender?.(renderedMessage, element);
+  return element?.querySelector?.('.QQ_chat_msgdiv') || element || null;
+};
+
+export const preloadHistoryCore = ({
+  messages = [],
+  keepScroll = false,
+  scrollEl,
+  documentLike,
+  isRp = false,
+  createRpFloorMarker,
+  buildMessageElement,
+  scrollToBottom,
+  refreshScrollDateBadge,
+  scheduleScrollBottomButtonRefresh,
+} = {}) => {
+  const list = Array.isArray(messages) ? messages : [];
+  if (!list.length || !scrollEl) return false;
+  const eagerTailCount = 8;
+  const eagerStart = Math.max(0, list.length - eagerTailCount);
+  const fragment = documentLike.createDocumentFragment();
+  for (let idx = 0; idx < list.length; idx += 1) {
+    const message = list[idx];
+    if (isRp) {
+      const floorMarker = createRpFloorMarker?.(message);
+      if (floorMarker) fragment.appendChild(floorMarker);
+    }
+    const element = buildMessageElement?.(
+      buildHistoryRenderMessage(message, {
+        lazyRichMount: Boolean(message?.meta?.renderRich) && idx < eagerStart,
+      }),
+    );
+    if (element) {
+      if (isRp && message?.meta?.floor != null) element.dataset.rpFloor = String(message.meta.floor);
+      fragment.appendChild(element);
+    }
+  }
+  scrollEl.appendChild(fragment);
+  if (!keepScroll) scrollToBottom?.();
+  refreshScrollDateBadge?.();
+  scheduleScrollBottomButtonRefresh?.({ immediate: true });
+  return true;
+};
+
+export const prependHistoryCore = ({
+  messages = [],
+  scrollEl,
+  documentLike,
+  isRp = false,
+  buildMessageElement,
+  refreshRpFloorMarkers,
+  refreshScrollDateBadge,
+  scheduleScrollBottomButtonRefresh,
+} = {}) => {
+  const list = Array.isArray(messages) ? messages : [];
+  if (!list.length || !scrollEl) return false;
+  const beforeHeight = Number(scrollEl.scrollHeight) || 0;
+  const beforeTop = Number(scrollEl.scrollTop) || 0;
+  const fragment = documentLike.createDocumentFragment();
+  for (const message of list) {
+    const element = buildMessageElement?.(
+      buildHistoryRenderMessage(message, {
+        lazyRichMount: Boolean(message?.meta?.renderRich),
+      }),
+    );
+    if (element) fragment.appendChild(element);
+  }
+  const first = scrollEl.firstChild;
+  if (first) scrollEl.insertBefore(fragment, first);
+  else scrollEl.appendChild(fragment);
+  if (isRp) refreshRpFloorMarkers?.();
+  const afterHeight = Number(scrollEl.scrollHeight) || 0;
+  scrollEl.scrollTop = beforeTop + (afterHeight - beforeHeight);
+  refreshScrollDateBadge?.();
+  scheduleScrollBottomButtonRefresh?.({ immediate: true });
+  return true;
+};
+
+export const refreshAvatarsCore = ({
+  scrollEl,
+  resolver,
+} = {}) => {
+  if (!scrollEl || typeof resolver !== 'function') return 0;
+  let updated = 0;
+  const list = scrollEl.querySelectorAll?.('.QQ_chat_mymsg, .QQ_chat_charmsg') || [];
+  list.forEach((wrapper) => {
+    const message = wrapper.__chatappMessage;
+    const img = wrapper.querySelector?.('img.QQ_chat_head');
+    if (!img) return;
+    const src = resolver(message);
+    if (src && img.src !== src) {
+      img.src = src;
+      updated += 1;
+    }
+  });
+  return updated;
+};
+
+export const removeMessageCore = ({
+  scrollEl,
+  msgId,
+  isRp = false,
+  cleanupRichTextMounts,
+  refreshRpFloorMarkers,
+  refreshScrollDateBadge,
+  scheduleScrollBottomButtonRefresh,
+} = {}) => {
+  const element = scrollEl?.querySelector?.(`[data-msg-id="${msgId}"]`);
+  if (!element) return false;
+  cleanupRichTextMounts?.(element);
+  element.remove?.();
+  if (isRp) refreshRpFloorMarkers?.();
+  refreshScrollDateBadge?.();
+  scheduleScrollBottomButtonRefresh?.({ immediate: true });
+  return true;
+};
+
+export const updateMessageCore = ({
+  scrollEl,
+  msgId,
+  newMessage,
+  resolveMessageSessionId,
+  resolveActiveSwipeMessage,
+  decorateMessage,
+  tryPatchMessageElement,
+  buildMessageElement,
+  cleanupRichTextMounts,
+  refreshScrollDateBadge,
+  scheduleScrollBottomButtonRefresh,
+} = {}) => {
+  const existing = scrollEl?.querySelector?.(`[data-msg-id="${msgId}"]`);
+  if (!existing) return null;
+  const prev = existing.__chatappMessage && typeof existing.__chatappMessage === 'object'
+    ? existing.__chatappMessage
+    : {};
+  const resolvedSessionId =
+    String(newMessage?.sessionId || '').trim()
+    || String(prev?.sessionId || '').trim()
+    || resolveMessageSessionId?.(prev);
+  const next = resolveActiveSwipeMessage?.(decorateMessage?.(
+    { ...prev, ...(newMessage || {}), id: msgId, sessionId: resolvedSessionId },
+    { phase: 'update', previous: prev },
+  ));
+  if (tryPatchMessageElement?.(existing, next)) {
+    refreshScrollDateBadge?.();
+    scheduleScrollBottomButtonRefresh?.({ immediate: true });
+    return existing;
+  }
+  const newEl = buildMessageElement?.(next);
+  if (!newEl) return null;
+  cleanupRichTextMounts?.(existing);
+  existing.replaceWith?.(newEl);
+  refreshScrollDateBadge?.();
+  scheduleScrollBottomButtonRefresh?.({ immediate: true });
+  return newEl;
+};

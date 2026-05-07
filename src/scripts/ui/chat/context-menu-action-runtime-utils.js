@@ -1,0 +1,66 @@
+import { resolveViewCodeText } from './context-menu-ui-utils.js';
+
+export const resolveContextMenuCopyText = (message, {
+  wrapper,
+  getBubbleCopyText,
+} = {}) => {
+  let text = message?.meta?.renderRich ? getBubbleCopyText?.(wrapper) : message?.content || '';
+  if (!String(text || '').trim()) {
+    text = message?.rawSource ?? message?.raw_source ?? message?.rawOriginal ?? message?.raw ?? message?.content ?? '';
+  }
+  return String(text ?? '');
+};
+
+export const dispatchContextMenuAction = async ({
+  actionKey = '',
+  message,
+  wrapper = null,
+  codeBlock = null,
+  hasCode = false,
+  tryAction,
+  hideMenu,
+  clearLongPress,
+  openCodeViewer,
+  getBubbleCopyText,
+  copyToClipboard,
+  showCopyToast,
+  startInlineEdit,
+  enterSelectionMode,
+} = {}) => {
+  hideMenu?.();
+  clearLongPress?.();
+
+  if (actionKey === 'view-code' && hasCode) {
+    const handled = await tryAction?.('view-code', { wrapper, codeBlock });
+    if (handled) return 'handled';
+    openCodeViewer?.({ message, text: resolveViewCodeText(message) });
+    return 'view-code';
+  }
+
+  if (actionKey === 'copy-text') {
+    const handled = await tryAction?.('copy-text', { wrapper, codeBlock });
+    if (handled) return 'handled';
+    const text = resolveContextMenuCopyText(message, { wrapper, getBubbleCopyText });
+    const ok = await copyToClipboard?.(text);
+    showCopyToast?.(ok === true);
+    return ok ? 'copied' : 'copy-failed';
+  }
+
+  if (actionKey === 'reply') {
+    await tryAction?.('reply', { wrapper }, { skipFallback: true });
+    return 'reply';
+  }
+
+  if (actionKey === 'edit') {
+    startInlineEdit?.(message);
+    return 'edit';
+  }
+
+  if (actionKey === 'delete' && message?.role === 'assistant') {
+    enterSelectionMode?.(message?.id);
+    return 'delete-selection';
+  }
+
+  await tryAction?.(actionKey, undefined, { skipFallback: true });
+  return actionKey || 'noop';
+};

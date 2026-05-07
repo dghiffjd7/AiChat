@@ -1,0 +1,297 @@
+const appendChild = (parent, child) => {
+  parent?.appendChild?.(child);
+  return child;
+};
+
+const createTextChip = (documentLike, text) => {
+  const chip = documentLike.createElement('span');
+  chip.className = 'chip';
+  chip.textContent = text;
+  return chip;
+};
+
+const formatAudioTime = (seconds = 0) => {
+  if (!Number.isFinite(seconds)) return '--:--';
+  const minutes = Math.floor(seconds / 60).toString().padStart(2, '0');
+  const secs = Math.floor(seconds % 60).toString().padStart(2, '0');
+  return `${minutes}:${secs}`;
+};
+
+export const renderMessageBubbleContentCore = ({
+  bubble,
+  message,
+  resolvedSessionId = '',
+  documentLike,
+  resolveMediaUrl,
+  resolveMediaAsset,
+  resolveStickerFrames,
+  resolveStickerFps,
+  applyImageFallback,
+  registerStickerAnimation,
+  toastOnce,
+  openLightbox,
+  renderRichText,
+  prepareTextContainer,
+  renderSwipeDraftPlaceholder,
+  normalizeAssistantLineBreaks,
+  renderTextWithStickers,
+  logGreetingRender,
+  createAudio = (url) => new Audio(url),
+  warningToast,
+  errorToast,
+} = {}) => {
+  switch (message?.type) {
+    case 'image': {
+      const imgSrc = resolveMediaUrl?.('image', message?.content) || '';
+      const imgEl = documentLike.createElement('img');
+      imgEl.src = imgSrc;
+      imgEl.alt = 'image';
+      imgEl.className = 'previewable';
+      imgEl.addEventListener?.('click', () => openLightbox?.(imgSrc));
+      imgEl.onerror = () => {
+        imgEl.classList?.add?.('broken');
+        imgEl.alt = '图片加载失败';
+        toastOnce?.('图片加载失败，请检查链接或网络');
+      };
+      appendChild(bubble, imgEl);
+      break;
+    }
+    case 'audio': {
+      const audioSrc = resolveMediaUrl?.('audio', message?.content) || '';
+      const toolbar = documentLike.createElement('div');
+      toolbar.className = 'message-toolbar';
+      appendChild(toolbar, createTextChip(documentLike, '语音'));
+      const audioEl = documentLike.createElement('audio');
+      audioEl.controls = true;
+      audioEl.preload = 'none';
+      audioEl.style.width = '160px';
+      const sourceEl = documentLike.createElement('source');
+      sourceEl.src = audioSrc;
+      appendChild(audioEl, sourceEl);
+      audioEl.onerror = () => {
+        toastOnce?.('语音加载失败');
+      };
+      appendChild(toolbar, audioEl);
+      appendChild(bubble, toolbar);
+      break;
+    }
+    case 'document': {
+      const titleText = String(message?.content || message?.meta?.name || '文件');
+      const metaLine = [message?.meta?.mime, message?.meta?.sizeLabel].filter(Boolean).join(' · ');
+      const card = documentLike.createElement('div');
+      card.className = 'card file-card';
+      const title = documentLike.createElement('div');
+      title.className = 'card-title';
+      title.textContent = titleText;
+      appendChild(card, title);
+      if (metaLine) {
+        const subtitle = documentLike.createElement('div');
+        subtitle.className = 'card-subtitle';
+        subtitle.textContent = metaLine;
+        appendChild(card, subtitle);
+      }
+      appendChild(bubble, card);
+      break;
+    }
+    case 'music': {
+      const artist = message?.meta?.artist || '';
+      const rawUrl = message?.meta?.url || '';
+      const resolved = resolveMediaAsset?.('audio', rawUrl);
+      const url = resolved?.url || rawUrl;
+      const statusText = url ? '待播放' : '无音频地址';
+      const card = documentLike.createElement('div');
+      card.className = 'card music-card';
+      const title = documentLike.createElement('div');
+      title.className = 'card-title';
+      title.textContent = `🎵 ${message?.content || '音乐'}`;
+      appendChild(card, title);
+      if (artist) {
+        const subtitle = documentLike.createElement('div');
+        subtitle.className = 'card-subtitle';
+        subtitle.textContent = artist;
+        appendChild(card, subtitle);
+      }
+      const statusEl = documentLike.createElement('div');
+      statusEl.className = 'card-status';
+      statusEl.dataset.role = 'status';
+      statusEl.textContent = statusText;
+      appendChild(card, statusEl);
+      const actions = documentLike.createElement('div');
+      actions.className = 'card-actions';
+      const playBtn = documentLike.createElement('button');
+      playBtn.className = 'card-button';
+      playBtn.dataset.action = 'play';
+      playBtn.textContent = '播放';
+      const pauseBtn = documentLike.createElement('button');
+      pauseBtn.className = 'card-button';
+      pauseBtn.dataset.action = 'pause';
+      pauseBtn.textContent = '暂停';
+      appendChild(actions, playBtn);
+      appendChild(actions, pauseBtn);
+      if (url) {
+        const urlLabel = documentLike.createElement('span');
+        urlLabel.style.fontSize = '12px';
+        urlLabel.style.color = '#9ca3af';
+        urlLabel.textContent = url;
+        appendChild(actions, urlLabel);
+      }
+      appendChild(card, actions);
+      let progressEl = null;
+      if (url) {
+        progressEl = documentLike.createElement('div');
+        progressEl.className = 'card-progress';
+        progressEl.dataset.role = 'progress';
+        progressEl.textContent = '00:00 / --:--';
+        appendChild(card, progressEl);
+      }
+      appendChild(bubble, card);
+
+      const audio = url ? createAudio?.(url) : null;
+      let playing = false;
+      const updateProgress = () => {
+        if (!audio || !progressEl) return;
+        const current = formatAudioTime(audio.currentTime || 0);
+        const total = audio.duration ? formatAudioTime(audio.duration) : '--:--';
+        progressEl.textContent = `${current} / ${total}`;
+      };
+
+      if (audio) {
+        audio.onerror = () => {
+          playing = false;
+          playBtn.textContent = '播放';
+          statusEl.textContent = '播放错误';
+          errorToast?.('音频加载/播放失败');
+        };
+        audio.addEventListener?.('timeupdate', updateProgress);
+        audio.addEventListener?.('loadedmetadata', updateProgress);
+        audio.addEventListener?.('ended', () => {
+          playing = false;
+          playBtn.textContent = '播放';
+          statusEl.textContent = '播放完畢';
+          updateProgress();
+        });
+      }
+
+      playBtn.onclick = () => {
+        if (!audio) {
+          warningToast?.('无音频地址，播放失败');
+          return;
+        }
+        audio.play()
+          .then(() => {
+            playing = true;
+            playBtn.textContent = '播放中';
+            statusEl.textContent = '播放中';
+            updateProgress();
+          })
+          .catch(() => warningToast?.('播放失败'));
+      };
+      pauseBtn.onclick = () => {
+        audio?.pause?.();
+        if (playing) {
+          playBtn.textContent = '播放';
+          statusEl.textContent = '已暂停';
+          playing = false;
+        }
+      };
+      break;
+    }
+    case 'transfer': {
+      const card = documentLike.createElement('div');
+      card.className = 'card transfer-card';
+      const title = documentLike.createElement('div');
+      title.className = 'card-title';
+      title.textContent = '转账';
+      appendChild(card, title);
+      const subtitle = documentLike.createElement('div');
+      subtitle.className = 'card-subtitle';
+      subtitle.textContent = `金额：${message?.content}`;
+      appendChild(card, subtitle);
+      const statusEl = documentLike.createElement('div');
+      statusEl.className = 'card-status';
+      statusEl.dataset.role = 'status';
+      statusEl.textContent = '待确认';
+      appendChild(card, statusEl);
+      const actions = documentLike.createElement('div');
+      actions.className = 'card-actions';
+      const confirmBtn = documentLike.createElement('button');
+      confirmBtn.className = 'card-button';
+      confirmBtn.dataset.action = 'confirm';
+      confirmBtn.textContent = '确认收款';
+      confirmBtn.onclick = () => {
+        confirmBtn.disabled = true;
+        confirmBtn.textContent = '已收款';
+        const stamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        statusEl.textContent = `已收款 ${stamp}`;
+      };
+      appendChild(actions, confirmBtn);
+      appendChild(card, actions);
+      appendChild(bubble, card);
+      break;
+    }
+    case 'sticker': {
+      const stickerResolved = resolveMediaAsset?.('sticker', message?.content) || resolveMediaAsset?.('image', message?.content);
+      if (stickerResolved) {
+        const stickerImg = documentLike.createElement('img');
+        stickerImg.alt = 'sticker';
+        stickerImg.className = 'previewable sticker-image';
+        const frames = resolveStickerFrames?.(stickerResolved, message?.content) || [];
+        const fps = resolveStickerFps?.(stickerResolved, message?.content);
+        const loaded = applyImageFallback?.(stickerImg, stickerResolved, {
+          onFail: () => {
+            stickerImg.classList?.add?.('broken');
+            stickerImg.alt = '表情包加载失败';
+            toastOnce?.('表情包加载失败');
+          },
+        });
+        if (loaded) {
+          if (frames.length > 1) registerStickerAnimation?.(stickerImg, frames, fps);
+          stickerImg.addEventListener?.('click', () => openLightbox?.(stickerImg.currentSrc || stickerImg.src));
+          bubble.innerHTML = '';
+          appendChild(bubble, stickerImg);
+        } else {
+          appendChild(bubble, createTextChip(documentLike, `表情包：${message?.content}`));
+        }
+      } else {
+        appendChild(bubble, createTextChip(documentLike, `表情包：${message?.content}`));
+      }
+      break;
+    }
+    case 'meta':
+      bubble.classList?.add?.('meta');
+      bubble.textContent = message?.content;
+      break;
+    case 'text':
+    default: {
+      if (message?.meta?.renderRich) {
+        const target = prepareTextContainer?.(bubble, message);
+        if (message?.meta?.isGreeting) {
+          logGreetingRender?.(message, resolvedSessionId);
+        }
+        renderRichText?.(target, String(message?.content ?? ''), {
+          messageId: message?.id,
+          preserveHtmlNewlines: true,
+          sessionId: resolvedSessionId,
+          debugTag: message?.meta?.isGreeting ? 'rp-greeting' : '',
+          lazyMount: message?.__lazyRichMount === true,
+        });
+        break;
+      }
+      if (message?.meta?.activeSwipeDraft?.active === true) {
+        const target = prepareTextContainer?.(bubble, message);
+        renderSwipeDraftPlaceholder?.(target, message?.meta?.activeSwipeDraft?.label || '生成新回复中...');
+        break;
+      }
+      const baseText = typeof message?.raw === 'string' ? message.raw : message?.content;
+      const normalized =
+        message?.role === 'assistant' ? normalizeAssistantLineBreaks?.(baseText) : String(baseText ?? '');
+      const target = prepareTextContainer?.(bubble, message);
+      if (!renderTextWithStickers?.(target, normalized)) {
+        target.textContent = normalized;
+        target.style.whiteSpace = 'pre-wrap';
+      }
+    }
+  }
+
+  return bubble;
+};

@@ -1,0 +1,132 @@
+import assert from 'node:assert/strict';
+
+import {
+  clearMessageQueueTimerCore,
+  enqueueMessagesCore,
+  hideTypingCore,
+  showTypingCore,
+} from '../../src/scripts/ui/chat/typing-flow-ui-utils.js';
+
+{
+  let cleared = 0;
+  let nextTimer = 123;
+  const removed = clearMessageQueueTimerCore({
+    getMessageQueueTimer: () => nextTimer,
+    setMessageQueueTimer: value => { nextTimer = value; },
+    clearTimer: () => { cleared += 1; },
+  });
+  assert.equal(removed, true);
+  assert.equal(cleared, 1);
+  assert.equal(nextTimer, null);
+  console.log('ok - clearMessageQueueTimerCore clears active timer handles and resets state');
+}
+
+{
+  let typingMounted = 0;
+  let groupCycle = 0;
+  const shown = showTypingCore({
+    options: {
+      groupMembers: [{ name: 'A', avatar: 'a.png' }],
+    },
+    isTypingDotsEnabled: () => true,
+    uiMode: 'chat',
+    typingEl: null,
+    clearTypingTimers() {},
+    createTypingIndicatorShell: () => ({
+      wrap: { id: 'typing' },
+      kind: 'group',
+      avatarStack: {},
+      labelEl: {},
+    }),
+    documentLike: {},
+    runGroupTypingCycle() { groupCycle += 1; },
+    renderTypingGroupMembers() {},
+    getDefaultAvatar() { return 'default.png'; },
+    schedule() {},
+    runPrivateThinkPause() {
+      throw new Error('group path should not use private pause runtime');
+    },
+    isNearBottom: () => true,
+    applyThinkPause() {},
+    removeThinkPause() {},
+    scrollToBottom() {},
+    setCycleTimer() {},
+    setThinkTimer() {},
+    setResumeTimer() {},
+    mountTypingElement() { typingMounted += 1; },
+    scrollEl: {},
+    setTypingEl() {},
+    setTypingNaturalHeight() {},
+    showFloatingTyping() {},
+  });
+  assert.equal(shown, true);
+  assert.equal(groupCycle, 1);
+  assert.equal(typingMounted, 1);
+  console.log('ok - showTypingCore routes group typing through group cycle runtime and mount flow');
+}
+
+{
+  let hidden = 0;
+  hideTypingCore({
+    clearTypingTimers() { hidden += 1; },
+    clearMessageQueueTimer() { hidden += 1; },
+    removeTypingElement() { hidden += 1; },
+  });
+  assert.equal(hidden, 3);
+  console.log('ok - hideTypingCore clears timers message queue and typing DOM together');
+}
+
+{
+  const shown = [];
+  const added = [];
+  let removedTyping = 0;
+  const { promise } = enqueueMessagesCore({
+    items: [
+      { message: { id: 'm1', content: 'hi' } },
+      { message: { id: 'm2', content: 'reply' } },
+    ],
+    options: {
+      avatarUrl: 'avatar.png',
+      typingOptions: {},
+    },
+    clearMessageQueueTimer() {},
+    hideTyping() {},
+    showTyping: (...args) => shown.push(args),
+    getTypingThinkTimer: () => null,
+    setTypingThinkTimer() {},
+    getTypingThinkResumeTimer: () => null,
+    setTypingThinkResumeTimer() {},
+    isNearBottom: () => false,
+    applyThinkPause() {},
+    removeThinkPause() {},
+    removeTypingElement() { removedTyping += 1; },
+    scrollToBottom() {},
+    setMessageQueueTimer() {},
+    scheduleTimeout: (handler) => {
+      handler();
+      return 1;
+    },
+    scheduleFrame: handler => handler(),
+    addMessage: message => added.push(message.id),
+    random: () => 0.99,
+  });
+  await promise;
+  assert.deepEqual(added, ['m1', 'm2']);
+  assert.equal(shown.length, 1);
+  assert.equal(removedTyping, 1);
+  console.log('ok - enqueueMessagesCore delays between queued messages and removes typing before next append');
+}
+
+{
+  let cleared = 0;
+  let hidden = 0;
+  const queued = enqueueMessagesCore({
+    items: [],
+    clearMessageQueueTimer() { cleared += 1; },
+    hideTyping() { hidden += 1; },
+  });
+  queued.cancel();
+  assert.equal(cleared, 1);
+  assert.equal(hidden, 1);
+  console.log('ok - enqueueMessagesCore cancel delegates to queue clear and typing hide hooks');
+}

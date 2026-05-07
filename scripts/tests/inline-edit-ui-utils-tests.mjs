@@ -1,0 +1,138 @@
+import assert from 'node:assert/strict';
+
+import { createInlineEditUiRuntime } from '../../src/scripts/ui/chat/inline-edit-ui-utils.js';
+
+const createFakeDocument = () => {
+  class FakeElement {
+    constructor(tagName) {
+      this.tagName = String(tagName || '').toUpperCase();
+      this.children = [];
+      this.parentNode = null;
+      this.style = {};
+      this.textContent = '';
+      this.value = '';
+      this.scrollHeight = 72;
+      this.listeners = new Map();
+    }
+    appendChild(child) {
+      this.children.push(child);
+      child.parentNode = this;
+      return child;
+    }
+    addEventListener(type, handler) {
+      this.listeners.set(type, handler);
+    }
+    emit(type, event = {}) {
+      return this.listeners.get(type)?.(event);
+    }
+    focus() {
+      this.focused = true;
+    }
+    setSelectionRange(start, end) {
+      this.selection = [start, end];
+    }
+    blur() {
+      this.emit('blur');
+    }
+  }
+  return {
+    createElement(tagName) {
+      return new FakeElement(tagName);
+    },
+  };
+};
+
+{
+  const documentLike = createFakeDocument();
+  const scheduled = [];
+  const confirms = [];
+  const bubble = {
+    children: [],
+    style: {},
+    textContent: '',
+    innerHTML: '',
+    appendChild(child) {
+      this.children = [child];
+      this.lastChild = child;
+      return child;
+    },
+  };
+  const scrollEl = {
+    querySelector(selector) {
+      if (selector === '[data-msg-id="m1"]') {
+        return {
+          querySelector(nextSelector) {
+            if (nextSelector === '.QQ_chat_msgdiv') return bubble;
+            return null;
+          },
+        };
+      }
+      return null;
+    },
+  };
+  const runtime = createInlineEditUiRuntime({
+    documentLike,
+    schedule: cb => scheduled.push(cb),
+    onConfirmEdit: (message, text) => confirms.push([message.id, text]),
+  });
+  runtime.startInlineEdit({
+    scrollEl,
+    message: { id: 'm1', content: 'hello' },
+  });
+  const textarea = bubble.lastChild;
+  textarea.value = 'next text';
+  scheduled[0]();
+  assert.equal(textarea.focused, true);
+  assert.deepEqual(textarea.selection, [9, 9]);
+  textarea.emit('keydown', {
+    key: 'Enter',
+    shiftKey: false,
+    preventDefault() {},
+  });
+  assert.deepEqual(confirms, [['m1', 'next text']]);
+  console.log('ok - startInlineEdit saves trimmed text on enter-triggered blur');
+}
+
+{
+  const documentLike = createFakeDocument();
+  const bubble = {
+    children: [],
+    style: {},
+    textContent: '',
+    innerHTML: '',
+    appendChild(child) {
+      this.children = [child];
+      this.lastChild = child;
+      return child;
+    },
+  };
+  const scrollEl = {
+    querySelector() {
+      return {
+        querySelector() {
+          return bubble;
+        },
+      };
+    },
+  };
+  const runtime = createInlineEditUiRuntime({
+    documentLike,
+    schedule: cb => cb(),
+    onConfirmEdit: () => {
+      throw new Error('should not confirm on escape');
+    },
+  });
+  runtime.startInlineEdit({
+    scrollEl,
+    message: { id: 'm2', content: 'origin' },
+  });
+  const textarea = bubble.lastChild;
+  textarea.value = 'changed';
+  textarea.emit('keydown', {
+    key: 'Escape',
+    preventDefault() {},
+  });
+  assert.equal(bubble.textContent, 'origin');
+  assert.equal(bubble.style.whiteSpace, 'pre-wrap');
+  console.log('ok - startInlineEdit restores original text on escape');
+}

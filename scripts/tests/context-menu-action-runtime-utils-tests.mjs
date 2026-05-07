@@ -1,0 +1,133 @@
+import assert from 'node:assert/strict';
+
+import {
+  dispatchContextMenuAction,
+  resolveContextMenuCopyText,
+} from '../../src/scripts/ui/chat/context-menu-action-runtime-utils.js';
+
+{
+  const text = resolveContextMenuCopyText(
+    {
+      content: '',
+      rawSource: 'raw-source',
+      meta: { renderRich: true },
+    },
+    {
+      wrapper: {},
+      getBubbleCopyText: () => '',
+    },
+  );
+  assert.equal(text, 'raw-source');
+  console.log('ok - resolveContextMenuCopyText falls back from rich bubble copy to raw source');
+}
+
+{
+  const calls = [];
+  const result = await dispatchContextMenuAction({
+    actionKey: 'view-code',
+    message: { id: 'm1', role: 'assistant', content: 'content', raw: 'raw' },
+    wrapper: { id: 'wrapper' },
+    codeBlock: { id: 'code' },
+    hasCode: true,
+    tryAction: async (key, payload) => {
+      calls.push(['try', key, payload]);
+      return false;
+    },
+    hideMenu: () => calls.push(['hide']),
+    clearLongPress: () => calls.push(['clear']),
+    openCodeViewer: payload => calls.push(['open', payload.text]),
+  });
+  assert.equal(result, 'view-code');
+  assert.deepEqual(calls, [
+    ['hide'],
+    ['clear'],
+    ['try', 'view-code', { wrapper: { id: 'wrapper' }, codeBlock: { id: 'code' } }],
+    ['open', 'raw'],
+  ]);
+  console.log('ok - dispatchContextMenuAction opens code viewer when view-code is not intercepted');
+}
+
+{
+  const calls = [];
+  const result = await dispatchContextMenuAction({
+    actionKey: 'copy-text',
+    message: { content: '', rawOriginal: 'raw-original', meta: { renderRich: true } },
+    wrapper: { id: 'wrapper' },
+    codeBlock: { id: 'code' },
+    tryAction: async (key, payload) => {
+      calls.push(['try', key, payload]);
+      return false;
+    },
+    hideMenu: () => calls.push(['hide']),
+    clearLongPress: () => calls.push(['clear']),
+    getBubbleCopyText: () => '',
+    copyToClipboard: async text => {
+      calls.push(['copy', text]);
+      return true;
+    },
+    showCopyToast: ok => calls.push(['toast', ok]),
+  });
+  assert.equal(result, 'copied');
+  assert.deepEqual(calls, [
+    ['hide'],
+    ['clear'],
+    ['try', 'copy-text', { wrapper: { id: 'wrapper' }, codeBlock: { id: 'code' } }],
+    ['copy', 'raw-original'],
+    ['toast', true],
+  ]);
+  console.log('ok - dispatchContextMenuAction copies resolved text and reports toast state');
+}
+
+{
+  const calls = [];
+  await dispatchContextMenuAction({
+    actionKey: 'reply',
+    message: { id: 'm2' },
+    wrapper: { id: 'wrapper' },
+    hideMenu: () => calls.push(['hide']),
+    clearLongPress: () => calls.push(['clear']),
+    tryAction: async (key, payload, options) => {
+      calls.push(['try', key, payload, options]);
+      return false;
+    },
+  });
+  await dispatchContextMenuAction({
+    actionKey: 'edit',
+    message: { id: 'm2' },
+    hideMenu: () => calls.push(['hide']),
+    clearLongPress: () => calls.push(['clear']),
+    startInlineEdit: message => calls.push(['edit', message.id]),
+  });
+  await dispatchContextMenuAction({
+    actionKey: 'delete',
+    message: { id: 'm3', role: 'assistant' },
+    hideMenu: () => calls.push(['hide']),
+    clearLongPress: () => calls.push(['clear']),
+    enterSelectionMode: id => calls.push(['delete', id]),
+  });
+  await dispatchContextMenuAction({
+    actionKey: 'download',
+    message: { id: 'm4' },
+    hideMenu: () => calls.push(['hide']),
+    clearLongPress: () => calls.push(['clear']),
+    tryAction: async (key, payload, options) => {
+      calls.push(['default', key, payload, options]);
+      return false;
+    },
+  });
+  assert.deepEqual(calls, [
+    ['hide'],
+    ['clear'],
+    ['try', 'reply', { wrapper: { id: 'wrapper' } }, { skipFallback: true }],
+    ['hide'],
+    ['clear'],
+    ['edit', 'm2'],
+    ['hide'],
+    ['clear'],
+    ['delete', 'm3'],
+    ['hide'],
+    ['clear'],
+    ['default', 'download', undefined, { skipFallback: true }],
+  ]);
+  console.log('ok - dispatchContextMenuAction preserves reply edit delete and default action routing');
+}
