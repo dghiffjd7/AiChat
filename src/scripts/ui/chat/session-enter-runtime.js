@@ -7,6 +7,16 @@ import {
   shouldUseProgressiveInitialRender,
 } from './session-enter-utils.js';
 
+const emitSessionEnterTrace = (recordTraceEvent, event) => {
+  try {
+    recordTraceEvent?.({
+      category: 'session',
+      source: 'session-enter-runtime',
+      ...event,
+    });
+  } catch {}
+};
+
 export const activateSessionEnterView = ({
   originPage = '',
   setChatOriginPage = null,
@@ -758,6 +768,7 @@ export const runSessionEnterFlow = async ({
   finalizeNavigationFn = null,
   finalizeUiStateFn = null,
   getChatOriginPage = null,
+  recordTraceEvent = null,
   uiLog = null,
 } = {}) => {
   const sid = String(sessionId || '').trim();
@@ -767,6 +778,19 @@ export const runSessionEnterFlow = async ({
   const jumpTargetMessageId = String(payload.jumpTargetMessageId || '').trim();
   const jumpKeyword = String(payload.jumpKeyword || '').trim();
   const jumpKind = String(payload.jumpKind || (jumpKeyword ? 'search' : 'anchor')).trim() || 'anchor';
+
+  emitSessionEnterTrace(recordTraceEvent, {
+    phase: 'enter.start',
+    sessionId: sid,
+    status: 'started',
+    summary: 'session enter started',
+    details: {
+      originPage,
+      isGroupSession: Boolean(isGroupSession),
+      hasJumpTarget: Boolean(jumpTargetMessageId),
+      suppressInitialAutoScroll,
+    },
+  });
 
   try {
     activateView?.({ originPage });
@@ -786,7 +810,15 @@ export const runSessionEnterFlow = async ({
     isGroupSession,
     jumpTargetMessageId,
   }));
-  if (historyStage?.stale) return { jumpedToTarget: false, stale: true };
+  if (historyStage?.stale) {
+    emitSessionEnterTrace(recordTraceEvent, {
+      phase: 'enter.finish',
+      sessionId: sid,
+      status: 'stale',
+      summary: 'session enter request became stale',
+    });
+    return { jumpedToTarget: false, stale: true };
+  }
 
   const { jumpedToTarget = false } = finalizeNavigationFn?.({
     jumpTargetMessageId,
@@ -806,6 +838,15 @@ export const runSessionEnterFlow = async ({
       originPage: typeof getChatOriginPage === 'function' ? getChatOriginPage() : originPage,
     });
   } catch {}
+  emitSessionEnterTrace(recordTraceEvent, {
+    phase: 'enter.finish',
+    sessionId: sid,
+    status: 'success',
+    summary: 'session enter completed',
+    details: {
+      jumpedToTarget: Boolean(jumpedToTarget),
+    },
+  });
   return { jumpedToTarget };
 };
 
@@ -821,7 +862,25 @@ export const runSessionExitFlow = ({
   uiLog = null,
   activePage = '',
   getCurrentSessionId = null,
+  recordTraceEvent = null,
 } = {}) => {
+  const sessionId = (() => {
+    try {
+      return typeof getCurrentSessionId === 'function' ? String(getCurrentSessionId() || '').trim() : '';
+    } catch {
+      return '';
+    }
+  })();
+  emitSessionEnterTrace(recordTraceEvent, {
+    phase: 'exit.start',
+    sessionId,
+    status: 'started',
+    summary: 'session exit started',
+    details: {
+      activePage,
+      originPage: String(chatOriginPage || '').trim() || 'chat',
+    },
+  });
   try {
     deactivateView?.();
   } catch {}
@@ -846,6 +905,17 @@ export const runSessionExitFlow = ({
       sessionId: typeof getCurrentSessionId === 'function' ? getCurrentSessionId() : '',
     });
   } catch {}
+  emitSessionEnterTrace(recordTraceEvent, {
+    phase: 'exit.finish',
+    sessionId,
+    status: 'success',
+    summary: 'session exit completed',
+    details: {
+      activePage,
+      originPage: origin,
+      switchedPage: Boolean(origin && origin !== 'chat'),
+    },
+  });
   return { originPage: origin };
 };
 

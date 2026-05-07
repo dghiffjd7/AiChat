@@ -62,6 +62,7 @@ test('markMessagesAsSending falls back safely when store helpers are missing', (
 test('dispatchAfterSendEvents respects skipScripts and still dispatches plugin events', async () => {
   const scriptCalls = [];
   const pluginCalls = [];
+  const trace = [];
 
   dispatchAfterSendEvents({
     messages: [{ id: 'm1' }, { id: 'm2' }],
@@ -79,6 +80,7 @@ test('dispatchAfterSendEvents respects skipScripts and still dispatches plugin e
       },
     },
     skipScripts: true,
+    recordTraceEvent: event => trace.push(event),
   });
 
   await Promise.resolve();
@@ -88,6 +90,15 @@ test('dispatchAfterSendEvents respects skipScripts and still dispatches plugin e
     { event: 'message.after_send', payload: { message: { id: 'm1' }, sessionId: 'session-a' } },
     { event: 'message.after_send', payload: { message: { id: 'm2' }, sessionId: 'session-a' } },
   ]);
+  assert.deepEqual(
+    trace.map(event => [event.runtimeLabel, event.phase, event.status, event.messageId]),
+    [
+      ['plugin', 'after_send.start', 'started', 'm1'],
+      ['plugin', 'after_send.finish', 'queued', 'm1'],
+      ['plugin', 'after_send.start', 'started', 'm2'],
+      ['plugin', 'after_send.finish', 'queued', 'm2'],
+    ],
+  );
 });
 
 test('dispatchAfterSendEvents logs rejected runtime dispatches without aborting sibling events', async () => {

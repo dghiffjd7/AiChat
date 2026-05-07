@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 
 import {
   buildCancelledAssistantPartial,
+  buildCancelledAssistantPartialMessage,
+  commitCancelledGenerationPartial,
   createActiveGenerationRecord,
 } from '../../src/scripts/ui/chat/generation-state-utils.js';
 
@@ -95,6 +97,150 @@ test('buildCancelledAssistantPartial falls back to stream controller id and prov
   assert.equal(partial.avatar, 'fallback.png');
   assert.equal(partial.time, '12:34');
   assert.equal(partial.content, '中断内容');
+});
+
+test('buildCancelledAssistantPartialMessage preserves cancel append payload shape', () => {
+  const message = buildCancelledAssistantPartialMessage({
+    partial: {
+      id: ' assistant-1 ',
+      name: '助手A',
+      avatar: 'assistant.png',
+      time: '13:00',
+      content: '已生成部分',
+      raw: 'raw 部分',
+      rawOriginal: 'raw original 部分',
+      meta: { partial: false, custom: true },
+    },
+    assistantAvatar: 'fallback.png',
+    fallbackTime: '12:00',
+  });
+
+  assert.deepEqual(message, {
+    role: 'assistant',
+    type: 'text',
+    id: 'assistant-1',
+    name: '助手A',
+    avatar: 'assistant.png',
+    time: '13:00',
+    content: '已生成部分',
+    raw: 'raw 部分',
+    rawOriginal: 'raw original 部分',
+    meta: {
+      partial: true,
+      custom: true,
+      cancelled: true,
+    },
+  });
+});
+
+test('buildCancelledAssistantPartialMessage falls back to content raw avatar and time', () => {
+  const message = buildCancelledAssistantPartialMessage({
+    partial: {
+      content: 'fallback content',
+    },
+    assistantAvatar: 'fallback.png',
+    fallbackTime: '12:00',
+  });
+
+  assert.equal(message.id, undefined);
+  assert.equal(message.raw, 'fallback content');
+  assert.equal(message.rawOriginal, 'fallback content');
+  assert.equal(message.avatar, 'fallback.png');
+  assert.equal(message.time, '12:00');
+  assert.equal(buildCancelledAssistantPartialMessage({ partial: { content: '   ' } }), null);
+});
+
+test('commitCancelledGenerationPartial appends unhandled user partials and refreshes contacts', () => {
+  const appended = [];
+  let refreshed = 0;
+  const result = commitCancelledGenerationPartial({
+    generation: { sessionId: 'session-a' },
+    partial: { id: 'partial-1', content: '部分回复' },
+    reason: 'user',
+    chatStore: {
+      findMessage: () => null,
+      appendMessage: (message, sessionId) => appended.push({ message, sessionId }),
+    },
+    getAssistantAvatarForSession: sid => `${sid}.png`,
+    formatNowTime: () => '12:00',
+    refreshChatAndContacts: () => { refreshed += 1; },
+  });
+
+  assert.deepEqual(result, {
+    attempted: true,
+    sessionId: 'session-a',
+    messageId: 'partial-1',
+    hasContent: true,
+    handledPartial: false,
+    appended: true,
+    skippedExisting: false,
+  });
+  assert.equal(refreshed, 1);
+  assert.equal(appended[0].sessionId, 'session-a');
+  assert.equal(appended[0].message.content, '部分回复');
+  assert.equal(appended[0].message.avatar, 'session-a.png');
+});
+
+test('commitCancelledGenerationPartial keeps existing handler precedence semantics', () => {
+  const calls = [];
+  const appended = [];
+  const result = commitCancelledGenerationPartial({
+    generation: {
+      sessionId: 'session-a',
+      partialCommitHandler: () => {
+        calls.push('partial');
+        return true;
+      },
+      swipeTarget: {
+        onPartial() {
+          calls.push('swipe');
+          return false;
+        },
+      },
+    },
+    partial: { content: '会被 swipe false 覆盖为未处理' },
+    reason: 'user',
+    chatStore: {
+      findMessage: () => false,
+      appendMessage: (message) => appended.push(message),
+    },
+  });
+
+  assert.deepEqual(calls, ['partial', 'swipe']);
+  assert.equal(result.handledPartial, false);
+  assert.equal(result.appended, true);
+  assert.equal(appended.length, 1);
+});
+
+test('commitCancelledGenerationPartial skips existing messages and non-user cancellations', () => {
+  const appended = [];
+  const existing = commitCancelledGenerationPartial({
+    generation: { sessionId: 'session-a' },
+    partial: { id: 'partial-1', content: '已存在' },
+    reason: 'user',
+    chatStore: {
+      findMessage: () => true,
+      appendMessage: message => appended.push(message),
+    },
+  });
+  const nonUser = commitCancelledGenerationPartial({
+    generation: { sessionId: 'session-a' },
+    partial: { content: '不会处理' },
+    reason: 'navigation',
+  });
+
+  assert.equal(existing.skippedExisting, true);
+  assert.equal(existing.appended, false);
+  assert.deepEqual(appended, []);
+  assert.deepEqual(nonUser, {
+    attempted: false,
+    sessionId: '',
+    messageId: '',
+    hasContent: false,
+    handledPartial: false,
+    appended: false,
+    skippedExisting: false,
+  });
 });
 
 let failed = 0;

@@ -1,7 +1,7 @@
 const GROUP_DROPDOWN_STYLE = `
   display:none;
   position: fixed;
-  background: white;
+  background: var(--app-surface-card);
   border: 1px solid rgba(0,0,0,0.10);
   border-radius: 12px;
   box-shadow: 0 10px 30px rgba(0,0,0,0.18);
@@ -57,7 +57,7 @@ const buildGroupDropdownHeader = ({
 } = {}) => {
   const header = createElement(documentRef, 'div', {
     className: 'group-dd-header',
-    style: 'display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 12px; border-bottom:1px solid rgba(0,0,0,0.06); background:rgba(248,250,252,0.92); border-radius:12px 12px 0 0;',
+    style: 'display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 12px; border-bottom:1px solid rgba(0,0,0,0.06); background:var(--app-surface-subtle); border-radius:12px 12px 0 0;',
   });
   const titleEl = createElement(documentRef, 'div', {
     className: 'group-dd-title',

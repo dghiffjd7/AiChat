@@ -4,6 +4,7 @@ import {
   applyMemoryTableSnapshot,
   buildMemoryTableSnapshot,
   loadSessionMemoryActionContext,
+  loadSessionMemoryRollbackSnapshotContext,
   resolveDefaultMemoryTemplateDefinition,
   resolveDefaultMemoryTemplateId,
   resolveDefaultMemoryTemplateRecordAndDefinition,
@@ -157,6 +158,48 @@ import {
     },
   );
   console.log('ok - loadSessionMemoryActionContext builds shared rows indexes and resolver context');
+}
+
+{
+  const context = await loadSessionMemoryRollbackSnapshotContext({
+    memoryTemplateStore: {
+      getTemplates: async () => [{
+        id: 'default-v1',
+        schema: { tables: [{ id: 'profile', name: '角色表', scope: 'contact', usage: 'all' }] },
+      }],
+    },
+    memoryTableStore: {
+      getMemories: async (query) => {
+        if (query.scope === 'contact') {
+          return [
+            { id: 'row-1', table_id: 'profile', contact_id: 'chat:1', row_data: { name: 'Alice' } },
+            { id: 'row-2', table_id: 'other', contact_id: 'chat:1', row_data: { note: 'skip' } },
+          ];
+        }
+        return [];
+      },
+    },
+    sessionId: 'chat:1',
+    isGroup: false,
+    uiMode: 'chat',
+    rollback: {
+      tables: [
+        { table_id: 'profile', scope: 'contact', rows: [{ id: 'row-1', row_data: { name: 'Restored' } }] },
+      ],
+    },
+  });
+  assert.equal(context?.templateId, 'default-v1');
+  assert.equal(context?.tables?.length, 1);
+  assert.deepEqual(context?.tables?.[0], {
+    tableId: 'profile',
+    scopeKey: 'contact',
+    scopeFields: { contact_id: 'chat:1', group_id: null },
+    currentRows: [
+      { id: 'row-1', table_id: 'profile', contact_id: 'chat:1', row_data: { name: 'Alice' } },
+    ],
+    snapshotRows: [{ id: 'row-1', row_data: { name: 'Restored' } }],
+  });
+  console.log('ok - loadSessionMemoryRollbackSnapshotContext prepares rollback table contexts');
 }
 
 {

@@ -74,6 +74,38 @@ test('applyBeforeSendHooks can suppress text overrides while still dispatching h
   assert.equal(result, '保持原文');
 });
 
+test('applyBeforeSendHooks emits lifecycle traces without exposing message content', async () => {
+  const trace = [];
+  const result = await applyBeforeSendHooks({
+    text: '原文',
+    sessionId: 'session-trace',
+    userName: '我',
+    scriptRuntime: {
+      dispatchEvent() {
+        return Promise.resolve({ content: '原文' });
+      },
+    },
+    pluginRuntime: {
+      dispatchEvent(event, payload) {
+        return Promise.resolve({ content: `${payload.content}-插件` });
+      },
+    },
+    recordTraceEvent: event => trace.push(event),
+  });
+
+  assert.equal(result, '原文-插件');
+  assert.deepEqual(
+    trace.map(event => [event.runtimeLabel, event.phase, event.status, event.details.changed]),
+    [
+      ['script', 'before_send.start', 'started', undefined],
+      ['script', 'before_send.finish', 'success', false],
+      ['plugin', 'before_send.start', 'started', undefined],
+      ['plugin', 'before_send.finish', 'success', true],
+    ],
+  );
+  assert.equal(trace.some(event => Object.hasOwn(event.details, 'content')), false);
+});
+
 test('applyBeforeSendHooks skips script runtime when skipScripts is enabled and logs failures', async () => {
   const warnings = [];
   const pluginPayloads = [];

@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
 
 import {
+  BRIDGE_CONTRACT_DOMAINS,
+  ensureBridgeContractRegistry,
   ensureDebugUiRegistry,
+  getBridgeContractRegistry,
+  registerBridgeContractMetadata,
   registerMessageActionBridgeContract,
   registerMemoryUpdateBridgeContract,
   registerPersonaBridgeContract,
@@ -25,6 +29,10 @@ import {
   assert.equal(ok, true);
   assert.equal(appBridge.queuePromptInjection(), 'queue');
   assert.equal(appBridge.notify(), 'notify');
+  const registry = getBridgeContractRegistry(appBridge);
+  assert.equal(registry.contracts.queuePromptInjection.domain, BRIDGE_CONTRACT_DOMAINS.promptInjection);
+  assert.equal(registry.contracts.notify.kind, 'method');
+  assert.equal(registry.domains[BRIDGE_CONTRACT_DOMAINS.promptInjection].peekPromptInjections, true);
   console.log('ok - registerPromptInjectionBridgeContract assigns prompt helpers');
 }
 
@@ -61,6 +69,16 @@ import {
   assert.deepEqual(calls[0], ['resolver', { sessionId: 's1', options: { test: true } }]);
   assert.equal(calls[1][0], 'lifecycle');
   assert.deepEqual(await appBridge.lifecycleHandler({ type: 'sync' }), { type: 'sync' });
+  const registry = getBridgeContractRegistry(appBridge);
+  assert.equal(registry.contracts.assignRoleWorldToPersona.domain, BRIDGE_CONTRACT_DOMAINS.roleWorld);
+  assert.deepEqual(registry.contracts.resolveRoleWorldBindings, {
+    name: 'resolveRoleWorldBindings',
+    domain: BRIDGE_CONTRACT_DOMAINS.roleWorld,
+    kind: 'resolver',
+    source: 'app-bridge-contract',
+    bridgeField: 'setRoleWorldResolver',
+  });
+  assert.equal(registry.contracts.handleWorldLifecycle.kind, 'lifecycle-handler');
   console.log('ok - registerRoleWorldBridgeContract assigns methods and optional setters');
 }
 
@@ -124,12 +142,36 @@ import {
     requestSummaryCompaction: async () => false,
     getUiModeContext: () => 'chat',
     getGroupAvatarDebugSnapshot: async () => ({ ok: true }),
+    skippedUndefinedUtility: undefined,
   });
   assert.equal(appBridge.showPromptPreview(), true);
   assert.equal(await appBridge.requestSummaryCompaction(), false);
   assert.equal(appBridge.getUiModeContext(), 'chat');
   assert.deepEqual(await appBridge.getGroupAvatarDebugSnapshot(), { ok: true });
+  assert.equal('skippedUndefinedUtility' in appBridge, false);
+  const registry = getBridgeContractRegistry(appBridge);
+  assert.equal(registry.contracts.getUiModeContext.domain, BRIDGE_CONTRACT_DOMAINS.uiUtility);
+  assert.equal(registry.contracts.skippedUndefinedUtility, undefined);
   console.log('ok - registerUiUtilityBridgeContract assigns ui/debug bridge helpers');
+}
+
+{
+  assert.equal(ensureBridgeContractRegistry(null), null);
+  assert.equal(getBridgeContractRegistry({}), null);
+  assert.equal(registerPromptInjectionBridgeContract(null, { queuePromptInjection: () => null }), false);
+  const appBridge = {};
+  const registry = ensureBridgeContractRegistry(appBridge);
+  assert.deepEqual(registry, { version: 1, contracts: {}, domains: {} });
+  registerBridgeContractMetadata(appBridge, 'diagnostics', {
+    bridgeContractRegistry: { kind: 'debug-store', source: 'test' },
+  });
+  assert.deepEqual(appBridge.bridgeContractRegistry.contracts.bridgeContractRegistry, {
+    name: 'bridgeContractRegistry',
+    domain: 'diagnostics',
+    kind: 'debug-store',
+    source: 'test',
+  });
+  console.log('ok - bridge contract registry records sidecar metadata safely');
 }
 
 {

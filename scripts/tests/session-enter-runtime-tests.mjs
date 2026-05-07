@@ -336,7 +336,46 @@ import {
 }
 
 {
+  const traces = [];
+  const result = await runSessionEnterFlow({
+    sessionId: 's-stale',
+    originPage: 'chat',
+    isGroupSession: true,
+    options: { suppressInitialAutoScroll: true },
+    loadHistoryStageFn: async () => ({ stale: true }),
+    recordTraceEvent: event => traces.push(event),
+  });
+  assert.deepEqual(result, { jumpedToTarget: false, stale: true });
+  assert.deepEqual(traces, [
+    {
+      category: 'session',
+      source: 'session-enter-runtime',
+      phase: 'enter.start',
+      sessionId: 's-stale',
+      status: 'started',
+      summary: 'session enter started',
+      details: {
+        originPage: 'chat',
+        isGroupSession: true,
+        hasJumpTarget: false,
+        suppressInitialAutoScroll: true,
+      },
+    },
+    {
+      category: 'session',
+      source: 'session-enter-runtime',
+      phase: 'enter.finish',
+      sessionId: 's-stale',
+      status: 'stale',
+      summary: 'session enter request became stale',
+    },
+  ]);
+  console.log('ok - runSessionEnterFlow can emit optional structured trace events for stale enters');
+}
+
+{
   const calls = [];
+  const traces = [];
   const result = runSessionExitFlow({
     options: { keep: true },
     deactivateView: () => calls.push(['deactivate']),
@@ -349,6 +388,7 @@ import {
     uiLog: (tag, payload) => calls.push(['log', tag, payload]),
     activePage: 'chat',
     getCurrentSessionId: () => 's-exit',
+    recordTraceEvent: event => traces.push(event),
   });
   assert.deepEqual(result, { originPage: 'moments' });
   assert.deepEqual(calls, [
@@ -358,6 +398,26 @@ import {
     ['pending'],
     ['save'],
     ['log', 'exitChatRoom', { activePage: 'chat', sessionId: 's-exit' }],
+  ]);
+  assert.deepEqual(traces, [
+    {
+      category: 'session',
+      source: 'session-enter-runtime',
+      phase: 'exit.start',
+      sessionId: 's-exit',
+      status: 'started',
+      summary: 'session exit started',
+      details: { activePage: 'chat', originPage: 'moments' },
+    },
+    {
+      category: 'session',
+      source: 'session-enter-runtime',
+      phase: 'exit.finish',
+      sessionId: 's-exit',
+      status: 'success',
+      summary: 'session exit completed',
+      details: { activePage: 'chat', originPage: 'moments', switchedPage: true },
+    },
   ]);
   console.log('ok - runSessionExitFlow restores list page saves state and logs current session');
 }

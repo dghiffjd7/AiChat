@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 
 import {
+  buildSendFlowTraceEvent,
   normalizeHandleSendInvocation,
   normalizeHandleSendOptions,
+  resolveRegenerateFromUserIndexPlan,
   resolveSyspromptProtocolFlags,
 } from '../../src/scripts/ui/chat/send-flow-utils.js';
 
@@ -17,6 +19,31 @@ test('normalizeHandleSendInvocation treats DOM-style events as empty send argume
   assert.deepEqual(normalizeHandleSendInvocation(eventLike, { overrideText: 'ignored' }), {
     targetMessageId: null,
     options: {},
+  });
+});
+
+test('buildSendFlowTraceEvent normalizes generation trace metadata and drops undefined details', () => {
+  assert.deepEqual(buildSendFlowTraceEvent({
+    phase: ' send.start ',
+    sessionId: ' s1 ',
+    status: ' started ',
+    summary: ' started ',
+    details: {
+      generationId: 1,
+      ignored: undefined,
+      hasAttachments: false,
+    },
+  }), {
+    category: 'generation',
+    source: 'send-flow',
+    phase: 'send.start',
+    sessionId: 's1',
+    status: 'started',
+    summary: 'started',
+    details: {
+      generationId: 1,
+      hasAttachments: false,
+    },
   });
 });
 
@@ -91,6 +118,64 @@ test('normalizeHandleSendOptions falls back safely for invalid payloads', () => 
   assert.equal(result.swipeTarget, null);
   assert.deepEqual(result.excludeMessageIds, []);
   assert.equal(result.includeAttachments, true);
+});
+
+test('resolveRegenerateFromUserIndexPlan rejects invalid sending or non-latest user rounds', () => {
+  const sending = resolveRegenerateFromUserIndexPlan({
+    messages: [{ id: 'u1', role: 'user', status: 'sending' }],
+    userIdx: 0,
+  });
+  assert.equal(sending.canRegenerate, false);
+  assert.equal(sending.warningMessage, '发送中的消息无法重生成');
+  assert.equal(sending.reason, 'user-message-sending');
+
+  const notLatest = resolveRegenerateFromUserIndexPlan({
+    messages: [
+      { id: 'u1', role: 'user' },
+      { id: 'a1', role: 'assistant' },
+      { id: 'u2', role: 'user' },
+    ],
+    userIdx: 0,
+  });
+  assert.equal(notLatest.canRegenerate, false);
+  assert.equal(notLatest.nextUserIdx, 2);
+  assert.equal(notLatest.warningMessage, '只能重生成最新一轮回复');
+});
+
+test('resolveRegenerateFromUserIndexPlan returns latest assistant and synthetic messages for deletion', () => {
+  const syntheticUser = { id: 'su1', role: 'user', meta: { generatedByAssistant: true } };
+  const plan = resolveRegenerateFromUserIndexPlan({
+    messages: [
+      { id: 'u1', role: 'user' },
+      { id: 'a1', role: 'assistant' },
+      syntheticUser,
+      { id: 'meta1', role: 'system' },
+    ],
+    userIdx: 0,
+    isSyntheticUser: message => message?.meta?.generatedByAssistant === true,
+  });
+  assert.equal(plan.canRegenerate, true);
+  assert.equal(plan.prevUser.id, 'u1');
+  assert.deepEqual(plan.regenMessages.map(message => message.id), ['a1', 'su1']);
+  assert.deepEqual(plan.roundMessages.map(message => message.id), ['a1', 'su1', 'meta1']);
+});
+
+test('resolveRegenerateFromUserIndexPlan supports empty assistant rounds only when allowed', () => {
+  const rejected = resolveRegenerateFromUserIndexPlan({
+    messages: [{ id: 'u1', role: 'user' }],
+    userIdx: 0,
+    allowEmpty: false,
+  });
+  assert.equal(rejected.canRegenerate, false);
+  assert.equal(rejected.warningMessage, '未找到可重生成的 AI 回复');
+
+  const allowed = resolveRegenerateFromUserIndexPlan({
+    messages: [{ id: 'u1', role: 'user' }],
+    userIdx: 0,
+    allowEmpty: true,
+  });
+  assert.equal(allowed.canRegenerate, true);
+  assert.deepEqual(allowed.regenMessages, []);
 });
 
 test('resolveSyspromptProtocolFlags enables private or group protocol only when matching rules exist', () => {

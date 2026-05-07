@@ -5,6 +5,7 @@ import {
   buildMemoryUpdateHistoryTextFromSettings,
   buildMemoryUpdatePlanForSession,
   confirmMemoryEditsWithUi,
+  createMemoryEditUiRuntime,
   buildMemoryUpdateLastEntry,
   buildMemoryUpdatePlanInput,
   buildMemoryUpdateRequest,
@@ -243,6 +244,7 @@ import {
 {
   const applied = [];
   const stored = [];
+  const traces = [];
   const parsed = await handleMemoryEditsFromRawWithUi({
     raw: '<tableEdit>x</tableEdit>',
     sessionId: 's1',
@@ -264,6 +266,7 @@ import {
     confirmMemoryEdits: async actions => actions,
     applyMemoryEdits: async payload => applied.push(payload),
     logger: { warn: () => {} },
+    recordTraceEvent: event => traces.push(event),
   });
   assert.deepEqual(parsed, {
     text: 'clean',
@@ -277,5 +280,129 @@ import {
     sessionId: 's1',
     isGroup: true,
   }]);
+  assert.deepEqual(traces, [
+    {
+      category: 'memory',
+      source: 'memory-update-runtime-utils',
+      phase: 'edit.apply',
+      sessionId: 's1',
+      status: 'started',
+      summary: 'memory edit apply started',
+      details: {
+        actionCount: 1,
+        force: true,
+        isGroup: true,
+      },
+    },
+    {
+      category: 'memory',
+      source: 'memory-update-runtime-utils',
+      phase: 'edit.apply',
+      sessionId: 's1',
+      status: 'success',
+      summary: 'memory edit apply completed',
+      details: {
+        actionCount: 1,
+      },
+    },
+  ]);
   console.log('ok - handleMemoryEditsFromRawWithUi records last entry and forwards confirmed edits');
+}
+
+{
+  const traces = [];
+  const result = await handleMemoryEditsFromRawWithUi({
+    raw: 'raw text',
+    sessionId: 's-skip',
+    isMemoryAutoExtractInline: () => false,
+    recordTraceEvent: event => traces.push(event),
+  });
+  assert.deepEqual(result, { text: 'raw text', blocks: [], actions: [] });
+  assert.deepEqual(traces, [{
+    category: 'memory',
+    source: 'memory-update-runtime-utils',
+    phase: 'edit.skip',
+    sessionId: 's-skip',
+    status: 'skipped',
+    summary: 'memory inline extraction disabled',
+  }]);
+  console.log('ok - handleMemoryEditsFromRawWithUi emits optional skip trace without changing passthrough result');
+}
+
+{
+  const applied = [];
+  const buildPlanCalls = [];
+  const runtime = createMemoryEditUiRuntime({
+    appSettings: {
+      get: () => ({
+        memoryAutoConfirm: true,
+        memoryAutoStepByStep: false,
+        memoryUpdateContextRounds: '3',
+      }),
+    },
+    chatStore: {
+      getMessages: () => [
+        { role: 'user', content: 'hello' },
+        { role: 'assistant', content: '<tableEdit>x</tableEdit>reply' },
+      ],
+    },
+    loadMemoryTemplateContext: async () => ({
+      tableById: new Map([['profile', { id: 'profile', name: '角色表' }]]),
+    }),
+    rawPlan: () => ({ tableOrder: ['profile'] }),
+    appConfirm: async () => true,
+    toastr: { info: () => {} },
+    isMemoryAutoExtractInline: () => true,
+    extractTableEditBlocks: () => ({
+      text: 'clean',
+      blocks: ['<tableEdit>x</tableEdit>'],
+      actions: [{ action: 'insert', tableId: 'profile', data: { title: 'A' } }],
+    }),
+    appBridge: {
+      lastRequest: { messages: [{ role: 'user', content: 'hello' }] },
+      getLastMemoryUpdate: () => null,
+      setLastMemoryUpdate: () => {},
+    },
+    buildRequestPrompt: messages => `built:${messages[0].content}`,
+    applyMemoryEdits: async payload => applied.push(payload),
+    logger: { warn: () => {} },
+    stripAssistantText: text => String(text || '').replace('<tableEdit>x</tableEdit>', ''),
+    buildPlan: async next => {
+      buildPlanCalls.push(next);
+      return { ok: true, next };
+    },
+  });
+  const confirmed = await runtime.confirmMemoryEditsIfNeeded([
+    { action: 'insert', tableId: 'profile', data: { title: 'A' } },
+  ]);
+  assert.equal(confirmed.length, 1);
+  const parsed = await runtime.handleMemoryEditsFromRaw('<tableEdit>x</tableEdit>', {
+    sessionId: 's1',
+    isGroup: false,
+    requestPrompt: 'prompt',
+  });
+  assert.deepEqual(parsed, {
+    text: 'clean',
+    blocks: ['<tableEdit>x</tableEdit>'],
+    actions: [{ action: 'insert', tableId: 'profile', data: { title: 'A' } }],
+  });
+  assert.deepEqual(applied, [{
+    actions: [{ action: 'insert', tableId: 'profile', data: { title: 'A' } }],
+    sessionId: 's1',
+    isGroup: false,
+  }]);
+  assert.equal(runtime.buildMemoryUpdateHistoryText('s1'), '用户: hello\n助手: reply');
+  const plan = await runtime.buildMemoryUpdatePlan('s1', true, { meta: { keep: true } });
+  assert.equal(buildPlanCalls.length, 1);
+  assert.deepEqual(buildPlanCalls[0], {
+    session: { id: 's1', isGroup: true },
+    meta: {
+      keep: true,
+      memoryAutoExtract: true,
+      memoryStorageMode: 'table',
+    },
+    history: [],
+  });
+  assert.deepEqual(plan, { ok: true, next: buildPlanCalls[0] });
+  console.log('ok - createMemoryEditUiRuntime wires confirm raw history and plan helpers together');
 }

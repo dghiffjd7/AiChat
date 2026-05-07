@@ -4,6 +4,16 @@ import {
 } from './request-prompt-utils.js';
 import { buildMemoryConfirmText } from './memory-edit-utils.js';
 
+const emitMemoryUpdateTrace = (recordTraceEvent, event) => {
+  try {
+    recordTraceEvent?.({
+      category: 'memory',
+      source: 'memory-update-runtime-utils',
+      ...event,
+    });
+  } catch {}
+};
+
 export const resolveMemoryUpdateHistoryLimit = (settings) => {
   const rawLimit = Math.trunc(Number(settings?.memoryUpdateContextRounds));
   return Number.isFinite(rawLimit) ? Math.max(0, rawLimit) : 6;
@@ -206,8 +216,15 @@ export const handleMemoryEditsFromRawWithUi = async ({
   confirmMemoryEdits = async (actions) => actions,
   applyMemoryEdits = async () => null,
   logger = null,
+  recordTraceEvent = null,
 } = {}) => {
   if (!force && !isMemoryAutoExtractInline()) {
+    emitMemoryUpdateTrace(recordTraceEvent, {
+      phase: 'edit.skip',
+      sessionId,
+      status: 'skipped',
+      summary: 'memory inline extraction disabled',
+    });
     return { text: raw, blocks: [], actions: [] };
   }
   const parsed = extractTableEditBlocks(raw);
@@ -227,14 +244,115 @@ export const handleMemoryEditsFromRawWithUi = async ({
     );
   } catch {}
   if (Array.isArray(parsed?.actions) && parsed.actions.length) {
+    emitMemoryUpdateTrace(recordTraceEvent, {
+      phase: 'edit.apply',
+      sessionId,
+      status: 'started',
+      summary: 'memory edit apply started',
+      details: {
+        actionCount: parsed.actions.length,
+        force: Boolean(force),
+        isGroup: Boolean(isGroup),
+      },
+    });
     try {
       const confirmedActions = await confirmMemoryEdits(parsed.actions);
       if (confirmedActions.length) {
         await applyMemoryEdits({ actions: confirmedActions, sessionId, isGroup });
+        emitMemoryUpdateTrace(recordTraceEvent, {
+          phase: 'edit.apply',
+          sessionId,
+          status: 'success',
+          summary: 'memory edit apply completed',
+          details: {
+            actionCount: confirmedActions.length,
+          },
+        });
+      } else {
+        emitMemoryUpdateTrace(recordTraceEvent, {
+          phase: 'edit.apply',
+          sessionId,
+          status: 'cancelled',
+          summary: 'memory edit apply cancelled',
+          details: {
+            actionCount: parsed.actions.length,
+          },
+        });
       }
     } catch (err) {
+      emitMemoryUpdateTrace(recordTraceEvent, {
+        phase: 'edit.apply',
+        sessionId,
+        status: 'error',
+        summary: 'memory edit apply failed',
+        details: {
+          message: err?.message ? String(err.message) : String(err || ''),
+        },
+      });
       logger?.warn?.('apply memory edits failed', err);
     }
   }
   return parsed;
 };
+
+export const createMemoryEditUiRuntime = ({
+  appSettings = null,
+  chatStore = null,
+  loadMemoryTemplateContext = async () => null,
+  rawPlan = () => null,
+  appConfirm = async () => true,
+  toastr = null,
+  isMemoryAutoExtractInline = () => false,
+  extractTableEditBlocks = value => ({ text: String(value ?? ''), blocks: [], actions: [] }),
+  appBridge = null,
+  buildRequestPrompt = null,
+  applyMemoryEdits = async () => null,
+  logger = null,
+  stripAssistantText = text => text,
+  buildPlan = async () => null,
+  recordTraceEvent = null,
+} = {}) => ({
+  confirmMemoryEditsIfNeeded: async (actions = []) => confirmMemoryEditsWithUi({
+    actions,
+    settings: appSettings?.get?.() || null,
+    loadMemoryTemplateContext,
+    rawPlan: typeof rawPlan === 'function' ? rawPlan() : rawPlan,
+    appConfirm,
+    toastr,
+  }),
+  handleMemoryEditsFromRaw: async (raw, { sessionId, isGroup, force = false, requestPrompt } = {}) =>
+    handleMemoryEditsFromRawWithUi({
+      raw,
+      sessionId,
+      isGroup,
+      force,
+      requestPrompt,
+      isMemoryAutoExtractInline,
+      extractTableEditBlocks,
+      appBridge,
+      buildRequestPrompt,
+      confirmMemoryEdits: async actions => confirmMemoryEditsWithUi({
+        actions,
+        settings: appSettings?.get?.() || null,
+        loadMemoryTemplateContext,
+        rawPlan: typeof rawPlan === 'function' ? rawPlan() : rawPlan,
+        appConfirm,
+        toastr,
+      }),
+      applyMemoryEdits,
+      logger,
+      recordTraceEvent,
+    }),
+  buildMemoryUpdateHistoryText: sessionId => buildMemoryUpdateHistoryTextForSession({
+    sessionId,
+    chatStore,
+    settings: appSettings?.get?.() || null,
+    stripAssistantText,
+  }),
+  buildMemoryUpdatePlan: async (sessionId, isGroup, baseContext) => buildMemoryUpdatePlanForSession({
+    sessionId,
+    isGroup,
+    baseContext,
+    buildPlan,
+  }),
+});

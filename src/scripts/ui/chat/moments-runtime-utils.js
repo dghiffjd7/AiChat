@@ -1,4 +1,40 @@
 const normalizeNameValue = (value) => String(value || '').trim();
+const isPlainObject = value => Boolean(value && typeof value === 'object' && !Array.isArray(value));
+const normalizeTraceText = (value, fallback = '') => {
+  const text = String(value ?? '').trim();
+  return text || fallback;
+};
+const normalizeTraceDetails = (details) => {
+  if (!isPlainObject(details)) return {};
+  return Object.fromEntries(
+    Object.entries(details).filter(([, value]) => value !== undefined),
+  );
+};
+
+export const buildMomentLifecycleTraceEvent = ({
+  phase = '',
+  sessionId = '',
+  momentId = '',
+  status = 'info',
+  summary = '',
+  details = {},
+} = {}) => ({
+  category: 'moments',
+  source: 'moments-runtime',
+  phase: normalizeTraceText(phase, 'event'),
+  sessionId: normalizeTraceText(sessionId, ''),
+  momentId: normalizeTraceText(momentId, ''),
+  status: normalizeTraceText(status, 'info'),
+  summary: normalizeTraceText(summary, ''),
+  details: normalizeTraceDetails(details),
+});
+
+const emitMomentLifecycleTrace = (recordTraceEvent, event) => {
+  if (typeof recordTraceEvent !== 'function') return;
+  try {
+    recordTraceEvent(buildMomentLifecycleTraceEvent(event));
+  } catch {}
+};
 
 export const resolvePrivateChatTargetSessionIdByName = (
   otherName,
@@ -611,24 +647,76 @@ export const createMomentSummaryCompactionRuntime = ({
   shouldCompact = () => false,
   dispatchUpdated = () => {},
   logger = null,
+  recordTraceEvent = null,
   setTimeoutFn = (fn, ms) => setTimeout(fn, ms),
   delayMs = 450,
 } = {}) => {
   const compacting = new Set();
   return ({ force = false } = {}) => {
-    if (compacting.has(scopeKey)) return Promise.resolve(false);
+    if (compacting.has(scopeKey)) {
+      emitMomentLifecycleTrace(recordTraceEvent, {
+        phase: 'summary.compaction.skipped',
+        status: 'skipped',
+        summary: 'moment summary compaction skipped',
+        details: { reason: 'already-compacting', scopeKey, force },
+      });
+      return Promise.resolve(false);
+    }
     if (!momentSummaryStore?.getSummaries || !momentSummaryStore?.setCompactedSummary) {
+      emitMomentLifecycleTrace(recordTraceEvent, {
+        phase: 'summary.compaction.skipped',
+        status: 'skipped',
+        summary: 'moment summary compaction skipped',
+        details: { reason: 'missing-store', scopeKey, force },
+      });
       return Promise.resolve(false);
     }
     if (typeof buildMessages !== 'function' || typeof backgroundChat !== 'function') {
+      emitMomentLifecycleTrace(recordTraceEvent, {
+        phase: 'summary.compaction.skipped',
+        status: 'skipped',
+        summary: 'moment summary compaction skipped',
+        details: { reason: 'missing-generation-runtime', scopeKey, force },
+      });
       return Promise.resolve(false);
     }
-    if (!getIsConfigured()) return Promise.resolve(false);
+    if (!getIsConfigured()) {
+      emitMomentLifecycleTrace(recordTraceEvent, {
+        phase: 'summary.compaction.skipped',
+        status: 'skipped',
+        summary: 'moment summary compaction skipped',
+        details: { reason: 'not-configured', scopeKey, force },
+      });
+      return Promise.resolve(false);
+    }
 
     const list = momentSummaryStore.getSummaries() || [];
-    if (!shouldCompact({ items: list, force })) return Promise.resolve(false);
+    if (!shouldCompact({ items: list, force })) {
+      emitMomentLifecycleTrace(recordTraceEvent, {
+        phase: 'summary.compaction.skipped',
+        status: 'skipped',
+        summary: 'moment summary compaction skipped',
+        details: {
+          reason: 'threshold-not-met',
+          scopeKey,
+          force,
+          itemCount: Array.isArray(list) ? list.length : 0,
+        },
+      });
+      return Promise.resolve(false);
+    }
 
     compacting.add(scopeKey);
+    emitMomentLifecycleTrace(recordTraceEvent, {
+      phase: 'summary.compaction.start',
+      status: 'started',
+      summary: 'moment summary compaction started',
+      details: {
+        scopeKey,
+        force,
+        itemCount: Array.isArray(list) ? list.length : 0,
+      },
+    });
     return new Promise((resolve) => {
       setTimeoutFn(async () => {
         try {
@@ -649,13 +737,35 @@ export const createMomentSummaryCompactionRuntime = ({
             buildMessages,
             backgroundChat,
           });
-          if (!raw) return resolve(false);
+          if (!raw) {
+            emitMomentLifecycleTrace(recordTraceEvent, {
+              phase: 'summary.compaction.finish',
+              status: 'skipped',
+              summary: 'moment summary compaction skipped',
+              details: { reason: 'empty-raw', scopeKey, force, itemCount: arr.length },
+            });
+            return resolve(false);
+          }
           try {
             momentSummaryStore.setCompactedSummaryRaw?.(raw);
           } catch {}
 
           const { text, valid } = parseCompactionResult(raw);
-          if (!text || !valid) return resolve(false);
+          if (!text || !valid) {
+            emitMomentLifecycleTrace(recordTraceEvent, {
+              phase: 'summary.compaction.finish',
+              status: 'skipped',
+              summary: 'moment summary compaction skipped',
+              details: {
+                reason: 'invalid-result',
+                scopeKey,
+                force,
+                itemCount: arr.length,
+                rawLength: String(raw || '').length,
+              },
+            });
+            return resolve(false);
+          }
 
           try {
             momentSummaryStore.setCompactedSummary(text, { raw });
@@ -667,11 +777,30 @@ export const createMomentSummaryCompactionRuntime = ({
           try {
             dispatchUpdated();
           } catch {}
+          emitMomentLifecycleTrace(recordTraceEvent, {
+            phase: 'summary.compaction.finish',
+            status: 'success',
+            summary: 'moment summary compaction finished',
+            details: {
+              scopeKey,
+              force,
+              itemCount: arr.length,
+              keptCount: normalizeItems(momentSummaryStore.getSummaries?.()).length,
+              rawLength: String(raw || '').length,
+              summaryLength: String(text || '').length,
+            },
+          });
           resolve(true);
         } catch (error) {
           try {
             logger?.debug?.('moment summary compaction failed', error);
           } catch {}
+          emitMomentLifecycleTrace(recordTraceEvent, {
+            phase: 'summary.compaction.finish',
+            status: 'error',
+            summary: error?.message || 'moment summary compaction failed',
+            details: { scopeKey, force },
+          });
           resolve(false);
         } finally {
           compacting.delete(scopeKey);

@@ -1,3 +1,5 @@
+import { emitHookLifecycleTrace } from './hook-lifecycle-trace-utils.js';
+
 export const resolveAfterReceiveSkipScripts = (
   skipScriptsOverride,
   defaultSkipScripts = false,
@@ -23,19 +25,52 @@ export const dispatchAfterReceiveEffects = ({
   applyUpdateVariable,
   handleVariableRules,
   useGlobalVariables = false,
+  recordTraceEvent = null,
 } = {}) => {
   if (!message || message.role !== 'assistant') return false;
   const shouldSkipScripts = resolveAfterReceiveSkipScripts(skipScripts, defaultSkipScripts);
   const payload = { message, sessionId };
-  if (scriptRuntime && !shouldSkipScripts) {
-    catchAsync(scriptRuntime.dispatchEvent('message.after_receive', payload), err => {
-      logger?.warn?.('script message.after_receive failed', err);
+  const dispatchRuntimeHook = ({ runtime = null, runtimeLabel = '' } = {}) => {
+    if (!runtime) return;
+    const messageId = String(message?.id || '').trim();
+    emitHookLifecycleTrace(recordTraceEvent, {
+      phase: 'after_receive.start',
+      hookName: 'message.after_receive',
+      runtimeLabel,
+      sessionId,
+      messageId,
+      status: 'started',
+      summary: 'message.after_receive hook started',
+      details: { role: message?.role || '', type: message?.type || '' },
     });
+    const result = runtime.dispatchEvent('message.after_receive', payload);
+    catchAsync(result, err => {
+      emitHookLifecycleTrace(recordTraceEvent, {
+        phase: 'after_receive.finish',
+        hookName: 'message.after_receive',
+        runtimeLabel,
+        sessionId,
+        messageId,
+        status: 'error',
+        summary: err?.message || 'message.after_receive hook failed',
+      });
+      logger?.warn?.(`${runtimeLabel} message.after_receive failed`, err);
+    });
+    emitHookLifecycleTrace(recordTraceEvent, {
+      phase: 'after_receive.finish',
+      hookName: 'message.after_receive',
+      runtimeLabel,
+      sessionId,
+      messageId,
+      status: 'queued',
+      summary: 'message.after_receive hook queued',
+    });
+  };
+  if (scriptRuntime && !shouldSkipScripts) {
+    dispatchRuntimeHook({ runtime: scriptRuntime, runtimeLabel: 'script' });
   }
   if (pluginRuntime) {
-    catchAsync(pluginRuntime.dispatchEvent('message.after_receive', payload), err => {
-      logger?.warn?.('plugin message.after_receive failed', err);
-    });
+    dispatchRuntimeHook({ runtime: pluginRuntime, runtimeLabel: 'plugin' });
   }
   try {
     if (typeof applyUpdateVariable === 'function') applyUpdateVariable(message, sessionId);

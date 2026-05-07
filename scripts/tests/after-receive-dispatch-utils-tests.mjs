@@ -4,6 +4,7 @@ import {
   dispatchAfterReceiveEffects,
   resolveAfterReceiveSkipScripts,
 } from '../../src/scripts/ui/chat/after-receive-dispatch-utils.js';
+import { buildHookLifecycleTraceEvent } from '../../src/scripts/ui/chat/hook-lifecycle-trace-utils.js';
 
 const tests = [];
 const test = (name, fn) => tests.push({ name, fn });
@@ -13,6 +14,31 @@ test('resolveAfterReceiveSkipScripts prefers explicit override', () => {
   assert.equal(resolveAfterReceiveSkipScripts(true, false), true);
   assert.equal(resolveAfterReceiveSkipScripts(false, true), false);
   assert.equal(resolveAfterReceiveSkipScripts(undefined, true), true);
+});
+
+test('buildHookLifecycleTraceEvent normalizes hook metadata and drops undefined details', () => {
+  const event = buildHookLifecycleTraceEvent({
+    phase: ' after_receive.start ',
+    hookName: ' message.after_receive ',
+    runtimeLabel: ' plugin ',
+    sessionId: ' s1 ',
+    messageId: ' m1 ',
+    status: ' started ',
+    summary: ' started ',
+    details: { kept: true, dropped: undefined },
+  });
+  assert.deepEqual(event, {
+    category: 'plugin-hooks',
+    source: 'hook-lifecycle',
+    phase: 'after_receive.start',
+    hookName: 'message.after_receive',
+    runtimeLabel: 'plugin',
+    sessionId: 's1',
+    messageId: 'm1',
+    status: 'started',
+    summary: 'started',
+    details: { kept: true },
+  });
 });
 
 test('dispatchAfterReceiveEffects ignores non-assistant messages', () => {
@@ -28,6 +54,7 @@ test('dispatchAfterReceiveEffects ignores non-assistant messages', () => {
 
 test('dispatchAfterReceiveEffects dispatches runtimes, update apply, and variable rules', async () => {
   const calls = [];
+  const trace = [];
   const handled = dispatchAfterReceiveEffects({
     message: { id: 'm1', role: 'assistant' },
     sessionId: 's2',
@@ -52,6 +79,7 @@ test('dispatchAfterReceiveEffects dispatches runtimes, update apply, and variabl
       return Promise.resolve();
     },
     useGlobalVariables: true,
+    recordTraceEvent: event => trace.push(event),
     logger: { warn() {} },
   });
   await flushMicrotasks();
@@ -62,6 +90,15 @@ test('dispatchAfterReceiveEffects dispatches runtimes, update apply, and variabl
     ['update', 'm1', 's2'],
     ['rules', 'm1', 's2', true],
   ]);
+  assert.deepEqual(
+    trace.map(event => [event.runtimeLabel, event.phase, event.status, event.messageId]),
+    [
+      ['script', 'after_receive.start', 'started', 'm1'],
+      ['script', 'after_receive.finish', 'queued', 'm1'],
+      ['plugin', 'after_receive.start', 'started', 'm1'],
+      ['plugin', 'after_receive.finish', 'queued', 'm1'],
+    ],
+  );
 });
 
 test('dispatchAfterReceiveEffects respects skipScripts and logs async/sync failures', async () => {

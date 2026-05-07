@@ -60,6 +60,7 @@ import {
   registerTurnCheckpointBridgeContract,
   registerUiUtilityBridgeContract,
 } from './app-bridge-contract.js';
+import { ensureDebugTraceTimeline } from './debug-trace-timeline-utils.js';
 import {
   bindAppSessionEntryNavigation,
   registerAppSessionEventListeners,
@@ -113,6 +114,7 @@ import {
 import {
   applyMomentCommentEvents,
   applyMomentSummaryFromRaw,
+  buildMomentLifecycleTraceEvent,
   buildMomentCommentPromptData,
   buildMomentCommentTaskContext,
   buildMomentPrivateChatMessages,
@@ -197,6 +199,7 @@ import {
 } from './chat/moment-ingest-utils.js';
 import {
   buildCancelledAssistantPartial,
+  commitCancelledGenerationPartial,
   createActiveGenerationRecord,
 } from './chat/generation-state-utils.js';
 import { parseGroupSystemOps } from './chat/group-system-ops-utils.js';
@@ -217,10 +220,7 @@ import {
 } from './chat/memory-table-action-utils.js';
 import { createMemoryUpdateRuntime } from './chat/memory-update-runtime.js';
 import {
-  buildMemoryUpdateHistoryTextForSession,
-  buildMemoryUpdatePlanForSession,
-  confirmMemoryEditsWithUi,
-  handleMemoryEditsFromRawWithUi,
+  createMemoryEditUiRuntime,
   resolveMemoryUpdatePlanForSession,
 } from './chat/memory-update-runtime-utils.js';
 import {
@@ -285,8 +285,10 @@ import {
 } from './chat/update-variable-runtime-utils.js';
 import { buildUpdateVariableParser } from './chat/update-variable-parser-utils.js';
 import {
+  buildSendFlowTraceEvent,
   normalizeHandleSendInvocation,
   normalizeHandleSendOptions,
+  resolveRegenerateFromUserIndexPlan,
   resolveSyspromptProtocolFlags,
 } from './chat/send-flow-utils.js';
 import {
@@ -326,6 +328,7 @@ import { ExperiencePackTransfer } from './experience-pack-transfer.js';
 import { GeneralSettingsPanel } from './general-settings-panel.js';
 import {
   loadSessionMemoryActionContext,
+  loadSessionMemoryRollbackSnapshotContext,
   resolveDefaultMemoryTemplateId,
   resolveSessionMemoryTemplateContextSafe,
 } from './session-memory-table-utils.js';
@@ -1641,8 +1644,24 @@ const initApp = async () => {
       mutator(registry);
     } catch {}
   };
+  const recordDebugTraceEvent = (event) => {
+    try {
+      window.appBridge?.debugUiRegistry?.actions?.recordTraceEvent?.(event);
+    } catch {}
+  };
+  const recordSendFlowTraceEvent = (event) => {
+    try {
+      recordDebugTraceEvent(buildSendFlowTraceEvent(event));
+    } catch {}
+  };
+  const recordMomentLifecycleTraceEvent = (event) => {
+    try {
+      recordDebugTraceEvent(buildMomentLifecycleTraceEvent(event));
+    } catch {}
+  };
   try {
     patchDebugUiRegistry((registry) => {
+      const traceTimeline = ensureDebugTraceTimeline(window.appBridge);
       Object.assign(registry, {
         panels: {
           configPanel,
@@ -1677,6 +1696,7 @@ const initApp = async () => {
           momentSummaryStore,
           pluginStore,
           scriptStore,
+          traceTimeline,
         },
         actions: {
           ...(registry.actions || {}),
@@ -1748,15 +1768,42 @@ const initApp = async () => {
     onUserComment: async (momentId, commentText, meta = null) => {
       const id = String(momentId || '').trim();
       const userComment = String(commentText || '').trim();
-      if (!id || !userComment) return;
+      if (!id || !userComment) {
+        recordMomentLifecycleTraceEvent({
+          phase: 'comment.skipped',
+          momentId: id,
+          status: 'skipped',
+          summary: 'moment comment skipped',
+          details: {
+            reason: 'missing-input',
+            hasMomentId: Boolean(id),
+            hasText: Boolean(userComment),
+          },
+        });
+        return;
+      }
 
       if (!window.appBridge.isConfigured()) {
+        recordMomentLifecycleTraceEvent({
+          phase: 'comment.skipped',
+          momentId: id,
+          status: 'skipped',
+          summary: 'moment comment skipped',
+          details: { reason: 'not-configured' },
+        });
         ui.showErrorBanner('未配置 API，请先填写 Base URL / Key / 模型');
         window.toastr?.warning('请先配置 API 信息', '未配置');
         configPanel.show();
         return;
       }
       if (typeof navigator !== 'undefined' && !navigator.onLine) {
+        recordMomentLifecycleTraceEvent({
+          phase: 'comment.skipped',
+          momentId: id,
+          status: 'skipped',
+          summary: 'moment comment skipped',
+          details: { reason: 'offline' },
+        });
         ui.showErrorBanner('当前离线，请连接网络后再试');
         window.toastr?.warning('离线状态，无法发送');
         return;
@@ -1764,6 +1811,13 @@ const initApp = async () => {
 
       const m = momentsStore.get(id);
       if (!m) {
+        recordMomentLifecycleTraceEvent({
+          phase: 'comment.skipped',
+          momentId: id,
+          status: 'skipped',
+          summary: 'moment comment skipped',
+          details: { reason: 'moment-not-found' },
+        });
         window.toastr?.warning?.('未找到该动态');
         return;
       }
@@ -1867,6 +1921,7 @@ const initApp = async () => {
         });
       };
 
+      let momentCommentTraceStarted = false;
       try {
         const config = window.appBridge.config.get();
 
@@ -1879,6 +1934,23 @@ const initApp = async () => {
           promptData,
           isReplyToComment,
           replyTo,
+        });
+        momentCommentTraceStarted = true;
+        recordMomentLifecycleTraceEvent({
+          phase: 'comment.start',
+          sessionId: originSessionId,
+          momentId: id,
+          status: 'started',
+          summary: 'moment comment generation started',
+          details: {
+            authorName,
+            targetSessionId: target?.sessionId || '',
+            targetName: target?.name || '',
+            stream: Boolean(config.stream),
+            isReplyToComment,
+            userCommentId,
+            hasRecentComments: Boolean(recentComments),
+          },
         });
         const { fullRaw, sawMomentReply } = await runMomentCommentGeneration(userComment, ctx, {
           stream: Boolean(config.stream),
@@ -1935,7 +2007,37 @@ const initApp = async () => {
             });
           } catch {}
         }
+        recordMomentLifecycleTraceEvent({
+          phase: 'comment.finish',
+          sessionId: originSessionId,
+          momentId: id,
+          status: sawMomentReply ? 'success' : 'warning',
+          summary: sawMomentReply
+            ? 'moment comment generation finished'
+            : 'moment comment reply not parsed',
+          details: {
+            authorName,
+            stream: Boolean(config.stream),
+            isReplyToComment,
+            userCommentId,
+            sawMomentReply,
+            rawLength: String(fullRaw || '').length,
+          },
+        });
       } catch (err) {
+        recordMomentLifecycleTraceEvent({
+          phase: 'comment.finish',
+          sessionId: originSessionId,
+          momentId: id,
+          status: 'error',
+          summary: err?.message || 'moment comment generation failed',
+          details: {
+            authorName,
+            isReplyToComment,
+            userCommentId,
+            started: momentCommentTraceStarted,
+          },
+        });
         logger.error('动态评论生成失败', err);
         window.toastr?.error?.(err?.message || '动态评论生成失败');
       }
@@ -12205,6 +12307,7 @@ Phase G（Frame 36）：循环衔接
         logger,
       }),
       getChatOriginPage: () => chatOriginPage,
+      recordTraceEvent: recordDebugTraceEvent,
       uiLog,
     });
   };
@@ -12240,6 +12343,7 @@ Phase G（Frame 36）：循环衔接
       uiLog,
       activePage,
       getCurrentSessionId: () => chatStore.getCurrent(),
+      recordTraceEvent: recordDebugTraceEvent,
     });
   };
   patchDebugUiRegistry((registry) => {
@@ -14450,6 +14554,16 @@ Phase G（Frame 36）：循环衔接
   const cancelActiveGeneration = (reason = 'user') => {
     if (!activeGeneration || activeGeneration.cancelled) return false;
     const generation = activeGeneration;
+    recordSendFlowTraceEvent({
+      phase: 'generation.cancel',
+      sessionId: generation.sessionId,
+      status: 'started',
+      summary: 'generation cancel requested',
+      details: {
+        generationId: generation.id,
+        reason,
+      },
+    });
     try {
       generation.cancelled = true;
     } catch {}
@@ -14473,57 +14587,29 @@ Phase G（Frame 36）：循环衔接
     }
     if (reason === 'user') {
       try {
-        const sessionId = String(generation.sessionId || '').trim();
-        const content = String(partial?.content || '').trim();
-        const msgId = String(partial?.id || '').trim();
-        let handledPartial = false;
-        const partialCommitHandler =
-          typeof generation.partialCommitHandler === 'function' ? generation.partialCommitHandler : null;
-        if (sessionId && content && partialCommitHandler) {
-          try {
-            handledPartial = partialCommitHandler(partial) === true;
-          } catch (err) {
-            logger.warn('assistant partial commit failed', err);
-          }
-        }
-        const swipeTarget = generation.swipeTarget && typeof generation.swipeTarget === 'object' ? generation.swipeTarget : null;
-        if (sessionId && content && typeof swipeTarget?.onPartial === 'function') {
-          try {
-            handledPartial = swipeTarget.onPartial(partial) === true;
-          } catch (err) {
-            logger.warn('swipe partial commit failed', err);
-          }
-        }
-        if (sessionId && content && !handledPartial) {
-          const exists = msgId ? Boolean(chatStore.findMessage(msgId, sessionId)) : false;
-          if (!exists) {
-            chatStore.appendMessage(
-              {
-                role: 'assistant',
-                type: 'text',
-                id: msgId || undefined,
-                name: partial?.name || '助手',
-                avatar: partial?.avatar || getAssistantAvatarForSession(sessionId),
-                time: partial?.time || formatNowTime(),
-                content: String(partial?.content || ''),
-                raw: typeof partial?.raw === 'string' ? partial.raw : String(partial?.content || ''),
-                rawOriginal:
-                  typeof partial?.rawOriginal === 'string'
-                    ? partial.rawOriginal
-                    : (typeof partial?.raw === 'string' ? partial.raw : String(partial?.content || '')),
-                meta: {
-                  ...(partial?.meta || {}),
-                  partial: true,
-                  cancelled: true,
-                },
-              },
-              sessionId,
-            );
-            refreshChatAndContacts();
-          }
-        }
+        commitCancelledGenerationPartial({
+          generation,
+          partial,
+          reason,
+          chatStore,
+          logger,
+          getAssistantAvatarForSession,
+          formatNowTime,
+          refreshChatAndContacts,
+        });
       } catch {}
     }
+    recordSendFlowTraceEvent({
+      phase: 'generation.cancel',
+      sessionId: generation.sessionId,
+      status: 'success',
+      summary: 'generation cancel completed',
+      details: {
+        generationId: generation.id,
+        reason,
+        hasPartial: Boolean(String(partial?.content || '').trim()),
+      },
+    });
     try {
       ui.hideTyping?.();
     } catch {}
@@ -14648,6 +14734,7 @@ Phase G（Frame 36）：循环衔接
     shouldCompact: shouldRunSummaryCompaction,
     dispatchUpdated: () => window.dispatchEvent(new CustomEvent('moment-summaries-updated')),
     logger,
+    recordTraceEvent: recordDebugTraceEvent,
     delayMs: 450,
   });
 
@@ -14734,7 +14821,18 @@ Phase G（Frame 36）：循环衔接
     const sessionId = chatStore.getCurrent();
     let outgoingReplyContexts = [];
     let generationId = 0;
+    let sendTraceStarted = false;
+    let sendErrorMessage = '';
     if (activeGeneration && !activeGeneration.cancelled) {
+      recordSendFlowTraceEvent({
+        phase: 'send.blocked',
+        sessionId,
+        status: 'skipped',
+        summary: 'send skipped because generation is active',
+        details: {
+          activeGenerationId: activeGeneration.id,
+        },
+      });
       window.toastr?.warning?.('正在生成中，请稍候...');
       return false;
     }
@@ -14826,6 +14924,7 @@ Phase G（Frame 36）：循环衔接
         pluginRuntime,
         skipScripts,
         logger,
+        recordTraceEvent: recordDebugTraceEvent,
       });
       // 立即刷新列表/浮层，避免发送中仍显示旧的 pending 计数
       refreshChatAndContacts({ immediate: true });
@@ -14880,6 +14979,7 @@ Phase G（Frame 36）：循环衔接
       pluginRuntime,
       skipScripts,
       logger,
+      recordTraceEvent: recordDebugTraceEvent,
     });
     if (variableRuleEngine) {
       variableRuleEngine.handleBeforeSend({ sessionId, content: text, useGlobalVariables: sharedVariables }).catch(err => {
@@ -15106,14 +15206,6 @@ Phase G（Frame 36）：循环衔接
       uiMode,
       filterTables,
     });
-    const confirmMemoryEditsIfNeeded = async actions => confirmMemoryEditsWithUi({
-      actions,
-      settings: appSettings.get(),
-      loadMemoryTemplateContext,
-      rawPlan: window.appBridge?.lastMemoryPlan,
-      appConfirm,
-      toastr: window.toastr,
-    });
     const applyMemoryEdits = async ({ actions, sessionId, isGroup }) => {
       if (!Array.isArray(actions) || actions.length === 0) return null;
       if (!memoryTableStore || !memoryTemplateStore) return null;
@@ -15296,36 +15388,25 @@ Phase G（Frame 36）：循环衔接
       if (!rollback || !Array.isArray(rollback.tables) || !rollback.tables.length) {
         return rollbackLastMemoryUpdateFromActions(sessionId, entry?.actions || []);
       }
-      const templateContext = await loadMemoryTemplateContext({
+      const rollbackContext = await loadSessionMemoryRollbackSnapshotContext({
+        memoryTemplateStore,
+        memoryTableStore,
         sessionId,
         isGroup: String(sessionId || '').startsWith('group:'),
-        filterTables: false,
+        uiMode,
+        rollback,
       });
-      const templateId = String(templateContext?.templateId || '').trim();
+      const templateId = String(rollbackContext?.templateId || '').trim();
       if (!templateId) return false;
       let changed = 0;
-      for (const tableSnap of rollback.tables) {
-        const tableId = String(tableSnap?.table_id || '').trim();
-        const scopeKey = String(tableSnap?.scope || '').trim();
-        if (!tableId || !scopeKey) continue;
-        const scopeFields = buildScopedMemoryRowFields({ scopeKey, sessionId });
-        const currentRows = await loadScopedMemories({
-          memoryTableStore,
-          scopeKey,
-          sessionId,
-          templateId,
-        });
-        const scopedCurrent = (Array.isArray(currentRows) ? currentRows : []).filter(
-          row => String(row?.table_id || '').trim() === tableId,
-        );
-        const snapshotRows = Array.isArray(tableSnap?.rows) ? tableSnap.rows : [];
+      for (const tableContext of rollbackContext.tables) {
         changed += await restoreMemoryRowsFromRollbackSnapshot({
           memoryTableStore,
           templateId,
-          tableId,
-          scopeFields,
-          currentRows: scopedCurrent,
-          snapshotRows,
+          tableId: tableContext.tableId,
+          scopeFields: tableContext.scopeFields,
+          currentRows: tableContext.currentRows,
+          snapshotRows: tableContext.snapshotRows,
         });
       }
       if (changed > 0) {
@@ -15338,37 +15419,31 @@ Phase G（Frame 36）：循环衔接
       }
       return changed > 0;
     };
+    const {
+      confirmMemoryEditsIfNeeded,
+      handleMemoryEditsFromRaw,
+      buildMemoryUpdateHistoryText,
+      buildMemoryUpdatePlan,
+    } = createMemoryEditUiRuntime({
+      appSettings,
+      chatStore,
+      loadMemoryTemplateContext,
+      rawPlan: () => window.appBridge?.lastMemoryPlan,
+      appConfirm,
+      toastr: window.toastr,
+      isMemoryAutoExtractInline,
+      extractTableEditBlocks,
+      appBridge: window.appBridge,
+      buildRequestPrompt: buildRequestPromptTextCore,
+      applyMemoryEdits,
+      logger,
+      stripAssistantText: text => stripTableEditBlocks(text),
+      buildPlan: next => window.appBridge?.buildMemoryPromptPlan?.(next) ?? null,
+      recordTraceEvent: recordDebugTraceEvent,
+    });
     registerMemoryUpdateBridgeContract(window.appBridge, {
       rollbackLastMemoryUpdate,
     });
-    const handleMemoryEditsFromRaw = async (raw, { sessionId, isGroup, force = false, requestPrompt } = {}) =>
-      handleMemoryEditsFromRawWithUi({
-        raw,
-        sessionId,
-        isGroup,
-        force,
-        requestPrompt,
-        isMemoryAutoExtractInline,
-        extractTableEditBlocks,
-        appBridge: window.appBridge,
-        buildRequestPrompt: buildRequestPromptTextCore,
-        confirmMemoryEdits: confirmMemoryEditsIfNeeded,
-        applyMemoryEdits,
-        logger,
-      });
-    const buildMemoryUpdateHistoryText = sessionId => buildMemoryUpdateHistoryTextForSession({
-      sessionId,
-      chatStore,
-      settings: appSettings.get(),
-      stripAssistantText: text => stripTableEditBlocks(text),
-    });
-    const buildMemoryUpdatePlan = async (sessionId, isGroup, baseContext) =>
-      buildMemoryUpdatePlanForSession({
-        sessionId,
-        isGroup,
-        baseContext,
-        buildPlan: next => window.appBridge?.buildMemoryPromptPlan?.(next) ?? null,
-      });
     const memoryUpdateRuntime = createMemoryUpdateRuntime({
       appBridge: window.appBridge,
       appSettings,
@@ -15490,6 +15565,7 @@ Phase G（Frame 36）：循环衔接
         applyUpdateVariable: resolveUpdateVariableApplyFn(applyUpdateVariableFromMessage),
         handleVariableRules: payload => variableRuleEngine?.handleAfterReceive?.(payload),
         useGlobalVariables: isSharedVariableSession(targetSessionId),
+        recordTraceEvent: recordDebugTraceEvent,
       });
     };
     const processProtocolRetryEvent = async (ev, {
@@ -15873,6 +15949,7 @@ Phase G（Frame 36）：循环衔接
           pluginRuntime,
           skipScripts,
           logger,
+          recordTraceEvent: recordDebugTraceEvent,
         });
         appendedUserOutput = true;
       }
@@ -15921,6 +15998,26 @@ Phase G（Frame 36）：循环衔接
     });
     const { protocolEnabled } = protocolFlags;
     disableSummaryForThis = protocolFlags.disableSummaryForThis;
+    sendTraceStarted = true;
+    recordSendFlowTraceEvent({
+      phase: 'send.start',
+      sessionId,
+      status: 'started',
+      summary: 'send flow started',
+      details: {
+        generationId,
+        stream: Boolean(config.stream),
+        protocolEnabled,
+        rpUiMode,
+        isGroupChat,
+        hasAttachments,
+        attachmentCount: attachmentQueue.length,
+        pendingCount: pendingMessagesToConfirm.length,
+        suppressUserMessage,
+        hasContinueTarget: Boolean(continueTarget),
+        hasSwipeTarget: Boolean(swipeTarget),
+      },
+    });
     try {
       if (config.stream) {
         if (rpUiMode) {
@@ -16655,6 +16752,7 @@ Phase G（Frame 36）：循环衔接
         sendSucceeded = true;
       }
     } catch (error) {
+      sendErrorMessage = error?.message ? String(error.message) : String(error || '');
       const generationInterrupted = isGenerationInterrupted(generationId);
       const isCancelled = Boolean(error?.cancelled || generationInterrupted);
       if (!isCancelled) {
@@ -16692,6 +16790,20 @@ Phase G（Frame 36）：循环衔接
       }
       if (activeGeneration?.id === generationId) {
         activeGeneration = null;
+      }
+      if (sendTraceStarted) {
+        recordSendFlowTraceEvent({
+          phase: 'send.finish',
+          sessionId,
+          status: sendSucceeded ? 'success' : (suppressErrorUI ? 'cancelled' : 'error'),
+          summary: sendSucceeded ? 'send flow completed' : 'send flow stopped',
+          details: {
+            generationId,
+            sendSucceeded,
+            cancelled: suppressErrorUI || undefined,
+            errorMessage: sendErrorMessage || undefined,
+          },
+        });
       }
       return sendSucceeded;
     }
@@ -16748,6 +16860,7 @@ Phase G（Frame 36）：循环衔接
           scriptRuntime,
           pluginRuntime,
           logger,
+          recordTraceEvent: recordDebugTraceEvent,
         });
       }
       if (isAssistant) emitPluginAfterReceive(saved, sessionId);
@@ -16861,34 +16974,29 @@ Phase G（Frame 36）：循环衔接
     const isSyntheticUser = m => m?.role === 'user' && m?.meta?.generatedByAssistant === true;
     const regenerateFromUserIndex = async (userIdx, { allowEmpty = false } = {}) => {
       const msgs = chatStore.getMessages(sessionId);
-      const prevUser = msgs[userIdx];
-      if (!prevUser || prevUser.role !== 'user' || isSyntheticUser(prevUser)) return;
-      if (prevUser.status === 'pending' || prevUser.status === 'sending') {
-        window.toastr?.warning('发送中的消息无法重生成');
+      const plan = resolveRegenerateFromUserIndexPlan({
+        messages: msgs,
+        userIdx,
+        allowEmpty,
+        isSyntheticUser,
+      });
+      if (!plan.canRegenerate) {
+        if (plan.warningMessage) window.toastr?.warning(plan.warningMessage);
         return;
       }
-      let nextUserIdx = -1;
-      for (let i = userIdx + 1; i < msgs.length; i++) {
-        if (
-          msgs[i]?.role === 'user' &&
-          !isSyntheticUser(msgs[i]) &&
-          msgs[i]?.status !== 'pending' &&
-          msgs[i]?.status !== 'sending'
-        ) {
-          nextUserIdx = i;
-          break;
-        }
-      }
-      if (nextUserIdx !== -1) {
-        window.toastr?.warning('只能重生成最新一轮回复');
-        return;
-      }
-      const roundMessages = msgs.slice(userIdx + 1, nextUserIdx === -1 ? msgs.length : nextUserIdx);
-      const regenMessages = roundMessages.filter(m => m?.role === 'assistant' || isSyntheticUser(m));
-      if (!regenMessages.length && !allowEmpty) {
-        window.toastr?.warning('未找到可重生成的 AI 回复');
-        return;
-      }
+      const prevUser = plan.prevUser;
+      const regenMessages = plan.regenMessages;
+      recordSendFlowTraceEvent({
+        phase: 'regenerate.start',
+        sessionId,
+        status: 'started',
+        summary: 'regenerate flow started',
+        details: {
+          userIdx,
+          allowEmpty,
+          regenMessageCount: regenMessages.length,
+        },
+      });
       if (regenMessages.length) {
         regenMessages.forEach(m => {
           chatStore.deleteMessage(m.id, sessionId);
@@ -16912,16 +17020,39 @@ Phase G（Frame 36）：循环衔接
       }
       const resendText = getMessageSendText(prevUser, buildStickerToken);
       if (!String(resendText || '').trim()) {
+        recordSendFlowTraceEvent({
+          phase: 'regenerate.finish',
+          sessionId,
+          status: 'skipped',
+          summary: 'regenerate flow skipped',
+          details: {
+            userIdx,
+            allowEmpty,
+            reason: 'empty-user-message',
+          },
+        });
         window.toastr?.warning('未找到对应的用户消息内容');
         return;
       }
-      await handleSend(null, {
+      const resent = await handleSend(null, {
         overrideText: resendText,
         ignorePending: true,
         suppressUserMessage: true,
         skipInputRegex: true,
         existingUserMessageId: prevUser?.id || '',
         includeAttachments: false,
+      });
+      recordSendFlowTraceEvent({
+        phase: 'regenerate.finish',
+        sessionId,
+        status: resent ? 'success' : 'error',
+        summary: resent ? 'regenerate flow completed' : 'regenerate resend failed',
+        details: {
+          userIdx,
+          allowEmpty,
+          regenMessageCount: regenMessages.length,
+          resent: Boolean(resent),
+        },
       });
     };
 

@@ -10,6 +10,7 @@ import {
   createMemoryActionResolvers,
 } from './chat/memory-table-action-utils.js';
 import {
+  buildScopedMemoryRowFields,
   loadScopedMemories,
   resolveSessionMemoryScopeKey,
 } from './chat/memory-table-scope-utils.js';
@@ -197,6 +198,56 @@ export const loadSessionMemoryActionContext = async ({
     rowsById,
     rowsByTableScope,
     ...resolvers,
+  };
+};
+
+export const loadSessionMemoryRollbackSnapshotContext = async ({
+  memoryTemplateStore = null,
+  memoryTableStore = null,
+  sessionId = '',
+  isGroup = false,
+  uiMode = '',
+  rollback = null,
+} = {}) => {
+  const tables = Array.isArray(rollback?.tables) ? rollback.tables : [];
+  if (!tables.length) return null;
+  const templateContext = await resolveSessionMemoryTemplateContextSafe({
+    memoryTemplateStore,
+    sessionId,
+    isGroup,
+    uiMode,
+    filterTables: false,
+  });
+  if (!templateContext?.record) return null;
+  const templateId = String(templateContext.templateId || '').trim();
+  if (!templateId) return null;
+
+  const scopedTables = [];
+  for (const tableSnap of tables) {
+    const tableId = String(tableSnap?.table_id || '').trim();
+    const scopeKey = String(tableSnap?.scope || '').trim();
+    if (!tableId || !scopeKey) continue;
+    const scopeFields = buildScopedMemoryRowFields({ scopeKey, sessionId });
+    const currentRows = await loadScopedMemories({
+      memoryTableStore,
+      scopeKey,
+      sessionId,
+      templateId,
+    });
+    scopedTables.push({
+      tableId,
+      scopeKey,
+      scopeFields,
+      currentRows: (Array.isArray(currentRows) ? currentRows : []).filter(
+        row => String(row?.table_id || '').trim() === tableId,
+      ),
+      snapshotRows: Array.isArray(tableSnap?.rows) ? tableSnap.rows : [],
+    });
+  }
+
+  return {
+    templateId,
+    tables: scopedTables,
   };
 };
 

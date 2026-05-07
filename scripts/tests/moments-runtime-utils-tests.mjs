@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   applyMomentCommentEvents,
   applyMomentSummaryFromRaw,
+  buildMomentLifecycleTraceEvent,
   buildMomentCommentContactList,
   buildMomentCommentPromptData,
   buildMomentCommentTaskContext,
@@ -20,6 +21,28 @@ import {
   runMomentReplyRetry,
   sanitizeThinkingForMomentReply,
 } from '../../src/scripts/ui/chat/moments-runtime-utils.js';
+
+{
+  const event = buildMomentLifecycleTraceEvent({
+    phase: ' comment.start ',
+    sessionId: ' contact:1 ',
+    momentId: ' m1 ',
+    status: ' started ',
+    summary: ' started ',
+    details: { kept: true, dropped: undefined },
+  });
+  assert.deepEqual(event, {
+    category: 'moments',
+    source: 'moments-runtime',
+    phase: 'comment.start',
+    sessionId: 'contact:1',
+    momentId: 'm1',
+    status: 'started',
+    summary: 'started',
+    details: { kept: true },
+  });
+  console.log('ok - buildMomentLifecycleTraceEvent normalizes lifecycle metadata and drops undefined details');
+}
 
 {
   const target = resolveMomentReplyTarget({
@@ -333,6 +356,7 @@ import {
 
 {
   const events = [];
+  const trace = [];
   const store = {
     summaries: [{ text: '旧1', at: 1 }, { text: '旧2', at: 2 }, { text: '新3', at: 3 }],
     raw: '',
@@ -358,6 +382,7 @@ import {
     normalizeItems: (items) => items,
     shouldCompact: ({ items }) => items.length >= 3,
     dispatchUpdated: () => events.push({ updated: true }),
+    recordTraceEvent: event => trace.push(event),
     setTimeoutFn: (fn) => { Promise.resolve().then(fn); return 1; },
     delayMs: 0,
   });
@@ -369,6 +394,13 @@ import {
   assert.equal(events[0].compactedText, '已有大总结');
   assert.deepEqual(events[0].context, { sessionId: 'moment_summary_global', characterName: '动态' });
   assert.deepEqual(events[1], { updated: true });
+  assert.deepEqual(
+    trace.map(event => [event.phase, event.status, event.details.itemCount]),
+    [
+      ['summary.compaction.start', 'started', 3],
+      ['summary.compaction.finish', 'success', 3],
+    ],
+  );
   console.log('ok - createMomentSummaryCompactionRuntime compacts summaries and keeps recent snapshots');
 }
 
