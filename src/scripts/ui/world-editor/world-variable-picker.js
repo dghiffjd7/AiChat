@@ -1,95 +1,25 @@
-const VARIABLE_BROWSER_EDITABLE_TYPES = new Set(['number', 'string', 'boolean']);
-const VARIABLE_BROWSER_DISPLAY_TYPES = new Set(['number', 'string', 'boolean', 'enum', 'array', 'object']);
+import {
+    buildWorldVariableRecords,
+    createWorldVariableInStore,
+    deleteWorldVariableDraft,
+    isWorldVariableEditableType,
+    normalizeWorldVariableType,
+    resolveWorldVariableSessionContext,
+    saveWorldVariableDraft,
+} from './world-variable-session-utils.js';
+
 const WORLD_CONDITION_VARIABLE_HINT = '世界书条件当前只支持数字、文本、布尔；若要与另一个变量比较，请在节点模式把变量节点连到比较节点右侧。';
 const WORLD_CONDITION_COMPLEX_HINT = '复杂类型变量当前仅支持查看，不能直接用于世界书条件；请到变量面板编辑。';
 
-const normalizeVariableBrowserType = (rawType = '', value = undefined) => {
-    const typeText = String(rawType || '').trim().toLowerCase();
-    if (VARIABLE_BROWSER_DISPLAY_TYPES.has(typeText)) return typeText;
-    if (Array.isArray(value)) return 'array';
-    if (value && typeof value === 'object') return 'object';
-    if (typeof value === 'number') return 'number';
-    if (typeof value === 'boolean') return 'boolean';
-    return 'string';
-};
-
-const isVariableBrowserEditableType = (type = 'string') => VARIABLE_BROWSER_EDITABLE_TYPES.has(String(type || '').trim().toLowerCase());
-
 export function getSessionVariableRecordsImpl(options = {}) {
     const opts = typeof options === 'string' ? { searchTerm: options } : (options && typeof options === 'object' ? options : {});
-    const searchTerm = String(opts.searchTerm || '');
-    const scope = String(opts.scope || 'current').trim().toLowerCase();
-    const bridge = window.appBridge;
-    const chatStore = bridge?.chatStore;
-    const sid = String(chatStore?.getCurrent?.() || bridge?.activeSessionId || '').trim();
-    if (!chatStore || !sid) return [];
-    const useGlobal = Boolean(typeof bridge?.isSharedVariableSession === 'function' && bridge.isSharedVariableSession(sid));
-    const localVars = chatStore?.listVariables?.(sid) || {};
-    const globalVars = chatStore?.listGlobalVariables?.() || {};
-    const initialVars = chatStore?.listInitialVariables?.(sid) || {};
-    const schemas = chatStore?.listVariableSchemas?.(sid) || {};
-    const query = String(searchTerm || '').trim().toLowerCase();
     const recentIds = Array.isArray(this.variableBrowserState?.recentIds) ? this.variableBrowserState.recentIds : [];
-    const getRecentIndex = (item) => {
-        const idIndex = recentIds.indexOf(item.id);
-        if (idIndex >= 0) return idIndex;
-        return recentIds.indexOf(item.name);
-    };
-    const isRecentRecord = (item) => getRecentIndex(item) >= 0;
-    const buildRecords = (sourceName, sourceVars = {}, { schemasMap = {}, includeInitial = false, includeSchemaKeys = true } = {}) => {
-        const keys = new Set([
-            ...Object.keys(sourceVars || {}),
-            ...(includeSchemaKeys ? Object.keys(schemasMap || {}) : []),
-            ...(includeInitial ? Object.keys(initialVars || {}) : []),
-        ].map(key => String(key || '').trim()).filter(Boolean));
-        return [...keys].map((key) => {
-            const schema = schemasMap[key] || null;
-            const type = normalizeVariableBrowserType(schema?.type, sourceVars[key]);
-            return {
-                id: `${sourceName}:${key}`,
-                name: key,
-                type,
-                source: sourceName,
-                currentValue: sourceVars[key],
-                defaultValue: schema?.default,
-                initialValue: includeInitial ? initialVars[key] : undefined,
-                schema,
-            };
-        });
-    };
-    const sessionRecords = buildRecords('session', localVars, { schemasMap: schemas, includeInitial: true, includeSchemaKeys: true });
-    const globalRecords = buildRecords('global', globalVars, { schemasMap: {}, includeInitial: false, includeSchemaKeys: false });
-    let records = [];
-    if (scope === 'global') records = globalRecords;
-    else if (scope === 'session') records = sessionRecords;
-    else if (scope === 'recent') records = [...sessionRecords, ...globalRecords].filter(isRecentRecord);
-    else records = useGlobal ? globalRecords : sessionRecords;
-    records = records.filter((item) => {
-        if (!query) return true;
-        const haystack = [
-            item.name,
-            item.type,
-            item.source === 'global' ? '全局' : '会话',
-        ].join(' ').toLowerCase();
-        return haystack.includes(query);
-    });
-    records.sort((a, b) => {
-        const recentDelta = getRecentIndex(a) - getRecentIndex(b);
-        const aRecent = isRecentRecord(a);
-        const bRecent = isRecentRecord(b);
-        if (aRecent && bRecent && recentDelta !== 0) return recentDelta;
-        if (aRecent !== bRecent) return aRecent ? -1 : 1;
-        const nameDelta = a.name.localeCompare(b.name, 'zh-CN');
-        if (nameDelta !== 0) return nameDelta;
-        return a.source.localeCompare(b.source, 'zh-CN');
-    });
-    return records.map((item) => {
-        const schema = item.schema || null;
-        const type = normalizeVariableBrowserType(item.type || schema?.type || 'string', item.currentValue);
-        return {
-            ...item,
-            type,
-        };
+    const session = resolveWorldVariableSessionContext();
+    return buildWorldVariableRecords({
+        ...session,
+        searchTerm: opts.searchTerm,
+        scope: opts.scope,
+        recentIds,
     });
 }
 
@@ -118,17 +48,8 @@ export function deleteVariableBrowserDraftImpl(deps = {}) {
     const { saveRecentVariableNames } = deps;
     const draft = this.variableBrowserState.draft;
     if (!draft?.name) return false;
-    const bridge = window.appBridge;
-    const chatStore = bridge?.chatStore;
-    const sid = String(chatStore?.getCurrent?.() || bridge?.activeSessionId || '').trim();
-    if (!chatStore || !sid) return false;
-    if (draft.source === 'global') {
-        chatStore.deleteGlobalVariable?.(draft.name);
-    } else {
-        chatStore.deleteVariable?.(draft.name, sid);
-        chatStore.deleteInitialVariable?.(draft.name, sid);
-        chatStore.deleteVariableSchema?.(draft.name, sid);
-    }
+    const session = resolveWorldVariableSessionContext();
+    if (!deleteWorldVariableDraft({ ...session, draft })) return false;
     const nextRecent = (Array.isArray(this.variableBrowserState?.recentIds) ? this.variableBrowserState.recentIds : [])
         .filter(entry => entry !== draft.id && entry !== draft.name);
     this.variableBrowserState.recentIds = nextRecent;
@@ -157,8 +78,8 @@ export function formatVariableBrowserValueImpl(value, type = 'string') {
 
 export function buildVariableBrowserDraftImpl(record = null) {
     const item = record && typeof record === 'object' ? record : {};
-    const type = normalizeVariableBrowserType(item.type || item.schema?.type || 'string', item.currentValue);
-    const isEditableType = isVariableBrowserEditableType(type);
+    const type = normalizeWorldVariableType(item.type || item.schema?.type || 'string', item.currentValue);
+    const isEditableType = isWorldVariableEditableType(type);
     const isGlobal = item.source === 'global';
     return {
         id: String(item.id || `${item.source || 'session'}:${item.name || ''}`).trim(),
@@ -181,7 +102,7 @@ export function buildVariableBrowserSelectionPayloadImpl(draft = null, deps = {}
     const { parseTypedValue } = deps;
     const name = String(draft?.name || '').trim();
     if (!name || !draft?.canUseInWorldEditor) return null;
-    const type = isVariableBrowserEditableType(draft?.type)
+    const type = isWorldVariableEditableType(draft?.type)
         ? String(draft.type).trim().toLowerCase()
         : 'string';
     const rawDefault = Object.prototype.hasOwnProperty.call(draft || {}, 'defaultValueRaw')
@@ -307,18 +228,11 @@ export function createVariableBrowserModalImpl(deps = {}) {
             const targetSource = ['global', 'session'].includes(String(this.variableBrowserState.scope || '').trim())
                 ? String(this.variableBrowserState.scope).trim()
                 : null;
-            const bridge = window.appBridge;
-            const chatStore = bridge?.chatStore;
-            const sid = String(chatStore?.getCurrent?.() || bridge?.activeSessionId || '').trim();
+            const session = resolveWorldVariableSessionContext();
+            if (!createWorldVariableInStore({ ...session, payload, source: targetSource })) return;
             const key = String(payload.name || '').trim();
-            if (!key || !chatStore || !sid) return;
-            if (targetSource === 'global') {
-                chatStore.setGlobalVariable?.(key, payload.defaultValue);
-            } else {
-                this.ensureVariableInStore(key, payload.type, payload.defaultValue, { source: targetSource });
-            }
             const nextSource = targetSource || this.getSessionVariableRecords({ scope: 'current' }).find(item => item.name === key)?.source || 'session';
-            this.variableBrowserState.selectedId = `${nextSource}:${String(payload.name || '').trim()}`;
+            this.variableBrowserState.selectedId = `${nextSource}:${key}`;
             this.renderVariableBrowser();
         });
     });
@@ -479,30 +393,20 @@ export function saveVariableBrowserDraftImpl(deps = {}) {
     const { parseTypedValue } = deps;
     const draft = this.variableBrowserState.draft;
     if (!draft?.name) return false;
-    const bridge = window.appBridge;
-    const chatStore = bridge?.chatStore;
-    const sid = String(chatStore?.getCurrent?.() || bridge?.activeSessionId || '').trim();
-    if (!chatStore || !sid) return false;
-    if (!isVariableBrowserEditableType(draft.type)) {
+    if (!isWorldVariableEditableType(draft.type)) {
         window.toastr?.warning?.('复杂类型变量当前仅支持查看，请到变量面板中编辑。');
         return false;
     }
-    draft.currentValueText = String(this.variableBrowserCurrentEl?.value || '');
-    draft.defaultValueText = String(this.variableBrowserDefaultEl?.value || '');
-    draft.initialValueText = String(this.variableBrowserInitialEl?.value || '');
-    const type = ['number', 'string', 'boolean'].includes(String(draft.type || '').trim().toLowerCase())
-        ? String(draft.type).trim().toLowerCase()
-        : 'string';
-    const defaultValue = parseTypedValue(draft.defaultValueText, type);
-    const currentValue = parseTypedValue(draft.currentValueText, type);
-    const initialValue = parseTypedValue(draft.initialValueText, type);
-    if (draft.source === 'global') {
-        chatStore.setGlobalVariable?.(draft.name, currentValue);
-    } else {
-        chatStore.setVariableSchema?.(draft.name, { type, default: defaultValue }, sid);
-        chatStore.setVariable?.(draft.name, currentValue, sid);
-        chatStore.setInitialVariable?.(draft.name, initialValue, sid);
-    }
+    const session = resolveWorldVariableSessionContext();
+    const saved = saveWorldVariableDraft({
+        ...session,
+        draft,
+        currentValueText: String(this.variableBrowserCurrentEl?.value || ''),
+        defaultValueText: String(this.variableBrowserDefaultEl?.value || ''),
+        initialValueText: String(this.variableBrowserInitialEl?.value || ''),
+        parseTypedValue,
+    });
+    if (!saved) return false;
     this.renderVariableBrowser();
     window.toastr?.success?.('变量已更新');
     return true;

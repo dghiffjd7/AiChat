@@ -2,6 +2,7 @@ import {
   buildMemoryUpdateRequest,
   resolveMemoryUpdateTrigger,
 } from './memory-update-runtime-utils.js';
+import { loadBridgeConfig } from '../config-runtime-utils.js';
 
 export const createMemoryUpdateRuntime = ({
   appBridge,
@@ -26,8 +27,7 @@ export const createMemoryUpdateRuntime = ({
     const settings = appSettings.get();
     const mode = String(settings.memoryUpdateApiMode || 'chat').toLowerCase();
     if (mode !== 'profile') {
-      await appBridge.config.load();
-      return appBridge.config.get();
+      return loadBridgeConfig(appBridge);
     }
     await memoryUpdateConfigManager.load();
     const profileId = String(settings.memoryUpdateProfileId || memoryUpdateConfigManager.getActiveProfileId() || '');

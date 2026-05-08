@@ -33,9 +33,10 @@ const ensureTableConfigDefaults = (table) => {
 };
 
 export class MemoryTemplatePanel {
-  constructor({ templateStore, memoryStore } = {}) {
+  constructor({ templateStore, memoryStore, contactsStore = null } = {}) {
     this.templateStore = templateStore || null;
     this.memoryStore = memoryStore || null;
+    this.contactsStore = contactsStore || null;
     this.overlay = null;
     this.panel = null;
     this.fileInput = null;
@@ -219,6 +220,7 @@ export class MemoryTemplatePanel {
         getContext: () => ({ type: 'global' }),
         memoryStore: this.memoryStore,
         templateStore: this.templateStore,
+        contactsStore: this.contactsStore,
         includeGlobal: true,
       });
     }
@@ -756,7 +758,7 @@ export class MemoryTemplatePanel {
   }
 
   getContactsStore() {
-    return window.appBridge?.contactsStore || null;
+    return this.contactsStore || null;
   }
 
   getFriendOptions() {

@@ -4,8 +4,12 @@ import {
   extractMemoryTimelineRound,
   isTimelineMemoryTableId,
 } from '../../memory/memory-row-order.js';
-import { isSummaryTableId } from '../../memory/memory-prompt-utils.js';
-import { normalizeMemoryCellValue, rowDataEquals } from './memory-edit-utils.js';
+import { isSummaryTableId, normalizeMemoryUpdateMode } from '../../memory/memory-prompt-utils.js';
+import {
+  normalizeMemoryCellValue,
+  normalizeTableRowData,
+  rowDataEquals,
+} from './memory-edit-utils.js';
 
 export const resolveMemoryActionTableId = ({
   action = null,
@@ -556,6 +560,113 @@ export const executeMemoryActionMutationPlan = async ({
   }
 
   return { inserted: 0, updated: 0, deleted: 0, skipped: 1 };
+};
+
+export const resolveMemoryActionBatchPermissions = (updateMode = 'full') => {
+  const normalizedUpdateMode = normalizeMemoryUpdateMode(updateMode, 'full');
+  return {
+    updateMode: normalizedUpdateMode,
+    allowSummaryTables: normalizedUpdateMode === 'summary' || normalizedUpdateMode === 'full',
+    allowStandardTables: normalizedUpdateMode === 'standard' || normalizedUpdateMode === 'full',
+  };
+};
+
+export const executeMemoryActionBatchMutation = async ({
+  actions = [],
+  actionContext = null,
+  updateMode = 'full',
+  memoryTableStore = null,
+  createMemories = async () => 0,
+  currentTurnNumber = 0,
+  isGroup = false,
+} = {}) => {
+  const list = Array.isArray(actions) ? actions : [];
+  const createInputs = [];
+  const totals = { inserted: 0, updated: 0, deleted: 0, skipped: 0 };
+  const permissions = resolveMemoryActionBatchPermissions(updateMode);
+  const templateId = String(actionContext?.templateId || '').trim();
+  const {
+    tableById,
+    rowsById,
+    rowsByTableScope,
+    resolveActionContext,
+    resolveRowId,
+    resolveRowIdByData,
+    resolveScopeForTable,
+    resolveTableId,
+  } = actionContext || {};
+
+  if (!templateId || typeof resolveActionContext !== 'function') {
+    return {
+      ...totals,
+      skipped: list.length,
+      changed: 0,
+      templateId,
+      createInputs,
+      rollbackSnapshot: null,
+      ...permissions,
+    };
+  }
+
+  const rollbackSnapshot = buildMemoryRollbackSnapshot({
+    actions: list,
+    templateId,
+    resolveTableId,
+    tableById,
+    resolveScopeForTable,
+    rowsByTableScope,
+    allowSummaryTables: permissions.allowSummaryTables,
+    allowStandardTables: permissions.allowStandardTables,
+    isGroup,
+  });
+
+  for (const action of list) {
+    const context = resolveActionContext({
+      action,
+      allowSummaryTables: permissions.allowSummaryTables,
+      allowStandardTables: permissions.allowStandardTables,
+    });
+    if (!context) {
+      totals.skipped += 1;
+      continue;
+    }
+    const data = normalizeTableRowData(action?.data, context.table?.columns || []);
+    const plan = resolveMemoryActionMutationPlan({
+      action,
+      actionContext: context,
+      data,
+      rowsByTableScope,
+      resolveRowId,
+      resolveRowIdByData,
+      rowsById,
+    });
+    const result = await executeMemoryActionMutationPlan({
+      plan,
+      memoryTableStore,
+      createInputs,
+      rowsById,
+      rowsByTableScope,
+      templateId,
+      currentTurnNumber,
+    });
+    totals.updated += Number(result?.updated || 0);
+    totals.deleted += Number(result?.deleted || 0);
+    totals.skipped += Number(result?.skipped || 0);
+  }
+
+  if (createInputs.length && typeof createMemories === 'function') {
+    const created = await createMemories(createInputs);
+    totals.inserted = Number.isFinite(Number(created)) ? Number(created) : 0;
+  }
+
+  return {
+    ...totals,
+    changed: totals.inserted + totals.updated + totals.deleted,
+    templateId,
+    createInputs,
+    rollbackSnapshot,
+    ...permissions,
+  };
 };
 
 export const deleteNewestMatchingMemoryRow = async ({

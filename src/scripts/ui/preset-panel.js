@@ -15,6 +15,19 @@ import { pickSavePath as pickNativeSavePath } from '../utils/save-dialog.js';
 import { safeInvoke } from '../utils/tauri.js';
 import { appConfirm, appChoice } from './app-confirm.js';
 import { buildScriptAuthorizationMessage } from './script-authorization-utils.js';
+import {
+    getActiveConfigProfile,
+    getActiveConfigProfileId,
+    getBridgeConfig,
+    getConfigProfileById,
+    syncChatRuntimeConfigToBridge,
+} from './config-runtime-utils.js';
+import {
+    listRegexLocalSets,
+    removeRegexLocalSet,
+    upsertRegexLocalSet,
+    waitForRegexStoreReady,
+} from './regex-store-runtime-utils.js';
 
 /* Section definitions — order matters for rendering */
 const SECTIONS = [
@@ -747,11 +760,11 @@ export class PresetPanel {
     }
 
     getBoundProfileForPreset(preset) {
-        const cm = window.appBridge?.config;
-        if (!cm) return null;
+        const bridge = window.appBridge;
+        if (!bridge) return null;
         const boundId = String(preset?.boundProfileId || '').trim();
-        if (boundId) return cm.getProfileById?.(boundId) || null;
-        return cm.getActiveProfile?.() || cm.get?.() || null;
+        if (boundId) return getConfigProfileById(bridge, boundId) || null;
+        return getActiveConfigProfile(bridge) || getBridgeConfig(bridge) || null;
     }
 
     getReasoningCapabilityForPreset(preset) {
@@ -1008,16 +1021,20 @@ export class PresetPanel {
         const modeProfileId = this.store.getModeProfileId?.('openai', modeForProfile) || null;
         const boundId = sessionProfileId || modeProfileId || preset?.boundProfileId;
         if (!boundId) return;
-        const cm = window.appBridge?.config;
-        if (!cm?.setActiveProfile) return;
-        const currentId = cm.getActiveProfileId?.();
+        const bridge = window.appBridge;
+        if (!bridge?.setActiveConfigProfile) return;
+        const currentId = bridge.getActiveConfigProfileId?.();
         if (currentId && currentId === boundId) return;
         try {
-            const runtime = await cm.setActiveProfile(boundId);
-            const cfg = runtime || cm.get?.();
-            if (window.appBridge) {
-                window.appBridge.config.set(cfg);
-                window.appBridge.client = canInitClient(cfg) ? new LLMClient(cfg) : null;
+            const runtime = await bridge.setActiveConfigProfile(boundId);
+            const cfg = runtime || bridge.getConfig?.() || {};
+            if (bridge) {
+                syncChatRuntimeConfigToBridge({
+                    bridge,
+                    runtime: cfg,
+                    canInitClient,
+                    createClient: config => new LLMClient(config),
+                });
             }
             window.dispatchEvent(new CustomEvent('preset-bound-config-applied', { detail: { profileId: boundId } }));
         } catch (err) {
@@ -2856,7 +2873,7 @@ export class PresetPanel {
             current.memory_data_depth = getInt(root.querySelector('#gen-memory-data-depth')?.value, current.memory_data_depth ?? 0);
             current.memory_guide_position = String(root.querySelector('#gen-memory-guide-position')?.value || '').trim().toLowerCase();
             current.memory_guide_depth = getInt(root.querySelector('#gen-memory-guide-depth')?.value, current.memory_guide_depth ?? 0);
-            current.boundProfileId = window.appBridge?.config?.getActiveProfileId?.() || current.boundProfileId || null;
+            current.boundProfileId = getActiveConfigProfileId(window.appBridge) || current.boundProfileId || null;
             return current;
         }
 
@@ -2899,7 +2916,7 @@ export class PresetPanel {
             current.prompts = Array.from(promptById.values());
             if (!Array.isArray(current.prompt_order)) current.prompt_order = [];
             current.prompt_order = [{ character_id: 100001, order }];
-            current.boundProfileId = window.appBridge?.config?.getActiveProfileId?.() || current.boundProfileId || null;
+            current.boundProfileId = getActiveConfigProfileId(window.appBridge) || current.boundProfileId || null;
             return current;
         }
 
@@ -2991,8 +3008,8 @@ export class PresetPanel {
         this.captureDraftsFromDOM();
 
         try {
-            await window.appBridge?.regex?.ready;
-            const sets = window.appBridge?.regex?.listLocalSets?.() || [];
+            await waitForRegexStoreReady(window.appBridge);
+            const sets = listRegexLocalSets(window.appBridge);
             const bound = sets.filter(s =>
                 s?.bind?.type === 'preset' &&
                 String(s.bind.presetType || '') === String(storeType) &&
@@ -3007,7 +3024,7 @@ export class PresetPanel {
                 if (delRegex) {
                     for (const s of bound) {
                         const sid = String(s?.id || '').trim();
-                        if (sid) await window.appBridge.regex.removeLocalSet(sid);
+                        if (sid) await removeRegexLocalSet(window.appBridge, sid);
                     }
                     window.dispatchEvent(new CustomEvent('regex-changed'));
                 }
@@ -3169,7 +3186,7 @@ export class PresetPanel {
     getExistingLocalRuleSigs() {
         const sigs = new Set();
         try {
-            const sets = window.appBridge?.regex?.listLocalSets?.() || [];
+            const sets = listRegexLocalSets(window.appBridge);
             sets.forEach(s => { (Array.isArray(s?.rules) ? s.rules : []).forEach(r => { sigs.add(this.getRuleSignature(r)); }); });
         } catch {}
         return sigs;
@@ -3249,8 +3266,8 @@ export class PresetPanel {
             const payload = { ...(preset || {}) };
 
             try {
-                await window.appBridge?.regex?.ready;
-                const sets = window.appBridge?.regex?.listLocalSets?.() || [];
+                await waitForRegexStoreReady(window.appBridge);
+                const sets = listRegexLocalSets(window.appBridge);
                 const bindId = this.store.getActiveId(type);
                 if (type && bindId) {
                     const bound = sets
@@ -3376,7 +3393,7 @@ export class PresetPanel {
                     confirmText: '一并导入', cancelText: '仅导入预设',
                 });
                 if (ok) {
-                    await window.appBridge?.regex?.ready;
+                    await waitForRegexStoreReady(window.appBridge);
                     const existingSigs = this.getExistingLocalRuleSigs();
                     for (const s of boundSets) {
                         const rulesRaw = Array.isArray(s?.rules) ? s.rules : [];
@@ -3389,7 +3406,7 @@ export class PresetPanel {
                         }
                         if (!rules.length) continue;
                         const setName = String(s?.name || '正则').trim() || '正则';
-                        await window.appBridge.regex.upsertLocalSet({
+                        await upsertRegexLocalSet(window.appBridge, {
                             name: `${setName} (${name})`, enabled: s?.enabled !== false,
                             bind: { type: 'preset', presetType: importType, presetId }, rules,
                         });

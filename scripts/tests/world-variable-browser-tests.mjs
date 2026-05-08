@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { parseTypedValue } from '../../src/scripts/variables/world-condition-core.js';
+import { buildVariableContext, parseTypedValue } from '../../src/scripts/variables/world-condition-core.js';
 import {
   buildVariableBrowserDraftImpl,
   buildVariableBrowserSelectionPayloadImpl,
@@ -7,22 +7,35 @@ import {
   getSessionVariableRecordsImpl,
   saveVariableBrowserDraftImpl,
 } from '../../src/scripts/ui/world-editor/world-variable-picker.js';
+import {
+  buildWorldConditionVariableRuntimeContext,
+  ensureWorldVariableInStore,
+  getWorldVariableOptions,
+  resolveWorldVariableSessionContext,
+} from '../../src/scripts/ui/world-editor/world-variable-session-utils.js';
 
 const tests = [];
 const test = (name, fn) => tests.push({ name, fn });
 
 const createWindowMock = (chatStore, extras = {}) => {
+  const {
+    appBridge: appBridgeExtras = {},
+    toastr: toastrExtras = {},
+    ...windowExtras
+  } = extras || {};
   globalThis.window = {
     appBridge: {
       chatStore,
-      activeSessionId: 'sess-1',
+      getActiveSessionId: () => 'sess-1',
       isSharedVariableSession: () => false,
+      ...appBridgeExtras,
     },
     toastr: {
       warning: () => {},
       success: () => {},
+      ...toastrExtras,
     },
-    ...extras,
+    ...windowExtras,
   };
 };
 
@@ -160,6 +173,68 @@ test('deleting a global draft does not delete session schema', () => {
   const deleted = deleteVariableBrowserDraftImpl.call(context, { saveRecentVariableNames: () => {} });
   assert.equal(deleted, true);
   assert.deepEqual(calls, [['global', 'sharedCount']]);
+});
+
+test('world variable options use shared globals while still including session schemas', () => {
+  const chatStore = {
+    getCurrent: () => 'sess-1',
+    listVariables: () => ({ localOnly: 1 }),
+    listGlobalVariables: () => ({ sharedFlag: true }),
+    listVariableSchemas: () => ({ schemaOnly: { type: 'number', default: 0 } }),
+  };
+  createWindowMock(chatStore, {
+    appBridge: {
+      isSharedVariableSession: () => true,
+    },
+  });
+  const options = getWorldVariableOptions(resolveWorldVariableSessionContext());
+  assert.deepEqual(options.map(item => item.value), ['schemaOnly', 'sharedFlag']);
+});
+
+test('ensure world variable store writes schema and preserves existing shared global value', () => {
+  const calls = [];
+  const chatStore = {
+    getCurrent: () => 'sess-1',
+    setVariableSchema: (name, schema, sid) => calls.push(['schema', name, schema, sid]),
+    getGlobalVariable: () => 7,
+    setGlobalVariable: (name, value) => calls.push(['global', name, value]),
+    getVariable: () => undefined,
+    setVariable: (name, value, sid) => calls.push(['session', name, value, sid]),
+    getInitialVariable: () => undefined,
+    setInitialVariable: (name, value, sid) => calls.push(['initial', name, value, sid]),
+  };
+  createWindowMock(chatStore, {
+    appBridge: {
+      isSharedVariableSession: () => true,
+    },
+  });
+  const saved = ensureWorldVariableInStore({
+    ...resolveWorldVariableSessionContext(),
+    name: 'score',
+    type: 'number',
+    defaultValue: 0,
+  });
+  assert.equal(saved, true);
+  assert.deepEqual(calls, [['schema', 'score', { type: 'number', default: 0 }, 'sess-1']]);
+});
+
+test('shared variable runtime context keeps local variables inspectable', () => {
+  const chatStore = {
+    getCurrent: () => 'sess-1',
+    listVariables: () => ({ localOnly: 2 }),
+    listGlobalVariables: () => ({ sharedScore: 9 }),
+  };
+  createWindowMock(chatStore, {
+    appBridge: {
+      isSharedVariableSession: () => true,
+    },
+  });
+  const runtimeContext = buildWorldConditionVariableRuntimeContext({
+    ...resolveWorldVariableSessionContext(),
+    buildVariableContext,
+  });
+  assert.equal(runtimeContext.resolvePathValue('sharedScore'), 9);
+  assert.deepEqual(runtimeContext.variableContext.local_variables, { localOnly: 2 });
 });
 
 let failed = 0;

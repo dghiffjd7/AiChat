@@ -97,7 +97,8 @@ export const createMessageHeaderUiRuntime = ({
       if (String(getUiMode?.() || '').trim() !== 'rp') return null;
       const bridge = getBridge?.();
       if (!bridge?.getRpGreetingState || !bridge?.setRpGreeting) return null;
-      const state = bridge.getRpGreetingState(bridge.activeSessionId || message?.sessionId);
+      const activeSessionId = bridge.getActiveSessionId?.();
+      const state = bridge.getRpGreetingState(activeSessionId || message?.sessionId);
       const list = Array.isArray(state?.greetings) ? state.greetings : [];
       if (list.length <= 1) return null;
 
@@ -120,7 +121,7 @@ export const createMessageHeaderUiRuntime = ({
       select.addEventListener('change', () => {
         const nextId = String(select.value || '').trim();
         if (!nextId) return;
-        bridge.setRpGreeting?.(nextId, state?.sessionId || bridge.activeSessionId);
+        bridge.setRpGreeting?.(nextId, state?.sessionId || activeSessionId);
       });
       wrap.appendChild(label);
       const selectWrap = createCustomSelectWrapper?.(select, {

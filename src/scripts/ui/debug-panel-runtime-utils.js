@@ -1,10 +1,17 @@
 import {
+  buildBridgeContractDiagnosticsMeta,
   buildCustomBundleDiagnosticsMeta,
+  buildDebugTraceTimelineDiagnosticsMeta,
   buildDebugTextFilename,
+  buildStorageMigrationDiagnosticsMeta,
   collectErrorLogs,
+  formatBridgeContractDiagnostics,
   formatCustomBundleDiagnostics,
+  formatDebugTraceTimelineDiagnostics,
   formatErrorLogs,
+  formatStorageMigrationDiagnostics,
 } from './debug-panel-utils.js';
+import { buildStorageMigrationChecklist } from '../storage/storage-migration-contracts.js';
 import { formatVisibleDebugLogsText } from './debug-panel-log-utils.js';
 
 export const createDebugViewerTextBindings = ({
@@ -69,6 +76,91 @@ export const handleCustomBundleDiagnosticsLoadError = ({
   setMeta?.(`加载失败: ${normalized}`);
   setText?.(`资料包导入诊断加载失败\n\n${normalized}`);
   logWarn?.(`资料包导入诊断加载失败: ${normalized}`);
+  return normalized;
+};
+
+export const refreshStorageMigrationDiagnosticsView = ({
+  checklist = null,
+  buildChecklist = buildStorageMigrationChecklist,
+  setMeta = () => {},
+  setText = () => {},
+} = {}) => {
+  const list = Array.isArray(checklist) ? checklist : buildChecklist?.() || [];
+  const meta = buildStorageMigrationDiagnosticsMeta(list);
+  const text = formatStorageMigrationDiagnostics(list);
+  setMeta?.(meta);
+  setText?.(text);
+  return { meta, text, count: list.length };
+};
+
+export const handleStorageMigrationDiagnosticsLoadError = ({
+  error = null,
+  setMeta = () => {},
+  setText = () => {},
+  logWarn = () => {},
+} = {}) => {
+  const message = error?.message ? String(error.message) : String(error || '');
+  const normalized = message || 'unknown error';
+  setMeta?.(`加载失败: ${normalized}`);
+  setText?.(`存储迁移检查表加载失败\n\n${normalized}`);
+  logWarn?.(`存储迁移检查表加载失败: ${normalized}`);
+  return normalized;
+};
+
+export const refreshBridgeContractDiagnosticsView = ({
+  registry = null,
+  setMeta = () => {},
+  setText = () => {},
+} = {}) => {
+  const meta = buildBridgeContractDiagnosticsMeta(registry);
+  const text = formatBridgeContractDiagnostics(registry);
+  setMeta?.(meta);
+  setText?.(text);
+  return { meta, text };
+};
+
+export const handleBridgeContractDiagnosticsLoadError = ({
+  error = null,
+  setMeta = () => {},
+  setText = () => {},
+  logWarn = () => {},
+} = {}) => {
+  const message = error?.message ? String(error.message) : String(error || '');
+  const normalized = message || 'unknown error';
+  setMeta?.(`加载失败: ${normalized}`);
+  setText?.(`Bridge contract 诊断加载失败\n\n${normalized}`);
+  logWarn?.(`Bridge contract 诊断加载失败: ${normalized}`);
+  return normalized;
+};
+
+export const refreshDebugTraceTimelineView = ({
+  timeline = null,
+  events = null,
+  snapshotOptions = { limit: 200 },
+  setMeta = () => {},
+  setText = () => {},
+} = {}) => {
+  const list = Array.isArray(events)
+    ? events
+    : (typeof timeline?.snapshot === 'function' ? timeline.snapshot(snapshotOptions) : []);
+  const meta = buildDebugTraceTimelineDiagnosticsMeta(list);
+  const text = formatDebugTraceTimelineDiagnostics(list);
+  setMeta?.(meta);
+  setText?.(text);
+  return { meta, text, count: list.length };
+};
+
+export const handleDebugTraceTimelineLoadError = ({
+  error = null,
+  setMeta = () => {},
+  setText = () => {},
+  logWarn = () => {},
+} = {}) => {
+  const message = error?.message ? String(error.message) : String(error || '');
+  const normalized = message || 'unknown error';
+  setMeta?.(`加载失败: ${normalized}`);
+  setText?.(`事件时间线加载失败\n\n${normalized}`);
+  logWarn?.(`事件时间线加载失败: ${normalized}`);
   return normalized;
 };
 

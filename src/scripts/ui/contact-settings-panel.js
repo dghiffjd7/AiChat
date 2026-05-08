@@ -522,6 +522,7 @@ export class ContactSettingsPanel {
                 },
                 memoryStore: window.appBridge.memoryTableStore,
                 templateStore: window.appBridge.memoryTemplateStore,
+                contactsStore: this.contactsStore,
                 includeGlobal: true,
             });
         }

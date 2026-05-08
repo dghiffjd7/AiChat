@@ -64,6 +64,18 @@ import {
     closeVariableBrowserImpl,
 } from './world-editor/world-variable-picker.js';
 import {
+    collectBoundWorldRegexSets,
+    ensureUniqueWorldbookIdCore,
+    resolveRefEntriesForDisplayCore,
+    resolveWorldEditorBridgeContext,
+    saveWorldInfoWithName,
+} from './world-editor/world-editor-bridge-utils.js';
+import {
+    ensureWorldVariableInStore,
+    getWorldVariableOptions,
+    resolveWorldVariableSessionContext,
+} from './world-editor/world-variable-session-utils.js';
+import {
     getConditionSummaryOperatorImpl,
     getConditionSummaryValueTextImpl,
     getConditionRuntimeContextImpl,
@@ -2851,56 +2863,17 @@ export class WorldEditorModal {
     }
 
     getSessionVariableOptions() {
-        const bridge = window.appBridge;
-        const chatStore = bridge?.chatStore;
-        const sid = String(chatStore?.getCurrent?.() || bridge?.activeSessionId || '').trim();
-        const useGlobal = Boolean(typeof bridge?.isSharedVariableSession === 'function' && sid && bridge.isSharedVariableSession(sid));
-        const vars = useGlobal
-            ? (chatStore?.listGlobalVariables?.() || {})
-            : (chatStore?.listVariables?.(sid) || {});
-        const schemas = chatStore?.listVariableSchemas?.(sid) || {};
-        const keys = new Set([
-            ...Object.keys(vars || {}).map(k => String(k || '').trim()).filter(Boolean),
-            ...Object.keys(schemas || {}).map(k => String(k || '').trim()).filter(Boolean),
-        ]);
-        return [...keys].sort((a, b) => a.localeCompare(b, 'zh-CN')).map((key) => ({
-            value: key,
-            label: key,
-        }));
+        return getWorldVariableOptions(resolveWorldVariableSessionContext());
     }
 
     ensureVariableInStore(name, type = 'number', defaultValue = 0, options = {}) {
-        const key = String(name || '').trim();
-        if (!key) return false;
-        const varType = ['number', 'string', 'boolean'].includes(String(type || '').trim().toLowerCase())
-            ? String(type || '').trim().toLowerCase()
-            : 'number';
-        const bridge = window.appBridge;
-        const chatStore = bridge?.chatStore;
-        const sid = String(chatStore?.getCurrent?.() || bridge?.activeSessionId || '').trim();
-        if (!chatStore || !sid) return false;
-        const preferredSource = ['global', 'session'].includes(String(options?.source || '').trim().toLowerCase())
-            ? String(options.source).trim().toLowerCase()
-            : null;
-        const useGlobal = preferredSource
-            ? preferredSource === 'global'
-            : Boolean(typeof bridge?.isSharedVariableSession === 'function' && bridge.isSharedVariableSession(sid));
-        chatStore.setVariableSchema?.(key, { type: varType, default: defaultValue }, sid);
-        if (useGlobal) {
-            const current = chatStore.getGlobalVariable?.(key);
-            if (current === undefined || current === null) {
-                chatStore.setGlobalVariable?.(key, defaultValue);
-            }
-        } else {
-            const current = chatStore.getVariable?.(key, sid);
-            if (current === undefined || current === null) {
-                chatStore.setVariable?.(key, defaultValue, sid);
-            }
-            if (chatStore.getInitialVariable?.(key, sid) === undefined) {
-                chatStore.setInitialVariable?.(key, defaultValue, sid);
-            }
-        }
-        return true;
+        return ensureWorldVariableInStore({
+            ...resolveWorldVariableSessionContext(),
+            name,
+            type,
+            defaultValue,
+            source: options?.source,
+        });
     }
 
     mountNodeEditor({ entry, block, markRefDirty }) {
@@ -4303,25 +4276,11 @@ export class WorldEditorModal {
     }
 
     async ensureUniqueWorldbookId(baseName, { allowUnicode = false } = {}) {
-        const sanitize = (value, fallback = 'worldbook') => {
-            const raw = String(value || '').trim();
-            if (allowUnicode) return raw || fallback;
-            const cleaned = raw.replace(/[^a-zA-Z0-9_-]/g, '_').replace(/_+/g, '_').slice(0, 48);
-            return cleaned || fallback;
-        };
-        const worldStore = window.appBridge?.worldStore;
-        try {
-            await worldStore?.ready;
-        } catch {}
-        const base = sanitize(baseName, 'worldbook');
-        if (!worldStore?.load?.(base)) return base;
-        let idx = 1;
-        while (idx < 9999) {
-            const next = `${base}_${idx}`;
-            if (!worldStore?.load?.(next)) return next;
-            idx += 1;
-        }
-        return `${base}_${Date.now()}`;
+        return ensureUniqueWorldbookIdCore({
+            ...resolveWorldEditorBridgeContext(),
+            baseName,
+            allowUnicode,
+        });
     }
 
     buildWorldRefs(entries = [], { includeAll = false } = {}) {
@@ -4343,44 +4302,10 @@ export class WorldEditorModal {
     }
 
     async resolveRefEntriesForDisplay(refs = []) {
-        const list = Array.isArray(refs) ? refs : [];
-        if (!list.length) return [];
-        const results = [];
-        const cache = new Map();
-        for (const raw of list) {
-            const ref = raw && typeof raw === 'object' ? raw : {};
-            const sourceId = String(ref.sourceId || ref.worldId || ref.source || '').trim();
-            if (!sourceId) continue;
-            if (!cache.has(sourceId)) {
-                let sourceData = null;
-                try {
-                    sourceData = await window.appBridge?.getWorldInfo?.(sourceId);
-                } catch {}
-                cache.set(sourceId, sourceData || null);
-            }
-            const sourceData = cache.get(sourceId);
-            const sourceEntries = Array.isArray(sourceData?.entries) ? sourceData.entries : [];
-            if (!sourceEntries.length) continue;
-            const entryIdRaw = String(ref.entryId || ref.entry || '').trim();
-            const entryIds = Array.isArray(ref.entryIds)
-                ? ref.entryIds.map(val => String(val || '').trim()).filter(Boolean)
-                : [];
-            const includeAll = ref.includeAll === true || ref.all === true || entryIdRaw === '*' || entryIds.includes('*');
-            let picked = sourceEntries;
-            if (!includeAll) {
-                const idSet = new Set(entryIds);
-                if (entryIdRaw) idSet.add(entryIdRaw);
-                picked = idSet.size
-                    ? sourceEntries.filter(entry => idSet.has(String(entry?.id ?? entry?.uid ?? '').trim()))
-                    : [];
-            }
-            picked.forEach((entry, idx) => {
-                if (!entry) return;
-                const entryId = String(entry?.id ?? entry?.uid ?? `entry-${idx}`).trim();
-                results.push({ ...entry, _refSourceId: sourceId, _refEntryId: entryId });
-            });
-        }
-        return results;
+        return resolveRefEntriesForDisplayCore({
+            ...resolveWorldEditorBridgeContext(),
+            refs,
+        });
     }
 
     async createChatFromEntries(entries, { name = '', includeAll = false } = {}) {
@@ -4389,8 +4314,12 @@ export class WorldEditorModal {
             window.toastr?.warning?.('未选择任何条目');
             return;
         }
-        const contactsStore = window.appBridge?.contactsStore;
-        const chatStore = window.appBridge?.chatStore;
+        const {
+            contactsStore,
+            chatStore,
+            saveWorldInfo,
+            bindWorldToSession,
+        } = resolveWorldEditorBridgeContext();
         if (!contactsStore || !chatStore) {
             window.toastr?.warning?.('联系人/会话尚未就绪');
             return;
@@ -4429,8 +4358,8 @@ export class WorldEditorModal {
                 refs,
                 source: 'world_entry',
             };
-            await window.appBridge?.saveWorldInfo?.(worldId, payload);
-            window.appBridge?.bindWorldToSession?.(sessionId, worldId, { silent: true });
+            await saveWorldInfo?.(worldId, payload);
+            bindWorldToSession?.(sessionId, worldId, { silent: true });
         } else {
             window.toastr?.warning?.('未能创建引用世界书，请稍后重试');
         }
@@ -4501,13 +4430,14 @@ export class WorldEditorModal {
                 if (showToast) window.toastr?.warning?.('未找到可同步的来源世界书');
                 return false;
             }
+            const { getWorldInfo, saveWorldInfo } = resolveWorldEditorBridgeContext();
             const updatedSources = [];
             let updatedCount = 0;
             let failedCount = 0;
             for (const [sourceId, updates] of updatesBySource.entries()) {
                 let sourceData = null;
                 try {
-                    sourceData = await window.appBridge?.getWorldInfo?.(sourceId);
+                    sourceData = await getWorldInfo?.(sourceId);
                 } catch {}
                 if (!sourceData || !Array.isArray(sourceData.entries)) {
                     failedCount += updates.length;
@@ -4528,7 +4458,7 @@ export class WorldEditorModal {
                     localUpdated += 1;
                 });
                 if (localUpdated > 0) {
-                    await window.appBridge?.saveWorldInfo?.(sourceId, { ...sourceData, entries: nextEntries });
+                    await saveWorldInfo?.(sourceId, { ...sourceData, entries: nextEntries });
                     updatedCount += localUpdated;
                     updatedSources.push(sourceId);
                 }
@@ -4587,14 +4517,11 @@ export class WorldEditorModal {
             const payload = this.prepareForSave(nextName);
 
             // 追加绑定正则集合（便于导入时自动带上）
-            try {
-                await window.appBridge?.regex?.ready;
-                const sets = window.appBridge?.regex?.listLocalSets?.() || [];
-                const bound = sets
-                    .filter(s => s?.bind?.type === 'world' && s.bind.worldId === nextName)
-                    .map(s => ({ name: s.name, enabled: s.enabled !== false, rules: s.rules || [] }));
-                if (bound.length) payload.boundRegexSets = bound;
-            } catch {}
+            const bound = await collectBoundWorldRegexSets({
+                ...resolveWorldEditorBridgeContext(),
+                worldId: nextName,
+            });
+            if (bound.length) payload.boundRegexSets = bound;
 
             const baseName = String(nextName || '').trim() || 'worldbook';
             const filename = baseName.toLowerCase().endsWith('.json')
@@ -4647,17 +4574,18 @@ export class WorldEditorModal {
                 return;
             }
             const payload = this.prepareForSave(nextName);
-            if (nextName !== this.worldName) {
-                const existing = await window.appBridge.listWorlds?.();
-                if (Array.isArray(existing) && existing.includes(nextName)) {
-                    window.toastr?.warning('名称已存在，请换一个');
-                    return;
-                }
-                await window.appBridge.renameWorldInfo?.(this.worldName, nextName, payload);
-                this.worldName = nextName;
-            } else {
-                await window.appBridge.saveWorldInfo(this.worldName, payload);
+            const saveResult = await saveWorldInfoWithName({
+                ...resolveWorldEditorBridgeContext(),
+                currentName: this.worldName,
+                nextName,
+                payload,
+            });
+            if (saveResult.reason === 'duplicate-name') {
+                window.toastr?.warning('名称已存在，请换一个');
+                return;
             }
+            if (!saveResult.ok) return;
+            this.worldName = saveResult.worldName;
             window.toastr?.success(`世界书已保存：${this.worldName}`);
             this.onSaved?.(this.worldName, payload);
             this.hide();
@@ -4707,22 +4635,23 @@ export class WorldEditorModal {
                 return false;
             }
             const payload = this.prepareForSave(nextName);
-            if (nextName !== this.worldName) {
-                const existing = await window.appBridge.listWorlds?.();
-                if (Array.isArray(existing) && existing.includes(nextName)) {
-                    if (showToast) window.toastr?.warning?.('名称已存在，无法自动保存');
-                    if (this.isAiTraceWatchActive()) {
-                        this.traceAi('save.silent.reject.duplicate-name', {
-                            nextName,
-                        }, 'warn');
-                    }
-                    return false;
+            const saveResult = await saveWorldInfoWithName({
+                ...resolveWorldEditorBridgeContext(),
+                currentName: this.worldName,
+                nextName,
+                payload,
+            });
+            if (saveResult.reason === 'duplicate-name') {
+                if (showToast) window.toastr?.warning?.('名称已存在，无法自动保存');
+                if (this.isAiTraceWatchActive()) {
+                    this.traceAi('save.silent.reject.duplicate-name', {
+                        nextName,
+                    }, 'warn');
                 }
-                await window.appBridge.renameWorldInfo?.(this.worldName, nextName, payload);
-                this.worldName = nextName;
-            } else {
-                await window.appBridge.saveWorldInfo(this.worldName, payload);
+                return false;
             }
+            if (!saveResult.ok) return false;
+            this.worldName = saveResult.worldName;
             this.onSaved?.(this.worldName, payload);
             if (showToast) window.toastr?.success?.(`世界书已保存：${this.worldName}`);
             if (this.isAiTraceWatchActive()) {

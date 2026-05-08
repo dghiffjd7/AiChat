@@ -5,6 +5,9 @@ import { pickSavePath } from '../utils/save-dialog.js';
 import { BUILTIN_PHONE_FORMAT_WORLDBOOK_ID } from '../storage/builtin-worldbooks.js';
 import { emitMemoryRowsUpdated } from './session-memory-event-utils.js';
 import { batchCreateMemoriesWithFallback } from './session-memory-write-utils.js';
+import { createRegexStoreRuntimeAdapter } from './regex-store-runtime-utils.js';
+import { hasStoredWorldInfo } from './world-store-runtime-utils.js';
+import { decodeZipEntryBase64Text } from './zip-entry-utils.js';
 
 const hasTauriRuntime = () => {
   const g = typeof globalThis !== 'undefined' ? globalThis : window;
@@ -81,6 +84,7 @@ export class CharacterCardTransfer {
     this.memoryTableStore = memoryTableStore;
     this.memoryTemplateStore = memoryTemplateStore;
     this.appBridge = appBridge || window.appBridge;
+    this.regexStore = createRegexStoreRuntimeAdapter(this.appBridge);
   }
 
   async resolveDefaultMemoryTemplateId() {
@@ -232,7 +236,7 @@ export class CharacterCardTransfer {
     let sessionRegex = null;
     let localSets = [];
     try {
-      const regexStore = this.appBridge?.regex;
+      const regexStore = this.regexStore;
       sessionRegex = regexStore?.getSession?.(sid) || null;
       const sets = regexStore?.listLocalSets?.() || [];
       localSets = sets.filter(s => s?.bind?.type === 'world' && exportWorldIds.includes(String(s.bind.worldId || '')));
@@ -398,10 +402,7 @@ export class CharacterCardTransfer {
     let cardText = String(cardEntry?.text || '').trim();
     if (!cardText && cardEntry?.base64) {
       try {
-        const bin = atob(String(cardEntry.base64 || ''));
-        const bytesArr = new Uint8Array(bin.length);
-        for (let i = 0; i < bin.length; i++) bytesArr[i] = bin.charCodeAt(i);
-        cardText = new TextDecoder().decode(bytesArr);
+        cardText = decodeZipEntryBase64Text(cardEntry.base64);
       } catch {}
     }
     if (!cardText) {
@@ -489,10 +490,10 @@ export class CharacterCardTransfer {
       const original = String(rawId || '').trim();
       if (!original || original === BUILTIN_PHONE_FORMAT_WORLDBOOK_ID) continue;
       let nextId = original;
-      const existing = this.appBridge?.worldStore?.load?.(nextId);
+      const existing = hasStoredWorldInfo(this.appBridge, nextId);
       if (existing) {
         let idx = 1;
-        while (this.appBridge?.worldStore?.load?.(`${original}-${idx}`)) idx += 1;
+        while (hasStoredWorldInfo(this.appBridge, `${original}-${idx}`)) idx += 1;
         nextId = `${original}-${idx}`;
       }
       worldIdMap[original] = nextId;
@@ -507,13 +508,13 @@ export class CharacterCardTransfer {
     const mappedWorldIds = rawWorldIds
       .map(id => worldIdMap[String(id || '').trim()] || String(id || '').trim())
       .filter(Boolean)
-      .filter(id => Boolean(this.appBridge?.worldStore?.load?.(id) || worldIdMap[id]));
+      .filter(id => Boolean(hasStoredWorldInfo(this.appBridge, id) || worldIdMap[id]));
     if (mappedWorldIds.length) {
       this.appBridge?.setSessionWorldIds?.(newId, mappedWorldIds, { silent: true });
     }
 
     try {
-      const regexStore = this.appBridge?.regex;
+      const regexStore = this.regexStore;
       if (regexStore) {
         const localSets = ensureArray(card?.regex?.localSets);
         for (const set of localSets) {

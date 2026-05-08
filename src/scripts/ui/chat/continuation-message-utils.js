@@ -73,3 +73,30 @@ export const buildContinuationMessageUpdate = ({
     meta: nextMeta,
   };
 };
+
+export const commitContinuationMessageToStore = ({
+  message = null,
+  partial = false,
+  continueTarget = null,
+  sessionId = '',
+  chatStore = null,
+  isSessionActive = () => false,
+  updateUiMessage = () => {},
+  formatNowTime = () => '',
+} = {}) => {
+  const targetId = String(continueTarget?.messageId || '').trim();
+  if (!targetId || !message) return null;
+  const existing = chatStore?.findMessage?.(targetId, sessionId) || continueTarget?.message || null;
+  if (!existing) return null;
+
+  const updatePayload = buildContinuationMessageUpdate({
+    existing,
+    message,
+    targetId,
+    fallbackTime: formatNowTime(),
+    partial,
+  });
+  const saved = chatStore?.updateMessage?.(targetId, updatePayload, sessionId) || { ...existing, ...updatePayload };
+  if (isSessionActive(sessionId)) updateUiMessage(targetId, saved);
+  return saved;
+};

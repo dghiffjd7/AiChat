@@ -47,6 +47,9 @@ const createFakeDocument = () => {
   const dom = createDebugPanelDom({
     documentRef,
     onShowCustomBundle: () => calls.push(['bundle']),
+    onShowStorageMigration: () => calls.push(['migration']),
+    onShowBridgeContracts: () => calls.push(['bridge']),
+    onShowTraceTimeline: () => calls.push(['trace']),
     onShowErrorLogs: () => calls.push(['errors']),
     onClearLogs: ({ filterInput }) => calls.push(['clear', filterInput]),
     onCopyLogs: () => calls.push(['copy']),
@@ -56,6 +59,9 @@ const createFakeDocument = () => {
   });
 
   dom.customBundleInspectBtn.onclick();
+  dom.storageMigrationInspectBtn.onclick();
+  dom.bridgeContractInspectBtn.onclick();
+  dom.traceTimelineInspectBtn.onclick();
   dom.errorLogBtn.onclick();
   dom.clearLogBtn.onclick();
   dom.copyLogBtn.onclick();
@@ -69,11 +75,11 @@ const createFakeDocument = () => {
   assert.equal(dom.filterInput.placeholder, '筛选日志...');
   assert.deepEqual(
     calls.map((entry) => entry[0]),
-    ['bundle', 'errors', 'clear', 'copy', 'filter', 'clear-filter', 'toggle'],
+    ['bundle', 'migration', 'bridge', 'trace', 'errors', 'clear', 'copy', 'filter', 'clear-filter', 'toggle'],
   );
-  assert.equal(calls[2][1], dom.filterInput);
-  assert.equal(calls[4][1], 'warn');
-  assert.equal(calls[4][2], dom.filterInput);
   assert.equal(calls[5][1], dom.filterInput);
+  assert.equal(calls[7][1], 'warn');
+  assert.equal(calls[7][2], dom.filterInput);
+  assert.equal(calls[8][1], dom.filterInput);
   console.log('ok - createDebugPanelDom builds diagnostics shell and wires button and filter callbacks');
 }

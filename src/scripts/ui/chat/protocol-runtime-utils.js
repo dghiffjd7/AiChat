@@ -133,3 +133,886 @@ export const consumeProtocolRetryEvents = async (
     abortFlow: false,
   };
 };
+
+export const runProtocolRetryFallbacks = async (
+  {
+    rawText = '',
+    didAnything = false,
+    mutatedMoments = false,
+    summarySessionIds = null,
+  } = {},
+  {
+    buildProtocolRetryCandidates = () => ({}),
+    createDialogueParser = null,
+    handleEvent = null,
+    flushMoments = null,
+    refreshChatAndContacts = null,
+    flushAfterRetry = false,
+    refreshAfterRetry = false,
+    stopOnMiPhoneAbort = false,
+  } = {},
+) => {
+  let nextDidAnything = Boolean(didAnything);
+  let nextMutatedMoments = Boolean(mutatedMoments);
+  let abortFlow = false;
+  const raw = String(rawText ?? '');
+
+  const runRefreshHooks = async () => {
+    if (flushAfterRetry) {
+      await flushProtocolMomentsIfNeeded(nextMutatedMoments, { flushMoments });
+    }
+    if (refreshAfterRetry && typeof refreshChatAndContacts === 'function') {
+      refreshChatAndContacts();
+    }
+  };
+
+  if (!nextDidAnything) {
+    try {
+      const { retryText } = buildProtocolRetryCandidates(raw) || {};
+      if (retryText && retryText !== raw && typeof createDialogueParser === 'function') {
+        const retryParser = createDialogueParser();
+        const retryEvents = retryParser?.push?.(retryText);
+        const retryState = await consumeProtocolRetryEvents(retryEvents, {
+          didAnything: nextDidAnything,
+          mutatedMoments: nextMutatedMoments,
+          summarySessionIds,
+        }, {
+          handleEvent,
+        });
+        nextDidAnything = retryState.didAnything;
+        nextMutatedMoments = retryState.mutatedMoments;
+        await runRefreshHooks();
+      }
+    } catch {}
+  }
+
+  if (!nextDidAnything) {
+    try {
+      const { miPhoneBlock } = buildProtocolRetryCandidates(raw) || {};
+      if (miPhoneBlock && typeof createDialogueParser === 'function') {
+        const retryParser = createDialogueParser();
+        const retryEvents = retryParser?.push?.(miPhoneBlock);
+        const retryState = await consumeProtocolRetryEvents(retryEvents, {
+          didAnything: nextDidAnything,
+          mutatedMoments: nextMutatedMoments,
+          summarySessionIds,
+        }, {
+          handleEvent,
+        });
+        if (retryState.abortFlow && stopOnMiPhoneAbort) {
+          abortFlow = true;
+          return {
+            didAnything: nextDidAnything,
+            mutatedMoments: nextMutatedMoments,
+            summarySessionIds,
+            abortFlow,
+          };
+        }
+        nextDidAnything = retryState.didAnything;
+        nextMutatedMoments = retryState.mutatedMoments;
+        await runRefreshHooks();
+      }
+    } catch {}
+  }
+
+  return {
+    didAnything: nextDidAnything,
+    mutatedMoments: nextMutatedMoments,
+    summarySessionIds,
+    abortFlow,
+  };
+};
+
+export const finalizeProtocolStreamFlow = async (
+  {
+    rawText = '',
+    didAnything = false,
+    mutatedMoments = false,
+    summarySessionIds = null,
+    summaryEnabled = false,
+    memoryOptions = {},
+  } = {},
+  {
+    extractSummaryBlock = null,
+    addSummary = null,
+    requestSummaryCompaction = null,
+    handleMemoryEditsFromRaw = null,
+    flushMoments = null,
+    refreshChatAndContacts = null,
+    buildProtocolRetryCandidates = () => ({}),
+    createDialogueParser = null,
+    handleRetryEvent = null,
+    warnNoValidTag = null,
+  } = {},
+) => {
+  const raw = String(rawText ?? '');
+  let nextDidAnything = Boolean(didAnything);
+  let nextMutatedMoments = Boolean(mutatedMoments);
+
+  if (summaryEnabled && typeof extractSummaryBlock === 'function') {
+    const { summary: protocolSummary } = extractSummaryBlock(raw) || {};
+    commitProtocolSummary(protocolSummary, summarySessionIds, {
+      addSummary,
+      requestSummaryCompaction,
+    });
+  }
+  if (typeof handleMemoryEditsFromRaw === 'function') {
+    await handleMemoryEditsFromRaw(raw, memoryOptions || {});
+  }
+  await flushProtocolMomentsIfNeeded(nextMutatedMoments, {
+    flushMoments,
+  });
+  if (typeof refreshChatAndContacts === 'function') {
+    refreshChatAndContacts();
+  }
+  if (!nextDidAnything) {
+    const retryState = await runProtocolRetryFallbacks({
+      rawText: raw,
+      didAnything: nextDidAnything,
+      mutatedMoments: nextMutatedMoments,
+      summarySessionIds,
+    }, {
+      buildProtocolRetryCandidates,
+      createDialogueParser,
+      handleEvent: handleRetryEvent,
+      flushAfterRetry: true,
+      refreshAfterRetry: true,
+      stopOnMiPhoneAbort: true,
+      flushMoments,
+      refreshChatAndContacts,
+    });
+    if (retryState.abortFlow) {
+      return {
+        didAnything: nextDidAnything,
+        mutatedMoments: nextMutatedMoments,
+        summarySessionIds,
+        abortFlow: true,
+        warned: false,
+      };
+    }
+    nextDidAnything = retryState.didAnything;
+    nextMutatedMoments = retryState.mutatedMoments;
+    if (!nextDidAnything && typeof warnNoValidTag === 'function') {
+      warnNoValidTag();
+    }
+  }
+
+  return {
+    didAnything: nextDidAnything,
+    mutatedMoments: nextMutatedMoments,
+    summarySessionIds,
+    abortFlow: false,
+    warned: !nextDidAnything,
+  };
+};
+
+export const finalizeProtocolBufferedFlow = async (
+  {
+    rawText = '',
+    didAnything = false,
+    mutatedMoments = false,
+    protocolSummary = '',
+    summarySessionIds = null,
+  } = {},
+  {
+    addSummary = null,
+    requestSummaryCompaction = null,
+    refreshChatAndContacts = null,
+    renderMoments = null,
+    flushMoments = null,
+    buildProtocolRetryCandidates = () => ({}),
+    createDialogueParser = null,
+    handleRetryEvent = null,
+    warnNoValidTag = null,
+  } = {},
+) => {
+  const raw = String(rawText ?? '');
+  let nextDidAnything = Boolean(didAnything);
+  let nextMutatedMoments = Boolean(mutatedMoments);
+  const finalize = () => finalizeProtocolHandledFlow({
+    didAnything: nextDidAnything,
+    mutatedMoments: nextMutatedMoments,
+    protocolSummary,
+    summarySessionIds,
+  }, {
+    addSummary,
+    requestSummaryCompaction,
+    refreshChatAndContacts,
+    renderMoments,
+    flushMoments,
+  });
+
+  if (await finalize()) {
+    return {
+      didAnything: nextDidAnything,
+      mutatedMoments: nextMutatedMoments,
+      summarySessionIds,
+      handled: true,
+      warned: false,
+    };
+  }
+
+  const retryState = await runProtocolRetryFallbacks({
+    rawText: raw,
+    didAnything: nextDidAnything,
+    mutatedMoments: nextMutatedMoments,
+    summarySessionIds,
+  }, {
+    buildProtocolRetryCandidates,
+    createDialogueParser,
+    handleEvent: handleRetryEvent,
+  });
+  nextDidAnything = retryState.didAnything;
+  nextMutatedMoments = retryState.mutatedMoments;
+
+  if (await finalize()) {
+    return {
+      didAnything: nextDidAnything,
+      mutatedMoments: nextMutatedMoments,
+      summarySessionIds,
+      handled: true,
+      warned: false,
+    };
+  }
+
+  if (typeof warnNoValidTag === 'function') {
+    warnNoValidTag();
+  }
+  return {
+    didAnything: nextDidAnything,
+    mutatedMoments: nextMutatedMoments,
+    summarySessionIds,
+    handled: false,
+    warned: true,
+  };
+};
+
+export const consumeProtocolBatchEvent = async (
+  event,
+  {
+    didAnything = false,
+    mutatedMoments = false,
+    summarySessionIds = null,
+  } = {},
+  {
+    applyMomentEvent = null,
+    onMomentConsumed = null,
+    buildGroupBatch = null,
+    dispatchGroupBatch = null,
+    getGroupDispatchOptions = () => ({}),
+    warnMissingGroupTarget = null,
+    buildPrivateBatch = null,
+    dispatchPrivateBatch = null,
+    getPrivateDispatchOptions = () => ({}),
+    warnMissingPrivateTarget = null,
+    onBeforeDispatch = null,
+    onAfterDispatch = null,
+  } = {},
+) => {
+  let nextDidAnything = Boolean(didAnything);
+  let nextMutatedMoments = Boolean(mutatedMoments);
+  const commitState = (handled = null) => {
+    const result = consumeProtocolHandledResult({
+      didAnything: nextDidAnything,
+      mutatedMoments: nextMutatedMoments,
+      summarySessionIds,
+    }, handled);
+    nextDidAnything = result.didAnything;
+    nextMutatedMoments = result.mutatedMoments;
+    return result;
+  };
+
+  const handledMoment =
+    typeof applyMomentEvent === 'function'
+      ? applyMomentEvent(event)
+      : null;
+  if (handledMoment?.abortFlow) {
+    return {
+      didAnything: nextDidAnything,
+      mutatedMoments: nextMutatedMoments,
+      summarySessionIds,
+      consumed: Boolean(handledMoment?.consumed),
+      abortFlow: true,
+    };
+  }
+  const momentState = commitState(handledMoment);
+  if (handledMoment?.consumed) {
+    if (typeof onMomentConsumed === 'function') {
+      await onMomentConsumed(handledMoment, event);
+    }
+    return {
+      ...momentState,
+      abortFlow: false,
+    };
+  }
+
+  if (event?.type === 'group_chat') {
+    if (typeof onBeforeDispatch === 'function') {
+      await onBeforeDispatch('group_chat', event);
+    }
+    const groupBatch =
+      typeof buildGroupBatch === 'function'
+        ? await buildGroupBatch(event)
+        : null;
+    if (!groupBatch?.targetSessionId) {
+      if (typeof warnMissingGroupTarget === 'function') warnMissingGroupTarget();
+      return {
+        didAnything: nextDidAnything,
+        mutatedMoments: nextMutatedMoments,
+        summarySessionIds,
+        consumed: true,
+        abortFlow: false,
+      };
+    }
+    if (summarySessionIds && typeof summarySessionIds.add === 'function') {
+      summarySessionIds.add(groupBatch.targetSessionId);
+    }
+    const options = typeof getGroupDispatchOptions === 'function'
+      ? getGroupDispatchOptions(groupBatch, event)
+      : {};
+    if (typeof dispatchGroupBatch === 'function') {
+      await dispatchGroupBatch(groupBatch, options || {});
+    }
+    nextDidAnything = true;
+    if (typeof onAfterDispatch === 'function') {
+      await onAfterDispatch('group_chat', groupBatch, event);
+    }
+    return {
+      didAnything: nextDidAnything,
+      mutatedMoments: nextMutatedMoments,
+      summarySessionIds,
+      consumed: true,
+      abortFlow: false,
+    };
+  }
+
+  if (event?.type === 'private_chat') {
+    if (typeof onBeforeDispatch === 'function') {
+      await onBeforeDispatch('private_chat', event);
+    }
+    const privateBatch =
+      typeof buildPrivateBatch === 'function'
+        ? await buildPrivateBatch(event)
+        : null;
+    if (!privateBatch?.targetSessionId) {
+      if (typeof warnMissingPrivateTarget === 'function') warnMissingPrivateTarget();
+      return {
+        didAnything: nextDidAnything,
+        mutatedMoments: nextMutatedMoments,
+        summarySessionIds,
+        consumed: true,
+        abortFlow: false,
+      };
+    }
+    if (summarySessionIds && typeof summarySessionIds.add === 'function') {
+      summarySessionIds.add(privateBatch.targetSessionId);
+    }
+    const options = typeof getPrivateDispatchOptions === 'function'
+      ? getPrivateDispatchOptions(privateBatch, event)
+      : {};
+    if (typeof dispatchPrivateBatch === 'function') {
+      await dispatchPrivateBatch(privateBatch, options || {});
+    }
+    nextDidAnything = true;
+    if (typeof onAfterDispatch === 'function') {
+      await onAfterDispatch('private_chat', privateBatch, event);
+    }
+    return {
+      didAnything: nextDidAnything,
+      mutatedMoments: nextMutatedMoments,
+      summarySessionIds,
+      consumed: true,
+      abortFlow: false,
+    };
+  }
+
+  return {
+    didAnything: nextDidAnything,
+    mutatedMoments: nextMutatedMoments,
+    summarySessionIds,
+    consumed: false,
+    abortFlow: false,
+  };
+};
+
+export const consumeProtocolEventList = async (
+  events,
+  {
+    didAnything = false,
+    mutatedMoments = false,
+    summarySessionIds = null,
+  } = {},
+  {
+    eventHandlers = {},
+    stopOnAbort = false,
+    consumeEvent = consumeProtocolBatchEvent,
+  } = {},
+) => {
+  let nextDidAnything = Boolean(didAnything);
+  let nextMutatedMoments = Boolean(mutatedMoments);
+  const eventList = Array.isArray(events) ? events : [];
+  for (const event of eventList) {
+    const eventState = await consumeEvent(event, {
+      didAnything: nextDidAnything,
+      mutatedMoments: nextMutatedMoments,
+      summarySessionIds,
+    }, eventHandlers);
+    if (eventState?.abortFlow && stopOnAbort) {
+      return {
+        didAnything: nextDidAnything,
+        mutatedMoments: nextMutatedMoments,
+        summarySessionIds,
+        abortFlow: true,
+      };
+    }
+    nextDidAnything = Boolean(eventState?.didAnything);
+    nextMutatedMoments = Boolean(eventState?.mutatedMoments);
+  }
+  return {
+    didAnything: nextDidAnything,
+    mutatedMoments: nextMutatedMoments,
+    summarySessionIds,
+    abortFlow: false,
+  };
+};
+
+export const consumeProtocolStreamChunks = async (
+  stream,
+  {
+    parser = null,
+    didAnything = false,
+    mutatedMoments = false,
+    summarySessionIds = null,
+  } = {},
+  {
+    normalizeChunk = chunk => chunk,
+    isInterrupted = () => false,
+    eventHandlers = {},
+    consumeEvents = consumeProtocolEventList,
+  } = {},
+) => {
+  let fullRaw = '';
+  let nextDidAnything = Boolean(didAnything);
+  let nextMutatedMoments = Boolean(mutatedMoments);
+  const isFlowInterrupted = () => Boolean(typeof isInterrupted === 'function' && isInterrupted());
+
+  for await (const chunk of stream) {
+    if (isFlowInterrupted()) break;
+    const normalizedChunk = typeof normalizeChunk === 'function'
+      ? normalizeChunk(chunk)
+      : chunk;
+    if (!normalizedChunk?.content) continue;
+    fullRaw += normalizedChunk.content;
+    const events = parser?.push?.(normalizedChunk.content);
+    const eventState = await consumeEvents(events, {
+      didAnything: nextDidAnything,
+      mutatedMoments: nextMutatedMoments,
+      summarySessionIds,
+    }, {
+      eventHandlers,
+      stopOnAbort: true,
+    });
+    if (eventState.abortFlow) {
+      return {
+        fullRaw,
+        didAnything: nextDidAnything,
+        mutatedMoments: nextMutatedMoments,
+        summarySessionIds,
+        abortFlow: true,
+        interrupted: false,
+      };
+    }
+    nextDidAnything = eventState.didAnything;
+    nextMutatedMoments = eventState.mutatedMoments;
+  }
+
+  return {
+    fullRaw,
+    didAnything: nextDidAnything,
+    mutatedMoments: nextMutatedMoments,
+    summarySessionIds,
+    abortFlow: false,
+    interrupted: isFlowInterrupted(),
+  };
+};
+
+export const runProtocolStreamResponseFlow = async (
+  {
+    stream = [],
+    parser = null,
+    summarySessionIds = null,
+    summaryEnabled = false,
+    memoryOptions = {},
+  } = {},
+  {
+    createDialogueParser = null,
+    normalizeChunk = chunk => chunk,
+    isInterrupted = () => false,
+    eventHandlers = {},
+    consumeStreamChunks = consumeProtocolStreamChunks,
+    onBeforeRawSave = null,
+    setLastRawResponse = null,
+    extractSummaryBlock = null,
+    addSummary = null,
+    requestSummaryCompaction = null,
+    handleMemoryEditsFromRaw = null,
+    flushMoments = null,
+    refreshChatAndContacts = null,
+    buildProtocolRetryCandidates = () => ({}),
+    handleRetryEvent = null,
+    warnNoValidTag = null,
+  } = {},
+) => {
+  const protocolParser = parser || (
+    typeof createDialogueParser === 'function'
+      ? createDialogueParser()
+      : null
+  );
+  const streamState = await consumeStreamChunks(stream || [], {
+    parser: protocolParser,
+    didAnything: false,
+    mutatedMoments: false,
+    summarySessionIds,
+  }, {
+    normalizeChunk,
+    isInterrupted,
+    eventHandlers,
+  });
+
+  if (streamState.abortFlow || streamState.interrupted) {
+    return {
+      ...streamState,
+      interrupted: Boolean(streamState.interrupted),
+    };
+  }
+
+  if (typeof isInterrupted === 'function' && isInterrupted()) {
+    return {
+      ...streamState,
+      interrupted: true,
+    };
+  }
+
+  const fullRaw = String(streamState.fullRaw ?? '');
+  if (typeof onBeforeRawSave === 'function') {
+    onBeforeRawSave(fullRaw, streamState);
+  }
+  if (typeof setLastRawResponse === 'function') {
+    setLastRawResponse(fullRaw, streamState);
+  }
+
+  const finalState = await finalizeProtocolStreamFlow({
+    rawText: fullRaw,
+    didAnything: streamState.didAnything,
+    mutatedMoments: streamState.mutatedMoments,
+    summarySessionIds: streamState.summarySessionIds || summarySessionIds,
+    summaryEnabled,
+    memoryOptions,
+  }, {
+    extractSummaryBlock,
+    addSummary,
+    requestSummaryCompaction,
+    handleMemoryEditsFromRaw,
+    flushMoments,
+    refreshChatAndContacts,
+    buildProtocolRetryCandidates,
+    createDialogueParser,
+    handleRetryEvent,
+    warnNoValidTag,
+  });
+
+  return {
+    ...finalState,
+    fullRaw,
+    interrupted: false,
+  };
+};
+
+export const runProtocolBufferedResponseFlow = async (
+  {
+    rawText = '',
+    protocolSummary = '',
+    summarySessionIds = null,
+    memoryOptions = {},
+  } = {},
+  {
+    createDialogueParser = null,
+    handleMemoryEditsFromRaw = null,
+    eventHandlers = {},
+    consumeEvents = consumeProtocolEventList,
+    addSummary = null,
+    requestSummaryCompaction = null,
+    refreshChatAndContacts = null,
+    renderMoments = null,
+    flushMoments = null,
+    buildProtocolRetryCandidates = () => ({}),
+    handleRetryEvent = null,
+    warnNoValidTag = null,
+  } = {},
+) => {
+  const raw = String(rawText ?? '');
+  const parser = typeof createDialogueParser === 'function'
+    ? createDialogueParser()
+    : null;
+  const events = parser?.push?.(raw);
+  let didAnything = false;
+  let mutatedMoments = false;
+
+  if (typeof handleMemoryEditsFromRaw === 'function') {
+    handleMemoryEditsFromRaw(raw, memoryOptions || {}).catch(() => {});
+  }
+
+  ({
+    didAnything,
+    mutatedMoments,
+  } = await consumeEvents(events, {
+    didAnything,
+    mutatedMoments,
+    summarySessionIds,
+  }, {
+    eventHandlers,
+  }));
+
+  return finalizeProtocolBufferedFlow({
+    rawText: raw,
+    didAnything,
+    mutatedMoments,
+    protocolSummary,
+    summarySessionIds,
+  }, {
+    addSummary,
+    requestSummaryCompaction,
+    refreshChatAndContacts,
+    renderMoments,
+    flushMoments,
+    buildProtocolRetryCandidates,
+    createDialogueParser,
+    handleRetryEvent,
+    warnNoValidTag,
+  });
+};
+
+export const createProtocolBatchEventHandlers = ({
+  streamMode = false,
+  applyMomentEvent = null,
+  onMomentConsumed = null,
+  buildGroupBatch = null,
+  dispatchGroupBatch = null,
+  warnMissingGroupTarget = null,
+  buildPrivateBatch = null,
+  dispatchPrivateBatch = null,
+  warnMissingPrivateTarget = null,
+  getAnimEnabled = () => true,
+  getQueueTypingOptions = () => ({}),
+  assignActiveQueue = null,
+  isSessionActive = () => false,
+  hideTyping = null,
+  fastForwardDelivery = null,
+  refreshChatAndContacts = null,
+  showTyping = null,
+  assistantAvatar = null,
+} = {}) => {
+  const resolveAnimEnabled = () => {
+    try {
+      return Boolean(getAnimEnabled());
+    } catch {
+      return true;
+    }
+  };
+  const resolveQueueTypingOptions = () => {
+    try {
+      return getQueueTypingOptions() || {};
+    } catch {
+      return {};
+    }
+  };
+  const assignQueue = q => {
+    if (typeof assignActiveQueue === 'function') {
+      assignActiveQueue(q);
+    }
+  };
+
+  const handlers = {
+    applyMomentEvent,
+    onMomentConsumed,
+    buildGroupBatch,
+    warnMissingGroupTarget,
+    getGroupDispatchOptions: () => {
+      const options = {
+        animEnabled: resolveAnimEnabled(),
+        bumpReadCount: true,
+      };
+      if (streamMode) {
+        options.onQueueCreated = assignQueue;
+        options.queueTypingOptions = resolveQueueTypingOptions();
+      }
+      return options;
+    },
+    dispatchGroupBatch,
+    buildPrivateBatch,
+    warnMissingPrivateTarget,
+    getPrivateDispatchOptions: () => {
+      const options = {
+        animEnabled: resolveAnimEnabled(),
+      };
+      if (streamMode) {
+        options.onQueueCreated = assignQueue;
+        options.queueTypingOptions = resolveQueueTypingOptions();
+      }
+      return options;
+    },
+    dispatchPrivateBatch,
+  };
+
+  if (streamMode) {
+    handlers.onBeforeDispatch = () => {
+      let active = false;
+      try {
+        active = Boolean(isSessionActive());
+      } catch {}
+      if (!active) return;
+      if (typeof hideTyping === 'function') hideTyping();
+      if (typeof fastForwardDelivery === 'function') fastForwardDelivery();
+    };
+    handlers.onAfterDispatch = () => {
+      if (typeof refreshChatAndContacts === 'function') {
+        refreshChatAndContacts();
+      }
+      let active = false;
+      try {
+        active = Boolean(isSessionActive());
+      } catch {}
+      if (active && typeof showTyping === 'function') {
+        showTyping(assistantAvatar, resolveQueueTypingOptions());
+      }
+    };
+  }
+
+  return handlers;
+};
+
+export const createSendProtocolEventHandlers = ({
+  streamMode = false,
+  sessionId = '',
+  generationId = null,
+  getActiveGeneration = null,
+  getActivePage = null,
+  applyProtocolMomentEvent = null,
+  ingestMoments = null,
+  addMoments = null,
+  addMomentComments = null,
+  normalizeMomentCommentsForStore = null,
+  renderMoments = null,
+  buildGroupBatch = null,
+  dispatchGroupBatch = null,
+  buildPrivateBatch = null,
+  dispatchPrivateBatch = null,
+  showWarning = null,
+  getTypingDotsMode = null,
+  getGroupTypingMembers = null,
+  isSessionActive = null,
+  hideTyping = null,
+  fastForwardDelivery = null,
+  refreshChatAndContacts = null,
+  showTyping = null,
+  assistantAvatar = null,
+} = {}) => createProtocolBatchEventHandlers({
+  streamMode,
+  applyMomentEvent: event => applyProtocolMomentEvent(event, {
+    addMoments: items => addMoments(ingestMoments(items)),
+    addMomentComments,
+    ...(streamMode ? { abortOnMissingMomentId: true } : {}),
+    normalizeComments: comments => normalizeMomentCommentsForStore(comments, {
+      regexMode: 'output',
+      depth: 0,
+    }),
+  }),
+  onMomentConsumed: streamMode
+    ? handled => {
+        if (handled.mutatedMoments && getActivePage() === 'moments') {
+          renderMoments();
+        }
+      }
+    : null,
+  buildGroupBatch,
+  warnMissingGroupTarget: () => showWarning?.('对话回复格式错误：群聊标签未匹配任何已存在群组，已丢弃'),
+  dispatchGroupBatch,
+  buildPrivateBatch,
+  warnMissingPrivateTarget: () => showWarning?.('对话回复格式错误：私聊标签未匹配当前联系人，已丢弃'),
+  dispatchPrivateBatch,
+  getAnimEnabled: () => getTypingDotsMode() !== 'off',
+  getQueueTypingOptions: () => getGroupTypingMembers(sessionId) || {},
+  assignActiveQueue: q => {
+    const activeGeneration = getActiveGeneration();
+    if (activeGeneration && activeGeneration.id === generationId) {
+      activeGeneration._messageQueue = q;
+    }
+  },
+  isSessionActive: () => isSessionActive(sessionId),
+  hideTyping,
+  fastForwardDelivery: () => fastForwardDelivery(sessionId),
+  refreshChatAndContacts,
+  showTyping,
+  assistantAvatar,
+});
+
+export const createSendProtocolResponseFlowHandlers = ({
+  sessionId = '',
+  getActivePage = null,
+  isSessionActive = null,
+  hideTyping = null,
+  fastForwardDelivery = null,
+  setLastRawResponse = null,
+  addSummary = null,
+  requestSummaryCompaction = null,
+  handleMemoryEditsFromRaw = null,
+  extractSummaryBlock = null,
+  flushMoments = null,
+  renderMoments = null,
+  refreshChatAndContacts = null,
+  buildProtocolRetryCandidates = null,
+  createDialogueParser = null,
+  processProtocolRetryEvent = null,
+  showWarning = null,
+} = {}) => {
+  const isActive = () => Boolean(typeof isSessionActive === 'function' && isSessionActive(sessionId));
+  const warnNoValidTag = () => showWarning?.('未解析到有效对话标签，已丢弃（可在“三 > 原始回复”查看）');
+  const createCommonHandlers = () => ({
+    createDialogueParser,
+    handleMemoryEditsFromRaw,
+    addSummary,
+    requestSummaryCompaction,
+    refreshChatAndContacts,
+    flushMoments,
+    buildProtocolRetryCandidates,
+    warnNoValidTag,
+  });
+
+  return {
+    createStreamHandlers: () => ({
+      ...createCommonHandlers(),
+      onBeforeRawSave: () => {
+        if (!isActive()) return;
+        if (typeof hideTyping === 'function') hideTyping();
+        if (typeof fastForwardDelivery === 'function') fastForwardDelivery(sessionId);
+      },
+      setLastRawResponse: fullRaw => setLastRawResponse?.(fullRaw, sessionId),
+      extractSummaryBlock,
+      handleRetryEvent: ev => processProtocolRetryEvent?.(ev, {
+        renderMoments: true,
+        refreshAfterAppend: true,
+      }),
+    }),
+    createBufferedHandlers: () => ({
+      ...createCommonHandlers(),
+      renderMoments: (
+        typeof getActivePage === 'function'
+        && getActivePage() === 'moments'
+        && typeof renderMoments === 'function'
+      )
+        ? () => renderMoments()
+        : null,
+      handleRetryEvent: ev => processProtocolRetryEvent?.(ev),
+    }),
+  };
+};

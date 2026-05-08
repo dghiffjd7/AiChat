@@ -29,8 +29,8 @@ const SECTION_BOX_STYLE = 'flex:1; min-width: 260px; border:1px solid var(--app-
 const DANGER_BUTTON_STYLE = 'padding:6px 10px; border:1px solid rgba(239,68,68,0.35); border-radius:10px; background:var(--app-surface-card); color:#f87171; cursor:pointer; font-size:12px;';
 
 export class RegexSessionPanel {
-    constructor(getSessionId) {
-        this.store = window.appBridge?.regex || new RegexStore();
+    constructor(getSessionId, { store = null } = {}) {
+        this.store = store || new RegexStore();
         this.getSessionId = typeof getSessionId === 'function' ? getSessionId : () => 'default';
         this.element = null;
         this.overlay = null;

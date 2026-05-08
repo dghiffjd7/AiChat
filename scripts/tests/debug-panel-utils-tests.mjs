@@ -1,11 +1,18 @@
 import assert from 'node:assert/strict';
 
 import {
+  buildBridgeContractDiagnosticsMeta,
   buildCustomBundleDiagnosticsMeta,
+  buildDebugTraceTimelineDiagnosticsMeta,
   buildDebugTextFilename,
+  buildStorageMigrationDiagnosticsMeta,
+  collectBridgeContractDiagnostics,
   collectErrorLogs,
+  formatBridgeContractDiagnostics,
   formatCustomBundleDiagnostics,
+  formatDebugTraceTimelineDiagnostics,
   formatErrorLogs,
+  formatStorageMigrationDiagnostics,
 } from '../../src/scripts/ui/debug-panel-utils.js';
 
 {
@@ -21,6 +28,117 @@ import {
   });
   assert.equal(meta, 'phase=done · duration=321ms · history=2 · file=bundle.zip');
   console.log('ok - buildCustomBundleDiagnosticsMeta summarizes last import phase duration history and file name');
+}
+
+{
+  const checklist = [
+    {
+      id: 'contacts',
+      owner: 'ContactsStore',
+      currentKey: 'contacts_store_v1',
+      scopeStrategy: 'scoped-with-legacy-migration',
+      scopedKeyExample: 'contacts_store_v1__default',
+      legacyReadKeys: ['contacts_store_v1'],
+      legacyMigrationKey: 'contacts_store_v1__scoped_migrated',
+      writeTargets: ['contacts_store_v1__<scope>'],
+      payloadVersion: 1,
+      risk: 'high',
+      importExportSurfaces: ['custom-bundle'],
+      tests: ['settings-lifecycle-integration'],
+    },
+    {
+      id: 'regex',
+      owner: 'RegexStore',
+      currentKey: 'regex_store_v1',
+      scopeStrategy: 'shared',
+      writeTargets: ['regex_store_v1'],
+      payloadVersion: 1,
+      risk: 'medium',
+      importExportSurfaces: ['character-card'],
+      tests: ['regex-transfer-tests'],
+    },
+  ];
+  assert.equal(buildStorageMigrationDiagnosticsMeta(checklist), 'contracts=2 · high=1 · legacy-read=1');
+  const text = formatStorageMigrationDiagnostics(checklist);
+  assert.equal(text.includes('[HIGH] contacts'), true);
+  assert.equal(text.includes('legacyMigrationKey: contacts_store_v1__scoped_migrated'), true);
+  assert.equal(text.includes('tests: regex-transfer-tests'), true);
+  assert.equal(formatStorageMigrationDiagnostics([]), '暂无存储迁移检查表');
+  console.log('ok - storage migration diagnostics format checklist meta and text');
+}
+
+{
+  const registry = {
+    version: 1,
+    contracts: {
+      notify: {
+        name: 'notify',
+        domain: 'prompt-injection',
+        kind: 'method',
+        source: 'app-bridge-contract',
+      },
+      resolveRoleWorldBindings: {
+        name: 'resolveRoleWorldBindings',
+        domain: 'role-world',
+        kind: 'resolver',
+        source: 'app-bridge-contract',
+        bridgeField: 'setRoleWorldResolver',
+      },
+    },
+  };
+  const diagnostics = collectBridgeContractDiagnostics(registry);
+  assert.equal(diagnostics.total, 2);
+  assert.deepEqual(diagnostics.domains, [
+    { domain: 'prompt-injection', count: 1 },
+    { domain: 'role-world', count: 1 },
+  ]);
+  assert.equal(buildBridgeContractDiagnosticsMeta(registry), 'contracts=2 · domains=2 · version=1');
+  const text = formatBridgeContractDiagnostics(registry);
+  assert.equal(text.includes('[prompt-injection] 1'), true);
+  assert.equal(text.includes('- notify (method · source=app-bridge-contract)'), true);
+  assert.equal(text.includes('field=setRoleWorldResolver'), true);
+  assert.equal(formatBridgeContractDiagnostics(null), '暂无 Bridge contract registry');
+  console.log('ok - bridge contract diagnostics summarize registry domains and contract entries');
+}
+
+{
+  const events = [
+    {
+      eventId: 'trace-1',
+      category: 'generation',
+      phase: 'send.start',
+      sessionId: 's1',
+      source: 'send',
+      status: 'started',
+      startedAt: Date.UTC(2026, 4, 7, 10, 0, 0),
+      endedAt: null,
+      durationMs: null,
+      summary: 'started',
+      details: { messageCount: 2 },
+      relatedIds: ['m1'],
+    },
+    {
+      eventId: 'trace-2',
+      category: 'memory',
+      phase: 'apply.finish',
+      sessionId: 's1',
+      source: 'memory',
+      status: 'error',
+      startedAt: Date.UTC(2026, 4, 7, 10, 0, 1),
+      endedAt: Date.UTC(2026, 4, 7, 10, 0, 2),
+      durationMs: 1000,
+      summary: 'failed',
+      details: {},
+      relatedIds: [],
+    },
+  ];
+  assert.equal(buildDebugTraceTimelineDiagnosticsMeta(events), 'events=2 · categories=2 · sessions=1 · failures=1');
+  const text = formatDebugTraceTimelineDiagnostics(events);
+  assert.equal(text.includes('#1 [STARTED] generation.send.start'), true);
+  assert.equal(text.includes('details: {"messageCount":2}'), true);
+  assert.equal(text.includes('durationMs: 1000ms'), true);
+  assert.equal(formatDebugTraceTimelineDiagnostics([]), '暂无事件时间线');
+  console.log('ok - debug trace timeline diagnostics summarize meta and format event text');
 }
 
 {

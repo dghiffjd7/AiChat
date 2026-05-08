@@ -633,6 +633,348 @@ export const runMomentCommentGeneration = async (
   return { fullRaw, sawMomentReply };
 };
 
+export const createMomentCommentLifecycleRuntime = ({
+  getIsConfigured = () => true,
+  isOnline = () => true,
+  getConfig = () => ({}),
+  getMoment = () => null,
+  getCurrentSessionId = () => '',
+  getContactCount = () => 1,
+  getActiveUserProfile = () => null,
+  getActiveUserName = () => '我',
+  contactsStore = null,
+  momentsStore = null,
+  normalizeName = normalizeNameValue,
+  normalizeLooseName = normalizeNameValue,
+  normalizeStickerTextForPrompt = value => String(value ?? ''),
+  normalizeInitialMomentStats = value => value,
+  normalizeMomentRecord = value => value,
+  normalizeMomentComments = value => value,
+  addMoments = list => momentsStore?.addMany?.(list),
+  addMomentComments = (momentId, comments) => momentsStore?.addComments?.(momentId, comments),
+  bumpMomentEngagement = () => {},
+  resolvePrivateChatTargetSessionId = null,
+  parseSpecialMessage = content => ({ type: 'text', content, meta: {} }),
+  userAvatar = '',
+  resolveAssistantAvatar = () => '',
+  formatNowTime = () => '',
+  appendPrivateChatMessage = () => null,
+  autoMarkReadIfActive = () => {},
+  onTouchedChats = () => {},
+  onTouchedMoments = () => {},
+  generate = async () => '',
+  createParser = () => ({ push: () => [] }),
+  normalizeChunk = chunk => chunk,
+  runGeneration = runMomentCommentGeneration,
+  retryMomentReply = runMomentReplyRetry,
+  saveRawReply = async () => {},
+  flushMoments = async () => {},
+  applySummaryFromRaw = applyMomentSummaryFromRaw,
+  addSummary = async () => {},
+  runSummaryCompaction = async () => {},
+  notifySummariesUpdated = async () => {},
+  showMissingConfig = () => {},
+  showOffline = () => {},
+  showMissingMoment = () => {},
+  showNoReplyWarning = () => {},
+  showError = () => {},
+  logger = null,
+  recordLifecycleEvent = null,
+  recordTraceEvent = null,
+} = {}) => {
+  const record = (event) => {
+    if (typeof recordLifecycleEvent === 'function') {
+      try {
+        recordLifecycleEvent(event);
+      } catch {}
+      return;
+    }
+    emitMomentLifecycleTrace(recordTraceEvent, event);
+  };
+  const normalize = typeof normalizeName === 'function' ? normalizeName : normalizeNameValue;
+  const normalizeLoose = typeof normalizeLooseName === 'function' ? normalizeLooseName : normalizeNameValue;
+  const resolvePrivateTarget = typeof resolvePrivateChatTargetSessionId === 'function'
+    ? resolvePrivateChatTargetSessionId
+    : otherName => resolvePrivateChatTargetSessionIdByName(otherName, {
+      contactsStore,
+      normalizeName: normalize,
+      fallbackSessionId: null,
+    });
+
+  return async (momentId, commentText, meta = null) => {
+    const id = String(momentId || '').trim();
+    const userComment = String(commentText || '').trim();
+    if (!id || !userComment) {
+      record({
+        phase: 'comment.skipped',
+        momentId: id,
+        status: 'skipped',
+        summary: 'moment comment skipped',
+        details: {
+          reason: 'missing-input',
+          hasMomentId: Boolean(id),
+          hasText: Boolean(userComment),
+        },
+      });
+      return { ok: false, reason: 'missing-input' };
+    }
+
+    if (!getIsConfigured()) {
+      record({
+        phase: 'comment.skipped',
+        momentId: id,
+        status: 'skipped',
+        summary: 'moment comment skipped',
+        details: { reason: 'not-configured' },
+      });
+      showMissingConfig();
+      return { ok: false, reason: 'not-configured' };
+    }
+
+    if (!isOnline()) {
+      record({
+        phase: 'comment.skipped',
+        momentId: id,
+        status: 'skipped',
+        summary: 'moment comment skipped',
+        details: { reason: 'offline' },
+      });
+      showOffline();
+      return { ok: false, reason: 'offline' };
+    }
+
+    const moment = getMoment(id);
+    if (!moment) {
+      record({
+        phase: 'comment.skipped',
+        momentId: id,
+        status: 'skipped',
+        summary: 'moment comment skipped',
+        details: { reason: 'moment-not-found' },
+      });
+      showMissingMoment();
+      return { ok: false, reason: 'moment-not-found' };
+    }
+
+    const engagementCount = Math.max(1, Number(getContactCount()) || 1);
+    try {
+      bumpMomentEngagement(id, engagementCount);
+    } catch {}
+
+    const authorName = String(moment.author || '').trim() || '发布者';
+    const originSessionId = String(
+      moment.originSessionId || moment.authorId || getCurrentSessionId() || '',
+    ).trim();
+    const userCommentId = String(meta?.userCommentId || '').trim();
+    const replyTo =
+      meta && typeof meta === 'object' && meta.replyTo && typeof meta.replyTo === 'object'
+        ? {
+            id: String(meta.replyTo.id || '').trim(),
+            author: String(meta.replyTo.author || '').trim(),
+            content: String(meta.replyTo.content || ''),
+          }
+        : null;
+    const isReplyToComment = Boolean(replyTo?.id);
+    const contactList = collectMomentCommentContactList(contactsStore, {
+      authorName,
+      maxItems: 16,
+    });
+    const target = resolveMomentReplyTarget({
+      isReplyToComment,
+      replyTo,
+      authorName,
+      originSessionId,
+      resolvePrivateChatTargetSessionId: resolvePrivateTarget,
+      normalizeName: normalize,
+    });
+    const recentComments = buildMomentRecentCommentsText(moment.comments, {
+      normalizeText: normalizeStickerTextForPrompt,
+    });
+    const userLine = isReplyToComment
+      ? `{{user}}回复了${replyTo.author}：{{lastUserMessage}}`
+      : `{{user}}：{{lastUserMessage}}`;
+    const promptData = buildMomentCommentPromptData({
+      authorName,
+      content: String(normalizeStickerTextForPrompt(moment.content || '') || '').trim(),
+      time: String(moment.time || '').trim(),
+      userLine,
+      isReplyToComment,
+      replyTo: isReplyToComment
+        ? {
+            author: replyTo.author,
+            content: String(normalizeStickerTextForPrompt(replyTo.content || '') || '').trim(),
+          }
+        : null,
+      recentComments,
+      contactList: contactList || '-（无）',
+    });
+    const applyEvents = (events = []) => applyMomentCommentEvents(events, {
+      currentMomentId: id,
+      originSessionId,
+      engagementCount,
+      momentsStore,
+      logger,
+      normalizeInitialMomentStats,
+      normalizeMomentRecord,
+      normalizeMomentComments,
+      addMoments,
+      addMomentComments,
+      isReplyToComment,
+      replyTo,
+      targetName: target?.name,
+      normalizeName: normalize,
+      bumpMomentEngagement,
+      resolvePrivateChatTargetSessionId: resolvePrivateTarget,
+      buildPrivateChatMessages: (messages, targetSessionId) => buildMomentPrivateChatMessages(messages, {
+        getActiveUserName,
+        normalizeName: normalize,
+        normalizeLooseName: normalizeLoose,
+        parseSpecialMessage,
+        userAvatar: typeof userAvatar === 'function' ? userAvatar() : userAvatar,
+        assistantAvatar: resolveAssistantAvatar(targetSessionId),
+        formatNowTime,
+      }),
+      appendPrivateChatMessage,
+      autoMarkReadIfActive,
+      onTouchedChats,
+      onTouchedMoments,
+    });
+
+    let momentCommentTraceStarted = false;
+    try {
+      const config = getConfig() || {};
+      const context = buildMomentCommentTaskContext({
+        userProfile: getActiveUserProfile(),
+        target,
+        authorName,
+        originSessionId,
+        promptData,
+        isReplyToComment,
+        replyTo,
+      });
+      momentCommentTraceStarted = true;
+      record({
+        phase: 'comment.start',
+        sessionId: originSessionId,
+        momentId: id,
+        status: 'started',
+        summary: 'moment comment generation started',
+        details: {
+          authorName,
+          targetSessionId: target?.sessionId || '',
+          targetName: target?.name || '',
+          stream: Boolean(config.stream),
+          isReplyToComment,
+          userCommentId,
+          hasRecentComments: Boolean(recentComments),
+        },
+      });
+
+      const { fullRaw, sawMomentReply } = await runGeneration(userComment, context, {
+        stream: Boolean(config.stream),
+        generate,
+        createParser,
+        normalizeChunk,
+        applyEvents,
+        saveRaw: raw => saveRawReply(raw, {
+          momentId: id,
+          author: authorName,
+          time: moment?.time || '',
+          comment: userComment,
+        }),
+        retryUnhandledReply: (raw, parseText) =>
+          retryMomentReply(raw, {
+            parseText,
+            logger,
+          }),
+        logger,
+      });
+
+      if (sawMomentReply) {
+        try {
+          await flushMoments();
+        } catch {}
+      } else {
+        try {
+          logger?.warn?.(
+            'moment_reply parse failed',
+            JSON.stringify({
+              momentId: id,
+              hasStart: String(fullRaw || '')
+                .toLowerCase()
+                .includes('moment_reply_start'),
+              hasEnd: String(fullRaw || '')
+                .toLowerCase()
+                .includes('moment_reply_end'),
+              rawLen: String(fullRaw || '').length,
+            }),
+          );
+        } catch {}
+        showNoReplyWarning();
+      }
+
+      let summary = '';
+      if (fullRaw) {
+        try {
+          summary = await applySummaryFromRaw(fullRaw, {
+            addSummary,
+            runCompaction: runSummaryCompaction,
+            notifyUpdated: notifySummariesUpdated,
+          });
+        } catch {}
+      }
+
+      record({
+        phase: 'comment.finish',
+        sessionId: originSessionId,
+        momentId: id,
+        status: sawMomentReply ? 'success' : 'warning',
+        summary: sawMomentReply
+          ? 'moment comment generation finished'
+          : 'moment comment reply not parsed',
+        details: {
+          authorName,
+          stream: Boolean(config.stream),
+          isReplyToComment,
+          userCommentId,
+          sawMomentReply,
+          rawLength: String(fullRaw || '').length,
+        },
+      });
+
+      return {
+        ok: Boolean(sawMomentReply),
+        status: sawMomentReply ? 'success' : 'warning',
+        fullRaw,
+        sawMomentReply,
+        summary,
+        context,
+        promptData,
+        target,
+      };
+    } catch (err) {
+      record({
+        phase: 'comment.finish',
+        sessionId: originSessionId,
+        momentId: id,
+        status: 'error',
+        summary: err?.message || 'moment comment generation failed',
+        details: {
+          authorName,
+          isReplyToComment,
+          userCommentId,
+          started: momentCommentTraceStarted,
+        },
+      });
+      try {
+        logger?.error?.('动态评论生成失败', err);
+      } catch {}
+      showError(err);
+      return { ok: false, status: 'error', error: err };
+    }
+  };
+};
+
 export const createMomentSummaryCompactionRuntime = ({
   scopeKey = 'global',
   momentSummaryStore = null,

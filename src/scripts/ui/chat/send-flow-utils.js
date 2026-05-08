@@ -1,3 +1,14 @@
+import {
+  createPendingUserMessage,
+  getMessageSendText,
+  restorePendingQueueToHistory,
+  resolvePendingMessagesToSend,
+} from './pending-message-utils.js';
+import {
+  dispatchAfterSendEvents,
+  markMessagesAsSending,
+} from './send-side-effect-utils.js';
+
 const normalizeStringIdList = (items = []) => Array.from(
   new Set(
     (Array.isArray(items) ? items : [])
@@ -88,6 +99,152 @@ export const normalizeHandleSendOptions = (options = {}) => {
   };
 };
 
+export const runPendingSendPreparationFlow = ({
+  ignorePending = false,
+  targetMessageId = null,
+  allMessages = [],
+  pendingQueue = [],
+  overrideText = '',
+  hasAttachments = false,
+  continueTarget = null,
+  sessionId = '',
+  userAvatar = '',
+  getInputText = () => '',
+  getActiveUserProfile = () => null,
+  isStickerAllowed = () => false,
+  parseStickerToken = () => '',
+  getReplyTargetForSession = () => null,
+  clearReplyTargetForSession = () => {},
+  formatNowTime = () => '',
+  appendMessage = null,
+  addMessageToUi = null,
+  removePendingMessage = null,
+  clearInput = () => {},
+  buildStickerToken = value => String(value || ''),
+  chatStore = null,
+  ui = null,
+  scriptRuntime = null,
+  pluginRuntime = null,
+  skipScripts = false,
+  logger = null,
+  recordTraceEvent = null,
+  refreshChatAndContacts = () => {},
+  updatePendingFloat = () => {},
+  showError = () => {},
+  showWarning = () => {},
+} = {}) => {
+  const pendingMessages = ignorePending
+    ? []
+    : (Array.isArray(allMessages) ? allMessages.filter(message => message?.status === 'pending') : []);
+  if (!ignorePending && !targetMessageId && Array.isArray(pendingQueue) && pendingQueue.length) {
+    const restored = restorePendingQueueToHistory({
+      pendingQueue,
+      existingMessages: allMessages,
+      sessionId,
+      appendMessage,
+      addMessageToUi,
+      removePendingMessage,
+    });
+    if (restored.length) pendingMessages.push(...restored);
+  }
+
+  if (pendingMessages.length > 0) {
+    let { messagesToSend, errorMessage } = resolvePendingMessagesToSend({
+      pendingMessages,
+      targetMessageId,
+    });
+
+    if (errorMessage) {
+      showError(errorMessage);
+      return {
+        shouldContinue: false,
+        text: '',
+        pendingMessagesToConfirm: [],
+        errorMessage,
+      };
+    }
+
+    if (!targetMessageId) {
+      const currentInput = String(getInputText() || '').trim();
+      if (currentInput) {
+        const activeUser = getActiveUserProfile();
+        const stickerKey = isStickerAllowed() ? parseStickerToken(currentInput) : '';
+        const replyTarget = getReplyTargetForSession(sessionId);
+        const newPendingMsg = createPendingUserMessage({
+          text: currentInput,
+          stickerKey,
+          avatar: userAvatar,
+          userName: activeUser?.name,
+          time: formatNowTime(),
+          replyTarget,
+        });
+        const saved = appendMessage(newPendingMsg, sessionId);
+        addMessageToUi(saved);
+        messagesToSend.push(saved);
+        clearInput();
+        if (replyTarget) clearReplyTargetForSession(sessionId);
+      }
+    }
+
+    const text = messagesToSend
+      .map(message => getMessageSendText(message, buildStickerToken))
+      .filter(Boolean)
+      .join('\n');
+    let pendingMessagesToConfirm = messagesToSend;
+
+    if (!text && !hasAttachments) {
+      showWarning('没有可发送的消息');
+      return {
+        shouldContinue: false,
+        text: '',
+        pendingMessagesToConfirm,
+        warningMessage: '没有可发送的消息',
+      };
+    }
+
+    pendingMessagesToConfirm = markMessagesAsSending({
+      messages: pendingMessagesToConfirm,
+      sessionId,
+      chatStore,
+      ui,
+    });
+    dispatchAfterSendEvents({
+      messages: pendingMessagesToConfirm,
+      sessionId,
+      scriptRuntime,
+      pluginRuntime,
+      skipScripts,
+      logger,
+      recordTraceEvent,
+    });
+    refreshChatAndContacts({ immediate: true });
+    updatePendingFloat(sessionId);
+
+    return {
+      shouldContinue: true,
+      text,
+      pendingMessagesToConfirm,
+      handledPending: true,
+    };
+  }
+
+  const text = overrideText || getInputText();
+  if (!text && !hasAttachments && !continueTarget) {
+    return {
+      shouldContinue: false,
+      text: '',
+      pendingMessagesToConfirm: [],
+    };
+  }
+
+  return {
+    shouldContinue: true,
+    text,
+    pendingMessagesToConfirm: [],
+    handledPending: false,
+  };
+};
+
 export const resolveRegenerateFromUserIndexPlan = ({
   messages = [],
   userIdx = -1,
@@ -165,6 +322,245 @@ export const resolveRegenerateFromUserIndexPlan = ({
     warningMessage: '',
     reason: '',
   };
+};
+
+export const runRegenerateFromUserIndexFlow = async ({
+  messages = [],
+  userIdx = -1,
+  allowEmpty = false,
+  isSyntheticUser = () => false,
+  sessionId = '',
+  chatStore = null,
+  ui = null,
+  recordTraceEvent = () => {},
+  removeTurnCheckpointsForMessages = async () => {},
+  refreshChatAndContacts = () => {},
+  getMemoryStorageMode = () => '',
+  restoreMemoryForActiveThread = async () => {},
+  getMessageSendText = () => '',
+  buildStickerToken = value => value,
+  handleSend = async () => false,
+  warn = () => {},
+  logger = null,
+} = {}) => {
+  const plan = resolveRegenerateFromUserIndexPlan({
+    messages,
+    userIdx,
+    allowEmpty,
+    isSyntheticUser,
+  });
+  if (!plan.canRegenerate) {
+    if (plan.warningMessage) warn(plan.warningMessage);
+    return {
+      started: false,
+      resent: false,
+      plan,
+      reason: plan.reason,
+    };
+  }
+
+  const prevUser = plan.prevUser;
+  const regenMessages = plan.regenMessages;
+  recordTraceEvent({
+    phase: 'regenerate.start',
+    sessionId,
+    status: 'started',
+    summary: 'regenerate flow started',
+    details: {
+      userIdx,
+      allowEmpty,
+      regenMessageCount: regenMessages.length,
+    },
+  });
+
+  if (regenMessages.length) {
+    regenMessages.forEach(message => {
+      chatStore?.deleteMessage?.(message.id, sessionId);
+      ui?.removeMessage?.(message.id);
+    });
+    try {
+      await removeTurnCheckpointsForMessages(sessionId, regenMessages, { prune: true });
+    } catch (err) {
+      logger?.warn?.('remove turn checkpoints for regenerated messages failed', err);
+    }
+    refreshChatAndContacts();
+  }
+
+  chatStore?.removeLastSummary?.(sessionId);
+  if (getMemoryStorageMode() === 'table') {
+    try {
+      await restoreMemoryForActiveThread(sessionId, {
+        refreshBaselineWhenNoTail: false,
+        source: 'regenerate_from_user_index',
+      });
+    } catch (err) {
+      logger?.warn?.('restore memory after regenerate failed', err);
+    }
+  }
+
+  const resendText = getMessageSendText(prevUser, buildStickerToken);
+  if (!String(resendText || '').trim()) {
+    recordTraceEvent({
+      phase: 'regenerate.finish',
+      sessionId,
+      status: 'skipped',
+      summary: 'regenerate flow skipped',
+      details: {
+        userIdx,
+        allowEmpty,
+        reason: 'empty-user-message',
+      },
+    });
+    warn('未找到对应的用户消息内容');
+    return {
+      started: true,
+      resent: false,
+      plan,
+      reason: 'empty-user-message',
+    };
+  }
+
+  const resent = await handleSend(null, {
+    overrideText: resendText,
+    ignorePending: true,
+    suppressUserMessage: true,
+    skipInputRegex: true,
+    existingUserMessageId: prevUser?.id || '',
+    includeAttachments: false,
+  });
+  recordTraceEvent({
+    phase: 'regenerate.finish',
+    sessionId,
+    status: resent ? 'success' : 'error',
+    summary: resent ? 'regenerate flow completed' : 'regenerate resend failed',
+    details: {
+      userIdx,
+      allowEmpty,
+      regenMessageCount: regenMessages.length,
+      resent: Boolean(resent),
+    },
+  });
+
+  return {
+    started: true,
+    resent: Boolean(resent),
+    plan,
+    reason: resent ? '' : 'resend-failed',
+  };
+};
+
+export const runSendCatchFlow = ({
+  error = null,
+  generationId = 0,
+  suppressErrorUI = false,
+  streamCtrl = null,
+  getActiveGeneration = () => null,
+  isGenerationInterrupted = () => false,
+  sessionId = '',
+  isSessionActive = () => false,
+  hideTyping = () => {},
+  fastForwardDelivery = () => {},
+  logger = null,
+  showErrorBanner = () => {},
+  retrySend = () => {},
+  showToastError = () => {},
+} = {}) => {
+  const sendErrorMessage = error?.message ? String(error.message) : String(error || '');
+  const generationInterrupted = isGenerationInterrupted(generationId);
+  const isCancelled = Boolean(error?.cancelled || generationInterrupted);
+  if (!isCancelled) {
+    streamCtrl?.cancel?.();
+  }
+  const activeGeneration = getActiveGeneration();
+  if (activeGeneration?._messageQueue) {
+    try {
+      activeGeneration._messageQueue.cancel();
+    } catch {}
+  }
+  if (!generationInterrupted && isSessionActive(sessionId)) {
+    hideTyping();
+    fastForwardDelivery(sessionId);
+  }
+
+  const nextSuppressErrorUI = Boolean(suppressErrorUI || isCancelled);
+  if (!nextSuppressErrorUI) {
+    logger?.error?.('发送失败', error, { status: error?.status, response: error?.response });
+    showErrorBanner(error?.message || '发送失败，请检查网络或 API 设置', {
+      label: '重试',
+      handler: () => retrySend(),
+    });
+    showToastError(error?.message || '发送失败', '错误');
+  }
+
+  return {
+    sendErrorMessage,
+    suppressErrorUI: nextSuppressErrorUI,
+    generationInterrupted,
+    cancelled: isCancelled,
+  };
+};
+
+export const runSendFinallyFlow = ({
+  sendSucceeded = false,
+  pendingMessagesToConfirm = [],
+  sessionId = '',
+  isGroupChat = false,
+  checkpointTargetMessageId = '',
+  generationId = 0,
+  sendTraceStarted = false,
+  suppressErrorUI = false,
+  sendErrorMessage = '',
+  finalizePendingMessages = () => {},
+  movePendingFromHistoryToQueue = () => {},
+  refreshChatAndContacts = () => {},
+  scriptRuntime = null,
+  runMemoryUpdateAfterChat = () => null,
+  buildMemoryContext = () => null,
+  updatePendingFloat = () => {},
+  getActiveGeneration = () => null,
+  setActiveGeneration = () => {},
+  setSendingState = () => {},
+  recordTraceEvent = () => {},
+} = {}) => {
+  if (sendSucceeded) {
+    if (Array.isArray(pendingMessagesToConfirm) && pendingMessagesToConfirm.length > 0) {
+      finalizePendingMessages(sessionId, pendingMessagesToConfirm);
+    }
+    movePendingFromHistoryToQueue(sessionId);
+    refreshChatAndContacts();
+    scriptRuntime?.consumeOnce?.(sessionId);
+    const memoryTask = runMemoryUpdateAfterChat(sessionId, isGroupChat, buildMemoryContext(), {
+      checkpointMessageId: checkpointTargetMessageId,
+    });
+    memoryTask?.catch?.(() => {});
+  }
+
+  updatePendingFloat(sessionId);
+  const activeBeforeSendingReset = getActiveGeneration();
+  if (!activeBeforeSendingReset || activeBeforeSendingReset.id === generationId) {
+    setSendingState(false);
+  }
+  const activeBeforeClear = getActiveGeneration();
+  if (activeBeforeClear?.id === generationId) {
+    setActiveGeneration(null);
+  }
+
+  if (sendTraceStarted) {
+    recordTraceEvent({
+      phase: 'send.finish',
+      sessionId,
+      status: sendSucceeded ? 'success' : (suppressErrorUI ? 'cancelled' : 'error'),
+      summary: sendSucceeded ? 'send flow completed' : 'send flow stopped',
+      details: {
+        generationId,
+        sendSucceeded,
+        cancelled: suppressErrorUI || undefined,
+        errorMessage: sendErrorMessage || undefined,
+      },
+    });
+  }
+
+  return sendSucceeded;
 };
 
 const isEnabledPromptRule = (enabled, rules) =>

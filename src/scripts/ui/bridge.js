@@ -1979,9 +1979,66 @@ class AppBridge {
     return Boolean(canInitClient(config));
   }
 
+  getConfig() {
+    return this.config?.get?.() || {};
+  }
+
+  async loadConfig() {
+    const loaded = await this.config?.load?.();
+    return this.config?.get?.() || loaded || {};
+  }
+
+  async reloadConfig() {
+    const reloaded = await this.config?.reload?.();
+    return this.config?.get?.() || reloaded || {};
+  }
+
+  async ensureConfigStores() {
+    return await this.config?.ensureStores?.();
+  }
+
+  getConfigProfiles() {
+    return this.config?.getProfiles?.() || [];
+  }
+
+  getConfigProfileById(profileId) {
+    return this.config?.getProfileById?.(profileId) || null;
+  }
+
+  getActiveConfigProfile() {
+    return this.config?.getActiveProfile?.() || null;
+  }
+
+  getActiveConfigProfileId() {
+    return this.config?.getActiveProfileId?.() || '';
+  }
+
+  async setActiveConfigProfile(profileId) {
+    return await this.config?.setActiveProfile?.(profileId);
+  }
+
+  async createConfigProfile(name, config = {}) {
+    return await this.config?.createProfile?.(name, config);
+  }
+
+  setChatRuntimeConfig(config = {}) {
+    const runtime = config && typeof config === 'object' ? config : {};
+    this.config?.set?.(runtime);
+    this.client = canInitClient(runtime) ? new LLMClient(runtime) : null;
+    return {
+      ok: true,
+      configured: Boolean(this.client),
+      clientReady: Boolean(this.client),
+    };
+  }
+
   /**
    * 切换当前会话（影响世界书选中）
    */
+  getActiveSessionId() {
+    return String(this.activeSessionId || '').trim();
+  }
+
   setActiveSession(sessionId = 'default') {
     const prevSessionId = this.activeSessionId;
     this.activeSessionId = sessionId;
@@ -5245,6 +5302,54 @@ const stringifyMessageContent = (content) => {
       await this.worldStore.ready;
     }
     return this.worldStore.list();
+  }
+
+  async waitForWorldStoreReady() {
+    if (this.worldStore?.ready) {
+      await this.worldStore.ready;
+    }
+    return true;
+  }
+
+  loadStoredWorldInfo(worldId) {
+    const id = String(worldId || '').trim();
+    if (!id) return null;
+    return this.worldStore?.load?.(id) || null;
+  }
+
+  hasStoredWorldInfo(worldId) {
+    return Boolean(this.loadStoredWorldInfo(worldId));
+  }
+
+  getRegexStore() {
+    return this.regex || null;
+  }
+
+  async waitForRegexStoreReady() {
+    if (this.regex?.ready) {
+      await this.regex.ready;
+    }
+    return true;
+  }
+
+  getRegexSession(sessionId) {
+    return this.regex?.getSession?.(sessionId) || null;
+  }
+
+  listRegexLocalSets() {
+    return this.regex?.listLocalSets?.() || [];
+  }
+
+  getRegexLocalSet(setId) {
+    return this.regex?.getLocalSet?.(setId) || null;
+  }
+
+  async upsertRegexLocalSet(set) {
+    return await this.regex?.upsertLocalSet?.(set);
+  }
+
+  async removeRegexLocalSet(setId) {
+    return await this.regex?.removeLocalSet?.(setId);
   }
 
   setCurrentWorld(worldId, sessionId = this.activeSessionId) {

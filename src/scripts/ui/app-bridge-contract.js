@@ -2,8 +2,15 @@ import { ensureDebugUiRegistry as ensureSharedDebugUiRegistry } from './debug-ui
 
 export const BRIDGE_CONTRACT_DOMAINS = Object.freeze({
   promptInjection: 'prompt-injection',
+  promptProcessing: 'prompt-processing',
   persona: 'persona',
+  sessionState: 'session-state',
   roleWorld: 'role-world',
+  worldStore: 'world-store',
+  configRuntime: 'config-runtime',
+  generation: 'generation',
+  regexTransform: 'regex-transform',
+  regexStore: 'regex-store',
   sharedSession: 'shared-session',
   runtimeService: 'runtime-service',
   turnCheckpoint: 'turn-checkpoint',
@@ -93,8 +100,16 @@ export const registerPromptInjectionBridgeContract = (appBridge, methods = {}) =
   return assignBridgeMethods(appBridge, methods, BRIDGE_CONTRACT_DOMAINS.promptInjection);
 };
 
+export const registerPromptProcessingBridgeContract = (appBridge, methods = {}) => {
+  return assignBridgeMethods(appBridge, methods, BRIDGE_CONTRACT_DOMAINS.promptProcessing);
+};
+
 export const registerPersonaBridgeContract = (appBridge, methods = {}) => {
   return assignBridgeMethods(appBridge, methods, BRIDGE_CONTRACT_DOMAINS.persona);
+};
+
+export const registerSessionStateBridgeContract = (appBridge, methods = {}) => {
+  return assignBridgeMethods(appBridge, methods, BRIDGE_CONTRACT_DOMAINS.sessionState);
 };
 
 export const registerRoleWorldBridgeContract = (appBridge, {
@@ -117,6 +132,26 @@ export const registerRoleWorldBridgeContract = (appBridge, {
     });
   }
   return true;
+};
+
+export const registerWorldStoreBridgeContract = (appBridge, methods = {}) => {
+  return assignBridgeMethods(appBridge, methods, BRIDGE_CONTRACT_DOMAINS.worldStore);
+};
+
+export const registerConfigRuntimeBridgeContract = (appBridge, methods = {}) => {
+  return assignBridgeMethods(appBridge, methods, BRIDGE_CONTRACT_DOMAINS.configRuntime);
+};
+
+export const registerGenerationBridgeContract = (appBridge, methods = {}) => {
+  return assignBridgeMethods(appBridge, methods, BRIDGE_CONTRACT_DOMAINS.generation);
+};
+
+export const registerRegexTransformBridgeContract = (appBridge, methods = {}) => {
+  return assignBridgeMethods(appBridge, methods, BRIDGE_CONTRACT_DOMAINS.regexTransform);
+};
+
+export const registerRegexStoreBridgeContract = (appBridge, methods = {}) => {
+  return assignBridgeMethods(appBridge, methods, BRIDGE_CONTRACT_DOMAINS.regexStore);
 };
 
 export const registerSharedSessionBridgeContract = (appBridge, methods = {}) => {

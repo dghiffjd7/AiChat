@@ -1,3 +1,12 @@
+import {
+    getWorldEntryActivationExplanationCore,
+    resolveWorldEditorBridgeContext,
+} from './world-editor-bridge-utils.js';
+import {
+    buildWorldConditionVariableRuntimeContext,
+    resolveWorldVariableSessionContext,
+} from './world-variable-session-utils.js';
+
 export function getConditionSummaryOperatorImpl(op = '>') {
     const value = String(op || '>').trim();
     const map = {
@@ -23,19 +32,10 @@ export function getConditionSummaryValueTextImpl(value, rightType = 'number', de
 
 export function getConditionRuntimeContextImpl(deps = {}) {
     const { buildVariableContext } = deps;
-    const bridge = window.appBridge;
-    const chatStore = bridge?.chatStore;
-    const sid = String(chatStore?.getCurrent?.() || bridge?.activeSessionId || '').trim();
-    if (!chatStore || !sid) {
-        return buildVariableContext({ baseVars: {}, globalVars: {} });
-    }
-    const useGlobal = Boolean(typeof bridge?.isSharedVariableSession === 'function' && bridge.isSharedVariableSession(sid));
-    const localVars = chatStore?.listVariables?.(sid) || {};
-    const globalVars = chatStore?.listGlobalVariables?.() || {};
-    const baseVars = useGlobal ? globalVars : localVars;
-    const runtimeContext = buildVariableContext({ baseVars, globalVars });
-    runtimeContext.variableContext.local_variables = localVars;
-    return runtimeContext;
+    return buildWorldConditionVariableRuntimeContext({
+        ...resolveWorldVariableSessionContext(),
+        buildVariableContext,
+    });
 }
 
 export function formatConditionRuntimeValueImpl(value, rightType = 'string') {
@@ -125,17 +125,14 @@ export function getConditionGroupExplanationReasonImpl(logicRaw = 'and', explana
 
 export function getEntryActivationExplanationImpl(entry, idx = this.currentIndex, deps = {}) {
     const { logger } = deps;
-    const bridge = window.appBridge;
-    const worldId = String(entry?._refSourceId || entry?._sourceWorldId || this.worldName || '').trim();
-    const entryId = this.getEntryId(entry, idx);
-    if (!bridge?.explainWorldEntryActivation || !worldId || !entryId) return null;
-    try {
-        const label = bridge.buildWorldDebugLabel?.() || null;
-        return bridge.explainWorldEntryActivation(worldId, entryId, label);
-    } catch (err) {
-        logger?.warn?.('读取世界书条目激活解释失败', err);
-        return null;
-    }
+    return getWorldEntryActivationExplanationCore({
+        ...resolveWorldEditorBridgeContext(),
+        entry,
+        idx,
+        worldName: this.worldName,
+        getEntryId: this.getEntryId?.bind(this),
+        logger,
+    });
 }
 
 export function renderEntryActivationOverviewImpl(explanation, deps = {}) {

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   createPendingUserMessage,
   getMessageSendText,
+  restorePendingQueueToHistory,
   resolvePendingMessagesToSend,
 } from '../../src/scripts/ui/chat/pending-message-utils.js';
 
@@ -93,6 +94,58 @@ test('resolvePendingMessagesToSend reports a missing target message', () => {
     messagesToSend: [],
     errorMessage: '未找到指定消息',
   });
+});
+
+test('restorePendingQueueToHistory appends missing queued messages before removing queue entries', () => {
+  const calls = [];
+  const pendingQueue = [
+    { id: 'existing', content: 'already in history' },
+    { id: 'p1', content: 'queued-1', status: 'queued' },
+    { id: '', content: 'no id' },
+    { id: 'p2', content: 'queued-2' },
+  ];
+
+  const restored = restorePendingQueueToHistory({
+    pendingQueue,
+    existingMessages: [{ id: 'existing' }],
+    sessionId: 'session-a',
+    appendMessage(message, sessionId) {
+      calls.push(['append', sessionId, message]);
+      return { ...message, saved: true };
+    },
+    addMessageToUi(message) {
+      calls.push(['ui', message.id]);
+    },
+    removePendingMessage(messageId, sessionId) {
+      calls.push(['remove', sessionId, messageId]);
+    },
+  });
+
+  assert.deepEqual(restored, [
+    { id: 'p1', content: 'queued-1', status: 'pending', saved: true },
+    { id: 'p2', content: 'queued-2', status: 'pending', saved: true },
+  ]);
+  assert.deepEqual(calls, [
+    ['append', 'session-a', { id: 'p1', content: 'queued-1', status: 'pending' }],
+    ['ui', 'p1'],
+    ['append', 'session-a', { id: 'p2', content: 'queued-2', status: 'pending' }],
+    ['ui', 'p2'],
+    ['remove', 'session-a', 'existing'],
+    ['remove', 'session-a', 'p1'],
+    ['remove', 'session-a', ''],
+    ['remove', 'session-a', 'p2'],
+  ]);
+});
+
+test('restorePendingQueueToHistory safely ignores empty queue input', () => {
+  const restored = restorePendingQueueToHistory({
+    pendingQueue: null,
+    appendMessage() {
+      throw new Error('should not append');
+    },
+  });
+
+  assert.deepEqual(restored, []);
 });
 
 test('getMessageSendText prioritizes raw text, attachments-only guard, and sticker token rendering', () => {

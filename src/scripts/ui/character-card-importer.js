@@ -8,6 +8,8 @@ import { appSettings } from '../storage/app-settings.js';
 import { appConfirm, appChoice } from './app-confirm.js';
 import { MVUConverter } from '../import/mvu-converter.js';
 import { buildScriptAuthorizationMessage } from './script-authorization-utils.js';
+import { createRegexStoreRuntimeAdapter } from './regex-store-runtime-utils.js';
+import { hasStoredWorldInfo, waitForWorldStoreReady } from './world-store-runtime-utils.js';
 
 const buildGreetingList = (card = {}) => {
   const list = [];
@@ -191,13 +193,13 @@ const buildWorldbookEntries = (card, { defaultScope = [] } = {}) => {
   return entries;
 };
 
-const ensureUniqueWorldbookId = (baseName, worldStore) => {
+const ensureUniqueWorldbookId = (baseName, hasWorldInfo) => {
   const base = sanitizeId(baseName, 'card_worldbook');
-  if (!worldStore?.load?.(base)) return base;
+  if (!hasWorldInfo(base)) return base;
   let idx = 1;
   while (idx < 9999) {
     const next = `${base}_${idx}`;
-    if (!worldStore?.load?.(next)) return next;
+    if (!hasWorldInfo(next)) return next;
     idx += 1;
   }
   return `${base}_${Date.now()}`;
@@ -207,6 +209,7 @@ export class CharacterCardImporter {
   constructor({ personaStore, appBridge, rpSessionStore, onPersonaChanged } = {}) {
     this.personaStore = personaStore || null;
     this.appBridge = appBridge || window.appBridge;
+    this.regexStore = createRegexStoreRuntimeAdapter(this.appBridge);
     this.rpSessionStore = rpSessionStore || null;
     this.onPersonaChanged = onPersonaChanged;
   }
@@ -325,15 +328,13 @@ export class CharacterCardImporter {
 
     let worldId = '';
     if (options.importWorld) {
-      if (this.appBridge?.worldStore?.ready) {
-        await this.appBridge.worldStore.ready;
-      }
+      await waitForWorldStoreReady(this.appBridge);
       const worldPayload = {
         name: String(card?.name || '').trim() ? displayName : '角色世界书',
         entries: worldEntries,
         source: 'character_card',
       };
-      worldId = ensureUniqueWorldbookId(displayName, this.appBridge?.worldStore);
+      worldId = ensureUniqueWorldbookId(displayName, id => hasStoredWorldInfo(this.appBridge, id));
       await this.appBridge?.saveWorldInfo?.(worldId, worldPayload);
     }
 
@@ -469,7 +470,7 @@ export class CharacterCardImporter {
     let regexSetId = '';
     if (options.importRegex && regexScripts.length) {
       try {
-        const regexStore = this.appBridge?.regex;
+        const regexStore = this.regexStore;
         if (regexStore?.ready) await regexStore.ready;
         if (regexStore?.upsertLocalSet) {
           regexSetId = await regexStore.upsertLocalSet({

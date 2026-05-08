@@ -2,9 +2,8 @@ import assert from 'node:assert/strict';
 
 import { createDebugTraceTimeline } from '../../src/scripts/ui/debug-trace-timeline-utils.js';
 import {
-  buildCancelledAssistantPartial,
-  commitCancelledGenerationPartial,
   createActiveGenerationRecord,
+  runActiveGenerationCancelFlow,
 } from '../../src/scripts/ui/chat/generation-state-utils.js';
 import {
   buildSendFlowTraceEvent,
@@ -53,38 +52,17 @@ generation.streamMeta = {
   time: '15:00',
 };
 
-recordSendTrace({
-  phase: 'generation.cancel',
-  sessionId: generation.sessionId,
-  status: 'started',
-  summary: 'cancel requested',
-  details: { generationId: generation.id, reason: 'user', content: undefined },
-});
-const partial = buildCancelledAssistantPartial({
+const cancelResult = runActiveGenerationCancelFlow({
   generation,
-  assistantAvatar: 'fallback.png',
-  fallbackTime: '14:59',
-});
-const commitResult = commitCancelledGenerationPartial({
-  generation,
-  partial,
   reason: 'user',
+  recordTraceEvent: recordSendTrace,
   chatStore,
   getAssistantAvatarForSession: () => 'fallback.png',
   formatNowTime: () => '14:59',
   refreshChatAndContacts: () => { refreshed += 1; },
 });
-recordSendTrace({
-  phase: 'generation.cancel',
-  sessionId: generation.sessionId,
-  status: 'success',
-  summary: 'cancel completed',
-  details: {
-    generationId: generation.id,
-    reason: 'user',
-    hasPartial: commitResult.hasContent,
-  },
-});
+const partial = cancelResult.partial;
+const commitResult = cancelResult.commitResult;
 
 const regeneratePlan = resolveRegenerateFromUserIndexPlan({
   messages,

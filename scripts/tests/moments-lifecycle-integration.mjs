@@ -2,10 +2,7 @@ import assert from 'node:assert/strict';
 
 import { DialogueStreamParser } from '../../src/scripts/ui/chat/dialogue-stream-parser.js';
 import {
-  applyMomentCommentEvents,
-  applyMomentSummaryFromRaw,
-  buildMomentPrivateChatMessages,
-  runMomentCommentGeneration,
+  createMomentCommentLifecycleRuntime,
 } from '../../src/scripts/ui/chat/moments-runtime-utils.js';
 import { createMomentFeedSendHandler } from '../../src/scripts/ui/moments-feed-interaction-utils.js';
 
@@ -56,7 +53,7 @@ const momentsStore = {
 const rawReply = `<content>
 moment_reply_start
 moment_id:: m1
-Alice--我也想你
+Bob--我也想你
 moment_reply_end
 <我和Alice的私聊>
 Alice--私聊补一句--10:01
@@ -77,31 +74,34 @@ const replyTargets = new Map([[
 const openComposer = new Set(['m1']);
 const pendingComment = new Set();
 
-const applyEvents = (events, replyTo) => applyMomentCommentEvents(events, {
-  currentMomentId: 'm1',
-  originSessionId: 'contact:alice',
-  engagementCount: 3,
+let generationResult = null;
+const momentCommentRuntime = createMomentCommentLifecycleRuntime({
+  getIsConfigured: () => true,
+  isOnline: () => true,
+  getConfig: () => ({ stream: false }),
+  getMoment: id => momentsStore.get(id),
+  getCurrentSessionId: () => 'contact:alice',
+  getContactCount: () => 3,
+  getActiveUserProfile: () => ({ name: '我' }),
+  getActiveUserName: () => '我',
+  contactsStore: {
+    listContacts: () => [{ id: 'contact:alice', name: 'Alice' }],
+  },
   momentsStore,
+  normalizeName: value => String(value || '').trim(),
+  normalizeLooseName: value => String(value || '').trim(),
+  normalizeStickerTextForPrompt: value => String(value || '').trim(),
   normalizeMomentComments: comments => comments,
   addMomentComments: (momentId, comments) => momentsStore.addComments(momentId, comments),
-  isReplyToComment: Boolean(replyTo),
-  replyTo,
-  targetName: 'Alice',
-  normalizeName: value => String(value || '').trim(),
   bumpMomentEngagement: (momentId, count) => {
     const target = momentsStore.get(momentId);
     if (target) target.engagement = (target.engagement || 0) + count;
   },
   resolvePrivateChatTargetSessionId: name => (name === 'Alice' ? 'contact:alice' : ''),
-  buildPrivateChatMessages: messages => buildMomentPrivateChatMessages(messages, {
-    getActiveUserName: () => '我',
-    normalizeName: value => String(value || '').trim(),
-    normalizeLooseName: value => String(value || '').trim(),
-    parseSpecialMessage: content => ({ type: 'text', content, meta: {} }),
-    userAvatar: 'user.png',
-    assistantAvatar: 'alice.png',
-    formatNowTime: () => 'NOW',
-  }),
+  parseSpecialMessage: content => ({ type: 'text', content, meta: {} }),
+  userAvatar: 'user.png',
+  resolveAssistantAvatar: () => 'alice.png',
+  formatNowTime: () => 'NOW',
   appendPrivateChatMessage: (message, targetSessionId) => {
     const list = chatMessages.get(targetSessionId) || [];
     const saved = {
@@ -115,9 +115,19 @@ const applyEvents = (events, replyTo) => applyMomentCommentEvents(events, {
   autoMarkReadIfActive: () => {},
   onTouchedChats: () => { touchedChats += 1; },
   onTouchedMoments: () => { touchedMoments += 1; },
+  generate: async (comment, context) => {
+    assert.equal(comment, '想你了');
+    assert.equal(context.task.targetName, 'Bob');
+    return rawReply;
+  },
+  createParser: () => new DialogueStreamParser({ userName: '我' }),
+  saveRawReply: async raw => savedRaw.push(raw),
+  flushMoments: async () => {},
+  addSummary: async summary => summaries.push(summary),
+  runSummaryCompaction: async () => { compacted = true; },
+  notifySummariesUpdated: async () => { summariesUpdated += 1; },
+  logger: { warn: () => {}, error: () => {} },
 });
-
-let generationResult = null;
 const send = createMomentFeedSendHandler({
   moment: momentRecord,
   inputEl,
@@ -132,24 +142,7 @@ const send = createMomentFeedSendHandler({
     assert.equal(text, '想你了');
     assert.equal(meta.userCommentId, 'user-comment-1');
     assert.equal(meta.replyTo?.id, 'c0');
-
-    generationResult = await runMomentCommentGeneration(text, { momentId }, {
-      stream: false,
-      generate: async (comment, context) => {
-        assert.equal(comment, '想你了');
-        assert.deepEqual(context, { momentId: 'm1' });
-        return rawReply;
-      },
-      createParser: () => new DialogueStreamParser({ userName: '我' }),
-      applyEvents: events => applyEvents(events, meta.replyTo),
-      saveRaw: async raw => savedRaw.push(raw),
-    });
-
-    await applyMomentSummaryFromRaw(generationResult.fullRaw, {
-      addSummary: async summary => summaries.push(summary),
-      runCompaction: async () => { compacted = true; },
-      notifyUpdated: async () => { summariesUpdated += 1; },
-    });
+    generationResult = await momentCommentRuntime(momentId, text, meta);
   },
   loggerWarn: () => {},
   generateCommentId: () => 'user-comment-1',
@@ -176,12 +169,12 @@ assert.deepEqual(comments[1], {
 });
 assert.deepEqual(comments[2], {
   id: 'saved-comment-3',
-  author: 'Alice',
+  author: 'Bob',
   content: '我也想你',
   replyTo: 'c0',
   replyToAuthor: 'Bob',
 });
-assert.equal(momentRecord.engagement, 3);
+assert.equal(momentRecord.engagement, 6);
 
 assert.equal(generationResult.fullRaw, rawReply);
 assert.equal(generationResult.sawMomentReply, true);

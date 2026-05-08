@@ -594,6 +594,7 @@ export class GroupSettingsPanel {
                 getContext: () => ({ type: 'group', groupId: this.groupId }),
                 memoryStore: window.appBridge.memoryTableStore,
                 templateStore: window.appBridge.memoryTemplateStore,
+                contactsStore: this.contactsStore,
                 includeGlobal: true,
             });
         }

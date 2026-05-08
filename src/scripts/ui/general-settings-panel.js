@@ -3,6 +3,7 @@ import { ConfigManager } from '../storage/config.js';
 import { pickSavePath } from '../utils/save-dialog.js';
 import { safeInvoke } from '../utils/tauri.js';
 import { appConfirm } from './app-confirm.js';
+import { resolveImportKindFromZipEntries } from './import-package-kind-utils.js';
 import {
   THEME_AVATAR_STYLE_OPTIONS,
   THEME_CHAT_DISPLAY_OPTIONS,
@@ -2591,29 +2592,11 @@ export class GeneralSettingsPanel {
       reader.readAsArrayBuffer(file);
     });
 
-    const base64ToText = (base64) => {
-      const raw = atob(String(base64 || ''));
-      const bytes = new Uint8Array(raw.length);
-      for (let i = 0; i < raw.length; i += 1) bytes[i] = raw.charCodeAt(i);
-      return new TextDecoder().decode(bytes);
-    };
-
     const detectImportKind = async (file) => {
       const buffer = await readFileAsArrayBuffer(file);
       const bytes = Array.from(new Uint8Array(buffer));
       const entries = await safeInvoke('read_zip_entries', { bytes });
-      const manifestEntry = (Array.isArray(entries) ? entries : []).find((entry) => String(entry?.name || '').replace(/\\/g, '/') === 'manifest.json');
-      if (!manifestEntry) return { kind: 'bundle', entries };
-      try {
-        const text = typeof manifestEntry.text === 'string' && manifestEntry.text.trim()
-          ? manifestEntry.text
-          : base64ToText(manifestEntry.base64 || '');
-        const manifest = JSON.parse(text);
-        const format = String(manifest?.format || '').trim();
-        if (format === 'chatapp.experience-pack.v1') return { kind: 'experience-pack', entries };
-        if (format === 'chatapp.custom-bundle.v1') return { kind: 'custom-bundle', entries };
-      } catch {}
-      return { kind: 'bundle', entries };
+      return resolveImportKindFromZipEntries(entries);
     };
 
     const buildBundleFileName = () => {

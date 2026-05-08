@@ -7,6 +7,10 @@ import { LLMClient } from '../api/client.js';
 import { canInitClient } from '../api/client-config-utils.js';
 import { logger } from '../utils/logger.js';
 import { appConfirm } from './app-confirm.js';
+import {
+    reloadBridgeConfig,
+    syncChatRuntimeConfigToBridge,
+} from './config-runtime-utils.js';
 
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>"]/g, (ch) => ({
     '&': '&amp;',
@@ -406,8 +410,12 @@ export class ConfigPanel {
             const config = await this.configManager.load();
             this.populateForm(config);
             if (window.appBridge && this.activeTab === 'chat') {
-                window.appBridge.config.set(config);
-                window.appBridge.client = canInitClient(config) ? new LLMClient(config) : null;
+                syncChatRuntimeConfigToBridge({
+                    bridge: window.appBridge,
+                    runtime: config,
+                    canInitClient,
+                    createClient: runtime => new LLMClient(runtime),
+                });
             }
         };
 
@@ -1344,8 +1352,12 @@ export class ConfigPanel {
         if (this.activeTab !== 'chat') return;
         const runtime = await this.configManager.load();
         if (window.appBridge) {
-            window.appBridge.config.set(runtime);
-            window.appBridge.client = canInitClient(runtime) ? new LLMClient(runtime) : null;
+            syncChatRuntimeConfigToBridge({
+                bridge: window.appBridge,
+                runtime,
+                canInitClient,
+                createClient: config => new LLMClient(config),
+            });
         }
     }
 
@@ -1461,11 +1473,16 @@ export class ConfigPanel {
             // 重新初始化客户端（仅聊天配置）
             if (window.appBridge && this.activeTab === 'chat') {
                 const runtime = await this.configManager.load();
-                window.appBridge.client = canInitClient(runtime) ? new LLMClient(runtime) : null;
-                await window.appBridge.config.reload();
+                const syncResult = syncChatRuntimeConfigToBridge({
+                    bridge: window.appBridge,
+                    runtime,
+                    canInitClient,
+                    createClient: config => new LLMClient(config),
+                });
+                await reloadBridgeConfig(window.appBridge);
 
                 // 若保存后仍拿不到 key（解密/保存失败），給出明確提示并不自動关闭
-                if (!canInitClient(runtime)) {
+                if (!syncResult.configured) {
                     this.showStatus('已保存，但当前 Key 不可用（请用 🔑 重新保存 Key）', 'error');
                     return;
                 }

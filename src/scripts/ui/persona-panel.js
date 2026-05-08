@@ -7,6 +7,7 @@ import { CharacterCardImporter } from './character-card-importer.js';
 import { getCharacterCardDisplayName, getCharacterCardSource } from '../utils/character-card-display.js';
 import { getDefaultAppIcon } from '../utils/default-icon.js';
 import { bindCustomSelectButton, closeCustomSelectMenu, refreshCustomSelectButton } from './custom-select.js';
+import { getRegexLocalSet, removeRegexLocalSet, waitForRegexStoreReady } from './regex-store-runtime-utils.js';
 
 export class PersonaPanel {
     constructor({ personaStore, userStore = null, chatStore = null, contactsStore = null, rpSessionStore = null, getSessionId = null, onPersonaChanged }) {
@@ -955,9 +956,8 @@ export class PersonaPanel {
         const worldLabel = hasWorld ? worldId : '';
         let regexLabel = hasRegex ? regexSetId : '';
         try {
-            const regexStore = window.appBridge?.regex;
-            if (regexStore?.ready) await regexStore.ready;
-            const set = regexStore?.getLocalSet?.(regexSetId);
+            await waitForRegexStoreReady(window.appBridge);
+            const set = getRegexLocalSet(window.appBridge, regexSetId);
             if (set?.name) regexLabel = set.name;
         } catch {}
         let worldName = worldLabel;
@@ -1178,9 +1178,8 @@ export class PersonaPanel {
         }
         if (options.deleteRegex && regexSetId) {
             try {
-                const regexStore = window.appBridge?.regex;
-                if (regexStore?.ready) await regexStore.ready;
-                await regexStore?.removeLocalSet?.(regexSetId);
+                await waitForRegexStoreReady(window.appBridge);
+                await removeRegexLocalSet(window.appBridge, regexSetId);
             } catch {}
         }
         if (options.deleteScripts) {

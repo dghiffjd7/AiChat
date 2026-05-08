@@ -5,6 +5,9 @@ import { pickSavePath } from '../utils/save-dialog.js';
 import { safeInvoke } from '../utils/tauri.js';
 import { appConfirm } from './app-confirm.js';
 import { CharacterCardTransfer } from './character-card-transfer.js';
+import { createConfigRuntimeAdapter } from './config-runtime-utils.js';
+import { hasStoredWorldInfo, waitForWorldStoreReady } from './world-store-runtime-utils.js';
+import { buildZipEntryMap, readZipEntryJson } from './zip-entry-utils.js';
 
 const EXPERIENCE_PACK_FORMAT = 'chatapp.experience-pack.v1';
 const EXPERIENCE_PACK_EXTENSION = 'aicpack';
@@ -64,13 +67,6 @@ const bytesToBase64 = (bytes) => {
     binary += String.fromCharCode(...slice);
   }
   return btoa(binary);
-};
-
-const base64ToText = (base64) => {
-  const raw = atob(String(base64 || ''));
-  const bytes = new Uint8Array(raw.length);
-  for (let i = 0; i < raw.length; i += 1) bytes[i] = raw.charCodeAt(i);
-  return new TextDecoder().decode(bytes);
 };
 
 const textToDataUrl = (text, mime = 'application/json') => {
@@ -333,7 +329,7 @@ export class ExperiencePackTransfer extends CharacterCardTransfer {
     super({ chatStore, contactsStore, memoryTableStore, memoryTemplateStore, appBridge });
     this.personaStore = personaStore || null;
     this.presetStore = appBridge?.presets || null;
-    this.configManager = appBridge?.config || null;
+    this.configManager = appBridge ? createConfigRuntimeAdapter(appBridge) : null;
   }
 
   getEffectivePersona(sessionId) {
@@ -370,7 +366,7 @@ export class ExperiencePackTransfer extends CharacterCardTransfer {
           .filter(id => id && id !== BUILTIN_PHONE_FORMAT_WORLDBOOK_ID)
       )
     );
-    const regexStore = this.appBridge?.regex;
+    const regexStore = this.regexStore;
     const sessionRegex = regexStore?.getSession?.(sid) || null;
     const localSets = ensureArray(regexStore?.listLocalSets?.()).filter((set) =>
       set?.bind?.type === 'world' && worldIds.includes(String(set.bind.worldId || '').trim())
@@ -590,7 +586,7 @@ export class ExperiencePackTransfer extends CharacterCardTransfer {
 
   collectRegexBundle(sessionId, worldIds = []) {
     const sid = String(sessionId || '').trim();
-    const regexStore = this.appBridge?.regex;
+    const regexStore = this.regexStore;
     const sessionRegex = cloneJson(regexStore?.getSession?.(sid) || null, null);
     const localSets = ensureArray(regexStore?.listLocalSets?.())
       .filter(set => set?.bind?.type === 'world' && worldIds.includes(String(set.bind.worldId || '').trim()))
@@ -1038,12 +1034,7 @@ export class ExperiencePackTransfer extends CharacterCardTransfer {
     const entry = entryMap.get(name);
     if (!entry) return fallback;
     try {
-      if (typeof entry.text === 'string' && entry.text.trim()) {
-        return JSON.parse(entry.text);
-      }
-      if (entry.base64) {
-        return JSON.parse(base64ToText(entry.base64));
-      }
+      return readZipEntryJson(entry, { fallback });
     } catch (err) {
       logger.warn(`read experience pack entry failed: ${name}`, err);
     }
@@ -1052,12 +1043,7 @@ export class ExperiencePackTransfer extends CharacterCardTransfer {
 
   parsePackageEntries(entries = []) {
     const list = ensureArray(entries);
-    const entryMap = new Map();
-    list.forEach((entry) => {
-      const name = String(entry?.name || '').replace(/\\/g, '/');
-      if (!name) return;
-      entryMap.set(name, entry);
-    });
+    const entryMap = buildZipEntryMap(list);
     const manifest = this.readJsonEntry(entryMap, 'manifest.json', null);
     if (!manifest || String(manifest.format || '').trim() !== EXPERIENCE_PACK_FORMAT) {
       throw new Error('不支持的体验包格式');
@@ -1232,7 +1218,7 @@ export class ExperiencePackTransfer extends CharacterCardTransfer {
     const source = String(baseId || '').trim() || 'world';
     let nextId = source;
     let index = 1;
-    while (this.appBridge?.worldStore?.load?.(nextId)) {
+    while (hasStoredWorldInfo(this.appBridge, nextId)) {
       nextId = `${source}-${index}`;
       index += 1;
     }
@@ -1279,7 +1265,7 @@ export class ExperiencePackTransfer extends CharacterCardTransfer {
       : (worldPayload && typeof worldPayload === 'object' ? worldPayload : {});
     const worldIdMap = {};
     try {
-      await this.appBridge?.worldStore?.ready;
+      await waitForWorldStoreReady(this.appBridge);
     } catch {}
     for (const [rawId, data] of Object.entries(worldbooks)) {
       const sourceId = String(rawId || '').trim();
@@ -1299,7 +1285,7 @@ export class ExperiencePackTransfer extends CharacterCardTransfer {
     const sid = String(sessionId || '').trim();
     const regex = packageData?.regex || null;
     if (!sid || !regex) return;
-    const regexStore = this.appBridge?.regex;
+    const regexStore = this.regexStore;
     if (!regexStore) return;
     try {
       await regexStore.ready;

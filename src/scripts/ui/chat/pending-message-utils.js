@@ -71,6 +71,40 @@ export const resolvePendingMessagesToSend = ({
   };
 };
 
+export const restorePendingQueueToHistory = ({
+  pendingQueue = [],
+  existingMessages = [],
+  sessionId = '',
+  appendMessage = null,
+  addMessageToUi = null,
+  removePendingMessage = null,
+} = {}) => {
+  const queue = Array.isArray(pendingQueue) ? pendingQueue : [];
+  if (!queue.length) return [];
+  const historyIds = new Set(
+    (Array.isArray(existingMessages) ? existingMessages : [])
+      .map(message => String(message?.id || '').trim())
+      .filter(Boolean),
+  );
+  const restored = [];
+  queue.forEach((message) => {
+    const id = String(message?.id || '').trim();
+    if (!id || historyIds.has(id)) return;
+    const saved = typeof appendMessage === 'function'
+      ? appendMessage({ ...message, status: 'pending' }, sessionId)
+      : { ...message, status: 'pending' };
+    if (typeof addMessageToUi === 'function') addMessageToUi(saved);
+    restored.push(saved);
+    historyIds.add(saved?.id);
+  });
+  queue.forEach((message) => {
+    if (typeof removePendingMessage === 'function') {
+      removePendingMessage(message?.id, sessionId);
+    }
+  });
+  return restored;
+};
+
 export const getMessageSendText = (
   message,
   buildStickerToken = (value) => String(value || ''),

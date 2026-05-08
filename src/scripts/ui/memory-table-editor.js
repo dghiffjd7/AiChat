@@ -200,11 +200,12 @@ const buildWorldbookEntriesForTable = (table, rows) => {
 };
 
 export class MemoryTableEditor {
-  constructor({ container, getContext, memoryStore, templateStore, includeGlobal = true } = {}) {
+  constructor({ container, getContext, memoryStore, templateStore, contactsStore = null, includeGlobal = true } = {}) {
     this.container = container || null;
     this.getContext = typeof getContext === 'function' ? getContext : () => null;
     this.memoryStore = memoryStore || null;
     this.templateStore = templateStore || null;
+    this.contactsStore = contactsStore || null;
     this.includeGlobal = includeGlobal !== false;
     this.template = null;
     this.memories = [];
@@ -637,10 +638,10 @@ export class MemoryTableEditor {
 
   getPromptPreviewContext(ctx) {
     const baseSessionId = ctx?.type === 'group' ? ctx?.groupId : ctx?.contactId;
-    const sessionId = String(baseSessionId || window.appBridge?.activeSessionId || '').trim();
+    const sessionId = String(baseSessionId || window.appBridge?.getActiveSessionId?.() || '').trim();
     const isGroup = ctx?.type === 'group' || String(sessionId).startsWith('group:');
     const isRp = ctx?.type === 'rp' || isRpSessionId(sessionId);
-    const contact = sessionId ? window.appBridge?.contactsStore?.getContact?.(sessionId) : null;
+    const contact = sessionId ? this.contactsStore?.getContact?.(sessionId) : null;
     const characterName = String(contact?.name || (isGroup ? sessionId.replace(/^group:/, '') : sessionId) || '助手');
     const settings = appSettings.get();
     const memoryInjectPosition = String(settings.memoryInjectPosition || 'template').toLowerCase();
@@ -674,7 +675,7 @@ export class MemoryTableEditor {
     if (ctx.type === 'group') return String(ctx.groupId || '').trim();
     if (ctx.type === 'rp') return String(ctx.contactId || '').trim();
     if (ctx.type === 'contact') return String(ctx.contactId || '').trim();
-    return String(window.appBridge?.activeSessionId || '').trim();
+    return String(window.appBridge?.getActiveSessionId?.() || '').trim();
   }
 
   pushTableToChat(table, rows, ctx) {

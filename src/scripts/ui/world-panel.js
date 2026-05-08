@@ -13,6 +13,7 @@ import { safeInvoke } from '../utils/tauri.js';
 import { WorldEditorModal } from './world-editor.js';
 import { appConfirm } from './app-confirm.js';
 import { bindCustomSelectButton, closeCustomSelectMenu, refreshCustomSelectButton } from './custom-select.js';
+import { listRegexLocalSets, upsertRegexLocalSet, waitForRegexStoreReady } from './regex-store-runtime-utils.js';
 
 export class WorldPanel {
     constructor({ contactsStore = null, getSessionId = null } = {}) {
@@ -192,7 +193,7 @@ export class WorldPanel {
             : (this.scope === 'global' ? 'global' : 'session_extra');
         return {
             type,
-            sessionId: String(raw.sessionId || this.getSessionId?.() || window.appBridge?.activeSessionId || '').trim(),
+            sessionId: String(raw.sessionId || this.getSessionId?.() || window.appBridge?.getActiveSessionId?.() || '').trim(),
             personaId: String(raw.personaId || '').trim(),
         };
     }
@@ -206,7 +207,7 @@ export class WorldPanel {
         if (!this.listEl) return;
         this.listEl.innerHTML = '';
         try {
-            const sessionId = this.getSessionId ? this.getSessionId() : (window.appBridge?.activeSessionId || 'default');
+            const sessionId = this.getSessionId ? this.getSessionId() : (window.appBridge?.getActiveSessionId?.() || 'default');
             const sessionKey = String(sessionId || 'default').trim() || 'default';
             const contact = this.contactsStore?.getContact?.(sessionKey) || null;
             const isRpSession = sessionKey.startsWith('rp:');
@@ -1009,8 +1010,9 @@ export class WorldPanel {
                             logger.info('Activated world', item.name, data);
                             window.toastr?.success(`已启用世界书：${item.name}`);
                         }
-                        const sid = String(normalizedTarget.sessionId || window.appBridge?.activeSessionId || '').trim();
-                        const isActiveSession = sid === String(window.appBridge?.activeSessionId || '').trim();
+                        const activeSessionId = String(window.appBridge?.getActiveSessionId?.() || '').trim();
+                        const sid = String(normalizedTarget.sessionId || activeSessionId || '').trim();
+                        const isActiveSession = sid === activeSessionId;
                         window.appBridge?.setSessionWorldIds?.(sid, Array.from(next), { silent: !isActiveSession });
                         if (!isActiveSession) {
                             window.appBridge?.syncWorldRegexBindings?.();
@@ -1081,10 +1083,11 @@ export class WorldPanel {
             } else if (target.type === 'role') {
                 await window.appBridge?.assignRoleWorldToPersona?.(String(target.personaId || '').trim(), name, { enabled: true });
             } else {
-                const sid = String(target.sessionId || window.appBridge?.activeSessionId || '').trim();
+                const activeSessionId = String(window.appBridge?.getActiveSessionId?.() || '').trim();
+                const sid = String(target.sessionId || activeSessionId || '').trim();
                 const current = window.appBridge?.getWorldIdsForSession?.(sid) || [];
                 const next = Array.from(new Set([...(Array.isArray(current) ? current : []), name]));
-                const isActiveSession = sid === String(window.appBridge?.activeSessionId || '').trim();
+                const isActiveSession = sid === activeSessionId;
                 await window.appBridge?.setSessionWorldIds?.(sid, next, { silent: !isActiveSession });
                 if (!isActiveSession) {
                     window.appBridge?.syncWorldRegexBindings?.();
@@ -1290,7 +1293,7 @@ export class WorldPanel {
         this.panel.querySelector('#world-new').onclick = () => this.onNewWorld({
             target: this.scope === 'global'
                 ? { type: 'global' }
-                : { type: 'session_extra', sessionId: this.getSessionId ? this.getSessionId() : (window.appBridge?.activeSessionId || '') },
+                : { type: 'session_extra', sessionId: this.getSessionId ? this.getSessionId() : (window.appBridge?.getActiveSessionId?.() || '') },
         });
         const exportBtn = this.panel.querySelector('#world-export-current');
         if (exportBtn) exportBtn.onclick = () => this.onExportCurrent();
@@ -1298,7 +1301,7 @@ export class WorldPanel {
             this.libraryToggleBtn.onclick = () => this.openLibraryModal(
                 this.scope === 'global'
                     ? { type: 'global' }
-                    : { type: 'session_extra', sessionId: this.getSessionId ? this.getSessionId() : (window.appBridge?.activeSessionId || '') },
+                    : { type: 'session_extra', sessionId: this.getSessionId ? this.getSessionId() : (window.appBridge?.getActiveSessionId?.() || '') },
             );
         }
         if (this.fileBtn && this.fileInput) {
@@ -1565,7 +1568,7 @@ export class WorldPanel {
                         return;
                     }
 
-                    await window.appBridge?.regex?.ready;
+                    await waitForRegexStoreReady(window.appBridge);
                     const ruleSig = (r) => {
                         const findRegex = String(r?.findRegex || '').trim();
                         const replaceString = String(r?.replaceString ?? '');
@@ -1594,7 +1597,7 @@ export class WorldPanel {
 
                     const existingSigs = new Set();
                     try {
-                        const sets = window.appBridge?.regex?.listLocalSets?.() || [];
+                        const sets = listRegexLocalSets(window.appBridge);
                         sets.forEach(s => (Array.isArray(s?.rules) ? s.rules : []).forEach(r => {
                             existingSigs.add(ruleSig(r));
                         }));
@@ -1613,7 +1616,7 @@ export class WorldPanel {
                         }
                         if (!rules.length) continue;
                         const setName = String(s?.name || '正则').trim() || '正则';
-                        await window.appBridge.regex.upsertLocalSet({
+                        await upsertRegexLocalSet(window.appBridge, {
                             name: `${setName} (${name})`,
                             enabled: s?.enabled !== false,
                             bind: { type: 'world', worldId: name },
@@ -1654,8 +1657,8 @@ export class WorldPanel {
 
         // 追加绑定正则集合（便于导入时自动带上）
         try {
-            await window.appBridge?.regex?.ready;
-            const sets = window.appBridge?.regex?.listLocalSets?.() || [];
+            await waitForRegexStoreReady(window.appBridge);
+            const sets = listRegexLocalSets(window.appBridge);
             const bound = sets.filter(s => s?.bind?.type === 'world' && s.bind.worldId === current)
                 .map(s => ({ name: s.name, enabled: s.enabled !== false, rules: s.rules || [] }));
             if (bound.length) payload.boundRegexSets = bound;

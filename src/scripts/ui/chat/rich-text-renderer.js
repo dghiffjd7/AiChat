@@ -6868,7 +6868,7 @@ const makeCodeBlock = ({
             if (explicitSid) return explicitSid;
             const mid = String(messageId || '').trim();
             const store = window.appBridge?.chatStore;
-            const currentSid = String(store?.getCurrent?.() || window.appBridge?.activeSessionId || '').trim();
+            const currentSid = String(store?.getCurrent?.() || window.appBridge?.getActiveSessionId?.() || '').trim();
             if (!store || !mid) return currentSid;
             if (currentSid && store.findMessage?.(mid, currentSid)) return currentSid;
             const sessionIds = Array.isArray(store.listSessions?.()) ? store.listSessions() : [];
@@ -6879,7 +6879,7 @@ const makeCodeBlock = ({
             }
             return currentSid;
         } catch {
-            return String(sessionId || window.appBridge?.activeSessionId || '').trim();
+            return String(sessionId || window.appBridge?.getActiveSessionId?.() || '').trim();
         }
     })();
     const messageIndex = (() => {
@@ -6929,7 +6929,7 @@ const makeCodeBlock = ({
     })();
     const compatSeedVars = (() => {
         try {
-            const sid = String(resolvedSessionId || window.appBridge?.activeSessionId || '').trim();
+            const sid = String(resolvedSessionId || window.appBridge?.getActiveSessionId?.() || '').trim();
             const store = window.appBridge?.chatStore;
             if (!store || !sid) return null;
             const localVars = store?.listVariables?.(sid) || {};
@@ -7680,7 +7680,7 @@ export const setupIframeResizeListener = () => {
         });
     };
     const collectMvuVars = (sessionId) => {
-        const sid = String(sessionId || window.appBridge?.activeSessionId || '').trim();
+        const sid = String(sessionId || window.appBridge?.getActiveSessionId?.() || '').trim();
         if (!sid) return null;
         const store = window.appBridge?.chatStore;
         if (!store) return null;
@@ -7704,7 +7704,7 @@ export const setupIframeResizeListener = () => {
         }
     };
     const resolveCompatVariableStoreScope = (sessionId, options = {}) => {
-        const sid = String(sessionId || window.appBridge?.activeSessionId || '').trim();
+        const sid = String(sessionId || window.appBridge?.getActiveSessionId?.() || '').trim();
         const type = normalizeMvuCompatOptionType(options);
         if (type === 'global') return 'global';
         if (type === 'local') return 'local';
@@ -7714,7 +7714,7 @@ export const setupIframeResizeListener = () => {
         return shared ? 'global' : 'local';
     };
     const buildCompatVarsSnapshot = (sessionId, scopeType = 'local') => {
-        const sid = String(sessionId || window.appBridge?.activeSessionId || '').trim();
+        const sid = String(sessionId || window.appBridge?.getActiveSessionId?.() || '').trim();
         const store = window.appBridge?.chatStore;
         const globalVars = store?.listGlobalVariables?.() || {};
         const localVars = sid ? (store?.listVariables?.(sid) || {}) : {};
@@ -7724,7 +7724,7 @@ export const setupIframeResizeListener = () => {
     };
     const syncCompatScopedVariablesToStore = (scopeType, nextScoped, sessionId) => {
         const store = window.appBridge?.chatStore;
-        const sid = String(sessionId || window.appBridge?.activeSessionId || '').trim();
+        const sid = String(sessionId || window.appBridge?.getActiveSessionId?.() || '').trim();
         if (!store) return false;
         if (scopeType !== 'global' && !sid) return false;
         const currentFlat = scopeType === 'global'
@@ -7755,7 +7755,7 @@ export const setupIframeResizeListener = () => {
         return changed;
     };
     const applyCompatVariableMutation = ({ sessionId, mode, payload, key, options = {} }) => {
-        const sid = String(sessionId || window.appBridge?.activeSessionId || '').trim();
+        const sid = String(sessionId || window.appBridge?.getActiveSessionId?.() || '').trim();
         const scopeType = resolveCompatVariableStoreScope(sid, options);
         const currentVars = collectMvuVars(sid) || buildCompatVarsSnapshot(sid, scopeType);
         const currentScoped = getMvuCompatScopedVariables(currentVars, { type: scopeType });
@@ -7781,7 +7781,7 @@ export const setupIframeResizeListener = () => {
     const postMvuVarsToIframe = (iframe, sessionId) => {
         if (!iframe || iframe.dataset.iframeMvuCompat !== '1' || iframe.dataset.iframeAllowScripts !== '1') return;
         const iframeId = String(iframe.dataset.iframeId || '');
-        const sid = String(sessionId || iframe.dataset.sessionId || window.appBridge?.activeSessionId || '').trim();
+        const sid = String(sessionId || iframe.dataset.sessionId || window.appBridge?.getActiveSessionId?.() || '').trim();
         if (!sid) {
             emitDebugLog({
                 source: 'iframe',
@@ -7877,7 +7877,7 @@ export const setupIframeResizeListener = () => {
         });
     };
     const resolveCompatSessionId = (iframe, sessionId) => {
-        const sid = String(sessionId || iframe?.dataset?.sessionId || window.appBridge?.activeSessionId || '').trim();
+        const sid = String(sessionId || iframe?.dataset?.sessionId || window.appBridge?.getActiveSessionId?.() || '').trim();
         return sid;
     };
     const resolveCompatMessageId = (sessionId, rawRef, fallbackRef = '') => {
@@ -8509,7 +8509,7 @@ export const renderRichText = (
         });
     }
     const resolveStatusCard = () => {
-        const sid = String(sessionId || window.appBridge?.activeSessionId || '').trim();
+        const sid = String(sessionId || window.appBridge?.getActiveSessionId?.() || '').trim();
         const store = window.appBridge?.chatStore;
         return buildVariableStatusSnapshot({ chatStore: store, sessionId: sid, inline: true });
     };

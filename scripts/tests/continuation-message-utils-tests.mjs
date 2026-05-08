@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 
-import { buildContinuationMessageUpdate } from '../../src/scripts/ui/chat/continuation-message-utils.js';
+import {
+  buildContinuationMessageUpdate,
+  commitContinuationMessageToStore,
+} from '../../src/scripts/ui/chat/continuation-message-utils.js';
 
 const tests = [];
 const test = (name, fn) => tests.push({ name, fn });
@@ -115,6 +118,116 @@ test('buildContinuationMessageUpdate falls back to message fields when existing 
     rawSource: 'stored-source',
     meta: {},
   });
+});
+
+test('commitContinuationMessageToStore updates store and active session ui with final payload', () => {
+  const calls = [];
+  const existing = {
+    id: 'assistant-4',
+    role: 'assistant',
+    content: '旧续写',
+    meta: { partial: true, cancelled: true },
+  };
+  const savedFromStore = {
+    id: 'assistant-4',
+    role: 'assistant',
+    content: '完成续写',
+    persisted: true,
+  };
+
+  const result = commitContinuationMessageToStore({
+    message: {
+      content: '完成续写',
+      raw: '完成续写 raw',
+      meta: { renderRich: true },
+    },
+    partial: false,
+    continueTarget: { messageId: 'assistant-4' },
+    sessionId: 'session-continue',
+    chatStore: {
+      findMessage: (targetId, sessionId) => {
+        calls.push(['find', targetId, sessionId]);
+        return existing;
+      },
+      updateMessage: (targetId, payload, sessionId) => {
+        calls.push(['update', targetId, payload, sessionId]);
+        return savedFromStore;
+      },
+    },
+    isSessionActive: sessionId => {
+      calls.push(['active', sessionId]);
+      return true;
+    },
+    updateUiMessage: (targetId, saved) => calls.push(['ui', targetId, saved]),
+    formatNowTime: () => '15:00',
+  });
+
+  assert.equal(result, savedFromStore);
+  assert.equal(calls[1][1], 'assistant-4');
+  assert.equal(calls[1][2].content, '完成续写');
+  assert.equal(calls[1][2].raw, '完成续写 raw');
+  assert.deepEqual(calls[1][2].meta, { renderRich: true });
+  assert.deepEqual(calls, [
+    ['find', 'assistant-4', 'session-continue'],
+    ['update', 'assistant-4', calls[1][2], 'session-continue'],
+    ['active', 'session-continue'],
+    ['ui', 'assistant-4', savedFromStore],
+  ]);
+});
+
+test('commitContinuationMessageToStore falls back to continue target message and skips inactive ui', () => {
+  const calls = [];
+  const fallbackMessage = {
+    id: 'assistant-5',
+    role: 'assistant',
+    content: '旧内容',
+    rawOriginal: 'old-original',
+  };
+
+  const result = commitContinuationMessageToStore({
+    message: {
+      content: '部分续写',
+    },
+    partial: true,
+    continueTarget: {
+      messageId: 'assistant-5',
+      message: fallbackMessage,
+    },
+    sessionId: 'session-inactive',
+    chatStore: {
+      findMessage: () => null,
+      updateMessage: () => null,
+    },
+    isSessionActive: sessionId => {
+      calls.push(['active', sessionId]);
+      return false;
+    },
+    updateUiMessage: () => calls.push(['ui']),
+    formatNowTime: () => '16:00',
+  });
+
+  assert.equal(result.id, 'assistant-5');
+  assert.equal(result.content, '部分续写');
+  assert.equal(result.rawOriginal, 'old-original');
+  assert.equal(result.meta.partial, true);
+  assert.equal(result.meta.cancelled, true);
+  assert.deepEqual(calls, [['active', 'session-inactive']]);
+});
+
+test('commitContinuationMessageToStore returns null without target message or existing payload', () => {
+  assert.equal(commitContinuationMessageToStore({
+    message: { content: 'x' },
+    continueTarget: null,
+  }), null);
+  assert.equal(commitContinuationMessageToStore({
+    message: null,
+    continueTarget: { messageId: 'assistant-6' },
+  }), null);
+  assert.equal(commitContinuationMessageToStore({
+    message: { content: 'x' },
+    continueTarget: { messageId: 'assistant-6' },
+    chatStore: { findMessage: () => null },
+  }), null);
 });
 
 let failed = 0;

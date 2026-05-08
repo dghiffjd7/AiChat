@@ -3,6 +3,10 @@ import assert from 'node:assert/strict';
 import {
   applyChatModeAssistantRegex,
   buildAssistantMessageFromText,
+  buildChatModeAssistantMessage,
+  buildChatModeAssistantMessageFromParts,
+  buildChatModeAssistantMessageParts,
+  buildCreativeAssistantMessage,
 } from '../../src/scripts/ui/chat/assistant-message-builder-utils.js';
 
 const tests = [];
@@ -122,6 +126,240 @@ test('buildAssistantMessageFromText supports template injection/render and group
   });
   assert.equal(message.avatar, 'contact.png');
   assert.equal(message.content, 'before\n\nhello\n\nafter:rendered');
+});
+
+test('buildCreativeAssistantMessage composes creative regex memory summary and native reasoning meta', async () => {
+  const calls = [];
+  const message = await buildCreativeAssistantMessage({
+    rawOriginal: 'raw\r\nreply',
+    text: 'shown\r\nreply',
+    sessionId: 'rp:session',
+    id: 'stream-1',
+    includeId: true,
+    avatar: 'assistant.png',
+    time: '10:00',
+    summary: '摘要',
+    isRpMode: true,
+    isGroupChat: true,
+    nativeReasoningState: { source: 'native' },
+    normalizeCreativeLineBreaks: value => String(value ?? '').replace(/\r\n/g, '\n'),
+    extractReasoningFromContent(value, options) {
+      calls.push(['reasoning', value, options]);
+      return {
+        content: `${value}:source`,
+        reasoning: 'parsed',
+        reasoningDisplay: 'Parsed',
+      };
+    },
+    resolveReasoningState(reasoningParsed, nativeReasoningState, options) {
+      calls.push(['resolve-reasoning', reasoningParsed.reasoning, nativeReasoningState, options]);
+      return {
+        reasoning: 'native',
+        reasoningDisplay: 'Native',
+        reasoningHidden: true,
+        reasoningLabel: 'Thinking',
+        reasoningSource: 'native',
+      };
+    },
+    applyOutputRegexPairSafe(value, options) {
+      calls.push(['regex', value, options.depth, typeof options.normalizeText]);
+      return {
+        stored: `${value}:stored`,
+        display: `${value}:display`,
+      };
+    },
+    captureAssistantMemoryState(sessionId, options) {
+      calls.push(['memory', sessionId, options]);
+      return { snapshotId: 'snap-1' };
+    },
+    attachAssistantMemoryStateToMeta(meta, memoryState) {
+      calls.push(['attach-memory', meta, memoryState]);
+      return { ...meta, memoryState };
+    },
+  });
+
+  assert.deepEqual(message, {
+    role: 'assistant',
+    type: 'text',
+    name: '助手',
+    avatar: 'assistant.png',
+    time: '10:00',
+    sessionId: 'rp:session',
+    rawOriginal: 'raw\r\nreply',
+    rawSource: 'shown\nreply:source',
+    raw: 'shown\nreply:source:stored',
+    content: 'shown\nreply:source:display',
+    meta: {
+      renderRich: true,
+      memoryState: { snapshotId: 'snap-1' },
+      summary: '摘要',
+      reasoning: 'native',
+      reasoningDisplay: 'Native',
+      reasoningHidden: true,
+      reasoningLabel: 'Thinking',
+      reasoningSource: 'native',
+    },
+    id: 'stream-1',
+  });
+  assert.deepEqual(calls, [
+    ['reasoning', 'shown\nreply', { depth: 0, strict: true }],
+    ['resolve-reasoning', 'parsed', { source: 'native' }, { finalize: true }],
+    ['regex', 'shown\nreply:source', 0, 'function'],
+    ['memory', 'rp:session', { isGroup: true }],
+    ['attach-memory', { renderRich: true }, { snapshotId: 'snap-1' }],
+  ]);
+});
+
+test('buildCreativeAssistantMessage preserves parsed reasoning and omits id for buffered replies', async () => {
+  const message = await buildCreativeAssistantMessage({
+    rawOriginal: 'raw',
+    text: 'body',
+    sessionId: 'rp:session',
+    avatar: 'assistant.png',
+    time: '10:01',
+    normalizeCreativeLineBreaks: value => String(value ?? ''),
+    extractReasoningFromContent: () => ({
+      content: 'body source',
+      reasoning: 'parsed',
+      reasoningDisplay: 'Parsed',
+    }),
+    applyOutputRegexPairSafe: value => ({
+      stored: `${value}:stored`,
+      display: `${value}:display`,
+    }),
+  });
+
+  assert.equal(Object.prototype.hasOwnProperty.call(message, 'id'), false);
+  assert.deepEqual(message.meta, {
+    renderRich: true,
+    reasoning: 'parsed',
+    reasoningDisplay: 'Parsed',
+  });
+  assert.equal(message.rawSource, 'body source');
+  assert.equal(message.raw, 'body source:stored');
+  assert.equal(message.content, 'body source:display');
+});
+
+test('buildChatModeAssistantMessageParts resolves native reasoning without rebuilding payload', () => {
+  const calls = [];
+  const parts = buildChatModeAssistantMessageParts({
+    text: 'reply',
+    nativeReasoningState: { source: 'native' },
+    applyChatModeAssistantRegex(value, options) {
+      calls.push(['regex', value, options]);
+      return {
+        reasoningParsed: { reasoning: 'parsed', reasoningDisplay: 'Parsed' },
+        finalSource: 'reply source',
+        stored: 'reply stored',
+        display: 'reply display',
+      };
+    },
+    resolveReasoningState(reasoningParsed, nativeReasoningState, options) {
+      calls.push(['resolve', reasoningParsed.reasoning, nativeReasoningState, options]);
+      return {
+        reasoning: 'native',
+        reasoningDisplay: 'Native',
+        reasoningHidden: true,
+        reasoningLabel: 'Thinking',
+        reasoningSource: 'native',
+      };
+    },
+  });
+
+  assert.deepEqual(parts, {
+    reasoningParsed: { reasoning: 'parsed', reasoningDisplay: 'Parsed' },
+    resolvedReasoning: {
+      reasoning: 'native',
+      reasoningDisplay: 'Native',
+      reasoningHidden: true,
+      reasoningLabel: 'Thinking',
+      reasoningSource: 'native',
+    },
+    finalSource: 'reply source',
+    stored: 'reply stored',
+    display: 'reply display',
+  });
+  assert.deepEqual(calls, [
+    ['regex', 'reply', { depth: 0 }],
+    ['resolve', 'parsed', { source: 'native' }, { finalize: true }],
+  ]);
+});
+
+test('buildChatModeAssistantMessageFromParts preserves special message parsing id and reasoning meta', () => {
+  const message = buildChatModeAssistantMessageFromParts({
+    parts: {
+      finalSource: 'reply source',
+      stored: 'reply stored',
+      display: 'reply display',
+      resolvedReasoning: {
+        reasoning: 'native',
+        reasoningDisplay: 'Native',
+        reasoningHidden: true,
+      },
+    },
+    rawOriginal: 'raw reply',
+    id: 'stream-2',
+    includeId: true,
+    avatar: 'assistant.png',
+    formatTime: () => '10:02',
+    parseSpecialMessage: value => ({
+      type: 'text',
+      content: value,
+      meta: { parsed: true },
+    }),
+  });
+
+  assert.deepEqual(message, {
+    role: 'assistant',
+    name: '助手',
+    avatar: 'assistant.png',
+    time: '10:02',
+    rawOriginal: 'raw reply',
+    rawSource: 'reply source',
+    raw: 'reply stored',
+    type: 'text',
+    content: 'reply display',
+    meta: {
+      reasoning: 'native',
+      reasoningDisplay: 'Native',
+      reasoningHidden: true,
+    },
+    id: 'stream-2',
+  });
+});
+
+test('buildChatModeAssistantMessage uses parsed reasoning and omits meta when empty', () => {
+  const withReasoning = buildChatModeAssistantMessage({
+    text: 'reply',
+    rawOriginal: 'raw reply',
+    avatar: 'assistant.png',
+    time: '10:03',
+    applyChatModeAssistantRegex: () => ({
+      reasoningParsed: { reasoning: 'parsed', reasoningDisplay: 'Parsed' },
+      finalSource: '',
+      stored: 'stored',
+      display: 'display',
+    }),
+    parseSpecialMessage: value => ({ type: 'text', content: value }),
+  });
+  assert.equal(Object.prototype.hasOwnProperty.call(withReasoning, 'id'), false);
+  assert.equal(withReasoning.rawSource, undefined);
+  assert.deepEqual(withReasoning.meta, {
+    reasoning: 'parsed',
+    reasoningDisplay: 'Parsed',
+  });
+
+  const withoutReasoning = buildChatModeAssistantMessage({
+    text: 'reply',
+    applyChatModeAssistantRegex: () => ({
+      reasoningParsed: { reasoning: '', reasoningDisplay: '' },
+      finalSource: 'source',
+      stored: 'stored',
+      display: 'display',
+    }),
+    parseSpecialMessage: value => ({ type: 'text', content: value }),
+  });
+  assert.equal(withoutReasoning.meta, undefined);
 });
 
 let failed = 0;

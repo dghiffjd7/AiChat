@@ -1,17 +1,12 @@
 import assert from 'node:assert/strict';
 
 import { extractTableEditBlocks } from '../../src/scripts/memory/memory-edit-parser.js';
-import { normalizeMemoryUpdateMode } from '../../src/scripts/memory/memory-prompt-utils.js';
 import { createDebugTraceTimeline } from '../../src/scripts/ui/debug-trace-timeline-utils.js';
 import {
-  buildMemoryRollbackSnapshot,
-  executeMemoryActionMutationPlan,
+  executeMemoryActionBatchMutation,
   restoreMemoryRowsFromRollbackSnapshot,
-  resolveMemoryActionMutationPlan,
 } from '../../src/scripts/ui/chat/memory-table-action-utils.js';
-import { normalizeTableRowData } from '../../src/scripts/ui/chat/memory-edit-utils.js';
 import { handleMemoryEditsFromRawWithUi } from '../../src/scripts/ui/chat/memory-update-runtime-utils.js';
-import { batchCreateMemoriesWithFallback } from '../../src/scripts/ui/session-memory-write-utils.js';
 import {
   loadSessionMemoryActionContext,
   loadSessionMemoryRollbackSnapshotContext,
@@ -135,64 +130,28 @@ const applyMemoryEdits = async ({ actions, sessionId, isGroup }) => {
     tableOrderOverride: appBridge.lastMemoryPlan.tableOrder,
     rowIndexMap: appBridge.lastMemoryPlan.rowIndexMap,
   });
-  const updateMode = normalizeMemoryUpdateMode(appBridge.lastMemoryPlan.updateMode, 'full');
-  const allowSummaryTables = updateMode === 'summary' || updateMode === 'full';
-  const allowStandardTables = updateMode === 'standard' || updateMode === 'full';
-  const rollback = buildMemoryRollbackSnapshot({
+  const result = await executeMemoryActionBatchMutation({
     actions,
-    templateId: actionContext.templateId,
-    resolveTableId: actionContext.resolveTableId,
-    tableById: actionContext.tableById,
-    resolveScopeForTable: actionContext.resolveScopeForTable,
-    rowsByTableScope: actionContext.rowsByTableScope,
-    allowSummaryTables,
-    allowStandardTables,
+    actionContext,
+    updateMode: appBridge.lastMemoryPlan.updateMode,
+    memoryTableStore,
+    createMemories: inputs => memoryTableStore.batchCreateMemories(inputs),
+    currentTurnNumber: 1,
     isGroup,
   });
-  const createInputs = [];
-  const totals = { inserted: 0, updated: 0, deleted: 0, skipped: 0 };
-  for (const action of actions) {
-    const context = actionContext.resolveActionContext({
-      action,
-      allowSummaryTables,
-      allowStandardTables,
-    });
-    if (!context) {
-      totals.skipped += 1;
-      continue;
-    }
-    const data = normalizeTableRowData(action.data, context.table?.columns || []);
-    const plan = resolveMemoryActionMutationPlan({
-      action,
-      actionContext: context,
-      data,
-      rowsByTableScope: actionContext.rowsByTableScope,
-      resolveRowId: actionContext.resolveRowId,
-      resolveRowIdByData: actionContext.resolveRowIdByData,
-      rowsById: actionContext.rowsById,
-    });
-    const result = await executeMemoryActionMutationPlan({
-      plan,
-      memoryTableStore,
-      createInputs,
-      rowsById: actionContext.rowsById,
-      rowsByTableScope: actionContext.rowsByTableScope,
-      templateId: actionContext.templateId,
-      currentTurnNumber: 1,
-    });
-    totals.updated += Number(result.updated || 0);
-    totals.deleted += Number(result.deleted || 0);
-    totals.skipped += Number(result.skipped || 0);
-  }
-  totals.inserted = await batchCreateMemoriesWithFallback({ memoryTableStore, inputs: createInputs });
-  if (rollback) {
+  if (result.rollbackSnapshot) {
     appBridge.setLastMemoryUpdate(sessionId, {
       ...(appBridge.getLastMemoryUpdate(sessionId) || {}),
-      rollback,
+      rollback: result.rollbackSnapshot,
       rollbackAt: 1234,
     });
   }
-  return totals;
+  return {
+    inserted: result.inserted,
+    updated: result.updated,
+    deleted: result.deleted,
+    skipped: result.skipped,
+  };
 };
 
 const raw = [

@@ -8,6 +8,7 @@ import { RegexStore, isLocalRegexSetAutoActive, regex_placement } from '../stora
 import { logger } from '../utils/logger.js';
 import { appConfirm } from './app-confirm.js';
 import { bindCustomSelectButton, closeCustomSelectMenu } from './custom-select.js';
+import { listWorldIds } from './world-store-runtime-utils.js';
 import {
     downloadJsonFile,
     flattenRegexImportRules,
@@ -53,8 +54,8 @@ const DANGER_BUTTON_STYLE = 'padding:6px 10px; border:1px solid rgba(239,68,68,0
 const DANGER_ACTION_STYLE = 'padding:10px 12px; border:1px solid rgba(239,68,68,0.35); border-radius:10px; background:var(--app-surface-card); color:#f87171; cursor:pointer;';
 
 export class RegexPanel {
-    constructor() {
-        this.store = window.appBridge?.regex || new RegexStore();
+    constructor({ store = null } = {}) {
+        this.store = store || new RegexStore();
         this.element = null;
         this.overlay = null;
         this.activeTab = 'global'; // global | character | preset
@@ -752,9 +753,7 @@ export class RegexPanel {
     }
 
     async pickWorld() {
-        const ws = window.appBridge?.worldStore;
-        await ws?.ready;
-        const list = ws?.list?.() || [];
+        const list = await listWorldIds(window.appBridge);
         if (!list.length) return null;
         const name = prompt(`选择绑定的世界书（输入名称）：\n${list.join('\n')}`, list[0]);
         if (!name || !list.includes(name)) return null;

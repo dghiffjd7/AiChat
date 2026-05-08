@@ -2202,15 +2202,18 @@ pub async fn export_data_bundle(
     files += add_sanitized_profile_stores_to_zip(&mut writer, &data_dir, options)?;
     writer.finish().map_err(|e| e.to_string())?;
     let bytes = fs::metadata(&output_path).map_err(|e| e.to_string())?.len();
-    let mut result_path = output_path.to_string_lossy().to_string();
     #[cfg(target_os = "android")]
-    {
+    let result_path = {
         if publish_download {
             let published = publish_bundle_to_downloads(&app, &output_path, &file_name)?;
             let _ = fs::remove_file(&output_path);
-            result_path = published;
+            published
+        } else {
+            output_path.to_string_lossy().to_string()
         }
-    }
+    };
+    #[cfg(not(target_os = "android"))]
+    let result_path = output_path.to_string_lossy().to_string();
 
     Ok(DataBundleResult {
         path: result_path,
@@ -3260,17 +3263,23 @@ pub struct ZipEntryPayload {
     pub base64: Option<String>,
 }
 
-#[tauri::command]
-pub async fn read_zip_entries(bytes: Vec<u8>) -> Result<Vec<ZipEntryPayload>, String> {
-    if bytes.is_empty() {
-        return Err("zip bytes empty".to_string());
-    }
-    let cursor = Cursor::new(bytes);
-    let mut archive = zip::ZipArchive::new(cursor).map_err(|e| e.to_string())?;
+const ZIP_ENTRY_MAX_TOTAL_BYTES: usize = 30 * 1024 * 1024;
+const ZIP_ENTRY_MAX_FILE_BYTES: usize = 12 * 1024 * 1024;
+
+fn is_text_zip_entry_name(name: &str) -> bool {
+    let lower = name.to_lowercase();
+    lower.ends_with(".json")
+        || lower.ends_with(".txt")
+        || lower.ends_with(".md")
+        || lower.ends_with(".js")
+        || lower.ends_with(".yaml")
+        || lower.ends_with(".yml")
+}
+
+fn read_zip_entry_payloads<R: Read + Seek>(reader: R) -> Result<Vec<ZipEntryPayload>, String> {
+    let mut archive = ZipArchive::new(reader).map_err(|e| e.to_string())?;
     let mut out: Vec<ZipEntryPayload> = Vec::new();
     let mut total: usize = 0;
-    const MAX_TOTAL: usize = 30 * 1024 * 1024;
-    const MAX_FILE: usize = 12 * 1024 * 1024;
     for i in 0..archive.len() {
         let mut file = archive.by_index(i).map_err(|e| e.to_string())?;
         if file.is_dir() {
@@ -3279,21 +3288,14 @@ pub async fn read_zip_entries(bytes: Vec<u8>) -> Result<Vec<ZipEntryPayload>, St
         let name = file.name().replace('\\', "/");
         let mut buf: Vec<u8> = Vec::new();
         file.read_to_end(&mut buf).map_err(|e| e.to_string())?;
-        if buf.len() > MAX_FILE {
+        if buf.len() > ZIP_ENTRY_MAX_FILE_BYTES {
             return Err(format!("zip entry too large: {}", name));
         }
         total = total.saturating_add(buf.len());
-        if total > MAX_TOTAL {
+        if total > ZIP_ENTRY_MAX_TOTAL_BYTES {
             return Err("zip too large".to_string());
         }
-        let lower = name.to_lowercase();
-        let is_text = lower.ends_with(".json")
-            || lower.ends_with(".txt")
-            || lower.ends_with(".md")
-            || lower.ends_with(".js")
-            || lower.ends_with(".yaml")
-            || lower.ends_with(".yml");
-        if is_text {
+        if is_text_zip_entry_name(&name) {
             if let Ok(text) = String::from_utf8(buf.clone()) {
                 out.push(ZipEntryPayload {
                     name,
@@ -3315,6 +3317,14 @@ pub async fn read_zip_entries(bytes: Vec<u8>) -> Result<Vec<ZipEntryPayload>, St
         });
     }
     Ok(out)
+}
+
+#[tauri::command]
+pub async fn read_zip_entries(bytes: Vec<u8>) -> Result<Vec<ZipEntryPayload>, String> {
+    if bytes.is_empty() {
+        return Err("zip bytes empty".to_string());
+    }
+    read_zip_entry_payloads(Cursor::new(bytes))
 }
 
 #[derive(serde::Serialize)]
@@ -3812,4 +3822,81 @@ pub async fn delete_template(
     id: String,
 ) -> Result<(), String> {
     db.delete_template(scope_id, id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn build_test_zip(entries: &[(&str, Option<&[u8]>)]) -> Vec<u8> {
+        let cursor = Cursor::new(Vec::new());
+        let mut writer = ZipWriter::new(cursor);
+        let options = FileOptions::default().compression_method(CompressionMethod::Deflated);
+        for (name, payload) in entries {
+            if let Some(bytes) = payload {
+                writer.start_file(*name, options).unwrap();
+                writer.write_all(bytes).unwrap();
+            } else {
+                writer.add_directory(*name, options).unwrap();
+            }
+        }
+        writer.finish().unwrap().into_inner()
+    }
+
+    #[test]
+    fn sanitize_zip_entry_name_removes_traversal_and_windows_unsafe_chars() {
+        assert_eq!(
+            sanitize_zip_entry_name(r#" ../folder\bad:name?.json "#),
+            "folder/bad_name_.json"
+        );
+        assert_eq!(sanitize_zip_entry_name("../.."), "entry");
+        assert_eq!(sanitize_zip_entry_name(".../   /ok.txt"), "entry/ok.txt");
+    }
+
+    #[test]
+    fn read_zip_entry_payloads_reads_real_zip_bytes_and_normalizes_contract() {
+        let zip_bytes = build_test_zip(&[
+            ("folder/", None),
+            (
+                "manifest.json",
+                Some(br#"{"format":"chatapp.custom-bundle.v1"}"#),
+            ),
+            (r"nested\notes.md", Some("中文 notes".as_bytes())),
+            ("assets/avatar.png", Some(&[0, 1, 2, 255])),
+        ]);
+
+        let entries = read_zip_entry_payloads(Cursor::new(zip_bytes)).unwrap();
+
+        assert_eq!(entries.len(), 3);
+        assert_eq!(entries[0].name, "manifest.json");
+        assert!(entries[0].is_text);
+        assert_eq!(
+            entries[0].text.as_deref(),
+            Some(r#"{"format":"chatapp.custom-bundle.v1"}"#)
+        );
+        assert!(entries[0].base64.is_none());
+
+        assert_eq!(entries[1].name, "nested/notes.md");
+        assert!(entries[1].is_text);
+        assert_eq!(entries[1].text.as_deref(), Some("中文 notes"));
+
+        assert_eq!(entries[2].name, "assets/avatar.png");
+        assert!(!entries[2].is_text);
+        assert_eq!(entries[2].size, 4);
+        let expected_avatar = BASE64_ENGINE.encode([0, 1, 2, 255]);
+        assert_eq!(entries[2].base64.as_deref(), Some(expected_avatar.as_str()));
+    }
+
+    #[test]
+    fn read_zip_entry_payloads_keeps_invalid_utf8_text_extensions_as_base64() {
+        let zip_bytes = build_test_zip(&[("broken.json", Some(&[0xff, 0xfe, 0xfd]))]);
+        let entries = read_zip_entry_payloads(Cursor::new(zip_bytes)).unwrap();
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].name, "broken.json");
+        assert!(!entries[0].is_text);
+        assert!(entries[0].text.is_none());
+        let expected_broken = BASE64_ENGINE.encode([0xff, 0xfe, 0xfd]);
+        assert_eq!(entries[0].base64.as_deref(), Some(expected_broken.as_str()));
+    }
 }

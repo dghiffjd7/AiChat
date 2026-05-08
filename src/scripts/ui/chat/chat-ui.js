@@ -628,7 +628,7 @@ export class ChatUI {
     const explicit = String(message?.sessionId || '').trim();
     if (explicit) return explicit;
     const bridge = typeof window !== 'undefined' ? window.appBridge : null;
-    const active = String(bridge?.activeSessionId || '').trim();
+    const active = String(bridge?.getActiveSessionId?.() || '').trim();
     if (active) return active;
     return String(bridge?.chatStore?.getCurrent?.() || '').trim();
   }

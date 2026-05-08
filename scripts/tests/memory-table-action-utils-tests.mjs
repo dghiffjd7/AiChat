@@ -10,6 +10,7 @@ import {
   countAssistantTurnsForMemoryTimeline,
   createMemoryActionResolvers,
   deleteNewestMatchingMemoryRow,
+  executeMemoryActionBatchMutation,
   executeMemoryActionMutationPlan,
   executeMemoryRollbackRestorePlan,
   getMemoryRowScopeKey,
@@ -17,6 +18,7 @@ import {
   pickNewestMemoryRow,
   queueMemoryInsert,
   restoreMemoryRowsFromRollbackSnapshot,
+  resolveMemoryActionBatchPermissions,
   resolveMemoryActionMutationPlan,
   resolveMemoryActionTableContext,
   resolveMemoryActionTargetRow,
@@ -619,6 +621,132 @@ test('executeMemoryActionMutationPlan applies queue update delete and skip count
     }),
     { inserted: 0, updated: 0, deleted: 0, skipped: 1 },
   );
+});
+
+test('resolveMemoryActionBatchPermissions normalizes update-mode table gates', () => {
+  assert.deepEqual(resolveMemoryActionBatchPermissions('summary-only'), {
+    updateMode: 'summary',
+    allowSummaryTables: true,
+    allowStandardTables: false,
+  });
+  assert.deepEqual(resolveMemoryActionBatchPermissions('standard_only'), {
+    updateMode: 'standard',
+    allowSummaryTables: false,
+    allowStandardTables: true,
+  });
+  assert.deepEqual(resolveMemoryActionBatchPermissions('unified'), {
+    updateMode: 'full',
+    allowSummaryTables: true,
+    allowStandardTables: true,
+  });
+});
+
+test('executeMemoryActionBatchMutation applies actions, queues inserts, and snapshots rollback scope', async () => {
+  const row = {
+    id: 'row-1',
+    template_id: 'tpl-memory',
+    table_id: 'profile',
+    contact_id: 'chat:1',
+    group_id: null,
+    row_data: { title: 'old' },
+    is_active: true,
+    is_pinned: false,
+    priority: 0,
+    sort_order: 1,
+  };
+  const tableById = new Map([
+    ['profile', {
+      id: 'profile',
+      scope: 'contact',
+      maxRows: 3,
+      columns: [{ id: 'title', name: '标题' }],
+    }],
+    ['chat_summary', {
+      id: 'chat_summary',
+      scope: 'contact',
+      maxRows: 3,
+      columns: [{ id: 'summary', name: '摘要' }],
+    }],
+  ]);
+  const rowsById = new Map([['row-1', row]]);
+  const rowsByTableScope = new Map([
+    ['profile:contact', [row]],
+    ['chat_summary:contact', []],
+  ]);
+  const resolvers = createMemoryActionResolvers({
+    tableById,
+    tableOrder: ['profile', 'chat_summary'],
+    rowsByTableScope,
+    sessionId: 'chat:1',
+    isGroup: false,
+  });
+  const updated = [];
+  const created = [];
+  const memoryTableStore = {
+    async updateMemory(payload) {
+      updated.push(payload);
+    },
+  };
+
+  const result = await executeMemoryActionBatchMutation({
+    actions: [
+      { action: 'update', tableId: 'profile', rowId: 'row-1', data: { title: 'next' } },
+      { action: 'insert', tableId: 'profile', data: { title: 'fresh' } },
+      { action: 'insert', tableId: 'chat_summary', data: { summary: 'should skip' } },
+    ],
+    actionContext: {
+      templateId: 'tpl-memory',
+      tableById,
+      rowsById,
+      rowsByTableScope,
+      ...resolvers,
+    },
+    updateMode: 'standard',
+    memoryTableStore,
+    createMemories: async (inputs) => {
+      created.push(...inputs);
+      return inputs.length;
+    },
+    currentTurnNumber: 5,
+    isGroup: false,
+  });
+
+  assert.equal(result.inserted, 1);
+  assert.equal(result.updated, 1);
+  assert.equal(result.deleted, 0);
+  assert.equal(result.skipped, 1);
+  assert.equal(result.changed, 2);
+  assert.deepEqual(updated, [{ id: 'row-1', row_data: { title: 'next' } }]);
+  assert.deepEqual(rowsById.get('row-1')?.row_data, { title: 'next' });
+  assert.equal(created.length, 1);
+  const { sort_order: createdSortOrder, ...createdPayload } = created[0];
+  assert.equal(Number.isFinite(Number(createdSortOrder)), true);
+  assert.deepEqual(createdPayload, {
+    template_id: 'tpl-memory',
+    table_id: 'profile',
+    contact_id: 'chat:1',
+    group_id: null,
+    row_data: { title: 'fresh' },
+    is_active: true,
+  });
+  assert.deepEqual(result.rollbackSnapshot, {
+    tables: [{
+      table_id: 'profile',
+      scope: 'contact',
+      rows: [{
+        id: 'row-1',
+        table_id: 'profile',
+        template_id: 'tpl-memory',
+        contact_id: 'chat:1',
+        group_id: null,
+        row_data: { title: 'old' },
+        is_active: true,
+        is_pinned: false,
+        priority: 0,
+        sort_order: 1,
+      }],
+    }],
+  });
 });
 
 test('buildMemoryRowBucketKey normalizes table and scope identifiers', () => {

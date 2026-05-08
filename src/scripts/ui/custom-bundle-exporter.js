@@ -13,10 +13,14 @@ import { logger } from '../utils/logger.js';
 import { pickSavePath } from '../utils/save-dialog.js';
 import { safeInvoke } from '../utils/tauri.js';
 import { appConfirm } from './app-confirm.js';
+import { createConfigRuntimeAdapter } from './config-runtime-utils.js';
 import { ensureDebugUiRegistry as ensureSharedDebugUiRegistry } from './debug-ui-registry-utils.js';
+import { createRegexStoreRuntimeAdapter } from './regex-store-runtime-utils.js';
 import { emitMemoryRowsUpdated } from './session-memory-event-utils.js';
 import { batchCreateMemoriesWithFallback } from './session-memory-write-utils.js';
+import { hasStoredWorldInfo, waitForWorldStoreReady } from './world-store-runtime-utils.js';
 import { normalizeWorldIdList } from './world-id-utils.js';
+import { buildZipEntryMap, readZipEntryJson } from './zip-entry-utils.js';
 
 const CUSTOM_BUNDLE_FORMAT = 'chatapp.custom-bundle.v1';
 const CUSTOM_BUNDLE_VERSION = 1;
@@ -125,13 +129,6 @@ const bytesToBase64 = (bytes) => {
 const textToDataUrl = (text, mime = 'application/json') => {
   const bytes = new TextEncoder().encode(String(text || ''));
   return `data:${mime};base64,${bytesToBase64(bytes)}`;
-};
-
-const base64ToText = (base64) => {
-  const raw = atob(String(base64 || ''));
-  const bytes = new Uint8Array(raw.length);
-  for (let i = 0; i < raw.length; i += 1) bytes[i] = raw.charCodeAt(i);
-  return new TextDecoder().decode(bytes);
 };
 
 const inferImageExtension = (dataUrl, fallback = 'png') => {
@@ -455,15 +452,15 @@ export class CustomBundleExporter {
     this.appBridge = appBridge || window.appBridge || null;
     this.getPersonaScopeKey = typeof getPersonaScopeKey === 'function' ? getPersonaScopeKey : ((personaId) => normalizeScopeId(personaId));
     this.chatStore = chatStore || this.appBridge?.chatStore || null;
-    this.contactsStore = contactsStore || this.appBridge?.contactsStore || null;
+    this.contactsStore = contactsStore || null;
     this.rpSessionStore = rpSessionStore || null;
     this.memoryTableStore = memoryTableStore || this.appBridge?.memoryTableStore || null;
     this.momentsStore = momentsStore || this.appBridge?.momentsStore || null;
     this.momentSummaryStore = momentSummaryStore || this.appBridge?.momentSummaryStore || null;
     this.presetStore = this.appBridge?.presets || null;
-    this.configManager = this.appBridge?.config || null;
+    this.configManager = this.appBridge ? createConfigRuntimeAdapter(this.appBridge) : null;
     this.memoryTemplateStore = this.appBridge?.memoryTemplateStore || null;
-    this.regexStore = this.appBridge?.regex || null;
+    this.regexStore = this.appBridge ? createRegexStoreRuntimeAdapter(this.appBridge) : null;
     this.onImportProgress = typeof onImportProgress === 'function' ? onImportProgress : null;
     this.scopeCache = new Map();
     this.worldStorePromise = null;
@@ -2558,12 +2555,7 @@ export class CustomBundleExporter {
     const entry = entryMap.get(name);
     if (!entry) return fallback;
     try {
-      if (typeof entry.text === 'string' && entry.text.trim()) {
-        return JSON.parse(entry.text);
-      }
-      if (entry.base64) {
-        return JSON.parse(base64ToText(entry.base64));
-      }
+      return readZipEntryJson(entry, { fallback });
     } catch (err) {
       logger.warn(`read custom bundle entry failed: ${name}`, err);
     }
@@ -2572,12 +2564,7 @@ export class CustomBundleExporter {
 
   parsePackageEntries(entries = []) {
     const list = ensureArray(entries);
-    const entryMap = new Map();
-    list.forEach((entry) => {
-      const name = String(entry?.name || '').replace(/\\/g, '/');
-      if (!name) return;
-      entryMap.set(name, entry);
-    });
+    const entryMap = buildZipEntryMap(list);
     const manifest = this.readJsonEntry(entryMap, 'manifest.json', null);
     if (!manifest || String(manifest.format || '').trim() !== CUSTOM_BUNDLE_FORMAT) {
       throw new Error('不支持的自定义资料包格式');
@@ -2650,7 +2637,7 @@ export class CustomBundleExporter {
     const source = String(baseId || '').trim() || 'world';
     let nextId = source;
     let index = 1;
-    while (this.appBridge?.worldStore?.load?.(nextId)) {
+    while (hasStoredWorldInfo(this.appBridge, nextId)) {
       nextId = `${source}-${index}`;
       index += 1;
     }
@@ -2697,7 +2684,7 @@ export class CustomBundleExporter {
       : (worldPayload && typeof worldPayload === 'object' ? worldPayload : {});
     const worldIdMap = {};
     try {
-      await this.appBridge?.worldStore?.ready;
+      await waitForWorldStoreReady(this.appBridge);
     } catch {}
     for (const [rawId, data] of Object.entries(worldbooks)) {
       const sourceId = String(rawId || '').trim();
@@ -2969,7 +2956,7 @@ export class CustomBundleExporter {
     if (activeScopeId === targetScopeId && this.appBridge) {
       try {
         this.appBridge.worldSessionMap = cloneJson(payload, {});
-        const activeSessionId = String(this.appBridge.activeSessionId || '').trim();
+        const activeSessionId = String(this.appBridge.getActiveSessionId?.() || '').trim();
         const currentWorldIds = activeSessionId
           ? normalizeWorldIdList(payload?.[activeSessionId], { excludeBuiltin: BUILTIN_PHONE_FORMAT_WORLDBOOK_ID })
           : [];
@@ -3728,7 +3715,7 @@ export class CustomBundleExporter {
           this.appBridge?.chatStore?.fullyReady,
           this.appBridge?.chatStore?.ready,
           this.appBridge?.chatStore?._v2Ready,
-          this.appBridge?.contactsStore?.ready,
+          this.contactsStore?.ready,
         ]);
         this.appBridge?.chatStore?.switchSession?.(sessionId);
         this.appBridge?.setActiveSession?.(sessionId);

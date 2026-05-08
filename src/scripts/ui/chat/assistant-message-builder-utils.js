@@ -174,3 +174,164 @@ export const buildAssistantMessageFromText = async (
   if (Object.keys(meta).length) next.meta = meta;
   return next;
 };
+
+export const buildCreativeAssistantMessageParts = ({
+  text = '',
+  nativeReasoningState = null,
+  normalizeCreativeLineBreaks = value => String(value ?? ''),
+  extractReasoningFromContent = value => ({
+    content: String(value ?? ''),
+    reasoning: '',
+    reasoningDisplay: '',
+  }),
+  resolveReasoningState = reasoningParsed => reasoningParsed,
+  applyOutputRegexPairSafe = value => ({ stored: String(value ?? ''), display: String(value ?? '') }),
+  appBridge = null,
+} = {}) => {
+  const rawSource = normalizeCreativeLineBreaks(text);
+  const reasoningParsed = extractReasoningFromContent(rawSource, { depth: 0, strict: true });
+  const resolvedReasoning = nativeReasoningState
+    ? resolveReasoningState(reasoningParsed, nativeReasoningState, { finalize: true })
+    : reasoningParsed;
+  const finalSource = normalizeCreativeLineBreaks(reasoningParsed.content || '');
+  const regexResult = applyOutputRegexPairSafe(finalSource, {
+    appBridge,
+    depth: 0,
+    normalizeText: normalizeCreativeLineBreaks,
+  }) || {};
+  return {
+    rawSource,
+    reasoningParsed,
+    resolvedReasoning,
+    finalSource,
+    stored: regexResult.stored,
+    display: regexResult.display,
+  };
+};
+
+export const buildCreativeAssistantMessageFromParts = async ({
+  parts = null,
+  rawOriginal = '',
+  sessionId = '',
+  id = undefined,
+  includeId = false,
+  avatar = '',
+  time = '',
+  formatTime = null,
+  summary = '',
+  isRpMode = false,
+  isGroupChat = false,
+  captureAssistantMemoryState = null,
+  attachAssistantMemoryStateToMeta = meta => meta,
+} = {}) => {
+  const nextParts = parts && typeof parts === 'object' ? parts : {};
+  const resolvedReasoning = nextParts.resolvedReasoning || {};
+  const memoryState =
+    isRpMode && typeof captureAssistantMemoryState === 'function'
+      ? await captureAssistantMemoryState(sessionId, { isGroup: isGroupChat })
+      : null;
+  const meta = (
+    typeof attachAssistantMemoryStateToMeta === 'function'
+      ? attachAssistantMemoryStateToMeta({ renderRich: true }, memoryState)
+      : { renderRich: true }
+  ) || { renderRich: true };
+  if (summary) meta.summary = summary;
+  if (resolvedReasoning.reasoning) {
+    meta.reasoning = resolvedReasoning.reasoning;
+    meta.reasoningDisplay = resolvedReasoning.reasoningDisplay;
+    if (resolvedReasoning.reasoningHidden) meta.reasoningHidden = true;
+    if (resolvedReasoning.reasoningLabel) meta.reasoningLabel = resolvedReasoning.reasoningLabel;
+    if (resolvedReasoning.reasoningSource) meta.reasoningSource = resolvedReasoning.reasoningSource;
+  }
+  const resolvedTime = time || (typeof formatTime === 'function' ? formatTime() : '');
+
+  const message = {
+    role: 'assistant',
+    type: 'text',
+    name: '助手',
+    avatar,
+    time: resolvedTime,
+    sessionId,
+    rawOriginal,
+    rawSource: nextParts.finalSource,
+    raw: nextParts.stored,
+    content: nextParts.display,
+    meta,
+  };
+  if (includeId) message.id = id;
+  return message;
+};
+
+export const buildCreativeAssistantMessage = async (options = {}) => {
+  const parts = buildCreativeAssistantMessageParts(options);
+  return buildCreativeAssistantMessageFromParts({ ...options, parts });
+};
+
+export const buildChatModeAssistantMessageParts = ({
+  text = '',
+  nativeReasoningState = null,
+  applyChatModeAssistantRegex = value => ({
+    reasoningParsed: {
+      content: String(value ?? ''),
+      reasoning: '',
+      reasoningDisplay: '',
+    },
+    finalSource: String(value ?? ''),
+    stored: String(value ?? ''),
+    display: String(value ?? ''),
+  }),
+  resolveReasoningState = reasoningParsed => reasoningParsed,
+} = {}) => {
+  const regexResult = applyChatModeAssistantRegex(text, { depth: 0 }) || {};
+  const reasoningParsed = regexResult.reasoningParsed || {};
+  const resolvedReasoning = nativeReasoningState
+    ? resolveReasoningState(reasoningParsed, nativeReasoningState, { finalize: true })
+    : reasoningParsed;
+  return {
+    reasoningParsed,
+    resolvedReasoning,
+    finalSource: regexResult.finalSource,
+    stored: regexResult.stored,
+    display: regexResult.display,
+  };
+};
+
+export const buildChatModeAssistantMessageFromParts = ({
+  parts = null,
+  rawOriginal = '',
+  id = undefined,
+  includeId = false,
+  avatar = '',
+  time = '',
+  formatTime = null,
+  parseSpecialMessage = value => ({ type: 'text', content: String(value ?? ''), meta: {} }),
+} = {}) => {
+  const nextParts = parts && typeof parts === 'object' ? parts : {};
+  const resolvedReasoning = nextParts.resolvedReasoning || {};
+  const meta = {};
+  if (resolvedReasoning.reasoning) {
+    meta.reasoning = resolvedReasoning.reasoning;
+    meta.reasoningDisplay = resolvedReasoning.reasoningDisplay;
+    if (resolvedReasoning.reasoningHidden) meta.reasoningHidden = true;
+    if (resolvedReasoning.reasoningLabel) meta.reasoningLabel = resolvedReasoning.reasoningLabel;
+    if (resolvedReasoning.reasoningSource) meta.reasoningSource = resolvedReasoning.reasoningSource;
+  }
+  const message = {
+    role: 'assistant',
+    name: '助手',
+    avatar,
+    time: time || (typeof formatTime === 'function' ? formatTime() : ''),
+    rawOriginal,
+    rawSource: nextParts.finalSource || undefined,
+    raw: nextParts.stored,
+    ...parseSpecialMessage(nextParts.display),
+    meta: Object.keys(meta).length ? meta : undefined,
+  };
+  if (includeId) message.id = id;
+  return message;
+};
+
+export const buildChatModeAssistantMessage = (options = {}) => {
+  const parts = buildChatModeAssistantMessageParts(options);
+  return buildChatModeAssistantMessageFromParts({ ...options, parts });
+};

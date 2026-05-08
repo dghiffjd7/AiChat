@@ -3,7 +3,6 @@ import { canInitClient } from '../api/client-config-utils.js';
 import { normalizeAssistantStreamChunk } from '../api/native-reasoning.js';
 import { isDeepSeekApiRequest } from '../api/providers/deepseek-compat.js';
 import { extractTableEditBlocks, stripTableEditBlocks } from '../memory/memory-edit-parser.js';
-import { isSummaryTableId, normalizeMemoryUpdateMode } from '../memory/memory-prompt-utils.js';
 import { getMemoryContextType, resolveMemorySessionMode, tableMatchesMemoryContext } from '../memory/memory-context-utils.js';
 import { appSettings } from '../storage/app-settings.js';
 import { renderTemplateTextAsync, templateSettings } from '../plugins/template-engine.js';
@@ -50,16 +49,24 @@ import { safeInvoke } from '../utils/tauri.js';
 import './bridge.js';
 import {
   ensureDebugUiRegistry,
+  registerConfigRuntimeBridgeContract,
+  registerGenerationBridgeContract,
   registerMessageActionBridgeContract,
   registerMemoryUpdateBridgeContract,
   registerPersonaBridgeContract,
   registerPromptInjectionBridgeContract,
+  registerPromptProcessingBridgeContract,
+  registerRegexStoreBridgeContract,
+  registerRegexTransformBridgeContract,
   registerRoleWorldBridgeContract,
   registerRuntimeServiceBridgeContract,
+  registerSessionStateBridgeContract,
   registerSharedSessionBridgeContract,
   registerTurnCheckpointBridgeContract,
   registerUiUtilityBridgeContract,
+  registerWorldStoreBridgeContract,
 } from './app-bridge-contract.js';
+import { getRegexStore, waitForRegexStoreReady } from './regex-store-runtime-utils.js';
 import { ensureDebugTraceTimeline } from './debug-trace-timeline-utils.js';
 import {
   bindAppSessionEntryNavigation,
@@ -100,8 +107,14 @@ import { dispatchAfterReceiveEffects } from './chat/after-receive-dispatch-utils
 import {
   applyChatModeAssistantRegex as applyChatModeAssistantRegexCore,
   buildAssistantMessageFromText as buildAssistantMessageFromTextCore,
+  buildChatModeAssistantMessage as buildChatModeAssistantMessageCore,
+  buildChatModeAssistantMessageFromParts as buildChatModeAssistantMessageFromPartsCore,
+  buildChatModeAssistantMessageParts as buildChatModeAssistantMessagePartsCore,
+  buildCreativeAssistantMessage as buildCreativeAssistantMessageCore,
+  buildCreativeAssistantMessageFromParts as buildCreativeAssistantMessageFromPartsCore,
+  buildCreativeAssistantMessageParts as buildCreativeAssistantMessagePartsCore,
 } from './chat/assistant-message-builder-utils.js';
-import { buildContinuationMessageUpdate } from './chat/continuation-message-utils.js';
+import { commitContinuationMessageToStore } from './chat/continuation-message-utils.js';
 import { CreativeStreamProcessor } from './chat/creative-stream-processor.js';
 import { normalizeDialogueMessage as normalizeDialogueMessageCore } from './chat/dialogue-message-utils.js';
 import { DialogueStreamParser } from './chat/dialogue-stream-parser.js';
@@ -112,19 +125,10 @@ import {
   normalizeMomentStoredText,
 } from './chat/moment-store-normalize-utils.js';
 import {
-  applyMomentCommentEvents,
-  applyMomentSummaryFromRaw,
   buildMomentLifecycleTraceEvent,
-  buildMomentCommentPromptData,
-  buildMomentCommentTaskContext,
-  buildMomentPrivateChatMessages,
-  buildMomentRecentCommentsText,
-  collectMomentCommentContactList,
+  createMomentCommentLifecycleRuntime,
   createMomentSummaryCompactionRuntime,
-  resolveMomentReplyTarget,
   resolvePrivateChatTargetSessionIdByName,
-  runMomentCommentGeneration,
-  runMomentReplyRetry,
 } from './chat/moments-runtime-utils.js';
 import {
   buildMvuVarsPayload as buildMvuVarsPayloadCore,
@@ -198,9 +202,8 @@ import {
   resolveMomentAuthorId as resolveMomentAuthorIdCore,
 } from './chat/moment-ingest-utils.js';
 import {
-  buildCancelledAssistantPartial,
-  commitCancelledGenerationPartial,
   createActiveGenerationRecord,
+  runActiveGenerationCancelFlow,
 } from './chat/generation-state-utils.js';
 import { parseGroupSystemOps } from './chat/group-system-ops-utils.js';
 import {
@@ -211,12 +214,10 @@ import {
   normalizeTableRowData,
 } from './chat/memory-edit-utils.js';
 import {
-  buildMemoryRollbackSnapshot,
   countAssistantTurnsForMemoryTimeline,
   deleteNewestMatchingMemoryRow,
-  executeMemoryActionMutationPlan,
+  executeMemoryActionBatchMutation,
   restoreMemoryRowsFromRollbackSnapshot,
-  resolveMemoryActionMutationPlan,
 } from './chat/memory-table-action-utils.js';
 import { createMemoryUpdateRuntime } from './chat/memory-update-runtime.js';
 import {
@@ -253,11 +254,10 @@ import {
   normalizeProtocolChatMessage,
 } from './chat/protocol-parse-utils.js';
 import {
-  commitProtocolSummary,
-  consumeProtocolRetryEvents,
-  consumeProtocolHandledResult,
-  finalizeProtocolHandledFlow,
-  flushProtocolMomentsIfNeeded,
+  createSendProtocolEventHandlers,
+  createSendProtocolResponseFlowHandlers,
+  runProtocolBufferedResponseFlow,
+  runProtocolStreamResponseFlow,
 } from './chat/protocol-runtime-utils.js';
 import {
   applyProtocolMomentEvent,
@@ -288,20 +288,27 @@ import {
   buildSendFlowTraceEvent,
   normalizeHandleSendInvocation,
   normalizeHandleSendOptions,
-  resolveRegenerateFromUserIndexPlan,
   resolveSyspromptProtocolFlags,
+  runPendingSendPreparationFlow,
+  runRegenerateFromUserIndexFlow,
+  runSendCatchFlow,
+  runSendFinallyFlow,
 } from './chat/send-flow-utils.js';
 import {
   createPendingUserMessage,
   getMessageSendText,
-  resolvePendingMessagesToSend,
 } from './chat/pending-message-utils.js';
+import { runPluginSendMessageFlow } from './chat/plugin-message-bridge-utils.js';
 import {
   applyBeforeSendHooks,
 } from './chat/send-before-hook-utils.js';
 import {
+  createCreativeAssistantStreamProcessor,
   dispatchAfterSendEvents,
-  markMessagesAsSending,
+  runAssistantGenerationRequest,
+  runBufferedAssistantResponseFlow,
+  runCreativeStreamAssistantResponseFlow,
+  runLegacyStreamAssistantResponseFlow,
 } from './chat/send-side-effect-utils.js';
 import {
   maybePromptScriptAuthorization,
@@ -577,10 +584,33 @@ const initApp = async () => {
     logger.warn('script runtime disabled (Worker unsupported or store missing)');
   }
   const presetPanel = new PresetPanel();
-  const regexPanel = new RegexPanel();
+  registerRegexStoreBridgeContract(window.appBridge, {
+    getRegexStore: window.appBridge.getRegexStore?.bind(window.appBridge),
+    waitForRegexStoreReady: window.appBridge.waitForRegexStoreReady?.bind(window.appBridge),
+    getRegexSession: window.appBridge.getRegexSession?.bind(window.appBridge),
+    listRegexLocalSets: window.appBridge.listRegexLocalSets?.bind(window.appBridge),
+    getRegexLocalSet: window.appBridge.getRegexLocalSet?.bind(window.appBridge),
+    upsertRegexLocalSet: window.appBridge.upsertRegexLocalSet?.bind(window.appBridge),
+    removeRegexLocalSet: window.appBridge.removeRegexLocalSet?.bind(window.appBridge),
+  });
+  const regexStore = getRegexStore(window.appBridge);
+  const regexPanel = new RegexPanel({ store: regexStore });
   const pluginPanel = new PluginPanel({ store: pluginStore, runtime: pluginRuntime });
   const chatStore = new ChatStore();
   window.appBridge.setChatStore(chatStore);
+  registerConfigRuntimeBridgeContract(window.appBridge, {
+    getConfig: window.appBridge.getConfig?.bind(window.appBridge),
+    loadConfig: window.appBridge.loadConfig?.bind(window.appBridge),
+    reloadConfig: window.appBridge.reloadConfig?.bind(window.appBridge),
+    ensureConfigStores: window.appBridge.ensureConfigStores?.bind(window.appBridge),
+    getConfigProfiles: window.appBridge.getConfigProfiles?.bind(window.appBridge),
+    getConfigProfileById: window.appBridge.getConfigProfileById?.bind(window.appBridge),
+    getActiveConfigProfile: window.appBridge.getActiveConfigProfile?.bind(window.appBridge),
+    getActiveConfigProfileId: window.appBridge.getActiveConfigProfileId?.bind(window.appBridge),
+    setActiveConfigProfile: window.appBridge.setActiveConfigProfile?.bind(window.appBridge),
+    createConfigProfile: window.appBridge.createConfigProfile?.bind(window.appBridge),
+    setChatRuntimeConfig: window.appBridge.setChatRuntimeConfig?.bind(window.appBridge),
+  });
   const variableRuleEngine = new VariableRuleEngine({ chatStore, appBridge: window.appBridge });
   registerRuntimeServiceBridgeContract(window.appBridge, {
     variableRuleEngine,
@@ -837,6 +867,7 @@ const initApp = async () => {
   const memoryTemplatePanel = new MemoryTemplatePanel({
     templateStore: memoryTemplateStore,
     memoryStore: memoryTableStore,
+    contactsStore,
   });
   const personaStore = new PersonaStore();
   const userStore = new UserStore();
@@ -947,17 +978,37 @@ const initApp = async () => {
     window.appBridge?.setPersonaScope?.(initialScopeKey);
   } catch {}
   await initMediaAssets();
-  await window.appBridge?.regex?.ready;
+  await waitForRegexStoreReady(window.appBridge);
   await window.appBridge?.presets?.ready;
   try {
     await window.appBridge?.syncPresetRegexBindings?.();
   } catch {}
   window.appBridge.setActiveSession(chatStore.getCurrent());
+  registerSessionStateBridgeContract(window.appBridge, {
+    getActiveSessionId: window.appBridge.getActiveSessionId?.bind(window.appBridge),
+    setActiveSession: window.appBridge.setActiveSession?.bind(window.appBridge),
+  });
+  registerPromptProcessingBridgeContract(window.appBridge, {
+    processTextMacros: window.appBridge.processTextMacros?.bind(window.appBridge),
+  });
+  registerGenerationBridgeContract(window.appBridge, {
+    generate: window.appBridge.generate?.bind(window.appBridge),
+    buildMessages: window.appBridge.buildMessages?.bind(window.appBridge),
+    backgroundChat: window.appBridge.backgroundChat?.bind(window.appBridge),
+  });
+  registerRegexTransformBridgeContract(window.appBridge, {
+    applyInputStoredRegex: window.appBridge.applyInputStoredRegex?.bind(window.appBridge),
+    applyInputDisplayRegex: window.appBridge.applyInputDisplayRegex?.bind(window.appBridge),
+    applyOutputStoredRegex: window.appBridge.applyOutputStoredRegex?.bind(window.appBridge),
+    applyOutputDisplayRegex: window.appBridge.applyOutputDisplayRegex?.bind(window.appBridge),
+    applyReasoningStoredRegex: window.appBridge.applyReasoningStoredRegex?.bind(window.appBridge),
+    applyReasoningDisplayRegex: window.appBridge.applyReasoningDisplayRegex?.bind(window.appBridge),
+  });
   const sessionPanel = new SessionPanel(chatStore, contactsStore, ui, { personaStore, getPersonaScopeKey });
   try {
     window.__sessionPanel = sessionPanel;
   } catch {}
-  const regexSessionPanel = new RegexSessionPanel(() => chatStore.getCurrent());
+  const regexSessionPanel = new RegexSessionPanel(() => chatStore.getCurrent(), { store: regexStore });
   generalSettingsPanel.setExternalActions({
     openSession: () => sessionPanel.show(),
     openMemoryTemplates: () => memoryTemplatePanel.show(),
@@ -1248,6 +1299,8 @@ const initApp = async () => {
             worldbookEnabled: enabled !== false,
           });
         },
+        buildWorldDebugLabel: window.appBridge.buildWorldDebugLabel?.bind(window.appBridge),
+        explainWorldEntryActivation: window.appBridge.explainWorldEntryActivation?.bind(window.appBridge),
         handleWorldLifecycle: async (event = {}) => {
           const type = String(event?.type || '').trim();
           const from = String(event?.from || '').trim();
@@ -1276,6 +1329,17 @@ const initApp = async () => {
           if (changed) emitRoleWorldBindingsChanged({ lifecycleType: type });
           return changed;
         },
+      });
+      registerWorldStoreBridgeContract(window.appBridge, {
+        getWorldInfo: window.appBridge.getWorldInfo?.bind(window.appBridge),
+        saveWorldInfo: window.appBridge.saveWorldInfo?.bind(window.appBridge),
+        listWorlds: window.appBridge.listWorlds?.bind(window.appBridge),
+        waitForWorldStoreReady: window.appBridge.waitForWorldStoreReady?.bind(window.appBridge),
+        loadStoredWorldInfo: window.appBridge.loadStoredWorldInfo?.bind(window.appBridge),
+        hasStoredWorldInfo: window.appBridge.hasStoredWorldInfo?.bind(window.appBridge),
+        bindWorldToSession: window.appBridge.bindWorldToSession?.bind(window.appBridge),
+        deleteWorldInfo: window.appBridge.deleteWorldInfo?.bind(window.appBridge),
+        renameWorldInfo: window.appBridge.renameWorldInfo?.bind(window.appBridge),
       });
     }
   } catch {}
@@ -1759,289 +1823,70 @@ const initApp = async () => {
   };
 
   let requestMomentSummaryCompaction = () => Promise.resolve(false);
+  let momentsPanel = null;
+  const momentCommentRuntime = createMomentCommentLifecycleRuntime({
+    getIsConfigured: () => window.appBridge.isConfigured(),
+    isOnline: () => typeof navigator === 'undefined' || navigator.onLine,
+    getConfig: () => window.appBridge.getConfig(),
+    getMoment: id => momentsStore.get(id),
+    getCurrentSessionId: () => chatStore.getCurrent() || '',
+    getContactCount: getContactCountN,
+    getActiveUserProfile,
+    getActiveUserName,
+    contactsStore,
+    momentsStore,
+    normalizeName: value => String(value || '').trim(),
+    normalizeLooseName: value => normalizeLooseName(value),
+    normalizeStickerTextForPrompt: value => normalizeStickerTextForPrompt(value),
+    normalizeInitialMomentStats,
+    normalizeMomentRecord: normalizeMomentRecordForStore,
+    normalizeMomentComments: normalizeMomentCommentsForStore,
+    addMoments: list => momentsStore.addMany(list),
+    addMomentComments: (momentId, comments) => momentsStore.addComments(momentId, comments),
+    bumpMomentEngagement,
+    parseSpecialMessage,
+    userAvatar: avatars.user,
+    resolveAssistantAvatar: targetSessionId =>
+      resolveAvatarForContact(targetSessionId, contactsStore.getContact(targetSessionId)),
+    formatNowTime: () => new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
+    appendPrivateChatMessage: (message, targetSessionId) => chatStore.appendMessage(message, targetSessionId),
+    autoMarkReadIfActive: (targetSessionId, messageId) => autoMarkReadIfActive(targetSessionId, messageId),
+    onTouchedChats: () => refreshChatAndContacts(),
+    onTouchedMoments: () => momentsPanel?.render({ preserveScroll: true }),
+    generate: (text, payload) => window.appBridge.generate(text, payload),
+    createParser: () => new DialogueStreamParser({ userName: '我' }),
+    normalizeChunk: normalizeAssistantStreamChunk,
+    saveRawReply: async (raw, metadata) => {
+      lastMomentRawReply = raw;
+      lastMomentRawMeta = metadata;
+    },
+    flushMoments: () => momentsStore.flush(),
+    addSummary: summary => momentSummaryStore.addSummary(summary),
+    runSummaryCompaction: () => requestMomentSummaryCompaction(),
+    notifySummariesUpdated: () => window.dispatchEvent(new CustomEvent('moment-summaries-updated')),
+    showMissingConfig: () => {
+      ui.showErrorBanner('未配置 API，请先填写 Base URL / Key / 模型');
+      window.toastr?.warning('请先配置 API 信息', '未配置');
+      configPanel.show();
+    },
+    showOffline: () => {
+      ui.showErrorBanner('当前离线，请连接网络后再试');
+      window.toastr?.warning('离线状态，无法发送');
+    },
+    showMissingMoment: () => window.toastr?.warning?.('未找到该动态'),
+    showNoReplyWarning: () => window.toastr?.warning?.('未解析到动态评论回复（可能格式不正确）'),
+    showError: err => window.toastr?.error?.(err?.message || '动态评论生成失败'),
+    logger,
+    recordLifecycleEvent: recordMomentLifecycleTraceEvent,
+  });
 
-  const momentsPanel = new MomentsPanel({
+  momentsPanel = new MomentsPanel({
     momentsStore,
     contactsStore,
     defaultAvatar: avatars.assistant,
     userAvatar: userStore.getActive()?.avatar || avatars.user,
-    onUserComment: async (momentId, commentText, meta = null) => {
-      const id = String(momentId || '').trim();
-      const userComment = String(commentText || '').trim();
-      if (!id || !userComment) {
-        recordMomentLifecycleTraceEvent({
-          phase: 'comment.skipped',
-          momentId: id,
-          status: 'skipped',
-          summary: 'moment comment skipped',
-          details: {
-            reason: 'missing-input',
-            hasMomentId: Boolean(id),
-            hasText: Boolean(userComment),
-          },
-        });
-        return;
-      }
-
-      if (!window.appBridge.isConfigured()) {
-        recordMomentLifecycleTraceEvent({
-          phase: 'comment.skipped',
-          momentId: id,
-          status: 'skipped',
-          summary: 'moment comment skipped',
-          details: { reason: 'not-configured' },
-        });
-        ui.showErrorBanner('未配置 API，请先填写 Base URL / Key / 模型');
-        window.toastr?.warning('请先配置 API 信息', '未配置');
-        configPanel.show();
-        return;
-      }
-      if (typeof navigator !== 'undefined' && !navigator.onLine) {
-        recordMomentLifecycleTraceEvent({
-          phase: 'comment.skipped',
-          momentId: id,
-          status: 'skipped',
-          summary: 'moment comment skipped',
-          details: { reason: 'offline' },
-        });
-        ui.showErrorBanner('当前离线，请连接网络后再试');
-        window.toastr?.warning('离线状态，无法发送');
-        return;
-      }
-
-      const m = momentsStore.get(id);
-      if (!m) {
-        recordMomentLifecycleTraceEvent({
-          phase: 'comment.skipped',
-          momentId: id,
-          status: 'skipped',
-          summary: 'moment comment skipped',
-          details: { reason: 'moment-not-found' },
-        });
-        window.toastr?.warning?.('未找到该动态');
-        return;
-      }
-      // Engagement simulation depends on contacts count N (views grow faster than likes)
-      const n = getContactCountN();
-      try {
-        bumpMomentEngagement(id, n);
-      } catch {}
-
-      // Build a constrained comment-reply task (adapted from 手机流式.html momentCommentTask)
-      const authorName = String(m.author || '').trim() || '发布者';
-      const originSessionId = String(m.originSessionId || m.authorId || chatStore.getCurrent() || '').trim();
-      const userCommentId = String(meta?.userCommentId || '').trim();
-      const replyTo =
-        meta && typeof meta === 'object' && meta.replyTo && typeof meta.replyTo === 'object'
-          ? {
-              id: String(meta.replyTo.id || '').trim(),
-              author: String(meta.replyTo.author || '').trim(),
-              content: String(meta.replyTo.content || ''),
-            }
-          : null;
-      const isReplyToComment = Boolean(replyTo?.id);
-      const listPart = collectMomentCommentContactList(contactsStore, {
-        authorName,
-        maxItems: 16,
-      });
-
-      const normalizeName = s => String(s || '').trim();
-      const resolvePrivateChatTargetSessionId = otherName =>
-        resolvePrivateChatTargetSessionIdByName(otherName, {
-          contactsStore,
-          normalizeName,
-          fallbackSessionId: null,
-        });
-
-      const target = resolveMomentReplyTarget({
-        isReplyToComment,
-        replyTo,
-        authorName,
-        originSessionId,
-        resolvePrivateChatTargetSessionId,
-        normalizeName,
-      });
-
-      const recentComments = buildMomentRecentCommentsText(m.comments, {
-        normalizeText: normalizeStickerTextForPrompt,
-      });
-
-      const userLine = isReplyToComment
-        ? `{{user}}回复了${replyTo.author}：{{lastUserMessage}}`
-        : `{{user}}：{{lastUserMessage}}`;
-
-      // 场景 C：动态评论（提示词规则由「预设 → 聊天提示词 → 动态评论回复提示词」注入；评论数据作为 system 注入，用户内容通过 {{lastUserMessage}} 填入）
-      const promptData = buildMomentCommentPromptData({
-        authorName,
-        content: String(normalizeStickerTextForPrompt(m.content || '') || '').trim(),
-        time: String(m.time || '').trim(),
-        userLine,
-        isReplyToComment,
-        replyTo: isReplyToComment
-          ? {
-              author: replyTo.author,
-              content: String(normalizeStickerTextForPrompt(replyTo.content || '') || '').trim(),
-            }
-          : null,
-        recentComments,
-        contactList: listPart || '-（无）',
-      });
-
-      const applyEvents = (events = []) => {
-        return applyMomentCommentEvents(events, {
-          currentMomentId: id,
-          originSessionId,
-          engagementCount: n,
-          momentsStore,
-          logger,
-          normalizeInitialMomentStats,
-          normalizeMomentRecord: normalizeMomentRecordForStore,
-          normalizeMomentComments: normalizeMomentCommentsForStore,
-          addMoments: list => momentsStore.addMany(list),
-          addMomentComments: (momentId, comments) => momentsStore.addComments(momentId, comments),
-          isReplyToComment,
-          replyTo,
-          targetName: target?.name,
-          normalizeName,
-          bumpMomentEngagement,
-          resolvePrivateChatTargetSessionId,
-          buildPrivateChatMessages: (messages, targetSessionId) => buildMomentPrivateChatMessages(messages, {
-            getActiveUserName,
-            normalizeName,
-            normalizeLooseName,
-            parseSpecialMessage,
-            userAvatar: avatars.user,
-            assistantAvatar: resolveAvatarForContact(targetSessionId, contactsStore.getContact(targetSessionId)),
-            formatNowTime: () => new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
-          }),
-          appendPrivateChatMessage: (message, targetSessionId) => chatStore.appendMessage(message, targetSessionId),
-          autoMarkReadIfActive,
-          onTouchedChats: () => refreshChatAndContacts(),
-          onTouchedMoments: () => momentsPanel.render({ preserveScroll: true }),
-        });
-      };
-
-      let momentCommentTraceStarted = false;
-      try {
-        const config = window.appBridge.config.get();
-
-        const userProfile = getActiveUserProfile();
-        const ctx = buildMomentCommentTaskContext({
-          userProfile,
-          target,
-          authorName,
-          originSessionId,
-          promptData,
-          isReplyToComment,
-          replyTo,
-        });
-        momentCommentTraceStarted = true;
-        recordMomentLifecycleTraceEvent({
-          phase: 'comment.start',
-          sessionId: originSessionId,
-          momentId: id,
-          status: 'started',
-          summary: 'moment comment generation started',
-          details: {
-            authorName,
-            targetSessionId: target?.sessionId || '',
-            targetName: target?.name || '',
-            stream: Boolean(config.stream),
-            isReplyToComment,
-            userCommentId,
-            hasRecentComments: Boolean(recentComments),
-          },
-        });
-        const { fullRaw, sawMomentReply } = await runMomentCommentGeneration(userComment, ctx, {
-          stream: Boolean(config.stream),
-          generate: (text, payload) => window.appBridge.generate(text, payload),
-          createParser: () => new DialogueStreamParser({ userName: '我' }),
-          normalizeChunk: normalizeAssistantStreamChunk,
-          applyEvents,
-          saveRaw: async (raw) => {
-            lastMomentRawReply = raw;
-            lastMomentRawMeta = {
-              momentId: id,
-              author: authorName,
-              time: m?.time || '',
-              comment: userComment,
-            };
-          },
-          retryUnhandledReply: (raw, parseText) =>
-            runMomentReplyRetry(raw, {
-              parseText,
-              logger,
-            }),
-          logger,
-        });
-
-        if (sawMomentReply) {
-          try {
-            await momentsStore.flush();
-          } catch {}
-        } else {
-          try {
-            logger.warn(
-              'moment_reply parse failed',
-              JSON.stringify({
-                momentId: id,
-                hasStart: String(fullRaw || '')
-                  .toLowerCase()
-                  .includes('moment_reply_start'),
-                hasEnd: String(fullRaw || '')
-                  .toLowerCase()
-                  .includes('moment_reply_end'),
-                rawLen: String(fullRaw || '').length,
-              }),
-            );
-          } catch {}
-          window.toastr?.warning?.('未解析到动态评论回复（可能格式不正确）');
-        }
-        if (fullRaw) {
-          try {
-            await applyMomentSummaryFromRaw(fullRaw, {
-              addSummary: summary => momentSummaryStore.addSummary(summary),
-              runCompaction: () => requestMomentSummaryCompaction(),
-              notifyUpdated: () =>
-                window.dispatchEvent(new CustomEvent('moment-summaries-updated')),
-            });
-          } catch {}
-        }
-        recordMomentLifecycleTraceEvent({
-          phase: 'comment.finish',
-          sessionId: originSessionId,
-          momentId: id,
-          status: sawMomentReply ? 'success' : 'warning',
-          summary: sawMomentReply
-            ? 'moment comment generation finished'
-            : 'moment comment reply not parsed',
-          details: {
-            authorName,
-            stream: Boolean(config.stream),
-            isReplyToComment,
-            userCommentId,
-            sawMomentReply,
-            rawLength: String(fullRaw || '').length,
-          },
-        });
-      } catch (err) {
-        recordMomentLifecycleTraceEvent({
-          phase: 'comment.finish',
-          sessionId: originSessionId,
-          momentId: id,
-          status: 'error',
-          summary: err?.message || 'moment comment generation failed',
-          details: {
-            authorName,
-            isReplyToComment,
-            userCommentId,
-            started: momentCommentTraceStarted,
-          },
-        });
-        logger.error('动态评论生成失败', err);
-        window.toastr?.error?.(err?.message || '动态评论生成失败');
-      }
-    },
+    onUserComment: (momentId, commentText, meta = null) =>
+      momentCommentRuntime(momentId, commentText, meta),
   });
 
   const momentSummaryPanel = new MomentSummaryPanel({
@@ -14552,74 +14397,23 @@ Phase G（Frame 36）：循环衔接
   const isGenerationInterrupted = (generationId) =>
     Boolean(generationId) && (!activeGeneration || activeGeneration.id !== generationId || activeGeneration.cancelled);
   const cancelActiveGeneration = (reason = 'user') => {
-    if (!activeGeneration || activeGeneration.cancelled) return false;
-    const generation = activeGeneration;
-    recordSendFlowTraceEvent({
-      phase: 'generation.cancel',
-      sessionId: generation.sessionId,
-      status: 'started',
-      summary: 'generation cancel requested',
-      details: {
-        generationId: generation.id,
-        reason,
-      },
+    const result = runActiveGenerationCancelFlow({
+      generation: activeGeneration,
+      reason,
+      recordTraceEvent: recordSendFlowTraceEvent,
+      abortMemoryUpdate: sid => memoryUpdateRuntime.abortMemoryUpdate(sid),
+      cancelCurrentGeneration: nextReason => window.appBridge.cancelCurrentGeneration(nextReason),
+      chatStore,
+      logger,
+      getAssistantAvatarForSession,
+      formatNowTime,
+      refreshChatAndContacts,
+      hideTyping: () => ui.hideTyping?.(),
+      setStreamingState: value => ui.setStreamingState?.(value),
+      setSendingState: value => ui.setSendingState(value),
     });
-    try {
-      generation.cancelled = true;
-    } catch {}
-    try {
-      const sid = String(generation.sessionId || '').trim();
-      if (sid) memoryUpdateRuntime.abortMemoryUpdate(sid);
-    } catch {}
-    try {
-      window.appBridge.cancelCurrentGeneration(reason);
-    } catch {}
-    let partial = null;
-    try {
-      partial = generation.streamCtrl?.cancel?.({ keepPartial: reason === 'user' }) || null;
-    } catch {}
-    if (!partial && reason === 'user') {
-      partial = buildCancelledAssistantPartial({
-        generation,
-        assistantAvatar: getAssistantAvatarForSession(generation.sessionId),
-        fallbackTime: formatNowTime(),
-      });
-    }
-    if (reason === 'user') {
-      try {
-        commitCancelledGenerationPartial({
-          generation,
-          partial,
-          reason,
-          chatStore,
-          logger,
-          getAssistantAvatarForSession,
-          formatNowTime,
-          refreshChatAndContacts,
-        });
-      } catch {}
-    }
-    recordSendFlowTraceEvent({
-      phase: 'generation.cancel',
-      sessionId: generation.sessionId,
-      status: 'success',
-      summary: 'generation cancel completed',
-      details: {
-        generationId: generation.id,
-        reason,
-        hasPartial: Boolean(String(partial?.content || '').trim()),
-      },
-    });
-    try {
-      ui.hideTyping?.();
-    } catch {}
-    try {
-      ui.setStreamingState?.(false);
-    } catch {}
-    try {
-      ui.setSendingState(false);
-    } catch {}
-    if (activeGeneration?.id === generation.id) {
+    if (!result.cancelled) return false;
+    if (activeGeneration?.id === result.generation?.id) {
       activeGeneration = null;
     }
     return true;
@@ -14836,104 +14630,43 @@ Phase G（Frame 36）：循环衔接
       window.toastr?.warning?.('正在生成中，请稍候...');
       return false;
     }
-    const allMessages = chatStore.getMessages(sessionId);
-
-    // 找到所有 pending 消息
-    const pendingMessages = ignorePending ? [] : allMessages.filter(m => m.status === 'pending');
-    const pendingQueue = !ignorePending && !targetMessageId ? chatStore.getPendingMessages(sessionId) || [] : [];
-    if (pendingQueue.length) {
-      const historyIds = new Set(allMessages.map(m => String(m?.id || '')).filter(Boolean));
-      const restored = [];
-      pendingQueue.forEach(m => {
-        const id = String(m?.id || '').trim();
-        if (!id || historyIds.has(id)) return;
-        const saved = chatStore.appendMessage({ ...m, status: 'pending' }, sessionId);
-        ui.addMessage(saved);
-        restored.push(saved);
-        historyIds.add(saved.id);
-      });
-      pendingQueue.forEach(m => chatStore.removePendingMessage(m?.id, sessionId));
-      if (restored.length) pendingMessages.push(...restored);
-    }
-
-    // 用于追踪哪些消息需要在发送成功后标记为 sent
-    let pendingMessagesToConfirm = [];
-
-    // 确定要发送的文本内容
-    let text = '';
-
-    if (pendingMessages.length > 0) {
-      // 有 pending 消息，根据 targetMessageId 决定发送范围
-      let { messagesToSend, errorMessage } = resolvePendingMessagesToSend({
-        pendingMessages,
-        targetMessageId,
-      });
-
-      if (errorMessage) {
-        window.toastr?.error?.(errorMessage);
-        return false;
-      }
-
-      if (!targetMessageId) {
-        // 点击发送按钮（没有指定消息），发送所有 pending 消息
-        // 如果输入框也有内容，先将其添加为 pending 消息
-        const currentInput = ui.getInputText().trim();
-        if (currentInput) {
-          const activeUser = getActiveUserProfile();
-          const stickerKey = isStickerAllowed() ? parseStickerToken(currentInput) : '';
-          const replyTarget = getReplyTargetForSession(sessionId);
-          const newPendingMsg = createPendingUserMessage({
-            text: currentInput,
-            stickerKey,
-            avatar: avatars.user,
-            userName: activeUser?.name,
-            time: formatNowTime(),
-            replyTarget,
-          });
-          const saved = chatStore.appendMessage(newPendingMsg, sessionId);
-          ui.addMessage(saved);
-          messagesToSend.push(saved);
-          ui.clearInput();
-          if (replyTarget) clearReplyTargetForSession(sessionId);
-        }
-      }
-
-      // 合并消息内容（换行分隔）
-      text = messagesToSend
-        .map(message => getMessageSendText(message, buildStickerToken))
-        .filter(Boolean)
-        .join('\n');
-      pendingMessagesToConfirm = messagesToSend;
-
-      if (!text && !hasAttachments) {
-        window.toastr?.warning?.('没有可发送的消息');
-        return false;
-      }
-
-      // 标记这些消息为"发送中"（保持半透明，等待 AI 响应）
-      pendingMessagesToConfirm = markMessagesAsSending({
-        messages: pendingMessagesToConfirm,
-        sessionId,
-        chatStore,
-        ui,
-      });
-      dispatchAfterSendEvents({
-        messages: pendingMessagesToConfirm,
-        sessionId,
-        scriptRuntime,
-        pluginRuntime,
-        skipScripts,
-        logger,
-        recordTraceEvent: recordDebugTraceEvent,
-      });
-      // 立即刷新列表/浮层，避免发送中仍显示旧的 pending 计数
-      refreshChatAndContacts({ immediate: true });
-      updatePendingFloat(sessionId);
-    } else {
-      // 没有 pending 消息，使用输入框内容（兼容旧行为）
-      text = overrideText || ui.getInputText();
-      if (!text && !hasAttachments && !continueTarget) return false;
-    }
+    const pendingPreparation = runPendingSendPreparationFlow({
+      ignorePending,
+      targetMessageId,
+      allMessages: chatStore.getMessages(sessionId),
+      pendingQueue: !ignorePending && !targetMessageId ? chatStore.getPendingMessages(sessionId) || [] : [],
+      overrideText,
+      hasAttachments,
+      continueTarget,
+      sessionId,
+      userAvatar: avatars.user,
+      getInputText: () => ui.getInputText(),
+      getActiveUserProfile,
+      isStickerAllowed,
+      parseStickerToken,
+      getReplyTargetForSession,
+      clearReplyTargetForSession,
+      formatNowTime,
+      appendMessage: (message, targetSessionId) => chatStore.appendMessage(message, targetSessionId),
+      addMessageToUi: message => ui.addMessage(message),
+      removePendingMessage: (messageId, targetSessionId) => chatStore.removePendingMessage(messageId, targetSessionId),
+      clearInput: () => ui.clearInput(),
+      buildStickerToken,
+      chatStore,
+      ui,
+      scriptRuntime,
+      pluginRuntime,
+      skipScripts,
+      logger,
+      recordTraceEvent: recordDebugTraceEvent,
+      refreshChatAndContacts,
+      updatePendingFloat,
+      showError: message => window.toastr?.error?.(message),
+      showWarning: message => window.toastr?.warning?.(message),
+    });
+    if (!pendingPreparation.shouldContinue) return false;
+    let pendingMessagesToConfirm = pendingPreparation.pendingMessagesToConfirm;
+    let text = pendingPreparation.text;
     const contact = contactsStore.getContact(sessionId);
     const isRpMode = uiMode === 'rp';
     const sharedVariables = isSharedVariableSession(sessionId);
@@ -15233,82 +14966,27 @@ Phase G（Frame 36）：循环衔接
         rowIndexMap,
       });
       if (!actionContext?.record) return null;
-      const {
-        tableById,
-        templateId,
-        rowsById,
-        rowsByTableScope,
-        resolveActionContext,
-        resolveRowId,
-        resolveRowIdByData,
-        resolveScopeForTable,
-        resolveTableId,
-      } = actionContext;
+      const { templateId } = actionContext;
 
       const currentTurnNumber = countAssistantTurnsForMemoryTimeline(chatStore.getMessages(sessionId) || []);
-
-      const createInputs = [];
-      let updated = 0;
-      let deleted = 0;
-      let skipped = 0;
-
-      const updateMode = normalizeMemoryUpdateMode(plan?.updateMode, 'full');
-      const allowSummaryTables = updateMode === 'summary' || updateMode === 'full';
-      const allowStandardTables = updateMode === 'standard' || updateMode === 'full';
-      const rollbackSnapshot = buildMemoryRollbackSnapshot({
+      const result = await executeMemoryActionBatchMutation({
         actions,
-        templateId,
-        resolveTableId,
-        tableById,
-        resolveScopeForTable,
-        rowsByTableScope,
-        allowSummaryTables,
-        allowStandardTables,
+        actionContext,
+        updateMode: plan?.updateMode,
+        memoryTableStore,
+        createMemories: inputs => batchCreateMemoriesWithFallback({
+          memoryTableStore,
+          inputs,
+        }),
+        currentTurnNumber,
         isGroup,
       });
-      for (const action of actions) {
-        const actionContext = resolveActionContext({
-          action,
-          allowSummaryTables,
-          allowStandardTables,
-        });
-        if (!actionContext) {
-          skipped += 1;
-          continue;
-        }
-        const data = normalizeTableRowData(action.data, actionContext.table?.columns || []);
-        const plan = resolveMemoryActionMutationPlan({
-          action,
-          actionContext,
-          data,
-          rowsByTableScope,
-          resolveRowId,
-          resolveRowIdByData,
-          rowsById,
-        });
-        const result = await executeMemoryActionMutationPlan({
-          plan,
-          memoryTableStore,
-          createInputs,
-          rowsById,
-          rowsByTableScope,
-          templateId,
-          currentTurnNumber,
-        });
-        updated += Number(result?.updated || 0);
-        deleted += Number(result?.deleted || 0);
-        skipped += Number(result?.skipped || 0);
-      }
-
-      let inserted = 0;
-      if (createInputs.length) {
-        inserted = await batchCreateMemoriesWithFallback({
-          memoryTableStore,
-          inputs: createInputs,
-        });
-      }
-
-      const changed = inserted + updated + deleted;
+      const inserted = Number(result?.inserted || 0);
+      const updated = Number(result?.updated || 0);
+      const deleted = Number(result?.deleted || 0);
+      const skipped = Number(result?.skipped || 0);
+      const rollbackSnapshot = result?.rollbackSnapshot || null;
+      const changed = Number(result?.changed || (inserted + updated + deleted));
       if (rollbackSnapshot) {
         try {
           const prev = window.appBridge?.getLastMemoryUpdate?.(sessionId) || {};
@@ -15883,20 +15561,16 @@ Phase G（Frame 36）：循环衔接
       },
     });
     const commitContinuationMessage = (message, { partial = false } = {}) => {
-      const targetId = String(continueTarget?.messageId || '').trim();
-      if (!targetId || !message) return null;
-      const existing = chatStore.findMessage(targetId, sessionId) || continueTarget?.message || null;
-      if (!existing) return null;
-      const updatePayload = buildContinuationMessageUpdate({
-        existing,
+      return commitContinuationMessageToStore({
         message,
-        targetId,
-        fallbackTime: formatNowTime(),
         partial,
+        continueTarget,
+        sessionId,
+        chatStore,
+        isSessionActive,
+        updateUiMessage: (targetId, saved) => ui.updateMessage(targetId, saved),
+        formatNowTime,
       });
-      const saved = chatStore.updateMessage(targetId, updatePayload, sessionId) || { ...existing, ...updatePayload };
-      if (isSessionActive(sessionId)) ui.updateMessage(targetId, saved);
-      return saved;
     };
     const resolvedPartialCommitHandler =
       partialCommitHandler ||
@@ -15987,7 +15661,7 @@ Phase G（Frame 36）：循环衔接
     // 显示已送出状态（对 pending 消息在 flush 后也生效）
     ui.showDeliveryStatus();
 
-    const config = window.appBridge.config.get();
+    const config = window.appBridge.getConfig();
     const assistantAvatar = getAssistantAvatarForSession(sessionId);
     const sysp = resolveEnabledPreset(window.appBridge, 'sysprompt', getPresetContext());
     const protocolFlags = resolveSyspromptProtocolFlags({
@@ -16018,14 +15692,65 @@ Phase G（Frame 36）：循环衔接
         hasSwipeTarget: Boolean(swipeTarget),
       },
     });
+    const createProtocolEventHandlers = ({ streamMode = false } = {}) => createSendProtocolEventHandlers({
+      streamMode,
+      sessionId,
+      generationId,
+      getActiveGeneration: () => activeGeneration,
+      getActivePage: () => activePage,
+      applyProtocolMomentEvent,
+      ingestMoments,
+      addMoments: items => momentsStore.addMany(items),
+      addMomentComments: (momentId, comments) => momentsStore.addComments(momentId, comments),
+      normalizeMomentCommentsForStore,
+      renderMoments: () => momentsPanel.render(),
+      buildGroupBatch: buildProtocolGroupBatch,
+      dispatchGroupBatch: dispatchProtocolGroupBatchToSession,
+      buildPrivateBatch: buildProtocolPrivateBatch,
+      dispatchPrivateBatch: dispatchProtocolPrivateBatchToSession,
+      showWarning: message => window.toastr?.warning?.(message),
+      getTypingDotsMode: () => document.body.dataset.typingDots,
+      getGroupTypingMembers,
+      isSessionActive,
+      hideTyping: () => ui.hideTyping(),
+      fastForwardDelivery,
+      refreshChatAndContacts,
+      showTyping: (avatar, options) => ui.showTyping(avatar, options),
+      assistantAvatar,
+    });
+    const protocolResponseFlowHandlers = createSendProtocolResponseFlowHandlers({
+      sessionId,
+      getActivePage: () => activePage,
+      isSessionActive,
+      hideTyping: () => ui.hideTyping(),
+      fastForwardDelivery,
+      setLastRawResponse: (raw, sid) => chatStore.setLastRawResponse(raw, sid),
+      addSummary: (summary, sid) => chatStore.addSummary(summary, sid),
+      requestSummaryCompaction,
+      handleMemoryEditsFromRaw,
+      extractSummaryBlock,
+      flushMoments: () => momentsStore.flush(),
+      renderMoments: () => momentsPanel.render(),
+      refreshChatAndContacts,
+      buildProtocolRetryCandidates,
+      createDialogueParser,
+      processProtocolRetryEvent,
+      showWarning: message => window.toastr?.warning?.(message),
+    });
+    const requestAssistantGeneration = () => runAssistantGenerationRequest({
+      text,
+      sessionId,
+    }, {
+      consumePromptInjections,
+      buildContext: llmContext,
+      appBridge: window.appBridge,
+    });
     try {
       if (config.stream) {
         if (rpUiMode) {
           // RP/创意写作界面：完整长文输出，不解析线上格式
           if (isSessionActive(sessionId)) startDeliveryAndTyping(sessionId, assistantAvatar);
-          consumePromptInjections(sessionId);
-          const stream = await window.appBridge.generate(text, llmContext(text));
-          let full = '';
+          const stream = await requestAssistantGeneration();
           streamCtrl = null;
           const streamMeta = {
             avatar: assistantAvatar,
@@ -16035,357 +15760,92 @@ Phase G（Frame 36）：循环衔接
             renderRich: true,
             streamMode: 'creative',
           };
-          const creativeStreamProcessor = new CreativeStreamProcessor({
-            fps: 18,
-            normalizeText: normalizeCreativeLineBreaks,
-            stripRaw: source => ((!isRpMode && isMemoryAutoExtractInline()) ? stripTableEditBlocks(source) : source),
-            extractReasoning: (source, { final = false } = {}) =>
-              extractStreamingReasoningFromContent(source, { depth: 0, final }),
-            applyStored: source => applyOutputStoredRegexSafe(source, {
-              appBridge: window.appBridge,
-              depth: 0,
-              normalizeText: normalizeCreativeLineBreaks,
-            }),
-            applyDisplay: source => applyOutputDisplayRegexSafe(source, {
-              appBridge: window.appBridge,
-              depth: 0,
-              normalizeText: normalizeCreativeLineBreaks,
-            }),
+          const creativeStreamProcessor = createCreativeAssistantStreamProcessor({
+            StreamProcessor: CreativeStreamProcessor,
+            isRpMode,
+            isMemoryAutoExtractInline,
+            stripTableEditBlocks,
+            normalizeCreativeLineBreaks,
+            extractStreamingReasoningFromContent,
+            applyOutputStoredRegexSafe,
+            applyOutputDisplayRegexSafe,
+            getAppBridge: () => window.appBridge,
           });
           const nativeReasoningState = createNativeReasoningState();
-          for await (const chunk of stream) {
-            if (isGenerationInterrupted(generationId)) break;
-            const normalizedChunk = normalizeAssistantStreamChunk(chunk);
-            if (normalizedChunk.reasoning) {
-              appendNativeReasoningChunk(nativeReasoningState, normalizedChunk, { depth: 0 });
-            }
-            if (normalizedChunk.content) {
-              full += normalizedChunk.content;
-            }
-            const preview = normalizedChunk.content
-              ? creativeStreamProcessor.append(normalizedChunk.content)
-              : (creativeStreamProcessor.lastSnapshot || null);
-            if (!preview && !normalizedChunk.reasoning) continue;
-            const currentPreview = preview || {
-              display: '',
-              stored: '',
-              contentSource: '',
-              raw: full,
-              reasoning: '',
-              reasoningDisplay: '',
-            };
-            const reasoningState = resolveReasoningState(currentPreview, nativeReasoningState, { finalize: false });
-            const previewMeta = {
-              renderRich: true,
-              ...(reasoningState.reasoning
-                ? {
-                    reasoning: reasoningState.reasoning,
-                    reasoningDisplay: reasoningState.reasoningDisplay,
-                    reasoningHidden: reasoningState.reasoningHidden,
-                    reasoningLabel: reasoningState.reasoningLabel,
-                    reasoningSource: reasoningState.reasoningSource,
-                  }
-                : {}),
-            };
-            streamCtrl = pushAssistantStreamText(
-              {
-                content: currentPreview.display,
-                raw: currentPreview.stored,
-                rawSource: currentPreview.contentSource,
-                rawOriginal: currentPreview.raw,
-                reasoning: reasoningState.reasoning,
-                reasoningDisplay: reasoningState.reasoningDisplay,
-                meta: previewMeta,
-              },
-              {
-                ...streamMeta,
-                raw: currentPreview.stored,
-                rawSource: currentPreview.contentSource,
-                rawOriginal: currentPreview.raw,
-                reasoning: reasoningState.reasoning,
-                reasoningDisplay: reasoningState.reasoningDisplay,
-                reasoningHidden: reasoningState.reasoningHidden,
-                reasoningLabel: reasoningState.reasoningLabel,
-                reasoningSource: reasoningState.reasoningSource,
-              },
-            );
-          }
-          if (isGenerationInterrupted(generationId)) return;
-          if (isSessionActive(sessionId)) ui.hideTyping();
-          chatStore.setLastRawResponse(full, sessionId);
-          const memoryParsed = await handleMemoryEditsFromRaw(full, { sessionId, isGroup: isGroupChat });
-          let stripped = memoryParsed.text;
-          let summary = '';
-          if (isSummaryMemoryEnabled()) {
-            const parsedSummary = extractSummaryBlock(full);
-            stripped = parsedSummary.text;
-            summary = parsedSummary.summary;
-            if (summary) {
-              try {
-                chatStore.addSummary(summary, sessionId);
-              } catch {}
-              try {
-                requestSummaryCompaction(sessionId);
-              } catch {}
-            }
-          }
-          const rawSource = normalizeCreativeLineBreaks(stripped);
-          const reasoningParsed = extractReasoningFromContent(rawSource, { depth: 0, strict: true });
-          const resolvedReasoning = resolveReasoningState(reasoningParsed, nativeReasoningState, { finalize: true });
-          const finalSource = normalizeCreativeLineBreaks(reasoningParsed.content || '');
-          const { stored, display } = applyOutputRegexPairSafe(finalSource, {
-            appBridge: window.appBridge,
-            depth: 0,
-            normalizeText: normalizeCreativeLineBreaks,
-          });
-          const finalStreamMeta = {
-            ...streamMeta,
-            raw: stored,
-            rawSource: finalSource,
-            rawOriginal: full,
-            reasoning: resolvedReasoning.reasoning,
-            reasoningDisplay: resolvedReasoning.reasoningDisplay,
-            reasoningHidden: resolvedReasoning.reasoningHidden,
-            reasoningLabel: resolvedReasoning.reasoningLabel,
-            reasoningSource: resolvedReasoning.reasoningSource,
-          };
-          const finalStreamPayload = {
-            content: display,
-            raw: stored,
-            rawSource: finalSource,
-            rawOriginal: full,
-            reasoning: resolvedReasoning.reasoning,
-            reasoningDisplay: resolvedReasoning.reasoningDisplay,
-            meta: {
-              renderRich: true,
-              ...(resolvedReasoning.reasoning
-                ? {
-                    reasoning: resolvedReasoning.reasoning,
-                    reasoningDisplay: resolvedReasoning.reasoningDisplay,
-                    reasoningHidden: resolvedReasoning.reasoningHidden,
-                    reasoningLabel: resolvedReasoning.reasoningLabel,
-                    reasoningSource: resolvedReasoning.reasoningSource,
-                  }
-                : {}),
-            },
-          };
-          streamCtrl = pushAssistantStreamText(finalStreamPayload, finalStreamMeta);
-          const memoryState = isRpMode
-            ? await captureAssistantMemoryState(sessionId, { isGroup: isGroupChat })
-            : null;
-          const meta = attachAssistantMemoryStateToMeta({ renderRich: true }, memoryState);
-          if (summary) meta.summary = summary;
-          if (resolvedReasoning.reasoning) {
-            meta.reasoning = resolvedReasoning.reasoning;
-            meta.reasoningDisplay = resolvedReasoning.reasoningDisplay;
-            if (resolvedReasoning.reasoningHidden) meta.reasoningHidden = true;
-            if (resolvedReasoning.reasoningLabel) meta.reasoningLabel = resolvedReasoning.reasoningLabel;
-            if (resolvedReasoning.reasoningSource) meta.reasoningSource = resolvedReasoning.reasoningSource;
-          }
-          const parsed = {
-            role: 'assistant',
-            type: 'text',
-            name: '助手',
-            avatar: assistantAvatar,
-            time: formatNowTime(),
-            id: streamCtrl?.id,
+          const creativeStreamState = await runCreativeStreamAssistantResponseFlow({
+            stream,
+            streamCtrl,
+            nativeReasoningState,
+            streamMeta,
+            creativeStreamProcessor,
             sessionId,
-            rawOriginal: full,
-            rawSource: finalSource,
-            raw: stored,
-            content: display,
-            meta,
-          };
-          if (!isStreamCtrlConnected(streamCtrl) && isSessionActive(sessionId)) {
-            streamCtrl = ensureAssistantStreamCtrl(streamMeta);
-          }
-          if (isStreamCtrlConnected(streamCtrl)) {
-            streamCtrl.finish(parsed);
-          } else if (isSessionActive(sessionId) && !suppressAssistantDom && !continueTarget) {
-            ui.addMessage(parsed);
-          }
-          {
-            const saved = continueTarget
-              ? commitContinuationMessage(parsed)
-              : chatStore.appendMessage(parsed, sessionId);
-            checkpointTargetMessageId = String(
-              swipeTarget?.msgId || saved?.id || parsed?.id || continueTarget?.messageId || '',
-            ).trim();
-            autoMarkReadIfActive(sessionId, saved?.id || parsed?.id || '');
-            emitPluginAfterReceive(saved, sessionId);
-            if (isTurnCheckpointSessionEnabled(sessionId) && !swipeTarget) {
-              syncTurnCheckpointForMessage(sessionId, saved || parsed, {
-                captureCurrentActiveState: true,
-              }).catch(err => {
-                logger.warn('sync turn checkpoint after assistant save failed', err);
-              });
-            }
-          }
-          refreshChatAndContacts();
+            memoryOptions: { sessionId, isGroup: isGroupChat },
+            avatar: assistantAvatar,
+            formatTime: formatNowTime,
+            isRpMode,
+            isGroupChat,
+            suppressAssistantDom,
+            continueTarget,
+            swipeTarget,
+          }, {
+            normalizeChunk: normalizeAssistantStreamChunk,
+            isInterrupted: () => isGenerationInterrupted(generationId),
+            appendReasoningChunk: appendNativeReasoningChunk,
+            isSessionActive: sid => isSessionActive(sid),
+            hideTyping: () => ui.hideTyping(),
+            setLastRawResponse: raw => chatStore.setLastRawResponse(raw, sessionId),
+            handleMemoryEditsFromRaw,
+            summaryEnabled: isSummaryMemoryEnabled,
+            extractSummaryBlock,
+            addSummary: summary => chatStore.addSummary(summary, sessionId),
+            requestSummaryCompaction,
+            buildCreativeAssistantMessageParts: buildCreativeAssistantMessagePartsCore,
+            buildCreativeAssistantMessage: buildCreativeAssistantMessageFromPartsCore,
+            normalizeCreativeLineBreaks,
+            extractReasoningFromContent,
+            resolveReasoningState,
+            applyOutputRegexPairSafe,
+            appBridge: window.appBridge,
+            pushAssistantStreamText,
+            captureAssistantMemoryState,
+            attachAssistantMemoryStateToMeta,
+            isStreamCtrlConnected,
+            ensureAssistantStreamCtrl,
+            addMessage: message => ui.addMessage(message),
+            commitContinuationMessage,
+            appendMessage: (message, targetSessionId) => chatStore.appendMessage(message, targetSessionId),
+            autoMarkReadIfActive,
+            emitPluginAfterReceive,
+            isTurnCheckpointSessionEnabled,
+            syncTurnCheckpointForMessage,
+            checkpointWarnMessage: 'sync turn checkpoint after assistant save failed',
+            logger,
+            refreshChatAndContacts,
+          });
+          streamCtrl = creativeStreamState.streamCtrl;
+          if (creativeStreamState.interrupted) return;
+          checkpointTargetMessageId = creativeStreamState.checkpointTargetMessageId;
           sendSucceeded = true;
         } else if (protocolEnabled) {
           // 对话模式（流式）：不逐字显示 AI 原文；只在捕获到完整的”有效标签”后输出解析结果
           if (isSessionActive(sessionId)) startDeliveryAndTyping(sessionId, assistantAvatar);
           const parser = createDialogueParser();
-          consumePromptInjections(sessionId);
-          const stream = await window.appBridge.generate(text, llmContext(text));
-          let fullRaw = '';
-          let didAnything = false;
-          let mutatedMoments = false;
+          const stream = await requestAssistantGeneration();
           const summarySessionIds = new Set([sessionId]);
-          for await (const chunk of stream) {
-            if (isGenerationInterrupted(generationId)) break;
-            const normalizedChunk = normalizeAssistantStreamChunk(chunk);
-            if (!normalizedChunk.content) continue;
-            fullRaw += normalizedChunk.content;
-            const events = parser.push(normalizedChunk.content);
-            for (const ev of events) {
-              const handledMoment = applyProtocolMomentEvent(ev, {
-                addMoments: items => momentsStore.addMany(ingestMoments(items)),
-                addMomentComments: (momentId, comments) => momentsStore.addComments(momentId, comments),
-                abortOnMissingMomentId: true,
-                normalizeComments: comments => normalizeMomentCommentsForStore(comments, { regexMode: 'output', depth: 0 }),
-              });
-              if (handledMoment?.abortFlow) return;
-              ({
-                didAnything,
-                mutatedMoments,
-              } = consumeProtocolHandledResult({
-                didAnything,
-                mutatedMoments,
-                summarySessionIds,
-              }, handledMoment));
-              if (handledMoment?.consumed) {
-                if (handledMoment.mutatedMoments && activePage === 'moments') {
-                  momentsPanel.render();
-                }
-                continue;
-              }
-              if (ev.type === 'group_chat') {
-                if (isSessionActive(sessionId)) { ui.hideTyping(); fastForwardDelivery(sessionId); }
-                const groupBatch = await buildProtocolGroupBatch(ev);
-                if (!groupBatch.targetSessionId) {
-                  window.toastr?.warning?.('对话回复格式错误：群聊标签未匹配任何已存在群组，已丢弃');
-                  continue;
-                }
-                summarySessionIds.add(groupBatch.targetSessionId);
-                const grpAnimEnabled = document.body.dataset.typingDots !== 'off';
-                await dispatchProtocolGroupBatchToSession(groupBatch, {
-                  animEnabled: grpAnimEnabled,
-                  bumpReadCount: true,
-                  onQueueCreated: q => {
-                    if (activeGeneration && activeGeneration.id === generationId) {
-                      activeGeneration._messageQueue = q;
-                    }
-                  },
-                  queueTypingOptions: getGroupTypingMembers(sessionId) || {},
-                });
-                didAnything = true;
-                refreshChatAndContacts();
-                if (isSessionActive(sessionId)) ui.showTyping(assistantAvatar, getGroupTypingMembers(sessionId) || {});
-                continue;
-              }
-              if (ev.type !== 'private_chat') continue;
-              if (isSessionActive(sessionId)) { ui.hideTyping(); fastForwardDelivery(sessionId); }
-
-              // 默认路由到当前 session；若标签指向其他私聊，则创建/写入对应会话（后续群聊/动态会扩展）
-              const privateBatch = await buildProtocolPrivateBatch(ev);
-              if (!privateBatch.targetSessionId) {
-                window.toastr?.warning?.('对话回复格式错误：私聊标签未匹配当前联系人，已丢弃');
-                continue;
-              }
-              summarySessionIds.add(privateBatch.targetSessionId);
-              const animEnabled = document.body.dataset.typingDots !== 'off';
-              await dispatchProtocolPrivateBatchToSession(privateBatch, {
-                animEnabled,
-                onQueueCreated: q => {
-                  if (activeGeneration && activeGeneration.id === generationId) {
-                    activeGeneration._messageQueue = q;
-                  }
-                },
-                queueTypingOptions: getGroupTypingMembers(sessionId) || {},
-              });
-              didAnything = true;
-              refreshChatAndContacts();
-
-              // Continue waiting animation until stream ends / next tag arrives
-              if (isSessionActive(sessionId)) ui.showTyping(assistantAvatar, getGroupTypingMembers(sessionId) || {});
-            }
-          }
-          if (isGenerationInterrupted(generationId)) return;
-          if (isSessionActive(sessionId)) { ui.hideTyping(); fastForwardDelivery(sessionId); }
-          chatStore.setLastRawResponse(fullRaw, sessionId);
-          if (isSummaryMemoryEnabled()) {
-            const { summary: protocolSummary } = extractSummaryBlock(fullRaw);
-            commitProtocolSummary(protocolSummary, summarySessionIds, {
-              addSummary: (summary, sid) => chatStore.addSummary(summary, sid),
-              requestSummaryCompaction,
-            });
-          }
-          await handleMemoryEditsFromRaw(fullRaw, { sessionId, isGroup: isGroupChat });
-          await flushProtocolMomentsIfNeeded(mutatedMoments, {
-            flushMoments: () => momentsStore.flush(),
+          const protocolStreamEventHandlers = createProtocolEventHandlers({ streamMode: true });
+          const protocolStreamState = await runProtocolStreamResponseFlow({
+            stream,
+            parser,
+            summarySessionIds,
+            summaryEnabled: isSummaryMemoryEnabled(),
+            memoryOptions: { sessionId, isGroup: isGroupChat },
+          }, {
+            normalizeChunk: normalizeAssistantStreamChunk,
+            isInterrupted: () => isGenerationInterrupted(generationId),
+            eventHandlers: protocolStreamEventHandlers,
+            ...protocolResponseFlowHandlers.createStreamHandlers(),
           });
-          refreshChatAndContacts();
-          if (!didAnything) {
-            // Fallback: if <thinking>/<think> contains literal "<content>", first-pass parsing may start too early.
-            // Retry once by stripping complete thinking blocks, then parsing again.
-	            try {
-	              const { retryText } = buildProtocolRetryCandidates(fullRaw);
-	              if (retryText && retryText !== fullRaw) {
-	                const retryParser = createDialogueParser();
-	                const retryEvents = retryParser.push(retryText);
-	                ({
-	                  didAnything,
-	                  mutatedMoments,
-	                } = await consumeProtocolRetryEvents(retryEvents, {
-	                  didAnything,
-	                  mutatedMoments,
-	                  summarySessionIds,
-	                }, {
-	                  handleEvent: ev => processProtocolRetryEvent(ev, {
-	                    renderMoments: true,
-	                    refreshAfterAppend: true,
-	                  }),
-	                }));
-	                await flushProtocolMomentsIfNeeded(mutatedMoments, {
-	                  flushMoments: () => momentsStore.flush(),
-	                });
-	                refreshChatAndContacts();
-              }
-            } catch {}
-            if (!didAnything) {
-	              try {
-	                const { miPhoneBlock } = buildProtocolRetryCandidates(fullRaw);
-	                if (miPhoneBlock) {
-	                  const retryParser = createDialogueParser();
-	                  const retryEvents = retryParser.push(miPhoneBlock);
-	                  const retryState = await consumeProtocolRetryEvents(retryEvents, {
-	                    didAnything,
-	                    mutatedMoments,
-	                    summarySessionIds,
-	                  }, {
-	                    handleEvent: ev => processProtocolRetryEvent(ev, {
-	                      renderMoments: true,
-	                      refreshAfterAppend: true,
-	                    }),
-	                  });
-	                  if (retryState.abortFlow) return;
-	                  ({
-	                    didAnything,
-	                    mutatedMoments,
-	                  } = retryState);
-	                  await flushProtocolMomentsIfNeeded(mutatedMoments, {
-	                    flushMoments: () => momentsStore.flush(),
-	                  });
-	                  refreshChatAndContacts();
-	                }
-	            } catch {}
-	            }
-            if (!didAnything) {
-              window.toastr?.warning?.('未解析到有效对话标签，已丢弃（可在“三 > 原始回复”查看）');
-            }
-          }
+          if (protocolStreamState.abortFlow || protocolStreamState.interrupted) return;
           sendSucceeded = true;
         } else {
           // 兼容旧逻辑（流式逐字）
@@ -16396,483 +15856,178 @@ Phase G（Frame 36）：循环衔接
             typing: true,
           };
           streamCtrl = isSessionActive(sessionId) ? ensureAssistantStreamCtrl(streamMeta) : null;
-          consumePromptInjections(sessionId);
-          const stream = await window.appBridge.generate(text, llmContext(text));
-          let full = '';
+          const stream = await requestAssistantGeneration();
           const nativeReasoningState = createNativeReasoningState();
-          for await (const chunk of stream) {
-            if (isGenerationInterrupted(generationId)) break;
-            const normalizedChunk = normalizeAssistantStreamChunk(chunk);
-            if (normalizedChunk.reasoning) {
-              appendNativeReasoningChunk(nativeReasoningState, normalizedChunk, { depth: 0 });
-            }
-            if (!normalizedChunk.content && !normalizedChunk.reasoning) continue;
-            full += normalizedChunk.content;
-            const streamText = (!isRpMode && isMemoryAutoExtractInline()) ? stripTableEditBlocks(full) : full;
-            const reasoningState = resolveReasoningState(null, nativeReasoningState, { finalize: false });
-            const streamPayload = reasoningState.reasoning
-              ? {
-                  content: streamText,
-                  raw: streamText,
-                  rawOriginal: full,
-                  reasoning: reasoningState.reasoning,
-                  reasoningDisplay: reasoningState.reasoningDisplay,
-                  meta: {
-                    reasoningHidden: reasoningState.reasoningHidden,
-                    reasoningLabel: reasoningState.reasoningLabel,
-                    reasoningSource: reasoningState.reasoningSource,
-                  },
-                }
-              : streamText;
-            streamCtrl = pushAssistantStreamText(streamPayload, {
-              ...streamMeta,
-              reasoning: reasoningState.reasoning,
-              reasoningDisplay: reasoningState.reasoningDisplay,
-              reasoningHidden: reasoningState.reasoningHidden,
-              reasoningLabel: reasoningState.reasoningLabel,
-              reasoningSource: reasoningState.reasoningSource,
-            });
-          }
-          if (isGenerationInterrupted(generationId)) return;
-          chatStore.setLastRawResponse(full, sessionId);
-          const memoryParsed = await handleMemoryEditsFromRaw(full, { sessionId, isGroup: isGroupChat });
-          let stripped = memoryParsed.text;
-          if (isSummaryMemoryEnabled()) {
-            const parsedSummary = extractSummaryBlock(full);
-            stripped = parsedSummary.text;
-            if (parsedSummary.summary) {
-              try {
-                chatStore.addSummary(parsedSummary.summary, sessionId);
-              } catch {}
-            }
-          }
-          // chat-mode-regex rollback marker:
-          // Old logic kept for comparison / easy rollback.
-          // let stored = sanitizeAssistantReplyText(stripped, userName);
-          // const reasoningParsed = extractReasoningFromContent(stored, { depth: 0, strict: true });
-          // stored = reasoningParsed.content || '';
-          // let display = stored;
-          const { reasoningParsed, finalSource, stored, display } = applyChatModeAssistantRegex(stripped, { depth: 0 });
-          const resolvedReasoning = resolveReasoningState(reasoningParsed, nativeReasoningState, { finalize: true });
-          const meta = {};
-          if (resolvedReasoning.reasoning) {
-            meta.reasoning = resolvedReasoning.reasoning;
-            meta.reasoningDisplay = resolvedReasoning.reasoningDisplay;
-            if (resolvedReasoning.reasoningHidden) meta.reasoningHidden = true;
-            if (resolvedReasoning.reasoningLabel) meta.reasoningLabel = resolvedReasoning.reasoningLabel;
-            if (resolvedReasoning.reasoningSource) meta.reasoningSource = resolvedReasoning.reasoningSource;
-          }
-          // === RP/创意写作界面===
-          // try {
-          //     stored = window.appBridge.applyOutputStoredRegex(full);
-          //     display = window.appBridge.applyOutputDisplayRegex(stored, { depth: 0 });
-          //     streamCtrl.update(display);
-          // } catch {}
-          const parsed = {
-            role: 'assistant',
-            name: '助手',
+          const legacyStreamState = await runLegacyStreamAssistantResponseFlow({
+            stream,
+            streamCtrl,
+            nativeReasoningState,
+            streamMeta,
+            sessionId,
+            memoryOptions: { sessionId, isGroup: isGroupChat },
             avatar: assistantAvatar,
-            time: formatNowTime(),
-            id: streamCtrl?.id,
-            rawOriginal: full,
-            rawSource: finalSource || undefined,
-            raw: stored,
-            ...parseSpecialMessage(display),
-            meta: Object.keys(meta).length ? meta : undefined,
-          };
-          updateActiveGenerationStreamCache(display, streamMeta);
-          if (isStreamCtrlConnected(streamCtrl)) {
-            streamCtrl.update(display);
-          } else if (isSessionActive(sessionId)) {
-            streamCtrl = ensureAssistantStreamCtrl(streamMeta);
-            if (streamCtrl) streamCtrl.update(display);
-          }
-          if (isStreamCtrlConnected(streamCtrl)) {
-            streamCtrl.finish(parsed);
-          } else if (isSessionActive(sessionId)) {
-            ui.addMessage(parsed);
-          }
-          {
-            const saved = chatStore.appendMessage(parsed, sessionId);
-            autoMarkReadIfActive(sessionId, saved?.id || parsed?.id || '');
-            emitPluginAfterReceive(saved, sessionId);
-          }
-          refreshChatAndContacts();
+            formatTime: formatNowTime,
+          }, {
+            normalizeChunk: normalizeAssistantStreamChunk,
+            isInterrupted: () => isGenerationInterrupted(generationId),
+            appendReasoningChunk: appendNativeReasoningChunk,
+            buildStreamText: full => ((!isRpMode && isMemoryAutoExtractInline()) ? stripTableEditBlocks(full) : full),
+            pushAssistantStreamText,
+            setLastRawResponse: raw => chatStore.setLastRawResponse(raw, sessionId),
+            handleMemoryEditsFromRaw,
+            summaryEnabled: isSummaryMemoryEnabled,
+            extractSummaryBlock,
+            addSummary: summary => chatStore.addSummary(summary, sessionId),
+            buildChatModeAssistantMessageParts: buildChatModeAssistantMessagePartsCore,
+            buildChatModeAssistantMessage: buildChatModeAssistantMessageFromPartsCore,
+            applyChatModeAssistantRegex,
+            resolveReasoningState,
+            parseSpecialMessage,
+            updateActiveGenerationStreamCache,
+            isStreamCtrlConnected,
+            isSessionActive: sid => isSessionActive(sid),
+            ensureAssistantStreamCtrl,
+            addMessage: message => ui.addMessage(message),
+            appendMessage: (message, targetSessionId) => chatStore.appendMessage(message, targetSessionId),
+            autoMarkReadIfActive,
+            emitPluginAfterReceive,
+            refreshChatAndContacts,
+          });
+          streamCtrl = legacyStreamState.streamCtrl;
+          if (legacyStreamState.interrupted) return;
           sendSucceeded = true;
         }
       } else {
         if (isSessionActive(sessionId)) startDeliveryAndTyping(sessionId, assistantAvatar);
-        consumePromptInjections(sessionId);
-        const resultRaw = await window.appBridge.generate(text, llmContext(text));
+        const resultRaw = await requestAssistantGeneration();
         if (isGenerationInterrupted(generationId)) {
           if (isSessionActive(sessionId)) { ui.hideTyping(); fastForwardDelivery(sessionId); }
           return;
         }
         sendSucceeded = true;
-        if (isSessionActive(sessionId)) { ui.hideTyping(); fastForwardDelivery(sessionId); }
-        chatStore.setLastRawResponse(resultRaw, sessionId);
-        let stripped = resultRaw;
-        if (!protocolEnabled) {
-          const memoryParsed = await handleMemoryEditsFromRaw(resultRaw, { sessionId, isGroup: isGroupChat });
-          stripped = memoryParsed.text;
-        }
-        let protocolSummary = '';
-        if (isSummaryMemoryEnabled()) {
-          const parsedSummary = extractSummaryBlock(resultRaw);
-          stripped = parsedSummary.text;
-          protocolSummary = parsedSummary.summary;
-        }
-        const summarySessionIds = new Set([sessionId]);
-        if (rpUiMode) {
-          if (protocolSummary) {
-            try {
-              chatStore.addSummary(protocolSummary, sessionId);
-            } catch {}
-            try {
-              requestSummaryCompaction(sessionId);
-            } catch {}
-          }
-          const rawSource = normalizeCreativeLineBreaks(stripped);
-          const reasoningParsed = extractReasoningFromContent(rawSource, { depth: 0, strict: true });
-          const finalSource = normalizeCreativeLineBreaks(reasoningParsed.content || '');
-          const { stored, display } = applyOutputRegexPairSafe(finalSource, {
-            appBridge: window.appBridge,
-            depth: 0,
-            normalizeText: normalizeCreativeLineBreaks,
-          });
-          const memoryState = isRpMode
-            ? await captureAssistantMemoryState(sessionId, { isGroup: isGroupChat })
-            : null;
-          const meta = attachAssistantMemoryStateToMeta({ renderRich: true }, memoryState);
-          if (protocolSummary) meta.summary = protocolSummary;
-          if (reasoningParsed.reasoning) {
-            meta.reasoning = reasoningParsed.reasoning;
-            meta.reasoningDisplay = reasoningParsed.reasoningDisplay;
-          }
-          const parsed = {
-            role: 'assistant',
-            type: 'text',
-            name: '助手',
-            avatar: assistantAvatar,
-            time: formatNowTime(),
-            sessionId,
-            rawOriginal: resultRaw,
-            rawSource: finalSource,
-            raw: stored,
-            content: display,
-            meta,
-          };
-          if (isSessionActive(sessionId) && !suppressAssistantDom && !continueTarget) ui.addMessage(parsed);
-          {
-            const saved = continueTarget
-              ? commitContinuationMessage(parsed)
-              : chatStore.appendMessage(parsed, sessionId);
-            checkpointTargetMessageId = String(
-              swipeTarget?.msgId || saved?.id || parsed?.id || continueTarget?.messageId || '',
-            ).trim();
-            autoMarkReadIfActive(sessionId, saved?.id || parsed?.id || '');
-            emitPluginAfterReceive(saved, sessionId);
-            if (isTurnCheckpointSessionEnabled(sessionId) && !swipeTarget) {
-              syncTurnCheckpointForMessage(sessionId, saved || parsed, {
-                captureCurrentActiveState: true,
-              }).catch(err => {
-                logger.warn('sync turn checkpoint after buffered assistant save failed', err);
-              });
-            }
-          }
-          refreshChatAndContacts();
-          return;
-        }
-        if (protocolEnabled) {
-          const parser = createDialogueParser();
-          const events = parser.push(resultRaw);
-          let didAnything = false;
-          let mutatedMoments = false;
-          handleMemoryEditsFromRaw(resultRaw, { sessionId, isGroup: isGroupChat }).catch(() => {});
-          for (const ev of events) {
-            const handledMoment = applyProtocolMomentEvent(ev, {
-              addMoments: items => momentsStore.addMany(ingestMoments(items)),
-              addMomentComments: (momentId, comments) => momentsStore.addComments(momentId, comments),
-              normalizeComments: comments => normalizeMomentCommentsForStore(comments, { regexMode: 'output', depth: 0 }),
-            });
-            ({
-              didAnything,
-              mutatedMoments,
-            } = consumeProtocolHandledResult({
-              didAnything,
-              mutatedMoments,
-              summarySessionIds,
-            }, handledMoment));
-            if (handledMoment?.consumed) {
-              continue;
-            }
-            if (ev?.type === 'group_chat') {
-              const nsGroupBatch = await buildProtocolGroupBatch(ev);
-              if (!nsGroupBatch.targetSessionId) {
-                window.toastr?.warning?.('对话回复格式错误：群聊标签未匹配任何已存在群组，已丢弃');
-                continue;
-              }
-              summarySessionIds.add(nsGroupBatch.targetSessionId);
-              const nsGrpAnim = document.body.dataset.typingDots !== 'off';
-              await dispatchProtocolGroupBatchToSession(nsGroupBatch, {
-                animEnabled: nsGrpAnim,
-                bumpReadCount: true,
-              });
-              didAnything = true;
-              continue;
-            }
-            if (ev?.type === 'private_chat') {
-              const nsPrivateBatch = await buildProtocolPrivateBatch(ev);
-              if (!nsPrivateBatch.targetSessionId) {
-                window.toastr?.warning?.('对话回复格式错误：私聊标签未匹配当前联系人，已丢弃');
-                continue;
-              }
-              summarySessionIds.add(nsPrivateBatch.targetSessionId);
-              const nsPvtAnim = document.body.dataset.typingDots !== 'off';
-              await dispatchProtocolPrivateBatchToSession(nsPrivateBatch, {
-                animEnabled: nsPvtAnim,
-              });
-              didAnything = true;
-            }
-          }
-          if (await finalizeProtocolHandledFlow({
-            didAnything,
-            mutatedMoments,
-            protocolSummary,
-            summarySessionIds,
-          }, {
-            addSummary: (summary, sid) => chatStore.addSummary(summary, sid),
-            requestSummaryCompaction,
-            refreshChatAndContacts,
-            renderMoments: activePage === 'moments'
-              ? () => momentsPanel.render()
-              : null,
-            flushMoments: () => momentsStore.flush(),
-          })) {
-            return;
-          }
-          // Fallback: strip complete <thinking>/<think> blocks then parse once more.
-          try {
-            const { retryText } = buildProtocolRetryCandidates(resultRaw);
-	            if (retryText && retryText !== resultRaw) {
-	              const retryParser = createDialogueParser();
-	              const retryEvents = retryParser.push(retryText);
-	              ({
-	                didAnything,
-	                mutatedMoments,
-	              } = await consumeProtocolRetryEvents(retryEvents, {
-	                didAnything,
-	                mutatedMoments,
-	                summarySessionIds,
-	              }, {
-	                handleEvent: ev => processProtocolRetryEvent(ev),
-	              }));
-	            }
-	          } catch {}
-          if (!didAnything) {
-            try {
-              const { miPhoneBlock } = buildProtocolRetryCandidates(resultRaw);
-	              if (miPhoneBlock) {
-	                const retryParser = createDialogueParser();
-	                const retryEvents = retryParser.push(miPhoneBlock);
-	                ({
-	                  didAnything,
-	                  mutatedMoments,
-	                } = await consumeProtocolRetryEvents(retryEvents, {
-	                  didAnything,
-	                  mutatedMoments,
-	                  summarySessionIds,
-	                }, {
-	                  handleEvent: ev => processProtocolRetryEvent(ev),
-	                }));
-	              }
-	            } catch {}
-          }
-          if (await finalizeProtocolHandledFlow({
-            didAnything,
-            mutatedMoments,
-            protocolSummary,
-            summarySessionIds,
-          }, {
-            addSummary: (summary, sid) => chatStore.addSummary(summary, sid),
-            requestSummaryCompaction,
-            refreshChatAndContacts,
-            renderMoments: activePage === 'moments'
-              ? () => momentsPanel.render()
-              : null,
-            flushMoments: () => momentsStore.flush(),
-          })) {
-            return;
-          }
-          window.toastr?.warning?.('未解析到有效对话标签，已丢弃（可在“三 > 原始回复”查看）');
-          return;
-        }
-        // === RP/创意写作界面===
-        // const stored = window.appBridge.applyOutputStoredRegex(resultRaw);
-        // const display = window.appBridge.applyOutputDisplayRegex(stored, { depth: 0 });
-        const summary = protocolSummary;
-        if (summary) {
-          try {
-            chatStore.addSummary(summary, sessionId);
-          } catch {}
-          try {
-            requestSummaryCompaction(sessionId);
-          } catch {}
-        }
-        // chat-mode-regex rollback marker:
-        // Old logic kept for comparison / easy rollback.
-        // const cleaned = sanitizeAssistantReplyText(stripped, userName);
-        // const reasoningParsed = extractReasoningFromContent(cleaned, { depth: 0, strict: true });
-        // const stored = reasoningParsed.content || '';
-        // const display = stored;
-        const { reasoningParsed, finalSource, stored, display } = applyChatModeAssistantRegex(stripped, { depth: 0 });
-        const meta = {};
-        if (reasoningParsed.reasoning) {
-          meta.reasoning = reasoningParsed.reasoning;
-          meta.reasoningDisplay = reasoningParsed.reasoningDisplay;
-        }
-        const parsed = {
-          role: 'assistant',
-          name: '助手',
+        const bufferedResponseState = await runBufferedAssistantResponseFlow({
+          rawText: resultRaw,
+          protocolEnabled,
+          creativeMode: rpUiMode,
+          memoryOptions: { sessionId, isGroup: isGroupChat },
+          sessionId,
           avatar: assistantAvatar,
-          time: formatNowTime(),
-          rawOriginal: resultRaw,
-          rawSource: finalSource || undefined,
-          raw: stored,
-          ...parseSpecialMessage(display),
-          meta: Object.keys(meta).length ? meta : undefined,
-        };
-        if (isSessionActive(sessionId)) ui.addMessage(parsed);
-        {
-          const saved = chatStore.appendMessage(parsed, sessionId);
-          autoMarkReadIfActive(sessionId, saved?.id || parsed?.id || '');
-          emitPluginAfterReceive(saved, sessionId);
+          formatTime: formatNowTime,
+          isRpMode,
+          isGroupChat,
+          suppressAssistantDom,
+          continueTarget,
+          swipeTarget,
+        }, {
+          summaryEnabled: isSummaryMemoryEnabled,
+          onBeforeRawSave: () => {
+            if (isSessionActive(sessionId)) { ui.hideTyping(); fastForwardDelivery(sessionId); }
+          },
+          setLastRawResponse: raw => chatStore.setLastRawResponse(raw, sessionId),
+          handleMemoryEditsFromRaw,
+          extractSummaryBlock,
+          runProtocolBufferedResponse: protocolInput => runProtocolBufferedResponseFlow(protocolInput, {
+            eventHandlers: createProtocolEventHandlers({ streamMode: false }),
+            ...protocolResponseFlowHandlers.createBufferedHandlers(),
+          }),
+          addSummary: summary => chatStore.addSummary(summary, sessionId),
+          requestSummaryCompaction,
+          buildCreativeAssistantMessage: buildCreativeAssistantMessageCore,
+          normalizeCreativeLineBreaks,
+          extractReasoningFromContent,
+          applyOutputRegexPairSafe,
+          appBridge: window.appBridge,
+          captureAssistantMemoryState,
+          attachAssistantMemoryStateToMeta,
+          isSessionActive: sid => isSessionActive(sid),
+          addMessage: message => ui.addMessage(message),
+          commitContinuationMessage,
+          appendMessage: (message, targetSessionId) => chatStore.appendMessage(message, targetSessionId),
+          autoMarkReadIfActive,
+          emitPluginAfterReceive,
+          isTurnCheckpointSessionEnabled,
+          syncTurnCheckpointForMessage,
+          creativeCheckpointWarnMessage: 'sync turn checkpoint after buffered assistant save failed',
+          logger,
+          buildChatModeAssistantMessage: buildChatModeAssistantMessageCore,
+          applyChatModeAssistantRegex,
+          parseSpecialMessage,
+          refreshChatAndContacts,
+        });
+        if (bufferedResponseState.checkpointTargetMessageId) {
+          checkpointTargetMessageId = bufferedResponseState.checkpointTargetMessageId;
         }
-        refreshChatAndContacts();
-        sendSucceeded = true;
       }
     } catch (error) {
-      sendErrorMessage = error?.message ? String(error.message) : String(error || '');
-      const generationInterrupted = isGenerationInterrupted(generationId);
-      const isCancelled = Boolean(error?.cancelled || generationInterrupted);
-      if (!isCancelled) {
-        streamCtrl?.cancel?.();
-      }
-      if (activeGeneration?._messageQueue) {
-        try { activeGeneration._messageQueue.cancel(); } catch {}
-      }
-      if (!generationInterrupted && isSessionActive(sessionId)) { ui.hideTyping(); fastForwardDelivery(sessionId); }
-      if (isCancelled) {
-        suppressErrorUI = true;
-      }
-      if (suppressErrorUI) return;
-      logger.error('发送失败', error, { status: error?.status, response: error?.response });
-      ui.showErrorBanner(error.message || '发送失败，请检查网络或 API 设置', {
-        label: '重试',
-        handler: () => handleSend(),
+      const catchResult = runSendCatchFlow({
+        error,
+        generationId,
+        suppressErrorUI,
+        streamCtrl,
+        getActiveGeneration: () => activeGeneration,
+        isGenerationInterrupted,
+        sessionId,
+        isSessionActive,
+        hideTyping: () => ui.hideTyping(),
+        fastForwardDelivery,
+        logger,
+        showErrorBanner: (...args) => ui.showErrorBanner(...args),
+        retrySend: () => handleSend(),
+        showToastError: (...args) => window.toastr?.error(...args),
       });
-      window.toastr?.error(error.message || '发送失败', '错误');
+      sendErrorMessage = catchResult.sendErrorMessage;
+      suppressErrorUI = catchResult.suppressErrorUI;
+      if (suppressErrorUI) return;
     } finally {
-      if (sendSucceeded) {
-        if (pendingMessagesToConfirm && pendingMessagesToConfirm.length > 0) {
-          finalizePendingMessages(sessionId, pendingMessagesToConfirm);
-        }
-        movePendingFromHistoryToQueue(sessionId);
-        refreshChatAndContacts();
-        scriptRuntime?.consumeOnce?.(sessionId);
-        memoryUpdateRuntime.runMemoryUpdateAfterChat(sessionId, isGroupChat, llmContext(''), {
-          checkpointMessageId: checkpointTargetMessageId,
-        }).catch(() => {});
-      }
-      updatePendingFloat(sessionId);
-      if (!activeGeneration || activeGeneration.id === generationId) {
-        ui.setSendingState(false);
-      }
-      if (activeGeneration?.id === generationId) {
-        activeGeneration = null;
-      }
-      if (sendTraceStarted) {
-        recordSendFlowTraceEvent({
-          phase: 'send.finish',
-          sessionId,
-          status: sendSucceeded ? 'success' : (suppressErrorUI ? 'cancelled' : 'error'),
-          summary: sendSucceeded ? 'send flow completed' : 'send flow stopped',
-          details: {
-            generationId,
-            sendSucceeded,
-            cancelled: suppressErrorUI || undefined,
-            errorMessage: sendErrorMessage || undefined,
-          },
-        });
-      }
-      return sendSucceeded;
+      return runSendFinallyFlow({
+        sendSucceeded,
+        pendingMessagesToConfirm,
+        sessionId,
+        isGroupChat,
+        checkpointTargetMessageId,
+        generationId,
+        sendTraceStarted,
+        suppressErrorUI,
+        sendErrorMessage,
+        finalizePendingMessages,
+        movePendingFromHistoryToQueue,
+        refreshChatAndContacts,
+        scriptRuntime,
+        runMemoryUpdateAfterChat: (...args) => memoryUpdateRuntime.runMemoryUpdateAfterChat(...args),
+        buildMemoryContext: () => llmContext(''),
+        updatePendingFloat,
+        getActiveGeneration: () => activeGeneration,
+        setActiveGeneration: next => {
+          activeGeneration = next;
+        },
+        setSendingState: value => ui.setSendingState(value),
+        recordTraceEvent: recordSendFlowTraceEvent,
+      });
     }
   };
 
-  const sendMessageFromPlugin = async (content, options = {}) => {
-    const text = String(content ?? '');
-    const opts = options && typeof options === 'object' ? options : {};
-    const role = String(opts.role || 'user').toLowerCase();
-    const silent = Boolean(opts.silent);
-    const skipInputRegex = Boolean(opts.skipInputRegex);
-    const sessionId = chatStore.getCurrent();
-    if (!sessionId) return null;
-    const contact = contactsStore.getContact(sessionId);
-    const characterName =
-      contact?.name || (sessionId.startsWith('group:') ? sessionId.replace(/^group:/, '') : sessionId) || 'assistant';
-    const activeUser = getActiveUserProfile();
-    const userName = String(activeUser?.name || '').trim() || '我';
-    const now = formatNowTime();
-
-    if (role !== 'user' || silent) {
-      const isSystem = role === 'system';
-      const isAssistant = role === 'assistant';
-      const isUser = role === 'user';
-      let display = text;
-      let stored = text;
-      if (!isSystem && !isAssistant) {
-        stored = skipInputRegex
-          ? text
-          : window.appBridge.applyInputStoredRegex(text, { isEdit: false });
-        display = skipInputRegex
-          ? text
-          : window.appBridge.applyInputDisplayRegex(stored, { isEdit: false, depth: 0 });
-      }
-      const msg = {
-        role,
-        type: isSystem ? 'meta' : 'text',
-        content: display,
-        raw: stored,
-        name: isSystem ? '系统' : (isAssistant ? '助手' : userName),
-        avatar: isAssistant ? getAssistantAvatarForSession(sessionId) : avatars.user,
-        time: now,
-      };
-      if (isAssistant && isRpSessionId(sessionId)) {
-        msg.meta = { ...(msg.meta || {}), renderRich: true };
-      }
-      if (isSessionActive(sessionId)) ui.addMessage(msg);
-      const saved = chatStore.appendMessage(msg, sessionId);
-      refreshChatAndContacts();
-      if (isUser) {
-        dispatchAfterSendEvents({
-          messages: [saved || msg],
-          sessionId,
-          scriptRuntime,
-          pluginRuntime,
-          logger,
-          recordTraceEvent: recordDebugTraceEvent,
-        });
-      }
-      if (isAssistant) emitPluginAfterReceive(saved, sessionId);
-      return saved;
-    }
-
-    if (!text.trim()) return null;
-    await handleSend(null, { overrideText: text, ignorePending: true, skipInputRegex });
-    const list = chatStore.getMessages(sessionId) || [];
-    const lastUser = [...list].reverse().find(m => m && m.role === 'user');
-    return lastUser || null;
-  };
+  const sendMessageFromPlugin = (content, options = {}) => runPluginSendMessageFlow({
+    content,
+    options,
+  }, {
+    chatStore,
+    ui,
+    appBridge: window.appBridge,
+    avatars,
+    getActiveUserProfile,
+    formatNowTime,
+    getAssistantAvatarForSession,
+    isRpSessionId,
+    isSessionActive,
+    refreshChatAndContacts,
+    handleSend,
+    dispatchAfterSendEvents,
+    emitPluginAfterReceive,
+    scriptRuntime,
+    pluginRuntime,
+    logger,
+    recordTraceEvent: recordDebugTraceEvent,
+  });
   registerMessageActionBridgeContract(window.appBridge, {
     sendMessageFromPlugin,
   });
@@ -16973,86 +16128,24 @@ Phase G（Frame 36）：循环衔接
     };
     const isSyntheticUser = m => m?.role === 'user' && m?.meta?.generatedByAssistant === true;
     const regenerateFromUserIndex = async (userIdx, { allowEmpty = false } = {}) => {
-      const msgs = chatStore.getMessages(sessionId);
-      const plan = resolveRegenerateFromUserIndexPlan({
-        messages: msgs,
+      await runRegenerateFromUserIndexFlow({
+        messages: chatStore.getMessages(sessionId),
         userIdx,
         allowEmpty,
         isSyntheticUser,
-      });
-      if (!plan.canRegenerate) {
-        if (plan.warningMessage) window.toastr?.warning(plan.warningMessage);
-        return;
-      }
-      const prevUser = plan.prevUser;
-      const regenMessages = plan.regenMessages;
-      recordSendFlowTraceEvent({
-        phase: 'regenerate.start',
         sessionId,
-        status: 'started',
-        summary: 'regenerate flow started',
-        details: {
-          userIdx,
-          allowEmpty,
-          regenMessageCount: regenMessages.length,
-        },
-      });
-      if (regenMessages.length) {
-        regenMessages.forEach(m => {
-          chatStore.deleteMessage(m.id, sessionId);
-          ui.removeMessage(m.id);
-        });
-        await removeTurnCheckpointsForMessages(sessionId, regenMessages, { prune: true }).catch(err => {
-          logger.warn('remove turn checkpoints for regenerated messages failed', err);
-        });
-        refreshChatAndContacts();
-      }
-      chatStore.removeLastSummary?.(sessionId);
-      if (getMemoryStorageMode() === 'table') {
-        try {
-          await restoreMemoryForActiveThread(sessionId, {
-            refreshBaselineWhenNoTail: false,
-            source: 'regenerate_from_user_index',
-          });
-        } catch (err) {
-          logger.warn('restore memory after regenerate failed', err);
-        }
-      }
-      const resendText = getMessageSendText(prevUser, buildStickerToken);
-      if (!String(resendText || '').trim()) {
-        recordSendFlowTraceEvent({
-          phase: 'regenerate.finish',
-          sessionId,
-          status: 'skipped',
-          summary: 'regenerate flow skipped',
-          details: {
-            userIdx,
-            allowEmpty,
-            reason: 'empty-user-message',
-          },
-        });
-        window.toastr?.warning('未找到对应的用户消息内容');
-        return;
-      }
-      const resent = await handleSend(null, {
-        overrideText: resendText,
-        ignorePending: true,
-        suppressUserMessage: true,
-        skipInputRegex: true,
-        existingUserMessageId: prevUser?.id || '',
-        includeAttachments: false,
-      });
-      recordSendFlowTraceEvent({
-        phase: 'regenerate.finish',
-        sessionId,
-        status: resent ? 'success' : 'error',
-        summary: resent ? 'regenerate flow completed' : 'regenerate resend failed',
-        details: {
-          userIdx,
-          allowEmpty,
-          regenMessageCount: regenMessages.length,
-          resent: Boolean(resent),
-        },
+        chatStore,
+        ui,
+        recordTraceEvent: recordSendFlowTraceEvent,
+        removeTurnCheckpointsForMessages,
+        refreshChatAndContacts,
+        getMemoryStorageMode,
+        restoreMemoryForActiveThread,
+        getMessageSendText,
+        buildStickerToken,
+        handleSend,
+        warn: message => window.toastr?.warning(message),
+        logger,
       });
     };
 

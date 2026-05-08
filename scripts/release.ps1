@@ -6,6 +6,7 @@
   [string]$KeystoreAlias = "",
   [string]$KeystorePass = "",
   [string]$KeyPass = "",
+  [switch]$SkipPreflight,
   [switch]$SkipBuild,
   [switch]$SkipSign,
   [switch]$SkipRelease
@@ -20,15 +21,25 @@ function Get-PlainText([Security.SecureString]$secure) {
   finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }
 }
 
+function Invoke-ExternalCommand([string]$FailureMessage, [scriptblock]$Command) {
+  & $Command
+  if ($LASTEXITCODE -ne 0) {
+    throw "$FailureMessage，退出码 $LASTEXITCODE"
+  }
+}
+
 $root = Resolve-Path (Join-Path $PSScriptRoot "..")
 Set-Location $root
 
+if (-not $SkipPreflight) {
+  Write-Host "[1/4] 发布前检查..."
+  Invoke-ExternalCommand "发布前检查失败" { npm run test:all }
+  Invoke-ExternalCommand "Rust ZIP contract 检查失败" { npm run test:rust:zip }
+}
+
 if (-not $SkipBuild) {
-  Write-Host "[1/3] 构建 APK..."
-  npm run android:build
-  if ($LASTEXITCODE -ne 0) {
-    throw "构建失败，退出码 $LASTEXITCODE"
-  }
+  Write-Host "[2/4] 构建 APK..."
+  Invoke-ExternalCommand "构建失败" { npm run android:build }
 }
 
 $apkInputCandidates = @(
@@ -55,7 +66,7 @@ $alignedApk = Join-Path $distDir "app-universal-release-aligned.apk"
 $signedApk = Join-Path $distDir "app-universal-release.apk"
 
 if (-not $SkipSign) {
-  Write-Host "[2/3] 对齐并签名 APK..."
+  Write-Host "[3/4] 对齐并签名 APK..."
 
   if (-not $env:ANDROID_HOME) {
     throw "ANDROID_HOME 未设置。"
@@ -91,18 +102,15 @@ if (-not $SkipSign) {
   }
 
   Remove-Item -Force -ErrorAction SilentlyContinue $alignedApk, $signedApk, "$signedApk.idsig"
-  & $zipalign -f -v 4 $apkInput $alignedApk
-  if ($LASTEXITCODE -ne 0) { throw "zipalign 失败，退出码 $LASTEXITCODE" }
-  & $apksigner sign --ks $KeystorePath --ks-key-alias $KeystoreAlias --ks-pass "pass:$KeystorePass" --key-pass "pass:$KeyPass" --out $signedApk $alignedApk
-  if ($LASTEXITCODE -ne 0) { throw "apksigner 失败，退出码 $LASTEXITCODE" }
-  & $apksigner verify --verbose $signedApk
-  if ($LASTEXITCODE -ne 0) { throw "apksigner verify 失败，退出码 $LASTEXITCODE" }
+  Invoke-ExternalCommand "zipalign 失败" { & $zipalign -f -v 4 $apkInput $alignedApk }
+  Invoke-ExternalCommand "apksigner 失败" { & $apksigner sign --ks $KeystorePath --ks-key-alias $KeystoreAlias --ks-pass "pass:$KeystorePass" --key-pass "pass:$KeyPass" --out $signedApk $alignedApk }
+  Invoke-ExternalCommand "apksigner verify 失败" { & $apksigner verify --verbose $signedApk }
 } else {
   Copy-Item $apkInput $signedApk -Force
 }
 
 if (-not $SkipRelease) {
-  Write-Host "[3/3] 发布 GitHub Release..."
+  Write-Host "[4/4] 发布 GitHub Release..."
   if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
     throw "未找到 gh CLI，请先安装并完成 gh auth login。"
   }

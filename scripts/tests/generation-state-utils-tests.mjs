@@ -5,6 +5,7 @@ import {
   buildCancelledAssistantPartialMessage,
   commitCancelledGenerationPartial,
   createActiveGenerationRecord,
+  runActiveGenerationCancelFlow,
 } from '../../src/scripts/ui/chat/generation-state-utils.js';
 
 const tests = [];
@@ -241,6 +242,106 @@ test('commitCancelledGenerationPartial skips existing messages and non-user canc
     appended: false,
     skippedExisting: false,
   });
+});
+
+test('runActiveGenerationCancelFlow preserves cancel side-effect order and commits user partials', () => {
+  const calls = [];
+  const generation = createActiveGenerationRecord({
+    id: 9,
+    sessionId: 'session-cancel',
+    userMsgId: 'user-1',
+  });
+  generation.streamCtrl = {
+    id: 'stream-9',
+    cancel(options) {
+      calls.push(['stream-cancel', options.keepPartial, generation.cancelled]);
+      return {
+        id: 'partial-9',
+        content: '保留的部分回复',
+        raw: '保留的部分回复',
+        meta: { source: 'stream' },
+      };
+    },
+  };
+  const appended = [];
+
+  const result = runActiveGenerationCancelFlow({
+    generation,
+    reason: 'user',
+    recordTraceEvent: event => calls.push(['trace', event.phase, event.status, event.details]),
+    abortMemoryUpdate: sessionId => calls.push(['abort-memory', sessionId]),
+    cancelCurrentGeneration: reason => calls.push(['bridge-cancel', reason]),
+    chatStore: {
+      findMessage: () => false,
+      appendMessage: (message, sessionId) => {
+        calls.push(['append', message.id, sessionId]);
+        appended.push({ message, sessionId });
+      },
+    },
+    getAssistantAvatarForSession: sessionId => `${sessionId}.png`,
+    formatNowTime: () => '16:00',
+    refreshChatAndContacts: () => calls.push(['refresh']),
+    hideTyping: () => calls.push(['hide-typing']),
+    setStreamingState: value => calls.push(['streaming', value]),
+    setSendingState: value => calls.push(['sending', value]),
+  });
+
+  assert.equal(result.cancelled, true);
+  assert.equal(result.hasPartial, true);
+  assert.equal(result.commitResult.appended, true);
+  assert.equal(generation.cancelled, true);
+  assert.equal(appended[0].message.meta.partial, true);
+  assert.equal(appended[0].message.meta.cancelled, true);
+  assert.deepEqual(calls, [
+    ['trace', 'generation.cancel', 'started', { generationId: 9, reason: 'user' }],
+    ['abort-memory', 'session-cancel'],
+    ['bridge-cancel', 'user'],
+    ['stream-cancel', true, true],
+    ['append', 'partial-9', 'session-cancel'],
+    ['refresh'],
+    ['trace', 'generation.cancel', 'success', { generationId: 9, reason: 'user', hasPartial: true }],
+    ['hide-typing'],
+    ['streaming', false],
+    ['sending', false],
+  ]);
+});
+
+test('runActiveGenerationCancelFlow skips partial commit for non-user reasons and no-ops cancelled records', () => {
+  const calls = [];
+  const generation = createActiveGenerationRecord({
+    id: 10,
+    sessionId: 'session-cancel',
+  });
+  generation.streamCtrl = {
+    cancel(options) {
+      calls.push(['stream-cancel', options.keepPartial]);
+      return { id: 'partial-10', content: '不会落库' };
+    },
+  };
+
+  const result = runActiveGenerationCancelFlow({
+    generation,
+    reason: 'retract',
+    recordTraceEvent: event => calls.push(['trace', event.status, event.details.hasPartial]),
+    chatStore: {
+      appendMessage: () => calls.push(['append']),
+    },
+    refreshChatAndContacts: () => calls.push(['refresh']),
+  });
+  const second = runActiveGenerationCancelFlow({
+    generation,
+    recordTraceEvent: () => calls.push(['second-trace']),
+  });
+
+  assert.equal(result.cancelled, true);
+  assert.equal(result.hasPartial, true);
+  assert.equal(result.commitResult, null);
+  assert.equal(second.cancelled, false);
+  assert.deepEqual(calls, [
+    ['trace', 'started', undefined],
+    ['stream-cancel', false],
+    ['trace', 'success', true],
+  ]);
 });
 
 let failed = 0;

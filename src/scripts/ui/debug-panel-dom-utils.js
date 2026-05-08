@@ -22,6 +22,9 @@ const createDebugButton = ({
 export const createDebugPanelDom = ({
   documentRef = globalThis.document,
   onShowCustomBundle = () => {},
+  onShowStorageMigration = () => {},
+  onShowBridgeContracts = () => {},
+  onShowTraceTimeline = () => {},
   onShowErrorLogs = () => {},
   onClearLogs = () => {},
   onCopyLogs = () => {},
@@ -42,6 +45,27 @@ export const createDebugPanelDom = ({
     onClick: onShowCustomBundle,
   });
   controls.appendChild(customBundleInspectBtn);
+
+  const storageMigrationInspectBtn = createDebugButton({
+    documentRef,
+    text: '迁移',
+    onClick: onShowStorageMigration,
+  });
+  controls.appendChild(storageMigrationInspectBtn);
+
+  const bridgeContractInspectBtn = createDebugButton({
+    documentRef,
+    text: 'Bridge',
+    onClick: onShowBridgeContracts,
+  });
+  controls.appendChild(bridgeContractInspectBtn);
+
+  const traceTimelineInspectBtn = createDebugButton({
+    documentRef,
+    text: '时间线',
+    onClick: onShowTraceTimeline,
+  });
+  controls.appendChild(traceTimelineInspectBtn);
 
   const errorLogBtn = createDebugButton({
     documentRef,
@@ -110,6 +134,9 @@ export const createDebugPanelDom = ({
     panel,
     controls,
     customBundleInspectBtn,
+    storageMigrationInspectBtn,
+    bridgeContractInspectBtn,
+    traceTimelineInspectBtn,
     errorLogBtn,
     filterWrap,
     clearLogBtn,

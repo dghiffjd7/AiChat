@@ -38,9 +38,15 @@ import {
     createDetachedTextareaCopyFallback,
     createSelectedTextareaCopyFallback,
     exportDebugTextFlow,
+    handleBridgeContractDiagnosticsLoadError,
     handleCustomBundleDiagnosticsLoadError,
+    handleDebugTraceTimelineLoadError,
+    handleStorageMigrationDiagnosticsLoadError,
+    refreshBridgeContractDiagnosticsView,
     refreshCustomBundleDiagnosticsView,
+    refreshDebugTraceTimelineView,
     refreshErrorLogView,
+    refreshStorageMigrationDiagnosticsView,
 } from './debug-panel-runtime-utils.js';
 
 export class DebugPanel {
@@ -56,6 +62,9 @@ export class DebugPanel {
         this.enabled = false;
         this.seenMessages = new Set();
         this.customBundleInspectBtn = null;
+        this.storageMigrationInspectBtn = null;
+        this.bridgeContractInspectBtn = null;
+        this.traceTimelineInspectBtn = null;
         this.errorLogBtn = null;
         this.filterInput = null;
         this.filterClearBtn = null;
@@ -67,6 +76,24 @@ export class DebugPanel {
         this.customBundleText = null;
         this.customBundleRefresh = null;
         this.customBundleExport = null;
+        this.storageMigrationOverlay = null;
+        this.storageMigrationPanel = null;
+        this.storageMigrationMeta = null;
+        this.storageMigrationText = null;
+        this.storageMigrationRefresh = null;
+        this.storageMigrationExport = null;
+        this.bridgeContractOverlay = null;
+        this.bridgeContractPanel = null;
+        this.bridgeContractMeta = null;
+        this.bridgeContractText = null;
+        this.bridgeContractRefresh = null;
+        this.bridgeContractExport = null;
+        this.traceTimelineOverlay = null;
+        this.traceTimelinePanel = null;
+        this.traceTimelineMeta = null;
+        this.traceTimelineText = null;
+        this.traceTimelineRefresh = null;
+        this.traceTimelineExport = null;
         this.errorLogOverlay = null;
         this.errorLogPanel = null;
         this.errorLogMeta = null;
@@ -82,6 +109,9 @@ export class DebugPanel {
         const dom = createDebugPanelDom({
             documentRef: document,
             onShowCustomBundle: () => this.showCustomBundleInspector(),
+            onShowStorageMigration: () => this.showStorageMigrationInspector(),
+            onShowBridgeContracts: () => this.showBridgeContractInspector(),
+            onShowTraceTimeline: () => this.showTraceTimelineInspector(),
             onShowErrorLogs: () => this.showErrorLogs(),
             onClearLogs: ({ filterInput }) => {
                 this.clear();
@@ -107,6 +137,9 @@ export class DebugPanel {
         this.panel = dom.panel;
         this.controls = dom.controls;
         this.customBundleInspectBtn = dom.customBundleInspectBtn;
+        this.storageMigrationInspectBtn = dom.storageMigrationInspectBtn;
+        this.bridgeContractInspectBtn = dom.bridgeContractInspectBtn;
+        this.traceTimelineInspectBtn = dom.traceTimelineInspectBtn;
         this.errorLogBtn = dom.errorLogBtn;
         this.copyLogBtn = dom.copyLogBtn;
         this.filterInput = dom.filterInput;
@@ -296,6 +329,221 @@ export class DebugPanel {
         await showDebugViewer({
             overlay: this.customBundleOverlay,
             onShow: () => this.refreshCustomBundleInspector(),
+        });
+    }
+
+    ensureStorageMigrationInspector() {
+        if (this.storageMigrationOverlay) return;
+        const viewer = createDebugViewerModal({
+            overlayId: 'debug-storage-migration-overlay',
+            panelId: 'debug-storage-migration-panel',
+            title: '存储迁移检查表',
+            onClose: () => this.hideStorageMigrationInspector(),
+            onRefresh: () => this.refreshStorageMigrationInspector(),
+            onExport: () => this.exportStorageMigrationDiagnostics(),
+        });
+        bindDebugViewerRefs({
+            target: this,
+            prefix: 'storageMigration',
+            viewer,
+        });
+    }
+
+    hideStorageMigrationInspector() {
+        setDebugViewerVisibility({ overlay: this.storageMigrationOverlay, visible: false });
+    }
+
+    async exportStorageMigrationDiagnostics() {
+        await exportDebugTextFlow({
+            text: String(this.storageMigrationText?.value || ''),
+            filenamePrefix: 'storage-migration-checklist',
+            successLabel: '迁移检查表已导出',
+            emptyMessage: '暂无存储迁移检查表可导出',
+            exportFailureToast: '迁移检查表导出失败',
+            exportFailurePrefix: '迁移检查表导出失败: ',
+            buildFilename: buildDebugTextFilename,
+            exportTextFile: (text, filename, successLabel) => exportDebugTextFile({
+                text,
+                filename,
+                successLabel,
+                onSuccess: (message) => window.toastr?.success?.(message),
+            }),
+            onWarning: (message) => window.toastr?.warning?.(message),
+            onLogWarn: (message) => this.log(message, 'warn'),
+            onError: (message) => window.toastr?.error?.(message),
+        });
+    }
+
+    async refreshStorageMigrationInspector() {
+        const viewer = createDebugViewerTextBindings({
+            metaEl: this.storageMigrationMeta,
+            textEl: this.storageMigrationText,
+        });
+        if (!this.storageMigrationOverlay || !viewer.hasViewer()) return;
+        try {
+            refreshStorageMigrationDiagnosticsView({
+                setMeta: viewer.setMeta,
+                setText: viewer.setText,
+            });
+        } catch (err) {
+            handleStorageMigrationDiagnosticsLoadError({
+                error: err,
+                setMeta: viewer.setMeta,
+                setText: viewer.setText,
+                logWarn: (message) => this.log(message, 'warn'),
+            });
+        }
+    }
+
+    async showStorageMigrationInspector() {
+        this.ensureStorageMigrationInspector();
+        await showDebugViewer({
+            overlay: this.storageMigrationOverlay,
+            onShow: () => this.refreshStorageMigrationInspector(),
+        });
+    }
+
+    ensureBridgeContractInspector() {
+        if (this.bridgeContractOverlay) return;
+        const viewer = createDebugViewerModal({
+            overlayId: 'debug-bridge-contract-overlay',
+            panelId: 'debug-bridge-contract-panel',
+            title: 'Bridge Contract 诊断',
+            onClose: () => this.hideBridgeContractInspector(),
+            onRefresh: () => this.refreshBridgeContractInspector(),
+            onExport: () => this.exportBridgeContractDiagnostics(),
+        });
+        bindDebugViewerRefs({
+            target: this,
+            prefix: 'bridgeContract',
+            viewer,
+        });
+    }
+
+    hideBridgeContractInspector() {
+        setDebugViewerVisibility({ overlay: this.bridgeContractOverlay, visible: false });
+    }
+
+    async exportBridgeContractDiagnostics() {
+        await exportDebugTextFlow({
+            text: String(this.bridgeContractText?.value || ''),
+            filenamePrefix: 'bridge-contract-registry',
+            successLabel: 'Bridge contract 诊断已导出',
+            emptyMessage: '暂无 Bridge contract 诊断可导出',
+            exportFailureToast: 'Bridge contract 诊断导出失败',
+            exportFailurePrefix: 'Bridge contract 诊断导出失败: ',
+            buildFilename: buildDebugTextFilename,
+            exportTextFile: (text, filename, successLabel) => exportDebugTextFile({
+                text,
+                filename,
+                successLabel,
+                onSuccess: (message) => window.toastr?.success?.(message),
+            }),
+            onWarning: (message) => window.toastr?.warning?.(message),
+            onLogWarn: (message) => this.log(message, 'warn'),
+            onError: (message) => window.toastr?.error?.(message),
+        });
+    }
+
+    async refreshBridgeContractInspector() {
+        const viewer = createDebugViewerTextBindings({
+            metaEl: this.bridgeContractMeta,
+            textEl: this.bridgeContractText,
+        });
+        if (!this.bridgeContractOverlay || !viewer.hasViewer()) return;
+        try {
+            refreshBridgeContractDiagnosticsView({
+                registry: window.appBridge?.bridgeContractRegistry || null,
+                setMeta: viewer.setMeta,
+                setText: viewer.setText,
+            });
+        } catch (err) {
+            handleBridgeContractDiagnosticsLoadError({
+                error: err,
+                setMeta: viewer.setMeta,
+                setText: viewer.setText,
+                logWarn: (message) => this.log(message, 'warn'),
+            });
+        }
+    }
+
+    async showBridgeContractInspector() {
+        this.ensureBridgeContractInspector();
+        await showDebugViewer({
+            overlay: this.bridgeContractOverlay,
+            onShow: () => this.refreshBridgeContractInspector(),
+        });
+    }
+
+    ensureTraceTimelineInspector() {
+        if (this.traceTimelineOverlay) return;
+        const viewer = createDebugViewerModal({
+            overlayId: 'debug-trace-timeline-overlay',
+            panelId: 'debug-trace-timeline-panel',
+            title: '事件时间线',
+            onClose: () => this.hideTraceTimelineInspector(),
+            onRefresh: () => this.refreshTraceTimelineInspector(),
+            onExport: () => this.exportTraceTimelineDiagnostics(),
+        });
+        bindDebugViewerRefs({
+            target: this,
+            prefix: 'traceTimeline',
+            viewer,
+        });
+    }
+
+    hideTraceTimelineInspector() {
+        setDebugViewerVisibility({ overlay: this.traceTimelineOverlay, visible: false });
+    }
+
+    async exportTraceTimelineDiagnostics() {
+        await exportDebugTextFlow({
+            text: String(this.traceTimelineText?.value || ''),
+            filenamePrefix: 'debug-trace-timeline',
+            successLabel: '事件时间线已导出',
+            emptyMessage: '暂无事件时间线可导出',
+            exportFailureToast: '事件时间线导出失败',
+            exportFailurePrefix: '事件时间线导出失败: ',
+            buildFilename: buildDebugTextFilename,
+            exportTextFile: (text, filename, successLabel) => exportDebugTextFile({
+                text,
+                filename,
+                successLabel,
+                onSuccess: (message) => window.toastr?.success?.(message),
+            }),
+            onWarning: (message) => window.toastr?.warning?.(message),
+            onLogWarn: (message) => this.log(message, 'warn'),
+            onError: (message) => window.toastr?.error?.(message),
+        });
+    }
+
+    async refreshTraceTimelineInspector() {
+        const viewer = createDebugViewerTextBindings({
+            metaEl: this.traceTimelineMeta,
+            textEl: this.traceTimelineText,
+        });
+        if (!this.traceTimelineOverlay || !viewer.hasViewer()) return;
+        try {
+            refreshDebugTraceTimelineView({
+                timeline: window.appBridge?.debugUiRegistry?.stores?.traceTimeline || null,
+                setMeta: viewer.setMeta,
+                setText: viewer.setText,
+            });
+        } catch (err) {
+            handleDebugTraceTimelineLoadError({
+                error: err,
+                setMeta: viewer.setMeta,
+                setText: viewer.setText,
+                logWarn: (message) => this.log(message, 'warn'),
+            });
+        }
+    }
+
+    async showTraceTimelineInspector() {
+        this.ensureTraceTimelineInspector();
+        await showDebugViewer({
+            overlay: this.traceTimelineOverlay,
+            onShow: () => this.refreshTraceTimelineInspector(),
         });
     }
 

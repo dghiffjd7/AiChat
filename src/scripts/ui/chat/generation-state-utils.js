@@ -1,4 +1,16 @@
 const normalizeObject = (value) => (value && typeof value === 'object' ? value : null);
+const noop = () => {};
+
+const callSafely = (fn, ...args) => {
+  if (typeof fn !== 'function') return undefined;
+  try {
+    return fn(...args);
+  } catch {
+    return undefined;
+  }
+};
+
+const hasPartialContent = (partial = null) => Boolean(String(partial?.content || '').trim());
 
 export const createActiveGenerationRecord = ({
   id = 0,
@@ -153,5 +165,106 @@ export const commitCancelledGenerationPartial = ({
     handledPartial,
     appended,
     skippedExisting,
+  };
+};
+
+export const runActiveGenerationCancelFlow = ({
+  generation = null,
+  reason = 'user',
+  recordTraceEvent = noop,
+  abortMemoryUpdate = noop,
+  cancelCurrentGeneration = noop,
+  chatStore = null,
+  logger = null,
+  getAssistantAvatarForSession = () => '',
+  formatNowTime = () => '',
+  refreshChatAndContacts = noop,
+  hideTyping = noop,
+  setStreamingState = noop,
+  setSendingState = noop,
+} = {}) => {
+  const currentGeneration = normalizeObject(generation);
+  if (!currentGeneration || currentGeneration.cancelled) {
+    return {
+      cancelled: false,
+      generation: currentGeneration,
+      partial: null,
+      commitResult: null,
+      sessionId: '',
+      hasPartial: false,
+    };
+  }
+
+  callSafely(recordTraceEvent, {
+    phase: 'generation.cancel',
+    sessionId: currentGeneration.sessionId,
+    status: 'started',
+    summary: 'generation cancel requested',
+    details: {
+      generationId: currentGeneration.id,
+      reason,
+    },
+  });
+
+  try {
+    currentGeneration.cancelled = true;
+  } catch {}
+
+  const sessionId = String(currentGeneration.sessionId || '').trim();
+  if (sessionId) callSafely(abortMemoryUpdate, sessionId);
+  callSafely(cancelCurrentGeneration, reason);
+
+  let partial = null;
+  try {
+    partial = currentGeneration.streamCtrl?.cancel?.({ keepPartial: reason === 'user' }) || null;
+  } catch {}
+
+  if (!partial && reason === 'user') {
+    partial = buildCancelledAssistantPartial({
+      generation: currentGeneration,
+      assistantAvatar: getAssistantAvatarForSession(currentGeneration.sessionId),
+      fallbackTime: formatNowTime(),
+    });
+  }
+
+  let commitResult = null;
+  if (reason === 'user') {
+    try {
+      commitResult = commitCancelledGenerationPartial({
+        generation: currentGeneration,
+        partial,
+        reason,
+        chatStore,
+        logger,
+        getAssistantAvatarForSession,
+        formatNowTime,
+        refreshChatAndContacts,
+      });
+    } catch {}
+  }
+
+  callSafely(recordTraceEvent, {
+    phase: 'generation.cancel',
+    sessionId: currentGeneration.sessionId,
+    status: 'success',
+    summary: 'generation cancel completed',
+    details: {
+      generationId: currentGeneration.id,
+      reason,
+      hasPartial: hasPartialContent(partial),
+    },
+  });
+
+  callSafely(hideTyping);
+  callSafely(setStreamingState, false);
+  callSafely(setSendingState, false);
+
+  return {
+    cancelled: true,
+    generation: currentGeneration,
+    partial,
+    commitResult,
+    sessionId,
+    hasPartial: hasPartialContent(partial),
   };
 };

@@ -1,0 +1,175 @@
+const getDefaultBridge = () => {
+    if (typeof window !== 'undefined') return window.appBridge || null;
+    return globalThis?.window?.appBridge || null;
+};
+
+const bindBridgeMethod = (bridge, name) => (
+    typeof bridge?.[name] === 'function' ? bridge[name].bind(bridge) : null
+);
+
+export const resolveWorldEditorBridgeContext = (options = {}) => {
+    const hasBridge = Object.prototype.hasOwnProperty.call(options || {}, 'bridge');
+    const bridge = hasBridge ? options.bridge : getDefaultBridge();
+    return {
+        bridge,
+        worldStore: options?.worldStore || bridge?.worldStore || null,
+        contactsStore: options?.contactsStore || bridge?.contactsStore || null,
+        chatStore: options?.chatStore || bridge?.chatStore || null,
+        regexStore: options?.regexStore || bridge?.regex || null,
+        getWorldInfo: options?.getWorldInfo || bindBridgeMethod(bridge, 'getWorldInfo'),
+        saveWorldInfo: options?.saveWorldInfo || bindBridgeMethod(bridge, 'saveWorldInfo'),
+        listWorlds: options?.listWorlds || bindBridgeMethod(bridge, 'listWorlds'),
+        renameWorldInfo: options?.renameWorldInfo || bindBridgeMethod(bridge, 'renameWorldInfo'),
+        bindWorldToSession: options?.bindWorldToSession || bindBridgeMethod(bridge, 'bindWorldToSession'),
+        buildWorldDebugLabel: options?.buildWorldDebugLabel || bindBridgeMethod(bridge, 'buildWorldDebugLabel'),
+        explainWorldEntryActivation: options?.explainWorldEntryActivation || bindBridgeMethod(bridge, 'explainWorldEntryActivation'),
+    };
+};
+
+export const sanitizeWorldbookId = (value, { allowUnicode = false, fallback = 'worldbook' } = {}) => {
+    const raw = String(value || '').trim();
+    if (allowUnicode) return raw || fallback;
+    const cleaned = raw.replace(/[^a-zA-Z0-9_-]/g, '_').replace(/_+/g, '_').slice(0, 48);
+    return cleaned || fallback;
+};
+
+export const ensureUniqueWorldbookIdCore = async (options = {}) => {
+    const {
+        worldStore = null,
+        baseName = '',
+        allowUnicode = false,
+        now = () => Date.now(),
+    } = options || {};
+    try {
+        await worldStore?.ready;
+    } catch {}
+    const base = sanitizeWorldbookId(baseName, { allowUnicode, fallback: 'worldbook' });
+    if (!worldStore?.load?.(base)) return base;
+    let idx = 1;
+    while (idx < 9999) {
+        const next = `${base}_${idx}`;
+        if (!worldStore?.load?.(next)) return next;
+        idx += 1;
+    }
+    return `${base}_${now()}`;
+};
+
+export const resolveRefEntriesForDisplayCore = async (options = {}) => {
+    const {
+        refs = [],
+        getWorldInfo = null,
+    } = options || {};
+    const list = Array.isArray(refs) ? refs : [];
+    if (!list.length || typeof getWorldInfo !== 'function') return [];
+    const results = [];
+    const cache = new Map();
+    for (const raw of list) {
+        const ref = raw && typeof raw === 'object' ? raw : {};
+        const sourceId = String(ref.sourceId || ref.worldId || ref.source || '').trim();
+        if (!sourceId) continue;
+        if (!cache.has(sourceId)) {
+            let sourceData = null;
+            try {
+                sourceData = await getWorldInfo(sourceId);
+            } catch {}
+            cache.set(sourceId, sourceData || null);
+        }
+        const sourceData = cache.get(sourceId);
+        const sourceEntries = Array.isArray(sourceData?.entries) ? sourceData.entries : [];
+        if (!sourceEntries.length) continue;
+        const entryIdRaw = String(ref.entryId || ref.entry || '').trim();
+        const entryIds = Array.isArray(ref.entryIds)
+            ? ref.entryIds.map(val => String(val || '').trim()).filter(Boolean)
+            : [];
+        const includeAll = ref.includeAll === true || ref.all === true || entryIdRaw === '*' || entryIds.includes('*');
+        let picked = sourceEntries;
+        if (!includeAll) {
+            const idSet = new Set(entryIds);
+            if (entryIdRaw) idSet.add(entryIdRaw);
+            picked = idSet.size
+                ? sourceEntries.filter(entry => idSet.has(String(entry?.id ?? entry?.uid ?? '').trim()))
+                : [];
+        }
+        picked.forEach((entry, idx) => {
+            if (!entry) return;
+            const entryId = String(entry?.id ?? entry?.uid ?? `entry-${idx}`).trim();
+            results.push({ ...entry, _refSourceId: sourceId, _refEntryId: entryId });
+        });
+    }
+    return results;
+};
+
+export const collectBoundWorldRegexSets = async (options = {}) => {
+    const {
+        regexStore = null,
+        worldId = '',
+    } = options || {};
+    const targetWorldId = String(worldId || '').trim();
+    if (!regexStore || !targetWorldId) return [];
+    try {
+        await regexStore?.ready;
+        const sets = regexStore?.listLocalSets?.() || [];
+        return sets
+            .filter(item => item?.bind?.type === 'world' && item.bind.worldId === targetWorldId)
+            .map(item => ({
+                name: item.name,
+                enabled: item.enabled !== false,
+                rules: item.rules || [],
+            }));
+    } catch {
+        return [];
+    }
+};
+
+export const saveWorldInfoWithName = async (options = {}) => {
+    const {
+        currentName = '',
+        nextName = '',
+        payload = null,
+        listWorlds = null,
+        renameWorldInfo = null,
+        saveWorldInfo = null,
+    } = options || {};
+    const current = String(currentName || '').trim();
+    const next = String(nextName || '').trim();
+    if (!next) return { ok: false, reason: 'empty-name', worldName: current };
+    if (next !== current) {
+        const existing = typeof listWorlds === 'function' ? await listWorlds() : undefined;
+        if (Array.isArray(existing) && existing.includes(next)) {
+            return { ok: false, reason: 'duplicate-name', worldName: current };
+        }
+        if (typeof renameWorldInfo === 'function') {
+            await renameWorldInfo(current, next, payload);
+        }
+        return { ok: true, reason: 'renamed', worldName: next };
+    }
+    if (typeof saveWorldInfo !== 'function') {
+        throw new Error('saveWorldInfo is unavailable');
+    }
+    await saveWorldInfo(current, payload);
+    return { ok: true, reason: 'saved', worldName: current };
+};
+
+export const getWorldEntryActivationExplanationCore = (options = {}) => {
+    const {
+        entry = null,
+        idx = 0,
+        worldName = '',
+        getEntryId = null,
+        buildWorldDebugLabel = null,
+        explainWorldEntryActivation = null,
+        logger = null,
+    } = options || {};
+    const worldId = String(entry?._refSourceId || entry?._sourceWorldId || worldName || '').trim();
+    const entryId = typeof getEntryId === 'function'
+        ? String(getEntryId(entry, idx) || '').trim()
+        : String(entry?.id ?? entry?.uid ?? '').trim();
+    if (typeof explainWorldEntryActivation !== 'function' || !worldId || !entryId) return null;
+    try {
+        const label = typeof buildWorldDebugLabel === 'function' ? (buildWorldDebugLabel() || null) : null;
+        return explainWorldEntryActivation(worldId, entryId, label);
+    } catch (err) {
+        logger?.warn?.('读取世界书条目激活解释失败', err);
+        return null;
+    }
+};

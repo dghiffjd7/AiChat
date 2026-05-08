@@ -10,6 +10,7 @@ import {
   buildMomentPrivateChatMessages,
   buildMomentRecentCommentsText,
   collectMomentCommentContactList,
+  createMomentCommentLifecycleRuntime,
   createMomentSummaryCompactionRuntime,
   extractMomentReplySegments,
   extractMomentSummaryText,
@@ -352,6 +353,143 @@ import {
   assert.equal(retried, true);
   assert.deepEqual(parsed, ['RAW', 'RETRY']);
   console.log('ok - runMomentCommentGeneration retries with a fresh parser when initial parse misses moment replies');
+}
+
+{
+  const traces = [];
+  const warnings = [];
+  const runtime = createMomentCommentLifecycleRuntime({
+    getIsConfigured: () => false,
+    isOnline: () => true,
+    showMissingConfig: () => warnings.push('config'),
+    recordLifecycleEvent: event => traces.push(event),
+  });
+  const result = await runtime('m1', '评论');
+  assert.deepEqual(result, { ok: false, reason: 'not-configured' });
+  assert.equal(warnings[0], 'config');
+  assert.deepEqual(traces.map(event => [event.phase, event.status, event.details.reason]), [
+    ['comment.skipped', 'skipped', 'not-configured'],
+  ]);
+  console.log('ok - createMomentCommentLifecycleRuntime gates unconfigured comment generation before side effects');
+}
+
+{
+  const rawReply = [
+    'moment_reply_start',
+    'moment_id:: m1',
+    'Alice--收到',
+    'moment_reply_end',
+    '<details><summary>摘要</summary> 关系升温 </details>',
+  ].join('\n');
+  const traces = [];
+  const comments = [];
+  const chats = [];
+  const rawSaves = [];
+  const summaries = [];
+  const touched = [];
+  const bumps = [];
+  const runtime = createMomentCommentLifecycleRuntime({
+    getIsConfigured: () => true,
+    isOnline: () => true,
+    getConfig: () => ({ stream: false }),
+    getMoment: id => (id === 'm1'
+      ? {
+          id: 'm1',
+          author: 'Alice',
+          content: '今天出门',
+          time: '10:00',
+          originSessionId: 'contact:alice',
+          comments: [{ id: 'c1', author: 'Bob', content: '早安' }],
+        }
+      : null),
+    getCurrentSessionId: () => 'contact:current',
+    getContactCount: () => 3,
+    getActiveUserProfile: () => ({ name: '我', description: '设定' }),
+    getActiveUserName: () => '我',
+    contactsStore: {
+      listContacts: () => [{ id: 'contact:alice', name: 'Alice' }],
+      getContact: id => (id === 'contact:alice' ? { id, name: 'Alice' } : null),
+    },
+    momentsStore: {
+      get: id => (id === 'm1' ? { id } : null),
+      list: () => [{ id: 'm1' }],
+    },
+    normalizeName: value => String(value || '').trim(),
+    normalizeLooseName: value => String(value || '').trim(),
+    normalizeStickerTextForPrompt: value => String(value || '').trim(),
+    normalizeMomentComments: value => value,
+    addMomentComments: (momentId, nextComments) => {
+      comments.push({ momentId, comments: nextComments });
+      return { id: momentId };
+    },
+    bumpMomentEngagement: (momentId, count) => bumps.push([momentId, count]),
+    resolvePrivateChatTargetSessionId: name => (
+      name === 'Alice' ? 'contact:alice' : name === 'Bob' ? 'contact:bob' : ''
+    ),
+    parseSpecialMessage: content => ({ type: 'text', content, meta: {} }),
+    userAvatar: 'user.png',
+    resolveAssistantAvatar: () => 'alice.png',
+    formatNowTime: () => 'NOW',
+    appendPrivateChatMessage: (message, targetSessionId) => {
+      chats.push({ targetSessionId, message });
+      return { ...message, id: `chat-${chats.length}` };
+    },
+    autoMarkReadIfActive: () => {},
+    onTouchedChats: () => touched.push('chats'),
+    onTouchedMoments: () => touched.push('moments'),
+    generate: async (comment, context) => {
+      assert.equal(comment, '评论');
+      assert.equal(context.task.targetSessionId, 'contact:bob');
+      assert.match(context.task.promptData, /今天出门/);
+      return rawReply;
+    },
+    createParser: () => ({
+      push: () => [
+        { type: 'moment_reply', momentId: 'm1', comments: [{ author: 'Bob', content: '收到' }] },
+        { type: 'private_chat', otherName: 'Alice', messages: [{ speaker: 'Alice', content: '私聊' }] },
+      ],
+    }),
+    saveRawReply: async (raw, metadata) => rawSaves.push({ raw, metadata }),
+    flushMoments: async () => touched.push('flush'),
+    addSummary: async summary => summaries.push(['summary', summary]),
+    runSummaryCompaction: async () => summaries.push(['compact']),
+    notifySummariesUpdated: async () => summaries.push(['updated']),
+    recordLifecycleEvent: event => traces.push(event),
+    logger: { warn: () => {}, error: () => {} },
+  });
+
+  const result = await runtime('m1', ' 评论 ', {
+    userCommentId: 'user-comment-1',
+    replyTo: { id: 'c1', author: 'Bob', content: '早安' },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.fullRaw, rawReply);
+  assert.equal(result.summary, '关系升温');
+  assert.deepEqual(traces.map(event => [event.phase, event.status]), [
+    ['comment.start', 'started'],
+    ['comment.finish', 'success'],
+  ]);
+  assert.deepEqual(comments[0], {
+    momentId: 'm1',
+    comments: [{ author: 'Bob', content: '收到', replyTo: 'c1', replyToAuthor: 'Bob' }],
+  });
+  assert.equal(chats[0].targetSessionId, 'contact:alice');
+  assert.equal(chats[0].message.content, '私聊');
+  assert.deepEqual(rawSaves[0].metadata, {
+    momentId: 'm1',
+    author: 'Alice',
+    time: '10:00',
+    comment: '评论',
+  });
+  assert.deepEqual(summaries, [
+    ['summary', '关系升温'],
+    ['compact'],
+    ['updated'],
+  ]);
+  assert.deepEqual(touched, ['chats', 'moments', 'flush']);
+  assert.deepEqual(bumps, [['m1', 3], ['m1', 3]]);
+  console.log('ok - createMomentCommentLifecycleRuntime orchestrates comment generation events raw save and summary');
 }
 
 {

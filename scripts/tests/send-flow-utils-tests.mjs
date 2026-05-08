@@ -6,6 +6,10 @@ import {
   normalizeHandleSendOptions,
   resolveRegenerateFromUserIndexPlan,
   resolveSyspromptProtocolFlags,
+  runPendingSendPreparationFlow,
+  runRegenerateFromUserIndexFlow,
+  runSendCatchFlow,
+  runSendFinallyFlow,
 } from '../../src/scripts/ui/chat/send-flow-utils.js';
 
 const tests = [];
@@ -120,6 +124,144 @@ test('normalizeHandleSendOptions falls back safely for invalid payloads', () => 
   assert.equal(result.includeAttachments, true);
 });
 
+test('runPendingSendPreparationFlow restores pending queue, appends input, marks sending, and dispatches hooks', () => {
+  const calls = [];
+  let nextInputId = 1;
+  const store = new Map([
+    ['p0', { id: 'p0', status: 'pending', raw: 'history text', content: 'history display' }],
+  ]);
+  const appendMessage = (message, sessionId) => {
+    const id = message.id || `input-${nextInputId++}`;
+    const saved = { ...message, id };
+    calls.push(['append', sessionId, saved]);
+    store.set(id, saved);
+    return saved;
+  };
+  const ui = {
+    addMessage(message) {
+      calls.push(['ui-add', message.id]);
+    },
+    updateMessage(messageId, message) {
+      calls.push(['ui-update', messageId, message.status]);
+    },
+  };
+  const chatStore = {
+    updateMessage(messageId, patch, sessionId) {
+      const next = { ...(store.get(messageId) || { id: messageId }), ...patch };
+      calls.push(['store-update', sessionId, messageId, patch]);
+      store.set(messageId, next);
+      return next;
+    },
+    findMessage(messageId) {
+      return store.get(messageId);
+    },
+  };
+
+  const result = runPendingSendPreparationFlow({
+    allMessages: [store.get('p0')],
+    pendingQueue: [{ id: 'q1', status: 'queued', content: 'queued text' }],
+    sessionId: 'session-a',
+    getInputText: () => ' /贴纸 开心 ',
+    getActiveUserProfile: () => ({ name: ' 小明 ' }),
+    isStickerAllowed: () => true,
+    parseStickerToken: () => '开心',
+    getReplyTargetForSession: () => ({ messageId: 'assistant-1' }),
+    clearReplyTargetForSession: sessionId => calls.push(['clear-reply', sessionId]),
+    formatNowTime: () => '10:00',
+    userAvatar: 'user.png',
+    appendMessage,
+    addMessageToUi: message => ui.addMessage(message),
+    removePendingMessage: (messageId, sessionId) => calls.push(['remove-pending', sessionId, messageId]),
+    clearInput: () => calls.push(['clear-input']),
+    buildStickerToken: value => `[贴纸:${value}]`,
+    chatStore,
+    ui,
+    skipScripts: true,
+    pluginRuntime: {
+      dispatchEvent(event, payload) {
+        calls.push(['plugin', event, payload.message.id, payload.sessionId]);
+        return Promise.resolve();
+      },
+    },
+    refreshChatAndContacts: options => calls.push(['refresh', options]),
+    updatePendingFloat: sessionId => calls.push(['pending-float', sessionId]),
+  });
+
+  assert.equal(result.shouldContinue, true);
+  assert.equal(result.text, 'history text\nqueued text\n/贴纸 开心');
+  assert.deepEqual(result.pendingMessagesToConfirm.map(message => [message.id, message.status]), [
+    ['p0', 'sending'],
+    ['q1', 'sending'],
+    ['input-1', 'sending'],
+  ]);
+  assert.deepEqual(calls, [
+    ['append', 'session-a', { id: 'q1', status: 'pending', content: 'queued text' }],
+    ['ui-add', 'q1'],
+    ['remove-pending', 'session-a', 'q1'],
+    ['append', 'session-a', {
+      role: 'user',
+      type: 'sticker',
+      content: '开心',
+      raw: '/贴纸 开心',
+      status: 'pending',
+      avatar: 'user.png',
+      name: '小明',
+      time: '10:00',
+      meta: { replyTo: { messageId: 'assistant-1' } },
+      id: 'input-1',
+    }],
+    ['ui-add', 'input-1'],
+    ['clear-input'],
+    ['clear-reply', 'session-a'],
+    ['store-update', 'session-a', 'p0', { status: 'sending' }],
+    ['ui-update', 'p0', 'sending'],
+    ['store-update', 'session-a', 'q1', { status: 'sending' }],
+    ['ui-update', 'q1', 'sending'],
+    ['store-update', 'session-a', 'input-1', { status: 'sending' }],
+    ['ui-update', 'input-1', 'sending'],
+    ['plugin', 'message.after_send', 'p0', 'session-a'],
+    ['plugin', 'message.after_send', 'q1', 'session-a'],
+    ['plugin', 'message.after_send', 'input-1', 'session-a'],
+    ['refresh', { immediate: true }],
+    ['pending-float', 'session-a'],
+  ]);
+});
+
+test('runPendingSendPreparationFlow reports missing pending target and supports empty continuation sends', () => {
+  const errors = [];
+  const missing = runPendingSendPreparationFlow({
+    allMessages: [{ id: 'p0', status: 'pending', content: 'pending' }],
+    targetMessageId: 'missing',
+    showError: message => errors.push(message),
+  });
+
+  assert.deepEqual(missing, {
+    shouldContinue: false,
+    text: '',
+    pendingMessagesToConfirm: [],
+    errorMessage: '未找到指定消息',
+  });
+  assert.deepEqual(errors, ['未找到指定消息']);
+
+  const emptyBlocked = runPendingSendPreparationFlow({
+    allMessages: [],
+    getInputText: () => '',
+  });
+  assert.equal(emptyBlocked.shouldContinue, false);
+
+  const continuation = runPendingSendPreparationFlow({
+    allMessages: [],
+    getInputText: () => '',
+    continueTarget: { messageId: 'assistant-1' },
+  });
+  assert.deepEqual(continuation, {
+    shouldContinue: true,
+    text: '',
+    pendingMessagesToConfirm: [],
+    handledPending: false,
+  });
+});
+
 test('resolveRegenerateFromUserIndexPlan rejects invalid sending or non-latest user rounds', () => {
   const sending = resolveRegenerateFromUserIndexPlan({
     messages: [{ id: 'u1', role: 'user', status: 'sending' }],
@@ -176,6 +318,314 @@ test('resolveRegenerateFromUserIndexPlan supports empty assistant rounds only wh
   });
   assert.equal(allowed.canRegenerate, true);
   assert.deepEqual(allowed.regenMessages, []);
+});
+
+test('runRegenerateFromUserIndexFlow deletes regen messages restores table memory and resends user text', async () => {
+  const calls = [];
+  const messages = [
+    { id: 'u1', role: 'user', raw: '原始用户消息' },
+    { id: 'a1', role: 'assistant' },
+    { id: 'synthetic-1', role: 'user', meta: { generatedByAssistant: true } },
+  ];
+
+  const result = await runRegenerateFromUserIndexFlow({
+    messages,
+    userIdx: 0,
+    allowEmpty: false,
+    isSyntheticUser: message => message?.meta?.generatedByAssistant === true,
+    sessionId: 'session-regen',
+    chatStore: {
+      deleteMessage: (messageId, sessionId) => calls.push(['delete', messageId, sessionId]),
+      removeLastSummary: sessionId => calls.push(['remove-summary', sessionId]),
+    },
+    ui: {
+      removeMessage: messageId => calls.push(['remove-ui', messageId]),
+    },
+    recordTraceEvent: event => calls.push(['trace', event.phase, event.status, event.details]),
+    removeTurnCheckpointsForMessages: async (sessionId, regenMessages, options) => {
+      calls.push(['remove-checkpoints', sessionId, regenMessages.map(message => message.id), options]);
+    },
+    refreshChatAndContacts: () => calls.push(['refresh']),
+    getMemoryStorageMode: () => 'table',
+    restoreMemoryForActiveThread: async (sessionId, options) => calls.push(['restore-memory', sessionId, options]),
+    getMessageSendText: message => `send:${message.raw}`,
+    handleSend: async (targetMessageId, options) => {
+      calls.push(['handle-send', targetMessageId, options]);
+      return true;
+    },
+  });
+
+  assert.equal(result.started, true);
+  assert.equal(result.resent, true);
+  assert.deepEqual(result.plan.regenMessages.map(message => message.id), ['a1', 'synthetic-1']);
+  assert.deepEqual(calls, [
+    ['trace', 'regenerate.start', 'started', { userIdx: 0, allowEmpty: false, regenMessageCount: 2 }],
+    ['delete', 'a1', 'session-regen'],
+    ['remove-ui', 'a1'],
+    ['delete', 'synthetic-1', 'session-regen'],
+    ['remove-ui', 'synthetic-1'],
+    ['remove-checkpoints', 'session-regen', ['a1', 'synthetic-1'], { prune: true }],
+    ['refresh'],
+    ['remove-summary', 'session-regen'],
+    ['restore-memory', 'session-regen', {
+      refreshBaselineWhenNoTail: false,
+      source: 'regenerate_from_user_index',
+    }],
+    ['handle-send', null, {
+      overrideText: 'send:原始用户消息',
+      ignorePending: true,
+      suppressUserMessage: true,
+      skipInputRegex: true,
+      existingUserMessageId: 'u1',
+      includeAttachments: false,
+    }],
+    ['trace', 'regenerate.finish', 'success', {
+      userIdx: 0,
+      allowEmpty: false,
+      regenMessageCount: 2,
+      resent: true,
+    }],
+  ]);
+});
+
+test('runRegenerateFromUserIndexFlow warns on invalid plans and traces empty resend skips', async () => {
+  const invalidCalls = [];
+  const invalid = await runRegenerateFromUserIndexFlow({
+    messages: [{ id: 'u1', role: 'user', status: 'sending' }],
+    userIdx: 0,
+    warn: message => invalidCalls.push(['warn', message]),
+    recordTraceEvent: () => invalidCalls.push(['trace']),
+  });
+
+  assert.equal(invalid.started, false);
+  assert.equal(invalid.reason, 'user-message-sending');
+  assert.deepEqual(invalidCalls, [['warn', '发送中的消息无法重生成']]);
+
+  const emptyCalls = [];
+  const empty = await runRegenerateFromUserIndexFlow({
+    messages: [{ id: 'u1', role: 'user', content: '   ' }],
+    userIdx: 0,
+    allowEmpty: true,
+    sessionId: 'session-empty',
+    getMessageSendText: () => '   ',
+    warn: message => emptyCalls.push(['warn', message]),
+    recordTraceEvent: event => emptyCalls.push(['trace', event.phase, event.status, event.details]),
+  });
+
+  assert.equal(empty.started, true);
+  assert.equal(empty.resent, false);
+  assert.equal(empty.reason, 'empty-user-message');
+  assert.deepEqual(emptyCalls, [
+    ['trace', 'regenerate.start', 'started', { userIdx: 0, allowEmpty: true, regenMessageCount: 0 }],
+    ['trace', 'regenerate.finish', 'skipped', {
+      userIdx: 0,
+      allowEmpty: true,
+      reason: 'empty-user-message',
+    }],
+    ['warn', '未找到对应的用户消息内容'],
+  ]);
+});
+
+test('runSendCatchFlow clears active stream queue typing and shows retryable error ui', () => {
+  const calls = [];
+  let retryHandler = null;
+  const error = Object.assign(new Error('Boom'), {
+    status: 500,
+    response: { code: 'bad' },
+  });
+
+  const result = runSendCatchFlow({
+    error,
+    generationId: 17,
+    streamCtrl: {
+      cancel: () => calls.push(['stream-cancel']),
+    },
+    getActiveGeneration: () => {
+      calls.push(['get-active']);
+      return {
+        _messageQueue: {
+          cancel: () => calls.push(['queue-cancel']),
+        },
+      };
+    },
+    isGenerationInterrupted: generationId => {
+      calls.push(['interrupted', generationId]);
+      return false;
+    },
+    sessionId: 'session-error',
+    isSessionActive: sessionId => {
+      calls.push(['active', sessionId]);
+      return true;
+    },
+    hideTyping: () => calls.push(['hide-typing']),
+    fastForwardDelivery: sessionId => calls.push(['fast-forward', sessionId]),
+    logger: {
+      error: (message, err, meta) => calls.push(['logger', message, err.message, meta]),
+    },
+    showErrorBanner: (message, action) => {
+      calls.push(['banner', message, action.label]);
+      retryHandler = action.handler;
+    },
+    retrySend: () => calls.push(['retry']),
+    showToastError: (message, title) => calls.push(['toast', message, title]),
+  });
+  retryHandler();
+
+  assert.deepEqual(result, {
+    sendErrorMessage: 'Boom',
+    suppressErrorUI: false,
+    generationInterrupted: false,
+    cancelled: false,
+  });
+  assert.deepEqual(calls, [
+    ['interrupted', 17],
+    ['stream-cancel'],
+    ['get-active'],
+    ['queue-cancel'],
+    ['active', 'session-error'],
+    ['hide-typing'],
+    ['fast-forward', 'session-error'],
+    ['logger', '发送失败', 'Boom', { status: 500, response: { code: 'bad' } }],
+    ['banner', 'Boom', '重试'],
+    ['toast', 'Boom', '错误'],
+    ['retry'],
+  ]);
+});
+
+test('runSendCatchFlow suppresses cancelled or interrupted errors without touching stream ui', () => {
+  const calls = [];
+  const result = runSendCatchFlow({
+    error: { cancelled: true, message: '用户取消' },
+    generationId: 18,
+    streamCtrl: {
+      cancel: () => calls.push(['stream-cancel']),
+    },
+    getActiveGeneration: () => ({
+      _messageQueue: {
+        cancel: () => calls.push(['queue-cancel']),
+      },
+    }),
+    isGenerationInterrupted: generationId => {
+      calls.push(['interrupted', generationId]);
+      return true;
+    },
+    sessionId: 'session-cancel',
+    isSessionActive: () => {
+      calls.push(['active']);
+      return true;
+    },
+    hideTyping: () => calls.push(['hide-typing']),
+    fastForwardDelivery: () => calls.push(['fast-forward']),
+    logger: {
+      error: () => calls.push(['logger']),
+    },
+    showErrorBanner: () => calls.push(['banner']),
+    showToastError: () => calls.push(['toast']),
+  });
+
+  assert.deepEqual(result, {
+    sendErrorMessage: '用户取消',
+    suppressErrorUI: true,
+    generationInterrupted: true,
+    cancelled: true,
+  });
+  assert.deepEqual(calls, [
+    ['interrupted', 18],
+    ['queue-cancel'],
+  ]);
+});
+
+test('runSendFinallyFlow preserves successful send cleanup order', () => {
+  const calls = [];
+  let activeGeneration = { id: 12 };
+  const pending = [{ id: 'p1' }, { id: 'p2' }];
+
+  const result = runSendFinallyFlow({
+    sendSucceeded: true,
+    pendingMessagesToConfirm: pending,
+    sessionId: 'session-finally',
+    isGroupChat: true,
+    checkpointTargetMessageId: 'assistant-12',
+    generationId: 12,
+    sendTraceStarted: true,
+    finalizePendingMessages: (sessionId, messages) => calls.push(['finalize-pending', sessionId, messages.map(m => m.id)]),
+    movePendingFromHistoryToQueue: sessionId => calls.push(['move-pending', sessionId]),
+    refreshChatAndContacts: () => calls.push(['refresh']),
+    scriptRuntime: {
+      consumeOnce: sessionId => calls.push(['consume-once', sessionId]),
+    },
+    buildMemoryContext: () => {
+      calls.push(['build-memory-context']);
+      return { messages: [] };
+    },
+    runMemoryUpdateAfterChat: (sessionId, isGroupChat, context, options) => {
+      calls.push(['memory-update', sessionId, isGroupChat, context, options]);
+      return Promise.resolve();
+    },
+    updatePendingFloat: sessionId => calls.push(['update-pending-float', sessionId]),
+    getActiveGeneration: () => activeGeneration,
+    setActiveGeneration: next => {
+      calls.push(['set-active', next]);
+      activeGeneration = next;
+    },
+    setSendingState: value => calls.push(['sending', value]),
+    recordTraceEvent: event => calls.push(['trace', event.phase, event.status, event.details]),
+  });
+
+  assert.equal(result, true);
+  assert.equal(activeGeneration, null);
+  assert.deepEqual(calls, [
+    ['finalize-pending', 'session-finally', ['p1', 'p2']],
+    ['move-pending', 'session-finally'],
+    ['refresh'],
+    ['consume-once', 'session-finally'],
+    ['build-memory-context'],
+    ['memory-update', 'session-finally', true, { messages: [] }, { checkpointMessageId: 'assistant-12' }],
+    ['update-pending-float', 'session-finally'],
+    ['sending', false],
+    ['set-active', null],
+    ['trace', 'send.finish', 'success', {
+      generationId: 12,
+      sendSucceeded: true,
+      cancelled: undefined,
+      errorMessage: undefined,
+    }],
+  ]);
+});
+
+test('runSendFinallyFlow skips success-only cleanup and preserves other active generation', () => {
+  const calls = [];
+  const activeGeneration = { id: 99 };
+
+  const result = runSendFinallyFlow({
+    sendSucceeded: false,
+    pendingMessagesToConfirm: [{ id: 'p1' }],
+    sessionId: 'session-cancelled',
+    generationId: 12,
+    sendTraceStarted: true,
+    suppressErrorUI: true,
+    sendErrorMessage: 'ignored cancel text',
+    finalizePendingMessages: () => calls.push(['finalize-pending']),
+    movePendingFromHistoryToQueue: () => calls.push(['move-pending']),
+    refreshChatAndContacts: () => calls.push(['refresh']),
+    runMemoryUpdateAfterChat: () => calls.push(['memory-update']),
+    updatePendingFloat: sessionId => calls.push(['update-pending-float', sessionId]),
+    getActiveGeneration: () => activeGeneration,
+    setActiveGeneration: () => calls.push(['set-active']),
+    setSendingState: () => calls.push(['sending']),
+    recordTraceEvent: event => calls.push(['trace', event.phase, event.status, event.details]),
+  });
+
+  assert.equal(result, false);
+  assert.deepEqual(calls, [
+    ['update-pending-float', 'session-cancelled'],
+    ['trace', 'send.finish', 'cancelled', {
+      generationId: 12,
+      sendSucceeded: false,
+      cancelled: true,
+      errorMessage: 'ignored cancel text',
+    }],
+  ]);
 });
 
 test('resolveSyspromptProtocolFlags enables private or group protocol only when matching rules exist', () => {

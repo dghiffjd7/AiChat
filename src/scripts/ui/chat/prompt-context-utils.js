@@ -1,3 +1,5 @@
+import { getBridgeConfig } from '../config-runtime-utils.js';
+
 export const buildPresetContext = ({
   sessionId = '',
   uiMode = 'chat',
@@ -43,7 +45,7 @@ export const createPresetRuntime = ({
   const getReasoningPreset = () => getPresetByType('reasoning');
 
   const canUseDeepSeekPrefixCompletion = () => {
-    const config = appBridge?.config?.get?.() || {};
+    const config = getBridgeConfig(appBridge);
     if (String(config?.provider || '').trim().toLowerCase() === 'custom') return false;
     return typeof isDeepSeekRequest === 'function'
       ? isDeepSeekRequest({

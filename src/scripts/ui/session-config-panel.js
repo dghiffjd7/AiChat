@@ -1,6 +1,7 @@
 import { PresetStore } from '../storage/preset-store.js';
 import { getReasoningCapability } from '../api/model-capabilities.js';
 import { logger } from '../utils/logger.js';
+import { getConfigProfileById, getConfigProfiles } from './config-runtime-utils.js';
 import { closeCustomSelectMenu as closeSharedCustomSelectMenu, openCustomSelectMenu } from './custom-select.js';
 
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>"]/g, (ch) => ({
@@ -288,7 +289,7 @@ export class SessionConfigPanel {
     }
 
     getProfiles() {
-        return window.appBridge?.config?.getProfiles?.() || [];
+        return getConfigProfiles(window.appBridge);
     }
 
     getPresetList() {
@@ -302,7 +303,7 @@ export class SessionConfigPanel {
     }
 
     getProfileName(profileId) {
-        const profile = profileId ? window.appBridge?.config?.getProfileById?.(profileId) : null;
+        const profile = profileId ? getConfigProfileById(window.appBridge, profileId) : null;
         return String(profile?.name || '').trim() || (profileId || '');
     }
 
@@ -592,7 +593,7 @@ export class SessionConfigPanel {
 
     getSessionReasoningSummary(entry, currentProfileId, resolvedPreset = {}) {
         if (!currentProfileId) return '';
-        const profile = window.appBridge?.config?.getProfileById?.(currentProfileId);
+        const profile = getConfigProfileById(window.appBridge, currentProfileId);
         if (!profile) return '';
         const cap = getReasoningCapability({ provider: profile.provider, model: profile.model });
         if (!cap.supported || !cap.requestControl) return '';
@@ -664,7 +665,7 @@ export class SessionConfigPanel {
     }
 
     renderReasoningControls(container, profileId, ctx) {
-        const profile = window.appBridge?.config?.getProfileById?.(profileId);
+        const profile = getConfigProfileById(window.appBridge, profileId);
         if (!profile) return;
         const cap = getReasoningCapability({ provider: profile.provider, model: profile.model });
         if (!cap.supported || !cap.requestControl) return;
