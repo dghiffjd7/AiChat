@@ -13,7 +13,13 @@ import { safeInvoke } from '../utils/tauri.js';
 import { WorldEditorModal } from './world-editor.js';
 import { appConfirm } from './app-confirm.js';
 import { bindCustomSelectButton, closeCustomSelectMenu, refreshCustomSelectButton } from './custom-select.js';
-import { listRegexLocalSets, upsertRegexLocalSet, waitForRegexStoreReady } from './regex-store-runtime-utils.js';
+import {
+    listRegexLocalSets,
+    syncWorldRegexBindings,
+    upsertRegexLocalSet,
+    waitForRegexStoreReady,
+} from './regex-store-runtime-utils.js';
+import { emitWorldInfoChanged, getCurrentWorldId, getGlobalWorldId } from './world-session-runtime-utils.js';
 
 export class WorldPanel {
     constructor({ contactsStore = null, getSessionId = null } = {}) {
@@ -217,7 +223,7 @@ export class WorldPanel {
             const indicator = this.panel?.querySelector('#world-current');
             const buildToggle = (opts) => this.buildToggle(opts);
             const visibleSessionIds = (window.appBridge?.getWorldIdsForSession?.(sessionKey) || []).filter((id) => id !== BUILTIN_PHONE_FORMAT_WORLDBOOK_ID);
-            const globalId = String(window.appBridge?.globalWorldId || '').trim();
+            const globalId = getGlobalWorldId(window.appBridge);
             const normalizedGlobalId = globalId === BUILTIN_PHONE_FORMAT_WORLDBOOK_ID ? '' : globalId;
             const roleBindings = this.getRoleBindings(sessionKey, { includeEmpty: true })
                 .filter((item) => item?.hasWorld || item?.isActive);
@@ -705,8 +711,8 @@ export class WorldPanel {
                         offBtn.onclick = async () => {
                             if (offBtn.disabled) return;
                             window.appBridge?.setSessionWorldIds?.(memberId, [], { silent: true });
-                            window.appBridge?.syncWorldRegexBindings?.();
-                            window.appBridge?.emitWorldInfoChanged?.({ sessionId: sessionKey });
+                            syncWorldRegexBindings(window.appBridge);
+                            emitWorldInfoChanged(window.appBridge, { sessionId: sessionKey });
                             window.toastr?.success?.('已清空成员附加世界书');
                             await this.refreshList();
                         };
@@ -1015,8 +1021,8 @@ export class WorldPanel {
                         const isActiveSession = sid === activeSessionId;
                         window.appBridge?.setSessionWorldIds?.(sid, Array.from(next), { silent: !isActiveSession });
                         if (!isActiveSession) {
-                            window.appBridge?.syncWorldRegexBindings?.();
-                            window.appBridge?.emitWorldInfoChanged?.({ sessionId: sid });
+                            syncWorldRegexBindings(window.appBridge);
+                            emitWorldInfoChanged(window.appBridge, { sessionId: sid });
                         }
                     }
                     await this.refreshList();
@@ -1090,8 +1096,8 @@ export class WorldPanel {
                 const isActiveSession = sid === activeSessionId;
                 await window.appBridge?.setSessionWorldIds?.(sid, next, { silent: !isActiveSession });
                 if (!isActiveSession) {
-                    window.appBridge?.syncWorldRegexBindings?.();
-                    window.appBridge?.emitWorldInfoChanged?.({ sessionId: sid });
+                    syncWorldRegexBindings(window.appBridge);
+                    emitWorldInfoChanged(window.appBridge, { sessionId: sid });
                 }
             }
 
@@ -1642,8 +1648,8 @@ export class WorldPanel {
 
     async onExportCurrent() {
         const current = this.scope === 'global'
-            ? (window.appBridge.globalWorldId || '')
-            : (window.appBridge.currentWorldId || '');
+            ? getGlobalWorldId(window.appBridge)
+            : getCurrentWorldId(window.appBridge);
         if (!current || current === '未启用') {
             window.toastr?.warning('没有可导出的世界书');
             return;

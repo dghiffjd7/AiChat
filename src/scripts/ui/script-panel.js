@@ -2,6 +2,7 @@ import { appSettings } from '../storage/app-settings.js';
 import { appConfirm } from './app-confirm.js';
 import { getCharacterCardDisplayName } from '../utils/character-card-display.js';
 import { bindCustomSelectButton, closeCustomSelectMenu, createCustomSelectWrapper } from './custom-select.js';
+import { restartScriptWorker } from './script-runtime-utils.js';
 
 const SOURCE_LABELS = {
   user: '手动创建',
@@ -81,10 +82,11 @@ const openScriptEditor = ({ script, title = '编辑脚本' } = {}) => new Promis
 });
 
 export class ScriptPanel {
-  constructor({ store, personaStore, presetStore } = {}) {
+  constructor({ store, personaStore, presetStore, appBridge = null } = {}) {
     this.store = store || null;
     this.personaStore = personaStore || null;
     this.presetStore = presetStore || null;
+    this.appBridge = appBridge || null;
     this.overlay = null;
     this.panel = null;
     this.body = null;
@@ -428,7 +430,7 @@ export class ScriptPanel {
         }
         await this.store.toggleScript(this.tab, scopeId, script.id, toggle.checked);
         try {
-          window.appBridge?.scriptRuntime?.restartWorker?.('脚本已重新加载');
+          restartScriptWorker(this.appBridge, '脚本已重新加载');
         } catch {}
         this.refresh();
       });

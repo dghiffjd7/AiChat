@@ -8,6 +8,10 @@ import {
   dispatchAfterSendEvents,
   markMessagesAsSending,
 } from './send-side-effect-utils.js';
+import {
+  normalizeLifecycleTraceDetails,
+  normalizeLifecycleTraceText,
+} from './lifecycle-trace-utils.js';
 
 const normalizeStringIdList = (items = []) => Array.from(
   new Set(
@@ -16,20 +20,6 @@ const normalizeStringIdList = (items = []) => Array.from(
       .filter(Boolean),
   ),
 );
-
-const isPlainObject = value => Boolean(value && typeof value === 'object' && !Array.isArray(value));
-
-const normalizeTraceText = (value, fallback = '') => {
-  const text = String(value || '').trim();
-  return text || fallback;
-};
-
-const normalizeTraceDetails = (details = {}) => {
-  if (!isPlainObject(details)) return {};
-  return Object.fromEntries(
-    Object.entries(details).filter(([, value]) => typeof value !== 'undefined'),
-  );
-};
 
 export const buildSendFlowTraceEvent = ({
   phase = '',
@@ -40,11 +30,11 @@ export const buildSendFlowTraceEvent = ({
 } = {}) => ({
   category: 'generation',
   source: 'send-flow',
-  phase: normalizeTraceText(phase, 'event'),
-  sessionId: normalizeTraceText(sessionId, ''),
-  status: normalizeTraceText(status, 'info'),
-  summary: normalizeTraceText(summary, ''),
-  details: normalizeTraceDetails(details),
+  phase: normalizeLifecycleTraceText(phase, 'event'),
+  sessionId: normalizeLifecycleTraceText(sessionId, ''),
+  status: normalizeLifecycleTraceText(status, 'info'),
+  summary: normalizeLifecycleTraceText(summary, ''),
+  details: normalizeLifecycleTraceDetails(details),
 });
 
 export const normalizeHandleSendInvocation = (targetMessageId = null, options = {}) => {

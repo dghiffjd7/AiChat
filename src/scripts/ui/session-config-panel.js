@@ -3,6 +3,7 @@ import { getReasoningCapability } from '../api/model-capabilities.js';
 import { logger } from '../utils/logger.js';
 import { getConfigProfileById, getConfigProfiles } from './config-runtime-utils.js';
 import { closeCustomSelectMenu as closeSharedCustomSelectMenu, openCustomSelectMenu } from './custom-select.js';
+import { getPresetStore } from './preset-store-runtime-utils.js';
 
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>"]/g, (ch) => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;',
@@ -177,8 +178,9 @@ const SC_PANEL_CSS = `
 `;
 
 export class SessionConfigPanel {
-    constructor() {
-        this.store = window.appBridge?.presets || new PresetStore();
+    constructor({ store = null } = {}) {
+        const bridge = typeof window !== 'undefined' ? window.appBridge : null;
+        this.store = store || getPresetStore(bridge) || new PresetStore();
         this.overlay = null;
         this.panel = null;
         this.scrollEl = null;

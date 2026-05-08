@@ -31,6 +31,7 @@ export const resolveConfigRuntimeBridge = (options = {}) => {
     setActiveConfigProfile: options?.setActiveConfigProfile || bindBridgeMethod(bridge, 'setActiveConfigProfile'),
     createConfigProfile: options?.createConfigProfile || bindBridgeMethod(bridge, 'createConfigProfile'),
     setChatRuntimeConfig: options?.setChatRuntimeConfig || bindBridgeMethod(bridge, 'setChatRuntimeConfig'),
+    isConfigured: options?.isConfigured || bindBridgeMethod(bridge, 'isConfigured'),
   };
 };
 
@@ -97,6 +98,12 @@ export const createConfigProfile = async (bridgeOrContext = null, name = '', con
   const context = resolveConfigRuntimeContext(bridgeOrContext);
   if (typeof context?.createConfigProfile === 'function') return await context.createConfigProfile(name, config);
   return await context?.configManager?.createProfile?.(name, config);
+};
+
+export const isBridgeConfigured = (bridgeOrContext = null) => {
+  const context = resolveConfigRuntimeContext(bridgeOrContext);
+  if (typeof context?.isConfigured === 'function') return Boolean(context.isConfigured());
+  return true;
 };
 
 export const syncChatRuntimeConfigToBridge = ({

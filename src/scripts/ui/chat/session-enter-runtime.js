@@ -6,15 +6,33 @@ import {
   resolveEnterScrollMode,
   shouldUseProgressiveInitialRender,
 } from './session-enter-utils.js';
+import {
+  emitLifecycleTraceEvent,
+  normalizeLifecycleTraceDetails,
+  normalizeLifecycleTraceText,
+} from './lifecycle-trace-utils.js';
+
+export const buildSessionEnterTraceEvent = ({
+  phase = '',
+  sessionId = '',
+  status = 'info',
+  summary = '',
+  details,
+} = {}) => {
+  const event = {
+    category: 'session',
+    source: 'session-enter-runtime',
+    phase: normalizeLifecycleTraceText(phase, 'event'),
+    sessionId: normalizeLifecycleTraceText(sessionId, ''),
+    status: normalizeLifecycleTraceText(status, 'info'),
+    summary: normalizeLifecycleTraceText(summary, ''),
+  };
+  if (details !== undefined) event.details = normalizeLifecycleTraceDetails(details);
+  return event;
+};
 
 const emitSessionEnterTrace = (recordTraceEvent, event) => {
-  try {
-    recordTraceEvent?.({
-      category: 'session',
-      source: 'session-enter-runtime',
-      ...event,
-    });
-  } catch {}
+  emitLifecycleTraceEvent(recordTraceEvent, buildSessionEnterTraceEvent(event));
 };
 
 export const activateSessionEnterView = ({

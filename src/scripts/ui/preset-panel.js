@@ -28,6 +28,8 @@ import {
     upsertRegexLocalSet,
     waitForRegexStoreReady,
 } from './regex-store-runtime-utils.js';
+import { getPresetStore } from './preset-store-runtime-utils.js';
+import { waitForScriptStoreReady } from './script-runtime-utils.js';
 
 /* Section definitions — order matters for rendering */
 const SECTIONS = [
@@ -702,8 +704,9 @@ const PANEL_CSS = `
 `;
 
 export class PresetPanel {
-    constructor() {
-        this.store = window.appBridge?.presets || new PresetStore();
+    constructor({ store = null } = {}) {
+        const bridge = typeof window !== 'undefined' ? window.appBridge : null;
+        this.store = store || getPresetStore(bridge) || new PresetStore();
         this.element = null;
         this.overlayElement = null;
         this.statusEl = null;
@@ -3032,8 +3035,7 @@ export class PresetPanel {
         } catch {}
 
         try {
-            const scriptStore = window.appBridge?.scriptStore;
-            if (scriptStore?.ready) await scriptStore.ready;
+            const scriptStore = await waitForScriptStoreReady(window.appBridge);
             const scripts = scriptStore?.getScripts?.('preset', id) || [];
             if (Array.isArray(scripts) && scripts.length) {
                 const delScripts = await appConfirm({
@@ -3301,8 +3303,7 @@ export class PresetPanel {
             } catch {}
 
             try {
-                const scriptStore = window.appBridge?.scriptStore;
-                if (scriptStore?.ready) await scriptStore.ready;
+                const scriptStore = await waitForScriptStoreReady(window.appBridge);
                 const bindId = this.store.getActiveId(type);
                 const boundScripts = bindId && scriptStore?.getScripts
                     ? (scriptStore.getScripts('preset', bindId) || [])
@@ -3424,8 +3425,7 @@ export class PresetPanel {
                     confirmText: '一并导入', cancelText: '仅导入预设',
                 });
                 if (ok) {
-                    const scriptStore = window.appBridge?.scriptStore;
-                    if (scriptStore?.ready) await scriptStore.ready;
+                    const scriptStore = await waitForScriptStoreReady(window.appBridge);
                     const result = await scriptStore?.importTavernHelperScripts?.({
                         scripts: boundScripts,
                         scope: 'preset',

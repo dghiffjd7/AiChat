@@ -7,7 +7,10 @@ export const BRIDGE_CONTRACT_DOMAINS = Object.freeze({
   sessionState: 'session-state',
   roleWorld: 'role-world',
   worldStore: 'world-store',
+  worldSession: 'world-session',
   configRuntime: 'config-runtime',
+  presetStore: 'preset-store',
+  scriptRuntime: 'script-runtime',
   generation: 'generation',
   regexTransform: 'regex-transform',
   regexStore: 'regex-store',
@@ -15,7 +18,9 @@ export const BRIDGE_CONTRACT_DOMAINS = Object.freeze({
   runtimeService: 'runtime-service',
   turnCheckpoint: 'turn-checkpoint',
   memoryUpdate: 'memory-update',
+  memoryStore: 'memory-store',
   messageAction: 'message-action',
+  chatUi: 'chat-ui',
   uiUtility: 'ui-utility',
 });
 
@@ -138,8 +143,20 @@ export const registerWorldStoreBridgeContract = (appBridge, methods = {}) => {
   return assignBridgeMethods(appBridge, methods, BRIDGE_CONTRACT_DOMAINS.worldStore);
 };
 
+export const registerWorldSessionBridgeContract = (appBridge, methods = {}) => {
+  return assignBridgeMethods(appBridge, methods, BRIDGE_CONTRACT_DOMAINS.worldSession);
+};
+
 export const registerConfigRuntimeBridgeContract = (appBridge, methods = {}) => {
   return assignBridgeMethods(appBridge, methods, BRIDGE_CONTRACT_DOMAINS.configRuntime);
+};
+
+export const registerPresetStoreBridgeContract = (appBridge, methods = {}) => {
+  return assignBridgeMethods(appBridge, methods, BRIDGE_CONTRACT_DOMAINS.presetStore);
+};
+
+export const registerScriptRuntimeBridgeContract = (appBridge, methods = {}) => {
+  return assignBridgeMethods(appBridge, methods, BRIDGE_CONTRACT_DOMAINS.scriptRuntime);
 };
 
 export const registerGenerationBridgeContract = (appBridge, methods = {}) => {
@@ -170,8 +187,16 @@ export const registerMemoryUpdateBridgeContract = (appBridge, methods = {}) => {
   return assignBridgeMethods(appBridge, methods, BRIDGE_CONTRACT_DOMAINS.memoryUpdate);
 };
 
+export const registerMemoryStoreBridgeContract = (appBridge, methods = {}) => {
+  return assignBridgeMethods(appBridge, methods, BRIDGE_CONTRACT_DOMAINS.memoryStore);
+};
+
 export const registerMessageActionBridgeContract = (appBridge, methods = {}) => {
   return assignBridgeMethods(appBridge, methods, BRIDGE_CONTRACT_DOMAINS.messageAction);
+};
+
+export const registerChatUiBridgeContract = (appBridge, methods = {}) => {
+  return assignBridgeMethods(appBridge, methods, BRIDGE_CONTRACT_DOMAINS.chatUi);
 };
 
 export const registerUiUtilityBridgeContract = (appBridge, methods = {}) => {

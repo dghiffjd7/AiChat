@@ -1,4 +1,5 @@
 import { getBridgeConfig } from '../config-runtime-utils.js';
+import { getPresetStore } from '../preset-store-runtime-utils.js';
 
 export const buildPresetContext = ({
   sessionId = '',
@@ -10,7 +11,7 @@ export const buildPresetContext = ({
 
 export const resolveResolvedPreset = (appBridge, presetType, context = {}) => {
   try {
-    return appBridge?.presets?.getResolvedActive?.(String(presetType || '').trim(), context)?.preset || {};
+    return getPresetStore(appBridge)?.getResolvedActive?.(String(presetType || '').trim(), context)?.preset || {};
   } catch {
     return {};
   }
@@ -20,7 +21,7 @@ export const resolveEnabledPreset = (appBridge, presetType, context = {}) => {
   const type = String(presetType || '').trim();
   if (!type) return {};
   try {
-    const enabled = appBridge?.presets?.getState?.()?.enabled || {};
+    const enabled = getPresetStore(appBridge)?.getState?.()?.enabled || {};
     if (!enabled?.[type]) return {};
   } catch {
     return {};

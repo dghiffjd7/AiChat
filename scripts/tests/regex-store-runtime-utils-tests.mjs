@@ -2,10 +2,13 @@ import assert from 'node:assert/strict';
 
 import {
   createRegexStoreRuntimeAdapter,
+  getRegexContext,
   getRegexLocalSet,
   getRegexSession,
   listRegexLocalSets,
   removeRegexLocalSet,
+  syncPresetRegexBindings,
+  syncWorldRegexBindings,
   upsertRegexLocalSet,
   waitForRegexStoreReady,
 } from '../../src/scripts/ui/regex-store-runtime-utils.js';
@@ -17,6 +20,7 @@ test('regex store helpers prefer bridge contract methods', async () => {
   const calls = [];
   const bridge = {
     waitForRegexStoreReady: async () => true,
+    getRegexContext: options => ({ sessionId: options.sessionId }),
     getRegexSession: id => ({ id, enabled: true }),
     listRegexLocalSets: () => [{ id: 'set-1' }],
     getRegexLocalSet: id => ({ id, name: 'Set' }),
@@ -28,16 +32,29 @@ test('regex store helpers prefer bridge contract methods', async () => {
       calls.push(['remove', id]);
       return true;
     },
+    syncPresetRegexBindings: async () => {
+      calls.push(['sync-preset']);
+      return 'preset';
+    },
+    syncWorldRegexBindings: async () => {
+      calls.push(['sync-world']);
+      return 'world';
+    },
   };
   assert.equal(await waitForRegexStoreReady(bridge), true);
+  assert.deepEqual(getRegexContext(bridge, { sessionId: 's1' }), { sessionId: 's1' });
   assert.deepEqual(getRegexSession(bridge, 's1'), { id: 's1', enabled: true });
   assert.deepEqual(listRegexLocalSets(bridge), [{ id: 'set-1' }]);
   assert.deepEqual(getRegexLocalSet(bridge, 'set-1'), { id: 'set-1', name: 'Set' });
   assert.equal(await upsertRegexLocalSet(bridge, { name: 'New' }), 'set-2');
   assert.equal(await removeRegexLocalSet(bridge, 'set-1'), true);
+  assert.equal(await syncPresetRegexBindings(bridge), 'preset');
+  assert.equal(await syncWorldRegexBindings(bridge), 'world');
   assert.deepEqual(calls, [
     ['upsert', { name: 'New' }],
     ['remove', 'set-1'],
+    ['sync-preset'],
+    ['sync-world'],
   ]);
 });
 
@@ -68,6 +85,15 @@ test('regex adapter keeps legacy store-compatible surface', async () => {
     ['upsert', { name: 'New' }],
     ['remove', 'set-1'],
   ]);
+});
+
+test('regex context helper tolerates missing contract', () => {
+  assert.deepEqual(getRegexContext({}), {});
+});
+
+test('regex sync helpers tolerate missing contract', async () => {
+  assert.equal(await syncPresetRegexBindings({}), null);
+  assert.equal(await syncWorldRegexBindings({}), null);
 });
 
 let failed = 0;

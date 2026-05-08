@@ -13,7 +13,9 @@ import {
 } from '../memory/memory-row-order.js';
 import { logger } from '../utils/logger.js';
 import { appConfirm } from './app-confirm.js';
+import { getLastMemoryUpdate } from './chat/memory-update-runtime-utils.js';
 import { bindCustomSelectButton, createCustomSelectWrapper, refreshCustomSelectButton } from './custom-select.js';
+import { getCurrentWorldId, getGlobalWorldId, setCurrentWorld } from './world-session-runtime-utils.js';
 
 const scopeLabelMap = {
   global: '全局',
@@ -743,7 +745,7 @@ export class MemoryTableEditor {
     const effectiveScope = scope;
     const sessionId = this.resolveSessionId(ctx);
     if (effectiveScope === 'global') {
-      let worldId = String(appBridge.globalWorldId || '').trim();
+      let worldId = getGlobalWorldId(appBridge);
       if (!worldId) {
         const ok = await appConfirm({
           title: '创建世界书',
@@ -758,7 +760,7 @@ export class MemoryTableEditor {
       }
       return worldId;
     }
-    let worldId = String(appBridge.currentWorldId || '').trim();
+    let worldId = getCurrentWorldId(appBridge);
     if (!worldId) {
       const ok = await appConfirm({
         title: '创建世界书',
@@ -768,7 +770,7 @@ export class MemoryTableEditor {
       const rawId = sessionId || 'default';
       const safeId = rawId.replace(/[^a-zA-Z0-9_-]+/g, '_').slice(0, 80) || 'default';
       worldId = `memory-table-${safeId}`;
-      appBridge.setCurrentWorld?.(worldId, sessionId);
+      setCurrentWorld(appBridge, worldId, sessionId);
       try {
         await appBridge.saveWorldInfo(worldId, { name: worldId, entries: [] });
       } catch {}
@@ -905,7 +907,7 @@ export class MemoryTableEditor {
       this.lastUpdatePanel.style.display = 'flex';
       return;
     }
-    const entry = window.appBridge?.getLastMemoryUpdate?.(sessionId);
+    const entry = getLastMemoryUpdate(window.appBridge, sessionId);
     if (!entry) {
       this.lastUpdateMeta.textContent = '暂无记录';
       this.lastUpdateContent.value = viewType === 'prompt' ? '尚未记录任何写表请求提示词。' : '尚未记录任何写表输出。';

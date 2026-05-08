@@ -8,6 +8,7 @@ import { cleanupRichText, renderRichText, setupIframeResizeListener } from './ri
 import { appSettings } from '../../storage/app-settings.js';
 import { logger } from '../../utils/logger.js';
 import { getDefaultAppIcon } from '../../utils/default-icon.js';
+import { getPluginRuntime } from '../app-runtime-service-utils.js';
 import { bindCustomSelectButton, createCustomSelectWrapper } from '../custom-select.js';
 import {
   DEFAULT_REACTION_EMOJIS,
@@ -54,6 +55,7 @@ import { createDeliveryStatusUiRuntime } from './delivery-status-ui-utils.js';
 import { createTypingIndicatorUiRuntime } from './typing-indicator-ui-utils.js';
 import { createTypingIndicatorShell, renderTypingGroupMembers } from './typing-indicator-dom-utils.js';
 import { createTypingIndicatorScheduleRuntime } from './typing-indicator-schedule-utils.js';
+import { dispatchScriptEvent } from '../script-runtime-utils.js';
 import {
   createSwipeIndicatorElement,
   ensureSwipeMeta,
@@ -1421,8 +1423,8 @@ export class ChatUI {
    *   true = 仅在用户已在底部时滚动（Discord风格）。false = 不滚动。
    */
   addMessage(message, options = {}) {
-    const runtime = typeof window !== 'undefined' ? window.appBridge?.pluginRuntime : null;
-    const scriptRuntime = typeof window !== 'undefined' ? window.appBridge?.scriptRuntime : null;
+    const runtime = typeof window !== 'undefined' ? getPluginRuntime(window.appBridge) : null;
+    const scriptBridge = typeof window !== 'undefined' ? window.appBridge : null;
     return addMessageCore({
       message,
       options,
@@ -1444,8 +1446,9 @@ export class ChatUI {
             logger.warn('plugin message.before_render failed', err);
           });
         }
-        if (scriptRuntime) {
-          scriptRuntime.dispatchEvent('message.before_render', { message: renderedMessage }).catch(err => {
+        const scriptDispatch = dispatchScriptEvent(scriptBridge, 'message.before_render', { message: renderedMessage });
+        if (scriptDispatch?.catch) {
+          scriptDispatch.catch(err => {
             logger.warn('script message.before_render failed', err);
           });
         }
@@ -1456,8 +1459,9 @@ export class ChatUI {
             logger.warn('plugin message.after_render failed', err);
           });
         }
-        if (scriptRuntime && element) {
-          scriptRuntime.dispatchEvent('message.after_render', { message: renderedMessage, elementId: renderedMessage?.id || '' }).catch(err => {
+        if (element) {
+          const scriptDispatch = dispatchScriptEvent(scriptBridge, 'message.after_render', { message: renderedMessage, elementId: renderedMessage?.id || '' });
+          scriptDispatch?.catch?.(err => {
             logger.warn('script message.after_render failed', err);
           });
         }

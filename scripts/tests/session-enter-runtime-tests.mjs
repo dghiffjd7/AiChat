@@ -7,6 +7,7 @@ import {
   applySessionEnterChatSettings,
   applySessionEnterLoadingState,
   applySessionEnterScrollMode,
+  buildSessionEnterTraceEvent,
   deactivateSessionEnterView,
   finalizeSessionEnterNavigation,
   finalizeSessionEnterUiState,
@@ -25,6 +26,41 @@ import {
   runSavedUiRestoreFlow,
   saveUiStateSnapshot,
 } from '../../src/scripts/ui/chat/session-enter-runtime.js';
+
+{
+  assert.deepEqual(buildSessionEnterTraceEvent({
+    phase: ' enter.start ',
+    sessionId: ' s1 ',
+    status: ' started ',
+    summary: ' started ',
+    details: {
+      kept: false,
+      dropped: undefined,
+    },
+  }), {
+    category: 'session',
+    source: 'session-enter-runtime',
+    phase: 'enter.start',
+    sessionId: 's1',
+    status: 'started',
+    summary: 'started',
+    details: { kept: false },
+  });
+  assert.deepEqual(buildSessionEnterTraceEvent({
+    phase: ' enter.finish ',
+    sessionId: ' s1 ',
+    status: ' stale ',
+    summary: ' stale ',
+  }), {
+    category: 'session',
+    source: 'session-enter-runtime',
+    phase: 'enter.finish',
+    sessionId: 's1',
+    status: 'stale',
+    summary: 'stale',
+  });
+  console.log('ok - buildSessionEnterTraceEvent normalizes session trace metadata while preserving optional details');
+}
 
 {
   const calls = [];

@@ -6,7 +6,12 @@ import {
   executeMemoryActionBatchMutation,
   restoreMemoryRowsFromRollbackSnapshot,
 } from '../../src/scripts/ui/chat/memory-table-action-utils.js';
-import { handleMemoryEditsFromRawWithUi } from '../../src/scripts/ui/chat/memory-update-runtime-utils.js';
+import {
+  getLastMemoryPlan,
+  getLastMemoryUpdate,
+  handleMemoryEditsFromRawWithUi,
+  setLastMemoryUpdate,
+} from '../../src/scripts/ui/chat/memory-update-runtime-utils.js';
 import {
   loadSessionMemoryActionContext,
   loadSessionMemoryRollbackSnapshotContext,
@@ -105,14 +110,15 @@ const memoryTableStore = {
 };
 
 let lastMemoryUpdate = null;
+const memoryPlan = {
+  targetId: 'contact:memory',
+  tableOrder: ['relationship'],
+  rowIndexMap: { relationship: ['row-1'] },
+  updateMode: 'full',
+};
 const appBridge = {
-  lastMemoryPlan: {
-    targetId: 'contact:memory',
-    tableOrder: ['relationship'],
-    rowIndexMap: { relationship: ['row-1'] },
-    updateMode: 'full',
-  },
   lastRequest: { messages: [{ role: 'user', content: 'history' }] },
+  getLastMemoryPlan: () => memoryPlan,
   getLastMemoryUpdate: () => lastMemoryUpdate,
   setLastMemoryUpdate: (sessionId, entry) => {
     lastMemoryUpdate = { ...(entry || {}), sessionId };
@@ -120,6 +126,7 @@ const appBridge = {
 };
 
 const applyMemoryEdits = async ({ actions, sessionId, isGroup }) => {
+  const memoryPlan = getLastMemoryPlan(appBridge) || {};
   const actionContext = await loadSessionMemoryActionContext({
     memoryTemplateStore,
     memoryTableStore,
@@ -127,21 +134,21 @@ const applyMemoryEdits = async ({ actions, sessionId, isGroup }) => {
     isGroup,
     uiMode: 'chat',
     filterTables: true,
-    tableOrderOverride: appBridge.lastMemoryPlan.tableOrder,
-    rowIndexMap: appBridge.lastMemoryPlan.rowIndexMap,
+    tableOrderOverride: memoryPlan.tableOrder,
+    rowIndexMap: memoryPlan.rowIndexMap,
   });
   const result = await executeMemoryActionBatchMutation({
     actions,
     actionContext,
-    updateMode: appBridge.lastMemoryPlan.updateMode,
+    updateMode: memoryPlan.updateMode,
     memoryTableStore,
     createMemories: inputs => memoryTableStore.batchCreateMemories(inputs),
     currentTurnNumber: 1,
     isGroup,
   });
   if (result.rollbackSnapshot) {
-    appBridge.setLastMemoryUpdate(sessionId, {
-      ...(appBridge.getLastMemoryUpdate(sessionId) || {}),
+    setLastMemoryUpdate(appBridge, sessionId, {
+      ...(getLastMemoryUpdate(appBridge, sessionId) || {}),
       rollback: result.rollbackSnapshot,
       rollbackAt: 1234,
     });

@@ -5,7 +5,10 @@ export const BRIDGE_CONTRACT_REGISTER_DOMAINS = Object.freeze({
   registerSessionStateBridgeContract: 'session-state',
   registerRoleWorldBridgeContract: 'role-world',
   registerWorldStoreBridgeContract: 'world-store',
+  registerWorldSessionBridgeContract: 'world-session',
   registerConfigRuntimeBridgeContract: 'config-runtime',
+  registerPresetStoreBridgeContract: 'preset-store',
+  registerScriptRuntimeBridgeContract: 'script-runtime',
   registerGenerationBridgeContract: 'generation',
   registerRegexTransformBridgeContract: 'regex-transform',
   registerRegexStoreBridgeContract: 'regex-store',
@@ -13,7 +16,9 @@ export const BRIDGE_CONTRACT_REGISTER_DOMAINS = Object.freeze({
   registerRuntimeServiceBridgeContract: 'runtime-service',
   registerTurnCheckpointBridgeContract: 'turn-checkpoint',
   registerMemoryUpdateBridgeContract: 'memory-update',
+  registerMemoryStoreBridgeContract: 'memory-store',
   registerMessageActionBridgeContract: 'message-action',
+  registerChatUiBridgeContract: 'chat-ui',
   registerUiUtilityBridgeContract: 'ui-utility',
 });
 

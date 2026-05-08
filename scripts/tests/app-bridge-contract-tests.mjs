@@ -6,11 +6,14 @@ import {
   ensureDebugUiRegistry,
   getBridgeContractRegistry,
   registerBridgeContractMetadata,
+  registerChatUiBridgeContract,
   registerConfigRuntimeBridgeContract,
   registerGenerationBridgeContract,
   registerMessageActionBridgeContract,
+  registerMemoryStoreBridgeContract,
   registerMemoryUpdateBridgeContract,
   registerPersonaBridgeContract,
+  registerPresetStoreBridgeContract,
   registerPromptInjectionBridgeContract,
   registerPromptProcessingBridgeContract,
   registerRegexStoreBridgeContract,
@@ -19,9 +22,11 @@ import {
   registerRuntimeServiceBridgeContract,
   registerSessionStateBridgeContract,
   registerSharedSessionBridgeContract,
+  registerScriptRuntimeBridgeContract,
   registerTurnCheckpointBridgeContract,
   registerUiUtilityBridgeContract,
   registerWorldStoreBridgeContract,
+  registerWorldSessionBridgeContract,
 } from '../../src/scripts/ui/app-bridge-contract.js';
 
 {
@@ -58,10 +63,23 @@ import {
   const appBridge = {};
   const ok = registerPersonaBridgeContract(appBridge, {
     getActivePersonaId: () => 'p1',
+    getCurrentCharacterId: () => 'character:p1',
+    getPersonaScope: () => 'scope:p1',
+    setPersonaScope: scopeId => `set:${scopeId}`,
+    deletePersonaCard: async id => `delete:${id}`,
+    cleanupPersonaScopedData: async (keepIds, deleteIds) => ({ keepIds, deleteIds }),
     switchPersona: async () => true,
   });
   assert.equal(ok, true);
   assert.equal(appBridge.getActivePersonaId(), 'p1');
+  assert.equal(appBridge.getCurrentCharacterId(), 'character:p1');
+  assert.equal(appBridge.getPersonaScope(), 'scope:p1');
+  assert.equal(appBridge.setPersonaScope('scope:p2'), 'set:scope:p2');
+  assert.equal(await appBridge.deletePersonaCard('p3'), 'delete:p3');
+  assert.deepEqual(await appBridge.cleanupPersonaScopedData(['p1'], ['p3']), {
+    keepIds: ['p1'],
+    deleteIds: ['p3'],
+  });
   assert.equal(await appBridge.switchPersona(), true);
   console.log('ok - registerPersonaBridgeContract assigns persona helpers');
 }
@@ -95,11 +113,19 @@ import {
   const ok = registerRoleWorldBridgeContract(appBridge, {
     resolveRoleWorldBindings: (sessionId, options) => ({ sessionId, options }),
     handleWorldLifecycle: async event => ({ type: event.type }),
+    setRoleWorldResolver: appBridge.setRoleWorldResolver.bind(appBridge),
+    setWorldLifecycleHandler: appBridge.setWorldLifecycleHandler.bind(appBridge),
+    setSessionWorldIds: (sessionId, worldIds, options = {}) => ({ sessionId, worldIds, options }),
     assignRoleWorldToPersona: async () => 'assign',
     buildWorldDebugLabel: () => ({ sessionId: 's1' }),
     explainWorldEntryActivation: (worldId, entryId, label) => ({ worldId, entryId, label }),
   });
   assert.equal(ok, true);
+  assert.deepEqual(appBridge.setSessionWorldIds('s1', ['w1'], { silent: true }), {
+    sessionId: 's1',
+    worldIds: ['w1'],
+    options: { silent: true },
+  });
   assert.equal(await appBridge.assignRoleWorldToPersona(), 'assign');
   assert.deepEqual(appBridge.buildWorldDebugLabel(), { sessionId: 's1' });
   assert.deepEqual(appBridge.explainWorldEntryActivation('w1', 'e1', { sessionId: 's2' }), {
@@ -111,6 +137,9 @@ import {
   assert.equal(calls[1][0], 'lifecycle');
   assert.deepEqual(await appBridge.lifecycleHandler({ type: 'sync' }), { type: 'sync' });
   const registry = getBridgeContractRegistry(appBridge);
+  assert.equal(registry.contracts.setRoleWorldResolver.domain, BRIDGE_CONTRACT_DOMAINS.roleWorld);
+  assert.equal(registry.contracts.setWorldLifecycleHandler.domain, BRIDGE_CONTRACT_DOMAINS.roleWorld);
+  assert.equal(registry.contracts.setSessionWorldIds.domain, BRIDGE_CONTRACT_DOMAINS.roleWorld);
   assert.equal(registry.contracts.assignRoleWorldToPersona.domain, BRIDGE_CONTRACT_DOMAINS.roleWorld);
   assert.equal(registry.contracts.buildWorldDebugLabel.domain, BRIDGE_CONTRACT_DOMAINS.roleWorld);
   assert.equal(registry.contracts.explainWorldEntryActivation.domain, BRIDGE_CONTRACT_DOMAINS.roleWorld);
@@ -177,6 +206,45 @@ import {
 
 {
   const appBridge = {};
+  const worldSessionMap = { s1: ['w1'] };
+  registerWorldSessionBridgeContract(appBridge, {
+    getWorldSessionMap: () => worldSessionMap,
+    getWorldIdsForSession: sessionId => worldSessionMap?.[sessionId] || [],
+    getCurrentWorldId: () => 'w1',
+    getCurrentWorldIds: () => ['w1'],
+    getGlobalWorldId: () => 'global',
+    emitWorldInfoChanged: detail => ({ emitted: detail }),
+    setCurrentWorld: (worldId, sessionId) => ({ worldId, sessionId }),
+    replaceWorldSessionMap: map => ({ replaced: map }),
+    renameWorldSessionMapEntry: (from, to) => `${from}->${to}`,
+    deleteWorldSessionMapEntry: id => `delete:${id}`,
+    persistWorldSessionMap: () => true,
+  });
+  assert.equal(appBridge.getWorldSessionMap(), worldSessionMap);
+  assert.deepEqual(appBridge.getWorldIdsForSession('s1'), ['w1']);
+  assert.equal(appBridge.getCurrentWorldId(), 'w1');
+  assert.deepEqual(appBridge.getCurrentWorldIds(), ['w1']);
+  assert.equal(appBridge.getGlobalWorldId(), 'global');
+  assert.deepEqual(appBridge.emitWorldInfoChanged({ sessionId: 's1' }), { emitted: { sessionId: 's1' } });
+  assert.deepEqual(appBridge.setCurrentWorld('w2', 's2'), { worldId: 'w2', sessionId: 's2' });
+  assert.deepEqual(appBridge.replaceWorldSessionMap({ s2: ['w2'] }), { replaced: { s2: ['w2'] } });
+  assert.equal(appBridge.renameWorldSessionMapEntry('s1', 's2'), 's1->s2');
+  assert.equal(appBridge.deleteWorldSessionMapEntry('s2'), 'delete:s2');
+  assert.equal(appBridge.persistWorldSessionMap(), true);
+  const registry = getBridgeContractRegistry(appBridge);
+  assert.equal(registry.contracts.getWorldSessionMap.domain, BRIDGE_CONTRACT_DOMAINS.worldSession);
+  assert.equal(registry.domains[BRIDGE_CONTRACT_DOMAINS.worldSession].getWorldIdsForSession, true);
+  assert.equal(registry.domains[BRIDGE_CONTRACT_DOMAINS.worldSession].getCurrentWorldId, true);
+  assert.equal(registry.domains[BRIDGE_CONTRACT_DOMAINS.worldSession].getCurrentWorldIds, true);
+  assert.equal(registry.domains[BRIDGE_CONTRACT_DOMAINS.worldSession].getGlobalWorldId, true);
+  assert.equal(registry.domains[BRIDGE_CONTRACT_DOMAINS.worldSession].emitWorldInfoChanged, true);
+  assert.equal(registry.domains[BRIDGE_CONTRACT_DOMAINS.worldSession].setCurrentWorld, true);
+  assert.equal(registry.domains[BRIDGE_CONTRACT_DOMAINS.worldSession].persistWorldSessionMap, true);
+  console.log('ok - registerWorldSessionBridgeContract assigns world-session helpers');
+}
+
+{
+  const appBridge = {};
   registerConfigRuntimeBridgeContract(appBridge, {
     getConfig: () => ({ provider: 'openai' }),
     loadConfig: async () => ({ provider: 'loaded' }),
@@ -189,6 +257,7 @@ import {
     setActiveConfigProfile: async id => ({ id }),
     createConfigProfile: async (name, config) => ({ name, config }),
     setChatRuntimeConfig: config => ({ configured: Boolean(config?.apiKey) }),
+    isConfigured: () => true,
   });
   assert.deepEqual(appBridge.getConfig(), { provider: 'openai' });
   assert.deepEqual(await appBridge.loadConfig(), { provider: 'loaded' });
@@ -204,6 +273,7 @@ import {
     config: { provider: 'openai' },
   });
   assert.deepEqual(appBridge.setChatRuntimeConfig({ apiKey: 'k' }), { configured: true });
+  assert.equal(appBridge.isConfigured(), true);
   const registry = getBridgeContractRegistry(appBridge);
   assert.equal(registry.contracts.getConfig.domain, BRIDGE_CONTRACT_DOMAINS.configRuntime);
   assert.equal(registry.domains[BRIDGE_CONTRACT_DOMAINS.configRuntime].ensureConfigStores, true);
@@ -214,7 +284,55 @@ import {
   assert.equal(registry.domains[BRIDGE_CONTRACT_DOMAINS.configRuntime].setActiveConfigProfile, true);
   assert.equal(registry.domains[BRIDGE_CONTRACT_DOMAINS.configRuntime].createConfigProfile, true);
   assert.equal(registry.domains[BRIDGE_CONTRACT_DOMAINS.configRuntime].setChatRuntimeConfig, true);
+  assert.equal(registry.domains[BRIDGE_CONTRACT_DOMAINS.configRuntime].isConfigured, true);
   console.log('ok - registerConfigRuntimeBridgeContract assigns config runtime helpers');
+}
+
+{
+  const appBridge = {};
+  const presetStore = { id: 'preset-store' };
+  registerPresetStoreBridgeContract(appBridge, {
+    getPresetStore: () => presetStore,
+  });
+  assert.equal(appBridge.getPresetStore(), presetStore);
+  const registry = getBridgeContractRegistry(appBridge);
+  assert.equal(registry.contracts.getPresetStore.domain, BRIDGE_CONTRACT_DOMAINS.presetStore);
+  assert.equal(registry.domains[BRIDGE_CONTRACT_DOMAINS.presetStore].getPresetStore, true);
+  console.log('ok - registerPresetStoreBridgeContract assigns preset store getter');
+}
+
+{
+  const appBridge = {};
+  const scriptStore = { id: 'script-store' };
+  const scriptRuntime = { id: 'script-runtime' };
+  const calls = [];
+  registerScriptRuntimeBridgeContract(appBridge, {
+    setScriptRuntime: runtime => calls.push(['set-runtime', runtime]),
+    getScriptStore: () => scriptStore,
+    getScriptRuntime: () => scriptRuntime,
+    restartScriptWorker: reason => calls.push(['restart', reason]),
+    allowScriptOnce: (sessionId, ids) => calls.push(['once', sessionId, ids]),
+    syncScripts: payload => calls.push(['sync', payload]),
+    dispatchScriptEvent: (eventName, payload, options) => calls.push(['event', eventName, payload, options]),
+  });
+  appBridge.setScriptRuntime(scriptRuntime);
+  assert.equal(appBridge.getScriptStore(), scriptStore);
+  assert.equal(appBridge.getScriptRuntime(), scriptRuntime);
+  appBridge.restartScriptWorker('reload');
+  appBridge.allowScriptOnce('s1', ['a']);
+  appBridge.syncScripts({ sessionId: 's1' });
+  appBridge.dispatchScriptEvent('message.before_render', { id: 'm1' }, { allowMutate: false });
+  assert.deepEqual(calls, [
+    ['set-runtime', scriptRuntime],
+    ['restart', 'reload'],
+    ['once', 's1', ['a']],
+    ['sync', { sessionId: 's1' }],
+    ['event', 'message.before_render', { id: 'm1' }, { allowMutate: false }],
+  ]);
+  const registry = getBridgeContractRegistry(appBridge);
+  assert.equal(registry.contracts.getScriptStore.domain, BRIDGE_CONTRACT_DOMAINS.scriptRuntime);
+  assert.equal(registry.domains[BRIDGE_CONTRACT_DOMAINS.scriptRuntime].dispatchScriptEvent, true);
+  console.log('ok - registerScriptRuntimeBridgeContract assigns script runtime helpers');
 }
 
 {
@@ -258,36 +376,62 @@ import {
   registerRegexStoreBridgeContract(appBridge, {
     getRegexStore: () => ({ id: 'regex-store' }),
     waitForRegexStoreReady: async () => true,
+    getRegexContext: () => ({ sessionId: 's1' }),
     getRegexSession: id => ({ id }),
     listRegexLocalSets: () => [{ id: 'set-1' }],
     getRegexLocalSet: id => ({ id, name: 'Set' }),
     upsertRegexLocalSet: async set => calls.push(['upsert', set]),
     removeRegexLocalSet: async id => calls.push(['remove', id]),
+    syncPresetRegexBindings: async () => calls.push(['sync-preset']),
+    syncWorldRegexBindings: async () => calls.push(['sync-world']),
   });
   assert.deepEqual(appBridge.getRegexStore(), { id: 'regex-store' });
   assert.equal(await appBridge.waitForRegexStoreReady(), true);
+  assert.deepEqual(appBridge.getRegexContext(), { sessionId: 's1' });
   assert.deepEqual(appBridge.getRegexSession('s1'), { id: 's1' });
   assert.deepEqual(appBridge.listRegexLocalSets(), [{ id: 'set-1' }]);
   assert.deepEqual(appBridge.getRegexLocalSet('set-1'), { id: 'set-1', name: 'Set' });
   await appBridge.upsertRegexLocalSet({ id: 'set-2' });
   await appBridge.removeRegexLocalSet('set-1');
+  await appBridge.syncPresetRegexBindings();
+  await appBridge.syncWorldRegexBindings();
   assert.deepEqual(calls, [
     ['upsert', { id: 'set-2' }],
     ['remove', 'set-1'],
+    ['sync-preset'],
+    ['sync-world'],
   ]);
   const registry = getBridgeContractRegistry(appBridge);
   assert.equal(registry.contracts.getRegexStore.domain, BRIDGE_CONTRACT_DOMAINS.regexStore);
+  assert.equal(registry.domains[BRIDGE_CONTRACT_DOMAINS.regexStore].getRegexContext, true);
   assert.equal(registry.domains[BRIDGE_CONTRACT_DOMAINS.regexStore].upsertRegexLocalSet, true);
   assert.equal(registry.domains[BRIDGE_CONTRACT_DOMAINS.regexStore].removeRegexLocalSet, true);
+  assert.equal(registry.domains[BRIDGE_CONTRACT_DOMAINS.regexStore].syncPresetRegexBindings, true);
+  assert.equal(registry.domains[BRIDGE_CONTRACT_DOMAINS.regexStore].syncWorldRegexBindings, true);
   console.log('ok - registerRegexStoreBridgeContract assigns regex store helpers');
 }
 
 {
   const appBridge = {};
+  const pluginRuntime = { id: 'plugin-runtime' };
   registerRuntimeServiceBridgeContract(appBridge, {
+    init: () => 'initialized',
+    setChatStore: store => ({ store }),
+    setContactsStore: store => ({ store }),
+    setPluginRuntime: runtime => ({ runtime }),
+    getPluginRuntime: () => pluginRuntime,
+    setMomentSummaryStore: store => ({ store }),
     variableRuleEngine: { id: 'vre' },
     stageManager: { id: 'stage' },
     pluginUiManager: { id: 'plugin-ui' },
+  });
+  assert.equal(appBridge.init(), 'initialized');
+  assert.deepEqual(appBridge.setChatStore({ id: 'chat-store' }), { store: { id: 'chat-store' } });
+  assert.deepEqual(appBridge.setContactsStore({ id: 'contacts-store' }), { store: { id: 'contacts-store' } });
+  assert.deepEqual(appBridge.setPluginRuntime(pluginRuntime), { runtime: pluginRuntime });
+  assert.equal(appBridge.getPluginRuntime(), pluginRuntime);
+  assert.deepEqual(appBridge.setMomentSummaryStore({ id: 'moment-summary-store' }), {
+    store: { id: 'moment-summary-store' },
   });
   assert.deepEqual(appBridge.variableRuleEngine, { id: 'vre' });
   assert.deepEqual(appBridge.stageManager, { id: 'stage' });
@@ -309,10 +453,40 @@ import {
 {
   const appBridge = {};
   registerMemoryUpdateBridgeContract(appBridge, {
+    getLastMemoryUpdate: sessionId => ({ sessionId }),
+    setLastMemoryUpdate: (sessionId, entry) => ({ sessionId, entry }),
+    getLastMemoryPlan: () => ({ enabled: true }),
+    setLastMemoryPlan: plan => ({ plan }),
+    buildMemoryPromptPlan: async ctx => ({ ctx }),
     rollbackLastMemoryUpdate: async () => 3,
   });
+  assert.deepEqual(appBridge.getLastMemoryUpdate('s1'), { sessionId: 's1' });
+  assert.deepEqual(appBridge.setLastMemoryUpdate('s1', { ok: true }), { sessionId: 's1', entry: { ok: true } });
+  assert.deepEqual(appBridge.getLastMemoryPlan(), { enabled: true });
+  assert.deepEqual(appBridge.setLastMemoryPlan({ enabled: false }), { plan: { enabled: false } });
+  assert.deepEqual(await appBridge.buildMemoryPromptPlan({ sessionId: 's1' }), { ctx: { sessionId: 's1' } });
   assert.equal(await appBridge.rollbackLastMemoryUpdate(), 3);
   console.log('ok - registerMemoryUpdateBridgeContract assigns memory-update helpers');
+}
+
+{
+  const appBridge = {};
+  const memoryTableStore = { id: 'memory-table-store' };
+  const memoryTemplateStore = { id: 'memory-template-store' };
+  registerMemoryStoreBridgeContract(appBridge, {
+    setMemoryTableStore: store => ({ store }),
+    setMemoryTemplateStore: store => ({ store }),
+    getMemoryTableStore: () => memoryTableStore,
+    getMemoryTemplateStore: () => memoryTemplateStore,
+  });
+  assert.deepEqual(appBridge.setMemoryTableStore(memoryTableStore), { store: memoryTableStore });
+  assert.deepEqual(appBridge.setMemoryTemplateStore(memoryTemplateStore), { store: memoryTemplateStore });
+  assert.equal(appBridge.getMemoryTableStore(), memoryTableStore);
+  assert.equal(appBridge.getMemoryTemplateStore(), memoryTemplateStore);
+  const registry = getBridgeContractRegistry(appBridge);
+  assert.equal(registry.contracts.getMemoryTableStore.domain, BRIDGE_CONTRACT_DOMAINS.memoryStore);
+  assert.equal(registry.domains[BRIDGE_CONTRACT_DOMAINS.memoryStore].getMemoryTemplateStore, true);
+  console.log('ok - registerMemoryStoreBridgeContract assigns memory store getters');
 }
 
 {
@@ -322,6 +496,21 @@ import {
   });
   assert.deepEqual(await appBridge.sendMessageFromPlugin(), { id: 'u1' });
   console.log('ok - registerMessageActionBridgeContract assigns message action helpers');
+}
+
+{
+  const appBridge = {};
+  const chatUI = { id: 'chat-ui' };
+  registerChatUiBridgeContract(appBridge, {
+    setChatUI: ui => ({ ui }),
+    getChatUI: () => chatUI,
+  });
+  assert.deepEqual(appBridge.setChatUI(chatUI), { ui: chatUI });
+  assert.equal(appBridge.getChatUI(), chatUI);
+  const registry = getBridgeContractRegistry(appBridge);
+  assert.equal(registry.contracts.getChatUI.domain, BRIDGE_CONTRACT_DOMAINS.chatUi);
+  assert.equal(registry.domains[BRIDGE_CONTRACT_DOMAINS.chatUi].getChatUI, true);
+  console.log('ok - registerChatUiBridgeContract assigns chat ui getter');
 }
 
 {

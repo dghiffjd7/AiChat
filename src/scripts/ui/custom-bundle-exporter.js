@@ -14,11 +14,86 @@ import { pickSavePath } from '../utils/save-dialog.js';
 import { safeInvoke } from '../utils/tauri.js';
 import { appConfirm } from './app-confirm.js';
 import { createConfigRuntimeAdapter } from './config-runtime-utils.js';
+import {
+  buildCustomBundleArchiveConversationPayload,
+  buildCustomBundleCurrentConversationPayload,
+  buildCustomBundleLegacyRestoredArchives,
+  buildCustomBundleRestoredArchiveMetas,
+  buildCustomBundleRestoredCurrentSessionState,
+  getCustomBundleImportedArchiveMessages,
+  normalizeCustomBundleImportedArchivePayloads,
+  selectCustomBundleConversationArchives,
+} from './custom-bundle-conversation-utils.js';
+import {
+  buildCustomBundleImportCancelledProgressDetail,
+  buildCustomBundleImportCompletionPatch,
+  buildCustomBundleImportDebugLogPayload,
+  buildCustomBundleImportDiagnostics,
+  buildCustomBundleImportDiagnosticsState,
+  buildCustomBundleImportDoneProgressDetail,
+  buildCustomBundleImportFailedProgressDetail,
+  buildCustomBundleImportFailureDiagnostics,
+  buildCustomBundleImportFileSelectedDebugLog,
+  buildCustomBundleImportPreviewProgressDetail,
+  buildCustomBundleImportProgressPayload,
+  buildCustomBundleImportProgressTraceEvent,
+  buildCustomBundleImportReadFileProgressDetail,
+  buildCustomBundleImportReadZipProgressDetail,
+  buildCustomBundleImportResultPayload,
+  buildCustomBundleImportSwitchConfirmOptions,
+  buildCustomBundleRoleImportDiagnostics,
+  cloneCustomBundleImportDiagnosticsSnapshot,
+  shouldPromptCustomBundleImportSwitch,
+} from './custom-bundle-import-diagnostics-utils.js';
+import {
+  buildCustomBundleChatImportedTarget,
+  buildCustomBundleChatRoomProgressDetail,
+  buildCustomBundleRoomRefCounts,
+  buildCustomBundleRoomDiagnosticExtra,
+  buildCustomBundleImportedContactRecord,
+  buildCustomBundleRoomImportDiagnostic,
+  buildCustomBundleRoomRestoreFailureNote,
+  buildCustomBundleRpImportedTarget,
+  buildCustomBundleRpRoomProgressDetail,
+  getCustomBundleRoomMemoryFailureLogMessage,
+  getCustomBundleRoomRestoreFailureLogMessage,
+  getCustomBundleScopeIdFromTouchedKey,
+  planCustomBundleChatRoomImports,
+  planCustomBundleRpRoomImport,
+  markCustomBundleTouchedRuntime,
+  mapCustomBundleImportedMemberIds,
+  mapCustomBundleImportedWorldIds,
+  resolveCustomBundlePersonaLockId,
+  resolveCustomBundleContactAvatar,
+} from './custom-bundle-import-room-utils.js';
+import {
+  buildCustomBundleImportConfirmLines,
+  buildCustomBundleImportPreview,
+} from './custom-bundle-import-preview-utils.js';
+import {
+  buildCustomBundleManifest,
+  buildCustomBundlePersonaPayload,
+  buildCustomBundleRoleManifest,
+} from './custom-bundle-manifest-utils.js';
+import { buildCustomBundleRoomEntryPayloads } from './custom-bundle-room-entry-utils.js';
+import {
+  buildCustomBundleRpGreetingPayload,
+  normalizeCustomBundleImportedRpGreetings,
+} from './custom-bundle-rp-greeting-utils.js';
+import {
+  collectCustomBundleWorldbookRecords,
+  getCustomBundleRoleWorldIds,
+  getCustomBundleSessionWorldIds,
+  mergeCustomBundleExportWorldIds,
+} from './custom-bundle-worldbook-utils.js';
 import { ensureDebugUiRegistry as ensureSharedDebugUiRegistry } from './debug-ui-registry-utils.js';
+import { getMemoryTableStore, getMemoryTemplateStore } from './memory-store-runtime-utils.js';
+import { getPresetStore } from './preset-store-runtime-utils.js';
 import { createRegexStoreRuntimeAdapter } from './regex-store-runtime-utils.js';
 import { emitMemoryRowsUpdated } from './session-memory-event-utils.js';
 import { batchCreateMemoriesWithFallback } from './session-memory-write-utils.js';
 import { hasStoredWorldInfo, waitForWorldStoreReady } from './world-store-runtime-utils.js';
+import { emitWorldInfoChanged, getGlobalWorldId, getWorldSessionMap, replaceWorldSessionMap } from './world-session-runtime-utils.js';
 import { normalizeWorldIdList } from './world-id-utils.js';
 import { buildZipEntryMap, readZipEntryJson } from './zip-entry-utils.js';
 
@@ -71,16 +146,6 @@ const cloneJson = (value, fallback = null) => {
       return fallback;
     }
   }
-};
-
-const uniqueById = (items = []) => {
-  const map = new Map();
-  ensureArray(items).forEach((item) => {
-    const id = String(item?.id || '').trim();
-    if (!id) return;
-    map.set(id, item);
-  });
-  return Array.from(map.values());
 };
 
 const escapeHtml = (value) =>
@@ -444,6 +509,8 @@ export class CustomBundleExporter {
     contactsStore = null,
     rpSessionStore = null,
     memoryTableStore = null,
+    memoryTemplateStore = null,
+    presetStore = null,
     momentsStore = null,
     momentSummaryStore = null,
     onImportProgress = null,
@@ -454,12 +521,12 @@ export class CustomBundleExporter {
     this.chatStore = chatStore || this.appBridge?.chatStore || null;
     this.contactsStore = contactsStore || null;
     this.rpSessionStore = rpSessionStore || null;
-    this.memoryTableStore = memoryTableStore || this.appBridge?.memoryTableStore || null;
+    this.memoryTableStore = memoryTableStore || getMemoryTableStore(this.appBridge);
     this.momentsStore = momentsStore || this.appBridge?.momentsStore || null;
     this.momentSummaryStore = momentSummaryStore || this.appBridge?.momentSummaryStore || null;
-    this.presetStore = this.appBridge?.presets || null;
+    this.presetStore = presetStore || getPresetStore(this.appBridge);
     this.configManager = this.appBridge ? createConfigRuntimeAdapter(this.appBridge) : null;
-    this.memoryTemplateStore = this.appBridge?.memoryTemplateStore || null;
+    this.memoryTemplateStore = memoryTemplateStore || getMemoryTemplateStore(this.appBridge);
     this.regexStore = this.appBridge ? createRegexStoreRuntimeAdapter(this.appBridge) : null;
     this.onImportProgress = typeof onImportProgress === 'function' ? onImportProgress : null;
     this.scopeCache = new Map();
@@ -673,92 +740,52 @@ export class CustomBundleExporter {
   }
 
   publishImportDiagnostics(snapshot) {
-    const payload = snapshot && typeof snapshot === 'object' ? cloneJson(snapshot, null) : null;
+    const payload = cloneCustomBundleImportDiagnosticsSnapshot(snapshot);
     if (!payload) return;
     try {
       const registry = ensureDebugUiRegistry();
       if (registry) {
         const current = registry.stores?.customBundleDiagnostics;
-        const history = Array.isArray(current?.history) ? current.history.slice() : [];
-        history.unshift(payload);
-        registry.stores.customBundleDiagnostics = {
-          lastImport: payload,
-          history: history.slice(0, CUSTOM_BUNDLE_DIAG_HISTORY_LIMIT),
-        };
+        registry.stores.customBundleDiagnostics = buildCustomBundleImportDiagnosticsState({
+          currentState: current,
+          snapshot: payload,
+          historyLimit: CUSTOM_BUNDLE_DIAG_HISTORY_LIMIT,
+        });
       }
     } catch {}
     try {
-      const phase = String(payload?.phase || '').trim() || 'done';
-      const durationMs = roundDuration(payload?.durationMs);
-      const roomCount = Number(payload?.preview?.chats || 0) || 0;
-      const archiveCount = Number(payload?.preview?.archives || 0) || 0;
-      emitDebugLog({
-        source: 'custom-bundle',
-        type: payload?.error ? 'error' : 'info',
-        message: `import ${phase} rooms=${roomCount} archives=${archiveCount} duration=${durationMs}ms${payload?.error ? ` error=${payload.error}` : ''}`,
-      });
+      emitDebugLog(buildCustomBundleImportDebugLogPayload(payload));
     } catch {}
   }
 
   reportImportProgress(detail = {}) {
-    const payload = {
-      kind: 'custom-bundle-import',
-      phase: String(detail?.phase || '').trim() || 'working',
-      progress: Math.max(0, Math.min(100, Number(detail?.progress || 0) || 0)),
-      status: String(detail?.status || '').trim(),
-      fileName: String(detail?.fileName || '').trim(),
-      done: detail?.done === true,
-      error: String(detail?.error || '').trim(),
-      at: Date.now(),
-    };
+    const payload = buildCustomBundleImportProgressPayload({ detail, at: Date.now() });
     try {
       window.dispatchEvent(new CustomEvent('custom-bundle-import-progress', { detail: payload }));
     } catch {}
     try {
       this.onImportProgress?.(payload);
     } catch {}
+    try {
+      const registry = this.appBridge?.debugUiRegistry || window.appBridge?.debugUiRegistry || null;
+      const actionRecordTraceEvent = registry?.actions?.recordTraceEvent;
+      const timelineRecordTraceEvent = registry?.stores?.traceTimeline?.record;
+      const recordTraceEvent = typeof actionRecordTraceEvent === 'function'
+        ? actionRecordTraceEvent
+        : (typeof timelineRecordTraceEvent === 'function' ? timelineRecordTraceEvent : null);
+      recordTraceEvent?.(buildCustomBundleImportProgressTraceEvent(payload));
+    } catch {}
     return payload;
   }
 
   buildRoomImportDiagnostic(runtime, sessionId, roomPackage, extra = {}) {
-    const sid = String(sessionId || '').trim();
-    const scopeId = normalizeScopeId(runtime?.chatStore?.scopeId || runtime?.scopeId || '');
-    const session = sid ? runtime?.chatStore?.state?.sessions?.[sid] || null : null;
-    const contact = sid ? runtime?.contactsStore?.getContact?.(sid) || null : null;
-    const expectedArchives = ensureArray(roomPackage?.archives).map((archive) => ({
-      id: String(archive?.id || '').trim(),
-      name: String(archive?.name || ''),
-      expectedMessages: ensureArray(archive?.messages).length,
-    })).filter((archive) => archive.id);
-    const storedArchives = ensureArray(session?.archives).map((archive) => {
-      const archiveId = String(archive?.id || '').trim();
-      return {
-        id: archiveId,
-        name: String(archive?.name || ''),
-        storedMetaMessages: Number(archive?.messageCount || 0) || 0,
-        v2Messages: sid ? Number(runtime?.chatStore?._v2?.getThreadTotal?.(sid, archiveId) || 0) || 0 : 0,
-      };
-    }).filter((archive) => archive.id);
-    return {
-      ...cloneJson(extra, {}),
-      scopeId,
-      sessionId: sid,
-      sourceSessionId: String(roomPackage?.contact?.id || roomPackage?.manifest?.sessionId || '').trim(),
-      roomName: String(roomPackage?.contact?.name || roomPackage?.manifest?.displayName || sid),
-      uiMode: String(roomPackage?.manifest?.uiMode || '').trim() || 'chat',
-      hasContact: Boolean(contact),
-      contactMembers: ensureArray(contact?.members).map((memberId) => String(memberId || '').trim()).filter(Boolean),
-      currentExpectedMessages: ensureArray(roomPackage?.chatCurrent?.messages).length,
-      currentStoredMessages: sid ? Number(runtime?.chatStore?._v2?.getThreadTotal?.(sid, '') || 0) || 0 : 0,
-      currentLoadedThreadKey: String(session?._loadedThreadKey || ''),
-      stateArchiveCount: storedArchives.length,
-      expectedArchives,
-      storedArchives,
-      expectedWorldIds: normalizeWorldIdList(roomPackage?.roomConfig?.world?.worldIds || [], {
-        excludeBuiltin: BUILTIN_PHONE_FORMAT_WORLDBOOK_ID,
-      }),
-      storedWorldIds: this.getSessionWorldIds(runtime, sid),
-    };
+    return buildCustomBundleRoomImportDiagnostic({
+      runtime,
+      sessionId,
+      roomPackage,
+      extra,
+      getSessionWorldIds: (currentRuntime, sid) => this.getSessionWorldIds(currentRuntime, sid),
+    });
   }
 
   buildMomentsImportDiagnostic(runtime, momentsPayload, extra = {}) {
@@ -821,10 +848,8 @@ export class CustomBundleExporter {
         getMemoryTableStore: () => this.memoryTableStore,
         momentsStore: this.momentsStore,
         momentSummaryStore: this.momentSummaryStore,
-        worldSessionMap: this.appBridge?.worldSessionMap && typeof this.appBridge.worldSessionMap === 'object'
-          ? this.appBridge.worldSessionMap
-          : {},
-        globalWorldId: String(this.appBridge?.globalWorldId || '').trim(),
+        worldSessionMap: getWorldSessionMap(this.appBridge),
+        globalWorldId: getGlobalWorldId(this.appBridge),
         worldGlobalSettings:
           this.appBridge?.worldGlobalSettings && typeof this.appBridge.worldGlobalSettings === 'object'
             ? this.appBridge.worldGlobalSettings
@@ -936,19 +961,11 @@ export class CustomBundleExporter {
   }
 
   getSessionWorldIds(runtime, sessionId) {
-    const sid = String(sessionId || '').trim();
-    if (!sid) return [];
-    const list = normalizeWorldIdList(runtime?.worldSessionMap?.[sid]);
-    const globalWorldId = String(runtime?.globalWorldId || '').trim();
-    if (globalWorldId && globalWorldId !== BUILTIN_PHONE_FORMAT_WORLDBOOK_ID) list.push(globalWorldId);
-    return normalizeWorldIdList(list, { excludeBuiltin: BUILTIN_PHONE_FORMAT_WORLDBOOK_ID });
+    return getCustomBundleSessionWorldIds(runtime, sessionId);
   }
 
   getRoleWorldIds(role) {
-    const source = role?.source && typeof role.source === 'object' ? role.source : {};
-    const worldbookId = String(source?.worldbookId || '').trim();
-    if (!worldbookId || worldbookId === BUILTIN_PHONE_FORMAT_WORLDBOOK_ID) return [];
-    return [worldbookId];
+    return getCustomBundleRoleWorldIds(role);
   }
 
   remapPersonaSource(sourceInput, worldIdMap = {}) {
@@ -1955,25 +1972,13 @@ export class CustomBundleExporter {
 
   async collectWorldbookRecords(worldIds = []) {
     const store = await this.getWorldStoreMap();
-    const worldbooks = {};
-    for (const worldId of worldIds) {
-      const id = String(worldId || '').trim();
-      if (!id) continue;
-      const fromStore = store?.[id];
-      if (fromStore && typeof fromStore === 'object') {
-        worldbooks[id] = cloneJson(fromStore, {});
-        continue;
-      }
-      try {
-        const loaded = await this.appBridge?.getWorldInfo?.(id);
-        if (loaded && typeof loaded === 'object') {
-          worldbooks[id] = cloneJson(loaded, {});
-        }
-      } catch (err) {
-        logger.warn('collect worldbook for custom bundle failed', err);
-      }
-    }
-    return worldbooks;
+    return collectCustomBundleWorldbookRecords({
+      worldIds,
+      worldStoreMap: store,
+      getWorldInfo: id => this.appBridge?.getWorldInfo?.(id),
+      cloneWorldbook: value => cloneJson(value, {}),
+      onError: err => logger.warn('collect worldbook for custom bundle failed', err),
+    });
   }
 
   collectRegexBundle(sessionId, worldIds = []) {
@@ -2194,8 +2199,7 @@ export class CustomBundleExporter {
     const memoryTemplate = await this.getDefaultMemoryTemplate();
     const worldIds = this.getSessionWorldIds(runtime, sid);
     const roleWorldIds = this.getRoleWorldIds(role);
-    const exportWorldIds = Array.from(new Set([...worldIds, ...roleWorldIds]))
-      .filter((id) => id && id !== BUILTIN_PHONE_FORMAT_WORLDBOOK_ID);
+    const exportWorldIds = mergeCustomBundleExportWorldIds(worldIds, roleWorldIds);
     exportWorldIds.forEach((worldId) => worldbookIds.add(worldId));
     const roomConfig = {
       sessionSettings: rawSettings,
@@ -2229,14 +2233,10 @@ export class CustomBundleExporter {
       ? this.buildContactPayload(descriptor, assets, `${basePath}/assets`)
       : null;
     const rpGreetingPayload = uiMode === 'rp'
-      ? {
-        greetings: ensureArray(runtime?.rpSessionStore?.getGreetings?.()).map((greeting) => ({
-          id: String(greeting?.id || '').trim(),
-          title: String(greeting?.title || '').trim(),
-          content: String(greeting?.content || '').trim(),
-        })),
-        activeGreetingId: String(runtime?.rpSessionStore?.getActiveGreetingId?.() || '').trim(),
-      }
+      ? buildCustomBundleRpGreetingPayload({
+        greetings: runtime?.rpSessionStore?.getGreetings?.(),
+        activeGreetingId: runtime?.rpSessionStore?.getActiveGreetingId?.(),
+      })
       : null;
     return {
       key: buildRoomKey(role.scopeId, sid),
@@ -2273,32 +2273,25 @@ export class CustomBundleExporter {
     if (!sid) return null;
     const session = runtime?.chatStore?.state?.sessions?.[sid] || {};
     const currentMessages = ensureArray(await runtime?.chatStore?.exportThreadMessages?.(sid, ''));
-    const current = {
-      exported: true,
-      draft: String(session?.draft || ''),
-      messageCount: currentMessages.length,
-      detachedSummaries: normalizeSummaryList(session?.detachedSummaries || []),
-      compactedSummary: normalizeCompactedSummary(session?.compactedSummary || null),
-      compactedSummaryLastRaw: cloneJson(session?.compactedSummaryLastRaw || null, null),
+    const current = buildCustomBundleCurrentConversationPayload({
+      session,
       messages: currentMessages,
-    };
-    const selectedArchives = ensureArray(descriptor?.archives).filter((archive) => selection?.archives?.[archive.id]);
+    });
+    const selectedArchives = selectCustomBundleConversationArchives({
+      archives: descriptor?.archives,
+      selection,
+    });
     const archives = await Promise.all(selectedArchives.map(async (archive) => {
       const archiveId = String(archive?.id || '').trim();
       if (!archiveId) return null;
       const source = ensureArray(runtime?.chatStore?.getArchives?.(sid)).find((item) => String(item?.id || '').trim() === archiveId) || {};
       const messages = ensureArray(await runtime?.chatStore?.exportThreadMessages?.(sid, archiveId));
-      return {
-        id: archiveId,
-        name: String(source?.name || archive?.name || ''),
-        timestamp: Number(source?.timestamp || archive?.timestamp || 0) || 0,
-        messageCount: Number(source?.messageCount || archive?.messageCount || messages.length) || messages.length,
-        summaries: normalizeSummaryList(source?.summaries || []),
-        compactedSummary: normalizeCompactedSummary(source?.compactedSummary || null),
-        compactedSummaryLastRaw: cloneJson(source?.compactedSummaryLastRaw || null, null),
-        memoryTableSnapshot: options.includeMemoryData ? cloneJson(source?.memoryTableSnapshot || null, null) : null,
+      return buildCustomBundleArchiveConversationPayload({
+        archive,
+        source,
         messages,
-      };
+        includeMemoryData: options?.includeMemoryData,
+      });
     }));
     return {
       current,
@@ -2313,25 +2306,8 @@ export class CustomBundleExporter {
         data_url: textToDataUrl(JSON.stringify(payload, null, 2), 'application/json'),
       });
     };
-    const basePath = room.basePath;
-    pushJson(`${basePath}/manifest.json`, {
-      key: room.key,
-      sessionId: room.sessionId,
-      scopeId: room.scopeId,
-      uiMode: room.uiMode,
-      hasConversationContent: Boolean(room.content),
-      hasMemoryData: Boolean(room.memoryData),
-      hasVariableState: Boolean(room.roomConfig?.variables?.state),
-    });
-    pushJson(`${basePath}/room.json`, room.roomConfig);
-    if (room.contactPayload) pushJson(`${basePath}/contact.json`, room.contactPayload);
-    if (room.rpGreetingPayload) pushJson(`${basePath}/rp_greetings.json`, room.rpGreetingPayload);
-    if (room.memoryData) pushJson(`${basePath}/memory_data.json`, room.memoryData);
-    if (room.content) {
-      pushJson(`${basePath}/chat_current.json`, room.content.current);
-      ensureArray(room.content.archives).forEach((archive) => {
-        pushJson(`${basePath}/archives/${slugifySegment(archive.id, 'archive')}.json`, archive);
-      });
+    for (const { name, payload } of buildCustomBundleRoomEntryPayloads(room)) {
+      pushJson(name, payload);
     }
   }
 
@@ -2384,33 +2360,15 @@ export class CustomBundleExporter {
       if (!selection?.selected) continue;
       const roleSlug = slugifySegment(role.name || role.id, role.id);
       const roleBase = `roles/${roleSlug}`;
-      const roleManifest = {
-        id: role.id,
-        name: role.name,
-        scopeId: role.scopeId,
-        sharedContacts: role.sharedContacts === true,
-        hasMoments: false,
-        chats: [],
-        creativeWriting: '',
-      };
+      const roleManifest = buildCustomBundleRoleManifest(role);
       const personaAvatarRaw = String(role.avatar || '').trim();
       const personaAvatarFile = assets.addSource(`${roleBase}/assets/persona_avatar.${inferImageExtension(personaAvatarRaw, 'png')}`, personaAvatarRaw);
       const personaCard = await this.loadPersonaCardData(role);
-      const personaPayload = {
-        id: role.id,
-        name: role.name,
-        description: role.description,
+      const personaPayload = buildCustomBundlePersonaPayload({
+        role,
         avatarFile: personaAvatarFile || '',
         avatarValue: personaAvatarFile ? '' : personaAvatarRaw,
-        source: cloneJson(role.source || null, null),
-        userBubbleColor: role.userBubbleColor,
-        userTextColor: role.userTextColor,
-        position: role.position,
-        depth: role.depth,
-        role: role.roleValue,
-        created: role.created,
-        updated: role.updated,
-      };
+      });
       this.getRoleWorldIds(role).forEach((worldId) => worldbookIds.add(worldId));
       entries.push({
         name: `${roleBase}/persona.json`,
@@ -2474,35 +2432,16 @@ export class CustomBundleExporter {
 
     const worldbooks = await this.collectWorldbookRecords(Array.from(worldbookIds));
     const summary = this.computeSummary(roles, state);
-    const manifest = {
+    const manifest = buildCustomBundleManifest({
       format: CUSTOM_BUNDLE_FORMAT,
       formatVersion: CUSTOM_BUNDLE_VERSION,
       exportedAt: new Date().toISOString(),
-      exportedBy: 'AiChat',
       mode: state.mode,
-      options: cloneJson(state.options, {}),
-      summary: {
-        roles: summary.roles,
-        chats: summary.chats,
-        creative: summary.creative,
-        archives: summary.archives,
-        moments: summary.momentScopes,
-        momentEntries: summary.moments,
-        momentSummaries: summary.momentSummaries,
-        momentCompacted: summary.momentCompacted,
-        includeConversationContent: state.options.includeConversationContent === true,
-        includeMemoryData: state.options.includeMemoryData === true,
-        includeVariableState: state.options.includeVariableState === true,
-        hideServiceAddresses: state.options.hideServiceAddresses === true,
-      },
+      options: state.options,
+      summary,
       roles: manifestRoles,
-      rooms: Array.from(roomMap.values()).map((room) => ({
-        key: room.key,
-        sessionId: room.sessionId,
-        scopeId: room.scopeId,
-        uiMode: room.uiMode,
-      })),
-    };
+      rooms: Array.from(roomMap.values()),
+    });
 
     entries.push({
       name: 'manifest.json',
@@ -2955,13 +2894,7 @@ export class CustomBundleExporter {
     const targetScopeId = normalizeScopeId(scopeId);
     if (activeScopeId === targetScopeId && this.appBridge) {
       try {
-        this.appBridge.worldSessionMap = cloneJson(payload, {});
-        const activeSessionId = String(this.appBridge.getActiveSessionId?.() || '').trim();
-        const currentWorldIds = activeSessionId
-          ? normalizeWorldIdList(payload?.[activeSessionId], { excludeBuiltin: BUILTIN_PHONE_FORMAT_WORLDBOOK_ID })
-          : [];
-        this.appBridge.currentWorldIds = currentWorldIds;
-        this.appBridge.currentWorldId = currentWorldIds[0] || null;
+        replaceWorldSessionMap(this.appBridge, cloneJson(payload, {}));
       } catch {}
     }
   }
@@ -3175,38 +3108,27 @@ export class CustomBundleExporter {
     const sid = String(sessionId || '').trim();
     if (!sid || !roomPackage?.chatCurrent || !chatStore) return false;
     const currentPayload = cloneJson(roomPackage.chatCurrent, {});
-    const archivesPayload = uniqueById(
-      ensureArray(roomPackage.archives).map((item) => ({
-        ...item,
-        id: String(item?.id || '').trim(),
-      })).filter((item) => item.id)
-    );
+    const archivesPayload = normalizeCustomBundleImportedArchivePayloads(roomPackage.archives);
     const session = chatStore?._ensureSession?.(sid);
     if (!session) return false;
-    const currentMessages = ensureArray(currentPayload?.messages);
-    session.draft = String(currentPayload?.draft || '');
-    session.detachedSummaries = normalizeSummaryList(currentPayload?.detachedSummaries || []);
-    session.compactedSummary = normalizeCompactedSummary(currentPayload?.compactedSummary || null);
-    session.compactedSummaryLastRaw = cloneJson(currentPayload?.compactedSummaryLastRaw || null, null);
-    session.currentArchiveId = null;
-    session.archives = archivesPayload.map((archive) => ({
-      id: String(archive?.id || '').trim(),
-      name: String(archive?.name || ''),
-      timestamp: Number(archive?.timestamp || 0) || 0,
-      messageCount: Number(archive?.messageCount || 0) || 0,
-      summaries: normalizeSummaryList(archive?.summaries || []),
-      compactedSummary: normalizeCompactedSummary(archive?.compactedSummary || null),
-      compactedSummaryLastRaw: cloneJson(archive?.compactedSummaryLastRaw || null, null),
-      memoryTableSnapshot: includeMemoryData ? cloneJson(archive?.memoryTableSnapshot || null, null) : null,
-    })).filter((archive) => archive.id);
+    const currentState = buildCustomBundleRestoredCurrentSessionState({ currentPayload });
+    const currentMessages = currentState.currentMessages;
+    session.draft = currentState.draft;
+    session.detachedSummaries = currentState.detachedSummaries;
+    session.compactedSummary = currentState.compactedSummary;
+    session.compactedSummaryLastRaw = currentState.compactedSummaryLastRaw;
+    session.currentArchiveId = currentState.currentArchiveId;
+    session.archives = buildCustomBundleRestoredArchiveMetas({
+      archivesPayload,
+      includeMemoryData,
+    });
 
     if (!chatStore?._useV2) {
       session.messages = currentMessages.slice();
-      const archiveMessageMap = new Map(archivesPayload.map((archive) => [archive.id, ensureArray(archive.messages)]));
-      session.archives = session.archives.map((archive) => ({
-        ...archive,
-        messages: archiveMessageMap.get(archive.id) || [],
-      }));
+      session.archives = buildCustomBundleLegacyRestoredArchives({
+        archiveMetas: session.archives,
+        archivesPayload,
+      });
       chatStore?._persist?.();
       return true;
     }
@@ -3220,8 +3142,10 @@ export class CustomBundleExporter {
       logger.warn('restore current thread for custom bundle failed', err);
     }
     for (const archive of session.archives) {
-      const payload = archivesPayload.find((item) => item.id === archive.id);
-      const messages = ensureArray(payload?.messages);
+      const messages = getCustomBundleImportedArchiveMessages({
+        archivesPayload,
+        archiveId: archive.id,
+      });
       try {
         await chatStore._v2.replaceThreadMessages(sid, archive.id, messages);
       } catch (err) {
@@ -3237,63 +3161,444 @@ export class CustomBundleExporter {
     return true;
   }
 
-  buildImportPreview(packageData) {
-    const roles = ensureArray(packageData?.manifest?.roles);
-    const roomRecords = Array.from(packageData?.roomMap?.values?.() || []);
-    const chatCount = roomRecords.filter((room) => room?.manifest?.uiMode === 'chat').length;
-    const rpCount = roomRecords.filter((room) => room?.manifest?.uiMode === 'rp').length;
-    const archiveCount = roomRecords.reduce((sum, room) => sum + ensureArray(room?.archives).length, 0);
-    const options = packageData?.manifest?.options || {};
-    const fallbackMomentScopes = ensureArray(packageData?.roles).filter((role) => {
-      const payload = role?.momentsPayload || null;
-      return Boolean(
-        ensureArray(payload?.moments).length
-        || normalizeSummaryList(payload?.summaries || []).length
-        || normalizeCompactedSummary(payload?.compactedSummary || null),
+  async importCustomBundleRoomMemorySnapshot({
+    runtime,
+    sessionId,
+    roomPackage,
+    importedMemoryTemplateId = '',
+    isGroup = false,
+    restoreFailureKind = 'chat',
+  } = {}) {
+    if (!roomPackage?.memoryData) return false;
+    try {
+      await this.applyMemorySnapshotToStore(
+        runtime.getMemoryTableStore?.(),
+        sessionId,
+        cloneJson(roomPackage.memoryData, {}),
+        {
+          templateId: importedMemoryTemplateId,
+          isGroup,
+        },
       );
-    }).length;
-    const fallbackMomentEntries = ensureArray(packageData?.roles).reduce((sum, role) => (
-      sum + ensureArray(role?.momentsPayload?.moments).length
-    ), 0);
-    const fallbackMomentSummaries = ensureArray(packageData?.roles).reduce((sum, role) => (
-      sum + normalizeSummaryList(role?.momentsPayload?.summaries || []).length
-    ), 0);
-    const fallbackMomentCompacted = ensureArray(packageData?.roles).reduce((sum, role) => (
-      sum + (normalizeCompactedSummary(role?.momentsPayload?.compactedSummary || null) ? 1 : 0)
-    ), 0);
+      return true;
+    } catch (err) {
+      logger.warn(getCustomBundleRoomMemoryFailureLogMessage(restoreFailureKind), err);
+      return false;
+    }
+  }
+
+  async restoreCustomBundleRoomConversation({
+    packageData,
+    runtime,
+    sessionId,
+    roomPackage,
+    diagnosticsNotes = null,
+    restoreFailureKind = 'chat',
+    restoreFailureName = '',
+  } = {}) {
+    if (!roomPackage?.chatCurrent) return 0;
+    const restoreStarted = getPerfNow();
+    try {
+      await this.restoreConversationToStore(runtime.chatStore, sessionId, roomPackage, {
+        includeMemoryData: Boolean(packageData?.manifest?.options?.includeMemoryData),
+      });
+    } catch (err) {
+      logger.warn(getCustomBundleRoomRestoreFailureLogMessage(restoreFailureKind), err);
+      diagnosticsNotes?.push?.(buildCustomBundleRoomRestoreFailureNote({
+        restoreFailureKind,
+        restoreFailureName,
+        sessionId,
+        error: err,
+      }));
+    }
+    return roundDuration(getPerfNow() - restoreStarted);
+  }
+
+  async importCustomBundleRoomContent({
+    packageData,
+    runtime,
+    scopeId = '',
+    roomPackage,
+    sessionId,
+    worldIdMap = {},
+    importedLocalSetKeys = null,
+    importedMemoryTemplateId = '',
+    displayName = '',
+    personaLockId = '',
+    roomKey = '',
+    isGroup = false,
+    mappedMembers,
+    diagnosticsNotes = null,
+    restoreFailureKind = 'chat',
+    restoreFailureName = '',
+  } = {}) {
+    runtime.chatStore?._ensureSession?.(sessionId);
+    this.importVariableCoreToStore(runtime.chatStore, roomPackage?.roomConfig?.variables?.core || null, sessionId);
+    await this.importRegexPayload(
+      roomPackage?.roomConfig?.regex || null,
+      sessionId,
+      worldIdMap,
+      importedLocalSetKeys,
+    );
+    const mappedWorldIds = mapCustomBundleImportedWorldIds({
+      worldIds: roomPackage?.roomConfig?.world?.worldIds || [],
+      worldIdMap,
+    });
+    if (mappedWorldIds.length) {
+      await this.setScopedWorldIds(scopeId, sessionId, mappedWorldIds);
+    }
+    await this.importRoomSettingsToScope({
+      packageData,
+      runtime,
+      roomPackage,
+      sessionId,
+      displayName,
+      personaLockId,
+    });
+    if (roomPackage?.roomConfig?.variables?.state) {
+      this.importVariableStateToStore(runtime.chatStore, roomPackage.roomConfig.variables.state, sessionId);
+    }
+    await this.importCustomBundleRoomMemorySnapshot({
+      runtime,
+      sessionId,
+      roomPackage,
+      importedMemoryTemplateId,
+      isGroup,
+      restoreFailureKind,
+    });
+    const restoreMs = await this.restoreCustomBundleRoomConversation({
+      packageData,
+      runtime,
+      sessionId,
+      roomPackage,
+      diagnosticsNotes,
+      restoreFailureKind,
+      restoreFailureName,
+    });
+    const diagnosticExtra = buildCustomBundleRoomDiagnosticExtra({
+      roomKey,
+      restoreMs,
+      mappedWorldIds,
+      isGroup,
+      mappedMembers,
+    });
     return {
-      roles: roles.length,
-      chats: chatCount,
-      creative: rpCount,
-      archives: archiveCount,
-      moments: Number(packageData?.manifest?.summary?.momentEntries || 0) || fallbackMomentEntries,
-      momentScopes: Number(packageData?.manifest?.summary?.moments || 0) || fallbackMomentScopes,
-      momentSummaries: Number(packageData?.manifest?.summary?.momentSummaries || 0) || fallbackMomentSummaries,
-      momentCompacted: Number(packageData?.manifest?.summary?.momentCompacted || 0) || fallbackMomentCompacted,
-      includeConversationContent: options.includeConversationContent === true,
-      includeMemoryData: options.includeMemoryData === true,
-      includeVariableState: options.includeVariableState === true,
-      hideServiceAddresses: options.hideServiceAddresses === true,
+      mappedWorldIds,
+      diagnostic: this.buildRoomImportDiagnostic(runtime, sessionId, roomPackage, diagnosticExtra),
     };
+  }
+
+  async importCustomBundleChatRoom({
+    packageData,
+    runtime,
+    chatScopeId = '',
+    roomKey = '',
+    roomPackage,
+    sessionId = '',
+    roomRefCount = 0,
+    importedPersona = {},
+    currentSharedMode = false,
+    sourceSessionIdMap = null,
+    worldIdMap = {},
+    importedLocalSetKeys = null,
+    importedMemoryTemplateId = '',
+    diagnosticsNotes = null,
+  } = {}) {
+    const personaLockId = resolveCustomBundlePersonaLockId({
+      personaId: importedPersona?.id,
+      currentSharedMode,
+      roomRefCount,
+    });
+    const contactPayload = roomPackage?.contact || {};
+    const avatarDataUrl = resolveCustomBundleContactAvatar({
+      contactPayload,
+      getEntryDataUrl: file => this.getEntryDataUrl(packageData, file),
+    });
+    const mappedMembers = mapCustomBundleImportedMemberIds({
+      members: contactPayload?.members,
+      sourceSessionIdMap,
+    });
+    runtime.contactsStore?.upsertContact?.(buildCustomBundleImportedContactRecord({
+      contactPayload,
+      sessionId,
+      avatar: avatarDataUrl,
+      mappedMembers,
+    }));
+    const importedRoom = await this.importCustomBundleRoomContent({
+      packageData,
+      runtime,
+      scopeId: chatScopeId,
+      roomPackage,
+      sessionId,
+      worldIdMap,
+      importedLocalSetKeys,
+      importedMemoryTemplateId,
+      displayName: String(importedPersona?.name || roomPackage?.contact?.name || sessionId),
+      personaLockId,
+      roomKey,
+      isGroup: Boolean(contactPayload?.isGroup),
+      mappedMembers,
+      diagnosticsNotes,
+      restoreFailureKind: 'chat',
+      restoreFailureName: String(contactPayload?.name || sessionId),
+    });
+    return {
+      contactPayload,
+      diagnostic: importedRoom.diagnostic,
+      target: buildCustomBundleChatImportedTarget({
+        importedPersona,
+        scopeId: chatScopeId,
+        sessionId,
+        contactPayload,
+      }),
+    };
+  }
+
+  async importCustomBundleRpRoom({
+    packageData,
+    rpRoomImportPlan = null,
+    importedPersona = {},
+    usedSessionIds = null,
+    worldIdMap = {},
+    importedLocalSetKeys = null,
+    importedMemoryTemplateId = '',
+    diagnosticsNotes = null,
+  } = {}) {
+    if (!rpRoomImportPlan) return null;
+    const {
+      roomKey,
+      roomPackage,
+      scopeId,
+      sessionId,
+      displayName,
+      personaLockId,
+    } = rpRoomImportPlan;
+    const runtime = await this.getScopeRuntime(scopeId);
+    usedSessionIds?.add?.(sessionId);
+    const importedRoom = await this.importCustomBundleRoomContent({
+      packageData,
+      runtime,
+      scopeId,
+      roomPackage,
+      sessionId,
+      worldIdMap,
+      importedLocalSetKeys,
+      importedMemoryTemplateId,
+      displayName,
+      personaLockId,
+      roomKey,
+      isGroup: false,
+      diagnosticsNotes,
+      restoreFailureKind: 'rp',
+      restoreFailureName: String(importedPersona?.name || sessionId),
+    });
+    if (roomPackage?.rpGreetings) {
+      const { greetings, activeId } = normalizeCustomBundleImportedRpGreetings(roomPackage.rpGreetings);
+      runtime.rpSessionStore?.setGreetings?.(greetings, {
+        activeId,
+      });
+    }
+    return {
+      runtime,
+      scopeId,
+      sessionId,
+      diagnostic: importedRoom.diagnostic,
+      target: buildCustomBundleRpImportedTarget({
+        importedPersona,
+        scopeId,
+        sessionId,
+      }),
+    };
+  }
+
+  async importCustomBundleRoleRooms({
+    packageData,
+    roleManifest = {},
+    importedPersona = {},
+    targetScopeId = '',
+    chatScopeId = '',
+    runtime = null,
+    currentSharedMode = false,
+    roomRefCounts = new Map(),
+    sharedImportedRooms = new Map(),
+    usedSessionIds = null,
+    worldIdMap = {},
+    importedLocalSetKeys = null,
+    importedMemoryTemplateId = '',
+    diagnosticsNotes = null,
+    roleDiagnostics = null,
+    importedTargets = null,
+    completedRoomUnits = 0,
+    totalRoomUnits = 1,
+    fileName = '',
+    markTouchedRuntime = null,
+  } = {}) {
+    let nextCompletedRoomUnits = completedRoomUnits;
+    const chatRoomImportPlan = planCustomBundleChatRoomImports({
+      chatRoomKeys: roleManifest?.chats,
+      roomMap: packageData?.roomMap,
+      sharedImportedRooms,
+      currentSharedMode,
+      allocateSessionId: roomPackage => this.allocateUniqueChatSessionId(roomPackage, usedSessionIds),
+    });
+    const { plannedChatSessions, sourceSessionIdMap } = chatRoomImportPlan;
+
+    for (const { roomKey, roomPackage } of chatRoomImportPlan.roomEntries) {
+      const sessionId = String(plannedChatSessions.get(roomKey) || '').trim()
+        || this.allocateUniqueChatSessionId(roomPackage, usedSessionIds);
+      const roomRefCount = Number(roomRefCounts.get(roomKey) || 0);
+
+      const importedChatRoom = await this.importCustomBundleChatRoom({
+        packageData,
+        runtime,
+        chatScopeId,
+        roomKey,
+        roomPackage,
+        sessionId,
+        roomRefCount,
+        importedPersona,
+        currentSharedMode,
+        sourceSessionIdMap,
+        worldIdMap,
+        importedLocalSetKeys,
+        importedMemoryTemplateId,
+        diagnosticsNotes,
+      });
+      roleDiagnostics?.chats?.push?.(importedChatRoom.diagnostic);
+      markTouchedRuntime?.(chatScopeId, runtime);
+      importedTargets?.push?.(importedChatRoom.target);
+      nextCompletedRoomUnits += 1;
+      this.reportImportProgress(buildCustomBundleChatRoomProgressDetail({
+        completedRoomUnits: nextCompletedRoomUnits,
+        totalRoomUnits,
+        contactPayload: importedChatRoom.contactPayload,
+        sessionId,
+        fileName,
+      }));
+      if (currentSharedMode) {
+        sharedImportedRooms.set(roomKey, { sessionId });
+      }
+    }
+
+    const rpRoomImportPlan = planCustomBundleRpRoomImport({
+      creativeWritingRoomKey: roleManifest?.creativeWriting,
+      roomMap: packageData?.roomMap,
+      importedPersona,
+      targetScopeId,
+      currentSharedMode,
+    });
+    if (rpRoomImportPlan) {
+      const importedRpRoom = await this.importCustomBundleRpRoom({
+        packageData,
+        rpRoomImportPlan,
+        importedPersona,
+        usedSessionIds,
+        worldIdMap,
+        importedLocalSetKeys,
+        importedMemoryTemplateId,
+        diagnosticsNotes,
+      });
+      if (roleDiagnostics) roleDiagnostics.creativeWriting = importedRpRoom.diagnostic;
+      markTouchedRuntime?.(importedRpRoom.scopeId, importedRpRoom.runtime);
+      importedTargets?.push?.(importedRpRoom.target);
+      nextCompletedRoomUnits += 1;
+      this.reportImportProgress(buildCustomBundleRpRoomProgressDetail({
+        completedRoomUnits: nextCompletedRoomUnits,
+        totalRoomUnits,
+        importedPersona,
+        fileName,
+      }));
+    }
+
+    return {
+      completedRoomUnits: nextCompletedRoomUnits,
+    };
+  }
+
+  async importCustomBundleRoleRuntime({
+    packageData,
+    rawRole = null,
+    worldIdMap = {},
+    currentSharedMode = false,
+    diagnostics = null,
+    markTouchedRuntime = null,
+  } = {}) {
+    const roleManifest = rawRole?.manifest || {};
+    const importedPersona = await this.importPersonaRecord({
+      ...rawRole,
+      packageData,
+    }, worldIdMap);
+    if (!importedPersona) return null;
+    const targetScopeId = normalizeScopeId(this.getPersonaScopeKey(importedPersona.id) || importedPersona.id);
+    const chatScopeId = currentSharedMode ? '' : targetScopeId;
+    const runtime = await this.getScopeRuntime(chatScopeId);
+    const roleDiagnostics = buildCustomBundleRoleImportDiagnostics({
+      importedPersona,
+      roleManifest,
+      targetScopeId,
+      chatScopeId,
+    });
+    diagnostics?.roles?.push?.(roleDiagnostics);
+    const importedMoments = await this.importMomentsPayload({
+      packageData,
+      rolePackage: rawRole,
+      runtime,
+    });
+    if (importedMoments) {
+      roleDiagnostics.moments = this.buildMomentsImportDiagnostic(runtime, rawRole?.momentsPayload || null, {
+        restoreMs: roundDuration(importedMoments.restoreMs),
+      });
+      markTouchedRuntime?.(chatScopeId, runtime);
+    }
+    return {
+      roleManifest,
+      importedPersona,
+      targetScopeId,
+      chatScopeId,
+      runtime,
+      roleDiagnostics,
+    };
+  }
+
+  async flushCustomBundleTouchedRuntimes({
+    touchedScopes = new Set(),
+    touchedRuntimes = new Map(),
+  } = {}) {
+    const flushStarted = getPerfNow();
+    for (const scopeKey of touchedScopes) {
+      const runtime = touchedRuntimes.get(scopeKey);
+      if (runtime) {
+        await this.flushRuntimeState(runtime);
+        continue;
+      }
+      const scopeId = getCustomBundleScopeIdFromTouchedKey(scopeKey);
+      try {
+        const nextRuntime = await this.getScopeRuntime(scopeId);
+        await this.flushRuntimeState(nextRuntime);
+      } catch {}
+    }
+    return roundDuration(getPerfNow() - flushStarted);
+  }
+
+  emitCustomBundleImportCompletionEvents() {
+    try {
+      window.dispatchEvent(new CustomEvent('contacts-updated'));
+    } catch {}
+    try {
+      window.dispatchEvent(new CustomEvent('moment-summaries-updated'));
+    } catch {}
+    try {
+      emitWorldInfoChanged(this.appBridge, { roleWorldChanged: true });
+    } catch {}
+  }
+
+  buildImportPreview(packageData) {
+    return buildCustomBundleImportPreview(packageData);
   }
 
   async confirmImport(packageData, fileName = '') {
     const preview = this.buildImportPreview(packageData);
-    const lines = [
-      `文件：${String(fileName || '自定义资料包').trim() || '自定义资料包'}`,
-      `角色 ${preview.roles} 个`,
-      `聊天室 ${preview.chats} 个`,
-      `创意写作 ${preview.creative} 个`,
-      `历史存档 ${preview.archives} 个`,
-      preview.includeConversationContent ? '包含聊天正文 / 创作正文' : '不含聊天正文 / 创作正文',
-      preview.includeMemoryData ? '包含记忆表格已填数据' : '不含记忆表格已填数据',
-      preview.includeVariableState ? '包含变量快照' : '不含变量快照',
-      preview.hideServiceAddresses ? '已隐藏服务地址' : '保留服务地址',
-    ];
-    if (preview.moments || preview.momentSummaries || preview.momentCompacted) {
-      lines.splice(4, 0, `动态 ${preview.moments} 条`);
-      lines.splice(5, 0, `动态摘要 ${preview.momentSummaries} 条${preview.momentCompacted ? ' · 含大总结' : ''}`);
-    }
+    const lines = buildCustomBundleImportConfirmLines({ preview, fileName });
     return appConfirm({
       title: '导入自定义资料包',
       message: `${lines.join('\n')}\n\n确定继续导入吗？`,
@@ -3309,21 +3614,12 @@ export class CustomBundleExporter {
     const preview = this.buildImportPreview(packageData);
     const totalRoomUnits = Math.max(1, Number(preview.chats || 0) + Number(preview.creative || 0));
     let completedRoomUnits = 0;
-    const diagnostics = {
-      kind: 'custom-bundle-import',
-      fileName: String(fileName || '').trim(),
-      phase: 'running',
-      startedAt,
-      durationMs: 0,
+    const diagnostics = buildCustomBundleImportDiagnostics({
+      fileName,
       preview,
       sharedMode: appSettings.get().personaBindContacts === false,
-      roles: [],
-      scopes: [],
-      notes: [],
-      importedTargetsCount: 0,
-      error: '',
-      phases: {},
-    };
+      startedAt,
+    });
     this.reportImportProgress({
       phase: 'prepare',
       progress: 18,
@@ -3347,303 +3643,53 @@ export class CustomBundleExporter {
     diagnostics.importedMemoryTemplateId = String(importedMemoryTemplateId || '').trim();
     const usedSessionIds = await this.collectExistingSessionIds();
     const importedLocalSetKeys = new Set();
-    const roomRefCounts = new Map();
-    ensureArray(packageData?.manifest?.roles).forEach((role) => {
-      ensureArray(role?.chats).forEach((roomKey) => {
-        const key = String(roomKey || '').trim();
-        if (!key) return;
-        roomRefCounts.set(key, Number(roomRefCounts.get(key) || 0) + 1);
-      });
-    });
+    const roomRefCounts = buildCustomBundleRoomRefCounts(packageData?.manifest?.roles);
     const sharedImportedRooms = new Map();
     const touchedScopes = new Set();
     const touchedRuntimes = new Map();
     const importedTargets = [];
     const markTouchedRuntime = (scopeId, runtime) => {
-      const scopeKey = scopeId || '__shared__';
-      touchedScopes.add(scopeKey);
-      if (runtime) touchedRuntimes.set(scopeKey, runtime);
+      markCustomBundleTouchedRuntime({
+        touchedScopes,
+        touchedRuntimes,
+        scopeId,
+        runtime,
+      });
     };
 
     for (const rawRole of ensureArray(packageData?.roles)) {
-      const roleManifest = rawRole?.manifest || {};
-      const importedPersona = await this.importPersonaRecord({
-        ...rawRole,
+      const roleRuntime = await this.importCustomBundleRoleRuntime({
         packageData,
-      }, worldIdMap);
-      if (!importedPersona) continue;
-      const targetScopeId = normalizeScopeId(this.getPersonaScopeKey(importedPersona.id) || importedPersona.id);
-      const chatScopeId = currentSharedMode ? '' : targetScopeId;
-      const runtime = await this.getScopeRuntime(chatScopeId);
-      const roleDiagnostics = {
-        personaId: String(importedPersona?.id || '').trim(),
-        personaName: String(importedPersona?.name || rawRole?.manifest?.name || '角色').trim() || '角色',
-        scopeId: targetScopeId,
-        chatScopeId,
-        moments: null,
-        chats: [],
-        creativeWriting: null,
-      };
-      diagnostics.roles.push(roleDiagnostics);
-      const importedMoments = await this.importMomentsPayload({
-        packageData,
-        rolePackage: rawRole,
-        runtime,
+        rawRole,
+        worldIdMap,
+        currentSharedMode,
+        diagnostics,
+        markTouchedRuntime,
       });
-      if (importedMoments) {
-        roleDiagnostics.moments = this.buildMomentsImportDiagnostic(runtime, rawRole?.momentsPayload || null, {
-          restoreMs: roundDuration(importedMoments.restoreMs),
-        });
-        markTouchedRuntime(chatScopeId, runtime);
-      }
-      const plannedChatSessions = new Map();
-      const sourceSessionIdMap = new Map();
-
-      for (const roomKeyRaw of ensureArray(roleManifest?.chats)) {
-        const roomKey = String(roomKeyRaw || '').trim();
-        if (!roomKey) continue;
-        const roomPackage = packageData?.roomMap?.get(roomKey);
-        if (!roomPackage) continue;
-        if (currentSharedMode && sharedImportedRooms.has(roomKey)) continue;
-        const sessionId = this.allocateUniqueChatSessionId(roomPackage, usedSessionIds);
-        plannedChatSessions.set(roomKey, sessionId);
-        const sourceSessionId = String(roomPackage?.contact?.id || roomPackage?.manifest?.sessionId || '').trim();
-        if (sourceSessionId) sourceSessionIdMap.set(sourceSessionId, sessionId);
-      }
-
-      for (const roomKeyRaw of ensureArray(roleManifest?.chats)) {
-        const roomKey = String(roomKeyRaw || '').trim();
-        if (!roomKey) continue;
-        const roomPackage = packageData?.roomMap?.get(roomKey);
-        if (!roomPackage) continue;
-        if (currentSharedMode && sharedImportedRooms.has(roomKey)) continue;
-        const sessionId = String(plannedChatSessions.get(roomKey) || '').trim()
-          || this.allocateUniqueChatSessionId(roomPackage, usedSessionIds);
-        const roomRefCount = Number(roomRefCounts.get(roomKey) || 0);
-        const personaLockId = importedPersona?.id && (!currentSharedMode || roomRefCount <= 1) ? importedPersona.id : '';
-
-        const contactPayload = roomPackage?.contact || {};
-        const avatarFile = String(contactPayload?.avatarFile || '').trim();
-        const avatarDataUrl = avatarFile
-          ? this.getEntryDataUrl(packageData, avatarFile)
-          : String(contactPayload?.avatarValue || '').trim();
-        const mappedMembers = ensureArray(contactPayload?.members)
-          .map((memberId) => {
-            const rawMemberId = String(memberId || '').trim();
-            if (!rawMemberId) return '';
-            return String(sourceSessionIdMap.get(rawMemberId) || rawMemberId).trim();
-          })
-          .filter(Boolean);
-        runtime.contactsStore?.upsertContact?.({
-          id: sessionId,
-          name: String(contactPayload?.name || contactPayload?.id || sessionId).trim() || sessionId,
-          avatar: avatarDataUrl || '',
-          isGroup: contactPayload?.isGroup === true,
-          members: mappedMembers,
-          description: String(contactPayload?.description || ''),
-          labels: ensureArray(contactPayload?.labels).map(String),
-          libraryTags: ensureArray(contactPayload?.libraryTags).map(String),
-          addedAt: Date.now(),
-          source: 'custom_bundle',
-          isUserCreated: true,
-        });
-        runtime.chatStore?._ensureSession?.(sessionId);
-        this.importVariableCoreToStore(runtime.chatStore, roomPackage?.roomConfig?.variables?.core || null, sessionId);
-        await this.importRegexPayload(
-          roomPackage?.roomConfig?.regex || null,
-          sessionId,
-          worldIdMap,
-          importedLocalSetKeys,
-        );
-        const sourceWorldIds = normalizeWorldIdList(
-          roomPackage?.roomConfig?.world?.worldIds || [],
-          { excludeBuiltin: BUILTIN_PHONE_FORMAT_WORLDBOOK_ID },
-        );
-        const mappedWorldIds = sourceWorldIds
-          .map((id) => worldIdMap[id] || id)
-          .filter(Boolean)
-          .filter((id, index, list) => list.indexOf(id) === index);
-        if (mappedWorldIds.length) {
-          await this.setScopedWorldIds(chatScopeId, sessionId, mappedWorldIds);
-        }
-        await this.importRoomSettingsToScope({
-          packageData,
-          runtime,
-          roomPackage,
-          sessionId,
-          displayName: String(importedPersona?.name || roomPackage?.contact?.name || sessionId),
-          personaLockId,
-        });
-        if (roomPackage?.roomConfig?.variables?.state) {
-          this.importVariableStateToStore(runtime.chatStore, roomPackage.roomConfig.variables.state, sessionId);
-        }
-        if (roomPackage?.memoryData) {
-          try {
-            await this.applyMemorySnapshotToStore(
-              runtime.getMemoryTableStore?.(),
-              sessionId,
-              cloneJson(roomPackage.memoryData, {}),
-              {
-                templateId: importedMemoryTemplateId,
-                isGroup: Boolean(contactPayload?.isGroup),
-              },
-            );
-          } catch (err) {
-            logger.warn('import memory snapshot for custom bundle chat failed', err);
-          }
-        }
-        if (roomPackage?.chatCurrent) {
-          const restoreStarted = getPerfNow();
-          try {
-            await this.restoreConversationToStore(runtime.chatStore, sessionId, roomPackage, {
-              includeMemoryData: Boolean(packageData?.manifest?.options?.includeMemoryData),
-            });
-          } catch (err) {
-            logger.warn('import chat history for custom bundle chat failed', err);
-            diagnostics.notes.push(`chat restore failed: ${String(contactPayload?.name || sessionId)} -> ${String(err?.message || err || 'unknown error')}`);
-          }
-          roleDiagnostics.chats.push(this.buildRoomImportDiagnostic(runtime, sessionId, roomPackage, {
-            roomKey,
-            restoreMs: roundDuration(getPerfNow() - restoreStarted),
-            mappedWorldIds,
-            mappedMembers,
-            isGroup: Boolean(contactPayload?.isGroup),
-          }));
-        } else {
-          roleDiagnostics.chats.push(this.buildRoomImportDiagnostic(runtime, sessionId, roomPackage, {
-            roomKey,
-            restoreMs: 0,
-            mappedWorldIds,
-            mappedMembers,
-            isGroup: Boolean(contactPayload?.isGroup),
-          }));
-        }
-        markTouchedRuntime(chatScopeId, runtime);
-        importedTargets.push({
-          personaId: importedPersona.id,
-          personaName: importedPersona.name,
-          scopeId: chatScopeId,
-          sessionId,
-          roomName: String(contactPayload?.name || sessionId),
-          isRp: false,
-        });
-        completedRoomUnits += 1;
-        this.reportImportProgress({
-          phase: 'rooms',
-          progress: 30 + Math.round((completedRoomUnits / totalRoomUnits) * 56),
-          status: `正在恢复聊天室 ${completedRoomUnits}/${totalRoomUnits}：${String(contactPayload?.name || sessionId)}`,
-          fileName,
-        });
-        if (currentSharedMode) {
-          sharedImportedRooms.set(roomKey, { sessionId });
-        }
-      }
-
-      const rpRoomKey = String(roleManifest?.creativeWriting || '').trim();
-      if (rpRoomKey) {
-        const roomPackage = packageData?.roomMap?.get(rpRoomKey);
-        if (roomPackage) {
-          const rpScopeId = currentSharedMode ? '' : targetScopeId;
-          const rpRuntime = await this.getScopeRuntime(rpScopeId);
-          const rpSessionId = getRpSessionId(importedPersona.id);
-          usedSessionIds.add(rpSessionId);
-          rpRuntime.chatStore?._ensureSession?.(rpSessionId);
-          this.importVariableCoreToStore(rpRuntime.chatStore, roomPackage?.roomConfig?.variables?.core || null, rpSessionId);
-          await this.importRegexPayload(
-            roomPackage?.roomConfig?.regex || null,
-            rpSessionId,
-            worldIdMap,
-            importedLocalSetKeys,
-          );
-          const sourceWorldIds = normalizeWorldIdList(
-            roomPackage?.roomConfig?.world?.worldIds || [],
-            { excludeBuiltin: BUILTIN_PHONE_FORMAT_WORLDBOOK_ID },
-          );
-          const mappedWorldIds = sourceWorldIds
-            .map((id) => worldIdMap[id] || id)
-            .filter(Boolean)
-            .filter((id, index, list) => list.indexOf(id) === index);
-          if (mappedWorldIds.length) {
-            await this.setScopedWorldIds(rpScopeId, rpSessionId, mappedWorldIds);
-          }
-          await this.importRoomSettingsToScope({
-            packageData,
-            runtime: rpRuntime,
-            roomPackage,
-            sessionId: rpSessionId,
-            displayName: `${String(importedPersona?.name || '角色').trim() || '角色'}·创意写作`,
-            personaLockId: importedPersona.id,
-          });
-          if (roomPackage?.roomConfig?.variables?.state) {
-            this.importVariableStateToStore(rpRuntime.chatStore, roomPackage.roomConfig.variables.state, rpSessionId);
-          }
-          if (roomPackage?.memoryData) {
-            try {
-              await this.applyMemorySnapshotToStore(
-                rpRuntime.getMemoryTableStore?.(),
-                rpSessionId,
-                cloneJson(roomPackage.memoryData, {}),
-                {
-                  templateId: importedMemoryTemplateId,
-                  isGroup: false,
-                },
-              );
-            } catch (err) {
-              logger.warn('import memory snapshot for custom bundle rp failed', err);
-            }
-          }
-          if (roomPackage?.chatCurrent) {
-            const restoreStarted = getPerfNow();
-            try {
-              await this.restoreConversationToStore(rpRuntime.chatStore, rpSessionId, roomPackage, {
-                includeMemoryData: Boolean(packageData?.manifest?.options?.includeMemoryData),
-              });
-            } catch (err) {
-              logger.warn('import chat history for custom bundle rp failed', err);
-              diagnostics.notes.push(`rp restore failed: ${String(importedPersona?.name || rpSessionId)} -> ${String(err?.message || err || 'unknown error')}`);
-            }
-            roleDiagnostics.creativeWriting = this.buildRoomImportDiagnostic(rpRuntime, rpSessionId, roomPackage, {
-              roomKey: rpRoomKey,
-              restoreMs: roundDuration(getPerfNow() - restoreStarted),
-              mappedWorldIds,
-              isGroup: false,
-            });
-          } else {
-            roleDiagnostics.creativeWriting = this.buildRoomImportDiagnostic(rpRuntime, rpSessionId, roomPackage, {
-              roomKey: rpRoomKey,
-              restoreMs: 0,
-              mappedWorldIds,
-              isGroup: false,
-            });
-          }
-          if (roomPackage?.rpGreetings) {
-            const greetings = ensureArray(roomPackage.rpGreetings?.greetings).map((greeting) => ({
-              id: String(greeting?.id || '').trim(),
-              title: String(greeting?.title || '').trim(),
-              content: String(greeting?.content || '').trim(),
-            })).filter((greeting) => greeting.content);
-            rpRuntime.rpSessionStore?.setGreetings?.(greetings, {
-              activeId: String(roomPackage?.rpGreetings?.activeGreetingId || '').trim(),
-            });
-          }
-          markTouchedRuntime(rpScopeId, rpRuntime);
-          importedTargets.push({
-            personaId: importedPersona.id,
-            personaName: importedPersona.name,
-            scopeId: rpScopeId,
-            sessionId: rpSessionId,
-            roomName: `${String(importedPersona?.name || '角色').trim() || '角色'}·创意写作`,
-            isRp: true,
-          });
-          completedRoomUnits += 1;
-          this.reportImportProgress({
-            phase: 'rooms',
-            progress: 30 + Math.round((completedRoomUnits / totalRoomUnits) * 56),
-            status: `正在恢复创意写作 ${completedRoomUnits}/${totalRoomUnits}：${String(importedPersona?.name || '角色').trim() || '角色'}`,
-            fileName,
-          });
-        }
-      }
+      if (!roleRuntime) continue;
+      const importedRoleRooms = await this.importCustomBundleRoleRooms({
+        packageData,
+        roleManifest: roleRuntime.roleManifest,
+        importedPersona: roleRuntime.importedPersona,
+        targetScopeId: roleRuntime.targetScopeId,
+        chatScopeId: roleRuntime.chatScopeId,
+        runtime: roleRuntime.runtime,
+        currentSharedMode,
+        roomRefCounts,
+        sharedImportedRooms,
+        usedSessionIds,
+        worldIdMap,
+        importedLocalSetKeys,
+        importedMemoryTemplateId,
+        diagnosticsNotes: diagnostics.notes,
+        roleDiagnostics: roleRuntime.roleDiagnostics,
+        importedTargets,
+        completedRoomUnits,
+        totalRoomUnits,
+        fileName,
+        markTouchedRuntime,
+      });
+      completedRoomUnits = importedRoleRooms.completedRoomUnits;
     }
 
     this.reportImportProgress({
@@ -3652,47 +3698,24 @@ export class CustomBundleExporter {
       status: '正在写入本地资料...',
       fileName,
     });
-    const flushStarted = getPerfNow();
-    for (const scopeKey of touchedScopes) {
-      const runtime = touchedRuntimes.get(scopeKey);
-      if (runtime) {
-        await this.flushRuntimeState(runtime);
-        continue;
-      }
-      const scopeId = scopeKey === '__shared__' ? '' : scopeKey;
-      try {
-        const nextRuntime = await this.getScopeRuntime(scopeId);
-        await this.flushRuntimeState(nextRuntime);
-      } catch {}
-    }
-    diagnostics.phases.flushMs = roundDuration(getPerfNow() - flushStarted);
-    diagnostics.scopes = Array.from(touchedScopes.values());
-    try {
-      window.dispatchEvent(new CustomEvent('contacts-updated'));
-    } catch {}
-    try {
-      window.dispatchEvent(new CustomEvent('moment-summaries-updated'));
-    } catch {}
-    try {
-      this.appBridge?.emitWorldInfoChanged?.({ roleWorldChanged: true });
-    } catch {}
-    const result = {
-      importedTargets,
-      firstTarget: importedTargets[0] || null,
-    };
-    diagnostics.phase = 'done';
-    diagnostics.importedTargetsCount = importedTargets.length;
-    diagnostics.durationMs = roundDuration(getPerfNow() - startedPerf);
-    diagnostics.finishedAt = Date.now();
-    diagnostics.firstTarget = cloneJson(result.firstTarget || null, null);
-    this.publishImportDiagnostics(diagnostics);
-    this.reportImportProgress({
-      phase: 'done',
-      progress: 100,
-      status: `导入完成：${importedTargets.length} 个会话`,
-      fileName,
-      done: true,
+    diagnostics.phases.flushMs = await this.flushCustomBundleTouchedRuntimes({
+      touchedScopes,
+      touchedRuntimes,
     });
+    diagnostics.scopes = Array.from(touchedScopes.values());
+    this.emitCustomBundleImportCompletionEvents();
+    const result = buildCustomBundleImportResultPayload({ importedTargets });
+    Object.assign(diagnostics, buildCustomBundleImportCompletionPatch({
+      importedTargets,
+      firstTarget: result.firstTarget,
+      durationMs: getPerfNow() - startedPerf,
+      finishedAt: Date.now(),
+    }));
+    this.publishImportDiagnostics(diagnostics);
+    this.reportImportProgress(buildCustomBundleImportDoneProgressDetail({
+      importedTargets,
+      fileName,
+    }));
     return {
       ...result,
       diagnostics,
@@ -3735,60 +3758,42 @@ export class CustomBundleExporter {
     }
     const importStarted = getPerfNow();
     const fileName = String(file?.name || '').trim();
-    emitDebugLog({ source: 'custom-bundle', message: `import file selected ${fileName || 'unknown'}` });
-    this.reportImportProgress({
-      phase: 'read-file',
-      progress: 4,
-      status: '正在读取资料包文件...',
+    emitDebugLog(buildCustomBundleImportFileSelectedDebugLog({ fileName }));
+    this.reportImportProgress(buildCustomBundleImportReadFileProgressDetail({
       fileName,
-    });
+    }));
     try {
       let entries = Array.isArray(prefetchedEntries) ? prefetchedEntries : null;
       if (!entries) {
         const buffer = await readFileAsArrayBuffer(file);
         const bytes = Array.from(new Uint8Array(buffer));
-        this.reportImportProgress({
-          phase: 'read-zip',
-          progress: 10,
-          status: '正在解析资料包索引...',
+        this.reportImportProgress(buildCustomBundleImportReadZipProgressDetail({
           fileName,
-        });
+        }));
         entries = await safeInvoke('read_zip_entries', { bytes });
       } else {
-        this.reportImportProgress({
-          phase: 'read-zip',
-          progress: 10,
-          status: '已复用预读取资料包索引',
+        this.reportImportProgress(buildCustomBundleImportReadZipProgressDetail({
           fileName,
-        });
+          reusedPrefetchedEntries: true,
+        }));
       }
       const packageData = this.parsePackageEntries(entries);
-      this.reportImportProgress({
-        phase: 'preview',
-        progress: 14,
-        status: '资料包识别完成，等待确认导入...',
+      this.reportImportProgress(buildCustomBundleImportPreviewProgressDetail({
         fileName,
-      });
+      }));
       const confirmed = await this.confirmImport(packageData, fileName);
       if (!confirmed) {
-        this.reportImportProgress({
-          phase: 'cancelled',
-          progress: 0,
-          status: '已取消导入',
+        this.reportImportProgress(buildCustomBundleImportCancelledProgressDetail({
           fileName,
-          done: true,
-        });
+        }));
         return false;
       }
       const result = await this.importPackage(packageData, { fileName });
       const target = result?.firstTarget || null;
-      if (target?.personaId || target?.sessionId) {
-        const shouldSwitch = await appConfirm({
-          title: '导入完成',
-          message: `已导入 ${result?.importedTargets?.length || 0} 个会话。是否切换到第一个导入结果？`,
-          confirmText: '切换',
-          cancelText: '稍后',
-        });
+      if (shouldPromptCustomBundleImportSwitch(target)) {
+        const shouldSwitch = await appConfirm(buildCustomBundleImportSwitchConfirmOptions({
+          importedTargets: result?.importedTargets,
+        }));
         if (shouldSwitch) {
           await this.switchToImportedTarget(target);
         }
@@ -3796,27 +3801,17 @@ export class CustomBundleExporter {
       window.toastr?.success?.('自定义资料包导入完成');
       return true;
     } catch (err) {
-      this.reportImportProgress({
-        phase: 'failed',
-        progress: 100,
-        status: `导入失败：${String(err?.message || err || '导入失败')}`,
+      this.reportImportProgress(buildCustomBundleImportFailedProgressDetail({
+        error: err,
         fileName,
-        done: true,
-        error: String(err?.message || err || '导入失败'),
-      });
-      this.publishImportDiagnostics({
-        kind: 'custom-bundle-import',
+      }));
+      this.publishImportDiagnostics(buildCustomBundleImportFailureDiagnostics({
         fileName,
-        phase: 'failed',
+        error: err,
         startedAt: Date.now(),
         finishedAt: Date.now(),
         durationMs: roundDuration(getPerfNow() - importStarted),
-        preview: {},
-        roles: [],
-        scopes: [],
-        importedTargetsCount: 0,
-        error: String(err?.message || err || '导入失败'),
-      });
+      }));
       throw err;
     }
   }

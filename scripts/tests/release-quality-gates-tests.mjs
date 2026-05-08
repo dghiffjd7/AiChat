@@ -79,6 +79,7 @@ const splitScriptSteps = script =>
 
 {
   const chatGenerationSteps = splitScriptSteps(scripts['test:chat-generation']);
+  assert.equal(chatGenerationSteps.includes('node scripts/tests/lifecycle-trace-utils-tests.mjs'), true);
   assert.equal(chatGenerationSteps.includes('node scripts/tests/send-flow-utils-tests.mjs'), true);
   assert.equal(chatGenerationSteps.includes('node scripts/tests/generation-state-utils-tests.mjs'), true);
   assert.equal(chatGenerationSteps.includes('node scripts/tests/continuation-message-utils-tests.mjs'), true);
@@ -103,6 +104,17 @@ const splitScriptSteps = script =>
     'node scripts/tests/regex-transfer-tests.mjs',
     'node scripts/tests/zip-entry-utils-tests.mjs',
     'node scripts/tests/import-package-kind-utils-tests.mjs',
+    'node scripts/tests/transfer-worldbook-utils-tests.mjs',
+    'node scripts/tests/experience-pack-export-utils-tests.mjs',
+    'node scripts/tests/experience-pack-import-utils-tests.mjs',
+    'node scripts/tests/custom-bundle-worldbook-utils-tests.mjs',
+    'node scripts/tests/custom-bundle-manifest-utils-tests.mjs',
+    'node scripts/tests/custom-bundle-room-entry-utils-tests.mjs',
+    'node scripts/tests/custom-bundle-conversation-utils-tests.mjs',
+    'node scripts/tests/custom-bundle-import-room-utils-tests.mjs',
+    'node scripts/tests/custom-bundle-import-preview-utils-tests.mjs',
+    'node scripts/tests/custom-bundle-import-diagnostics-utils-tests.mjs',
+    'node scripts/tests/custom-bundle-rp-greeting-utils-tests.mjs',
     'node scripts/tests/transfer-package-contract-tests.mjs',
   ]);
   assert.equal(scripts['test:migration'], 'node scripts/tests/storage-migration-contracts-tests.mjs');

@@ -5,7 +5,9 @@ import { pickSavePath } from '../utils/save-dialog.js';
 import { BUILTIN_PHONE_FORMAT_WORLDBOOK_ID } from '../storage/builtin-worldbooks.js';
 import { emitMemoryRowsUpdated } from './session-memory-event-utils.js';
 import { batchCreateMemoriesWithFallback } from './session-memory-write-utils.js';
+import { getMemoryTableStore, getMemoryTemplateStore } from './memory-store-runtime-utils.js';
 import { createRegexStoreRuntimeAdapter } from './regex-store-runtime-utils.js';
+import { collectTransferWorldbookBundle } from './transfer-worldbook-utils.js';
 import { hasStoredWorldInfo } from './world-store-runtime-utils.js';
 import { decodeZipEntryBase64Text } from './zip-entry-utils.js';
 
@@ -81,14 +83,14 @@ export class CharacterCardTransfer {
   constructor({ chatStore, contactsStore, memoryTableStore, memoryTemplateStore, appBridge }) {
     this.chatStore = chatStore;
     this.contactsStore = contactsStore;
-    this.memoryTableStore = memoryTableStore;
-    this.memoryTemplateStore = memoryTemplateStore;
     this.appBridge = appBridge || window.appBridge;
+    this.memoryTableStore = memoryTableStore || getMemoryTableStore(this.appBridge);
+    this.memoryTemplateStore = memoryTemplateStore || getMemoryTemplateStore(this.appBridge);
     this.regexStore = createRegexStoreRuntimeAdapter(this.appBridge);
   }
 
   async resolveDefaultMemoryTemplateId() {
-    const store = this.memoryTemplateStore || this.appBridge?.memoryTemplateStore;
+    const store = this.memoryTemplateStore || getMemoryTemplateStore(this.appBridge);
     if (!store?.getTemplates) return '';
     try {
       const list = await store.getTemplates({ is_default: true });
@@ -102,7 +104,7 @@ export class CharacterCardTransfer {
   }
 
   async buildMemorySnapshot(sessionId, { isGroup = false } = {}) {
-    const memoryTableStore = this.memoryTableStore || this.appBridge?.memoryTableStore;
+    const memoryTableStore = this.memoryTableStore || getMemoryTableStore(this.appBridge);
     if (!memoryTableStore?.getMemories) return null;
     const templateId = await this.resolveDefaultMemoryTemplateId();
     if (!templateId) return null;
@@ -139,7 +141,7 @@ export class CharacterCardTransfer {
 
   async applyMemorySnapshot(sessionId, snapshot, { isGroup = false } = {}) {
     if (!snapshot) return false;
-    const memoryTableStore = this.memoryTableStore || this.appBridge?.memoryTableStore;
+    const memoryTableStore = this.memoryTableStore || getMemoryTableStore(this.appBridge);
     if (!memoryTableStore?.getMemories) return false;
     const sid = String(sessionId || '').trim();
     if (!sid) return false;
@@ -209,23 +211,16 @@ export class CharacterCardTransfer {
     const sid = String(sessionId || '').trim();
     if (!sid) throw new Error('未选择聊天');
     const contact = this.contactsStore?.getContact?.(sid) || { id: sid, name: sid };
-    const worldIds = ensureArray(this.appBridge?.getWorldIdsForSession?.(sid));
-    const globalWorldId = String(this.appBridge?.globalWorldId || '').trim();
-    const exportWorldIds = Array.from(new Set([
-      ...worldIds,
-      ...(globalWorldId && globalWorldId !== BUILTIN_PHONE_FORMAT_WORLDBOOK_ID ? [globalWorldId] : []),
-    ])).filter(id => id && id !== BUILTIN_PHONE_FORMAT_WORLDBOOK_ID);
-    const worldbooks = {};
-    for (const id of exportWorldIds) {
-      try {
-        const data = await this.appBridge?.getWorldInfo?.(id);
-        if (data && typeof data === 'object') {
-          worldbooks[id] = { ...data, name: String(data?.name || id) };
-        }
-      } catch (err) {
-        logger.warn('export worldbook failed', err);
-      }
-    }
+    const {
+      worldIds: exportWorldIds,
+      globalWorldId,
+      worldbooks,
+    } = await collectTransferWorldbookBundle({
+      appBridge: this.appBridge,
+      sessionId: sid,
+      normalizeSessionWorldIds: false,
+      onError: err => logger.warn('export worldbook failed', err),
+    });
 
     const variables = {
       values: this.chatStore?.listVariables?.(sid) || {},

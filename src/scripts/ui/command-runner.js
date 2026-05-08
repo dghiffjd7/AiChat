@@ -3,6 +3,7 @@
  */
 
 import { logger } from '../utils/logger.js';
+import { getCurrentWorldId, setCurrentWorld } from './world-session-runtime-utils.js';
 
 const RP_HIDE_META_KEY = 'hiddenFromRpPrompt';
 
@@ -118,7 +119,7 @@ const COMMANDS = {
         window.toastr?.warning('请提供世界书 ID');
         return;
       }
-      appBridge.setCurrentWorld(id);
+      setCurrentWorld(appBridge, id);
       window.toastr?.success(`已切换世界书：${id}`);
     }
   },
@@ -136,7 +137,7 @@ const COMMANDS = {
   '/exportworld': {
     desc: '导出当前世界书 JSON 到剪贴簿',
     run: async ({ appBridge }) => {
-      const id = appBridge.currentWorldId;
+      const id = getCurrentWorldId(appBridge);
       if (!id) {
         window.toastr?.warning('尚未选择世界书');
         return;

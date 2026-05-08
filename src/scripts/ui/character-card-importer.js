@@ -8,8 +8,11 @@ import { appSettings } from '../storage/app-settings.js';
 import { appConfirm, appChoice } from './app-confirm.js';
 import { MVUConverter } from '../import/mvu-converter.js';
 import { buildScriptAuthorizationMessage } from './script-authorization-utils.js';
+import { getPresetStore } from './preset-store-runtime-utils.js';
 import { createRegexStoreRuntimeAdapter } from './regex-store-runtime-utils.js';
+import { allowScriptOnce, getScriptRuntime, waitForScriptStoreReady } from './script-runtime-utils.js';
 import { hasStoredWorldInfo, waitForWorldStoreReady } from './world-store-runtime-utils.js';
+import { emitWorldInfoChanged } from './world-session-runtime-utils.js';
 
 const buildGreetingList = (card = {}) => {
   const list = [];
@@ -206,9 +209,10 @@ const ensureUniqueWorldbookId = (baseName, hasWorldInfo) => {
 };
 
 export class CharacterCardImporter {
-  constructor({ personaStore, appBridge, rpSessionStore, onPersonaChanged } = {}) {
+  constructor({ personaStore, appBridge, presetStore = null, rpSessionStore, onPersonaChanged } = {}) {
     this.personaStore = personaStore || null;
     this.appBridge = appBridge || window.appBridge;
+    this.presetStore = presetStore || getPresetStore(this.appBridge);
     this.regexStore = createRegexStoreRuntimeAdapter(this.appBridge);
     this.rpSessionStore = rpSessionStore || null;
     this.onPersonaChanged = onPersonaChanged;
@@ -448,7 +452,7 @@ export class CharacterCardImporter {
       try {
         const sys = String(card.system_prompt || '').trim();
         const post = String(card.post_history_instructions || '').trim();
-        const presetStore = this.appBridge?.presets;
+        const presetStore = this.presetStore;
         if (presetStore?.ready) await presetStore.ready;
         if (presetStore?.upsert) {
           presetId = await presetStore.upsert('sysprompt', {
@@ -488,8 +492,7 @@ export class CharacterCardImporter {
 
     if (options.importScripts && tavernScripts.length) {
       try {
-        const scriptStore = this.appBridge?.scriptStore;
-        if (scriptStore?.ready) await scriptStore.ready;
+        const scriptStore = await waitForScriptStoreReady(this.appBridge);
         const zodSchemaScriptIds = new Set(
           zodScriptsWithSchema.map(s => String(s?.id || s?.name || '').trim()).filter(Boolean)
         );
@@ -545,8 +548,9 @@ export class CharacterCardImporter {
             await Promise.all(ids.map((id) => scriptStore.toggleScript('character', persona.id, id, true)));
           } else if (choice === 'once') {
             const sid = this.appBridge?.chatStore?.getCurrent?.() || '';
-            if (sid && this.appBridge?.scriptRuntime?.allowOnce) {
-              this.appBridge.scriptRuntime.allowOnce(sid, ids);
+            const scriptRuntime = getScriptRuntime(this.appBridge);
+            if (sid && scriptRuntime?.allowOnce) {
+              allowScriptOnce(this.appBridge, sid, ids);
             } else {
               window.toastr?.info?.('当前未打开会话，脚本已导入但未启用');
             }
@@ -576,7 +580,7 @@ export class CharacterCardImporter {
         update.originalCard = rawCard;
       }
       await this.personaStore.update?.(persona.id, update);
-      this.appBridge?.emitWorldInfoChanged?.({ roleWorldChanged: Boolean(worldId) });
+      emitWorldInfoChanged(this.appBridge, { roleWorldChanged: Boolean(worldId) });
     } catch (err) {
       logger.warn('update persona source failed', err);
     }

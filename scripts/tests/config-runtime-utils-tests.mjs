@@ -8,6 +8,7 @@ import {
   getBridgeConfig,
   getConfigProfileById,
   getConfigProfiles,
+  isBridgeConfigured,
   loadBridgeConfig,
   reloadBridgeConfig,
   resolveConfigRuntimeBridge,
@@ -55,6 +56,9 @@ test('resolveConfigRuntimeBridge binds explicit config runtime methods', () => {
     setChatRuntimeConfig(config) {
       return { configured: config.enabled === true };
     },
+    isConfigured() {
+      return this.marker === 'bridge-marker';
+    },
   };
   const context = resolveConfigRuntimeBridge({ bridge });
   assert.equal(context.configManager.id, 'config-manager');
@@ -73,6 +77,7 @@ test('resolveConfigRuntimeBridge binds explicit config runtime methods', () => {
     marker: 'bridge-marker',
   });
   assert.deepEqual(context.setChatRuntimeConfig({ enabled: true }), { configured: true });
+  assert.equal(context.isConfigured(), true);
 });
 
 test('getBridgeConfig and loadBridgeConfig prefer contract methods with config fallback', async () => {
@@ -204,6 +209,12 @@ test('syncChatRuntimeConfigToBridge uses contract method when available', () => 
   });
   assert.deepEqual(calls, [{ provider: 'openai' }]);
   assert.deepEqual(result, { ok: true, configured: true, clientReady: true });
+});
+
+test('isBridgeConfigured prefers contract method and defaults to configured', () => {
+  assert.equal(isBridgeConfigured({ isConfigured: () => false }), false);
+  assert.equal(isBridgeConfigured({ isConfigured: () => true }), true);
+  assert.equal(isBridgeConfigured({}), true);
 });
 
 test('syncChatRuntimeConfigToBridge fallback writes config and client', () => {

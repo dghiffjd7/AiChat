@@ -1,6 +1,7 @@
 import {
   buildMemoryUpdateRequest,
   resolveMemoryUpdateTrigger,
+  setLastMemoryPlan,
 } from './memory-update-runtime-utils.js';
 import { loadBridgeConfig } from '../config-runtime-utils.js';
 
@@ -52,9 +53,7 @@ export const createMemoryUpdateRuntime = ({
       if (signal?.aborted) return;
       if (!isOnline()) return;
       const plan = await buildMemoryUpdatePlan(sessionId, isGroup, baseContext);
-      if (appBridge) {
-        appBridge.lastMemoryPlan = plan || null;
-      }
+      setLastMemoryPlan(appBridge, plan);
       if (!plan?.enabled || !plan.promptText) return;
       if (signal?.aborted) return;
       const historyText = buildMemoryUpdateHistoryText(sessionId);

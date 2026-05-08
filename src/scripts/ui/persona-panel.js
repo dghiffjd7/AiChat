@@ -7,7 +7,10 @@ import { CharacterCardImporter } from './character-card-importer.js';
 import { getCharacterCardDisplayName, getCharacterCardSource } from '../utils/character-card-display.js';
 import { getDefaultAppIcon } from '../utils/default-icon.js';
 import { bindCustomSelectButton, closeCustomSelectMenu, refreshCustomSelectButton } from './custom-select.js';
+import { cleanupPersonaScopedData, deletePersonaCard } from './persona-runtime-utils.js';
 import { getRegexLocalSet, removeRegexLocalSet, waitForRegexStoreReady } from './regex-store-runtime-utils.js';
+import { waitForScriptStoreReady } from './script-runtime-utils.js';
+import { deleteWorldSessionMapEntry } from './world-session-runtime-utils.js';
 
 export class PersonaPanel {
     constructor({ personaStore, userStore = null, chatStore = null, contactsStore = null, rpSessionStore = null, getSessionId = null, onPersonaChanged }) {
@@ -914,7 +917,7 @@ export class PersonaPanel {
                 await this.onPersonaChanged?.();
             } catch {}
             try {
-                await window.appBridge?.deletePersonaCard?.(deleteId);
+                await deletePersonaCard(window.appBridge, deleteId);
             } catch {}
             try {
                 await this.cleanupPersonaBindings(persona, options);
@@ -935,10 +938,9 @@ export class PersonaPanel {
             : {};
         const worldId = String(source.worldbookId || '').trim();
         const regexSetId = String(source.regexSetId || '').trim();
-        const scriptStore = window.appBridge?.scriptStore;
+        const scriptStore = await waitForScriptStoreReady(window.appBridge);
         let scriptCount = 0;
         try {
-            if (scriptStore?.ready) await scriptStore.ready;
             if (scriptStore?.getScripts) {
                 scriptCount = (scriptStore.getScripts('character', persona?.id || '') || []).length;
             }
@@ -1124,7 +1126,7 @@ export class PersonaPanel {
             .filter(Boolean);
         let deletedScopes = [];
         try {
-            const result = await window.appBridge?.cleanupPersonaScopedData?.(keepPersonaIds, [personaId]);
+            const result = await cleanupPersonaScopedData(window.appBridge, keepPersonaIds, [personaId]);
             deletedScopes = Array.isArray(result?.deletedScopes)
                 ? result.deletedScopes.map(scope => String(scope || '').trim()).filter(Boolean)
                 : [];
@@ -1158,11 +1160,7 @@ export class PersonaPanel {
             });
         } catch {}
         try {
-            const map = window.appBridge?.worldSessionMap;
-            if (map && Object.prototype.hasOwnProperty.call(map, rpSessionId)) {
-                delete map[rpSessionId];
-                window.appBridge?.persistWorldSessionMap?.();
-            }
+            deleteWorldSessionMapEntry(window.appBridge, rpSessionId);
         } catch {}
     }
 
@@ -1184,8 +1182,7 @@ export class PersonaPanel {
         }
         if (options.deleteScripts) {
             try {
-                const scriptStore = window.appBridge?.scriptStore;
-                if (scriptStore?.ready) await scriptStore.ready;
+                const scriptStore = await waitForScriptStoreReady(window.appBridge);
                 await scriptStore?.setScripts?.('character', persona.id, []);
             } catch {}
         }

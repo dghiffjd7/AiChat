@@ -3,15 +3,81 @@ import {
   resolveMemoryUpdateRequestPrompt,
 } from './request-prompt-utils.js';
 import { buildMemoryConfirmText } from './memory-edit-utils.js';
+import {
+  emitLifecycleTraceEvent,
+  normalizeLifecycleTraceDetails,
+  normalizeLifecycleTraceText,
+} from './lifecycle-trace-utils.js';
+
+export const buildMemoryUpdateTraceEvent = ({
+  phase = '',
+  sessionId = '',
+  status = 'info',
+  summary = '',
+  details,
+} = {}) => {
+  const event = {
+    category: 'memory',
+    source: 'memory-update-runtime-utils',
+    phase: normalizeLifecycleTraceText(phase, 'event'),
+    sessionId: normalizeLifecycleTraceText(sessionId, ''),
+    status: normalizeLifecycleTraceText(status, 'info'),
+    summary: normalizeLifecycleTraceText(summary, ''),
+  };
+  if (details !== undefined) event.details = normalizeLifecycleTraceDetails(details);
+  return event;
+};
 
 const emitMemoryUpdateTrace = (recordTraceEvent, event) => {
-  try {
-    recordTraceEvent?.({
-      category: 'memory',
-      source: 'memory-update-runtime-utils',
-      ...event,
-    });
-  } catch {}
+  emitLifecycleTraceEvent(recordTraceEvent, buildMemoryUpdateTraceEvent(event));
+};
+
+const getDefaultBridge = () => {
+  if (typeof window !== 'undefined') return window.appBridge || null;
+  return globalThis?.window?.appBridge || null;
+};
+
+const resolveMemoryUpdateBridge = (bridge = null) => bridge || getDefaultBridge();
+
+export const getLastMemoryUpdate = (bridge = null, sessionId = '') => {
+  const runtime = resolveMemoryUpdateBridge(bridge);
+  if (typeof runtime?.getLastMemoryUpdate === 'function') return runtime.getLastMemoryUpdate(sessionId) || null;
+  const id = String(sessionId || '').trim();
+  return id ? runtime?.['lastMemoryUpdateBySession']?.[id] || null : null;
+};
+
+export const setLastMemoryUpdate = (bridge = null, sessionId = '', payload = null) => {
+  const runtime = resolveMemoryUpdateBridge(bridge);
+  if (typeof runtime?.setLastMemoryUpdate === 'function') {
+    runtime.setLastMemoryUpdate(sessionId, payload);
+    return true;
+  }
+  return false;
+};
+
+export const getLastMemoryPlan = (bridge = null) => {
+  const runtime = resolveMemoryUpdateBridge(bridge);
+  if (typeof runtime?.getLastMemoryPlan === 'function') return runtime.getLastMemoryPlan() || null;
+  return runtime?.['lastMemoryPlan'] || null;
+};
+
+export const setLastMemoryPlan = (bridge = null, plan = null) => {
+  const runtime = resolveMemoryUpdateBridge(bridge);
+  if (typeof runtime?.setLastMemoryPlan === 'function') {
+    runtime.setLastMemoryPlan(plan);
+    return true;
+  }
+  if (runtime && typeof runtime === 'object') {
+    runtime['lastMemoryPlan'] = plan || null;
+    return true;
+  }
+  return false;
+};
+
+export const buildMemoryPromptPlan = async (bridge = null, context = null) => {
+  const runtime = resolveMemoryUpdateBridge(bridge);
+  if (typeof runtime?.buildMemoryPromptPlan === 'function') return await runtime.buildMemoryPromptPlan(context);
+  return null;
 };
 
 export const resolveMemoryUpdateHistoryLimit = (settings) => {
@@ -229,8 +295,9 @@ export const handleMemoryEditsFromRawWithUi = async ({
   }
   const parsed = extractTableEditBlocks(raw);
   try {
-    const lastEntry = appBridge?.getLastMemoryUpdate?.(sessionId);
-    appBridge?.setLastMemoryUpdate?.(
+    const lastEntry = getLastMemoryUpdate(appBridge, sessionId);
+    setLastMemoryUpdate(
+      appBridge,
       sessionId,
       buildMemoryUpdateLastEntry({
         raw,

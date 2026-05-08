@@ -1,3 +1,8 @@
+import {
+  normalizeLifecycleTraceDetails,
+  normalizeLifecycleTraceText,
+} from './lifecycle-trace-utils.js';
+
 const normalizeObject = (value) => (value && typeof value === 'object' ? value : null);
 const noop = () => {};
 
@@ -11,6 +16,30 @@ const callSafely = (fn, ...args) => {
 };
 
 const hasPartialContent = (partial = null) => Boolean(String(partial?.content || '').trim());
+
+export const buildGenerationCancelTraceEvent = ({
+  sessionId = '',
+  generationId,
+  reason = 'user',
+  status = 'info',
+  hasPartial,
+} = {}) => {
+  const normalizedStatus = normalizeLifecycleTraceText(status, 'info');
+  const details = {
+    generationId,
+    reason: normalizeLifecycleTraceText(reason, ''),
+  };
+  if (hasPartial !== undefined) details.hasPartial = Boolean(hasPartial);
+  return {
+    phase: 'generation.cancel',
+    sessionId: normalizeLifecycleTraceText(sessionId, ''),
+    status: normalizedStatus,
+    summary: normalizedStatus === 'success'
+      ? 'generation cancel completed'
+      : (normalizedStatus === 'started' ? 'generation cancel requested' : 'generation cancel event'),
+    details: normalizeLifecycleTraceDetails(details),
+  };
+};
 
 export const createActiveGenerationRecord = ({
   id = 0,
@@ -195,16 +224,12 @@ export const runActiveGenerationCancelFlow = ({
     };
   }
 
-  callSafely(recordTraceEvent, {
-    phase: 'generation.cancel',
+  callSafely(recordTraceEvent, buildGenerationCancelTraceEvent({
     sessionId: currentGeneration.sessionId,
+    generationId: currentGeneration.id,
+    reason,
     status: 'started',
-    summary: 'generation cancel requested',
-    details: {
-      generationId: currentGeneration.id,
-      reason,
-    },
-  });
+  }));
 
   try {
     currentGeneration.cancelled = true;
@@ -243,17 +268,13 @@ export const runActiveGenerationCancelFlow = ({
     } catch {}
   }
 
-  callSafely(recordTraceEvent, {
-    phase: 'generation.cancel',
+  callSafely(recordTraceEvent, buildGenerationCancelTraceEvent({
     sessionId: currentGeneration.sessionId,
+    generationId: currentGeneration.id,
+    reason,
     status: 'success',
-    summary: 'generation cancel completed',
-    details: {
-      generationId: currentGeneration.id,
-      reason,
-      hasPartial: hasPartialContent(partial),
-    },
-  });
+    hasPartial: hasPartialContent(partial),
+  }));
 
   callSafely(hideTyping);
   callSafely(setStreamingState, false);

@@ -26,6 +26,7 @@ import { stickerPackStore } from '../storage/sticker-pack-store.js';
 import { makeScopedKey, normalizeScopeId } from '../storage/store-scope.js';
 import { appSettings } from '../storage/app-settings.js';
 import { renderTemplateMessages, templateSettings } from '../plugins/template-engine.js';
+import { getChatUI } from './chat-ui-runtime-utils.js';
 import { mergeRichCompatInputText, parseRichCompatSlashCommand } from './chat/rich-input-compat.js';
 import {
   buildMemoryTablePlan,
@@ -460,12 +461,52 @@ class AppBridge {
     this.chatUI = ui;
   }
 
+  getChatUI() {
+    return this.chatUI || null;
+  }
+
+  getCurrentCharacterId() {
+    return this.currentCharacterId || '';
+  }
+
   setPluginRuntime(runtime) {
     this.pluginRuntime = runtime || null;
   }
 
+  getPluginRuntime() {
+    return this.pluginRuntime || null;
+  }
+
   setScriptRuntime(runtime) {
     this.scriptRuntime = runtime || null;
+  }
+
+  getScriptStore() {
+    return this.scriptStore || null;
+  }
+
+  getScriptRuntime() {
+    return this.scriptRuntime || null;
+  }
+
+  restartScriptWorker(reason = '') {
+    return this.scriptRuntime?.restartWorker?.(reason);
+  }
+
+  allowScriptOnce(sessionId, scriptIds = []) {
+    return this.scriptRuntime?.allowOnce?.(sessionId, scriptIds);
+  }
+
+  syncScripts(payload = {}) {
+    return this.scriptRuntime?.syncScripts?.(payload);
+  }
+
+  dispatchScriptEvent(eventName, payload = {}, options = {}) {
+    return this.scriptRuntime?.dispatchEvent?.(eventName, payload, options);
+  }
+
+  getPresetStore() {
+    return this.presets || null;
   }
 
   setContactsStore(store) {
@@ -482,6 +523,14 @@ class AppBridge {
 
   setMemoryTemplateStore(store) {
     this.memoryTemplateStore = store;
+  }
+
+  getMemoryTableStore() {
+    return this.memoryTableStore || null;
+  }
+
+  getMemoryTemplateStore() {
+    return this.memoryTemplateStore || null;
   }
 
   setContextBuilder(fn) {
@@ -1550,6 +1599,14 @@ class AppBridge {
     return this.lastMemoryUpdateBySession?.[id] || null;
   }
 
+  getLastMemoryPlan() {
+    return this.lastMemoryPlan || null;
+  }
+
+  setLastMemoryPlan(plan = null) {
+    this.lastMemoryPlan = plan || null;
+  }
+
   async ensureBuiltinWorldbooks() {
     await this.worldStore.ready;
     try {
@@ -1720,6 +1777,10 @@ class AppBridge {
   normalizeWorldIds(value) {
     const list = Array.isArray(value) ? value : (value ? [value] : []);
     return list.map(item => String(item || '').trim()).filter(Boolean);
+  }
+
+  getPersonaScope() {
+    return this.scopeId || '';
   }
 
   setPersonaScope(scopeId = '') {
@@ -1919,6 +1980,38 @@ class AppBridge {
   persistWorldSessionMap() {
     localStorage.setItem(this.getWorldSessionMapKey(), JSON.stringify(this.worldSessionMap || {}));
     safeInvoke('save_kv', { name: this.getWorldSessionMapKey(), data: this.worldSessionMap }).catch(() => {});
+  }
+
+  getWorldSessionMap() {
+    return this.worldSessionMap || {};
+  }
+
+  replaceWorldSessionMap(worldSessionMap = {}) {
+    this.worldSessionMap = worldSessionMap && typeof worldSessionMap === 'object' && !Array.isArray(worldSessionMap)
+      ? worldSessionMap
+      : {};
+    this.persistWorldSessionMap();
+    const activeSessionId = String(this.getActiveSessionId?.() || this.activeSessionId || '').trim();
+    this.currentWorldIds = activeSessionId ? this.normalizeWorldIds(this.worldSessionMap?.[activeSessionId]) : [];
+    this.currentWorldId = this.currentWorldIds[0] || null;
+  }
+
+  renameWorldSessionMapEntry(fromSessionId = '', toSessionId = '') {
+    const from = String(fromSessionId || '').trim();
+    const to = String(toSessionId || '').trim();
+    if (!from || !to || !Object.prototype.hasOwnProperty.call(this.worldSessionMap || {}, from)) return false;
+    this.worldSessionMap[to] = this.worldSessionMap[from];
+    delete this.worldSessionMap[from];
+    this.persistWorldSessionMap();
+    return true;
+  }
+
+  deleteWorldSessionMapEntry(sessionId = '') {
+    const sid = String(sessionId || '').trim();
+    if (!sid || !Object.prototype.hasOwnProperty.call(this.worldSessionMap || {}, sid)) return false;
+    delete this.worldSessionMap[sid];
+    this.persistWorldSessionMap();
+    return true;
   }
 
   persistGlobalWorldId() {
@@ -5389,6 +5482,18 @@ const stringifyMessageContent = (content) => {
     return this.normalizeWorldIds(this.worldSessionMap[sessionId]);
   }
 
+  getCurrentWorldId() {
+    return this.currentWorldId || '';
+  }
+
+  getCurrentWorldIds() {
+    return this.normalizeWorldIds(this.currentWorldIds);
+  }
+
+  getGlobalWorldId() {
+    return this.globalWorldId || '';
+  }
+
   setSessionWorldIds(sessionId, worldIds, { silent = true } = {}) {
     const sid = String(sessionId || '').trim();
     if (!sid) return;
@@ -6112,7 +6217,7 @@ window.triggerSlash = async command => {
   logger.info('执行命令:', command);
   const parsed = parseRichCompatSlashCommand(command);
   if (!parsed) return false;
-  const ui = window.appBridge?.chatUI;
+  const ui = getChatUI(window.appBridge);
   const inputEl = ui?.inputEl || document.getElementById('composer-input');
   if (!inputEl) return false;
   const current = String(inputEl.value || '');
@@ -6136,7 +6241,7 @@ window.getWorldInfoSettings = async () => {
 };
 
 window.saveWorldInfo = async data => {
-  await window.appBridge.saveWorldInfo(window.appBridge.currentCharacterId, data);
+  await window.appBridge.saveWorldInfo(window.appBridge.getCurrentCharacterId?.() || '', data);
 };
 
 // 兼容：从 ST world JSON 导入（期望前端读取后调用）

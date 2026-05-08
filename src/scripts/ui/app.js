@@ -49,11 +49,14 @@ import { safeInvoke } from '../utils/tauri.js';
 import './bridge.js';
 import {
   ensureDebugUiRegistry,
+  registerChatUiBridgeContract,
   registerConfigRuntimeBridgeContract,
   registerGenerationBridgeContract,
   registerMessageActionBridgeContract,
+  registerMemoryStoreBridgeContract,
   registerMemoryUpdateBridgeContract,
   registerPersonaBridgeContract,
+  registerPresetStoreBridgeContract,
   registerPromptInjectionBridgeContract,
   registerPromptProcessingBridgeContract,
   registerRegexStoreBridgeContract,
@@ -62,11 +65,22 @@ import {
   registerRuntimeServiceBridgeContract,
   registerSessionStateBridgeContract,
   registerSharedSessionBridgeContract,
+  registerScriptRuntimeBridgeContract,
   registerTurnCheckpointBridgeContract,
   registerUiUtilityBridgeContract,
   registerWorldStoreBridgeContract,
+  registerWorldSessionBridgeContract,
 } from './app-bridge-contract.js';
-import { getRegexStore, waitForRegexStoreReady } from './regex-store-runtime-utils.js';
+import { isBridgeConfigured } from './config-runtime-utils.js';
+import { getPresetStore } from './preset-store-runtime-utils.js';
+import {
+  getRegexStore,
+  syncPresetRegexBindings,
+  syncWorldRegexBindings,
+  waitForRegexStoreReady,
+} from './regex-store-runtime-utils.js';
+import { getScriptStore } from './script-runtime-utils.js';
+import { emitWorldInfoChanged } from './world-session-runtime-utils.js';
 import { ensureDebugTraceTimeline } from './debug-trace-timeline-utils.js';
 import {
   bindAppSessionEntryNavigation,
@@ -221,8 +235,12 @@ import {
 } from './chat/memory-table-action-utils.js';
 import { createMemoryUpdateRuntime } from './chat/memory-update-runtime.js';
 import {
+  buildMemoryPromptPlan,
   createMemoryEditUiRuntime,
+  getLastMemoryPlan,
+  getLastMemoryUpdate,
   resolveMemoryUpdatePlanForSession,
+  setLastMemoryUpdate,
 } from './chat/memory-update-runtime-utils.js';
 import {
   buildScopedMemoryRowFields,
@@ -567,11 +585,15 @@ const initApp = async () => {
   const imageConfigManager = new ConfigManager({ scope: 'image' });
   const memoryUpdateConfigManager = new ConfigManager();
   const generalSettingsPanel = new GeneralSettingsPanel();
-  const sessionConfigPanel = new SessionConfigPanel();
+  const presetStore = getPresetStore(window.appBridge);
+  registerPresetStoreBridgeContract(window.appBridge, {
+    getPresetStore: window.appBridge.getPresetStore?.bind(window.appBridge),
+  });
+  const sessionConfigPanel = new SessionConfigPanel({ store: presetStore });
   const pluginStore = new PluginStore();
   const pluginRuntime =
     typeof Worker === 'undefined' ? null : new PluginRuntime(pluginStore);
-  const scriptStore = window.appBridge?.scriptStore || null;
+  const scriptStore = getScriptStore(window.appBridge);
   const scriptRuntime =
     typeof Worker === 'undefined' || !scriptStore ? null : new ScriptRuntime(scriptStore);
   const pluginUiManager = new PluginUiManager();
@@ -583,18 +605,21 @@ const initApp = async () => {
   if (!scriptRuntime) {
     logger.warn('script runtime disabled (Worker unsupported or store missing)');
   }
-  const presetPanel = new PresetPanel();
+  const presetPanel = new PresetPanel({ store: presetStore });
   registerRegexStoreBridgeContract(window.appBridge, {
     getRegexStore: window.appBridge.getRegexStore?.bind(window.appBridge),
     waitForRegexStoreReady: window.appBridge.waitForRegexStoreReady?.bind(window.appBridge),
+    getRegexContext: window.appBridge.getRegexContext?.bind(window.appBridge),
     getRegexSession: window.appBridge.getRegexSession?.bind(window.appBridge),
     listRegexLocalSets: window.appBridge.listRegexLocalSets?.bind(window.appBridge),
     getRegexLocalSet: window.appBridge.getRegexLocalSet?.bind(window.appBridge),
     upsertRegexLocalSet: window.appBridge.upsertRegexLocalSet?.bind(window.appBridge),
     removeRegexLocalSet: window.appBridge.removeRegexLocalSet?.bind(window.appBridge),
+    syncPresetRegexBindings: window.appBridge.syncPresetRegexBindings?.bind(window.appBridge),
+    syncWorldRegexBindings: window.appBridge.syncWorldRegexBindings?.bind(window.appBridge),
   });
   const regexStore = getRegexStore(window.appBridge);
-  const regexPanel = new RegexPanel({ store: regexStore });
+  const regexPanel = new RegexPanel({ store: regexStore, presetStore });
   const pluginPanel = new PluginPanel({ store: pluginStore, runtime: pluginRuntime });
   const chatStore = new ChatStore();
   window.appBridge.setChatStore(chatStore);
@@ -610,9 +635,16 @@ const initApp = async () => {
     setActiveConfigProfile: window.appBridge.setActiveConfigProfile?.bind(window.appBridge),
     createConfigProfile: window.appBridge.createConfigProfile?.bind(window.appBridge),
     setChatRuntimeConfig: window.appBridge.setChatRuntimeConfig?.bind(window.appBridge),
+    isConfigured: window.appBridge.isConfigured?.bind(window.appBridge),
   });
   const variableRuleEngine = new VariableRuleEngine({ chatStore, appBridge: window.appBridge });
   registerRuntimeServiceBridgeContract(window.appBridge, {
+    init: window.appBridge.init?.bind(window.appBridge),
+    setChatStore: window.appBridge.setChatStore?.bind(window.appBridge),
+    setContactsStore: window.appBridge.setContactsStore?.bind(window.appBridge),
+    setPluginRuntime: window.appBridge.setPluginRuntime?.bind(window.appBridge),
+    getPluginRuntime: window.appBridge.getPluginRuntime?.bind(window.appBridge),
+    setMomentSummaryStore: window.appBridge.setMomentSummaryStore?.bind(window.appBridge),
     variableRuleEngine,
     runVariableRules: (sessionId, ruleId) => variableRuleEngine.runManual(sessionId, ruleId),
   });
@@ -838,10 +870,23 @@ const initApp = async () => {
     window.appBridge.setChatUI?.(ui);
     pluginRuntime.init().catch((err) => logger.warn('plugin runtime init failed', err));
   }
+  registerChatUiBridgeContract(window.appBridge, {
+    setChatUI: window.appBridge.setChatUI?.bind(window.appBridge),
+    getChatUI: window.appBridge.getChatUI?.bind(window.appBridge),
+  });
   if (scriptRuntime) {
-    scriptRuntime.setContext({ bridge: window.appBridge, chatStore, contactsStore, presets: window.appBridge?.presets });
+    scriptRuntime.setContext({ bridge: window.appBridge, chatStore, contactsStore, presets: presetStore });
     window.appBridge.setScriptRuntime?.(scriptRuntime);
   }
+  registerScriptRuntimeBridgeContract(window.appBridge, {
+    setScriptRuntime: window.appBridge.setScriptRuntime?.bind(window.appBridge),
+    getScriptStore: window.appBridge.getScriptStore?.bind(window.appBridge),
+    getScriptRuntime: window.appBridge.getScriptRuntime?.bind(window.appBridge),
+    restartScriptWorker: window.appBridge.restartScriptWorker?.bind(window.appBridge),
+    allowScriptOnce: window.appBridge.allowScriptOnce?.bind(window.appBridge),
+    syncScripts: window.appBridge.syncScripts?.bind(window.appBridge),
+    dispatchScriptEvent: window.appBridge.dispatchScriptEvent?.bind(window.appBridge),
+  });
   const groupStore = new GroupStore();
   const momentsStore = new MomentsStore();
   const momentSummaryStore = new MomentSummaryStore();
@@ -860,6 +905,12 @@ const initApp = async () => {
   try {
     window.appBridge.setMemoryTemplateStore?.(memoryTemplateStore);
   } catch {}
+  registerMemoryStoreBridgeContract(window.appBridge, {
+    setMemoryTableStore: window.appBridge.setMemoryTableStore?.bind(window.appBridge),
+    setMemoryTemplateStore: window.appBridge.setMemoryTemplateStore?.bind(window.appBridge),
+    getMemoryTableStore: window.appBridge.getMemoryTableStore?.bind(window.appBridge),
+    getMemoryTemplateStore: window.appBridge.getMemoryTemplateStore?.bind(window.appBridge),
+  });
   const turnCheckpointStore = new TurnCheckpointStore();
   registerRuntimeServiceBridgeContract(window.appBridge, {
     turnCheckpointStore,
@@ -878,6 +929,7 @@ const initApp = async () => {
     memoryTableStore,
     memoryTemplateStore,
     personaStore,
+    presetStore,
     appBridge: window.appBridge,
   });
   let activePersonaScopeKey = '';
@@ -900,13 +952,15 @@ const initApp = async () => {
     contactsStore,
     rpSessionStore,
     memoryTableStore,
+    memoryTemplateStore,
+    presetStore,
     momentsStore,
     momentSummaryStore,
   });
   let lastMomentRawReply = '';
   let lastMomentRawMeta = null;
   const worldPanel = new WorldPanel({ contactsStore, getSessionId: () => chatStore.getCurrent() });
-  const scriptPanel = new ScriptPanel({ store: scriptStore, personaStore, presetStore: window.appBridge?.presets });
+  const scriptPanel = new ScriptPanel({ store: scriptStore, personaStore, presetStore, appBridge: window.appBridge });
   presetPanel.setRuntimeContext({
     chatStore,
     contactsStore,
@@ -979,9 +1033,9 @@ const initApp = async () => {
   } catch {}
   await initMediaAssets();
   await waitForRegexStoreReady(window.appBridge);
-  await window.appBridge?.presets?.ready;
+  await presetStore?.ready;
   try {
-    await window.appBridge?.syncPresetRegexBindings?.();
+    await syncPresetRegexBindings(window.appBridge);
   } catch {}
   window.appBridge.setActiveSession(chatStore.getCurrent());
   registerSessionStateBridgeContract(window.appBridge, {
@@ -1036,6 +1090,8 @@ const initApp = async () => {
     contactsStore,
     chatStore,
     getSessionId: () => chatStore.getCurrent(),
+    memoryTableStore,
+    memoryTemplateStore,
     onExportExperiencePack: (sessionId) => experiencePackTransfer.exportExperiencePack(sessionId),
     onSaved: async ({ forceRefresh } = {}) => {
       refreshChatAndContacts();
@@ -1123,6 +1179,8 @@ const initApp = async () => {
   const groupSettingsPanel = new GroupSettingsPanel({
     contactsStore,
     chatStore,
+    memoryTableStore,
+    memoryTemplateStore,
     onSaved: async ({ id, forceRefresh } = {}) => {
       try {
         refreshChatAndContacts();
@@ -1185,6 +1243,11 @@ const initApp = async () => {
         return getRpSessionId(getEffectivePersona(sid)?.id || activePersonaId);
       },
       getActivePersonaId: () => String(activePersonaId || '').trim(),
+      getCurrentCharacterId: window.appBridge.getCurrentCharacterId?.bind(window.appBridge),
+      getPersonaScope: window.appBridge.getPersonaScope?.bind(window.appBridge),
+      setPersonaScope: window.appBridge.setPersonaScope?.bind(window.appBridge),
+      deletePersonaCard: window.appBridge.deletePersonaCard?.bind(window.appBridge),
+      cleanupPersonaScopedData: window.appBridge.cleanupPersonaScopedData?.bind(window.appBridge),
       getLastChatSessionId: () => String(lastChatState?.sessionId || '').trim(),
       getLastSocialSessionId: () => String(lastChatState?.sessionId || '').trim(),
       getRpCharacterNameForSession: (sessionId = '') => {
@@ -1256,10 +1319,10 @@ const initApp = async () => {
   };
   const emitRoleWorldBindingsChanged = (detail = {}) => {
     try {
-      window.appBridge?.syncWorldRegexBindings?.();
+      syncWorldRegexBindings(window.appBridge);
     } catch {}
     try {
-      window.appBridge?.emitWorldInfoChanged?.({ roleWorldChanged: true, ...(detail || {}) });
+      emitWorldInfoChanged(window.appBridge, { roleWorldChanged: true, ...(detail || {}) });
     } catch {}
   };
   const updatePersonaRoleWorldBinding = async (personaId, { worldbookId, worldbookEnabled } = {}) => {
@@ -1282,6 +1345,9 @@ const initApp = async () => {
     if (window.appBridge) {
       registerRoleWorldBridgeContract(window.appBridge, {
         resolveRoleWorldBindings: (sessionId, options = {}) => buildRoleWorldBindingsForSession(sessionId, options),
+        setRoleWorldResolver: window.appBridge.setRoleWorldResolver?.bind(window.appBridge),
+        setWorldLifecycleHandler: window.appBridge.setWorldLifecycleHandler?.bind(window.appBridge),
+        setSessionWorldIds: window.appBridge.setSessionWorldIds?.bind(window.appBridge),
         assignRoleWorldToPersona: async (personaId, worldId, { enabled = true } = {}) => {
           return updatePersonaRoleWorldBinding(personaId, {
             worldbookId: worldId,
@@ -1340,6 +1406,19 @@ const initApp = async () => {
         bindWorldToSession: window.appBridge.bindWorldToSession?.bind(window.appBridge),
         deleteWorldInfo: window.appBridge.deleteWorldInfo?.bind(window.appBridge),
         renameWorldInfo: window.appBridge.renameWorldInfo?.bind(window.appBridge),
+      });
+      registerWorldSessionBridgeContract(window.appBridge, {
+        getWorldSessionMap: window.appBridge.getWorldSessionMap?.bind(window.appBridge),
+        getWorldIdsForSession: window.appBridge.getWorldIdsForSession?.bind(window.appBridge),
+        getCurrentWorldId: window.appBridge.getCurrentWorldId?.bind(window.appBridge),
+        getCurrentWorldIds: window.appBridge.getCurrentWorldIds?.bind(window.appBridge),
+        getGlobalWorldId: window.appBridge.getGlobalWorldId?.bind(window.appBridge),
+        emitWorldInfoChanged: window.appBridge.emitWorldInfoChanged?.bind(window.appBridge),
+        setCurrentWorld: window.appBridge.setCurrentWorld?.bind(window.appBridge),
+        replaceWorldSessionMap: window.appBridge.replaceWorldSessionMap?.bind(window.appBridge),
+        renameWorldSessionMapEntry: window.appBridge.renameWorldSessionMapEntry?.bind(window.appBridge),
+        deleteWorldSessionMapEntry: window.appBridge.deleteWorldSessionMapEntry?.bind(window.appBridge),
+        persistWorldSessionMap: window.appBridge.persistWorldSessionMap?.bind(window.appBridge),
       });
     }
   } catch {}
@@ -1825,7 +1904,7 @@ const initApp = async () => {
   let requestMomentSummaryCompaction = () => Promise.resolve(false);
   let momentsPanel = null;
   const momentCommentRuntime = createMomentCommentLifecycleRuntime({
-    getIsConfigured: () => window.appBridge.isConfigured(),
+    getIsConfigured: () => isBridgeConfigured(window.appBridge),
     isOnline: () => typeof navigator === 'undefined' || navigator.onLine,
     getConfig: () => window.appBridge.getConfig(),
     getMoment: id => momentsStore.get(id),
@@ -12743,13 +12822,11 @@ Phase G（Frame 36）：循环衔接
     const extractInitVarFromWorldbooks = (sid, macroContext = {}) => {
       const app = window.appBridge;
       const ids = new Set();
-      const globalId = String(app?.globalWorldId || '').trim();
+      const globalId = String(app?.getGlobalWorldId?.() || '').trim();
       if (globalId) ids.add(globalId);
       const sessionIds = Array.isArray(app?.getWorldIdsForSession?.(sid))
         ? app.getWorldIdsForSession(sid)
-        : Array.isArray(app?.currentWorldIds)
-          ? app.currentWorldIds
-          : [];
+        : [];
       sessionIds.forEach((id) => {
         const name = String(id || '').trim();
         if (name) ids.add(name);
@@ -13219,7 +13296,7 @@ Phase G（Frame 36）：循环衔接
       sessionId,
       buildSnapshot: sid => buildSwipeMemoryTableSnapshot(sid, { isGroup }),
       cloneEntry: cloneSwipeMemoryUpdateEntry,
-      getMemoryUpdateEntry: sid => window.appBridge?.getLastMemoryUpdate?.(sid),
+      getMemoryUpdateEntry: sid => getLastMemoryUpdate(window.appBridge, sid),
     });
   };
   const applySwipeBranchMemoryState = async (sessionId, branch, { isGroup } = {}) => {
@@ -13229,7 +13306,7 @@ Phase G（Frame 36）：循环衔接
       branch,
       applySnapshot: (sid, snapshot) => applySwipeMemoryTableSnapshot(sid, snapshot, { isGroup }),
       cloneEntry: cloneSwipeMemoryUpdateEntry,
-      setMemoryUpdateEntry: (sid, entry) => window.appBridge?.setLastMemoryUpdate?.(sid, entry),
+      setMemoryUpdateEntry: (sid, entry) => setLastMemoryUpdate(window.appBridge, sid, entry),
     });
   };
   const captureAssistantMemoryState = async (sessionId, { isGroup } = {}) => {
@@ -13239,7 +13316,7 @@ Phase G（Frame 36）：循环衔接
       buildSnapshot: sid => buildSwipeMemoryTableSnapshot(sid, { isGroup }),
       cloneSnapshot: cloneSwipePlainObject,
       cloneEntry: cloneSwipeMemoryUpdateEntry,
-      getMemoryUpdateEntry: sid => window.appBridge?.getLastMemoryUpdate?.(sid),
+      getMemoryUpdateEntry: sid => getLastMemoryUpdate(window.appBridge, sid),
     });
   };
   const attachAssistantMemoryStateToMeta = (meta, memoryState) => {
@@ -13494,7 +13571,7 @@ Phase G（Frame 36）：循环衔接
     const applied = await applySwipeMemoryTableSnapshot(sid, snapshot, { isGroup });
     if (applied) {
       const entry = cloneSwipeMemoryUpdateEntry(source.memoryUpdateEntry);
-      window.appBridge?.setLastMemoryUpdate?.(sid, entry || null);
+      setLastMemoryUpdate(window.appBridge, sid, entry || null);
     }
     return applied;
   };
@@ -13525,7 +13602,7 @@ Phase G（Frame 36）：循环衔接
     let currentMemoryEntry = null;
     if (captureCurrentActiveState) {
       currentSnapshot = await buildSwipeMemoryTableSnapshot(sid, { isGroup });
-      currentMemoryEntry = cloneSwipeMemoryUpdateEntry(window.appBridge?.getLastMemoryUpdate?.(sid));
+      currentMemoryEntry = cloneSwipeMemoryUpdateEntry(getLastMemoryUpdate(window.appBridge, sid));
       if (currentSnapshot && nextSwipes[activeSwipeIndex]) {
         nextSwipes[activeSwipeIndex].memoryTableSnapshot = cloneSwipePlainObject(currentSnapshot);
         nextSwipes[activeSwipeIndex].memoryUpdateEntry = cloneSwipeMemoryUpdateEntry(currentMemoryEntry);
@@ -13627,7 +13704,7 @@ Phase G（Frame 36）：循环衔接
     if (!tailMessage) {
       const baselineId = await ensureSessionBaselineCheckpointSnapshot(sid, { force: refreshBaselineWhenNoTail });
       if (!baselineId) {
-        window.appBridge?.setLastMemoryUpdate?.(sid, null);
+        setLastMemoryUpdate(window.appBridge, sid, null);
         await turnCheckpointStore.clearPointer(sid);
         return false;
       }
@@ -13636,7 +13713,7 @@ Phase G（Frame 36）：循环衔接
         isGroup,
         fallbackSnapshot: baselineSnapshot,
       });
-      window.appBridge?.setLastMemoryUpdate?.(sid, null);
+      setLastMemoryUpdate(window.appBridge, sid, null);
       await turnCheckpointStore.clearPointer(sid);
       return applied;
     }
@@ -13902,7 +13979,7 @@ Phase G（Frame 36）：循环衔接
             { isGroup, fallbackSnapshot: fallbackLoadedSnapshot },
           );
           if (applied) {
-            window.appBridge?.setLastMemoryUpdate?.(sid, null);
+            setLastMemoryUpdate(window.appBridge, sid, null);
             await turnCheckpointStore.clearPointer(sid);
             await turnCheckpointStore.setArchivePointer(sid, archiveId, {
               ...pointer,
@@ -14235,7 +14312,7 @@ Phase G（Frame 36）：循环衔接
       try {
         const rollbackFn = window.appBridge?.rollbackLastMemoryUpdate;
         if (typeof rollbackFn === 'function') await rollbackFn(sid);
-        window.appBridge?.setLastMemoryUpdate?.(sid, null);
+        setLastMemoryUpdate(window.appBridge, sid, null);
         baselineMemorySnapshot = await buildSwipeMemoryTableSnapshot(sid, { isGroup: isGroupScope });
         baselineMemoryUpdateEntry = null;
       } catch (err) {
@@ -14322,7 +14399,7 @@ Phase G（Frame 36）：循环衔接
       if (getMemoryStorageMode() === 'table') {
         try {
           branchMemorySnapshot = await buildSwipeMemoryTableSnapshot(sid, { isGroup: isGroupScope });
-          branchMemoryUpdateEntry = cloneSwipeMemoryUpdateEntry(window.appBridge?.getLastMemoryUpdate?.(sid));
+          branchMemoryUpdateEntry = cloneSwipeMemoryUpdateEntry(getLastMemoryUpdate(window.appBridge, sid));
         } catch (err) {
           logger.warn('capture swipe memory state failed', err);
         }
@@ -14471,8 +14548,7 @@ Phase G（Frame 36）：循环衔接
   const requestSummaryCompaction = createSessionSummaryCompactionRuntime({
     chatStore,
     getIsSummaryMemoryEnabled: isSummaryMemoryEnabled,
-    getIsConfigured: () =>
-      typeof window.appBridge.isConfigured !== 'function' || window.appBridge.isConfigured(),
+    getIsConfigured: () => isBridgeConfigured(window.appBridge),
     buildMessages: (...args) => window.appBridge.buildMessages(...args),
     backgroundChat: (...args) => window.appBridge.backgroundChat(...args),
     buildSessionContext: (sessionId) => {
@@ -14516,8 +14592,7 @@ Phase G（Frame 36）：循环衔接
 
   requestMomentSummaryCompaction = createMomentSummaryCompactionRuntime({
     momentSummaryStore,
-    getIsConfigured: () =>
-      typeof window.appBridge.isConfigured !== 'function' || window.appBridge.isConfigured(),
+    getIsConfigured: () => isBridgeConfigured(window.appBridge),
     buildMessages: (...args) => window.appBridge.buildMessages(...args),
     backgroundChat: (...args) => window.appBridge.backgroundChat(...args),
     getActiveUserProfile,
@@ -14943,7 +15018,7 @@ Phase G（Frame 36）：循环衔接
       if (!Array.isArray(actions) || actions.length === 0) return null;
       if (!memoryTableStore || !memoryTemplateStore) return null;
 
-      const rawPlan = window.appBridge?.lastMemoryPlan || null;
+      const rawPlan = getLastMemoryPlan(window.appBridge);
       const { plan, planTargetId, currentSessionId, isStaleTarget } =
         resolveMemoryUpdatePlanForSession({ rawPlan, sessionId });
       if (isStaleTarget) {
@@ -14989,8 +15064,8 @@ Phase G（Frame 36）：循环衔接
       const changed = Number(result?.changed || (inserted + updated + deleted));
       if (rollbackSnapshot) {
         try {
-          const prev = window.appBridge?.getLastMemoryUpdate?.(sessionId) || {};
-          window.appBridge?.setLastMemoryUpdate?.(sessionId, {
+          const prev = getLastMemoryUpdate(window.appBridge, sessionId) || {};
+          setLastMemoryUpdate(window.appBridge, sessionId, {
             ...prev,
             rollback: rollbackSnapshot,
             rollbackAt: Date.now(),
@@ -15061,7 +15136,7 @@ Phase G（Frame 36）：循环衔接
     };
     const rollbackLastMemoryUpdate = async sessionId => {
       if (!memoryTableStore || !memoryTemplateStore) return false;
-      const entry = window.appBridge?.getLastMemoryUpdate?.(sessionId);
+      const entry = getLastMemoryUpdate(window.appBridge, sessionId);
       const rollback = entry?.rollback;
       if (!rollback || !Array.isArray(rollback.tables) || !rollback.tables.length) {
         return rollbackLastMemoryUpdateFromActions(sessionId, entry?.actions || []);
@@ -15106,7 +15181,7 @@ Phase G（Frame 36）：循环衔接
       appSettings,
       chatStore,
       loadMemoryTemplateContext,
-      rawPlan: () => window.appBridge?.lastMemoryPlan,
+      rawPlan: () => getLastMemoryPlan(window.appBridge),
       appConfirm,
       toastr: window.toastr,
       isMemoryAutoExtractInline,
@@ -15116,10 +15191,15 @@ Phase G（Frame 36）：循环衔接
       applyMemoryEdits,
       logger,
       stripAssistantText: text => stripTableEditBlocks(text),
-      buildPlan: next => window.appBridge?.buildMemoryPromptPlan?.(next) ?? null,
+      buildPlan: next => buildMemoryPromptPlan(window.appBridge, next),
       recordTraceEvent: recordDebugTraceEvent,
     });
     registerMemoryUpdateBridgeContract(window.appBridge, {
+      getLastMemoryUpdate: window.appBridge.getLastMemoryUpdate?.bind(window.appBridge),
+      setLastMemoryUpdate: window.appBridge.setLastMemoryUpdate?.bind(window.appBridge),
+      getLastMemoryPlan: window.appBridge.getLastMemoryPlan?.bind(window.appBridge),
+      setLastMemoryPlan: window.appBridge.setLastMemoryPlan?.bind(window.appBridge),
+      buildMemoryPromptPlan: window.appBridge.buildMemoryPromptPlan?.bind(window.appBridge),
       rollbackLastMemoryUpdate,
     });
     const memoryUpdateRuntime = createMemoryUpdateRuntime({
@@ -15467,7 +15547,7 @@ Phase G（Frame 36）：循环衔接
       }
     }
 
-    if (!window.appBridge.isConfigured()) {
+    if (!isBridgeConfigured(window.appBridge)) {
       ui.showErrorBanner('未配置 API，请先填写 Base URL / Key / 模型');
       window.toastr?.warning('请先配置 API 信息', '未配置');
       configPanel.show();
@@ -16498,7 +16578,7 @@ Phase G（Frame 36）：循环衔接
     onOpenSessionConfig: () => sessionConfigPanel.show(),
     onPresetChanged: async () => {
       try {
-        await window.appBridge?.syncPresetRegexBindings?.();
+        await syncPresetRegexBindings(window.appBridge);
       } catch {}
       scriptRuntime?.syncContext?.().catch(() => {});
       rerenderCurrentSession();

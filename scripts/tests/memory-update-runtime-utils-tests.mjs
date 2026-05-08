@@ -4,16 +4,61 @@ import {
   buildMemoryUpdateHistoryTextForSession,
   buildMemoryUpdateHistoryTextFromSettings,
   buildMemoryUpdatePlanForSession,
+  buildMemoryUpdateTraceEvent,
+  buildMemoryPromptPlan,
   confirmMemoryEditsWithUi,
   createMemoryEditUiRuntime,
   buildMemoryUpdateLastEntry,
   buildMemoryUpdatePlanInput,
   buildMemoryUpdateRequest,
+  getLastMemoryPlan,
+  getLastMemoryUpdate,
   handleMemoryEditsFromRawWithUi,
   resolveMemoryUpdatePlanForSession,
   resolveMemoryUpdateHistoryLimit,
   resolveMemoryUpdateTrigger,
+  setLastMemoryPlan,
+  setLastMemoryUpdate,
 } from '../../src/scripts/ui/chat/memory-update-runtime-utils.js';
+
+{
+  assert.deepEqual(buildMemoryUpdateTraceEvent({
+    phase: ' edit.apply ',
+    sessionId: ' s1 ',
+    status: ' started ',
+    summary: ' started ',
+    details: {
+      actionCount: 0,
+      force: false,
+      dropped: undefined,
+    },
+  }), {
+    category: 'memory',
+    source: 'memory-update-runtime-utils',
+    phase: 'edit.apply',
+    sessionId: 's1',
+    status: 'started',
+    summary: 'started',
+    details: {
+      actionCount: 0,
+      force: false,
+    },
+  });
+  assert.deepEqual(buildMemoryUpdateTraceEvent({
+    phase: ' edit.skip ',
+    sessionId: ' s2 ',
+    status: ' skipped ',
+    summary: ' skipped ',
+  }), {
+    category: 'memory',
+    source: 'memory-update-runtime-utils',
+    phase: 'edit.skip',
+    sessionId: 's2',
+    status: 'skipped',
+    summary: 'skipped',
+  });
+  console.log('ok - buildMemoryUpdateTraceEvent normalizes memory trace metadata while preserving optional details');
+}
 
 {
   assert.equal(resolveMemoryUpdateHistoryLimit({ memoryUpdateContextRounds: '8' }), 8);
@@ -78,6 +123,29 @@ import {
     plan: { targetId: 's1', foo: true },
   });
   console.log('ok - resolveMemoryUpdatePlanForSession keeps matching plans and flags stale targets');
+}
+
+{
+  const bridge = {
+    updateBySession: {},
+    plan: null,
+    getLastMemoryUpdate: sessionId => bridge.updateBySession[sessionId] || null,
+    setLastMemoryUpdate: (sessionId, entry) => {
+      bridge.updateBySession[sessionId] = entry;
+    },
+    getLastMemoryPlan: () => bridge.plan,
+    setLastMemoryPlan: plan => {
+      bridge.plan = plan;
+    },
+    buildMemoryPromptPlan: async context => ({ targetId: context.sessionId }),
+  };
+  assert.equal(setLastMemoryUpdate(bridge, 's1', { ok: true }), true);
+  assert.deepEqual(getLastMemoryUpdate(bridge, 's1'), { ok: true });
+  assert.equal(setLastMemoryPlan(bridge, { enabled: true }), true);
+  assert.deepEqual(getLastMemoryPlan(bridge), { enabled: true });
+  assert.deepEqual(await buildMemoryPromptPlan(bridge, { sessionId: 's2' }), { targetId: 's2' });
+  assert.equal(setLastMemoryUpdate(null, 's1', {}), false);
+  console.log('ok - memory update bridge helpers prefer explicit contract methods');
 }
 
 {

@@ -6,7 +6,40 @@ import { safeInvoke } from '../utils/tauri.js';
 import { appConfirm } from './app-confirm.js';
 import { CharacterCardTransfer } from './character-card-transfer.js';
 import { createConfigRuntimeAdapter } from './config-runtime-utils.js';
+import {
+  buildExperiencePackPersonaBundlePayload,
+  buildExperiencePackJsonEntryPayloads,
+  buildExperiencePackManifest,
+  buildExperiencePackStickerItemPayload,
+  buildExperiencePackStickerPackPayload,
+  buildExperiencePackWallpaperFilePayload,
+  buildExperiencePackWallpaperRemotePayload,
+} from './experience-pack-export-utils.js';
+import {
+  buildExperiencePackArchiveMessageRestoreJobs,
+  buildExperiencePackImportedConnectionProfileNameBase,
+  buildExperiencePackImportedContactRecord,
+  buildExperiencePackImportedPresetNameBase,
+  buildExperiencePackImportSwitchConfirmOptions,
+  buildExperiencePackLegacyRestoredArchives,
+  buildExperiencePackPresetUpsertPayload,
+  buildExperiencePackRemoteWallpaperSettings,
+  buildExperiencePackRoomBaseSettings,
+  buildExperiencePackRestoredSessionChatState,
+  buildExperiencePackSavedWallpaperSettings,
+  buildExperiencePackSessionChangedDetail,
+  buildExperiencePackSessionSettings,
+  buildExperiencePackWallpaperSaveRequest,
+  getExperiencePackImportBaseName,
+  mapExperiencePackImportedWorldIds,
+  normalizeExperiencePackChatArchivePayloads,
+  normalizeExperiencePackCompactedSummary,
+  normalizeExperiencePackSummaryList,
+} from './experience-pack-import-utils.js';
+import { getPresetStore } from './preset-store-runtime-utils.js';
+import { collectTransferWorldbookBundle } from './transfer-worldbook-utils.js';
 import { hasStoredWorldInfo, waitForWorldStoreReady } from './world-store-runtime-utils.js';
+import { emitWorldInfoChanged } from './world-session-runtime-utils.js';
 import { buildZipEntryMap, readZipEntryJson } from './zip-entry-utils.js';
 
 const EXPERIENCE_PACK_FORMAT = 'chatapp.experience-pack.v1';
@@ -261,32 +294,6 @@ const createAssetCollector = () => {
   return { entries, addDataUrl, addPath, addSource };
 };
 
-const normalizeSummaryList = (list = []) =>
-  ensureArray(list)
-    .map(item => {
-      if (!item || typeof item !== 'object') return null;
-      const text = String(item.text || '').trim();
-      if (!text) return null;
-      return {
-        at: Number(item.at || 0) || 0,
-        text,
-      };
-    })
-    .filter(Boolean);
-
-const normalizeCompactedSummary = (value) => {
-  if (!value || typeof value !== 'object') return null;
-  const text = String(value.text || '').trim();
-  if (!text) return null;
-  const out = {
-    at: Number(value.at || 0) || 0,
-    text,
-  };
-  const raw = String(value.raw || '').trim();
-  if (raw) out.raw = raw;
-  return out;
-};
-
 const sanitizeProfileForPack = (profile, { hideServiceAddresses = false } = {}) => {
   if (!profile || typeof profile !== 'object') return null;
   const next = {
@@ -307,16 +314,6 @@ const sanitizeProfileForPack = (profile, { hideServiceAddresses = false } = {}) 
   return next;
 };
 
-const uniqueById = (items = []) => {
-  const map = new Map();
-  items.forEach((item) => {
-    const id = String(item?.id || '').trim();
-    if (!id) return;
-    map.set(id, item);
-  });
-  return Array.from(map.values());
-};
-
 export class ExperiencePackTransfer extends CharacterCardTransfer {
   constructor({
     chatStore,
@@ -324,11 +321,12 @@ export class ExperiencePackTransfer extends CharacterCardTransfer {
     memoryTableStore,
     memoryTemplateStore,
     personaStore,
+    presetStore = null,
     appBridge,
   } = {}) {
     super({ chatStore, contactsStore, memoryTableStore, memoryTemplateStore, appBridge });
     this.personaStore = personaStore || null;
-    this.presetStore = appBridge?.presets || null;
+    this.presetStore = presetStore || getPresetStore(appBridge);
     this.configManager = appBridge ? createConfigRuntimeAdapter(appBridge) : null;
   }
 
@@ -542,29 +540,12 @@ export class ExperiencePackTransfer extends CharacterCardTransfer {
   }
 
   async collectWorldbookBundle(sessionId) {
-    const sid = String(sessionId || '').trim();
-    const worldIds = ensureArray(this.appBridge?.getWorldIdsForSession?.(sid))
-      .map(id => String(id || '').trim())
-      .filter(id => id && id !== BUILTIN_PHONE_FORMAT_WORLDBOOK_ID);
-    const globalWorldId = String(this.appBridge?.globalWorldId || '').trim();
-    if (globalWorldId && globalWorldId !== BUILTIN_PHONE_FORMAT_WORLDBOOK_ID) worldIds.push(globalWorldId);
-    const deduped = Array.from(new Set(worldIds));
-    const worldbooks = {};
-    for (const id of deduped) {
-      try {
-        const data = await this.appBridge?.getWorldInfo?.(id);
-        if (data && typeof data === 'object') {
-          worldbooks[id] = { ...cloneJson(data, {}), name: String(data?.name || id) };
-        }
-      } catch (err) {
-        logger.warn('collect worldbook for experience pack failed', err);
-      }
-    }
-    return {
-      worldIds: deduped,
-      globalWorldId: globalWorldId && globalWorldId !== BUILTIN_PHONE_FORMAT_WORLDBOOK_ID ? globalWorldId : '',
-      worldbooks,
-    };
+    return collectTransferWorldbookBundle({
+      appBridge: this.appBridge,
+      sessionId,
+      cloneWorldbook: data => cloneJson(data, {}),
+      onError: err => logger.warn('collect worldbook for experience pack failed', err),
+    });
   }
 
   collectVariableCore(sessionId) {
@@ -602,18 +583,12 @@ export class ExperiencePackTransfer extends CharacterCardTransfer {
     const avatarFile = assets.addSource(`assets/contact_avatar.${inferImageExtension(avatarRaw, 'png')}`, avatarRaw);
     const persona = this.getEffectivePersona(sid);
     if (!persona) {
-      return {
-        contact: {
-          id: String(contact?.id || sid),
-          name: String(contact?.name || sid),
-          description: String(contact?.description || ''),
-          labels: ensureArray(contact?.labels).map(String),
-          avatarFile: avatarFile || '',
-          avatarValue: avatarFile ? '' : avatarRaw,
-        },
-        persona: null,
-        personaCard: null,
-      };
+      return buildExperiencePackPersonaBundlePayload({
+        contact,
+        sessionId: sid,
+        contactAvatarFile: avatarFile || '',
+        contactAvatarRaw: avatarRaw,
+      });
     }
     const personaAvatarRaw = String(persona?.avatar || '').trim();
     const personaAvatarFile = assets.addSource(
@@ -621,30 +596,16 @@ export class ExperiencePackTransfer extends CharacterCardTransfer {
       personaAvatarRaw
     );
     const originalCard = await this.loadPersonaCardData(persona);
-    return {
-      contact: {
-        id: String(contact?.id || sid),
-        name: String(contact?.name || sid),
-        description: String(contact?.description || ''),
-        labels: ensureArray(contact?.labels).map(String),
-        avatarFile: avatarFile || '',
-        avatarValue: avatarFile ? '' : avatarRaw,
-      },
-      persona: {
-        name: String(persona?.name || '').trim() || String(contact?.name || sid),
-        description: String(persona?.description || ''),
-        avatarFile: personaAvatarFile || '',
-        avatarValue: personaAvatarFile ? '' : personaAvatarRaw,
-        userBubbleColor: String(persona?.userBubbleColor || ''),
-        userTextColor: String(persona?.userTextColor || ''),
-        position: Number(persona?.position || 0) || 0,
-        depth: Number(persona?.depth || 0) || 0,
-        role: Number(persona?.role || 0) || 0,
-        source: cloneJson(persona?.source || null, null),
-        lockToSession: true,
-      },
+    return buildExperiencePackPersonaBundlePayload({
+      contact,
+      sessionId: sid,
+      contactAvatarFile: avatarFile || '',
+      contactAvatarRaw: avatarRaw,
+      persona,
+      personaAvatarFile: personaAvatarFile || '',
+      personaAvatarRaw,
       personaCard: originalCard,
-    };
+    });
   }
 
   async collectMemoryTemplateRecord() {
@@ -726,35 +687,10 @@ export class ExperiencePackTransfer extends CharacterCardTransfer {
     const ext = path ? inferMimeFromName(path).split('/')[1] || 'png' : inferImageExtension(url, 'png');
     const file = assets.addSource(`room/wallpaper.${ext}`, source);
     if (file) {
-      return {
-        file,
-        remoteUrl: '',
-        meta: {
-          name: String(wallpaper.name || ''),
-          zoom: Number(wallpaper.zoom || 1) || 1,
-          rotate: Number(wallpaper.rotate || 0) || 0,
-          offsetX: Number(wallpaper.offsetX || 0) || 0,
-          offsetY: Number(wallpaper.offsetY || 0) || 0,
-          width: Number(wallpaper.width || 0) || 0,
-          height: Number(wallpaper.height || 0) || 0,
-          saveOriginal: wallpaper.saveOriginal === true,
-        },
-      };
+      return buildExperiencePackWallpaperFilePayload({ file, wallpaper });
     }
     if (isRemoteUrl(url)) {
-      return {
-        file: '',
-        remoteUrl: url,
-        meta: {
-          name: String(wallpaper.name || ''),
-          zoom: Number(wallpaper.zoom || 1) || 1,
-          rotate: Number(wallpaper.rotate || 0) || 0,
-          offsetX: Number(wallpaper.offsetX || 0) || 0,
-          offsetY: Number(wallpaper.offsetY || 0) || 0,
-          width: Number(wallpaper.width || 0) || 0,
-          height: Number(wallpaper.height || 0) || 0,
-        },
-      };
+      return buildExperiencePackWallpaperRemotePayload({ remoteUrl: url, wallpaper });
     }
     return null;
   }
@@ -781,24 +717,17 @@ export class ExperiencePackTransfer extends CharacterCardTransfer {
             frame
           ))
           .filter(Boolean);
-        return {
-          id: String(sticker?.id || ''),
-          name: String(sticker?.name || ''),
-          keyword: String(sticker?.keyword || ''),
-          fps: Number(sticker?.fps || 0) || 0,
+        return buildExperiencePackStickerItemPayload({
+          sticker,
           assetFile: assetFile || '',
           frameFiles,
-        };
+        });
       });
-      return {
-        id: String(pack?.id || ''),
-        name: String(pack?.name || ''),
-        colorIndex: Number(pack?.colorIndex || 0) || 0,
-        aiEnabled: pack?.aiEnabled === true,
+      return buildExperiencePackStickerPackPayload({
+        pack,
         iconFile: iconFile || '',
-        iconMeta: cloneJson(pack?.iconMeta || {}, {}),
         stickers,
-      };
+      });
     });
   }
 
@@ -843,8 +772,8 @@ export class ExperiencePackTransfer extends CharacterCardTransfer {
             name: String(archive?.name || ''),
             timestamp: Number(archive?.timestamp || 0) || 0,
             messageCount: Number(archive?.messageCount || messages.length) || messages.length,
-            summaries: normalizeSummaryList(archive?.summaries || []),
-            compactedSummary: normalizeCompactedSummary(archive?.compactedSummary || null),
+            summaries: normalizeExperiencePackSummaryList(archive?.summaries || []),
+            compactedSummary: normalizeExperiencePackCompactedSummary(archive?.compactedSummary || null),
             compactedSummaryLastRaw: cloneJson(archive?.compactedSummaryLastRaw || null, null),
             memoryTableSnapshot: includeMemoryData ? cloneJson(archive?.memoryTableSnapshot || null, null) : null,
             messages,
@@ -857,8 +786,8 @@ export class ExperiencePackTransfer extends CharacterCardTransfer {
       exportedRange,
       draft: String(session?.draft || ''),
       current: {
-        detachedSummaries: normalizeSummaryList(session?.detachedSummaries || []),
-        compactedSummary: normalizeCompactedSummary(session?.compactedSummary || null),
+        detachedSummaries: normalizeExperiencePackSummaryList(session?.detachedSummaries || []),
+        compactedSummary: normalizeExperiencePackCompactedSummary(session?.compactedSummary || null),
         compactedSummaryLastRaw: cloneJson(session?.compactedSummaryLastRaw || null, null),
       },
       currentMessages,
@@ -886,111 +815,33 @@ export class ExperiencePackTransfer extends CharacterCardTransfer {
         })
       : null;
 
-    const manifest = {
+    const manifest = buildExperiencePackManifest({
+      sessionId: sid,
+      character,
+      room,
+      memoryData,
+      variableState,
+      chat,
+      options,
       format: EXPERIENCE_PACK_FORMAT,
       formatVersion: EXPERIENCE_PACK_VERSION,
-      exportedAt: new Date().toISOString(),
-      exportedBy: 'AiChat',
-      character: {
-        id: sid,
-        name: String(character?.contact?.name || sid),
-      },
-      layers: {
-        core: true,
-        room: Boolean(room),
-        stickers: Boolean(room && ensureArray(room.stickers).length),
-        memory_template: Boolean(room?.memoryTemplate),
-        memory_data: Boolean(memoryData),
-        variable_state: Boolean(variableState),
-        chat_history: Boolean(chat),
-      },
-      options: {
-        hideServiceAddresses: options.hideServiceAddresses === true,
-      },
-    };
+    });
 
-    const entries = [
-      { name: 'manifest.json', data_url: textToDataUrl(JSON.stringify(manifest, null, 2), 'application/json') },
-      { name: 'character.json', data_url: textToDataUrl(JSON.stringify(character, null, 2), 'application/json') },
-      { name: 'worldbook/worldbooks.json', data_url: textToDataUrl(JSON.stringify(world, null, 2), 'application/json') },
-      { name: 'variables/core.json', data_url: textToDataUrl(JSON.stringify(variableCore, null, 2), 'application/json') },
-      { name: 'scripts/regex.json', data_url: textToDataUrl(JSON.stringify(regex, null, 2), 'application/json') },
-    ];
-    if (character?.personaCard) {
-      entries.push({
-        name: 'persona/original-card.json',
-        data_url: textToDataUrl(JSON.stringify(character.personaCard, null, 2), 'application/json'),
-      });
-    }
-    if (variableState) {
-      entries.push({
-        name: 'variables/state.json',
-        data_url: textToDataUrl(JSON.stringify(variableState, null, 2), 'application/json'),
-      });
-    }
-    if (room) {
-      entries.push(
-        { name: 'room/config.json', data_url: textToDataUrl(JSON.stringify({
-          sessionSettings: room.sessionSettings,
-          wallpaper: room.wallpaper,
-        }, null, 2), 'application/json') },
-        { name: 'room/presets.json', data_url: textToDataUrl(JSON.stringify(room.presets, null, 2), 'application/json') },
-        { name: 'room/connection-profile.json', data_url: textToDataUrl(JSON.stringify(room.connection, null, 2), 'application/json') },
-      );
-      if (ensureArray(room.stickers).length) {
-        entries.push({
-          name: 'room/stickers.json',
-          data_url: textToDataUrl(JSON.stringify(room.stickers, null, 2), 'application/json'),
-        });
-      }
-      if (room.memoryTemplate) {
-        entries.push({
-          name: 'memory/template.json',
-          data_url: textToDataUrl(JSON.stringify(room.memoryTemplate, null, 2), 'application/json'),
-        });
-      }
-    }
-    if (memoryData) {
-      entries.push({
-        name: 'memory/data.json',
-        data_url: textToDataUrl(JSON.stringify(memoryData, null, 2), 'application/json'),
-      });
-    }
-    if (chat) {
-      entries.push(
-        {
-          name: 'chat/session.json',
-          data_url: textToDataUrl(JSON.stringify({
-            exportedRange: chat.exportedRange,
-            draft: chat.draft,
-            current: chat.current,
-            archives: ensureArray(chat.archives).map((archive) => ({
-              id: archive.id,
-              name: archive.name,
-              timestamp: archive.timestamp,
-              messageCount: archive.messageCount,
-              summaries: archive.summaries,
-              compactedSummary: archive.compactedSummary,
-              compactedSummaryLastRaw: archive.compactedSummaryLastRaw,
-              memoryTableSnapshot: archive.memoryTableSnapshot,
-            })),
-          }, null, 2), 'application/json'),
-        },
-        {
-          name: 'chat/current.json',
-          data_url: textToDataUrl(JSON.stringify(chat.currentMessages, null, 2), 'application/json'),
-        }
-      );
-      ensureArray(chat.archives).forEach((archive) => {
-        entries.push({
-          name: `chat/archives/${slugifySegment(archive.id, 'archive')}.json`,
-          data_url: textToDataUrl(JSON.stringify({
-            id: archive.id,
-            messages: archive.messages,
-          }, null, 2), 'application/json'),
-        });
-      });
-    }
+    const entries = buildExperiencePackJsonEntryPayloads({
+      manifest,
+      character,
+      world,
+      variableCore,
+      regex,
+      variableState,
+      room,
+      memoryData,
+      chat,
+      archiveEntryNameForId: archiveId => `chat/archives/${slugifySegment(archiveId, 'archive')}.json`,
+    }).map(entry => ({
+      name: entry.name,
+      data_url: textToDataUrl(JSON.stringify(entry.value, null, 2), 'application/json'),
+    }));
     entries.push(...assets.entries);
 
     const fileName = sanitizeExportName(`${character?.contact?.name || sid}.${EXPERIENCE_PACK_EXTENSION}`, `experience_pack.${EXPERIENCE_PACK_EXTENSION}`);
@@ -1392,46 +1243,31 @@ export class ExperiencePackTransfer extends CharacterCardTransfer {
     const roomConfig = cloneJson(packageData?.roomConfig || {}, {});
     const roomPresets = cloneJson(packageData?.roomPresets || {}, {});
     const roomConnection = cloneJson(packageData?.roomConnection || {}, {});
-    const settings = cloneJson(roomConfig?.sessionSettings || {}, {});
-    delete settings.personaLockId;
+    const settings = buildExperiencePackRoomBaseSettings(roomConfig);
 
     const wallpaper = roomConfig?.wallpaper || null;
     if (wallpaper?.file) {
       const dataUrl = this.getEntryDataUrl(packageData, wallpaper.file);
       if (dataUrl) {
         try {
-          const saved = await safeInvoke('save_wallpaper', {
+          const saved = await safeInvoke('save_wallpaper', buildExperiencePackWallpaperSaveRequest({
             sessionId: sid,
             dataUrl,
-            fileName: wallpaper?.meta?.name || wallpaper.file.split('/').pop() || 'wallpaper',
+            wallpaper,
+          }));
+          settings.wallpaper = buildExperiencePackSavedWallpaperSettings({
+            wallpaper,
+            savedPath: saved?.path,
           });
-          settings.wallpaper = {
-            path: String(saved?.path || '').trim(),
-            name: String(wallpaper?.meta?.name || ''),
-            zoom: Number(wallpaper?.meta?.zoom || 1) || 1,
-            rotate: Number(wallpaper?.meta?.rotate || 0) || 0,
-            offsetX: Number(wallpaper?.meta?.offsetX || 0) || 0,
-            offsetY: Number(wallpaper?.meta?.offsetY || 0) || 0,
-            width: Number(wallpaper?.meta?.width || 0) || 0,
-            height: Number(wallpaper?.meta?.height || 0) || 0,
-            saveOriginal: wallpaper?.meta?.saveOriginal === true,
-          };
         } catch (err) {
           logger.warn('import wallpaper from experience pack failed', err);
         }
       }
     } else if (wallpaper?.remoteUrl) {
-      settings.wallpaper = {
-        ...(settings.wallpaper && typeof settings.wallpaper === 'object' ? settings.wallpaper : {}),
-        url: String(wallpaper.remoteUrl || ''),
-        name: String(wallpaper?.meta?.name || ''),
-        zoom: Number(wallpaper?.meta?.zoom || 1) || 1,
-        rotate: Number(wallpaper?.meta?.rotate || 0) || 0,
-        offsetX: Number(wallpaper?.meta?.offsetX || 0) || 0,
-        offsetY: Number(wallpaper?.meta?.offsetY || 0) || 0,
-        width: Number(wallpaper?.meta?.width || 0) || 0,
-        height: Number(wallpaper?.meta?.height || 0) || 0,
-      };
+      settings.wallpaper = buildExperiencePackRemoteWallpaperSettings({
+        currentWallpaper: settings.wallpaper,
+        wallpaper,
+      });
     }
 
     const restoredPresetIds = {};
@@ -1442,14 +1278,16 @@ export class ExperiencePackTransfer extends CharacterCardTransfer {
       const presetPayload = roomPresets?.presets?.[type];
       if (!presetPayload?.data || !this.presetStore?.upsert) continue;
       try {
-        const presetName = this.getUniquePresetName(
-          `${String(packageData?.manifest?.character?.name || settings?.name || '角色').trim() || '角色'}·${String(presetPayload.name || type)}`
-        );
-        const presetId = await this.presetStore.upsert(type, {
-          name: presetName,
-          data: cloneJson(presetPayload.data, {}),
-          makeActive: false,
-        });
+        const presetName = this.getUniquePresetName(buildExperiencePackImportedPresetNameBase({
+          packageData,
+          settings,
+          presetPayload,
+          type,
+        }));
+        const presetId = await this.presetStore.upsert(type, buildExperiencePackPresetUpsertPayload({
+          presetPayload,
+          presetName,
+        }));
         restoredPresetIds[type] = presetId;
       } catch (err) {
         logger.warn('import preset from experience pack failed', err);
@@ -1470,7 +1308,7 @@ export class ExperiencePackTransfer extends CharacterCardTransfer {
       } catch {}
       try {
         const profileName = this.getUniquePresetName(
-          `${String(packageData?.manifest?.character?.name || '角色').trim() || '角色'}·连线`
+          buildExperiencePackImportedConnectionProfileNameBase(packageData)
         );
         const createdProfile = await this.configManager.createProfile(profileName, cloneJson(roomConnection.profile, {}));
         if (previousActiveProfileId && createdProfile?.id && previousActiveProfileId !== createdProfile.id) {
@@ -1562,37 +1400,20 @@ export class ExperiencePackTransfer extends CharacterCardTransfer {
     const chatSession = packageData?.chatSession || null;
     if (!chatSession) return false;
     const currentMessages = ensureArray(packageData?.chatCurrent);
-    const archivesPayload = uniqueById(
-      ensureArray(packageData?.chatArchives).map((item) => ({
-        ...item,
-        id: String(item?.id || '').trim(),
-      })).filter(item => item.id)
-    );
+    const archivesPayload = normalizeExperiencePackChatArchivePayloads(packageData?.chatArchives);
     const session = this.chatStore?._ensureSession?.(sid);
     if (!session) return false;
-    session.draft = String(chatSession?.draft || '');
-    session.detachedSummaries = normalizeSummaryList(chatSession?.current?.detachedSummaries || []);
-    session.compactedSummary = normalizeCompactedSummary(chatSession?.current?.compactedSummary || null);
-    session.compactedSummaryLastRaw = cloneJson(chatSession?.current?.compactedSummaryLastRaw || null, null);
-    session.currentArchiveId = null;
-    session.archives = ensureArray(chatSession?.archives).map((archive) => ({
-      id: String(archive?.id || '').trim(),
-      name: String(archive?.name || ''),
-      timestamp: Number(archive?.timestamp || 0) || 0,
-      messageCount: Number(archive?.messageCount || 0) || 0,
-      summaries: normalizeSummaryList(archive?.summaries || []),
-      compactedSummary: normalizeCompactedSummary(archive?.compactedSummary || null),
-      compactedSummaryLastRaw: cloneJson(archive?.compactedSummaryLastRaw || null, null),
-      memoryTableSnapshot: includeMemoryData ? cloneJson(archive?.memoryTableSnapshot || null, null) : null,
-    })).filter(archive => archive.id);
+    const restoredState = buildExperiencePackRestoredSessionChatState(chatSession, { includeMemoryData });
+    session.draft = restoredState.draft;
+    session.detachedSummaries = restoredState.detachedSummaries;
+    session.compactedSummary = restoredState.compactedSummary;
+    session.compactedSummaryLastRaw = restoredState.compactedSummaryLastRaw;
+    session.currentArchiveId = restoredState.currentArchiveId;
+    session.archives = restoredState.archives;
 
     if (!this.chatStore?._useV2) {
       session.messages = currentMessages.slice();
-      const archiveMessageMap = new Map(archivesPayload.map(archive => [archive.id, ensureArray(archive.messages)]));
-      session.archives = session.archives.map((archive) => ({
-        ...archive,
-        messages: archiveMessageMap.get(archive.id) || [],
-      }));
+      session.archives = buildExperiencePackLegacyRestoredArchives(session.archives, archivesPayload);
       this.chatStore?._persist?.();
       return true;
     }
@@ -1605,11 +1426,9 @@ export class ExperiencePackTransfer extends CharacterCardTransfer {
     } catch (err) {
       logger.warn('restore current thread for experience pack failed', err);
     }
-    for (const archive of session.archives) {
-      const payload = archivesPayload.find(item => item.id === archive.id);
-      const messages = ensureArray(payload?.messages);
+    for (const job of buildExperiencePackArchiveMessageRestoreJobs(session.archives, archivesPayload)) {
       try {
-        await this.chatStore._v2.replaceThreadMessages(sid, archive.id, messages);
+        await this.chatStore._v2.replaceThreadMessages(sid, job.archiveId, job.messages);
       } catch (err) {
         logger.warn('restore archive thread for experience pack failed', err);
       }
@@ -1625,22 +1444,17 @@ export class ExperiencePackTransfer extends CharacterCardTransfer {
 
   async importPackage(packageData, options = {}) {
     const character = packageData?.character || {};
-    const baseName = String(character?.contact?.name || packageData?.manifest?.character?.name || '角色').trim() || '角色';
+    const baseName = getExperiencePackImportBaseName(packageData);
     const newSessionId = this.getUniqueSessionId(baseName);
     const avatarFile = String(character?.contact?.avatarFile || '').trim();
     const avatarDataUrl = avatarFile ? this.getEntryDataUrl(packageData, avatarFile) : String(character?.contact?.avatarValue || '').trim();
-    const contactPayload = {
-      id: newSessionId,
-      name: baseName,
-      avatar: avatarDataUrl || '',
-      isGroup: false,
+    this.contactsStore?.upsertContact?.(buildExperiencePackImportedContactRecord({
+      packageData,
+      sessionId: newSessionId,
+      baseName,
+      avatar: avatarDataUrl,
       addedAt: Date.now(),
-      labels: ensureArray(character?.contact?.labels).map(String),
-      description: String(character?.contact?.description || ''),
-      source: 'experience_pack',
-      isUserCreated: true,
-    };
-    this.contactsStore?.upsertContact?.(contactPayload);
+    }));
     this.chatStore?._ensureSession?.(newSessionId);
 
     let importedPersona = null;
@@ -1656,13 +1470,10 @@ export class ExperiencePackTransfer extends CharacterCardTransfer {
     this.importVariableCore(packageData, newSessionId);
     await this.importRegex(packageData, newSessionId, worldIdMap);
 
-    const sourceWorldIds = ensureArray(packageData?.worldbooks?.worldIds || [])
-      .map(id => String(id || '').trim())
-      .filter(Boolean);
-    const mappedWorldIds = sourceWorldIds
-      .map(id => worldIdMap[id] || id)
-      .filter(Boolean)
-      .filter((id, index, list) => list.indexOf(id) === index);
+    const mappedWorldIds = mapExperiencePackImportedWorldIds({
+      worldIds: packageData?.worldbooks?.worldIds || [],
+      worldIdMap,
+    });
     if (mappedWorldIds.length) {
       try {
         this.appBridge?.setSessionWorldIds?.(newSessionId, mappedWorldIds, { silent: true });
@@ -1694,9 +1505,10 @@ export class ExperiencePackTransfer extends CharacterCardTransfer {
       }
     }
 
-    if (importedPersona?.id) {
-      sessionSettings = { ...sessionSettings, personaLockId: importedPersona.id };
-    }
+    sessionSettings = buildExperiencePackSessionSettings({
+      sessionSettings,
+      importedPersona,
+    });
     this.chatStore?.setSessionSettings?.(newSessionId, sessionSettings);
 
     if (options.includeVariableState) {
@@ -1726,20 +1538,17 @@ export class ExperiencePackTransfer extends CharacterCardTransfer {
       await this.chatStore?.flush?.();
     } catch {}
     try {
-      this.appBridge?.emitWorldInfoChanged?.({ sessionId: newSessionId, roleWorldChanged: true });
+      emitWorldInfoChanged(this.appBridge, { sessionId: newSessionId, roleWorldChanged: true });
     } catch {}
 
-    const shouldSwitch = await appConfirm({
-      title: '导入完成',
-      message: `已创建角色副本：${baseName}。是否切换到这个会话？`,
-      confirmText: '切换',
-      cancelText: '稍后',
-    });
+    const shouldSwitch = await appConfirm(buildExperiencePackImportSwitchConfirmOptions({ baseName }));
     if (shouldSwitch) {
       this.chatStore?.switchSession?.(newSessionId);
       this.appBridge?.setActiveSession?.(newSessionId);
       try {
-        window.dispatchEvent(new CustomEvent('session-changed', { detail: { id: newSessionId } }));
+        window.dispatchEvent(new CustomEvent('session-changed', {
+          detail: buildExperiencePackSessionChangedDetail(newSessionId),
+        }));
       } catch {}
     }
     window.toastr?.success?.('角色体验包导入完成');

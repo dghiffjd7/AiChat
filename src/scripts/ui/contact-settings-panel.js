@@ -16,6 +16,7 @@ import {
     runContactSettingsSaveFlow,
 } from './contact-settings-runtime-utils.js';
 import { createContactMemoryShareRuntime } from './contact-memory-share-runtime-utils.js';
+import { getMemoryTableStore, getMemoryTemplateStore } from './memory-store-runtime-utils.js';
 import { createSessionPanelShell } from './session-panel-shell-utils.js';
 import {
     applySessionPanelMemoryMode,
@@ -71,35 +72,57 @@ import {
     createSessionArchiveEmptyState,
     createSessionArchiveRow,
 } from './session-shared-view-utils.js';
-const resolveDefaultMemoryTemplateId = async () => resolveSharedDefaultMemoryTemplateId({
-    memoryTemplateStore: window.appBridge?.memoryTemplateStore,
+const resolveDefaultMemoryTemplateId = async (memoryTemplateStore = null) => resolveSharedDefaultMemoryTemplateId({
+    memoryTemplateStore,
 });
 
-const resolveDefaultMemoryTemplateDefinition = async () => resolveSharedDefaultMemoryTemplateDefinition({
-    memoryTemplateStore: window.appBridge?.memoryTemplateStore,
+const resolveDefaultMemoryTemplateDefinition = async (memoryTemplateStore = null) => resolveSharedDefaultMemoryTemplateDefinition({
+    memoryTemplateStore,
 });
 
-const buildMemoryTableSnapshot = async ({ sessionId, isGroup } = {}) => buildSharedMemoryTableSnapshot({
+const buildMemoryTableSnapshot = async ({
     sessionId,
     isGroup,
-    memoryTableStore: window.appBridge?.memoryTableStore,
-    resolveDefaultMemoryTemplateId,
+    memoryTableStore = null,
+    memoryTemplateStore = null,
+} = {}) => buildSharedMemoryTableSnapshot({
+    sessionId,
+    isGroup,
+    memoryTableStore,
+    resolveDefaultMemoryTemplateId: () => resolveDefaultMemoryTemplateId(memoryTemplateStore),
 });
 
-const applyMemoryTableSnapshot = async ({ sessionId, isGroup, snapshot } = {}) => applySharedMemoryTableSnapshot({
+const applyMemoryTableSnapshot = async ({
     sessionId,
     isGroup,
     snapshot,
-    memoryTableStore: window.appBridge?.memoryTableStore,
-    resolveDefaultMemoryTemplateId,
+    memoryTableStore = null,
+    memoryTemplateStore = null,
+} = {}) => applySharedMemoryTableSnapshot({
+    sessionId,
+    isGroup,
+    snapshot,
+    memoryTableStore,
+    resolveDefaultMemoryTemplateId: () => resolveDefaultMemoryTemplateId(memoryTemplateStore),
     notifyRowsUpdated: ({ sessionId, templateId }) =>
         emitSharedMemoryRowsUpdated({ target: window, sessionId, templateId }),
 });
 
 export class ContactSettingsPanel {
-    constructor({ contactsStore, chatStore, getSessionId, onSaved, onExportExperiencePack } = {}) {
+    constructor({
+        contactsStore,
+        chatStore,
+        getSessionId,
+        memoryTableStore = null,
+        memoryTemplateStore = null,
+        onSaved,
+        onExportExperiencePack,
+    } = {}) {
         this.contactsStore = contactsStore;
         this.chatStore = chatStore;
+        const bridge = typeof window !== 'undefined' ? window.appBridge : null;
+        this.memoryTableStore = memoryTableStore || getMemoryTableStore(bridge);
+        this.memoryTemplateStore = memoryTemplateStore || getMemoryTemplateStore(bridge);
         this.getSessionId = typeof getSessionId === 'function' ? getSessionId : () => 'default';
         this.onSaved = typeof onSaved === 'function' ? onSaved : null;
         this.onExportExperiencePack = typeof onExportExperiencePack === 'function' ? onExportExperiencePack : null;
@@ -141,6 +164,30 @@ export class ContactSettingsPanel {
         this.memoryShareSummary = null;
         this.memoryShareRuntime = null;
         this.exportExperiencePackBtn = null;
+    }
+
+    resolveDefaultMemoryTemplateId() {
+        return resolveDefaultMemoryTemplateId(this.memoryTemplateStore);
+    }
+
+    resolveDefaultMemoryTemplateDefinition() {
+        return resolveDefaultMemoryTemplateDefinition(this.memoryTemplateStore);
+    }
+
+    buildMemoryTableSnapshot(payload = {}) {
+        return buildMemoryTableSnapshot({
+            ...payload,
+            memoryTableStore: this.memoryTableStore,
+            memoryTemplateStore: this.memoryTemplateStore,
+        });
+    }
+
+    applyMemoryTableSnapshot(payload = {}) {
+        return applyMemoryTableSnapshot({
+            ...payload,
+            memoryTableStore: this.memoryTableStore,
+            memoryTemplateStore: this.memoryTemplateStore,
+        });
     }
 
     show() {
@@ -513,15 +560,15 @@ export class ContactSettingsPanel {
             confirm: (options) => appConfirm(options),
         });
 
-        if (this.memoryTableContent && window.appBridge) {
+        if (this.memoryTableContent && this.memoryTableStore && this.memoryTemplateStore) {
             this.memoryTableEditor = new MemoryTableEditor({
                 container: this.memoryTableContent,
                 getContext: () => {
                     const contactId = this.getSessionId();
                     return { type: isRpSessionId(contactId) ? 'rp' : 'contact', contactId };
                 },
-                memoryStore: window.appBridge.memoryTableStore,
-                templateStore: window.appBridge.memoryTemplateStore,
+                memoryStore: this.memoryTableStore,
+                templateStore: this.memoryTemplateStore,
                 contactsStore: this.contactsStore,
                 includeGlobal: true,
             });
@@ -607,11 +654,11 @@ export class ContactSettingsPanel {
             getMemoryStorageMode,
             askMemoryTableNewChatMode,
             promptForArchiveName: () => prompt('请输入当前聊天的存档名称（留空将自动命名）：'),
-            buildMemoryTableSnapshot: ({ sessionId, isGroup }) => buildMemoryTableSnapshot({ sessionId, isGroup }),
+            buildMemoryTableSnapshot: ({ sessionId, isGroup }) => this.buildMemoryTableSnapshot({ sessionId, isGroup }),
             captureArchivePointer: (sessionId, options) =>
                 window.appBridge?.buildArchivePointerFromCurrentThread?.(sessionId, options),
-            memoryTableStore: window.appBridge?.memoryTableStore,
-            resolveDefaultMemoryTemplateId,
+            memoryTableStore: this.memoryTableStore,
+            resolveDefaultMemoryTemplateId: () => this.resolveDefaultMemoryTemplateId(),
             resolveSummaryTableIds: ({ sessionId, isGroup, sessionMode }) => {
                 const { summaryTableId, outlineTableId } = getSummaryTableIdsForContext({
                     sessionId,
@@ -647,7 +694,7 @@ export class ContactSettingsPanel {
             getChatStore: () => this.chatStore,
             isGroup: false,
             getMemoryStorageMode,
-            buildMemoryTableSnapshot: ({ sessionId, isGroup }) => buildMemoryTableSnapshot({ sessionId, isGroup }),
+            buildMemoryTableSnapshot: ({ sessionId, isGroup }) => this.buildMemoryTableSnapshot({ sessionId, isGroup }),
             captureArchivePointer: (sessionId, options) =>
                 window.appBridge?.buildArchivePointerFromCurrentThread?.(sessionId, options),
             loadArchivedMessages: (archiveId, sessionId, options) =>
@@ -656,7 +703,7 @@ export class ContactSettingsPanel {
             persistArchivePointer: (sessionId, archiveId, archivePointer, options) =>
                 window.appBridge?.setArchivePointerForArchive?.(sessionId, archiveId, archivePointer, options),
             applyMemoryTableSnapshot: ({ sessionId, isGroup, snapshot }) =>
-                applyMemoryTableSnapshot({ sessionId, isGroup, snapshot }),
+                this.applyMemoryTableSnapshot({ sessionId, isGroup, snapshot }),
             restoreArchivePointerForLoadedThread: (sessionId, options) =>
                 window.appBridge?.restoreArchivePointerForLoadedThread?.(sessionId, options),
             logger,
@@ -711,9 +758,9 @@ export class ContactSettingsPanel {
             setSessionSettings: (sessionId, sessionSettings) => this.chatStore?.setSessionSettings?.(sessionId, sessionSettings),
             getContact: (sessionId) => this.contactsStore?.getContact?.(sessionId),
             listSessions: () => this.chatStore?.listSessions?.() || [],
-            memoryTableStore: window.appBridge?.memoryTableStore,
-            resolveTemplateDefinition: () => resolveDefaultMemoryTemplateDefinition(),
-            resolveTemplateId: () => resolveDefaultMemoryTemplateId(),
+            memoryTableStore: this.memoryTableStore,
+            resolveTemplateDefinition: () => this.resolveDefaultMemoryTemplateDefinition(),
+            resolveTemplateId: () => this.resolveDefaultMemoryTemplateId(),
             getRpCharacterNameForSession: (sessionId) => window.appBridge?.getRpCharacterNameForSession?.(sessionId),
             getRpSessionIdForSession: (sessionId) => window.appBridge?.getRpSessionIdForSession?.(sessionId),
             getRpSessionIdForActivePersona: () => window.appBridge?.getRpSessionIdForActivePersona?.(),

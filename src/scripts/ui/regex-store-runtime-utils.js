@@ -17,6 +17,12 @@ export const waitForRegexStoreReady = async (bridge = null) => {
   return await getRegexStore(runtime)?.ready;
 };
 
+export const getRegexContext = (bridge = null, options = {}) => {
+  const runtime = resolveRegexBridge(bridge);
+  if (typeof runtime?.getRegexContext === 'function') return runtime.getRegexContext(options) || {};
+  return {};
+};
+
 export const getRegexSession = (bridge = null, sessionId = '') => {
   const runtime = resolveRegexBridge(bridge);
   const sid = String(sessionId || '').trim();
@@ -49,6 +55,18 @@ export const removeRegexLocalSet = async (bridge = null, setId = '') => {
   const runtime = resolveRegexBridge(bridge);
   if (typeof runtime?.removeRegexLocalSet === 'function') return await runtime.removeRegexLocalSet(setId);
   return await getRegexStore(runtime)?.removeLocalSet?.(setId);
+};
+
+export const syncPresetRegexBindings = async (bridge = null) => {
+  const runtime = resolveRegexBridge(bridge);
+  if (typeof runtime?.syncPresetRegexBindings === 'function') return await runtime.syncPresetRegexBindings();
+  return null;
+};
+
+export const syncWorldRegexBindings = async (bridge = null) => {
+  const runtime = resolveRegexBridge(bridge);
+  if (typeof runtime?.syncWorldRegexBindings === 'function') return await runtime.syncWorldRegexBindings();
+  return null;
 };
 
 export const createRegexStoreRuntimeAdapter = (bridge = null) => {

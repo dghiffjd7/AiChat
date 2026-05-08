@@ -13,6 +13,11 @@ import { logger } from '../utils/logger.js';
 import { buildNameWithBadgesHtml, escapeHtml, getAutoBadgeFromName, getContactBadges } from '../utils/name-badges.js';
 import { safeInvoke } from '../utils/tauri.js';
 import { appConfirm } from './app-confirm.js';
+import {
+  deleteWorldSessionMapEntry,
+  getWorldSessionMap,
+  renameWorldSessionMapEntry,
+} from './world-session-runtime-utils.js';
 
 const CONTACTS_STORE_KEY = 'contacts_store_v1';
 const CHAT_STORE_KEY = 'chat_store_v1';
@@ -339,12 +344,7 @@ export class SessionPanel {
     }
 
     // 迁移世界书映射（按会话隔离）
-    const map = window.appBridge?.worldSessionMap;
-    if (map && map[id]) {
-      map[nextId] = map[id];
-      delete map[id];
-      window.appBridge?.persistWorldSessionMap?.();
-    }
+    renameWorldSessionMapEntry(window.appBridge, id, nextId);
 
     // 迁移联系人记录
     const existing = this.contactsStore?.getContact?.(id);
@@ -389,7 +389,7 @@ export class SessionPanel {
     try {
       const bound = window.appBridge?.getWorldIdsForSession?.(id) || [];
       const boundIds = Array.isArray(bound) ? bound.filter(Boolean) : (bound ? [String(bound)] : []);
-      const map = window.appBridge?.worldSessionMap || {};
+      const map = getWorldSessionMap(window.appBridge);
       const isUsedElsewhere = (worldId) => {
         const target = String(worldId || '').trim();
         if (!target) return false;
@@ -414,11 +414,7 @@ export class SessionPanel {
     }
 
     // 清理世界书映射
-    const map = window.appBridge?.worldSessionMap;
-    if (map && map[id]) {
-      delete map[id];
-      window.appBridge?.persistWorldSessionMap?.();
-    }
+    deleteWorldSessionMapEntry(window.appBridge, id);
 
     this.store.delete(id);
     window.appBridge?.clearSessionTurnCheckpointState?.(id).catch?.(err => {

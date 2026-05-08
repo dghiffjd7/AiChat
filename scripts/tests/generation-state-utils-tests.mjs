@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   buildCancelledAssistantPartial,
   buildCancelledAssistantPartialMessage,
+  buildGenerationCancelTraceEvent,
   commitCancelledGenerationPartial,
   createActiveGenerationRecord,
   runActiveGenerationCancelFlow,
@@ -10,6 +11,40 @@ import {
 
 const tests = [];
 const test = (name, fn) => tests.push({ name, fn });
+
+test('buildGenerationCancelTraceEvent normalizes cancel trace metadata and details', () => {
+  assert.deepEqual(buildGenerationCancelTraceEvent({
+    sessionId: ' session-cancel ',
+    generationId: 0,
+    reason: ' user ',
+    status: ' started ',
+  }), {
+    phase: 'generation.cancel',
+    sessionId: 'session-cancel',
+    status: 'started',
+    summary: 'generation cancel requested',
+    details: {
+      generationId: 0,
+      reason: 'user',
+    },
+  });
+  assert.deepEqual(buildGenerationCancelTraceEvent({
+    sessionId: ' session-cancel ',
+    generationId: undefined,
+    reason: '',
+    status: ' success ',
+    hasPartial: false,
+  }), {
+    phase: 'generation.cancel',
+    sessionId: 'session-cancel',
+    status: 'success',
+    summary: 'generation cancel completed',
+    details: {
+      reason: '',
+      hasPartial: false,
+    },
+  });
+});
 
 test('createActiveGenerationRecord keeps caller ownership fields and initializes runtime slots', () => {
   const partialCommitHandler = () => true;

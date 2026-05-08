@@ -8,6 +8,8 @@ import { RegexStore, isLocalRegexSetAutoActive, regex_placement } from '../stora
 import { logger } from '../utils/logger.js';
 import { appConfirm } from './app-confirm.js';
 import { bindCustomSelectButton, closeCustomSelectMenu } from './custom-select.js';
+import { getPresetStore } from './preset-store-runtime-utils.js';
+import { getRegexContext } from './regex-store-runtime-utils.js';
 import { listWorldIds } from './world-store-runtime-utils.js';
 import {
     downloadJsonFile,
@@ -54,8 +56,10 @@ const DANGER_BUTTON_STYLE = 'padding:6px 10px; border:1px solid rgba(239,68,68,0
 const DANGER_ACTION_STYLE = 'padding:10px 12px; border:1px solid rgba(239,68,68,0.35); border-radius:10px; background:var(--app-surface-card); color:#f87171; cursor:pointer;';
 
 export class RegexPanel {
-    constructor({ store = null } = {}) {
+    constructor({ store = null, presetStore = null } = {}) {
         this.store = store || new RegexStore();
+        const bridge = typeof window !== 'undefined' ? window.appBridge : null;
+        this.presetStore = presetStore || getPresetStore(bridge);
         this.element = null;
         this.overlay = null;
         this.activeTab = 'global'; // global | character | preset
@@ -492,7 +496,7 @@ export class RegexPanel {
     }
 
     getActiveRegexContext() {
-        return window.appBridge?.getRegexContext?.() || {};
+        return getRegexContext(window.appBridge);
     }
 
     formatLocalSetRuntimeState(setObj) {
@@ -767,7 +771,7 @@ export class RegexPanel {
         const idx = parseInt(choice, 10) - 1;
         const pt = PRESET_TYPES[idx];
         if (!pt) return null;
-        const presets = window.appBridge?.presets?.list?.(pt.id) || [];
+        const presets = this.presetStore?.list?.(pt.id) || [];
         if (!presets.length) { this.showStatus(`${pt.label} 无可用预设`, 'info'); return null; }
         const presetLabels = presets.map((p, i) => `${i + 1}. ${p.name || p.id}`).join('\n');
         const pChoice = prompt(`选择 ${pt.label} 预设：\n${presetLabels}`, '1');

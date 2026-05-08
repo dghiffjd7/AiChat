@@ -1,3 +1,5 @@
+import { getCurrentWorldIds, getGlobalWorldId } from './world-session-runtime-utils.js';
+
 const formatWorldIdsLabel = (ids) => {
   if (!Array.isArray(ids) || !ids.length) return '';
   if (ids.length <= 2) return ids.join(' + ');
@@ -140,11 +142,9 @@ export function createAppChatroomRuntime({
 
     updateWorldIndicator() {
       const bridge = getBridge?.();
-      const globalId = String(bridge?.globalWorldId || '').trim();
+      const globalId = getGlobalWorldId(bridge);
       const roleIds = bridge?.getRoleWorldIds?.(getCurrentSessionId?.()) || [];
-      const currentIds = Array.isArray(bridge?.currentWorldIds)
-        ? bridge.currentWorldIds
-        : (bridge?.currentWorldId ? [bridge.currentWorldId] : []);
+      const currentIds = getCurrentWorldIds(bridge);
       const label = formatWorldIndicatorLabel({
         globalId,
         roleIds,

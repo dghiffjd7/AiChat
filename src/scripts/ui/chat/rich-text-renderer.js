@@ -9,6 +9,7 @@ import { emitDebugLog } from '../../utils/debug-log.js';
 import { appSettings } from '../../storage/app-settings.js';
 import { serializeForInlineScript } from '../../utils/inline-script.js';
 import { buildVariableStatusSnapshot } from '../variable-status-card.js';
+import { getChatUI } from '../chat-ui-runtime-utils.js';
 import { buildVariableContext } from '../../variables/variable-path-utils.js';
 import {
     detectPlainTextRichRoute,
@@ -95,12 +96,13 @@ const writeDirectLoadCache = (url, html) => {
         .slice(0, Math.max(0, directLoadCache.size - DIRECT_LOAD_CACHE_LIMIT));
     oldest.forEach(([k]) => directLoadCache.delete(k));
 };
+const resolveCompatChatUI = () => getChatUI(window.appBridge);
 const resolveCompatComposerInput = () =>
-    window.appBridge?.chatUI?.inputEl || document.getElementById('composer-input');
+    resolveCompatChatUI()?.inputEl || document.getElementById('composer-input');
 const resolveCompatComposerSendButton = () =>
-    window.appBridge?.chatUI?.sendBtn || document.getElementById('send-button');
+    resolveCompatChatUI()?.sendBtn || document.getElementById('send-button');
 const applyCompatInputText = ({ text, options = {} } = {}) => {
-    const ui = window.appBridge?.chatUI;
+    const ui = resolveCompatChatUI();
     const inputEl = resolveCompatComposerInput();
     if (!inputEl) return { ok: false, reason: 'missing-composer-input' };
     const current = String(inputEl.value || '');
@@ -7913,7 +7915,7 @@ export const setupIframeResizeListener = () => {
     };
     const applyCompatSetChatMessage = async ({ iframe, sessionId, messageRef, fieldValues }) => {
         const store = window.appBridge?.chatStore;
-        const ui = window.appBridge?.chatUI;
+        const ui = resolveCompatChatUI();
         const sid = String(sessionId || '').trim();
         if (!store || !sid) return { ok: false, reason: 'missing-store-or-session' };
         const fallbackRef = String(iframe?.dataset?.msgId || '').trim();

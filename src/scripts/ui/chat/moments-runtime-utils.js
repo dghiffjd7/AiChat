@@ -1,15 +1,10 @@
+import {
+  emitLifecycleTraceEvent,
+  normalizeLifecycleTraceDetails,
+  normalizeLifecycleTraceText,
+} from './lifecycle-trace-utils.js';
+
 const normalizeNameValue = (value) => String(value || '').trim();
-const isPlainObject = value => Boolean(value && typeof value === 'object' && !Array.isArray(value));
-const normalizeTraceText = (value, fallback = '') => {
-  const text = String(value ?? '').trim();
-  return text || fallback;
-};
-const normalizeTraceDetails = (details) => {
-  if (!isPlainObject(details)) return {};
-  return Object.fromEntries(
-    Object.entries(details).filter(([, value]) => value !== undefined),
-  );
-};
 
 export const buildMomentLifecycleTraceEvent = ({
   phase = '',
@@ -21,19 +16,16 @@ export const buildMomentLifecycleTraceEvent = ({
 } = {}) => ({
   category: 'moments',
   source: 'moments-runtime',
-  phase: normalizeTraceText(phase, 'event'),
-  sessionId: normalizeTraceText(sessionId, ''),
-  momentId: normalizeTraceText(momentId, ''),
-  status: normalizeTraceText(status, 'info'),
-  summary: normalizeTraceText(summary, ''),
-  details: normalizeTraceDetails(details),
+  phase: normalizeLifecycleTraceText(phase, 'event'),
+  sessionId: normalizeLifecycleTraceText(sessionId, ''),
+  momentId: normalizeLifecycleTraceText(momentId, ''),
+  status: normalizeLifecycleTraceText(status, 'info'),
+  summary: normalizeLifecycleTraceText(summary, ''),
+  details: normalizeLifecycleTraceDetails(details),
 });
 
 const emitMomentLifecycleTrace = (recordTraceEvent, event) => {
-  if (typeof recordTraceEvent !== 'function') return;
-  try {
-    recordTraceEvent(buildMomentLifecycleTraceEvent(event));
-  } catch {}
+  emitLifecycleTraceEvent(recordTraceEvent, buildMomentLifecycleTraceEvent(event));
 };
 
 export const resolvePrivateChatTargetSessionIdByName = (
