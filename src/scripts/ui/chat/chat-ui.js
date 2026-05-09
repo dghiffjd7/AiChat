@@ -9,6 +9,7 @@ import { appSettings } from '../../storage/app-settings.js';
 import { logger } from '../../utils/logger.js';
 import { getDefaultAppIcon } from '../../utils/default-icon.js';
 import { getPluginRuntime } from '../app-runtime-service-utils.js';
+import { recordDebugTraceEvent } from '../debug-ui-registry-utils.js';
 import { bindCustomSelectButton, createCustomSelectWrapper } from '../custom-select.js';
 import {
   DEFAULT_REACTION_EMOJIS,
@@ -55,7 +56,8 @@ import { createDeliveryStatusUiRuntime } from './delivery-status-ui-utils.js';
 import { createTypingIndicatorUiRuntime } from './typing-indicator-ui-utils.js';
 import { createTypingIndicatorShell, renderTypingGroupMembers } from './typing-indicator-dom-utils.js';
 import { createTypingIndicatorScheduleRuntime } from './typing-indicator-schedule-utils.js';
-import { dispatchScriptEvent } from '../script-runtime-utils.js';
+import { dispatchScriptEvent, getScriptRuntime } from '../script-runtime-utils.js';
+import { dispatchRuntimeHookLifecycleEvent } from './hook-lifecycle-trace-utils.js';
 import {
   createSwipeIndicatorElement,
   ensureSwipeMeta,
@@ -1425,6 +1427,33 @@ export class ChatUI {
   addMessage(message, options = {}) {
     const runtime = typeof window !== 'undefined' ? getPluginRuntime(window.appBridge) : null;
     const scriptBridge = typeof window !== 'undefined' ? window.appBridge : null;
+    const scriptRuntime = scriptBridge ? getScriptRuntime(scriptBridge) : null;
+    const recordRenderHookTraceEvent = event => recordDebugTraceEvent(scriptBridge, event);
+    const getRenderSessionId = () => String(scriptBridge?.getActiveSessionId?.() || '').trim();
+    const buildRenderHookDetails = renderedMessage => ({
+      role: renderedMessage?.role || '',
+      type: renderedMessage?.type || '',
+    });
+    const dispatchRenderHook = ({
+      hookName = '',
+      runtime: targetRuntime = null,
+      runtimeLabel = '',
+      payload = {},
+      renderedMessage = null,
+      details = {},
+      warningMessage = '',
+    } = {}) => dispatchRuntimeHookLifecycleEvent({
+      runtime: targetRuntime,
+      runtimeLabel,
+      hookName,
+      payload,
+      sessionId: getRenderSessionId(),
+      messageId: renderedMessage?.id || '',
+      details,
+      logger,
+      warningMessage,
+      recordTraceEvent: recordRenderHookTraceEvent,
+    });
     return addMessageCore({
       message,
       options,
@@ -1441,28 +1470,61 @@ export class ChatUI {
         }
       },
       dispatchBeforeRender: (renderedMessage) => {
+        const payload = { message: renderedMessage };
+        const details = buildRenderHookDetails(renderedMessage);
         if (runtime) {
-          runtime.dispatchEvent('message.before_render', { message: renderedMessage }).catch(err => {
-            logger.warn('plugin message.before_render failed', err);
+          dispatchRenderHook({
+            hookName: 'message.before_render',
+            runtime,
+            runtimeLabel: 'plugin',
+            payload,
+            renderedMessage,
+            details,
+            warningMessage: 'plugin message.before_render failed',
           });
         }
-        const scriptDispatch = dispatchScriptEvent(scriptBridge, 'message.before_render', { message: renderedMessage });
-        if (scriptDispatch?.catch) {
-          scriptDispatch.catch(err => {
-            logger.warn('script message.before_render failed', err);
+        if (scriptRuntime) {
+          dispatchRenderHook({
+            hookName: 'message.before_render',
+            runtime: {
+              dispatchEvent: (eventName, nextPayload) => dispatchScriptEvent(scriptBridge, eventName, nextPayload),
+            },
+            runtimeLabel: 'script',
+            payload,
+            renderedMessage,
+            details,
+            warningMessage: 'script message.before_render failed',
           });
         }
       },
       dispatchAfterRender: (renderedMessage, element) => {
+        const payload = { message: renderedMessage, elementId: renderedMessage?.id || '' };
+        const details = {
+          ...buildRenderHookDetails(renderedMessage),
+          hasElement: Boolean(element),
+        };
         if (runtime && element) {
-          runtime.dispatchEvent('message.after_render', { message: renderedMessage, elementId: renderedMessage?.id || '' }).catch(err => {
-            logger.warn('plugin message.after_render failed', err);
+          dispatchRenderHook({
+            hookName: 'message.after_render',
+            runtime,
+            runtimeLabel: 'plugin',
+            payload,
+            renderedMessage,
+            details,
+            warningMessage: 'plugin message.after_render failed',
           });
         }
-        if (element) {
-          const scriptDispatch = dispatchScriptEvent(scriptBridge, 'message.after_render', { message: renderedMessage, elementId: renderedMessage?.id || '' });
-          scriptDispatch?.catch?.(err => {
-            logger.warn('script message.after_render failed', err);
+        if (scriptRuntime && element) {
+          dispatchRenderHook({
+            hookName: 'message.after_render',
+            runtime: {
+              dispatchEvent: (eventName, nextPayload) => dispatchScriptEvent(scriptBridge, eventName, nextPayload),
+            },
+            runtimeLabel: 'script',
+            payload,
+            renderedMessage,
+            details,
+            warningMessage: 'script message.after_render failed',
           });
         }
       },

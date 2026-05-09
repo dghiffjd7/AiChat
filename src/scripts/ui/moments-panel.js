@@ -60,12 +60,20 @@ const getMomentsWindowRef = () => {
 };
 
 export class MomentsPanel {
-  constructor({ momentsStore, contactsStore, defaultAvatar = '', userAvatar = '', onUserComment } = {}) {
+  constructor({
+    momentsStore,
+    contactsStore,
+    defaultAvatar = '',
+    userAvatar = '',
+    onUserComment,
+    recordLifecycleEvent = null,
+  } = {}) {
     this.store = momentsStore;
     this.contactsStore = contactsStore;
     this.defaultAvatar = defaultAvatar;
     this.userAvatar = userAvatar;
     this.onUserComment = typeof onUserComment === 'function' ? onUserComment : null;
+    this.recordLifecycleEvent = typeof recordLifecycleEvent === 'function' ? recordLifecycleEvent : null;
     this.listEl = null;
     this.modal = null;
     this.activeMomentId = null;
@@ -314,6 +322,7 @@ export class MomentsPanel {
           render: (options) => this.render(options),
           onUserComment: this.onUserComment,
           loggerWarn: (...args) => logger.warn(...args),
+          recordLifecycleEvent: this.recordLifecycleEvent,
         }),
       });
 

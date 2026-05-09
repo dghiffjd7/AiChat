@@ -27,6 +27,11 @@ import { makeScopedKey, normalizeScopeId } from '../storage/store-scope.js';
 import { appSettings } from '../storage/app-settings.js';
 import { renderTemplateMessages, templateSettings } from '../plugins/template-engine.js';
 import { getChatUI } from './chat-ui-runtime-utils.js';
+import { recordDebugTraceEvent } from './debug-ui-registry-utils.js';
+import {
+  dispatchRuntimeHookLifecycleEvent,
+  runRuntimeHookLifecycleEvent,
+} from './chat/hook-lifecycle-trace-utils.js';
 import { mergeRichCompatInputText, parseRichCompatSlashCommand } from './chat/rich-input-compat.js';
 import {
   buildMemoryTablePlan,
@@ -2140,35 +2145,52 @@ class AppBridge {
     this.syncWorldRegexBindings?.();
     this.emitWorldInfoChanged({ sessionId: this.activeSessionId });
     try {
+      const buildSessionPayload = (sid) => {
+        const id = String(sid || '').trim();
+        if (!id) return null;
+        const contact = this.contactsStore?.getContact?.(id) || null;
+        const name = contact?.name || id;
+        const isGroup = Boolean(contact?.isGroup) || id.startsWith('group:');
+        return { id, name, isGroup };
+      };
+      const payload = {
+        oldSession: buildSessionPayload(prevSessionId),
+        newSession: buildSessionPayload(sessionId),
+      };
+      const traceDetails = {
+        oldSessionId: payload.oldSession?.id || '',
+        newSessionId: payload.newSession?.id || '',
+        oldIsGroup: payload.oldSession?.isGroup === true,
+        newIsGroup: payload.newSession?.isGroup === true,
+      };
+      const recordTraceEvent = event => recordDebugTraceEvent(this, event);
       const runtime = this.pluginRuntime;
       if (runtime) {
-        const buildSessionPayload = (sid) => {
-          const id = String(sid || '').trim();
-          if (!id) return null;
-          const contact = this.contactsStore?.getContact?.(id) || null;
-          const name = contact?.name || id;
-          const isGroup = Boolean(contact?.isGroup) || id.startsWith('group:');
-          return { id, name, isGroup };
-        };
-        runtime.dispatchEvent('session.changed', {
-          oldSession: buildSessionPayload(prevSessionId),
-          newSession: buildSessionPayload(sessionId),
-        }).catch(err => logger.warn('plugin session.changed failed', err));
+        dispatchRuntimeHookLifecycleEvent({
+          runtime,
+          runtimeLabel: 'plugin',
+          hookName: 'session.changed',
+          payload,
+          sessionId: payload.newSession?.id || '',
+          details: traceDetails,
+          logger,
+          warningMessage: 'plugin session.changed failed',
+          recordTraceEvent,
+        });
       }
       const scriptRuntime = this.scriptRuntime;
       if (scriptRuntime) {
-        const buildSessionPayload = (sid) => {
-          const id = String(sid || '').trim();
-          if (!id) return null;
-          const contact = this.contactsStore?.getContact?.(id) || null;
-          const name = contact?.name || id;
-          const isGroup = Boolean(contact?.isGroup) || id.startsWith('group:');
-          return { id, name, isGroup };
-        };
-        scriptRuntime.dispatchEvent('session.changed', {
-          oldSession: buildSessionPayload(prevSessionId),
-          newSession: buildSessionPayload(sessionId),
-        }).catch(err => logger.warn('script session.changed failed', err));
+        dispatchRuntimeHookLifecycleEvent({
+          runtime: scriptRuntime,
+          runtimeLabel: 'script',
+          hookName: 'session.changed',
+          payload,
+          sessionId: payload.newSession?.id || '',
+          details: traceDetails,
+          logger,
+          warningMessage: 'script session.changed failed',
+          recordTraceEvent,
+        });
       }
     } catch (err) {
       logger.debug('plugin session.changed dispatch skipped', err);
@@ -2597,61 +2619,126 @@ class AppBridge {
       } catch (err) {
         logger.warn('memory prompt plan failed', err);
       }
+      const recordPromptHookTraceEvent = event => recordDebugTraceEvent(this, event);
       const scriptRuntime = this.scriptRuntime;
       if (scriptRuntime && nextContext?.meta?.skipScripts !== true) {
-        try {
-          const updated = await scriptRuntime.dispatchEvent('prompt.before_build', {
+        const beforePromptInput = promptInput;
+        const beforePromptContext = nextContext;
+        const { result: updated } = await runRuntimeHookLifecycleEvent({
+          runtime: scriptRuntime,
+          runtimeLabel: 'script',
+          hookName: 'prompt.before_build',
+          payload: {
             input: promptInput,
             context: nextContext,
-          });
-          if (updated && typeof updated === 'object') {
-            if (typeof updated.input === 'string') promptInput = updated.input;
-            if (updated.context && typeof updated.context === 'object') nextContext = updated.context;
-          }
-        } catch (err) {
-          logger.warn('script prompt.before_build failed', err);
+          },
+          sessionId: String(nextContext?.session?.id || this.activeSessionId || '').trim(),
+          details: {
+            inputLength: String(promptInput || '').length,
+            hasContext: Boolean(nextContext),
+          },
+          finishDetails: result => ({
+            hasInputOverride: typeof result?.input === 'string',
+            inputChanged: typeof result?.input === 'string' && result.input !== beforePromptInput,
+            hasContextOverride: Boolean(result?.context && typeof result.context === 'object'),
+            contextChanged: Boolean(result?.context && typeof result.context === 'object' && result.context !== beforePromptContext),
+          }),
+          logger,
+          warningMessage: 'script prompt.before_build failed',
+          recordTraceEvent: recordPromptHookTraceEvent,
+        });
+        if (updated && typeof updated === 'object') {
+          if (typeof updated.input === 'string') promptInput = updated.input;
+          if (updated.context && typeof updated.context === 'object') nextContext = updated.context;
         }
       }
       const pluginRuntime = this.pluginRuntime;
       if (pluginRuntime) {
-        try {
-          const updated = await pluginRuntime.dispatchEvent('prompt.before_build', {
+        const beforePromptInput = promptInput;
+        const beforePromptContext = nextContext;
+        const { result: updated } = await runRuntimeHookLifecycleEvent({
+          runtime: pluginRuntime,
+          runtimeLabel: 'plugin',
+          hookName: 'prompt.before_build',
+          payload: {
             input: promptInput,
             context: nextContext,
-          });
-          if (updated && typeof updated === 'object') {
-            if (typeof updated.input === 'string') promptInput = updated.input;
-            if (updated.context && typeof updated.context === 'object') nextContext = updated.context;
-          }
-        } catch (err) {
-          logger.warn('plugin prompt.before_build failed', err);
+          },
+          sessionId: String(nextContext?.session?.id || this.activeSessionId || '').trim(),
+          details: {
+            inputLength: String(promptInput || '').length,
+            hasContext: Boolean(nextContext),
+          },
+          finishDetails: result => ({
+            hasInputOverride: typeof result?.input === 'string',
+            inputChanged: typeof result?.input === 'string' && result.input !== beforePromptInput,
+            hasContextOverride: Boolean(result?.context && typeof result.context === 'object'),
+            contextChanged: Boolean(result?.context && typeof result.context === 'object' && result.context !== beforePromptContext),
+          }),
+          logger,
+          warningMessage: 'plugin prompt.before_build failed',
+          recordTraceEvent: recordPromptHookTraceEvent,
+        });
+        if (updated && typeof updated === 'object') {
+          if (typeof updated.input === 'string') promptInput = updated.input;
+          if (updated.context && typeof updated.context === 'object') nextContext = updated.context;
         }
       }
       let messages = this.buildMessages(promptInput, nextContext);
       if (scriptRuntime && nextContext?.meta?.skipScripts !== true) {
-        try {
-          const updated = await scriptRuntime.dispatchEvent('prompt.after_build', {
+        const beforePrompt = messages;
+        const { result: updated } = await runRuntimeHookLifecycleEvent({
+          runtime: scriptRuntime,
+          runtimeLabel: 'script',
+          hookName: 'prompt.after_build',
+          payload: {
             prompt: messages,
             context: nextContext,
-          });
-          if (updated && typeof updated === 'object' && Array.isArray(updated.prompt)) {
-            messages = updated.prompt;
-          }
-        } catch (err) {
-          logger.warn('script prompt.after_build failed', err);
+          },
+          sessionId: String(nextContext?.session?.id || this.activeSessionId || '').trim(),
+          details: {
+            promptCount: Array.isArray(messages) ? messages.length : 0,
+            hasContext: Boolean(nextContext),
+          },
+          finishDetails: result => ({
+            hasPromptOverride: Array.isArray(result?.prompt),
+            promptChanged: Array.isArray(result?.prompt) && result.prompt !== beforePrompt,
+            promptCount: Array.isArray(result?.prompt) ? result.prompt.length : undefined,
+          }),
+          logger,
+          warningMessage: 'script prompt.after_build failed',
+          recordTraceEvent: recordPromptHookTraceEvent,
+        });
+        if (updated && typeof updated === 'object' && Array.isArray(updated.prompt)) {
+          messages = updated.prompt;
         }
       }
       if (pluginRuntime) {
-        try {
-          const updated = await pluginRuntime.dispatchEvent('prompt.after_build', {
+        const beforePrompt = messages;
+        const { result: updated } = await runRuntimeHookLifecycleEvent({
+          runtime: pluginRuntime,
+          runtimeLabel: 'plugin',
+          hookName: 'prompt.after_build',
+          payload: {
             prompt: messages,
             context: nextContext,
-          });
-          if (updated && typeof updated === 'object' && Array.isArray(updated.prompt)) {
-            messages = updated.prompt;
-          }
-        } catch (err) {
-          logger.warn('plugin prompt.after_build failed', err);
+          },
+          sessionId: String(nextContext?.session?.id || this.activeSessionId || '').trim(),
+          details: {
+            promptCount: Array.isArray(messages) ? messages.length : 0,
+            hasContext: Boolean(nextContext),
+          },
+          finishDetails: result => ({
+            hasPromptOverride: Array.isArray(result?.prompt),
+            promptChanged: Array.isArray(result?.prompt) && result.prompt !== beforePrompt,
+            promptCount: Array.isArray(result?.prompt) ? result.prompt.length : undefined,
+          }),
+          logger,
+          warningMessage: 'plugin prompt.after_build failed',
+          recordTraceEvent: recordPromptHookTraceEvent,
+        });
+        if (updated && typeof updated === 'object' && Array.isArray(updated.prompt)) {
+          messages = updated.prompt;
         }
       }
       if (templateSettings.shouldRun('generate', nextContext)) {

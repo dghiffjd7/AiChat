@@ -31,6 +31,121 @@ export const buildSessionEnterTraceEvent = ({
   return event;
 };
 
+export const buildSessionEnterStartTraceEvent = ({
+  sessionId = '',
+  originPage = '',
+  isGroupSession = false,
+  jumpTargetMessageId = '',
+  suppressInitialAutoScroll = false,
+} = {}) => ({
+  phase: 'enter.start',
+  sessionId: normalizeLifecycleTraceText(sessionId, ''),
+  status: 'started',
+  summary: 'session enter started',
+  details: {
+    originPage,
+    isGroupSession: Boolean(isGroupSession),
+    hasJumpTarget: Boolean(jumpTargetMessageId),
+    suppressInitialAutoScroll,
+  },
+});
+
+export const buildSessionEnterFinishTraceEvent = ({
+  sessionId = '',
+  status = 'success',
+  jumpedToTarget = false,
+} = {}) => {
+  const normalizedStatus = normalizeLifecycleTraceText(status, 'success');
+  if (normalizedStatus === 'stale') {
+    return {
+      phase: 'enter.finish',
+      sessionId: normalizeLifecycleTraceText(sessionId, ''),
+      status: 'stale',
+      summary: 'session enter request became stale',
+    };
+  }
+  return {
+    phase: 'enter.finish',
+    sessionId: normalizeLifecycleTraceText(sessionId, ''),
+    status: 'success',
+    summary: 'session enter completed',
+    details: {
+      jumpedToTarget: Boolean(jumpedToTarget),
+    },
+  };
+};
+
+export const buildSessionExitStartTraceEvent = ({
+  sessionId = '',
+  activePage = '',
+  chatOriginPage = 'chat',
+} = {}) => ({
+  phase: 'exit.start',
+  sessionId: normalizeLifecycleTraceText(sessionId, ''),
+  status: 'started',
+  summary: 'session exit started',
+  details: {
+    activePage,
+    originPage: String(chatOriginPage || '').trim() || 'chat',
+  },
+});
+
+export const buildSessionExitFinishTraceEvent = ({
+  sessionId = '',
+  activePage = '',
+  originPage = 'chat',
+} = {}) => {
+  const normalizedOriginPage = String(originPage || '').trim() || 'chat';
+  return {
+    phase: 'exit.finish',
+    sessionId: normalizeLifecycleTraceText(sessionId, ''),
+    status: 'success',
+    summary: 'session exit completed',
+    details: {
+      activePage,
+      originPage: normalizedOriginPage,
+      switchedPage: Boolean(normalizedOriginPage && normalizedOriginPage !== 'chat'),
+    },
+  };
+};
+
+export const buildSessionChangedStartTraceEvent = ({
+  sessionId = '',
+} = {}) => ({
+  phase: 'changed.start',
+  sessionId: normalizeLifecycleTraceText(sessionId, ''),
+  status: 'started',
+  summary: 'session change started',
+});
+
+export const buildSessionChangedFinishTraceEvent = ({
+  sessionId = '',
+  status = 'success',
+  messageCount = 0,
+} = {}) => {
+  const normalizedStatus = normalizeLifecycleTraceText(status, 'success');
+  if (normalizedStatus === 'stale') {
+    return {
+      phase: 'changed.finish',
+      sessionId: normalizeLifecycleTraceText(sessionId, ''),
+      status: 'stale',
+      summary: 'session change request became stale',
+      details: {
+        messageCount: Number(messageCount || 0) || 0,
+      },
+    };
+  }
+  return {
+    phase: 'changed.finish',
+    sessionId: normalizeLifecycleTraceText(sessionId, ''),
+    status: 'success',
+    summary: 'session change completed',
+    details: {
+      messageCount: Number(messageCount || 0) || 0,
+    },
+  };
+};
+
 const emitSessionEnterTrace = (recordTraceEvent, event) => {
   emitLifecycleTraceEvent(recordTraceEvent, buildSessionEnterTraceEvent(event));
 };
@@ -797,18 +912,13 @@ export const runSessionEnterFlow = async ({
   const jumpKeyword = String(payload.jumpKeyword || '').trim();
   const jumpKind = String(payload.jumpKind || (jumpKeyword ? 'search' : 'anchor')).trim() || 'anchor';
 
-  emitSessionEnterTrace(recordTraceEvent, {
-    phase: 'enter.start',
+  emitSessionEnterTrace(recordTraceEvent, buildSessionEnterStartTraceEvent({
     sessionId: sid,
-    status: 'started',
-    summary: 'session enter started',
-    details: {
-      originPage,
-      isGroupSession: Boolean(isGroupSession),
-      hasJumpTarget: Boolean(jumpTargetMessageId),
-      suppressInitialAutoScroll,
-    },
-  });
+    originPage,
+    isGroupSession,
+    jumpTargetMessageId,
+    suppressInitialAutoScroll,
+  }));
 
   try {
     activateView?.({ originPage });
@@ -829,12 +939,10 @@ export const runSessionEnterFlow = async ({
     jumpTargetMessageId,
   }));
   if (historyStage?.stale) {
-    emitSessionEnterTrace(recordTraceEvent, {
-      phase: 'enter.finish',
+    emitSessionEnterTrace(recordTraceEvent, buildSessionEnterFinishTraceEvent({
       sessionId: sid,
       status: 'stale',
-      summary: 'session enter request became stale',
-    });
+    }));
     return { jumpedToTarget: false, stale: true };
   }
 
@@ -856,15 +964,10 @@ export const runSessionEnterFlow = async ({
       originPage: typeof getChatOriginPage === 'function' ? getChatOriginPage() : originPage,
     });
   } catch {}
-  emitSessionEnterTrace(recordTraceEvent, {
-    phase: 'enter.finish',
+  emitSessionEnterTrace(recordTraceEvent, buildSessionEnterFinishTraceEvent({
     sessionId: sid,
-    status: 'success',
-    summary: 'session enter completed',
-    details: {
-      jumpedToTarget: Boolean(jumpedToTarget),
-    },
-  });
+    jumpedToTarget,
+  }));
   return { jumpedToTarget };
 };
 
@@ -889,16 +992,11 @@ export const runSessionExitFlow = ({
       return '';
     }
   })();
-  emitSessionEnterTrace(recordTraceEvent, {
-    phase: 'exit.start',
+  emitSessionEnterTrace(recordTraceEvent, buildSessionExitStartTraceEvent({
     sessionId,
-    status: 'started',
-    summary: 'session exit started',
-    details: {
-      activePage,
-      originPage: String(chatOriginPage || '').trim() || 'chat',
-    },
-  });
+    activePage,
+    chatOriginPage,
+  }));
   try {
     deactivateView?.();
   } catch {}
@@ -923,17 +1021,11 @@ export const runSessionExitFlow = ({
       sessionId: typeof getCurrentSessionId === 'function' ? getCurrentSessionId() : '',
     });
   } catch {}
-  emitSessionEnterTrace(recordTraceEvent, {
-    phase: 'exit.finish',
+  emitSessionEnterTrace(recordTraceEvent, buildSessionExitFinishTraceEvent({
     sessionId,
-    status: 'success',
-    summary: 'session exit completed',
-    details: {
-      activePage,
-      originPage: origin,
-      switchedPage: Boolean(origin && origin !== 'chat'),
-    },
-  });
+    activePage,
+    originPage: origin,
+  }));
   return { originPage: origin };
 };
 
@@ -948,9 +1040,13 @@ export const runSessionChangedFlow = async ({
   ensureRecentMessagesLoaded = null,
   isRequestStale = null,
   renderChangedHistoryStageFn = null,
+  recordTraceEvent = null,
 } = {}) => {
   const sid = String(sessionId || '').trim();
   if (!sid) return { handled: false, stale: false, messageCount: 0 };
+  emitSessionEnterTrace(recordTraceEvent, buildSessionChangedStartTraceEvent({
+    sessionId: sid,
+  }));
   const enterRequest = beginEnterRequest?.(sid);
   try {
     cancelInitialHistoryFillJobs?.();
@@ -972,11 +1068,17 @@ export const runSessionChangedFlow = async ({
     applyLoadingStateFn?.({ sessionId: sid, contact, sessionName: contact?.name || sid });
   } catch {}
   const messages = await Promise.resolve(ensureRecentMessagesLoaded?.(sid));
+  const messageCount = Array.isArray(messages) ? messages.length : 0;
   if (typeof isRequestStale === 'function' && isRequestStale(enterRequest) === true) {
+    emitSessionEnterTrace(recordTraceEvent, buildSessionChangedFinishTraceEvent({
+      sessionId: sid,
+      status: 'stale',
+      messageCount,
+    }));
     return {
       handled: true,
       stale: true,
-      messageCount: Array.isArray(messages) ? messages.length : 0,
+      messageCount,
     };
   }
   try {
@@ -986,10 +1088,14 @@ export const runSessionChangedFlow = async ({
       messages: Array.isArray(messages) ? messages : [],
     });
   } catch {}
+  emitSessionEnterTrace(recordTraceEvent, buildSessionChangedFinishTraceEvent({
+    sessionId: sid,
+    messageCount,
+  }));
   return {
     handled: true,
     stale: false,
-    messageCount: Array.isArray(messages) ? messages.length : 0,
+    messageCount,
   };
 };
 

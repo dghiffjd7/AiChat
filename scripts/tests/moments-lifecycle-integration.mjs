@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 
+import { createDebugTraceTimeline } from '../../src/scripts/ui/debug-trace-timeline-utils.js';
 import { DialogueStreamParser } from '../../src/scripts/ui/chat/dialogue-stream-parser.js';
 import {
+  buildMomentLifecycleTraceEvent,
   createMomentCommentLifecycleRuntime,
 } from '../../src/scripts/ui/chat/moments-runtime-utils.js';
 import { createMomentFeedSendHandler } from '../../src/scripts/ui/moments-feed-interaction-utils.js';
@@ -28,6 +30,15 @@ let touchedChats = 0;
 let touchedMoments = 0;
 let compacted = false;
 let summariesUpdated = 0;
+let now = 4000;
+const timeline = createDebugTraceTimeline({
+  maxEvents: 80,
+  now: () => now,
+});
+const recordLifecycleEvent = (event) => {
+  now += 19;
+  return timeline.record(buildMomentLifecycleTraceEvent(event));
+};
 
 const momentsStore = {
   get(id) {
@@ -127,6 +138,7 @@ const momentCommentRuntime = createMomentCommentLifecycleRuntime({
   runSummaryCompaction: async () => { compacted = true; },
   notifySummariesUpdated: async () => { summariesUpdated += 1; },
   logger: { warn: () => {}, error: () => {} },
+  recordLifecycleEvent,
 });
 const send = createMomentFeedSendHandler({
   moment: momentRecord,
@@ -144,6 +156,7 @@ const send = createMomentFeedSendHandler({
     assert.equal(meta.replyTo?.id, 'c0');
     generationResult = await momentCommentRuntime(momentId, text, meta);
   },
+  recordLifecycleEvent,
   loggerWarn: () => {},
   generateCommentId: () => 'user-comment-1',
 });
@@ -184,6 +197,19 @@ assert.equal(compacted, true);
 assert.equal(summariesUpdated, 1);
 assert.equal(touchedChats, 1);
 assert.equal(touchedMoments, 1);
+assert.deepEqual(
+  timeline.snapshot({ category: 'moments', momentId: 'm1' }).map(event => [event.phase, event.status]),
+  [
+    ['comment.local.start', 'started'],
+    ['comment.start', 'started'],
+    ['comment.finish', 'success'],
+    ['comment.local.finish', 'success'],
+  ],
+);
+assert.equal(
+  timeline.snapshot().some(event => JSON.stringify(event.details || {}).includes('想你了')),
+  false,
+);
 
 assert.deepEqual(
   chatMessages.get('contact:alice').map(message => ({

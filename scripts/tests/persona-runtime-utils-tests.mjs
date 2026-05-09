@@ -1,10 +1,57 @@
 import assert from 'node:assert/strict';
 
 import {
+  PERSONA_SWITCHER_TAB_STORAGE_KEY,
   cleanupPersonaScopedData,
   deletePersonaCard,
   getCurrentCharacterId,
+  normalizePersonaSwitcherTab,
+  readPersonaSwitcherTab,
+  writePersonaSwitcherTab,
 } from '../../src/scripts/ui/persona-runtime-utils.js';
+
+const createStorage = () => {
+  const values = new Map();
+  return {
+    values,
+    getItem(key) {
+      return values.has(key) ? values.get(key) : null;
+    },
+    setItem(key, value) {
+      values.set(key, String(value));
+    },
+  };
+};
+
+{
+  assert.equal(PERSONA_SWITCHER_TAB_STORAGE_KEY, 'persona_switcher_tab_v2');
+  assert.equal(normalizePersonaSwitcherTab('character'), 'character');
+  assert.equal(normalizePersonaSwitcherTab(' CHARACTER '), 'character');
+  assert.equal(normalizePersonaSwitcherTab('user'), 'user');
+  assert.equal(normalizePersonaSwitcherTab('bad'), 'user');
+  console.log('ok - persona switcher tab helpers preserve legacy key and normalization');
+}
+
+{
+  const storage = createStorage();
+  assert.equal(writePersonaSwitcherTab('character', { storage }), true);
+  assert.equal(storage.values.get(PERSONA_SWITCHER_TAB_STORAGE_KEY), 'character');
+  assert.equal(readPersonaSwitcherTab({ storage }), 'character');
+  assert.equal(writePersonaSwitcherTab('bad', { storage }), true);
+  assert.equal(storage.values.get(PERSONA_SWITCHER_TAB_STORAGE_KEY), 'user');
+  assert.equal(readPersonaSwitcherTab({ storage }), 'user');
+  console.log('ok - persona switcher tab storage helpers preserve read write fallback');
+}
+
+{
+  const storage = {
+    getItem() { throw new Error('read failed'); },
+    setItem() { throw new Error('write failed'); },
+  };
+  assert.equal(readPersonaSwitcherTab({ storage }), 'user');
+  assert.equal(writePersonaSwitcherTab('character', { storage }), false);
+  console.log('ok - persona switcher tab storage helpers tolerate storage failures');
+}
 
 {
   const calls = [];

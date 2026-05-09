@@ -95,8 +95,13 @@ import {
   assert.equal(appBridge.setActiveSession('s2'), 'set:s2');
   const registry = getBridgeContractRegistry(appBridge);
   assert.equal(registry.contracts.getActiveSessionId.domain, BRIDGE_CONTRACT_DOMAINS.sessionState);
+  assert.equal(registry.contracts.getActiveSessionId.returns, 'string');
+  assert.equal(registry.contracts.getActiveSessionId.status, 'covered');
+  assert.deepEqual(registry.contracts.setActiveSession.params, ['sessionId: string']);
+  assert.equal(registry.contracts.setActiveSession.returns, 'void');
+  assert.equal(registry.contracts.setActiveSession.sideEffects.includes('dispatches plugin/script session.changed'), true);
   assert.equal(registry.domains[BRIDGE_CONTRACT_DOMAINS.sessionState].setActiveSession, true);
-  console.log('ok - registerSessionStateBridgeContract assigns session-state helpers');
+  console.log('ok - registerSessionStateBridgeContract assigns session-state helpers and metadata');
 }
 
 {
@@ -347,8 +352,15 @@ import {
   assert.equal(await appBridge.backgroundChat([{ role: 'user' }]), 'background:1');
   const registry = getBridgeContractRegistry(appBridge);
   assert.equal(registry.contracts.generate.domain, BRIDGE_CONTRACT_DOMAINS.generation);
+  assert.deepEqual(registry.contracts.generate.params, ['userMessage: string', 'context?: generation context']);
+  assert.equal(registry.contracts.generate.returns, 'Promise<string> | AsyncGenerator<string>');
+  assert.equal(registry.contracts.generate.sideEffects.includes('updates lastRequest diagnostics'), true);
+  assert.equal(registry.contracts.generate.tests.includes('send-cancel-regenerate-integration.mjs'), true);
+  assert.equal(registry.contracts.generate.status, 'covered');
+  assert.equal(registry.contracts.buildMessages.returns, 'Provider message[]');
+  assert.equal(registry.contracts.backgroundChat.sideEffects.includes('does not write chat history'), true);
   assert.equal(registry.domains[BRIDGE_CONTRACT_DOMAINS.generation].backgroundChat, true);
-  console.log('ok - registerGenerationBridgeContract assigns generation helpers');
+  console.log('ok - registerGenerationBridgeContract assigns generation helpers and metadata');
 }
 
 {
@@ -466,7 +478,14 @@ import {
   assert.deepEqual(appBridge.setLastMemoryPlan({ enabled: false }), { plan: { enabled: false } });
   assert.deepEqual(await appBridge.buildMemoryPromptPlan({ sessionId: 's1' }), { ctx: { sessionId: 's1' } });
   assert.equal(await appBridge.rollbackLastMemoryUpdate(), 3);
-  console.log('ok - registerMemoryUpdateBridgeContract assigns memory-update helpers');
+  const registry = getBridgeContractRegistry(appBridge);
+  assert.deepEqual(registry.contracts.getLastMemoryUpdate.params, ['sessionId: string']);
+  assert.equal(registry.contracts.getLastMemoryUpdate.returns, 'Memory update entry | null');
+  assert.equal(registry.contracts.setLastMemoryUpdate.sideEffects.includes('stores or clears last memory update entry scoped by sessionId'), true);
+  assert.equal(registry.contracts.buildMemoryPromptPlan.returns, 'Promise<Memory prompt plan | null>');
+  assert.equal(registry.contracts.rollbackLastMemoryUpdate.returns, 'Promise<boolean>');
+  assert.equal(registry.contracts.rollbackLastMemoryUpdate.tests.includes('memory-lifecycle-integration.mjs'), true);
+  console.log('ok - registerMemoryUpdateBridgeContract assigns memory-update helpers and metadata');
 }
 
 {

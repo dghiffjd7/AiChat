@@ -11,6 +11,11 @@ import {
   buildMemoryUpdateLastEntry,
   buildMemoryUpdatePlanInput,
   buildMemoryUpdateRequest,
+  buildMemoryRollbackFinishTraceEvent,
+  buildMemoryRollbackStartTraceEvent,
+  buildMemoryUpdateTaskFinishTraceEvent,
+  buildMemoryUpdateTaskSkippedTraceEvent,
+  buildMemoryUpdateTaskStartTraceEvent,
   getLastMemoryPlan,
   getLastMemoryUpdate,
   handleMemoryEditsFromRawWithUi,
@@ -58,6 +63,94 @@ import {
     summary: 'skipped',
   });
   console.log('ok - buildMemoryUpdateTraceEvent normalizes memory trace metadata while preserving optional details');
+}
+
+{
+  assert.deepEqual(buildMemoryUpdateTaskStartTraceEvent({
+    sessionId: ' s1 ',
+    isGroup: 1,
+    checkpointMessageId: ' m1 ',
+  }), {
+    phase: 'update.start',
+    sessionId: 's1',
+    status: 'started',
+    summary: 'memory update task started',
+    details: {
+      isGroup: true,
+      checkpointMessageId: 'm1',
+    },
+  });
+  assert.deepEqual(buildMemoryUpdateTaskSkippedTraceEvent({
+    sessionId: ' s1 ',
+    reason: ' cadence ',
+    nextCounter: 1,
+    everyN: 3,
+  }), {
+    phase: 'update.skip',
+    sessionId: 's1',
+    status: 'skipped',
+    summary: 'memory update skipped',
+    details: {
+      reason: 'cadence',
+      nextCounter: 1,
+      everyN: 3,
+    },
+  });
+  assert.deepEqual(buildMemoryUpdateTaskFinishTraceEvent({
+    sessionId: ' s1 ',
+    status: ' error ',
+    reason: ' exception ',
+    checkpointMessageId: ' m1 ',
+    errorMessage: ' boom ',
+  }), {
+    phase: 'update.finish',
+    sessionId: 's1',
+    status: 'error',
+    summary: 'memory update task failed',
+    details: {
+      reason: 'exception',
+      checkpointMessageId: 'm1',
+      errorMessage: 'boom',
+    },
+  });
+  console.log('ok - memory update task trace patch builders preserve task lifecycle contracts');
+}
+
+{
+  assert.deepEqual(buildMemoryRollbackStartTraceEvent({
+    sessionId: ' s1 ',
+    mode: ' actions ',
+    actionCount: '2',
+  }), {
+    phase: 'rollback.start',
+    sessionId: 's1',
+    status: 'started',
+    summary: 'memory rollback started',
+    details: {
+      mode: 'actions',
+      actionCount: 2,
+      tableCount: 0,
+    },
+  });
+  assert.deepEqual(buildMemoryRollbackFinishTraceEvent({
+    sessionId: ' s1 ',
+    status: ' skipped ',
+    mode: ' snapshot ',
+    changed: 0,
+    reason: ' no-changes ',
+  }), {
+    phase: 'rollback.finish',
+    sessionId: 's1',
+    status: 'skipped',
+    summary: 'memory rollback skipped',
+    details: {
+      mode: 'snapshot',
+      changed: 0,
+      reason: 'no-changes',
+      errorMessage: undefined,
+    },
+  });
+  console.log('ok - memory rollback trace patch builders preserve rollback lifecycle contracts');
 }
 
 {

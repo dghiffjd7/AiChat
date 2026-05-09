@@ -3,12 +3,21 @@ import assert from 'node:assert/strict';
 import {
   applyMomentCommentEvents,
   applyMomentSummaryFromRaw,
+  buildMomentCommentFinishTraceEvent,
+  buildMomentCommentSkippedTraceEvent,
+  buildMomentCommentStartTraceEvent,
+  buildMomentFeedCommentFinishTraceEvent,
+  buildMomentFeedCommentSkippedTraceEvent,
+  buildMomentFeedCommentStartTraceEvent,
   buildMomentLifecycleTraceEvent,
   buildMomentCommentContactList,
   buildMomentCommentPromptData,
   buildMomentCommentTaskContext,
   buildMomentPrivateChatMessages,
   buildMomentRecentCommentsText,
+  buildMomentSummaryCompactionFinishTraceEvent,
+  buildMomentSummaryCompactionSkippedTraceEvent,
+  buildMomentSummaryCompactionStartTraceEvent,
   collectMomentCommentContactList,
   createMomentCommentLifecycleRuntime,
   createMomentSummaryCompactionRuntime,
@@ -43,6 +52,219 @@ import {
     details: { kept: true },
   });
   console.log('ok - buildMomentLifecycleTraceEvent normalizes lifecycle metadata and drops undefined details');
+}
+
+{
+  assert.deepEqual(buildMomentCommentSkippedTraceEvent({
+    momentId: ' m1 ',
+    reason: 'missing-input',
+    hasMomentId: true,
+    hasText: false,
+  }), {
+    phase: 'comment.skipped',
+    momentId: 'm1',
+    status: 'skipped',
+    summary: 'moment comment skipped',
+    details: {
+      reason: 'missing-input',
+      hasMomentId: true,
+      hasText: false,
+    },
+  });
+  assert.deepEqual(buildMomentCommentStartTraceEvent({
+    sessionId: ' contact:1 ',
+    momentId: ' m1 ',
+    authorName: 'Alice',
+    targetSessionId: 'contact:bob',
+    targetName: 'Bob',
+    stream: 1,
+    isReplyToComment: true,
+    userCommentId: 'uc1',
+    hasRecentComments: true,
+  }), {
+    phase: 'comment.start',
+    sessionId: 'contact:1',
+    momentId: 'm1',
+    status: 'started',
+    summary: 'moment comment generation started',
+    details: {
+      authorName: 'Alice',
+      targetSessionId: 'contact:bob',
+      targetName: 'Bob',
+      stream: true,
+      isReplyToComment: true,
+      userCommentId: 'uc1',
+      hasRecentComments: true,
+    },
+  });
+  assert.deepEqual(buildMomentCommentFinishTraceEvent({
+    sessionId: 'contact:1',
+    momentId: 'm1',
+    authorName: 'Alice',
+    stream: false,
+    isReplyToComment: true,
+    userCommentId: 'uc1',
+    sawMomentReply: false,
+    fullRaw: 'RAW',
+  }), {
+    phase: 'comment.finish',
+    sessionId: 'contact:1',
+    momentId: 'm1',
+    status: 'warning',
+    summary: 'moment comment reply not parsed',
+    details: {
+      authorName: 'Alice',
+      stream: false,
+      isReplyToComment: true,
+      userCommentId: 'uc1',
+      sawMomentReply: false,
+      rawLength: 3,
+    },
+  });
+  assert.deepEqual(buildMomentCommentFinishTraceEvent({
+    sessionId: 'contact:1',
+    momentId: 'm1',
+    status: 'error',
+    authorName: 'Alice',
+    isReplyToComment: false,
+    userCommentId: '',
+    started: true,
+    errorMessage: 'failed',
+  }), {
+    phase: 'comment.finish',
+    sessionId: 'contact:1',
+    momentId: 'm1',
+    status: 'error',
+    summary: 'failed',
+    details: {
+      authorName: 'Alice',
+      isReplyToComment: false,
+      userCommentId: '',
+      started: true,
+    },
+  });
+  assert.deepEqual(buildMomentFeedCommentSkippedTraceEvent({
+    sessionId: ' contact:1 ',
+    momentId: ' m1 ',
+    reason: ' empty-text ',
+    pending: false,
+    hasText: false,
+  }), {
+    phase: 'comment.local.skipped',
+    sessionId: 'contact:1',
+    momentId: 'm1',
+    status: 'skipped',
+    summary: 'local moment comment skipped',
+    details: {
+      reason: 'empty-text',
+      pending: false,
+      hasText: false,
+    },
+  });
+  assert.deepEqual(buildMomentFeedCommentStartTraceEvent({
+    sessionId: ' contact:1 ',
+    momentId: ' m1 ',
+    userCommentId: ' uc1 ',
+    isReplyToComment: true,
+  }), {
+    phase: 'comment.local.start',
+    sessionId: 'contact:1',
+    momentId: 'm1',
+    status: 'started',
+    summary: 'local moment comment send started',
+    details: {
+      userCommentId: 'uc1',
+      isReplyToComment: true,
+    },
+  });
+  assert.deepEqual(buildMomentFeedCommentFinishTraceEvent({
+    sessionId: 'contact:1',
+    momentId: 'm1',
+    status: 'error',
+    userCommentId: 'uc1',
+    isReplyToComment: true,
+    errorMessage: 'callback failed',
+  }), {
+    phase: 'comment.local.finish',
+    sessionId: 'contact:1',
+    momentId: 'm1',
+    status: 'error',
+    summary: 'local moment comment callback failed',
+    details: {
+      userCommentId: 'uc1',
+      isReplyToComment: true,
+      errorMessage: 'callback failed',
+    },
+  });
+  assert.deepEqual(buildMomentSummaryCompactionSkippedTraceEvent({
+    reason: 'threshold-not-met',
+    scopeKey: 'global',
+    force: false,
+    itemCount: 2,
+  }), {
+    phase: 'summary.compaction.skipped',
+    status: 'skipped',
+    summary: 'moment summary compaction skipped',
+    details: {
+      reason: 'threshold-not-met',
+      scopeKey: 'global',
+      force: false,
+      itemCount: 2,
+    },
+  });
+  assert.deepEqual(buildMomentSummaryCompactionStartTraceEvent({
+    scopeKey: 'global',
+    force: true,
+    itemCount: 3,
+  }), {
+    phase: 'summary.compaction.start',
+    status: 'started',
+    summary: 'moment summary compaction started',
+    details: {
+      scopeKey: 'global',
+      force: true,
+      itemCount: 3,
+    },
+  });
+  assert.deepEqual(buildMomentSummaryCompactionFinishTraceEvent({
+    status: 'success',
+    scopeKey: 'global',
+    force: false,
+    itemCount: 3,
+    keptCount: 2,
+    raw: '<summary>ok</summary>',
+    summaryText: 'ok',
+  }), {
+    phase: 'summary.compaction.finish',
+    status: 'success',
+    summary: 'moment summary compaction finished',
+    details: {
+      scopeKey: 'global',
+      force: false,
+      itemCount: 3,
+      keptCount: 2,
+      rawLength: 21,
+      summaryLength: 2,
+    },
+  });
+  assert.deepEqual(buildMomentSummaryCompactionFinishTraceEvent({
+    status: 'skipped',
+    reason: 'empty-raw',
+    scopeKey: 'global',
+    force: false,
+    itemCount: 3,
+  }), {
+    phase: 'summary.compaction.finish',
+    status: 'skipped',
+    summary: 'moment summary compaction skipped',
+    details: {
+      reason: 'empty-raw',
+      scopeKey: 'global',
+      force: false,
+      itemCount: 3,
+    },
+  });
+  console.log('ok - moment comment feed and summary trace patch builders preserve raw payload contracts');
 }
 
 {

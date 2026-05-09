@@ -1,9 +1,68 @@
 import assert from 'node:assert/strict';
 
 import {
+  LEGACY_SEND_MODE_STORAGE_KEY,
+  UI_MODE_STORAGE_KEY,
+  normalizeUiMode,
+  readUiMode,
+  removeLegacySendModeState,
   runEnterRpModeFlow,
   runExitRpModeFlow,
+  writeUiMode,
 } from '../../src/scripts/ui/chat/rp-mode-runtime-utils.js';
+
+const createStorage = () => {
+  const values = new Map();
+  return {
+    values,
+    getItem(key) {
+      return values.has(key) ? values.get(key) : null;
+    },
+    setItem(key, value) {
+      values.set(key, String(value));
+    },
+    removeItem(key) {
+      values.delete(key);
+    },
+  };
+};
+
+{
+  assert.equal(UI_MODE_STORAGE_KEY, 'chat_ui_mode_v1');
+  assert.equal(LEGACY_SEND_MODE_STORAGE_KEY, 'chat_send_mode_v1');
+  assert.equal(normalizeUiMode('rp'), 'rp');
+  assert.equal(normalizeUiMode(' RP '), 'rp');
+  assert.equal(normalizeUiMode('creative'), 'chat');
+  assert.equal(normalizeUiMode(''), 'chat');
+  console.log('ok - ui mode storage helpers preserve legacy keys and mode normalization');
+}
+
+{
+  const storage = createStorage();
+  assert.equal(writeUiMode('rp', { storage }), true);
+  assert.equal(storage.values.get(UI_MODE_STORAGE_KEY), 'rp');
+  assert.equal(readUiMode({ storage }), 'rp');
+  assert.equal(writeUiMode('bad', { storage }), true);
+  assert.equal(storage.values.get(UI_MODE_STORAGE_KEY), 'chat');
+  storage.values.set(UI_MODE_STORAGE_KEY, 'RP');
+  assert.equal(readUiMode({ storage }), 'rp');
+  storage.values.set(LEGACY_SEND_MODE_STORAGE_KEY, 'creative');
+  assert.equal(removeLegacySendModeState({ storage }), true);
+  assert.equal(storage.values.has(LEGACY_SEND_MODE_STORAGE_KEY), false);
+  console.log('ok - ui mode read write and legacy cleanup helpers preserve storage behavior');
+}
+
+{
+  const storage = {
+    getItem() { throw new Error('read failed'); },
+    setItem() { throw new Error('write failed'); },
+    removeItem() { throw new Error('remove failed'); },
+  };
+  assert.equal(readUiMode({ storage }), 'chat');
+  assert.equal(writeUiMode('rp', { storage }), false);
+  assert.equal(removeLegacySendModeState({ storage }), false);
+  console.log('ok - ui mode storage helpers tolerate storage failures');
+}
 
 {
   const calls = [];

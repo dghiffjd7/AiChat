@@ -1,3 +1,9 @@
+import {
+  buildMomentFeedCommentFinishTraceEvent,
+  buildMomentFeedCommentSkippedTraceEvent,
+  buildMomentFeedCommentStartTraceEvent,
+} from './chat/moments-runtime-utils.js';
+
 export const toggleMomentComposer = ({
   momentId,
   openComposer,
@@ -52,14 +58,45 @@ export const createMomentFeedSendHandler = ({
   render,
   onUserComment,
   loggerWarn,
+  recordLifecycleEvent,
   generateCommentId = () => `comment-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
 } = {}) => async () => {
   const momentId = moment?.id;
-  if (!momentId || pending) return false;
+  const sessionId = String(moment?.originSessionId || moment?.authorId || '').trim();
+  const record = (event) => {
+    if (typeof recordLifecycleEvent !== 'function') return;
+    try {
+      recordLifecycleEvent(event);
+    } catch {}
+  };
+  if (!momentId || pending) {
+    record(buildMomentFeedCommentSkippedTraceEvent({
+      sessionId,
+      momentId: momentId || '',
+      reason: !momentId ? 'missing-moment-id' : 'pending',
+      pending: Boolean(pending),
+    }));
+    return false;
+  }
   const text = String(inputEl?.value || '').trim();
-  if (!text) return false;
+  if (!text) {
+    record(buildMomentFeedCommentSkippedTraceEvent({
+      sessionId,
+      momentId,
+      reason: 'empty-text',
+      hasText: false,
+    }));
+    return false;
+  }
   const reply = replyTargets?.get(momentId) || null;
   const userCommentId = generateCommentId();
+  const isReplyToComment = Boolean(reply?.id);
+  record(buildMomentFeedCommentStartTraceEvent({
+    sessionId,
+    momentId,
+    userCommentId,
+    isReplyToComment,
+  }));
   store?.addComments?.(momentId, [
     {
       id: userCommentId,
@@ -80,8 +117,23 @@ export const createMomentFeedSendHandler = ({
       userCommentId,
       replyTo: reply ? { ...reply } : null,
     });
+    record(buildMomentFeedCommentFinishTraceEvent({
+      sessionId,
+      momentId,
+      userCommentId,
+      isReplyToComment,
+      status: 'success',
+    }));
   } catch (error) {
     loggerWarn?.('onUserComment failed', error);
+    record(buildMomentFeedCommentFinishTraceEvent({
+      sessionId,
+      momentId,
+      userCommentId,
+      isReplyToComment,
+      status: 'error',
+      errorMessage: error?.message ? String(error.message) : String(error || ''),
+    }));
   } finally {
     pendingComment?.delete?.(momentId);
     render?.({ preserveScroll: true });

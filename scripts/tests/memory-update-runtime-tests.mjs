@@ -11,6 +11,7 @@ const createDeps = (overrides = {}) => {
     messages: null,
     plans: [],
     syncs: [],
+    traces: [],
     warnings: [],
   };
   const runtime = createMemoryUpdateRuntime({
@@ -58,6 +59,7 @@ const createDeps = (overrides = {}) => {
       getActiveProfileId: () => '',
       getRuntimeConfigByProfileId: async () => null,
     },
+    recordTraceEvent: event => calls.traces.push(event),
     syncTurnCheckpointForMessage: async (...args) => {
       calls.syncs.push(args);
     },
@@ -95,6 +97,11 @@ const createDeps = (overrides = {}) => {
   assert.equal(calls.edits[0].options.force, true);
   assert.match(calls.edits[0].options.requestPrompt, /^system:\nsystem prompt\n\nuser:\n/);
   assert.deepEqual(calls.syncs, [['s1', 'm2', { captureCurrentActiveState: true }]]);
+  assert.deepEqual(calls.traces.map(event => [event.phase, event.status, event.details]), [
+    ['update.skip', 'skipped', { reason: 'cadence', nextCounter: 1, everyN: 2 }],
+    ['update.start', 'started', { isGroup: false, checkpointMessageId: 'm2' }],
+    ['update.finish', 'success', { checkpointMessageId: 'm2' }],
+  ]);
   console.log('ok - createMemoryUpdateRuntime enforces cadence and runs queued memory update tasks');
 }
 

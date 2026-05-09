@@ -58,13 +58,14 @@ const splitScriptSteps = script =>
   const integrationSteps = splitScriptSteps(scripts['test:integration']);
   assert.deepEqual(integrationSteps, [
     'node scripts/tests/lifecycle-trace-integration.mjs',
+    'node scripts/tests/plugin-hook-lifecycle-integration.mjs',
     'node scripts/tests/session-enter-lifecycle-integration.mjs',
     'node scripts/tests/send-cancel-regenerate-integration.mjs',
     'node scripts/tests/memory-lifecycle-integration.mjs',
     'node scripts/tests/settings-lifecycle-integration.mjs',
     'node scripts/tests/moments-lifecycle-integration.mjs',
   ]);
-  console.log('ok - test:integration preserves the six high-risk lifecycle regression scripts');
+  console.log('ok - test:integration preserves the seven high-risk lifecycle regression scripts');
 }
 
 {

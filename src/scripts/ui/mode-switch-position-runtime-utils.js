@@ -1,5 +1,52 @@
 const clampValue = (value, min, max) => Math.min(max, Math.max(min, value));
 
+export const MODE_SWITCH_POSITION_STORAGE_KEY = 'phone_mode_switch_pos_v1';
+
+const getDefaultLocalStorage = () => {
+  try {
+    return typeof localStorage !== 'undefined' ? localStorage : null;
+  } catch {
+    return null;
+  }
+};
+
+export const normalizeStoredModeSwitchPosition = (value = null) => {
+  if (!value || typeof value !== 'object') return null;
+  const xRatio = Number(value.xRatio);
+  const yRatio = Number(value.yRatio);
+  if (!Number.isFinite(xRatio) || !Number.isFinite(yRatio)) return null;
+  return { xRatio, yRatio };
+};
+
+export const readModeSwitchPosition = ({
+  storage = getDefaultLocalStorage(),
+  key = MODE_SWITCH_POSITION_STORAGE_KEY,
+} = {}) => {
+  try {
+    const raw = storage?.getItem?.(key);
+    if (!raw) return null;
+    return normalizeStoredModeSwitchPosition(JSON.parse(raw));
+  } catch {
+    return null;
+  }
+};
+
+export const writeModeSwitchPosition = (
+  position = null,
+  {
+    storage = getDefaultLocalStorage(),
+    key = MODE_SWITCH_POSITION_STORAGE_KEY,
+  } = {},
+) => {
+  try {
+    if (!position) return false;
+    storage?.setItem?.(key, JSON.stringify(position));
+    return true;
+  } catch {
+    return false;
+  }
+};
+
 export const createModeSwitchPositionRuntime = ({
   modeSwitchEl = null,
   readCssVarPx = null,

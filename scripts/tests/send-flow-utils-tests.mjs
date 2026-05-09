@@ -1,10 +1,18 @@
 import assert from 'node:assert/strict';
 
 import {
+  buildRegenerateFinishTraceEvent,
+  buildRegenerateStartTraceEvent,
+  buildSendBlockedTraceEvent,
   buildSendFlowTraceEvent,
+  buildSendFinishTraceEvent,
+  buildSendPreflightBlockedTraceEvent,
+  buildSendStartTraceEvent,
+  buildSendUserMessage,
   normalizeHandleSendInvocation,
   normalizeHandleSendOptions,
   resolveRegenerateFromUserIndexPlan,
+  resolveSendPreflightBlock,
   resolveSyspromptProtocolFlags,
   runPendingSendPreparationFlow,
   runRegenerateFromUserIndexFlow,
@@ -49,6 +57,244 @@ test('buildSendFlowTraceEvent normalizes generation trace metadata and drops und
       hasAttachments: false,
     },
   });
+});
+
+test('send trace patch builders preserve raw start and finish payload contracts', () => {
+  assert.deepEqual(buildSendBlockedTraceEvent({
+    sessionId: ' session-blocked ',
+    activeGenerationId: 6,
+  }), {
+    phase: 'send.blocked',
+    sessionId: 'session-blocked',
+    status: 'skipped',
+    summary: 'send skipped because generation is active',
+    details: {
+      activeGenerationId: 6,
+    },
+  });
+  assert.deepEqual(buildSendPreflightBlockedTraceEvent({
+    sessionId: ' session-preflight ',
+    reason: ' api-not-configured ',
+  }), {
+    phase: 'send.preflight.blocked',
+    sessionId: 'session-preflight',
+    status: 'skipped',
+    summary: 'send blocked before generation started',
+    details: {
+      reason: 'api-not-configured',
+    },
+  });
+  assert.deepEqual(buildSendStartTraceEvent({
+    sessionId: ' session-send ',
+    generationId: 7,
+    stream: 1,
+    protocolEnabled: true,
+    rpUiMode: false,
+    isGroupChat: true,
+    hasAttachments: true,
+    attachmentCount: '2',
+    pendingCount: 3,
+    suppressUserMessage: false,
+    hasContinueTarget: true,
+    hasSwipeTarget: false,
+  }), {
+    phase: 'send.start',
+    sessionId: 'session-send',
+    status: 'started',
+    summary: 'send flow started',
+    details: {
+      generationId: 7,
+      stream: true,
+      protocolEnabled: true,
+      rpUiMode: false,
+      isGroupChat: true,
+      hasAttachments: true,
+      attachmentCount: 2,
+      pendingCount: 3,
+      suppressUserMessage: false,
+      hasContinueTarget: true,
+      hasSwipeTarget: false,
+    },
+  });
+  assert.deepEqual(buildSendFinishTraceEvent({
+    sessionId: 'session-send',
+    generationId: 7,
+    sendSucceeded: true,
+  }), {
+    phase: 'send.finish',
+    sessionId: 'session-send',
+    status: 'success',
+    summary: 'send flow completed',
+    details: {
+      generationId: 7,
+      sendSucceeded: true,
+      cancelled: undefined,
+      errorMessage: undefined,
+    },
+  });
+  assert.deepEqual(buildSendFinishTraceEvent({
+    sessionId: 'session-send',
+    generationId: 8,
+    sendSucceeded: false,
+    suppressErrorUI: true,
+    sendErrorMessage: '用户取消',
+  }), {
+    phase: 'send.finish',
+    sessionId: 'session-send',
+    status: 'cancelled',
+    summary: 'send flow stopped',
+    details: {
+      generationId: 8,
+      sendSucceeded: false,
+      cancelled: true,
+      errorMessage: '用户取消',
+    },
+  });
+});
+
+test('regenerate trace patch builders preserve start success and skipped payload contracts', () => {
+  assert.deepEqual(buildRegenerateStartTraceEvent({
+    sessionId: ' session-regen ',
+    userIdx: 2,
+    allowEmpty: true,
+    regenMessageCount: '3',
+  }), {
+    phase: 'regenerate.start',
+    sessionId: 'session-regen',
+    status: 'started',
+    summary: 'regenerate flow started',
+    details: {
+      userIdx: 2,
+      allowEmpty: true,
+      regenMessageCount: 3,
+    },
+  });
+  assert.deepEqual(buildRegenerateFinishTraceEvent({
+    sessionId: 'session-regen',
+    status: 'success',
+    userIdx: 2,
+    allowEmpty: false,
+    regenMessageCount: 3,
+    resent: true,
+  }), {
+    phase: 'regenerate.finish',
+    sessionId: 'session-regen',
+    status: 'success',
+    summary: 'regenerate flow completed',
+    details: {
+      userIdx: 2,
+      allowEmpty: false,
+      regenMessageCount: 3,
+      resent: true,
+    },
+  });
+  assert.deepEqual(buildRegenerateFinishTraceEvent({
+    sessionId: 'session-regen',
+    status: 'skipped',
+    userIdx: 2,
+    allowEmpty: true,
+    reason: 'empty-user-message',
+  }), {
+    phase: 'regenerate.finish',
+    sessionId: 'session-regen',
+    status: 'skipped',
+    summary: 'regenerate flow skipped',
+    details: {
+      userIdx: 2,
+      allowEmpty: true,
+      reason: 'empty-user-message',
+    },
+  });
+});
+
+test('resolveSendPreflightBlock preserves existing configured offline ui contracts', () => {
+  assert.deepEqual(resolveSendPreflightBlock({
+    bridgeConfigured: false,
+    online: true,
+  }), {
+    blocked: true,
+    reason: 'api-not-configured',
+    bannerMessage: '未配置 API，请先填写 Base URL / Key / 模型',
+    toastMessage: '请先配置 API 信息',
+    toastTitle: '未配置',
+    showConfigPanel: true,
+  });
+
+  assert.deepEqual(resolveSendPreflightBlock({
+    bridgeConfigured: true,
+    online: false,
+  }), {
+    blocked: true,
+    reason: 'offline',
+    bannerMessage: '当前离线，请连接网络后再试',
+    toastMessage: '离线状态，无法发送',
+    toastTitle: '',
+    showConfigPanel: false,
+  });
+
+  assert.deepEqual(resolveSendPreflightBlock({
+    bridgeConfigured: true,
+    online: true,
+  }), {
+    blocked: false,
+    reason: '',
+    bannerMessage: '',
+    toastMessage: '',
+    toastTitle: '',
+    showConfigPanel: false,
+  });
+});
+
+test('buildSendUserMessage preserves sticker and regex user message contracts', () => {
+  assert.deepEqual(buildSendUserMessage({
+    text: '/贴纸 开心',
+    userName: '小明',
+    userAvatar: 'user.png',
+    time: '10:00',
+    isStickerAllowed: () => true,
+    parseStickerToken: text => (text.includes('开心') ? '开心' : ''),
+    applyInputStoredRegex: () => {
+      throw new Error('regex should not run for stickers');
+    },
+  }), {
+    role: 'user',
+    type: 'sticker',
+    content: '开心',
+    raw: '/贴纸 开心',
+    name: '小明',
+    avatar: 'user.png',
+    time: '10:00',
+  });
+
+  const regexCalls = [];
+  assert.deepEqual(buildSendUserMessage({
+    text: 'hello',
+    userName: '我',
+    userAvatar: 'me.png',
+    time: '10:01',
+    isStickerAllowed: () => false,
+    parseStickerToken: () => 'ignored',
+    applyInputStoredRegex: (value, opts) => {
+      regexCalls.push(['stored', value, opts]);
+      return `stored:${value}`;
+    },
+    applyInputDisplayRegex: (value, opts) => {
+      regexCalls.push(['display', value, opts]);
+      return `display:${value}`;
+    },
+  }), {
+    role: 'user',
+    type: 'text',
+    content: 'display:stored:hello',
+    raw: 'stored:hello',
+    name: '我',
+    avatar: 'me.png',
+    time: '10:01',
+  });
+  assert.deepEqual(regexCalls, [
+    ['stored', 'hello', { isEdit: false }],
+    ['display', 'stored:hello', { isEdit: false, depth: 0 }],
+  ]);
 });
 
 test('normalizeHandleSendInvocation upgrades object target into options payload', () => {

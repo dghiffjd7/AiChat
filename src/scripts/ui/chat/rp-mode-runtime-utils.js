@@ -1,4 +1,56 @@
 const normalizeSessionId = (value = '') => String(value || '').trim();
+export const UI_MODE_STORAGE_KEY = 'chat_ui_mode_v1';
+export const LEGACY_SEND_MODE_STORAGE_KEY = 'chat_send_mode_v1';
+
+const getDefaultLocalStorage = () => {
+  try {
+    return typeof localStorage !== 'undefined' ? localStorage : null;
+  } catch {
+    return null;
+  }
+};
+
+export const normalizeUiMode = (value = '') => (
+  String(value || '').trim().toLowerCase() === 'rp' ? 'rp' : 'chat'
+);
+
+export const readUiMode = ({
+  storage = getDefaultLocalStorage(),
+  key = UI_MODE_STORAGE_KEY,
+} = {}) => {
+  try {
+    return normalizeUiMode(storage?.getItem?.(key));
+  } catch {
+    return 'chat';
+  }
+};
+
+export const writeUiMode = (
+  value = 'chat',
+  {
+    storage = getDefaultLocalStorage(),
+    key = UI_MODE_STORAGE_KEY,
+  } = {},
+) => {
+  try {
+    storage?.setItem?.(key, normalizeUiMode(value));
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+export const removeLegacySendModeState = ({
+  storage = getDefaultLocalStorage(),
+  key = LEGACY_SEND_MODE_STORAGE_KEY,
+} = {}) => {
+  try {
+    storage?.removeItem?.(key);
+    return true;
+  } catch {
+    return false;
+  }
+};
 
 export const runEnterRpModeFlow = async ({
   uiMode = 'chat',

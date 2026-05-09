@@ -28,6 +28,111 @@ export const buildMemoryUpdateTraceEvent = ({
   return event;
 };
 
+export const buildMemoryUpdateTaskStartTraceEvent = ({
+  sessionId = '',
+  isGroup = false,
+  checkpointMessageId = '',
+} = {}) => ({
+  phase: 'update.start',
+  sessionId: normalizeLifecycleTraceText(sessionId, ''),
+  status: 'started',
+  summary: 'memory update task started',
+  details: {
+    isGroup: Boolean(isGroup),
+    checkpointMessageId: normalizeLifecycleTraceText(checkpointMessageId, '') || undefined,
+  },
+});
+
+export const buildMemoryUpdateTaskSkippedTraceEvent = ({
+  sessionId = '',
+  reason = '',
+  nextCounter,
+  everyN,
+} = {}) => ({
+  phase: 'update.skip',
+  sessionId: normalizeLifecycleTraceText(sessionId, ''),
+  status: 'skipped',
+  summary: 'memory update skipped',
+  details: {
+    reason: normalizeLifecycleTraceText(reason, ''),
+    nextCounter,
+    everyN,
+  },
+});
+
+export const buildMemoryUpdateTaskFinishTraceEvent = ({
+  sessionId = '',
+  status = 'success',
+  reason = '',
+  checkpointMessageId = '',
+  errorMessage = '',
+} = {}) => {
+  const normalizedStatus = normalizeLifecycleTraceText(status, 'success');
+  return {
+    phase: 'update.finish',
+    sessionId: normalizeLifecycleTraceText(sessionId, ''),
+    status: normalizedStatus,
+    summary:
+      normalizedStatus === 'success'
+        ? 'memory update task completed'
+        : (normalizedStatus === 'skipped'
+            ? 'memory update task skipped'
+            : (normalizedStatus === 'cancelled'
+                ? 'memory update task cancelled'
+                : 'memory update task failed')),
+    details: {
+      reason: normalizeLifecycleTraceText(reason, '') || undefined,
+      checkpointMessageId: normalizeLifecycleTraceText(checkpointMessageId, '') || undefined,
+      errorMessage: normalizeLifecycleTraceText(errorMessage, '') || undefined,
+    },
+  };
+};
+
+export const buildMemoryRollbackStartTraceEvent = ({
+  sessionId = '',
+  mode = 'snapshot',
+  actionCount = 0,
+  tableCount = 0,
+} = {}) => ({
+  phase: 'rollback.start',
+  sessionId: normalizeLifecycleTraceText(sessionId, ''),
+  status: 'started',
+  summary: 'memory rollback started',
+  details: {
+    mode: normalizeLifecycleTraceText(mode, 'snapshot'),
+    actionCount: Number(actionCount || 0) || 0,
+    tableCount: Number(tableCount || 0) || 0,
+  },
+});
+
+export const buildMemoryRollbackFinishTraceEvent = ({
+  sessionId = '',
+  status = 'success',
+  mode = 'snapshot',
+  changed = 0,
+  reason = '',
+  errorMessage = '',
+} = {}) => {
+  const normalizedStatus = normalizeLifecycleTraceText(status, 'success');
+  return {
+    phase: 'rollback.finish',
+    sessionId: normalizeLifecycleTraceText(sessionId, ''),
+    status: normalizedStatus,
+    summary:
+      normalizedStatus === 'success'
+        ? 'memory rollback completed'
+        : (normalizedStatus === 'skipped'
+            ? 'memory rollback skipped'
+            : 'memory rollback failed'),
+    details: {
+      mode: normalizeLifecycleTraceText(mode, 'snapshot'),
+      changed: Number(changed || 0) || 0,
+      reason: normalizeLifecycleTraceText(reason, '') || undefined,
+      errorMessage: normalizeLifecycleTraceText(errorMessage, '') || undefined,
+    },
+  };
+};
+
 const emitMemoryUpdateTrace = (recordTraceEvent, event) => {
   emitLifecycleTraceEvent(recordTraceEvent, buildMemoryUpdateTraceEvent(event));
 };

@@ -1,4 +1,8 @@
-import { emitHookLifecycleTrace } from './hook-lifecycle-trace-utils.js';
+import {
+  buildAfterReceiveHookFinishTraceEvent,
+  buildAfterReceiveHookStartTraceEvent,
+  emitHookLifecycleTrace,
+} from './hook-lifecycle-trace-utils.js';
 
 export const resolveAfterReceiveSkipScripts = (
   skipScriptsOverride,
@@ -33,38 +37,28 @@ export const dispatchAfterReceiveEffects = ({
   const dispatchRuntimeHook = ({ runtime = null, runtimeLabel = '' } = {}) => {
     if (!runtime) return;
     const messageId = String(message?.id || '').trim();
-    emitHookLifecycleTrace(recordTraceEvent, {
-      phase: 'after_receive.start',
-      hookName: 'message.after_receive',
+    emitHookLifecycleTrace(recordTraceEvent, buildAfterReceiveHookStartTraceEvent({
       runtimeLabel,
       sessionId,
-      messageId,
-      status: 'started',
-      summary: 'message.after_receive hook started',
-      details: { role: message?.role || '', type: message?.type || '' },
-    });
+      message,
+    }));
     const result = runtime.dispatchEvent('message.after_receive', payload);
     catchAsync(result, err => {
-      emitHookLifecycleTrace(recordTraceEvent, {
-        phase: 'after_receive.finish',
-        hookName: 'message.after_receive',
+      emitHookLifecycleTrace(recordTraceEvent, buildAfterReceiveHookFinishTraceEvent({
         runtimeLabel,
         sessionId,
         messageId,
         status: 'error',
-        summary: err?.message || 'message.after_receive hook failed',
-      });
+        errorMessage: err?.message,
+      }));
       logger?.warn?.(`${runtimeLabel} message.after_receive failed`, err);
     });
-    emitHookLifecycleTrace(recordTraceEvent, {
-      phase: 'after_receive.finish',
-      hookName: 'message.after_receive',
+    emitHookLifecycleTrace(recordTraceEvent, buildAfterReceiveHookFinishTraceEvent({
       runtimeLabel,
       sessionId,
       messageId,
       status: 'queued',
-      summary: 'message.after_receive hook queued',
-    });
+    }));
   };
   if (scriptRuntime && !shouldSkipScripts) {
     dispatchRuntimeHook({ runtime: scriptRuntime, runtimeLabel: 'script' });

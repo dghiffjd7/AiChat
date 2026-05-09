@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import {
   SELF_REACTION_ACTOR,
+  attachReplyTargetToMessage,
+  buildOutgoingReplyContexts,
   buildRpFloorAssignments,
   buildReplyTargetSnapshot,
   countReactionActors,
@@ -41,6 +43,75 @@ test('buildReplyTargetSnapshot should keep author, avatar and truncated content'
 test('normalizeReplyTarget should drop empty targets', () => {
   assert.equal(normalizeReplyTarget(null), null);
   assert.equal(normalizeReplyTarget({}), null);
+});
+
+test('attachReplyTargetToMessage should clone meta and normalize reply target', () => {
+  const source = {
+    id: 'u1',
+    role: 'user',
+    type: 'text',
+    content: '回复内容',
+    meta: { existing: true },
+  };
+  const result = attachReplyTargetToMessage(source, {
+    id: 'a1',
+    role: 'assistant',
+    content: '被回复内容',
+    author: '助手',
+  });
+
+  assert.notEqual(result, source);
+  assert.notEqual(result.meta, source.meta);
+  assert.deepEqual(result.meta, {
+    existing: true,
+    replyTo: {
+      id: 'a1',
+      role: 'assistant',
+      type: 'text',
+      author: '助手',
+      avatar: '',
+      content: '被回复内容',
+      sessionId: '',
+    },
+  });
+  assert.equal(attachReplyTargetToMessage(source, null), source);
+});
+
+test('buildOutgoingReplyContexts should keep prompt-safe user previews and normalized targets', () => {
+  const contexts = buildOutgoingReplyContexts([
+    {
+      id: 'u1',
+      type: 'text',
+      content: '当前用户消息',
+      meta: {
+        replyTo: {
+          id: 'a1',
+          role: 'assistant',
+          content: '上一条助手消息',
+          author: '助手',
+        },
+      },
+    },
+    {
+      id: 'u2',
+      type: 'sticker',
+      content: '开心',
+      meta: {},
+    },
+  ]);
+
+  assert.deepEqual(contexts, [{
+    userMessage: '当前用户消息',
+    replyTo: {
+      id: 'a1',
+      role: 'assistant',
+      type: 'text',
+      author: '助手',
+      avatar: '',
+      content: '上一条助手消息',
+      sessionId: '',
+    },
+  }]);
 });
 
 test('normalizeReactionEntries should merge duplicate emoji and unique actors', () => {

@@ -6,6 +6,10 @@ import {
 
 const normalizeNameValue = (value) => String(value || '').trim();
 
+const omitUndefinedTraceDetails = (details = {}) => Object.fromEntries(
+  Object.entries(details).filter(([, value]) => value !== undefined),
+);
+
 export const buildMomentLifecycleTraceEvent = ({
   phase = '',
   sessionId = '',
@@ -23,6 +27,243 @@ export const buildMomentLifecycleTraceEvent = ({
   summary: normalizeLifecycleTraceText(summary, ''),
   details: normalizeLifecycleTraceDetails(details),
 });
+
+export const buildMomentCommentSkippedTraceEvent = ({
+  momentId = '',
+  reason = '',
+  hasMomentId,
+  hasText,
+} = {}) => ({
+  phase: 'comment.skipped',
+  momentId: normalizeLifecycleTraceText(momentId, ''),
+  status: 'skipped',
+  summary: 'moment comment skipped',
+  details: omitUndefinedTraceDetails({
+    reason: normalizeLifecycleTraceText(reason, ''),
+    hasMomentId,
+    hasText,
+  }),
+});
+
+export const buildMomentCommentStartTraceEvent = ({
+  sessionId = '',
+  momentId = '',
+  authorName = '',
+  targetSessionId = '',
+  targetName = '',
+  stream = false,
+  isReplyToComment = false,
+  userCommentId = '',
+  hasRecentComments = false,
+} = {}) => ({
+  phase: 'comment.start',
+  sessionId: normalizeLifecycleTraceText(sessionId, ''),
+  momentId: normalizeLifecycleTraceText(momentId, ''),
+  status: 'started',
+  summary: 'moment comment generation started',
+  details: {
+    authorName,
+    targetSessionId,
+    targetName,
+    stream: Boolean(stream),
+    isReplyToComment: Boolean(isReplyToComment),
+    userCommentId,
+    hasRecentComments: Boolean(hasRecentComments),
+  },
+});
+
+export const buildMomentCommentFinishTraceEvent = ({
+  sessionId = '',
+  momentId = '',
+  status = '',
+  authorName = '',
+  stream = false,
+  isReplyToComment = false,
+  userCommentId = '',
+  sawMomentReply = false,
+  fullRaw = '',
+  started = false,
+  errorMessage = '',
+} = {}) => {
+  const normalizedStatus = normalizeLifecycleTraceText(status, '');
+  if (normalizedStatus === 'error') {
+    return {
+      phase: 'comment.finish',
+      sessionId: normalizeLifecycleTraceText(sessionId, ''),
+      momentId: normalizeLifecycleTraceText(momentId, ''),
+      status: 'error',
+      summary: errorMessage || 'moment comment generation failed',
+      details: {
+        authorName,
+        isReplyToComment: Boolean(isReplyToComment),
+        userCommentId,
+        started: Boolean(started),
+      },
+    };
+  }
+
+  const replyParsed = Boolean(sawMomentReply);
+  const finalStatus = normalizedStatus || (replyParsed ? 'success' : 'warning');
+  return {
+    phase: 'comment.finish',
+    sessionId: normalizeLifecycleTraceText(sessionId, ''),
+    momentId: normalizeLifecycleTraceText(momentId, ''),
+    status: finalStatus,
+    summary: finalStatus === 'success'
+      ? 'moment comment generation finished'
+      : 'moment comment reply not parsed',
+    details: {
+      authorName,
+      stream: Boolean(stream),
+      isReplyToComment: Boolean(isReplyToComment),
+      userCommentId,
+      sawMomentReply: replyParsed,
+      rawLength: String(fullRaw || '').length,
+    },
+  };
+};
+
+export const buildMomentFeedCommentSkippedTraceEvent = ({
+  sessionId = '',
+  momentId = '',
+  reason = '',
+  pending = false,
+  hasText,
+} = {}) => ({
+  phase: 'comment.local.skipped',
+  sessionId: normalizeLifecycleTraceText(sessionId, ''),
+  momentId: normalizeLifecycleTraceText(momentId, ''),
+  status: 'skipped',
+  summary: 'local moment comment skipped',
+  details: omitUndefinedTraceDetails({
+    reason: normalizeLifecycleTraceText(reason, ''),
+    pending: Boolean(pending),
+    hasText,
+  }),
+});
+
+export const buildMomentFeedCommentStartTraceEvent = ({
+  sessionId = '',
+  momentId = '',
+  userCommentId = '',
+  isReplyToComment = false,
+} = {}) => ({
+  phase: 'comment.local.start',
+  sessionId: normalizeLifecycleTraceText(sessionId, ''),
+  momentId: normalizeLifecycleTraceText(momentId, ''),
+  status: 'started',
+  summary: 'local moment comment send started',
+  details: {
+    userCommentId: normalizeLifecycleTraceText(userCommentId, ''),
+    isReplyToComment: Boolean(isReplyToComment),
+  },
+});
+
+export const buildMomentFeedCommentFinishTraceEvent = ({
+  sessionId = '',
+  momentId = '',
+  status = 'success',
+  userCommentId = '',
+  isReplyToComment = false,
+  errorMessage = '',
+} = {}) => {
+  const normalizedStatus = normalizeLifecycleTraceText(status, 'success');
+  return {
+    phase: 'comment.local.finish',
+    sessionId: normalizeLifecycleTraceText(sessionId, ''),
+    momentId: normalizeLifecycleTraceText(momentId, ''),
+    status: normalizedStatus,
+    summary:
+      normalizedStatus === 'success'
+        ? 'local moment comment send finished'
+        : 'local moment comment callback failed',
+    details: omitUndefinedTraceDetails({
+      userCommentId: normalizeLifecycleTraceText(userCommentId, ''),
+      isReplyToComment: Boolean(isReplyToComment),
+      errorMessage: normalizeLifecycleTraceText(errorMessage, '') || undefined,
+    }),
+  };
+};
+
+export const buildMomentSummaryCompactionSkippedTraceEvent = ({
+  phase = 'summary.compaction.skipped',
+  reason = '',
+  scopeKey = 'global',
+  force = false,
+  itemCount,
+  rawLength,
+} = {}) => ({
+  phase,
+  status: 'skipped',
+  summary: 'moment summary compaction skipped',
+  details: omitUndefinedTraceDetails({
+    reason: normalizeLifecycleTraceText(reason, ''),
+    scopeKey,
+    force,
+    itemCount,
+    rawLength,
+  }),
+});
+
+export const buildMomentSummaryCompactionStartTraceEvent = ({
+  scopeKey = 'global',
+  force = false,
+  itemCount = 0,
+} = {}) => ({
+  phase: 'summary.compaction.start',
+  status: 'started',
+  summary: 'moment summary compaction started',
+  details: {
+    scopeKey,
+    force,
+    itemCount,
+  },
+});
+
+export const buildMomentSummaryCompactionFinishTraceEvent = ({
+  status = 'success',
+  reason = '',
+  scopeKey = 'global',
+  force = false,
+  itemCount,
+  keptCount = 0,
+  raw,
+  summaryText = '',
+  errorMessage = '',
+} = {}) => {
+  const normalizedStatus = normalizeLifecycleTraceText(status, 'success');
+  if (normalizedStatus === 'skipped') {
+    return buildMomentSummaryCompactionSkippedTraceEvent({
+      phase: 'summary.compaction.finish',
+      reason,
+      scopeKey,
+      force,
+      itemCount,
+      rawLength: raw === undefined ? undefined : String(raw || '').length,
+    });
+  }
+  if (normalizedStatus === 'error') {
+    return {
+      phase: 'summary.compaction.finish',
+      status: 'error',
+      summary: errorMessage || 'moment summary compaction failed',
+      details: { scopeKey, force },
+    };
+  }
+  return {
+    phase: 'summary.compaction.finish',
+    status: 'success',
+    summary: 'moment summary compaction finished',
+    details: {
+      scopeKey,
+      force,
+      itemCount,
+      keptCount,
+      rawLength: String(raw || '').length,
+      summaryLength: String(summaryText || '').length,
+    },
+  };
+};
 
 const emitMomentLifecycleTrace = (recordTraceEvent, event) => {
   emitLifecycleTraceEvent(recordTraceEvent, buildMomentLifecycleTraceEvent(event));
@@ -697,53 +938,39 @@ export const createMomentCommentLifecycleRuntime = ({
     const id = String(momentId || '').trim();
     const userComment = String(commentText || '').trim();
     if (!id || !userComment) {
-      record({
-        phase: 'comment.skipped',
+      record(buildMomentCommentSkippedTraceEvent({
         momentId: id,
-        status: 'skipped',
-        summary: 'moment comment skipped',
-        details: {
-          reason: 'missing-input',
-          hasMomentId: Boolean(id),
-          hasText: Boolean(userComment),
-        },
-      });
+        reason: 'missing-input',
+        hasMomentId: Boolean(id),
+        hasText: Boolean(userComment),
+      }));
       return { ok: false, reason: 'missing-input' };
     }
 
     if (!getIsConfigured()) {
-      record({
-        phase: 'comment.skipped',
+      record(buildMomentCommentSkippedTraceEvent({
         momentId: id,
-        status: 'skipped',
-        summary: 'moment comment skipped',
-        details: { reason: 'not-configured' },
-      });
+        reason: 'not-configured',
+      }));
       showMissingConfig();
       return { ok: false, reason: 'not-configured' };
     }
 
     if (!isOnline()) {
-      record({
-        phase: 'comment.skipped',
+      record(buildMomentCommentSkippedTraceEvent({
         momentId: id,
-        status: 'skipped',
-        summary: 'moment comment skipped',
-        details: { reason: 'offline' },
-      });
+        reason: 'offline',
+      }));
       showOffline();
       return { ok: false, reason: 'offline' };
     }
 
     const moment = getMoment(id);
     if (!moment) {
-      record({
-        phase: 'comment.skipped',
+      record(buildMomentCommentSkippedTraceEvent({
         momentId: id,
-        status: 'skipped',
-        summary: 'moment comment skipped',
-        details: { reason: 'moment-not-found' },
-      });
+        reason: 'moment-not-found',
+      }));
       showMissingMoment();
       return { ok: false, reason: 'moment-not-found' };
     }
@@ -845,22 +1072,17 @@ export const createMomentCommentLifecycleRuntime = ({
         replyTo,
       });
       momentCommentTraceStarted = true;
-      record({
-        phase: 'comment.start',
+      record(buildMomentCommentStartTraceEvent({
         sessionId: originSessionId,
         momentId: id,
-        status: 'started',
-        summary: 'moment comment generation started',
-        details: {
-          authorName,
-          targetSessionId: target?.sessionId || '',
-          targetName: target?.name || '',
-          stream: Boolean(config.stream),
-          isReplyToComment,
-          userCommentId,
-          hasRecentComments: Boolean(recentComments),
-        },
-      });
+        authorName,
+        targetSessionId: target?.sessionId || '',
+        targetName: target?.name || '',
+        stream: Boolean(config.stream),
+        isReplyToComment,
+        userCommentId,
+        hasRecentComments: Boolean(recentComments),
+      }));
 
       const { fullRaw, sawMomentReply } = await runGeneration(userComment, context, {
         stream: Boolean(config.stream),
@@ -916,23 +1138,16 @@ export const createMomentCommentLifecycleRuntime = ({
         } catch {}
       }
 
-      record({
-        phase: 'comment.finish',
+      record(buildMomentCommentFinishTraceEvent({
         sessionId: originSessionId,
         momentId: id,
-        status: sawMomentReply ? 'success' : 'warning',
-        summary: sawMomentReply
-          ? 'moment comment generation finished'
-          : 'moment comment reply not parsed',
-        details: {
-          authorName,
-          stream: Boolean(config.stream),
-          isReplyToComment,
-          userCommentId,
-          sawMomentReply,
-          rawLength: String(fullRaw || '').length,
-        },
-      });
+        authorName,
+        stream: Boolean(config.stream),
+        isReplyToComment,
+        userCommentId,
+        sawMomentReply,
+        fullRaw,
+      }));
 
       return {
         ok: Boolean(sawMomentReply),
@@ -945,19 +1160,16 @@ export const createMomentCommentLifecycleRuntime = ({
         target,
       };
     } catch (err) {
-      record({
-        phase: 'comment.finish',
+      record(buildMomentCommentFinishTraceEvent({
         sessionId: originSessionId,
         momentId: id,
         status: 'error',
-        summary: err?.message || 'moment comment generation failed',
-        details: {
-          authorName,
-          isReplyToComment,
-          userCommentId,
-          started: momentCommentTraceStarted,
-        },
-      });
+        authorName,
+        isReplyToComment,
+        userCommentId,
+        started: momentCommentTraceStarted,
+        errorMessage: err?.message,
+      }));
       try {
         logger?.error?.('动态评论生成失败', err);
       } catch {}
@@ -988,69 +1200,55 @@ export const createMomentSummaryCompactionRuntime = ({
   const compacting = new Set();
   return ({ force = false } = {}) => {
     if (compacting.has(scopeKey)) {
-      emitMomentLifecycleTrace(recordTraceEvent, {
-        phase: 'summary.compaction.skipped',
-        status: 'skipped',
-        summary: 'moment summary compaction skipped',
-        details: { reason: 'already-compacting', scopeKey, force },
-      });
+      emitMomentLifecycleTrace(recordTraceEvent, buildMomentSummaryCompactionSkippedTraceEvent({
+        reason: 'already-compacting',
+        scopeKey,
+        force,
+      }));
       return Promise.resolve(false);
     }
     if (!momentSummaryStore?.getSummaries || !momentSummaryStore?.setCompactedSummary) {
-      emitMomentLifecycleTrace(recordTraceEvent, {
-        phase: 'summary.compaction.skipped',
-        status: 'skipped',
-        summary: 'moment summary compaction skipped',
-        details: { reason: 'missing-store', scopeKey, force },
-      });
+      emitMomentLifecycleTrace(recordTraceEvent, buildMomentSummaryCompactionSkippedTraceEvent({
+        reason: 'missing-store',
+        scopeKey,
+        force,
+      }));
       return Promise.resolve(false);
     }
     if (typeof buildMessages !== 'function' || typeof backgroundChat !== 'function') {
-      emitMomentLifecycleTrace(recordTraceEvent, {
-        phase: 'summary.compaction.skipped',
-        status: 'skipped',
-        summary: 'moment summary compaction skipped',
-        details: { reason: 'missing-generation-runtime', scopeKey, force },
-      });
+      emitMomentLifecycleTrace(recordTraceEvent, buildMomentSummaryCompactionSkippedTraceEvent({
+        reason: 'missing-generation-runtime',
+        scopeKey,
+        force,
+      }));
       return Promise.resolve(false);
     }
     if (!getIsConfigured()) {
-      emitMomentLifecycleTrace(recordTraceEvent, {
-        phase: 'summary.compaction.skipped',
-        status: 'skipped',
-        summary: 'moment summary compaction skipped',
-        details: { reason: 'not-configured', scopeKey, force },
-      });
+      emitMomentLifecycleTrace(recordTraceEvent, buildMomentSummaryCompactionSkippedTraceEvent({
+        reason: 'not-configured',
+        scopeKey,
+        force,
+      }));
       return Promise.resolve(false);
     }
 
     const list = momentSummaryStore.getSummaries() || [];
     if (!shouldCompact({ items: list, force })) {
-      emitMomentLifecycleTrace(recordTraceEvent, {
-        phase: 'summary.compaction.skipped',
-        status: 'skipped',
-        summary: 'moment summary compaction skipped',
-        details: {
-          reason: 'threshold-not-met',
-          scopeKey,
-          force,
-          itemCount: Array.isArray(list) ? list.length : 0,
-        },
-      });
+      emitMomentLifecycleTrace(recordTraceEvent, buildMomentSummaryCompactionSkippedTraceEvent({
+        reason: 'threshold-not-met',
+        scopeKey,
+        force,
+        itemCount: Array.isArray(list) ? list.length : 0,
+      }));
       return Promise.resolve(false);
     }
 
     compacting.add(scopeKey);
-    emitMomentLifecycleTrace(recordTraceEvent, {
-      phase: 'summary.compaction.start',
-      status: 'started',
-      summary: 'moment summary compaction started',
-      details: {
-        scopeKey,
-        force,
-        itemCount: Array.isArray(list) ? list.length : 0,
-      },
-    });
+    emitMomentLifecycleTrace(recordTraceEvent, buildMomentSummaryCompactionStartTraceEvent({
+      scopeKey,
+      force,
+      itemCount: Array.isArray(list) ? list.length : 0,
+    }));
     return new Promise((resolve) => {
       setTimeoutFn(async () => {
         try {
@@ -1072,12 +1270,13 @@ export const createMomentSummaryCompactionRuntime = ({
             backgroundChat,
           });
           if (!raw) {
-            emitMomentLifecycleTrace(recordTraceEvent, {
-              phase: 'summary.compaction.finish',
+            emitMomentLifecycleTrace(recordTraceEvent, buildMomentSummaryCompactionFinishTraceEvent({
               status: 'skipped',
-              summary: 'moment summary compaction skipped',
-              details: { reason: 'empty-raw', scopeKey, force, itemCount: arr.length },
-            });
+              reason: 'empty-raw',
+              scopeKey,
+              force,
+              itemCount: arr.length,
+            }));
             return resolve(false);
           }
           try {
@@ -1086,18 +1285,14 @@ export const createMomentSummaryCompactionRuntime = ({
 
           const { text, valid } = parseCompactionResult(raw);
           if (!text || !valid) {
-            emitMomentLifecycleTrace(recordTraceEvent, {
-              phase: 'summary.compaction.finish',
+            emitMomentLifecycleTrace(recordTraceEvent, buildMomentSummaryCompactionFinishTraceEvent({
               status: 'skipped',
-              summary: 'moment summary compaction skipped',
-              details: {
-                reason: 'invalid-result',
-                scopeKey,
-                force,
-                itemCount: arr.length,
-                rawLength: String(raw || '').length,
-              },
-            });
+              reason: 'invalid-result',
+              scopeKey,
+              force,
+              itemCount: arr.length,
+              raw,
+            }));
             return resolve(false);
           }
 
@@ -1111,30 +1306,26 @@ export const createMomentSummaryCompactionRuntime = ({
           try {
             dispatchUpdated();
           } catch {}
-          emitMomentLifecycleTrace(recordTraceEvent, {
-            phase: 'summary.compaction.finish',
+          emitMomentLifecycleTrace(recordTraceEvent, buildMomentSummaryCompactionFinishTraceEvent({
             status: 'success',
-            summary: 'moment summary compaction finished',
-            details: {
-              scopeKey,
-              force,
-              itemCount: arr.length,
-              keptCount: normalizeItems(momentSummaryStore.getSummaries?.()).length,
-              rawLength: String(raw || '').length,
-              summaryLength: String(text || '').length,
-            },
-          });
+            scopeKey,
+            force,
+            itemCount: arr.length,
+            keptCount: normalizeItems(momentSummaryStore.getSummaries?.()).length,
+            raw,
+            summaryText: text,
+          }));
           resolve(true);
         } catch (error) {
           try {
             logger?.debug?.('moment summary compaction failed', error);
           } catch {}
-          emitMomentLifecycleTrace(recordTraceEvent, {
-            phase: 'summary.compaction.finish',
+          emitMomentLifecycleTrace(recordTraceEvent, buildMomentSummaryCompactionFinishTraceEvent({
             status: 'error',
-            summary: error?.message || 'moment summary compaction failed',
-            details: { scopeKey, force },
-          });
+            scopeKey,
+            force,
+            errorMessage: error?.message,
+          }));
           resolve(false);
         } finally {
           compacting.delete(scopeKey);

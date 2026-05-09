@@ -7,7 +7,13 @@ import {
   applySessionEnterChatSettings,
   applySessionEnterLoadingState,
   applySessionEnterScrollMode,
+  buildSessionChangedFinishTraceEvent,
+  buildSessionChangedStartTraceEvent,
+  buildSessionEnterFinishTraceEvent,
+  buildSessionEnterStartTraceEvent,
   buildSessionEnterTraceEvent,
+  buildSessionExitFinishTraceEvent,
+  buildSessionExitStartTraceEvent,
   deactivateSessionEnterView,
   finalizeSessionEnterNavigation,
   finalizeSessionEnterUiState,
@@ -60,6 +66,111 @@ import {
     summary: 'stale',
   });
   console.log('ok - buildSessionEnterTraceEvent normalizes session trace metadata while preserving optional details');
+}
+
+{
+  assert.deepEqual(buildSessionEnterStartTraceEvent({
+    sessionId: ' s1 ',
+    originPage: 'contacts',
+    isGroupSession: true,
+    jumpTargetMessageId: 'm1',
+    suppressInitialAutoScroll: true,
+  }), {
+    phase: 'enter.start',
+    sessionId: 's1',
+    status: 'started',
+    summary: 'session enter started',
+    details: {
+      originPage: 'contacts',
+      isGroupSession: true,
+      hasJumpTarget: true,
+      suppressInitialAutoScroll: true,
+    },
+  });
+  assert.deepEqual(buildSessionEnterFinishTraceEvent({
+    sessionId: 's1',
+    status: 'stale',
+  }), {
+    phase: 'enter.finish',
+    sessionId: 's1',
+    status: 'stale',
+    summary: 'session enter request became stale',
+  });
+  assert.deepEqual(buildSessionEnterFinishTraceEvent({
+    sessionId: 's1',
+    jumpedToTarget: false,
+  }), {
+    phase: 'enter.finish',
+    sessionId: 's1',
+    status: 'success',
+    summary: 'session enter completed',
+    details: {
+      jumpedToTarget: false,
+    },
+  });
+  assert.deepEqual(buildSessionExitStartTraceEvent({
+    sessionId: 's2',
+    activePage: 'chat-room',
+    chatOriginPage: ' contacts ',
+  }), {
+    phase: 'exit.start',
+    sessionId: 's2',
+    status: 'started',
+    summary: 'session exit started',
+    details: {
+      activePage: 'chat-room',
+      originPage: 'contacts',
+    },
+  });
+  assert.deepEqual(buildSessionExitFinishTraceEvent({
+    sessionId: 's2',
+    activePage: 'chat-room',
+    originPage: 'contacts',
+  }), {
+    phase: 'exit.finish',
+    sessionId: 's2',
+    status: 'success',
+    summary: 'session exit completed',
+    details: {
+      activePage: 'chat-room',
+      originPage: 'contacts',
+      switchedPage: true,
+    },
+  });
+  assert.deepEqual(buildSessionChangedStartTraceEvent({
+    sessionId: ' s3 ',
+  }), {
+    phase: 'changed.start',
+    sessionId: 's3',
+    status: 'started',
+    summary: 'session change started',
+  });
+  assert.deepEqual(buildSessionChangedFinishTraceEvent({
+    sessionId: 's3',
+    status: 'stale',
+    messageCount: 2,
+  }), {
+    phase: 'changed.finish',
+    sessionId: 's3',
+    status: 'stale',
+    summary: 'session change request became stale',
+    details: {
+      messageCount: 2,
+    },
+  });
+  assert.deepEqual(buildSessionChangedFinishTraceEvent({
+    sessionId: 's3',
+    messageCount: 3,
+  }), {
+    phase: 'changed.finish',
+    sessionId: 's3',
+    status: 'success',
+    summary: 'session change completed',
+    details: {
+      messageCount: 3,
+    },
+  });
+  console.log('ok - session enter exit and changed trace patch builders preserve raw payload contracts');
 }
 
 {
@@ -460,6 +571,7 @@ import {
 
 {
   const calls = [];
+  const traces = [];
   const result = await runSessionChangedFlow({
     sessionId: 's-changed',
     beginEnterRequest: sid => {
@@ -482,6 +594,7 @@ import {
     },
     renderChangedHistoryStageFn: ({ sessionId, contact, messages }) =>
       calls.push(['render', sessionId, contact?.name, messages.map(message => message.id)]),
+    recordTraceEvent: event => traces.push(event),
   });
   assert.deepEqual(result, { handled: true, stale: false, messageCount: 2 });
   assert.deepEqual(calls, [
@@ -494,11 +607,31 @@ import {
     ['stale?', { sid: 's-changed' }],
     ['render', 's-changed', '会话B', ['m1', 'm2']],
   ]);
+  assert.deepEqual(traces, [
+    {
+      category: 'session',
+      source: 'session-enter-runtime',
+      phase: 'changed.start',
+      sessionId: 's-changed',
+      status: 'started',
+      summary: 'session change started',
+    },
+    {
+      category: 'session',
+      source: 'session-enter-runtime',
+      phase: 'changed.finish',
+      sessionId: 's-changed',
+      status: 'success',
+      summary: 'session change completed',
+      details: { messageCount: 2 },
+    },
+  ]);
   console.log('ok - runSessionChangedFlow reloads session history and re-renders current session shell');
 }
 
 {
   const calls = [];
+  const traces = [];
   const result = await runSessionChangedFlow({
     sessionId: 's-stale',
     beginEnterRequest: sid => sid,
@@ -510,6 +643,7 @@ import {
     ensureRecentMessagesLoaded: async () => [{ id: 'm1' }],
     isRequestStale: () => true,
     renderChangedHistoryStageFn: () => calls.push(['render']),
+    recordTraceEvent: event => traces.push(event),
   });
   assert.deepEqual(result, { handled: true, stale: true, messageCount: 1 });
   assert.deepEqual(calls, [
@@ -517,6 +651,10 @@ import {
     ['script'],
     ['shell'],
     ['loading'],
+  ]);
+  assert.deepEqual(traces.map(event => [event.phase, event.status, event.details?.messageCount]), [
+    ['changed.start', 'started', undefined],
+    ['changed.finish', 'stale', 1],
   ]);
   console.log('ok - runSessionChangedFlow skips render when the session-change request has gone stale');
 }

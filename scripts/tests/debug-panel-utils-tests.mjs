@@ -76,6 +76,11 @@ import {
         domain: 'prompt-injection',
         kind: 'method',
         source: 'app-bridge-contract',
+        params: ['message: string', 'level?: string'],
+        returns: 'boolean',
+        sideEffects: ['shows toast notification'],
+        tests: ['app-bridge-contract-tests.mjs'],
+        status: 'covered',
       },
       resolveRoleWorldBindings: {
         name: 'resolveRoleWorldBindings',
@@ -92,10 +97,18 @@ import {
     { domain: 'prompt-injection', count: 1 },
     { domain: 'role-world', count: 1 },
   ]);
+  assert.deepEqual(diagnostics.contracts[0].params, ['message: string', 'level?: string']);
+  assert.equal(diagnostics.contracts[0].returns, 'boolean');
+  assert.deepEqual(diagnostics.contracts[0].sideEffects, ['shows toast notification']);
+  assert.deepEqual(diagnostics.contracts[0].tests, ['app-bridge-contract-tests.mjs']);
+  assert.equal(diagnostics.contracts[0].status, 'covered');
   assert.equal(buildBridgeContractDiagnosticsMeta(registry), 'contracts=2 · domains=2 · version=1');
   const text = formatBridgeContractDiagnostics(registry);
   assert.equal(text.includes('[prompt-injection] 1'), true);
-  assert.equal(text.includes('- notify (method · source=app-bridge-contract)'), true);
+  assert.equal(text.includes('- notify (method · source=app-bridge-contract · status=covered · returns=boolean)'), true);
+  assert.equal(text.includes('params: message: string, level?: string'), true);
+  assert.equal(text.includes('sideEffects: shows toast notification'), true);
+  assert.equal(text.includes('tests: app-bridge-contract-tests.mjs'), true);
   assert.equal(text.includes('field=setRoleWorldResolver'), true);
   assert.equal(formatBridgeContractDiagnostics(null), '暂无 Bridge contract registry');
   console.log('ok - bridge contract diagnostics summarize registry domains and contract entries');
@@ -108,6 +121,9 @@ import {
       category: 'generation',
       phase: 'send.start',
       sessionId: 's1',
+      hookName: 'message.after_send',
+      runtimeLabel: 'plugin',
+      messageId: 'm1',
       source: 'send',
       status: 'started',
       startedAt: Date.UTC(2026, 4, 7, 10, 0, 0),
@@ -135,6 +151,7 @@ import {
   assert.equal(buildDebugTraceTimelineDiagnosticsMeta(events), 'events=2 · categories=2 · sessions=1 · failures=1');
   const text = formatDebugTraceTimelineDiagnostics(events);
   assert.equal(text.includes('#1 [STARTED] generation.send.start'), true);
+  assert.equal(text.includes('metadata: hookName=message.after_send · runtimeLabel=plugin · messageId=m1'), true);
   assert.equal(text.includes('details: {"messageCount":2}'), true);
   assert.equal(text.includes('durationMs: 1000ms'), true);
   assert.equal(formatDebugTraceTimelineDiagnostics([]), '暂无事件时间线');

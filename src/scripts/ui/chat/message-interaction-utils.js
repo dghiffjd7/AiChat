@@ -99,6 +99,29 @@ export const buildReplyTargetSnapshot = (message, { author = '', avatar = '', se
   );
 };
 
+export const attachReplyTargetToMessage = (message, replyTarget) => {
+  const msg = message && typeof message === 'object' ? message : null;
+  const nextReply = normalizeReplyTarget(replyTarget);
+  if (!msg || !nextReply) return msg;
+  const meta = msg.meta && typeof msg.meta === 'object' ? { ...msg.meta } : {};
+  meta.replyTo = nextReply;
+  return { ...msg, meta };
+};
+
+export const buildOutgoingReplyContexts = (messages = []) => {
+  const list = Array.isArray(messages) ? messages : [];
+  return list
+    .map((message) => {
+      const replyTo = normalizeReplyTarget(message?.meta?.replyTo);
+      if (!replyTo) return null;
+      return {
+        userMessage: getMessagePreviewText(message, { maxLength: 80, fallback: '[消息]' }),
+        replyTo,
+      };
+    })
+    .filter(Boolean);
+};
+
 export const getRpFloorLabel = (floor) => (Number(floor) === 0 ? '#0 序章' : `# ${Number(floor)}`);
 
 export const buildRpFloorAssignments = (messages = []) => {

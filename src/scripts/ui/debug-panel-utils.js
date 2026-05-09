@@ -50,6 +50,10 @@ export const formatStorageMigrationDiagnostics = (checklist = []) => {
 
 const isPlainObject = value => Boolean(value && typeof value === 'object' && !Array.isArray(value));
 
+const normalizeDiagnosticList = (value = []) => (
+  Array.isArray(value) ? value : (value ? [value] : [])
+).map(item => String(item || '').trim()).filter(Boolean);
+
 export const collectBridgeContractDiagnostics = (registry = null) => {
   const contracts = isPlainObject(registry?.contracts) ? registry.contracts : {};
   const entries = Object.entries(contracts)
@@ -63,6 +67,12 @@ export const collectBridgeContractDiagnostics = (registry = null) => {
         kind: String(source.kind || 'method').trim() || 'method',
         source: String(source.source || 'unknown').trim() || 'unknown',
         bridgeField: String(source.bridgeField || '').trim(),
+        params: normalizeDiagnosticList(source.params),
+        returns: String(source.returns || '').trim(),
+        sideEffects: normalizeDiagnosticList(source.sideEffects),
+        tests: normalizeDiagnosticList(source.tests),
+        callers: normalizeDiagnosticList(source.callers),
+        status: String(source.status || '').trim(),
       };
     })
     .filter(Boolean)
@@ -99,7 +109,13 @@ export const formatBridgeContractDiagnostics = (registry = null) => {
       .filter(contract => contract.domain === domain)
       .map((contract) => {
         const bridgeField = contract.bridgeField ? ` · field=${contract.bridgeField}` : '';
-        return `- ${contract.name} (${contract.kind} · source=${contract.source}${bridgeField})`;
+        const status = contract.status ? ` · status=${contract.status}` : '';
+        const returns = contract.returns ? ` · returns=${contract.returns}` : '';
+        const params = contract.params.length ? `\n  params: ${formatList(contract.params)}` : '';
+        const sideEffects = contract.sideEffects.length ? `\n  sideEffects: ${formatList(contract.sideEffects)}` : '';
+        const tests = contract.tests.length ? `\n  tests: ${formatList(contract.tests)}` : '';
+        const callers = contract.callers.length ? `\n  callers: ${formatList(contract.callers)}` : '';
+        return `- ${contract.name} (${contract.kind} · source=${contract.source}${bridgeField}${status}${returns})${params}${sideEffects}${tests}${callers}`;
       });
     return [`[${domain}] ${count}`, ...entries].join('\n');
   });
@@ -135,6 +151,18 @@ const formatTraceDetails = (details = {}) => {
   }
 };
 
+const formatTraceMetadata = (event = {}) => {
+  const entries = [
+    ['hookName', event?.hookName],
+    ['runtimeLabel', event?.runtimeLabel],
+    ['messageId', event?.messageId],
+    ['momentId', event?.momentId],
+  ].map(([key, value]) => [key, String(value || '').trim()])
+    .filter(([, value]) => value);
+  if (!entries.length) return '-';
+  return entries.map(([key, value]) => `${key}=${value}`).join(' · ');
+};
+
 export const buildDebugTraceTimelineDiagnosticsMeta = (events = []) => {
   const list = normalizeTraceEvents(events);
   const categories = new Set(list.map(event => String(event?.category || '').trim()).filter(Boolean));
@@ -167,6 +195,7 @@ export const formatDebugTraceTimelineDiagnostics = (events = []) => {
       `endedAt: ${event?.endedAt == null ? '-' : formatTraceTimestamp(event.endedAt)}`,
       `durationMs: ${duration}`,
       `summary: ${summary}`,
+      `metadata: ${formatTraceMetadata(event)}`,
       `relatedIds: ${relatedIds}`,
       `details: ${formatTraceDetails(event?.details)}`,
     ].join('\n');

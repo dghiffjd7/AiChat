@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict';
 
-import { createModeSwitchPositionRuntime } from '../../src/scripts/ui/mode-switch-position-runtime-utils.js';
+import {
+  MODE_SWITCH_POSITION_STORAGE_KEY,
+  createModeSwitchPositionRuntime,
+  normalizeStoredModeSwitchPosition,
+  readModeSwitchPosition,
+  writeModeSwitchPosition,
+} from '../../src/scripts/ui/mode-switch-position-runtime-utils.js';
 
 const createClassList = (initial = []) => {
   const set = new Set(initial);
@@ -15,6 +21,53 @@ const createModeSwitchEl = () => ({
   classList: createClassList(['is-hidden']),
   style: { left: '', top: '', pointerEvents: '' },
 });
+
+const createStorage = () => {
+  const values = new Map();
+  return {
+    values,
+    getItem(key) {
+      return values.has(key) ? values.get(key) : null;
+    },
+    setItem(key, value) {
+      values.set(key, String(value));
+    },
+  };
+};
+
+{
+  assert.equal(MODE_SWITCH_POSITION_STORAGE_KEY, 'phone_mode_switch_pos_v1');
+  assert.deepEqual(normalizeStoredModeSwitchPosition({ xRatio: '0.25', yRatio: 0.75 }), {
+    xRatio: 0.25,
+    yRatio: 0.75,
+  });
+  assert.equal(normalizeStoredModeSwitchPosition({ xRatio: 'bad', yRatio: 0.75 }), null);
+  assert.equal(normalizeStoredModeSwitchPosition(null), null);
+  console.log('ok - mode switch position storage helpers preserve legacy key and validation contract');
+}
+
+{
+  const storage = createStorage();
+  assert.equal(writeModeSwitchPosition({ xRatio: 0.4, yRatio: 0.6 }, { storage }), true);
+  assert.equal(storage.values.get(MODE_SWITCH_POSITION_STORAGE_KEY), '{"xRatio":0.4,"yRatio":0.6}');
+  assert.deepEqual(readModeSwitchPosition({ storage }), { xRatio: 0.4, yRatio: 0.6 });
+  storage.values.set(MODE_SWITCH_POSITION_STORAGE_KEY, '{"xRatio":"0.1","yRatio":"0.9"}');
+  assert.deepEqual(readModeSwitchPosition({ storage }), { xRatio: 0.1, yRatio: 0.9 });
+  storage.values.set(MODE_SWITCH_POSITION_STORAGE_KEY, 'not-json');
+  assert.equal(readModeSwitchPosition({ storage }), null);
+  console.log('ok - mode switch position read write helpers preserve JSON storage fallback behavior');
+}
+
+{
+  const storage = {
+    getItem() { throw new Error('read failed'); },
+    setItem() { throw new Error('write failed'); },
+  };
+  assert.equal(readModeSwitchPosition({ storage }), null);
+  assert.equal(writeModeSwitchPosition({ xRatio: 0.4, yRatio: 0.6 }, { storage }), false);
+  assert.equal(writeModeSwitchPosition(null, { storage: createStorage() }), false);
+  console.log('ok - mode switch position storage helpers tolerate storage failures');
+}
 
 {
   const modeSwitchEl = createModeSwitchEl();

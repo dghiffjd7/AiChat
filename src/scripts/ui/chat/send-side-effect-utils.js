@@ -1,4 +1,8 @@
-import { emitHookLifecycleTrace } from './hook-lifecycle-trace-utils.js';
+import {
+  buildAfterSendHookFinishTraceEvent,
+  buildAfterSendHookStartTraceEvent,
+  emitHookLifecycleTrace,
+} from './hook-lifecycle-trace-utils.js';
 
 const normalizeMessages = (messages = []) => (Array.isArray(messages) ? messages : []);
 
@@ -13,37 +17,27 @@ const dispatchAfterSendToRuntime = ({
   if (!runtime || typeof runtime.dispatchEvent !== 'function') return;
   normalizeMessages(messages).forEach((message) => {
     const messageId = String(message?.id || '').trim();
-    emitHookLifecycleTrace(recordTraceEvent, {
-      phase: 'after_send.start',
-      hookName: 'message.after_send',
+    emitHookLifecycleTrace(recordTraceEvent, buildAfterSendHookStartTraceEvent({
       runtimeLabel,
       sessionId,
-      messageId,
-      status: 'started',
-      summary: 'message.after_send hook started',
-      details: { role: message?.role || '', type: message?.type || '' },
-    });
+      message,
+    }));
     runtime.dispatchEvent('message.after_send', { message, sessionId }).catch((err) => {
-      emitHookLifecycleTrace(recordTraceEvent, {
-        phase: 'after_send.finish',
-        hookName: 'message.after_send',
+      emitHookLifecycleTrace(recordTraceEvent, buildAfterSendHookFinishTraceEvent({
         runtimeLabel,
         sessionId,
         messageId,
         status: 'error',
-        summary: err?.message || 'message.after_send hook failed',
-      });
+        errorMessage: err?.message,
+      }));
       logger?.warn?.(`${runtimeLabel} message.after_send failed`, err);
     });
-    emitHookLifecycleTrace(recordTraceEvent, {
-      phase: 'after_send.finish',
-      hookName: 'message.after_send',
+    emitHookLifecycleTrace(recordTraceEvent, buildAfterSendHookFinishTraceEvent({
       runtimeLabel,
       sessionId,
       messageId,
       status: 'queued',
-      summary: 'message.after_send hook queued',
-    });
+    }));
   });
 };
 

@@ -1,10 +1,223 @@
 import assert from 'node:assert/strict';
 
 import {
+  RUNTIME_NOISE_STORAGE_KEYS,
+  buildAppBootTraceEvent,
+  clearRuntimeNoiseStorage,
+  createRuntimeIssueReporter,
+  finishAppBootTrace,
+  getRuntimeErrorMessage,
+  isIgnorableRuntimeNoise,
+  registerGlobalRuntimeIssueHandlers,
   registerHydratedUiRestoreListener,
   registerUiLifecycleDiagnostics,
   runAppBootRestoreFlow,
+  startAppBootTrace,
 } from '../../src/scripts/ui/app-boot-runtime-utils.js';
+
+const createDocumentLike = () => {
+  const body = {
+    children: [],
+    appendChild(el) {
+      this.children.push(el);
+      return el;
+    },
+  };
+  return {
+    body,
+    createElement(tagName) {
+      return {
+        tagName: String(tagName || '').toUpperCase(),
+        id: '',
+        style: { cssText: '' },
+        textContent: '',
+        removed: false,
+        remove() {
+          this.removed = true;
+        },
+      };
+    },
+    getElementById(id) {
+      return body.children.find(child => child.id === id) || null;
+    },
+  };
+};
+
+{
+  assert.deepEqual(buildAppBootTraceEvent({
+    phase: ' init ',
+    status: ' started ',
+    summary: ' booting ',
+    details: {
+      keptFalse: false,
+      keptZero: 0,
+      dropped: undefined,
+    },
+  }), {
+    category: 'app',
+    source: 'app-boot',
+    phase: 'boot.init',
+    status: 'started',
+    summary: 'booting',
+    details: {
+      keptFalse: false,
+      keptZero: 0,
+    },
+  });
+  assert.equal(buildAppBootTraceEvent({ phase: 'boot.ready' }).phase, 'boot.ready');
+  console.log('ok - buildAppBootTraceEvent normalizes app boot trace schema');
+}
+
+{
+  const calls = [];
+  const traceTimeline = {
+    start(event) {
+      calls.push(['start', event]);
+      return { eventId: 'trace-boot', ...event };
+    },
+    finish(eventId, patch) {
+      calls.push(['finish', eventId, patch]);
+      return { eventId, ...patch };
+    },
+  };
+  const started = startAppBootTrace({
+    traceTimeline,
+    details: { runtimeReady: false },
+  });
+  const finished = finishAppBootTrace({
+    traceTimeline,
+    eventId: started.eventId,
+    status: 'success',
+    details: { runtimeReady: true },
+  });
+  assert.equal(started.eventId, 'trace-boot');
+  assert.equal(finished.status, 'success');
+  assert.deepEqual(calls, [
+    ['start', {
+      category: 'app',
+      source: 'app-boot',
+      phase: 'boot.init',
+      status: 'started',
+      summary: 'app boot started',
+      details: { runtimeReady: false },
+    }],
+    ['finish', 'trace-boot', {
+      category: 'app',
+      source: 'app-boot',
+      phase: 'boot.init',
+      status: 'success',
+      summary: 'app boot completed',
+      details: { runtimeReady: true },
+    }],
+  ]);
+  assert.equal(startAppBootTrace({ traceTimeline: {} }), null);
+  assert.equal(finishAppBootTrace({ traceTimeline, eventId: '' }), null);
+  assert.equal(startAppBootTrace({
+    traceTimeline: {
+      start() {
+        throw new Error('trace failed');
+      },
+    },
+  }), null);
+  console.log('ok - app boot trace helpers safely start and finish debug timeline events');
+}
+
+{
+  const removed = [];
+  const storage = {
+    removeItem(key) {
+      removed.push(key);
+    },
+  };
+  assert.equal(getRuntimeErrorMessage(new Error('boom')), 'boom');
+  assert.equal(getRuntimeErrorMessage(null), 'unknown error');
+  assert.equal(isIgnorableRuntimeNoise('ResizeObserver loop limit exceeded'), true);
+  assert.equal(isIgnorableRuntimeNoise('ResizeObserver loop completed with undelivered notifications'), true);
+  assert.equal(isIgnorableRuntimeNoise('real error'), false);
+  assert.equal(clearRuntimeNoiseStorage({ storage }), true);
+  assert.deepEqual(removed, RUNTIME_NOISE_STORAGE_KEYS);
+  assert.equal(clearRuntimeNoiseStorage({ storage: { removeItem() { throw new Error('fail'); } } }), false);
+  console.log('ok - runtime issue helpers normalize messages noise and cleanup storage keys');
+}
+
+{
+  const documentLike = createDocumentLike();
+  const errors = [];
+  let ready = false;
+  let now = 1000;
+  const cleared = [];
+  const timeouts = [];
+  const windowLike = { __chatappRuntimeBannerTimer: 'old-timer' };
+  const reporter = createRuntimeIssueReporter({
+    logger: { error: (...args) => errors.push(args) },
+    documentLike,
+    windowLike,
+    getRuntimeReady: () => ready,
+    nowFn: () => now,
+    setTimeoutFn: (fn, delay) => {
+      timeouts.push({ fn, delay });
+      return `timer-${timeouts.length}`;
+    },
+    clearTimeoutFn: timer => cleared.push(timer),
+  });
+
+  reporter.reportGlobalRuntimeIssue(new Error('boot failed'), 'App init failed');
+  const overlay = documentLike.getElementById('chatapp-fatal-error-overlay');
+  assert.equal(overlay.textContent, 'App init failed: boot failed');
+
+  ready = true;
+  reporter.reportGlobalRuntimeIssue('runtime failed', 'Runtime error');
+  const banner = documentLike.getElementById('chatapp-runtime-error-banner');
+  assert.equal(banner.textContent, 'Runtime error: runtime failed');
+  assert.deepEqual(cleared, ['old-timer']);
+  assert.equal(windowLike.__chatappRuntimeBannerTimer, 'timer-1');
+  assert.equal(timeouts[0].delay, 6000);
+
+  now = 2000;
+  reporter.reportGlobalRuntimeIssue('runtime failed', 'Runtime error');
+  assert.deepEqual(cleared, ['old-timer']);
+  assert.equal(errors.length, 3);
+  console.log('ok - createRuntimeIssueReporter routes boot fatal overlay and runtime banner with dedupe');
+}
+
+{
+  const toastrCalls = [];
+  const reporter = createRuntimeIssueReporter({
+    logger: { error: () => {} },
+    documentLike: createDocumentLike(),
+    windowLike: { toastr: { error: (...args) => toastrCalls.push(args) } },
+    getRuntimeReady: () => true,
+  });
+  reporter.reportGlobalRuntimeIssue('toast failed', 'Runtime error');
+  assert.deepEqual(toastrCalls, [['toast failed', 'Runtime error']]);
+  console.log('ok - createRuntimeIssueReporter prefers toastr when available');
+}
+
+{
+  const listeners = new Map();
+  const reports = [];
+  registerGlobalRuntimeIssueHandlers({
+    windowLike: {
+      addEventListener(type, handler) {
+        listeners.set(type, handler);
+      },
+    },
+    isIgnorableRuntimeNoise: value => value === 'ignore-me',
+    reportGlobalRuntimeIssue: (...args) => reports.push(args),
+  });
+  listeners.get('error')({
+    message: 'boom',
+    error: { message: 'boom' },
+  });
+  listeners.get('error')({ message: 'ignore-me' });
+  listeners.get('unhandledrejection')({ reason: { message: 'reject' } });
+  listeners.get('unhandledrejection')({ reason: 'ignore-me' });
+  assert.deepEqual(reports, [
+    [{ message: 'boom' }, 'Runtime error'],
+    [{ message: 'reject' }, 'Unhandled rejection'],
+  ]);
+  console.log('ok - registerGlobalRuntimeIssueHandlers wires error and rejection reporting');
+}
 
 {
   let activePage = '';

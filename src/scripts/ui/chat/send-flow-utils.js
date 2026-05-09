@@ -37,6 +37,203 @@ export const buildSendFlowTraceEvent = ({
   details: normalizeLifecycleTraceDetails(details),
 });
 
+export const buildSendStartTraceEvent = ({
+  sessionId = '',
+  generationId = 0,
+  stream = false,
+  protocolEnabled = false,
+  rpUiMode = false,
+  isGroupChat = false,
+  hasAttachments = false,
+  attachmentCount = 0,
+  pendingCount = 0,
+  suppressUserMessage = false,
+  hasContinueTarget = false,
+  hasSwipeTarget = false,
+} = {}) => ({
+  phase: 'send.start',
+  sessionId: normalizeLifecycleTraceText(sessionId, ''),
+  status: 'started',
+  summary: 'send flow started',
+  details: {
+    generationId,
+    stream: Boolean(stream),
+    protocolEnabled: Boolean(protocolEnabled),
+    rpUiMode: Boolean(rpUiMode),
+    isGroupChat: Boolean(isGroupChat),
+    hasAttachments: Boolean(hasAttachments),
+    attachmentCount: Number(attachmentCount || 0) || 0,
+    pendingCount: Number(pendingCount || 0) || 0,
+    suppressUserMessage: Boolean(suppressUserMessage),
+    hasContinueTarget: Boolean(hasContinueTarget),
+    hasSwipeTarget: Boolean(hasSwipeTarget),
+  },
+});
+
+export const buildSendBlockedTraceEvent = ({
+  sessionId = '',
+  activeGenerationId = 0,
+} = {}) => ({
+  phase: 'send.blocked',
+  sessionId: normalizeLifecycleTraceText(sessionId, ''),
+  status: 'skipped',
+  summary: 'send skipped because generation is active',
+  details: {
+    activeGenerationId,
+  },
+});
+
+export const buildSendPreflightBlockedTraceEvent = ({
+  sessionId = '',
+  reason = '',
+} = {}) => ({
+  phase: 'send.preflight.blocked',
+  sessionId: normalizeLifecycleTraceText(sessionId, ''),
+  status: 'skipped',
+  summary: 'send blocked before generation started',
+  details: {
+    reason: normalizeLifecycleTraceText(reason, ''),
+  },
+});
+
+export const buildSendFinishTraceEvent = ({
+  sessionId = '',
+  generationId = 0,
+  sendSucceeded = false,
+  suppressErrorUI = false,
+  sendErrorMessage = '',
+} = {}) => ({
+  phase: 'send.finish',
+  sessionId: normalizeLifecycleTraceText(sessionId, ''),
+  status: sendSucceeded ? 'success' : (suppressErrorUI ? 'cancelled' : 'error'),
+  summary: sendSucceeded ? 'send flow completed' : 'send flow stopped',
+  details: {
+    generationId,
+    sendSucceeded,
+    cancelled: suppressErrorUI || undefined,
+    errorMessage: sendErrorMessage || undefined,
+  },
+});
+
+export const buildRegenerateStartTraceEvent = ({
+  sessionId = '',
+  userIdx = -1,
+  allowEmpty = false,
+  regenMessageCount = 0,
+} = {}) => ({
+  phase: 'regenerate.start',
+  sessionId: normalizeLifecycleTraceText(sessionId, ''),
+  status: 'started',
+  summary: 'regenerate flow started',
+  details: {
+    userIdx,
+    allowEmpty: Boolean(allowEmpty),
+    regenMessageCount: Number(regenMessageCount || 0) || 0,
+  },
+});
+
+export const buildRegenerateFinishTraceEvent = ({
+  sessionId = '',
+  status = 'success',
+  userIdx = -1,
+  allowEmpty = false,
+  regenMessageCount = 0,
+  resent = false,
+  reason = '',
+} = {}) => {
+  const normalizedStatus = normalizeLifecycleTraceText(status, 'success');
+  const skipped = normalizedStatus === 'skipped';
+  return {
+    phase: 'regenerate.finish',
+    sessionId: normalizeLifecycleTraceText(sessionId, ''),
+    status: normalizedStatus,
+    summary: skipped
+      ? 'regenerate flow skipped'
+      : (normalizedStatus === 'success' ? 'regenerate flow completed' : 'regenerate resend failed'),
+    details: skipped
+      ? {
+          userIdx,
+          allowEmpty: Boolean(allowEmpty),
+          reason: normalizeLifecycleTraceText(reason, ''),
+        }
+      : {
+          userIdx,
+          allowEmpty: Boolean(allowEmpty),
+          regenMessageCount: Number(regenMessageCount || 0) || 0,
+          resent: Boolean(resent),
+        },
+  };
+};
+
+export const resolveSendPreflightBlock = ({
+  bridgeConfigured = true,
+  online = true,
+} = {}) => {
+  if (!bridgeConfigured) {
+    return {
+      blocked: true,
+      reason: 'api-not-configured',
+      bannerMessage: '未配置 API，请先填写 Base URL / Key / 模型',
+      toastMessage: '请先配置 API 信息',
+      toastTitle: '未配置',
+      showConfigPanel: true,
+    };
+  }
+  if (!online) {
+    return {
+      blocked: true,
+      reason: 'offline',
+      bannerMessage: '当前离线，请连接网络后再试',
+      toastMessage: '离线状态，无法发送',
+      toastTitle: '',
+      showConfigPanel: false,
+    };
+  }
+  return {
+    blocked: false,
+    reason: '',
+    bannerMessage: '',
+    toastMessage: '',
+    toastTitle: '',
+    showConfigPanel: false,
+  };
+};
+
+export const buildSendUserMessage = ({
+  text = '',
+  userName = '',
+  userAvatar = '',
+  time = '',
+  isStickerAllowed = () => false,
+  parseStickerToken = () => '',
+  applyInputStoredRegex = value => value,
+  applyInputDisplayRegex = value => value,
+} = {}) => {
+  const stickerKey = isStickerAllowed() ? parseStickerToken(text) : '';
+  if (stickerKey) {
+    return {
+      role: 'user',
+      type: 'sticker',
+      content: stickerKey,
+      raw: text,
+      name: userName,
+      avatar: userAvatar,
+      time,
+    };
+  }
+  const storedUser = applyInputStoredRegex(text, { isEdit: false });
+  const displayUser = applyInputDisplayRegex(storedUser, { isEdit: false, depth: 0 });
+  return {
+    role: 'user',
+    type: 'text',
+    content: displayUser,
+    raw: storedUser,
+    name: userName,
+    avatar: userAvatar,
+    time,
+  };
+};
+
 export const normalizeHandleSendInvocation = (targetMessageId = null, options = {}) => {
   let nextTargetMessageId = targetMessageId;
   let nextOptions = options;
@@ -351,17 +548,12 @@ export const runRegenerateFromUserIndexFlow = async ({
 
   const prevUser = plan.prevUser;
   const regenMessages = plan.regenMessages;
-  recordTraceEvent({
-    phase: 'regenerate.start',
+  recordTraceEvent(buildRegenerateStartTraceEvent({
     sessionId,
-    status: 'started',
-    summary: 'regenerate flow started',
-    details: {
-      userIdx,
-      allowEmpty,
-      regenMessageCount: regenMessages.length,
-    },
-  });
+    userIdx,
+    allowEmpty,
+    regenMessageCount: regenMessages.length,
+  }));
 
   if (regenMessages.length) {
     regenMessages.forEach(message => {
@@ -390,17 +582,13 @@ export const runRegenerateFromUserIndexFlow = async ({
 
   const resendText = getMessageSendText(prevUser, buildStickerToken);
   if (!String(resendText || '').trim()) {
-    recordTraceEvent({
-      phase: 'regenerate.finish',
+    recordTraceEvent(buildRegenerateFinishTraceEvent({
       sessionId,
       status: 'skipped',
-      summary: 'regenerate flow skipped',
-      details: {
-        userIdx,
-        allowEmpty,
-        reason: 'empty-user-message',
-      },
-    });
+      userIdx,
+      allowEmpty,
+      reason: 'empty-user-message',
+    }));
     warn('未找到对应的用户消息内容');
     return {
       started: true,
@@ -418,18 +606,14 @@ export const runRegenerateFromUserIndexFlow = async ({
     existingUserMessageId: prevUser?.id || '',
     includeAttachments: false,
   });
-  recordTraceEvent({
-    phase: 'regenerate.finish',
+  recordTraceEvent(buildRegenerateFinishTraceEvent({
     sessionId,
     status: resent ? 'success' : 'error',
-    summary: resent ? 'regenerate flow completed' : 'regenerate resend failed',
-    details: {
-      userIdx,
-      allowEmpty,
-      regenMessageCount: regenMessages.length,
-      resent: Boolean(resent),
-    },
-  });
+    userIdx,
+    allowEmpty,
+    regenMessageCount: regenMessages.length,
+    resent: Boolean(resent),
+  }));
 
   return {
     started: true,
@@ -536,18 +720,13 @@ export const runSendFinallyFlow = ({
   }
 
   if (sendTraceStarted) {
-    recordTraceEvent({
-      phase: 'send.finish',
+    recordTraceEvent(buildSendFinishTraceEvent({
       sessionId,
-      status: sendSucceeded ? 'success' : (suppressErrorUI ? 'cancelled' : 'error'),
-      summary: sendSucceeded ? 'send flow completed' : 'send flow stopped',
-      details: {
-        generationId,
-        sendSucceeded,
-        cancelled: suppressErrorUI || undefined,
-        errorMessage: sendErrorMessage || undefined,
-      },
-    });
+      generationId,
+      sendSucceeded,
+      suppressErrorUI,
+      sendErrorMessage,
+    }));
   }
 
   return sendSucceeded;

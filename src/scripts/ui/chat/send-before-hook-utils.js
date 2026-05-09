@@ -1,4 +1,8 @@
-import { emitHookLifecycleTrace } from './hook-lifecycle-trace-utils.js';
+import {
+  buildBeforeSendHookFinishTraceEvent,
+  buildBeforeSendHookStartTraceEvent,
+  emitHookLifecycleTrace,
+} from './hook-lifecycle-trace-utils.js';
 
 const applyBeforeSendRuntimeHook = async ({
   runtime = null,
@@ -15,20 +19,14 @@ const applyBeforeSendRuntimeHook = async ({
   if (!runtime || typeof runtime.dispatchEvent !== 'function') return text;
 
   try {
-    emitHookLifecycleTrace(recordTraceEvent, {
-      phase: 'before_send.start',
-      hookName: 'message.before_send',
+    emitHookLifecycleTrace(recordTraceEvent, buildBeforeSendHookStartTraceEvent({
       runtimeLabel,
       sessionId,
-      status: 'started',
-      summary: 'message.before_send hook started',
-      details: {
-        isGroupChat,
-        hasAttachments,
-        allowTextOverride,
-        contentLength: String(text || '').length,
-      },
-    });
+      text,
+      isGroupChat,
+      hasAttachments,
+      allowTextOverride,
+    }));
     const payload = {
       content: text,
       sessionId,
@@ -43,43 +41,29 @@ const applyBeforeSendRuntimeHook = async ({
       typeof updated.content === 'string' &&
       updated.content !== text
     ) {
-      emitHookLifecycleTrace(recordTraceEvent, {
-        phase: 'before_send.finish',
-        hookName: 'message.before_send',
+      emitHookLifecycleTrace(recordTraceEvent, buildBeforeSendHookFinishTraceEvent({
         runtimeLabel,
         sessionId,
-        status: 'success',
-        summary: 'message.before_send hook changed content',
-        details: {
-          changed: true,
-          originalLength: String(text || '').length,
-          nextLength: String(updated.content || '').length,
-        },
-      });
+        text,
+        nextText: updated.content,
+        changed: true,
+      }));
       return updated.content;
     }
-    emitHookLifecycleTrace(recordTraceEvent, {
-      phase: 'before_send.finish',
-      hookName: 'message.before_send',
+    emitHookLifecycleTrace(recordTraceEvent, buildBeforeSendHookFinishTraceEvent({
       runtimeLabel,
       sessionId,
-      status: 'success',
-      summary: 'message.before_send hook finished',
-      details: {
-        changed: false,
-        contentLength: String(text || '').length,
-      },
-    });
+      text,
+      changed: false,
+    }));
   } catch (err) {
-    emitHookLifecycleTrace(recordTraceEvent, {
-      phase: 'before_send.finish',
-      hookName: 'message.before_send',
+    emitHookLifecycleTrace(recordTraceEvent, buildBeforeSendHookFinishTraceEvent({
       runtimeLabel,
       sessionId,
       status: 'error',
-      summary: err?.message || 'message.before_send hook failed',
-      details: { contentLength: String(text || '').length },
-    });
+      text,
+      errorMessage: err?.message,
+    }));
     logger?.warn?.(`${runtimeLabel} message.before_send failed`, err);
   }
 

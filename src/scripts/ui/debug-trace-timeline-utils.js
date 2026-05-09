@@ -9,6 +9,8 @@ const normalizeText = (value, fallback = '') => {
   return text || fallback;
 };
 
+const normalizeOptionalText = value => normalizeText(value, '');
+
 const normalizeTimestamp = (value, fallback) => {
   const numeric = Number(value);
   if (Number.isFinite(numeric) && numeric >= 0) return numeric;
@@ -38,6 +40,10 @@ export const normalizeDebugTraceEvent = (event = {}, {
     category: normalizeText(event?.category, 'general'),
     phase: normalizeText(event?.phase, 'event'),
     sessionId: normalizeText(event?.sessionId, ''),
+    hookName: normalizeOptionalText(event?.hookName),
+    runtimeLabel: normalizeOptionalText(event?.runtimeLabel),
+    messageId: normalizeOptionalText(event?.messageId),
+    momentId: normalizeOptionalText(event?.momentId),
     source: normalizeText(event?.source, 'unknown'),
     status: normalizeText(event?.status, 'info'),
     startedAt,

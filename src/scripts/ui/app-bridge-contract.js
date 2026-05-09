@@ -24,10 +24,161 @@ export const BRIDGE_CONTRACT_DOMAINS = Object.freeze({
   uiUtility: 'ui-utility',
 });
 
+export const BRIDGE_CONTRACT_METHOD_METADATA = Object.freeze({
+  [BRIDGE_CONTRACT_DOMAINS.generation]: {
+    generate: {
+      params: ['userMessage: string', 'context?: generation context'],
+      returns: 'Promise<string> | AsyncGenerator<string>',
+      sideEffects: [
+        'initializes runtime when needed',
+        'sets generation lock and abort state',
+        'updates lastRequest diagnostics',
+        'saves non-stream assistant replies to history',
+      ],
+      tests: [
+        'app-bridge-contract-tests.mjs',
+        'send-side-effect-utils-tests.mjs',
+        'send-cancel-regenerate-integration.mjs',
+      ],
+      status: 'covered',
+    },
+    buildMessages: {
+      params: ['userMessage: string', 'context?: prompt context'],
+      returns: 'Provider message[]',
+      sideEffects: [
+        'resets prompt debug snapshots',
+        'may update world and provider compatibility diagnostics',
+      ],
+      tests: [
+        'app-bridge-contract-tests.mjs',
+        'llm-context-builder-utils-tests.mjs',
+        'summary-compaction-utils-tests.mjs',
+      ],
+      status: 'covered',
+    },
+    backgroundChat: {
+      params: ['messages: Provider message[]', 'options?: generation overrides'],
+      returns: 'Promise<string>',
+      sideEffects: [
+        'initializes runtime when needed',
+        'calls provider client without main generation lock',
+        'does not write chat history',
+      ],
+      tests: [
+        'app-bridge-contract-tests.mjs',
+        'summary-compaction-utils-tests.mjs',
+        'moments-runtime-utils-tests.mjs',
+      ],
+      status: 'covered',
+    },
+  },
+  [BRIDGE_CONTRACT_DOMAINS.sessionState]: {
+    getActiveSessionId: {
+      returns: 'string',
+      tests: [
+        'app-bridge-contract-tests.mjs',
+        'session-enter-runtime-tests.mjs',
+        'session-enter-lifecycle-integration.mjs',
+      ],
+      status: 'covered',
+    },
+    setActiveSession: {
+      params: ['sessionId: string'],
+      returns: 'void',
+      sideEffects: [
+        'updates activeSessionId',
+        'updates current world ids',
+        'syncs world regex bindings',
+        'emits worldinfo-changed',
+        'dispatches plugin/script session.changed',
+      ],
+      tests: [
+        'app-bridge-contract-tests.mjs',
+        'session-enter-runtime-tests.mjs',
+        'session-enter-lifecycle-integration.mjs',
+      ],
+      status: 'covered',
+    },
+  },
+  [BRIDGE_CONTRACT_DOMAINS.memoryUpdate]: {
+    getLastMemoryUpdate: {
+      params: ['sessionId: string'],
+      returns: 'Memory update entry | null',
+      tests: [
+        'app-bridge-contract-tests.mjs',
+        'memory-update-runtime-utils-tests.mjs',
+        'memory-lifecycle-integration.mjs',
+      ],
+      status: 'covered',
+    },
+    setLastMemoryUpdate: {
+      params: ['sessionId: string', 'entry: object | null'],
+      returns: 'void',
+      sideEffects: ['stores or clears last memory update entry scoped by sessionId'],
+      tests: [
+        'app-bridge-contract-tests.mjs',
+        'memory-update-runtime-utils-tests.mjs',
+        'memory-lifecycle-integration.mjs',
+      ],
+      status: 'covered',
+    },
+    getLastMemoryPlan: {
+      returns: 'Memory prompt plan | null',
+      tests: [
+        'app-bridge-contract-tests.mjs',
+        'memory-update-runtime-utils-tests.mjs',
+        'memory-lifecycle-integration.mjs',
+      ],
+      status: 'covered',
+    },
+    setLastMemoryPlan: {
+      params: ['plan: object | null'],
+      returns: 'void',
+      sideEffects: ['stores or clears latest memory prompt plan'],
+      tests: [
+        'app-bridge-contract-tests.mjs',
+        'memory-update-runtime-utils-tests.mjs',
+        'memory-lifecycle-integration.mjs',
+      ],
+      status: 'covered',
+    },
+    buildMemoryPromptPlan: {
+      params: ['context: generation context'],
+      returns: 'Promise<Memory prompt plan | null>',
+      sideEffects: ['reads memory table/template stores and settings'],
+      tests: [
+        'app-bridge-contract-tests.mjs',
+        'memory-update-runtime-utils-tests.mjs',
+        'memory-lifecycle-integration.mjs',
+      ],
+      status: 'covered',
+    },
+    rollbackLastMemoryUpdate: {
+      params: ['sessionId: string'],
+      returns: 'Promise<boolean>',
+      sideEffects: [
+        'restores memory rows from rollback snapshots or action history',
+        'notifies memory rollback UI when rows changed',
+      ],
+      tests: [
+        'app-bridge-contract-tests.mjs',
+        'memory-update-runtime-utils-tests.mjs',
+        'memory-lifecycle-integration.mjs',
+      ],
+      status: 'covered',
+    },
+  },
+});
+
 const DEFAULT_BRIDGE_CONTRACT_DOMAIN = 'app-bridge';
 const DEFAULT_BRIDGE_CONTRACT_SOURCE = 'app-bridge-contract';
 
 const isPlainObject = value => Boolean(value && typeof value === 'object' && !Array.isArray(value));
+
+const normalizeStringList = (value) => {
+  const raw = Array.isArray(value) ? value : (value ? [value] : []);
+  return raw.map(item => String(item || '').trim()).filter(Boolean);
+};
 
 const normalizeBridgeContractDomain = (domain) => {
   const normalized = String(domain || '').trim();
@@ -36,17 +187,38 @@ const normalizeBridgeContractDomain = (domain) => {
 
 const normalizeBridgeContractName = (name) => String(name || '').trim();
 
+const getDefaultBridgeContractMetadata = (name, domain) => (
+  BRIDGE_CONTRACT_METHOD_METADATA[domain]?.[name] || {}
+);
+
 const normalizeBridgeContractEntry = (name, domain, metadata = {}) => {
   const normalizedName = normalizeBridgeContractName(name);
   const normalizedDomain = normalizeBridgeContractDomain(domain);
-  const entry = isPlainObject(metadata) ? metadata : {};
-  return {
+  const defaults = getDefaultBridgeContractMetadata(normalizedName, normalizedDomain);
+  const entry = {
+    ...(isPlainObject(defaults) ? defaults : {}),
+    ...(isPlainObject(metadata) ? metadata : {}),
+  };
+  const contract = {
     name: normalizedName,
     domain: normalizedDomain,
     kind: String(entry.kind || 'method').trim() || 'method',
     source: String(entry.source || DEFAULT_BRIDGE_CONTRACT_SOURCE).trim() || DEFAULT_BRIDGE_CONTRACT_SOURCE,
     ...(entry.bridgeField ? { bridgeField: String(entry.bridgeField).trim() } : {}),
   };
+  const params = normalizeStringList(entry.params);
+  const sideEffects = normalizeStringList(entry.sideEffects);
+  const tests = normalizeStringList(entry.tests);
+  const callers = normalizeStringList(entry.callers);
+  const returns = String(entry.returns || '').trim();
+  const status = String(entry.status || '').trim();
+  if (params.length) contract.params = params;
+  if (returns) contract.returns = returns;
+  if (sideEffects.length) contract.sideEffects = sideEffects;
+  if (tests.length) contract.tests = tests;
+  if (callers.length) contract.callers = callers;
+  if (status) contract.status = status;
+  return contract;
 };
 
 export const ensureBridgeContractRegistry = (appBridge) => {

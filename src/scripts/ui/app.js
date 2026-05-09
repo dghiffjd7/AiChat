@@ -48,7 +48,6 @@ import { pickSavePath } from '../utils/save-dialog.js';
 import { safeInvoke } from '../utils/tauri.js';
 import './bridge.js';
 import {
-  ensureDebugUiRegistry,
   registerChatUiBridgeContract,
   registerConfigRuntimeBridgeContract,
   registerGenerationBridgeContract,
@@ -72,7 +71,17 @@ import {
   registerWorldSessionBridgeContract,
 } from './app-bridge-contract.js';
 import { isBridgeConfigured } from './config-runtime-utils.js';
+import {
+  patchDebugUiRegistry as patchDebugUiRegistryCore,
+  recordDebugTraceEvent as recordDebugTraceEventCore,
+  registerDebugRuntimeContext as registerDebugRuntimeContextCore,
+} from './debug-ui-registry-utils.js';
 import { getPresetStore } from './preset-store-runtime-utils.js';
+import {
+  normalizePersonaSwitcherTab,
+  readPersonaSwitcherTab,
+  writePersonaSwitcherTab,
+} from './persona-runtime-utils.js';
 import {
   getRegexStore,
   syncPresetRegexBindings,
@@ -82,6 +91,11 @@ import {
 import { getScriptStore } from './script-runtime-utils.js';
 import { emitWorldInfoChanged } from './world-session-runtime-utils.js';
 import { ensureDebugTraceTimeline } from './debug-trace-timeline-utils.js';
+import {
+  bindDraftMirrorInput,
+  readDraftMirror,
+  removeDraftMirror,
+} from './draft-mirror-utils.js';
 import {
   bindAppSessionEntryNavigation,
   registerAppSessionEventListeners,
@@ -166,8 +180,11 @@ import {
 } from './chat/prompt-world-debug-utils.js';
 import { createReasoningRuntime } from './chat/reasoning-runtime-utils.js';
 import {
+  readUiMode,
+  removeLegacySendModeState,
   runEnterRpModeFlow,
   runExitRpModeFlow,
+  writeUiMode,
 } from './chat/rp-mode-runtime-utils.js';
 import {
   createLlmContextBuilder,
@@ -236,6 +253,9 @@ import {
 import { createMemoryUpdateRuntime } from './chat/memory-update-runtime.js';
 import {
   buildMemoryPromptPlan,
+  buildMemoryRollbackFinishTraceEvent,
+  buildMemoryRollbackStartTraceEvent,
+  buildMemoryUpdateTraceEvent,
   createMemoryEditUiRuntime,
   getLastMemoryPlan,
   getLastMemoryUpdate,
@@ -303,9 +323,14 @@ import {
 } from './chat/update-variable-runtime-utils.js';
 import { buildUpdateVariableParser } from './chat/update-variable-parser-utils.js';
 import {
+  buildSendBlockedTraceEvent,
   buildSendFlowTraceEvent,
+  buildSendPreflightBlockedTraceEvent,
+  buildSendStartTraceEvent,
+  buildSendUserMessage,
   normalizeHandleSendInvocation,
   normalizeHandleSendOptions,
+  resolveSendPreflightBlock,
   resolveSyspromptProtocolFlags,
   runPendingSendPreparationFlow,
   runRegenerateFromUserIndexFlow,
@@ -320,6 +345,7 @@ import { runPluginSendMessageFlow } from './chat/plugin-message-bridge-utils.js'
 import {
   applyBeforeSendHooks,
 } from './chat/send-before-hook-utils.js';
+import { dispatchRuntimeHookLifecycleEvent } from './chat/hook-lifecycle-trace-utils.js';
 import {
   createCreativeAssistantStreamProcessor,
   dispatchAfterSendEvents,
@@ -334,6 +360,8 @@ import {
 } from './chat/send-prompt-gates.js';
 import {
   SELF_REACTION_ACTOR,
+  attachReplyTargetToMessage,
+  buildOutgoingReplyContexts,
   buildReplyTargetSnapshot,
   getMessagePreviewText,
   normalizeReplyTarget,
@@ -383,6 +411,14 @@ import { SessionConfigPanel } from './session-config-panel.js';
 import { SessionPanel } from './session-panel.js';
 import { createSheetMenuRuntime } from './sheet-menu-runtime-utils.js';
 import { StickerPicker } from './sticker-picker.js';
+import {
+  readStickerAiState,
+  readStickerUsage,
+  resolveMostUsedStickerKeys,
+  updateStickerRecents as updateStickerRecentsStorage,
+  writeStickerAiState,
+  writeStickerUsage,
+} from './sticker-storage-utils.js';
 import { UserPanel } from './user-panel.js';
 import { VariablePanel } from './variable-panel.js';
 import {
@@ -398,12 +434,23 @@ import { StageTimeline } from './stage-timeline.js';
 import { WorldPanel } from './world-panel.js';
 import { WorldInfoIndicator } from './worldinfo-indicator.js';
 import { buildRoleWorldBindingsImpl } from './world-role-binding-utils.js';
-import { createModeSwitchPositionRuntime } from './mode-switch-position-runtime-utils.js';
+import {
+  createModeSwitchPositionRuntime,
+  readModeSwitchPosition,
+  writeModeSwitchPosition,
+} from './mode-switch-position-runtime-utils.js';
 import { appConfirm, appChoice } from './app-confirm.js';
 import {
+  clearRuntimeNoiseStorage,
+  finishAppBootTrace,
+  getRuntimeErrorMessage,
+  createRuntimeIssueReporter,
+  isIgnorableRuntimeNoise,
+  registerGlobalRuntimeIssueHandlers,
   registerHydratedUiRestoreListener,
   registerUiLifecycleDiagnostics,
   runAppBootRestoreFlow,
+  startAppBootTrace,
 } from './app-boot-runtime-utils.js';
 import { bindCustomSelectButton, createCustomSelectWrapper, refreshCustomSelectButton } from './custom-select.js';
 import { PluginRuntime } from '../plugins/plugin-runtime.js';
@@ -411,8 +458,6 @@ import { themeManager } from './theme-manager.js';
 import { getDefaultAppIcon } from '../utils/default-icon.js';
 
 let appRuntimeReady = false;
-let lastRuntimeNoticeKey = '';
-let lastRuntimeNoticeAt = 0;
 
 if (window.toastr) {
   const _origToastr = { error: window.toastr.error, warning: window.toastr.warning, success: window.toastr.success, info: window.toastr.info };
@@ -426,112 +471,28 @@ if (window.toastr) {
   window.toastr.info = _guard(_origToastr.info);
 }
 
-const getRuntimeErrorMessage = (err) => {
-  if (err?.message) return String(err.message);
-  return String(err || 'unknown error');
-};
-
-const reportFatalError = (err, label = 'App init failed') => {
-  try {
-    const msg = getRuntimeErrorMessage(err);
-    logger.error(label, msg, err);
-    let overlay = document.getElementById('chatapp-fatal-error-overlay');
-    if (!overlay) {
-      overlay = document.createElement('div');
-      overlay.id = 'chatapp-fatal-error-overlay';
-      overlay.style.cssText = `
-        position: fixed;
-        inset: 0;
-        z-index: 40000;
-        background: rgba(0,0,0,0.86);
-        color: #f8fafc;
-        padding: 20px;
-        font-family: monospace;
-        font-size: 12px;
-        overflow: auto;
-      `;
-      document.body.appendChild(overlay);
-    }
-    overlay.textContent = `${label}: ${msg}`;
-  } catch {}
-};
-
-const reportRuntimeToast = (err, label = 'Runtime error') => {
-  try {
-    const msg = getRuntimeErrorMessage(err);
-    logger.error(label, msg, err);
-    const noticeKey = `${label}::${msg}`;
-    const now = Date.now();
-    if (noticeKey === lastRuntimeNoticeKey && (now - lastRuntimeNoticeAt) < 4000) return;
-    lastRuntimeNoticeKey = noticeKey;
-    lastRuntimeNoticeAt = now;
-    if (window.toastr?.error) {
-      window.toastr.error(msg, label);
-      return;
-    }
-    let banner = document.getElementById('chatapp-runtime-error-banner');
-    if (!banner) {
-      banner = document.createElement('div');
-      banner.id = 'chatapp-runtime-error-banner';
-      banner.style.cssText = `
-        position: fixed;
-        left: 12px;
-        right: 12px;
-        bottom: 18px;
-        z-index: 39999;
-        border-radius: 12px;
-        padding: 10px 12px;
-        background: rgba(15,23,42,0.94);
-        color: #f8fafc;
-        border: 1px solid rgba(248,250,252,0.14);
-        box-shadow: 0 12px 30px rgba(15,23,42,0.28);
-        font-size: 12px;
-        line-height: 1.45;
-        white-space: pre-wrap;
-        word-break: break-word;
-      `;
-      document.body.appendChild(banner);
-    }
-    banner.textContent = `${label}: ${msg}`;
-    clearTimeout(window.__chatappRuntimeBannerTimer);
-    window.__chatappRuntimeBannerTimer = setTimeout(() => {
-      try { banner?.remove(); } catch {}
-    }, 6000);
-  } catch {}
-};
-
-const reportGlobalRuntimeIssue = (err, label = 'Runtime error') => {
-  if (appRuntimeReady) {
-    reportRuntimeToast(err, label);
-    return;
-  }
-  reportFatalError(err, label);
-};
-
-try {
-  localStorage.removeItem('chatapp_renderer_lifecycle_v1');
-  localStorage.removeItem('chatapp_rich_script_guard_v1');
-} catch {}
-
-const isIgnorableRuntimeNoise = (value = '') => {
-  const msg = String(value || '');
-  if (!msg) return false;
-  return /resizeobserver loop (limit exceeded|completed with (?:undelivered|delivered) notifications)/i.test(msg);
-};
-
-window.addEventListener('error', (event) => {
-  if (!event) return;
-  const msg = String(event?.message || event?.error?.message || event?.error || '');
-  if (isIgnorableRuntimeNoise(msg)) return;
-  reportGlobalRuntimeIssue(event.error || event.message || 'unknown error', 'Runtime error');
+const {
+  reportFatalError,
+  reportGlobalRuntimeIssue,
+} = createRuntimeIssueReporter({
+  logger,
+  documentLike: document,
+  windowLike: window,
+  getRuntimeReady: () => appRuntimeReady,
 });
 
-window.addEventListener('unhandledrejection', (event) => {
-  if (!event) return;
-  const msg = String(event?.reason?.message || event?.reason || '');
-  if (isIgnorableRuntimeNoise(msg)) return;
-  reportGlobalRuntimeIssue(event.reason || 'unhandled rejection', 'Unhandled rejection');
+clearRuntimeNoiseStorage();
+registerGlobalRuntimeIssueHandlers({
+  windowLike: window,
+  isIgnorableRuntimeNoise,
+  reportGlobalRuntimeIssue,
 });
+const appBootTraceTimeline = ensureDebugTraceTimeline(window.appBridge);
+const appBootTraceEvent = startAppBootTrace({
+  traceTimeline: appBootTraceTimeline,
+  details: { runtimeReady: appRuntimeReady },
+});
+const recordAppDebugTraceEvent = event => recordDebugTraceEventCore(window.appBridge, event);
 
 const initApp = async () => {
   const ui = new ChatUI();
@@ -680,21 +641,42 @@ const initApp = async () => {
     const emitVariableChanged = (name, oldValue, newValue, sessionId, scope = 'chat') => {
       const sid = String(sessionId || chatStore.getCurrent() || '').trim();
       if (!sid && scope !== 'global') return;
-      pluginRuntime.dispatchEvent('variable.changed', {
+      const payload = {
         name: String(name || ''),
         oldValue,
         newValue,
         sessionId: sid || null,
         scope,
-      }).catch(err => logger.warn('plugin variable.changed failed', err));
+      };
+      const traceDetails = {
+        name: String(name || ''),
+        scope,
+        hasSession: Boolean(sid),
+        changed: oldValue !== newValue,
+      };
+      dispatchRuntimeHookLifecycleEvent({
+        runtime: pluginRuntime,
+        runtimeLabel: 'plugin',
+        hookName: 'variable.changed',
+        payload,
+        sessionId: sid,
+        details: traceDetails,
+        logger,
+        warningMessage: 'plugin variable.changed failed',
+        recordTraceEvent: recordAppDebugTraceEvent,
+      });
       if (scriptRuntime) {
-        scriptRuntime.dispatchEvent('variable.changed', {
-          name: String(name || ''),
-          oldValue,
-          newValue,
-          sessionId: sid || null,
-          scope,
-        }).catch(err => logger.warn('script variable.changed failed', err));
+        dispatchRuntimeHookLifecycleEvent({
+          runtime: scriptRuntime,
+          runtimeLabel: 'script',
+          hookName: 'variable.changed',
+          payload,
+          sessionId: sid,
+          details: traceDetails,
+          logger,
+          warningMessage: 'script variable.changed failed',
+          recordTraceEvent: recordAppDebugTraceEvent,
+        });
       }
       try {
         window.dispatchEvent(new CustomEvent('chatapp-variable-changed', {
@@ -849,9 +831,7 @@ const initApp = async () => {
     const sid = String(sessionId || '').trim();
     if (!sid) return;
     chatStore.setDraft('', sid);
-    try {
-      sessionStorage.removeItem(`phone_draft_${sid}`);
-    } catch {}
+    removeDraftMirror(sid);
   };
   const originalClearInput = ui.clearInput.bind(ui);
   ui.clearInput = () => {
@@ -1221,14 +1201,10 @@ const initApp = async () => {
     assistant: getDefaultAppIcon(),
   };
 
-  const UI_MODE_KEY = 'chat_ui_mode_v1';
-  const LEGACY_SEND_MODE_KEY = 'chat_send_mode_v1';
   let uiMode = 'chat';
   let lastChatState = { activePage: 'chat', sessionId: '', inChatRoom: false };
   const clearLegacySendModeState = () => {
-    try {
-      localStorage.removeItem(LEGACY_SEND_MODE_KEY);
-    } catch {}
+    removeLegacySendModeState();
     const btn = document.getElementById('send-button');
     if (!btn) return;
     btn.classList.remove('is-creative');
@@ -1264,19 +1240,8 @@ const initApp = async () => {
     sessionPanel.getChatSessionId = () => String(lastChatState?.sessionId || '').trim();
     sessionPanel.getSocialSessionId = sessionPanel.getChatSessionId;
   } catch {}
-  const loadUiMode = () => {
-    try {
-      const raw = localStorage.getItem(UI_MODE_KEY);
-      return raw === 'rp' ? 'rp' : 'chat';
-    } catch {
-      return 'chat';
-    }
-  };
-  const persistUiMode = () => {
-    try {
-      localStorage.setItem(UI_MODE_KEY, uiMode);
-    } catch {}
-  };
+  const loadUiMode = () => readUiMode();
+  const persistUiMode = () => writeUiMode(uiMode);
 
   const getActiveUserProfile = () => userStore.getActive?.() || { id: 'default', name: '我', avatar: '', description: '' };
   const getActiveUserName = () => String(getActiveUserProfile()?.name || '').trim() || '我';
@@ -1779,22 +1744,16 @@ const initApp = async () => {
     getSessionId: () => chatStore.getCurrent(),
     getVariableScope: sid => (isSharedVariableSession(sid) ? 'global' : 'session'),
   });
-  const patchDebugUiRegistry = (mutator) => {
-    try {
-      if (!window.appBridge || typeof mutator !== 'function') return;
-      const registry = ensureDebugUiRegistry(window.appBridge);
-      if (!registry) return;
-      mutator(registry);
-    } catch {}
-  };
-  const recordDebugTraceEvent = (event) => {
-    try {
-      window.appBridge?.debugUiRegistry?.actions?.recordTraceEvent?.(event);
-    } catch {}
-  };
+  const patchDebugUiRegistry = (mutator) => patchDebugUiRegistryCore(window.appBridge, mutator);
+  const recordDebugTraceEvent = (event) => recordAppDebugTraceEvent(event);
   const recordSendFlowTraceEvent = (event) => {
     try {
       recordDebugTraceEvent(buildSendFlowTraceEvent(event));
+    } catch {}
+  };
+  const recordMemoryUpdateTraceEvent = (event) => {
+    try {
+      recordDebugTraceEvent(buildMemoryUpdateTraceEvent(event));
     } catch {}
   };
   const recordMomentLifecycleTraceEvent = (event) => {
@@ -1803,48 +1762,42 @@ const initApp = async () => {
     } catch {}
   };
   try {
-    patchDebugUiRegistry((registry) => {
-      const traceTimeline = ensureDebugTraceTimeline(window.appBridge);
-      Object.assign(registry, {
-        panels: {
-          configPanel,
-          generalSettingsPanel,
-          presetPanel,
-          regexPanel,
-          pluginPanel,
-          memoryTemplatePanel,
-          worldPanel,
-          scriptPanel,
-          sessionPanel,
-          regexSessionPanel,
-          contactSettingsPanel,
-          groupCreatePanel,
-          groupSettingsPanel,
-          groupPanel,
-          personaPanel,
-          userPanel,
-          variablePanel,
-          extensionsPanel,
-          stickerPicker,
-        },
-        stores: {
-          chatStore,
-          contactsStore,
-          memoryTableStore,
-          memoryTemplateStore,
-          personaStore,
-          userStore,
-          groupStore,
-          rpSessionStore,
-          momentSummaryStore,
-          pluginStore,
-          scriptStore,
-          traceTimeline,
-        },
-        actions: {
-          ...(registry.actions || {}),
-        },
-      });
+    registerDebugRuntimeContextCore(window.appBridge, {
+      panels: {
+        configPanel,
+        generalSettingsPanel,
+        presetPanel,
+        regexPanel,
+        pluginPanel,
+        memoryTemplatePanel,
+        worldPanel,
+        scriptPanel,
+        sessionPanel,
+        regexSessionPanel,
+        contactSettingsPanel,
+        groupCreatePanel,
+        groupSettingsPanel,
+        groupPanel,
+        personaPanel,
+        userPanel,
+        variablePanel,
+        extensionsPanel,
+        stickerPicker,
+      },
+      stores: {
+        chatStore,
+        contactsStore,
+        memoryTableStore,
+        memoryTemplateStore,
+        personaStore,
+        userStore,
+        groupStore,
+        rpSessionStore,
+        momentSummaryStore,
+        pluginStore,
+        scriptStore,
+      },
+      traceTimeline: ensureDebugTraceTimeline(window.appBridge),
     });
   } catch {}
 
@@ -1966,6 +1919,7 @@ const initApp = async () => {
     userAvatar: userStore.getActive()?.avatar || avatars.user,
     onUserComment: (momentId, commentText, meta = null) =>
       momentCommentRuntime(momentId, commentText, meta),
+    recordLifecycleEvent: recordMomentLifecycleTraceEvent,
   });
 
   const momentSummaryPanel = new MomentSummaryPanel({
@@ -3183,29 +3137,6 @@ const initApp = async () => {
     return buildReplyTargetSnapshot(message, { author, avatar, sessionId: sid });
   };
 
-  const attachReplyTargetToMessage = (message, replyTarget) => {
-    const msg = message && typeof message === 'object' ? message : null;
-    const nextReply = normalizeReplyTarget(replyTarget);
-    if (!msg || !nextReply) return msg;
-    const meta = msg.meta && typeof msg.meta === 'object' ? { ...msg.meta } : {};
-    meta.replyTo = nextReply;
-    return { ...msg, meta };
-  };
-
-  const buildOutgoingReplyContexts = (messages = []) => {
-    const list = Array.isArray(messages) ? messages : [];
-    return list
-      .map((message) => {
-        const replyTo = normalizeReplyTarget(message?.meta?.replyTo);
-        if (!replyTo) return null;
-        return {
-          userMessage: getMessagePreviewText(message, { maxLength: 80, fallback: '[消息]' }),
-          replyTo,
-        };
-      })
-      .filter(Boolean);
-  };
-
   const buildReplyPromptHint = (contexts = []) => buildReplyPromptHintCore(contexts);
 
   const insertStickerToken = keyword => {
@@ -3260,7 +3191,6 @@ const initApp = async () => {
   const STICKER_ICON_SESSION = 'sticker_pack_icons';
   const STICKER_AI_ASSET_SESSION = 'sticker_ai_assets';
   const STICKER_EXPORT_SESSION = 'sticker_export';
-  const STICKER_AI_STATE_KEY = 'sticker_ai_state_v1';
   const STICKER_SOFT_IMAGE_BYTES = 600_000;
   const STICKER_SOFT_GIF_BYTES = 2_000_000;
   const STICKER_SOFT_PACK_LIMIT = 72;
@@ -4559,18 +4489,7 @@ Phase G（Frame 36）：循环衔接
     return items;
   };
   const getMostUsedStickerKeys = () => {
-    const entries = Object.entries(stickerUsage || {})
-      .map(([key, count]) => ({ key, count: Number(count || 0) }))
-      .filter(item => item.key && Number.isFinite(item.count) && item.count > 0)
-      .sort((a, b) => b.count - a.count);
-    const keys = entries.map(item => item.key);
-    if (keys.length) return keys.slice(0, 48);
-    try {
-      const raw = localStorage.getItem(STICKER_RECENT_KEY);
-      const list = raw ? JSON.parse(raw) : null;
-      if (Array.isArray(list) && list.length) return list.slice(0, 48);
-    } catch {}
-    return [];
+    return resolveMostUsedStickerKeys({ usage: stickerUsage, max: 48 });
   };
   const getStickerItemsForTab = tab => {
     if (tab === 'recent') {
@@ -5825,31 +5744,12 @@ Phase G（Frame 36）：循环衔接
   const modeSwitchBtn = modeSwitch ? modeSwitch.querySelector('button') : null;
   let syncModeSwitchPosition = () => {};
   let scheduleModeSwitchSync = () => {};
-  const MODE_SWITCH_POS_KEY = 'phone_mode_switch_pos_v1';
   let modeSwitchPinned = false;
   let modeSwitchPos = null;
   let modeSwitchDimTimer = null;
   const MODE_SWITCH_DIM_DELAY = 30_000;
-  const loadModeSwitchPos = () => {
-    try {
-      const raw = localStorage.getItem(MODE_SWITCH_POS_KEY);
-      if (!raw) return null;
-      const parsed = JSON.parse(raw);
-      if (!parsed || typeof parsed !== 'object') return null;
-      const xRatio = Number(parsed.xRatio);
-      const yRatio = Number(parsed.yRatio);
-      if (!Number.isFinite(xRatio) || !Number.isFinite(yRatio)) return null;
-      return { xRatio, yRatio };
-    } catch {
-      return null;
-    }
-  };
-  const saveModeSwitchPos = () => {
-    try {
-      if (!modeSwitchPos) return;
-      localStorage.setItem(MODE_SWITCH_POS_KEY, JSON.stringify(modeSwitchPos));
-    } catch {}
-  };
+  const loadModeSwitchPos = () => readModeSwitchPosition();
+  const saveModeSwitchPos = () => writeModeSwitchPosition(modeSwitchPos);
   const setModeSwitchOpacityDuration = ms => {
     if (!modeSwitch) return;
     const val = Number(ms);
@@ -6504,33 +6404,11 @@ Phase G（Frame 36）：循环衔接
   let stickerPanelTab = 'default';
   let stickerPanelPage = 0;
   const STICKER_PAGE_SIZE = 8;
-  const STICKER_USAGE_KEY = 'sticker_usage_v1';
-  const STICKER_RECENT_KEY = 'sticker_recents';
   let stickerUsage = {};
-  const loadStickerUsage = () => {
-    try {
-      const raw = localStorage.getItem(STICKER_USAGE_KEY);
-      const parsed = raw ? JSON.parse(raw) : null;
-      return parsed && typeof parsed === 'object' ? parsed : {};
-    } catch {
-      return {};
-    }
-  };
-  const saveStickerUsage = () => {
-    try {
-      localStorage.setItem(STICKER_USAGE_KEY, JSON.stringify(stickerUsage));
-    } catch {}
-  };
+  const loadStickerUsage = () => readStickerUsage();
+  const saveStickerUsage = () => writeStickerUsage(stickerUsage);
   const updateStickerRecents = keyword => {
-    const key = String(keyword || '').trim();
-    if (!key) return;
-    try {
-      const raw = localStorage.getItem(STICKER_RECENT_KEY);
-      const parsed = raw ? JSON.parse(raw) : null;
-      const list = Array.isArray(parsed) ? parsed : [];
-      const next = [key, ...list.filter(item => item !== key)].slice(0, 24);
-      localStorage.setItem(STICKER_RECENT_KEY, JSON.stringify(next));
-    } catch {}
+    updateStickerRecentsStorage(keyword, { max: 24 });
   };
   const bumpStickerUsage = keyword => {
     const key = String(keyword || '').trim();
@@ -6996,21 +6874,10 @@ Phase G（Frame 36）：循环衔接
     let guideEditorLoadToken = 0;
     let guideDragState = null;
 
-    const loadStickerAiState = () => {
-      try {
-        const raw = localStorage.getItem(STICKER_AI_STATE_KEY);
-        if (!raw) return null;
-        const parsed = JSON.parse(raw);
-        return parsed && typeof parsed === 'object' ? parsed : null;
-      } catch {
-        return null;
-      }
-    };
+    const loadStickerAiState = () => readStickerAiState();
 
     const persistStickerAiState = state => {
-      try {
-        localStorage.setItem(STICKER_AI_STATE_KEY, JSON.stringify(state || {}));
-      } catch {}
+      writeStickerAiState(state);
     };
 
     const normalizeStickerAiImage = item => {
@@ -11067,19 +10934,10 @@ Phase G（Frame 36）：循环衔接
 
   // Mirror composer draft to sessionStorage to avoid losing the last few keystrokes on reload/update.
   try {
-    const el = document.getElementById('composer-input');
-    if (el && !el.hasAttribute('data-draft-mirror')) {
-      el.setAttribute('data-draft-mirror', 'true');
-      el.addEventListener('input', () => {
-        const sid = chatStore.getCurrent();
-        const text = String(el.value || '');
-        const maxLen = 20_000;
-        const trimmed = text.length > maxLen ? text.slice(-maxLen) : text;
-        try {
-          sessionStorage.setItem(`phone_draft_${sid}`, trimmed);
-        } catch {}
-      });
-    }
+    bindDraftMirrorInput({
+      inputEl: document.getElementById('composer-input'),
+      getSessionId: () => chatStore.getCurrent(),
+    });
   } catch {}
 
   /* ---------------- 原始回复面板（调试） ---------------- */
@@ -11651,23 +11509,8 @@ Phase G（Frame 36）：循环衔接
   /* ---------------- 头像设置菜单 ---------------- */
   const settingsMenu = document.getElementById('settings-menu');
   const quickMenu = document.getElementById('quick-menu');
-  const PERSONA_SWITCHER_TAB_KEY = 'persona_switcher_tab_v2';
-  const normalizePersonaSwitcherTab = (value = '') => {
-    const raw = String(value || '').trim().toLowerCase();
-    return raw === 'character' ? 'character' : 'user';
-  };
-  let personaSwitcherTab = (() => {
-    try {
-      return normalizePersonaSwitcherTab(localStorage.getItem(PERSONA_SWITCHER_TAB_KEY));
-    } catch {
-      return 'user';
-    }
-  })();
-  const persistPersonaSwitcherTab = () => {
-    try {
-      localStorage.setItem(PERSONA_SWITCHER_TAB_KEY, normalizePersonaSwitcherTab(personaSwitcherTab));
-    } catch {}
-  };
+  let personaSwitcherTab = readPersonaSwitcherTab();
+  const persistPersonaSwitcherTab = () => writePersonaSwitcherTab(personaSwitcherTab);
   // 顶部头像/＋按钮在「消息」与「联系人」页共用同样外观
   const avatarBtns = document.querySelectorAll('.qq-message-topbar .user-avatar-btn');
   const settingsBtns = document.querySelectorAll('.qq-message-topbar .user-settings-btn');
@@ -12150,12 +11993,7 @@ Phase G（Frame 36）：循环衔接
         sessionName,
         showConversationLoading: payload => ui.showConversationLoading(payload),
         getDraft: sid => chatStore.getDraft(sid),
-        getMirrorDraft: sid => {
-          try {
-            return sessionStorage.getItem(`phone_draft_${sid}`) || '';
-          } catch {}
-          return '';
-        },
+        getMirrorDraft: sid => readDraftMirror(sid),
         setInputText: value => ui.setInputText(value),
         syncReplyTargetComposer,
         setSessionLabel: sid => ui.setSessionLabel(sid),
@@ -12212,12 +12050,7 @@ Phase G（Frame 36）：循环衔接
         refreshChatAndContacts,
         nowPerfMs,
         getDraft: sid => chatStore.getDraft(sid),
-        getMirrorDraft: sid => {
-          try {
-            return sessionStorage.getItem(`phone_draft_${sid}`) || '';
-          } catch {}
-          return '';
-        },
+        getMirrorDraft: sid => readDraftMirror(sid),
         setInputText: value => ui.setInputText(value),
         syncReplyTargetComposer,
         setSessionLabel: sid => ui.setSessionLabel(sid),
@@ -14693,15 +14526,10 @@ Phase G（Frame 36）：循环衔接
     let sendTraceStarted = false;
     let sendErrorMessage = '';
     if (activeGeneration && !activeGeneration.cancelled) {
-      recordSendFlowTraceEvent({
-        phase: 'send.blocked',
+      recordSendFlowTraceEvent(buildSendBlockedTraceEvent({
         sessionId,
-        status: 'skipped',
-        summary: 'send skipped because generation is active',
-        details: {
-          activeGenerationId: activeGeneration.id,
-        },
-      });
+        activeGenerationId: activeGeneration.id,
+      }));
       window.toastr?.warning?.('正在生成中，请稍候...');
       return false;
     }
@@ -15088,8 +14916,8 @@ Phase G（Frame 36）：循环衔接
       return { inserted, updated, deleted, skipped };
     };
     const rollbackLastMemoryUpdateFromActions = async (sessionId, actions = []) => {
-      if (!memoryTableStore || !memoryTemplateStore) return false;
-      if (!Array.isArray(actions) || actions.length === 0) return false;
+      if (!memoryTableStore || !memoryTemplateStore) return 0;
+      if (!Array.isArray(actions) || actions.length === 0) return 0;
       const isGroupScope = String(sessionId || '').startsWith('group:');
       const actionContext = await loadSessionMemoryActionContext({
         memoryTemplateStore,
@@ -15098,7 +14926,7 @@ Phase G（Frame 36）：循环衔接
         isGroup: isGroupScope,
         uiMode,
       });
-      if (!actionContext?.record) return false;
+      if (!actionContext?.record) return 0;
       const {
         templateId,
         rowsByTableScope,
@@ -15132,45 +14960,101 @@ Phase G（Frame 36）：循环衔接
           toastr: window.toastr,
         });
       }
-      return changed > 0;
+      return changed;
     };
     const rollbackLastMemoryUpdate = async sessionId => {
       if (!memoryTableStore || !memoryTemplateStore) return false;
       const entry = getLastMemoryUpdate(window.appBridge, sessionId);
       const rollback = entry?.rollback;
       if (!rollback || !Array.isArray(rollback.tables) || !rollback.tables.length) {
-        return rollbackLastMemoryUpdateFromActions(sessionId, entry?.actions || []);
-      }
-      const rollbackContext = await loadSessionMemoryRollbackSnapshotContext({
-        memoryTemplateStore,
-        memoryTableStore,
-        sessionId,
-        isGroup: String(sessionId || '').startsWith('group:'),
-        uiMode,
-        rollback,
-      });
-      const templateId = String(rollbackContext?.templateId || '').trim();
-      if (!templateId) return false;
-      let changed = 0;
-      for (const tableContext of rollbackContext.tables) {
-        changed += await restoreMemoryRowsFromRollbackSnapshot({
-          memoryTableStore,
-          templateId,
-          tableId: tableContext.tableId,
-          scopeFields: tableContext.scopeFields,
-          currentRows: tableContext.currentRows,
-          snapshotRows: tableContext.snapshotRows,
-        });
-      }
-      if (changed > 0) {
-        notifyMemoryEditsRolledBack({
-          target: window,
+        const actionCount = Array.isArray(entry?.actions) ? entry.actions.length : 0;
+        recordMemoryUpdateTraceEvent(buildMemoryRollbackStartTraceEvent({
           sessionId,
-          templateId,
-          toastr: window.toastr,
-        });
+          mode: 'actions',
+          actionCount,
+        }));
+        try {
+          const changed = await rollbackLastMemoryUpdateFromActions(sessionId, entry?.actions || []);
+          recordMemoryUpdateTraceEvent(buildMemoryRollbackFinishTraceEvent({
+            sessionId,
+            mode: 'actions',
+            status: changed > 0 ? 'success' : 'skipped',
+            changed,
+            reason: changed > 0 ? '' : 'no-matching-actions',
+          }));
+          return changed > 0;
+        } catch (err) {
+          recordMemoryUpdateTraceEvent(buildMemoryRollbackFinishTraceEvent({
+            sessionId,
+            mode: 'actions',
+            status: 'error',
+            reason: 'exception',
+            errorMessage: err?.message ? String(err.message) : String(err || ''),
+          }));
+          throw err;
+        }
       }
-      return changed > 0;
+      recordMemoryUpdateTraceEvent(buildMemoryRollbackStartTraceEvent({
+        sessionId,
+        mode: 'snapshot',
+        tableCount: rollback.tables.length,
+      }));
+      try {
+        const rollbackContext = await loadSessionMemoryRollbackSnapshotContext({
+          memoryTemplateStore,
+          memoryTableStore,
+          sessionId,
+          isGroup: String(sessionId || '').startsWith('group:'),
+          uiMode,
+          rollback,
+        });
+        const templateId = String(rollbackContext?.templateId || '').trim();
+        if (!templateId) {
+          recordMemoryUpdateTraceEvent(buildMemoryRollbackFinishTraceEvent({
+            sessionId,
+            mode: 'snapshot',
+            status: 'skipped',
+            reason: 'missing-template',
+          }));
+          return false;
+        }
+        let changed = 0;
+        for (const tableContext of rollbackContext.tables) {
+          changed += await restoreMemoryRowsFromRollbackSnapshot({
+            memoryTableStore,
+            templateId,
+            tableId: tableContext.tableId,
+            scopeFields: tableContext.scopeFields,
+            currentRows: tableContext.currentRows,
+            snapshotRows: tableContext.snapshotRows,
+          });
+        }
+        if (changed > 0) {
+          notifyMemoryEditsRolledBack({
+            target: window,
+            sessionId,
+            templateId,
+            toastr: window.toastr,
+          });
+        }
+        recordMemoryUpdateTraceEvent(buildMemoryRollbackFinishTraceEvent({
+          sessionId,
+          mode: 'snapshot',
+          status: changed > 0 ? 'success' : 'skipped',
+          changed,
+          reason: changed > 0 ? '' : 'no-changes',
+        }));
+        return changed > 0;
+      } catch (err) {
+        recordMemoryUpdateTraceEvent(buildMemoryRollbackFinishTraceEvent({
+          sessionId,
+          mode: 'snapshot',
+          status: 'error',
+          reason: 'exception',
+          errorMessage: err?.message ? String(err.message) : String(err || ''),
+        }));
+        throw err;
+      }
     };
     const {
       confirmMemoryEditsIfNeeded,
@@ -15213,6 +15097,7 @@ Phase G（Frame 36）：循环衔接
       isMemoryAutoExtractSeparate,
       logger,
       memoryUpdateConfigManager,
+      recordTraceEvent: recordDebugTraceEvent,
       syncTurnCheckpointForMessage,
     });
     const applyChatModeAssistantRegex = (text, { depth } = {}) => applyChatModeAssistantRegexCore(text, {
@@ -15535,11 +15420,25 @@ Phase G（Frame 36）：循环衔接
           handleSend(null, { overrideText: String(content ?? ''), ignorePending: true, ...opts }),
       });
       if (pluginRuntime) {
-        pluginRuntime.dispatchEvent('command.parsed', {
+        const commandParsedPayload = {
           text,
           handled: Boolean(handled),
           sessionId,
-        }).catch(err => logger.warn('plugin command.parsed failed', err));
+        };
+        dispatchRuntimeHookLifecycleEvent({
+          runtime: pluginRuntime,
+          runtimeLabel: 'plugin',
+          hookName: 'command.parsed',
+          payload: commandParsedPayload,
+          sessionId,
+          details: {
+            handled: Boolean(handled),
+            commandLength: String(text || '').length,
+          },
+          logger,
+          warningMessage: 'plugin command.parsed failed',
+          recordTraceEvent: recordDebugTraceEvent,
+        });
       }
       if (handled) {
         ui.clearInput();
@@ -15547,15 +15446,22 @@ Phase G（Frame 36）：循环衔接
       }
     }
 
-    if (!isBridgeConfigured(window.appBridge)) {
-      ui.showErrorBanner('未配置 API，请先填写 Base URL / Key / 模型');
-      window.toastr?.warning('请先配置 API 信息', '未配置');
-      configPanel.show();
-      return false;
-    }
-    if (typeof navigator !== 'undefined' && !navigator.onLine) {
-      ui.showErrorBanner('当前离线，请连接网络后再试');
-      window.toastr?.warning('离线状态，无法发送');
+    const sendPreflightBlock = resolveSendPreflightBlock({
+      bridgeConfigured: isBridgeConfigured(window.appBridge),
+      online: typeof navigator === 'undefined' || Boolean(navigator.onLine),
+    });
+    if (sendPreflightBlock.blocked) {
+      recordSendFlowTraceEvent(buildSendPreflightBlockedTraceEvent({
+        sessionId,
+        reason: sendPreflightBlock.reason,
+      }));
+      ui.showErrorBanner(sendPreflightBlock.bannerMessage);
+      if (sendPreflightBlock.toastTitle) {
+        window.toastr?.warning(sendPreflightBlock.toastMessage, sendPreflightBlock.toastTitle);
+      } else {
+        window.toastr?.warning(sendPreflightBlock.toastMessage);
+      }
+      if (sendPreflightBlock.showConfigPanel) configPanel.show();
       return false;
     }
 
@@ -15665,30 +15571,16 @@ Phase G（Frame 36）：循环衔接
     let userMsg = null;
     if (!pendingMessagesToConfirm || pendingMessagesToConfirm.length === 0) {
       if (!suppressUserMessage && hasUserText) {
-        const stickerKey = isStickerAllowed() ? parseStickerToken(text) : '';
-        if (stickerKey) {
-          userMsg = {
-            role: 'user',
-            type: 'sticker',
-            content: stickerKey,
-            raw: text,
-            name: userName,
-            avatar: avatars.user,
-            time: formatNowTime(),
-          };
-        } else {
-          const storedUser = window.appBridge.applyInputStoredRegex(text, { isEdit: false });
-          const displayUser = window.appBridge.applyInputDisplayRegex(storedUser, { isEdit: false, depth: 0 });
-          userMsg = {
-            role: 'user',
-            type: 'text',
-            content: displayUser,
-            raw: storedUser,
-            name: userName,
-            avatar: avatars.user,
-            time: formatNowTime(),
-          };
-        }
+        userMsg = buildSendUserMessage({
+          text,
+          userName,
+          userAvatar: avatars.user,
+          time: formatNowTime(),
+          isStickerAllowed,
+          parseStickerToken,
+          applyInputStoredRegex: (value, opts) => window.appBridge.applyInputStoredRegex(value, opts),
+          applyInputDisplayRegex: (value, opts) => window.appBridge.applyInputDisplayRegex(value, opts),
+        });
         if (currentDraftReplyTarget) {
           userMsg = attachReplyTargetToMessage(userMsg, currentDraftReplyTarget);
           consumedDraftReplyTarget = true;
@@ -15753,25 +15645,20 @@ Phase G（Frame 36）：循环衔接
     const { protocolEnabled } = protocolFlags;
     disableSummaryForThis = protocolFlags.disableSummaryForThis;
     sendTraceStarted = true;
-    recordSendFlowTraceEvent({
-      phase: 'send.start',
+    recordSendFlowTraceEvent(buildSendStartTraceEvent({
       sessionId,
-      status: 'started',
-      summary: 'send flow started',
-      details: {
-        generationId,
-        stream: Boolean(config.stream),
-        protocolEnabled,
-        rpUiMode,
-        isGroupChat,
-        hasAttachments,
-        attachmentCount: attachmentQueue.length,
-        pendingCount: pendingMessagesToConfirm.length,
-        suppressUserMessage,
-        hasContinueTarget: Boolean(continueTarget),
-        hasSwipeTarget: Boolean(swipeTarget),
-      },
-    });
+      generationId,
+      stream: Boolean(config.stream),
+      protocolEnabled,
+      rpUiMode,
+      isGroupChat,
+      hasAttachments,
+      attachmentCount: attachmentQueue.length,
+      pendingCount: pendingMessagesToConfirm.length,
+      suppressUserMessage,
+      hasContinueTarget: Boolean(continueTarget),
+      hasSwipeTarget: Boolean(swipeTarget),
+    }));
     const createProtocolEventHandlers = ({ streamMode = false } = {}) => createSendProtocolEventHandlers({
       streamMode,
       sessionId,
@@ -16616,12 +16503,7 @@ Phase G（Frame 36）：循环衔接
           sessionName,
           showConversationLoading: payload => ui.showConversationLoading(payload),
           getDraft: sid => chatStore.getDraft(sid),
-          getMirrorDraft: sid => {
-            try {
-              return sessionStorage.getItem(`phone_draft_${sid}`) || '';
-            } catch {}
-            return '';
-          },
+          getMirrorDraft: sid => readDraftMirror(sid),
           setInputText: value => ui.setInputText(value),
           syncReplyTargetComposer,
           setSessionLabel: sid => ui.setSessionLabel(sid),
@@ -16646,6 +16528,7 @@ Phase G（Frame 36）：循环衔接
           refreshRpToolbar,
           refreshChatAndContacts,
         }),
+        recordTraceEvent: recordDebugTraceEvent,
       });
     },
   });
@@ -17754,5 +17637,23 @@ document.addEventListener('DOMContentLoaded', () => {
   (async () => {
     await themeManager.init();
     await initApp();
-  })().catch(err => reportFatalError(err, 'App init failed'));
+    finishAppBootTrace({
+      traceTimeline: appBootTraceTimeline,
+      eventId: appBootTraceEvent?.eventId,
+      status: 'success',
+      details: { runtimeReady: appRuntimeReady },
+    });
+  })().catch((err) => {
+    finishAppBootTrace({
+      traceTimeline: appBootTraceTimeline,
+      eventId: appBootTraceEvent?.eventId,
+      status: 'error',
+      summary: 'app boot failed',
+      details: {
+        runtimeReady: appRuntimeReady,
+        errorMessage: getRuntimeErrorMessage(err),
+      },
+    });
+    reportFatalError(err, 'App init failed');
+  });
 });

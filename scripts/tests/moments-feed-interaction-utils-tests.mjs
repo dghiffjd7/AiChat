@@ -69,9 +69,10 @@ import {
   const pendingComment = new Set();
   const added = [];
   const calls = [];
+  const traces = [];
   const inputEl = { value: ' 测试评论 ' };
   const send = createMomentFeedSendHandler({
-    moment: { id: 'm1' },
+    moment: { id: 'm1', originSessionId: 'contact:moment' },
     inputEl,
     replyTargets,
     openComposer,
@@ -87,6 +88,7 @@ import {
       calls.push(['comment', momentId, text, meta.replyTo?.id]);
     },
     loggerWarn: (...args) => calls.push(['warn', ...args]),
+    recordLifecycleEvent: event => traces.push(event),
     generateCommentId: () => 'comment-fixed',
   });
   const result = await send();
@@ -110,7 +112,41 @@ import {
     ['comment', 'm1', '测试评论', 'c1'],
     ['render', { preserveScroll: true }],
   ]);
+  assert.deepEqual(traces.map(event => [event.phase, event.status, event.sessionId, event.momentId, event.details]), [
+    ['comment.local.start', 'started', 'contact:moment', 'm1', {
+      userCommentId: 'comment-fixed',
+      isReplyToComment: true,
+    }],
+    ['comment.local.finish', 'success', 'contact:moment', 'm1', {
+      userCommentId: 'comment-fixed',
+      isReplyToComment: true,
+    }],
+  ]);
   console.log('ok - createMomentFeedSendHandler stores local comment clears state and forwards async callback');
+}
+
+{
+  const traces = [];
+  const emptySend = createMomentFeedSendHandler({
+    moment: { id: 'm-empty', originSessionId: 'contact:moment' },
+    inputEl: { value: '   ' },
+    pendingComment: new Set(),
+    recordLifecycleEvent: event => traces.push(event),
+  });
+  const pendingSend = createMomentFeedSendHandler({
+    moment: { id: 'm-pending', originSessionId: 'contact:moment' },
+    inputEl: { value: 'comment' },
+    pending: true,
+    pendingComment: new Set(),
+    recordLifecycleEvent: event => traces.push(event),
+  });
+  assert.equal(await emptySend(), false);
+  assert.equal(await pendingSend(), false);
+  assert.deepEqual(traces.map(event => [event.phase, event.status, event.momentId, event.details.reason]), [
+    ['comment.local.skipped', 'skipped', 'm-empty', 'empty-text'],
+    ['comment.local.skipped', 'skipped', 'm-pending', 'pending'],
+  ]);
+  console.log('ok - createMomentFeedSendHandler emits optional local comment skip traces');
 }
 
 {
