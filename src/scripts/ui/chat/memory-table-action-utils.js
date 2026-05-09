@@ -360,6 +360,7 @@ export const updateMemoryRowInIndexes = ({
   rowId = '',
   row = null,
   rowData = null,
+  sortOrder = undefined,
 } = {}) => {
   const id = String(rowId || row?.id || '').trim();
   if (!id) return null;
@@ -371,6 +372,9 @@ export const updateMemoryRowInIndexes = ({
       ? rowData
       : (currentRow?.row_data || {}),
   };
+  if (sortOrder !== undefined && sortOrder !== null && Number.isFinite(Number(sortOrder))) {
+    nextRow.sort_order = Number(sortOrder);
+  }
   rowsById?.set?.(id, nextRow);
   const tableId = String(nextRow?.table_id || '').trim();
   if (!tableId) return nextRow;
@@ -471,6 +475,7 @@ export const resolveMemoryActionMutationPlan = ({
       kind: 'updateRow',
       rowId: target.rowId,
       row: target.row,
+      tableId,
       merged,
     };
   }
@@ -534,13 +539,24 @@ export const executeMemoryActionMutationPlan = async ({
     if (!memoryTableStore?.updateMemory) {
       return { inserted: 0, updated: 0, deleted: 0, skipped: 1 };
     }
-    await memoryTableStore.updateMemory({ id: plan.rowId, row_data: plan.merged });
+    const rowData = normalizeTimelineMemoryActionData({
+      tableId: plan.tableId,
+      rowData: plan.merged,
+      currentTurnNumber,
+    });
+    const sortOrder = isTimelineMemoryTableId(plan.tableId)
+      ? extractMemoryTimelineRound(rowData?.time)
+      : null;
+    const payload = { id: plan.rowId, row_data: rowData };
+    if (sortOrder !== null) payload.sort_order = sortOrder;
+    await memoryTableStore.updateMemory(payload);
     updateMemoryRowInIndexes({
       rowsById,
       rowsByTableScope,
       rowId: plan.rowId,
       row: plan.row,
-      rowData: plan.merged,
+      rowData,
+      sortOrder,
     });
     return { inserted: 0, updated: 1, deleted: 0, skipped: 0 };
   }

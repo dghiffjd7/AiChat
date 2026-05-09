@@ -122,3 +122,27 @@ import {
   assert.equal(plan.unrepairable.length, 0);
   console.log('ok - buildMemoryTimelineRepairPlan repairs mismatched timeline rows only');
 }
+
+{
+  const plan = buildMemoryTimelineRepairPlan({
+    tables: [{ id: 'group_summary', scope: 'group' }],
+    messages: [
+      { id: '1770000000000-u1', role: 'user', timestamp: 1770000000000 },
+      { id: '1770000001000-a1', role: 'assistant', timestamp: 1770000001000 },
+      { id: '1770000002000-u2', role: 'user', timestamp: 1770000002000 },
+      { id: '1770000008000-a2', role: 'assistant', timestamp: 1770000008000 },
+    ],
+    rows: [
+      {
+        id: 'mem_1770000003000_0',
+        table_id: 'group_summary',
+        row_data: { summary: 'new', time: '第2轮' },
+        sort_order: 2,
+      },
+    ],
+  });
+  assert.equal(plan.checked, 1);
+  assert.equal(plan.repairable.length, 0);
+  assert.equal(plan.unrepairable.length, 0);
+  console.log('ok - buildMemoryTimelineRepairPlan trusts canonical round when timestamp is slightly early');
+}

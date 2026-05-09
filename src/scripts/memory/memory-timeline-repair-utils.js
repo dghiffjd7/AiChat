@@ -180,6 +180,34 @@ export const matchMemoryTimelineRowToAssistant = ({
   };
 };
 
+const findTimelineRoundCandidate = ({
+  assistantTimeline = [],
+  round = null,
+  rowTimestamp = 0,
+  maxDistanceMs = DEFAULT_MAX_MATCH_DISTANCE_MS,
+} = {}) => {
+  const expectedRound = Math.trunc(Number(round));
+  if (!Number.isFinite(expectedRound) || expectedRound <= 0) return null;
+  if (!Array.isArray(assistantTimeline) || !assistantTimeline.length) return null;
+  const rowTs = Number(rowTimestamp || 0);
+  let candidate = null;
+  for (const item of assistantTimeline) {
+    if (Math.trunc(Number(item?.floor || 0)) !== expectedRound) continue;
+    const ts = Number(item?.timestamp || 0);
+    const distance = Number.isFinite(ts) && ts > 0 && rowTs > 0 ? Math.abs(rowTs - ts) : 0;
+    const limit = Number(maxDistanceMs);
+    if (Number.isFinite(limit) && limit > 0 && distance > limit) continue;
+    if (!candidate || distance < Number(candidate.distanceMs || Infinity)) {
+      candidate = {
+        ...item,
+        distanceMs: distance,
+        rowTimestamp: rowTs,
+      };
+    }
+  }
+  return candidate;
+};
+
 export const buildMemoryTimelineRepairPlan = ({
   rows = [],
   messages = [],
@@ -213,13 +241,28 @@ export const buildMemoryTimelineRepairPlan = ({
     const table = tableById.get(tableId);
     if (table && String(table.scope || '').trim().toLowerCase() === 'global') continue;
     checked += 1;
+    const currentRound = extractMemoryTimelineRound(row?.row_data?.time);
+    const currentSortOrder = getMemoryRowSortOrder(row);
+    const rowTimestamp = getMemoryTimelineRowTimestamp(row);
     const match = matchMemoryTimelineRowToAssistant({
       row,
       assistantTimeline,
       maxDistanceMs,
     });
+    const roundCandidate = findTimelineRoundCandidate({
+      assistantTimeline,
+      round: currentRound,
+      rowTimestamp,
+      maxDistanceMs,
+    });
+    if (
+      currentRound !== null
+      && currentSortOrder === currentRound
+      && roundCandidate
+    ) {
+      continue;
+    }
     if (!match?.floor) {
-      const currentRound = extractMemoryTimelineRound(row?.row_data?.time);
       if (currentRound !== null && maxTimelineRound && currentRound > maxTimelineRound) {
         unrepairable.push({
           rowId: id,
@@ -231,8 +274,6 @@ export const buildMemoryTimelineRepairPlan = ({
       continue;
     }
     const expectedRound = Number(match.floor);
-    const currentRound = extractMemoryTimelineRound(row?.row_data?.time);
-    const currentSortOrder = getMemoryRowSortOrder(row);
     if (currentRound === expectedRound && currentSortOrder === expectedRound) continue;
     const rowData = row?.row_data && typeof row.row_data === 'object' ? { ...row.row_data } : {};
     rowData.time = buildMemoryTimelineLabel(expectedRound);

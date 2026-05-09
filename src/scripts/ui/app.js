@@ -14896,7 +14896,39 @@ Phase G（Frame 36）：循环衔接
       const n = Math.trunc(Number(value));
       return Number.isFinite(n) && n > 0 ? n : 0;
     };
-    const resolveMemoryTimelineTurnNumber = ({
+    const loadMemoryTimelineMessagesForSession = async (targetSessionId = '') => {
+      const sid = String(targetSessionId || '').trim();
+      if (!sid) return [];
+      try {
+        if (typeof chatStore.exportThreadMessages === 'function') {
+          const exported = await chatStore.exportThreadMessages(sid);
+          if (Array.isArray(exported) && exported.length) return exported;
+        }
+      } catch (err) {
+        logger.debug('memory timeline full message export failed', err);
+      }
+      try {
+        const loaded = chatStore.getMessages(sid);
+        return Array.isArray(loaded) ? loaded : [];
+      } catch {
+        return [];
+      }
+    };
+    const countMemoryTimelineTurns = async targetSessionId => normalizeMemoryTimelineTurnNumber(
+      countUserTurnsForMemoryTimeline(await loadMemoryTimelineMessagesForSession(targetSessionId)),
+    );
+    const resolveMessageTimelineTurnNumber = async (targetSessionId, messageId) => {
+      const sid = String(targetSessionId || '').trim();
+      const mid = String(messageId || '').trim();
+      if (!sid || !mid) return 0;
+      return normalizeMemoryTimelineTurnNumber(
+        resolveTurnIndexForAssistantCore(
+          await loadMemoryTimelineMessagesForSession(sid),
+          mid,
+        ),
+      );
+    };
+    const resolveMemoryTimelineTurnNumber = async ({
       sessionId = '',
       timelineTurnNumber = null,
       timelineMessageId = '',
@@ -14906,7 +14938,7 @@ Phase G（Frame 36）：循环衔接
       if (!sid) return 0;
       if (typeof resolveTimelineTurnNumber === 'function') {
         try {
-          const resolved = normalizeMemoryTimelineTurnNumber(resolveTimelineTurnNumber(sid));
+          const resolved = normalizeMemoryTimelineTurnNumber(await resolveTimelineTurnNumber(sid));
           if (resolved > 0) return resolved;
         } catch {}
       }
@@ -14914,12 +14946,10 @@ Phase G（Frame 36）：循环衔接
       if (explicit > 0) return explicit;
       const messageId = String(timelineMessageId || '').trim();
       if (messageId) {
-        const turnIndex = normalizeMemoryTimelineTurnNumber(resolveTurnIndexForAssistant(sid, messageId));
+        const turnIndex = await resolveMessageTimelineTurnNumber(sid, messageId);
         if (turnIndex > 0) return turnIndex;
       }
-      return normalizeMemoryTimelineTurnNumber(
-        countUserTurnsForMemoryTimeline(chatStore.getMessages(sid) || []),
-      );
+      return countMemoryTimelineTurns(sid);
     };
     const applyMemoryEdits = async ({
       actions,
@@ -14957,7 +14987,7 @@ Phase G（Frame 36）：循环衔接
       if (!actionContext?.record) return null;
       const { templateId } = actionContext;
 
-      const currentTurnNumber = resolveMemoryTimelineTurnNumber({
+      const currentTurnNumber = await resolveMemoryTimelineTurnNumber({
         sessionId,
         timelineTurnNumber,
         timelineMessageId,
@@ -15931,31 +15961,28 @@ Phase G（Frame 36）：循环衔接
       processProtocolRetryEvent,
       showWarning: message => window.toastr?.warning?.(message),
     });
-    const countMemoryTimelineTurns = targetSessionId => normalizeMemoryTimelineTurnNumber(
-      countUserTurnsForMemoryTimeline(chatStore.getMessages(targetSessionId) || []),
-    );
-    const resolveMessageTimelineTurnNumber = (targetSessionId, messageId) => {
-      const sid = String(targetSessionId || '').trim();
-      const mid = String(messageId || '').trim();
-      if (!sid || !mid) return 0;
-      return normalizeMemoryTimelineTurnNumber(resolveTurnIndexForAssistant(sid, mid));
-    };
-    const resolveTargetMemoryTimelineTurnNumber = (targetSessionId = sessionId) => {
+    const resolveTargetMemoryTimelineTurnNumber = async (targetSessionId = sessionId) => {
       const sid = String(targetSessionId || sessionId || '').trim();
       if (!sid) return 0;
       const targetMessageId = String(swipeTarget?.msgId || continueTarget?.messageId || '').trim();
       if (targetMessageId) {
-        const turnIndex = resolveMessageTimelineTurnNumber(sid, targetMessageId);
+        const turnIndex = await resolveMessageTimelineTurnNumber(sid, targetMessageId);
         if (turnIndex > 0) return turnIndex;
         return countMemoryTimelineTurns(sid);
       }
       return countMemoryTimelineTurns(sid);
     };
-    const resolveTailMemoryTimelineTurnNumber = (targetSessionId = sessionId) => {
+    const resolveTailMemoryTimelineTurnNumber = async (targetSessionId = sessionId) => {
       const sid = String(targetSessionId || sessionId || '').trim();
       if (!sid) return 0;
-      const tail = findTailTrackedAssistantMessage(sid);
-      const turnIndex = resolveMessageTimelineTurnNumber(sid, tail?.id);
+      const messages = await loadMemoryTimelineMessagesForSession(sid);
+      const tail = findTailTrackedAssistantMessageCore(
+        messages,
+        message => isCheckpointTrackedAssistantMessage(message, sid),
+      );
+      const turnIndex = tail?.id
+        ? normalizeMemoryTimelineTurnNumber(resolveTurnIndexForAssistantCore(messages, tail.id))
+        : 0;
       if (turnIndex > 0) return turnIndex;
       return resolveTargetMemoryTimelineTurnNumber(sid);
     };

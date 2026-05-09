@@ -1058,6 +1058,51 @@ test('normalizeTimelineMemoryActionData and resolveMemoryInsertSortOrder use can
   );
 });
 
+test('executeMemoryActionMutationPlan keeps timeline update sort_order aligned', async () => {
+  const rowsById = new Map([
+    ['row-1', {
+      id: 'row-1',
+      table_id: 'chat_summary',
+      contact_id: 'chat:1',
+      row_data: { summary: 'old', time: '第1轮' },
+      sort_order: 1,
+    }],
+  ]);
+  const rowsByTableScope = new Map([
+    ['chat_summary:contact', [rowsById.get('row-1')]],
+  ]);
+  const updated = [];
+  const memoryTableStore = {
+    async updateMemory(payload) {
+      updated.push(payload);
+    },
+  };
+
+  assert.deepEqual(
+    await executeMemoryActionMutationPlan({
+      plan: {
+        kind: 'updateRow',
+        tableId: 'chat_summary',
+        rowId: 'row-1',
+        row: rowsById.get('row-1'),
+        merged: { summary: 'next', time: '第99轮' },
+      },
+      memoryTableStore,
+      rowsById,
+      rowsByTableScope,
+      currentTurnNumber: 4,
+    }),
+    { inserted: 0, updated: 1, deleted: 0, skipped: 0 },
+  );
+  assert.deepEqual(updated, [{
+    id: 'row-1',
+    row_data: { summary: 'next', time: '第4轮' },
+    sort_order: 4,
+  }]);
+  assert.deepEqual(rowsById.get('row-1')?.row_data, { summary: 'next', time: '第4轮' });
+  assert.equal(rowsById.get('row-1')?.sort_order, 4);
+});
+
 test('pickNewestMemoryRow prefers latest updated/created timestamp and later index ties', () => {
   const rows = [
     { id: 'row-1', updated_at: 100 },
