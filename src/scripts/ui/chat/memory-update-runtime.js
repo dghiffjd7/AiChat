@@ -123,6 +123,7 @@ export const createMemoryUpdateRuntime = ({
       await handleMemoryEditsFromRaw(response, {
         sessionId,
         isGroup,
+        timelineMessageId: checkpointMessageId,
         force: true,
         requestPrompt: request.requestPrompt,
       });

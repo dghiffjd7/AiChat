@@ -758,10 +758,6 @@ export const runProtocolBufferedResponseFlow = async (
   let didAnything = false;
   let mutatedMoments = false;
 
-  if (typeof handleMemoryEditsFromRaw === 'function') {
-    handleMemoryEditsFromRaw(raw, memoryOptions || {}).catch(() => {});
-  }
-
   ({
     didAnything,
     mutatedMoments,
@@ -772,6 +768,10 @@ export const runProtocolBufferedResponseFlow = async (
   }, {
     eventHandlers,
   }));
+
+  if (typeof handleMemoryEditsFromRaw === 'function') {
+    await handleMemoryEditsFromRaw(raw, memoryOptions || {});
+  }
 
   return finalizeProtocolBufferedFlow({
     rawText: raw,

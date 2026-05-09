@@ -8,6 +8,7 @@ import {
   buildMemoryRowBucketKey,
   buildMemoryRowsIndex,
   countAssistantTurnsForMemoryTimeline,
+  countUserTurnsForMemoryTimeline,
   createMemoryActionResolvers,
   deleteNewestMatchingMemoryRow,
   executeMemoryActionBatchMutation,
@@ -1009,7 +1010,20 @@ test('countAssistantTurnsForMemoryTimeline ignores pending, greetings, and memor
   );
 });
 
-test('normalizeTimelineMemoryActionData and resolveMemoryInsertSortOrder preserve timeline rounds', () => {
+test('countUserTurnsForMemoryTimeline ignores assistant-generated user messages', () => {
+  assert.equal(
+    countUserTurnsForMemoryTimeline([
+      { role: 'user', content: '用户1' },
+      { role: 'assistant', content: '助手1' },
+      { role: 'user', meta: { generatedByAssistant: true }, content: '旁白生成' },
+      { role: 'user', content: '用户2' },
+      { role: 'assistant', content: '助手2' },
+    ]),
+    2,
+  );
+});
+
+test('normalizeTimelineMemoryActionData and resolveMemoryInsertSortOrder use canonical timeline rounds', () => {
   assert.deepEqual(
     normalizeTimelineMemoryActionData({
       tableId: 'chat_summary',
@@ -1025,6 +1039,14 @@ test('normalizeTimelineMemoryActionData and resolveMemoryInsertSortOrder preserv
       currentTurnNumber: 0,
     }),
     { time: '第7轮' },
+  );
+  assert.deepEqual(
+    normalizeTimelineMemoryActionData({
+      tableId: 'group_summary',
+      rowData: { summary: 'new', time: '第640轮' },
+      currentTurnNumber: 324,
+    }),
+    { summary: 'new', time: '第324轮' },
   );
   assert.equal(
     resolveMemoryInsertSortOrder({

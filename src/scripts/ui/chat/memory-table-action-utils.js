@@ -883,6 +883,18 @@ export const countAssistantTurnsForMemoryTimeline = (messages = []) => {
   return count;
 };
 
+export const countUserTurnsForMemoryTimeline = (messages = []) => {
+  const list = Array.isArray(messages) ? messages : [];
+  let count = 0;
+  for (const message of list) {
+    if (!message || message.role !== 'user') continue;
+    const meta = message?.meta && typeof message.meta === 'object' ? message.meta : {};
+    if (meta.generatedByAssistant === true) continue;
+    count += 1;
+  }
+  return count;
+};
+
 export const normalizeTimelineMemoryActionData = ({
   tableId = '',
   rowData = null,
@@ -895,7 +907,10 @@ export const normalizeTimelineMemoryActionData = ({
     return next;
   }
   const round = extractMemoryTimelineRound(next.time);
-  if (round !== null) next.time = buildMemoryTimelineLabel(round);
+  if (round !== null) {
+    next.time = buildMemoryTimelineLabel(round);
+    return next;
+  }
   return next;
 };
 

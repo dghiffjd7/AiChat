@@ -245,7 +245,7 @@ import {
   normalizeTableRowData,
 } from './chat/memory-edit-utils.js';
 import {
-  countAssistantTurnsForMemoryTimeline,
+  countUserTurnsForMemoryTimeline,
   deleteNewestMatchingMemoryRow,
   executeMemoryActionBatchMutation,
   restoreMemoryRowsFromRollbackSnapshot,
@@ -353,6 +353,7 @@ import {
   runBufferedAssistantResponseFlow,
   runCreativeStreamAssistantResponseFlow,
   runLegacyStreamAssistantResponseFlow,
+  syncProtocolResponseTurnCheckpoints,
 } from './chat/send-side-effect-utils.js';
 import {
   maybePromptScriptAuthorization,
@@ -386,10 +387,19 @@ import {
   resolveSessionMemoryTemplateContextSafe,
 } from './session-memory-table-utils.js';
 import {
+  emitMemoryRowsUpdated as emitSharedMemoryRowsUpdated,
   notifyMemoryEditsApplied,
   notifyMemoryEditsRolledBack,
 } from './session-memory-event-utils.js';
 import { batchCreateMemoriesWithFallback } from './session-memory-write-utils.js';
+import {
+  buildMemoryTimelineAutoRepairStateKey,
+  buildMemoryTimelineRepairPlan,
+  isMemoryTimelineAutoRepairDone,
+  markMemoryTimelineAutoRepairDone,
+  MEMORY_TIMELINE_AUTO_REPAIR_VERSION,
+  normalizeMemoryTimelineAutoRepairState,
+} from '../memory/memory-timeline-repair-utils.js';
 import { GroupCreatePanel, GroupSettingsPanel } from './group-chat-panels.js';
 import { GroupPanel } from './group-panel.js';
 import { MediaPicker } from './media-picker.js';
@@ -13526,6 +13536,42 @@ Phase G（Frame 36）：循环衔接
     await refreshTurnCheckpointSnapshotReachability(sid);
     return checkpoint;
   };
+  const syncCurrentMemoryStateAfterTimelineRepair = async (sessionId, { source = 'timeline_repair' } = {}) => {
+    const sid = String(sessionId || '').trim();
+    if (!sid || !isTurnCheckpointSessionEnabled(sid)) return false;
+    const tailMessage = findTailTrackedAssistantMessage(sid);
+    if (tailMessage) {
+      const checkpoint = await syncTurnCheckpointForMessage(sid, tailMessage, {
+        setPointer: true,
+        captureCurrentActiveState: true,
+      });
+      if (checkpoint) {
+        logger.info(
+          `[memory-timeline-repair] synced current memory snapshot session=${sid} tail=${String(tailMessage.id || '').trim()} source=${String(source || '').trim() || 'timeline_repair'}`,
+        );
+        return true;
+      }
+      return false;
+    }
+    const baselineId = await ensureSessionBaselineCheckpointSnapshot(sid, { force: true });
+    if (baselineId) {
+      logger.info(
+        `[memory-timeline-repair] refreshed baseline memory snapshot session=${sid} source=${String(source || '').trim() || 'timeline_repair'}`,
+      );
+      return true;
+    }
+    return false;
+  };
+  window.addEventListener('memory-timeline-repaired', (event) => {
+    const detail = event?.detail && typeof event.detail === 'object' ? event.detail : {};
+    const sid = String(detail.sessionId || '').trim();
+    if (!sid) return;
+    syncCurrentMemoryStateAfterTimelineRepair(sid, {
+      source: String(detail.source || 'timeline_repair_event'),
+    }).catch((err) => {
+      logger.warn('sync memory timeline repair snapshot failed', err);
+    });
+  });
   const restoreMemoryFromCurrentTailAssistant = async (sessionId, {
     refreshBaselineWhenNoTail = false,
     source = 'tail_restore',
@@ -13865,6 +13911,7 @@ Phase G（Frame 36）：循环衔接
     clearSessionTurnCheckpointState,
     renameSessionTurnCheckpointState,
     deleteArchiveTurnCheckpointState,
+    syncCurrentMemoryStateAfterTimelineRepair,
     buildArchivePointerFromCurrentThread,
     setArchivePointerForArchive,
     restoreArchivePointerForLoadedThread,
@@ -14494,6 +14541,9 @@ Phase G（Frame 36）：循环衔接
     updatePendingFloat(sessionId);
   };
 
+  const MEMORY_TIMELINE_AUTO_REPAIR_STORAGE_KEY = 'memory_timeline_auto_repair_state_v1';
+  const memoryTimelineAutoRepairInFlight = new Set();
+
   // Send handler (发送 pending 消息)
   /**
    * @param {string} targetMessageId - 可选，点击的 pending 消息 ID（发送到这里）
@@ -14842,7 +14892,43 @@ Phase G（Frame 36）：循环衔接
       uiMode,
       filterTables,
     });
-    const applyMemoryEdits = async ({ actions, sessionId, isGroup }) => {
+    const normalizeMemoryTimelineTurnNumber = (value) => {
+      const n = Math.trunc(Number(value));
+      return Number.isFinite(n) && n > 0 ? n : 0;
+    };
+    const resolveMemoryTimelineTurnNumber = ({
+      sessionId = '',
+      timelineTurnNumber = null,
+      timelineMessageId = '',
+      resolveTimelineTurnNumber = null,
+    } = {}) => {
+      const sid = String(sessionId || '').trim();
+      if (!sid) return 0;
+      if (typeof resolveTimelineTurnNumber === 'function') {
+        try {
+          const resolved = normalizeMemoryTimelineTurnNumber(resolveTimelineTurnNumber(sid));
+          if (resolved > 0) return resolved;
+        } catch {}
+      }
+      const explicit = normalizeMemoryTimelineTurnNumber(timelineTurnNumber);
+      if (explicit > 0) return explicit;
+      const messageId = String(timelineMessageId || '').trim();
+      if (messageId) {
+        const turnIndex = normalizeMemoryTimelineTurnNumber(resolveTurnIndexForAssistant(sid, messageId));
+        if (turnIndex > 0) return turnIndex;
+      }
+      return normalizeMemoryTimelineTurnNumber(
+        countUserTurnsForMemoryTimeline(chatStore.getMessages(sid) || []),
+      );
+    };
+    const applyMemoryEdits = async ({
+      actions,
+      sessionId,
+      isGroup,
+      timelineTurnNumber = null,
+      timelineMessageId = '',
+      resolveTimelineTurnNumber = null,
+    }) => {
       if (!Array.isArray(actions) || actions.length === 0) return null;
       if (!memoryTableStore || !memoryTemplateStore) return null;
 
@@ -14871,7 +14957,12 @@ Phase G（Frame 36）：循环衔接
       if (!actionContext?.record) return null;
       const { templateId } = actionContext;
 
-      const currentTurnNumber = countAssistantTurnsForMemoryTimeline(chatStore.getMessages(sessionId) || []);
+      const currentTurnNumber = resolveMemoryTimelineTurnNumber({
+        sessionId,
+        timelineTurnNumber,
+        timelineMessageId,
+        resolveTimelineTurnNumber,
+      });
       const result = await executeMemoryActionBatchMutation({
         actions,
         actionContext,
@@ -14914,6 +15005,142 @@ Phase G（Frame 36）：循环衔接
         logger.debug('memory auto extract skipped actions', { skipped });
       }
       return { inserted, updated, deleted, skipped };
+    };
+    const readMemoryTimelineAutoRepairState = () => {
+      try {
+        return normalizeMemoryTimelineAutoRepairState(
+          JSON.parse(localStorage.getItem(MEMORY_TIMELINE_AUTO_REPAIR_STORAGE_KEY) || '{}'),
+        );
+      } catch {
+        return {};
+      }
+    };
+    const writeMemoryTimelineAutoRepairState = (state = {}) => {
+      try {
+        localStorage.setItem(
+          MEMORY_TIMELINE_AUTO_REPAIR_STORAGE_KEY,
+          JSON.stringify({ entries: normalizeMemoryTimelineAutoRepairState(state) }),
+        );
+      } catch (err) {
+        logger.debug('persist memory timeline auto repair state failed', err);
+      }
+    };
+    const getMemoryTimelineAutoRepairScopeId = () => (
+      String(memoryTableStore?.scopeId || activePersonaScopeKey || getPersonaScopeKey(activePersonaId) || 'default').trim() || 'default'
+    );
+    const markMemoryTimelineAutoRepairComplete = ({ key, changed = 0, checked = 0 } = {}) => {
+      const nextState = markMemoryTimelineAutoRepairDone({
+        state: readMemoryTimelineAutoRepairState(),
+        key,
+        version: MEMORY_TIMELINE_AUTO_REPAIR_VERSION,
+        changed,
+        checked,
+      });
+      writeMemoryTimelineAutoRepairState(nextState);
+      return nextState;
+    };
+    const runMemoryTimelineAutoRepairOnceAfterSend = async (targetSessionId = sessionId, targetIsGroup = isGroupChat) => {
+      const sid = String(targetSessionId || '').trim();
+      if (!sid) return null;
+      if (getMemoryStorageMode() !== 'table') return null;
+      if (!memoryTableStore?.getMemories || !memoryTableStore?.updateMemory || !memoryTemplateStore) return null;
+
+      const stateKey = buildMemoryTimelineAutoRepairStateKey({
+        scopeId: getMemoryTimelineAutoRepairScopeId(),
+        sessionId: sid,
+        version: MEMORY_TIMELINE_AUTO_REPAIR_VERSION,
+      });
+      if (!stateKey) return null;
+      if (isMemoryTimelineAutoRepairDone(readMemoryTimelineAutoRepairState(), stateKey)) {
+        return { skipped: 'already-done' };
+      }
+      if (memoryTimelineAutoRepairInFlight.has(stateKey)) {
+        return { skipped: 'in-flight' };
+      }
+
+      memoryTimelineAutoRepairInFlight.add(stateKey);
+      try {
+        if (isMemoryTimelineAutoRepairDone(readMemoryTimelineAutoRepairState(), stateKey)) {
+          return { skipped: 'already-done' };
+        }
+        const actionContext = await loadSessionMemoryActionContext({
+          memoryTemplateStore,
+          memoryTableStore,
+          sessionId: sid,
+          isGroup: Boolean(targetIsGroup || sid.startsWith('group:')),
+          uiMode,
+          filterTables: true,
+        });
+        if (!actionContext?.record) return null;
+
+        const tables = actionContext.tableById instanceof Map
+          ? [...actionContext.tableById.values()]
+          : [];
+        const rows = Array.isArray(actionContext.scopedRows) ? actionContext.scopedRows : [];
+        if (!tables.length || !rows.length) {
+          markMemoryTimelineAutoRepairComplete({ key: stateKey, checked: 0, changed: 0 });
+          return { checked: 0, changed: 0 };
+        }
+
+        let messages = [];
+        try {
+          if (typeof chatStore.exportThreadMessages === 'function') {
+            messages = await chatStore.exportThreadMessages(sid);
+          }
+        } catch (err) {
+          logger.debug('auto memory timeline repair full message export failed', err);
+        }
+        if (!Array.isArray(messages) || !messages.length) {
+          messages = chatStore.getMessages(sid) || [];
+        }
+        if (!Array.isArray(messages) || !messages.length) return null;
+
+        const plan = buildMemoryTimelineRepairPlan({
+          rows,
+          messages,
+          tables,
+          maxDistanceMs: 5 * 60 * 1000,
+        });
+        const repairable = (Array.isArray(plan.repairable) ? plan.repairable : [])
+          .filter(item => item?.rowId && item?.rowData && Number(item?.expectedRound) > 0);
+
+        let changed = 0;
+        for (const item of repairable) {
+          await memoryTableStore.updateMemory({
+            id: item.rowId,
+            row_data: item.rowData,
+            sort_order: item.sortOrder,
+          });
+          changed += 1;
+        }
+
+        if (changed > 0) {
+          await syncCurrentMemoryStateAfterTimelineRepair(sid, {
+            source: 'auto_timeline_repair',
+          });
+          emitSharedMemoryRowsUpdated({
+            target: window,
+            sessionId: sid,
+            templateId: actionContext.templateId,
+          });
+          window.toastr?.info?.(`已自动修正 ${changed} 条记忆表格轮次`);
+        }
+        markMemoryTimelineAutoRepairComplete({
+          key: stateKey,
+          checked: plan.checked,
+          changed,
+        });
+        logger.info(
+          `[memory-timeline-auto-repair] session=${sid} checked=${plan.checked} changed=${changed} unrepairable=${plan.unrepairable?.length || 0} version=${MEMORY_TIMELINE_AUTO_REPAIR_VERSION}`,
+        );
+        return {
+          checked: plan.checked,
+          changed,
+          unrepairable: plan.unrepairable?.length || 0,
+        };
+      } finally {
+        memoryTimelineAutoRepairInFlight.delete(stateKey);
+      }
     };
     const rollbackLastMemoryUpdateFromActions = async (sessionId, actions = []) => {
       if (!memoryTableStore || !memoryTemplateStore) return 0;
@@ -15704,6 +15931,63 @@ Phase G（Frame 36）：循环衔接
       processProtocolRetryEvent,
       showWarning: message => window.toastr?.warning?.(message),
     });
+    const countMemoryTimelineTurns = targetSessionId => normalizeMemoryTimelineTurnNumber(
+      countUserTurnsForMemoryTimeline(chatStore.getMessages(targetSessionId) || []),
+    );
+    const resolveMessageTimelineTurnNumber = (targetSessionId, messageId) => {
+      const sid = String(targetSessionId || '').trim();
+      const mid = String(messageId || '').trim();
+      if (!sid || !mid) return 0;
+      return normalizeMemoryTimelineTurnNumber(resolveTurnIndexForAssistant(sid, mid));
+    };
+    const resolveTargetMemoryTimelineTurnNumber = (targetSessionId = sessionId) => {
+      const sid = String(targetSessionId || sessionId || '').trim();
+      if (!sid) return 0;
+      const targetMessageId = String(swipeTarget?.msgId || continueTarget?.messageId || '').trim();
+      if (targetMessageId) {
+        const turnIndex = resolveMessageTimelineTurnNumber(sid, targetMessageId);
+        if (turnIndex > 0) return turnIndex;
+        return countMemoryTimelineTurns(sid);
+      }
+      return countMemoryTimelineTurns(sid);
+    };
+    const resolveTailMemoryTimelineTurnNumber = (targetSessionId = sessionId) => {
+      const sid = String(targetSessionId || sessionId || '').trim();
+      if (!sid) return 0;
+      const tail = findTailTrackedAssistantMessage(sid);
+      const turnIndex = resolveMessageTimelineTurnNumber(sid, tail?.id);
+      if (turnIndex > 0) return turnIndex;
+      return resolveTargetMemoryTimelineTurnNumber(sid);
+    };
+    const buildPreAppendMemoryOptions = () => {
+      const targetMessageId = String(swipeTarget?.msgId || continueTarget?.messageId || '').trim();
+      return {
+        sessionId,
+        isGroup: isGroupChat,
+        ...(targetMessageId ? { timelineMessageId: targetMessageId } : {}),
+        resolveTimelineTurnNumber: targetSessionId => resolveTargetMemoryTimelineTurnNumber(targetSessionId || sessionId),
+      };
+    };
+    const buildProtocolMemoryOptions = () => ({
+      sessionId,
+      isGroup: isGroupChat,
+      resolveTimelineTurnNumber: targetSessionId => resolveTailMemoryTimelineTurnNumber(targetSessionId || sessionId),
+    });
+    const syncProtocolCheckpoints = async (protocolState, warnMessage) => {
+      const result = await syncProtocolResponseTurnCheckpoints({
+        protocolState,
+        sessionId,
+        findTailTrackedAssistantMessage,
+        isTurnCheckpointSessionEnabled,
+        syncTurnCheckpointForMessage,
+        logger,
+        warnMessage,
+      });
+      if (result?.checkpointTargetMessageId) {
+        checkpointTargetMessageId = result.checkpointTargetMessageId;
+      }
+      return result;
+    };
     const requestAssistantGeneration = () => runAssistantGenerationRequest({
       text,
       sessionId,
@@ -15746,7 +16030,7 @@ Phase G（Frame 36）：循环衔接
             streamMeta,
             creativeStreamProcessor,
             sessionId,
-            memoryOptions: { sessionId, isGroup: isGroupChat },
+            memoryOptions: buildPreAppendMemoryOptions(),
             avatar: assistantAvatar,
             formatTime: formatNowTime,
             isRpMode,
@@ -15805,7 +16089,7 @@ Phase G（Frame 36）：循环衔接
             parser,
             summarySessionIds,
             summaryEnabled: isSummaryMemoryEnabled(),
-            memoryOptions: { sessionId, isGroup: isGroupChat },
+            memoryOptions: buildProtocolMemoryOptions(),
           }, {
             normalizeChunk: normalizeAssistantStreamChunk,
             isInterrupted: () => isGenerationInterrupted(generationId),
@@ -15813,6 +16097,10 @@ Phase G（Frame 36）：循环衔接
             ...protocolResponseFlowHandlers.createStreamHandlers(),
           });
           if (protocolStreamState.abortFlow || protocolStreamState.interrupted) return;
+          await syncProtocolCheckpoints(
+            protocolStreamState,
+            'sync turn checkpoint after protocol stream response failed',
+          );
           sendSucceeded = true;
         } else {
           // 兼容旧逻辑（流式逐字）
@@ -15831,7 +16119,7 @@ Phase G（Frame 36）：循环衔接
             nativeReasoningState,
             streamMeta,
             sessionId,
-            memoryOptions: { sessionId, isGroup: isGroupChat },
+            memoryOptions: buildPreAppendMemoryOptions(),
             avatar: assistantAvatar,
             formatTime: formatNowTime,
           }, {
@@ -15876,7 +16164,7 @@ Phase G（Frame 36）：循环衔接
           rawText: resultRaw,
           protocolEnabled,
           creativeMode: rpUiMode,
-          memoryOptions: { sessionId, isGroup: isGroupChat },
+          memoryOptions: protocolEnabled ? buildProtocolMemoryOptions() : buildPreAppendMemoryOptions(),
           sessionId,
           avatar: assistantAvatar,
           formatTime: formatNowTime,
@@ -15924,6 +16212,12 @@ Phase G（Frame 36）：循环衔接
         if (bufferedResponseState.checkpointTargetMessageId) {
           checkpointTargetMessageId = bufferedResponseState.checkpointTargetMessageId;
         }
+        if (bufferedResponseState.branch === 'protocol') {
+          await syncProtocolCheckpoints(
+            bufferedResponseState.protocolState,
+            'sync turn checkpoint after buffered protocol response failed',
+          );
+        }
       }
     } catch (error) {
       const catchResult = runSendCatchFlow({
@@ -15960,7 +16254,18 @@ Phase G（Frame 36）：循环衔接
         movePendingFromHistoryToQueue,
         refreshChatAndContacts,
         scriptRuntime,
-        runMemoryUpdateAfterChat: (...args) => memoryUpdateRuntime.runMemoryUpdateAfterChat(...args),
+        runMemoryUpdateAfterChat: (targetSessionId, targetIsGroup, baseContext, options) => {
+          const memoryTask = Promise.resolve(
+            memoryUpdateRuntime.runMemoryUpdateAfterChat(targetSessionId, targetIsGroup, baseContext, options),
+          );
+          return memoryTask.then(
+            () => runMemoryTimelineAutoRepairOnceAfterSend(targetSessionId, targetIsGroup),
+            (err) => {
+              logger.warn('memory update before timeline auto repair failed', err);
+              throw err;
+            },
+          );
+        },
         buildMemoryContext: () => llmContext(''),
         updatePendingFloat,
         getActiveGeneration: () => activeGeneration,

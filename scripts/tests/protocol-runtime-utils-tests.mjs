@@ -1055,9 +1055,10 @@ import {
           return [{ id: 'event-1' }];
         },
       }),
-      handleMemoryEditsFromRaw: (raw, options) => {
-        calls.push(['memory', raw, options]);
-        return Promise.resolve();
+      handleMemoryEditsFromRaw: async (raw, options) => {
+        calls.push(['memory-start', raw, options]);
+        await Promise.resolve();
+        calls.push(['memory-end']);
       },
       eventHandlers: { marker: 'handlers' },
       consumeEvents: async (events, state, options) => {
@@ -1087,8 +1088,9 @@ import {
   assert.deepEqual([...summarySessionIds], ['s1', 's2']);
   assert.deepEqual(calls, [
     ['parse', 'raw'],
-    ['memory', 'raw', { sessionId: 's1', isGroup: false }],
     ['events', 'event-1', false, false, 'handlers'],
+    ['memory-start', 'raw', { sessionId: 's1', isGroup: false }],
+    ['memory-end'],
     ['summary', 's1', '总结'],
     ['summary', 's2', '总结'],
     ['compact', 's1'],
@@ -1097,7 +1099,7 @@ import {
     ['render'],
     ['flush'],
   ]);
-  console.log('ok - runProtocolBufferedResponseFlow parses starts memory consumes events and finalizes');
+  console.log('ok - runProtocolBufferedResponseFlow parses consumes events awaits memory and finalizes');
 }
 
 {
@@ -1115,9 +1117,8 @@ import {
           return [];
         },
       }),
-      handleMemoryEditsFromRaw: () => {
+      handleMemoryEditsFromRaw: async () => {
         calls.push(['memory']);
-        return Promise.reject(new Error('ignored'));
       },
       consumeEvents: async () => {
         calls.push(['events']);
@@ -1135,13 +1136,13 @@ import {
   assert.equal(result.warned, true);
   assert.deepEqual(calls, [
     ['parse', 'raw'],
-    ['memory'],
     ['events'],
+    ['memory'],
     ['candidates', 'raw'],
     ['candidates', 'raw'],
     ['warn'],
   ]);
-  console.log('ok - runProtocolBufferedResponseFlow keeps memory rejection fire-and-forget and warns on misses');
+  console.log('ok - runProtocolBufferedResponseFlow waits for memory and warns on misses');
 }
 
 {

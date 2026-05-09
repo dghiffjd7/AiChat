@@ -378,6 +378,9 @@ export const handleMemoryEditsFromRawWithUi = async ({
   raw = '',
   sessionId = '',
   isGroup = false,
+  timelineTurnNumber = null,
+  timelineMessageId = '',
+  resolveTimelineTurnNumber = null,
   force = false,
   requestPrompt = '',
   isMemoryAutoExtractInline = () => false,
@@ -430,7 +433,18 @@ export const handleMemoryEditsFromRawWithUi = async ({
     try {
       const confirmedActions = await confirmMemoryEdits(parsed.actions);
       if (confirmedActions.length) {
-        await applyMemoryEdits({ actions: confirmedActions, sessionId, isGroup });
+        const payload = { actions: confirmedActions, sessionId, isGroup };
+        const normalizedTimelineTurnNumber = Math.trunc(Number(timelineTurnNumber));
+        if (Number.isFinite(normalizedTimelineTurnNumber) && normalizedTimelineTurnNumber > 0) {
+          payload.timelineTurnNumber = normalizedTimelineTurnNumber;
+        }
+        if (timelineMessageId) {
+          payload.timelineMessageId = String(timelineMessageId || '').trim();
+        }
+        if (typeof resolveTimelineTurnNumber === 'function') {
+          payload.resolveTimelineTurnNumber = resolveTimelineTurnNumber;
+        }
+        await applyMemoryEdits(payload);
         emitMemoryUpdateTrace(recordTraceEvent, {
           phase: 'edit.apply',
           sessionId,
@@ -492,11 +506,25 @@ export const createMemoryEditUiRuntime = ({
     appConfirm,
     toastr,
   }),
-  handleMemoryEditsFromRaw: async (raw, { sessionId, isGroup, force = false, requestPrompt } = {}) =>
+  handleMemoryEditsFromRaw: async (
+    raw,
+    {
+      sessionId,
+      isGroup,
+      timelineTurnNumber = null,
+      timelineMessageId = '',
+      resolveTimelineTurnNumber = null,
+      force = false,
+      requestPrompt,
+    } = {},
+  ) =>
     handleMemoryEditsFromRawWithUi({
       raw,
       sessionId,
       isGroup,
+      timelineTurnNumber,
+      timelineMessageId,
+      resolveTimelineTurnNumber,
       force,
       requestPrompt,
       isMemoryAutoExtractInline,

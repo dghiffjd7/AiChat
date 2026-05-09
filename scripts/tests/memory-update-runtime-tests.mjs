@@ -95,6 +95,7 @@ const createDeps = (overrides = {}) => {
   assert.equal(calls.edits[0].raw, '<tableEdit>ok</tableEdit>');
   assert.equal(calls.edits[0].options.sessionId, 's1');
   assert.equal(calls.edits[0].options.force, true);
+  assert.equal(calls.edits[0].options.timelineMessageId, 'm2');
   assert.match(calls.edits[0].options.requestPrompt, /^system:\nsystem prompt\n\nuser:\n/);
   assert.deepEqual(calls.syncs, [['s1', 'm2', { captureCurrentActiveState: true }]]);
   assert.deepEqual(calls.traces.map(event => [event.phase, event.status, event.details]), [

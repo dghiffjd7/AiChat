@@ -16,6 +16,7 @@ import {
   runBufferedAssistantResponseFlow,
   runCreativeStreamAssistantResponseFlow,
   runLegacyStreamAssistantResponseFlow,
+  syncProtocolResponseTurnCheckpoints,
 } from '../../src/scripts/ui/chat/send-side-effect-utils.js';
 
 const tests = [];
@@ -1866,6 +1867,27 @@ test('commitAssistantReceiveEffects supports legacy append/read/receive without 
     ['append', 'parsed-legacy', 'session-legacy'],
     ['markRead', 'session-legacy', 'saved-legacy'],
     ['afterReceive', 'saved-legacy', 'session-legacy'],
+  ]);
+});
+
+test('syncProtocolResponseTurnCheckpoints syncs enabled protocol session tails', async () => {
+  const calls = [];
+
+  const result = await syncProtocolResponseTurnCheckpoints({
+    protocolState: { summarySessionIds: new Set(['group:1', 'group:2']) },
+    sessionId: 'group:1',
+    isTurnCheckpointSessionEnabled: sessionId => sessionId !== 'group:2',
+    findTailTrackedAssistantMessage: sessionId => ({ id: `${sessionId}:tail`, role: 'assistant' }),
+    syncTurnCheckpointForMessage: async (sessionId, message, options) => {
+      calls.push([sessionId, message.id, options]);
+    },
+  });
+
+  assert.equal(result.checkpointTargetMessageId, 'group:1:tail');
+  assert.deepEqual(result.syncedSessionIds, ['group:1']);
+  assert.deepEqual(result.failedSessionIds, []);
+  assert.deepEqual(calls, [
+    ['group:1', 'group:1:tail', { captureCurrentActiveState: true }],
   ]);
 });
 

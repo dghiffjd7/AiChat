@@ -11,6 +11,7 @@ import {
   isTimelineMemoryTableId,
   sortMemoryRows,
 } from '../memory/memory-row-order.js';
+import { buildMemoryTimelineRepairPlan } from '../memory/memory-timeline-repair-utils.js';
 import { logger } from '../utils/logger.js';
 import { appConfirm } from './app-confirm.js';
 import { getLastMemoryUpdate } from './chat/memory-update-runtime-utils.js';
@@ -202,21 +203,39 @@ const buildWorldbookEntriesForTable = (table, rows) => {
 };
 
 export class MemoryTableEditor {
-  constructor({ container, getContext, memoryStore, templateStore, contactsStore = null, includeGlobal = true } = {}) {
+  constructor({
+    container,
+    getContext,
+    memoryStore,
+    templateStore,
+    contactsStore = null,
+    chatStore = null,
+    getMessages = null,
+    includeGlobal = true,
+  } = {}) {
     this.container = container || null;
     this.getContext = typeof getContext === 'function' ? getContext : () => null;
     this.memoryStore = memoryStore || null;
     this.templateStore = templateStore || null;
     this.contactsStore = contactsStore || null;
+    this.chatStore = chatStore || null;
+    this.getMessages = typeof getMessages === 'function' ? getMessages : null;
     this.includeGlobal = includeGlobal !== false;
     this.template = null;
     this.memories = [];
+    this.timelineRepairPlan = null;
+    this.timelineRepairCacheKey = '';
+    this.timelineRepairCache = null;
+    this.timelineRepairPendingKey = '';
+    this.timelineRepairCheckToken = 0;
+    this.dismissedTimelineRepairKey = '';
     this.batchMode = false;
     this.selectedIds = new Set();
     this.searchTerm = '';
     this.visibleIds = new Set();
     this.currentContext = null;
     this.toolbarWrap = null;
+    this.timelineRepairWrap = null;
     this.listWrap = null;
     this.searchInput = null;
     this.batchBtn = null;
@@ -291,6 +310,8 @@ export class MemoryTableEditor {
       this.batchMode = false;
       this.selectedIds.clear();
       this.searchTerm = '';
+      this.timelineRepairCheckToken += 1;
+      this.timelineRepairPendingKey = '';
     }
     this.ensureLayout();
     this.renderToolbar();
@@ -364,6 +385,7 @@ export class MemoryTableEditor {
     if (!this.container || !this.listWrap) return;
     const template = this.template;
     if (!template || !Array.isArray(template.tables)) {
+      this.cancelTimelineRepairCheck();
       this.listWrap.innerHTML = '<div style="color:var(--app-text-muted); font-size:12px;">未找到可用模板。</div>';
       return;
     }
@@ -388,9 +410,11 @@ export class MemoryTableEditor {
       return true;
     });
     if (!tables.length) {
+      this.cancelTimelineRepairCheck();
       this.listWrap.innerHTML = '<div style="color:var(--app-text-muted); font-size:12px;">当前模板没有匹配的表格。</div>';
       return;
     }
+    this.scheduleTimelineRepairCheck(ctx, tables);
     for (const table of tables) {
       this.listWrap.appendChild(this.renderTableBlock(table, ctx));
     }
@@ -576,9 +600,13 @@ export class MemoryTableEditor {
 
     const listWrap = document.createElement('div');
     listWrap.style.cssText = 'display:flex; flex-direction:column;';
+    const timelineRepairWrap = document.createElement('div');
+    timelineRepairWrap.style.cssText = 'display:none; margin-bottom:10px;';
     this.container.appendChild(toolbarWrap);
+    this.container.appendChild(timelineRepairWrap);
     this.container.appendChild(listWrap);
     this.toolbarWrap = toolbarWrap;
+    this.timelineRepairWrap = timelineRepairWrap;
     this.listWrap = listWrap;
     this.searchInput = search;
     this.batchBtn = batchBtn;
@@ -678,6 +706,254 @@ export class MemoryTableEditor {
     if (ctx.type === 'rp') return String(ctx.contactId || '').trim();
     if (ctx.type === 'contact') return String(ctx.contactId || '').trim();
     return String(window.appBridge?.getActiveSessionId?.() || '').trim();
+  }
+
+  getScopedTimelineRows(ctx, tables = []) {
+    if (!ctx || ctx.type === 'global' || !Array.isArray(tables)) return [];
+    const rows = [];
+    for (const table of tables) {
+      const tableId = String(table?.id || '').trim();
+      if (!tableId || !isTimelineMemoryTableId(tableId)) continue;
+      if (String(table?.scope || '').trim().toLowerCase() === 'global') continue;
+      const allRows = this.memories.filter(row => String(row?.table_id || '') === tableId);
+      rows.push(...filterRowsByScope(allRows, table, ctx));
+    }
+    return rows;
+  }
+
+  buildTimelineRepairSignature(ctx, tables = []) {
+    const sessionId = this.resolveSessionId(ctx);
+    if (!sessionId) return '';
+    const rows = this.getScopedTimelineRows(ctx, tables);
+    if (!rows.length) return '';
+    const rowSig = rows
+      .map(row => {
+        const id = String(row?.id || '').trim();
+        const tableId = String(row?.table_id || '').trim();
+        const time = String(row?.row_data?.time || '').trim();
+        const order = getMemoryRowSortOrder(row);
+        return `${tableId}:${id}:${time}:${order ?? ''}`;
+      })
+      .join('|');
+    return `${ctx?.type || ''}:${sessionId}:${rowSig}`;
+  }
+
+  async resolveContextMessagesForTimelineRepair(ctx) {
+    const sessionId = this.resolveSessionId(ctx);
+    if (!sessionId) return [];
+    try {
+      if (typeof this.chatStore?.exportThreadMessages === 'function') {
+        const exported = await this.chatStore.exportThreadMessages(sessionId);
+        if (Array.isArray(exported) && exported.length) return exported;
+      }
+    } catch (err) {
+      logger.debug('timeline repair full message export failed', err);
+    }
+    try {
+      if (this.getMessages) {
+        const result = await this.getMessages(sessionId);
+        if (Array.isArray(result)) return result;
+      }
+    } catch (err) {
+      logger.debug('timeline repair getMessages failed', err);
+    }
+    try {
+      const result = this.chatStore?.getMessages?.(sessionId);
+      return Array.isArray(result) ? result : [];
+    } catch {
+      return [];
+    }
+  }
+
+  async buildTimelineRepairPlanForContext(ctx, tables = []) {
+    const rows = this.getScopedTimelineRows(ctx, tables);
+    if (!rows.length) {
+      return { checked: 0, assistantCount: 0, repairable: [], unrepairable: [], hasIssues: false };
+    }
+    const messages = await this.resolveContextMessagesForTimelineRepair(ctx);
+    if (!messages.length) {
+      return { checked: rows.length, assistantCount: 0, repairable: [], unrepairable: [], hasIssues: false };
+    }
+    return buildMemoryTimelineRepairPlan({ rows, messages, tables });
+  }
+
+  scheduleTimelineRepairCheck(ctx, tables = []) {
+    const signature = this.buildTimelineRepairSignature(ctx, tables);
+    if (!signature) {
+      this.cancelTimelineRepairCheck();
+      return;
+    }
+    if (signature === this.timelineRepairCacheKey && this.timelineRepairCache) {
+      this.renderTimelineRepairNotice(this.timelineRepairCache, ctx, signature);
+      return;
+    }
+    if (signature === this.timelineRepairPendingKey) return;
+    this.hideTimelineRepairNotice();
+    this.timelineRepairPendingKey = signature;
+    const token = ++this.timelineRepairCheckToken;
+    this.buildTimelineRepairPlanForContext(ctx, tables)
+      .then((plan) => {
+        if (token !== this.timelineRepairCheckToken) return;
+        this.timelineRepairPlan = plan;
+        this.timelineRepairCacheKey = signature;
+        this.timelineRepairCache = plan;
+        this.renderTimelineRepairNotice(plan, ctx, signature);
+      })
+      .catch((err) => {
+        if (token !== this.timelineRepairCheckToken) return;
+        logger.warn('timeline repair check failed', err);
+        this.hideTimelineRepairNotice();
+      })
+      .finally(() => {
+        if (this.timelineRepairPendingKey === signature) {
+          this.timelineRepairPendingKey = '';
+        }
+      });
+  }
+
+  buildTimelineRepairNoticeKey(plan, signature = '') {
+    if (!plan?.hasIssues) return '';
+    const repairable = (plan.repairable || [])
+      .map(item => `${item.rowId}:${item.currentRound ?? ''}:${item.currentSortOrder ?? ''}->${item.expectedRound}`)
+      .join('|');
+    const unrepairable = (plan.unrepairable || [])
+      .map(item => `${item.rowId}:${item.currentRound ?? ''}:${item.reason || ''}`)
+      .join('|');
+    return `${signature}:${repairable}:${unrepairable}`;
+  }
+
+  hideTimelineRepairNotice() {
+    if (!this.timelineRepairWrap) return;
+    this.timelineRepairWrap.style.display = 'none';
+    this.timelineRepairWrap.innerHTML = '';
+  }
+
+  cancelTimelineRepairCheck() {
+    this.timelineRepairCheckToken += 1;
+    this.timelineRepairPendingKey = '';
+    this.hideTimelineRepairNotice();
+  }
+
+  renderTimelineRepairNotice(plan, ctx, signature = '') {
+    if (!this.timelineRepairWrap) return;
+    if (!plan?.hasIssues) {
+      this.hideTimelineRepairNotice();
+      return;
+    }
+    const noticeKey = this.buildTimelineRepairNoticeKey(plan, signature);
+    if (noticeKey && noticeKey === this.dismissedTimelineRepairKey) {
+      this.hideTimelineRepairNotice();
+      return;
+    }
+    const repairableCount = Array.isArray(plan.repairable) ? plan.repairable.length : 0;
+    const unrepairableCount = Array.isArray(plan.unrepairable) ? plan.unrepairable.length : 0;
+    const box = document.createElement('div');
+    box.style.cssText = [
+      'border:1px solid var(--app-border-default)',
+      'border-radius:12px',
+      'padding:10px',
+      'background:var(--app-surface-card)',
+      'box-shadow:inset 3px 0 0 #ca8a04',
+      'display:flex',
+      'gap:10px',
+      'align-items:flex-start',
+      'flex-wrap:wrap',
+    ].join(';');
+    const text = document.createElement('div');
+    text.style.cssText = 'flex:1; min-width:180px; color:var(--app-text-primary); font-size:12px; line-height:1.5;';
+    const title = document.createElement('div');
+    title.style.cssText = 'font-weight:900; margin-bottom:2px;';
+    title.textContent = '检测到记忆表格轮次可能与当前用户请求轮次不一致';
+    const detail = document.createElement('div');
+    const parts = [];
+    if (repairableCount) parts.push(`可自动修正 ${repairableCount} 条`);
+    if (unrepairableCount) parts.push(`${unrepairableCount} 条无法可靠匹配`);
+    detail.textContent = `${parts.join('，') || '暂无可修正项'}。自动修正只改 time 和排序，不改记忆内容。`;
+    text.appendChild(title);
+    text.appendChild(detail);
+    const actions = document.createElement('div');
+    actions.style.cssText = 'display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end;';
+    const repairBtn = document.createElement('button');
+    repairBtn.textContent = '修正轮次';
+    repairBtn.disabled = repairableCount <= 0;
+    repairBtn.style.cssText = 'padding:6px 10px; border:1px solid var(--app-border-default); border-radius:9px; background:var(--app-text-primary); color:var(--app-surface-card); cursor:pointer; font-size:12px; font-weight:800;';
+    if (repairBtn.disabled) {
+      repairBtn.style.opacity = '0.55';
+      repairBtn.style.cursor = 'not-allowed';
+    }
+    repairBtn.onclick = () => {
+      this.repairTimelineRows(plan, ctx).catch((err) => {
+        logger.warn('timeline repair apply failed', err);
+        window.toastr?.error?.('修正记忆轮次失败');
+      });
+    };
+    const ignoreBtn = document.createElement('button');
+    ignoreBtn.textContent = '忽略';
+    ignoreBtn.style.cssText = 'padding:6px 10px; border:1px solid var(--app-border-default); border-radius:9px; background:var(--app-surface-subtle); color:var(--app-text-primary); cursor:pointer; font-size:12px;';
+    ignoreBtn.onclick = () => {
+      this.dismissedTimelineRepairKey = noticeKey;
+      this.hideTimelineRepairNotice();
+    };
+    actions.appendChild(repairBtn);
+    actions.appendChild(ignoreBtn);
+    box.appendChild(text);
+    box.appendChild(actions);
+    this.timelineRepairWrap.innerHTML = '';
+    this.timelineRepairWrap.appendChild(box);
+    this.timelineRepairWrap.style.display = 'block';
+  }
+
+  async repairTimelineRows(plan, ctx) {
+    const items = Array.isArray(plan?.repairable) ? plan.repairable : [];
+    if (!items.length || !this.memoryStore) return;
+    const unrepairableCount = Array.isArray(plan?.unrepairable) ? plan.unrepairable.length : 0;
+    const ok = await appConfirm({
+      title: '修正记忆轮次',
+      message: `将按当前聊天记录修正 ${items.length} 条摘要/大纲轮次。${unrepairableCount ? `另有 ${unrepairableCount} 条无法可靠匹配，不会修改。` : ''}\n\n只修改 time 和排序，不修改记忆内容。`,
+    });
+    if (!ok) return;
+    let changed = 0;
+    for (const item of items) {
+      if (!item?.rowId || !item?.rowData) continue;
+      await this.memoryStore.updateMemory({
+        id: item.rowId,
+        row_data: item.rowData,
+        sort_order: item.sortOrder,
+      });
+      changed += 1;
+    }
+    if (changed > 0) {
+      const sessionId = this.resolveSessionId(ctx);
+      let synced = false;
+      const syncFn = window.appBridge?.syncCurrentMemoryStateAfterTimelineRepair;
+      if (sessionId && typeof syncFn === 'function') {
+        try {
+          synced = await syncFn(sessionId, { source: 'manual_timeline_repair' });
+        } catch (err) {
+          logger.warn('sync manual timeline repair snapshot failed', err);
+          window.toastr?.warning?.('记忆轮次已修正，但同步当前对话快照失败，重新进入后可能需要再次修正');
+        }
+      }
+      if (!synced && sessionId) {
+        try {
+          window.dispatchEvent(new CustomEvent('memory-timeline-repaired', {
+            detail: {
+              sessionId,
+              isGroup: ctx?.type === 'group',
+              changed,
+              source: 'manual_timeline_repair_event',
+            },
+          }));
+        } catch {}
+      }
+    }
+    this.timelineRepairCacheKey = '';
+    this.timelineRepairCache = null;
+    this.timelineRepairPendingKey = '';
+    this.timelineRepairPlan = null;
+    this.dismissedTimelineRepairKey = '';
+    if (changed > 0) window.toastr?.success?.(`已修正 ${changed} 条记忆轮次`);
+    await this.render();
   }
 
   pushTableToChat(table, rows, ctx) {

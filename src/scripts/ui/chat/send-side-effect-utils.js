@@ -195,6 +195,53 @@ export const prepareBufferedAssistantResponse = async (
   };
 };
 
+const collectProtocolCheckpointSessionIds = (protocolState = null, sessionId = '') => {
+  const ids = new Set();
+  const fallback = String(sessionId || '').trim();
+  if (fallback) ids.add(fallback);
+  const summarySessionIds = protocolState?.summarySessionIds;
+  if (summarySessionIds && typeof summarySessionIds[Symbol.iterator] === 'function') {
+    for (const value of summarySessionIds) {
+      const id = String(value || '').trim();
+      if (id) ids.add(id);
+    }
+  }
+  return Array.from(ids);
+};
+
+export const syncProtocolResponseTurnCheckpoints = async ({
+  protocolState = null,
+  sessionId = '',
+  findTailTrackedAssistantMessage = null,
+  isTurnCheckpointSessionEnabled = null,
+  syncTurnCheckpointForMessage = null,
+  logger = null,
+  warnMessage = 'sync turn checkpoint after protocol response failed',
+} = {}) => {
+  if (typeof findTailTrackedAssistantMessage !== 'function' || typeof syncTurnCheckpointForMessage !== 'function') {
+    return { checkpointTargetMessageId: '', syncedSessionIds: [], failedSessionIds: [] };
+  }
+  const currentSessionId = String(sessionId || '').trim();
+  const syncedSessionIds = [];
+  const failedSessionIds = [];
+  let checkpointTargetMessageId = '';
+  for (const sid of collectProtocolCheckpointSessionIds(protocolState, currentSessionId)) {
+    try {
+      if (typeof isTurnCheckpointSessionEnabled === 'function' && !isTurnCheckpointSessionEnabled(sid)) continue;
+      const tailMessage = findTailTrackedAssistantMessage(sid);
+      const messageId = String(tailMessage?.id || '').trim();
+      if (!messageId) continue;
+      await syncTurnCheckpointForMessage(sid, tailMessage, { captureCurrentActiveState: true });
+      syncedSessionIds.push(sid);
+      if (sid === currentSessionId && !checkpointTargetMessageId) checkpointTargetMessageId = messageId;
+    } catch (err) {
+      failedSessionIds.push(sid);
+      logger?.warn?.(warnMessage, err);
+    }
+  }
+  return { checkpointTargetMessageId, syncedSessionIds, failedSessionIds };
+};
+
 export const consumeLegacyAssistantStream = async (
   stream = [],
   {

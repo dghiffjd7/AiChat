@@ -570,6 +570,7 @@ export class ContactSettingsPanel {
                 memoryStore: this.memoryTableStore,
                 templateStore: this.memoryTemplateStore,
                 contactsStore: this.contactsStore,
+                chatStore: this.chatStore,
                 includeGlobal: true,
             });
         }

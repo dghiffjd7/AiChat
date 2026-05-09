@@ -410,6 +410,8 @@ import {
     raw: '<tableEdit>x</tableEdit>',
     sessionId: 's1',
     isGroup: true,
+    timelineTurnNumber: 42,
+    timelineMessageId: 'assistant-42',
     force: true,
     requestPrompt: 'prompt',
     isMemoryAutoExtractInline: () => false,
@@ -440,6 +442,8 @@ import {
     actions: [{ action: 'insert' }],
     sessionId: 's1',
     isGroup: true,
+    timelineTurnNumber: 42,
+    timelineMessageId: 'assistant-42',
   }]);
   assert.deepEqual(traces, [
     {
