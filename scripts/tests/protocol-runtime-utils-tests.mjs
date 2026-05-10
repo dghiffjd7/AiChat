@@ -1281,6 +1281,7 @@ import {
   const groupOptions = handlers.getGroupDispatchOptions();
   assert.equal(groupOptions.animEnabled, false);
   assert.equal(groupOptions.bumpReadCount, true);
+  assert.equal(groupOptions.backgroundQueue, true);
   assert.deepEqual(groupOptions.queueTypingOptions, { memberIds: ['u1'] });
   groupOptions.onQueueCreated('queue-1');
   assert.equal(activeGeneration._messageQueue, 'queue-1');

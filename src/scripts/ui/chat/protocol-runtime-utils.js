@@ -843,6 +843,7 @@ export const createProtocolBatchEventHandlers = ({
         bumpReadCount: true,
       };
       if (streamMode) {
+        options.backgroundQueue = true;
         options.onQueueCreated = assignQueue;
         options.queueTypingOptions = resolveQueueTypingOptions();
       }
@@ -856,6 +857,7 @@ export const createProtocolBatchEventHandlers = ({
         animEnabled: resolveAnimEnabled(),
       };
       if (streamMode) {
+        options.backgroundQueue = true;
         options.onQueueCreated = assignQueue;
         options.queueTypingOptions = resolveQueueTypingOptions();
       }

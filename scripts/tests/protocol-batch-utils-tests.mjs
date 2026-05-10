@@ -140,3 +140,43 @@ import {
   assert.deepEqual(receives, [['c2', 'c2:1'], ['c2', 'c2:2']]);
   console.log('ok - dispatchProtocolPrivateChatBatch supports queued append flow');
 }
+
+{
+  const queuedItems = [];
+  let queuedOptions = null;
+  await dispatchProtocolPrivateChatBatch(
+    {
+      targetSessionId: 'c3',
+      items: [
+        { parsed: { role: 'assistant', content: '第一条' }, isMe: false },
+        { parsed: { role: 'assistant', content: '第二条' }, isMe: false },
+      ],
+    },
+    {
+      isActive: false,
+      animEnabled: true,
+      backgroundQueue: true,
+      enqueueMessages: (items, options) => {
+        queuedItems.push(...items);
+        queuedOptions = options;
+        return { promise: Promise.resolve() };
+      },
+      appendMessage: () => {
+        throw new Error('background queue should defer append to the queue owner');
+      },
+      onAddUiMessage: () => {
+        throw new Error('inactive background queue should not append UI immediately');
+      },
+    },
+  );
+  assert.equal(queuedItems.length, 2);
+  assert.deepEqual(queuedItems[0].delivery, {
+    kind: 'private',
+    targetSessionId: 'c3',
+    isMe: false,
+  });
+  assert.equal(queuedOptions.targetSessionId, 'c3');
+  assert.equal(queuedOptions.active, false);
+  assert.equal(queuedOptions.background, true);
+  console.log('ok - dispatchProtocolPrivateChatBatch can defer inactive stream batches to background queue');
+}

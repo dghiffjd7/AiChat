@@ -1667,10 +1667,11 @@ export class ChatUI {
     });
   }
 
-  hideTyping() {
+  hideTyping(options = {}) {
     hideTypingCore({
       clearTypingTimers: () => this._clearTypingTimers(),
       clearMessageQueueTimer: () => this._clearMessageQueueTimer(),
+      clearMessageQueue: options?.clearMessageQueue !== false,
       removeTypingElement: () => this._removeTypingElement(),
     });
   }

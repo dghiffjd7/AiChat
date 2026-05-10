@@ -130,6 +130,7 @@ import {
   openSessionRawReplyFlow,
 } from './app-quick-action-runtime-utils.js';
 import { ChatUI } from './chat/chat-ui.js';
+import { enqueueMessagesCore } from './chat/typing-flow-ui-utils.js';
 import { createAssistantStreamRuntime, isStreamCtrlConnected } from './chat/assistant-stream-runtime.js';
 import { dispatchAfterReceiveEffects } from './chat/after-receive-dispatch-utils.js';
 import {
@@ -308,6 +309,14 @@ import {
   dispatchProtocolGroupChatBatch,
   dispatchProtocolPrivateChatBatch,
 } from './chat/protocol-batch-utils.js';
+import {
+  deliverProtocolDeliveryItem,
+  flushPersistedProtocolDeliveryPlans,
+  normalizeProtocolDeliveryItem,
+  removeProtocolDeliveryPlan,
+  updateProtocolDeliveryPlanCursor,
+  upsertProtocolDeliveryPlan,
+} from './chat/protocol-delivery-plan-utils.js';
 import {
   extractUpdateVariableBlocks,
   stripUpdateVariableBlocks,
@@ -11904,6 +11913,172 @@ Phase G（Frame 36）：循环衔接
   const isSessionActive = (sessionId) => activeSessionRuntime.isSessionActive(sessionId);
   const autoMarkReadIfActive = (sessionId, messageId = '') =>
     activeSessionRuntime.autoMarkReadIfActive(sessionId, messageId);
+  const getProtocolDeliveryStorage = () => {
+    try {
+      return typeof localStorage !== 'undefined' ? localStorage : null;
+    } catch {
+      return null;
+    }
+  };
+  const getProtocolDeliveryScopeId = () => (
+    String(chatStore.scopeId || activePersonaScopeKey || 'default').trim() || 'default'
+  );
+  const createProtocolDeliveryQueue = (items = [], options = {}, effects = {}) => {
+    const targetSessionId = String(options?.targetSessionId || '').trim();
+    const normalizedItems = (Array.isArray(items) ? items : [])
+      .map(item => normalizeProtocolDeliveryItem(item, { fallbackSessionId: targetSessionId }))
+      .filter(Boolean);
+    if (!normalizedItems.length) {
+      return { cancel: () => {}, promise: Promise.resolve() };
+    }
+
+    const sessionId = String(normalizedItems[0]?.delivery?.targetSessionId || targetSessionId).trim();
+    const scopeId = getProtocolDeliveryScopeId();
+    const plan = upsertProtocolDeliveryPlan({
+      storage: getProtocolDeliveryStorage(),
+      scopeId,
+      plan: {
+        id: `protocol-delivery-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
+        scopeId,
+        sessionId,
+        cursor: 0,
+        items: normalizedItems,
+      },
+      logger,
+    });
+    let messageQueueTimer = null;
+    let cancelled = false;
+    const clearMessageQueueTimer = () => {
+      if (messageQueueTimer) clearTimeout(messageQueueTimer);
+      messageQueueTimer = null;
+    };
+    const isQueueSessionActive = () => Boolean(sessionId && isSessionActive(sessionId));
+    const hideQueueTyping = () => {
+      if (isQueueSessionActive()) ui.hideTyping({ clearMessageQueue: false });
+    };
+    const queue = enqueueMessagesCore({
+      items: normalizedItems.map((item, index) => ({
+        message: item.message,
+        callback: () => {
+          if (cancelled) return;
+          try {
+            deliverProtocolDeliveryItem(item, {
+              appendMessage: (message, sid) => chatStore.appendMessage(message, sid),
+              findMessage: (messageId, sid) => chatStore.findMessage(messageId, sid),
+              isSessionActive,
+              addUiMessage: (message, addOptions) => ui.addMessage(message, addOptions),
+              autoMarkReadIfActive,
+              emitPluginAfterReceive: effects.emitPluginAfterReceive,
+              maybeApplyGroupSystemOps: effects.maybeApplyGroupSystemOps,
+              refreshChatAndContacts,
+              logger,
+            });
+            if (plan?.id) {
+              updateProtocolDeliveryPlanCursor({
+                storage: getProtocolDeliveryStorage(),
+                scopeId,
+                planId: plan.id,
+                cursor: index + 1,
+                logger,
+              });
+            }
+          } catch (err) {
+            logger.warn('protocol delivery queue append failed', err);
+          }
+        },
+      })),
+      options,
+      clearMessageQueueTimer,
+      hideTyping: hideQueueTyping,
+      showTyping: (avatarUrl, typingOptions) => {
+        if (isQueueSessionActive()) ui.showTyping(avatarUrl, typingOptions);
+      },
+      getTypingThinkTimer: () => ui._typingThinkTimer,
+      setTypingThinkTimer: value => {
+        ui._typingThinkTimer = value;
+      },
+      getTypingThinkResumeTimer: () => ui._typingThinkResumeTimer,
+      setTypingThinkResumeTimer: value => {
+        ui._typingThinkResumeTimer = value;
+      },
+      isNearBottom: () => (isQueueSessionActive() ? ui.isNearBottom() : false),
+      applyThinkPause: () => {
+        if (isQueueSessionActive()) ui._applyThinkPause?.();
+      },
+      removeThinkPause: () => {
+        if (isQueueSessionActive()) ui._removeThinkPause?.();
+      },
+      removeTypingElement: () => {
+        if (isQueueSessionActive()) ui._removeTypingElement?.();
+      },
+      scrollToBottom: () => {
+        if (isQueueSessionActive()) ui.scrollToBottom();
+      },
+      setMessageQueueTimer: value => {
+        messageQueueTimer = value;
+      },
+      scheduleTimeout: (handler, delay) => setTimeout(handler, delay),
+      scheduleFrame: handler => (
+        typeof requestAnimationFrame === 'function'
+          ? requestAnimationFrame(handler)
+          : setTimeout(handler, 0)
+      ),
+      addMessage: () => {},
+    });
+    const wrappedPromise = Promise.resolve(queue?.promise).finally(() => {
+      if (!cancelled && plan?.id) {
+        removeProtocolDeliveryPlan({
+          storage: getProtocolDeliveryStorage(),
+          scopeId,
+          planId: plan.id,
+          logger,
+        });
+      }
+    });
+    return {
+      cancel: () => {
+        cancelled = true;
+        try {
+          queue?.cancel?.();
+        } catch {}
+        clearMessageQueueTimer();
+        if (plan?.id) {
+          removeProtocolDeliveryPlan({
+            storage: getProtocolDeliveryStorage(),
+            scopeId,
+            planId: plan.id,
+            logger,
+          });
+        }
+      },
+      promise: wrappedPromise,
+    };
+  };
+  const flushProtocolDeliveryBacklog = async ({ source = 'boot' } = {}) => {
+    try {
+      const result = await flushPersistedProtocolDeliveryPlans({
+        storage: getProtocolDeliveryStorage(),
+        scopeId: getProtocolDeliveryScopeId(),
+        appendMessage: (message, sid) => chatStore.appendMessage(message, sid),
+        findMessage: (messageId, sid) => chatStore.findMessage(messageId, sid),
+        isSessionActive,
+        autoMarkReadIfActive,
+        refreshChatAndContacts,
+        logger,
+      });
+      if (result.appended || result.skipped || result.failed) {
+        logger.info(
+          `[protocol-delivery] recovered source=${source} plans=${result.plans} appended=${result.appended} skipped=${result.skipped} failed=${result.failed}`,
+        );
+        refreshChatAndContacts({ immediate: true });
+      }
+      return result;
+    } catch (err) {
+      logger.warn('flush protocol delivery backlog failed', err);
+      return null;
+    }
+  };
+  void flushProtocolDeliveryBacklog({ source: 'boot' });
   const pendingFloatRuntime = createPendingFloatRuntime({
     pendingFloat,
     pendingFloatMenu,
@@ -12019,7 +12194,7 @@ Phase G（Frame 36）：循环衔接
         getFirstUnreadMessageId: sid => chatStore.getFirstUnreadMessageId(sid),
         injectUnreadDivider,
         clearMessages: () => ui.clearMessages(),
-        hideTyping: () => ui.hideTyping(),
+        hideTyping: () => ui.hideTyping({ clearMessageQueue: false }),
         renderInitialHistoryProgressive,
         decorateMessagesForDisplay,
         preloadHistory: (messages, options) => ui.preloadHistory(messages, options),
@@ -15564,15 +15739,20 @@ Phase G（Frame 36）：循环衔接
     });
     const dispatchProtocolGroupBatchToSession = (batch, {
       animEnabled = false,
+      backgroundQueue = false,
       bumpReadCount = false,
       onQueueCreated = null,
       queueTypingOptions = {},
     } = {}) => dispatchProtocolGroupChatBatch(batch, {
       appendMessage: (parsed, targetSessionId) => chatStore.appendMessage(parsed, targetSessionId),
       autoMarkReadIfActive,
+      backgroundQueue,
       bumpReadCount: bumpReadCount ? count => ui.bumpReadCount(count) : null,
       emitPluginAfterReceive,
-      enqueueMessages: (...args) => ui.enqueueMessages(...args),
+      enqueueMessages: (queueItems, queueOptions) => createProtocolDeliveryQueue(queueItems, queueOptions, {
+        emitPluginAfterReceive,
+        maybeApplyGroupSystemOps,
+      }),
       isActive: isSessionActive(batch?.targetSessionId || ''),
       animEnabled,
       maybeApplyGroupSystemOps,
@@ -15583,13 +15763,17 @@ Phase G（Frame 36）：循环衔接
     });
     const dispatchProtocolPrivateBatchToSession = (batch, {
       animEnabled = false,
+      backgroundQueue = false,
       onQueueCreated = null,
       queueTypingOptions = {},
     } = {}) => dispatchProtocolPrivateChatBatch(batch, {
       appendMessage: (parsed, targetSessionId) => chatStore.appendMessage(parsed, targetSessionId),
       autoMarkReadIfActive,
+      backgroundQueue,
       emitPluginAfterReceive,
-      enqueueMessages: (...args) => ui.enqueueMessages(...args),
+      enqueueMessages: (queueItems, queueOptions) => createProtocolDeliveryQueue(queueItems, queueOptions, {
+        emitPluginAfterReceive,
+      }),
       isActive: isSessionActive(batch?.targetSessionId || ''),
       animEnabled,
       onAddUiMessage: (parsed, options) => ui.addMessage(parsed, options),

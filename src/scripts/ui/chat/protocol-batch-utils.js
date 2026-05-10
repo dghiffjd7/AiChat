@@ -120,6 +120,7 @@ export const dispatchProtocolGroupChatBatch = async (
     enqueueMessages = null,
     isActive = false,
     animEnabled = false,
+    backgroundQueue = false,
     maybeApplyGroupSystemOps = null,
     onAddUiMessage = null,
     onQueueCreated = null,
@@ -130,9 +131,17 @@ export const dispatchProtocolGroupChatBatch = async (
   const list = Array.isArray(batch?.items) ? batch.items : [];
   const targetSessionId = String(batch?.targetSessionId || '').trim();
   if (!targetSessionId) return;
-  if (isActive && animEnabled && list.length > 1 && typeof enqueueMessages === 'function') {
+  const shouldQueue =
+    animEnabled && list.length > 1 && typeof enqueueMessages === 'function' && (isActive || backgroundQueue);
+  if (shouldQueue) {
     const queueItems = list.map(({ parsed, isSystem, role }) => ({
       message: parsed,
+      delivery: {
+        kind: 'group',
+        targetSessionId,
+        isSystem: Boolean(isSystem),
+        role: role || '',
+      },
       callback: () => {
         const saved = typeof appendMessage === 'function' ? appendMessage(parsed, targetSessionId) : parsed;
         if (isSystem) {
@@ -149,6 +158,9 @@ export const dispatchProtocolGroupChatBatch = async (
     const queue = enqueueMessages(queueItems, {
       avatarUrl: queueAvatarUrl,
       typingOptions: queueTypingOptions,
+      targetSessionId,
+      active: Boolean(isActive),
+      background: !isActive,
     });
     if (typeof onQueueCreated === 'function') onQueueCreated(queue);
     await queue?.promise;
@@ -183,6 +195,7 @@ export const dispatchProtocolPrivateChatBatch = async (
     enqueueMessages = null,
     isActive = false,
     animEnabled = false,
+    backgroundQueue = false,
     onAddUiMessage = null,
     onQueueCreated = null,
     queueAvatarUrl = '',
@@ -192,9 +205,16 @@ export const dispatchProtocolPrivateChatBatch = async (
   const list = Array.isArray(batch?.items) ? batch.items : [];
   const targetSessionId = String(batch?.targetSessionId || '').trim();
   if (!targetSessionId) return;
-  if (isActive && animEnabled && list.length > 1 && typeof enqueueMessages === 'function') {
+  const shouldQueue =
+    animEnabled && list.length > 1 && typeof enqueueMessages === 'function' && (isActive || backgroundQueue);
+  if (shouldQueue) {
     const queueItems = list.map(({ parsed, isMe }) => ({
       message: parsed,
+      delivery: {
+        kind: 'private',
+        targetSessionId,
+        isMe: Boolean(isMe),
+      },
       callback: () => {
         const saved = typeof appendMessage === 'function' ? appendMessage(parsed, targetSessionId) : parsed;
         if (!isMe && typeof autoMarkReadIfActive === 'function') {
@@ -206,6 +226,9 @@ export const dispatchProtocolPrivateChatBatch = async (
     const queue = enqueueMessages(queueItems, {
       avatarUrl: queueAvatarUrl,
       typingOptions: queueTypingOptions,
+      targetSessionId,
+      active: Boolean(isActive),
+      background: !isActive,
     });
     if (typeof onQueueCreated === 'function') onQueueCreated(queue);
     await queue?.promise;

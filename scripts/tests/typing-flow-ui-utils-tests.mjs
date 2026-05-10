@@ -77,6 +77,20 @@ import {
 }
 
 {
+  let clearedQueue = 0;
+  let hidden = 0;
+  hideTypingCore({
+    clearTypingTimers() { hidden += 1; },
+    clearMessageQueueTimer() { clearedQueue += 1; },
+    clearMessageQueue: false,
+    removeTypingElement() { hidden += 1; },
+  });
+  assert.equal(hidden, 2);
+  assert.equal(clearedQueue, 0);
+  console.log('ok - hideTypingCore can preserve active message queue timers');
+}
+
+{
   const shown = [];
   const added = [];
   let removedTyping = 0;

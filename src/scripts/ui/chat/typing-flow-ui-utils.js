@@ -88,10 +88,11 @@ export const showTypingCore = ({
 export const hideTypingCore = ({
   clearTypingTimers,
   clearMessageQueueTimer,
+  clearMessageQueue = true,
   removeTypingElement,
 } = {}) => {
   clearTypingTimers?.();
-  clearMessageQueueTimer?.();
+  if (clearMessageQueue !== false) clearMessageQueueTimer?.();
   removeTypingElement?.();
 };
 
