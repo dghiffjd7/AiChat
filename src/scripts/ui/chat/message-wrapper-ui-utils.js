@@ -62,6 +62,9 @@ export const createStandardMessageWrapperCore = ({
     wrapper.classList?.add?.('is-rp-regenerating');
     wrapper.setAttribute?.('aria-busy', 'true');
   }
+  if (message?.meta?.hideAvatar === true || message?.meta?.compactWithSource === true) {
+    wrapper.classList?.add?.('is-source-followup');
+  }
   applyCreativeBubbleState?.(wrapper, message);
   if (message?.status === 'pending' || message?.status === 'sending') {
     wrapper.classList?.add?.('message-pending');
@@ -81,5 +84,14 @@ export const createMessageAvatarImageCore = ({
   avatarImg.alt = message?.name || '';
   avatarImg.loading = 'lazy';
   avatarImg.decoding = 'async';
+  if (message?.meta?.hideAvatar === true || message?.meta?.compactWithSource === true) {
+    avatarImg.classList?.add?.('is-hidden-followup');
+    avatarImg.alt = '';
+    avatarImg.setAttribute?.('aria-hidden', 'true');
+    if (avatarImg.style) {
+      avatarImg.style.visibility = 'hidden';
+      avatarImg.style.pointerEvents = 'none';
+    }
+  }
   return avatarImg;
 };

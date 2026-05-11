@@ -112,3 +112,22 @@ const createFakeDocument = () => {
   assert.equal(avatar.decoding, 'async');
   console.log('ok - createMessageAvatarImageCore builds lazy async avatar image with message metadata');
 }
+
+{
+  const documentLike = createFakeDocument();
+  const wrapper = createStandardMessageWrapperCore({
+    documentLike,
+    message: { id: 'follow', role: 'assistant', meta: { compactWithSource: true } },
+    isUser: false,
+  });
+  const avatar = createMessageAvatarImageCore({
+    documentLike,
+    message: { avatar: '/a.png', name: 'Alice', meta: { compactWithSource: true } },
+    defaultAvatar: '/default.png',
+  });
+  assert.equal(wrapper.className.includes('is-source-followup'), true);
+  assert.equal(avatar.className.includes('is-hidden-followup'), true);
+  assert.equal(avatar.alt, '');
+  assert.equal(avatar.attributes['aria-hidden'], 'true');
+  console.log('ok - source-followup messages keep layout space but hide repeated avatars');
+}

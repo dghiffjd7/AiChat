@@ -2,6 +2,14 @@ const resolveHistoryRole = (message) => (
   message?.role === 'system' ? 'system' : message?.role === 'user' ? 'user' : 'assistant'
 );
 
+const findInsertBeforeNode = (scrollEl, insertAfterMessageId = '') => {
+  const targetId = String(insertAfterMessageId || '').trim();
+  if (!scrollEl || !targetId) return null;
+  const children = Array.from(scrollEl.children || []);
+  const anchor = children.find(node => String(node?.dataset?.msgId || '') === targetId);
+  return anchor?.nextSibling || null;
+};
+
 export const buildHistoryRenderMessage = (message, { lazyRichMount = false } = {}) => ({
   role: resolveHistoryRole(message),
   type: message?.type || 'text',
@@ -43,9 +51,17 @@ export const addMessageCore = ({
   const floorMarker = createRpFloorMarker?.(renderedMessage);
   const element = buildMessageElement?.(renderedMessage);
   if (element) {
-    if (floorMarker) scrollEl?.appendChild?.(floorMarker);
+    const referenceNode = findInsertBeforeNode(scrollEl, options.insertAfterMessageId || options.afterMessageId);
+    const insertNode = (node) => {
+      if (referenceNode && typeof scrollEl?.insertBefore === 'function') {
+        scrollEl.insertBefore(node, referenceNode);
+        return;
+      }
+      scrollEl?.appendChild?.(node);
+    };
+    if (floorMarker) insertNode(floorMarker);
     element.dataset.newMsg = '1';
-    scrollEl?.appendChild?.(element);
+    insertNode(element);
     if (renderedMessage?.meta?.floor != null) element.dataset.rpFloor = String(renderedMessage.meta.floor);
     const shouldScroll = options.autoScroll !== false && wasNearBottom;
     if (shouldScroll) scrollToBottom?.();

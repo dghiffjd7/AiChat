@@ -92,6 +92,23 @@ const setPromptHiddenState = ({ chatStore, ui, reloadCurrentSession }, token, hi
   );
 };
 
+const runImageCommand = async (ctx = {}, args = []) => {
+  const prompt = args.slice(1).join(' ').trim();
+  if (!prompt) {
+    if (typeof ctx?.prepareImageCommand === 'function') {
+      ctx.prepareImageCommand();
+    } else {
+      ctx?.ui?.setInputText?.('/image ');
+    }
+    return;
+  }
+  if (typeof ctx?.generateImage !== 'function') {
+    window.toastr?.error?.('图片生成接口未就绪');
+    return;
+  }
+  await ctx.generateImage(prompt);
+};
+
 const COMMANDS = {
   '/clear': {
     desc: '清空当前会话',
@@ -155,6 +172,10 @@ const COMMANDS = {
       await navigator.clipboard?.writeText(JSON.stringify(data, null, 2));
       window.toastr?.success('已复制当前会话 JSON');
     }
+  },
+  '/image': {
+    desc: '/image <提示词> 生成图片',
+    run: runImageCommand,
   },
   '/send': {
     desc: '/send [--no-template] [--no-script] <内容> 发送并可跳过模板/脚本',
@@ -235,7 +256,13 @@ export function runCommand(input, ctx) {
   }
   const handler = COMMANDS[cmdKey];
   try {
-    handler.run(ctx, parts);
+    const result = handler.run(ctx, parts);
+    if (result && typeof result.catch === 'function') {
+      result.catch(err => {
+        logger.error('命令执行失败', err);
+        window.toastr?.error('命令执行失败');
+      });
+    }
   } catch (err) {
     logger.error('命令执行失败', err);
     window.toastr?.error('命令执行失败');

@@ -5933,6 +5933,36 @@ Phase G（Frame 36）：循环衔接
     requestAnimationFrame(syncChatBottomGap);
   });
 
+  const imageSlashPromptHint = (() => {
+    if (!composerInput || !chatInputContainer) return null;
+    const el = document.createElement('div');
+    el.className = 'slash-argument-hint';
+    el.innerHTML = `
+      <span class="slash-argument-command">/image</span>
+      <span class="slash-argument-chip">提示词</span>
+      <span class="slash-argument-copy">输入后按 Enter 直接生成图片</span>
+    `;
+    const inputRow = chatInputContainer.querySelector('.chat-input-row');
+    chatInputContainer.insertBefore(el, inputRow || null);
+    const update = () => {
+      const value = String(composerInput.value || '');
+      const active = /^\/image(?:\s|$)/i.test(value.trimStart());
+      el.classList.toggle('is-active', active);
+    };
+    composerInput.addEventListener('input', update);
+    composerInput.addEventListener('focus', update);
+    return { el, update };
+  })();
+  const prepareImageSlashPrompt = () => {
+    if (!composerInput) return false;
+    composerInput.value = '/image ';
+    composerInput.focus();
+    composerInput.setSelectionRange?.(composerInput.value.length, composerInput.value.length);
+    composerInput.dispatchEvent(new Event('input', { bubbles: true }));
+    imageSlashPromptHint?.update?.();
+    return true;
+  };
+
   // Slash command menu (type "/" in composer)
   (() => {
     if (!composerInput) return;
@@ -12366,6 +12396,52 @@ Phase G（Frame 36）：循环衔接
     refreshChatAndContacts({ immediate: true });
     return finalMessage;
   };
+  const resolveGeneratedMediaClusterTailId = (sessionId, sourceMessageId) => {
+    const sourceId = String(sourceMessageId || '').trim();
+    if (!sourceId) return '';
+    const messages = chatStore.getMessages(sessionId) || [];
+    const anchorIndex = messages.findIndex(item => String(item?.id || '') === sourceId);
+    if (anchorIndex < 0) return sourceId;
+    let tailId = sourceId;
+    for (let index = anchorIndex + 1; index < messages.length; index += 1) {
+      const nextSourceId = String(messages[index]?.meta?.generatedMedia?.sourceMessageId || '').trim();
+      if (nextSourceId !== sourceId) break;
+      tailId = String(messages[index]?.id || tailId);
+    }
+    return tailId;
+  };
+  const resolveImageGenerationSender = ({ sessionId, surface, surfaceCopy, sourceMessage = null } = {}) => {
+    const sourceId = String(sourceMessage?.id || '').trim();
+    if (sourceId) {
+      const sourceRole = sourceMessage?.role === 'user' ? 'user' : 'assistant';
+      const fallbackAvatar = sourceRole === 'user'
+        ? getActiveUserAvatar()
+        : (resolveAvatarForMessage(sourceMessage, sessionId) || getAssistantAvatarForSession(sessionId));
+      return {
+        role: sourceRole,
+        name: String(sourceMessage?.name || '').trim() || (sourceRole === 'user' ? getActiveUserName() : surfaceCopy.pendingName),
+        avatar: String(sourceMessage?.avatar || '').trim() || fallbackAvatar,
+        hideAvatar: true,
+        sourceMessageId: sourceId,
+      };
+    }
+    if (surface === 'chat') {
+      return {
+        role: 'user',
+        name: getActiveUserName(),
+        avatar: getActiveUserAvatar(),
+        hideAvatar: false,
+        sourceMessageId: '',
+      };
+    }
+    return {
+      role: 'assistant',
+      name: surfaceCopy.pendingName,
+      avatar: getAssistantAvatarForSession(sessionId),
+      hideAvatar: false,
+      sourceMessageId: '',
+    };
+  };
 	  const runChatImageGeneration = async ({ prompt, sourceMessage = null, surface = '' } = {}) => {
 	    const imagePrompt = String(prompt || '').trim();
 	    if (!imagePrompt) return false;
@@ -12378,28 +12454,42 @@ Phase G（Frame 36）：循环衔接
 	    if (!config) return false;
 	    const mediaSurface = surface || resolveMediaSurfaceForSession(sessionId);
 	    const surfaceCopy = getMediaSurfaceCopy(mediaSurface);
+	    const sender = resolveImageGenerationSender({
+	      sessionId,
+	      surface: mediaSurface,
+	      surfaceCopy,
+	      sourceMessage,
+	    });
+	    const sourceMessageId = sender.sourceMessageId;
 	    const pendingMeta = {
+	      hideAvatar: sender.hideAvatar,
+	      compactWithSource: sender.hideAvatar,
 	      generatedMedia: {
 	        kind: 'image',
 	        status: 'running',
 	        surface: mediaSurface,
 	        targetId: sessionId,
 	        prompt: imagePrompt,
-	        sourceMessageId: String(sourceMessage?.id || ''),
+	        sourceMessageId,
 	      },
     };
 	    const pendingMessage = {
-	      role: 'assistant',
+	      role: sender.role,
 	      type: 'text',
 	      content: `${surfaceCopy.pendingText}：${imagePrompt}`,
-	      name: surfaceCopy.pendingName,
-	      avatar: getAssistantAvatarForSession(sessionId),
+	      name: sender.name,
+	      avatar: sender.avatar,
 	      time: formatNowTime(),
 	      meta: pendingMeta,
     };
-    const savedPending = chatStore.appendMessage(pendingMessage, sessionId) || pendingMessage;
+    const insertAfterMessageId = sourceMessageId
+      ? resolveGeneratedMediaClusterTailId(sessionId, sourceMessageId)
+      : '';
+    const savedPending = sourceMessageId && typeof chatStore.insertMessageAfter === 'function'
+      ? (chatStore.insertMessageAfter(sourceMessageId, pendingMessage, sessionId) || pendingMessage)
+      : (chatStore.appendMessage(pendingMessage, sessionId) || pendingMessage);
     if (isSessionActive(sessionId)) {
-      ui.addMessage(savedPending);
+      ui.addMessage(savedPending, sourceMessageId ? { insertAfterMessageId, autoScroll: false } : undefined);
       autoMarkReadIfActive(sessionId, savedPending.id);
     }
     refreshChatAndContacts({ immediate: true });
@@ -12414,23 +12504,26 @@ Phase G（Frame 36）：循环衔接
 	        scope: {
 	          surface: mediaSurface,
 	          targetId: sessionId,
-	          sourceMessageId: String(sourceMessage?.id || ''),
+	          sourceMessageId,
 	        },
 	        signal: controller.signal,
 	      });
 	      const imagePatch = buildGeneratedImageMessagePatch(asset, {
-	        sourceMessageId: String(sourceMessage?.id || ''),
+	        sourceMessageId,
 	        surface: mediaSurface,
 	        targetId: sessionId,
 	      });
 	      const nextMeta = {
 	        ...(savedPending.meta || {}),
 	        ...(imagePatch.meta || {}),
+	        hideAvatar: sender.hideAvatar,
+	        compactWithSource: sender.hideAvatar,
 	      };
 	      patchChatImageGenerationMessage(savedPending.id, {
 	        ...imagePatch,
-	        name: surfaceCopy.pendingName,
-	        avatar: getAssistantAvatarForSession(sessionId),
+	        role: sender.role,
+	        name: sender.name,
+	        avatar: sender.avatar,
 	        time: formatNowTime(),
 	        meta: nextMeta,
 	      }, sessionId);
@@ -12439,14 +12532,16 @@ Phase G（Frame 36）：循环衔接
 	    } catch (err) {
 	      const aborted = controller.signal.aborted || err?.name === 'AbortError';
 	      patchChatImageGenerationMessage(savedPending.id, {
-	        role: 'assistant',
+	        role: sender.role,
 	        type: 'text',
 	        content: aborted ? surfaceCopy.cancelledText : `${surfaceCopy.failedText}：${err?.message || '未知错误'}`,
-	        name: surfaceCopy.pendingName,
-	        avatar: getAssistantAvatarForSession(sessionId),
+	        name: sender.name,
+	        avatar: sender.avatar,
 	        time: formatNowTime(),
         meta: {
           ...(savedPending.meta || {}),
+          hideAvatar: sender.hideAvatar,
+          compactWithSource: sender.hideAvatar,
           generatedMedia: {
             ...(savedPending.meta?.generatedMedia || {}),
             status: aborted ? 'cancelled' : 'failed',
@@ -12463,10 +12558,18 @@ Phase G（Frame 36）：循环衔接
       chatImageGenerationControllers.delete(savedPending.id);
     }
   };
-	  const openChatImageGenerationFlow = async ({ initialPrompt = '', sourceMessage = null, surface = '' } = {}) => {
+	  const openChatImageGenerationFlow = async ({
+	    initialPrompt = '',
+	    sourceMessage = null,
+	    surface = '',
+	    useComposerFallback = true,
+	  } = {}) => {
 	    const mediaSurface = surface || resolveMediaSurfaceForSession();
 	    const surfaceCopy = getMediaSurfaceCopy(mediaSurface);
-	    const seedPrompt = String(initialPrompt || '').trim() || resolveChatImageInitialPrompt(sourceMessage);
+	    const fallbackPrompt = (sourceMessage || useComposerFallback)
+	      ? resolveChatImageInitialPrompt(sourceMessage)
+	      : '';
+	    const seedPrompt = String(initialPrompt || '').trim() || fallbackPrompt;
 	    const promptText = await getChatImagePromptModal().open({
 	      initialPrompt: seedPrompt,
 	      title: surfaceCopy.title,
@@ -16532,6 +16635,11 @@ Phase G（Frame 36）：循环衔接
           if (!currentId) return;
           window.dispatchEvent(new CustomEvent('session-changed', { detail: { id: currentId } }));
         },
+        prepareImageCommand: () => prepareImageSlashPrompt(),
+        generateImage: (imagePrompt = '') => runChatImageGeneration({
+          prompt: String(imagePrompt || '').trim(),
+          surface: resolveMediaSurfaceForSession(sessionId),
+        }),
         sendMessage: (content, opts = {}) =>
           handleSend(null, { overrideText: String(content ?? ''), ignorePending: true, ...opts }),
       });
@@ -17196,11 +17304,16 @@ Phase G（Frame 36）：循环衔接
 	      return;
 	    }
 	    const raw = String(ui.getInputText?.() || '').trim();
-	    const imageSlash = raw.match(/^\/(?:image|img|画图)\s+([\s\S]+)$/i);
+	    if (/^\/image$/i.test(raw)) {
+	      prepareImageSlashPrompt();
+	      return;
+	    }
+	    const imageSlash = raw.match(/^\/image\s+([\s\S]+)$/i);
 	    if (imageSlash) {
 	      ui.clearInput?.();
-	      openChatImageGenerationFlow({
-	        initialPrompt: imageSlash[1],
+	      imageSlashPromptHint?.update?.();
+	      runChatImageGeneration({
+	        prompt: imageSlash[1],
 	        surface: resolveMediaSurfaceForSession(),
 	      });
 	      return;
@@ -17211,7 +17324,8 @@ Phase G（Frame 36）：循环衔接
   // 普通聊天沿用 Enter 缓存；RP/创意写作界面 Enter 直接发送。
   ui.onSendWithMode({
     onEnter: () => {
-      if (uiMode === 'rp') {
+      const raw = String(ui.getInputText?.() || '').trim();
+      if (uiMode === 'rp' || raw.startsWith('/')) {
         handleComposerSend();
         return;
       }

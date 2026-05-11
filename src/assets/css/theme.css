@@ -3535,6 +3535,26 @@ body[data-theme-mode='dark'] .slash-command-desc {
   color: rgba(203, 213, 225, 0.9) !important;
 }
 
+body[data-theme-mode='dark'] .slash-argument-hint {
+  background: rgba(15, 23, 42, 0.9) !important;
+  border-color: rgba(96, 165, 250, 0.34) !important;
+  color: #dbeafe !important;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.38) !important;
+}
+
+body[data-theme-mode='dark'] .slash-argument-command {
+  color: #93c5fd !important;
+}
+
+body[data-theme-mode='dark'] .slash-argument-chip {
+  background: #2563eb !important;
+  color: #fff !important;
+}
+
+body[data-theme-mode='dark'] .slash-argument-copy {
+  color: rgba(203, 213, 225, 0.86) !important;
+}
+
 body[data-theme-mode='dark'] .moments-empty-state {
   color: var(--app-text-secondary) !important;
 }

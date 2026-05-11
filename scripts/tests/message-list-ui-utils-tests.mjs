@@ -69,6 +69,45 @@ const createFragment = () => ({
 }
 
 {
+  const anchor = { dataset: { msgId: 'anchor' } };
+  const tail = { dataset: { msgId: 'tail' } };
+  anchor.nextSibling = tail;
+  const wrapper = {
+    dataset: { msgId: 'inserted' },
+    querySelector() {
+      return null;
+    },
+  };
+  const scrollEl = {
+    children: [anchor, tail],
+    appendChild(node) {
+      this.children.push(node);
+      return node;
+    },
+    insertBefore(node, target) {
+      const idx = this.children.indexOf(target);
+      this.children.splice(idx >= 0 ? idx : this.children.length, 0, node);
+      return node;
+    },
+  };
+  addMessageCore({
+    message: { id: 'inserted', role: 'assistant', meta: {} },
+    options: { insertAfterMessageId: 'anchor', autoScroll: false },
+    decorateMessage: message => message,
+    ensureMessageId: message => message,
+    isNearBottom: () => true,
+    buildMessageElement: () => wrapper,
+    scrollEl,
+    scrollToBottom() {
+      throw new Error('anchored insert should not auto-scroll when disabled');
+    },
+    schedule: handler => handler(),
+  });
+  assert.deepEqual(scrollEl.children.map(node => node.dataset.msgId), ['anchor', 'inserted', 'tail']);
+  console.log('ok - addMessageCore can insert a message after an existing rendered message');
+}
+
+{
   const rendered = buildHistoryRenderMessage({
     role: 'user',
     type: 'text',

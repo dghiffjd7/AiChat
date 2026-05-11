@@ -2058,6 +2058,45 @@ body[data-ui-mode='rp'] .rp-continue-btn {
   line-height: 1.2;
 }
 
+.slash-argument-hint {
+  display: none;
+  align-items: center;
+  gap: 6px;
+  width: fit-content;
+  max-width: 100%;
+  margin: 0 0 -2px 48px;
+  padding: 5px 8px;
+  border: 1px solid rgba(37, 99, 235, 0.22);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.78);
+  color: #334155;
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.08);
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+.slash-argument-hint.is-active {
+  display: inline-flex;
+}
+
+.slash-argument-command {
+  font-weight: 800;
+  color: #1d4ed8;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
+
+.slash-argument-chip {
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: #1d4ed8;
+  color: #fff;
+  font-weight: 800;
+}
+
+.slash-argument-copy {
+  color: #64748b;
+}
+
 .chat-image-gen-overlay {
   position: fixed;
   inset: 0;

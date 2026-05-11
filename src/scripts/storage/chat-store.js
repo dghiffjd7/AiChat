@@ -1781,6 +1781,46 @@ export class ChatStore {
     return msg;
   }
 
+  insertMessageAfter(anchorMessageId, message, id = this.currentId) {
+    const sid = String(id || '').trim();
+    if (!sid) return null;
+    this._ensureSession(sid);
+    const session = this.state.sessions[sid];
+    if (!Array.isArray(session.messages)) session.messages = [];
+    const msg = ensureId({ ...message });
+    this._persistRawOriginal(msg, sid);
+
+    const anchorId = String(anchorMessageId || '').trim();
+    const anchorIndex = anchorId
+      ? session.messages.findIndex(item => String(item?.id || '') === anchorId)
+      : -1;
+    let insertIndex = anchorIndex >= 0 ? anchorIndex + 1 : session.messages.length;
+    if (anchorId && anchorIndex >= 0) {
+      while (insertIndex < session.messages.length) {
+        const sourceId = String(session.messages[insertIndex]?.meta?.generatedMedia?.sourceMessageId || '').trim();
+        if (sourceId !== anchorId) break;
+        insertIndex += 1;
+      }
+    }
+    session.messages.splice(insertIndex, 0, msg);
+    if (msg?.role === 'assistant') {
+      session.unreadCount = Number(session.unreadCount || 0) + 1;
+    }
+
+    if (this._useV2) {
+      const aid = String(session.currentArchiveId || '').trim();
+      const threadKey = this._getThreadKey(sid, aid);
+      this._getThreadState(threadKey, { reset: true });
+      const sanitized = session.messages.map(sanitizeMessageForPersist);
+      const v2 = this._v2;
+      v2.enqueue(async () => {
+        await v2.replaceThreadMessages(sid, aid, sanitized);
+      });
+    }
+    this._persist();
+    return msg;
+  }
+
   markRead(id = this.currentId, messageId = '') {
     const sid = String(id || '').trim();
     if (!sid) return;
