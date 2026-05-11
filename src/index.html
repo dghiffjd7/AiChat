@@ -281,9 +281,6 @@
         <div class="sheet-header">会话快捷</div>
         <div class="sheet-desc">当前聊天相关操作</div>
         <button data-action="world">🌐 人物设定</button>
-        <button data-action="regex">🧩 正规表达式</button>
-        <button data-action="vars">🧮 变量管理器</button>
-        <button data-action="generate-image">🖼️ 生成图片</button>
         <button data-action="chat-settings">🎨 聊天设置</button>
         <button data-action="prompt-preview">🧩 本次 Prompt</button>
         <button data-action="raw-reply">🧾 原始回复</button>
@@ -292,10 +289,6 @@
         <div class="sheet-header">会话快捷</div>
         <div class="sheet-desc">当前聊天相关操作</div>
         <button data-action="world">🌐 角色世界书</button>
-        <button data-action="regex">🧩 正规表达式</button>
-        <button data-action="vars">🧮 变量管理器</button>
-        <button data-action="generate-image">🖼️ 生成插图</button>
-        <button data-action="writing-assets">🗂️ 插图素材</button>
         <button data-action="chat-settings">🎨 聊天设置</button>
         <button data-action="prompt-preview">🧩 本次 Prompt</button>
         <button data-action="raw-reply">🧾 原始回复</button>
@@ -355,6 +348,13 @@
                 <input type="radio" name="chat-setting-scope" value="all" />
                 全部聊天
               </label>
+            </div>
+          </div>
+          <div class="setting-item setting-advanced-tools">
+            <span>高级配置</span>
+            <div class="chat-setting-tool-actions">
+              <button type="button" id="chat-setting-open-regex">正规表达式</button>
+              <button type="button" id="chat-setting-open-vars">变量管理器</button>
             </div>
           </div>
           <div class="setting-item setting-wallpaper">

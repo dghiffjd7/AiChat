@@ -761,9 +761,24 @@ body[data-theme-mode='dark'] .chat-attachment-doc-meta {
   color: var(--app-text-secondary) !important;
 }
 
-body[data-theme-mode='dark'] .chat-attachment-remove {
-  background: rgba(240, 246, 252, 0.14) !important;
-  color: var(--app-text-primary) !important;
+body[data-theme-mode='dark'] :is(
+  .chat-attachment-remove,
+  .sticker-preview-remove,
+  .sticker-ai-ref-remove
+) {
+  background: rgba(2, 6, 23, 0.86) !important;
+  color: #ffffff !important;
+  border: 1px solid rgba(248, 250, 252, 0.28) !important;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.38) !important;
+}
+
+body[data-theme-mode='dark'] .chat-attachment-item.is-writing-asset {
+  border-color: rgba(96, 165, 250, 0.3) !important;
+}
+
+body[data-theme-mode='dark'] .chat-attachment-badge {
+  background: rgba(2, 6, 23, 0.78) !important;
+  color: #dbeafe !important;
 }
 
 body[data-theme-mode='dark'] .chat-send-btn.is-generating::before {
@@ -1753,8 +1768,12 @@ body[data-theme-mode='dark'] .sticker-preview-item {
   color: var(--app-text-secondary) !important;
 }
 
-body[data-theme-mode='dark'] .sticker-preview-remove {
-  background: rgba(8, 12, 18, 0.68) !important;
+body[data-theme-mode='dark'] :is(
+  .chat-attachment-remove,
+  .sticker-preview-remove,
+  .sticker-ai-ref-remove
+):active {
+  background: rgba(15, 23, 42, 0.96) !important;
 }
 
 body[data-theme-mode='dark'] :is(.sticker-ai-modal, .sticker-ai-zoom-modal) {
@@ -2981,6 +3000,7 @@ body[data-theme-mode='dark'] :is(
 
 body[data-theme-mode='dark'] :is(
   .chat-setting-content input[type='text'],
+  .chat-setting-tool-actions button,
   .wallpaper-actions button,
   .color-picker
 ) {
@@ -3553,6 +3573,12 @@ body[data-theme-mode='dark'] .slash-argument-chip {
 
 body[data-theme-mode='dark'] .slash-argument-copy {
   color: rgba(203, 213, 225, 0.86) !important;
+}
+
+body[data-theme-mode='dark'] .chat-image-gen-secondary {
+  border-color: rgba(96, 165, 250, 0.32) !important;
+  background: rgba(59, 130, 246, 0.16) !important;
+  color: #bfdbfe !important;
 }
 
 body[data-theme-mode='dark'] .moments-empty-state {

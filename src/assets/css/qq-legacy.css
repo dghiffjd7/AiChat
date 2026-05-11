@@ -1787,6 +1787,26 @@ body[data-ui-mode='rp'] .chat-reply-draft {
   display: block;
 }
 
+.chat-attachment-item.is-writing-asset {
+  width: 72px;
+  height: 72px;
+  border-color: rgba(37, 99, 235, 0.2);
+}
+
+.chat-attachment-badge {
+  position: absolute;
+  left: 5px;
+  bottom: 5px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.76);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1.2;
+  pointer-events: none;
+}
+
 .chat-attachment-doc {
   width: 100%;
   height: 100%;
@@ -2188,6 +2208,7 @@ body[data-ui-mode='rp'] .rp-continue-btn {
 }
 
 .chat-image-gen-cancel,
+.chat-image-gen-secondary,
 .chat-image-gen-submit {
   border-radius: 999px;
   border: 1px solid rgba(15, 23, 42, 0.12);
@@ -2199,6 +2220,13 @@ body[data-ui-mode='rp'] .rp-continue-btn {
 .chat-image-gen-cancel {
   background: var(--app-surface-card);
   color: var(--app-text-primary);
+}
+
+.chat-image-gen-secondary {
+  margin-left: auto;
+  border-color: rgba(37, 99, 235, 0.18);
+  background: rgba(37, 99, 235, 0.08);
+  color: #1d4ed8;
 }
 
 .chat-image-gen-submit {
@@ -5391,6 +5419,33 @@ body[data-ui-mode='rp'] .QQ_chat_page.sticker-preview-active .msgcontent {
 
 .setting-item input[type='text']:focus {
   border-color: #019aff;
+}
+
+.setting-advanced-tools {
+  align-items: flex-start;
+}
+
+.chat-setting-tool-actions {
+  flex: 1;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.chat-setting-tool-actions button {
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  border-radius: 999px;
+  background: var(--app-surface-card);
+  color: var(--app-text-primary);
+  padding: 8px 12px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.chat-setting-tool-actions button:active {
+  transform: scale(0.98);
 }
 
 .chat-setting-color-field {

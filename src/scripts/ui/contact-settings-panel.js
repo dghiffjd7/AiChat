@@ -117,6 +117,8 @@ export class ContactSettingsPanel {
         memoryTemplateStore = null,
         onSaved,
         onExportExperiencePack,
+        onOpenRegex,
+        onOpenVariables,
     } = {}) {
         this.contactsStore = contactsStore;
         this.chatStore = chatStore;
@@ -126,6 +128,8 @@ export class ContactSettingsPanel {
         this.getSessionId = typeof getSessionId === 'function' ? getSessionId : () => 'default';
         this.onSaved = typeof onSaved === 'function' ? onSaved : null;
         this.onExportExperiencePack = typeof onExportExperiencePack === 'function' ? onExportExperiencePack : null;
+        this.onOpenRegex = typeof onOpenRegex === 'function' ? onOpenRegex : null;
+        this.onOpenVariables = typeof onOpenVariables === 'function' ? onOpenVariables : null;
         this.overlay = null;
         this.panel = null;
         this.fileInput = null;
@@ -154,6 +158,8 @@ export class ContactSettingsPanel {
         this.summaryCompacting = false;
         this.templateToggle = null;
         this.scriptToggle = null;
+        this.openRegexBtn = null;
+        this.openVariablesBtn = null;
         this.resetVarsBtn = null;
         this.rpBridgeSection = null;
         this.rpBridgeToggle = null;
@@ -339,10 +345,18 @@ export class ContactSettingsPanel {
                         <input type="checkbox" id="contact-script-enabled" style="${checkboxInputStyle}">
                         <span>启用脚本</span>
                     </label>
+                    <div style="${buildSessionFlexRowStyle({ gap: 8, wrap: true, margin: '8px 0 8px' })}">
+                        <button id="contact-open-regex" type="button" style="${utilitySmallButtonStyle}">
+                            正规表达式
+                        </button>
+                        <button id="contact-open-vars-panel" type="button" style="${utilitySmallButtonStyle}">
+                            变量管理器
+                        </button>
+                    </div>
                     <button id="contact-reset-vars" type="button" style="${utilitySmallButtonStyle}">
                         重置本会话变量
                     </button>
-	                    <div style="${helperTextStyle}">仅清空本会话 local 变量，不影响全局变量。</div>
+	                    <div style="${helperTextStyle}">正则与变量属于高级脚本配置；重置仅清空本会话 local 变量，不影响全局变量。</div>
 	                </div>
 
                     <div id="contact-memory-features-section" style="margin-top:16px; border-top:1px solid var(--app-border-subtle); padding-top:14px;">
@@ -442,6 +456,8 @@ export class ContactSettingsPanel {
         this.summariesBatchBar = this.panel.querySelector('#contact-summaries-batchbar');
         this.templateToggle = this.panel.querySelector('#contact-template-enabled');
         this.scriptToggle = this.panel.querySelector('#contact-script-enabled');
+        this.openRegexBtn = this.panel.querySelector('#contact-open-regex');
+        this.openVariablesBtn = this.panel.querySelector('#contact-open-vars-panel');
         this.resetVarsBtn = this.panel.querySelector('#contact-reset-vars');
         this.rpBridgeSection = this.panel.querySelector('#contact-rp-bridge-section');
         this.rpBridgeToggle = this.panel.querySelector('#contact-rp-bridge-enabled');
@@ -506,6 +522,14 @@ export class ContactSettingsPanel {
         };
         this.panel.querySelector('#contact-settings-save').onclick = () => this.save();
         this.rpBridgeToggle?.addEventListener('change', syncBridgeControls);
+        this.openRegexBtn?.addEventListener('click', () => {
+            this.hide();
+            this.onOpenRegex?.();
+        });
+        this.openVariablesBtn?.addEventListener('click', () => {
+            this.hide();
+            this.onOpenVariables?.();
+        });
         bindSessionMemoryShareButton({
             buttonEl: this.memoryShareButton,
             openManager: () => this.openMemoryShareManager(),

@@ -1098,6 +1098,11 @@ const initApp = async () => {
     memoryTableStore,
     memoryTemplateStore,
     onExportExperiencePack: (sessionId) => experiencePackTransfer.exportExperiencePack(sessionId),
+    onOpenRegex: () => regexSessionPanel.show(),
+    onOpenVariables: () => {
+      blurComposerInput();
+      variablePanel.show();
+    },
     onSaved: async ({ forceRefresh } = {}) => {
       refreshChatAndContacts();
       const id = chatStore.getCurrent();
@@ -3180,6 +3185,39 @@ const initApp = async () => {
     const next = `${before}${insert}${after}`;
     composerInput.value = next;
     const caret = before.length + insert.length;
+    try {
+      composerInput.selectionStart = composerInput.selectionEnd = caret;
+      composerInput.focus();
+    } catch {}
+    try {
+      composerInput.dispatchEvent(new Event('input', { bubbles: true }));
+    } catch {}
+    return true;
+  };
+
+  const removeComposerTextToken = token => {
+    if (!composerInput) return false;
+    const raw = String(token || '').trim();
+    if (!raw) return false;
+    const value = String(composerInput.value || '');
+    if (!value.includes(raw)) return false;
+    const escaped = escapeRegExp(raw);
+    const linePattern = new RegExp(`(^|\\n)[ \\t]*${escaped}[ \\t]*(?=\\n|$)`);
+    const lineMatch = linePattern.exec(value);
+    let start = -1;
+    let end = -1;
+    if (lineMatch) {
+      start = lineMatch.index;
+      end = start + lineMatch[0].length;
+      if (start === 0 && value.charAt(end) === '\n') end += 1;
+    } else {
+      start = value.indexOf(raw);
+      end = start + raw.length;
+    }
+    if (start < 0 || end <= start) return false;
+    const next = `${value.slice(0, start)}${value.slice(end)}`;
+    composerInput.value = next;
+    const caret = Math.min(start, next.length);
     try {
       composerInput.selectionStart = composerInput.selectionEnd = caret;
       composerInput.focus();
@@ -6248,12 +6286,19 @@ Phase G（Frame 36）：循环衔接
       const item = document.createElement('div');
       item.className = 'chat-attachment-item';
       item.dataset.attachmentId = attachment.id || '';
+      if (attachment.source === 'writing-asset') item.classList.add('is-writing-asset');
 
       if (attachment.kind === 'image') {
         const img = document.createElement('img');
         img.src = attachment.url || '';
         img.alt = attachment.name || 'image';
         item.appendChild(img);
+        if (attachment.source === 'writing-asset') {
+          const badge = document.createElement('div');
+          badge.className = 'chat-attachment-badge';
+          badge.textContent = '插图';
+          item.appendChild(badge);
+        }
       } else {
         const doc = document.createElement('div');
         doc.className = 'chat-attachment-doc';
@@ -6317,7 +6362,10 @@ Phase G（Frame 36）：循环衔接
     if (!targetId) return;
     const idx = composerAttachments.findIndex(a => String(a?.id || '') === targetId);
     if (idx === -1) return;
-    composerAttachments.splice(idx, 1);
+    const [removed] = composerAttachments.splice(idx, 1);
+    if (removed?.source === 'writing-asset') {
+      removeComposerTextToken(removed.placeholder || removed.name || '');
+    }
     renderComposerAttachments();
   };
   const clearComposerAttachments = () => {
@@ -6341,7 +6389,8 @@ Phase G（Frame 36）：循环衔接
     (attachments || []).forEach(attachment => {
       if (!attachment || typeof attachment !== 'object') return;
       if (attachment.kind === 'image' && attachment.url) {
-        parts.push({ type: 'image_url', image_url: { url: attachment.url } });
+        const url = String(attachment.llmUrl || attachment.url || '').trim();
+        if (url) parts.push({ type: 'image_url', image_url: { url } });
         return;
       }
       if (attachment.kind === 'document') {
@@ -6356,7 +6405,7 @@ Phase G（Frame 36）：循环衔接
     (attachments || []).forEach(attachment => {
       if (!attachment || typeof attachment !== 'object') return;
       if (attachment.kind === 'image' && attachment.url) {
-        const expiresAt = Date.now() + ATTACHMENT_TTL_MS;
+        const expiresAt = attachment.source === 'writing-asset' ? 0 : Date.now() + ATTACHMENT_TTL_MS;
         list.push({
           role: 'user',
           type: 'image',
@@ -6368,6 +6417,12 @@ Phase G（Frame 36）：循环衔接
             attachmentId: attachment.id || '',
             originalName: attachment.name || '',
             expiresAt,
+            source: attachment.source || '',
+            prompt: attachment.prompt || '',
+            placeholder: attachment.placeholder || '',
+            localPath: attachment.localPath || '',
+            localBytes: Number(attachment.localBytes || 0) || undefined,
+            generatedAssetId: attachment.generatedAssetId || '',
           },
         });
         return;
@@ -11719,6 +11774,8 @@ Phase G（Frame 36）：循环衔接
   const restoreSettingBtn = document.getElementById('restore-setting-btn');
   const saveSettingBtn = document.getElementById('save-setting-btn');
   const cancelSettingBtn = document.getElementById('cancel-setting-btn');
+  const chatSettingOpenRegexBtn = document.getElementById('chat-setting-open-regex');
+  const chatSettingOpenVarsBtn = document.getElementById('chat-setting-open-vars');
 
   const hideMenus = () => {
     personaSwitcherMenu?.classList.add('hidden');
@@ -12229,6 +12286,7 @@ Phase G（Frame 36）：循环衔接
           </div>
           <div class="chat-image-gen-footer">
             <button type="button" class="chat-image-gen-cancel">取消</button>
+            <button type="button" class="chat-image-gen-secondary" style="display:none;">插图素材</button>
             <button type="button" class="chat-image-gen-submit">生成图片</button>
           </div>
         </div>
@@ -12238,8 +12296,10 @@ Phase G（Frame 36）：循环衔接
       const statusEl = overlay.querySelector('.chat-image-gen-status');
       const closeBtn = overlay.querySelector('.chat-image-gen-close');
       const cancelBtn = overlay.querySelector('.chat-image-gen-cancel');
+      const secondaryBtn = overlay.querySelector('.chat-image-gen-secondary');
       const submitBtn = overlay.querySelector('.chat-image-gen-submit');
       let resolveOpen = null;
+      let secondaryHandler = null;
       const close = (value = '') => {
         overlay.classList.remove('is-active');
         statusEl.textContent = '';
@@ -12258,6 +12318,11 @@ Phase G（Frame 36）：循环衔接
       };
       closeBtn?.addEventListener('click', () => close(''));
       cancelBtn?.addEventListener('click', () => close(''));
+      secondaryBtn?.addEventListener('click', () => {
+        const handler = secondaryHandler;
+        close('');
+        if (typeof handler === 'function') handler();
+      });
       submitBtn?.addEventListener('click', submit);
       overlay.addEventListener('click', event => {
         if (event.target === overlay) close('');
@@ -12274,13 +12339,20 @@ Phase G（Frame 36）：循环衔接
           title = '生成图片',
           subtitle = '使用当前图片模型生成并写入这个聊天室',
           submitText = '生成图片',
+          secondaryText = '',
+          onSecondary = null,
         } = {}) => new Promise(resolve => {
           resolveOpen = resolve;
+          secondaryHandler = typeof onSecondary === 'function' ? onSecondary : null;
           const titleEl = overlay.querySelector('.chat-image-gen-title');
           const subtitleEl = overlay.querySelector('.chat-image-gen-subtitle');
           if (titleEl) titleEl.textContent = title;
           if (subtitleEl) subtitleEl.textContent = subtitle;
           if (submitBtn) submitBtn.textContent = submitText;
+          if (secondaryBtn) {
+            secondaryBtn.textContent = secondaryText || '';
+            secondaryBtn.style.display = secondaryText && secondaryHandler ? '' : 'none';
+          }
           textarea.value = String(initialPrompt || '').trim();
           statusEl.textContent = '';
           overlay.classList.add('is-active');
@@ -12315,6 +12387,11 @@ Phase G（Frame 36）：循环衔接
 	  const resolveMediaSurfaceForSession = (sessionId = chatStore.getCurrent()) => {
 	    const sid = String(sessionId || '').trim();
 	    return uiMode === 'rp' || isRpSessionId(sid) ? 'writing' : 'chat';
+	  };
+	  const isWritingMediaSurface = (surface = '', sessionId = chatStore.getCurrent()) => {
+	    if (surface === 'writing') return true;
+	    const sid = String(sessionId || '').trim();
+	    return uiMode === 'rp' || isRpSessionId(sid);
 	  };
 	  const getMediaSurfaceCopy = (surface = 'chat') => {
 	    if (surface === 'writing') {
@@ -12566,6 +12643,7 @@ Phase G（Frame 36）：循环衔接
 	  } = {}) => {
 	    const mediaSurface = surface || resolveMediaSurfaceForSession();
 	    const surfaceCopy = getMediaSurfaceCopy(mediaSurface);
+	    const showWritingAssets = isWritingMediaSurface(mediaSurface);
 	    const fallbackPrompt = (sourceMessage || useComposerFallback)
 	      ? resolveChatImageInitialPrompt(sourceMessage)
 	      : '';
@@ -12575,6 +12653,8 @@ Phase G（Frame 36）：循环衔接
 	      title: surfaceCopy.title,
 	      subtitle: surfaceCopy.subtitle,
 	      submitText: surfaceCopy.submitText,
+	      secondaryText: showWritingAssets ? '插图素材' : '',
+	      onSecondary: showWritingAssets ? () => openWritingAssetPanel() : null,
 	    });
 	    if (!promptText) return false;
 	    return runChatImageGeneration({ prompt: promptText, sourceMessage, surface: mediaSurface });
@@ -12585,11 +12665,56 @@ Phase G（Frame 36）：循环衔接
 	    if (path) return resolveLocalStickerUrl(path);
 	    return String(output.url || output.dataUrl || '').trim();
 	  };
-	  const buildGeneratedImageInlineHtml = (asset = {}) => {
-	    const url = resolveGeneratedImagePreviewUrl(asset);
-	    if (!url) return '';
-	    const alt = String(asset.prompt || '插图').trim() || '插图';
-	    return `<img src="${escapeHtml(url)}" alt="${escapeHtml(alt)}">`;
+	  const readImageUrlAsDataUrl = async (url = '') => {
+	    const src = String(url || '').trim();
+	    if (!src || src.startsWith('data:image/')) return src;
+	    if (typeof fetch !== 'function' || typeof FileReader === 'undefined') return '';
+	    try {
+	      const resp = await fetch(src);
+	      if (!resp?.ok) return '';
+	      const blob = await resp.blob();
+	      if (!String(blob?.type || '').startsWith('image/')) return '';
+	      return await new Promise(resolve => {
+	        const reader = new FileReader();
+	        reader.onload = () => resolve(String(reader.result || ''));
+	        reader.onerror = () => resolve('');
+	        reader.readAsDataURL(blob);
+	      });
+	    } catch {
+	      return '';
+	    }
+	  };
+	  const buildWritingAssetPlaceholder = (asset = {}) => {
+	    const prompt = String(asset?.prompt || '').trim();
+	    const label = prompt ? prompt.replace(/\s+/g, ' ').slice(0, 40) : '插图';
+	    return `[插图：${label}${prompt.length > 40 ? '…' : ''}]`;
+	  };
+	  const addWritingImageAssetToComposer = async (asset = {}) => {
+	    const previewUrl = resolveGeneratedImagePreviewUrl(asset);
+	    if (!previewUrl) {
+	      window.toastr?.warning?.('该插图缺少可插入的图片地址');
+	      return false;
+	    }
+	    const output = asset?.output && typeof asset.output === 'object' ? asset.output : {};
+	    const directUrl = String(output.dataUrl || output.url || '').trim();
+	    const llmUrl = directUrl || await readImageUrlAsDataUrl(previewUrl);
+	    const placeholder = buildWritingAssetPlaceholder(asset);
+	    const ok = addComposerAttachment({
+	      kind: 'image',
+	      source: 'writing-asset',
+	      url: previewUrl,
+	      llmUrl: llmUrl || previewUrl,
+	      name: placeholder,
+	      placeholder,
+	      prompt: String(asset?.prompt || '').trim(),
+	      generatedAssetId: String(asset?.id || '').trim(),
+	      localPath: String(output.path || '').trim(),
+	      localBytes: Number(output.bytes || 0) || 0,
+	      mime: String(output.mime || '').trim(),
+	    });
+	    if (!ok) return false;
+	    insertComposerText(placeholder, { block: true });
+	    return true;
 	  };
 	  const collectWritingImageAssetsForCurrentSession = () => {
 	    const sessionId = String(chatStore.getCurrent() || '').trim();
@@ -12645,14 +12770,10 @@ Phase G（Frame 36）：循环衔接
 	        const asset = lastAssets.find(item => String(item.id || '') === assetId);
 	        if (!asset) return;
 	        if (action === 'insert-writing-image') {
-	          const html = buildGeneratedImageInlineHtml(asset);
-	          if (!html) {
-	            window.toastr?.warning?.('该插图缺少可插入的图片地址');
-	            return;
-	          }
-	          insertComposerText(html, { block: true });
+	          const inserted = await addWritingImageAssetToComposer(asset);
+	          if (!inserted) return;
 	          overlay.classList.remove('is-active');
-	          window.toastr?.success?.('已插入到输入框');
+	          window.toastr?.success?.('已添加到输入区');
 	        }
 	      });
 	    };
@@ -12676,7 +12797,7 @@ Phase G（Frame 36）：循环衔接
 	              <div class="writing-media-asset-model">${escapeHtml([asset.provider, asset.model].filter(Boolean).join(' · ') || '图片模型')}</div>
 	            </div>
 	            <div class="writing-media-asset-actions">
-	              <button type="button" data-action="insert-writing-image">插入当前位置</button>
+	              <button type="button" data-action="insert-writing-image">添加到输入区</button>
 	            </div>
 	          </div>
 	        `;
@@ -18736,6 +18857,15 @@ Phase G（Frame 36）：循环衔接
     chatSettingsOverlay.style.display = 'none';
     chatSettingsModal.style.display = 'none';
   }
+  const openRegexFromChatSettings = () => {
+    closeChatSettings();
+    regexSessionPanel.show();
+  };
+  const openVariablesFromChatSettings = () => {
+    closeChatSettings();
+    blurComposerInput();
+    variablePanel.show();
+  };
   patchDebugUiRegistry((registry) => {
     registry.actions.openChatSettings = openChatSettings;
     registry.actions.closeChatSettings = closeChatSettings;
@@ -18816,6 +18946,8 @@ Phase G（Frame 36）：循环衔接
   closeChatSettingsBtn?.addEventListener('click', closeChatSettings);
   chatSettingsOverlay?.addEventListener('click', closeChatSettings);
   cancelSettingBtn?.addEventListener('click', closeChatSettings);
+  chatSettingOpenRegexBtn?.addEventListener('click', openRegexFromChatSettings);
+  chatSettingOpenVarsBtn?.addEventListener('click', openVariablesFromChatSettings);
   saveSettingBtn?.addEventListener('click', () => {
     void saveChatSettings();
   });
