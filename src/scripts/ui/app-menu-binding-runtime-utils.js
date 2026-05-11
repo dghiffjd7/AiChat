@@ -103,6 +103,8 @@ export const bindChatroomMenuActions = ({
   openWorld = () => {},
   openRegex = () => {},
   openVars = () => {},
+  openGenerateImage = () => {},
+  openWritingAssets = () => {},
   openChatSettings = () => {},
   openPromptPreview = () => {},
   openRawReply = () => {},
@@ -114,6 +116,8 @@ export const bindChatroomMenuActions = ({
       if (action === 'world') openWorld();
       if (action === 'regex') openRegex();
       if (action === 'vars') openVars();
+      if (action === 'generate-image') openGenerateImage();
+      if (action === 'writing-assets') openWritingAssets();
       if (action === 'chat-settings') openChatSettings();
       if (action === 'prompt-preview') openPromptPreview();
       if (action === 'raw-reply') openRawReply();

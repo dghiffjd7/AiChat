@@ -57,9 +57,11 @@ import {
     setStickerPanelOpen: (value) => calls.push(['sticker-open', value]),
     isStickerAllowed: () => false,
     setActionPanelOpen: (value) => calls.push(['action-open', value]),
+    generateImage: async () => calls.push(['generate-image']),
     notifyInfo: (message) => calls.push(['info', message]),
   });
 
+  runtime.runQuickAction('generate-image');
   runtime.runQuickAction('music');
   runtime.runQuickAction('sticker');
   runtime.runQuickAction('unknown');
@@ -67,6 +69,8 @@ import {
   await Promise.resolve();
 
   assert.deepEqual(calls, [
+    ['action-open', false],
+    ['generate-image'],
     ['action-open', false],
     ['action-open', false],
     ['info', 'RP界面不支持贴图'],

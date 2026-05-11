@@ -121,6 +121,14 @@ const formatCacheDebugUsage = (usage = {}) => {
   return entries.map(([key, value]) => `${key}=${value}`).join(', ');
 };
 
+const imageGenerationModelSupportsResponseFormat = (model = '') => {
+  const raw = String(model || '').trim().toLowerCase();
+  if (!raw) return true;
+  // The newer gpt-image family returns base64 image data by default and rejects response_format.
+  if (raw.startsWith('gpt-image')) return false;
+  return true;
+};
+
 const emitOpenAICacheDebug = ({
   phase = 'response',
   provider = '',
@@ -681,13 +689,16 @@ export class OpenAIProvider {
    * @param {Object} options
    */
   async generateImage(prompt, options = {}) {
+    const { signal } = options || {};
     const payload = {
       model: this.model,
       prompt: String(prompt || '').trim(),
       n: Number.isFinite(options.n) ? Math.trunc(options.n) : 1,
     };
-    const responseFormat = options.responseFormat || options.response_format || 'b64_json';
-    if (responseFormat) payload.response_format = responseFormat;
+    const responseFormat = options.responseFormat || options.response_format || '';
+    if (responseFormat && imageGenerationModelSupportsResponseFormat(this.model)) {
+      payload.response_format = responseFormat;
+    }
     if (options.size) payload.size = options.size;
     if (options.quality) payload.quality = options.quality;
     if (options.style) payload.style = options.style;
@@ -697,6 +708,7 @@ export class OpenAIProvider {
       method: 'POST',
       headers: this.getHeaders(),
       body: JSON.stringify(payload),
+      signal,
     });
 
     const list = Array.isArray(data?.data) ? data.data : [];

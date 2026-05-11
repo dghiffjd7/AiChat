@@ -10,6 +10,24 @@ const createTextChip = (documentLike, text) => {
   return chip;
 };
 
+const resolveLocalFileLikeUrl = (value = '') => {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  try {
+    const g = typeof globalThis !== 'undefined' ? globalThis : window;
+    const convert =
+      g?.__TAURI__?.core?.convertFileSrc || g?.__TAURI__?.convertFileSrc || g?.__TAURI_INTERNALS__?.convertFileSrc;
+    if (typeof convert === 'function') {
+      const converted = convert(raw);
+      if (converted) return converted;
+    }
+  } catch {}
+  if (/^(file|asset|tauri|app|https?|data|blob):/i.test(raw)) return raw;
+  if (/^[a-zA-Z]:[\\/]/.test(raw)) return `file:///${raw.replace(/\\/g, '/')}`;
+  if (raw.startsWith('/')) return `file://${raw}`;
+  return '';
+};
+
 const formatAudioTime = (seconds = 0) => {
   if (!Number.isFinite(seconds)) return '--:--';
   const minutes = Math.floor(seconds / 60).toString().padStart(2, '0');
@@ -42,17 +60,31 @@ export const renderMessageBubbleContentCore = ({
 } = {}) => {
   switch (message?.type) {
     case 'image': {
-      const imgSrc = resolveMediaUrl?.('image', message?.content) || '';
+      const meta = message?.meta && typeof message.meta === 'object' ? message.meta : {};
+      const generated = meta.generatedMedia && typeof meta.generatedMedia === 'object' ? meta.generatedMedia : {};
+      const output = generated.output && typeof generated.output === 'object' ? generated.output : {};
+      const content = String(message?.content || '').trim();
+      const contentIsPlaceholder = !content || content === '[binary omitted]' || content === '[图片]';
+      const imageRef = contentIsPlaceholder
+        ? String(meta.localPath || output.path || output.url || output.dataUrl || '').trim()
+        : content;
+      const localFileUrl = contentIsPlaceholder ? resolveLocalFileLikeUrl(imageRef) : '';
+      const resolved = localFileUrl ? null : (resolveMediaAsset?.('image', imageRef) || null);
+      const imgSrc = localFileUrl || resolved?.url || resolveMediaUrl?.('image', imageRef) || imageRef || '';
       const imgEl = documentLike.createElement('img');
       imgEl.src = imgSrc;
       imgEl.alt = 'image';
       imgEl.className = 'previewable';
       imgEl.addEventListener?.('click', () => openLightbox?.(imgSrc));
-      imgEl.onerror = () => {
+      const onFail = () => {
         imgEl.classList?.add?.('broken');
         imgEl.alt = '图片加载失败';
         toastOnce?.('图片加载失败，请检查链接或网络');
       };
+      const hasFallback = typeof applyImageFallback === 'function'
+        ? applyImageFallback(imgEl, resolved, { onFail })
+        : false;
+      if (!hasFallback) imgEl.onerror = onFail;
       appendChild(bubble, imgEl);
       break;
     }

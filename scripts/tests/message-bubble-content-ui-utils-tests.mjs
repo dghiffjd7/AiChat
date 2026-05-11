@@ -77,6 +77,26 @@ const createFakeDocument = () => {
 {
   const documentLike = createFakeDocument();
   const bubble = documentLike.createElement('div');
+  renderMessageBubbleContentCore({
+    bubble,
+    message: {
+      type: 'image',
+      content: '[binary omitted]',
+      meta: { localPath: 'D:\\images\\generated.png' },
+    },
+    documentLike,
+    resolveMediaAsset: () => {
+      throw new Error('local generated image path should be resolved directly');
+    },
+  });
+  const img = bubble.children[0];
+  assert.equal(img.src, 'file:///D:/images/generated.png');
+  console.log('ok - renderMessageBubbleContentCore resolves generated image local path from meta');
+}
+
+{
+  const documentLike = createFakeDocument();
+  const bubble = documentLike.createElement('div');
   const target = documentLike.createElement('div');
   const renders = [];
   const logs = [];

@@ -14,6 +14,24 @@ export const normalizeMomentRegexMode = (mode, fallback = 'output') => {
   return String(fallback || '').trim().toLowerCase() === 'input' ? 'input' : 'output';
 };
 
+const resolveMomentDirectMediaUrl = (value = '') => {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  try {
+    const g = typeof globalThis !== 'undefined' ? globalThis : window;
+    const convert =
+      g?.__TAURI__?.core?.convertFileSrc || g?.__TAURI__?.convertFileSrc || g?.__TAURI_INTERNALS__?.convertFileSrc;
+    if (typeof convert === 'function' && (/^[a-zA-Z]:[\\/]/.test(raw) || raw.startsWith('/'))) {
+      const converted = convert(raw);
+      if (converted) return converted;
+    }
+  } catch {}
+  if (/^(file|asset|tauri|app|https?|data|blob):/i.test(raw)) return raw;
+  if (/^[a-zA-Z]:[\\/]/.test(raw)) return `file:///${raw.replace(/\\/g, '/')}`;
+  if (raw.startsWith('/')) return `file://${raw}`;
+  return raw;
+};
+
 export const applyMomentStoredRegex = (raw = '', { regexMode = 'output' } = {}) => {
   const text = String(raw ?? '');
   try {
@@ -101,7 +119,9 @@ export const extractMomentMedia = (raw = '') => {
 
   const pushImage = (payload, kind = 'image') => {
     const resolved = resolveMediaAsset(kind, payload) || resolveMediaAsset('image', payload);
-    const url = resolved?.url || (isLikelyUrl(payload) ? payload : '');
+    const url = resolved?.url
+      ? resolveMomentDirectMediaUrl(resolved.url)
+      : (isLikelyUrl(payload) ? resolveMomentDirectMediaUrl(payload) : '');
     if (!url) return false;
     images.push({ url, label: String(payload || '').trim() });
     return true;
@@ -156,8 +176,9 @@ export const extractMomentMedia = (raw = '') => {
   const trimmed = output.trim();
   if (trimmed && (isAssetRef(trimmed) || isLikelyUrl(trimmed))) {
     const image = resolveMediaAsset('image', trimmed);
-    if (image?.url) {
-      images.push({ url: image.url, label: trimmed });
+    const imageUrl = image?.url ? resolveMomentDirectMediaUrl(image.url) : '';
+    if (imageUrl) {
+      images.push({ url: imageUrl, label: trimmed });
       output = '';
     } else {
       const audio = resolveMediaAsset('audio', trimmed);

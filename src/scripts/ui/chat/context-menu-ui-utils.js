@@ -13,6 +13,21 @@ export const buildContextMenuActions = (message, {
   if (canDownload) {
     actions.push({ key: 'download', label: '下载' });
   }
+  if (message?.meta?.generatedMedia?.status === 'running') {
+    actions.push({ key: 'cancel-media-generation', label: '取消生成' });
+    return actions;
+  }
+  if (
+    message?.status !== 'pending' &&
+    message?.status !== 'sending' &&
+    ['text', 'image', 'sticker'].includes(String(message?.type || 'text'))
+  ) {
+    const hasGeneratedImagePrompt = Boolean(String(message?.meta?.generatedMedia?.prompt || '').trim());
+    actions.push({
+      key: 'generate-image',
+      label: message?.type === 'image' && hasGeneratedImagePrompt ? '重新生成图片' : '以此生成图片',
+    });
+  }
   if (message?.role === 'assistant') {
     actions.push({ key: 'copy-text', label: '复制' });
     actions.push({ key: 'regenerate', label: '重新生成' });

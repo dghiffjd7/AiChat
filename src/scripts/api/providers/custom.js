@@ -257,12 +257,13 @@ export class CustomProvider {
      * 生成图片（OpenAI 兼容 /images/generations）
      */
     async generateImage(prompt, options = {}) {
+        const { signal } = options || {};
         const payload = {
             model: this.model,
             prompt: String(prompt || '').trim(),
             n: Number.isFinite(options.n) ? Math.trunc(options.n) : 1,
         };
-        const responseFormat = options.responseFormat || options.response_format || 'b64_json';
+        const responseFormat = options.responseFormat || options.response_format || '';
         if (responseFormat) payload.response_format = responseFormat;
         if (options.size) payload.size = options.size;
         if (options.quality) payload.quality = options.quality;
@@ -273,6 +274,7 @@ export class CustomProvider {
             method: 'POST',
             headers: this.getHeaders(),
             body: JSON.stringify(payload),
+            signal,
         });
 
         const list = Array.isArray(data?.data) ? data.data : [];

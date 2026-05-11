@@ -55,6 +55,17 @@ globalThis.window = {
   console.log('ok - extractMomentMedia separates image audio tokens from remaining text');
 }
 
+{
+  const previousTauri = globalThis.__TAURI__;
+  globalThis.__TAURI__ = { core: { convertFileSrc: value => `asset://${String(value).replace(/\\/g, '/')}` } };
+  const media = extractMomentMedia('[img-D:\\app\\generated.png]');
+  assert.deepEqual(media.images, [{ url: 'asset://D:/app/generated.png', label: 'D:\\app\\generated.png' }]);
+  assert.equal(media.text, '');
+  if (previousTauri === undefined) delete globalThis.__TAURI__;
+  else globalThis.__TAURI__ = previousTauri;
+  console.log('ok - extractMomentMedia converts local generated image paths for display');
+}
+
 if (previousWindow === undefined) {
   delete globalThis.window;
 } else {

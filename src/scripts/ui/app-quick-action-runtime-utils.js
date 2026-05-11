@@ -32,9 +32,13 @@ export const createQuickActionRuntime = ({
   setStickerPanelOpen = () => {},
   isStickerAllowed = () => true,
   setActionPanelOpen = () => {},
+  generateImage = async () => {},
   notifyInfo = () => {},
 } = {}) => {
   const actionHandlers = {
+    'generate-image': async () => {
+      await generateImage?.();
+    },
     image: async () => {
       await mediaPicker?.pickFile?.('image');
     },

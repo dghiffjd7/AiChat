@@ -1625,7 +1625,7 @@ body[data-theme-mode='dark'] .QQ_chat_page::before {
   background: linear-gradient(180deg, rgba(9, 13, 19, 0.85) 0%, rgba(27, 31, 36, 0.94) 100%) !important;
 }
 
-body[data-theme-mode='dark'] :is(.action-panel, .sticker-panel, .sticker-preview) {
+body[data-theme-mode='dark'] :is(.action-panel, .sticker-panel, .sticker-preview, .chat-image-gen-modal, .writing-media-assets-panel, .moment-compose-modal) {
   background: rgba(26, 31, 38, 0.98) !important;
   border-top-color: var(--app-border-subtle) !important;
 }
@@ -1638,6 +1638,28 @@ body[data-theme-mode='dark'] .action-icon {
 
 body[data-theme-mode='dark'] .action-label {
   color: var(--app-text-secondary) !important;
+}
+
+body[data-theme-mode='dark'] :is(.chat-image-gen-textarea, .moment-compose-text, .moment-compose-prompt) {
+  background: rgba(205, 217, 229, 0.08) !important;
+  border-color: var(--app-border-default) !important;
+  color: var(--app-text-primary) !important;
+}
+
+body[data-theme-mode='dark'] :is(.chat-image-gen-footer, .moment-compose-footer, .writing-media-assets-toolbar) {
+  background: rgba(205, 217, 229, 0.04) !important;
+  border-top-color: var(--app-border-subtle) !important;
+}
+
+body[data-theme-mode='dark'] :is(.chat-image-gen-cancel, .moment-compose-cancel, .writing-media-asset-actions button) {
+  background: rgba(205, 217, 229, 0.08) !important;
+  color: var(--app-text-primary) !important;
+  border-color: var(--app-border-default) !important;
+}
+
+body[data-theme-mode='dark'] :is(.writing-media-assets-empty, .moment-compose-image-empty) {
+  border-color: var(--app-border-default) !important;
+  color: var(--app-text-muted) !important;
 }
 
 body[data-theme-mode='dark'] .chat-action-btn {
@@ -1661,6 +1683,15 @@ body[data-theme-mode='dark'] .chat-action-btn::before {
 
 body[data-theme-mode='dark'] .chat-action-btn[data-action='image']::before {
   background-image: url('../external/action-image.svg') !important;
+}
+
+body[data-theme-mode='dark'] .chat-action-btn[data-action='generate-image']::before {
+  display: none !important;
+}
+
+body[data-theme-mode='dark'] .chat-action-btn[data-action='generate-image']::after {
+  content: 'AI';
+  color: #93c5fd;
 }
 
 body[data-theme-mode='dark'] .chat-action-btn[data-action='document']::before {

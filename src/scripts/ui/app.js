@@ -129,6 +129,12 @@ import {
   createQuickActionRuntime,
   openSessionRawReplyFlow,
 } from './app-quick-action-runtime-utils.js';
+import {
+  buildGeneratedImageMessagePatch,
+  buildMomentContentWithGeneratedImages,
+  collectGeneratedImageAssetsFromMessages,
+} from './media-generation-adapter-utils.js';
+import { createMediaGenerationService } from './media-generation-service.js';
 import { ChatUI } from './chat/chat-ui.js';
 import { enqueueMessagesCore } from './chat/typing-flow-ui-utils.js';
 import { createAssistantStreamRuntime, isStreamCtrlConnected } from './chat/assistant-stream-runtime.js';
@@ -3158,6 +3164,32 @@ const initApp = async () => {
 
   const buildReplyPromptHint = (contexts = []) => buildReplyPromptHintCore(contexts);
 
+  const insertComposerText = (text, { block = false } = {}) => {
+    if (!composerInput) return false;
+    const raw = String(text || '');
+    if (!raw) return false;
+    const start = Number.isFinite(composerInput.selectionStart)
+      ? composerInput.selectionStart
+      : composerInput.value.length;
+    const end = Number.isFinite(composerInput.selectionEnd) ? composerInput.selectionEnd : composerInput.value.length;
+    const before = composerInput.value.slice(0, start);
+    const after = composerInput.value.slice(end);
+    const insert = block
+      ? `${before && !before.endsWith('\n') ? '\n' : ''}${raw}${after && !after.startsWith('\n') ? '\n' : ''}`
+      : raw;
+    const next = `${before}${insert}${after}`;
+    composerInput.value = next;
+    const caret = before.length + insert.length;
+    try {
+      composerInput.selectionStart = composerInput.selectionEnd = caret;
+      composerInput.focus();
+    } catch {}
+    try {
+      composerInput.dispatchEvent(new Event('input', { bubbles: true }));
+    } catch {}
+    return true;
+  };
+
   const insertStickerToken = keyword => {
     if (!composerInput) return;
     const key = String(keyword || '').trim();
@@ -4213,6 +4245,19 @@ Phase G（Frame 36）：循环衔接
       return '';
     }
   };
+  const mediaGenerationService = createMediaGenerationService({
+    createClient: config => new LLMClient(config),
+    saveDataUrl: async (dataUrl, fileName, { sessionId } = {}) => {
+      const path = await saveStickerAsset(
+        dataUrl,
+        fileName,
+        String(sessionId || 'generated_images'),
+        { forceStream: true },
+      );
+      return { path };
+    },
+    logger,
+  });
 
   const pickFilesFromInput = input => {
     return new Promise(resolve => {
@@ -6448,6 +6493,10 @@ Phase G（Frame 36）：循环衔接
         <button type="button" class="action-item" data-action="sticker" aria-label="贴图">
           <div class="action-icon">😊</div>
           <div class="action-label">贴图</div>
+        </button>
+        <button type="button" class="action-item" data-action="generate-image" aria-label="生成图片">
+          <div class="action-icon">AI</div>
+          <div class="action-label">生成图片</div>
         </button>
         <button type="button" class="action-item" data-action="image" aria-label="传送图片">
           <div class="action-icon">🖼️</div>
@@ -9380,7 +9429,7 @@ Phase G（Frame 36）：循环衔接
       setStatus('正在生成图片...', 'loading');
       try {
         const client = new LLMClient(config);
-        const options = { responseFormat: 'b64_json' };
+        const options = {};
         if (referenceImages.length) {
           options.referenceImages = referenceImages.map(item => item.dataUrl).filter(Boolean);
         }
@@ -11534,30 +11583,39 @@ Phase G（Frame 36）：循环衔接
   const avatarBtns = document.querySelectorAll('.qq-message-topbar .user-avatar-btn');
   const settingsBtns = document.querySelectorAll('.qq-message-topbar .user-settings-btn');
   const plusBtns = document.querySelectorAll('.qq-message-topbar .topbar-plus-btn');
-  const chatMenuBtn = document.getElementById('chat-menu-btn');
-  const chatroomMenu = document.getElementById('chatroom-menu');
-  const rpChatroomMenu = document.getElementById('rp-chatroom-menu');
-  const momentsSettingsBtn = document.getElementById('moments-settings-btn');
-  const momentsMenu = (() => {
+	  const chatMenuBtn = document.getElementById('chat-menu-btn');
+	  const chatroomMenu = document.getElementById('chatroom-menu');
+	  const rpChatroomMenu = document.getElementById('rp-chatroom-menu');
+	  const momentsComposeBtn = document.getElementById('moments-compose-btn');
+	  const momentsSettingsBtn = document.getElementById('moments-settings-btn');
+	  const momentsMenu = (() => {
     const menu = document.createElement('div');
     menu.id = 'moments-menu';
     menu.className = 'sheet hidden';
     menu.innerHTML = `
-      <div class="sheet-header">动态菜单</div>
-      <div class="sheet-desc">动态相关操作</div>
-      <button data-action="moment-summary">📘 动态摘要</button>
-      <button data-action="raw-reply">🧾 原始回复</button>
-    `;
+	      <div class="sheet-header">动态菜单</div>
+	      <div class="sheet-desc">动态相关操作</div>
+	      <button data-action="publish-moment">📝 发布动态</button>
+	      <button data-action="moment-summary">📘 动态摘要</button>
+	      <button data-action="raw-reply">🧾 原始回复</button>
+	    `;
     menu.addEventListener('click', e => {
-      const action = e?.target?.closest ? e.target.closest('button')?.dataset?.action : '';
-      if (!action) return;
-      if (action === 'moment-summary') momentSummaryPanel.show();
-      if (action === 'raw-reply') showMomentRawReply();
-      hideMenus();
+	      const action = e?.target?.closest ? e.target.closest('button')?.dataset?.action : '';
+	      if (!action) return;
+	      if (action === 'publish-moment') openMomentComposeModal();
+	      if (action === 'moment-summary') momentSummaryPanel.show();
+	      if (action === 'raw-reply') showMomentRawReply();
+	      hideMenus();
     });
     document.body.appendChild(menu);
-    return menu;
-  })();
+	    return menu;
+	  })();
+	  momentsComposeBtn?.addEventListener('click', e => {
+	    e.preventDefault();
+	    e.stopPropagation();
+	    hideMenus();
+	    openMomentComposeModal();
+	  });
   const personaSwitcherMenu = (() => {
     const menu = document.createElement('div');
     menu.id = 'persona-switcher-menu';
@@ -11833,12 +11891,13 @@ Phase G（Frame 36）：循环衔接
     menuEl: chatroomMenu,
     openWorld: () => worldPanel.show(),
     openRegex: () => regexSessionPanel.show(),
-    openVars: () => {
-      blurComposerInput();
-      variablePanel.show();
-    },
-    openChatSettings,
-    openPromptPreview: () => showPromptPreview(),
+	    openVars: () => {
+	      blurComposerInput();
+	      variablePanel.show();
+	    },
+	    openGenerateImage: () => openChatImageGenerationFlow({ surface: 'chat' }),
+	    openChatSettings,
+	    openPromptPreview: () => showPromptPreview(),
     openRawReply: openRawReplyFromMenu,
     hideMenus,
   });
@@ -11846,11 +11905,13 @@ Phase G（Frame 36）：循环衔接
     menuEl: rpChatroomMenu,
     openWorld: () => worldPanel.show(),
     openRegex: () => regexSessionPanel.show(),
-    openVars: () => {
-      blurComposerInput();
-      variablePanel.show();
-    },
-    openChatSettings,
+	    openVars: () => {
+	      blurComposerInput();
+	      variablePanel.show();
+	    },
+	    openGenerateImage: () => openChatImageGenerationFlow({ surface: 'writing' }),
+	    openWritingAssets: () => openWritingAssetPanel(),
+	    openChatSettings,
     openPromptPreview: () => showPromptPreview(),
     openRawReply: openRawReplyFromMenu,
     hideMenus,
@@ -12115,7 +12176,620 @@ Phase G（Frame 36）：循环衔接
   const sendPendingFromFloat = async (pendingMsg, sessionId = chatStore.getCurrent()) => {
     return pendingFloatRuntime.sendPendingFromFloat(pendingMsg, sessionId);
   };
-  const enterChatRoom = async (sessionId, sessionName, originPage = activePage, options = {}) => {
+  const chatImageGenerationControllers = new Map();
+	  const getChatImagePromptModal = (() => {
+    let modal = null;
+    return () => {
+      if (modal) return modal;
+      const overlay = document.createElement('div');
+      overlay.id = 'chat-image-gen-overlay';
+      overlay.className = 'chat-image-gen-overlay';
+      overlay.innerHTML = `
+        <div class="chat-image-gen-modal" role="dialog" aria-modal="true" aria-labelledby="chat-image-gen-title">
+          <div class="chat-image-gen-header">
+            <div>
+              <div id="chat-image-gen-title" class="chat-image-gen-title">生成图片</div>
+              <div class="chat-image-gen-subtitle">使用当前图片模型生成并写入这个聊天室</div>
+            </div>
+            <button type="button" class="chat-image-gen-close" aria-label="关闭">×</button>
+          </div>
+          <div class="chat-image-gen-body">
+            <textarea class="chat-image-gen-textarea" placeholder="描述你想生成的图片，例如角色、场景、风格、构图、光线"></textarea>
+            <div class="chat-image-gen-status"></div>
+          </div>
+          <div class="chat-image-gen-footer">
+            <button type="button" class="chat-image-gen-cancel">取消</button>
+            <button type="button" class="chat-image-gen-submit">生成图片</button>
+          </div>
+        </div>
+      `;
+      document.body.appendChild(overlay);
+      const textarea = overlay.querySelector('.chat-image-gen-textarea');
+      const statusEl = overlay.querySelector('.chat-image-gen-status');
+      const closeBtn = overlay.querySelector('.chat-image-gen-close');
+      const cancelBtn = overlay.querySelector('.chat-image-gen-cancel');
+      const submitBtn = overlay.querySelector('.chat-image-gen-submit');
+      let resolveOpen = null;
+      const close = (value = '') => {
+        overlay.classList.remove('is-active');
+        statusEl.textContent = '';
+        const resolve = resolveOpen;
+        resolveOpen = null;
+        if (typeof resolve === 'function') resolve(value);
+      };
+      const submit = () => {
+        const value = String(textarea.value || '').trim();
+        if (!value) {
+          statusEl.textContent = '请先填写图片提示词';
+          textarea.focus();
+          return;
+        }
+        close(value);
+      };
+      closeBtn?.addEventListener('click', () => close(''));
+      cancelBtn?.addEventListener('click', () => close(''));
+      submitBtn?.addEventListener('click', submit);
+      overlay.addEventListener('click', event => {
+        if (event.target === overlay) close('');
+      });
+      textarea?.addEventListener('keydown', event => {
+        if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+          event.preventDefault();
+          submit();
+        }
+      });
+      modal = {
+        open: ({
+          initialPrompt = '',
+          title = '生成图片',
+          subtitle = '使用当前图片模型生成并写入这个聊天室',
+          submitText = '生成图片',
+        } = {}) => new Promise(resolve => {
+          resolveOpen = resolve;
+          const titleEl = overlay.querySelector('.chat-image-gen-title');
+          const subtitleEl = overlay.querySelector('.chat-image-gen-subtitle');
+          if (titleEl) titleEl.textContent = title;
+          if (subtitleEl) subtitleEl.textContent = subtitle;
+          if (submitBtn) submitBtn.textContent = submitText;
+          textarea.value = String(initialPrompt || '').trim();
+          statusEl.textContent = '';
+          overlay.classList.add('is-active');
+          setTimeout(() => {
+            textarea.focus();
+            const len = textarea.value.length;
+            try {
+              textarea.setSelectionRange(len, len);
+            } catch {}
+          }, 0);
+        }),
+      };
+	      return modal;
+	    };
+	  })();
+	  const resolveSelectedTextForMediaPrompt = (wrapper = null) => {
+	    try {
+	      const selection = window.getSelection?.();
+	      const text = String(selection?.toString?.() || '').trim();
+	      if (!text) return '';
+	      if (wrapper && selection?.rangeCount) {
+	        const range = selection.getRangeAt(0);
+	        const anchorNode = range?.commonAncestorContainer || selection.anchorNode || selection.focusNode;
+	        const node = anchorNode?.nodeType === Node.TEXT_NODE ? anchorNode.parentElement : anchorNode;
+	        if (node && !wrapper.contains(node)) return '';
+	      }
+	      return text.length > 1800 ? `${text.slice(0, 1800)}\n...` : text;
+	    } catch {
+	      return '';
+	    }
+	  };
+	  const resolveMediaSurfaceForSession = (sessionId = chatStore.getCurrent()) => {
+	    const sid = String(sessionId || '').trim();
+	    return uiMode === 'rp' || isRpSessionId(sid) ? 'writing' : 'chat';
+	  };
+	  const getMediaSurfaceCopy = (surface = 'chat') => {
+	    if (surface === 'writing') {
+	      return {
+	        title: '生成插图',
+	        subtitle: '使用当前图片模型生成，并作为创意写作素材保存到这个会话',
+	        submitText: '生成插图',
+	        pendingName: '创作插图',
+	        pendingText: '正在生成插图',
+	        successText: '插图生成完成',
+	        failedText: '插图生成失败',
+	        cancelledText: '插图生成已取消',
+	      };
+	    }
+	    if (surface === 'moments') {
+	      return {
+	        title: '生成配图',
+	        subtitle: '使用当前图片模型生成，并加入动态发布草稿',
+	        submitText: '生成配图',
+	        pendingName: 'AI配图',
+	        pendingText: '正在生成配图',
+	        successText: '配图生成完成',
+	        failedText: '配图生成失败',
+	        cancelledText: '配图生成已取消',
+	      };
+	    }
+	    return {
+	      title: '生成图片',
+	      subtitle: '使用当前图片模型生成并写入这个聊天室',
+	      submitText: '生成图片',
+	      pendingName: 'AI绘图',
+	      pendingText: '正在生成图片',
+	      successText: '图片生成完成',
+	      failedText: '图片生成失败',
+	      cancelledText: '图片生成已取消',
+	    };
+	  };
+	  const resolveChatImageInitialPrompt = (message = null) => {
+    const generatedPrompt = String(
+      message?.meta?.generatedMedia?.prompt ||
+      message?.meta?.imageGeneration?.prompt ||
+      '',
+    ).trim();
+    if (generatedPrompt) return generatedPrompt;
+    if (!message) return String(composerInput?.value || '').trim();
+    if (message?.type === 'image') return '';
+    let text = '';
+    if (message?.meta?.renderRich) {
+      text = resolveMessagePlainText(message, { depth: 0, preferRawSource: true });
+    }
+    if (!String(text || '').trim()) {
+      text = String(
+        message?.rawSource ??
+        message?.raw_source ??
+        message?.rawOriginal ??
+        message?.raw ??
+        message?.content ??
+        '',
+      ).trim();
+    }
+    if (text === '[binary omitted]' || text === '[图片]') return '';
+    return text.length > 1800 ? `${text.slice(0, 1800)}\n...` : text;
+  };
+  const renderStoredMessageIfActive = (messageId, message, sessionId) => {
+    if (!messageId || !message || !isSessionActive(sessionId)) return;
+    const [decorated] = decorateMessagesForDisplay([message], { sessionId });
+    ui.updateMessage(messageId, decorated || message);
+  };
+  const patchChatImageGenerationMessage = (messageId, patch, sessionId) => {
+    const updated = chatStore.updateMessage(messageId, patch, sessionId);
+    const fallback = {
+      ...(chatStore.findMessage(messageId, sessionId) || {}),
+      ...patch,
+      id: messageId,
+    };
+    const finalMessage = updated || fallback;
+    renderStoredMessageIfActive(messageId, finalMessage, sessionId);
+    autoMarkReadIfActive(sessionId, messageId);
+    refreshChatAndContacts({ immediate: true });
+    return finalMessage;
+  };
+	  const runChatImageGeneration = async ({ prompt, sourceMessage = null, surface = '' } = {}) => {
+	    const imagePrompt = String(prompt || '').trim();
+	    if (!imagePrompt) return false;
+	    const sessionId = String(chatStore.getCurrent() || '').trim();
+    if (!sessionId) {
+      window.toastr?.warning?.('请先进入一个聊天室');
+      return false;
+	    }
+	    const config = await ensureImageConfigReady();
+	    if (!config) return false;
+	    const mediaSurface = surface || resolveMediaSurfaceForSession(sessionId);
+	    const surfaceCopy = getMediaSurfaceCopy(mediaSurface);
+	    const pendingMeta = {
+	      generatedMedia: {
+	        kind: 'image',
+	        status: 'running',
+	        surface: mediaSurface,
+	        targetId: sessionId,
+	        prompt: imagePrompt,
+	        sourceMessageId: String(sourceMessage?.id || ''),
+	      },
+    };
+	    const pendingMessage = {
+	      role: 'assistant',
+	      type: 'text',
+	      content: `${surfaceCopy.pendingText}：${imagePrompt}`,
+	      name: surfaceCopy.pendingName,
+	      avatar: getAssistantAvatarForSession(sessionId),
+	      time: formatNowTime(),
+	      meta: pendingMeta,
+    };
+    const savedPending = chatStore.appendMessage(pendingMessage, sessionId) || pendingMessage;
+    if (isSessionActive(sessionId)) {
+      ui.addMessage(savedPending);
+      autoMarkReadIfActive(sessionId, savedPending.id);
+    }
+    refreshChatAndContacts({ immediate: true });
+
+    const controller = new AbortController();
+    chatImageGenerationControllers.set(savedPending.id, controller);
+    try {
+      const asset = await mediaGenerationService.generateImage({
+        prompt: imagePrompt,
+        config,
+	        sessionId,
+	        scope: {
+	          surface: mediaSurface,
+	          targetId: sessionId,
+	          sourceMessageId: String(sourceMessage?.id || ''),
+	        },
+	        signal: controller.signal,
+	      });
+	      const imagePatch = buildGeneratedImageMessagePatch(asset, {
+	        sourceMessageId: String(sourceMessage?.id || ''),
+	        surface: mediaSurface,
+	        targetId: sessionId,
+	      });
+	      const nextMeta = {
+	        ...(savedPending.meta || {}),
+	        ...(imagePatch.meta || {}),
+	      };
+	      patchChatImageGenerationMessage(savedPending.id, {
+	        ...imagePatch,
+	        name: surfaceCopy.pendingName,
+	        avatar: getAssistantAvatarForSession(sessionId),
+	        time: formatNowTime(),
+	        meta: nextMeta,
+	      }, sessionId);
+	      window.toastr?.success?.(surfaceCopy.successText);
+	      return true;
+	    } catch (err) {
+	      const aborted = controller.signal.aborted || err?.name === 'AbortError';
+	      patchChatImageGenerationMessage(savedPending.id, {
+	        role: 'assistant',
+	        type: 'text',
+	        content: aborted ? surfaceCopy.cancelledText : `${surfaceCopy.failedText}：${err?.message || '未知错误'}`,
+	        name: surfaceCopy.pendingName,
+	        avatar: getAssistantAvatarForSession(sessionId),
+	        time: formatNowTime(),
+        meta: {
+          ...(savedPending.meta || {}),
+          generatedMedia: {
+            ...(savedPending.meta?.generatedMedia || {}),
+            status: aborted ? 'cancelled' : 'failed',
+            error: aborted ? '' : String(err?.message || err || ''),
+          },
+        },
+	      }, sessionId);
+	      if (!aborted) {
+	        logger.warn('chat image generation failed', err);
+	        window.toastr?.error?.(surfaceCopy.failedText);
+	      }
+      return false;
+    } finally {
+      chatImageGenerationControllers.delete(savedPending.id);
+    }
+  };
+	  const openChatImageGenerationFlow = async ({ initialPrompt = '', sourceMessage = null, surface = '' } = {}) => {
+	    const mediaSurface = surface || resolveMediaSurfaceForSession();
+	    const surfaceCopy = getMediaSurfaceCopy(mediaSurface);
+	    const seedPrompt = String(initialPrompt || '').trim() || resolveChatImageInitialPrompt(sourceMessage);
+	    const promptText = await getChatImagePromptModal().open({
+	      initialPrompt: seedPrompt,
+	      title: surfaceCopy.title,
+	      subtitle: surfaceCopy.subtitle,
+	      submitText: surfaceCopy.submitText,
+	    });
+	    if (!promptText) return false;
+	    return runChatImageGeneration({ prompt: promptText, sourceMessage, surface: mediaSurface });
+	  };
+	  const resolveGeneratedImagePreviewUrl = (asset = {}) => {
+	    const output = asset?.output && typeof asset.output === 'object' ? asset.output : {};
+	    const path = String(output.path || '').trim();
+	    if (path) return resolveLocalStickerUrl(path);
+	    return String(output.url || output.dataUrl || '').trim();
+	  };
+	  const buildGeneratedImageInlineHtml = (asset = {}) => {
+	    const url = resolveGeneratedImagePreviewUrl(asset);
+	    if (!url) return '';
+	    const alt = String(asset.prompt || '插图').trim() || '插图';
+	    return `<img src="${escapeHtml(url)}" alt="${escapeHtml(alt)}">`;
+	  };
+	  const collectWritingImageAssetsForCurrentSession = () => {
+	    const sessionId = String(chatStore.getCurrent() || '').trim();
+	    if (!sessionId) return [];
+	    return collectGeneratedImageAssetsFromMessages(chatStore.getMessages(sessionId), { surface: 'writing' })
+	      .filter(asset => resolveGeneratedImagePreviewUrl(asset))
+	      .reverse();
+	  };
+	  const writingAssetPanel = (() => {
+	    let overlay = null;
+	    let listEl = null;
+	    let countEl = null;
+	    let lastAssets = [];
+	    const ensure = () => {
+	      if (overlay) return;
+	      overlay = document.createElement('div');
+	      overlay.id = 'writing-media-assets-overlay';
+	      overlay.className = 'writing-media-assets-overlay';
+	      overlay.innerHTML = `
+	        <div class="writing-media-assets-panel" role="dialog" aria-modal="true" aria-labelledby="writing-media-assets-title">
+	          <div class="writing-media-assets-header">
+	            <div>
+	              <div id="writing-media-assets-title" class="writing-media-assets-title">插图素材</div>
+	              <div class="writing-media-assets-subtitle">当前创意写作会话中已生成的插图，不会自动改写正文</div>
+	            </div>
+	            <button type="button" class="writing-media-assets-close" aria-label="关闭">×</button>
+	          </div>
+	          <div class="writing-media-assets-toolbar">
+	            <span class="writing-media-assets-count"></span>
+	            <button type="button" data-action="generate-writing-image">生成插图</button>
+	          </div>
+	          <div class="writing-media-assets-list"></div>
+	        </div>
+	      `;
+	      document.body.appendChild(overlay);
+	      listEl = overlay.querySelector('.writing-media-assets-list');
+	      countEl = overlay.querySelector('.writing-media-assets-count');
+	      overlay.querySelector('.writing-media-assets-close')?.addEventListener('click', () => overlay.classList.remove('is-active'));
+	      overlay.addEventListener('click', event => {
+	        if (event.target === overlay) overlay.classList.remove('is-active');
+	      });
+	      overlay.addEventListener('click', async event => {
+	        const btn = event.target?.closest?.('button[data-action]');
+	        if (!btn) return;
+	        const action = btn.dataset.action || '';
+	        if (action === 'generate-writing-image') {
+	          overlay.classList.remove('is-active');
+	          await openChatImageGenerationFlow({ surface: 'writing' });
+	          openWritingAssetPanel();
+	          return;
+	        }
+	        const assetId = btn.closest('[data-asset-id]')?.dataset?.assetId || '';
+	        const asset = lastAssets.find(item => String(item.id || '') === assetId);
+	        if (!asset) return;
+	        if (action === 'insert-writing-image') {
+	          const html = buildGeneratedImageInlineHtml(asset);
+	          if (!html) {
+	            window.toastr?.warning?.('该插图缺少可插入的图片地址');
+	            return;
+	          }
+	          insertComposerText(html, { block: true });
+	          overlay.classList.remove('is-active');
+	          window.toastr?.success?.('已插入到输入框');
+	        }
+	      });
+	    };
+	    const render = () => {
+	      ensure();
+	      lastAssets = collectWritingImageAssetsForCurrentSession();
+	      if (countEl) countEl.textContent = lastAssets.length ? `${lastAssets.length} 张素材` : '暂无素材';
+	      if (!listEl) return;
+	      if (!lastAssets.length) {
+	        listEl.innerHTML = '<div class="writing-media-assets-empty">还没有插图。可以先选中文本或输入提示词生成插图。</div>';
+	        return;
+	      }
+	      listEl.innerHTML = lastAssets.map(asset => {
+	        const url = resolveGeneratedImagePreviewUrl(asset);
+	        const prompt = String(asset.prompt || '').trim();
+	        return `
+	          <div class="writing-media-asset-card" data-asset-id="${escapeHtml(String(asset.id || ''))}">
+	            <img src="${escapeHtml(url)}" alt="${escapeHtml(prompt || '插图')}">
+	            <div class="writing-media-asset-meta">
+	              <div class="writing-media-asset-prompt">${escapeHtml(prompt || '（无提示词）')}</div>
+	              <div class="writing-media-asset-model">${escapeHtml([asset.provider, asset.model].filter(Boolean).join(' · ') || '图片模型')}</div>
+	            </div>
+	            <div class="writing-media-asset-actions">
+	              <button type="button" data-action="insert-writing-image">插入当前位置</button>
+	            </div>
+	          </div>
+	        `;
+	      }).join('');
+	    };
+	    return {
+	      open() {
+	        ensure();
+	        render();
+	        overlay.classList.add('is-active');
+	      },
+	      render,
+	    };
+	  })();
+	  const openWritingAssetPanel = () => {
+	    const sessionId = String(chatStore.getCurrent() || '').trim();
+	    if (!sessionId) {
+	      window.toastr?.warning?.('请先进入一个创意写作会话');
+	      return false;
+	    }
+	    writingAssetPanel.open();
+	    return true;
+	  };
+	  const getMomentImageAttachmentSessionId = () => 'moments_generated_images';
+	  const momentComposeModal = (() => {
+	    let overlay = null;
+	    let textArea = null;
+	    let promptArea = null;
+	    let statusEl = null;
+	    let previewEl = null;
+	    let generateBtn = null;
+	    let publishBtn = null;
+	    let cancelBtn = null;
+	    let assets = [];
+	    let controller = null;
+	    const setStatus = (text = '', kind = '') => {
+	      if (!statusEl) return;
+	      statusEl.textContent = text;
+	      statusEl.dataset.kind = kind || '';
+	    };
+	    const renderPreview = () => {
+	      if (!previewEl) return;
+	      if (!assets.length) {
+	        previewEl.innerHTML = '<div class="moment-compose-image-empty">还没有配图</div>';
+	        return;
+	      }
+	      previewEl.innerHTML = assets.map((asset, idx) => {
+	        const url = resolveGeneratedImagePreviewUrl(asset);
+	        return `
+	          <div class="moment-compose-image-card" data-index="${idx}">
+	            <img src="${escapeHtml(url)}" alt="${escapeHtml(asset.prompt || '动态配图')}">
+	            <button type="button" data-action="remove-moment-image" aria-label="移除配图">×</button>
+	          </div>
+	        `;
+	      }).join('');
+	    };
+	    const setBusy = (busy) => {
+	      if (generateBtn) generateBtn.disabled = Boolean(busy);
+	      if (publishBtn) publishBtn.disabled = Boolean(busy);
+	      if (cancelBtn) cancelBtn.textContent = busy ? '取消生成' : '取消';
+	    };
+	    const close = () => {
+	      if (controller) {
+	        controller.abort('moment compose closed');
+	        controller = null;
+	      }
+	      overlay?.classList.remove('is-active');
+	    };
+	    const generateImage = async () => {
+	      const text = String(textArea?.value || '').trim();
+	      const prompt = String(promptArea?.value || '').trim() || text;
+	      if (!prompt) {
+	        setStatus('请先填写动态正文或图片提示词', 'warn');
+	        promptArea?.focus?.();
+	        return;
+	      }
+	      const config = await ensureImageConfigReady();
+	      if (!config) return;
+	      controller = new AbortController();
+	      setBusy(true);
+	      setStatus('正在生成配图...', 'running');
+	      try {
+	        const asset = await mediaGenerationService.generateImage({
+	          prompt,
+	          config,
+	          sessionId: getMomentImageAttachmentSessionId(),
+	          scope: {
+	            surface: 'moments',
+	            targetId: String(momentsStore.scopeId || 'default').trim() || 'default',
+	          },
+	          signal: controller.signal,
+	        });
+	        assets = [...assets, asset];
+	        renderPreview();
+	        setStatus('配图已加入草稿', 'success');
+	      } catch (err) {
+	        const aborted = controller?.signal?.aborted || err?.name === 'AbortError';
+	        setStatus(aborted ? '已取消生成' : `生成失败：${err?.message || '未知错误'}`, aborted ? 'warn' : 'error');
+	        if (!aborted) logger.warn('moment image generation failed', err);
+	      } finally {
+	        controller = null;
+	        setBusy(false);
+	      }
+	    };
+	    const publish = () => {
+	      const text = String(textArea?.value || '').trim();
+	      const content = buildMomentContentWithGeneratedImages(text, assets);
+	      if (!content) {
+	        setStatus('请先填写动态正文或生成配图', 'warn');
+	        textArea?.focus?.();
+	        return;
+	      }
+	      const user = getActiveUserProfile();
+	      const timestamp = Date.now();
+	      const record = normalizeMomentRecordForStore({
+	        authorId: String(user?.id || '').trim(),
+	        author: getActiveUserName(),
+	        authorAvatar: getActiveUserAvatar(),
+	        originSessionId: String(user?.id || '').trim(),
+	        content,
+	        time: formatNowTime(),
+	        timestamp,
+	        regexMode: 'input',
+	        views: 0,
+	        likes: 0,
+	        comments: [],
+	        signature: `local:${String(user?.id || 'me')}:${timestamp}`,
+	      }, { regexMode: 'input', depth: 0, appBridge: window.appBridge });
+	      momentsStore.upsert(record);
+	      momentsPanel?.render?.({ preserveScroll: false });
+	      window.toastr?.success?.('动态已发布');
+	      close();
+	      if (activePage !== 'moments') switchPage('moments');
+	    };
+	    const ensure = () => {
+	      if (overlay) return;
+	      overlay = document.createElement('div');
+	      overlay.id = 'moment-compose-overlay';
+	      overlay.className = 'moment-compose-overlay';
+	      overlay.innerHTML = `
+	        <div class="moment-compose-modal" role="dialog" aria-modal="true" aria-labelledby="moment-compose-title">
+	          <div class="moment-compose-header">
+	            <div>
+	              <div id="moment-compose-title" class="moment-compose-title">发布动态</div>
+	              <div class="moment-compose-subtitle">正文和配图都会以资源引用保存，不写入大型 base64</div>
+	            </div>
+	            <button type="button" class="moment-compose-close" aria-label="关闭">×</button>
+	          </div>
+	          <div class="moment-compose-body">
+	            <label class="moment-compose-field">
+	              <span>动态正文</span>
+	              <textarea class="moment-compose-text" placeholder="写点什么..."></textarea>
+	            </label>
+	            <label class="moment-compose-field">
+	              <span>图片提示词</span>
+	              <textarea class="moment-compose-prompt" placeholder="留空则使用动态正文作为提示词"></textarea>
+	            </label>
+	            <div class="moment-compose-images"></div>
+	            <div class="moment-compose-status"></div>
+	          </div>
+	          <div class="moment-compose-footer">
+	            <button type="button" class="moment-compose-cancel">取消</button>
+	            <button type="button" class="moment-compose-generate">生成配图</button>
+	            <button type="button" class="moment-compose-publish">发布</button>
+	          </div>
+	        </div>
+	      `;
+	      document.body.appendChild(overlay);
+	      textArea = overlay.querySelector('.moment-compose-text');
+	      promptArea = overlay.querySelector('.moment-compose-prompt');
+	      statusEl = overlay.querySelector('.moment-compose-status');
+	      previewEl = overlay.querySelector('.moment-compose-images');
+	      generateBtn = overlay.querySelector('.moment-compose-generate');
+	      publishBtn = overlay.querySelector('.moment-compose-publish');
+	      cancelBtn = overlay.querySelector('.moment-compose-cancel');
+	      overlay.querySelector('.moment-compose-close')?.addEventListener('click', close);
+	      cancelBtn?.addEventListener('click', () => {
+	        if (controller) {
+	          controller.abort('cancelled by user');
+	          return;
+	        }
+	        close();
+	      });
+	      generateBtn?.addEventListener('click', generateImage);
+	      publishBtn?.addEventListener('click', publish);
+	      previewEl?.addEventListener('click', event => {
+	        const btn = event.target?.closest?.('button[data-action="remove-moment-image"]');
+	        if (!btn) return;
+	        const idx = Number(btn.closest('[data-index]')?.dataset?.index);
+	        if (!Number.isFinite(idx)) return;
+	        assets = assets.filter((_, itemIdx) => itemIdx !== idx);
+	        renderPreview();
+	      });
+	      overlay.addEventListener('click', event => {
+	        if (event.target === overlay) close();
+	      });
+	    };
+	    return {
+	      open({ initialText = '', initialPrompt = '' } = {}) {
+	        ensure();
+	        assets = [];
+	        if (textArea) textArea.value = String(initialText || '').trim();
+	        if (promptArea) promptArea.value = String(initialPrompt || '').trim();
+	        setStatus('');
+	        setBusy(false);
+	        renderPreview();
+	        overlay.classList.add('is-active');
+	        setTimeout(() => (textArea?.value ? promptArea : textArea)?.focus?.(), 0);
+	      },
+	    };
+	  })();
+	  const openMomentComposeModal = ({ initialText = '', initialPrompt = '' } = {}) => {
+	    momentComposeModal.open({ initialText, initialPrompt });
+	    return true;
+	  };
+	  const enterChatRoom = async (sessionId, sessionName, originPage = activePage, options = {}) => {
     const enterRequest = beginChatEnterRequest(sessionId);
     const contact = contactsStore.getContact(sessionId);
     const isGroupSession = Boolean(contact?.isGroup) || String(sessionId || '').startsWith('group:');
@@ -13194,6 +13868,7 @@ Phase G（Frame 36）：循环衔接
     setStickerPanelOpen,
     isStickerAllowed,
     setActionPanelOpen,
+    generateImage: () => openChatImageGenerationFlow({ surface: resolveMediaSurfaceForSession() }),
     notifyInfo: (message) => window.toastr?.info?.(message),
   });
   const runQuickAction = quickActionRuntime.runQuickAction;
@@ -16515,13 +17190,23 @@ Phase G（Frame 36）：循环衔接
     sendMessageFromPlugin,
   });
 
-  const handleComposerSend = () => {
-    if (ui?.isSending || ui?.isStreaming || (activeGeneration && !activeGeneration.cancelled)) {
-      cancelActiveGeneration('user');
-      return;
-    }
-    handleSend();
-  };
+	  const handleComposerSend = () => {
+	    if (ui?.isSending || ui?.isStreaming || (activeGeneration && !activeGeneration.cancelled)) {
+	      cancelActiveGeneration('user');
+	      return;
+	    }
+	    const raw = String(ui.getInputText?.() || '').trim();
+	    const imageSlash = raw.match(/^\/(?:image|img|画图)\s+([\s\S]+)$/i);
+	    if (imageSlash) {
+	      ui.clearInput?.();
+	      openChatImageGenerationFlow({
+	        initialPrompt: imageSlash[1],
+	        surface: resolveMediaSurfaceForSession(),
+	      });
+	      return;
+	    }
+	    handleSend();
+	  };
 
   // 普通聊天沿用 Enter 缓存；RP/创意写作界面 Enter 直接发送。
   ui.onSendWithMode({
@@ -16719,6 +17404,25 @@ Phase G（Frame 36）：循环衔接
       await downloadChatAttachment(message);
       return true;
     }
+    if (action === 'cancel-media-generation') {
+      const controller = chatImageGenerationControllers.get(String(message?.id || ''));
+      if (controller) {
+        controller.abort('cancelled by user');
+        window.toastr?.info?.('已取消图片生成');
+      }
+      return true;
+	    }
+	    if (action === 'generate-image') {
+	      const initialPrompt =
+	        resolveSelectedTextForMediaPrompt(payload?.wrapper) ||
+	        resolveChatImageInitialPrompt(message);
+	      await openChatImageGenerationFlow({
+	        initialPrompt,
+	        sourceMessage: message,
+	        surface: resolveMediaSurfaceForSession(sessionId),
+	      });
+	      return true;
+	    }
 
     if (action === 'delete-selected') {
       const ids = Array.isArray(payload?.ids) ? payload.ids.map(String).filter(Boolean) : [];

@@ -11,7 +11,7 @@ import {
     { role: 'assistant', type: 'image' },
     { hasCode: true, isThreadingEnabled: true },
   );
-  assert.deepEqual(actions.map(item => item.key), ['reply', 'view-code', 'download', 'copy-text', 'regenerate', 'delete']);
+  assert.deepEqual(actions.map(item => item.key), ['reply', 'view-code', 'download', 'generate-image', 'copy-text', 'regenerate', 'delete']);
   console.log('ok - buildContextMenuActions composes assistant actions with reply code and download entries');
 }
 
@@ -22,6 +22,15 @@ import {
   );
   assert.deepEqual(actions.map(item => item.key), ['send-to-here', 'copy-text', 'delete']);
   console.log('ok - buildContextMenuActions preserves pending-user specific actions');
+}
+
+{
+  const actions = buildContextMenuActions(
+    { role: 'assistant', type: 'text', meta: { generatedMedia: { status: 'running' } } },
+    { hasCode: false, isThreadingEnabled: false },
+  );
+  assert.deepEqual(actions.map(item => item.key), ['cancel-media-generation']);
+  console.log('ok - buildContextMenuActions exposes cancel action for running media generation');
 }
 
 {
