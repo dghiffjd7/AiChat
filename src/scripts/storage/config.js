@@ -312,7 +312,7 @@ export class ConfigManager {
             proxyAuthHeaderName: '',
             proxyAuthToken: '',
             forwardProviderAuth: true,
-            model: isImage ? 'gpt-image-1' : 'gpt-3.5-turbo',
+            model: isImage ? 'gpt-image-2' : 'gpt-3.5-turbo',
             stream: true,
             timeout: 60000,
             maxRetries: 3

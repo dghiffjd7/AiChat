@@ -98,6 +98,44 @@ export class ConfigPanel {
         if (!config) config = this.configManager.getDefault();
         this.refreshProfileOptions();
         this.populateForm(config);
+        this.emitDraftChange();
+    }
+
+    emitDraftChange() {
+        try {
+            window.dispatchEvent(new CustomEvent('config-draft-changed', {
+                detail: { tab: this.activeTab },
+            }));
+        } catch {}
+    }
+
+    async syncActiveProfileRuntime(config = null) {
+        if (!window.appBridge || this.activeTab !== 'chat') return config;
+        let runtime = config;
+        try {
+            runtime = await reloadBridgeConfig(window.appBridge) || config;
+        } catch (err) {
+            logger.warn('同步聊天配置切换到运行时失败，回退表单配置', err);
+        }
+        syncChatRuntimeConfigToBridge({
+            bridge: window.appBridge,
+            runtime: runtime || config || {},
+            canInitClient,
+            createClient: nextRuntime => new LLMClient(nextRuntime),
+        });
+        return runtime || config;
+    }
+
+    emitProfileChanged(profileId = '') {
+        this.emitDraftChange();
+        try {
+            window.dispatchEvent(new CustomEvent('config-profile-changed', {
+                detail: {
+                    tab: this.activeTab,
+                    profileId: profileId || this.configManager.getActiveProfileId?.() || '',
+                },
+            }));
+        } catch {}
     }
 
     updateTabUI() {
@@ -409,14 +447,8 @@ export class ConfigPanel {
             await this.configManager.setActiveProfile(profileId);
             const config = await this.configManager.load();
             this.populateForm(config);
-            if (window.appBridge && this.activeTab === 'chat') {
-                syncChatRuntimeConfigToBridge({
-                    bridge: window.appBridge,
-                    runtime: config,
-                    canInitClient,
-                    createClient: runtime => new LLMClient(runtime),
-                });
-            }
+            await this.syncActiveProfileRuntime(config);
+            this.emitProfileChanged(profileId);
         };
 
         // Provider 切换时更新默认值和字段可见性
@@ -424,16 +456,21 @@ export class ConfigPanel {
             const provider = e.target.value;
             this.updateDefaultsForProvider(provider);
             this.updateFieldVisibility(provider);
+            this.emitDraftChange();
         };
         this.element.querySelector('#config-region').onchange = async () => {
             const provider = this.element.querySelector('#config-provider')?.value || 'openai';
             if (provider === 'vertexai') {
                 this.updateDefaultsForProvider(provider);
             }
+            this.emitDraftChange();
         };
         this.element.querySelector('#config-transport-mode').onchange = async () => {
             this.updateTransportVisibility({ autoExpand: true });
+            this.emitDraftChange();
         };
+        this.element.querySelector('#config-model')?.addEventListener('input', () => this.emitDraftChange());
+        this.element.querySelector('#config-baseurl')?.addEventListener('input', () => this.emitDraftChange());
 
         this.initCustomSelects();
 
@@ -657,7 +694,7 @@ export class ConfigPanel {
         const defaults = {
             openai: {
                 baseUrl: 'https://api.openai.com/v1',
-                model: isImage ? 'gpt-image-1' : 'gpt-3.5-turbo',
+                model: isImage ? 'gpt-image-2' : 'gpt-3.5-turbo',
                 urlHelp: 'OpenAI API 基础 URL'
             },
             makersuite: {
@@ -777,6 +814,7 @@ export class ConfigPanel {
                 const modelInput = (this.element || document).querySelector('#config-model');
                 if (modelInput) {
                     modelInput.value = modelId;
+                    modelInput.dispatchEvent(new Event('input', { bubbles: true }));
                 }
             };
             container.appendChild(chip);
@@ -1132,16 +1170,18 @@ export class ConfigPanel {
     /**
      * 获取表单数据
      */
-    getFormData() {
+    getFormData({ commitActiveInput = true } = {}) {
         const panel = this.element || document;
 
         // 在部分移动端输入法下，点击按钮时输入可能还在 composition 状态；先 blur 提交文本
-        try {
-            const activeEl = panel?.ownerDocument?.activeElement || document.activeElement;
-            if (activeEl && panel?.contains?.(activeEl) && typeof activeEl.blur === 'function') {
-                activeEl.blur();
-            }
-        } catch {}
+        if (commitActiveInput) {
+            try {
+                const activeEl = panel?.ownerDocument?.activeElement || document.activeElement;
+                if (activeEl && panel?.contains?.(activeEl) && typeof activeEl.blur === 'function') {
+                    activeEl.blur();
+                }
+            } catch {}
+        }
 
         const provider = panel.querySelector('#config-provider')?.value;
         const region = panel.querySelector('#config-region')?.value || 'us-central1';
@@ -1192,6 +1232,20 @@ export class ConfigPanel {
         return formData;
     }
 
+    isOpen() {
+        return this.element?.style?.display === 'block';
+    }
+
+    getActiveTab() {
+        return this.activeTab;
+    }
+
+    getDraftConfig({ tab = '' } = {}) {
+        const targetTab = tab === 'image' ? 'image' : tab === 'chat' ? 'chat' : this.activeTab;
+        if (!this.isOpen() || targetTab !== this.activeTab) return null;
+        return this.getFormData({ commitActiveInput: false });
+    }
+
     toggleApiKey() {
         const panel = this.element || document;
         const input = panel.querySelector('#config-apikey');
@@ -1227,6 +1281,8 @@ export class ConfigPanel {
         const config = await this.configManager.load();
         this.refreshProfileOptions();
         this.populateForm(config);
+        await this.syncActiveProfileRuntime(config);
+        this.emitProfileChanged();
         window.toastr?.success(`已创建：${name}`);
     }
 
@@ -1237,6 +1293,7 @@ export class ConfigPanel {
         if (!name) return;
         await this.configManager.renameProfile(active.id, name);
         this.refreshProfileOptions();
+        this.emitProfileChanged(active.id);
         window.toastr?.success('已重命名');
     }
 
@@ -1258,6 +1315,8 @@ export class ConfigPanel {
         const config = await this.configManager.load();
         this.refreshProfileOptions();
         this.populateForm(config);
+        await this.syncActiveProfileRuntime(config);
+        this.emitProfileChanged();
     }
 
     openKeyManager() {
@@ -1490,7 +1549,7 @@ export class ConfigPanel {
 
             this.showStatus('配置保存成功！', 'success');
             logger.info('配置保存成功');
-            window.dispatchEvent(new CustomEvent('config-profile-changed'));
+            this.emitProfileChanged();
 
             setTimeout(() => this.hide(), 1500);
         } catch (e) {

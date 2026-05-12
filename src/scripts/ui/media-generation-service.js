@@ -1,4 +1,6 @@
 const DEFAULT_IMAGE_MIME = 'image/png';
+const DEFAULT_GEMINI_REFERENCE_IMAGE_MAX = 3;
+const DEFAULT_OPENAI_GPT_IMAGE_REFERENCE_IMAGE_MAX = 16;
 
 const createId = (prefix = 'media') => {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -29,6 +31,87 @@ export const getImageExtensionFromMime = (mime = '') => {
   if (raw.includes('gif')) return 'gif';
   if (raw.includes('avif')) return 'avif';
   return 'png';
+};
+
+const readExplicitReferenceImageMax = (config = {}) => {
+  const keys = [
+    'referenceImageMax',
+    'referenceImagesMax',
+    'maxReferenceImages',
+    'imageReferenceMax',
+    'imageReferenceImagesMax',
+  ];
+  for (const key of keys) {
+    if (!Object.prototype.hasOwnProperty.call(config, key)) continue;
+    const value = Number(config[key]);
+    if (!Number.isFinite(value)) continue;
+    return Math.max(0, Math.trunc(value));
+  }
+  return null;
+};
+
+export const resolveImageReferenceCapability = (config = {}) => {
+  const explicitMax = readExplicitReferenceImageMax(config || {});
+  if (explicitMax === 0) {
+    return {
+      supported: false,
+      max: 0,
+      reason: '当前配置已关闭参考图输入',
+      source: 'config',
+    };
+  }
+
+  const provider = String(config?.provider || '').trim().toLowerCase();
+  const model = String(config?.model || '').trim().toLowerCase();
+  const unsupported = (reason) => ({
+    supported: false,
+    max: 0,
+    reason,
+    source: 'builtin',
+  });
+
+  if (provider === 'makersuite' || provider === 'gemini') {
+    if (model.includes('imagen') || model.startsWith('imagegeneration')) {
+      return unsupported('当前 Google Imagen 链路暂不支持参考图');
+    }
+    if (!model || model.includes('gemini') || model.includes('banana')) {
+      const max = explicitMax !== null ? explicitMax : DEFAULT_GEMINI_REFERENCE_IMAGE_MAX;
+      return {
+        supported: max > 0,
+        max,
+        reason: max > 0
+          ? `当前 Gemini 图片链路支持最多 ${max} 张参考图`
+          : '当前配置已关闭参考图输入',
+        source: explicitMax !== null ? 'config' : 'builtin',
+      };
+    }
+    return unsupported('当前 Google 图片模型未标记为支持参考图');
+  }
+
+  if (provider === 'openai') {
+    if (model.startsWith('gpt-image')) {
+      const max = explicitMax !== null ? explicitMax : DEFAULT_OPENAI_GPT_IMAGE_REFERENCE_IMAGE_MAX;
+      return {
+        supported: max > 0,
+        max,
+        reason: max > 0
+          ? `当前 OpenAI GPT Image 链路支持最多 ${max} 张参考图`
+          : '当前配置已关闭参考图输入',
+        source: explicitMax !== null ? 'config' : 'builtin',
+      };
+    }
+    return unsupported('当前 OpenAI 图片模型暂不支持参考图');
+  }
+
+  if (provider === 'custom') {
+    return unsupported('当前自定义 OpenAI 兼容图片链路暂不支持参考图');
+  }
+
+  if (provider === 'vertexai') {
+    return unsupported('当前 Vertex AI 图片生成链路暂未接入参考图');
+  }
+
+  return unsupported('当前图片模型暂不支持参考图');
 };
 
 export const normalizeGeneratedImageResult = (item = {}) => {

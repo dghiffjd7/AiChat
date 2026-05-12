@@ -190,6 +190,21 @@ const imageGenerationModelSupportsResponseFormat = (model = '') => {
   return true;
 };
 
+const isOpenAIGptImageModel = (model = '') => {
+  const raw = String(model || '').trim().toLowerCase();
+  return raw.startsWith('gpt-image');
+};
+
+const normalizeImageReferenceInputs = (referenceImages = []) => {
+  return (Array.isArray(referenceImages) ? referenceImages : [])
+    .map((item) => {
+      if (typeof item === 'string') return item.trim();
+      return String(item?.image_url || item?.imageUrl || item?.url || item?.dataUrl || '').trim();
+    })
+    .filter(Boolean)
+    .slice(0, 16);
+};
+
 const openAIChatModelUsesMaxCompletionTokens = (model = '') => {
   const raw = String(model || '').trim().toLowerCase();
   if (!raw) return false;
@@ -892,6 +907,50 @@ export class OpenAIProvider {
    */
   async generateImage(prompt, options = {}) {
     const { signal } = options || {};
+    const referenceImages = normalizeImageReferenceInputs(options.referenceImages);
+    if (referenceImages.length) {
+      if (!isOpenAIGptImageModel(this.model)) {
+        throw new Error(`当前 OpenAI 图片模型不支持参考图: ${this.model}`);
+      }
+      const payload = {
+        model: this.model,
+        prompt: String(prompt || '').trim(),
+        images: referenceImages.map(imageUrl => ({ image_url: imageUrl })),
+        n: Number.isFinite(options.n) ? Math.trunc(options.n) : 1,
+      };
+      if (options.size) payload.size = options.size;
+      if (options.quality) payload.quality = options.quality;
+      if (options.background) payload.background = options.background;
+      if (options.outputFormat || options.output_format) {
+        payload.output_format = options.outputFormat || options.output_format;
+      }
+      if (Number.isFinite(options.outputCompression) || Number.isFinite(options.output_compression)) {
+        payload.output_compression = Number.isFinite(options.outputCompression)
+          ? Math.trunc(options.outputCompression)
+          : Math.trunc(options.output_compression);
+      }
+      if (options.moderation) payload.moderation = options.moderation;
+      if (options.user) payload.user = options.user;
+
+      const data = await this.requestJson({
+        url: `${this.baseUrl}/images/edits`,
+        method: 'POST',
+        headers: this.getHeaders(),
+        body: JSON.stringify(payload),
+        signal,
+      });
+
+      const list = Array.isArray(data?.data) ? data.data : [];
+      return list.map((item, index) => {
+        const b64 = item?.b64_json || item?.b64 || '';
+        if (b64) {
+          return { dataUrl: `data:image/png;base64,${b64}`, index };
+        }
+        const url = String(item?.url || '').trim();
+        return { url, index };
+      });
+    }
+
     const payload = {
       model: this.model,
       prompt: String(prompt || '').trim(),

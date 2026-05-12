@@ -134,7 +134,10 @@ import {
   buildMomentContentWithGeneratedImages,
   collectGeneratedImageAssetsFromMessages,
 } from './media-generation-adapter-utils.js';
-import { createMediaGenerationService } from './media-generation-service.js';
+import {
+  createMediaGenerationService,
+  resolveImageReferenceCapability,
+} from './media-generation-service.js';
 import { ChatUI } from './chat/chat-ui.js';
 import { enqueueMessagesCore } from './chat/typing-flow-ui-utils.js';
 import { createAssistantStreamRuntime, isStreamCtrlConnected } from './chat/assistant-stream-runtime.js';
@@ -569,6 +572,7 @@ const initApp = async () => {
   const configPanel = new ConfigPanel();
   const chatConfigManager = new ConfigManager();
   const imageConfigManager = new ConfigManager({ scope: 'image' });
+  let imageConfigNeedsReload = false;
   const memoryUpdateConfigManager = new ConfigManager();
   const generalSettingsPanel = new GeneralSettingsPanel();
   const presetStore = getPresetStore(window.appBridge);
@@ -970,12 +974,14 @@ const initApp = async () => {
     chatStore,
     contactsStore,
     personaStore,
+    configPanel,
     getUiMode: () => (uiMode === 'rp' ? 'rp' : 'chat'),
   });
   sessionConfigPanel.setRuntimeContext({
     chatStore,
     contactsStore,
     personaStore,
+    configPanel,
     getUiMode: () => (uiMode === 'rp' ? 'rp' : 'chat'),
   });
   await personaStore.ready;
@@ -3362,8 +3368,27 @@ Phase G（Frame 36）：循环衔接
     }
     return config;
   };
+  const loadImageRuntimeConfig = async ({ includeDraft = false } = {}) => {
+    const savedConfig = imageConfigNeedsReload
+      ? await imageConfigManager.reload()
+      : await imageConfigManager.load();
+    imageConfigNeedsReload = false;
+    if (!includeDraft) return savedConfig;
+    const draftConfig = configPanel?.getDraftConfig?.({ tab: 'image' });
+    if (!draftConfig) return savedConfig;
+    return {
+      ...(savedConfig || {}),
+      ...draftConfig,
+      apiKey: typeof draftConfig.apiKey === 'string' && draftConfig.apiKey.trim()
+        ? draftConfig.apiKey
+        : (savedConfig?.apiKey || ''),
+      vertexaiServiceAccount: typeof draftConfig.vertexaiServiceAccount === 'string' && draftConfig.vertexaiServiceAccount.trim()
+        ? draftConfig.vertexaiServiceAccount
+        : savedConfig?.vertexaiServiceAccount,
+    };
+  };
   const ensureImageConfigReady = async () => {
-    const config = await imageConfigManager.load();
+    const config = await loadImageRuntimeConfig({ includeDraft: true });
     if (!canInitClient(config)) {
       window.toastr?.warning?.('请先配置图片生成 API');
       try {
@@ -3427,6 +3452,7 @@ Phase G（Frame 36）：循环衔接
   const stickerPackIconManagePicker = createFilePicker('image/*', { multiple: false });
   const stickerAiReferencePicker = createFilePicker('image/*', { multiple: true });
   const stickerAiUploadPicker = createFilePicker('image/*', { multiple: true });
+  const chatImageReferencePicker = createFilePicker('image/*', { multiple: true });
 
   const readFileAsDataUrl = file => {
     return new Promise(resolve => {
@@ -4306,6 +4332,70 @@ Phase G（Frame 36）：循环衔接
       };
       input.click();
     });
+  };
+
+  const loadImageReferenceCapability = async () => {
+    try {
+      const config = await loadImageRuntimeConfig({ includeDraft: true });
+      return resolveImageReferenceCapability(config || {});
+    } catch {
+      return resolveImageReferenceCapability({});
+    }
+  };
+  window.addEventListener('config-profile-changed', (event) => {
+    if (event?.detail?.tab && event.detail.tab !== 'image') return;
+    imageConfigNeedsReload = true;
+  });
+
+  const normalizeImageGenerationReferenceItems = (items = [], capability = {}) => {
+    const supported = Boolean(capability?.supported);
+    const max = Math.max(0, Math.trunc(Number(capability?.max || 0)));
+    if (!supported || max <= 0) return [];
+    return (Array.isArray(items) ? items : [])
+      .map((item) => {
+        if (typeof item === 'string') {
+          return { dataUrl: item.trim(), name: '', mime: '', size: 0 };
+        }
+        return {
+          dataUrl: String(item?.dataUrl || item?.url || '').trim(),
+          name: String(item?.name || '').trim(),
+          mime: String(item?.mime || item?.type || '').trim(),
+          size: Number(item?.size || 0) || 0,
+        };
+      })
+      .filter(item => item.dataUrl)
+      .slice(0, max);
+  };
+
+  const readImageGenerationReferenceFiles = async (files = [], limit = 0) => {
+    const max = Math.max(0, Math.trunc(Number(limit || 0)));
+    if (max <= 0) return [];
+    const refs = [];
+    for (const file of Array.from(files || [])) {
+      if (refs.length >= max) break;
+      if (!String(file?.type || '').startsWith('image/')) continue;
+      const rawDataUrl = await readFileAsDataUrl(file);
+      if (!rawDataUrl) continue;
+      let dataUrl = rawDataUrl;
+      if (!isGifFile(file)) {
+        try {
+          dataUrl = await compressImageDataUrl(rawDataUrl, {
+            maxDim: 1280,
+            quality: 0.9,
+            maxBytes: 2_000_000,
+          });
+        } catch {
+          dataUrl = rawDataUrl;
+        }
+      }
+      refs.push({
+        dataUrl,
+        name: String(file?.name || '').trim(),
+        mime: String(file?.type || '').trim(),
+        size: Number(file?.size || 0) || 0,
+      });
+    }
+    return refs;
   };
 
   const ensureStickerKeywords = pack => {
@@ -5979,17 +6069,125 @@ Phase G（Frame 36）：循环衔接
       <span class="slash-argument-command">/image</span>
       <span class="slash-argument-chip">提示词</span>
       <span class="slash-argument-copy">输入后按 Enter 直接生成图片</span>
+      <button type="button" class="slash-image-ref-add">参考图</button>
+      <div class="slash-image-ref-list" aria-live="polite"></div>
     `;
     const inputRow = chatInputContainer.querySelector('.chat-input-row');
     chatInputContainer.insertBefore(el, inputRow || null);
+    const refAddBtn = el.querySelector('.slash-image-ref-add');
+    const refListEl = el.querySelector('.slash-image-ref-list');
+    let referenceImages = [];
+    let referenceCapability = resolveImageReferenceCapability({});
+    let capabilityLoadPromise = null;
+    let capabilityLoaded = false;
+    const renderReferences = () => {
+      const max = Math.max(0, Math.trunc(Number(referenceCapability?.max || 0)));
+      const supported = Boolean(referenceCapability?.supported && max > 0);
+      if (refAddBtn) {
+        refAddBtn.disabled = !supported || referenceImages.length >= max;
+        refAddBtn.textContent = supported
+          ? `参考图 ${referenceImages.length}/${max}`
+          : '不支持参考图';
+        refAddBtn.title = supported ? '添加参考图' : String(referenceCapability?.reason || '当前图片模型不支持参考图');
+      }
+      if (!refListEl) return;
+      refListEl.innerHTML = '';
+      referenceImages.forEach((item, idx) => {
+        const wrap = document.createElement('div');
+        wrap.className = 'slash-image-ref-item';
+        const img = document.createElement('img');
+        img.src = item.dataUrl;
+        img.alt = item.name || '参考图';
+        const remove = document.createElement('button');
+        remove.type = 'button';
+        remove.className = 'slash-image-ref-remove';
+        remove.textContent = '×';
+        remove.dataset.index = String(idx);
+        wrap.appendChild(img);
+        wrap.appendChild(remove);
+        refListEl.appendChild(wrap);
+      });
+    };
+    const refreshCapability = ({ force = false } = {}) => {
+      if (!force && capabilityLoaded) return Promise.resolve(referenceCapability);
+      if (capabilityLoadPromise) return capabilityLoadPromise;
+      capabilityLoadPromise = loadImageReferenceCapability()
+        .then((capability) => {
+          referenceCapability = capability;
+          capabilityLoaded = true;
+          referenceImages = normalizeImageGenerationReferenceItems(referenceImages, referenceCapability);
+          renderReferences();
+          return capability;
+        })
+        .finally(() => {
+          capabilityLoadPromise = null;
+        });
+      return capabilityLoadPromise;
+    };
+    const invalidateCapability = () => {
+      capabilityLoaded = false;
+      if (/^\/image(?:\s|$)/i.test(String(composerInput.value || '').trimStart())) {
+        refreshCapability({ force: true });
+      } else {
+        renderReferences();
+      }
+    };
     const update = () => {
       const value = String(composerInput.value || '');
       const active = /^\/image(?:\s|$)/i.test(value.trimStart());
       el.classList.toggle('is-active', active);
+      if (active) refreshCapability();
+      renderReferences();
     };
+    refAddBtn?.addEventListener('click', async () => {
+      const capability = await refreshCapability({ force: true });
+      const max = Math.max(0, Math.trunc(Number(capability?.max || 0)));
+      if (!capability?.supported || max <= 0) {
+        window.toastr?.warning?.(capability?.reason || '当前图片模型不支持参考图');
+        return;
+      }
+      const remaining = max - referenceImages.length;
+      if (remaining <= 0) {
+        window.toastr?.info?.(`参考图最多 ${max} 张`);
+        return;
+      }
+      const files = await pickFilesFromInput(chatImageReferencePicker);
+      if (!files.length) return;
+      const refs = await readImageGenerationReferenceFiles(files, remaining);
+      referenceImages = normalizeImageGenerationReferenceItems([...referenceImages, ...refs], capability);
+      if (files.length > remaining) window.toastr?.info?.(`已按当前模型限制保留前 ${max} 张参考图`);
+      renderReferences();
+    });
+    refListEl?.addEventListener('click', (event) => {
+      const btn = event?.target?.closest ? event.target.closest('button.slash-image-ref-remove') : null;
+      if (!btn) return;
+      const idx = Number(btn.dataset.index);
+      if (!Number.isFinite(idx)) return;
+      referenceImages.splice(idx, 1);
+      renderReferences();
+    });
     composerInput.addEventListener('input', update);
     composerInput.addEventListener('focus', update);
-    return { el, update };
+    window.addEventListener('config-draft-changed', (event) => {
+      if (event?.detail?.tab && event.detail.tab !== 'image') return;
+      invalidateCapability();
+    });
+    window.addEventListener('config-profile-changed', (event) => {
+      if (event?.detail?.tab && event.detail.tab !== 'image') return;
+      imageConfigNeedsReload = true;
+      invalidateCapability();
+    });
+    renderReferences();
+    return {
+      el,
+      update,
+      takeReferenceImages: () => {
+        const refs = referenceImages;
+        referenceImages = [];
+        renderReferences();
+        return refs;
+      },
+    };
   })();
   const prepareImageSlashPrompt = () => {
     if (!composerInput) return false;
@@ -12282,6 +12480,13 @@ Phase G（Frame 36）：循环衔接
           </div>
           <div class="chat-image-gen-body">
             <textarea class="chat-image-gen-textarea" placeholder="描述你想生成的图片，例如角色、场景、风格、构图、光线"></textarea>
+            <div class="chat-image-gen-ref">
+              <div class="chat-image-gen-ref-head">
+                <button type="button" class="chat-image-gen-ref-add">添加参考图</button>
+                <span class="chat-image-gen-ref-hint"></span>
+              </div>
+              <div class="chat-image-gen-ref-list" aria-live="polite"></div>
+            </div>
             <div class="chat-image-gen-status"></div>
           </div>
           <div class="chat-image-gen-footer">
@@ -12298,13 +12503,79 @@ Phase G（Frame 36）：循环衔接
       const cancelBtn = overlay.querySelector('.chat-image-gen-cancel');
       const secondaryBtn = overlay.querySelector('.chat-image-gen-secondary');
       const submitBtn = overlay.querySelector('.chat-image-gen-submit');
+      const refAddBtn = overlay.querySelector('.chat-image-gen-ref-add');
+      const refHintEl = overlay.querySelector('.chat-image-gen-ref-hint');
+      const refListEl = overlay.querySelector('.chat-image-gen-ref-list');
       let resolveOpen = null;
       let secondaryHandler = null;
-      const close = (value = '') => {
+      let referenceImages = [];
+      let referenceCapability = resolveImageReferenceCapability({});
+      let referenceCapabilityLoader = null;
+      const renderReferences = () => {
+        const max = Math.max(0, Math.trunc(Number(referenceCapability?.max || 0)));
+        const supported = Boolean(referenceCapability?.supported && max > 0);
+        if (refAddBtn) {
+          refAddBtn.disabled = !supported || referenceImages.length >= max;
+          refAddBtn.textContent = supported ? `添加参考图 ${referenceImages.length}/${max}` : '不支持参考图';
+          refAddBtn.title = supported ? '添加参考图' : String(referenceCapability?.reason || '当前图片模型不支持参考图');
+        }
+        if (refHintEl) {
+          refHintEl.textContent = supported
+            ? `当前模型最多 ${max} 张，可用于角色、构图或风格参考`
+            : String(referenceCapability?.reason || '当前图片模型不支持参考图');
+        }
+        if (!refListEl) return;
+        refListEl.innerHTML = '';
+        referenceImages.forEach((item, idx) => {
+          const wrap = document.createElement('div');
+          wrap.className = 'chat-image-gen-ref-item';
+          const img = document.createElement('img');
+          img.src = item.dataUrl;
+          img.alt = item.name || '参考图';
+          const remove = document.createElement('button');
+          remove.type = 'button';
+          remove.className = 'chat-image-gen-ref-remove';
+          remove.textContent = '×';
+          remove.dataset.index = String(idx);
+          wrap.appendChild(img);
+          wrap.appendChild(remove);
+          refListEl.appendChild(wrap);
+        });
+      };
+      const handleAddReferences = async () => {
+        const max = Math.max(0, Math.trunc(Number(referenceCapability?.max || 0)));
+        if (!referenceCapability?.supported || max <= 0) {
+          statusEl.textContent = referenceCapability?.reason || '当前图片模型不支持参考图';
+          return;
+        }
+        const remaining = max - referenceImages.length;
+        if (remaining <= 0) {
+          statusEl.textContent = `参考图最多 ${max} 张`;
+          return;
+        }
+        const files = await pickFilesFromInput(chatImageReferencePicker);
+        if (!files.length) return;
+        const refs = await readImageGenerationReferenceFiles(files, remaining);
+        referenceImages = normalizeImageGenerationReferenceItems([...referenceImages, ...refs], referenceCapability);
+        statusEl.textContent = files.length > remaining ? `已按当前模型限制保留前 ${max} 张参考图` : '';
+        renderReferences();
+      };
+      const refreshReferenceCapability = async (event = null) => {
+        if (event?.detail?.tab && event.detail.tab !== 'image') return;
+        if (!overlay.classList.contains('is-active')) return;
+        if (typeof referenceCapabilityLoader !== 'function') return;
+        const nextCapability = await referenceCapabilityLoader();
+        referenceCapability = nextCapability || resolveImageReferenceCapability({});
+        referenceImages = normalizeImageGenerationReferenceItems(referenceImages, referenceCapability);
+        renderReferences();
+      };
+      const close = (value = null) => {
         overlay.classList.remove('is-active');
         statusEl.textContent = '';
         const resolve = resolveOpen;
         resolveOpen = null;
+        referenceImages = [];
+        renderReferences();
         if (typeof resolve === 'function') resolve(value);
       };
       const submit = () => {
@@ -12314,18 +12585,31 @@ Phase G（Frame 36）：循环衔接
           textarea.focus();
           return;
         }
-        close(value);
+        close({
+          prompt: value,
+          referenceImages: referenceImages.map(item => ({ ...item })),
+        });
       };
-      closeBtn?.addEventListener('click', () => close(''));
-      cancelBtn?.addEventListener('click', () => close(''));
+      closeBtn?.addEventListener('click', () => close(null));
+      cancelBtn?.addEventListener('click', () => close(null));
       secondaryBtn?.addEventListener('click', () => {
         const handler = secondaryHandler;
-        close('');
+        close(null);
         if (typeof handler === 'function') handler();
       });
       submitBtn?.addEventListener('click', submit);
       overlay.addEventListener('click', event => {
-        if (event.target === overlay) close('');
+        if (event.target === overlay) close(null);
+      });
+      refAddBtn?.addEventListener('click', () => handleAddReferences());
+      refListEl?.addEventListener('click', (event) => {
+        const btn = event?.target?.closest ? event.target.closest('button.chat-image-gen-ref-remove') : null;
+        if (!btn) return;
+        const idx = Number(btn.dataset.index);
+        if (!Number.isFinite(idx)) return;
+        referenceImages.splice(idx, 1);
+        statusEl.textContent = '';
+        renderReferences();
       });
       textarea?.addEventListener('keydown', event => {
         if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
@@ -12333,6 +12617,8 @@ Phase G（Frame 36）：循环衔接
           submit();
         }
       });
+      window.addEventListener('config-draft-changed', refreshReferenceCapability);
+      window.addEventListener('config-profile-changed', refreshReferenceCapability);
       modal = {
         open: ({
           initialPrompt = '',
@@ -12341,9 +12627,15 @@ Phase G（Frame 36）：循环衔接
           submitText = '生成图片',
           secondaryText = '',
           onSecondary = null,
+          referenceCapability: nextReferenceCapability = resolveImageReferenceCapability({}),
+          referenceImages: initialReferenceImages = [],
+          loadReferenceCapability = null,
         } = {}) => new Promise(resolve => {
           resolveOpen = resolve;
           secondaryHandler = typeof onSecondary === 'function' ? onSecondary : null;
+          referenceCapabilityLoader = typeof loadReferenceCapability === 'function' ? loadReferenceCapability : null;
+          referenceCapability = nextReferenceCapability || resolveImageReferenceCapability({});
+          referenceImages = normalizeImageGenerationReferenceItems(initialReferenceImages, referenceCapability);
           const titleEl = overlay.querySelector('.chat-image-gen-title');
           const subtitleEl = overlay.querySelector('.chat-image-gen-subtitle');
           if (titleEl) titleEl.textContent = title;
@@ -12355,6 +12647,7 @@ Phase G（Frame 36）：循环衔接
           }
           textarea.value = String(initialPrompt || '').trim();
           statusEl.textContent = '';
+          renderReferences();
           overlay.classList.add('is-active');
           setTimeout(() => {
             textarea.focus();
@@ -12519,7 +12812,7 @@ Phase G（Frame 36）：循环衔接
       sourceMessageId: '',
     };
   };
-	  const runChatImageGeneration = async ({ prompt, sourceMessage = null, surface = '' } = {}) => {
+	  const runChatImageGeneration = async ({ prompt, sourceMessage = null, surface = '', referenceImages = [] } = {}) => {
 	    const imagePrompt = String(prompt || '').trim();
 	    if (!imagePrompt) return false;
 	    const sessionId = String(chatStore.getCurrent() || '').trim();
@@ -12529,6 +12822,9 @@ Phase G（Frame 36）：循环衔接
 	    }
 	    const config = await ensureImageConfigReady();
 	    if (!config) return false;
+	    const referenceCapability = resolveImageReferenceCapability(config);
+	    const normalizedReferences = normalizeImageGenerationReferenceItems(referenceImages, referenceCapability);
+	    const referenceImageCount = normalizedReferences.length;
 	    const mediaSurface = surface || resolveMediaSurfaceForSession(sessionId);
 	    const surfaceCopy = getMediaSurfaceCopy(mediaSurface);
 	    const sender = resolveImageGenerationSender({
@@ -12548,12 +12844,13 @@ Phase G（Frame 36）：循环衔接
 	        targetId: sessionId,
 	        prompt: imagePrompt,
 	        sourceMessageId,
+	        referenceImageCount,
 	      },
     };
 	    const pendingMessage = {
 	      role: sender.role,
 	      type: 'text',
-	      content: `${surfaceCopy.pendingText}：${imagePrompt}`,
+	      content: `${surfaceCopy.pendingText}：${imagePrompt}${referenceImageCount ? `（参考图 ${referenceImageCount} 张）` : ''}`,
 	      name: sender.name,
 	      avatar: sender.avatar,
 	      time: formatNowTime(),
@@ -12583,6 +12880,9 @@ Phase G（Frame 36）：循环衔接
 	          targetId: sessionId,
 	          sourceMessageId,
 	        },
+	        options: referenceImageCount
+	          ? { referenceImages: normalizedReferences.map(item => item.dataUrl).filter(Boolean) }
+	          : {},
 	        signal: controller.signal,
 	      });
 	      const imagePatch = buildGeneratedImageMessagePatch(asset, {
@@ -12595,6 +12895,10 @@ Phase G（Frame 36）：循环衔接
 	        ...(imagePatch.meta || {}),
 	        hideAvatar: sender.hideAvatar,
 	        compactWithSource: sender.hideAvatar,
+	        generatedMedia: {
+	          ...(imagePatch.meta?.generatedMedia || {}),
+	          referenceImageCount,
+	        },
 	      };
 	      patchChatImageGenerationMessage(savedPending.id, {
 	        ...imagePatch,
@@ -12648,16 +12952,28 @@ Phase G（Frame 36）：循环衔接
 	      ? resolveChatImageInitialPrompt(sourceMessage)
 	      : '';
 	    const seedPrompt = String(initialPrompt || '').trim() || fallbackPrompt;
-	    const promptText = await getChatImagePromptModal().open({
+	    const referenceCapability = await loadImageReferenceCapability();
+	    const modalResult = await getChatImagePromptModal().open({
 	      initialPrompt: seedPrompt,
 	      title: surfaceCopy.title,
 	      subtitle: surfaceCopy.subtitle,
 	      submitText: surfaceCopy.submitText,
 	      secondaryText: showWritingAssets ? '插图素材' : '',
 	      onSecondary: showWritingAssets ? () => openWritingAssetPanel() : null,
+	      referenceCapability,
+	      loadReferenceCapability: loadImageReferenceCapability,
 	    });
+	    const promptText = typeof modalResult === 'string'
+	      ? modalResult
+	      : String(modalResult?.prompt || '').trim();
 	    if (!promptText) return false;
-	    return runChatImageGeneration({ prompt: promptText, sourceMessage, surface: mediaSurface });
+	    const modalReferenceImages = Array.isArray(modalResult?.referenceImages) ? modalResult.referenceImages : [];
+	    return runChatImageGeneration({
+	      prompt: promptText,
+	      sourceMessage,
+	      surface: mediaSurface,
+	      referenceImages: modalReferenceImages,
+	    });
 	  };
 	  const resolveGeneratedImagePreviewUrl = (asset = {}) => {
 	    const output = asset?.output && typeof asset.output === 'object' ? asset.output : {};
@@ -17431,11 +17747,13 @@ Phase G（Frame 36）：循环衔接
 	    }
 	    const imageSlash = raw.match(/^\/image\s+([\s\S]+)$/i);
 	    if (imageSlash) {
+	      const referenceImages = imageSlashPromptHint?.takeReferenceImages?.() || [];
 	      ui.clearInput?.();
 	      imageSlashPromptHint?.update?.();
 	      runChatImageGeneration({
 	        prompt: imageSlash[1],
 	        surface: resolveMediaSurfaceForSession(),
+	        referenceImages,
 	      });
 	      return;
 	    }

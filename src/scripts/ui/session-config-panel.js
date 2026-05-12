@@ -1,7 +1,7 @@
 import { PresetStore } from '../storage/preset-store.js';
 import { getReasoningCapability } from '../api/model-capabilities.js';
 import { logger } from '../utils/logger.js';
-import { getConfigProfileById, getConfigProfiles } from './config-runtime-utils.js';
+import { getActiveConfigProfileId, getConfigProfileById, getConfigProfiles } from './config-runtime-utils.js';
 import { closeCustomSelectMenu as closeSharedCustomSelectMenu, openCustomSelectMenu } from './custom-select.js';
 import { getPresetStore } from './preset-store-runtime-utils.js';
 
@@ -190,6 +190,7 @@ export class SessionConfigPanel {
             chatStore: null,
             contactsStore: null,
             personaStore: null,
+            configPanel: null,
             getUiMode: null,
         };
         this.expandedSessionByGroup = { chat: '', rp: '' };
@@ -200,6 +201,7 @@ export class SessionConfigPanel {
         if (ctx.chatStore) this.runtimeContext.chatStore = ctx.chatStore;
         if (ctx.contactsStore) this.runtimeContext.contactsStore = ctx.contactsStore;
         if (ctx.personaStore) this.runtimeContext.personaStore = ctx.personaStore;
+        if (ctx.configPanel) this.runtimeContext.configPanel = ctx.configPanel;
         if (typeof ctx.getUiMode === 'function') this.runtimeContext.getUiMode = ctx.getUiMode;
     }
 
@@ -240,6 +242,14 @@ export class SessionConfigPanel {
         this.panel.querySelector('#sc-close').addEventListener('click', () => this.hide());
         this.scrollEl = this.panel.querySelector('#sc-scroll');
         this.editorEl = this.panel.querySelector('#sc-editor');
+
+        const refreshForChatConfig = (event) => {
+            if (event?.detail?.tab && event.detail.tab !== 'chat') return;
+            if (this.panel?.style.display === 'none') return;
+            this.rerender();
+        };
+        window.addEventListener('config-profile-changed', refreshForChatConfig);
+        window.addEventListener('config-draft-changed', refreshForChatConfig);
 
         document.body.appendChild(this.overlay);
         document.body.appendChild(this.panel);
@@ -307,6 +317,21 @@ export class SessionConfigPanel {
     getProfileName(profileId) {
         const profile = profileId ? getConfigProfileById(window.appBridge, profileId) : null;
         return String(profile?.name || '').trim() || (profileId || '');
+    }
+
+    getProfileForReasoning(profileId) {
+        const id = String(profileId || '').trim();
+        const profile = id ? getConfigProfileById(window.appBridge, id) : null;
+        const draft = this.runtimeContext.configPanel?.getDraftConfig?.({ tab: 'chat' }) || null;
+        if (!draft) return profile;
+        const activeId = getActiveConfigProfileId(window.appBridge);
+        if (id && activeId && id !== activeId) return profile;
+        return {
+            ...(profile || {}),
+            ...draft,
+            id: profile?.id || activeId || id,
+            name: profile?.name || '当前聊天配置草稿',
+        };
     }
 
     findSessionElement(sessionId) {
@@ -595,7 +620,7 @@ export class SessionConfigPanel {
 
     getSessionReasoningSummary(entry, currentProfileId, resolvedPreset = {}) {
         if (!currentProfileId) return '';
-        const profile = getConfigProfileById(window.appBridge, currentProfileId);
+        const profile = this.getProfileForReasoning(currentProfileId);
         if (!profile) return '';
         const cap = getReasoningCapability({ provider: profile.provider, model: profile.model });
         if (!cap.supported || !cap.requestControl) return '';
@@ -667,7 +692,7 @@ export class SessionConfigPanel {
     }
 
     renderReasoningControls(container, profileId, ctx) {
-        const profile = getConfigProfileById(window.appBridge, profileId);
+        const profile = this.getProfileForReasoning(profileId);
         if (!profile) return;
         const cap = getReasoningCapability({ provider: profile.provider, model: profile.model });
         if (!cap.supported || !cap.requestControl) return;

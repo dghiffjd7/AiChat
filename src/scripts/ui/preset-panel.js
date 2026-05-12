@@ -19,7 +19,6 @@ import {
     getActiveConfigProfile,
     getActiveConfigProfileId,
     getBridgeConfig,
-    getConfigProfileById,
     syncChatRuntimeConfigToBridge,
 } from './config-runtime-utils.js';
 import {
@@ -733,6 +732,7 @@ export class PresetPanel {
             chatStore: null,
             contactsStore: null,
             personaStore: null,
+            configPanel: null,
             getUiMode: null,
         };
     }
@@ -741,6 +741,7 @@ export class PresetPanel {
         this.runtimeContext.chatStore = context.chatStore || this.runtimeContext.chatStore || null;
         this.runtimeContext.contactsStore = context.contactsStore || this.runtimeContext.contactsStore || null;
         this.runtimeContext.personaStore = context.personaStore || this.runtimeContext.personaStore || null;
+        this.runtimeContext.configPanel = context.configPanel || this.runtimeContext.configPanel || null;
         this.runtimeContext.getUiMode = typeof context.getUiMode === 'function'
             ? context.getUiMode
             : this.runtimeContext.getUiMode;
@@ -764,10 +765,17 @@ export class PresetPanel {
 
     getBoundProfileForPreset(preset) {
         const bridge = window.appBridge;
-        if (!bridge) return null;
-        const boundId = String(preset?.boundProfileId || '').trim();
-        if (boundId) return getConfigProfileById(bridge, boundId) || null;
-        return getActiveConfigProfile(bridge) || getBridgeConfig(bridge) || null;
+        const draft = this.runtimeContext.configPanel?.getDraftConfig?.({ tab: 'chat' }) || null;
+        if (!bridge) return draft;
+        const activeId = getActiveConfigProfileId(bridge);
+        const profile = getActiveConfigProfile(bridge) || getBridgeConfig(bridge) || null;
+        if (!draft) return profile;
+        return {
+            ...(profile || {}),
+            ...draft,
+            id: profile?.id || activeId || '',
+            name: profile?.name || '当前聊天配置草稿',
+        };
     }
 
     getReasoningCapabilityForPreset(preset) {
@@ -1022,7 +1030,7 @@ export class PresetPanel {
         const sessionProfileId = sessionId ? this.store.getSessionProfileId('openai', sessionId) : null;
         const modeForProfile = sessionId?.startsWith('rp:') ? 'rp' : (context?.uiMode || 'chat');
         const modeProfileId = this.store.getModeProfileId?.('openai', modeForProfile) || null;
-        const boundId = sessionProfileId || modeProfileId || preset?.boundProfileId;
+        const boundId = sessionProfileId || modeProfileId;
         if (!boundId) return;
         const bridge = window.appBridge;
         if (!bridge?.setActiveConfigProfile) return;
@@ -1190,9 +1198,14 @@ export class PresetPanel {
         };
         this.element.querySelector('#preset-export').onclick = () => this.exportCurrent();
 
-        window.addEventListener('config-profile-changed', () => {
-            if (this.element?.style.display !== 'none') this.renderAllSections();
-        });
+        const refreshForChatConfig = (event) => {
+            if (event?.detail?.tab && event.detail.tab !== 'chat') return;
+            if (this.element?.style.display === 'none') return;
+            this.captureCurrentDetailDraft();
+            this.renderAllSections();
+        };
+        window.addEventListener('config-profile-changed', refreshForChatConfig);
+        window.addEventListener('config-draft-changed', refreshForChatConfig);
     }
 
     /* ════════════════════════════════════════
@@ -2898,7 +2911,7 @@ export class PresetPanel {
             current.memory_data_depth = getInt(root.querySelector('#gen-memory-data-depth')?.value, current.memory_data_depth ?? 0);
             current.memory_guide_position = String(root.querySelector('#gen-memory-guide-position')?.value || '').trim().toLowerCase();
             current.memory_guide_depth = getInt(root.querySelector('#gen-memory-guide-depth')?.value, current.memory_guide_depth ?? 0);
-            current.boundProfileId = getActiveConfigProfileId(window.appBridge) || current.boundProfileId || null;
+            delete current.boundProfileId;
             return current;
         }
 
@@ -2941,7 +2954,7 @@ export class PresetPanel {
             current.prompts = Array.from(promptById.values());
             if (!Array.isArray(current.prompt_order)) current.prompt_order = [];
             current.prompt_order = [{ character_id: 100001, order }];
-            current.boundProfileId = getActiveConfigProfileId(window.appBridge) || current.boundProfileId || null;
+            delete current.boundProfileId;
             return current;
         }
 

@@ -764,7 +764,9 @@ body[data-theme-mode='dark'] .chat-attachment-doc-meta {
 body[data-theme-mode='dark'] :is(
   .chat-attachment-remove,
   .sticker-preview-remove,
-  .sticker-ai-ref-remove
+  .sticker-ai-ref-remove,
+  .chat-image-gen-ref-remove,
+  .slash-image-ref-remove
 ) {
   background: rgba(2, 6, 23, 0.86) !important;
   color: #ffffff !important;
@@ -1771,7 +1773,9 @@ body[data-theme-mode='dark'] .sticker-preview-item {
 body[data-theme-mode='dark'] :is(
   .chat-attachment-remove,
   .sticker-preview-remove,
-  .sticker-ai-ref-remove
+  .sticker-ai-ref-remove,
+  .chat-image-gen-ref-remove,
+  .slash-image-ref-remove
 ):active {
   background: rgba(15, 23, 42, 0.96) !important;
 }
@@ -3575,7 +3579,11 @@ body[data-theme-mode='dark'] .slash-argument-copy {
   color: rgba(203, 213, 225, 0.86) !important;
 }
 
-body[data-theme-mode='dark'] .chat-image-gen-secondary {
+body[data-theme-mode='dark'] :is(
+  .chat-image-gen-secondary,
+  .chat-image-gen-ref-add,
+  .slash-image-ref-add
+) {
   border-color: rgba(96, 165, 250, 0.32) !important;
   background: rgba(59, 130, 246, 0.16) !important;
   color: #bfdbfe !important;

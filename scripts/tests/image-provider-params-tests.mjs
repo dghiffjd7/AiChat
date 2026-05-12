@@ -24,6 +24,41 @@ import { CustomProvider } from '../../src/scripts/api/providers/custom.js';
   const provider = new OpenAIProvider({
     provider: 'openai',
     apiKey: 'test',
+    model: 'gpt-image-2',
+  });
+  let body = null;
+  let url = '';
+  provider.requestJson = async request => {
+    url = request.url;
+    body = JSON.parse(request.body);
+    return { data: [{ b64_json: 'abc123' }] };
+  };
+  await provider.generateImage('cat', {
+    referenceImages: [
+      'data:image/png;base64,ref1',
+      { dataUrl: 'data:image/jpeg;base64,ref2' },
+    ],
+    size: '1024x1024',
+    quality: 'high',
+    responseFormat: 'b64_json',
+  });
+  assert.equal(url, 'https://api.openai.com/v1/images/edits');
+  assert.equal(body.model, 'gpt-image-2');
+  assert.equal(body.prompt, 'cat');
+  assert.deepEqual(body.images, [
+    { image_url: 'data:image/png;base64,ref1' },
+    { image_url: 'data:image/jpeg;base64,ref2' },
+  ]);
+  assert.equal(body.size, '1024x1024');
+  assert.equal(body.quality, 'high');
+  assert.equal(Object.hasOwn(body, 'response_format'), false);
+  console.log('ok - OpenAI image provider routes reference images through image edits JSON');
+}
+
+{
+  const provider = new OpenAIProvider({
+    provider: 'openai',
+    apiKey: 'test',
     model: 'dall-e-3',
   });
   let body = null;

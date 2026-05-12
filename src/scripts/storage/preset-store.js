@@ -425,6 +425,9 @@ const normalizeOpenAIPreset = (preset) => {
     preset.memory_data_depth = normalizeNonNegativeInt(preset.memory_data_depth, 0);
     preset.memory_guide_position = normalizeMemoryDataPosition(preset.memory_guide_position);
     preset.memory_guide_depth = normalizeNonNegativeInt(preset.memory_guide_depth, 0);
+    // 旧版曾把生成参数预设自动绑定到当时的连线设置档，会导致切换文本模型后
+    // 推理请求仍读取旧模型。连线绑定已迁移到会话配置管理，预设本体不再保存此字段。
+    delete preset.boundProfileId;
     if (typeof preset.impersonation_prompt !== 'string' || !preset.impersonation_prompt.trim()) {
         preset.impersonation_prompt = DEFAULT_OPENAI_IMPERSONATION_PROMPT;
     }
