@@ -2229,6 +2229,12 @@ body[data-ui-mode='rp'] .rp-continue-btn {
   padding: 0 16px 14px;
 }
 
+.chat-image-gen-body[hidden],
+.chat-image-gen-footer[hidden],
+.chat-image-gen-advanced[hidden] {
+  display: none;
+}
+
 .chat-image-gen-textarea {
   width: 100%;
   min-height: 132px;
@@ -2332,8 +2338,12 @@ body[data-ui-mode='rp'] .rp-continue-btn {
 }
 
 .chat-image-gen-cancel,
+.chat-image-gen-advanced-open,
 .chat-image-gen-secondary,
-.chat-image-gen-submit {
+.chat-image-gen-submit,
+.chat-image-gen-advanced-back,
+.chat-image-gen-param-reset,
+.chat-image-gen-param-done {
   border-radius: 999px;
   border: 1px solid rgba(15, 23, 42, 0.12);
   padding: 9px 16px;
@@ -2342,18 +2352,115 @@ body[data-ui-mode='rp'] .rp-continue-btn {
 }
 
 .chat-image-gen-cancel {
+  margin-right: auto;
   background: var(--app-surface-card);
   color: var(--app-text-primary);
 }
 
+.chat-image-gen-advanced-open,
 .chat-image-gen-secondary {
-  margin-left: auto;
   border-color: rgba(37, 99, 235, 0.18);
   background: rgba(37, 99, 235, 0.08);
   color: #1d4ed8;
 }
 
+.chat-image-gen-advanced-open.has-overrides {
+  border-color: rgba(245, 158, 11, 0.34);
+  background: rgba(245, 158, 11, 0.12);
+  color: #b45309;
+}
+
 .chat-image-gen-submit {
+  border-color: rgba(37, 99, 235, 0.26);
+  background: #2563eb;
+  color: #fff;
+}
+
+.chat-image-gen-advanced {
+  padding: 0 16px 14px;
+  max-height: min(68vh, 560px);
+  overflow: auto;
+}
+
+.chat-image-gen-advanced-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-bottom: 12px;
+}
+
+.chat-image-gen-advanced-back,
+.chat-image-gen-param-reset {
+  background: var(--app-surface-card);
+  color: var(--app-text-primary);
+}
+
+.chat-image-gen-advanced-title {
+  font-weight: 900;
+  color: var(--app-text-primary);
+}
+
+.chat-image-gen-advanced-subtitle,
+.chat-image-gen-advanced-summary,
+.chat-image-gen-param-help {
+  color: var(--app-text-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.chat-image-gen-advanced-summary {
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 14px;
+  background: var(--app-surface-subtle);
+}
+
+.chat-image-gen-advanced-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 12px;
+}
+
+.chat-image-gen-param-row {
+  display: block;
+}
+
+.chat-image-gen-param-label {
+  margin-bottom: 6px;
+  font-weight: 800;
+  color: var(--app-text-primary);
+}
+
+.chat-image-gen-param-field {
+  box-sizing: border-box;
+  width: 100%;
+  border-radius: 12px;
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  background: var(--app-surface-card);
+  color: var(--app-text-primary);
+  padding: 10px 12px;
+  font: inherit;
+  outline: none;
+}
+
+.chat-image-gen-param-field:focus {
+  border-color: rgba(37, 99, 235, 0.45);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+}
+
+.chat-image-gen-param-help {
+  margin-top: 5px;
+}
+
+.chat-image-gen-advanced-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.chat-image-gen-param-done {
   border-color: rgba(37, 99, 235, 0.26);
   background: #2563eb;
   color: #fff;

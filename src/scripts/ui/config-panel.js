@@ -11,6 +11,7 @@ import {
     reloadBridgeConfig,
     syncChatRuntimeConfigToBridge,
 } from './config-runtime-utils.js';
+import { ImageGenerationParamsPanel } from './image-generation-params-panel.js';
 
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>"]/g, (ch) => ({
     '&': '&amp;',
@@ -39,6 +40,13 @@ export class ConfigPanel {
         this.customSelectMenuAnchor = null;
         this.transportExpanded = false;
         this.openOptions = {};
+        this.imageGenerationParamsPanel = new ImageGenerationParamsPanel({
+            getImageConfig: async () => {
+                const draft = this.getDraftConfig?.({ tab: 'image' });
+                if (draft) return draft;
+                return await this.imageConfigManager.load();
+            },
+        });
     }
 
     /**
@@ -158,6 +166,10 @@ export class ConfigPanel {
                 btn.style.color = 'var(--app-text-primary)';
             }
         });
+        const imageParamsEntry = this.element.querySelector('#image-params-entry');
+        if (imageParamsEntry) {
+            imageParamsEntry.style.display = this.activeTab === 'image' ? 'block' : 'none';
+        }
     }
 
     /**
@@ -197,6 +209,16 @@ export class ConfigPanel {
                     <button type="button" class="config-tab" data-tab="image"
                             style="border:1px solid var(--app-border-default); background:var(--app-surface-card); padding:6px 12px; border-radius:999px; font-size:12px; cursor:pointer;">
                         图片模型
+                    </button>
+                </div>
+                <div id="image-params-entry" style="display:none; margin: -4px 0 16px;">
+                    <button type="button" id="open-image-generation-params"
+                            style="width:100%; display:flex; align-items:center; justify-content:space-between; gap:12px; padding:12px 14px; border:1px solid var(--app-border-default); border-radius:12px; background:var(--app-surface-subtle); color:var(--app-text-primary); cursor:pointer; text-align:left;">
+                        <span style="display:flex; flex-direction:column; gap:3px;">
+                            <span style="font-weight:800;">图片生成参数</span>
+                            <span style="font-size:12px; color:var(--app-text-muted);">质量、尺寸、输出格式等；所有生图入口共享</span>
+                        </span>
+                        <span style="color:var(--app-text-muted);">›</span>
                     </button>
                 </div>
 
@@ -433,6 +455,9 @@ export class ConfigPanel {
         this.element.querySelector('#refresh-models').onclick = () => this.refreshModels();
         this.element.querySelector('#config-transport-toggle').onclick = () => this.toggleTransportSection();
         this.element.querySelector('#toggle-proxy-token').onclick = () => this.toggleProxyToken();
+        this.element.querySelector('#open-image-generation-params')?.addEventListener('click', () => {
+            this.imageGenerationParamsPanel.show();
+        });
 
         // 连线设置档切换
         this.element.querySelector('#config-profile').onchange = async (e) => {

@@ -28,6 +28,7 @@ import { appSettings } from '../storage/app-settings.js';
 import { renderTemplateMessages, templateSettings } from '../plugins/template-engine.js';
 import { getChatUI } from './chat-ui-runtime-utils.js';
 import { recordDebugTraceEvent } from './debug-ui-registry-utils.js';
+import { buildAutoImagePromptInstruction } from './chat/auto-image-prompt-utils.js';
 import {
   dispatchRuntimeHookLifecycleEvent,
   runRuntimeHookLifecycleEvent,
@@ -3036,14 +3037,17 @@ class AppBridge {
     const preserveCreativeHistoryParagraphs = String(context?.meta?.uiMode || '').trim().toLowerCase() === 'rp';
     const memoryMode = String(context?.meta?.memoryStorageMode || '').trim().toLowerCase();
     const useSummaryMemory = memoryMode === 'summary' && !Boolean(context?.meta?.disableSummary);
+    const settingsSnapshot = (() => {
+      try {
+        return appSettings.get();
+      } catch {
+        return {};
+      }
+    })();
     const includeTimeContext = (() => {
       const raw = context?.meta?.includeTimeContext;
       if (typeof raw === 'boolean') return raw;
-      try {
-        return appSettings.get().promptCurrentTimeEnabled === true;
-      } catch {
-        return false;
-      }
+      return settingsSnapshot.promptCurrentTimeEnabled === true;
     })();
     const timeContextBlock = includeTimeContext ? { role: 'system', content: buildTimeContextText() } : null;
     const parseInjectedPrompt = (rawPrompt, fallbackPositions = ['after_persona'], fallbackDepth = 0) => {
@@ -3086,6 +3090,12 @@ class AppBridge {
     const scenarioFormatReminder = scenarioHintBase
       ? scenarioHintBase
       : '';
+    const autoImagePromptSettingEnabled = settingsSnapshot.autoImagePromptEnabled === true;
+    let autoImagePromptActive = autoImagePromptSettingEnabled;
+    let autoImagePromptRules = '';
+    let autoImagePromptPosition = 0;
+    let autoImagePromptDepth = 1;
+    let autoImagePromptRole = 0;
     const includeTableEditInFormatReminder = Boolean(context?.meta?.memoryAutoExtract)
       || Boolean(String(memoryGuidePrompt?.content || '').includes('<memory_edit_rules>'));
     const buildOutputFormatReminderText = () => {
@@ -3103,6 +3113,11 @@ class AppBridge {
           lines.push('<tableEdit>');
           lines.push('记忆表格内容');
           lines.push('</tableEdit>');
+        }
+        if (autoImagePromptActive) {
+          lines.push('<image_prompt>');
+          lines.push('生图提示词');
+          lines.push('</image_prompt>');
         }
       }
       return lines.join('\n').trim();
@@ -3522,6 +3537,35 @@ class AppBridge {
       : 1;
     const groupRole = Number.isFinite(Number(sysp?.group_role)) ? Math.trunc(Number(sysp.group_role)) : 0;
 
+    // 自动标签生图提示词：总开关在通用设定，具体文案和注入位置放在“聊天提示词”预设中管理。
+    const autoImagePromptPresetEnabled = useSysprompt && sysp?.auto_image_prompt_enabled !== false;
+    const autoImagePromptRulesRaw = typeof sysp?.auto_image_prompt_rules === 'string' ? sysp.auto_image_prompt_rules : '';
+    autoImagePromptRules = (autoImagePromptSettingEnabled && autoImagePromptPresetEnabled)
+      ? buildAutoImagePromptInstruction({
+        uiMode,
+        isGroupChat,
+        modelHint: context?.meta?.autoImagePromptModelHint,
+        style: settingsSnapshot.autoImagePromptStyle,
+        includeTableEdit: includeTableEditInFormatReminder,
+        template: processTextMacrosWithPendingFlag(autoImagePromptRulesRaw, {
+          user: name1,
+          char: name2,
+          group: groupName || name2,
+          members: membersText,
+        }),
+      })
+      : '';
+    autoImagePromptActive = Boolean(autoImagePromptRules);
+    autoImagePromptPosition = Number.isFinite(Number(sysp?.auto_image_prompt_position))
+      ? Number(sysp.auto_image_prompt_position)
+      : 0;
+    autoImagePromptDepth = Number.isFinite(Number(sysp?.auto_image_prompt_depth))
+      ? Math.max(0, Math.trunc(Number(sysp.auto_image_prompt_depth)))
+      : 1;
+    autoImagePromptRole = Number.isFinite(Number(sysp?.auto_image_prompt_role))
+      ? Math.trunc(Number(sysp.auto_image_prompt_role))
+      : 0;
+
     // Formatting helpers from OpenAI preset (optional)
     const wiFormatRaw =
       typeof openp?.wi_format === 'string' && openp.wi_format.includes('{0}') ? openp.wi_format : '{0}';
@@ -3707,7 +3751,7 @@ const stringifyMessageContent = (content) => {
 	        }
 	        promptParts.push(trimmed);
 	      };
-	      const groupSystemHint = '系统消息（我们能解析的这种）：内容';
+	      const groupSystemHint = '系统消息：内容';
 	      if (!summaryOnly && !isMomentCommentTask && !isGroupChat && dialogueEnabled && dialogueRules) {
 	        pushByPosition(dialogueRules, dialoguePosition, dialogueDepth, dialogueRole);
 	      }
@@ -3720,6 +3764,9 @@ const stringifyMessageContent = (content) => {
 	      }
 	      if (!summaryOnly && isMomentCommentTask && momentCommentEnabled && momentCommentRules) {
 	        pushByPosition(momentCommentRules, momentCommentPosition, momentCommentDepth, momentCommentRole);
+	      }
+	      if (!summaryOnly && autoImagePromptRules) {
+	        pushByPosition(autoImagePromptRules, autoImagePromptPosition, autoImagePromptDepth, autoImagePromptRole);
 	      }
 	      if (summaryRules) {
 	        pushByPosition(summaryRules, summaryPosition, 1, 0);

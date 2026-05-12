@@ -11,6 +11,7 @@ import { ChatStore } from '../storage/chat-store.js';
 import { ConfigManager } from '../storage/config.js';
 import { ContactsStore } from '../storage/contacts-store.js';
 import { GroupStore } from '../storage/group-store.js';
+import { getImageGenerationParamsStore } from '../storage/image-generation-params-store.js';
 import { MemoryTableStore } from '../storage/memory-table-store.js';
 import { MemorySnapshotStore } from '../storage/memory-snapshot-store.js';
 import { MemoryTemplateStore } from '../storage/memory-template-store.js';
@@ -138,6 +139,11 @@ import {
   createMediaGenerationService,
   resolveImageReferenceCapability,
 } from './media-generation-service.js';
+import {
+  getParamsForImageConfig,
+  mergeImageGenerationRequestOptions,
+  resolveImageGenerationParamSchema,
+} from './image-generation-params-utils.js';
 import { ChatUI } from './chat/chat-ui.js';
 import { enqueueMessagesCore } from './chat/typing-flow-ui-utils.js';
 import { createAssistantStreamRuntime, isStreamCtrlConnected } from './chat/assistant-stream-runtime.js';
@@ -388,6 +394,11 @@ import {
   toggleReactionActor,
 } from './chat/message-interaction-utils.js';
 import { parseSpecialMessage } from './chat/message-parser.js';
+import {
+  buildImagePromptModelHintFromConfig,
+  extractAutoImagePrompts,
+  stripAutoImagePromptTags,
+} from './chat/auto-image-prompt-utils.js';
 import { runCommand, getCommandList } from './command-runner.js';
 import { ConfigPanel } from './config-panel.js';
 import { ContactDragManager } from './contact-drag-manager.js';
@@ -572,7 +583,9 @@ const initApp = async () => {
   const configPanel = new ConfigPanel();
   const chatConfigManager = new ConfigManager();
   const imageConfigManager = new ConfigManager({ scope: 'image' });
+  const imageGenerationParamsStore = getImageGenerationParamsStore();
   let imageConfigNeedsReload = false;
+  let imagePromptModelHintCache = '';
   const memoryUpdateConfigManager = new ConfigManager();
   const generalSettingsPanel = new GeneralSettingsPanel();
   const presetStore = getPresetStore(window.appBridge);
@@ -2035,7 +2048,7 @@ const initApp = async () => {
         .join('\n');
     };
 
-    let out = String(text ?? '');
+    let out = stripAutoImagePromptTags(String(text ?? ''));
     out = out.replace(/<!--[\s\S]*?-->/g, '');
     out = stripXmlBlocks(out);
     out = stripLeadingUserSpeakerLines(out, userName);
@@ -2045,7 +2058,7 @@ const initApp = async () => {
   };
 
   const normalizeCreativeLineBreaks = text =>
-    String(text ?? '')
+    stripAutoImagePromptTags(String(text ?? ''))
       .replace(/&lt;br\s*\/?&gt;/gi, '\n')
       .replace(/<br\s*\/?>/gi, '\n')
       .replace(/\r\n/g, '\n')
@@ -3368,15 +3381,19 @@ Phase G（Frame 36）：循环衔接
     }
     return config;
   };
+  const cacheImagePromptModelHint = (config = {}) => {
+    imagePromptModelHintCache = buildImagePromptModelHintFromConfig(config || {});
+    return config;
+  };
   const loadImageRuntimeConfig = async ({ includeDraft = false } = {}) => {
     const savedConfig = imageConfigNeedsReload
       ? await imageConfigManager.reload()
       : await imageConfigManager.load();
     imageConfigNeedsReload = false;
-    if (!includeDraft) return savedConfig;
+    if (!includeDraft) return cacheImagePromptModelHint(savedConfig);
     const draftConfig = configPanel?.getDraftConfig?.({ tab: 'image' });
-    if (!draftConfig) return savedConfig;
-    return {
+    if (!draftConfig) return cacheImagePromptModelHint(savedConfig);
+    return cacheImagePromptModelHint({
       ...(savedConfig || {}),
       ...draftConfig,
       apiKey: typeof draftConfig.apiKey === 'string' && draftConfig.apiKey.trim()
@@ -3385,7 +3402,7 @@ Phase G（Frame 36）：循环衔接
       vertexaiServiceAccount: typeof draftConfig.vertexaiServiceAccount === 'string' && draftConfig.vertexaiServiceAccount.trim()
         ? draftConfig.vertexaiServiceAccount
         : savedConfig?.vertexaiServiceAccount,
-    };
+    });
   };
   const ensureImageConfigReady = async () => {
     const config = await loadImageRuntimeConfig({ includeDraft: true });
@@ -4340,6 +4357,25 @@ Phase G（Frame 36）：循环衔接
       return resolveImageReferenceCapability(config || {});
     } catch {
       return resolveImageReferenceCapability({});
+    }
+  };
+  const loadImageGenerationParamContext = async () => {
+    try {
+      const config = await loadImageRuntimeConfig({ includeDraft: true });
+      await imageGenerationParamsStore.ready;
+      const preset = imageGenerationParamsStore.getActive();
+      return {
+        config: config || {},
+        schema: resolveImageGenerationParamSchema(config || {}),
+        baseParams: getParamsForImageConfig(preset, config || {}),
+      };
+    } catch {
+      const fallbackConfig = {};
+      return {
+        config: fallbackConfig,
+        schema: resolveImageGenerationParamSchema(fallbackConfig),
+        baseParams: {},
+      };
     }
   };
   window.addEventListener('config-profile-changed', (event) => {
@@ -12489,18 +12525,43 @@ Phase G（Frame 36）：循环衔接
             </div>
             <div class="chat-image-gen-status"></div>
           </div>
+          <div class="chat-image-gen-advanced" hidden>
+            <div class="chat-image-gen-advanced-head">
+              <button type="button" class="chat-image-gen-advanced-back">返回</button>
+              <div>
+                <div class="chat-image-gen-advanced-title">高级参数</div>
+                <div class="chat-image-gen-advanced-subtitle">只覆盖本次生成，不会写入全局默认</div>
+              </div>
+            </div>
+            <div class="chat-image-gen-advanced-summary"></div>
+            <div class="chat-image-gen-advanced-fields"></div>
+            <div class="chat-image-gen-advanced-actions">
+              <button type="button" class="chat-image-gen-param-reset">清除本次覆盖</button>
+              <button type="button" class="chat-image-gen-param-done">返回生成</button>
+            </div>
+          </div>
           <div class="chat-image-gen-footer">
             <button type="button" class="chat-image-gen-cancel">取消</button>
+            <button type="button" class="chat-image-gen-advanced-open">高级参数</button>
             <button type="button" class="chat-image-gen-secondary" style="display:none;">插图素材</button>
             <button type="button" class="chat-image-gen-submit">生成图片</button>
           </div>
         </div>
       `;
       document.body.appendChild(overlay);
+      const bodyEl = overlay.querySelector('.chat-image-gen-body');
+      const footerEl = overlay.querySelector('.chat-image-gen-footer');
       const textarea = overlay.querySelector('.chat-image-gen-textarea');
       const statusEl = overlay.querySelector('.chat-image-gen-status');
       const closeBtn = overlay.querySelector('.chat-image-gen-close');
       const cancelBtn = overlay.querySelector('.chat-image-gen-cancel');
+      const advancedBtn = overlay.querySelector('.chat-image-gen-advanced-open');
+      const advancedPage = overlay.querySelector('.chat-image-gen-advanced');
+      const advancedBackBtn = overlay.querySelector('.chat-image-gen-advanced-back');
+      const advancedDoneBtn = overlay.querySelector('.chat-image-gen-param-done');
+      const advancedResetBtn = overlay.querySelector('.chat-image-gen-param-reset');
+      const advancedSummaryEl = overlay.querySelector('.chat-image-gen-advanced-summary');
+      const advancedFieldsEl = overlay.querySelector('.chat-image-gen-advanced-fields');
       const secondaryBtn = overlay.querySelector('.chat-image-gen-secondary');
       const submitBtn = overlay.querySelector('.chat-image-gen-submit');
       const refAddBtn = overlay.querySelector('.chat-image-gen-ref-add');
@@ -12511,6 +12572,133 @@ Phase G（Frame 36）：循环衔接
       let referenceImages = [];
       let referenceCapability = resolveImageReferenceCapability({});
       let referenceCapabilityLoader = null;
+      let generationParamConfig = {};
+      let generationParamSchema = resolveImageGenerationParamSchema({});
+      let generationParamBase = {};
+      let generationParamOverrides = {};
+      let generationParamContextLoader = null;
+      const hasOwn = (obj, key) => Object.prototype.hasOwnProperty.call(obj || {}, key);
+      const normalizeParamFieldValue = (field, value) => {
+        if (field?.type === 'number') {
+          const raw = Math.trunc(Number(value));
+          if (!Number.isFinite(raw)) return Number(field?.defaultValue || 0);
+          const min = Number.isFinite(Number(field?.min)) ? Number(field.min) : Number.MIN_SAFE_INTEGER;
+          const max = Number.isFinite(Number(field?.max)) ? Number(field.max) : Number.MAX_SAFE_INTEGER;
+          return Math.min(max, Math.max(min, raw));
+        }
+        return String(value ?? field?.defaultValue ?? '');
+      };
+      const getParamFieldValue = (field, params = {}) => normalizeParamFieldValue(
+        field,
+        hasOwn(params, field?.key) ? params[field.key] : field?.defaultValue,
+      );
+      const normalizeParamOverrides = (overrides = {}, schema = generationParamSchema) => {
+        const next = {};
+        if (!overrides || typeof overrides !== 'object') return next;
+        (schema?.fields || []).forEach(field => {
+          if (!field?.key || !hasOwn(overrides, field.key)) return;
+          next[field.key] = normalizeParamFieldValue(field, overrides[field.key]);
+        });
+        return next;
+      };
+      const countGenerationParamOverrides = () => Object.keys(generationParamOverrides || {}).length;
+      const updateAdvancedButton = () => {
+        if (!advancedBtn) return;
+        const count = countGenerationParamOverrides();
+        advancedBtn.textContent = count ? `高级参数（${count}）` : '高级参数';
+        advancedBtn.classList.toggle('has-overrides', count > 0);
+      };
+      const updateAdvancedSummary = () => {
+        const modelLabel = [generationParamConfig?.provider, generationParamConfig?.model].filter(Boolean).join(' / ') || '未选择图片模型';
+        if (advancedSummaryEl) {
+          const count = countGenerationParamOverrides();
+          advancedSummaryEl.textContent = `${generationParamSchema?.title || '图片生成参数'} · ${modelLabel}${count ? ` · 本次覆盖 ${count} 项` : ''}`;
+        }
+      };
+      const applyGenerationParamContext = (context = {}) => {
+        generationParamConfig = context?.config && typeof context.config === 'object' ? context.config : {};
+        generationParamSchema = context?.schema || resolveImageGenerationParamSchema(generationParamConfig);
+        generationParamBase = context?.baseParams && typeof context.baseParams === 'object' ? context.baseParams : {};
+        generationParamOverrides = normalizeParamOverrides(generationParamOverrides, generationParamSchema);
+        updateAdvancedButton();
+      };
+      const syncAdvancedOverridesFromFields = () => {
+        if (!advancedFieldsEl) return;
+        const next = {};
+        (generationParamSchema?.fields || []).forEach(field => {
+          const el = advancedFieldsEl.querySelector(`[data-param-key="${field.key}"]`);
+          if (!el) return;
+          const currentValue = normalizeParamFieldValue(field, el.value);
+          const baseValue = getParamFieldValue(field, generationParamBase);
+          if (String(currentValue) !== String(baseValue)) next[field.key] = currentValue;
+        });
+        generationParamOverrides = next;
+        updateAdvancedButton();
+        updateAdvancedSummary();
+      };
+      const renderAdvancedFields = () => {
+        if (!advancedFieldsEl) return;
+        updateAdvancedSummary();
+        advancedFieldsEl.innerHTML = '';
+        (generationParamSchema?.fields || []).forEach(field => {
+          const label = document.createElement('label');
+          label.className = 'chat-image-gen-param-row';
+          const title = document.createElement('div');
+          title.className = 'chat-image-gen-param-label';
+          title.textContent = field.label || field.key;
+          label.appendChild(title);
+          let control = null;
+          if (field.type === 'select') {
+            control = document.createElement('select');
+            (field.options || []).forEach(opt => {
+              const option = document.createElement('option');
+              option.value = String(opt.value ?? '');
+              option.textContent = String(opt.label || opt.value || '');
+              control.appendChild(option);
+            });
+          } else {
+            control = document.createElement('input');
+            control.type = field.type === 'number' ? 'number' : 'text';
+            if (field.type === 'number') {
+              if (field.min != null) control.min = String(field.min);
+              if (field.max != null) control.max = String(field.max);
+              if (field.step != null) control.step = String(field.step);
+            }
+          }
+          control.className = 'chat-image-gen-param-field';
+          control.dataset.paramKey = field.key;
+          control.value = String(getParamFieldValue(field, { ...generationParamBase, ...generationParamOverrides }));
+          control.addEventListener('input', syncAdvancedOverridesFromFields);
+          control.addEventListener('change', syncAdvancedOverridesFromFields);
+          label.appendChild(control);
+          if (field.help) {
+            const help = document.createElement('div');
+            help.className = 'chat-image-gen-param-help';
+            help.textContent = field.help;
+            label.appendChild(help);
+          }
+          advancedFieldsEl.appendChild(label);
+        });
+      };
+      const openAdvancedPage = () => {
+        renderAdvancedFields();
+        if (bodyEl) bodyEl.hidden = true;
+        if (footerEl) footerEl.hidden = true;
+        if (advancedPage) advancedPage.hidden = false;
+      };
+      const closeAdvancedPage = () => {
+        if (advancedPage) advancedPage.hidden = true;
+        if (bodyEl) bodyEl.hidden = false;
+        if (footerEl) footerEl.hidden = false;
+      };
+      const refreshGenerationParamContext = async (event = null) => {
+        if (event?.detail?.tab && event.detail.tab !== 'image') return;
+        if (!overlay.classList.contains('is-active')) return;
+        if (typeof generationParamContextLoader !== 'function') return;
+        const nextContext = await generationParamContextLoader();
+        applyGenerationParamContext(nextContext);
+        if (advancedPage && !advancedPage.hidden) renderAdvancedFields();
+      };
       const renderReferences = () => {
         const max = Math.max(0, Math.trunc(Number(referenceCapability?.max || 0)));
         const supported = Boolean(referenceCapability?.supported && max > 0);
@@ -12571,10 +12759,14 @@ Phase G（Frame 36）：循环衔接
       };
       const close = (value = null) => {
         overlay.classList.remove('is-active');
+        closeAdvancedPage();
         statusEl.textContent = '';
         const resolve = resolveOpen;
         resolveOpen = null;
         referenceImages = [];
+        generationParamOverrides = {};
+        generationParamContextLoader = null;
+        updateAdvancedButton();
         renderReferences();
         if (typeof resolve === 'function') resolve(value);
       };
@@ -12588,10 +12780,19 @@ Phase G（Frame 36）：循环衔接
         close({
           prompt: value,
           referenceImages: referenceImages.map(item => ({ ...item })),
+          generationParamOverrides: { ...generationParamOverrides },
         });
       };
       closeBtn?.addEventListener('click', () => close(null));
       cancelBtn?.addEventListener('click', () => close(null));
+      advancedBtn?.addEventListener('click', () => openAdvancedPage());
+      advancedBackBtn?.addEventListener('click', () => closeAdvancedPage());
+      advancedDoneBtn?.addEventListener('click', () => closeAdvancedPage());
+      advancedResetBtn?.addEventListener('click', () => {
+        generationParamOverrides = {};
+        renderAdvancedFields();
+        updateAdvancedButton();
+      });
       secondaryBtn?.addEventListener('click', () => {
         const handler = secondaryHandler;
         close(null);
@@ -12619,6 +12820,8 @@ Phase G（Frame 36）：循环衔接
       });
       window.addEventListener('config-draft-changed', refreshReferenceCapability);
       window.addEventListener('config-profile-changed', refreshReferenceCapability);
+      window.addEventListener('config-draft-changed', refreshGenerationParamContext);
+      window.addEventListener('config-profile-changed', refreshGenerationParamContext);
       modal = {
         open: ({
           initialPrompt = '',
@@ -12630,10 +12833,18 @@ Phase G（Frame 36）：循环衔接
           referenceCapability: nextReferenceCapability = resolveImageReferenceCapability({}),
           referenceImages: initialReferenceImages = [],
           loadReferenceCapability = null,
+          generationParamContext = {},
+          generationParamOverrides: initialGenerationParamOverrides = {},
+          loadGenerationParamContext = null,
         } = {}) => new Promise(resolve => {
           resolveOpen = resolve;
           secondaryHandler = typeof onSecondary === 'function' ? onSecondary : null;
           referenceCapabilityLoader = typeof loadReferenceCapability === 'function' ? loadReferenceCapability : null;
+          generationParamContextLoader = typeof loadGenerationParamContext === 'function' ? loadGenerationParamContext : null;
+          generationParamOverrides = initialGenerationParamOverrides && typeof initialGenerationParamOverrides === 'object'
+            ? { ...initialGenerationParamOverrides }
+            : {};
+          applyGenerationParamContext(generationParamContext || {});
           referenceCapability = nextReferenceCapability || resolveImageReferenceCapability({});
           referenceImages = normalizeImageGenerationReferenceItems(initialReferenceImages, referenceCapability);
           const titleEl = overlay.querySelector('.chat-image-gen-title');
@@ -12647,7 +12858,9 @@ Phase G（Frame 36）：循环衔接
           }
           textarea.value = String(initialPrompt || '').trim();
           statusEl.textContent = '';
+          closeAdvancedPage();
           renderReferences();
+          updateAdvancedButton();
           overlay.classList.add('is-active');
           setTimeout(() => {
             textarea.focus();
@@ -12812,10 +13025,18 @@ Phase G（Frame 36）：循环衔接
       sourceMessageId: '',
     };
   };
-	  const runChatImageGeneration = async ({ prompt, sourceMessage = null, surface = '', referenceImages = [] } = {}) => {
+	  const runChatImageGeneration = async ({
+	    prompt,
+	    sourceMessage = null,
+	    surface = '',
+	    referenceImages = [],
+	    generationParamOverrides = {},
+	    targetSessionId = '',
+	    autoGenerated = false,
+	  } = {}) => {
 	    const imagePrompt = String(prompt || '').trim();
 	    if (!imagePrompt) return false;
-	    const sessionId = String(chatStore.getCurrent() || '').trim();
+	    const sessionId = String(targetSessionId || chatStore.getCurrent() || '').trim();
     if (!sessionId) {
       window.toastr?.warning?.('请先进入一个聊天室');
       return false;
@@ -12825,6 +13046,16 @@ Phase G（Frame 36）：循环衔接
 	    const referenceCapability = resolveImageReferenceCapability(config);
 	    const normalizedReferences = normalizeImageGenerationReferenceItems(referenceImages, referenceCapability);
 	    const referenceImageCount = normalizedReferences.length;
+	    await imageGenerationParamsStore.ready;
+	    const imageParamsPreset = imageGenerationParamsStore.getActive();
+	    const generationOptions = mergeImageGenerationRequestOptions({
+	      config,
+	      preset: imageParamsPreset,
+	      overrides: generationParamOverrides,
+	      extra: referenceImageCount
+	        ? { referenceImages: normalizedReferences.map(item => item.dataUrl).filter(Boolean) }
+	        : {},
+	    });
 	    const mediaSurface = surface || resolveMediaSurfaceForSession(sessionId);
 	    const surfaceCopy = getMediaSurfaceCopy(mediaSurface);
 	    const sender = resolveImageGenerationSender({
@@ -12845,6 +13076,9 @@ Phase G（Frame 36）：循环衔接
 	        prompt: imagePrompt,
 	        sourceMessageId,
 	        referenceImageCount,
+	        generationParams: generationOptions,
+	        autoGenerated: Boolean(autoGenerated),
+	        source: autoGenerated ? 'auto_image_prompt' : 'manual',
 	      },
     };
 	    const pendingMessage = {
@@ -12880,9 +13114,7 @@ Phase G（Frame 36）：循环衔接
 	          targetId: sessionId,
 	          sourceMessageId,
 	        },
-	        options: referenceImageCount
-	          ? { referenceImages: normalizedReferences.map(item => item.dataUrl).filter(Boolean) }
-	          : {},
+	        options: generationOptions,
 	        signal: controller.signal,
 	      });
 	      const imagePatch = buildGeneratedImageMessagePatch(asset, {
@@ -12898,6 +13130,9 @@ Phase G（Frame 36）：循环衔接
 	        generatedMedia: {
 	          ...(imagePatch.meta?.generatedMedia || {}),
 	          referenceImageCount,
+	          generationParams: generationOptions,
+	          autoGenerated: Boolean(autoGenerated),
+	          source: autoGenerated ? 'auto_image_prompt' : 'manual',
 	        },
 	      };
 	      patchChatImageGenerationMessage(savedPending.id, {
@@ -12953,6 +13188,7 @@ Phase G（Frame 36）：循环衔接
 	      : '';
 	    const seedPrompt = String(initialPrompt || '').trim() || fallbackPrompt;
 	    const referenceCapability = await loadImageReferenceCapability();
+	    const generationParamContext = await loadImageGenerationParamContext();
 	    const modalResult = await getChatImagePromptModal().open({
 	      initialPrompt: seedPrompt,
 	      title: surfaceCopy.title,
@@ -12962,19 +13198,146 @@ Phase G（Frame 36）：循环衔接
 	      onSecondary: showWritingAssets ? () => openWritingAssetPanel() : null,
 	      referenceCapability,
 	      loadReferenceCapability: loadImageReferenceCapability,
+	      generationParamContext,
+	      loadGenerationParamContext: loadImageGenerationParamContext,
 	    });
 	    const promptText = typeof modalResult === 'string'
 	      ? modalResult
 	      : String(modalResult?.prompt || '').trim();
 	    if (!promptText) return false;
 	    const modalReferenceImages = Array.isArray(modalResult?.referenceImages) ? modalResult.referenceImages : [];
+	    const modalGenerationParamOverrides = modalResult?.generationParamOverrides && typeof modalResult.generationParamOverrides === 'object'
+	      ? modalResult.generationParamOverrides
+	      : {};
 	    return runChatImageGeneration({
 	      prompt: promptText,
 	      sourceMessage,
 	      surface: mediaSurface,
 	      referenceImages: modalReferenceImages,
+	      generationParamOverrides: modalGenerationParamOverrides,
 	    });
 	  };
+  const autoImagePromptProcessedSourceIds = new Set();
+  const getAutoImagePromptSourceKey = (sessionId = '', messageId = '') =>
+    `${String(sessionId || '').trim()}::${String(messageId || '').trim()}`;
+  const isAutoImagePromptEnabled = () => {
+    try {
+      return appSettings.get().autoImagePromptEnabled === true;
+    } catch {
+      return false;
+    }
+  };
+  const collectAutoImagePromptCandidates = (message = {}, rawText = '') => {
+    const candidates = [];
+    const push = value => {
+      const text = String(value ?? '');
+      if (text && !candidates.includes(text)) candidates.push(text);
+    };
+    push(rawText);
+    push(message?.rawOriginal);
+    push(message?.rawSource);
+    push(message?.raw);
+    if (typeof message?.content === 'string') push(message.content);
+    return candidates;
+  };
+  const findLastAutoImagePromptSourceMessage = (sessionId = '') => {
+    const sid = String(sessionId || '').trim();
+    const messages = chatStore.getMessages(sid) || [];
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      const message = messages[i];
+      if (!message || message.role !== 'assistant') continue;
+      if (message.type === 'image') continue;
+      if (message.meta?.generatedMedia) continue;
+      if (message.meta?.kind === 'memory-table-push') continue;
+      return message;
+    }
+    return null;
+  };
+  const patchAutoImagePromptSourceMeta = (message, sessionId, patch = {}) => {
+    const sid = String(sessionId || '').trim();
+    const messageId = String(message?.id || '').trim();
+    if (!sid || !messageId) return;
+    const nextMeta = {
+      ...(message.meta || {}),
+      autoImagePrompt: {
+        ...(message.meta?.autoImagePrompt || {}),
+        ...patch,
+      },
+    };
+    const updated = chatStore.updateMessage(messageId, { meta: nextMeta }, sid);
+    if (updated && isSessionActive(sid)) ui.updateMessage(messageId, updated);
+  };
+  const scheduleAutoImagePromptGenerationForMessage = (
+    message,
+    targetSessionId,
+    { rawText = '', source = 'after_receive' } = {},
+  ) => {
+    const sessionId = String(targetSessionId || '').trim();
+    const messageId = String(message?.id || '').trim();
+    if (!isAutoImagePromptEnabled() || !sessionId || !messageId) return false;
+    if (message?.role !== 'assistant' || message?.meta?.generatedMedia) return false;
+    const key = getAutoImagePromptSourceKey(sessionId, messageId);
+    if (autoImagePromptProcessedSourceIds.has(key) || message?.meta?.autoImagePrompt?.status) return false;
+    const prompts = [];
+    for (const candidate of collectAutoImagePromptCandidates(message, rawText)) {
+      prompts.push(...extractAutoImagePrompts(candidate, { max: 1 }));
+      if (prompts.length) break;
+    }
+    const imagePrompt = String(prompts[0] || '').trim();
+    if (!imagePrompt) return false;
+    autoImagePromptProcessedSourceIds.add(key);
+    patchAutoImagePromptSourceMeta(message, sessionId, {
+      status: 'queued',
+      prompt: imagePrompt,
+      source,
+      at: Date.now(),
+    });
+    setTimeout(async () => {
+      try {
+        patchAutoImagePromptSourceMeta(message, sessionId, {
+          status: 'running',
+          prompt: imagePrompt,
+          source,
+          at: Date.now(),
+        });
+        const ok = await runChatImageGeneration({
+          prompt: imagePrompt,
+          sourceMessage: message,
+          surface: resolveMediaSurfaceForSession(sessionId),
+          targetSessionId: sessionId,
+          autoGenerated: true,
+        });
+        patchAutoImagePromptSourceMeta(message, sessionId, {
+          status: ok ? 'done' : 'failed',
+          prompt: imagePrompt,
+          source,
+          at: Date.now(),
+        });
+      } catch (err) {
+        patchAutoImagePromptSourceMeta(message, sessionId, {
+          status: 'failed',
+          prompt: imagePrompt,
+          source,
+          error: String(err?.message || err || ''),
+          at: Date.now(),
+        });
+        logger.warn('auto image prompt generation failed', err);
+      }
+    }, 0);
+    return true;
+  };
+  const scheduleAutoImagePromptGenerationFromLastRaw = (targetSessionId = '') => {
+    const sid = String(targetSessionId || '').trim();
+    if (!isAutoImagePromptEnabled() || !sid) return false;
+    const raw = chatStore.getLastRawResponse(sid);
+    if (!extractAutoImagePrompts(raw, { max: 1 }).length) return false;
+    const sourceMessage = findLastAutoImagePromptSourceMessage(sid);
+    if (!sourceMessage) return false;
+    return scheduleAutoImagePromptGenerationForMessage(sourceMessage, sid, {
+      rawText: raw,
+      source: 'last_raw_response',
+    });
+  };
 	  const resolveGeneratedImagePreviewUrl = (asset = {}) => {
 	    const output = asset?.output && typeof asset.output === 'object' ? asset.output : {};
 	    const path = String(output.path || '').trim();
@@ -13192,6 +13555,12 @@ Phase G（Frame 36）：循环衔接
 	      }
 	      const config = await ensureImageConfigReady();
 	      if (!config) return;
+	      await imageGenerationParamsStore.ready;
+	      const imageParamsPreset = imageGenerationParamsStore.getActive();
+	      const generationOptions = mergeImageGenerationRequestOptions({
+	        config,
+	        preset: imageParamsPreset,
+	      });
 	      controller = new AbortController();
 	      setBusy(true);
 	      setStatus('正在生成配图...', 'running');
@@ -13204,6 +13573,7 @@ Phase G（Frame 36）：循环衔接
 	            surface: 'moments',
 	            targetId: String(momentsStore.scopeId || 'default').trim() || 'default',
 	          },
+	          options: generationOptions,
 	          signal: controller.signal,
 	        });
 	        assets = [...assets, asset];
@@ -16857,6 +17227,9 @@ Phase G（Frame 36）：循环衔接
         useGlobalVariables: isSharedVariableSession(targetSessionId),
         recordTraceEvent: recordDebugTraceEvent,
       });
+      scheduleAutoImagePromptGenerationForMessage(message, targetSessionId, {
+        source: 'after_receive',
+      });
     };
     const processProtocolRetryEvent = async (ev, {
       renderMoments = false,
@@ -17022,6 +17395,11 @@ Phase G（Frame 36）：循环衔接
     });
     let disableSummaryForThis = false;
     const attachmentParts = hasAttachments ? buildAttachmentParts(attachmentQueue) : [];
+    if (appSettings.get().autoImagePromptEnabled === true) {
+      try {
+        await loadImageRuntimeConfig({ includeDraft: true });
+      } catch {}
+    }
     const llmContext = createLlmContextBuilder({
       promptUserName,
       activeUser,
@@ -17041,6 +17419,7 @@ Phase G（Frame 36）：循环衔接
       getLastChatBridgeSessionId: () => lastChatState?.sessionId,
       getMemoryStorageMode,
       isMemoryAutoExtractInline,
+      getAutoImagePromptModelHint: () => imagePromptModelHintCache,
       attachmentParts,
       getOpenAIPreset: getOpenAIPreset,
       getSettings: () => appSettings.get(),
@@ -17671,7 +18050,7 @@ Phase G（Frame 36）：循环衔接
       suppressErrorUI = catchResult.suppressErrorUI;
       if (suppressErrorUI) return;
     } finally {
-      return runSendFinallyFlow({
+      const finallyResult = runSendFinallyFlow({
         sendSucceeded,
         pendingMessagesToConfirm,
         sessionId,
@@ -17706,6 +18085,10 @@ Phase G（Frame 36）：循环衔接
         setSendingState: value => ui.setSendingState(value),
         recordTraceEvent: recordSendFlowTraceEvent,
       });
+      if (sendSucceeded) {
+        scheduleAutoImagePromptGenerationFromLastRaw(sessionId);
+      }
+      return finallyResult;
     }
   };
 

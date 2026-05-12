@@ -60,7 +60,6 @@ const DEFAULT_DIALOGUE_RULES_PRIVATE_CHAT = `
 // 群聊提示词（默认精简版）：
 // - 旧版包含完整 QQ 聊天格式介绍，与世界书 `手机-格式2-QQ聊天` 重复，已停用（保留于注释对照）。
 // const DEFAULT_GROUP_RULES_LEGACY_DUP = `...`.trim();
-const LEGACY_GROUP_RULES_NOTE = '（注：QQ聊天/群聊格式、特殊消息类型等“手机格式提示词”已迁移到聊天提示词固定区块「QQ聊天格式」；本区块仅保留场景信息，避免重复。）';
 const DEFAULT_GROUP_RULES = `
 【群聊场景提示词】
 当前处于群聊：{{group}}
@@ -171,17 +170,34 @@ const DEFAULT_SUMMARY_RULES = [
     '用一句话概括本条回复的内容，禁止不必要的总结和升华',
 ].join('\n').trim();
 
-const LEGACY_DEFAULT_DS_FORMAT_RULES = '回顾前文所提的格式要求为？确保标签不遗漏，否则视为无效回复。';
-const DEFAULT_DS_FORMAT_RULES = '回顾前面所提及的格式为？确保标签不遗漏且正确闭合，否则视为无效回复。';
+const DEFAULT_AUTO_IMAGE_PROMPT_RULES = [
+    '自动生图标签规则，用于生成{{image_prompt_surface}}。默认不要输出图片标签。',
+    '当本轮回复适合配图、或聊天角色会自然发送图片时，输出一个生图提示词标签。',
+    '当前图片模型：{{image_prompt_model}}',
+    '提示词风格：{{image_prompt_style}}',
+    '请严格按以下XML格式输出：',
+    '<image_prompt>',
+    '这里写完整生图提示词',
+    '</image_prompt>',
+    '注意事项：',
+    '- 所有信息需与当前剧情进展严格连贯。',
+    '- 格式务必正确。',
+    '- 标签内只写生图提示词，不写解释、编号或 Markdown',
+    '若本轮不需要图片，完全不要输出 <image_prompt> 标签。',
+].join('\n').trim();
+
+const CURRENT_MOMENT_CREATE_CONTENT_LINE = '- 如果决定发布动态，请在本轮手机格式回复中输出完整的 `moment_start` ... `moment_end` 区块。';
+const CURRENT_PHONE_FORMAT_FOOTER_RULE = '4. **手机正文必须以MiPhone_end标识符收尾；若本轮需要输出<tableEdit>，必须在MiPhone_end的下一行紧跟输出。**';
+const CURRENT_PHONE_FORMAT_SKELETON = [
+    '[手机正确格式骨架]',
+    'MiPhone_start',
+    'msg_start',
+    'msg_end',
+    'MiPhone_end',
+    '',
+].join('\n');
 
 const DEFAULT_PHONE_FORMAT_PROMPTS = getBuiltinPhoneFormatPromptSeed();
-
-const PROMPT_MIGRATION_NOTES = [
-    LEGACY_GROUP_RULES_NOTE,
-    '（注：QQ空间格式、评论系统说明、moment_start/moment_end 等“手机格式提示词”已迁移到聊天提示词固定区块「QQ空间格式」；本区块默认不重复这些格式说明。）',
-    '（注：具体输出协议（如 <content> 等）建议由“预设-自定义”区块统一管理；此处只保留决策逻辑。）',
-    '（注：具体输出协议（如 <content> 等）建议由“预设-自定义”区块统一管理；此处只保留评论回复规则。）',
-];
 
 const ensurePhoneFormatPromptFields = (preset, seed = DEFAULT_PHONE_FORMAT_PROMPTS) => {
     const p = (preset && typeof preset === 'object') ? preset : null;
@@ -200,7 +216,8 @@ const ensurePhoneFormatPromptFields = (preset, seed = DEFAULT_PHONE_FORMAT_PROMP
 const stripPromptMigrationNotes = (value) => {
     const raw = String(value ?? '');
     if (!raw) return '';
-    return PROMPT_MIGRATION_NOTES.reduce((next, note) => next.replace(note, ''), raw)
+    return raw
+        .replace(/^[ \t]*\uFF08\u6CE8\uFF1A[^\uFF09]*\uFF09[ \t]*$/gm, '')
         .replace(/(?:\r?\n[ \t]*){3,}/g, '\n\n')
         .trim();
 };
@@ -213,10 +230,20 @@ const sanitizeMomentCreateRulesText = (value) => {
     const raw = stripPromptMigrationNotes(value);
     if (!raw) return '';
     return raw
-        .replace(
-            /-\s*如果决定发布动态，请在\s*<content>\s*内输出完整的\s*`moment_start`\s*\.\.\.\s*`moment_end`\s*区块。/g,
-            '- 如果决定发布动态，请在本轮手机格式回复中输出完整的 `moment_start` ... `moment_end` 区块。'
-        )
+        .split(/\r?\n/)
+        .map((line) => {
+            const compact = String(line || '').replace(/\s+/g, '');
+            if (
+                compact.includes('如果决定发布动态') &&
+                compact.includes('<content>') &&
+                compact.includes('moment_start') &&
+                compact.includes('moment_end')
+            ) {
+                return CURRENT_MOMENT_CREATE_CONTENT_LINE;
+            }
+            return line;
+        })
+        .join('\n')
         .replace(/\n{3,}/g, '\n\n')
         .trim();
 };
@@ -240,6 +267,46 @@ const sanitizeMomentCommentRulesText = (value) => {
     return stripPromptMigrationNotes(value);
 };
 
+const looksDefaultAutoImagePromptRulesForMigration = (value) => {
+    const raw = String(value || '');
+    if (!raw) return false;
+    if (raw.includes('<auto_image_generation>')) return true;
+    return raw.includes('{{image_prompt_position_rule}}') &&
+        raw.includes('{{image_prompt_surface}}') &&
+        raw.includes('{{image_prompt_model}}') &&
+        raw.includes('<image_prompt>');
+};
+
+const ensureAutoImagePromptFields = (preset) => {
+    const p = (preset && typeof preset === 'object') ? preset : null;
+    if (!p) return;
+    if (typeof p.auto_image_prompt_enabled !== 'boolean') p.auto_image_prompt_enabled = true;
+    if (typeof p.auto_image_prompt_position !== 'number') p.auto_image_prompt_position = 0;
+    if (typeof p.auto_image_prompt_depth !== 'number') p.auto_image_prompt_depth = 1;
+    if (typeof p.auto_image_prompt_role !== 'number') p.auto_image_prompt_role = 0;
+    if (typeof p.auto_image_prompt_rules !== 'string' || !p.auto_image_prompt_rules.trim()) {
+        p.auto_image_prompt_rules = DEFAULT_AUTO_IMAGE_PROMPT_RULES;
+    } else if (looksDefaultAutoImagePromptRulesForMigration(p.auto_image_prompt_rules)) {
+        p.auto_image_prompt_rules = DEFAULT_AUTO_IMAGE_PROMPT_RULES;
+    }
+    p.auto_image_prompt_rules = String(p.auto_image_prompt_rules || '')
+        .split(/\r?\n/)
+        .map((line) => {
+            const text = String(line || '');
+            if (
+                text.includes('若需要生成图片') &&
+                text.includes('可能存在') &&
+                text.includes('<tableEdit>') &&
+                text.includes('image_prompt_position_rule') === false
+            ) {
+                return '{{image_prompt_position_rule}}';
+            }
+            return line;
+        })
+        .join('\n')
+        .trim();
+};
+
 const sanitizePhoneFormatPromptText = (value, spec = {}) => {
     const raw = String(value ?? '');
     if (!raw) return '';
@@ -247,25 +314,16 @@ const sanitizePhoneFormatPromptText = (value, spec = {}) => {
     const rulesKey = String(spec?.rulesKey || '');
     let out = stripPromptMigrationNotes(raw);
     if (entryId === '手机-格式3-QQ空间' || rulesKey === 'phone_format_moment_rules') {
-        out = out.replace(
-            /\n+【动态评论系统说明】[\s\S]*?\n+QQ空间仅会有主要角色发布的动态/g,
-            '\n\nQQ空间仅会有主要角色发布的动态'
-        );
+        out = out.replace(/\n+【[^】]*评论[^】]*系统[^】]*】[\s\S]*?(?=\n+QQ空间仅会有主要角色发布的动态)/g, '\n');
     }
     if (entryId === '手机-格式999-格式结尾' || rulesKey === 'phone_format_footer_rules') {
         out = out
-            .replace(
-                '4. **以MiPhone_end标识符收尾**',
-                '4. **手机正文必须以MiPhone_end标识符收尾；若本轮需要输出<tableEdit>，必须在MiPhone_end的下一行紧跟输出。**'
-            )
-            .replace(
-                '4. **手机正文必须以MiPhone_end标识符收尾；若本轮需要输出<tableEdit>，必须紧跟在MiPhone_end之后。**',
-                '4. **手机正文必须以MiPhone_end标识符收尾；若本轮需要输出<tableEdit>，必须在MiPhone_end的下一行紧跟输出。**'
-            )
-            .replace(
-                /\[手机正确格式\]\s*MiPhone_start\s*\/\*\s*此处必须完整生成所有字符\s*\*\/[\s\S]*?MiPhone_end\s*\/\*\s*此处必须完整生成所有字符\s*\*\/\s*(?=\n<\/线上格式>)/,
-                '[手机正确格式骨架]\nMiPhone_start\nmsg_start\nmsg_end\nMiPhone_end\n'
-            );
+            .split(/\r?\n/)
+            .map((line) => (/^4\.\s*\*\*.*MiPhone_end.*\*\*\s*$/.test(String(line || '')) ? CURRENT_PHONE_FORMAT_FOOTER_RULE : line))
+            .join('\n');
+        if (/\/\*[\s\S]*?\*\//.test(out)) {
+            out = out.replace(/\[手机正确格式\][\s\S]*?MiPhone_end[\s\S]*?(?=\n<\/线上格式>)/, CURRENT_PHONE_FORMAT_SKELETON);
+        }
     }
     return out.replace(/\n{3,}/g, '\n\n').trim();
 };
@@ -746,14 +804,10 @@ export class PresetStore {
                     p.summary_rules = DEFAULT_SUMMARY_RULES;
                 }
 
+                ensureAutoImagePromptFields(p);
+
                 if (typeof p.ds_format_enabled !== 'boolean') p.ds_format_enabled = true;
-                if (typeof p.ds_format_rules !== 'string' || !p.ds_format_rules.trim()) p.ds_format_rules = DEFAULT_DS_FORMAT_RULES;
-                try {
-                    const cur = String(p.ds_format_rules || '').trim();
-                    if (cur && cur === LEGACY_DEFAULT_DS_FORMAT_RULES.trim()) {
-                        p.ds_format_rules = DEFAULT_DS_FORMAT_RULES;
-                    }
-                } catch {}
+                p.ds_format_rules = '';
             }
             try {
                 for (const p of Object.values(state.presets.openai || {})) normalizeOpenAIPreset(p);
@@ -865,14 +919,10 @@ export class PresetStore {
                     p.summary_rules = DEFAULT_SUMMARY_RULES;
                 }
 
+                ensureAutoImagePromptFields(p);
+
                 if (typeof p.ds_format_enabled !== 'boolean') p.ds_format_enabled = true;
-                if (typeof p.ds_format_rules !== 'string' || !p.ds_format_rules.trim()) p.ds_format_rules = DEFAULT_DS_FORMAT_RULES;
-                try {
-                    const cur = String(p.ds_format_rules || '').trim();
-                    if (cur && cur === LEGACY_DEFAULT_DS_FORMAT_RULES.trim()) {
-                        p.ds_format_rules = DEFAULT_DS_FORMAT_RULES;
-                    }
-                } catch {}
+                p.ds_format_rules = '';
             }
             try {
                 for (const p of Object.values(state.presets.openai || {})) normalizeOpenAIPreset(p);
@@ -1215,6 +1265,7 @@ export class PresetStore {
         const next = { ...(data || {}), name: String(name || data?.name || presetId) };
         if (t === 'sysprompt') {
             ensurePhoneFormatPromptFields(next);
+            ensureAutoImagePromptFields(next);
             if (typeof next.group_rules === 'string') {
                 next.group_rules = sanitizeGroupRulesText(next.group_rules);
             }

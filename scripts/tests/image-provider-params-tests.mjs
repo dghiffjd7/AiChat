@@ -27,6 +27,34 @@ import { CustomProvider } from '../../src/scripts/api/providers/custom.js';
     model: 'gpt-image-2',
   });
   let body = null;
+  provider.requestJson = async request => {
+    body = JSON.parse(request.body);
+    return { data: [{ b64_json: 'abc123' }] };
+  };
+  await provider.generateImage('cat', {
+    quality: 'medium',
+    size: '1024x1536',
+    output_format: 'webp',
+    output_compression: 75,
+    background: 'opaque',
+    moderation: 'low',
+  });
+  assert.equal(body.quality, 'medium');
+  assert.equal(body.size, '1024x1536');
+  assert.equal(body.output_format, 'webp');
+  assert.equal(body.output_compression, 75);
+  assert.equal(body.background, 'opaque');
+  assert.equal(body.moderation, 'low');
+  console.log('ok - OpenAI gpt-image generation forwards supported image params');
+}
+
+{
+  const provider = new OpenAIProvider({
+    provider: 'openai',
+    apiKey: 'test',
+    model: 'gpt-image-2',
+  });
+  let body = null;
   let url = '';
   provider.requestJson = async request => {
     url = request.url;

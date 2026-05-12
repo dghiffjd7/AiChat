@@ -962,7 +962,20 @@ export class OpenAIProvider {
     }
     if (options.size) payload.size = options.size;
     if (options.quality) payload.quality = options.quality;
-    if (options.style) payload.style = options.style;
+    if (options.style && !isOpenAIGptImageModel(this.model)) payload.style = options.style;
+    if (isOpenAIGptImageModel(this.model)) {
+      if (options.background) payload.background = options.background;
+      if (options.outputFormat || options.output_format) {
+        payload.output_format = options.outputFormat || options.output_format;
+      }
+      if (Number.isFinite(options.outputCompression) || Number.isFinite(options.output_compression)) {
+        payload.output_compression = Number.isFinite(options.outputCompression)
+          ? Math.trunc(options.outputCompression)
+          : Math.trunc(options.output_compression);
+      }
+      if (options.moderation) payload.moderation = options.moderation;
+      if (options.user) payload.user = options.user;
+    }
 
     const data = await this.requestJson({
       url: `${this.baseUrl}/images/generations`,

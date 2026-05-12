@@ -1,3 +1,5 @@
+import { stripAutoImagePromptTags } from './auto-image-prompt-utils.js';
+
 export const sanitizeThinkingForProtocolParse = (text) => {
   const raw = String(text ?? '');
   // More tolerant fallback: if model echoed "<content>" inside (possibly unclosed) thinking,
@@ -52,7 +54,7 @@ export const normalizeProtocolChatMessage = (
   speaker: typeof normalizeSpeaker === 'function'
     ? normalizeSpeaker(message?.speaker)
     : String(message?.speaker || '').trim(),
-  content: String(message?.content || '').replace(/<br\s*\/?>/gi, '\n'),
+  content: stripAutoImagePromptTags(String(message?.content || '').replace(/<br\s*\/?>/gi, '\n')),
   time: String(message?.time || '').trim(),
 });
 

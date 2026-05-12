@@ -7,6 +7,12 @@ import {
   normalizeGeneratedImageResult,
   resolveImageReferenceCapability,
 } from '../../src/scripts/ui/media-generation-service.js';
+import {
+  createDefaultImageGenerationPreset,
+  getParamsForImageConfig,
+  mergeImageGenerationRequestOptions,
+  resolveImageGenerationParamSchema,
+} from '../../src/scripts/ui/image-generation-params-utils.js';
 
 {
   const normalized = normalizeGeneratedImageResult({
@@ -40,6 +46,32 @@ import {
   assert.equal(resolveImageReferenceCapability({ provider: 'makersuite', model: 'gemini-2.5-flash-image-preview', maxReferenceImages: 2 }).max, 2);
   assert.equal(resolveImageReferenceCapability({ provider: 'custom', model: 'image-model', maxReferenceImages: 2 }).supported, false);
   console.log('ok - media generation service resolves image reference capabilities');
+}
+
+{
+  const schema = resolveImageGenerationParamSchema({ provider: 'openai', model: 'gpt-image-2' });
+  assert.equal(schema.fields.some(field => field.key === 'quality'), true);
+  const preset = createDefaultImageGenerationPreset();
+  preset.paramsByProvider.openai.quality = 'high';
+  preset.paramsByProvider.openai.size = '1024x1024';
+  preset.paramsByProvider.openai.output_format = 'webp';
+  preset.paramsByProvider.openai.output_compression = 80;
+  const params = getParamsForImageConfig(preset, { provider: 'openai', model: 'gpt-image-2' });
+  assert.deepEqual(params, {
+    n: 1,
+    quality: 'high',
+    size: '1024x1024',
+    output_format: 'webp',
+    output_compression: 80,
+  });
+  const merged = mergeImageGenerationRequestOptions({
+    config: { provider: 'openai', model: 'gpt-image-2' },
+    preset,
+    extra: { referenceImages: ['data:image/png;base64,ref'] },
+  });
+  assert.deepEqual(merged.referenceImages, ['data:image/png;base64,ref']);
+  assert.equal(merged.quality, 'high');
+  console.log('ok - media generation params schema sanitizes OpenAI image options');
 }
 
 {

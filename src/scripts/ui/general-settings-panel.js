@@ -169,6 +169,8 @@ export class GeneralSettingsPanel {
     this.creativeWideToggle = null;
     this.personaBindToggle = null;
     this.promptTimeToggle = null;
+    this.autoImagePromptToggle = null;
+    this.autoImagePromptStyleSelect = null;
     this.memoryEnabledToggle = null;
     this.memoryModeSummary = null;
     this.memoryModeTable = null;
@@ -348,6 +350,14 @@ export class GeneralSettingsPanel {
     }
     if (this.promptTimeToggle) {
       this.promptTimeToggle.checked = settings.promptCurrentTimeEnabled === true;
+    }
+    if (this.autoImagePromptToggle) {
+      this.autoImagePromptToggle.checked = settings.autoImagePromptEnabled === true;
+    }
+    if (this.autoImagePromptStyleSelect) {
+      const raw = String(settings.autoImagePromptStyle || 'auto').trim();
+      const allowed = new Set(['auto', 'natural', 'nai_tags']);
+      this.autoImagePromptStyleSelect.value = allowed.has(raw) ? raw : 'auto';
     }
     const memoryEnabled = settings.memoryEnabled !== false;
     const memoryMode = String(settings.memoryStorageMode || 'table').toLowerCase();
@@ -1340,6 +1350,10 @@ export class GeneralSettingsPanel {
         background: var(--app-surface-card);
         color: var(--app-text-primary);
       }
+      #general-settings-panel .general-settings-select option {
+        background: var(--app-surface-card);
+        color: var(--app-text-primary);
+      }
       #general-settings-panel .general-settings-inline-hint {
         margin-top: 8px;
         color: var(--app-text-muted);
@@ -1618,6 +1632,36 @@ export class GeneralSettingsPanel {
               icon: 'palette',
             })}
             </div>
+          </div>
+        </div>
+
+        <div class="general-settings-card">
+          <div class="general-settings-card-head">
+            <div>
+              <div class="general-settings-card-title">AI 图片生成</div>
+              <div class="general-settings-card-note">控制回复后自动提取标签生成图片的行为。</div>
+            </div>
+          </div>
+
+          <div class="general-settings-setting-list">
+            ${this.renderSettingRow({
+              id: 'general-auto-image-prompt',
+              title: 'AI 回复后自动生图',
+              description: '默认关闭。启用后会提示 AI 在合适时输出 &lt;image_prompt&gt; 标签，本地提取后自动生成图片。',
+              icon: 'palette',
+            })}
+            ${this.renderInputRow({
+              title: '生图提示词风格',
+              description: '控制发送给文字模型的标签提示词要求；实际生图仍使用当前图片模型配置。',
+              icon: 'sliders',
+              control: `
+                <select id="general-auto-image-prompt-style" class="general-settings-select">
+                  <option value="auto">自动匹配当前图片模型</option>
+                  <option value="natural">自然语言提示词</option>
+                  <option value="nai_tags">NAI / 标签式提示词</option>
+                </select>
+              `,
+            })}
           </div>
         </div>
 
@@ -2036,6 +2080,8 @@ export class GeneralSettingsPanel {
     this.uiAdvancedWrap = this.element.querySelector('#general-ui-advanced');
     this.personaBindToggle = this.element.querySelector('#general-persona-bind');
     this.promptTimeToggle = this.element.querySelector('#general-prompt-time');
+    this.autoImagePromptToggle = this.element.querySelector('#general-auto-image-prompt');
+    this.autoImagePromptStyleSelect = this.element.querySelector('#general-auto-image-prompt-style');
     this.memoryEnabledToggle = this.element.querySelector('#general-memory-enabled');
     this.memoryModeSummary = this.element.querySelector('#general-memory-mode-summary');
     this.memoryModeTable = this.element.querySelector('#general-memory-mode-table');
@@ -2453,6 +2499,19 @@ export class GeneralSettingsPanel {
       const enabled = Boolean(e?.target?.checked);
       appSettings.update({ promptCurrentTimeEnabled: enabled });
       window.dispatchEvent(new CustomEvent('app-settings-changed', { detail: { key: 'promptCurrentTimeEnabled', value: enabled } }));
+    });
+    this.autoImagePromptToggle?.addEventListener('change', (e) => {
+      const enabled = Boolean(e?.target?.checked);
+      appSettings.update({ autoImagePromptEnabled: enabled });
+      window.dispatchEvent(new CustomEvent('app-settings-changed', { detail: { key: 'autoImagePromptEnabled', value: enabled } }));
+    });
+    this.autoImagePromptStyleSelect?.addEventListener('change', (e) => {
+      const raw = String(e?.target?.value || 'auto').trim();
+      const allowed = new Set(['auto', 'natural', 'nai_tags']);
+      const value = allowed.has(raw) ? raw : 'auto';
+      if (e?.target) e.target.value = value;
+      appSettings.update({ autoImagePromptStyle: value });
+      window.dispatchEvent(new CustomEvent('app-settings-changed', { detail: { key: 'autoImagePromptStyle', value } }));
     });
 
     const applyMemoryMode = (mode) => {

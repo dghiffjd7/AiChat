@@ -1988,6 +1988,16 @@ export class PresetPanel {
             ],
         }));
         list.appendChild(makePromptBlock({
+            idPrefix: 'auto-image-prompt', title: '自动标签生图提示词',
+            enabledKey: 'auto_image_prompt_enabled', positionKey: 'auto_image_prompt_position',
+            depthKey: 'auto_image_prompt_depth', roleKey: 'auto_image_prompt_role',
+            rulesKey: 'auto_image_prompt_rules', defaultDepth: 1, placeholder: '自动标签生图提示词',
+            metaChips: [
+                { label: '于通用设定开启', tone: 'dynamic' },
+                { label: '私聊/群聊/创意写作', tone: 'scope' },
+            ],
+        }));
+        list.appendChild(makePromptBlock({
             idPrefix: 'group', title: '群聊提示词',
             enabledKey: 'group_enabled', positionKey: 'group_position',
             depthKey: 'group_depth', roleKey: 'group_role',
@@ -2080,6 +2090,9 @@ export class PresetPanel {
                 '<tableEdit>',
                 '记忆表格内容',
                 '</tableEdit>',
+                '<image_prompt>',
+                '生图提示词',
+                '</image_prompt>',
             ].join('\n');
             body.appendChild(preview);
             card.appendChild(body);
@@ -2844,6 +2857,11 @@ export class PresetPanel {
             current.moment_comment_depth = getInt(root.querySelector('#moment-comment-depth')?.value, current.moment_comment_depth ?? 0);
             current.moment_comment_role = getInt(root.querySelector('#moment-comment-role')?.value, current.moment_comment_role ?? EXT_PROMPT_ROLES.SYSTEM);
             current.moment_comment_rules = root.querySelector('#moment-comment-rules')?.value ?? '';
+            current.auto_image_prompt_enabled = Boolean(root.querySelector('#auto-image-prompt-enabled')?.checked);
+            current.auto_image_prompt_position = getInt(root.querySelector('#auto-image-prompt-position')?.value, current.auto_image_prompt_position ?? EXT_PROMPT_TYPES.IN_PROMPT);
+            current.auto_image_prompt_depth = getInt(root.querySelector('#auto-image-prompt-depth')?.value, current.auto_image_prompt_depth ?? 1);
+            current.auto_image_prompt_role = getInt(root.querySelector('#auto-image-prompt-role')?.value, current.auto_image_prompt_role ?? EXT_PROMPT_ROLES.SYSTEM);
+            current.auto_image_prompt_rules = root.querySelector('#auto-image-prompt-rules')?.value ?? '';
             current.group_enabled = Boolean(root.querySelector('#group-enabled')?.checked);
             current.group_position = getInt(root.querySelector('#group-position')?.value, current.group_position ?? EXT_PROMPT_TYPES.IN_PROMPT);
             current.group_depth = getInt(root.querySelector('#group-depth')?.value, current.group_depth ?? 1);

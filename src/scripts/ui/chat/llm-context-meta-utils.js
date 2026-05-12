@@ -64,6 +64,7 @@ export const buildLlmContextMeta = ({
   memoryStorageMode = '',
   memoryAutoExtract = false,
   memoryRuntime = null,
+  autoImagePromptModelHint = '',
   attachmentParts = [],
   replyPromptHint = '',
   extraPromptBlocks = [],
@@ -107,6 +108,8 @@ export const buildLlmContextMeta = ({
       prefix: String(continueTarget.prefix || ''),
     };
   }
+  const imagePromptModelHint = String(autoImagePromptModelHint || '').trim();
+  if (imagePromptModelHint) meta.autoImagePromptModelHint = imagePromptModelHint;
   if (skipTemplate) meta.templateEnabled = false;
   if (skipScripts) meta.skipScripts = true;
   return meta;
@@ -125,30 +128,36 @@ export const buildLlmContextMetaInput = ({
   memoryStorageMode = '',
   memoryAutoExtract = false,
   memoryRuntime = null,
+  autoImagePromptModelHint = '',
   attachmentParts = [],
   replyPromptHint = '',
   stagePromptBlocks = [],
   injectedPromptBlocks = [],
   skipTemplate = false,
   skipScripts = false,
-} = {}) => ({
-  disableSummary: Boolean(disableSummary),
-  skipInputRegex: Boolean(skipInputRegex),
-  continueTarget,
-  rpUiMode: Boolean(rpUiMode),
-  uiMode: String(uiMode || 'chat'),
-  sharedVariables: Boolean(sharedVariables),
-  defaultRpBridgeSessionId: isRpMode ? '' : String(rpBridgeSessionId || '').trim(),
-  defaultChatBridgeSessionId: isRpMode ? String(lastChatBridgeSessionId || '').trim() : '',
-  memoryStorageMode: String(memoryStorageMode || ''),
-  memoryAutoExtract: Boolean(memoryAutoExtract),
-  memoryRuntime,
-  attachmentParts: Array.isArray(attachmentParts) ? attachmentParts : [],
-  replyPromptHint: String(replyPromptHint || ''),
-  extraPromptBlocks: [
-    ...(Array.isArray(stagePromptBlocks) ? stagePromptBlocks : []),
-    ...(Array.isArray(injectedPromptBlocks) ? injectedPromptBlocks : []),
-  ],
-  skipTemplate: Boolean(skipTemplate),
-  skipScripts: Boolean(skipScripts),
-});
+} = {}) => {
+  const out = {
+    disableSummary: Boolean(disableSummary),
+    skipInputRegex: Boolean(skipInputRegex),
+    continueTarget,
+    rpUiMode: Boolean(rpUiMode),
+    uiMode: String(uiMode || 'chat'),
+    sharedVariables: Boolean(sharedVariables),
+    defaultRpBridgeSessionId: isRpMode ? '' : String(rpBridgeSessionId || '').trim(),
+    defaultChatBridgeSessionId: isRpMode ? String(lastChatBridgeSessionId || '').trim() : '',
+    memoryStorageMode: String(memoryStorageMode || ''),
+    memoryAutoExtract: Boolean(memoryAutoExtract),
+    memoryRuntime,
+    attachmentParts: Array.isArray(attachmentParts) ? attachmentParts : [],
+    replyPromptHint: String(replyPromptHint || ''),
+    extraPromptBlocks: [
+      ...(Array.isArray(stagePromptBlocks) ? stagePromptBlocks : []),
+      ...(Array.isArray(injectedPromptBlocks) ? injectedPromptBlocks : []),
+    ],
+    skipTemplate: Boolean(skipTemplate),
+    skipScripts: Boolean(skipScripts),
+  };
+  const imagePromptModelHint = String(autoImagePromptModelHint || '').trim();
+  if (imagePromptModelHint) out.autoImagePromptModelHint = imagePromptModelHint;
+  return out;
+};

@@ -49,6 +49,8 @@ const defaults = {
   reasoningMaxAdditions: 1,
   personaBindContacts: true,
   promptCurrentTimeEnabled: false,
+  autoImagePromptEnabled: false,
+  autoImagePromptStyle: 'auto',
   templateEnabled: false,
   templateExecuteBeforeGenerate: true,
   templateExecuteAfterRender: true,

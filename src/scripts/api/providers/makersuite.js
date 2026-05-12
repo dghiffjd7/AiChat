@@ -470,14 +470,27 @@ export class MakersuiteProvider {
       const isDeprecated = String(this.model || '').startsWith('imagegeneration');
       const count = Number.isFinite(payloadOptions.n) ? Math.max(1, Math.trunc(payloadOptions.n)) : 1;
       const aspectRatio = payloadOptions.aspectRatio || payloadOptions.aspect_ratio;
+      const negativePrompt = payloadOptions.negativePrompt || payloadOptions.negative_prompt;
+      const responseMimeType = payloadOptions.responseMimeType
+        || payloadOptions.response_mime_type
+        || payloadOptions.outputMimeType
+        || payloadOptions.output_mime_type
+        || 'image/jpeg';
+      const compressionRaw = Number.isFinite(payloadOptions.outputCompression)
+        ? payloadOptions.outputCompression
+        : payloadOptions.output_compression;
+      const compressionQuality = Number.isFinite(Number(compressionRaw))
+        ? Math.min(100, Math.max(1, Math.trunc(Number(compressionRaw))))
+        : 100;
       const parameters = {
         sampleCount: count,
         aspectRatio: String(aspectRatio || '1:1'),
         outputOptions: {
-          mimeType: 'image/jpeg',
-          compressionQuality: 100,
+          mimeType: String(responseMimeType || 'image/jpeg'),
+          compressionQuality,
         },
       };
+      if (negativePrompt) parameters.negativePrompt = String(negativePrompt);
       if (!isDeprecated) {
         parameters.personGeneration = 'allow_all';
         parameters.safetySetting = 'block_low_and_above';

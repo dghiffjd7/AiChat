@@ -1657,7 +1657,7 @@ body[data-theme-mode='dark'] .action-label {
   color: var(--app-text-secondary) !important;
 }
 
-body[data-theme-mode='dark'] :is(.chat-image-gen-textarea, .moment-compose-text, .moment-compose-prompt) {
+body[data-theme-mode='dark'] :is(.chat-image-gen-textarea, .chat-image-gen-param-field, .moment-compose-text, .moment-compose-prompt) {
   background: rgba(205, 217, 229, 0.08) !important;
   border-color: var(--app-border-default) !important;
   color: var(--app-text-primary) !important;
@@ -1668,7 +1668,7 @@ body[data-theme-mode='dark'] :is(.chat-image-gen-footer, .moment-compose-footer,
   border-top-color: var(--app-border-subtle) !important;
 }
 
-body[data-theme-mode='dark'] :is(.chat-image-gen-cancel, .moment-compose-cancel, .writing-media-asset-actions button) {
+body[data-theme-mode='dark'] :is(.chat-image-gen-cancel, .chat-image-gen-advanced-back, .chat-image-gen-param-reset, .moment-compose-cancel, .writing-media-asset-actions button) {
   background: rgba(205, 217, 229, 0.08) !important;
   color: var(--app-text-primary) !important;
   border-color: var(--app-border-default) !important;
@@ -3581,12 +3581,24 @@ body[data-theme-mode='dark'] .slash-argument-copy {
 
 body[data-theme-mode='dark'] :is(
   .chat-image-gen-secondary,
+  .chat-image-gen-advanced-open,
   .chat-image-gen-ref-add,
   .slash-image-ref-add
 ) {
   border-color: rgba(96, 165, 250, 0.32) !important;
   background: rgba(59, 130, 246, 0.16) !important;
   color: #bfdbfe !important;
+}
+
+body[data-theme-mode='dark'] .chat-image-gen-advanced-summary {
+  background: rgba(205, 217, 229, 0.06) !important;
+  border-color: var(--app-border-default) !important;
+}
+
+body[data-theme-mode='dark'] .chat-image-gen-advanced-open.has-overrides {
+  border-color: rgba(251, 191, 36, 0.38) !important;
+  background: rgba(245, 158, 11, 0.18) !important;
+  color: #fde68a !important;
 }
 
 body[data-theme-mode='dark'] .moments-empty-state {
