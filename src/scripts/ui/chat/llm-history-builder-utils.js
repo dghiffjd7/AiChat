@@ -5,7 +5,6 @@ import {
   buildLlmHistoryEntry,
   loadLlmCreativeSummarySource,
   resolveLlmCreativeHistorySummary,
-  resolveLlmHistoryImageAttachment,
 } from './llm-history-entry-utils.js';
 
 export const buildLlmHistoryForSession = ({
@@ -25,8 +24,6 @@ export const buildLlmHistoryForSession = ({
   rpUiMode,
   settings,
 } = {}) => {
-  const resolveImageAttachment = (message) =>
-    resolveLlmHistoryImageAttachment(message, { isAttachmentExpired });
   const creativeSummarySource = loadLlmCreativeSummarySource(creativeSummaryGetters);
   const candidates = buildLlmHistoryCandidates(messages || [], {
     excludeMessageIds,
@@ -47,7 +44,6 @@ export const buildLlmHistoryForSession = ({
       resolvePlainText,
       resolveStickerKeyword,
       buildStickerToken,
-      resolveImageAttachment,
     }))
     .filter(Boolean);
   return finalizeLlmHistory(history, buildLlmHistoryFinalizeOptions({

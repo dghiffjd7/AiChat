@@ -1,24 +1,9 @@
-export const isPromptImageUrl = (value) => {
-  const raw = String(value || '').trim();
-  if (!raw) return false;
-  if (raw.startsWith('data:image/')) return true;
-  if (/^https?:\/\//i.test(raw)) return true;
-  return false;
-};
-
 export const resolveLlmHistoryImageAttachment = (
   message,
   { isAttachmentExpired = () => false } = {},
 ) => {
   if (!message || typeof message !== 'object') return '';
   if (isAttachmentExpired(message.meta)) return '';
-  if (message.type === 'image' && typeof message.content === 'string') {
-    const raw = String(message.content || '').trim();
-    if (!raw || raw === '[binary omitted]' || raw === '[图片]') return '';
-    return isPromptImageUrl(raw) ? raw : '';
-  }
-  const raw = typeof message.content === 'string' ? message.content.trim() : '';
-  if (isPromptImageUrl(raw)) return raw;
   return '';
 };
 
@@ -67,7 +52,6 @@ export const buildLlmHistoryEntry = (
     resolvePlainText = null,
     resolveStickerKeyword = null,
     buildStickerToken = null,
-    resolveImageAttachment = null,
   } = {},
 ) => {
   if (!message || typeof message.content !== 'string') return null;
@@ -91,21 +75,6 @@ export const buildLlmHistoryEntry = (
     message.role === 'assistant' && typeof message?.meta?.reasoning === 'string'
       ? message.meta.reasoning
       : '';
-  const imageUrl = typeof resolveImageAttachment === 'function' ? resolveImageAttachment(message) : '';
-  if (imageUrl) {
-    const out = {
-      role: message.role,
-      content: '[图片]',
-      name: typeof message.name === 'string' ? message.name : '',
-      __creative: isCreativeReply,
-      __reasoning: reasoning,
-    };
-    if (message.role === 'user') {
-      out.__mediaKind = 'image';
-      out.__mediaUrl = imageUrl;
-    }
-    return out;
-  }
   if (message.type === 'image') {
     return {
       role: message.role,

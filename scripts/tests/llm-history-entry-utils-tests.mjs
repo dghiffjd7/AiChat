@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 
 import {
   buildLlmHistoryEntry,
-  isPromptImageUrl,
   loadLlmCreativeSummarySource,
   resolveLlmCreativeHistorySummary,
   resolveLlmHistoryImageAttachment,
@@ -11,19 +10,13 @@ import {
 const tests = [];
 const test = (name, fn) => tests.push({ name, fn });
 
-test('isPromptImageUrl detects supported image prompt urls', () => {
-  assert.equal(isPromptImageUrl('data:image/png;base64,abc'), true);
-  assert.equal(isPromptImageUrl('https://example.com/a.png'), true);
-  assert.equal(isPromptImageUrl('file:///tmp/a.png'), false);
-});
-
-test('resolveLlmHistoryImageAttachment ignores placeholders and expired attachments', () => {
+test('resolveLlmHistoryImageAttachment keeps history images detached from prompt media', () => {
   assert.equal(
     resolveLlmHistoryImageAttachment(
       { type: 'image', content: 'https://example.com/a.png', meta: {} },
       { isAttachmentExpired: () => false },
     ),
-    'https://example.com/a.png',
+    '',
   );
   assert.equal(
     resolveLlmHistoryImageAttachment(
@@ -103,6 +96,22 @@ test('buildLlmHistoryEntry converts group system messages into assistant-readabl
       content: '系统消息（我们能解析的这种）：Alice 加入了群聊',
       name: '系统',
       __creative: false,
+    },
+  );
+});
+
+test('buildLlmHistoryEntry converts history image messages to placeholders only', () => {
+  assert.deepEqual(
+    buildLlmHistoryEntry(
+      { role: 'user', type: 'image', content: 'https://example.com/a.png', name: '我' },
+      {},
+    ),
+    {
+      role: 'user',
+      content: '[图片]',
+      name: '我',
+      __creative: false,
+      __reasoning: '',
     },
   );
 });
