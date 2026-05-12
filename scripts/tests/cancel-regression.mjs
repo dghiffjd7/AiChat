@@ -92,6 +92,70 @@ test('deepseek chat prepareChatRequest should stay unchanged unless prefix mode 
   assert.equal(prepared.compat.reasoner.changed, false);
 });
 
+test('openai gpt-5 chat request should map max_tokens and omit restricted sampling params', () => {
+  const provider = new OpenAIProvider({
+    provider: 'openai',
+    apiKey: 'test-key',
+    baseUrl: 'https://api.openai.com/v1',
+    model: 'gpt-5.5',
+    timeout: 5000,
+  });
+  const prepared = provider.prepareChatRequest([{ role: 'user', content: 'hello' }], {
+    max_tokens: 1234,
+    temperature: 0.7,
+    top_p: 0.9,
+    presence_penalty: 0.2,
+    frequency_penalty: 0.1,
+    seed: 42,
+    n: 2,
+  });
+
+  assert.equal(prepared.payload.max_completion_tokens, 1234);
+  assert.equal(Object.hasOwn(prepared.payload, 'max_tokens'), false);
+  assert.equal(Object.hasOwn(prepared.payload, 'temperature'), false);
+  assert.equal(Object.hasOwn(prepared.payload, 'top_p'), false);
+  assert.equal(Object.hasOwn(prepared.payload, 'presence_penalty'), false);
+  assert.equal(Object.hasOwn(prepared.payload, 'frequency_penalty'), false);
+  assert.equal(Object.hasOwn(prepared.payload, 'seed'), false);
+  assert.equal(Object.hasOwn(prepared.payload, 'n'), false);
+});
+
+test('openai legacy chat request should keep max_tokens', () => {
+  const provider = new OpenAIProvider({
+    provider: 'openai',
+    apiKey: 'test-key',
+    baseUrl: 'https://api.openai.com/v1',
+    model: 'gpt-4o',
+    timeout: 5000,
+  });
+  const prepared = provider.prepareChatRequest([{ role: 'user', content: 'hello' }], {
+    max_tokens: 1234,
+    temperature: 0.7,
+    top_p: 0.9,
+  });
+
+  assert.equal(prepared.payload.max_tokens, 1234);
+  assert.equal(prepared.payload.temperature, 0.7);
+  assert.equal(prepared.payload.top_p, 0.9);
+  assert.equal(Object.hasOwn(prepared.payload, 'max_completion_tokens'), false);
+});
+
+test('deepseek request should not use OpenAI max_completion_tokens mapping', () => {
+  const provider = new OpenAIProvider({
+    provider: 'deepseek',
+    apiKey: 'test-key',
+    baseUrl: 'https://api.deepseek.com/v1',
+    model: 'deepseek-chat',
+    timeout: 5000,
+  });
+  const prepared = provider.prepareChatRequest([{ role: 'user', content: 'hello' }], {
+    max_tokens: 1234,
+  });
+
+  assert.equal(prepared.payload.max_tokens, 1234);
+  assert.equal(Object.hasOwn(prepared.payload, 'max_completion_tokens'), false);
+});
+
 test('openai non-stream: abort signal should cancel request', async () => {
   await withServer(async (req, res) => {
     if (req.url !== '/chat/completions' || req.method !== 'POST') {

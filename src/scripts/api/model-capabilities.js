@@ -250,8 +250,10 @@ export const getReasoningSamplerPolicy = ({
   model,
   requestReasoning,
 } = {}) => {
+  const p = normalizeText(provider);
   const capability = getReasoningCapability({ provider, model });
-  const active = capability.supported && requestReasoning === true;
+  const openAIRestrictedSampling = p === 'openai' && capability.strategy === 'openai-effort';
+  const active = (capability.supported && requestReasoning === true) || openAIRestrictedSampling;
   const disabledFields = new Set();
 
   if (!active) {
@@ -269,6 +271,12 @@ export const getReasoningSamplerPolicy = ({
     disabledFields.add('temperature');
     disabledFields.add('top_p');
     disabledFields.add('top_k');
+  }
+  if (openAIRestrictedSampling) {
+    disabledFields.add('presence_penalty');
+    disabledFields.add('frequency_penalty');
+    disabledFields.add('seed');
+    disabledFields.add('n');
   }
 
   return {

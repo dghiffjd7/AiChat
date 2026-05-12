@@ -5080,6 +5080,10 @@ const stringifyMessageContent = (content) => {
       if (samplerPolicy.disabledFields.includes('temperature')) delete base.temperature;
       if (samplerPolicy.disabledFields.includes('top_p')) delete base.top_p;
       if (samplerPolicy.disabledFields.includes('top_k')) delete base.top_k;
+      if (samplerPolicy.disabledFields.includes('presence_penalty')) delete base.presence_penalty;
+      if (samplerPolicy.disabledFields.includes('frequency_penalty')) delete base.frequency_penalty;
+      if (samplerPolicy.disabledFields.includes('seed')) delete base.seed;
+      if (samplerPolicy.disabledFields.includes('n')) delete base.n;
 
       // Provider-specific mapping
       if (provider === 'gemini' || provider === 'makersuite' || provider === 'vertexai') {

@@ -129,6 +129,14 @@ const imageGenerationModelSupportsResponseFormat = (model = '') => {
   return true;
 };
 
+const openAIChatModelUsesMaxCompletionTokens = (model = '') => {
+  const raw = String(model || '').trim().toLowerCase();
+  if (!raw) return false;
+  return raw.startsWith('gpt-5') || raw.startsWith('o1') || raw.startsWith('o3') || raw.startsWith('o4');
+};
+
+const openAIChatModelHasRestrictedSampling = (model = '') => openAIChatModelUsesMaxCompletionTokens(model);
+
 const emitOpenAICacheDebug = ({
   phase = 'response',
   provider = '',
@@ -253,29 +261,47 @@ export class OpenAIProvider {
       model: this.model,
       baseUrl: this.baseUrl,
     });
+    const isOpenAIRestrictedSampling =
+      this.provider === 'openai' && openAIChatModelHasRestrictedSampling(this.model);
 
     // Common OpenAI-compatible parameters
-    if (typeof src.temperature === 'number') out.temperature = src.temperature;
-    if (typeof src.top_p === 'number') out.top_p = src.top_p;
-    if (typeof src.presence_penalty === 'number') out.presence_penalty = src.presence_penalty;
-    if (typeof src.frequency_penalty === 'number') out.frequency_penalty = src.frequency_penalty;
+    if (!isOpenAIRestrictedSampling) {
+      if (typeof src.temperature === 'number') out.temperature = src.temperature;
+      if (typeof src.top_p === 'number') out.top_p = src.top_p;
+      if (typeof src.presence_penalty === 'number') out.presence_penalty = src.presence_penalty;
+      if (typeof src.frequency_penalty === 'number') out.frequency_penalty = src.frequency_penalty;
+    }
     if (typeof src.reasoning_effort === 'string' && src.reasoning_effort.trim()) {
       out.reasoning_effort = String(src.reasoning_effort).trim();
     }
 
-    // Token limits
-    if (Number.isFinite(src.max_tokens)) out.max_tokens = Math.trunc(src.max_tokens);
-    if (Number.isFinite(src.maxTokens) && !Number.isFinite(out.max_tokens)) out.max_tokens = Math.trunc(src.maxTokens);
+    // Token limits. Newer OpenAI reasoning/chat models reject max_tokens and require max_completion_tokens.
+    const tokenLimit = Number.isFinite(src.max_completion_tokens)
+      ? Math.trunc(src.max_completion_tokens)
+      : Number.isFinite(src.max_tokens)
+        ? Math.trunc(src.max_tokens)
+        : Number.isFinite(src.maxTokens)
+          ? Math.trunc(src.maxTokens)
+          : null;
+    if (Number.isFinite(tokenLimit)) {
+      if (this.provider === 'openai' && openAIChatModelUsesMaxCompletionTokens(this.model)) {
+        out.max_completion_tokens = tokenLimit;
+      } else {
+        out.max_tokens = tokenLimit;
+      }
+    }
 
     // stop can be string or array
     if (typeof src.stop === 'string' || Array.isArray(src.stop)) out.stop = src.stop;
 
     // Some servers reject unsupported fields (DeepSeek is stricter).
-    if (!isDeepSeek) {
+    if (isDeepSeek) {
+      if (src.thinking && typeof src.thinking === 'object' && src.thinking.type === 'enabled') {
+        out.thinking = { type: 'enabled' };
+      }
+    } else if (!isOpenAIRestrictedSampling) {
       if (Number.isFinite(src.n)) out.n = Math.trunc(src.n);
       if (Number.isFinite(src.seed)) out.seed = Math.trunc(src.seed);
-    } else if (src.thinking && typeof src.thinking === 'object' && src.thinking.type === 'enabled') {
-      out.thinking = { type: 'enabled' };
     }
 
     return out;
