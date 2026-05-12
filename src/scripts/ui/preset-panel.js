@@ -1884,6 +1884,10 @@ export class PresetPanel {
             { v: EXT_PROMPT_TYPES.SYSTEM_DEPTH_1, t: 'SYSTEM_DEPTH_1（紧跟 chat history）' },
             { v: EXT_PROMPT_TYPES.NONE, t: 'NONE（不注入）' },
         ];
+        const frontPromptOpts = [
+            { v: EXT_PROMPT_TYPES.IN_PROMPT, t: 'IN_PROMPT（系统开头）' },
+            { v: EXT_PROMPT_TYPES.NONE, t: 'NONE（不注入）' },
+        ];
 
         list.appendChild(makePromptBlock({
             idPrefix: 'phone-format-intro', title: '手机格式开头',
@@ -1942,10 +1946,10 @@ export class PresetPanel {
             enabledKey: 'dialogue_enabled', positionKey: 'dialogue_position',
             depthKey: 'dialogue_depth', roleKey: 'dialogue_role',
             rulesKey: 'dialogue_rules', defaultDepth: 1, placeholder: '私聊协议提示词',
-            positionOptions: fixedDepthOpts, showDepthRole: false,
+            positionOptions: frontPromptOpts, showDepthRole: false,
             metaChips: [
                 { label: '仅私聊', tone: 'scope' },
-                { label: '系统深度 1', tone: 'placement' },
+                { label: '系统开头', tone: 'placement' },
             ],
         }));
         list.appendChild(makePromptBlock({
@@ -1975,10 +1979,10 @@ export class PresetPanel {
             enabledKey: 'group_enabled', positionKey: 'group_position',
             depthKey: 'group_depth', roleKey: 'group_role',
             rulesKey: 'group_rules', defaultDepth: 1, placeholder: '群聊协议提示词',
-            positionOptions: fixedDepthOpts, showDepthRole: false,
+            positionOptions: frontPromptOpts, showDepthRole: false,
             metaChips: [
                 { label: '仅群聊', tone: 'scope' },
-                { label: '系统深度 1', tone: 'placement' },
+                { label: '系统开头', tone: 'placement' },
             ],
         }));
         list.appendChild(makePromptBlock({
@@ -1994,13 +1998,11 @@ export class PresetPanel {
             ],
         }));
 
-        // DeepSeek format reminder block
+        // Default preset format reminder block (runtime-generated; legacy ds_format_* kept for import compatibility).
         {
             const card = document.createElement('div');
             card.className = 'pp-block';
             card.dataset.collapsed = 'true';
-            const isEnabled = p.ds_format_enabled !== false;
-            if (!isEnabled) card.classList.add('pp-block-disabled');
 
             const header = document.createElement('div');
             header.className = 'pp-block-header';
@@ -2014,14 +2016,15 @@ export class PresetPanel {
             main.className = 'pp-block-main';
             const title = document.createElement('div');
             title.className = 'pp-block-title';
-            title.textContent = 'DeepSeek 格式提醒';
+            title.textContent = 'Default 格式提醒（自动）';
             main.appendChild(title);
             const meta = document.createElement('div');
             meta.className = 'pp-block-meta';
             [
-                { label: '仅 DeepSeek 模型', tone: 'scope' },
+                { label: '仅 Default 预设', tone: 'scope' },
                 { label: '私聊/群聊/动态评论', tone: 'scope' },
-                { label: '末尾 user 角色', tone: 'placement' },
+                { label: '末尾 system 角色', tone: 'placement' },
+                { label: '动态格式骨架', tone: 'dynamic' },
             ].forEach(chip => {
                 const el = document.createElement('span');
                 el.className = `pp-meta-chip is-${chip.tone}`;
@@ -2031,22 +2034,41 @@ export class PresetPanel {
             main.appendChild(meta);
             left.appendChild(main);
             header.appendChild(left);
-            const right = document.createElement('div');
-            right.className = 'pp-block-right';
-            const enabledWrap = document.createElement('label');
-            enabledWrap.style.cssText = 'display:flex; align-items:center; gap:6px; font-size:12px; color:var(--app-text-secondary); cursor:pointer;';
-            enabledWrap.innerHTML = '<input id="ds-format-enabled" type="checkbox" style="width:16px; height:16px;">启用';
-            const enabledInput = enabledWrap.querySelector('input');
-            enabledInput.checked = isEnabled;
-            enabledInput.addEventListener('click', (e) => e.stopPropagation());
-            enabledInput.addEventListener('change', () => card.classList.toggle('pp-block-disabled', !enabledInput.checked));
-            right.appendChild(enabledWrap);
-            header.appendChild(right);
             card.appendChild(header);
 
             const body = document.createElement('div');
             body.className = 'pp-block-body';
-            body.appendChild(this.renderTextarea('格式提醒内容', 'ds-format-rules', p.ds_format_rules || '', '格式提醒'));
+            const enabledInput = document.createElement('input');
+            enabledInput.type = 'hidden';
+            enabledInput.id = 'ds-format-enabled';
+            enabledInput.checked = true;
+            const rulesInput = document.createElement('textarea');
+            rulesInput.id = 'ds-format-rules';
+            rulesInput.style.display = 'none';
+            rulesInput.value = p.ds_format_rules || '';
+            body.appendChild(enabledInput);
+            body.appendChild(rulesInput);
+            const info = document.createElement('div');
+            info.className = 'pp-help';
+            info.style.cssText = 'margin-bottom:10px; color:var(--app-text-secondary); font-size:12px; line-height:1.6;';
+            info.textContent = '此区块由运行时自动生成，仅在 OpenAI 参数预设为 Default 时注入。内容会按当前场景、同步写表、后续图片等功能动态生成，不再使用旧 DeepSeek 文案。';
+            body.appendChild(info);
+            const preview = document.createElement('pre');
+            preview.className = 'pp-code-preview';
+            preview.style.cssText = 'margin:0; padding:12px; border:1px solid var(--app-border-default); border-radius:12px; background:var(--app-surface-hover); color:var(--app-text-primary); white-space:pre-wrap; font-size:12px; line-height:1.5;';
+            preview.textContent = [
+                '正在与XX私聊，请遵循私聊格式',
+                '',
+                '以下为格式输出顺序，请严格遵守',
+                'MiPhone_start',
+                'msg_start',
+                'msg_end',
+                'MiPhone_end',
+                '<tableEdit>',
+                '记忆表格内容',
+                '</tableEdit>',
+            ].join('\n');
+            body.appendChild(preview);
             card.appendChild(body);
 
             const setCollapsed = (collapsed) => {
@@ -2795,7 +2817,7 @@ export class PresetPanel {
             current.phone_format_footer_enabled = Boolean(root.querySelector('#phone-format-footer-enabled')?.checked);
             current.phone_format_footer_rules = root.querySelector('#phone-format-footer-rules')?.value ?? '';
             current.dialogue_enabled = Boolean(root.querySelector('#dialogue-enabled')?.checked);
-            current.dialogue_position = getInt(root.querySelector('#dialogue-position')?.value, current.dialogue_position ?? EXT_PROMPT_TYPES.SYSTEM_DEPTH_1);
+            current.dialogue_position = getInt(root.querySelector('#dialogue-position')?.value, current.dialogue_position ?? EXT_PROMPT_TYPES.IN_PROMPT);
             current.dialogue_depth = getInt(root.querySelector('#dialogue-depth')?.value, current.dialogue_depth ?? 1);
             current.dialogue_role = getInt(root.querySelector('#dialogue-role')?.value, current.dialogue_role ?? EXT_PROMPT_ROLES.SYSTEM);
             current.dialogue_rules = root.querySelector('#dialogue-rules')?.value ?? '';
@@ -2810,7 +2832,7 @@ export class PresetPanel {
             current.moment_comment_role = getInt(root.querySelector('#moment-comment-role')?.value, current.moment_comment_role ?? EXT_PROMPT_ROLES.SYSTEM);
             current.moment_comment_rules = root.querySelector('#moment-comment-rules')?.value ?? '';
             current.group_enabled = Boolean(root.querySelector('#group-enabled')?.checked);
-            current.group_position = getInt(root.querySelector('#group-position')?.value, current.group_position ?? EXT_PROMPT_TYPES.SYSTEM_DEPTH_1);
+            current.group_position = getInt(root.querySelector('#group-position')?.value, current.group_position ?? EXT_PROMPT_TYPES.IN_PROMPT);
             current.group_depth = getInt(root.querySelector('#group-depth')?.value, current.group_depth ?? 1);
             current.group_role = getInt(root.querySelector('#group-role')?.value, current.group_role ?? EXT_PROMPT_ROLES.SYSTEM);
             current.group_rules = root.querySelector('#group-rules')?.value ?? '';

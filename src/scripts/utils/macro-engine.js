@@ -225,7 +225,7 @@ export class MacroEngine {
             for (const [k, v] of Object.entries(context || {})) {
                 if (!k || k === 'sessionId' || k === 'user' || k === 'char' || k === 'extraMacros') continue;
                 const normalized = this.normalizeMacroValue(v);
-                if (normalized !== '') baseVars[k] = normalized;
+                baseVars[k] = normalized;
             }
         } catch {}
 
@@ -234,7 +234,7 @@ export class MacroEngine {
             for (const [k, v] of Object.entries(context.extraMacros)) {
                 if (!k) continue;
                 const normalized = this.normalizeMacroValue(v);
-                if (normalized !== '') baseVars[k] = normalized;
+                baseVars[k] = normalized;
             }
         }
 

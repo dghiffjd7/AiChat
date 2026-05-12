@@ -73,15 +73,12 @@ const DEFAULT_GROUP_RULES = `
 // const DEFAULT_MOMENT_RULES_LEGACY_DUP = `...`.trim();
 const DEFAULT_MOMENT_RULES = `
 【动态（QQ空间）场景提示词】
-（注：QQ空间格式、评论系统说明、moment_start/moment_end 等“手机格式提示词”已迁移到聊天提示词固定区块「QQ空间格式」；本区块默认不重复这些格式说明。）
 `.trim();
 
 // 动态发布决策提示词：从 DEFAULT_MOMENT_RULES 中的“任务：动态发布决策”段落拆分
 const DEFAULT_MOMENT_CREATION_RULES = `
 ## 任务：动态发布决策
 在回应聊天之后，请评估当前对话情景，并决定是否要发布一条新的动态。
-
-	（注：具体输出协议（如 <content> 等）建议由“预设-自定义”区块统一管理；此处只保留决策逻辑。）
 
 **【决策流程】**
 1. **评估时机**：回顾刚刚的对话内容，判断是否属于以下【发布动态的参考时机】。
@@ -96,15 +93,13 @@ const DEFAULT_MOMENT_CREATION_RULES = `
 - **寻求互动**：想要发起一个话题（如“大家最喜欢的电影是什么？”）或者询问大家的意见。
 
 **【输出格式】**
-- 如果决定发布动态，请在 <content> 内输出完整的 \`moment_start\` ... \`moment_end\` 区块。
+- 如果决定发布动态，请在本轮手机格式回复中输出完整的 \`moment_start\` ... \`moment_end\` 区块。
 - 如果决定不发布，则**不要输出任何与动态相关的内容**。
 `.trim();
 
 // 动态评论回复提示词：用于“动态评论”场景（仅输出评论回复规则）
 const LEGACY_DEFAULT_MOMENT_COMMENT_RULES = `
 你正在处理 QQ空间「动态评论回复」任务。
-
-（注：具体输出协议（如 <content> 等）建议由“预设-自定义”区块统一管理；此处只保留评论回复规则。）
 
 【输入中会提供】
 - moment_id、发布者、动态内容、用户评论、可用联系人名单
@@ -128,13 +123,16 @@ const LEGACY_DEFAULT_MOMENT_COMMENT_RULES = `
 const DEFAULT_MOMENT_COMMENT_RULES = `
 你正在处理 QQ空间「动态评论回复」任务。
 
-（注：具体输出协议（如 <content> 等）建议由“预设-自定义”区块统一管理；此处只保留评论回复规则。）
-
 【输入中会提供】
 - moment_id、发布者、动态内容
 - 用户评论（会包含 user_comment_id）
 - 可用联系人名单
 - 可能还会提供：用户是否在回复某条评论（reply_to_comment_id / reply_to_author / reply_to_content）
+
+【评论回应原则】
+- 动态评论是公开可见的社交场景；回复应简短、自然，并符合角色性格与关系亲疏。
+- 发布者或被回复评论的角色有较高概率回应，但不强制；其他角色可按兴趣、关系和性格自然插话。
+- 不要把动态评论扩展成私聊/群聊剧情，除非本轮任务明确要求。
 
 【输出硬性要求】
 1) 只输出一个 <content>...</content> 区块，除此之外不要输出任何文字。
@@ -178,6 +176,13 @@ const DEFAULT_DS_FORMAT_RULES = '回顾前面所提及的格式为？确保标�
 
 const DEFAULT_PHONE_FORMAT_PROMPTS = getBuiltinPhoneFormatPromptSeed();
 
+const PROMPT_MIGRATION_NOTES = [
+    LEGACY_GROUP_RULES_NOTE,
+    '（注：QQ空间格式、评论系统说明、moment_start/moment_end 等“手机格式提示词”已迁移到聊天提示词固定区块「QQ空间格式」；本区块默认不重复这些格式说明。）',
+    '（注：具体输出协议（如 <content> 等）建议由“预设-自定义”区块统一管理；此处只保留决策逻辑。）',
+    '（注：具体输出协议（如 <content> 等）建议由“预设-自定义”区块统一管理；此处只保留评论回复规则。）',
+];
+
 const ensurePhoneFormatPromptFields = (preset, seed = DEFAULT_PHONE_FORMAT_PROMPTS) => {
     const p = (preset && typeof preset === 'object') ? preset : null;
     if (!p) return;
@@ -188,16 +193,91 @@ const ensurePhoneFormatPromptFields = (preset, seed = DEFAULT_PHONE_FORMAT_PROMP
         if (typeof p[spec.rulesKey] !== 'string' || !p[spec.rulesKey].trim()) {
             p[spec.rulesKey] = String(seed[spec.rulesKey] ?? '');
         }
+        p[spec.rulesKey] = sanitizePhoneFormatPromptText(p[spec.rulesKey], spec);
     });
 };
 
-const sanitizeGroupRulesText = (value) => {
+const stripPromptMigrationNotes = (value) => {
     const raw = String(value ?? '');
     if (!raw) return '';
+    return PROMPT_MIGRATION_NOTES.reduce((next, note) => next.replace(note, ''), raw)
+        .replace(/(?:\r?\n[ \t]*){3,}/g, '\n\n')
+        .trim();
+};
+
+const sanitizeGroupRulesText = (value) => stripPromptMigrationNotes(value);
+
+const sanitizeMomentRulesText = (value) => stripPromptMigrationNotes(value);
+
+const sanitizeMomentCreateRulesText = (value) => {
+    const raw = stripPromptMigrationNotes(value);
+    if (!raw) return '';
     return raw
-        .replace(LEGACY_GROUP_RULES_NOTE, '')
+        .replace(
+            /-\s*如果决定发布动态，请在\s*<content>\s*内输出完整的\s*`moment_start`\s*\.\.\.\s*`moment_end`\s*区块。/g,
+            '- 如果决定发布动态，请在本轮手机格式回复中输出完整的 `moment_start` ... `moment_end` 区块。'
+        )
         .replace(/\n{3,}/g, '\n\n')
         .trim();
+};
+
+const looksDefaultMomentCommentRulesForMigration = (value) => {
+    const raw = String(value || '');
+    return raw.includes('你正在处理 QQ空间「动态评论回复」任务。') &&
+        raw.includes('【输出硬性要求】') &&
+        raw.includes('moment_reply_start') &&
+        (
+            raw.includes('此处只保留评论回复规则') ||
+            raw.includes('发布者必须回复用户评论') ||
+            (raw.includes('【reply_to 规则（用于楼中楼）】') && !raw.includes('【评论回应原则】'))
+        );
+};
+
+const sanitizeMomentCommentRulesText = (value) => {
+    if (looksDefaultMomentCommentRulesForMigration(value)) {
+        return DEFAULT_MOMENT_COMMENT_RULES;
+    }
+    return stripPromptMigrationNotes(value);
+};
+
+const sanitizePhoneFormatPromptText = (value, spec = {}) => {
+    const raw = String(value ?? '');
+    if (!raw) return '';
+    const entryId = String(spec?.entryId || '');
+    const rulesKey = String(spec?.rulesKey || '');
+    let out = stripPromptMigrationNotes(raw);
+    if (entryId === '手机-格式3-QQ空间' || rulesKey === 'phone_format_moment_rules') {
+        out = out.replace(
+            /\n+【动态评论系统说明】[\s\S]*?\n+QQ空间仅会有主要角色发布的动态/g,
+            '\n\nQQ空间仅会有主要角色发布的动态'
+        );
+    }
+    if (entryId === '手机-格式999-格式结尾' || rulesKey === 'phone_format_footer_rules') {
+        out = out
+            .replace(
+                '4. **以MiPhone_end标识符收尾**',
+                '4. **手机正文必须以MiPhone_end标识符收尾；若本轮需要输出<tableEdit>，必须在MiPhone_end的下一行紧跟输出。**'
+            )
+            .replace(
+                '4. **手机正文必须以MiPhone_end标识符收尾；若本轮需要输出<tableEdit>，必须紧跟在MiPhone_end之后。**',
+                '4. **手机正文必须以MiPhone_end标识符收尾；若本轮需要输出<tableEdit>，必须在MiPhone_end的下一行紧跟输出。**'
+            )
+            .replace(
+                /\[手机正确格式\]\s*MiPhone_start\s*\/\*\s*此处必须完整生成所有字符\s*\*\/[\s\S]*?MiPhone_end\s*\/\*\s*此处必须完整生成所有字符\s*\*\/\s*(?=\n<\/线上格式>)/,
+                '[手机正确格式骨架]\nMiPhone_start\nmsg_start\nmsg_end\nMiPhone_end\n'
+            );
+    }
+    return out.replace(/\n{3,}/g, '\n\n').trim();
+};
+
+const looksDefaultDialogueRulesText = (value) => {
+    const raw = String(value || '');
+    return raw.includes('# 行为风格与节奏指南') || raw.includes('聊天风格与节奏（核心格式规则）');
+};
+
+const looksDefaultGroupRulesText = (value) => {
+    const raw = String(value || '');
+    return raw.includes('【群聊场景提示词】') && raw.includes('{{members}}');
 };
 
 const clone = (v) => {
@@ -599,12 +679,15 @@ export class PresetStore {
                 if (!p || typeof p !== 'object') continue;
                 ensurePhoneFormatPromptFields(p);
                 if (typeof p.dialogue_enabled !== 'boolean') p.dialogue_enabled = true;
-                // 聊天提示词：固定注入到系统深度=1（历史前），避免混入 <history>
-                if (typeof p.dialogue_position !== 'number') p.dialogue_position = 3;
+                // 聊天提示词：默认放在 prompt 前段，避免出现在最新用户消息之后。
+                if (typeof p.dialogue_position !== 'number') p.dialogue_position = 0;
                 if (typeof p.dialogue_depth !== 'number') p.dialogue_depth = 1;
                 if (typeof p.dialogue_role !== 'number') p.dialogue_role = 0;
                 if (typeof p.dialogue_rules !== 'string' || !p.dialogue_rules.trim()) {
                     p.dialogue_rules = DEFAULT_DIALOGUE_RULES_PRIVATE_CHAT;
+                }
+                if (p.dialogue_position === 3 && looksDefaultDialogueRulesText(p.dialogue_rules)) {
+                    p.dialogue_position = 0;
                 }
                 if (typeof p.moment_enabled !== 'boolean') p.moment_enabled = false;
                 if (typeof p.moment_position !== 'number') p.moment_position = 0;
@@ -613,6 +696,7 @@ export class PresetStore {
                 if (typeof p.moment_rules !== 'string' || !p.moment_rules.trim()) {
                     p.moment_rules = DEFAULT_MOMENT_RULES;
                 }
+                p.moment_rules = sanitizeMomentRulesText(p.moment_rules);
 
                 // 分场景：动态发布决策 / 动态评论回复
                 if (typeof p.moment_create_enabled !== 'boolean') p.moment_create_enabled = false;
@@ -622,6 +706,7 @@ export class PresetStore {
                 if (typeof p.moment_create_rules !== 'string' || !p.moment_create_rules.trim()) {
                     p.moment_create_rules = DEFAULT_MOMENT_CREATION_RULES;
                 }
+                p.moment_create_rules = sanitizeMomentCreateRulesText(p.moment_create_rules);
 
                 if (typeof p.moment_comment_enabled !== 'boolean') p.moment_comment_enabled = true;
                 if (typeof p.moment_comment_position !== 'number') p.moment_comment_position = 0;
@@ -637,16 +722,20 @@ export class PresetStore {
                         p.moment_comment_rules = DEFAULT_MOMENT_COMMENT_RULES;
                     }
                 } catch {}
+                p.moment_comment_rules = sanitizeMomentCommentRulesText(p.moment_comment_rules);
 
                 if (typeof p.group_enabled !== 'boolean') p.group_enabled = true;
-                // 群聊提示词：同上（系统深度=1）
-                if (typeof p.group_position !== 'number') p.group_position = 3;
+                // 群聊提示词：同上，默认放在 prompt 前段。
+                if (typeof p.group_position !== 'number') p.group_position = 0;
                 if (typeof p.group_depth !== 'number') p.group_depth = 1;
                 if (typeof p.group_role !== 'number') p.group_role = 0;
                 if (typeof p.group_rules !== 'string' || !p.group_rules.trim()) {
                     p.group_rules = DEFAULT_GROUP_RULES;
                 }
                 p.group_rules = sanitizeGroupRulesText(p.group_rules);
+                if (p.group_position === 3 && looksDefaultGroupRulesText(p.group_rules)) {
+                    p.group_position = 0;
+                }
 
                 if (typeof p.summary_enabled !== 'boolean') p.summary_enabled = true;
                 if (typeof p.summary_position !== 'number') p.summary_position = 3;
@@ -693,9 +782,8 @@ export class PresetStore {
                 if (!p || typeof p !== 'object') continue;
                 ensurePhoneFormatPromptFields(p);
                 if (typeof p.dialogue_enabled !== 'boolean') p.dialogue_enabled = true; // 聊天室自动启用
-                // 私聊提示词：迁移为系统深度=1（历史前）
-                if (typeof p.dialogue_position !== 'number') p.dialogue_position = 3;
-                else if (p.dialogue_position === 0 || p.dialogue_position === 1 || p.dialogue_position === 2) p.dialogue_position = 3;
+                // 私聊提示词：默认放在 prompt 前段；迁移旧默认 SYSTEM_DEPTH_1，避免出现在最新用户消息后。
+                if (typeof p.dialogue_position !== 'number') p.dialogue_position = 0;
                 if (typeof p.dialogue_depth !== 'number') p.dialogue_depth = 1;
                 if (typeof p.dialogue_role !== 'number') p.dialogue_role = 0; // SYSTEM
                 const rules = (typeof p.dialogue_rules === 'string') ? p.dialogue_rules : '';
@@ -707,6 +795,9 @@ export class PresetStore {
                     (rules.includes('程序只会解析') || rules.includes('<content>'));
                 if (typeof p.dialogue_rules !== 'string' || !p.dialogue_rules.trim() || looksLegacy || looksDupDialogueDefault) {
                     p.dialogue_rules = DEFAULT_DIALOGUE_RULES_PRIVATE_CHAT;
+                }
+                if (p.dialogue_position === 3 && looksDefaultDialogueRulesText(p.dialogue_rules)) {
+                    p.dialogue_position = 0;
                 }
 
                 if (typeof p.moment_enabled !== 'boolean') p.moment_enabled = false;
@@ -722,6 +813,7 @@ export class PresetStore {
                 if (looksOldMoment || looksCommentDisabledDefault) {
                     p.moment_rules = DEFAULT_MOMENT_RULES;
                 }
+                p.moment_rules = sanitizeMomentRulesText(p.moment_rules);
 
                 // Migration: 旧 moment_* 迁移到 moment_comment_*（避免把“发布决策”误当成评论规则）
                 if (typeof p.moment_comment_enabled !== 'boolean') p.moment_comment_enabled = true;
@@ -731,6 +823,13 @@ export class PresetStore {
                 if (typeof p.moment_comment_rules !== 'string' || !p.moment_comment_rules.trim()) {
                     p.moment_comment_rules = DEFAULT_MOMENT_COMMENT_RULES;
                 }
+                try {
+                    const cur = String(p.moment_comment_rules || '').trim();
+                    if (cur && cur === LEGACY_DEFAULT_MOMENT_COMMENT_RULES.trim()) {
+                        p.moment_comment_rules = DEFAULT_MOMENT_COMMENT_RULES;
+                    }
+                } catch {}
+                p.moment_comment_rules = sanitizeMomentCommentRulesText(p.moment_comment_rules);
 
                 if (typeof p.moment_create_enabled !== 'boolean') p.moment_create_enabled = false;
                 if (typeof p.moment_create_position !== 'number') p.moment_create_position = 0;
@@ -739,11 +838,11 @@ export class PresetStore {
                 if (typeof p.moment_create_rules !== 'string' || !p.moment_create_rules.trim()) {
                     p.moment_create_rules = DEFAULT_MOMENT_CREATION_RULES;
                 }
+                p.moment_create_rules = sanitizeMomentCreateRulesText(p.moment_create_rules);
 
                 if (typeof p.group_enabled !== 'boolean') p.group_enabled = true;
-                // 群聊提示词：迁移为系统深度=1（历史前）
-                if (typeof p.group_position !== 'number') p.group_position = 3;
-                else if (p.group_position === 0 || p.group_position === 1 || p.group_position === 2) p.group_position = 3;
+                // 群聊提示词：默认放在 prompt 前段；迁移旧默认 SYSTEM_DEPTH_1。
+                if (typeof p.group_position !== 'number') p.group_position = 0;
                 if (typeof p.group_depth !== 'number') p.group_depth = 1;
                 if (typeof p.group_role !== 'number') p.group_role = 0;
                 const gr = (typeof p.group_rules === 'string') ? p.group_rules : '';
@@ -752,6 +851,9 @@ export class PresetStore {
                     p.group_rules = DEFAULT_GROUP_RULES;
                 }
                 p.group_rules = sanitizeGroupRulesText(p.group_rules);
+                if (p.group_position === 3 && looksDefaultGroupRulesText(p.group_rules)) {
+                    p.group_position = 0;
+                }
 
                 if (typeof p.summary_enabled !== 'boolean') p.summary_enabled = true;
                 if (typeof p.summary_position !== 'number') p.summary_position = 3;

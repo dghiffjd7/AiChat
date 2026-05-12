@@ -121,6 +121,67 @@ const formatCacheDebugUsage = (usage = {}) => {
   return entries.map(([key, value]) => `${key}=${value}`).join(', ');
 };
 
+const pickOpenAICompatibleFinishReason = (body = {}) => {
+  const direct = String(body?.finish_reason || body?.finishReason || body?.stop_reason || body?.stopReason || '').trim();
+  const choices = Array.isArray(body?.choices) ? body.choices : [];
+  const reasons = choices
+    .map(choice => String(choice?.finish_reason || choice?.finishReason || choice?.stop_reason || choice?.stopReason || '').trim())
+    .filter(Boolean);
+  if (reasons.length) return reasons.join(',');
+  return direct;
+};
+
+const emitOpenAIResponseDiagnostics = ({
+  phase = '',
+  provider = '',
+  model = '',
+  stream = false,
+  transport = '',
+  requestId = '',
+  status = 0,
+  payload = {},
+  finishReason = '',
+  outputChars = 0,
+  reasoningChars = 0,
+  deltaCount = 0,
+  usageBody = null,
+  errorMessage = '',
+} = {}) => {
+  if (typeof window === 'undefined') return;
+  const maxTokens = Number.isFinite(Number(payload?.max_tokens)) ? Number(payload.max_tokens) : '';
+  const maxCompletionTokens = Number.isFinite(Number(payload?.max_completion_tokens))
+    ? Number(payload.max_completion_tokens)
+    : '';
+  const usage = usageBody && typeof usageBody === 'object'
+    ? extractCacheDebugUsage(usageBody?.usage ? usageBody : { usage: usageBody })
+    : {};
+  const message = [
+    `phase=${phase || '-'}`,
+    `provider=${String(provider || '').trim() || '-'}`,
+    `model=${String(model || '').trim() || '-'}`,
+    `stream=${stream ? 1 : 0}`,
+    `transport=${String(transport || '').trim() || '-'}`,
+    `status=${Number(status || 0)}`,
+    `finish_reason=${String(finishReason || '').trim() || '-'}`,
+    `output_chars=${Math.max(0, Math.trunc(Number(outputChars) || 0))}`,
+    `reasoning_chars=${Math.max(0, Math.trunc(Number(reasoningChars) || 0))}`,
+    `deltas=${Math.max(0, Math.trunc(Number(deltaCount) || 0))}`,
+    `max_tokens=${maxTokens || '-'}`,
+    `max_completion_tokens=${maxCompletionTokens || '-'}`,
+    `timeout_ms=${Number.isFinite(Number(payload?.__timeoutMs)) ? Number(payload.__timeoutMs) : '-'}`,
+    `usage=${formatCacheDebugUsage(usage)}`,
+    `requestId=${String(requestId || '').trim() || '-'}`,
+    errorMessage ? `error=${String(errorMessage || '').replace(/\s+/g, ' ').slice(0, 240)}` : '',
+  ].filter(Boolean).join(' ');
+  console.info('[openai-response-diagnostics]', message);
+  emitDebugLog({
+    source: 'openai-response-diagnostics',
+    type: errorMessage ? 'warn' : 'info',
+    message,
+    force: true,
+  });
+};
+
 const imageGenerationModelSupportsResponseFormat = (model = '') => {
   const raw = String(model || '').trim().toLowerCase();
   if (!raw) return true;
@@ -497,6 +558,20 @@ export class OpenAIProvider {
         throw error;
       }
     } catch (error) {
+      emitOpenAIResponseDiagnostics({
+        phase: 'chat-error',
+        provider: this.provider,
+        model: this.model,
+        stream: false,
+        transport: this.canUseNativeHttp() ? 'native-http' : 'fetch',
+        requestId,
+        status: res?.status || error?.status || 0,
+        payload: { ...prepared.payload, __timeoutMs: this.timeout },
+        finishReason: data ? pickOpenAICompatibleFinishReason(data) : '',
+        outputChars: 0,
+        usageBody: data,
+        errorMessage: error?.message || String(error || ''),
+      });
       throw attachMessageIndexDiagnostics(error, messages);
     }
     emitOpenAICacheDebug({
@@ -511,7 +586,22 @@ export class OpenAIProvider {
       body: data,
     });
 
-    return data.choices?.[0]?.message?.content ?? '';
+    const content = data.choices?.[0]?.message?.content ?? '';
+    emitOpenAIResponseDiagnostics({
+      phase: 'chat',
+      provider: this.provider,
+      model: this.model,
+      stream: false,
+      transport: this.canUseNativeHttp() ? 'native-http' : 'fetch',
+      requestId,
+      status: res?.status,
+      payload: { ...prepared.payload, __timeoutMs: this.timeout },
+      finishReason: pickOpenAICompatibleFinishReason(data),
+      outputChars: typeof content === 'string' ? content.length : String(content ?? '').length,
+      usageBody: data,
+    });
+
+    return content;
   }
 
   /**
@@ -563,13 +653,22 @@ export class OpenAIProvider {
       let rawErrorBody = '';
       let sseBuffer = '';
       let lastUsage = null;
+      let lastFinishReason = '';
+      let outputChars = 0;
+      let reasoningChars = 0;
+      let deltaCount = 0;
       const emitParsedDelta = function* (data) {
         if (data?.usage && typeof data.usage === 'object') lastUsage = data;
+        const finishReason = pickOpenAICompatibleFinishReason(data);
+        if (finishReason) lastFinishReason = finishReason;
         const parts = extractOpenAICompatibleStreamParts(data);
+        if (parts.content || parts.reasoning || finishReason) deltaCount += 1;
         if (parts.reasoning) {
+          reasoningChars += parts.reasoning.length;
           yield createReasoningStreamEvent(parts.reasoning, { provider: 'openai' });
         }
         if (parts.content) {
+          outputChars += parts.content.length;
           yield parts.content;
         }
       };
@@ -646,6 +745,21 @@ export class OpenAIProvider {
               headers: {},
               body: lastUsage,
             });
+            emitOpenAIResponseDiagnostics({
+              phase: 'stream-native',
+              provider: this.provider,
+              model: this.model,
+              stream: true,
+              transport: 'native-stream',
+              requestId: nativeStreamRequestId,
+              status: responseStatus || 0,
+              payload: { ...prepared.payload, __timeoutMs: this.timeout },
+              finishReason: lastFinishReason,
+              outputChars,
+              reasoningChars,
+              deltaCount,
+              usageBody: lastUsage,
+            });
             return;
           }
 
@@ -654,6 +768,22 @@ export class OpenAIProvider {
           }
         }
       } catch (error) {
+        emitOpenAIResponseDiagnostics({
+          phase: 'stream-native-error',
+          provider: this.provider,
+          model: this.model,
+          stream: true,
+          transport: 'native-stream',
+          requestId: nativeStreamRequestId,
+          status: responseStatus || 0,
+          payload: { ...prepared.payload, __timeoutMs: this.timeout },
+          finishReason: lastFinishReason,
+          outputChars,
+          reasoningChars,
+          deltaCount,
+          usageBody: lastUsage,
+          errorMessage: error?.message || String(error || ''),
+        });
         throw attachMessageIndexDiagnostics(error, messages);
       } finally {
         if (started) {
@@ -663,6 +793,13 @@ export class OpenAIProvider {
     }
 
     const { controller, cleanup } = createLinkedAbortController({ timeoutMs: this.timeout, signal });
+    let responseStatus = 0;
+    let responseHeaders = {};
+    let lastUsage = null;
+    let lastFinishReason = '';
+    let outputChars = 0;
+    let reasoningChars = 0;
+    let deltaCount = 0;
     try {
       const response = await fetch(transport.url, {
         method: 'POST',
@@ -670,6 +807,7 @@ export class OpenAIProvider {
         signal: controller.signal,
         body: payload,
       });
+      responseStatus = response.status;
 
       if (!response.ok) {
         const txt = await response.text();
@@ -680,18 +818,23 @@ export class OpenAIProvider {
         throw attachMessageIndexDiagnostics(error, messages);
       }
 
-      const responseHeaders = {};
       response.headers.forEach((value, key) => {
         responseHeaders[key] = value;
       });
-      let lastUsage = null;
       for await (const data of handleSSE(response)) {
         if (data?.usage && typeof data.usage === 'object') lastUsage = data;
+        const finishReason = pickOpenAICompatibleFinishReason(data);
+        if (finishReason) lastFinishReason = finishReason;
         const parts = extractOpenAICompatibleStreamParts(data);
+        if (parts.content || parts.reasoning || finishReason) deltaCount += 1;
         if (parts.reasoning) {
+          reasoningChars += parts.reasoning.length;
           yield createReasoningStreamEvent(parts.reasoning, { provider: 'openai' });
         }
-        if (parts.content) yield parts.content;
+        if (parts.content) {
+          outputChars += parts.content.length;
+          yield parts.content;
+        }
       }
       emitOpenAICacheDebug({
         phase: 'stream-fetch',
@@ -704,6 +847,39 @@ export class OpenAIProvider {
         headers: responseHeaders,
         body: lastUsage,
       });
+      emitOpenAIResponseDiagnostics({
+        phase: 'stream-fetch',
+        provider: this.provider,
+        model: this.model,
+        stream: true,
+        transport: 'fetch-stream',
+        requestId,
+        status: responseStatus,
+        payload: { ...prepared.payload, __timeoutMs: this.timeout },
+        finishReason: lastFinishReason,
+        outputChars,
+        reasoningChars,
+        deltaCount,
+        usageBody: lastUsage,
+      });
+    } catch (error) {
+      emitOpenAIResponseDiagnostics({
+        phase: 'stream-fetch-error',
+        provider: this.provider,
+        model: this.model,
+        stream: true,
+        transport: 'fetch-stream',
+        requestId,
+        status: responseStatus,
+        payload: { ...prepared.payload, __timeoutMs: this.timeout },
+        finishReason: lastFinishReason,
+        outputChars,
+        reasoningChars,
+        deltaCount,
+        usageBody: lastUsage,
+        errorMessage: error?.message || String(error || ''),
+      });
+      throw error;
     } finally {
       cleanup();
     }

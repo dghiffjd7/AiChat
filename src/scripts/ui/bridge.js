@@ -877,7 +877,8 @@ class AppBridge {
       if (tableOrder.some(tableId => isSummaryTableId(tableId))) {
         lines.push('摘要/总体大纲表格只允许 insert；禁止 update/delete。');
       }
-      lines.push('需要更新记忆表格时，在回复末尾输出 <tableEdit>...</tableEdit>，每行一个 JSON（允许 insert/update/delete: 前缀）。');
+      lines.push('启用同步写表时，手机正文必须先完整输出 MiPhone_end；若需要更新记忆表格，必须在 MiPhone_end 的下一行紧跟完整输出 <tableEdit>...</tableEdit>，不要和 MiPhone_end 写在同一行，也不要放入 MiPhone_start/MiPhone_end 内。');
+      lines.push('<tableEdit> 与 </tableEdit> 标签必须完整闭合；标签内每一行是一个完整 JSON（允许 insert/update/delete: 前缀），禁止输出半截 JSON 或缺少 </tableEdit>。');
       lines.push('insert: {"action":"insert","table_id":"relationship","data":{"relation":"朋友"}}');
       lines.push('update: {"action":"update","table_id":"relationship","row_index":0,"data":{"relation":"亲密朋友"}}');
       lines.push('delete: {"action":"delete","table_id":"relationship","row_index":0}');
@@ -885,7 +886,7 @@ class AppBridge {
       lines.push('仅当 row_index 对应现有行时才使用 update/delete。');
       lines.push('也可使用函数式语法：insertRow(tableIndex, {...}) / updateRow(tableIndex, rowIndex, {...}) / deleteRow(tableIndex, rowIndex)');
       lines.push('row_index 对应表格中每行前的编号；table_id 见下表。');
-      lines.push('无修改则输出空 <tableEdit></tableEdit>。');
+      lines.push('无修改时，也必须在 MiPhone_end 的下一行紧跟完整输出空 <tableEdit></tableEdit>。');
       lines.push('表格索引:');
       tableOrder.forEach((tableId, index) => {
         const table = tableById.get(tableId) || { id: tableId, name: tableId, columns: [] };
@@ -1662,16 +1663,39 @@ class AppBridge {
     }
   }
 
-  buildPhoneFormatPromptEntries(preset = null) {
+  replaceMomentPurposeBlockWithDecisionPrompt(content, decisionPrompt) {
+    const raw = String(content || '');
+    const prompt = String(decisionPrompt || '')
+      .replace(/(?:\r?\n[ \t]*){3,}/g, '\n\n')
+      .replace(/^(?:[ \t]*\r?\n)+/, '')
+      .replace(/(?:\r?\n[ \t]*)+$/, '');
+    if (!raw.trim() || !prompt) return raw;
+    const replacement = `<发布动态的目的与时机>\n${prompt}\n</发布动态的目的与时机>`;
+    const blockRe = /<发布动态的目的与时机>[\s\S]*?<\/发布动态的目的与时机>/;
+    if (blockRe.test(raw)) return raw.replace(blockRe, replacement);
+    if (raw.includes('</QQ空间格式介绍>')) {
+      return raw.replace('</QQ空间格式介绍>', `${replacement}\n\n</QQ空间格式介绍>`);
+    }
+    return `${raw.replace(/\s+$/, '')}\n\n${replacement}`;
+  }
+
+  buildPhoneFormatPromptEntries(preset = null, options = {}) {
     const source = (preset && typeof preset === 'object') ? preset : {};
     const seed = getBuiltinPhoneFormatPromptSeed(BUILTIN_PHONE_FORMAT_WORLDBOOK);
+    const momentCreateRules = String(options?.momentCreateRules || '')
+      .replace(/(?:\r?\n[ \t]*){3,}/g, '\n\n')
+      .replace(/^(?:[ \t]*\r?\n)+/, '')
+      .replace(/(?:\r?\n[ \t]*)+$/, '');
     const out = [];
     BUILTIN_PHONE_FORMAT_CHAT_PROMPT_SPECS.forEach((spec, index) => {
       if (source?.[spec.enabledKey] === false) return;
       const raw = typeof source?.[spec.rulesKey] === 'string' && source[spec.rulesKey].trim()
         ? source[spec.rulesKey]
         : String(seed?.[spec.rulesKey] ?? '');
-      const content = String(raw ?? '');
+      let content = String(raw ?? '');
+      if (spec.rulesKey === 'phone_format_moment_rules' && momentCreateRules) {
+        content = this.replaceMomentPurposeBlockWithDecisionPrompt(content, momentCreateRules);
+      }
       if (!content.trim()) return;
       const order = Number.isFinite(Number(spec.order)) ? Number(spec.order) : index;
       out.push({
@@ -3059,14 +3083,38 @@ class AppBridge {
       const privateTargetName = String(sessionName || characterName || context?.session?.id || '当前对象').trim();
       return `正在与${privateTargetName}私聊，请遵循私聊格式`;
     })();
-    const scenarioHints = [scenarioHintBase, replyPromptHint].filter(Boolean);
-    const scenarioHint = scenarioHints.join('；');
+    const scenarioFormatReminder = scenarioHintBase
+      ? scenarioHintBase
+      : '';
+    const includeTableEditInFormatReminder = Boolean(context?.meta?.memoryAutoExtract)
+      || Boolean(String(memoryGuidePrompt?.content || '').includes('<memory_edit_rules>'));
+    const buildOutputFormatReminderText = () => {
+      const lines = [];
+      const scenario = String(scenarioFormatReminder || '').trim();
+      if (scenario) lines.push(scenario);
+      if (!disablePhoneFormat) {
+        if (lines.length) lines.push('');
+        lines.push('以下为格式输出顺序，请严格遵守');
+        lines.push('MiPhone_start');
+        lines.push('msg_start');
+        lines.push('msg_end');
+        lines.push('MiPhone_end');
+        if (includeTableEditInFormatReminder) {
+          lines.push('<tableEdit>');
+          lines.push('记忆表格内容');
+          lines.push('</tableEdit>');
+        }
+      }
+      return lines.join('\n').trim();
+    };
+    const pendingUserHints = [replyPromptHint].filter(Boolean);
+    const pendingUserHint = pendingUserHints.join('；');
     const pendingUserText = (() => {
       if (suppressPendingUserTurn) return '';
       if (!pendingUserTextRaw) {
-        return scenarioHint ? `（${scenarioHint}）` : '';
+        return pendingUserHint ? `（${pendingUserHint}）` : '';
       }
-      return scenarioHint ? `${pendingUserTextRaw}（${scenarioHint}）` : pendingUserTextRaw;
+      return pendingUserHint ? `${pendingUserTextRaw}（${pendingUserHint}）` : pendingUserTextRaw;
     })();
     const requestConfig = this.config?.get?.() || {};
     const provider = String(requestConfig?.provider || '').trim().toLowerCase();
@@ -3438,6 +3486,9 @@ class AppBridge {
     const momentCreateRole = Number.isFinite(Number(sysp?.moment_create_role))
       ? Math.trunc(Number(sysp.moment_create_role))
       : 0;
+    const shouldEmbedMomentCreateInPhoneFormat =
+      !disablePhoneFormat &&
+      syspActive?.phone_format_moment_enabled !== false;
 
     // 动态评论回复提示词（仅用于“动态评论”场景）
     const momentCommentEnabled = Boolean(sysp?.moment_comment_enabled);
@@ -3584,12 +3635,7 @@ const stringifyMessageContent = (content) => {
         syntheticAssistantDowngradeCount,
       });
     };
-    const appendDeepSeekFormatReminder = () => {
-      const isDeepSeek = isDeepSeekApiRequest({
-        provider,
-        model: requestModel,
-        baseUrl: requestConfig?.baseUrl,
-      });
+    const appendOutputFormatReminder = () => {
       const activeOpenAIPresetId = String(openaiResolved?.presetId || '').trim();
       const activeOpenAIPresetName = String(activeOpenAIPreset?.name || '').trim();
       const isDefaultOpenAIPreset =
@@ -3597,11 +3643,11 @@ const stringifyMessageContent = (content) => {
         || activeOpenAIPresetName.toLowerCase() === 'default';
       const activeSyspromptPresetId = String(syspResolved?.presetId || '').trim();
       const activeSyspromptPresetName = String(syspActive?.name || '').trim();
-      const rawDsFormatRules = String(syspActive?.ds_format_rules || '').trim();
-      const dsFormatEnabled =
-        isDeepSeek
-        && isDefaultOpenAIPreset
-        && syspActive?.ds_format_enabled !== false;
+      const isDeepSeek = isDeepSeekApiRequest({
+        provider,
+        model: requestModel,
+        baseUrl: requestConfig?.baseUrl,
+      });
       const isChatMode = uiMode !== 'rp';
       this.lastDeepSeekFormatDebug = {
         provider,
@@ -3610,6 +3656,7 @@ const stringifyMessageContent = (content) => {
         uiMode,
         isChatMode,
         isDeepSeekApiRequest: isDeepSeek,
+        universalFormatReminder: true,
         openaiPresetId: activeOpenAIPresetId,
         openaiPresetName: activeOpenAIPresetName,
         openaiPresetSource: String(openaiResolved?.source || '').trim(),
@@ -3617,25 +3664,19 @@ const stringifyMessageContent = (content) => {
         syspromptPresetId: activeSyspromptPresetId,
         syspromptPresetName: activeSyspromptPresetName,
         syspromptPresetSource: String(syspResolved?.source || '').trim(),
-        dsFormatEnabledFlag: syspActive?.ds_format_enabled !== false,
-        dsFormatRulesPresent: Boolean(rawDsFormatRules),
-        dsFormatEnabled,
+        dsFormatEnabledFlag: true,
+        dsFormatRulesPresent: true,
+        dsFormatEnabled: isDefaultOpenAIPreset,
         dsFormatInjected: false,
-        dsFormatInjectedRole: '',
+        dsFormatInjectedRole: 'system',
         dsFormatTextPreview: '',
       };
-      if (!dsFormatEnabled || !isChatMode || !rawDsFormatRules) return;
-      const dsText = processTextMacrosWithPendingFlag(rawDsFormatRules, {
-        user: name1,
-        char: name2,
-        group: groupName || name2,
-        members: membersText,
-      });
-      if (!dsText) return;
-      messages.push({ role: 'user', content: dsText });
+      if (!isDefaultOpenAIPreset) return;
+      const text = buildOutputFormatReminderText();
+      if (!text) return;
       this.lastDeepSeekFormatDebug.dsFormatInjected = true;
-      this.lastDeepSeekFormatDebug.dsFormatInjectedRole = 'user';
-      this.lastDeepSeekFormatDebug.dsFormatTextPreview = String(dsText).replace(/\s+/g, ' ').trim().slice(0, 160);
+      this.lastDeepSeekFormatDebug.dsFormatTextPreview = String(text).replace(/\s+/g, ' ').trim().slice(0, 160);
+      messages.push({ role: 'system', content: text });
     };
 	    const buildChatGuidePlan = () => {
 	      const mode = String(context?.meta?.chatGuideMode || '').trim().toLowerCase();
@@ -3674,7 +3715,7 @@ const stringifyMessageContent = (content) => {
 	        const combined = joinPromptBlocks([groupRules, groupSystemHint]);
 	        pushByPosition(combined, groupPosition, groupDepth, groupRole);
 	      }
-	      if (!summaryOnly && !isMomentCommentTask && momentCreateEnabled && momentCreateRules) {
+	      if (!summaryOnly && !isMomentCommentTask && momentCreateEnabled && momentCreateRules && !shouldEmbedMomentCreateInPhoneFormat) {
 	        pushByPosition(momentCreateRules, momentCreatePosition, momentCreateDepth, momentCreateRole);
 	      }
 	      if (!summaryOnly && isMomentCommentTask && momentCommentEnabled && momentCommentRules) {
@@ -3961,7 +4002,9 @@ const stringifyMessageContent = (content) => {
             list.forEach(entry => pushEntry(entry, meta));
           };
           if (!disablePhoneFormat) {
-            const builtinEntries = this.buildPhoneFormatPromptEntries(syspActive);
+            const builtinEntries = this.buildPhoneFormatPromptEntries(syspActive, {
+              momentCreateRules: shouldEmbedMomentCreateInPhoneFormat && momentCreateEnabled ? momentCreateRules : '',
+            });
             builtinEntries.forEach(entry => captureWorldDebugEntry(worldDebugRaw.builtinEntries, entry, {
               sourceKind: 'builtin',
             }));
@@ -4019,7 +4062,7 @@ const stringifyMessageContent = (content) => {
           defaultPrompt: '默认 Prompt',
           depth: '按深度插入',
         };
-        const buildStickerListBlock = () => {
+        const buildStickerListData = () => {
           const state = stickerPackStore.getState();
           const activeSessionId = String(this.activeSessionId || '').trim();
           const keywords = [];
@@ -4045,13 +4088,20 @@ const stringifyMessageContent = (content) => {
               addKeyword(sticker?.keyword || '');
             });
           });
-          return `<表情包列表>\n${keywords.join('\n')}\n</表情包列表>`;
+          return {
+            hasKeywords: keywords.length > 0,
+            block: `<表情包列表>\n${keywords.join('\n')}\n</表情包列表>`,
+          };
         };
-        const stickerListBlock = buildStickerListBlock();
+        const stickerListData = buildStickerListData();
+        const removeStickerInstructionBlock = (text) => String(text || '')
+          .replace(/\n*【表情包相关】[\s\S]*?(?=\n【转账消息相关】|\n【语音消息相关】|\n【音乐分享消息相关】|\n【图片或视频消息相关】|\n格式解释:|\n<\/QQ聊天格式介绍>|$)/g, '')
+          .replace(/\n*<表情包列表>[\s\S]*?<\/表情包列表>/g, '');
         const injectStickerList = (text) => {
           const raw = String(text || '');
           if (!raw.includes('<表情包列表>')) return raw;
-          return raw.replace(/<表情包列表>[\s\S]*?<\/表情包列表>/g, stickerListBlock);
+          if (!stickerListData.hasKeywords) return removeStickerInstructionBlock(raw);
+          return raw.replace(/<表情包列表>[\s\S]*?<\/表情包列表>/g, stickerListData.block);
         };
         const formatWorldEntryContent = (entry, { applyRegex = true } = {}) => {
           const raw = processTextMacrosWithPendingFlag(entry?.content || '', macroContext);
@@ -4571,7 +4621,7 @@ const stringifyMessageContent = (content) => {
       if (hasUserAttachments && !attachmentsInserted && attachmentOnlyContent) {
         messages.push({ role: 'user', content: attachmentOnlyContent });
       }
-      appendDeepSeekFormatReminder();
+      appendOutputFormatReminder();
       return finalizeProviderMessages();
     }
 
@@ -5018,7 +5068,7 @@ const stringifyMessageContent = (content) => {
 	      logger.warn('template inject apply failed', err);
 	    }
 
-    appendDeepSeekFormatReminder();
+    appendOutputFormatReminder();
 
 	    return finalizeProviderMessages();
 	  }
@@ -6213,7 +6263,11 @@ const stringifyMessageContent = (content) => {
       sessionId: this.activeSessionId,
       uiMode: String(this.activeSessionId || '').trim().startsWith('rp:') ? 'rp' : 'chat',
     })?.preset || null;
-    const builtinEntries = this.buildPhoneFormatPromptEntries(syspActive);
+    const builtinEntries = this.buildPhoneFormatPromptEntries(syspActive, {
+      momentCreateRules: syspActive?.moment_create_enabled && syspActive?.phone_format_moment_enabled !== false
+        ? String(syspActive?.moment_create_rules || '')
+        : '',
+    });
     const builtinPart = builtinEntries.map(e => e.content).join('\n\n');
     const globalEntries = resolvedWorldState.globalWorldId ? collectEntries(resolvedWorldState.globalWorldId) : [];
     const roleEntries = [];
