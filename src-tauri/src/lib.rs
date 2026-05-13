@@ -47,6 +47,7 @@ pub fn run() {
             commands::cleanup_wallpapers,
             commands::save_attachment,
             commands::save_attachment_bytes,
+            commands::read_attachment_data_url,
             commands::save_attachment_stream_start,
             commands::save_attachment_stream_chunk,
             commands::save_attachment_stream_finish,

@@ -368,6 +368,14 @@ pub struct AttachmentSaveResult {
     pub bytes: usize,
 }
 
+#[derive(serde::Serialize)]
+pub struct AttachmentDataUrlResult {
+    #[serde(rename = "dataUrl")]
+    pub data_url: String,
+    pub bytes: usize,
+    pub mime: String,
+}
+
 #[derive(serde::Deserialize)]
 pub struct StickerZipEntry {
     pub name: String,
@@ -1618,6 +1626,42 @@ pub async fn save_attachment_bytes(
     Ok(AttachmentSaveResult {
         path: file.to_string_lossy().to_string(),
         bytes: bytes.len(),
+    })
+}
+
+/// 读取当前会话附件为 data URL，用于发送给支持视觉的文本模型。
+#[tauri::command]
+pub async fn read_attachment_data_url(
+    app: AppHandle,
+    session_id: String,
+    path: String,
+) -> Result<AttachmentDataUrlResult, String> {
+    let raw = path.trim();
+    if raw.is_empty() {
+        return Err("attachment path empty".to_string());
+    }
+    let data_dir = get_data_dir(&app)?;
+    let safe_sid = sanitize_segment(&session_id);
+    let attach_root = data_dir.join("attachments").join(&safe_sid);
+    let target = PathBuf::from(raw);
+    if !target.starts_with(&attach_root) {
+        return Err("invalid attachment path".to_string());
+    }
+    let bytes = fs::read(&target).map_err(|e| e.to_string())?;
+    let ext = target
+        .extension()
+        .and_then(|v| v.to_str())
+        .unwrap_or("")
+        .to_string();
+    let mime = mime_from_extension(&ext).unwrap_or_else(|| "application/octet-stream".to_string());
+    if !is_image_mime(&mime) {
+        return Err("attachment is not an image".to_string());
+    }
+    let encoded = BASE64_ENGINE.encode(&bytes);
+    Ok(AttachmentDataUrlResult {
+        data_url: format!("data:{mime};base64,{encoded}"),
+        bytes: bytes.len(),
+        mime,
     })
 }
 

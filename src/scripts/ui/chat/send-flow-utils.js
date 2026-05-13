@@ -526,6 +526,7 @@ export const runRegenerateFromUserIndexFlow = async ({
   restoreMemoryForActiveThread = async () => {},
   getMessageSendText = () => '',
   buildStickerToken = value => value,
+  buildResendAttachmentParts = async () => [],
   handleSend = async () => false,
   warn = () => {},
   logger = null,
@@ -580,8 +581,24 @@ export const runRegenerateFromUserIndexFlow = async ({
     }
   }
 
-  const resendText = getMessageSendText(prevUser, buildStickerToken);
-  if (!String(resendText || '').trim()) {
+  let resendAttachmentParts = [];
+  try {
+    const built = await buildResendAttachmentParts({
+      messages,
+      userIdx,
+      prevUser,
+      plan,
+    });
+    resendAttachmentParts = Array.isArray(built) ? built.filter(Boolean) : [];
+  } catch (err) {
+    logger?.warn?.('build regenerate attachment parts failed', err);
+  }
+  const hasResendAttachments = resendAttachmentParts.length > 0;
+  let resendText = getMessageSendText(prevUser, buildStickerToken);
+  if (hasResendAttachments && prevUser?.type === 'image' && String(resendText || '').trim() === '[图片]') {
+    resendText = '';
+  }
+  if (!String(resendText || '').trim() && !hasResendAttachments) {
     recordTraceEvent(buildRegenerateFinishTraceEvent({
       sessionId,
       status: 'skipped',
@@ -605,6 +622,7 @@ export const runRegenerateFromUserIndexFlow = async ({
     skipInputRegex: true,
     existingUserMessageId: prevUser?.id || '',
     includeAttachments: false,
+    resendAttachmentParts,
   });
   recordTraceEvent(buildRegenerateFinishTraceEvent({
     sessionId,

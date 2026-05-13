@@ -3249,6 +3249,26 @@ const initApp = async () => {
     } catch {}
     return true;
   };
+  const removeTextTokenOnce = (value = '', token = '') => {
+    const raw = String(token || '').trim();
+    const source = String(value || '');
+    if (!raw || !source.includes(raw)) return source;
+    const escaped = escapeRegExp(raw);
+    const linePattern = new RegExp(`(^|\\n)[ \\t]*${escaped}[ \\t]*(?=\\n|$)`);
+    const lineMatch = linePattern.exec(source);
+    let start = -1;
+    let end = -1;
+    if (lineMatch) {
+      start = lineMatch.index;
+      end = start + lineMatch[0].length;
+      if (start === 0 && source.charAt(end) === '\n') end += 1;
+    } else {
+      start = source.indexOf(raw);
+      end = start + raw.length;
+    }
+    if (start < 0 || end <= start) return source;
+    return `${source.slice(0, start)}${source.slice(end)}`;
+  };
 
   const insertStickerToken = keyword => {
     if (!composerInput) return;
@@ -6749,21 +6769,22 @@ Phase G（Frame 36）：循环衔接
     composerAttachments.forEach(attachment => {
       if (!attachment || typeof attachment !== 'object') return;
       const item = document.createElement('div');
-      item.className = 'chat-attachment-item';
-      item.dataset.attachmentId = attachment.id || '';
-      if (attachment.source === 'writing-asset') item.classList.add('is-writing-asset');
+	      item.className = 'chat-attachment-item';
+	      item.dataset.attachmentId = attachment.id || '';
+	      if (attachment.source === 'writing-asset') item.classList.add('is-writing-asset');
+	      if (attachment.source === 'generated-image') item.classList.add('is-generated-image');
 
-      if (attachment.kind === 'image') {
-        const img = document.createElement('img');
-        img.src = attachment.url || '';
-        img.alt = attachment.name || 'image';
-        item.appendChild(img);
-        if (attachment.source === 'writing-asset') {
-          const badge = document.createElement('div');
-          badge.className = 'chat-attachment-badge';
-          badge.textContent = '插图';
-          item.appendChild(badge);
-        }
+	      if (attachment.kind === 'image') {
+	        const img = document.createElement('img');
+	        img.src = attachment.url || '';
+	        img.alt = attachment.name || 'image';
+	        item.appendChild(img);
+	        if (attachment.source === 'writing-asset' || attachment.source === 'generated-image') {
+	          const badge = document.createElement('div');
+	          badge.className = 'chat-attachment-badge';
+	          badge.textContent = attachment.source === 'writing-asset' ? '插图' : '图片';
+	          item.appendChild(badge);
+	        }
       } else {
         const doc = document.createElement('div');
         doc.className = 'chat-attachment-doc';
@@ -6828,9 +6849,9 @@ Phase G（Frame 36）：循环衔接
     const idx = composerAttachments.findIndex(a => String(a?.id || '') === targetId);
     if (idx === -1) return;
     const [removed] = composerAttachments.splice(idx, 1);
-    if (removed?.source === 'writing-asset') {
-      removeComposerTextToken(removed.placeholder || removed.name || '');
-    }
+	    if (removed?.source === 'writing-asset' || removed?.source === 'generated-image') {
+	      removeComposerTextToken(removed.placeholder || removed.name || '');
+	    }
     renderComposerAttachments();
   };
   const clearComposerAttachments = () => {
@@ -6848,6 +6869,16 @@ Phase G（Frame 36）：循环衔接
     if (!body) return `${header}\n[无法读取文件内容，仅提供文件信息]`;
     const suffix = attachment?.textTruncated ? '\n[内容已截断]' : '';
     return `${header}\n${body}${suffix}`;
+  };
+  const stripComposerAttachmentPlaceholders = (text = '', attachments = composerAttachments) => {
+    let next = String(text || '');
+    const list = Array.isArray(attachments) ? attachments : [];
+    list.forEach((attachment) => {
+      const token = String(attachment?.placeholder || '').trim();
+      if (!token) return;
+      next = removeTextTokenOnce(next, token);
+    });
+    return next.trim();
   };
   const buildAttachmentParts = attachments => {
     const parts = [];
@@ -6868,9 +6899,10 @@ Phase G（Frame 36）：循环衔接
   const buildAttachmentMessages = (attachments, { name, avatar } = {}) => {
     const list = [];
     (attachments || []).forEach(attachment => {
-      if (!attachment || typeof attachment !== 'object') return;
-      if (attachment.kind === 'image' && attachment.url) {
-        const expiresAt = attachment.source === 'writing-asset' ? 0 : Date.now() + ATTACHMENT_TTL_MS;
+	      if (!attachment || typeof attachment !== 'object') return;
+	      if (attachment.kind === 'image' && attachment.url) {
+	        const isPersistentAsset = attachment.source === 'writing-asset' || attachment.source === 'generated-image';
+	        const expiresAt = isPersistentAsset ? 0 : Date.now() + ATTACHMENT_TTL_MS;
         list.push({
           role: 'user',
           type: 'image',
@@ -6939,15 +6971,22 @@ Phase G（Frame 36）：循环衔接
       logger.warn('save attachment failed', err);
     }
   };
-  if (composerAttachmentsEl) {
-    composerAttachmentsEl.addEventListener('click', event => {
-      const btn = event?.target?.closest ? event.target.closest('.chat-attachment-remove') : null;
-      if (!btn) return;
-      event.preventDefault();
-      const targetId = btn.dataset.attachmentId || '';
-      if (targetId) removeComposerAttachment(targetId);
-    });
-  }
+	  if (composerAttachmentsEl) {
+	    composerAttachmentsEl.addEventListener('click', event => {
+	      const item = event?.target?.closest ? event.target.closest('.chat-attachment-item') : null;
+	      const btn = event?.target?.closest ? event.target.closest('.chat-attachment-remove') : null;
+	      if (btn) {
+	        event.preventDefault();
+	        const targetId = btn.dataset.attachmentId || '';
+	        if (targetId) removeComposerAttachment(targetId);
+	        return;
+	      }
+	      if (item?.classList?.contains('is-generated-image')) {
+	        event.preventDefault();
+	        chatGeneratedImagePreview.recallForCurrentSession(chatStore.getCurrent());
+	      }
+	    });
+	  }
   const scanExpiredAttachments = () => {
     const sessions = chatStore.listSessions();
     if (!sessions || !sessions.length) return;
@@ -13212,6 +13251,93 @@ Phase G（Frame 36）：循环衔接
     refreshChatAndContacts({ immediate: true });
     return finalMessage;
   };
+  const CHAT_GENERATED_IMAGE_ALBUM_LIMIT = 200;
+  const normalizeChatGeneratedImageAlbumAsset = (asset = {}, sessionId = '') => {
+    if (!asset || typeof asset !== 'object') return null;
+    const output = asset.output && typeof asset.output === 'object' ? asset.output : {};
+    const path = String(output.path || '').trim();
+    const url = String(output.url || output.dataUrl || '').trim();
+    if (!path && !url) return null;
+    const id = String(asset.id || path || url || '').trim();
+    return {
+      id,
+      kind: 'image',
+      provider: String(asset.provider || '').trim(),
+      model: String(asset.model || '').trim(),
+      prompt: String(asset.prompt || '').trim(),
+      output: {
+        path,
+        url: String(output.url || '').trim(),
+        dataUrl: '',
+        mime: String(output.mime || '').trim(),
+        bytes: Number(output.bytes || 0) || 0,
+      },
+      status: 'succeeded',
+      scope: {
+        surface: 'chat',
+        targetId: String(sessionId || asset?.scope?.targetId || '').trim(),
+        sourceMessageId: String(asset?.scope?.sourceMessageId || '').trim(),
+      },
+      messageId: String(asset.messageId || '').trim(),
+      createdAt: Number(asset.createdAt || Date.now()) || Date.now(),
+    };
+  };
+  const getChatGeneratedImageAlbumStore = (sessionId = '') => {
+    const sid = String(sessionId || '').trim();
+    const session = sid ? chatStore.state?.sessions?.[sid] : null;
+    const list = Array.isArray(session?.generatedImageAlbum) ? session.generatedImageAlbum : [];
+    return { session, list };
+  };
+  const getChatGeneratedImageAlbumAssets = (sessionId = '') => {
+    const sid = String(sessionId || '').trim();
+    const { list } = getChatGeneratedImageAlbumStore(sid);
+    return list
+      .map(asset => normalizeChatGeneratedImageAlbumAsset(asset, sid))
+      .filter(Boolean);
+  };
+  const persistChatGeneratedImageAlbumAssets = (sessionId = '', list = []) => {
+    const sid = String(sessionId || '').trim();
+    if (!sid || !chatStore.state?.sessions?.[sid]) return false;
+    const normalized = (Array.isArray(list) ? list : [])
+      .map(asset => normalizeChatGeneratedImageAlbumAsset(asset, sid))
+      .filter(Boolean)
+      .slice(-CHAT_GENERATED_IMAGE_ALBUM_LIMIT);
+    chatStore.state.sessions[sid].generatedImageAlbum = normalized;
+    try {
+      chatStore._persist?.();
+    } catch {}
+    return true;
+  };
+  const addChatGeneratedImageAlbumAsset = (sessionId = '', asset = {}) => {
+    const sid = String(sessionId || '').trim();
+    if (!sid) return false;
+    const normalized = normalizeChatGeneratedImageAlbumAsset(asset, sid);
+    if (!normalized) return false;
+    const current = getChatGeneratedImageAlbumAssets(sid);
+    const key = getGeneratedImageAssetStableKey(normalized);
+    const next = current.filter(item => getGeneratedImageAssetStableKey(item) !== key);
+    next.push(normalized);
+    return persistChatGeneratedImageAlbumAssets(sid, next);
+  };
+  const removeChatGeneratedImageAlbumAsset = (sessionId = '', asset = {}) => {
+    const sid = String(sessionId || '').trim();
+    if (!sid) return false;
+    const key = getGeneratedImageAssetStableKey(asset);
+    if (!key) return false;
+    const current = getChatGeneratedImageAlbumAssets(sid);
+    const next = current.filter(item => getGeneratedImageAssetStableKey(item) !== key);
+    if (next.length === current.length) return false;
+    return persistChatGeneratedImageAlbumAssets(sid, next);
+  };
+  const removeChatImageGenerationMessage = (messageId, sessionId) => {
+    const mid = String(messageId || '').trim();
+    const sid = String(sessionId || '').trim();
+    if (!mid || !sid) return false;
+    const removed = chatStore.deleteMessage(mid, sid);
+    if (removed && isSessionActive(sid)) ui.removeMessage(mid);
+    if (removed) refreshChatAndContacts({ immediate: true });
+    return removed;
+  };
   const resolveGeneratedMediaClusterTailId = (sessionId, sourceMessageId) => {
     const sourceId = String(sourceMessageId || '').trim();
     if (!sourceId) return '';
@@ -13384,6 +13510,26 @@ Phase G（Frame 36）：循环衔接
       const asset = autoGenerated
         ? await enqueueAutoImageGeneration(runImageRequest)
         : await runImageRequest();
+	      if (!autoGenerated && mediaSurface === 'chat' && !sourceMessageId) {
+	        removeChatImageGenerationMessage(savedPending.id, sessionId);
+	        const previewAsset = {
+	          ...asset,
+	          messageId: '',
+	          scope: {
+	            ...(asset.scope || {}),
+	            surface: mediaSurface,
+	            targetId: sessionId,
+	            sourceMessageId,
+	          },
+	        };
+	        addChatGeneratedImageAlbumAsset(sessionId, previewAsset);
+	        if (isSessionActive(sessionId)) {
+	          await addGeneratedImageAssetToComposer(previewAsset, { silent: true });
+	        }
+	        chatGeneratedImagePreview.showOrStore(sessionId, [previewAsset]);
+	        window.toastr?.success?.(surfaceCopy.successText);
+	        return true;
+	      }
 	      const imagePatch = buildGeneratedImageMessagePatch(asset, {
 	        sourceMessageId,
 	        surface: mediaSurface,
@@ -13402,16 +13548,16 @@ Phase G（Frame 36）：循环衔接
 	          source: autoGenerated ? 'auto_image_prompt' : 'manual',
 	        },
 	      };
-	      patchChatImageGenerationMessage(savedPending.id, {
-	        ...imagePatch,
-	        role: sender.role,
+		      patchChatImageGenerationMessage(savedPending.id, {
+		        ...imagePatch,
+		        role: sender.role,
 	        name: sender.name,
 	        avatar: sender.avatar,
 	        time: formatNowTime(),
-	        meta: nextMeta,
-	      }, sessionId);
-	      window.toastr?.success?.(surfaceCopy.successText);
-	      return true;
+		        meta: nextMeta,
+		      }, sessionId);
+		      window.toastr?.success?.(surfaceCopy.successText);
+		      return true;
 	    } catch (err) {
 	      const aborted = controller.signal.aborted || err?.name === 'AbortError';
 	      const briefError = getImageGenerationBriefError(err);
@@ -13709,38 +13855,511 @@ Phase G（Frame 36）：循环衔接
 	      return '';
 	    }
 	  };
+	  const resolveMessageImageForLlm = async (message = {}, sessionId = '') => {
+	    if (!message || typeof message !== 'object' || message.type !== 'image') return '';
+	    const meta = message.meta && typeof message.meta === 'object' ? message.meta : {};
+	    if (isAttachmentExpired(meta)) return '';
+	    const content = String(message.content || '').trim();
+	    if (content.startsWith('data:image/')) return content;
+	    const localPath = String(meta.localPath || '').trim();
+	    if (localPath) {
+	      try {
+	        const resp = await safeInvoke('read_attachment_data_url', {
+	          sessionId: String(sessionId || '').trim(),
+	          path: localPath,
+	        });
+	        const dataUrl = String(resp?.dataUrl || '').trim();
+	        if (dataUrl.startsWith('data:image/')) return dataUrl;
+	      } catch (err) {
+	        logger.warn('read regenerate image attachment failed', err);
+	      }
+	    }
+	    if (/^https?:/i.test(content)) return content;
+	    if (content && content !== '[binary omitted]' && content !== '[图片]') {
+	      const dataUrl = await readImageUrlAsDataUrl(content);
+	      if (dataUrl.startsWith('data:image/')) return dataUrl;
+	    }
+	    return '';
+	  };
+	  const collectRegenerateImageMessages = (messages = [], userIdx = -1) => {
+	    const list = Array.isArray(messages) ? messages : [];
+	    const index = Math.trunc(Number(userIdx));
+	    if (!Number.isFinite(index) || index < 0 || index >= list.length) return [];
+	    const result = [];
+	    for (let i = index; i >= 0; i -= 1) {
+	      const message = list[i];
+	      if (!message || message.role !== 'user') break;
+	      if (message.status === 'pending' || message.status === 'sending') continue;
+	      if (message.type === 'image') result.unshift(message);
+	    }
+	    return result;
+	  };
+	  const buildRegenerateImageAttachmentParts = async (messages = [], userIdx = -1, sessionId = '') => {
+	    const imageMessages = collectRegenerateImageMessages(messages, userIdx);
+	    if (!imageMessages.length) return [];
+	    const parts = [];
+	    const seen = new Set();
+	    for (const message of imageMessages) {
+	      const url = await resolveMessageImageForLlm(message, sessionId);
+	      if (!url || seen.has(url)) continue;
+	      seen.add(url);
+	      parts.push({ type: 'image_url', image_url: { url } });
+	    }
+	    return parts;
+	  };
+	  const readGeneratedImageAssetAsDataUrl = async (asset = {}, previewUrl = '') => {
+	    const output = asset?.output && typeof asset.output === 'object' ? asset.output : {};
+	    const dataUrl = String(output.dataUrl || '').trim();
+	    if (dataUrl.startsWith('data:image/')) return dataUrl;
+	    const remoteUrl = String(output.url || '').trim();
+	    if (/^https?:/i.test(remoteUrl) || remoteUrl.startsWith('data:image/')) return remoteUrl;
+	    const path = String(output.path || '').trim();
+	    if (path) {
+	      try {
+	        const sessionId = String(asset?.scope?.targetId || chatStore.getCurrent() || '').trim();
+	        const resp = await safeInvoke('read_attachment_data_url', { sessionId, path });
+	        const localDataUrl = String(resp?.dataUrl || '').trim();
+	        if (localDataUrl.startsWith('data:image/')) return localDataUrl;
+	      } catch (err) {
+	        logger.warn('read generated image attachment for composer failed', err);
+	      }
+	    }
+	    return readImageUrlAsDataUrl(previewUrl);
+	  };
 	  const buildWritingAssetPlaceholder = (asset = {}) => {
 	    const prompt = String(asset?.prompt || '').trim();
 	    const label = prompt ? prompt.replace(/\s+/g, ' ').slice(0, 40) : '插图';
 	    return `[插图：${label}${prompt.length > 40 ? '…' : ''}]`;
 	  };
-	  const addWritingImageAssetToComposer = async (asset = {}) => {
+	  const buildGeneratedImageAssetPlaceholder = (asset = {}) => {
+	    const prompt = String(asset?.prompt || '').trim();
+	    const label = prompt ? prompt.replace(/\s+/g, ' ').slice(0, 40) : '生成图片';
+	    return `[图片：${label}${prompt.length > 40 ? '…' : ''}]`;
+	  };
+	  const getGeneratedImageAssetStableKey = (asset = {}) => {
+	    const output = asset?.output && typeof asset.output === 'object' ? asset.output : {};
+	    const attachmentKey = String(
+	      asset?.generatedAssetId ||
+	      asset?.localPath ||
+	      asset?.llmUrl ||
+	      asset?.url ||
+	      '',
+	    ).trim();
+	    if (attachmentKey) return attachmentKey;
+	    return String(
+	      asset?.id ||
+	      asset?.messageId ||
+	      output.path ||
+	      output.url ||
+	      output.dataUrl ||
+	      '',
+	    ).trim();
+	  };
+	  const isGeneratedImageAssetAlreadyAttached = (asset = {}) => {
+	    const key = getGeneratedImageAssetStableKey(asset);
+	    const output = asset?.output && typeof asset.output === 'object' ? asset.output : {};
+	    const path = String(output.path || '').trim();
+	    const url = String(output.url || output.dataUrl || '').trim();
+	    return composerAttachments.some((attachment) => {
+	      if (!attachment || attachment.kind !== 'image') return false;
+	      if (key && String(attachment.generatedAssetId || '') === key) return true;
+	      if (path && String(attachment.localPath || '') === path) return true;
+	      if (url && (String(attachment.llmUrl || '') === url || String(attachment.url || '') === url)) return true;
+	      return false;
+	    });
+	  };
+	  const addGeneratedImageAssetToComposer = async (asset = {}, {
+	    source = 'generated-image',
+	    placeholderBuilder = buildGeneratedImageAssetPlaceholder,
+	    insertPlaceholder = true,
+	    silent = false,
+	  } = {}) => {
 	    const previewUrl = resolveGeneratedImagePreviewUrl(asset);
 	    if (!previewUrl) {
 	      window.toastr?.warning?.('该插图缺少可插入的图片地址');
 	      return false;
 	    }
+	    if (isGeneratedImageAssetAlreadyAttached(asset)) {
+	      if (!silent) window.toastr?.info?.('该图片已在输入区');
+	      return false;
+	    }
 	    const output = asset?.output && typeof asset.output === 'object' ? asset.output : {};
-	    const directUrl = String(output.dataUrl || output.url || '').trim();
-	    const llmUrl = directUrl || await readImageUrlAsDataUrl(previewUrl);
-	    const placeholder = buildWritingAssetPlaceholder(asset);
+	    const llmUrl = await readGeneratedImageAssetAsDataUrl(asset, previewUrl);
+	    const placeholder = placeholderBuilder(asset);
 	    const ok = addComposerAttachment({
 	      kind: 'image',
-	      source: 'writing-asset',
+	      source,
 	      url: previewUrl,
 	      llmUrl: llmUrl || previewUrl,
 	      name: placeholder,
 	      placeholder,
 	      prompt: String(asset?.prompt || '').trim(),
-	      generatedAssetId: String(asset?.id || '').trim(),
+	      generatedAssetId: getGeneratedImageAssetStableKey(asset),
 	      localPath: String(output.path || '').trim(),
 	      localBytes: Number(output.bytes || 0) || 0,
 	      mime: String(output.mime || '').trim(),
 	    });
 	    if (!ok) return false;
-	    insertComposerText(placeholder, { block: true });
+	    if (insertPlaceholder) insertComposerText(placeholder, { block: true });
 	    return true;
 	  };
+	  const addWritingImageAssetToComposer = (asset = {}) => addGeneratedImageAssetToComposer(asset, {
+	    source: 'writing-asset',
+	    placeholderBuilder: buildWritingAssetPlaceholder,
+	  });
+	  const getGeneratedImageAssetMatchKeys = (asset = {}) => {
+	    const output = asset?.output && typeof asset.output === 'object' ? asset.output : {};
+	    return {
+	      id: String(asset?.id || '').trim(),
+	      messageId: String(asset?.messageId || '').trim(),
+	      path: String(output.path || '').trim(),
+	      url: String(output.url || output.dataUrl || '').trim(),
+	    };
+	  };
+	  const messageMatchesGeneratedImageAsset = (message = {}, asset = {}) => {
+	    if (!message || typeof message !== 'object') return false;
+	    const keys = getGeneratedImageAssetMatchKeys(asset);
+	    if (keys.messageId && String(message.id || '') === keys.messageId) return true;
+	    const meta = message.meta && typeof message.meta === 'object' ? message.meta : {};
+	    const generated = meta.generatedMedia && typeof meta.generatedMedia === 'object' ? meta.generatedMedia : {};
+	    const generatedOutput = generated.output && typeof generated.output === 'object' ? generated.output : {};
+	    if (keys.id && String(generated.id || meta.generatedAssetId || '') === keys.id) return true;
+	    if (keys.path && (
+	      String(meta.localPath || '') === keys.path ||
+	      String(generatedOutput.path || '') === keys.path
+	    )) return true;
+	    if (keys.url && (
+	      String(message.content || '') === keys.url ||
+	      String(generatedOutput.url || generatedOutput.dataUrl || '') === keys.url
+	    )) return true;
+	    return false;
+	  };
+	  const composerAttachmentMatchesGeneratedImageAsset = (attachment = {}, asset = {}) => {
+	    if (!attachment || typeof attachment !== 'object') return false;
+	    const keys = getGeneratedImageAssetMatchKeys(asset);
+	    if (keys.id && String(attachment.generatedAssetId || '') === keys.id) return true;
+	    if (keys.path && String(attachment.localPath || '') === keys.path) return true;
+	    if (keys.url && (
+	      String(attachment.url || '') === keys.url ||
+	      String(attachment.llmUrl || '') === keys.url
+	    )) return true;
+	    return false;
+	  };
+	  const removeComposerAttachmentsForGeneratedImageAsset = (asset = {}) => {
+	    const removed = [];
+	    composerAttachments = composerAttachments.filter((attachment) => {
+	      if (!composerAttachmentMatchesGeneratedImageAsset(attachment, asset)) return true;
+	      removed.push(attachment);
+	      return false;
+	    });
+	    removed.forEach((attachment) => {
+	      removeComposerTextToken(attachment.placeholder || attachment.name || '');
+	    });
+	    if (removed.length) renderComposerAttachments();
+	    return removed.length;
+	  };
+	  const countGeneratedImageAssetReferences = (asset = {}, { excludeMessageIds = new Set() } = {}) => {
+	    const skipIds = excludeMessageIds instanceof Set ? excludeMessageIds : new Set();
+	    let count = 0;
+	    try {
+	      (chatStore.listSessions?.() || []).forEach((sid) => {
+	        (chatStore.getMessages(sid) || []).forEach((message) => {
+	          if (skipIds.has(String(message?.id || ''))) return;
+	          if (messageMatchesGeneratedImageAsset(message, asset)) count += 1;
+	        });
+	      });
+	    } catch {}
+	    try {
+	      const keys = getGeneratedImageAssetMatchKeys(asset);
+	      (momentsStore.list?.() || []).forEach((moment) => {
+	        (Array.isArray(moment?.generatedImages) ? moment.generatedImages : []).forEach((item) => {
+	          const itemOutput = item?.output && typeof item.output === 'object' ? item.output : {};
+	          const itemPath = String(itemOutput.path || '').trim();
+	          const itemUrl = String(itemOutput.url || itemOutput.dataUrl || '').trim();
+	          if (
+	            getGeneratedImageAssetStableKey(item) === getGeneratedImageAssetStableKey(asset) ||
+	            (keys.path && itemPath === keys.path) ||
+	            (keys.url && itemUrl === keys.url)
+	          ) count += 1;
+	        });
+	      });
+	    } catch {}
+	    try {
+	      composerAttachments.forEach((attachment) => {
+	        if (composerAttachmentMatchesGeneratedImageAsset(attachment, asset)) count += 1;
+	      });
+	    } catch {}
+	    return count;
+	  };
+	  const maybeDeleteGeneratedImageFileIfUnreferenced = (asset = {}, sessionId = '') => {
+	    const output = asset?.output && typeof asset.output === 'object' ? asset.output : {};
+	    const path = String(output.path || '').trim();
+	    if (!path) return;
+	    if (countGeneratedImageAssetReferences(asset) > 0) return;
+	    safeInvoke('delete_attachment', { sessionId, path }).catch(() => {});
+	  };
+	  const deleteGeneratedImageAssetFromCurrentChat = async (asset = {}) => {
+	    const sessionId = String(asset?.scope?.targetId || chatStore.getCurrent() || '').trim();
+	    if (!sessionId) return false;
+	    const ok = await appConfirm({
+	      title: '删除图片',
+	      message: '删除这张图片？相册记录和当前聊天室中引用它的图片消息都会一起移除。',
+	      danger: true,
+	    });
+	    if (!ok) return false;
+	    const messages = chatStore.getMessages(sessionId) || [];
+	    const targets = messages.filter(message => messageMatchesGeneratedImageAsset(message, asset));
+	    const removedIds = new Set(targets.map(message => String(message?.id || '')).filter(Boolean));
+	    targets.forEach((message) => {
+	      if (!message?.id) return;
+	      chatStore.deleteMessage(message.id, sessionId);
+	      if (isSessionActive(sessionId)) ui.removeMessage(message.id);
+	    });
+	    removeComposerAttachmentsForGeneratedImageAsset(asset);
+	    chatGeneratedImagePreview.removeAsset(asset);
+	    const removedAlbum = removeChatGeneratedImageAlbumAsset(sessionId, asset);
+	    await removeTurnCheckpointsForMessages(sessionId, targets, { prune: true }).catch(err => {
+	      logger.warn('remove turn checkpoints after generated image delete failed', err);
+	    });
+	    maybeDeleteGeneratedImageFileIfUnreferenced(asset, sessionId);
+	    refreshChatAndContacts({ immediate: true });
+	    if (removedIds.size || removedAlbum) window.toastr?.success?.('图片已删除');
+	    return removedIds.size > 0 || removedAlbum;
+	  };
+	  const chatGeneratedImagePreview = (() => {
+	    const pendingBySession = new Map();
+	    let root = null;
+	    let mainImg = null;
+	    let thumbsEl = null;
+	    let closeBtn = null;
+	    let activeSessionId = '';
+	    let assets = [];
+	    let activeIndex = 0;
+	    let dimTimer = null;
+
+	    const clearTimers = () => {
+	      if (dimTimer) clearTimeout(dimTimer);
+	      dimTimer = null;
+	    };
+	    const hide = () => {
+	      clearTimers();
+	      root?.classList.remove('is-visible', 'is-solid', 'is-dim');
+	      activeSessionId = '';
+	      assets = [];
+	      activeIndex = 0;
+	    };
+	    const currentAsset = () => assets[Math.max(0, Math.min(activeIndex, assets.length - 1))] || null;
+	    const setDimmed = () => {
+	      if (!root?.classList.contains('is-visible')) return;
+	      if (dimTimer) clearTimeout(dimTimer);
+	      dimTimer = null;
+	      root.classList.remove('is-solid');
+	      root.classList.add('is-dim');
+	    };
+	    const scheduleSolidLifecycle = () => {
+	      clearTimers();
+	      dimTimer = setTimeout(setDimmed, 5000);
+	    };
+	    const scheduleDimLifecycle = () => {
+	      clearTimers();
+	    };
+	    const reveal = () => {
+	      if (!root?.classList.contains('is-visible')) return;
+	      root.classList.remove('is-dim');
+	      root.classList.add('is-solid');
+	      scheduleSolidLifecycle();
+	    };
+	    const stashCurrent = () => {
+	      if (activeSessionId && assets.length) {
+	        pendingBySession.set(activeSessionId, mergePreviewAssets(pendingBySession.get(activeSessionId) || [], assets));
+	      }
+	      hide();
+	    };
+	    const removeAt = (index) => {
+	      const safeIndex = Math.trunc(Number(index));
+	      if (!Number.isFinite(safeIndex) || safeIndex < 0 || safeIndex >= assets.length) return;
+	      assets.splice(safeIndex, 1);
+	      if (!assets.length) {
+	        hide();
+	        return;
+	      }
+	      activeIndex = Math.min(activeIndex, assets.length - 1);
+	      render();
+	    };
+	    const render = () => {
+	      const asset = currentAsset();
+	      if (!root || !asset) return;
+	      const url = resolveGeneratedImagePreviewUrl(asset);
+	      const prompt = String(asset.prompt || '').trim();
+	      if (mainImg) {
+	        mainImg.src = url;
+	        mainImg.alt = prompt || '生成图片';
+	      }
+	      if (thumbsEl) {
+	        thumbsEl.innerHTML = assets.map((item, index) => {
+	          const thumbUrl = resolveGeneratedImagePreviewUrl(item);
+	          return `
+	            <button type="button" class="chat-generated-image-preview-thumb ${index === activeIndex ? 'is-active' : ''}" data-index="${index}">
+	              <img src="${escapeHtml(thumbUrl)}" alt="${escapeHtml(String(item.prompt || '生成图片'))}">
+	              <span class="chat-generated-image-preview-thumb-close" data-remove-index="${index}" aria-label="隐藏图片">×</span>
+	            </button>
+	          `;
+	        }).join('');
+	        thumbsEl.hidden = assets.length <= 0;
+	      }
+	    };
+	    const ensure = () => {
+	      if (root) return;
+	      root = document.createElement('div');
+	      root.id = 'chat-generated-image-preview';
+	      root.className = 'chat-generated-image-preview';
+	      root.innerHTML = `
+	        <div class="chat-generated-image-preview-card">
+	          <button type="button" class="chat-generated-image-preview-close" aria-label="隐藏预览">×</button>
+	          <img class="chat-generated-image-preview-main" alt="生成图片">
+	          <div class="chat-generated-image-preview-thumbs" hidden></div>
+	        </div>
+	      `;
+	      document.body.appendChild(root);
+	      mainImg = root.querySelector('.chat-generated-image-preview-main');
+	      thumbsEl = root.querySelector('.chat-generated-image-preview-thumbs');
+	      closeBtn = root.querySelector('.chat-generated-image-preview-close');
+	      closeBtn?.addEventListener('click', event => {
+	        event.stopPropagation();
+	        stashCurrent();
+	      });
+	      mainImg?.addEventListener('click', event => {
+	        event.stopPropagation();
+	        const url = resolveGeneratedImagePreviewUrl(currentAsset());
+	        reveal();
+	        if (url) ui.openLightbox?.(url);
+	      });
+	      thumbsEl?.addEventListener('click', event => {
+	        const removeBtn = event.target?.closest?.('.chat-generated-image-preview-thumb-close[data-remove-index]');
+	        if (removeBtn) {
+	          event.stopPropagation();
+	          removeAt(removeBtn.dataset.removeIndex);
+	          return;
+	        }
+	        const btn = event.target?.closest?.('.chat-generated-image-preview-thumb[data-index]');
+	        if (!btn) return;
+	        event.stopPropagation();
+	        const idx = Math.trunc(Number(btn.dataset.index));
+	        if (Number.isFinite(idx) && idx >= 0 && idx < assets.length) {
+	          activeIndex = idx;
+	          render();
+	          reveal();
+	        }
+	      });
+	      root.addEventListener('click', () => reveal());
+	      document.addEventListener('pointerdown', event => {
+	        if (!root?.classList.contains('is-visible')) return;
+	        if (root.contains(event.target)) return;
+	        setDimmed();
+	      });
+	    };
+	    const normalizePreviewAssets = (list = []) => (Array.isArray(list) ? list : [list])
+	      .filter(asset => asset && typeof asset === 'object' && resolveGeneratedImagePreviewUrl(asset));
+	    const mergePreviewAssets = (base = [], incoming = []) => {
+	      const merged = [];
+	      const seen = new Set();
+	      [...normalizePreviewAssets(base), ...normalizePreviewAssets(incoming)].forEach((asset) => {
+	        const key = getGeneratedImageAssetStableKey(asset) || resolveGeneratedImagePreviewUrl(asset);
+	        if (key && seen.has(key)) return;
+	        if (key) seen.add(key);
+	        merged.push(asset);
+	      });
+	      return merged;
+	    };
+	    const showNow = (sessionId = '', list = []) => {
+	      const sid = String(sessionId || '').trim();
+	      const normalized = activeSessionId === sid
+	        ? mergePreviewAssets(assets, list)
+	        : normalizePreviewAssets(list);
+	      if (!normalized.length) return false;
+	      ensure();
+	      activeSessionId = sid;
+	      assets = normalized;
+	      activeIndex = Math.max(0, assets.length - 1);
+	      render();
+	      root.classList.remove('is-solid');
+	      root.classList.add('is-visible', 'is-dim');
+	      scheduleDimLifecycle();
+	      return true;
+	    };
+	    return {
+	      showOrStore(sessionId = '', list = []) {
+	        const sid = String(sessionId || '').trim();
+	        const normalized = normalizePreviewAssets(list);
+	        if (!sid || !normalized.length) return false;
+	        if (isSessionActive(sid)) return showNow(sid, normalized);
+	        pendingBySession.set(sid, mergePreviewAssets(pendingBySession.get(sid) || [], normalized));
+	        return true;
+	      },
+	      revealPendingForSession(sessionId = '') {
+	        const sid = String(sessionId || '').trim();
+	        if (!sid || !pendingBySession.has(sid)) {
+	          if (activeSessionId && activeSessionId !== sid) hide();
+	          return false;
+	        }
+	        const pending = pendingBySession.get(sid);
+	        pendingBySession.delete(sid);
+	        return showNow(sid, pending);
+	      },
+	      removeAsset(asset = {}) {
+	        const matcher = item => getGeneratedImageAssetStableKey(item) === getGeneratedImageAssetStableKey(asset);
+	        pendingBySession.forEach((list, sid) => {
+	          const next = list.filter(item => !matcher(item));
+	          if (next.length) pendingBySession.set(sid, next);
+	          else pendingBySession.delete(sid);
+	        });
+	        if (!assets.some(matcher)) return;
+	        assets = assets.filter(item => !matcher(item));
+	        if (!assets.length) {
+	          hide();
+	          return;
+	        }
+	        activeIndex = Math.min(activeIndex, assets.length - 1);
+	        render();
+	      },
+	      removeAssets(list = []) {
+	        (Array.isArray(list) ? list : []).forEach(asset => this.removeAsset(asset));
+	      },
+	      recallForCurrentSession(sessionId = '') {
+	        const sid = String(sessionId || chatStore.getCurrent() || '').trim();
+	        if (!sid) return false;
+	        if (activeSessionId === sid && assets.length) {
+	          ensure();
+	          root.classList.add('is-visible');
+	          reveal();
+	          return true;
+	        }
+	        if (pendingBySession.has(sid)) return this.revealPendingForSession(sid);
+	        const generatedAttachments = composerAttachments
+	          .filter(item => item?.source === 'generated-image')
+	          .map(item => ({
+	            id: String(item.generatedAssetId || item.localPath || item.url || item.id || '').trim(),
+	            prompt: String(item.prompt || '').trim(),
+	            output: {
+	              path: String(item.localPath || '').trim(),
+	              url: String(item.url || '').trim(),
+	              dataUrl: '',
+	              mime: String(item.mime || '').trim(),
+	              bytes: Number(item.localBytes || 0) || 0,
+	            },
+	            scope: {
+	              surface: 'chat',
+	              targetId: sid,
+	            },
+	          }))
+	          .filter(item => resolveGeneratedImagePreviewUrl(item));
+	        return showNow(sid, generatedAttachments);
+	      },
+	      suspendCurrent() {
+	        stashCurrent();
+	      },
+	    };
+	  })();
 	  const collectWritingImageAssetsForCurrentSession = () => {
 	    const sessionId = String(chatStore.getCurrent() || '').trim();
 	    if (!sessionId) return [];
@@ -13765,9 +14384,18 @@ Phase G（Frame 36）：循环衔接
 	  const collectChatImageAlbumAssetsForCurrentSession = () => {
 	    const sessionId = String(chatStore.getCurrent() || '').trim();
 	    if (!sessionId) return [];
-	    return collectGeneratedImageAssetsFromMessages(chatStore.getMessages(sessionId), { surface: 'chat' })
-	      .filter(asset => resolveGeneratedImagePreviewUrl(asset))
-	      .reverse()
+	    const fromMessages = collectGeneratedImageAssetsFromMessages(chatStore.getMessages(sessionId), { surface: 'chat' });
+	    const fromAlbum = getChatGeneratedImageAlbumAssets(sessionId);
+	    const seen = new Set();
+	    return [...fromAlbum, ...fromMessages]
+	      .filter(asset => {
+	        if (!resolveGeneratedImagePreviewUrl(asset)) return false;
+	        const key = getGeneratedImageAssetStableKey(asset) || resolveGeneratedImagePreviewUrl(asset);
+	        if (key && seen.has(key)) return false;
+	        if (key) seen.add(key);
+	        return true;
+	      })
+	      .sort((a, b) => (Number(b.createdAt || 0) || 0) - (Number(a.createdAt || 0) || 0))
 	      .map(asset => ({
 	        ...asset,
 	        albumId: String(asset.id || asset.messageId || resolveGeneratedImagePreviewUrl(asset)),
@@ -13800,6 +14428,8 @@ Phase G（Frame 36）：循环衔接
 	    let detailPromptEl = null;
 	    let detailMetaEl = null;
 	    let detailCopyBtn = null;
+	    let detailAddBtn = null;
+	    let detailDeleteBtn = null;
 	    let activeDetailAsset = null;
 	    let lastAssets = [];
 	    let lastOptions = {};
@@ -13837,12 +14467,14 @@ Phase G（Frame 36）：循环衔接
 	                <div class="generated-image-album-detail-label">完整提示词</div>
 	                <pre class="generated-image-album-detail-prompt"></pre>
 	              </div>
-	            </div>
-	            <div class="generated-image-album-detail-actions">
-	              <button type="button" data-action="copy-detail-prompt">复制提示词</button>
-	            </div>
-	          </div>
-	        </div>
+		            </div>
+		            <div class="generated-image-album-detail-actions">
+		              <button type="button" data-action="add-detail-to-input">添加到输入区</button>
+		              <button type="button" data-action="copy-detail-prompt">复制提示词</button>
+		              <button type="button" class="is-danger" data-action="delete-detail-asset">删除</button>
+		            </div>
+		          </div>
+		        </div>
 	      `;
 	      document.body.appendChild(overlay);
 	      titleEl = overlay.querySelector('.writing-media-assets-title');
@@ -13854,7 +14486,14 @@ Phase G（Frame 36）：循环衔接
 	      detailPromptEl = overlay.querySelector('.generated-image-album-detail-prompt');
 	      detailMetaEl = overlay.querySelector('.generated-image-album-detail-meta');
 	      detailCopyBtn = overlay.querySelector('[data-action="copy-detail-prompt"]');
-	      overlay.querySelector('.writing-media-assets-close')?.addEventListener('click', () => overlay.classList.remove('is-active'));
+	      detailAddBtn = overlay.querySelector('[data-action="add-detail-to-input"]');
+	      detailDeleteBtn = overlay.querySelector('[data-action="delete-detail-asset"]');
+	      const closeAlbum = () => {
+	        overlay.classList.remove('is-active');
+	        if (detailEl) detailEl.hidden = true;
+	        activeDetailAsset = null;
+	      };
+	      overlay.querySelector('.writing-media-assets-close')?.addEventListener('click', closeAlbum);
 	      overlay.querySelector('.generated-image-album-detail-close')?.addEventListener('click', () => {
 	        if (detailEl) detailEl.hidden = true;
 	        activeDetailAsset = null;
@@ -13866,7 +14505,7 @@ Phase G（Frame 36）：循环衔接
 	        }
 	      });
 	      overlay.addEventListener('click', event => {
-	        if (event.target === overlay) overlay.classList.remove('is-active');
+	        if (event.target === overlay) closeAlbum();
 	      });
 	      const openDetail = (asset = {}) => {
 	        const url = resolveGeneratedImagePreviewUrl(asset);
@@ -13883,22 +14522,47 @@ Phase G（Frame 36）：循环衔接
 	        if (detailPromptEl) detailPromptEl.textContent = prompt || '（无提示词）';
 	        if (detailMetaEl) detailMetaEl.textContent = [model, source, time].filter(Boolean).join(' · ');
 	        if (detailCopyBtn) detailCopyBtn.disabled = !prompt;
+	        if (detailAddBtn) detailAddBtn.hidden = lastOptions.allowComposer === false;
+	        if (detailDeleteBtn) detailDeleteBtn.hidden = lastOptions.allowDelete !== true;
 	        detailEl.hidden = false;
 	      };
 	      overlay.addEventListener('click', async event => {
 	        const btn = event.target?.closest?.('button[data-action]');
 	        if (btn) {
 	          const assetId = btn.closest('[data-asset-id]')?.dataset?.assetId || '';
-	          const asset = btn.dataset.action === 'copy-detail-prompt'
-	            ? activeDetailAsset
-	            : lastAssets.find(item => String(item.albumId || item.id || '') === assetId);
-	          if (!asset) return;
-	          if (btn.dataset.action === 'copy-prompt' || btn.dataset.action === 'copy-detail-prompt') {
-	            const ok = await ui.copyToClipboard(String(asset.prompt || ''));
-	            ok ? window.toastr?.success?.('已复制提示词') : window.toastr?.warning?.('复制失败');
-	          }
-	          return;
-	        }
+		        const action = btn.dataset.action || '';
+		        const isDetailAction = action.includes('detail');
+		        const asset = isDetailAction
+		          ? activeDetailAsset
+		          : lastAssets.find(item => String(item.albumId || item.id || '') === assetId);
+		          if (!asset) return;
+		          if (action === 'copy-prompt' || action === 'copy-detail-prompt') {
+		            const ok = await ui.copyToClipboard(String(asset.prompt || ''));
+		            ok ? window.toastr?.success?.('已复制提示词') : window.toastr?.warning?.('复制失败');
+		          }
+		          if (action === 'add-to-input' || action === 'add-detail-to-input') {
+		            const handler = typeof lastOptions.onAdd === 'function'
+		              ? lastOptions.onAdd
+		              : item => addGeneratedImageAssetToComposer(item);
+		            const ok = await handler(asset);
+		            if (ok) {
+		              window.toastr?.success?.('已添加到输入区');
+		              if (detailEl) detailEl.hidden = true;
+		              activeDetailAsset = null;
+		              closeAlbum();
+		            }
+		          }
+		          if (action === 'delete-asset' || action === 'delete-detail-asset') {
+		            if (typeof lastOptions.onDelete !== 'function') return;
+		            const ok = await lastOptions.onDelete(asset);
+		            if (!ok) return;
+		            if (detailEl) detailEl.hidden = true;
+		            activeDetailAsset = null;
+		            lastAssets = typeof lastOptions.collect === 'function' ? lastOptions.collect() : [];
+		            render();
+		          }
+		          return;
+		        }
 	        const detailImage = event.target?.closest?.('.generated-image-album-detail-image');
 	        if (detailImage && detailImage.src) {
 	          ui.openLightbox?.(detailImage.src);
@@ -13922,24 +14586,28 @@ Phase G（Frame 36）：循环衔接
 	        listEl.innerHTML = `<div class="writing-media-assets-empty">${escapeHtml(lastOptions.emptyText || '还没有生成图片。')}</div>`;
 	        return;
 	      }
-	      listEl.innerHTML = lastAssets.map(asset => {
-	        const url = resolveGeneratedImagePreviewUrl(asset);
-	        const prompt = String(asset.prompt || '').trim();
-	        const model = [asset.provider, asset.model].filter(Boolean).join(' · ') || '图片模型';
-	        const time = formatGeneratedImageAlbumTime(asset.createdAt);
-	        const source = String(asset.sourceLabel || '').trim();
-	        return `
-	          <div class="writing-media-asset-card" data-asset-id="${escapeHtml(String(asset.albumId || asset.id || ''))}">
-	            <img src="${escapeHtml(url)}" alt="${escapeHtml(prompt || '生成图片')}" data-preview-url="${escapeHtml(url)}">
+		      listEl.innerHTML = lastAssets.map(asset => {
+		        const url = resolveGeneratedImagePreviewUrl(asset);
+		        const prompt = String(asset.prompt || '').trim();
+		        const model = [asset.provider, asset.model].filter(Boolean).join(' · ') || '图片模型';
+		        const time = formatGeneratedImageAlbumTime(asset.createdAt);
+		        const source = String(asset.sourceLabel || '').trim();
+		        const showAdd = lastOptions.allowComposer !== false;
+		        const showDelete = lastOptions.allowDelete === true;
+		        return `
+		          <div class="writing-media-asset-card" data-asset-id="${escapeHtml(String(asset.albumId || asset.id || ''))}">
+		            <img src="${escapeHtml(url)}" alt="${escapeHtml(prompt || '生成图片')}" data-preview-url="${escapeHtml(url)}">
 	            <div class="writing-media-asset-meta">
 	              <div class="writing-media-asset-prompt">${escapeHtml(prompt || '（无提示词）')}</div>
 	              <div class="writing-media-asset-model">${escapeHtml([model, source, time].filter(Boolean).join(' · '))}</div>
-	            </div>
-	            <div class="writing-media-asset-actions">
-	              <button type="button" data-action="copy-prompt" ${prompt ? '' : 'disabled'}>复制提示词</button>
-	            </div>
-	          </div>
-	        `;
+		            </div>
+		            <div class="writing-media-asset-actions">
+		              ${showAdd ? '<button type="button" data-action="add-to-input">添加到输入区</button>' : ''}
+		              <button type="button" data-action="copy-prompt" ${prompt ? '' : 'disabled'}>复制提示词</button>
+		              ${showDelete ? '<button type="button" class="is-danger" data-action="delete-asset">删除</button>' : ''}
+		            </div>
+		          </div>
+		        `;
 	      }).join('');
 	    };
 	    return {
@@ -13947,6 +14615,8 @@ Phase G（Frame 36）：循环衔接
 	        ensure();
 	        lastOptions = options || {};
 	        lastAssets = typeof options.collect === 'function' ? options.collect() : [];
+	        if (detailEl) detailEl.hidden = true;
+	        activeDetailAsset = null;
 	        render();
 	        overlay.classList.add('is-active');
 	      },
@@ -13960,6 +14630,8 @@ Phase G（Frame 36）：循环衔接
 	        subtitle: '当前动态作用域中生成的图片与提示词',
 	        emptyText: '还没有动态生成图片。',
 	        collect: collectMomentImageAlbumAssetsForCurrentScope,
+	        allowComposer: false,
+	        allowDelete: false,
 	      });
 	      return true;
 	    }
@@ -13973,6 +14645,10 @@ Phase G（Frame 36）：循环衔接
 	      subtitle: '当前聊天室生成的图片与提示词',
 	      emptyText: '当前聊天室还没有生成图片。',
 	      collect: collectChatImageAlbumAssetsForCurrentSession,
+	      allowComposer: true,
+	      allowDelete: true,
+	      onAdd: asset => addGeneratedImageAssetToComposer(asset),
+	      onDelete: asset => deleteGeneratedImageAssetFromCurrentChat(asset),
 	    });
 	    return true;
 	  };
@@ -14279,7 +14955,7 @@ Phase G（Frame 36）：循环衔接
     const enterRequest = beginChatEnterRequest(sessionId);
     const contact = contactsStore.getContact(sessionId);
     const isGroupSession = Boolean(contact?.isGroup) || String(sessionId || '').startsWith('group:');
-    return runSessionEnterFlow({
+	    const result = await runSessionEnterFlow({
       sessionId,
       sessionName,
       originPage,
@@ -14410,11 +15086,14 @@ Phase G（Frame 36）：循环衔接
       }),
       getChatOriginPage: () => chatOriginPage,
       recordTraceEvent: recordDebugTraceEvent,
-      uiLog,
-    });
-  };
+	      uiLog,
+	    });
+	    chatGeneratedImagePreview.revealPendingForSession(sessionId);
+	    return result;
+	  };
 
-  const exitChatRoom = (options) => {
+	  const exitChatRoom = (options) => {
+	    chatGeneratedImagePreview.suspendCurrent();
     runSessionExitFlow({
       options,
       deactivateView: () => deactivateSessionEnterView({
@@ -16544,7 +17223,12 @@ Phase G（Frame 36）：循环衔接
       streamMode: 'creative',
     }) || null;
     try {
-      const resendText = String(userMsg?.content ?? '').trim() || '[Continue]';
+      const resendAttachmentParts = await buildRegenerateImageAttachmentParts(msgs, userIdx, sid);
+      let resendText = getMessageSendText(userMsg, buildStickerToken);
+      if (resendAttachmentParts.length && userMsg?.type === 'image' && String(resendText || '').trim() === '[图片]') {
+        resendText = '';
+      }
+      if (!String(resendText || '').trim() && !resendAttachmentParts.length) resendText = '[Continue]';
       const sendOk = await handleSend(null, {
         overrideText: resendText,
         suppressUserMessage: true,
@@ -16552,6 +17236,7 @@ Phase G（Frame 36）：循环衔接
         skipInputRegex: true,
         existingUserMessageId: userMsg.id,
         includeAttachments: false,
+        resendAttachmentParts,
         suppressAssistantDom: true,
         excludeMessageIds: [msgId],
         createAssistantStream: meta => {
@@ -16829,8 +17514,9 @@ Phase G（Frame 36）：循环衔接
    * Handle Enter key: 添加半透明气泡到聊天室 (不发送请求)
    */
   const handleEnter = () => {
-    const text = ui.getInputText();
+    const rawText = ui.getInputText();
     const hasAttachments = composerAttachments.length > 0;
+    const text = hasAttachments ? stripComposerAttachmentPlaceholders(rawText) : rawText;
     if (!text && !hasAttachments) return;
 
     const sessionId = chatStore.getCurrent();
@@ -16886,6 +17572,9 @@ Phase G（Frame 36）：循环衔接
    */
   const handleSend = async (targetMessageId = null, options = {}) => {
     ({ targetMessageId, options } = normalizeHandleSendInvocation(targetMessageId, options));
+    const rawResendAttachmentParts = Array.isArray(options?.resendAttachmentParts)
+      ? options.resendAttachmentParts
+      : [];
     const {
       overrideText,
       ignorePending,
@@ -16905,7 +17594,14 @@ Phase G（Frame 36）：循环衔接
     const excludeMessageIds = new Set(excludedMessageIds);
     const rpUiMode = uiMode === 'rp';
     const attachmentQueue = includeAttachments ? composerAttachments.slice() : [];
+    const resendAttachmentParts = rawResendAttachmentParts.filter(part => {
+      if (!part || typeof part !== 'object') return false;
+      if (part.type === 'image_url') return Boolean(String(part.image_url?.url || '').trim());
+      if (part.type === 'text') return Boolean(String(part.text || '').trim());
+      return false;
+    });
     const hasAttachments = attachmentQueue.length > 0;
+    const hasRequestAttachments = hasAttachments || resendAttachmentParts.length > 0;
     const sessionId = chatStore.getCurrent();
     let outgoingReplyContexts = [];
     let generationId = 0;
@@ -16925,11 +17621,13 @@ Phase G（Frame 36）：循环衔接
       allMessages: chatStore.getMessages(sessionId),
       pendingQueue: !ignorePending && !targetMessageId ? chatStore.getPendingMessages(sessionId) || [] : [],
       overrideText,
-      hasAttachments,
+      hasAttachments: hasRequestAttachments,
       continueTarget,
       sessionId,
       userAvatar: avatars.user,
-      getInputText: () => ui.getInputText(),
+      getInputText: () => (hasAttachments
+        ? stripComposerAttachmentPlaceholders(ui.getInputText(), attachmentQueue)
+        : ui.getInputText()),
       getActiveUserProfile,
       isStickerAllowed,
       parseStickerToken,
@@ -16956,6 +17654,9 @@ Phase G（Frame 36）：循环衔接
     if (!pendingPreparation.shouldContinue) return false;
     let pendingMessagesToConfirm = pendingPreparation.pendingMessagesToConfirm;
     let text = pendingPreparation.text;
+    if (hasAttachments) {
+      text = stripComposerAttachmentPlaceholders(text, attachmentQueue);
+    }
     const contact = contactsStore.getContact(sessionId);
     const isRpMode = uiMode === 'rp';
     const sharedVariables = isSharedVariableSession(sessionId);
@@ -17970,7 +18671,10 @@ Phase G（Frame 36）：循环衔接
       },
     });
     let disableSummaryForThis = false;
-    const attachmentParts = hasAttachments ? buildAttachmentParts(attachmentQueue) : [];
+    const attachmentParts = [
+      ...resendAttachmentParts,
+      ...(hasAttachments ? buildAttachmentParts(attachmentQueue) : []),
+    ];
     if (appSettings.get().autoImagePromptEnabled === true) {
       try {
         await loadImageRuntimeConfig({ includeDraft: true });
@@ -18116,7 +18820,37 @@ Phase G（Frame 36）：循环衔接
         const attachment = attachmentById.get(String(msg?.meta?.attachmentId || ''));
         if (!attachment) return;
         persistImageAttachmentMessage(msg, attachment, sessionId);
+        if (attachment.source === 'generated-image') {
+          const attachmentKey = String(attachment.generatedAssetId || '').trim();
+          const existingAsset = getChatGeneratedImageAlbumAssets(sessionId).find((item) => {
+            if (attachmentKey && getGeneratedImageAssetStableKey(item) === attachmentKey) return true;
+            if (attachment.localPath && String(item?.output?.path || '') === String(attachment.localPath)) return true;
+            return false;
+          });
+          addChatGeneratedImageAlbumAsset(sessionId, {
+            ...(existingAsset || {}),
+            id: attachment.generatedAssetId || msg.id || '',
+            kind: 'image',
+            provider: existingAsset?.provider || '',
+            model: existingAsset?.model || '',
+            prompt: existingAsset?.prompt || attachment.prompt || '',
+            output: {
+              path: existingAsset?.output?.path || attachment.localPath || '',
+              url: existingAsset?.output?.url || (String(attachment.url || '').startsWith('data:image/') ? '' : (attachment.url || '')),
+              dataUrl: '',
+              mime: existingAsset?.output?.mime || attachment.mime || '',
+              bytes: Number(existingAsset?.output?.bytes || attachment.localBytes || 0) || 0,
+            },
+            status: 'succeeded',
+            scope: { surface: 'chat', targetId: sessionId },
+            messageId: msg.id || '',
+            createdAt: Date.now(),
+          });
+        }
       });
+      chatGeneratedImagePreview.removeAssets(
+        attachmentQueue.filter(item => item?.source === 'generated-image'),
+      );
     }
     let appendedUserOutput = attachmentMessages.length > 0;
     let streamCtrl = null;
@@ -18269,7 +19003,7 @@ Phase G（Frame 36）：循环衔接
       rpUiMode,
       isGroupChat,
       hasAttachments,
-      attachmentCount: attachmentQueue.length,
+      attachmentCount: attachmentQueue.length + resendAttachmentParts.length,
       pendingCount: pendingMessagesToConfirm.length,
       suppressUserMessage,
       hasContinueTarget: Boolean(continueTarget),
@@ -18808,8 +19542,9 @@ Phase G（Frame 36）：循环衔接
     };
     const isSyntheticUser = m => m?.role === 'user' && m?.meta?.generatedByAssistant === true;
     const regenerateFromUserIndex = async (userIdx, { allowEmpty = false } = {}) => {
+      const messages = chatStore.getMessages(sessionId);
       await runRegenerateFromUserIndexFlow({
-        messages: chatStore.getMessages(sessionId),
+        messages,
         userIdx,
         allowEmpty,
         isSyntheticUser,
@@ -18823,6 +19558,8 @@ Phase G（Frame 36）：循环衔接
         restoreMemoryForActiveThread,
         getMessageSendText,
         buildStickerToken,
+        buildResendAttachmentParts: ({ messages: sourceMessages, userIdx: sourceUserIdx }) =>
+          buildRegenerateImageAttachmentParts(sourceMessages || messages, sourceUserIdx, sessionId),
         handleSend,
         warn: message => window.toastr?.warning(message),
         logger,
