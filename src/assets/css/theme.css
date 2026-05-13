@@ -1642,7 +1642,7 @@ body[data-theme-mode='dark'] .QQ_chat_page::before {
   background: linear-gradient(180deg, rgba(9, 13, 19, 0.85) 0%, rgba(27, 31, 36, 0.94) 100%) !important;
 }
 
-body[data-theme-mode='dark'] :is(.action-panel, .sticker-panel, .sticker-preview, .chat-image-gen-modal, .writing-media-assets-panel, .moment-compose-modal) {
+body[data-theme-mode='dark'] :is(.action-panel, .sticker-panel, .sticker-preview, .chat-image-gen-modal, .writing-media-assets-panel, .generated-image-album-detail-card, .moment-compose-modal) {
   background: rgba(26, 31, 38, 0.98) !important;
   border-top-color: var(--app-border-subtle) !important;
 }
@@ -1677,6 +1677,11 @@ body[data-theme-mode='dark'] :is(.chat-image-gen-cancel, .chat-image-gen-advance
 body[data-theme-mode='dark'] :is(.writing-media-assets-empty, .moment-compose-image-empty) {
   border-color: var(--app-border-default) !important;
   color: var(--app-text-muted) !important;
+}
+
+body[data-theme-mode='dark'] .generated-image-album-detail-prompt {
+  background: rgba(205, 217, 229, 0.08) !important;
+  color: var(--app-text-primary) !important;
 }
 
 body[data-theme-mode='dark'] .chat-action-btn {

@@ -80,6 +80,42 @@ const clone = (v) => {
 const genId = (prefix = 'moment') => `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
 const hasOwn = (obj, key) => Object.prototype.hasOwnProperty.call(obj || {}, key);
 
+const normalizeGeneratedImages = (items = []) => {
+    const seen = new Set();
+    const out = [];
+    (Array.isArray(items) ? items : []).forEach((item) => {
+        if (!item || typeof item !== 'object') return;
+        const output = item.output && typeof item.output === 'object' ? item.output : {};
+        const path = String(output.path || item.path || '').trim();
+        const url = String(output.url || item.url || '').trim();
+        const dataUrl = String(output.dataUrl || '').trim();
+        if (!path && !url && !dataUrl) return;
+        const id = String(item.id || '').trim() || path || url || dataUrl.slice(0, 80);
+        const key = id || path || url || dataUrl.slice(0, 80);
+        if (key && seen.has(key)) return;
+        if (key) seen.add(key);
+        out.push({
+            id,
+            kind: 'image',
+            provider: String(item.provider || '').trim(),
+            model: String(item.model || '').trim(),
+            prompt: String(item.prompt || '').trim(),
+            output: {
+                path,
+                url,
+                dataUrl,
+                mime: String(output.mime || item.mime || '').trim(),
+                bytes: Number(output.bytes || item.bytes || 0) || 0,
+            },
+            status: String(item.status || 'succeeded').trim() || 'succeeded',
+            token: String(item.token || '').trim(),
+            sourceMomentId: String(item.sourceMomentId || '').trim(),
+            createdAt: Number.isFinite(Number(item.createdAt)) ? Number(item.createdAt) : Date.now(),
+        });
+    });
+    return out;
+};
+
 export class MomentsStore {
     constructor({ scopeId = '' } = {}) {
         this.scopeId = normalizeScopeId(scopeId);
@@ -105,6 +141,7 @@ export class MomentsStore {
                 if (typeof m.authorAvatar === 'string') {
                     m.authorAvatar = this._sanitizeAvatarForStore(m.authorAvatar);
                 }
+                m.generatedImages = normalizeGeneratedImages(m.generatedImages);
                 // Ensure comment ids for stable delete operations
                 if (Array.isArray(m.comments)) {
                     m.comments = m.comments.map((c) => {
@@ -322,6 +359,9 @@ export class MomentsStore {
         const comments = hasOwn(moment, 'comments')
             ? normalizeComments(moment.comments)
             : normalizeComments(Array.isArray(existingById?.comments) ? existingById.comments : (Array.isArray(existingBySig?.comments) ? existingBySig.comments : []));
+        const generatedImages = hasOwn(moment, 'generatedImages')
+            ? normalizeGeneratedImages(moment.generatedImages)
+            : normalizeGeneratedImages(Array.isArray(existingById?.generatedImages) ? existingById.generatedImages : (Array.isArray(existingBySig?.generatedImages) ? existingBySig.generatedImages : []));
 
         const timestamp = hasOwn(moment, 'timestamp')
             ? (Number.isFinite(Number(moment.timestamp)) ? Number(moment.timestamp) : Date.now())
@@ -346,6 +386,7 @@ export class MomentsStore {
             views,
             likes,
             comments,
+            generatedImages,
             timestamp,
         };
         const idx = list.findIndex(m => m.id === id);

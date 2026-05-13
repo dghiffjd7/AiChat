@@ -184,7 +184,7 @@ export const buildAutoImagePromptInstruction = ({
     .trim();
 };
 
-export const extractAutoImagePrompts = (text = '', { max = 1, maxLength = 2000 } = {}) => {
+export const extractAutoImagePrompts = (text = '', { max = 1, maxLength = 2000, dedupe = true } = {}) => {
   const source = stripReasoningLikeBlocks(stripMarkdownCodeBlocks(htmlDecodeLite(text)));
   const limit = Math.max(1, Math.trunc(Number(max)) || 1);
   const lengthLimit = Math.max(80, Math.trunc(Number(maxLength)) || 2000);
@@ -195,8 +195,8 @@ export const extractAutoImagePrompts = (text = '', { max = 1, maxLength = 2000 }
   while ((match = re.exec(source))) {
     const normalized = normalizePromptText(match[1]).slice(0, lengthLimit).trim();
     const key = normalized.toLowerCase();
-    if (isEmptyPromptToken(normalized) || seen.has(key)) continue;
-    seen.add(key);
+    if (isEmptyPromptToken(normalized) || (dedupe && seen.has(key))) continue;
+    if (dedupe) seen.add(key);
     prompts.push(normalized);
     if (prompts.length >= limit) break;
   }

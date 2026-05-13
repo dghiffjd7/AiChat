@@ -178,6 +178,7 @@ export class GeneralSettingsPanel {
     this.autoImagePromptCooldownInput = null;
     this.autoImagePromptWindowRoundsInput = null;
     this.autoImagePromptWindowMaxInput = null;
+    this.autoImagePromptMaxConcurrencyInput = null;
     this.autoImagePromptSkipRepeatedToggle = null;
     this.memoryEnabledToggle = null;
     this.memoryModeSummary = null;
@@ -388,6 +389,10 @@ export class GeneralSettingsPanel {
     if (this.autoImagePromptWindowMaxInput) {
       const n = Number(settings.autoImagePromptWindowMax);
       this.autoImagePromptWindowMaxInput.value = String(Number.isFinite(n) ? Math.max(0, Math.trunc(n)) : 0);
+    }
+    if (this.autoImagePromptMaxConcurrencyInput) {
+      const n = Number(settings.autoImagePromptMaxConcurrency);
+      this.autoImagePromptMaxConcurrencyInput.value = String(Number.isFinite(n) ? Math.max(1, Math.trunc(n)) : 5);
     }
     if (this.autoImagePromptSkipRepeatedToggle) {
       this.autoImagePromptSkipRepeatedToggle.checked = settings.autoImagePromptSkipRepeated !== false;
@@ -1742,6 +1747,12 @@ export class GeneralSettingsPanel {
                 icon: 'palette',
                 control: '<input type="number" id="general-auto-image-prompt-window-max" class="general-settings-number-input" min="0" step="1" value="0">',
               })}
+              ${this.renderInputRow({
+                title: '最大并发数',
+                description: '自动标签生图同时运行的最大请求数，超出后进入队列。',
+                icon: 'sliders',
+                control: '<input type="number" id="general-auto-image-prompt-max-concurrency" class="general-settings-number-input" min="1" step="1" value="5">',
+              })}
               ${this.renderSettingRow({
                 id: 'general-auto-image-prompt-skip-repeated',
                 title: '跳过重复提示词',
@@ -2177,6 +2188,7 @@ export class GeneralSettingsPanel {
     this.autoImagePromptCooldownInput = this.element.querySelector('#general-auto-image-prompt-cooldown');
     this.autoImagePromptWindowRoundsInput = this.element.querySelector('#general-auto-image-prompt-window-rounds');
     this.autoImagePromptWindowMaxInput = this.element.querySelector('#general-auto-image-prompt-window-max');
+    this.autoImagePromptMaxConcurrencyInput = this.element.querySelector('#general-auto-image-prompt-max-concurrency');
     this.autoImagePromptSkipRepeatedToggle = this.element.querySelector('#general-auto-image-prompt-skip-repeated');
     this.memoryEnabledToggle = this.element.querySelector('#general-memory-enabled');
     this.memoryModeSummary = this.element.querySelector('#general-memory-mode-summary');
@@ -2628,10 +2640,10 @@ export class GeneralSettingsPanel {
       appSettings.update({ autoImagePromptMomentMediaMode: value });
       window.dispatchEvent(new CustomEvent('app-settings-changed', { detail: { key: 'autoImagePromptMomentMediaMode', value } }));
     });
-    const bindAutoImagePromptNumber = (input, key, fallback) => {
+    const bindAutoImagePromptNumber = (input, key, fallback, min = 0) => {
       input?.addEventListener('input', (e) => {
         const raw = Math.trunc(Number(e?.target?.value));
-        const value = Number.isFinite(raw) ? Math.max(0, raw) : fallback;
+        const value = Number.isFinite(raw) ? Math.max(min, raw) : fallback;
         if (e?.target) e.target.value = String(value);
         appSettings.update({ [key]: value });
         window.dispatchEvent(new CustomEvent('app-settings-changed', { detail: { key, value } }));
@@ -2640,6 +2652,7 @@ export class GeneralSettingsPanel {
     bindAutoImagePromptNumber(this.autoImagePromptCooldownInput, 'autoImagePromptCooldownRounds', 0);
     bindAutoImagePromptNumber(this.autoImagePromptWindowRoundsInput, 'autoImagePromptWindowRounds', 0);
     bindAutoImagePromptNumber(this.autoImagePromptWindowMaxInput, 'autoImagePromptWindowMax', 0);
+    bindAutoImagePromptNumber(this.autoImagePromptMaxConcurrencyInput, 'autoImagePromptMaxConcurrency', 5, 1);
     this.autoImagePromptSkipRepeatedToggle?.addEventListener('change', (e) => {
       const value = Boolean(e?.target?.checked);
       appSettings.update({ autoImagePromptSkipRepeated: value });

@@ -314,6 +314,25 @@ export const renderMessageBubbleContentCore = ({
         renderSwipeDraftPlaceholder?.(target, message?.meta?.activeSwipeDraft?.label || '生成新回复中...');
         break;
       }
+      const generated = message?.meta?.generatedMedia && typeof message.meta.generatedMedia === 'object'
+        ? message.meta.generatedMedia
+        : null;
+      if (generated?.status === 'failed' && String(generated?.error || '').trim()) {
+        const details = documentLike.createElement('details');
+        details.className = 'card generated-media-error-card';
+        const summary = documentLike.createElement('summary');
+        summary.className = 'card-title';
+        summary.textContent = String(message?.content || '图片生成失败');
+        const body = documentLike.createElement('pre');
+        body.className = 'card-subtitle';
+        body.style.whiteSpace = 'pre-wrap';
+        body.style.margin = '8px 0 0';
+        body.textContent = String(generated.error || '');
+        appendChild(details, summary);
+        appendChild(details, body);
+        appendChild(bubble, details);
+        break;
+      }
       const baseText = typeof message?.raw === 'string' ? message.raw : message?.content;
       const normalized =
         message?.role === 'assistant' ? normalizeAssistantLineBreaks?.(baseText) : String(baseText ?? '');

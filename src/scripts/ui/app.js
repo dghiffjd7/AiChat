@@ -132,6 +132,7 @@ import {
 } from './app-quick-action-runtime-utils.js';
 import {
   buildGeneratedImageMessagePatch,
+  buildGeneratedImageToken,
   buildMomentContentWithGeneratedImages,
   collectGeneratedImageAssetsFromMessages,
 } from './media-generation-adapter-utils.js';
@@ -4341,12 +4342,146 @@ Phase G（Frame 36）：循环衔接
     },
     logger,
   });
+  const MAX_AUTO_IMAGE_PROMPTS_PER_SOURCE = 10;
+  const normalizeAutoImageGenerationConcurrency = (value) => {
+    const raw = Math.trunc(Number(value));
+    return Number.isFinite(raw) ? Math.max(1, raw) : 5;
+  };
+  const getAutoImageGenerationConcurrencyLimit = () => {
+    try {
+      return normalizeAutoImageGenerationConcurrency(appSettings.get().autoImagePromptMaxConcurrency);
+    } catch {
+      return 5;
+    }
+  };
+  const makeAbortError = (message = '图片生成已取消') => {
+    try {
+      return new DOMException(message, 'AbortError');
+    } catch {
+      const err = new Error(message);
+      err.name = 'AbortError';
+      return err;
+    }
+  };
+  const getImageGenerationErrorText = (err) => String(err?.message || err || '未知错误').trim() || '未知错误';
+  const getImageGenerationBriefError = (err) => {
+    const text = getImageGenerationErrorText(err).replace(/\s+/g, ' ');
+    return text.length > 120 ? `${text.slice(0, 120)}...` : text;
+  };
+  const getImageGenerationTokenError = (err) =>
+    getImageGenerationBriefError(err).replace(/[\[\]\r\n]/g, ' ').trim() || '未知错误';
+  const buildMomentImageErrorToken = (err) => {
+    const payload = {
+      brief: getImageGenerationTokenError(err),
+      detail: getImageGenerationErrorText(err),
+    };
+    return `[img-error-${encodeURIComponent(JSON.stringify(payload))}]`;
+  };
+  const autoImageGenerationQueue = [];
+  let autoImageGenerationActiveCount = 0;
+  const pumpAutoImageGenerationQueue = () => {
+    const limit = getAutoImageGenerationConcurrencyLimit();
+    while (autoImageGenerationActiveCount < limit && autoImageGenerationQueue.length) {
+      const task = autoImageGenerationQueue.shift();
+      if (!task || typeof task.run !== 'function') continue;
+      autoImageGenerationActiveCount += 1;
+      Promise.resolve()
+        .then(task.run)
+        .then(task.resolve, task.reject)
+        .finally(() => {
+          autoImageGenerationActiveCount = Math.max(0, autoImageGenerationActiveCount - 1);
+          pumpAutoImageGenerationQueue();
+        });
+    }
+  };
+  const enqueueAutoImageGeneration = (run) => new Promise((resolve, reject) => {
+    autoImageGenerationQueue.push({ run, resolve, reject });
+    pumpAutoImageGenerationQueue();
+  });
+  window.addEventListener?.('app-settings-changed', (event) => {
+    if (event?.detail?.key === 'autoImagePromptMaxConcurrency') pumpAutoImageGenerationQueue();
+  });
   const momentAutoImageGenerationKeys = new Set();
   const getMomentImageAttachmentSessionId = () => 'moments_generated_images';
+  const buildMomentAutoImagePendingToken = (index = 0) =>
+    `[img-图片生成中${index > 0 ? ` ${index + 1}` : ''}]`;
+  const replaceFirstText = (source = '', needle = '', replacement = '') => {
+    const text = String(source || '');
+    const target = String(needle || '');
+    if (!target) return '';
+    const index = text.indexOf(target);
+    if (index < 0) return '';
+    return `${text.slice(0, index)}${replacement}${text.slice(index + target.length)}`;
+  };
+  const isAutoImagePromptSettingEnabled = () => {
+    try {
+      return appSettings.get().autoImagePromptEnabled === true;
+    } catch {
+      return false;
+    }
+  };
+  const patchMomentAutoImagePendingToken = (momentId = '', pendingToken = '', replacement = '') => {
+    const current = momentsStore.get(momentId);
+    if (!current || !pendingToken) return false;
+    const baseContent = stripAutoImagePromptTags(String(current.content || '')).trim();
+    const nextContent = replaceFirstText(baseContent, pendingToken, replacement);
+    if (!nextContent) return false;
+    momentsStore.upsert({ id: momentId, content: nextContent });
+    if (activePage === 'moments') momentsPanel?.render?.();
+    return true;
+  };
+  const normalizeMomentGeneratedImageAsset = (asset = {}, extra = {}) => {
+    const output = asset?.output && typeof asset.output === 'object' ? asset.output : {};
+    const path = String(output.path || '').trim();
+    const url = String(output.url || output.dataUrl || '').trim();
+    const dataUrl = String(output.dataUrl || '').trim();
+    if (!path && !url && !dataUrl) return null;
+    return {
+      id: String(asset.id || path || url || dataUrl.slice(0, 80)).trim(),
+      kind: 'image',
+      provider: String(asset.provider || '').trim(),
+      model: String(asset.model || '').trim(),
+      prompt: String(asset.prompt || '').trim(),
+      output: {
+        path,
+        url: String(output.url || '').trim(),
+        dataUrl,
+        mime: String(output.mime || '').trim(),
+        bytes: Number(output.bytes || 0) || 0,
+      },
+      status: 'succeeded',
+      token: String(extra.token || buildGeneratedImageToken(asset) || '').trim(),
+      sourceMomentId: String(extra.sourceMomentId || '').trim(),
+      createdAt: Number(asset.createdAt || Date.now()) || Date.now(),
+    };
+  };
+  const mergeMomentGeneratedImages = (moment = {}, assets = []) => {
+    const existing = Array.isArray(moment?.generatedImages) ? moment.generatedImages : [];
+    const out = [];
+    const seen = new Set();
+    [...existing, ...(Array.isArray(assets) ? assets : [])].forEach((asset) => {
+      const normalized = normalizeMomentGeneratedImageAsset(asset, {
+        sourceMomentId: moment?.id,
+        token: asset?.token,
+      });
+      if (!normalized) return;
+      const key = normalized.id || normalized.output.path || normalized.output.url || normalized.output.dataUrl.slice(0, 80);
+      if (key && seen.has(key)) return;
+      if (key) seen.add(key);
+      out.push(normalized);
+    });
+    return out;
+  };
   const prepareMomentAutoImagePrompt = (moment = {}) => {
     const content = String(moment?.content || '');
-    const prompt = String(extractAutoImagePrompts(content, { max: 1 })[0] || '').trim();
-    const nextContent = stripAutoImagePromptTags(content).replace(/\n{3,}/g, '\n\n').trim();
+    const prompts = isAutoImagePromptSettingEnabled()
+      ? extractAutoImagePrompts(content, { max: MAX_AUTO_IMAGE_PROMPTS_PER_SOURCE, dedupe: false })
+      .map(item => String(item || '').trim())
+      .filter(Boolean)
+      : [];
+    const pendingTokens = prompts.map((_, index) => buildMomentAutoImagePendingToken(index));
+    const bodyContent = stripAutoImagePromptTags(content).replace(/\n{3,}/g, '\n\n').trim();
+    const nextContent = [bodyContent, ...pendingTokens].filter(Boolean).join('\n');
     const nextMoment = {
       ...(moment || {}),
       content: nextContent,
@@ -4356,21 +4491,28 @@ Phase G（Frame 36）：循环衔接
     }
     return {
       moment: nextMoment,
-      prompt,
+      prompts: prompts.map((prompt, index) => ({
+        prompt,
+        pendingToken: pendingTokens[index] || buildMomentAutoImagePendingToken(index),
+      })),
     };
   };
-  const scheduleMomentAutoImageGeneration = ({ moment = {}, prompt = '' } = {}) => {
+  const scheduleMomentAutoImageGeneration = ({ moment = {}, prompt = '', pendingToken = '' } = {}) => {
     const momentId = String(moment?.id || '').trim();
     const imagePrompt = String(prompt || '').trim();
     if (!momentId || !imagePrompt) return false;
-    if (appSettings.get().autoImagePromptEnabled !== true) return false;
-    const key = `${momentId}::${imagePrompt.toLowerCase()}`;
+    if (appSettings.get().autoImagePromptEnabled !== true) {
+      patchMomentAutoImagePendingToken(momentId, pendingToken, buildMomentImageErrorToken('自动生图已关闭'));
+      return false;
+    }
+    const key = `${momentId}::${String(pendingToken || imagePrompt).toLowerCase()}`;
     if (momentAutoImageGenerationKeys.has(key)) return false;
     momentAutoImageGenerationKeys.add(key);
     setTimeout(async () => {
       try {
         const config = await loadImageRuntimeConfig({ includeDraft: true });
         if (!canInitClient(config)) {
+          patchMomentAutoImagePendingToken(momentId, pendingToken, buildMomentImageErrorToken('图片配置不可用'));
           logger.debug?.('moment auto image generation skipped: image config not ready');
           return;
         }
@@ -4380,7 +4522,7 @@ Phase G（Frame 36）：循环衔接
           config,
           preset: imageParamsPreset,
         });
-        const asset = await mediaGenerationService.generateImage({
+        const asset = await enqueueAutoImageGeneration(() => mediaGenerationService.generateImage({
           prompt: imagePrompt,
           config,
           sessionId: getMomentImageAttachmentSessionId(),
@@ -4390,15 +4532,20 @@ Phase G（Frame 36）：循环衔接
             sourceMomentId: momentId,
           },
           options: generationOptions,
-        });
+        }));
+        const generatedToken = buildGeneratedImageToken(asset);
         const current = momentsStore.get(momentId);
         if (!current) return;
         const baseContent = stripAutoImagePromptTags(String(current.content || '')).trim();
-        const nextContent = buildMomentContentWithGeneratedImages(baseContent, [asset]);
+        const nextContent = generatedToken && pendingToken
+          ? (replaceFirstText(baseContent, pendingToken, generatedToken) || buildMomentContentWithGeneratedImages(baseContent, [asset]))
+          : buildMomentContentWithGeneratedImages(baseContent, [asset]);
         if (!nextContent) return;
-        momentsStore.upsert({ id: momentId, content: nextContent });
+        const generatedImages = mergeMomentGeneratedImages(current, [{ ...asset, token: generatedToken }]);
+        momentsStore.upsert({ id: momentId, content: nextContent, generatedImages });
         if (activePage === 'moments') momentsPanel?.render?.();
       } catch (err) {
+        patchMomentAutoImagePendingToken(momentId, pendingToken, buildMomentImageErrorToken(err));
         logger.warn('moment auto image generation failed', err);
       } finally {
         momentAutoImageGenerationKeys.delete(key);
@@ -4410,8 +4557,16 @@ Phase G（Frame 36）：循环衔接
     const prepared = (Array.isArray(items) ? items : []).map(prepareMomentAutoImagePrompt);
     const saved = momentsStore.addMany(prepared.map(item => item.moment));
     saved.forEach((moment, index) => {
-      const prompt = prepared[index]?.prompt || '';
-      if (prompt) scheduleMomentAutoImageGeneration({ moment, prompt });
+      const prompts = Array.isArray(prepared[index]?.prompts) ? prepared[index].prompts : [];
+      prompts.forEach(item => {
+        if (item?.prompt) {
+          scheduleMomentAutoImageGeneration({
+            moment,
+            prompt: item.prompt,
+            pendingToken: item.pendingToken,
+          });
+        }
+      });
     });
     return saved;
   };
@@ -11991,6 +12146,7 @@ Phase G（Frame 36）：循环衔接
 	      <div class="sheet-header">动态菜单</div>
 	      <div class="sheet-desc">动态相关操作</div>
 	      <button data-action="publish-moment">📝 发布动态</button>
+	      <button data-action="moment-album">🖼️ 相册</button>
 	      <button data-action="moment-summary">📘 动态摘要</button>
 	      <button data-action="raw-reply">🧾 原始回复</button>
 	    `;
@@ -11998,6 +12154,7 @@ Phase G（Frame 36）：循环衔接
 	      const action = e?.target?.closest ? e.target.closest('button')?.dataset?.action : '';
 	      if (!action) return;
 	      if (action === 'publish-moment') openMomentComposeModal();
+	      if (action === 'moment-album') openGeneratedImageAlbumPanel({ surface: 'moments' });
 	      if (action === 'moment-summary') momentSummaryPanel.show();
 	      if (action === 'raw-reply') showMomentRawReply();
 	      hideMenus();
@@ -13126,6 +13283,7 @@ Phase G（Frame 36）：循环衔接
 	    generationParamOverrides = {},
 	    targetSessionId = '',
 	    autoGenerated = false,
+	    reuseAutoImageSource = true,
 	  } = {}) => {
 	    const imagePrompt = String(prompt || '').trim();
 	    if (!imagePrompt) return false;
@@ -13158,7 +13316,9 @@ Phase G（Frame 36）：循环衔接
 	      sourceMessage,
 	    });
 	    const sourceMessageId = sender.sourceMessageId;
-	    const reuseSourceMessage = Boolean(autoGenerated && sourceMessageId && isAutoImagePromptOnlyMessage(sourceMessage));
+	    const reuseSourceMessage = Boolean(
+	      autoGenerated && reuseAutoImageSource && sourceMessageId && isAutoImagePromptOnlyMessage(sourceMessage)
+	    );
 	    const pendingMeta = {
 	      ...(reuseSourceMessage ? (sourceMessage?.meta || {}) : {}),
 	      hideAvatar: reuseSourceMessage ? false : sender.hideAvatar,
@@ -13206,7 +13366,9 @@ Phase G（Frame 36）：循环衔接
     const controller = new AbortController();
     chatImageGenerationControllers.set(savedPending.id, controller);
     try {
-      const asset = await mediaGenerationService.generateImage({
+      const runImageRequest = () => {
+        if (controller.signal.aborted) throw makeAbortError();
+        return mediaGenerationService.generateImage({
         prompt: imagePrompt,
         config,
 	        sessionId,
@@ -13218,6 +13380,10 @@ Phase G（Frame 36）：循环衔接
 	        options: generationOptions,
 	        signal: controller.signal,
 	      });
+      };
+      const asset = autoGenerated
+        ? await enqueueAutoImageGeneration(runImageRequest)
+        : await runImageRequest();
 	      const imagePatch = buildGeneratedImageMessagePatch(asset, {
 	        sourceMessageId,
 	        surface: mediaSurface,
@@ -13248,10 +13414,12 @@ Phase G（Frame 36）：循环衔接
 	      return true;
 	    } catch (err) {
 	      const aborted = controller.signal.aborted || err?.name === 'AbortError';
+	      const briefError = getImageGenerationBriefError(err);
+	      const detailError = getImageGenerationErrorText(err);
 	      patchChatImageGenerationMessage(savedPending.id, {
 	        role: sender.role,
 	        type: 'text',
-	        content: aborted ? surfaceCopy.cancelledText : `${surfaceCopy.failedText}：${err?.message || '未知错误'}`,
+	        content: aborted ? surfaceCopy.cancelledText : `${surfaceCopy.failedText}：${briefError}`,
 	        name: sender.name,
 	        avatar: sender.avatar,
 	        time: formatNowTime(),
@@ -13262,7 +13430,7 @@ Phase G（Frame 36）：循环衔接
           generatedMedia: {
             ...(savedPending.meta?.generatedMedia || {}),
             status: aborted ? 'cancelled' : 'failed',
-            error: aborted ? '' : String(err?.message || err || ''),
+            error: aborted ? '' : detailError,
           },
         },
 	      }, sessionId);
@@ -13290,13 +13458,15 @@ Phase G（Frame 36）：循环衔接
 	    const seedPrompt = String(initialPrompt || '').trim() || fallbackPrompt;
 	    const referenceCapability = await loadImageReferenceCapability();
 	    const generationParamContext = await loadImageGenerationParamContext();
-	    const modalResult = await getChatImagePromptModal().open({
+	      const modalResult = await getChatImagePromptModal().open({
 	      initialPrompt: seedPrompt,
 	      title: surfaceCopy.title,
 	      subtitle: surfaceCopy.subtitle,
 	      submitText: surfaceCopy.submitText,
-	      secondaryText: showWritingAssets ? '插图素材' : '',
-	      onSecondary: showWritingAssets ? () => openWritingAssetPanel() : null,
+	      secondaryText: showWritingAssets ? '插图素材' : (mediaSurface === 'chat' ? '相册' : ''),
+	      onSecondary: showWritingAssets
+	        ? () => openWritingAssetPanel()
+	        : (mediaSurface === 'chat' ? () => openGeneratedImageAlbumPanel({ surface: 'chat' }) : null),
 	      referenceCapability,
 	      loadReferenceCapability: loadImageReferenceCapability,
 	      generationParamContext,
@@ -13429,11 +13599,12 @@ Phase G（Frame 36）：循环衔接
     if (autoImagePromptProcessedSourceIds.has(key) || message?.meta?.autoImagePrompt?.status) return false;
     const prompts = [];
     for (const candidate of collectAutoImagePromptCandidates(message, rawText)) {
-      prompts.push(...extractAutoImagePrompts(candidate, { max: 1 }));
+      prompts.push(...extractAutoImagePrompts(candidate, { max: MAX_AUTO_IMAGE_PROMPTS_PER_SOURCE, dedupe: false }));
       if (prompts.length) break;
     }
-    const imagePrompt = String(prompts[0] || '').trim();
-    if (!imagePrompt) return false;
+    const imagePrompts = prompts.map(item => String(item || '').trim()).filter(Boolean);
+    const imagePrompt = String(imagePrompts[0] || '').trim();
+    if (!imagePrompts.length) return false;
     const guard = shouldRunAutoImagePromptGeneration({
       sessionId,
       messageId,
@@ -13454,41 +13625,52 @@ Phase G（Frame 36）：循环衔接
     patchAutoImagePromptSourceMeta(message, sessionId, {
       status: 'queued',
       prompt: imagePrompt,
+      prompts: imagePrompts,
       source,
       at: Date.now(),
     });
-    setTimeout(async () => {
+    imagePrompts.forEach((prompt, index) => setTimeout(async () => {
       try {
         patchAutoImagePromptSourceMeta(message, sessionId, {
           status: 'running',
-          prompt: imagePrompt,
+          prompt,
+          prompts: imagePrompts,
+          index,
+          total: imagePrompts.length,
           source,
           at: Date.now(),
         });
         const ok = await runChatImageGeneration({
-          prompt: imagePrompt,
+          prompt,
           sourceMessage: message,
           surface: resolveMediaSurfaceForSession(sessionId),
           targetSessionId: sessionId,
           autoGenerated: true,
+          reuseAutoImageSource: index === 0,
         });
         patchAutoImagePromptSourceMeta(message, sessionId, {
           status: ok ? 'done' : 'failed',
-          prompt: imagePrompt,
+          prompt,
+          prompts: imagePrompts,
+          index,
+          total: imagePrompts.length,
           source,
           at: Date.now(),
         });
       } catch (err) {
         patchAutoImagePromptSourceMeta(message, sessionId, {
           status: 'failed',
-          prompt: imagePrompt,
+          prompt,
+          prompts: imagePrompts,
+          index,
+          total: imagePrompts.length,
           source,
           error: String(err?.message || err || ''),
           at: Date.now(),
         });
         logger.warn('auto image prompt generation failed', err);
       }
-    }, 0);
+    }, 0));
     return true;
   };
   const scheduleAutoImagePromptGenerationFromLastRaw = (targetSessionId = '') => {
@@ -13565,6 +13747,234 @@ Phase G（Frame 36）：循环衔接
 	    return collectGeneratedImageAssetsFromMessages(chatStore.getMessages(sessionId), { surface: 'writing' })
 	      .filter(asset => resolveGeneratedImagePreviewUrl(asset))
 	      .reverse();
+	  };
+	  const formatGeneratedImageAlbumTime = (value = 0) => {
+	    const n = Number(value);
+	    if (!Number.isFinite(n) || n <= 0) return '';
+	    try {
+	      return new Date(n).toLocaleString([], {
+	        month: '2-digit',
+	        day: '2-digit',
+	        hour: '2-digit',
+	        minute: '2-digit',
+	      });
+	    } catch {
+	      return '';
+	    }
+	  };
+	  const collectChatImageAlbumAssetsForCurrentSession = () => {
+	    const sessionId = String(chatStore.getCurrent() || '').trim();
+	    if (!sessionId) return [];
+	    return collectGeneratedImageAssetsFromMessages(chatStore.getMessages(sessionId), { surface: 'chat' })
+	      .filter(asset => resolveGeneratedImagePreviewUrl(asset))
+	      .reverse()
+	      .map(asset => ({
+	        ...asset,
+	        albumId: String(asset.id || asset.messageId || resolveGeneratedImagePreviewUrl(asset)),
+	        sourceLabel: '聊天图片',
+	      }));
+	  };
+	  const collectMomentImageAlbumAssetsForCurrentScope = () => {
+	    return momentsStore.list()
+	      .flatMap(moment => {
+	        const momentId = String(moment?.id || '').trim();
+	        return (Array.isArray(moment?.generatedImages) ? moment.generatedImages : [])
+	          .map((asset, index) => ({
+	            ...asset,
+	            albumId: `${momentId || 'moment'}::${String(asset?.id || index)}`,
+	            sourceMomentId: momentId,
+	            sourceLabel: [moment?.author, moment?.time].filter(Boolean).join(' · ') || '动态配图',
+	          }));
+	      })
+	      .filter(asset => resolveGeneratedImagePreviewUrl(asset))
+	      .sort((a, b) => (Number(b.createdAt || 0) || 0) - (Number(a.createdAt || 0) || 0));
+	  };
+	  const generatedImageAlbumPanel = (() => {
+	    let overlay = null;
+	    let titleEl = null;
+	    let subtitleEl = null;
+	    let countEl = null;
+	    let listEl = null;
+	    let detailEl = null;
+	    let detailImageEl = null;
+	    let detailPromptEl = null;
+	    let detailMetaEl = null;
+	    let detailCopyBtn = null;
+	    let activeDetailAsset = null;
+	    let lastAssets = [];
+	    let lastOptions = {};
+	    const ensure = () => {
+	      if (overlay) return;
+	      overlay = document.createElement('div');
+	      overlay.id = 'generated-image-album-overlay';
+	      overlay.className = 'writing-media-assets-overlay';
+	      overlay.innerHTML = `
+	        <div class="writing-media-assets-panel" role="dialog" aria-modal="true" aria-labelledby="generated-image-album-title">
+	          <div class="writing-media-assets-header">
+	            <div>
+	              <div id="generated-image-album-title" class="writing-media-assets-title">相册</div>
+	              <div class="writing-media-assets-subtitle">当前会话生成的图片与提示词</div>
+	            </div>
+	            <button type="button" class="writing-media-assets-close" aria-label="关闭">×</button>
+	          </div>
+	          <div class="writing-media-assets-toolbar">
+	            <span class="writing-media-assets-count"></span>
+	          </div>
+	          <div class="writing-media-assets-list"></div>
+	        </div>
+	        <div class="generated-image-album-detail" hidden>
+	          <div class="generated-image-album-detail-card" role="dialog" aria-modal="true" aria-labelledby="generated-image-album-detail-title">
+	            <div class="generated-image-album-detail-header">
+	              <div>
+	                <div id="generated-image-album-detail-title" class="generated-image-album-detail-title">图片详情</div>
+	                <div class="generated-image-album-detail-meta"></div>
+	              </div>
+	              <button type="button" class="generated-image-album-detail-close" aria-label="关闭">×</button>
+	            </div>
+	            <div class="generated-image-album-detail-body">
+	              <img class="generated-image-album-detail-image" alt="生成图片">
+	              <div class="generated-image-album-detail-prompt-wrap">
+	                <div class="generated-image-album-detail-label">完整提示词</div>
+	                <pre class="generated-image-album-detail-prompt"></pre>
+	              </div>
+	            </div>
+	            <div class="generated-image-album-detail-actions">
+	              <button type="button" data-action="copy-detail-prompt">复制提示词</button>
+	            </div>
+	          </div>
+	        </div>
+	      `;
+	      document.body.appendChild(overlay);
+	      titleEl = overlay.querySelector('.writing-media-assets-title');
+	      subtitleEl = overlay.querySelector('.writing-media-assets-subtitle');
+	      countEl = overlay.querySelector('.writing-media-assets-count');
+	      listEl = overlay.querySelector('.writing-media-assets-list');
+	      detailEl = overlay.querySelector('.generated-image-album-detail');
+	      detailImageEl = overlay.querySelector('.generated-image-album-detail-image');
+	      detailPromptEl = overlay.querySelector('.generated-image-album-detail-prompt');
+	      detailMetaEl = overlay.querySelector('.generated-image-album-detail-meta');
+	      detailCopyBtn = overlay.querySelector('[data-action="copy-detail-prompt"]');
+	      overlay.querySelector('.writing-media-assets-close')?.addEventListener('click', () => overlay.classList.remove('is-active'));
+	      overlay.querySelector('.generated-image-album-detail-close')?.addEventListener('click', () => {
+	        if (detailEl) detailEl.hidden = true;
+	        activeDetailAsset = null;
+	      });
+	      detailEl?.addEventListener('click', event => {
+	        if (event.target === detailEl) {
+	          detailEl.hidden = true;
+	          activeDetailAsset = null;
+	        }
+	      });
+	      overlay.addEventListener('click', event => {
+	        if (event.target === overlay) overlay.classList.remove('is-active');
+	      });
+	      const openDetail = (asset = {}) => {
+	        const url = resolveGeneratedImagePreviewUrl(asset);
+	        if (!detailEl || !url) return;
+	        activeDetailAsset = asset;
+	        const prompt = String(asset.prompt || '').trim();
+	        const model = [asset.provider, asset.model].filter(Boolean).join(' · ') || '图片模型';
+	        const time = formatGeneratedImageAlbumTime(asset.createdAt);
+	        const source = String(asset.sourceLabel || '').trim();
+	        if (detailImageEl) {
+	          detailImageEl.src = url;
+	          detailImageEl.alt = prompt || '生成图片';
+	        }
+	        if (detailPromptEl) detailPromptEl.textContent = prompt || '（无提示词）';
+	        if (detailMetaEl) detailMetaEl.textContent = [model, source, time].filter(Boolean).join(' · ');
+	        if (detailCopyBtn) detailCopyBtn.disabled = !prompt;
+	        detailEl.hidden = false;
+	      };
+	      overlay.addEventListener('click', async event => {
+	        const btn = event.target?.closest?.('button[data-action]');
+	        if (btn) {
+	          const assetId = btn.closest('[data-asset-id]')?.dataset?.assetId || '';
+	          const asset = btn.dataset.action === 'copy-detail-prompt'
+	            ? activeDetailAsset
+	            : lastAssets.find(item => String(item.albumId || item.id || '') === assetId);
+	          if (!asset) return;
+	          if (btn.dataset.action === 'copy-prompt' || btn.dataset.action === 'copy-detail-prompt') {
+	            const ok = await ui.copyToClipboard(String(asset.prompt || ''));
+	            ok ? window.toastr?.success?.('已复制提示词') : window.toastr?.warning?.('复制失败');
+	          }
+	          return;
+	        }
+	        const detailImage = event.target?.closest?.('.generated-image-album-detail-image');
+	        if (detailImage && detailImage.src) {
+	          ui.openLightbox?.(detailImage.src);
+	          return;
+	        }
+	        const card = event.target?.closest?.('.writing-media-asset-card[data-asset-id]');
+	        if (!card) return;
+	        const asset = lastAssets.find(item => String(item.albumId || item.id || '') === String(card.dataset.assetId || ''));
+	        if (asset) openDetail(asset);
+	      });
+	    };
+	    const render = () => {
+	      ensure();
+	      const title = String(lastOptions.title || '相册');
+	      const subtitle = String(lastOptions.subtitle || '当前会话生成的图片与提示词');
+	      if (titleEl) titleEl.textContent = title;
+	      if (subtitleEl) subtitleEl.textContent = subtitle;
+	      if (countEl) countEl.textContent = lastAssets.length ? `${lastAssets.length} 张图片` : '暂无图片';
+	      if (!listEl) return;
+	      if (!lastAssets.length) {
+	        listEl.innerHTML = `<div class="writing-media-assets-empty">${escapeHtml(lastOptions.emptyText || '还没有生成图片。')}</div>`;
+	        return;
+	      }
+	      listEl.innerHTML = lastAssets.map(asset => {
+	        const url = resolveGeneratedImagePreviewUrl(asset);
+	        const prompt = String(asset.prompt || '').trim();
+	        const model = [asset.provider, asset.model].filter(Boolean).join(' · ') || '图片模型';
+	        const time = formatGeneratedImageAlbumTime(asset.createdAt);
+	        const source = String(asset.sourceLabel || '').trim();
+	        return `
+	          <div class="writing-media-asset-card" data-asset-id="${escapeHtml(String(asset.albumId || asset.id || ''))}">
+	            <img src="${escapeHtml(url)}" alt="${escapeHtml(prompt || '生成图片')}" data-preview-url="${escapeHtml(url)}">
+	            <div class="writing-media-asset-meta">
+	              <div class="writing-media-asset-prompt">${escapeHtml(prompt || '（无提示词）')}</div>
+	              <div class="writing-media-asset-model">${escapeHtml([model, source, time].filter(Boolean).join(' · '))}</div>
+	            </div>
+	            <div class="writing-media-asset-actions">
+	              <button type="button" data-action="copy-prompt" ${prompt ? '' : 'disabled'}>复制提示词</button>
+	            </div>
+	          </div>
+	        `;
+	      }).join('');
+	    };
+	    return {
+	      open(options = {}) {
+	        ensure();
+	        lastOptions = options || {};
+	        lastAssets = typeof options.collect === 'function' ? options.collect() : [];
+	        render();
+	        overlay.classList.add('is-active');
+	      },
+	      render,
+	    };
+	  })();
+	  const openGeneratedImageAlbumPanel = ({ surface = 'chat' } = {}) => {
+	    if (surface === 'moments') {
+	      generatedImageAlbumPanel.open({
+	        title: '动态相册',
+	        subtitle: '当前动态作用域中生成的图片与提示词',
+	        emptyText: '还没有动态生成图片。',
+	        collect: collectMomentImageAlbumAssetsForCurrentScope,
+	      });
+	      return true;
+	    }
+	    const sessionId = String(chatStore.getCurrent() || '').trim();
+	    if (!sessionId) {
+	      window.toastr?.warning?.('请先进入一个聊天室');
+	      return false;
+	    }
+	    generatedImageAlbumPanel.open({
+	      title: '相册',
+	      subtitle: '当前聊天室生成的图片与提示词',
+	      emptyText: '当前聊天室还没有生成图片。',
+	      collect: collectChatImageAlbumAssetsForCurrentSession,
+	    });
+	    return true;
 	  };
 	  const writingAssetPanel = (() => {
 	    let overlay = null;
@@ -13775,6 +14185,9 @@ Phase G（Frame 36）：循环衔接
 	        comments: [],
 	        signature: `local:${String(user?.id || 'me')}:${timestamp}`,
 	      }, { regexMode: 'input', depth: 0, appBridge: window.appBridge });
+	      record.generatedImages = assets
+	        .map(asset => normalizeMomentGeneratedImageAsset(asset, { sourceMomentId: record.id }))
+	        .filter(Boolean);
 	      momentsStore.upsert(record);
 	      momentsPanel?.render?.({ preserveScroll: false });
 	      window.toastr?.success?.('动态已发布');

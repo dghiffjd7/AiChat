@@ -4875,6 +4875,8 @@ body,
 .moments-topbar {
   justify-content: space-between;
   align-items: center;
+  min-height: calc(env(safe-area-inset-top, 0px) + 54px);
+  box-sizing: border-box;
 }
 
 .moments-title {

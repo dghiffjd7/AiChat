@@ -76,7 +76,7 @@ export const resolveMomentDisplayText = (record, { fallbackMode = 'output' } = {
 export const renderMomentTextWithStickers = (raw = '') => {
   const input = normalizeMomentInlineBreaks(raw);
   if (!input) return '';
-  const tokenRe = /\[bqb-([\s\S]+?)\]/gi;
+  const tokenRe = /\[(bqb|img-error)-([\s\S]+?)\]/gi;
   let output = '';
   let lastIndex = 0;
 
@@ -97,11 +97,24 @@ export const renderMomentTextWithStickers = (raw = '') => {
     output += '<br>';
   };
 
+  const appendImageError = (payload) => {
+    let data = null;
+    try {
+      const parsed = JSON.parse(decodeURIComponent(String(payload || '')));
+      if (parsed && typeof parsed === 'object') data = parsed;
+    } catch {}
+    const brief = String(data?.brief || '图片生成失败').trim();
+    const detail = String(data?.detail || brief).trim();
+    output += `<details class="moment-media-error"><summary>${escapeMomentHtml(`图片生成失败：${brief}`)}</summary><pre>${escapeMomentHtml(detail)}</pre></details>`;
+  };
+
   let match;
   while ((match = tokenRe.exec(input))) {
     appendText(input.slice(lastIndex, match.index));
-    const payload = String(match[1] || '').trim();
-    if (payload) appendSticker(payload, match[0]);
+    const type = String(match[1] || '').toLowerCase();
+    const payload = String(match[2] || '').trim();
+    if (type === 'img-error') appendImageError(payload);
+    else if (payload) appendSticker(payload, match[0]);
     else appendText(match[0]);
     lastIndex = tokenRe.lastIndex;
   }
