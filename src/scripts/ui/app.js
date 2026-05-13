@@ -397,6 +397,7 @@ import { parseSpecialMessage } from './chat/message-parser.js';
 import {
   buildImagePromptModelHintFromConfig,
   extractAutoImagePrompts,
+  shouldAllowAutoImagePromptByRateLimit,
   stripAutoImagePromptTags,
 } from './chat/auto-image-prompt-utils.js';
 import { runCommand, getCommandList } from './command-runner.js';
@@ -1905,6 +1906,7 @@ const initApp = async () => {
 
   let requestMomentSummaryCompaction = () => Promise.resolve(false);
   let momentsPanel = null;
+  let addMomentsWithAutoImage = (items = []) => momentsStore.addMany(items);
   const momentCommentRuntime = createMomentCommentLifecycleRuntime({
     getIsConfigured: () => isBridgeConfigured(window.appBridge),
     isOnline: () => typeof navigator === 'undefined' || navigator.onLine,
@@ -1922,7 +1924,7 @@ const initApp = async () => {
     normalizeInitialMomentStats,
     normalizeMomentRecord: normalizeMomentRecordForStore,
     normalizeMomentComments: normalizeMomentCommentsForStore,
-    addMoments: list => momentsStore.addMany(list),
+    addMoments: list => addMomentsWithAutoImage(list),
     addMomentComments: (momentId, comments) => momentsStore.addComments(momentId, comments),
     bumpMomentEngagement,
     parseSpecialMessage,
@@ -4339,6 +4341,80 @@ Phase G（Frame 36）：循环衔接
     },
     logger,
   });
+  const momentAutoImageGenerationKeys = new Set();
+  const getMomentImageAttachmentSessionId = () => 'moments_generated_images';
+  const prepareMomentAutoImagePrompt = (moment = {}) => {
+    const content = String(moment?.content || '');
+    const prompt = String(extractAutoImagePrompts(content, { max: 1 })[0] || '').trim();
+    const nextContent = stripAutoImagePromptTags(content).replace(/\n{3,}/g, '\n\n').trim();
+    const nextMoment = {
+      ...(moment || {}),
+      content: nextContent,
+    };
+    if (typeof nextMoment.signature === 'string') {
+      nextMoment.signature = `${nextMoment.author || ''}\u0000${nextContent || ''}\u0000${nextMoment.time || ''}`;
+    }
+    return {
+      moment: nextMoment,
+      prompt,
+    };
+  };
+  const scheduleMomentAutoImageGeneration = ({ moment = {}, prompt = '' } = {}) => {
+    const momentId = String(moment?.id || '').trim();
+    const imagePrompt = String(prompt || '').trim();
+    if (!momentId || !imagePrompt) return false;
+    if (appSettings.get().autoImagePromptEnabled !== true) return false;
+    const key = `${momentId}::${imagePrompt.toLowerCase()}`;
+    if (momentAutoImageGenerationKeys.has(key)) return false;
+    momentAutoImageGenerationKeys.add(key);
+    setTimeout(async () => {
+      try {
+        const config = await loadImageRuntimeConfig({ includeDraft: true });
+        if (!canInitClient(config)) {
+          logger.debug?.('moment auto image generation skipped: image config not ready');
+          return;
+        }
+        await imageGenerationParamsStore.ready;
+        const imageParamsPreset = imageGenerationParamsStore.getActive();
+        const generationOptions = mergeImageGenerationRequestOptions({
+          config,
+          preset: imageParamsPreset,
+        });
+        const asset = await mediaGenerationService.generateImage({
+          prompt: imagePrompt,
+          config,
+          sessionId: getMomentImageAttachmentSessionId(),
+          scope: {
+            surface: 'moments',
+            targetId: String(momentsStore.scopeId || 'default').trim() || 'default',
+            sourceMomentId: momentId,
+          },
+          options: generationOptions,
+        });
+        const current = momentsStore.get(momentId);
+        if (!current) return;
+        const baseContent = stripAutoImagePromptTags(String(current.content || '')).trim();
+        const nextContent = buildMomentContentWithGeneratedImages(baseContent, [asset]);
+        if (!nextContent) return;
+        momentsStore.upsert({ id: momentId, content: nextContent });
+        if (activePage === 'moments') momentsPanel?.render?.();
+      } catch (err) {
+        logger.warn('moment auto image generation failed', err);
+      } finally {
+        momentAutoImageGenerationKeys.delete(key);
+      }
+    }, 0);
+    return true;
+  };
+  addMomentsWithAutoImage = (items = []) => {
+    const prepared = (Array.isArray(items) ? items : []).map(prepareMomentAutoImagePrompt);
+    const saved = momentsStore.addMany(prepared.map(item => item.moment));
+    saved.forEach((moment, index) => {
+      const prompt = prepared[index]?.prompt || '';
+      if (prompt) scheduleMomentAutoImageGeneration({ moment, prompt });
+    });
+    return saved;
+  };
 
   const pickFilesFromInput = input => {
     return new Promise(resolve => {
@@ -13252,6 +13328,15 @@ Phase G（Frame 36）：循环衔接
       return false;
     }
   };
+  const shouldRunAutoImagePromptGeneration = ({ sessionId = '', messageId = '', prompt = '' } = {}) => {
+    return shouldAllowAutoImagePromptByRateLimit({
+      messages: chatStore.getMessages(sessionId) || [],
+      messageId,
+      prompt,
+      settings: appSettings.get(),
+      checkRepeated: true,
+    });
+  };
   const collectAutoImagePromptCandidates = (message = {}, rawText = '') => {
     const candidates = [];
     const push = value => {
@@ -13259,10 +13344,6 @@ Phase G（Frame 36）：循环衔接
       if (text && !candidates.includes(text)) candidates.push(text);
     };
     push(message?.meta?.autoImagePromptRawContent);
-    push(rawText);
-    push(message?.rawOriginal);
-    push(message?.rawSource);
-    push(message?.raw);
     if (typeof message?.content === 'string') push(message.content);
     return candidates;
   };
@@ -13353,6 +13434,22 @@ Phase G（Frame 36）：循环衔接
     }
     const imagePrompt = String(prompts[0] || '').trim();
     if (!imagePrompt) return false;
+    const guard = shouldRunAutoImagePromptGeneration({
+      sessionId,
+      messageId,
+      prompt: imagePrompt,
+    });
+    if (!guard.ok) {
+      logger.debug?.(`auto image prompt skipped: ${guard.reason}`);
+      patchAutoImagePromptSourceMeta(message, sessionId, {
+        status: 'skipped',
+        prompt: imagePrompt,
+        source,
+        reason: guard.reason,
+        at: Date.now(),
+      });
+      return false;
+    }
     autoImagePromptProcessedSourceIds.add(key);
     patchAutoImagePromptSourceMeta(message, sessionId, {
       status: 'queued',
@@ -13398,11 +13495,10 @@ Phase G（Frame 36）：循环衔接
     const sid = String(targetSessionId || '').trim();
     if (!isAutoImagePromptEnabled() || !sid) return false;
     const raw = chatStore.getLastRawResponse(sid);
-    if (!extractAutoImagePrompts(raw, { max: 1 }).length) return false;
     const sourceMessage = findAutoImagePromptSourceMessageFromRaw(sid, raw) || findLastAutoImagePromptSourceMessage(sid);
     if (!sourceMessage) return false;
     return scheduleAutoImagePromptGenerationForMessage(sourceMessage, sid, {
-      rawText: raw,
+      rawText: '',
       source: 'last_raw_response',
     });
   };
@@ -13568,7 +13664,6 @@ Phase G（Frame 36）：循环衔接
 	    writingAssetPanel.open();
 	    return true;
 	  };
-	  const getMomentImageAttachmentSessionId = () => 'moments_generated_images';
 	  const momentComposeModal = (() => {
 	    let overlay = null;
 	    let textArea = null;
@@ -17316,7 +17411,7 @@ Phase G（Frame 36）：循环衔接
 
       try {
         return finalizeResult(applyProtocolMomentEvent(ev, {
-          addMoments: items => momentsStore.addMany(ingestMoments(items)),
+          addMoments: items => addMomentsWithAutoImage(ingestMoments(items)),
           addMomentComments: (momentId, comments) => momentsStore.addComments(momentId, comments),
           normalizeComments: comments => normalizeMomentCommentsForStore(comments, { regexMode: 'output', depth: 0 }),
         }));
@@ -17775,7 +17870,7 @@ Phase G（Frame 36）：循环衔接
       getActivePage: () => activePage,
       applyProtocolMomentEvent,
       ingestMoments,
-      addMoments: items => momentsStore.addMany(items),
+      addMoments: items => addMomentsWithAutoImage(items),
       addMomentComments: (momentId, comments) => momentsStore.addComments(momentId, comments),
       normalizeMomentCommentsForStore,
       renderMoments: () => momentsPanel.render(),

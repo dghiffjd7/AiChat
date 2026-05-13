@@ -18,6 +18,13 @@ const isEmptyPromptToken = (value = '') => {
   return !raw || raw === 'none' || raw === 'null' || raw === 'n/a' || raw === '无' || raw === '不需要';
 };
 
+const stripMarkdownCodeBlocks = (value = '') => String(value ?? '')
+  .replace(/```[\s\S]*?```/g, '')
+  .replace(/~~~[\s\S]*?~~~/g, '');
+
+const stripReasoningLikeBlocks = (value = '') => String(value ?? '')
+  .replace(/<\s*(?:think|thinking|reasoning)(?:\s[^>]*)?\s*>[\s\S]*?<\s*\/\s*(?:think|thinking|reasoning)\s*>/gi, '');
+
 export const AUTO_IMAGE_PROMPT_TAG = IMAGE_PROMPT_TAG;
 
 export const DEFAULT_AUTO_IMAGE_PROMPT_RULES = [
@@ -25,6 +32,7 @@ export const DEFAULT_AUTO_IMAGE_PROMPT_RULES = [
   '当本轮回复适合配图、或聊天角色会自然发送图片时，在合适的位置插入一个生图提示词标签。',
   '当前图片模型：{{image_prompt_model}}',
   '提示词风格：{{image_prompt_style}}',
+  '{{image_prompt_decision_mode}}',
   '请严格按以下XML格式输出：',
   '<image_prompt>这里写完整生图提示词</image_prompt>',
   '注意事项：',
@@ -48,10 +56,108 @@ export const describeAutoImagePromptStyle = (value = '') => {
   return '自动：优先匹配当前图片模型；若无法判断，用清晰自然语言提示词。若用户明确要求 NAI/tag 风格，可用英文标签。';
 };
 
+export const describeAutoImagePromptDecisionMode = (value = '') => {
+  const mode = String(value || '').trim().toLowerCase();
+  if (mode === 'aggressive') {
+    return '触发策略：积极。视觉场景、角色自然会发送图片、创意写作出现可视化段落时，可以更主动地输出 <image_prompt>。';
+  }
+  if (mode === 'standard') {
+    return '触发策略：标准。仅在本轮回复明显适合配图、用户提到图片需求、或角色自然会发送图片时输出 <image_prompt>。';
+  }
+  return '触发策略：保守。默认不要输出图片标签；只有用户明确要求图像、场景强视觉化、角色明显自然会发送图片、或创意写作关键场景时才输出 <image_prompt>。普通闲聊、寒暄、解释、没有新视觉信息时禁止输出。';
+};
+
 export const buildImagePromptModelHintFromConfig = (config = {}) => {
   const provider = String(config?.provider || '').trim();
   const model = String(config?.model || '').trim();
   return [provider, model].filter(Boolean).join(' / ');
+};
+
+export const normalizeAutoImagePromptTextKey = (value = '') =>
+  String(value || '').trim().replace(/\s+/g, ' ').toLowerCase();
+
+export const isAutoImagePromptAssistantRoundMessage = (message = {}) => {
+  if (!message || message.role !== 'assistant') return false;
+  if (message?.meta?.kind === 'memory-table-push') return false;
+  const generated = message?.meta?.generatedMedia && typeof message.meta.generatedMedia === 'object'
+    ? message.meta.generatedMedia
+    : null;
+  if (!generated) return true;
+  const sourceId = String(generated.sourceMessageId || '').trim();
+  const messageId = String(message.id || '').trim();
+  return generated.source === 'auto_image_prompt' && sourceId && sourceId === messageId;
+};
+
+export const getAutoImagePromptAssistantOrdinal = (messages = [], messageId = '') => {
+  const targetId = String(messageId || '').trim();
+  if (!targetId) return 0;
+  let ordinal = 0;
+  for (const item of Array.isArray(messages) ? messages : []) {
+    if (isAutoImagePromptAssistantRoundMessage(item)) ordinal += 1;
+    if (String(item?.id || '') === targetId) return ordinal;
+  }
+  return ordinal;
+};
+
+export const collectAutoImagePromptGenerationHistory = (messages = []) => {
+  let ordinal = 0;
+  const ordinalById = new Map();
+  const history = [];
+  for (const item of Array.isArray(messages) ? messages : []) {
+    const itemId = String(item?.id || '').trim();
+    const isRound = isAutoImagePromptAssistantRoundMessage(item);
+    if (isRound) {
+      ordinal += 1;
+      if (itemId) ordinalById.set(itemId, ordinal);
+    }
+    const generated = item?.meta?.generatedMedia && typeof item.meta.generatedMedia === 'object'
+      ? item.meta.generatedMedia
+      : null;
+    if (!generated || generated.source !== 'auto_image_prompt') continue;
+    const sourceId = String(generated.sourceMessageId || '').trim();
+    const prompt = String(generated.prompt || '').trim();
+    history.push({
+      ordinal: (sourceId && ordinalById.get(sourceId)) || ordinal,
+      prompt,
+      key: normalizeAutoImagePromptTextKey(prompt),
+    });
+  }
+  return history;
+};
+
+export const shouldAllowAutoImagePromptByRateLimit = ({
+  messages = [],
+  messageId = '',
+  prompt = '',
+  settings = {},
+  nextAssistantTurn = false,
+  checkRepeated = true,
+} = {}) => {
+  const list = Array.isArray(messages) ? messages : [];
+  const currentOrdinal = nextAssistantTurn
+    ? list.reduce((count, item) => count + (isAutoImagePromptAssistantRoundMessage(item) ? 1 : 0), 0) + 1
+    : getAutoImagePromptAssistantOrdinal(list, messageId);
+  const promptKey = normalizeAutoImagePromptTextKey(prompt);
+  const history = collectAutoImagePromptGenerationHistory(list);
+  if (checkRepeated && settings.autoImagePromptSkipRepeated !== false && promptKey && history.some(item => item.key === promptKey)) {
+    return { ok: false, reason: 'repeated-prompt' };
+  }
+  const cooldown = Math.max(0, Math.trunc(Number(settings.autoImagePromptCooldownRounds) || 0));
+  if (cooldown > 0 && history.length) {
+    const last = history[history.length - 1];
+    if (last && currentOrdinal > 0 && currentOrdinal - last.ordinal <= cooldown) {
+      return { ok: false, reason: `cooldown-${cooldown}` };
+    }
+  }
+  const windowRounds = Math.max(0, Math.trunc(Number(settings.autoImagePromptWindowRounds) || 0));
+  const windowMax = Math.max(0, Math.trunc(Number(settings.autoImagePromptWindowMax) || 0));
+  if (windowRounds > 0 && windowMax > 0 && currentOrdinal > 0) {
+    const count = history.filter(item => currentOrdinal - item.ordinal < windowRounds).length;
+    if (count >= windowMax) {
+      return { ok: false, reason: `window-limit-${windowMax}-per-${windowRounds}` };
+    }
+  }
+  return { ok: true, reason: '' };
 };
 
 export const buildAutoImagePromptInstruction = ({
@@ -59,6 +165,7 @@ export const buildAutoImagePromptInstruction = ({
   isGroupChat = false,
   modelHint = '',
   style = 'auto',
+  decisionMode = 'conservative',
   template = '',
 } = {}) => {
   const mode = String(uiMode || '').trim().toLowerCase();
@@ -71,13 +178,14 @@ export const buildAutoImagePromptInstruction = ({
     .replace(/\{\{\s*image_prompt_surface\s*\}\}/gi, surface)
     .replace(/\{\{\s*image_prompt_model\s*\}\}/gi, targetModel)
     .replace(/\{\{\s*image_prompt_style\s*\}\}/gi, describeAutoImagePromptStyle(style))
+    .replace(/\{\{\s*image_prompt_decision_mode\s*\}\}/gi, describeAutoImagePromptDecisionMode(decisionMode))
     .replace(/\{\{\s*image_prompt_position_rule\s*\}\}/gi, '')
     .replace(/\{\{\s*image_prompt_tag\s*\}\}/gi, IMAGE_PROMPT_TAG)
     .trim();
 };
 
 export const extractAutoImagePrompts = (text = '', { max = 1, maxLength = 2000 } = {}) => {
-  const source = htmlDecodeLite(text);
+  const source = stripReasoningLikeBlocks(stripMarkdownCodeBlocks(htmlDecodeLite(text)));
   const limit = Math.max(1, Math.trunc(Number(max)) || 1);
   const lengthLimit = Math.max(80, Math.trunc(Number(maxLength)) || 2000);
   const prompts = [];

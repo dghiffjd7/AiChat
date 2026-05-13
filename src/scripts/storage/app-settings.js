@@ -51,6 +51,13 @@ const defaults = {
   promptCurrentTimeEnabled: false,
   autoImagePromptEnabled: false,
   autoImagePromptStyle: 'auto',
+  autoImagePromptDecisionMode: 'conservative',
+  autoImagePromptMomentMediaMode: 'ai',
+  autoImagePromptCooldownRounds: 0,
+  autoImagePromptWindowRounds: 0,
+  autoImagePromptWindowMax: 0,
+  autoImagePromptSkipRepeated: true,
+  autoImagePromptRateLimitDefaultsMigrated: true,
   templateEnabled: false,
   templateExecuteBeforeGenerate: true,
   templateExecuteAfterRender: true,
@@ -132,6 +139,30 @@ const migrateSettings = (settings = {}) => {
     }
     next.uiThemeSchemaVersion = defaults.uiThemeSchemaVersion;
   }
+  const imageDecisionMode = String(next.autoImagePromptDecisionMode || '').trim().toLowerCase();
+  if (!['conservative', 'standard', 'aggressive'].includes(imageDecisionMode)) {
+    next.autoImagePromptDecisionMode = defaults.autoImagePromptDecisionMode;
+  }
+  const imageMomentMediaMode = String(next.autoImagePromptMomentMediaMode || '').trim().toLowerCase();
+  if (!['placeholder', 'image_prompt', 'ai'].includes(imageMomentMediaMode)) {
+    next.autoImagePromptMomentMediaMode = defaults.autoImagePromptMomentMediaMode;
+  }
+  ['autoImagePromptCooldownRounds', 'autoImagePromptWindowRounds', 'autoImagePromptWindowMax'].forEach((key) => {
+    const raw = Math.trunc(Number(next[key]));
+    next[key] = Number.isFinite(raw) ? Math.max(0, raw) : defaults[key];
+  });
+  if (
+    next.autoImagePromptRateLimitDefaultsMigrated !== true &&
+    Number(next.autoImagePromptCooldownRounds) === 2 &&
+    Number(next.autoImagePromptWindowRounds) === 10 &&
+    Number(next.autoImagePromptWindowMax) === 2
+  ) {
+    next.autoImagePromptCooldownRounds = 0;
+    next.autoImagePromptWindowRounds = 0;
+    next.autoImagePromptWindowMax = 0;
+  }
+  next.autoImagePromptRateLimitDefaultsMigrated = true;
+  next.autoImagePromptSkipRepeated = next.autoImagePromptSkipRepeated !== false;
   next.chatDefaultColorMode = inferChatColorMode(next, defaults.chatDefaultColorMode);
   return next;
 };

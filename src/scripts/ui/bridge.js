@@ -28,7 +28,10 @@ import { appSettings } from '../storage/app-settings.js';
 import { renderTemplateMessages, templateSettings } from '../plugins/template-engine.js';
 import { getChatUI } from './chat-ui-runtime-utils.js';
 import { recordDebugTraceEvent } from './debug-ui-registry-utils.js';
-import { buildAutoImagePromptInstruction } from './chat/auto-image-prompt-utils.js';
+import {
+  buildAutoImagePromptInstruction,
+  shouldAllowAutoImagePromptByRateLimit,
+} from './chat/auto-image-prompt-utils.js';
 import {
   dispatchRuntimeHookLifecycleEvent,
   runRuntimeHookLifecycleEvent,
@@ -1664,6 +1667,49 @@ class AppBridge {
     }
   }
 
+  normalizeMomentMediaMode(value = '', autoImagePromptEnabled = false) {
+    if (!autoImagePromptEnabled) return 'placeholder';
+    const raw = String(value || '').trim().toLowerCase();
+    if (raw === 'image_prompt' || raw === 'ai' || raw === 'placeholder') return raw;
+    return 'ai';
+  }
+
+  buildMomentMediaModePrompt(mode = 'placeholder') {
+    if (mode === 'image_prompt') {
+      return [
+        '动态如果有配图,使用<image_prompt>标签格式',
+        '如{{user}}--我好看吗<image_prompt>自拍提示词</image_prompt>--12:00--67--32',
+      ].join('\n');
+    }
+    if (mode === 'ai') {
+      return [
+        '动态如果有配图,请决策要使用[img-内容]这个格式还是使用<image_prompt>标签进行文生图',
+        '如{{user}}--我好看吗[img-一张自拍]--12:00--67--32',
+        '或',
+        '{{user}}--我好看吗<image_prompt>自拍提示词</image_prompt>--12:00--67--32',
+      ].join('\n');
+    }
+    return [
+      '动态如果有配图,使用[img-内容]这个格式',
+      '如{{user}}--我好看吗[img-一张自拍]--12:00--67--32',
+    ].join('\n');
+  }
+
+  replaceMomentMediaModePrompt(content, mode = 'placeholder') {
+    const raw = String(content || '');
+    if (!raw.trim()) return raw;
+    const replacement = this.buildMomentMediaModePrompt(mode);
+    const blockRe = /动态如果有配图[^\n\r]*(?:\r?\n)如\{\{user\}\}--我好看吗[^\n\r]*(?:(?:\r?\n)或(?:\r?\n)\{\{user\}\}--我好看吗[^\n\r]*)?/;
+    if (blockRe.test(raw)) return raw.replace(blockRe, replacement);
+    if (raw.includes('但是角色发布的动态可以有路人参与评论')) {
+      return raw.replace('但是角色发布的动态可以有路人参与评论', `${replacement}\n但是角色发布的动态可以有路人参与评论`);
+    }
+    if (raw.includes('</QQ空间格式介绍>')) {
+      return raw.replace('</QQ空间格式介绍>', `${replacement}\n\n</QQ空间格式介绍>`);
+    }
+    return `${raw.replace(/\s+$/, '')}\n${replacement}`;
+  }
+
   replaceMomentPurposeBlockWithDecisionPrompt(content, decisionPrompt) {
     const raw = String(content || '');
     const prompt = String(decisionPrompt || '')
@@ -1687,6 +1733,10 @@ class AppBridge {
       .replace(/(?:\r?\n[ \t]*){3,}/g, '\n\n')
       .replace(/^(?:[ \t]*\r?\n)+/, '')
       .replace(/(?:\r?\n[ \t]*)+$/, '');
+    const momentMediaMode = this.normalizeMomentMediaMode(
+      options?.momentMediaMode,
+      options?.autoImagePromptEnabled === true,
+    );
     const out = [];
     BUILTIN_PHONE_FORMAT_CHAT_PROMPT_SPECS.forEach((spec, index) => {
       if (source?.[spec.enabledKey] === false) return;
@@ -1694,6 +1744,9 @@ class AppBridge {
         ? source[spec.rulesKey]
         : String(seed?.[spec.rulesKey] ?? '');
       let content = String(raw ?? '');
+      if (spec.rulesKey === 'phone_format_moment_rules') {
+        content = this.replaceMomentMediaModePrompt(content, momentMediaMode);
+      }
       if (spec.rulesKey === 'phone_format_moment_rules' && momentCreateRules) {
         content = this.replaceMomentPurposeBlockWithDecisionPrompt(content, momentCreateRules);
       }
@@ -3535,13 +3588,24 @@ class AppBridge {
     // 自动标签生图提示词：总开关在通用设定，具体文案和注入位置放在“聊天提示词”预设中管理。
     const autoImagePromptPresetEnabled = useSysprompt && sysp?.auto_image_prompt_enabled !== false;
     const autoImagePromptRulesRaw = typeof sysp?.auto_image_prompt_rules === 'string' ? sysp.auto_image_prompt_rules : '';
-    autoImagePromptRules = (autoImagePromptSettingEnabled && autoImagePromptPresetEnabled)
+    const autoImagePromptInjectGuard = autoImagePromptSettingEnabled
+      ? shouldAllowAutoImagePromptByRateLimit({
+        messages: this.chatStore?.getMessages?.(sessionId) || [],
+        settings: settingsSnapshot,
+        nextAssistantTurn: true,
+        checkRepeated: false,
+      })
+      : { ok: true, reason: '' };
+    if (autoImagePromptSettingEnabled && !autoImagePromptInjectGuard.ok) {
+      logger.debug?.(`auto image prompt injection skipped: ${autoImagePromptInjectGuard.reason}`);
+    }
+    autoImagePromptRules = (autoImagePromptSettingEnabled && autoImagePromptPresetEnabled && autoImagePromptInjectGuard.ok)
       ? buildAutoImagePromptInstruction({
         uiMode,
         isGroupChat,
         modelHint: context?.meta?.autoImagePromptModelHint,
         style: settingsSnapshot.autoImagePromptStyle,
-        includeTableEdit: includeTableEditInFormatReminder,
+        decisionMode: settingsSnapshot.autoImagePromptDecisionMode,
         template: processTextMacrosWithPendingFlag(autoImagePromptRulesRaw, {
           user: name1,
           char: name2,
@@ -4046,6 +4110,8 @@ const stringifyMessageContent = (content) => {
           if (!disablePhoneFormat) {
             const builtinEntries = this.buildPhoneFormatPromptEntries(syspActive, {
               momentCreateRules: shouldEmbedMomentCreateInPhoneFormat && momentCreateEnabled ? momentCreateRules : '',
+              momentMediaMode: settingsSnapshot.autoImagePromptMomentMediaMode,
+              autoImagePromptEnabled: Boolean(autoImagePromptRules),
             });
             builtinEntries.forEach(entry => captureWorldDebugEntry(worldDebugRaw.builtinEntries, entry, {
               sourceKind: 'builtin',
@@ -6309,6 +6375,8 @@ const stringifyMessageContent = (content) => {
       momentCreateRules: syspActive?.moment_create_enabled && syspActive?.phone_format_moment_enabled !== false
         ? String(syspActive?.moment_create_rules || '')
         : '',
+      momentMediaMode: appSettings.get().autoImagePromptMomentMediaMode,
+      autoImagePromptEnabled: appSettings.get().autoImagePromptEnabled === true,
     });
     const builtinPart = builtinEntries.map(e => e.content).join('\n\n');
     const globalEntries = resolvedWorldState.globalWorldId ? collectEntries(resolvedWorldState.globalWorldId) : [];

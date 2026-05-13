@@ -171,6 +171,14 @@ export class GeneralSettingsPanel {
     this.promptTimeToggle = null;
     this.autoImagePromptToggle = null;
     this.autoImagePromptStyleSelect = null;
+    this.autoImagePromptAdvancedToggle = null;
+    this.autoImagePromptAdvancedWrap = null;
+    this.autoImagePromptDecisionModeSelect = null;
+    this.autoImagePromptMomentMediaModeSelect = null;
+    this.autoImagePromptCooldownInput = null;
+    this.autoImagePromptWindowRoundsInput = null;
+    this.autoImagePromptWindowMaxInput = null;
+    this.autoImagePromptSkipRepeatedToggle = null;
     this.memoryEnabledToggle = null;
     this.memoryModeSummary = null;
     this.memoryModeTable = null;
@@ -358,6 +366,31 @@ export class GeneralSettingsPanel {
       const raw = String(settings.autoImagePromptStyle || 'auto').trim();
       const allowed = new Set(['auto', 'natural', 'nai_tags']);
       this.autoImagePromptStyleSelect.value = allowed.has(raw) ? raw : 'auto';
+    }
+    if (this.autoImagePromptDecisionModeSelect) {
+      const raw = String(settings.autoImagePromptDecisionMode || 'conservative').trim();
+      const allowed = new Set(['conservative', 'standard', 'aggressive']);
+      this.autoImagePromptDecisionModeSelect.value = allowed.has(raw) ? raw : 'conservative';
+    }
+    if (this.autoImagePromptMomentMediaModeSelect) {
+      const raw = String(settings.autoImagePromptMomentMediaMode || 'ai').trim();
+      const allowed = new Set(['placeholder', 'image_prompt', 'ai']);
+      this.autoImagePromptMomentMediaModeSelect.value = allowed.has(raw) ? raw : 'ai';
+    }
+    if (this.autoImagePromptCooldownInput) {
+      const n = Number(settings.autoImagePromptCooldownRounds);
+      this.autoImagePromptCooldownInput.value = String(Number.isFinite(n) ? Math.max(0, Math.trunc(n)) : 0);
+    }
+    if (this.autoImagePromptWindowRoundsInput) {
+      const n = Number(settings.autoImagePromptWindowRounds);
+      this.autoImagePromptWindowRoundsInput.value = String(Number.isFinite(n) ? Math.max(0, Math.trunc(n)) : 0);
+    }
+    if (this.autoImagePromptWindowMaxInput) {
+      const n = Number(settings.autoImagePromptWindowMax);
+      this.autoImagePromptWindowMaxInput.value = String(Number.isFinite(n) ? Math.max(0, Math.trunc(n)) : 0);
+    }
+    if (this.autoImagePromptSkipRepeatedToggle) {
+      this.autoImagePromptSkipRepeatedToggle.checked = settings.autoImagePromptSkipRepeated !== false;
     }
     const memoryEnabled = settings.memoryEnabled !== false;
     const memoryMode = String(settings.memoryStorageMode || 'table').toLowerCase();
@@ -784,6 +817,7 @@ export class GeneralSettingsPanel {
     };
     applyFold(this.uiAdvancedToggle, this.uiAdvancedWrap);
     applyFold(this.themeAdvancedToggle, this.themeAdvancedWrap);
+    applyFold(this.autoImagePromptAdvancedToggle, this.autoImagePromptAdvancedWrap);
     applyFold(this.memoryAdvancedToggle, this.memoryAdvancedWrap);
     applyFold(this.templateAdvancedToggle, this.templateAdvancedWrap);
     applyFold(this.scriptAdvancedToggle, this.scriptAdvancedWrap);
@@ -1641,6 +1675,7 @@ export class GeneralSettingsPanel {
               <div class="general-settings-card-title">AI 图片生成</div>
               <div class="general-settings-card-note">控制回复后自动提取标签生成图片的行为。</div>
             </div>
+            ${this.renderFoldButton('general-auto-image-prompt-advanced-toggle', '自动生图策略')}
           </div>
 
           <div class="general-settings-setting-list">
@@ -1662,6 +1697,59 @@ export class GeneralSettingsPanel {
                 </select>
               `,
             })}
+          </div>
+          <div id="general-auto-image-prompt-advanced" class="general-settings-fold-content" style="display:none;">
+            <div class="general-settings-setting-list-sub">
+              ${this.renderInputRow({
+                title: '触发策略',
+                description: '保守会减少误触发；积极更容易让角色在视觉场景中发图。',
+                icon: 'sliders',
+                control: `
+                  <select id="general-auto-image-prompt-decision-mode" class="general-settings-select">
+                    <option value="conservative">保守</option>
+                    <option value="standard">标准</option>
+                    <option value="aggressive">积极</option>
+                  </select>
+                `,
+              })}
+              ${this.renderInputRow({
+                title: '动态配图模式',
+                description: '控制动态内容里配图格式的提示方式。',
+                icon: 'palette',
+                control: `
+                  <select id="general-auto-image-prompt-moment-media-mode" class="general-settings-select">
+                    <option value="placeholder">占位图片</option>
+                    <option value="image_prompt">文生图</option>
+                    <option value="ai">AI决策</option>
+                  </select>
+                `,
+              })}
+              ${this.renderInputRow({
+                title: '冷却轮数',
+                description: '自动生图成功后，至少间隔多少个助手回复才允许再次自动生图。0 表示不限制。',
+                icon: 'history',
+                control: '<input type="number" id="general-auto-image-prompt-cooldown" class="general-settings-number-input" min="0" step="1" value="0">',
+              })}
+              ${this.renderInputRow({
+                title: '窗口轮数',
+                description: '频率限制的统计窗口。0 表示不启用窗口限制。',
+                icon: 'history',
+                control: '<input type="number" id="general-auto-image-prompt-window-rounds" class="general-settings-number-input" min="0" step="1" value="0">',
+              })}
+              ${this.renderInputRow({
+                title: '窗口内最多张数',
+                description: '在上述窗口轮数内最多允许自动生成多少张图。0 表示不限制。',
+                icon: 'palette',
+                control: '<input type="number" id="general-auto-image-prompt-window-max" class="general-settings-number-input" min="0" step="1" value="0">',
+              })}
+              ${this.renderSettingRow({
+                id: 'general-auto-image-prompt-skip-repeated',
+                title: '跳过重复提示词',
+                description: '若新提示词和最近自动生图提示词相同，则不重复生成。',
+                icon: 'reply',
+                nested: true,
+              })}
+            </div>
           </div>
         </div>
 
@@ -2082,6 +2170,14 @@ export class GeneralSettingsPanel {
     this.promptTimeToggle = this.element.querySelector('#general-prompt-time');
     this.autoImagePromptToggle = this.element.querySelector('#general-auto-image-prompt');
     this.autoImagePromptStyleSelect = this.element.querySelector('#general-auto-image-prompt-style');
+    this.autoImagePromptAdvancedToggle = this.element.querySelector('#general-auto-image-prompt-advanced-toggle');
+    this.autoImagePromptAdvancedWrap = this.element.querySelector('#general-auto-image-prompt-advanced');
+    this.autoImagePromptDecisionModeSelect = this.element.querySelector('#general-auto-image-prompt-decision-mode');
+    this.autoImagePromptMomentMediaModeSelect = this.element.querySelector('#general-auto-image-prompt-moment-media-mode');
+    this.autoImagePromptCooldownInput = this.element.querySelector('#general-auto-image-prompt-cooldown');
+    this.autoImagePromptWindowRoundsInput = this.element.querySelector('#general-auto-image-prompt-window-rounds');
+    this.autoImagePromptWindowMaxInput = this.element.querySelector('#general-auto-image-prompt-window-max');
+    this.autoImagePromptSkipRepeatedToggle = this.element.querySelector('#general-auto-image-prompt-skip-repeated');
     this.memoryEnabledToggle = this.element.querySelector('#general-memory-enabled');
     this.memoryModeSummary = this.element.querySelector('#general-memory-mode-summary');
     this.memoryModeTable = this.element.querySelector('#general-memory-mode-table');
@@ -2255,6 +2351,9 @@ export class GeneralSettingsPanel {
     });
     this.themeAdvancedToggle?.addEventListener('click', () => {
       this.toggleAdvancedSection(this.themeAdvancedToggle, this.themeAdvancedWrap);
+    });
+    this.autoImagePromptAdvancedToggle?.addEventListener('click', () => {
+      this.toggleAdvancedSection(this.autoImagePromptAdvancedToggle, this.autoImagePromptAdvancedWrap);
     });
     this.themeAvatarStyleSelect?.addEventListener('change', (e) => {
       const value = String(e?.target?.value || 'system').trim() || 'system';
@@ -2512,6 +2611,39 @@ export class GeneralSettingsPanel {
       if (e?.target) e.target.value = value;
       appSettings.update({ autoImagePromptStyle: value });
       window.dispatchEvent(new CustomEvent('app-settings-changed', { detail: { key: 'autoImagePromptStyle', value } }));
+    });
+    this.autoImagePromptDecisionModeSelect?.addEventListener('change', (e) => {
+      const raw = String(e?.target?.value || 'conservative').trim();
+      const allowed = new Set(['conservative', 'standard', 'aggressive']);
+      const value = allowed.has(raw) ? raw : 'conservative';
+      if (e?.target) e.target.value = value;
+      appSettings.update({ autoImagePromptDecisionMode: value });
+      window.dispatchEvent(new CustomEvent('app-settings-changed', { detail: { key: 'autoImagePromptDecisionMode', value } }));
+    });
+    this.autoImagePromptMomentMediaModeSelect?.addEventListener('change', (e) => {
+      const raw = String(e?.target?.value || 'ai').trim();
+      const allowed = new Set(['placeholder', 'image_prompt', 'ai']);
+      const value = allowed.has(raw) ? raw : 'ai';
+      if (e?.target) e.target.value = value;
+      appSettings.update({ autoImagePromptMomentMediaMode: value });
+      window.dispatchEvent(new CustomEvent('app-settings-changed', { detail: { key: 'autoImagePromptMomentMediaMode', value } }));
+    });
+    const bindAutoImagePromptNumber = (input, key, fallback) => {
+      input?.addEventListener('input', (e) => {
+        const raw = Math.trunc(Number(e?.target?.value));
+        const value = Number.isFinite(raw) ? Math.max(0, raw) : fallback;
+        if (e?.target) e.target.value = String(value);
+        appSettings.update({ [key]: value });
+        window.dispatchEvent(new CustomEvent('app-settings-changed', { detail: { key, value } }));
+      });
+    };
+    bindAutoImagePromptNumber(this.autoImagePromptCooldownInput, 'autoImagePromptCooldownRounds', 0);
+    bindAutoImagePromptNumber(this.autoImagePromptWindowRoundsInput, 'autoImagePromptWindowRounds', 0);
+    bindAutoImagePromptNumber(this.autoImagePromptWindowMaxInput, 'autoImagePromptWindowMax', 0);
+    this.autoImagePromptSkipRepeatedToggle?.addEventListener('change', (e) => {
+      const value = Boolean(e?.target?.checked);
+      appSettings.update({ autoImagePromptSkipRepeated: value });
+      window.dispatchEvent(new CustomEvent('app-settings-changed', { detail: { key: 'autoImagePromptSkipRepeated', value } }));
     });
 
     const applyMemoryMode = (mode) => {

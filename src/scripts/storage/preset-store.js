@@ -175,6 +175,7 @@ const DEFAULT_AUTO_IMAGE_PROMPT_RULES = [
     '当本轮回复适合配图、或聊天角色会自然发送图片时，在合适的位置插入一个生图提示词标签。',
     '当前图片模型：{{image_prompt_model}}',
     '提示词风格：{{image_prompt_style}}',
+    '{{image_prompt_decision_mode}}',
     '请严格按以下XML格式输出：',
     '<image_prompt>这里写完整生图提示词</image_prompt>',
     '注意事项：',
@@ -274,6 +275,14 @@ const looksDefaultAutoImagePromptRulesForMigration = (value) => {
     if (raw.includes('输出一个生图提示词标签') && raw.includes('<image_prompt>')) return true;
     if (compact.includes('MiPhone_end') && compact.includes('<image_prompt>')) return true;
     if (compact.includes('<tableEdit>') && compact.includes('<image_prompt>')) return true;
+    if (
+        raw.includes('自动生图标签规则，用于生成{{image_prompt_surface}}') &&
+        raw.includes('提示词风格：{{image_prompt_style}}') &&
+        raw.includes('<image_prompt>这里写完整生图提示词</image_prompt>') &&
+        !raw.includes('{{image_prompt_decision_mode}}')
+    ) {
+        return true;
+    }
     return raw.includes('{{image_prompt_position_rule}}') &&
         raw.includes('{{image_prompt_surface}}') &&
         raw.includes('{{image_prompt_model}}') &&
