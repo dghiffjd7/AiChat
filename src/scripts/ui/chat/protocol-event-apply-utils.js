@@ -125,6 +125,12 @@ export const appendProtocolGroupChatEventImmediate = async (
           depth: 0,
         })
       : buildUserMessageFromAI(content, item?.time || fallbackTime);
+    if (role === 'assistant' && normalized?.rawContent) {
+      parsed.meta = {
+        ...(parsed.meta || {}),
+        autoImagePromptRawContent: String(normalized.rawContent || ''),
+      };
+    }
     if (typeof isSessionActive === 'function' && isSessionActive(targetSessionId) && typeof onAddUiMessage === 'function') {
       onAddUiMessage(parsed);
     }
@@ -183,6 +189,12 @@ export const appendProtocolPrivateChatEventImmediate = async (
           time: time || fallbackTime,
           depth: 0,
         });
+    if (!isMe && normalized?.rawContent) {
+      parsed.meta = {
+        ...(parsed.meta || {}),
+        autoImagePromptRawContent: String(normalized.rawContent || ''),
+      };
+    }
     if (typeof isSessionActive === 'function' && isSessionActive(targetSessionId) && typeof onAddUiMessage === 'function') {
       onAddUiMessage(parsed);
     }

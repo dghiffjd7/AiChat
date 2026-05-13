@@ -60,6 +60,12 @@ export const buildProtocolGroupChatBatch = async (
           depth: 0,
         })
       : buildUserMessageFromAI(content, rawItem?.time || fallbackTime);
+    if (role === 'assistant' && item?.rawContent) {
+      parsed.meta = {
+        ...(parsed.meta || {}),
+        autoImagePromptRawContent: String(item.rawContent || ''),
+      };
+    }
     items.push({ parsed, role, isSystem: false, isMe });
   }
   const uniqueAssistantSpeakerCount = new Set(
@@ -105,6 +111,12 @@ export const buildProtocolPrivateChatBatch = async (
           time: time || fallbackTime,
           depth: 0,
         });
+    if (!isMe && item?.rawContent) {
+      parsed.meta = {
+        ...(parsed.meta || {}),
+        autoImagePromptRawContent: String(item.rawContent || ''),
+      };
+    }
     items.push({ parsed, isMe });
   }
   return { targetSessionId, items };

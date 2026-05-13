@@ -21,14 +21,12 @@ const isEmptyPromptToken = (value = '') => {
 export const AUTO_IMAGE_PROMPT_TAG = IMAGE_PROMPT_TAG;
 
 export const DEFAULT_AUTO_IMAGE_PROMPT_RULES = [
-  '自动生图标签规则，用于生成{{image_prompt_surface}}。默认不要输出图片标签。',
-  '当本轮回复适合配图、或聊天角色会自然发送图片时，输出一个生图提示词标签。',
+  '自动生图标签规则，用于生成{{image_prompt_surface}}。',
+  '当本轮回复适合配图、或聊天角色会自然发送图片时，在合适的位置插入一个生图提示词标签。',
   '当前图片模型：{{image_prompt_model}}',
   '提示词风格：{{image_prompt_style}}',
   '请严格按以下XML格式输出：',
-  '<image_prompt>',
-  '这里写完整生图提示词',
-  '</image_prompt>',
+  '<image_prompt>这里写完整生图提示词</image_prompt>',
   '注意事项：',
   '- 所有信息需与当前剧情进展严格连贯。',
   '- 格式务必正确。',
@@ -62,36 +60,18 @@ export const buildAutoImagePromptInstruction = ({
   modelHint = '',
   style = 'auto',
   template = '',
-  includeTableEdit = false,
 } = {}) => {
   const mode = String(uiMode || '').trim().toLowerCase();
   const surface = mode === 'rp'
     ? '创意写作插图'
     : (isGroupChat ? '群聊图片消息' : '私聊图片消息');
   const targetModel = String(modelHint || '').trim() || '未指定图片模型';
-  const positionRule = includeTableEdit
-    ? '若需要生成图片，必须在所有正文、MiPhone_end、以及 <tableEdit>...</tableEdit> 之后，另起一行输出：'
-    : '若需要生成图片，必须在所有正文和 MiPhone_end 之后，另起一行输出：';
   const source = String(template || '').trim() || DEFAULT_AUTO_IMAGE_PROMPT_RULES;
   return source
-    .split(/\r?\n/)
-    .map((line) => {
-      const text = String(line || '');
-      if (
-        text.includes('若需要生成图片') &&
-        text.includes('可能存在') &&
-        text.includes('<tableEdit>') &&
-        text.includes('image_prompt_position_rule') === false
-      ) {
-        return positionRule;
-      }
-      return line;
-    })
-    .join('\n')
     .replace(/\{\{\s*image_prompt_surface\s*\}\}/gi, surface)
     .replace(/\{\{\s*image_prompt_model\s*\}\}/gi, targetModel)
     .replace(/\{\{\s*image_prompt_style\s*\}\}/gi, describeAutoImagePromptStyle(style))
-    .replace(/\{\{\s*image_prompt_position_rule\s*\}\}/gi, positionRule)
+    .replace(/\{\{\s*image_prompt_position_rule\s*\}\}/gi, '')
     .replace(/\{\{\s*image_prompt_tag\s*\}\}/gi, IMAGE_PROMPT_TAG)
     .trim();
 };

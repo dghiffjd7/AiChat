@@ -54,6 +54,7 @@ export const normalizeProtocolChatMessage = (
   speaker: typeof normalizeSpeaker === 'function'
     ? normalizeSpeaker(message?.speaker)
     : String(message?.speaker || '').trim(),
+  rawContent: String(message?.content || '').replace(/<br\s*\/?>/gi, '\n'),
   content: stripAutoImagePromptTags(String(message?.content || '').replace(/<br\s*\/?>/gi, '\n')),
   time: String(message?.time || '').trim(),
 });

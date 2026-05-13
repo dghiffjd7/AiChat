@@ -13233,6 +13233,7 @@ Phase G（Frame 36）：循环衔接
       const text = String(value ?? '');
       if (text && !candidates.includes(text)) candidates.push(text);
     };
+    push(message?.meta?.autoImagePromptRawContent);
     push(rawText);
     push(message?.rawOriginal);
     push(message?.rawSource);
@@ -13252,6 +13253,47 @@ Phase G（Frame 36）：循环衔接
       return message;
     }
     return null;
+  };
+  const findAutoImagePromptSourceMessageFromRaw = (sessionId = '', raw = '') => {
+    const sid = String(sessionId || '').trim();
+    const source = String(raw || '');
+    if (!sid || !source) return null;
+    const messages = chatStore.getMessages(sid) || [];
+    const assistantMessages = messages.filter(message =>
+      message &&
+      message.role === 'assistant' &&
+      message.type !== 'image' &&
+      !message.meta?.generatedMedia &&
+      message.meta?.kind !== 'memory-table-push'
+    );
+    for (const message of assistantMessages) {
+      if (extractAutoImagePrompts(message?.meta?.autoImagePromptRawContent, { max: 1 }).length) {
+        return message;
+      }
+    }
+    const tagIndex = source.search(/<\s*image_prompt(?:\s[^>]*)?\s*>/i);
+    if (tagIndex < 0) return assistantMessages[assistantMessages.length - 1] || null;
+    let best = null;
+    let bestIndex = -1;
+    for (const message of assistantMessages) {
+      const candidates = [
+        message?.meta?.autoImagePromptRawContent,
+        message?.rawOriginal,
+        message?.rawSource,
+        message?.raw,
+        message?.content,
+      ];
+      for (const candidate of candidates) {
+        const text = String(candidate || '').trim();
+        if (!text) continue;
+        const idx = source.lastIndexOf(text, tagIndex);
+        if (idx >= 0 && idx >= bestIndex) {
+          best = message;
+          bestIndex = idx;
+        }
+      }
+    }
+    return best || assistantMessages[assistantMessages.length - 1] || null;
   };
   const patchAutoImagePromptSourceMeta = (message, sessionId, patch = {}) => {
     const sid = String(sessionId || '').trim();
@@ -13331,7 +13373,7 @@ Phase G（Frame 36）：循环衔接
     if (!isAutoImagePromptEnabled() || !sid) return false;
     const raw = chatStore.getLastRawResponse(sid);
     if (!extractAutoImagePrompts(raw, { max: 1 }).length) return false;
-    const sourceMessage = findLastAutoImagePromptSourceMessage(sid);
+    const sourceMessage = findAutoImagePromptSourceMessageFromRaw(sid, raw) || findLastAutoImagePromptSourceMessage(sid);
     if (!sourceMessage) return false;
     return scheduleAutoImagePromptGenerationForMessage(sourceMessage, sid, {
       rawText: raw,

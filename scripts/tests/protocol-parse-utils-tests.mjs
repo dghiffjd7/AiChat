@@ -75,8 +75,21 @@ test('normalizeProtocolChatMessage normalizes speaker and converts br tags to ne
     ),
     {
       speaker: 'alice',
+      rawContent: 'a\nb',
       content: 'a\nb',
       time: '09:00',
+    },
+  );
+});
+
+test('normalizeProtocolChatMessage strips image prompt from content but keeps rawContent', () => {
+  assert.deepEqual(
+    normalizeProtocolChatMessage({ speaker: 'bot', content: '正文<image_prompt>prompt</image_prompt>', time: '09:01' }),
+    {
+      speaker: 'bot',
+      rawContent: '正文<image_prompt>prompt</image_prompt>',
+      content: '正文',
+      time: '09:01',
     },
   );
 });

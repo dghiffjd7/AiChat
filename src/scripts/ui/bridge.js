@@ -3114,11 +3114,6 @@ class AppBridge {
           lines.push('记忆表格内容');
           lines.push('</tableEdit>');
         }
-        if (autoImagePromptActive) {
-          lines.push('<image_prompt>');
-          lines.push('生图提示词');
-          lines.push('</image_prompt>');
-        }
       }
       return lines.join('\n').trim();
     };

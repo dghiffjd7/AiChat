@@ -171,14 +171,12 @@ const DEFAULT_SUMMARY_RULES = [
 ].join('\n').trim();
 
 const DEFAULT_AUTO_IMAGE_PROMPT_RULES = [
-    '自动生图标签规则，用于生成{{image_prompt_surface}}。默认不要输出图片标签。',
-    '当本轮回复适合配图、或聊天角色会自然发送图片时，输出一个生图提示词标签。',
+    '自动生图标签规则，用于生成{{image_prompt_surface}}。',
+    '当本轮回复适合配图、或聊天角色会自然发送图片时，在合适的位置插入一个生图提示词标签。',
     '当前图片模型：{{image_prompt_model}}',
     '提示词风格：{{image_prompt_style}}',
     '请严格按以下XML格式输出：',
-    '<image_prompt>',
-    '这里写完整生图提示词',
-    '</image_prompt>',
+    '<image_prompt>这里写完整生图提示词</image_prompt>',
     '注意事项：',
     '- 所有信息需与当前剧情进展严格连贯。',
     '- 格式务必正确。',
@@ -271,10 +269,34 @@ const looksDefaultAutoImagePromptRulesForMigration = (value) => {
     const raw = String(value || '');
     if (!raw) return false;
     if (raw.includes('<auto_image_generation>')) return true;
+    const compact = raw.replace(/\s+/g, '');
+    if (raw.includes('默认不要输出图片标签') && raw.includes('<image_prompt>')) return true;
+    if (raw.includes('输出一个生图提示词标签') && raw.includes('<image_prompt>')) return true;
+    if (compact.includes('MiPhone_end') && compact.includes('<image_prompt>')) return true;
+    if (compact.includes('<tableEdit>') && compact.includes('<image_prompt>')) return true;
     return raw.includes('{{image_prompt_position_rule}}') &&
         raw.includes('{{image_prompt_surface}}') &&
         raw.includes('{{image_prompt_model}}') &&
         raw.includes('<image_prompt>');
+};
+
+const sanitizeAutoImagePromptRulesText = (value) => {
+    if (looksDefaultAutoImagePromptRulesForMigration(value)) {
+        return DEFAULT_AUTO_IMAGE_PROMPT_RULES;
+    }
+    return String(value || '')
+        .split(/\r?\n/)
+        .filter((line) => {
+            const text = String(line || '');
+            const compact = text.replace(/\s+/g, '');
+            if (text.includes('{{image_prompt_position_rule}}')) return false;
+            if (compact.includes('MiPhone_end') && compact.includes('<image_prompt>')) return false;
+            if (compact.includes('<tableEdit>') && compact.includes('<image_prompt>')) return false;
+            return true;
+        })
+        .join('\n')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
 };
 
 const ensureAutoImagePromptFields = (preset) => {
@@ -289,22 +311,7 @@ const ensureAutoImagePromptFields = (preset) => {
     } else if (looksDefaultAutoImagePromptRulesForMigration(p.auto_image_prompt_rules)) {
         p.auto_image_prompt_rules = DEFAULT_AUTO_IMAGE_PROMPT_RULES;
     }
-    p.auto_image_prompt_rules = String(p.auto_image_prompt_rules || '')
-        .split(/\r?\n/)
-        .map((line) => {
-            const text = String(line || '');
-            if (
-                text.includes('若需要生成图片') &&
-                text.includes('可能存在') &&
-                text.includes('<tableEdit>') &&
-                text.includes('image_prompt_position_rule') === false
-            ) {
-                return '{{image_prompt_position_rule}}';
-            }
-            return line;
-        })
-        .join('\n')
-        .trim();
+    p.auto_image_prompt_rules = sanitizeAutoImagePromptRulesText(p.auto_image_prompt_rules);
 };
 
 const sanitizePhoneFormatPromptText = (value, spec = {}) => {

@@ -10,6 +10,7 @@ test('normalizeDialogueMessage trims object fields', () => {
     normalizeDialogueMessage({ speaker: ' Alice ', content: ' hi ', time: ' 09:00 ' }),
     {
       speaker: 'Alice',
+      rawContent: 'hi',
       content: 'hi',
       time: '09:00',
     },
@@ -23,6 +24,7 @@ test('normalizeDialogueMessage parses inline user speaker prefix when callback a
     }),
     {
       speaker: '我',
+      rawContent: '你好',
       content: '你好',
       time: '',
     },
@@ -36,6 +38,7 @@ test('normalizeDialogueMessage keeps raw text when inline prefix is not a user s
     }),
     {
       speaker: '',
+      rawContent: '路人：你好',
       content: '路人：你好',
       time: '',
     },

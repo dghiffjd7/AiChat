@@ -40,11 +40,12 @@ import {
 
 {
   const instruction = buildAutoImagePromptInstruction({
-    includeTableEdit: true,
     template: '{{image_prompt_position_rule}}\n<image_prompt>prompt</image_prompt>',
   });
-  assert.match(instruction, /<tableEdit>\.\.\.<\/tableEdit>/);
-  console.log('ok - includes tableEdit position rule for custom placeholder templates');
+  assert.doesNotMatch(instruction, /image_prompt_position_rule/);
+  assert.doesNotMatch(instruction, /<tableEdit>/);
+  assert.match(instruction, /<image_prompt>prompt<\/image_prompt>/);
+  console.log('ok - removes legacy position placeholder from custom templates');
 }
 
 {
@@ -56,7 +57,8 @@ import {
   });
   assert.match(instruction, /surface=创意写作插图/);
   assert.match(instruction, /model=gemini \/ nano banana/);
-  assert.match(instruction, /where=若需要生成图片/);
+  assert.match(instruction, /where=/);
+  assert.doesNotMatch(instruction, /若需要生成图片/);
   assert.match(instruction, /tag=image_prompt/);
   console.log('ok - renders custom preset auto image prompt template');
 }

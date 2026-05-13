@@ -2090,9 +2090,6 @@ export class PresetPanel {
                 '<tableEdit>',
                 '记忆表格内容',
                 '</tableEdit>',
-                '<image_prompt>',
-                '生图提示词',
-                '</image_prompt>',
             ].join('\n');
             body.appendChild(preview);
             card.appendChild(body);
