@@ -135,7 +135,18 @@ export const clearInputCore = ({
   if (!inputEl) return false;
   const shouldFocus = options === true
     || (typeof options === 'object' ? options.focus !== false : options !== false);
+  const resizeInput = () => {
+    if (!inputEl?.style) return;
+    inputEl.style.height = 'auto';
+    const scrollHeight = Number(inputEl.scrollHeight || 0);
+    if (scrollHeight > 0) inputEl.style.height = `${scrollHeight}px`;
+  };
   inputEl.value = '';
+  resizeInput();
+  try {
+    inputEl.dispatchEvent?.(new Event('input', { bubbles: true }));
+  } catch {}
+  resizeInput();
   if (shouldFocus) inputEl.focus?.();
   return true;
 };

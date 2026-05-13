@@ -323,6 +323,32 @@ export const runPendingSendPreparationFlow = ({
   const pendingMessages = ignorePending
     ? []
     : (Array.isArray(allMessages) ? allMessages.filter(message => message?.status === 'pending') : []);
+  const buildTextForPendingMessages = (messagesToSend = []) => {
+    const list = Array.isArray(messagesToSend) ? messagesToSend : [];
+    const imageGroupIds = new Set(
+      list
+        .filter(message => message?.type === 'image')
+        .map(message => String(message?.meta?.pendingGroupId || '').trim())
+        .filter(Boolean),
+    );
+    return list
+      .filter((message) => {
+        if (message?.type === 'image') return false;
+        if (message?.meta?.attachmentsOnly) return false;
+        const groupId = String(message?.meta?.pendingGroupId || '').trim();
+        if (
+          groupId &&
+          imageGroupIds.has(groupId) &&
+          String(message?.content || '').trim() === '[图片]'
+        ) {
+          return false;
+        }
+        return true;
+      })
+      .map(message => getMessageSendText(message, buildStickerToken))
+      .filter(Boolean)
+      .join('\n');
+  };
   if (!ignorePending && !targetMessageId && Array.isArray(pendingQueue) && pendingQueue.length) {
     const restored = restorePendingQueueToHistory({
       pendingQueue,
@@ -373,10 +399,7 @@ export const runPendingSendPreparationFlow = ({
       }
     }
 
-    const text = messagesToSend
-      .map(message => getMessageSendText(message, buildStickerToken))
-      .filter(Boolean)
-      .join('\n');
+    const text = buildTextForPendingMessages(messagesToSend);
     let pendingMessagesToConfirm = messagesToSend;
 
     if (!text && !hasAttachments) {

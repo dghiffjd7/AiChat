@@ -157,6 +157,18 @@ export const normalizeGeneratedImageResult = (item = {}) => {
   return null;
 };
 
+const normalizeGenerationMetadataOptions = (options = {}) => {
+  const out = {};
+  Object.entries(options && typeof options === 'object' ? options : {}).forEach(([key, value]) => {
+    if (key === 'signal') return;
+    if (key === 'referenceImages' || key === 'reference_images') return;
+    if (typeof value === 'function') return;
+    if (value === undefined) return;
+    out[key] = value;
+  });
+  return out;
+};
+
 const blobToDataUrl = async (blob) => new Promise((resolve, reject) => {
   const reader = new FileReader();
   reader.onload = () => resolve(String(reader.result || ''));
@@ -258,6 +270,8 @@ export const createMediaGenerationService = ({
       provider: String(config.provider || '').trim(),
       model: String(config.model || '').trim(),
       prompt: text,
+      negativePrompt: String(options.negativePrompt || options.negative_prompt || '').trim(),
+      generationParams: normalizeGenerationMetadataOptions(options),
       output,
       status: 'succeeded',
       scope: {

@@ -31,6 +31,10 @@ export const normalizeGeneratedImageAssetFromMessage = (message = {}) => {
     provider: String(generated.provider || '').trim(),
     model: String(generated.model || '').trim(),
     prompt: String(generated.prompt || '').trim(),
+    negativePrompt: String(generated.negativePrompt || generated.negative_prompt || generated.generationParams?.negativePrompt || generated.generationParams?.negative_prompt || '').trim(),
+    generationParams: generated.generationParams && typeof generated.generationParams === 'object'
+      ? { ...generated.generationParams }
+      : {},
     output: {
       path,
       url,
@@ -88,6 +92,10 @@ export const buildGeneratedImageMessagePatch = (asset = {}, {
         provider: asset.provider,
         model: asset.model,
         prompt: asset.prompt,
+        negativePrompt: String(asset.negativePrompt || asset.negative_prompt || '').trim(),
+        generationParams: asset.generationParams && typeof asset.generationParams === 'object'
+          ? { ...asset.generationParams }
+          : {},
         surface,
         targetId,
         sourceMessageId: String(sourceMessageId || '').trim(),

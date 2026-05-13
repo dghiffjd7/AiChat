@@ -47,16 +47,24 @@ export const markMessagesAsSending = ({
   chatStore = null,
   ui = null,
 } = {}) => normalizeMessages(messages).map((message) => {
+  const nextPatch = { status: 'sending' };
+  if (message?.meta?.pendingGroupId) {
+    nextPatch.meta = {
+      ...(message.meta || {}),
+      pendingGroupStatus: 'sending',
+    };
+  }
   const fallback = {
     ...(message && typeof message === 'object' ? message : {}),
     status: 'sending',
+    ...(nextPatch.meta ? { meta: nextPatch.meta } : {}),
   };
   const messageId = message?.id;
   if (!messageId) return fallback;
 
   const updated =
     chatStore && typeof chatStore.updateMessage === 'function'
-      ? (chatStore.updateMessage(messageId, { status: 'sending' }, sessionId) || fallback)
+      ? (chatStore.updateMessage(messageId, nextPatch, sessionId) || fallback)
       : fallback;
   if (ui && typeof ui.updateMessage === 'function') {
     ui.updateMessage(messageId, updated || fallback);

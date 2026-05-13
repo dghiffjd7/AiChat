@@ -192,6 +192,41 @@ export const normalizeImageProviderKey = (provider = '') => {
   return p || 'custom';
 };
 
+export const resolveImageNegativePromptCapability = (config = {}) => {
+  const provider = normalizeImageProviderKey(config?.provider);
+  const model = toKey(config?.model);
+  const supported = (help = '生成时可填写本次负面提示词。') => ({
+    supported: true,
+    key: 'negativePrompt',
+    label: '负面提示词',
+    help,
+  });
+  const unsupported = (reason = '当前图片模型不支持负面提示词。') => ({
+    supported: false,
+    key: 'negativePrompt',
+    label: '负面提示词',
+    reason,
+  });
+
+  if (provider === 'makersuite' || provider === 'vertexai') {
+    const isImagen = model.includes('imagen') || model.startsWith('imagegeneration');
+    return isImagen
+      ? supported('Google Imagen 链路会传递 negativePrompt。')
+      : unsupported('当前 Gemini 图片链路未接入独立负面提示词参数。');
+  }
+  if ([
+    'novelai',
+    'stability',
+    'togetherai',
+    'pollinations',
+    'automatic1111',
+    'comfyui',
+  ].includes(provider)) {
+    return supported();
+  }
+  return unsupported();
+};
+
 export const resolveImageGenerationParamSchema = (config = {}) => {
   const provider = normalizeImageProviderKey(config?.provider);
   const model = toKey(config?.model);
@@ -303,7 +338,6 @@ export const resolveImageGenerationParamSchema = (config = {}) => {
           { value: '9:16', label: '9:16' },
           { value: '16:9', label: '16:9' },
         ], '1:1'),
-        makeText('negativePrompt', '负面提示词', '', isImagen ? 'Imagen 链路会传递 negativePrompt；Gemini 预览模型可能忽略。' : '部分 Gemini 图片模型可能忽略。'),
         makeSelect('responseMimeType', '输出格式', [
           { value: 'image/png', label: 'PNG' },
           { value: 'image/jpeg', label: 'JPEG' },
@@ -340,7 +374,6 @@ export const resolveImageGenerationParamSchema = (config = {}) => {
           { value: 'exponential', label: 'exponential' },
           { value: 'polyexponential', label: 'polyexponential' },
         ], 'karras'),
-        makeText('negativePrompt', '负面提示词', ''),
         makeText('seed', 'Seed', '', '留空则随机。'),
         makeSelect('qualityToggle', 'Quality Tags Enabled', BOOLEAN_OPTIONS, 'true', '开启后由 NovelAI 追加模型对应质量标签；如提示词已手写大量质量词，可关闭。'),
         makeSelect('sm', 'SMEA', BOOLEAN_OPTIONS, ''),
@@ -391,7 +424,6 @@ export const resolveImageGenerationParamSchema = (config = {}) => {
           { value: 'pixel-art', label: 'pixel-art' },
           { value: 'tile-texture', label: 'tile-texture' },
         ], ''),
-        makeText('negativePrompt', '负面提示词', ''),
         makeText('seed', 'Seed', '', '留空则由服务商随机。'),
       ],
     };
@@ -408,7 +440,6 @@ export const resolveImageGenerationParamSchema = (config = {}) => {
         makeNumber('height', '高度', { min: 128, max: 2048, step: 64, fallback: 1024 }),
         makeNumber('steps', '步数', { min: 1, max: 100, fallback: 4 }),
         makeNumber('guidance_scale', 'Guidance Scale', { min: 0, max: 30, step: 0.1, fallback: 3.5, integer: false }),
-        makeText('negativePrompt', '负面提示词', ''),
         makeText('seed', 'Seed', '', '留空则不传。'),
         makeSelect('response_format', '返回格式', [
           { value: '', label: '默认' },
@@ -433,7 +464,6 @@ export const resolveImageGenerationParamSchema = (config = {}) => {
       fields: [
         makeNumber('width', '宽度', { min: 64, max: 4096, step: 64, fallback: 1024 }),
         makeNumber('height', '高度', { min: 64, max: 4096, step: 64, fallback: 1024 }),
-        makeText('negativePrompt', '负面提示词', ''),
         makeText('seed', 'Seed', '', '留空则不传。'),
         makeSelect('enhance', '增强提示词', BOOLEAN_OPTIONS, ''),
       ],
@@ -453,7 +483,6 @@ export const resolveImageGenerationParamSchema = (config = {}) => {
         makeNumber('cfg_scale', 'CFG Scale', { min: 0, max: 30, step: 0.5, fallback: 7, integer: false }),
         makeText('sampler_name', '采样器', '', '例如 Euler a、DPM++ 2M Karras；留空则使用服务端默认。'),
         makeText('scheduler', '调度器', '', '仅在你的 WebUI 版本支持时传递。'),
-        makeText('negativePrompt', '负面提示词', ''),
         makeText('seed', 'Seed', '', '留空则随机。'),
         makeSelect('restore_faces', '面部修复', BOOLEAN_OPTIONS, ''),
         makeSelect('enable_hr', 'Highres Fix', BOOLEAN_OPTIONS, ''),
@@ -473,7 +502,6 @@ export const resolveImageGenerationParamSchema = (config = {}) => {
         makeNumber('scale', 'CFG / Scale', { min: 0, max: 30, step: 0.5, fallback: 7, integer: false }),
         makeText('sampler', '采样器', ''),
         makeText('scheduler', '调度器', ''),
-        makeText('negativePrompt', '负面提示词', ''),
         makeText('seed', 'Seed', '', '留空则随机。'),
         makeTextarea('workflowJson', 'Workflow JSON', '', '粘贴 ComfyUI 的 Save (API Format) JSON；可使用 "%prompt%"、"%negative_prompt%"、"%model%"、"%seed%"、"%width%"、"%height%"、"%steps%"、"%scale%" 等占位符。'),
       ],

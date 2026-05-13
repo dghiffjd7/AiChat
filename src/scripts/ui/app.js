@@ -143,6 +143,7 @@ import {
 import {
   getParamsForImageConfig,
   mergeImageGenerationRequestOptions,
+  resolveImageNegativePromptCapability,
   resolveImageGenerationParamSchema,
 } from './image-generation-params-utils.js';
 import { ChatUI } from './chat/chat-ui.js';
@@ -4462,6 +4463,10 @@ Phase G（Frame 36）：循环衔接
       provider: String(asset.provider || '').trim(),
       model: String(asset.model || '').trim(),
       prompt: String(asset.prompt || '').trim(),
+      negativePrompt: String(asset.negativePrompt || asset.negative_prompt || asset?.generationParams?.negativePrompt || asset?.generationParams?.negative_prompt || '').trim(),
+      generationParams: asset.generationParams && typeof asset.generationParams === 'object'
+        ? { ...asset.generationParams }
+        : {},
       output: {
         path,
         url: String(output.url || '').trim(),
@@ -6946,6 +6951,50 @@ Phase G（Frame 36）：循环衔接
       }
     });
     return list;
+  };
+  const buildPendingMessagesFromComposer = (attachments, {
+    text = '',
+    stickerKey = '',
+    fallbackContent = '[附件]',
+    avatar = '',
+    userName = '我',
+    time = '',
+    replyTarget = null,
+  } = {}) => {
+    const groupId = `pending-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+    const messages = [];
+    const cleanText = String(text || '').trim();
+    if (cleanText || stickerKey || !attachments?.length) {
+      const pendingText = createPendingUserMessage({
+        text: cleanText,
+        stickerKey,
+        fallbackContent,
+        avatar,
+        userName,
+        time,
+        replyTarget,
+        attachmentsOnly: !cleanText && Boolean(attachments?.length) && !stickerKey,
+      });
+      pendingText.meta = {
+        ...(pendingText.meta || {}),
+        pendingGroupId: groupId,
+        pendingGroupStatus: 'pending',
+      };
+      messages.push(pendingText);
+    }
+    const attachmentMessages = buildAttachmentMessages(attachments || [], { name: userName, avatar })
+      .map((message, index) => ({
+        ...message,
+        status: 'pending',
+        meta: {
+          ...(message.meta || {}),
+          pendingGroupId: groupId,
+          pendingGroupStatus: 'pending',
+          replyTo: !messages.length && index === 0 && replyTarget ? replyTarget : message.meta?.replyTo,
+        },
+      }));
+    messages.push(...attachmentMessages);
+    return messages;
   };
   const persistImageAttachmentMessage = async (message, attachment, sessionId) => {
     if (!message || !attachment) return;
@@ -12788,6 +12837,13 @@ Phase G（Frame 36）：循环衔接
           </div>
           <div class="chat-image-gen-body">
             <textarea class="chat-image-gen-textarea" placeholder="描述你想生成的图片，例如角色、场景、风格、构图、光线"></textarea>
+            <div class="chat-image-gen-negative" hidden>
+              <div class="chat-image-gen-negative-head">
+                <span class="chat-image-gen-negative-label">负面提示词</span>
+                <span class="chat-image-gen-negative-hint">仅本次生成生效</span>
+              </div>
+              <textarea class="chat-image-gen-textarea chat-image-gen-negative-textarea" placeholder="不想出现的内容，例如低清、畸形手、文字水印"></textarea>
+            </div>
             <div class="chat-image-gen-ref">
               <div class="chat-image-gen-ref-head">
                 <button type="button" class="chat-image-gen-ref-add">添加参考图</button>
@@ -12824,6 +12880,9 @@ Phase G（Frame 36）：循环衔接
       const bodyEl = overlay.querySelector('.chat-image-gen-body');
       const footerEl = overlay.querySelector('.chat-image-gen-footer');
       const textarea = overlay.querySelector('.chat-image-gen-textarea');
+      const negativeWrap = overlay.querySelector('.chat-image-gen-negative');
+      const negativeTextarea = overlay.querySelector('.chat-image-gen-negative-textarea');
+      const negativeHintEl = overlay.querySelector('.chat-image-gen-negative-hint');
       const statusEl = overlay.querySelector('.chat-image-gen-status');
       const closeBtn = overlay.querySelector('.chat-image-gen-close');
       const cancelBtn = overlay.querySelector('.chat-image-gen-cancel');
@@ -12849,7 +12908,10 @@ Phase G（Frame 36）：循环衔接
       let generationParamBase = {};
       let generationParamOverrides = {};
       let generationParamContextLoader = null;
+      let negativeCapability = resolveImageNegativePromptCapability({});
       const hasOwn = (obj, key) => Object.prototype.hasOwnProperty.call(obj || {}, key);
+      const isNegativePromptField = (field = {}) => field?.key === 'negativePrompt' || field?.key === 'negative_prompt';
+      const isNegativePromptSupported = () => Boolean(negativeCapability?.supported);
       const normalizeParamFieldValue = (field, value) => {
         if (field?.type === 'number') {
           const raw = Math.trunc(Number(value));
@@ -12859,6 +12921,21 @@ Phase G（Frame 36）：循环衔接
           return Math.min(max, Math.max(min, raw));
         }
         return String(value ?? field?.defaultValue ?? '');
+      };
+      const syncNegativePromptField = () => {
+        const supported = isNegativePromptSupported();
+        if (negativeWrap) negativeWrap.hidden = !supported;
+        if (negativeHintEl) negativeHintEl.textContent = supported
+          ? String(negativeCapability?.help || '生成时可填写本次负面提示词。')
+          : String(negativeCapability?.reason || '当前图片模型不支持负面提示词。');
+        if (!negativeTextarea) return;
+        if (!supported) {
+          negativeTextarea.value = '';
+        }
+      };
+      const syncNegativePromptOverrideFromInput = () => {
+        updateAdvancedButton();
+        updateAdvancedSummary();
       };
       const getParamFieldValue = (field, params = {}) => normalizeParamFieldValue(
         field,
@@ -12891,13 +12968,16 @@ Phase G（Frame 36）：循环衔接
         generationParamConfig = context?.config && typeof context.config === 'object' ? context.config : {};
         generationParamSchema = context?.schema || resolveImageGenerationParamSchema(generationParamConfig);
         generationParamBase = context?.baseParams && typeof context.baseParams === 'object' ? context.baseParams : {};
+        negativeCapability = resolveImageNegativePromptCapability(generationParamConfig);
         generationParamOverrides = normalizeParamOverrides(generationParamOverrides, generationParamSchema);
+        syncNegativePromptField();
         updateAdvancedButton();
       };
       const syncAdvancedOverridesFromFields = () => {
         if (!advancedFieldsEl) return;
         const next = {};
         (generationParamSchema?.fields || []).forEach(field => {
+          if (isNegativePromptField(field)) return;
           const el = advancedFieldsEl.querySelector(`[data-param-key="${field.key}"]`);
           if (!el) return;
           const currentValue = normalizeParamFieldValue(field, el.value);
@@ -12913,6 +12993,7 @@ Phase G（Frame 36）：循环衔接
         updateAdvancedSummary();
         advancedFieldsEl.innerHTML = '';
         (generationParamSchema?.fields || []).forEach(field => {
+          if (isNegativePromptField(field)) return;
           const label = document.createElement('label');
           label.className = 'chat-image-gen-param-row';
           const title = document.createElement('div');
@@ -13035,10 +13116,11 @@ Phase G（Frame 36）：循环衔接
         statusEl.textContent = '';
         const resolve = resolveOpen;
         resolveOpen = null;
-        referenceImages = [];
-        generationParamOverrides = {};
-        generationParamContextLoader = null;
-        updateAdvancedButton();
+          referenceImages = [];
+          generationParamOverrides = {};
+          if (negativeTextarea) negativeTextarea.value = '';
+          generationParamContextLoader = null;
+          updateAdvancedButton();
         renderReferences();
         if (typeof resolve === 'function') resolve(value);
       };
@@ -13052,6 +13134,7 @@ Phase G（Frame 36）：循环衔接
         close({
           prompt: value,
           referenceImages: referenceImages.map(item => ({ ...item })),
+          negativePrompt: isNegativePromptSupported() ? String(negativeTextarea?.value || '').trim() : '',
           generationParamOverrides: { ...generationParamOverrides },
         });
       };
@@ -13062,9 +13145,11 @@ Phase G（Frame 36）：循环衔接
       advancedDoneBtn?.addEventListener('click', () => closeAdvancedPage());
       advancedResetBtn?.addEventListener('click', () => {
         generationParamOverrides = {};
+        if (negativeTextarea) negativeTextarea.value = '';
         renderAdvancedFields();
         updateAdvancedButton();
       });
+      negativeTextarea?.addEventListener('input', syncNegativePromptOverrideFromInput);
       secondaryBtn?.addEventListener('click', () => {
         const handler = secondaryHandler;
         close(null);
@@ -13097,6 +13182,7 @@ Phase G（Frame 36）：循环衔接
       modal = {
         open: ({
           initialPrompt = '',
+          initialNegativePrompt = '',
           title = '生成图片',
           subtitle = '使用当前图片模型生成并写入这个聊天室',
           submitText = '生成图片',
@@ -13129,6 +13215,8 @@ Phase G（Frame 36）：循环衔接
             secondaryBtn.style.display = secondaryText && secondaryHandler ? '' : 'none';
           }
           textarea.value = String(initialPrompt || '').trim();
+          if (negativeTextarea) negativeTextarea.value = String(initialNegativePrompt || '').trim();
+          syncNegativePromptOverrideFromInput();
           statusEl.textContent = '';
           closeAdvancedPage();
           renderReferences();
@@ -13265,6 +13353,10 @@ Phase G（Frame 36）：循环衔接
       provider: String(asset.provider || '').trim(),
       model: String(asset.model || '').trim(),
       prompt: String(asset.prompt || '').trim(),
+      negativePrompt: String(asset.negativePrompt || asset.negative_prompt || asset?.generationParams?.negativePrompt || asset?.generationParams?.negative_prompt || '').trim(),
+      generationParams: asset.generationParams && typeof asset.generationParams === 'object'
+        ? { ...asset.generationParams }
+        : {},
       output: {
         path,
         url: String(output.url || '').trim(),
@@ -13406,6 +13498,7 @@ Phase G（Frame 36）：循环衔接
 	    sourceMessage = null,
 	    surface = '',
 	    referenceImages = [],
+	    negativePrompt = '',
 	    generationParamOverrides = {},
 	    targetSessionId = '',
 	    autoGenerated = false,
@@ -13423,15 +13516,20 @@ Phase G（Frame 36）：循环衔接
 	    const referenceCapability = resolveImageReferenceCapability(config);
 	    const normalizedReferences = normalizeImageGenerationReferenceItems(referenceImages, referenceCapability);
 	    const referenceImageCount = normalizedReferences.length;
+	    const negativeCapability = resolveImageNegativePromptCapability(config);
+	    const negativePromptText = negativeCapability?.supported ? String(negativePrompt || '').trim() : '';
 	    await imageGenerationParamsStore.ready;
 	    const imageParamsPreset = imageGenerationParamsStore.getActive();
+	    const generationExtra = {};
+	    if (referenceImageCount) {
+	      generationExtra.referenceImages = normalizedReferences.map(item => item.dataUrl).filter(Boolean);
+	    }
+	    if (negativePromptText) generationExtra.negativePrompt = negativePromptText;
 	    const generationOptions = mergeImageGenerationRequestOptions({
 	      config,
 	      preset: imageParamsPreset,
 	      overrides: generationParamOverrides,
-	      extra: referenceImageCount
-	        ? { referenceImages: normalizedReferences.map(item => item.dataUrl).filter(Boolean) }
-	        : {},
+	      extra: generationExtra,
 	    });
 	    const mediaSurface = surface || resolveMediaSurfaceForSession(sessionId);
 	    const surfaceCopy = getMediaSurfaceCopy(mediaSurface);
@@ -13455,6 +13553,7 @@ Phase G（Frame 36）：循环衔接
 	        surface: mediaSurface,
 	        targetId: sessionId,
 	        prompt: imagePrompt,
+	        negativePrompt: negativePromptText,
 	        sourceMessageId,
 	        referenceImageCount,
 	        generationParams: generationOptions,
@@ -13514,6 +13613,7 @@ Phase G（Frame 36）：循环衔接
 	        removeChatImageGenerationMessage(savedPending.id, sessionId);
 	        const previewAsset = {
 	          ...asset,
+	          generationParams: generationOptions,
 	          messageId: '',
 	          scope: {
 	            ...(asset.scope || {}),
@@ -13542,6 +13642,7 @@ Phase G（Frame 36）：循环衔接
 	        compactWithSource: reuseSourceMessage ? false : sender.hideAvatar,
 	        generatedMedia: {
 	          ...(imagePatch.meta?.generatedMedia || {}),
+	          negativePrompt: negativePromptText,
 	          referenceImageCount,
 	          generationParams: generationOptions,
 	          autoGenerated: Boolean(autoGenerated),
@@ -13591,6 +13692,8 @@ Phase G（Frame 36）：循环衔接
   };
 	  const openChatImageGenerationFlow = async ({
 	    initialPrompt = '',
+	    initialNegativePrompt = '',
+	    generationParamOverrides = {},
 	    sourceMessage = null,
 	    surface = '',
 	    useComposerFallback = true,
@@ -13616,6 +13719,8 @@ Phase G（Frame 36）：循环衔接
 	      referenceCapability,
 	      loadReferenceCapability: loadImageReferenceCapability,
 	      generationParamContext,
+	      initialNegativePrompt,
+	      generationParamOverrides,
 	      loadGenerationParamContext: loadImageGenerationParamContext,
 	    });
 	    const promptText = typeof modalResult === 'string'
@@ -13623,6 +13728,7 @@ Phase G（Frame 36）：循环衔接
 	      : String(modalResult?.prompt || '').trim();
 	    if (!promptText) return false;
 	    const modalReferenceImages = Array.isArray(modalResult?.referenceImages) ? modalResult.referenceImages : [];
+	    const modalNegativePrompt = String(modalResult?.negativePrompt || '').trim();
 	    const modalGenerationParamOverrides = modalResult?.generationParamOverrides && typeof modalResult.generationParamOverrides === 'object'
 	      ? modalResult.generationParamOverrides
 	      : {};
@@ -13631,6 +13737,7 @@ Phase G（Frame 36）：循环衔接
 	      sourceMessage,
 	      surface: mediaSurface,
 	      referenceImages: modalReferenceImages,
+	      negativePrompt: modalNegativePrompt,
 	      generationParamOverrides: modalGenerationParamOverrides,
 	    });
 	  };
@@ -13881,6 +13988,19 @@ Phase G（Frame 36）：循环衔接
 	    }
 	    return '';
 	  };
+	  const buildImageAttachmentPartsFromMessages = async (messages = [], sessionId = '') => {
+	    const list = Array.isArray(messages) ? messages : [];
+	    const parts = [];
+	    const seen = new Set();
+	    for (const message of list) {
+	      if (!message || message.type !== 'image') continue;
+	      const url = await resolveMessageImageForLlm(message, sessionId);
+	      if (!url || seen.has(url)) continue;
+	      seen.add(url);
+	      parts.push({ type: 'image_url', image_url: { url } });
+	    }
+	    return parts;
+	  };
 	  const collectRegenerateImageMessages = (messages = [], userIdx = -1) => {
 	    const list = Array.isArray(messages) ? messages : [];
 	    const index = Math.trunc(Number(userIdx));
@@ -13896,16 +14016,7 @@ Phase G（Frame 36）：循环衔接
 	  };
 	  const buildRegenerateImageAttachmentParts = async (messages = [], userIdx = -1, sessionId = '') => {
 	    const imageMessages = collectRegenerateImageMessages(messages, userIdx);
-	    if (!imageMessages.length) return [];
-	    const parts = [];
-	    const seen = new Set();
-	    for (const message of imageMessages) {
-	      const url = await resolveMessageImageForLlm(message, sessionId);
-	      if (!url || seen.has(url)) continue;
-	      seen.add(url);
-	      parts.push({ type: 'image_url', image_url: { url } });
-	    }
-	    return parts;
+	    return buildImageAttachmentPartsFromMessages(imageMessages, sessionId);
 	  };
 	  const readGeneratedImageAssetAsDataUrl = async (asset = {}, previewUrl = '') => {
 	    const output = asset?.output && typeof asset.output === 'object' ? asset.output : {};
@@ -14098,12 +14209,12 @@ Phase G（Frame 36）：循环衔接
 	    if (countGeneratedImageAssetReferences(asset) > 0) return;
 	    safeInvoke('delete_attachment', { sessionId, path }).catch(() => {});
 	  };
-	  const deleteGeneratedImageAssetFromCurrentChat = async (asset = {}) => {
+	  const deleteGeneratedImageAssetFromCurrentChat = async (asset = {}, options = {}) => {
 	    const sessionId = String(asset?.scope?.targetId || chatStore.getCurrent() || '').trim();
 	    if (!sessionId) return false;
 	    const ok = await appConfirm({
-	      title: '删除图片',
-	      message: '删除这张图片？相册记录和当前聊天室中引用它的图片消息都会一起移除。',
+	      title: String(options.title || '删除图片'),
+	      message: String(options.message || '删除这张图片？相册记录和当前聊天室中引用它的图片消息都会一起移除。'),
 	      danger: true,
 	    });
 	    if (!ok) return false;
@@ -14123,9 +14234,14 @@ Phase G（Frame 36）：循环衔接
 	    });
 	    maybeDeleteGeneratedImageFileIfUnreferenced(asset, sessionId);
 	    refreshChatAndContacts({ immediate: true });
-	    if (removedIds.size || removedAlbum) window.toastr?.success?.('图片已删除');
+	    if (removedIds.size || removedAlbum) window.toastr?.success?.(String(options.successText || '图片已删除'));
 	    return removedIds.size > 0 || removedAlbum;
 	  };
+	  const deleteGeneratedImageAssetFromCurrentWriting = (asset = {}) => deleteGeneratedImageAssetFromCurrentChat(asset, {
+	    title: '删除插图素材',
+	    message: '删除这张插图素材？当前创意写作会话中引用它的图片消息和输入区占位都会一起移除。',
+	    successText: '插图素材已删除',
+	  });
 	  const chatGeneratedImagePreview = (() => {
 	    const pendingBySession = new Map();
 	    let root = null;
@@ -14365,7 +14481,12 @@ Phase G（Frame 36）：循环衔接
 	    if (!sessionId) return [];
 	    return collectGeneratedImageAssetsFromMessages(chatStore.getMessages(sessionId), { surface: 'writing' })
 	      .filter(asset => resolveGeneratedImagePreviewUrl(asset))
-	      .reverse();
+	      .reverse()
+	      .map(asset => ({
+	        ...asset,
+	        albumId: String(asset.id || asset.messageId || resolveGeneratedImagePreviewUrl(asset)),
+	        sourceLabel: '创意写作插图',
+	      }));
 	  };
 	  const formatGeneratedImageAlbumTime = (value = 0) => {
 	    const n = Number(value);
@@ -14380,6 +14501,40 @@ Phase G（Frame 36）：循环衔接
 	    } catch {
 	      return '';
 	    }
+	  };
+	  const getGeneratedImageNegativePrompt = (asset = {}) => {
+	    return String(
+	      asset.negativePrompt ||
+	      asset.negative_prompt ||
+	      asset.generationParams?.negativePrompt ||
+	      asset.generationParams?.negative_prompt ||
+	      asset.meta?.generatedMedia?.negativePrompt ||
+	      asset.meta?.generatedMedia?.negative_prompt ||
+	      asset.meta?.generatedMedia?.generationParams?.negativePrompt ||
+	      asset.meta?.generatedMedia?.generationParams?.negative_prompt ||
+	      '',
+	    ).trim();
+	  };
+	  const buildImageGenerationOverridesFromAsset = async (asset = {}) => {
+	    const savedParams = asset.generationParams && typeof asset.generationParams === 'object'
+	      ? asset.generationParams
+	      : {};
+	    const config = await loadImageRuntimeConfig({ includeDraft: true }).catch(() => null);
+	    const schema = resolveImageGenerationParamSchema(config || {});
+	    if (!schema?.fields?.length) return {};
+	    await imageGenerationParamsStore.ready;
+	    const currentBase = getParamsForImageConfig(imageGenerationParamsStore.getActive(), config || {});
+	    const overrides = {};
+	    (schema.fields || []).forEach((field) => {
+	      if (!field?.key) return;
+	      if (field.key === 'negativePrompt' || field.key === 'negative_prompt') return;
+	      if (field.key === 'referenceImages' || field.key === 'reference_images') return;
+	      if (!Object.prototype.hasOwnProperty.call(savedParams, field.key)) return;
+	      const savedValue = savedParams[field.key];
+	      const baseValue = currentBase[field.key];
+	      if (String(savedValue ?? '') !== String(baseValue ?? '')) overrides[field.key] = savedValue;
+	    });
+	    return overrides;
 	  };
 	  const collectChatImageAlbumAssetsForCurrentSession = () => {
 	    const sessionId = String(chatStore.getCurrent() || '').trim();
@@ -14426,10 +14581,13 @@ Phase G（Frame 36）：循环衔接
 	    let detailEl = null;
 	    let detailImageEl = null;
 	    let detailPromptEl = null;
+	    let detailPromptWrapEl = null;
+	    let detailNegativePromptEl = null;
+	    let detailNegativeWrapEl = null;
 	    let detailMetaEl = null;
-	    let detailCopyBtn = null;
-	    let detailAddBtn = null;
+	    let detailUseBtn = null;
 	    let detailDeleteBtn = null;
+	    let toolbarActionBtn = null;
 	    let activeDetailAsset = null;
 	    let lastAssets = [];
 	    let lastOptions = {};
@@ -14449,6 +14607,7 @@ Phase G（Frame 36）：循环衔接
 	          </div>
 	          <div class="writing-media-assets-toolbar">
 	            <span class="writing-media-assets-count"></span>
+	            <button type="button" data-action="album-toolbar-action" hidden></button>
 	          </div>
 	          <div class="writing-media-assets-list"></div>
 	        </div>
@@ -14464,13 +14623,16 @@ Phase G（Frame 36）：循环衔接
 	            <div class="generated-image-album-detail-body">
 	              <img class="generated-image-album-detail-image" alt="生成图片">
 	              <div class="generated-image-album-detail-prompt-wrap">
-	                <div class="generated-image-album-detail-label">完整提示词</div>
+	                <div class="generated-image-album-detail-label">正向提示词</div>
 	                <pre class="generated-image-album-detail-prompt"></pre>
+	              </div>
+	              <div class="generated-image-album-detail-prompt-wrap generated-image-album-detail-negative-wrap" hidden>
+	                <div class="generated-image-album-detail-label">负面提示词</div>
+	                <pre class="generated-image-album-detail-prompt generated-image-album-detail-negative-prompt"></pre>
 	              </div>
 		            </div>
 		            <div class="generated-image-album-detail-actions">
-		              <button type="button" data-action="add-detail-to-input">添加到输入区</button>
-		              <button type="button" data-action="copy-detail-prompt">复制提示词</button>
+		              <button type="button" data-action="use-detail-asset">使用</button>
 		              <button type="button" class="is-danger" data-action="delete-detail-asset">删除</button>
 		            </div>
 		          </div>
@@ -14484,10 +14646,13 @@ Phase G（Frame 36）：循环衔接
 	      detailEl = overlay.querySelector('.generated-image-album-detail');
 	      detailImageEl = overlay.querySelector('.generated-image-album-detail-image');
 	      detailPromptEl = overlay.querySelector('.generated-image-album-detail-prompt');
+	      detailPromptWrapEl = overlay.querySelector('.generated-image-album-detail-prompt-wrap');
+	      detailNegativePromptEl = overlay.querySelector('.generated-image-album-detail-negative-prompt');
+	      detailNegativeWrapEl = overlay.querySelector('.generated-image-album-detail-negative-wrap');
 	      detailMetaEl = overlay.querySelector('.generated-image-album-detail-meta');
-	      detailCopyBtn = overlay.querySelector('[data-action="copy-detail-prompt"]');
-	      detailAddBtn = overlay.querySelector('[data-action="add-detail-to-input"]');
+	      detailUseBtn = overlay.querySelector('[data-action="use-detail-asset"]');
 	      detailDeleteBtn = overlay.querySelector('[data-action="delete-detail-asset"]');
+	      toolbarActionBtn = overlay.querySelector('[data-action="album-toolbar-action"]');
 	      const closeAlbum = () => {
 	        overlay.classList.remove('is-active');
 	        if (detailEl) detailEl.hidden = true;
@@ -14512,6 +14677,7 @@ Phase G（Frame 36）：循环衔接
 	        if (!detailEl || !url) return;
 	        activeDetailAsset = asset;
 	        const prompt = String(asset.prompt || '').trim();
+	        const negativePrompt = getGeneratedImageNegativePrompt(asset);
 	        const model = [asset.provider, asset.model].filter(Boolean).join(' · ') || '图片模型';
 	        const time = formatGeneratedImageAlbumTime(asset.createdAt);
 	        const source = String(asset.sourceLabel || '').trim();
@@ -14519,38 +14685,45 @@ Phase G（Frame 36）：循环衔接
 	          detailImageEl.src = url;
 	          detailImageEl.alt = prompt || '生成图片';
 	        }
-	        if (detailPromptEl) detailPromptEl.textContent = prompt || '（无提示词）';
+	        if (detailPromptWrapEl) detailPromptWrapEl.hidden = !prompt;
+	        if (detailPromptEl) detailPromptEl.textContent = prompt;
+	        if (detailNegativeWrapEl) detailNegativeWrapEl.hidden = !negativePrompt;
+	        if (detailNegativePromptEl) detailNegativePromptEl.textContent = negativePrompt;
 	        if (detailMetaEl) detailMetaEl.textContent = [model, source, time].filter(Boolean).join(' · ');
-	        if (detailCopyBtn) detailCopyBtn.disabled = !prompt;
-	        if (detailAddBtn) detailAddBtn.hidden = lastOptions.allowComposer === false;
+	        if (detailUseBtn) {
+	          detailUseBtn.disabled = !prompt;
+	          detailUseBtn.hidden = lastOptions.allowUse === false;
+	        }
 	        if (detailDeleteBtn) detailDeleteBtn.hidden = lastOptions.allowDelete !== true;
 	        detailEl.hidden = false;
 	      };
 	      overlay.addEventListener('click', async event => {
 	        const btn = event.target?.closest?.('button[data-action]');
 	        if (btn) {
-	          const assetId = btn.closest('[data-asset-id]')?.dataset?.assetId || '';
 		        const action = btn.dataset.action || '';
+		        if (action === 'album-toolbar-action') {
+		          if (typeof lastOptions.onToolbarAction !== 'function') return;
+		          overlay.classList.remove('is-active');
+		          if (detailEl) detailEl.hidden = true;
+		          activeDetailAsset = null;
+		          await lastOptions.onToolbarAction();
+		          return;
+		        }
+	          const assetId = btn.closest('[data-asset-id]')?.dataset?.assetId || '';
 		        const isDetailAction = action.includes('detail');
 		        const asset = isDetailAction
 		          ? activeDetailAsset
 		          : lastAssets.find(item => String(item.albumId || item.id || '') === assetId);
 		          if (!asset) return;
-		          if (action === 'copy-prompt' || action === 'copy-detail-prompt') {
-		            const ok = await ui.copyToClipboard(String(asset.prompt || ''));
-		            ok ? window.toastr?.success?.('已复制提示词') : window.toastr?.warning?.('复制失败');
-		          }
-		          if (action === 'add-to-input' || action === 'add-detail-to-input') {
-		            const handler = typeof lastOptions.onAdd === 'function'
-		              ? lastOptions.onAdd
-		              : item => addGeneratedImageAssetToComposer(item);
-		            const ok = await handler(asset);
-		            if (ok) {
-		              window.toastr?.success?.('已添加到输入区');
-		              if (detailEl) detailEl.hidden = true;
-		              activeDetailAsset = null;
-		              closeAlbum();
-		            }
+		          if (action === 'use-asset' || action === 'use-detail-asset') {
+		            const handler = typeof lastOptions.onUse === 'function'
+		              ? lastOptions.onUse
+		              : null;
+		            if (!handler) return;
+		            if (detailEl) detailEl.hidden = true;
+		            activeDetailAsset = null;
+		            closeAlbum();
+		            await handler(asset);
 		          }
 		          if (action === 'delete-asset' || action === 'delete-detail-asset') {
 		            if (typeof lastOptions.onDelete !== 'function') return;
@@ -14581,6 +14754,12 @@ Phase G（Frame 36）：循环衔接
 	      if (titleEl) titleEl.textContent = title;
 	      if (subtitleEl) subtitleEl.textContent = subtitle;
 	      if (countEl) countEl.textContent = lastAssets.length ? `${lastAssets.length} 张图片` : '暂无图片';
+	      if (toolbarActionBtn) {
+	        const text = String(lastOptions.toolbarActionText || '').trim();
+	        const enabled = Boolean(text && typeof lastOptions.onToolbarAction === 'function');
+	        toolbarActionBtn.hidden = !enabled;
+	        if (enabled) toolbarActionBtn.textContent = text;
+	      }
 	      if (!listEl) return;
 	      if (!lastAssets.length) {
 	        listEl.innerHTML = `<div class="writing-media-assets-empty">${escapeHtml(lastOptions.emptyText || '还没有生成图片。')}</div>`;
@@ -14589,21 +14768,25 @@ Phase G（Frame 36）：循环衔接
 		      listEl.innerHTML = lastAssets.map(asset => {
 		        const url = resolveGeneratedImagePreviewUrl(asset);
 		        const prompt = String(asset.prompt || '').trim();
+		        const negative = getGeneratedImageNegativePrompt(asset);
 		        const model = [asset.provider, asset.model].filter(Boolean).join(' · ') || '图片模型';
 		        const time = formatGeneratedImageAlbumTime(asset.createdAt);
 		        const source = String(asset.sourceLabel || '').trim();
-		        const showAdd = lastOptions.allowComposer !== false;
+		        const showUse = lastOptions.allowUse !== false;
 		        const showDelete = lastOptions.allowDelete === true;
+		        const useButton = showUse
+		          ? `<button type="button" data-action="use-asset" ${prompt ? '' : 'disabled'}>使用</button>`
+		          : '';
 		        return `
 		          <div class="writing-media-asset-card" data-asset-id="${escapeHtml(String(asset.albumId || asset.id || ''))}">
 		            <img src="${escapeHtml(url)}" alt="${escapeHtml(prompt || '生成图片')}" data-preview-url="${escapeHtml(url)}">
 	            <div class="writing-media-asset-meta">
 	              <div class="writing-media-asset-prompt">${escapeHtml(prompt || '（无提示词）')}</div>
+	              ${negative ? `<div class="writing-media-asset-prompt writing-media-asset-negative">负面：${escapeHtml(negative)}</div>` : ''}
 	              <div class="writing-media-asset-model">${escapeHtml([model, source, time].filter(Boolean).join(' · '))}</div>
 		            </div>
 		            <div class="writing-media-asset-actions">
-		              ${showAdd ? '<button type="button" data-action="add-to-input">添加到输入区</button>' : ''}
-		              <button type="button" data-action="copy-prompt" ${prompt ? '' : 'disabled'}>复制提示词</button>
+		              ${useButton}
 		              ${showDelete ? '<button type="button" class="is-danger" data-action="delete-asset">删除</button>' : ''}
 		            </div>
 		          </div>
@@ -14630,7 +14813,7 @@ Phase G（Frame 36）：循环衔接
 	        subtitle: '当前动态作用域中生成的图片与提示词',
 	        emptyText: '还没有动态生成图片。',
 	        collect: collectMomentImageAlbumAssetsForCurrentScope,
-	        allowComposer: false,
+	        allowUse: false,
 	        allowDelete: false,
 	      });
 	      return true;
@@ -14645,9 +14828,15 @@ Phase G（Frame 36）：循环衔接
 	      subtitle: '当前聊天室生成的图片与提示词',
 	      emptyText: '当前聊天室还没有生成图片。',
 	      collect: collectChatImageAlbumAssetsForCurrentSession,
-	      allowComposer: true,
+	      allowUse: true,
 	      allowDelete: true,
-	      onAdd: asset => addGeneratedImageAssetToComposer(asset),
+	      onUse: async asset => openChatImageGenerationFlow({
+	        surface: 'chat',
+	        initialPrompt: String(asset.prompt || '').trim(),
+	        initialNegativePrompt: getGeneratedImageNegativePrompt(asset),
+	        generationParamOverrides: await buildImageGenerationOverridesFromAsset(asset),
+	        useComposerFallback: false,
+	      }),
 	      onDelete: asset => deleteGeneratedImageAssetFromCurrentChat(asset),
 	    });
 	    return true;
@@ -14747,13 +14936,35 @@ Phase G（Frame 36）：循环衔接
 	      window.toastr?.warning?.('请先进入一个创意写作会话');
 	      return false;
 	    }
-	    writingAssetPanel.open();
+	    generatedImageAlbumPanel.open({
+	      title: '插图素材',
+	      subtitle: '当前创意写作会话中已生成的插图，不会自动改写正文',
+	      emptyText: '还没有插图。可以先选中文本或输入提示词生成插图。',
+	      collect: collectWritingImageAssetsForCurrentSession,
+	      allowUse: true,
+	      allowDelete: true,
+	      toolbarActionText: '生成插图',
+	      onToolbarAction: async () => {
+	        await openChatImageGenerationFlow({ surface: 'writing' });
+	        openWritingAssetPanel();
+	      },
+	      onUse: async asset => openChatImageGenerationFlow({
+	        surface: 'writing',
+	        initialPrompt: String(asset.prompt || '').trim(),
+	        initialNegativePrompt: getGeneratedImageNegativePrompt(asset),
+	        generationParamOverrides: await buildImageGenerationOverridesFromAsset(asset),
+	        useComposerFallback: false,
+	      }),
+	      onDelete: asset => deleteGeneratedImageAssetFromCurrentWriting(asset),
+	    });
 	    return true;
 	  };
 	  const momentComposeModal = (() => {
 	    let overlay = null;
 	    let textArea = null;
 	    let promptArea = null;
+	    let negativeAreaWrap = null;
+	    let negativeArea = null;
 	    let statusEl = null;
 	    let previewEl = null;
 	    let generateBtn = null;
@@ -14761,6 +14972,7 @@ Phase G（Frame 36）：循环衔接
 	    let cancelBtn = null;
 	    let assets = [];
 	    let controller = null;
+	    let negativeCapability = resolveImageNegativePromptCapability({});
 	    const setStatus = (text = '', kind = '') => {
 	      if (!statusEl) return;
 	      statusEl.textContent = text;
@@ -14787,6 +14999,17 @@ Phase G（Frame 36）：循环衔接
 	      if (publishBtn) publishBtn.disabled = Boolean(busy);
 	      if (cancelBtn) cancelBtn.textContent = busy ? '取消生成' : '取消';
 	    };
+	    const refreshNegativeCapability = async () => {
+	      try {
+	        const config = await loadImageRuntimeConfig({ includeDraft: true });
+	        negativeCapability = resolveImageNegativePromptCapability(config || {});
+	      } catch {
+	        negativeCapability = resolveImageNegativePromptCapability({});
+	      }
+	      const supported = Boolean(negativeCapability?.supported);
+	      if (negativeAreaWrap) negativeAreaWrap.hidden = !supported;
+	      if (!supported && negativeArea) negativeArea.value = '';
+	    };
 	    const close = () => {
 	      if (controller) {
 	        controller.abort('moment compose closed');
@@ -14804,11 +15027,14 @@ Phase G（Frame 36）：循环衔接
 	      }
 	      const config = await ensureImageConfigReady();
 	      if (!config) return;
+	      negativeCapability = resolveImageNegativePromptCapability(config);
+	      const negativePrompt = negativeCapability?.supported ? String(negativeArea?.value || '').trim() : '';
 	      await imageGenerationParamsStore.ready;
 	      const imageParamsPreset = imageGenerationParamsStore.getActive();
 	      const generationOptions = mergeImageGenerationRequestOptions({
 	        config,
 	        preset: imageParamsPreset,
+	        extra: negativePrompt ? { negativePrompt } : {},
 	      });
 	      controller = new AbortController();
 	      setBusy(true);
@@ -14893,6 +15119,10 @@ Phase G（Frame 36）：循环衔接
 	              <span>图片提示词</span>
 	              <textarea class="moment-compose-prompt" placeholder="留空则使用动态正文作为提示词"></textarea>
 	            </label>
+	            <label class="moment-compose-field moment-compose-negative-field" hidden>
+	              <span>负面提示词</span>
+	              <textarea class="moment-compose-prompt moment-compose-negative" placeholder="不想出现的内容，例如低清、畸形手、文字水印"></textarea>
+	            </label>
 	            <div class="moment-compose-images"></div>
 	            <div class="moment-compose-status"></div>
 	          </div>
@@ -14906,6 +15136,8 @@ Phase G（Frame 36）：循环衔接
 	      document.body.appendChild(overlay);
 	      textArea = overlay.querySelector('.moment-compose-text');
 	      promptArea = overlay.querySelector('.moment-compose-prompt');
+	      negativeAreaWrap = overlay.querySelector('.moment-compose-negative-field');
+	      negativeArea = overlay.querySelector('.moment-compose-negative');
 	      statusEl = overlay.querySelector('.moment-compose-status');
 	      previewEl = overlay.querySelector('.moment-compose-images');
 	      generateBtn = overlay.querySelector('.moment-compose-generate');
@@ -14939,10 +15171,12 @@ Phase G（Frame 36）：循环衔接
 	        assets = [];
 	        if (textArea) textArea.value = String(initialText || '').trim();
 	        if (promptArea) promptArea.value = String(initialPrompt || '').trim();
+	        if (negativeArea) negativeArea.value = '';
 	        setStatus('');
 	        setBusy(false);
 	        renderPreview();
 	        overlay.classList.add('is-active');
+	        void refreshNegativeCapability();
 	        setTimeout(() => (textArea?.value ? promptArea : textArea)?.focus?.(), 0);
 	      },
 	    };
@@ -17533,7 +17767,7 @@ Phase G（Frame 36）：循环衔接
     };
 
     // 创建 pending 消息（status: 'pending'）
-    const pendingMessage = createPendingUserMessage({
+    const pendingMessages = buildPendingMessagesFromComposer(composerAttachments, {
       text,
       stickerKey,
       fallbackContent: attachmentSummary() || '[附件]',
@@ -17541,16 +17775,29 @@ Phase G（Frame 36）：循环衔接
       userName: activeUser?.name,
       time: formatNowTime(),
       replyTarget,
-      attachmentsOnly: !text && hasAttachments && !stickerKey,
     });
 
     // 添加到聊天历史（作为 pending 状态的消息）
-    const saved = chatStore.appendMessage(pendingMessage, sessionId);
+    const savedMessages = pendingMessages
+      .map(message => chatStore.appendMessage(message, sessionId))
+      .filter(Boolean);
 
     // 在UI中渲染为半透明气泡
-    ui.addMessage(saved);
+    savedMessages.forEach(saved => ui.addMessage(saved));
+    const attachmentById = new Map(
+      composerAttachments.filter(item => item && typeof item === 'object').map(item => [String(item.id || ''), item]),
+    );
+    savedMessages.forEach((message) => {
+      if (message?.type !== 'image') return;
+      const attachment = attachmentById.get(String(message?.meta?.attachmentId || ''));
+      if (attachment) persistImageAttachmentMessage(message, attachment, sessionId);
+    });
+    chatGeneratedImagePreview.removeAssets(
+      composerAttachments.filter(item => item?.source === 'generated-image'),
+    );
 
     // 清空输入框
+    clearComposerAttachments();
     ui.clearInput();
     if (replyTarget) clearReplyTargetForSession(sessionId);
 
@@ -17657,6 +17904,10 @@ Phase G（Frame 36）：循环衔接
     if (hasAttachments) {
       text = stripComposerAttachmentPlaceholders(text, attachmentQueue);
     }
+    const pendingAttachmentParts = await buildImageAttachmentPartsFromMessages(pendingMessagesToConfirm, sessionId);
+    const pendingGeneratedImageMessages = pendingMessagesToConfirm.filter(
+      message => message?.type === 'image' && message?.meta?.source === 'generated-image',
+    );
     const contact = contactsStore.getContact(sessionId);
     const isRpMode = uiMode === 'rp';
     const sharedVariables = isSharedVariableSession(sessionId);
@@ -18672,6 +18923,7 @@ Phase G（Frame 36）：循环衔接
     });
     let disableSummaryForThis = false;
     const attachmentParts = [
+      ...pendingAttachmentParts,
       ...resendAttachmentParts,
       ...(hasAttachments ? buildAttachmentParts(attachmentQueue) : []),
     ];
@@ -18896,6 +19148,17 @@ Phase G（Frame 36）：循环衔接
         } catch {}
       },
     });
+    if (pendingGeneratedImageMessages.length) {
+      chatGeneratedImagePreview.removeAssets(pendingGeneratedImageMessages.map(message => ({
+        id: String(message?.meta?.generatedAssetId || '').trim(),
+        localPath: String(message?.meta?.localPath || '').trim(),
+        url: String(message?.content || '').trim(),
+        output: {
+          path: String(message?.meta?.localPath || '').trim(),
+          url: String(message?.content || '').trim(),
+        },
+      })));
+    }
     const commitContinuationMessage = (message, { partial = false } = {}) => {
       return commitContinuationMessageToStore({
         message,
@@ -19003,7 +19266,7 @@ Phase G（Frame 36）：循环衔接
       rpUiMode,
       isGroupChat,
       hasAttachments,
-      attachmentCount: attachmentQueue.length + resendAttachmentParts.length,
+      attachmentCount: attachmentQueue.length + resendAttachmentParts.length + pendingAttachmentParts.length,
       pendingCount: pendingMessagesToConfirm.length,
       suppressUserMessage,
       hasContinueTarget: Boolean(continueTarget),

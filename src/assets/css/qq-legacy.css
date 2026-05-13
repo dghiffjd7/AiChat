@@ -2255,6 +2255,37 @@ body[data-ui-mode='rp'] .rp-continue-btn {
   box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
 }
 
+.chat-image-gen-negative {
+  margin-top: 10px;
+}
+
+.chat-image-gen-negative[hidden] {
+  display: none;
+}
+
+.chat-image-gen-negative-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.chat-image-gen-negative-label {
+  color: var(--app-text-primary);
+  font-weight: 800;
+  font-size: 13px;
+}
+
+.chat-image-gen-negative-hint {
+  color: var(--app-text-muted);
+  font-size: 12px;
+}
+
+.chat-image-gen-negative-textarea {
+  min-height: 76px;
+}
+
 .chat-image-gen-status {
   min-height: 18px;
   margin-top: 8px;
@@ -2608,6 +2639,11 @@ body[data-ui-mode='rp'] .rp-continue-btn {
   color: var(--app-text-primary);
   font-size: 13px;
   line-height: 1.35;
+}
+
+.writing-media-asset-negative {
+  margin-top: 4px;
+  color: var(--app-text-muted);
 }
 
 .writing-media-asset-model {

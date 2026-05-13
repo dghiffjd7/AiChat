@@ -129,19 +129,35 @@ export const createPendingFloatRuntime = ({
   const finalizePendingMessages = (sessionId, sentMessages = []) => {
     const sid = String(sessionId || '').trim();
     if (!sid) return;
-    const ids = new Set(sentMessages.map((message) => String(message?.id || '')).filter(Boolean));
+    const ids = new Set();
+    const groupIds = new Set();
+    sentMessages.forEach((message) => {
+      const id = String(message?.id || '').trim();
+      if (id) ids.add(id);
+      const groupId = String(message?.meta?.pendingGroupId || '').trim();
+      if (groupId) groupIds.add(groupId);
+    });
     if (!ids.size) return;
     const history = getMessages(sid) || [];
     history.forEach((message) => {
       const messageId = String(message?.id || '');
-      if (!ids.has(messageId)) return;
-      const updated = updateMessage(message.id, { status: 'sent' }, sid);
+      const groupId = String(message?.meta?.pendingGroupId || '').trim();
+      if (!ids.has(messageId) && !(groupId && groupIds.has(groupId))) return;
+      const patch = { status: 'sent' };
+      if (groupId) {
+        patch.meta = {
+          ...(message.meta || {}),
+          pendingGroupStatus: 'sent',
+        };
+      }
+      const updated = updateMessage(message.id, patch, sid);
       updateMessageDom(message.id, updated || { ...message, status: 'sent' });
     });
     const pendingQueue = getPendingMessages(sid) || [];
     pendingQueue.forEach((message) => {
       const messageId = String(message?.id || '');
-      if (!ids.has(messageId)) return;
+      const groupId = String(message?.meta?.pendingGroupId || '').trim();
+      if (!ids.has(messageId) && !(groupId && groupIds.has(groupId))) return;
       removePendingMessage(message.id, sid);
     });
   };
@@ -150,7 +166,8 @@ export const createPendingFloatRuntime = ({
     const sid = String(sessionId || '').trim();
     if (!sid || !pendingMessage) return false;
     const content = String(pendingMessage?.content ?? '').trim();
-    if (!content) {
+    const hasMediaContent = pendingMessage?.type === 'image' || pendingMessage?.type === 'document';
+    if (!content && !hasMediaContent) {
       notifyMissingContent('未找到缓存内容');
       return false;
     }
