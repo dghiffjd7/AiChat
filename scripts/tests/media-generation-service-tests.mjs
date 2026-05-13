@@ -45,6 +45,7 @@ import {
   assert.equal(resolveImageReferenceCapability({ provider: 'gemini', model: 'nano-banana-pro' }).max, 3);
   assert.equal(resolveImageReferenceCapability({ provider: 'makersuite', model: 'gemini-2.5-flash-image-preview', maxReferenceImages: 2 }).max, 2);
   assert.equal(resolveImageReferenceCapability({ provider: 'custom', model: 'image-model', maxReferenceImages: 2 }).supported, false);
+  assert.equal(resolveImageReferenceCapability({ provider: 'novelai', model: 'nai-diffusion-4-5-full' }).supported, false);
   console.log('ok - media generation service resolves image reference capabilities');
 }
 
@@ -72,6 +73,23 @@ import {
   assert.deepEqual(merged.referenceImages, ['data:image/png;base64,ref']);
   assert.equal(merged.quality, 'high');
   console.log('ok - media generation params schema sanitizes OpenAI image options');
+}
+
+{
+  const novelSchema = resolveImageGenerationParamSchema({ provider: 'novelai', model: 'nai-diffusion-4-5-full' });
+  assert.equal(novelSchema.fields.some(field => field.key === 'sampler'), true);
+  const novelParams = getParamsForImageConfig(createDefaultImageGenerationPreset(), { provider: 'novelai', model: 'nai-diffusion-4-5-full' });
+  assert.equal(novelParams.steps, 23);
+  assert.equal(novelParams.scale, 5);
+  assert.equal(novelParams.cfgRescale, 0);
+  assert.equal(novelParams.sampler, 'k_euler_ancestral');
+  assert.equal(novelParams.qualityToggle, 'true');
+  const a1111Params = getParamsForImageConfig(createDefaultImageGenerationPreset(), { provider: 'automatic1111', model: 'default' });
+  assert.equal(a1111Params.width, 1024);
+  assert.equal(a1111Params.cfg_scale, 7);
+  const comfySchema = resolveImageGenerationParamSchema({ provider: 'comfyui', model: 'workflow' });
+  assert.equal(comfySchema.fields.some(field => field.key === 'workflowJson' && field.type === 'textarea'), true);
+  console.log('ok - media generation params schema supports added image providers');
 }
 
 {

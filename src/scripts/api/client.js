@@ -9,6 +9,14 @@ import { GeminiProvider } from './providers/gemini.js';
 import { DeepseekProvider } from './providers/deepseek.js';
 import { MakersuiteProvider } from './providers/makersuite.js';
 import { VertexAIProvider } from './providers/vertexai.js';
+import {
+    Automatic1111ImageProvider,
+    ComfyUIImageProvider,
+    NovelAIImageProvider,
+    PollinationsImageProvider,
+    StabilityAIImageProvider,
+    TogetherAIImageProvider,
+} from './providers/image-generation-providers.js';
 
 const PROVIDER_CLASSES = Object.freeze({
     openai: OpenAIProvider,
@@ -18,6 +26,14 @@ const PROVIDER_CLASSES = Object.freeze({
     vertexai: VertexAIProvider,
     deepseek: DeepseekProvider,
     custom: CustomProvider,
+    novelai: NovelAIImageProvider,
+    stability: StabilityAIImageProvider,
+    togetherai: TogetherAIImageProvider,
+    pollinations: PollinationsImageProvider,
+    automatic1111: Automatic1111ImageProvider,
+    a1111: Automatic1111ImageProvider,
+    comfyui: ComfyUIImageProvider,
+    comfy: ComfyUIImageProvider,
 });
 
 export class LLMClient {

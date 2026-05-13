@@ -111,6 +111,19 @@ export const resolveImageReferenceCapability = (config = {}) => {
     return unsupported('当前 Vertex AI 图片生成链路暂未接入参考图');
   }
 
+  if ([
+    'novelai',
+    'stability',
+    'togetherai',
+    'pollinations',
+    'automatic1111',
+    'a1111',
+    'comfyui',
+    'comfy',
+  ].includes(provider)) {
+    return unsupported('当前图片渠道先接入文本生图，参考图链路暂未开放');
+  }
+
   return unsupported('当前图片模型暂不支持参考图');
 };
 

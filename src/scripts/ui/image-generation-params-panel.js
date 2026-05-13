@@ -175,6 +175,7 @@ export class ImageGenerationParamsPanel {
       this.body.querySelector('[data-action="rename"]')?.addEventListener('click', () => this.renamePreset());
       this.body.querySelector('[data-action="delete"]')?.addEventListener('click', () => this.deletePreset());
       this.body.querySelector('[data-action="reset-provider"]')?.addEventListener('click', () => this.resetProviderParams(provider));
+      this.bindFieldInteractions();
     } finally {
       this.isRendering = false;
     }
@@ -192,6 +193,8 @@ export class ImageGenerationParamsPanel {
       </select>`;
     } else if (field.type === 'number') {
       control = `<input ${common} type="number" min="${escapeHtml(field.min ?? '')}" max="${escapeHtml(field.max ?? '')}" step="${escapeHtml(field.step ?? 1)}" value="${escapeHtml(safeValue)}" style="${inputStyle}">`;
+    } else if (field.type === 'textarea') {
+      control = `<textarea ${common} style="${inputStyle} min-height:140px; resize:vertical; font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; line-height:1.45;">${escapeHtml(safeValue)}</textarea>`;
     } else {
       control = `<input ${common} type="text" value="${escapeHtml(safeValue)}" style="${inputStyle}">`;
     }
@@ -202,6 +205,26 @@ export class ImageGenerationParamsPanel {
         ${help}
       </label>
     `;
+  }
+
+  bindFieldInteractions() {
+    const samplerEl = this.body?.querySelector('[data-param-key="sampler"]');
+    const smEl = this.body?.querySelector('[data-param-key="sm"]');
+    const smDynEl = this.body?.querySelector('[data-param-key="sm_dyn"]');
+    if (!samplerEl || !smEl || !smDynEl || this.currentSchema?.provider !== 'novelai') return;
+    const syncNovelAiSmea = () => {
+      const isDdim = String(samplerEl.value || '') === 'ddim';
+      const hasSmea = !isDdim && String(smEl.value || '') === 'true';
+      smEl.disabled = isDdim;
+      smDynEl.disabled = !hasSmea;
+      if (isDdim) smEl.value = '';
+      if (!hasSmea) smDynEl.value = '';
+      smEl.style.opacity = smEl.disabled ? '0.55' : '';
+      smDynEl.style.opacity = smDynEl.disabled ? '0.55' : '';
+    };
+    samplerEl.addEventListener('change', syncNovelAiSmea);
+    smEl.addEventListener('change', syncNovelAiSmea);
+    syncNovelAiSmea();
   }
 
   collectParams() {

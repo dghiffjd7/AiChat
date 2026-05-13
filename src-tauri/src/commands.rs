@@ -3444,6 +3444,7 @@ pub async fn http_request(
     body: Option<String>,
     timeout_ms: Option<u64>,
     request_id: Option<String>,
+    response_base64: Option<bool>,
     abort_state: State<'_, HttpAbortState>,
 ) -> Result<HttpResponse, String> {
     let request_key = match request_id {
@@ -3481,7 +3482,12 @@ pub async fn http_request(
                 out_headers.insert(k.as_str().to_string(), vs.to_string());
             }
         }
-        let body = resp.text().await.map_err(|e| e.to_string())?;
+        let body = if response_base64.unwrap_or(false) {
+            let bytes = resp.bytes().await.map_err(|e| e.to_string())?;
+            BASE64_ENGINE.encode(bytes)
+        } else {
+            resp.text().await.map_err(|e| e.to_string())?
+        };
 
         Ok(HttpResponse {
             status: status.as_u16(),

@@ -20,6 +20,34 @@ const escapeHtml = (value) => String(value ?? '').replace(/[&<>"]/g, (ch) => ({
     '"': '&quot;',
 }[ch]));
 
+const CHAT_PROVIDER_OPTIONS = [
+    { value: 'openai', label: 'OpenAI' },
+    { value: 'makersuite', label: 'Google AI Studio (Makersuite)' },
+    { value: 'vertexai', label: 'Google Vertex AI' },
+    { value: 'deepseek', label: 'Deepseek' },
+    { value: 'anthropic', label: 'Anthropic (Claude)' },
+    { value: 'custom', label: '自定义 API' },
+];
+
+const IMAGE_PROVIDER_OPTIONS = [
+    { value: 'openai', label: 'OpenAI' },
+    { value: 'makersuite', label: 'Google AI Studio (Gemini/Imagen)' },
+    { value: 'vertexai', label: 'Google Vertex AI' },
+    { value: 'novelai', label: 'NovelAI Diffusion' },
+    { value: 'stability', label: 'Stability AI' },
+    { value: 'togetherai', label: 'Together AI' },
+    { value: 'pollinations', label: 'Pollinations' },
+    { value: 'automatic1111', label: 'AUTOMATIC1111' },
+    { value: 'comfyui', label: 'ComfyUI' },
+    { value: 'custom', label: '自定义 OpenAI 兼容 API' },
+];
+
+const ALL_PROVIDER_KEYS = Array.from(new Set([
+    ...CHAT_PROVIDER_OPTIONS.map(item => item.value),
+    ...IMAGE_PROVIDER_OPTIONS.map(item => item.value),
+]));
+
+const NO_API_KEY_PROVIDERS = new Set(['pollinations', 'automatic1111', 'a1111', 'comfyui', 'comfy']);
 
 export class ConfigPanel {
     constructor() {
@@ -146,8 +174,33 @@ export class ConfigPanel {
         } catch {}
     }
 
+    getProviderOptions() {
+        return this.activeTab === 'image' ? IMAGE_PROVIDER_OPTIONS : CHAT_PROVIDER_OPTIONS;
+    }
+
+    refreshProviderOptions() {
+        if (!this.element) return;
+        const select = this.element.querySelector('#config-provider');
+        if (!select) return;
+        const options = this.getProviderOptions();
+        const current = select.value;
+        const allowed = new Set(options.map(item => item.value));
+        select.innerHTML = options
+            .map(item => `<option value="${escapeHtml(item.value)}">${escapeHtml(item.label)}</option>`)
+            .join('');
+        select.value = allowed.has(current) ? current : (options[0]?.value || 'openai');
+        this.refreshCustomSelect('config-provider');
+    }
+
+    providerRequiresApiKey(provider) {
+        const raw = String(provider || '').trim().toLowerCase();
+        if (raw === 'vertexai') return false;
+        return !NO_API_KEY_PROVIDERS.has(raw);
+    }
+
     updateTabUI() {
         if (!this.element) return;
+        this.refreshProviderOptions();
         const title = this.element.querySelector('#config-title');
         if (title) {
             title.textContent = this.activeTab === 'image' ? '图片模型配置' : '聊天模型配置';
@@ -742,6 +795,36 @@ export class ConfigPanel {
                 model: 'claude-3-5-sonnet-20241022',
                 urlHelp: 'Anthropic API 基础 URL'
             },
+            novelai: {
+                baseUrl: 'https://image.novelai.net',
+                model: 'nai-diffusion-4-5-full',
+                urlHelp: 'NovelAI Image API URL'
+            },
+            stability: {
+                baseUrl: 'https://api.stability.ai',
+                model: 'stable-image-core',
+                urlHelp: 'Stability AI API URL'
+            },
+            togetherai: {
+                baseUrl: 'https://api.together.xyz/v1',
+                model: 'black-forest-labs/FLUX.1-schnell',
+                urlHelp: 'Together AI API URL'
+            },
+            pollinations: {
+                baseUrl: 'https://gen.pollinations.ai',
+                model: 'flux',
+                urlHelp: 'Pollinations 图片 API URL'
+            },
+            automatic1111: {
+                baseUrl: 'http://127.0.0.1:7860',
+                model: 'default',
+                urlHelp: 'AUTOMATIC1111 WebUI URL（需要启动 --api）'
+            },
+            comfyui: {
+                baseUrl: 'http://127.0.0.1:8188',
+                model: 'workflow',
+                urlHelp: 'ComfyUI URL（需要在图片参数中填写 API Format workflow JSON）'
+            },
             custom: {
                 baseUrl: 'http://localhost:8000/v1',
                 model: isImage ? 'image-model' : 'default',
@@ -753,7 +836,7 @@ export class ConfigPanel {
     }
 
     usesEditableBaseUrl(provider) {
-        return String(provider || '').trim().toLowerCase() === 'custom';
+        return ['custom', 'automatic1111', 'a1111', 'comfyui', 'comfy'].includes(String(provider || '').trim().toLowerCase());
     }
 
     resetFormForProvider(provider) {
@@ -972,7 +1055,9 @@ export class ConfigPanel {
             return;
         }
 
-        providerEl.value = config.provider || 'openai';
+        const allowedProviders = new Set(this.getProviderOptions().map(item => item.value));
+        const selectedProvider = allowedProviders.has(config.provider) ? config.provider : 'openai';
+        providerEl.value = selectedProvider;
         const currentProvider = providerEl.value || 'openai';
         const currentRegion = config.vertexaiRegion || 'us-central1';
         const defaultBaseUrl = this.getProviderDefaults(currentProvider, { region: currentRegion }).baseUrl;
@@ -1137,7 +1222,7 @@ export class ConfigPanel {
             // 内建服务商固定使用默认协议地址；custom 保持可编辑。
             const currentUrl = baseUrlInput.value.trim();
             const selectedRegion = panel.querySelector('#config-region')?.value || 'us-central1';
-            const allDefaults = ['openai', 'makersuite', 'vertexai', 'deepseek', 'anthropic', 'custom']
+            const allDefaults = ALL_PROVIDER_KEYS
                 .map((name) => this.getProviderDefaults(name, { region: selectedRegion }).baseUrl);
             const isDefaultUrl = allDefaults.includes(currentUrl);
             if (!editableBaseUrl || !currentUrl || isDefaultUrl) {
@@ -1157,7 +1242,7 @@ export class ConfigPanel {
         if (modelInput) {
             // 自动填写模型（如果当前为空或为其他服务商的默认值）
             const currentModel = modelInput.value.trim();
-            const allDefaults = ['openai','makersuite','vertexai','deepseek','anthropic','custom'].map(p => this.getProviderDefaults(p).model);
+            const allDefaults = ALL_PROVIDER_KEYS.map(p => this.getProviderDefaults(p).model);
             const isDefaultModel = allDefaults.includes(currentModel);
             if (!currentModel || isDefaultModel) {
                 modelInput.value = defaults.model;
@@ -1182,6 +1267,11 @@ export class ConfigPanel {
             vertexaiFields.style.display = 'block';
             if (apiKeyHelp) {
                 apiKeyHelp.textContent = 'Vertex AI 需 Service Account 后端签名；纯前端建议改用 Google AI Studio (Makersuite)';
+            }
+        } else if (!this.providerRequiresApiKey(provider)) {
+            vertexaiFields.style.display = 'none';
+            if (apiKeyHelp) {
+                apiKeyHelp.textContent = '此图片渠道可不填写 API Key；若服务端启用鉴权再保存 Key。';
             }
         } else {
             vertexaiFields.style.display = 'none';
@@ -1543,7 +1633,7 @@ export class ConfigPanel {
             const keys = this.configManager.listKeys?.(active?.id) || [];
             const hasTypedKey = typeof formData.apiKey === 'string' && formData.apiKey.trim().length > 0;
             const hasSavedKey = keys.length > 0;
-            if (!hasTypedKey && !hasSavedKey && formData.provider !== 'vertexai') {
+            if (!hasTypedKey && !hasSavedKey && this.providerRequiresApiKey(formData.provider)) {
                 this.showStatus('请先用 🔑 保存至少一个 API Key，或在此栏贴上 Key 后保存', 'error');
                 return;
             }
@@ -1616,7 +1706,7 @@ export class ConfigPanel {
             const runtime = await this.configManager.load();
             const existingKey = (runtime?.apiKey || '').trim();
             const keyToUse = (typeof formData.apiKey === 'string') ? formData.apiKey.trim() : existingKey;
-            if (!keyToUse) {
+            if (!keyToUse && this.providerRequiresApiKey(formData.provider)) {
                 this.showStatus('请先用 🔑 保存至少一个 API Key，或在此栏贴上 Key', 'error');
                 return;
             }

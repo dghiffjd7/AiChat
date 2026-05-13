@@ -8,6 +8,12 @@ const clampInt = (value, min, max, fallback) => {
   return Math.min(max, Math.max(min, raw));
 };
 
+const clampNumber = (value, min, max, fallback) => {
+  const raw = Number(value);
+  if (!Number.isFinite(raw)) return fallback;
+  return Math.min(max, Math.max(min, raw));
+};
+
 const optionValues = (field) => new Set((field?.options || []).map(item => String(item.value)));
 const AUTO_OPTION_OMIT_KEYS = new Set(['quality', 'size', 'background', 'moderation']);
 
@@ -20,7 +26,7 @@ const makeSelect = (key, label, options, fallback, help = '') => ({
   help,
 });
 
-const makeNumber = (key, label, { min, max, step = 1, fallback, help = '' } = {}) => ({
+const makeNumber = (key, label, { min, max, step = 1, fallback, help = '', integer = true } = {}) => ({
   key,
   label,
   type: 'number',
@@ -28,6 +34,7 @@ const makeNumber = (key, label, { min, max, step = 1, fallback, help = '' } = {}
   max,
   step,
   defaultValue: fallback,
+  integer,
   help,
 });
 
@@ -38,6 +45,41 @@ const makeText = (key, label, fallback = '', help = '') => ({
   defaultValue: fallback,
   help,
 });
+
+const makeTextarea = (key, label, fallback = '', help = '') => ({
+  key,
+  label,
+  type: 'textarea',
+  defaultValue: fallback,
+  help,
+});
+
+const BOOLEAN_OPTIONS = [
+  { value: '', label: '关闭' },
+  { value: 'true', label: '开启' },
+];
+
+const NOVELAI_LEGACY_DEFAULTS = {
+  steps: 28,
+  scale: 9,
+  sampler: 'k_dpmpp_2m',
+};
+
+const NOVELAI_DEFAULTS = {
+  width: 1024,
+  height: 1024,
+  steps: 23,
+  scale: 5,
+  cfgRescale: 0,
+  sampler: 'k_euler_ancestral',
+  scheduler: 'karras',
+  negativePrompt: '',
+  seed: '',
+  qualityToggle: 'true',
+  sm: '',
+  sm_dyn: '',
+  decrisper: '',
+};
 
 export const IMAGE_GENERATION_PARAM_STORE_KEY = 'image_generation_params_v1';
 
@@ -79,6 +121,59 @@ export const createDefaultImageGenerationPreset = () => ({
       style: '',
       response_format: '',
     },
+    novelai: {
+      ...NOVELAI_DEFAULTS,
+    },
+    stability: {
+      aspectRatio: '1:1',
+      output_format: 'png',
+      style_preset: '',
+      negativePrompt: '',
+      seed: '',
+    },
+    togetherai: {
+      n: 1,
+      width: 1024,
+      height: 1024,
+      steps: 4,
+      guidance_scale: 3.5,
+      negativePrompt: '',
+      seed: '',
+      response_format: '',
+      output_format: 'png',
+      disable_safety_checker: '',
+    },
+    pollinations: {
+      width: 1024,
+      height: 1024,
+      negativePrompt: '',
+      seed: '',
+      enhance: '',
+    },
+    automatic1111: {
+      n: 1,
+      width: 1024,
+      height: 1024,
+      steps: 20,
+      cfg_scale: 7,
+      sampler_name: '',
+      scheduler: '',
+      negativePrompt: '',
+      seed: '',
+      restore_faces: '',
+      enable_hr: '',
+    },
+    comfyui: {
+      width: 1024,
+      height: 1024,
+      steps: 20,
+      scale: 7,
+      sampler: '',
+      scheduler: '',
+      negativePrompt: '',
+      seed: '',
+      workflowJson: '',
+    },
   },
 });
 
@@ -88,6 +183,12 @@ export const normalizeImageProviderKey = (provider = '') => {
   if (p === 'vertexai') return 'vertexai';
   if (p === 'openai') return 'openai';
   if (p === 'custom') return 'custom';
+  if (p === 'novel' || p === 'novelai') return 'novelai';
+  if (p === 'stability' || p === 'stabilityai') return 'stability';
+  if (p === 'together' || p === 'togetherai') return 'togetherai';
+  if (p === 'pollinations') return 'pollinations';
+  if (p === 'automatic1111' || p === 'a1111' || p === 'auto') return 'automatic1111';
+  if (p === 'comfy' || p === 'comfyui') return 'comfyui';
   return p || 'custom';
 };
 
@@ -213,6 +314,172 @@ export const resolveImageGenerationParamSchema = (config = {}) => {
     };
   }
 
+  if (provider === 'novelai') {
+    return {
+      provider,
+      model,
+      title: 'NovelAI Diffusion 参数',
+      fields: [
+        makeNumber('width', '宽度', { min: 64, max: 2048, step: 64, fallback: 1024 }),
+        makeNumber('height', '高度', { min: 64, max: 2048, step: 64, fallback: 1024 }),
+        makeNumber('steps', '步数', { min: 1, max: 50, fallback: 23 }),
+        makeNumber('scale', 'Prompt Guidance / Scale', { min: 0, max: 30, step: 0.5, fallback: 5, integer: false }),
+        makeNumber('cfgRescale', 'Prompt Guidance Rescale', { min: 0, max: 1, step: 0.05, fallback: 0, integer: false, help: '高 Prompt Guidance 时可缓解过饱和和伪影；0 表示关闭。' }),
+        makeSelect('sampler', '采样器', [
+          { value: 'k_euler_ancestral', label: 'k_euler_ancestral' },
+          { value: 'k_euler', label: 'k_euler' },
+          { value: 'k_dpmpp_2m', label: 'k_dpmpp_2m' },
+          { value: 'k_dpmpp_sde', label: 'k_dpmpp_sde' },
+          { value: 'k_dpmpp_2s_ancestral', label: 'k_dpmpp_2s_ancestral' },
+          { value: 'k_dpm_fast', label: 'k_dpm_fast' },
+          { value: 'ddim', label: 'ddim' },
+        ], 'k_euler_ancestral'),
+        makeSelect('scheduler', '噪声调度', [
+          { value: 'karras', label: 'karras' },
+          { value: 'native', label: 'native' },
+          { value: 'exponential', label: 'exponential' },
+          { value: 'polyexponential', label: 'polyexponential' },
+        ], 'karras'),
+        makeText('negativePrompt', '负面提示词', ''),
+        makeText('seed', 'Seed', '', '留空则随机。'),
+        makeSelect('qualityToggle', 'Quality Tags Enabled', BOOLEAN_OPTIONS, 'true', '开启后由 NovelAI 追加模型对应质量标签；如提示词已手写大量质量词，可关闭。'),
+        makeSelect('sm', 'SMEA', BOOLEAN_OPTIONS, ''),
+        makeSelect('sm_dyn', 'SMEA DYN', BOOLEAN_OPTIONS, ''),
+        makeSelect('decrisper', 'Decrisper', BOOLEAN_OPTIONS, ''),
+      ],
+    };
+  }
+
+  if (provider === 'stability') {
+    return {
+      provider,
+      model,
+      title: 'Stability AI 参数',
+      fields: [
+        makeSelect('aspectRatio', '比例', [
+          { value: '1:1', label: '1:1' },
+          { value: '16:9', label: '16:9' },
+          { value: '9:16', label: '9:16' },
+          { value: '4:3', label: '4:3' },
+          { value: '3:4', label: '3:4' },
+          { value: '3:2', label: '3:2' },
+          { value: '2:3', label: '2:3' },
+          { value: '21:9', label: '21:9' },
+          { value: '9:21', label: '9:21' },
+        ], '1:1'),
+        makeSelect('output_format', '输出格式', [
+          { value: 'png', label: 'PNG' },
+          { value: 'jpeg', label: 'JPEG' },
+          { value: 'webp', label: 'WebP' },
+        ], 'png'),
+        makeSelect('style_preset', '风格预设', [
+          { value: '', label: '不传' },
+          { value: '3d-model', label: '3d-model' },
+          { value: 'analog-film', label: 'analog-film' },
+          { value: 'anime', label: 'anime' },
+          { value: 'cinematic', label: 'cinematic' },
+          { value: 'comic-book', label: 'comic-book' },
+          { value: 'digital-art', label: 'digital-art' },
+          { value: 'fantasy-art', label: 'fantasy-art' },
+          { value: 'isometric', label: 'isometric' },
+          { value: 'line-art', label: 'line-art' },
+          { value: 'low-poly', label: 'low-poly' },
+          { value: 'modeling-compound', label: 'modeling-compound' },
+          { value: 'neon-punk', label: 'neon-punk' },
+          { value: 'origami', label: 'origami' },
+          { value: 'photographic', label: 'photographic' },
+          { value: 'pixel-art', label: 'pixel-art' },
+          { value: 'tile-texture', label: 'tile-texture' },
+        ], ''),
+        makeText('negativePrompt', '负面提示词', ''),
+        makeText('seed', 'Seed', '', '留空则由服务商随机。'),
+      ],
+    };
+  }
+
+  if (provider === 'togetherai') {
+    return {
+      provider,
+      model,
+      title: 'Together AI 图片参数',
+      fields: [
+        makeNumber('n', '生成张数', { min: 1, max: 4, fallback: 1 }),
+        makeNumber('width', '宽度', { min: 128, max: 2048, step: 64, fallback: 1024 }),
+        makeNumber('height', '高度', { min: 128, max: 2048, step: 64, fallback: 1024 }),
+        makeNumber('steps', '步数', { min: 1, max: 100, fallback: 4 }),
+        makeNumber('guidance_scale', 'Guidance Scale', { min: 0, max: 30, step: 0.1, fallback: 3.5, integer: false }),
+        makeText('negativePrompt', '负面提示词', ''),
+        makeText('seed', 'Seed', '', '留空则不传。'),
+        makeSelect('response_format', '返回格式', [
+          { value: '', label: '默认' },
+          { value: 'base64', label: 'Base64' },
+          { value: 'url', label: 'URL' },
+        ], ''),
+        makeSelect('output_format', '输出格式', [
+          { value: 'png', label: 'PNG' },
+          { value: 'jpeg', label: 'JPEG' },
+          { value: 'webp', label: 'WebP' },
+        ], 'png'),
+        makeSelect('disable_safety_checker', '关闭安全检查', BOOLEAN_OPTIONS, ''),
+      ],
+    };
+  }
+
+  if (provider === 'pollinations') {
+    return {
+      provider,
+      model,
+      title: 'Pollinations 参数',
+      fields: [
+        makeNumber('width', '宽度', { min: 64, max: 4096, step: 64, fallback: 1024 }),
+        makeNumber('height', '高度', { min: 64, max: 4096, step: 64, fallback: 1024 }),
+        makeText('negativePrompt', '负面提示词', ''),
+        makeText('seed', 'Seed', '', '留空则不传。'),
+        makeSelect('enhance', '增强提示词', BOOLEAN_OPTIONS, ''),
+      ],
+    };
+  }
+
+  if (provider === 'automatic1111') {
+    return {
+      provider,
+      model,
+      title: 'AUTOMATIC1111 参数',
+      fields: [
+        makeNumber('n', '生成张数', { min: 1, max: 8, fallback: 1 }),
+        makeNumber('width', '宽度', { min: 64, max: 4096, step: 64, fallback: 1024 }),
+        makeNumber('height', '高度', { min: 64, max: 4096, step: 64, fallback: 1024 }),
+        makeNumber('steps', '步数', { min: 1, max: 150, fallback: 20 }),
+        makeNumber('cfg_scale', 'CFG Scale', { min: 0, max: 30, step: 0.5, fallback: 7, integer: false }),
+        makeText('sampler_name', '采样器', '', '例如 Euler a、DPM++ 2M Karras；留空则使用服务端默认。'),
+        makeText('scheduler', '调度器', '', '仅在你的 WebUI 版本支持时传递。'),
+        makeText('negativePrompt', '负面提示词', ''),
+        makeText('seed', 'Seed', '', '留空则随机。'),
+        makeSelect('restore_faces', '面部修复', BOOLEAN_OPTIONS, ''),
+        makeSelect('enable_hr', 'Highres Fix', BOOLEAN_OPTIONS, ''),
+      ],
+    };
+  }
+
+  if (provider === 'comfyui') {
+    return {
+      provider,
+      model,
+      title: 'ComfyUI 参数',
+      fields: [
+        makeNumber('width', '宽度', { min: 64, max: 4096, step: 64, fallback: 1024 }),
+        makeNumber('height', '高度', { min: 64, max: 4096, step: 64, fallback: 1024 }),
+        makeNumber('steps', '步数', { min: 1, max: 150, fallback: 20 }),
+        makeNumber('scale', 'CFG / Scale', { min: 0, max: 30, step: 0.5, fallback: 7, integer: false }),
+        makeText('sampler', '采样器', ''),
+        makeText('scheduler', '调度器', ''),
+        makeText('negativePrompt', '负面提示词', ''),
+        makeText('seed', 'Seed', '', '留空则随机。'),
+        makeTextarea('workflowJson', 'Workflow JSON', '', '粘贴 ComfyUI 的 Save (API Format) JSON；可使用 "%prompt%"、"%negative_prompt%"、"%model%"、"%seed%"、"%width%"、"%height%"、"%steps%"、"%scale%" 等占位符。'),
+      ],
+    };
+  }
+
   if (provider === 'custom') {
     return {
       provider,
@@ -245,13 +512,28 @@ export const resolveImageGenerationParamSchema = (config = {}) => {
 export const normalizeImageGenerationPreset = (preset = {}) => {
   const fallback = createDefaultImageGenerationPreset();
   const source = isObject(preset) ? preset : {};
+  const id = String(source.id || fallback.id).trim() || fallback.id;
+  const sourceParamsByProvider = isObject(source.paramsByProvider) ? source.paramsByProvider : {};
+  const paramsByProvider = {
+    ...fallback.paramsByProvider,
+    ...sourceParamsByProvider,
+  };
+  if (isObject(paramsByProvider.novelai)) {
+    const sourceNovel = isObject(sourceParamsByProvider.novelai) ? sourceParamsByProvider.novelai : {};
+    const nextNovel = { ...paramsByProvider.novelai };
+    if (id === DEFAULT_IMAGE_GENERATION_PRESET_ID) {
+      if (Number(nextNovel.steps) === NOVELAI_LEGACY_DEFAULTS.steps) nextNovel.steps = NOVELAI_DEFAULTS.steps;
+      if (Number(nextNovel.scale) === NOVELAI_LEGACY_DEFAULTS.scale) nextNovel.scale = NOVELAI_DEFAULTS.scale;
+      if (String(nextNovel.sampler || '') === NOVELAI_LEGACY_DEFAULTS.sampler) nextNovel.sampler = NOVELAI_DEFAULTS.sampler;
+    }
+    if (!Object.hasOwn(sourceNovel, 'cfgRescale')) nextNovel.cfgRescale = NOVELAI_DEFAULTS.cfgRescale;
+    if (!Object.hasOwn(sourceNovel, 'qualityToggle')) nextNovel.qualityToggle = NOVELAI_DEFAULTS.qualityToggle;
+    paramsByProvider.novelai = nextNovel;
+  }
   return {
-    id: String(source.id || fallback.id).trim() || fallback.id,
+    id,
     name: String(source.name || fallback.name).trim() || fallback.name,
-    paramsByProvider: {
-      ...fallback.paramsByProvider,
-      ...(isObject(source.paramsByProvider) ? source.paramsByProvider : {}),
-    },
+    paramsByProvider,
     createdAt: Number.isFinite(Number(source.createdAt)) ? Number(source.createdAt) : Date.now(),
     updatedAt: Number.isFinite(Number(source.updatedAt)) ? Number(source.updatedAt) : Date.now(),
   };
@@ -264,7 +546,9 @@ export const sanitizeImageGenerationParams = (params = {}, config = {}) => {
   schema.fields.forEach((field) => {
     const value = raw[field.key];
     if (field.type === 'number') {
-      const safe = clampInt(value, field.min ?? Number.MIN_SAFE_INTEGER, field.max ?? Number.MAX_SAFE_INTEGER, field.defaultValue ?? 0);
+      const safe = field.integer === false
+        ? clampNumber(value, field.min ?? -Number.MAX_SAFE_INTEGER, field.max ?? Number.MAX_SAFE_INTEGER, field.defaultValue ?? 0)
+        : clampInt(value, field.min ?? Number.MIN_SAFE_INTEGER, field.max ?? Number.MAX_SAFE_INTEGER, field.defaultValue ?? 0);
       if (Number.isFinite(safe)) out[field.key] = safe;
       return;
     }
@@ -285,6 +569,14 @@ export const sanitizeImageGenerationParams = (params = {}, config = {}) => {
   }
   if (out.responseMimeType && out.responseMimeType === 'image/png') {
     delete out.outputCompression;
+  }
+  if (schema.provider === 'novelai') {
+    if (out.sampler === 'ddim') {
+      delete out.sm;
+      delete out.sm_dyn;
+    } else if (!out.sm) {
+      delete out.sm_dyn;
+    }
   }
   return out;
 };

@@ -5,7 +5,39 @@
 import { logger } from '../utils/logger.js';
 import { safeInvoke } from '../utils/tauri.js';
 
-const SUPPORTED_PROVIDERS = ['openai', 'makersuite', 'vertexai', 'anthropic', 'deepseek', 'gemini', 'custom'];
+const SUPPORTED_PROVIDERS = [
+    'openai',
+    'makersuite',
+    'vertexai',
+    'anthropic',
+    'deepseek',
+    'gemini',
+    'custom',
+    'novelai',
+    'stability',
+    'togetherai',
+    'pollinations',
+    'automatic1111',
+    'a1111',
+    'comfyui',
+    'comfy',
+];
+
+const IMAGE_ONLY_PROVIDERS = new Set([
+    'novelai',
+    'stability',
+    'togetherai',
+    'pollinations',
+    'automatic1111',
+    'a1111',
+    'comfyui',
+    'comfy',
+]);
+
+const TEXT_ONLY_PROVIDERS = new Set([
+    'anthropic',
+    'deepseek',
+]);
 
 const PROFILE_STORE_KEY = 'llm_profiles_v1';
 const KEYRING_STORE_KEY = 'llm_keyring_v1';
@@ -796,6 +828,10 @@ export class ConfigManager {
      */
     validate(config) {
         const required = ['provider', 'baseUrl', 'model'];
+        const provider = String(config?.provider || '').trim().toLowerCase();
+        const supportedProviders = this.scope === 'image'
+            ? SUPPORTED_PROVIDERS.filter(item => !TEXT_ONLY_PROVIDERS.has(item))
+            : SUPPORTED_PROVIDERS.filter(item => !IMAGE_ONLY_PROVIDERS.has(item));
 
         for (const key of required) {
             if (!config[key]) {
@@ -804,9 +840,10 @@ export class ConfigManager {
         }
 
         // 验证 provider
-        if (!SUPPORTED_PROVIDERS.includes(config.provider)) {
-            throw new Error(`无效的 provider: ${config.provider}。可用: ${SUPPORTED_PROVIDERS.join(', ')}`);
+        if (!supportedProviders.includes(provider)) {
+            throw new Error(`无效的 provider: ${config.provider}。可用: ${supportedProviders.join(', ')}`);
         }
+        config.provider = provider;
 
         // 验证 URL
         try {
