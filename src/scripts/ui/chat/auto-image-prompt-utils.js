@@ -203,6 +203,30 @@ export const extractAutoImagePrompts = (text = '', { max = 1, maxLength = 2000, 
   return prompts;
 };
 
+export const buildAutoImagePromptPendingToken = (index = 0) =>
+  `[img-图片生成中${index > 0 ? ` ${index + 1}` : ''}]`;
+
+export const prepareAutoImagePromptPlaceholders = (text = '', { max = 10, maxLength = 2000 } = {}) => {
+  const source = String(text ?? '');
+  const limit = Math.max(1, Math.trunc(Number(max)) || 10);
+  const lengthLimit = Math.max(80, Math.trunc(Number(maxLength)) || 2000);
+  const prompts = [];
+  let index = 0;
+  const nextText = source.replace(/<\s*image_prompt(?:\s[^>]*)?\s*>([\s\S]*?)<\s*\/\s*image_prompt\s*>/gi, (full, body) => {
+    if (prompts.length >= limit) return '';
+    const prompt = normalizePromptText(body).slice(0, lengthLimit).trim();
+    if (isEmptyPromptToken(prompt)) return '';
+    const pendingToken = buildAutoImagePromptPendingToken(index);
+    prompts.push({ prompt, pendingToken, tag: full, index });
+    index += 1;
+    return pendingToken;
+  });
+  return {
+    text: nextText.replace(/[ \t]+\n/g, '\n').replace(/\n{4,}/g, '\n\n\n'),
+    prompts,
+  };
+};
+
 export const stripAutoImagePromptTags = (text = '') => {
   const source = String(text ?? '');
   if (!source) return source;

@@ -50,6 +50,7 @@ const defaults = {
   personaBindContacts: true,
   promptCurrentTimeEnabled: false,
   autoImagePromptEnabled: false,
+  autoImagePromptWritingEnabled: true,
   autoImagePromptStyle: 'auto',
   autoImagePromptDecisionMode: 'conservative',
   autoImagePromptMomentMediaMode: 'ai',
@@ -168,6 +169,7 @@ const migrateSettings = (settings = {}) => {
   }
   next.autoImagePromptRateLimitDefaultsMigrated = true;
   next.autoImagePromptSkipRepeated = next.autoImagePromptSkipRepeated !== false;
+  next.autoImagePromptWritingEnabled = next.autoImagePromptWritingEnabled !== false;
   next.chatDefaultColorMode = inferChatColorMode(next, defaults.chatDefaultColorMode);
   return next;
 };

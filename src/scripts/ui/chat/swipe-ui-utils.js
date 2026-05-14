@@ -8,6 +8,38 @@ export const ensureSwipeMeta = (message) => {
   return message.meta;
 };
 
+const INLINE_GENERATED_IMAGE_TOKEN_RE = /\[(?:img|img-error)-[^\]\n]+\]/i;
+
+const hasInlineGeneratedImageToken = value => INLINE_GENERATED_IMAGE_TOKEN_RE.test(String(value || ''));
+
+const stripTableEditBlocksLocal = value => {
+  let out = String(value ?? '');
+  const startRe = /<tableEdit\b[^>]*>/i;
+  const endRe = /<\/tableEdit\s*>/i;
+  for (let i = 0; i < 20; i += 1) {
+    const start = out.match(startRe);
+    if (!start) break;
+    const startIdx = start.index ?? -1;
+    if (startIdx < 0) break;
+    const afterStart = out.slice(startIdx + start[0].length);
+    const end = afterStart.match(endRe);
+    if (!end) {
+      out = out.slice(0, startIdx);
+      break;
+    }
+    const endIdx = startIdx + start[0].length + (end.index ?? 0);
+    out = out.slice(0, startIdx) + out.slice(endIdx + end[0].length);
+  }
+  return out.replace(/\n{3,}/g, '\n\n').trim();
+};
+
+const pickInlineGeneratedImageSource = message => [
+  message?.content,
+  message?.raw,
+  message?.rawSource,
+  message?.raw_source,
+].map(stripTableEditBlocksLocal).find(hasInlineGeneratedImageToken) || '';
+
 export const resolveSwipeIndicatorState = (message) => {
   const swipes = Array.isArray(message?.meta?.swipes) ? message.meta.swipes : null;
   const total = swipes?.length ? swipes.length : 1;
@@ -121,13 +153,36 @@ export const resolveActiveSwipeMessageCore = (message, {
   if (meta.activeSwipe !== active) nextMeta.activeSwipe = active;
   if (activeSwipeDraft) nextMeta.activeSwipeDraft = activeSwipeDraft;
   else delete nextMeta.activeSwipeDraft;
+  let content = branch.content ?? message.content ?? '';
+  let raw = branch.raw !== undefined
+    ? branch.raw
+    : (branch.content !== undefined ? branch.content : message.raw);
+  let rawSource = branch.rawSource !== undefined ? branch.rawSource : message.rawSource;
+  const generatedImages = Array.isArray(nextMeta.generatedInlineImages) ? nextMeta.generatedInlineImages : [];
+  const branchHasGeneratedImage =
+    hasInlineGeneratedImageToken(branch.content) ||
+    hasInlineGeneratedImageToken(branch.raw) ||
+    hasInlineGeneratedImageToken(branch.rawSource);
+  const generatedSource = generatedImages.length && swipes.length === 1 && !branchHasGeneratedImage
+    ? pickInlineGeneratedImageSource(message)
+    : '';
+  if (generatedSource) {
+    const messageContent = stripTableEditBlocksLocal(message.content);
+    const messageRaw = stripTableEditBlocksLocal(message.raw);
+    const messageRawSource = stripTableEditBlocksLocal(message.rawSource);
+    content = hasInlineGeneratedImageToken(messageContent) ? messageContent : generatedSource;
+    raw = hasInlineGeneratedImageToken(messageRaw) ? messageRaw : content;
+    rawSource = hasInlineGeneratedImageToken(messageRawSource) ? messageRawSource : content;
+    nextMeta.swipes = [{ ...branch, content, raw, rawSource }];
+    nextMeta.activeSwipe = 0;
+  }
   const next = {
     ...message,
-    content: branch.content ?? message.content ?? '',
+    content,
     meta: nextMeta,
   };
-  if (branch.raw !== undefined) next.raw = branch.raw;
-  else if (branch.content !== undefined) next.raw = branch.content;
+  if (raw !== undefined) next.raw = raw;
+  if (rawSource !== undefined) next.rawSource = rawSource;
   return next;
 };
 

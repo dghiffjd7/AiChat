@@ -363,6 +363,9 @@ export class GeneralSettingsPanel {
     if (this.autoImagePromptToggle) {
       this.autoImagePromptToggle.checked = settings.autoImagePromptEnabled === true;
     }
+    if (this.autoImagePromptWritingToggle) {
+      this.autoImagePromptWritingToggle.checked = settings.autoImagePromptWritingEnabled !== false;
+    }
     if (this.autoImagePromptStyleSelect) {
       const raw = String(settings.autoImagePromptStyle || 'auto').trim();
       const allowed = new Set(['auto', 'natural', 'nai_tags']);
@@ -1690,6 +1693,12 @@ export class GeneralSettingsPanel {
               description: '默认关闭。启用后会提示 AI 在合适时输出 &lt;image_prompt&gt; 标签，本地提取后自动生成图片。',
               icon: 'palette',
             })}
+            ${this.renderSettingRow({
+              id: 'general-auto-image-prompt-writing',
+              title: '创意写作自动生图',
+              description: '启用后，创意写作也会注入生图标签规则，并按标签位置生成插图。',
+              icon: 'book-open',
+            })}
             ${this.renderInputRow({
               title: '生图提示词风格',
               description: '控制发送给文字模型的标签提示词要求；实际生图仍使用当前图片模型配置。',
@@ -2180,6 +2189,7 @@ export class GeneralSettingsPanel {
     this.personaBindToggle = this.element.querySelector('#general-persona-bind');
     this.promptTimeToggle = this.element.querySelector('#general-prompt-time');
     this.autoImagePromptToggle = this.element.querySelector('#general-auto-image-prompt');
+    this.autoImagePromptWritingToggle = this.element.querySelector('#general-auto-image-prompt-writing');
     this.autoImagePromptStyleSelect = this.element.querySelector('#general-auto-image-prompt-style');
     this.autoImagePromptAdvancedToggle = this.element.querySelector('#general-auto-image-prompt-advanced-toggle');
     this.autoImagePromptAdvancedWrap = this.element.querySelector('#general-auto-image-prompt-advanced');
@@ -2615,6 +2625,11 @@ export class GeneralSettingsPanel {
       const enabled = Boolean(e?.target?.checked);
       appSettings.update({ autoImagePromptEnabled: enabled });
       window.dispatchEvent(new CustomEvent('app-settings-changed', { detail: { key: 'autoImagePromptEnabled', value: enabled } }));
+    });
+    this.autoImagePromptWritingToggle?.addEventListener('change', (e) => {
+      const value = Boolean(e?.target?.checked);
+      appSettings.update({ autoImagePromptWritingEnabled: value });
+      window.dispatchEvent(new CustomEvent('app-settings-changed', { detail: { key: 'autoImagePromptWritingEnabled', value } }));
     });
     this.autoImagePromptStyleSelect?.addEventListener('change', (e) => {
       const raw = String(e?.target?.value || 'auto').trim();

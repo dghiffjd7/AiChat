@@ -640,6 +640,7 @@ export const finalizeCreativeStreamAssistantResponse = async (
     resolveReasoningState = null,
     applyOutputRegexPairSafe = null,
     appBridge = null,
+    preserveAutoImagePromptPlaceholders = false,
     pushAssistantStreamText = null,
     captureAssistantMemoryState = null,
     attachAssistantMemoryStateToMeta = null,
@@ -710,6 +711,7 @@ export const finalizeCreativeStreamAssistantResponse = async (
         resolveReasoningState,
         applyOutputRegexPairSafe,
         appBridge,
+        preserveAutoImagePromptPlaceholders,
       })
     : {
         finalSource: stripped,
@@ -845,6 +847,7 @@ export const finalizeBufferedCreativeAssistantResponse = async (
     extractReasoningFromContent = null,
     applyOutputRegexPairSafe = null,
     appBridge = null,
+    preserveAutoImagePromptPlaceholders = false,
     captureAssistantMemoryState = null,
     attachAssistantMemoryStateToMeta = null,
     isSessionActive = null,
@@ -888,6 +891,7 @@ export const finalizeBufferedCreativeAssistantResponse = async (
         extractReasoningFromContent,
         applyOutputRegexPairSafe,
         appBridge,
+        preserveAutoImagePromptPlaceholders,
         captureAssistantMemoryState,
         attachAssistantMemoryStateToMeta,
       })

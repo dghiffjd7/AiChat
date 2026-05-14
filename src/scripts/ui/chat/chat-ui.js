@@ -532,6 +532,7 @@ export class ChatUI {
         messageId: renderMsg.id,
         preserveHtmlNewlines: true,
         sessionId: renderMsg.sessionId,
+        openLightbox: url => this.openLightbox(url),
         deferSandboxExecution: streaming === true,
         streaming: streaming === true,
       });

@@ -881,8 +881,7 @@ class AppBridge {
       if (tableOrder.some(tableId => isSummaryTableId(tableId))) {
         lines.push('摘要/总体大纲表格只允许 insert；禁止 update/delete。');
       }
-      lines.push('启用同步写表时，手机正文必须先完整输出 MiPhone_end；若需要更新记忆表格，必须在 MiPhone_end 的下一行紧跟完整输出 <tableEdit>...</tableEdit>，不要和 MiPhone_end 写在同一行，也不要放入 MiPhone_start/MiPhone_end 内。');
-      lines.push('<tableEdit> 与 </tableEdit> 标签必须完整闭合；标签内每一行是一个完整 JSON（允许 insert/update/delete: 前缀），禁止输出半截 JSON 或缺少 </tableEdit>。');
+      lines.push('需要更新记忆表格时，在回复末尾输出 <tableEdit>...</tableEdit>，每行一个 JSON（允许 insert/update/delete: 前缀）。');
       lines.push('insert: {"action":"insert","table_id":"relationship","data":{"relation":"朋友"}}');
       lines.push('update: {"action":"update","table_id":"relationship","row_index":0,"data":{"relation":"亲密朋友"}}');
       lines.push('delete: {"action":"delete","table_id":"relationship","row_index":0}');
@@ -890,7 +889,7 @@ class AppBridge {
       lines.push('仅当 row_index 对应现有行时才使用 update/delete。');
       lines.push('也可使用函数式语法：insertRow(tableIndex, {...}) / updateRow(tableIndex, rowIndex, {...}) / deleteRow(tableIndex, rowIndex)');
       lines.push('row_index 对应表格中每行前的编号；table_id 见下表。');
-      lines.push('无修改时，也必须在 MiPhone_end 的下一行紧跟完整输出空 <tableEdit></tableEdit>。');
+      lines.push('无修改则输出空 <tableEdit></tableEdit>。');
       lines.push('表格索引:');
       tableOrder.forEach((tableId, index) => {
         const table = tableById.get(tableId) || { id: tableId, name: tableId, columns: [] };
@@ -3143,7 +3142,11 @@ class AppBridge {
     const scenarioFormatReminder = scenarioHintBase
       ? scenarioHintBase
       : '';
-    const autoImagePromptSettingEnabled = settingsSnapshot.autoImagePromptEnabled === true;
+    const uiModeRawForAutoImage = String(context?.meta?.uiMode || context?.uiMode || '').trim().toLowerCase();
+    const autoImagePromptWritingAllowed = uiModeRawForAutoImage === 'rp'
+      ? settingsSnapshot.autoImagePromptWritingEnabled !== false
+      : true;
+    const autoImagePromptSettingEnabled = settingsSnapshot.autoImagePromptEnabled === true && autoImagePromptWritingAllowed;
     let autoImagePromptActive = autoImagePromptSettingEnabled;
     let autoImagePromptRules = '';
     let autoImagePromptPosition = 0;
@@ -3824,7 +3827,7 @@ const stringifyMessageContent = (content) => {
 	      if (!summaryOnly && isMomentCommentTask && momentCommentEnabled && momentCommentRules) {
 	        pushByPosition(momentCommentRules, momentCommentPosition, momentCommentDepth, momentCommentRole);
 	      }
-	      if (!summaryOnly && autoImagePromptRules) {
+	      if ((!summaryOnly || uiMode === 'rp') && autoImagePromptRules) {
 	        pushByPosition(autoImagePromptRules, autoImagePromptPosition, autoImagePromptDepth, autoImagePromptRole);
 	      }
 	      if (summaryRules) {

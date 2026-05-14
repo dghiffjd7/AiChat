@@ -1,3 +1,8 @@
+import {
+  prepareAutoImagePromptPlaceholders,
+  stripAutoImagePromptTags,
+} from './auto-image-prompt-utils.js';
+
 export const applyChatModeAssistantRegex = (
   text,
   {
@@ -187,13 +192,18 @@ export const buildCreativeAssistantMessageParts = ({
   resolveReasoningState = reasoningParsed => reasoningParsed,
   applyOutputRegexPairSafe = value => ({ stored: String(value ?? ''), display: String(value ?? '') }),
   appBridge = null,
+  preserveAutoImagePromptPlaceholders = false,
 } = {}) => {
   const rawSource = normalizeCreativeLineBreaks(text);
   const reasoningParsed = extractReasoningFromContent(rawSource, { depth: 0, strict: true });
   const resolvedReasoning = nativeReasoningState
     ? resolveReasoningState(reasoningParsed, nativeReasoningState, { finalize: true })
     : reasoningParsed;
-  const finalSource = normalizeCreativeLineBreaks(reasoningParsed.content || '');
+  const rawFinalSource = normalizeCreativeLineBreaks(reasoningParsed.content || '');
+  const autoImagePrepared = preserveAutoImagePromptPlaceholders
+    ? prepareAutoImagePromptPlaceholders(rawFinalSource)
+    : { text: stripAutoImagePromptTags(rawFinalSource), prompts: [] };
+  const finalSource = autoImagePrepared.text;
   const regexResult = applyOutputRegexPairSafe(finalSource, {
     appBridge,
     depth: 0,
@@ -201,6 +211,8 @@ export const buildCreativeAssistantMessageParts = ({
   }) || {};
   return {
     rawSource,
+    autoImagePromptRawContent: rawFinalSource,
+    autoImagePromptPlaceholders: autoImagePrepared.prompts,
     reasoningParsed,
     resolvedReasoning,
     finalSource,
@@ -236,6 +248,14 @@ export const buildCreativeAssistantMessageFromParts = async ({
       : { renderRich: true }
   ) || { renderRich: true };
   if (summary) meta.summary = summary;
+  if (nextParts.autoImagePromptRawContent && Array.isArray(nextParts.autoImagePromptPlaceholders) && nextParts.autoImagePromptPlaceholders.length) {
+    meta.autoImagePromptRawContent = nextParts.autoImagePromptRawContent;
+    meta.autoImagePromptPlaceholders = nextParts.autoImagePromptPlaceholders.map(item => ({
+      prompt: String(item?.prompt || '').trim(),
+      pendingToken: String(item?.pendingToken || '').trim(),
+      tag: String(item?.tag || '').trim(),
+    })).filter(item => item.prompt && item.pendingToken);
+  }
   if (resolvedReasoning.reasoning) {
     meta.reasoning = resolvedReasoning.reasoning;
     meta.reasoningDisplay = resolvedReasoning.reasoningDisplay;

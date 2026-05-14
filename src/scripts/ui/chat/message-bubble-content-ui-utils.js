@@ -306,6 +306,7 @@ export const renderMessageBubbleContentCore = ({
           sessionId: resolvedSessionId,
           debugTag: message?.meta?.isGreeting ? 'rp-greeting' : '',
           lazyMount: message?.__lazyRichMount === true,
+          openLightbox,
         });
         break;
       }

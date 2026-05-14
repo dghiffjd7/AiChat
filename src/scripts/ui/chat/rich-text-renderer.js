@@ -43,6 +43,7 @@ const DIRECT_LOAD_CACHE_TTL = 5 * 60 * 1000;
 const DIRECT_LOAD_CACHE_LIMIT = 6;
 const COMPAT_SEND_TEXTAREA_ID = 'send_textarea';
 const COMPAT_SEND_BUTTON_ID = 'send_but';
+const RICH_IMAGE_TOKEN_RE = /\[(img|img-error)-([^\]\n]+)\]/gi;
 const compatInputProxyState = {
     boundInput: null,
     boundSendButton: null,
@@ -52,6 +53,109 @@ const compatInputProxyState = {
     inputSyncListener: null,
     sendProxyListener: null,
     syncing: false,
+};
+const resolveLocalFileLikeUrl = (value = '') => {
+    const raw = String(value || '').trim();
+    if (!raw) return '';
+    try {
+        const g = typeof globalThis !== 'undefined' ? globalThis : window;
+        const convert =
+            g?.__TAURI__?.core?.convertFileSrc || g?.__TAURI__?.convertFileSrc || g?.__TAURI_INTERNALS__?.convertFileSrc;
+        if (typeof convert === 'function') {
+            const converted = convert(raw);
+            if (converted) return converted;
+        }
+    } catch {}
+    if (/^(file|asset|tauri|app|https?|data|blob):/i.test(raw)) return raw;
+    if (/^[a-zA-Z]:[\\/]/.test(raw)) return `file:///${raw.replace(/\\/g, '/')}`;
+    if (raw.startsWith('/')) return `file://${raw}`;
+    return '';
+};
+const decodeRichImageErrorPayload = (encoded = '') => {
+    const raw = String(encoded || '').trim();
+    if (!raw) return { brief: '图片生成失败', detail: '' };
+    try {
+        const parsed = JSON.parse(decodeURIComponent(raw));
+        return {
+            brief: String(parsed?.brief || '图片生成失败').trim() || '图片生成失败',
+            detail: String(parsed?.detail || '').trim(),
+        };
+    } catch {
+        return { brief: raw || '图片生成失败', detail: '' };
+    }
+};
+const isRenderableRichImageRef = (value = '') => {
+    const raw = String(value || '').trim();
+    if (!raw) return false;
+    return /^(file|asset|tauri|app|https?|data:image\/|blob):/i.test(raw)
+        || /^[a-zA-Z]:[\\/]/.test(raw)
+        || raw.startsWith('/')
+        || raw.startsWith('./')
+        || raw.startsWith('../');
+};
+const appendRichTextInlineMedia = (containerEl, text = '', {
+    openLightbox = null,
+    escapeText = value => String(value ?? ''),
+} = {}) => {
+    const source = String(text ?? '');
+    if (!source) return false;
+    RICH_IMAGE_TOKEN_RE.lastIndex = 0;
+    let match = null;
+    let last = 0;
+    let didMedia = false;
+    const appendText = (value) => {
+        const raw = String(value || '');
+        if (!raw) return;
+        const span = document.createElement('span');
+        span.textContent = escapeText(raw);
+        containerEl.appendChild(span);
+    };
+    while ((match = RICH_IMAGE_TOKEN_RE.exec(source))) {
+        const [full, type, body] = match;
+        appendText(source.slice(last, match.index));
+        last = match.index + full.length;
+        if (String(type || '').toLowerCase() === 'img-error') {
+            const payload = decodeRichImageErrorPayload(body);
+            const chip = document.createElement('span');
+            chip.className = 'chat-rich-image-error';
+            chip.textContent = `图片生成失败：${payload.brief}`;
+            if (payload.detail) chip.title = payload.detail;
+            containerEl.appendChild(chip);
+            didMedia = true;
+            continue;
+        }
+        const ref = String(body || '').trim();
+        if (!isRenderableRichImageRef(ref)) {
+            appendText(full);
+            continue;
+        }
+        const src = resolveLocalFileLikeUrl(ref) || ref;
+        if (!src) {
+            appendText(full);
+            continue;
+        }
+        const img = document.createElement('img');
+        img.className = 'previewable chat-rich-inline-image';
+        img.alt = 'image';
+        img.src = src;
+        try {
+            console.info('[writing-auto-image]', 'rich-render-image-token', {
+                refPreview: ref.slice(0, 180),
+                srcPreview: src.slice(0, 180),
+            });
+        } catch {}
+        img.addEventListener?.('click', () => {
+            if (typeof openLightbox === 'function') openLightbox(img.currentSrc || img.src || src);
+        });
+        img.onerror = () => {
+            img.classList.add('broken');
+            img.alt = '图片加载失败';
+        };
+        containerEl.appendChild(img);
+        didMedia = true;
+    }
+    appendText(source.slice(last));
+    return didMedia;
 };
 const MVU_IFRAME_VARIABLE_COMPAT_SOURCE = `
 ${cloneMvuCompatValue.toString()}
@@ -8393,6 +8497,7 @@ export const renderRichText = (
         lazyMount = false,
         deferSandboxExecution = false,
         streaming = false,
+        openLightbox = null,
     } = {},
 ) => {
     if (!containerEl) return;
@@ -8404,6 +8509,7 @@ export const renderRichText = (
             sessionId,
             debugTag,
             deferSandboxExecution,
+            openLightbox,
         });
         return;
     }
@@ -8553,14 +8659,18 @@ export const renderRichText = (
         }
         const lines = chunk.split(/\n/);
         lines.forEach((line, idx) => {
-            const segments = line.split(STATUS_TOKEN);
-            segments.forEach((seg, segIdx) => {
-                if (seg) {
+            const statusSegments = line.split(STATUS_TOKEN);
+            statusSegments.forEach((statusSeg, statusIdx) => {
+                RICH_IMAGE_TOKEN_RE.lastIndex = 0;
+                if (RICH_IMAGE_TOKEN_RE.test(statusSeg)) {
+                    RICH_IMAGE_TOKEN_RE.lastIndex = 0;
+                    appendRichTextInlineMedia(containerEl, statusSeg, { openLightbox, escapeText });
+                } else if (statusSeg) {
                     const span = document.createElement('span');
-                    span.textContent = escapeText(seg);
+                    span.textContent = escapeText(statusSeg);
                     containerEl.appendChild(span);
                 }
-                if (segIdx !== segments.length - 1) {
+                if (statusIdx !== statusSegments.length - 1) {
                     const card = resolveStatusCard();
                     if (card) {
                         containerEl.appendChild(card);
