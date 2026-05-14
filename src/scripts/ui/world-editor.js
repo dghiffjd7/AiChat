@@ -102,8 +102,8 @@ const SELECTIVE_LOGIC_OPTIONS = [
 ];
 
 const POSITION_OPTIONS = [
-    { value: 0, label: '↑Char（角色前）' },
-    { value: 1, label: '↓Char（角色后）' },
+    { value: 0, label: 'World Info (↑Char)' },
+    { value: 1, label: 'World Info (↓Char)' },
     { value: 2, label: '↑AT（作者备注前）' },
     { value: 3, label: '↓AT（作者备注后）' },
     { value: 4, label: '@Depth（按深度插入）' },

@@ -1825,13 +1825,13 @@ export class PresetPanel {
             const opts = Array.isArray(cfg.positionOptions) && cfg.positionOptions.length
                 ? cfg.positionOptions
                 : [
-                    { v: EXT_PROMPT_TYPES.IN_PROMPT, t: 'IN_PROMPT（系统开头）' },
-                    { v: EXT_PROMPT_TYPES.IN_CHAT, t: 'IN_CHAT（按深度插入历史）' },
-                    { v: EXT_PROMPT_TYPES.BEFORE_PROMPT, t: 'BEFORE_PROMPT（最前）' },
+                    { v: EXT_PROMPT_TYPES.IN_PROMPT, t: 'IN_PROMPT（main 末尾）' },
+                    { v: EXT_PROMPT_TYPES.IN_CHAT, t: 'IN_CHAT（按 depth/role）' },
+                    { v: EXT_PROMPT_TYPES.BEFORE_PROMPT, t: 'BEFORE_PROMPT（main 开头）' },
                     { v: EXT_PROMPT_TYPES.NONE, t: 'NONE（不注入）' },
                 ];
             pos.innerHTML = opts.map(o => `<option value="${o.v}">${o.t}</option>`).join('');
-            const fallbackPos = opts.some(o => o.v === EXT_PROMPT_TYPES.SYSTEM_DEPTH_1) ? EXT_PROMPT_TYPES.SYSTEM_DEPTH_1 : EXT_PROMPT_TYPES.IN_PROMPT;
+            const fallbackPos = opts.some(o => o.v === EXT_PROMPT_TYPES.IN_PROMPT) ? EXT_PROMPT_TYPES.IN_PROMPT : opts[0]?.v;
             pos.value = String(p[cfg.positionKey] ?? fallbackPos);
             const posWrap = this.wrapSelectWithCustomUI(pos, '注入位置');
 
@@ -1894,11 +1894,7 @@ export class PresetPanel {
         };
 
         const fixedDepthOpts = [
-            { v: EXT_PROMPT_TYPES.SYSTEM_DEPTH_1, t: 'SYSTEM_DEPTH_1（紧跟 chat history）' },
-            { v: EXT_PROMPT_TYPES.NONE, t: 'NONE（不注入）' },
-        ];
-        const frontPromptOpts = [
-            { v: EXT_PROMPT_TYPES.IN_PROMPT, t: 'IN_PROMPT（系统开头）' },
+            { v: EXT_PROMPT_TYPES.IN_CHAT, t: 'IN_CHAT / SYSTEM D1' },
             { v: EXT_PROMPT_TYPES.NONE, t: 'NONE（不注入）' },
         ];
 
@@ -1908,10 +1904,10 @@ export class PresetPanel {
             rulesKey: 'phone_format_intro_rules',
             placeholder: '手机格式开头',
             showPlacementControls: false,
-            fixedHint: '固定前置区块。始终排在手机格式链路的第 1 段。',
+            fixedHint: '固定注入：IN_CHAT / SYSTEM / D0。始终排在手机格式链路的第 1 段。',
             metaChips: [
                 { label: '聊天主链路', tone: 'scope' },
-                { label: '固定前置', tone: 'placement' },
+                { label: 'SYSTEM D0', tone: 'placement' },
                 { label: '固定顺序 1/4', tone: 'placement' },
             ],
         }));
@@ -1921,10 +1917,10 @@ export class PresetPanel {
             rulesKey: 'phone_format_chat_rules',
             placeholder: 'QQ聊天格式说明',
             showPlacementControls: false,
-            fixedHint: '固定前置区块。表情包列表会在发送前按当前启用的表情包资源自动替换。',
+            fixedHint: '固定注入：IN_CHAT / SYSTEM / D0。表情包列表会在发送前按当前启用的表情包资源自动替换。',
             metaChips: [
                 { label: '聊天主链路', tone: 'scope' },
-                { label: '固定前置', tone: 'placement' },
+                { label: 'SYSTEM D0', tone: 'placement' },
                 { label: '表情包列表动态填充', tone: 'dynamic' },
             ],
         }));
@@ -1934,10 +1930,10 @@ export class PresetPanel {
             rulesKey: 'phone_format_moment_rules',
             placeholder: 'QQ空间格式说明',
             showPlacementControls: false,
-            fixedHint: '固定前置区块。用于动态发布相关格式说明，不参与动态评论回复任务。',
+            fixedHint: '固定注入：IN_CHAT / SYSTEM / D0。用于动态发布相关格式说明，不参与动态评论回复任务。',
             metaChips: [
                 { label: '聊天主链路', tone: 'scope' },
-                { label: '固定前置', tone: 'placement' },
+                { label: 'SYSTEM D0', tone: 'placement' },
                 { label: '动态评论任务不发送', tone: 'dynamic' },
             ],
         }));
@@ -1947,10 +1943,10 @@ export class PresetPanel {
             rulesKey: 'phone_format_footer_rules',
             placeholder: '手机格式结尾',
             showPlacementControls: false,
-            fixedHint: '固定前置区块。始终排在手机格式链路的最后一段。',
+            fixedHint: '固定注入：IN_CHAT / SYSTEM / D0。始终排在手机格式链路的最后一段。',
             metaChips: [
                 { label: '聊天主链路', tone: 'scope' },
-                { label: '固定前置', tone: 'placement' },
+                { label: 'SYSTEM D0', tone: 'placement' },
                 { label: '固定顺序 4/4', tone: 'placement' },
             ],
         }));
@@ -1959,10 +1955,9 @@ export class PresetPanel {
             enabledKey: 'dialogue_enabled', positionKey: 'dialogue_position',
             depthKey: 'dialogue_depth', roleKey: 'dialogue_role',
             rulesKey: 'dialogue_rules', defaultDepth: 1, placeholder: '私聊协议提示词',
-            positionOptions: frontPromptOpts, showDepthRole: false,
             metaChips: [
                 { label: '仅私聊', tone: 'scope' },
-                { label: '系统开头', tone: 'placement' },
+                { label: '位置可调', tone: 'placement' },
             ],
         }));
         list.appendChild(makePromptBlock({
@@ -1991,7 +1986,7 @@ export class PresetPanel {
             idPrefix: 'auto-image-prompt', title: '自动标签生图提示词',
             enabledKey: 'auto_image_prompt_enabled', positionKey: 'auto_image_prompt_position',
             depthKey: 'auto_image_prompt_depth', roleKey: 'auto_image_prompt_role',
-            rulesKey: 'auto_image_prompt_rules', defaultDepth: 1, placeholder: '自动标签生图提示词',
+            rulesKey: 'auto_image_prompt_rules', defaultDepth: 0, placeholder: '自动标签生图提示词',
             metaChips: [
                 { label: '于通用设定开启', tone: 'dynamic' },
                 { label: '私聊/群聊/创意写作', tone: 'scope' },
@@ -2002,10 +1997,9 @@ export class PresetPanel {
             enabledKey: 'group_enabled', positionKey: 'group_position',
             depthKey: 'group_depth', roleKey: 'group_role',
             rulesKey: 'group_rules', defaultDepth: 1, placeholder: '群聊协议提示词',
-            positionOptions: frontPromptOpts, showDepthRole: false,
             metaChips: [
                 { label: '仅群聊', tone: 'scope' },
-                { label: '系统开头', tone: 'placement' },
+                { label: '位置可调', tone: 'placement' },
             ],
         }));
         list.appendChild(makePromptBlock({
@@ -2122,9 +2116,9 @@ export class PresetPanel {
         const pos = document.createElement('select');
         pos.id = 'context-position'; pos.className = 'pp-input';
         pos.innerHTML = `
-            <option value="${EXT_PROMPT_TYPES.IN_PROMPT}">IN_PROMPT（系统开头）</option>
-            <option value="${EXT_PROMPT_TYPES.IN_CHAT}">IN_CHAT（按深度插入历史）</option>
-            <option value="${EXT_PROMPT_TYPES.BEFORE_PROMPT}">BEFORE_PROMPT（最前）</option>
+            <option value="${EXT_PROMPT_TYPES.IN_PROMPT}">IN_PROMPT（main 末尾）</option>
+            <option value="${EXT_PROMPT_TYPES.IN_CHAT}">IN_CHAT（按 depth/role）</option>
+            <option value="${EXT_PROMPT_TYPES.BEFORE_PROMPT}">BEFORE_PROMPT（main 开头）</option>
             <option value="${EXT_PROMPT_TYPES.NONE}">NONE（不注入）</option>
         `;
         pos.value = String(p.story_string_position ?? EXT_PROMPT_TYPES.IN_PROMPT);
@@ -2538,7 +2532,7 @@ export class PresetPanel {
 
         const memoryHint = document.createElement('div');
         memoryHint.style.cssText = 'color:var(--app-text-muted); font-size:12px; margin:10px 0 4px; line-height:1.5;';
-        memoryHint.textContent = '动态记忆表格内容默认建议放在 history 后；写表指导位置可在下方单独控制。';
+        memoryHint.textContent = '动态记忆表格内容默认放在 SYSTEM D0；写表指导位置可在下方单独控制。';
         wrap.appendChild(memoryHint);
 
         const memDataRow = this.renderInputRow([
@@ -2569,7 +2563,7 @@ export class PresetPanel {
 
         const guideHint = document.createElement('div');
         guideHint.style.cssText = 'color:var(--app-text-muted); font-size:12px; margin:12px 0 4px; line-height:1.5;';
-        guideHint.textContent = '写表指导提示词可单独定位；默认放在 history 前。';
+        guideHint.textContent = '写表指导提示词可单独定位；默认放在 SYSTEM D0。';
         wrap.appendChild(guideHint);
 
         const memoryGuidePosition = makeMemoryDataPositionSelect('gen-memory-guide-position', p.memory_guide_position);
@@ -2855,8 +2849,8 @@ export class PresetPanel {
             current.moment_comment_role = getInt(root.querySelector('#moment-comment-role')?.value, current.moment_comment_role ?? EXT_PROMPT_ROLES.SYSTEM);
             current.moment_comment_rules = root.querySelector('#moment-comment-rules')?.value ?? '';
             current.auto_image_prompt_enabled = Boolean(root.querySelector('#auto-image-prompt-enabled')?.checked);
-            current.auto_image_prompt_position = getInt(root.querySelector('#auto-image-prompt-position')?.value, current.auto_image_prompt_position ?? EXT_PROMPT_TYPES.IN_PROMPT);
-            current.auto_image_prompt_depth = getInt(root.querySelector('#auto-image-prompt-depth')?.value, current.auto_image_prompt_depth ?? 1);
+            current.auto_image_prompt_position = getInt(root.querySelector('#auto-image-prompt-position')?.value, current.auto_image_prompt_position ?? EXT_PROMPT_TYPES.IN_CHAT);
+            current.auto_image_prompt_depth = getInt(root.querySelector('#auto-image-prompt-depth')?.value, current.auto_image_prompt_depth ?? 0);
             current.auto_image_prompt_role = getInt(root.querySelector('#auto-image-prompt-role')?.value, current.auto_image_prompt_role ?? EXT_PROMPT_ROLES.SYSTEM);
             current.auto_image_prompt_rules = root.querySelector('#auto-image-prompt-rules')?.value ?? '';
             current.group_enabled = Boolean(root.querySelector('#group-enabled')?.checked);
@@ -2865,7 +2859,7 @@ export class PresetPanel {
             current.group_role = getInt(root.querySelector('#group-role')?.value, current.group_role ?? EXT_PROMPT_ROLES.SYSTEM);
             current.group_rules = root.querySelector('#group-rules')?.value ?? '';
             current.summary_enabled = Boolean(root.querySelector('#summary-enabled')?.checked);
-            current.summary_position = getInt(root.querySelector('#summary-position')?.value, current.summary_position ?? EXT_PROMPT_TYPES.SYSTEM_DEPTH_1);
+            current.summary_position = getInt(root.querySelector('#summary-position')?.value, current.summary_position ?? EXT_PROMPT_TYPES.IN_CHAT);
             current.summary_rules = root.querySelector('#summary-rules')?.value ?? '';
             current.ds_format_enabled = Boolean(root.querySelector('#ds-format-enabled')?.checked);
             current.ds_format_rules = root.querySelector('#ds-format-rules')?.value ?? '';

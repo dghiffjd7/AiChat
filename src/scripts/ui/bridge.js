@@ -741,12 +741,12 @@ class AppBridge {
       tokenBudgetData: Math.floor(DEFAULT_MEMORY_BUDGET.maxTokens * DEFAULT_MEMORY_BUDGET.safetyRatio),
       overheadTokens: 0,
       maxRows: DEFAULT_MEMORY_BUDGET.maxRows,
-      position: 'history_after',
+      position: 'history_depth',
       injectDepth: 0,
       promptText: '',
       dataPromptText: '',
       guidePromptText: '',
-      guidePosition: 'history_before',
+      guidePosition: 'history_depth',
       guideInjectDepth: 0,
       tableData: '',
       updateMode,
@@ -816,11 +816,11 @@ class AppBridge {
         : [];
     const positions = overridePositions.length
       ? overridePositions
-      : ['history_after'];
+      : ['history_depth'];
     const position = positions.join('+');
     const guidePositionRaw = String(context?.meta?.memoryGuidePosition || '').trim().toLowerCase();
     const guidePositions = guidePositionRaw ? parseMemoryPromptPositions(guidePositionRaw) : [];
-    const guidePosition = (guidePositions.length ? guidePositions : ['history_before']).join('+');
+    const guidePosition = (guidePositions.length ? guidePositions : ['history_depth']).join('+');
     const guideInjectDepthRaw = Math.trunc(Number(context?.meta?.memoryGuideDepth));
     const guideInjectDepth = Number.isFinite(guideInjectDepthRaw) ? Math.max(0, guideInjectDepthRaw) : 0;
 
@@ -2691,7 +2691,7 @@ class AppBridge {
           if (memoryPlan.guidePromptText) {
             nextMeta.memoryGuidePrompt = {
               content: memoryPlan.guidePromptText,
-              position: memoryPlan.guidePosition || 'history_before',
+              position: memoryPlan.guidePosition || 'history_depth',
               depth: memoryPlan.guideInjectDepth,
             };
           }
@@ -3117,8 +3117,8 @@ class AppBridge {
           : 'system';
       return { content, positions, role, depth };
     };
-    const memoryGuidePrompt = parseInjectedPrompt(context?.meta?.memoryGuidePrompt, ['history_before'], 0);
-    const memoryPrompt = parseInjectedPrompt(context?.meta?.memoryPrompt, ['history_after'], 0);
+    const memoryGuidePrompt = parseInjectedPrompt(context?.meta?.memoryGuidePrompt, ['history_depth'], 0);
+    const memoryPrompt = parseInjectedPrompt(context?.meta?.memoryPrompt, ['history_depth'], 0);
     const disableScenarioHint = Boolean(context?.meta?.disableScenarioHint);
     const replyPromptHint = String(context?.meta?.replyPromptHint || '').trim();
     const overrideLastUserMessageRaw = (typeof context?.meta?.overrideLastUserMessage === 'string')
@@ -3237,12 +3237,21 @@ class AppBridge {
           messages.push(buildSyntheticMessage(prompt.role, prompt.content));
           inserted.add(pos);
         },
-        insertIntoHistory(history) {
+        insertIntoHistory(history, options = {}) {
           if (!prompt || !prompt.positions.includes('history_depth') || inserted.has('history_depth')) return;
-          const depth = Math.max(0, Math.trunc(Number(prompt?.depth || 0)));
+          const rawDepth = Math.max(0, Math.trunc(Number(prompt?.depth || 0)));
+          if (rawDepth === 0) return;
+          const depth = options?.hasPendingLatest ? Math.max(0, rawDepth - 1) : rawDepth;
           const idx = Math.max(0, history.length - depth);
           history.splice(idx, 0, buildSyntheticMessage(prompt.role, prompt.content));
           inserted.add('history_depth');
+        },
+        popDepthZero() {
+          if (!prompt || !prompt.positions.includes('history_depth') || inserted.has('history_depth')) return null;
+          const depth = Math.max(0, Math.trunc(Number(prompt?.depth || 0)));
+          if (depth !== 0) return null;
+          inserted.add('history_depth');
+          return { role: prompt.role, content: prompt.content };
         },
         insertHistoryBoundary(pos) {
           if (!prompt || !prompt.positions.includes(pos) || inserted.has(pos)) return;
@@ -3257,9 +3266,9 @@ class AppBridge {
       memoryGuideInjector.insertAt(pos);
       memoryDataInjector.insertAt(pos);
     };
-    const insertMemoryPromptIntoHistory = (history) => {
-      memoryGuideInjector.insertIntoHistory(history);
-      memoryDataInjector.insertIntoHistory(history);
+    const insertMemoryPromptIntoHistory = (history, options = {}) => {
+      memoryGuideInjector.insertIntoHistory(history, options);
+      memoryDataInjector.insertIntoHistory(history, options);
     };
     const insertMemoryPromptBeforeHistory = () => {
       memoryGuideInjector.insertHistoryBoundary('history_before');
@@ -3269,6 +3278,10 @@ class AppBridge {
       memoryGuideInjector.insertHistoryBoundary('history_after');
       memoryDataInjector.insertHistoryBoundary('history_after');
     };
+    const buildMemoryDepthZeroMessages = () => [
+      memoryGuideInjector.popDepthZero(),
+      memoryDataInjector.popDepthZero(),
+    ].filter(Boolean);
 	    const normalizeSyntheticMessageList = (list) => {
 	      const arr = Array.isArray(list) ? list : [];
 	      return arr.map((msg) => {
@@ -3620,10 +3633,10 @@ class AppBridge {
     autoImagePromptActive = Boolean(autoImagePromptRules);
     autoImagePromptPosition = Number.isFinite(Number(sysp?.auto_image_prompt_position))
       ? Number(sysp.auto_image_prompt_position)
-      : 0;
+      : 1;
     autoImagePromptDepth = Number.isFinite(Number(sysp?.auto_image_prompt_depth))
       ? Math.max(0, Math.trunc(Number(sysp.auto_image_prompt_depth)))
-      : 1;
+      : 0;
     autoImagePromptRole = Number.isFinite(Number(sysp?.auto_image_prompt_role))
       ? Math.trunc(Number(sysp.auto_image_prompt_role))
       : 0;
@@ -3666,12 +3679,12 @@ class AppBridge {
 	    const openaiOrderBlock = pickOpenAIOrderBlock();
 	    const openaiOrder = Array.isArray(openaiOrderBlock?.order) ? openaiOrderBlock.order : null;
 
-	    // 摘要提示词：移入“聊天提示词”区块管理，并固定在系统深度=1（紧跟历史）
+	    // 摘要提示词：移入“聊天提示词”区块管理，并固定在 ST IN_CHAT / SYSTEM / D1。
 	    const summaryPosition = (() => {
-	      if (!useSysprompt) return 3;
-	      if (!syspActive || typeof syspActive !== 'object') return 3;
+	      if (!useSysprompt) return 1;
+	      if (!syspActive || typeof syspActive !== 'object') return 1;
 	      const n = Number(syspActive.summary_position);
-	      return Number.isFinite(n) ? n : 3;
+	      return Number.isFinite(n) ? n : 1;
 	    })();
 	    const summaryEnabled = (() => {
 	      if (!useSummaryMemory) return false;
@@ -3695,9 +3708,9 @@ class AppBridge {
 	        })
 	      : '';
 
-	    // 聊天提示词（私聊/群聊/动态/摘要）：按扩展位置注入
-	    // - IN_PROMPT / BEFORE_PROMPT / SYSTEM_DEPTH_1：包装为 <chat_guide>
-	    // - IN_CHAT：按深度插入历史
+	    // 聊天提示词（私聊/群聊/动态/摘要）：按 ST 扩展位置注入。
+	    // - IN_PROMPT / BEFORE_PROMPT：相对 main prompt 注入
+	    // - IN_CHAT：按 depth/role 注入历史
 	    const buildChatGuideBlock = (parts) => {
 	      const content = joinPromptBlocks(parts);
 	      if (!content) return '';
@@ -3970,6 +3983,7 @@ const stringifyMessageContent = (content) => {
           beforeExamples: [],
           afterExamples: [],
           defaultPrompt: [],
+          afterPrompt: [],
           depth: [],
         };
         const templateInject = {
@@ -3995,6 +4009,7 @@ const stringifyMessageContent = (content) => {
           templateEntries: [],
           initialVariableEntries: [],
         };
+        const builtinPhoneFormatEntries = [];
         const captureWorldDebugEntry = (target, entry, extra = {}) => {
           if (!target || !entry) return;
           target.push({ entry, ...extra });
@@ -4069,12 +4084,12 @@ const stringifyMessageContent = (content) => {
             let bucket = 'defaultPrompt';
             switch (pos) {
               case 0:
-                bucket = 'beforeChar';
-                worldBuckets.beforeChar.push(entry);
+                bucket = 'defaultPrompt';
+                worldBuckets.defaultPrompt.push(entry);
                 break;
               case 1:
-                bucket = 'afterChar';
-                worldBuckets.afterChar.push(entry);
+                bucket = 'afterPrompt';
+                worldBuckets.afterPrompt.push(entry);
                 break;
               case 2:
                 bucket = 'beforeScenario';
@@ -4119,7 +4134,7 @@ const stringifyMessageContent = (content) => {
             builtinEntries.forEach(entry => captureWorldDebugEntry(worldDebugRaw.builtinEntries, entry, {
               sourceKind: 'builtin',
             }));
-            pushEntries(builtinEntries, { sourceKind: 'builtin' });
+            builtinPhoneFormatEntries.push(...builtinEntries);
           }
           const globalEntries =
             resolvedWorldState.globalWorldId
@@ -4166,11 +4181,12 @@ const stringifyMessageContent = (content) => {
         const bucketLabels = {
           beforeChar: '角色描述前',
           afterChar: '角色描述后',
-          beforeScenario: '场景前',
-          afterScenario: '场景后',
+          beforeScenario: '作者备注前',
+          afterScenario: '作者备注后',
           beforeExamples: '示例前',
           afterExamples: '示例后',
-          defaultPrompt: '默认 Prompt',
+          defaultPrompt: 'World Info (before)',
+          afterPrompt: 'World Info (after)',
           depth: '按深度插入',
         };
         const buildStickerListData = () => {
@@ -4331,9 +4347,15 @@ const stringifyMessageContent = (content) => {
             worldPromptDefaultRestParts.push(content);
           }
         });
-        const worldPromptBuiltin = worldPromptBuiltinParts.join('\n\n');
+        const phoneFormatPromptContent = joinPromptBlocks([
+          ...builtinPhoneFormatEntries.map(entry => formatWorldEntryContent(entry, { applyRegex: false })),
+          ...worldPromptBuiltinParts,
+        ]);
         const worldPromptDefaultRest = worldPromptDefaultRestParts.join('\n\n');
-        const worldPromptDefault = joinPromptBlocks([worldPromptBuiltin, worldPromptDefaultRest]);
+        const worldPromptDefault = worldPromptDefaultRest;
+        const worldPromptAfter = joinPromptBlocks(
+          worldBuckets.afterPrompt.map(entry => formatWorldEntryContent(entry, { applyRegex: false })),
+        );
         const worldPromptMessages = {
           beforeChar: buildWorldMessages(worldBuckets.beforeChar),
           afterChar: buildWorldMessages(worldBuckets.afterChar),
@@ -4380,8 +4402,10 @@ const stringifyMessageContent = (content) => {
 
         return {
           worldPromptDefault,
-          worldPromptBuiltin,
+          worldPromptBuiltin: phoneFormatPromptContent,
+          phoneFormatPromptContent,
           worldPromptDefaultRest,
+          worldPromptAfter,
           worldPromptMessages,
           depthWorldMessages,
           templateInject: templateInjectPlan,
@@ -4412,6 +4436,33 @@ const stringifyMessageContent = (content) => {
           });
         });
         return out;
+      };
+      const buildPhoneFormatDepthMessages = () => {
+        const content = trimEdgeBlankLines(worldInjectionPlan?.phoneFormatPromptContent || '');
+        return content ? [{ role: 'system', content, depth: 0, _seq: -100000 }] : [];
+      };
+      const splitDepthMessagesForPendingLatest = (depthMessages, hasPendingLatest) => {
+        const historyMessages = [];
+        const afterLatestMessages = [];
+        const list = Array.isArray(depthMessages) ? depthMessages : [];
+        list.forEach((msg, idx) => {
+          if (!msg) return;
+          const rawDepth = Math.max(0, Math.trunc(Number(msg.depth || 0)));
+          const normalized = {
+            ...msg,
+            depth: rawDepth,
+            _seq: Number.isFinite(Number(msg._seq)) ? msg._seq : idx,
+          };
+          if (hasPendingLatest && rawDepth === 0) {
+            afterLatestMessages.push(normalized);
+            return;
+          }
+          historyMessages.push({
+            ...normalized,
+            depth: hasPendingLatest ? Math.max(0, rawDepth - 1) : rawDepth,
+          });
+        });
+        return { historyMessages, afterLatestMessages };
       };
       const insertDepthMessages = (history, depthMessages) => {
         const list = Array.isArray(depthMessages) ? depthMessages : [];
@@ -4476,16 +4527,9 @@ const stringifyMessageContent = (content) => {
         if (hasUserAttachments) attachmentsInserted = false;
       };
 
-      // 聊天提示词：按位置注入（IN_PROMPT 走 worldInfo marker，SYSTEM_DEPTH_1 在 history 后）。
+      // 聊天提示词：按 ST 位置注入（IN_PROMPT/BEFORE_PROMPT 相对 main；IN_CHAT 按 depth/role）。
       // 世界书条目可按 position/@Depth 插入，其余默认仍走 worldInfo marker。
 
-      // Persona Description (SillyTavern-like): AT_DEPTH=4 injects into chat history
-      if (personaText && personaPosition === 4) {
-        const roleMap = { 0: 'system', 1: 'user', 2: 'assistant' };
-        const role = roleMap[personaRole] || 'system';
-        const idx = Math.max(0, history.length - personaDepth);
-        history.splice(idx, 0, buildSyntheticMessage(role, personaText));
-      }
       const prompts = Array.isArray(openp.prompts) ? openp.prompts : [];
       const byId = new Map();
       prompts.forEach(p => {
@@ -4494,32 +4538,83 @@ const stringifyMessageContent = (content) => {
 
       const formatScenario = processTextMacrosWithPendingFlag(scenarioFormat, macroContext);
       const formatPersonality = processTextMacrosWithPendingFlag(personalityFormat, macroContext);
-      const worldPromptBuiltin = worldInjectionPlan.worldPromptBuiltin || '';
+      const phoneFormatDepthMessages = buildPhoneFormatDepthMessages();
       const worldPromptDefaultRest = worldInjectionPlan.worldPromptDefaultRest || '';
+      const worldPromptAfter = worldInjectionPlan.worldPromptAfter || '';
       const worldPromptMessages = cloneWorldPromptMessages(worldInjectionPlan.worldPromptMessages);
       const depthWorldMessages = Array.isArray(worldInjectionPlan.depthWorldMessages)
         ? [...worldInjectionPlan.depthWorldMessages]
         : [];
-      const depthPromptMessages = mergeDepthMessages(depthWorldMessages, chatGuidePlan.depthMessages);
-      insertDepthMessages(history, depthPromptMessages);
-      insertMemoryPromptIntoHistory(history);
+      const personaDepthMessages = (() => {
+        if (!personaText || personaPosition !== 4) return [];
+        const roleMap = { 0: 'system', 1: 'user', 2: 'assistant' };
+        return [{
+          role: roleMap[personaRole] || 'system',
+          content: personaText,
+          depth: personaDepth,
+        }];
+      })();
+      const depthPromptMessages = mergeDepthMessages(
+        phoneFormatDepthMessages,
+        chatGuidePlan.depthMessages,
+        depthWorldMessages,
+        personaDepthMessages,
+      );
+      const hasPendingLatestForDepth = Boolean(pendingUserHistoryEntry);
+      const {
+        historyMessages: depthPromptHistoryMessages,
+        afterLatestMessages: depthPromptAfterLatestMessages,
+      } = splitDepthMessagesForPendingLatest(depthPromptMessages, hasPendingLatestForDepth);
+      insertDepthMessages(history, depthPromptHistoryMessages);
+      insertMemoryPromptIntoHistory(history, { hasPendingLatest: hasPendingLatestForDepth });
+      const memoryDepthZeroMessages = buildMemoryDepthZeroMessages();
 
-      // WORLD_INFO placement for prompt stage (supports promptOnly scripts)
+      // WORLD_INFO only carries real world info markers. Extension prompts use ST positions below.
       const chatGuideContent = chatGuidePlan.promptContent;
       const chatGuideBeforePromptContent = chatGuidePlan.beforePromptContent;
       const chatGuideDepthContent = chatGuidePlan.depthContent;
-      let worldForPrompt = joinPromptBlocks([worldPromptBuiltin, chatGuideContent, worldPromptDefaultRest]);
-      if (worldForPrompt) {
-        worldForPrompt = this.regex.apply(worldForPrompt, this.getRegexContext(), regex_placement.WORLD_INFO, {
+      const applyWorldInfoRegexForPrompt = (text) => {
+        const raw = String(text || '').trim();
+        if (!raw) return '';
+        return this.regex.apply(raw, this.getRegexContext(), regex_placement.WORLD_INFO, {
           isMarkdown: false,
           isPrompt: true,
           isEdit: false,
           depth: 0,
         });
-      }
-      const formatWorld = worldForPrompt ? wiFormat.replace('{0}', worldForPrompt) : '';
-      let worldInserted = false;
+      };
+      const worldBeforeForPrompt = applyWorldInfoRegexForPrompt(worldPromptDefaultRest);
+      const worldAfterForPrompt = applyWorldInfoRegexForPrompt(worldPromptAfter);
+      const formatWorldBefore = worldBeforeForPrompt ? wiFormat.replace('{0}', worldBeforeForPrompt) : '';
+      const formatWorldAfter = worldAfterForPrompt ? wiFormat.replace('{0}', worldAfterForPrompt) : '';
+      let worldBeforeInserted = false;
+      let worldAfterInserted = false;
+      let chatGuideBeforePromptInserted = false;
+      let chatGuidePromptInserted = false;
       let chatGuideAfterHistoryInserted = false;
+      let depthAfterLatestInserted = false;
+      const appendChatGuideBeforePrompt = () => {
+        if (chatGuideBeforePromptInserted || !chatGuideBeforePromptContent) return;
+        messages.push({ role: 'system', content: chatGuideBeforePromptContent });
+        chatGuideBeforePromptInserted = true;
+      };
+      const appendChatGuidePrompt = () => {
+        if (chatGuidePromptInserted || !chatGuideContent) return;
+        messages.push({ role: 'system', content: chatGuideContent });
+        chatGuidePromptInserted = true;
+      };
+      const insertDepthAfterLatestMessages = () => {
+        if (depthAfterLatestInserted) return;
+        depthPromptAfterLatestMessages.forEach(msg => {
+          if (!msg?.content) return;
+          messages.push(buildSyntheticMessage(msg.role || 'system', msg.content));
+        });
+        memoryDepthZeroMessages.forEach(msg => {
+          if (!msg?.content) return;
+          messages.push(buildSyntheticMessage(msg.role || 'system', msg.content));
+        });
+        depthAfterLatestInserted = true;
+      };
       const insertChatGuideAfterHistory = () => {
         if (chatGuideAfterHistoryInserted || !chatGuideDepthContent) return;
         messages.push({ role: 'system', content: chatGuideDepthContent });
@@ -4535,10 +4630,13 @@ const stringifyMessageContent = (content) => {
       const resolveMarker = identifier => {
         switch (identifier) {
           case 'worldInfoBefore':
+            if (!formatWorldBefore || worldBeforeInserted) return '';
+            worldBeforeInserted = true;
+            return formatWorldBefore;
           case 'worldInfoAfter':
-            if (!formatWorld || worldInserted) return '';
-            worldInserted = true;
-            return formatWorld;
+            if (!formatWorldAfter || worldAfterInserted) return '';
+            worldAfterInserted = true;
+            return formatWorldAfter;
           case 'charDescription':
             return processTextMacrosWithPendingFlag(context?.character?.description || '', macroContext);
           case 'charPersonality':
@@ -4624,10 +4722,6 @@ const stringifyMessageContent = (content) => {
         return blocks;
       })();
 
-      if (chatGuideBeforePromptContent) {
-        messages.push({ role: 'system', content: chatGuideBeforePromptContent });
-      }
-
       for (const item of openaiOrder) {
         const identifier = item?.identifier;
         const enabled = item?.enabled !== false;
@@ -4643,6 +4737,9 @@ const stringifyMessageContent = (content) => {
           insertMemoryPromptAfterHistory();
           insertTimeContextAfterHistory();
           insertPendingUserIntoHistory();
+          if (!pendingUserHistoryEntry || pendingUserInsertIndex >= 0 || usedLastUserMessageForPendingInput) {
+            insertDepthAfterLatestMessages();
+          }
           insertChatGuideAfterHistory();
           historyInserted = true;
           continue;
@@ -4671,10 +4768,8 @@ const stringifyMessageContent = (content) => {
             continue;
           }
           if (identifier === 'scenario') {
-            appendWorldBucket('beforeScenario');
             const content = resolveMarker(identifier);
             if (content) messages.push({ role: 'system', content });
-            appendWorldBucket('afterScenario');
             continue;
           }
           if (identifier === 'dialogueExamples') {
@@ -4704,7 +4799,18 @@ const stringifyMessageContent = (content) => {
         }
         const rawHadLastUser = lastUserMessageRe.test(String(content || ''));
         content = processTextMacrosWithPendingFlag(content, macroContext);
-        if (!content) continue;
+        const isMainPrompt = identifier === 'main';
+        if (isMainPrompt) {
+          appendWorldBucket('beforeScenario');
+          appendChatGuideBeforePrompt();
+        }
+        if (!content) {
+          if (isMainPrompt) {
+            appendChatGuidePrompt();
+            appendWorldBucket('afterScenario');
+          }
+          continue;
+        }
 
 	        const role = String(pr?.role || 'system').toLowerCase();
 	        const mappedRole = pr?.system_prompt === true
@@ -4715,8 +4821,14 @@ const stringifyMessageContent = (content) => {
 	          removePendingUserFromHistory();
 	        }
 	        messages.push(buildSyntheticMessage(pr?.system_prompt === true ? 'system' : role, content));
+        if (isMainPrompt) {
+          appendChatGuidePrompt();
+          appendWorldBucket('afterScenario');
+        }
 	      }
 
+      appendChatGuideBeforePrompt();
+      appendChatGuidePrompt();
       // Flush any world buckets that didn't find their markers to avoid dropping entries.
       appendWorldBucket('beforeChar');
       appendWorldBucket('afterChar');
@@ -4735,6 +4847,9 @@ const stringifyMessageContent = (content) => {
         insertMemoryPromptAfterHistory();
         insertTimeContextAfterHistory();
         insertPendingUserIntoHistory();
+        if (!pendingUserHistoryEntry || pendingUserInsertIndex >= 0 || usedLastUserMessageForPendingInput) {
+          insertDepthAfterLatestMessages();
+        }
         insertChatGuideAfterHistory();
       }
 
@@ -4749,6 +4864,7 @@ const stringifyMessageContent = (content) => {
       if (hasUserAttachments && !attachmentsInserted && attachmentOnlyContent) {
         messages.push({ role: 'user', content: attachmentOnlyContent });
       }
+      insertDepthAfterLatestMessages();
       appendOutputFormatReminder();
       return finalizeProviderMessages();
     }
@@ -4756,22 +4872,27 @@ const stringifyMessageContent = (content) => {
     const chatGuideContent = chatGuidePlan.promptContent;
     const chatGuideBeforePromptContent = chatGuidePlan.beforePromptContent;
     const chatGuideDepthContent = chatGuidePlan.depthContent;
-    const worldPromptBuiltin = worldInjectionPlan.worldPromptBuiltin || '';
+    const phoneFormatDepthMessages = buildPhoneFormatDepthMessages();
     const worldPromptDefaultRest = worldInjectionPlan.worldPromptDefaultRest || '';
+    const worldPromptAfter = worldInjectionPlan.worldPromptAfter || '';
     const worldPromptMessages = cloneWorldPromptMessages(worldInjectionPlan.worldPromptMessages);
     const depthWorldMessages = Array.isArray(worldInjectionPlan.depthWorldMessages)
       ? [...worldInjectionPlan.depthWorldMessages]
       : [];
-    const worldPromptCombined = joinPromptBlocks([worldPromptBuiltin, chatGuideContent, worldPromptDefaultRest]);
-    let worldPromptCombinedForPrompt = worldPromptCombined;
-    if (worldPromptCombinedForPrompt) {
-      worldPromptCombinedForPrompt = this.regex.apply(worldPromptCombinedForPrompt, this.getRegexContext(), regex_placement.WORLD_INFO, {
+    const applyWorldInfoRegexForPrompt = (text) => {
+      const raw = String(text || '').trim();
+      if (!raw) return '';
+      return this.regex.apply(raw, this.getRegexContext(), regex_placement.WORLD_INFO, {
         isMarkdown: false,
         isPrompt: true,
         isEdit: false,
         depth: 0,
       });
-    }
+    };
+    const worldPromptBeforeForPrompt = applyWorldInfoRegexForPrompt(worldPromptDefaultRest);
+    const worldPromptAfterForPrompt = applyWorldInfoRegexForPrompt(worldPromptAfter);
+    const formatWorldBefore = worldPromptBeforeForPrompt ? wiFormat.replace('{0}', worldPromptBeforeForPrompt) : '';
+    const formatWorldAfter = worldPromptAfterForPrompt ? wiFormat.replace('{0}', worldPromptAfterForPrompt) : '';
     const renderWorldBucket = (bucket) => {
       const list = Array.isArray(bucket) ? bucket : [];
       return joinPromptBlocks(list.map(msg => msg?.content || ''));
@@ -4803,13 +4924,19 @@ const stringifyMessageContent = (content) => {
       members: membersText,
       scenario: context?.character?.scenario || '',
     });
-    const scenarioText = hasScenarioToken
-      ? joinPromptBlocks([consumeWorldBucket(worldPromptMessages.beforeScenario), scenarioBase, consumeWorldBucket(worldPromptMessages.afterScenario)])
-      : scenarioBase;
+    const scenarioText = scenarioBase;
     const mesExamplesBase = '';
     const mesExamplesText = hasExamplesToken
       ? joinPromptBlocks([consumeWorldBucket(worldPromptMessages.beforeExamples), mesExamplesBase, consumeWorldBucket(worldPromptMessages.afterExamples)])
       : mesExamplesBase;
+    const anchorBeforeText = joinPromptBlocks([
+      consumeWorldBucket(worldPromptMessages.beforeScenario),
+      chatGuideBeforePromptContent,
+    ]);
+    const anchorAfterText = joinPromptBlocks([
+      consumeWorldBucket(worldPromptMessages.afterScenario),
+      chatGuideContent,
+    ]);
 
     const vars = {
       user: name1,
@@ -4829,12 +4956,12 @@ const stringifyMessageContent = (content) => {
       personality: personalityText,
       scenario: scenarioText,
       persona: personaPosition === 0 ? personaText : '',
-      wiBefore: worldPromptCombinedForPrompt ? wiFormat.replace('{0}', worldPromptCombinedForPrompt) : '',
-      wiAfter: '',
-      loreBefore: worldPromptCombinedForPrompt ? wiFormat.replace('{0}', worldPromptCombinedForPrompt) : '',
-      loreAfter: '',
-      anchorBefore: '',
-      anchorAfter: '',
+      wiBefore: formatWorldBefore,
+      wiAfter: formatWorldAfter,
+      loreBefore: formatWorldBefore,
+      loreAfter: formatWorldAfter,
+      anchorBefore: anchorBeforeText,
+      anchorAfter: anchorAfterText,
       mesExamples: mesExamplesText,
       mesExamplesRaw: mesExamplesText,
       trim: '',
@@ -4862,10 +4989,6 @@ const stringifyMessageContent = (content) => {
       fn();
       flushWorldMessages(worldMessagesAfter);
     };
-
-    if (chatGuideBeforePromptContent) {
-      messages.push({ role: 'system', content: chatGuideBeforePromptContent });
-    }
 
     // 1) Context preset: render story_string as ST-like template
     const combinedStoryString =
@@ -4903,11 +5026,20 @@ const stringifyMessageContent = (content) => {
         if (context.systemPrompt) {
           messages.push({ role: 'system', content: context.systemPrompt });
         }
+        if (chatGuideBeforePromptContent) {
+          messages.push({ role: 'system', content: chatGuideBeforePromptContent });
+        }
         if (vars.system) {
           messages.push({ role: 'system', content: vars.system });
         }
-        if (worldPromptCombinedForPrompt) {
-          messages.push({ role: 'system', content: wiFormat.replace('{0}', worldPromptCombinedForPrompt) });
+        if (formatWorldBefore) {
+          messages.push({ role: 'system', content: formatWorldBefore });
+        }
+        if (formatWorldAfter) {
+          messages.push({ role: 'system', content: formatWorldAfter });
+        }
+        if (chatGuideContent) {
+          messages.push({ role: 'system', content: chatGuideContent });
         }
         if (context.character) {
           let characterPrompt = `你正在扮演: ${context.character.name}`;
@@ -4916,11 +5048,17 @@ const stringifyMessageContent = (content) => {
           messages.push({ role: 'system', content: characterPrompt });
         }
       });
-    } else if (!shouldInsertStoryString) {
-      // Context preset enabled but no story_string inserted: still flush world buckets to avoid dropping entries.
-      flushWorldMessages(worldMessagesBefore);
-      flushWorldMessages(worldMessagesAfter);
-    }
+	    } else if (!shouldInsertStoryString) {
+	      // Context preset enabled but no story_string inserted: still flush world buckets to avoid dropping entries.
+	      flushWorldMessages(worldMessagesBefore);
+      if (chatGuideBeforePromptContent) {
+        messages.push({ role: 'system', content: chatGuideBeforePromptContent });
+      }
+      if (chatGuideContent) {
+        messages.push({ role: 'system', content: chatGuideContent });
+      }
+	      flushWorldMessages(worldMessagesAfter);
+	    }
     insertMemoryPromptAt('after_persona');
     insertMemoryPromptAt('system_end');
 
@@ -4969,25 +5107,52 @@ const stringifyMessageContent = (content) => {
       }
     } catch {}
 
-    // Persona Description (SillyTavern-like): AT_DEPTH=4 injects into chat history
-	    if (personaText && personaPosition === 4) {
-	      const roleMap = { 0: 'system', 1: 'user', 2: 'assistant' };
-	      const role = roleMap[personaRole] || 'system';
-	      const idx = Math.max(0, history.length - personaDepth);
-	      history.splice(idx, 0, buildSyntheticMessage(role, personaText));
-	    }
-
-    // IN_CHAT: inject story string into history (depth + role)
-	    if (combinedStoryString && position === 1) {
-	      const roleMap = { 0: 'system', 1: 'user', 2: 'assistant' };
-	      const role = roleMap[injectRole] || 'system';
-	      const idx = Math.max(0, history.length - injectDepth);
-	      history.splice(idx, 0, buildSyntheticMessage(role, combinedStoryString));
-	    }
-	    const depthPromptMessages = mergeDepthMessages(depthWorldMessages, chatGuidePlan.depthMessages);
-	    insertDepthMessages(history, depthPromptMessages);
-	    insertMemoryPromptIntoHistory(history);
-		    // 聊天提示词的 SYSTEM_DEPTH_1 由 <chat_guide> 承载，不落入 <history>。
+    const hasPendingLatestForDepth = !usedLastUserMessageForPendingInput && (pendingUserPrompt || hasUserAttachments);
+    const roleMapForDepth = { 0: 'system', 1: 'user', 2: 'assistant' };
+    const personaDepthMessages = (() => {
+      if (!personaText || personaPosition !== 4) return [];
+      return [{
+        role: roleMapForDepth[personaRole] || 'system',
+        content: personaText,
+        depth: personaDepth,
+      }];
+    })();
+    const storyStringDepthMessages = (() => {
+      if (!combinedStoryString || position !== 1) return [];
+      return [{
+        role: roleMapForDepth[injectRole] || 'system',
+        content: combinedStoryString,
+        depth: injectDepth,
+      }];
+    })();
+	    const depthPromptMessages = mergeDepthMessages(
+      phoneFormatDepthMessages,
+      chatGuidePlan.depthMessages,
+      personaDepthMessages,
+      storyStringDepthMessages,
+      depthWorldMessages,
+    );
+    const {
+      historyMessages: depthPromptHistoryMessages,
+      afterLatestMessages: depthPromptAfterLatestMessages,
+    } = splitDepthMessagesForPendingLatest(depthPromptMessages, hasPendingLatestForDepth);
+	    insertDepthMessages(history, depthPromptHistoryMessages);
+	    insertMemoryPromptIntoHistory(history, { hasPendingLatest: hasPendingLatestForDepth });
+    const memoryDepthZeroMessages = buildMemoryDepthZeroMessages();
+    let depthAfterLatestInserted = false;
+    const insertDepthAfterLatestMessages = () => {
+      if (depthAfterLatestInserted) return;
+      depthPromptAfterLatestMessages.forEach(msg => {
+        if (!msg?.content) return;
+        messages.push(buildSyntheticMessage(msg.role || 'system', msg.content));
+      });
+      memoryDepthZeroMessages.forEach(msg => {
+        if (!msg?.content) return;
+        messages.push(buildSyntheticMessage(msg.role || 'system', msg.content));
+      });
+      depthAfterLatestInserted = true;
+    };
+		    // 聊天提示词的 IN_CHAT 部分已按 depth/role 注入 history。
 	    const postHistoryRaw = useSysprompt ? sysp?.post_history || '' : '';
 	    const extraPromptBlocksRaw = Array.isArray(context?.meta?.extraPromptBlocks) ? context.meta.extraPromptBlocks : [];
 	    const extraConsumesLastUser = extraPromptBlocksRaw.some((b) => {
@@ -5143,6 +5308,7 @@ const stringifyMessageContent = (content) => {
     if (hasUserAttachments && !attachmentsInserted && attachmentOnlyContent) {
       messages.push({ role: 'user', content: attachmentOnlyContent });
     }
+    insertDepthAfterLatestMessages();
     try {
       const inject = worldInjectionPlan?.templateInject || null;
       if (inject) {

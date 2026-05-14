@@ -311,16 +311,26 @@ const sanitizeAutoImagePromptRulesText = (value) => {
 const ensureAutoImagePromptFields = (preset) => {
     const p = (preset && typeof preset === 'object') ? preset : null;
     if (!p) return;
+    const hadPosition = typeof p.auto_image_prompt_position === 'number';
+    const hadDepth = typeof p.auto_image_prompt_depth === 'number';
+    const hadRole = typeof p.auto_image_prompt_role === 'number';
     if (typeof p.auto_image_prompt_enabled !== 'boolean') p.auto_image_prompt_enabled = true;
-    if (typeof p.auto_image_prompt_position !== 'number') p.auto_image_prompt_position = 0;
-    if (typeof p.auto_image_prompt_depth !== 'number') p.auto_image_prompt_depth = 1;
+    if (!hadPosition) p.auto_image_prompt_position = 1;
+    if (!hadDepth) p.auto_image_prompt_depth = 0;
     if (typeof p.auto_image_prompt_role !== 'number') p.auto_image_prompt_role = 0;
+    const shouldMigrateLegacyDefaultPosition =
+        hadPosition && hadDepth && p.auto_image_prompt_position === 0 && p.auto_image_prompt_depth === 1 && (!hadRole || p.auto_image_prompt_role === 0);
     if (typeof p.auto_image_prompt_rules !== 'string' || !p.auto_image_prompt_rules.trim()) {
         p.auto_image_prompt_rules = DEFAULT_AUTO_IMAGE_PROMPT_RULES;
     } else if (looksDefaultAutoImagePromptRulesForMigration(p.auto_image_prompt_rules)) {
         p.auto_image_prompt_rules = DEFAULT_AUTO_IMAGE_PROMPT_RULES;
     }
     p.auto_image_prompt_rules = sanitizeAutoImagePromptRulesText(p.auto_image_prompt_rules);
+    if (shouldMigrateLegacyDefaultPosition && p.auto_image_prompt_rules === DEFAULT_AUTO_IMAGE_PROMPT_RULES) {
+        p.auto_image_prompt_position = 1;
+        p.auto_image_prompt_depth = 0;
+        p.auto_image_prompt_role = 0;
+    }
 };
 
 const sanitizePhoneFormatPromptText = (value, spec = {}) => {
@@ -815,7 +825,7 @@ export class PresetStore {
                 }
 
                 if (typeof p.summary_enabled !== 'boolean') p.summary_enabled = true;
-                if (typeof p.summary_position !== 'number') p.summary_position = 3;
+                if (typeof p.summary_position !== 'number') p.summary_position = 1;
                 if (typeof p.summary_rules !== 'string' || !p.summary_rules.trim()) {
                     p.summary_rules = DEFAULT_SUMMARY_RULES;
                 }
@@ -855,7 +865,7 @@ export class PresetStore {
                 if (!p || typeof p !== 'object') continue;
                 ensurePhoneFormatPromptFields(p);
                 if (typeof p.dialogue_enabled !== 'boolean') p.dialogue_enabled = true; // 聊天室自动启用
-                // 私聊提示词：默认放在 prompt 前段；迁移旧默认 SYSTEM_DEPTH_1，避免出现在最新用户消息后。
+                // 私聊提示词：默认使用 ST IN_PROMPT；用户可改为 IN_CHAT depth/role。
                 if (typeof p.dialogue_position !== 'number') p.dialogue_position = 0;
                 if (typeof p.dialogue_depth !== 'number') p.dialogue_depth = 1;
                 if (typeof p.dialogue_role !== 'number') p.dialogue_role = 0; // SYSTEM
@@ -914,7 +924,7 @@ export class PresetStore {
                 p.moment_create_rules = sanitizeMomentCreateRulesText(p.moment_create_rules);
 
                 if (typeof p.group_enabled !== 'boolean') p.group_enabled = true;
-                // 群聊提示词：默认放在 prompt 前段；迁移旧默认 SYSTEM_DEPTH_1。
+                // 群聊提示词：默认使用 ST IN_PROMPT；用户可改为 IN_CHAT depth/role。
                 if (typeof p.group_position !== 'number') p.group_position = 0;
                 if (typeof p.group_depth !== 'number') p.group_depth = 1;
                 if (typeof p.group_role !== 'number') p.group_role = 0;
@@ -929,8 +939,8 @@ export class PresetStore {
                 }
 
                 if (typeof p.summary_enabled !== 'boolean') p.summary_enabled = true;
-                if (typeof p.summary_position !== 'number') p.summary_position = 3;
-                else if (p.summary_position === 0 || p.summary_position === 1 || p.summary_position === 2) p.summary_position = 3;
+                if (typeof p.summary_position !== 'number') p.summary_position = 1;
+                else if (p.summary_position === 3 && String(p.summary_rules || '').trim() === DEFAULT_SUMMARY_RULES) p.summary_position = 1;
                 if (typeof p.summary_rules !== 'string' || !p.summary_rules.trim()) {
                     p.summary_rules = DEFAULT_SUMMARY_RULES;
                 }

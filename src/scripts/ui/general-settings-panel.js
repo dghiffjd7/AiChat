@@ -449,9 +449,9 @@ export class GeneralSettingsPanel {
       this.memoryFillEveryNInput.value = String(safeN);
     }
     if (this.memoryInjectPositionSelect) {
-      const raw = String(settings.memoryInjectPosition || 'history_after').toLowerCase();
+      const raw = String(settings.memoryInjectPosition || 'history_depth').toLowerCase();
       const allowed = new Set(['after_persona', 'system_end', 'before_chat', 'history_before', 'history_after', 'history_depth', 'system_end+before_chat']);
-      this.memoryInjectPositionSelect.value = allowed.has(raw) ? raw : 'history_after';
+      this.memoryInjectPositionSelect.value = allowed.has(raw) ? raw : 'history_depth';
       this.refreshThemeSelectButton(this.memoryInjectPositionButton, this.memoryInjectPositionSelect, '注入位置');
     }
     if (this.memoryInjectDepthInput) {
@@ -641,7 +641,7 @@ export class GeneralSettingsPanel {
       this.memoryInjectPositionButton.disabled = !showMemoryTable;
       this.memoryInjectPositionButton.classList.toggle('is-disabled', this.memoryInjectPositionButton.disabled);
     }
-    const position = String(settings.memoryInjectPosition || 'history_after').toLowerCase();
+    const position = String(settings.memoryInjectPosition || 'history_depth').toLowerCase();
     const showDepth = showMemoryTable && position === 'history_depth';
     if (this.memoryInjectDepthWrap) {
       this.memoryInjectDepthWrap.style.display = showDepth ? 'block' : 'none';
@@ -3030,9 +3030,9 @@ export class GeneralSettingsPanel {
       }
     });
     this.memoryInjectPositionSelect?.addEventListener('change', (e) => {
-      const raw = String(e?.target?.value || 'history_after').toLowerCase();
+      const raw = String(e?.target?.value || 'history_depth').toLowerCase();
       const allowed = new Set(['after_persona', 'system_end', 'before_chat', 'history_before', 'history_after', 'history_depth', 'system_end+before_chat']);
-      const next = allowed.has(raw) ? raw : 'history_after';
+      const next = allowed.has(raw) ? raw : 'history_depth';
       appSettings.update({ memoryInjectPosition: next });
       window.dispatchEvent(new CustomEvent('app-settings-changed', { detail: { key: 'memoryInjectPosition', value: next } }));
       this.refreshThemeSelectButton(this.memoryInjectPositionButton, this.memoryInjectPositionSelect, '注入位置');

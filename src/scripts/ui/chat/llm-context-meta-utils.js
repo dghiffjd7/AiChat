@@ -1,9 +1,6 @@
-export const normalizeRuntimeMemoryPosition = (positionRaw, depthRaw, fallback = '') => {
+export const normalizeRuntimeMemoryPosition = (positionRaw, _depthRaw, fallback = '') => {
   const token = String(positionRaw || '').trim().toLowerCase();
-  const depthNum = Math.trunc(Number(depthRaw));
-  const depth = Number.isFinite(depthNum) ? Math.max(0, depthNum) : 0;
   if (!token || token === 'template') return String(fallback || '').trim().toLowerCase();
-  if (token === 'history_depth' && depth === 0) return 'history_after';
   return token;
 };
 
@@ -25,9 +22,9 @@ export const resolveLlmMemoryRuntimeConfig = ({
     ? Math.max(0, settingsMemoryInjectDepthRaw)
     : 0;
   const settingsMemoryInjectPosition = normalizeRuntimeMemoryPosition(
-    settings?.memoryInjectPosition || 'history_after',
+    settings?.memoryInjectPosition || 'history_depth',
     settingsMemoryInjectDepth,
-    'history_after',
+    'history_depth',
   );
   const memoryInjectPosition = presetMemoryInjectPosition || settingsMemoryInjectPosition;
   const memoryInjectDepth = presetMemoryInjectPosition && Number.isFinite(presetMemoryInjectDepthRaw)

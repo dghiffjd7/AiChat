@@ -674,7 +674,7 @@ export class MemoryTableEditor {
     const contact = sessionId ? this.contactsStore?.getContact?.(sessionId) : null;
     const characterName = String(contact?.name || (isGroup ? sessionId.replace(/^group:/, '') : sessionId) || '助手');
     const settings = appSettings.get();
-    const memoryInjectPosition = String(settings.memoryInjectPosition || 'template').toLowerCase();
+    const memoryInjectPosition = String(settings.memoryInjectPosition || 'history_depth').toLowerCase();
     const memoryInjectDepthRaw = Math.trunc(Number(settings.memoryInjectDepth));
     const memoryInjectDepth = Number.isFinite(memoryInjectDepthRaw) ? Math.max(0, memoryInjectDepthRaw) : 4;
     const memoryAutoMode = String(settings.memoryAutoExtractMode || 'inline').toLowerCase();

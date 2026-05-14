@@ -73,10 +73,11 @@ const defaults = {
   memoryStorageMode: 'table',
   memoryAutoExtract: true,
   memoryAutoExtractMode: 'inline',
+  memoryInjectDefaultD0Migrated: true,
   memoryUpdateApiMode: 'chat',
   memoryUpdateProfileId: '',
   memoryUpdateContextRounds: 6,
-  memoryInjectPosition: 'history_after',
+  memoryInjectPosition: 'history_depth',
   memoryInjectDepth: 0,
   memoryBridgeRpToChatEnabled: true,
   memoryBridgeRpToChatLimit: 0,
@@ -128,13 +129,21 @@ const migrateSettings = (settings = {}) => {
     next.memoryInjectPosition = defaults.memoryInjectPosition;
   } else if (injectPositionRaw === 'history_depth') {
     const injectDepthRaw = Math.trunc(Number(next.memoryInjectDepth));
-    const injectDepth = Number.isFinite(injectDepthRaw) ? Math.max(0, injectDepthRaw) : defaults.memoryInjectDepth;
-    if (injectDepth === 0) next.memoryInjectPosition = 'history_after';
+    if (!Number.isFinite(injectDepthRaw)) next.memoryInjectDepth = defaults.memoryInjectDepth;
   }
   const injectDepthRaw = Math.trunc(Number(next.memoryInjectDepth));
   if (!Number.isFinite(injectDepthRaw) || injectDepthRaw < 0) {
     next.memoryInjectDepth = defaults.memoryInjectDepth;
   }
+  if (
+    next.memoryInjectDefaultD0Migrated !== true &&
+    String(next.memoryInjectPosition || '').trim().toLowerCase() === 'history_after' &&
+    Number(next.memoryInjectDepth || 0) === 0
+  ) {
+    next.memoryInjectPosition = 'history_depth';
+    next.memoryInjectDepth = 0;
+  }
+  next.memoryInjectDefaultD0Migrated = true;
   if (next.uiThemeSchemaVersion == null) {
     if (String(next.uiThemeAvatarStyle || '').trim().toLowerCase() === 'rounded') {
       next.uiThemeAvatarStyle = 'system';
