@@ -4316,10 +4316,24 @@ const stringifyMessageContent = (content) => {
           };
         });
 
-        const worldPromptDefaultParts = worldBuckets.defaultPrompt
-          .map(entry => formatWorldEntryContent(entry, { applyRegex: false }))
-          .filter(Boolean);
-        const worldPromptDefault = worldPromptDefaultParts.join('\n\n');
+        const isBuiltinPhoneFormatEntry = (entry) => (
+          String(entry?._src || '').trim() === 'builtin'
+          || String(entry?._entryId || '').trim().startsWith('手机-格式')
+        );
+        const worldPromptBuiltinParts = [];
+        const worldPromptDefaultRestParts = [];
+        worldBuckets.defaultPrompt.forEach((entry) => {
+          const content = formatWorldEntryContent(entry, { applyRegex: false });
+          if (!content) return;
+          if (isBuiltinPhoneFormatEntry(entry)) {
+            worldPromptBuiltinParts.push(content);
+          } else {
+            worldPromptDefaultRestParts.push(content);
+          }
+        });
+        const worldPromptBuiltin = worldPromptBuiltinParts.join('\n\n');
+        const worldPromptDefaultRest = worldPromptDefaultRestParts.join('\n\n');
+        const worldPromptDefault = joinPromptBlocks([worldPromptBuiltin, worldPromptDefaultRest]);
         const worldPromptMessages = {
           beforeChar: buildWorldMessages(worldBuckets.beforeChar),
           afterChar: buildWorldMessages(worldBuckets.afterChar),
@@ -4366,6 +4380,8 @@ const stringifyMessageContent = (content) => {
 
         return {
           worldPromptDefault,
+          worldPromptBuiltin,
+          worldPromptDefaultRest,
           worldPromptMessages,
           depthWorldMessages,
           templateInject: templateInjectPlan,
@@ -4478,7 +4494,8 @@ const stringifyMessageContent = (content) => {
 
       const formatScenario = processTextMacrosWithPendingFlag(scenarioFormat, macroContext);
       const formatPersonality = processTextMacrosWithPendingFlag(personalityFormat, macroContext);
-      const worldPromptDefault = worldInjectionPlan.worldPromptDefault || '';
+      const worldPromptBuiltin = worldInjectionPlan.worldPromptBuiltin || '';
+      const worldPromptDefaultRest = worldInjectionPlan.worldPromptDefaultRest || '';
       const worldPromptMessages = cloneWorldPromptMessages(worldInjectionPlan.worldPromptMessages);
       const depthWorldMessages = Array.isArray(worldInjectionPlan.depthWorldMessages)
         ? [...worldInjectionPlan.depthWorldMessages]
@@ -4491,7 +4508,7 @@ const stringifyMessageContent = (content) => {
       const chatGuideContent = chatGuidePlan.promptContent;
       const chatGuideBeforePromptContent = chatGuidePlan.beforePromptContent;
       const chatGuideDepthContent = chatGuidePlan.depthContent;
-      let worldForPrompt = joinPromptBlocks([worldPromptDefault, chatGuideContent]);
+      let worldForPrompt = joinPromptBlocks([worldPromptBuiltin, chatGuideContent, worldPromptDefaultRest]);
       if (worldForPrompt) {
         worldForPrompt = this.regex.apply(worldForPrompt, this.getRegexContext(), regex_placement.WORLD_INFO, {
           isMarkdown: false,
@@ -4739,12 +4756,13 @@ const stringifyMessageContent = (content) => {
     const chatGuideContent = chatGuidePlan.promptContent;
     const chatGuideBeforePromptContent = chatGuidePlan.beforePromptContent;
     const chatGuideDepthContent = chatGuidePlan.depthContent;
-    const worldPromptDefault = worldInjectionPlan.worldPromptDefault || '';
+    const worldPromptBuiltin = worldInjectionPlan.worldPromptBuiltin || '';
+    const worldPromptDefaultRest = worldInjectionPlan.worldPromptDefaultRest || '';
     const worldPromptMessages = cloneWorldPromptMessages(worldInjectionPlan.worldPromptMessages);
     const depthWorldMessages = Array.isArray(worldInjectionPlan.depthWorldMessages)
       ? [...worldInjectionPlan.depthWorldMessages]
       : [];
-    const worldPromptCombined = joinPromptBlocks([worldPromptDefault, chatGuideContent]);
+    const worldPromptCombined = joinPromptBlocks([worldPromptBuiltin, chatGuideContent, worldPromptDefaultRest]);
     let worldPromptCombinedForPrompt = worldPromptCombined;
     if (worldPromptCombinedForPrompt) {
       worldPromptCombinedForPrompt = this.regex.apply(worldPromptCombinedForPrompt, this.getRegexContext(), regex_placement.WORLD_INFO, {

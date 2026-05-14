@@ -41,6 +41,15 @@ export const loadLlmCreativeSummarySource = ({
   };
 };
 
+const GENERATED_IMAGE_HISTORY_TOKEN_RE = /\[(?:img|img-error)-[^\]\n]+\]/gi;
+
+export const sanitizeLlmHistoryMediaTokens = (value = '') => (
+  String(value ?? '')
+    .replace(GENERATED_IMAGE_HISTORY_TOKEN_RE, '[图片]')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+);
+
 export const buildLlmHistoryEntry = (
   message,
   {
@@ -119,6 +128,7 @@ export const buildLlmHistoryEntry = (
     const key = typeof resolveStickerKeyword === 'function' ? resolveStickerKeyword(message) : '';
     if (key && typeof buildStickerToken === 'function') content = buildStickerToken(key);
   }
+  content = sanitizeLlmHistoryMediaTokens(content);
   if (!String(content || '').trim()) return null;
   return {
     role: message.role,

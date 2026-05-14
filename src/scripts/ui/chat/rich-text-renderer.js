@@ -139,10 +139,12 @@ const appendRichTextInlineMedia = (containerEl, text = '', {
         img.alt = 'image';
         img.src = src;
         try {
-            console.info('[writing-auto-image]', 'rich-render-image-token', {
-                refPreview: ref.slice(0, 180),
-                srcPreview: src.slice(0, 180),
-            });
+            if (shouldLogRichDebug()) {
+                console.info('[writing-auto-image]', 'rich-render-image-token', {
+                    refPreview: ref.slice(0, 180),
+                    srcPreview: src.slice(0, 180),
+                });
+            }
         } catch {}
         img.addEventListener?.('click', () => {
             if (typeof openLightbox === 'function') openLightbox(img.currentSrc || img.src || src);
@@ -4166,15 +4168,42 @@ const appendHtmlFragment = (parent, html) => {
     }
 };
 
-const appendMarkdownText = (parent, text, { blockMode = true, allowStatusCards = true, resolveStatusCard = null } = {}) => {
+const appendMarkdownText = (parent, text, {
+    blockMode = true,
+    allowStatusCards = true,
+    resolveStatusCard = null,
+    openLightbox = null,
+} = {}) => {
     const raw = String(text ?? '');
     if (!raw) return;
-    const segments = raw.split('__CHATAPP_STATUS__');
-    segments.forEach((segment, index) => {
+    const appendMarkdownSegment = (segment) => {
         const html = blockMode
             ? renderMarkdownBlocksHtml(segment)
             : renderInlineMarkdownHtml(segment).replace(/\r\n?/g, '\n').replace(/\n/g, '<br>');
         if (html.trim()) appendHtmlFragment(parent, html);
+    };
+    const appendMediaAwareSegment = (segment) => {
+        const source = String(segment ?? '');
+        if (!source) return;
+        const imageTokenRe = new RegExp(RICH_IMAGE_TOKEN_RE.source, RICH_IMAGE_TOKEN_RE.flags);
+        let match = null;
+        let last = 0;
+        let didSplit = false;
+        while ((match = imageTokenRe.exec(source))) {
+            didSplit = true;
+            appendMarkdownSegment(source.slice(last, match.index));
+            appendRichTextInlineMedia(parent, match[0], { openLightbox });
+            last = match.index + match[0].length;
+        }
+        if (!didSplit) {
+            appendMarkdownSegment(source);
+            return;
+        }
+        appendMarkdownSegment(source.slice(last));
+    };
+    const segments = raw.split('__CHATAPP_STATUS__');
+    segments.forEach((segment, index) => {
+        appendMediaAwareSegment(segment);
         if (allowStatusCards && index !== segments.length - 1) {
             const card = typeof resolveStatusCard === 'function' ? resolveStatusCard() : null;
             if (card) parent.appendChild(card);
@@ -4284,6 +4313,7 @@ const appendRichFragmentNode = (sourceNode, targetParent, state, mode = 'block')
             blockMode: mode !== 'inline',
             allowStatusCards: state.allowStatusCards,
             resolveStatusCard: state.resolveStatusCard,
+            openLightbox: state.openLightbox,
         });
         return;
     }
@@ -4316,7 +4346,14 @@ const appendRichFragmentNode = (sourceNode, targetParent, state, mode = 'block')
 const renderScopedRichFragment = (
     containerEl,
     text,
-    { messageId = '', resolveStatusCard = null, allowStatusCards = true, debugTag = '', source = 'message' } = {},
+    {
+        messageId = '',
+        resolveStatusCard = null,
+        allowStatusCards = true,
+        debugTag = '',
+        source = 'message',
+        openLightbox = null,
+    } = {},
 ) => {
     if (!containerEl) return false;
     const normalized = maybeDecodeRichFragmentEntities(text);
@@ -4335,6 +4372,7 @@ const renderScopedRichFragment = (
             scopeSelector,
             allowStatusCards,
             resolveStatusCard,
+            openLightbox,
         };
         Array.from(root.childNodes || []).forEach((node) => appendRichFragmentNode(node, fragment, state, 'block'));
         if (state.styles.length) {
@@ -8647,6 +8685,7 @@ export const renderRichText = (
                 allowStatusCards: true,
                 debugTag,
                 source: 'message',
+                openLightbox,
             });
             if (rendered) {
                 if (Boolean(debugTag) || shouldLogRichDebug()) {
