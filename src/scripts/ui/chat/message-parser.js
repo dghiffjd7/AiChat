@@ -14,7 +14,7 @@
 
 import { resolveMediaAsset, isLikelyUrl } from '../../utils/media-assets.js';
 
-const TOKEN_PATTERN = /^\[(img|yy|music|zz|bqb)-([\s\S]+)\]$/i;
+const TOKEN_PATTERN = /^\[(img-error|img|yy|music|zz|bqb)-([\s\S]+)\]$/i;
 const FENCED_CODE_PATTERN = /^```[\s\S]*```$/;
 const HTML_DOC_HINT_PATTERN = /<!doctype\s+html|<html[\s>]|<head[\s>]|<body[\s>]/i;
 
@@ -77,6 +77,8 @@ export function parseSpecialMessage(raw = '') {
     const payload = match[2].trim();
 
     switch (type) {
+        case 'img-error':
+            return { type: 'text', content: raw };
         case 'img': {
             const resolved = resolveMediaAsset('image', payload);
             if (resolved?.url) {

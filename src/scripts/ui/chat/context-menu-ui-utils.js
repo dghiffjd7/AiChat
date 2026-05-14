@@ -1,3 +1,11 @@
+const INLINE_GENERATED_IMAGE_TOKEN_RE = /\[(?:img|img-error)-[^\]\n]+\]/i;
+
+const hasInlineGeneratedImageToken = value => INLINE_GENERATED_IMAGE_TOKEN_RE.test(String(value || ''));
+
+const compactStringValues = values => values
+  .map(value => (typeof value === 'string' ? value : ''))
+  .filter(value => value.trim());
+
 export const buildContextMenuActions = (message, {
   hasCode = false,
   isThreadingEnabled = false,
@@ -6,7 +14,8 @@ export const buildContextMenuActions = (message, {
   if (isThreadingEnabled) {
     actions.push({ key: 'reply', label: '回复' });
   }
-  if (hasCode) {
+  const canViewSource = hasCode || (message?.role === 'assistant' && message?.meta?.renderRich === true);
+  if (canViewSource) {
     actions.push({ key: 'view-code', label: '✏' });
   }
   const canDownload = ['image', 'document', 'sticker'].includes(String(message?.type || ''));
@@ -57,18 +66,40 @@ export const resolveViewCodeText = (message) => {
         : swipes.length - 1
     ]
     : null;
-  return String(
-    branch?.rawOriginal ??
-    branch?.rawSource ??
-    branch?.raw ??
-    message?.rawOriginal ??
-    message?.rawSource ??
-    message?.raw_source ??
-    message?.source ??
-    message?.raw ??
-    message?.content ??
-    '',
-  );
+  const branchRawSource = typeof branch?.rawSource === 'string' ? branch.rawSource : '';
+  const messageRawSource = typeof message?.rawSource === 'string' ? message.rawSource : '';
+  const branchHasInlineImage = hasInlineGeneratedImageToken(branchRawSource);
+  const messageHasInlineImage = hasInlineGeneratedImageToken(messageRawSource);
+  const shouldPreferCurrentSource =
+    message?.meta?.renderRich === true ||
+    branchHasInlineImage ||
+    messageHasInlineImage;
+  const richCurrentSources = messageHasInlineImage && !branchHasInlineImage
+    ? [messageRawSource, branchRawSource]
+    : [branchRawSource, messageRawSource];
+  const ordered = shouldPreferCurrentSource
+    ? compactStringValues([
+      ...richCurrentSources,
+      branch?.rawOriginal,
+      branch?.raw,
+      message?.raw_source,
+      message?.source,
+      message?.rawOriginal,
+      message?.raw,
+      message?.content,
+    ])
+    : compactStringValues([
+      branch?.rawOriginal,
+      branchRawSource,
+      branch?.raw,
+      message?.rawOriginal,
+      messageRawSource,
+      message?.raw_source,
+      message?.source,
+      message?.raw,
+      message?.content,
+    ]);
+  return String(ordered[0] || '');
 };
 
 export const positionContextMenu = (menu, { x = 0, y = 0, windowLike, padding = 8, offsetY = 6 } = {}) => {

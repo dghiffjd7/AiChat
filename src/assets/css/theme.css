@@ -4481,6 +4481,88 @@ body[data-theme-mode='dark'] #preset-panel .pp-reasoning-card :is(.pp-field-labe
   color: var(--app-text-primary) !important;
 }
 
+.generated-media-error-card {
+  background: rgba(254, 242, 242, 0.96) !important;
+  border-color: rgba(248, 113, 113, 0.45) !important;
+  color: #7f1d1d !important;
+}
+
+.generated-media-error-card .card-title {
+  color: #991b1b !important;
+}
+
+.generated-media-error-card .card-subtitle {
+  color: #7f1d1d !important;
+}
+
+body[data-theme-mode='dark'] .generated-media-error-card {
+  background: rgba(69, 10, 10, 0.72) !important;
+  border-color: rgba(248, 113, 113, 0.46) !important;
+  color: #fee2e2 !important;
+}
+
+body[data-theme-mode='dark'] .generated-media-error-card .card-title {
+  color: #fecaca !important;
+}
+
+body[data-theme-mode='dark'] .generated-media-error-card .card-subtitle {
+  color: #fee2e2 !important;
+}
+
+.chat-inline-image-error {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: min(100%, 520px);
+  margin: 4px 0;
+  padding: 8px 10px;
+  border: 1px solid rgba(248, 113, 113, 0.42);
+  border-radius: 12px;
+  background: rgba(254, 242, 242, 0.95);
+  color: #7f1d1d;
+  vertical-align: middle;
+}
+
+.chat-inline-image-error[data-retryable='1'] {
+  cursor: pointer;
+}
+
+.chat-inline-image-error-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-inline-image-error-retry {
+  flex: 0 0 auto;
+  border: 1px solid rgba(220, 38, 38, 0.35);
+  border-radius: 999px;
+  background: #fff;
+  color: #991b1b;
+  padding: 4px 9px;
+  font-size: 12px;
+  line-height: 1.2;
+  cursor: pointer;
+}
+
+.chat-inline-image-error-retry:disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
+body[data-theme-mode='dark'] .chat-inline-image-error {
+  background: rgba(69, 10, 10, 0.72);
+  border-color: rgba(248, 113, 113, 0.46);
+  color: #fee2e2;
+}
+
+body[data-theme-mode='dark'] .chat-inline-image-error-retry {
+  background: rgba(254, 226, 226, 0.08);
+  border-color: rgba(252, 165, 165, 0.38);
+  color: #fecaca;
+}
+
 body[data-theme-mode='dark'] #preset-panel :is(
   [style*='background:linear-gradient(180deg,#f8fbff'],
   [style*='background: linear-gradient(180deg,#f8fbff'],

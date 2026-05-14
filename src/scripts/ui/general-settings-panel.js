@@ -395,7 +395,7 @@ export class GeneralSettingsPanel {
     }
     if (this.autoImagePromptMaxConcurrencyInput) {
       const n = Number(settings.autoImagePromptMaxConcurrency);
-      this.autoImagePromptMaxConcurrencyInput.value = String(Number.isFinite(n) ? Math.max(1, Math.trunc(n)) : 5);
+      this.autoImagePromptMaxConcurrencyInput.value = String(Number.isFinite(n) ? Math.max(1, Math.trunc(n)) : 1);
     }
     if (this.autoImagePromptSkipRepeatedToggle) {
       this.autoImagePromptSkipRepeatedToggle.checked = settings.autoImagePromptSkipRepeated !== false;
@@ -1760,7 +1760,7 @@ export class GeneralSettingsPanel {
                 title: '最大并发数',
                 description: '自动标签生图同时运行的最大请求数，超出后进入队列。',
                 icon: 'sliders',
-                control: '<input type="number" id="general-auto-image-prompt-max-concurrency" class="general-settings-number-input" min="1" step="1" value="5">',
+                control: '<input type="number" id="general-auto-image-prompt-max-concurrency" class="general-settings-number-input" min="1" step="1" value="1">',
               })}
               ${this.renderSettingRow({
                 id: 'general-auto-image-prompt-skip-repeated',
@@ -2667,7 +2667,7 @@ export class GeneralSettingsPanel {
     bindAutoImagePromptNumber(this.autoImagePromptCooldownInput, 'autoImagePromptCooldownRounds', 0);
     bindAutoImagePromptNumber(this.autoImagePromptWindowRoundsInput, 'autoImagePromptWindowRounds', 0);
     bindAutoImagePromptNumber(this.autoImagePromptWindowMaxInput, 'autoImagePromptWindowMax', 0);
-    bindAutoImagePromptNumber(this.autoImagePromptMaxConcurrencyInput, 'autoImagePromptMaxConcurrency', 5, 1);
+    bindAutoImagePromptNumber(this.autoImagePromptMaxConcurrencyInput, 'autoImagePromptMaxConcurrency', 1, 1);
     this.autoImagePromptSkipRepeatedToggle?.addEventListener('change', (e) => {
       const value = Boolean(e?.target?.checked);
       appSettings.update({ autoImagePromptSkipRepeated: value });

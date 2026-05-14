@@ -30,7 +30,7 @@ export const dispatchContextMenuAction = async ({
   hideMenu?.();
   clearLongPress?.();
 
-  if (actionKey === 'view-code' && hasCode) {
+  if (actionKey === 'view-code') {
     const handled = await tryAction?.('view-code', { wrapper, codeBlock });
     if (handled) return 'handled';
     openCodeViewer?.({ message, text: resolveViewCodeText(message) });

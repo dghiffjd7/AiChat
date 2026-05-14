@@ -34,6 +34,15 @@ import {
 }
 
 {
+  const actions = buildContextMenuActions(
+    { role: 'assistant', type: 'text', meta: { renderRich: true } },
+    { hasCode: false, isThreadingEnabled: false },
+  );
+  assert.deepEqual(actions.map(item => item.key), ['view-code', 'generate-image', 'copy-text', 'regenerate', 'delete']);
+  console.log('ok - buildContextMenuActions exposes raw editor for creative assistant messages');
+}
+
+{
   const text = resolveViewCodeText({
     content: 'fallback',
     raw: 'raw',
@@ -48,6 +57,31 @@ import {
   });
   assert.equal(text, 'swipe-1-original');
   console.log('ok - resolveViewCodeText prefers active swipe raw payload before message fallbacks');
+}
+
+{
+  const text = resolveViewCodeText({
+    rawOriginal: '<image_prompt>old</image_prompt>',
+    rawSource: 'current [img-C:\\\\tmp\\\\generated.png]',
+    meta: { renderRich: true },
+  });
+  assert.equal(text, 'current [img-C:\\\\tmp\\\\generated.png]');
+  console.log('ok - resolveViewCodeText prefers current rich source so generated image tokens survive edits');
+}
+
+{
+  const text = resolveViewCodeText({
+    rawSource: 'message current [img-C:\\\\tmp\\\\generated.png]',
+    meta: {
+      renderRich: true,
+      activeSwipe: 0,
+      swipes: [
+        { rawSource: 'stale branch source', rawOriginal: '<image_prompt>old</image_prompt>' },
+      ],
+    },
+  });
+  assert.equal(text, 'message current [img-C:\\\\tmp\\\\generated.png]');
+  console.log('ok - resolveViewCodeText avoids stale swipe sources when message source has image tokens');
 }
 
 {

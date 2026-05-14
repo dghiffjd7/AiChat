@@ -136,3 +136,50 @@ const createFakeDocument = () => {
   assert.equal(chip.textContent, '表情包：missing');
   console.log('ok - renderTextWithStickersCore falls back to chip output when sticker asset is unavailable');
 }
+
+{
+  const documentLike = createFakeDocument();
+  const bubble = documentLike.createElement('div');
+  const token = `[img-error-${encodeURIComponent(JSON.stringify({
+    brief: '429',
+    detail: 'NovelAI API Error: 429',
+    prompt: 'blue sky',
+    index: 1,
+  }))}]`;
+  const rendered = renderTextWithStickersCore({
+    bubble,
+    text: `before ${token} after`,
+    documentLike,
+    resolveMediaAsset: () => null,
+  });
+  assert.equal(rendered, true);
+  const chip = bubble.children.find(node => String(node.className || '').includes('chat-inline-image-error'));
+  assert.ok(chip);
+  assert.equal(chip.dataset.retryable, '1');
+  assert.equal(chip.dataset.prompt, 'blue sky');
+  const retry = chip.children.find(node => String(node.className || '').includes('chat-inline-image-error-retry'));
+  assert.ok(retry);
+  assert.equal(retry.textContent, '重试图片');
+  console.log('ok - renderTextWithStickersCore renders retryable inline image error chips');
+}
+
+{
+  const documentLike = createFakeDocument();
+  const bubble = documentLike.createElement('div');
+  const previews = [];
+  const path = String.raw`C:\tmp\generated.png`;
+  const rendered = renderTextWithStickersCore({
+    bubble,
+    text: `插图 [img-${path}]`,
+    documentLike,
+    resolveMediaAsset: () => null,
+    onPreview: url => previews.push(url),
+  });
+  assert.equal(rendered, true);
+  const imageNode = bubble.children.find(node => String(node.className || '').includes('chat-inline-generated-image'));
+  assert.ok(imageNode);
+  assert.equal(imageNode.src, 'file:///C:/tmp/generated.png');
+  imageNode.emit('click');
+  assert.deepEqual(previews, ['file:///C:/tmp/generated.png']);
+  console.log('ok - renderTextWithStickersCore renders local inline generated image tokens');
+}

@@ -50,6 +50,31 @@ import {
 {
   const calls = [];
   const result = await dispatchContextMenuAction({
+    actionKey: 'view-code',
+    message: { id: 'm-rich', role: 'assistant', content: 'rendered', rawSource: 'raw-rich', meta: { renderRich: true } },
+    wrapper: { id: 'wrapper' },
+    hasCode: false,
+    hideMenu: () => calls.push(['hide']),
+    clearLongPress: () => calls.push(['clear']),
+    tryAction: async (key, payload) => {
+      calls.push(['try', key, payload]);
+      return false;
+    },
+    openCodeViewer: payload => calls.push(['open', payload.text]),
+  });
+  assert.equal(result, 'view-code');
+  assert.deepEqual(calls, [
+    ['hide'],
+    ['clear'],
+    ['try', 'view-code', { wrapper: { id: 'wrapper' }, codeBlock: null }],
+    ['open', 'raw-rich'],
+  ]);
+  console.log('ok - dispatchContextMenuAction opens raw viewer for rich assistant messages without code blocks');
+}
+
+{
+  const calls = [];
+  const result = await dispatchContextMenuAction({
     actionKey: 'copy-text',
     message: { content: '', rawOriginal: 'raw-original', meta: { renderRich: true } },
     wrapper: { id: 'wrapper' },

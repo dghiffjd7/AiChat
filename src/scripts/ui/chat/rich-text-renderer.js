@@ -43,7 +43,7 @@ const DIRECT_LOAD_CACHE_TTL = 5 * 60 * 1000;
 const DIRECT_LOAD_CACHE_LIMIT = 6;
 const COMPAT_SEND_TEXTAREA_ID = 'send_textarea';
 const COMPAT_SEND_BUTTON_ID = 'send_but';
-const RICH_IMAGE_TOKEN_RE = /\[(img|img-error)-([^\]\n]+)\]/gi;
+const RICH_IMAGE_TOKEN_RE = /\[(img-error|img)-([^\]\n]+)\]/gi;
 const compatInputProxyState = {
     boundInput: null,
     boundSendButton: null,
@@ -79,6 +79,9 @@ const decodeRichImageErrorPayload = (encoded = '') => {
         return {
             brief: String(parsed?.brief || '图片生成失败').trim() || '图片生成失败',
             detail: String(parsed?.detail || '').trim(),
+            prompt: String(parsed?.prompt || '').trim(),
+            source: String(parsed?.source || '').trim(),
+            index: Number.isFinite(Number(parsed?.index)) ? Number(parsed.index) : undefined,
         };
     } catch {
         return { brief: raw || '图片生成失败', detail: '' };
@@ -117,9 +120,21 @@ const appendRichTextInlineMedia = (containerEl, text = '', {
         if (String(type || '').toLowerCase() === 'img-error') {
             const payload = decodeRichImageErrorPayload(body);
             const chip = document.createElement('span');
-            chip.className = 'chat-rich-image-error';
-            chip.textContent = `图片生成失败：${payload.brief}`;
+            chip.className = 'chat-inline-image-error chat-rich-image-error';
+            chip.dataset.imgErrorToken = full;
+            chip.dataset.retryable = '1';
+            if (payload.prompt) chip.dataset.prompt = payload.prompt;
             if (payload.detail) chip.title = payload.detail;
+            const label = document.createElement('span');
+            label.className = 'chat-inline-image-error-label';
+            label.textContent = `图片生成失败：${payload.brief}`;
+            chip.appendChild(label);
+            const retry = document.createElement('button');
+            retry.type = 'button';
+            retry.className = 'chat-inline-image-error-retry';
+            retry.dataset.imgErrorToken = full;
+            retry.textContent = '重试图片';
+            chip.appendChild(retry);
             containerEl.appendChild(chip);
             didMedia = true;
             continue;
@@ -4173,6 +4188,7 @@ const appendMarkdownText = (parent, text, {
     allowStatusCards = true,
     resolveStatusCard = null,
     openLightbox = null,
+    escapeText = value => String(value ?? ''),
 } = {}) => {
     const raw = String(text ?? '');
     if (!raw) return;
@@ -4192,7 +4208,7 @@ const appendMarkdownText = (parent, text, {
         while ((match = imageTokenRe.exec(source))) {
             didSplit = true;
             appendMarkdownSegment(source.slice(last, match.index));
-            appendRichTextInlineMedia(parent, match[0], { openLightbox });
+            appendRichTextInlineMedia(parent, match[0], { openLightbox, escapeText });
             last = match.index + match[0].length;
         }
         if (!didSplit) {
@@ -4314,6 +4330,7 @@ const appendRichFragmentNode = (sourceNode, targetParent, state, mode = 'block')
             allowStatusCards: state.allowStatusCards,
             resolveStatusCard: state.resolveStatusCard,
             openLightbox: state.openLightbox,
+            escapeText: state.escapeText,
         });
         return;
     }
@@ -4373,6 +4390,7 @@ const renderScopedRichFragment = (
             allowStatusCards,
             resolveStatusCard,
             openLightbox,
+            escapeText: value => String(value ?? ''),
         };
         Array.from(root.childNodes || []).forEach((node) => appendRichFragmentNode(node, fragment, state, 'block'));
         if (state.styles.length) {

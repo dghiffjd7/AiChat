@@ -396,12 +396,14 @@ import {
   toggleReactionActor,
 } from './chat/message-interaction-utils.js';
 import { parseSpecialMessage } from './chat/message-parser.js';
+import { resolveViewCodeText } from './chat/context-menu-ui-utils.js';
 import {
   buildImagePromptModelHintFromConfig,
   buildAutoImagePromptPendingToken,
   extractAutoImagePrompts,
   prepareAutoImagePromptPlaceholders,
   shouldAllowAutoImagePromptByRateLimit,
+  stripMomentBlocksForAutoImagePrompt,
   stripAutoImagePromptTags,
 } from './chat/auto-image-prompt-utils.js';
 import { runCommand, getCommandList } from './command-runner.js';
@@ -4371,13 +4373,13 @@ Phase G（Frame 36）：循环衔接
   const MAX_AUTO_IMAGE_PROMPTS_PER_SOURCE = 10;
   const normalizeAutoImageGenerationConcurrency = (value) => {
     const raw = Math.trunc(Number(value));
-    return Number.isFinite(raw) ? Math.max(1, raw) : 5;
+    return Number.isFinite(raw) ? Math.max(1, raw) : 1;
   };
   const getAutoImageGenerationConcurrencyLimit = () => {
     try {
       return normalizeAutoImageGenerationConcurrency(appSettings.get().autoImagePromptMaxConcurrency);
     } catch {
-      return 5;
+      return 1;
     }
   };
   const makeAbortError = (message = '图片生成已取消') => {
@@ -4396,11 +4398,20 @@ Phase G（Frame 36）：循环衔接
   };
   const getImageGenerationTokenError = (err) =>
     getImageGenerationBriefError(err).replace(/[\[\]\r\n]/g, ' ').trim() || '未知错误';
-  const buildMomentImageErrorToken = (err) => {
+  const buildMomentImageErrorToken = (err, extra = {}) => {
     const payload = {
       brief: getImageGenerationTokenError(err),
       detail: getImageGenerationErrorText(err),
     };
+    if (extra && typeof extra === 'object') {
+      const prompt = String(extra.prompt || '').trim();
+      if (prompt) payload.prompt = prompt;
+      const source = String(extra.source || '').trim();
+      if (source) payload.source = source;
+      if (Number.isFinite(Number(extra.index))) payload.index = Number(extra.index);
+      const pendingToken = String(extra.pendingToken || '').trim();
+      if (pendingToken) payload.pendingToken = pendingToken;
+    }
     return `[img-error-${encodeURIComponent(JSON.stringify(payload))}]`;
   };
   const normalizeInlineGeneratedImageAsset = (asset = {}, extra = {}) => {
@@ -14048,6 +14059,7 @@ Phase G（Frame 36）：循环衔接
   const runWritingAutoImagePromptGenerationForMessage = (message, targetSessionId, prompts = [], {
     source = 'after_receive',
     fallbackSource = '',
+    bypassRateLimit = false,
   } = {}) => {
     const sessionId = String(targetSessionId || '').trim();
     const messageId = String(message?.id || '').trim();
@@ -14056,7 +14068,7 @@ Phase G（Frame 36）：循环衔接
         prompt: String(item?.prompt || item || '').trim(),
         pendingToken: String(item?.pendingToken || buildAutoImagePromptPendingToken(index)).trim(),
         tag: String(item?.tag || '').trim(),
-        index,
+        index: Number.isFinite(Number(item?.index)) ? Number(item.index) : index,
       }))
       .filter(item => item.prompt && item.pendingToken);
     traceWritingAutoImagePrompt('run-start', {
@@ -14074,11 +14086,13 @@ Phase G（Frame 36）：循环衔接
     });
     if (!sessionId || !messageId || !items.length) return false;
     const firstPrompt = items[0]?.prompt || '';
-    const guard = shouldRunAutoImagePromptGeneration({
-      sessionId,
-      messageId,
-      prompt: firstPrompt,
-    });
+    const guard = bypassRateLimit
+      ? { ok: true }
+      : shouldRunAutoImagePromptGeneration({
+        sessionId,
+        messageId,
+        prompt: firstPrompt,
+      });
     if (!guard.ok) {
       traceWritingAutoImagePrompt('run-skipped-rate-limit', {
         sessionId,
@@ -14194,7 +14208,12 @@ Phase G（Frame 36）：循环衔接
           index: item.index,
           error: String(err?.message || err || ''),
         });
-        patchWritingAutoImagePromptToken(message, sessionId, item.pendingToken, buildMomentImageErrorToken(err), {
+        patchWritingAutoImagePromptToken(message, sessionId, item.pendingToken, buildMomentImageErrorToken(err, {
+          prompt: item.prompt,
+          index: item.index,
+          pendingToken: item.pendingToken,
+          source,
+        }), {
           autoImagePromptSourceTag: item.tag,
           autoImagePromptFallbackSource: fallbackSource,
         });
@@ -14213,6 +14232,95 @@ Phase G（Frame 36）：循环衔接
     }, 0));
     return true;
   };
+  const decodeInlineImageErrorTokenPayload = (token = '') => {
+    const rawToken = String(token || '').trim();
+    const match = rawToken.match(/^\[img-error-([^\]\n]+)\]$/i);
+    if (!match) return null;
+    try {
+      const parsed = JSON.parse(decodeURIComponent(match[1]));
+      return parsed && typeof parsed === 'object' ? parsed : null;
+    } catch {
+      return null;
+    }
+  };
+  const retryWritingAutoImagePromptErrorToken = async ({
+    sessionId = '',
+    messageId = '',
+    token = '',
+    prompt = '',
+  } = {}) => {
+    const sid = String(sessionId || '').trim();
+    const mid = String(messageId || '').trim();
+    const errorToken = String(token || '').trim();
+    const payload = decodeInlineImageErrorTokenPayload(errorToken) || {};
+    if (!sid || !mid || !errorToken) {
+      window.toastr?.warning?.('没有找到原始生图提示词，无法重试');
+      return false;
+    }
+    const current = chatStore.findMessage(mid, sid);
+    if (!current) {
+      window.toastr?.warning?.('没有找到要重试的消息');
+      return false;
+    }
+    const retryIndex = Number.isFinite(Number(payload.index)) ? Number(payload.index) : 0;
+    const metaPrompt = current?.meta?.autoImagePrompt && typeof current.meta.autoImagePrompt === 'object'
+      ? current.meta.autoImagePrompt
+      : {};
+    const promptFromMetaIndex = Array.isArray(metaPrompt.prompts) && Number.isFinite(retryIndex)
+      ? String(metaPrompt.prompts[retryIndex] || '').trim()
+      : '';
+    const retryPrompt = String(prompt || payload.prompt || promptFromMetaIndex || metaPrompt.prompt || '').trim();
+    if (!retryPrompt) {
+      window.toastr?.warning?.('没有找到原始生图提示词，无法重试');
+      return false;
+    }
+    const pendingToken = buildAutoImagePromptPendingToken(retryIndex);
+    const fallbackSource = String(current?.rawSource || current?.raw || current?.content || '');
+    const patched = patchWritingAutoImagePromptToken(current, sid, errorToken, pendingToken, {
+      autoImagePromptFallbackSource: fallbackSource,
+    });
+    if (!patched) {
+      window.toastr?.warning?.('没有找到失败占位，无法重试');
+      return false;
+    }
+    const started = runWritingAutoImagePromptGenerationForMessage(patched, sid, [{
+      prompt: retryPrompt,
+      pendingToken,
+      index: retryIndex,
+    }], {
+      source: 'retry_image_error',
+      fallbackSource: String(patched.rawSource || fallbackSource || ''),
+      bypassRateLimit: true,
+    });
+    if (started) window.toastr?.info?.('正在重试图片生成');
+    return started;
+  };
+  const bindWritingAutoImagePromptRetryActions = () => {
+    if (document.__chatappWritingAutoImageRetryBound) return;
+    document.__chatappWritingAutoImageRetryBound = true;
+    document.addEventListener('click', (event) => {
+      const target = event?.target?.closest?.('.chat-inline-image-error-retry, .chat-inline-image-error[data-retryable="1"]');
+      if (!target) return;
+      const chip = target.closest?.('.chat-inline-image-error') || target;
+      if (chip?.dataset?.retryable !== '1') return;
+      event.preventDefault?.();
+      event.stopPropagation?.();
+      const wrapper = target.closest?.('[data-msg-id]');
+      const message = wrapper?.__chatappMessage && typeof wrapper.__chatappMessage === 'object'
+        ? wrapper.__chatappMessage
+        : null;
+      retryWritingAutoImagePromptErrorToken({
+        sessionId: String(message?.sessionId || chatStore.getCurrent?.() || '').trim(),
+        messageId: String(wrapper?.dataset?.msgId || message?.id || '').trim(),
+        token: String(chip?.dataset?.imgErrorToken || target?.dataset?.imgErrorToken || '').trim(),
+        prompt: String(chip?.dataset?.prompt || '').trim(),
+      }).catch(err => {
+        logger.warn('retry writing auto image prompt failed', err);
+        window.toastr?.error?.('重试图片生成失败');
+      });
+    });
+  };
+  bindWritingAutoImagePromptRetryActions();
   const scheduleAutoImagePromptGenerationForMessage = (
     message,
     targetSessionId,
@@ -14257,8 +14365,13 @@ Phase G（Frame 36）：循环衔接
     }
     const prompts = [];
     const candidates = collectAutoImagePromptCandidates(message, rawText);
+    const extractOptions = {
+      max: MAX_AUTO_IMAGE_PROMPTS_PER_SOURCE,
+      dedupe: false,
+      stripMomentBlocks: !isWritingSurface,
+    };
     for (const candidate of candidates) {
-      prompts.push(...extractAutoImagePrompts(candidate, { max: MAX_AUTO_IMAGE_PROMPTS_PER_SOURCE, dedupe: false }));
+      prompts.push(...extractAutoImagePrompts(candidate, extractOptions));
       if (prompts.length) break;
     }
     const imagePrompts = prompts.map(item => String(item || '').trim()).filter(Boolean);
@@ -14272,6 +14385,7 @@ Phase G（Frame 36）：循环衔接
           length: String(candidate || '').length,
           hasTag: /<\s*image_prompt\b/i.test(String(candidate || '')),
           preview: String(candidate || '').slice(0, 180),
+          filteredHasTag: /<\s*image_prompt\b/i.test(stripMomentBlocksForAutoImagePrompt(candidate)),
         })),
         promptCount: imagePrompts.length,
         prompts: imagePrompts.map(prompt => prompt.slice(0, 160)),
@@ -20391,18 +20505,15 @@ Phase G（Frame 36）：循环衔接
       return true;
     }
     if (action === 'view-code') {
-      const activeBranch = getActiveSwipeBranch(message);
-      let raw = typeof activeBranch?.rawOriginal === 'string' ? activeBranch.rawOriginal : '';
-      if (!raw.trim()) raw = typeof activeBranch?.rawSource === 'string' ? activeBranch.rawSource : '';
-      if (!raw.trim()) raw = typeof activeBranch?.raw === 'string' ? activeBranch.raw : '';
-      if (!raw.trim()) raw = typeof message?.rawOriginal === 'string' ? message.rawOriginal : '';
+      const current = chatStore.findMessage(message.id, sessionId) || message;
+      let raw = resolveViewCodeText(current);
       if (!raw.trim()) {
-        raw = (await chatStore.loadRawOriginal?.(message, sessionId)) || '';
+        raw = (await chatStore.loadRawOriginal?.(current, sessionId)) || '';
       }
       if (!raw.trim()) {
-        raw = message?.rawSource ?? message?.raw_source ?? message?.source ?? message?.raw ?? message?.content ?? '';
+        raw = current?.rawSource ?? current?.raw_source ?? current?.source ?? current?.raw ?? current?.content ?? '';
       }
-      ui.openCodeViewer({ message, text: String(raw || '') });
+      ui.openCodeViewer({ message: current, text: String(raw || '') });
       return true;
     }
     if (action === 'copy-text') {

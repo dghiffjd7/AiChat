@@ -57,7 +57,8 @@ const defaults = {
   autoImagePromptCooldownRounds: 0,
   autoImagePromptWindowRounds: 0,
   autoImagePromptWindowMax: 0,
-  autoImagePromptMaxConcurrency: 5,
+  autoImagePromptMaxConcurrency: 1,
+  autoImagePromptConcurrencyDefaultMigrated: true,
   autoImagePromptSkipRepeated: true,
   autoImagePromptRateLimitDefaultsMigrated: true,
   templateEnabled: false,
@@ -162,6 +163,13 @@ const migrateSettings = (settings = {}) => {
     const raw = Math.trunc(Number(next[key]));
     next[key] = Number.isFinite(raw) ? Math.max(0, raw) : defaults[key];
   });
+  if (
+    next.autoImagePromptConcurrencyDefaultMigrated !== true &&
+    Number(next.autoImagePromptMaxConcurrency) === 5
+  ) {
+    next.autoImagePromptMaxConcurrency = defaults.autoImagePromptMaxConcurrency;
+  }
+  next.autoImagePromptConcurrencyDefaultMigrated = true;
   const imageMaxConcurrency = Math.trunc(Number(next.autoImagePromptMaxConcurrency));
   next.autoImagePromptMaxConcurrency = Number.isFinite(imageMaxConcurrency)
     ? Math.max(1, imageMaxConcurrency)

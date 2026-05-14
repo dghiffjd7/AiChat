@@ -1,3 +1,75 @@
+const INLINE_MEDIA_TOKEN_RE = /\[(img-error|bqb|img)-([\s\S]+?)\]/gi;
+
+const resolveLocalFileLikeUrl = (value = '') => {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  try {
+    const g = typeof globalThis !== 'undefined' ? globalThis : window;
+    const convert = g?.__TAURI__?.core?.convertFileSrc || g?.__TAURI__?.convertFileSrc || g?.__TAURI_INTERNALS__?.convertFileSrc;
+    if (typeof convert === 'function') {
+      const converted = convert(raw);
+      if (converted) return converted;
+    }
+  } catch {}
+  if (/^(file|asset|tauri|app|https?|data:image\/|blob):/i.test(raw)) return raw;
+  if (/^[a-zA-Z]:[\\/]/.test(raw)) return `file:///${raw.replace(/\\/g, '/')}`;
+  if (raw.startsWith('/')) return `file://${raw}`;
+  return '';
+};
+
+const isRenderableInlineImageRef = (value = '') => {
+  const raw = String(value || '').trim();
+  if (!raw) return false;
+  return /^(file|asset|tauri|app|https?|data:image\/|blob):/i.test(raw)
+    || /^[a-zA-Z]:[\\/]/.test(raw)
+    || raw.startsWith('/')
+    || raw.startsWith('./')
+    || raw.startsWith('../');
+};
+
+export const decodeInlineImageErrorPayload = (encoded = '') => {
+  const raw = String(encoded || '').trim();
+  if (!raw) return { brief: '图片生成失败', detail: '', prompt: '' };
+  try {
+    const parsed = JSON.parse(decodeURIComponent(raw));
+    return {
+      brief: String(parsed?.brief || '图片生成失败').trim() || '图片生成失败',
+      detail: String(parsed?.detail || '').trim(),
+      prompt: String(parsed?.prompt || '').trim(),
+      source: String(parsed?.source || '').trim(),
+      index: Number.isFinite(Number(parsed?.index)) ? Number(parsed.index) : undefined,
+    };
+  } catch {
+    return { brief: raw || '图片生成失败', detail: '', prompt: '' };
+  }
+};
+
+const appendInlineImageError = (frag, documentLike, fullToken = '', body = '') => {
+  const payload = decodeInlineImageErrorPayload(body);
+  const chip = documentLike.createElement('span');
+  chip.className = 'chat-inline-image-error';
+  if (!chip.dataset) chip.dataset = {};
+  chip.dataset.imgErrorToken = fullToken;
+  chip.dataset.retryable = '1';
+  if (payload.prompt) chip.dataset.prompt = payload.prompt;
+  if (payload.detail) chip.title = payload.detail;
+
+  const label = documentLike.createElement('span');
+  label.className = 'chat-inline-image-error-label';
+  label.textContent = `图片生成失败：${payload.brief}`;
+  chip.appendChild(label);
+
+  const retry = documentLike.createElement('button');
+  retry.type = 'button';
+  retry.className = 'chat-inline-image-error-retry';
+  if (!retry.dataset) retry.dataset = {};
+  retry.dataset.imgErrorToken = fullToken;
+  retry.textContent = '重试图片';
+  chip.appendChild(retry);
+
+  frag.appendChild(chip);
+};
+
 export const renderTextWithStickersCore = ({
   bubble,
   text,
@@ -11,7 +83,8 @@ export const renderTextWithStickersCore = ({
   onPreview,
 } = {}) => {
   const raw = String(text ?? '');
-  const re = /\[bqb-([\s\S]+?)\]/gi;
+  const re = INLINE_MEDIA_TOKEN_RE;
+  re.lastIndex = 0;
   let match = null;
   let lastIndex = 0;
   let hasToken = false;
@@ -36,7 +109,37 @@ export const renderTextWithStickersCore = ({
     const before = raw.slice(lastIndex, match.index);
     appendText(before);
 
-    const keyword = String(match[1] || '').trim();
+    const tokenType = String(match[1] || '').toLowerCase();
+    const tokenBody = String(match[2] || '').trim();
+    if (tokenType === 'img-error') {
+      appendInlineImageError(frag, documentLike, match[0], tokenBody);
+      lastIndex = match.index + match[0].length;
+      continue;
+    }
+    if (tokenType === 'img') {
+      const resolved = resolveMediaAsset?.('image', tokenBody);
+      const src = resolved?.url || (isRenderableInlineImageRef(tokenBody) ? resolveLocalFileLikeUrl(tokenBody) || tokenBody : '');
+      if (src) {
+        if (frag.childNodes.length) ensureBreak();
+        const img = documentLike.createElement('img');
+        img.alt = 'image';
+        img.className = 'previewable chat-rich-inline-image chat-inline-generated-image';
+        img.loading = 'lazy';
+        img.decoding = 'async';
+        img.src = src;
+        img.addEventListener?.('click', () => onPreview?.(img.currentSrc || img.src || src));
+        frag.appendChild(img);
+        const remaining = raw.slice(match.index + match[0].length);
+        if (remaining && !remaining.startsWith('\n')) frag.appendChild(documentLike.createElement('br'));
+        lastIndex = match.index + match[0].length;
+        continue;
+      }
+      appendText(match[0]);
+      lastIndex = match.index + match[0].length;
+      continue;
+    }
+
+    const keyword = tokenBody;
     if (frag.childNodes.length) ensureBreak();
     const resolved = resolveMediaAsset?.('sticker', keyword) || resolveMediaAsset?.('image', keyword);
     if (resolved) {

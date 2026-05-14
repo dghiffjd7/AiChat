@@ -748,6 +748,8 @@ export const runSendFinallyFlow = ({
       checkpointMessageId: checkpointTargetMessageId,
     });
     memoryTask?.catch?.(() => {});
+  } else if (!suppressErrorUI && Array.isArray(pendingMessagesToConfirm) && pendingMessagesToConfirm.length > 0) {
+    finalizePendingMessages(sessionId, pendingMessagesToConfirm);
   }
 
   updatePendingFloat(sessionId);

@@ -3,6 +3,7 @@ import {
   buildAutoImagePromptInstruction,
   extractAutoImagePrompts,
   shouldAllowAutoImagePromptByRateLimit,
+  stripMomentBlocksForAutoImagePrompt,
   stripAutoImagePromptTags,
 } from '../../src/scripts/ui/chat/auto-image-prompt-utils.js';
 
@@ -51,6 +52,22 @@ import {
   const prompts = extractAutoImagePrompts('<thinking><image_prompt>ignored</image_prompt></thinking>\n<image_prompt>visible</image_prompt>');
   assert.deepEqual(prompts, ['visible']);
   console.log('ok - ignores image_prompt tags inside reasoning blocks');
+}
+
+{
+  const source = [
+    '聊天正文',
+    'moment_start',
+    '阿兰--动态<image_prompt>moment image</image_prompt>--12:00--1--2',
+    'moment_end',
+    '<image_prompt>chat image</image_prompt>',
+  ].join('\n');
+  const stripped = stripMomentBlocksForAutoImagePrompt(source);
+  assert.doesNotMatch(stripped, /moment image/);
+  assert.match(stripped, /chat image/);
+  const prompts = extractAutoImagePrompts(source, { stripMomentBlocks: true });
+  assert.deepEqual(prompts, ['chat image']);
+  console.log('ok - chat auto image extraction can ignore moment image tags');
 }
 
 {

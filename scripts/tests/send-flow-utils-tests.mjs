@@ -624,6 +624,7 @@ test('runRegenerateFromUserIndexFlow deletes regen messages restores table memor
       skipInputRegex: true,
       existingUserMessageId: 'u1',
       includeAttachments: false,
+      resendAttachmentParts: [],
     }],
     ['trace', 'regenerate.finish', 'success', {
       userIdx: 0,
@@ -870,6 +871,40 @@ test('runSendFinallyFlow skips success-only cleanup and preserves other active g
       sendSucceeded: false,
       cancelled: true,
       errorMessage: 'ignored cancel text',
+    }],
+  ]);
+});
+
+test('runSendFinallyFlow finalizes pending messages after visible send failure', () => {
+  const calls = [];
+
+  const result = runSendFinallyFlow({
+    sendSucceeded: false,
+    pendingMessagesToConfirm: [{ id: 'p1' }],
+    sessionId: 'session-error',
+    generationId: 12,
+    sendTraceStarted: true,
+    suppressErrorUI: false,
+    sendErrorMessage: 'network failed',
+    finalizePendingMessages: (sessionId, messages) => calls.push(['finalize-pending', sessionId, messages.map(m => m.id)]),
+    updatePendingFloat: sessionId => calls.push(['update-pending-float', sessionId]),
+    getActiveGeneration: () => ({ id: 12 }),
+    setActiveGeneration: next => calls.push(['set-active', next]),
+    setSendingState: value => calls.push(['sending', value]),
+    recordTraceEvent: event => calls.push(['trace', event.phase, event.status, event.details]),
+  });
+
+  assert.equal(result, false);
+  assert.deepEqual(calls, [
+    ['finalize-pending', 'session-error', ['p1']],
+    ['update-pending-float', 'session-error'],
+    ['sending', false],
+    ['set-active', null],
+    ['trace', 'send.finish', 'error', {
+      generationId: 12,
+      sendSucceeded: false,
+      cancelled: undefined,
+      errorMessage: 'network failed',
     }],
   ]);
 });

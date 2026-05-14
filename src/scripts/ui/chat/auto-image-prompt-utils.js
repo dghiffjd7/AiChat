@@ -25,6 +25,23 @@ const stripMarkdownCodeBlocks = (value = '') => String(value ?? '')
 const stripReasoningLikeBlocks = (value = '') => String(value ?? '')
   .replace(/<\s*(?:think|thinking|reasoning)(?:\s[^>]*)?\s*>[\s\S]*?<\s*\/\s*(?:think|thinking|reasoning)\s*>/gi, '');
 
+const stripDelimitedPlainBlocks = (value = '', start = '', end = '') => {
+  const source = String(value ?? '');
+  if (!source || !start || !end) return source;
+  const re = new RegExp(`(?:<\\s*)?${start}(?:\\s*>|\\b)[\\s\\S]*?(?:<\\s*)?${end}(?:\\s*>|\\b)`, 'gi');
+  return source.replace(re, '');
+};
+
+export const stripMomentBlocksForAutoImagePrompt = (text = '') => {
+  const source = htmlDecodeLite(text);
+  if (!source) return source;
+  return stripDelimitedPlainBlocks(
+    stripDelimitedPlainBlocks(source, 'moment_reply_start', 'moment_reply_end'),
+    'moment_start',
+    'moment_end',
+  );
+};
+
 export const AUTO_IMAGE_PROMPT_TAG = IMAGE_PROMPT_TAG;
 
 export const DEFAULT_AUTO_IMAGE_PROMPT_RULES = [
@@ -184,8 +201,9 @@ export const buildAutoImagePromptInstruction = ({
     .trim();
 };
 
-export const extractAutoImagePrompts = (text = '', { max = 1, maxLength = 2000, dedupe = true } = {}) => {
-  const source = stripReasoningLikeBlocks(stripMarkdownCodeBlocks(htmlDecodeLite(text)));
+export const extractAutoImagePrompts = (text = '', { max = 1, maxLength = 2000, dedupe = true, stripMomentBlocks = false } = {}) => {
+  const decoded = stripMomentBlocks ? stripMomentBlocksForAutoImagePrompt(text) : htmlDecodeLite(text);
+  const source = stripReasoningLikeBlocks(stripMarkdownCodeBlocks(decoded));
   const limit = Math.max(1, Math.trunc(Number(max)) || 1);
   const lengthLimit = Math.max(80, Math.trunc(Number(maxLength)) || 2000);
   const prompts = [];
