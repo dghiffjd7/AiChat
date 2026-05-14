@@ -14324,18 +14324,29 @@ Phase G（Frame 36）：循环衔接
   const scheduleAutoImagePromptGenerationForMessage = (
     message,
     targetSessionId,
-    { rawText = '', source = 'after_receive' } = {},
+    { rawText = '', source = 'after_receive', force = false } = {},
   ) => {
     const sessionId = String(targetSessionId || '').trim();
     const messageId = String(message?.id || '').trim();
     const surface = sessionId ? resolveMediaSurfaceForSession(sessionId) : '';
     const isWritingSurface = surface === 'writing';
+    const logEditSchedule = (stage = '', payload = {}) => {
+      if (source !== 'edit_assistant_raw') return;
+      logger.info(`[edit-assistant-raw] auto-image-scheduler-${stage} ${JSON.stringify({
+        sessionId,
+        messageId,
+        surface,
+        force,
+        ...payload,
+      })}`);
+    };
     if (isWritingSurface) {
       traceWritingAutoImagePrompt('schedule-enter', {
         sessionId,
         messageId,
         source,
-        enabled: isAutoImagePromptEnabled(),
+        enabled: force || isAutoImagePromptEnabled(),
+        force,
         role: message?.role,
         hasGeneratedMedia: Boolean(message?.meta?.generatedMedia),
         hasRawContent: Boolean(message?.meta?.autoImagePromptRawContent),
@@ -14344,16 +14355,18 @@ Phase G（Frame 36）：循环衔接
         rawTextHasTag: /<\s*image_prompt\b/i.test(String(rawText || '')),
       });
     }
-    if (!isAutoImagePromptEnabled() || !sessionId || !messageId) {
-      if (isWritingSurface) traceWritingAutoImagePrompt('schedule-skip-basic', { sessionId, messageId, enabled: isAutoImagePromptEnabled() });
+    if (!(force || isAutoImagePromptEnabled()) || !sessionId || !messageId) {
+      if (isWritingSurface) traceWritingAutoImagePrompt('schedule-skip-basic', { sessionId, messageId, enabled: force || isAutoImagePromptEnabled(), force });
+      logEditSchedule('skip-basic', { enabled: force || isAutoImagePromptEnabled() });
       return false;
     }
     if (message?.role !== 'assistant' || message?.meta?.generatedMedia) {
       if (isWritingSurface) traceWritingAutoImagePrompt('schedule-skip-message', { role: message?.role, hasGeneratedMedia: Boolean(message?.meta?.generatedMedia) });
+      logEditSchedule('skip-message', { role: message?.role, hasGeneratedMedia: Boolean(message?.meta?.generatedMedia) });
       return false;
     }
     const key = getAutoImagePromptSourceKey(sessionId, messageId);
-    if (autoImagePromptProcessedSourceIds.has(key) || message?.meta?.autoImagePrompt?.status) {
+    if (!force && (autoImagePromptProcessedSourceIds.has(key) || message?.meta?.autoImagePrompt?.status)) {
       if (isWritingSurface) {
         traceWritingAutoImagePrompt('schedule-skip-processed', {
           key,
@@ -14361,6 +14374,10 @@ Phase G（Frame 36）：循环衔接
           status: message?.meta?.autoImagePrompt?.status || '',
         });
       }
+      logEditSchedule('skip-processed', {
+        processed: autoImagePromptProcessedSourceIds.has(key),
+        status: message?.meta?.autoImagePrompt?.status || '',
+      });
       return false;
     }
     const prompts = [];
@@ -14391,7 +14408,17 @@ Phase G（Frame 36）：循环衔接
         prompts: imagePrompts.map(prompt => prompt.slice(0, 160)),
       });
     }
-    if (!imagePrompts.length) return false;
+    if (!imagePrompts.length) {
+      logEditSchedule('skip-no-prompts', {
+        candidateCount: candidates.length,
+        candidates: candidates.map(candidate => ({
+          length: String(candidate || '').length,
+          hasTag: /<\s*image_prompt\b/i.test(String(candidate || '')),
+          preview: String(candidate || '').slice(0, 160),
+        })),
+      });
+      return false;
+    }
     if (surface === 'writing') {
       const hasStoredPlaceholders = Array.isArray(message?.meta?.autoImagePromptPlaceholders);
       const preparedFallback = hasStoredPlaceholders
@@ -14414,19 +14441,29 @@ Phase G（Frame 36）：循环衔接
           promptPreview: String(item?.prompt || '').slice(0, 160),
         })),
       });
+      logEditSchedule('writing-branch', {
+        promptCount: imagePrompts.length,
+        hasStoredPlaceholders,
+        placeholderCount: placeholderItems.length,
+        fallbackSourceLength: String(preparedFallback.text || '').length,
+      });
       autoImagePromptProcessedSourceIds.add(key);
       return runWritingAutoImagePromptGenerationForMessage(message, sessionId, placeholderItems, {
         source,
         fallbackSource: preparedFallback.text,
+        bypassRateLimit: force,
       });
     }
-    const guard = shouldRunAutoImagePromptGeneration({
-      sessionId,
-      messageId,
-      prompt: imagePrompt,
-    });
+    const guard = force
+      ? { ok: true }
+      : shouldRunAutoImagePromptGeneration({
+        sessionId,
+        messageId,
+        prompt: imagePrompt,
+      });
     if (!guard.ok) {
       logger.debug?.(`auto image prompt skipped: ${guard.reason}`);
+      logEditSchedule('skip-guard', { reason: guard.reason, promptPreview: imagePrompt.slice(0, 120) });
       patchAutoImagePromptSourceMeta(message, sessionId, {
         status: 'skipped',
         prompt: imagePrompt,
@@ -14437,6 +14474,10 @@ Phase G（Frame 36）：循环衔接
       return false;
     }
     autoImagePromptProcessedSourceIds.add(key);
+    logEditSchedule('chat-queued', {
+      promptCount: imagePrompts.length,
+      promptPreview: imagePrompt.slice(0, 120),
+    });
     patchAutoImagePromptSourceMeta(message, sessionId, {
       status: 'queued',
       prompt: imagePrompt,
@@ -17858,17 +17899,34 @@ Phase G（Frame 36）：循环衔接
         logger.warn('apply swipe memory state failed', err);
       }
     }
-    const nextMeta = { ...sourceMeta, swipes, activeSwipe: index };
-    if (nextMeta && typeof nextMeta === 'object' && 'activeSwipeDraft' in nextMeta) {
-      delete nextMeta.activeSwipeDraft;
-    }
-    const payload = {
-      meta: nextMeta,
-    };
-    if (!isDraftBranch) {
-      payload.content = activeBranch?.content ?? message.content;
-      payload.raw = activeBranch?.raw !== undefined ? activeBranch.raw : message.raw;
-    }
+	    const nextMeta = { ...sourceMeta, swipes, activeSwipe: index };
+	    if (nextMeta && typeof nextMeta === 'object' && 'activeSwipeDraft' in nextMeta) {
+	      delete nextMeta.activeSwipeDraft;
+	    }
+	    delete nextMeta.autoImagePrompt;
+	    delete nextMeta.autoImagePromptRawContent;
+	    delete nextMeta.autoImagePromptPlaceholders;
+	    if (activeBranch?.autoImagePromptRawContent && Array.isArray(activeBranch?.autoImagePromptPlaceholders)) {
+	      nextMeta.autoImagePromptRawContent = String(activeBranch.autoImagePromptRawContent || '');
+	      nextMeta.autoImagePromptPlaceholders = activeBranch.autoImagePromptPlaceholders
+	        .map(item => ({
+	          prompt: String(item?.prompt || '').trim(),
+	          pendingToken: String(item?.pendingToken || '').trim(),
+	          tag: String(item?.tag || '').trim(),
+	        }))
+	        .filter(item => item.prompt && item.pendingToken);
+	    }
+	    const payload = {
+	      meta: nextMeta,
+	    };
+	    if (!isDraftBranch) {
+	      payload.content = activeBranch?.content ?? message.content;
+	      payload.raw = activeBranch?.raw !== undefined ? activeBranch.raw : message.raw;
+	      payload.rawSource = activeBranch?.rawSource !== undefined
+	        ? activeBranch.rawSource
+	        : (activeBranch?.raw !== undefined ? activeBranch.raw : message.rawSource);
+	      if (activeBranch?.rawOriginal !== undefined) payload.rawOriginal = activeBranch.rawOriginal;
+	    }
     const saved = chatStore.updateMessage(msgId, payload, sid) || { ...stored, ...payload };
     if (!isDraftBranch) {
       syncTurnCheckpointForMessage(sid, saved).catch(err => {
@@ -17979,34 +18037,66 @@ Phase G（Frame 36）：循环衔接
       }
       return updated;
     };
-    const commitBranch = (source, {
-      partial = false,
-      cancelled = false,
-      memoryTableSnapshot = null,
-      memoryUpdateEntry = undefined,
-    } = {}) => {
-      const content = String(source?.content ?? '');
-      const raw = typeof source?.raw === 'string' ? source.raw : content;
-      if (!content.trim() && !raw.trim()) return false;
-      const newBranch = { content, raw };
-      if (partial) newBranch.partial = true;
-      if (cancelled) newBranch.cancelled = true;
-      if (memoryTableSnapshot) newBranch.memoryTableSnapshot = cloneSwipePlainObject(memoryTableSnapshot);
-      if (memoryUpdateEntry !== undefined) newBranch.memoryUpdateEntry = cloneSwipeMemoryUpdateEntry(memoryUpdateEntry);
-      const merged = [...swipesBefore, newBranch];
-      const nextMeta = { ...sourceMeta, swipes: merged, activeSwipe: merged.length - 1 };
-      delete nextMeta.swipeRegenerating;
-      delete nextMeta.activeSwipeDraft;
-      const updated = chatStore.updateMessage(msgId, {
-        content: newBranch.content,
-        raw: newBranch.raw,
-        meta: nextMeta,
-      }, sid) || {
-        ...storedMsg,
-        content: newBranch.content,
-        raw: newBranch.raw,
-        meta: nextMeta,
-      };
+	    const commitBranch = (source, {
+	      partial = false,
+	      cancelled = false,
+	      memoryTableSnapshot = null,
+	      memoryUpdateEntry = undefined,
+	    } = {}) => {
+	      const content = String(source?.content ?? '');
+	      const raw = typeof source?.raw === 'string' ? source.raw : content;
+	      const rawSource = typeof source?.rawSource === 'string'
+	        ? source.rawSource
+	        : (typeof source?.meta?.autoImagePromptRawContent === 'string' ? source.meta.autoImagePromptRawContent : raw);
+	      const rawOriginal = typeof source?.rawOriginal === 'string' ? source.rawOriginal : rawSource;
+	      if (!content.trim() && !raw.trim()) return false;
+	      const newBranch = { content, raw };
+	      if (typeof rawSource === 'string') newBranch.rawSource = rawSource;
+	      if (typeof rawOriginal === 'string') newBranch.rawOriginal = rawOriginal;
+	      const sourceMessageMeta = source?.meta && typeof source.meta === 'object' ? source.meta : {};
+	      const sourceAutoImageRawContent = String(sourceMessageMeta.autoImagePromptRawContent || '');
+	      const sourceAutoImagePlaceholders = Array.isArray(sourceMessageMeta.autoImagePromptPlaceholders)
+	        ? sourceMessageMeta.autoImagePromptPlaceholders
+	            .map(item => ({
+	              prompt: String(item?.prompt || '').trim(),
+	              pendingToken: String(item?.pendingToken || '').trim(),
+	              tag: String(item?.tag || '').trim(),
+	            }))
+	            .filter(item => item.prompt && item.pendingToken)
+	        : [];
+	      if (sourceAutoImageRawContent && sourceAutoImagePlaceholders.length) {
+	        newBranch.autoImagePromptRawContent = sourceAutoImageRawContent;
+	        newBranch.autoImagePromptPlaceholders = sourceAutoImagePlaceholders;
+	      }
+	      if (partial) newBranch.partial = true;
+	      if (cancelled) newBranch.cancelled = true;
+	      if (memoryTableSnapshot) newBranch.memoryTableSnapshot = cloneSwipePlainObject(memoryTableSnapshot);
+	      if (memoryUpdateEntry !== undefined) newBranch.memoryUpdateEntry = cloneSwipeMemoryUpdateEntry(memoryUpdateEntry);
+	      const merged = [...swipesBefore, newBranch];
+	      const nextMeta = { ...sourceMeta, swipes: merged, activeSwipe: merged.length - 1 };
+	      delete nextMeta.swipeRegenerating;
+	      delete nextMeta.activeSwipeDraft;
+	      delete nextMeta.autoImagePrompt;
+	      delete nextMeta.autoImagePromptRawContent;
+	      delete nextMeta.autoImagePromptPlaceholders;
+	      if (sourceAutoImageRawContent && sourceAutoImagePlaceholders.length) {
+	        nextMeta.autoImagePromptRawContent = sourceAutoImageRawContent;
+	        nextMeta.autoImagePromptPlaceholders = sourceAutoImagePlaceholders;
+	      }
+	      const updated = chatStore.updateMessage(msgId, {
+	        content: newBranch.content,
+	        raw: newBranch.raw,
+	        rawSource: newBranch.rawSource,
+	        rawOriginal: newBranch.rawOriginal,
+	        meta: nextMeta,
+	      }, sid) || {
+	        ...storedMsg,
+	        content: newBranch.content,
+	        raw: newBranch.raw,
+	        rawSource: newBranch.rawSource,
+	        rawOriginal: newBranch.rawOriginal,
+	        meta: nextMeta,
+	      };
       const wrapper = ui.scrollEl?.querySelector(`[data-msg-id="${CSS.escape(msgId)}"]`);
       if (wrapper && wrapper.isConnected) {
         wrapper.__chatappMessage = updated;
@@ -18014,11 +18104,20 @@ Phase G（Frame 36）：循环衔接
       }
       branchFinalized = true;
       clearActiveSwipeGenerationMarker();
-      syncTurnCheckpointForMessage(sid, updated).catch(err => {
-        logger.warn('sync turn checkpoint after swipe commit failed', err);
-      });
-      return true;
-    };
+	      syncTurnCheckpointForMessage(sid, updated).catch(err => {
+	        logger.warn('sync turn checkpoint after swipe commit failed', err);
+	      });
+	      if (!partial && !cancelled && sourceAutoImagePlaceholders.length) {
+	        setTimeout(() => {
+	          autoImagePromptProcessedSourceIds.delete(getAutoImagePromptSourceKey(sid, msgId));
+	          scheduleAutoImagePromptGenerationForMessage(updated, sid, {
+	            rawText: sourceAutoImageRawContent || newBranch.rawSource || newBranch.rawOriginal || newBranch.raw || newBranch.content,
+	            source: 'swipe_regen',
+	          });
+	        }, 0);
+	      }
+	      return true;
+	    };
     const restorePreviousBranch = async () => {
       cancelSwipePlaceholderStream();
       const cleanSwipes = swipesBefore.filter(branch => !branch?.draft);
@@ -18124,9 +18223,10 @@ Phase G（Frame 36）：循环衔接
           }) || null;
           return swipeStreamCtrl;
         },
-        swipeTarget: {
-          msgId,
-          onPartial: partial => {
+	        swipeTarget: {
+	          msgId,
+	          suppressAfterReceive: true,
+	          onPartial: partial => {
             partialCommitted = commitBranch(partial, {
               partial: true,
               cancelled: true,
@@ -20425,7 +20525,7 @@ Phase G（Frame 36）：循环衔接
       return applyUpdateVariableForMessageWithFallback({
         message: targetMessage,
         sessionId: targetSessionId,
-        applyUpdateVariable: resolveUpdateVariableApplyFn(applyUpdateVariableFromMessage),
+        applyUpdateVariable: resolveUpdateVariableApplyFn(),
         getEffectivePersona,
         listVariableSchemas: id => chatStore.listVariableSchemas?.(id),
         transformDisplay: nextStored => applyOutputDisplayRegexSafe(nextStored, {
@@ -20629,35 +20729,95 @@ Phase G（Frame 36）：循环衔接
       refreshChatAndContacts();
       return;
     }
-    if (action === 'edit-assistant-raw' && message.role === 'assistant') {
-      const next = String(payload?.text ?? '');
-      const regexEditMode = payload?.regexEditMode === true;
-      const cleanedForRender = stripUpdateVariableBlocks(next);
+	    if (action === 'edit-assistant-raw' && message.role === 'assistant') {
+	      const next = String(payload?.text ?? '');
+	      const regexEditMode = payload?.regexEditMode === true;
+	      const cleanedForRender = stripUpdateVariableBlocks(next);
       const hadUpdateVariableTag = /<\s*(update(?:variable)?|variableupdate)\b/i.test(next);
       if (hadUpdateVariableTag) {
         logger.info(
           `[edit-assistant-raw] strip-update-variable messageId=${String(message?.id || '')} rawLen=${next.length} cleanedLen=${cleanedForRender.length}`,
         );
       }
-      const isCreativeAssistant =
-        Boolean(message?.meta?.renderRich) || (sessionId && isRpSessionId(sessionId));
-      let updater = null;
+	      const isCreativeAssistant =
+	        Boolean(message?.meta?.renderRich) || (sessionId && isRpSessionId(sessionId));
+	      let updater = null;
+	      let editAutoImagePromptRawText = '';
+	      let editAutoImagePromptPlaceholders = [];
+	      let editAutoImagePromptDebug = null;
+	      const normalizeAutoImagePromptPlaceholdersForMeta = (items = []) => (
+	        Array.isArray(items) ? items : []
+	      ).map(item => ({
+	        prompt: String(item?.prompt || '').trim(),
+	        pendingToken: String(item?.pendingToken || '').trim(),
+	        tag: String(item?.tag || '').trim(),
+	        index: Number.isFinite(Number(item?.index)) ? Number(item.index) : undefined,
+	      })).filter(item => item.prompt && item.pendingToken);
+	      const clearAutoImagePromptEditMeta = (meta = {}) => {
+	        const nextMeta = meta && typeof meta === 'object' ? { ...meta } : {};
+	        delete nextMeta.autoImagePrompt;
+	        delete nextMeta.autoImagePromptRawContent;
+	        delete nextMeta.autoImagePromptPlaceholders;
+	        return nextMeta;
+	      };
+	      const decodeAutoImagePromptEditText = (value = '') => {
+	        const text = String(value ?? '');
+	        if (!/&(?:amp|lt|gt|quot|#39);/i.test(text)) return text;
+	        return text
+	          .replace(/&amp;/gi, '&')
+	          .replace(/&lt;/gi, '<')
+	          .replace(/&gt;/gi, '>')
+	          .replace(/&quot;/gi, '"')
+	          .replace(/&#39;/gi, "'");
+	      };
 
-      if (isCreativeAssistant) {
-        const rawSource = normalizeCreativeLineBreaksForDisplay(cleanedForRender);
-        const reasoningParsed = extractReasoningFromContent(rawSource, { depth: 0, strict: true });
-        const finalSource = normalizeCreativeLineBreaksForDisplay(reasoningParsed.content || '');
-        const { stored, display } = applyOutputRegexPairSafe(finalSource, {
-          appBridge: window.appBridge,
-          depth: 0,
-          isEdit: regexEditMode,
-          normalizeText: normalizeCreativeLineBreaksForDisplay,
-        });
-        const nextMeta =
-          message?.meta && typeof message.meta === 'object' ? { ...message.meta, renderRich: true } : { renderRich: true };
-        if (reasoningParsed.reasoning) {
-          nextMeta.reasoning = reasoningParsed.reasoning;
-          nextMeta.reasoningDisplay = reasoningParsed.reasoningDisplay;
+	      if (isCreativeAssistant) {
+	        const rawSource = normalizeCreativeLineBreaks(cleanedForRender);
+	        const reasoningParsed = extractReasoningFromContent(rawSource, { depth: 0, strict: true });
+	        const rawFinalSource = normalizeCreativeLineBreaks(reasoningParsed.content || '');
+	        const autoImagePromptSource = decodeAutoImagePromptEditText(rawFinalSource);
+	        const shouldPrepareAutoImagePrompt =
+	          extractAutoImagePrompts(autoImagePromptSource, { max: 1 }).length > 0;
+	        const autoImagePrepared = shouldPrepareAutoImagePrompt
+	          ? prepareAutoImagePromptPlaceholders(autoImagePromptSource, { max: MAX_AUTO_IMAGE_PROMPTS_PER_SOURCE })
+	          : null;
+	        const finalSource = autoImagePrepared?.prompts?.length ? autoImagePrepared.text : stripAutoImagePromptTags(rawFinalSource);
+	        editAutoImagePromptRawText = autoImagePrepared?.prompts?.length ? autoImagePromptSource : '';
+	        editAutoImagePromptPlaceholders = normalizeAutoImagePromptPlaceholdersForMeta(autoImagePrepared?.prompts || []);
+	        editAutoImagePromptDebug = {
+	          mode: 'creative',
+	          rawLength: rawFinalSource.length,
+	          decodedChanged: autoImagePromptSource !== rawFinalSource,
+	          rawHasLiteralTag: /<\s*image_prompt\b/i.test(rawFinalSource),
+	          decodedHasLiteralTag: /<\s*image_prompt\b/i.test(autoImagePromptSource),
+	          extractedCount: extractAutoImagePrompts(autoImagePromptSource, { max: MAX_AUTO_IMAGE_PROMPTS_PER_SOURCE, dedupe: false }).length,
+	          preparedCount: editAutoImagePromptPlaceholders.length,
+	          finalHasPending: /\[img-图片生成中(?: \d+)?\]/.test(finalSource),
+	          promptPreview: String(editAutoImagePromptPlaceholders[0]?.prompt || '').slice(0, 120),
+	        };
+	        if (editAutoImagePromptDebug.extractedCount || editAutoImagePromptDebug.rawHasLiteralTag || editAutoImagePromptDebug.decodedHasLiteralTag) {
+	          logger.info(`[edit-assistant-raw] auto-image-prepare ${JSON.stringify({
+	            messageId: String(message?.id || ''),
+	            session: String(sessionId || ''),
+	            ...editAutoImagePromptDebug,
+	          })}`);
+	        }
+	        const { stored, display } = applyOutputRegexPairSafe(finalSource, {
+	          appBridge: window.appBridge,
+	          depth: 0,
+	          isEdit: regexEditMode,
+	          normalizeText: normalizeCreativeLineBreaksForDisplay,
+	        });
+	        const nextMeta = clearAutoImagePromptEditMeta(
+	          message?.meta && typeof message.meta === 'object' ? { ...message.meta, renderRich: true } : { renderRich: true },
+	        );
+	        if (editAutoImagePromptRawText && editAutoImagePromptPlaceholders.length) {
+	          nextMeta.autoImagePromptRawContent = editAutoImagePromptRawText;
+	          nextMeta.autoImagePromptPlaceholders = editAutoImagePromptPlaceholders;
+	        }
+	        if (reasoningParsed.reasoning) {
+	          nextMeta.reasoning = reasoningParsed.reasoning;
+	          nextMeta.reasoningDisplay = reasoningParsed.reasoningDisplay;
         } else {
           delete nextMeta.reasoning;
           delete nextMeta.reasoningDisplay;
@@ -20667,34 +20827,60 @@ Phase G（Frame 36）：循环衔接
           rawSource: finalSource,
           raw: stored,
           type: 'text',
-          content: display,
-          meta: nextMeta,
-        };
-      } else {
+	          content: display,
+	          meta: nextMeta,
+	        };
+	      } else {
         const { stored, display } = applyOutputRegexPairSafe(cleanedForRender, {
           appBridge: window.appBridge,
           depth: 0,
           isEdit: regexEditMode,
         });
         const parsed = parseSpecialMessage(display);
-        const nextMeta = message?.meta && typeof message.meta === 'object' ? { ...message.meta } : undefined;
-        if (parsed?.meta && typeof parsed.meta === 'object') {
-          updater = {
-            rawOriginal: next,
-            rawSource: cleanedForRender,
-            raw: stored,
-            ...parsed,
-            meta: nextMeta ? { ...nextMeta, ...parsed.meta } : parsed.meta,
-          };
-        } else {
-          updater = {
-            rawOriginal: next,
-            rawSource: cleanedForRender,
-            raw: stored,
-            ...parsed,
-          };
-        }
-      }
+	        const nextMeta = clearAutoImagePromptEditMeta(
+	          message?.meta && typeof message.meta === 'object' ? { ...message.meta } : {},
+	        );
+	        const autoImagePromptSource = decodeAutoImagePromptEditText(cleanedForRender);
+	        const chatEditPrompts = extractAutoImagePrompts(autoImagePromptSource, { max: MAX_AUTO_IMAGE_PROMPTS_PER_SOURCE, dedupe: false });
+	        if (chatEditPrompts.length > 0) {
+	          editAutoImagePromptRawText = autoImagePromptSource;
+	        }
+	        editAutoImagePromptDebug = {
+	          mode: 'chat',
+	          rawLength: cleanedForRender.length,
+	          decodedChanged: autoImagePromptSource !== cleanedForRender,
+	          rawHasLiteralTag: /<\s*image_prompt\b/i.test(cleanedForRender),
+	          decodedHasLiteralTag: /<\s*image_prompt\b/i.test(autoImagePromptSource),
+	          extractedCount: chatEditPrompts.length,
+	          preparedCount: 0,
+	          finalHasPending: false,
+	          promptPreview: String(chatEditPrompts[0] || '').slice(0, 120),
+	        };
+	        if (editAutoImagePromptDebug.extractedCount || editAutoImagePromptDebug.rawHasLiteralTag || editAutoImagePromptDebug.decodedHasLiteralTag) {
+	          logger.info(`[edit-assistant-raw] auto-image-prepare ${JSON.stringify({
+	            messageId: String(message?.id || ''),
+	            session: String(sessionId || ''),
+	            ...editAutoImagePromptDebug,
+	          })}`);
+	        }
+	        if (parsed?.meta && typeof parsed.meta === 'object') {
+	          updater = {
+	            rawOriginal: next,
+	            rawSource: cleanedForRender,
+	            raw: stored,
+	            ...parsed,
+	            meta: { ...nextMeta, ...parsed.meta },
+	          };
+	        } else {
+	          updater = {
+	            rawOriginal: next,
+	            rawSource: cleanedForRender,
+	            raw: stored,
+	            ...parsed,
+	            meta: nextMeta,
+	          };
+	        }
+	      }
       const sourceMeta = message?.meta && typeof message.meta === 'object' ? message.meta : null;
       const sourceSwipes = Array.isArray(sourceMeta?.swipes) ? sourceMeta.swipes : null;
       if (sourceSwipes?.length) {
@@ -20704,16 +20890,23 @@ Phase G（Frame 36）：循环衔接
           ? Math.min(Math.max(0, rawIndex), swipes.length - 1)
           : Math.max(0, swipes.length - 1);
         const activeBranch = swipes[activeIndex] || {};
-        swipes[activeIndex] = {
-          ...activeBranch,
-          rawOriginal: next,
-          rawSource: typeof updater?.rawSource === 'string' ? updater.rawSource : activeBranch.rawSource,
-          raw: typeof updater?.raw === 'string' ? updater.raw : activeBranch.raw,
-          content: typeof updater?.content === 'string' ? updater.content : activeBranch.content,
-        };
-        updater = {
-          ...updater,
-          meta: {
+	        const nextBranch = {
+	          ...activeBranch,
+	          rawOriginal: next,
+	          rawSource: typeof updater?.rawSource === 'string' ? updater.rawSource : activeBranch.rawSource,
+	          raw: typeof updater?.raw === 'string' ? updater.raw : activeBranch.raw,
+	          content: typeof updater?.content === 'string' ? updater.content : activeBranch.content,
+	        };
+	        delete nextBranch.autoImagePromptRawContent;
+	        delete nextBranch.autoImagePromptPlaceholders;
+	        if (editAutoImagePromptRawText && editAutoImagePromptPlaceholders.length) {
+	          nextBranch.autoImagePromptRawContent = editAutoImagePromptRawText;
+	          nextBranch.autoImagePromptPlaceholders = editAutoImagePromptPlaceholders;
+	        }
+	        swipes[activeIndex] = nextBranch;
+	        updater = {
+	          ...updater,
+	          meta: {
             ...(sourceMeta || {}),
             ...((updater?.meta && typeof updater.meta === 'object') ? updater.meta : {}),
             swipes,
@@ -20725,17 +20918,66 @@ Phase G（Frame 36）：循环衔接
       if (updated) {
         let finalMessage = updated;
         try {
-          const changed = applyUpdateVariableForMessageSafe(updated, sessionId);
+	          const changed = applyUpdateVariableForMessageSafe(updated, sessionId);
           logger.info(
             `[edit-assistant-raw] update-variable messageId=${String(message?.id || '')} session=${String(sessionId || '')} changed=${changed ? 1 : 0}`,
           );
           finalMessage = chatStore.findMessage(message.id, sessionId) || finalMessage;
         } catch (err) {
           logger.warn('edit-assistant-raw: UpdateVariable parse failed', err);
-        }
-        ui.updateMessage(message.id, finalMessage);
-        refreshChatAndContacts();
-      }
+	        }
+	        ui.updateMessage(message.id, finalMessage);
+	        const scheduleCandidates = [
+	          ['meta.autoImagePromptRawContent', finalMessage?.meta?.autoImagePromptRawContent],
+	          ['editAutoImagePromptRawText', editAutoImagePromptRawText],
+	          ['rawSource', finalMessage?.rawSource],
+	          ['raw', finalMessage?.raw],
+	          ['content', finalMessage?.content],
+	        ];
+	        const schedulePicked = scheduleCandidates.find(([, value]) => String(value || '').trim());
+	        const scheduleRawText = String(schedulePicked?.[1] || '');
+	        const schedulePromptCount = extractAutoImagePrompts(scheduleRawText, {
+	          max: MAX_AUTO_IMAGE_PROMPTS_PER_SOURCE,
+	          dedupe: false,
+	          stripMomentBlocks: resolveMediaSurfaceForSession(sessionId) !== 'writing',
+	        }).length;
+	        const shouldScheduleAutoImageAfterEdit =
+	          schedulePromptCount > 0;
+	        logger.info(`[edit-assistant-raw] auto-image-schedule-check ${JSON.stringify({
+	          messageId: String(message?.id || ''),
+	          session: String(sessionId || ''),
+	          surface: resolveMediaSurfaceForSession(sessionId),
+	          source: String(schedulePicked?.[0] || ''),
+	          scheduleLength: scheduleRawText.length,
+	          promptCount: schedulePromptCount,
+	          shouldSchedule: shouldScheduleAutoImageAfterEdit,
+	          preparedCount: editAutoImagePromptPlaceholders.length,
+	          metaPreparedCount: Array.isArray(finalMessage?.meta?.autoImagePromptPlaceholders) ? finalMessage.meta.autoImagePromptPlaceholders.length : 0,
+	          metaHasRawContent: Boolean(finalMessage?.meta?.autoImagePromptRawContent),
+	          autoImageStatus: String(finalMessage?.meta?.autoImagePrompt?.status || ''),
+	          prepare: editAutoImagePromptDebug,
+	        })}`);
+	        if (shouldScheduleAutoImageAfterEdit) {
+	          autoImagePromptProcessedSourceIds.delete(getAutoImagePromptSourceKey(sessionId, message.id));
+	          setTimeout(() => {
+	            const latest = chatStore.findMessage(message.id, sessionId) || finalMessage;
+	            const started = scheduleAutoImagePromptGenerationForMessage(latest, sessionId, {
+	              rawText: scheduleRawText,
+	              source: 'edit_assistant_raw',
+	              force: true,
+	            });
+	            logger.info(`[edit-assistant-raw] auto-image-schedule-run ${JSON.stringify({
+	              messageId: String(message?.id || ''),
+	              session: String(sessionId || ''),
+	              started: Boolean(started),
+	              latestHasMetaRaw: Boolean(latest?.meta?.autoImagePromptRawContent),
+	              latestPlaceholderCount: Array.isArray(latest?.meta?.autoImagePromptPlaceholders) ? latest.meta.autoImagePromptPlaceholders.length : 0,
+	              latestStatus: String(latest?.meta?.autoImagePrompt?.status || ''),
+	            })}`);
+	          }, 0);
+	        }
+	        refreshChatAndContacts();
+	      }
       return;
     }
     if (action === 'edit-confirm' && message.role === 'user') {

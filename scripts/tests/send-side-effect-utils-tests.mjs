@@ -1841,6 +1841,35 @@ test('commitAssistantReceiveEffects commits continuations and skips checkpoint f
   ]);
 });
 
+test('commitAssistantReceiveEffects can suppress after_receive for transient swipe targets', () => {
+  const calls = [];
+
+  const result = commitAssistantReceiveEffects({
+    parsed: { id: 'parsed-swipe', role: 'assistant' },
+    sessionId: 'session-swipe',
+    swipeTarget: { msgId: 'swipe-final', suppressAfterReceive: true },
+    appendMessage(message, sessionId) {
+      calls.push(['append', message.id, sessionId]);
+      return { ...message, id: 'temp-swipe' };
+    },
+    autoMarkReadIfActive(sessionId, messageId) {
+      calls.push(['markRead', sessionId, messageId]);
+    },
+    emitPluginAfterReceive(message, sessionId) {
+      calls.push(['afterReceive', message?.id, sessionId]);
+    },
+  });
+
+  assert.deepEqual(result, {
+    saved: { id: 'temp-swipe', role: 'assistant' },
+    checkpointTargetMessageId: 'swipe-final',
+  });
+  assert.deepEqual(calls, [
+    ['append', 'parsed-swipe', 'session-swipe'],
+    ['markRead', 'session-swipe', 'temp-swipe'],
+  ]);
+});
+
 test('commitAssistantReceiveEffects supports legacy append/read/receive without checkpoint wiring', () => {
   const calls = [];
 

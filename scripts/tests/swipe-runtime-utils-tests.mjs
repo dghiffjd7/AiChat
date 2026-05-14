@@ -64,15 +64,16 @@ const createWrapper = (message = null) => {
   const message = {
     id: 'm1',
     content: 'a',
-    raw: 'ra',
-    meta: {
-      activeSwipe: 0,
-      swipes: [
-        { content: 'a', raw: 'ra' },
-        { content: 'b', raw: 'rb' },
-      ],
-    },
-  };
+	    raw: 'ra',
+	    rawSource: 'source-a',
+	    meta: {
+	      activeSwipe: 0,
+	      swipes: [
+	        { content: 'a', raw: 'ra', rawSource: 'source-a' },
+	        { content: 'b', raw: 'rb', rawSource: 'source-b', rawOriginal: 'original-b' },
+	      ],
+	    },
+	  };
   const wrapper = createWrapper(message);
   const renders = [];
   const syncs = [];
@@ -87,9 +88,11 @@ const createWrapper = (message = null) => {
   });
   assert.equal(applied, true);
   assert.equal(message.meta.activeSwipe, 1);
-  assert.equal(message.content, 'b');
-  assert.equal(message.raw, 'rb');
-  assert.equal(renders.length, 1);
+	  assert.equal(message.content, 'b');
+	  assert.equal(message.raw, 'rb');
+	  assert.equal(message.rawSource, 'source-b');
+	  assert.equal(message.rawOriginal, 'original-b');
+	  assert.equal(renders.length, 1);
   assert.equal(syncs.length, 1);
   assert.equal(change.index, 1);
   assert.equal(change.previousIndex, 0);

@@ -43,6 +43,9 @@ export const applySwipeCore = ({
   const branch = swipes[newIndex];
   message.content = branch.content;
   if (branch.raw !== undefined) message.raw = branch.raw;
+  if (branch.rawSource !== undefined) message.rawSource = branch.rawSource;
+  else if (branch.raw !== undefined) message.rawSource = branch.raw;
+  if (branch.rawOriginal !== undefined) message.rawOriginal = branch.rawOriginal;
   const generating = Boolean(branch?.draft) || message.meta?.swipeRegenerating === true;
   const placeholder = branch?.draft ? String(branch?.label || '生成新回复中...') : '';
 

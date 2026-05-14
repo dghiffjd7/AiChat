@@ -451,7 +451,7 @@ export const commitAssistantReceiveEffects = ({
   if (typeof autoMarkReadIfActive === 'function') {
     autoMarkReadIfActive(sessionId, saved?.id || parsed?.id || '');
   }
-  if (typeof emitPluginAfterReceive === 'function') {
+  if (typeof emitPluginAfterReceive === 'function' && swipeTarget?.suppressAfterReceive !== true) {
     emitPluginAfterReceive(saved, sessionId);
   }
   if (

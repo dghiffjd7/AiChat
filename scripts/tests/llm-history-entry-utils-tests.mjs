@@ -116,6 +116,36 @@ test('buildLlmHistoryEntry converts history image messages to placeholders only'
   );
 });
 
+test('buildLlmHistoryEntry omits image messages from creative writing history', () => {
+  assert.equal(
+    buildLlmHistoryEntry(
+      { role: 'user', type: 'image', content: 'https://example.com/a.png', name: '我' },
+      { isRpMode: true },
+    ),
+    null,
+  );
+});
+
+test('buildLlmHistoryEntry removes generated image tokens from creative writing history text', () => {
+  assert.deepEqual(
+    buildLlmHistoryEntry(
+      {
+        role: 'assistant',
+        content: '第一段\n[img-C:\\\\tmp\\\\generated.png]\n第二段 [img-error-%7B%7D] 收尾',
+        name: '角色',
+      },
+      { isRpMode: true },
+    ),
+    {
+      role: 'assistant',
+      content: '第一段\n第二段  收尾',
+      name: '角色',
+      __creative: true,
+      __reasoning: '',
+    },
+  );
+});
+
 test('buildLlmHistoryEntry prefers rp plain text and preserves assistant reasoning', () => {
   assert.deepEqual(
     buildLlmHistoryEntry(

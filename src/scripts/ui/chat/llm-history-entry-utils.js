@@ -42,13 +42,21 @@ export const loadLlmCreativeSummarySource = ({
 };
 
 const GENERATED_IMAGE_HISTORY_TOKEN_RE = /\[(?:img|img-error)-[^\]\n]+\]/gi;
+const STANDALONE_GENERATED_IMAGE_HISTORY_TOKEN_LINE_RE = /^[ \t]*\[(?:img|img-error)-[^\]\n]+\][ \t]*(?:\r?\n|$)/gim;
 
-export const sanitizeLlmHistoryMediaTokens = (value = '') => (
-  String(value ?? '')
-    .replace(GENERATED_IMAGE_HISTORY_TOKEN_RE, '[图片]')
+export const sanitizeLlmHistoryMediaTokens = (value = '', { imageMode = 'placeholder' } = {}) => {
+  const omitImages = imageMode === 'omit';
+  const text = String(value ?? '');
+  const withoutImageTokens = omitImages
+    ? text
+      .replace(STANDALONE_GENERATED_IMAGE_HISTORY_TOKEN_LINE_RE, '')
+      .replace(GENERATED_IMAGE_HISTORY_TOKEN_RE, '')
+    : text.replace(GENERATED_IMAGE_HISTORY_TOKEN_RE, '[图片]');
+  return withoutImageTokens
+    .replace(/[ \t]+\n/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
-    .trim()
-);
+    .trim();
+};
 
 export const buildLlmHistoryEntry = (
   message,
@@ -67,6 +75,7 @@ export const buildLlmHistoryEntry = (
   const isCreativeReply =
     message?.role === 'assistant' &&
     (Boolean(message?.meta?.renderRich) || isRpMode);
+  const omitHistoryImages = Boolean(isRpMode || rpUiMode);
   if (isGroupChat && message.role === 'system') {
     const raw = String(message.content || '').trim();
     if (!raw) return null;
@@ -85,6 +94,7 @@ export const buildLlmHistoryEntry = (
       ? message.meta.reasoning
       : '';
   if (message.type === 'image') {
+    if (omitHistoryImages) return null;
     return {
       role: message.role,
       content: '[图片]',
@@ -128,7 +138,9 @@ export const buildLlmHistoryEntry = (
     const key = typeof resolveStickerKeyword === 'function' ? resolveStickerKeyword(message) : '';
     if (key && typeof buildStickerToken === 'function') content = buildStickerToken(key);
   }
-  content = sanitizeLlmHistoryMediaTokens(content);
+  content = sanitizeLlmHistoryMediaTokens(content, {
+    imageMode: omitHistoryImages ? 'omit' : 'placeholder',
+  });
   if (!String(content || '').trim()) return null;
   return {
     role: message.role,
