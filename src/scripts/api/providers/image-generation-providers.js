@@ -408,7 +408,9 @@ export class NovelAIImageProvider extends ImageProviderBase {
     const sampler = String(options.sampler || 'k_euler_ancestral').trim();
     const scheduler = String(options.scheduler || options.noise_schedule || 'karras').trim();
     const steps = toInt(options.steps, 23, { min: 1, max: 50 });
-    const input = String(prompt || '').trim();
+    const promptPrefix = String(options.promptPrefix || options.prompt_prefix || '').trim();
+    const promptSuffix = String(options.promptSuffix || options.prompt_suffix || '').trim();
+    const input = [promptPrefix, String(prompt || '').trim(), promptSuffix].filter(Boolean).join(', ');
     const sm = sampler === 'ddim' ? false : isEnabled(options.sm);
     const smDyn = sm ? isEnabled(options.sm_dyn) : false;
     return {

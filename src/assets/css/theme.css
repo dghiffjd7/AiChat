@@ -1663,6 +1663,12 @@ body[data-theme-mode='dark'] :is(.chat-image-gen-textarea, .chat-image-gen-param
   color: var(--app-text-primary) !important;
 }
 
+body[data-theme-mode='dark'] select.chat-image-gen-param-field,
+body[data-theme-mode='dark'] select.chat-image-gen-param-field option {
+  background-color: #161b22 !important;
+  color: var(--app-text-primary) !important;
+}
+
 body[data-theme-mode='dark'] :is(.chat-image-gen-footer, .moment-compose-footer, .writing-media-assets-toolbar) {
   background: rgba(205, 217, 229, 0.04) !important;
   border-top-color: var(--app-border-subtle) !important;

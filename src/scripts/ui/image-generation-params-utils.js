@@ -66,6 +66,8 @@ const NOVELAI_LEGACY_DEFAULTS = {
 };
 
 const NOVELAI_DEFAULTS = {
+  promptPrefix: '',
+  promptSuffix: '',
   width: 1024,
   height: 1024,
   steps: 23,
@@ -354,6 +356,8 @@ export const resolveImageGenerationParamSchema = (config = {}) => {
       model,
       title: 'NovelAI Diffusion 参数',
       fields: [
+        makeText('promptPrefix', '固定正向前缀', '', '每次调用 NovelAI 前自动加到正向提示词开头，适合放画师串、固定画风标签。'),
+        makeText('promptSuffix', '固定正向后缀', '', '每次调用 NovelAI 前自动加到正向提示词末尾。'),
         makeNumber('width', '宽度', { min: 64, max: 2048, step: 64, fallback: 1024 }),
         makeNumber('height', '高度', { min: 64, max: 2048, step: 64, fallback: 1024 }),
         makeNumber('steps', '步数', { min: 1, max: 50, fallback: 23 }),
@@ -556,6 +560,8 @@ export const normalizeImageGenerationPreset = (preset = {}) => {
     }
     if (!Object.hasOwn(sourceNovel, 'cfgRescale')) nextNovel.cfgRescale = NOVELAI_DEFAULTS.cfgRescale;
     if (!Object.hasOwn(sourceNovel, 'qualityToggle')) nextNovel.qualityToggle = NOVELAI_DEFAULTS.qualityToggle;
+    if (!Object.hasOwn(sourceNovel, 'promptPrefix')) nextNovel.promptPrefix = NOVELAI_DEFAULTS.promptPrefix;
+    if (!Object.hasOwn(sourceNovel, 'promptSuffix')) nextNovel.promptSuffix = NOVELAI_DEFAULTS.promptSuffix;
     paramsByProvider.novelai = nextNovel;
   }
   return {
