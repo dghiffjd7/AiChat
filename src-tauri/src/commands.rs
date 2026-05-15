@@ -2889,7 +2889,11 @@ fn read_json_file(path: &Path) -> Option<Value> {
     serde_json::from_str(&json).ok()
 }
 
-fn collect_scope_session_ids(app: &AppHandle, data_dir: &Path, scope: &str) -> HashSet<String> {
+fn collect_scope_session_ids_from_dirs(
+    data_dir: &Path,
+    chat_v2_base: &Path,
+    scope: &str,
+) -> HashSet<String> {
     let mut session_ids: HashSet<String> = HashSet::new();
 
     let contacts_file = data_dir.join(format!("contacts_store_v1__{scope}.json"));
@@ -2932,21 +2936,80 @@ fn collect_scope_session_ids(app: &AppHandle, data_dir: &Path, scope: &str) -> H
         }
     }
 
-    if let Ok(scope_dir) = chat_store_v2_scope_dir(app, scope) {
-        let index_file = scope_dir.join("index.json");
-        if let Some(value) = read_json_file(&index_file) {
-            if let Some(sessions) = value.get("sessions").and_then(|v| v.as_object()) {
-                for key in sessions.keys() {
-                    let id = key.trim();
-                    if !id.is_empty() {
-                        session_ids.insert(id.to_string());
-                    }
+    let index_file = chat_v2_base
+        .join(format!("scope_{scope}"))
+        .join("index.json");
+    if let Some(value) = read_json_file(&index_file) {
+        if let Some(sessions) = value.get("sessions").and_then(|v| v.as_object()) {
+            for key in sessions.keys() {
+                let id = key.trim();
+                if !id.is_empty() {
+                    session_ids.insert(id.to_string());
                 }
             }
         }
     }
 
     session_ids
+}
+
+fn collect_scope_session_ids(app: &AppHandle, data_dir: &Path, scope: &str) -> HashSet<String> {
+    let Ok(chat_v2_base) = chat_store_v2_base(app) else {
+        return HashSet::new();
+    };
+    collect_scope_session_ids_from_dirs(data_dir, &chat_v2_base, scope)
+}
+
+fn collect_known_data_scopes(data_dir: &Path, chat_v2_base: &Path) -> HashSet<String> {
+    let mut scopes: HashSet<String> = HashSet::new();
+
+    if let Ok(entries) = fs::read_dir(data_dir) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            for base in PERSONA_SCOPED_JSON_BASES {
+                if let Some(scope) = extract_scoped_json_scope(&name, base) {
+                    scopes.insert(scope);
+                }
+            }
+        }
+    }
+
+    if let Ok(entries) = fs::read_dir(chat_v2_base) {
+        for entry in entries.flatten() {
+            if !entry.path().is_dir() {
+                continue;
+            }
+            let name = entry.file_name().to_string_lossy().to_string();
+            let Some(raw_scope) = name.strip_prefix("scope_") else {
+                continue;
+            };
+            let scope = normalize_scope_id(raw_scope);
+            if !scope.is_empty() {
+                scopes.insert(scope);
+            }
+        }
+    }
+
+    scopes
+}
+
+fn collect_protected_session_ids(
+    data_dir: &Path,
+    chat_v2_base: &Path,
+    scopes_to_delete: &HashSet<String>,
+) -> HashSet<String> {
+    let mut protected: HashSet<String> = HashSet::new();
+    for scope in collect_known_data_scopes(data_dir, chat_v2_base) {
+        if scopes_to_delete.contains(&scope) {
+            continue;
+        }
+        protected.extend(collect_scope_session_ids_from_dirs(
+            data_dir,
+            chat_v2_base,
+            &scope,
+        ));
+    }
+    protected
 }
 
 fn delete_path_if_exists(path: &Path, deleted_paths: &mut Vec<String>) -> Result<(), String> {
@@ -2962,10 +3025,32 @@ fn delete_path_if_exists(path: &Path, deleted_paths: &mut Vec<String>) -> Result
     Ok(())
 }
 
+fn delete_unprotected_session_sidecars(
+    data_dir: &Path,
+    session_ids: HashSet<String>,
+    protected_session_ids: &HashSet<String>,
+    deleted_paths: &mut Vec<String>,
+) -> Result<(), String> {
+    for session_id in session_ids {
+        if protected_session_ids.contains(&session_id) {
+            continue;
+        }
+        let safe_sid = sanitize_segment(&session_id);
+        let raw_reply_dir = data_dir.join("raw_replies").join(&safe_sid);
+        delete_path_if_exists(&raw_reply_dir, deleted_paths)?;
+        let wallpaper_dir = data_dir.join("wallpapers").join(&safe_sid);
+        delete_path_if_exists(&wallpaper_dir, deleted_paths)?;
+        let attachment_dir = data_dir.join("attachments").join(&safe_sid);
+        delete_path_if_exists(&attachment_dir, deleted_paths)?;
+    }
+    Ok(())
+}
+
 fn purge_persona_scope_data(
     app: &AppHandle,
     memory_db: &MemoryDb,
     scope: &str,
+    protected_session_ids: &HashSet<String>,
     deleted_paths: &mut Vec<String>,
 ) -> Result<(), String> {
     let normalized_scope = normalize_scope_id(scope);
@@ -2992,15 +3077,12 @@ fn purge_persona_scope_data(
     let chat_v2_dir = chat_store_v2_scope_dir(app, &normalized_scope)?;
     delete_path_if_exists(&chat_v2_dir, deleted_paths)?;
 
-    for session_id in session_ids {
-        let safe_sid = sanitize_segment(&session_id);
-        let raw_reply_dir = data_dir.join("raw_replies").join(&safe_sid);
-        delete_path_if_exists(&raw_reply_dir, deleted_paths)?;
-        let wallpaper_dir = data_dir.join("wallpapers").join(&safe_sid);
-        delete_path_if_exists(&wallpaper_dir, deleted_paths)?;
-        let attachment_dir = data_dir.join("attachments").join(&safe_sid);
-        delete_path_if_exists(&attachment_dir, deleted_paths)?;
-    }
+    delete_unprotected_session_sidecars(
+        &data_dir,
+        session_ids,
+        protected_session_ids,
+        deleted_paths,
+    )?;
 
     Ok(())
 }
@@ -3070,13 +3152,23 @@ pub async fn cleanup_persona_scoped_data(
         .filter(|scope| !keep_scopes.contains(scope))
         .collect();
     scopes_to_delete.sort();
+    let scopes_to_delete_set: HashSet<String> = scopes_to_delete.iter().cloned().collect();
+    let chat_v2_base = chat_store_v2_base(&app)?;
+    let protected_session_ids =
+        collect_protected_session_ids(&data_dir, &chat_v2_base, &scopes_to_delete_set);
 
     let mut deleted_scopes: Vec<String> = Vec::new();
     let mut deleted_paths: Vec<String> = Vec::new();
     let mut failed_scopes: Vec<Value> = Vec::new();
 
     for scope in scopes_to_delete {
-        match purge_persona_scope_data(&app, &db, &scope, &mut deleted_paths) {
+        match purge_persona_scope_data(
+            &app,
+            &db,
+            &scope,
+            &protected_session_ids,
+            &mut deleted_paths,
+        ) {
             Ok(()) => deleted_scopes.push(scope),
             Err(err) => failed_scopes.push(serde_json::json!({
                 "scope": scope,
@@ -3966,6 +4058,26 @@ pub async fn delete_template(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn unique_temp_data_dir(label: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir =
+            std::env::temp_dir().join(format!("chatapp-{label}-{}-{nanos}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn write_json(path: &Path, value: Value) {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
+        fs::write(path, serde_json::to_vec(&value).unwrap()).unwrap();
+    }
 
     fn build_test_zip(entries: &[(&str, Option<&[u8]>)]) -> Vec<u8> {
         let cursor = Cursor::new(Vec::new());
@@ -3980,6 +4092,69 @@ mod tests {
             }
         }
         writer.finish().unwrap().into_inner()
+    }
+
+    #[test]
+    fn protected_session_ids_include_sessions_from_non_deleted_scopes() {
+        let data_dir = unique_temp_data_dir("protected-sessions");
+        let chat_v2_base = data_dir.join("chat_store_v2");
+        fs::create_dir_all(&chat_v2_base).unwrap();
+
+        write_json(
+            &data_dir.join("contacts_store_v1__persona_deleted.json"),
+            serde_json::json!({
+                "contacts": {
+                    "own": { "id": "rp:persona_deleted" },
+                    "foreign": { "id": "rp:persona_keep" }
+                }
+            }),
+        );
+        write_json(
+            &data_dir.join("contacts_store_v1__persona_keep.json"),
+            serde_json::json!({
+                "contacts": {
+                    "self": { "id": "rp:persona_keep" }
+                }
+            }),
+        );
+
+        let mut scopes_to_delete = HashSet::new();
+        scopes_to_delete.insert("persona_deleted".to_string());
+        let protected = collect_protected_session_ids(&data_dir, &chat_v2_base, &scopes_to_delete);
+
+        assert!(protected.contains("rp:persona_keep"));
+        assert!(!protected.contains("rp:persona_deleted"));
+        let _ = fs::remove_dir_all(&data_dir);
+    }
+
+    #[test]
+    fn delete_unprotected_session_sidecars_preserves_protected_session_assets() {
+        let data_dir = unique_temp_data_dir("sidecar-delete");
+        let keep_safe = sanitize_segment("rp:persona_keep");
+        let delete_safe = sanitize_segment("rp:persona_deleted");
+        for base in ["attachments", "raw_replies", "wallpapers"] {
+            fs::create_dir_all(data_dir.join(base).join(&keep_safe)).unwrap();
+            fs::create_dir_all(data_dir.join(base).join(&delete_safe)).unwrap();
+        }
+
+        let mut session_ids = HashSet::new();
+        session_ids.insert("rp:persona_keep".to_string());
+        session_ids.insert("rp:persona_deleted".to_string());
+        let mut protected = HashSet::new();
+        protected.insert("rp:persona_keep".to_string());
+        let mut deleted_paths = Vec::new();
+
+        delete_unprotected_session_sidecars(&data_dir, session_ids, &protected, &mut deleted_paths)
+            .unwrap();
+
+        assert!(data_dir.join("attachments").join(&keep_safe).exists());
+        assert!(data_dir.join("raw_replies").join(&keep_safe).exists());
+        assert!(data_dir.join("wallpapers").join(&keep_safe).exists());
+        assert!(!data_dir.join("attachments").join(&delete_safe).exists());
+        assert!(!data_dir.join("raw_replies").join(&delete_safe).exists());
+        assert!(!data_dir.join("wallpapers").join(&delete_safe).exists());
+        assert_eq!(deleted_paths.len(), 3);
+        let _ = fs::remove_dir_all(&data_dir);
     }
 
     #[test]

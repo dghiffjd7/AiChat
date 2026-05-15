@@ -10,6 +10,29 @@ export const clearMessageQueueTimerCore = ({
   return true;
 };
 
+const clampRandomUnit = (value) => {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  if (n >= 1) return 1 - Number.EPSILON;
+  return n;
+};
+
+export const sampleBenfordUnit = (random = Math.random) => {
+  const u = clampRandomUnit(random?.());
+  return (10 ** u - 1) / 9;
+};
+
+export const calculateMessageQueueDelay = (charCount, {
+  random = Math.random,
+} = {}) => {
+  const count = Math.max(0, Number(charCount) || 0);
+  const base = Math.min(count * 60, 5500) + 1200;
+  const lower = Math.max(500, base - 1600);
+  const upper = Math.max(500, base - 400);
+  if (upper <= lower) return lower;
+  return lower + (upper - lower) * sampleBenfordUnit(random);
+};
+
 export const showTypingCore = ({
   avatarUrl = '',
   options = {},
@@ -124,11 +147,7 @@ export const enqueueMessagesCore = ({
     hideTyping?.();
   };
 
-  const calcDelay = (charCount) => {
-    const base = Math.min(charCount * 60, 5500) + 1200;
-    const jitter = (random() - 0.5) * 1200;
-    return Math.max(1500, base + jitter);
-  };
+  const calcDelay = charCount => calculateMessageQueueDelay(charCount, { random });
 
   const sleep = delay => new Promise((resolve) => {
     setMessageQueueTimer?.(scheduleTimeout(resolve, delay));
@@ -156,8 +175,8 @@ export const enqueueMessagesCore = ({
           setTypingThinkResumeTimer?.(null);
         }
 
-        if (isPrivate && delay >= 1500 && random() < 0.3) {
-          const pauseCount = delay >= 3000 && random() < 0.4 ? 2 : 1;
+        if (isPrivate && delay >= 500 && random() < 0.3) {
+          const pauseCount = delay >= 2000 && random() < 0.4 ? 2 : 1;
           const segments = pauseCount + 1;
           const segmentBase = delay / (segments + pauseCount * 0.4);
           for (let p = 0; p < pauseCount; p += 1) {

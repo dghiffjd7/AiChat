@@ -1,11 +1,26 @@
 import assert from 'node:assert/strict';
 
 import {
+  calculateMessageQueueDelay,
   clearMessageQueueTimerCore,
   enqueueMessagesCore,
   hideTypingCore,
+  sampleBenfordUnit,
   showTypingCore,
 } from '../../src/scripts/ui/chat/typing-flow-ui-utils.js';
+
+{
+  assert.equal(sampleBenfordUnit(() => 0), 0);
+  const highSample = sampleBenfordUnit(() => 1);
+  assert.ok(highSample < 1);
+  assert.ok(highSample > 0.999);
+  assert.equal(calculateMessageQueueDelay(10, { random: () => 0 }), 500);
+  const tenCharHigh = calculateMessageQueueDelay(10, { random: () => 1 });
+  assert.ok(tenCharHigh < 1400);
+  assert.ok(tenCharHigh > 1399);
+  assert.equal(calculateMessageQueueDelay(30, { random: () => 0 }), 1400);
+  console.log('ok - calculateMessageQueueDelay uses shortened Benford-distributed delay ranges');
+}
 
 {
   let cleared = 0;
