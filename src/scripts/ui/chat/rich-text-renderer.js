@@ -3929,6 +3929,61 @@ const maybeDecodeRichFragmentEntities = (input) => {
     return raw;
 };
 
+const RICH_FRAGMENT_RAW_TEXT_TAGS_FOR_PARSE = new Set(['script', 'style', 'textarea', 'title']);
+const RICH_FRAGMENT_SUPPORTED_TAGS = new Set([
+    ...RICH_FRAGMENT_ALLOWED_TAGS,
+    ...RICH_FRAGMENT_DROP_TAGS,
+]);
+
+const escapeUnsupportedRichFragmentTags = (input) => {
+    const raw = String(input ?? '');
+    if (!raw || !/<\/?[a-z][\w:-]*(?:\s[^<>]*?)?>/i.test(raw)) return raw;
+    return raw.replace(/<\/?([a-z][\w:-]*)(?:\s[^<>]*?)?>/gi, (match, tagName) => {
+        const tag = String(tagName || '').toLowerCase();
+        if (RICH_FRAGMENT_SUPPORTED_TAGS.has(tag)) return match;
+        return escapeHtmlText(match);
+    });
+};
+
+const escapeUnbalancedRichRawTextTags = (input) => {
+    const raw = String(input ?? '');
+    if (!raw || !/<(?:script|style|textarea|title)\b/i.test(raw)) return raw;
+    const openerRe = /<(script|style|textarea|title)\b[^>]*>/ig;
+    let out = '';
+    let cursor = 0;
+    let match;
+    while ((match = openerRe.exec(raw))) {
+        const tag = String(match[1] || '').toLowerCase();
+        if (!RICH_FRAGMENT_RAW_TEXT_TAGS_FOR_PARSE.has(tag)) continue;
+        const openStart = match.index;
+        const openEnd = openerRe.lastIndex;
+        const closerRe = new RegExp(`<\\/${tag}\\s*>`, 'ig');
+        closerRe.lastIndex = openEnd;
+        const closer = closerRe.exec(raw);
+        const nextSameOpenerRe = new RegExp(`<${tag}\\b[^>]*>`, 'ig');
+        nextSameOpenerRe.lastIndex = openEnd;
+        const nextSameOpener = nextSameOpenerRe.exec(raw);
+        const hasLocalCloser = Boolean(closer && (!nextSameOpener || closer.index < nextSameOpener.index));
+        if (hasLocalCloser) {
+            const closeEnd = closer.index + closer[0].length;
+            out += raw.slice(cursor, closeEnd);
+            cursor = closeEnd;
+            openerRe.lastIndex = closeEnd;
+            continue;
+        }
+        out += raw.slice(cursor, openStart);
+        out += escapeHtmlText(raw.slice(openStart, openEnd));
+        cursor = openEnd;
+        openerRe.lastIndex = openEnd;
+    }
+    out += raw.slice(cursor);
+    return out;
+};
+
+export const prepareRichFragmentHtmlForParsing = (input) => (
+    escapeUnbalancedRichRawTextTags(escapeUnsupportedRichFragmentTags(input))
+);
+
 const hasInteractiveHtmlHint = (input) => {
     const raw = String(input ?? '');
     return Boolean(raw) && (RICH_INTERACTIVE_HTML_RE.test(raw) || RICH_INTERACTIVE_ESCAPED_HTML_RE.test(raw));
@@ -4442,7 +4497,7 @@ const renderScopedRichFragment = (
     } = {},
 ) => {
     if (!containerEl) return false;
-    const normalized = maybeDecodeRichFragmentEntities(text);
+    const normalized = prepareRichFragmentHtmlForParsing(maybeDecodeRichFragmentEntities(text));
     if (!normalized.trim()) return false;
     if (typeof DOMParser === 'undefined') return false;
     try {
