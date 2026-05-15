@@ -44,6 +44,7 @@ pub fn run() {
             commands::save_wallpaper_stream_chunk,
             commands::save_wallpaper_stream_finish,
             commands::delete_wallpaper,
+            commands::wallpaper_path_exists,
             commands::cleanup_wallpapers,
             commands::save_attachment,
             commands::save_attachment_bytes,

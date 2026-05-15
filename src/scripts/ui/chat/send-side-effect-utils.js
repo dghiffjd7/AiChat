@@ -14,7 +14,7 @@ const countPendingImageTokens = value => (
 
 const logWritingAutoImageFinalizeDebug = (logger, stage = '', payload = {}) => {
   try {
-    logger?.info?.(`[writing-auto-image] finalize-${stage} ${JSON.stringify(payload)}`);
+    logger?.debug?.(`[writing-auto-image] finalize-${stage} ${JSON.stringify(payload)}`);
   } catch {}
 };
 

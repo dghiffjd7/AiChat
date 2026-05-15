@@ -96,7 +96,7 @@ export class GroupStore {
                 } catch (err) {
                     logger.warn('group store hydrate -> localStorage failed', err);
                 }
-                logger.info('group store hydrated from disk');
+                logger.debug('group store hydrated from disk');
             }
         } catch (err) {
             logger.debug('group store disk load skipped (可能非 Tauri)', err);

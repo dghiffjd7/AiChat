@@ -1058,7 +1058,7 @@ export class ChatStore {
         lastReadAt: 0,
         unreadCount: 0,
       };
-      logger.info(`[Persona_test] chatStore.sessionCreated sid=${sid} scope=${this.scopeId || 'default'} key=${this.storeKey}`);
+      logger.debug(`[Persona_test] chatStore.sessionCreated sid=${sid} scope=${this.scopeId || 'default'} key=${this.storeKey}`);
       return this.state.sessions[sid];
     }
     const s = this.state.sessions[sid];
@@ -1160,8 +1160,8 @@ export class ChatStore {
             logger.warn('chat store hydrate -> localStorage failed', err);
           }
         }
-        logger.info('chat store hydrated from disk');
-        logger.info(
+        logger.debug('chat store hydrated from disk');
+        logger.debug(
           `[Persona_test] chatStore.hydrated scope=${scopeId || 'default'} key=${storeKey} sessions=${
             Object.keys(this.state.sessions || {}).length
           } current=${this.currentId || ''}`,
@@ -1371,7 +1371,7 @@ export class ChatStore {
       if (tail.length) {
         tail.reverse();
         merged.push(...tail);
-        logger.info(
+        logger.debug(
           `[chat-store] preserved in-memory tail sid=${sid} scope=${this.scopeId || 'default'} loaded=${ids.length} tail=${tail.length}`
         );
       }
@@ -1566,7 +1566,7 @@ export class ChatStore {
     if (nextScope === this.scopeId) return this.fullyReady || this.ready;
     const prevScope = this.scopeId;
     const prevKey = this.storeKey;
-    logger.info(
+    logger.debug(
       `[Persona_test] chatStore.setScope begin scope=${prevScope || 'default'} key=${prevKey} -> ${nextScope || 'default'}`,
     );
     this._scopeToken += 1;
@@ -1595,7 +1595,7 @@ export class ChatStore {
     const ready = this.fullyReady;
     ready
       .then(() => {
-        logger.info(
+        logger.debug(
           `[Persona_test] chatStore.setScope ready scope=${this.scopeId || 'default'} key=${
             this.storeKey
           } sessions=${Object.keys(this.state.sessions || {}).length} current=${this.currentId || ''}`,

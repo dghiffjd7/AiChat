@@ -39,7 +39,7 @@ import {
   const ok = refreshChatAndContactsListNow({
     chatScopeId: 'scope-a',
     contactsScopeId: 'scope-b',
-    logger: { info: (...args) => calls.push(args) },
+    logger: { debug: (...args) => calls.push(args) },
   });
   assert.equal(ok, false);
   assert.equal(calls.length, 1);

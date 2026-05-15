@@ -251,7 +251,7 @@ export class ConfigManager {
             const active = this.getActiveProfile();
             this.config = await this.buildRuntimeConfig(active);
             this.isLoaded = true;
-            logger.info(`配置加载成功: ${active.name} (ID: ${active.id}), provider: ${active.provider}`);
+            logger.debug(`配置加载成功: ${active.name} (ID: ${active.id}), provider: ${active.provider}`);
         } catch (e) {
             logger.error('配置加载失败，回退默认值', e);
             this.config = this.getDefault();
@@ -359,7 +359,7 @@ export class ConfigManager {
         try {
             profiles = await safeInvoke('load_kv', { name: this.profileStoreKey });
             if (profiles) {
-                logger.info(`load_kv profiles 成功 (Tauri): activeProfileId=${profiles.activeProfileId}, profiles数量=${Object.keys(profiles.profiles || {}).length}`);
+                logger.debug(`load_kv profiles 成功 (Tauri): activeProfileId=${profiles.activeProfileId}, profiles数量=${Object.keys(profiles.profiles || {}).length}`);
             }
         } catch (err) {
             logger.debug('load_kv profiles failed (可能非 Tauri)', err);
@@ -371,7 +371,7 @@ export class ConfigManager {
         try {
             keyring = await safeInvoke('load_kv', { name: this.keyringStoreKey });
             if (keyring) {
-                logger.info('load_kv keyring 成功 (Tauri)');
+                logger.debug('load_kv keyring 成功 (Tauri)');
             }
         } catch (err) {
             logger.debug('load_kv keyring failed (可能非 Tauri)', err);
@@ -426,7 +426,7 @@ export class ConfigManager {
                 if (raw) {
                     localProfiles = JSON.parse(raw);
                     profiles = localProfiles;
-                    logger.info(`localStorage profiles 加载成功（备份）: activeProfileId=${profiles.activeProfileId}, profiles数量=${Object.keys(profiles.profiles || {}).length}`);
+                    logger.debug(`localStorage profiles 加载成功（备份）: activeProfileId=${profiles.activeProfileId}, profiles数量=${Object.keys(profiles.profiles || {}).length}`);
                 }
             } catch (err) {
                 logger.error('localStorage profiles 加载失败', err);
@@ -436,7 +436,7 @@ export class ConfigManager {
                 const raw = localStorage.getItem(this.profileStoreKey);
                 if (raw) {
                     localProfiles = JSON.parse(raw);
-                    logger.info(`localStorage profiles 对比加载成功（备份）: activeProfileId=${localProfiles.activeProfileId}, profiles数量=${Object.keys(localProfiles.profiles || {}).length}`);
+                    logger.debug(`localStorage profiles 对比加载成功（备份）: activeProfileId=${localProfiles.activeProfileId}, profiles数量=${Object.keys(localProfiles.profiles || {}).length}`);
                 }
             } catch (err) {
                 logger.error('localStorage profiles 对比加载失败', err);

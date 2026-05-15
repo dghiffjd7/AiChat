@@ -155,7 +155,7 @@ const appendRichTextInlineMedia = (containerEl, text = '', {
         img.src = src;
         try {
             if (shouldLogRichDebug()) {
-                console.info('[writing-auto-image]', 'rich-render-image-token', {
+                console.debug('[writing-auto-image]', 'rich-render-image-token', {
                     refPreview: ref.slice(0, 180),
                     srcPreview: src.slice(0, 180),
                 });
@@ -3282,7 +3282,7 @@ const logIframeHeight = ({
         force: true,
     });
     if (level === 'warn') logger.warn(msg);
-    else logger.info(msg);
+    else logger.debug(msg);
 };
 
 const clearIframeAutoResizeObservers = (iframe) => {
@@ -4462,7 +4462,7 @@ const renderScopedRichFragment = (
         if (Boolean(debugTag) || shouldLogRichDebug()) {
             const info = `fragment source=${source} msg=${String(messageId || '')} len=${normalized.length} styles=${state.styles.length}${debugTag ? ` tag=${debugTag}` : ''}`;
             emitDebugLog({ source: 'rich', type: 'info', message: info, force: true });
-            logger.info(`[rich] ${info}`);
+            logger.debug(`[rich] ${info}`);
         }
         return true;
     } catch (err) {
@@ -7285,7 +7285,7 @@ const makeCodeBlock = ({
     if (debugTag === 'rp-greeting' && !String(sessionId || '').trim() && resolvedSessionId) {
         const sidMsg = `rp-greeting session-fallback sid=${resolvedSessionId}`;
         emitDebugLog({ source: 'rich', type: 'info', message: sidMsg, force: true });
-        logger.info(`[rich] ${sidMsg}`);
+        logger.debug(`[rich] ${sidMsg}`);
     }
     const useLegacyMvuBridge = !directBodyLoadUrl;
     const mvuBridgeBuilder = useLegacyMvuBridge ? buildMvuCompatBridgeLegacy : buildMvuCompatBridge;
@@ -7301,10 +7301,10 @@ const makeCodeBlock = ({
         if (hasHtmlHint || shouldRenderHtml) {
             const msg = `codeblock route=${renderLevel} exec=${renderExecution} html?=${shouldRenderHtml} fragment=${shouldRenderScopedFragment ? 1 : 0} lang=${lang || 'none'} len=${String(code || '').length} msg=${String(messageId || '')} scripts=${allowScripts ? 1 : 0} mvu=${needsMvuCompat ? 1 : 0} forceMvu=${forceMvuCompat ? 1 : 0}${debugTag ? ` tag=${debugTag}` : ''}`;
             emitDebugLog({ source: 'rich', type: shouldRenderHtml ? 'info' : 'warn', message: msg, force: true });
-            logger.info(`[rich] ${msg}`);
+            logger.debug(`[rich] ${msg}`);
             const compatMsg = `compat-profile=${sourceCompat.profile} flags=${summarizeCompatFlags(sourceCompat.flags) || 'none'}${debugTag ? ` tag=${debugTag}` : ''}`;
             emitDebugLog({ source: 'rich', type: 'info', message: compatMsg, force: true });
-            logger.info(`[rich] ${compatMsg}`);
+            logger.debug(`[rich] ${compatMsg}`);
             if (debugTag === 'rp-greeting') {
                 const importUrlSet = new Set();
                 const codeText = String(code || '');
@@ -7355,33 +7355,33 @@ const makeCodeBlock = ({
                     ` narrationCount=${narrationCount}` +
                     ` tag=${debugTag}`;
                 emitDebugLog({ source: 'rich', type: 'info', message: probeMsg, force: true });
-                logger.info(`[rich] ${probeMsg}`);
+                logger.debug(`[rich] ${probeMsg}`);
                 if (importUrls.length) {
                     const importMsg = `html-import-urls ${importUrls.slice(0, 6).join(' | ')}${importUrls.length > 6 ? ' | ...' : ''} tag=${debugTag}`;
                     emitDebugLog({ source: 'rich', type: 'info', message: importMsg, force: true });
-                    logger.info(`[rich] ${importMsg}`);
+                    logger.debug(`[rich] ${importMsg}`);
                 }
                 if (scriptSrcList.length) {
                     const srcMsg = `html-script-src ${scriptSrcList.slice(0, 6).join(' | ')}${scriptSrcList.length > 6 ? ' | ...' : ''} tag=${debugTag}`;
                     emitDebugLog({ source: 'rich', type: 'info', message: srcMsg, force: true });
-                    logger.info(`[rich] ${srcMsg}`);
+                    logger.debug(`[rich] ${srcMsg}`);
                 }
                 if (inlineScriptList.length) {
                     const inlinePreview = inlineScriptList[0].replace(/\s+/g, ' ').slice(0, 180);
                     const inlineMsg = `html-inline-script-preview ${inlinePreview}${inlineScriptList[0].length > 180 ? '...' : ''} tag=${debugTag}`;
                     emitDebugLog({ source: 'rich', type: 'info', message: inlineMsg, force: true });
-                    logger.info(`[rich] ${inlineMsg}`);
+                    logger.debug(`[rich] ${inlineMsg}`);
                 }
                 if (preview) {
                     const previewMsg = `html-preview ${preview}${String(code || '').length > 220 ? '...' : ''} tag=${debugTag}`;
                     emitDebugLog({ source: 'rich', type: 'info', message: previewMsg, force: true });
-                    logger.info(`[rich] ${previewMsg}`);
+                    logger.debug(`[rich] ${previewMsg}`);
                 }
             }
             if (directBodyLoadUrl) {
                 const bodyLoadMsg = `body-load-detected url=${directBodyLoadUrl}${debugTag ? ` tag=${debugTag}` : ''}`;
                 emitDebugLog({ source: 'rich', type: 'info', message: bodyLoadMsg, force: true });
-                logger.info(`[rich] ${bodyLoadMsg}`);
+                logger.debug(`[rich] ${bodyLoadMsg}`);
             }
         }
     }
@@ -7459,7 +7459,7 @@ const makeCodeBlock = ({
             if (rewriteResult.replaced > 0) {
                 const msg = `helper-rewrite-inline count=${rewriteResult.replaced}${debugTag ? ` tag=${debugTag}` : ''}`;
                 emitDebugLog({ source: 'rich', type: 'info', message: msg, force: true });
-                logger.info(`[rich] ${msg}`);
+                logger.debug(`[rich] ${msg}`);
             }
             html = ensureBabelScriptDefaults(html);
         }
@@ -7519,7 +7519,7 @@ const makeCodeBlock = ({
         if (needsMvuCompat && (Boolean(debugTag) || shouldLogRichDebug())) {
             const modeMsg = `mvu-bridge=${useLegacyMvuBridge ? 'legacy' : 'enhanced'}${debugTag ? ` tag=${debugTag}` : ''}`;
             emitDebugLog({ source: 'rich', type: 'info', message: modeMsg, force: true });
-            logger.info(`[rich] ${modeMsg}`);
+            logger.debug(`[rich] ${modeMsg}`);
         }
         const scriptHeadPrepend = `${dollarShim}${reactShim}${frameworkShim}${mvuCompatBridge}`;
         const scriptHostDoc = buildIframeSrcDoc(html, {
@@ -7560,7 +7560,7 @@ const makeCodeBlock = ({
                 const msg = String(message || '');
                 emitDebugLog({ source: 'iframe', type, message: msg, force: true });
                 if (type === 'warn') warnIframe('direct-load', iframeId, `msg=${msg}`);
-                else logger.info(`[iframe] ${msg}`);
+                else logger.debug(`[iframe] ${msg}`);
             };
             const postDirectDocToHost = (sourceLabel) => {
                 if (!directHostLoaded || !directDocToSend || iframe.dataset.iframeDocSent === '1') return false;
@@ -8564,7 +8564,7 @@ export const setupIframeResizeListener = () => {
             if (!iframe) return;
             const st = getIframeState(id, { messageId: String(iframe.dataset.msgId || ''), createdAt: Date.now() });
             if (st) st.hostReadyAt = Date.now();
-            logger.info(`[iframe] host-ready id=${id}`);
+            logger.debug(`[iframe] host-ready id=${id}`);
             return;
         }
         if (data.type === 'chatapp:iframe-host-error') {
@@ -8652,7 +8652,7 @@ export const setupIframeResizeListener = () => {
                 force: true,
             });
             if (warnType) warnIframe('compat', id, message ? `msg=${message}` : '');
-            else logger.info(`[iframe] ${info}`);
+            else logger.debug(`[iframe] ${info}`);
             return;
         }
         if (data.type === 'chatapp:iframe-resize') {
@@ -8815,7 +8815,7 @@ export const renderRichText = (
         if (fragmentHint || hasCodeFence || wholeLooksLikeHtml) {
             const msg = `render msg=${String(messageId || '')} codeFence=${hasCodeFence} html=${wholeLooksLikeHtml} escaped=${hasEscapedHtml} parts=${parts.length}${debugTag ? ` tag=${debugTag}` : ''}`;
             emitDebugLog({ source: 'rich', type: 'info', message: msg, force: true });
-            logger.info(`[rich] ${msg}`);
+            logger.debug(`[rich] ${msg}`);
         }
     }
     if (hasCodeFence) {
@@ -8876,7 +8876,7 @@ export const renderRichText = (
                 if (Boolean(debugTag) || shouldLogRichDebug()) {
                     const msg = `text route=${chunkRoute.level} interactive=${chunkRoute.hasInteractiveHtml ? 1 : 0} len=${chunk.length}${debugTag ? ` tag=${debugTag}` : ''}`;
                     emitDebugLog({ source: 'rich', type: 'info', message: msg, force: true });
-                    logger.info(`[rich] ${msg}`);
+                    logger.debug(`[rich] ${msg}`);
                 }
                 return;
             }

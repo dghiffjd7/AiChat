@@ -64,7 +64,7 @@ export class ContactDragManager {
         }
 
         this.initialized = true;
-        logger.info('ContactDragManager 已初始化');
+        logger.debug('ContactDragManager 已初始化');
     }
 
     /**
@@ -86,7 +86,7 @@ export class ContactDragManager {
         }
 
         this.initialized = false;
-        logger.info('ContactDragManager 已销毁');
+        logger.debug('ContactDragManager 已销毁');
     }
 
     beginDrag(contact) {

@@ -163,15 +163,15 @@ export class ContactsStore {
                         logger.warn('contacts store hydrate -> localStorage failed', err);
                     }
                 }
-                logger.info('contacts store hydrated from disk');
+                logger.debug('contacts store hydrated from disk');
                 try {
                     const contacts = Object.values(this.state.contacts || {});
                     const groupCount = contacts.filter(item => item && (item.isGroup || String(item.id || '').startsWith('group:'))).length;
-                    logger.info(
+                    logger.debug(
                         `[contacts-store] hydrate scope=${scopeId || 'default'} contacts=${contacts.length} groups=${groupCount}`
                     );
                 } catch {}
-                logger.info(
+                logger.debug(
                     `[Persona_test] contactsStore.hydrated scope=${scopeId || 'default'} key=${storeKey} contacts=${
                         Object.keys(this.state.contacts || {}).length
                     }`
@@ -223,7 +223,7 @@ export class ContactsStore {
         if (nextScope === this.scopeId) return this.ready;
         const prevScope = this.scopeId;
         const prevKey = this.storeKey;
-        logger.info(
+        logger.debug(
             `[Persona_test] contactsStore.setScope begin scope=${prevScope || 'default'} key=${prevKey} -> ${nextScope || 'default'}`
         );
         this._scopeToken += 1;
@@ -237,7 +237,7 @@ export class ContactsStore {
         const ready = this.ready;
         ready
             .then(() => {
-                logger.info(
+                logger.debug(
                     `[Persona_test] contactsStore.setScope ready scope=${this.scopeId || 'default'} key=${this.storeKey} contacts=${
                         Object.keys(this.state.contacts || {}).length
                     }`
@@ -305,7 +305,7 @@ export class ContactsStore {
             if (next?.isGroup || String(id).startsWith('group:')) {
                 const members = Array.isArray(next?.members) ? next.members.length : 0;
                 const avatarLen = String(next?.avatar || '').trim().length;
-                logger.info(
+                logger.debug(
                     `[contacts-store] upsert group scope=${this.scopeId || 'default'} id=${id} name=${String(next?.name || '')} members=${members} avatarLen=${avatarLen}`
                 );
             }
@@ -350,7 +350,7 @@ export class ContactsStore {
         if (changed) {
             const preview = added.slice(0, 6).join(', ');
             const suffix = added.length > 6 ? '...' : '';
-            logger.info(
+            logger.debug(
                 `[Persona_test] contactsStore.ensureFromSessions added=${added.length} scope=${this.scopeId || 'default'} ids=${preview}${suffix}`
             );
             this._persist();
@@ -358,7 +358,7 @@ export class ContactsStore {
         if (skippedGroups.length) {
             const preview = skippedGroups.slice(0, 6).join(', ');
             const suffix = skippedGroups.length > 6 ? '...' : '';
-            logger.info(
+            logger.debug(
                 `[contacts-store] ensureFromSessions skippedGroups=${skippedGroups.length} scope=${this.scopeId || 'default'} ids=${preview}${suffix}`
             );
         }

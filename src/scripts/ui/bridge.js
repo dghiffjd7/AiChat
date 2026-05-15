@@ -2025,7 +2025,7 @@ class AppBridge {
           this.currentWorldId = this.currentWorldIds[0] || null;
           this.emitWorldInfoChanged();
         }
-        logger.info('world-session map hydrated from disk');
+        logger.debug('world-session map hydrated from disk');
       }
     } catch (err) {
       logger.debug('world-session map 磁盘加载失败（可能非 Tauri）', err);
@@ -2127,7 +2127,7 @@ class AppBridge {
    */
   async init() {
     try {
-      logger.info('初始化 AppBridge...');
+      logger.debug('初始化 AppBridge...');
 
       // 加载配置
       await this.presets.ready;
@@ -2142,13 +2142,13 @@ class AppBridge {
       // 初始化 LLM 客户端
       if (canInitClient(config)) {
         this.client = new LLMClient(config);
-        logger.info(`LLM 客户端初始化成功 (provider: ${config.provider})`);
+        logger.debug(`LLM 客户端初始化成功 (provider: ${config.provider})`);
       } else {
         logger.warn('未配置 API 认证信息，请先配置');
       }
 
       this.initialized = true;
-      logger.info('AppBridge 初始化完成');
+      logger.debug('AppBridge 初始化完成');
 
       return true;
     } catch (error) {
@@ -6651,7 +6651,7 @@ window.importSTWorld = async (jsonObj, name = 'imported') => {
 window.appBridge
   .init()
   .then(() => {
-    logger.info('✅ App Bridge 初始化完成');
+    logger.debug('App Bridge 初始化完成');
   })
   .catch(error => {
     logger.error('❌ App Bridge 初始化失败:', error);

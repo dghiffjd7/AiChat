@@ -1519,7 +1519,7 @@ const initApp = async () => {
     });
     emitMvuInitialized(sid, 0, { useGlobal });
     if (reason) {
-      logger.info(`[MVU] defaults applied=${updateKeys.length} reason=${reason} session=${sid}`);
+      logger.debug(`[MVU] defaults applied=${updateKeys.length} reason=${reason} session=${sid}`);
     }
     return true;
   };
@@ -1642,7 +1642,7 @@ const initApp = async () => {
         updatedAt: Date.now(),
       };
     } catch {}
-    logger.info(`[Persona_test] applyPersonaScope start persona=${pid} scope=${nextKey || 'default'}`);
+    logger.debug(`[Persona_test] applyPersonaScope start persona=${pid} scope=${nextKey || 'default'}`);
     activePersonaScopeKey = nextKey;
     await Promise.all([
       chatStore.setScope?.(nextKey),
@@ -1680,7 +1680,7 @@ const initApp = async () => {
     try {
       if (activePage === 'moments') momentsPanel.render({ preserveScroll: false });
     } catch {}
-    logger.info(
+    logger.debug(
       `[Persona_test] applyPersonaScope done scope=${nextKey || 'default'} sessions=${
         chatStore.listSessions?.().length || 0
       } contacts=${contactsStore.listContacts?.().length || 0}`,
@@ -11463,32 +11463,7 @@ Phase G（Frame 36）：循环衔接
   let uiStateDiskTimer = null;
   const uiLog = (...args) => {
     try {
-      console.log('[CHATAPP_UI]', ...args);
-    } catch {}
-    try {
-      logger.info('[CHATAPP_UI]', ...args);
-    } catch {}
-    try {
-      const g = typeof globalThis !== 'undefined' ? globalThis : window;
-      if (g?.__TAURI__) {
-        const msg = args
-          .map(a => {
-            if (a == null) return '';
-            if (typeof a === 'string') return a;
-            try {
-              return JSON.stringify(a);
-            } catch {
-              return String(a);
-            }
-          })
-          .filter(Boolean)
-          .join(' ');
-        safeInvoke('log_js', {
-          tag: 'CHATAPP_UI',
-          level: 'info',
-          message: msg.slice(0, 2000),
-        }).catch(() => {});
-      }
+      logger.debug('[CHATAPP_UI]', ...args);
     } catch {}
   };
   const appUiStateRuntime = createAppUiStateRuntime({
@@ -13874,7 +13849,7 @@ Phase G（Frame 36）：循环衔接
       const settings = appSettings.get();
       const enabled = settings.autoImagePromptEnabled === true && settings.autoImagePromptWritingEnabled !== false;
       if (!enabled) {
-        logger.info(`[writing-auto-image] preserve-disabled ${JSON.stringify({
+        logger.debug(`[writing-auto-image] preserve-disabled ${JSON.stringify({
           sessionId: String(targetSessionId || ''),
           autoImagePromptEnabled: settings.autoImagePromptEnabled,
           autoImagePromptWritingEnabled: settings.autoImagePromptWritingEnabled,
@@ -13885,7 +13860,7 @@ Phase G（Frame 36）：循环衔接
       }
       return enabled;
     } catch (err) {
-      logger.info(`[writing-auto-image] preserve-disabled ${JSON.stringify({
+      logger.debug(`[writing-auto-image] preserve-disabled ${JSON.stringify({
         sessionId: String(targetSessionId || ''),
         reason: 'settings-error',
         error: String(err?.message || err || ''),
@@ -13896,7 +13871,7 @@ Phase G（Frame 36）：循环衔接
   const traceWritingAutoImagePrompt = (stage = '', payload = {}) => {
     try {
       if (localStorage.getItem('debug_writing_auto_image') !== '1') return;
-      console.info('[writing-auto-image]', stage, payload);
+      console.debug('[writing-auto-image]', stage, payload);
     } catch {}
   };
   const shouldRunAutoImagePromptGeneration = ({ sessionId = '', messageId = '', prompt = '' } = {}) => {
@@ -14165,7 +14140,7 @@ Phase G（Frame 36）：循环衔接
         prompt: firstPrompt,
       });
     if (!guard.ok) {
-      logger.info(`[writing-auto-image] run-skipped ${JSON.stringify({
+      logger.debug(`[writing-auto-image] run-skipped ${JSON.stringify({
         sessionId,
         messageId,
         source,
@@ -14414,7 +14389,7 @@ Phase G（Frame 36）：循环衔接
     );
     const logEditSchedule = (stage = '', payload = {}) => {
       if (source !== 'edit_assistant_raw') return;
-      logger.info(`[edit-assistant-raw] auto-image-scheduler-${stage} ${JSON.stringify({
+      logger.debug(`[edit-assistant-raw] auto-image-scheduler-${stage} ${JSON.stringify({
         sessionId,
         messageId,
         surface,
@@ -16203,7 +16178,7 @@ Phase G（Frame 36）：循环衔接
       const detail = Object.entries(fields)
         .map(([key, value]) => `${key}=${String(value ?? '')}`)
         .join(' ');
-      logger.info(`[rp-greeting] ${stage}${detail ? ` ${detail}` : ''}`);
+      logger.debug(`[rp-greeting] ${stage}${detail ? ` ${detail}` : ''}`);
     } catch {}
   };
   const hasRpConversation = (sessionId) => {
@@ -16608,20 +16583,20 @@ Phase G（Frame 36）：循环衔接
         const unmatched = Array.isArray(meta.unmatched) ? meta.unmatched : [];
         const missingSchema = Array.isArray(meta.missingSchema) ? meta.missingSchema : [];
         const unmatchedNested = Array.isArray(meta.unmatchedNested) ? meta.unmatchedNested : [];
-        logger.info(`[initvar] session=${sessionId} source=${source || 'unknown'} raw=${rawKeys.length} normalized=${normalizedKeys.length} schema=${(meta.schemaKeys || []).length} mappedLeaf=${mappedLeaf.length} unmatched=${unmatched.length}`);
-        if (meta.noSchema) logger.info(`[initvar] session=${sessionId} source=${source || 'unknown'} no schema detected, using raw keys`);
+        logger.debug(`[initvar] session=${sessionId} source=${source || 'unknown'} raw=${rawKeys.length} normalized=${normalizedKeys.length} schema=${(meta.schemaKeys || []).length} mappedLeaf=${mappedLeaf.length} unmatched=${unmatched.length}`);
+        if (meta.noSchema) logger.debug(`[initvar] session=${sessionId} source=${source || 'unknown'} no schema detected, using raw keys`);
         if (mappedLeaf.length) {
           const pairs = mappedLeaf.map(item => `${item.from}->${item.to}`).join(', ');
-          logger.info(`[initvar] session=${sessionId} source=${source || 'unknown'} leaf mapped: ${pairs}`);
+          logger.debug(`[initvar] session=${sessionId} source=${source || 'unknown'} leaf mapped: ${pairs}`);
         }
-        if (unmatched.length) logger.info(`[initvar] session=${sessionId} source=${source || 'unknown'} unmatched: ${unmatched.join(', ')}`);
+        if (unmatched.length) logger.debug(`[initvar] session=${sessionId} source=${source || 'unknown'} unmatched: ${unmatched.join(', ')}`);
         if (missingSchema.length) {
           const sample = missingSchema.slice(0, 12).join(', ');
-          logger.info(`[initvar] session=${sessionId} source=${source || 'unknown'} missing schema keys (${missingSchema.length}): ${sample}`);
+          logger.debug(`[initvar] session=${sessionId} source=${source || 'unknown'} missing schema keys (${missingSchema.length}): ${sample}`);
         }
         if (unmatchedNested.length) {
           const sample = unmatchedNested.slice(0, 20).join(', ');
-          logger.info(`[initvar] session=${sessionId} source=${source || 'unknown'} nested keys under unmatched: ${sample}`);
+          logger.debug(`[initvar] session=${sessionId} source=${source || 'unknown'} nested keys under unmatched: ${sample}`);
         }
       }
       const existing = chatStore.listVariables(sessionId) || {};
@@ -16664,9 +16639,9 @@ Phase G（Frame 36）：循环衔接
       if (preferInit && hasExisting && logger?.info && shouldLogGreetingDiagnostics()) {
         const applied = Object.keys(mergedUpdates);
         if (applied.length) {
-          logger.info(`[initvar] session=${sessionId} source=${source || 'unknown'} applied=${applied.length} (respecting user changes)`);
+          logger.debug(`[initvar] session=${sessionId} source=${source || 'unknown'} applied=${applied.length} (respecting user changes)`);
         } else {
-          logger.info(`[initvar] session=${sessionId} source=${source || 'unknown'} applied=0 (all keys already set or user-changed)`);
+          logger.debug(`[initvar] session=${sessionId} source=${source || 'unknown'} applied=0 (all keys already set or user-changed)`);
         }
       }
       return changed;
@@ -20843,7 +20818,7 @@ Phase G（Frame 36）：循环衔接
 	      const cleanedForRender = stripUpdateVariableBlocks(next);
       const hadUpdateVariableTag = /<\s*(update(?:variable)?|variableupdate)\b/i.test(next);
       if (hadUpdateVariableTag) {
-        logger.info(
+        logger.debug(
           `[edit-assistant-raw] strip-update-variable messageId=${String(message?.id || '')} rawLen=${next.length} cleanedLen=${cleanedForRender.length}`,
         );
       }
@@ -20906,7 +20881,7 @@ Phase G（Frame 36）：循环衔接
 	          promptPreview: String(editAutoImagePromptPlaceholders[0]?.prompt || '').slice(0, 120),
 	        };
 	        if (editAutoImagePromptDebug.extractedCount || editAutoImagePromptDebug.rawHasLiteralTag || editAutoImagePromptDebug.decodedHasLiteralTag) {
-	          logger.info(`[edit-assistant-raw] auto-image-prepare ${JSON.stringify({
+	          logger.debug(`[edit-assistant-raw] auto-image-prepare ${JSON.stringify({
 	            messageId: String(message?.id || ''),
 	            session: String(sessionId || ''),
 	            ...editAutoImagePromptDebug,
@@ -20967,7 +20942,7 @@ Phase G（Frame 36）：循环衔接
 	          promptPreview: String(chatEditPrompts[0] || '').slice(0, 120),
 	        };
 	        if (editAutoImagePromptDebug.extractedCount || editAutoImagePromptDebug.rawHasLiteralTag || editAutoImagePromptDebug.decodedHasLiteralTag) {
-	          logger.info(`[edit-assistant-raw] auto-image-prepare ${JSON.stringify({
+	          logger.debug(`[edit-assistant-raw] auto-image-prepare ${JSON.stringify({
 	            messageId: String(message?.id || ''),
 	            session: String(sessionId || ''),
 	            ...editAutoImagePromptDebug,
@@ -21037,7 +21012,7 @@ Phase G（Frame 36）：循环衔接
         let finalMessage = updated;
         try {
 	          const changed = applyUpdateVariableForMessageSafe(updated, sessionId);
-          logger.info(
+          logger.debug(
             `[edit-assistant-raw] update-variable messageId=${String(message?.id || '')} session=${String(sessionId || '')} changed=${changed ? 1 : 0}`,
           );
           finalMessage = chatStore.findMessage(message.id, sessionId) || finalMessage;
@@ -21061,7 +21036,7 @@ Phase G（Frame 36）：循环衔接
 	        }).length;
 	        const shouldScheduleAutoImageAfterEdit =
 	          schedulePromptCount > 0;
-	        logger.info(`[edit-assistant-raw] auto-image-schedule-check ${JSON.stringify({
+	        logger.debug(`[edit-assistant-raw] auto-image-schedule-check ${JSON.stringify({
 	          messageId: String(message?.id || ''),
 	          session: String(sessionId || ''),
 	          surface: resolveMediaSurfaceForSession(sessionId),
@@ -21083,7 +21058,7 @@ Phase G（Frame 36）：循环衔接
 	              rawText: scheduleRawText,
 	              source: 'edit_assistant_raw',
 	            });
-	            logger.info(`[edit-assistant-raw] auto-image-schedule-run ${JSON.stringify({
+	            logger.debug(`[edit-assistant-raw] auto-image-schedule-run ${JSON.stringify({
 	              messageId: String(message?.id || ''),
 	              session: String(sessionId || ''),
 	              started: Boolean(started),
@@ -21512,6 +21487,11 @@ Phase G（Frame 36）：循环衔接
     return '';
   };
 
+  const getLocalWallpaperPath = wallpaper => {
+    if (!wallpaper || wallpaper.url || wallpaper.dataUrl || !wallpaper.path) return '';
+    return String(wallpaper.path || '').trim();
+  };
+
   const ensureChatWallpaperLayer = () => {
     if (!chatRoom) return null;
     let layer = chatRoom.querySelector('.chat-wallpaper-layer');
@@ -21530,6 +21510,8 @@ Phase G（Frame 36）：循环衔接
   let activeWallpaperMeta = null;
   let activeWallpaperUrl = '';
   let activeWallpaperLoaded = false;
+  const wallpaperPathExistsCache = new Map();
+  let wallpaperPathCheckToken = 0;
   const WALLPAPER_IDLE_TIMEOUT_MS = 120000;
   let wallpaperIdleTimer = null;
   let lastWallpaperActivityAt = 0;
@@ -21591,37 +21573,91 @@ Phase G（Frame 36）：循环衔接
     })`;
   };
 
-  const applyWallpaperToChatRoom = settings => {
+  const clearWallpaperImage = (layer, img) => {
+    activeWallpaperUrl = '';
+    activeWallpaperLoaded = false;
+    layer?.classList.add('is-hidden');
+    if (img) {
+      img.onload = null;
+      img.onerror = null;
+      img.removeAttribute('src');
+    }
+    scheduleWallpaperIdle();
+  };
+
+  const canValidateLocalWallpaperPath = () => typeof getConvertFileSrc() === 'function';
+
+  const validateLocalWallpaperPath = async path => {
+    if (!path || !canValidateLocalWallpaperPath()) return true;
+    if (wallpaperPathExistsCache.has(path)) return wallpaperPathExistsCache.get(path) === true;
+    const exists = await safeInvoke('wallpaper_path_exists', { path });
+    const ok = exists === true;
+    wallpaperPathExistsCache.set(path, ok);
+    return ok;
+  };
+
+  const applyWallpaperToChatRoom = (settings, sessionId = '') => {
     if (!chatRoom) return;
+    const applyToken = ++wallpaperPathCheckToken;
     const layerInfo = ensureChatWallpaperLayer();
     if (!layerInfo) return;
     const { layer, img } = layerInfo;
     const meta = settings?.wallpaper || null;
     const url = resolveWallpaperUrl(meta);
+    const localPath = getLocalWallpaperPath(meta);
     activeWallpaperMeta = meta;
-    activeWallpaperUrl = url;
+    activeWallpaperUrl = '';
     activeWallpaperLoaded = false;
     if (!url || !img) {
-      layer?.classList.add('is-hidden');
-      if (img) {
-        img.onload = null;
-        img.onerror = null;
-        img.removeAttribute('src');
-      }
-      scheduleWallpaperIdle();
+      clearWallpaperImage(layer, img);
       return;
     }
+    if (localPath && canValidateLocalWallpaperPath()) {
+      const cached = wallpaperPathExistsCache.get(localPath);
+      if (cached === false) {
+        logger.debug(`[wallpaper] missing local wallpaper skipped path=${localPath}`);
+        clearWallpaperImage(layer, img);
+        return;
+      }
+      if (cached !== true) {
+        clearWallpaperImage(layer, img);
+        validateLocalWallpaperPath(localPath)
+          .then(exists => {
+            if (applyToken !== wallpaperPathCheckToken) return;
+            if (!exists) {
+              logger.debug(`[wallpaper] missing local wallpaper skipped path=${localPath}`);
+              clearWallpaperImage(layer, img);
+              return;
+            }
+            const currentId = String(chatStore.getCurrent?.() || '');
+            const expectedId = String(sessionId || currentId || '');
+            if (expectedId && currentId && expectedId !== currentId) return;
+            const latestSettings = normalizeChatSettings(chatStore.getSessionSettings?.(expectedId) || settings || {});
+            if (getLocalWallpaperPath(latestSettings?.wallpaper) !== localPath) return;
+            applyWallpaperToChatRoom(latestSettings, expectedId);
+          })
+          .catch(err => {
+            logger.debug('[wallpaper] local path validation skipped', err);
+            wallpaperPathExistsCache.set(localPath, true);
+            if (applyToken !== wallpaperPathCheckToken) return;
+            applyWallpaperToChatRoom(settings, sessionId);
+          });
+        return;
+      }
+    }
+    activeWallpaperUrl = url;
     layer?.classList.remove('is-hidden');
-    if (img.src !== url) img.src = url;
     img.onload = () => {
       activeWallpaperLoaded = Number(img.naturalWidth || 0) > 0 && Number(img.naturalHeight || 0) > 0;
       if (activeWallpaperLoaded) applyWallpaperTransform(img, chatRoom, meta);
       scheduleWallpaperIdle();
     };
     img.onerror = () => {
+      if (localPath) wallpaperPathExistsCache.set(localPath, false);
       activeWallpaperLoaded = false;
-      scheduleWallpaperIdle();
+      clearWallpaperImage(layer, img);
     };
+    if (img.src !== url) img.src = url;
     if (img.complete) {
       activeWallpaperLoaded = Number(img.naturalWidth || 0) > 0 && Number(img.naturalHeight || 0) > 0;
       if (activeWallpaperLoaded) applyWallpaperTransform(img, chatRoom, meta);
@@ -21631,6 +21667,7 @@ Phase G（Frame 36）：循环衔接
 
   window.addEventListener('resize', () => {
     if (!activeWallpaperMeta) return;
+    if (!activeWallpaperUrl) return;
     const layerInfo = ensureChatWallpaperLayer();
     if (!layerInfo?.img) return;
     if (activeWallpaperUrl && layerInfo.img.src !== activeWallpaperUrl) {
@@ -21926,7 +21963,7 @@ Phase G（Frame 36）：循环衔接
       chatRoom.style.removeProperty('--chat-text-color');
     }
     applyUserMessageColors(sessionId);
-    applyWallpaperToChatRoom(settings);
+    applyWallpaperToChatRoom(settings, sessionId);
   }
 
   const saveWallpaperChunked = async (sessionId, dataUrl, fileName, previousPath) => {
@@ -22358,7 +22395,7 @@ Phase G（Frame 36）：循环衔接
   }
 
   appRuntimeReady = true;
-  logger.info('✅ Chat UI 初始化完成');
+  logger.debug('Chat UI 初始化完成');
 
   const splash = document.getElementById('app-splash');
   if (splash) {

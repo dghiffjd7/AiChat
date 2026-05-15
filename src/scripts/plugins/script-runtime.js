@@ -61,8 +61,15 @@ const installWorkerConsoleBridge = () => {
   if (self.__CHATAPP_WORKER_CONSOLE_BRIDGE__) return;
   self.__CHATAPP_WORKER_CONSOLE_BRIDGE__ = true;
   const original = {
+    log: console.log.bind(console),
+    info: console.info.bind(console),
     warn: console.warn.bind(console),
     error: console.error.bind(console),
+  };
+  const shouldSuppressInfo = (args) => {
+    if (currentSettings.debugExecutionLogs === true || currentSettings.mirrorConsole === true) return false;
+    const text = args.map(stringifyConsoleArg).join(' ');
+    return /^\\[(ReasoningRegexStyler|TagFixer|UAF)\\]/i.test(text);
   };
   let count = 0;
   const limit = 120;
@@ -74,6 +81,12 @@ const installWorkerConsoleBridge = () => {
     const text = args.map(stringifyConsoleArg).join(' ').slice(0, 1600);
     if (!text) return;
     callRpc('log', { level, args: ['[worker-console]', text] }).catch(() => {});
+  };
+  console.log = (...args) => {
+    if (!shouldSuppressInfo(args)) original.log(...args);
+  };
+  console.info = (...args) => {
+    if (!shouldSuppressInfo(args)) original.info(...args);
   };
   console.warn = (...args) => {
     original.warn(...args);
@@ -2801,6 +2814,7 @@ export class ScriptRuntime {
       allowReadMessages: settings.scriptAllowReadMessages !== false,
       allowModifyVariables: settings.scriptAllowModifyVariables !== false,
       allowNetwork: settings.scriptAllowNetwork === true,
+      debugExecutionLogs: settings.debugExecutionLogs === true,
     };
     if (!this.isEnabled(this.context.sessionId)) {
       if (this.worker) {
@@ -2902,6 +2916,7 @@ export class ScriptRuntime {
       allowReadMessages: settings.scriptAllowReadMessages !== false,
       allowModifyVariables: settings.scriptAllowModifyVariables !== false,
       allowNetwork: settings.scriptAllowNetwork === true,
+      debugExecutionLogs: settings.debugExecutionLogs === true,
     };
     if (this.worker) {
       this.worker.postMessage({

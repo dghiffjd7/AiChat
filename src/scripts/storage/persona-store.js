@@ -160,7 +160,7 @@ export class PersonaStore {
             // Persist normalization upgrades (backfill position/depth/role, etc.)
             if (changed || tooLarge) await this.save();
             
-            logger.info(`PersonaStore loaded: ${this.personas.length} personas, active: ${this.activeId}`);
+            logger.debug(`PersonaStore loaded: ${this.personas.length} personas, active: ${this.activeId}`);
         } catch (err) {
             logger.error('PersonaStore load failed', err);
             // Fallback to default in memory

@@ -34,6 +34,15 @@ fn get_data_dir(app: &AppHandle) -> Result<PathBuf, String> {
     app.path().app_data_dir().map_err(|e| e.to_string())
 }
 
+fn is_kv_debug_enabled() -> bool {
+    std::env::var("CHATAPP_DEBUG_KV")
+        .map(|value| {
+            let normalized = value.trim().to_ascii_lowercase();
+            matches!(normalized.as_str(), "1" | "true" | "yes" | "on")
+        })
+        .unwrap_or(false)
+}
+
 fn sanitize_segment(input: &str) -> String {
     let raw = input.trim();
     let mut out = String::with_capacity(raw.len());
@@ -1571,6 +1580,23 @@ pub async fn delete_wallpaper(
     Ok(false)
 }
 
+/// 检查保存过的聊天壁纸路径是否仍然存在。
+#[tauri::command]
+pub async fn wallpaper_path_exists(app: AppHandle, path: Option<String>) -> Result<bool, String> {
+    let raw = path.unwrap_or_default();
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Ok(false);
+    }
+    let data_dir = get_data_dir(&app)?;
+    let wallpaper_root = data_dir.join("wallpapers");
+    let target = PathBuf::from(trimmed);
+    if !target.starts_with(&wallpaper_root) {
+        return Ok(false);
+    }
+    Ok(target.is_file())
+}
+
 /// 保存附件图片到本地（AppData）
 #[tauri::command]
 pub async fn save_attachment(
@@ -2621,12 +2647,13 @@ pub async fn save_kv(app: AppHandle, name: String, data: Value) -> Result<(), St
         }
     }
 
-    // 记录保存的文件路径和数据摘要（用于调试）
-    eprintln!("[save_kv] 文件: {:?}, 大小: {} bytes", file, json.len());
-    if name == "llm_profiles_v1" {
-        if let Some(obj) = data.as_object() {
-            if let Some(active_id) = obj.get("activeProfileId") {
-                eprintln!("[save_kv] activeProfileId: {}", active_id);
+    if is_kv_debug_enabled() {
+        eprintln!("[save_kv] 文件: {:?}, 大小: {} bytes", file, json.len());
+        if name == "llm_profiles_v1" {
+            if let Some(obj) = data.as_object() {
+                if let Some(active_id) = obj.get("activeProfileId") {
+                    eprintln!("[save_kv] activeProfileId: {}", active_id);
+                }
             }
         }
     }
@@ -2640,7 +2667,9 @@ pub async fn load_kv(app: AppHandle, name: String) -> Result<Value, String> {
     let file = data_dir.join(format!("{name}.json"));
 
     if !file.exists() {
-        eprintln!("[load_kv] 文件不存在: {:?}", file);
+        if is_kv_debug_enabled() {
+            eprintln!("[load_kv] 文件不存在: {:?}", file);
+        }
         return Ok(serde_json::json!({}));
     }
 
@@ -2656,16 +2685,17 @@ pub async fn load_kv(app: AppHandle, name: String) -> Result<Value, String> {
     let json = fs::read_to_string(&file).map_err(|e| e.to_string())?;
     let data: Value = serde_json::from_str(&json).map_err(|e| e.to_string())?;
 
-    // 记录加载的文件路径和数据摘要（用于调试）
-    eprintln!("[load_kv] 文件: {:?}, 大小: {} bytes", file, json.len());
-    if name == "llm_profiles_v1" {
-        if let Some(obj) = data.as_object() {
-            if let Some(active_id) = obj.get("activeProfileId") {
-                eprintln!("[load_kv] activeProfileId: {}", active_id);
-            }
-            if let Some(profiles) = obj.get("profiles") {
-                if let Some(profiles_obj) = profiles.as_object() {
-                    eprintln!("[load_kv] profiles数量: {}", profiles_obj.len());
+    if is_kv_debug_enabled() {
+        eprintln!("[load_kv] 文件: {:?}, 大小: {} bytes", file, json.len());
+        if name == "llm_profiles_v1" {
+            if let Some(obj) = data.as_object() {
+                if let Some(active_id) = obj.get("activeProfileId") {
+                    eprintln!("[load_kv] activeProfileId: {}", active_id);
+                }
+                if let Some(profiles) = obj.get("profiles") {
+                    if let Some(profiles_obj) = profiles.as_object() {
+                        eprintln!("[load_kv] profiles数量: {}", profiles_obj.len());
+                    }
                 }
             }
         }

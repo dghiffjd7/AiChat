@@ -38,7 +38,9 @@ const stringifyArg = (arg) => {
 
 const shouldMirrorLevel = (level, text) => {
   if (level === 'warn' || level === 'error') return true;
-  return /(failed|failure|error|warning|uncaught|typeerror|referenceerror|not available|失败|错误|异常|报错)/i.test(text);
+  const normalized = String(text || '').replace(/\b(?:failed|failure|errors?|warnings?)\s*[:=]\s*0\b/gi, '');
+  if (/\b(?:failed|failure|errors?|warnings?)\s*[:=]\s*(?!0\b)\d+\b/i.test(text)) return true;
+  return /\b(error|warning|uncaught|typeerror|referenceerror)\b|not available|失败|错误|异常|报错/i.test(normalized);
 };
 
 const installNativeConsoleBridge = () => {

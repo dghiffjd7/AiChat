@@ -14,7 +14,7 @@ export const refreshChatAndContactsListNow = ({
   updateChatContentSearchVisibility = () => {},
 } = {}) => {
   if (chatScopeId !== contactsScopeId) {
-    logger?.info?.(
+    logger?.debug?.(
       `[Persona_test] refreshChatAndContacts skip scope mismatch chat=${chatScopeId || 'default'} contacts=${
         contactsScopeId || 'default'
       }`,

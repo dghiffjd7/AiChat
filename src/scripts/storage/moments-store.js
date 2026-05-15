@@ -215,7 +215,7 @@ export class MomentsStore {
                         logger.warn('moments store hydrate -> localStorage failed', err);
                     }
                 }
-                logger.info('moments store hydrated from disk');
+                logger.debug('moments store hydrated from disk');
                 try {
                     window.dispatchEvent(new CustomEvent('store-hydrated', { detail: { store: 'moments' } }));
                 } catch {}
