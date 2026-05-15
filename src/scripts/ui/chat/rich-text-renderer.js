@@ -5334,15 +5334,15 @@ const buildIframeSrcDoc = (
         .slice(0, 6);
       const inlineScripts = Array.from(document.scripts || [])
         .filter((s) => !s?.src)
-        .map((s) => String(s?.textContent || '').replace(/\s+/g, ' ').trim())
+        .map((s) => String(s?.textContent || '').replace(/\\s+/g, ' ').trim())
         .filter(Boolean);
       const contentNode = document.querySelector('content');
       const stateBarNode = document.querySelector('state_bar');
       const contentTextLen = String(contentNode?.textContent || '').trim().length;
       const stateBarTextLen = String(stateBarNode?.textContent || '').trim().length;
       const contentHtml = String(contentNode?.innerHTML || '');
-      const contentHasBr = /<br\s*\/?>/i.test(contentHtml) ? 1 : 0;
-      const narrationCount = (String(contentNode?.textContent || '').match(/\[旁白\]\|/g) || []).length;
+      const contentHasBr = /<br\\s*\\/?>/i.test(contentHtml) ? 1 : 0;
+      const narrationCount = (String(contentNode?.textContent || '').match(/\\[旁白\\]\\|/g) || []).length;
       parent.postMessage({
         type: 'chatapp:iframe-debug',
         id,
@@ -9011,7 +9011,7 @@ export const renderRichText = (
     }
     const resolveStatusCard = () => {
         const sid = String(sessionId || window.appBridge?.getActiveSessionId?.() || '').trim();
-        const store = window.appBridge?.chatStore;
+        const store = window.appBridge?.getChatStore?.();
         return buildVariableStatusSnapshot({ chatStore: store, sessionId: sid, inline: true });
     };
 

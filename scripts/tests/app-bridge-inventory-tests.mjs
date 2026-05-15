@@ -296,6 +296,7 @@ const readSourceInfo = async (fullPath) => ({
   assert.equal(registered.has('setSessionWorldIds'), true);
   assert.equal(registered.has('init'), true);
   assert.equal(registered.has('setChatStore'), true);
+  assert.equal(registered.has('getChatStore'), true);
   assert.equal(registered.has('setContactsStore'), true);
   assert.equal(registered.has('setPluginRuntime'), true);
   assert.equal(registered.has('getPluginRuntime'), true);
@@ -375,6 +376,7 @@ const readSourceInfo = async (fullPath) => ({
   assert.equal(gaps.has('setSessionWorldIds'), false);
   assert.equal(gaps.has('init'), false);
   assert.equal(gaps.has('setChatStore'), false);
+  assert.equal(gaps.has('getChatStore'), false);
   assert.equal(gaps.has('setContactsStore'), false);
   assert.equal(gaps.has('setPluginRuntime'), false);
   assert.equal(gaps.has('getPluginRuntime'), false);

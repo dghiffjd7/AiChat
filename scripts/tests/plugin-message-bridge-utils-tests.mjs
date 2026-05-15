@@ -19,6 +19,11 @@ test('normalizePluginSendMessageOptions normalizes role silent and regex flags',
     role: 'assistant',
     silent: true,
     skipInputRegex: true,
+    skipScripts: false,
+    name: '',
+    type: '',
+    avatar: '',
+    meta: null,
   });
 });
 

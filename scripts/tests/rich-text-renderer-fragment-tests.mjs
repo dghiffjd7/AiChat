@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
 
 globalThis.localStorage = {
   getItem: () => null,
@@ -10,6 +12,13 @@ const { prepareRichFragmentHtmlForParsing } = await import('../../src/scripts/ui
 
 const tests = [];
 const test = (name, fn) => tests.push({ name, fn });
+
+test('keeps iframe diagnostic regex escapes inside generated srcdoc script', () => {
+  const source = fs.readFileSync(path.join(process.cwd(), 'src/scripts/ui/chat/rich-text-renderer.js'), 'utf8');
+  assert.ok(source.includes("replace(/\\\\s+/g, ' ').trim()"));
+  assert.ok(source.includes('const contentHasBr = /<br\\\\s*\\\\/?>/i.test(contentHtml) ? 1 : 0;'));
+  assert.ok(source.includes("match(/\\\\[旁白\\\\]\\\\|/g)"));
+});
 
 test('keeps balanced style scaffolds intact', () => {
   const input = '<style>.pf-wrap{display:block}</style><details><summary>cot</summary><div>body</div></details>';

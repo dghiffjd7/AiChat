@@ -651,6 +651,7 @@ const initApp = async () => {
   registerRuntimeServiceBridgeContract(window.appBridge, {
     init: window.appBridge.init?.bind(window.appBridge),
     setChatStore: window.appBridge.setChatStore?.bind(window.appBridge),
+    getChatStore: window.appBridge.getChatStore?.bind(window.appBridge),
     setContactsStore: window.appBridge.setContactsStore?.bind(window.appBridge),
     setPluginRuntime: window.appBridge.setPluginRuntime?.bind(window.appBridge),
     getPluginRuntime: window.appBridge.getPluginRuntime?.bind(window.appBridge),
@@ -18630,6 +18631,33 @@ Phase G（Frame 36）：循环衔接
   const MEMORY_TIMELINE_AUTO_REPAIR_STORAGE_KEY = 'memory_timeline_auto_repair_state_v1';
   const memoryTimelineAutoRepairInFlight = new Set();
 
+  const emitPluginAfterReceiveEffects = (
+    message,
+    targetSessionId,
+    {
+      skipScripts: skipThisScripts,
+      defaultSkipScripts = false,
+      applyUpdateVariable = null,
+    } = {},
+  ) => {
+    dispatchAfterReceiveEffects({
+      message,
+      sessionId: targetSessionId,
+      skipScripts: skipThisScripts,
+      defaultSkipScripts,
+      scriptRuntime,
+      pluginRuntime,
+      logger,
+      applyUpdateVariable: resolveUpdateVariableApplyFn(applyUpdateVariable),
+      handleVariableRules: payload => variableRuleEngine?.handleAfterReceive?.(payload),
+      useGlobalVariables: isSharedVariableSession(targetSessionId),
+      recordTraceEvent: recordDebugTraceEvent,
+    });
+    scheduleAutoImagePromptGenerationForMessage(message, targetSessionId, {
+      source: 'after_receive',
+    });
+  };
+
   // Send handler (发送 pending 消息)
   /**
    * @param {string} targetMessageId - 可选，点击的 pending 消息 ID（发送到这里）
@@ -19559,21 +19587,10 @@ Phase G（Frame 36）：循环衔接
     });
     registerUpdateVariableApplyFn(applyUpdateVariableFromMessage);
     const emitPluginAfterReceive = (message, targetSessionId, { skipScripts: skipThisScripts } = {}) => {
-      dispatchAfterReceiveEffects({
-        message,
-        sessionId: targetSessionId,
+      emitPluginAfterReceiveEffects(message, targetSessionId, {
         skipScripts: skipThisScripts,
         defaultSkipScripts: skipScripts,
-        scriptRuntime,
-        pluginRuntime,
-        logger,
-        applyUpdateVariable: resolveUpdateVariableApplyFn(applyUpdateVariableFromMessage),
-        handleVariableRules: payload => variableRuleEngine?.handleAfterReceive?.(payload),
-        useGlobalVariables: isSharedVariableSession(targetSessionId),
-        recordTraceEvent: recordDebugTraceEvent,
-      });
-      scheduleAutoImagePromptGenerationForMessage(message, targetSessionId, {
-        source: 'after_receive',
+        applyUpdateVariable: applyUpdateVariableFromMessage,
       });
     };
     const processProtocolRetryEvent = async (ev, {
@@ -20502,14 +20519,28 @@ Phase G（Frame 36）：循环衔接
     refreshChatAndContacts,
     handleSend,
     dispatchAfterSendEvents,
-    emitPluginAfterReceive,
+    emitPluginAfterReceive: emitPluginAfterReceiveEffects,
     scriptRuntime,
     pluginRuntime,
     logger,
     recordTraceEvent: recordDebugTraceEvent,
   });
+  const triggerAssistantFromSlash = () => handleSend(null, {
+    overrideText: '[Continue]',
+    suppressUserMessage: true,
+    ignorePending: true,
+    skipInputRegex: true,
+    includeAttachments: false,
+  });
+  const generateImageFromSlash = (prompt = '') => runChatImageGeneration({
+    prompt: String(prompt || '').trim(),
+    surface: resolveMediaSurfaceForSession(chatStore.getCurrent()),
+    referenceImages: [],
+  });
   registerMessageActionBridgeContract(window.appBridge, {
     sendMessageFromPlugin,
+    triggerAssistantFromSlash,
+    generateImageFromSlash,
   });
 
 	  const handleComposerSend = () => {

@@ -5,6 +5,11 @@ export const normalizePluginSendMessageOptions = (content, options = {}) => {
     role: String(opts.role || 'user').toLowerCase(),
     silent: Boolean(opts.silent),
     skipInputRegex: Boolean(opts.skipInputRegex),
+    skipScripts: Boolean(opts.skipScripts),
+    name: typeof opts.name === 'string' ? opts.name : '',
+    type: typeof opts.type === 'string' ? opts.type : '',
+    avatar: typeof opts.avatar === 'string' ? opts.avatar : '',
+    meta: opts.meta && typeof opts.meta === 'object' ? { ...opts.meta } : null,
   };
 };
 
@@ -19,6 +24,10 @@ export const buildPluginInjectedMessage = ({
   userAvatar = '',
   assistantAvatar = '',
   isRpSession = false,
+  name = '',
+  type = '',
+  avatar = '',
+  meta = null,
 } = {}) => {
   const normalizedRole = String(role || 'user').toLowerCase();
   const isSystem = normalizedRole === 'system';
@@ -35,13 +44,16 @@ export const buildPluginInjectedMessage = ({
   }
   const message = {
     role: normalizedRole,
-    type: isSystem ? 'meta' : 'text',
+    type: type || (isSystem ? 'meta' : 'text'),
     content: display,
     raw: stored,
-    name: isSystem ? '系统' : (isAssistant ? '助手' : userName),
-    avatar: isAssistant ? assistantAvatar : userAvatar,
+    name: String(name || '').trim() || (isSystem ? '系统' : (isAssistant ? '助手' : userName)),
+    avatar: avatar || (isAssistant ? assistantAvatar : userAvatar),
     time: now,
   };
+  if (meta && typeof meta === 'object') {
+    message.meta = { ...(message.meta || {}), ...meta };
+  }
   if (isAssistant && isRpSession) {
     message.meta = { ...(message.meta || {}), renderRich: true };
   }
@@ -79,7 +91,7 @@ export const runPluginSendMessageFlow = async (
     recordTraceEvent = null,
   } = {},
 ) => {
-  const { text, role, silent, skipInputRegex } = normalizePluginSendMessageOptions(content, options);
+  const { text, role, silent, skipInputRegex, skipScripts, name, type, avatar, meta } = normalizePluginSendMessageOptions(content, options);
   const sessionId = String(chatStore?.getCurrent?.() || '').trim();
   if (!sessionId) return null;
 
@@ -97,6 +109,10 @@ export const runPluginSendMessageFlow = async (
       userAvatar: avatars.user,
       assistantAvatar: getAssistantAvatarForSession(sessionId),
       isRpSession: isRpSessionId(sessionId),
+      name,
+      type,
+      avatar,
+      meta,
     });
     if (isSessionActive(sessionId)) ui?.addMessage?.(message);
     const saved = chatStore?.appendMessage?.(message, sessionId) || message;
@@ -111,7 +127,7 @@ export const runPluginSendMessageFlow = async (
         recordTraceEvent,
       });
     }
-    if (isAssistant) emitPluginAfterReceive(saved, sessionId);
+    if (isAssistant) emitPluginAfterReceive(saved, sessionId, { skipScripts });
     return saved;
   }
 

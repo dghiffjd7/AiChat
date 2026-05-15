@@ -41,7 +41,7 @@ import {
   dispatchRuntimeHookLifecycleEvent,
   runRuntimeHookLifecycleEvent,
 } from './chat/hook-lifecycle-trace-utils.js';
-import { mergeRichCompatInputText, parseRichCompatSlashCommand } from './chat/rich-input-compat.js';
+import { createSillyTavernSlashCompat } from './chat/sillytavern-slash-compat.js';
 import {
   buildTemplateInjectRegex as buildRegexFromTag,
   parseTemplateInjectTags,
@@ -473,6 +473,10 @@ class AppBridge {
   setChatStore(store) {
     this.chatStore = store;
     this.macroEngine = new MacroEngine(store);
+  }
+
+  getChatStore() {
+    return this.chatStore || null;
   }
 
   setChatUI(ui) {
@@ -6608,29 +6612,17 @@ const stringifyMessageContent = (content) => {
 // 创建全局实例
 window.appBridge = new AppBridge();
 
-// 兼容层：提供类似 SillyTavern 的全局函数
-window.triggerSlash = async command => {
-  logger.info('执行命令:', command);
-  const parsed = parseRichCompatSlashCommand(command);
-  if (!parsed) return false;
-  const ui = getChatUI(window.appBridge);
-  const inputEl = ui?.inputEl || document.getElementById('composer-input');
-  if (!inputEl) return false;
-  const current = String(inputEl.value || '');
-  const next = mergeRichCompatInputText(current, parsed.text, parsed);
-  if (typeof ui?.setInputText === 'function') ui.setInputText(next);
-  else inputEl.value = next;
-  try {
-    inputEl.setSelectionRange(next.length, next.length);
-  } catch {}
-  try {
-    inputEl.dispatchEvent(new Event('input', { bubbles: true }));
-  } catch {}
-  try {
-    inputEl.focus();
-  } catch {}
-  return true;
-};
+// SillyTavern compatibility entry. App-native slash commands are handled by
+// command-runner from the composer; triggerSlash is kept as a card/script API.
+window.triggerSlash = createSillyTavernSlashCompat({
+  appBridge: window.appBridge,
+  getChatUI,
+  getChatStore: bridge => bridge?.getChatStore?.(),
+  logger,
+  getWindow: () => window,
+  getDocument: () => document,
+  getToastr: () => window.toastr,
+});
 
 window.getWorldInfoSettings = async () => {
   return await window.appBridge.getWorldInfo();
