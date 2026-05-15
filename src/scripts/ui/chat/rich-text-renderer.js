@@ -397,8 +397,15 @@ html,body{margin:0;padding:0;background:#0f1115;color:#e6edf3;font-family:system
 const shouldStaticFallbackForIframeError = (message = '') => {
     const msg = String(message || '').toLowerCase();
     if (!msg) return false;
+    if (/resource-load-failed/.test(msg)) {
+        return /tag=(?:script|link|iframe|object|embed)\b/.test(msg);
+    }
     return /cannot read properties of undefined|is not defined|typeerror|referenceerror|syntaxerror|unhandledrejection|resource-load-failed|failed to fetch|script error/.test(msg);
 };
+const isNonCriticalIframeResourceError = (message = '') =>
+    /resource-load-failed\s+tag=(?:img|image|picture|source|video|audio)\b/i.test(String(message || ''));
+const isCriticalIframeResourceError = (message = '') =>
+    /resource-load-failed\s+tag=(?:script|link|iframe|object|embed)\b/i.test(String(message || ''));
 const setIframeStaticFallbackDoc = (id, doc) => {
     const key = String(id || '').trim();
     if (!key) return;
@@ -5204,7 +5211,9 @@ const buildIframeSrcDoc = (
       const target = ev?.target;
       if (target && target !== window) {
         const tag = String(target.tagName || '').toLowerCase();
-        const src = String(target.src || target.href || target.currentSrc || '').trim();
+        const attrSrc = String(target.getAttribute?.('src') || target.getAttribute?.('href') || '').trim();
+        const src = String(target.currentSrc || target.src || target.href || '').trim();
+        if (tag === 'img' && !attrSrc) return;
         if (src) {
           parent.postMessage({
             type: 'chatapp:iframe-error',
@@ -5212,6 +5221,7 @@ const buildIframeSrcDoc = (
             message: 'resource-load-failed tag=' + tag + ' url=' + src,
           }, '*');
         }
+        return;
       }
       const message = String(ev?.message || ev?.error?.message || 'iframe error');
       if (isIgnorableNoise(message)) return;
@@ -8675,6 +8685,10 @@ export const setupIframeResizeListener = () => {
             if (!id) return;
             const iframe = document.querySelector(`iframe[data-iframe-id="${esc(id)}"]`);
             if (!iframe) return;
+            if (isNonCriticalIframeResourceError(message)) {
+                logger.debug(`[iframe] resource-load id=${id} ${message}`);
+                return;
+            }
             iframe.dataset.iframeError = message || 'error';
             const st = getIframeState(id, { messageId: String(iframe.dataset.msgId || ''), createdAt: Date.now() });
             if (st) st.error = message || 'error';
@@ -8688,7 +8702,8 @@ export const setupIframeResizeListener = () => {
             const recoverableRuntimeError = shouldStaticFallbackForIframeError(message);
             let handled = false;
             if (
-                /VueRouter is not defined|Vue is not defined|Pinia is not defined|createPinia is not defined|ReactDOM is not defined|React is not defined|_ is not defined|resource-load-failed|unhandledrejection/i.test(message)
+                /VueRouter is not defined|Vue is not defined|Pinia is not defined|createPinia is not defined|ReactDOM is not defined|React is not defined|_ is not defined|unhandledrejection/i.test(message)
+                || isCriticalIframeResourceError(message)
             ) {
                 const recovered = tryRecoverDirectLoadFallback(iframe, id, message.slice(0, 120));
                 handled = recovered;

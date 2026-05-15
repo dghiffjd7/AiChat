@@ -262,10 +262,13 @@
         const target = ev?.target;
         if (target && target !== window) {
           const tag = String(target.tagName || '').toLowerCase();
-          const src = String(target.src || target.href || target.currentSrc || '').trim();
+          const attrSrc = String(target.getAttribute?.('src') || target.getAttribute?.('href') || '').trim();
+          const src = String(target.currentSrc || target.src || target.href || '').trim();
+          if (tag === 'img' && !attrSrc) return;
           if (src) {
             sendIframeError('resource-load-failed tag=' + tag + ' url=' + src);
           }
+          return;
         }
         const message = String(ev?.message || ev?.error?.message || 'iframe error');
         if (isIgnorableNoise(message)) return;
@@ -631,7 +634,8 @@
       // Only guard true ASI hazards like a new-line IIFE / array / template literal.
       // Do not treat leading "." as risky: that breaks合法的链式调用（.then/.finally/.classList...）。
       const riskyStartRe = /^[([`]/;
-      const safePrevEndRe = /(?:[;{[(,:?=><!&|/^~]|(?:\+\+|--))\s*$/;
+      // Preserve valid continuations such as `value +\n(expr ? a : b)`.
+      const safePrevEndRe = /(?:[;{[(,:?=><!&|/^~]|(?:\+\+|--|[+\-*%]))\s*$/;
       const keywordPrevRe = /\b(?:return|throw|case|delete|typeof|void|new|in|instanceof|await|yield)\s*$/;
       lines.forEach((line) => {
         const trimmed = String(line || '').trim();
