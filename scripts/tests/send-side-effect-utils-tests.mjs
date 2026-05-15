@@ -906,6 +906,42 @@ test('runCreativeStreamAssistantResponseFlow preserves post-stream interruption 
   ]);
 });
 
+test('runCreativeStreamAssistantResponseFlow forwards creative auto-image preserve option to finalize', async () => {
+  async function* stream() {
+    yield { content: 'plain creative text' };
+  }
+  const preserveValues = [];
+
+  const result = await runCreativeStreamAssistantResponseFlow(
+    {
+      stream: stream(),
+      streamMeta: { renderRich: true },
+      sessionId: 'session-preserve',
+    },
+    {
+      preserveAutoImagePromptPlaceholders: true,
+      buildCreativeAssistantMessageParts: options => {
+        preserveValues.push(options.preserveAutoImagePromptPlaceholders);
+        return {
+          finalSource: options.text,
+          stored: options.text,
+          display: options.text,
+          resolvedReasoning: {},
+        };
+      },
+      buildCreativeAssistantMessage: async options => ({
+        id: 'parsed-preserve',
+        role: 'assistant',
+        content: options.parts.display,
+      }),
+      appendMessage: message => message,
+    },
+  );
+
+  assert.deepEqual(preserveValues, [true]);
+  assert.equal(result.finalizeState?.creativeParts?.display, 'plain creative text');
+});
+
 test('runLegacyStreamAssistantResponseFlow consumes stream then finalizes legacy response in order', async () => {
   const calls = [];
   async function* stream() {

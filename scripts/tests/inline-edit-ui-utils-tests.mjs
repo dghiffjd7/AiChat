@@ -3,12 +3,22 @@ import assert from 'node:assert/strict';
 import { createInlineEditUiRuntime } from '../../src/scripts/ui/chat/inline-edit-ui-utils.js';
 
 const createFakeDocument = () => {
+  const createClassList = () => {
+    const classes = new Set();
+    return {
+      add: value => classes.add(value),
+      remove: value => classes.delete(value),
+      contains: value => classes.has(value),
+    };
+  };
   class FakeElement {
     constructor(tagName) {
       this.tagName = String(tagName || '').toUpperCase();
       this.children = [];
       this.parentNode = null;
       this.style = {};
+      this.classList = createClassList();
+      this.className = '';
       this.textContent = '';
       this.value = '';
       this.scrollHeight = 72;
@@ -49,6 +59,12 @@ const createFakeDocument = () => {
   const bubble = {
     children: [],
     style: {},
+    classList: {
+      add(value) { this.value = value; },
+      remove(value) { if (this.value === value) this.value = ''; },
+      contains(value) { return this.value === value; },
+      value: '',
+    },
     textContent: '',
     innerHTML: '',
     appendChild(child) {
@@ -61,6 +77,12 @@ const createFakeDocument = () => {
     querySelector(selector) {
       if (selector === '[data-msg-id="m1"]') {
         return {
+          classList: {
+            add(value) { this.value = value; },
+            remove(value) { if (this.value === value) this.value = ''; },
+            contains(value) { return this.value === value; },
+            value: '',
+          },
           querySelector(nextSelector) {
             if (nextSelector === '.QQ_chat_msgdiv') return bubble;
             return null;
@@ -82,6 +104,7 @@ const createFakeDocument = () => {
   const textarea = bubble.lastChild;
   textarea.value = 'next text';
   scheduled[0]();
+  assert.equal(textarea.className, 'chat-inline-edit-textarea');
   assert.equal(textarea.focused, true);
   assert.deepEqual(textarea.selection, [9, 9]);
   textarea.emit('keydown', {
@@ -98,6 +121,12 @@ const createFakeDocument = () => {
   const bubble = {
     children: [],
     style: {},
+    classList: {
+      add(value) { this.value = value; },
+      remove(value) { if (this.value === value) this.value = ''; },
+      contains(value) { return this.value === value; },
+      value: '',
+    },
     textContent: '',
     innerHTML: '',
     appendChild(child) {
@@ -109,6 +138,12 @@ const createFakeDocument = () => {
   const scrollEl = {
     querySelector() {
       return {
+        classList: {
+          add(value) { this.value = value; },
+          remove(value) { if (this.value === value) this.value = ''; },
+          contains(value) { return this.value === value; },
+          value: '',
+        },
         querySelector() {
           return bubble;
         },

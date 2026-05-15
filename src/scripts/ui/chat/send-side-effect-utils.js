@@ -6,6 +6,18 @@ import {
 
 const normalizeMessages = (messages = []) => (Array.isArray(messages) ? messages : []);
 
+const hasAutoImagePromptTag = value => /<\s*image_prompt\b/i.test(String(value || ''));
+
+const countPendingImageTokens = value => (
+  String(value || '').match(/\[img-图片生成中(?: \d+)?\]/g) || []
+).length;
+
+const logWritingAutoImageFinalizeDebug = (logger, stage = '', payload = {}) => {
+  try {
+    logger?.info?.(`[writing-auto-image] finalize-${stage} ${JSON.stringify(payload)}`);
+  } catch {}
+};
+
 const dispatchAfterSendToRuntime = ({
   runtime = null,
   runtimeLabel = '',
@@ -702,6 +714,7 @@ export const finalizeCreativeStreamAssistantResponse = async (
     }
   }
 
+  const effectivePreserveAutoImagePromptPlaceholders = Boolean(preserveAutoImagePromptPlaceholders);
   const creativeParts = typeof buildCreativeAssistantMessageParts === 'function'
     ? buildCreativeAssistantMessageParts({
         text: stripped,
@@ -711,7 +724,7 @@ export const finalizeCreativeStreamAssistantResponse = async (
         resolveReasoningState,
         applyOutputRegexPairSafe,
         appBridge,
-        preserveAutoImagePromptPlaceholders,
+        preserveAutoImagePromptPlaceholders: effectivePreserveAutoImagePromptPlaceholders,
       })
     : {
         finalSource: stripped,
@@ -720,6 +733,27 @@ export const finalizeCreativeStreamAssistantResponse = async (
         resolvedReasoning: {},
       };
   const { finalSource, stored, display, resolvedReasoning = {} } = creativeParts;
+  if (
+    hasAutoImagePromptTag(raw) ||
+    hasAutoImagePromptTag(stripped) ||
+    countPendingImageTokens(finalSource) ||
+    countPendingImageTokens(display)
+  ) {
+    logWritingAutoImageFinalizeDebug(logger, 'stream-parts', {
+      sessionId,
+      preserveAutoImagePromptPlaceholders: Boolean(preserveAutoImagePromptPlaceholders),
+      effectivePreserveAutoImagePromptPlaceholders,
+      rawLength: raw.length,
+      strippedLength: String(stripped || '').length,
+      rawHasTag: hasAutoImagePromptTag(raw),
+      strippedHasTag: hasAutoImagePromptTag(stripped),
+      finalSourceLength: String(finalSource || '').length,
+      finalSourcePendingCount: countPendingImageTokens(finalSource),
+      displayPendingCount: countPendingImageTokens(display),
+      metaPlaceholderCount: Array.isArray(creativeParts?.autoImagePromptPlaceholders) ? creativeParts.autoImagePromptPlaceholders.length : 0,
+      metaHasRawContent: Boolean(creativeParts?.autoImagePromptRawContent),
+    });
+  }
   const finalStreamMeta = {
     ...streamMeta,
     raw: stored,
@@ -891,7 +925,7 @@ export const finalizeBufferedCreativeAssistantResponse = async (
         extractReasoningFromContent,
         applyOutputRegexPairSafe,
         appBridge,
-        preserveAutoImagePromptPlaceholders,
+        preserveAutoImagePromptPlaceholders: Boolean(preserveAutoImagePromptPlaceholders),
         captureAssistantMemoryState,
         attachAssistantMemoryStateToMeta,
       })
@@ -901,6 +935,26 @@ export const finalizeBufferedCreativeAssistantResponse = async (
         content: stripped,
         rawOriginal: rawText,
       };
+  if (
+    hasAutoImagePromptTag(rawText) ||
+    hasAutoImagePromptTag(stripped) ||
+    countPendingImageTokens(parsed?.rawSource) ||
+    countPendingImageTokens(parsed?.content)
+  ) {
+    logWritingAutoImageFinalizeDebug(logger, 'buffered-parsed', {
+      sessionId,
+      preserveAutoImagePromptPlaceholders: Boolean(preserveAutoImagePromptPlaceholders),
+      effectivePreserveAutoImagePromptPlaceholders: Boolean(preserveAutoImagePromptPlaceholders),
+      rawLength: String(rawText || '').length,
+      strippedLength: String(stripped || '').length,
+      rawHasTag: hasAutoImagePromptTag(rawText),
+      strippedHasTag: hasAutoImagePromptTag(stripped),
+      rawSourcePendingCount: countPendingImageTokens(parsed?.rawSource),
+      contentPendingCount: countPendingImageTokens(parsed?.content),
+      metaPlaceholderCount: Array.isArray(parsed?.meta?.autoImagePromptPlaceholders) ? parsed.meta.autoImagePromptPlaceholders.length : 0,
+      metaHasRawContent: Boolean(parsed?.meta?.autoImagePromptRawContent),
+    });
+  }
 
   if (
     typeof isSessionActive === 'function'
@@ -1054,6 +1108,7 @@ export const runCreativeStreamAssistantResponseFlow = async (
     extractReasoningFromContent = null,
     applyOutputRegexPairSafe = null,
     appBridge = null,
+    preserveAutoImagePromptPlaceholders = false,
     captureAssistantMemoryState = null,
     attachAssistantMemoryStateToMeta = null,
     isStreamCtrlConnected = null,
@@ -1122,6 +1177,7 @@ export const runCreativeStreamAssistantResponseFlow = async (
     resolveReasoningState,
     applyOutputRegexPairSafe,
     appBridge,
+    preserveAutoImagePromptPlaceholders,
     pushAssistantStreamText,
     captureAssistantMemoryState,
     attachAssistantMemoryStateToMeta,

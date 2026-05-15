@@ -13822,6 +13822,30 @@ Phase G（Frame 36）：循环衔接
       return false;
     }
   };
+  const resolveWritingAutoImagePromptPreserveState = (targetSessionId = '') => {
+    try {
+      const settings = appSettings.get();
+      const enabled = settings.autoImagePromptEnabled === true && settings.autoImagePromptWritingEnabled !== false;
+      if (!enabled) {
+        logger.info(`[writing-auto-image] preserve-disabled ${JSON.stringify({
+          sessionId: String(targetSessionId || ''),
+          autoImagePromptEnabled: settings.autoImagePromptEnabled,
+          autoImagePromptWritingEnabled: settings.autoImagePromptWritingEnabled,
+          reason: settings.autoImagePromptEnabled !== true
+            ? 'global-disabled'
+            : 'writing-disabled',
+        })}`);
+      }
+      return enabled;
+    } catch (err) {
+      logger.info(`[writing-auto-image] preserve-disabled ${JSON.stringify({
+        sessionId: String(targetSessionId || ''),
+        reason: 'settings-error',
+        error: String(err?.message || err || ''),
+      })}`);
+      return false;
+    }
+  };
   const traceWritingAutoImagePrompt = (stage = '', payload = {}) => {
     try {
       if (localStorage.getItem('debug_writing_auto_image') !== '1') return;
@@ -14094,6 +14118,14 @@ Phase G（Frame 36）：循环衔接
         prompt: firstPrompt,
       });
     if (!guard.ok) {
+      logger.info(`[writing-auto-image] run-skipped ${JSON.stringify({
+        sessionId,
+        messageId,
+        source,
+        reason: guard.reason,
+        itemCount: items.length,
+        firstPromptPreview: firstPrompt.slice(0, 160),
+      })}`);
       traceWritingAutoImagePrompt('run-skipped-rate-limit', {
         sessionId,
         messageId,
@@ -14330,6 +14362,9 @@ Phase G（Frame 36）：循环衔接
     const messageId = String(message?.id || '').trim();
     const surface = sessionId ? resolveMediaSurfaceForSession(sessionId) : '';
     const isWritingSurface = surface === 'writing';
+    const isSurfaceAutoImagePromptEnabled = () => (
+      isWritingSurface ? isWritingAutoImagePromptEnabled() : isAutoImagePromptEnabled()
+    );
     const logEditSchedule = (stage = '', payload = {}) => {
       if (source !== 'edit_assistant_raw') return;
       logger.info(`[edit-assistant-raw] auto-image-scheduler-${stage} ${JSON.stringify({
@@ -14345,7 +14380,7 @@ Phase G（Frame 36）：循环衔接
         sessionId,
         messageId,
         source,
-        enabled: force || isAutoImagePromptEnabled(),
+        enabled: force || isSurfaceAutoImagePromptEnabled(),
         force,
         role: message?.role,
         hasGeneratedMedia: Boolean(message?.meta?.generatedMedia),
@@ -14355,9 +14390,9 @@ Phase G（Frame 36）：循环衔接
         rawTextHasTag: /<\s*image_prompt\b/i.test(String(rawText || '')),
       });
     }
-    if (!(force || isAutoImagePromptEnabled()) || !sessionId || !messageId) {
-      if (isWritingSurface) traceWritingAutoImagePrompt('schedule-skip-basic', { sessionId, messageId, enabled: force || isAutoImagePromptEnabled(), force });
-      logEditSchedule('skip-basic', { enabled: force || isAutoImagePromptEnabled() });
+    if (!(force || isSurfaceAutoImagePromptEnabled()) || !sessionId || !messageId) {
+      if (isWritingSurface) traceWritingAutoImagePrompt('schedule-skip-basic', { sessionId, messageId, enabled: force || isSurfaceAutoImagePromptEnabled(), force });
+      logEditSchedule('skip-basic', { enabled: force || isSurfaceAutoImagePromptEnabled() });
       return false;
     }
     if (message?.role !== 'assistant' || message?.meta?.generatedMedia) {
@@ -14531,10 +14566,15 @@ Phase G（Frame 36）：循环衔接
   };
   const scheduleAutoImagePromptGenerationFromLastRaw = (targetSessionId = '') => {
     const sid = String(targetSessionId || '').trim();
-    if (!isAutoImagePromptEnabled() || !sid) return false;
+    if (!sid) return false;
+    const surface = resolveMediaSurfaceForSession(sid);
+    const enabled = surface === 'writing'
+      ? isWritingAutoImagePromptEnabled()
+      : isAutoImagePromptEnabled();
+    if (!enabled) return false;
     const raw = chatStore.getLastRawResponse(sid);
     const sourceMessage = findAutoImagePromptSourceMessageFromRaw(sid, raw) || findLastAutoImagePromptSourceMessage(sid);
-    if (resolveMediaSurfaceForSession(sid) === 'writing') {
+    if (surface === 'writing') {
       traceWritingAutoImagePrompt('last-raw-enter', {
         sessionId: sid,
         rawLength: String(raw || '').length,
@@ -20173,7 +20213,7 @@ Phase G（Frame 36）：循环衔接
             resolveReasoningState,
             applyOutputRegexPairSafe,
             appBridge: window.appBridge,
-            preserveAutoImagePromptPlaceholders: isWritingAutoImagePromptEnabled(),
+            preserveAutoImagePromptPlaceholders: resolveWritingAutoImagePromptPreserveState(sessionId),
             pushAssistantStreamText,
             captureAssistantMemoryState,
             attachAssistantMemoryStateToMeta,
@@ -20309,7 +20349,7 @@ Phase G（Frame 36）：循环衔接
           extractReasoningFromContent,
           applyOutputRegexPairSafe,
           appBridge: window.appBridge,
-          preserveAutoImagePromptPlaceholders: isWritingAutoImagePromptEnabled(),
+          preserveAutoImagePromptPlaceholders: resolveWritingAutoImagePromptPreserveState(sessionId),
           captureAssistantMemoryState,
           attachAssistantMemoryStateToMeta,
           isSessionActive: sid => isSessionActive(sid),
@@ -20964,7 +21004,6 @@ Phase G（Frame 36）：循环衔接
 	            const started = scheduleAutoImagePromptGenerationForMessage(latest, sessionId, {
 	              rawText: scheduleRawText,
 	              source: 'edit_assistant_raw',
-	              force: true,
 	            });
 	            logger.info(`[edit-assistant-raw] auto-image-schedule-run ${JSON.stringify({
 	              messageId: String(message?.id || ''),

@@ -67,8 +67,23 @@ export const buildCancelledAssistantPartial = ({
   fallbackTime = '',
 } = {}) => {
   const currentGeneration = normalizeObject(generation);
-  const rawText = String(currentGeneration?.streamText || '');
-  if (!rawText.trim()) return null;
+  const payload = normalizeObject(currentGeneration?.streamPayload);
+  const content = String(
+    currentGeneration?.streamText
+      || payload?.content
+      || payload?.raw
+      || payload?.rawSource
+      || payload?.rawOriginal
+      || '',
+  );
+  const rawText = String(
+    payload?.rawOriginal
+      || payload?.rawSource
+      || payload?.raw
+      || content
+      || '',
+  );
+  if (!content.trim() && !rawText.trim()) return null;
 
   const meta = normalizeObject(currentGeneration?.streamMeta) || {};
   return {
@@ -78,10 +93,12 @@ export const buildCancelledAssistantPartial = ({
     name: meta.name || '助手',
     avatar: meta.avatar || assistantAvatar,
     time: meta.time || fallbackTime,
-    content: rawText,
-    raw: rawText,
-    rawOriginal: rawText,
+    content: content || rawText,
+    raw: typeof payload?.raw === 'string' ? payload.raw : rawText,
+    rawOriginal: typeof payload?.rawOriginal === 'string' ? payload.rawOriginal : rawText,
+    rawSource: typeof payload?.rawSource === 'string' ? payload.rawSource : rawText,
     meta: {
+      ...(normalizeObject(payload?.meta) || {}),
       partial: true,
       cancelled: true,
     },
@@ -94,12 +111,15 @@ export const buildCancelledAssistantPartialMessage = ({
   fallbackTime = '',
 } = {}) => {
   const source = normalizeObject(partial);
-  const content = String(source?.content || '');
-  if (!content.trim()) return null;
-  const raw = typeof source?.raw === 'string' ? source.raw : content;
+  const raw = typeof source?.raw === 'string' ? source.raw : '';
+  const rawSource = typeof source?.rawSource === 'string' ? source.rawSource : '';
+  const rawOriginalSource = typeof source?.rawOriginal === 'string' ? source.rawOriginal : '';
+  const content = String(source?.content || raw || rawSource || rawOriginalSource || '');
+  if (!content.trim() && !raw.trim() && !rawSource.trim() && !rawOriginalSource.trim()) return null;
+  const resolvedRaw = raw || rawSource || rawOriginalSource || content;
   const rawOriginal = typeof source?.rawOriginal === 'string'
     ? source.rawOriginal
-    : raw;
+    : resolvedRaw;
   return {
     role: 'assistant',
     type: 'text',
@@ -108,8 +128,9 @@ export const buildCancelledAssistantPartialMessage = ({
     avatar: source?.avatar || assistantAvatar,
     time: source?.time || fallbackTime,
     content,
-    raw,
+    raw: resolvedRaw,
     rawOriginal,
+    rawSource: rawSource || resolvedRaw,
     meta: {
       ...(normalizeObject(source?.meta) || {}),
       partial: true,
@@ -141,7 +162,7 @@ export const commitCancelledGenerationPartial = ({
   }
   const currentGeneration = normalizeObject(generation);
   const sessionId = String(currentGeneration?.sessionId || '').trim();
-  const content = String(partial?.content || '').trim();
+  const content = String(partial?.content || partial?.raw || partial?.rawSource || partial?.rawOriginal || '').trim();
   const messageId = String(partial?.id || '').trim();
   let handledPartial = false;
 

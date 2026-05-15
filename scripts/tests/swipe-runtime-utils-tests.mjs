@@ -288,3 +288,47 @@ const createWrapper = (message = null) => {
   assert.equal(partial.meta.cancelled, true);
   console.log('ok - createSwipeGenerationStreamCore renders updates and returns partial message on cancel');
 }
+
+{
+  const message = {
+    id: 'm6',
+    role: 'assistant',
+    content: '',
+    meta: { swipes: [{ content: 'old', raw: 'old' }], activeSwipe: 0 },
+  };
+  const wrapper = createWrapper(message);
+  const scrollEl = {
+    querySelector(selector) {
+      return selector.includes('m6') ? wrapper : null;
+    },
+  };
+  const stream = createSwipeGenerationStreamCore({
+    scrollEl,
+    msgId: 'm6',
+    meta: { label: '生成新回复中...' },
+    setSwipeRegenerating() {},
+    syncSwipeIndicator() {},
+    renderSwipeContent() {},
+    setStreamingState() {},
+    isNearBottom: () => false,
+    getStreamAutoFollow: () => false,
+    setStreamAutoFollow() {},
+    buildAssistantStreamMessage: (placeholder, meta, msgId, state) => ({
+      ...placeholder,
+      id: msgId,
+      content: '',
+      raw: typeof state.raw === 'string' ? state.raw : '',
+      rawOriginal: typeof state.rawOriginal === 'string' ? state.rawOriginal : '',
+      rawSource: typeof state.rawSource === 'string' ? state.rawSource : '',
+      meta: {},
+    }),
+    applyReasoningUiState() {},
+    scrollToBottom() {},
+  });
+
+  stream.update({ content: '', raw: 'raw partial', rawSource: 'source partial' });
+  const partial = stream.cancel({ keepPartial: true });
+  assert.equal(partial.content, 'source partial');
+  assert.equal(partial.rawSource, 'source partial');
+  console.log('ok - createSwipeGenerationStreamCore keeps raw-only partial on cancel');
+}

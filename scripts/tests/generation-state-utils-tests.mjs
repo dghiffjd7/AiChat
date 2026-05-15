@@ -111,11 +111,35 @@ test('buildCancelledAssistantPartial uses cached meta first and falls back to ru
     content: '部分回复',
     raw: '部分回复',
     rawOriginal: '部分回复',
+    rawSource: '部分回复',
     meta: {
       partial: true,
       cancelled: true,
     },
   });
+});
+
+test('buildCancelledAssistantPartial preserves raw payload when rendered stream text is empty', () => {
+  const partial = buildCancelledAssistantPartial({
+    generation: {
+      streamText: '',
+      streamPayload: {
+        content: '',
+        raw: 'raw 部分',
+        rawSource: 'source 部分',
+        rawOriginal: 'original 部分',
+        meta: { renderRich: true },
+      },
+      streamMeta: { id: 'assistant-raw' },
+    },
+  });
+
+  assert.equal(partial.id, 'assistant-raw');
+  assert.equal(partial.content, 'raw 部分');
+  assert.equal(partial.raw, 'raw 部分');
+  assert.equal(partial.rawSource, 'source 部分');
+  assert.equal(partial.rawOriginal, 'original 部分');
+  assert.equal(partial.meta.renderRich, true);
 });
 
 test('buildCancelledAssistantPartial falls back to stream controller id and provided avatar/time', () => {
@@ -161,6 +185,7 @@ test('buildCancelledAssistantPartialMessage preserves cancel append payload shap
     content: '已生成部分',
     raw: 'raw 部分',
     rawOriginal: 'raw original 部分',
+    rawSource: 'raw 部分',
     meta: {
       partial: true,
       custom: true,
@@ -181,6 +206,7 @@ test('buildCancelledAssistantPartialMessage falls back to content raw avatar and
   assert.equal(message.id, undefined);
   assert.equal(message.raw, 'fallback content');
   assert.equal(message.rawOriginal, 'fallback content');
+  assert.equal(message.rawSource, 'fallback content');
   assert.equal(message.avatar, 'fallback.png');
   assert.equal(message.time, '12:00');
   assert.equal(buildCancelledAssistantPartialMessage({ partial: { content: '   ' } }), null);
@@ -215,6 +241,23 @@ test('commitCancelledGenerationPartial appends unhandled user partials and refre
   assert.equal(appended[0].sessionId, 'session-a');
   assert.equal(appended[0].message.content, '部分回复');
   assert.equal(appended[0].message.avatar, 'session-a.png');
+});
+
+test('commitCancelledGenerationPartial accepts raw-only partials', () => {
+  const appended = [];
+  const result = commitCancelledGenerationPartial({
+    generation: { sessionId: 'session-raw' },
+    partial: { id: 'partial-raw', content: '', raw: 'raw-only partial' },
+    reason: 'user',
+    chatStore: {
+      findMessage: () => null,
+      appendMessage: (message, sessionId) => appended.push({ message, sessionId }),
+    },
+  });
+
+  assert.equal(result.hasContent, true);
+  assert.equal(result.appended, true);
+  assert.equal(appended[0].message.content, 'raw-only partial');
 });
 
 test('commitCancelledGenerationPartial keeps existing handler precedence semantics', () => {

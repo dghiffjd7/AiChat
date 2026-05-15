@@ -217,18 +217,21 @@ export const createSwipeGenerationStreamCore = ({
         normalizeAssistantSwipeStreamStateCore(pendingState),
       );
       const displayText = String(buffered?.content ?? '');
-      const rawText =
-        typeof buffered?.rawOriginal === 'string'
-          ? buffered.rawOriginal
-          : (typeof buffered?.raw === 'string' ? buffered.raw : displayText);
-      if (keepPartial && displayText.trim()) {
+      const rawText = String(
+        (typeof buffered?.rawOriginal === 'string' && buffered.rawOriginal.trim() ? buffered.rawOriginal : '')
+          || (typeof buffered?.rawSource === 'string' && buffered.rawSource.trim() ? buffered.rawSource : '')
+          || (typeof buffered?.raw === 'string' && buffered.raw.trim() ? buffered.raw : '')
+          || displayText,
+      );
+      const partialText = displayText.trim() ? displayText : rawText;
+      if (keepPartial && String(partialText || '').trim()) {
         flush(buffered, { final: false });
         return {
           ...(buffered || message),
           role: 'assistant',
           type: 'text',
           id: message.id || streamId,
-          content: displayText,
+          content: partialText,
           raw: typeof buffered?.raw === 'string' ? buffered.raw : rawText,
           rawOriginal: typeof buffered?.rawOriginal === 'string' ? buffered.rawOriginal : rawText,
           rawSource:
