@@ -33,6 +33,11 @@ import {
   shouldAllowAutoImagePromptByRateLimit,
 } from './chat/auto-image-prompt-utils.js';
 import {
+  isBridgeAbortError,
+  resolveBridgeCancellationReason,
+  shouldTreatBridgeStreamErrorAsCancellation,
+} from './bridge-cancel-utils.js';
+import {
   dispatchRuntimeHookLifecycleEvent,
   runRuntimeHookLifecycleEvent,
 } from './chat/hook-lifecycle-trace-utils.js';
@@ -2973,15 +2978,21 @@ class AppBridge {
       await this.saveToHistory(originalUserMessage || '', fullResponse);
     } catch (error) {
       // User-initiated cancellation (e.g. message retract) should not be converted into a timeout error.
-      if (this.abortController?.signal?.aborted && this.abortReason) {
-        throw makeCancelledError(this.abortReason);
+      if (shouldTreatBridgeStreamErrorAsCancellation(error, {
+        signal: genOptions?.signal || null,
+        abortReason: this.abortReason,
+      })) {
+        throw makeCancelledError(resolveBridgeCancellationReason({
+          signal: genOptions?.signal || null,
+          abortReason: this.abortReason,
+        }));
       }
       const normalized = (() => {
         try {
           // Android WebView may throw DOMException on abort/timeout
           const name = String(error?.name || '');
           const msg = String(error?.message || '');
-          if (name === 'AbortError' || (error instanceof DOMException && name === 'AbortError')) {
+          if (isBridgeAbortError(error)) {
             const ms = Number(this.config?.get?.()?.timeout);
             const sec = Number.isFinite(ms) ? Math.round(ms / 1000) : 60;
             const e = new Error(`请求超时（${sec}秒），请稍后重试或在 API 设定中调低输出/切换网络`);

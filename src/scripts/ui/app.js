@@ -18158,6 +18158,22 @@ Phase G（Frame 36）：循环衔接
 	      }
 	      return true;
 	    };
+	    const commitBufferedSwipePartial = () => {
+	      if (partialCommitted) return true;
+	      let partial = null;
+	      try {
+	        partial = swipeStreamCtrl?.cancel?.({ keepPartial: true }) || null;
+	      } catch {}
+	      if (!partial) return false;
+	      partialCommitted = commitBranch(partial, {
+	        partial: true,
+	        cancelled: true,
+	        memoryTableSnapshot: baselineMemorySnapshot,
+	        memoryUpdateEntry: baselineMemoryUpdateEntry,
+	      });
+	      if (partialCommitted) markActiveSwipeMemoryState(sid, msgId, swipesBefore.length);
+	      return partialCommitted;
+	    };
     const restorePreviousBranch = async () => {
       cancelSwipePlaceholderStream();
       const cleanSwipes = swipesBefore.filter(branch => !branch?.draft);
@@ -18279,6 +18295,7 @@ Phase G（Frame 36）：循环衔接
         },
       });
 
+      if (!sendOk && !partialCommitted) commitBufferedSwipePartial();
       const msgsAfter = chatStore.getMessages(sid);
       const generatedAssistants = (msgsAfter || []).filter(m => {
         const id = String(m?.id || '');
@@ -18334,8 +18351,10 @@ Phase G（Frame 36）：循环衔接
           chatStore.deleteMessage(m.id, sid);
         });
       } catch {}
+      if (!partialCommitted) commitBufferedSwipePartial();
       if (!partialCommitted) await restorePreviousBranch();
     } finally {
+      if (!branchFinalized && !partialCommitted) commitBufferedSwipePartial();
       if (!branchFinalized) await restorePreviousBranch();
       ui.setSwipeRegenerating?.(msgId, false);
       ui.setStreamingState?.(false);
@@ -20944,14 +20963,22 @@ Phase G（Frame 36）：循环衔接
 	          nextBranch.autoImagePromptPlaceholders = editAutoImagePromptPlaceholders;
 	        }
 	        swipes[activeIndex] = nextBranch;
+	        const mergedMeta = {
+	          ...(sourceMeta || {}),
+	          ...((updater?.meta && typeof updater.meta === 'object') ? updater.meta : {}),
+	          swipes,
+	          activeSwipe: activeIndex,
+	        };
+	        delete mergedMeta.autoImagePrompt;
+	        delete mergedMeta.autoImagePromptRawContent;
+	        delete mergedMeta.autoImagePromptPlaceholders;
+	        if (editAutoImagePromptRawText && editAutoImagePromptPlaceholders.length) {
+	          mergedMeta.autoImagePromptRawContent = editAutoImagePromptRawText;
+	          mergedMeta.autoImagePromptPlaceholders = editAutoImagePromptPlaceholders;
+	        }
 	        updater = {
 	          ...updater,
-	          meta: {
-            ...(sourceMeta || {}),
-            ...((updater?.meta && typeof updater.meta === 'object') ? updater.meta : {}),
-            swipes,
-            activeSwipe: activeIndex,
-          },
+	          meta: mergedMeta,
         };
       }
       const updated = chatStore.updateMessage(message.id, updater, sessionId);
