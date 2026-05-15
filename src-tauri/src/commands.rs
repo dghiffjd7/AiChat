@@ -196,6 +196,18 @@ fn chat_store_v2_thread_dir(
         .join(format!("thread_{thread_key}")))
 }
 
+fn chat_store_v2_field_path(
+    app: &AppHandle,
+    scope: &str,
+    session_dir: &str,
+    thread_dir: &str,
+    field_id: &str,
+) -> Result<PathBuf, String> {
+    let dir = chat_store_v2_thread_dir(app, scope, session_dir, thread_dir)?;
+    let field_key = validate_safe_key(field_id, "field_id")?;
+    Ok(dir.join("fields").join(format!("{field_key}.txt")))
+}
+
 fn write_json_file(path: &Path, data: &Value) -> Result<(), String> {
     let json = serde_json::to_string_pretty(data).map_err(|e| e.to_string())?;
     if let Some(parent) = path.parent() {
@@ -3151,6 +3163,53 @@ pub async fn chat_store_v2_delete_part(
     let dir = chat_store_v2_thread_dir(&app, &scope, &session_dir, &thread_dir)?;
     let part = validate_safe_key(&part_id, "part_id")?;
     let file = dir.join(format!("{part}.json"));
+    if file.exists() {
+        fs::remove_file(file).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// 写入大字段旁路文件（分片 JSON 只保存引用和预览）
+#[tauri::command]
+pub async fn chat_store_v2_write_field(
+    app: AppHandle,
+    scope: String,
+    session_dir: String,
+    thread_dir: String,
+    field_id: String,
+    text: String,
+) -> Result<(), String> {
+    let file = chat_store_v2_field_path(&app, &scope, &session_dir, &thread_dir, &field_id)?;
+    write_bytes_file(&file, text.as_bytes())
+}
+
+/// 读取大字段旁路文件
+#[tauri::command]
+pub async fn chat_store_v2_read_field(
+    app: AppHandle,
+    scope: String,
+    session_dir: String,
+    thread_dir: String,
+    field_id: String,
+) -> Result<Option<String>, String> {
+    let file = chat_store_v2_field_path(&app, &scope, &session_dir, &thread_dir, &field_id)?;
+    if !file.exists() {
+        return Ok(None);
+    }
+    let text = fs::read_to_string(file).map_err(|e| e.to_string())?;
+    Ok(Some(text))
+}
+
+/// 删除大字段旁路文件
+#[tauri::command]
+pub async fn chat_store_v2_delete_field(
+    app: AppHandle,
+    scope: String,
+    session_dir: String,
+    thread_dir: String,
+    field_id: String,
+) -> Result<(), String> {
+    let file = chat_store_v2_field_path(&app, &scope, &session_dir, &thread_dir, &field_id)?;
     if file.exists() {
         fs::remove_file(file).map_err(|e| e.to_string())?;
     }

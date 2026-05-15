@@ -2772,6 +2772,44 @@ const buildIframeBridgeScript = () => `
       parent.postMessage({ type: 'chatapp:iframe-debug', id, level: String(level || 'info'), message: String(message || '') }, '*');
     } catch {}
   };
+  let stableViewportHeight = 0;
+  const readStableViewportHeight = () => {
+    try {
+      const docEl = document.documentElement;
+      if (!docEl) return 0;
+      const raw = String(getComputedStyle(docEl).getPropertyValue('--viewport-height') || '').trim();
+      const parsed = Number.parseFloat(raw);
+      return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+    } catch {
+      return 0;
+    }
+  };
+  const applyStableViewportVars = (height = 0) => {
+    try {
+      const docEl = document.documentElement;
+      if (!docEl) return 0;
+      const next = Number(height || stableViewportHeight || readStableViewportHeight() || 0);
+      if (!Number.isFinite(next) || next <= 0) return 0;
+      stableViewportHeight = next;
+      docEl.style.setProperty('--viewport-height', next + 'px');
+      docEl.style.setProperty('--vh', (next * 0.01) + 'px');
+      Array.from(docEl.style || []).forEach((name) => {
+        try {
+          const prop = String(name || '');
+          const value = String(docEl.style.getPropertyValue(prop) || '');
+          if (!/\\b-?\\d+(?:\\.\\d+)?vh\\b/i.test(value)) return;
+          const converted = value.replace(/(-?\\d+(?:\\.\\d+)?)vh\\b/gi, (_match, num) => {
+            const n = Number.parseFloat(num);
+            return Number.isFinite(n) ? (next * (n / 100)) + 'px' : _match;
+          });
+          if (converted !== value) docEl.style.setProperty(prop, converted);
+        } catch {}
+      });
+      return next;
+    } catch {
+      return 0;
+    }
+  };
   const readMetaPolicy = () => {
     try {
       const metaHeight = document.querySelector('meta[name="chatapp-height"]');
@@ -2894,6 +2932,7 @@ const buildIframeBridgeScript = () => `
   };
   const postResize = ({ source = 'bridge', force = false } = {}) => {
     try {
+      applyStableViewportVars();
       const meta = readMetaPolicy();
       // Auto-detecting viewport mode inside chat iframes creates a feedback loop:
       // once the outer iframe grows, innerHeight grows with it and the next resize
@@ -3183,7 +3222,7 @@ const buildIframeBridgeScript = () => `
     if (!data || typeof data !== 'object') return;
     if (data.type === 'chatapp:updateViewportHeight' && typeof data.height === 'number') {
       try {
-        document.documentElement.style.setProperty('--viewport-height', data.height + 'px');
+        applyStableViewportVars(data.height);
       } catch {}
       forceNextResize = true;
       requestLayout('observer', true);
@@ -4724,6 +4763,45 @@ const buildIframeSrcDoc = (
     window.appendInputText = (text, options = {}) => postInputText(text, { ...(options || {}), mode: 'append' });
   }
 
+  let stableViewportHeight = 0;
+  const readStableViewportHeight = () => {
+    try {
+      const docEl = document.documentElement;
+      if (!docEl) return 0;
+      const raw = String(getComputedStyle(docEl).getPropertyValue('--viewport-height') || '').trim();
+      const parsed = Number.parseFloat(raw);
+      return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+    } catch {
+      return 0;
+    }
+  };
+  const applyStableViewportVars = (height = 0) => {
+    try {
+      const docEl = document.documentElement;
+      if (!docEl) return 0;
+      const next = Number(height || stableViewportHeight || readStableViewportHeight() || 0);
+      if (!Number.isFinite(next) || next <= 0) return 0;
+      stableViewportHeight = next;
+      docEl.style.setProperty('--viewport-height', next + 'px');
+      docEl.style.setProperty('--vh', (next * 0.01) + 'px');
+      Array.from(docEl.style || []).forEach((name) => {
+        try {
+          const prop = String(name || '');
+          const value = String(docEl.style.getPropertyValue(prop) || '');
+          if (!/\\b-?\\d+(?:\\.\\d+)?vh\\b/i.test(value)) return;
+          const converted = value.replace(/(-?\\d+(?:\\.\\d+)?)vh\\b/gi, (_match, num) => {
+            const n = Number.parseFloat(num);
+            return Number.isFinite(n) ? (next * (n / 100)) + 'px' : _match;
+          });
+          if (converted !== value) docEl.style.setProperty(prop, converted);
+        } catch {}
+      });
+      return next;
+    } catch {
+      return 0;
+    }
+  };
+
   const readMetaPolicy = () => {
     try {
       const metaHeight = document.querySelector('meta[name="chatapp-height"]');
@@ -4850,6 +4928,7 @@ const buildIframeSrcDoc = (
 
   const post = ({ source = 'bridge', force = false } = {}) => {
     try {
+      applyStableViewportVars();
       const meta = readMetaPolicy();
       // Auto-detecting viewport mode inside chat iframes creates a feedback loop:
       // once the outer iframe grows, innerHeight grows with it and the next resize
@@ -5068,7 +5147,7 @@ const buildIframeSrcDoc = (
       if (!e || !e.data || typeof e.data !== 'object') return;
       if (e.data.type === 'chatapp:updateViewportHeight' && typeof e.data.height === 'number') {
         try {
-          document.documentElement.style.setProperty('--viewport-height', e.data.height + 'px');
+          applyStableViewportVars(e.data.height);
         } catch {}
         forceNextResize = true;
         requestLayout('observer', true);
@@ -5304,12 +5383,15 @@ const buildIframeSrcDoc = (
 </script>`;
 
     // If user content uses 100vh, provide a stable CSS var like ST does
-    const vh = needsVhHandling ? `<style>:root{--viewport-height:${window.innerHeight}px;}</style>` : '';
+    const vh = needsVhHandling
+        ? `<style>:root{--viewport-height:${window.innerHeight}px;--vh:${window.innerHeight * 0.01}px;}</style>`
+        : '';
     const viewportAdjust = needsVhHandling
         ? `<script>
 window.addEventListener('message', (e) => {
   if (e && e.data && e.data.type === 'chatapp:updateViewportHeight' && typeof e.data.height === 'number') {
     document.documentElement.style.setProperty('--viewport-height', e.data.height + 'px');
+    document.documentElement.style.setProperty('--vh', (e.data.height * 0.01) + 'px');
   }
 });
 </script>`
@@ -5367,42 +5449,39 @@ const injectHtmlNewlines = (html) => {
 const processAllVhUnits = (htmlContent) => {
     const viewportHeight = window.innerHeight;
     let processed = String(htmlContent ?? '');
+    const convertVhValue = (value) => String(value || '').replace(/(\d+(?:\.\d+)?)vh/g, (num) => {
+        const numValue = parseFloat(num);
+        if (numValue === 100) return `var(--viewport-height, ${viewportHeight}px)`;
+        return `calc(var(--viewport-height, ${viewportHeight}px) * ${numValue / 100})`;
+    });
 
     processed = processed.replace(
-        /((?:document\.body\.style\.minHeight|\.style\.minHeight|setProperty\s*\(\s*['"]min-height['"])\s*[=,]\s*['"`])([^'"`]*?)(['"`])/g,
+        /((?:document\.body\.style\.|\.style\.)(?:height|minHeight|maxHeight)\s*=\s*['"`])([^'"`]*?)(['"`])/g,
         (match, prefix, value, suffix) => {
             if (String(value || '').includes('vh')) {
-                const convertedValue = String(value).replace(/(\d+(?:\.\d+)?)vh/g, (num) => {
-                    const numValue = parseFloat(num);
-                    if (numValue === 100) return `var(--viewport-height, ${viewportHeight}px)`;
-                    return `calc(var(--viewport-height, ${viewportHeight}px) * ${numValue / 100})`;
-                });
-                return prefix + convertedValue + suffix;
+                return prefix + convertVhValue(value) + suffix;
             }
             return match;
         }
     );
 
-    processed = processed.replace(/min-height:\s*([^;]*vh[^;]*);/g, (expression) => {
-        const processedExpression = String(expression).replace(/(\d+(?:\.\d+)?)vh/g, (num) => {
-            const numValue = parseFloat(num);
-            if (numValue === 100) return `var(--viewport-height, ${viewportHeight}px)`;
-            return `calc(var(--viewport-height, ${viewportHeight}px) * ${numValue / 100})`;
-        });
-        return `${processedExpression};`;
-    });
+    processed = processed.replace(
+        /(setProperty\s*\(\s*['"](?:height|min-height|max-height)['"]\s*,\s*['"`])([^'"`]*?vh[^'"`]*?)(['"`])/g,
+        (match, prefix, value, suffix) => prefix + convertVhValue(value) + suffix,
+    );
 
     processed = processed.replace(
-        /style\s*=\s*["']([^"']*min-height:\s*[^"']*vh[^"']*?)["']/gi,
+        /(^|[;{]\s*)((?:min-|max-)?height)\s*:\s*([^;{}]*vh[^;{}]*)(;?)/gi,
+        (match, prefix, prop, value, suffix) => `${prefix}${prop}: ${convertVhValue(value)}${suffix || ''}`,
+    );
+
+    processed = processed.replace(
+        /style\s*=\s*["']([^"']*(?:(?:min-|max-)?height)\s*:\s*[^"']*vh[^"']*?)["']/gi,
         (match, styleContent) => {
-            const processedStyleContent = String(styleContent).replace(/min-height:\s*([^;]*vh[^;]*)/g, (expression) => {
-                const processedExpression = String(expression).replace(/(\d+(?:\.\d+)?)vh/g, (num) => {
-                    const numValue = parseFloat(num);
-                    if (numValue === 100) return `var(--viewport-height, ${viewportHeight}px)`;
-                    return `calc(var(--viewport-height, ${viewportHeight}px) * ${numValue / 100})`;
-                });
-                return processedExpression;
-            });
+            const processedStyleContent = String(styleContent).replace(
+                /(^|;)\s*((?:min-|max-)?height)\s*:\s*([^;]*vh[^;]*)/gi,
+                (innerMatch, prefix, prop, value) => `${prefix} ${prop}: ${convertVhValue(value)}`,
+            );
             return match.replace(styleContent, processedStyleContent);
         }
     );
@@ -8888,6 +8967,15 @@ export const renderRichText = (
             const decoded = decodeHtmlEntities(p.text);
             return [{ type: 'code', lang: 'html', code: decoded }];
         });
+        const stripStandaloneContentWrapperLines = (value) => String(value || '').replace(
+            /(^|\n)[ \t]*(?:(?:<content\b[^>]*>\s*<\/content\s*>|<\/?content\b[^>]*>)|(?:&lt;content\b[^\n]*?&gt;\s*&lt;\/content\s*&gt;|&lt;\/?content\b[^\n]*?&gt;))[ \t]*(?=\n|$)/gi,
+            '$1',
+        );
+        if (parts.some((p) => p.type === 'code')) {
+            parts = parts
+                .map((p) => (p.type === 'text' ? { ...p, text: stripStandaloneContentWrapperLines(p.text) } : p))
+                .filter((p) => p.type !== 'text' || String(p.text || '').trim());
+        }
     }
     if (streaming) {
         parts = collapseStreamingInteractiveCodeParts(parts);

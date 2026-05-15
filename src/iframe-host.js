@@ -21,6 +21,7 @@
   let resizeObserver = null;
   let mutationObserver = null;
   let fallbackResizeTimer = 0;
+  let stableViewportHeight = 0;
   let nestedSrcdocCompatInstalled = false;
   const managedScriptMeta = new WeakMap();
   const managedBlobUrls = new Set();
@@ -63,6 +64,49 @@
         message: String(message || 'iframe-error'),
       }, '*');
     } catch {}
+  };
+
+  const readStableViewportHeight = () => {
+    try {
+      const docEl = document.documentElement;
+      if (!docEl) return 0;
+      const style = getComputedStyle(docEl);
+      const raw = String(style.getPropertyValue('--viewport-height') || '').trim();
+      const parsed = Number.parseFloat(raw);
+      return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+    } catch {
+      return 0;
+    }
+  };
+
+  const applyStableViewportVars = (height = 0) => {
+    try {
+      const docEl = document.documentElement;
+      if (!docEl) return 0;
+      const next = Number(height || stableViewportHeight || readStableViewportHeight() || 0);
+      if (!Number.isFinite(next) || next <= 0) return 0;
+      stableViewportHeight = next;
+      docEl.style.setProperty('--viewport-height', `${next}px`);
+      // Many SillyTavern front-end cards use the mobile-browser --vh trick.
+      // Keep it tied to the parent app viewport instead of the iframe height,
+      // otherwise the parent and child continuously resize each other.
+      docEl.style.setProperty('--vh', `${next * 0.01}px`);
+      Array.from(docEl.style || []).forEach((name) => {
+        try {
+          const prop = String(name || '');
+          const value = String(docEl.style.getPropertyValue(prop) || '');
+          if (!/\b-?\d+(?:\.\d+)?vh\b/i.test(value)) return;
+          const converted = value.replace(/(-?\d+(?:\.\d+)?)vh\b/gi, (_match, num) => {
+            const n = Number.parseFloat(num);
+            return Number.isFinite(n) ? `${next * (n / 100)}px` : _match;
+          });
+          if (converted !== value) docEl.style.setProperty(prop, converted);
+        } catch {}
+      });
+      return next;
+    } catch {
+      return 0;
+    }
   };
 
   const getBlobDebugName = (descriptor = {}) => {
@@ -213,6 +257,211 @@
         textarea.dataset.chatappCompatBound = '1';
       }
     } catch {}
+  };
+
+  const getParentBridge = () => {
+    try {
+      if (parent?.appBridge && typeof parent.appBridge === 'object') return parent.appBridge;
+    } catch {}
+    try {
+      if (top?.appBridge && typeof top.appBridge === 'object') return top.appBridge;
+    } catch {}
+    return null;
+  };
+
+  const exposeGlobalCompatFunction = (name, fn) => {
+    const key = String(name || '').trim();
+    if (!key || typeof fn !== 'function') return;
+    try {
+      if (typeof window[key] !== 'function') window[key] = fn;
+    } catch {}
+    try {
+      window.eval('var ' + key + ' = window["' + key + '"];');
+    } catch {}
+  };
+
+  const normalizeLorebookEntry = (entry = {}, index = 0) => {
+    const source = entry && typeof entry === 'object' ? entry : {};
+    const uid = source.uid ?? source.id ?? `entry-${index}`;
+    const disable = typeof source.disable === 'boolean'
+      ? source.disable
+      : (typeof source.enabled === 'boolean' ? !source.enabled : false);
+    return {
+      ...source,
+      uid,
+      id: source.id ?? String(uid),
+      comment: source.comment ?? source.title ?? String(uid),
+      order: Number.isFinite(Number(source.order ?? source.priority ?? source.insertion_order))
+        ? Number(source.order ?? source.priority ?? source.insertion_order)
+        : 100,
+      enabled: !disable,
+      disable,
+    };
+  };
+
+  const getStoredLorebook = async (name) => {
+    const bridge = getParentBridge();
+    const target = String(name || '').trim();
+    if (!bridge || !target) return null;
+    try {
+      if (bridge.worldStore?.ready) await bridge.worldStore.ready;
+    } catch {}
+    try {
+      if (typeof bridge.worldStore?.load === 'function') {
+        const local = bridge.worldStore.load(target);
+        if (local) return local;
+      }
+    } catch {}
+    try {
+      if (typeof bridge.getWorldInfo === 'function') return await bridge.getWorldInfo(target);
+    } catch {}
+    return null;
+  };
+
+  const saveStoredLorebook = async (name, data) => {
+    const bridge = getParentBridge();
+    const target = String(name || '').trim();
+    if (!bridge || !target) return false;
+    try {
+      if (typeof bridge.saveWorldInfo === 'function') {
+        await bridge.saveWorldInfo(target, data);
+        return true;
+      }
+    } catch {}
+    try {
+      if (bridge.worldStore?.ready) await bridge.worldStore.ready;
+      if (typeof bridge.worldStore?.save === 'function') {
+        await bridge.worldStore.save(target, data);
+        return true;
+      }
+    } catch {}
+    return false;
+  };
+
+  const listLorebookNames = async () => {
+    const bridge = getParentBridge();
+    const names = new Set();
+    if (!bridge) return [];
+    const add = (value) => {
+      if (Array.isArray(value)) {
+        value.forEach(add);
+        return;
+      }
+      const text = String(value || '').trim();
+      if (text) names.add(text);
+    };
+    try {
+      if (bridge.worldStore?.ready) await bridge.worldStore.ready;
+    } catch {}
+    try { add(bridge.worldStore?.list?.()); } catch {}
+    try { add(bridge.getWorldIdsForSession?.(bridge.activeSessionId)); } catch {}
+    try { add(bridge.currentWorldIds); } catch {}
+    try { add(bridge.getWorldForSession?.(bridge.activeSessionId)); } catch {}
+    try { add(bridge.currentWorldId); } catch {}
+    return Array.from(names);
+  };
+
+  const readCurrentLorebookNames = () => {
+    const bridge = getParentBridge();
+    const names = [];
+    const add = (value) => {
+      if (Array.isArray(value)) {
+        value.forEach(add);
+        return;
+      }
+      const text = String(value || '').trim();
+      if (text && !names.includes(text)) names.push(text);
+    };
+    try { add(bridge?.getWorldIdsForSession?.(bridge.activeSessionId)); } catch {}
+    try { add(bridge?.currentWorldIds); } catch {}
+    try { add(bridge?.getWorldForSession?.(bridge.activeSessionId)); } catch {}
+    try { add(bridge?.currentWorldId); } catch {}
+    return names;
+  };
+
+  const filterLorebookEntries = (entries, options = {}) => {
+    const list = (Array.isArray(entries) ? entries : []).map((entry, index) => normalizeLorebookEntry(entry, index));
+    const filter = options?.filter && typeof options.filter === 'object' ? options.filter : null;
+    if (!filter) return list;
+    return list.filter((entry) => Object.entries(filter).every(([key, value]) => {
+      if (value == null || value === '') return true;
+      if (key === 'enabled') return Boolean(entry.enabled) === Boolean(value);
+      if (key === 'disabled' || key === 'disable') return Boolean(entry.disable) === Boolean(value);
+      const actual = entry[key];
+      if (Array.isArray(value)) return value.some((item) => String(item) === String(actual));
+      return String(actual) === String(value);
+    }));
+  };
+
+  const ensureSillyTavernApiCompat = () => {
+    exposeGlobalCompatFunction('getLorebooks', async () => {
+      try {
+        if (typeof parent?.getLorebooks === 'function') return await parent.getLorebooks();
+      } catch {}
+      return await listLorebookNames();
+    });
+
+    exposeGlobalCompatFunction('getLorebookEntries', async (name, options = {}) => {
+      try {
+        if (typeof parent?.getLorebookEntries === 'function') return await parent.getLorebookEntries(name, options);
+      } catch {}
+      const data = await getStoredLorebook(name);
+      const entries = Array.isArray(data?.entries) ? data.entries : [];
+      return filterLorebookEntries(entries, options);
+    });
+
+    exposeGlobalCompatFunction('setLorebookEntries', async (name, entries = []) => {
+      try {
+        if (typeof parent?.setLorebookEntries === 'function') return await parent.setLorebookEntries(name, entries);
+      } catch {}
+      const target = String(name || '').trim();
+      if (!target) return false;
+      const current = await getStoredLorebook(target);
+      const existingEntries = Array.isArray(current?.entries) ? current.entries : [];
+      const nextEntries = existingEntries.map((entry, index) => normalizeLorebookEntry(entry, index));
+      const keyFor = (entry, index) => {
+        const normalized = normalizeLorebookEntry(entry, index);
+        return String(normalized.uid ?? normalized.id ?? normalized.comment ?? index);
+      };
+      const byKey = new Map(nextEntries.map((entry, index) => [keyFor(entry, index), index]));
+      (Array.isArray(entries) ? entries : []).forEach((entry, index) => {
+        const normalized = normalizeLorebookEntry(entry, index);
+        const key = keyFor(normalized, index);
+        if (byKey.has(key)) {
+          const prevIndex = byKey.get(key);
+          nextEntries[prevIndex] = normalizeLorebookEntry({ ...nextEntries[prevIndex], ...normalized }, prevIndex);
+        } else {
+          byKey.set(key, nextEntries.length);
+          nextEntries.push(normalized);
+        }
+      });
+      const payload = {
+        ...(current && typeof current === 'object' ? current : {}),
+        name: current?.name || target,
+        entries: nextEntries,
+      };
+      await saveStoredLorebook(target, payload);
+      return true;
+    });
+
+    exposeGlobalCompatFunction('getCharWorldbookNames', (characterName) => {
+      const names = readCurrentLorebookNames();
+      const fallback = String(characterName || '').trim();
+      return {
+        primary: names[0] || fallback || '',
+        additional: names.length > 1 ? names.slice(1) : [],
+      };
+    });
+
+    exposeGlobalCompatFunction('triggerSlash', async (command) => {
+      const text = String(command || '');
+      try {
+        if (typeof parent?.triggerSlash === 'function') return await parent.triggerSlash(text);
+      } catch {}
+      const setInput = text.match(/^\/setinput\s+([\s\S]*)$/i);
+      if (setInput) return postInputText(setInput[1] || '', { mode: 'replace', focus: true });
+      return false;
+    });
   };
 
   const isIgnorableNoise = (value) => /resizeobserver loop (limit exceeded|completed with (?:undelivered|delivered) notifications)/i.test(String(value || ''));
@@ -1536,6 +1785,7 @@
 
   const postHeight = ({ source = 'bridge', force = false } = {}) => {
     try {
+      applyStableViewportVars();
       const meta = readMetaPolicy();
       // Auto-detecting viewport mode inside chat iframes creates a feedback loop:
       // once the outer iframe grows, innerHeight grows with it and the next resize
@@ -1787,6 +2037,7 @@
     const inlineBehaviorBindings = [];
     const inlineBehaviorStats = createInlineBehaviorStats();
     ensureCompatInputHelpers();
+    ensureSillyTavernApiCompat();
     ensureRuntimeDiagnostics();
     installFrameElementHeightCompat();
     try {
@@ -1821,6 +2072,7 @@
           inlineBehaviorStats,
         });
       });
+      applyStableViewportVars();
 
       sendDebug('info', `host-apply allowScripts=${allowScripts ? 1 : 0} headNodes=${Number(parsed.head?.childNodes?.length || 0)} bodyNodes=${Number(parsed.body?.childNodes?.length || 0)} docLength=${Number(String(doc || '').length || 0)}`);
       sendDebug('info', formatScriptStats(scriptStats));
@@ -1865,7 +2117,7 @@
       return;
     }
     if (data.type === 'chatapp:updateViewportHeight' && typeof data.height === 'number') {
-      document.documentElement.style.setProperty('--viewport-height', data.height + 'px');
+      applyStableViewportVars(data.height);
       forceNextResize = true;
       requestLayout('observer', true);
       return;

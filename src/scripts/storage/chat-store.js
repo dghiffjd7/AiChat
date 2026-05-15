@@ -13,11 +13,18 @@ const MAX_PERSIST_SUMMARIES_PER_SESSION = 120;
 const MAX_PERSIST_STRING_CHARS = 180_000;
 const MAX_PERSIST_RAW_SOURCE_CHARS = 600_000;
 const MAX_PERSIST_DATA_URL_CHARS = 4096;
+const MAX_PERSIST_FIELD_INLINE_CHARS = MAX_PERSIST_STRING_CHARS;
+const MAX_PERSIST_DERIVED_RICH_CONTENT_CHARS = 16_000;
+const PERSIST_FIELD_PREVIEW_CHARS = 4000;
+const V2_SIDECAR_FIELD_CHUNK_CHARS = 160_000;
 const MAX_RAW_ORIGINAL_AUTOLOAD = 5;
 const CHAT_STORE_V2_VERSION = 1;
 const V2_PART_MESSAGE_LIMIT = 160;
 const V2_PART_CHAR_LIMIT = 320_000;
 const V2_RECENT_PARTS = 2;
+const MESSAGE_FIELD_REF_VERSION = 1;
+const MESSAGE_FIELD_REF_KIND = 'chat_store_v2_field';
+const V2_SIDECAR_FIELDS = ['content', 'raw', 'rawSource', 'raw_source'];
 
 const isConversationMessage = msg =>
   msg && (msg.role === 'user' || msg.role === 'assistant' || msg.role === 'system');
@@ -248,8 +255,101 @@ const clampString = (value, max = MAX_PERSIST_STRING_CHARS) => {
   return `${s.slice(0, max)}…`;
 };
 
-const sanitizeMessageForPersist = msg => {
+const buildPersistPreview = (value, max = PERSIST_FIELD_PREVIEW_CHARS) => {
+  const s = String(value ?? '');
+  if (s.length <= max) return s;
+  return `${s.slice(0, max)}…`;
+};
+
+const makeMessageFieldId = (message, field) => {
+  const safeField = String(field || 'field').replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 24) || 'field';
+  const safeMessageId = String(message?.id || 'message').replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 48) || 'message';
+  const suffix = makeShardKey('f').slice(2);
+  return `f_${safeField}_${safeMessageId}_${suffix}`.slice(0, 96);
+};
+
+const makeMessageFieldChunkId = (fieldId, index) => (
+  `${String(fieldId || '').slice(0, 110)}_${String(index).padStart(4, '0')}`
+);
+
+const splitPersistFieldChunks = text => {
+  const raw = String(text ?? '');
+  if (raw.length <= V2_SIDECAR_FIELD_CHUNK_CHARS) return [raw];
+  const chunks = [];
+  for (let start = 0; start < raw.length; start += V2_SIDECAR_FIELD_CHUNK_CHARS) {
+    chunks.push(raw.slice(start, start + V2_SIDECAR_FIELD_CHUNK_CHARS));
+  }
+  return chunks;
+};
+
+const getMessageFieldRefs = msg => (
+  msg?.fieldRefs && typeof msg.fieldRefs === 'object' && !Array.isArray(msg.fieldRefs)
+    ? msg.fieldRefs
+    : null
+);
+
+const cloneMessageFieldRefs = refs => {
+  if (!refs || typeof refs !== 'object' || Array.isArray(refs)) return null;
+  const out = {};
+  for (const [field, ref] of Object.entries(refs)) {
+    if (!ref || typeof ref !== 'object' || Array.isArray(ref)) continue;
+    out[field] = { ...ref };
+  }
+  return Object.keys(out).length ? out : null;
+};
+
+const normalizeMessageFieldRef = (entry, thread, field, fieldId, text, preview, chunks = []) => {
+  const out = {
+    version: MESSAGE_FIELD_REF_VERSION,
+    kind: MESSAGE_FIELD_REF_KIND,
+    field,
+    fieldId,
+    sessionDir: entry?.dir || '',
+    threadDir: thread?.threadDir || '',
+    length: String(text ?? '').length,
+    preview,
+  };
+  if (Array.isArray(chunks) && chunks.length > 1) out.chunks = chunks;
+  return out;
+};
+
+const isSameMessageFieldRef = (a, b) => {
+  if (!a || !b || typeof a !== 'object' || typeof b !== 'object') return false;
+  return String(a.fieldId || '') === String(b.fieldId || '') &&
+    String(a.sessionDir || '') === String(b.sessionDir || '') &&
+    String(a.threadDir || '') === String(b.threadDir || '');
+};
+
+const getRecoverableCreativeSourceLength = msg => {
+  if (!isCreativeAssistant(msg)) return 0;
+  for (const key of ['rawSource', 'raw_source', 'raw']) {
+    if (typeof msg?.[key] === 'string' && msg[key].trim()) return msg[key].length;
+  }
+  const refs = getMessageFieldRefs(msg);
+  for (const key of ['rawSource', 'raw_source', 'raw']) {
+    const ref = refs?.[key];
+    if (ref && typeof ref === 'object') return Number(ref.length || 1) || 1;
+  }
+  return 0;
+};
+
+const compactDerivedRenderRichContent = msg => {
   if (!msg || typeof msg !== 'object') return msg;
+  if (!isCreativeAssistant(msg)) return msg;
+  const content = typeof msg.content === 'string' ? msg.content : '';
+  if (content.length <= MAX_PERSIST_DERIVED_RICH_CONTENT_CHARS) return msg;
+  if (!getRecoverableCreativeSourceLength(msg)) return msg;
+  msg.content = buildPersistPreview(content);
+  const meta = msg.meta && typeof msg.meta === 'object' ? { ...msg.meta } : {};
+  meta.contentPersistMode = 'derived-preview';
+  meta.contentOriginalLength = content.length;
+  msg.meta = meta;
+  return msg;
+};
+
+const sanitizeMessageForPersist = (msg, options = {}) => {
+  if (!msg || typeof msg !== 'object') return msg;
+  const preserveLargeFields = Boolean(options?.preserveLargeFields);
   const out = { ...msg };
 
   // Never persist very large inline binaries (images/audio/avatars); they will explode KV/localStorage.
@@ -259,13 +359,18 @@ const sanitizeMessageForPersist = msg => {
 
   // Many message payloads include huge raw originals; we only keep bounded versions on disk.
   if (typeof out.rawOriginal === 'string') delete out.rawOriginal;
-  if (typeof out.rawSource === 'string') out.rawSource = clampString(out.rawSource, MAX_PERSIST_RAW_SOURCE_CHARS);
-  if (typeof out.raw_source === 'string' && typeof out.rawSource !== 'string') {
-    out.raw_source = clampString(out.raw_source, MAX_PERSIST_RAW_SOURCE_CHARS);
+  compactDerivedRenderRichContent(out);
+  if (!preserveLargeFields) {
+    if (typeof out.rawSource === 'string') out.rawSource = clampString(out.rawSource, MAX_PERSIST_RAW_SOURCE_CHARS);
+    if (typeof out.raw_source === 'string' && typeof out.rawSource !== 'string') {
+      out.raw_source = clampString(out.raw_source, MAX_PERSIST_RAW_SOURCE_CHARS);
+    }
   }
 
-  if (typeof out.content === 'string') out.content = clampString(out.content);
-  if (typeof out.raw === 'string') out.raw = clampString(out.raw);
+  if (!preserveLargeFields) {
+    if (typeof out.content === 'string') out.content = clampString(out.content);
+    if (typeof out.raw === 'string') out.raw = clampString(out.raw);
+  }
 
   try {
     if (out.meta && typeof out.meta === 'object') {
@@ -634,14 +739,17 @@ class ChatStoreV2 {
     }
   }
 
-  async readPart(entry, thread, partId) {
+  async readPart(entry, thread, partId, options = {}) {
     if (!this.available || !entry || !thread || !partId) return [];
-    return safeInvoke('chat_store_v2_read_part', {
+    const data = await safeInvoke('chat_store_v2_read_part', {
       scope: this.scopeId,
       sessionDir: entry.dir,
       threadDir: thread.threadDir,
       partId,
     });
+    const list = Array.isArray(data) ? data : [];
+    if (options?.hydrate === false) return list;
+    return this.hydrateMessageFields(entry, thread, list);
   }
 
   async writePart(entry, thread, partId, messages) {
@@ -654,6 +762,126 @@ class ChatStoreV2 {
       data: messages,
     });
     return true;
+  }
+
+  async writeField(entry, thread, fieldId, text) {
+    if (!this.available || !entry || !thread || !fieldId) return false;
+    const chunks = splitPersistFieldChunks(text);
+    const ids = chunks.length > 1
+      ? chunks.map((_, idx) => makeMessageFieldChunkId(fieldId, idx))
+      : [fieldId];
+    for (let i = 0; i < chunks.length; i++) {
+      await safeInvoke('chat_store_v2_write_field', {
+        scope: this.scopeId,
+        sessionDir: entry.dir,
+        threadDir: thread.threadDir,
+        fieldId: ids[i],
+        text: chunks[i],
+      });
+    }
+    return ids;
+  }
+
+  async readField(entry, thread, ref) {
+    if (!this.available || !entry || !thread || !ref?.fieldId) return null;
+    const ids = Array.isArray(ref.chunks) && ref.chunks.length ? ref.chunks : [ref.fieldId];
+    const parts = [];
+    for (const fieldId of ids) {
+      const text = await safeInvoke('chat_store_v2_read_field', {
+        scope: this.scopeId,
+        sessionDir: ref.sessionDir || entry.dir,
+        threadDir: ref.threadDir || thread.threadDir,
+        fieldId,
+      });
+      parts.push(typeof text === 'string' ? text : '');
+    }
+    return parts.join('');
+  }
+
+  async deleteField(entry, thread, ref) {
+    if (!this.available || !entry || !thread || !ref?.fieldId) return false;
+    const ids = Array.isArray(ref.chunks) && ref.chunks.length ? ref.chunks : [ref.fieldId];
+    for (const fieldId of ids) {
+      await safeInvoke('chat_store_v2_delete_field', {
+        scope: this.scopeId,
+        sessionDir: ref.sessionDir || entry.dir,
+        threadDir: ref.threadDir || thread.threadDir,
+        fieldId,
+      });
+    }
+    return true;
+  }
+
+  async hydrateMessageFields(entry, thread, value) {
+    const hydrateOne = async msg => {
+      if (!msg || typeof msg !== 'object') return msg;
+      const refs = getMessageFieldRefs(msg);
+      if (!refs) return msg;
+      const out = { ...msg, fieldRefs: cloneMessageFieldRefs(refs) || refs };
+      for (const field of V2_SIDECAR_FIELDS) {
+        const ref = refs[field];
+        if (!ref || typeof ref !== 'object') continue;
+        try {
+          const text = await this.readField(entry, thread, ref);
+          if (typeof text === 'string') out[field] = text;
+        } catch (err) {
+          logger.debug('chat store v2 field hydrate failed', { field, err });
+        }
+      }
+      return out;
+    };
+    if (Array.isArray(value)) {
+      const out = [];
+      for (const msg of value) out.push(await hydrateOne(msg));
+      return out;
+    }
+    return hydrateOne(value);
+  }
+
+  async prepareMessageForPersist(entry, thread, message) {
+    const out = sanitizeMessageForPersist(message, { preserveLargeFields: true });
+    if (!out || typeof out !== 'object') return out;
+    const refs = cloneMessageFieldRefs(out.fieldRefs) || {};
+    for (const field of V2_SIDECAR_FIELDS) {
+      const value = out[field];
+      const ref = refs[field];
+      const refPreview = typeof ref?.preview === 'string' ? ref.preview : '';
+      if (field === 'content' && getRecoverableCreativeSourceLength(out)) {
+        delete refs[field];
+        continue;
+      }
+      if (ref && typeof value === 'string' && value === refPreview) {
+        continue;
+      }
+      if (typeof value === 'string' && value.length > MAX_PERSIST_FIELD_INLINE_CHARS) {
+        const preview = buildPersistPreview(value);
+        const fieldId = makeMessageFieldId(out, field);
+        const chunks = await this.writeField(entry, thread, fieldId, value);
+        refs[field] = normalizeMessageFieldRef(entry, thread, field, fieldId, value, preview, chunks);
+        out[field] = preview;
+      } else {
+        delete refs[field];
+      }
+    }
+    if (Object.keys(refs).length) out.fieldRefs = refs;
+    else delete out.fieldRefs;
+    return out;
+  }
+
+  async deleteMessageFieldRefs(entry, thread, message, nextMessage = null) {
+    const refs = getMessageFieldRefs(message);
+    if (!refs) return;
+    const nextRefs = getMessageFieldRefs(nextMessage) || {};
+    for (const field of Object.keys(refs)) {
+      const ref = refs[field];
+      if (!ref || typeof ref !== 'object') continue;
+      if (isSameMessageFieldRef(ref, nextRefs[field])) continue;
+      try {
+        await this.deleteField(entry, thread, ref);
+      } catch (err) {
+        logger.debug('chat store v2 field delete failed', { field, err });
+      }
+    }
   }
 
   async deletePart(entry, thread, partId) {
@@ -708,7 +936,8 @@ class ChatStoreV2 {
     if (!entry) return null;
     const thread = this._normalizeThreadMeta(this._ensureThread(entry, archiveId));
     if (!thread) return null;
-    const msgChars = estimateMessageChars(message);
+    const storedMessage = await this.prepareMessageForPersist(entry, thread, message);
+    const msgChars = estimateMessageChars(storedMessage);
     const parts = Array.isArray(thread.parts) ? thread.parts : [];
     let part = parts.length ? parts[parts.length - 1] : null;
     let createdNewPart = false;
@@ -724,14 +953,14 @@ class ChatStoreV2 {
       createdNewPart = true;
     }
     const partId = part.id;
-    const existing = await this.readPart(entry, thread, partId);
+    const existing = await this.readPart(entry, thread, partId, { hydrate: false });
     const list = Array.isArray(existing) ? existing : [];
-    list.push(message);
+    list.push(storedMessage);
     await this.writePart(entry, thread, partId, list);
     part.count = Number(part.count || 0) + 1;
     part.chars = Number(part.chars || 0) + msgChars;
     thread.total = Number(thread.total || 0) + 1;
-    const snap = snapshotMessage(message);
+    const snap = snapshotMessage(storedMessage);
     if (snap) {
       thread.lastMessage = snap;
       thread.lastMessageAt = Number(snap.timestamp || Date.now());
@@ -751,14 +980,15 @@ class ChatStoreV2 {
       ? [partId]
       : (Array.isArray(thread.parts) ? thread.parts.map(p => p.id).slice().reverse() : []);
     for (const pid of ids) {
-      const existing = await this.readPart(entry, thread, pid);
+      const existing = await this.readPart(entry, thread, pid, { hydrate: false });
       const list = Array.isArray(existing) ? existing : [];
       const idx = list.findIndex(m => String(m?.id || '') === targetId);
       if (idx === -1) continue;
       const prev = list[idx];
-      const updated = { ...prev, ...updater };
+      const updated = await this.prepareMessageForPersist(entry, thread, { ...prev, ...updater });
       list[idx] = updated;
       await this.writePart(entry, thread, pid, list);
+      await this.deleteMessageFieldRefs(entry, thread, prev, updated);
       const partMeta = (thread.parts || []).find(p => p.id === pid);
       if (partMeta) {
         const diff = estimateMessageChars(updated) - estimateMessageChars(prev);
@@ -786,7 +1016,7 @@ class ChatStoreV2 {
       return;
     }
     const lastPart = parts[parts.length - 1];
-    const existing = await this.readPart(entry, thread, lastPart.id);
+    const existing = await this.readPart(entry, thread, lastPart.id, { hydrate: false });
     const list = Array.isArray(existing) ? existing : [];
     const last = list.length ? list[list.length - 1] : null;
     const snap = snapshotMessage(last);
@@ -810,12 +1040,13 @@ class ChatStoreV2 {
       ? [partId]
       : (Array.isArray(thread.parts) ? thread.parts.map(p => p.id).slice().reverse() : []);
     for (const pid of ids) {
-      const existing = await this.readPart(entry, thread, pid);
+      const existing = await this.readPart(entry, thread, pid, { hydrate: false });
       const list = Array.isArray(existing) ? existing : [];
       const idx = list.findIndex(m => String(m?.id || '') === targetId);
       if (idx === -1) continue;
       const removed = list[idx];
       list.splice(idx, 1);
+      await this.deleteMessageFieldRefs(entry, thread, removed);
       const partMetaIdx = (thread.parts || []).findIndex(p => p.id === pid);
       const partMeta = partMetaIdx >= 0 ? thread.parts[partMetaIdx] : null;
       if (list.length) {
@@ -868,7 +1099,7 @@ class ChatStoreV2 {
     let bucket = [];
     let chars = 0;
     for (let i = 0; i < list.length; i++) {
-      const msg = list[i];
+      const msg = await this.prepareMessageForPersist(entry, thread, list[i]);
       const msgChars = estimateMessageChars(msg);
       const shouldRoll =
         bucket.length >= V2_PART_MESSAGE_LIMIT ||
@@ -1291,7 +1522,7 @@ export class ChatStore {
     const hasCurrentArchive = currentArchiveId && archives.some(a => String(a?.id || '').trim() === currentArchiveId);
     if (!currentArchiveId || !hasCurrentArchive) {
       const raw = Array.isArray(session.messages) ? session.messages : [];
-      const messages = raw.map(sanitizeMessageForPersist);
+      const messages = raw.slice();
       if (this._isScopeStale(token, scopeId)) return;
       await this._v2.replaceThreadMessages(sid, '', messages);
     }
@@ -1302,7 +1533,7 @@ export class ChatStore {
       const useCurrent = currentArchiveId && aid === currentArchiveId;
       const source = useCurrent ? session.messages : arc.messages;
       const raw = Array.isArray(source) ? source : [];
-      const messages = raw.map(sanitizeMessageForPersist);
+      const messages = raw.slice();
       if (this._isScopeStale(token, scopeId)) return;
       await this._v2.replaceThreadMessages(sid, aid, messages);
       arc.messageCount = messages.length;
@@ -1761,12 +1992,12 @@ export class ChatStore {
     if (this._useV2) {
       const aid = String(this.state.sessions[sid]?.currentArchiveId || '').trim();
       const threadKey = this._getThreadKey(sid, aid);
-      const sanitized = sanitizeMessageForPersist(msg);
       const v2 = this._v2;
       const token = this._scopeToken;
       const scopeId = this.scopeId;
+      const messageSnapshot = { ...msg };
       v2.enqueue(async () => {
-        const res = await v2.appendMessage(sid, aid, sanitized);
+        const res = await v2.appendMessage(sid, aid, messageSnapshot);
         if (this._isScopeStale(token, scopeId)) return;
         if (this.state.sessions[sid]?._loadedThreadKey === threadKey && res?.partId) {
           const threadState = this._getThreadState(threadKey);
@@ -1811,10 +2042,10 @@ export class ChatStore {
       const aid = String(session.currentArchiveId || '').trim();
       const threadKey = this._getThreadKey(sid, aid);
       this._getThreadState(threadKey, { reset: true });
-      const sanitized = session.messages.map(sanitizeMessageForPersist);
+      const messagesSnapshot = session.messages.slice();
       const v2 = this._v2;
       v2.enqueue(async () => {
-        await v2.replaceThreadMessages(sid, aid, sanitized);
+        await v2.replaceThreadMessages(sid, aid, messagesSnapshot);
       });
     }
     this._persist();
@@ -2385,10 +2616,10 @@ export class ChatStore {
       const threadKey = this._getThreadKey(sid, aid);
       const threadState = this._getThreadState(threadKey);
       const partId = threadState.messagePartMap.get(String(msgId || ''));
-      const sanitized = sanitizeMessageForPersist(updated);
       const v2 = this._v2;
+      const patch = { ...updater, id: updated.id, timestamp: updated.timestamp };
       v2.enqueue(async () => {
-        await v2.updateMessage(sid, aid, msgId, sanitized, partId || '');
+        await v2.updateMessage(sid, aid, msgId, patch, partId || '');
       });
     }
     this._persist();
@@ -3120,3 +3351,14 @@ export class ChatStore {
     return this.getPendingMessages(id).length;
   }
 }
+
+export const __chatStoreStorageInternals = {
+  MAX_PERSIST_DERIVED_RICH_CONTENT_CHARS,
+  MAX_PERSIST_FIELD_INLINE_CHARS,
+  PERSIST_FIELD_PREVIEW_CHARS,
+  V2_SIDECAR_FIELD_CHUNK_CHARS,
+  buildPersistPreview,
+  compactDerivedRenderRichContent,
+  sanitizeMessageForPersist,
+  splitPersistFieldChunks,
+};
