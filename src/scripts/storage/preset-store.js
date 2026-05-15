@@ -181,6 +181,7 @@ const DEFAULT_AUTO_IMAGE_PROMPT_RULES = [
     '注意事项：',
     '- 所有信息需与当前剧情进展严格连贯。',
     '- 格式务必正确。',
+    '- [img-内容] 是一般图片格式，<image_prompt> 是文生图格式，二者禁止在同一条内容中混用或嵌套。',
     '- 标签内只写生图提示词，不写解释、编号或 Markdown',
     '若本轮不需要图片，完全不要输出 <image_prompt> 标签。',
 ].join('\n').trim();
@@ -279,7 +280,9 @@ const looksDefaultAutoImagePromptRulesForMigration = (value) => {
         raw.includes('自动生图标签规则，用于生成{{image_prompt_surface}}') &&
         raw.includes('提示词风格：{{image_prompt_style}}') &&
         raw.includes('<image_prompt>这里写完整生图提示词</image_prompt>') &&
-        !raw.includes('{{image_prompt_decision_mode}}')
+        (!raw.includes('{{image_prompt_decision_mode}}') ||
+            !raw.includes('[img-内容] 是一般图片格式，<image_prompt> 是文生图格式') ||
+            raw.includes('[img-<image_prompt>'))
     ) {
         return true;
     }

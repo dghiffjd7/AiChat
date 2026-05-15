@@ -1683,6 +1683,7 @@ class AppBridge {
       return [
         '动态如果有配图,使用<image_prompt>标签格式',
         '如{{user}}--我好看吗<image_prompt>自拍提示词</image_prompt>--12:00--67--32',
+        '禁止同时使用[img-内容]；禁止输出[img-说明文字]<image_prompt>...</image_prompt>',
       ].join('\n');
     }
     if (mode === 'ai') {
@@ -1691,6 +1692,7 @@ class AppBridge {
         '如{{user}}--我好看吗[img-一张自拍]--12:00--67--32',
         '或',
         '{{user}}--我好看吗<image_prompt>自拍提示词</image_prompt>--12:00--67--32',
+        '禁止在同一条动态中同时出现[img-...]和<image_prompt>；禁止输出[img-说明文字]<image_prompt>...</image_prompt>',
       ].join('\n');
     }
     return [
@@ -1703,7 +1705,7 @@ class AppBridge {
     const raw = String(content || '');
     if (!raw.trim()) return raw;
     const replacement = this.buildMomentMediaModePrompt(mode);
-    const blockRe = /动态如果有配图[^\n\r]*(?:\r?\n)如\{\{user\}\}--我好看吗[^\n\r]*(?:(?:\r?\n)或(?:\r?\n)\{\{user\}\}--我好看吗[^\n\r]*)?/;
+    const blockRe = /动态如果有配图[^\n\r]*(?:(?:\r?\n)(?!(?:但是角色发布的动态可以有路人参与评论|路人必须生成具体网名|每条动态|使用moment_start|请勿生成多个|<发布动态的目的与时机>|<\/QQ空间格式介绍>))[^\n\r]*){0,5}/;
     if (blockRe.test(raw)) return raw.replace(blockRe, replacement);
     if (raw.includes('但是角色发布的动态可以有路人参与评论')) {
       return raw.replace('但是角色发布的动态可以有路人参与评论', `${replacement}\n但是角色发布的动态可以有路人参与评论`);

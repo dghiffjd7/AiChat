@@ -13578,9 +13578,15 @@ Phase G（Frame 36）：循环衔接
       sourceMessageId: '',
     };
   };
+  const isAutoImagePromptPlaceholderRemainder = (value = '') => {
+    const text = stripAutoImagePromptTags(String(value ?? ''))
+      .replace(/[ \t]+\n/g, '\n')
+      .trim();
+    if (!text) return true;
+    if (/^\[\s*img\s*-[\s\S]*\]$/i.test(text)) return true;
+    return /^(?:图片|圖片|图像|圖像|image)\s*[:：]\s*[\s\S]+$/i.test(text);
+  };
   const isAutoImagePromptOnlyMessage = (message = {}) => {
-    const displayText = stripAutoImagePromptTags(String(message?.content ?? message?.raw ?? '')).trim();
-    if (displayText) return false;
     const candidates = [
       message?.meta?.autoImagePromptRawContent,
       message?.rawOriginal,
@@ -13588,12 +13594,14 @@ Phase G（Frame 36）：循环衔接
       message?.raw,
       message?.content,
     ];
-    return candidates.some((candidate) => {
+    const hasPromptOnlySource = candidates.some((candidate) => {
       const text = String(candidate || '').trim();
       return Boolean(text)
         && extractAutoImagePrompts(text, { max: 1 }).length > 0
-        && !stripAutoImagePromptTags(text).trim();
+        && isAutoImagePromptPlaceholderRemainder(text);
     });
+    if (!hasPromptOnlySource) return false;
+    return isAutoImagePromptPlaceholderRemainder(message?.content ?? message?.raw ?? '');
   };
 	  const runChatImageGeneration = async ({
 	    prompt,
