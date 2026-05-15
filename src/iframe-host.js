@@ -516,6 +516,55 @@
     }
   };
 
+  const uniqueUrls = (urls) => {
+    const seen = new Set();
+    return (Array.isArray(urls) ? urls : [])
+      .map((url) => String(url || '').trim())
+      .filter((url) => {
+        if (!url || seen.has(url)) return false;
+        seen.add(url);
+        return true;
+      });
+  };
+
+  const getKnownRuntimeScriptFallbackUrls = (url) => {
+    const rawUrl = String(url || '').trim();
+    if (!rawUrl) return [];
+    try {
+      const parsed = new URL(rawUrl, window.location.href);
+      if (!/^https?:$/i.test(parsed.protocol)) return [rawUrl];
+      const host = String(parsed.hostname || '').toLowerCase();
+      const knownCdn = /(?:^|\.)unpkg\.com$|(?:^|\.)jsdelivr\.net$|(?:^|\.)testingcf\.jsdelivr\.net$/i.test(host);
+      if (!knownCdn) return [rawUrl];
+      const pathname = decodeURIComponent(String(parsed.pathname || ''));
+      const reactMatch = pathname.match(/\/(?:npm\/)?(react(?:-dom)?)@?([^/]*)\/umd\/(react(?:-dom)?\.(?:development|production\.min)\.js)$/i);
+      if (reactMatch) {
+        const pkg = String(reactMatch[1] || '').toLowerCase();
+        const version = String(reactMatch[2] || '18').replace(/^@/, '') || '18';
+        const file = String(reactMatch[3] || '');
+        return uniqueUrls([
+          rawUrl,
+          `https://testingcf.jsdelivr.net/npm/${pkg}@${version}/umd/${file}`,
+          `https://cdn.jsdelivr.net/npm/${pkg}@${version}/umd/${file}`,
+          `https://unpkg.com/${pkg}@${version}/umd/${file}`,
+        ]);
+      }
+      const babelMatch = pathname.match(/\/(?:npm\/)?@babel\/standalone(?:@([^/]+))?\/(babel(?:\.min)?\.js)$/i);
+      if (babelMatch) {
+        const version = String(babelMatch[1] || '').trim();
+        const suffix = version ? `@${version}` : '';
+        const file = String(babelMatch[2] || 'babel.min.js');
+        return uniqueUrls([
+          rawUrl,
+          `https://testingcf.jsdelivr.net/npm/@babel/standalone${suffix}/${file}`,
+          `https://cdn.jsdelivr.net/npm/@babel/standalone${suffix}/${file}`,
+          `https://unpkg.com/@babel/standalone${suffix}/${file}`,
+        ]);
+      }
+    } catch {}
+    return [rawUrl];
+  };
+
   const fetchRemoteScriptText = async (url) => {
     const key = String(url || '').trim();
     if (!key) throw new Error('empty-remote-script-url');
@@ -625,6 +674,8 @@
       const presets = attrPresets.length ? attrPresets : defaultPresets;
       const plugins = attrPlugins;
       const label = String(descriptor?.label || 'babel-script');
+      const needsReactRuntime = /\bReact\b|React\.createElement\s*\(|<\s*[A-Z][\w.:]*(?:\s|\/?>)|<\s*[a-z][\w:-]*[^>]*\/>/i.test(source);
+      const needsReactDomRuntime = /\bReactDOM\b|createRoot\s*\(/i.test(source);
       return [
         '(() => {',
         `  const __chatappBabelSource = ${JSON.stringify(source)};`,
@@ -632,6 +683,8 @@
         `  const __chatappBabelPlugins = ${JSON.stringify(plugins)};`,
         `  const __chatappBabelParserPlugins = ${JSON.stringify(parserPlugins)};`,
         `  const __chatappBabelLabel = ${JSON.stringify(label)};`,
+        `  const __chatappBabelNeedsReact = ${needsReactRuntime ? 'true' : 'false'};`,
+        `  const __chatappBabelNeedsReactDOM = ${needsReactDomRuntime ? 'true' : 'false'};`,
         '  const resolveNamedEntry = (table, entry) => {',
         '    if (typeof entry !== "string") return entry;',
         '    const key = String(entry || "").trim();',
@@ -688,8 +741,20 @@
         '    console.info("[iframe] babel-compiled-append", __chatappBabelLabel);',
         '    (document.body || document.documentElement || document.head).appendChild(script);',
         '  };',
+        '  const isReactRuntimeReady = () => (!__chatappBabelNeedsReact || Boolean(window.React)) && (!__chatappBabelNeedsReactDOM || Boolean(window.ReactDOM));',
+        '  let reactRuntimeWaitAttached = false;',
+        '  const waitForReactRuntime = () => {',
+        '    if (isReactRuntimeReady()) return true;',
+        '    const ready = window.__CHATAPP_REACT_READY__;',
+        '    if (!reactRuntimeWaitAttached && ready && typeof ready.then === "function") {',
+        '      reactRuntimeWaitAttached = true;',
+        '      ready.then(() => setTimeout(tick, 0), () => setTimeout(tick, 0));',
+        '    }',
+        '    return false;',
+        '  };',
         '  const tryCompile = () => {',
         '    if (!window.Babel || typeof window.Babel.transform !== "function") return false;',
+        '    if (!waitForReactRuntime()) return false;',
         '    const resolvedPresets = resolvePresetEntries();',
         '    const resolvedPlugins = resolvePluginEntries();',
         '    const result = window.Babel.transform(__chatappBabelSource, {',
@@ -1040,46 +1105,75 @@
       }
       managedScriptMeta.set(script, createManagedWriteMeta(script, target, descriptor));
       if (descriptor.src) {
-        if (!isAllowedResourceUrl(descriptor.src, { allowRemoteHttp: true })) {
-          if (scriptStats) scriptStats.blocked += 1;
-          sendDebug('warn', 'script-src-blocked ' + descriptor.label);
-          return;
-        }
+        if (script.type !== 'module') script.async = false;
         scriptTasks.push(new Promise((resolve) => {
           let finalized = false;
+          let candidateIndex = 0;
+          let activeCandidate = '';
+          const candidates = getKnownRuntimeScriptFallbackUrls(descriptor.src);
           const finalize = (ok) => {
             if (finalized) return;
             finalized = true;
             resolve(ok);
           };
+          const loadNextCandidate = async () => {
+            if (finalized) return;
+            const candidate = String(candidates[candidateIndex++] || '').trim();
+            if (!candidate) {
+              if (scriptStats) scriptStats.blocked += 1;
+              sendDebug('warn', 'script-src-blocked ' + descriptor.label);
+              finalize(false);
+              return;
+            }
+            activeCandidate = candidate;
+            if (!isAllowedResourceUrl(candidate, { allowRemoteHttp: true })) {
+              sendDebug('warn', 'script-src-blocked ' + descriptor.label + ' candidate=' + compactText(candidate, 220));
+              loadNextCandidate();
+              return;
+            }
+            try {
+              const resolved = await resolveRemoteScriptSrc(candidate, descriptor);
+              if (finalized) return;
+              if (resolved?.proxied) {
+                if (scriptStats) scriptStats.externalized += 1;
+                script.dataset.chatappRemoteProxy = '1';
+                sendDebug('info', 'script-remote-proxied ' + descriptor.label + ' src=' + compactText(candidate, 220));
+              } else if (resolved?.error) {
+                sendDebug('warn', 'script-remote-proxy-failed ' + descriptor.label + ' err=' + compactText(resolved.error?.message || resolved.error || 'unknown', 220));
+              } else {
+                try { delete script.dataset.chatappRemoteProxy; } catch {}
+              }
+              script.async = false;
+              script.src = String(resolved?.src || candidate || '');
+              const fallbackNote = candidate === descriptor.src ? '' : ' fallback=' + compactText(candidate, 220);
+              sendDebug('info', 'script-load-start ' + descriptor.label + fallbackNote + (resolved?.proxied ? ' proxied=1' : ''));
+            } catch (err) {
+              sendDebug('warn', 'script-load-prepare-failed ' + descriptor.label + ' err=' + compactText(err?.message || err || 'unknown', 220));
+              if (candidateIndex < candidates.length) {
+                loadNextCandidate();
+                return;
+              }
+              script.async = false;
+              script.src = candidate;
+              sendDebug('info', 'script-load-start ' + descriptor.label);
+            }
+          };
           script.addEventListener('load', () => {
             if (scriptStats) scriptStats.loaded += 1;
             sendDebug('info', 'script-load-ok ' + descriptor.label + (script.dataset.chatappRemoteProxy === '1' ? ' proxied=1' : ''));
             finalize(true);
-          }, { once: true });
+          });
           script.addEventListener('error', () => {
+            if (candidateIndex < candidates.length) {
+              sendDebug('warn', 'script-load-failed-try-next ' + descriptor.label + ' src=' + compactText(activeCandidate, 220));
+              loadNextCandidate();
+              return;
+            }
             if (scriptStats) scriptStats.failed += 1;
             sendIframeError('resource-load-failed tag=script ' + descriptor.label);
             finalize(false);
-          }, { once: true });
-          (async () => {
-            const resolved = await resolveRemoteScriptSrc(descriptor.src, descriptor);
-            if (resolved?.proxied) {
-              if (scriptStats) scriptStats.externalized += 1;
-              script.dataset.chatappRemoteProxy = '1';
-              sendDebug('info', 'script-remote-proxied ' + descriptor.label + ' src=' + compactText(descriptor.src, 220));
-            } else if (resolved?.error) {
-              sendDebug('warn', 'script-remote-proxy-failed ' + descriptor.label + ' err=' + compactText(resolved.error?.message || resolved.error || 'unknown', 220));
-            }
-            script.src = String(resolved?.src || descriptor.src || '');
-            if (script.type !== 'module') script.async = false;
-            sendDebug('info', 'script-load-start ' + descriptor.label + (resolved?.proxied ? ' proxied=1' : ''));
-          })().catch((err) => {
-            sendDebug('warn', 'script-load-prepare-failed ' + descriptor.label + ' err=' + compactText(err?.message || err || 'unknown', 220));
-            script.src = descriptor.src;
-            if (script.type !== 'module') script.async = false;
-            sendDebug('info', 'script-load-start ' + descriptor.label);
           });
+          loadNextCandidate();
         }));
       } else {
         const rawCode = String(node.textContent || '');
@@ -1091,8 +1185,8 @@
           const blobUrl = toBlobScriptUrl(code, descriptor);
           if (blobUrl) {
             if (scriptStats) scriptStats.externalized += 1;
-            script.src = blobUrl;
             if (script.type !== 'module') script.async = false;
+            script.src = blobUrl;
             sendDebug('info', 'script-inline-externalized ' + descriptor.label);
             scriptTasks.push(new Promise((resolve) => {
               const finalize = (ok) => {

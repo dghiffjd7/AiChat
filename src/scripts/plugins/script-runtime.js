@@ -41,6 +41,52 @@ const callRpc = (method, params = {}) => {
   });
 };
 
+const stringifyConsoleArg = (arg) => {
+  if (arg instanceof Error) return \`\${arg.name}: \${arg.message}\`;
+  if (typeof arg === 'string') return arg;
+  if (arg == null) return String(arg);
+  try { return JSON.stringify(arg); } catch { return String(arg); }
+};
+
+const isDevOrigin = () => {
+  try {
+    const origin = String(self.location?.origin || self.location?.href || '');
+    return origin.includes('127.0.0.1') || origin.includes('localhost');
+  } catch {
+    return false;
+  }
+};
+
+const installWorkerConsoleBridge = () => {
+  if (self.__CHATAPP_WORKER_CONSOLE_BRIDGE__) return;
+  self.__CHATAPP_WORKER_CONSOLE_BRIDGE__ = true;
+  const original = {
+    warn: console.warn.bind(console),
+    error: console.error.bind(console),
+  };
+  let count = 0;
+  const limit = 120;
+  const mirror = (level, args) => {
+    if (currentSettings.mirrorConsole === false) return;
+    if (currentSettings.mirrorConsole !== true && !isDevOrigin()) return;
+    if (count >= limit) return;
+    count += 1;
+    const text = args.map(stringifyConsoleArg).join(' ').slice(0, 1600);
+    if (!text) return;
+    callRpc('log', { level, args: ['[worker-console]', text] }).catch(() => {});
+  };
+  console.warn = (...args) => {
+    original.warn(...args);
+    mirror('warn', args);
+  };
+  console.error = (...args) => {
+    original.error(...args);
+    mirror('error', args);
+  };
+};
+
+installWorkerConsoleBridge();
+
 const legacyListenerMap = new WeakMap();
 const wrapLegacyHandler = (cb) => {
   if (legacyListenerMap.has(cb)) return legacyListenerMap.get(cb);
@@ -75,6 +121,7 @@ const eventRemoveListener = (event, cb) => {
 
 self.eventOn = eventOn;
 self.eventRemoveListener = eventRemoveListener;
+self.tavern_events = self.tavern_events || { on: eventOn, off: eventRemoveListener, eventOn, eventRemoveListener };
 
 const buildModuleNamespace = (moduleExports, diff) => {
   const hasDiff = diff && Object.keys(diff).length > 0;
@@ -218,29 +265,593 @@ const makeCompatLodash = () => ({
   },
 });
 
+const runCompatCallback = (fn, ...args) => {
+  try {
+    const result = typeof fn === 'function' ? fn(...args) : undefined;
+    if (result && typeof result.catch === 'function') result.catch(err => console.error(err));
+    return result;
+  } catch (err) {
+    console.error(err);
+    return undefined;
+  }
+};
+
 const makeCompatDollar = () => {
-  const fn = (handler) => {
-    if (typeof handler === 'function') {
-      try { handler(); } catch {}
+  const normalizeNodes = (selector) => {
+    if (!selector) return [makeCompatElement('div')];
+    if (selector === self || selector === self.window || selector === self.document) return [selector];
+    if (Array.isArray(selector)) return selector.filter(Boolean);
+    if (selector && typeof selector === 'object' && typeof selector.length === 'number' && typeof selector !== 'function') {
+      return Array.from(selector).filter(Boolean);
     }
-    return {
-      on: () => {},
-      ready: (cb) => { if (typeof cb === 'function') cb(); },
-    };
+    if (selector && typeof selector === 'object') return [selector];
+    return [makeCompatElement(String(selector || 'div').startsWith('<') ? 'div' : String(selector || 'div'))];
   };
-  fn.ready = (cb) => { if (typeof cb === 'function') cb(); };
+  const makeCollection = (selector) => {
+    const nodes = normalizeNodes(selector);
+    const api = {
+      length: nodes.length,
+      get: (index) => {
+        if (index == null) return nodes.slice();
+        const idx = Number(index);
+        return Number.isFinite(idx) ? nodes[idx] : undefined;
+      },
+      eq: (index) => makeCollection(nodes[Math.trunc(Number(index) || 0)]),
+      each: (cb) => {
+        if (typeof cb === 'function') nodes.forEach((node, index) => runCompatCallback(cb, index, node));
+        return api;
+      },
+      ready: (cb) => {
+        if (typeof cb === 'function') runCompatCallback(cb);
+        return api;
+      },
+      on: (event, handler) => {
+        nodes.forEach(node => node?.addEventListener?.(event, handler));
+        return api;
+      },
+      off: (event, handler) => {
+        nodes.forEach(node => node?.removeEventListener?.(event, handler));
+        return api;
+      },
+      trigger: (event) => {
+        nodes.forEach(node => node?.dispatchEvent?.(event));
+        return api;
+      },
+      html: (value) => {
+        if (value === undefined) return String(nodes[0]?.innerHTML ?? '');
+        nodes.forEach(node => {
+          if (node && typeof node === 'object') node.innerHTML = String(value ?? '');
+        });
+        return api;
+      },
+      text: (value) => {
+        if (value === undefined) return String(nodes[0]?.textContent ?? '');
+        nodes.forEach(node => {
+          if (node && typeof node === 'object') node.textContent = String(value ?? '');
+        });
+        return api;
+      },
+      val: (value) => {
+        if (value === undefined) return nodes[0]?.value ?? '';
+        nodes.forEach(node => {
+          if (node && typeof node === 'object') node.value = value;
+        });
+        return api;
+      },
+      attr: (name, value) => {
+        if (value === undefined) return nodes[0]?.getAttribute?.(name);
+        nodes.forEach(node => node?.setAttribute?.(name, value));
+        return api;
+      },
+      prop: (name, value) => {
+        if (value === undefined) return nodes[0]?.[name];
+        nodes.forEach(node => {
+          if (node && typeof node === 'object') node[name] = value;
+        });
+        return api;
+      },
+      css: (name, value) => {
+        if (typeof name === 'string' && value === undefined) return nodes[0]?.style?.[name];
+        nodes.forEach(node => {
+          if (!node?.style) return;
+          if (name && typeof name === 'object') Object.assign(node.style, name);
+          else if (name) node.style[name] = String(value ?? '');
+        });
+        return api;
+      },
+      append: (...items) => {
+        nodes.forEach(node => items.forEach(item => node?.appendChild?.(item && typeof item === 'object' ? item : makeCompatElement('span'))));
+        return api;
+      },
+      prepend: (...items) => {
+        nodes.forEach(node => {
+          if (!node || !Array.isArray(node.children)) return;
+          const next = items.map(item => (item && typeof item === 'object' ? item : makeCompatElement('span')));
+          node.children = [...next, ...node.children];
+        });
+        return api;
+      },
+      empty: () => {
+        nodes.forEach(node => {
+          if (node && typeof node === 'object') {
+            node.children = [];
+            node.innerHTML = '';
+            node.textContent = '';
+          }
+        });
+        return api;
+      },
+      remove: () => {
+        nodes.forEach(node => node?.remove?.());
+        return api;
+      },
+      addClass: (...names) => {
+        nodes.forEach(node => node?.classList?.add?.(...names));
+        return api;
+      },
+      removeClass: (...names) => {
+        nodes.forEach(node => node?.classList?.remove?.(...names));
+        return api;
+      },
+      toggleClass: (name) => {
+        nodes.forEach(node => node?.classList?.toggle?.(name));
+        return api;
+      },
+      find: (selector) => makeCollection(nodes[0]?.querySelector?.(selector)),
+      closest: (selector) => makeCollection(nodes[0]?.closest?.(selector)),
+      parent: () => makeCollection(nodes[0]?.parentNode || makeCompatElement('div')),
+      children: () => makeCollection(nodes[0]?.children || []),
+      scrollTop: (value) => {
+        if (value === undefined) return Number(nodes[0]?.scrollTop || 0);
+        nodes.forEach(node => {
+          if (node && typeof node === 'object') node.scrollTop = Number(value) || 0;
+        });
+        return api;
+      },
+      scrollLeft: (value) => {
+        if (value === undefined) return Number(nodes[0]?.scrollLeft || 0);
+        nodes.forEach(node => {
+          if (node && typeof node === 'object') node.scrollLeft = Number(value) || 0;
+        });
+        return api;
+      },
+      hide: () => api.css('display', 'none'),
+      show: () => api.css('display', ''),
+    };
+    nodes.forEach((node, index) => { api[index] = node; });
+    return api;
+  };
+  const fn = (selector) => {
+    if (typeof selector === 'function') {
+      runCompatCallback(selector);
+      return makeCollection(self.document || makeCompatElement('document'));
+    }
+    return makeCollection(selector);
+  };
+  fn.ready = (cb) => { if (typeof cb === 'function') runCompatCallback(cb); };
   return fn;
 };
+
+const compatLocalStorageState = new Map();
+
+const makeCompatLocalStorage = () => ({
+  get length() {
+    return compatLocalStorageState.size;
+  },
+  key(index) {
+    const idx = Math.trunc(Number(index) || 0);
+    return Array.from(compatLocalStorageState.keys())[idx] || null;
+  },
+  getItem(key) {
+    const name = String(key || '');
+    return compatLocalStorageState.has(name) ? compatLocalStorageState.get(name) : null;
+  },
+  setItem(key, value) {
+    compatLocalStorageState.set(String(key || ''), String(value ?? ''));
+  },
+  removeItem(key) {
+    compatLocalStorageState.delete(String(key || ''));
+  },
+  clear() {
+    compatLocalStorageState.clear();
+  },
+});
+
+const makeCompatDomTokenList = () => ({
+  add: () => {},
+  remove: () => {},
+  toggle: () => false,
+  contains: () => false,
+});
+
+class CompatObserver {
+  constructor(callback) {
+    this.callback = typeof callback === 'function' ? callback : null;
+  }
+
+  observe() {}
+
+  disconnect() {}
+
+  unobserve() {}
+
+  takeRecords() {
+    return [];
+  }
+}
+
+const makeCompatElement = (tagName = 'div') => {
+  const element = {
+    tagName: String(tagName || 'div').toUpperCase(),
+    style: {},
+    dataset: {},
+    classList: makeCompatDomTokenList(),
+    children: [],
+    parentNode: null,
+    textContent: '',
+    innerHTML: '',
+    value: '',
+    checked: false,
+    scrollTop: 0,
+    scrollLeft: 0,
+    scrollHeight: 0,
+    scrollWidth: 0,
+    clientHeight: 0,
+    clientWidth: 0,
+    appendChild(child) {
+      if (child && typeof child === 'object') {
+        child.parentNode = element;
+        element.children.push(child);
+      }
+      return child;
+    },
+    removeChild(child) {
+      element.children = element.children.filter(item => item !== child);
+      if (child && typeof child === 'object') child.parentNode = null;
+      return child;
+    },
+    remove() {
+      if (element.parentNode?.removeChild) element.parentNode.removeChild(element);
+    },
+    setAttribute(name, value) {
+      element[String(name || '')] = String(value ?? '');
+    },
+    getAttribute(name) {
+      const key = String(name || '');
+      return Object.prototype.hasOwnProperty.call(element, key) ? String(element[key]) : null;
+    },
+    removeAttribute(name) {
+      const key = String(name || '');
+      if (key) delete element[key];
+    },
+    hasAttribute(name) {
+      const key = String(name || '');
+      return key ? Object.prototype.hasOwnProperty.call(element, key) : false;
+    },
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    dispatchEvent: () => true,
+    querySelector: () => makeCompatElement('div'),
+    querySelectorAll: () => [],
+    closest: () => makeCompatElement('div'),
+    focus: () => {},
+    blur: () => {},
+    click: () => {},
+  };
+  return element;
+};
+
+const makeCompatDocument = () => {
+  const body = makeCompatElement('body');
+  const head = makeCompatElement('head');
+  const documentElement = makeCompatElement('html');
+  documentElement.appendChild(head);
+  documentElement.appendChild(body);
+  return {
+    readyState: 'complete',
+    body,
+    head,
+    documentElement,
+    createElement: makeCompatElement,
+    createTextNode: (text = '') => ({ nodeType: 3, textContent: String(text ?? '') }),
+    createDocumentFragment: () => makeCompatElement('fragment'),
+    getElementById: (id = '') => makeCompatElement(id || 'div'),
+    querySelector: (selector = '') => makeCompatElement(selector || 'div'),
+    querySelectorAll: () => [],
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    dispatchEvent: () => true,
+  };
+};
+
+const defaultErrorCatched = (fn) => (...args) => {
+  try {
+    return typeof fn === 'function' ? fn(...args) : undefined;
+  } catch (err) {
+    console.error(err);
+    return undefined;
+  }
+};
+
+const normalizeCompatVariableScope = (option = { type: 'message' }) => {
+  const raw = option && typeof option === 'object'
+    ? String(option.type || option.scope || option.name || '').trim().toLowerCase()
+    : String(option || '').trim().toLowerCase();
+  if (raw === 'global' || raw === 'world') return 'global';
+  return 'chat';
+};
+
+const getCompatBaseVariables = (option = { type: 'message' }) => {
+  const scope = normalizeCompatVariableScope(option);
+  const globalVars = currentContext.globalVariables && typeof currentContext.globalVariables === 'object'
+    ? currentContext.globalVariables
+    : {};
+  const localVars = currentContext.localVariables && typeof currentContext.localVariables === 'object'
+    ? currentContext.localVariables
+    : currentContext.variables && typeof currentContext.variables === 'object'
+      ? currentContext.variables
+      : {};
+  return scope === 'global' ? globalVars : localVars;
+};
+
+const buildCompatVariablesSnapshot = () => {
+  const globalVars = currentContext.globalVariables && typeof currentContext.globalVariables === 'object'
+    ? currentContext.globalVariables
+    : {};
+  const localVars = currentContext.localVariables && typeof currentContext.localVariables === 'object'
+    ? currentContext.localVariables
+    : currentContext.variables && typeof currentContext.variables === 'object'
+      ? currentContext.variables
+      : {};
+  const baseVars = currentContext.variables && typeof currentContext.variables === 'object' ? currentContext.variables : localVars;
+  return {
+    stat_data: clone(baseVars),
+    variables: clone(baseVars),
+    status_current_variables: clone(baseVars),
+    global_variables: clone(globalVars),
+    local_variables: clone(localVars),
+  };
+};
+
+const getVariables = (option = { type: 'message' }) => clone(getCompatBaseVariables(option));
+const getAllVariables = () => buildCompatVariablesSnapshot();
+
+const setCompatVariables = (updates = {}, option = { type: 'message' }) => {
+  const scope = normalizeCompatVariableScope(option);
+  const payload = updates && typeof updates === 'object' ? updates : {};
+  const targetKey = scope === 'global' ? 'globalVariables' : 'localVariables';
+  const current = currentContext[targetKey] && typeof currentContext[targetKey] === 'object' ? currentContext[targetKey] : {};
+  const next = { ...current, ...payload };
+  currentContext[targetKey] = next;
+  if (scope !== 'global') currentContext.variables = next;
+  Object.entries(payload).forEach(([key, value]) => {
+    callRpc('variables.set', {
+      key,
+      value,
+      options: { scope: scope === 'global' ? 'global' : 'local' },
+      sessionId: currentContext.sessionId,
+    }).catch(() => {});
+  });
+  return getVariables(option);
+};
+
+const updateVariablesWith = (updates, option = { type: 'message' }) => {
+  if (typeof updates === 'function') {
+    const current = getVariables(option);
+    const next = updates(current);
+    return setCompatVariables(next && typeof next === 'object' ? next : {}, option);
+  }
+  return setCompatVariables(updates, option);
+};
+
+const splitVariablePath = (path = '') => String(path || '').split('.').map(part => part.trim()).filter(Boolean);
+
+const deleteCompatValueAtPath = (obj, path = '') => {
+  const parts = Array.isArray(path) ? path : splitVariablePath(path);
+  if (!obj || typeof obj !== 'object' || !parts.length) return false;
+  let cursor = obj;
+  for (let index = 0; index < parts.length - 1; index += 1) {
+    cursor = cursor?.[parts[index]];
+    if (!cursor || typeof cursor !== 'object') return false;
+  }
+  const last = parts[parts.length - 1];
+  if (!Object.prototype.hasOwnProperty.call(cursor, last)) return false;
+  delete cursor[last];
+  return true;
+};
+
+const deleteVariable = (path, option = { type: 'message' }) => {
+  const scope = normalizeCompatVariableScope(option);
+  const targetKey = scope === 'global' ? 'globalVariables' : 'localVariables';
+  const current = currentContext[targetKey] && typeof currentContext[targetKey] === 'object' ? clone(currentContext[targetKey]) : {};
+  const changed = deleteCompatValueAtPath(current, path);
+  currentContext[targetKey] = current;
+  if (scope !== 'global') currentContext.variables = current;
+  if (changed) {
+    callRpc('variables.delete', {
+      key: String(path || ''),
+      options: { scope: scope === 'global' ? 'global' : 'local' },
+      sessionId: currentContext.sessionId,
+    }).catch(() => {});
+  }
+  return changed;
+};
+
+const replaceVariables = (text = '') => String(text ?? '').replace(/\{\{\s*([^{}]+?)\s*\}\}/g, (_m, key) => {
+  const name = String(key || '').trim();
+  const local = getVariables();
+  const globalVars = getVariables({ type: 'global' });
+  const value = local[name] ?? globalVars[name];
+  if (value === undefined || value === null) return '';
+  return typeof value === 'object' ? JSON.stringify(value) : String(value);
+});
+
+const EVENT_TYPES = {
+  APP_READY: 'app.ready',
+  CHAT_CHANGED: 'chat.changed',
+  CHARACTER_SELECTED: 'character.selected',
+  MESSAGE_RECEIVED: 'message.after_receive',
+  MESSAGE_SENT: 'message.after_send',
+};
+
+const eventSource = {
+  on: eventOn,
+  off: eventRemoveListener,
+  makeFirst: eventOn,
+  removeListener: eventRemoveListener,
+  once: (event, cb) => {
+    if (typeof cb !== 'function') return;
+    const wrapped = (...args) => {
+      eventRemoveListener(event, wrapped);
+      return cb(...args);
+    };
+    eventOn(event, wrapped);
+  },
+};
+
+const normalizeStringList = (value) => (
+  Array.isArray(value)
+    ? value.map(item => String(item || '').trim()).filter(Boolean)
+    : []
+);
+
+const getWorldbookNamesFromContext = () => {
+  const names = normalizeStringList(currentContext.worldbookNames);
+  const worldIds = normalizeStringList(currentContext.worldIds);
+  const worldId = String(currentContext.worldId || '').trim();
+  return Array.from(new Set(names.concat(worldIds, worldId ? [worldId] : []).filter(Boolean)));
+};
+
+const getActiveWorldbookIds = () => {
+  const worldIds = normalizeStringList(currentContext.worldIds);
+  const worldId = String(currentContext.worldId || '').trim();
+  return Array.from(new Set((worldId ? [worldId] : []).concat(worldIds).filter(Boolean)));
+};
+
+const getGlobalWorldbookNames = () => getWorldbookNamesFromContext();
+
+const getCharWorldbookNames = () => {
+  const active = getActiveWorldbookIds();
+  return {
+    primary: active[0] || '',
+    additional: active.slice(1),
+  };
+};
+
+const getChatWorldbookName = () => getActiveWorldbookIds()[0] || '';
+
+const normalizeWorldbookEntry = (entry = {}, index = 0) => ({
+  ...entry,
+  uid: entry.uid ?? entry.id ?? entry.key ?? index,
+  id: entry.id ?? entry.uid ?? \`entry-\${index}\`,
+  name: entry.name || entry.comment || entry.title || entry.id || \`Entry \${index + 1}\`,
+  comment: entry.comment || entry.name || entry.title || '',
+  title: entry.title || entry.comment || entry.name || '',
+  content: String(entry.content || ''),
+  enabled: entry.enabled !== false && entry.disable !== true,
+});
+
+const getWorldbook = async (name) => {
+  const world = String(name || '').trim();
+  if (!world) return [];
+  const entries = await callRpc('world.getBook', { world, sessionId: currentContext.sessionId });
+  return Array.isArray(entries) ? entries.map(normalizeWorldbookEntry) : [];
+};
+
+const getCurrentCharacterName = () => (
+  String(currentContext.personaName || currentContext.characterName || currentContext.name2 || '').trim()
+);
+
+const buildCompatCharacters = () => {
+  const name = getCurrentCharacterName();
+  return [{
+    id: currentContext.personaId || 'current',
+    name,
+    avatar: currentContext.personaAvatar || name,
+    data: {
+      name,
+      extensions: currentContext.characterExtensions && typeof currentContext.characterExtensions === 'object'
+        ? currentContext.characterExtensions
+        : {},
+    },
+  }];
+};
+
+const getPreset = () => {
+  const preset = currentContext.activePreset && typeof currentContext.activePreset === 'object'
+    ? currentContext.activePreset
+    : {};
+  const prompts = Array.isArray(preset.prompts)
+    ? preset.prompts
+    : normalizeStringList([]).concat(Array.isArray(currentContext.presetPrompts) ? currentContext.presetPrompts : []);
+  return {
+    ...preset,
+    name: preset.name || currentContext.presetName || '',
+    prompts,
+    prompts_unused: Array.isArray(preset.prompts_unused) ? preset.prompts_unused : [],
+  };
+};
+
+const isPresetPlaceholderPrompt = (prompt = {}) => {
+  const id = String(prompt.identifier || prompt.id || prompt.name || '').toLowerCase();
+  return Boolean(prompt.placeholder || prompt.isPlaceholder || id.includes('placeholder'));
+};
+
+const isPresetSystemPrompt = (prompt = {}) => {
+  const role = String(prompt.role || prompt.type || prompt.position || '').toLowerCase();
+  return prompt.system === true || prompt.isSystem === true || role === 'system' || role === '0';
+};
+
+const buildCompatChatCompletionSettings = () => ({
+  function_calling: false,
+  ...(currentContext.chatCompletionSettings && typeof currentContext.chatCompletionSettings === 'object'
+    ? currentContext.chatCompletionSettings
+    : {}),
+  prompts: getPreset().prompts,
+});
+
+const buildCompatStContext = () => ({
+  characterId: 0,
+  characters: buildCompatCharacters(),
+  name2: getCurrentCharacterName(),
+  eventSource,
+  eventTypes: EVENT_TYPES,
+  event_types: EVENT_TYPES,
+  extensionSettings: currentContext.extensionSettings && typeof currentContext.extensionSettings === 'object'
+    ? currentContext.extensionSettings
+    : {},
+  chatCompletionSettings: buildCompatChatCompletionSettings(),
+  world_names: getWorldbookNamesFromContext(),
+  selected_world_info: getActiveWorldbookIds(),
+  chat_metadata: {
+    ...(currentContext.chat_metadata && typeof currentContext.chat_metadata === 'object' ? currentContext.chat_metadata : {}),
+    world_info: getChatWorldbookName(),
+  },
+});
+
+const getContext = () => ({
+  ...currentContext,
+  ...buildCompatStContext(),
+  chat: ensureSillyTavern().chat || [],
+  messages: ensureSillyTavern().chat || [],
+  currentMessageId: currentContext.currentMessageId || '',
+  ...buildCompatVariablesSnapshot(),
+  powerUserSettings: self.powerUserSettings || {},
+});
 
 const legacyMacros = new Map();
 
 const buildSillyTavern = () => {
   const st = {};
   st.chat = [];
-  st.characters = [];
+  st.characters = buildCompatCharacters();
   st.characterId = 0;
-  st.extensionSettings = {};
-  st.chatCompletionSettings = { function_calling: false };
+  st.extensionSettings = buildCompatStContext().extensionSettings;
+  st.chatCompletionSettings = buildCompatChatCompletionSettings();
+  st.eventSource = eventSource;
+  st.eventTypes = EVENT_TYPES;
+  st.event_types = EVENT_TYPES;
+  st.getContext = getContext;
   st.ToolManager = {
     isToolCallingSupported: () => false,
     parseToolCalls: () => {},
@@ -270,6 +881,14 @@ const buildSillyTavern = () => {
 
 const ensureSillyTavern = () => {
   if (!self.SillyTavern) self.SillyTavern = buildSillyTavern();
+  self.SillyTavern.characters = buildCompatCharacters();
+  self.SillyTavern.characterId = 0;
+  self.SillyTavern.extensionSettings = buildCompatStContext().extensionSettings;
+  self.SillyTavern.chatCompletionSettings = buildCompatChatCompletionSettings();
+  self.SillyTavern.eventSource = eventSource;
+  self.SillyTavern.eventTypes = EVENT_TYPES;
+  self.SillyTavern.event_types = EVENT_TYPES;
+  self.SillyTavern.getContext = getContext;
   return self.SillyTavern;
 };
 
@@ -283,6 +902,21 @@ const refreshSillyTavernChat = async () => {
 const ensureCompatGlobals = () => {
   const allowNetwork = currentSettings.allowNetwork === true;
   if (!self.window) self.window = self;
+  if (!self.parent) self.parent = self;
+  if (!self.top) self.top = self;
+  if (!self.localStorage) self.localStorage = makeCompatLocalStorage();
+  if (!self.document) self.document = makeCompatDocument();
+  if (!self.navigator) self.navigator = { userAgent: 'ChatApp ScriptRuntime' };
+  if (!self.location) self.location = { href: '', origin: '' };
+  if (typeof self.requestAnimationFrame !== 'function') {
+    self.requestAnimationFrame = (cb) => setTimeout(() => {
+      if (typeof cb === 'function') cb(Date.now());
+    }, 16);
+  }
+  if (typeof self.cancelAnimationFrame !== 'function') self.cancelAnimationFrame = (id) => clearTimeout(id);
+  if (typeof self.MutationObserver !== 'function') self.MutationObserver = CompatObserver;
+  if (typeof self.ResizeObserver !== 'function') self.ResizeObserver = CompatObserver;
+  if (typeof self.IntersectionObserver !== 'function') self.IntersectionObserver = CompatObserver;
   if (!self._) {
     const lodashUrls = [resolveLibUrl('lib/lodash.min.js')];
     if (allowNetwork) lodashUrls.push('https://cdn.jsdelivr.net/npm/lodash@4.17.21/lodash.min.js');
@@ -322,11 +956,45 @@ const ensureCompatGlobals = () => {
   }
   if (!self.$) self.$ = makeCompatDollar();
   ensureSillyTavern();
-  if (!self.TavernHelper) {
-    self.TavernHelper = {
-      getTavernHelperVersion: async () => '0.0.0',
-    };
-  }
+  if (typeof self.getVariables !== 'function') self.getVariables = getVariables;
+  if (typeof self.getAllVariables !== 'function') self.getAllVariables = getAllVariables;
+  if (typeof self.setVariables !== 'function') self.setVariables = setCompatVariables;
+  if (typeof self.updateVariablesWith !== 'function') self.updateVariablesWith = updateVariablesWith;
+  if (typeof self.insertOrAssignVariables !== 'function') self.insertOrAssignVariables = setCompatVariables;
+  if (typeof self.deleteVariable !== 'function') self.deleteVariable = deleteVariable;
+  if (typeof self.replaceVariables !== 'function') self.replaceVariables = replaceVariables;
+  if (typeof self.waitGlobalInitialized !== 'function') self.waitGlobalInitialized = () => Promise.resolve(true);
+  if (typeof self.errorCatched !== 'function') self.errorCatched = defaultErrorCatched;
+  if (typeof self.getContext !== 'function') self.getContext = getContext;
+  if (typeof self.getCurrentCharacterName !== 'function') self.getCurrentCharacterName = getCurrentCharacterName;
+  if (typeof self.getGlobalWorldbookNames !== 'function') self.getGlobalWorldbookNames = getGlobalWorldbookNames;
+  if (typeof self.getCharWorldbookNames !== 'function') self.getCharWorldbookNames = getCharWorldbookNames;
+  if (typeof self.getChatWorldbookName !== 'function') self.getChatWorldbookName = getChatWorldbookName;
+  if (typeof self.getWorldbook !== 'function') self.getWorldbook = getWorldbook;
+  if (typeof self.getPreset !== 'function') self.getPreset = getPreset;
+  if (typeof self.isPresetPlaceholderPrompt !== 'function') self.isPresetPlaceholderPrompt = isPresetPlaceholderPrompt;
+  if (typeof self.isPresetSystemPrompt !== 'function') self.isPresetSystemPrompt = isPresetSystemPrompt;
+  self.eventSource = self.eventSource || eventSource;
+  self.eventTypes = self.eventTypes || EVENT_TYPES;
+  self.event_types = self.event_types || EVENT_TYPES;
+  self.Context = getContext();
+  self.powerUserSettings = self.powerUserSettings || {};
+  if (!self.TavernHelper || typeof self.TavernHelper !== 'object') self.TavernHelper = {};
+  const helper = self.TavernHelper;
+  if (typeof helper.getTavernHelperVersion !== 'function') helper.getTavernHelperVersion = async () => '0.0.0';
+  helper.getVariables = helper.getVariables || getVariables;
+  helper.getAllVariables = helper.getAllVariables || getAllVariables;
+  helper.setVariables = helper.setVariables || setCompatVariables;
+  helper.updateVariablesWith = helper.updateVariablesWith || updateVariablesWith;
+  helper.insertOrAssignVariables = helper.insertOrAssignVariables || setCompatVariables;
+  helper.deleteVariable = helper.deleteVariable || deleteVariable;
+  helper.replaceVariables = helper.replaceVariables || replaceVariables;
+  helper.getContext = helper.getContext || getContext;
+  helper.getWorldbook = helper.getWorldbook || getWorldbook;
+  helper.getGlobalWorldbookNames = helper.getGlobalWorldbookNames || getGlobalWorldbookNames;
+  helper.getCharWorldbookNames = helper.getCharWorldbookNames || getCharWorldbookNames;
+  helper.getChatWorldbookName = helper.getChatWorldbookName || getChatWorldbookName;
+  helper.getPreset = helper.getPreset || getPreset;
 };
 
 let lastSchemaDebug = null;
@@ -995,6 +1663,11 @@ const makeApi = (scriptId) => {
       return filtered.slice(s, e).map(messageContentToText);
     },
     getwi: (world, title, data) => call('world.getEntry', { world, title, data }),
+    getWorldbook: (world) => call('world.getBook', { world }),
+    getWorldbookNames: () => getWorldbookNamesFromContext(),
+    getGlobalWorldbookNames,
+    getCharWorldbookNames,
+    getChatWorldbookName,
     activewi: (world, title, force) => call('world.activate', { world, title, force }),
     getchar: (name) => call('context.getCharacter', { name }),
     getpreset: (name) => call('context.getPreset', { name }),
@@ -1112,8 +1785,46 @@ const runHandlers = async (entry, eventName, payload, allowMutate) => {
   return data;
 };
 
+const syncCompatVariablesFromEvent = (eventName, payload = {}) => {
+  const evt = String(eventName || '').trim();
+  const data = payload && typeof payload === 'object' ? payload : {};
+  if (evt === 'variable.changed') {
+    const name = String(data.name || '').trim();
+    if (!name) return;
+    const scope = normalizeCompatVariableScope(data.scope || 'chat');
+    const targetKey = scope === 'global' ? 'globalVariables' : 'localVariables';
+    const current = currentContext[targetKey] && typeof currentContext[targetKey] === 'object' ? currentContext[targetKey] : {};
+    if (data.newValue === undefined) {
+      delete current[name];
+    } else {
+      current[name] = data.newValue;
+    }
+    currentContext[targetKey] = current;
+    if (scope !== 'global') currentContext.variables = current;
+    ensureCompatGlobals();
+    return;
+  }
+  if (evt === 'mag_variable_initialized' || evt === 'mag_variable_update_ended' || evt === 'mag_variable_update_ended_for_zod') {
+    const variables = data.variables && typeof data.variables === 'object'
+      ? data.variables
+      : Array.isArray(data.args) && data.args[0] && typeof data.args[0] === 'object'
+        ? data.args[0]
+        : null;
+    if (!variables) return;
+    const scope = normalizeCompatVariableScope(data.scope || 'chat');
+    if (scope === 'global') {
+      currentContext.globalVariables = clone(variables);
+    } else {
+      currentContext.localVariables = clone(variables);
+      currentContext.variables = clone(variables);
+    }
+    ensureCompatGlobals();
+  }
+};
+
 const dispatchEvent = async (eventName, payload, allowMutate = true) => {
   let data = payload;
+  syncCompatVariablesFromEvent(eventName, payload);
   await refreshSillyTavernChat();
   for (const entry of scripts.values()) {
     if (!entry?.record?.enabled) continue;
@@ -1138,14 +1849,15 @@ self.onmessage = async (e) => {
     if (msg.settings && typeof msg.settings === 'object') {
       currentSettings = { ...currentSettings, ...msg.settings };
     }
+    if (msg.context && typeof msg.context === 'object') {
+      currentContext = { ...currentContext, ...msg.context };
+    }
+    ensureCompatGlobals();
     list.forEach(item => {
       const record = { ...item };
       record.enabled = item.enabled === true;
       scripts.set(record.id, compileScript(record));
     });
-    if (msg.context && typeof msg.context === 'object') {
-      currentContext = { ...currentContext, ...msg.context };
-    }
     postMessage({ type: 'sync_done' });
     return;
   }
@@ -1156,6 +1868,7 @@ self.onmessage = async (e) => {
     if (msg.settings && typeof msg.settings === 'object') {
       currentSettings = { ...currentSettings, ...msg.settings };
     }
+    ensureCompatGlobals();
     return;
   }
   if (msg.type === 'dispatch') {
@@ -1177,6 +1890,36 @@ self.onmessage = async (e) => {
   }
 };
 `;
+
+export const buildScriptRuntimeWorkerSourceForTests = buildWorkerScript;
+
+const clonePlain = (value) => {
+  if (value === undefined || value === null) return value;
+  try {
+    return structuredClone(value);
+  } catch {
+    try {
+      return JSON.parse(JSON.stringify(value));
+    } catch {
+      return value;
+    }
+  }
+};
+
+const normalizeScriptWorldEntry = (entry = {}, index = 0) => {
+  const id = String(entry.id ?? entry.uid ?? `entry-${index}`);
+  const name = String(entry.name || entry.comment || entry.title || id || `Entry ${index + 1}`);
+  return {
+    ...clonePlain(entry),
+    uid: entry.uid ?? id,
+    id,
+    name,
+    comment: entry.comment || name,
+    title: entry.title || entry.comment || name,
+    content: String(entry.content || ''),
+    enabled: entry.enabled !== false && entry.disable !== true,
+  };
+};
 
 const toPath = (key) => String(key || '').split('.').map(p => p.trim()).filter(Boolean);
 
@@ -1201,6 +1944,19 @@ const setByPath = (obj, path, value) => {
     cur = cur[part];
   });
   return obj;
+};
+
+const deleteByPath = (obj, path) => {
+  if (!obj || typeof obj !== 'object' || !Array.isArray(path) || !path.length) return false;
+  let cur = obj;
+  for (let idx = 0; idx < path.length - 1; idx += 1) {
+    cur = cur?.[path[idx]];
+    if (!cur || typeof cur !== 'object') return false;
+  }
+  const last = path[path.length - 1];
+  if (!Object.prototype.hasOwnProperty.call(cur, last)) return false;
+  delete cur[last];
+  return true;
 };
 
 const estimatePayloadSize = (value) => {
@@ -1296,6 +2052,96 @@ ${allowNetwork ? `
   let seq = 0;
   const handlers = new Map();
   let defaultHandler = null;
+  function cloneCompat(value) {
+    try { return structuredClone(value); } catch {
+      try { return JSON.parse(JSON.stringify(value)); } catch { return value; }
+    }
+  }
+  function normalizeCompatVariableScope(option) {
+    const raw = option && typeof option === 'object'
+      ? String(option.type || option.scope || option.name || '').trim().toLowerCase()
+      : String(option || '').trim().toLowerCase();
+    return raw === 'global' || raw === 'world' ? 'global' : 'chat';
+  }
+  function getCompatBaseVariables(option) {
+    const scope = normalizeCompatVariableScope(option);
+    const globals = currentContext.globalVariables && typeof currentContext.globalVariables === 'object'
+      ? currentContext.globalVariables
+      : {};
+    const locals = currentContext.localVariables && typeof currentContext.localVariables === 'object'
+      ? currentContext.localVariables
+      : currentContext.variables && typeof currentContext.variables === 'object'
+        ? currentContext.variables
+        : {};
+    return scope === 'global' ? globals : locals;
+  }
+  function buildCompatVariablesSnapshot() {
+    const globals = currentContext.globalVariables && typeof currentContext.globalVariables === 'object'
+      ? currentContext.globalVariables
+      : {};
+    const locals = currentContext.localVariables && typeof currentContext.localVariables === 'object'
+      ? currentContext.localVariables
+      : currentContext.variables && typeof currentContext.variables === 'object'
+        ? currentContext.variables
+        : {};
+    const base = currentContext.variables && typeof currentContext.variables === 'object' ? currentContext.variables : locals;
+    return {
+      stat_data: cloneCompat(base),
+      variables: cloneCompat(base),
+      status_current_variables: cloneCompat(base),
+      global_variables: cloneCompat(globals),
+      local_variables: cloneCompat(locals),
+    };
+  }
+  function getVariables(option) {
+    return cloneCompat(getCompatBaseVariables(option));
+  }
+  function getAllVariables() {
+    return buildCompatVariablesSnapshot();
+  }
+  function getContext() {
+    return Object.assign({}, currentContext, buildCompatVariablesSnapshot(), {
+      powerUserSettings: window.powerUserSettings || {},
+    });
+  }
+  window.powerUserSettings = window.powerUserSettings || {};
+  window.getVariables = window.getVariables || getVariables;
+  window.getAllVariables = window.getAllVariables || getAllVariables;
+  window.getContext = window.getContext || getContext;
+  try {
+    Object.defineProperty(window, 'Context', {
+      configurable: true,
+      enumerable: true,
+      get: () => window.getContext(),
+    });
+  } catch {
+    window.Context = window.getContext();
+  }
+  var getVariables = window.getVariables;
+  var getAllVariables = window.getAllVariables;
+  var getContext = window.getContext;
+  var Context = window.Context;
+  var powerUserSettings = window.powerUserSettings;
+  function bridgeCompatGlobalsToHost(host) {
+    try {
+      if (!host || host === window) return;
+      if (!host.powerUserSettings || typeof host.powerUserSettings !== 'object') host.powerUserSettings = window.powerUserSettings;
+      if (typeof host.getContext !== 'function') host.getContext = () => window.getContext();
+      if (typeof host.getVariables !== 'function') host.getVariables = (...args) => window.getVariables(...args);
+      if (typeof host.getAllVariables !== 'function') host.getAllVariables = (...args) => window.getAllVariables(...args);
+      try {
+        Object.defineProperty(host, 'Context', {
+          configurable: true,
+          enumerable: true,
+          get: () => host.getContext(),
+        });
+      } catch {
+        host.Context = host.getContext();
+      }
+    } catch {}
+  }
+  bridgeCompatGlobalsToHost(window.parent);
+  bridgeCompatGlobalsToHost(window.top);
   function callParent(method, params) {
     const id = String(Date.now()) + '-' + (++seq);
     const payload = { type: 'script-iframe-rpc', id, scriptId, method, params };
@@ -1324,6 +2170,7 @@ ${allowNetwork ? `
     }
     if (msg.type === 'script-iframe-context' && msg.context) {
       currentContext = Object.assign({}, currentContext, msg.context);
+      try { Context = window.Context; } catch {}
       return;
     }
     if (msg.type === 'script-iframe-dispatch') {
@@ -1370,6 +2217,19 @@ ${allowNetwork ? `
   var eventEmit = window.eventEmit;
   var on = window.on;
   var off = window.off;
+  window.tavern_events = window.tavern_events || { on, off, eventOn: on, eventRemoveListener: off };
+  function bridgeEventGlobalsToHost(host) {
+    try {
+      if (!host || host === window) return;
+      if (typeof host.eventOn !== 'function') host.eventOn = on;
+      if (typeof host.eventRemoveListener !== 'function') host.eventRemoveListener = off;
+      if (!host.tavern_events || typeof host.tavern_events !== 'object') {
+        host.tavern_events = window.tavern_events;
+      }
+    } catch {}
+  }
+  bridgeEventGlobalsToHost(window.parent);
+  bridgeEventGlobalsToHost(window.top);
   function makeDataProxy(data) {
     const base = data && typeof data === 'object' ? data : {};
     return new Proxy(base, {
@@ -1874,6 +2734,28 @@ export class ScriptRuntime {
       ? resolvedWorldState.worldIds.slice()
       : (Array.isArray(this.bridge?.currentWorldIds) ? this.bridge.currentWorldIds.slice() : []);
     const worldId = String(this.bridge?.currentWorldId || worldIds[0] || '');
+    const worldbookNames = Array.from(new Set([
+      ...(Array.isArray(this.bridge?.worldStore?.list?.()) ? this.bridge.worldStore.list() : []),
+      ...(Array.isArray(worldIds) ? worldIds : []),
+      ...(worldId ? [worldId] : []),
+    ].map(item => String(item || '').trim()).filter(Boolean)));
+    const activeOpenAiPreset = this.presets?.getActive?.('openai') || {};
+    const activePresetPrompts = Array.isArray(activeOpenAiPreset?.prompts)
+      ? clonePlain(activeOpenAiPreset.prompts)
+      : [];
+    const activePreset = {
+      name: String(activeOpenAiPreset?.name || ''),
+      prompts: activePresetPrompts,
+      prompts_unused: Array.isArray(activeOpenAiPreset?.prompts_unused)
+        ? clonePlain(activeOpenAiPreset.prompts_unused)
+        : [],
+    };
+    const localVariables = sid && this.chatStore?.listVariables
+      ? (this.chatStore.listVariables(sid) || {})
+      : {};
+    const globalVariables = this.chatStore?.listGlobalVariables?.() || {};
+    const sharedVariables = this.bridge?.isSharedVariableSession?.(sid) === true;
+    const variables = sharedVariables ? globalVariables : localVariables;
     return {
       sessionId: sid,
       personaId,
@@ -1882,6 +2764,14 @@ export class ScriptRuntime {
       presetIds,
       worldId,
       worldIds,
+      worldbookNames,
+      activePreset,
+      presetPrompts: activePreset.prompts,
+      presetName: activePreset.name,
+      variables: clonePlain(variables) || {},
+      localVariables: clonePlain(localVariables) || {},
+      globalVariables: clonePlain(globalVariables) || {},
+      sharedVariables,
     };
   }
 
@@ -1902,7 +2792,9 @@ export class ScriptRuntime {
   }
 
   async syncScripts(contextOverride) {
-    const context = contextOverride || this.buildContext();
+    const context = contextOverride
+      ? { ...this.buildContext(contextOverride.sessionId), ...contextOverride }
+      : this.buildContext();
     this.context = { ...this.context, ...context };
     const settings = appSettings.get();
     const runtimeSettings = {
@@ -1999,7 +2891,9 @@ export class ScriptRuntime {
   }
 
   async syncContext(contextOverride) {
-    const context = contextOverride || this.buildContext();
+    const context = contextOverride
+      ? { ...this.buildContext(contextOverride.sessionId), ...contextOverride }
+      : this.buildContext();
     const next = { ...this.context, ...context };
     const changed = JSON.stringify(next) !== JSON.stringify(this.context);
     this.context = next;
@@ -2028,6 +2922,9 @@ export class ScriptRuntime {
     const sessionId = String(payload?.sessionId || this.context.sessionId || this.chatStore?.getCurrent?.() || '').trim();
     if (!this.isEnabled(sessionId)) return payload;
     if (options?.skip === true || payload?.skipScripts === true || payload?.meta?.skipScripts === true) {
+      return payload;
+    }
+    if (event === 'variable.changed' && !this.hasListener(event) && !this.hasListener('*')) {
       return payload;
     }
     const payloadSize = estimatePayloadSize({ event, payload });
@@ -2140,6 +3037,41 @@ export class ScriptRuntime {
       const base = this.chatStore?.getVariable?.(path[0], sessionId) || {};
       const next = setByPath({ ...(base && typeof base === 'object' ? base : {}) }, path.slice(1), params.value);
       return this.chatStore?.setVariable?.(path[0], next, sessionId);
+    }
+    if (method === 'variables.delete') {
+      if (!allowModifyVariables) return false;
+      const key = String(params.key || '').trim();
+      const scope = String(params.options?.scope || params.scope || 'local').toLowerCase();
+      if (!key) return false;
+      const path = toPath(key);
+      if (!path.length) return false;
+      if (scope === 'global') {
+        if (path.length === 1) return this.chatStore?.deleteGlobalVariable?.(path[0]) ?? false;
+        const base = this.chatStore?.getGlobalVariable?.(path[0]) || {};
+        if (!base || typeof base !== 'object') return false;
+        const next = clonePlain(base) || {};
+        const changed = deleteByPath(next, path.slice(1));
+        if (!changed) return false;
+        return this.chatStore?.setGlobalVariable?.(path[0], next) ?? false;
+      }
+      if (path.length === 1) return this.chatStore?.deleteVariable?.(path[0], sessionId) ?? false;
+      const base = this.chatStore?.getVariable?.(path[0], sessionId) || {};
+      if (!base || typeof base !== 'object') return false;
+      const next = clonePlain(base) || {};
+      const changed = deleteByPath(next, path.slice(1));
+      if (!changed) return false;
+      return this.chatStore?.setVariable?.(path[0], next, sessionId) ?? false;
+    }
+    if (method === 'variables.patch') {
+      if (!allowModifyVariables) return false;
+      const scope = String(params.options?.scope || params.scope || 'local').toLowerCase();
+      const patch = params.patch && typeof params.patch === 'object' ? params.patch : {};
+      const results = await Promise.all(Object.entries(patch).map(([key, value]) => (
+        value === undefined
+          ? this.processRpc('variables.delete', { key, options: { scope }, sessionId })
+          : this.processRpc('variables.set', { key, value, options: { scope }, sessionId })
+      )));
+      return results.some(Boolean);
     }
     if (method === 'variables.inc' || method === 'variables.dec') {
       if (!allowModifyVariables) return false;
@@ -2279,6 +3211,22 @@ export class ScriptRuntime {
       const entry = find();
       return String(entry?.content || '');
     }
+    if (method === 'world.list') {
+      const names = Array.from(new Set([
+        ...(Array.isArray(this.bridge?.worldStore?.list?.()) ? this.bridge.worldStore.list() : []),
+        ...(Array.isArray(this.context.worldbookNames) ? this.context.worldbookNames : []),
+        ...(Array.isArray(this.context.worldIds) ? this.context.worldIds : []),
+        ...(this.context.worldId ? [this.context.worldId] : []),
+      ].map(item => String(item || '').trim()).filter(Boolean)));
+      return names;
+    }
+    if (method === 'world.getBook') {
+      const worldId = String(params.world || this.context.worldId || '').trim();
+      if (!worldId) return [];
+      const world = this.bridge?.worldStore?.load?.(worldId);
+      const entries = Array.isArray(world?.entries) ? world.entries : [];
+      return entries.map((entry, index) => normalizeScriptWorldEntry(entry, index));
+    }
     if (method === 'world.activate') {
       const worldId = String(params.world || this.context.worldId || '').trim();
       const title = params.title;
@@ -2303,6 +3251,18 @@ export class ScriptRuntime {
     }
     if (method === 'context.getPreset') {
       const name = String(params.name || '');
+      if (!name || name === 'in_use' || name === 'current') {
+        const activeOpenAiPreset = this.presets?.getActive?.('openai') || {};
+        return {
+          name: String(activeOpenAiPreset?.name || this.context.presetName || ''),
+          prompts: Array.isArray(activeOpenAiPreset?.prompts)
+            ? clonePlain(activeOpenAiPreset.prompts)
+            : clonePlain(this.context.presetPrompts || []),
+          prompts_unused: Array.isArray(activeOpenAiPreset?.prompts_unused)
+            ? clonePlain(activeOpenAiPreset.prompts_unused)
+            : [],
+        };
+      }
       if (!name && this.presets?.getActive) {
         const active = this.presets.getActive('sysprompt') || {};
         return { name: String(active?.name || '') };
@@ -2310,7 +3270,30 @@ export class ScriptRuntime {
       return { name };
     }
     if (method === 'context.getContext') {
-      return {};
+      const localVariables = sessionId && this.chatStore?.listVariables
+        ? (this.chatStore.listVariables(sessionId) || {})
+        : {};
+      const globalVariables = this.chatStore?.listGlobalVariables?.() || {};
+      const sharedVariables = this.bridge?.isSharedVariableSession?.(sessionId) === true;
+      const variables = sharedVariables ? globalVariables : localVariables;
+      const chat = allowReadMessages && Array.isArray(this.chatStore?.getMessages?.(sessionId))
+        ? this.chatStore.getMessages(sessionId).map(m => ({ ...m }))
+        : [];
+      return {
+        ...this.context,
+        sessionId,
+        chat,
+        messages: chat,
+        variables: clonePlain(variables) || {},
+        stat_data: clonePlain(variables) || {},
+        status_current_variables: clonePlain(variables) || {},
+        local_variables: clonePlain(localVariables) || {},
+        global_variables: clonePlain(globalVariables) || {},
+        localVariables: clonePlain(localVariables) || {},
+        globalVariables: clonePlain(globalVariables) || {},
+        sharedVariables,
+        powerUserSettings: {},
+      };
     }
     if (method === 'script.updateData') {
       const scriptId = String(params.scriptId || '').trim();

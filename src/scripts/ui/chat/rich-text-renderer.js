@@ -611,6 +611,36 @@ const shouldInjectFrameworkShim = (html, { directLoad = false } = {}) => {
     if (directLoad) return true;
     return /\bVueRouter\b|\bVue\b|\bPinia\b|createApp\s*\(|createRouter\s*\(|createPinia\s*\(/.test(raw);
 };
+const shouldInjectReactShim = (html) => {
+    const raw = String(html || '');
+    if (!raw) return false;
+    const usesReact = /\bReact\b|React\.createElement\s*\(|<script\b[^>]*type\s*=\s*["'](?:text\/)?(?:babel|jsx|tsx)["']/i.test(raw);
+    const usesReactDom = /\bReactDOM\b|createRoot\s*\(/i.test(raw);
+    if (!usesReact && !usesReactDom) return false;
+    const hasReactScript = /<script\b[^>]*\bsrc\s*=\s*["'][^"']*(?:\/|%2f)react@[^"']*\/umd\/react\.(?:development|production\.min)\.js/i.test(raw);
+    const hasReactDomScript = /<script\b[^>]*\bsrc\s*=\s*["'][^"']*(?:\/|%2f)react-dom@[^"']*\/umd\/react-dom\.(?:development|production\.min)\.js/i.test(raw);
+    return !(hasReactScript && (!usesReactDom || hasReactDomScript));
+};
+const hasReactRuntimeUsage = (html) => {
+    const raw = String(html || '');
+    if (!raw) return false;
+    return /\bReactDOM\b|\bReact\b|React\.createElement\s*\(|createRoot\s*\(|<script\b[^>]*type\s*=\s*["'](?:text\/)?(?:babel|jsx|tsx)["']/i.test(raw);
+};
+const ensureBabelScriptDefaults = (html) => {
+    const raw = String(html || '');
+    if (!raw || !/<script\b/i.test(raw)) return raw;
+    try {
+        return raw.replace(/<script\b([^>]*)>/gi, (full, attrs) => {
+            const attrText = String(attrs || '');
+            if (!/\btype\s*=\s*["'](?:text\/)?(?:babel|jsx|tsx)["']/i.test(attrText)) return full;
+            if (/\bdata-presets\s*=/i.test(attrText)) return full;
+            const presets = /\btsx\b/i.test(attrText) ? 'typescript,react' : 'react';
+            return `<script${attrText} data-presets="${presets}">`;
+        });
+    } catch {
+        return raw;
+    }
+};
 const shouldInjectZodShim = (html) => {
     const raw = String(html || '');
     if (!raw) return false;
@@ -624,6 +654,8 @@ const analyzeCompatProfile = (html, { directLoad = false } = {}) => {
         vue: /\bVue\b|createApp\s*\(|from\s+['"]vue['"]/i.test(raw),
         vueRouter: /\bVueRouter\b|createRouter\s*\(|from\s+['"]vue-router['"]/i.test(raw),
         pinia: /\bPinia\b|createPinia\s*\(|from\s+['"]pinia['"]/i.test(raw),
+        react: hasReactRuntimeUsage(raw),
+        babel: /<script\b[^>]*type\s*=\s*["'](?:text\/)?(?:babel|jsx|tsx)["']|\bBabel\b|@babel\/standalone/i.test(raw),
         stGlobals: /\bSillyTavern\b|\bTavernHelper\b|\btoastr\b|\bYAML\b|registerMvuSchema\s*\(|registerVariableSchema\s*\(|mag_variable_|setChatMessage\s*\(|setChatMessages\s*\(|replaceVariables\s*\(|insertOrAssignVariables\s*\(|deleteVariable\s*\(|getCurrentMessageId\s*\(|getChatMessages\s*\(|getChatMessage\s*\(|getContext\s*\(/i.test(raw),
         stApi: /getRequestHeaders\s*\(|\/api\/backends\//i.test(raw),
         externalScript: /<script[^>]+src\s*=\s*["']https?:\/\//i.test(raw),
@@ -632,6 +664,7 @@ const analyzeCompatProfile = (html, { directLoad = false } = {}) => {
     let profile = 'basic-inline';
     if (flags.bodyLoad || directLoad) profile = 'direct-load-static';
     if (flags.vue || flags.vueRouter || flags.pinia) profile = flags.bodyLoad || directLoad ? 'direct-load-framework' : 'inline-framework';
+    if (flags.react || flags.babel) profile = flags.bodyLoad || directLoad ? 'direct-load-framework' : 'inline-framework';
     if (flags.stGlobals || flags.stApi) profile = 'st-runtime-dependent';
     return { profile, flags };
 };
@@ -683,6 +716,8 @@ const diagnoseIframeError = (message = '') => {
     if (/VueRouter is not defined/i.test(msg)) return 'hint=vue-router-missing-or-cdn-blocked';
     if (/Vue is not defined/i.test(msg)) return 'hint=vue-missing-or-cdn-blocked';
     if (/Pinia is not defined|createPinia is not defined/i.test(msg)) return 'hint=pinia-missing-or-cdn-blocked';
+    if (/ReactDOM is not defined/i.test(msg)) return 'hint=react-dom-missing-or-cdn-blocked';
+    if (/React is not defined/i.test(msg)) return 'hint=react-missing-or-cdn-blocked';
     if (/\$ is not defined|jQuery is not defined/i.test(msg)) return 'hint=jquery-shim-missing-or-overwritten';
     if (/errorCatched is not defined|errorCatched is not a function/i.test(msg)) return 'hint=compat-helper-binding-missing';
     if (/Failed to fetch|NetworkError|CORS|cross-origin/i.test(msg)) return 'hint=network-or-cors';
@@ -1236,6 +1271,16 @@ const buildMvuCompatBridge = ({ iframeId, sessionId, debugTag, messageId, messag
       currentMessageId: (typeof compatApi.getCurrentMessageId === 'function' ? compatApi.getCurrentMessageId() : resolveCompatCurrentMessageId()),
     });
   };
+  if (!window.powerUserSettings || typeof window.powerUserSettings !== 'object') window.powerUserSettings = {};
+  try {
+    Object.defineProperty(window, 'Context', {
+      configurable: true,
+      enumerable: true,
+      get() { return window.getContext?.() || {}; },
+    });
+  } catch {
+    window.Context = window.getContext?.() || {};
+  }
   window.setChatMessage = (...args) => compatApi.setChatMessage(...args);
   window.setChatMessages = (...args) => compatApi.setChatMessages(...args);
   window.replaceVariables = (...args) => compatApi.replaceVariables(...args);
@@ -1326,10 +1371,12 @@ const buildMvuCompatBridge = ({ iframeId, sessionId, debugTag, messageId, messag
     exposeAlias('waitGlobalInitialized', window.waitGlobalInitialized);
     exposeAlias('TavernHelper', window.TavernHelper);
     exposeAlias('SillyTavern', window.SillyTavern);
+    exposeAlias('Context', window.Context);
+    exposeAlias('powerUserSettings', window.powerUserSettings);
     exposeAlias('__chatappCompat', window.__chatappCompat);
     exposeAlias('Mvu', window.Mvu);
     exposeAlias('_', window._);
-    try { window.eval('var $ = window.$; var jQuery = window.jQuery || window.$; var getVariables = window.getVariables; var getCurrentMessageId = window.getCurrentMessageId; var getChatMessages = window.getChatMessages; var getChatMessage = window.getChatMessage; var getContext = window.getContext; var setChatMessage = window.setChatMessage; var setChatMessages = window.setChatMessages; var replaceVariables = window.replaceVariables; var insertOrAssignVariables = window.insertOrAssignVariables; var deleteVariable = window.deleteVariable; var TavernHelper = window.TavernHelper; var SillyTavern = window.SillyTavern;'); } catch {}
+    try { window.eval('var $ = window.$; var jQuery = window.jQuery || window.$; var getVariables = window.getVariables; var getCurrentMessageId = window.getCurrentMessageId; var getChatMessages = window.getChatMessages; var getChatMessage = window.getChatMessage; var getContext = window.getContext; var setChatMessage = window.setChatMessage; var setChatMessages = window.setChatMessages; var replaceVariables = window.replaceVariables; var insertOrAssignVariables = window.insertOrAssignVariables; var deleteVariable = window.deleteVariable; var TavernHelper = window.TavernHelper; var SillyTavern = window.SillyTavern; var Context = window.Context; var powerUserSettings = window.powerUserSettings;'); } catch {}
     postCompatLog('info', 'mvu-alias-ready');
   };
 
@@ -2100,6 +2147,16 @@ const buildMvuCompatBridgeLegacy = ({ iframeId, sessionId, messageId, messageInd
       });
     };
   }
+  if (!window.powerUserSettings || typeof window.powerUserSettings !== 'object') window.powerUserSettings = {};
+  try {
+    Object.defineProperty(window, 'Context', {
+      configurable: true,
+      enumerable: true,
+      get() { return window.getContext?.() || {}; },
+    });
+  } catch {
+    window.Context = window.getContext?.() || {};
+  }
   if (typeof window.setChatMessage !== 'function') {
     window.setChatMessage = async (fieldValues, messageId, options = {}) => {
       const payload = normalizeChatMessageFieldValues(fieldValues);
@@ -2204,7 +2261,7 @@ const buildMvuCompatBridgeLegacy = ({ iframeId, sessionId, messageId, messageInd
     };
   }
   try {
-    window.eval('var errorCatched = window.errorCatched; var getAllVariables = window.getAllVariables; var getVariables = window.getVariables; var getCurrentMessageId = window.getCurrentMessageId; var getChatMessages = window.getChatMessages; var getChatMessage = window.getChatMessage; var getContext = window.getContext; var setChatMessage = window.setChatMessage; var setChatMessages = window.setChatMessages; var replaceVariables = window.replaceVariables; var insertOrAssignVariables = window.insertOrAssignVariables; var deleteVariable = window.deleteVariable; var eventOn = window.eventOn; var eventRemoveListener = window.eventRemoveListener; var waitGlobalInitialized = window.waitGlobalInitialized;');
+    window.eval('var errorCatched = window.errorCatched; var getAllVariables = window.getAllVariables; var getVariables = window.getVariables; var getCurrentMessageId = window.getCurrentMessageId; var getChatMessages = window.getChatMessages; var getChatMessage = window.getChatMessage; var getContext = window.getContext; var setChatMessage = window.setChatMessage; var setChatMessages = window.setChatMessages; var replaceVariables = window.replaceVariables; var insertOrAssignVariables = window.insertOrAssignVariables; var deleteVariable = window.deleteVariable; var eventOn = window.eventOn; var eventRemoveListener = window.eventRemoveListener; var waitGlobalInitialized = window.waitGlobalInitialized; var Context = window.Context; var powerUserSettings = window.powerUserSettings;');
   } catch {}
 
   const ensureLodash = () => {
@@ -5460,6 +5517,91 @@ const maybeRewriteMvuInlineHelpers = (htmlCode, { needsMvuCompat = false, direct
     return rewriteErrorCatchedOnly(html);
 };
 
+const buildReactGlobalShim = ({ iframeId = '', debugTag = '' } = {}) => {
+    const id = String(iframeId || '');
+    const tag = String(debugTag || '');
+    const reactUrls = [
+        'https://testingcf.jsdelivr.net/npm/react@18/umd/react.production.min.js',
+        'https://cdn.jsdelivr.net/npm/react@18/umd/react.production.min.js',
+        'https://unpkg.com/react@18/umd/react.production.min.js',
+    ];
+    const reactDomUrls = [
+        'https://testingcf.jsdelivr.net/npm/react-dom@18/umd/react-dom.production.min.js',
+        'https://cdn.jsdelivr.net/npm/react-dom@18/umd/react-dom.production.min.js',
+        'https://unpkg.com/react-dom@18/umd/react-dom.production.min.js',
+    ];
+    return `<script>
+(() => {
+  const CHATAPP_IFRAME_ID = ${serializeForInlineScript(id)};
+  const CHATAPP_DEBUG_TAG = ${serializeForInlineScript(tag)};
+  const withTag = (msg) => CHATAPP_DEBUG_TAG ? ('tag=' + CHATAPP_DEBUG_TAG + ' ' + String(msg || '')) : String(msg || '');
+  const log = (level, message) => {
+    try {
+      parent.postMessage({
+        type: 'chatapp:iframe-debug',
+        id: CHATAPP_IFRAME_ID,
+        level: String(level || 'info'),
+        message: withTag(message),
+      }, '*');
+    } catch {}
+  };
+  const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const loadScript = (url) => new Promise((resolve) => {
+    try {
+      const root = document.head || document.documentElement || document.body;
+      if (!root) {
+        resolve(false);
+        return;
+      }
+      const s = document.createElement('script');
+      s.src = String(url || '');
+      s.async = false;
+      s.onload = () => resolve(true);
+      s.onerror = () => resolve(false);
+      root.appendChild(s);
+    } catch {
+      resolve(false);
+    }
+  });
+  const ensureGlobal = async (name, urls, readyMsg, missMsg) => {
+    if (window[name]) {
+      log('info', readyMsg + '-existing');
+      return true;
+    }
+    for (let i = 0; i < urls.length; i += 1) {
+      if (window[name]) break;
+      const u = String(urls[i] || '');
+      if (!u) continue;
+      log('info', 'compat-load-attempt-late name=' + name + ' url=' + u);
+      try { await loadScript(u); } catch {}
+      if (window[name]) {
+        log('info', readyMsg);
+        return true;
+      }
+    }
+    if (window[name]) {
+      log('info', readyMsg);
+      return true;
+    }
+    log('warn', missMsg);
+    return false;
+  };
+  if (!window.__CHATAPP_REACT_READY__ || typeof window.__CHATAPP_REACT_READY__.then !== 'function') {
+    window.__CHATAPP_REACT_READY__ = (async () => {
+      await wait(120);
+      const reactReady = window.React
+        ? (log('info', 'react-shim-ready-existing'), true)
+        : await ensureGlobal('React', ${serializeForInlineScript(reactUrls)}, 'react-shim-ready', 'react-shim-missing');
+      const reactDomReady = window.ReactDOM
+        ? (log('info', 'react-dom-shim-ready-existing'), true)
+        : await ensureGlobal('ReactDOM', ${serializeForInlineScript(reactDomUrls)}, 'react-dom-shim-ready', 'react-dom-shim-missing');
+      return Boolean(reactReady && reactDomReady);
+    })();
+  }
+})();
+</script>`;
+};
+
 const buildFrameworkGlobalShim = ({ iframeId = '', debugTag = '', vueMajor = 3, appOrigin = '' } = {}) => {
     const id = String(iframeId || '');
     const tag = String(debugTag || '');
@@ -6815,8 +6957,18 @@ const buildDollarGlobalShim = ({
       try { return fn?.(...args); } catch (err) { console.error(err); }
     };
   }
+  if (!window.powerUserSettings || typeof window.powerUserSettings !== 'object') window.powerUserSettings = {};
   try {
-    window.eval('var $ = window.$; var jQuery = window.jQuery; var _ = window._; var z = window.z; var Zod = window.Zod; var getVariables = window.getVariables; var getCurrentMessageId = window.getCurrentMessageId; var getChatMessages = window.getChatMessages; var getChatMessage = window.getChatMessage; var getContext = window.getContext; var setChatMessage = window.setChatMessage; var setChatMessages = window.setChatMessages; var insertOrAssignVariables = window.insertOrAssignVariables; var deleteVariable = window.deleteVariable; var errorCatched = window.errorCatched;');
+    Object.defineProperty(window, 'Context', {
+      configurable: true,
+      enumerable: true,
+      get() { return window.getContext?.() || {}; },
+    });
+  } catch {
+    window.Context = window.getContext?.() || {};
+  }
+  try {
+    window.eval('var $ = window.$; var jQuery = window.jQuery; var _ = window._; var z = window.z; var Zod = window.Zod; var getVariables = window.getVariables; var getCurrentMessageId = window.getCurrentMessageId; var getChatMessages = window.getChatMessages; var getChatMessage = window.getChatMessage; var getContext = window.getContext; var setChatMessage = window.setChatMessage; var setChatMessages = window.setChatMessages; var insertOrAssignVariables = window.insertOrAssignVariables; var deleteVariable = window.deleteVariable; var errorCatched = window.errorCatched; var Context = window.Context; var powerUserSettings = window.powerUserSettings;');
   } catch {}
   if (typeof window.$ === 'function') log('info', 'dollar-shim-ready');
   else log('warn', 'dollar-shim-missing');
@@ -7024,6 +7176,7 @@ const makeCodeBlock = ({
     const effectiveAllowScripts = allowScripts && !shouldDeferSandbox;
     const needsMvuCompat = renderLevel === RICH_RENDER_LEVELS.SANDBOX && effectiveAllowScripts && (forceMvuCompat || shouldEnableMvuCompat(code));
     const needsFrameworkShim = renderLevel === RICH_RENDER_LEVELS.SANDBOX && effectiveAllowScripts && shouldInjectFrameworkShim(code, { directLoad: Boolean(directBodyLoadUrl) });
+    const needsReactShim = renderLevel === RICH_RENDER_LEVELS.SANDBOX && effectiveAllowScripts && shouldInjectReactShim(code);
     const resolvedSessionId = (() => {
         try {
             const explicitSid = String(sessionId || '').trim();
@@ -7308,6 +7461,7 @@ const makeCodeBlock = ({
                 emitDebugLog({ source: 'rich', type: 'info', message: msg, force: true });
                 logger.info(`[rich] ${msg}`);
             }
+            html = ensureBabelScriptDefaults(html);
         }
         const hasMinVh = /min-height:\s*[^;]*vh/i.test(html);
         const hasJsVhUsage = /\d+vh/.test(html);
@@ -7356,6 +7510,9 @@ const makeCodeBlock = ({
         const frameworkShim = (effectiveAllowScripts && !useLegacyMvuBridge && needsFrameworkShim)
             ? buildFrameworkGlobalShim({ iframeId, debugTag, vueMajor: vueRuntimePreference, appOrigin: window.location.origin })
             : '';
+        const reactShim = needsReactShim
+            ? buildReactGlobalShim({ iframeId, debugTag })
+            : '';
         const mvuCompatBridge = needsMvuCompat
             ? mvuBridgeBuilder({ iframeId, sessionId: resolvedSessionId, debugTag, messageId, messageIndex, seedVars: compatSeedVars || {} })
             : '';
@@ -7364,7 +7521,7 @@ const makeCodeBlock = ({
             emitDebugLog({ source: 'rich', type: 'info', message: modeMsg, force: true });
             logger.info(`[rich] ${modeMsg}`);
         }
-        const scriptHeadPrepend = `${dollarShim}${frameworkShim}${mvuCompatBridge}`;
+        const scriptHeadPrepend = `${dollarShim}${reactShim}${frameworkShim}${mvuCompatBridge}`;
         const scriptHostDoc = buildIframeSrcDoc(html, {
             iframeId,
             needsVhHandling,
@@ -7466,6 +7623,7 @@ const makeCodeBlock = ({
                     directHtml = pathRewrite.html;
                     const rewriteResult = maybeRewriteStHelperGlobals(directHtml, { directLoad: true });
                     directHtml = rewriteResult.html;
+                    directHtml = ensureBabelScriptDefaults(directHtml);
                     const directProfile = analyzeCompatProfile(directHtml, { directLoad: true });
                     logDirect('info', `direct-load-profile id=${iframeId} profile=${directProfile.profile} flags=${summarizeCompatFlags(directProfile.flags) || 'none'} source=cache`);
                     if (pathRewrite.failed) {
@@ -7489,14 +7647,18 @@ const makeCodeBlock = ({
                         seedMessages: compatSeedMessages,
                     });
                     const directNeedsFrameworkShim = shouldInjectFrameworkShim(directHtml, { directLoad: true });
+                    const directNeedsReactShim = shouldInjectReactShim(directHtml);
                     const directVueRuntimePreference = detectVueRuntimePreference(directHtml);
                     const directFrameworkShim = directNeedsFrameworkShim
                         ? buildFrameworkGlobalShim({ iframeId, debugTag, vueMajor: directVueRuntimePreference, appOrigin: window.location.origin })
                         : '';
+                    const directReactShim = directNeedsReactShim
+                        ? buildReactGlobalShim({ iframeId, debugTag })
+                        : '';
                     const directMvuBridge = needsMvuCompat
                         ? buildMvuCompatBridge({ iframeId, sessionId: resolvedSessionId, debugTag, messageId, messageIndex, seedVars: compatSeedVars || {} })
                         : '';
-                    const directHeadPrepend = `${directDollarShim}${directFrameworkShim}${directMvuBridge}`;
+                    const directHeadPrepend = `${directDollarShim}${directReactShim}${directFrameworkShim}${directMvuBridge}`;
                     const directHostDoc = buildIframeSrcDoc(directHtml, {
                         iframeId,
                         needsVhHandling: fetchedNeedsVh,
@@ -7550,6 +7712,7 @@ const makeCodeBlock = ({
                     directHtml = pathRewrite.html;
                     const rewriteResult = maybeRewriteStHelperGlobals(directHtml, { directLoad: true });
                     directHtml = rewriteResult.html;
+                    directHtml = ensureBabelScriptDefaults(directHtml);
                     const directProfile = analyzeCompatProfile(directHtml, { directLoad: true });
                     logDirect('info', `direct-load-profile id=${iframeId} profile=${directProfile.profile} flags=${summarizeCompatFlags(directProfile.flags) || 'none'} source=fetch`);
                     if (pathRewrite.failed) {
@@ -7574,14 +7737,18 @@ const makeCodeBlock = ({
                         seedMessages: compatSeedMessages,
                     });
                     const directNeedsFrameworkShim = shouldInjectFrameworkShim(directHtml, { directLoad: true });
+                    const directNeedsReactShim = shouldInjectReactShim(directHtml);
                     const directVueRuntimePreference = detectVueRuntimePreference(directHtml);
                     const directFrameworkShim = directNeedsFrameworkShim
                         ? buildFrameworkGlobalShim({ iframeId, debugTag, vueMajor: directVueRuntimePreference, appOrigin: window.location.origin })
                         : '';
+                    const directReactShim = directNeedsReactShim
+                        ? buildReactGlobalShim({ iframeId, debugTag })
+                        : '';
                     const directMvuBridge = needsMvuCompat
                         ? buildMvuCompatBridge({ iframeId, sessionId: resolvedSessionId, debugTag, messageId, messageIndex, seedVars: compatSeedVars || {} })
                         : '';
-                    const directHeadPrepend = `${directDollarShim}${directFrameworkShim}${directMvuBridge}`;
+                    const directHeadPrepend = `${directDollarShim}${directReactShim}${directFrameworkShim}${directMvuBridge}`;
                     const directHostDoc = buildIframeSrcDoc(directHtml, {
                         iframeId,
                         needsVhHandling: fetchedNeedsVh,
@@ -8454,7 +8621,7 @@ export const setupIframeResizeListener = () => {
             const recoverableRuntimeError = shouldStaticFallbackForIframeError(message);
             let handled = false;
             if (
-                /VueRouter is not defined|Vue is not defined|Pinia is not defined|createPinia is not defined|_ is not defined|resource-load-failed|unhandledrejection/i.test(message)
+                /VueRouter is not defined|Vue is not defined|Pinia is not defined|createPinia is not defined|ReactDOM is not defined|React is not defined|_ is not defined|resource-load-failed|unhandledrejection/i.test(message)
             ) {
                 const recovered = tryRecoverDirectLoadFallback(iframe, id, message.slice(0, 120));
                 handled = recovered;
