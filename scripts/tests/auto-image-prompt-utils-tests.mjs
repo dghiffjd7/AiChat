@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import {
   buildAutoImagePromptInstruction,
   extractAutoImagePrompts,
+  prepareAutoImagePromptPlaceholders,
   shouldAllowAutoImagePromptByRateLimit,
   stripMomentBlocksForAutoImagePrompt,
   stripAutoImagePromptTags,
@@ -46,6 +47,29 @@ import {
   const prompts = extractAutoImagePrompts('```xml\n<image_prompt>ignored</image_prompt>\n```\n<image_prompt>visible</image_prompt>');
   assert.deepEqual(prompts, ['visible']);
   console.log('ok - ignores image_prompt tags inside markdown code blocks');
+}
+
+{
+  const source = '<image_prompt>A</image_prompt>\n<image_prompt>B</image_prompt>\n<image_prompt>C</image_prompt>';
+  const prepared = prepareAutoImagePromptPlaceholders(source, {
+    max: 2,
+    overflowTokenBuilder: ({ prompt, index, max }) => `[overflow-${index}-${max}-${prompt}]`,
+  });
+  assert.deepEqual(prepared.prompts.map(item => item.prompt), ['A', 'B']);
+  assert.match(prepared.text, /\[img-图片生成中\]/);
+  assert.match(prepared.text, /\[img-图片生成中 2\]/);
+  assert.match(prepared.text, /\[overflow-2-2-C\]/);
+  console.log('ok - prepares overflow tokens for image prompts beyond max');
+}
+
+{
+  const source = '<image_prompt>A</image_prompt>\n<image_prompt>B</image_prompt>\n<image_prompt>C</image_prompt>';
+  const prompts = extractAutoImagePrompts(source, { max: 0, dedupe: false });
+  const prepared = prepareAutoImagePromptPlaceholders(source, { max: 0 });
+  assert.deepEqual(prompts, ['A', 'B', 'C']);
+  assert.deepEqual(prepared.prompts.map(item => item.prompt), ['A', 'B', 'C']);
+  assert.equal(prepared.text.includes('[overflow'), false);
+  console.log('ok - image prompt max 0 means unlimited');
 }
 
 {

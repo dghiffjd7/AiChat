@@ -179,6 +179,7 @@ export class GeneralSettingsPanel {
     this.autoImagePromptWindowRoundsInput = null;
     this.autoImagePromptWindowMaxInput = null;
     this.autoImagePromptMaxConcurrencyInput = null;
+    this.autoImagePromptMaxPerResponseInput = null;
     this.autoImagePromptSkipRepeatedToggle = null;
     this.memoryEnabledToggle = null;
     this.memoryModeSummary = null;
@@ -396,6 +397,10 @@ export class GeneralSettingsPanel {
     if (this.autoImagePromptMaxConcurrencyInput) {
       const n = Number(settings.autoImagePromptMaxConcurrency);
       this.autoImagePromptMaxConcurrencyInput.value = String(Number.isFinite(n) ? Math.max(1, Math.trunc(n)) : 1);
+    }
+    if (this.autoImagePromptMaxPerResponseInput) {
+      const n = Number(settings.autoImagePromptMaxPerResponse);
+      this.autoImagePromptMaxPerResponseInput.value = String(Number.isFinite(n) ? Math.max(0, Math.trunc(n)) : 0);
     }
     if (this.autoImagePromptSkipRepeatedToggle) {
       this.autoImagePromptSkipRepeatedToggle.checked = settings.autoImagePromptSkipRepeated !== false;
@@ -1762,6 +1767,12 @@ export class GeneralSettingsPanel {
                 icon: 'sliders',
                 control: '<input type="number" id="general-auto-image-prompt-max-concurrency" class="general-settings-number-input" min="1" step="1" value="1">',
               })}
+              ${this.renderInputRow({
+                title: '单次最多图片标签',
+                description: '一次 AI 回复最多自动生成多少张图。0 表示不限制，超过上限的标签会显示为可重试占位。',
+                icon: 'image',
+                control: '<input type="number" id="general-auto-image-prompt-max-per-response" class="general-settings-number-input" min="0" step="1" value="0">',
+              })}
               ${this.renderSettingRow({
                 id: 'general-auto-image-prompt-skip-repeated',
                 title: '跳过重复提示词',
@@ -2199,6 +2210,7 @@ export class GeneralSettingsPanel {
     this.autoImagePromptWindowRoundsInput = this.element.querySelector('#general-auto-image-prompt-window-rounds');
     this.autoImagePromptWindowMaxInput = this.element.querySelector('#general-auto-image-prompt-window-max');
     this.autoImagePromptMaxConcurrencyInput = this.element.querySelector('#general-auto-image-prompt-max-concurrency');
+    this.autoImagePromptMaxPerResponseInput = this.element.querySelector('#general-auto-image-prompt-max-per-response');
     this.autoImagePromptSkipRepeatedToggle = this.element.querySelector('#general-auto-image-prompt-skip-repeated');
     this.memoryEnabledToggle = this.element.querySelector('#general-memory-enabled');
     this.memoryModeSummary = this.element.querySelector('#general-memory-mode-summary');
@@ -2668,6 +2680,7 @@ export class GeneralSettingsPanel {
     bindAutoImagePromptNumber(this.autoImagePromptWindowRoundsInput, 'autoImagePromptWindowRounds', 0);
     bindAutoImagePromptNumber(this.autoImagePromptWindowMaxInput, 'autoImagePromptWindowMax', 0);
     bindAutoImagePromptNumber(this.autoImagePromptMaxConcurrencyInput, 'autoImagePromptMaxConcurrency', 1, 1);
+    bindAutoImagePromptNumber(this.autoImagePromptMaxPerResponseInput, 'autoImagePromptMaxPerResponse', 0, 0);
     this.autoImagePromptSkipRepeatedToggle?.addEventListener('change', (e) => {
       const value = Boolean(e?.target?.checked);
       appSettings.update({ autoImagePromptSkipRepeated: value });

@@ -4370,7 +4370,18 @@ Phase G（Frame 36）：循环衔接
     },
     logger,
   });
-  const MAX_AUTO_IMAGE_PROMPTS_PER_SOURCE = 10;
+  const DEFAULT_AUTO_IMAGE_PROMPTS_PER_SOURCE = 0;
+  const normalizeAutoImagePromptMaxPerResponse = (value) => {
+    const raw = Math.trunc(Number(value));
+    return Number.isFinite(raw) ? Math.max(0, raw) : DEFAULT_AUTO_IMAGE_PROMPTS_PER_SOURCE;
+  };
+  const getAutoImagePromptMaxPerResponse = () => {
+    try {
+      return normalizeAutoImagePromptMaxPerResponse(appSettings.get().autoImagePromptMaxPerResponse);
+    } catch {
+      return DEFAULT_AUTO_IMAGE_PROMPTS_PER_SOURCE;
+    }
+  };
   const normalizeAutoImageGenerationConcurrency = (value) => {
     const raw = Math.trunc(Number(value));
     return Number.isFinite(raw) ? Math.max(1, raw) : 1;
@@ -4414,6 +4425,21 @@ Phase G（Frame 36）：循环衔接
     }
     return `[img-error-${encodeURIComponent(JSON.stringify(payload))}]`;
   };
+  const buildAutoImagePromptLimitExceededToken = ({ prompt = '', index = 0, max = DEFAULT_AUTO_IMAGE_PROMPTS_PER_SOURCE, source = '' } = {}) => {
+    const limit = Math.max(0, Math.trunc(Number(max)) || 0);
+    const detail = limit > 0
+      ? `超过单次自动生图上限（${limit} 张）。点击重试可单独生成这张图。`
+      : '自动生图未进入队列。点击重试可单独生成这张图。';
+    return buildMomentImageErrorToken(detail, {
+      prompt,
+      index,
+      source: source || 'auto_image_prompt_limit',
+    });
+  };
+  const buildAutoImagePromptLimitOptions = (source = '') => ({
+    max: getAutoImagePromptMaxPerResponse(),
+    overflowTokenBuilder: payload => buildAutoImagePromptLimitExceededToken({ ...payload, source }),
+  });
   const normalizeInlineGeneratedImageAsset = (asset = {}, extra = {}) => {
     const output = asset?.output && typeof asset.output === 'object' ? asset.output : {};
     const path = String(output.path || '').trim();
@@ -4549,14 +4575,27 @@ Phase G（Frame 36）：循环衔接
   };
   const prepareMomentAutoImagePrompt = (moment = {}) => {
     const content = String(moment?.content || '');
+    const maxPerResponse = getAutoImagePromptMaxPerResponse();
     const prompts = isAutoImagePromptSettingEnabled()
-      ? extractAutoImagePrompts(content, { max: MAX_AUTO_IMAGE_PROMPTS_PER_SOURCE, dedupe: false })
+      ? extractAutoImagePrompts(content, { max: maxPerResponse, dedupe: false })
       .map(item => String(item || '').trim())
       .filter(Boolean)
       : [];
+    const overflowPrompts = isAutoImagePromptSettingEnabled() && maxPerResponse > 0
+      ? extractAutoImagePrompts(content, { max: 0, dedupe: false })
+        .map(item => String(item || '').trim())
+        .filter(Boolean)
+        .slice(maxPerResponse)
+      : [];
     const pendingTokens = prompts.map((_, index) => buildMomentAutoImagePendingToken(index));
+    const overflowTokens = overflowPrompts.map((prompt, index) => buildAutoImagePromptLimitExceededToken({
+      prompt,
+      index: maxPerResponse + index,
+      max: maxPerResponse,
+      source: 'moment_auto_image_prompt_limit',
+    }));
     const bodyContent = stripAutoImagePromptTags(content).replace(/\n{3,}/g, '\n\n').trim();
-    const nextContent = [bodyContent, ...pendingTokens].filter(Boolean).join('\n');
+    const nextContent = [bodyContent, ...pendingTokens, ...overflowTokens].filter(Boolean).join('\n');
     const nextMoment = {
       ...(moment || {}),
       content: nextContent,
@@ -14418,7 +14457,7 @@ Phase G（Frame 36）：循环衔接
     const prompts = [];
     const candidates = collectAutoImagePromptCandidates(message, rawText);
     const extractOptions = {
-      max: MAX_AUTO_IMAGE_PROMPTS_PER_SOURCE,
+      max: getAutoImagePromptMaxPerResponse(),
       dedupe: false,
       stripMomentBlocks: !isWritingSurface,
     };
@@ -14459,7 +14498,7 @@ Phase G（Frame 36）：循环衔接
       const preparedFallback = hasStoredPlaceholders
         ? { text: '', prompts: [] }
         : prepareAutoImagePromptPlaceholders(String(message?.meta?.autoImagePromptRawContent || rawText || message?.content || ''), {
-          max: MAX_AUTO_IMAGE_PROMPTS_PER_SOURCE,
+          ...buildAutoImagePromptLimitOptions('writing_auto_image_prompt_limit'),
         });
       const placeholderItems = hasStoredPlaceholders
         ? message.meta.autoImagePromptPlaceholders
@@ -20233,6 +20272,7 @@ Phase G（Frame 36）：循环衔接
             applyOutputRegexPairSafe,
             appBridge: window.appBridge,
             preserveAutoImagePromptPlaceholders: resolveWritingAutoImagePromptPreserveState(sessionId),
+            autoImagePromptPlaceholderOptions: buildAutoImagePromptLimitOptions('writing_auto_image_prompt_limit'),
             pushAssistantStreamText,
             captureAssistantMemoryState,
             attachAssistantMemoryStateToMeta,
@@ -20369,6 +20409,7 @@ Phase G（Frame 36）：循环衔接
           applyOutputRegexPairSafe,
           appBridge: window.appBridge,
           preserveAutoImagePromptPlaceholders: resolveWritingAutoImagePromptPreserveState(sessionId),
+          autoImagePromptPlaceholderOptions: buildAutoImagePromptLimitOptions('writing_auto_image_prompt_limit'),
           captureAssistantMemoryState,
           attachAssistantMemoryStateToMeta,
           isSessionActive: sid => isSessionActive(sid),
@@ -20838,7 +20879,9 @@ Phase G（Frame 36）：循环衔接
 	        const shouldPrepareAutoImagePrompt =
 	          extractAutoImagePrompts(autoImagePromptSource, { max: 1 }).length > 0;
 	        const autoImagePrepared = shouldPrepareAutoImagePrompt
-	          ? prepareAutoImagePromptPlaceholders(autoImagePromptSource, { max: MAX_AUTO_IMAGE_PROMPTS_PER_SOURCE })
+	          ? prepareAutoImagePromptPlaceholders(autoImagePromptSource, {
+	              ...buildAutoImagePromptLimitOptions('edit_assistant_raw_limit'),
+	            })
 	          : null;
 	        const finalSource = autoImagePrepared?.prompts?.length ? autoImagePrepared.text : stripAutoImagePromptTags(rawFinalSource);
 	        editAutoImagePromptRawText = autoImagePrepared?.prompts?.length ? autoImagePromptSource : '';
@@ -20849,7 +20892,7 @@ Phase G（Frame 36）：循环衔接
 	          decodedChanged: autoImagePromptSource !== rawFinalSource,
 	          rawHasLiteralTag: /<\s*image_prompt\b/i.test(rawFinalSource),
 	          decodedHasLiteralTag: /<\s*image_prompt\b/i.test(autoImagePromptSource),
-	          extractedCount: extractAutoImagePrompts(autoImagePromptSource, { max: MAX_AUTO_IMAGE_PROMPTS_PER_SOURCE, dedupe: false }).length,
+	          extractedCount: extractAutoImagePrompts(autoImagePromptSource, { max: getAutoImagePromptMaxPerResponse(), dedupe: false }).length,
 	          preparedCount: editAutoImagePromptPlaceholders.length,
 	          finalHasPending: /\[img-图片生成中(?: \d+)?\]/.test(finalSource),
 	          promptPreview: String(editAutoImagePromptPlaceholders[0]?.prompt || '').slice(0, 120),
@@ -20900,7 +20943,7 @@ Phase G（Frame 36）：循环衔接
 	          message?.meta && typeof message.meta === 'object' ? { ...message.meta } : {},
 	        );
 	        const autoImagePromptSource = decodeAutoImagePromptEditText(cleanedForRender);
-	        const chatEditPrompts = extractAutoImagePrompts(autoImagePromptSource, { max: MAX_AUTO_IMAGE_PROMPTS_PER_SOURCE, dedupe: false });
+	        const chatEditPrompts = extractAutoImagePrompts(autoImagePromptSource, { max: getAutoImagePromptMaxPerResponse(), dedupe: false });
 	        if (chatEditPrompts.length > 0) {
 	          editAutoImagePromptRawText = autoImagePromptSource;
 	        }
@@ -21004,7 +21047,7 @@ Phase G（Frame 36）：循环衔接
 	        const schedulePicked = scheduleCandidates.find(([, value]) => String(value || '').trim());
 	        const scheduleRawText = String(schedulePicked?.[1] || '');
 	        const schedulePromptCount = extractAutoImagePrompts(scheduleRawText, {
-	          max: MAX_AUTO_IMAGE_PROMPTS_PER_SOURCE,
+	          max: getAutoImagePromptMaxPerResponse(),
 	          dedupe: false,
 	          stripMomentBlocks: resolveMediaSurfaceForSession(sessionId) !== 'writing',
 	        }).length;

@@ -201,10 +201,16 @@ export const buildAutoImagePromptInstruction = ({
     .trim();
 };
 
+const normalizeAutoImagePromptLimit = (max, fallback) => {
+  const raw = Math.trunc(Number(max));
+  if (Number.isFinite(raw)) return raw <= 0 ? Number.POSITIVE_INFINITY : raw;
+  return fallback <= 0 ? Number.POSITIVE_INFINITY : fallback;
+};
+
 export const extractAutoImagePrompts = (text = '', { max = 1, maxLength = 2000, dedupe = true, stripMomentBlocks = false } = {}) => {
   const decoded = stripMomentBlocks ? stripMomentBlocksForAutoImagePrompt(text) : htmlDecodeLite(text);
   const source = stripReasoningLikeBlocks(stripMarkdownCodeBlocks(decoded));
-  const limit = Math.max(1, Math.trunc(Number(max)) || 1);
+  const limit = normalizeAutoImagePromptLimit(max, 1);
   const lengthLimit = Math.max(80, Math.trunc(Number(maxLength)) || 2000);
   const prompts = [];
   const seen = new Set();
@@ -224,19 +230,29 @@ export const extractAutoImagePrompts = (text = '', { max = 1, maxLength = 2000, 
 export const buildAutoImagePromptPendingToken = (index = 0) =>
   `[img-图片生成中${index > 0 ? ` ${index + 1}` : ''}]`;
 
-export const prepareAutoImagePromptPlaceholders = (text = '', { max = 10, maxLength = 2000 } = {}) => {
+export const prepareAutoImagePromptPlaceholders = (text = '', {
+  max = 10,
+  maxLength = 2000,
+  overflowTokenBuilder = null,
+} = {}) => {
   const source = String(text ?? '');
-  const limit = Math.max(1, Math.trunc(Number(max)) || 10);
+  const limit = normalizeAutoImagePromptLimit(max, 10);
   const lengthLimit = Math.max(80, Math.trunc(Number(maxLength)) || 2000);
   const prompts = [];
-  let index = 0;
+  let tagIndex = 0;
   const nextText = source.replace(/<\s*image_prompt(?:\s[^>]*)?\s*>([\s\S]*?)<\s*\/\s*image_prompt\s*>/gi, (full, body) => {
-    if (prompts.length >= limit) return '';
+    const index = tagIndex;
+    tagIndex += 1;
     const prompt = normalizePromptText(body).slice(0, lengthLimit).trim();
     if (isEmptyPromptToken(prompt)) return '';
+    if (prompts.length >= limit) {
+      if (typeof overflowTokenBuilder === 'function') {
+        return String(overflowTokenBuilder({ prompt, index, tag: full, max: limit }) || '');
+      }
+      return '';
+    }
     const pendingToken = buildAutoImagePromptPendingToken(index);
     prompts.push({ prompt, pendingToken, tag: full, index });
-    index += 1;
     return pendingToken;
   });
   return {

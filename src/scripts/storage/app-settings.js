@@ -58,6 +58,7 @@ const defaults = {
   autoImagePromptWindowRounds: 0,
   autoImagePromptWindowMax: 0,
   autoImagePromptMaxConcurrency: 1,
+  autoImagePromptMaxPerResponse: 0,
   autoImagePromptConcurrencyDefaultMigrated: true,
   autoImagePromptSkipRepeated: true,
   autoImagePromptRateLimitDefaultsMigrated: true,
@@ -159,7 +160,7 @@ const migrateSettings = (settings = {}) => {
   if (!['placeholder', 'image_prompt', 'ai'].includes(imageMomentMediaMode)) {
     next.autoImagePromptMomentMediaMode = defaults.autoImagePromptMomentMediaMode;
   }
-  ['autoImagePromptCooldownRounds', 'autoImagePromptWindowRounds', 'autoImagePromptWindowMax'].forEach((key) => {
+  ['autoImagePromptCooldownRounds', 'autoImagePromptWindowRounds', 'autoImagePromptWindowMax', 'autoImagePromptMaxPerResponse'].forEach((key) => {
     const raw = Math.trunc(Number(next[key]));
     next[key] = Number.isFinite(raw) ? Math.max(0, raw) : defaults[key];
   });

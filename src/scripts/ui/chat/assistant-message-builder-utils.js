@@ -193,6 +193,7 @@ export const buildCreativeAssistantMessageParts = ({
   applyOutputRegexPairSafe = value => ({ stored: String(value ?? ''), display: String(value ?? '') }),
   appBridge = null,
   preserveAutoImagePromptPlaceholders = false,
+  autoImagePromptPlaceholderOptions = {},
 } = {}) => {
   const rawSource = normalizeCreativeLineBreaks(text);
   const reasoningParsed = extractReasoningFromContent(rawSource, { depth: 0, strict: true });
@@ -201,7 +202,7 @@ export const buildCreativeAssistantMessageParts = ({
     : reasoningParsed;
   const rawFinalSource = normalizeCreativeLineBreaks(reasoningParsed.content || '');
   const autoImagePrepared = preserveAutoImagePromptPlaceholders
-    ? prepareAutoImagePromptPlaceholders(rawFinalSource)
+    ? prepareAutoImagePromptPlaceholders(rawFinalSource, autoImagePromptPlaceholderOptions)
     : { text: stripAutoImagePromptTags(rawFinalSource), prompts: [] };
   const finalSource = autoImagePrepared.text;
   const regexResult = applyOutputRegexPairSafe(finalSource, {
