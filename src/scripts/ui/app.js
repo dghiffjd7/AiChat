@@ -12601,7 +12601,7 @@ Phase G（Frame 36）：循环衔接
 	      blurComposerInput();
 	      variablePanel.show();
 	    },
-	    openGenerateImage: () => openChatImageGenerationFlow({ surface: 'chat' }),
+	    openGenerateImage: () => openChatImageGenerationFlow({ surface: 'chat', useComposerFallback: false }),
 	    openChatSettings,
 	    openPromptPreview: () => showPromptPreview(),
     openRawReply: openRawReplyFromMenu,
@@ -12615,7 +12615,7 @@ Phase G（Frame 36）：循环衔接
 	      blurComposerInput();
 	      variablePanel.show();
 	    },
-	    openGenerateImage: () => openChatImageGenerationFlow({ surface: 'writing' }),
+	    openGenerateImage: () => openChatImageGenerationFlow({ surface: 'writing', useComposerFallback: false }),
 	    openWritingAssets: () => openWritingAssetPanel(),
 	    openChatSettings,
     openPromptPreview: () => showPromptPreview(),
@@ -17003,7 +17003,10 @@ Phase G（Frame 36）：循环衔接
     setStickerPanelOpen,
     isStickerAllowed,
     setActionPanelOpen,
-    generateImage: () => openChatImageGenerationFlow({ surface: resolveMediaSurfaceForSession() }),
+    generateImage: () => openChatImageGenerationFlow({
+      surface: resolveMediaSurfaceForSession(),
+      useComposerFallback: false,
+    }),
     notifyInfo: (message) => window.toastr?.info?.(message),
   });
   const runQuickAction = quickActionRuntime.runQuickAction;

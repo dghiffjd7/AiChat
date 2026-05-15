@@ -1620,6 +1620,70 @@
     });
   };
 
+  const installFrameElementHeightCompat = () => {
+    try {
+      const frame = window.frameElement;
+      const style = frame?.style;
+      if (!frame || !style || style.__chatappFrameElementHeightCompat === '1') return;
+      const nativeSetProperty = typeof style.setProperty === 'function'
+        ? style.setProperty.bind(style)
+        : null;
+      const nativeGetPropertyValue = typeof style.getPropertyValue === 'function'
+        ? style.getPropertyValue.bind(style)
+        : null;
+      const nativeRemoveProperty = typeof style.removeProperty === 'function'
+        ? style.removeProperty.bind(style)
+        : null;
+      const shouldAllowNativeHeightWrite = () => frame?.dataset?.chatappHeightWrite === '1';
+      const requestCompatLayout = () => {
+        forceNextResize = true;
+        requestLayout('observer', true);
+      };
+      try {
+        Object.defineProperty(style, 'height', {
+          configurable: true,
+          enumerable: true,
+          get() {
+            try { return nativeGetPropertyValue ? nativeGetPropertyValue('height') : ''; } catch { return ''; }
+          },
+          set(value) {
+            if (shouldAllowNativeHeightWrite()) {
+              if (nativeSetProperty) nativeSetProperty('height', String(value || ''));
+              return;
+            }
+            requestCompatLayout();
+          },
+        });
+      } catch {
+        return;
+      }
+      if (nativeSetProperty) {
+        try {
+          style.setProperty = function patchedSetProperty(name, value, priority) {
+            if (String(name || '').trim().toLowerCase() === 'height' && !shouldAllowNativeHeightWrite()) {
+              requestCompatLayout();
+              return undefined;
+            }
+            return nativeSetProperty(name, value, priority);
+          };
+        } catch {}
+      }
+      if (nativeRemoveProperty) {
+        try {
+          style.removeProperty = function patchedRemoveProperty(name) {
+            if (String(name || '').trim().toLowerCase() === 'height' && !shouldAllowNativeHeightWrite()) {
+              requestCompatLayout();
+              return '';
+            }
+            return nativeRemoveProperty(name);
+          };
+        } catch {}
+      }
+      try { style.__chatappFrameElementHeightCompat = '1'; } catch {}
+      sendDebug('info', 'frameElement-height-compat-installed');
+    } catch {}
+  };
+
   const bindBridgeEvents = () => {
     if (bridgeEventsBound) return;
     bridgeEventsBound = true;
@@ -1720,6 +1784,7 @@
     const inlineBehaviorStats = createInlineBehaviorStats();
     ensureCompatInputHelpers();
     ensureRuntimeDiagnostics();
+    installFrameElementHeightCompat();
     try {
       releaseBlobUrls(nestedSrcdocBlobUrls);
       const parser = new DOMParser();

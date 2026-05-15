@@ -414,6 +414,15 @@ const setIframeDynamicDoc = (id, doc, source = 'dynamic-srcdoc') => {
     st.dynamicDoc = String(doc || '');
     st.dynamicSource = String(source || 'dynamic-srcdoc');
 };
+const setIframeStyleHeight = (iframe, value) => {
+    if (!iframe) return;
+    try {
+        iframe.dataset.chatappHeightWrite = '1';
+        iframe.style.height = String(value || '');
+    } finally {
+        try { delete iframe.dataset.chatappHeightWrite; } catch {}
+    }
+};
 const applyIframeDynamicRecover = (iframe, id, reason = '') => {
     if (!iframe || !id) return false;
     const st = getIframeState(id, { messageId: String(iframe.dataset.msgId || ''), createdAt: Date.now() });
@@ -426,7 +435,7 @@ const applyIframeDynamicRecover = (iframe, id, reason = '') => {
         iframe.dataset.iframeLoaded = '0';
         iframe.dataset.iframeError = reason || 'dynamic-recover';
         iframe.dataset.iframeDocSent = '1';
-        iframe.style.height = '320px';
+        setIframeStyleHeight(iframe, '320px');
         iframe.style.minHeight = '220px';
         iframe.style.maxHeight = '1200px';
         iframe.removeAttribute('src');
@@ -462,7 +471,7 @@ const applyIframeStaticFallback = (iframe, id, reason = '') => {
         iframe.dataset.iframeLoaded = '0';
         iframe.dataset.iframeError = reason || 'static-fallback';
         iframe.dataset.iframeDocSent = '1';
-        iframe.style.height = '320px';
+        setIframeStyleHeight(iframe, '320px');
         iframe.style.minHeight = '220px';
         iframe.style.maxHeight = '1200px';
         iframe.removeAttribute('src');
@@ -3498,29 +3507,40 @@ const applyIframeResizeUpdate = (iframe, {
     }
 
     if (authority === IFRAME_AUTHORITY_LOCKED && !(lock || unlock)) {
-        logIframeHeight({
-            id,
-            seq: incomingSeq,
-            source: normalizedSource,
-            mode: normalizedMode,
-            raw,
-            applied: appliedHeight,
-            authority,
-            lock: Boolean(st.lock),
-            event: 'locked-drop',
-            level: 'info',
-        });
-        return false;
+        const previousApplied = Number(st.lastAppliedHeight || 0);
+        const canShrinkFromLock = (
+            normalizedMode === 'document' &&
+            previousApplied > 0 &&
+            appliedHeight > 0 &&
+            appliedHeight <= previousApplied - 8
+        );
+        if (canShrinkFromLock) {
+            st.lock = false;
+            switchIframeAuthority(iframe, st, IFRAME_AUTHORITY_IFRAME, 'locked-shrink');
+            authority = IFRAME_AUTHORITY_IFRAME;
+        } else {
+            logIframeHeight({
+                id,
+                seq: incomingSeq,
+                source: normalizedSource,
+                mode: normalizedMode,
+                raw,
+                applied: appliedHeight,
+                authority,
+                lock: Boolean(st.lock),
+                event: 'locked-drop',
+                level: 'info',
+            });
+            return false;
+        }
     }
 
     const current = parseFloat(iframe.style.height || '') || 0;
     if (Math.abs(current - appliedHeight) > 1) {
-        iframe.style.height = `${appliedHeight}px`;
+        setIframeStyleHeight(iframe, `${appliedHeight}px`);
     }
     markIframePostResize(iframe);
     const now = Number.isFinite(Number(ts)) ? Math.trunc(Number(ts)) : Date.now();
-    const previousAppliedHeight = Number(st.lastAppliedHeight || 0);
-
     st.lastSeq = incomingSeq;
     st.lastResizeSource = normalizedSource;
     st.lastResizeMode = normalizedMode;
@@ -3540,25 +3560,17 @@ const applyIframeResizeUpdate = (iframe, {
         source: normalizedSource,
         mode: normalizedMode,
     })) {
-        const recentValues = (Array.isArray(st.heightHistory) ? st.heightHistory : [])
-            .slice(-10)
-            .map((entry) => Number(entry?.value))
-            .filter((value) => Number.isFinite(value) && value > 0);
-        const minRecent = recentValues.length ? Math.min(...recentValues) : appliedHeight;
-        const freezeHeight = Math.max(
-            IFRAME_HEIGHT_MIN,
-            Math.min(
-                appliedHeight,
-                previousAppliedHeight > 0 ? previousAppliedHeight : appliedHeight,
-                minRecent,
-            ),
-        );
+        // Lock at the current measured height. Snapping back to the smallest
+        // recent value makes legacy self-resizing widgets visibly flicker.
+        const freezeHeight = appliedHeight;
         if (Math.abs((parseFloat(iframe.style.height || '') || 0) - freezeHeight) > 1) {
-            iframe.style.height = `${freezeHeight}px`;
+            setIframeStyleHeight(iframe, `${freezeHeight}px`);
         }
         st.lastAppliedHeight = freezeHeight;
         st.lock = true;
+        iframe.dataset.iframeLock = '1';
         switchIframeAuthority(iframe, st, IFRAME_AUTHORITY_LOCKED, 'feedback-loop');
+        const feedbackLevel = freezeHeight >= 1000 ? 'warn' : 'info';
         logIframeHeight({
             id,
             seq: incomingSeq,
@@ -3569,7 +3581,7 @@ const applyIframeResizeUpdate = (iframe, {
             authority: IFRAME_AUTHORITY_LOCKED,
             lock: true,
             event: 'feedback-loop',
-            level: 'warn',
+            level: feedbackLevel,
         });
     } else {
         logIframeHeight({
@@ -7550,7 +7562,7 @@ const makeCodeBlock = ({
             iframe.dataset.directLoadUrl = String(directBodyLoadUrl || '');
             iframe.dataset.iframeSource = 'direct-host';
             iframe.dataset.iframeDocSent = '0';
-            iframe.style.height = '260px';
+            setIframeStyleHeight(iframe, '260px');
             iframe.style.minHeight = '220px';
             iframe.style.maxHeight = '760px';
             let directDocToSend = '';
@@ -8172,7 +8184,7 @@ export const setupIframeResizeListener = () => {
         iframe.dataset.iframeReady = '0';
         iframe.dataset.iframeLoaded = '0';
         iframe.dataset.iframeError = reason || 'direct-recover';
-        iframe.style.height = '70vh';
+        setIframeStyleHeight(iframe, '70vh');
         iframe.style.minHeight = '320px';
         iframe.style.maxHeight = '860px';
         try {
