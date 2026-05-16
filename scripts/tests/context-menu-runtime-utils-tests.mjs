@@ -109,3 +109,36 @@ const createFakeDocument = () => {
   assert.equal(context.hasCode, true);
   console.log('ok - resolveContextMenuContext falls back to scroll lookup and keeps direct code block target');
 }
+
+{
+  const inlineImage = {
+    dataset: {
+      generatedImageToken: '[img-D:\\\\assets\\\\cat.png]',
+      inlineImageRef: 'D:\\\\assets\\\\cat.png',
+    },
+    currentSrc: 'asset://cat',
+    src: 'asset://fallback',
+  };
+  const wrapper = {
+    __chatappMessage: { id: 'm3', content: 'wrapper-msg' },
+    querySelector() {
+      return null;
+    },
+  };
+  const target = {
+    closest(selector) {
+      if (selector === '[data-msg-id]') return wrapper;
+      if (selector.includes('chat-inline-generated-image')) return inlineImage;
+      return null;
+    },
+  };
+  const context = resolveContextMenuContext({
+    event: { target },
+    message: { id: 'm3' },
+    scrollEl: null,
+  });
+  assert.equal(context.inlineGeneratedImage.token, '[img-D:\\\\assets\\\\cat.png]');
+  assert.equal(context.inlineGeneratedImage.ref, 'D:\\\\assets\\\\cat.png');
+  assert.equal(context.inlineGeneratedImage.src, 'asset://cat');
+  console.log('ok - resolveContextMenuContext captures inline generated image target context');
+}

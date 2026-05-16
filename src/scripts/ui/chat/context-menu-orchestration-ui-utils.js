@@ -38,6 +38,7 @@ export const showContextMenuCore = ({
     message: resolvedMessage,
     codeBlock,
     hasCode,
+    inlineGeneratedImage,
   } = resolveContextMenuContext?.({
     event,
     message,
@@ -48,6 +49,7 @@ export const showContextMenuCore = ({
     ...(buildContextMenuActions?.(resolvedMessage, {
       hasCode,
       isThreadingEnabled: threadingEnabled,
+      inlineGeneratedImage,
     }) || []),
   ];
   contextMenu.innerHTML = '';
@@ -84,6 +86,7 @@ export const showContextMenuCore = ({
           wrapper,
           codeBlock,
           hasCode,
+          inlineGeneratedImage,
           tryAction: async (key, payload, options = {}) => {
             if (typeof actionHandler !== 'function') return false;
             try {

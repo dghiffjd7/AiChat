@@ -4,6 +4,7 @@ import {
   buildContextMenuActions,
   canDeleteCurrentSwipe,
   positionContextMenu,
+  resolveInlineGeneratedImageAsset,
   resolveViewCodeText,
 } from '../../src/scripts/ui/chat/context-menu-ui-utils.js';
 
@@ -41,6 +42,36 @@ import {
   );
   assert.deepEqual(actions.map(item => item.key), ['view-code', 'generate-image', 'copy-text', 'regenerate', 'delete']);
   console.log('ok - buildContextMenuActions exposes raw editor for creative assistant messages');
+}
+
+{
+  const message = {
+    role: 'assistant',
+    type: 'text',
+    meta: {
+      renderRich: true,
+      generatedInlineImages: [
+        {
+          id: 'asset-1',
+          prompt: 'cinematic cat',
+          token: '[img-D:\\\\assets\\\\cat.png]',
+          output: { path: 'D:\\\\assets\\\\cat.png' },
+        },
+      ],
+    },
+  };
+  const inlineGeneratedImage = {
+    token: '[img-D:\\\\assets\\\\cat.png]',
+    ref: 'D:\\\\assets\\\\cat.png',
+  };
+  const actions = buildContextMenuActions(message, {
+    hasCode: false,
+    isThreadingEnabled: false,
+    inlineGeneratedImage,
+  });
+  assert.equal(resolveInlineGeneratedImageAsset(message, inlineGeneratedImage)?.prompt, 'cinematic cat');
+  assert.equal(actions.find(item => item.key === 'generate-image')?.label, '重新生成图片');
+  console.log('ok - buildContextMenuActions labels rich inline generated images as regenerate image');
 }
 
 {

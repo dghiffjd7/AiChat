@@ -2,6 +2,49 @@ const INLINE_GENERATED_IMAGE_TOKEN_RE = /\[(?:img|img-error)-[^\]\n]+\]/i;
 
 const hasInlineGeneratedImageToken = value => INLINE_GENERATED_IMAGE_TOKEN_RE.test(String(value || ''));
 
+const buildGeneratedImageToken = (asset = {}) => {
+  const output = asset?.output && typeof asset.output === 'object' ? asset.output : {};
+  const ref = String(output.path || output.url || output.dataUrl || '').trim();
+  return ref ? `[img-${ref}]` : '';
+};
+
+const compactMatchKeys = values => values
+  .map(value => String(value ?? '').trim())
+  .filter(Boolean);
+
+const buildInlineGeneratedImageMatchKeys = (value = {}) => {
+  const output = value?.output && typeof value.output === 'object' ? value.output : {};
+  return compactMatchKeys([
+    value?.token,
+    value?.generatedImageToken,
+    value?.inlineImageRef,
+    value?.ref,
+    value?.src,
+    value?.currentSrc,
+    value?.id,
+    output.path,
+    output.url,
+    output.dataUrl,
+    buildGeneratedImageToken(value),
+    value?.ref ? `[img-${value.ref}]` : '',
+    value?.inlineImageRef ? `[img-${value.inlineImageRef}]` : '',
+  ]);
+};
+
+export const resolveInlineGeneratedImageAsset = (message, inlineGeneratedImage = null) => {
+  if (!inlineGeneratedImage) return null;
+  const assets = Array.isArray(message?.meta?.generatedInlineImages)
+    ? message.meta.generatedInlineImages
+    : [];
+  if (!assets.length) return null;
+  const targetKeys = new Set(buildInlineGeneratedImageMatchKeys(inlineGeneratedImage));
+  if (!targetKeys.size) return null;
+  return assets.find((asset) => {
+    const assetKeys = buildInlineGeneratedImageMatchKeys(asset);
+    return assetKeys.some(key => targetKeys.has(key));
+  }) || null;
+};
+
 const compactStringValues = values => values
   .map(value => (typeof value === 'string' ? value : ''))
   .filter(value => value.trim());
@@ -9,8 +52,10 @@ const compactStringValues = values => values
 export const buildContextMenuActions = (message, {
   hasCode = false,
   isThreadingEnabled = false,
+  inlineGeneratedImage = null,
 } = {}) => {
   const actions = [];
+  const inlineGeneratedAsset = resolveInlineGeneratedImageAsset(message, inlineGeneratedImage);
   if (isThreadingEnabled) {
     actions.push({ key: 'reply', label: '回复', group: 'main' });
   }
@@ -32,9 +77,12 @@ export const buildContextMenuActions = (message, {
     ['text', 'image', 'sticker'].includes(String(message?.type || 'text'))
   ) {
     const hasGeneratedImagePrompt = Boolean(String(message?.meta?.generatedMedia?.prompt || '').trim());
+    const hasInlineGeneratedImagePrompt = Boolean(String(inlineGeneratedAsset?.prompt || '').trim());
     actions.push({
       key: 'generate-image',
-      label: message?.type === 'image' && hasGeneratedImagePrompt ? '重新生成图片' : '以此生成图片',
+      label: (message?.type === 'image' && hasGeneratedImagePrompt) || hasInlineGeneratedImagePrompt
+        ? '重新生成图片'
+        : '以此生成图片',
       group: 'main',
     });
   }

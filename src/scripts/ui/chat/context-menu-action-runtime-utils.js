@@ -17,6 +17,7 @@ export const dispatchContextMenuAction = async ({
   wrapper = null,
   codeBlock = null,
   hasCode = false,
+  inlineGeneratedImage = null,
   tryAction,
   hideMenu,
   clearLongPress,
@@ -49,6 +50,11 @@ export const dispatchContextMenuAction = async ({
   if (actionKey === 'reply') {
     await tryAction?.('reply', { wrapper }, { skipFallback: true });
     return 'reply';
+  }
+
+  if (actionKey === 'generate-image') {
+    await tryAction?.('generate-image', { wrapper, inlineGeneratedImage }, { skipFallback: true });
+    return 'generate-image';
   }
 
   if (actionKey === 'edit') {

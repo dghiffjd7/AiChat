@@ -397,7 +397,7 @@ import {
   toggleReactionActor,
 } from './chat/message-interaction-utils.js';
 import { parseSpecialMessage } from './chat/message-parser.js';
-import { canDeleteCurrentSwipe, resolveViewCodeText } from './chat/context-menu-ui-utils.js';
+import { canDeleteCurrentSwipe, resolveInlineGeneratedImageAsset, resolveViewCodeText } from './chat/context-menu-ui-utils.js';
 import {
   buildImagePromptModelHintFromConfig,
   buildAutoImagePromptPendingToken,
@@ -15274,6 +15274,206 @@ Phase G（Frame 36）：循环衔接
 	    });
 	    return overrides;
 	  };
+	  const buildInlineGeneratedImageAssetMatchKeys = (asset = {}, inlineGeneratedImage = null) => {
+	    const output = asset?.output && typeof asset.output === 'object' ? asset.output : {};
+	    return [
+	      asset?.id,
+	      asset?.messageId,
+	      asset?.token,
+	      buildGeneratedImageToken(asset),
+	      output.path,
+	      output.url,
+	      output.dataUrl,
+	      inlineGeneratedImage?.token,
+	      inlineGeneratedImage?.ref,
+	      inlineGeneratedImage?.src,
+	      inlineGeneratedImage?.ref ? `[img-${inlineGeneratedImage.ref}]` : '',
+	    ]
+	      .map(value => String(value || '').trim())
+	      .filter(Boolean);
+	  };
+	  const generatedInlineImageAssetMatches = (asset = {}, targetAsset = {}, inlineGeneratedImage = null) => {
+	    const targetKeys = new Set(buildInlineGeneratedImageAssetMatchKeys(targetAsset, inlineGeneratedImage));
+	    if (!targetKeys.size) return false;
+	    return buildInlineGeneratedImageAssetMatchKeys(asset).some(key => targetKeys.has(key));
+	  };
+	  const resolveActiveSwipeSourceForGeneratedImage = (message = {}) => {
+	    const meta = message?.meta && typeof message.meta === 'object' ? message.meta : {};
+	    const swipes = Array.isArray(meta.swipes) ? meta.swipes : [];
+	    if (!swipes.length) return '';
+	    const rawIndex = Math.trunc(Number(meta.activeSwipe));
+	    const activeIndex = Number.isFinite(rawIndex)
+	      ? Math.min(Math.max(0, rawIndex), swipes.length - 1)
+	      : Math.max(0, swipes.length - 1);
+	    const branch = swipes[activeIndex] || {};
+	    return String(branch.rawSource || branch.raw || branch.content || '').trim();
+	  };
+	  const resolveInlineGeneratedImageTokenForMessage = (message = {}, asset = {}, inlineGeneratedImage = null) => {
+	    const output = asset?.output && typeof asset.output === 'object' ? asset.output : {};
+	    const candidates = [
+	      inlineGeneratedImage?.token,
+	      asset?.token,
+	      buildGeneratedImageToken(asset),
+	      inlineGeneratedImage?.ref ? `[img-${inlineGeneratedImage.ref}]` : '',
+	      output.path ? `[img-${output.path}]` : '',
+	      output.url ? `[img-${output.url}]` : '',
+	      output.dataUrl ? `[img-${output.dataUrl}]` : '',
+	    ]
+	      .map(value => String(value || '').trim())
+	      .filter((value, index, arr) => value && arr.indexOf(value) === index);
+	    const sources = [
+	      message?.rawSource,
+	      message?.raw,
+	      message?.content,
+	      message?.meta?.autoImagePromptRawContent,
+	      resolveActiveSwipeSourceForGeneratedImage(message),
+	    ].map(value => String(value || '')).filter(Boolean);
+	    for (const source of sources) {
+	      const hit = candidates.find(candidate => source.includes(candidate));
+	      if (hit) return hit;
+	    }
+	    return candidates.find(value => value.startsWith('[img-')) || '';
+	  };
+	  const regenerateWritingInlineGeneratedImage = async ({
+	    sourceMessage = null,
+	    inlineGeneratedImage = null,
+	    prompt = '',
+	    negativePrompt = '',
+	    referenceImages = [],
+	    generationParamOverrides = {},
+	    targetSessionId = '',
+	  } = {}) => {
+	    const sessionId = String(targetSessionId || chatStore.getCurrent() || '').trim();
+	    const messageId = String(sourceMessage?.id || '').trim();
+	    const imagePrompt = String(prompt || '').trim();
+	    if (!sessionId || !messageId || !imagePrompt) {
+	      window.toastr?.warning?.('没有找到原始生图提示词，无法重新生成');
+	      return false;
+	    }
+	    const current = chatStore.findMessage(messageId, sessionId) || sourceMessage;
+	    const originalAsset = resolveInlineGeneratedImageAsset(current, inlineGeneratedImage);
+	    if (!originalAsset) {
+	      window.toastr?.warning?.('没有找到这张插图的生成记录');
+	      return false;
+	    }
+	    const oldToken = resolveInlineGeneratedImageTokenForMessage(current, originalAsset, inlineGeneratedImage);
+	    if (!oldToken) {
+	      window.toastr?.warning?.('没有找到这张插图在正文中的位置');
+	      return false;
+	    }
+	    const config = await ensureImageConfigReady();
+	    if (!config) return false;
+	    const referenceCapability = resolveImageReferenceCapability(config);
+	    const normalizedReferences = normalizeImageGenerationReferenceItems(referenceImages, referenceCapability);
+	    const negativeCapability = resolveImageNegativePromptCapability(config);
+	    const negativePromptText = negativeCapability?.supported ? String(negativePrompt || '').trim() : '';
+	    await imageGenerationParamsStore.ready;
+	    const generationExtra = {};
+	    if (normalizedReferences.length) {
+	      generationExtra.referenceImages = normalizedReferences.map(item => item.dataUrl).filter(Boolean);
+	    }
+	    if (negativePromptText) generationExtra.negativePrompt = negativePromptText;
+	    const generationOptions = mergeImageGenerationRequestOptions({
+	      config,
+	      preset: imageGenerationParamsStore.getActive(),
+	      overrides: generationParamOverrides,
+	      extra: generationExtra,
+	    });
+	    window.toastr?.info?.('正在重新生成图片');
+	    try {
+	      const asset = await enqueueAutoImageGeneration(() => mediaGenerationService.generateImage({
+	        prompt: imagePrompt,
+	        config,
+	        sessionId,
+	        scope: {
+	          surface: 'writing',
+	          targetId: sessionId,
+	          sourceMessageId: messageId,
+	        },
+	        options: generationOptions,
+	      }));
+	      const token = buildGeneratedImageToken(asset);
+	      if (!token) throw new Error('生成结果缺少图片地址');
+	      const normalizedAsset = normalizeInlineGeneratedImageAsset({
+	        ...asset,
+	        generationParams: generationOptions,
+	      }, {
+	        surface: 'writing',
+	        targetId: sessionId,
+	        sourceMessageId: messageId,
+	        messageId,
+	        token,
+	      });
+	      const fresh = chatStore.findMessage(messageId, sessionId) || current;
+	      const inlineImages = Array.isArray(fresh?.meta?.generatedInlineImages) ? fresh.meta.generatedInlineImages : [];
+	      const nextInlineImages = normalizedAsset
+	        ? mergeInlineGeneratedImageAssets(
+	          inlineImages.filter(item => !generatedInlineImageAssetMatches(item, originalAsset, inlineGeneratedImage)),
+	          [normalizedAsset],
+	        )
+	        : inlineImages;
+	      const patched = patchWritingAutoImagePromptToken(fresh, sessionId, oldToken, token, {
+	        autoImagePromptFallbackSource: resolveActiveSwipeSourceForGeneratedImage(fresh),
+	        generatedInlineImages: nextInlineImages,
+	      });
+	      if (!patched) {
+	        maybeDeleteGeneratedImageFileIfUnreferenced(normalizedAsset || asset, sessionId);
+	        window.toastr?.warning?.('没有找到这张插图在正文中的位置');
+	        return false;
+	      }
+	      maybeDeleteGeneratedImageFileIfUnreferenced(originalAsset, sessionId);
+	      window.toastr?.success?.('图片已重新生成');
+	      return true;
+	    } catch (err) {
+	      logger.warn('regenerate writing inline image failed', err);
+	      window.toastr?.error?.('重新生成图片失败');
+	      return false;
+	    }
+	  };
+	  const openWritingInlineGeneratedImageRegenerationFlow = async ({
+	    sourceMessage = null,
+	    inlineGeneratedImage = null,
+	  } = {}) => {
+	    const sessionId = String(chatStore.getCurrent() || '').trim();
+	    const current = chatStore.findMessage(sourceMessage?.id, sessionId) || sourceMessage;
+	    const asset = resolveInlineGeneratedImageAsset(current, inlineGeneratedImage);
+	    const prompt = String(asset?.prompt || '').trim();
+	    if (!asset || !prompt) {
+	      window.toastr?.warning?.('没有找到原始生图提示词，无法重新生成');
+	      return false;
+	    }
+	    const referenceCapability = await loadImageReferenceCapability();
+	    const generationParamContext = await loadImageGenerationParamContext();
+	    const modalResult = await getChatImagePromptModal().open({
+	      initialPrompt: prompt,
+	      title: '重新生成插图',
+	      subtitle: '使用这张插图的提示词重新生成，并替换当前图片',
+	      submitText: '重新生成图片',
+	      secondaryText: '插图素材',
+	      onSecondary: () => openWritingAssetPanel(),
+	      referenceCapability,
+	      loadReferenceCapability: loadImageReferenceCapability,
+	      generationParamContext,
+	      initialNegativePrompt: getGeneratedImageNegativePrompt(asset),
+	      generationParamOverrides: await buildImageGenerationOverridesFromAsset(asset),
+	      loadGenerationParamContext: loadImageGenerationParamContext,
+	    });
+	    const promptText = typeof modalResult === 'string'
+	      ? modalResult
+	      : String(modalResult?.prompt || '').trim();
+	    if (!promptText) return false;
+	    return regenerateWritingInlineGeneratedImage({
+	      sourceMessage: current,
+	      inlineGeneratedImage,
+	      prompt: promptText,
+	      negativePrompt: String(modalResult?.negativePrompt || '').trim(),
+	      referenceImages: Array.isArray(modalResult?.referenceImages) ? modalResult.referenceImages : [],
+	      generationParamOverrides: modalResult?.generationParamOverrides && typeof modalResult.generationParamOverrides === 'object'
+	        ? modalResult.generationParamOverrides
+	        : {},
+	      targetSessionId: sessionId,
+	    });
+	  };
 	  const collectChatImageAlbumAssetsForCurrentSession = () => {
 	    const sessionId = String(chatStore.getCurrent() || '').trim();
 	    if (!sessionId) return [];
@@ -20906,6 +21106,18 @@ Phase G（Frame 36）：循环衔接
       return true;
 	    }
 	    if (action === 'generate-image') {
+	      const inlineGeneratedImage = payload?.inlineGeneratedImage || null;
+	      if (
+	        inlineGeneratedImage &&
+	        resolveMediaSurfaceForSession(sessionId) === 'writing' &&
+	        String(resolveInlineGeneratedImageAsset(message, inlineGeneratedImage)?.prompt || '').trim()
+	      ) {
+	        await openWritingInlineGeneratedImageRegenerationFlow({
+	          sourceMessage: message,
+	          inlineGeneratedImage,
+	        });
+	        return true;
+	      }
 	      const initialPrompt =
 	        resolveSelectedTextForMediaPrompt(payload?.wrapper) ||
 	        resolveChatImageInitialPrompt(message);

@@ -127,6 +127,10 @@ export const renderTextWithStickersCore = ({
         img.loading = 'lazy';
         img.decoding = 'async';
         img.src = src;
+        if (img.dataset) {
+          img.dataset.generatedImageToken = match[0];
+          img.dataset.inlineImageRef = tokenBody;
+        }
         img.addEventListener?.('click', () => onPreview?.(img.currentSrc || img.src || src));
         frag.appendChild(img);
         const remaining = raw.slice(match.index + match[0].length);

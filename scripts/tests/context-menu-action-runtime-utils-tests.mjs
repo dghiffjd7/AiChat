@@ -137,6 +137,30 @@ import {
 
 {
   const calls = [];
+  const inlineGeneratedImage = { token: '[img-D:\\\\assets\\\\cat.png]' };
+  const result = await dispatchContextMenuAction({
+    actionKey: 'generate-image',
+    message: { id: 'm-image', role: 'assistant' },
+    wrapper: { id: 'wrapper' },
+    inlineGeneratedImage,
+    hideMenu: () => calls.push(['hide']),
+    clearLongPress: () => calls.push(['clear']),
+    tryAction: async (key, payload, options) => {
+      calls.push(['try', key, payload, options]);
+      return true;
+    },
+  });
+  assert.equal(result, 'generate-image');
+  assert.deepEqual(calls, [
+    ['hide'],
+    ['clear'],
+    ['try', 'generate-image', { wrapper: { id: 'wrapper' }, inlineGeneratedImage }, { skipFallback: true }],
+  ]);
+  console.log('ok - dispatchContextMenuAction forwards inline generated image context to image generation');
+}
+
+{
+  const calls = [];
   await dispatchContextMenuAction({
     actionKey: 'reply',
     message: { id: 'm2' },

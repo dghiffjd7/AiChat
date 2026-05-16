@@ -150,9 +150,13 @@ const appendRichTextInlineMedia = (containerEl, text = '', {
             continue;
         }
         const img = document.createElement('img');
-        img.className = 'previewable chat-rich-inline-image';
+        img.className = 'previewable chat-rich-inline-image chat-inline-generated-image';
         img.alt = 'image';
         img.src = src;
+        if (img.dataset) {
+            img.dataset.generatedImageToken = full;
+            img.dataset.inlineImageRef = ref;
+        }
         try {
             if (shouldLogRichDebug()) {
                 console.debug('[writing-auto-image]', 'rich-render-image-token', {
