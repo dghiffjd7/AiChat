@@ -106,6 +106,38 @@ import {
 {
   const calls = [];
   await dispatchContextMenuAction({
+    actionKey: 'delete',
+    message: {
+      id: 'm-swipe',
+      role: 'assistant',
+      meta: {
+        activeSwipe: 0,
+        swipes: [
+          { content: 'one' },
+          { content: 'two' },
+        ],
+      },
+    },
+    wrapper: { id: 'wrapper' },
+    hideMenu: () => calls.push(['hide']),
+    clearLongPress: () => calls.push(['clear']),
+    tryAction: async (key, payload, options) => {
+      calls.push(['try-delete', key, payload, options]);
+      return true;
+    },
+    enterSelectionMode: id => calls.push(['delete', id]),
+  });
+  assert.deepEqual(calls, [
+    ['hide'],
+    ['clear'],
+    ['try-delete', 'delete', { wrapper: { id: 'wrapper' }, deleteScope: 'choose-swipe-or-message' }, { skipFallback: true }],
+  ]);
+  console.log('ok - dispatchContextMenuAction lets app choose current swipe or whole assistant delete for multi-swipe messages');
+}
+
+{
+  const calls = [];
+  await dispatchContextMenuAction({
     actionKey: 'reply',
     message: { id: 'm2' },
     wrapper: { id: 'wrapper' },

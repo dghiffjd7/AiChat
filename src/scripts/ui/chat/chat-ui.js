@@ -35,7 +35,7 @@ import { createMessagePatchUiRuntime } from './message-patch-ui-utils.js';
 import { createMessageClipboardUiRuntime } from './message-clipboard-ui-utils.js';
 import { createCodeViewerUiRuntime } from './code-viewer-ui-utils.js';
 import { buildContextMenuActions, positionContextMenu, resolveViewCodeText } from './context-menu-ui-utils.js';
-import { createContextMenuActionButton, createContextMenuReactionRow } from './context-menu-dom-utils.js';
+import { createContextMenuActionButton, createContextMenuDivider, createContextMenuReactionRow } from './context-menu-dom-utils.js';
 import { dispatchContextMenuAction } from './context-menu-action-runtime-utils.js';
 import { createContextMenuShell, resolveContextMenuContext } from './context-menu-runtime-utils.js';
 import { showContextMenuCore } from './context-menu-orchestration-ui-utils.js';
@@ -485,7 +485,7 @@ export class ChatUI {
   }
 
   _applySwipe(wrapper, msg, newIndex, options = {}) {
-    this.swipeRuntime.applySwipe({
+    return this.swipeRuntime.applySwipe({
       wrapper,
       message: msg,
       newIndex,
@@ -2239,6 +2239,7 @@ export class ChatUI {
       defaultReactionEmojis: DEFAULT_REACTION_EMOJIS,
       isSelfReaction: entry => hasReactionActor(entry, SELF_REACTION_ACTOR),
       createContextMenuActionButton,
+      createContextMenuDivider,
       dispatchContextMenuAction,
       getPoint: nextEvent => this.getPoint(nextEvent),
       positionContextMenu,

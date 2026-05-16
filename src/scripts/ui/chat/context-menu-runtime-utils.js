@@ -3,16 +3,11 @@ export const createContextMenuShell = ({
 } = {}) => {
   const menu = documentLike.createElement('div');
   menu.id = 'msg-context-menu';
+  menu.className = 'chat-message-context-menu';
   menu.style.cssText = `
             position: fixed;
-            background: var(--app-surface-card);
-            border: 1px solid var(--app-border-default);
-            border-radius: 10px;
-            box-shadow: 0 8px 30px rgba(0,0,0,0.12);
-            padding: 6px;
             display: none;
             z-index: 20000;
-            min-width: 120px;
         `;
   documentLike.body.appendChild(menu);
   documentLike.addEventListener?.(

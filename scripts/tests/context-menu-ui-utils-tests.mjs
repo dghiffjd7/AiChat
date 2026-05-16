@@ -60,12 +60,12 @@ import {
     isThreadingEnabled: false,
   });
   assert.equal(canDeleteCurrentSwipe(message), true);
-  assert.deepEqual(actions.map(item => item.key), ['generate-image', 'copy-text', 'regenerate', 'delete-current-swipe', 'delete']);
+  assert.deepEqual(actions.map(item => item.key), ['generate-image', 'copy-text', 'regenerate', 'delete']);
   assert.equal(buildContextMenuActions({
     ...message,
     meta: { ...message.meta, swipes: [{ content: 'only' }] },
-  }).some(action => action.key === 'delete-current-swipe'), false);
-  console.log('ok - buildContextMenuActions exposes current swipe deletion only for multi-swipe assistant messages');
+  }).some(action => action.key === 'delete'), true);
+  console.log('ok - buildContextMenuActions keeps assistant delete as one entry while detecting multi-swipe state');
 }
 
 {

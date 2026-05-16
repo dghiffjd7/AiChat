@@ -397,7 +397,7 @@ import {
   toggleReactionActor,
 } from './chat/message-interaction-utils.js';
 import { parseSpecialMessage } from './chat/message-parser.js';
-import { resolveViewCodeText } from './chat/context-menu-ui-utils.js';
+import { canDeleteCurrentSwipe, resolveViewCodeText } from './chat/context-menu-ui-utils.js';
 import {
   buildImagePromptModelHintFromConfig,
   buildAutoImagePromptPendingToken,
@@ -20760,6 +20760,58 @@ Phase G（Frame 36）：循环衔接
         logger,
       });
     };
+    const deleteWholeMessage = async (targetMessage) => {
+      if (!targetMessage?.id) return false;
+      const currentReplyTarget = getReplyTargetForSession(sessionId);
+      const removedMessage = chatStore.findMessage(targetMessage.id, sessionId) || targetMessage;
+      chatStore.deleteMessage(targetMessage.id, sessionId);
+      ui.removeMessage(targetMessage.id);
+      if (currentReplyTarget?.id === String(targetMessage.id || '')) clearReplyTargetForSession(sessionId);
+      await removeTurnCheckpointsForMessages(sessionId, [removedMessage], { prune: true }).catch(err => {
+        logger.warn('remove turn checkpoint after delete failed', err);
+      });
+      await restoreMemoryForActiveThread(sessionId, {
+        refreshBaselineWhenNoTail: false,
+        source: 'delete_message',
+      }).catch(err => {
+        logger.warn('restore memory after delete failed', err);
+      });
+      refreshChatAndContacts();
+      return true;
+    };
+    const deleteCurrentSwipeFromMessage = (targetMessage) => {
+      const messageId = String(targetMessage?.id || '').trim();
+      const result = messageId ? ui.deleteCurrentSwipe?.(messageId) : null;
+      if (result?.deleted) {
+        window.toastr?.success?.('已删除当前回复');
+        return true;
+      }
+      const reason = String(result?.reason || '');
+      if (reason === 'generating') {
+        window.toastr?.warning?.('当前回复正在生成中，无法删除');
+      } else {
+        window.toastr?.warning?.('没有可删除的当前回复');
+      }
+      return false;
+    };
+    const promptDeleteAssistantSwipes = async (targetMessage) => {
+      const current = chatStore.findMessage(targetMessage?.id, sessionId) || targetMessage;
+      if (!canDeleteCurrentSwipe(current)) return false;
+      const swipes = Array.isArray(current?.meta?.swipes) ? current.meta.swipes : [];
+      const choice = await appChoice({
+        title: '删除回复',
+        message: `这条 AI 回复包含 ${swipes.length} 个回复分支。`,
+        danger: false,
+        defaultActionId: 'current',
+        actions: [
+          { id: 'current', label: '删除当前回复' },
+          { id: 'all', label: '删除所有回复', variant: 'danger' },
+        ],
+      });
+      if (choice === 'current') return deleteCurrentSwipeFromMessage(current);
+      if (choice === 'all') return deleteWholeMessage(current);
+      return true;
+    };
 
     // 处理"发送到这里"
     if (action === 'send-to-here' && message.status === 'pending') {
@@ -20870,18 +20922,7 @@ Phase G（Frame 36）：循环衔接
         window.toastr?.warning?.('正在生成中，请稍候...');
         return true;
       }
-      const messageId = String(message?.id || '').trim();
-      const result = messageId ? ui.deleteCurrentSwipe?.(messageId) : null;
-      if (result?.deleted) {
-        window.toastr?.success?.('已删除当前回复');
-        return true;
-      }
-      const reason = String(result?.reason || '');
-      if (reason === 'generating') {
-        window.toastr?.warning?.('当前回复正在生成中，无法删除');
-      } else {
-        window.toastr?.warning?.('没有可删除的当前回复');
-      }
+      deleteCurrentSwipeFromMessage(message);
       return true;
     }
 
@@ -20929,22 +20970,20 @@ Phase G（Frame 36）：循环衔接
       return;
     }
     if (action === 'delete') {
-      const currentReplyTarget = getReplyTargetForSession(sessionId);
-      const removedMessage = chatStore.findMessage(message.id, sessionId) || message;
-      chatStore.deleteMessage(message.id, sessionId);
-      ui.removeMessage(message.id);
-      if (currentReplyTarget?.id === String(message.id || '')) clearReplyTargetForSession(sessionId);
-      await removeTurnCheckpointsForMessages(sessionId, [removedMessage], { prune: true }).catch(err => {
-        logger.warn('remove turn checkpoint after delete failed', err);
-      });
-      await restoreMemoryForActiveThread(sessionId, {
-        refreshBaselineWhenNoTail: false,
-        source: 'delete_message',
-      }).catch(err => {
-        logger.warn('restore memory after delete failed', err);
-      });
-      refreshChatAndContacts();
-      return;
+      if (
+        message.role === 'assistant' &&
+        payload?.deleteScope === 'choose-swipe-or-message'
+      ) {
+        const current = chatStore.findMessage(message.id, sessionId) || message;
+        if (canDeleteCurrentSwipe(current)) {
+          await promptDeleteAssistantSwipes(current);
+        } else {
+          window.toastr?.warning?.('没有可删除的当前回复');
+        }
+        return true;
+      }
+      await deleteWholeMessage(message);
+      return true;
     }
     if (action === 'edit-assistant-raw' && message.role === 'assistant') {
       message = ensureRenderedCancelledPartialPersisted(message) || message;

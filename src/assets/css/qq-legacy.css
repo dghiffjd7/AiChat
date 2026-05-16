@@ -1297,23 +1297,28 @@ body[data-ui-mode='rp'] .rp-swipe-indicator {
   top: 50%;
   right: -30px;
   transform: translateY(-50%);
-  width: 18px;
-  height: 18px;
-  border: none;
-  border-radius: 0;
-  background: transparent;
-  color: rgba(100, 116, 139, 0.72);
-  box-shadow: none;
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--app-border-subtle);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.92);
+  color: var(--app-text-secondary);
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.12);
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 16px;
+  font-size: 15px;
   line-height: 1;
   cursor: pointer;
   padding: 0;
   opacity: 0;
   pointer-events: none;
-  transition: opacity 0.15s ease;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease,
+    opacity 0.15s ease,
+    transform 0.15s ease;
 }
 
 /* 电脑版：鼠标悬停气泡时显示 */
@@ -1326,6 +1331,7 @@ body[data-ui-mode='rp'] .rp-swipe-indicator {
 
 .chat-reaction-trigger:active {
   opacity: 0.8;
+  transform: translateY(-50%) scale(0.96);
 }
 
 .QQ_chat_mymsg .chat-reaction-trigger {
@@ -1333,33 +1339,58 @@ body[data-ui-mode='rp'] .rp-swipe-indicator {
   right: auto;
 }
 
+.chat-reaction-trigger:hover,
+.chat-reaction-trigger:focus-visible {
+  background: var(--app-surface-card);
+  border-color: var(--app-border-default);
+  color: var(--app-accent-primary);
+  outline: none;
+}
+
 .chat-reaction-summary {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+  margin-top: 4px;
 }
 
 .chat-reaction-chip {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  border: 1px solid rgba(15, 23, 42, 0.08);
+  min-height: 24px;
+  border: 1px solid var(--app-border-subtle);
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.9);
-  padding: 3px 8px;
+  background: rgba(255, 255, 255, 0.86);
+  padding: 3px 9px;
   font-size: 12px;
   color: var(--app-text-secondary);
   cursor: pointer;
+  box-shadow: 0 3px 10px rgba(15, 23, 42, 0.06);
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    box-shadow 0.15s ease,
+    transform 0.15s ease;
 }
 
 .chat-reaction-chip.is-self {
-  background: rgba(220, 252, 231, 0.9);
-  border-color: rgba(34, 197, 94, 0.18);
-  color: #166534;
+  background: var(--app-accent-soft);
+  border-color: rgba(25, 154, 255, 0.32);
+  color: var(--app-accent-strong);
+}
+
+.chat-reaction-chip:hover,
+.chat-reaction-chip:focus-visible {
+  background: var(--app-surface-card);
+  border-color: var(--app-border-default);
+  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.1);
+  outline: none;
 }
 
 .chat-reaction-chip:active {
   opacity: 0.82;
+  transform: scale(0.98);
 }
 
 .chat-reaction-chip-count {
@@ -1370,21 +1401,144 @@ body[data-ui-mode='rp'] .rp-swipe-indicator {
 .chat-reaction-option {
   width: 34px;
   height: 34px;
-  border: none;
+  border: 1px solid transparent;
   border-radius: 999px;
   background: transparent;
   font-size: 20px;
   line-height: 1;
   cursor: pointer;
   padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    transform 0.15s ease;
+}
+
+.chat-reaction-option:hover,
+.chat-reaction-option:focus-visible {
+  background: var(--app-surface-hover);
+  border-color: var(--app-border-subtle);
+  outline: none;
 }
 
 .chat-reaction-option:active {
   background: rgba(15, 23, 42, 0.08);
+  transform: scale(0.94);
 }
 
 .chat-reaction-option.is-active {
-  background: rgba(220, 252, 231, 0.9);
+  background: var(--app-accent-soft);
+  border-color: rgba(25, 154, 255, 0.32);
+}
+
+.chat-reaction-picker {
+  padding: 6px;
+  border-radius: 999px;
+  border: 1px solid var(--app-border-subtle);
+  background: var(--app-surface-card);
+  box-shadow: 0 14px 34px rgba(15, 23, 42, 0.18);
+  gap: 4px;
+  align-items: center;
+  backdrop-filter: blur(16px);
+}
+
+.chat-message-context-menu {
+  min-width: 188px;
+  max-width: min(280px, calc(100vw - 16px));
+  padding: 6px;
+  border: 1px solid var(--app-border-default);
+  border-radius: 8px;
+  background: var(--app-surface-card);
+  color: var(--app-text-primary);
+  box-shadow: 0 18px 44px rgba(15, 23, 42, 0.2);
+  backdrop-filter: blur(18px);
+  user-select: none;
+}
+
+.chat-context-reaction-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  padding: 4px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--app-border-subtle);
+}
+
+.chat-context-reaction-row .chat-reaction-option {
+  width: 34px;
+  height: 34px;
+  background: var(--app-surface-subtle);
+}
+
+.chat-context-menu-section-divider {
+  height: 1px;
+  margin: 5px 4px;
+  background: var(--app-border-subtle);
+}
+
+.chat-context-menu-action {
+  width: 100%;
+  min-height: 38px;
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  padding: 7px 9px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--app-text-primary);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1.25;
+  text-align: left;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease,
+    transform 0.15s ease;
+}
+
+.chat-context-menu-action:hover,
+.chat-context-menu-action:focus-visible {
+  background: var(--app-surface-hover);
+  outline: none;
+}
+
+.chat-context-menu-action:active {
+  transform: scale(0.985);
+}
+
+.chat-context-menu-action-icon {
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  background: var(--app-surface-subtle);
+  color: var(--app-text-secondary);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.chat-context-menu-action-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-context-menu-action.is-danger {
+  color: #dc2626;
+}
+
+.chat-context-menu-action.is-danger .chat-context-menu-action-icon {
+  background: rgba(239, 68, 68, 0.1);
+  color: #dc2626;
 }
 
 .message-pending .chat-reaction-trigger {
@@ -5895,9 +6049,10 @@ body[data-ui-mode='rp'] .QQ_chat_page.sticker-preview-active .msgcontent {
 }
 
 .app-confirm-modal.is-danger .app-confirm-btn.app-confirm-ok,
-.app-confirm-btn.app-confirm-ok[data-variant='danger'] {
+.app-confirm-btn[data-variant='danger'] {
   border-color: #ef4444;
   background: #ef4444;
+  color: var(--app-text-inverse);
 }
 
 /* 弹窗遮罩层 */

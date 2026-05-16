@@ -12,18 +12,18 @@ export const buildContextMenuActions = (message, {
 } = {}) => {
   const actions = [];
   if (isThreadingEnabled) {
-    actions.push({ key: 'reply', label: '回复' });
+    actions.push({ key: 'reply', label: '回复', group: 'main' });
   }
   const canViewSource = hasCode || (message?.role === 'assistant' && message?.meta?.renderRich === true);
   if (canViewSource) {
-    actions.push({ key: 'view-code', label: '✏' });
+    actions.push({ key: 'view-code', label: hasCode ? '查看代码' : '查看源码', group: 'main' });
   }
   const canDownload = ['image', 'document', 'sticker'].includes(String(message?.type || ''));
   if (canDownload) {
-    actions.push({ key: 'download', label: '下载' });
+    actions.push({ key: 'download', label: '下载', group: 'main' });
   }
   if (message?.meta?.generatedMedia?.status === 'running') {
-    actions.push({ key: 'cancel-media-generation', label: '取消生成' });
+    actions.push({ key: 'cancel-media-generation', label: '取消生成', group: 'danger', tone: 'danger' });
     return actions;
   }
   if (
@@ -35,27 +35,25 @@ export const buildContextMenuActions = (message, {
     actions.push({
       key: 'generate-image',
       label: message?.type === 'image' && hasGeneratedImagePrompt ? '重新生成图片' : '以此生成图片',
+      group: 'main',
     });
   }
   if (message?.role === 'assistant') {
-    actions.push({ key: 'copy-text', label: '复制' });
-    actions.push({ key: 'regenerate', label: '重新生成' });
-    if (canDeleteCurrentSwipe(message)) {
-      actions.push({ key: 'delete-current-swipe', label: '删除当前回复' });
-    }
-    actions.push({ key: 'delete', label: '删除' });
+    actions.push({ key: 'copy-text', label: '复制', group: 'main' });
+    actions.push({ key: 'regenerate', label: '重新生成', group: 'main' });
+    actions.push({ key: 'delete', label: '删除', group: 'danger', tone: 'danger' });
   } else if (message?.role === 'user') {
     if (message?.status === 'pending') {
-      actions.push({ key: 'send-to-here', label: '🚀 发送到这里' });
+      actions.push({ key: 'send-to-here', label: '发送到这里', group: 'main' });
     }
-    actions.push({ key: 'copy-text', label: '复制' });
+    actions.push({ key: 'copy-text', label: '复制', group: 'main' });
     if (message?.status !== 'pending' && message?.status !== 'sending' && !message?.meta?.generatedByAssistant) {
-      actions.push({ key: 'regenerate', label: '重新生成' });
+      actions.push({ key: 'regenerate', label: '重新生成', group: 'main' });
     }
     if (message?.status !== 'pending' && message?.status !== 'sending') {
-      actions.push({ key: 'edit', label: '编辑' });
+      actions.push({ key: 'edit', label: '编辑', group: 'main' });
     }
-    actions.push({ key: 'delete', label: '删除' });
+    actions.push({ key: 'delete', label: '删除', group: 'danger', tone: 'danger' });
   }
   return actions;
 };

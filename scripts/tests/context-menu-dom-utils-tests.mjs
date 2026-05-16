@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 
 import {
   createContextMenuActionButton,
+  createContextMenuDivider,
   createContextMenuReactionRow,
 } from '../../src/scripts/ui/chat/context-menu-dom-utils.js';
 
@@ -10,8 +11,9 @@ const createClassList = (owner) => {
   return {
     add: (...tokens) => {
       tokens.filter(Boolean).forEach(token => set.add(token));
-      owner.className = [...set].join(' ');
+      owner.className = [owner.className, ...set].join(' ').trim();
     },
+    contains: token => String(owner.className || '').split(/\s+/).includes(token) || set.has(token),
   };
 };
 
@@ -25,12 +27,17 @@ const createFakeDocument = () => {
       this.style = {};
       this.textContent = '';
       this.type = '';
+      this.dataset = {};
+      this.attributes = {};
       this.classList = createClassList(this);
     }
     appendChild(child) {
       this.children.push(child);
       child.parentNode = this;
       return child;
+    }
+    setAttribute(name, value) {
+      this.attributes[name] = String(value);
     }
   }
   return {
@@ -51,7 +58,7 @@ const createFakeDocument = () => {
     onToggle: emoji => toggles.push(emoji),
   });
   assert.equal(row.children.length, 2);
-  assert.equal(row.children[0].className, 'is-active');
+  assert.equal(row.children[0].classList.contains('is-active'), true);
   row.children[1].onclick({ stopPropagation() {} });
   assert.deepEqual(toggles, ['😂']);
   console.log('ok - createContextMenuReactionRow renders active self reaction state and forwards toggles');
@@ -62,17 +69,22 @@ const createFakeDocument = () => {
   let clicked = false;
   const btn = createContextMenuActionButton({
     documentLike,
-    action: { label: '复制' },
+    action: { key: 'copy-text', label: '复制' },
     onClick: () => {
       clicked = true;
     },
   });
-  assert.equal(btn.textContent, '复制');
-  btn.onmouseenter();
-  assert.equal(btn.style.background, 'var(--app-surface-hover)');
-  btn.onmouseleave();
-  assert.equal(btn.style.background, 'transparent');
+  assert.equal(btn.className, 'chat-context-menu-action');
+  assert.equal(btn.children[1].textContent, '复制');
+  assert.equal(btn.dataset.actionKey, 'copy-text');
   btn.onclick();
   assert.equal(clicked, true);
-  console.log('ok - createContextMenuActionButton applies hover styles and forwards clicks');
+  console.log('ok - createContextMenuActionButton renders structured action rows and forwards clicks');
+}
+
+{
+  const documentLike = createFakeDocument();
+  const divider = createContextMenuDivider({ documentLike });
+  assert.equal(divider.className, 'chat-context-menu-section-divider');
+  console.log('ok - createContextMenuDivider renders menu group divider');
 }

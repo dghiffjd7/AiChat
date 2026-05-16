@@ -826,6 +826,37 @@ body[data-theme-mode='dark'] .chat-reaction-trigger {
   color: rgba(173, 186, 199, 0.76) !important;
 }
 
+body[data-theme-mode='dark'] :is(.chat-message-context-menu, .chat-reaction-picker) {
+  background: rgba(22, 27, 34, 0.96) !important;
+  border-color: var(--app-border-default) !important;
+  box-shadow: 0 18px 44px rgba(1, 4, 9, 0.52) !important;
+}
+
+body[data-theme-mode='dark'] .chat-reaction-trigger,
+body[data-theme-mode='dark'] .chat-context-menu-action-icon,
+body[data-theme-mode='dark'] .chat-context-reaction-row .chat-reaction-option {
+  background: rgba(205, 217, 229, 0.06) !important;
+  border-color: var(--app-border-subtle) !important;
+}
+
+body[data-theme-mode='dark'] :is(.chat-context-menu-action:hover, .chat-context-menu-action:focus-visible, .chat-reaction-option:hover, .chat-reaction-option:focus-visible) {
+  background: rgba(205, 217, 229, 0.08) !important;
+}
+
+body[data-theme-mode='dark'] .chat-context-menu-section-divider,
+body[data-theme-mode='dark'] .chat-context-reaction-row {
+  border-color: var(--app-border-subtle) !important;
+}
+
+body[data-theme-mode='dark'] .chat-context-menu-section-divider {
+  background: var(--app-border-subtle) !important;
+}
+
+body[data-theme-mode='dark'] :is(.chat-reaction-chip.is-self, .chat-reaction-option.is-active) {
+  background: rgba(83, 155, 245, 0.16) !important;
+  border-color: rgba(108, 182, 255, 0.28) !important;
+}
+
 body[data-theme-mode='dark'] .QQ_chat_msgdiv.chat-rich-fragment blockquote,
 body[data-theme-mode='dark'] .QQ_chat_msgdiv .chat-rich-fragment blockquote {
   border-left-color: rgba(108, 182, 255, 0.42) !important;

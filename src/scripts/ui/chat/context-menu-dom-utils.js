@@ -1,3 +1,18 @@
+const ACTION_ICON_MAP = {
+  reply: '↩',
+  'view-code': '<>',
+  download: '↓',
+  'cancel-media-generation': '×',
+  'generate-image': '图',
+  'copy-text': '⧉',
+  regenerate: '↻',
+  'send-to-here': '➤',
+  edit: '✎',
+  delete: '⌫',
+};
+
+const DANGER_ACTIONS = new Set(['delete', 'cancel-media-generation']);
+
 export const createContextMenuReactionRow = ({
   documentLike,
   currentReactions = [],
@@ -6,7 +21,7 @@ export const createContextMenuReactionRow = ({
   onToggle,
 } = {}) => {
   const row = documentLike.createElement('div');
-  row.style.cssText = 'display:flex; justify-content:center; gap:4px; padding:6px 8px; border-bottom:1px solid var(--app-border-light);';
+  row.className = 'chat-context-reaction-row';
   emojis.forEach((emoji) => {
     const btn = documentLike.createElement('button');
     btn.type = 'button';
@@ -24,29 +39,38 @@ export const createContextMenuReactionRow = ({
   return row;
 };
 
+export const createContextMenuDivider = ({
+  documentLike,
+} = {}) => {
+  const divider = documentLike.createElement('div');
+  divider.className = 'chat-context-menu-section-divider';
+  return divider;
+};
+
 export const createContextMenuActionButton = ({
   documentLike,
   action,
   onClick,
 } = {}) => {
   const btn = documentLike.createElement('button');
-  btn.textContent = action?.label || '';
-  btn.style.cssText = `
-            width: 100%;
-            padding: 10px 12px;
-            border: none;
-            background: transparent;
-            text-align: left;
-            border-radius: 8px;
-            cursor: pointer;
-            font-size: 14px;
-        `;
-  btn.onmouseenter = () => {
-    btn.style.background = 'var(--app-surface-hover)';
-  };
-  btn.onmouseleave = () => {
-    btn.style.background = 'transparent';
-  };
+  const key = String(action?.key || '');
+  const isDanger = action?.tone === 'danger' || DANGER_ACTIONS.has(key);
+  btn.type = 'button';
+  btn.className = `chat-context-menu-action${isDanger ? ' is-danger' : ''}`;
+  if (btn.dataset) btn.dataset.actionKey = key;
+  btn.setAttribute?.('aria-label', action?.label || key);
+
+  const icon = documentLike.createElement('span');
+  icon.className = 'chat-context-menu-action-icon';
+  icon.setAttribute?.('aria-hidden', 'true');
+  icon.textContent = String(action?.icon || ACTION_ICON_MAP[key] || '');
+
+  const label = documentLike.createElement('span');
+  label.className = 'chat-context-menu-action-label';
+  label.textContent = action?.label || '';
+
+  btn.appendChild(icon);
+  btn.appendChild(label);
   btn.onclick = onClick;
   return btn;
 };

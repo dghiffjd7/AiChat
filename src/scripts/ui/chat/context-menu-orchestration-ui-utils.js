@@ -14,6 +14,7 @@ export const showContextMenuCore = ({
   defaultReactionEmojis = [],
   isSelfReaction = null,
   createContextMenuActionButton = null,
+  createContextMenuDivider = null,
   dispatchContextMenuAction = null,
   getPoint = null,
   positionContextMenu = null,
@@ -64,7 +65,14 @@ export const showContextMenuCore = ({
     });
     if (reactionRow) contextMenu.appendChild(reactionRow);
   }
+  let previousGroup = '';
   actions.forEach((action) => {
+    const group = String(action?.group || 'default');
+    if (previousGroup && group !== previousGroup) {
+      const divider = createContextMenuDivider?.({ documentLike });
+      if (divider) contextMenu.appendChild(divider);
+    }
+    previousGroup = group;
     const button = createContextMenuActionButton?.({
       documentLike,
       action,

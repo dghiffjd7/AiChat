@@ -1,4 +1,4 @@
-import { resolveViewCodeText } from './context-menu-ui-utils.js';
+import { canDeleteCurrentSwipe, resolveViewCodeText } from './context-menu-ui-utils.js';
 
 export const resolveContextMenuCopyText = (message, {
   wrapper,
@@ -57,6 +57,10 @@ export const dispatchContextMenuAction = async ({
   }
 
   if (actionKey === 'delete' && message?.role === 'assistant') {
+    if (canDeleteCurrentSwipe(message)) {
+      const handled = await tryAction?.('delete', { wrapper, deleteScope: 'choose-swipe-or-message' }, { skipFallback: true });
+      if (handled) return 'handled';
+    }
     enterSelectionMode?.(message?.id);
     return 'delete-selection';
   }

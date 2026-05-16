@@ -55,7 +55,7 @@ export const createReactionTriggerButton = (
   const reactionBtn = documentLike.createElement('button');
   reactionBtn.type = 'button';
   reactionBtn.className = 'chat-reaction-trigger';
-  reactionBtn.setAttribute?.('aria-label', '添加回应');
+  reactionBtn.setAttribute?.('aria-label', '添加反应');
   reactionBtn.textContent = '☺';
   reactionBtn.addEventListener?.('click', (event) => {
     event.preventDefault?.();
@@ -71,17 +71,11 @@ export const createReactionPicker = ({
 } = {}) => {
   const picker = documentLike.createElement('div');
   picker.id = 'msg-reaction-picker';
+  picker.className = 'chat-reaction-picker';
   picker.style.cssText = `
             position: fixed;
             display: none;
             z-index: 20010;
-            padding: 6px;
-            border-radius: 999px;
-            border: 1px solid rgba(15, 23, 42, 0.08);
-            background: var(--app-surface-card);
-            box-shadow: 0 10px 28px rgba(15, 23, 42, 0.16);
-            gap: 4px;
-            align-items: center;
         `;
   documentLike.body?.appendChild?.(picker);
   documentLike.addEventListener?.(
