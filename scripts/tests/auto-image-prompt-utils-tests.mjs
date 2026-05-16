@@ -3,6 +3,8 @@ import {
   buildAutoImagePromptInstruction,
   extractAutoImagePrompts,
   prepareAutoImagePromptPlaceholders,
+  protectUnclosedAutoImagePromptTags,
+  restoreProtectedAutoImagePromptTags,
   shouldAllowAutoImagePromptByRateLimit,
   stripMomentBlocksForAutoImagePrompt,
   stripAutoImagePromptTags,
@@ -24,6 +26,31 @@ import {
   const stripped = stripAutoImagePromptTags('hello\n<image_prompt>secret prompt</image_prompt>\nworld');
   assert.equal(stripped.trim().replace(/\n{2,}/g, '\n'), 'hello\nworld');
   console.log('ok - strips image_prompt tags from display text');
+}
+
+{
+  const source = '正文\n<image_prompt>\n后续正文';
+  const protectedSource = protectUnclosedAutoImagePromptTags(source);
+  assert.doesNotMatch(protectedSource.text, /<\s*image_prompt\b/i);
+  assert.equal(restoreProtectedAutoImagePromptTags(protectedSource.text, protectedSource), source);
+  console.log('ok - protects unclosed image_prompt open tags as plain text');
+}
+
+{
+  const source = '正文\n<image_prompt>closed prompt</image_prompt>\n后续正文';
+  const protectedSource = protectUnclosedAutoImagePromptTags(source);
+  assert.equal(protectedSource.text, source);
+  assert.equal(protectedSource.replacements.length, 0);
+  console.log('ok - leaves closed image_prompt tags available for extraction');
+}
+
+{
+  const source = '正文\n<image_prompt>\n后续正文';
+  const prepared = prepareAutoImagePromptPlaceholders(source);
+  assert.deepEqual(prepared.prompts, []);
+  assert.equal(prepared.text, source);
+  assert.equal(stripAutoImagePromptTags(source), source);
+  console.log('ok - incomplete image_prompt tags are not stripped or extracted');
 }
 
 {

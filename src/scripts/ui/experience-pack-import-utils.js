@@ -175,6 +175,12 @@ export const buildExperiencePackRoomBaseSettings = (roomConfig = {}) => {
   return settings;
 };
 
+const normalizeExperiencePackWallpaperOpacity = value => {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return 1;
+  return Math.min(1, Math.max(0, numeric));
+};
+
 const buildExperiencePackWallpaperMetaSettings = (wallpaper = {}) => ({
   name: String(wallpaper?.meta?.name || ''),
   zoom: Number(wallpaper?.meta?.zoom || 1) || 1,
@@ -183,6 +189,7 @@ const buildExperiencePackWallpaperMetaSettings = (wallpaper = {}) => ({
   offsetY: Number(wallpaper?.meta?.offsetY || 0) || 0,
   width: Number(wallpaper?.meta?.width || 0) || 0,
   height: Number(wallpaper?.meta?.height || 0) || 0,
+  opacity: normalizeExperiencePackWallpaperOpacity(wallpaper?.meta?.opacity ?? 1),
 });
 
 export const buildExperiencePackWallpaperSaveRequest = ({

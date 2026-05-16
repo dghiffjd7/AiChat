@@ -37,6 +37,15 @@ import {
 
 {
   const actions = buildContextMenuActions(
+    { role: 'user', type: 'text', meta: { generatedMedia: { status: 'failed', prompt: 'blue sky' } } },
+    { hasCode: false, isThreadingEnabled: false },
+  );
+  assert.equal(actions.find(item => item.key === 'generate-image')?.label, '重新生成图片');
+  console.log('ok - buildContextMenuActions labels failed generated media as regenerate image');
+}
+
+{
+  const actions = buildContextMenuActions(
     { role: 'assistant', type: 'text', meta: { renderRich: true } },
     { hasCode: false, isThreadingEnabled: false },
   );

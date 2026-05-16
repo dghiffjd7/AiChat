@@ -231,6 +231,12 @@ const toDataUrlFromEntry = (entry, fallbackName = '') => {
 
 const isRemoteUrl = (value) => /^https?:\/\//i.test(String(value || '').trim());
 
+const normalizeWallpaperOpacity = value => {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return 1;
+  return Math.min(1, Math.max(0, numeric));
+};
+
 const looksLikeLocalPath = (value) => {
   const raw = String(value || '').trim();
   if (!raw || raw.startsWith('data:') || isRemoteUrl(raw)) return false;
@@ -2091,6 +2097,7 @@ export class CustomBundleExporter {
           offsetY: Number(wallpaper.offsetY || 0) || 0,
           width: Number(wallpaper.width || 0) || 0,
           height: Number(wallpaper.height || 0) || 0,
+          opacity: normalizeWallpaperOpacity(wallpaper.opacity ?? 1),
           saveOriginal: wallpaper.saveOriginal === true,
         },
       };
@@ -2107,6 +2114,7 @@ export class CustomBundleExporter {
           offsetY: Number(wallpaper.offsetY || 0) || 0,
           width: Number(wallpaper.width || 0) || 0,
           height: Number(wallpaper.height || 0) || 0,
+          opacity: normalizeWallpaperOpacity(wallpaper.opacity ?? 1),
         },
       };
     }
@@ -2994,6 +3002,7 @@ export class CustomBundleExporter {
             offsetY: Number(wallpaper?.meta?.offsetY || 0) || 0,
             width: Number(wallpaper?.meta?.width || 0) || 0,
             height: Number(wallpaper?.meta?.height || 0) || 0,
+            opacity: normalizeWallpaperOpacity(wallpaper?.meta?.opacity ?? 1),
             saveOriginal: wallpaper?.meta?.saveOriginal === true,
           };
         } catch (err) {
@@ -3011,6 +3020,7 @@ export class CustomBundleExporter {
         offsetY: Number(wallpaper?.meta?.offsetY || 0) || 0,
         width: Number(wallpaper?.meta?.width || 0) || 0,
         height: Number(wallpaper?.meta?.height || 0) || 0,
+        opacity: normalizeWallpaperOpacity(wallpaper?.meta?.opacity ?? 1),
       };
     }
 

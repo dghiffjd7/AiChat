@@ -106,6 +106,12 @@ export const buildExperiencePackStickerPackPayload = ({
   stickers: ensureArray(stickers),
 });
 
+const normalizeExperiencePackWallpaperOpacity = value => {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return 1;
+  return Math.min(1, Math.max(0, numeric));
+};
+
 const buildExperiencePackWallpaperMeta = (wallpaper = {}) => ({
   name: String(wallpaper?.name || ''),
   zoom: Number(wallpaper?.zoom || 1) || 1,
@@ -114,6 +120,7 @@ const buildExperiencePackWallpaperMeta = (wallpaper = {}) => ({
   offsetY: Number(wallpaper?.offsetY || 0) || 0,
   width: Number(wallpaper?.width || 0) || 0,
   height: Number(wallpaper?.height || 0) || 0,
+  opacity: normalizeExperiencePackWallpaperOpacity(wallpaper?.opacity ?? 1),
 });
 
 export const buildExperiencePackWallpaperFilePayload = ({

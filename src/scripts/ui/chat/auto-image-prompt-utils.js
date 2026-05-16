@@ -13,6 +13,11 @@ const normalizePromptText = (value = '') => String(value ?? '')
   .replace(/\n{3,}/g, '\n\n')
   .trim();
 
+const IMAGE_PROMPT_OPEN_RE = /<\s*image_prompt(?:\s[^>]*)?\s*>/gi;
+const IMAGE_PROMPT_CLOSE_RE = /<\s*\/\s*image_prompt\s*>/gi;
+const PROTECTED_IMAGE_PROMPT_OPEN_PREFIX = '\uE000chatapp-image-prompt-open-';
+const PROTECTED_IMAGE_PROMPT_OPEN_SUFFIX = '\uE001';
+
 const isEmptyPromptToken = (value = '') => {
   const raw = String(value || '').trim().toLowerCase();
   return !raw || raw === 'none' || raw === 'null' || raw === 'n/a' || raw === '无' || raw === '不需要';
@@ -43,6 +48,41 @@ export const stripMomentBlocksForAutoImagePrompt = (text = '') => {
 };
 
 export const AUTO_IMAGE_PROMPT_TAG = IMAGE_PROMPT_TAG;
+
+export const protectUnclosedAutoImagePromptTags = (text = '') => {
+  const source = String(text ?? '');
+  if (!source || !/<\s*image_prompt\b/i.test(source)) {
+    return { text: source, replacements: [] };
+  }
+  const replacements = [];
+  const protectedText = source.replace(IMAGE_PROMPT_OPEN_RE, (full, offset) => {
+    const openEnd = offset + full.length;
+    const closeRe = new RegExp(IMAGE_PROMPT_CLOSE_RE.source, IMAGE_PROMPT_CLOSE_RE.flags);
+    closeRe.lastIndex = openEnd;
+    const close = closeRe.exec(source);
+    const nextOpenRe = new RegExp(IMAGE_PROMPT_OPEN_RE.source, IMAGE_PROMPT_OPEN_RE.flags);
+    nextOpenRe.lastIndex = openEnd;
+    const nextOpen = nextOpenRe.exec(source);
+    if (close && (!nextOpen || close.index < nextOpen.index)) return full;
+    const token = `${PROTECTED_IMAGE_PROMPT_OPEN_PREFIX}${replacements.length}${PROTECTED_IMAGE_PROMPT_OPEN_SUFFIX}`;
+    replacements.push({ token, value: full });
+    return token;
+  });
+  return { text: protectedText, replacements };
+};
+
+export const restoreProtectedAutoImagePromptTags = (text = '', protection = null) => {
+  const replacements = Array.isArray(protection)
+    ? protection
+    : (Array.isArray(protection?.replacements) ? protection.replacements : []);
+  if (!replacements.length) return String(text ?? '');
+  let out = String(text ?? '');
+  replacements.forEach(({ token, value }) => {
+    if (!token) return;
+    out = out.split(token).join(String(value || ''));
+  });
+  return out;
+};
 
 export const DEFAULT_AUTO_IMAGE_PROMPT_RULES = [
   '自动生图标签规则，用于生成{{image_prompt_surface}}。',

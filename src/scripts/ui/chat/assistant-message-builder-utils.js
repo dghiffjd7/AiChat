@@ -1,5 +1,7 @@
 import {
   prepareAutoImagePromptPlaceholders,
+  protectUnclosedAutoImagePromptTags,
+  restoreProtectedAutoImagePromptTags,
   stripAutoImagePromptTags,
 } from './auto-image-prompt-utils.js';
 
@@ -205,7 +207,8 @@ export const buildCreativeAssistantMessageParts = ({
     ? prepareAutoImagePromptPlaceholders(rawFinalSource, autoImagePromptPlaceholderOptions)
     : { text: stripAutoImagePromptTags(rawFinalSource), prompts: [] };
   const finalSource = autoImagePrepared.text;
-  const regexResult = applyOutputRegexPairSafe(finalSource, {
+  const protectedFinalSource = protectUnclosedAutoImagePromptTags(finalSource);
+  const regexResult = applyOutputRegexPairSafe(protectedFinalSource.text, {
     appBridge,
     depth: 0,
     normalizeText: normalizeCreativeLineBreaks,
@@ -217,8 +220,8 @@ export const buildCreativeAssistantMessageParts = ({
     reasoningParsed,
     resolvedReasoning,
     finalSource,
-    stored: regexResult.stored,
-    display: regexResult.display,
+    stored: restoreProtectedAutoImagePromptTags(regexResult.stored, protectedFinalSource),
+    display: restoreProtectedAutoImagePromptTags(regexResult.display, protectedFinalSource),
   };
 };
 

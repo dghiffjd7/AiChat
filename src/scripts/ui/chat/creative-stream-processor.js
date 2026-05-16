@@ -93,21 +93,30 @@ export class CreativeStreamProcessor {
     const balancePreview = typeof this.options.balancePreview === 'function'
       ? this.options.balancePreview
       : balanceCreativeStreamPreview;
+    const protectRegexSource = typeof this.options.protectRegexSource === 'function'
+      ? this.options.protectRegexSource
+      : (value => ({ text: value, replacements: [] }));
+    const restoreRegexOutput = typeof this.options.restoreRegexOutput === 'function'
+      ? this.options.restoreRegexOutput
+      : (value => value);
 
     const strippedRaw = normalize(stripRaw(sourceRaw));
     const reasoningState = extractReasoning(strippedRaw, { final }) || {};
     const contentSource = normalize(reasoningState.content);
     const reasoning = normalize(reasoningState.reasoning);
     const reasoningDisplay = normalize(reasoningState.reasoningDisplay || reasoning);
+    const protectedSource = protectRegexSource(contentSource) || { text: contentSource, replacements: [] };
 
-    let stored = contentSource;
-    let display = contentSource;
+    let stored = String(protectedSource.text ?? contentSource);
+    let display = String(protectedSource.text ?? contentSource);
     try {
-      stored = normalize(applyStored(contentSource, { final }));
+      stored = normalize(applyStored(protectedSource.text, { final }));
     } catch {}
     try {
       display = normalize(applyDisplay(stored, { final }));
     } catch {}
+    stored = normalize(restoreRegexOutput(stored, protectedSource));
+    display = normalize(restoreRegexOutput(display, protectedSource));
     if (!final && !display.trim() && contentSource.trim()) {
       stored = contentSource;
       display = contentSource;

@@ -137,6 +137,35 @@ const createFakeDocument = () => {
 {
   const documentLike = createFakeDocument();
   const bubble = documentLike.createElement('div');
+  renderMessageBubbleContentCore({
+    bubble,
+    message: {
+      type: 'text',
+      content: '图片生成失败：429',
+      meta: {
+        generatedMedia: {
+          status: 'failed',
+          prompt: 'blue sky',
+          error: 'NovelAI API Error: 429',
+        },
+      },
+    },
+    documentLike,
+  });
+  const card = bubble.children[0];
+  assert.equal(card.tagName, 'DETAILS');
+  assert.equal(card.className.includes('generated-media-error-card'), true);
+  const summary = card.children[0];
+  const retry = summary.children.find(node => String(node.className || '').includes('generated-media-error-retry'));
+  assert.ok(retry);
+  assert.equal(retry.dataset.action, 'retry-generated-media');
+  assert.equal(retry.textContent, '重新生成图片');
+  console.log('ok - renderMessageBubbleContentCore renders retry button for failed generated media');
+}
+
+{
+  const documentLike = createFakeDocument();
+  const bubble = documentLike.createElement('div');
   const target = documentLike.createElement('div');
   let normalizedInput = null;
   const stickerCalls = [];

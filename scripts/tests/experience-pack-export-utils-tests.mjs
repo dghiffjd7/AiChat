@@ -173,6 +173,7 @@ const {
         offsetY: '4',
         width: '800',
         height: '600',
+        opacity: '0.35',
         saveOriginal: true,
       },
     }),
@@ -187,6 +188,7 @@ const {
         offsetY: 4,
         width: 800,
         height: 600,
+        opacity: 0.35,
         saveOriginal: true,
       },
     },
@@ -211,6 +213,7 @@ const {
         offsetY: 0,
         width: 0,
         height: 0,
+        opacity: 1,
       },
     },
   );

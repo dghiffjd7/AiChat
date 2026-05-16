@@ -516,6 +516,7 @@ const { logger } = await import('../../src/scripts/utils/logger.js');
       offsetY: '4',
       width: '800',
       height: '600',
+      opacity: '0.35',
       saveOriginal: true,
     },
   }, assets);
@@ -541,6 +542,7 @@ const { logger } = await import('../../src/scripts/utils/logger.js');
       offsetY: 4,
       width: 800,
       height: 600,
+      opacity: 0.35,
       saveOriginal: true,
     },
   });
@@ -555,6 +557,7 @@ const { logger } = await import('../../src/scripts/utils/logger.js');
       offsetY: 0,
       width: 0,
       height: 0,
+      opacity: 1,
     },
   });
   console.log('ok - ExperiencePackTransfer collectWallpaperBundle preserves asset and remote fallback contracts');

@@ -3054,6 +3054,7 @@ body[data-theme-mode='dark'] :is(
   .wallpaper-drop-desc,
   .wallpaper-status,
   .wallpaper-controls label,
+  .wallpaper-control-value,
   .setting-scope-options label,
   .wallpaper-drop-meta,
   #chat-setting-preview span
@@ -3860,7 +3861,8 @@ body[data-theme-mode='dark'] #save-setting-btn {
 }
 
 body[data-theme-mode='dark'] #wallpaper-zoom,
-body[data-theme-mode='dark'] #wallpaper-rotate {
+body[data-theme-mode='dark'] #wallpaper-rotate,
+body[data-theme-mode='dark'] #wallpaper-opacity {
   accent-color: var(--app-accent-primary) !important;
 }
 
@@ -4519,6 +4521,21 @@ body[data-theme-mode='dark'] #preset-panel .pp-reasoning-card :is(.pp-field-labe
 }
 
 .generated-media-error-card .card-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #991b1b !important;
+}
+
+.generated-media-error-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.generated-media-error-retry {
+  margin-left: auto;
+  border-color: rgba(248, 113, 113, 0.42) !important;
   color: #991b1b !important;
 }
 
@@ -4533,6 +4550,12 @@ body[data-theme-mode='dark'] .generated-media-error-card {
 }
 
 body[data-theme-mode='dark'] .generated-media-error-card .card-title {
+  color: #fecaca !important;
+}
+
+body[data-theme-mode='dark'] .generated-media-error-retry {
+  background: rgba(248, 113, 113, 0.12) !important;
+  border-color: rgba(248, 113, 113, 0.38) !important;
   color: #fecaca !important;
 }
 

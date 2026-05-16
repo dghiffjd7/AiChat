@@ -240,6 +240,25 @@ test('buildCreativeAssistantMessage preserves parsed reasoning and omits id for 
   assert.equal(message.content, 'body source:display');
 });
 
+test('buildCreativeAssistantMessage preserves incomplete image_prompt tags through output regex', async () => {
+  const source = '正文\n<image_prompt>\n后续正文';
+  const dangerousStrip = value => String(value ?? '').replace(/<\s*image_prompt\b[\s\S]*/i, '');
+  const message = await buildCreativeAssistantMessage({
+    rawOriginal: source,
+    text: source,
+    sessionId: 'rp:session',
+    normalizeCreativeLineBreaks: value => String(value ?? ''),
+    applyOutputRegexPairSafe: value => ({
+      stored: dangerousStrip(value),
+      display: dangerousStrip(value),
+    }),
+  });
+
+  assert.equal(message.rawSource, source);
+  assert.equal(message.raw, source);
+  assert.equal(message.content, source);
+});
+
 test('buildChatModeAssistantMessageParts resolves native reasoning without rebuilding payload', () => {
   const calls = [];
   const parts = buildChatModeAssistantMessageParts({

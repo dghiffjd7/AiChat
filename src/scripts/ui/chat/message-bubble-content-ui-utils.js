@@ -323,7 +323,18 @@ export const renderMessageBubbleContentCore = ({
         details.className = 'card generated-media-error-card';
         const summary = documentLike.createElement('summary');
         summary.className = 'card-title';
-        summary.textContent = String(message?.content || '图片生成失败');
+        const titleText = documentLike.createElement('span');
+        titleText.className = 'generated-media-error-title';
+        titleText.textContent = String(message?.content || '图片生成失败');
+        appendChild(summary, titleText);
+        if (String(generated?.prompt || '').trim()) {
+          const retry = documentLike.createElement('button');
+          retry.type = 'button';
+          retry.className = 'card-button generated-media-error-retry';
+          retry.dataset.action = 'retry-generated-media';
+          retry.textContent = '重新生成图片';
+          appendChild(summary, retry);
+        }
         const body = documentLike.createElement('pre');
         body.className = 'card-subtitle';
         body.style.whiteSpace = 'pre-wrap';

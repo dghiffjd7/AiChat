@@ -6386,6 +6386,17 @@ body[data-ui-mode='rp'] .QQ_chat_page.sticker-preview-active .msgcontent {
   flex: 1;
 }
 
+.wallpaper-control-value {
+  min-width: 42px;
+  text-align: right;
+  color: var(--app-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.setting-wallpaper .wallpaper-control-value {
+  padding-top: 0;
+}
+
 .wallpaper-actions {
   display: flex;
   gap: 8px;

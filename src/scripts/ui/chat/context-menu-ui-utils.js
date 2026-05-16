@@ -80,7 +80,7 @@ export const buildContextMenuActions = (message, {
     const hasInlineGeneratedImagePrompt = Boolean(String(inlineGeneratedAsset?.prompt || '').trim());
     actions.push({
       key: 'generate-image',
-      label: (message?.type === 'image' && hasGeneratedImagePrompt) || hasInlineGeneratedImagePrompt
+      label: hasGeneratedImagePrompt || hasInlineGeneratedImagePrompt
         ? '重新生成图片'
         : '以此生成图片',
       group: 'main',

@@ -3,6 +3,10 @@ import {
   buildAfterSendHookStartTraceEvent,
   emitHookLifecycleTrace,
 } from './hook-lifecycle-trace-utils.js';
+import {
+  protectUnclosedAutoImagePromptTags,
+  restoreProtectedAutoImagePromptTags,
+} from './auto-image-prompt-utils.js';
 
 const normalizeMessages = (messages = []) => (Array.isArray(messages) ? messages : []);
 
@@ -167,6 +171,8 @@ export const createCreativeAssistantStreamProcessor = ({
       depth: 0,
       normalizeText: normalizeCreativeLineBreaks,
     }),
+    protectRegexSource: protectUnclosedAutoImagePromptTags,
+    restoreRegexOutput: restoreProtectedAutoImagePromptTags,
   });
 };
 

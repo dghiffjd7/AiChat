@@ -4,6 +4,10 @@ import {
   CreativeStreamProcessor,
   balanceCreativeStreamPreview,
 } from '../../src/scripts/ui/chat/creative-stream-processor.js';
+import {
+  protectUnclosedAutoImagePromptTags,
+  restoreProtectedAutoImagePromptTags,
+} from '../../src/scripts/ui/chat/auto-image-prompt-utils.js';
 
 const splitThinking = (raw) => {
   const text = String(raw ?? '');
@@ -89,9 +93,29 @@ const testThrottleAndFinalize = () => {
   assert.equal(finalSnapshot.display, 'abcdefghi```code');
 };
 
+const testIncompleteImagePromptSurvivesRegex = () => {
+  let now = 4000;
+  const dangerousStrip = value => String(value ?? '').replace(/<\s*image_prompt\b[\s\S]*/i, '');
+  const processor = new CreativeStreamProcessor({
+    now: () => now,
+    minChunkChars: 1,
+    normalizeText: value => String(value ?? ''),
+    extractReasoning: value => ({ content: String(value ?? ''), reasoning: '', reasoningDisplay: '' }),
+    applyStored: dangerousStrip,
+    applyDisplay: dangerousStrip,
+    protectRegexSource: protectUnclosedAutoImagePromptTags,
+    restoreRegexOutput: restoreProtectedAutoImagePromptTags,
+  });
+  const snapshot = processor.append('正文\n<image_prompt>\n后续正文');
+  assert.ok(snapshot);
+  assert.equal(snapshot.stored, '正文\n<image_prompt>\n后续正文');
+  assert.equal(snapshot.display, '正文\n<image_prompt>\n后续正文');
+};
+
 testPreviewBalance();
 testIncompleteReasoningSplit();
 testPreviewFallbackWhenRegexEmpties();
 testThrottleAndFinalize();
+testIncompleteImagePromptSurvivesRegex();
 
 console.log('creative-stream-processor tests passed');
