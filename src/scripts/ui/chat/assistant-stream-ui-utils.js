@@ -269,7 +269,17 @@ export const createAssistantStreamUiRuntime = ({
             typeof buffered?.rawOriginal === 'string'
               ? buffered.rawOriginal
               : (typeof buffered?.raw === 'string' ? buffered.raw : displayText);
-          const hasText = displayText.trim().length > 0;
+          const reasoningText = String(
+            buffered?.reasoningDisplay
+              || buffered?.reasoning
+              || buffered?.meta?.reasoningDisplay
+              || buffered?.meta?.reasoning
+              || '',
+          );
+          const hasText =
+            displayText.trim().length > 0 ||
+            rawText.trim().length > 0 ||
+            reasoningText.trim().length > 0;
           if (keepPartial && hasText) {
             const partial = {
               ...(buffered || placeholder),
@@ -379,7 +389,17 @@ export const createAssistantStreamUiRuntime = ({
             typeof buffered?.rawOriginal === 'string'
               ? buffered.rawOriginal
               : (typeof buffered?.raw === 'string' ? buffered.raw : displayText);
-          const hasText = displayText.trim().length > 0;
+          const reasoningText = String(
+            buffered?.reasoningDisplay
+              || buffered?.reasoning
+              || buffered?.meta?.reasoningDisplay
+              || buffered?.meta?.reasoning
+              || '',
+          );
+          const hasText =
+            displayText.trim().length > 0 ||
+            rawText.trim().length > 0 ||
+            reasoningText.trim().length > 0;
           if (keepPartial && hasText) {
             const partial = {
               ...(buffered || placeholder),

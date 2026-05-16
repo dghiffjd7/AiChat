@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 
 import {
   buildContextMenuActions,
+  canDeleteCurrentSwipe,
   positionContextMenu,
   resolveViewCodeText,
 } from '../../src/scripts/ui/chat/context-menu-ui-utils.js';
@@ -40,6 +41,31 @@ import {
   );
   assert.deepEqual(actions.map(item => item.key), ['view-code', 'generate-image', 'copy-text', 'regenerate', 'delete']);
   console.log('ok - buildContextMenuActions exposes raw editor for creative assistant messages');
+}
+
+{
+  const message = {
+    role: 'assistant',
+    type: 'text',
+    meta: {
+      activeSwipe: 1,
+      swipes: [
+        { content: 'first' },
+        { content: 'second' },
+      ],
+    },
+  };
+  const actions = buildContextMenuActions(message, {
+    hasCode: false,
+    isThreadingEnabled: false,
+  });
+  assert.equal(canDeleteCurrentSwipe(message), true);
+  assert.deepEqual(actions.map(item => item.key), ['generate-image', 'copy-text', 'regenerate', 'delete-current-swipe', 'delete']);
+  assert.equal(buildContextMenuActions({
+    ...message,
+    meta: { ...message.meta, swipes: [{ content: 'only' }] },
+  }).some(action => action.key === 'delete-current-swipe'), false);
+  console.log('ok - buildContextMenuActions exposes current swipe deletion only for multi-swipe assistant messages');
 }
 
 {

@@ -142,6 +142,27 @@ test('buildCancelledAssistantPartial preserves raw payload when rendered stream 
   assert.equal(partial.meta.renderRich, true);
 });
 
+test('buildCancelledAssistantPartial preserves reasoning-only cached payloads', () => {
+  const partial = buildCancelledAssistantPartial({
+    generation: {
+      streamText: '',
+      streamPayload: {
+        content: '',
+        raw: '',
+        meta: { reasoningDisplay: '只生成了思考', renderRich: true },
+      },
+      streamMeta: { id: 'assistant-reasoning', reasoningLabel: '思考' },
+    },
+  });
+
+  assert.equal(partial.id, 'assistant-reasoning');
+  assert.equal(partial.content, '');
+  assert.equal(partial.raw, '');
+  assert.equal(partial.meta.reasoningDisplay, '只生成了思考');
+  assert.equal(partial.meta.reasoningLabel, '思考');
+  assert.equal(partial.meta.cancelled, true);
+});
+
 test('buildCancelledAssistantPartial falls back to stream controller id and provided avatar/time', () => {
   const partial = buildCancelledAssistantPartial({
     generation: {
@@ -258,6 +279,29 @@ test('commitCancelledGenerationPartial accepts raw-only partials', () => {
   assert.equal(result.hasContent, true);
   assert.equal(result.appended, true);
   assert.equal(appended[0].message.content, 'raw-only partial');
+});
+
+test('commitCancelledGenerationPartial accepts reasoning-only partials', () => {
+  const appended = [];
+  const result = commitCancelledGenerationPartial({
+    generation: { sessionId: 'session-reasoning' },
+    partial: {
+      id: 'partial-reasoning',
+      content: '',
+      meta: { reasoningDisplay: '只输出了思考', renderRich: true },
+    },
+    reason: 'user',
+    chatStore: {
+      findMessage: () => null,
+      appendMessage: (message, sessionId) => appended.push({ message, sessionId }),
+    },
+  });
+
+  assert.equal(result.hasContent, true);
+  assert.equal(result.appended, true);
+  assert.equal(appended[0].message.content, '');
+  assert.equal(appended[0].message.meta.reasoningDisplay, '只输出了思考');
+  assert.equal(appended[0].message.meta.cancelled, true);
 });
 
 test('commitCancelledGenerationPartial keeps existing handler precedence semantics', () => {

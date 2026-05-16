@@ -9,6 +9,7 @@ import {
   buildSendPreflightBlockedTraceEvent,
   buildSendStartTraceEvent,
   buildSendUserMessage,
+  adoptRenderedRegenerateRoundMessages,
   normalizeHandleSendInvocation,
   normalizeHandleSendOptions,
   resolveRegenerateFromUserIndexPlan,
@@ -564,6 +565,54 @@ test('resolveRegenerateFromUserIndexPlan supports empty assistant rounds only wh
   });
   assert.equal(allowed.canRegenerate, true);
   assert.deepEqual(allowed.regenMessages, []);
+});
+
+test('adoptRenderedRegenerateRoundMessages persists DOM-only replies before regenerate', () => {
+  const messages = [
+    { id: 'u1', role: 'user', raw: '用户消息' },
+  ];
+  const appended = [];
+  const renderedWrapper = {};
+  const renderedPartial = {
+    id: 'a-partial',
+    role: 'assistant',
+    type: 'text',
+    content: '中止部分',
+    meta: { renderRich: true },
+  };
+  const adopted = adoptRenderedRegenerateRoundMessages({
+    messages,
+    userIdx: 0,
+    renderedMessages: [
+      { wrapper: {}, message: messages[0] },
+      { wrapper: renderedWrapper, message: renderedPartial },
+      { wrapper: {}, message: { id: 'a-empty', role: 'assistant', content: '   ' } },
+    ],
+    sessionId: 'session-regen',
+    chatStore: {
+      appendMessage: (message, sessionId) => {
+        const saved = { ...message, sessionId };
+        appended.push(saved);
+        messages.push(saved);
+        return saved;
+      },
+    },
+    isSyntheticUser: message => message?.meta?.generatedByAssistant === true,
+  });
+
+  assert.equal(adopted.length, 1);
+  assert.equal(adopted[0].entry.wrapper, renderedWrapper);
+  assert.equal(adopted[0].saved.id, 'a-partial');
+  assert.equal(appended[0].sessionId, 'session-regen');
+  assert.deepEqual(messages.map(message => message.id), ['u1', 'a-partial']);
+  const plan = resolveRegenerateFromUserIndexPlan({
+    messages,
+    userIdx: 0,
+    allowEmpty: false,
+    isSyntheticUser: message => message?.meta?.generatedByAssistant === true,
+  });
+  assert.equal(plan.canRegenerate, true);
+  assert.deepEqual(plan.regenMessages.map(message => message.id), ['a-partial']);
 });
 
 test('runRegenerateFromUserIndexFlow deletes regen messages restores table memory and resends user text', async () => {

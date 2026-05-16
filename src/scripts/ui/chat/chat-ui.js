@@ -561,6 +561,14 @@ export class ChatUI {
     });
   }
 
+  deleteCurrentSwipe(msgId) {
+    return this.swipeRuntime.deleteSwipeBranch({
+      scrollEl: this.scrollEl,
+      msgId,
+      applySwipe: ({ wrapper, message, newIndex }) => this._applySwipe(wrapper, message, newIndex),
+    });
+  }
+
   onSwipeRegen(handler) { this._swipeRegenHandler = handler; }
   onSwipeChange(handler) { this._swipeChangeHandler = handler; }
 

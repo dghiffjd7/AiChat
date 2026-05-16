@@ -157,6 +157,58 @@ const createTarget = () => ({
     },
     cancelFrame() {},
   });
+  const wrapper = {
+    dataset: { msgId: 'm4-reasoning' },
+    isConnected: true,
+    removeCalled: false,
+    remove() { this.removeCalled = true; },
+  };
+  const messageEl = {
+    isConnected: true,
+    closest() { return wrapper; },
+    parentElement: wrapper,
+    innerHTML: '',
+    textContent: '',
+  };
+  const messageBuffer = [];
+  const finishes = [];
+  const stream = runtime.startAssistantStream({
+    meta: { id: 'm4-reasoning', typing: false, renderRich: true },
+    addMessage() { return messageEl; },
+    messageBuffer,
+    setStreamingState() {},
+    isNearBottom: () => true,
+    getStreamAutoFollow: () => false,
+    setStreamAutoFollow() {},
+    renderAssistantStreamState() {},
+    finishMessageDom: (...args) => { finishes.push(args); },
+    normalizeAssistantStreamState: value => (typeof value === 'object' ? { ...value } : { content: String(value ?? '') }),
+    isTypingDotsEnabled: () => false,
+    scrollToBottom() {},
+  });
+  stream.update({
+    content: '',
+    raw: '',
+    rawOriginal: '',
+    meta: { reasoningDisplay: 'thinking only' },
+  });
+  const partial = stream.cancel({ keepPartial: true });
+  assert.equal(wrapper.removeCalled, false);
+  assert.equal(partial.content, '');
+  assert.equal(partial.meta.reasoningDisplay, 'thinking only');
+  assert.equal(partial.meta.partial, true);
+  assert.equal(finishes.length, 1);
+  console.log('ok - startAssistantStream keeps reasoning-only partials on cancel');
+}
+
+{
+  const runtime = createAssistantStreamUiRuntime({
+    scheduleFrame: cb => {
+      cb();
+      return 1;
+    },
+    cancelFrame() {},
+  });
   const baseMessage = {
     id: 'm5',
     content: 'seed',

@@ -354,6 +354,7 @@ import {
   buildSendPreflightBlockedTraceEvent,
   buildSendStartTraceEvent,
   buildSendUserMessage,
+  adoptRenderedRegenerateRoundMessages,
   normalizeHandleSendInvocation,
   normalizeHandleSendOptions,
   resolveSendPreflightBlock,
@@ -18109,17 +18110,29 @@ Phase G（Frame 36）：循环衔接
 	      memoryTableSnapshot = null,
 	      memoryUpdateEntry = undefined,
 	    } = {}) => {
+	      const sourceMessageMeta = source?.meta && typeof source.meta === 'object' ? source.meta : {};
 	      const content = String(source?.content ?? '');
 	      const raw = typeof source?.raw === 'string' ? source.raw : content;
 	      const rawSource = typeof source?.rawSource === 'string'
 	        ? source.rawSource
 	        : (typeof source?.meta?.autoImagePromptRawContent === 'string' ? source.meta.autoImagePromptRawContent : raw);
 	      const rawOriginal = typeof source?.rawOriginal === 'string' ? source.rawOriginal : rawSource;
-	      if (!content.trim() && !raw.trim()) return false;
+	      const reasoningText = String(
+	        source?.reasoningDisplay
+	          || source?.reasoning
+	          || sourceMessageMeta.reasoningDisplay
+	          || sourceMessageMeta.reasoning
+	          || sourceMessageMeta.reasoningSource
+	          || '',
+	      );
+	      if (!content.trim() && !raw.trim() && !reasoningText.trim()) return false;
 	      const newBranch = { content, raw };
 	      if (typeof rawSource === 'string') newBranch.rawSource = rawSource;
 	      if (typeof rawOriginal === 'string') newBranch.rawOriginal = rawOriginal;
-	      const sourceMessageMeta = source?.meta && typeof source.meta === 'object' ? source.meta : {};
+	      ['reasoning', 'reasoningDisplay', 'reasoningSource', 'reasoningHidden', 'reasoningLabel'].forEach((key) => {
+	        if (source?.[key] !== undefined) newBranch[key] = source[key];
+	        else if (sourceMessageMeta[key] !== undefined) newBranch[key] = sourceMessageMeta[key];
+	      });
 	      const sourceAutoImageRawContent = String(sourceMessageMeta.autoImagePromptRawContent || '');
 	      const sourceAutoImagePlaceholders = Array.isArray(sourceMessageMeta.autoImagePromptPlaceholders)
 	        ? sourceMessageMeta.autoImagePromptPlaceholders
@@ -18149,6 +18162,9 @@ Phase G（Frame 36）：循环衔接
 	        nextMeta.autoImagePromptRawContent = sourceAutoImageRawContent;
 	        nextMeta.autoImagePromptPlaceholders = sourceAutoImagePlaceholders;
 	      }
+	      ['reasoning', 'reasoningDisplay', 'reasoningSource', 'reasoningHidden', 'reasoningLabel'].forEach((key) => {
+	        if (newBranch[key] !== undefined) nextMeta[key] = newBranch[key];
+	      });
 	      const updated = chatStore.updateMessage(msgId, {
 	        content: newBranch.content,
 	        raw: newBranch.raw,
@@ -20656,8 +20672,72 @@ Phase G（Frame 36）：循环衔接
       });
     };
     const isSyntheticUser = m => m?.role === 'user' && m?.meta?.generatedByAssistant === true;
-    const regenerateFromUserIndex = async (userIdx, { allowEmpty = false } = {}) => {
+    const collectRenderedMessageEntries = () => (
+      Array.from(ui?.scrollEl?.querySelectorAll?.('.QQ_chat_mymsg, .QQ_chat_charmsg') || [])
+        .map(wrapper => ({
+          wrapper,
+          message: wrapper?.__chatappMessage && typeof wrapper.__chatappMessage === 'object'
+            ? wrapper.__chatappMessage
+            : null,
+        }))
+        .filter(entry => entry.message)
+    );
+    const syncRenderedCancelledPartialsForRegenerate = (messages, userIdx) => {
+      const adopted = adoptRenderedRegenerateRoundMessages({
+        messages,
+        userIdx,
+        renderedMessages: collectRenderedMessageEntries(),
+        sessionId,
+        chatStore,
+        isSyntheticUser,
+        logger,
+      });
+      adopted.forEach(({ entry, saved }) => {
+        if (entry?.wrapper && saved) entry.wrapper.__chatappMessage = saved;
+      });
+      if (adopted.length) {
+        logger.debug(`[regenerate] adopted-rendered-partials session=${String(sessionId || '')} count=${adopted.length}`);
+      }
+      return adopted;
+    };
+    const findPreviousUserIndexForRenderedAssistant = (assistantId) => {
+      const targetId = String(assistantId || '').trim();
+      if (!targetId) return -1;
+      const rendered = collectRenderedMessageEntries();
+      const renderedIdx = rendered.findIndex(({ wrapper, message: renderedMessage }) => (
+        String(renderedMessage?.id || wrapper?.dataset?.msgId || '').trim() === targetId
+      ));
+      if (renderedIdx < 0) return -1;
       const messages = chatStore.getMessages(sessionId);
+      for (let i = renderedIdx - 1; i >= 0; i -= 1) {
+        const candidate = rendered[i]?.message;
+        if (
+          candidate?.role === 'user' &&
+          !isSyntheticUser(candidate) &&
+          candidate?.status !== 'pending' &&
+          candidate?.status !== 'sending'
+        ) {
+          const userId = String(candidate.id || '').trim();
+          if (!userId) return -1;
+          return messages.findIndex(messageItem => String(messageItem?.id || '').trim() === userId);
+        }
+      }
+      return -1;
+    };
+    const ensureRenderedCancelledPartialPersisted = (targetMessage) => {
+      const messageId = String(targetMessage?.id || '').trim();
+      if (!messageId || targetMessage?.role !== 'assistant') return null;
+      const existing = chatStore.findMessage(messageId, sessionId);
+      if (existing) return existing;
+      const prevUserIdx = findPreviousUserIndexForRenderedAssistant(messageId);
+      if (prevUserIdx === -1) return null;
+      syncRenderedCancelledPartialsForRegenerate(chatStore.getMessages(sessionId), prevUserIdx);
+      return chatStore.findMessage(messageId, sessionId);
+    };
+    const regenerateFromUserIndex = async (userIdx, { allowEmpty = false } = {}) => {
+      let messages = chatStore.getMessages(sessionId);
+      const adopted = syncRenderedCancelledPartialsForRegenerate(messages, userIdx);
+      if (adopted.length) messages = chatStore.getMessages(sessionId);
       await runRegenerateFromUserIndexFlow({
         messages,
         userIdx,
@@ -20722,7 +20802,7 @@ Phase G（Frame 36）：循环衔接
       return true;
     }
     if (action === 'view-code') {
-      const current = chatStore.findMessage(message.id, sessionId) || message;
+      const current = ensureRenderedCancelledPartialPersisted(message) || chatStore.findMessage(message.id, sessionId) || message;
       let raw = resolveViewCodeText(current);
       if (!raw.trim()) {
         raw = (await chatStore.loadRawOriginal?.(current, sessionId)) || '';
@@ -20785,6 +20865,26 @@ Phase G（Frame 36）：循环衔接
 	      return true;
 	    }
 
+    if (action === 'delete-current-swipe' && message.role === 'assistant') {
+      if (activeGeneration && !activeGeneration.cancelled) {
+        window.toastr?.warning?.('正在生成中，请稍候...');
+        return true;
+      }
+      const messageId = String(message?.id || '').trim();
+      const result = messageId ? ui.deleteCurrentSwipe?.(messageId) : null;
+      if (result?.deleted) {
+        window.toastr?.success?.('已删除当前回复');
+        return true;
+      }
+      const reason = String(result?.reason || '');
+      if (reason === 'generating') {
+        window.toastr?.warning?.('当前回复正在生成中，无法删除');
+      } else {
+        window.toastr?.warning?.('没有可删除的当前回复');
+      }
+      return true;
+    }
+
     if (action === 'delete-selected') {
       const ids = Array.isArray(payload?.ids) ? payload.ids.map(String).filter(Boolean) : [];
       if (!ids.length) return;
@@ -20846,10 +20946,11 @@ Phase G（Frame 36）：循环衔接
       refreshChatAndContacts();
       return;
     }
-	    if (action === 'edit-assistant-raw' && message.role === 'assistant') {
-	      const next = String(payload?.text ?? '');
-	      const regexEditMode = payload?.regexEditMode === true;
-	      const cleanedForRender = stripUpdateVariableBlocks(next);
+    if (action === 'edit-assistant-raw' && message.role === 'assistant') {
+      message = ensureRenderedCancelledPartialPersisted(message) || message;
+      const next = String(payload?.text ?? '');
+      const regexEditMode = payload?.regexEditMode === true;
+      const cleanedForRender = stripUpdateVariableBlocks(next);
       const hadUpdateVariableTag = /<\s*(update(?:variable)?|variableupdate)\b/i.test(next);
       if (hadUpdateVariableTag) {
         logger.debug(
@@ -21135,7 +21236,13 @@ Phase G（Frame 36）：循环衔接
     if (action === 'regenerate' && message.role === 'assistant') {
       const msgs = chatStore.getMessages(sessionId);
       const idx = msgs.findIndex(m => m.id === message.id);
-      if (idx === -1) return;
+      if (idx === -1) {
+        const renderedPrevUserIdx = findPreviousUserIndexForRenderedAssistant(message.id);
+        if (renderedPrevUserIdx !== -1) {
+          await regenerateFromUserIndex(renderedPrevUserIdx, { allowEmpty: false });
+        }
+        return;
+      }
       let prevUserIdx = -1;
       for (let i = idx - 1; i >= 0; i--) {
         if (

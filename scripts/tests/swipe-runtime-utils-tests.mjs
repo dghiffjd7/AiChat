@@ -5,6 +5,7 @@ import {
   applySwipeCore,
   bindSwipeEventsCore,
   createSwipeGenerationStreamCore,
+  deleteSwipeBranchCore,
   normalizeAssistantSwipeStreamStateCore,
   setSwipeRegeneratingCore,
 } from '../../src/scripts/ui/chat/swipe-runtime-utils.js';
@@ -130,6 +131,53 @@ const createWrapper = (message = null) => {
   assert.equal(message.meta.swipes.length, 2);
   assert.equal(applied[0].newIndex, 1);
   console.log('ok - addSwipeBranchCore appends a new branch and requests activation');
+}
+
+{
+  const message = {
+    id: 'm-delete',
+    content: 'b',
+    raw: 'rb',
+    meta: {
+      activeSwipe: 1,
+      swipes: [
+        { content: 'a', raw: 'ra' },
+        { content: 'b', raw: 'rb' },
+        { content: 'c', raw: 'rc' },
+      ],
+    },
+  };
+  const wrapper = createWrapper(message);
+  const scrollEl = {
+    querySelector(selector) {
+      return selector.includes('m-delete') ? wrapper : null;
+    },
+  };
+  const applied = [];
+  const result = deleteSwipeBranchCore({
+    scrollEl,
+    msgId: 'm-delete',
+    applySwipe: ({ message: nextMessage, newIndex }) => {
+      applied.push({ nextMessage, newIndex });
+      applySwipeCore({
+        wrapper,
+        message: nextMessage,
+        newIndex,
+        renderSwipeContent() {},
+        syncSwipeIndicator() {},
+      });
+      return true;
+    },
+  });
+  assert.equal(result.deleted, true);
+  assert.equal(result.deletedIndex, 1);
+  assert.equal(result.newIndex, 1);
+  assert.equal(message.meta.swipes.length, 2);
+  assert.deepEqual(message.meta.swipes.map(branch => branch.content), ['a', 'c']);
+  assert.equal(message.meta.activeSwipe, 1);
+  assert.equal(message.content, 'c');
+  assert.equal(applied.length, 1);
+  console.log('ok - deleteSwipeBranchCore removes current branch and activates the adjacent swipe');
 }
 
 {
@@ -331,4 +379,51 @@ const createWrapper = (message = null) => {
   assert.equal(partial.content, 'source partial');
   assert.equal(partial.rawSource, 'source partial');
   console.log('ok - createSwipeGenerationStreamCore keeps raw-only partial on cancel');
+}
+
+{
+  const message = {
+    id: 'm7',
+    role: 'assistant',
+    content: '',
+    meta: { swipes: [{ content: 'old', raw: 'old' }], activeSwipe: 0 },
+  };
+  const wrapper = createWrapper(message);
+  const scrollEl = {
+    querySelector(selector) {
+      return selector.includes('m7') ? wrapper : null;
+    },
+  };
+  const stream = createSwipeGenerationStreamCore({
+    scrollEl,
+    msgId: 'm7',
+    meta: { label: '生成新回复中...' },
+    setSwipeRegenerating() {},
+    syncSwipeIndicator() {},
+    renderSwipeContent() {},
+    setStreamingState() {},
+    isNearBottom: () => false,
+    getStreamAutoFollow: () => false,
+    setStreamAutoFollow() {},
+    buildAssistantStreamMessage: (placeholder, meta, msgId, state) => ({
+      ...placeholder,
+      id: msgId,
+      content: '',
+      raw: '',
+      rawOriginal: '',
+      rawSource: '',
+      meta: {
+        ...((state.meta && typeof state.meta === 'object') ? state.meta : {}),
+      },
+    }),
+    applyReasoningUiState() {},
+    scrollToBottom() {},
+  });
+
+  stream.update({ content: '', meta: { reasoningDisplay: '只生成了思考' } });
+  const partial = stream.cancel({ keepPartial: true });
+  assert.equal(partial.content, '');
+  assert.equal(partial.meta.reasoningDisplay, '只生成了思考');
+  assert.equal(partial.meta.cancelled, true);
+  console.log('ok - createSwipeGenerationStreamCore keeps reasoning-only partial on cancel');
 }

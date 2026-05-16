@@ -40,6 +40,9 @@ export const buildContextMenuActions = (message, {
   if (message?.role === 'assistant') {
     actions.push({ key: 'copy-text', label: '复制' });
     actions.push({ key: 'regenerate', label: '重新生成' });
+    if (canDeleteCurrentSwipe(message)) {
+      actions.push({ key: 'delete-current-swipe', label: '删除当前回复' });
+    }
     actions.push({ key: 'delete', label: '删除' });
   } else if (message?.role === 'user') {
     if (message?.status === 'pending') {
@@ -57,14 +60,28 @@ export const buildContextMenuActions = (message, {
   return actions;
 };
 
+export const resolveActiveSwipeIndex = (message) => {
+  const swipes = Array.isArray(message?.meta?.swipes) ? message.meta.swipes : [];
+  const raw = Math.trunc(Number(message?.meta?.activeSwipe));
+  if (!swipes.length) return 0;
+  return Number.isFinite(raw)
+    ? Math.min(Math.max(0, raw), swipes.length - 1)
+    : Math.max(0, swipes.length - 1);
+};
+
+export const canDeleteCurrentSwipe = (message) => {
+  if (message?.role !== 'assistant') return false;
+  const swipes = Array.isArray(message?.meta?.swipes) ? message.meta.swipes : [];
+  if (swipes.length <= 1) return false;
+  if (message?.meta?.swipeRegenerating === true || message?.meta?.activeSwipeDraft?.active === true) return false;
+  const active = resolveActiveSwipeIndex(message);
+  return swipes[active]?.draft !== true;
+};
+
 export const resolveViewCodeText = (message) => {
   const swipes = Array.isArray(message?.meta?.swipes) ? message.meta.swipes : [];
   const branch = swipes.length
-    ? swipes[
-      Number.isFinite(Math.trunc(Number(message?.meta?.activeSwipe)))
-        ? Math.min(Math.max(0, Math.trunc(Number(message.meta.activeSwipe))), swipes.length - 1)
-        : swipes.length - 1
-    ]
+    ? swipes[resolveActiveSwipeIndex(message)]
     : null;
   const branchRawSource = typeof branch?.rawSource === 'string' ? branch.rawSource : '';
   const messageRawSource = typeof message?.rawSource === 'string' ? message.rawSource : '';

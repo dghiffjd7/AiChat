@@ -15,7 +15,41 @@ const callSafely = (fn, ...args) => {
   }
 };
 
-const hasPartialContent = (partial = null) => Boolean(String(partial?.content || '').trim());
+const getPartialReasoningText = (partial = null) => {
+  const meta = normalizeObject(partial?.meta) || {};
+  return String(
+    partial?.reasoningDisplay
+      || partial?.reasoning
+      || meta.reasoningDisplay
+      || meta.reasoning
+      || meta.reasoningSource
+      || '',
+  );
+};
+
+const getPartialPersistableText = (partial = null) => String(
+  partial?.content
+    || partial?.raw
+    || partial?.rawSource
+    || partial?.rawOriginal
+    || getPartialReasoningText(partial)
+    || '',
+);
+
+const hasPartialContent = (partial = null) => Boolean(getPartialPersistableText(partial).trim());
+
+const copyDefinedReasoningFields = (target, ...sources) => {
+  const out = target && typeof target === 'object' ? target : {};
+  ['reasoning', 'reasoningDisplay', 'reasoningSource', 'reasoningHidden', 'reasoningLabel', 'renderRich', 'streamMode']
+    .forEach((key) => {
+      for (const source of sources) {
+        if (!source || typeof source !== 'object' || source[key] === undefined) continue;
+        out[key] = source[key];
+        break;
+      }
+    });
+  return out;
+};
 
 export const buildGenerationCancelTraceEvent = ({
   sessionId = '',
@@ -68,6 +102,13 @@ export const buildCancelledAssistantPartial = ({
 } = {}) => {
   const currentGeneration = normalizeObject(generation);
   const payload = normalizeObject(currentGeneration?.streamPayload);
+  const streamMeta = normalizeObject(currentGeneration?.streamMeta) || {};
+  const payloadMeta = normalizeObject(payload?.meta) || {};
+  const partialMeta = copyDefinedReasoningFields({ ...payloadMeta }, payload, streamMeta);
+  const reasoningText = getPartialReasoningText({
+    ...payload,
+    meta: partialMeta,
+  });
   const content = String(
     currentGeneration?.streamText
       || payload?.content
@@ -83,22 +124,21 @@ export const buildCancelledAssistantPartial = ({
       || content
       || '',
   );
-  if (!content.trim() && !rawText.trim()) return null;
+  if (!content.trim() && !rawText.trim() && !reasoningText.trim()) return null;
 
-  const meta = normalizeObject(currentGeneration?.streamMeta) || {};
   return {
     role: 'assistant',
     type: 'text',
-    id: meta.id || currentGeneration?.streamCtrl?.id,
-    name: meta.name || '助手',
-    avatar: meta.avatar || assistantAvatar,
-    time: meta.time || fallbackTime,
+    id: streamMeta.id || currentGeneration?.streamCtrl?.id,
+    name: streamMeta.name || '助手',
+    avatar: streamMeta.avatar || assistantAvatar,
+    time: streamMeta.time || fallbackTime,
     content: content || rawText,
     raw: typeof payload?.raw === 'string' ? payload.raw : rawText,
     rawOriginal: typeof payload?.rawOriginal === 'string' ? payload.rawOriginal : rawText,
     rawSource: typeof payload?.rawSource === 'string' ? payload.rawSource : rawText,
     meta: {
-      ...(normalizeObject(payload?.meta) || {}),
+      ...partialMeta,
       partial: true,
       cancelled: true,
     },
@@ -114,8 +154,9 @@ export const buildCancelledAssistantPartialMessage = ({
   const raw = typeof source?.raw === 'string' ? source.raw : '';
   const rawSource = typeof source?.rawSource === 'string' ? source.rawSource : '';
   const rawOriginalSource = typeof source?.rawOriginal === 'string' ? source.rawOriginal : '';
+  const reasoningText = getPartialReasoningText(source);
   const content = String(source?.content || raw || rawSource || rawOriginalSource || '');
-  if (!content.trim() && !raw.trim() && !rawSource.trim() && !rawOriginalSource.trim()) return null;
+  if (!content.trim() && !raw.trim() && !rawSource.trim() && !rawOriginalSource.trim() && !reasoningText.trim()) return null;
   const resolvedRaw = raw || rawSource || rawOriginalSource || content;
   const rawOriginal = typeof source?.rawOriginal === 'string'
     ? source.rawOriginal
@@ -162,7 +203,7 @@ export const commitCancelledGenerationPartial = ({
   }
   const currentGeneration = normalizeObject(generation);
   const sessionId = String(currentGeneration?.sessionId || '').trim();
-  const content = String(partial?.content || partial?.raw || partial?.rawSource || partial?.rawOriginal || '').trim();
+  const content = getPartialPersistableText(partial).trim();
   const messageId = String(partial?.id || '').trim();
   let handledPartial = false;
 

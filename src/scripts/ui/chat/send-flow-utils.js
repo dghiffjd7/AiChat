@@ -534,6 +534,104 @@ export const resolveRegenerateFromUserIndexPlan = ({
   };
 };
 
+const isRegenerateRoundUser = (message, isSynthetic) => (
+  message?.role === 'user' &&
+  !isSynthetic(message) &&
+  message?.status !== 'pending' &&
+  message?.status !== 'sending'
+);
+
+const isRegenerateRoundTarget = (message, isSynthetic) => (
+  message?.role === 'assistant' || isSynthetic(message)
+);
+
+const isCancelledPartialMessage = message => (
+  message?.meta?.partial === true || message?.meta?.cancelled === true
+);
+
+const hasAdoptableRenderedMessageContent = (message, entry = null) => {
+  const meta = message?.meta && typeof message.meta === 'object' ? message.meta : {};
+  const text = String(
+    message?.content
+      || message?.raw
+      || message?.rawSource
+      || message?.rawOriginal
+      || meta.reasoningDisplay
+      || meta.reasoning
+      || meta.reasoningSource
+      || '',
+  );
+  if (text.trim()) return true;
+  if (Array.isArray(message?.attachments) && message.attachments.length > 0) return true;
+  const wrapperText = String(entry?.wrapper?.innerText || entry?.wrapper?.textContent || '');
+  return Boolean(wrapperText.trim());
+};
+
+export const adoptRenderedRegenerateRoundMessages = ({
+  messages = [],
+  userIdx = -1,
+  renderedMessages = [],
+  sessionId = '',
+  chatStore = null,
+  isSyntheticUser = () => false,
+  logger = null,
+} = {}) => {
+  const list = Array.isArray(messages) ? messages : [];
+  const index = Math.trunc(Number(userIdx));
+  const prevUser = list[index] || null;
+  const isSynthetic = message => {
+    try {
+      return Boolean(isSyntheticUser?.(message));
+    } catch {
+      return false;
+    }
+  };
+  if (!prevUser || prevUser.role !== 'user' || isSynthetic(prevUser)) return [];
+
+  const rendered = (Array.isArray(renderedMessages) ? renderedMessages : [])
+    .map((entry) => {
+      const message = entry?.message && typeof entry.message === 'object'
+        ? entry.message
+        : (entry && typeof entry === 'object' ? entry : null);
+      return message ? { entry, message } : null;
+    })
+    .filter(Boolean);
+  if (!rendered.length) return [];
+
+  const anchorId = String(prevUser.id || '').trim();
+  if (!anchorId) return [];
+  const anchorIndex = rendered.findIndex(({ message }) => String(message?.id || '').trim() === anchorId);
+  if (anchorIndex < 0) return [];
+
+  const knownIds = new Set(
+    list
+      .map(message => String(message?.id || '').trim())
+      .filter(Boolean),
+  );
+  const adopted = [];
+  for (let i = anchorIndex + 1; i < rendered.length; i += 1) {
+    const { entry, message } = rendered[i];
+    if (!message || typeof message !== 'object') continue;
+    if (isRegenerateRoundUser(message, isSynthetic)) break;
+    if (!isRegenerateRoundTarget(message, isSynthetic)) continue;
+    if (!isCancelledPartialMessage(message) && !hasAdoptableRenderedMessageContent(message, entry)) continue;
+
+    const messageId = String(message.id || '').trim();
+    if (!messageId || knownIds.has(messageId)) continue;
+
+    try {
+      const saved = chatStore?.appendMessage?.({ ...message, id: messageId }, sessionId) || null;
+      if (saved) {
+        knownIds.add(String(saved.id || messageId).trim());
+        adopted.push({ entry, message, saved });
+      }
+    } catch (err) {
+      logger?.warn?.('adopt rendered partial before regenerate failed', err);
+    }
+  }
+  return adopted;
+};
+
 export const runRegenerateFromUserIndexFlow = async ({
   messages = [],
   userIdx = -1,

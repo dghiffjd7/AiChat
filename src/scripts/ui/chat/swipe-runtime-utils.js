@@ -94,6 +94,83 @@ export const addSwipeBranchCore = ({
   return applySwipe?.({ wrapper, message, newIndex }) || false;
 };
 
+const resolveActiveSwipeIndex = (message) => {
+  const swipes = Array.isArray(message?.meta?.swipes) ? message.meta.swipes : [];
+  const raw = Math.trunc(Number(message?.meta?.activeSwipe));
+  if (!swipes.length) return 0;
+  return Number.isFinite(raw)
+    ? Math.min(Math.max(0, raw), swipes.length - 1)
+    : Math.max(0, swipes.length - 1);
+};
+
+export const deleteSwipeBranchCore = ({
+  scrollEl,
+  msgId,
+  swipeIndex = null,
+  applySwipe,
+  escapeSelector,
+} = {}) => {
+  const wrapper = resolveSwipeWrapper(scrollEl, msgId, escapeSelector);
+  const message = wrapper?.__chatappMessage;
+  const meta = message?.meta && typeof message.meta === 'object' ? message.meta : null;
+  const swipes = Array.isArray(meta?.swipes) ? meta.swipes : [];
+  if (!wrapper || !message || swipes.length <= 1) {
+    return { deleted: false, reason: 'missing-or-single-swipe', message: message || null };
+  }
+  if (meta.swipeRegenerating === true || meta.activeSwipeDraft?.active === true) {
+    return { deleted: false, reason: 'generating', message };
+  }
+
+  const requested = swipeIndex === null || swipeIndex === undefined
+    ? resolveActiveSwipeIndex(message)
+    : Math.trunc(Number(swipeIndex));
+  if (!Number.isFinite(requested) || requested < 0 || requested >= swipes.length) {
+    return { deleted: false, reason: 'invalid-index', message };
+  }
+  if (swipes[requested]?.draft === true) {
+    return { deleted: false, reason: 'draft', message };
+  }
+
+  const previousState = {
+    content: message.content,
+    raw: message.raw,
+    rawSource: message.rawSource,
+    rawOriginal: message.rawOriginal,
+    meta: message.meta,
+  };
+  const nextSwipes = swipes.map(branch => (branch && typeof branch === 'object' ? { ...branch } : {}));
+  const [deletedBranch] = nextSwipes.splice(requested, 1);
+  const newIndex = Math.min(requested, nextSwipes.length - 1);
+  message.meta = {
+    ...meta,
+    swipes: nextSwipes,
+    activeSwipe: requested,
+  };
+  delete message.meta.swipeRegenerating;
+  delete message.meta.activeSwipeDraft;
+  wrapper.__chatappMessage = message;
+
+  const applied = applySwipe?.({ wrapper, message, newIndex }) === true;
+  if (!applied) {
+    message.content = previousState.content;
+    message.raw = previousState.raw;
+    message.rawSource = previousState.rawSource;
+    message.rawOriginal = previousState.rawOriginal;
+    message.meta = previousState.meta;
+    wrapper.__chatappMessage = message;
+    return { deleted: false, reason: 'apply-failed', message };
+  }
+
+  return {
+    deleted: true,
+    reason: '',
+    message,
+    deletedIndex: requested,
+    newIndex,
+    deletedBranch,
+  };
+};
+
 export const bindSwipeEventsCore = ({
   scrollEl,
   getSwipeHandlers,
@@ -224,7 +301,15 @@ export const createSwipeGenerationStreamCore = ({
           || displayText,
       );
       const partialText = displayText.trim() ? displayText : rawText;
-      if (keepPartial && String(partialText || '').trim()) {
+      const reasoningText = String(
+        buffered?.reasoningDisplay
+          || buffered?.reasoning
+          || buffered?.meta?.reasoningDisplay
+          || buffered?.meta?.reasoning
+          || buffered?.meta?.reasoningSource
+          || '',
+      );
+      if (keepPartial && (String(partialText || '').trim() || reasoningText.trim())) {
         flush(buffered, { final: false });
         return {
           ...(buffered || message),
@@ -260,6 +345,7 @@ export const createSwipeUiRuntime = ({
   normalizeAssistantStreamState: state => normalizeAssistantSwipeStreamStateCore(state),
   setSwipeRegenerating: params => setSwipeRegeneratingCore({ ...params, escapeSelector }),
   addSwipeBranch: params => addSwipeBranchCore({ ...params, escapeSelector }),
+  deleteSwipeBranch: params => deleteSwipeBranchCore({ ...params, escapeSelector }),
   startSwipeGenerationStream: params => createSwipeGenerationStreamCore({
     ...params,
     scheduleFrame,
