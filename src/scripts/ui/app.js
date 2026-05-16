@@ -115,7 +115,15 @@ import {
 import {
   createModeSwitchInteractionRuntime,
 } from './app-mode-switch-interaction-runtime-utils.js';
+import { createAppBackNavigationRuntime } from './app-back-navigation-runtime-utils.js';
 import { createAppUiStateRuntime } from './app-ui-state-runtime-utils.js';
+import {
+  buildPersonaScopedStorageKey,
+  canEnterPersonaScopedSession,
+  hasPersonaScopedSession,
+  resolvePersonaScopedCurrentSession,
+} from './persona-scope-runtime-utils.js';
+import { createViewportKeyboardRuntime } from './viewport-keyboard-runtime-utils.js';
 import {
   bindAppChatMenuToggle,
   bindAppSheetToggleButtons,
@@ -1631,7 +1639,9 @@ const initApp = async () => {
     applyUserMessageColors(sessionId);
   };
 
-  const applyPersonaScope = async ({ personaId = null, force = false } = {}) => {
+  let personaScopeApplyToken = 0;
+  let personaScopeApplySerial = Promise.resolve();
+  const applyPersonaScopeNow = async ({ personaId = null, force = false } = {}, token = 0) => {
     const pid = personaId || personaStore.getActive?.()?.id || 'default';
     const nextKey = getPersonaScopeKey(pid);
     if (!force && nextKey === activePersonaScopeKey) {
@@ -1663,21 +1673,41 @@ const initApp = async () => {
     try {
       await memoryTemplateStore.ensureDefaultTemplate?.();
     } catch {}
+    const activePid = personaStore.getActive?.()?.id || 'default';
+    const activeKey = getPersonaScopeKey(activePid);
+    if (token !== personaScopeApplyToken || activeKey !== nextKey) {
+      logger.debug(
+        `[Persona_test] applyPersonaScope stale scope=${nextKey || 'default'} active=${activeKey || 'default'}`,
+      );
+      return false;
+    }
     try {
       window.appBridge?.setPersonaScope?.(nextKey);
     } catch {}
+    const currentSession = resolvePersonaScopedCurrentSession({
+      scopeId: nextKey,
+      chatStore,
+      contactsStore,
+    });
+    const sid = currentSession.sessionId;
     try {
-      window.appBridge?.setActiveSession?.(chatStore.getCurrent());
+      window.appBridge?.setActiveSession?.(sid);
     } catch {}
-    const sid = chatStore.getCurrent();
-    applyMvuSchemaDefaults(sid, { reason: 'persona' });
+    if (sid) applyMvuSchemaDefaults(sid, { reason: 'persona' });
     const rpSessionId = getRpSessionId(pid);
     if (chatStore.hasSession?.(rpSessionId)) {
       applyMvuSchemaDefaults(rpSessionId, { reason: 'persona_rp' });
     }
-    const contact = contactsStore.getContact(sid);
     if (typeof isChatRoomVisible === 'function' && isChatRoomVisible()) {
-      enterChatRoom(sid, contact?.name || sid, chatOriginPage);
+      if (sid) {
+        const contact = contactsStore.getContact(sid);
+        enterChatRoom(sid, contact?.name || sid, chatOriginPage);
+      } else {
+        try {
+          exitChatRoom({ animate: false });
+        } catch {}
+        refreshChatAndContacts({ immediate: true });
+      }
     } else {
       refreshChatAndContacts({ immediate: true });
     }
@@ -1697,6 +1727,13 @@ const initApp = async () => {
       refreshRpToolbar(getRpSessionId(pid));
     }
     return true;
+  };
+  const applyPersonaScope = (options = {}) => {
+    const token = ++personaScopeApplyToken;
+    personaScopeApplySerial = personaScopeApplySerial
+      .catch(() => {})
+      .then(() => applyPersonaScopeNow(options, token));
+    return personaScopeApplySerial;
   };
 
   const personaPanel = new PersonaPanel({
@@ -5781,6 +5818,10 @@ Phase G（Frame 36）：循环衔接
     logger,
     listSessions: () => chatStore.listSessions(),
     isRpSessionId,
+    shouldSyncSessionToContacts: sessionId => (
+      chatStore.hasMessages?.(sessionId) ||
+      (chatStore.getMessages(sessionId) || []).some(isConversationMessage)
+    ),
     ensureContactsFromSessions: (sessions, options) => contactsStore.ensureFromSessions(sessions, options),
     defaultAvatar: FEATHER_DEFAULT,
     renderChatList,
@@ -11476,6 +11517,8 @@ Phase G（Frame 36）：循环衔接
   let activePage = 'chat';
   const UI_STATE_KEY = 'phone_ui_state_v1';
   const UI_STATE_KV = 'phone_ui_state_v1';
+  const getUiStateStorageKey = () => buildPersonaScopedStorageKey(UI_STATE_KEY, activePersonaScopeKey);
+  const getUiStateKvName = () => buildPersonaScopedStorageKey(UI_STATE_KV, activePersonaScopeKey);
   let uiStateArmed = false;
   let uiStateDiskTimer = null;
   const uiLog = (...args) => {
@@ -11484,19 +11527,24 @@ Phase G（Frame 36）：循环衔接
     } catch {}
   };
   const appUiStateRuntime = createAppUiStateRuntime({
-    key: UI_STATE_KEY,
-    kvName: UI_STATE_KV,
+    key: getUiStateStorageKey,
+    kvName: getUiStateKvName,
     sessionStorageLike: sessionStorage,
     localStorageLike: localStorage,
     clearTimerFn: timer => clearTimeout(timer),
     setTimerFn: (fn, delay) => setTimeout(fn, delay),
     persistDiskState: payload => safeInvoke('save_kv', payload).catch(() => {}),
-    loadDiskState: () => safeInvoke('load_kv', { name: UI_STATE_KV }),
+    loadDiskState: () => safeInvoke('load_kv', { name: getUiStateKvName() }),
     uiLog,
     getActivePage: () => activePage,
     isChatRoomVisible: () => Boolean(chatRoom ? !chatRoom.classList.contains('hidden') : false),
     getCurrentSessionId: () => chatStore.getCurrent(),
-    hasKnownSession: sid => chatStore.hasSession?.(sid) || contactsStore.getContact(sid),
+    hasKnownSession: sid => hasPersonaScopedSession({
+      sessionId: sid,
+      scopeId: activePersonaScopeKey,
+      chatStore,
+      contactsStore,
+    }),
     activateShellStateFn: sid => activateSessionShellState({
       sessionId: sid,
       switchSession: nextSid => chatStore.switchSession(nextSid),
@@ -11690,34 +11738,38 @@ Phase G（Frame 36）：循环衔接
     scheduleModeSwitchSync();
   });
 
-  if (window.visualViewport && chatRoom) {
-    let _vvPatchActive = false;
-    const _applyVVPatch = () => {
-      const vv = window.visualViewport;
-      const fullH = window.innerHeight;
-      const vvH = Math.max(0, Math.round(Number(vv?.height) || 0));
-      const vvTop = Math.max(0, Math.round(Number(vv?.offsetTop) || 0));
-      const diff = fullH - vvH;
-      if (diff > 50 || vvTop > 0) {
-        chatRoom.style.top = `${vvTop}px`;
-        chatRoom.style.bottom = 'auto';
-        chatRoom.style.height = `${vvH}px`;
-        chatRoom.classList.add('keyboard-visible');
-        _vvPatchActive = true;
-        requestAnimationFrame(() => {
-          chatScroll?.scrollTo?.({ top: chatScroll.scrollHeight, behavior: 'instant' });
-        });
-      } else if (_vvPatchActive) {
-        chatRoom.style.top = '';
-        chatRoom.style.bottom = '';
-        chatRoom.style.height = '';
-        chatRoom.classList.remove('keyboard-visible');
-        _vvPatchActive = false;
-      }
-    };
-    window.visualViewport.addEventListener('resize', _applyVVPatch);
-    window.visualViewport.addEventListener('scroll', _applyVVPatch);
-  }
+  const viewportKeyboardRuntime = createViewportKeyboardRuntime({
+    windowRef: window,
+    documentRef: document,
+    rootEl: document.documentElement,
+    bodyEl: document.body,
+    targets: [
+      {
+        element: () => chatRoom,
+        activeClass: 'keyboard-visible',
+        fixedToVisualViewport: true,
+        onApply: (snapshot) => {
+          if (!snapshot.keyboardVisible) return;
+          requestAnimationFrame(() => {
+            chatScroll?.scrollTo?.({ top: chatScroll.scrollHeight, behavior: 'instant' });
+          });
+        },
+      },
+    ],
+    getFocusedElement: () => document.activeElement,
+    onSnapshot: () => scheduleModeSwitchSync?.(),
+    requestAnimationFrameFn: typeof requestAnimationFrame === 'function' ? requestAnimationFrame : null,
+    setTimeoutFn: typeof setTimeout === 'function' ? setTimeout : null,
+    logger,
+  });
+  viewportKeyboardRuntime.start();
+  try {
+    window.__chatappViewportDebugInfo = () => viewportKeyboardRuntime.getDebugInfo();
+  } catch {}
+  patchDebugUiRegistry((registry) => {
+    registry.actions.getViewportDebugInfo = () => viewportKeyboardRuntime.getDebugInfo();
+    registry.actions.refreshViewportKeyboardRuntime = () => viewportKeyboardRuntime.refresh();
+  });
 
   // Mirror composer draft to sessionStorage to avoid losing the last few keystrokes on reload/update.
   try {
@@ -16216,11 +16268,27 @@ Phase G（Frame 36）：循环衔接
 	    return true;
 	  };
 	  const enterChatRoom = async (sessionId, sessionName, originPage = activePage, options = {}) => {
-    const enterRequest = beginChatEnterRequest(sessionId);
-    const contact = contactsStore.getContact(sessionId);
-    const isGroupSession = Boolean(contact?.isGroup) || String(sessionId || '').startsWith('group:');
+    const sid = String(sessionId || '').trim();
+    const enterGuard = canEnterPersonaScopedSession({
+      sessionId: sid,
+      scopeId: activePersonaScopeKey,
+      chatStore,
+      contactsStore,
+    });
+    if (!enterGuard.allowed) {
+      logger.debug(
+        `[Persona_test] enterChatRoom blocked reason=${enterGuard.reason} scope=${
+          activePersonaScopeKey || 'default'
+        } chatScope=${chatStore.scopeId || 'default'} contactsScope=${contactsStore.scopeId || 'default'} sid=${sid}`,
+      );
+      refreshChatAndContacts({ immediate: true });
+      return { jumpedToTarget: false, stale: false, blocked: true, reason: enterGuard.reason };
+    }
+    const enterRequest = beginChatEnterRequest(sid);
+    const contact = contactsStore.getContact(sid);
+    const isGroupSession = Boolean(contact?.isGroup) || sid.startsWith('group:');
 	    const result = await runSessionEnterFlow({
-      sessionId,
+      sessionId: sid,
       sessionName,
       originPage,
       options,
@@ -21766,7 +21834,12 @@ Phase G（Frame 36）：循环衔接
           refreshChatAndContacts,
           getCurrentSessionId: () => chatStore.getCurrent(),
           readSavedStateFast: readSavedUiStateFast,
-          hasSession: sid => chatStore.hasSession?.(sid),
+          hasSession: sid => hasPersonaScopedSession({
+            sessionId: sid,
+            scopeId: activePersonaScopeKey,
+            chatStore,
+            contactsStore,
+          }),
           pickSavedUiState,
           hasPage: page => Boolean(pages[page]),
           switchPage,
@@ -22893,6 +22966,146 @@ Phase G（Frame 36）：循环衔接
 
   wallpaperClearBtn?.addEventListener('click', () => {
     clearWallpaperSelection();
+  });
+
+  const isBackLayerVisible = (element) => {
+    if (!element) return false;
+    try {
+      const style = getComputedStyle(element);
+      if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
+      return element.getClientRects?.().length > 0 || style.position === 'fixed';
+    } catch {
+      return false;
+    }
+  };
+  const closeVisibleBySelector = (selector, closer = null, { dryRun = false } = {}) => {
+    const matches = Array.from(document.querySelectorAll(selector));
+    const element = matches.reverse().find(isBackLayerVisible);
+    if (!element) return false;
+    if (!dryRun) {
+      if (typeof closer === 'function') {
+        closer(element);
+      } else {
+        element.click?.();
+      }
+    }
+    return true;
+  };
+  const panelBackClosers = [
+    () => closeChatSettings(),
+    () => rawReplyModal.hide(),
+    () => promptPreviewModal.hide(),
+    () => worldDebugLocatorModal.hide(),
+    () => presetPanel.hide(),
+    () => configPanel.hide(),
+    () => generalSettingsPanel.hide(),
+    () => sessionConfigPanel.hide(),
+    () => regexPanel.hide(),
+    () => pluginPanel.hide(),
+    () => memoryTemplatePanel.hide(),
+    () => worldPanel.hide(),
+    () => scriptPanel.hide(),
+    () => sessionPanel.hide(),
+    () => regexSessionPanel.hide(),
+    () => extensionsPanel.hide(),
+    () => contactSettingsPanel.hide(),
+    () => groupCreatePanel.hide(),
+    () => groupSettingsPanel.hide(),
+    () => groupPanel.hide(),
+    () => personaPanel.hide(),
+    () => userPanel.hide(),
+    () => variablePanel.hide(),
+    () => momentSummaryPanel.hide(),
+  ];
+  const panelBackOpenChecks = [
+    () => isBackLayerVisible(chatSettingsOverlay) || isBackLayerVisible(chatSettingsModal),
+    () => isBackLayerVisible(document.getElementById('raw-reply-overlay')),
+    () => isBackLayerVisible(document.getElementById('prompt-preview-overlay')),
+    () => isBackLayerVisible(document.getElementById('world-debug-locator-overlay')),
+    () => isBackLayerVisible(presetPanel.overlayElement) || isBackLayerVisible(presetPanel.element),
+    () => isBackLayerVisible(configPanel.overlayElement) || isBackLayerVisible(configPanel.element),
+    () => isBackLayerVisible(generalSettingsPanel.overlay) || isBackLayerVisible(generalSettingsPanel.panel),
+    () => isBackLayerVisible(sessionConfigPanel.overlay) || isBackLayerVisible(sessionConfigPanel.panel),
+    () => isBackLayerVisible(regexPanel.overlay) || isBackLayerVisible(regexPanel.element),
+    () => isBackLayerVisible(pluginPanel.overlayElement) || isBackLayerVisible(pluginPanel.element),
+    () => isBackLayerVisible(memoryTemplatePanel.overlay) || isBackLayerVisible(memoryTemplatePanel.panel),
+    () => isBackLayerVisible(worldPanel.overlay) || isBackLayerVisible(worldPanel.panel),
+    () => isBackLayerVisible(scriptPanel.overlay) || isBackLayerVisible(scriptPanel.panel),
+    () => isBackLayerVisible(sessionPanel.overlay) || isBackLayerVisible(sessionPanel.panel),
+    () => isBackLayerVisible(regexSessionPanel.overlay) || isBackLayerVisible(regexSessionPanel.element),
+    () => isBackLayerVisible(extensionsPanel.overlay) || isBackLayerVisible(extensionsPanel.element),
+    () => isBackLayerVisible(contactSettingsPanel.overlay) || isBackLayerVisible(contactSettingsPanel.panel),
+    () => isBackLayerVisible(groupCreatePanel.overlay) || isBackLayerVisible(groupCreatePanel.panel),
+    () => isBackLayerVisible(groupSettingsPanel.overlay) || isBackLayerVisible(groupSettingsPanel.panel),
+    () => isBackLayerVisible(groupPanel.overlay) || isBackLayerVisible(groupPanel.panel),
+    () => isBackLayerVisible(personaPanel.overlay) || isBackLayerVisible(personaPanel.panel),
+    () => isBackLayerVisible(userPanel.overlay) || isBackLayerVisible(userPanel.panel),
+    () => isBackLayerVisible(variablePanel.overlay),
+    () => isBackLayerVisible(momentSummaryPanel.overlay) || isBackLayerVisible(momentSummaryPanel.panel),
+  ];
+  const closeTopAppLayer = ({ dryRun = false } = {}) => {
+    const activeSelectors = [
+      '.sticker-ai-zoom-overlay.is-active',
+      '.sticker-bind-overlay.is-active',
+      '.sticker-ai-overlay.is-active',
+      '.writing-media-assets-overlay.is-active',
+      '.moment-compose-overlay.is-active',
+    ];
+    for (const selector of activeSelectors) {
+      if (closeVisibleBySelector(selector, null, { dryRun })) return true;
+    }
+    for (let idx = 0; idx < panelBackOpenChecks.length; idx += 1) {
+      let open = false;
+      try {
+        open = Boolean(panelBackOpenChecks[idx]?.());
+      } catch {}
+      if (!open) continue;
+      if (!dryRun) {
+        try {
+          panelBackClosers[idx]?.();
+        } catch {}
+      }
+      return true;
+    }
+    const sheetSelectors = [
+      '#persona-switcher-menu:not(.hidden)',
+      '#settings-menu:not(.hidden)',
+      '#quick-menu:not(.hidden)',
+      '#chatroom-menu:not(.hidden)',
+      '#rp-chatroom-menu:not(.hidden)',
+      '#moments-menu:not(.hidden)',
+      '#chat-title-menu:not(.hidden)',
+      '#pending-float-menu:not(.hidden)',
+      '#rp-greeting-sheet:not(.hidden)',
+      '#group-management-dropdown',
+    ];
+    for (const selector of sheetSelectors) {
+      if (closeVisibleBySelector(selector, hideMenus, { dryRun })) return true;
+    }
+    return false;
+  };
+  const androidBackRuntime = createAppBackNavigationRuntime({
+    windowRef: window,
+    historyRef: window.history,
+    documentRef: document,
+    getActivePage: () => activePage,
+    rootPage: 'chat',
+    switchPage,
+    isChatRoomVisible,
+    exitChatRoom: () => {
+      if (uiMode === 'rp') exitRpMode();
+      else exitChatRoom();
+    },
+    closeTopLayer: closeTopAppLayer,
+    getFocusedElement: () => document.activeElement,
+    showExitHint: () => window.toastr?.info?.('再按一次返回退出应用'),
+    nowFn: () => Date.now(),
+    logger,
+  });
+  androidBackRuntime.start();
+  patchDebugUiRegistry((registry) => {
+    registry.actions.handleAndroidBack = () => androidBackRuntime.handleBack('debug');
+    registry.actions.closeTopAppLayer = () => closeTopAppLayer({ dryRun: false });
   });
 
   const wallpaperActivityHandler = () => {

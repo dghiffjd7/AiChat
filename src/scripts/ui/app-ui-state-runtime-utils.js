@@ -32,6 +32,10 @@ export const createAppUiStateRuntime = ({
   runSavedRestoreFlow = runSavedUiRestoreFlow,
   applySavedState = applySavedUiRestoreState,
 } = {}) => {
+  const resolveOptionValue = (value) => (typeof value === 'function' ? value() : value);
+  const resolveKey = () => String(resolveOptionValue(key) || '').trim();
+  const resolveKvName = () => String(resolveOptionValue(kvName) || '').trim();
+
   const saveUiState = (existingTimer = null) => saveSnapshot({
     state: {
       activePage: getActivePage(),
@@ -39,8 +43,8 @@ export const createAppUiStateRuntime = ({
       sessionId: getCurrentSessionId(),
       at: nowFn(),
     },
-    key,
-    kvName,
+    key: resolveKey(),
+    kvName: resolveKvName(),
     sessionStorageLike,
     localStorageLike,
     clearTimerFn,
@@ -52,7 +56,7 @@ export const createAppUiStateRuntime = ({
   });
 
   const pickSavedUiState = async () => pickSnapshot({
-    key,
+    key: resolveKey(),
     sessionStorageLike,
     localStorageLike,
     loadDiskState,
@@ -65,7 +69,7 @@ export const createAppUiStateRuntime = ({
   });
 
   const readSavedUiStateFast = () => readFastSnapshot({
-    key,
+    key: resolveKey(),
     sessionStorageLike,
     localStorageLike,
   });

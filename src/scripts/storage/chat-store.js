@@ -576,11 +576,25 @@ const sanitizeStateForPersist = (state, options = {}) => {
   return { ...src, globalVariables, sessions: nextSessions };
 };
 
-const resolveCurrentId = (state) => {
+const getScopeStorageId = (scopeId = '') => normalizeScopeId(scopeId) || 'default';
+const getOwnRpSessionIdForScope = (scopeId = '') => `rp:${getScopeStorageId(scopeId)}`;
+const isForeignRpSessionForScope = (sessionId = '', scopeId = '') => {
+  const sid = String(sessionId || '').trim();
+  if (!sid.startsWith('rp:')) return false;
+  return sid !== getOwnRpSessionIdForScope(scopeId);
+};
+
+const resolveCurrentId = (state, scopeId = '') => {
   const sessions = state?.sessions && typeof state.sessions === 'object' ? state.sessions : {};
   const raw = String(state?.currentId || '').trim();
-  if (raw && Object.prototype.hasOwnProperty.call(sessions, raw)) return raw;
-  const ids = Object.keys(sessions);
+  if (
+    raw &&
+    Object.prototype.hasOwnProperty.call(sessions, raw) &&
+    !isForeignRpSessionForScope(raw, scopeId)
+  ) {
+    return raw;
+  }
+  const ids = Object.keys(sessions).filter(id => !isForeignRpSessionForScope(id, scopeId));
   return ids.length ? ids[0] : '';
 };
 
@@ -1244,7 +1258,7 @@ export class ChatStore {
     if (!this.state.globalVariables || typeof this.state.globalVariables !== 'object') {
       this.state.globalVariables = {};
     }
-    this.currentId = resolveCurrentId(this.state);
+    this.currentId = resolveCurrentId(this.state, this.scopeId);
     this.state.currentId = this.currentId;
     this.ready = this._hydrateFromDisk();
     this._skipMessagePersist = false;
@@ -1369,7 +1383,7 @@ export class ChatStore {
       if (kv && kv.sessions) {
         if (token !== this._scopeToken || storeKey !== this.storeKey || scopeId !== this.scopeId) return;
         this.state = sanitizeStateForPersist(kv);
-        this.currentId = resolveCurrentId(this.state);
+        this.currentId = resolveCurrentId(this.state, scopeId);
         this.state.currentId = this.currentId;
         if (this.scopeId) markLegacyMigrated();
         try {
@@ -1818,7 +1832,7 @@ export class ChatStore {
     this._lsQuotaWarned = false;
     this._hydrateRetryCount = 0;
     this.state = sanitizeStateForPersist(this._load());
-    this.currentId = resolveCurrentId(this.state);
+    this.currentId = resolveCurrentId(this.state, this.scopeId);
     this.state.currentId = this.currentId;
     this.ready = this._hydrateFromDisk();
     this._v2Ready = this._hydrateV2FromDisk();
@@ -1935,24 +1949,29 @@ export class ChatStore {
 
   listSessions() {
     // Sort by last message time desc
-    return Object.keys(this.state.sessions).sort((a, b) => {
-      const ta = this.getLastMessage(a)?.timestamp || 0;
-      const tb = this.getLastMessage(b)?.timestamp || 0;
-      return tb - ta;
-    });
+    return Object.keys(this.state.sessions)
+      .filter(id => !isForeignRpSessionForScope(id, this.scopeId))
+      .sort((a, b) => {
+        const ta = this.getLastMessage(a)?.timestamp || 0;
+        const tb = this.getLastMessage(b)?.timestamp || 0;
+        return tb - ta;
+      });
   }
 
   hasSession(id) {
     const sid = String(id || '').trim();
     if (!sid) return false;
+    if (isForeignRpSessionForScope(sid, this.scopeId)) return false;
     return Boolean(this.state?.sessions && Object.prototype.hasOwnProperty.call(this.state.sessions, sid));
   }
 
   setCurrent(id) {
     const sid = String(id || '').trim();
+    if (isForeignRpSessionForScope(sid, this.scopeId)) return false;
     this.currentId = sid;
     this.state.currentId = sid;
     this._persist();
+    return true;
   }
 
   getCurrent() {
@@ -2635,6 +2654,7 @@ export class ChatStore {
   switchSession(id) {
     const sid = String(id || '').trim();
     if (!sid) return false;
+    if (isForeignRpSessionForScope(sid, this.scopeId)) return false;
     this.setCurrent(sid);
     this._ensureSession(sid);
     this._persist();
@@ -3359,6 +3379,9 @@ export const __chatStoreStorageInternals = {
   V2_SIDECAR_FIELD_CHUNK_CHARS,
   buildPersistPreview,
   compactDerivedRenderRichContent,
+  getOwnRpSessionIdForScope,
+  isForeignRpSessionForScope,
+  resolveCurrentId,
   sanitizeMessageForPersist,
   splitPersistFieldChunks,
 };

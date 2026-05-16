@@ -89,6 +89,13 @@ const isScopedDataMatch = (data, scopeId) => {
 };
 
 const normalizeId = (id) => String(id || '').trim();
+const getScopeStorageId = (scopeId = '') => normalizeScopeId(scopeId) || 'default';
+const getOwnRpContactIdForScope = (scopeId = '') => `rp:${getScopeStorageId(scopeId)}`;
+const isForeignRpContactForScope = (contactId = '', scopeId = '') => {
+    const id = normalizeId(contactId);
+    if (!id.startsWith('rp:')) return false;
+    return id !== getOwnRpContactIdForScope(scopeId);
+};
 const displayNameFromId = (id) => {
     const s = normalizeId(id);
     return s.startsWith('group:') ? s.replace(/^group:/, '') : s;
@@ -251,7 +258,8 @@ export class ContactsStore {
     }
 
     listContacts() {
-        const list = Object.values(this.state.contacts || {});
+        const list = Object.values(this.state.contacts || {})
+            .filter(item => !isForeignRpContactForScope(item?.id, this.scopeId));
         return list.sort((a, b) => {
             const ta = a.addedAt || 0;
             const tb = b.addedAt || 0;
@@ -261,12 +269,15 @@ export class ContactsStore {
     }
 
     getContact(id) {
-        return this.state.contacts[normalizeId(id)] || null;
+        const cid = normalizeId(id);
+        if (isForeignRpContactForScope(cid, this.scopeId)) return null;
+        return this.state.contacts[cid] || null;
     }
 
     upsertContact(contact) {
         const id = normalizeId(contact?.id);
         if (!id) return;
+        if (isForeignRpContactForScope(id, this.scopeId)) return;
         const prev = this.state.contacts[id] || {};
         const nextMembers = Array.isArray(contact?.members)
             ? contact.members.map(normalizeId).filter(Boolean)
@@ -328,6 +339,7 @@ export class ContactsStore {
         sessionIds.forEach((sid) => {
             const id = normalizeId(sid);
             if (!id) return;
+            if (isForeignRpContactForScope(id, this.scopeId)) return;
             if (id.startsWith('group:') && includeGroups !== true) {
                 skippedGroups.push(id);
                 return;
@@ -384,3 +396,8 @@ export class ContactsStore {
         return exact?.id || '';
     }
 }
+
+export const __contactsStoreInternals = {
+    getOwnRpContactIdForScope,
+    isForeignRpContactForScope,
+};

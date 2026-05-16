@@ -98,6 +98,45 @@ import { createAppUiStateRuntime } from '../../src/scripts/ui/app-ui-state-runti
 }
 
 {
+  let scope = 'default';
+  const calls = [];
+  const runtime = createAppUiStateRuntime({
+    key: () => `ui-key__${scope}`,
+    kvName: () => `ui-kv__${scope}`,
+    sessionStorageLike: 'session-storage',
+    localStorageLike: 'local-storage',
+    getActivePage: () => 'chat',
+    isChatRoomVisible: () => false,
+    getCurrentSessionId: () => 'session-1',
+    nowFn: () => 1,
+    saveSnapshot: (payload) => {
+      calls.push(['save', payload.key, payload.kvName]);
+      return 'timer';
+    },
+    pickSnapshot: async (payload) => {
+      calls.push(['pick', payload.key]);
+      return null;
+    },
+    readFastSnapshot: (payload) => {
+      calls.push(['read-fast', payload.key]);
+      return null;
+    },
+  });
+
+  runtime.saveUiState();
+  scope = 'persona_1';
+  await runtime.pickSavedUiState();
+  runtime.readSavedUiStateFast();
+
+  assert.deepEqual(calls, [
+    ['save', 'ui-key__default', 'ui-kv__default'],
+    ['pick', 'ui-key__persona_1'],
+    ['read-fast', 'ui-key__persona_1'],
+  ]);
+  console.log('ok - createAppUiStateRuntime resolves dynamic storage keys per call');
+}
+
+{
   const calls = [];
   const runtime = createAppUiStateRuntime({
     key: 'ui-key',

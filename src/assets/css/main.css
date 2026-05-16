@@ -235,7 +235,7 @@ body[data-typing-dots="off"] [data-typing-placeholder="1"] {
 .page {
     display: none;
     height: calc(100vh - 56px);
-    height: calc(100dvh - 56px);
+    height: calc(var(--app-visual-height, 100dvh) - 56px);
     overflow: hidden;
 }
 
@@ -4204,6 +4204,7 @@ body,
 #app {
   position: relative;
   min-height: 100vh;
+  min-height: var(--app-visual-height, 100dvh);
   overflow: hidden;
   /* 不添加 padding，让内容从0开始，状态栏透明显示 */
   padding-top: 0;
@@ -5554,8 +5555,7 @@ body,
   flex-direction: column;
   position: absolute;
   top: 0; left: 0; right: 0;
-  height: calc(100vh - 56px);
-  height: calc(100dvh - 56px);
+  height: calc(var(--app-visual-height, 100dvh) - 56px);
   overflow: hidden;
   pointer-events: none;
 }

@@ -38,6 +38,25 @@ import {
   const calls = [];
   const ok = refreshChatAndContactsListNow({
     chatScopeId: 'scope-a',
+    contactsScopeId: 'scope-a',
+    listSessions: () => ['empty-room', 'active-room', 'rp:1'],
+    isRpSessionId: (sessionId) => sessionId.startsWith('rp:'),
+    shouldSyncSessionToContacts: (sessionId) => sessionId === 'active-room',
+    ensureContactsFromSessions: (sessions, options) => calls.push(['ensure', sessions, options]),
+    renderChatList: () => calls.push(['chat-list']),
+    renderGroupsList: () => calls.push(['groups']),
+    renderContactsUngrouped: () => calls.push(['contacts']),
+  });
+
+  assert.equal(ok, true);
+  assert.deepEqual(calls[0], ['ensure', ['active-room'], { defaultAvatar: '', includeGroups: false }]);
+  console.log('ok - refreshChatAndContactsListNow avoids auto-creating contacts for empty sessions');
+}
+
+{
+  const calls = [];
+  const ok = refreshChatAndContactsListNow({
+    chatScopeId: 'scope-a',
     contactsScopeId: 'scope-b',
     logger: { debug: (...args) => calls.push(args) },
   });

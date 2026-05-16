@@ -129,6 +129,8 @@ const PANEL_CSS = `
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
     font-size: 14px;
     color: var(--app-text-primary);
+    --pp-panel-margin: 10px;
+    --pp-footer-height: 58px;
 }
 
 /* ── header ── */
@@ -347,24 +349,30 @@ const PANEL_CSS = `
     position: relative;
 }
 .pp-pages {
-    width: 300%;
+    position: relative;
+    width: 100%;
     height: 100%;
-    display: flex;
-    transition: transform 260ms cubic-bezier(.2,.9,.2,1);
-    transform: translateX(0);
-}
-.pp-pages[data-view="detail"] {
-    transform: translateX(-33.333333%);
-}
-.pp-pages[data-view="bindings"] {
-    transform: translateX(-66.666667%);
+    display: block;
 }
 .pp-page {
-    width: 33.333333%;
-    min-width: 33.333333%;
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    min-width: 0;
     min-height: 0;
     display: flex;
     flex-direction: column;
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transition: opacity 120ms ease;
+}
+.pp-pages[data-view="root"] .pp-page[data-panel-page="root"],
+.pp-pages[data-view="detail"] .pp-page[data-panel-page="detail"],
+.pp-pages[data-view="bindings"] .pp-page[data-panel-page="bindings"] {
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
 }
 .pp-page-scroll {
     flex: 1 1 0;
@@ -700,6 +708,39 @@ const PANEL_CSS = `
 .pp-btn-cancel { border: 1px solid var(--app-border-default); background: var(--app-surface-subtle); color: var(--app-text-secondary); }
 .pp-btn-save { border: none; background: #3b82f6; color: var(--app-text-inverse); font-weight: 700; }
 .pp-btn-save:active { background: #2563eb; }
+
+@media (max-height: 720px) {
+    .pp-header {
+        padding: 10px 12px;
+        min-height: 48px;
+    }
+    .pp-header-sub {
+        display: none;
+    }
+    .pp-header-actions {
+        gap: 6px;
+    }
+    .pp-header-actions button {
+        padding: 5px 8px;
+    }
+    .pp-manager {
+        padding: 8px 12px 10px;
+    }
+    .pp-manager-card {
+        padding: 10px;
+    }
+    .pp-page-scroll {
+        padding: 10px 12px 12px;
+    }
+    .pp-footer {
+        min-height: var(--pp-footer-height);
+        padding: 8px 12px;
+        gap: 8px;
+    }
+    .pp-footer button {
+        padding: 9px 14px;
+    }
+}
 `;
 
 export class PresetPanel {
@@ -1065,6 +1106,7 @@ export class PresetPanel {
         this.bindingStoreType = '';
         this.bindingPresetId = '';
         this.renderAllSections();
+        this.setPageView('root');
         this.element.style.display = 'flex';
         this.overlayElement.style.display = 'block';
     }
@@ -1091,9 +1133,11 @@ export class PresetPanel {
         this.element.style.cssText = `
             display:none; position:fixed;
             top: calc(10px + env(safe-area-inset-top, 0px));
-            bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+            bottom: auto;
             left: calc(10px + env(safe-area-inset-left, 0px));
             right: calc(10px + env(safe-area-inset-right, 0px));
+            height: calc(var(--app-visual-height, 100dvh) - 20px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+            max-height: calc(var(--app-visual-height, 100dvh) - 20px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
             box-sizing: border-box;
             background:var(--app-surface-card); border-radius:12px; box-shadow:0 10px 40px rgba(0,0,0,0.25);
             z-index: 21000; flex-direction: column; overflow: hidden;
@@ -1118,12 +1162,12 @@ export class PresetPanel {
                 <div class="pp-manager" id="preset-manager"></div>
                 <div class="pp-nav-shell">
                     <div class="pp-pages" id="preset-pages" data-view="root">
-                        <section class="pp-page">
+                        <section class="pp-page" data-panel-page="root">
                             <div class="pp-page-scroll">
                                 <div class="pp-nav-list" id="preset-root-list"></div>
                             </div>
                         </section>
-                        <section class="pp-page">
+                        <section class="pp-page" data-panel-page="detail">
                             <div class="pp-detail-topbar">
                                 <button type="button" class="pp-back-btn" id="preset-back">
                                     ${chevronLeftSvg}
@@ -1136,7 +1180,7 @@ export class PresetPanel {
                                 <div class="pp-section-editor" id="preset-detail-editor"></div>
                             </div>
                         </section>
-                        <section class="pp-page">
+                        <section class="pp-page" data-panel-page="bindings">
                             <div class="pp-detail-topbar">
                                 <button type="button" class="pp-back-btn" id="preset-binding-back">
                                     ${chevronLeftSvg}
@@ -1441,6 +1485,7 @@ export class PresetPanel {
         if (!this.pagesEl) return;
         const next = view === 'bindings' ? 'bindings' : (view === 'detail' ? 'detail' : 'root');
         this.pagesEl.dataset.view = next;
+        if (this.element) this.element.dataset.view = next;
     }
 
     renderDetailSection(sec) {

@@ -43,7 +43,7 @@ export class PersonaPanel {
             personaStore: this.store,
             appBridge: window.appBridge,
             rpSessionStore: this.rpSessionStore,
-            onPersonaChanged: this.onPersonaChanged,
+            onPersonaChanged: () => this.notifyPersonaChanged(),
         });
         this.importInput = null;
         this.importOverlay = null;
@@ -52,6 +52,11 @@ export class PersonaPanel {
         this.importUrlBtn = null;
         this.importFileBtn = null;
         this.importCloseBtn = null;
+    }
+
+    async notifyPersonaChanged() {
+        if (typeof this.onPersonaChanged !== 'function') return;
+        await Promise.resolve(this.onPersonaChanged());
     }
 
     ensureUI() {
@@ -563,7 +568,7 @@ export class PersonaPanel {
         if (countEl) countEl.textContent = `已选 ${this.bulkState.selected.size} / ${this.bulkState.sessionIds.length}`;
     }
 
-    applyBulkModal() {
+    async applyBulkModal() {
         if (!this.bulkState || !this.chatStore) return;
         const personaId = this.bulkState.personaId;
         const selected = this.bulkState.selected;
@@ -590,7 +595,7 @@ export class PersonaPanel {
         window.toastr?.success?.(`已应用 ${changed} 项绑定变更`);
         this.hideBulkModal();
         this.renderList();
-        if (this.onPersonaChanged) this.onPersonaChanged();
+        await this.notifyPersonaChanged();
     }
 
     updateInjectionUi() {
@@ -667,11 +672,11 @@ export class PersonaPanel {
                 ${lockPersonaId ? `<button id="persona-unlock-btn" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:6px 10px; cursor:pointer;">解除锁定</button>` : ''}
             </div>
         `;
-        bar.querySelector('#persona-unlock-btn')?.addEventListener('click', (e) => {
+        bar.querySelector('#persona-unlock-btn')?.addEventListener('click', async (e) => {
             e.stopPropagation();
             this.clearSessionLockPersonaId(sessionId);
             this.renderList();
-            if (this.onPersonaChanged) this.onPersonaChanged();
+            await this.notifyPersonaChanged();
         });
     }
 
@@ -737,7 +742,7 @@ export class PersonaPanel {
                 if (e.target.closest('.edit-btn')) return;
                 await this.store.setActive(p.id);
                 this.renderList();
-                if (this.onPersonaChanged) this.onPersonaChanged();
+                await this.notifyPersonaChanged();
             });
 
             // Click edit button
@@ -896,12 +901,12 @@ export class PersonaPanel {
             await this.store.update(this.editingId, { name, description, avatar, position, depth, role, source: applySourcePatch(current) });
         } else {
             const newP = await this.store.create({ name, description, avatar, position, depth, role, source: applySourcePatch(null) });
-            this.store.setActive(newP.id); // Auto switch to new
+            await this.store.setActive(newP.id); // Auto switch to new
         }
 
         this.closeEdit();
         this.renderList();
-        if (this.onPersonaChanged) this.onPersonaChanged();
+        await this.notifyPersonaChanged();
     }
 
     async deleteCurrent() {
@@ -914,7 +919,7 @@ export class PersonaPanel {
         const success = await this.store.delete(deleteId);
         if (success) {
             try {
-                await this.onPersonaChanged?.();
+                await this.notifyPersonaChanged();
             } catch {}
             try {
                 await deletePersonaCard(window.appBridge, deleteId);

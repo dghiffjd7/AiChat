@@ -4,6 +4,7 @@ export const refreshChatAndContactsListNow = ({
   logger = null,
   listSessions = () => [],
   isRpSessionId = () => false,
+  shouldSyncSessionToContacts = () => true,
   ensureContactsFromSessions = () => {},
   defaultAvatar = '',
   renderChatList = () => {},
@@ -22,7 +23,14 @@ export const refreshChatAndContactsListNow = ({
     return false;
   }
   const socialSessions = listSessions().filter((sessionId) => !isRpSessionId(sessionId));
-  ensureContactsFromSessions(socialSessions, {
+  const contactSyncSessions = socialSessions.filter((sessionId) => {
+    try {
+      return shouldSyncSessionToContacts(sessionId) !== false;
+    } catch {
+      return true;
+    }
+  });
+  ensureContactsFromSessions(contactSyncSessions, {
     defaultAvatar,
     includeGroups: false,
   });

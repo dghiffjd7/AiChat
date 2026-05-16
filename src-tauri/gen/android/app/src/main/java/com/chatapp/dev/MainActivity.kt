@@ -5,6 +5,8 @@ import android.webkit.WebView
 import androidx.activity.enableEdgeToEdge
 
 class MainActivity : TauriActivity() {
+  override val handleBackNavigation: Boolean = true
+
   override fun onCreate(savedInstanceState: Bundle?) {
     WebView.setWebContentsDebuggingEnabled(true)
     enableEdgeToEdge()
