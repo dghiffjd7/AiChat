@@ -210,6 +210,8 @@ const renderStTemplate = (template, vars) => {
 
 const DEFAULT_OPENAI_IMPERSONATION_PROMPT =
   '[Write your next reply from the point of view of {{user}}, using the chat history so far as a guideline for the writing style of {{user}}. Don\'t write as {{char}} or system. Don\'t describe actions of {{char}}.]';
+const DEFAULT_OPENAI_MAIN_PROMPT =
+  "Write {{char}}'s next reply in a fictional chat between {{char}} and {{user}}.";
 
 const normalizeReplyTarget = (value, fallback = 'character') => {
   const token = String(value || '').trim().toLowerCase();
@@ -225,6 +227,17 @@ const resolvePresetReplyTarget = (preset, uiMode = 'chat', override = '') => {
   if (String(override || '').trim()) return overrideTarget;
   const key = mode === 'rp' ? 'response_target_rp' : 'response_target_chat';
   return normalizeReplyTarget(preset?.[key], fallback);
+};
+
+const normalizeBridgePresetUiMode = (value = '', { sessionId = '', taskType = '' } = {}) => {
+  const token = String(value || '').trim().toLowerCase();
+  if (token === 'moments' || token === 'moment' || token === 'dynamic' || token === 'space') return 'moments';
+  if (token === 'rp' || token === 'creative') return 'rp';
+  if (token === 'chat' || token === 'social') return 'chat';
+  const task = String(taskType || '').trim().toLowerCase();
+  if (task === 'moment_comment') return 'moments';
+  const sid = String(sessionId || '').trim().toLowerCase();
+  return sid.startsWith('rp:') ? 'rp' : 'chat';
 };
 
 const withSpeakerPrefix = (content, speaker) => {
@@ -2293,10 +2306,10 @@ class AppBridge {
     const sid = String(options?.sessionId || this.activeSessionId || '').trim();
     const uiModeRaw = String(
       options?.uiMode
-        || this.getUiModeContext?.()
-        || '',
+      || this.getUiModeContext?.()
+      || '',
     ).trim().toLowerCase();
-    const uiMode = uiModeRaw === 'rp' ? 'rp' : (sid.startsWith('rp:') ? 'rp' : 'chat');
+    const uiMode = normalizeBridgePresetUiMode(uiModeRaw, { sessionId: sid });
     const presetState = this.presets?.getState?.() || {};
     const activePresets = (() => {
       const enabled = presetState?.enabled || {};
@@ -2481,14 +2494,19 @@ class AppBridge {
   }
 
   getRequestPresetContext(context = {}) {
+    const sessionId = String(context?.session?.id || this.activeSessionId || '').trim();
     return {
-      sessionId: String(context?.session?.id || this.activeSessionId || '').trim(),
-      uiMode: String(
+      sessionId,
+      uiMode: normalizeBridgePresetUiMode(
         context?.meta?.uiMode
         || context?.uiMode
         || this.getUiModeContext?.()
         || '',
-      ).trim().toLowerCase() === 'rp' ? 'rp' : 'chat',
+        {
+          sessionId,
+          taskType: context?.task?.type,
+        },
+      ),
     };
   }
 
@@ -2505,7 +2523,9 @@ class AppBridge {
     const openp = this.presets?.getResolvedActive?.('openai', presetContext || {})?.preset || null;
     if (!openp || typeof openp !== 'object') return {};
 
-    const uiMode = presetContext?.uiMode === 'rp' ? 'rp' : 'chat';
+    const uiMode = normalizeBridgePresetUiMode(presetContext?.uiMode, {
+      sessionId: presetContext?.sessionId || '',
+    });
     const responseTarget = resolvePresetReplyTarget(openp, uiMode, context?.meta?.responseTarget);
     if (responseTarget === 'user') return {};
 
@@ -2880,6 +2900,7 @@ class AppBridge {
           name: String(nextContext?.session?.name || '').trim(),
           isGroup: Boolean(nextContext?.session?.isGroup),
         },
+        presetContext,
         task: nextContext?.task && typeof nextContext.task === 'object'
           ? {
               type: String(nextContext.task.type || '').trim(),
@@ -3460,7 +3481,11 @@ class AppBridge {
     const sessionId = String(context?.session?.id || '').trim();
     const sessionName = String(context?.session?.name || '').trim();
     const uiModeRaw = String(context?.meta?.uiMode || context?.uiMode || '').trim().toLowerCase();
-    const uiMode = uiModeRaw === 'rp' ? 'rp' : 'chat';
+    const uiMode = uiModeRaw === 'rp' || (!uiModeRaw && sessionId.startsWith('rp:')) ? 'rp' : 'chat';
+    const presetUiMode = normalizeBridgePresetUiMode(uiModeRaw, {
+      sessionId,
+      taskType: context?.task?.type,
+    });
     const matchContext = {
       userMessage: String(userMessage ?? ''),
       history: historyMatchLines,
@@ -3579,7 +3604,7 @@ class AppBridge {
     const useSysprompt = Boolean(presetState?.enabled?.sysprompt);
     const useContext = Boolean(presetState?.enabled?.context);
     const useOpenAIPreset = Boolean(presetState?.enabled?.openai);
-    const presetContext = { sessionId, uiMode };
+    const presetContext = { sessionId, uiMode: presetUiMode };
     const syspResolved = this.presets.getResolvedActive('sysprompt', presetContext) || null;
     const syspActive = syspResolved?.preset || null;
     const sysp = useSysprompt ? syspActive : null;
@@ -3725,7 +3750,7 @@ class AppBridge {
     const scenarioFormat = typeof openp?.scenario_format === 'string' ? openp.scenario_format : '{{scenario}}';
     const personalityFormat =
       typeof openp?.personality_format === 'string' ? openp.personality_format : '{{personality}}';
-    const replyTarget = resolvePresetReplyTarget(activeOpenAIPreset, macroUiMode, context?.meta?.responseTarget);
+    const replyTarget = resolvePresetReplyTarget(activeOpenAIPreset, presetUiMode, context?.meta?.responseTarget);
     const impersonationPromptRaw = replyTarget === 'user'
       ? (typeof activeOpenAIPreset?.impersonation_prompt === 'string' && activeOpenAIPreset.impersonation_prompt.trim()
         ? activeOpenAIPreset.impersonation_prompt
@@ -4871,7 +4896,12 @@ const stringifyMessageContent = (content) => {
         }
 
         // Custom/editable prompt block
-        let content = typeof pr?.content === 'string' ? pr.content : '';
+        const rawPromptContent = typeof pr?.content === 'string' ? pr.content : '';
+        const normalizedRawPromptContent = String(rawPromptContent || '').replace(/\s+/g, ' ').trim();
+        const hasExplicitPromptContent =
+          Boolean(normalizedRawPromptContent) &&
+          normalizedRawPromptContent !== DEFAULT_OPENAI_MAIN_PROMPT;
+        let content = rawPromptContent;
         // Special case: main prompt fallback
         if (identifier === 'main' && !content) {
           if (useSysprompt && sysp?.content) content = sysp.content;
@@ -4880,7 +4910,7 @@ const stringifyMessageContent = (content) => {
         const rawHadLastUser = lastUserMessageRe.test(String(content || ''));
         content = processTextMacrosWithPendingFlag(content, macroContext);
         const isMainPrompt = identifier === 'main';
-        if (isMainPrompt && suppressGenericReplyPrompt) {
+        if (isMainPrompt && suppressGenericReplyPrompt && !hasExplicitPromptContent) {
           appendWorldBucket('beforeScenario');
           appendChatGuideBeforePrompt();
           appendChatGuidePrompt();
@@ -5475,7 +5505,7 @@ const stringifyMessageContent = (content) => {
       const sessionReasoning = sessionId
           ? this.presets.getSessionReasoning?.('openai', sessionId)
           : null;
-      const modeForReasoning = sessionId?.startsWith('rp:') ? 'rp' : (presetContext?.uiMode || 'chat');
+      const modeForReasoning = normalizeBridgePresetUiMode(presetContext?.uiMode, { sessionId });
       const modeReasoning = this.presets.getModeReasoning?.('openai', modeForReasoning) || null;
       const overrideReasoning = sessionReasoning || modeReasoning;
       const effectiveRequestReasoning = overrideReasoning

@@ -498,7 +498,7 @@ const clone = (v) => {
 };
 
 const PRESET_TYPES = ['sysprompt', 'context', 'instruct', 'openai', 'reasoning'];
-const PRESET_BINDING_MODES = ['chat', 'rp'];
+const PRESET_BINDING_MODES = ['chat', 'rp', 'moments'];
 
 const normalizeType = (type) => {
     const t = String(type || '').toLowerCase();
@@ -511,17 +511,18 @@ const ensureObj = (v, fallback) => (v && typeof v === 'object') ? v : fallback;
 const normalizeBindingMode = (mode, { sessionId = '' } = {}) => {
     const raw = String(mode || '').trim().toLowerCase();
     if (raw === 'rp' || raw === 'creative') return 'rp';
+    if (raw === 'moments' || raw === 'moment' || raw === 'dynamic' || raw === 'space') return 'moments';
     if (raw === 'chat' || raw === 'social') return 'chat';
     const sid = String(sessionId || '').trim().toLowerCase();
     return sid.startsWith('rp:') ? 'rp' : 'chat';
 };
 
 const makeEmptyBindingBucket = () => ({
-    modes: { chat: '', rp: '' },
+    modes: Object.fromEntries(PRESET_BINDING_MODES.map(mode => [mode, ''])),
     sessions: {},
     sessionProfiles: {},
     sessionReasoning: {},
-    modeProfiles: { chat: '', rp: '' },
+    modeProfiles: Object.fromEntries(PRESET_BINDING_MODES.map(mode => [mode, ''])),
     modeReasoning: {},
 });
 

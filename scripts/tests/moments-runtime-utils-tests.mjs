@@ -432,6 +432,7 @@ import {
   });
   assert.equal(ctx.user.name, '我');
   assert.equal(ctx.task.type, 'moment_comment');
+  assert.equal(ctx.meta?.uiMode, 'moments');
   assert.equal(ctx.meta?.skipScripts, true);
   assert.equal(ctx.task.replyToCommentId, 'c1');
   assert.equal(ctx.task.replyToAuthor, '甲');

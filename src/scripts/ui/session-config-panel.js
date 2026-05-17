@@ -417,6 +417,7 @@ export class SessionConfigPanel {
 
         this.renderModeCard(wrap, 'chat', '聊天默认', profiles, presetList);
         this.renderModeCard(wrap, 'rp', '创意写作默认', profiles, presetList);
+        this.renderModeCard(wrap, 'moments', '动态任务默认', profiles, presetList);
         this.renderSessionGroup(wrap, 'chat', '聊天对话会话', '还没有聊天室或群聊。', profiles, presetList);
         this.renderSessionGroup(wrap, 'rp', '创意写作会话', '还没有创意写作会话。', profiles, presetList);
 

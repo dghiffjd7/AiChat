@@ -851,7 +851,11 @@ export class PresetPanel {
 
     getBindingSourceLabel(source, mode = 'chat') {
         if (source === 'session') return '会话绑定';
-        if (source === 'mode') return mode === 'rp' ? '创意写作默认' : '聊天对话默认';
+        if (source === 'mode') {
+            if (mode === 'rp') return '创意写作默认';
+            if (mode === 'moments') return '动态任务默认';
+            return '聊天对话默认';
+        }
         return '全局默认';
     }
 
@@ -1069,7 +1073,10 @@ export class PresetPanel {
         const preset = resolved?.preset || {};
         const sessionId = String(context?.sessionId || '').trim();
         const sessionProfileId = sessionId ? this.store.getSessionProfileId('openai', sessionId) : null;
-        const modeForProfile = sessionId?.startsWith('rp:') ? 'rp' : (context?.uiMode || 'chat');
+        const rawModeForProfile = String(context?.uiMode || '').trim().toLowerCase();
+        const modeForProfile = rawModeForProfile === 'moments'
+            ? 'moments'
+            : (sessionId?.startsWith('rp:') ? 'rp' : (rawModeForProfile === 'rp' ? 'rp' : 'chat'));
         const modeProfileId = this.store.getModeProfileId?.('openai', modeForProfile) || null;
         const boundId = sessionProfileId || modeProfileId;
         if (!boundId) return;
@@ -1712,6 +1719,7 @@ export class PresetPanel {
 
         wrap.appendChild(buildModeCard('chat', '聊天对话'));
         wrap.appendChild(buildModeCard('rp', '创意写作'));
+        wrap.appendChild(buildModeCard('moments', '动态任务'));
 
         const renderSessionSummary = (group, title) => {
             const items = sessionEntries.filter((item) => item.group === group);

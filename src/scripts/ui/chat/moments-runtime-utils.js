@@ -671,7 +671,7 @@ export const buildMomentCommentTaskContext = ({
   const attachments = Array.isArray(userAttachmentParts)
     ? userAttachmentParts.filter((part) => part && typeof part === 'object')
     : [];
-  const meta = {};
+  const meta = { uiMode: 'moments' };
   if (skipScripts !== false) {
     meta.skipScripts = true;
   }
