@@ -1366,7 +1366,7 @@ body[data-ui-mode='rp'] .rp-swipe-indicator {
   min-height: 24px;
   border: 1px solid var(--app-border-subtle);
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.86);
+  background: var(--app-surface-card);
   padding: 3px 9px;
   font-size: 12px;
   color: var(--app-text-secondary);

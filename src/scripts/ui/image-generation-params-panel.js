@@ -85,7 +85,7 @@ export class ImageGenerationParamsPanel {
       <div data-role="status" style="display:none; padding:10px 18px; border-top:1px solid var(--app-border-default); font-size:13px;"></div>
       <div style="display:flex; justify-content:flex-end; gap:10px; padding:14px 18px; border-top:1px solid var(--app-border-default);">
         <button type="button" data-action="cancel" style="padding:10px 16px; border-radius:10px; border:1px solid var(--app-border-default); background:var(--app-surface-subtle); color:var(--app-text-primary); cursor:pointer;">取消</button>
-        <button type="button" data-action="save" style="padding:10px 18px; border-radius:10px; border:none; background:#2563eb; color:white; font-weight:800; cursor:pointer;">保存参数</button>
+        <button type="button" data-action="save" style="padding:10px 18px; border-radius:10px; border:none; background:#2563eb; color:var(--app-text-inverse); font-weight:800; cursor:pointer;">保存参数</button>
       </div>
     `;
     this.body = this.panel.querySelector('[data-role="body"]');

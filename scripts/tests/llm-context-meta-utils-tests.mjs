@@ -10,10 +10,10 @@ import {
 const tests = [];
 const test = (name, fn) => tests.push({ name, fn });
 
-test('normalizeRuntimeMemoryPosition handles template fallback and history_depth zero fallback', () => {
+test('normalizeRuntimeMemoryPosition handles template fallback and preserves history_depth zero', () => {
   assert.equal(normalizeRuntimeMemoryPosition('', 0, 'history_after'), 'history_after');
   assert.equal(normalizeRuntimeMemoryPosition('template', 0, 'history_after'), 'history_after');
-  assert.equal(normalizeRuntimeMemoryPosition('history_depth', 0, 'history_after'), 'history_after');
+  assert.equal(normalizeRuntimeMemoryPosition('history_depth', 0, 'history_after'), 'history_depth');
   assert.equal(normalizeRuntimeMemoryPosition('history_depth', 2, 'history_after'), 'history_depth');
 });
 
