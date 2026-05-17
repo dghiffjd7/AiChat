@@ -2875,6 +2875,20 @@ class AppBridge {
         baseUrl: preparedRequest?.url ? String(preparedRequest.url).replace(/\/chat\/completions$/, '') : config?.baseUrl,
         model: config?.model,
         stream: Boolean(config?.stream),
+        session: {
+          id: sessionId,
+          name: String(nextContext?.session?.name || '').trim(),
+          isGroup: Boolean(nextContext?.session?.isGroup),
+        },
+        task: nextContext?.task && typeof nextContext.task === 'object'
+          ? {
+              type: String(nextContext.task.type || '').trim(),
+              mode: String(nextContext.task.mode || '').trim(),
+              targetName: String(nextContext.task.targetName || '').trim(),
+              targetSessionId: String(nextContext.task.targetSessionId || '').trim(),
+              isReplyToComment: Boolean(nextContext.task.isReplyToComment),
+            }
+          : null,
         options: preparedRequest?.normalizedOptions || genOptions,
         requestOptions: {
           ...(genOptions || {}),
@@ -3102,6 +3116,18 @@ class AppBridge {
     const pendingUserTextRaw = suppressPendingUserTurn ? '' : String(rawUserMessage ?? '').trim();
     const appendUserToHistory = context?.meta?.appendUserToHistory !== false;
     const isMomentCommentTask = String(context?.task?.type || '').toLowerCase() === 'moment_comment';
+    const momentCommentTaskMode = String(context?.task?.mode || '').trim().toLowerCase();
+    const isPublishedMomentCommentTask =
+      isMomentCommentTask &&
+      (momentCommentTaskMode === 'published_moment' ||
+        momentCommentTaskMode === 'moment_publish' ||
+        momentCommentTaskMode === 'publish_comment');
+    const suppressGenericReplyPrompt = isMomentCommentTask;
+    const historyRecallNotice = isMomentCommentTask
+      ? (isPublishedMomentCommentTask
+        ? '以下为用户发布的动态及相关上下文（仅用于生成动态评论）：'
+        : '以下为动态及评论上下文（仅用于生成评论回复）：')
+      : HISTORY_RECALL_NOTICE;
     const isGroupChat = Boolean(context?.session?.isGroup) || String(context?.session?.id || '').startsWith('group:');
     const preserveCreativeHistoryParagraphs = String(context?.meta?.uiMode || '').trim().toLowerCase() === 'rp';
     const memoryMode = String(context?.meta?.memoryStorageMode || '').trim().toLowerCase();
@@ -3144,6 +3170,14 @@ class AppBridge {
     const scenarioHintBase = (() => {
       if (disableScenarioHint) return '';
       if (isMomentCommentTask) {
+        if (isPublishedMomentCommentTask) {
+          return [
+            '用户刚发布动态，请按动态评论格式输出：',
+            'moment_reply_start',
+            '评论人--评论内容',
+            'moment_reply_end',
+          ].join('\n');
+        }
         const isReply = Boolean(context?.task?.replyToAuthor) || Boolean(context?.task?.replyToCommentId) || Boolean(context?.task?.isReplyToComment);
         return isReply ? '在动态评论回复，注意动态评论格式' : '在动态评论，注意动态评论格式';
       }
@@ -3163,7 +3197,10 @@ class AppBridge {
     const autoImagePromptWritingAllowed = uiModeRawForAutoImage === 'rp'
       ? settingsSnapshot.autoImagePromptWritingEnabled !== false
       : true;
-    const autoImagePromptSettingEnabled = settingsSnapshot.autoImagePromptEnabled === true && autoImagePromptWritingAllowed;
+    const autoImagePromptSettingEnabled =
+      settingsSnapshot.autoImagePromptEnabled === true &&
+      autoImagePromptWritingAllowed &&
+      !isMomentCommentTask;
     let autoImagePromptActive = autoImagePromptSettingEnabled;
     let autoImagePromptRules = '';
     let autoImagePromptPosition = 0;
@@ -3536,7 +3573,7 @@ class AppBridge {
         ].join('\n\n'),
       };
     };
-    const disablePhoneFormat = Boolean(context?.meta?.disablePhoneFormat);
+    const disablePhoneFormat = Boolean(context?.meta?.disablePhoneFormat) || isMomentCommentTask;
 
     const presetState = this.presets?.getState?.() || null;
     const useSysprompt = Boolean(presetState?.enabled?.sysprompt);
@@ -3586,7 +3623,7 @@ class AppBridge {
       !disablePhoneFormat &&
       syspActive?.phone_format_moment_enabled !== false;
 
-    // 动态评论回复提示词（仅用于“动态评论”场景）
+    // 动态评论回复提示词（仅用于用户评论/楼中楼回复任务）
     const momentCommentEnabled = Boolean(sysp?.moment_comment_enabled);
     const momentCommentRulesRaw =
       typeof sysp?.moment_comment_rules === 'string' ? sysp.moment_comment_rules : '';
@@ -3601,6 +3638,23 @@ class AppBridge {
       : 0;
     const momentCommentRole = Number.isFinite(Number(sysp?.moment_comment_role))
       ? Math.trunc(Number(sysp.moment_comment_role))
+      : 0;
+
+    // 发布后评论提示词（仅用于用户发布动态后的自动评论任务）
+    const momentPublishCommentEnabled = Boolean(sysp?.moment_publish_comment_enabled);
+    const momentPublishCommentRulesRaw =
+      typeof sysp?.moment_publish_comment_rules === 'string' ? sysp.moment_publish_comment_rules : '';
+    const momentPublishCommentRules = momentPublishCommentEnabled
+      ? processTextMacrosWithPendingFlag(momentPublishCommentRulesRaw, { user: name1, char: name2 })
+      : '';
+    const momentPublishCommentPosition = Number.isFinite(Number(sysp?.moment_publish_comment_position))
+      ? Number(sysp.moment_publish_comment_position)
+      : 0;
+    const momentPublishCommentDepth = Number.isFinite(Number(sysp?.moment_publish_comment_depth))
+      ? Math.max(0, Math.trunc(Number(sysp.moment_publish_comment_depth)))
+      : 0;
+    const momentPublishCommentRole = Number.isFinite(Number(sysp?.moment_publish_comment_role))
+      ? Math.trunc(Number(sysp.moment_publish_comment_role))
       : 0;
 
     // 群聊模式：群聊协议提示词（保存于 sysprompt 预设）
@@ -3854,8 +3908,17 @@ const stringifyMessageContent = (content) => {
 	      if (!summaryOnly && !isMomentCommentTask && momentCreateEnabled && momentCreateRules && !shouldEmbedMomentCreateInPhoneFormat) {
 	        pushByPosition(momentCreateRules, momentCreatePosition, momentCreateDepth, momentCreateRole);
 	      }
-	      if (!summaryOnly && isMomentCommentTask && momentCommentEnabled && momentCommentRules) {
-	        pushByPosition(momentCommentRules, momentCommentPosition, momentCommentDepth, momentCommentRole);
+	      if (!summaryOnly && isMomentCommentTask) {
+	        if (isPublishedMomentCommentTask && momentPublishCommentEnabled && momentPublishCommentRules) {
+	          pushByPosition(
+	            momentPublishCommentRules,
+	            momentPublishCommentPosition,
+	            momentPublishCommentDepth,
+	            momentPublishCommentRole,
+	          );
+	        } else if (!isPublishedMomentCommentTask && momentCommentEnabled && momentCommentRules) {
+	          pushByPosition(momentCommentRules, momentCommentPosition, momentCommentDepth, momentCommentRole);
+	        }
 	      }
 	      if ((!summaryOnly || uiMode === 'rp') && autoImagePromptRules) {
 	        pushByPosition(autoImagePromptRules, autoImagePromptPosition, autoImagePromptDepth, autoImagePromptRole);
@@ -4686,7 +4749,7 @@ const stringifyMessageContent = (content) => {
       })();
       const historyRecallBlocks = (() => {
 	        const blocks = [];
-          blocks.push({ role: 'system', content: HISTORY_RECALL_NOTICE });
+	          blocks.push({ role: 'system', content: historyRecallNotice });
 	        const momentData = buildMomentCommentDataBlock();
 	        if (momentData) blocks.push(momentData);
 	        if (useSummaryMemory) {
@@ -4749,7 +4812,7 @@ const stringifyMessageContent = (content) => {
           insertMemoryPromptAt('system_end');
           insertMemoryPromptAt('before_chat');
           insertMemoryPromptBeforeHistory();
-          messages.push(...historyRecallBlocks);
+	      messages.push(...historyRecallBlocks);
           if (history.length) messages.push(...history);
           insertMemoryPromptAfterHistory();
           insertTimeContextAfterHistory();
@@ -4817,6 +4880,13 @@ const stringifyMessageContent = (content) => {
         const rawHadLastUser = lastUserMessageRe.test(String(content || ''));
         content = processTextMacrosWithPendingFlag(content, macroContext);
         const isMainPrompt = identifier === 'main';
+        if (isMainPrompt && suppressGenericReplyPrompt) {
+          appendWorldBucket('beforeScenario');
+          appendChatGuideBeforePrompt();
+          appendChatGuidePrompt();
+          appendWorldBucket('afterScenario');
+          continue;
+        }
         if (isMainPrompt) {
           appendWorldBucket('beforeScenario');
           appendChatGuideBeforePrompt();
@@ -5038,30 +5108,30 @@ const stringifyMessageContent = (content) => {
 	    // 聊天提示词（私聊/群聊/动态/摘要）统一放入 <chat_guide>，与世界书同位置注入。
 
     // If context preset disabled, fall back to legacy system prompt building
-    if (!useContext) {
-      insertWorldAround(() => {
-        if (context.systemPrompt) {
-          messages.push({ role: 'system', content: context.systemPrompt });
-        }
-        if (chatGuideBeforePromptContent) {
-          messages.push({ role: 'system', content: chatGuideBeforePromptContent });
-        }
-        if (vars.system) {
-          messages.push({ role: 'system', content: vars.system });
-        }
-        if (formatWorldBefore) {
-          messages.push({ role: 'system', content: formatWorldBefore });
+	    if (!useContext) {
+	      insertWorldAround(() => {
+	        if (!suppressGenericReplyPrompt && context.systemPrompt) {
+	          messages.push({ role: 'system', content: context.systemPrompt });
+	        }
+	        if (chatGuideBeforePromptContent) {
+	          messages.push({ role: 'system', content: chatGuideBeforePromptContent });
+	        }
+	        if (!suppressGenericReplyPrompt && vars.system) {
+	          messages.push({ role: 'system', content: vars.system });
+	        }
+	        if (formatWorldBefore) {
+	          messages.push({ role: 'system', content: formatWorldBefore });
         }
         if (formatWorldAfter) {
           messages.push({ role: 'system', content: formatWorldAfter });
         }
-        if (chatGuideContent) {
-          messages.push({ role: 'system', content: chatGuideContent });
-        }
-        if (context.character) {
-          let characterPrompt = `你正在扮演: ${context.character.name}`;
-          if (context.character.description) characterPrompt += `\n\n角色描述:\n${context.character.description}`;
-          if (context.character.personality) characterPrompt += `\n\n性格特点:\n${context.character.personality}`;
+	        if (chatGuideContent) {
+	          messages.push({ role: 'system', content: chatGuideContent });
+	        }
+	        if (!suppressGenericReplyPrompt && context.character) {
+	          let characterPrompt = `你正在扮演: ${context.character.name}`;
+	          if (context.character.description) characterPrompt += `\n\n角色描述:\n${context.character.description}`;
+	          if (context.character.personality) characterPrompt += `\n\n性格特点:\n${context.character.personality}`;
           messages.push({ role: 'system', content: characterPrompt });
         }
       });
@@ -5184,7 +5254,7 @@ const stringifyMessageContent = (content) => {
 
 	    insertMemoryPromptAt('before_chat');
       insertMemoryPromptBeforeHistory();
-	    messages.push({ role: 'system', content: HISTORY_RECALL_NOTICE });
+		    messages.push({ role: 'system', content: historyRecallNotice });
 	    try {
 	      const momentData = buildMomentCommentDataBlock();
 	      if (momentData) messages.push(momentData);

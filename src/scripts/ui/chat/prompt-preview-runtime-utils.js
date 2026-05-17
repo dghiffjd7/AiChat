@@ -38,6 +38,7 @@ export const createPromptPreviewRuntime = ({
       [head, worldDebugText, body].filter(Boolean).join('\n\n').trim(),
       meta,
       {
+        request: req,
         onLocate: locateCandidates.length
           ? async () => {
               showWorldDebugLocatorModal(locateCandidates, {

@@ -49,6 +49,7 @@ const defaults = {
   reasoningMaxAdditions: 1,
   personaBindContacts: true,
   promptCurrentTimeEnabled: false,
+  momentCommentSideEffectsEnabled: true,
   autoImagePromptEnabled: false,
   autoImagePromptWritingEnabled: true,
   autoImagePromptStyle: 'auto',
@@ -188,6 +189,7 @@ const migrateSettings = (settings = {}) => {
   next.autoImagePromptRateLimitDefaultsMigrated = true;
   next.autoImagePromptSkipRepeated = next.autoImagePromptSkipRepeated !== false;
   next.autoImagePromptWritingEnabled = next.autoImagePromptWritingEnabled !== false;
+  next.momentCommentSideEffectsEnabled = next.momentCommentSideEffectsEnabled !== false;
   next.chatDefaultColorMode = inferChatColorMode(next, defaults.chatDefaultColorMode);
   return next;
 };

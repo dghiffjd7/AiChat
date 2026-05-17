@@ -344,22 +344,82 @@ export const buildMomentRecentCommentsText = (
     .join('\n');
 };
 
+const MOMENT_INLINE_IMAGE_TOKEN_RE = /\[img-[\s\S]*?\]/gi;
+const MOMENT_BQB_ATTACHMENT_TOKEN_RE = /\[bqb-attachment[^\]\r\n]*\]+/gi;
+
+export const stripMomentImageTokensForPrompt = (value = '') => String(value ?? '')
+  .replace(MOMENT_INLINE_IMAGE_TOKEN_RE, ' ')
+  .replace(MOMENT_BQB_ATTACHMENT_TOKEN_RE, ' ')
+  .replace(/[ \t]+\n/g, '\n')
+  .replace(/[ \t]{2,}/g, ' ')
+  .replace(/\n{3,}/g, '\n\n')
+  .trim();
+
+export const buildMomentPromptContentText = (
+  content = '',
+  {
+    normalizeText = value => String(value ?? ''),
+  } = {},
+) => {
+  const stripped = stripMomentImageTokensForPrompt(content);
+  const normalized = String(normalizeText(stripped) || '').trim();
+  return stripMomentImageTokensForPrompt(normalized || stripped);
+};
+
+export const buildMomentCommentSideEffectInstructions = ({
+  enabled = true,
+  userName = '{{user}}',
+} = {}) => {
+  if (enabled === false) return '';
+  const displayUser = String(userName || '').trim() || '{{user}}';
+  return [
+    '【可选联动】',
+    '决策指南：',
+    '请根据以下几点，并结合角色性格，判断是否需要在公开评论之外发起私聊或群聊：',
+    '1. 话题是否私密或敏感？涉及个人情感、秘密、暧昧、只适合单独说的话，倾向私聊。',
+    '2. 你和用户的关系是否足够亲密？恋人、挚友、信任关系中的悄悄话，倾向私聊。',
+    '3. 用户是否在寻求安慰，或表达强烈负面情绪？如果是，倾向由合适角色发起私聊。',
+    '4. 话题是否适合公开讨论、分享或让多人参与？如果适合，倾向群聊。',
+    '5. 动态是否只是简单日常、轻松玩笑、晒图、点赞式互动？通常只需要公开评论，不要小题大做。',
+    '6. 如果决定私聊，发起者不限于动态发布者；任何因动态内容、与用户关系或自身性格而觉得有必要深入沟通的联系人，都可以发起私聊。',
+    '',
+    '输出格式：',
+    '- 公开评论仍必须输出 moment_reply_start/moment_reply_end。',
+    '- 如果决定私聊，可在评论区块之后追加一个或多个私聊标签块，但总数不超过 3 个：',
+    `<${displayUser}和联系人名的私聊>`,
+    '联系人名--消息内容',
+    `</${displayUser}和联系人名的私聊>`,
+    '- 如果决定群聊，可在评论区块之后追加一个群聊标签块：',
+    '<群聊：群名>',
+    '群成员名--消息内容',
+    '</群聊：群名>',
+    '- 如果不需要深入交流，不要输出任何私聊或群聊标签。',
+    '',
+    '注意事项：',
+    '- 最终决定必须符合角色性格；外向、爱热闹的角色更可能群聊回应，内向、体贴的角色更可能私聊。',
+    '- 私聊/群聊必须少量、自然、与这条动态强相关；不要为了联动而强行开启聊天。',
+  ].join('\n');
+};
+
 export const buildMomentCommentPromptData = ({
+  taskTitle = 'QQ空间动态评论回复（数据）',
   authorName = '',
   content = '',
   time = '',
+  userSectionTitle = '用户评论',
   userLine = '',
   isReplyToComment = false,
   replyTo = null,
   recentComments = '',
   contactList = '',
+  sideEffectInstructions = '',
 } = {}) => `
-【QQ空间动态评论回复（数据）】
+【${String(taskTitle || '').trim() || 'QQ空间动态评论回复（数据）'}】
 发布者: ${String(authorName || '').trim() || '发布者'}
 动态内容: ${String(content || '').trim()}
 动态时间: ${String(time || '').trim() || '（未知）'}
 
-【用户评论】
+【${String(userSectionTitle || '').trim() || '用户评论'}】
 ${String(userLine || '').trim()}
 
 ${
@@ -381,7 +441,73 @@ ${String(recentComments || '').trim()}
 
 【可用联系人名单】
 ${String(contactList || '').trim() || '-（无）'}
+
+${String(sideEffectInstructions || '').trim()}
 `.trim();
+
+const getMomentImageAssetUrl = (asset = {}, { resolveImageUrl = null } = {}) => {
+  if (!asset || typeof asset !== 'object') return '';
+  if (typeof resolveImageUrl === 'function') {
+    try {
+      const resolved = String(resolveImageUrl(asset) || '').trim();
+      if (resolved) return resolved;
+    } catch {}
+  }
+  const output = asset.output && typeof asset.output === 'object' ? asset.output : {};
+  return String(output.dataUrl || output.url || output.path || asset.url || asset.dataUrl || '').trim();
+};
+
+const buildMomentImageAssetFromToken = (payload = '') => {
+  const raw = String(payload || '').trim();
+  if (!raw) return null;
+  if (/^(data:image\/|https?:|blob:|file:|asset:|tauri:|app:)/i.test(raw)) {
+    return { output: { url: raw, dataUrl: raw.startsWith('data:image/') ? raw : '' } };
+  }
+  return { output: { path: raw } };
+};
+
+export const buildMomentImageAttachmentParts = async (
+  moment = {},
+  {
+    resolveImageUrl = null,
+    toLlmImageUrl = async url => url,
+    maxImages = 4,
+  } = {},
+) => {
+  const limit = Math.max(0, Math.trunc(Number(maxImages) || 0));
+  if (!limit) return [];
+  const candidates = [];
+  (Array.isArray(moment?.generatedImages) ? moment.generatedImages : []).forEach((asset) => {
+    if (asset && typeof asset === 'object') candidates.push(asset);
+  });
+  const content = String(moment?.content || '');
+  const tokenRe = /\[img-([\s\S]+?)\]/gi;
+  let match;
+  while ((match = tokenRe.exec(content))) {
+    const asset = buildMomentImageAssetFromToken(match[1]);
+    if (asset) candidates.push(asset);
+  }
+
+  const parts = [];
+  const seenSource = new Set();
+  const seenFinal = new Set();
+  for (const candidate of candidates) {
+    if (parts.length >= limit) break;
+    const sourceUrl = getMomentImageAssetUrl(candidate, { resolveImageUrl });
+    if (!sourceUrl || seenSource.has(sourceUrl)) continue;
+    seenSource.add(sourceUrl);
+    let llmUrl = '';
+    try {
+      llmUrl = String(await toLlmImageUrl(sourceUrl, candidate) || '').trim();
+    } catch {}
+    const finalUrl = llmUrl || sourceUrl;
+    if (!/^(data:image\/|https?:)/i.test(finalUrl)) continue;
+    if (seenFinal.has(finalUrl)) continue;
+    seenFinal.add(finalUrl);
+    parts.push({ type: 'image_url', image_url: { url: finalUrl } });
+  }
+  return parts;
+};
 
 export const buildMomentCommentContactList = (
   contacts,
@@ -394,6 +520,7 @@ export const buildMomentCommentContactList = (
   [String(authorName || '').trim(), ...(Array.isArray(contacts) ? contacts : [])].forEach((value) => {
     const name = String(value || '').trim();
     if (!name) return;
+    if (name.toLowerCase().startsWith('rp:')) return;
     if (names.includes(name)) return;
     names.push(name);
   });
@@ -403,19 +530,58 @@ export const buildMomentCommentContactList = (
     .join('\n');
 };
 
+const isInternalMomentContact = (contact = {}) => {
+  const id = String(contact?.id || '').trim().toLowerCase();
+  const name = String(contact?.name || '').trim().toLowerCase();
+  return id.startsWith('rp:') || name.startsWith('rp:');
+};
+
 export const collectMomentCommentContactList = (
   contactsStore,
   {
     authorName = '',
     maxItems = 16,
+    excludeNames = [],
   } = {},
 ) => {
+  const blockedNames = new Set(
+    ['我', '用户', 'user', ...(Array.isArray(excludeNames) ? excludeNames : [])]
+      .map((name) => String(name || '').trim().toLowerCase())
+      .filter(Boolean),
+  );
   const contacts = (contactsStore?.listContacts?.() || [])
-    .filter((contact) => contact && !contact.isGroup)
+    .filter((contact) => contact && !contact.isGroup && !isInternalMomentContact(contact))
     .map((contact) => String(contact.name || contact.id || '').trim())
     .filter(Boolean)
-    .filter((name) => name !== '我' && name !== '用户' && name.toLowerCase() !== 'user');
+    .filter((name) => !blockedNames.has(name.toLowerCase()));
   return buildMomentCommentContactList(contacts, { authorName, maxItems });
+};
+
+export const resolveMomentPublishCommentTarget = ({
+  contactsStore = null,
+  authorName = '',
+  userName = '',
+  normalizeName = normalizeNameValue,
+} = {}) => {
+  const normalize = typeof normalizeName === 'function' ? normalizeName : normalizeNameValue;
+  const blockedNames = new Set(
+    ['我', '用户', 'user', authorName, userName]
+      .map((name) => normalize(name).toLowerCase())
+      .filter(Boolean),
+  );
+  const rawContacts = contactsStore?.listContacts?.();
+  const contacts = Array.isArray(rawContacts) ? rawContacts : [];
+  for (const contact of contacts) {
+    if (!contact || contact.isGroup || isInternalMomentContact(contact)) continue;
+    const name = String(contact.name || contact.id || '').trim();
+    const normalizedName = normalize(name);
+    if (!normalizedName || blockedNames.has(normalizedName.toLowerCase())) continue;
+    return {
+      name: normalizedName,
+      sessionId: String(contact.id || '').trim(),
+    };
+  }
+  return { name: '', sessionId: '' };
 };
 
 export const buildMomentCommentTaskContext = ({
@@ -424,6 +590,9 @@ export const buildMomentCommentTaskContext = ({
   authorName = '',
   originSessionId = '',
   promptData = '',
+  mode = 'comment',
+  userAttachmentParts = [],
+  skipScripts = true,
   isReplyToComment = false,
   replyTo = null,
 } = {}) => {
@@ -441,12 +610,26 @@ export const buildMomentCommentTaskContext = ({
     history: [],
     task: {
       type: 'moment_comment',
+      mode: String(mode || '').trim() || 'comment',
       targetSessionId: String(resolvedTarget?.sessionId || '').trim(),
       targetName: String(resolvedTarget?.name || '').trim(),
       promptData: String(promptData || ''),
     },
     session: { id: String(originSessionId || '').trim(), isGroup: false },
   };
+  const attachments = Array.isArray(userAttachmentParts)
+    ? userAttachmentParts.filter((part) => part && typeof part === 'object')
+    : [];
+  const meta = {};
+  if (skipScripts !== false) {
+    meta.skipScripts = true;
+  }
+  if (attachments.length) {
+    meta.userAttachmentParts = attachments;
+  }
+  if (Object.keys(meta).length) {
+    context.meta = meta;
+  }
   if (isReplyToComment) {
     context.task.isReplyToComment = true;
     context.task.replyToCommentId = String(replyTo?.id || '').trim();
@@ -531,11 +714,21 @@ export const patchMomentReplyComments = (
 export const resolveMomentReplyEventTarget = ({
   eventMomentId = '',
   currentMomentId = '',
+  forceCurrentMomentId = false,
   momentsStore = null,
   logger = null,
   incomingCount = 0,
 } = {}) => {
-  const requestedId = String(eventMomentId || '').trim();
+  const rawRequestedId = String(eventMomentId || '').trim();
+  const compactRequestedId = rawRequestedId.replace(/\s+/g, '').toLowerCase();
+  const isPlaceholderId = Boolean(
+    compactRequestedId === '动态id' ||
+      compactRequestedId === 'moment_id' ||
+      compactRequestedId === 'momentid' ||
+      compactRequestedId === 'id' ||
+      (rawRequestedId.includes('动态ID') && rawRequestedId.includes('moment_id')),
+  );
+  const requestedId = forceCurrentMomentId || isPlaceholderId ? '' : rawRequestedId;
   let momentId = requestedId || String(currentMomentId || '').trim();
   let targetMoment = momentsStore?.get?.(momentId);
   if (!targetMoment && currentMomentId && currentMomentId !== momentId) {
@@ -638,6 +831,73 @@ export const buildMomentPrivateChatMessages = (
     .filter(Boolean);
 };
 
+export const buildMomentGroupChatMessages = (
+  messages,
+  {
+    getActiveUserName = () => '我',
+    normalizeName = normalizeNameValue,
+    normalizeLooseName = normalizeNameValue,
+    parseSpecialMessage = (content) => ({ type: 'text', content, meta: {} }),
+    userAvatar = '',
+    resolveGroupSpeakerContact = () => null,
+    resolveGroupSpeakerAvatar = () => '',
+    formatNowTime = () => '',
+    targetSessionId = '',
+  } = {},
+) => {
+  const list = Array.isArray(messages) ? messages : [];
+  const userDisplayName = String(getActiveUserName?.() || '').trim();
+  const userKey = normalizeName(userDisplayName).replace(/[：:]/g, '').trim();
+  const sessionId = String(targetSessionId || '').trim();
+  return list
+    .map((message) => {
+      const payload = message && typeof message === 'object' ? message : { content: message };
+      const speakerRaw = String(payload?.speaker || '').trim();
+      const content = String(payload?.content || '').trim();
+      if (!content) return null;
+      const speakerKey = normalizeName(speakerRaw).replace(/[：:]/g, '').trim();
+      const isMe = Boolean(
+        speakerKey &&
+          userKey &&
+          (speakerKey === userKey || normalizeLooseName(speakerKey) === normalizeLooseName(userKey)),
+      );
+      const time =
+        String(payload?.time || '').trim() ||
+        String(formatNowTime?.() || '').trim();
+      if (isMe) {
+        const parsed = parseSpecialMessage(content);
+        return {
+          role: 'user',
+          message: {
+            role: 'user',
+            type: 'text',
+            ...parsed,
+            name: userDisplayName,
+            avatar: userAvatar,
+            time,
+            meta: { ...(parsed.meta || {}), generatedByAssistant: true },
+          },
+        };
+      }
+      const speakerContact = resolveGroupSpeakerContact?.(speakerRaw, sessionId) || null;
+      const parsed = parseSpecialMessage(content);
+      return {
+        role: 'assistant',
+        message: {
+          role: 'assistant',
+          type: 'text',
+          ...parsed,
+          name: speakerRaw || '成员',
+          avatar: resolveGroupSpeakerAvatar?.(speakerRaw, sessionId, speakerContact) || '',
+          time,
+          showName: true,
+          speakerContactId: String(speakerContact?.id || '').trim(),
+        },
+      };
+    })
+    .filter(Boolean);
+};
+
 export const applyMomentCommentEvents = (
   events,
   {
@@ -651,6 +911,7 @@ export const applyMomentCommentEvents = (
     normalizeMomentComments = value => value,
     addMoments = () => {},
     addMomentComments = () => null,
+    forceCurrentMomentId = false,
     isReplyToComment = false,
     replyTo = null,
     targetName = '',
@@ -659,9 +920,13 @@ export const applyMomentCommentEvents = (
     resolvePrivateChatTargetSessionId = () => '',
     buildPrivateChatMessages = () => [],
     appendPrivateChatMessage = () => null,
+    resolveGroupChatTargetSessionId = () => '',
+    buildGroupChatMessages = () => [],
+    appendGroupChatMessage = () => null,
     autoMarkReadIfActive = () => {},
     onTouchedChats = () => {},
     onTouchedMoments = () => {},
+    allowSideEffects = true,
   } = {},
 ) => {
   let touchedMoments = false;
@@ -685,6 +950,7 @@ export const applyMomentCommentEvents = (
       const { momentId, targetMoment } = resolveMomentReplyEventTarget({
         eventMomentId: event.momentId,
         currentMomentId,
+        forceCurrentMomentId,
         momentsStore,
         logger,
         incomingCount: incoming.length,
@@ -719,11 +985,25 @@ export const applyMomentCommentEvents = (
       return;
     }
     if (event.type === 'private_chat') {
+      if (allowSideEffects === false) return;
       const targetSessionId = resolvePrivateChatTargetSessionId(event.otherName);
       if (!targetSessionId) return;
       const messages = buildPrivateChatMessages(event.messages, targetSessionId);
       messages.forEach(({ role, message }) => {
         const saved = appendPrivateChatMessage(message, targetSessionId);
+        if (role === 'assistant') {
+          autoMarkReadIfActive(targetSessionId, saved?.id || message?.id || '');
+        }
+        touchedChats = true;
+      });
+    }
+    if (event.type === 'group_chat') {
+      if (allowSideEffects === false) return;
+      const targetSessionId = resolveGroupChatTargetSessionId(event.groupName);
+      if (!targetSessionId) return;
+      const messages = buildGroupChatMessages(event.messages, targetSessionId);
+      messages.forEach(({ role, message }) => {
+        const saved = appendGroupChatMessage(message, targetSessionId);
         if (role === 'assistant') {
           autoMarkReadIfActive(targetSessionId, saved?.id || message?.id || '');
         }
@@ -887,20 +1167,26 @@ export const createMomentCommentLifecycleRuntime = ({
   addMomentComments = (momentId, comments) => momentsStore?.addComments?.(momentId, comments),
   bumpMomentEngagement = () => {},
   resolvePrivateChatTargetSessionId = null,
+  resolveGroupChatTargetSessionId = () => '',
+  resolveGroupSpeakerContact = () => null,
+  resolveGroupSpeakerAvatar = () => '',
   parseSpecialMessage = content => ({ type: 'text', content, meta: {} }),
   userAvatar = '',
   resolveAssistantAvatar = () => '',
   formatNowTime = () => '',
   appendPrivateChatMessage = () => null,
+  appendGroupChatMessage = () => null,
   autoMarkReadIfActive = () => {},
   onTouchedChats = () => {},
   onTouchedMoments = () => {},
+  getAllowMomentCommentSideEffects = () => true,
   generate = async () => '',
   createParser = () => ({ push: () => [] }),
   normalizeChunk = chunk => chunk,
   runGeneration = runMomentCommentGeneration,
   retryMomentReply = runMomentReplyRetry,
   saveRawReply = async () => {},
+  buildPublishedMomentAttachmentParts = async () => [],
   flushMoments = async () => {},
   applySummaryFromRaw = applyMomentSummaryFromRaw,
   addSummary = async () => {},
@@ -936,13 +1222,20 @@ export const createMomentCommentLifecycleRuntime = ({
 
   return async (momentId, commentText, meta = null) => {
     const id = String(momentId || '').trim();
+    const mode = String(meta?.mode || meta?.source || meta?.kind || '').trim().toLowerCase();
+    const isPublishedMomentComment =
+      mode === 'moment_publish' ||
+      mode === 'published_moment' ||
+      mode === 'publish_comment' ||
+      meta?.publishedMoment === true ||
+      meta?.isPublishedMoment === true;
     const userComment = String(commentText || '').trim();
-    if (!id || !userComment) {
+    if (!id || (!userComment && !isPublishedMomentComment)) {
       record(buildMomentCommentSkippedTraceEvent({
         momentId: id,
         reason: 'missing-input',
         hasMomentId: Boolean(id),
-        hasText: Boolean(userComment),
+        hasText: Boolean(userComment) || Boolean(isPublishedMomentComment),
       }));
       return { ok: false, reason: 'missing-input' };
     }
@@ -984,6 +1277,7 @@ export const createMomentCommentLifecycleRuntime = ({
     const originSessionId = String(
       moment.originSessionId || moment.authorId || getCurrentSessionId() || '',
     ).trim();
+    const activeUserName = String(getActiveUserName?.() || '').trim();
     const userCommentId = String(meta?.userCommentId || '').trim();
     const replyTo =
       meta && typeof meta === 'object' && meta.replyTo && typeof meta.replyTo === 'object'
@@ -995,27 +1289,52 @@ export const createMomentCommentLifecycleRuntime = ({
         : null;
     const isReplyToComment = Boolean(replyTo?.id);
     const contactList = collectMomentCommentContactList(contactsStore, {
-      authorName,
+      authorName: isPublishedMomentComment ? '' : authorName,
       maxItems: 16,
+      excludeNames: isPublishedMomentComment ? [authorName, activeUserName] : [],
     });
-    const target = resolveMomentReplyTarget({
-      isReplyToComment,
-      replyTo,
-      authorName,
-      originSessionId,
-      resolvePrivateChatTargetSessionId: resolvePrivateTarget,
-      normalizeName: normalize,
-    });
+    const target = isPublishedMomentComment
+      ? resolveMomentPublishCommentTarget({
+          contactsStore,
+          authorName,
+          userName: activeUserName,
+          normalizeName: normalize,
+        })
+      : resolveMomentReplyTarget({
+          isReplyToComment,
+          replyTo,
+          authorName,
+          originSessionId,
+          resolvePrivateChatTargetSessionId: resolvePrivateTarget,
+          normalizeName: normalize,
+        });
     const recentComments = buildMomentRecentCommentsText(moment.comments, {
       normalizeText: normalizeStickerTextForPrompt,
     });
-    const userLine = isReplyToComment
+    const momentPromptContent = buildMomentPromptContentText(moment.content || '', {
+      normalizeText: normalizeStickerTextForPrompt,
+    });
+    const allowSideEffects = getAllowMomentCommentSideEffects?.() !== false;
+    const sideEffectInstructions = buildMomentCommentSideEffectInstructions({
+      enabled: allowSideEffects,
+      userName: activeUserName || '{{user}}',
+    });
+    const userLine = isPublishedMomentComment
+      ? [
+          '{{user}}刚刚发布了这条动态。',
+          '请让可用联系人对这条动态进行自然评论；不要代替{{user}}追加评论，也不要让{{user}}自评。',
+        ].join('\n')
+      : isReplyToComment
       ? `{{user}}回复了${replyTo.author}：{{lastUserMessage}}`
       : `{{user}}：{{lastUserMessage}}`;
     const promptData = buildMomentCommentPromptData({
+      taskTitle: isPublishedMomentComment
+        ? 'QQ空间动态发布后评论（数据）'
+        : 'QQ空间动态评论回复（数据）',
       authorName,
-      content: String(normalizeStickerTextForPrompt(moment.content || '') || '').trim(),
+      content: momentPromptContent || '（无文字，仅图片动态）',
       time: String(moment.time || '').trim(),
+      userSectionTitle: isPublishedMomentComment ? '用户发布动态' : '用户评论',
       userLine,
       isReplyToComment,
       replyTo: isReplyToComment
@@ -1026,6 +1345,7 @@ export const createMomentCommentLifecycleRuntime = ({
         : null,
       recentComments,
       contactList: contactList || '-（无）',
+      sideEffectInstructions,
     });
     const applyEvents = (events = []) => applyMomentCommentEvents(events, {
       currentMomentId: id,
@@ -1038,6 +1358,7 @@ export const createMomentCommentLifecycleRuntime = ({
       normalizeMomentComments,
       addMoments,
       addMomentComments,
+      forceCurrentMomentId: true,
       isReplyToComment,
       replyTo,
       targetName: target?.name,
@@ -1054,14 +1375,33 @@ export const createMomentCommentLifecycleRuntime = ({
         formatNowTime,
       }),
       appendPrivateChatMessage,
+      resolveGroupChatTargetSessionId,
+      buildGroupChatMessages: (messages, targetSessionId) => buildMomentGroupChatMessages(messages, {
+        getActiveUserName,
+        normalizeName: normalize,
+        normalizeLooseName: normalizeLoose,
+        parseSpecialMessage,
+        userAvatar: typeof userAvatar === 'function' ? userAvatar() : userAvatar,
+        resolveGroupSpeakerContact,
+        resolveGroupSpeakerAvatar,
+        formatNowTime,
+        targetSessionId,
+      }),
+      appendGroupChatMessage,
       autoMarkReadIfActive,
       onTouchedChats,
       onTouchedMoments,
+      allowSideEffects,
     });
 
     let momentCommentTraceStarted = false;
     try {
       const config = getConfig() || {};
+      const userAttachmentParts = isPublishedMomentComment
+        ? await Promise.resolve(buildPublishedMomentAttachmentParts(moment, { momentId: id }))
+          .then(parts => (Array.isArray(parts) ? parts : []))
+          .catch(() => [])
+        : [];
       const context = buildMomentCommentTaskContext({
         userProfile: getActiveUserProfile(),
         target,
@@ -1070,6 +1410,8 @@ export const createMomentCommentLifecycleRuntime = ({
         promptData,
         isReplyToComment,
         replyTo,
+        mode: isPublishedMomentComment ? 'published_moment' : 'comment',
+        userAttachmentParts,
       });
       momentCommentTraceStarted = true;
       record(buildMomentCommentStartTraceEvent({
@@ -1084,18 +1426,25 @@ export const createMomentCommentLifecycleRuntime = ({
         hasRecentComments: Boolean(recentComments),
       }));
 
-      const { fullRaw, sawMomentReply } = await runGeneration(userComment, context, {
+      const generationInput = isPublishedMomentComment
+        ? (momentPromptContent || '（无文字，仅图片动态）')
+        : userComment;
+      const { fullRaw, sawMomentReply } = await runGeneration(generationInput, context, {
         stream: Boolean(config.stream),
         generate,
         createParser,
         normalizeChunk,
         applyEvents,
-        saveRaw: raw => saveRawReply(raw, {
-          momentId: id,
-          author: authorName,
-          time: moment?.time || '',
-          comment: userComment,
-        }),
+        saveRaw: raw => {
+          const metadata = {
+            momentId: id,
+            author: authorName,
+            time: moment?.time || '',
+            comment: isPublishedMomentComment ? '用户发布动态' : userComment,
+          };
+          if (isPublishedMomentComment) metadata.mode = 'published_moment';
+          return saveRawReply(raw, metadata);
+        },
         retryUnhandledReply: (raw, parseText) =>
           retryMomentReply(raw, {
             parseText,

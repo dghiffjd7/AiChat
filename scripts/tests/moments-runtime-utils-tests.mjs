@@ -12,7 +12,11 @@ import {
   buildMomentLifecycleTraceEvent,
   buildMomentCommentContactList,
   buildMomentCommentPromptData,
+  buildMomentCommentSideEffectInstructions,
   buildMomentCommentTaskContext,
+  buildMomentGroupChatMessages,
+  buildMomentImageAttachmentParts,
+  buildMomentPromptContentText,
   buildMomentPrivateChatMessages,
   buildMomentRecentCommentsText,
   buildMomentSummaryCompactionFinishTraceEvent,
@@ -25,11 +29,13 @@ import {
   extractMomentSummaryText,
   patchMomentReplyComments,
   resolveMomentReplyEventTarget,
+  resolveMomentPublishCommentTarget,
   resolveMomentReplyTarget,
   resolvePrivateChatTargetSessionIdByName,
   runMomentCommentGeneration,
   runMomentReplyRetry,
   sanitizeThinkingForMomentReply,
+  stripMomentImageTokensForPrompt,
 } from '../../src/scripts/ui/chat/moments-runtime-utils.js';
 
 {
@@ -299,6 +305,7 @@ import {
     recentComments: '- author::甲 | content::hi',
     contactList: '- 发布者\n- 甲',
   });
+  assert.doesNotMatch(text, /moment_id/);
   assert.match(text, /发布者: 发布者/);
   assert.match(text, /reply_to_author: 甲/);
   assert.match(text, /当前评论列表/);
@@ -307,7 +314,41 @@ import {
 }
 
 {
-  const list = buildMomentCommentContactList(['甲', '乙', '甲', '', '我', 'user'], {
+  const stripped = stripMomentImageTokensForPrompt('正文\n[img-/tmp/generated.png]\n[bqb-attachment_moments_generated_images_a.png]]\n尾声');
+  assert.equal(stripped, '正文\n\n尾声');
+  const content = buildMomentPromptContentText('今天晴朗\n[img-/tmp/a.png]\n[bqb-attachment_moments_generated_images_b.png]]', {
+    normalizeText: value => String(value || '').trim(),
+  });
+  assert.equal(content, '今天晴朗');
+  console.log('ok - moment prompt content strips generated image tokens before sending text');
+}
+
+{
+  const parts = await buildMomentImageAttachmentParts({
+    content: '正文\n[img-/tmp/a.png]\n[img-https://example.test/b.png]',
+    generatedImages: [
+      { output: { path: '/tmp/a.png' } },
+      { output: { dataUrl: 'data:image/png;base64,CCC' } },
+    ],
+  }, {
+    resolveImageUrl: asset => {
+      const path = String(asset?.output?.path || '').trim();
+      if (path === '/tmp/a.png') return 'asset://a.png';
+      return String(asset?.output?.dataUrl || asset?.output?.url || '').trim();
+    },
+    toLlmImageUrl: async url => (url === 'asset://a.png' ? 'data:image/png;base64,AAA' : url),
+    maxImages: 4,
+  });
+  assert.deepEqual(parts, [
+    { type: 'image_url', image_url: { url: 'data:image/png;base64,AAA' } },
+    { type: 'image_url', image_url: { url: 'data:image/png;base64,CCC' } },
+    { type: 'image_url', image_url: { url: 'https://example.test/b.png' } },
+  ]);
+  console.log('ok - buildMomentImageAttachmentParts converts generated moment images into prompt image parts');
+}
+
+{
+  const list = buildMomentCommentContactList(['甲', '乙', '甲', '', 'rp:default', '我', 'user'], {
     authorName: '发布者',
     maxItems: 3,
   });
@@ -319,6 +360,7 @@ import {
   const list = collectMomentCommentContactList({
     listContacts: () => [
       { id: 'u1', name: '我' },
+      { id: 'rp:default', name: '' },
       { id: 'u2', name: '甲' },
       { id: 'u3', name: '乙', isGroup: true },
       { id: 'u4', name: '甲' },
@@ -331,6 +373,23 @@ import {
   });
   assert.equal(list, '- 发布者\n- 甲\n- 丙');
   console.log('ok - collectMomentCommentContactList filters self/group contacts before building prompt list');
+}
+
+{
+  const target = resolveMomentPublishCommentTarget({
+    authorName: '我',
+    userName: '我',
+    contactsStore: {
+      listContacts: () => [
+        { id: 'user:1', name: '我' },
+        { id: 'rp:default', name: '' },
+        { id: 'group:1', name: '群', isGroup: true },
+        { id: 'contact:alice', name: 'Alice' },
+      ],
+    },
+  });
+  assert.deepEqual(target, { name: 'Alice', sessionId: 'contact:alice' });
+  console.log('ok - resolveMomentPublishCommentTarget selects first non-user contact for published moment comments');
 }
 
 {
@@ -351,10 +410,22 @@ import {
   });
   assert.equal(ctx.user.name, '我');
   assert.equal(ctx.task.type, 'moment_comment');
+  assert.equal(ctx.meta?.skipScripts, true);
   assert.equal(ctx.task.replyToCommentId, 'c1');
   assert.equal(ctx.task.replyToAuthor, '甲');
   assert.equal(ctx.character.name, '发布者');
   console.log('ok - buildMomentCommentTaskContext builds task payload with optional reply metadata');
+}
+
+{
+  const text = buildMomentCommentSideEffectInstructions({ enabled: true, userName: '我' });
+  assert.match(text, /决策/);
+  assert.match(text, /话题是否私密或敏感/);
+  assert.match(text, /总数不超过 3 个/);
+  assert.match(text, /<我和联系人名的私聊>/);
+  assert.match(text, /<群聊：群名>/);
+  assert.equal(buildMomentCommentSideEffectInstructions({ enabled: false }), '');
+  console.log('ok - buildMomentCommentSideEffectInstructions is controlled by setting flag');
 }
 
 {
@@ -397,6 +468,55 @@ import {
   assert.equal(result.targetMoment?.id, 'm1');
   assert.equal(warnings.length, 1);
   console.log('ok - resolveMomentReplyEventTarget falls back to current moment before warning hard failure');
+}
+
+{
+  const warnings = [];
+  const store = {
+    get(id) {
+      return id === 'm1' ? { id: 'm1' } : null;
+    },
+    list() {
+      return [{ id: 'm1' }];
+    },
+  };
+  const result = resolveMomentReplyEventTarget({
+    eventMomentId: '动态ID',
+    currentMomentId: 'm1',
+    momentsStore: store,
+    logger: { warn: (...args) => warnings.push(args) },
+    incomingCount: 2,
+  });
+  assert.equal(result.momentId, 'm1');
+  assert.equal(result.targetMoment?.id, 'm1');
+  assert.equal(warnings.length, 0);
+  console.log('ok - resolveMomentReplyEventTarget treats copied placeholder moment ids as current without warning');
+}
+
+{
+  const warnings = [];
+  const store = {
+    get(id) {
+      if (id === 'm1') return { id: 'm1' };
+      if (id === 'm2') return { id: 'm2' };
+      return null;
+    },
+    list() {
+      return [{ id: 'm1' }, { id: 'm2' }];
+    },
+  };
+  const result = resolveMomentReplyEventTarget({
+    eventMomentId: 'm2',
+    currentMomentId: 'm1',
+    forceCurrentMomentId: true,
+    momentsStore: store,
+    logger: { warn: (...args) => warnings.push(args) },
+    incomingCount: 2,
+  });
+  assert.equal(result.momentId, 'm1');
+  assert.equal(result.targetMoment?.id, 'm1');
+  assert.equal(warnings.length, 0);
+  console.log('ok - resolveMomentReplyEventTarget can force single-target replies back to current moment');
 }
 
 {
@@ -715,6 +835,104 @@ import {
 }
 
 {
+  const rawReply = [
+    'moment_reply_start',
+    'moment_id:: m2',
+    'Alice--看起来不错',
+    'moment_reply_end',
+  ].join('\n');
+  const comments = [];
+  const rawSaves = [];
+  const runtime = createMomentCommentLifecycleRuntime({
+    getIsConfigured: () => true,
+    isOnline: () => true,
+    getConfig: () => ({ stream: false }),
+    getMoment: id => (id === 'm2'
+      ? {
+          id: 'm2',
+          author: '我',
+          content: '今天晴朗\n[img-/tmp/hidden-prompt.png]\n[bqb-attachment_moments_generated_images_hidden.png]]',
+          time: '12:00',
+          originSessionId: 'user:1',
+          generatedImages: [{ output: { dataUrl: 'data:image/png;base64,AAA' } }],
+          comments: [],
+        }
+      : null),
+    getCurrentSessionId: () => 'user:1',
+    getContactCount: () => 2,
+    getActiveUserProfile: () => ({ name: '我' }),
+    getActiveUserName: () => '我',
+    contactsStore: {
+      listContacts: () => [
+        { id: 'user:1', name: '我' },
+        { id: 'contact:alice', name: 'Alice' },
+        { id: 'contact:bob', name: 'Bob' },
+      ],
+    },
+    momentsStore: {
+      get: id => (id === 'm2' ? { id } : null),
+      list: () => [{ id: 'm2' }],
+    },
+    normalizeName: value => String(value || '').trim(),
+    normalizeLooseName: value => String(value || '').trim(),
+    normalizeStickerTextForPrompt: value => String(value || '').trim(),
+    normalizeMomentComments: value => value,
+    addMomentComments: (momentId, nextComments) => {
+      comments.push({ momentId, comments: nextComments });
+      return { id: momentId };
+    },
+    generate: async (input, context) => {
+      assert.equal(input, '今天晴朗');
+      assert.equal(context.task.mode, 'published_moment');
+      assert.equal(context.task.targetName, 'Alice');
+      assert.match(context.task.promptData, /QQ空间动态发布后评论/);
+      assert.doesNotMatch(context.task.promptData, /moment_id/);
+      assert.match(context.task.promptData, /【用户发布动态】/);
+      assert.match(context.task.promptData, /动态内容: 今天晴朗/);
+      assert.doesNotMatch(context.task.promptData, /本轮没有用户评论或楼中楼回复目标/);
+      assert.doesNotMatch(context.task.promptData, /reply_to/);
+      assert.doesNotMatch(context.task.promptData, /\[img-/);
+      assert.doesNotMatch(context.task.promptData, /bqb-attachment/);
+      assert.match(context.task.promptData, /【可选联动】/);
+      assert.deepEqual(context.meta?.userAttachmentParts, [
+        { type: 'image_url', image_url: { url: 'data:image/png;base64,AAA' } },
+      ]);
+      assert.equal(context.meta?.skipScripts, true);
+      assert.doesNotMatch(context.task.promptData, /- 我/);
+      return rawReply;
+    },
+    createParser: () => ({
+      push: () => [
+        { type: 'moment_reply', momentId: 'm2', comments: [{ author: 'Alice', content: '看起来不错' }] },
+      ],
+    }),
+    saveRawReply: async (raw, metadata) => rawSaves.push({ raw, metadata }),
+    buildPublishedMomentAttachmentParts: moment => buildMomentImageAttachmentParts(moment),
+    flushMoments: async () => {},
+    logger: { warn: () => {}, error: () => {} },
+  });
+
+  const result = await runtime('m2', '', {
+    mode: 'moment_publish',
+    publishedMoment: true,
+  });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(comments[0], {
+    momentId: 'm2',
+    comments: [{ author: 'Alice', content: '看起来不错' }],
+  });
+  assert.deepEqual(rawSaves[0].metadata, {
+    momentId: 'm2',
+    author: '我',
+    time: '12:00',
+    comment: '用户发布动态',
+    mode: 'published_moment',
+  });
+  console.log('ok - createMomentCommentLifecycleRuntime handles published moment comment generation without user comment text');
+}
+
+{
   const events = [];
   const trace = [];
   const store = {
@@ -772,8 +990,9 @@ import {
   const result = applyMomentCommentEvents(
     [
       { type: 'moments', moments: [{ id: 'm2', views: 1, likes: 1 }] },
-      { type: 'moment_reply', momentId: 'm1', comments: [{ author: '甲', content: '回复' }] },
+      { type: 'moment_reply', momentId: 'm2', comments: [{ author: '甲', content: '回复' }] },
       { type: 'private_chat', otherName: '小王', messages: [{ speaker: '小王', content: '私聊' }] },
+      { type: 'group_chat', groupName: '群', messages: [{ speaker: '小王', content: '群聊' }] },
     ],
     {
       currentMomentId: 'm1',
@@ -791,6 +1010,7 @@ import {
         momentComments.push({ momentId, comments });
         return { id: momentId };
       },
+      forceCurrentMomentId: true,
       isReplyToComment: true,
       replyTo: { id: 'c1', author: '甲' },
       targetName: '发布者',
@@ -802,6 +1022,18 @@ import {
       appendPrivateChatMessage: (message, sid) => {
         appended.push({ kind: 'chat', sid, message });
         return { ...message, id: 'msg1' };
+      },
+      resolveGroupChatTargetSessionId: (name) => (name === '群' ? 'group:1' : ''),
+      buildGroupChatMessages: (messages, targetSessionId) => buildMomentGroupChatMessages(messages, {
+        getActiveUserName: () => '我',
+        resolveGroupSpeakerContact: speaker => ({ id: `contact:${speaker}`, name: speaker }),
+        resolveGroupSpeakerAvatar: speaker => `avatar:${speaker}`,
+        parseSpecialMessage: content => ({ type: 'text', content, meta: {} }),
+        targetSessionId,
+      }),
+      appendGroupChatMessage: (message, sid) => {
+        appended.push({ kind: 'group-chat', sid, message });
+        return { ...message, id: 'msg2' };
       },
       autoMarkReadIfActive: () => {},
       bumpMomentEngagement: () => {},
@@ -816,5 +1048,36 @@ import {
   assert.equal(appended[0].kind, 'moments');
   assert.equal(momentComments[0].momentId, 'm1');
   assert.equal(appended[1].sid, 'contact:2');
-  console.log('ok - applyMomentCommentEvents dispatches moment, reply, and private chat mutations');
+  assert.equal(appended[2].sid, 'group:1');
+  assert.equal(appended[2].message.name, '小王');
+  assert.equal(appended[2].message.showName, true);
+  console.log('ok - applyMomentCommentEvents dispatches moment, reply, private chat, and group chat mutations');
+}
+
+{
+  const appended = [];
+  const result = applyMomentCommentEvents(
+    [
+      { type: 'private_chat', otherName: '小王', messages: [{ speaker: '小王', content: '私聊' }] },
+      { type: 'group_chat', groupName: '群', messages: [{ speaker: '小王', content: '群聊' }] },
+    ],
+    {
+      resolvePrivateChatTargetSessionId: () => 'contact:2',
+      buildPrivateChatMessages: (messages) => messages.map(() => ({
+        role: 'assistant',
+        message: { role: 'assistant', type: 'text', content: '私聊' },
+      })),
+      appendPrivateChatMessage: (message, sid) => appended.push({ sid, message }),
+      resolveGroupChatTargetSessionId: () => 'group:1',
+      buildGroupChatMessages: (messages) => messages.map(() => ({
+        role: 'assistant',
+        message: { role: 'assistant', type: 'text', content: '群聊' },
+      })),
+      appendGroupChatMessage: (message, sid) => appended.push({ sid, message }),
+      allowSideEffects: false,
+    },
+  );
+  assert.equal(result.touchedChats, false);
+  assert.deepEqual(appended, []);
+  console.log('ok - applyMomentCommentEvents respects side-effect setting for private and group chat');
 }

@@ -169,7 +169,9 @@ export class GeneralSettingsPanel {
     this.creativeWideToggle = null;
     this.personaBindToggle = null;
     this.promptTimeToggle = null;
+    this.momentCommentSideEffectsToggle = null;
     this.autoImagePromptToggle = null;
+    this.autoImagePromptWritingToggle = null;
     this.autoImagePromptStyleSelect = null;
     this.autoImagePromptAdvancedToggle = null;
     this.autoImagePromptAdvancedWrap = null;
@@ -360,6 +362,9 @@ export class GeneralSettingsPanel {
     }
     if (this.promptTimeToggle) {
       this.promptTimeToggle.checked = settings.promptCurrentTimeEnabled === true;
+    }
+    if (this.momentCommentSideEffectsToggle) {
+      this.momentCommentSideEffectsToggle.checked = settings.momentCommentSideEffectsEnabled !== false;
     }
     if (this.autoImagePromptToggle) {
       this.autoImagePromptToggle.checked = settings.autoImagePromptEnabled === true;
@@ -1882,6 +1887,12 @@ export class GeneralSettingsPanel {
               icon: 'clock',
             })}
             ${this.renderSettingRow({
+              id: 'general-moment-comment-side-effects',
+              title: '动态评论联动私聊 / 群聊',
+              description: '允许动态评论任务在公开评论外，少量写入相关私聊或群聊。',
+              icon: 'reply',
+            })}
+            ${this.renderSettingRow({
               id: 'general-memory-enabled',
               title: '启用记忆系统',
               description: '关闭后不会发送摘要提示词，也不会读写记忆表格。',
@@ -2199,6 +2210,7 @@ export class GeneralSettingsPanel {
     this.uiAdvancedWrap = this.element.querySelector('#general-ui-advanced');
     this.personaBindToggle = this.element.querySelector('#general-persona-bind');
     this.promptTimeToggle = this.element.querySelector('#general-prompt-time');
+    this.momentCommentSideEffectsToggle = this.element.querySelector('#general-moment-comment-side-effects');
     this.autoImagePromptToggle = this.element.querySelector('#general-auto-image-prompt');
     this.autoImagePromptWritingToggle = this.element.querySelector('#general-auto-image-prompt-writing');
     this.autoImagePromptStyleSelect = this.element.querySelector('#general-auto-image-prompt-style');
@@ -2632,6 +2644,11 @@ export class GeneralSettingsPanel {
       const enabled = Boolean(e?.target?.checked);
       appSettings.update({ promptCurrentTimeEnabled: enabled });
       window.dispatchEvent(new CustomEvent('app-settings-changed', { detail: { key: 'promptCurrentTimeEnabled', value: enabled } }));
+    });
+    this.momentCommentSideEffectsToggle?.addEventListener('change', (e) => {
+      const enabled = Boolean(e?.target?.checked);
+      appSettings.update({ momentCommentSideEffectsEnabled: enabled });
+      window.dispatchEvent(new CustomEvent('app-settings-changed', { detail: { key: 'momentCommentSideEffectsEnabled', value: enabled } }));
     });
     this.autoImagePromptToggle?.addEventListener('change', (e) => {
       const enabled = Boolean(e?.target?.checked);

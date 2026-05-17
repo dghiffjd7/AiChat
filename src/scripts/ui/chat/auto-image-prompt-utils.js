@@ -85,6 +85,7 @@ export const restoreProtectedAutoImagePromptTags = (text = '', protection = null
 };
 
 export const DEFAULT_AUTO_IMAGE_PROMPT_RULES = [
+  '<generate_img_rule>',
   '自动生图标签规则，用于生成{{image_prompt_surface}}。',
   '当本轮回复适合配图、或聊天角色会自然发送图片时，在合适的位置插入一个生图提示词标签。',
   '当前图片模型：{{image_prompt_model}}',
@@ -98,7 +99,17 @@ export const DEFAULT_AUTO_IMAGE_PROMPT_RULES = [
   '- [img-内容] 是一般图片格式，<image_prompt> 是文生图格式，二者禁止在同一条内容中混用或嵌套。',
   '- 标签内只写生图提示词，不写解释、编号或 Markdown',
   '若本轮不需要图片，完全不要输出 <image_prompt> 标签。',
+  '</generate_img_rule>',
 ].join('\n');
+
+export const wrapAutoImagePromptInstruction = (value = '') => {
+  const body = String(value || '').trim();
+  if (!body) return '';
+  if (/^<\s*generate_img_rule(?:\s[^>]*)?\s*>[\s\S]*<\s*\/\s*generate_img_rule\s*>$/i.test(body)) {
+    return body;
+  }
+  return `<generate_img_rule>\n${body}\n</generate_img_rule>`;
+};
 
 export const normalizeAutoImagePromptStyle = (value = '') => {
   const raw = String(value || '').trim().toLowerCase();
@@ -232,7 +243,7 @@ export const buildAutoImagePromptInstruction = ({
     : (isGroupChat ? '群聊图片消息' : '私聊图片消息');
   const targetModel = String(modelHint || '').trim() || '未指定图片模型';
   const source = String(template || '').trim() || DEFAULT_AUTO_IMAGE_PROMPT_RULES;
-  return source
+  const rendered = source
     .replace(/\{\{\s*image_prompt_surface\s*\}\}/gi, surface)
     .replace(/\{\{\s*image_prompt_model\s*\}\}/gi, targetModel)
     .replace(/\{\{\s*image_prompt_style\s*\}\}/gi, describeAutoImagePromptStyle(style))
@@ -240,6 +251,7 @@ export const buildAutoImagePromptInstruction = ({
     .replace(/\{\{\s*image_prompt_position_rule\s*\}\}/gi, '')
     .replace(/\{\{\s*image_prompt_tag\s*\}\}/gi, IMAGE_PROMPT_TAG)
     .trim();
+  return wrapAutoImagePromptInstruction(rendered);
 };
 
 const normalizeAutoImagePromptLimit = (max, fallback) => {

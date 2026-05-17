@@ -107,7 +107,7 @@ const LEGACY_DEFAULT_MOMENT_COMMENT_RULES = `
 1) 只输出一个 <content>...</content> 区块，除此之外不要输出任何文字。
 2) <content> 内必须输出一段 moment_reply_start/moment_reply_end：
    moment_reply_start
-   moment_id::动态ID（使用输入中提供的 moment_id）
+   moment_id::输入中提供的 moment_id 原值（不要写“动态ID”）
    评论人--评论内容
    评论人--评论内容
    moment_reply_end
@@ -123,7 +123,7 @@ const DEFAULT_MOMENT_COMMENT_RULES = `
 你正在处理 QQ空间「动态评论回复」任务。
 
 【输入中会提供】
-- moment_id、发布者、动态内容
+- 发布者、动态内容
 - 用户评论（会包含 user_comment_id）
 - 可用联系人名单
 - 可能还会提供：用户是否在回复某条评论（reply_to_comment_id / reply_to_author / reply_to_content）
@@ -131,21 +131,21 @@ const DEFAULT_MOMENT_COMMENT_RULES = `
 【评论回应原则】
 - 动态评论是公开可见的社交场景；回复应简短、自然，并符合角色性格与关系亲疏。
 - 发布者或被回复评论的角色有较高概率回应，但不强制；其他角色可按兴趣、关系和性格自然插话。
-- 不要把动态评论扩展成私聊/群聊剧情，除非本轮任务明确要求。
+- 不要把动态评论扩展成私聊/群聊剧情，除非任务数据明确允许。
 
 【输出硬性要求】
 1) 只输出一个 <content>...</content> 区块，除此之外不要输出任何文字。
 2) <content> 内必须输出一段 moment_reply_start/moment_reply_end：
    moment_reply_start
-   moment_id::动态ID（使用输入中提供的 moment_id）
    评论人--评论内容
    评论人--评论内容--reply_to::comment_id--reply_to_author::名字
    moment_reply_end
-3) “谁来回复”不是强制：
+3) 评论区块里只写评论行。
+4) “谁来回复”不是强制：
    - 当用户在评论动态本身时：发布者对用户评论有较高概率回复，但可按情境与性格自行决定不回复（例如明显无关、骚扰/挑衅言论等）。
    - 当用户在回复某条评论时：被回复的那位角色对用户评论有较高概率回复；同样可按情境与性格自行决定不回复。
-4) 至少输出 1 条评论；若情境合适可多条（可包含其他角色的围观/插话）。
-5) 评论内容若需要换行，使用 <br>。
+5) 至少输出 1 条评论；若情境合适可多条（可包含其他角色的围观/插话）。
+6) 评论内容若需要换行，使用 <br>。
 
 【reply_to 规则（用于楼中楼）】
 - 仅当你要“回复某条评论”时才附加 reply_to::。
@@ -154,7 +154,69 @@ const DEFAULT_MOMENT_COMMENT_RULES = `
 
 【注意】
 - 评论人必须是具体名字（优先从联系人名单中挑选）；不要使用“匿名网友”等敷衍名字。
-- 本场景不要输出私聊/群聊标签块（只输出评论回复）。
+- 未提供【可选联动】时不要输出私聊/群聊标签块；若任务数据明确允许，可按其格式少量附加。
+`.trim();
+
+const COMBINED_DEFAULT_MOMENT_COMMENT_RULES = `
+你正在处理 QQ空间「动态评论 / 发布后评论」任务。
+
+【输入中会提供】
+- 发布者、动态内容
+- 两种任务之一：
+  - 用户评论（会包含 user_comment_id）
+  - 用户刚发布动态（没有用户评论、没有 reply_to）
+- 可用联系人名单
+- 可能还会提供：用户是否在回复某条评论（reply_to_comment_id / reply_to_author / reply_to_content）
+
+【评论回应原则】
+- 动态评论是公开可见的社交场景；回复应简短、自然，并符合角色性格与关系亲疏。
+- 当用户在评论动态本身时：发布者对用户评论有较高概率回复，但可按情境与性格自行决定不回复。
+- 当用户在回复某条评论时：被回复的那位角色对用户评论有较高概率回复；同样可按情境与性格自行决定不回复。
+- 当用户刚发布动态时：本轮没有回复对象，请让可用联系人对这条动态进行自然评论；不要代替 {{user}} 追加评论，也不要强制发布者自评。
+- 不要把动态评论扩展成私聊/群聊剧情，除非任务数据明确允许。
+
+【输出硬性要求】
+1) 只输出一个 <content>...</content> 区块，除此之外不要输出任何文字。
+2) <content> 内必须输出一段 moment_reply_start/moment_reply_end：
+   moment_reply_start
+   评论人--评论内容
+   评论人--评论内容--reply_to::comment_id--reply_to_author::名字
+   moment_reply_end
+3) 评论区块里只写评论行。
+4) “谁来回复”不是强制，但至少输出 1 条评论；若情境合适可多条（可包含其他角色的围观/插话）。
+5) 评论内容若需要换行，使用 <br>。
+
+【reply_to 规则（用于楼中楼）】
+- 仅当你要“回复某条评论”时才附加 reply_to::。
+- reply_to:: 的值必须来自输入里提供的 comment_id / user_comment_id。
+- reply_to_author:: 填被回复的角色名（可用输入里的 reply_to_author 或评论列表里的 author）。
+- 用户刚发布动态时不要附加 reply_to::。
+
+【注意】
+- 评论人必须是具体名字（优先从联系人名单中挑选）；不要使用“匿名网友”等敷衍名字。
+- 未提供【可选联动】时不要输出私聊/群聊标签块；若任务数据明确允许，可按其格式少量附加。
+`.trim();
+
+const DEFAULT_MOMENT_PUBLISH_COMMENT_RULES = `
+你正在处理「评论{{user}}发布的动态」任务。
+
+【评论回应原则】
+- 动态评论是公开可见的社交场景；回复应简短、自然，并符合角色性格与关系亲疏。
+- 评论应由可用联系人发出；不要代替 {{user}} 追加评论，也不要让 {{user}} 自评。
+- 可按联系人与 {{user}} 的关系、兴趣和性格决定谁来评论；不需要所有联系人都出现。
+
+【输出硬性要求】
+1) 只输出一段 moment_reply_start/moment_reply_end 区块，除此之外不要输出任何文字。
+2) 格式如下：
+   moment_reply_start
+   评论人--评论内容
+   moment_reply_end
+3) 评论区块里只写评论行，不写动态 ID。
+4) 至少输出 1 条评论；若情境合适可多条（可包含其他角色的围观/插话）。
+5) 评论内容若需要换行，使用 <br>。
+
+【注意】
+- 评论人必须是具体名字（优先从联系人名单中挑选）；不要使用“匿名网友”等敷衍名字。
 `.trim();
 
 // 摘要提示词：每次回复末尾输出 <details><summary>摘要</summary>...</details>（纯中文）
@@ -171,6 +233,7 @@ const DEFAULT_SUMMARY_RULES = [
 ].join('\n').trim();
 
 const DEFAULT_AUTO_IMAGE_PROMPT_RULES = [
+    '<generate_img_rule>',
     '自动生图标签规则，用于生成{{image_prompt_surface}}。',
     '当本轮回复适合配图、或聊天角色会自然发送图片时，在合适的位置插入一个生图提示词标签。',
     '当前图片模型：{{image_prompt_model}}',
@@ -184,6 +247,7 @@ const DEFAULT_AUTO_IMAGE_PROMPT_RULES = [
     '- [img-内容] 是一般图片格式，<image_prompt> 是文生图格式，二者禁止在同一条内容中混用或嵌套。',
     '- 标签内只写生图提示词，不写解释、编号或 Markdown',
     '若本轮不需要图片，完全不要输出 <image_prompt> 标签。',
+    '</generate_img_rule>',
 ].join('\n').trim();
 
 const CURRENT_MOMENT_CREATE_CONTENT_LINE = '- 如果决定发布动态，请在本轮手机格式回复中输出完整的 `moment_start` ... `moment_end` 区块。';
@@ -261,8 +325,67 @@ const looksDefaultMomentCommentRulesForMigration = (value) => {
 };
 
 const sanitizeMomentCommentRulesText = (value) => {
+    const trimmed = String(value || '').trim();
+    if (
+        trimmed === LEGACY_DEFAULT_MOMENT_COMMENT_RULES.trim() ||
+        trimmed === COMBINED_DEFAULT_MOMENT_COMMENT_RULES.trim() ||
+        (
+            trimmed.includes('你正在处理 QQ空间「动态评论回复」任务。') &&
+            trimmed.includes('moment_id::输入中提供的 moment_id 原值') &&
+            trimmed.includes('【评论回应原则】')
+        ) ||
+        (
+            trimmed.includes('你正在处理 QQ空间「动态评论回复」任务。') &&
+            trimmed.includes('本场景不要输出私聊/群聊标签块（只输出评论回复）') &&
+            trimmed.includes('【评论回应原则】')
+        ) ||
+        (
+            trimmed.includes('你正在处理 QQ空间「动态评论 / 发布后评论」任务。') &&
+            trimmed.includes('moment_id::输入中提供的 moment_id 原值')
+        )
+    ) {
+        return DEFAULT_MOMENT_COMMENT_RULES;
+    }
     if (looksDefaultMomentCommentRulesForMigration(value)) {
         return DEFAULT_MOMENT_COMMENT_RULES;
+    }
+    return stripPromptMigrationNotes(value);
+};
+
+const sanitizeMomentPublishCommentRulesText = (value) => {
+    const trimmed = String(value || '').trim();
+    if (
+        trimmed === COMBINED_DEFAULT_MOMENT_COMMENT_RULES.trim() ||
+        (
+            trimmed.includes('你正在处理 QQ空间「用户发布动态后的评论」任务。') &&
+            trimmed.includes('moment_id::输入中提供的 moment_id 原值')
+        ) ||
+        (
+            trimmed.includes('你正在处理 QQ空间「用户发布动态后的评论」任务。') &&
+            trimmed.includes('moment_id::动态ID（使用输入中提供的 moment_id）')
+        ) ||
+        (
+            trimmed.includes('你正在处理 QQ空间「用户发布动态后的评论」任务。') &&
+            trimmed.includes('【输入中会提供】') &&
+            trimmed.includes('本轮没有回复对象，请让可用联系人对这条动态进行自然评论') &&
+            trimmed.includes('只输出一个 <content>')
+        ) ||
+        (
+            trimmed.includes('你正在处理「评论{{user}}发布的动态」任务。') &&
+            trimmed.includes('程序会自动把评论写回当前动态') &&
+            trimmed.includes('评论区块里只写评论行，不写动态 ID')
+        ) ||
+        (
+            trimmed.includes('你正在处理 QQ空间「用户发布动态后的评论」任务。') &&
+            trimmed.includes('本场景不要输出私聊/群聊标签块（只输出评论回复）') &&
+            trimmed.includes('【评论回应原则】')
+        ) ||
+        (
+            trimmed.includes('你正在处理 QQ空间「动态评论 / 发布后评论」任务。') &&
+            trimmed.includes('moment_id::输入中提供的 moment_id 原值')
+        )
+    ) {
+        return DEFAULT_MOMENT_PUBLISH_COMMENT_RULES;
     }
     return stripPromptMigrationNotes(value);
 };
@@ -280,7 +403,8 @@ const looksDefaultAutoImagePromptRulesForMigration = (value) => {
         raw.includes('自动生图标签规则，用于生成{{image_prompt_surface}}') &&
         raw.includes('提示词风格：{{image_prompt_style}}') &&
         raw.includes('<image_prompt>这里写完整生图提示词</image_prompt>') &&
-        (!raw.includes('{{image_prompt_decision_mode}}') ||
+        (!raw.includes('<generate_img_rule>') ||
+            !raw.includes('{{image_prompt_decision_mode}}') ||
             !raw.includes('[img-内容] 是一般图片格式，<image_prompt> 是文生图格式') ||
             raw.includes('[img-<image_prompt>'))
     ) {
@@ -814,6 +938,15 @@ export class PresetStore {
                 } catch {}
                 p.moment_comment_rules = sanitizeMomentCommentRulesText(p.moment_comment_rules);
 
+                if (typeof p.moment_publish_comment_enabled !== 'boolean') p.moment_publish_comment_enabled = true;
+                if (typeof p.moment_publish_comment_position !== 'number') p.moment_publish_comment_position = 0;
+                if (typeof p.moment_publish_comment_depth !== 'number') p.moment_publish_comment_depth = 0;
+                if (typeof p.moment_publish_comment_role !== 'number') p.moment_publish_comment_role = 0;
+                if (typeof p.moment_publish_comment_rules !== 'string' || !p.moment_publish_comment_rules.trim()) {
+                    p.moment_publish_comment_rules = DEFAULT_MOMENT_PUBLISH_COMMENT_RULES;
+                }
+                p.moment_publish_comment_rules = sanitizeMomentPublishCommentRulesText(p.moment_publish_comment_rules);
+
                 if (typeof p.group_enabled !== 'boolean') p.group_enabled = true;
                 // 群聊提示词：同上，默认放在 prompt 前段。
                 if (typeof p.group_position !== 'number') p.group_position = 0;
@@ -916,6 +1049,15 @@ export class PresetStore {
                     }
                 } catch {}
                 p.moment_comment_rules = sanitizeMomentCommentRulesText(p.moment_comment_rules);
+
+                if (typeof p.moment_publish_comment_enabled !== 'boolean') p.moment_publish_comment_enabled = true;
+                if (typeof p.moment_publish_comment_position !== 'number') p.moment_publish_comment_position = 0;
+                if (typeof p.moment_publish_comment_depth !== 'number') p.moment_publish_comment_depth = 0;
+                if (typeof p.moment_publish_comment_role !== 'number') p.moment_publish_comment_role = 0;
+                if (typeof p.moment_publish_comment_rules !== 'string' || !p.moment_publish_comment_rules.trim()) {
+                    p.moment_publish_comment_rules = DEFAULT_MOMENT_PUBLISH_COMMENT_RULES;
+                }
+                p.moment_publish_comment_rules = sanitizeMomentPublishCommentRulesText(p.moment_publish_comment_rules);
 
                 if (typeof p.moment_create_enabled !== 'boolean') p.moment_create_enabled = false;
                 if (typeof p.moment_create_position !== 'number') p.moment_create_position = 0;

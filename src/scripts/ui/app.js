@@ -144,6 +144,7 @@ import {
   buildMomentContentWithGeneratedImages,
   collectGeneratedImageAssetsFromMessages,
 } from './media-generation-adapter-utils.js';
+import { persistComposedMomentRecord } from './moment-compose-runtime-utils.js';
 import {
   createMediaGenerationService,
   resolveImageReferenceCapability,
@@ -180,6 +181,7 @@ import {
 } from './chat/moment-store-normalize-utils.js';
 import {
   buildMomentLifecycleTraceEvent,
+  buildMomentImageAttachmentParts,
   createMomentCommentLifecycleRuntime,
   createMomentSummaryCompactionRuntime,
   resolvePrivateChatTargetSessionIdByName,
@@ -1974,12 +1976,43 @@ const initApp = async () => {
     addMoments: list => addMomentsWithAutoImage(list),
     addMomentComments: (momentId, comments) => momentsStore.addComments(momentId, comments),
     bumpMomentEngagement,
+    getAllowMomentCommentSideEffects: () => appSettings.get().momentCommentSideEffectsEnabled !== false,
     parseSpecialMessage,
     userAvatar: avatars.user,
     resolveAssistantAvatar: targetSessionId =>
       resolveAvatarForContact(targetSessionId, contactsStore.getContact(targetSessionId)),
+    resolveGroupChatTargetSessionId: groupName => {
+      const raw = String(groupName || '').trim();
+      if (!raw) return '';
+      const direct = contactsStore.findGroupIdByName?.(raw) || '';
+      if (direct) return direct;
+      const loose = value => String(value || '').normalize('NFKC').trim().toLowerCase().replace(/\s+/g, '');
+      const key = loose(raw);
+      const groups = (contactsStore.listContacts?.() || []).filter(
+        item => item && (item.isGroup || String(item.id || '').startsWith('group:')),
+      );
+      const hit = groups.find(item => loose(item.name || item.id) === key);
+      return String(hit?.id || '').trim();
+    },
+    resolveGroupSpeakerContact: (speakerName, groupSessionId) => {
+      const raw = String(speakerName || '').trim();
+      if (!raw) return null;
+      const loose = value => String(value || '').normalize('NFKC').trim().toLowerCase().replace(/\s+/g, '');
+      const group = contactsStore.getContact(groupSessionId);
+      const memberIds = Array.isArray(group?.members) ? group.members.map(String).filter(Boolean) : [];
+      const memberContacts = memberIds.map(id => contactsStore.getContact(id)).filter(Boolean);
+      const candidates = memberContacts.length
+        ? memberContacts
+        : (contactsStore.listContacts?.() || []).filter(item => item && !item.isGroup);
+      return candidates.find(item => String(item?.name || item?.id || '').trim() === raw)
+        || candidates.find(item => loose(item?.name || item?.id || '') === loose(raw))
+        || null;
+    },
+    resolveGroupSpeakerAvatar: (_speakerName, _groupSessionId, speakerContact) =>
+      resolveAvatarForContact(speakerContact?.id || '', speakerContact),
     formatNowTime: () => new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
     appendPrivateChatMessage: (message, targetSessionId) => chatStore.appendMessage(message, targetSessionId),
+    appendGroupChatMessage: (message, targetSessionId) => chatStore.appendMessage(message, targetSessionId),
     autoMarkReadIfActive: (targetSessionId, messageId) => autoMarkReadIfActive(targetSessionId, messageId),
     onTouchedChats: () => refreshChatAndContacts(),
     onTouchedMoments: () => momentsPanel?.render({ preserveScroll: true }),
@@ -1990,6 +2023,11 @@ const initApp = async () => {
       lastMomentRawReply = raw;
       lastMomentRawMeta = metadata;
     },
+    buildPublishedMomentAttachmentParts: moment => buildMomentImageAttachmentParts(moment, {
+      resolveImageUrl: resolveGeneratedImagePreviewUrl,
+      toLlmImageUrl: readImageUrlAsDataUrl,
+      maxImages: 4,
+    }),
     flushMoments: () => momentsStore.flush(),
     addSummary: summary => momentSummaryStore.addSummary(summary),
     runSummaryCompaction: () => requestMomentSummaryCompaction(),
@@ -11911,6 +11949,7 @@ Phase G（Frame 36）：循环衔接
     let apiView = null;
     let activeTab = 'prompt';
     let apiPlainText = '';
+    let previewRequest = null;
 
     const escHtml = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
@@ -12047,7 +12086,7 @@ Phase G（Frame 36）：循环衔接
     };
 
     const refreshApiView = () => {
-      const req = window.appBridge?.lastRequest;
+      const req = previewRequest || window.appBridge?.lastRequest;
       if (!req) {
         if (apiContentEl) apiContentEl.innerHTML = '<div style="padding:20px; color:#6272a4; font-family:monospace; font-size:13px; text-align:center;">暂无 API 请求记录<br><span style="font-size:11px;">请先发送一次消息</span></div>';
         apiPlainText = '';
@@ -12176,9 +12215,10 @@ Phase G（Frame 36）：循环衔接
       });
     };
 
-    const show = (text, meta = '', { onLocate = null, initialTab = 'api' } = {}) => {
+    const show = (text, meta = '', { onLocate = null, initialTab = 'api', request = null } = {}) => {
       ensure();
       if (!overlay || !panel || !textarea) return;
+      previewRequest = request && typeof request === 'object' ? request : null;
       locateHandler = typeof onLocate === 'function' ? onLocate : null;
       if (locateBtn) {
         locateBtn.disabled = typeof locateHandler !== 'function';
@@ -12195,6 +12235,7 @@ Phase G（Frame 36）：循环衔接
       if (!overlay) return;
       overlay.style.display = 'none';
       locateHandler = null;
+      previewRequest = null;
     };
 
     return { show, hide };
@@ -12341,6 +12382,32 @@ Phase G（Frame 36）：循环衔接
     notifyError: (message) => window.toastr?.error?.(message),
     logger,
   });
+  const getLastMomentPromptRequest = () => {
+    const req = window.appBridge?.lastRequest;
+    return String(req?.task?.type || '').trim().toLowerCase() === 'moment_comment' ? req : null;
+  };
+  const getLastMomentPromptLabel = () => {
+    const mode = String(getLastMomentPromptRequest()?.task?.mode || '').trim().toLowerCase();
+    if (mode === 'published_moment' || mode === 'moment_publish' || mode === 'publish_comment') {
+      return '动态发布后评论';
+    }
+    return '动态评论';
+  };
+  const showMomentPromptPreview = createPromptPreviewRuntime({
+    getCurrentSessionId: () => 'moments',
+    getContactBySessionId: () => ({ name: getLastMomentPromptLabel() }),
+    getLastRequest: getLastMomentPromptRequest,
+    buildPromptPreview: buildPromptPreviewSnapshot,
+    formatWorldDebugText: formatPromptWorldDebug,
+    buildWorldDebugCandidates: buildWorldDebugLocatorCandidates,
+    showPromptPreviewModal: (...args) => promptPreviewModal.show(...args),
+    hidePromptPreviewModal: () => promptPreviewModal.hide(),
+    showWorldDebugLocatorModal: (items, options) => worldDebugLocatorModal.show(items, options),
+    openWorldEditor: (worldId, options) => worldPanel.openEditor(worldId, options),
+    notifyWarning: () => window.toastr?.warning?.('暂无动态本次 Prompt 记录（请先触发一次动态评论/发布后评论）'),
+    notifyError: () => window.toastr?.error?.('打开动态本次 Prompt 失败'),
+    logger,
+  });
   registerUiUtilityBridgeContract(window.appBridge, {
     showPromptPreview,
   });
@@ -12366,17 +12433,17 @@ Phase G（Frame 36）：循环衔接
     menu.innerHTML = `
 	      <div class="sheet-header">动态菜单</div>
 	      <div class="sheet-desc">动态相关操作</div>
-	      <button data-action="publish-moment">📝 发布动态</button>
 	      <button data-action="moment-album">🖼️ 相册</button>
 	      <button data-action="moment-summary">📘 动态摘要</button>
+	      <button data-action="prompt-preview">🧩 本次 Prompt</button>
 	      <button data-action="raw-reply">🧾 原始回复</button>
 	    `;
     menu.addEventListener('click', e => {
 	      const action = e?.target?.closest ? e.target.closest('button')?.dataset?.action : '';
 	      if (!action) return;
-	      if (action === 'publish-moment') openMomentComposeModal();
 	      if (action === 'moment-album') openGeneratedImageAlbumPanel({ surface: 'moments' });
 	      if (action === 'moment-summary') momentSummaryPanel.show();
+	      if (action === 'prompt-preview') showMomentPromptPreview();
 	      if (action === 'raw-reply') showMomentRawReply();
 	      hideMenus();
     });
@@ -16169,14 +16236,48 @@ Phase G（Frame 36）：循环衔接
 	        comments: [],
 	        signature: `local:${String(user?.id || 'me')}:${timestamp}`,
 	      }, { regexMode: 'input', depth: 0, appBridge: window.appBridge });
-	      record.generatedImages = assets
-	        .map(asset => normalizeMomentGeneratedImageAsset(asset, { sourceMomentId: record.id }))
-	        .filter(Boolean);
-	      momentsStore.upsert(record);
+	      const persisted = persistComposedMomentRecord({
+	        momentsStore,
+	        record,
+	        assets,
+	        normalizeGeneratedImageAsset: normalizeMomentGeneratedImageAsset,
+	      });
+	      const publishedMomentId = String(persisted?.momentId || '').trim();
+	      if (!persisted.ok || !publishedMomentId) {
+	        const reason = String(persisted?.reason || 'unknown').trim() || 'unknown';
+	        logger.warn('moment publish skipped: failed to persist moment id', JSON.stringify({ reason }));
+	        window.toastr?.error?.('动态发布失败：未能建立动态 ID');
+	        return;
+	      }
 	      momentsPanel?.render?.({ preserveScroll: false });
-	      window.toastr?.success?.('动态已发布');
+	      window.toastr?.success?.('动态已发布，正在生成评论');
 	      close();
 	      if (activePage !== 'moments') switchPage('moments');
+	      logger.info('moment publish comment generation requested', JSON.stringify({
+	        momentId: publishedMomentId,
+	        imageCount: Array.isArray(persisted.generatedImages) ? persisted.generatedImages.length : 0,
+	      }));
+	      void momentCommentRuntime(publishedMomentId, '', {
+	        mode: 'moment_publish',
+	        publishedMoment: true,
+	      }).then((result) => {
+	        if (result?.ok) {
+	          logger.info('moment publish comment generation finished', JSON.stringify({
+	            momentId: publishedMomentId,
+	            status: result.status || 'success',
+	            sawMomentReply: Boolean(result.sawMomentReply),
+	          }));
+	          return;
+	        }
+	        const reason = String(result?.reason || result?.status || 'unknown').trim() || 'unknown';
+	        logger.warn('moment publish comment generation skipped', JSON.stringify({
+	          momentId: publishedMomentId,
+	          reason,
+	        }));
+	      }).catch((err) => {
+	        logger.warn('moment publish comment generation failed', err);
+	        window.toastr?.error?.(err?.message || '发布后评论生成失败');
+	      });
 	    };
 	    const ensure = () => {
 	      if (overlay) return;

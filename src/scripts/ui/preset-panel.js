@@ -2022,7 +2022,18 @@ export class PresetPanel {
             depthKey: 'moment_comment_depth', roleKey: 'moment_comment_role',
             rulesKey: 'moment_comment_rules', defaultDepth: 0, placeholder: '动态评论回复规则',
             metaChips: [
-                { label: '仅动态评论', tone: 'scope' },
+                { label: '仅动态评论回复', tone: 'scope' },
+                { label: '私聊/群聊不发送', tone: 'dynamic' },
+                { label: '位置可调', tone: 'placement' },
+            ],
+        }));
+        list.appendChild(makePromptBlock({
+            idPrefix: 'moment-publish-comment', title: '发布后评论提示词',
+            enabledKey: 'moment_publish_comment_enabled', positionKey: 'moment_publish_comment_position',
+            depthKey: 'moment_publish_comment_depth', roleKey: 'moment_publish_comment_role',
+            rulesKey: 'moment_publish_comment_rules', defaultDepth: 0, placeholder: '用户发布动态后的评论规则',
+            metaChips: [
+                { label: '仅发布后评论', tone: 'scope' },
                 { label: '私聊/群聊不发送', tone: 'dynamic' },
                 { label: '位置可调', tone: 'placement' },
             ],
@@ -2893,6 +2904,11 @@ export class PresetPanel {
             current.moment_comment_depth = getInt(root.querySelector('#moment-comment-depth')?.value, current.moment_comment_depth ?? 0);
             current.moment_comment_role = getInt(root.querySelector('#moment-comment-role')?.value, current.moment_comment_role ?? EXT_PROMPT_ROLES.SYSTEM);
             current.moment_comment_rules = root.querySelector('#moment-comment-rules')?.value ?? '';
+            current.moment_publish_comment_enabled = Boolean(root.querySelector('#moment-publish-comment-enabled')?.checked);
+            current.moment_publish_comment_position = getInt(root.querySelector('#moment-publish-comment-position')?.value, current.moment_publish_comment_position ?? EXT_PROMPT_TYPES.IN_PROMPT);
+            current.moment_publish_comment_depth = getInt(root.querySelector('#moment-publish-comment-depth')?.value, current.moment_publish_comment_depth ?? 0);
+            current.moment_publish_comment_role = getInt(root.querySelector('#moment-publish-comment-role')?.value, current.moment_publish_comment_role ?? EXT_PROMPT_ROLES.SYSTEM);
+            current.moment_publish_comment_rules = root.querySelector('#moment-publish-comment-rules')?.value ?? '';
             current.auto_image_prompt_enabled = Boolean(root.querySelector('#auto-image-prompt-enabled')?.checked);
             current.auto_image_prompt_position = getInt(root.querySelector('#auto-image-prompt-position')?.value, current.auto_image_prompt_position ?? EXT_PROMPT_TYPES.IN_CHAT);
             current.auto_image_prompt_depth = getInt(root.querySelector('#auto-image-prompt-depth')?.value, current.auto_image_prompt_depth ?? 0);

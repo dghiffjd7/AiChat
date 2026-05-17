@@ -62,6 +62,8 @@ import {
     decisionMode: 'conservative',
   });
   assert.doesNotMatch(instruction, /<auto_image_generation>/);
+  assert.match(instruction, /^<generate_img_rule>/);
+  assert.match(instruction, /<\/generate_img_rule>$/);
   assert.match(instruction, /<image_prompt>/);
   assert.match(instruction, /请严格按以下XML格式输出/);
   assert.match(instruction, /openai \/ gpt-image-2/);
@@ -127,8 +129,18 @@ import {
   });
   assert.doesNotMatch(instruction, /image_prompt_position_rule/);
   assert.doesNotMatch(instruction, /<tableEdit>/);
+  assert.match(instruction, /^<generate_img_rule>/);
   assert.match(instruction, /<image_prompt>prompt<\/image_prompt>/);
   console.log('ok - removes legacy position placeholder from custom templates');
+}
+
+{
+  const instruction = buildAutoImagePromptInstruction({
+    template: '<generate_img_rule>\n<image_prompt>prompt</image_prompt>\n</generate_img_rule>',
+  });
+  assert.equal((instruction.match(/<generate_img_rule>/g) || []).length, 1);
+  assert.equal((instruction.match(/<\/generate_img_rule>/g) || []).length, 1);
+  console.log('ok - avoids double wrapping generate_img_rule templates');
 }
 
 {
@@ -143,6 +155,7 @@ import {
   assert.match(instruction, /where=/);
   assert.doesNotMatch(instruction, /若需要生成图片/);
   assert.match(instruction, /tag=image_prompt/);
+  assert.match(instruction, /^<generate_img_rule>/);
   console.log('ok - renders custom preset auto image prompt template');
 }
 

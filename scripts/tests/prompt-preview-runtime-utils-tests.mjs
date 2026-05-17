@@ -5,12 +5,14 @@ import { createPromptPreviewRuntime } from '../../src/scripts/ui/chat/prompt-pre
 {
   const calls = [];
   let locateOptions = null;
+  const request = {
+    worldDebug: { sections: [] },
+    messages: [{ role: 'user', content: '你好' }],
+  };
   const runtime = createPromptPreviewRuntime({
     getCurrentSessionId: () => 's1',
     getContactBySessionId: () => ({ name: '角色A' }),
-    getLastRequest: () => ({
-      worldDebug: { sections: [] },
-    }),
+    getLastRequest: () => request,
     buildPromptPreview: () => ({
       meta: '角色A · 现在',
       head: 'provider: openai',
@@ -34,6 +36,7 @@ import { createPromptPreviewRuntime } from '../../src/scripts/ui/chat/prompt-pre
   });
   const ok = runtime();
   assert.equal(ok, true);
+  assert.equal(locateOptions.request, request);
   await locateOptions.onLocate();
   assert.deepEqual(calls, [
     ['showPreview', 'provider: openai\n\nWORLD DEBUG\n\nuser:\n你好', '角色A · 现在', true],
