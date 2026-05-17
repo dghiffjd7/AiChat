@@ -412,6 +412,7 @@ export const buildMomentCommentPromptData = ({
   replyTo = null,
   recentComments = '',
   contactList = '',
+  groupList = '',
   sideEffectInstructions = '',
 } = {}) => `
 【${String(taskTitle || '').trim() || 'QQ空间动态评论回复（数据）'}】
@@ -441,6 +442,10 @@ ${String(recentComments || '').trim()}
 
 【可用联系人名单】
 ${String(contactList || '').trim() || '-（无）'}
+
+${String(groupList || '').trim()
+  ? `【可用群聊】\n${String(groupList || '').trim()}\n`
+  : ''}
 
 ${String(sideEffectInstructions || '').trim()}
 `.trim();
@@ -555,6 +560,52 @@ export const collectMomentCommentContactList = (
     .filter(Boolean)
     .filter((name) => !blockedNames.has(name.toLowerCase()));
   return buildMomentCommentContactList(contacts, { authorName, maxItems });
+};
+
+export const buildMomentCommentGroupList = (
+  contactsStore,
+  {
+    maxItems = 12,
+    maxMembers = 20,
+  } = {},
+) => {
+  const rawContacts = contactsStore?.listContacts?.();
+  const contacts = Array.isArray(rawContacts) ? rawContacts : [];
+  if (!contacts.length) return '';
+  const contactById = new Map(
+    contacts
+      .filter(Boolean)
+      .map(contact => [String(contact.id || '').trim(), contact])
+      .filter(([id]) => Boolean(id)),
+  );
+  const resolveMemberName = (memberId = '') => {
+    const id = String(memberId || '').trim();
+    if (!id) return '';
+    const contact = contactsStore?.getContact?.(id) || contactById.get(id) || null;
+    const name = String(contact?.name || contact?.id || id).trim();
+    if (!name || name.toLowerCase().startsWith('rp:')) return '';
+    return name;
+  };
+  const limit = Math.max(0, Math.trunc(Number(maxItems) || 0));
+  const memberLimit = Math.max(0, Math.trunc(Number(maxMembers) || 0));
+  return contacts
+    .filter(contact => contact && (contact.isGroup || String(contact.id || '').startsWith('group:')))
+    .filter(contact => !isInternalMomentContact(contact))
+    .slice(0, limit)
+    .map((group) => {
+      const groupName = String(group?.name || group?.id || '').trim();
+      if (!groupName) return '';
+      const memberNames = [];
+      (Array.isArray(group?.members) ? group.members : []).forEach((memberId) => {
+        if (memberNames.length >= memberLimit) return;
+        const name = resolveMemberName(memberId);
+        if (!name || memberNames.includes(name)) return;
+        memberNames.push(name);
+      });
+      return `- ${groupName}（成员：${memberNames.length ? memberNames.join('、') : '未列出'}）`;
+    })
+    .filter(Boolean)
+    .join('\n');
 };
 
 export const resolveMomentPublishCommentTarget = ({
@@ -1319,6 +1370,9 @@ export const createMomentCommentLifecycleRuntime = ({
       enabled: allowSideEffects,
       userName: activeUserName || '{{user}}',
     });
+    const groupList = allowSideEffects
+      ? buildMomentCommentGroupList(contactsStore, { maxItems: 12, maxMembers: 20 })
+      : '';
     const userLine = isPublishedMomentComment
       ? [
           '{{user}}刚刚发布了这条动态。',
@@ -1345,6 +1399,7 @@ export const createMomentCommentLifecycleRuntime = ({
         : null,
       recentComments,
       contactList: contactList || '-（无）',
+      groupList,
       sideEffectInstructions,
     });
     const applyEvents = (events = []) => applyMomentCommentEvents(events, {

@@ -11,6 +11,7 @@ import {
   buildMomentFeedCommentStartTraceEvent,
   buildMomentLifecycleTraceEvent,
   buildMomentCommentContactList,
+  buildMomentCommentGroupList,
   buildMomentCommentPromptData,
   buildMomentCommentSideEffectInstructions,
   buildMomentCommentTaskContext,
@@ -304,12 +305,15 @@ import {
     replyTo: { author: '甲', content: '原评论' },
     recentComments: '- author::甲 | content::hi',
     contactList: '- 发布者\n- 甲',
+    groupList: '- 晚饭群（成员：甲、乙）',
   });
   assert.doesNotMatch(text, /moment_id/);
   assert.match(text, /发布者: 发布者/);
   assert.match(text, /reply_to_author: 甲/);
   assert.match(text, /当前评论列表/);
   assert.match(text, /可用联系人名单/);
+  assert.match(text, /【可用群聊】/);
+  assert.match(text, /- 晚饭群（成员：甲、乙）/);
   console.log('ok - buildMomentCommentPromptData builds constrained moment comment prompt payload');
 }
 
@@ -373,6 +377,24 @@ import {
   });
   assert.equal(list, '- 发布者\n- 甲\n- 丙');
   console.log('ok - collectMomentCommentContactList filters self/group contacts before building prompt list');
+}
+
+{
+  const list = buildMomentCommentGroupList({
+    listContacts: () => [
+      { id: 'user:1', name: '我' },
+      { id: 'contact:alice', name: 'Alice' },
+      { id: 'contact:bob', name: 'Bob' },
+      { id: 'group:morning', name: '早安群', isGroup: true, members: ['contact:alice', 'contact:bob'] },
+      { id: 'rp:default', name: 'RP群', isGroup: true, members: ['contact:alice'] },
+    ],
+    getContact: id => ({
+      'contact:alice': { id: 'contact:alice', name: 'Alice' },
+      'contact:bob': { id: 'contact:bob', name: 'Bob' },
+    }[id] || null),
+  });
+  assert.equal(list, '- 早安群（成员：Alice、Bob）');
+  console.log('ok - buildMomentCommentGroupList injects available group names with member names');
 }
 
 {
@@ -867,7 +889,12 @@ import {
         { id: 'user:1', name: '我' },
         { id: 'contact:alice', name: 'Alice' },
         { id: 'contact:bob', name: 'Bob' },
+        { id: 'group:morning', name: '早安群', isGroup: true, members: ['contact:alice', 'contact:bob'] },
       ],
+      getContact: id => ({
+        'contact:alice': { id: 'contact:alice', name: 'Alice' },
+        'contact:bob': { id: 'contact:bob', name: 'Bob' },
+      }[id] || null),
     },
     momentsStore: {
       get: id => (id === 'm2' ? { id } : null),
@@ -894,6 +921,8 @@ import {
       assert.doesNotMatch(context.task.promptData, /\[img-/);
       assert.doesNotMatch(context.task.promptData, /bqb-attachment/);
       assert.match(context.task.promptData, /【可选联动】/);
+      assert.match(context.task.promptData, /【可用群聊】/);
+      assert.match(context.task.promptData, /- 早安群（成员：Alice、Bob）/);
       assert.deepEqual(context.meta?.userAttachmentParts, [
         { type: 'image_url', image_url: { url: 'data:image/png;base64,AAA' } },
       ]);

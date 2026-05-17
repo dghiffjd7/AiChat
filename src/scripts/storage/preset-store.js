@@ -211,9 +211,8 @@ const DEFAULT_MOMENT_PUBLISH_COMMENT_RULES = `
    moment_reply_start
    评论人--评论内容
    moment_reply_end
-3) 评论区块里只写评论行，不写动态 ID。
-4) 至少输出 1 条评论；若情境合适可多条（可包含其他角色的围观/插话）。
-5) 评论内容若需要换行，使用 <br>。
+3) 至少输出 1 条评论；若情境合适可多条（可包含其他角色的围观/插话）。
+4) 评论内容若需要换行，使用 <br>。
 
 【注意】
 - 评论人必须是具体名字（优先从联系人名单中挑选）；不要使用“匿名网友”等敷衍名字。
@@ -372,7 +371,6 @@ const sanitizeMomentPublishCommentRulesText = (value) => {
         ) ||
         (
             trimmed.includes('你正在处理「评论{{user}}发布的动态」任务。') &&
-            trimmed.includes('程序会自动把评论写回当前动态') &&
             trimmed.includes('评论区块里只写评论行，不写动态 ID')
         ) ||
         (

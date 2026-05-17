@@ -15721,6 +15721,82 @@ Phase G（Frame 36）：循环衔接
 	      .filter(asset => resolveGeneratedImagePreviewUrl(asset))
 	      .sort((a, b) => (Number(b.createdAt || 0) || 0) - (Number(a.createdAt || 0) || 0));
 	  };
+	  const buildMomentGeneratedImageAssetMatchKeys = (asset = {}) => {
+	    const output = asset?.output && typeof asset.output === 'object' ? asset.output : {};
+	    return [
+	      asset?.id,
+	      asset?.albumId,
+	      asset?.token,
+	      buildGeneratedImageToken(asset),
+	      output.path,
+	      output.url,
+	      output.dataUrl,
+	    ].map(value => String(value || '').trim()).filter(Boolean);
+	  };
+	  const momentGeneratedImageAssetMatches = (asset = {}, targetAsset = {}) => {
+	    const targetKeys = new Set(buildMomentGeneratedImageAssetMatchKeys(targetAsset));
+	    if (!targetKeys.size) return false;
+	    const stable = getGeneratedImageAssetStableKey(asset);
+	    const targetStable = getGeneratedImageAssetStableKey(targetAsset);
+	    if (stable && targetStable && stable === targetStable) return true;
+	    return buildMomentGeneratedImageAssetMatchKeys(asset).some(key => targetKeys.has(key));
+	  };
+	  const removeMomentGeneratedImageTokensFromContent = (content = '', removedAssets = []) => {
+	    let next = String(content || '');
+	    const tokens = new Set();
+	    (Array.isArray(removedAssets) ? removedAssets : []).forEach((asset) => {
+	      [asset?.token, buildGeneratedImageToken(asset)].forEach((value) => {
+	        const token = String(value || '').trim();
+	        if (token) tokens.add(token);
+	      });
+	    });
+	    Array.from(tokens)
+	      .sort((a, b) => b.length - a.length)
+	      .forEach((token) => {
+	        next = next.split(token).join('');
+	      });
+	    return next
+	      .split(/\r?\n/)
+	      .map(line => line.trimEnd())
+	      .filter((line, index, arr) => line.trim() || arr.some((item, itemIndex) => itemIndex > index && item.trim()))
+	      .join('\n')
+	      .replace(/[ \t]+\n/g, '\n')
+	      .replace(/\n{3,}/g, '\n\n')
+	      .trim();
+	  };
+	  const deleteGeneratedImageAssetFromMoments = async (asset = {}) => {
+	    const ok = await appConfirm({
+	      title: '删除动态图片',
+	      message: '删除这张动态图片？会从对应动态和动态相册中移除。',
+	      danger: true,
+	    });
+	    if (!ok) return false;
+	    const sourceMomentId = String(asset?.sourceMomentId || asset?.scope?.sourceMomentId || '').trim();
+	    const sourceMoment = sourceMomentId ? momentsStore.get(sourceMomentId) : null;
+	    const candidates = sourceMoment ? [sourceMoment] : momentsStore.list();
+	    let changed = false;
+	    candidates.forEach((moment) => {
+	      const generatedImages = Array.isArray(moment?.generatedImages) ? moment.generatedImages : [];
+	      const removed = generatedImages.filter(item => momentGeneratedImageAssetMatches(item, asset));
+	      if (!removed.length) return;
+	      const nextImages = generatedImages.filter(item => !momentGeneratedImageAssetMatches(item, asset));
+	      const nextContent = removeMomentGeneratedImageTokensFromContent(moment.content, removed);
+	      momentsStore.upsert({
+	        id: moment.id,
+	        content: nextContent,
+	        generatedImages: nextImages,
+	      });
+	      changed = true;
+	    });
+	    if (!changed) {
+	      window.toastr?.warning?.('没有找到这张动态图片');
+	      return false;
+	    }
+	    maybeDeleteGeneratedImageFileIfUnreferenced(asset, getMomentImageAttachmentSessionId());
+	    momentsPanel?.render?.({ preserveScroll: true });
+	    window.toastr?.success?.('动态图片已删除');
+	    return true;
+	  };
 	  const generatedImageAlbumPanel = (() => {
 	    let overlay = null;
 	    let titleEl = null;
@@ -15962,8 +16038,16 @@ Phase G（Frame 36）：循环衔接
 	        subtitle: '当前动态作用域中生成的图片与提示词',
 	        emptyText: '还没有动态生成图片。',
 	        collect: collectMomentImageAlbumAssetsForCurrentScope,
-	        allowUse: false,
-	        allowDelete: false,
+	        allowUse: true,
+	        allowDelete: true,
+	        toolbarActionText: '发布动态',
+	        onToolbarAction: () => openMomentComposeModal(),
+	        onUse: async asset => openMomentComposeModal({
+	          initialPrompt: String(asset.prompt || '').trim(),
+	          initialNegativePrompt: getGeneratedImageNegativePrompt(asset),
+	          generationParamOverrides: await buildImageGenerationOverridesFromAsset(asset),
+	        }),
+	        onDelete: asset => deleteGeneratedImageAssetFromMoments(asset),
 	      });
 	      return true;
 	    }
@@ -16119,9 +16203,163 @@ Phase G（Frame 36）：循环衔接
 	    let generateBtn = null;
 	    let publishBtn = null;
 	    let cancelBtn = null;
+	    let advancedBtn = null;
+	    let bodyEl = null;
+	    let footerEl = null;
+	    let advancedPage = null;
+	    let advancedBackBtn = null;
+	    let advancedDoneBtn = null;
+	    let advancedResetBtn = null;
+	    let advancedSummaryEl = null;
+	    let advancedFieldsEl = null;
 	    let assets = [];
 	    let controller = null;
 	    let negativeCapability = resolveImageNegativePromptCapability({});
+	    let generationParamConfig = {};
+	    let generationParamSchema = resolveImageGenerationParamSchema({});
+	    let generationParamBase = {};
+	    let generationParamOverrides = {};
+	    const hasOwn = (obj, key) => Object.prototype.hasOwnProperty.call(obj || {}, key);
+	    const isTransientGenerationParamField = (field = {}) => {
+	      const key = String(field?.key || '');
+	      return key === 'negativePrompt' ||
+	        key === 'negative_prompt' ||
+	        key === 'referenceImages' ||
+	        key === 'reference_images';
+	    };
+	    const normalizeParamFieldValue = (field, value) => {
+	      if (field?.type === 'number') {
+	        const raw = Math.trunc(Number(value));
+	        if (!Number.isFinite(raw)) return Number(field?.defaultValue || 0);
+	        const min = Number.isFinite(Number(field?.min)) ? Number(field.min) : Number.MIN_SAFE_INTEGER;
+	        const max = Number.isFinite(Number(field?.max)) ? Number(field.max) : Number.MAX_SAFE_INTEGER;
+	        return Math.min(max, Math.max(min, raw));
+	      }
+	      return String(value ?? field?.defaultValue ?? '');
+	    };
+	    const getParamFieldValue = (field, params = {}) => normalizeParamFieldValue(
+	      field,
+	      hasOwn(params, field?.key) ? params[field.key] : field?.defaultValue,
+	    );
+	    const normalizeParamOverrides = (overrides = {}, schema = generationParamSchema) => {
+	      const next = {};
+	      if (!overrides || typeof overrides !== 'object') return next;
+	      (schema?.fields || []).forEach((field) => {
+	        if (!field?.key || isTransientGenerationParamField(field) || !hasOwn(overrides, field.key)) return;
+	        next[field.key] = normalizeParamFieldValue(field, overrides[field.key]);
+	      });
+	      return next;
+	    };
+	    const countGenerationParamOverrides = () => Object.keys(generationParamOverrides || {}).length;
+	    const updateAdvancedButton = () => {
+	      if (!advancedBtn) return;
+	      const count = countGenerationParamOverrides();
+	      advancedBtn.textContent = count ? `高级参数（${count}）` : '高级参数';
+	      advancedBtn.classList.toggle('has-overrides', count > 0);
+	    };
+	    const updateAdvancedSummary = () => {
+	      if (!advancedSummaryEl) return;
+	      const modelLabel = [generationParamConfig?.provider, generationParamConfig?.model].filter(Boolean).join(' / ') || '未选择图片模型';
+	      const count = countGenerationParamOverrides();
+	      advancedSummaryEl.textContent = `${generationParamSchema?.title || '图片生成参数'} · ${modelLabel}${count ? ` · 本次覆盖 ${count} 项` : ''}`;
+	    };
+	    const applyGenerationParamContext = (context = {}) => {
+	      generationParamConfig = context?.config && typeof context.config === 'object' ? context.config : {};
+	      generationParamSchema = context?.schema || resolveImageGenerationParamSchema(generationParamConfig);
+	      generationParamBase = context?.baseParams && typeof context.baseParams === 'object' ? context.baseParams : {};
+	      negativeCapability = resolveImageNegativePromptCapability(generationParamConfig);
+	      generationParamOverrides = normalizeParamOverrides(generationParamOverrides, generationParamSchema);
+	      const supported = Boolean(negativeCapability?.supported);
+	      if (negativeAreaWrap) negativeAreaWrap.hidden = !supported;
+	      if (!supported && negativeArea) negativeArea.value = '';
+	      updateAdvancedButton();
+	      updateAdvancedSummary();
+	    };
+	    const syncAdvancedOverridesFromFields = () => {
+	      if (!advancedFieldsEl) return;
+	      const next = {};
+	      (generationParamSchema?.fields || []).forEach((field) => {
+	        if (!field?.key || isTransientGenerationParamField(field)) return;
+	        const el = advancedFieldsEl.querySelector(`[data-param-key="${field.key}"]`);
+	        if (!el) return;
+	        const currentValue = normalizeParamFieldValue(field, el.value);
+	        const baseValue = getParamFieldValue(field, generationParamBase);
+	        if (String(currentValue) !== String(baseValue)) next[field.key] = currentValue;
+	      });
+	      generationParamOverrides = next;
+	      updateAdvancedButton();
+	      updateAdvancedSummary();
+	    };
+	    const renderAdvancedFields = () => {
+	      if (!advancedFieldsEl) return;
+	      updateAdvancedSummary();
+	      const fields = (generationParamSchema?.fields || []).filter(field => field?.key && !isTransientGenerationParamField(field));
+	      advancedFieldsEl.innerHTML = '';
+	      if (!fields.length) {
+	        advancedFieldsEl.innerHTML = '<div class="chat-image-gen-advanced-summary">当前图片模型没有可覆盖的高级参数。</div>';
+	        return;
+	      }
+	      fields.forEach((field) => {
+	        const label = document.createElement('label');
+	        label.className = 'chat-image-gen-param-row';
+	        const title = document.createElement('div');
+	        title.className = 'chat-image-gen-param-label';
+	        title.textContent = field.label || field.key;
+	        label.appendChild(title);
+	        const control = field.type === 'select'
+	          ? document.createElement('select')
+	          : document.createElement('input');
+	        if (field.type === 'select') {
+	          (field.options || []).forEach((opt) => {
+	            const option = document.createElement('option');
+	            option.value = String(opt.value ?? '');
+	            option.textContent = String(opt.label || opt.value || '');
+	            control.appendChild(option);
+	          });
+	        } else {
+	          control.type = field.type === 'number' ? 'number' : 'text';
+	          if (field.type === 'number') {
+	            if (field.min != null) control.min = String(field.min);
+	            if (field.max != null) control.max = String(field.max);
+	            if (field.step != null) control.step = String(field.step);
+	          }
+	        }
+	        control.className = 'chat-image-gen-param-field';
+	        control.dataset.paramKey = field.key;
+	        control.value = String(getParamFieldValue(field, { ...generationParamBase, ...generationParamOverrides }));
+	        control.addEventListener('input', syncAdvancedOverridesFromFields);
+	        control.addEventListener('change', syncAdvancedOverridesFromFields);
+	        label.appendChild(control);
+	        if (field.help) {
+	          const help = document.createElement('div');
+	          help.className = 'chat-image-gen-param-help';
+	          help.textContent = field.help;
+	          label.appendChild(help);
+	        }
+	        advancedFieldsEl.appendChild(label);
+	      });
+	    };
+	    const openAdvancedPage = () => {
+	      renderAdvancedFields();
+	      if (bodyEl) bodyEl.hidden = true;
+	      if (footerEl) footerEl.hidden = true;
+	      if (advancedPage) advancedPage.hidden = false;
+	    };
+	    const closeAdvancedPage = () => {
+	      if (advancedPage) advancedPage.hidden = true;
+	      if (bodyEl) bodyEl.hidden = false;
+	      if (footerEl) footerEl.hidden = false;
+	    };
+	    const refreshGenerationParamContext = async (event = null) => {
+	      if (event?.detail?.tab && event.detail.tab !== 'image') return;
+	      if (!overlay?.classList?.contains('is-active')) return;
+	      try {
+	        applyGenerationParamContext(await loadImageGenerationParamContext());
+	        if (advancedPage && !advancedPage.hidden) renderAdvancedFields();
+	      } catch {
+	        applyGenerationParamContext({});
+	      }
+	    };
 	    const setStatus = (text = '', kind = '') => {
 	      if (!statusEl) return;
 	      statusEl.textContent = text;
@@ -16150,20 +16388,17 @@ Phase G（Frame 36）：循环衔接
 	    };
 	    const refreshNegativeCapability = async () => {
 	      try {
-	        const config = await loadImageRuntimeConfig({ includeDraft: true });
-	        negativeCapability = resolveImageNegativePromptCapability(config || {});
+	        applyGenerationParamContext(await loadImageGenerationParamContext());
 	      } catch {
-	        negativeCapability = resolveImageNegativePromptCapability({});
+	        applyGenerationParamContext({});
 	      }
-	      const supported = Boolean(negativeCapability?.supported);
-	      if (negativeAreaWrap) negativeAreaWrap.hidden = !supported;
-	      if (!supported && negativeArea) negativeArea.value = '';
 	    };
 	    const close = () => {
 	      if (controller) {
 	        controller.abort('moment compose closed');
 	        controller = null;
 	      }
+	      closeAdvancedPage();
 	      overlay?.classList.remove('is-active');
 	    };
 	    const generateImage = async () => {
@@ -16183,6 +16418,7 @@ Phase G（Frame 36）：循环衔接
 	      const generationOptions = mergeImageGenerationRequestOptions({
 	        config,
 	        preset: imageParamsPreset,
+	        overrides: generationParamOverrides,
 	        extra: negativePrompt ? { negativePrompt } : {},
 	      });
 	      controller = new AbortController();
@@ -16200,7 +16436,11 @@ Phase G（Frame 36）：循环衔接
 	          options: generationOptions,
 	          signal: controller.signal,
 	        });
-	        assets = [...assets, asset];
+	        assets = [...assets, {
+	          ...asset,
+	          negativePrompt,
+	          generationParams: generationOptions,
+	        }];
 	        renderPreview();
 	        setStatus('配图已加入草稿', 'success');
 	      } catch (err) {
@@ -16309,14 +16549,32 @@ Phase G（Frame 36）：循环衔接
 	            <div class="moment-compose-images"></div>
 	            <div class="moment-compose-status"></div>
 	          </div>
+	          <div class="chat-image-gen-advanced moment-compose-advanced-panel" hidden>
+	            <div class="chat-image-gen-advanced-head">
+	              <button type="button" class="chat-image-gen-advanced-back moment-compose-advanced-back">返回</button>
+	              <div>
+	                <div class="chat-image-gen-advanced-title">高级参数</div>
+	                <div class="chat-image-gen-advanced-subtitle">只覆盖本次动态配图，不会写入全局默认</div>
+	              </div>
+	            </div>
+	            <div class="chat-image-gen-advanced-summary"></div>
+	            <div class="chat-image-gen-advanced-fields"></div>
+	            <div class="chat-image-gen-advanced-actions">
+	              <button type="button" class="chat-image-gen-param-reset moment-compose-param-reset">清除本次覆盖</button>
+	              <button type="button" class="chat-image-gen-param-done moment-compose-param-done">返回发布</button>
+	            </div>
+	          </div>
 	          <div class="moment-compose-footer">
 	            <button type="button" class="moment-compose-cancel">取消</button>
+	            <button type="button" class="chat-image-gen-advanced-open moment-compose-advanced">高级参数</button>
 	            <button type="button" class="moment-compose-generate">生成配图</button>
 	            <button type="button" class="moment-compose-publish">发布</button>
 	          </div>
 	        </div>
 	      `;
 	      document.body.appendChild(overlay);
+	      bodyEl = overlay.querySelector('.moment-compose-body');
+	      footerEl = overlay.querySelector('.moment-compose-footer');
 	      textArea = overlay.querySelector('.moment-compose-text');
 	      promptArea = overlay.querySelector('.moment-compose-prompt');
 	      negativeAreaWrap = overlay.querySelector('.moment-compose-negative-field');
@@ -16326,6 +16584,13 @@ Phase G（Frame 36）：循环衔接
 	      generateBtn = overlay.querySelector('.moment-compose-generate');
 	      publishBtn = overlay.querySelector('.moment-compose-publish');
 	      cancelBtn = overlay.querySelector('.moment-compose-cancel');
+	      advancedBtn = overlay.querySelector('.moment-compose-advanced');
+	      advancedPage = overlay.querySelector('.moment-compose-advanced-panel');
+	      advancedBackBtn = overlay.querySelector('.moment-compose-advanced-back');
+	      advancedDoneBtn = overlay.querySelector('.moment-compose-param-done');
+	      advancedResetBtn = overlay.querySelector('.moment-compose-param-reset');
+	      advancedSummaryEl = overlay.querySelector('.chat-image-gen-advanced-summary');
+	      advancedFieldsEl = overlay.querySelector('.chat-image-gen-advanced-fields');
 	      overlay.querySelector('.moment-compose-close')?.addEventListener('click', close);
 	      cancelBtn?.addEventListener('click', () => {
 	        if (controller) {
@@ -16336,27 +16601,53 @@ Phase G（Frame 36）：循环衔接
 	      });
 	      generateBtn?.addEventListener('click', generateImage);
 	      publishBtn?.addEventListener('click', publish);
+	      advancedBtn?.addEventListener('click', openAdvancedPage);
+	      advancedBackBtn?.addEventListener('click', closeAdvancedPage);
+	      advancedDoneBtn?.addEventListener('click', closeAdvancedPage);
+	      advancedResetBtn?.addEventListener('click', () => {
+	        generationParamOverrides = {};
+	        renderAdvancedFields();
+	        updateAdvancedButton();
+	        updateAdvancedSummary();
+	      });
 	      previewEl?.addEventListener('click', event => {
 	        const btn = event.target?.closest?.('button[data-action="remove-moment-image"]');
-	        if (!btn) return;
-	        const idx = Number(btn.closest('[data-index]')?.dataset?.index);
-	        if (!Number.isFinite(idx)) return;
-	        assets = assets.filter((_, itemIdx) => itemIdx !== idx);
-	        renderPreview();
+	        if (btn) {
+	          const idx = Number(btn.closest('[data-index]')?.dataset?.index);
+	          if (!Number.isFinite(idx)) return;
+	          assets = assets.filter((_, itemIdx) => itemIdx !== idx);
+	          renderPreview();
+	          return;
+	        }
+	        const img = event.target?.closest?.('.moment-compose-image-card img');
+	        if (img?.src) ui.openLightbox?.(img.src);
 	      });
 	      overlay.addEventListener('click', event => {
 	        if (event.target === overlay) close();
 	      });
+	      window.addEventListener('config-draft-changed', refreshGenerationParamContext);
+	      window.addEventListener('config-profile-changed', refreshGenerationParamContext);
 	    };
 	    return {
-	      open({ initialText = '', initialPrompt = '' } = {}) {
+	      open({
+	        initialText = '',
+	        initialPrompt = '',
+	        initialNegativePrompt = '',
+	        generationParamOverrides: initialGenerationParamOverrides = {},
+	      } = {}) {
 	        ensure();
 	        assets = [];
+	        generationParamOverrides = initialGenerationParamOverrides && typeof initialGenerationParamOverrides === 'object'
+	          ? { ...initialGenerationParamOverrides }
+	          : {};
 	        if (textArea) textArea.value = String(initialText || '').trim();
 	        if (promptArea) promptArea.value = String(initialPrompt || '').trim();
-	        if (negativeArea) negativeArea.value = '';
+	        if (negativeArea) negativeArea.value = String(initialNegativePrompt || '').trim();
 	        setStatus('');
 	        setBusy(false);
+	        closeAdvancedPage();
+	        updateAdvancedButton();
+	        updateAdvancedSummary();
 	        renderPreview();
 	        overlay.classList.add('is-active');
 	        void refreshNegativeCapability();
@@ -16364,8 +16655,18 @@ Phase G（Frame 36）：循环衔接
 	      },
 	    };
 	  })();
-	  const openMomentComposeModal = ({ initialText = '', initialPrompt = '' } = {}) => {
-	    momentComposeModal.open({ initialText, initialPrompt });
+	  const openMomentComposeModal = ({
+	    initialText = '',
+	    initialPrompt = '',
+	    initialNegativePrompt = '',
+	    generationParamOverrides = {},
+	  } = {}) => {
+	    momentComposeModal.open({
+	      initialText,
+	      initialPrompt,
+	      initialNegativePrompt,
+	      generationParamOverrides,
+	    });
 	    return true;
 	  };
 	  const enterChatRoom = async (sessionId, sessionName, originPage = activePage, options = {}) => {

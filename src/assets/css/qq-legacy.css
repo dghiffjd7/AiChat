@@ -2775,6 +2775,18 @@ body[data-ui-mode='rp'] .rp-continue-btn {
   color: #fff !important;
 }
 
+.moment-compose-advanced {
+  border-color: rgba(37, 99, 235, 0.18) !important;
+  background: rgba(37, 99, 235, 0.08) !important;
+  color: #1d4ed8 !important;
+}
+
+.moment-compose-advanced.has-overrides {
+  border-color: rgba(245, 158, 11, 0.34) !important;
+  background: rgba(245, 158, 11, 0.12) !important;
+  color: #b45309 !important;
+}
+
 .writing-media-assets-list,
 .moment-compose-body {
   min-height: 0;
@@ -3158,6 +3170,7 @@ body[data-ui-mode='rp'] .rp-continue-btn {
   width: 100%;
   height: 100%;
   object-fit: cover;
+  cursor: zoom-in;
 }
 
 .moment-compose-image-card button {

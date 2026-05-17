@@ -14,6 +14,10 @@
       #toast-container {
         padding: calc(8px + env(safe-area-inset-top, 0px)) 8px 8px 8px;
       }
+      #toast-container.toast-top-right {
+        right: calc(64px + env(safe-area-inset-right, 0px));
+        top: 0;
+      }
       #toast-container > div {
         width: auto;
         max-width: calc(100vw - 24px);
@@ -72,7 +76,10 @@
         right: 0;
       }
       @media all and (max-width:480px) {
-        #toast-container > div { width: auto; }
+        #toast-container > div {
+          width: auto;
+          max-width: calc(100vw - 96px);
+        }
       }
       @media all and (min-width:481px) and (max-width:768px) {
         #toast-container > div { width: auto; }
