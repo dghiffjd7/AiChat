@@ -798,6 +798,9 @@ export class ContactSettingsPanel {
             closeSourceMenu: () => closeCustomSelectMenu(),
             documentRef: document,
             getGlobalSettings: () => appSettings.get(),
+            updateGlobalSettings: (patch) => appSettings.update(patch),
+            dispatchSettingChanged: (key, value) =>
+                window.dispatchEvent(new CustomEvent('app-settings-changed', { detail: { key, value } })),
             notifySaveSuccess: () => window.toastr?.success?.('已保存记忆共享设置'),
             notifySaveError: () => window.toastr?.error?.('保存记忆共享失败'),
             logger,

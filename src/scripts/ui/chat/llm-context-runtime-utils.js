@@ -1,4 +1,7 @@
-import { buildLlmContextPayload } from './llm-context-builder-utils.js';
+import {
+  buildLlmContextPayload,
+  resolveMemoryTablePlace,
+} from './llm-context-builder-utils.js';
 import { buildLlmHistoryForSession } from './llm-history-builder-utils.js';
 
 export const createLlmHistoryBuilder = ({
@@ -77,37 +80,41 @@ export const createLlmContextBuilder = ({
   buildHistory = null,
 } = {}) => {
   const sid = String(sessionId || '').trim();
-  return (pendingUserText = '') => buildLlmContextPayload({
-    promptUserName,
-    activeUser,
-    characterName,
-    activePersona,
-    sessionId: sid,
-    isGroupChat,
-    sessionSettings: getSessionSettings?.(sid) || {},
-    disableSummary: getDisableSummary?.() === true,
-    skipInputRegex,
-    continueTarget,
-    rpUiMode,
-    uiMode: getUiMode?.() || 'chat',
-    sharedVariables,
-    isRpMode,
-    rpBridgeSessionId: String(getRpBridgeSessionId?.() || '').trim(),
-    lastChatBridgeSessionId: String(getLastChatBridgeSessionId?.() || '').trim(),
-    memoryStorageMode: getMemoryStorageMode?.() || '',
-    memoryAutoExtract: isMemoryAutoExtractInline?.() === true,
-    autoImagePromptModelHint: getAutoImagePromptModelHint?.() || '',
-    openaiPreset: getOpenAIPreset?.() || {},
-    settings: getSettings?.() || {},
-    attachmentParts,
-    replyPromptHint: getReplyPromptHint?.() || '',
-    stagePromptBlocks: getStagePromptBlocks?.() || [],
-    injectedPromptBlocks: getInjectedPromptBlocks?.() || [],
-    skipTemplate,
-    skipScripts,
-    groupMembers,
-    getContactName,
-    buildHistory,
-    pendingUserText,
-  });
+  return (pendingUserText = '') => {
+    const resolvedUiMode = getUiMode?.() || 'chat';
+    const memoryPlace = resolveMemoryTablePlace(resolvedUiMode);
+    return buildLlmContextPayload({
+      promptUserName,
+      activeUser,
+      characterName,
+      activePersona,
+      sessionId: sid,
+      isGroupChat,
+      sessionSettings: getSessionSettings?.(sid) || {},
+      disableSummary: getDisableSummary?.() === true,
+      skipInputRegex,
+      continueTarget,
+      rpUiMode,
+      uiMode: resolvedUiMode,
+      sharedVariables,
+      isRpMode,
+      rpBridgeSessionId: String(getRpBridgeSessionId?.() || '').trim(),
+      lastChatBridgeSessionId: String(getLastChatBridgeSessionId?.() || '').trim(),
+      memoryStorageMode: getMemoryStorageMode?.(memoryPlace) || '',
+      memoryAutoExtract: isMemoryAutoExtractInline?.(memoryPlace) === true,
+      autoImagePromptModelHint: getAutoImagePromptModelHint?.() || '',
+      openaiPreset: getOpenAIPreset?.() || {},
+      settings: getSettings?.() || {},
+      attachmentParts,
+      replyPromptHint: getReplyPromptHint?.() || '',
+      stagePromptBlocks: getStagePromptBlocks?.() || [],
+      injectedPromptBlocks: getInjectedPromptBlocks?.() || [],
+      skipTemplate,
+      skipScripts,
+      groupMembers,
+      getContactName,
+      buildHistory,
+      pendingUserText,
+    });
+  };
 };

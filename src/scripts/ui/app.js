@@ -284,6 +284,7 @@ import {
   buildMemoryRollbackFinishTraceEvent,
   buildMemoryRollbackStartTraceEvent,
   buildMemoryUpdateTraceEvent,
+  confirmMemoryEditsWithUi,
   createMemoryEditUiRuntime,
   getLastMemoryPlan,
   getLastMemoryUpdate,
@@ -565,6 +566,7 @@ const initApp = async () => {
     }
   };
   applyTypingDotsSetting();
+  let resolveOpenAIPresetForMemory = () => ({});
   const applyCreativeWideSetting = () => {
     const enabled = appSettings.get().creativeWideBubble === true;
     if (!document?.body) return;
@@ -575,23 +577,58 @@ const initApp = async () => {
     }
   };
   applyCreativeWideSetting();
+  const resolveMemoryTablePlace = (place = '') => {
+    const raw = String(place || '').trim().toLowerCase();
+    if (raw === 'rp' || raw === 'writing' || raw === 'creative') return 'writing';
+    if (raw === 'moments' || raw === 'moment') return 'moments';
+    return 'chat';
+  };
+  const isMemoryTablePlaceEnabled = (place = 'chat') => {
+    const settings = appSettings.get();
+    const resolved = resolveMemoryTablePlace(place);
+    if (resolved === 'writing') return settings.memoryTableEnabledWriting !== false;
+    if (resolved === 'moments') return settings.memoryTableEnabledMoments !== false;
+    return settings.memoryTableEnabledChat !== false;
+  };
   const isMemoryEnabled = () => appSettings.get().memoryEnabled !== false;
-  const getMemoryStorageMode = () => {
+  const getMemoryStorageMode = (place = 'chat') => {
     if (!isMemoryEnabled()) return 'off';
     const mode = String(appSettings.get().memoryStorageMode || 'table').toLowerCase();
-    return mode === 'table' ? 'table' : 'summary';
+    if (mode !== 'table') return 'summary';
+    return isMemoryTablePlaceEnabled(place) ? 'table' : 'off';
   };
-  const isSummaryMemoryEnabled = () => getMemoryStorageMode() === 'summary';
+  const isSummaryMemoryEnabled = (place = 'chat') => getMemoryStorageMode(place) === 'summary';
+  let syncMomentsMemoryMenuItem = () => {};
   const getMemoryAutoExtractMode = () => {
     const mode = String(appSettings.get().memoryAutoExtractMode || 'inline').toLowerCase();
     return mode === 'separate' ? 'separate' : 'inline';
   };
-  const isMemoryAutoExtractEnabled = () => {
+  const isMemoryAutoExtractEnabled = (place = 'chat') => {
     const settings = appSettings.get();
-    return getMemoryStorageMode() === 'table' && settings.memoryAutoExtract === true;
+    return getMemoryStorageMode(place) === 'table' && settings.memoryAutoExtract === true;
   };
-  const isMemoryAutoExtractInline = () => isMemoryAutoExtractEnabled() && getMemoryAutoExtractMode() === 'inline';
-  const isMemoryAutoExtractSeparate = () => isMemoryAutoExtractEnabled() && getMemoryAutoExtractMode() === 'separate';
+  const isMemoryAutoExtractInline = (place = 'chat') =>
+    isMemoryAutoExtractEnabled(place) && getMemoryAutoExtractMode() === 'inline';
+  const isMemoryAutoExtractSeparate = (place = 'chat') =>
+    isMemoryAutoExtractEnabled(place) && getMemoryAutoExtractMode() === 'separate';
+  const getMemoryRuntimeConfig = () => {
+    const settings = appSettings.get();
+    const openaiPreset = resolveOpenAIPresetForMemory?.() || {};
+    const presetDataPosition = String(openaiPreset?.memory_data_position || '').trim();
+    const presetDataDepthRaw = Math.trunc(Number(openaiPreset?.memory_data_depth));
+    const settingsDataPosition = String(settings.memoryInjectPosition || 'history_depth').trim();
+    const settingsDataDepthRaw = Math.trunc(Number(settings.memoryInjectDepth));
+    const guidePosition = String(openaiPreset?.memory_guide_position || '').trim();
+    const guideDepthRaw = Math.trunc(Number(openaiPreset?.memory_guide_depth));
+    return {
+      memoryInjectPosition: presetDataPosition || settingsDataPosition,
+      memoryInjectDepth: presetDataPosition && Number.isFinite(presetDataDepthRaw)
+        ? Math.max(0, presetDataDepthRaw)
+        : (Number.isFinite(settingsDataDepthRaw) ? Math.max(0, settingsDataDepthRaw) : 0),
+      memoryGuidePosition: guidePosition,
+      memoryGuideDepth: Number.isFinite(guideDepthRaw) ? Math.max(0, guideDepthRaw) : 0,
+    };
+  };
   let updateStickerPreview = () => {};
   const originalSetInputText = ui.setInputText.bind(ui);
   ui.setInputText = val => {
@@ -1819,7 +1856,14 @@ const initApp = async () => {
       refreshChatAndContacts({ immediate: true });
       return;
     }
-    if (key === 'memoryStorageMode' || key === 'memoryEnabled') {
+    if (
+      key === 'memoryStorageMode' ||
+      key === 'memoryEnabled' ||
+      key === 'memoryTableEnabledChat' ||
+      key === 'memoryTableEnabledMoments' ||
+      key === 'memoryTableEnabledWriting'
+    ) {
+      syncMomentsMemoryMenuItem();
       refreshChatAndContacts({ immediate: true });
     }
     if (key === 'uiThemePresetId') {
@@ -1953,6 +1997,167 @@ const initApp = async () => {
     momentsStore.upsert({ id, views: nextViews, likes: nextLikes });
   };
 
+  const applyMemoryEditsForRuntime = async ({
+    actions,
+    sessionId,
+    isGroup,
+    contextType = '',
+    uiMode: memoryUiMode = '',
+    useSharedGlobalScope = false,
+    timelineTurnNumber = null,
+    timelineMessageId = '',
+    resolveTimelineTurnNumber = null,
+  } = {}) => {
+    if (!Array.isArray(actions) || actions.length === 0) return null;
+    if (!memoryTableStore || !memoryTemplateStore) return null;
+    const sid = String(sessionId || '').trim();
+    if (!sid) return null;
+
+    const rawPlan = getLastMemoryPlan(window.appBridge);
+    const { plan, planTargetId, currentSessionId, isStaleTarget } =
+      resolveMemoryUpdatePlanForSession({ rawPlan, sessionId: sid });
+    if (isStaleTarget) {
+      logger.debug('memory apply: ignore stale plan target', {
+        planTargetId,
+        currentSessionId,
+      });
+    }
+
+    const planOrder = Array.isArray(plan?.tableOrder) ? plan.tableOrder : [];
+    const rowIndexMap = plan?.rowIndexMap && typeof plan.rowIndexMap === 'object' ? plan.rowIndexMap : {};
+    const actionContext = await loadSessionMemoryActionContext({
+      memoryTemplateStore,
+      memoryTableStore,
+      sessionId: sid,
+      isGroup,
+      uiMode: memoryUiMode || uiMode,
+      contextType,
+      filterTables: true,
+      useSharedGlobalScope,
+      tableOrderOverride: planOrder,
+      rowIndexMap,
+    });
+    if (!actionContext?.record) return null;
+
+    const explicitTurn = Math.trunc(Number(timelineTurnNumber));
+    let currentTurnNumber = Number.isFinite(explicitTurn) && explicitTurn > 0 ? explicitTurn : 0;
+    if (!currentTurnNumber && typeof resolveTimelineTurnNumber === 'function') {
+      try {
+        const resolved = Math.trunc(Number(await resolveTimelineTurnNumber(sid)));
+        if (Number.isFinite(resolved) && resolved > 0) currentTurnNumber = resolved;
+      } catch {}
+    }
+    const result = await executeMemoryActionBatchMutation({
+      actions,
+      actionContext,
+      updateMode: plan?.updateMode,
+      memoryTableStore,
+      createMemories: inputs => batchCreateMemoriesWithFallback({
+        memoryTableStore,
+        inputs,
+      }),
+      currentTurnNumber,
+      isGroup,
+    });
+    const inserted = Number(result?.inserted || 0);
+    const updated = Number(result?.updated || 0);
+    const deleted = Number(result?.deleted || 0);
+    const skipped = Number(result?.skipped || 0);
+    const changed = Number(result?.changed || (inserted + updated + deleted));
+    if (changed > 0) {
+      notifyMemoryEditsApplied({
+        target: window,
+        sessionId: sid,
+        templateId: actionContext.templateId,
+        inserted,
+        updated,
+        deleted,
+        toastr: window.toastr,
+      });
+    } else if (skipped > 0) {
+      logger.debug('memory auto extract skipped actions', { skipped });
+    }
+    return { inserted, updated, deleted, skipped };
+  };
+
+  const handleMemoryEditsFromRawForRuntime = async (raw, {
+    sessionId = '',
+    isGroup = false,
+    contextType = '',
+    uiMode: memoryUiMode = '',
+    memoryPlace = '',
+    useSharedGlobalScope = false,
+    timelineTurnNumber = null,
+    timelineMessageId = '',
+    resolveTimelineTurnNumber = null,
+    force = false,
+    requestPrompt = '',
+  } = {}) => {
+    const place = resolveMemoryTablePlace(memoryPlace || memoryUiMode || 'chat');
+    if (!force && !isMemoryAutoExtractInline(place)) {
+      recordMemoryUpdateTraceEvent({
+        phase: 'edit.skip',
+        sessionId,
+        status: 'skipped',
+        summary: 'memory inline extraction disabled',
+      });
+      return { text: raw, blocks: [], actions: [] };
+    }
+    const parsed = extractTableEditBlocks(raw);
+    try {
+      setLastMemoryUpdate(window.appBridge, sessionId, {
+        at: Date.now(),
+        mode: force ? 'separate' : 'inline',
+        raw: String(raw ?? ''),
+        tableEditRaw: (Array.isArray(parsed?.blocks) ? parsed.blocks : []).join('\n\n').trim(),
+        actions: Array.isArray(parsed?.actions) ? parsed.actions : [],
+        requestPrompt: requestPrompt || buildRequestPromptTextCore(window.appBridge?.lastRequest?.messages || []),
+      });
+    } catch {}
+    if (!Array.isArray(parsed?.actions) || !parsed.actions.length) return parsed;
+    try {
+      const confirmedActions = await confirmMemoryEditsWithUi({
+        actions: parsed.actions,
+        settings: appSettings.get(),
+        loadMemoryTemplateContext: ({ filterTables = false } = {}) => resolveSessionMemoryTemplateContextSafe({
+          memoryTemplateStore,
+          sessionId,
+          isGroup,
+          uiMode: memoryUiMode,
+          contextType,
+          filterTables,
+        }),
+        rawPlan: getLastMemoryPlan(window.appBridge),
+        appConfirm,
+        toastr: window.toastr,
+      });
+      if (!confirmedActions.length) return parsed;
+      await applyMemoryEditsForRuntime({
+        actions: confirmedActions,
+        sessionId,
+        isGroup,
+        contextType,
+        uiMode: memoryUiMode,
+        useSharedGlobalScope,
+        timelineTurnNumber,
+        timelineMessageId,
+        resolveTimelineTurnNumber,
+      });
+    } catch (err) {
+      recordMemoryUpdateTraceEvent({
+        phase: 'edit.apply',
+        sessionId,
+        status: 'error',
+        summary: 'memory edit apply failed',
+        details: {
+          message: err?.message ? String(err.message) : String(err || ''),
+        },
+      });
+      logger.warn('apply memory edits failed', err);
+    }
+    return parsed;
+  };
+
   let requestMomentSummaryCompaction = () => Promise.resolve(false);
   let momentsPanel = null;
   let addMomentsWithAutoImage = (items = []) => momentsStore.addMany(items);
@@ -2028,6 +2233,10 @@ const initApp = async () => {
       toLlmImageUrl: readImageUrlAsDataUrl,
       maxImages: 4,
     }),
+    getMemoryStorageMode,
+    isMemoryAutoExtractInline,
+    getMemoryRuntimeConfig,
+    handleMemoryEditsFromRaw: handleMemoryEditsFromRawForRuntime,
     flushMoments: () => momentsStore.flush(),
     addSummary: summary => momentSummaryStore.addSummary(summary),
     runSummaryCompaction: () => requestMomentSummaryCompaction(),
@@ -2061,6 +2270,12 @@ const initApp = async () => {
   const momentSummaryPanel = new MomentSummaryPanel({
     store: momentSummaryStore,
     onRunCompaction: opts => requestMomentSummaryCompaction(opts),
+    memoryTableStore,
+    memoryTemplateStore,
+    contactsStore,
+    chatStore,
+    getMemoryStorageMode,
+    isMemoryTableEnabled: isMemoryTablePlaceEnabled,
   });
   patchDebugUiRegistry((registry) => {
     registry.panels.momentSummaryPanel = momentSummaryPanel;
@@ -2188,6 +2403,7 @@ const initApp = async () => {
     getUiMode: getEffectivePresetUiMode,
     isDeepSeekRequest: isDeepSeekApiRequest,
   });
+  resolveOpenAIPresetForMemory = getOpenAIPreset;
   const getActiveSwipeBranch = (message) => {
     const swipes = Array.isArray(message?.meta?.swipes) ? message.meta.swipes : null;
     if (!swipes?.length) return null;
@@ -12450,6 +12666,24 @@ Phase G（Frame 36）：循环衔接
     document.body.appendChild(menu);
 	    return menu;
 	  })();
+  syncMomentsMemoryMenuItem = () => {
+    const summaryBtn = momentsMenu?.querySelector?.('[data-action="moment-summary"]');
+    if (!summaryBtn) return;
+    const memoryMode = getMemoryStorageMode('moments');
+    if (memoryMode === 'summary') {
+      summaryBtn.hidden = false;
+      summaryBtn.textContent = '📘 动态摘要';
+      return;
+    }
+    if (memoryMode === 'table') {
+      summaryBtn.hidden = false;
+      summaryBtn.textContent = '📘 动态记忆表格';
+      return;
+    }
+    summaryBtn.hidden = true;
+    summaryBtn.textContent = '📘 动态摘要';
+  };
+  syncMomentsMemoryMenuItem();
 	  momentsComposeBtn?.addEventListener('click', e => {
 	    e.preventDefault();
 	    e.stopPropagation();
@@ -12697,6 +12931,7 @@ Phase G（Frame 36）：循环衔接
     settingsMenu,
     quickMenu,
     momentsMenu,
+    onBeforeOpenMomentsMenu: syncMomentsMemoryMenuItem,
   });
 
   // Mount moments list renderer
@@ -19795,12 +20030,15 @@ Phase G（Frame 36）：循环衔接
     const loadMemoryTemplateContext = async ({
       sessionId = '',
       isGroup = false,
+      contextType = '',
+      uiMode: targetUiMode = uiMode,
       filterTables = true,
     } = {}) => resolveSessionMemoryTemplateContextSafe({
       memoryTemplateStore,
       sessionId,
       isGroup,
-      uiMode,
+      uiMode: targetUiMode,
+      contextType,
       filterTables,
     });
     const normalizeMemoryTimelineTurnNumber = (value) => {
@@ -19866,6 +20104,9 @@ Phase G（Frame 36）：循环衔接
       actions,
       sessionId,
       isGroup,
+      contextType = '',
+      uiMode: memoryUiMode = uiMode,
+      useSharedGlobalScope = false,
       timelineTurnNumber = null,
       timelineMessageId = '',
       resolveTimelineTurnNumber = null,
@@ -19890,8 +20131,10 @@ Phase G（Frame 36）：循环衔接
         memoryTableStore,
         sessionId,
         isGroup,
-        uiMode,
+        uiMode: memoryUiMode,
+        contextType,
         filterTables: true,
+        useSharedGlobalScope,
         tableOrderOverride: planOrder,
         rowIndexMap,
       });
@@ -20262,7 +20505,7 @@ Phase G（Frame 36）：循环衔接
       canInitClient,
       createClient: config => new LLMClient(config),
       handleMemoryEditsFromRaw,
-      isMemoryAutoExtractSeparate,
+      isMemoryAutoExtractSeparate: () => isMemoryAutoExtractSeparate(uiMode === 'rp' ? 'writing' : 'chat'),
       logger,
       memoryUpdateConfigManager,
       recordTraceEvent: recordDebugTraceEvent,
@@ -20959,6 +21202,8 @@ Phase G（Frame 36）：循环衔接
       return {
         sessionId,
         isGroup: isGroupChat,
+        uiMode,
+        memoryPlace: uiMode === 'rp' ? 'writing' : 'chat',
         ...(targetMessageId ? { timelineMessageId: targetMessageId } : {}),
         resolveTimelineTurnNumber: targetSessionId => resolveTargetMemoryTimelineTurnNumber(targetSessionId || sessionId),
       };
@@ -20966,6 +21211,8 @@ Phase G（Frame 36）：循环衔接
     const buildProtocolMemoryOptions = () => ({
       sessionId,
       isGroup: isGroupChat,
+      uiMode,
+      memoryPlace: uiMode === 'rp' ? 'writing' : 'chat',
       resolveTimelineTurnNumber: targetSessionId => resolveTailMemoryTimelineTurnNumber(targetSessionId || sessionId),
     });
     const syncProtocolCheckpoints = async (protocolState, warnMessage) => {

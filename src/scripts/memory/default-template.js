@@ -2,10 +2,10 @@ export const DEFAULT_MEMORY_TEMPLATE = {
   meta: {
     id: 'default-v1',
     name: '通用记忆模板',
-    version: '1.1.1',
+    version: '1.1.2',
     author: '官方',
-    description: '适用于聊天界面与 RP 界面的基础记忆表格模板。',
-    tags: ['通用', '聊天', 'RP'],
+    description: '适用于聊天界面、动态界面与 RP 界面的基础记忆表格模板。',
+    tags: ['通用', '聊天', '动态', 'RP'],
   },
   tables: [
     {
@@ -354,6 +354,64 @@ export const DEFAULT_MEMORY_TEMPLATE = {
       columns: [
         { id: 'time', name: '时间/轮次', type: 'text' },
         { id: 'outline', name: '总体大纲', type: 'multiline' },
+      ],
+    },
+    {
+      id: 'moment_summary',
+      name: '动态摘要',
+      scope: 'global',
+      usage: 'moments',
+      sourceData: {
+        note: '记录动态区每次有效互动后的摘要。每次动态发布、动态评论回复或相关公开互动后必须新增一行，禁止用 update 覆盖旧行。只记录动态区公开信息与自然社交反应，禁止输出 <details>/<summary> 等标签。',
+        initNode: '动态区首次有效互动后插入一条摘要。',
+        insertNode: '每次动态互动新增一条摘要（必须）。',
+        updateNode: '禁止使用 update 覆盖旧摘要；如需修正请手动编辑。',
+        deleteNode: '一般不删除，除非摘要明显错误或需要合并重写。',
+      },
+      updateConfig: {
+        contextDepth: 6,
+        updateFrequency: 1,
+        batchSize: 20,
+        skipFloors: 0,
+      },
+      exportConfig: {
+        enabled: false,
+        splitByRow: false,
+        entryName: '',
+        keywords: '',
+        injectionTemplate: '',
+      },
+      columns: [
+        { id: 'summary', name: '动态摘要', type: 'multiline' },
+      ],
+    },
+    {
+      id: 'moment_outline',
+      name: '动态总体大纲',
+      scope: 'global',
+      usage: 'moments',
+      sourceData: {
+        note: '记录动态区每次有效互动后的总体大纲。每次动态发布、动态评论回复或相关公开互动后必须新增一行，禁止用 update 覆盖旧行。内容需精炼到关键动态、关系变化与后续可延续话题；禁止输出 <details>/<summary> 等标签。',
+        initNode: '动态区首次有效互动后插入一条总体大纲。',
+        insertNode: '每次动态互动新增一条总体大纲（必须）。',
+        updateNode: '禁止使用 update 覆盖旧大纲；如需修正请手动编辑。',
+        deleteNode: '一般不删除，除非大纲明显错误或需要合并重写。',
+      },
+      updateConfig: {
+        contextDepth: 6,
+        updateFrequency: 1,
+        batchSize: 20,
+        skipFloors: 0,
+      },
+      exportConfig: {
+        enabled: false,
+        splitByRow: false,
+        entryName: '',
+        keywords: '',
+        injectionTemplate: '',
+      },
+      columns: [
+        { id: 'outline', name: '动态总体大纲', type: 'multiline' },
       ],
     },
     {

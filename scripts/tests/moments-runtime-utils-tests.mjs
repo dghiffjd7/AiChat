@@ -443,6 +443,12 @@ import {
     authorName: '发布者',
     originSessionId: 'contact:1',
     promptData: 'PROMPT',
+    memoryStorageMode: 'table',
+    memoryAutoExtract: true,
+    memoryInjectPosition: 'history_depth',
+    memoryInjectDepth: 2,
+    memoryGuidePosition: 'system_end',
+    memoryGuideDepth: 1,
     isReplyToComment: true,
     replyTo: { id: 'c1', author: '甲' },
   });
@@ -450,6 +456,14 @@ import {
   assert.equal(ctx.task.type, 'moment_comment');
   assert.equal(ctx.meta?.uiMode, 'moments');
   assert.equal(ctx.meta?.skipScripts, true);
+  assert.equal(ctx.meta?.memoryStorageMode, 'table');
+  assert.equal(ctx.meta?.memoryAutoExtract, true);
+  assert.equal(ctx.meta?.memoryContextType, 'global');
+  assert.equal(ctx.meta?.memorySessionId, 'moments');
+  assert.equal(ctx.meta?.memoryInjectPosition, 'history_depth');
+  assert.equal(ctx.meta?.memoryInjectDepth, 2);
+  assert.equal(ctx.meta?.memoryGuidePosition, 'system_end');
+  assert.equal(ctx.meta?.memoryGuideDepth, 1);
   assert.equal(ctx.task.replyToCommentId, 'c1');
   assert.equal(ctx.task.replyToAuthor, '甲');
   assert.equal(ctx.character.name, '发布者');
@@ -938,6 +952,7 @@ import {
   ].join('\n');
   const comments = [];
   const rawSaves = [];
+  const memoryCalls = [];
   const runtime = createMomentCommentLifecycleRuntime({
     getIsConfigured: () => true,
     isOnline: () => true,
@@ -999,6 +1014,12 @@ import {
       assert.deepEqual(context.meta?.userAttachmentParts, [
         { type: 'image_url', image_url: { url: 'data:image/png;base64,AAA' } },
       ]);
+      assert.equal(context.meta?.memoryStorageMode, 'table');
+      assert.equal(context.meta?.memoryAutoExtract, true);
+      assert.equal(context.meta?.memoryContextType, 'global');
+      assert.equal(context.meta?.memorySessionId, 'moments');
+      assert.equal(context.meta?.memoryInjectPosition, 'history_depth');
+      assert.equal(context.meta?.memoryInjectDepth, 1);
       assert.equal(context.meta?.skipScripts, true);
       assert.doesNotMatch(context.task.promptData, /- 我/);
       return rawReply;
@@ -1010,6 +1031,13 @@ import {
     }),
     saveRawReply: async (raw, metadata) => rawSaves.push({ raw, metadata }),
     buildPublishedMomentAttachmentParts: moment => buildMomentImageAttachmentParts(moment),
+    getMemoryStorageMode: place => (place === 'moments' ? 'table' : 'off'),
+    isMemoryAutoExtractInline: place => place === 'moments',
+    getMemoryRuntimeConfig: () => ({
+      memoryInjectPosition: 'history_depth',
+      memoryInjectDepth: 1,
+    }),
+    handleMemoryEditsFromRaw: async (raw, options) => memoryCalls.push({ raw, options }),
     flushMoments: async () => {},
     logger: { warn: () => {}, error: () => {} },
   });
@@ -1031,6 +1059,17 @@ import {
     comment: '用户发布动态',
     mode: 'published_moment',
   });
+  assert.deepEqual(memoryCalls, [{
+    raw: rawReply,
+    options: {
+      sessionId: 'moments',
+      isGroup: false,
+      contextType: 'global',
+      uiMode: 'moments',
+      memoryPlace: 'moments',
+      useSharedGlobalScope: true,
+    },
+  }]);
   console.log('ok - createMomentCommentLifecycleRuntime handles published moment comment generation without user comment text');
 }
 

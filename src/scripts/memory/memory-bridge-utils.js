@@ -5,6 +5,23 @@ const RP_TO_CHAT_TABLE_IDS = [
   'rp_outline',
 ];
 
+const MOMENTS_TO_CHAT_TABLE_IDS = [
+  'moment_summary',
+  'moment_outline',
+];
+
+const CHAT_TO_MOMENTS_TABLE_IDS = [
+  'chat_summary',
+  'group_summary',
+  'chat_outline',
+  'group_outline',
+];
+
+const RP_TO_MOMENTS_TABLE_IDS = [
+  'rp_summary',
+  'rp_outline',
+];
+
 const CHAT_TO_RP_CONTACT_TABLE_IDS = [
   'character_profile',
   'relationship',
@@ -47,6 +64,85 @@ export const getBridgeTableShortLabel = (table) => {
 export const getRpToChatBridgeTableIds = () => RP_TO_CHAT_TABLE_IDS.slice();
 
 export const getDefaultRpToChatBridgeTableId = () => 'rp_outline';
+
+export const getMomentsToChatBridgeTableIds = () => MOMENTS_TO_CHAT_TABLE_IDS.slice();
+
+export const getChatToMomentsBridgeTableIds = () => CHAT_TO_MOMENTS_TABLE_IDS.slice();
+
+export const getRpToMomentsBridgeTableIds = () => RP_TO_MOMENTS_TABLE_IDS.slice();
+
+const resolveGlobalBridgeTableSettings = ({
+  tableIds = [],
+  rawSettings = {},
+  fallbackEnabled = true,
+  fallbackLimit = 0,
+} = {}) => (
+  Object.fromEntries((Array.isArray(tableIds) ? tableIds : []).map((tableId) => {
+    const raw = rawSettings?.[tableId] && typeof rawSettings[tableId] === 'object'
+      ? rawSettings[tableId]
+      : null;
+    const enabled = typeof raw?.enabled === 'boolean' ? raw.enabled : Boolean(fallbackEnabled);
+    const limit = normalizeBridgeLimit(raw?.limit, fallbackLimit);
+    return [tableId, { enabled, limit }];
+  }))
+);
+
+const pruneGlobalBridgeTableSettings = (rawSettings = {}, tableIds = []) => (
+  Object.fromEntries((Array.isArray(tableIds) ? tableIds : []).map((tableId) => {
+    const raw = rawSettings?.[tableId] && typeof rawSettings[tableId] === 'object'
+      ? rawSettings[tableId]
+      : {};
+    return [
+      tableId,
+      {
+        enabled: raw.enabled !== false,
+        limit: normalizeBridgeLimit(raw.limit, 0),
+      },
+    ];
+  }))
+);
+
+export const resolveMomentsToChatBridgeTableSettings = ({
+  settings = {},
+  fallbackEnabled = true,
+  fallbackLimit = 5,
+} = {}) => resolveGlobalBridgeTableSettings({
+  tableIds: getMomentsToChatBridgeTableIds(),
+  rawSettings: settings?.memoryBridgeMomentsToChatTableSettings,
+  fallbackEnabled,
+  fallbackLimit,
+});
+
+export const resolveChatToMomentsBridgeTableSettings = ({
+  settings = {},
+  fallbackEnabled = true,
+  fallbackLimit = 5,
+} = {}) => resolveGlobalBridgeTableSettings({
+  tableIds: getChatToMomentsBridgeTableIds(),
+  rawSettings: settings?.memoryBridgeChatToMomentsTableSettings,
+  fallbackEnabled,
+  fallbackLimit,
+});
+
+export const resolveRpToMomentsBridgeTableSettings = ({
+  settings = {},
+  fallbackEnabled = true,
+  fallbackLimit = 5,
+} = {}) => resolveGlobalBridgeTableSettings({
+  tableIds: getRpToMomentsBridgeTableIds(),
+  rawSettings: settings?.memoryBridgeRpToMomentsTableSettings,
+  fallbackEnabled,
+  fallbackLimit,
+});
+
+export const pruneMomentsToChatBridgeTableSettings = (rawSettings = {}) =>
+  pruneGlobalBridgeTableSettings(rawSettings, getMomentsToChatBridgeTableIds());
+
+export const pruneChatToMomentsBridgeTableSettings = (rawSettings = {}) =>
+  pruneGlobalBridgeTableSettings(rawSettings, getChatToMomentsBridgeTableIds());
+
+export const pruneRpToMomentsBridgeTableSettings = (rawSettings = {}) =>
+  pruneGlobalBridgeTableSettings(rawSettings, getRpToMomentsBridgeTableIds());
 
 export const resolveRpToChatBridgeTableSettings = ({
   sessionSettings = {},

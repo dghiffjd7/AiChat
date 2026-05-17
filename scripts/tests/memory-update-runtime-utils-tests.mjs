@@ -475,6 +475,41 @@ import {
 }
 
 {
+  const applied = [];
+  const parsed = await handleMemoryEditsFromRawWithUi({
+    raw: '<tableEdit>x</tableEdit>',
+    sessionId: 'moments',
+    contextType: 'global',
+    uiMode: 'moments',
+    memoryPlace: 'moments',
+    useSharedGlobalScope: true,
+    isMemoryAutoExtractInline: place => place === 'moments',
+    extractTableEditBlocks: () => ({
+      text: 'clean',
+      blocks: ['<tableEdit>x</tableEdit>'],
+      actions: [{ action: 'insert' }],
+    }),
+    appBridge: {
+      getLastMemoryUpdate: () => null,
+      setLastMemoryUpdate: () => {},
+    },
+    confirmMemoryEdits: async actions => actions,
+    applyMemoryEdits: async payload => applied.push(payload),
+    logger: { warn: () => {} },
+  });
+  assert.equal(parsed.actions.length, 1);
+  assert.deepEqual(applied, [{
+    actions: [{ action: 'insert' }],
+    sessionId: 'moments',
+    isGroup: false,
+    contextType: 'global',
+    uiMode: 'moments',
+    useSharedGlobalScope: true,
+  }]);
+  console.log('ok - handleMemoryEditsFromRawWithUi forwards dynamic global memory context options');
+}
+
+{
   const traces = [];
   const result = await handleMemoryEditsFromRawWithUi({
     raw: 'raw text',

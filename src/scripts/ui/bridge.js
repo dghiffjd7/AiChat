@@ -66,12 +66,18 @@ import {
   tableMatchesMemoryContext,
 } from '../memory/memory-context-utils.js';
 import {
+  getChatToMomentsBridgeTableIds,
   getChatToRpBridgeSourceMeta,
   getChatToRpBridgeTableIds,
+  getMomentsToChatBridgeTableIds,
+  getRpToMomentsBridgeTableIds,
   getRpToChatBridgeTableIds,
   isChatToRpGroupTableId,
   normalizeBridgeLimit,
+  resolveChatToMomentsBridgeTableSettings,
   resolveChatToRpBridgeTableSettings,
+  resolveMomentsToChatBridgeTableSettings,
+  resolveRpToMomentsBridgeTableSettings,
   resolveRpToChatBridgeTableSettings,
 } from '../memory/memory-bridge-utils.js';
 import { logger } from '../utils/logger.js';
@@ -800,17 +806,21 @@ class AppBridge {
     const templateName = String(template?.meta?.name || record?.name || '').trim();
     if (!templateId) return disabledPlan('missing_template_id');
 
-    const sessionId = String(context?.session?.id || this.activeSessionId || '').trim();
+    const sessionId = String(context?.meta?.memorySessionId || context?.session?.id || this.activeSessionId || '').trim();
     if (!sessionId) return disabledPlan('missing_session');
 
     const isGroup = Boolean(context?.session?.isGroup) || sessionId.startsWith('group:');
-    const contextType = getMemoryContextType({ sessionId, isGroup });
+    const contextType = getMemoryContextType({
+      sessionId,
+      isGroup,
+      contextType: context?.meta?.memoryContextType,
+    });
     const sessionMode = resolveMemorySessionMode({
       uiMode: context?.meta?.uiMode,
       sessionId,
       contextType,
     });
-    const scope = isGroup ? 'group' : 'contact';
+    const scope = contextType === 'global' || contextType === 'moments' ? 'global' : (isGroup ? 'group' : 'contact');
     const sessionSettings = context?.session?.settings && typeof context.session.settings === 'object'
       ? context.session.settings
       : {};
@@ -949,7 +959,9 @@ class AppBridge {
     let scopedRows = [];
     let globalRows = [];
     try {
-      if (isGroup) {
+      if (contextType === 'global' || contextType === 'moments') {
+        scopedRows = [];
+      } else if (isGroup) {
         scopedRows = await this.memoryTableStore.getMemories({ scope: 'group', group_id: sessionId, template_id: templateId });
       } else {
         scopedRows = await this.memoryTableStore.getMemories({ scope: 'contact', contact_id: sessionId, template_id: templateId });
@@ -1172,6 +1184,116 @@ class AppBridge {
           if (!rowText) return;
           pushLine(`- ${rowText}`);
         });
+      };
+      const loadRowsForMemorySession = async (sourceId = '') => {
+        const sid = normalizeId(sourceId);
+        if (!sid) return [];
+        const sourceIsGroup = sid.startsWith('group:');
+        const rows = await this.memoryTableStore.getMemories({
+          scope: sourceIsGroup ? 'group' : 'contact',
+          group_id: sourceIsGroup ? sid : undefined,
+          contact_id: sourceIsGroup ? undefined : sid,
+          template_id: templateId,
+        }).catch(() => []);
+        return Array.isArray(rows) ? rows.filter(row => row && row.is_active !== false) : [];
+      };
+      const resolveSessionSourceName = (sourceId = '') => {
+        const sid = normalizeId(sourceId);
+        if (!sid) return '';
+        if (isRpSessionId(sid)) {
+          const rpName = normalizeId(this.getRpCharacterNameForSession?.(sid));
+          if (rpName) return rpName;
+        }
+        return resolveContactName(sid) || sid;
+      };
+      const listMemorySessionIdsByMode = (mode = 'social') => {
+        const list = this.chatStore?.listSessions?.() || [];
+        return Array.from(new Set(
+          (Array.isArray(list) ? list : [])
+            .map(id => normalizeId(id))
+            .filter(Boolean)
+            .filter(id => id !== 'moments')
+            .filter(id => (mode === 'rp' ? isRpSessionId(id) : !isRpSessionId(id))),
+        ));
+      };
+      const collectMemorySourceRecords = async (sourceIds = []) => {
+        const ids = Array.from(new Set((Array.isArray(sourceIds) ? sourceIds : [])
+          .map(id => normalizeId(id))
+          .filter(Boolean)));
+        const records = [];
+        for (const sourceId of ids) {
+          const rows = await loadRowsForMemorySession(sourceId);
+          if (!rows.length) continue;
+          records.push({
+            sourceId,
+            sourceName: resolveSessionSourceName(sourceId),
+            sourceIsGroup: sourceId.startsWith('group:'),
+            rows,
+          });
+        }
+        return records;
+      };
+      const appendSourceRecordTables = ({
+        header = '',
+        note = '',
+        records = [],
+        tableIds = [],
+        limit = 0,
+        getLimitForTable = null,
+        includeSourceName = true,
+        resolveTableLabel = table => String(table?.name || table?.id || '').trim(),
+      } = {}) => {
+        if (!Array.isArray(records) || !records.length) return;
+        const blockLines = [];
+        for (const tableId of Array.isArray(tableIds) ? tableIds : []) {
+          const table = tableByIdAll.get(tableId);
+          if (!table) continue;
+          const collectedRows = [];
+          records.forEach((record) => {
+            (Array.isArray(record?.rows) ? record.rows : [])
+              .filter(row => normalizeId(row?.table_id) === tableId)
+              .forEach(row => collectedRows.push({
+                row,
+                sourceId: record.sourceId,
+                sourceName: record.sourceName,
+              }));
+          });
+          if (!collectedRows.length) continue;
+          collectedRows.sort((a, b) => {
+            const af = resolveRowSortKey(a?.row, 0);
+            const bf = resolveRowSortKey(b?.row, 0);
+            const ak = resolvePromptSortKeyForTable(a?.row, tableId, af);
+            const bk = resolvePromptSortKeyForTable(b?.row, tableId, bf);
+            if (ak !== bk) return ak - bk;
+            if (af !== bf) return af - bf;
+            return String(a?.sourceId || '').localeCompare(String(b?.sourceId || ''));
+          });
+          const tableLimit = typeof getLimitForTable === 'function'
+            ? normalizeBridgeLimit(getLimitForTable(tableId), limit)
+            : normalizeBridgeLimit(limit, 0);
+          const selectedRows = tableLimit > 0 && collectedRows.length > tableLimit
+            ? collectedRows.slice(-tableLimit)
+            : collectedRows;
+          if (!selectedRows.length) continue;
+          if (blockLines.length === 0) {
+            blockLines.push(header);
+            if (note) blockLines.push(note);
+          } else {
+            blockLines.push('');
+          }
+          blockLines.push(`【${resolveTableLabel(table, tableId)}】`);
+          selectedRows.forEach(({ row, sourceName }) => {
+            const rowText = getRowText(row, table);
+            if (!rowText) return;
+            const prefix = includeSourceName && sourceName ? `${sourceName}：` : '';
+            blockLines.push(`- ${prefix}${rowText}`);
+          });
+        }
+        if (!blockLines.length) return;
+        pushSpacer();
+        for (const line of blockLines) {
+          if (!pushLine(line)) break;
+        }
       };
 
       if (sessionMode === 'chat' && !isGroup) {
@@ -1492,6 +1614,86 @@ class AppBridge {
               pushLine(line);
             });
           }
+        }
+      }
+      if (
+        (sessionMode === 'chat' || sessionMode === 'rp') &&
+        globalSettings.memoryTableEnabledMoments !== false &&
+        globalSettings.memoryBridgeMomentsToChatEnabled !== false
+      ) {
+        const momentsTableSettings = resolveMomentsToChatBridgeTableSettings({
+          settings: globalSettings,
+          fallbackEnabled: globalSettings.memoryBridgeMomentsToChatEnabled !== false,
+          fallbackLimit: clampBridgeLimit(globalSettings.memoryBridgeMomentsToChatLimit, 5),
+        });
+        const enabledMomentTableIds = getMomentsToChatBridgeTableIds()
+          .filter(tableId => momentsTableSettings?.[tableId]?.enabled === true);
+        const momentRows = (Array.isArray(globalRows) ? globalRows : [])
+          .filter(row => row && row.is_active !== false)
+          .filter(row => enabledMomentTableIds.includes(normalizeId(row?.table_id)));
+        appendSourceRecordTables({
+          header: '【跨模式参考｜动态公开记忆】',
+          note: '（以下内容来自动态区公开互动，仅供理解公开社交语境；不在当前会话记忆表格中更新）',
+          records: [{
+            sourceId: 'moments',
+            sourceName: '动态',
+            sourceIsGroup: false,
+            rows: momentRows,
+          }],
+          tableIds: enabledMomentTableIds,
+          limit: clampBridgeLimit(globalSettings.memoryBridgeMomentsToChatLimit, 5),
+          getLimitForTable: tableId => momentsTableSettings?.[tableId]?.limit,
+          includeSourceName: false,
+        });
+      }
+      if (sessionMode === 'moments') {
+        if (
+          globalSettings.memoryTableEnabledChat !== false &&
+          globalSettings.memoryBridgeChatToMomentsEnabled !== false
+        ) {
+          const chatToMomentsTableSettings = resolveChatToMomentsBridgeTableSettings({
+            settings: globalSettings,
+            fallbackEnabled: globalSettings.memoryBridgeChatToMomentsEnabled !== false,
+            fallbackLimit: clampBridgeLimit(globalSettings.memoryBridgeChatToMomentsLimit, 5),
+          });
+          const enabledChatToMomentsTableIds = getChatToMomentsBridgeTableIds()
+            .filter(tableId => chatToMomentsTableSettings?.[tableId]?.enabled === true);
+          const socialRecords = await collectMemorySourceRecords(listMemorySessionIdsByMode('social'));
+          appendSourceRecordTables({
+            header: '【跨模式参考｜聊天互动记忆】',
+            note: '（以下内容来自私聊 / 群聊记忆表格，仅供动态任务理解关系与近期公开语境；禁止在动态评论中泄露私聊内容）',
+            records: socialRecords,
+            tableIds: enabledChatToMomentsTableIds,
+            limit: clampBridgeLimit(globalSettings.memoryBridgeChatToMomentsLimit, 5),
+            getLimitForTable: tableId => chatToMomentsTableSettings?.[tableId]?.limit,
+            includeSourceName: true,
+            resolveTableLabel: (table, tableId) => {
+              const base = String(table?.name || tableId).trim() || tableId;
+              return `${isChatToRpGroupTableId(tableId) ? '群聊' : '私聊'}${base}`;
+            },
+          });
+        }
+        if (
+          globalSettings.memoryTableEnabledWriting !== false &&
+          globalSettings.memoryBridgeRpToMomentsEnabled !== false
+        ) {
+          const rpToMomentsTableSettings = resolveRpToMomentsBridgeTableSettings({
+            settings: globalSettings,
+            fallbackEnabled: globalSettings.memoryBridgeRpToMomentsEnabled !== false,
+            fallbackLimit: clampBridgeLimit(globalSettings.memoryBridgeRpToMomentsLimit, 5),
+          });
+          const enabledRpToMomentsTableIds = getRpToMomentsBridgeTableIds()
+            .filter(tableId => rpToMomentsTableSettings?.[tableId]?.enabled === true);
+          const rpRecords = await collectMemorySourceRecords(listMemorySessionIdsByMode('rp'));
+          appendSourceRecordTables({
+            header: '【跨模式参考｜RP剧情记忆】',
+            note: '（以下内容来自 RP 记忆表格，仅供动态任务理解角色经历；动态评论应保持自然社交表达，不直接暴露设定式信息）',
+            records: rpRecords,
+            tableIds: enabledRpToMomentsTableIds,
+            limit: clampBridgeLimit(globalSettings.memoryBridgeRpToMomentsLimit, 5),
+            getLimitForTable: tableId => rpToMomentsTableSettings?.[tableId]?.limit,
+            includeSourceName: true,
+          });
         }
       }
       return { text: parts.join('\n').trim(), tokens: used };

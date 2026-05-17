@@ -203,9 +203,19 @@ export class GeneralSettingsPanel {
     this.memoryInjectDepthWrap = null;
     this.memoryInjectDepthInput = null;
     this.memoryBridgeBlock = null;
+    this.memoryBridgeMomentsToChatToggle = null;
+    this.memoryBridgeMomentsToChatLimitInput = null;
+    this.memoryBridgeChatToMomentsToggle = null;
+    this.memoryBridgeChatToMomentsLimitInput = null;
+    this.memoryBridgeRpToMomentsToggle = null;
+    this.memoryBridgeRpToMomentsLimitInput = null;
     this.memoryAutoConfirmToggle = null;
     this.memoryAutoStepToggle = null;
     this.memoryFillEveryNInput = null;
+    this.memoryPlacesButton = null;
+    this.memoryPlacesDialogOverlay = null;
+    this.memoryPlacesDialog = null;
+    this.memoryPlacesChecks = {};
     this.templateEnabledToggle = null;
     this.templateBeforeToggle = null;
     this.templateAfterToggle = null;
@@ -458,6 +468,7 @@ export class GeneralSettingsPanel {
       const safeN = Number.isFinite(rawN) && rawN >= 1 ? rawN : 1;
       this.memoryFillEveryNInput.value = String(safeN);
     }
+    this.refreshMemoryPlacesDialog(settings);
     if (this.memoryInjectPositionSelect) {
       const raw = String(settings.memoryInjectPosition || 'history_depth').toLowerCase();
       const allowed = new Set(['after_persona', 'system_end', 'before_chat', 'history_before', 'history_after', 'history_depth', 'system_end+before_chat']);
@@ -469,6 +480,23 @@ export class GeneralSettingsPanel {
       const safe = Number.isFinite(raw) ? Math.max(0, raw) : 0;
       this.memoryInjectDepthInput.value = String(safe);
     }
+    const syncBridgeLimit = (input, value, fallback = 5) => {
+      if (!input) return;
+      const raw = Math.trunc(Number(value));
+      input.value = String(Number.isFinite(raw) ? Math.max(0, raw) : fallback);
+    };
+    if (this.memoryBridgeMomentsToChatToggle) {
+      this.memoryBridgeMomentsToChatToggle.checked = settings.memoryBridgeMomentsToChatEnabled !== false;
+    }
+    syncBridgeLimit(this.memoryBridgeMomentsToChatLimitInput, settings.memoryBridgeMomentsToChatLimit, 5);
+    if (this.memoryBridgeChatToMomentsToggle) {
+      this.memoryBridgeChatToMomentsToggle.checked = settings.memoryBridgeChatToMomentsEnabled !== false;
+    }
+    syncBridgeLimit(this.memoryBridgeChatToMomentsLimitInput, settings.memoryBridgeChatToMomentsLimit, 5);
+    if (this.memoryBridgeRpToMomentsToggle) {
+      this.memoryBridgeRpToMomentsToggle.checked = settings.memoryBridgeRpToMomentsEnabled !== false;
+    }
+    syncBridgeLimit(this.memoryBridgeRpToMomentsLimitInput, settings.memoryBridgeRpToMomentsLimit, 5);
     if (this.templateEnabledToggle) {
       this.templateEnabledToggle.checked = settings.templateEnabled !== false;
     }
@@ -507,6 +535,7 @@ export class GeneralSettingsPanel {
 
   hide() {
     this.closeCustomSelectMenu();
+    this.hideMemoryPlacesDialog();
     if (this.element) this.element.style.display = 'none';
     if (this.overlayElement) this.overlayElement.style.display = 'none';
   }
@@ -619,6 +648,10 @@ export class GeneralSettingsPanel {
     if (this.memoryModeSummary) this.memoryModeSummary.disabled = !memoryEnabled;
     if (this.memoryModeTable) this.memoryModeTable.disabled = !memoryEnabled;
     if (this.memoryAutoToggle) this.memoryAutoToggle.disabled = !showMemoryTable;
+    if (this.memoryPlacesButton) {
+      this.memoryPlacesButton.disabled = !showMemoryTable;
+      this.memoryPlacesButton.classList.toggle('is-disabled', this.memoryPlacesButton.disabled);
+    }
     if (this.memoryAutoOptions) {
       this.memoryAutoOptions.style.display = showAuto ? 'block' : 'none';
     }
@@ -662,7 +695,105 @@ export class GeneralSettingsPanel {
     if (this.memoryBridgeBlock) {
       this.memoryBridgeBlock.style.display = showMemoryTable ? 'block' : 'none';
     }
+    const syncBridgePair = (toggle, input) => {
+      if (toggle) toggle.disabled = !showMemoryTable;
+      if (input) input.disabled = !showMemoryTable || toggle?.checked === false;
+    };
+    syncBridgePair(this.memoryBridgeMomentsToChatToggle, this.memoryBridgeMomentsToChatLimitInput);
+    syncBridgePair(this.memoryBridgeChatToMomentsToggle, this.memoryBridgeChatToMomentsLimitInput);
+    syncBridgePair(this.memoryBridgeRpToMomentsToggle, this.memoryBridgeRpToMomentsLimitInput);
     this.updateSelectableCards();
+  }
+
+  refreshMemoryPlacesDialog(settings = appSettings.get()) {
+    const checks = this.memoryPlacesChecks || {};
+    if (checks.chat) checks.chat.checked = settings.memoryTableEnabledChat !== false;
+    if (checks.moments) checks.moments.checked = settings.memoryTableEnabledMoments !== false;
+    if (checks.writing) checks.writing.checked = settings.memoryTableEnabledWriting !== false;
+  }
+
+  ensureMemoryPlacesDialog() {
+    if (this.memoryPlacesDialog) return;
+    const overlay = document.createElement('div');
+    overlay.className = 'app-themed-overlay general-memory-places-overlay';
+    overlay.style.cssText = 'display:none; position:fixed; inset:0; background:rgba(15,23,42,0.45); z-index:24000; align-items:center; justify-content:center; padding:16px;';
+    const dialog = document.createElement('div');
+    dialog.className = 'app-themed-panel general-memory-places-dialog';
+    dialog.style.cssText = 'width:min(92vw,420px); background:var(--app-surface-card); border:1px solid var(--app-border-default); border-radius:14px; box-shadow:0 18px 42px rgba(15,23,42,0.22); overflow:hidden;';
+    dialog.addEventListener('click', (e) => e.stopPropagation());
+    dialog.innerHTML = `
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; padding:12px 14px; border-bottom:1px solid var(--app-border-default); background:var(--app-surface-subtle);">
+        <div style="font-weight:900;">记忆表格生效位置</div>
+        <button type="button" data-role="close" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:6px 10px; cursor:pointer;">关闭</button>
+      </div>
+      <div style="padding:14px; display:flex; flex-direction:column; gap:10px;">
+        <label style="display:flex; align-items:flex-start; gap:10px; cursor:pointer; padding:10px; border:1px solid var(--app-border-subtle); border-radius:10px;">
+          <input type="checkbox" data-place="chat" style="width:18px; height:18px; margin-top:1px;">
+          <span>
+            <span style="display:block; font-weight:800; color:var(--app-text-primary);">聊天</span>
+            <span style="display:block; font-size:12px; color:var(--app-text-muted); margin-top:3px;">私聊与群聊请求注入、自动写表。</span>
+          </span>
+        </label>
+        <label style="display:flex; align-items:flex-start; gap:10px; cursor:pointer; padding:10px; border:1px solid var(--app-border-subtle); border-radius:10px;">
+          <input type="checkbox" data-place="moments" style="width:18px; height:18px; margin-top:1px;">
+          <span>
+            <span style="display:block; font-weight:800; color:var(--app-text-primary);">动态</span>
+            <span style="display:block; font-size:12px; color:var(--app-text-muted); margin-top:3px;">动态评论任务注入、动态记忆表格自动写入。</span>
+          </span>
+        </label>
+        <label style="display:flex; align-items:flex-start; gap:10px; cursor:pointer; padding:10px; border:1px solid var(--app-border-subtle); border-radius:10px;">
+          <input type="checkbox" data-place="writing" style="width:18px; height:18px; margin-top:1px;">
+          <span>
+            <span style="display:block; font-weight:800; color:var(--app-text-primary);">创意写作</span>
+            <span style="display:block; font-size:12px; color:var(--app-text-muted); margin-top:3px;">RP / 创意写作请求注入、自动写表。</span>
+          </span>
+        </label>
+      </div>
+      <div style="display:flex; justify-content:flex-end; gap:10px; padding:12px 14px; border-top:1px solid var(--app-border-default);">
+        <button type="button" data-role="cancel" style="padding:8px 12px; border:1px solid var(--app-border-default); border-radius:10px; background:var(--app-surface-subtle); cursor:pointer;">取消</button>
+        <button type="button" data-role="save" style="padding:8px 14px; border:none; border-radius:10px; background:#019aff; color:var(--app-text-inverse); cursor:pointer; font-weight:800;">保存</button>
+      </div>
+    `;
+    overlay.appendChild(dialog);
+    document.body.appendChild(overlay);
+    this.memoryPlacesDialogOverlay = overlay;
+    this.memoryPlacesDialog = dialog;
+    this.memoryPlacesChecks = {
+      chat: dialog.querySelector('[data-place="chat"]'),
+      moments: dialog.querySelector('[data-place="moments"]'),
+      writing: dialog.querySelector('[data-place="writing"]'),
+    };
+    const close = () => this.hideMemoryPlacesDialog();
+    overlay.addEventListener('click', close);
+    dialog.querySelector('[data-role="close"]')?.addEventListener('click', close);
+    dialog.querySelector('[data-role="cancel"]')?.addEventListener('click', close);
+    dialog.querySelector('[data-role="save"]')?.addEventListener('click', () => this.saveMemoryPlacesDialog());
+  }
+
+  showMemoryPlacesDialog() {
+    this.ensureMemoryPlacesDialog();
+    this.refreshMemoryPlacesDialog(appSettings.get());
+    if (this.memoryPlacesDialogOverlay) this.memoryPlacesDialogOverlay.style.display = 'flex';
+  }
+
+  hideMemoryPlacesDialog() {
+    if (this.memoryPlacesDialogOverlay) this.memoryPlacesDialogOverlay.style.display = 'none';
+  }
+
+  saveMemoryPlacesDialog() {
+    const patch = {
+      memoryTableEnabledChat: this.memoryPlacesChecks.chat?.checked !== false,
+      memoryTableEnabledMoments: this.memoryPlacesChecks.moments?.checked !== false,
+      memoryTableEnabledWriting: this.memoryPlacesChecks.writing?.checked !== false,
+    };
+    appSettings.update(patch);
+    Object.entries(patch).forEach(([key, value]) => {
+      window.dispatchEvent(new CustomEvent('app-settings-changed', { detail: { key, value } }));
+    });
+    window.dispatchEvent(new CustomEvent('memory-table-places-changed', { detail: patch }));
+    this.hideMemoryPlacesDialog();
+    this.updateMemoryAutoVisibility();
+    window.toastr?.success?.('已更新记忆表格生效位置');
   }
 
   updateTemplateScriptVisibility() {
@@ -1935,6 +2066,11 @@ export class GeneralSettingsPanel {
               </label>
             </div>
 
+            <div style="margin-left: 26px; margin-top: 8px; margin-bottom: 10px;">
+              <button type="button" id="general-memory-places-btn" class="general-settings-manage-btn">生效位置</button>
+              <small style="color:var(--app-text-muted); display:block; margin-top:6px;">控制记忆表格在聊天、动态、创意写作中是否启用。</small>
+            </div>
+
             <div id="general-memory-auto-options" style="margin-left: 26px; margin-top: 6px; display: none;">
             <div style="font-size:12px; color:var(--app-text-muted); margin-bottom:8px;">写表方式</div>
             <label style="display:flex; align-items:center; gap:8px; cursor:pointer; margin-bottom:6px;">
@@ -2028,8 +2164,37 @@ export class GeneralSettingsPanel {
 	            </div>
 	          </div>
 
-              <div id=”general-memory-bridge-block” style=”margin-left: 26px; margin-top: 10px; padding: 8px; border: 1px dashed var(--app-border-default); border-radius: 10px; display: none;”>
-                <small style=”color:var(--app-text-muted); line-height:1.6;”>聊天 / RP 记忆桥接请在各会话的「好友设置 → 记忆共享」中配置，可针对每张表格单独开关与限条。</small>
+              <div id="general-memory-bridge-block" style="margin-left: 26px; margin-top: 10px; padding: 8px; border: 1px dashed var(--app-border-default); border-radius: 10px; display: none;">
+                <small style="color:var(--app-text-muted); line-height:1.6; display:block;">聊天 / RP 会话之间的桥接请在各会话的「好友设置 → 记忆共享」中配置；动态桥接为全局设置。</small>
+                <div style="display:flex; flex-direction:column; gap:8px; margin-top:8px;">
+                  <label style="display:flex; align-items:center; justify-content:space-between; gap:10px; color:var(--app-text-primary); font-size:12px;">
+                    <span>动态记忆注入聊天 / RP</span>
+                    <input type="checkbox" id="general-memory-bridge-moments-to-chat" style="width:16px; height:16px;">
+                  </label>
+                  <label style="display:flex; align-items:center; justify-content:space-between; gap:8px; color:var(--app-text-secondary); font-size:12px;">
+                    <span>注入条数（每表，0=全部）</span>
+                    <input type="number" id="general-memory-bridge-moments-to-chat-limit" min="0" step="1"
+                           style="width: 90px; padding: 4px 6px; border:1px solid var(--app-border-default); border-radius:8px; font-size:12px; text-align:right;">
+                  </label>
+                  <label style="display:flex; align-items:center; justify-content:space-between; gap:10px; color:var(--app-text-primary); font-size:12px;">
+                    <span>聊天 / 群聊记忆注入动态</span>
+                    <input type="checkbox" id="general-memory-bridge-chat-to-moments" style="width:16px; height:16px;">
+                  </label>
+                  <label style="display:flex; align-items:center; justify-content:space-between; gap:8px; color:var(--app-text-secondary); font-size:12px;">
+                    <span>注入条数（每表，0=全部）</span>
+                    <input type="number" id="general-memory-bridge-chat-to-moments-limit" min="0" step="1"
+                           style="width: 90px; padding: 4px 6px; border:1px solid var(--app-border-default); border-radius:8px; font-size:12px; text-align:right;">
+                  </label>
+                  <label style="display:flex; align-items:center; justify-content:space-between; gap:10px; color:var(--app-text-primary); font-size:12px;">
+                    <span>RP 记忆注入动态</span>
+                    <input type="checkbox" id="general-memory-bridge-rp-to-moments" style="width:16px; height:16px;">
+                  </label>
+                  <label style="display:flex; align-items:center; justify-content:space-between; gap:8px; color:var(--app-text-secondary); font-size:12px;">
+                    <span>注入条数（每表，0=全部）</span>
+                    <input type="number" id="general-memory-bridge-rp-to-moments-limit" min="0" step="1"
+                           style="width: 90px; padding: 4px 6px; border:1px solid var(--app-border-default); border-radius:8px; font-size:12px; text-align:right;">
+                  </label>
+                </div>
               </div>
 	          </div>
 	        </div>
@@ -2246,9 +2411,16 @@ export class GeneralSettingsPanel {
     this.memoryInjectDepthWrap = this.element.querySelector('#general-memory-inject-depth-wrap');
     this.memoryInjectDepthInput = this.element.querySelector('#general-memory-inject-depth');
     this.memoryBridgeBlock = this.element.querySelector('#general-memory-bridge-block');
+    this.memoryBridgeMomentsToChatToggle = this.element.querySelector('#general-memory-bridge-moments-to-chat');
+    this.memoryBridgeMomentsToChatLimitInput = this.element.querySelector('#general-memory-bridge-moments-to-chat-limit');
+    this.memoryBridgeChatToMomentsToggle = this.element.querySelector('#general-memory-bridge-chat-to-moments');
+    this.memoryBridgeChatToMomentsLimitInput = this.element.querySelector('#general-memory-bridge-chat-to-moments-limit');
+    this.memoryBridgeRpToMomentsToggle = this.element.querySelector('#general-memory-bridge-rp-to-moments');
+    this.memoryBridgeRpToMomentsLimitInput = this.element.querySelector('#general-memory-bridge-rp-to-moments-limit');
     this.memoryAutoConfirmToggle = this.element.querySelector('#general-memory-auto-confirm');
     this.memoryAutoStepToggle = this.element.querySelector('#general-memory-auto-step');
     this.memoryFillEveryNInput = this.element.querySelector('#general-memory-fill-every-n');
+    this.memoryPlacesButton = this.element.querySelector('#general-memory-places-btn');
     this.templateEnabledToggle = this.element.querySelector('#general-template-enabled');
     this.templateBeforeToggle = this.element.querySelector('#general-template-before');
     this.templateAfterToggle = this.element.querySelector('#general-template-after');
@@ -2294,6 +2466,10 @@ export class GeneralSettingsPanel {
       if (typeof fn !== 'function') return;
       this.hide();
       fn();
+    });
+    this.memoryPlacesButton?.addEventListener('click', () => {
+      if (this.memoryPlacesButton?.disabled) return;
+      this.showMemoryPlacesDialog();
     });
     this.customBundleExportBtn?.addEventListener('click', async () => {
       const fn = this.externalActions.exportCustomBundle;
@@ -3095,6 +3271,29 @@ export class GeneralSettingsPanel {
       appSettings.update({ memoryInjectDepth: safe });
       window.dispatchEvent(new CustomEvent('app-settings-changed', { detail: { key: 'memoryInjectDepth', value: safe } }));
     });
+    const bindMemoryBridgeToggle = (input, key) => {
+      input?.addEventListener('change', (e) => {
+        const enabled = e?.target?.checked !== false;
+        appSettings.update({ [key]: enabled });
+        window.dispatchEvent(new CustomEvent('app-settings-changed', { detail: { key, value: enabled } }));
+        this.updateMemoryAutoVisibility();
+      });
+    };
+    const bindMemoryBridgeLimit = (input, key, fallback = 5) => {
+      input?.addEventListener('input', (e) => {
+        const raw = Math.trunc(Number(e?.target?.value));
+        const safe = Number.isFinite(raw) ? Math.max(0, raw) : fallback;
+        if (e?.target) e.target.value = String(safe);
+        appSettings.update({ [key]: safe });
+        window.dispatchEvent(new CustomEvent('app-settings-changed', { detail: { key, value: safe } }));
+      });
+    };
+    bindMemoryBridgeToggle(this.memoryBridgeMomentsToChatToggle, 'memoryBridgeMomentsToChatEnabled');
+    bindMemoryBridgeLimit(this.memoryBridgeMomentsToChatLimitInput, 'memoryBridgeMomentsToChatLimit', 5);
+    bindMemoryBridgeToggle(this.memoryBridgeChatToMomentsToggle, 'memoryBridgeChatToMomentsEnabled');
+    bindMemoryBridgeLimit(this.memoryBridgeChatToMomentsLimitInput, 'memoryBridgeChatToMomentsLimit', 5);
+    bindMemoryBridgeToggle(this.memoryBridgeRpToMomentsToggle, 'memoryBridgeRpToMomentsEnabled');
+    bindMemoryBridgeLimit(this.memoryBridgeRpToMomentsLimitInput, 'memoryBridgeRpToMomentsLimit', 5);
     this.memoryModeTable?.addEventListener('change', async (e) => {
       const target = e?.target;
       const checked = Boolean(target?.checked);

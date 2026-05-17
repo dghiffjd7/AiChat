@@ -15,6 +15,7 @@ export const bindAppSheetToggleButtons = ({
   settingsMenu = null,
   quickMenu = null,
   momentsMenu = null,
+  onBeforeOpenMomentsMenu = () => {},
 } = {}) => {
   bindClick(avatarBtns, (event) => {
     event.stopPropagation?.();
@@ -34,6 +35,7 @@ export const bindAppSheetToggleButtons = ({
 
   momentsSettingsBtn?.addEventListener?.('click', (event) => {
     event.stopPropagation?.();
+    onBeforeOpenMomentsMenu();
     toggleSheetAt(momentsMenu, momentsSettingsBtn, { alignRight: true, kind: 'moments' });
   });
 };

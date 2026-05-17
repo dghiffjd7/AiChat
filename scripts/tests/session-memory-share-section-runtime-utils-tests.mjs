@@ -7,6 +7,51 @@ import {
   createSessionMemoryShareSectionRuntime,
 } from '../../src/scripts/ui/session-memory-share-section-runtime-utils.js';
 
+const createElement = (tagName = 'div', ownerDocument = null) => {
+  const el = {
+    tagName,
+    ownerDocument,
+    style: { display: '', cssText: '' },
+    textContent: '',
+    value: '',
+    checked: false,
+    disabled: false,
+    children: [],
+    listeners: {},
+    attributes: {},
+    appendChild(child) {
+      this.children.push(child);
+      return child;
+    },
+    addEventListener(type, handler) {
+      if (!this.listeners[type]) this.listeners[type] = [];
+      this.listeners[type].push(handler);
+    },
+    setAttribute(name, value) {
+      this.attributes[name] = String(value);
+    },
+  };
+  Object.defineProperty(el, 'innerHTML', {
+    get() {
+      return this._innerHTML || '';
+    },
+    set(value) {
+      this._innerHTML = String(value || '');
+      if (this._innerHTML === '') this.children = [];
+    },
+  });
+  return el;
+};
+
+const createDocumentRef = () => {
+  const documentRef = {
+    createElement(tagName) {
+      return createElement(tagName, documentRef);
+    },
+  };
+  return documentRef;
+};
+
 {
   const allSocialDraft = buildSessionMemoryShareDraft({
     sessionId: 'rp:hero',
@@ -264,4 +309,78 @@ import {
   await runtime.saveMemoryShareManager();
   assert.deepEqual(setCalls, [['group:7', { initial: true, savedLimit: 9 }]]);
   console.log('ok - createSessionMemoryShareSectionRuntime routes non-rp sessions through rp-to-chat save flow');
+}
+
+{
+  const documentRef = createDocumentRef();
+  const bodyEl = documentRef.createElement('body');
+  const tableUpdates = [];
+  const modal = {
+    overlay: documentRef.createElement('div'),
+    panel: documentRef.createElement('div'),
+    hint: documentRef.createElement('div'),
+    sourceWrap: documentRef.createElement('div'),
+    sourceStatic: documentRef.createElement('div'),
+    sourceSelect: documentRef.createElement('select'),
+    sourceButton: documentRef.createElement('button'),
+    rows: documentRef.createElement('div'),
+    saveButton: documentRef.createElement('button'),
+    closeButton: documentRef.createElement('button'),
+    cancelButton: documentRef.createElement('button'),
+  };
+  const runtime = createSessionMemoryShareSectionRuntime({
+    getSessionId: () => 'chat:1',
+    getSummaryEl: () => documentRef.createElement('div'),
+    getSessionSettings: () => ({}),
+    setSessionSettings: () => {},
+    buildDraft: () => ({
+      sessionId: 'chat:1',
+      sourceId: '',
+      tableSettings: {},
+    }),
+    buildMemoryShareContext: async () => ({
+      summarySourceText: '主来源',
+      entries: [],
+    }),
+    buildExtraMemoryShareGroups: async () => [
+      {
+        id: 'moments',
+        label: '动态',
+        description: '动态记忆',
+        context: {
+          summarySourceText: '动态',
+          entries: [
+            {
+              tableId: 'moment_summary',
+              shortLabel: '动态摘要',
+              enabled: true,
+              limit: 5,
+              rowCount: 2,
+              actualCount: 2,
+            },
+          ],
+        },
+        enabled: true,
+        tableSettings: {
+          moment_summary: { enabled: true, limit: 5 },
+        },
+        setEnabled: async () => {},
+        setTableSetting: async (tableId, value) => {
+          tableUpdates.push([tableId, value]);
+        },
+      },
+    ],
+    createModal: () => modal,
+    bodyEl,
+    resolveIsRpTarget: () => false,
+  });
+
+  await runtime.openMemoryShareManager();
+  assert.equal(modal.rows.children.length, 2);
+  const manageButton = modal.rows.children[1].children[1];
+  await manageButton.listeners.click[0]();
+  assert.equal(modal.rows.children[0].textContent, '‹ 动态');
+  assert.equal(modal.rows.children[1].className, 'memory-share-row');
+  assert.equal(modal.rows.children[1].children[0].children[0].textContent, '动态摘要');
+  console.log('ok - createSessionMemoryShareSectionRuntime renders two-level extra memory-share detail rows');
 }

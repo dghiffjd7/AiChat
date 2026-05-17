@@ -731,6 +731,12 @@ export const buildMomentCommentTaskContext = ({
   promptData = '',
   mode = 'comment',
   userAttachmentParts = [],
+  memoryStorageMode = '',
+  memoryAutoExtract = false,
+  memoryInjectPosition = '',
+  memoryInjectDepth = 0,
+  memoryGuidePosition = '',
+  memoryGuideDepth = 0,
   skipScripts = true,
   isReplyToComment = false,
   replyTo = null,
@@ -765,6 +771,21 @@ export const buildMomentCommentTaskContext = ({
   }
   if (attachments.length) {
     meta.userAttachmentParts = attachments;
+  }
+  const memoryMode = String(memoryStorageMode || '').trim().toLowerCase();
+  if (memoryMode) {
+    meta.memoryStorageMode = memoryMode;
+    meta.memoryAutoExtract = Boolean(memoryAutoExtract);
+    meta.memoryContextType = 'global';
+    meta.memorySessionId = 'moments';
+    const injectPosition = String(memoryInjectPosition || '').trim();
+    if (injectPosition) meta.memoryInjectPosition = injectPosition;
+    const injectDepth = Math.trunc(Number(memoryInjectDepth));
+    if (Number.isFinite(injectDepth)) meta.memoryInjectDepth = Math.max(0, injectDepth);
+    const guidePosition = String(memoryGuidePosition || '').trim();
+    if (guidePosition) meta.memoryGuidePosition = guidePosition;
+    const guideDepth = Math.trunc(Number(memoryGuideDepth));
+    if (Number.isFinite(guideDepth)) meta.memoryGuideDepth = Math.max(0, guideDepth);
   }
   if (Object.keys(meta).length) {
     context.meta = meta;
@@ -1417,6 +1438,10 @@ export const createMomentCommentLifecycleRuntime = ({
   addSummary = async () => {},
   runSummaryCompaction = async () => {},
   notifySummariesUpdated = async () => {},
+  getMemoryStorageMode = () => '',
+  isMemoryAutoExtractInline = () => false,
+  getMemoryRuntimeConfig = () => ({}),
+  handleMemoryEditsFromRaw = null,
   showMissingConfig = () => {},
   showOffline = () => {},
   showMissingMoment = () => {},
@@ -1633,6 +1658,8 @@ export const createMomentCommentLifecycleRuntime = ({
           .then(parts => (Array.isArray(parts) ? parts : []))
           .catch(() => [])
         : [];
+      const memoryStorageMode = String(getMemoryStorageMode?.('moments') || '').trim().toLowerCase();
+      const memoryRuntimeConfig = getMemoryRuntimeConfig?.('moments') || {};
       const context = buildMomentCommentTaskContext({
         userProfile: getActiveUserProfile(),
         target,
@@ -1643,6 +1670,12 @@ export const createMomentCommentLifecycleRuntime = ({
         replyTo,
         mode: isPublishedMomentComment ? 'published_moment' : 'comment',
         userAttachmentParts,
+        memoryStorageMode,
+        memoryAutoExtract: memoryStorageMode === 'table' && isMemoryAutoExtractInline?.('moments') === true,
+        memoryInjectPosition: memoryRuntimeConfig.memoryInjectPosition,
+        memoryInjectDepth: memoryRuntimeConfig.memoryInjectDepth,
+        memoryGuidePosition: memoryRuntimeConfig.memoryGuidePosition,
+        memoryGuideDepth: memoryRuntimeConfig.memoryGuideDepth,
       });
       momentCommentTraceStarted = true;
       record(buildMomentCommentStartTraceEvent({
@@ -1705,6 +1738,23 @@ export const createMomentCommentLifecycleRuntime = ({
           );
         } catch {}
         showNoReplyWarning();
+      }
+
+      if (fullRaw && typeof handleMemoryEditsFromRaw === 'function') {
+        try {
+          await handleMemoryEditsFromRaw(fullRaw, {
+            sessionId: 'moments',
+            isGroup: false,
+            contextType: 'global',
+            uiMode: 'moments',
+            memoryPlace: 'moments',
+            useSharedGlobalScope: true,
+          });
+        } catch (err) {
+          try {
+            logger?.warn?.('moment memory table update failed', err);
+          } catch {}
+        }
       }
 
       let summary = '';

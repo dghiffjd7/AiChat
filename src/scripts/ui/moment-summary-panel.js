@@ -1,12 +1,54 @@
 import { logger } from '../utils/logger.js';
+import { appSettings } from '../storage/app-settings.js';
+import {
+    pruneChatToMomentsBridgeTableSettings,
+    pruneRpToMomentsBridgeTableSettings,
+} from '../memory/memory-bridge-utils.js';
 import { appConfirm } from './app-confirm.js';
+import { MemoryTableEditor } from './memory-table-editor.js';
+import {
+    buildChatToMomentsMemoryShareContext,
+    buildRpToMomentsMemoryShareContext,
+    listSocialSessionIds,
+    loadMemoryShareRows,
+} from './session-memory-share-context-utils.js';
+import {
+    createMemoryShareEmptyState,
+    createMemoryShareEntryRow,
+    createSessionMemoryShareModal,
+} from './session-shared-view-utils.js';
 
 export class MomentSummaryPanel {
-    constructor({ store, onRunCompaction } = {}) {
+    constructor({
+        store,
+        onRunCompaction,
+        memoryTableStore = null,
+        memoryTemplateStore = null,
+        contactsStore = null,
+        chatStore = null,
+        getMemoryStorageMode = () => '',
+        isMemoryTableEnabled = () => false,
+    } = {}) {
         this.store = store;
         this.onRunCompaction = typeof onRunCompaction === 'function' ? onRunCompaction : null;
+        this.memoryTableStore = memoryTableStore || null;
+        this.memoryTemplateStore = memoryTemplateStore || null;
+        this.contactsStore = contactsStore || null;
+        this.chatStore = chatStore || null;
+        this.getMemoryStorageMode = typeof getMemoryStorageMode === 'function' ? getMemoryStorageMode : () => '';
+        this.isMemoryTableEnabled = typeof isMemoryTableEnabled === 'function' ? isMemoryTableEnabled : () => false;
         this.overlay = null;
         this.panel = null;
+        this.titleEl = null;
+        this.legacyBody = null;
+        this.memoryBody = null;
+        this.memoryEditorContainer = null;
+        this.memoryShareButton = null;
+        this.memoryEditor = null;
+        this.memoryShareModal = null;
+        this.memoryShareView = 'overview';
+        this.memoryShareDetailGroupId = '';
+        this.memoryShareGroups = [];
         this.summariesList = null;
         this.compactedList = null;
         this.summaryBatchMode = false;
@@ -21,8 +63,12 @@ export class MomentSummaryPanel {
         this.summaryCompacting = false;
         this._onUpdate = () => {
             if (!this.panel || this.panel.style.display === 'none') return;
-            this.renderSummaries();
-            this.renderCompactedSummary();
+            if (this.shouldShowMemoryTable()) {
+                this.renderMemoryTable();
+            } else {
+                this.renderSummaries();
+                this.renderCompactedSummary();
+            }
         };
         window.addEventListener('moment-summaries-updated', this._onUpdate);
     }
@@ -57,10 +103,10 @@ export class MomentSummaryPanel {
 
         this.panel.innerHTML = `
             <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; padding:12px 14px; border-bottom:1px solid var(--app-border-default); background:var(--app-surface-subtle);">
-                <div style="font-weight:900;">动态摘要</div>
+                <div id="moment-summary-title" style="font-weight:900;">动态摘要</div>
                 <button id="moment-summary-close" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:6px 10px; cursor:pointer;">关闭</button>
             </div>
-            <div style="padding:12px 14px; overflow:auto; flex:1;">
+            <div id="moment-summary-legacy-body" style="padding:12px 14px; overflow:auto; flex:1;">
                 <div>
                     <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:6px;">
                         <div style="font-size:12px; color:var(--app-text-muted);">摘要列表</div>
@@ -90,11 +136,23 @@ export class MomentSummaryPanel {
                     <div id="moment-compacted-summary" style="max-height:240px; overflow-y:auto; border:1px solid var(--app-border-subtle); border-radius:8px; background:var(--app-surface-card); padding:0;"></div>
                 </div>
             </div>
+            <div id="moment-memory-table-body" style="display:none; padding:12px 14px; overflow:auto; flex:1; min-height:0;">
+                <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:10px;">
+                    <div style="font-size:12px; color:var(--app-text-muted);">动态记忆表格</div>
+                    <button id="moment-memory-share-manage" type="button" style="padding:7px 10px; border:1px solid var(--app-border-default); border-radius:10px; background:var(--app-surface-card); color:var(--app-text-primary); cursor:pointer; font-weight:800;">记忆共享</button>
+                </div>
+                <div id="moment-memory-editor-container"></div>
+            </div>
         `;
 
         document.body.appendChild(this.overlay);
         document.body.appendChild(this.panel);
 
+        this.titleEl = this.panel.querySelector('#moment-summary-title');
+        this.legacyBody = this.panel.querySelector('#moment-summary-legacy-body');
+        this.memoryBody = this.panel.querySelector('#moment-memory-table-body');
+        this.memoryEditorContainer = this.panel.querySelector('#moment-memory-editor-container');
+        this.memoryShareButton = this.panel.querySelector('#moment-memory-share-manage');
         this.summariesList = this.panel.querySelector('#moment-summaries-list');
         this.compactedList = this.panel.querySelector('#moment-compacted-summary');
         const batchBar = this.panel.querySelector('#moment-summaries-batchbar');
@@ -134,13 +192,24 @@ export class MomentSummaryPanel {
         };
 
         if (batchBar) batchBar.style.display = 'none';
+        this.memoryShareButton?.addEventListener('click', () => this.openMemoryShareManager());
     }
 
     show() {
         this.ensure();
         if (!this.panel || !this.overlay) return;
-        this.renderSummaries();
-        this.renderCompactedSummary();
+        if (this.shouldShowMemoryTable()) {
+            if (this.titleEl) this.titleEl.textContent = '动态记忆表格';
+            if (this.legacyBody) this.legacyBody.style.display = 'none';
+            if (this.memoryBody) this.memoryBody.style.display = 'block';
+            this.renderMemoryTable();
+        } else {
+            if (this.titleEl) this.titleEl.textContent = '动态摘要';
+            if (this.legacyBody) this.legacyBody.style.display = 'block';
+            if (this.memoryBody) this.memoryBody.style.display = 'none';
+            this.renderSummaries();
+            this.renderCompactedSummary();
+        }
         this.overlay.style.display = 'block';
         this.panel.style.display = 'flex';
     }
@@ -149,6 +218,305 @@ export class MomentSummaryPanel {
         if (this.overlay) this.overlay.style.display = 'none';
         if (this.panel) this.panel.style.display = 'none';
         this.setSummaryBatchMode(false);
+    }
+
+    shouldShowMemoryTable() {
+        try {
+            return String(this.getMemoryStorageMode?.('moments') || '').trim().toLowerCase() === 'table'
+                && this.isMemoryTableEnabled?.('moments') !== false
+                && Boolean(this.memoryTableStore && this.memoryTemplateStore);
+        } catch {
+            return false;
+        }
+    }
+
+    ensureMemoryEditor() {
+        if (this.memoryEditor || !this.memoryEditorContainer) return;
+        this.memoryEditor = new MemoryTableEditor({
+            container: this.memoryEditorContainer,
+            getContext: () => ({
+                type: 'global',
+                uiMode: 'moments',
+            }),
+            memoryStore: this.memoryTableStore,
+            templateStore: this.memoryTemplateStore,
+            contactsStore: this.contactsStore,
+            includeGlobal: true,
+        });
+    }
+
+    renderMemoryTable() {
+        this.ensureMemoryEditor();
+        this.memoryEditor?.render?.().catch((err) => {
+            logger.warn('render moment memory table failed', err);
+        });
+    }
+
+    dispatchSettingChanged(key, value) {
+        try {
+            window.dispatchEvent(new CustomEvent('app-settings-changed', { detail: { key, value } }));
+        } catch {}
+    }
+
+    async resolveDefaultMemoryTemplateDefinition() {
+        try {
+            const list = await this.memoryTemplateStore?.getTemplates?.({ is_default: true });
+            const record = Array.isArray(list) && list.length ? list[0] : null;
+            if (!record) return null;
+            return this.memoryTemplateStore?.toTemplateDefinition?.(record) || record?.schema || null;
+        } catch {
+            return null;
+        }
+    }
+
+    async resolveDefaultMemoryTemplateId() {
+        try {
+            const list = await this.memoryTemplateStore?.getTemplates?.({ is_default: true });
+            const record = Array.isArray(list) && list.length ? list[0] : null;
+            return String(record?.id || '').trim();
+        } catch {
+            return '';
+        }
+    }
+
+    listSocialSessions() {
+        return listSocialSessionIds({
+            listSessions: () => this.chatStore?.listSessions?.() || [],
+        });
+    }
+
+    listRpSessions() {
+        return (this.chatStore?.listSessions?.() || [])
+            .map(id => String(id || '').trim())
+            .filter(id => id.startsWith('rp:'));
+    }
+
+    async loadMemoryRows(sourceId = '', { templateId = '', sourceIsGroup = false } = {}) {
+        return loadMemoryShareRows({
+            memoryTableStore: this.memoryTableStore,
+            sourceId,
+            templateId,
+            sourceIsGroup,
+        });
+    }
+
+    async buildMemoryShareGroups() {
+        const chatContext = await buildChatToMomentsMemoryShareContext({
+            resolveTemplateDefinition: () => this.resolveDefaultMemoryTemplateDefinition(),
+            resolveTemplateId: () => this.resolveDefaultMemoryTemplateId(),
+            listSocialSessions: () => this.listSocialSessions(),
+            loadRows: (sourceId, options) => this.loadMemoryRows(sourceId, options),
+            getGlobalSettings: () => appSettings.get(),
+        });
+        const rpContext = await buildRpToMomentsMemoryShareContext({
+            resolveTemplateDefinition: () => this.resolveDefaultMemoryTemplateDefinition(),
+            resolveTemplateId: () => this.resolveDefaultMemoryTemplateId(),
+            listRpSessions: () => this.listRpSessions(),
+            loadRows: (sourceId, options) => this.loadMemoryRows(sourceId, options),
+            getGlobalSettings: () => appSettings.get(),
+        });
+        const applyPatch = (patch = {}) => {
+            appSettings.update(patch);
+            Object.entries(patch).forEach(([key, value]) => this.dispatchSettingChanged(key, value));
+        };
+        return [
+            {
+                id: 'chat',
+                label: '聊天室',
+                description: chatContext?.summarySourceText || '来源：全部私聊 / 群聊',
+                context: chatContext,
+                enabled: chatContext?.enabled !== false,
+                tableSettings: chatContext?.tableSettings || {},
+                setEnabled: async (enabled) => applyPatch({ memoryBridgeChatToMomentsEnabled: Boolean(enabled) }),
+                setTableSetting: async (tableId, value) => {
+                    const current = appSettings.get();
+                    const next = pruneChatToMomentsBridgeTableSettings({
+                        ...(current.memoryBridgeChatToMomentsTableSettings || {}),
+                        [tableId]: value,
+                    });
+                    applyPatch({ memoryBridgeChatToMomentsTableSettings: next });
+                },
+            },
+            {
+                id: 'rp',
+                label: '创意写作',
+                description: rpContext?.summarySourceText || '来源：全部创意写作',
+                context: rpContext,
+                enabled: rpContext?.enabled !== false,
+                tableSettings: rpContext?.tableSettings || {},
+                setEnabled: async (enabled) => applyPatch({ memoryBridgeRpToMomentsEnabled: Boolean(enabled) }),
+                setTableSetting: async (tableId, value) => {
+                    const current = appSettings.get();
+                    const next = pruneRpToMomentsBridgeTableSettings({
+                        ...(current.memoryBridgeRpToMomentsTableSettings || {}),
+                        [tableId]: value,
+                    });
+                    applyPatch({ memoryBridgeRpToMomentsTableSettings: next });
+                },
+            },
+        ];
+    }
+
+    ensureMemoryShareModal() {
+        if (this.memoryShareModal) return;
+        const modal = createSessionMemoryShareModal({
+            variant: 'group',
+            title: '动态记忆共享',
+            hintText: '按来源管理注入到动态任务的跨记忆内容。',
+            documentRef: document,
+        });
+        this.memoryShareModal = modal;
+        document.body.appendChild(modal.overlay);
+        document.body.appendChild(modal.panel);
+        if (modal.sourceStatic) modal.sourceStatic.style.display = 'none';
+        modal.overlay.addEventListener('click', () => this.closeMemoryShareManager());
+        modal.closeButton.onclick = () => this.closeMemoryShareManager();
+        modal.cancelButton.onclick = () => this.closeMemoryShareManager();
+        modal.saveButton.onclick = () => {
+            this.closeMemoryShareManager();
+            window.toastr?.success?.('已保存记忆共享设置');
+        };
+    }
+
+    getEntryEnabledCount(entries = []) {
+        return (Array.isArray(entries) ? entries : []).filter(entry => entry?.enabled === true).length;
+    }
+
+    getEntryActualCount(entries = []) {
+        return (Array.isArray(entries) ? entries : []).reduce((total, entry) => total + (Number(entry?.actualCount || 0) || 0), 0);
+    }
+
+    renderMemoryShareOverview() {
+        const rows = this.memoryShareModal?.rows;
+        if (!rows) return;
+        rows.innerHTML = '';
+        this.memoryShareGroups.forEach((group) => {
+            const entries = Array.isArray(group?.context?.entries) ? group.context.entries : [];
+            const row = document.createElement('div');
+            row.style.cssText = 'border:1px solid var(--app-border-default); border-radius:12px; background:var(--app-surface-card); overflow:hidden;';
+            const header = document.createElement('label');
+            header.style.cssText = 'display:flex; align-items:center; justify-content:space-between; gap:10px; padding:11px 12px; cursor:pointer;';
+            const textWrap = document.createElement('div');
+            textWrap.style.cssText = 'min-width:0; flex:1;';
+            const title = document.createElement('div');
+            title.style.cssText = 'font-weight:900; color:var(--app-text-primary);';
+            title.textContent = group.label;
+            const desc = document.createElement('div');
+            desc.style.cssText = 'font-size:12px; color:var(--app-text-muted); margin-top:4px; line-height:1.4;';
+            desc.textContent = `${group.description}；${this.getEntryEnabledCount(entries)} 张表开启，可注入 ${this.getEntryActualCount(entries)} 条`;
+            textWrap.appendChild(title);
+            textWrap.appendChild(desc);
+            const toggle = document.createElement('input');
+            toggle.type = 'checkbox';
+            toggle.style.cssText = 'width:18px; height:18px;';
+            toggle.checked = group.enabled !== false;
+            toggle.addEventListener('change', async () => {
+                await group.setEnabled?.(toggle.checked);
+                await this.renderMemoryShareManager();
+            });
+            header.appendChild(textWrap);
+            header.appendChild(toggle);
+            const manage = document.createElement('button');
+            manage.type = 'button';
+            manage.textContent = '管理 ›';
+            manage.style.cssText = 'width:100%; border:none; border-top:1px solid var(--app-border-subtle); background:var(--app-surface-subtle); color:var(--app-text-secondary); padding:9px 12px; font-size:12px; text-align:left; cursor:pointer;';
+            manage.onclick = async () => {
+                this.memoryShareView = 'detail';
+                this.memoryShareDetailGroupId = group.id;
+                await this.renderMemoryShareManager();
+            };
+            row.appendChild(header);
+            row.appendChild(manage);
+            rows.appendChild(row);
+        });
+    }
+
+    renderMemoryShareDetail(group) {
+        const rows = this.memoryShareModal?.rows;
+        if (!rows) return;
+        rows.innerHTML = '';
+        const back = document.createElement('button');
+        back.type = 'button';
+        back.textContent = `‹ ${group?.label || '返回'}`;
+        back.style.cssText = 'width:100%; margin-bottom:10px; padding:9px 10px; border:1px solid var(--app-border-default); border-radius:12px; background:var(--app-surface-subtle); color:var(--app-text-primary); text-align:left; cursor:pointer; font-weight:800;';
+        back.onclick = async () => {
+            this.memoryShareView = 'overview';
+            this.memoryShareDetailGroupId = '';
+            await this.renderMemoryShareManager();
+        };
+        rows.appendChild(back);
+        const entries = Array.isArray(group?.context?.entries) ? group.context.entries : [];
+        if (!entries.length) {
+            rows.appendChild(createMemoryShareEmptyState({ documentRef: document }));
+            return;
+        }
+        entries.forEach((entry) => {
+            const { row } = createMemoryShareEntryRow({
+                documentRef: document,
+                entry,
+                onToggle: async ({ toggle, limitInput }) => {
+                    const tableId = String(entry?.tableId || '').trim();
+                    if (!tableId) return;
+                    const nextValue = {
+                        enabled: toggle.checked === true,
+                        limit: Number(group?.tableSettings?.[tableId]?.limit ?? entry.limit) || 0,
+                    };
+                    group.tableSettings = {
+                        ...(group?.tableSettings || {}),
+                        [tableId]: nextValue,
+                    };
+                    await group?.setTableSetting?.(tableId, nextValue);
+                    limitInput.disabled = toggle.checked !== true;
+                },
+                onLimitInput: async ({ limitInput }) => {
+                    const tableId = String(entry?.tableId || '').trim();
+                    if (!tableId) return;
+                    const safe = Math.max(0, Math.trunc(Number(limitInput.value)) || 0);
+                    limitInput.value = String(safe);
+                    const nextValue = {
+                        enabled: group?.tableSettings?.[tableId]?.enabled !== false,
+                        limit: safe,
+                    };
+                    group.tableSettings = {
+                        ...(group?.tableSettings || {}),
+                        [tableId]: nextValue,
+                    };
+                    await group?.setTableSetting?.(tableId, nextValue);
+                },
+            });
+            if (row) rows.appendChild(row);
+        });
+    }
+
+    async renderMemoryShareManager() {
+        this.memoryShareGroups = await this.buildMemoryShareGroups();
+        if (this.memoryShareModal?.hint) {
+            this.memoryShareModal.hint.textContent = this.memoryShareView === 'detail'
+                ? '逐张表控制是否注入动态任务，以及每次最多注入多少条。'
+                : '按来源管理跨记忆注入；进入详情后可逐张表控制开关和条数。';
+        }
+        if (this.memoryShareView === 'detail') {
+            const group = this.memoryShareGroups.find(item => item.id === this.memoryShareDetailGroupId) || this.memoryShareGroups[0];
+            this.renderMemoryShareDetail(group);
+            return;
+        }
+        this.renderMemoryShareOverview();
+    }
+
+    async openMemoryShareManager() {
+        this.ensureMemoryShareModal();
+        this.memoryShareView = 'overview';
+        this.memoryShareDetailGroupId = '';
+        await this.renderMemoryShareManager();
+        if (this.memoryShareModal?.overlay) this.memoryShareModal.overlay.style.display = 'block';
+        if (this.memoryShareModal?.panel) this.memoryShareModal.panel.style.display = 'flex';
+    }
+
+    closeMemoryShareManager() {
+        if (this.memoryShareModal?.overlay) this.memoryShareModal.overlay.style.display = 'none';
+        if (this.memoryShareModal?.panel) this.memoryShareModal.panel.style.display = 'none';
+        this.memoryShareView = 'overview';
+        this.memoryShareDetailGroupId = '';
     }
 
     setSummaryBatchMode(next) {

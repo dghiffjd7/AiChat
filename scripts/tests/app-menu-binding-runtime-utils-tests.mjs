@@ -60,6 +60,7 @@ const createMenu = (buttons = []) => ({
     settingsMenu: 'settings-menu',
     quickMenu: 'quick-menu',
     momentsMenu: 'moments-menu',
+    onBeforeOpenMomentsMenu: () => calls.push(['sync-moments-menu']),
   });
   avatarBtn.trigger();
   settingsBtn.trigger();
@@ -71,6 +72,7 @@ const createMenu = (buttons = []) => ({
     ['toggle', 'persona-menu', avatarBtn, { kind: 'persona' }],
     ['toggle', 'settings-menu', settingsBtn, { alignRight: true, kind: 'settings' }],
     ['toggle', 'quick-menu', plusBtn, { alignRight: true, kind: 'quick' }],
+    ['sync-moments-menu'],
     ['toggle', 'moments-menu', momentsBtn, { alignRight: true, kind: 'moments' }],
   ]);
   console.log('ok - bindAppSheetToggleButtons wires avatar settings quick and moments sheet toggles');

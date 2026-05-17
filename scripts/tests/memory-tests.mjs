@@ -1,10 +1,19 @@
 import assert from 'node:assert/strict';
 import { extractTableEditBlocks, parseTableEditActions, stripTableEditBlocks } from '../../src/scripts/memory/memory-edit-parser.js';
 import {
+  getChatToMomentsBridgeTableIds,
   getChatToRpBridgeSourceMeta,
+  getMomentsToChatBridgeTableIds,
+  getRpToMomentsBridgeTableIds,
   resolveChatToRpBridgeTableSettings,
   resolveRpToChatBridgeTableSettings,
 } from '../../src/scripts/memory/memory-bridge-utils.js';
+import { DEFAULT_MEMORY_TEMPLATE } from '../../src/scripts/memory/default-template.js';
+import {
+  getSummaryTableIdsForContext,
+  normalizeMemoryTableUsage,
+  tableMatchesMemoryContext,
+} from '../../src/scripts/memory/memory-context-utils.js';
 import { validateTemplate } from '../../src/scripts/memory/template-schema.js';
 import { buildMemoryTablePlan, estimateTokens, parseMemoryPromptPositions } from '../../src/scripts/memory/memory-prompt-utils.js';
 
@@ -92,6 +101,24 @@ test('parseMemoryPromptPositions + estimateTokens', () => {
   assert.deepEqual(positions, ['system_end', 'before_chat', 'history_depth']);
   assert.equal(estimateTokens('abcd', 'rough'), 1);
   assert.equal(estimateTokens('abcd', 'strict'), 4);
+});
+
+test('moment memory context only matches dynamic global tables', () => {
+  assert.equal(normalizeMemoryTableUsage('moments'), 'moments');
+  assert.deepEqual(getSummaryTableIdsForContext({
+    uiMode: 'moments',
+    contextType: 'global',
+  }), {
+    summaryTableId: 'moment_summary',
+    outlineTableId: 'moment_outline',
+  });
+  const dynamicTables = DEFAULT_MEMORY_TEMPLATE.tables.filter(table => tableMatchesMemoryContext(table, {
+    uiMode: 'moments',
+    contextType: 'global',
+    sessionId: 'moments',
+  }));
+  assert.deepEqual(dynamicTables.map(table => table.id), ['moment_summary', 'moment_outline']);
+  assert.deepEqual(dynamicTables.map(table => table.columns.map(col => col.id)), [['summary'], ['outline']]);
 });
 
 test('buildMemoryTablePlan: pinned first + max_rows', () => {
@@ -245,6 +272,17 @@ test('resolveRpToChatBridgeTableSettings: explicit table settings override legac
   assert.equal(settings.rp_important_people.enabled, false);
   assert.equal(settings.rp_tasks.enabled, false);
   assert.equal(settings.rp_summary.enabled, false);
+});
+
+test('dynamic memory bridge table ids include summary and outline tables', () => {
+  assert.deepEqual(getMomentsToChatBridgeTableIds(), ['moment_summary', 'moment_outline']);
+  assert.deepEqual(getChatToMomentsBridgeTableIds(), [
+    'chat_summary',
+    'group_summary',
+    'chat_outline',
+    'group_outline',
+  ]);
+  assert.deepEqual(getRpToMomentsBridgeTableIds(), ['rp_summary', 'rp_outline']);
 });
 
 let failed = 0;

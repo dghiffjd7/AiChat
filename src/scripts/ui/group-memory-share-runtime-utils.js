@@ -3,12 +3,17 @@ import {
     createSessionMemoryShareSectionRuntime,
 } from './session-memory-share-section-runtime-utils.js';
 import {
+    buildMomentsToChatMemoryShareContext,
     buildRpToChatMemoryShareContext,
+    loadGlobalMemoryShareRows,
     loadMemoryShareRows,
     resolveDefaultRpBridgeSourceId,
     resolveRpDisplayName,
 } from './session-memory-share-context-utils.js';
 import { createSessionMemoryShareModal } from './session-shared-view-utils.js';
+import {
+    pruneMomentsToChatBridgeTableSettings,
+} from '../memory/memory-bridge-utils.js';
 
 export const createGroupMemoryShareRuntime = ({
     getSessionId = () => '',
@@ -25,6 +30,8 @@ export const createGroupMemoryShareRuntime = ({
     documentRef = globalThis.document,
     bodyEl = globalThis.document?.body,
     getGlobalSettings = () => ({}),
+    updateGlobalSettings = () => {},
+    dispatchSettingChanged = () => {},
     notifySaveSuccess = () => {},
     notifySaveError = () => {},
     logger = null,
@@ -54,6 +61,11 @@ export const createGroupMemoryShareRuntime = ({
         sourceId,
         templateId,
         sourceIsGroup: false,
+    });
+
+    const loadGlobalRows = async ({ templateId = '' } = {}) => loadGlobalMemoryShareRows({
+        memoryTableStore,
+        templateId,
     });
 
     const buildMemoryShareContext = async (
@@ -98,6 +110,39 @@ export const createGroupMemoryShareRuntime = ({
             getSourceStaticLabel: (sessionId) => {
                 const sourceId = getDefaultRpBridgeSourceId(sessionId);
                 return sourceId ? (getRpDisplayName(sourceId) || sourceId) : '当前为空';
+            },
+            getPrimaryGroupLabel: () => '创意写作',
+            buildExtraMemoryShareGroups: async () => {
+                const context = await buildMomentsToChatMemoryShareContext({
+                    resolveTemplateDefinition,
+                    resolveTemplateId,
+                    loadGlobalRows,
+                    getGlobalSettings,
+                });
+                const applyGlobalPatch = (patch = {}) => {
+                    updateGlobalSettings?.(patch);
+                    Object.entries(patch).forEach(([key, value]) => dispatchSettingChanged?.(key, value));
+                };
+                return [{
+                    id: 'moments',
+                    label: '动态',
+                    description: context?.summarySourceText || '来源：动态',
+                    detailHint: '管理动态摘要 / 大纲注入到当前群聊请求的规则。',
+                    context,
+                    enabled: context?.enabled !== false,
+                    tableSettings: context?.tableSettings || {},
+                    setEnabled: async (enabled) => {
+                        applyGlobalPatch({ memoryBridgeMomentsToChatEnabled: Boolean(enabled) });
+                    },
+                    setTableSetting: async (tableId, value) => {
+                        const current = getGlobalSettings?.() || {};
+                        const next = pruneMomentsToChatBridgeTableSettings({
+                            ...(current.memoryBridgeMomentsToChatTableSettings || {}),
+                            [tableId]: value,
+                        });
+                        applyGlobalPatch({ memoryBridgeMomentsToChatTableSettings: next });
+                    },
+                }];
             },
             getRpToChatFallbackEnabled: () => getGlobalSettings?.().memoryBridgeRpToChatEnabled !== false,
             getRpToChatFallbackLimit: () => getGlobalSettings?.().memoryBridgeRpToChatLimit,

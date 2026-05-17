@@ -304,7 +304,7 @@ export class MemoryTableEditor {
       return;
     }
     this.currentContext = ctx;
-    const contextKey = `${ctx.type || ''}:${ctx.contactId || ''}:${ctx.groupId || ''}`;
+    const contextKey = `${ctx.type || ''}:${ctx.uiMode || ''}:${ctx.contactId || ''}:${ctx.groupId || ''}`;
     if (contextKey !== this.__lastContextKey) {
       this.__lastContextKey = contextKey;
       this.batchMode = false;
@@ -403,7 +403,7 @@ export class MemoryTableEditor {
         sessionId,
         contextType: ctx?.type,
         isGroup: ctx?.type === 'group',
-        uiMode: ctx?.type === 'rp' || isRpSessionId(sessionId) ? 'rp' : 'chat',
+        uiMode: ctx?.uiMode || (ctx?.type === 'rp' || isRpSessionId(sessionId) ? 'rp' : 'chat'),
       });
     }).filter(table => {
       if (!includeGlobal && table.scope === 'global') return false;
@@ -667,18 +667,24 @@ export class MemoryTableEditor {
   }
 
   getPromptPreviewContext(ctx) {
-    const baseSessionId = ctx?.type === 'group' ? ctx?.groupId : ctx?.contactId;
+    const isMoments = String(ctx?.uiMode || '').trim().toLowerCase() === 'moments';
+    const baseSessionId = isMoments ? 'moments' : (ctx?.type === 'group' ? ctx?.groupId : ctx?.contactId);
     const sessionId = String(baseSessionId || window.appBridge?.getActiveSessionId?.() || '').trim();
     const isGroup = ctx?.type === 'group' || String(sessionId).startsWith('group:');
     const isRp = ctx?.type === 'rp' || isRpSessionId(sessionId);
     const contact = sessionId ? this.contactsStore?.getContact?.(sessionId) : null;
-    const characterName = String(contact?.name || (isGroup ? sessionId.replace(/^group:/, '') : sessionId) || '助手');
+    const characterName = String(contact?.name || (isMoments ? '动态' : (isGroup ? sessionId.replace(/^group:/, '') : sessionId)) || '助手');
     const settings = appSettings.get();
     const memoryInjectPosition = String(settings.memoryInjectPosition || 'history_depth').toLowerCase();
     const memoryInjectDepthRaw = Math.trunc(Number(settings.memoryInjectDepth));
     const memoryInjectDepth = Number.isFinite(memoryInjectDepthRaw) ? Math.max(0, memoryInjectDepthRaw) : 4;
     const memoryAutoMode = String(settings.memoryAutoExtractMode || 'inline').toLowerCase();
-    const memoryAutoExtract = settings.memoryAutoExtract === true && memoryAutoMode !== 'separate';
+    const memoryPlaceEnabled = isMoments
+      ? settings.memoryTableEnabledMoments !== false
+      : isRp
+        ? settings.memoryTableEnabledWriting !== false
+        : settings.memoryTableEnabledChat !== false;
+    const memoryAutoExtract = memoryPlaceEnabled && settings.memoryAutoExtract === true && memoryAutoMode !== 'separate';
     return {
       user: { name: '用户' },
       character: { name: characterName },
@@ -688,8 +694,10 @@ export class MemoryTableEditor {
         memoryAutoExtract,
         memoryInjectPosition,
         memoryInjectDepth,
+        memoryContextType: isMoments ? 'global' : '',
+        memorySessionId: isMoments ? 'moments' : '',
         sharedMemory: false,
-        uiMode: isRp ? 'rp' : 'chat',
+        uiMode: isMoments ? 'moments' : (isRp ? 'rp' : 'chat'),
         defaultRpBridgeSessionId: !isRp ? String(window.appBridge?.getRpSessionIdForActivePersona?.() || '').trim() : '',
         defaultChatBridgeSessionId: isRp
           ? String(window.appBridge?.getLastChatSessionId?.() || window.appBridge?.getLastSocialSessionId?.() || '').trim()
@@ -702,6 +710,7 @@ export class MemoryTableEditor {
 
   resolveSessionId(ctx) {
     if (!ctx) return '';
+    if (String(ctx.uiMode || '').trim().toLowerCase() === 'moments') return 'moments';
     if (ctx.type === 'group') return String(ctx.groupId || '').trim();
     if (ctx.type === 'rp') return String(ctx.contactId || '').trim();
     if (ctx.type === 'contact') return String(ctx.contactId || '').trim();

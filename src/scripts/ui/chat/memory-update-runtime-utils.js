@@ -378,6 +378,10 @@ export const handleMemoryEditsFromRawWithUi = async ({
   raw = '',
   sessionId = '',
   isGroup = false,
+  contextType = '',
+  uiMode = '',
+  memoryPlace = '',
+  useSharedGlobalScope = false,
   timelineTurnNumber = null,
   timelineMessageId = '',
   resolveTimelineTurnNumber = null,
@@ -392,7 +396,15 @@ export const handleMemoryEditsFromRawWithUi = async ({
   logger = null,
   recordTraceEvent = null,
 } = {}) => {
-  if (!force && !isMemoryAutoExtractInline()) {
+  const resolvedMemoryPlace = String(
+    memoryPlace ||
+      (String(uiMode || '').trim().toLowerCase() === 'rp'
+        ? 'writing'
+        : String(uiMode || '').trim().toLowerCase() === 'moments'
+          ? 'moments'
+          : ''),
+  ).trim();
+  if (!force && !isMemoryAutoExtractInline(resolvedMemoryPlace)) {
     emitMemoryUpdateTrace(recordTraceEvent, {
       phase: 'edit.skip',
       sessionId,
@@ -433,7 +445,14 @@ export const handleMemoryEditsFromRawWithUi = async ({
     try {
       const confirmedActions = await confirmMemoryEdits(parsed.actions);
       if (confirmedActions.length) {
-        const payload = { actions: confirmedActions, sessionId, isGroup };
+        const payload = {
+          actions: confirmedActions,
+          sessionId,
+          isGroup,
+        };
+        if (contextType) payload.contextType = contextType;
+        if (uiMode) payload.uiMode = uiMode;
+        if (useSharedGlobalScope) payload.useSharedGlobalScope = true;
         const normalizedTimelineTurnNumber = Math.trunc(Number(timelineTurnNumber));
         if (Number.isFinite(normalizedTimelineTurnNumber) && normalizedTimelineTurnNumber > 0) {
           payload.timelineTurnNumber = normalizedTimelineTurnNumber;
@@ -511,6 +530,10 @@ export const createMemoryEditUiRuntime = ({
     {
       sessionId,
       isGroup,
+      contextType = '',
+      uiMode = '',
+      memoryPlace = '',
+      useSharedGlobalScope = false,
       timelineTurnNumber = null,
       timelineMessageId = '',
       resolveTimelineTurnNumber = null,
@@ -522,6 +545,10 @@ export const createMemoryEditUiRuntime = ({
       raw,
       sessionId,
       isGroup,
+      contextType,
+      uiMode,
+      memoryPlace,
+      useSharedGlobalScope,
       timelineTurnNumber,
       timelineMessageId,
       resolveTimelineTurnNumber,

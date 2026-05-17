@@ -5,6 +5,8 @@ const TIMELINE_TABLE_IDS = new Set([
   'group_outline',
   'rp_summary',
   'rp_outline',
+  'moment_summary',
+  'moment_outline',
 ]);
 
 const TIMELINE_ROUND_RE = /第\s*(\d+)\s*轮/;

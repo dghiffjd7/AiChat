@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 
 import {
+  buildChatToMomentsMemoryShareContext,
   buildChatToRpMemoryShareContext,
+  buildMomentsToChatMemoryShareContext,
+  buildRpToMomentsMemoryShareContext,
   buildRpToChatMemoryShareContext,
   listSocialSessionIds,
   loadMemoryShareRows,
@@ -18,6 +21,66 @@ import {
   });
   assert.equal(display, '测试角色');
   console.log('ok - resolveRpDisplayName prefers saved non-rp contact name when bridge name is absent');
+}
+
+{
+  const template = {
+    tables: [
+      { id: 'moment_summary', name: '动态摘要' },
+      { id: 'moment_outline', name: '动态大纲' },
+      { id: 'chat_summary', name: '私聊摘要' },
+      { id: 'group_outline', name: '群聊大纲' },
+      { id: 'rp_outline', name: 'RP 大纲' },
+    ],
+  };
+  const momentsToChat = await buildMomentsToChatMemoryShareContext({
+    resolveTemplateDefinition: async () => template,
+    resolveTemplateId: async () => 'default-v1',
+    loadGlobalRows: async () => [{ table_id: 'moment_summary' }, { table_id: 'moment_outline' }],
+    getGlobalSettings: () => ({
+      memoryBridgeMomentsToChatEnabled: true,
+      memoryBridgeMomentsToChatLimit: 1,
+    }),
+  });
+  assert.equal(momentsToChat.mode, 'moments_to_chat');
+  assert.deepEqual(momentsToChat.entries.map(entry => [entry.tableId, entry.rowCount, entry.actualCount]), [
+    ['moment_summary', 1, 1],
+    ['moment_outline', 1, 1],
+  ]);
+
+  const chatToMoments = await buildChatToMomentsMemoryShareContext({
+    resolveTemplateDefinition: async () => template,
+    resolveTemplateId: async () => 'default-v1',
+    listSocialSessions: () => ['chat:1', 'group:1'],
+    loadRows: async (sourceId) => sourceId === 'chat:1'
+      ? [{ table_id: 'chat_summary' }]
+      : [{ table_id: 'group_outline' }, { table_id: 'group_outline' }],
+    getGlobalSettings: () => ({
+      memoryBridgeChatToMomentsEnabled: true,
+      memoryBridgeChatToMomentsLimit: 1,
+    }),
+  });
+  assert.equal(chatToMoments.mode, 'chat_to_moments');
+  assert.deepEqual(chatToMoments.entries.map(entry => [entry.tableId, entry.rowCount, entry.actualCount]), [
+    ['chat_summary', 1, 1],
+    ['group_outline', 2, 1],
+  ]);
+
+  const rpToMoments = await buildRpToMomentsMemoryShareContext({
+    resolveTemplateDefinition: async () => template,
+    resolveTemplateId: async () => 'default-v1',
+    listRpSessions: () => ['rp:hero'],
+    loadRows: async () => [{ table_id: 'rp_outline' }, { table_id: 'rp_outline' }],
+    getGlobalSettings: () => ({
+      memoryBridgeRpToMomentsEnabled: true,
+      memoryBridgeRpToMomentsLimit: 1,
+    }),
+  });
+  assert.equal(rpToMoments.mode, 'rp_to_moments');
+  assert.deepEqual(rpToMoments.entries.map(entry => [entry.tableId, entry.rowCount, entry.actualCount]), [
+    ['rp_outline', 2, 1],
+  ]);
+  console.log('ok - dynamic memory-share contexts build cross-source table counts and limits');
 }
 
 {

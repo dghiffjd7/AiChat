@@ -89,19 +89,20 @@ export const resolveSessionMemoryTemplateContext = async ({
   sessionId = '',
   isGroup = false,
   uiMode = '',
+  contextType = '',
   filterTables = true,
 } = {}) => {
   const templateInfo = await resolveDefaultMemoryTemplateRecordAndDefinition({ memoryTemplateStore });
   if (!templateInfo?.record) return null;
   const templateId = String(templateInfo.record?.id || '').trim();
   if (!templateId) return null;
-  const contextType = getMemoryContextType({ sessionId, isGroup });
-  const sessionMode = resolveMemorySessionMode({ uiMode, sessionId, contextType });
+  const resolvedContextType = getMemoryContextType({ sessionId, isGroup, contextType });
+  const sessionMode = resolveMemorySessionMode({ uiMode, sessionId, contextType: resolvedContextType });
   const filterOptions = filterTables
     ? {
       sessionId,
       isGroup,
-      contextType,
+      contextType: resolvedContextType,
       uiMode: sessionMode === 'rp' ? 'rp' : uiMode,
     }
     : null;
@@ -112,7 +113,7 @@ export const resolveSessionMemoryTemplateContext = async ({
   return {
     ...templateInfo,
     templateId,
-    contextType,
+    contextType: resolvedContextType,
     sessionMode,
     tableById,
     tableNameMap,
@@ -134,6 +135,7 @@ export const loadSessionMemoryActionContext = async ({
   sessionId = '',
   isGroup = false,
   uiMode = '',
+  contextType = '',
   filterTables = true,
   useSharedGlobalScope = false,
   tableOrderOverride = null,
@@ -144,6 +146,7 @@ export const loadSessionMemoryActionContext = async ({
     sessionId,
     isGroup,
     uiMode,
+    contextType,
     filterTables,
   });
   if (!templateContext?.record) return null;

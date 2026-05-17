@@ -74,6 +74,9 @@ const defaults = {
   scriptAllowNetwork: false,
   memoryEnabled: true,
   memoryStorageMode: 'table',
+  memoryTableEnabledChat: true,
+  memoryTableEnabledMoments: true,
+  memoryTableEnabledWriting: true,
   memoryAutoExtract: true,
   memoryAutoExtractMode: 'inline',
   memoryInjectDefaultD0Migrated: true,
@@ -86,6 +89,15 @@ const defaults = {
   memoryBridgeRpToChatLimit: 0,
   memoryBridgeChatToRpEnabled: true,
   memoryBridgeChatToRpLimit: 5,
+  memoryBridgeMomentsToChatEnabled: true,
+  memoryBridgeMomentsToChatLimit: 5,
+  memoryBridgeMomentsToChatTableSettings: {},
+  memoryBridgeChatToMomentsEnabled: true,
+  memoryBridgeChatToMomentsLimit: 5,
+  memoryBridgeChatToMomentsTableSettings: {},
+  memoryBridgeRpToMomentsEnabled: true,
+  memoryBridgeRpToMomentsLimit: 5,
+  memoryBridgeRpToMomentsTableSettings: {},
   memoryAutoConfirm: false,
   memoryAutoStepByStep: false,
   memoryFillEveryN: 1,
@@ -190,6 +202,19 @@ const migrateSettings = (settings = {}) => {
   next.autoImagePromptSkipRepeated = next.autoImagePromptSkipRepeated !== false;
   next.autoImagePromptWritingEnabled = next.autoImagePromptWritingEnabled !== false;
   next.momentCommentSideEffectsEnabled = next.momentCommentSideEffectsEnabled !== false;
+  next.memoryTableEnabledChat = next.memoryTableEnabledChat !== false;
+  next.memoryTableEnabledMoments = next.memoryTableEnabledMoments !== false;
+  next.memoryTableEnabledWriting = next.memoryTableEnabledWriting !== false;
+  next.memoryBridgeMomentsToChatEnabled = next.memoryBridgeMomentsToChatEnabled !== false;
+  next.memoryBridgeChatToMomentsEnabled = next.memoryBridgeChatToMomentsEnabled !== false;
+  next.memoryBridgeRpToMomentsEnabled = next.memoryBridgeRpToMomentsEnabled !== false;
+  ['memoryBridgeMomentsToChatLimit', 'memoryBridgeChatToMomentsLimit', 'memoryBridgeRpToMomentsLimit'].forEach((key) => {
+    const raw = Math.trunc(Number(next[key]));
+    next[key] = Number.isFinite(raw) ? Math.max(0, raw) : defaults[key];
+  });
+  ['memoryBridgeMomentsToChatTableSettings', 'memoryBridgeChatToMomentsTableSettings', 'memoryBridgeRpToMomentsTableSettings'].forEach((key) => {
+    if (!next[key] || typeof next[key] !== 'object' || Array.isArray(next[key])) next[key] = {};
+  });
   next.chatDefaultColorMode = inferChatColorMode(next, defaults.chatDefaultColorMode);
   return next;
 };

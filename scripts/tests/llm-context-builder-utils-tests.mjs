@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 
-import { buildLlmContextPayload } from '../../src/scripts/ui/chat/llm-context-builder-utils.js';
+import {
+  buildLlmContextPayload,
+  isMemoryTablePlaceEnabled,
+  resolveMemoryTablePlace,
+} from '../../src/scripts/ui/chat/llm-context-builder-utils.js';
 
 {
   const payload = buildLlmContextPayload({
@@ -95,4 +99,27 @@ import { buildLlmContextPayload } from '../../src/scripts/ui/chat/llm-context-bu
   assert.equal(payload.meta.memoryInjectPosition, 'history_before');
   assert.equal(payload.meta.memoryInjectDepth, 4);
   console.log('ok - buildLlmContextPayload respects rp bridge defaults and settings fallback');
+}
+
+{
+  assert.equal(resolveMemoryTablePlace('rp'), 'writing');
+  assert.equal(resolveMemoryTablePlace('moments'), 'moments');
+  assert.equal(resolveMemoryTablePlace('chat'), 'chat');
+  assert.equal(isMemoryTablePlaceEnabled({ memoryTableEnabledMoments: false }, 'moments'), false);
+  assert.equal(isMemoryTablePlaceEnabled({ memoryTableEnabledWriting: false }, 'rp'), false);
+  assert.equal(isMemoryTablePlaceEnabled({}, 'chat'), true);
+
+  const payload = buildLlmContextPayload({
+    sessionId: 'moments',
+    uiMode: 'moments',
+    memoryStorageMode: 'table',
+    memoryAutoExtract: true,
+    settings: {
+      memoryTableEnabledMoments: false,
+    },
+    buildHistory: () => [],
+  });
+  assert.equal(payload.meta.memoryStorageMode, 'off');
+  assert.equal(payload.meta.memoryAutoExtract, false);
+  console.log('ok - buildLlmContextPayload gates memory table by configured place');
 }

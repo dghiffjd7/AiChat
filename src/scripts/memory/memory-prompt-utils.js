@@ -8,8 +8,17 @@ const MEMORY_PROMPT_POSITIONS = new Set([
   'history_after',
   'history_depth',
 ]);
-const SUMMARY_TABLE_IDS = new Set(['chat_summary', 'group_summary', 'chat_outline', 'group_outline', 'rp_summary', 'rp_outline']);
-const SUMMARY_LIMIT_TABLE_IDS = new Set(['chat_summary', 'group_summary', 'rp_summary']);
+const SUMMARY_TABLE_IDS = new Set([
+  'chat_summary',
+  'group_summary',
+  'chat_outline',
+  'group_outline',
+  'rp_summary',
+  'rp_outline',
+  'moment_summary',
+  'moment_outline',
+]);
+const SUMMARY_LIMIT_TABLE_IDS = new Set(['chat_summary', 'group_summary', 'rp_summary', 'moment_summary']);
 
 export const isSummaryTableId = (tableId) => {
   const id = String(tableId || '').trim();
