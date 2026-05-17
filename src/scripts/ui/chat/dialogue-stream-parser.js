@@ -165,12 +165,12 @@ const parsePrivateChatMessages = (innerText) => {
 
 const isGroupChatTag = (tagName) => {
     const tn = String(tagName || '').trim();
-    return /^群聊\s*:/i.test(tn);
+    return /^群聊\s*[:：]/i.test(tn);
 };
 
 const extractGroupNameFromTag = (tagName) => {
     const tn = String(tagName || '').trim();
-    const m = tn.match(/^群聊\s*:\s*(.+)\s*$/i);
+    const m = tn.match(/^群聊\s*[:：]\s*(.+)\s*$/i);
     return m ? String(m[1] || '').trim() : '';
 };
 

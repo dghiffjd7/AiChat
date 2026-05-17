@@ -11,10 +11,14 @@ import {
     visibleComments: [
       { id: 'c1', author: '甲', content: '你好' },
       { id: 'c2', author: '乙', content: '回复', replyTo: 'c1', replyToAuthor: '甲' },
+      { id: 'c3', author: '丙', content: '回复楼中楼', replyTo: 'c2', replyToAuthor: '乙' },
     ],
     buildThreadedComments: () => ({
       roots: [{ id: 'c1', author: '甲', content: '你好' }],
-      repliesByParent: new Map([['c1', [{ id: 'c2', author: '乙', content: '回复', replyToAuthor: '甲' }]]]),
+      repliesByParent: new Map([
+        ['c1', [{ id: 'c2', author: '乙', content: '回复', replyToAuthor: '甲' }]],
+        ['c2', [{ id: 'c3', author: '丙', content: '回复楼中楼', replyToAuthor: '乙' }]],
+      ]),
     }),
     escapeHtml: (value) => String(value ?? ''),
     renderMomentTextWithStickers: (value) => `HTML:${value}`,
@@ -22,8 +26,10 @@ import {
   });
   assert.equal(html.includes('HTML:你好'), true);
   assert.equal(html.includes('HTML:回复'), true);
+  assert.equal(html.includes('HTML:回复楼中楼'), true);
+  assert.equal(html.includes('moment-comment-reply'), true);
   assert.equal(html.includes('回复 <span'), true);
-  console.log('ok - buildMomentThreadedCommentsHtml renders root and nested reply bodies');
+  console.log('ok - buildMomentThreadedCommentsHtml renders root and flattened nested reply bodies');
 }
 
 {

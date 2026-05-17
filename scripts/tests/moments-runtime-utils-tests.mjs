@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 
+import { DialogueStreamParser } from '../../src/scripts/ui/chat/dialogue-stream-parser.js';
+
 import {
   applyMomentCommentEvents,
   applyMomentSummaryFromRaw,
@@ -13,6 +15,7 @@ import {
   buildMomentCommentContactList,
   buildMomentCommentGroupList,
   buildMomentCommentPromptData,
+  buildMomentCommentReferenceTable,
   buildMomentCommentSideEffectInstructions,
   buildMomentCommentTaskContext,
   buildMomentGroupChatMessages,
@@ -288,11 +291,23 @@ import {
 
 {
   const text = buildMomentRecentCommentsText([
-    { author: '甲', content: '你好\n世界', replyToAuthor: '乙' },
-    { author: '丙', content: '' },
+    { id: 'c1', author: '甲', content: '你好\n世界' },
+    { id: 'c2', author: '乙', content: '回复甲', replyTo: 'c1', replyToAuthor: '甲' },
+    { id: 'c3', author: '甲', content: '第二条主评论' },
+    { id: 'c4', author: '丙', content: '回复第二条', replyTo: 'c3', replyToAuthor: '甲' },
   ]);
-  assert.equal(text, '- author::甲 | reply_to_author::乙 | content::你好<br>世界\n- author::丙');
-  console.log('ok - buildMomentRecentCommentsText formats tail comments for prompt injection');
+  assert.equal(text, [
+    '[A0] author::甲 | content::你好<br>世界',
+    '[A1] author::乙 | reply_to::A0 | content::回复甲',
+    '[B0] author::甲 | content::第二条主评论',
+    '[B1] author::丙 | reply_to::B0 | content::回复第二条',
+  ].join('\n'));
+  const table = buildMomentCommentReferenceTable([
+    { id: 'root', author: '甲', content: '主评论' },
+    { id: 'reply', author: '乙', content: '楼中楼', replyTo: 'root', replyToAuthor: '甲' },
+  ]);
+  assert.deepEqual(table.refToId, { A0: 'root', A1: 'reply' });
+  console.log('ok - buildMomentRecentCommentsText formats reference-coded threaded comments');
 }
 
 {
@@ -303,7 +318,7 @@ import {
     userLine: '{{user}}：{{lastUserMessage}}',
     isReplyToComment: true,
     replyTo: { author: '甲', content: '原评论' },
-    recentComments: '- author::甲 | content::hi',
+    recentComments: '[A0] author::甲 | content::hi',
     contactList: '- 发布者\n- 甲',
     groupList: '- 晚饭群（成员：甲、乙）',
   });
@@ -311,6 +326,7 @@ import {
   assert.match(text, /发布者: 发布者/);
   assert.match(text, /reply_to_author: 甲/);
   assert.match(text, /当前评论列表/);
+  assert.match(text, /\[A0\] author::甲/);
   assert.match(text, /可用联系人名单/);
   assert.match(text, /【可用群聊】/);
   assert.match(text, /- 晚饭群（成员：甲、乙）/);
@@ -467,7 +483,40 @@ import {
     { author: '甲', content: '回复', replyTo: 'comment:1', replyToAuthor: '甲' },
     { author: '乙', content: '旁观', replyTo: 'x' },
   ]);
-  console.log('ok - patchMomentReplyComments injects reply target only for primary replier');
+  const namedPatched = patchMomentReplyComments(
+    [
+      { author: '甲', content: '回复', replyTo: 'a1' },
+      { author: '乙', content: '插话', replyTo: 'B0' },
+      { author: '丁', content: '沿用旧格式', replyTo: 'comment:3' },
+    ],
+    {
+      isReplyToComment: true,
+      replyTo: { id: 'comment:1', author: '甲' },
+      existingComments: [
+        { id: 'comment:1', author: '甲' },
+        { id: 'comment:3', author: '丙' },
+      ],
+      commentRefMap: { A1: 'comment:1', B0: 'comment:3' },
+    },
+  );
+  assert.deepEqual(namedPatched, [
+    { author: '甲', content: '回复', replyTo: 'comment:1', replyToAuthor: '甲' },
+    { author: '乙', content: '插话', replyTo: 'comment:3', replyToAuthor: '丙' },
+    { author: '丁', content: '沿用旧格式', replyTo: 'comment:3', replyToAuthor: '丙' },
+  ]);
+  const invalidRefPatched = patchMomentReplyComments(
+    [
+      { author: '乙', content: '无效引用', replyTo: 'Z9', replyToAuthor: '未知' },
+    ],
+    {
+      existingComments: [{ id: 'comment:1', author: '甲' }],
+      commentRefMap: { A0: 'comment:1' },
+    },
+  );
+  assert.deepEqual(invalidRefPatched, [
+    { author: '乙', content: '无效引用', replyTo: '', replyToAuthor: '' },
+  ]);
+  console.log('ok - patchMomentReplyComments injects and resolves coded reply targets');
 }
 
 {
@@ -633,6 +682,29 @@ import {
     'moment_reply_start 1 moment_reply_end\nmoment_reply_start 2 moment_reply_end',
   );
   console.log('ok - moment reply retry helpers strip thinking and extract tagged segments');
+}
+
+{
+  const parser = new DialogueStreamParser({ userName: '我' });
+  const events = parser.push([
+    'moment_reply_start',
+    '甲--公开评论',
+    'moment_reply_end',
+    '',
+    '<群聊：港区>',
+    '甲--全角冒号群聊消息',
+    '乙--收到',
+    '</群聊：港区>',
+  ].join('\n'));
+  assert.equal(events.length, 2);
+  assert.equal(events[0].type, 'moment_reply');
+  assert.equal(events[1].type, 'group_chat');
+  assert.equal(events[1].groupName, '港区');
+  assert.deepEqual(events[1].messages.map(item => [item.speaker, item.content]), [
+    ['甲', '全角冒号群聊消息'],
+    ['乙', '收到'],
+  ]);
+  console.log('ok - DialogueStreamParser parses full-width colon group chat tags after moment replies');
 }
 
 {

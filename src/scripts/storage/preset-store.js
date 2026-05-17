@@ -120,25 +120,18 @@ const LEGACY_DEFAULT_MOMENT_COMMENT_RULES = `
 `.trim();
 
 const DEFAULT_MOMENT_COMMENT_RULES = `
-你正在处理 QQ空间「动态评论回复」任务。
-
-【输入中会提供】
-- 发布者、动态内容
-- 用户评论（会包含 user_comment_id）
-- 可用联系人名单
-- 可能还会提供：用户是否在回复某条评论（reply_to_comment_id / reply_to_author / reply_to_content）
+任务：QQ空间动态评论回复。
 
 【评论回应原则】
 - 动态评论是公开可见的社交场景；回复应简短、自然，并符合角色性格与关系亲疏。
 - 发布者或被回复评论的角色有较高概率回应，但不强制；其他角色可按兴趣、关系和性格自然插话。
-- 不要把动态评论扩展成私聊/群聊剧情，除非任务数据明确允许。
 
 【输出硬性要求】
-1) 只输出一个 <content>...</content> 区块，除此之外不要输出任何文字。
-2) <content> 内必须输出一段 moment_reply_start/moment_reply_end：
+1) 必须输出一段 moment_reply_start/moment_reply_end 区块。
+2) 格式如下：
    moment_reply_start
    评论人--评论内容
-   评论人--评论内容--reply_to::comment_id--reply_to_author::名字
+   评论人--评论内容--reply_to::引用码
    moment_reply_end
 3) 评论区块里只写评论行。
 4) “谁来回复”不是强制：
@@ -149,12 +142,13 @@ const DEFAULT_MOMENT_COMMENT_RULES = `
 
 【reply_to 规则（用于楼中楼）】
 - 仅当你要“回复某条评论”时才附加 reply_to::。
-- reply_to:: 的值必须来自输入里提供的 comment_id / user_comment_id。
-- reply_to_author:: 填被回复的角色名（可用输入里的 reply_to_author 或评论列表里的 author）。
+- reply_to:: 只能填写【当前评论列表】中方括号里的引用码，例如 A0、A1、B2。
+- A0/B0/C0 表示主评论；A1/A2 表示 A 这条主评论下的楼中楼回复。
+- 不要输出角色名、comment_id 或 user_comment_id。
+- 如果不确定要回复谁，就不要附加 reply_to::。
 
 【注意】
 - 评论人必须是具体名字（优先从联系人名单中挑选）；不要使用“匿名网友”等敷衍名字。
-- 未提供【可选联动】时不要输出私聊/群聊标签块；若任务数据明确允许，可按其格式少量附加。
 `.trim();
 
 const COMBINED_DEFAULT_MOMENT_COMMENT_RULES = `
@@ -337,6 +331,18 @@ const sanitizeMomentCommentRulesText = (value) => {
             trimmed.includes('你正在处理 QQ空间「动态评论回复」任务。') &&
             trimmed.includes('本场景不要输出私聊/群聊标签块（只输出评论回复）') &&
             trimmed.includes('【评论回应原则】')
+        ) ||
+        (
+            trimmed.includes('你正在处理 QQ空间「动态评论回复」任务。') &&
+            trimmed.includes('【输入中会提供】') &&
+            trimmed.includes('不要把动态评论扩展成私聊/群聊剧情') &&
+            trimmed.includes('只输出一个 <content>...</content> 区块') &&
+            trimmed.includes('reply_to:: 的值必须来自输入里提供的 comment_id / user_comment_id')
+        ) ||
+        (
+            trimmed.includes('你正在处理 QQ空间「动态评论回复」任务。') &&
+            trimmed.includes('reply_to:: 填被回复的角色名') &&
+            trimmed.includes('reply_to::被回复角色名')
         ) ||
         (
             trimmed.includes('你正在处理 QQ空间「动态评论 / 发布后评论」任务。') &&

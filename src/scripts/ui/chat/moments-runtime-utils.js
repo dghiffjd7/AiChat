@@ -6,6 +6,16 @@ import {
 
 const normalizeNameValue = (value) => String(value || '').trim();
 
+const buildAlphaIndex = (index) => {
+  let n = Math.max(0, Math.trunc(Number(index) || 0));
+  let out = '';
+  do {
+    out = String.fromCharCode(65 + (n % 26)) + out;
+    n = Math.floor(n / 26) - 1;
+  } while (n >= 0);
+  return out || 'A';
+};
+
 const omitUndefinedTraceDetails = (details = {}) => Object.fromEntries(
   Object.entries(details).filter(([, value]) => value !== undefined),
 );
@@ -324,24 +334,102 @@ export const buildMomentRecentCommentsText = (
     limit = 12,
     normalizeText = value => String(value ?? ''),
   } = {},
+) => buildMomentCommentReferenceTable(comments, { limit, normalizeText }).text;
+
+export const buildMomentCommentReferenceTable = (
+  comments,
+  {
+    limit = 12,
+    normalizeText = value => String(value ?? ''),
+  } = {},
 ) => {
   const list = Array.isArray(comments) ? comments : [];
-  const tail = list.slice(-Math.max(0, Math.trunc(Number(limit) || 0)));
-  return tail
-    .map((comment) => {
-      const author = String(comment?.author || '').trim();
-      const normalized = normalizeText(comment?.content || '');
+  const rows = list
+    .map((comment, index) => {
+      if (!comment || typeof comment !== 'object') return null;
+      const id = String(comment?.id || '').trim();
+      return { comment, index, id };
+    })
+    .filter(Boolean);
+  const maxItems = Math.max(0, Math.trunc(Number(limit) || 0));
+  const selected = maxItems > 0 ? rows.slice(-maxItems) : rows;
+  const byId = new Map(rows.filter(item => item.id).map(item => [item.id, item]));
+  const includeKeys = new Set();
+  const keyOf = item => item.id || `__idx_${item.index}`;
+  const includeWithAncestors = (item) => {
+    let current = item;
+    const seen = new Set();
+    while (current && !seen.has(keyOf(current))) {
+      seen.add(keyOf(current));
+      includeKeys.add(keyOf(current));
+      const parentId = String(current.comment?.replyTo || '').trim();
+      current = parentId ? byId.get(parentId) : null;
+    }
+  };
+  selected.forEach(includeWithAncestors);
+
+  const included = rows.filter(item => includeKeys.has(keyOf(item)));
+  const includedById = new Map(included.filter(item => item.id).map(item => [item.id, item]));
+  const rootIdCache = new Map();
+  const resolveRootKey = (item) => {
+    const ownKey = keyOf(item);
+    if (rootIdCache.has(ownKey)) return rootIdCache.get(ownKey);
+    let current = item;
+    const seen = new Set();
+    while (current && !seen.has(keyOf(current))) {
+      seen.add(keyOf(current));
+      const parentId = String(current.comment?.replyTo || '').trim();
+      const parent = parentId ? includedById.get(parentId) : null;
+      if (!parent) break;
+      current = parent;
+    }
+    const rootKey = keyOf(current || item);
+    rootIdCache.set(ownKey, rootKey);
+    return rootKey;
+  };
+  const roots = included.filter((item) => {
+    const parentId = String(item.comment?.replyTo || '').trim();
+    return !parentId || !includedById.has(parentId);
+  });
+  const idToRef = new Map();
+  const refEntries = [];
+  const lines = [];
+  roots.forEach((root, rootIndex) => {
+    const prefix = buildAlphaIndex(rootIndex);
+    const members = included
+      .filter(item => resolveRootKey(item) === keyOf(root))
+      .sort((a, b) => a.index - b.index);
+    members.forEach((item) => {
+      const isRoot = keyOf(item) === keyOf(root);
+      const replyNumber = isRoot ? 0 : members.filter(other => other !== root && other.index <= item.index).length;
+      const ref = `${prefix}${replyNumber}`;
+      if (item.id) {
+        idToRef.set(item.id, ref);
+        refEntries.push({
+          ref,
+          id: item.id,
+          author: String(item.comment?.author || '').trim(),
+        });
+      }
+      const author = String(item.comment?.author || '').trim();
+      const normalized = normalizeText(item.comment?.content || '');
       const content = String(normalized || '').replace(/\n/g, '<br>');
-      const replyToAuthor = String(comment?.replyToAuthor || '').trim();
+      const parentId = String(item.comment?.replyTo || '').trim();
+      const parentRef = parentId ? idToRef.get(parentId) : '';
+      const replyToAuthor = String(item.comment?.replyToAuthor || '').trim();
       const parts = [
         author ? `author::${author}` : '',
-        replyToAuthor ? `reply_to_author::${replyToAuthor}` : '',
+        parentRef ? `reply_to::${parentRef}` : (replyToAuthor ? `reply_to_author::${replyToAuthor}` : ''),
         content ? `content::${content}` : '',
       ].filter(Boolean);
-      return parts.length ? `- ${parts.join(' | ')}` : '';
-    })
-    .filter(Boolean)
-    .join('\n');
+      if (parts.length) lines.push(`[${ref}] ${parts.join(' | ')}`);
+    });
+  });
+  return {
+    text: lines.join('\n'),
+    refs: refEntries,
+    refToId: Object.fromEntries(refEntries.map(item => [item.ref, item.id])),
+  };
 };
 
 const MOMENT_INLINE_IMAGE_TOKEN_RE = /\[img-[\s\S]*?\]/gi;
@@ -434,7 +522,7 @@ reply_to_content: ${String(replyTo?.content || '').trim()}
 
 ${
   recentComments
-    ? `【当前评论列表（最近12条）】
+    ? `【当前评论列表（引用码用于 reply_to，最近12条及必要上级）】
 ${String(recentComments || '').trim()}
 `
     : ''
@@ -741,23 +829,106 @@ export const patchMomentReplyComments = (
     isReplyToComment = false,
     replyTo = null,
     targetName = '',
+    existingComments = [],
+    commentRefMap = {},
     normalizeName = normalizeNameValue,
   } = {},
 ) => {
   const incoming = Array.isArray(comments) ? comments : [];
-  if (!isReplyToComment || !replyTo?.id) return incoming;
   const normalize = typeof normalizeName === 'function' ? normalizeName : normalizeNameValue;
+  const sourceComments = Array.isArray(existingComments) ? existingComments : [];
+  const replyTarget = replyTo?.id
+    ? {
+        id: String(replyTo.id || '').trim(),
+        author: String(replyTo.author || '').trim(),
+      }
+    : null;
+  const refToComment = (() => {
+    const normalizeEntries = entries => new Map(entries.map(([key, value]) => [
+      String(key || '').trim().toUpperCase(),
+      value,
+    ]));
+    if (commentRefMap instanceof Map) return normalizeEntries([...commentRefMap.entries()]);
+    if (commentRefMap && typeof commentRefMap === 'object') {
+      return normalizeEntries(Object.entries(commentRefMap));
+    }
+    return new Map();
+  })();
+  const findCommentById = (commentId) => {
+    const id = String(commentId || '').trim();
+    if (!id) return null;
+    const found = sourceComments.find(item => String(item?.id || '').trim() === id);
+    if (!found) return null;
+    return {
+      id,
+      author: String(found.author || '').trim(),
+    };
+  };
+  const resolveReplyToRef = (rawReplyTo) => {
+    const ref = String(rawReplyTo || '').trim().replace(/^\[|\]$/g, '').toUpperCase();
+    if (!ref) return null;
+    return findCommentById(refToComment.get(ref));
+  };
+  const looksReplyRefToken = (rawReplyTo) => {
+    const ref = String(rawReplyTo || '').trim().replace(/^\[|\]$/g, '').toUpperCase();
+    return /^[A-Z]+[0-9]+$/.test(ref);
+  };
+  const findExistingReplyTargetByAuthor = (authorName) => {
+    const target = normalize(authorName);
+    if (!target) return null;
+    for (let i = sourceComments.length - 1; i >= 0; i -= 1) {
+      const item = sourceComments[i];
+      if (!item || typeof item !== 'object') continue;
+      const id = String(item.id || '').trim();
+      const author = String(item.author || '').trim();
+      if (!id || normalize(author) !== target) continue;
+      return { id, author };
+    }
+    return null;
+  };
+  const resolveReplyToName = (rawReplyTo, rawReplyToAuthor = '') => {
+    const refTarget = resolveReplyToRef(rawReplyTo);
+    if (refTarget) return refTarget;
+    const directTarget = findCommentById(rawReplyTo);
+    if (directTarget) return directTarget;
+    const name = normalize(rawReplyTo);
+    const authorHint = normalize(rawReplyToAuthor);
+    if (!name && !authorHint) return null;
+    if (replyTarget && (
+      (name && name === normalize(replyTarget.author)) ||
+      (authorHint && authorHint === normalize(replyTarget.author))
+    )) {
+      return replyTarget;
+    }
+    return findExistingReplyTargetByAuthor(name) || findExistingReplyTargetByAuthor(authorHint);
+  };
   return incoming.map((comment) => {
     if (!comment || typeof comment !== 'object') return comment;
     const author = String(comment.author || '').trim();
-    const hasReplyTo = String(comment.replyTo || '').trim().length > 0;
+    const replyToValue = String(comment.replyTo || '').trim();
+    const replyToAuthor = String(comment.replyToAuthor || '').trim();
+    const resolvedReplyTo = resolveReplyToName(replyToValue, replyToAuthor);
+    if (
+      resolvedReplyTo &&
+      (replyToValue !== resolvedReplyTo.id || (!replyToAuthor && resolvedReplyTo.author))
+    ) {
+      return {
+        ...comment,
+        replyTo: resolvedReplyTo.id,
+        replyToAuthor: replyToAuthor || resolvedReplyTo.author,
+      };
+    }
+    const invalidRefToken = replyToValue && looksReplyRefToken(replyToValue) && !resolvedReplyTo;
+    const baseComment = invalidRefToken ? { ...comment, replyTo: '', replyToAuthor: '' } : comment;
+    if (!isReplyToComment || !replyTarget) return baseComment;
+    const hasReplyTo = !invalidRefToken && replyToValue.length > 0;
     const isPrimaryReplier =
-      author && (author === normalize(replyTo?.author) || author === normalize(targetName));
-    if (hasReplyTo || !isPrimaryReplier) return comment;
+      author && (author === normalize(replyTarget.author) || author === normalize(targetName));
+    if (hasReplyTo || !isPrimaryReplier) return baseComment;
     return {
-      ...comment,
-      replyTo: String(replyTo.id || ''),
-      replyToAuthor: String(replyTo.author || ''),
+      ...baseComment,
+      replyTo: replyTarget.id,
+      replyToAuthor: replyTarget.author,
     };
   });
 };
@@ -966,6 +1137,7 @@ export const applyMomentCommentEvents = (
     isReplyToComment = false,
     replyTo = null,
     targetName = '',
+    commentRefMap = {},
     normalizeName = normalizeNameValue,
     bumpMomentEngagement = () => {},
     resolvePrivateChatTargetSessionId = () => '',
@@ -1011,6 +1183,8 @@ export const applyMomentCommentEvents = (
         isReplyToComment,
         replyTo,
         targetName,
+        existingComments: targetMoment?.comments || [],
+        commentRefMap,
         normalizeName,
       });
       const saved = addMomentComments(
@@ -1359,9 +1533,10 @@ export const createMomentCommentLifecycleRuntime = ({
           resolvePrivateChatTargetSessionId: resolvePrivateTarget,
           normalizeName: normalize,
         });
-    const recentComments = buildMomentRecentCommentsText(moment.comments, {
+    const commentReferenceTable = buildMomentCommentReferenceTable(moment.comments, {
       normalizeText: normalizeStickerTextForPrompt,
     });
+    const recentComments = commentReferenceTable.text;
     const momentPromptContent = buildMomentPromptContentText(moment.content || '', {
       normalizeText: normalizeStickerTextForPrompt,
     });
@@ -1417,6 +1592,7 @@ export const createMomentCommentLifecycleRuntime = ({
       isReplyToComment,
       replyTo,
       targetName: target?.name,
+      commentRefMap: commentReferenceTable.refToId,
       normalizeName: normalize,
       bumpMomentEngagement,
       resolvePrivateChatTargetSessionId: resolvePrivateTarget,

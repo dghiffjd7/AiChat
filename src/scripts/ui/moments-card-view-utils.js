@@ -6,12 +6,22 @@ export const buildMomentThreadedCommentsHtml = ({
   resolveMomentDisplayText = (value) => String(value?.content ?? ''),
 } = {}) => {
   const { roots: commentRoots, repliesByParent } = buildThreadedComments(visibleComments);
+  const collectReplies = (parentId, seen = new Set()) => {
+    const id = String(parentId || '').trim();
+    if (!id || seen.has(id)) return [];
+    seen.add(id);
+    const directReplies = repliesByParent.get(id) || [];
+    return directReplies.flatMap((reply) => {
+      const replyId = String(reply?.id || '').trim();
+      return [reply, ...collectReplies(replyId, seen)];
+    });
+  };
   return commentRoots
     .map((comment) => {
       const commentId = String(comment?.id || '').trim();
       const author = String(comment?.author || '').trim();
       const content = resolveMomentDisplayText(comment);
-      const replies = commentId ? (repliesByParent.get(commentId) || []) : [];
+      const replies = commentId ? collectReplies(commentId) : [];
       const replyHtml = replies
         .map((reply) => {
           const replyId = String(reply?.id || '').trim();
