@@ -15807,6 +15807,7 @@ Phase G（Frame 36）：循环衔接
 	      window.toastr?.warning?.('没有找到这张插图在正文中的位置');
 	      return false;
 	    }
+	    const mediaSurface = resolveMediaSurfaceForSession(sessionId);
 	    const config = await ensureImageConfigReady();
 	    if (!config) return false;
 	    const referenceCapability = resolveImageReferenceCapability(config);
@@ -15832,7 +15833,7 @@ Phase G（Frame 36）：循环衔接
 	        config,
 	        sessionId,
 	        scope: {
-	          surface: 'writing',
+	          surface: mediaSurface,
 	          targetId: sessionId,
 	          sourceMessageId: messageId,
 	        },
@@ -15844,7 +15845,7 @@ Phase G（Frame 36）：循环衔接
 	        ...asset,
 	        generationParams: generationOptions,
 	      }, {
-	        surface: 'writing',
+	        surface: mediaSurface,
 	        targetId: sessionId,
 	        sourceMessageId: messageId,
 	        messageId,
@@ -15888,15 +15889,21 @@ Phase G（Frame 36）：循环衔接
 	      window.toastr?.warning?.('没有找到原始生图提示词，无法重新生成');
 	      return false;
 	    }
+	    const mediaSurface = resolveMediaSurfaceForSession(sessionId);
+	    const isWritingSurface = mediaSurface === 'writing';
 	    const referenceCapability = await loadImageReferenceCapability();
 	    const generationParamContext = await loadImageGenerationParamContext();
 	    const modalResult = await getChatImagePromptModal().open({
 	      initialPrompt: prompt,
-	      title: '重新生成插图',
-	      subtitle: '使用这张插图的提示词重新生成，并替换当前图片',
+	      title: isWritingSurface ? '重新生成插图' : '重新生成图片',
+	      subtitle: isWritingSurface
+	        ? '使用这张插图的提示词重新生成，并替换当前图片'
+	        : '使用这张图片的提示词重新生成，并替换当前图片',
 	      submitText: '重新生成图片',
-	      secondaryText: '插图素材',
-	      onSecondary: () => openWritingAssetPanel(),
+	      secondaryText: isWritingSurface ? '插图素材' : (mediaSurface === 'chat' ? '相册' : ''),
+	      onSecondary: isWritingSurface
+	        ? () => openWritingAssetPanel()
+	        : (mediaSurface === 'chat' ? () => openGeneratedImageAlbumPanel({ surface: 'chat' }) : null),
 	      referenceCapability,
 	      loadReferenceCapability: loadImageReferenceCapability,
 	      generationParamContext,
@@ -21918,10 +21925,7 @@ Phase G（Frame 36）：循环衔接
 	      const generated = message?.meta?.generatedMedia && typeof message.meta.generatedMedia === 'object'
 	        ? message.meta.generatedMedia
 	        : null;
-	      if (
-	        generated?.status === 'failed' &&
-	        String(generated?.prompt || '').trim()
-	      ) {
+	      if (generated && String(generated?.prompt || '').trim()) {
 	        await retryChatGeneratedMediaFailure({
 	          sessionId,
 	          messageId: String(message?.id || '').trim(),
@@ -21929,11 +21933,7 @@ Phase G（Frame 36）：循环衔接
 	        return true;
 	      }
 	      const inlineGeneratedImage = payload?.inlineGeneratedImage || null;
-	      if (
-	        inlineGeneratedImage &&
-	        resolveMediaSurfaceForSession(sessionId) === 'writing' &&
-	        String(resolveInlineGeneratedImageAsset(message, inlineGeneratedImage)?.prompt || '').trim()
-	      ) {
+	      if (inlineGeneratedImage && String(resolveInlineGeneratedImageAsset(message, inlineGeneratedImage)?.prompt || '').trim()) {
 	        await openWritingInlineGeneratedImageRegenerationFlow({
 	          sourceMessage: message,
 	          inlineGeneratedImage,
