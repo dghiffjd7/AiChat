@@ -5,6 +5,8 @@ import {
   getChatToRpBridgeSourceMeta,
   getMomentsToChatBridgeTableIds,
   getRpToMomentsBridgeTableIds,
+  resolveChatToMomentsBridgeTableSettings,
+  resolveRpToMomentsBridgeTableSettings,
   resolveChatToRpBridgeTableSettings,
   resolveRpToChatBridgeTableSettings,
 } from '../../src/scripts/memory/memory-bridge-utils.js';
@@ -303,12 +305,52 @@ test('resolveRpToChatBridgeTableSettings: explicit table settings override legac
 test('dynamic memory bridge table ids include summary and outline tables', () => {
   assert.deepEqual(getMomentsToChatBridgeTableIds(), ['moment_summary', 'moment_outline']);
   assert.deepEqual(getChatToMomentsBridgeTableIds(), [
+    'character_profile',
+    'relationship',
+    'events',
+    'items',
     'chat_summary',
-    'group_summary',
     'chat_outline',
+    'important_people',
+    'group_consensus',
+    'group_summary',
     'group_outline',
   ]);
-  assert.deepEqual(getRpToMomentsBridgeTableIds(), ['rp_summary', 'rp_outline']);
+  assert.deepEqual(getRpToMomentsBridgeTableIds(), [
+    'rp_important_people',
+    'rp_tasks',
+    'rp_summary',
+    'rp_outline',
+  ]);
+});
+
+test('dynamic memory bridge defaults enable selected profile and writing tables', () => {
+  const chatSettings = resolveChatToMomentsBridgeTableSettings({
+    settings: {},
+    fallbackEnabled: true,
+    fallbackLimit: 5,
+  });
+  assert.equal(chatSettings.character_profile.enabled, true);
+  assert.equal(chatSettings.relationship.enabled, true);
+  assert.equal(chatSettings.events.enabled, true);
+  assert.equal(chatSettings.items.enabled, false);
+  assert.equal(chatSettings.important_people.enabled, false);
+  assert.equal(chatSettings.group_consensus.enabled, false);
+  assert.equal(chatSettings.chat_summary.enabled, true);
+  assert.equal(chatSettings.group_outline.enabled, true);
+  assert.equal(chatSettings.character_profile.limit, 0);
+  assert.equal(chatSettings.relationship.limit, 5);
+  assert.equal(chatSettings.items.limit, 0);
+
+  const rpSettings = resolveRpToMomentsBridgeTableSettings({
+    settings: {},
+    fallbackEnabled: true,
+    fallbackLimit: 5,
+  });
+  assert.equal(rpSettings.rp_important_people.enabled, true);
+  assert.equal(rpSettings.rp_tasks.enabled, true);
+  assert.equal(rpSettings.rp_summary.enabled, true);
+  assert.equal(rpSettings.rp_outline.enabled, true);
 });
 
 let failed = 0;

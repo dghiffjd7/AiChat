@@ -11,16 +11,45 @@ const MOMENTS_TO_CHAT_TABLE_IDS = [
 ];
 
 const CHAT_TO_MOMENTS_TABLE_IDS = [
+  'character_profile',
+  'relationship',
+  'events',
+  'items',
   'chat_summary',
-  'group_summary',
   'chat_outline',
+  'important_people',
+  'group_consensus',
+  'group_summary',
   'group_outline',
 ];
 
 const RP_TO_MOMENTS_TABLE_IDS = [
+  'rp_important_people',
+  'rp_tasks',
   'rp_summary',
   'rp_outline',
 ];
+
+const CHAT_TO_MOMENTS_DEFAULT_ENABLED_TABLE_IDS = new Set([
+  'character_profile',
+  'relationship',
+  'events',
+  'chat_summary',
+  'chat_outline',
+  'group_summary',
+  'group_outline',
+]);
+
+const CHAT_TO_MOMENTS_DEFAULT_LIMIT_BY_TABLE = {
+  character_profile: 0,
+};
+
+const RP_TO_MOMENTS_DEFAULT_ENABLED_TABLE_IDS = new Set([
+  'rp_important_people',
+  'rp_tasks',
+  'rp_summary',
+  'rp_outline',
+]);
 
 const CHAT_TO_RP_CONTACT_TABLE_IDS = [
   'character_profile',
@@ -76,26 +105,40 @@ const resolveGlobalBridgeTableSettings = ({
   rawSettings = {},
   fallbackEnabled = true,
   fallbackLimit = 0,
+  defaultEnabledTableIds = null,
+  defaultLimitByTable = null,
 } = {}) => (
   Object.fromEntries((Array.isArray(tableIds) ? tableIds : []).map((tableId) => {
     const raw = rawSettings?.[tableId] && typeof rawSettings[tableId] === 'object'
       ? rawSettings[tableId]
       : null;
-    const enabled = typeof raw?.enabled === 'boolean' ? raw.enabled : Boolean(fallbackEnabled);
-    const limit = normalizeBridgeLimit(raw?.limit, fallbackLimit);
+    const defaultEnabled = defaultEnabledTableIds instanceof Set
+      ? defaultEnabledTableIds.has(tableId)
+      : Boolean(fallbackEnabled);
+    const tableFallbackLimit = defaultLimitByTable
+      && Object.prototype.hasOwnProperty.call(defaultLimitByTable, tableId)
+      ? defaultLimitByTable[tableId]
+      : fallbackLimit;
+    const enabled = typeof raw?.enabled === 'boolean' ? raw.enabled : defaultEnabled;
+    const limit = normalizeBridgeLimit(raw?.limit, defaultEnabled ? tableFallbackLimit : 0);
     return [tableId, { enabled, limit }];
   }))
 );
 
-const pruneGlobalBridgeTableSettings = (rawSettings = {}, tableIds = []) => (
+const pruneGlobalBridgeTableSettings = (rawSettings = {}, tableIds = [], {
+  defaultEnabledTableIds = null,
+} = {}) => (
   Object.fromEntries((Array.isArray(tableIds) ? tableIds : []).map((tableId) => {
     const raw = rawSettings?.[tableId] && typeof rawSettings[tableId] === 'object'
       ? rawSettings[tableId]
       : {};
+    const defaultEnabled = defaultEnabledTableIds instanceof Set
+      ? defaultEnabledTableIds.has(tableId)
+      : true;
     return [
       tableId,
       {
-        enabled: raw.enabled !== false,
+        enabled: typeof raw.enabled === 'boolean' ? raw.enabled : defaultEnabled,
         limit: normalizeBridgeLimit(raw.limit, 0),
       },
     ];
@@ -122,6 +165,8 @@ export const resolveChatToMomentsBridgeTableSettings = ({
   rawSettings: settings?.memoryBridgeChatToMomentsTableSettings,
   fallbackEnabled,
   fallbackLimit,
+  defaultEnabledTableIds: fallbackEnabled ? CHAT_TO_MOMENTS_DEFAULT_ENABLED_TABLE_IDS : new Set(),
+  defaultLimitByTable: CHAT_TO_MOMENTS_DEFAULT_LIMIT_BY_TABLE,
 });
 
 export const resolveRpToMomentsBridgeTableSettings = ({
@@ -133,16 +178,21 @@ export const resolveRpToMomentsBridgeTableSettings = ({
   rawSettings: settings?.memoryBridgeRpToMomentsTableSettings,
   fallbackEnabled,
   fallbackLimit,
+  defaultEnabledTableIds: fallbackEnabled ? RP_TO_MOMENTS_DEFAULT_ENABLED_TABLE_IDS : new Set(),
 });
 
 export const pruneMomentsToChatBridgeTableSettings = (rawSettings = {}) =>
   pruneGlobalBridgeTableSettings(rawSettings, getMomentsToChatBridgeTableIds());
 
 export const pruneChatToMomentsBridgeTableSettings = (rawSettings = {}) =>
-  pruneGlobalBridgeTableSettings(rawSettings, getChatToMomentsBridgeTableIds());
+  pruneGlobalBridgeTableSettings(rawSettings, getChatToMomentsBridgeTableIds(), {
+    defaultEnabledTableIds: CHAT_TO_MOMENTS_DEFAULT_ENABLED_TABLE_IDS,
+  });
 
 export const pruneRpToMomentsBridgeTableSettings = (rawSettings = {}) =>
-  pruneGlobalBridgeTableSettings(rawSettings, getRpToMomentsBridgeTableIds());
+  pruneGlobalBridgeTableSettings(rawSettings, getRpToMomentsBridgeTableIds(), {
+    defaultEnabledTableIds: RP_TO_MOMENTS_DEFAULT_ENABLED_TABLE_IDS,
+  });
 
 export const resolveRpToChatBridgeTableSettings = ({
   sessionSettings = {},
