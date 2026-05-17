@@ -15,6 +15,8 @@ const normalizePromptText = (value = '') => String(value ?? '')
 
 const IMAGE_PROMPT_OPEN_RE = /<\s*image_prompt(?:\s[^>]*)?\s*>/gi;
 const IMAGE_PROMPT_CLOSE_RE = /<\s*\/\s*image_prompt\s*>/gi;
+const ESCAPED_IMAGE_PROMPT_OPEN_RE = /&lt;\s*image_prompt(?:\s[^&]*?)?&gt;/gi;
+const ESCAPED_IMAGE_PROMPT_CLOSE_RE = /&lt;\s*\/\s*image_prompt\s*&gt;/gi;
 const PROTECTED_IMAGE_PROMPT_OPEN_PREFIX = '\uE000chatapp-image-prompt-open-';
 const PROTECTED_IMAGE_PROMPT_OPEN_SUFFIX = '\uE001';
 
@@ -29,6 +31,66 @@ const stripMarkdownCodeBlocks = (value = '') => String(value ?? '')
 
 const stripReasoningLikeBlocks = (value = '') => String(value ?? '')
   .replace(/<\s*(?:think|thinking|reasoning)(?:\s[^>]*)?\s*>[\s\S]*?<\s*\/\s*(?:think|thinking|reasoning)\s*>/gi, '');
+
+const collectIgnoredAutoImagePromptRanges = (source = '') => {
+  const text = String(source ?? '');
+  const ranges = [];
+  const collect = (re) => {
+    re.lastIndex = 0;
+    let match = null;
+    while ((match = re.exec(text))) {
+      ranges.push({ start: match.index, end: match.index + match[0].length });
+      if (match[0].length === 0) re.lastIndex += 1;
+    }
+  };
+  collect(/```[\s\S]*?```/g);
+  collect(/~~~[\s\S]*?~~~/g);
+  collect(/<\s*(?:think|thinking|reasoning)(?:\s[^>]*)?\s*>[\s\S]*?<\s*\/\s*(?:think|thinking|reasoning)\s*>/gi);
+  return ranges.sort((a, b) => a.start - b.start || a.end - b.end);
+};
+
+const rangeIntersects = (start = 0, end = 0, ranges = []) =>
+  ranges.some(range => start < range.end && end > range.start);
+
+const replaceClosedImagePromptBlocks = (source = '', replacer = () => '', {
+  openRe = IMAGE_PROMPT_OPEN_RE,
+  closeRe = IMAGE_PROMPT_CLOSE_RE,
+  ignoredRanges = [],
+} = {}) => {
+  const text = String(source ?? '');
+  if (!text) return text;
+  const openScanner = new RegExp(openRe.source, openRe.flags);
+  const closeScanner = new RegExp(closeRe.source, closeRe.flags);
+  let out = '';
+  let cursor = 0;
+  let tagIndex = 0;
+  let open = null;
+  while ((open = openScanner.exec(text))) {
+    const openStart = open.index;
+    const openEnd = open.index + open[0].length;
+    const nextOpenScanner = new RegExp(openRe.source, openRe.flags);
+    nextOpenScanner.lastIndex = openEnd;
+    closeScanner.lastIndex = openEnd;
+    const close = closeScanner.exec(text);
+    const nextOpen = nextOpenScanner.exec(text);
+    if (!close || (nextOpen && nextOpen.index < close.index)) {
+      openScanner.lastIndex = openEnd;
+      continue;
+    }
+    const closeStart = close.index;
+    const closeEnd = close.index + close[0].length;
+    if (rangeIntersects(openStart, closeEnd, ignoredRanges)) {
+      openScanner.lastIndex = closeEnd;
+      continue;
+    }
+    out += text.slice(cursor, openStart);
+    out += String(replacer(text.slice(openStart, closeEnd), text.slice(openEnd, closeStart), tagIndex) ?? '');
+    tagIndex += 1;
+    cursor = closeEnd;
+    openScanner.lastIndex = closeEnd;
+  }
+  return cursor > 0 ? `${out}${text.slice(cursor)}` : text;
+};
 
 const stripDelimitedPlainBlocks = (value = '', start = '', end = '') => {
   const source = String(value ?? '');
@@ -267,16 +329,14 @@ export const extractAutoImagePrompts = (text = '', { max = 1, maxLength = 2000, 
   const lengthLimit = Math.max(80, Math.trunc(Number(maxLength)) || 2000);
   const prompts = [];
   const seen = new Set();
-  const re = /<\s*image_prompt(?:\s[^>]*)?\s*>([\s\S]*?)<\s*\/\s*image_prompt\s*>/gi;
-  let match = null;
-  while ((match = re.exec(source))) {
-    const normalized = normalizePromptText(match[1]).slice(0, lengthLimit).trim();
+  replaceClosedImagePromptBlocks(source, (full, body) => {
+    const normalized = normalizePromptText(body).slice(0, lengthLimit).trim();
     const key = normalized.toLowerCase();
-    if (isEmptyPromptToken(normalized) || (dedupe && seen.has(key))) continue;
+    if (isEmptyPromptToken(normalized) || (dedupe && seen.has(key)) || prompts.length >= limit) return full;
     if (dedupe) seen.add(key);
     prompts.push(normalized);
-    if (prompts.length >= limit) break;
-  }
+    return full;
+  });
   return prompts;
 };
 
@@ -292,10 +352,9 @@ export const prepareAutoImagePromptPlaceholders = (text = '', {
   const limit = normalizeAutoImagePromptLimit(max, 10);
   const lengthLimit = Math.max(80, Math.trunc(Number(maxLength)) || 2000);
   const prompts = [];
-  let tagIndex = 0;
-  const nextText = source.replace(/<\s*image_prompt(?:\s[^>]*)?\s*>([\s\S]*?)<\s*\/\s*image_prompt\s*>/gi, (full, body) => {
+  const ignoredRanges = collectIgnoredAutoImagePromptRanges(source);
+  const nextText = replaceClosedImagePromptBlocks(source, (full, body, tagIndex) => {
     const index = tagIndex;
-    tagIndex += 1;
     const prompt = normalizePromptText(body).slice(0, lengthLimit).trim();
     if (isEmptyPromptToken(prompt)) return '';
     if (prompts.length >= limit) {
@@ -307,6 +366,8 @@ export const prepareAutoImagePromptPlaceholders = (text = '', {
     const pendingToken = buildAutoImagePromptPendingToken(index);
     prompts.push({ prompt, pendingToken, tag: full, index });
     return pendingToken;
+  }, {
+    ignoredRanges,
   });
   return {
     text: nextText.replace(/[ \t]+\n/g, '\n').replace(/\n{4,}/g, '\n\n\n'),
@@ -317,8 +378,12 @@ export const prepareAutoImagePromptPlaceholders = (text = '', {
 export const stripAutoImagePromptTags = (text = '') => {
   const source = String(text ?? '');
   if (!source) return source;
-  const stripped = source
-    .replace(/<\s*image_prompt(?:\s[^>]*)?\s*>[\s\S]*?<\s*\/\s*image_prompt\s*>/gi, '')
-    .replace(/&lt;\s*image_prompt(?:\s[^&]*?)?&gt;[\s\S]*?&lt;\s*\/\s*image_prompt\s*&gt;/gi, '');
+  const stripped = replaceClosedImagePromptBlocks(
+    replaceClosedImagePromptBlocks(source, () => '', {
+      openRe: ESCAPED_IMAGE_PROMPT_OPEN_RE,
+      closeRe: ESCAPED_IMAGE_PROMPT_CLOSE_RE,
+    }),
+    () => '',
+  );
   return stripped.replace(/[ \t]+\n/g, '\n').replace(/\n{4,}/g, '\n\n\n');
 };

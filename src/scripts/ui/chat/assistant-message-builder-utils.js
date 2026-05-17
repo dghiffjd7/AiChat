@@ -4,6 +4,7 @@ import {
   restoreProtectedAutoImagePromptTags,
   stripAutoImagePromptTags,
 } from './auto-image-prompt-utils.js';
+import { hideCreativeContentTagsForDisplay } from './creative-content-display-utils.js';
 
 export const applyChatModeAssistantRegex = (
   text,
@@ -221,7 +222,9 @@ export const buildCreativeAssistantMessageParts = ({
     resolvedReasoning,
     finalSource,
     stored: restoreProtectedAutoImagePromptTags(regexResult.stored, protectedFinalSource),
-    display: restoreProtectedAutoImagePromptTags(regexResult.display, protectedFinalSource),
+    display: hideCreativeContentTagsForDisplay(
+      restoreProtectedAutoImagePromptTags(regexResult.display, protectedFinalSource),
+    ),
   };
 };
 

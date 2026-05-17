@@ -122,6 +122,24 @@ const createFakeDocument = () => {
   const documentLike = createFakeDocument();
   const bubble = documentLike.createElement('div');
   const target = documentLike.createElement('div');
+  const renders = [];
+  renderMessageBubbleContentCore({
+    bubble,
+    message: { id: 'm-content', type: 'text', content: '<content><b>x</b></content>', meta: { renderRich: true } },
+    resolvedSessionId: 'rp:test',
+    documentLike,
+    prepareTextContainer: () => target,
+    renderRichText: (...args) => renders.push(args),
+  });
+  assert.equal(renders.length, 1);
+  assert.equal(renders[0][1], '<b>x</b>');
+  console.log('ok - renderMessageBubbleContentCore hides creative content wrapper before rich rendering');
+}
+
+{
+  const documentLike = createFakeDocument();
+  const bubble = documentLike.createElement('div');
+  const target = documentLike.createElement('div');
   const drafts = [];
   renderMessageBubbleContentCore({
     bubble,

@@ -1,3 +1,5 @@
+import { hideCreativeContentTagsForDisplay } from './creative-content-display-utils.js';
+
 const DEFAULT_STREAM_FPS = 18;
 const DEFAULT_MIN_CHARS = 6;
 
@@ -116,10 +118,10 @@ export class CreativeStreamProcessor {
       display = normalize(applyDisplay(stored, { final }));
     } catch {}
     stored = normalize(restoreRegexOutput(stored, protectedSource));
-    display = normalize(restoreRegexOutput(display, protectedSource));
+    display = normalize(hideCreativeContentTagsForDisplay(restoreRegexOutput(display, protectedSource)));
     if (!final && !display.trim() && contentSource.trim()) {
       stored = contentSource;
-      display = contentSource;
+      display = hideCreativeContentTagsForDisplay(contentSource);
     }
     if (!final) display = normalize(balancePreview(display));
 

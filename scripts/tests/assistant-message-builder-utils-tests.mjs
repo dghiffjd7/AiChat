@@ -7,6 +7,7 @@ import {
   buildChatModeAssistantMessageFromParts,
   buildChatModeAssistantMessageParts,
   buildCreativeAssistantMessage,
+  buildCreativeAssistantMessageParts,
 } from '../../src/scripts/ui/chat/assistant-message-builder-utils.js';
 
 const tests = [];
@@ -238,6 +239,41 @@ test('buildCreativeAssistantMessage preserves parsed reasoning and omits id for 
   assert.equal(message.rawSource, 'body source');
   assert.equal(message.raw, 'body source:stored');
   assert.equal(message.content, 'body source:display');
+});
+
+test('buildCreativeAssistantMessage hides content wrapper in display while preserving creative raw fields', async () => {
+  const source = '<content>正文</content>';
+  const message = await buildCreativeAssistantMessage({
+    rawOriginal: source,
+    text: source,
+    sessionId: 'rp:session',
+    normalizeCreativeLineBreaks: value => String(value ?? ''),
+    applyOutputRegexPairSafe: value => ({
+      stored: String(value ?? ''),
+      display: String(value ?? ''),
+    }),
+  });
+
+  assert.equal(message.rawOriginal, source);
+  assert.equal(message.rawSource, source);
+  assert.equal(message.raw, source);
+  assert.equal(message.content, '正文');
+});
+
+test('buildCreativeAssistantMessageParts hides content wrapper after display regex only', () => {
+  const source = '<content type="story">正文</content>';
+  const parts = buildCreativeAssistantMessageParts({
+    text: source,
+    normalizeCreativeLineBreaks: value => String(value ?? ''),
+    applyOutputRegexPairSafe: value => ({
+      stored: `${value}:stored`,
+      display: `${value}:display`,
+    }),
+  });
+
+  assert.equal(parts.finalSource, source);
+  assert.equal(parts.stored, `${source}:stored`);
+  assert.equal(parts.display, '正文:display');
 });
 
 test('buildCreativeAssistantMessage preserves incomplete image_prompt tags through output regex', async () => {

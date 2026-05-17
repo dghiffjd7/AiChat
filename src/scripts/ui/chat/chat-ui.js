@@ -5,6 +5,7 @@
 import { resolveMediaAsset } from '../../utils/media-assets.js';
 import { stickerPackStore } from '../../storage/sticker-pack-store.js';
 import { cleanupRichText, renderRichText, setupIframeResizeListener } from './rich-text-renderer.js';
+import { hideCreativeContentTagsForDisplay } from './creative-content-display-utils.js';
 import { appSettings } from '../../storage/app-settings.js';
 import { logger } from '../../utils/logger.js';
 import { getDefaultAppIcon } from '../../utils/default-icon.js';
@@ -523,7 +524,9 @@ export class ChatUI {
     const target = this.prepareTextContainer(bubble, renderMsg);
     target.classList.remove('rp-swipe-draft-placeholder');
     target.style.removeProperty('white-space');
-    const text = String(content ?? '');
+    const text = renderMsg.meta?.renderRich
+      ? hideCreativeContentTagsForDisplay(content)
+      : String(content ?? '');
     if (!text.trim() && placeholder) {
       return this.renderSwipeDraftPlaceholder(target, placeholder);
     }

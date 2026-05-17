@@ -112,10 +112,32 @@ const testIncompleteImagePromptSurvivesRegex = () => {
   assert.equal(snapshot.display, '正文\n<image_prompt>\n后续正文');
 };
 
+const testContentWrapperHiddenDuringStream = () => {
+  let now = 5000;
+  const processor = new CreativeStreamProcessor({
+    now: () => now,
+    minChunkChars: 1,
+    normalizeText: value => String(value ?? ''),
+    extractReasoning: value => ({ content: String(value ?? ''), reasoning: '', reasoningDisplay: '' }),
+    applyStored: value => value,
+    applyDisplay: value => value,
+  });
+  const opening = processor.append('<content');
+  assert.ok(opening);
+  assert.equal(opening.stored, '<content');
+  assert.equal(opening.display, '');
+  now += 60;
+  const body = processor.append('>正文</content>');
+  assert.ok(body);
+  assert.equal(body.stored, '<content>正文</content>');
+  assert.equal(body.display, '正文');
+};
+
 testPreviewBalance();
 testIncompleteReasoningSplit();
 testPreviewFallbackWhenRegexEmpties();
 testThrottleAndFinalize();
 testIncompleteImagePromptSurvivesRegex();
+testContentWrapperHiddenDuringStream();
 
 console.log('creative-stream-processor tests passed');

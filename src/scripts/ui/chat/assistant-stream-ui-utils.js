@@ -1,3 +1,5 @@
+import { hideCreativeContentTagsForDisplay } from './creative-content-display-utils.js';
+
 export const buildAssistantStreamMessageCore = (placeholder, meta, msgId, state = {}) => {
   const streamState = state && typeof state === 'object' ? state : { content: state };
   const content = String(streamState.content ?? '');
@@ -58,7 +60,9 @@ export const renderAssistantStreamStateCore = ({
   if (wrapperEl?.dataset?.typingPlaceholder) delete wrapperEl.dataset.typingPlaceholder;
   cleanupRichTextMounts?.(messageEl);
   const target = prepareTextContainer?.(messageEl, nextMessage) || messageEl;
-  const text = String(nextMessage.content ?? '');
+  const text = nextMessage?.meta?.renderRich
+    ? hideCreativeContentTagsForDisplay(nextMessage.content)
+    : String(nextMessage.content ?? '');
   if (nextMessage?.meta?.renderRich) {
     try {
       renderRichText?.(target, text, {
@@ -125,7 +129,9 @@ export const finishMessageDomCore = ({
   }
   if (Array.isArray(messageBuffer)) messageBuffer[bufferIndex] = fm;
   try {
-    const text = String(fm?.content ?? '');
+    const text = fm?.meta?.renderRich
+      ? hideCreativeContentTagsForDisplay(fm?.content)
+      : String(fm?.content ?? '');
     const target = prepareTextContainer?.(messageEl, fm) || messageEl;
     if (fm?.meta?.renderRich) {
       renderRichText?.(target, text, {

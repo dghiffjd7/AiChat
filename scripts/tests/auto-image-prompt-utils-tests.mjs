@@ -54,6 +54,26 @@ import {
 }
 
 {
+  const source = '<thought><image_prompt>draft only</thought>\n正文\n<image_prompt>visible</image_prompt>';
+  const prompts = extractAutoImagePrompts(source, { max: 0, dedupe: false });
+  const prepared = prepareAutoImagePromptPlaceholders(source);
+  const stripped = stripAutoImagePromptTags(source);
+  assert.deepEqual(prompts, ['visible']);
+  assert.deepEqual(prepared.prompts.map(item => item.prompt), ['visible']);
+  assert.equal(prepared.text, '<thought><image_prompt>draft only</thought>\n正文\n[img-图片生成中]');
+  assert.equal(stripped.trim(), '<thought><image_prompt>draft only</thought>\n正文');
+  console.log('ok - unclosed image_prompt before a later closed tag does not consume intervening text');
+}
+
+{
+  const source = '<thinking><image_prompt>ignored</image_prompt></thinking>\n<image_prompt>visible</image_prompt>';
+  const prepared = prepareAutoImagePromptPlaceholders(source);
+  assert.deepEqual(prepared.prompts.map(item => item.prompt), ['visible']);
+  assert.equal(prepared.text, '<thinking><image_prompt>ignored</image_prompt></thinking>\n[img-图片生成中]');
+  console.log('ok - complete image_prompt tags inside known reasoning blocks are ignored by placeholder prep');
+}
+
+{
   const instruction = buildAutoImagePromptInstruction({
     uiMode: 'chat',
     isGroupChat: true,

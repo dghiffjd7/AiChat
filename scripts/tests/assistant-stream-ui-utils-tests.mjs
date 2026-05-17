@@ -68,6 +68,35 @@ const createTarget = () => ({
 }
 
 {
+  const target = createTarget();
+  const wrapper = {
+    dataset: { typingPlaceholder: '1' },
+    __chatappMessage: { content: 'old' },
+  };
+  const renders = [];
+  const next = renderAssistantStreamStateCore({
+    messageEl: { nodeName: 'DIV' },
+    wrapperEl: wrapper,
+    msgId: 'm2-rich',
+    meta: { renderRich: true },
+    placeholder: { id: 'm2-rich' },
+    state: { content: '<content>正文</content>' },
+    applyReasoningUiState() {},
+    cleanupRichTextMounts() {},
+    prepareTextContainer() { return target; },
+    normalizeAssistantLineBreaks: text => text,
+    renderTextWithStickers: () => false,
+    renderRichText: (...args) => renders.push(args),
+    applyCreativeBubbleState() {},
+  });
+  assert.equal(next.content, '<content>正文</content>');
+  assert.equal(renders.length, 1);
+  assert.equal(renders[0][1], '正文');
+  assert.equal(wrapper.__chatappMessage.content, '<content>正文</content>');
+  console.log('ok - renderAssistantStreamStateCore hides content wrapper only for rich stream rendering');
+}
+
+{
   const messageEl = { parentElement: { parentElement: { remove() {} } } };
   const target = createTarget();
   const wrapper = { __chatappMessage: { content: 'prev' } };
