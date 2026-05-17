@@ -1,3 +1,8 @@
+import {
+  buildImportedPresetUpsertPayload,
+  getImportedPresetName,
+} from './preset-import-dedupe-utils.js';
+
 const ensureArray = value => (Array.isArray(value) ? value : []);
 
 const cloneJson = (value, fallback = null) => {
@@ -221,22 +226,16 @@ export const buildExperiencePackRemoteWallpaperSettings = ({
 });
 
 export const buildExperiencePackImportedPresetNameBase = ({
-  packageData = {},
-  settings = {},
   presetPayload = {},
   type = '',
 } = {}) => (
-  `${String(packageData?.manifest?.character?.name || settings?.name || '角色').trim() || '角色'}·${String(presetPayload?.name || type)}`
+  getImportedPresetName({ presetPayload, type })
 );
 
 export const buildExperiencePackPresetUpsertPayload = ({
   presetPayload = {},
   presetName = '',
-} = {}) => ({
-  name: String(presetName || ''),
-  data: cloneJson(presetPayload?.data || {}, {}),
-  makeActive: false,
-});
+} = {}) => buildImportedPresetUpsertPayload({ presetPayload, presetName });
 
 export const buildExperiencePackImportedConnectionProfileNameBase = (packageData = {}) => (
   `${String(packageData?.manifest?.character?.name || '角色').trim() || '角色'}·连线`

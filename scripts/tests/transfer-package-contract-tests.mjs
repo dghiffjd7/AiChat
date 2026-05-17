@@ -495,6 +495,78 @@ const { logger } = await import('../../src/scripts/utils/logger.js');
 }
 
 {
+  const presetTypes = ['sysprompt', 'context', 'instruct', 'openai', 'reasoning'];
+  const presetState = {
+    presets: Object.fromEntries(presetTypes.map(type => [type, {}])),
+  };
+  presetState.presets.context['context-existing-default'] = { name: 'Default' };
+  const upserts = [];
+  const bindings = [];
+  const presetStore = {
+    ready: Promise.resolve(),
+    getState: () => presetState,
+    upsert: async (type, payload) => {
+      const id = `${type}:${payload.name}`;
+      upserts.push({ type, payload });
+      presetState.presets[type][id] = { ...(payload.data || {}), name: payload.name };
+      return id;
+    },
+    setSessionBinding: async (type, sessionId, presetId) => {
+      bindings.push([type, sessionId, presetId]);
+    },
+  };
+  const exporter = new CustomBundleExporter({
+    personaStore: { getAll: () => [] },
+    appBridge: {},
+    presetStore,
+  });
+  const roomPackage = {
+    roomConfig: {
+      presets: {
+        presets: {
+          context: { name: ' Default ', data: { name: 'Default' } },
+          openai: { name: 'Shared Model', data: { name: 'Shared Model', temperature: 0.7 } },
+        },
+      },
+    },
+  };
+  const presetImportCache = new Map();
+
+  await exporter.importRoomSettingsToScope({
+    packageData: {},
+    runtime: {},
+    roomPackage,
+    sessionId: 'room-a',
+    displayName: 'Alice',
+    presetImportCache,
+  });
+  await exporter.importRoomSettingsToScope({
+    packageData: {},
+    runtime: {},
+    roomPackage,
+    sessionId: 'room-b',
+    displayName: 'Bob',
+    presetImportCache,
+  });
+
+  assert.deepEqual(upserts, [{
+    type: 'openai',
+    payload: {
+      name: 'Shared Model',
+      data: { name: 'Shared Model', temperature: 0.7 },
+      makeActive: false,
+    },
+  }]);
+  assert.deepEqual(bindings, [
+    ['context', 'room-a', 'context-existing-default'],
+    ['openai', 'room-a', 'openai:Shared Model'],
+    ['context', 'room-b', 'context-existing-default'],
+    ['openai', 'room-b', 'openai:Shared Model'],
+  ]);
+  console.log('ok - CustomBundleExporter importRoomSettingsToScope dedupes imported preset names and keeps per-session bindings');
+}
+
+{
   const assetCalls = [];
   const assets = {
     addSource(preferredName, source) {

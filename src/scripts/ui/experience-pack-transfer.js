@@ -19,7 +19,6 @@ import {
   buildExperiencePackArchiveMessageRestoreJobs,
   buildExperiencePackImportedConnectionProfileNameBase,
   buildExperiencePackImportedContactRecord,
-  buildExperiencePackImportedPresetNameBase,
   buildExperiencePackImportSwitchConfirmOptions,
   buildExperiencePackLegacyRestoredArchives,
   buildExperiencePackPresetUpsertPayload,
@@ -36,6 +35,7 @@ import {
   normalizeExperiencePackCompactedSummary,
   normalizeExperiencePackSummaryList,
 } from './experience-pack-import-utils.js';
+import { resolveImportedPresetIdByName } from './preset-import-dedupe-utils.js';
 import { getPresetStore } from './preset-store-runtime-utils.js';
 import { collectTransferWorldbookBundle } from './transfer-worldbook-utils.js';
 import { hasStoredWorldInfo, waitForWorldStoreReady } from './world-store-runtime-utils.js';
@@ -1278,17 +1278,13 @@ export class ExperiencePackTransfer extends CharacterCardTransfer {
       const presetPayload = roomPresets?.presets?.[type];
       if (!presetPayload?.data || !this.presetStore?.upsert) continue;
       try {
-        const presetName = this.getUniquePresetName(buildExperiencePackImportedPresetNameBase({
-          packageData,
-          settings,
-          presetPayload,
+        const presetId = await resolveImportedPresetIdByName({
+          presetStore: this.presetStore,
           type,
-        }));
-        const presetId = await this.presetStore.upsert(type, buildExperiencePackPresetUpsertPayload({
           presetPayload,
-          presetName,
-        }));
-        restoredPresetIds[type] = presetId;
+          upsertPayloadBuilder: buildExperiencePackPresetUpsertPayload,
+        });
+        if (presetId) restoredPresetIds[type] = presetId;
       } catch (err) {
         logger.warn('import preset from experience pack failed', err);
       }

@@ -88,6 +88,10 @@ import {
 } from './custom-bundle-worldbook-utils.js';
 import { ensureDebugUiRegistry as ensureSharedDebugUiRegistry } from './debug-ui-registry-utils.js';
 import { getMemoryTableStore, getMemoryTemplateStore } from './memory-store-runtime-utils.js';
+import {
+  buildImportedPresetUpsertPayload,
+  resolveImportedPresetIdByName,
+} from './preset-import-dedupe-utils.js';
 import { getPresetStore } from './preset-store-runtime-utils.js';
 import { createRegexStoreRuntimeAdapter } from './regex-store-runtime-utils.js';
 import { emitMemoryRowsUpdated } from './session-memory-event-utils.js';
@@ -2975,6 +2979,7 @@ export class CustomBundleExporter {
     sessionId,
     displayName,
     personaLockId = '',
+    presetImportCache = null,
   }) {
     const sid = String(sessionId || '').trim();
     if (!sid) return {};
@@ -3033,15 +3038,14 @@ export class CustomBundleExporter {
       const presetPayload = roomPresets?.presets?.[type];
       if (!presetPayload?.data || !this.presetStore?.upsert) continue;
       try {
-        const presetName = this.getUniquePresetName(
-          `${String(displayName || '角色').trim() || '角色'}·${String(presetPayload.name || type)}`
-        );
-        const presetId = await this.presetStore.upsert(type, {
-          name: presetName,
-          data: cloneJson(presetPayload.data, {}),
-          makeActive: false,
+        const presetId = await resolveImportedPresetIdByName({
+          presetStore: this.presetStore,
+          type,
+          presetPayload,
+          cache: presetImportCache,
+          upsertPayloadBuilder: buildImportedPresetUpsertPayload,
         });
-        restoredPresetIds[type] = presetId;
+        if (presetId) restoredPresetIds[type] = presetId;
       } catch (err) {
         logger.warn('import preset from custom bundle failed', err);
       }
@@ -3233,6 +3237,7 @@ export class CustomBundleExporter {
     worldIdMap = {},
     importedLocalSetKeys = null,
     importedMemoryTemplateId = '',
+    presetImportCache = null,
     displayName = '',
     personaLockId = '',
     roomKey = '',
@@ -3264,6 +3269,7 @@ export class CustomBundleExporter {
       sessionId,
       displayName,
       personaLockId,
+      presetImportCache,
     });
     if (roomPackage?.roomConfig?.variables?.state) {
       this.importVariableStateToStore(runtime.chatStore, roomPackage.roomConfig.variables.state, sessionId);
@@ -3312,6 +3318,7 @@ export class CustomBundleExporter {
     worldIdMap = {},
     importedLocalSetKeys = null,
     importedMemoryTemplateId = '',
+    presetImportCache = null,
     diagnosticsNotes = null,
   } = {}) {
     const personaLockId = resolveCustomBundlePersonaLockId({
@@ -3343,6 +3350,7 @@ export class CustomBundleExporter {
       worldIdMap,
       importedLocalSetKeys,
       importedMemoryTemplateId,
+      presetImportCache,
       displayName: String(importedPersona?.name || roomPackage?.contact?.name || sessionId),
       personaLockId,
       roomKey,
@@ -3372,6 +3380,7 @@ export class CustomBundleExporter {
     worldIdMap = {},
     importedLocalSetKeys = null,
     importedMemoryTemplateId = '',
+    presetImportCache = null,
     diagnosticsNotes = null,
   } = {}) {
     if (!rpRoomImportPlan) return null;
@@ -3394,6 +3403,7 @@ export class CustomBundleExporter {
       worldIdMap,
       importedLocalSetKeys,
       importedMemoryTemplateId,
+      presetImportCache,
       displayName,
       personaLockId,
       roomKey,
@@ -3435,6 +3445,7 @@ export class CustomBundleExporter {
     worldIdMap = {},
     importedLocalSetKeys = null,
     importedMemoryTemplateId = '',
+    presetImportCache = null,
     diagnosticsNotes = null,
     roleDiagnostics = null,
     importedTargets = null,
@@ -3472,6 +3483,7 @@ export class CustomBundleExporter {
         worldIdMap,
         importedLocalSetKeys,
         importedMemoryTemplateId,
+        presetImportCache,
         diagnosticsNotes,
       });
       roleDiagnostics?.chats?.push?.(importedChatRoom.diagnostic);
@@ -3506,6 +3518,7 @@ export class CustomBundleExporter {
         worldIdMap,
         importedLocalSetKeys,
         importedMemoryTemplateId,
+        presetImportCache,
         diagnosticsNotes,
       });
       if (roleDiagnostics) roleDiagnostics.creativeWriting = importedRpRoom.diagnostic;
@@ -3653,6 +3666,7 @@ export class CustomBundleExporter {
     diagnostics.importedMemoryTemplateId = String(importedMemoryTemplateId || '').trim();
     const usedSessionIds = await this.collectExistingSessionIds();
     const importedLocalSetKeys = new Set();
+    const presetImportCache = new Map();
     const roomRefCounts = buildCustomBundleRoomRefCounts(packageData?.manifest?.roles);
     const sharedImportedRooms = new Map();
     const touchedScopes = new Set();
@@ -3691,6 +3705,7 @@ export class CustomBundleExporter {
         worldIdMap,
         importedLocalSetKeys,
         importedMemoryTemplateId,
+        presetImportCache,
         diagnosticsNotes: diagnostics.notes,
         roleDiagnostics: roleRuntime.roleDiagnostics,
         importedTargets,

@@ -378,7 +378,7 @@ const {
       presetPayload: { name: 'Preset Name' },
       type: 'sysprompt',
     }),
-    'Alice·Preset Name',
+    'Preset Name',
   );
   assert.equal(
     buildExperiencePackImportedPresetNameBase({
@@ -387,7 +387,7 @@ const {
       presetPayload: {},
       type: 'context',
     }),
-    '角色·context',
+    'context',
   );
   assert.equal(
     buildExperiencePackImportedConnectionProfileNameBase({
@@ -396,7 +396,7 @@ const {
     'Alice·连线',
   );
   assert.equal(buildExperiencePackImportedConnectionProfileNameBase({}), '角色·连线');
-  console.log('ok - experience pack imported preset and connection profile name helpers preserve fallback policy');
+  console.log('ok - experience pack imported preset names dedupe by source name while connection profiles keep character prefixes');
 }
 
 {

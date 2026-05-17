@@ -108,6 +108,7 @@ const splitScriptSteps = script =>
     'node scripts/tests/transfer-worldbook-utils-tests.mjs',
     'node scripts/tests/experience-pack-export-utils-tests.mjs',
     'node scripts/tests/experience-pack-import-utils-tests.mjs',
+    'node scripts/tests/preset-import-dedupe-utils-tests.mjs',
     'node scripts/tests/custom-bundle-worldbook-utils-tests.mjs',
     'node scripts/tests/custom-bundle-manifest-utils-tests.mjs',
     'node scripts/tests/custom-bundle-room-entry-utils-tests.mjs',
@@ -118,6 +119,10 @@ const splitScriptSteps = script =>
     'node scripts/tests/custom-bundle-rp-greeting-utils-tests.mjs',
     'node scripts/tests/transfer-package-contract-tests.mjs',
   ]);
-  assert.equal(scripts['test:migration'], 'node scripts/tests/storage-migration-contracts-tests.mjs');
+  assert.deepEqual(splitScriptSteps(scripts['test:migration']), [
+    'node scripts/tests/storage-migration-contracts-tests.mjs',
+    'node scripts/tests/chat-store-large-field-tests.mjs',
+    'node scripts/tests/chat-store-scope-guard-tests.mjs',
+  ]);
   console.log('ok - transfer and migration release gates preserve package and storage contract tests');
 }
