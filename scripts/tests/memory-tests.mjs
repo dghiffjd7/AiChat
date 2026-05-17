@@ -15,7 +15,13 @@ import {
   tableMatchesMemoryContext,
 } from '../../src/scripts/memory/memory-context-utils.js';
 import { validateTemplate } from '../../src/scripts/memory/template-schema.js';
-import { buildMemoryTablePlan, estimateTokens, parseMemoryPromptPositions } from '../../src/scripts/memory/memory-prompt-utils.js';
+import {
+  buildMemoryBridgeYamlLines,
+  buildMemoryTablePlan,
+  estimateTokens,
+  getMemoryBridgeTablePromptLabel,
+  parseMemoryPromptPositions,
+} from '../../src/scripts/memory/memory-prompt-utils.js';
 
 const tests = [];
 const test = (name, fn) => tests.push({ name, fn });
@@ -101,6 +107,26 @@ test('parseMemoryPromptPositions + estimateTokens', () => {
   assert.deepEqual(positions, ['system_end', 'before_chat', 'history_depth']);
   assert.equal(estimateTokens('abcd', 'rough'), 1);
   assert.equal(estimateTokens('abcd', 'strict'), 4);
+});
+
+test('memory bridge yaml uses concise table labels', () => {
+  assert.equal(getMemoryBridgeTablePromptLabel('character_profile'), '角色档案');
+  assert.equal(getMemoryBridgeTablePromptLabel('group_consensus'), '群聊共识');
+  assert.equal(getMemoryBridgeTablePromptLabel('moment_outline'), '大纲');
+  assert.equal(getMemoryBridgeTablePromptLabel('rp_tasks'), '任务');
+  assert.deepEqual(buildMemoryBridgeYamlLines({
+    header: '【动态】',
+    tables: [
+      { label: '摘要', rows: ['第1轮：发了晚安动态'] },
+      { label: '大纲', rows: ['公开互动偏轻松'] },
+    ],
+  }), [
+    '"【动态】":',
+    '  - "摘要":',
+    '      - "第1轮：发了晚安动态"',
+    '  - "大纲":',
+    '      - "公开互动偏轻松"',
+  ]);
 });
 
 test('moment memory context only matches dynamic global tables', () => {

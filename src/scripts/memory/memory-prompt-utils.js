@@ -19,6 +19,24 @@ const SUMMARY_TABLE_IDS = new Set([
   'moment_outline',
 ]);
 const SUMMARY_LIMIT_TABLE_IDS = new Set(['chat_summary', 'group_summary', 'rp_summary', 'moment_summary']);
+const MEMORY_BRIDGE_TABLE_LABELS = {
+  character_profile: '角色档案',
+  relationship: '关系记录',
+  events: '重要事件',
+  items: '重要物品',
+  chat_summary: '摘要',
+  chat_outline: '大纲',
+  important_people: '重要人物表',
+  group_consensus: '群聊共识',
+  group_summary: '摘要',
+  group_outline: '大纲',
+  moment_summary: '摘要',
+  moment_outline: '大纲',
+  rp_important_people: '重要人物表',
+  rp_tasks: '任务',
+  rp_summary: '摘要',
+  rp_outline: '大纲',
+};
 
 export const isSummaryTableId = (tableId) => {
   const id = String(tableId || '').trim();
@@ -28,6 +46,40 @@ export const isSummaryTableId = (tableId) => {
 export const isSummaryLimitTableId = (tableId) => {
   const id = String(tableId || '').trim();
   return SUMMARY_LIMIT_TABLE_IDS.has(id);
+};
+
+export const getMemoryBridgeTablePromptLabel = (tableId, fallback = '') => {
+  const id = String(tableId || '').trim();
+  return MEMORY_BRIDGE_TABLE_LABELS[id] || String(fallback || id || '').trim();
+};
+
+export const quoteYamlString = (value) => JSON.stringify(String(value ?? ''));
+
+export const buildMemoryBridgeYamlLines = ({
+  header = '',
+  tables = [],
+} = {}) => {
+  const title = String(header || '').trim();
+  if (!title) return [];
+  const tableList = Array.isArray(tables) ? tables : [];
+  const bodyLines = [];
+  tableList.forEach((table) => {
+    const label = String(table?.label || '').trim();
+    if (!label) return;
+    const rows = (Array.isArray(table?.rows) ? table.rows : [])
+      .map(row => String(row || '').trim())
+      .filter(Boolean);
+    if (!rows.length) return;
+    bodyLines.push(`  - ${quoteYamlString(label)}:`);
+    rows.forEach((row) => {
+      bodyLines.push(`      - ${quoteYamlString(row)}`);
+    });
+  });
+  if (!bodyLines.length) return [];
+  return [
+    `${quoteYamlString(title)}:`,
+    ...bodyLines,
+  ];
 };
 
 export const normalizeMemoryUpdateMode = (raw, defaultMode = 'full') => {

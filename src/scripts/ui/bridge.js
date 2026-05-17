@@ -47,8 +47,10 @@ import {
   parseTemplateInjectTags,
 } from './template-inject-tag-utils.js';
 import {
+  buildMemoryBridgeYamlLines,
   buildMemoryTablePlan,
   estimateTokens,
+  getMemoryBridgeTablePromptLabel,
   isSummaryLimitTableId,
   isSummaryTableId,
   formatMemoryRowText,
@@ -72,7 +74,6 @@ import {
   getMomentsToChatBridgeTableIds,
   getRpToMomentsBridgeTableIds,
   getRpToChatBridgeTableIds,
-  isChatToRpGroupTableId,
   normalizeBridgeLimit,
   resolveChatToMomentsBridgeTableSettings,
   resolveChatToRpBridgeTableSettings,
@@ -1204,6 +1205,15 @@ class AppBridge {
           const rpName = normalizeId(this.getRpCharacterNameForSession?.(sid));
           if (rpName) return rpName;
         }
+        if (sid.startsWith('group:')) {
+          const groups = this.contactsStore?.listGroups?.() || [];
+          const group = (Array.isArray(groups) ? groups : []).find((item) => {
+            const gid = normalizeId(item?.id);
+            return gid === sid || `group:${gid}` === sid;
+          });
+          const groupName = normalizeId(group?.name);
+          if (groupName) return groupName;
+        }
         return resolveContactName(sid) || sid;
       };
       const listMemorySessionIdsByMode = (mode = 'social') => {
@@ -1233,67 +1243,145 @@ class AppBridge {
         }
         return records;
       };
+      const resolveBridgeRecordHeader = (record = {}, sourceKind = '') => {
+        const kind = String(sourceKind || record?.sourceKind || '').trim();
+        if (kind === 'moments') return '【动态】';
+        if (kind === 'rp') return '【创意写作】';
+        const sourceId = normalizeId(record?.sourceId);
+        const sourceNameRaw = normalizeId(record?.sourceName) || resolveSessionSourceName(sourceId) || sourceId;
+        const sourceName = record?.sourceIsGroup
+          ? sourceNameRaw.replace(/^group:/, '') || '未知群聊'
+          : sourceNameRaw || '未知联系人';
+        if (record?.sourceIsGroup) return `【群聊：${sourceName}】`;
+        return `【用户和${sourceName}的私聊】`;
+      };
+      const buildBridgeTableGroupsForRecord = ({
+        record = null,
+        tableIds = [],
+        limit = 0,
+        getLimitForTable = null,
+        prefixRows = false,
+      } = {}) => {
+        const rows = Array.isArray(record?.rows) ? record.rows : [];
+        if (!rows.length) return [];
+        const groups = [];
+        for (const tableId of Array.isArray(tableIds) ? tableIds : []) {
+          const table = tableByIdAll.get(tableId);
+          if (!table) continue;
+          const rowsForTable = rows.filter(row => normalizeId(row?.table_id) === tableId);
+          if (!rowsForTable.length) continue;
+          const tableLimit = typeof getLimitForTable === 'function'
+            ? normalizeBridgeLimit(getLimitForTable(tableId), limit)
+            : normalizeBridgeLimit(limit, 0);
+          const selectedRows = pickNewestRows(rowsForTable, tableLimit, tableId);
+          const sourceName = normalizeId(record?.sourceName);
+          const rowTexts = selectedRows
+            .map((row) => {
+              const rowText = getRowText(row, table);
+              if (!rowText) return '';
+              return prefixRows && sourceName ? `${sourceName}：${rowText}` : rowText;
+            })
+            .filter(Boolean);
+          if (!rowTexts.length) continue;
+          groups.push({
+            tableId,
+            label: getMemoryBridgeTablePromptLabel(tableId, table?.name || tableId),
+            rows: rowTexts,
+          });
+        }
+        return groups;
+      };
+      const appendYamlBridgeBlock = (header, tables = []) => {
+        const title = normalizeId(header);
+        const normalizedTables = (Array.isArray(tables) ? tables : [])
+          .map(table => ({
+            label: normalizeId(table?.label),
+            rows: (Array.isArray(table?.rows) ? table.rows : [])
+              .map(row => String(row || '').trim())
+              .filter(Boolean),
+          }))
+          .filter(table => table.label && table.rows.length);
+        if (!title || !normalizedTables.length) return false;
+        const remaining = Math.max(0, budgetTokens - used);
+        const tablesToFit = normalizedTables.map(table => ({ ...table, rows: [...table.rows] }));
+        while (tablesToFit.length) {
+          const lines = buildMemoryBridgeYamlLines({ header: title, tables: tablesToFit });
+          const cost = lines.reduce((sum, line) => sum + (line ? estimateTokens(line, tokenMode) : 0), 0);
+          if (lines.length && cost <= remaining) {
+            pushSpacer();
+            lines.forEach((line) => {
+              pushLine(line);
+            });
+            return true;
+          }
+          let trimIndex = -1;
+          let rowCount = 0;
+          tablesToFit.forEach((table, index) => {
+            if (table.rows.length > rowCount) {
+              trimIndex = index;
+              rowCount = table.rows.length;
+            }
+          });
+          if (trimIndex < 0) break;
+          tablesToFit[trimIndex].rows.shift();
+          if (!tablesToFit[trimIndex].rows.length) tablesToFit.splice(trimIndex, 1);
+        }
+        return false;
+      };
+      const mergeBridgeTableGroups = (target, groups = []) => {
+        groups.forEach((group) => {
+          const tableId = normalizeId(group?.tableId || group?.label);
+          const label = normalizeId(group?.label);
+          const rows = (Array.isArray(group?.rows) ? group.rows : [])
+            .map(row => String(row || '').trim())
+            .filter(Boolean);
+          if (!tableId || !label || !rows.length) return;
+          if (!target.has(tableId)) target.set(tableId, { tableId, label, rows: [] });
+          target.get(tableId).rows.push(...rows);
+        });
+      };
       const appendSourceRecordTables = ({
-        header = '',
-        note = '',
         records = [],
         tableIds = [],
         limit = 0,
         getLimitForTable = null,
-        includeSourceName = true,
-        resolveTableLabel = table => String(table?.name || table?.id || '').trim(),
+        sourceKind = '',
+        aggregateHeader = '',
+        prefixRows = false,
       } = {}) => {
-        if (!Array.isArray(records) || !records.length) return;
-        const blockLines = [];
-        for (const tableId of Array.isArray(tableIds) ? tableIds : []) {
-          const table = tableByIdAll.get(tableId);
-          if (!table) continue;
-          const collectedRows = [];
-          records.forEach((record) => {
-            (Array.isArray(record?.rows) ? record.rows : [])
-              .filter(row => normalizeId(row?.table_id) === tableId)
-              .forEach(row => collectedRows.push({
-                row,
-                sourceId: record.sourceId,
-                sourceName: record.sourceName,
-              }));
+        const cleanRecords = (Array.isArray(records) ? records : [])
+          .filter(record => Array.isArray(record?.rows) && record.rows.length);
+        if (!cleanRecords.length) return;
+        const orderedTableIds = (Array.isArray(tableIds) ? tableIds : [])
+          .map(tableId => normalizeId(tableId))
+          .filter(Boolean);
+        if (!orderedTableIds.length) return;
+        if (aggregateHeader) {
+          const merged = new Map();
+          cleanRecords.forEach((record) => {
+            const groups = buildBridgeTableGroupsForRecord({
+              record,
+              tableIds: orderedTableIds,
+              limit,
+              getLimitForTable,
+              prefixRows: prefixRows || cleanRecords.length > 1,
+            });
+            mergeBridgeTableGroups(merged, groups);
           });
-          if (!collectedRows.length) continue;
-          collectedRows.sort((a, b) => {
-            const af = resolveRowSortKey(a?.row, 0);
-            const bf = resolveRowSortKey(b?.row, 0);
-            const ak = resolvePromptSortKeyForTable(a?.row, tableId, af);
-            const bk = resolvePromptSortKeyForTable(b?.row, tableId, bf);
-            if (ak !== bk) return ak - bk;
-            if (af !== bf) return af - bf;
-            return String(a?.sourceId || '').localeCompare(String(b?.sourceId || ''));
-          });
-          const tableLimit = typeof getLimitForTable === 'function'
-            ? normalizeBridgeLimit(getLimitForTable(tableId), limit)
-            : normalizeBridgeLimit(limit, 0);
-          const selectedRows = tableLimit > 0 && collectedRows.length > tableLimit
-            ? collectedRows.slice(-tableLimit)
-            : collectedRows;
-          if (!selectedRows.length) continue;
-          if (blockLines.length === 0) {
-            blockLines.push(header);
-            if (note) blockLines.push(note);
-          } else {
-            blockLines.push('');
-          }
-          blockLines.push(`【${resolveTableLabel(table, tableId)}】`);
-          selectedRows.forEach(({ row, sourceName }) => {
-            const rowText = getRowText(row, table);
-            if (!rowText) return;
-            const prefix = includeSourceName && sourceName ? `${sourceName}：` : '';
-            blockLines.push(`- ${prefix}${rowText}`);
-          });
+          const tables = orderedTableIds.map(tableId => merged.get(tableId)).filter(Boolean);
+          appendYamlBridgeBlock(aggregateHeader, tables);
+          return;
         }
-        if (!blockLines.length) return;
-        pushSpacer();
-        for (const line of blockLines) {
-          if (!pushLine(line)) break;
-        }
+        cleanRecords.forEach((record) => {
+          const groups = buildBridgeTableGroupsForRecord({
+            record,
+            tableIds: orderedTableIds,
+            limit,
+            getLimitForTable,
+            prefixRows,
+          });
+          appendYamlBridgeBlock(resolveBridgeRecordHeader(record, sourceKind), groups);
+        });
       };
 
       if (sessionMode === 'chat' && !isGroup) {
@@ -1452,35 +1540,19 @@ class AppBridge {
           }).catch(() => []);
           const activeRpRows = (Array.isArray(rpRows) ? rpRows : [])
             .filter(row => row && row.is_active !== false);
-          const sourceName = resolveContactName(rpBridgeSourceId) || rpBridgeSourceId;
-          const blockLines = [];
-          enabledRpTableIds.forEach((tableId) => {
-            const table = tableByIdAll.get(tableId);
-            if (!table) return;
-            const rowsForTable = activeRpRows.filter((row) => normalizeId(row?.table_id) === tableId);
-            if (!rowsForTable.length) return;
-            const limit = clampBridgeLimit(rpTableSettings?.[tableId]?.limit, 0);
-            const selectedRows = pickNewestRows(rowsForTable, limit, tableId);
-            if (!selectedRows.length) return;
-            if (blockLines.length === 0) {
-              blockLines.push(`【跨模式参考｜RP剧情记忆：${sourceName}】`);
-              blockLines.push('（仅用于帮助理解 RP 剧情进度，不代表当前聊天消息格式）');
-            } else {
-              blockLines.push('');
-            }
-            blockLines.push(`【${String(table?.name || tableId).trim() || tableId}】`);
-            selectedRows.forEach((row) => {
-              const rowText = getRowText(row, table);
-              if (!rowText) return;
-              blockLines.push(`- ${rowText}`);
-            });
+          appendSourceRecordTables({
+            records: [{
+              sourceId: rpBridgeSourceId,
+              sourceName: resolveContactName(rpBridgeSourceId) || rpBridgeSourceId,
+              sourceKind: 'rp',
+              sourceIsGroup: false,
+              rows: activeRpRows,
+            }],
+            tableIds: enabledRpTableIds,
+            getLimitForTable: tableId => rpTableSettings?.[tableId]?.limit,
+            sourceKind: 'rp',
+            aggregateHeader: '【创意写作】',
           });
-          if (blockLines.length) {
-            pushSpacer();
-            blockLines.forEach((line) => {
-              pushLine(line);
-            });
-          }
         }
       } else if (sessionMode === 'rp') {
         const rawChatBridgeSourceId = String(sessionSettings?.chatBridgeSourceSessionId || '').trim();
@@ -1517,61 +1589,17 @@ class AppBridge {
               }).catch(() => []);
               return {
                 sourceId,
+                sourceName: resolveSessionSourceName(sourceId) || sourceId,
                 sourceIsGroup: currentSourceIsGroup,
                 rows: Array.isArray(rows) ? rows.filter((row) => row && row.is_active !== false) : [],
               };
             }));
-            const blockLines = [];
-            enabledTableIds.forEach((tableId) => {
-              const table = tableByIdAll.get(tableId);
-              if (!table) return;
-              const tableSourceIsGroup = isChatToRpGroupTableId(tableId);
-              const collectedRows = [];
-              sourceRecords.forEach((record) => {
-                if (record.sourceIsGroup !== tableSourceIsGroup) return;
-                record.rows
-                  .filter((row) => normalizeId(row?.table_id) === tableId)
-                  .forEach((row) => {
-                    collectedRows.push({ sourceId: record.sourceId, row });
-                  });
-              });
-              if (!collectedRows.length) return;
-              collectedRows.sort((a, b) => {
-                const af = resolveRowSortKey(a?.row, 0);
-                const bf = resolveRowSortKey(b?.row, 0);
-                const ak = resolvePromptSortKeyForTable(a?.row, tableId, af);
-                const bk = resolvePromptSortKeyForTable(b?.row, tableId, bf);
-                if (ak !== bk) return ak - bk;
-                if (af !== bf) return af - bf;
-                return String(a?.sourceId || '').localeCompare(String(b?.sourceId || ''));
-              });
-              const limit = normalizeBridgeLimit(tableSettings?.[tableId]?.limit, 0);
-              const selectedRows = limit > 0 && collectedRows.length > limit
-                ? collectedRows.slice(-limit)
-                : collectedRows;
-              if (!selectedRows.length) return;
-              if (blockLines.length === 0) {
-                blockLines.push('【跨模式参考｜聊天互动记忆：所有聊天室】');
-                blockLines.push('（以下内容来自全部私聊 / 群聊的记忆表格，仅用于帮助理解用户近期互动，不代表 RP 正文格式）');
-              } else {
-                blockLines.push('');
-              }
-              const tableLabel = String(table?.name || tableId).trim() || tableId;
-              const scopedLabel = `${tableSourceIsGroup ? '群聊' : '私聊'}${tableLabel}`;
-              blockLines.push(`【${scopedLabel}】`);
-              selectedRows.forEach(({ sourceId, row }) => {
-                const rowText = getRowText(row, table);
-                if (!rowText) return;
-                const sourceName = resolveContactName(sourceId) || sourceId;
-                blockLines.push(`- ${sourceName}：${rowText}`);
-              });
+            appendSourceRecordTables({
+              records: sourceRecords,
+              tableIds: enabledTableIds,
+              getLimitForTable: tableId => tableSettings?.[tableId]?.limit,
+              sourceKind: 'social',
             });
-            if (blockLines.length) {
-              pushSpacer();
-              blockLines.forEach((line) => {
-                pushLine(line);
-              });
-            }
           }
         } else if (enabledTableIds.length && chatBridgeSourceId && chatBridgeSourceId !== sessionId) {
           const sourceRows = await this.memoryTableStore.getMemories({
@@ -1582,38 +1610,17 @@ class AppBridge {
           }).catch(() => []);
           const activeSourceRows = (Array.isArray(sourceRows) ? sourceRows : [])
             .filter(row => row && row.is_active !== false);
-          const sourceName = resolveContactName(chatBridgeSourceId) || chatBridgeSourceId;
-          const blockNote = sourceIsGroup
-            ? '（以下内容来自群聊记忆表格，仅用于帮助理解用户近期互动，不代表 RP 正文格式）'
-            : '（以下内容来自私聊记忆表格，仅用于帮助理解用户近期互动，不代表 RP 正文格式）';
-          const blockLines = [];
-          enabledTableIds.forEach((tableId) => {
-            const table = tableByIdAll.get(tableId);
-            if (!table) return;
-            const rowsForTable = activeSourceRows.filter((row) => normalizeId(row?.table_id) === tableId);
-            if (!rowsForTable.length) return;
-            const limit = normalizeBridgeLimit(tableSettings?.[tableId]?.limit, 0);
-            const selectedRows = pickNewestRows(rowsForTable, limit, tableId);
-            if (!selectedRows.length) return;
-            if (blockLines.length === 0) {
-              blockLines.push(`【跨模式参考｜聊天互动记忆：${sourceName}】`);
-              blockLines.push(blockNote);
-            } else {
-              blockLines.push('');
-            }
-            blockLines.push(`【${String(table?.name || tableId).trim() || tableId}】`);
-            selectedRows.forEach((row) => {
-              const rowText = getRowText(row, table);
-              if (!rowText) return;
-              blockLines.push(`- ${rowText}`);
-            });
+          appendSourceRecordTables({
+            records: [{
+              sourceId: chatBridgeSourceId,
+              sourceName: resolveSessionSourceName(chatBridgeSourceId) || chatBridgeSourceId,
+              sourceIsGroup,
+              rows: activeSourceRows,
+            }],
+            tableIds: enabledTableIds,
+            getLimitForTable: tableId => tableSettings?.[tableId]?.limit,
+            sourceKind: 'social',
           });
-          if (blockLines.length) {
-            pushSpacer();
-            blockLines.forEach((line) => {
-              pushLine(line);
-            });
-          }
         }
       }
       if (
@@ -1632,18 +1639,18 @@ class AppBridge {
           .filter(row => row && row.is_active !== false)
           .filter(row => enabledMomentTableIds.includes(normalizeId(row?.table_id)));
         appendSourceRecordTables({
-          header: '【跨模式参考｜动态公开记忆】',
-          note: '（以下内容来自动态区公开互动，仅供理解公开社交语境；不在当前会话记忆表格中更新）',
           records: [{
             sourceId: 'moments',
             sourceName: '动态',
+            sourceKind: 'moments',
             sourceIsGroup: false,
             rows: momentRows,
           }],
           tableIds: enabledMomentTableIds,
           limit: clampBridgeLimit(globalSettings.memoryBridgeMomentsToChatLimit, 5),
           getLimitForTable: tableId => momentsTableSettings?.[tableId]?.limit,
-          includeSourceName: false,
+          sourceKind: 'moments',
+          aggregateHeader: '【动态】',
         });
       }
       if (sessionMode === 'moments') {
@@ -1660,17 +1667,11 @@ class AppBridge {
             .filter(tableId => chatToMomentsTableSettings?.[tableId]?.enabled === true);
           const socialRecords = await collectMemorySourceRecords(listMemorySessionIdsByMode('social'));
           appendSourceRecordTables({
-            header: '【跨模式参考｜聊天互动记忆】',
-            note: '（以下内容来自私聊 / 群聊记忆表格，仅供动态任务理解关系与近期公开语境；禁止在动态评论中泄露私聊内容）',
             records: socialRecords,
             tableIds: enabledChatToMomentsTableIds,
             limit: clampBridgeLimit(globalSettings.memoryBridgeChatToMomentsLimit, 5),
             getLimitForTable: tableId => chatToMomentsTableSettings?.[tableId]?.limit,
-            includeSourceName: true,
-            resolveTableLabel: (table, tableId) => {
-              const base = String(table?.name || tableId).trim() || tableId;
-              return `${isChatToRpGroupTableId(tableId) ? '群聊' : '私聊'}${base}`;
-            },
+            sourceKind: 'social',
           });
         }
         if (
@@ -1686,13 +1687,13 @@ class AppBridge {
             .filter(tableId => rpToMomentsTableSettings?.[tableId]?.enabled === true);
           const rpRecords = await collectMemorySourceRecords(listMemorySessionIdsByMode('rp'));
           appendSourceRecordTables({
-            header: '【跨模式参考｜RP剧情记忆】',
-            note: '（以下内容来自 RP 记忆表格，仅供动态任务理解角色经历；动态评论应保持自然社交表达，不直接暴露设定式信息）',
             records: rpRecords,
             tableIds: enabledRpToMomentsTableIds,
             limit: clampBridgeLimit(globalSettings.memoryBridgeRpToMomentsLimit, 5),
             getLimitForTable: tableId => rpToMomentsTableSettings?.[tableId]?.limit,
-            includeSourceName: true,
+            sourceKind: 'rp',
+            aggregateHeader: '【创意写作】',
+            prefixRows: rpRecords.length > 1,
           });
         }
       }
