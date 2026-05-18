@@ -65,6 +65,7 @@ const createFakeDocument = () => {
   const dropdown = ensureMentionDropdownShell(documentLike, null);
   assert.equal(documentLike.body.children[0], dropdown);
   assert.equal(dropdown.className, 'mention-dropdown');
+  assert.equal(dropdown.style.cssText.includes('z-index:31000'), true);
   assert.equal(ensureMentionDropdownShell(documentLike, dropdown), dropdown);
   console.log('ok - ensureMentionDropdownShell mounts shell once and reuses it');
 }

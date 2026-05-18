@@ -918,45 +918,61 @@ export const createSendProtocolEventHandlers = ({
   refreshChatAndContacts = null,
   showTyping = null,
   assistantAvatar = null,
-} = {}) => createProtocolBatchEventHandlers({
-  streamMode,
-  applyMomentEvent: event => applyProtocolMomentEvent(event, {
-    addMoments: items => addMoments(ingestMoments(items)),
-    addMomentComments,
-    ...(streamMode ? { abortOnMissingMomentId: true } : {}),
-    normalizeComments: comments => normalizeMomentCommentsForStore(comments, {
-      regexMode: 'output',
-      depth: 0,
+} = {}) => {
+  const isActiveGeneration = () => {
+    const activeGeneration = typeof getActiveGeneration === 'function'
+      ? getActiveGeneration()
+      : null;
+    return Boolean(
+      activeGeneration &&
+      activeGeneration.id === generationId &&
+      activeGeneration.cancelled !== true
+    );
+  };
+  const isActiveSessionGeneration = () => (
+    isActiveGeneration() &&
+    (typeof isSessionActive === 'function' ? isSessionActive(sessionId) : false)
+  );
+
+  return createProtocolBatchEventHandlers({
+    streamMode,
+    applyMomentEvent: event => applyProtocolMomentEvent(event, {
+      addMoments: items => addMoments(ingestMoments(items)),
+      addMomentComments,
+      ...(streamMode ? { abortOnMissingMomentId: true } : {}),
+      normalizeComments: comments => normalizeMomentCommentsForStore(comments, {
+        regexMode: 'output',
+        depth: 0,
+      }),
     }),
-  }),
-  onMomentConsumed: streamMode
-    ? handled => {
-        if (handled.mutatedMoments && getActivePage() === 'moments') {
-          renderMoments();
+    onMomentConsumed: streamMode
+      ? handled => {
+          if (handled.mutatedMoments && getActivePage() === 'moments') {
+            renderMoments();
+          }
         }
-      }
-    : null,
-  buildGroupBatch,
-  warnMissingGroupTarget: () => showWarning?.('对话回复格式错误：群聊标签未匹配任何已存在群组，已丢弃'),
-  dispatchGroupBatch,
-  buildPrivateBatch,
-  warnMissingPrivateTarget: () => showWarning?.('对话回复格式错误：私聊标签未匹配当前联系人，已丢弃'),
-  dispatchPrivateBatch,
-  getAnimEnabled: () => getTypingDotsMode() !== 'off',
-  getQueueTypingOptions: () => getGroupTypingMembers(sessionId) || {},
-  assignActiveQueue: q => {
-    const activeGeneration = getActiveGeneration();
-    if (activeGeneration && activeGeneration.id === generationId) {
+      : null,
+    buildGroupBatch,
+    warnMissingGroupTarget: () => showWarning?.('对话回复格式错误：群聊标签未匹配任何已存在群组，已丢弃'),
+    dispatchGroupBatch,
+    buildPrivateBatch,
+    warnMissingPrivateTarget: () => showWarning?.('对话回复格式错误：私聊标签未匹配当前联系人，已丢弃'),
+    dispatchPrivateBatch,
+    getAnimEnabled: () => getTypingDotsMode() !== 'off',
+    getQueueTypingOptions: () => getGroupTypingMembers(sessionId) || {},
+    assignActiveQueue: q => {
+      if (!isActiveGeneration()) return;
+      const activeGeneration = getActiveGeneration();
       activeGeneration._messageQueue = q;
-    }
-  },
-  isSessionActive: () => isSessionActive(sessionId),
-  hideTyping,
-  fastForwardDelivery: () => fastForwardDelivery(sessionId),
-  refreshChatAndContacts,
-  showTyping,
-  assistantAvatar,
-});
+    },
+    isSessionActive: isActiveSessionGeneration,
+    hideTyping,
+    fastForwardDelivery: () => fastForwardDelivery(sessionId),
+    refreshChatAndContacts,
+    showTyping,
+    assistantAvatar,
+  });
+};
 
 export const createSendProtocolResponseFlowHandlers = ({
   sessionId = '',

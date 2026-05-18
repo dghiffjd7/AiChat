@@ -21,6 +21,14 @@ const isEditableElement = (element) => {
   return Boolean(element.isContentEditable);
 };
 
+const shouldUseScreenHeightBaseline = (windowRef) => {
+  const nav = windowRef?.navigator || {};
+  const ua = String(nav.userAgent || '').toLowerCase();
+  const platform = String(nav.platform || '').toLowerCase();
+  if (/(android|iphone|ipad|ipod|mobile)/i.test(`${ua} ${platform}`)) return true;
+  return false;
+};
+
 export const normalizeViewportSnapshot = ({
   innerWidth = 0,
   innerHeight = 0,
@@ -33,6 +41,7 @@ export const normalizeViewportSnapshot = ({
   previousBaseWidth = 0,
   hasFocusedEditable = false,
   keyboardThreshold = 80,
+  useScreenHeightBaseline = true,
 } = {}) => {
   const vvWidth = readViewportValue(visualViewport, 'width');
   const vvHeight = readViewportValue(visualViewport, 'height');
@@ -44,7 +53,9 @@ export const normalizeViewportSnapshot = ({
   const visualHeight = vvHeight || layoutHeight;
   const widthChanged = previousBaseWidth > 0 && Math.abs(layoutWidth - previousBaseWidth) > 24;
   const retainedBaseHeight = widthChanged ? 0 : roundPx(previousBaseHeight);
-  const screenHeightCandidate = hasFocusedEditable ? Math.max(roundPx(screenHeight), roundPx(screenWidth)) : 0;
+  const screenHeightCandidate = hasFocusedEditable && useScreenHeightBaseline
+    ? Math.max(roundPx(screenHeight), roundPx(screenWidth))
+    : 0;
   let baseHeight = Math.max(retainedBaseHeight, layoutHeight, visualHeight, screenHeightCandidate);
   const keyboardInsetBottom = Math.max(0, roundPx(baseHeight - visualHeight - visualOffsetTop));
   const keyboardVisible = Boolean(
@@ -175,6 +186,7 @@ export const createViewportKeyboardRuntime = ({
       previousBaseWidth: baseWidth,
       hasFocusedEditable: isEditableElement(focusedElement),
       keyboardThreshold,
+      useScreenHeightBaseline: shouldUseScreenHeightBaseline(windowRef),
     });
     baseHeight = snapshot.baseHeight;
     baseWidth = snapshot.baseWidth;

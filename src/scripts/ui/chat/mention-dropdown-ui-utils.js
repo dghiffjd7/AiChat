@@ -13,7 +13,7 @@ export const ensureMentionDropdownShell = (documentLike, existingDropdown) => {
   const dropdown = documentLike.createElement('div');
   dropdown.className = 'mention-dropdown';
   dropdown.style.cssText = [
-    'position:absolute', 'z-index:15000',
+    'position:absolute', 'z-index:31000',
     'background:var(--app-surface-card)', 'border:1px solid var(--app-border-default)',
     'border-radius:12px', 'box-shadow:var(--app-shadow-md)',
     'max-height:220px', 'overflow-y:auto', 'overflow-x:hidden',

@@ -208,14 +208,13 @@ test('regenerate trace patch builders preserve start success and skipped payload
   });
 });
 
-test('resolveSendPreflightBlock preserves existing configured offline ui contracts', () => {
+test('resolveSendPreflightBlock returns toast-only configured offline ui contracts', () => {
   assert.deepEqual(resolveSendPreflightBlock({
     bridgeConfigured: false,
     online: true,
   }), {
     blocked: true,
     reason: 'api-not-configured',
-    bannerMessage: '未配置 API，请先填写 Base URL / Key / 模型',
     toastMessage: '请先配置 API 信息',
     toastTitle: '未配置',
     showConfigPanel: true,
@@ -227,7 +226,6 @@ test('resolveSendPreflightBlock preserves existing configured offline ui contrac
   }), {
     blocked: true,
     reason: 'offline',
-    bannerMessage: '当前离线，请连接网络后再试',
     toastMessage: '离线状态，无法发送',
     toastTitle: '',
     showConfigPanel: false,
@@ -239,7 +237,6 @@ test('resolveSendPreflightBlock preserves existing configured offline ui contrac
   }), {
     blocked: false,
     reason: '',
-    bannerMessage: '',
     toastMessage: '',
     toastTitle: '',
     showConfigPanel: false,
@@ -722,9 +719,8 @@ test('runRegenerateFromUserIndexFlow warns on invalid plans and traces empty res
   ]);
 });
 
-test('runSendCatchFlow clears active stream queue typing and shows retryable error ui', () => {
+test('runSendCatchFlow clears active stream queue typing and shows toast error ui', () => {
   const calls = [];
-  let retryHandler = null;
   const error = Object.assign(new Error('Boom'), {
     status: 500,
     response: { code: 'bad' },
@@ -758,14 +754,8 @@ test('runSendCatchFlow clears active stream queue typing and shows retryable err
     logger: {
       error: (message, err, meta) => calls.push(['logger', message, err.message, meta]),
     },
-    showErrorBanner: (message, action) => {
-      calls.push(['banner', message, action.label]);
-      retryHandler = action.handler;
-    },
-    retrySend: () => calls.push(['retry']),
     showToastError: (message, title) => calls.push(['toast', message, title]),
   });
-  retryHandler();
 
   assert.deepEqual(result, {
     sendErrorMessage: 'Boom',
@@ -782,9 +772,7 @@ test('runSendCatchFlow clears active stream queue typing and shows retryable err
     ['hide-typing'],
     ['fast-forward', 'session-error'],
     ['logger', '发送失败', 'Boom', { status: 500, response: { code: 'bad' } }],
-    ['banner', 'Boom', '重试'],
     ['toast', 'Boom', '错误'],
-    ['retry'],
   ]);
 });
 
@@ -815,7 +803,6 @@ test('runSendCatchFlow suppresses cancelled or interrupted errors without touchi
     logger: {
       error: () => calls.push(['logger']),
     },
-    showErrorBanner: () => calls.push(['banner']),
     showToastError: () => calls.push(['toast']),
   });
 

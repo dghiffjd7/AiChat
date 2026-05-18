@@ -1288,6 +1288,7 @@ import {
   activeGeneration = { id: 8 };
   groupOptions.onQueueCreated('queue-2');
   assert.equal(activeGeneration._messageQueue, undefined);
+  activeGeneration = { id: 7 };
   handlers.onBeforeDispatch();
   handlers.onAfterDispatch();
 
@@ -1309,6 +1310,13 @@ import {
     ['active', 'session-protocol'],
     ['typing-members', 'session-protocol'],
     ['show', 'assistant.png', { memberIds: ['u1'] }],
+  ]);
+  calls.length = 0;
+  activeGeneration = { id: 7, cancelled: true };
+  handlers.onBeforeDispatch();
+  handlers.onAfterDispatch();
+  assert.deepEqual(calls, [
+    ['refresh'],
   ]);
   console.log('ok - createSendProtocolEventHandlers wires stream protocol side effects');
 }

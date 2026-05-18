@@ -159,3 +159,42 @@ import {
   assert.equal(hidden, 1);
   console.log('ok - enqueueMessagesCore cancel delegates to queue clear and typing hide hooks');
 }
+
+{
+  const added = [];
+  const timers = [];
+  const queued = enqueueMessagesCore({
+    items: [
+      { message: { id: 'm1', content: 'first' } },
+      { message: { id: 'm2', content: 'second' } },
+    ],
+    options: {
+      typingOptions: {},
+    },
+    clearMessageQueueTimer() {},
+    hideTyping() {},
+    showTyping() {},
+    getTypingThinkTimer: () => null,
+    setTypingThinkTimer() {},
+    getTypingThinkResumeTimer: () => null,
+    setTypingThinkResumeTimer() {},
+    isNearBottom: () => false,
+    applyThinkPause() {},
+    removeThinkPause() {},
+    removeTypingElement() {},
+    scrollToBottom() {},
+    setMessageQueueTimer: timer => timers.push(timer),
+    scheduleTimeout: handler => ({ handler }),
+    scheduleFrame: handler => handler(),
+    addMessage: message => added.push(message.id),
+    random: () => 0.99,
+  });
+
+  await Promise.resolve();
+  assert.deepEqual(added, ['m1']);
+  queued.cancel();
+  await queued.promise;
+  assert.deepEqual(added, ['m1']);
+  assert.equal(timers.length, 1);
+  console.log('ok - enqueueMessagesCore cancel resolves pending delay without appending queued messages');
+}

@@ -173,7 +173,6 @@ export const resolveSendPreflightBlock = ({
     return {
       blocked: true,
       reason: 'api-not-configured',
-      bannerMessage: '未配置 API，请先填写 Base URL / Key / 模型',
       toastMessage: '请先配置 API 信息',
       toastTitle: '未配置',
       showConfigPanel: true,
@@ -183,7 +182,6 @@ export const resolveSendPreflightBlock = ({
     return {
       blocked: true,
       reason: 'offline',
-      bannerMessage: '当前离线，请连接网络后再试',
       toastMessage: '离线状态，无法发送',
       toastTitle: '',
       showConfigPanel: false,
@@ -192,7 +190,6 @@ export const resolveSendPreflightBlock = ({
   return {
     blocked: false,
     reason: '',
-    bannerMessage: '',
     toastMessage: '',
     toastTitle: '',
     showConfigPanel: false,
@@ -774,8 +771,6 @@ export const runSendCatchFlow = ({
   hideTyping = () => {},
   fastForwardDelivery = () => {},
   logger = null,
-  showErrorBanner = () => {},
-  retrySend = () => {},
   showToastError = () => {},
 } = {}) => {
   const sendErrorMessage = error?.message ? String(error.message) : String(error || '');
@@ -798,11 +793,7 @@ export const runSendCatchFlow = ({
   const nextSuppressErrorUI = Boolean(suppressErrorUI || isCancelled);
   if (!nextSuppressErrorUI) {
     logger?.error?.('发送失败', error, { status: error?.status, response: error?.response });
-    showErrorBanner(error?.message || '发送失败，请检查网络或 API 设置', {
-      label: '重试',
-      handler: () => retrySend(),
-    });
-    showToastError(error?.message || '发送失败', '错误');
+    showToastError(error?.message || '发送失败，请检查网络或 API 设置', '错误');
   }
 
   return {

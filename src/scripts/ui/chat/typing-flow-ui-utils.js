@@ -141,16 +141,27 @@ export const enqueueMessagesCore = ({
   random = Math.random,
 } = {}) => {
   let cancelled = false;
+  let resolveSleep = null;
   const cancel = () => {
     cancelled = true;
     clearMessageQueueTimer?.();
+    if (resolveSleep) {
+      try {
+        resolveSleep();
+      } catch {}
+      resolveSleep = null;
+    }
     hideTyping?.();
   };
 
   const calcDelay = charCount => calculateMessageQueueDelay(charCount, { random });
 
   const sleep = delay => new Promise((resolve) => {
-    setMessageQueueTimer?.(scheduleTimeout(resolve, delay));
+    resolveSleep = () => {
+      resolveSleep = null;
+      resolve();
+    };
+    setMessageQueueTimer?.(scheduleTimeout(resolveSleep, delay));
   });
 
   const promise = (async () => {

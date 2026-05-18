@@ -670,12 +670,41 @@ body[data-theme-mode='dark'] .rp-greeting-sheet-item.active {
   background: rgba(59, 130, 246, 0.12) !important;
 }
 
+body[data-theme-mode='dark'] .rp-greeting-sheet-edit {
+  background: rgba(205, 217, 229, 0.07) !important;
+  color: var(--app-text-secondary) !important;
+}
+
+body[data-theme-mode='dark'] .rp-greeting-sheet-edit:active {
+  background: rgba(205, 217, 229, 0.12) !important;
+  color: var(--app-text-primary) !important;
+}
+
 body[data-theme-mode='dark'] .rp-greeting-sheet-footer {
   border-top-color: rgba(139, 152, 167, 0.12) !important;
 }
 
 body[data-theme-mode='dark'] .rp-greeting-sheet-footer button {
   background: rgba(239, 68, 68, 0.12) !important;
+}
+
+body[data-theme-mode='dark'] #rp-greeting-sheet-add {
+  background: rgba(59, 130, 246, 0.16) !important;
+  color: #8ab4ff !important;
+}
+
+body[data-theme-mode='dark'] .rp-greeting-editor {
+  background: #1d2129 !important;
+}
+
+body[data-theme-mode='dark'] .rp-greeting-editor-header {
+  border-bottom-color: rgba(139, 152, 167, 0.14) !important;
+}
+
+body[data-theme-mode='dark'] .rp-greeting-editor-field input,
+body[data-theme-mode='dark'] .rp-greeting-editor-field textarea {
+  background: rgba(205, 217, 229, 0.06) !important;
+  border-color: rgba(139, 152, 167, 0.22) !important;
 }
 
 body[data-theme-mode='dark'] .rp-swipe-prev,

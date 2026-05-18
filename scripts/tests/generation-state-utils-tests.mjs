@@ -466,6 +466,41 @@ test('runActiveGenerationCancelFlow skips partial commit for non-user reasons an
   ]);
 });
 
+test('runActiveGenerationCancelFlow cancels queued protocol bubbles', () => {
+  const calls = [];
+  const generation = createActiveGenerationRecord({
+    id: 11,
+    sessionId: 'session-cancel',
+  });
+  generation._messageQueue = {
+    cancel() {
+      calls.push(['queue-cancel']);
+    },
+  };
+
+  const result = runActiveGenerationCancelFlow({
+    generation,
+    reason: 'user',
+    cancelCurrentGeneration: reason => calls.push(['bridge-cancel', reason]),
+    abortMemoryUpdate: sessionId => calls.push(['abort-memory', sessionId]),
+    cancelDeliverySequence: () => calls.push(['cancel-delivery']),
+    hideTyping: () => calls.push(['hide-typing']),
+    setStreamingState: value => calls.push(['streaming', value]),
+    setSendingState: value => calls.push(['sending', value]),
+  });
+
+  assert.equal(result.cancelled, true);
+  assert.deepEqual(calls, [
+    ['abort-memory', 'session-cancel'],
+    ['bridge-cancel', 'user'],
+    ['queue-cancel'],
+    ['cancel-delivery'],
+    ['hide-typing'],
+    ['streaming', false],
+    ['sending', false],
+  ]);
+});
+
 let failed = 0;
 for (const t of tests) {
   try {

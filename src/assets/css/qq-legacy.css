@@ -442,17 +442,26 @@ body[data-ui-mode='rp'] .bottom-nav {
   -webkit-overflow-scrolling: touch;
 }
 
+.rp-greeting-sheet-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 2px 0;
+}
+
 .rp-greeting-sheet-item {
   display: flex;
   align-items: center;
   gap: 10px;
   padding: 12px 12px;
-  margin: 2px 0;
+  margin: 0;
   border-radius: 10px;
   cursor: pointer;
   border: none;
   background: none;
-  width: 100%;
+  flex: 1 1 auto;
+  min-width: 0;
+  width: auto;
   text-align: left;
   -webkit-tap-highlight-color: transparent;
   transition: background 0.15s ease;
@@ -493,14 +502,37 @@ body[data-ui-mode='rp'] .bottom-nav {
   pointer-events: none;
 }
 
+.rp-greeting-sheet-edit {
+  flex: 0 0 auto;
+  height: 40px;
+  min-width: 54px;
+  padding: 0 12px;
+  border: none;
+  border-radius: 10px;
+  background: rgba(15, 23, 42, 0.05);
+  color: var(--app-text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.rp-greeting-sheet-edit:active {
+  background: rgba(15, 23, 42, 0.10);
+  color: var(--app-text-primary);
+}
+
 .rp-greeting-sheet-footer {
   padding: 8px 12px 16px;
   flex-shrink: 0;
   border-top: 1px solid rgba(15, 23, 42, 0.06);
+  display: flex;
+  gap: 8px;
 }
 
 .rp-greeting-sheet-footer button {
-  width: 100%;
+  flex: 1;
   padding: 10px;
   border: none;
   border-radius: 10px;
@@ -512,8 +544,126 @@ body[data-ui-mode='rp'] .bottom-nav {
   -webkit-tap-highlight-color: transparent;
 }
 
+#rp-greeting-sheet-add {
+  background: rgba(59, 130, 246, 0.10);
+  color: #2563eb;
+}
+
 .rp-greeting-sheet-footer button:active {
   background: rgba(239, 68, 68, 0.15);
+}
+
+#rp-greeting-sheet-add:active {
+  background: rgba(59, 130, 246, 0.18);
+}
+
+.rp-greeting-editor-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1300;
+  background: rgba(15, 23, 42, 0.36);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+
+.rp-greeting-editor {
+  width: min(92vw, 460px);
+  max-height: min(86vh, 620px);
+  background: var(--app-surface-card, #fff);
+  border-radius: 14px;
+  box-shadow: 0 18px 48px rgba(15, 23, 42, 0.22);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.rp-greeting-editor-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  border-bottom: 1px solid rgba(15, 23, 42, 0.08);
+}
+
+.rp-greeting-editor-title {
+  font-size: 15px;
+  font-weight: 800;
+  color: var(--app-text-primary);
+}
+
+.rp-greeting-editor-close {
+  border: none;
+  background: transparent;
+  color: var(--app-text-muted);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.rp-greeting-editor-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 16px 0;
+  color: var(--app-text-primary);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.rp-greeting-editor-field input,
+.rp-greeting-editor-field textarea {
+  width: 100%;
+  border: 1px solid var(--app-border-default);
+  border-radius: 10px;
+  background: var(--app-surface-input, #fff);
+  color: var(--app-text-primary);
+  font: inherit;
+  font-weight: 500;
+  padding: 10px 12px;
+  outline: none;
+  resize: vertical;
+}
+
+.rp-greeting-editor-field textarea {
+  min-height: 180px;
+  max-height: 42vh;
+  line-height: 1.5;
+}
+
+.rp-greeting-editor-status {
+  min-height: 20px;
+  padding: 8px 16px 0;
+  color: #ef4444;
+  font-size: 12px;
+}
+
+.rp-greeting-editor-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 16px 16px;
+}
+
+.rp-greeting-editor-actions button {
+  border: none;
+  border-radius: 10px;
+  padding: 9px 14px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.rp-greeting-editor-cancel {
+  background: rgba(15, 23, 42, 0.06);
+  color: var(--app-text-secondary);
+}
+
+.rp-greeting-editor-submit {
+  background: #2563eb;
+  color: #fff;
 }
 
 .rp-greeting-switch {

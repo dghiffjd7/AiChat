@@ -152,6 +152,7 @@ export const bindMomentFeedCardInteractions = ({
   toggleExpanded,
   clearReplyTarget,
   createSendHandler,
+  bindMentionInput,
 } = {}) => {
   if (!cardEl || !moment) return false;
   const dotsBtn = cardEl.querySelector?.('.moment-more');
@@ -202,6 +203,7 @@ export const bindMomentFeedCardInteractions = ({
   });
 
   const inputEl = cardEl.querySelector?.('.moment-comment-input');
+  bindMentionInput?.(inputEl, inputEl?.closest?.('.moment-comment-input-row') || cardEl);
   const send = createSendHandler?.({ moment, inputEl, pending });
   cardEl.querySelector?.('.moment_comment[data-action="send"]')?.addEventListener?.('click', (event) => {
     event.stopPropagation?.();

@@ -1867,6 +1867,12 @@ export class ChatUI {
     });
   }
 
+  cancelDeliverySequence() {
+    this._clearDeliverySequence();
+    this._deliverySequenceDone = true;
+    this.hideTyping();
+  }
+
   /**
    * 逐条延迟输出消息队列（模拟真人逐条发送）
    * @param {Array<{message: object, callback?: function}>} items - 消息 + 可选回调

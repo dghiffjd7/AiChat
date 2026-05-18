@@ -270,6 +270,7 @@ export const runActiveGenerationCancelFlow = ({
   getAssistantAvatarForSession = () => '',
   formatNowTime = () => '',
   refreshChatAndContacts = noop,
+  cancelDeliverySequence = noop,
   hideTyping = noop,
   setStreamingState = noop,
   setSendingState = noop,
@@ -300,6 +301,10 @@ export const runActiveGenerationCancelFlow = ({
   const sessionId = String(currentGeneration.sessionId || '').trim();
   if (sessionId) callSafely(abortMemoryUpdate, sessionId);
   callSafely(cancelCurrentGeneration, reason);
+  try {
+    currentGeneration._messageQueue?.cancel?.();
+  } catch {}
+  callSafely(cancelDeliverySequence);
 
   let partial = null;
   try {

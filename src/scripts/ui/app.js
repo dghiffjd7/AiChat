@@ -146,6 +146,10 @@ import {
 } from './media-generation-adapter-utils.js';
 import { persistComposedMomentRecord } from './moment-compose-runtime-utils.js';
 import {
+  bindMentionInputControl,
+  buildMentionMembersFromContacts,
+} from './mention-input-binding-utils.js';
+import {
   createMediaGenerationService,
   resolveImageReferenceCapability,
 } from './media-generation-service.js';
@@ -2242,12 +2246,10 @@ const initApp = async () => {
     runSummaryCompaction: () => requestMomentSummaryCompaction(),
     notifySummariesUpdated: () => window.dispatchEvent(new CustomEvent('moment-summaries-updated')),
     showMissingConfig: () => {
-      ui.showErrorBanner('未配置 API，请先填写 Base URL / Key / 模型');
       window.toastr?.warning('请先配置 API 信息', '未配置');
       configPanel.show();
     },
     showOffline: () => {
-      ui.showErrorBanner('当前离线，请连接网络后再试');
       window.toastr?.warning('离线状态，无法发送');
     },
     showMissingMoment: () => window.toastr?.warning?.('未找到该动态'),
@@ -6689,6 +6691,7 @@ Phase G（Frame 36）：循环衔接
   const rpGreetingOverlay = document.getElementById('rp-greeting-overlay');
   const rpGreetingSheet = document.getElementById('rp-greeting-sheet');
   const rpGreetingSheetList = document.getElementById('rp-greeting-sheet-list');
+  const rpGreetingSheetAdd = document.getElementById('rp-greeting-sheet-add');
   const rpGreetingSheetReset = document.getElementById('rp-greeting-sheet-reset');
   const chatScroll = document.getElementById('chat-scroll');
   const composerInput = document.getElementById('composer-input');
@@ -16434,6 +16437,22 @@ Phase G（Frame 36）：循环衔接
 	    });
 	    return true;
 	  };
+	  let momentMentionDropdown = null;
+	  const getMomentMentionMembers = () => buildMentionMembersFromContacts({
+	    contactsStore,
+	    resolveAvatar: contact => resolveAvatarForContact(contact?.id || '', contact),
+	  });
+	  const bindMomentMentionInput = (inputEl, anchorEl = null) => bindMentionInputControl({
+	    inputEl,
+	    anchorEl,
+	    documentLike: document,
+	    windowLike: window,
+	    getMembers: getMomentMentionMembers,
+	    getDropdown: () => momentMentionDropdown,
+	    setDropdown: dropdown => {
+	      momentMentionDropdown = dropdown;
+	    },
+	  });
 	  const momentComposeModal = (() => {
 	    let overlay = null;
 	    let textArea = null;
@@ -16833,6 +16852,7 @@ Phase G（Frame 36）：循环衔接
 	      advancedResetBtn = overlay.querySelector('.moment-compose-param-reset');
 	      advancedSummaryEl = overlay.querySelector('.chat-image-gen-advanced-summary');
 	      advancedFieldsEl = overlay.querySelector('.chat-image-gen-advanced-fields');
+	      bindMomentMentionInput(textArea, textArea?.closest?.('.moment-compose-field') || textArea);
 	      overlay.querySelector('.moment-compose-close')?.addEventListener('click', close);
 	      cancelBtn?.addEventListener('click', () => {
 	        if (controller) {
@@ -17210,7 +17230,7 @@ Phase G（Frame 36）：循环衔接
     const list = getRpGreetings();
     if (!list.length) {
       rpGreetingName.textContent = '无开场白';
-      if (rpGreetingTrigger) rpGreetingTrigger.disabled = true;
+      if (rpGreetingTrigger) rpGreetingTrigger.disabled = false;
       return;
     }
     const active = ensureRpGreetingActive();
@@ -17227,10 +17247,8 @@ Phase G（Frame 36）：循环衔接
     }
     rpToolbar.style.display = '';
     renderRpToolbar();
-    const list = getRpGreetings();
-    const locked = hasRpConversation(sessionId);
     if (rpGreetingTrigger) {
-      rpGreetingTrigger.disabled = !list.length || locked;
+      rpGreetingTrigger.disabled = false;
     }
   };
 
@@ -17244,6 +17262,8 @@ Phase G（Frame 36）：循环衔接
     list.forEach((g, idx) => {
       const id = String(g?.id || '').trim();
       const isActive = id === activeId;
+      const row = document.createElement('div');
+      row.className = 'rp-greeting-sheet-row';
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'rp-greeting-sheet-item' + (isActive ? ' active' : '');
@@ -17261,7 +17281,19 @@ Phase G（Frame 36）：循环衔接
         closeRpGreetingSheet();
         await setRpGreeting(id, sessionId);
       });
-      rpGreetingSheetList.appendChild(btn);
+      const editBtn = document.createElement('button');
+      editBtn.type = 'button';
+      editBtn.className = 'rp-greeting-sheet-edit';
+      editBtn.textContent = '编辑';
+      editBtn.setAttribute('aria-label', `编辑${g?.title || `开场白 ${idx + 1}`}`);
+      editBtn.addEventListener('click', async (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        await editRpGreeting(id);
+      });
+      row.appendChild(btn);
+      row.appendChild(editBtn);
+      rpGreetingSheetList.appendChild(row);
     });
     if (rpGreetingSheetReset) rpGreetingSheetReset.style.display = locked ? '' : 'none';
     rpGreetingOverlay?.classList.remove('hidden');
@@ -17271,6 +17303,153 @@ Phase G（Frame 36）：循环衔接
   const closeRpGreetingSheet = () => {
     rpGreetingOverlay?.classList.add('hidden');
     rpGreetingSheet?.classList.add('hidden');
+  };
+
+  const promptRpGreetingEditor = ({
+    dialogTitle = '新增开场白',
+    initialTitle = '',
+    initialContent = '',
+    submitText = '保存',
+  } = {}) => new Promise((resolve) => {
+    const overlay = document.createElement('div');
+    overlay.className = 'rp-greeting-editor-overlay';
+    overlay.innerHTML = `
+      <div class="rp-greeting-editor" role="dialog" aria-modal="true" aria-labelledby="rp-greeting-editor-title">
+        <div class="rp-greeting-editor-header">
+          <div id="rp-greeting-editor-title" class="rp-greeting-editor-title"></div>
+          <button type="button" class="rp-greeting-editor-close" aria-label="关闭">×</button>
+        </div>
+        <label class="rp-greeting-editor-field">
+          <span>标题</span>
+          <input class="rp-greeting-editor-title-input" type="text" placeholder="例如：开场白 2">
+        </label>
+        <label class="rp-greeting-editor-field">
+          <span>内容</span>
+          <textarea class="rp-greeting-editor-content" placeholder="输入开场白内容，支持角色卡里的宏和富文本"></textarea>
+        </label>
+        <div class="rp-greeting-editor-status"></div>
+        <div class="rp-greeting-editor-actions">
+          <button type="button" class="rp-greeting-editor-cancel">取消</button>
+          <button type="button" class="rp-greeting-editor-submit"></button>
+        </div>
+      </div>
+    `;
+    const close = (value = null) => {
+      overlay.remove();
+      resolve(value);
+    };
+    const titleInput = overlay.querySelector('.rp-greeting-editor-title-input');
+    const contentInput = overlay.querySelector('.rp-greeting-editor-content');
+    const statusEl = overlay.querySelector('.rp-greeting-editor-status');
+    const dialogTitleEl = overlay.querySelector('.rp-greeting-editor-title');
+    const submitBtn = overlay.querySelector('.rp-greeting-editor-submit');
+    if (dialogTitleEl) dialogTitleEl.textContent = dialogTitle;
+    if (submitBtn) submitBtn.textContent = submitText;
+    if (titleInput) titleInput.value = String(initialTitle || '').trim();
+    if (contentInput) contentInput.value = String(initialContent || '').trim();
+    const submit = () => {
+      const content = String(contentInput?.value || '').trim();
+      if (!content) {
+        if (statusEl) statusEl.textContent = '请先填写开场白内容';
+        contentInput?.focus?.();
+        return;
+      }
+      close({
+        title: String(titleInput?.value || '').trim(),
+        content,
+      });
+    };
+    overlay.querySelector('.rp-greeting-editor-close')?.addEventListener('click', () => close(null));
+    overlay.querySelector('.rp-greeting-editor-cancel')?.addEventListener('click', () => close(null));
+    overlay.querySelector('.rp-greeting-editor-submit')?.addEventListener('click', submit);
+    overlay.addEventListener('click', event => {
+      if (event.target === overlay) close(null);
+    });
+    contentInput?.addEventListener('keydown', event => {
+      if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+        event.preventDefault();
+        submit();
+      }
+    });
+    document.body.appendChild(overlay);
+    setTimeout(() => titleInput?.focus?.(), 0);
+  });
+
+  const promptRpGreetingCreate = () => promptRpGreetingEditor({
+    dialogTitle: '新增开场白',
+    submitText: '保存',
+  });
+
+  const promptRpGreetingEdit = (greeting, idx = 0) => promptRpGreetingEditor({
+    dialogTitle: '编辑开场白',
+    initialTitle: String(greeting?.title || `开场白 ${idx + 1}`).trim(),
+    initialContent: String(greeting?.content || '').trim(),
+    submitText: '保存修改',
+  });
+
+  const createRpGreetingId = (list = []) => {
+    const existing = new Set((Array.isArray(list) ? list : []).map(item => String(item?.id || '').trim()));
+    const base = `greeting_custom_${Date.now().toString(36)}`;
+    if (!existing.has(base)) return base;
+    let idx = 2;
+    while (existing.has(`${base}_${idx}`)) idx += 1;
+    return `${base}_${idx}`;
+  };
+
+  const addRpGreeting = async () => {
+    closeRpGreetingSheet();
+    const payload = await promptRpGreetingCreate();
+    if (!payload?.content) return false;
+    const list = getRpGreetings();
+    const id = createRpGreetingId(list);
+    const title = String(payload.title || '').trim() || `开场白 ${list.length + 1}`;
+    const nextGreeting = { id, title, content: String(payload.content || '').trim() };
+    const sessionId = getRpSessionId(activePersonaId);
+    const locked = hasRpConversation(sessionId);
+    const activeId = locked
+      ? String(rpSessionStore.getActiveGreetingId?.() || '').trim()
+      : id;
+    rpSessionStore.setGreetings?.([...list, nextGreeting], { activeId });
+    refreshRpToolbar(sessionId);
+    if (!locked) {
+      await resetRpHistory(sessionId);
+      window.toastr?.success?.('已新增并切换开场白');
+      return true;
+    }
+    window.toastr?.success?.('已新增开场白；当前已有互动，重置剧情后可切换');
+    return true;
+  };
+
+  const editRpGreeting = async (targetId) => {
+    const id = String(targetId || '').trim();
+    if (!id) return false;
+    closeRpGreetingSheet();
+    const list = getRpGreetings();
+    const idx = list.findIndex(item => String(item?.id || '').trim() === id);
+    if (idx < 0) return false;
+    const current = list[idx];
+    const payload = await promptRpGreetingEdit(current, idx);
+    if (!payload?.content) return false;
+    const nextList = list.map((item, itemIdx) => {
+      if (itemIdx !== idx) return item;
+      return {
+        ...item,
+        title: String(payload.title || '').trim() || `开场白 ${idx + 1}`,
+        content: String(payload.content || '').trim(),
+      };
+    });
+    const sessionId = getRpSessionId(activePersonaId);
+    const locked = hasRpConversation(sessionId);
+    const activeId = String(rpSessionStore.getActiveGreetingId?.() || '').trim();
+    rpSessionStore.setGreetings?.(nextList, { activeId });
+    refreshRpToolbar(sessionId);
+    if (!locked && id === activeId) {
+      await resetRpHistory(sessionId);
+      window.toastr?.success?.('已更新当前开场白');
+      return true;
+    }
+    window.toastr?.success?.(locked ? '已保存开场白修改；当前剧情不会自动改写' : '已保存开场白修改');
+    return true;
   };
 
   const getRpGreetingState = (sessionId = getRpSessionId(activePersonaId)) => {
@@ -17960,6 +18139,11 @@ Phase G（Frame 36）：循环衔接
   });
 
   rpGreetingOverlay?.addEventListener('click', () => closeRpGreetingSheet());
+
+  rpGreetingSheetAdd?.addEventListener('click', async (event) => {
+    event.stopPropagation();
+    await addRpGreeting();
+  });
 
   rpGreetingSheetReset?.addEventListener('click', async () => {
     if (uiMode !== 'rp') return;
@@ -19458,6 +19642,7 @@ Phase G（Frame 36）：循环衔接
       getAssistantAvatarForSession,
       formatNowTime,
       refreshChatAndContacts,
+      cancelDeliverySequence: () => ui.cancelDeliverySequence?.(),
       hideTyping: () => ui.hideTyping?.(),
       setStreamingState: value => ui.setStreamingState?.(value),
       setSendingState: value => ui.setSendingState(value),
@@ -20889,7 +21074,6 @@ Phase G（Frame 36）：循环衔接
         sessionId,
         reason: sendPreflightBlock.reason,
       }));
-      ui.showErrorBanner(sendPreflightBlock.bannerMessage);
       if (sendPreflightBlock.toastTitle) {
         window.toastr?.warning(sendPreflightBlock.toastMessage, sendPreflightBlock.toastTitle);
       } else {
@@ -21134,6 +21318,24 @@ Phase G（Frame 36）：循环衔接
       hasContinueTarget: Boolean(continueTarget),
       hasSwipeTarget: Boolean(swipeTarget),
     }));
+    const stopGenerationIndicatorsIfActive = () => {
+      if (!isSessionActive(sessionId)) return;
+      try {
+        ui.cancelDeliverySequence?.();
+      } catch {}
+      try {
+        ui.hideTyping?.();
+      } catch {}
+    };
+    const startDeliveryAndTypingIfCurrent = () => {
+      if (isGenerationInterrupted(generationId)) {
+        stopGenerationIndicatorsIfActive();
+        return false;
+      }
+      if (!isSessionActive(sessionId)) return false;
+      startDeliveryAndTyping(sessionId, assistantAvatar);
+      return true;
+    };
     const createProtocolEventHandlers = ({ streamMode = false } = {}) => createSendProtocolEventHandlers({
       streamMode,
       sessionId,
@@ -21249,8 +21451,12 @@ Phase G（Frame 36）：循环衔接
       if (config.stream) {
         if (rpUiMode) {
           // RP/创意写作界面：完整长文输出，不解析线上格式
-          if (isSessionActive(sessionId)) startDeliveryAndTyping(sessionId, assistantAvatar);
+          if (!startDeliveryAndTypingIfCurrent()) return;
           const stream = await requestAssistantGeneration();
+          if (isGenerationInterrupted(generationId)) {
+            stopGenerationIndicatorsIfActive();
+            return;
+          }
           streamCtrl = null;
           const streamMeta = {
             avatar: assistantAvatar,
@@ -21330,9 +21536,13 @@ Phase G（Frame 36）：循环衔接
           sendSucceeded = true;
         } else if (protocolEnabled) {
           // 对话模式（流式）：不逐字显示 AI 原文；只在捕获到完整的”有效标签”后输出解析结果
-          if (isSessionActive(sessionId)) startDeliveryAndTyping(sessionId, assistantAvatar);
+          if (!startDeliveryAndTypingIfCurrent()) return;
           const parser = createDialogueParser();
           const stream = await requestAssistantGeneration();
+          if (isGenerationInterrupted(generationId)) {
+            stopGenerationIndicatorsIfActive();
+            return;
+          }
           const summarySessionIds = new Set([sessionId]);
           const protocolStreamEventHandlers = createProtocolEventHandlers({ streamMode: true });
           const protocolStreamState = await runProtocolStreamResponseFlow({
@@ -21355,6 +21565,10 @@ Phase G（Frame 36）：循环衔接
           sendSucceeded = true;
         } else {
           // 兼容旧逻辑（流式逐字）
+          if (isGenerationInterrupted(generationId)) {
+            stopGenerationIndicatorsIfActive();
+            return;
+          }
           const streamMeta = {
             avatar: assistantAvatar,
             name: '助手',
@@ -21404,10 +21618,10 @@ Phase G（Frame 36）：循环衔接
           sendSucceeded = true;
         }
       } else {
-        if (isSessionActive(sessionId)) startDeliveryAndTyping(sessionId, assistantAvatar);
+        if (!startDeliveryAndTypingIfCurrent()) return;
         const resultRaw = await requestAssistantGeneration();
         if (isGenerationInterrupted(generationId)) {
-          if (isSessionActive(sessionId)) { ui.hideTyping(); fastForwardDelivery(sessionId); }
+          stopGenerationIndicatorsIfActive();
           return;
         }
         sendSucceeded = true;
@@ -21485,9 +21699,7 @@ Phase G（Frame 36）：循环衔接
         hideTyping: () => ui.hideTyping(),
         fastForwardDelivery,
         logger,
-        showErrorBanner: (...args) => ui.showErrorBanner(...args),
-        retrySend: () => handleSend(),
-        showToastError: (...args) => window.toastr?.error(...args),
+        showToastError: (...args) => window.toastr?.error?.(...args),
       });
       sendErrorMessage = catchResult.sendErrorMessage;
       suppressErrorUI = catchResult.suppressErrorUI;
@@ -21577,7 +21789,14 @@ Phase G（Frame 36）：循环衔接
 
 	  const handleComposerSend = () => {
 	    if (ui?.isSending || ui?.isStreaming || (activeGeneration && !activeGeneration.cancelled)) {
-	      cancelActiveGeneration('user');
+	      const cancelled = cancelActiveGeneration('user');
+	      if (!cancelled) {
+	        try { window.appBridge.cancelCurrentGeneration('user'); } catch {}
+	        try { ui.cancelDeliverySequence?.(); } catch {}
+	        try { ui.hideTyping?.(); } catch {}
+	        ui.setStreamingState?.(false);
+	        ui.setSendingState?.(false);
+	      }
 	      return;
 	    }
 	    const raw = String(ui.getInputText?.() || '').trim();

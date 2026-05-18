@@ -88,6 +88,26 @@ const createElement = ({ tagName = 'div', type = '', id = '' } = {}) => ({
 }
 
 {
+  const snapshot = normalizeViewportSnapshot({
+    innerWidth: 1280,
+    innerHeight: 720,
+    documentClientWidth: 1280,
+    documentClientHeight: 720,
+    visualViewport: { width: 1280, height: 720, offsetTop: 0, offsetLeft: 0 },
+    screenWidth: 2560,
+    screenHeight: 1440,
+    previousBaseHeight: 0,
+    previousBaseWidth: 0,
+    hasFocusedEditable: true,
+    useScreenHeightBaseline: false,
+  });
+  assert.equal(snapshot.keyboardVisible, false);
+  assert.equal(snapshot.keyboardInsetBottom, 0);
+  assert.equal(snapshot.rawKeyboardInsetBottom, 0);
+  console.log('ok - normalizeViewportSnapshot ignores desktop screen baseline when disabled');
+}
+
+{
   const root = createElement({ tagName: 'html' });
   const body = { dataset: {} };
   const input = createElement({ tagName: 'input', type: 'text', id: 'composer-input' });
@@ -167,4 +187,74 @@ const createElement = ({ tagName = 'div', type = '', id = '' } = {}) => ({
   assert.equal(chatRoom.style.height, '');
   assert.equal(runtime.getDebugInfo().visualViewport.height, 800);
   console.log('ok - createViewportKeyboardRuntime applies CSS vars target layout and debug info');
+}
+
+{
+  const root = createElement({ tagName: 'html' });
+  const body = { dataset: {} };
+  const input = createElement({ tagName: 'input', type: 'text', id: 'composer-input' });
+  const chatRoom = createElement({ tagName: 'div', id: 'chat-room' });
+  const listeners = new Map();
+  const visualListeners = new Map();
+  const documentRef = {
+    documentElement: root,
+    body,
+    activeElement: input,
+    addEventListener(type, handler) {
+      listeners.set(type, handler);
+    },
+    removeEventListener(type) {
+      listeners.delete(type);
+    },
+  };
+  root.ownerDocument = {
+    defaultView: {
+      getComputedStyle: element => element.style,
+    },
+  };
+  const windowRef = {
+    innerWidth: 1280,
+    innerHeight: 720,
+    devicePixelRatio: 1,
+    navigator: { userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)', platform: 'Win32' },
+    screen: { width: 2560, height: 1440, availWidth: 2560, availHeight: 1400, orientation: { type: 'landscape-primary' } },
+    visualViewport: {
+      width: 1280,
+      height: 720,
+      offsetTop: 0,
+      offsetLeft: 0,
+      scale: 1,
+      addEventListener(type, handler) {
+        visualListeners.set(type, handler);
+      },
+      removeEventListener(type) {
+        visualListeners.delete(type);
+      },
+    },
+    addEventListener(type, handler) {
+      listeners.set(type, handler);
+    },
+    removeEventListener(type) {
+      listeners.delete(type);
+    },
+  };
+
+  const runtime = createViewportKeyboardRuntime({
+    windowRef,
+    documentRef,
+    rootEl: root,
+    bodyEl: body,
+    targets: [{ element: chatRoom, activeClass: 'keyboard-visible', fixedToVisualViewport: true }],
+    getFocusedElement: () => documentRef.activeElement,
+    requestAnimationFrameFn: fn => fn(),
+  });
+  const snapshot = runtime.start();
+  assert.equal(snapshot.keyboardVisible, false);
+  assert.equal(snapshot.keyboardInsetBottom, 0);
+  assert.equal(body.dataset.keyboardVisible, 'false');
+  assert.equal(chatRoom.classList.contains('keyboard-visible'), false);
+  assert.equal(chatRoom.style.height, '');
+  assert.deepEqual(input.scrollCalls, []);
+  assert.equal(runtime.getDebugInfo().keyboard.visible, false);
+  console.log('ok - createViewportKeyboardRuntime does not treat desktop refocus as keyboard open');
 }

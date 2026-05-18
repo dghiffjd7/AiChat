@@ -37,6 +37,10 @@ import {
   resolveMomentContactAvatar,
 } from './moments-avatar-utils.js';
 import { buildMomentThreadedComments } from './moments-thread-utils.js';
+import {
+  bindMentionInputControl,
+  buildMentionMembersFromContacts,
+} from './mention-input-binding-utils.js';
 
 const getMomentsDocumentRef = () => {
   try {
@@ -83,6 +87,7 @@ export class MomentsPanel {
     this.pendingComment = new Set();
     this.replyTargets = new Map(); // momentId -> { id, author, content }
     this.commentMenuEl = null;
+    this.mentionDropdown = null;
     this.visibleCount = 5;
     this.pageSize = 5;
     this.menuRuntime = createMomentsMenuRuntime({
@@ -143,6 +148,27 @@ export class MomentsPanel {
           defaultAvatar: this.defaultAvatar,
         }),
       }),
+    });
+  }
+
+  getMentionMembers() {
+    return buildMentionMembersFromContacts({
+      contactsStore: this.contactsStore,
+      resolveAvatar: contact => this.resolveContactAvatar(contact, contact?.name || contact?.id || ''),
+    });
+  }
+
+  bindMentionInput(inputEl, anchorEl = null) {
+    return bindMentionInputControl({
+      inputEl,
+      anchorEl,
+      documentLike: document,
+      windowLike: window,
+      getMembers: () => this.getMentionMembers(),
+      getDropdown: () => this.mentionDropdown,
+      setDropdown: dropdown => {
+        this.mentionDropdown = dropdown;
+      },
     });
   }
 
@@ -310,6 +336,7 @@ export class MomentsPanel {
             momentId: nextMomentId,
           }),
         }),
+        bindMentionInput: (inputEl, anchorEl) => this.bindMentionInput(inputEl, anchorEl),
         createSendHandler: ({ moment, inputEl, pending }) => createMomentFeedSendHandler({
           moment,
           inputEl,
@@ -351,6 +378,7 @@ export class MomentsPanel {
       documentLike: document,
       onSendComment: () => this.addLocalComment(),
     });
+    this.bindMentionInput(this.modal?.querySelector('#moment-comment-input'));
   }
 
   openDetail(momentId) {
