@@ -35,6 +35,11 @@ import {
   shouldAllowAutoImagePromptByRateLimit,
 } from './chat/auto-image-prompt-utils.js';
 import {
+  limitMomentWorldEntriesByBudget,
+  resolveMomentSessionWorldBudgetTokens,
+  resolveMomentWorldStrongSources,
+} from './chat/moment-world-resolver-utils.js';
+import {
   PROMPT_SEGMENT_ANCHORS,
   sortPromptSegments,
   splitDepthPromptMessagesForLatest,
@@ -3863,9 +3868,23 @@ class AppBridge {
     if (globalScanDepth !== null) {
       historyMatchLines = historyMatchLines.slice(-globalScanDepth);
     }
-    const matchText = [String(userMessage ?? ''), ...historyMatchLines].join('\n');
+    const momentTaskPromptData = isMomentCommentTask ? String(context?.task?.promptData || '') : '';
+    const momentTaskTriggerText = isMomentCommentTask
+      ? String(context?.task?.triggerText || momentTaskPromptData || '')
+      : '';
+    const matchText = (
+      isMomentCommentTask
+        ? [String(userMessage ?? ''), momentTaskTriggerText, ...historyMatchLines]
+        : [String(userMessage ?? ''), ...historyMatchLines]
+    ).filter(item => String(item || '').trim()).join('\n');
     const sessionId = String(context?.session?.id || '').trim();
     const sessionName = String(context?.session?.name || '').trim();
+    const matchSessionId = isMomentCommentTask
+      ? String(context?.task?.targetSessionId || sessionId).trim()
+      : sessionId;
+    const matchSessionName = isMomentCommentTask
+      ? String(context?.task?.targetName || sessionName).trim()
+      : sessionName;
     const uiModeRaw = String(context?.meta?.uiMode || context?.uiMode || '').trim().toLowerCase();
     const uiMode = uiModeRaw === 'rp' || (!uiModeRaw && sessionId.startsWith('rp:')) ? 'rp' : 'chat';
     const presetUiMode = normalizeBridgePresetUiMode(uiModeRaw, {
@@ -3877,8 +3896,8 @@ class AppBridge {
       history: historyMatchLines,
       fullHistory: fullHistoryLines,
       personaText,
-      sessionId,
-      sessionName,
+      sessionId: matchSessionId,
+      sessionName: matchSessionName,
       uiMode,
       character: {
         description: String(context?.character?.description || ''),
@@ -3895,11 +3914,28 @@ class AppBridge {
       matchContext.groupMemberNames = groupMemberNames;
     }
     const membersText = groupMemberNames.filter(Boolean).join(',');
-    const resolvedWorldState = this.getResolvedWorldState(sessionId || this.activeSessionId, {
-      uiMode,
-      isGroupChat,
-      groupMemberIds,
-    });
+    const momentWorldSessionId = String(matchSessionId || sessionId || this.activeSessionId || '').trim();
+    const resolvedWorldStateBase = this.getResolvedWorldState(
+      isMomentCommentTask ? momentWorldSessionId : (sessionId || this.activeSessionId),
+      {
+        uiMode: isMomentCommentTask ? 'chat' : uiMode,
+        isGroupChat: isMomentCommentTask ? false : isGroupChat,
+        groupMemberIds: isMomentCommentTask ? [] : groupMemberIds,
+      },
+    );
+    const resolvedWorldState = isMomentCommentTask
+      ? {
+          ...resolvedWorldStateBase,
+          uiMode: 'moments',
+          isGroupChat: false,
+          groupMemberIds: [],
+          sessionWorldIds: [],
+          worldIds: [
+            resolvedWorldStateBase.globalWorldId,
+            ...(Array.isArray(resolvedWorldStateBase.roleWorldIds) ? resolvedWorldStateBase.roleWorldIds : []),
+          ].filter(Boolean),
+        }
+      : resolvedWorldStateBase;
     const macroContext = {
       user: name1,
       char: name2,
@@ -4541,13 +4577,14 @@ const stringifyMessageContent = (content) => {
           injectedEntries: [],
           templateEntries: [],
           initialVariableEntries: [],
+          dynamicWorld: null,
         };
         const builtinPhoneFormatEntries = [];
         const captureWorldDebugEntry = (target, entry, extra = {}) => {
           if (!target || !entry) return;
           target.push({ entry, ...extra });
         };
-        if (!isMomentCommentTask) {
+        {
           const worldSettings = this.getWorldGlobalSettings?.() || this.worldGlobalSettings || {};
           const insertionStrategy = normalizeWorldInsertionStrategy(worldSettings.insertionStrategy, 'role_first');
           const variableDefineStrategy = normalizeWorldVariableDefineStrategy(
@@ -4556,7 +4593,10 @@ const stringifyMessageContent = (content) => {
           );
           worldDebugRaw.insertionStrategy = insertionStrategy;
           worldDebugRaw.variableDefineStrategy = variableDefineStrategy;
-          const collectEntries = worldId => this.collectWorldEntries(worldId, { matchText, matchContext });
+          const collectEntries = (worldId, overrideMatchContext = null) => this.collectWorldEntries(worldId, {
+            matchText,
+            matchContext: overrideMatchContext || matchContext,
+          });
           const pushEntry = (entry, meta = {}) => {
             const sourceKind = String(meta?.sourceKind || entry?._src || '').trim() || 'session';
             const commentRaw = String(entry?.comment || '');
@@ -4687,16 +4727,106 @@ const stringifyMessageContent = (content) => {
             }));
             roleEntries.push(...tagged);
           });
-          const sessionEntries = [];
-          resolvedWorldState.sessionWorldIds.forEach((id) => {
-            if (!id) return;
-            const entries = collectEntries(id);
-            if (!entries.length) return;
-            sessionEntries.push(...entries.map(entry => ({ ...entry, _src: 'session' })));
-          });
-          sessionEntries.forEach(entry => captureWorldDebugEntry(worldDebugRaw.sessionEntries, entry, {
-            sourceKind: 'session',
-          }));
+          let sessionEntries = [];
+          if (isMomentCommentTask) {
+            const contacts = [
+              ...(this.contactsStore?.listContacts?.() || []),
+              ...(this.contactsStore?.listGroups?.() || []).map((group) => {
+                const rawId = String(group?.id || '').trim();
+                return {
+                  ...(group || {}),
+                  id: rawId && !rawId.startsWith('group:') ? `group:${rawId}` : rawId,
+                  isGroup: true,
+                };
+              }),
+            ];
+            const dynamicResolution = resolveMomentWorldStrongSources({
+              text: matchText,
+              mentions: context?.task?.mentions || [],
+              contacts,
+              targetSessionId: context?.task?.targetSessionId,
+              targetName: context?.task?.targetName,
+              replyToAuthor: context?.task?.replyToAuthor,
+              mode: context?.task?.mode,
+              maxSources: 3,
+              getWorldIdsForSession: sid => this.getWorldIdsForSession(sid)
+                .filter(worldId => worldId !== BUILTIN_PHONE_FORMAT_WORLDBOOK_ID),
+            });
+            const rawSessionEntries = [];
+            const seenDynamicWorldIds = new Set();
+            dynamicResolution.selectedSources.forEach((source) => {
+              (Array.isArray(source?.worldIds) ? source.worldIds : []).forEach((worldId) => {
+                const id = String(worldId || '').trim();
+                if (!id || seenDynamicWorldIds.has(id)) return;
+                seenDynamicWorldIds.add(id);
+                const entries = collectEntries(id, {
+                  ...matchContext,
+                  sessionId: String(source?.sessionId || matchContext.sessionId || '').trim(),
+                  sessionName: String(source?.name || matchContext.sessionName || '').trim(),
+                });
+                entries.forEach(entry => rawSessionEntries.push({
+                  ...entry,
+                  _src: 'session',
+                  _momentTriggerReason: (source.reasons || []).join(','),
+                  _momentTriggerName: source.name,
+                  _momentTriggerSessionId: source.sessionId,
+                  _momentTriggerType: source.type,
+                }));
+              });
+            });
+            const sessionBudgetTokens = resolveMomentSessionWorldBudgetTokens(this.getWorldBudgetTokens?.());
+            const limitedSessionEntries = limitMomentWorldEntriesByBudget(rawSessionEntries, {
+              budgetTokens: sessionBudgetTokens,
+              tokenMode: 'rough',
+            });
+            sessionEntries = limitedSessionEntries.entries;
+            worldDebugRaw.dynamicWorld = {
+              enabled: true,
+              candidates: (dynamicResolution.candidates || []).map(item => ({
+                sessionId: String(item?.sessionId || '').trim(),
+                name: String(item?.name || '').trim(),
+                type: String(item?.type || '').trim(),
+                reasons: Array.isArray(item?.reasons) ? item.reasons.slice() : [],
+                worldIds: Array.isArray(item?.worldIds) ? item.worldIds.slice() : [],
+              })),
+              selectedSources: (dynamicResolution.selectedSources || []).map(item => ({
+                sessionId: String(item?.sessionId || '').trim(),
+                name: String(item?.name || '').trim(),
+                type: String(item?.type || '').trim(),
+                reasons: Array.isArray(item?.reasons) ? item.reasons.slice() : [],
+                worldIds: Array.isArray(item?.worldIds) ? item.worldIds.slice() : [],
+              })),
+              sessionBudgetTokens: limitedSessionEntries.budgetTokens,
+              sessionUsedTokens: limitedSessionEntries.usedTokens,
+              sessionTrimmedCount: limitedSessionEntries.trimmedEntries.length,
+              overflowed: limitedSessionEntries.overflowed === true,
+            };
+            sessionEntries.forEach(entry => captureWorldDebugEntry(worldDebugRaw.sessionEntries, entry, {
+              sourceKind: 'session',
+              triggerReason: entry?._momentTriggerReason,
+              triggerSourceName: entry?._momentTriggerName,
+              triggerSessionId: entry?._momentTriggerSessionId,
+              triggerType: entry?._momentTriggerType,
+            }));
+            limitedSessionEntries.trimmedEntries.forEach(entry => captureWorldDebugEntry(worldDebugRaw.trimmedEntries, entry, {
+              sourceKind: 'session',
+              trimReason: 'moment_session_budget',
+              triggerReason: entry?._momentTriggerReason,
+              triggerSourceName: entry?._momentTriggerName,
+              triggerSessionId: entry?._momentTriggerSessionId,
+              triggerType: entry?._momentTriggerType,
+            }));
+          } else {
+            resolvedWorldState.sessionWorldIds.forEach((id) => {
+              if (!id) return;
+              const entries = collectEntries(id);
+              if (!entries.length) return;
+              sessionEntries.push(...entries.map(entry => ({ ...entry, _src: 'session' })));
+            });
+            sessionEntries.forEach(entry => captureWorldDebugEntry(worldDebugRaw.sessionEntries, entry, {
+              sourceKind: 'session',
+            }));
+          }
           const mergedDetail = this.mergeWorldEntriesDetailed(globalEntries, [...roleEntries, ...sessionEntries], insertionStrategy);
           worldDebugRaw.budgetTokens = mergedDetail.budgetTokens;
           worldDebugRaw.usedTokens = mergedDetail.usedTokens;
@@ -4857,6 +4987,11 @@ const stringifyMessageContent = (content) => {
             order: Number.isFinite(Number(entry?.order)) ? Number(entry.order) : 0,
             injectMode: String(item?.injectMode || 'bucket').trim() || 'bucket',
             bucket: String(item?.bucket || '').trim(),
+            triggerReason: String(item?.triggerReason || entry?._momentTriggerReason || '').trim(),
+            triggerSourceName: String(item?.triggerSourceName || entry?._momentTriggerName || '').trim(),
+            triggerSessionId: String(item?.triggerSessionId || entry?._momentTriggerSessionId || '').trim(),
+            triggerType: String(item?.triggerType || entry?._momentTriggerType || '').trim(),
+            trimReason: String(item?.trimReason || '').trim(),
             tags: tags.map(tag => ({
               stage: String(tag?.stage || '').trim(),
               type: String(tag?.type || '').trim(),
@@ -4934,6 +5069,7 @@ const stringifyMessageContent = (content) => {
           injectedEntries: mapWorldDebugEntries(worldDebugRaw.injectedEntries),
           templateEntries: mapWorldDebugEntries(worldDebugRaw.templateEntries),
           initialVariableEntries: mapWorldDebugEntries(worldDebugRaw.initialVariableEntries),
+          dynamicWorld: worldDebugRaw.dynamicWorld,
         };
 
         return {

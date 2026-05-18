@@ -116,6 +116,26 @@ const normalizeGeneratedImages = (items = []) => {
     return out;
 };
 
+const normalizeMentions = (items = []) => {
+    const seen = new Set();
+    const out = [];
+    (Array.isArray(items) ? items : []).forEach((item) => {
+        if (!item || typeof item !== 'object') return;
+        const id = String(item.id || item.sessionId || '').trim();
+        const name = String(item.name || item.label || id).trim();
+        if (!id && !name) return;
+        if (id.toLowerCase().startsWith('rp:') || name.toLowerCase().startsWith('rp:')) return;
+        const type = item.type === 'group' || item.isGroup === true || id.startsWith('group:')
+            ? 'group'
+            : 'contact';
+        const key = `${type}:${id || name}`;
+        if (seen.has(key)) return;
+        seen.add(key);
+        out.push({ id, name: name || id, type });
+    });
+    return out;
+};
+
 export class MomentsStore {
     constructor({ scopeId = '' } = {}) {
         this.scopeId = normalizeScopeId(scopeId);
@@ -142,6 +162,7 @@ export class MomentsStore {
                     m.authorAvatar = this._sanitizeAvatarForStore(m.authorAvatar);
                 }
                 m.generatedImages = normalizeGeneratedImages(m.generatedImages);
+                m.mentions = normalizeMentions(m.mentions);
                 // Ensure comment ids for stable delete operations
                 if (Array.isArray(m.comments)) {
                     m.comments = m.comments.map((c) => {
@@ -362,6 +383,9 @@ export class MomentsStore {
         const generatedImages = hasOwn(moment, 'generatedImages')
             ? normalizeGeneratedImages(moment.generatedImages)
             : normalizeGeneratedImages(Array.isArray(existingById?.generatedImages) ? existingById.generatedImages : (Array.isArray(existingBySig?.generatedImages) ? existingBySig.generatedImages : []));
+        const mentions = hasOwn(moment, 'mentions')
+            ? normalizeMentions(moment.mentions)
+            : normalizeMentions(Array.isArray(existingById?.mentions) ? existingById.mentions : (Array.isArray(existingBySig?.mentions) ? existingBySig.mentions : []));
 
         const timestamp = hasOwn(moment, 'timestamp')
             ? (Number.isFinite(Number(moment.timestamp)) ? Number(moment.timestamp) : Date.now())
@@ -387,6 +411,7 @@ export class MomentsStore {
             likes,
             comments,
             generatedImages,
+            mentions,
             timestamp,
         };
         const idx = list.findIndex(m => m.id === id);

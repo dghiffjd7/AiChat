@@ -56,15 +56,27 @@ import {
     injectedEntries: [{ worldId: 'w1', entryId: 'e1', blockId: 'legacy', title: '内置1', sourceKind: 'builtin', role: 'system', positionLabel: 'system', contentPreview: 'preview' }],
     templateEntries: [{ worldId: 'w2', entryId: 'e2', blockId: 'b2', title: '模板1', sourceKind: 'role', role: 'user', positionLabel: 'user', tags: [{ stage: 'render', type: 'regex', pattern: 'x' }] }],
     initialVariableEntries: [],
-    trimmedEntries: [],
+    trimmedEntries: [{ worldId: 'w3', entryId: 'e3', blockId: 'legacy', title: '裁剪1', sourceKind: 'session', role: 'system', trimReason: 'moment_session_budget', triggerSourceName: 'Alice', triggerReason: 'mention' }],
     budgetTokens: 100,
     usedTokens: 20,
     overflowed: false,
+    dynamicWorld: {
+      enabled: true,
+      candidates: [{ sessionId: 'contact:alice', name: 'Alice', reasons: ['mention'], worldIds: ['w3'] }],
+      selectedSources: [{ sessionId: 'contact:alice', name: 'Alice', reasons: ['mention'], worldIds: ['w3'] }],
+      sessionBudgetTokens: 30,
+      sessionUsedTokens: 10,
+      sessionTrimmedCount: 1,
+      overflowed: true,
+    },
   });
   assert.match(text, /\[世界书调试\]/);
   assert.match(text, /变量自动建立: first_hit（命中后建立）/);
   assert.match(text, /激活条目/);
   assert.match(text, /模板注入/);
   assert.match(text, /render:regex:x/);
+  assert.match(text, /动态强触发: 候选 1 \/ 注入来源 1/);
+  assert.match(text, /动态强触发来源/);
+  assert.match(text, /裁剪=moment_session_budget/);
   console.log('ok - formatPromptWorldDebug formats sectioned prompt debug summary');
 }

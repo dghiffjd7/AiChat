@@ -85,10 +85,30 @@ const createDocumentLike = () => {
     resolveAvatar: contact => contact.avatar || `${contact.id}.png`,
   });
   assert.deepEqual(members, [
-    { id: 'alice', name: 'Alice', avatar: 'alice.png' },
-    { id: 'bob', name: 'Bob', avatar: 'bob.png' },
+    { id: 'alice', name: 'Alice', avatar: 'alice.png', type: 'contact' },
+    { id: 'bob', name: 'Bob', avatar: 'bob.png', type: 'contact' },
   ]);
   console.log('ok - buildMentionMembersFromContacts filters groups rp contacts and duplicate ids');
+}
+
+{
+  const members = buildMentionMembersFromContacts({
+    contactsStore: {
+      listContacts: () => [
+        { id: 'alice', name: 'Alice' },
+      ],
+      listGroups: () => [
+        { id: 'room', name: 'Room', avatar: 'room.png' },
+      ],
+    },
+    includeGroups: true,
+    resolveAvatar: contact => contact.avatar || '',
+  });
+  assert.deepEqual(members, [
+    { id: 'alice', name: 'Alice', avatar: '', type: 'contact' },
+    { id: 'group:room', name: 'Room', avatar: 'room.png', type: 'group' },
+  ]);
+  console.log('ok - buildMentionMembersFromContacts can include groups for moments compose');
 }
 
 {
@@ -105,6 +125,7 @@ const createDocumentLike = () => {
   input.value = 'hello @a';
   input.selectionStart = input.value.length;
   let inputEvents = 0;
+  const selectedMentions = [];
   input.addEventListener('input', () => {
     inputEvents += 1;
   });
@@ -115,13 +136,14 @@ const createDocumentLike = () => {
     documentLike,
     windowLike,
     getMembers: () => [
-      { id: 'alice', name: 'Alice' },
-      { id: 'bob', name: 'Bob' },
+      { id: 'alice', name: 'Alice', type: 'contact' },
+      { id: 'bob', name: 'Bob', type: 'contact' },
     ],
     getDropdown: () => dropdown,
     setDropdown: next => {
       dropdown = next;
     },
+    onMentionSelected: mention => selectedMentions.push(mention),
   });
 
   input.dispatch('input', { type: 'input' });
@@ -153,6 +175,7 @@ const createDocumentLike = () => {
   assert.equal(keyEvent.defaultPrevented, true);
   assert.equal(keyEvent.immediateStopped, true);
   assert.equal(inputEvents, 2);
+  assert.deepEqual(selectedMentions, [{ id: 'alice', name: 'Alice', type: 'contact' }]);
   console.log('ok - bindMentionInputControl inserts selected mention before Enter send handlers');
 }
 

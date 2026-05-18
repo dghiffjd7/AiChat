@@ -101,6 +101,13 @@ export const formatPromptWorldDebug = (worldDebug) => {
           .filter(Boolean);
         if (tags.length) parts.push(tags.join(', '));
       }
+      const triggerName = String(entry?.triggerSourceName || '').trim();
+      const triggerReason = String(entry?.triggerReason || '').trim();
+      if (triggerName || triggerReason) {
+        parts.push(`触发=${[triggerName, triggerReason].filter(Boolean).join(':')}`);
+      }
+      const trimReason = String(entry?.trimReason || '').trim();
+      if (trimReason) parts.push(`裁剪=${trimReason}`);
       const preview = previewOf(entry);
       return `${parts.join(' | ')}${preview ? ` | ${preview}` : ''}`;
     });
@@ -115,6 +122,11 @@ export const formatPromptWorldDebug = (worldDebug) => {
   const initialVariableEntries = listOf(worldDebug?.initialVariableEntries);
   const trimmedEntries = listOf(worldDebug?.trimmedEntries);
   const mergedEntries = listOf(worldDebug?.mergedEntries);
+  const dynamicWorld = worldDebug?.dynamicWorld && typeof worldDebug.dynamicWorld === 'object'
+    ? worldDebug.dynamicWorld
+    : null;
+  const dynamicCandidates = listOf(dynamicWorld?.candidates);
+  const dynamicSelected = listOf(dynamicWorld?.selectedSources);
 
   const budgetTokens = Number.isFinite(Number(worldDebug?.budgetTokens)) ? Number(worldDebug.budgetTokens) : null;
   const usedTokens = Number.isFinite(Number(worldDebug?.usedTokens)) ? Number(worldDebug.usedTokens) : 0;
@@ -137,6 +149,27 @@ export const formatPromptWorldDebug = (worldDebug) => {
       ? `- 预算: ${usedTokens}/${budgetTokens} tokens${worldDebug?.overflowed ? `，裁掉 ${trimmedEntries.length} 条` : ''}`
       : '- 预算: 未限制',
   ];
+  if (dynamicWorld?.enabled) {
+    const sessionBudgetTokens = Number.isFinite(Number(dynamicWorld?.sessionBudgetTokens))
+      ? Number(dynamicWorld.sessionBudgetTokens)
+      : null;
+    const sessionUsedTokens = Number.isFinite(Number(dynamicWorld?.sessionUsedTokens))
+      ? Number(dynamicWorld.sessionUsedTokens)
+      : 0;
+    header.push(
+      sessionBudgetTokens != null
+        ? `- 动态强触发: 候选 ${dynamicCandidates.length} / 注入来源 ${dynamicSelected.length} / 会话世界书预算 ${sessionUsedTokens}/${sessionBudgetTokens} tokens${dynamicWorld?.overflowed ? `，裁掉 ${Number(dynamicWorld?.sessionTrimmedCount) || 0} 条` : ''}`
+        : `- 动态强触发: 候选 ${dynamicCandidates.length} / 注入来源 ${dynamicSelected.length}`,
+    );
+  }
+
+  pushSection('动态强触发来源', dynamicSelected.map((source) => {
+    const name = String(source?.name || source?.sessionId || '').trim() || '未知对象';
+    const sessionId = String(source?.sessionId || '').trim();
+    const reasons = listOf(source?.reasons).join(',');
+    const worldIds = listOf(source?.worldIds).join(',');
+    return `- ${name}${sessionId ? ` (${sessionId})` : ''}${reasons ? ` | ${reasons}` : ''}${worldIds ? ` | ${worldIds}` : ''}`;
+  }));
 
   pushSection('激活条目', [
     ...renderEntryRows(builtinEntries, { emptyText: '无内置命中' }),

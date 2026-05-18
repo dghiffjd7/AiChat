@@ -66,6 +66,12 @@ test('MomentsStore upsert normalizes duplicate comment ids and infers regex mode
       author: '发布者',
       content: '第一条动态',
       time: '10:00',
+      mentions: [
+        { id: 'contact:alice', name: 'Alice', type: 'contact' },
+        { id: 'contact:alice', name: 'Alice Again', type: 'contact' },
+        { id: 'group:room', name: 'Room', type: 'group' },
+        { id: 'rp:persona_1', name: '角色房间' },
+      ],
       comments: [
         { id: 'c1', author: '我', content: '第一条评论' },
         { id: 'c1', author: '路人甲', content: '回复第一条', replyTo: 'c1', replyToAuthor: '我' },
@@ -80,6 +86,10 @@ test('MomentsStore upsert normalizes duplicate comment ids and infers regex mode
     assert.equal(moment.comments[1].regexMode, 'output');
     assert.equal(moment.comments[1].replyTo, 'c1');
     assert.equal(moment.comments[1].replyToAuthor, '我');
+    assert.deepEqual(moment.mentions, [
+      { id: 'contact:alice', name: 'Alice', type: 'contact' },
+      { id: 'group:room', name: 'Room', type: 'group' },
+    ]);
   });
 });
 

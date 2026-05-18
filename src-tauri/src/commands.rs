@@ -2761,10 +2761,23 @@ pub async fn list_contacts_by_scopes(
             Some(val) => val,
             None => continue,
         };
-        let scope_id = obj
+        let stored_scope = obj
             .get("scopeId")
             .and_then(|v| v.as_str())
-            .unwrap_or(scope.as_str());
+            .map(normalize_scope_id)
+            .unwrap_or_default();
+        if stored_scope.is_empty() {
+            if scope != "default" {
+                continue;
+            }
+        } else if stored_scope != scope {
+            continue;
+        }
+        let scope_id = if stored_scope.is_empty() {
+            scope.as_str()
+        } else {
+            stored_scope.as_str()
+        };
 
         let mut contacts_out: Vec<Value> = Vec::new();
         if let Some(contacts) = obj.get("contacts").and_then(|v| v.as_object()) {

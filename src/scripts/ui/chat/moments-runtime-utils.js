@@ -3,6 +3,7 @@ import {
   normalizeLifecycleTraceDetails,
   normalizeLifecycleTraceText,
 } from './lifecycle-trace-utils.js';
+import { normalizeMomentMentionTarget } from './moment-world-resolver-utils.js';
 
 const normalizeNameValue = (value) => String(value || '').trim();
 
@@ -729,6 +730,7 @@ export const buildMomentCommentTaskContext = ({
   authorName = '',
   originSessionId = '',
   promptData = '',
+  triggerText = '',
   mode = 'comment',
   userAttachmentParts = [],
   memoryStorageMode = '',
@@ -740,6 +742,7 @@ export const buildMomentCommentTaskContext = ({
   skipScripts = true,
   isReplyToComment = false,
   replyTo = null,
+  mentions = [],
 } = {}) => {
   const profile = userProfile && typeof userProfile === 'object' ? userProfile : {};
   const resolvedTarget = target && typeof target === 'object' ? target : {};
@@ -759,6 +762,10 @@ export const buildMomentCommentTaskContext = ({
       targetSessionId: String(resolvedTarget?.sessionId || '').trim(),
       targetName: String(resolvedTarget?.name || '').trim(),
       promptData: String(promptData || ''),
+      triggerText: String(triggerText || ''),
+      mentions: (Array.isArray(mentions) ? mentions : [])
+        .map(normalizeMomentMentionTarget)
+        .filter(Boolean),
     },
     session: { id: String(originSessionId || '').trim(), isGroup: false },
   };
@@ -1602,6 +1609,14 @@ export const createMomentCommentLifecycleRuntime = ({
       groupList,
       sideEffectInstructions,
     });
+    const triggerText = [
+      authorName,
+      momentPromptContent,
+      userComment,
+      isReplyToComment ? replyTo?.author : '',
+      isReplyToComment ? normalizeStickerTextForPrompt(replyTo?.content || '') : '',
+      recentComments,
+    ].map(item => String(item || '').trim()).filter(Boolean).join('\n');
     const applyEvents = (events = []) => applyMomentCommentEvents(events, {
       currentMomentId: id,
       originSessionId,
@@ -1666,6 +1681,8 @@ export const createMomentCommentLifecycleRuntime = ({
         authorName,
         originSessionId,
         promptData,
+        triggerText,
+        mentions: moment?.mentions || [],
         isReplyToComment,
         replyTo,
         mode: isPublishedMomentComment ? 'published_moment' : 'comment',

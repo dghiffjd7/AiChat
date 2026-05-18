@@ -583,6 +583,10 @@ const isForeignRpSessionForScope = (sessionId = '', scopeId = '') => {
   if (!sid.startsWith('rp:')) return false;
   return sid !== getOwnRpSessionIdForScope(scopeId);
 };
+const isDefaultScopeId = (scopeId = '') => {
+  const scope = normalizeScopeId(scopeId);
+  return !scope || scope === 'default';
+};
 
 const resolveCurrentId = (state, scopeId = '') => {
   const sessions = state?.sessions && typeof state.sessions === 'object' ? state.sessions : {};
@@ -601,8 +605,9 @@ const resolveCurrentId = (state, scopeId = '') => {
 const isScopedDataMatch = (data, scopeId) => {
   try {
     const stored = String(data?.scopeId ?? '').trim();
-    if (!stored) return true; // legacy data without scope marker
-    return stored === String(scopeId || '').trim();
+    const scope = normalizeScopeId(scopeId);
+    if (!stored) return isDefaultScopeId(scope); // legacy data without scope marker belongs to default/shared only
+    return stored === scope;
   } catch {
     return true;
   }
@@ -1347,7 +1352,7 @@ export class ChatStore {
       if (this.scopeId) markLegacyMigrated();
       return data;
     }
-    if (this.scopeId && !isLegacyMigrated()) {
+    if (isDefaultScopeId(this.scopeId) && !isLegacyMigrated()) {
       const legacy = readLocalState(BASE_STORE_KEY);
       if (legacy) {
         markLegacyMigrated();
@@ -1367,7 +1372,7 @@ export class ChatStore {
       if (kv && !isScopedDataMatch(kv, scopeId)) {
         kv = null;
       }
-      if (!kv && this.scopeId && !isLegacyMigrated()) {
+      if (!kv && isDefaultScopeId(this.scopeId) && !isLegacyMigrated()) {
         const legacy = await safeInvoke('load_kv', { name: BASE_STORE_KEY });
         if (token !== this._scopeToken || storeKey !== this.storeKey || scopeId !== this.scopeId) return;
         if (legacy && legacy.sessions) {
@@ -3380,7 +3385,9 @@ export const __chatStoreStorageInternals = {
   buildPersistPreview,
   compactDerivedRenderRichContent,
   getOwnRpSessionIdForScope,
+  isDefaultScopeId,
   isForeignRpSessionForScope,
+  isScopedDataMatch,
   resolveCurrentId,
   sanitizeMessageForPersist,
   splitPersistFieldChunks,

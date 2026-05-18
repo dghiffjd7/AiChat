@@ -88,7 +88,7 @@ const createFakeDocument = () => {
   const selected = [];
   const items = buildMentionDropdownItems(documentLike, [
     { name: '甲', avatar: '' },
-    { name: '乙', id: 'b2', avatar: 'b.png' },
+    { name: '乙', id: 'b2', avatar: 'b.png', type: 'contact' },
   ], {
     selectedIndex: 0,
     onHover: index => hovered.push(index),
@@ -96,6 +96,8 @@ const createFakeDocument = () => {
   });
   assert.equal(items.length, 2);
   assert.equal(items[0].style.cssText.includes('background:var(--app-accent-soft)'), true);
+  assert.equal(items[1].dataset.memberId, 'b2');
+  assert.equal(items[1].dataset.memberType, 'contact');
   items[1].dispatch('pointerenter');
   items[1].dispatch('click');
   assert.deepEqual(hovered, [1]);

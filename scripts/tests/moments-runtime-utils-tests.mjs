@@ -443,6 +443,7 @@ import {
     authorName: '发布者',
     originSessionId: 'contact:1',
     promptData: 'PROMPT',
+    triggerText: '只用于动态世界书触发',
     memoryStorageMode: 'table',
     memoryAutoExtract: true,
     memoryInjectPosition: 'history_depth',
@@ -451,6 +452,10 @@ import {
     memoryGuideDepth: 1,
     isReplyToComment: true,
     replyTo: { id: 'c1', author: '甲' },
+    mentions: [
+      { id: 'contact:alice', name: 'Alice', type: 'contact' },
+      { id: 'rp:persona_1', name: '角色房间' },
+    ],
   });
   assert.equal(ctx.user.name, '我');
   assert.equal(ctx.task.type, 'moment_comment');
@@ -466,6 +471,10 @@ import {
   assert.equal(ctx.meta?.memoryGuideDepth, 1);
   assert.equal(ctx.task.replyToCommentId, 'c1');
   assert.equal(ctx.task.replyToAuthor, '甲');
+  assert.equal(ctx.task.triggerText, '只用于动态世界书触发');
+  assert.deepEqual(ctx.task.mentions, [
+    { id: 'contact:alice', name: 'Alice', type: 'contact' },
+  ]);
   assert.equal(ctx.character.name, '发布者');
   console.log('ok - buildMomentCommentTaskContext builds task payload with optional reply metadata');
 }

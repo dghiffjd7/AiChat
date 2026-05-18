@@ -16,20 +16,39 @@ const normalizeMentionMember = (contact = {}, resolveAvatar = null) => {
   const id = String(contact?.id || '').trim();
   const name = String(contact?.name || id).trim();
   if (!id && !name) return null;
+  const type = contact?.type === 'group' || contact?.isGroup === true || id.startsWith('group:')
+    ? 'group'
+    : 'contact';
   const avatar = typeof resolveAvatar === 'function'
     ? String(resolveAvatar(contact) || '').trim()
     : String(contact?.avatar || '').trim();
-  return { id, name: name || id, avatar };
+  return { id, name: name || id, avatar, type };
 };
 
 export const buildMentionMembersFromContacts = ({
   contactsStore = null,
   resolveAvatar = null,
+  includeGroups = false,
 } = {}) => {
-  const contacts = contactsStore?.listContacts?.() || [];
+  const groups = includeGroups && Array.isArray(contactsStore?.listGroups?.())
+    ? contactsStore.listGroups()
+    : [];
+  const contacts = [
+    ...(contactsStore?.listContacts?.() || []),
+    ...(includeGroups
+      ? groups.map((group) => {
+          const rawId = String(group?.id || '').trim();
+          return {
+            ...(group || {}),
+            id: rawId && !rawId.startsWith('group:') ? `group:${rawId}` : rawId,
+            isGroup: true,
+          };
+        })
+      : []),
+  ];
   const seen = new Set();
   return contacts
-    .filter(contact => contact && !contact.isGroup && !String(contact.id || '').trim().startsWith('rp:'))
+    .filter(contact => contact && (includeGroups || !contact.isGroup) && !String(contact.id || '').trim().startsWith('rp:'))
     .map(contact => normalizeMentionMember(contact, resolveAvatar))
     .filter((member) => {
       const key = String(member?.id || member?.name || '').trim();
@@ -59,6 +78,7 @@ export const bindMentionInputControl = ({
   getMembers = () => [],
   getDropdown = () => null,
   setDropdown = () => {},
+  onMentionSelected = null,
 } = {}) => {
   if (!inputEl || !documentLike) return null;
   try {
@@ -89,7 +109,11 @@ export const bindMentionInputControl = ({
   const updateSelection = () => {
     updateMentionSelectionCore(getDropdown?.()?.querySelectorAll?.('.mention-item') || [], mentionSelectedIndex);
   };
-  const insertMention = (name) => {
+  const insertMention = (memberOrName) => {
+    const member = memberOrName && typeof memberOrName === 'object'
+      ? memberOrName
+      : { name: String(memberOrName || '') };
+    const name = String(member?.name || member?.id || '').trim();
     const value = String(inputEl.value || '');
     const { value: nextValue, cursor } = applyMentionInsertion({
       value,
@@ -104,6 +128,13 @@ export const bindMentionInputControl = ({
     inputEl.focus?.();
     hide();
     inputEl.dispatchEvent?.(new Event('input', { bubbles: true }));
+    if (name && typeof onMentionSelected === 'function') {
+      onMentionSelected({
+        id: String(member?.id || '').trim(),
+        name,
+        type: String(member?.type || '').trim(),
+      });
+    }
   };
   const show = (query = '') => {
     const members = filterMentionMembers(getMembers?.() || [], query);
@@ -121,7 +152,7 @@ export const bindMentionInputControl = ({
         mentionSelectedIndex = index;
         updateSelection();
       },
-      onSelect: name => insertMention(name),
+      onSelect: (_name, member) => insertMention(member),
     }).forEach(item => dropdown.appendChild(item));
     positionMentionDropdownCore(dropdown, anchorEl || inputEl.parentElement || inputEl, {
       windowHeight: getWindowHeight(),
@@ -165,7 +196,11 @@ export const bindMentionInputControl = ({
       event.preventDefault?.();
       event.stopPropagation?.();
       event.stopImmediatePropagation?.();
-      insertMention(selected.dataset.memberName);
+      insertMention({
+        id: selected.dataset.memberId,
+        name: selected.dataset.memberName,
+        type: selected.dataset.memberType,
+      });
       return;
     }
     if (action.type === 'hide') {

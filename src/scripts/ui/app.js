@@ -191,6 +191,9 @@ import {
   resolvePrivateChatTargetSessionIdByName,
 } from './chat/moments-runtime-utils.js';
 import {
+  buildMomentStructuredMentions,
+} from './chat/moment-world-resolver-utils.js';
+import {
   buildMvuVarsPayload as buildMvuVarsPayloadCore,
   createMvuEventRuntime,
 } from './chat/mvu-event-runtime-utils.js';
@@ -16438,8 +16441,20 @@ Phase G（Frame 36）：循环衔接
 	    return true;
 	  };
 	  let momentMentionDropdown = null;
+	  let momentComposeSelectedMentions = [];
+	  const addMomentComposeSelectedMention = (mention = {}) => {
+	    const id = String(mention?.id || '').trim();
+	    const name = String(mention?.name || id).trim();
+	    if (!id && !name) return;
+	    if (id.toLowerCase().startsWith('rp:') || name.toLowerCase().startsWith('rp:')) return;
+	    const type = mention?.type === 'group' || id.startsWith('group:') ? 'group' : 'contact';
+	    const key = `${type}:${id || name}`;
+	    if (momentComposeSelectedMentions.some(item => `${item.type}:${item.id || item.name}` === key)) return;
+	    momentComposeSelectedMentions.push({ id, name: name || id, type });
+	  };
 	  const getMomentMentionMembers = () => buildMentionMembersFromContacts({
 	    contactsStore,
+	    includeGroups: true,
 	    resolveAvatar: contact => resolveAvatarForContact(contact?.id || '', contact),
 	  });
 	  const bindMomentMentionInput = (inputEl, anchorEl = null) => bindMentionInputControl({
@@ -16452,6 +16467,7 @@ Phase G（Frame 36）：循环衔接
 	    setDropdown: dropdown => {
 	      momentMentionDropdown = dropdown;
 	    },
+	    onMentionSelected: addMomentComposeSelectedMention,
 	  });
 	  const momentComposeModal = (() => {
 	    let overlay = null;
@@ -16723,12 +16739,18 @@ Phase G（Frame 36）：循环衔接
 	      }
 	      const user = getActiveUserProfile();
 	      const timestamp = Date.now();
+	      const mentions = buildMomentStructuredMentions({
+	        text,
+	        selectedMentions: momentComposeSelectedMentions,
+	        contactsStore,
+	      });
 	      const record = normalizeMomentRecordForStore({
 	        authorId: String(user?.id || '').trim(),
 	        author: getActiveUserName(),
 	        authorAvatar: getActiveUserAvatar(),
 	        originSessionId: String(user?.id || '').trim(),
 	        content,
+	        mentions,
 	        time: formatNowTime(),
 	        timestamp,
 	        regexMode: 'input',
@@ -16902,6 +16924,7 @@ Phase G（Frame 36）：循环衔接
 	        generationParamOverrides = initialGenerationParamOverrides && typeof initialGenerationParamOverrides === 'object'
 	          ? { ...initialGenerationParamOverrides }
 	          : {};
+	        momentComposeSelectedMentions = [];
 	        if (textArea) textArea.value = String(initialText || '').trim();
 	        if (promptArea) promptArea.value = String(initialPrompt || '').trim();
 	        if (negativeArea) negativeArea.value = String(initialNegativePrompt || '').trim();

@@ -20,7 +20,6 @@ import {
 } from './world-session-runtime-utils.js';
 
 const CONTACTS_STORE_KEY = 'contacts_store_v1';
-const CHAT_STORE_KEY = 'chat_store_v1';
 const WORLD_SESSION_MAP_KEY = 'world_session_map_v1';
 const LEGACY_CONTACTS_MIGRATION_KEY = `${CONTACTS_STORE_KEY}__scoped_migrated`;
 const SHARED_AVATAR_MAX = 200_000;
@@ -48,11 +47,17 @@ const isLegacyContactsMigrated = () => {
   }
 };
 
+const isDefaultScopeId = (scopeId = '') => {
+  const scope = normalizeScopeId(scopeId);
+  return !scope || scope === 'default';
+};
+
 const isScopedDataMatch = (data, scopeId) => {
   try {
     const stored = String(data?.scopeId ?? '').trim();
-    if (!stored) return true;
-    return stored === String(scopeId || '').trim();
+    const scope = normalizeScopeId(scopeId);
+    if (!stored) return isDefaultScopeId(scope);
+    return stored === scope;
   } catch {
     return true;
   }
@@ -78,6 +83,14 @@ const uniqueKeys = (list = []) => {
 };
 
 const isRpSessionId = (sessionId) => String(sessionId || '').startsWith('rp:');
+const isGroupSessionId = (sessionId) => String(sessionId || '').startsWith('group:');
+const isSharedContactCandidate = (contact) => {
+  const id = String(contact?.id || '').trim();
+  if (!id) return false;
+  if (isRpSessionId(id) || isGroupSessionId(id)) return false;
+  if (contact?.isGroup === true) return false;
+  return true;
+};
 
 const calculateStaggerDelay = (index = 0) => {
   const idx = Math.max(0, Math.trunc(index));
@@ -202,14 +215,6 @@ export class SessionPanel {
     } catch {}
     this.listElCurrent.innerHTML = '';
     let contacts = this.contactsStore?.listContacts?.() || [];
-    if (!contacts.length && this.contactsReadyResolved) {
-      const sessions = this.store?.listSessions?.() || [];
-      if (sessions.length) {
-        contacts = sessions
-          .filter(id => !isRpSessionId(id))
-          .map(id => this.contactsStore?.getContact?.(id) || { id, name: id, isGroup: String(id).startsWith('group:') });
-      }
-    }
     const currentIdRaw = this.store.getCurrent();
     if (currentIdRaw && !isRpSessionId(currentIdRaw)) {
       this.lastChatSessionId = currentIdRaw;
@@ -486,30 +491,6 @@ export class SessionPanel {
     return data || {};
   }
 
-  async loadSessionsByScope(scopeId) {
-    const scope = normalizeScopeId(scopeId);
-    if (!scope) return [];
-    try {
-      const data = await safeInvoke('chat_store_v2_read_index', { scope });
-      if (data && data.sessions && typeof data.sessions === 'object') {
-        const ids = Object.keys(data.sessions || {}).filter(id => String(id || '').trim());
-        if (ids.length) return ids;
-      }
-    } catch {}
-    const key = makeScopedKey(CHAT_STORE_KEY, scope);
-    const useLegacy = scope === 'default' && !isLegacyContactsMigrated();
-    let data = await this.loadScopedData(key, { fallbackKey: useLegacy ? CHAT_STORE_KEY : '' });
-    if (data && !isScopedDataMatch(data, scope)) {
-      data = null;
-      try {
-        data = await safeInvoke('load_kv', { name: key });
-      } catch {}
-      if (data && !isScopedDataMatch(data, scope)) data = null;
-    }
-    if (!data || !data.sessions) return [];
-    return Object.keys(data.sessions || {}).filter(id => String(id || '').trim());
-  }
-
   renderSharedList() {
     if (!this.listElShared) return;
     this.listElShared.innerHTML = '';
@@ -629,23 +610,11 @@ export class SessionPanel {
       if (!contacts.length) {
         contacts = await this.loadContactsByScope(scope);
       }
-      if (!contacts.length) {
-        const sessions = await this.loadSessionsByScope(scope);
-        if (sessions.length) {
-          contacts = sessions.map(id => ({
-            id,
-            name: id,
-            avatar: '',
-            isGroup: String(id || '').startsWith('group:'),
-          }));
-        }
-      }
       if (!contacts.length) continue;
       const worldMap = await this.loadWorldMapByScope(scope);
       contacts.forEach(contact => {
         const id = String(contact?.id || '').trim();
-        if (!id) return;
-        if (isRpSessionId(id)) return;
+        if (!isSharedContactCandidate(contact)) return;
         results.push({
           contact: {
             ...contact,
@@ -700,8 +669,7 @@ export class SessionPanel {
         const contacts = Array.isArray(entry?.contacts) ? entry.contacts : [];
         contacts.forEach(contact => {
           const id = String(contact?.id || '').trim();
-          if (!id) return;
-          if (isRpSessionId(id)) return;
+          if (!isSharedContactCandidate(contact)) return;
           results.push({
             contact: {
               ...contact,
@@ -727,6 +695,10 @@ export class SessionPanel {
     if (!contact || !contact.id) return;
     const id = String(contact.id || '').trim();
     if (!id) return;
+    if (!isSharedContactCandidate(contact)) {
+      window.toastr?.warning?.('群组不能通过添加好友导入');
+      return;
+    }
     if (this.contactsStore.getContact(id)) {
       window.toastr?.info?.('联系人已存在');
       return;
@@ -1351,3 +1323,10 @@ export class SessionPanel {
     this.refresh();
   }
 }
+
+export const __sessionPanelInternals = {
+  isDefaultScopeId,
+  isGroupSessionId,
+  isScopedDataMatch,
+  isSharedContactCandidate,
+};

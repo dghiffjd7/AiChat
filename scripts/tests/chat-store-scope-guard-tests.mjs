@@ -25,6 +25,10 @@ const makeSession = (timestamp = 1) => ({
 
 {
   const storage = __chatStoreStorageInternals;
+  assert.equal(storage.isScopedDataMatch({ sessions: {} }, 'persona_1'), false);
+  assert.equal(storage.isScopedDataMatch({ sessions: {} }, 'default'), true);
+  assert.equal(storage.isScopedDataMatch({ sessions: {}, scopeId: 'persona_1' }, 'persona_1'), true);
+  assert.equal(storage.isScopedDataMatch({ sessions: {}, scopeId: 'persona_2' }, 'persona_1'), false);
   assert.equal(storage.isForeignRpSessionForScope('rp:persona_2', 'persona_1'), true);
   assert.equal(storage.isForeignRpSessionForScope('rp:persona_1', 'persona_1'), false);
   assert.equal(storage.isForeignRpSessionForScope('room-a', 'persona_1'), false);
@@ -63,6 +67,10 @@ const makeSession = (timestamp = 1) => ({
 
 {
   const contacts = __contactsStoreInternals;
+  assert.equal(contacts.isScopedDataMatch({ contacts: {} }, 'persona_1'), false);
+  assert.equal(contacts.isScopedDataMatch({ contacts: {} }, 'default'), true);
+  assert.equal(contacts.isScopedDataMatch({ contacts: {}, scopeId: 'persona_1' }, 'persona_1'), true);
+  assert.equal(contacts.isScopedDataMatch({ contacts: {}, scopeId: 'persona_2' }, 'persona_1'), false);
   assert.equal(contacts.isForeignRpContactForScope('rp:persona_2', 'persona_1'), true);
   assert.equal(contacts.isForeignRpContactForScope('rp:persona_1', 'persona_1'), false);
 

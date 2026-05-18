@@ -39,6 +39,8 @@ export const buildMentionDropdownItems = (documentLike, members, {
   const item = documentLike.createElement('div');
   item.className = 'mention-item';
   item.dataset.memberName = member.name || member.id;
+  item.dataset.memberId = member.id || '';
+  item.dataset.memberType = member.type || '';
   item.style.cssText = [
     'display:flex', 'align-items:center', 'gap:8px',
     'padding:8px 12px', 'cursor:pointer', 'font-size:14px',
@@ -64,7 +66,7 @@ export const buildMentionDropdownItems = (documentLike, members, {
   item.addEventListener?.('click', (event) => {
     event.preventDefault?.();
     event.stopPropagation?.();
-    onSelect?.(member.name || member.id);
+    onSelect?.(member.name || member.id, member);
   });
   return item;
 });
