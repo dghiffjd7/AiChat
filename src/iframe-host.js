@@ -28,6 +28,7 @@
   const nestedSrcdocBlobUrls = new Set();
   const externalizedBlobMeta = new Map();
   const remoteScriptTextCache = new Map();
+  const loadingOverlaySignalRe = /(^|[^a-z])(loading|loader|preload|preloader|spinner|splash|progress|resource)([^a-z]|$)/i;
 
   const normalizeSource = (source) => {
     const raw = String(source || '').trim().toLowerCase();
@@ -1707,6 +1708,7 @@
   const measureDocumentHeight = () => {
     try {
       const body = document.body;
+      const docEl = document.documentElement;
       if (!body) return 0;
       const kids = Array.from(body.children || []);
       if (!kids.length) {
@@ -1741,9 +1743,64 @@
           return true;
         }
       };
+      const hasLoadingOverlaySignal = (el) => {
+        try {
+          const marker = [
+            el.id,
+            el.className,
+            el.getAttribute?.('role'),
+            el.getAttribute?.('aria-label'),
+            el.getAttribute?.('data-state'),
+            el.getAttribute?.('data-loading'),
+          ].join(' ');
+          return loadingOverlaySignalRe.test(String(marker || ''));
+        } catch {
+          return false;
+        }
+      };
+      const isLikelyLoadingOverlay = (el) => {
+        try {
+          if (!(el instanceof HTMLElement)) return false;
+          if (!hasLoadingOverlaySignal(el)) return false;
+          const style = getComputedStyle(el);
+          const position = String(style.position || '').trim().toLowerCase();
+          if (position !== 'fixed' && position !== 'absolute') return false;
+          const rect = el.getBoundingClientRect();
+          if (!rect || rect.width <= 0 || rect.height <= 0) return false;
+          const viewportH = Math.max(window.innerHeight || 0, docEl?.clientHeight || 0);
+          const viewportW = Math.max(window.innerWidth || 0, docEl?.clientWidth || 0);
+          const coversHeight = viewportH > 0 ? rect.height >= (viewportH * 0.7) : rect.height >= 360;
+          const coversWidth = viewportW > 0 ? rect.width >= (viewportW * 0.7) : true;
+          return coversHeight && coversWidth;
+        } catch {
+          return false;
+        }
+      };
+      const getLoadingOverlayFallbackHeight = () => {
+        try {
+          const stable = Math.max(stableViewportHeight || 0, readStableViewportHeight() || 0);
+          const previous = Number(lastSentHeight || 0);
+          if (stable > 0) {
+            const lower = Math.max(120, stable * 0.5);
+            const upper = Math.max(360, stable * 1.25);
+            if (previous >= lower && previous <= upper) return previous;
+            return stable;
+          }
+          if (previous >= 120 && previous <= 1000) return previous;
+          return 480;
+        } catch {
+          return 480;
+        }
+      };
       const visibleKids = kids.filter((el) => !shouldIgnore(el));
       const measuredKids = visibleKids.filter((el) => isInFlow(el));
-      const targets = measuredKids.length ? measuredKids : visibleKids;
+      // Full-screen loaders track the iframe viewport; measuring them creates height feedback.
+      const overlayFilteredKids = visibleKids.filter((el) => !isLikelyLoadingOverlay(el));
+      const hasLoadingOverlayOnly = !measuredKids.length && overlayFilteredKids.length < visibleKids.length;
+      const targets = measuredKids.length ? measuredKids : overlayFilteredKids;
+      if (!targets.length && hasLoadingOverlayOnly) {
+        return getLoadingOverlayFallbackHeight();
+      }
       if (!targets.length) {
         const rect = body.getBoundingClientRect();
         return rect ? rect.height : 0;

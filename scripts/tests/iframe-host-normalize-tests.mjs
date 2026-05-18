@@ -18,6 +18,7 @@ const extractRegex = (name) => {
 const riskyStartRe = extractRegex('riskyStartRe');
 const safePrevEndRe = extractRegex('safePrevEndRe');
 const keywordPrevRe = extractRegex('keywordPrevRe');
+const loadingOverlaySignalRe = extractRegex('loadingOverlaySignalRe');
 
 const normalizeExecutableScriptSource = (code) => {
   const lines = String(code || '').replace(/\r\n?/g, '\n').split('\n');
@@ -58,6 +59,14 @@ const normalizeExecutableScriptSource = (code) => {
       '(function init() {})();',
     ].join('\n'),
   );
+}
+
+{
+  assert.match('loading-screen', loadingOverlaySignalRe);
+  assert.match('preloader overlay', loadingOverlaySignalRe);
+  assert.match('resource progress', loadingOverlaySignalRe);
+  assert.doesNotMatch('unloading-state', loadingOverlaySignalRe);
+  assert.doesNotMatch('catalog-panel', loadingOverlaySignalRe);
 }
 
 console.log('iframe-host-normalize-tests passed');
