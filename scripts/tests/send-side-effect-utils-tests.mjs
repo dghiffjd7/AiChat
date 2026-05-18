@@ -177,12 +177,12 @@ test('runAssistantGenerationRequest preserves prompt, context, then bound bridge
     },
   );
 
-  assert.equal(result, 'generated-stream');
-  assert.deepEqual(calls, [
-    ['inject', 'session-a'],
-    ['context', 'hello'],
-    ['generate', 'bridge-instance', 'hello', context],
-  ]);
+	  assert.equal(result, 'generated-stream');
+	  assert.deepEqual(calls, [
+	    ['context', 'hello'],
+	    ['inject', 'session-a'],
+	    ['generate', 'bridge-instance', 'hello', context],
+	  ]);
 });
 
 test('runAssistantGenerationRequest propagates generation errors after prompt and context build', async () => {
@@ -212,11 +212,11 @@ test('runAssistantGenerationRequest propagates generation errors after prompt an
     error,
   );
 
-  assert.deepEqual(calls, [
-    ['inject', 'session-b'],
-    ['context', 'hello'],
-    ['generate', 'hello', { prompt: 'hello' }],
-  ]);
+	  assert.deepEqual(calls, [
+	    ['context', 'hello'],
+	    ['inject', 'session-b'],
+	    ['generate', 'hello', { prompt: 'hello' }],
+	  ]);
 });
 
 test('createCreativeAssistantStreamProcessor preserves creative callback wiring', () => {

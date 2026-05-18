@@ -70,6 +70,27 @@ export const getBuiltinPhoneFormatPromptSeed = (source = BUILTIN_PHONE_FORMAT_WO
     return out;
 };
 
+export const LEGACY_PHONE_IMAGE_MESSAGE_RULES = [
+    '【图片或视频消息相关】',
+    '- 格式：[img-内容]',
+    '- 示例：路人a--[img-一张自拍]--12:00',
+    '- 可用范围：私聊，群聊，QQ空间',
+    '- 在群聊和私聊时必须独立成行',
+    '- 在QQ空间时前面可带其他文字内容',
+    '- 注意：图片和视频都是使用这个格式',
+].join('\n');
+
+export const CURRENT_PHONE_IMAGE_MESSAGE_RULES = [
+    '【图片或视频消息相关】',
+    '- 仅文字描述：使用 [img-内容]',
+    '- 需要图片时：使用 <image_prompt>完整生图提示词</image_prompt>格式',
+    '- 请根据语境二选一；禁止同一条消息同时使用 [img-...] 和 <image_prompt>',
+    '- 积极策略下，默认优先使用 <image_prompt>',
+    '- 可用范围：私聊，群聊，QQ空间',
+    '- 在群聊和私聊时必须独立成行',
+    '- 在QQ空间时前面可带其他文字内容',
+].join('\n');
+
 export const BUILTIN_PHONE_FORMAT_WORLDBOOK = {
     name: BUILTIN_PHONE_FORMAT_WORLDBOOK_ID,
     entries: [
@@ -209,13 +230,7 @@ CPU烧了
 - 可用范围：私聊，群聊
 - 不可用范围：QQ空间
 
-【图片或视频消息相关】
-- 格式：[img-内容]
-- 示例：路人a--[img-一张自拍]--12:00
-- 可用范围：私聊，群聊，QQ空间
-- 在群聊和私聊时必须独立成行
-- 在QQ空间时前面可带其他文字内容
-- 注意：图片和视频都是使用这个格式
+${CURRENT_PHONE_IMAGE_MESSAGE_RULES}
 
 格式解释:
 私聊：{{user}}和对方的私聊,聊天内容只有双方知道,标签名字顺序一定是{{user}}和xxx的私聊,而不是xxx和{{user}}的私聊

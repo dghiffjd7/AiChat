@@ -80,10 +80,11 @@ const defaults = {
   memoryAutoExtract: true,
   memoryAutoExtractMode: 'inline',
   memoryInjectDefaultD0Migrated: true,
+  memoryInjectDefaultLatestUserMigrated: true,
   memoryUpdateApiMode: 'chat',
   memoryUpdateProfileId: '',
   memoryUpdateContextRounds: 6,
-  memoryInjectPosition: 'history_depth',
+  memoryInjectPosition: 'before_latest_user',
   memoryInjectDepth: 0,
   memoryBridgeRpToChatEnabled: true,
   memoryBridgeRpToChatLimit: 0,
@@ -140,7 +141,7 @@ const migrateSettings = (settings = {}) => {
     next.memoryUpdateContextRounds = safe;
   }
   const injectPositionRaw = String(next.memoryInjectPosition || '').trim().toLowerCase();
-  if (!injectPositionRaw || injectPositionRaw === 'template') {
+  if (!injectPositionRaw) {
     next.memoryInjectPosition = defaults.memoryInjectPosition;
   } else if (injectPositionRaw === 'history_depth') {
     const injectDepthRaw = Math.trunc(Number(next.memoryInjectDepth));
@@ -159,6 +160,15 @@ const migrateSettings = (settings = {}) => {
     next.memoryInjectDepth = 0;
   }
   next.memoryInjectDefaultD0Migrated = true;
+  if (
+    next.memoryInjectDefaultLatestUserMigrated !== true &&
+    String(next.memoryInjectPosition || '').trim().toLowerCase() === 'history_depth' &&
+    Number(next.memoryInjectDepth || 0) === 0
+  ) {
+    next.memoryInjectPosition = 'before_latest_user';
+    next.memoryInjectDepth = 0;
+  }
+  next.memoryInjectDefaultLatestUserMigrated = true;
   if (next.uiThemeSchemaVersion == null) {
     if (String(next.uiThemeAvatarStyle || '').trim().toLowerCase() === 'rounded') {
       next.uiThemeAvatarStyle = 'system';

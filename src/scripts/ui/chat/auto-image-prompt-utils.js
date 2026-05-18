@@ -149,10 +149,15 @@ export const restoreProtectedAutoImagePromptTags = (text = '', protection = null
 export const DEFAULT_AUTO_IMAGE_PROMPT_RULES = [
   '<generate_img_rule>',
   '自动生图标签规则，用于生成{{image_prompt_surface}}。',
-  '当本轮回复适合配图、或聊天角色会自然发送图片时，在合适的位置插入一个生图提示词标签。',
   '当前图片模型：{{image_prompt_model}}',
   '提示词风格：{{image_prompt_style}}',
   '{{image_prompt_decision_mode}}',
+  '【AI决策规则】',
+  '- 若本轮需要新生成图片，输出 <image_prompt>...</image_prompt>',
+  '- 若只是通过文本描述图片，输出 [img-内容]',
+  '- 积极：用户明确要照片/自拍/图片时，优先视为新生成图片，使用 <image_prompt>',
+  '- 标准：明确图片需求或强视觉场景才使用 <image_prompt>',
+  '- 保守：只有用户明确要求图片生成时才使用 <image_prompt>',
   '请严格按以下XML格式输出：',
   '<image_prompt>这里写完整生图提示词</image_prompt>',
   '注意事项：',
@@ -190,12 +195,12 @@ export const describeAutoImagePromptStyle = (value = '') => {
 export const describeAutoImagePromptDecisionMode = (value = '') => {
   const mode = String(value || '').trim().toLowerCase();
   if (mode === 'aggressive') {
-    return '触发策略：积极。视觉场景、角色自然会发送图片、创意写作出现可视化段落时，可以更主动地输出 <image_prompt>。';
+    return '触发策略：积极。用户明确要照片/自拍/图片时，优先视为新生成图片并使用 <image_prompt>；视觉场景、角色自然会发送图片、创意写作出现可视化段落时，可以更主动地输出 <image_prompt>。';
   }
   if (mode === 'standard') {
     return '触发策略：标准。仅在本轮回复明显适合配图、用户提到图片需求、或角色自然会发送图片时输出 <image_prompt>。';
   }
-  return '触发策略：保守。默认不要输出图片标签；只有用户明确要求图像、场景强视觉化、角色明显自然会发送图片、或创意写作关键场景时才输出 <image_prompt>。普通闲聊、寒暄、解释、没有新视觉信息时禁止输出。';
+  return '触发策略：保守。默认不要输出图片标签；只有用户明确要求图片生成、场景强视觉化、角色明显自然会发送图片、或创意写作关键场景时才输出 <image_prompt>。普通闲聊、寒暄、解释、没有新视觉信息时禁止输出。';
 };
 
 export const buildImagePromptModelHintFromConfig = (config = {}) => {

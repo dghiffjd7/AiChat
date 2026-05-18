@@ -7,6 +7,8 @@ const MEMORY_PROMPT_POSITIONS = new Set([
   'history_before',
   'history_after',
   'history_depth',
+  'before_latest_user',
+  'after_latest_user',
 ]);
 const SUMMARY_TABLE_IDS = new Set([
   'chat_summary',

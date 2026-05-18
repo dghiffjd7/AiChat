@@ -6,6 +6,8 @@
 
 import {
     BUILTIN_PHONE_FORMAT_CHAT_PROMPT_SPECS,
+    CURRENT_PHONE_IMAGE_MESSAGE_RULES,
+    LEGACY_PHONE_IMAGE_MESSAGE_RULES,
     getBuiltinPhoneFormatPromptSeed,
 } from './builtin-worldbooks.js';
 import { normalizeReasoningEffort } from '../api/model-capabilities.js';
@@ -228,10 +230,15 @@ const DEFAULT_SUMMARY_RULES = [
 const DEFAULT_AUTO_IMAGE_PROMPT_RULES = [
     '<generate_img_rule>',
     '自动生图标签规则，用于生成{{image_prompt_surface}}。',
-    '当本轮回复适合配图、或聊天角色会自然发送图片时，在合适的位置插入一个生图提示词标签。',
     '当前图片模型：{{image_prompt_model}}',
     '提示词风格：{{image_prompt_style}}',
     '{{image_prompt_decision_mode}}',
+    '【AI决策规则】',
+    '- 若本轮需要新生成图片，输出 <image_prompt>...</image_prompt>',
+    '- 若只是通过文本描述图片，输出 [img-内容]',
+    '- 积极：用户明确要照片/自拍/图片时，优先视为新生成图片，使用 <image_prompt>',
+    '- 标准：明确图片需求或强视觉场景才使用 <image_prompt>',
+    '- 保守：只有用户明确要求图片生成时才使用 <image_prompt>',
     '请严格按以下XML格式输出：',
     '<image_prompt>这里写完整生图提示词</image_prompt>',
     '注意事项：',
@@ -409,6 +416,7 @@ const looksDefaultAutoImagePromptRulesForMigration = (value) => {
         raw.includes('<image_prompt>这里写完整生图提示词</image_prompt>') &&
         (!raw.includes('<generate_img_rule>') ||
             !raw.includes('{{image_prompt_decision_mode}}') ||
+            !raw.includes('【AI决策规则】') ||
             !raw.includes('[img-内容] 是一般图片格式，<image_prompt> 是文生图格式') ||
             raw.includes('[img-<image_prompt>'))
     ) {
@@ -446,7 +454,7 @@ const ensureAutoImagePromptFields = (preset) => {
     const hadDepth = typeof p.auto_image_prompt_depth === 'number';
     const hadRole = typeof p.auto_image_prompt_role === 'number';
     if (typeof p.auto_image_prompt_enabled !== 'boolean') p.auto_image_prompt_enabled = true;
-    if (!hadPosition) p.auto_image_prompt_position = 1;
+    if (!hadPosition) p.auto_image_prompt_position = 4;
     if (!hadDepth) p.auto_image_prompt_depth = 0;
     if (typeof p.auto_image_prompt_role !== 'number') p.auto_image_prompt_role = 0;
     const shouldMigrateLegacyDefaultPosition =
@@ -458,10 +466,30 @@ const ensureAutoImagePromptFields = (preset) => {
     }
     p.auto_image_prompt_rules = sanitizeAutoImagePromptRulesText(p.auto_image_prompt_rules);
     if (shouldMigrateLegacyDefaultPosition && p.auto_image_prompt_rules === DEFAULT_AUTO_IMAGE_PROMPT_RULES) {
-        p.auto_image_prompt_position = 1;
+        p.auto_image_prompt_position = 4;
         p.auto_image_prompt_depth = 0;
         p.auto_image_prompt_role = 0;
     }
+    if (
+        p.auto_image_prompt_default_prefix_migrated !== true &&
+        p.auto_image_prompt_rules === DEFAULT_AUTO_IMAGE_PROMPT_RULES &&
+        p.auto_image_prompt_position === 1 &&
+        p.auto_image_prompt_depth === 0 &&
+        p.auto_image_prompt_role === 0
+    ) {
+        p.auto_image_prompt_position = 4;
+    }
+    p.auto_image_prompt_default_prefix_migrated = true;
+    if (
+        p.auto_image_prompt_default_latest_migrated !== true &&
+        p.auto_image_prompt_rules === DEFAULT_AUTO_IMAGE_PROMPT_RULES &&
+        p.auto_image_prompt_position === 0 &&
+        p.auto_image_prompt_depth === 0 &&
+        p.auto_image_prompt_role === 0
+    ) {
+        p.auto_image_prompt_position = 4;
+    }
+    p.auto_image_prompt_default_latest_migrated = true;
 };
 
 const sanitizePhoneFormatPromptText = (value, spec = {}) => {
@@ -472,6 +500,9 @@ const sanitizePhoneFormatPromptText = (value, spec = {}) => {
     let out = stripPromptMigrationNotes(raw);
     if (entryId === '手机-格式3-QQ空间' || rulesKey === 'phone_format_moment_rules') {
         out = out.replace(/\n+【[^】]*评论[^】]*系统[^】]*】[\s\S]*?(?=\n+QQ空间仅会有主要角色发布的动态)/g, '\n');
+    }
+    if (entryId === '手机-格式2-QQ聊天' || rulesKey === 'phone_format_chat_rules') {
+        out = out.split(LEGACY_PHONE_IMAGE_MESSAGE_RULES).join(CURRENT_PHONE_IMAGE_MESSAGE_RULES);
     }
     if (entryId === '手机-格式999-格式结尾' || rulesKey === 'phone_format_footer_rules') {
         out = out
@@ -610,6 +641,8 @@ const MEMORY_DATA_POSITIONS = new Set([
     'history_before',
     'history_after',
     'history_depth',
+    'before_latest_user',
+    'after_latest_user',
 ]);
 
 const normalizeMemoryDataPosition = (value) => {

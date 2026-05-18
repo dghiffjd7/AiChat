@@ -19,6 +19,7 @@ const riskyStartRe = extractRegex('riskyStartRe');
 const safePrevEndRe = extractRegex('safePrevEndRe');
 const keywordPrevRe = extractRegex('keywordPrevRe');
 const loadingOverlaySignalRe = extractRegex('loadingOverlaySignalRe');
+const fontAwesomeCdnCssRe = extractRegex('fontAwesomeCdnCssRe');
 
 const normalizeExecutableScriptSource = (code) => {
   const lines = String(code || '').replace(/\r\n?/g, '\n').split('\n');
@@ -67,6 +68,26 @@ const normalizeExecutableScriptSource = (code) => {
   assert.match('resource progress', loadingOverlaySignalRe);
   assert.doesNotMatch('unloading-state', loadingOverlaySignalRe);
   assert.doesNotMatch('catalog-panel', loadingOverlaySignalRe);
+}
+
+{
+  assert.match(
+    'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css',
+    fontAwesomeCdnCssRe,
+  );
+  assert.match(
+    'https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.0.0-beta3/css/all.min.css',
+    fontAwesomeCdnCssRe,
+  );
+  assert.match(
+    'https://unpkg.com/@fortawesome/fontawesome-free@6.0.0-beta3/css/all.css',
+    fontAwesomeCdnCssRe,
+  );
+  assert.doesNotMatch(
+    'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css',
+    fontAwesomeCdnCssRe,
+  );
+  assert.doesNotMatch('https://example.com/font-awesome.css', fontAwesomeCdnCssRe);
 }
 
 console.log('iframe-host-normalize-tests passed');

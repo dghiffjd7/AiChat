@@ -29,6 +29,8 @@
   const externalizedBlobMeta = new Map();
   const remoteScriptTextCache = new Map();
   const loadingOverlaySignalRe = /(^|[^a-z])(loading|loader|preload|preloader|spinner|splash|progress|resource)([^a-z]|$)/i;
+  const FONT_AWESOME_LOCAL_CSS_PATH = '/vendor/fontawesome/6.0.0-beta3/css/all.min.css';
+  const fontAwesomeCdnCssRe = /^https?:\/\/(?:(?:cdnjs\.cloudflare\.com\/ajax\/libs\/font-awesome\/6\.0\.0-beta3\/css\/all(?:\.min)?\.css)|(?:(?:cdn\.jsdelivr\.net\/npm|unpkg\.com)\/@fortawesome\/fontawesome-free@6\.0\.0-beta3\/css\/all(?:\.min)?\.css))(?:[?#].*)?$/i;
 
   const normalizeSource = (source) => {
     const raw = String(source || '').trim().toLowerCase();
@@ -593,6 +595,13 @@
     if (!isAbsolute) return true;
     if (/^(data:|blob:|asset:|tauri:|file:)/i.test(value)) return true;
     return Boolean(allowRemoteHttp) && /^https?:/i.test(value);
+  };
+
+  const rewriteVendorResourceUrl = (url) => {
+    const value = String(url || '').trim();
+    if (!value) return value;
+    if (fontAwesomeCdnCssRe.test(value)) return FONT_AWESOME_LOCAL_CSS_PATH;
+    return value;
   };
 
   const syncElementAttributes = (target, source) => {
@@ -1511,10 +1520,11 @@
     }
     if (tag === 'link') {
       const rel = String(node.getAttribute('rel') || '').trim().toLowerCase();
-      const href = String(node.getAttribute('href') || '').trim();
+      const rawHref = String(node.getAttribute('href') || '').trim();
+      const href = rewriteVendorResourceUrl(rawHref);
       if (rel !== 'stylesheet' || !href || !isAllowedResourceUrl(href, { allowRemoteHttp: allowScripts })) {
-        if (rel === 'stylesheet' && href) {
-          sendDebug('warn', 'stylesheet-blocked href=' + compactText(href, 220));
+        if (rel === 'stylesheet' && rawHref) {
+          sendDebug('warn', 'stylesheet-blocked href=' + compactText(rawHref, 220));
         }
         return null;
       }
@@ -1522,6 +1532,15 @@
       Array.from(node.attributes || []).forEach((attr) => {
         try { link.setAttribute(attr.name, attr.value); } catch {}
       });
+      if (href !== rawHref) {
+        try {
+          link.setAttribute('href', href);
+          link.removeAttribute('integrity');
+          link.removeAttribute('crossorigin');
+          link.setAttribute('data-chatapp-vendor-rewrite', 'fontawesome');
+          sendDebug('info', 'stylesheet-rewrite href=' + compactText(rawHref, 220));
+        } catch {}
+      }
       if (inHead) link.setAttribute('data-chatapp-head-node', '1');
       link.addEventListener('load', () => {
         sendDebug('info', 'stylesheet-load-ok href=' + compactText(href, 220));

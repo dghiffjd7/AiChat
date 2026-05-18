@@ -47,6 +47,8 @@ const EXT_PROMPT_TYPES = {
     IN_CHAT: 1,
     BEFORE_PROMPT: 2,
     SYSTEM_DEPTH_1: 3,
+    BEFORE_LATEST_USER: 4,
+    AFTER_LATEST_USER: 5,
 };
 
 const EXT_PROMPT_ROLES = {
@@ -1880,6 +1882,8 @@ export class PresetPanel {
                 : [
                     { v: EXT_PROMPT_TYPES.IN_PROMPT, t: 'IN_PROMPT（main 末尾）' },
                     { v: EXT_PROMPT_TYPES.IN_CHAT, t: 'IN_CHAT（按 depth/role）' },
+                    { v: EXT_PROMPT_TYPES.BEFORE_LATEST_USER, t: '最新输入前' },
+                    { v: EXT_PROMPT_TYPES.AFTER_LATEST_USER, t: '最新输入后' },
                     { v: EXT_PROMPT_TYPES.BEFORE_PROMPT, t: 'BEFORE_PROMPT（main 开头）' },
                     { v: EXT_PROMPT_TYPES.NONE, t: 'NONE（不注入）' },
                 ];
@@ -2180,10 +2184,12 @@ export class PresetPanel {
         const pos = document.createElement('select');
         pos.id = 'context-position'; pos.className = 'pp-input';
         pos.innerHTML = `
-            <option value="${EXT_PROMPT_TYPES.IN_PROMPT}">IN_PROMPT（main 末尾）</option>
-            <option value="${EXT_PROMPT_TYPES.IN_CHAT}">IN_CHAT（按 depth/role）</option>
-            <option value="${EXT_PROMPT_TYPES.BEFORE_PROMPT}">BEFORE_PROMPT（main 开头）</option>
-            <option value="${EXT_PROMPT_TYPES.NONE}">NONE（不注入）</option>
+	            <option value="${EXT_PROMPT_TYPES.IN_PROMPT}">IN_PROMPT（main 末尾）</option>
+	            <option value="${EXT_PROMPT_TYPES.IN_CHAT}">IN_CHAT（按 depth/role）</option>
+	            <option value="${EXT_PROMPT_TYPES.BEFORE_LATEST_USER}">最新输入前</option>
+	            <option value="${EXT_PROMPT_TYPES.AFTER_LATEST_USER}">最新输入后</option>
+	            <option value="${EXT_PROMPT_TYPES.BEFORE_PROMPT}">BEFORE_PROMPT（main 开头）</option>
+	            <option value="${EXT_PROMPT_TYPES.NONE}">NONE（不注入）</option>
         `;
         pos.value = String(p.story_string_position ?? EXT_PROMPT_TYPES.IN_PROMPT);
         const posWrap = this.wrapSelectWithCustomUI(pos, '注入位置');
@@ -2572,9 +2578,11 @@ export class PresetPanel {
                 <option value="history_before">History 前</option>
                 <option value="history_after">History 后</option>
                 <option value="history_depth">深度注入（History 内）</option>
+                <option value="before_latest_user">最新输入前</option>
+                <option value="after_latest_user">最新输入后</option>
                 <option value="system_end+before_chat">双重注入（系统末尾 + 对话前）</option>
             `;
-            const allowed = new Set(['after_persona', 'system_end', 'before_chat', 'history_before', 'history_after', 'history_depth', 'system_end+before_chat']);
+            const allowed = new Set(['after_persona', 'system_end', 'before_chat', 'history_before', 'history_after', 'history_depth', 'before_latest_user', 'after_latest_user', 'system_end+before_chat']);
             const next = String(value || '').trim().toLowerCase();
             el.value = allowed.has(next) ? next : '';
             return el;
@@ -2596,7 +2604,7 @@ export class PresetPanel {
 
         const memoryHint = document.createElement('div');
         memoryHint.style.cssText = 'color:var(--app-text-muted); font-size:12px; margin:10px 0 4px; line-height:1.5;';
-        memoryHint.textContent = '动态记忆表格内容默认放在 SYSTEM D0；写表指导位置可在下方单独控制。';
+        memoryHint.textContent = '动态记忆表格内容默认排在 History 后、最新输入前；写表指导位置可在下方单独控制。';
         wrap.appendChild(memoryHint);
 
         const memDataRow = this.renderInputRow([
@@ -2613,7 +2621,7 @@ export class PresetPanel {
 
         const memoryDepthHint = document.createElement('div');
         memoryDepthHint.style.cssText = 'color:var(--app-text-muted); font-size:12px; margin:4px 0 0; line-height:1.5;';
-        memoryDepthHint.textContent = '仅在“深度注入（History 内）”时生效。要放在 history 后，请直接选择“History 后”。';
+        memoryDepthHint.textContent = '仅在“深度注入（History 内）”时生效。要脱离 depth，请直接选择 History 前/后或最新输入前/后。';
         wrap.appendChild(memoryDepthHint);
 
         const syncMemoryDataUi = () => {
@@ -2627,7 +2635,7 @@ export class PresetPanel {
 
         const guideHint = document.createElement('div');
         guideHint.style.cssText = 'color:var(--app-text-muted); font-size:12px; margin:12px 0 4px; line-height:1.5;';
-        guideHint.textContent = '写表指导提示词可单独定位；默认放在 SYSTEM D0。';
+        guideHint.textContent = '写表指导提示词可单独定位；默认排在 History 后、记忆表格内容前。';
         wrap.appendChild(guideHint);
 
         const memoryGuidePosition = makeMemoryDataPositionSelect('gen-memory-guide-position', p.memory_guide_position);

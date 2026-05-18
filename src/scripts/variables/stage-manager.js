@@ -24,6 +24,9 @@ const normalizeStageSchema = (raw) => {
         : String(worldbook || '').trim();
       const prompt = typeof stage.prompt === 'string' ? stage.prompt.trim() : '';
       const role = typeof stage.role === 'string' ? stage.role.trim().toLowerCase() : '';
+      const position = String(stage.position ?? stage.promptPosition ?? 'before_latest_user').trim();
+      const depthRaw = Math.trunc(Number(stage.depth ?? stage.promptDepth));
+      const orderRaw = Number(stage.order ?? stage.promptOrder);
       return {
         id,
         name,
@@ -32,6 +35,9 @@ const normalizeStageSchema = (raw) => {
         worldbook: worldId,
         prompt,
         role,
+        position,
+        depth: Number.isFinite(depthRaw) ? Math.max(0, depthRaw) : 0,
+        order: Number.isFinite(orderRaw) ? orderRaw : 3200,
       };
     })
     .filter(Boolean);
@@ -222,7 +228,14 @@ export class StageManager {
         content = this.appBridge.processTextMacros(content, { sessionId: sid });
       }
     } catch {}
-    return [{ content, role }];
+    return [{
+      content,
+      role,
+      position: String(stage.position || 'before_latest_user').trim(),
+      depth: Number.isFinite(Number(stage.depth)) ? Math.max(0, Math.trunc(Number(stage.depth))) : 0,
+      order: Number.isFinite(Number(stage.order)) ? Number(stage.order) : 3200,
+      source: 'stage',
+    }];
   }
 
   async evaluateStageTransition(sessionId, { force = false } = {}) {

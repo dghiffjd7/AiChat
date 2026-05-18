@@ -117,6 +117,12 @@ const ROLE_OPTIONS = [
     { value: 2, label: 'assistant' },
 ];
 
+const DEPTH_ANCHOR_OPTIONS = [
+    { value: '', label: '默认（D0 在最新输入后）' },
+    { value: 'before_latest_user', label: 'D0 最新输入前' },
+    { value: 'after_latest_user', label: 'D0 最新输入后' },
+];
+
 const TRIGGER_STRATEGY_OPTIONS = [
     { value: 'blue', label: '🔵 蓝灯（常驻触发）' },
     { value: 'green', label: '🟢 绿灯（关键词触发）' },
@@ -488,6 +494,8 @@ const normalizeEntry = (entry = {}, index = 0, options = {}) => {
     e.depth = toNumber(e.depth, DEFAULT_DEPTH);
     e.position = toNumber(e.position, 0);
     e.role = toNumber(e.role, 0);
+    const anchor = String(e.latestUserAnchor || e.promptAnchor || '').trim().toLowerCase();
+    e.latestUserAnchor = anchor === 'before_latest_user' || anchor === 'after_latest_user' ? anchor : '';
 
     e.disable = Boolean(e.disable);
     e.constant = Boolean(e.constant);
@@ -3765,6 +3773,13 @@ export class WorldEditorModal {
                                         <span class="world-app-select-btn-chevron">▾</span>
                                     </button>
                                 </div>
+                                <div class="world-entry-field" id="we-depth-anchor-wrap" style="${Number(entry.position) === 4 ? '' : 'display:none;'}">
+                                    <label>D0 锚点</label>
+                                    <button type="button" class="world-app-select-btn" id="we-depth-anchor-btn">
+                                        <span>${this.getOptionLabel(DEPTH_ANCHOR_OPTIONS, entry.latestUserAnchor, '默认（D0 在最新输入后）')}</span>
+                                        <span class="world-app-select-btn-chevron">▾</span>
+                                    </button>
+                                </div>
                             </div>
                         </div>
 
@@ -4014,6 +4029,8 @@ export class WorldEditorModal {
                 entry.position = toNumber(value, 0);
                 const roleWrap = q('#we-role-wrap');
                 if (roleWrap) roleWrap.style.display = Number(entry.position) === 4 ? '' : 'none';
+                const anchorWrap = q('#we-depth-anchor-wrap');
+                if (anchorWrap) anchorWrap.style.display = Number(entry.position) === 4 ? '' : 'none';
             },
             rerenderList: true,
         });
@@ -4024,6 +4041,17 @@ export class WorldEditorModal {
             getValue: () => entry.role,
             setValue: (value) => {
                 entry.role = toNumber(value, 0);
+            },
+            rerenderList: true,
+        });
+
+        bindCustomSelect({
+            btnSelector: '#we-depth-anchor-btn',
+            options: DEPTH_ANCHOR_OPTIONS,
+            getValue: () => entry.latestUserAnchor || '',
+            setValue: (value) => {
+                const token = String(value || '').trim().toLowerCase();
+                entry.latestUserAnchor = token === 'before_latest_user' || token === 'after_latest_user' ? token : '';
             },
             rerenderList: true,
         });

@@ -616,7 +616,7 @@ const initApp = async () => {
     const openaiPreset = resolveOpenAIPresetForMemory?.() || {};
     const presetDataPosition = String(openaiPreset?.memory_data_position || '').trim();
     const presetDataDepthRaw = Math.trunc(Number(openaiPreset?.memory_data_depth));
-    const settingsDataPosition = String(settings.memoryInjectPosition || 'history_depth').trim();
+    const settingsDataPosition = String(settings.memoryInjectPosition || 'before_latest_user').trim();
     const settingsDataDepthRaw = Math.trunc(Number(settings.memoryInjectDepth));
     const guidePosition = String(openaiPreset?.memory_guide_position || '').trim();
     const guideDepthRaw = Math.trunc(Number(openaiPreset?.memory_guide_depth));

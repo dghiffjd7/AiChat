@@ -689,11 +689,36 @@ export class VariablePanel {
                         <option value="user">user</option>
                         <option value="assistant">assistant</option>
                     </select>
-                    <button id="rule-action-inject-role-btn" type="button" class="world-app-select-btn" style="width:100%;">
-                        <span class="pp-custom-select-label" data-custom-select-label>system</span>
-                        <span class="world-app-select-btn-chevron">▾</span>
-                    </button>
-                </div>
+	                    <button id="rule-action-inject-role-btn" type="button" class="world-app-select-btn" style="width:100%;">
+	                        <span class="pp-custom-select-label" data-custom-select-label>system</span>
+	                        <span class="world-app-select-btn-chevron">▾</span>
+	                    </button>
+	                    <label style="font-size:12px; color:var(--app-text-muted);">注入位置</label>
+	                    <select id="rule-action-inject-position" style="display:none;">
+	                        <option value="before_latest_user">最新输入前</option>
+	                        <option value="after_latest_user">最新输入后</option>
+	                        <option value="history_depth">History 内（按深度）</option>
+	                        <option value="before_chat">对话前</option>
+	                        <option value="history_before">History 前</option>
+	                        <option value="history_after">History 后</option>
+	                        <option value="system_end">系统提示末尾</option>
+	                        <option value="after_persona">角色设定后</option>
+	                    </select>
+	                    <button id="rule-action-inject-position-btn" type="button" class="world-app-select-btn" style="width:100%;">
+	                        <span class="pp-custom-select-label" data-custom-select-label>最新输入前</span>
+	                        <span class="world-app-select-btn-chevron">▾</span>
+	                    </button>
+	                    <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+	                        <div style="display:flex; flex-direction:column; gap:4px;">
+	                            <label style="font-size:12px; color:var(--app-text-muted);">深度</label>
+	                            <input id="rule-action-inject-depth" type="number" min="0" value="0" style="padding:8px 10px; border:1px solid var(--app-border-default); border-radius:10px;">
+	                        </div>
+	                        <div style="display:flex; flex-direction:column; gap:4px;">
+	                            <label style="font-size:12px; color:var(--app-text-muted);">顺序 / Order</label>
+	                            <input id="rule-action-inject-order" type="number" value="3500" style="padding:8px 10px; border:1px solid var(--app-border-default); border-radius:10px;">
+	                        </div>
+	                    </div>
+	                </div>
             </div>
             <div style="display:flex; gap:8px; padding:12px; border-top:1px solid #eef2f7;">
                 <button id="rule-delete" style="border:1px solid rgba(239,68,68,0.35); background:var(--app-surface-card); color:#b91c1c; border-radius:10px; padding:8px 10px;">删除</button>
@@ -738,10 +763,14 @@ export class VariablePanel {
             actionPersonaWrap: q('#rule-action-persona-wrap'),
             actionPersona: q('#rule-action-persona'),
             actionInjectWrap: q('#rule-action-inject-wrap'),
-            actionInject: q('#rule-action-inject'),
-            actionInjectRole: q('#rule-action-inject-role'),
-            actionInjectRoleBtn: q('#rule-action-inject-role-btn'),
-            targetList: q('#rule-target-list'),
+	            actionInject: q('#rule-action-inject'),
+	            actionInjectRole: q('#rule-action-inject-role'),
+	            actionInjectRoleBtn: q('#rule-action-inject-role-btn'),
+	            actionInjectPosition: q('#rule-action-inject-position'),
+	            actionInjectPositionBtn: q('#rule-action-inject-position-btn'),
+	            actionInjectDepth: q('#rule-action-inject-depth'),
+	            actionInjectOrder: q('#rule-action-inject-order'),
+	            targetList: q('#rule-target-list'),
             save: q('#rule-save'),
             cancel: q('#rule-cancel'),
             close: q('#rule-editor-close'),
@@ -750,8 +779,9 @@ export class VariablePanel {
         bindCustomSelectButton({ buttonEl: fields.triggerTypeBtn, selectEl: fields.triggerType, fallback: '每轮' });
         bindCustomSelectButton({ buttonEl: fields.actionTypeBtn, selectEl: fields.actionType, fallback: '设置数值' });
         bindCustomSelectButton({ buttonEl: fields.actionModeBtn, selectEl: fields.actionMode, fallback: '增量' });
-        bindCustomSelectButton({ buttonEl: fields.actionMessageStyleBtn, selectEl: fields.actionMessageStyle, fallback: 'info' });
-        bindCustomSelectButton({ buttonEl: fields.actionInjectRoleBtn, selectEl: fields.actionInjectRole, fallback: 'system' });
+	        bindCustomSelectButton({ buttonEl: fields.actionMessageStyleBtn, selectEl: fields.actionMessageStyle, fallback: 'info' });
+	        bindCustomSelectButton({ buttonEl: fields.actionInjectRoleBtn, selectEl: fields.actionInjectRole, fallback: 'system' });
+	        bindCustomSelectButton({ buttonEl: fields.actionInjectPositionBtn, selectEl: fields.actionInjectPosition, fallback: '最新输入前' });
 
         const updateTriggerUI = () => {
             const type = String(fields.triggerType?.value || '');
@@ -981,9 +1011,13 @@ export class VariablePanel {
         if (fields.actionMessageStyle) fields.actionMessageStyle.value = normalized.action.style || 'info';
         refreshCustomSelectButton(fields.actionMessageStyleBtn, fields.actionMessageStyle, 'info');
         if (fields.actionPersona) fields.actionPersona.value = normalized.action.persona || '';
-        if (fields.actionInject) fields.actionInject.value = normalized.action.prompt || '';
-        if (fields.actionInjectRole) fields.actionInjectRole.value = normalized.action.role || 'system';
-        refreshCustomSelectButton(fields.actionInjectRoleBtn, fields.actionInjectRole, 'system');
+	        if (fields.actionInject) fields.actionInject.value = normalized.action.prompt || '';
+	        if (fields.actionInjectRole) fields.actionInjectRole.value = normalized.action.role || 'system';
+	        refreshCustomSelectButton(fields.actionInjectRoleBtn, fields.actionInjectRole, 'system');
+	        if (fields.actionInjectPosition) fields.actionInjectPosition.value = normalized.action.position || 'before_latest_user';
+	        refreshCustomSelectButton(fields.actionInjectPositionBtn, fields.actionInjectPosition, '最新输入前');
+	        if (fields.actionInjectDepth) fields.actionInjectDepth.value = Number.isFinite(Number(normalized.action.depth)) ? Math.max(0, Math.trunc(Number(normalized.action.depth))) : 0;
+	        if (fields.actionInjectOrder) fields.actionInjectOrder.value = Number.isFinite(Number(normalized.action.order)) ? Number(normalized.action.order) : 3500;
 
         const { vars } = this.getVars();
         if (fields.targetList) {
@@ -1108,10 +1142,15 @@ export class VariablePanel {
             action.style = String(fields.actionMessageStyle?.value || 'info');
         } else if (actionType === 'switch_persona') {
             action.persona = String(fields.actionPersona?.value || '').trim();
-        } else if (actionType === 'inject_prompt') {
-            action.prompt = String(fields.actionInject?.value || '').trim();
-            action.role = String(fields.actionInjectRole?.value || 'system');
-        }
+	        } else if (actionType === 'inject_prompt') {
+	            action.prompt = String(fields.actionInject?.value || '').trim();
+	            action.role = String(fields.actionInjectRole?.value || 'system');
+	            action.position = String(fields.actionInjectPosition?.value || 'before_latest_user');
+	            const depth = Math.trunc(Number(fields.actionInjectDepth?.value));
+	            action.depth = Number.isFinite(depth) ? Math.max(0, depth) : 0;
+	            const order = Number(fields.actionInjectOrder?.value);
+	            action.order = Number.isFinite(order) ? order : 3500;
+	        }
 
         const next = { id, name, enabled, priority, trigger, action };
         const idx = rules.findIndex(r => String(r?.id || '') === id);
@@ -1593,10 +1632,12 @@ export class VariablePanel {
                 prompt: String(action.prompt || ''),
                 message: String(action.message || ''),
                 style: String(action.style || ''),
-                persona: String(action.persona || ''),
-                role: String(action.role || ''),
-                position: String(action.position || ''),
-                mode: String(action.mode || 'delta'),
+	                persona: String(action.persona || ''),
+	                role: String(action.role || ''),
+	                position: String(action.position || ''),
+	                depth: Number.isFinite(Number(action.depth)) ? Math.max(0, Math.trunc(Number(action.depth))) : 0,
+	                order: Number.isFinite(Number(action.order)) ? Number(action.order) : 3500,
+	                mode: String(action.mode || 'delta'),
             },
         };
     }

@@ -458,10 +458,15 @@ export class MemoryTableEditor {
     const positionSelect = document.createElement('select');
     positionSelect.style.cssText = 'padding:6px 8px; border:1px solid var(--app-border-default); border-radius:8px; font-size:12px;';
     [
-      { value: 'after_persona', label: '角色设定后' },
-      { value: 'system_end', label: '系统末尾' },
-      { value: 'before_chat', label: '对话前' },
-    ].forEach((opt) => {
+	      { value: 'after_persona', label: '角色设定后' },
+	      { value: 'system_end', label: '系统末尾' },
+	      { value: 'before_chat', label: '对话前' },
+	      { value: 'history_before', label: 'History 前' },
+	      { value: 'history_after', label: 'History 后' },
+	      { value: 'history_depth', label: '深度注入（History 内）' },
+	      { value: 'before_latest_user', label: '最新输入前' },
+	      { value: 'after_latest_user', label: '最新输入后' },
+	    ].forEach((opt) => {
       const option = document.createElement('option');
       option.value = opt.value;
       option.textContent = opt.label;
@@ -469,7 +474,7 @@ export class MemoryTableEditor {
     });
     positionRow.appendChild(positionLabel);
     const positionWrap = createCustomSelectWrapper(positionSelect, {
-      placeholder: '角色设定后',
+      placeholder: '最新输入前',
       wrapperStyle: 'min-width:160px;',
       buttonStyle: 'min-width:160px;',
     });
@@ -477,7 +482,7 @@ export class MemoryTableEditor {
       bindCustomSelectButton({
         buttonEl: positionWrap.querySelector('button'),
         selectEl: positionSelect,
-        fallback: '角色设定后',
+        fallback: '最新输入前',
       });
       positionRow.appendChild(positionWrap);
     } else {
@@ -637,19 +642,19 @@ export class MemoryTableEditor {
     if (!template || !template.meta) {
       this.promptTemplateInput.value = '';
       this.promptWrapperInput.value = '';
-      this.promptPositionSelect.value = 'after_persona';
+      this.promptPositionSelect.value = 'before_latest_user';
       if (this.promptPreviewInput) this.promptPreviewInput.value = '未找到可用模板。';
       return;
     }
     const injection = template.injection || {};
     const templateText = typeof injection.template === 'string' ? injection.template : '{{tableData}}';
     const wrapperText = typeof injection.wrapper === 'string' ? injection.wrapper : '<memories>\n{{tableData}}\n</memories>';
-    const position = typeof injection.position === 'string' ? injection.position : 'after_persona';
+    const position = typeof injection.position === 'string' ? injection.position : 'before_latest_user';
     this.promptTemplateInput.value = templateText;
     this.promptWrapperInput.value = wrapperText;
     this.promptPositionSelect.value = position;
     if (this.promptPositionSelectButton) {
-      refreshCustomSelectButton(this.promptPositionSelectButton, this.promptPositionSelect, '角色设定后');
+      refreshCustomSelectButton(this.promptPositionSelectButton, this.promptPositionSelect, '最新输入前');
     }
     if (this.promptSaveBtn) {
       this.promptSaveBtn.onclick = () => this.savePromptTemplate(ctx);
@@ -675,7 +680,7 @@ export class MemoryTableEditor {
     const contact = sessionId ? this.contactsStore?.getContact?.(sessionId) : null;
     const characterName = String(contact?.name || (isMoments ? '动态' : (isGroup ? sessionId.replace(/^group:/, '') : sessionId)) || '助手');
     const settings = appSettings.get();
-    const memoryInjectPosition = String(settings.memoryInjectPosition || 'history_depth').toLowerCase();
+    const memoryInjectPosition = String(settings.memoryInjectPosition || 'before_latest_user').toLowerCase();
     const memoryInjectDepthRaw = Math.trunc(Number(settings.memoryInjectDepth));
     const memoryInjectDepth = Number.isFinite(memoryInjectDepthRaw) ? Math.max(0, memoryInjectDepthRaw) : 4;
     const memoryAutoMode = String(settings.memoryAutoExtractMode || 'inline').toLowerCase();
@@ -1098,7 +1103,7 @@ export class MemoryTableEditor {
     if (!templateId) return;
     const templateText = String(this.promptTemplateInput?.value || '').trim() || '{{tableData}}';
     const wrapperText = String(this.promptWrapperInput?.value || '').trim();
-    const position = String(this.promptPositionSelect?.value || 'after_persona');
+    const position = String(this.promptPositionSelect?.value || 'before_latest_user');
     const injection = {
       template: templateText,
       wrapper: wrapperText,

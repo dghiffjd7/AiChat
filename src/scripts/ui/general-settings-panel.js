@@ -470,9 +470,9 @@ export class GeneralSettingsPanel {
     }
     this.refreshMemoryPlacesDialog(settings);
     if (this.memoryInjectPositionSelect) {
-      const raw = String(settings.memoryInjectPosition || 'history_depth').toLowerCase();
-      const allowed = new Set(['after_persona', 'system_end', 'before_chat', 'history_before', 'history_after', 'history_depth', 'system_end+before_chat']);
-      this.memoryInjectPositionSelect.value = allowed.has(raw) ? raw : 'history_depth';
+      const raw = String(settings.memoryInjectPosition || 'before_latest_user').toLowerCase();
+      const allowed = new Set(['template', 'after_persona', 'system_end', 'before_chat', 'history_before', 'history_after', 'history_depth', 'before_latest_user', 'after_latest_user', 'system_end+before_chat']);
+      this.memoryInjectPositionSelect.value = allowed.has(raw) ? raw : 'before_latest_user';
       this.refreshThemeSelectButton(this.memoryInjectPositionButton, this.memoryInjectPositionSelect, '注入位置');
     }
     if (this.memoryInjectDepthInput) {
@@ -684,7 +684,7 @@ export class GeneralSettingsPanel {
       this.memoryInjectPositionButton.disabled = !showMemoryTable;
       this.memoryInjectPositionButton.classList.toggle('is-disabled', this.memoryInjectPositionButton.disabled);
     }
-    const position = String(settings.memoryInjectPosition || 'history_depth').toLowerCase();
+    const position = String(settings.memoryInjectPosition || 'before_latest_user').toLowerCase();
     const showDepth = showMemoryTable && position === 'history_depth';
     if (this.memoryInjectDepthWrap) {
       this.memoryInjectDepthWrap.style.display = showDepth ? 'block' : 'none';
@@ -2137,12 +2137,15 @@ export class GeneralSettingsPanel {
             <div style="margin-top: 10px;">
               <div style="font-size:12px; color:var(--app-text-muted); margin-bottom:6px;">记忆表格内容注入位置</div>
               <select id="general-memory-inject-position" style="display:none;">
-                <option value="after_persona">角色设定后</option>
-                <option value="system_end">系统提示末尾</option>
+	                <option value="after_persona">角色设定后</option>
+	                <option value="template">跟随记忆模板</option>
+	                <option value="system_end">系统提示末尾</option>
                 <option value="before_chat">对话前</option>
                 <option value="history_before">History 前</option>
                 <option value="history_after">History 后</option>
                 <option value="history_depth">深度注入（插入到 History 内）</option>
+                <option value="before_latest_user">最新输入前</option>
+                <option value="after_latest_user">最新输入后</option>
                 <option value="system_end+before_chat">双重注入（系统末尾 + 对话前）</option>
               </select>
               <div class="general-settings-inline-actions">
@@ -2151,7 +2154,7 @@ export class GeneralSettingsPanel {
                   <span class="world-app-select-btn-chevron">▾</span>
                 </button>
               </div>
-              <small style="color:var(--app-text-muted); display:block; margin-top:4px;">只控制动态记忆表格内容；稳定写表指导固定保留在系统提示末尾</small>
+              <small style="color:var(--app-text-muted); display:block; margin-top:4px;">只控制动态记忆表格内容；默认排在 History 后、最新输入前</small>
             </div>
 
 	            <div id="general-memory-inject-depth-wrap" style="margin-top: 10px; display:none;">
@@ -3236,9 +3239,9 @@ export class GeneralSettingsPanel {
       }
     });
     this.memoryInjectPositionSelect?.addEventListener('change', (e) => {
-      const raw = String(e?.target?.value || 'history_depth').toLowerCase();
-      const allowed = new Set(['after_persona', 'system_end', 'before_chat', 'history_before', 'history_after', 'history_depth', 'system_end+before_chat']);
-      const next = allowed.has(raw) ? raw : 'history_depth';
+      const raw = String(e?.target?.value || 'before_latest_user').toLowerCase();
+      const allowed = new Set(['template', 'after_persona', 'system_end', 'before_chat', 'history_before', 'history_after', 'history_depth', 'before_latest_user', 'after_latest_user', 'system_end+before_chat']);
+      const next = allowed.has(raw) ? raw : 'before_latest_user';
       appSettings.update({ memoryInjectPosition: next });
       window.dispatchEvent(new CustomEvent('app-settings-changed', { detail: { key: 'memoryInjectPosition', value: next } }));
       this.refreshThemeSelectButton(this.memoryInjectPositionButton, this.memoryInjectPositionSelect, '注入位置');

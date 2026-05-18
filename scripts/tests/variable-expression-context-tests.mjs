@@ -108,6 +108,35 @@ test('StageManager resolves stage conditions with shared nested/global variable 
   assert.equal(stage?.id, 'winter_ready');
 });
 
+test('StageManager exposes prompt position metadata for prompt injection planner', () => {
+  const chatStore = {
+    getStageSchema: () => ({
+      id: 'stage_schema',
+      currentStageVar: 'stage',
+      stages: [{
+        id: 'active',
+        name: 'Active',
+        prompt: '阶段提示词',
+        role: 'assistant',
+        position: 'after_latest_user',
+        depth: 0,
+        order: 3210,
+      }],
+    }),
+    getVariable: () => 'active',
+  };
+  const manager = new StageManager({ chatStore, appBridge: null });
+
+  assert.deepEqual(manager.getPromptBlocks('session_stage'), [{
+    content: '阶段提示词',
+    role: 'assistant',
+    position: 'after_latest_user',
+    depth: 0,
+    order: 3210,
+    source: 'stage',
+  }]);
+});
+
 test('StageManager reevaluates the active session when global variables change', () => {
   const chatStore = {
     getStageSchema: () => null,

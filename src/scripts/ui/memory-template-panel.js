@@ -534,7 +534,7 @@ export class MemoryTemplatePanel {
         return s;
       };
       const scopeText = scopes.size ? Array.from(scopes).map(scopeLabel).join(' / ') : '未标注';
-      const injectionPos = String(parsed?.injection?.position || '').trim() || 'after_persona';
+      const injectionPos = String(parsed?.injection?.position || '').trim() || 'before_latest_user';
       const info = [
         `名称: ${String(meta.name || '').trim() || templateId}`,
         `ID: ${templateId}`,

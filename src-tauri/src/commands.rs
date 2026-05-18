@@ -3394,8 +3394,7 @@ pub async fn delete_raw_reply(
     Ok(())
 }
 
-#[tauri::command]
-pub async fn read_plugin_zip(bytes: Vec<u8>) -> Result<serde_json::Value, String> {
+fn read_plugin_zip_bytes(bytes: Vec<u8>) -> Result<serde_json::Value, String> {
     if bytes.is_empty() {
         return Err("zip bytes empty".to_string());
     }
@@ -3432,6 +3431,7 @@ pub async fn read_plugin_zip(bytes: Vec<u8>) -> Result<serde_json::Value, String
     let main_raw = manifest_json
         .get("main")
         .and_then(|v| v.as_str())
+        .or_else(|| manifest_json.get("js").and_then(|v| v.as_str()))
         .unwrap_or("index.js");
 
     let normalize_path = |raw: &str| -> String {
@@ -3477,6 +3477,11 @@ pub async fn read_plugin_zip(bytes: Vec<u8>) -> Result<serde_json::Value, String
         "mainPath": main_path,
         "mainText": main_text
     }))
+}
+
+#[tauri::command]
+pub async fn read_plugin_zip(bytes: Vec<u8>) -> Result<serde_json::Value, String> {
+    read_plugin_zip_bytes(bytes)
 }
 
 #[derive(serde::Serialize)]
@@ -4092,6 +4097,31 @@ mod tests {
             }
         }
         writer.finish().unwrap().into_inner()
+    }
+
+    #[test]
+    fn read_plugin_zip_uses_sillytavern_js_entry_when_main_is_missing() {
+        let zip_bytes = build_test_zip(&[
+            (
+                "JS-Slash-Runner-main/manifest.json",
+                Some(br#"{"display_name":"Slash Runner","js":"dist/index.js","version":"4.6.4"}"#),
+            ),
+            (
+                "JS-Slash-Runner-main/dist/index.js",
+                Some(b"console.log('slash runner');"),
+            ),
+        ]);
+
+        let result = read_plugin_zip_bytes(zip_bytes).unwrap();
+
+        assert_eq!(
+            result.get("mainPath").and_then(|value| value.as_str()),
+            Some("JS-Slash-Runner-main/dist/index.js")
+        );
+        assert_eq!(
+            result.get("mainText").and_then(|value| value.as_str()),
+            Some("console.log('slash runner');")
+        );
     }
 
     #[test]

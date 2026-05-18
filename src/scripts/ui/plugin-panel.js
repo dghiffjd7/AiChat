@@ -12,6 +12,32 @@ const readFileText = (file) => new Promise((resolve, reject) => {
 
 const normalizePath = (value) => String(value || '').replace(/\\/g, '/').replace(/^\/+/, '');
 
+const base64ToByteArray = (base64 = '') => {
+  const raw = atob(String(base64 || ''));
+  const bytes = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i += 1) bytes[i] = raw.charCodeAt(i);
+  return Array.from(bytes);
+};
+
+const isInvokeUnavailableError = (err) => /tauri invoke not available|command not found|unknown command/i.test(String(err?.message || err || ''));
+
+const SILLY_TAVERN_EXTENSION_MESSAGE = '检测到 SillyTavern/酒馆扩展格式（display_name/js/css）。当前插件系统不能直接运行酒馆扩展；需要先做兼容适配或转换为 ChatApp 插件清单。';
+
+const isSillyTavernExtensionManifest = (manifest) => {
+  const raw = manifest && typeof manifest === 'object' ? manifest : {};
+  const hasSillyTavernEntry =
+    typeof raw.display_name === 'string' ||
+    typeof raw.js === 'string' ||
+    typeof raw.css === 'string';
+  const hasChatAppEntry =
+    typeof raw.id === 'string' ||
+    typeof raw.name === 'string' ||
+    typeof raw.apiVersion === 'string' ||
+    typeof raw.main === 'string' ||
+    Array.isArray(raw.permissions);
+  return hasSillyTavernEntry && !hasChatAppEntry;
+};
+
 const pickManifestPath = (paths) => {
   const candidates = paths.filter(p => p.toLowerCase().endsWith('/manifest.json') || p.toLowerCase() === 'manifest.json');
   if (!candidates.length) return '';
@@ -439,6 +465,10 @@ export class PluginPanel {
       const manifestFile = fileMap.get(manifestPath);
       const manifestText = await readFileText(manifestFile);
       const manifest = JSON.parse(manifestText);
+      if (isSillyTavernExtensionManifest(manifest)) {
+        window.toastr?.error?.(SILLY_TAVERN_EXTENSION_MESSAGE);
+        return;
+      }
       const { manifest: normalized, ok, errors } = validateManifest(manifest);
       if (!ok) {
         window.toastr?.error?.(`manifest 校验失败：${errors.join('；')}`);
@@ -506,17 +536,16 @@ export class PluginPanel {
     }
     try {
       this.setStatus('正在下载插件…');
-      const res = await fetch(normalizedUrl);
-      if (!res.ok) {
-        if (this.shouldRetryGithubMain(normalizedUrl, res.status)) {
+      const download = await this.downloadPluginUrl(normalizedUrl);
+      if (!download.ok) {
+        if (this.shouldRetryGithubMain(normalizedUrl, download.status)) {
           const fallback = this.replaceGithubBranch(normalizedUrl, 'master');
           this.setStatus('尝试主分支…');
-          const retry = await fetch(fallback);
+          const retry = await this.downloadPluginUrl(fallback);
           if (!retry.ok) throw new Error(`下载失败 (${retry.status})`);
-          const buffer = await retry.arrayBuffer();
-          const name = fallback.split('/').pop() || 'plugin.zip';
+          const name = retry.name || fallback.split('/').pop() || 'plugin.zip';
           this.setStatus('正在解析 ZIP…');
-          const installed = await this.installFromZipBytes(Array.from(new Uint8Array(buffer)), { name, url: fallback });
+          const installed = await this.installFromZipBytes(retry.bytes, { name, url: fallback });
           if (installed) {
             this.setStatus('安装完成', 2000);
           } else {
@@ -524,12 +553,11 @@ export class PluginPanel {
           }
           return;
         }
-        throw new Error(`下载失败 (${res.status})`);
+        throw new Error(`下载失败 (${download.status})`);
       }
-      const buffer = await res.arrayBuffer();
-      const name = normalizedUrl.split('/').pop() || 'plugin.zip';
+      const name = download.name || normalizedUrl.split('/').pop() || 'plugin.zip';
       this.setStatus('正在解析 ZIP…');
-      const installed = await this.installFromZipBytes(Array.from(new Uint8Array(buffer)), { name, url: normalizedUrl });
+      const installed = await this.installFromZipBytes(download.bytes, { name, url: normalizedUrl });
       if (installed) {
         this.setStatus('安装完成', 2000);
       } else {
@@ -541,6 +569,78 @@ export class PluginPanel {
     }
   }
 
+  async downloadPluginUrl(url) {
+    const requestUrl = String(url || '').trim();
+    if (!/^https?:\/\//i.test(requestUrl)) throw new Error('仅支持 http/https 链接');
+    let nativeError = null;
+    try {
+      const response = await safeInvoke('http_request', {
+        url: requestUrl,
+        method: 'GET',
+        headers: {
+          Accept: 'application/zip, application/octet-stream, */*',
+        },
+        body: null,
+        timeoutMs: 120000,
+        requestId: null,
+        responseBase64: true,
+      });
+      const status = Number(response?.status || 0) || 0;
+      const ok = Boolean(response?.ok) || (status >= 200 && status < 300);
+      const body = String(response?.body || '');
+      return {
+        ok,
+        status,
+        bytes: ok ? base64ToByteArray(body) : [],
+        name: this.resolveDownloadedFileName(requestUrl, response?.headers),
+        url: requestUrl,
+        source: 'native',
+      };
+    } catch (err) {
+      nativeError = err;
+      if (!isInvokeUnavailableError(err)) {
+        console.warn('native plugin download failed, trying browser fetch:', err);
+      }
+    }
+
+    try {
+      const res = await fetch(requestUrl, { credentials: 'omit' });
+      const buffer = res.ok ? await res.arrayBuffer() : new ArrayBuffer(0);
+      return {
+        ok: res.ok,
+        status: Number(res.status || 0) || 0,
+        bytes: res.ok ? Array.from(new Uint8Array(buffer)) : [],
+        name: this.resolveDownloadedFileName(requestUrl, Object.fromEntries(res.headers.entries())),
+        url: requestUrl,
+        source: 'fetch',
+      };
+    } catch (err) {
+      if (nativeError && !isInvokeUnavailableError(nativeError)) {
+        throw new Error(`下载失败：native ${nativeError?.message || nativeError}; fetch ${err?.message || err}`);
+      }
+      throw err;
+    }
+  }
+
+  resolveDownloadedFileName(url, headers = {}) {
+    try {
+      const map = headers && typeof headers === 'object' ? headers : {};
+      const disposition = String(map['content-disposition'] || map['Content-Disposition'] || '').trim();
+      const encoded = disposition.match(/filename\*\s*=\s*UTF-8''([^;]+)/i)?.[1];
+      if (encoded) return decodeURIComponent(encoded).replace(/[\\/]+/g, '_');
+      const quoted = disposition.match(/filename\s*=\s*"([^"]+)"/i)?.[1];
+      if (quoted) return quoted.replace(/[\\/]+/g, '_');
+      const plain = disposition.match(/filename\s*=\s*([^;]+)/i)?.[1];
+      if (plain) return plain.trim().replace(/[\\/]+/g, '_');
+    } catch {}
+    try {
+      const parsed = new URL(url);
+      const last = parsed.pathname.split('/').filter(Boolean).pop();
+      if (last) return last;
+    } catch {}
+    return 'plugin.zip';
+  }
+
   async installFromZipBytes(bytes, { name, url } = {}) {
     const result = await safeInvoke('read_plugin_zip', { bytes });
     const manifestText = String(result?.manifestText || '');
@@ -549,6 +649,9 @@ export class PluginPanel {
       throw new Error('ZIP 解析失败');
     }
     const manifest = JSON.parse(manifestText);
+    if (isSillyTavernExtensionManifest(manifest)) {
+      throw new Error(SILLY_TAVERN_EXTENSION_MESSAGE);
+    }
     const { manifest: normalized, ok, errors } = validateManifest(manifest);
     if (!ok) {
       throw new Error(`manifest 校验失败：${errors.join('；')}`);

@@ -10,9 +10,9 @@ import {
 const tests = [];
 const test = (name, fn) => tests.push({ name, fn });
 
-test('normalizeRuntimeMemoryPosition handles template fallback and preserves history_depth zero', () => {
+test('normalizeRuntimeMemoryPosition keeps template empty for template-driven placement', () => {
   assert.equal(normalizeRuntimeMemoryPosition('', 0, 'history_after'), 'history_after');
-  assert.equal(normalizeRuntimeMemoryPosition('template', 0, 'history_after'), 'history_after');
+  assert.equal(normalizeRuntimeMemoryPosition('template', 0, 'history_after'), '');
   assert.equal(normalizeRuntimeMemoryPosition('history_depth', 0, 'history_after'), 'history_depth');
   assert.equal(normalizeRuntimeMemoryPosition('history_depth', 2, 'history_after'), 'history_depth');
 });
@@ -34,6 +34,21 @@ test('resolveLlmMemoryRuntimeConfig prefers preset inject settings and normalize
     {
       memoryInjectPosition: 'history_depth',
       memoryInjectDepth: 3,
+      memoryGuidePosition: '',
+      memoryGuideDepth: 0,
+    },
+  );
+});
+
+test('resolveLlmMemoryRuntimeConfig defaults dynamic memory near latest user', () => {
+  assert.deepEqual(
+    resolveLlmMemoryRuntimeConfig({
+      openaiPreset: {},
+      settings: {},
+    }),
+    {
+      memoryInjectPosition: 'before_latest_user',
+      memoryInjectDepth: 0,
       memoryGuidePosition: '',
       memoryGuideDepth: 0,
     },

@@ -87,6 +87,22 @@ test('validateTemplate: rules fields accepted', () => {
   assert.equal(result.ok, true);
 });
 
+test('validateTemplate: latest-user injection positions accepted', () => {
+  const template = {
+    meta: { id: 'tpl-latest', name: '模板' },
+    tables: [],
+    injection: {
+      position: 'before_latest_user+after_latest_user+history_before+history_after',
+    },
+  };
+  const result = validateTemplate(template);
+  assert.equal(result.ok, true);
+});
+
+test('default memory template injects dynamic data before latest user', () => {
+  assert.equal(DEFAULT_MEMORY_TEMPLATE.injection.position, 'before_latest_user');
+});
+
 test('validateTemplate: invalid field types', () => {
   const template = {
     meta: { id: 'tpl2', name: '模板' },
@@ -105,8 +121,8 @@ test('validateTemplate: invalid field types', () => {
 });
 
 test('parseMemoryPromptPositions + estimateTokens', () => {
-  const positions = parseMemoryPromptPositions('system_end+before_chat,history_depth');
-  assert.deepEqual(positions, ['system_end', 'before_chat', 'history_depth']);
+  const positions = parseMemoryPromptPositions('system_end+before_chat,history_depth,before_latest_user,after_latest_user');
+  assert.deepEqual(positions, ['system_end', 'before_chat', 'history_depth', 'before_latest_user', 'after_latest_user']);
   assert.equal(estimateTokens('abcd', 'rough'), 1);
   assert.equal(estimateTokens('abcd', 'strict'), 4);
 });

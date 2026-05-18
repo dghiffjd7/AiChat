@@ -7,6 +7,8 @@ echo "📦 开始下载前端依赖..."
 # 创建目录
 mkdir -p src/lib
 mkdir -p src/assets/css
+mkdir -p src/vendor/fontawesome/6.0.0-beta3/css
+mkdir -p src/vendor/fontawesome/6.0.0-beta3/webfonts
 
 download_with_fallback() {
     local output="$1"
@@ -36,6 +38,28 @@ if [ $? -eq 0 ]; then
     echo "✅ Toastr 下载完成"
 else
     echo "❌ Toastr 下载失败"
+fi
+
+# 下载 Font Awesome Free（iframe 角色卡 CDN 兼容，本地同源兜底）
+echo "⬇️  下载 Font Awesome Free 6.0.0-beta3..."
+download_with_fallback src/vendor/fontawesome/6.0.0-beta3/css/all.min.css \
+    https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css \
+    https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.0.0-beta3/css/all.min.css \
+    https://unpkg.com/@fortawesome/fontawesome-free@6.0.0-beta3/css/all.min.css
+fa_status=$?
+for font in fa-brands-400 fa-regular-400 fa-solid-900 fa-v4compatibility; do
+    download_with_fallback "src/vendor/fontawesome/6.0.0-beta3/webfonts/${font}.woff2" \
+        "https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/webfonts/${font}.woff2" \
+        "https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.0.0-beta3/webfonts/${font}.woff2" \
+        "https://unpkg.com/@fortawesome/fontawesome-free@6.0.0-beta3/webfonts/${font}.woff2"
+    if [ $? -ne 0 ]; then
+        fa_status=1
+    fi
+done
+if [ $fa_status -eq 0 ]; then
+    echo "✅ Font Awesome 下载完成"
+else
+    echo "❌ Font Awesome 下载失败"
 fi
 
 # 下载 Lodash

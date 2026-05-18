@@ -613,6 +613,38 @@ const getIframeHostUrl = () => {
         return 'iframe-host.html';
     }
 };
+const FONT_AWESOME_LOCAL_CSS_PATH = '/vendor/fontawesome/6.0.0-beta3/css/all.min.css';
+const fontAwesomeCdnCssRe = /^https?:\/\/(?:(?:cdnjs\.cloudflare\.com\/ajax\/libs\/font-awesome\/6\.0\.0-beta3\/css\/all(?:\.min)?\.css)|(?:(?:cdn\.jsdelivr\.net\/npm|unpkg\.com)\/@fortawesome\/fontawesome-free@6\.0\.0-beta3\/css\/all(?:\.min)?\.css))(?:[?#].*)?$/i;
+const rewriteVendorResourceUrl = (url) => {
+    const value = String(url || '').trim();
+    if (!value) return value;
+    if (fontAwesomeCdnCssRe.test(value)) return FONT_AWESOME_LOCAL_CSS_PATH;
+    return value;
+};
+const stripHtmlAttr = (tag, attrName) => {
+    const name = String(attrName || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    if (!name) return tag;
+    return String(tag || '').replace(new RegExp(`\\s+${name}\\s*=\\s*(?:"[^"]*"|'[^']*'|[^\\s>]+)`, 'gi'), '');
+};
+const rewriteVendorStylesheetLinks = (html) => String(html || '').replace(/<link\b[^>]*>/gi, (tag) => {
+    if (!/\brel\s*=\s*(?:"[^"]*\bstylesheet\b[^"]*"|'[^']*\bstylesheet\b[^']*'|[^\s>]*stylesheet[^\s>]*)/i.test(tag)) {
+        return tag;
+    }
+    const quotedHref = tag.match(/\bhref\s*=\s*(["'])(.*?)\1/i);
+    const unquotedHref = quotedHref ? null : tag.match(/\bhref\s*=\s*([^\s>]+)/i);
+    const href = quotedHref ? quotedHref[2] : (unquotedHref ? unquotedHref[1] : '');
+    const nextHref = rewriteVendorResourceUrl(href);
+    if (!href || nextHref === href) return tag;
+    let next = quotedHref
+        ? tag.replace(/\bhref\s*=\s*(["'])(.*?)\1/i, (_match, quote) => `href=${quote}${nextHref}${quote}`)
+        : tag.replace(/\bhref\s*=\s*([^\s>]+)/i, `href="${nextHref}"`);
+    next = stripHtmlAttr(next, 'integrity');
+    next = stripHtmlAttr(next, 'crossorigin');
+    if (/\/\s*>$/.test(next)) {
+        return next.replace(/\s*\/\s*>$/, ' data-chatapp-vendor-rewrite="fontawesome">');
+    }
+    return next.replace(/\s*>$/, ' data-chatapp-vendor-rewrite="fontawesome">');
+});
 const escapeText = (s) => String(s ?? '');
 const allowRichIframeScripts = () => appSettings.get().allowRichIframeScripts === true;
 const shouldLogRichDebug = () => {
@@ -4690,6 +4722,7 @@ const buildIframeSrcDoc = (
             doc = `${headPrependHtml}${doc}`;
         }
     }
+    doc = rewriteVendorStylesheetLinks(doc);
 
     // Detect current theme mode from parent document
     const isDarkMode = document?.body?.dataset?.themeMode === 'dark';

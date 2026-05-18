@@ -132,10 +132,10 @@ export const runAssistantGenerationRequest = async (
     appBridge = null,
   } = {},
 ) => {
+  const context = buildContext(text);
   if (typeof consumePromptInjections === 'function') {
     consumePromptInjections(sessionId);
   }
-  const context = buildContext(text);
   return appBridge.generate(text, context);
 };
 

@@ -3,8 +3,17 @@ export const normalizePromptInjectionBlock = (input = {}) => {
   if (!raw) return null;
   const roleRaw = String(input?.role || 'system').trim().toLowerCase();
   const role = (roleRaw === 'user' || roleRaw === 'assistant' || roleRaw === 'system') ? roleRaw : 'system';
-  const position = String(input?.position || '').trim();
-  return { content: raw, role, position };
+  const position = String(input?.position ?? input?.promptPosition ?? '').trim().toLowerCase();
+  const depthRaw = Math.trunc(Number(input?.depth ?? input?.promptDepth));
+  const orderRaw = Number(input?.order ?? input?.promptOrder);
+  return {
+    content: raw,
+    role,
+    position,
+    depth: Number.isFinite(depthRaw) ? Math.max(0, depthRaw) : 0,
+    order: Number.isFinite(orderRaw) ? orderRaw : 0,
+    source: String(input?.source || 'prompt_injection').trim() || 'prompt_injection',
+  };
 };
 
 export const createPromptInjectionRuntime = ({

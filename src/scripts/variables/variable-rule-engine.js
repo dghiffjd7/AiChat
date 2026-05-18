@@ -34,6 +34,8 @@ const normalizeRule = (raw) => {
       persona: typeof action.persona === 'string' ? action.persona : '',
       role: typeof action.role === 'string' ? action.role : '',
       position: typeof action.position === 'string' ? action.position : '',
+      depth: Number.isFinite(Number(action.depth)) ? Math.max(0, Math.trunc(Number(action.depth))) : 0,
+      order: Number.isFinite(Number(action.order)) ? Number(action.order) : 3500,
       mode: String(action.mode || '').trim().toLowerCase(),
     },
   };
@@ -246,7 +248,10 @@ export class VariableRuleEngine {
       this.appBridge.queuePromptInjection(sessionId, {
         content: String(processed || '').trim(),
         role,
-        position: String(action.position || '').trim(),
+        position: String(action.position || 'before_latest_user').trim(),
+        depth: Number.isFinite(Number(action.depth)) ? Math.max(0, Math.trunc(Number(action.depth))) : 0,
+        order: Number.isFinite(Number(action.order)) ? Number(action.order) : 3500,
+        source: 'variable_rule',
       });
       return;
     }

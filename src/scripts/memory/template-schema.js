@@ -1,6 +1,15 @@
 const COLUMN_TYPES = ['text', 'number', 'select', 'multiline'];
 const SCOPE_TYPES = ['global', 'contact', 'group'];
-const INJECTION_POSITIONS = ['system_end', 'after_persona', 'before_chat', 'history_depth'];
+const INJECTION_POSITIONS = [
+  'system_end',
+  'after_persona',
+  'before_chat',
+  'history_before',
+  'history_after',
+  'history_depth',
+  'before_latest_user',
+  'after_latest_user',
+];
 const RULE_FIELDS = ['note', 'initNode', 'insertNode', 'updateNode', 'deleteNode'];
 
 export const templateSchema = {

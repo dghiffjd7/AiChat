@@ -2,7 +2,7 @@ export const DEFAULT_MEMORY_TEMPLATE = {
   meta: {
     id: 'default-v1',
     name: '通用记忆模板',
-    version: '1.1.2',
+    version: '1.1.3',
     author: '官方',
     description: '适用于聊天界面、动态界面与 RP 界面的基础记忆表格模板。',
     tags: ['通用', '聊天', '动态', 'RP'],
@@ -547,7 +547,7 @@ export const DEFAULT_MEMORY_TEMPLATE = {
   ],
   injection: {
     template: '{{tableData}}',
-    position: 'after_persona',
+    position: 'before_latest_user',
     wrapper: '<memories>\n{{tableData}}\n</memories>',
   },
 };
