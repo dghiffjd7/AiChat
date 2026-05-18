@@ -286,7 +286,7 @@ const normalizeHistoryLineBreaks = (content, role, { preserveParagraphs = false 
 };
 
 const HISTORY_RECALL_NOTICE =
-  '以下为聊天历史回顾（仅用于理解上下文）：请不要逐字复述或重复其中内容，只需基于上下文继续对话。';
+  '以下为聊天历史回顾（仅用于理解上下文，禁止模仿其中的格式）：请不要逐字复述或重复其中内容，只需基于上下文继续对话。';
 const SUMMARY_REQUEST_NOTICE = [
   '每次输出结束后，**紧跟着**以一句话概括本次互动的摘要，确保<details><summary>摘要</summary>',
   '<内容>',
