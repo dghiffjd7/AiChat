@@ -4,6 +4,7 @@ import { OpenAIProvider } from '../../src/scripts/api/providers/openai.js';
 import { CustomProvider } from '../../src/scripts/api/providers/custom.js';
 import {
   Automatic1111ImageProvider,
+  ComfyUIImageProvider,
   NovelAIImageProvider,
   PollinationsImageProvider,
   StabilityAIImageProvider,
@@ -107,6 +108,17 @@ import {
 }
 
 {
+  const provider = new OpenAIProvider({
+    provider: 'openai',
+    apiKey: 'test',
+    model: 'gpt-4o-mini',
+  });
+  assert.equal(Object.hasOwn(provider.normalizeOptions({ seed: -1 }), 'seed'), false);
+  assert.equal(provider.normalizeOptions({ seed: 123 }).seed, 123);
+  console.log('ok - OpenAI chat provider treats seed -1 as random omission');
+}
+
+{
   const provider = new CustomProvider({
     provider: 'custom',
     apiKey: 'test',
@@ -121,6 +133,45 @@ import {
   await provider.generateImage('cat');
   assert.equal(Object.hasOwn(body, 'response_format'), false);
   console.log('ok - custom image provider does not force response_format by default');
+}
+
+{
+  const provider = new CustomProvider({
+    provider: 'custom',
+    apiKey: 'test',
+    baseUrl: 'https://example.com/v1',
+    model: 'chat-model',
+  });
+  let body = null;
+  provider.requestJson = async request => {
+    body = JSON.parse(request.body);
+    return { choices: [{ message: { content: 'ok' } }] };
+  };
+  await provider.chat([{ role: 'user', content: 'hi' }], { seed: -1, temperature: 0.7 });
+  assert.equal(Object.hasOwn(body, 'seed'), false);
+  assert.equal(body.temperature, 0.7);
+  await provider.chat([{ role: 'user', content: 'hi' }], { seed: 42 });
+  assert.equal(body.seed, 42);
+  console.log('ok - custom chat provider omits seed -1 and keeps fixed non-negative seeds');
+}
+
+{
+  const provider = new CustomProvider({
+    provider: 'custom',
+    apiKey: 'test',
+    baseUrl: 'https://example.com/v1',
+    model: 'image-model',
+  });
+  let body = null;
+  provider.requestJson = async request => {
+    body = JSON.parse(request.body);
+    return { data: [{ url: 'https://example.com/image.png' }] };
+  };
+  await provider.generateImage('cat', { seed: -1 });
+  assert.equal(Object.hasOwn(body, 'seed'), false);
+  await provider.generateImage('cat', { seed: 42 });
+  assert.equal(body.seed, 42);
+  console.log('ok - custom image provider omits random seed sentinel and keeps fixed seeds');
 }
 
 {
@@ -149,6 +200,24 @@ import {
   assert.equal(body.guidance_scale, 3.2);
   assert.equal(body.negative_prompt, 'blur');
   console.log('ok - Together AI image provider maps common generation params');
+}
+
+{
+  const provider = new TogetherAIImageProvider({
+    provider: 'togetherai',
+    apiKey: 'test',
+    model: 'black-forest-labs/FLUX.1-schnell',
+  });
+  let body = null;
+  provider.requestJson = async request => {
+    body = JSON.parse(request.body);
+    return { data: [{ b64_json: 'abc123' }] };
+  };
+  await provider.generateImage('cat', { seed: -1 });
+  assert.equal(Object.hasOwn(body, 'seed'), false);
+  await provider.generateImage('cat', { seed: 7 });
+  assert.equal(body.seed, 7);
+  console.log('ok - Together AI image provider treats seed -1 as service random');
 }
 
 {
@@ -184,6 +253,23 @@ import {
 }
 
 {
+  const provider = new NovelAIImageProvider({
+    provider: 'novelai',
+    apiKey: 'test',
+    model: 'nai-diffusion-4-5-full',
+  });
+  const oldRandom = Math.random;
+  Math.random = () => 0.123;
+  try {
+    const payload = provider.buildPayload('cat', { seed: -1 });
+    assert.equal(payload.parameters.seed, 1229999999);
+  } finally {
+    Math.random = oldRandom;
+  }
+  console.log('ok - NovelAI image provider turns seed -1 into a random non-negative seed');
+}
+
+{
   const provider = new StabilityAIImageProvider({
     provider: 'stability',
     apiKey: 'test',
@@ -211,6 +297,25 @@ import {
 }
 
 {
+  const provider = new StabilityAIImageProvider({
+    provider: 'stability',
+    apiKey: 'test',
+    model: 'stable-image-core',
+  });
+  let body = '';
+  provider.request = async request => {
+    body = request.body;
+    return { ok: true, status: 200, body: 'abc123', headers: { 'content-type': 'image/png' } };
+  };
+  await provider.generateImage('cat', { seed: -1 });
+  assert.doesNotMatch(body, /name="seed"/);
+  await provider.generateImage('cat', { seed: 9 });
+  assert.match(body, /name="seed"/);
+  assert.match(body, /9/);
+  console.log('ok - Stability AI image provider omits seed -1 and keeps fixed seeds');
+}
+
+{
   const provider = new PollinationsImageProvider({
     provider: 'pollinations',
     model: 'flux',
@@ -226,6 +331,23 @@ import {
   assert.match(url, /height=768/);
   assert.match(url, /enhance=true/);
   console.log('ok - Pollinations image provider builds image URL params');
+}
+
+{
+  const provider = new PollinationsImageProvider({
+    provider: 'pollinations',
+    model: 'flux',
+  });
+  let url = '';
+  provider.request = async request => {
+    url = request.url;
+    return { ok: true, status: 200, body: 'abc123', headers: { 'content-type': 'image/jpeg' } };
+  };
+  await provider.generateImage('a cat', { seed: -1 });
+  assert.doesNotMatch(url, /[?&]seed=/);
+  await provider.generateImage('a cat', { seed: 11 });
+  assert.match(url, /seed=11/);
+  console.log('ok - Pollinations image provider omits seed -1 and keeps fixed seeds');
 }
 
 {
@@ -252,4 +374,42 @@ import {
   assert.equal(body.sampler_name, 'Euler a');
   assert.deepEqual(body.override_settings, { sd_model_checkpoint: 'anime.safetensors' });
   console.log('ok - AUTOMATIC1111 image provider maps txt2img payload');
+}
+
+{
+  const provider = new Automatic1111ImageProvider({
+    provider: 'automatic1111',
+    baseUrl: 'http://127.0.0.1:7860',
+    model: 'default',
+  });
+  let body = null;
+  provider.requestJson = async request => {
+    body = JSON.parse(request.body);
+    return { images: ['abc123'] };
+  };
+  await provider.generateImage('cat', { seed: -1 });
+  assert.equal(body.seed, -1);
+  await provider.generateImage('cat', { seed: -9 });
+  assert.equal(body.seed, -1);
+  console.log('ok - AUTOMATIC1111 image provider preserves random seed sentinel');
+}
+
+{
+  const provider = new ComfyUIImageProvider({
+    provider: 'comfyui',
+    baseUrl: 'http://127.0.0.1:8188',
+    model: 'workflow',
+  });
+  const oldRandom = Math.random;
+  Math.random = () => 0.5;
+  try {
+    const workflow = provider.buildWorkflow('cat', {
+      seed: -1,
+      workflowJson: '{"1":{"inputs":{"seed":%seed%,"prompt":"%prompt%"}}}',
+    });
+    assert.equal(workflow['1'].inputs.seed, Math.floor(Number.MAX_SAFE_INTEGER * 0.5));
+  } finally {
+    Math.random = oldRandom;
+  }
+  console.log('ok - ComfyUI image provider turns seed -1 into a random non-negative seed');
 }

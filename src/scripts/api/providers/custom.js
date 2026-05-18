@@ -50,6 +50,26 @@ const makeAbortError = () => {
     return err;
 };
 
+const normalizeNonNegativeSeed = (value) => {
+    if (String(value ?? '').trim() === '') return undefined;
+    const seed = Math.trunc(Number(value));
+    if (!Number.isFinite(seed) || seed < 0) return undefined;
+    return seed;
+};
+
+const normalizeOpenAICompatiblePayloadOptions = (options = {}) => {
+    const out = { ...(options && typeof options === 'object' ? options : {}) };
+    if (Object.hasOwn(out, 'seed')) {
+        const seed = normalizeNonNegativeSeed(out.seed);
+        if (seed === undefined) {
+            delete out.seed;
+        } else {
+            out.seed = seed;
+        }
+    }
+    return out;
+};
+
 export class CustomProvider {
     constructor(config) {
         this.transportConfig = config || {};
@@ -142,7 +162,8 @@ export class CustomProvider {
      * 发送聊天消息（非流式）
      */
     async chat(messages, options = {}) {
-        const { signal, requestId, options: payloadOptions } = splitRequestOptions(options);
+        const { signal, requestId, options: rawPayloadOptions } = splitRequestOptions(options);
+        const payloadOptions = normalizeOpenAICompatiblePayloadOptions(rawPayloadOptions);
         const data = await this.requestJson({
             url: `${this.baseUrl}/chat/completions`,
             method: 'POST',
@@ -172,7 +193,8 @@ export class CustomProvider {
      * 流式聊天
      */
     async *streamChat(messages, options = {}) {
-        const { signal, requestId, options: payloadOptions } = splitRequestOptions(options);
+        const { signal, requestId, options: rawPayloadOptions } = splitRequestOptions(options);
+        const payloadOptions = normalizeOpenAICompatiblePayloadOptions(rawPayloadOptions);
         const payload = JSON.stringify({
             model: this.model,
             messages: messages,
@@ -268,6 +290,8 @@ export class CustomProvider {
         if (options.size) payload.size = options.size;
         if (options.quality) payload.quality = options.quality;
         if (options.style) payload.style = options.style;
+        const seed = normalizeNonNegativeSeed(options.seed);
+        if (seed !== undefined) payload.seed = seed;
 
         const data = await this.requestJson({
             url: `${this.baseUrl}/images/generations`,

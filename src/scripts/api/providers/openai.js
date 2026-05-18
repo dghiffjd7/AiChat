@@ -62,6 +62,13 @@ const makeAbortError = () => {
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+const normalizeNonNegativeSeed = (value) => {
+  if (String(value ?? '').trim() === '') return undefined;
+  const seed = Math.trunc(Number(value));
+  if (!Number.isFinite(seed) || seed < 0) return undefined;
+  return seed;
+};
+
 const CACHE_DEBUG_RESPONSE_HEADER_KEYS = [
   'cf-cache-status',
   'x-cache',
@@ -377,7 +384,8 @@ export class OpenAIProvider {
       }
     } else if (!isOpenAIRestrictedSampling) {
       if (Number.isFinite(src.n)) out.n = Math.trunc(src.n);
-      if (Number.isFinite(src.seed)) out.seed = Math.trunc(src.seed);
+      const seed = normalizeNonNegativeSeed(src.seed);
+      if (seed !== undefined) out.seed = seed;
     }
 
     return out;

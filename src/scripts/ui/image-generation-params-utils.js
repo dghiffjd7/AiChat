@@ -122,6 +122,7 @@ export const createDefaultImageGenerationPreset = () => ({
       quality: '',
       style: '',
       response_format: '',
+      seed: '',
     },
     novelai: {
       ...NOVELAI_DEFAULTS,
@@ -378,7 +379,7 @@ export const resolveImageGenerationParamSchema = (config = {}) => {
           { value: 'exponential', label: 'exponential' },
           { value: 'polyexponential', label: 'polyexponential' },
         ], 'karras'),
-        makeText('seed', 'Seed', '', '留空则随机。'),
+        makeText('seed', 'Seed', '', '留空或 -1 则随机；固定 seed 请填 0 或正整数。'),
         makeSelect('qualityToggle', 'Quality Tags Enabled', BOOLEAN_OPTIONS, 'true', '开启后由 NovelAI 追加模型对应质量标签；如提示词已手写大量质量词，可关闭。'),
         makeSelect('sm', 'SMEA', BOOLEAN_OPTIONS, ''),
         makeSelect('sm_dyn', 'SMEA DYN', BOOLEAN_OPTIONS, ''),
@@ -428,7 +429,7 @@ export const resolveImageGenerationParamSchema = (config = {}) => {
           { value: 'pixel-art', label: 'pixel-art' },
           { value: 'tile-texture', label: 'tile-texture' },
         ], ''),
-        makeText('seed', 'Seed', '', '留空则由服务商随机。'),
+        makeText('seed', 'Seed', '', '留空或 -1 则由服务商随机；固定 seed 请填 0 或正整数。'),
       ],
     };
   }
@@ -444,7 +445,7 @@ export const resolveImageGenerationParamSchema = (config = {}) => {
         makeNumber('height', '高度', { min: 128, max: 2048, step: 64, fallback: 1024 }),
         makeNumber('steps', '步数', { min: 1, max: 100, fallback: 4 }),
         makeNumber('guidance_scale', 'Guidance Scale', { min: 0, max: 30, step: 0.1, fallback: 3.5, integer: false }),
-        makeText('seed', 'Seed', '', '留空则不传。'),
+        makeText('seed', 'Seed', '', '留空或 -1 则不传 seed；固定 seed 请填 0 或正整数。'),
         makeSelect('response_format', '返回格式', [
           { value: '', label: '默认' },
           { value: 'base64', label: 'Base64' },
@@ -468,7 +469,7 @@ export const resolveImageGenerationParamSchema = (config = {}) => {
       fields: [
         makeNumber('width', '宽度', { min: 64, max: 4096, step: 64, fallback: 1024 }),
         makeNumber('height', '高度', { min: 64, max: 4096, step: 64, fallback: 1024 }),
-        makeText('seed', 'Seed', '', '留空则不传。'),
+        makeText('seed', 'Seed', '', '留空或 -1 则不传 seed；固定 seed 请填 0 或正整数。'),
         makeSelect('enhance', '增强提示词', BOOLEAN_OPTIONS, ''),
       ],
     };
@@ -487,7 +488,7 @@ export const resolveImageGenerationParamSchema = (config = {}) => {
         makeNumber('cfg_scale', 'CFG Scale', { min: 0, max: 30, step: 0.5, fallback: 7, integer: false }),
         makeText('sampler_name', '采样器', '', '例如 Euler a、DPM++ 2M Karras；留空则使用服务端默认。'),
         makeText('scheduler', '调度器', '', '仅在你的 WebUI 版本支持时传递。'),
-        makeText('seed', 'Seed', '', '留空则随机。'),
+        makeText('seed', 'Seed', '', '留空或 -1 则随机；A1111 会保留 -1。固定 seed 请填 0 或正整数。'),
         makeSelect('restore_faces', '面部修复', BOOLEAN_OPTIONS, ''),
         makeSelect('enable_hr', 'Highres Fix', BOOLEAN_OPTIONS, ''),
       ],
@@ -506,7 +507,7 @@ export const resolveImageGenerationParamSchema = (config = {}) => {
         makeNumber('scale', 'CFG / Scale', { min: 0, max: 30, step: 0.5, fallback: 7, integer: false }),
         makeText('sampler', '采样器', ''),
         makeText('scheduler', '调度器', ''),
-        makeText('seed', 'Seed', '', '留空则随机。'),
+        makeText('seed', 'Seed', '', '留空或 -1 则随机；固定 seed 请填 0 或正整数。'),
         makeTextarea('workflowJson', 'Workflow JSON', '', '粘贴 ComfyUI 的 Save (API Format) JSON；可使用 "%prompt%"、"%negative_prompt%"、"%model%"、"%seed%"、"%width%"、"%height%"、"%steps%"、"%scale%" 等占位符。'),
       ],
     };
@@ -522,6 +523,7 @@ export const resolveImageGenerationParamSchema = (config = {}) => {
         makeText('size', '尺寸', '', '例如 1024x1024；留空则不传。'),
         makeText('quality', '质量', '', '仅在你的兼容端点支持时填写。'),
         makeText('style', '风格', '', '仅在你的兼容端点支持时填写。'),
+        makeText('seed', 'Seed', '', '留空或 -1 则不传 seed；固定 seed 请填 0 或正整数。'),
         makeSelect('response_format', '返回格式', [
           { value: '', label: '不传' },
           { value: 'url', label: 'URL' },

@@ -44,6 +44,24 @@ const toNumber = (value, fallback, { min = -Infinity, max = Infinity } = {}) => 
 
 const hasValue = (value) => String(value ?? '').trim() !== '';
 
+const isRandomSeedRequest = (value) => {
+  if (!hasValue(value)) return false;
+  const n = Math.trunc(Number(value));
+  return Number.isFinite(n) && n === -1;
+};
+
+const toOptionalSeed = (value, { max = Number.MAX_SAFE_INTEGER } = {}) => {
+  if (!hasValue(value) || isRandomSeedRequest(value)) return undefined;
+  return toInt(value, 0, { min: 0, max });
+};
+
+const randomSeed = (max = Number.MAX_SAFE_INTEGER) => Math.floor(Math.random() * Math.max(1, max));
+
+const toRandomSeed = (value, { max = Number.MAX_SAFE_INTEGER } = {}) => {
+  if (!hasValue(value) || isRandomSeedRequest(value)) return randomSeed(max);
+  return toInt(value, 0, { min: 0, max });
+};
+
 const isEnabled = (value) => value === true || String(value ?? '').trim().toLowerCase() === 'true';
 
 const trimTrailingSlash = (value) => String(value || '').trim().replace(/\/+$/, '');
@@ -232,7 +250,8 @@ export class TogetherAIImageProvider extends ImageProviderBase {
     if (hasValue(options.width)) payload.width = toInt(options.width, 1024, { min: 128, max: 2048 });
     if (hasValue(options.height)) payload.height = toInt(options.height, 1024, { min: 128, max: 2048 });
     if (hasValue(options.steps)) payload.steps = toInt(options.steps, 4, { min: 1, max: 100 });
-    if (hasValue(options.seed)) payload.seed = toInt(options.seed, 0, { min: 0 });
+    const seed = toOptionalSeed(options.seed);
+    if (seed !== undefined) payload.seed = seed;
     if (hasValue(options.negativePrompt || options.negative_prompt)) payload.negative_prompt = options.negativePrompt || options.negative_prompt;
     if (hasValue(options.guidanceScale || options.guidance_scale)) payload.guidance_scale = toNumber(options.guidanceScale || options.guidance_scale, 3.5, { min: 0, max: 30 });
     if (hasValue(options.responseFormat || options.response_format)) payload.response_format = options.responseFormat || options.response_format;
@@ -280,7 +299,8 @@ export class PollinationsImageProvider extends ImageProviderBase {
     if (this.model) url.searchParams.set('model', this.model);
     if (hasValue(options.width)) url.searchParams.set('width', String(toInt(options.width, 1024, { min: 64, max: 4096 })));
     if (hasValue(options.height)) url.searchParams.set('height', String(toInt(options.height, 1024, { min: 64, max: 4096 })));
-    if (hasValue(options.seed)) url.searchParams.set('seed', String(toInt(options.seed, 0, { min: 0 })));
+    const seed = toOptionalSeed(options.seed);
+    if (seed !== undefined) url.searchParams.set('seed', String(seed));
     const negative = options.negativePrompt || options.negative_prompt;
     if (hasValue(negative)) url.searchParams.set('negative_prompt', String(negative));
     if (isEnabled(options.enhance)) url.searchParams.set('enhance', 'true');
@@ -329,7 +349,7 @@ export class StabilityAIImageProvider extends ImageProviderBase {
       prompt: String(prompt || '').trim().slice(0, 10000),
       negative_prompt: String(options.negativePrompt || options.negative_prompt || '').trim().slice(0, 10000),
       aspect_ratio: String(options.aspectRatio || options.aspect_ratio || '1:1').trim(),
-      seed: hasValue(options.seed) ? toInt(options.seed, 0, { min: 0, max: 4294967294 }) : undefined,
+      seed: toOptionalSeed(options.seed, { max: 4294967294 }),
       style_preset: options.stylePreset || options.style_preset || undefined,
       output_format: outputFormat,
     };
@@ -398,9 +418,7 @@ export class NovelAIImageProvider extends ImageProviderBase {
 
   buildPayload(prompt, options = {}) {
     const negative = String(options.negativePrompt || options.negative_prompt || '').trim();
-    const seed = hasValue(options.seed)
-      ? toInt(options.seed, 0, { min: 0 })
-      : Math.floor(Math.random() * 9999999999);
+    const seed = toRandomSeed(options.seed, { max: 9999999999 });
     const width = toInt(options.width, 1024, { min: 64, max: 2048 });
     const height = toInt(options.height, 1024, { min: 64, max: 2048 });
     const scale = toNumber(options.scale, 5, { min: 0, max: 30 });
@@ -525,7 +543,10 @@ export class Automatic1111ImageProvider extends ImageProviderBase {
     };
     if (hasValue(options.samplerName || options.sampler_name)) payload.sampler_name = options.samplerName || options.sampler_name;
     if (hasValue(options.scheduler)) payload.scheduler = options.scheduler;
-    if (hasValue(options.seed)) payload.seed = toInt(options.seed, -1);
+    if (hasValue(options.seed)) {
+      const seed = toInt(options.seed, -1);
+      payload.seed = seed < 0 ? -1 : seed;
+    }
     if (isEnabled(options.restoreFaces || options.restore_faces)) payload.restore_faces = true;
     if (isEnabled(options.enableHr || options.enable_hr)) payload.enable_hr = true;
     if (this.model && this.model !== 'default') {
@@ -579,7 +600,7 @@ export class ComfyUIImageProvider extends ImageProviderBase {
     if (!raw) {
       throw new Error('ComfyUI 需要先在图片生成参数中填写 API Format workflow JSON');
     }
-    const seed = hasValue(options.seed) ? toInt(options.seed, 0) : Math.round(Math.random() * Number.MAX_SAFE_INTEGER);
+    const seed = toRandomSeed(options.seed);
     const replacements = {
       prompt,
       negative_prompt: String(options.negativePrompt || options.negative_prompt || ''),

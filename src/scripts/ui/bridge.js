@@ -5749,6 +5749,7 @@ const stringifyMessageContent = (content) => {
       if (samplerPolicy.disabledFields.includes('frequency_penalty')) delete base.frequency_penalty;
       if (samplerPolicy.disabledFields.includes('seed')) delete base.seed;
       if (samplerPolicy.disabledFields.includes('n')) delete base.n;
+      if (typeof base.seed === 'number' && base.seed < 0) delete base.seed;
 
       // Provider-specific mapping
       if (provider === 'gemini' || provider === 'makersuite' || provider === 'vertexai') {
