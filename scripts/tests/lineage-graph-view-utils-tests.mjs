@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
+import { createRequire } from 'node:module';
 
 import {
+  buildLineageMapSceneModelWithElk,
+  buildLineageMapSceneModel,
   buildLineageGraphViewModel,
   detectLineageCycles,
   exportLineageGraphDot,
@@ -15,6 +18,9 @@ import {
   renderLineagePipelineHtml,
   summarizeLineageGraph,
 } from '../../src/scripts/ui/chat/lineage-graph-view-utils.js';
+
+const require = createRequire(import.meta.url);
+const ELK = require('elkjs/lib/elk.bundled.js');
 
 const graph = {
   version: 1,
@@ -35,6 +41,60 @@ const graph = {
     { id: 'e3', source: 'row:a:1', target: 'prompt:req-1', type: 'injects', status: 'active', reason: 'memory_row_match', sourceScopeId: 'persona:1', targetScopeId: 'persona:1' },
     { id: 'e4', source: 'contact:b', target: 'prompt:req-1', type: 'candidate_for', status: 'blocked', reason: 'scope_block', sourceScopeId: 'persona:2', targetScopeId: 'persona:1' },
   ],
+};
+
+const buildDenseGraph = () => ({
+  ...graph,
+  nodes: [
+    graph.nodes[4],
+    ...Array.from({ length: 8 }, (_, index) => ({
+      id: `contact:dense:${index}`,
+      type: 'contact',
+      label: `联系人 ${index}`,
+      status: 'active',
+      scopeId: 'persona:1',
+    })),
+    ...Array.from({ length: 8 }, (_, index) => ({
+      id: `row:dense:${index}`,
+      type: 'memory_row',
+      label: `记忆 ${index}`,
+      status: 'active',
+      scopeId: 'persona:1',
+    })),
+  ],
+  edges: [
+    ...Array.from({ length: 8 }, (_, index) => ({
+      id: `edge:contact:${index}`,
+      source: `contact:dense:${index}`,
+      target: 'prompt:req-1',
+      type: 'candidate_for',
+      status: 'candidate',
+      sourceScopeId: 'persona:1',
+      targetScopeId: 'persona:1',
+    })),
+    ...Array.from({ length: 8 }, (_, index) => ({
+      id: `edge:row:${index}`,
+      source: `row:dense:${index}`,
+      target: 'prompt:req-1',
+      type: 'injects',
+      status: 'active',
+      sourceScopeId: 'persona:1',
+      targetScopeId: 'persona:1',
+    })),
+  ],
+});
+
+const collectNodeOverlaps = (nodes = []) => {
+  const overlaps = [];
+  const visibleNodes = nodes.filter(node => node.kind !== 'root');
+  visibleNodes.forEach((node, index) => {
+    visibleNodes.slice(index + 1).forEach((other) => {
+      const intersects = Math.abs(node.x - other.x) < (node.width + other.width) / 2 + 6
+        && Math.abs(node.y - other.y) < (node.height + other.height) / 2 + 10;
+      if (intersects) overlaps.push(`${node.id}/${other.id}`);
+    });
+  });
+  return overlaps;
 };
 
 {
@@ -85,10 +145,32 @@ const graph = {
   assert.match(scene, /联系人/);
   assert.doesNotMatch(scene, /NaN/);
   assert.doesNotMatch(scene, /Alice 画像/);
+  const expandedCategory = renderLineageMapSceneHtml(graph, { expandedIds: ['contacts'] });
+  assert.doesNotMatch(expandedCategory, /is-contains/);
   const expanded = renderLineageMapSceneHtml(graph, { expandedIds: ['contacts'], focusId: 'contact:a' });
   assert.match(expanded, /data-lineage-node-id="contact:a"/);
   assert.match(expanded, /Alice/);
+  assert.match(expanded, /is-contains/);
   console.log('ok - lineage map scene renders first-layer categories and expands on demand');
+}
+
+{
+  const model = buildLineageMapSceneModel(buildDenseGraph(), { expandedIds: ['contacts', 'memories'] });
+  assert.deepEqual(collectNodeOverlaps(model.nodes), []);
+  assert.ok(model.edges.every(edge => /C/.test(edge.path)));
+  console.log('ok - lineage map scene allocates expanded bands without node overlap');
+}
+
+{
+  const model = await buildLineageMapSceneModelWithElk(buildDenseGraph(), {
+    expandedIds: ['contacts', 'memories'],
+    elkConstructor: ELK,
+  });
+  assert.equal(model.layoutEngine, 'elk');
+  assert.deepEqual(collectNodeOverlaps(model.nodes), []);
+  assert.ok(model.edges.filter(edge => edge.kind === 'aggregate').every(edge => /C/.test(edge.path)));
+  assert.ok(model.edges.filter(edge => edge.kind !== 'aggregate').every(edge => /L/.test(edge.path)));
+  console.log('ok - lineage map scene uses ELK layered orthogonal layout without node overlap');
 }
 
 {

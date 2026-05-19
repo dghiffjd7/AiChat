@@ -222,7 +222,7 @@ import {
   formatLineageEdgeDetails,
   formatLineageNodeDetails,
   getLineageGraphItem,
-  renderLineageMapSceneHtml,
+  renderLineageMapSceneHtmlAsync,
   summarizeLineageGraph,
 } from './chat/lineage-graph-view-utils.js';
 import { createPromptPreviewRuntime } from './chat/prompt-preview-runtime-utils.js';
@@ -5901,15 +5901,23 @@ Phase G（Frame 36）：循环衔接
   const setActionPanelOpen = open => {
     if (!actionPanel?.el || !chatRoom) return;
     const next = Boolean(open);
+    const inlinePanel = chatRoom.querySelector('.chat-action-inline');
     actionPanelOpen = next;
     if (next) {
+      inlinePanel?.removeAttribute('aria-hidden');
+      inlinePanel?.removeAttribute('inert');
       actionPanel.el.classList.add('is-active');
       chatRoom.classList.add('action-panel-open');
       setStickerPanelOpen(false);
       composerInput?.blur();
     } else {
+      if (inlinePanel?.contains(document.activeElement)) {
+        document.activeElement?.blur?.();
+      }
       actionPanel.el.classList.remove('is-active');
       chatRoom.classList.remove('action-panel-open');
+      inlinePanel?.setAttribute('aria-hidden', 'true');
+      inlinePanel?.setAttribute('inert', '');
     }
     syncChatInputOffset();
     scheduleModeSwitchSync();
@@ -12221,7 +12229,9 @@ Phase G（Frame 36）：循环衔接
     let lineagePanX = 0;
     let lineagePanY = 0;
     let lineageSelection = null;
+    let lineagePendingCenterSelector = '';
     let lineageDrag = null;
+    let lineageRenderSeq = 0;
 
     const escHtml = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
@@ -12352,6 +12362,23 @@ Phase G（Frame 36）：循环衔接
       lineageCanvasEl.style.transformOrigin = '0 0';
     };
 
+    const escapeCssValue = globalThis.CSS && typeof globalThis.CSS.escape === 'function'
+      ? globalThis.CSS.escape
+      : (value) => String(value || '').replace(/["\\]/g, '\\$&');
+
+    const centerLineageMapTarget = (selector = '') => {
+      if (!lineageCanvasWrap || !lineageCanvasEl || !selector) return;
+      const target = lineageCanvasEl.querySelector(selector);
+      if (!(target instanceof HTMLElement)) return;
+      const left = Math.max(0, target.offsetLeft - lineageCanvasWrap.clientWidth / 2 + target.offsetWidth / 2);
+      const top = Math.max(0, target.offsetTop - lineageCanvasWrap.clientHeight / 2 + target.offsetHeight / 2);
+      lineageCanvasWrap.scrollTo({ left, top, behavior: 'smooth' });
+    };
+
+    const scheduleLineageMapCenter = (selector = '') => {
+      lineagePendingCenterSelector = String(selector || '');
+    };
+
     const buildLineageCompactDetailsHtml = (kind = '', item = null, graph = null) => {
       if (!item) return '';
       const fullText = kind === 'edge'
@@ -12396,15 +12423,13 @@ Phase G（Frame 36）：循环衔接
       lineageCanvasEl.querySelectorAll('.is-selected').forEach(el => el.classList.remove('is-selected'));
       if (!lineageSelection) return;
       const attr = lineageSelection.kind === 'edge' ? 'data-lineage-edge-id' : 'data-lineage-node-id';
-      const escapeCss = globalThis.CSS && typeof globalThis.CSS.escape === 'function'
-        ? globalThis.CSS.escape
-        : (value) => String(value || '').replace(/["\\]/g, '\\$&');
-      const selector = `[${attr}="${escapeCss(lineageSelection.id)}"]`;
+      const selector = `[${attr}="${escapeCssValue(lineageSelection.id)}"]`;
       lineageCanvasEl.querySelectorAll(selector).forEach(el => el.classList.add('is-selected'));
     };
 
-    const renderLineageGraph = () => {
+    const renderLineageGraph = async () => {
       const graph = getPreviewLineageGraph();
+      const renderSeq = ++lineageRenderSeq;
       if (!lineageGraphEl || !lineageCanvasEl) return;
       if (!graph) {
         if (lineageSummaryEl) lineageSummaryEl.textContent = '';
@@ -12422,13 +12447,23 @@ Phase G（Frame 36）：循环衔接
       if (lineageSelection && !getLineageGraphItem(graph, lineageSelection.kind, lineageSelection.id)) lineageSelection = null;
       lineageCanvasEl.classList.remove('is-readable-view');
       lineageCanvasEl.classList.add('is-map-scene-view');
-      lineageCanvasEl.innerHTML = renderLineageMapSceneHtml(graph, {
+      if (!lineageCanvasEl.querySelector('.lineage-map-scene')) {
+        lineageCanvasEl.innerHTML = '<div class="lineage-graph-empty">排版中…</div>';
+      }
+      const html = await renderLineageMapSceneHtmlAsync(graph, {
         focusId: lineageSelection?.kind === 'node' ? lineageSelection.id : '',
         expandedIds: Array.from(lineageExpandedIds),
       });
+      if (renderSeq !== lineageRenderSeq || !lineageCanvasEl) return;
+      lineageCanvasEl.innerHTML = html;
       updateLineageTransform();
       markLineageSelection();
       setLineageInspector(lineageSelection?.kind || '', lineageSelection?.id || '');
+      if (lineagePendingCenterSelector) {
+        const selector = lineagePendingCenterSelector;
+        lineagePendingCenterSelector = '';
+        requestAnimationFrame(() => centerLineageMapTarget(selector));
+      }
     };
 
     const switchTab = (tab) => {
@@ -12614,6 +12649,7 @@ Phase G（Frame 36）：循环衔接
           if (categoryId) {
             if (lineageExpandedIds.has(categoryId)) lineageExpandedIds.delete(categoryId);
             else lineageExpandedIds.add(categoryId);
+            scheduleLineageMapCenter(`[data-lineage-map-category="${escapeCssValue(categoryId)}"]`);
           }
           lineageSelection = null;
           renderLineageGraph();
@@ -12629,9 +12665,17 @@ Phase G（Frame 36）：循环衔接
         const nodeEl = event.target?.closest?.('[data-lineage-node-id]');
         if (nodeEl) {
           lineageSelection = { kind: 'node', id: String(nodeEl.dataset.lineageNodeId || '') };
+          scheduleLineageMapCenter(`[data-lineage-node-id="${escapeCssValue(lineageSelection.id)}"]`);
           renderLineageGraph();
           return;
         }
+      });
+      lineageGraphEl?.addEventListener('keydown', (event) => {
+        if (event.key !== 'Enter' && event.key !== ' ') return;
+        const target = event.target?.closest?.('[data-lineage-node-id], [data-lineage-map-category]');
+        if (!target) return;
+        event.preventDefault();
+        target.click?.();
       });
       lineageCanvasWrap?.addEventListener('wheel', (event) => {
         if (!event.ctrlKey && !event.metaKey) return;
@@ -12729,6 +12773,7 @@ Phase G（Frame 36）：循环衔接
       lineagePanX = 0;
       lineagePanY = 0;
       lineageSelection = null;
+      lineagePendingCenterSelector = '';
       locateHandler = typeof onLocate === 'function' ? onLocate : null;
       if (locateBtn) {
         locateBtn.disabled = typeof locateHandler !== 'function';
@@ -12755,6 +12800,7 @@ Phase G（Frame 36）：循环衔接
       previewLineageTrace = null;
       lineageOnlyMode = false;
       lineagePlainText = '';
+      lineagePendingCenterSelector = '';
       lineageDrag = null;
     };
 

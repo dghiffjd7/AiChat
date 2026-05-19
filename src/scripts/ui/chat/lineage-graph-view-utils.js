@@ -69,6 +69,8 @@ const MAP_CATEGORY_DEFS = Object.freeze([
   { id: 'prompts', label: 'Prompt', types: ['prompt'] },
 ]);
 
+const LINEAGE_ELK_SCRIPT_URL = '../../vendor/elk.bundled.js';
+
 const TYPE_COLUMNS = Object.freeze({
   persona_card: 0,
   private_chat: 1,
@@ -317,13 +319,20 @@ const relevantEdgesForNode = (graph = null, nodeId = '') => {
     });
 };
 
-const makeMapEdgePath = (source = {}, target = {}) => {
-  const sourceX = Number(source?.x || 0) + Number(source?.width || 0) / 2;
-  const sourceY = Number(source?.y || 0);
-  const targetX = Number(target?.x || 0) - Number(target?.width || 0) / 2;
-  const targetY = Number(target?.y || 0);
-  const delta = Math.max(64, Math.abs(targetX - sourceX) * 0.45);
-  return `M ${sourceX.toFixed(1)} ${sourceY.toFixed(1)} C ${(sourceX + delta).toFixed(1)} ${sourceY.toFixed(1)}, ${(targetX - delta).toFixed(1)} ${targetY.toFixed(1)}, ${targetX.toFixed(1)} ${targetY.toFixed(1)}`;
+const makeMapEdgePath = (source = {}, target = {}, {
+  laneIndex = 0,
+  laneCount = 1,
+} = {}) => {
+  const forward = Number(target?.x || 0) >= Number(source?.x || 0);
+  const sourceX = Number(source?.x || 0) + (forward ? Number(source?.width || 0) / 2 : -Number(source?.width || 0) / 2);
+  const targetX = Number(target?.x || 0) + (forward ? -Number(target?.width || 0) / 2 : Number(target?.width || 0) / 2);
+  const laneOffset = (Number(laneIndex) - (Math.max(1, Number(laneCount) || 1) - 1) / 2) * 8;
+  const sourceY = Number(source?.y || 0) + laneOffset;
+  const targetY = Number(target?.y || 0) - laneOffset * 0.32;
+  const delta = Math.max(76, Math.abs(targetX - sourceX) * 0.42);
+  const c1x = sourceX + (forward ? delta : -delta);
+  const c2x = targetX + (forward ? -delta : delta);
+  return `M ${sourceX.toFixed(1)} ${sourceY.toFixed(1)} C ${c1x.toFixed(1)} ${sourceY.toFixed(1)}, ${c2x.toFixed(1)} ${targetY.toFixed(1)}, ${targetX.toFixed(1)} ${targetY.toFixed(1)}`;
 };
 
 const makeMapNode = ({
@@ -354,7 +363,56 @@ const makeMapNode = ({
   count: Number(count) || 0,
 });
 
-const buildLineageMapSceneModel = (graph = null, {
+const shouldRenderLineageMapEdge = (edge = {}, model = {}, nodeByMapId = new Map()) => {
+  if (!normalizeString(edge?.path)) return false;
+  const kind = normalizeString(edge?.kind);
+  if (kind !== 'contains') return true;
+  const focusId = normalizeString(model?.focusId);
+  if (!focusId) return false;
+  const source = nodeByMapId.get(normalizeString(edge?.sourceId));
+  const target = nodeByMapId.get(normalizeString(edge?.targetId));
+  return normalizeString(source?.nodeId) === focusId || normalizeString(target?.nodeId) === focusId;
+};
+
+let lineageElkConstructorPromise = null;
+let lineageElkInstancePromise = null;
+
+const loadLineageElkConstructor = async () => {
+  if (typeof globalThis === 'undefined') return null;
+  if (typeof globalThis.ELK === 'function') return globalThis.ELK;
+  const doc = globalThis.document;
+  if (!doc?.createElement) return null;
+  if (!lineageElkConstructorPromise) {
+    lineageElkConstructorPromise = new Promise((resolve) => {
+      const existing = doc.querySelector('script[data-lineage-elk-loader="true"]');
+      if (existing) {
+        existing.addEventListener('load', () => resolve(typeof globalThis.ELK === 'function' ? globalThis.ELK : null), { once: true });
+        existing.addEventListener('error', () => resolve(null), { once: true });
+        return;
+      }
+      const script = doc.createElement('script');
+      script.src = new URL(LINEAGE_ELK_SCRIPT_URL, import.meta.url).href;
+      script.async = true;
+      script.dataset.lineageElkLoader = 'true';
+      script.onload = () => resolve(typeof globalThis.ELK === 'function' ? globalThis.ELK : null);
+      script.onerror = () => resolve(null);
+      doc.head.appendChild(script);
+    });
+  }
+  return lineageElkConstructorPromise;
+};
+
+const getLineageElkInstance = async (elkConstructor = null) => {
+  const ElkCtor = elkConstructor || await loadLineageElkConstructor();
+  if (typeof ElkCtor !== 'function') return null;
+  if (elkConstructor) return new ElkCtor();
+  if (!lineageElkInstancePromise) {
+    lineageElkInstancePromise = Promise.resolve(new ElkCtor());
+  }
+  return lineageElkInstancePromise;
+};
+
+export const buildLineageMapSceneModel = (graph = null, {
   focusId = '',
   expandedIds = [],
   maxItemsPerCategory = 12,
@@ -368,10 +426,42 @@ const buildLineageMapSceneModel = (graph = null, {
   const expanded = new Set(listOf(expandedIds).map(normalizeString).filter(Boolean));
   const focus = normalizeString(focusId);
   const focusNode = nodeById.get(focus) || null;
-  const rootY = 320;
   const mapNodes = [];
   const mapEdges = [];
+  const itemLimit = Math.max(1, Math.trunc(Number(maxItemsPerCategory) || 12));
+  const itemGap = 76;
+  const categoryGap = 30;
 
+  const categoryRows = MAP_CATEGORY_DEFS
+    .map((definition) => {
+      const categoryNodes = nodes
+        .filter((node) => normalizeString(node?.id) !== normalizeString(rootNode?.id))
+        .filter((node) => definition.types.includes(normalizeString(node?.type)));
+      const ids = new Set(categoryNodes.map(node => normalizeString(node?.id)).filter(Boolean));
+      const counts = summarizeEdgesForNodes(graph, ids);
+      const sortedNodes = categoryNodes.sort(compareNode);
+      const expandedRow = expanded.has(definition.id);
+      const visibleCount = expandedRow ? Math.min(sortedNodes.length, itemLimit) : 0;
+      const hasMore = expandedRow && sortedNodes.length > visibleCount;
+      const itemSlots = visibleCount + (hasMore ? 1 : 0);
+      return {
+        ...definition,
+        nodes: sortedNodes,
+        counts,
+        expanded: expandedRow,
+        visibleCount,
+        hasMore,
+        bandHeight: expandedRow ? Math.max(96, itemSlots * itemGap + 22) : 86,
+        status: statusFromCounts(counts),
+      };
+    })
+    .filter(category => category.nodes.length);
+
+  const sceneTop = 120;
+  const totalBandHeight = categoryRows.reduce((sum, category, index) => (
+    sum + category.bandHeight + (index > 0 ? categoryGap : 0)
+  ), 0);
+  const rootY = Math.max(320, sceneTop + totalBandHeight / 2);
   const rootMapNode = makeMapNode({
     id: rootMapId,
     label: rootNode ? labelOfNode(rootNode) : '当前上下文',
@@ -386,25 +476,11 @@ const buildLineageMapSceneModel = (graph = null, {
   });
   mapNodes.push(rootMapNode);
 
-  const categoryRows = MAP_CATEGORY_DEFS
-    .map((definition) => {
-      const categoryNodes = nodes
-        .filter((node) => normalizeString(node?.id) !== normalizeString(rootNode?.id))
-        .filter((node) => definition.types.includes(normalizeString(node?.type)));
-      const ids = new Set(categoryNodes.map(node => normalizeString(node?.id)).filter(Boolean));
-      const counts = summarizeEdgesForNodes(graph, ids);
-      return {
-        ...definition,
-        nodes: categoryNodes.sort(compareNode),
-        counts,
-        status: statusFromCounts(counts),
-      };
-    })
-    .filter(category => category.nodes.length);
-
-  const categoryStartY = Math.max(120, rootY - (categoryRows.length - 1) * 46);
+  let cursorY = sceneTop;
   categoryRows.forEach((category, index) => {
-    const y = categoryStartY + index * 92;
+    if (index > 0) cursorY += categoryGap;
+    const y = cursorY + category.bandHeight / 2;
+    cursorY += category.bandHeight;
     const meta = category.counts.risk
       ? `${category.counts.risk} 风险`
       : category.counts.injects
@@ -434,10 +510,10 @@ const buildLineageMapSceneModel = (graph = null, {
       kind: 'aggregate',
     });
 
-    if (!expanded.has(category.id)) return;
-    const itemLimit = Math.max(1, Math.trunc(Number(maxItemsPerCategory) || 12));
+    if (!category.expanded) return;
     const visibleItems = category.nodes.slice(0, itemLimit);
-    const itemStartY = y - Math.max(0, visibleItems.length - 1) * 34;
+    const itemSlots = visibleItems.length + (category.hasMore ? 1 : 0);
+    const itemStartY = y - Math.max(0, itemSlots - 1) * itemGap / 2;
     visibleItems.forEach((node, itemIndex) => {
       const nodeId = normalizeString(node?.id);
       const itemNode = makeMapNode({
@@ -447,7 +523,7 @@ const buildLineageMapSceneModel = (graph = null, {
         kind: nodeId === focus ? 'focus' : 'item',
         status: mapNodeStatus(node, graph),
         x: 920,
-        y: itemStartY + itemIndex * 68,
+        y: itemStartY + itemIndex * itemGap,
         width: 188,
         height: 58,
         nodeId,
@@ -461,7 +537,7 @@ const buildLineageMapSceneModel = (graph = null, {
         kind: 'contains',
       });
     });
-    if (category.nodes.length > visibleItems.length) {
+    if (category.hasMore) {
       const moreNode = makeMapNode({
         id: `more:${category.id}`,
         label: `+${category.nodes.length - visibleItems.length}`,
@@ -469,7 +545,7 @@ const buildLineageMapSceneModel = (graph = null, {
         kind: 'more',
         status: 'unknown',
         x: 920,
-        y: itemStartY + visibleItems.length * 68,
+        y: itemStartY + visibleItems.length * itemGap,
         width: 118,
         height: 48,
       });
@@ -517,7 +593,8 @@ const buildLineageMapSceneModel = (graph = null, {
       const other = nodeById.get(otherId);
       if (other) relatedNodes.push(other);
     });
-    const relatedStartY = sourceNode.y - Math.max(0, relatedNodes.length - 1) * 32;
+    const relatedGap = 70;
+    const relatedStartY = sourceNode.y - Math.max(0, relatedNodes.length - 1) * relatedGap / 2;
     relatedNodes.forEach((node, index) => {
       const nodeId = normalizeString(node?.id);
       const relatedNode = makeMapNode({
@@ -527,7 +604,7 @@ const buildLineageMapSceneModel = (graph = null, {
         kind: 'related',
         status: mapNodeStatus(node, graph),
         x: 1200,
-        y: relatedStartY + index * 64,
+        y: relatedStartY + index * relatedGap,
         width: 176,
         height: 54,
         nodeId,
@@ -547,14 +624,24 @@ const buildLineageMapSceneModel = (graph = null, {
   }
 
   const mapNodeById = new Map(mapNodes.map(node => [node.id, node]));
+  const edgeLaneBySource = new Map();
+  mapEdges.forEach((edge) => {
+    const key = normalizeString(edge.sourceId);
+    if (!edgeLaneBySource.has(key)) edgeLaneBySource.set(key, []);
+    edgeLaneBySource.get(key).push(edge);
+  });
   const renderedEdges = mapEdges
     .map((edge) => {
       const source = mapNodeById.get(edge.sourceId);
       const target = mapNodeById.get(edge.targetId);
       if (!source || !target) return null;
+      const laneGroup = edgeLaneBySource.get(normalizeString(edge.sourceId)) || [];
       return {
         ...edge,
-        path: makeMapEdgePath(source, target),
+        path: makeMapEdgePath(source, target, {
+          laneIndex: Math.max(0, laneGroup.indexOf(edge)),
+          laneCount: laneGroup.length,
+        }),
       };
     })
     .filter(Boolean);
@@ -571,7 +658,137 @@ const buildLineageMapSceneModel = (graph = null, {
       path: edge.path.replace(/(\d+\.\d+) (\d+\.\d+)/g, (match, x, y) => `${x} ${(Number(y) - Math.min(0, top)).toFixed(1)}`),
     })),
     expandedIds: Array.from(expanded),
+    focusId: focus,
   };
+};
+
+const toElkLayoutGraph = (model = null) => ({
+  id: 'lineage-map',
+  layoutOptions: {
+    'elk.algorithm': 'layered',
+    'elk.direction': 'RIGHT',
+    'elk.edgeRouting': 'ORTHOGONAL',
+    'elk.hierarchyHandling': 'INCLUDE_CHILDREN',
+    'elk.spacing.nodeNode': '34',
+    'elk.layered.spacing.nodeNodeBetweenLayers': '138',
+    'elk.layered.spacing.edgeNodeBetweenLayers': '28',
+    'elk.layered.spacing.edgeEdgeBetweenLayers': '18',
+    'elk.layered.nodePlacement.strategy': 'NETWORK_SIMPLEX',
+    'elk.layered.crossingMinimization.strategy': 'LAYER_SWEEP',
+    'elk.layered.considerModelOrder.strategy': 'NODES_AND_EDGES',
+    'elk.layered.mergeEdges': 'true',
+    'elk.padding': '[top=90,left=90,bottom=90,right=90]',
+  },
+  children: listOf(model?.nodes).map((node) => ({
+    id: normalizeString(node?.id),
+    width: Number(node?.width || 176),
+    height: Number(node?.height || 58),
+    ports: [
+      {
+        id: `${normalizeString(node?.id)}:in`,
+        width: 2,
+        height: 2,
+        layoutOptions: { 'elk.port.side': 'WEST' },
+      },
+      {
+        id: `${normalizeString(node?.id)}:out`,
+        width: 2,
+        height: 2,
+        layoutOptions: { 'elk.port.side': 'EAST' },
+      },
+    ],
+    layoutOptions: {
+      'elk.portConstraints': 'FIXED_SIDE',
+    },
+  })),
+  edges: listOf(model?.edges).map((edge) => ({
+    id: normalizeString(edge?.id),
+    sources: [`${normalizeString(edge?.sourceId)}:out`],
+    targets: [`${normalizeString(edge?.targetId)}:in`],
+  })),
+});
+
+const formatElkEdgePath = (edge = null) => {
+  const sections = listOf(edge?.sections);
+  const paths = sections.map((section) => {
+    const points = [
+      section?.startPoint,
+      ...listOf(section?.bendPoints),
+      section?.endPoint,
+    ].filter(point => Number.isFinite(Number(point?.x)) && Number.isFinite(Number(point?.y)));
+    if (points.length < 2) return '';
+    return points.map((point, index) => (
+      `${index === 0 ? 'M' : 'L'} ${Number(point.x).toFixed(1)} ${Number(point.y).toFixed(1)}`
+    )).join(' ');
+  }).filter(Boolean);
+  return paths.join(' ');
+};
+
+const mergeElkLayoutIntoMapModel = (model = null, elkGraph = null) => {
+  const elkNodeById = new Map(listOf(elkGraph?.children).map(node => [normalizeString(node?.id), node]));
+  const elkEdgeById = new Map(listOf(elkGraph?.edges).map(edge => [normalizeString(edge?.id), edge]));
+  const nodes = listOf(model?.nodes).map((node) => {
+    const elkNode = elkNodeById.get(normalizeString(node?.id));
+    if (!elkNode) return node;
+    const width = Number(elkNode.width || node.width || 176);
+    const height = Number(elkNode.height || node.height || 58);
+    return {
+      ...node,
+      x: Number(elkNode.x || 0) + width / 2,
+      y: Number(elkNode.y || 0) + height / 2,
+      width,
+      height,
+    };
+  });
+  const nodeByMapId = new Map(nodes.map(node => [normalizeString(node?.id), node]));
+  const edgeLaneBySource = new Map();
+  listOf(model?.edges).forEach((edge) => {
+    const key = normalizeString(edge?.sourceId);
+    if (!edgeLaneBySource.has(key)) edgeLaneBySource.set(key, []);
+    edgeLaneBySource.get(key).push(edge);
+  });
+  const edges = listOf(model?.edges).map((edge) => {
+    const kind = normalizeString(edge?.kind);
+    if (kind === 'aggregate') {
+      const source = nodeByMapId.get(normalizeString(edge?.sourceId));
+      const target = nodeByMapId.get(normalizeString(edge?.targetId));
+      const laneGroup = edgeLaneBySource.get(normalizeString(edge?.sourceId)) || [];
+      return source && target
+        ? {
+          ...edge,
+          path: makeMapEdgePath(source, target, {
+            laneIndex: Math.max(0, laneGroup.indexOf(edge)),
+            laneCount: laneGroup.length,
+          }),
+          layoutEngine: 'map',
+        }
+        : edge;
+    }
+    const path = formatElkEdgePath(elkEdgeById.get(normalizeString(edge?.id)));
+    return path ? { ...edge, path, layoutEngine: 'elk' } : edge;
+  });
+  const right = Math.max(760, Number(elkGraph?.width || 0) + 40, ...nodes.map(node => node.x + node.width / 2 + 90));
+  const bottom = Math.max(420, Number(elkGraph?.height || 0) + 40, ...nodes.map(node => node.y + node.height / 2 + 90));
+  return {
+    ...model,
+    width: Math.ceil(right),
+    height: Math.ceil(bottom),
+    nodes,
+    edges,
+    layoutEngine: 'elk',
+  };
+};
+
+export const buildLineageMapSceneModelWithElk = async (graph = null, options = {}) => {
+  const fallbackModel = buildLineageMapSceneModel(graph, options);
+  try {
+    const elk = await getLineageElkInstance(options.elkConstructor || null);
+    if (!elk?.layout) return { ...fallbackModel, layoutEngine: 'fallback' };
+    const elkGraph = await elk.layout(toElkLayoutGraph(fallbackModel));
+    return mergeElkLayoutIntoMapModel(fallbackModel, elkGraph);
+  } catch {
+    return { ...fallbackModel, layoutEngine: 'fallback' };
+  }
 };
 
 const edgeLabel = (edge = {}, nodes = new Map()) => {
@@ -771,15 +988,26 @@ export const renderLineagePipelineHtml = (graph = null) => {
 
 export const renderLineageMapSceneHtml = (graph = null, options = {}) => {
   const model = buildLineageMapSceneModel(graph, options);
+  return renderLineageMapSceneModelHtml(model);
+};
+
+export const renderLineageMapSceneHtmlAsync = async (graph = null, options = {}) => {
+  const model = await buildLineageMapSceneModelWithElk(graph, options);
+  return renderLineageMapSceneModelHtml(model);
+};
+
+const renderLineageMapSceneModelHtml = (model = null) => {
   if (!model.nodes.length) {
     return '<div class="lineage-graph-empty">暂无血缘图节点</div>';
   }
-  const edgeHtml = model.edges.map((edge) => {
+  const nodeByMapId = new Map(model.nodes.map(node => [normalizeString(node?.id), node]));
+  const edgeHtml = model.edges.filter(edge => shouldRenderLineageMapEdge(edge, model, nodeByMapId)).map((edge) => {
     const status = normalizeString(edge?.status) || 'unknown';
     const riskClass = edge?.isRisk ? ' is-risk' : '';
+    const kindClass = edge?.kind ? ` is-${normalizeString(edge.kind)}` : '';
     const edgeAttr = edge?.edgeId ? ` data-lineage-edge-id="${escHtml(edge.edgeId)}"` : '';
     return `
-      <path class="lineage-map-link is-${escHtml(status)}${riskClass}" d="${escHtml(edge?.path)}"${edgeAttr} />
+      <path class="lineage-map-link is-${escHtml(status)}${riskClass}${escHtml(kindClass)}" d="${escHtml(edge?.path)}"${edgeAttr} />
     `;
   }).join('');
   const nodeHtml = model.nodes.map((node) => {

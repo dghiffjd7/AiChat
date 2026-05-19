@@ -1265,17 +1265,18 @@ export class ChatStore {
     }
     this.currentId = resolveCurrentId(this.state, this.scopeId);
     this.state.currentId = this.currentId;
-    this.ready = this._hydrateFromDisk();
     this._skipMessagePersist = false;
     this._useV2 = false;
     this._v2 = new ChatStoreV2({ scopeId: this.scopeId });
     this._v2ThreadState = new Map();
-    this._v2Ready = this._hydrateV2FromDisk();
-    this.fullyReady = Promise.allSettled([this.ready, this._v2Ready]);
+    this._diskBacked = false;
     this._lsDisabled = false;
     this._lsQuotaWarned = false;
     this._hydrateRetryCount = 0;
     this._lastArchiveTransition = null;
+    this.ready = this._hydrateFromDisk();
+    this._v2Ready = this._hydrateV2FromDisk();
+    this.fullyReady = Promise.allSettled([this.ready, this._v2Ready]);
   }
 
   _isScopeStale(token, scopeId) {
@@ -1390,26 +1391,11 @@ export class ChatStore {
         this.state = sanitizeStateForPersist(kv);
         this.currentId = resolveCurrentId(this.state, scopeId);
         this.state.currentId = this.currentId;
+        this._diskBacked = true;
         if (this.scopeId) markLegacyMigrated();
         try {
-          localStorage.setItem(storeKey, JSON.stringify({ ...this.state, scopeId }));
-        } catch (err) {
-          if (isQuotaError(err)) {
-            this._lsDisabled = true;
-            if (!this._lsQuotaWarned) {
-              this._lsQuotaWarned = true;
-              logger.warn(
-                'chat store: localStorage quota exceeded; will rely on Tauri KV (data should remain after restart).',
-                err,
-              );
-            }
-            try {
-              localStorage.removeItem(this.storeKey);
-            } catch {}
-          } else {
-            logger.warn('chat store hydrate -> localStorage failed', err);
-          }
-        }
+          localStorage.removeItem(storeKey);
+        } catch {}
         logger.debug('chat store hydrated from disk');
         logger.debug(
           `[Persona_test] chatStore.hydrated scope=${scopeId || 'default'} key=${storeKey} sessions=${
@@ -1739,7 +1725,7 @@ export class ChatStore {
     if (this._lsTimer) clearTimeout(this._lsTimer);
     this._lsTimer = setTimeout(() => {
       if (token !== this._scopeToken || storeKey !== this.storeKey) return;
-      if (this._lsDisabled) return;
+      if (this._diskBacked || this._lsDisabled) return;
       try {
         localStorage.setItem(storeKey, JSON.stringify(persistable()));
       } catch (err) {
@@ -1777,7 +1763,7 @@ export class ChatStore {
       scopeId: this.scopeId,
     };
     try {
-      if (!this._lsDisabled) {
+      if (!this._diskBacked && !this._lsDisabled) {
         localStorage.setItem(this.storeKey, JSON.stringify(data));
       }
     } catch (err) {
@@ -1833,6 +1819,7 @@ export class ChatStore {
     this._skipMessagePersist = false;
     this._v2ThreadState.clear();
     this._v2 = new ChatStoreV2({ scopeId: this.scopeId });
+    this._diskBacked = false;
     this._lsDisabled = false;
     this._lsQuotaWarned = false;
     this._hydrateRetryCount = 0;

@@ -113,10 +113,11 @@ export class ContactsStore {
         this.storeKey = makeScopedKey(BASE_STORE_KEY, this.scopeId);
         this._scopeToken = 0;
         this.state = this._load();
-        this.ready = this._hydrateFromDisk();
+        this._diskBacked = false;
         this._lsDisabled = false;
         this._lsQuotaWarned = false;
         this._hydrateRetryCount = 0;
+        this.ready = this._hydrateFromDisk();
     }
 
     _load() {
@@ -161,21 +162,9 @@ export class ContactsStore {
             if (kv && kv.contacts) {
                 if (token !== this._scopeToken || storeKey !== this.storeKey || scopeId !== this.scopeId) return;
                 this.state = kv;
+                this._diskBacked = true;
                 if (this.scopeId) markLegacyMigrated();
-                try {
-                    localStorage.setItem(storeKey, JSON.stringify({ ...this.state, scopeId }));
-                } catch (err) {
-                    if (isQuotaError(err)) {
-                        this._lsDisabled = true;
-                        if (!this._lsQuotaWarned) {
-                            this._lsQuotaWarned = true;
-                            logger.warn('contacts store: localStorage quota exceeded; will rely on Tauri KV (data should remain after restart).', err);
-                        }
-                        try { localStorage.removeItem(this.storeKey); } catch {}
-                    } else {
-                        logger.warn('contacts store hydrate -> localStorage failed', err);
-                    }
-                }
+                try { localStorage.removeItem(storeKey); } catch {}
                 logger.debug('contacts store hydrated from disk');
                 try {
                     const contacts = Object.values(this.state.contacts || {});
@@ -214,7 +203,7 @@ export class ContactsStore {
         safeInvoke('save_kv', { name: this.storeKey, data: payload }).catch((err) => {
             logger.debug('contacts store save_kv failed (可能非 Tauri)', err);
         });
-        if (this._lsDisabled) return;
+        if (this._diskBacked || this._lsDisabled) return;
         try {
             localStorage.setItem(this.storeKey, JSON.stringify(payload));
         } catch (err) {
@@ -242,6 +231,7 @@ export class ContactsStore {
         this._scopeToken += 1;
         this.scopeId = nextScope;
         this.storeKey = makeScopedKey(BASE_STORE_KEY, this.scopeId);
+        this._diskBacked = false;
         this._lsDisabled = false;
         this._lsQuotaWarned = false;
         this._hydrateRetryCount = 0;

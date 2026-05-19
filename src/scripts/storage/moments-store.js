@@ -143,12 +143,13 @@ export class MomentsStore {
         this._scopeToken = 0;
         this.state = this._load();
         this._normalizeState();
-        this.ready = this._hydrateFromDisk();
         this._pendingDiskSave = Promise.resolve();
         this.lastDiskError = '';
+        this._diskBacked = false;
         this._lsDisabled = false;
         this._lsQuotaWarned = false;
         this._hydrateRetryCount = 0;
+        this.ready = this._hydrateFromDisk();
     }
 
     _normalizeState() {
@@ -223,19 +224,9 @@ export class MomentsStore {
                 if (token !== this._scopeToken || storeKey !== this.storeKey || scopeId !== this.scopeId) return;
                 this.state = kv;
                 this._normalizeState();
+                this._diskBacked = true;
                 if (this.scopeId) markLegacyMigrated();
-                try { localStorage.setItem(storeKey, JSON.stringify(this.state)); } catch (err) {
-                    if (isQuotaError(err)) {
-                        this._lsDisabled = true;
-                        if (!this._lsQuotaWarned) {
-                            this._lsQuotaWarned = true;
-                            logger.warn('moments store: localStorage quota exceeded; will rely on Tauri KV (data should remain after restart).', err);
-                        }
-                        try { localStorage.removeItem(this.storeKey); } catch {}
-                    } else {
-                        logger.warn('moments store hydrate -> localStorage failed', err);
-                    }
-                }
+                try { localStorage.removeItem(storeKey); } catch {}
                 logger.debug('moments store hydrated from disk');
                 try {
                     window.dispatchEvent(new CustomEvent('store-hydrated', { detail: { store: 'moments' } }));
@@ -267,7 +258,7 @@ export class MomentsStore {
     }
 
     _persist() {
-        if (!this._lsDisabled) {
+        if (!this._diskBacked && !this._lsDisabled) {
             try { localStorage.setItem(this.storeKey, JSON.stringify(this.state)); } catch (err) {
                 if (isQuotaError(err)) {
                     this._lsDisabled = true;
@@ -303,6 +294,7 @@ export class MomentsStore {
         this._scopeToken += 1;
         this.scopeId = nextScope;
         this.storeKey = makeScopedKey(BASE_STORE_KEY, this.scopeId);
+        this._diskBacked = false;
         this._lsDisabled = false;
         this._lsQuotaWarned = false;
         this._hydrateRetryCount = 0;

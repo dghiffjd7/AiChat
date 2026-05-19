@@ -2798,7 +2798,8 @@ body[data-theme-mode='dark'] :is(#raw-reply-text, #prompt-preview-text, #prompt-
   min-height: 420px;
   width: max-content;
   height: max-content;
-  transition: transform 80ms linear;
+  transition: transform 120ms ease-out;
+  will-change: transform;
 }
 
 .lineage-graph-canvas.is-readable-view {
@@ -2820,8 +2821,7 @@ body[data-theme-mode='dark'] :is(#raw-reply-text, #prompt-preview-text, #prompt-
 
 .lineage-map-scene {
   position: relative;
-  min-width: 100%;
-  min-height: 100%;
+  box-sizing: border-box;
 }
 
 .lineage-map-links {
@@ -2840,6 +2840,7 @@ body[data-theme-mode='dark'] :is(#raw-reply-text, #prompt-preview-text, #prompt-
   stroke-width: 2;
   vector-effect: non-scaling-stroke;
   pointer-events: none;
+  transition: opacity 140ms ease, stroke-width 140ms ease, filter 140ms ease;
 }
 
 .lineage-map-link[data-lineage-edge-id] {
@@ -2852,10 +2853,26 @@ body[data-theme-mode='dark'] :is(#raw-reply-text, #prompt-preview-text, #prompt-
 .lineage-map-link.is-blocked,
 .lineage-map-link.is-risk { stroke: rgba(220, 38, 38, 0.78); stroke-width: 2.4; }
 .lineage-map-link.is-trimmed { stroke: rgba(217, 119, 6, 0.72); stroke-dasharray: 9 5; }
+.lineage-map-link.is-contains {
+  opacity: 0.44;
+  stroke-width: 1.6;
+  stroke-dasharray: 5 6;
+}
+.lineage-map-link.is-aggregate {
+  opacity: 0.54;
+  stroke: rgba(100, 116, 139, 0.58);
+  stroke-width: 2;
+}
+.lineage-map-link.is-related,
+.lineage-map-link[data-lineage-edge-id] {
+  opacity: 0.86;
+  stroke-width: 2.4;
+}
 
 .lineage-map-link.is-selected {
   stroke-width: 3.2;
   filter: drop-shadow(0 0 4px rgba(37, 99, 235, 0.32));
+  opacity: 1;
 }
 
 .lineage-map-node {
@@ -2876,6 +2893,8 @@ body[data-theme-mode='dark'] :is(#raw-reply-text, #prompt-preview-text, #prompt-
   box-shadow: 0 8px 22px rgba(15, 23, 42, 0.10);
   cursor: default;
   user-select: none;
+  animation: lineage-map-node-enter 150ms ease-out;
+  transition: border-color 140ms ease, box-shadow 140ms ease, transform 140ms ease, opacity 140ms ease;
 }
 
 .lineage-map-node[role='button'] {
@@ -2886,12 +2905,15 @@ body[data-theme-mode='dark'] :is(#raw-reply-text, #prompt-preview-text, #prompt-
 .lineage-map-node[role='button']:focus-visible {
   border-color: rgba(37, 99, 235, 0.45);
   box-shadow: 0 10px 26px rgba(37, 99, 235, 0.16);
+  transform: translate(-50%, -50%) scale(1.018);
   outline: none;
 }
 
 .lineage-map-node.is-selected {
   border-color: rgba(37, 99, 235, 0.72);
   box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.18), 0 10px 26px rgba(37, 99, 235, 0.18);
+  transform: translate(-50%, -50%) scale(1.032);
+  z-index: 3;
 }
 
 .lineage-map-node.is-root {
@@ -2913,6 +2935,26 @@ body[data-theme-mode='dark'] :is(#raw-reply-text, #prompt-preview-text, #prompt-
 
 .lineage-map-node.is-more {
   opacity: 0.76;
+}
+
+@keyframes lineage-map-node-enter {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -48%) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lineage-graph-canvas,
+  .lineage-map-link,
+  .lineage-map-node {
+    animation: none;
+    transition: none;
+  }
 }
 
 .lineage-map-node.is-active { border-left-color: #16a34a; }
