@@ -2136,7 +2136,7 @@ export class PresetPanel {
             const info = document.createElement('div');
             info.className = 'pp-help';
             info.style.cssText = 'margin-bottom:10px; color:var(--app-text-secondary); font-size:12px; line-height:1.6;';
-            info.textContent = '此区块由运行时自动生成，仅在 OpenAI 参数预设为 Default 时注入。内容会按当前场景、同步写表、后续图片等功能动态生成，不再使用旧 DeepSeek 文案。';
+            info.textContent = '此区块由运行时自动生成。OpenAI 参数预设为 Default 时注入完整格式提醒；非 Default 时仅把当前私聊/群聊的一句提醒附加到 user input，不带后续格式示例。内容会按当前场景、同步写表、后续图片等功能动态生成，不再使用旧 DeepSeek 文案。';
             body.appendChild(info);
             const preview = document.createElement('pre');
             preview.className = 'pp-code-preview';

@@ -46,6 +46,10 @@ import {
   toPromptSegment,
 } from './chat/prompt-segment-plan-utils.js';
 import {
+  buildPendingUserTextWithScenarioReminder,
+  resolveOpenAIPresetFormatReminderState,
+} from './chat/prompt-context-utils.js';
+import {
   isBridgeAbortError,
   resolveBridgeCancellationReason,
   shouldTreatBridgeStreamErrorAsCancellation,
@@ -3380,15 +3384,38 @@ class AppBridge {
         momentCommentTaskMode === 'moment_publish' ||
         momentCommentTaskMode === 'publish_comment');
     const suppressGenericReplyPrompt = isMomentCommentTask;
+    const sessionId = String(context?.session?.id || '').trim();
+    const uiModeRaw = String(context?.meta?.uiMode || context?.uiMode || '').trim().toLowerCase();
+    const uiMode = uiModeRaw === 'rp' || (!uiModeRaw && sessionId.startsWith('rp:')) ? 'rp' : 'chat';
+    const presetUiMode = normalizeBridgePresetUiMode(uiModeRaw, {
+      sessionId,
+      taskType: context?.task?.type,
+    });
     const historyRecallNotice = isMomentCommentTask
       ? (isPublishedMomentCommentTask
         ? '以下为用户发布的动态及相关上下文（仅用于生成动态评论）：'
         : '以下为动态及评论上下文（仅用于生成评论回复）：')
       : HISTORY_RECALL_NOTICE;
-    const isGroupChat = Boolean(context?.session?.isGroup) || String(context?.session?.id || '').startsWith('group:');
-    const preserveCreativeHistoryParagraphs = String(context?.meta?.uiMode || '').trim().toLowerCase() === 'rp';
+    const isGroupChat = Boolean(context?.session?.isGroup) || sessionId.startsWith('group:');
+    const preserveCreativeHistoryParagraphs = uiModeRaw === 'rp';
     const memoryMode = String(context?.meta?.memoryStorageMode || '').trim().toLowerCase();
     const useSummaryMemory = memoryMode === 'summary' && !Boolean(context?.meta?.disableSummary);
+    const presetState = this.presets?.getState?.() || null;
+    const useSysprompt = Boolean(presetState?.enabled?.sysprompt);
+    const useContext = Boolean(presetState?.enabled?.context);
+    const useOpenAIPreset = Boolean(presetState?.enabled?.openai);
+    const presetContext = { sessionId, uiMode: presetUiMode };
+    const syspResolved = this.presets.getResolvedActive('sysprompt', presetContext) || null;
+    const syspActive = syspResolved?.preset || null;
+    const sysp = useSysprompt ? syspActive : null;
+    const ctxp = useContext ? (this.presets.getResolvedActive('context', presetContext)?.preset || null) : null;
+    const openaiResolved = this.presets.getResolvedActive('openai', presetContext) || null;
+    const activeOpenAIPreset = openaiResolved?.preset || null;
+    const openp = useOpenAIPreset ? activeOpenAIPreset : null;
+    const openAIFormatReminderState = resolveOpenAIPresetFormatReminderState(openaiResolved, activeOpenAIPreset);
+    const activeOpenAIPresetId = openAIFormatReminderState.presetId;
+    const activeOpenAIPresetName = openAIFormatReminderState.presetName;
+    const isDefaultOpenAIPreset = openAIFormatReminderState.isDefaultPreset;
     const settingsSnapshot = (() => {
       try {
         return appSettings.get();
@@ -3486,13 +3513,18 @@ class AppBridge {
     };
     const pendingUserHints = [replyPromptHint].filter(Boolean);
     const pendingUserHint = pendingUserHints.join('；');
-    const pendingUserText = (() => {
-      if (suppressPendingUserTurn) return '';
-      if (!pendingUserTextRaw) {
-        return pendingUserHint ? `（${pendingUserHint}）` : '';
-      }
-      return pendingUserHint ? `${pendingUserTextRaw}（${pendingUserHint}）` : pendingUserTextRaw;
-    })();
+    const appendScenarioFormatReminderToUserInput =
+      openAIFormatReminderState.hasPreset &&
+      !isDefaultOpenAIPreset &&
+      !isMomentCommentTask &&
+      Boolean(String(scenarioFormatReminder || '').trim());
+    const pendingUserText = buildPendingUserTextWithScenarioReminder({
+      rawText: pendingUserTextRaw,
+      replyHint: pendingUserHint,
+      scenarioReminder: scenarioFormatReminder,
+      suppressPendingUserTurn,
+      appendScenarioReminder: appendScenarioFormatReminderToUserInput,
+    });
     const requestConfig = this.config?.get?.() || {};
     const provider = String(requestConfig?.provider || '').trim().toLowerCase();
     const requestModel = String(requestConfig?.model || '').trim().toLowerCase();
@@ -3877,7 +3909,6 @@ class AppBridge {
         ? [String(userMessage ?? ''), momentTaskTriggerText, ...historyMatchLines]
         : [String(userMessage ?? ''), ...historyMatchLines]
     ).filter(item => String(item || '').trim()).join('\n');
-    const sessionId = String(context?.session?.id || '').trim();
     const sessionName = String(context?.session?.name || '').trim();
     const matchSessionId = isMomentCommentTask
       ? String(context?.task?.targetSessionId || sessionId).trim()
@@ -3885,12 +3916,6 @@ class AppBridge {
     const matchSessionName = isMomentCommentTask
       ? String(context?.task?.targetName || sessionName).trim()
       : sessionName;
-    const uiModeRaw = String(context?.meta?.uiMode || context?.uiMode || '').trim().toLowerCase();
-    const uiMode = uiModeRaw === 'rp' || (!uiModeRaw && sessionId.startsWith('rp:')) ? 'rp' : 'chat';
-    const presetUiMode = normalizeBridgePresetUiMode(uiModeRaw, {
-      sessionId,
-      taskType: context?.task?.type,
-    });
     const matchContext = {
       userMessage: String(userMessage ?? ''),
       history: historyMatchLines,
@@ -4021,19 +4046,6 @@ class AppBridge {
       };
     };
     const disablePhoneFormat = Boolean(context?.meta?.disablePhoneFormat) || isMomentCommentTask;
-
-    const presetState = this.presets?.getState?.() || null;
-    const useSysprompt = Boolean(presetState?.enabled?.sysprompt);
-    const useContext = Boolean(presetState?.enabled?.context);
-    const useOpenAIPreset = Boolean(presetState?.enabled?.openai);
-    const presetContext = { sessionId, uiMode: presetUiMode };
-    const syspResolved = this.presets.getResolvedActive('sysprompt', presetContext) || null;
-    const syspActive = syspResolved?.preset || null;
-    const sysp = useSysprompt ? syspActive : null;
-    const ctxp = useContext ? (this.presets.getResolvedActive('context', presetContext)?.preset || null) : null;
-    const openaiResolved = this.presets.getResolvedActive('openai', presetContext) || null;
-    const activeOpenAIPreset = openaiResolved?.preset || null;
-    const openp = useOpenAIPreset ? activeOpenAIPreset : null;
 
     // 对话模式：额外注入对话协议提示词（保存于 sysprompt 预设）
     // ST extension prompt types => IN_PROMPT:0, IN_CHAT:1, BEFORE_PROMPT:2, NONE:-1
@@ -4276,11 +4288,6 @@ const stringifyMessageContent = (content) => {
       });
     };
     const appendOutputFormatReminder = () => {
-      const activeOpenAIPresetId = String(openaiResolved?.presetId || '').trim();
-      const activeOpenAIPresetName = String(activeOpenAIPreset?.name || '').trim();
-      const isDefaultOpenAIPreset =
-        activeOpenAIPresetId.toLowerCase() === 'default'
-        || activeOpenAIPresetName.toLowerCase() === 'default';
       const activeSyspromptPresetId = String(syspResolved?.presetId || '').trim();
       const activeSyspromptPresetName = String(syspActive?.name || '').trim();
       const isDeepSeek = isDeepSeekApiRequest({
@@ -4308,13 +4315,23 @@ const stringifyMessageContent = (content) => {
         dsFormatRulesPresent: true,
         dsFormatEnabled: isDefaultOpenAIPreset,
         dsFormatInjected: false,
-        dsFormatInjectedRole: 'system',
+        dsFormatInjectedRole: appendScenarioFormatReminderToUserInput ? 'user' : 'system',
+        scenarioReminderAppendedToUserInput: appendScenarioFormatReminderToUserInput,
         dsFormatTextPreview: '',
       };
-      if (!isDefaultOpenAIPreset) return;
+      if (!isDefaultOpenAIPreset) {
+        if (appendScenarioFormatReminderToUserInput) {
+          this.lastDeepSeekFormatDebug.dsFormatTextPreview = `（${String(scenarioFormatReminder).trim()}）`
+            .replace(/\s+/g, ' ')
+            .trim()
+            .slice(0, 160);
+        }
+        return;
+      }
       const text = buildOutputFormatReminderText();
       if (!text) return;
       this.lastDeepSeekFormatDebug.dsFormatInjected = true;
+      this.lastDeepSeekFormatDebug.dsFormatInjectedRole = 'system';
       this.lastDeepSeekFormatDebug.dsFormatTextPreview = String(text).replace(/\s+/g, ' ').trim().slice(0, 160);
       messages.push({ role: 'system', content: text });
     };

@@ -29,6 +29,39 @@ export const resolveEnabledPreset = (appBridge, presetType, context = {}) => {
   return resolveResolvedPreset(appBridge, type, context);
 };
 
+export const resolveOpenAIPresetFormatReminderState = (openaiResolved = {}, activeOpenAIPreset = null) => {
+  const presetId = String(openaiResolved?.presetId || '').trim();
+  const presetName = String(activeOpenAIPreset?.name || '').trim();
+  const hasPreset = Boolean(presetId || presetName || activeOpenAIPreset);
+  const isDefaultPreset =
+    presetId.toLowerCase() === 'default' ||
+    presetName.toLowerCase() === 'default';
+  return {
+    presetId,
+    presetName,
+    hasPreset,
+    isDefaultPreset,
+  };
+};
+
+export const buildPendingUserTextWithScenarioReminder = ({
+  rawText = '',
+  replyHint = '',
+  scenarioReminder = '',
+  suppressPendingUserTurn = false,
+  appendScenarioReminder = false,
+} = {}) => {
+  if (suppressPendingUserTurn) return '';
+  const pendingUserTextRaw = String(rawText ?? '').trim();
+  const pendingUserHint = String(replyHint ?? '').trim();
+  const baseText = !pendingUserTextRaw
+    ? (pendingUserHint ? `（${pendingUserHint}）` : '')
+    : (pendingUserHint ? `${pendingUserTextRaw}（${pendingUserHint}）` : pendingUserTextRaw);
+  const scenario = appendScenarioReminder ? String(scenarioReminder || '').trim() : '';
+  const scenarioText = scenario ? `（${scenario}）` : '';
+  return [baseText, scenarioText].filter(Boolean).join('\n\n');
+};
+
 export const createPresetRuntime = ({
   appBridge = null,
   getSessionId = null,

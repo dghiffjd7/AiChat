@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
 
 import {
+  buildPendingUserTextWithScenarioReminder,
   buildPresetContext,
   buildReplyPromptHint,
   createPresetRuntime,
+  resolveOpenAIPresetFormatReminderState,
   resolveEnabledPreset,
   resolveResolvedPreset,
 } from '../../src/scripts/ui/chat/prompt-context-utils.js';
@@ -52,6 +54,58 @@ import {
   assert.deepEqual(resolveEnabledPreset(appBridge, 'openai', { sessionId: 's1' }), {});
   assert.deepEqual(resolveEnabledPreset({}, 'sysprompt', { sessionId: 's1' }), {});
   console.log('ok - resolveEnabledPreset requires enabled state before resolving preset');
+}
+
+{
+  assert.deepEqual(
+    resolveOpenAIPresetFormatReminderState({ presetId: 'default' }, { name: 'Custom' }),
+    {
+      presetId: 'default',
+      presetName: 'Custom',
+      hasPreset: true,
+      isDefaultPreset: true,
+    },
+  );
+  assert.deepEqual(
+    resolveOpenAIPresetFormatReminderState({ presetId: 'creative' }, { name: 'Creative' }),
+    {
+      presetId: 'creative',
+      presetName: 'Creative',
+      hasPreset: true,
+      isDefaultPreset: false,
+    },
+  );
+  console.log('ok - resolveOpenAIPresetFormatReminderState detects default preset by id or name');
+}
+
+{
+  assert.equal(
+    buildPendingUserTextWithScenarioReminder({
+      rawText: '你好',
+      replyHint: '引用上一条',
+      scenarioReminder: '正在与小夏私聊，请遵循私聊格式',
+      appendScenarioReminder: true,
+    }),
+    '你好（引用上一条）\n\n（正在与小夏私聊，请遵循私聊格式）',
+  );
+  assert.equal(
+    buildPendingUserTextWithScenarioReminder({
+      rawText: '你好',
+      scenarioReminder: '在旅行群中群聊，请遵循群聊格式',
+      appendScenarioReminder: false,
+    }),
+    '你好',
+  );
+  assert.equal(
+    buildPendingUserTextWithScenarioReminder({
+      rawText: '你好',
+      scenarioReminder: '正在与小夏私聊，请遵循私聊格式',
+      suppressPendingUserTurn: true,
+      appendScenarioReminder: true,
+    }),
+    '',
+  );
+  console.log('ok - buildPendingUserTextWithScenarioReminder appends non-default scenario reminders to user input');
 }
 
 {
