@@ -19,10 +19,12 @@ import { createPromptPreviewRuntime } from '../../src/scripts/ui/chat/prompt-pre
       body: 'user:\n你好',
       messages: [{ role: 'user', content: '你好' }],
     }),
+    buildPromptLineageTrace: () => ({ traceId: 'trace-1' }),
+    formatPromptLineageText: trace => `TRACE ${trace.traceId}`,
     formatWorldDebugText: () => 'WORLD DEBUG',
     buildWorldDebugCandidates: () => [{ worldId: 'world:1', entryId: 'entry:1', blockId: 'block:1', focusNodeId: 'node:1' }],
     showPromptPreviewModal: (text, meta, options) => {
-      calls.push(['showPreview', text, meta, Boolean(options?.onLocate)]);
+      calls.push(['showPreview', text, meta, Boolean(options?.onLocate), options?.lineageText, options?.lineageTrace?.traceId]);
       locateOptions = options;
     },
     hidePromptPreviewModal: () => calls.push(['hidePreview']),
@@ -39,7 +41,7 @@ import { createPromptPreviewRuntime } from '../../src/scripts/ui/chat/prompt-pre
   assert.equal(locateOptions.request, request);
   await locateOptions.onLocate();
   assert.deepEqual(calls, [
-    ['showPreview', 'provider: openai\n\nWORLD DEBUG\n\nuser:\n你好', '角色A · 现在', true],
+    ['showPreview', 'provider: openai\n\nWORLD DEBUG\n\nuser:\n你好', '角色A · 现在', true, 'TRACE trace-1', 'trace-1'],
     ['showLocator', 1, '角色A · 现在 · 1 条可定位记录'],
     ['hidePreview'],
     ['openWorld', 'world:1', { entryId: 'entry:1', blockId: 'block:1', nodeId: 'node:1' }],

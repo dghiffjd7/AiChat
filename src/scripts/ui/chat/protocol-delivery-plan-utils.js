@@ -2,6 +2,7 @@ const STORAGE_PREFIX = 'chatapp_protocol_delivery_plans_v1';
 const MAX_STORED_PLANS = 20;
 
 const normalizeString = value => String(value || '').trim();
+const normalizeDiskKeySegment = value => normalizeString(value).replace(/[^A-Za-z0-9_.-]+/g, '_') || 'default';
 
 const clonePlainObject = value => {
   try {
@@ -41,6 +42,11 @@ const createDeliveryMessageId = ({ now = Date.now, random = Math.random } = {}) 
 export const getProtocolDeliveryPlanStorageKey = (scopeId = 'default') => {
   const scope = normalizeString(scopeId) || 'default';
   return `${STORAGE_PREFIX}:${scope}`;
+};
+
+export const getProtocolDeliveryPlanDiskKey = (scopeId = 'default') => {
+  const scope = normalizeDiskKeySegment(scopeId);
+  return `${STORAGE_PREFIX}__${scope}`;
 };
 
 export const ensureProtocolDeliveryMessageIdentity = (
@@ -134,45 +140,144 @@ export const readProtocolDeliveryPlans = ({
   }
 };
 
+const normalizeProtocolDeliveryPlanPayload = (payload, { scopeId = 'default' } = {}) => {
+  const plans = Array.isArray(payload?.plans) ? payload.plans : [];
+  return plans
+    .map(plan => normalizeProtocolDeliveryPlan(plan, { scopeId }))
+    .filter(Boolean)
+    .slice(-MAX_STORED_PLANS);
+};
+
+const mergeProtocolDeliveryPlans = (primary = [], secondary = []) => {
+  const byId = new Map();
+  for (const plan of [...primary, ...secondary]) {
+    const normalized = normalizeProtocolDeliveryPlan(plan, { scopeId: plan?.scopeId || 'default' });
+    if (!normalized) continue;
+    const existing = byId.get(normalized.id);
+    if (!existing || Number(normalized.cursor || 0) >= Number(existing.cursor || 0)) {
+      byId.set(normalized.id, normalized);
+    }
+  }
+  return [...byId.values()]
+    .sort((a, b) => Number(a.createdAt || 0) - Number(b.createdAt || 0))
+    .slice(-MAX_STORED_PLANS);
+};
+
+const readProtocolDeliveryPlansForMutation = ({
+  storage = null,
+  scopeId = 'default',
+  fallbackReadSync = null,
+  logger = null,
+} = {}) => {
+  const localPlans = readProtocolDeliveryPlans({ storage, scopeId, logger });
+  if (typeof fallbackReadSync !== 'function') return localPlans;
+  try {
+    const payload = fallbackReadSync(getProtocolDeliveryPlanDiskKey(scopeId));
+    const fallbackPlans = normalizeProtocolDeliveryPlanPayload(payload, { scopeId });
+    return mergeProtocolDeliveryPlans(fallbackPlans, localPlans);
+  } catch (err) {
+    logger?.debug?.('read protocol delivery plans fallback cache failed', err);
+    return localPlans;
+  }
+};
+
+export const readProtocolDeliveryPlansWithFallback = async ({
+  storage = null,
+  scopeId = 'default',
+  fallbackRead = null,
+  fallbackReadSync = null,
+  logger = null,
+} = {}) => {
+  const localPlans = readProtocolDeliveryPlansForMutation({
+    storage,
+    scopeId,
+    fallbackReadSync,
+    logger,
+  });
+  if (typeof fallbackRead !== 'function') return localPlans;
+  try {
+    const payload = await fallbackRead(getProtocolDeliveryPlanDiskKey(scopeId));
+    const diskPlans = normalizeProtocolDeliveryPlanPayload(payload, { scopeId });
+    return mergeProtocolDeliveryPlans(diskPlans, localPlans);
+  } catch (err) {
+    logger?.debug?.('read protocol delivery plans fallback failed', err);
+    return localPlans;
+  }
+};
+
+const scheduleProtocolDeliveryFallbackWrite = ({
+  scopeId = 'default',
+  payload = {},
+  fallbackWrite = null,
+  logger = null,
+} = {}) => {
+  if (typeof fallbackWrite !== 'function') return false;
+  try {
+    Promise.resolve(fallbackWrite(getProtocolDeliveryPlanDiskKey(scopeId), payload)).catch(err => {
+      logger?.warn?.('write protocol delivery plans fallback failed', err);
+    });
+    return true;
+  } catch (err) {
+    logger?.warn?.('write protocol delivery plans fallback failed', err);
+    return false;
+  }
+};
+
 export const writeProtocolDeliveryPlans = ({
   storage = null,
   scopeId = 'default',
   plans = [],
+  fallbackWrite = null,
   logger = null,
 } = {}) => {
   const targetStorage = getStorage(storage);
-  if (!targetStorage) return false;
   const key = getProtocolDeliveryPlanStorageKey(scopeId);
   const normalized = (Array.isArray(plans) ? plans : [])
     .map(plan => normalizeProtocolDeliveryPlan(plan, { scopeId }))
     .filter(Boolean)
     .slice(-MAX_STORED_PLANS);
+  const payload = { plans: normalized.map(sanitizePlanForStorage) };
+  let localWritten = false;
   try {
-    if (!normalized.length) {
-      if (typeof targetStorage.removeItem === 'function') targetStorage.removeItem(key);
-      else targetStorage.setItem(key, JSON.stringify({ plans: [] }));
-    } else {
-      targetStorage.setItem(key, JSON.stringify({ plans: normalized.map(sanitizePlanForStorage) }));
+    if (targetStorage) {
+      if (!normalized.length) {
+        if (typeof targetStorage.removeItem === 'function') targetStorage.removeItem(key);
+        else targetStorage.setItem(key, JSON.stringify(payload));
+      } else {
+        targetStorage.setItem(key, JSON.stringify(payload));
+      }
+      localWritten = true;
     }
-    return true;
   } catch (err) {
-    logger?.warn?.('write protocol delivery plans failed', err);
-    return false;
+    if (typeof fallbackWrite === 'function') {
+      logger?.debug?.('write protocol delivery plans localStorage failed; using fallback', err);
+    } else {
+      logger?.warn?.('write protocol delivery plans failed', err);
+    }
   }
+  const fallbackScheduled = scheduleProtocolDeliveryFallbackWrite({
+    scopeId,
+    payload,
+    fallbackWrite,
+    logger,
+  });
+  return localWritten || fallbackScheduled;
 };
 
 export const upsertProtocolDeliveryPlan = ({
   storage = null,
   scopeId = 'default',
   plan = null,
+  fallbackReadSync = null,
+  fallbackWrite = null,
   logger = null,
 } = {}) => {
   const normalized = normalizeProtocolDeliveryPlan(plan, { scopeId });
   if (!normalized) return null;
-  const plans = readProtocolDeliveryPlans({ storage, scopeId, logger })
+  const plans = readProtocolDeliveryPlansForMutation({ storage, scopeId, fallbackReadSync, logger })
     .filter(item => item.id !== normalized.id);
   plans.push(normalized);
-  writeProtocolDeliveryPlans({ storage, scopeId, plans, logger });
+  writeProtocolDeliveryPlans({ storage, scopeId, plans, fallbackWrite, logger });
   return normalized;
 };
 
@@ -181,11 +286,13 @@ export const updateProtocolDeliveryPlanCursor = ({
   scopeId = 'default',
   planId = '',
   cursor = 0,
+  fallbackReadSync = null,
+  fallbackWrite = null,
   logger = null,
 } = {}) => {
   const id = normalizeString(planId);
   if (!id) return false;
-  const plans = readProtocolDeliveryPlans({ storage, scopeId, logger });
+  const plans = readProtocolDeliveryPlansForMutation({ storage, scopeId, fallbackReadSync, logger });
   let changed = false;
   const nextPlans = plans.map(plan => {
     if (plan.id !== id) return plan;
@@ -194,21 +301,23 @@ export const updateProtocolDeliveryPlanCursor = ({
     return { ...plan, cursor: nextCursor };
   });
   if (!changed) return false;
-  return writeProtocolDeliveryPlans({ storage, scopeId, plans: nextPlans, logger });
+  return writeProtocolDeliveryPlans({ storage, scopeId, plans: nextPlans, fallbackWrite, logger });
 };
 
 export const removeProtocolDeliveryPlan = ({
   storage = null,
   scopeId = 'default',
   planId = '',
+  fallbackReadSync = null,
+  fallbackWrite = null,
   logger = null,
 } = {}) => {
   const id = normalizeString(planId);
   if (!id) return false;
-  const plans = readProtocolDeliveryPlans({ storage, scopeId, logger });
+  const plans = readProtocolDeliveryPlansForMutation({ storage, scopeId, fallbackReadSync, logger });
   const nextPlans = plans.filter(plan => plan.id !== id);
   if (nextPlans.length === plans.length) return false;
-  return writeProtocolDeliveryPlans({ storage, scopeId, plans: nextPlans, logger });
+  return writeProtocolDeliveryPlans({ storage, scopeId, plans: nextPlans, fallbackWrite, logger });
 };
 
 export const deliverProtocolDeliveryItem = (
@@ -276,10 +385,19 @@ export const deliverProtocolDeliveryItem = (
 export const flushPersistedProtocolDeliveryPlans = async ({
   storage = null,
   scopeId = 'default',
+  fallbackRead = null,
+  fallbackReadSync = null,
+  fallbackWrite = null,
   logger = null,
   ...deliveryOptions
 } = {}) => {
-  const plans = readProtocolDeliveryPlans({ storage, scopeId, logger });
+  const plans = await readProtocolDeliveryPlansWithFallback({
+    storage,
+    scopeId,
+    fallbackRead,
+    fallbackReadSync,
+    logger,
+  });
   let appended = 0;
   let skipped = 0;
   let failed = 0;
@@ -299,6 +417,8 @@ export const flushPersistedProtocolDeliveryPlans = async ({
           scopeId,
           planId: plan.id,
           cursor: i + 1,
+          fallbackReadSync,
+          fallbackWrite,
           logger,
         });
       } catch (err) {
@@ -309,7 +429,14 @@ export const flushPersistedProtocolDeliveryPlans = async ({
       }
     }
     if (!planFailed) {
-      removeProtocolDeliveryPlan({ storage, scopeId, planId: plan.id, logger });
+      removeProtocolDeliveryPlan({
+        storage,
+        scopeId,
+        planId: plan.id,
+        fallbackReadSync,
+        fallbackWrite,
+        logger,
+      });
     }
   }
   return {

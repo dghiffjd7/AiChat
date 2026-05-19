@@ -125,8 +125,14 @@ export const formatPromptWorldDebug = (worldDebug) => {
   const dynamicWorld = worldDebug?.dynamicWorld && typeof worldDebug.dynamicWorld === 'object'
     ? worldDebug.dynamicWorld
     : null;
+  const dynamicProfiles = worldDebug?.dynamicProfiles && typeof worldDebug.dynamicProfiles === 'object'
+    ? worldDebug.dynamicProfiles
+    : null;
   const dynamicCandidates = listOf(dynamicWorld?.candidates);
   const dynamicSelected = listOf(dynamicWorld?.selectedSources);
+  const profileCandidates = listOf(dynamicProfiles?.candidates);
+  const profileSelected = listOf(dynamicProfiles?.selectedSources);
+  const profileInjectedRows = listOf(dynamicProfiles?.injectedRows);
 
   const budgetTokens = Number.isFinite(Number(worldDebug?.budgetTokens)) ? Number(worldDebug.budgetTokens) : null;
   const usedTokens = Number.isFinite(Number(worldDebug?.usedTokens)) ? Number(worldDebug.usedTokens) : 0;
@@ -162,6 +168,11 @@ export const formatPromptWorldDebug = (worldDebug) => {
         : `- 动态强触发: 候选 ${dynamicCandidates.length} / 注入来源 ${dynamicSelected.length}`,
     );
   }
+  if (dynamicProfiles?.enabled) {
+    header.push(
+      `- 动态弱触发: 候选 ${profileCandidates.length} / 命中 ${profileSelected.length} / 注入记忆行 ${profileInjectedRows.length}${dynamicProfiles?.promptInjected ? '' : '（未注入）'}`,
+    );
+  }
 
   pushSection('动态强触发来源', dynamicSelected.map((source) => {
     const name = String(source?.name || source?.sessionId || '').trim() || '未知对象';
@@ -169,6 +180,21 @@ export const formatPromptWorldDebug = (worldDebug) => {
     const reasons = listOf(source?.reasons).join(',');
     const worldIds = listOf(source?.worldIds).join(',');
     return `- ${name}${sessionId ? ` (${sessionId})` : ''}${reasons ? ` | ${reasons}` : ''}${worldIds ? ` | ${worldIds}` : ''}`;
+  }));
+
+  pushSection('动态弱触发画像/记忆', profileCandidates.map((source) => {
+    const name = String(source?.name || source?.contactId || '').trim() || '未知联系人';
+    const contactId = String(source?.contactId || '').trim();
+    const score = Number.isFinite(Number(source?.score)) ? Number(source.score) : 0;
+    const status = String(source?.status || '').trim() || 'unknown';
+    const reason = String(source?.blockedReason || '').trim();
+    const terms = listOf(source?.matchedTerms).join(',');
+    const rows = listOf(source?.matchedRows)
+      .map(row => String(row?.rowSummary || row?.id || '').trim())
+      .filter(Boolean)
+      .slice(0, 2)
+      .join(' / ');
+    return `- ${name}${contactId ? ` (${contactId})` : ''} | ${status} | score=${score}${reason ? ` | ${reason}` : ''}${terms ? ` | ${terms}` : ''}${rows ? ` | ${rows}` : ''}`;
   }));
 
   pushSection('激活条目', [

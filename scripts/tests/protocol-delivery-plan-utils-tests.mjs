@@ -3,7 +3,9 @@ import assert from 'node:assert/strict';
 import {
   deliverProtocolDeliveryItem,
   flushPersistedProtocolDeliveryPlans,
+  getProtocolDeliveryPlanDiskKey,
   getProtocolDeliveryPlanStorageKey,
+  readProtocolDeliveryPlansWithFallback,
   readProtocolDeliveryPlans,
   removeProtocolDeliveryPlan,
   updateProtocolDeliveryPlanCursor,
@@ -25,6 +27,14 @@ class MemoryStorage {
 
   removeItem(key) {
     this.map.delete(key);
+  }
+}
+
+class QuotaStorage extends MemoryStorage {
+  setItem() {
+    const err = new Error('quota exceeded');
+    err.name = 'QuotaExceededError';
+    throw err;
   }
 }
 
@@ -58,6 +68,92 @@ class MemoryStorage {
   assert.equal(removeProtocolDeliveryPlan({ storage, scopeId: 'scope-a', planId: 'plan-1' }), true);
   assert.equal(storage.getItem(key), null);
   console.log('ok - protocol delivery plans persist message identity and cursor');
+}
+
+{
+  const storage = new QuotaStorage();
+  const fallbackWrites = [];
+  const fallbackCache = new Map();
+  const scopeId = 'scope:quota';
+  const fallbackReadSync = key => fallbackCache.get(key) || null;
+  const fallbackWrite = (key, payload) => {
+    fallbackWrites.push([key, payload]);
+    fallbackCache.set(key, payload);
+  };
+  const plan = upsertProtocolDeliveryPlan({
+    storage,
+    scopeId,
+    fallbackReadSync,
+    fallbackWrite,
+    logger: { debug() {}, warn() {} },
+    plan: {
+      id: 'plan-quota',
+      sessionId: 'c-quota',
+      items: [
+        {
+          message: { id: 'm-quota', role: 'assistant', content: 'hello' },
+          delivery: { kind: 'private', targetSessionId: 'c-quota', isMe: false },
+        },
+      ],
+    },
+  });
+  assert.equal(plan.id, 'plan-quota');
+  assert.equal(fallbackWrites[0][0], getProtocolDeliveryPlanDiskKey(scopeId));
+  assert.equal(fallbackWrites[0][1].plans[0].id, 'plan-quota');
+  assert.equal(
+    updateProtocolDeliveryPlanCursor({
+      storage,
+      scopeId,
+      planId: 'plan-quota',
+      cursor: 1,
+      fallbackReadSync,
+      fallbackWrite,
+      logger: { debug() {}, warn() {} },
+    }),
+    true,
+  );
+  assert.equal(fallbackWrites.at(-1)[1].plans[0].cursor, 1);
+  assert.equal(
+    removeProtocolDeliveryPlan({
+      storage,
+      scopeId,
+      planId: 'plan-quota',
+      fallbackReadSync,
+      fallbackWrite,
+      logger: { debug() {}, warn() {} },
+    }),
+    true,
+  );
+  assert.deepEqual(fallbackWrites.at(-1)[1], { plans: [] });
+  console.log('ok - protocol delivery plans fall back to disk payload when localStorage quota is exceeded');
+}
+
+{
+  const diskKey = getProtocolDeliveryPlanDiskKey('scope-disk');
+  const plans = await readProtocolDeliveryPlansWithFallback({
+    storage: new MemoryStorage(),
+    scopeId: 'scope-disk',
+    fallbackRead: async key => {
+      assert.equal(key, diskKey);
+      return {
+        plans: [
+          {
+            id: 'plan-disk',
+            sessionId: 'c-disk',
+            items: [
+              {
+                message: { id: 'm-disk', role: 'assistant', content: 'disk' },
+                delivery: { kind: 'private', targetSessionId: 'c-disk', isMe: false },
+              },
+            ],
+          },
+        ],
+      };
+    },
+  });
+  assert.equal(plans.length, 1);
+  assert.equal(plans[0].id, 'plan-disk');
+  console.log('ok - protocol delivery plans read from disk fallback when localStorage has no plan');
 }
 
 {

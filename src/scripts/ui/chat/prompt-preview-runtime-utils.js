@@ -3,6 +3,8 @@ export const createPromptPreviewRuntime = ({
   getContactBySessionId = null,
   getLastRequest = null,
   buildPromptPreview = () => ({ meta: '', head: '', body: '', messages: [] }),
+  buildPromptLineageTrace = () => null,
+  formatPromptLineageText = () => '',
   formatWorldDebugText = () => '',
   buildWorldDebugCandidates = () => [],
   showPromptPreviewModal = () => {},
@@ -33,12 +35,18 @@ export const createPromptPreviewRuntime = ({
     }
     const worldDebug = req?.worldDebug && typeof req.worldDebug === 'object' ? req.worldDebug : null;
     const worldDebugText = formatWorldDebugText(worldDebug);
+    const lineageTrace = req?.lineageTrace && typeof req.lineageTrace === 'object'
+      ? req.lineageTrace
+      : buildPromptLineageTrace({ request: req, worldDebug });
+    const lineageText = formatPromptLineageText(lineageTrace);
     const locateCandidates = buildWorldDebugCandidates(worldDebug);
     showPromptPreviewModal(
       [head, worldDebugText, body].filter(Boolean).join('\n\n').trim(),
       meta,
       {
         request: req,
+        lineageText,
+        lineageTrace,
         onLocate: locateCandidates.length
           ? async () => {
               showWorldDebugLocatorModal(locateCandidates, {

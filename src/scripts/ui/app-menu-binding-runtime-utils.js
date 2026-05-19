@@ -66,6 +66,7 @@ export const bindSettingsMenuActions = ({
   openExtensions = () => {},
   openConfig = () => {},
   openSessionConfig = () => {},
+  openLineageOverview = () => {},
   hideMenus = () => {},
 } = {}) => {
   settingsMenu?.querySelectorAll?.('button').forEach((button) => {
@@ -77,6 +78,7 @@ export const bindSettingsMenuActions = ({
       if (action === 'extensions') openExtensions();
       if (action === 'config') openConfig();
       if (action === 'session-config') openSessionConfig();
+      if (action === 'lineage-overview') openLineageOverview();
       hideMenus();
     });
   });

@@ -69,6 +69,24 @@ import {
       sessionTrimmedCount: 1,
       overflowed: true,
     },
+    dynamicProfiles: {
+      enabled: true,
+      promptInjected: true,
+      candidates: [
+        {
+          contactId: 'contact:alice',
+          name: 'Alice',
+          score: 5,
+          status: 'active',
+          matchedTerms: ['拍照'],
+          matchedRows: [
+            { id: 'r1', tableId: 'events', tableName: '重要事件', rowSummary: 'Alice 和用户约过拍照' },
+          ],
+        },
+      ],
+      selectedSources: [{ contactId: 'contact:alice', name: 'Alice' }],
+      injectedRows: [{ contactId: 'contact:alice', row: { id: 'r1' } }],
+    },
   });
   assert.match(text, /\[世界书调试\]/);
   assert.match(text, /变量自动建立: first_hit（命中后建立）/);
@@ -76,6 +94,8 @@ import {
   assert.match(text, /模板注入/);
   assert.match(text, /render:regex:x/);
   assert.match(text, /动态强触发: 候选 1 \/ 注入来源 1/);
+  assert.match(text, /动态弱触发: 候选 1 \/ 命中 1 \/ 注入记忆行 1/);
+  assert.match(text, /动态弱触发画像\/记忆/);
   assert.match(text, /动态强触发来源/);
   assert.match(text, /裁剪=moment_session_budget/);
   console.log('ok - formatPromptWorldDebug formats sectioned prompt debug summary');

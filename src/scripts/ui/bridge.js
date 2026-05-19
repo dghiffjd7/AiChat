@@ -40,6 +40,10 @@ import {
   resolveMomentWorldStrongSources,
 } from './chat/moment-world-resolver-utils.js';
 import {
+  buildContactProfileWeakTriggerPrompt,
+  resolveContactProfileWeakTriggers,
+} from '../memory/contact-profile-utils.js';
+import {
   PROMPT_SEGMENT_ANCHORS,
   sortPromptSegments,
   splitDepthPromptMessagesForLatest,
@@ -49,6 +53,9 @@ import {
   buildPendingUserTextWithScenarioReminder,
   resolveOpenAIPresetFormatReminderState,
 } from './chat/prompt-context-utils.js';
+import {
+  buildPromptTraceFromRequest,
+} from './chat/context-lineage-graph-utils.js';
 import {
   isBridgeAbortError,
   resolveBridgeCancellationReason,
@@ -487,6 +494,7 @@ class AppBridge {
     this.momentSummaryStore = null; // Injected
     this.memoryTableStore = null; // Injected
     this.memoryTemplateStore = null; // Injected
+    this.contactProfileStore = null; // Injected
     this.chatUI = null; // Injected
     this.pluginRuntime = null; // Injected
     this.scriptRuntime = null; // Injected
@@ -584,12 +592,40 @@ class AppBridge {
     this.memoryTemplateStore = store;
   }
 
+  setContactProfileStore(store) {
+    this.contactProfileStore = store;
+  }
+
   getMemoryTableStore() {
     return this.memoryTableStore || null;
   }
 
   getMemoryTemplateStore() {
     return this.memoryTemplateStore || null;
+  }
+
+  getContactProfileStore() {
+    return this.contactProfileStore || null;
+  }
+
+  getContactProfileSettings() {
+    return this.contactProfileStore?.getSettings?.() || null;
+  }
+
+  updateContactProfileSettings(patch = {}) {
+    return this.contactProfileStore?.updateSettings?.(patch) || null;
+  }
+
+  listContactProfiles() {
+    return this.contactProfileStore?.listProfiles?.() || [];
+  }
+
+  upsertContactProfile(profile = {}) {
+    return this.contactProfileStore?.upsertProfile?.(profile) || null;
+  }
+
+  deleteContactProfile(contactId = '') {
+    return this.contactProfileStore?.deleteProfile?.(contactId) || false;
   }
 
   setContextBuilder(fn) {
@@ -795,6 +831,7 @@ class AppBridge {
       guidePosition: 'before_latest_user',
       guideInjectDepth: 0,
       tableData: '',
+      dynamicProfileDebug: null,
       updateMode,
       templateId: '',
       templateName: '',
@@ -1136,6 +1173,21 @@ class AppBridge {
     const tableData = planResult.tableData || '';
     const rowIndexMap = planResult.rowIndexMap || {};
     const tableOrderNext = planResult.tableOrder || tableOrder;
+    let dynamicProfileDebug = null;
+    const buildDynamicWeakTriggerText = () => {
+      const historyLines = (Array.isArray(context?.history) ? context.history : [])
+        .map(item => String(item?.content ?? '').trim())
+        .filter(Boolean)
+        .slice(-6);
+      return [
+        context?.meta?.rawUserMessage,
+        context?.task?.triggerText,
+        context?.task?.promptData,
+        context?.task?.replyToAuthor,
+        context?.task?.targetName,
+        ...historyLines,
+      ].map(item => String(item || '').trim()).filter(Boolean).join('\n');
+    };
 
     const buildCrossScopeExtraText = async (budgetTokens) => {
       if (!this.memoryTableStore || budgetTokens <= 0) return { text: '', tokens: 0 };
@@ -1263,6 +1315,12 @@ class AppBridge {
           });
         }
         return records;
+      };
+      let momentsSocialRecordsCache = null;
+      const getMomentsSocialRecords = async () => {
+        if (momentsSocialRecordsCache) return momentsSocialRecordsCache;
+        momentsSocialRecordsCache = await collectMemorySourceRecords(listMemorySessionIdsByMode('social'));
+        return momentsSocialRecordsCache;
       };
       const resolveBridgeRecordHeader = (record = {}, sourceKind = '') => {
         const kind = String(sourceKind || record?.sourceKind || '').trim();
@@ -1403,6 +1461,105 @@ class AppBridge {
           });
           appendYamlBridgeBlock(resolveBridgeRecordHeader(record, sourceKind), groups);
         });
+      };
+
+      const sanitizeDynamicProfileDebug = (resolution = {}, { promptInjected = false } = {}) => {
+        const sanitizeRows = rows => (Array.isArray(rows) ? rows : []).map(row => ({
+          id: normalizeId(row?.id),
+          tableId: normalizeId(row?.tableId),
+          tableName: normalizeId(row?.tableName),
+          rowSummary: String(row?.rowSummary || row?.rowText || '').trim().slice(0, 160),
+          score: Number(row?.score || 0),
+          matchedTerms: (Array.isArray(row?.matchedTerms) ? row.matchedTerms : [])
+            .map(term => String(term || '').trim())
+            .filter(Boolean)
+            .slice(0, 8),
+        })).filter(row => row.id || row.rowSummary);
+        const sanitizeSource = source => ({
+          contactId: normalizeId(source?.contactId),
+          name: normalizeId(source?.name),
+          scopeId: normalizeId(source?.scopeId),
+          profileId: normalizeId(source?.profileId),
+          hasProfile: source?.hasProfile === true,
+          score: Number(source?.score || 0),
+          status: normalizeId(source?.status || 'unknown'),
+          blockedReason: normalizeId(source?.blockedReason),
+          reasons: (Array.isArray(source?.reasons) ? source.reasons : []).map(normalizeId).filter(Boolean),
+          matchedFields: (Array.isArray(source?.matchedFields) ? source.matchedFields : []).map(normalizeId).filter(Boolean),
+          matchedTerms: (Array.isArray(source?.matchedTerms) ? source.matchedTerms : [])
+            .map(term => String(term || '').trim())
+            .filter(Boolean)
+            .slice(0, 12),
+          matchedRows: sanitizeRows(source?.matchedRows),
+          profileHeader: String(source?.profileHeader || '').trim().slice(0, 180),
+          sourceRefs: (Array.isArray(source?.sourceRefs) ? source.sourceRefs : []).map(normalizeId).filter(Boolean).slice(0, 20),
+        });
+        return {
+          enabled: resolution?.enabled === true,
+          scopeId: normalizeId(resolution?.scopeId || this.scopeId),
+          threshold: Number(resolution?.threshold || 0),
+          highThreshold: Number(resolution?.highThreshold || 0),
+          profileHeaderThreshold: Number(resolution?.profileHeaderThreshold || 0),
+          promptInjected,
+          candidates: (Array.isArray(resolution?.candidates) ? resolution.candidates : []).map(sanitizeSource),
+          selectedSources: (Array.isArray(resolution?.selectedSources) ? resolution.selectedSources : []).map(sanitizeSource),
+          blockedCandidates: (Array.isArray(resolution?.blockedCandidates) ? resolution.blockedCandidates : []).map(sanitizeSource),
+          injectedRows: (Array.isArray(resolution?.injectedRows) ? resolution.injectedRows : []).map(item => ({
+            contactId: normalizeId(item?.contactId),
+            contactName: normalizeId(item?.contactName),
+            score: Number(item?.score || 0),
+            matchedTerms: (Array.isArray(item?.matchedTerms) ? item.matchedTerms : []).map(normalizeId).filter(Boolean),
+            row: sanitizeRows([item?.row])[0] || null,
+          })).filter(item => item.contactId && item.row),
+        };
+      };
+
+      const appendMomentWeakContactMemoryBlock = async () => {
+        if (sessionMode !== 'moments') return;
+        if (!this.contactProfileStore) return;
+        const settings = this.contactProfileStore.getSettings?.() || {};
+        if (settings.weakTriggerEnabled === false && settings.memoryWeakTriggerEnabled === false) {
+          dynamicProfileDebug = sanitizeDynamicProfileDebug({ enabled: false }, { promptInjected: false });
+          return;
+        }
+        const triggerText = buildDynamicWeakTriggerText();
+        if (!triggerText.trim()) return;
+        const sourceRecords = await getMomentsSocialRecords();
+        if (!sourceRecords.length && !(this.contactProfileStore.listProfiles?.() || []).length) return;
+        const records = sourceRecords.map(record => ({
+          contactId: normalizeId(record?.sourceId),
+          contactName: normalizeId(record?.sourceName),
+          rows: (Array.isArray(record?.rows) ? record.rows : []).map((row) => {
+            const tableId = normalizeId(row?.table_id);
+            const table = tableByIdAll.get(tableId);
+            const rowText = table ? getRowText(row, table) : '';
+            if (!rowText) return null;
+            return {
+              id: normalizeId(row?.id),
+              tableId,
+              tableName: normalizeId(table?.name || tableId),
+              rowText,
+              rowSummary: rowText,
+              updatedAt: Number(row?.updated_at || 0) || 0,
+              sourceRef: row?.id ? `memory_row:${row.id}` : '',
+            };
+          }).filter(Boolean),
+        })).filter(record => record.contactId && record.rows.length);
+        const resolution = resolveContactProfileWeakTriggers({
+          text: triggerText,
+          profiles: this.contactProfileStore.listProfiles?.() || [],
+          records,
+          settings,
+          scopeId: this.scopeId,
+        });
+        const promptText = buildContactProfileWeakTriggerPrompt(resolution, { settings });
+        const injected = Boolean(promptText);
+        dynamicProfileDebug = sanitizeDynamicProfileDebug(resolution, { promptInjected: injected });
+        if (!promptText) return;
+        pushSpacer();
+        for (const line of promptText.split(/\r?\n/)) {
+          if (!pushLine(line)) break;
+        }
       };
 
       if (sessionMode === 'chat' && !isGroup) {
@@ -1675,6 +1832,7 @@ class AppBridge {
         });
       }
       if (sessionMode === 'moments') {
+        await appendMomentWeakContactMemoryBlock();
         if (
           globalSettings.memoryTableEnabledChat !== false &&
           globalSettings.memoryBridgeChatToMomentsEnabled !== false
@@ -1686,7 +1844,7 @@ class AppBridge {
           });
           const enabledChatToMomentsTableIds = getChatToMomentsBridgeTableIds()
             .filter(tableId => chatToMomentsTableSettings?.[tableId]?.enabled === true);
-          const socialRecords = await collectMemorySourceRecords(listMemorySessionIdsByMode('social'));
+          const socialRecords = await getMomentsSocialRecords();
           appendSourceRecordTables({
             records: socialRecords,
             tableIds: enabledChatToMomentsTableIds,
@@ -1748,10 +1906,11 @@ class AppBridge {
         promptText,
         dataPromptText,
         guidePromptText,
-        guidePosition,
-        guideInjectDepth,
-        tableData: '',
-        updateMode,
+	        guidePosition,
+	        guideInjectDepth,
+	        tableData: '',
+	        dynamicProfileDebug,
+	        updateMode,
         templateId,
         templateName,
         targetId: sessionId,
@@ -1784,10 +1943,11 @@ class AppBridge {
         promptText,
         dataPromptText,
         guidePromptText,
-        guidePosition,
-        guideInjectDepth,
-        tableData: '',
-        updateMode,
+	        guidePosition,
+	        guideInjectDepth,
+	        tableData: '',
+	        dynamicProfileDebug,
+	        updateMode,
         templateId,
         templateName,
         targetId: sessionId,
@@ -1819,11 +1979,12 @@ class AppBridge {
       injectDepth,
       promptText,
       dataPromptText,
-      guidePromptText,
-      guidePosition,
-      guideInjectDepth,
-      tableData,
-      updateMode,
+	      guidePromptText,
+	      guidePosition,
+	      guideInjectDepth,
+	      tableData,
+	      dynamicProfileDebug,
+	      updateMode,
       templateId,
       templateName,
       targetId: sessionId,
@@ -2947,7 +3108,7 @@ class AppBridge {
       try {
         const memoryPlan = await this.buildMemoryPromptPlan(nextContext);
         this.lastMemoryPlan = memoryPlan;
-        if (memoryPlan?.enabled && (memoryPlan.dataPromptText || memoryPlan.guidePromptText)) {
+        if (memoryPlan?.enabled && (memoryPlan.dataPromptText || memoryPlan.guidePromptText || memoryPlan.dynamicProfileDebug)) {
           const nextMeta = {
             ...(nextContext.meta || {}),
           };
@@ -2964,6 +3125,9 @@ class AppBridge {
               position: memoryPlan.guidePosition || 'before_latest_user',
               depth: memoryPlan.guideInjectDepth,
             };
+          }
+          if (memoryPlan.dynamicProfileDebug) {
+            nextMeta.dynamicProfileDebug = memoryPlan.dynamicProfileDebug;
           }
           nextContext.meta = nextMeta;
         }
@@ -3130,6 +3294,8 @@ class AppBridge {
       // Debug: keep the exact request payload used for the latest generation
       this.lastRequest = {
         at: Date.now(),
+        requestId: nativeRequestId,
+        scopeId: String(this.scopeId || '').trim(),
         provider: config?.provider,
         baseUrl: preparedRequest?.url ? String(preparedRequest.url).replace(/\/chat\/completions$/, '') : config?.baseUrl,
         model: config?.model,
@@ -3159,6 +3325,10 @@ class AppBridge {
         worldDebug: this.lastWorldInjectionDebug || null,
         deepSeekFormatDebug: this.lastDeepSeekFormatDebug || null,
       };
+      this.lastRequest.lineageTrace = buildPromptTraceFromRequest(this.lastRequest, {
+        requestId: nativeRequestId,
+        scopeId: this.scopeId || sessionId,
+      });
       this.lastRequest.promptCacheDebug = this.emitPromptCacheDebug(
         sessionId,
         preparedRequest?.messages || messages,
@@ -4592,10 +4762,18 @@ const stringifyMessageContent = (content) => {
           mergedEntries: [],
           trimmedEntries: [],
           injectedEntries: [],
-          templateEntries: [],
-          initialVariableEntries: [],
-          dynamicWorld: null,
-        };
+	          templateEntries: [],
+	          initialVariableEntries: [],
+	          dynamicWorld: null,
+	          dynamicProfiles: null,
+	        };
+	        const dynamicProfilesFromContext =
+	          context?.meta?.dynamicProfileDebug && typeof context.meta.dynamicProfileDebug === 'object'
+	            ? context.meta.dynamicProfileDebug
+	            : null;
+	        if (dynamicProfilesFromContext) {
+	          worldDebugRaw.dynamicProfiles = dynamicProfilesFromContext;
+	        }
         const builtinPhoneFormatEntries = [];
         const captureWorldDebugEntry = (target, entry, extra = {}) => {
           if (!target || !entry) return;
@@ -5084,10 +5262,11 @@ const stringifyMessageContent = (content) => {
           mergedEntries: mapWorldDebugEntries(worldDebugRaw.mergedEntries),
           trimmedEntries: mapWorldDebugEntries(worldDebugRaw.trimmedEntries),
           injectedEntries: mapWorldDebugEntries(worldDebugRaw.injectedEntries),
-          templateEntries: mapWorldDebugEntries(worldDebugRaw.templateEntries),
-          initialVariableEntries: mapWorldDebugEntries(worldDebugRaw.initialVariableEntries),
-          dynamicWorld: worldDebugRaw.dynamicWorld,
-        };
+	          templateEntries: mapWorldDebugEntries(worldDebugRaw.templateEntries),
+	          initialVariableEntries: mapWorldDebugEntries(worldDebugRaw.initialVariableEntries),
+	          dynamicWorld: worldDebugRaw.dynamicWorld,
+	          dynamicProfiles: worldDebugRaw.dynamicProfiles,
+	        };
 
         return {
           worldPromptDefault,

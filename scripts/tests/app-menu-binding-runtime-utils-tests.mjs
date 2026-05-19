@@ -108,6 +108,7 @@ const createMenu = (buttons = []) => ({
     createButton('extensions'),
     createButton('config'),
     createButton('session-config'),
+    createButton('lineage-overview'),
   ]);
   bindSettingsMenuActions({
     settingsMenu,
@@ -117,6 +118,7 @@ const createMenu = (buttons = []) => ({
     openExtensions: () => calls.push('extensions'),
     openConfig: () => calls.push('config'),
     openSessionConfig: () => calls.push('session-config'),
+    openLineageOverview: () => calls.push('lineage-overview'),
     hideMenus: () => calls.push('hide'),
   });
   settingsMenu.querySelectorAll('button').forEach((button) => button.trigger());
@@ -127,6 +129,7 @@ const createMenu = (buttons = []) => ({
     'extensions', 'hide',
     'config', 'hide',
     'session-config', 'hide',
+    'lineage-overview', 'hide',
   ]);
   console.log('ok - bindSettingsMenuActions dispatches settings menu actions then hides menus');
 }
