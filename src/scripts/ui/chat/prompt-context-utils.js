@@ -63,7 +63,7 @@ export const buildPendingUserTextWithScenarioReminder = ({
 };
 
 const PROMPT_POST_PROCESSING_MODES = new Set(['none', 'merge', 'semi', 'strict', 'single']);
-const PROMPT_EMPTY_TEXT_PLACEHOLDER = '.';
+const PROMPT_EMPTY_TEXT_PLACEHOLDER = "Let's get started.";
 
 export const normalizePromptPostProcessingMode = (mode = '') => {
   const raw = String(mode || '').trim().toLowerCase();

@@ -108,6 +108,11 @@ const describeFetchFailure = (url, error) => {
 };
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const ANTHROPIC_EMPTY_TEXT_PLACEHOLDER = '\u200b';
+const normalizeAnthropicTextBlock = (value) => {
+    const text = String(value ?? '');
+    return text.trim().length ? text : ANTHROPIC_EMPTY_TEXT_PLACEHOLDER;
+};
 
 export class AnthropicProvider {
     constructor(config) {
@@ -230,8 +235,7 @@ export class AnthropicProvider {
                 content.forEach((part) => {
                     if (!part || typeof part !== 'object') return;
                     if (part.type === 'text') {
-                        const text = String(part.text || '');
-                        if (text) parts.push({ type: 'text', text });
+                        parts.push({ type: 'text', text: normalizeAnthropicTextBlock(part.text) });
                         return;
                     }
                     if (part.type === 'image_url') {
@@ -251,9 +255,9 @@ export class AnthropicProvider {
                         }
                     }
                 });
-                return parts.length ? parts : [{ type: 'text', text: '' }];
+                return parts.length ? parts : [{ type: 'text', text: ANTHROPIC_EMPTY_TEXT_PLACEHOLDER }];
             }
-            return [{ type: 'text', text: String(content ?? '') }];
+            return [{ type: 'text', text: normalizeAnthropicTextBlock(content) }];
         };
         const toSystemText = (content) => {
             if (Array.isArray(content)) {

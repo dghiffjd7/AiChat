@@ -171,7 +171,7 @@ import {
     ]),
     [
       { role: 'system', content: '开场系统' },
-      { role: 'user', content: '.' },
+      { role: 'user', content: "Let's get started." },
       { role: 'assistant', content: '不应直接跟在 system 后' },
       { role: 'user', content: '后段系统\n\n格式提醒\n\n你好' },
     ],
@@ -183,7 +183,7 @@ import {
       { role: 'assistant', content: '第二段' },
     ]),
     [
-      { role: 'user', content: '.' },
+      { role: 'user', content: "Let's get started." },
       { role: 'assistant', content: '继续写\n\n第二段' },
     ],
   );
@@ -194,7 +194,7 @@ import {
       { role: 'user', content: [{ type: 'image_url', image_url: { url: 'data:image/png;base64,abc' } }] },
     ]),
     [
-      { role: 'user', content: '.' },
+      { role: 'user', content: "Let's get started." },
       { role: 'assistant', content: '历史回复' },
       {
         role: 'user',
@@ -219,7 +219,7 @@ import {
       { role: 'user', content: '基础设定\n\n历史回复\n\n最新消息' },
     ],
   );
-  assert.deepEqual(applyPromptPostProcessing([], 'single'), [{ role: 'user', content: '.' }]);
+  assert.deepEqual(applyPromptPostProcessing([], 'single'), [{ role: 'user', content: "Let's get started." }]);
   console.log('ok - applySingleUserPromptPostProcessing flattens all messages into one user turn');
 }
 
