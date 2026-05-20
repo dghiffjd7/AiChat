@@ -3260,7 +3260,16 @@ class AppBridge {
           if (updated.context && typeof updated.context === 'object') nextContext = updated.context;
         }
       }
-      let messages = this.buildMessages(promptInput, nextContext);
+      const presetContext = this.getRequestPresetContext(nextContext);
+      const requestRuntime = await this.resolveRequestRuntimeConfig(presetContext);
+      const config = requestRuntime?.config || this.config.get();
+      const requestClient = requestRuntime?.client || (canInitClient(config) ? new LLMClient(config) : null);
+      if (!requestClient) {
+        throw new Error('请先配置 API 信息');
+      }
+      let messages = this.buildMessages(promptInput, nextContext, {
+        requestConfig: config,
+      });
       if (scriptRuntime && nextContext?.meta?.skipScripts !== true) {
         const beforePrompt = messages;
         const { result: updated } = await runRuntimeHookLifecycleEvent({
@@ -3335,13 +3344,6 @@ class AppBridge {
         } catch (err) {
           logger.warn('template render (generate) failed', err);
         }
-      }
-      const presetContext = this.getRequestPresetContext(nextContext);
-      const requestRuntime = await this.resolveRequestRuntimeConfig(presetContext);
-      const config = requestRuntime?.config || this.config.get();
-      const requestClient = requestRuntime?.client || (canInitClient(config) ? new LLMClient(config) : null);
-      if (!requestClient) {
-        throw new Error('请先配置 API 信息');
       }
       messages = this.normalizeOutgoingProviderMessages(messages, config);
       const genOptions = this.getGenerationOptions(presetContext, config);
@@ -3626,7 +3628,7 @@ class AppBridge {
   /**
    * 构建消息数组
    */
-	  buildMessages(userMessage, context = {}) {
+	  buildMessages(userMessage, context = {}, options = {}) {
 	    const messages = [];
     this.lastWorldInjectionDebug = null;
     this.lastDeepSeekFormatDebug = null;
@@ -3790,7 +3792,9 @@ class AppBridge {
       suppressPendingUserTurn,
       appendScenarioReminder: appendScenarioFormatReminderToUserInput,
     });
-    const requestConfig = this.config?.get?.() || {};
+    const requestConfig = options?.requestConfig && typeof options.requestConfig === 'object'
+      ? options.requestConfig
+      : (this.config?.get?.() || {});
     const provider = String(requestConfig?.provider || '').trim().toLowerCase();
     const requestModel = String(requestConfig?.model || '').trim().toLowerCase();
     const providerNeedsExplicitUserTurn = shouldUseDeepSeekReasonerCompatibility({

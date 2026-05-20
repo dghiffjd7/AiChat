@@ -63,6 +63,7 @@ export const buildPendingUserTextWithScenarioReminder = ({
 };
 
 const PROMPT_POST_PROCESSING_MODES = new Set(['none', 'merge', 'semi', 'strict', 'single']);
+const PROMPT_EMPTY_TEXT_PLACEHOLDER = '.';
 
 export const normalizePromptPostProcessingMode = (mode = '') => {
   const raw = String(mode || '').trim().toLowerCase();
@@ -130,7 +131,7 @@ const mergeAdjacentPromptMessages = (messages = []) => {
 };
 
 const ensurePromptMessagesNotEmpty = (messages = []) =>
-  messages.length ? messages : [{ role: 'user', content: ' ' }];
+  messages.length ? messages : [{ role: 'user', content: PROMPT_EMPTY_TEXT_PLACEHOLDER }];
 
 export const applyMergePromptPostProcessing = (messages = []) =>
   ensurePromptMessagesNotEmpty(mergeAdjacentPromptMessages(messages));
@@ -156,15 +157,15 @@ export const applyStrictPromptPostProcessing = (messages = []) => {
 
   if (list[0]?.role === 'system') {
     if (list.length === 1 || list[1]?.role !== 'user') {
-      list.splice(1, 0, { role: 'user', content: ' ' });
+      list.splice(1, 0, { role: 'user', content: PROMPT_EMPTY_TEXT_PLACEHOLDER });
     }
   } else if (list[0]?.role !== 'user') {
-    list.unshift({ role: 'user', content: ' ' });
+    list.unshift({ role: 'user', content: PROMPT_EMPTY_TEXT_PLACEHOLDER });
   }
 
   const merged = mergeAdjacentPromptMessages(list);
   return merged.map(message => (
-    contentHasPromptText(message.content) ? message : { ...message, content: ' ' }
+    contentHasPromptText(message.content) ? message : { ...message, content: PROMPT_EMPTY_TEXT_PLACEHOLDER }
   ));
 };
 

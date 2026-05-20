@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
 import {
   normalizeRequestConfigUiMode,
   resolveRequestConfigProfileId,
@@ -72,6 +74,22 @@ test('falls back to global profile when no binding exists', () => {
     sessionId: 'chat:1',
     uiMode: 'chat',
   });
+});
+
+test('generation resolves request config before building provider messages', async () => {
+  const bridgePath = fileURLToPath(new URL('../../src/scripts/ui/bridge.js', import.meta.url));
+  const source = await readFile(bridgePath, 'utf8');
+  const start = source.indexOf('async generate(userMessage, context = {})');
+  const end = source.indexOf('async backgroundChat(messages, options = {})');
+  assert.ok(start >= 0 && end > start, 'bridge generate body should be discoverable');
+  const body = source.slice(start, end);
+  const resolveIndex = body.indexOf('const requestRuntime = await this.resolveRequestRuntimeConfig(presetContext);');
+  const buildIndex = body.indexOf('let messages = this.buildMessages(promptInput, nextContext, {');
+  assert.ok(resolveIndex >= 0, 'generate should resolve request runtime config');
+  assert.ok(buildIndex >= 0, 'generate should pass request config into buildMessages');
+  assert.ok(resolveIndex < buildIndex, 'request config must be resolved before buildMessages');
+  assert.match(body, /this\.buildMessages\(promptInput, nextContext,\s*\{\s*requestConfig: config,\s*\}\s*\)/);
+  assert.match(source, /buildMessages\(userMessage, context = \{\}, options = \{\}\)/);
 });
 
 for (const { name, fn } of tests) {
