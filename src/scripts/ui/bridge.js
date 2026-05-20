@@ -51,6 +51,8 @@ import {
 } from './chat/prompt-segment-plan-utils.js';
 import {
   buildPendingUserTextWithScenarioReminder,
+  mergeSystemMessagesBeforeFinalUser,
+  moveTrailingSystemMessagesBeforeFinalUser,
   resolveOpenAIPresetFormatReminderState,
 } from './chat/prompt-context-utils.js';
 import {
@@ -3468,18 +3470,22 @@ class AppBridge {
   }
 
   normalizeOutgoingProviderMessages(messages, config = null, meta = {}) {
-    const list = Array.isArray(messages) ? messages : [];
+    let list = Array.isArray(messages) ? messages : [];
     if (!list.length) return list;
 
     const cfg = config || this.config?.get?.() || {};
     const provider = String(cfg?.provider || '').trim().toLowerCase();
+    const model = String(cfg?.model || '').trim().toLowerCase();
+    const baseUrl = String(cfg?.baseUrl || '').trim().toLowerCase();
     const providerRejectsAssistantPrefill = provider === 'anthropic';
     const providerCompatLabel = provider === 'anthropic' ? 'Anthropic' : (provider || 'Provider');
     const syntheticAssistantDowngradeCount = Math.max(0, Math.trunc(Number(meta?.syntheticAssistantDowngradeCount) || 0));
-
-    if (!providerRejectsAssistantPrefill && syntheticAssistantDowngradeCount <= 0) {
-      return list;
-    }
+    const providerRejectsLateSystemMessages =
+      provider === 'custom' &&
+      (
+        model.includes('vercel') ||
+        baseUrl.includes('vercel')
+      );
 
     const normalizeRole = (role) => {
       const r = String(role || '').trim().toLowerCase();
@@ -3510,6 +3516,23 @@ class AppBridge {
           return `${absoluteIdx}:${role}:${preview}`;
         })
         .join(' | ');
+
+    if (providerRejectsLateSystemMessages) {
+      const normalizedTail = moveTrailingSystemMessagesBeforeFinalUser(list);
+      if (normalizedTail !== list) {
+        list = normalizedTail;
+        const compatMsg = `${providerCompatLabel} 兼容：已将尾部 system 提示移到最终 user 前，避免 Vercel 兼容端点拒绝 user 后的 system。tail=${summarizeTailRoles()}`;
+        logger.debug(compatMsg);
+        emitDebugLog({ source: 'prompt', type: 'info', message: compatMsg });
+      }
+      const mergedLateSystems = mergeSystemMessagesBeforeFinalUser(list);
+      if (mergedLateSystems !== list) {
+        list = mergedLateSystems;
+        const compatMsg = `${providerCompatLabel} 兼容：已将最终 user 前的后段 system 提示合并进 user，避免 Vercel 兼容端点拒绝对话中后段 system。tail=${summarizeTailRoles()}`;
+        logger.debug(compatMsg);
+        emitDebugLog({ source: 'prompt', type: 'info', message: compatMsg });
+      }
+    }
 
     if (syntheticAssistantDowngradeCount > 0) {
       const compatMsg = `${providerCompatLabel} 兼容：已将 ${syntheticAssistantDowngradeCount} 个合成 assistant 提示词改为 system。tail=${summarizeTailRoles()}`;
@@ -6424,14 +6447,17 @@ const stringifyMessageContent = (content) => {
       const maxTokens = int(p.openai_max_tokens);
       const provider = runtimeConfig?.provider;
       const model = runtimeConfig?.model;
+      const baseUrl = runtimeConfig?.baseUrl;
       const samplerPolicy = getReasoningSamplerPolicy({
         provider,
         model,
+        baseUrl,
         requestReasoning: effectiveRequestReasoning,
       });
       const reasoningOptions = buildReasoningRequestOptions({
         provider,
         model,
+        baseUrl,
         requestReasoning: effectiveRequestReasoning,
         reasoningEffort: effectiveReasoningEffort,
         maxOutputTokens: maxTokens,

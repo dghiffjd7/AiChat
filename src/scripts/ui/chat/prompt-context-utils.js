@@ -62,6 +62,85 @@ export const buildPendingUserTextWithScenarioReminder = ({
   return [baseText, scenarioText].filter(Boolean).join('\n\n');
 };
 
+export const moveTrailingSystemMessagesBeforeFinalUser = (messages = []) => {
+  const list = Array.isArray(messages) ? messages : [];
+  if (list.length < 2) return list;
+
+  const normalizeRole = (role) => String(role || '').trim().toLowerCase();
+  let trailingStart = list.length;
+  while (trailingStart > 0 && normalizeRole(list[trailingStart - 1]?.role) === 'system') {
+    trailingStart -= 1;
+  }
+
+  if (trailingStart === list.length || trailingStart <= 0) return list;
+  const finalNonSystemIndex = trailingStart - 1;
+  if (normalizeRole(list[finalNonSystemIndex]?.role) !== 'user') return list;
+
+  return [
+    ...list.slice(0, finalNonSystemIndex),
+    ...list.slice(trailingStart),
+    list[finalNonSystemIndex],
+  ];
+};
+
+const stringifyPromptMessageContent = (content) => {
+  if (Array.isArray(content)) {
+    return content
+      .map(part => (part?.type === 'text' ? String(part.text || '') : ''))
+      .filter(Boolean)
+      .join('\n');
+  }
+  return String(content ?? '');
+};
+
+export const mergeSystemMessagesBeforeFinalUser = (messages = []) => {
+  const list = Array.isArray(messages) ? messages : [];
+  if (list.length < 2) return list;
+
+  const normalizeRole = (role) => String(role || '').trim().toLowerCase();
+  let finalUserIndex = -1;
+  for (let i = list.length - 1; i >= 0; i -= 1) {
+    if (normalizeRole(list[i]?.role) === 'user') {
+      finalUserIndex = i;
+      break;
+    }
+  }
+  if (finalUserIndex <= 0) return list;
+
+  let systemStart = finalUserIndex;
+  while (systemStart > 0 && normalizeRole(list[systemStart - 1]?.role) === 'system') {
+    systemStart -= 1;
+  }
+  if (systemStart === finalUserIndex) return list;
+
+  const systemText = list
+    .slice(systemStart, finalUserIndex)
+    .map(msg => stringifyPromptMessageContent(msg?.content).trim())
+    .filter(Boolean)
+    .join('\n\n');
+  if (!systemText) return list;
+
+  const finalUser = list[finalUserIndex] || {};
+  const userContent = Array.isArray(finalUser.content)
+    ? [
+        { type: 'text', text: systemText },
+        ...finalUser.content,
+      ]
+    : [systemText, stringifyPromptMessageContent(finalUser.content).trim()]
+        .filter(Boolean)
+        .join('\n\n');
+
+  return [
+    ...list.slice(0, systemStart),
+    {
+      ...finalUser,
+      role: 'user',
+      content: userContent,
+    },
+    ...list.slice(finalUserIndex + 1),
+  ];
+};
+
 export const createPresetRuntime = ({
   appBridge = null,
   getSessionId = null,

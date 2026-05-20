@@ -623,7 +623,7 @@ export class SessionConfigPanel {
         if (!currentProfileId) return '';
         const profile = this.getProfileForReasoning(currentProfileId);
         if (!profile) return '';
-        const cap = getReasoningCapability({ provider: profile.provider, model: profile.model });
+        const cap = getReasoningCapability({ provider: profile.provider, model: profile.model, baseUrl: profile.baseUrl });
         if (!cap.supported || !cap.requestControl) return '';
         const currentReasoning = this.store.getSessionReasoning('openai', entry.id) || null;
         const enabled = resolvedPreset.request_reasoning === true || currentReasoning?.request_reasoning === true;
@@ -695,7 +695,7 @@ export class SessionConfigPanel {
     renderReasoningControls(container, profileId, ctx) {
         const profile = this.getProfileForReasoning(profileId);
         if (!profile) return;
-        const cap = getReasoningCapability({ provider: profile.provider, model: profile.model });
+        const cap = getReasoningCapability({ provider: profile.provider, model: profile.model, baseUrl: profile.baseUrl });
         if (!cap.supported || !cap.requestControl) return;
 
         const resolveCtx = {};

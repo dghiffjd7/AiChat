@@ -138,3 +138,40 @@ const createDeps = (overrides = {}) => {
   assert.deepEqual(calls.clients, [{ apiKey: 'profile-key' }]);
   console.log('ok - createMemoryUpdateRuntime resolves profile-scoped config when configured');
 }
+
+{
+  const agentCalls = [];
+  const agentTaskRuntime = {
+    startRun: (run) => {
+      agentCalls.push(['startRun', run]);
+      return { id: 'agent-run-1', ...run };
+    },
+    startStep: (runId, step) => {
+      agentCalls.push(['startStep', runId, step]);
+      return { id: 'agent-step-1', runId, ...step };
+    },
+    finishStep: (runId, stepId, patch) => {
+      agentCalls.push(['finishStep', runId, stepId, patch]);
+      return { id: stepId, runId, ...patch };
+    },
+    finishRun: (runId, patch) => {
+      agentCalls.push(['finishRun', runId, patch]);
+      return { id: runId, ...patch };
+    },
+  };
+  const { runtime } = createDeps({ agentTaskRuntime });
+  await runtime.runMemoryUpdateAfterChat('s3', false, {}, { checkpointMessageId: 'm3' });
+  assert.deepEqual(agentCalls.map(call => call[0]), [
+    'startRun',
+    'startStep',
+    'finishStep',
+    'finishRun',
+  ]);
+  assert.equal(agentCalls[0][1].kind, 'memory_update');
+  assert.equal(agentCalls[0][1].sessionId, 's3');
+  assert.equal(agentCalls[0][1].metadata.checkpointMessageId, 'm3');
+  assert.equal(agentCalls[1][2].type, 'memory.update');
+  assert.equal(agentCalls[2][3].status, 'succeeded');
+  assert.equal(agentCalls[3][2].status, 'succeeded');
+  console.log('ok - createMemoryUpdateRuntime records optional agent run lifecycle without changing memory flow');
+}

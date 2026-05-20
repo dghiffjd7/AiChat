@@ -57,14 +57,63 @@ const normalizeNonNegativeSeed = (value) => {
     return seed;
 };
 
-const normalizeOpenAICompatiblePayloadOptions = (options = {}) => {
+const buildEndpointUrl = (baseUrl, path) => {
+    const base = String(baseUrl || '').replace(/\/+$/, '');
+    const nextPath = String(path || '').replace(/^\/+/, '');
+    return `${base}/${nextPath}`;
+};
+
+const isOfficialGeminiOpenAIEndpoint = (baseUrl) => {
+    try {
+        const url = new URL(String(baseUrl || '').trim());
+        return (
+            url.hostname === 'generativelanguage.googleapis.com' &&
+            url.pathname.split('/').filter(Boolean).includes('openai')
+        );
+    } catch (_e) {
+        return false;
+    }
+};
+
+const normalizeOpenAICompatiblePayloadOptions = (options = {}, { officialGeminiOpenAIEndpoint = false } = {}) => {
     const out = { ...(options && typeof options === 'object' ? options : {}) };
+    if (officialGeminiOpenAIEndpoint) {
+        delete out.deepseekPrefix;
+        delete out.thinkingBudget;
+        delete out.thinkingLevel;
+        delete out.stream;
+    }
+
     if (Object.hasOwn(out, 'seed')) {
         const seed = normalizeNonNegativeSeed(out.seed);
-        if (seed === undefined) {
+        if (seed === undefined || officialGeminiOpenAIEndpoint) {
             delete out.seed;
         } else {
             out.seed = seed;
+        }
+    }
+    if (officialGeminiOpenAIEndpoint && Object.hasOwn(out, 'n')) {
+        const n = Math.trunc(Number(out.n));
+        if (!Number.isFinite(n) || n <= 1) {
+            delete out.n;
+        } else {
+            out.n = n;
+        }
+    }
+    if (officialGeminiOpenAIEndpoint && Object.hasOwn(out, 'presence_penalty')) {
+        const value = Number(out.presence_penalty);
+        if (!Number.isFinite(value) || value === 0) {
+            delete out.presence_penalty;
+        } else {
+            out.presence_penalty = value;
+        }
+    }
+    if (officialGeminiOpenAIEndpoint && Object.hasOwn(out, 'frequency_penalty')) {
+        const value = Number(out.frequency_penalty);
+        if (!Number.isFinite(value) || value === 0) {
+            delete out.frequency_penalty;
+        } else {
+            out.frequency_penalty = value;
         }
     }
     return out;
@@ -159,23 +208,48 @@ export class CustomProvider {
     }
 
     /**
+     * 准备聊天请求，供发送链路和调试面板复用同一份实际 payload。
+     */
+    prepareChatRequest(messages, options = {}) {
+        const { signal, requestId, options: rawPayloadOptions } = splitRequestOptions(options);
+        const officialGeminiOpenAIEndpoint = isOfficialGeminiOpenAIEndpoint(this.baseUrl);
+        const normalizedOptions = normalizeOpenAICompatiblePayloadOptions(rawPayloadOptions, {
+            officialGeminiOpenAIEndpoint,
+        });
+        const payloadMessages = Array.isArray(messages) ? messages : [];
+        const payload = {
+            model: this.model,
+            messages: payloadMessages,
+            ...normalizedOptions,
+        };
+        return {
+            signal,
+            requestId,
+            url: officialGeminiOpenAIEndpoint
+                ? buildEndpointUrl(this.baseUrl, 'chat/completions')
+                : `${this.baseUrl}/chat/completions`,
+            payload,
+            messages: payloadMessages,
+            normalizedOptions,
+            responsePrefix: '',
+        };
+    }
+
+    /**
      * 发送聊天消息（非流式）
      */
     async chat(messages, options = {}) {
-        const { signal, requestId, options: rawPayloadOptions } = splitRequestOptions(options);
-        const payloadOptions = normalizeOpenAICompatiblePayloadOptions(rawPayloadOptions);
+        const request = this.prepareChatRequest(messages, options);
         const data = await this.requestJson({
-            url: `${this.baseUrl}/chat/completions`,
+            url: request.url,
             method: 'POST',
             headers: this.getHeaders(),
             body: JSON.stringify({
-                model: this.model,
-                messages: messages,
+                ...request.payload,
                 stream: false,
-                ...payloadOptions
             }),
-            signal,
-            requestId,
+            signal: request.signal,
+            requestId: request.requestId,
         });
 
         if (data.choices && data.choices[0]) {
@@ -193,25 +267,22 @@ export class CustomProvider {
      * 流式聊天
      */
     async *streamChat(messages, options = {}) {
-        const { signal, requestId, options: rawPayloadOptions } = splitRequestOptions(options);
-        const payloadOptions = normalizeOpenAICompatiblePayloadOptions(rawPayloadOptions);
+        const request = this.prepareChatRequest(messages, options);
         const payload = JSON.stringify({
-            model: this.model,
-            messages: messages,
+            ...request.payload,
             stream: true,
-            ...payloadOptions
         });
 
         const invoker = getTauriInvoker();
         if (typeof invoker === 'function') {
-            if (signal?.aborted) throw makeAbortError();
+            if (request.signal?.aborted) throw makeAbortError();
             const res = await this.request({
-                url: `${this.baseUrl}/chat/completions`,
+                url: request.url,
                 method: 'POST',
                 headers: { ...this.getHeaders(), Accept: 'text/event-stream' },
                 body: payload,
-                signal,
-                requestId,
+                signal: request.signal,
+                requestId: request.requestId,
             });
             if (!res.ok) {
                 const raw = String(res.body || '').trim();
@@ -235,12 +306,12 @@ export class CustomProvider {
             return;
         }
 
-        const { controller, cleanup } = createLinkedAbortController({ timeoutMs: this.timeout, signal });
+        const { controller, cleanup } = createLinkedAbortController({ timeoutMs: this.timeout, signal: request.signal });
         try {
             const prepared = prepareTransportRequest({
                 config: this.transportConfig,
                 provider: this.provider,
-                url: `${this.baseUrl}/chat/completions`,
+                url: request.url,
                 headers: { ...this.getHeaders(), Accept: 'text/event-stream' },
             });
             const response = await fetch(prepared.url, {

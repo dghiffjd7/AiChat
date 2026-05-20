@@ -5,6 +5,8 @@ import {
   buildPresetContext,
   buildReplyPromptHint,
   createPresetRuntime,
+  mergeSystemMessagesBeforeFinalUser,
+  moveTrailingSystemMessagesBeforeFinalUser,
   resolveOpenAIPresetFormatReminderState,
   resolveEnabledPreset,
   resolveResolvedPreset,
@@ -106,6 +108,72 @@ import {
     '',
   );
   console.log('ok - buildPendingUserTextWithScenarioReminder appends non-default scenario reminders to user input');
+}
+
+{
+  const user = { role: 'user', content: '你好' };
+  const format = { role: 'system', content: '请遵循格式' };
+  const style = { role: 'system', content: '保持简洁' };
+  assert.deepEqual(
+    moveTrailingSystemMessagesBeforeFinalUser([
+      { role: 'system', content: '设定' },
+      user,
+      format,
+      style,
+    ]),
+    [
+      { role: 'system', content: '设定' },
+      format,
+      style,
+      user,
+    ],
+  );
+
+  const alreadySafe = [
+    { role: 'system', content: '设定' },
+    { role: 'user', content: '你好' },
+    { role: 'assistant', content: '好' },
+    { role: 'system', content: '备注' },
+  ];
+  assert.equal(moveTrailingSystemMessagesBeforeFinalUser(alreadySafe), alreadySafe);
+  assert.equal(moveTrailingSystemMessagesBeforeFinalUser([{ role: 'user', content: '你好' }]).length, 1);
+  console.log('ok - moveTrailingSystemMessagesBeforeFinalUser keeps final user as the last turn');
+}
+
+{
+  assert.deepEqual(
+    mergeSystemMessagesBeforeFinalUser([
+      { role: 'system', content: '基础设定' },
+      { role: 'assistant', content: '历史回复' },
+      { role: 'system', content: '时间提示' },
+      { role: 'system', content: '格式提示' },
+      { role: 'user', content: '你好' },
+    ]),
+    [
+      { role: 'system', content: '基础设定' },
+      { role: 'assistant', content: '历史回复' },
+      { role: 'user', content: '时间提示\n\n格式提示\n\n你好' },
+    ],
+  );
+
+  assert.deepEqual(
+    mergeSystemMessagesBeforeFinalUser([
+      { role: 'assistant', content: '历史回复' },
+      { role: 'system', content: '图片提示' },
+      { role: 'user', content: [{ type: 'image_url', image_url: { url: 'data:image/png;base64,abc' } }] },
+    ]),
+    [
+      { role: 'assistant', content: '历史回复' },
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: '图片提示' },
+          { type: 'image_url', image_url: { url: 'data:image/png;base64,abc' } },
+        ],
+      },
+    ],
+  );
+  console.log('ok - mergeSystemMessagesBeforeFinalUser folds late dynamic system prompts into the final user turn');
 }
 
 {

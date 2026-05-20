@@ -25,6 +25,14 @@ const GEMINI_LEVEL_REASONING_OPTIONS = Object.freeze([
   { value: 'high', label: '高' },
 ]);
 
+const GEMINI_OPENAI_REASONING_OPTIONS = Object.freeze([
+  { value: 'auto', label: '自动' },
+  { value: 'minimal', label: '极低' },
+  { value: 'low', label: '低' },
+  { value: 'medium', label: '中' },
+  { value: 'high', label: '高' },
+]);
+
 const DEEPSEEK_REASONING_OPTIONS = Object.freeze([
   { value: 'high', label: '高' },
   { value: 'max', label: '最大' },
@@ -54,6 +62,7 @@ const isOpenAIReasoningModel = (model) => {
 };
 
 const isDeepSeekModel = (model) => normalizeText(model).startsWith('deepseek');
+const isGeminiModel = (model) => normalizeText(model).includes('gemini');
 
 const isAnthropicThinkingModel = (model) => {
   const m = normalizeText(model);
@@ -70,6 +79,18 @@ const isGeminiLevelModel = (model) => normalizeText(model).includes('gemini-3');
 
 const isGpt51Family = (model) => normalizeText(model).startsWith('gpt-5.1');
 const isGpt5ProFamily = (model) => normalizeText(model).startsWith('gpt-5-pro');
+
+const isOfficialGeminiOpenAIBaseUrl = (baseUrl) => {
+  try {
+    const url = new URL(String(baseUrl || '').trim());
+    return (
+      url.hostname === 'generativelanguage.googleapis.com' &&
+      url.pathname.split('/').filter(Boolean).includes('openai')
+    );
+  } catch (_e) {
+    return false;
+  }
+};
 
 const budgetFromEffort = ({ effort, maxOutputTokens }) => {
   const safeMax = Number.isFinite(Number(maxOutputTokens))
@@ -109,7 +130,16 @@ const openAIReasoningEffortFromSetting = ({ model, effort }) => {
   return normalized;
 };
 
-export const getReasoningCapability = ({ provider, model } = {}) => {
+const geminiOpenAIReasoningEffortFromSetting = (effort) => {
+  const normalized = normalizeReasoningEffort(effort, 'high');
+  if (normalized === 'auto') return null;
+  if (normalized === 'minimal') return 'minimal';
+  if (normalized === 'low') return 'low';
+  if (normalized === 'medium') return 'medium';
+  return 'high';
+};
+
+export const getReasoningCapability = ({ provider, model, baseUrl } = {}) => {
   const p = normalizeText(provider);
   const m = normalizeText(model);
 
@@ -183,6 +213,16 @@ export const getReasoningCapability = ({ provider, model } = {}) => {
         hint: 'DeepSeek 推理强度：高（默认）/ 最大；思考模式下 temperature 等采样参数会被忽略。',
       };
     }
+    if (isGeminiModel(m) && isOfficialGeminiOpenAIBaseUrl(baseUrl)) {
+      return {
+        supported: true,
+        strategy: 'gemini-openai-effort',
+        requestControl: true,
+        effortControl: true,
+        effortOptions: GEMINI_OPENAI_REASONING_OPTIONS,
+        hint: '自定义 Gemini OpenAI 兼容端点按 reasoning_effort 发送；不要同时发送 thinkingLevel/thinkingBudget。',
+      };
+    }
     if (isOpenAIReasoningModel(m)) {
       return {
         supported: true,
@@ -212,16 +252,21 @@ export const getReasoningCapability = ({ provider, model } = {}) => {
 export const buildReasoningRequestOptions = ({
   provider,
   model,
+  baseUrl,
   requestReasoning,
   reasoningEffort,
   maxOutputTokens,
 } = {}) => {
-  const capability = getReasoningCapability({ provider, model });
+  const capability = getReasoningCapability({ provider, model, baseUrl });
   if (!capability.supported || requestReasoning !== true) return {};
 
   switch (capability.strategy) {
     case 'openai-effort': {
       const effort = openAIReasoningEffortFromSetting({ model, effort: reasoningEffort });
+      return effort ? { reasoning_effort: effort } : {};
+    }
+    case 'gemini-openai-effort': {
+      const effort = geminiOpenAIReasoningEffortFromSetting(reasoningEffort);
       return effort ? { reasoning_effort: effort } : {};
     }
     case 'anthropic-budget': {
@@ -248,10 +293,11 @@ export const buildReasoningRequestOptions = ({
 export const getReasoningSamplerPolicy = ({
   provider,
   model,
+  baseUrl,
   requestReasoning,
 } = {}) => {
   const p = normalizeText(provider);
-  const capability = getReasoningCapability({ provider, model });
+  const capability = getReasoningCapability({ provider, model, baseUrl });
   const openAIRestrictedSampling = p === 'openai' && capability.strategy === 'openai-effort';
   const active = (capability.supported && requestReasoning === true) || openAIRestrictedSampling;
   const disabledFields = new Set();

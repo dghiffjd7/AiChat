@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 
+import { buildReasoningRequestOptions, getReasoningCapability } from '../../src/scripts/api/model-capabilities.js';
 import { OpenAIProvider } from '../../src/scripts/api/providers/openai.js';
 import { CustomProvider } from '../../src/scripts/api/providers/custom.js';
 import {
@@ -153,6 +154,118 @@ import {
   await provider.chat([{ role: 'user', content: 'hi' }], { seed: 42 });
   assert.equal(body.seed, 42);
   console.log('ok - custom chat provider omits seed -1 and keeps fixed non-negative seeds');
+}
+
+{
+  const provider = new CustomProvider({
+    provider: 'custom',
+    apiKey: 'test',
+    baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai/',
+    model: 'gemini-3.5-flash',
+  });
+  const request = provider.prepareChatRequest(
+    [{ role: 'user', content: 'hi' }],
+    {
+      temperature: 1,
+      top_p: 0.95,
+      presence_penalty: 0,
+      frequency_penalty: 0,
+      seed: 42,
+      n: 1,
+      max_tokens: 8192,
+      stream: false,
+      reasoning_effort: 'medium',
+      thinkingLevel: 'high',
+      thinkingBudget: 1024,
+    },
+  );
+  assert.equal(request.url, 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions');
+  assert.equal(request.payload.reasoning_effort, 'medium');
+  assert.equal(request.payload.max_tokens, 8192);
+  assert.equal(Object.hasOwn(request.payload, 'presence_penalty'), false);
+  assert.equal(Object.hasOwn(request.payload, 'frequency_penalty'), false);
+  assert.equal(Object.hasOwn(request.payload, 'seed'), false);
+  assert.equal(Object.hasOwn(request.payload, 'n'), false);
+  assert.equal(Object.hasOwn(request.payload, 'stream'), false);
+  assert.equal(Object.hasOwn(request.payload, 'thinkingLevel'), false);
+  assert.equal(Object.hasOwn(request.payload, 'thinkingBudget'), false);
+  console.log('ok - custom Gemini chat request matches OpenAI-compatible payload shape');
+}
+
+{
+  const capability = getReasoningCapability({
+    provider: 'custom',
+    model: 'gemini-3.5-flash',
+    baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai/',
+  });
+  assert.equal(capability.supported, true);
+  assert.equal(capability.strategy, 'gemini-openai-effort');
+  assert.deepEqual(
+    buildReasoningRequestOptions({
+      provider: 'custom',
+      model: 'gemini-3.5-flash',
+      baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai/',
+      requestReasoning: true,
+      reasoningEffort: 'medium',
+      maxOutputTokens: 8192,
+    }),
+    { reasoning_effort: 'medium' },
+  );
+  assert.deepEqual(
+    buildReasoningRequestOptions({
+      provider: 'custom',
+      model: 'gemini-3.5-flash',
+      baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai/',
+      requestReasoning: true,
+      reasoningEffort: 'auto',
+      maxOutputTokens: 8192,
+    }),
+    {},
+  );
+  console.log('ok - custom Gemini models map reasoning settings to reasoning_effort');
+}
+
+{
+  const provider = new CustomProvider({
+    provider: 'custom',
+    apiKey: 'test',
+    baseUrl: 'https://example-vercel-proxy.vercel.app/v1',
+    model: 'gemini-3.5-flash',
+  });
+  const request = provider.prepareChatRequest(
+    [{ role: 'user', content: 'hi' }],
+    {
+      presence_penalty: 0,
+      frequency_penalty: 0,
+      seed: 42,
+      n: 1,
+    },
+  );
+  assert.equal(request.url, 'https://example-vercel-proxy.vercel.app/v1/chat/completions');
+  assert.equal(request.payload.presence_penalty, 0);
+  assert.equal(request.payload.frequency_penalty, 0);
+  assert.equal(request.payload.seed, 42);
+  assert.equal(request.payload.n, 1);
+  assert.equal(
+    getReasoningCapability({
+      provider: 'custom',
+      model: 'gemini-3.5-flash',
+      baseUrl: 'https://example-vercel-proxy.vercel.app/v1',
+    }).supported,
+    false,
+  );
+  assert.deepEqual(
+    buildReasoningRequestOptions({
+      provider: 'custom',
+      model: 'gemini-3.5-flash',
+      baseUrl: 'https://example-vercel-proxy.vercel.app/v1',
+      requestReasoning: true,
+      reasoningEffort: 'medium',
+      maxOutputTokens: 8192,
+    }),
+    {},
+  );
+  console.log('ok - custom Vercel Gemini endpoints keep generic custom payload behavior');
 }
 
 {

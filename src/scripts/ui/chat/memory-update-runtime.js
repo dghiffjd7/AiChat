@@ -19,6 +19,7 @@ const emitMemoryRuntimeTrace = (recordTraceEvent, event) => {
 };
 
 export const createMemoryUpdateRuntime = ({
+  agentTaskRuntime = null,
   appBridge,
   appSettings,
   buildMemoryUpdateHistoryText,
@@ -37,6 +38,14 @@ export const createMemoryUpdateRuntime = ({
   const memoryUpdateAbortControllers = new Map();
   const memoryUpdateQueues = new Map();
   const memoryFillSessionCounters = new Map();
+
+  const toAgentStatus = (status = '') => {
+    const token = String(status || '').trim().toLowerCase();
+    if (token === 'success') return 'succeeded';
+    if (token === 'error') return 'failed';
+    if (token === 'cancelled' || token === 'skipped') return token;
+    return 'succeeded';
+  };
 
   const resolveMemoryUpdateConfig = async () => {
     const settings = appSettings.get();
@@ -60,10 +69,82 @@ export const createMemoryUpdateRuntime = ({
     }
   };
 
+  const startAgentMemoryRun = async ({ sessionId, isGroup, checkpointMessageId }) => {
+    if (!agentTaskRuntime || typeof agentTaskRuntime.startRun !== 'function') return null;
+    try {
+      const run = await Promise.resolve(agentTaskRuntime.startRun({
+        kind: 'memory_update',
+        title: 'Memory update',
+        sessionId,
+        surface: isGroup ? 'group-chat' : 'chat',
+        trigger: 'chat.after_send',
+        source: 'memory-update-runtime',
+        summary: 'memory update task started',
+        metadata: {
+          isGroup: Boolean(isGroup),
+          checkpointMessageId: String(checkpointMessageId || '').trim(),
+        },
+      }));
+      const runId = String(run?.id || '').trim();
+      if (!runId || typeof agentTaskRuntime.startStep !== 'function') return runId ? { runId, stepId: '' } : null;
+      const step = await Promise.resolve(agentTaskRuntime.startStep(runId, {
+        type: 'memory.update',
+        title: 'Update memory',
+        summary: 'memory update request running',
+        input: {
+          sessionId,
+          isGroup: Boolean(isGroup),
+          checkpointMessageId: String(checkpointMessageId || '').trim(),
+        },
+      }));
+      return {
+        runId,
+        stepId: String(step?.id || '').trim(),
+      };
+    } catch (err) {
+      logger?.debug?.('agent memory run start skipped', err);
+      return null;
+    }
+  };
+
+  const finishAgentMemoryRun = async (agentRun, {
+    status = 'success',
+    reason = '',
+    errorMessage = '',
+  } = {}) => {
+    if (!agentRun?.runId || !agentTaskRuntime) return;
+    const agentStatus = toAgentStatus(status);
+    try {
+      if (agentRun.stepId && typeof agentTaskRuntime.finishStep === 'function') {
+        await Promise.resolve(agentTaskRuntime.finishStep(agentRun.runId, agentRun.stepId, {
+          status: agentStatus,
+          summary: reason ? `memory update ${agentStatus}: ${reason}` : `memory update ${agentStatus}`,
+          errorMessage,
+          metadata: {
+            reason,
+          },
+        }));
+      }
+      if (typeof agentTaskRuntime.finishRun === 'function') {
+        await Promise.resolve(agentTaskRuntime.finishRun(agentRun.runId, {
+          status: agentStatus,
+          summary: reason ? `memory update ${agentStatus}: ${reason}` : `memory update ${agentStatus}`,
+          errorMessage,
+          metadata: {
+            reason,
+          },
+        }));
+      }
+    } catch (err) {
+      logger?.debug?.('agent memory run finish skipped', err);
+    }
+  };
+
   const runMemoryUpdateTask = async (sessionId, isGroup, baseContext, checkpointMessageId, signal) => {
     const runId = `${sessionId}:${checkpointMessageId || Date.now()}`;
     memoryUpdateRunning.add(runId);
-    const finishTrace = ({ status = 'success', reason = '', errorMessage = '' } = {}) =>
+    const agentRun = await startAgentMemoryRun({ sessionId, isGroup, checkpointMessageId });
+    const finishTrace = async ({ status = 'success', reason = '', errorMessage = '' } = {}) => {
       emitMemoryRuntimeTrace(recordTraceEvent, buildMemoryUpdateTaskFinishTraceEvent({
         sessionId,
         status,
@@ -71,6 +152,8 @@ export const createMemoryUpdateRuntime = ({
         checkpointMessageId,
         errorMessage,
       }));
+      await finishAgentMemoryRun(agentRun, { status, reason, errorMessage });
+    };
     emitMemoryRuntimeTrace(recordTraceEvent, buildMemoryUpdateTaskStartTraceEvent({
       sessionId,
       isGroup,
@@ -78,36 +161,36 @@ export const createMemoryUpdateRuntime = ({
     }));
     try {
       if (signal?.aborted) {
-        finishTrace({ status: 'cancelled', reason: 'aborted' });
+        await finishTrace({ status: 'cancelled', reason: 'aborted' });
         return;
       }
       if (!isOnline()) {
-        finishTrace({ status: 'skipped', reason: 'offline' });
+        await finishTrace({ status: 'skipped', reason: 'offline' });
         return;
       }
       const plan = await buildMemoryUpdatePlan(sessionId, isGroup, baseContext);
       setLastMemoryPlan(appBridge, plan);
       if (!plan?.enabled || !plan.promptText) {
-        finishTrace({ status: 'skipped', reason: plan?.enabled ? 'prompt-missing' : 'plan-disabled' });
+        await finishTrace({ status: 'skipped', reason: plan?.enabled ? 'prompt-missing' : 'plan-disabled' });
         return;
       }
       if (signal?.aborted) {
-        finishTrace({ status: 'cancelled', reason: 'aborted' });
+        await finishTrace({ status: 'cancelled', reason: 'aborted' });
         return;
       }
       const historyText = buildMemoryUpdateHistoryText(sessionId);
       if (!historyText.trim()) {
-        finishTrace({ status: 'skipped', reason: 'empty-history' });
+        await finishTrace({ status: 'skipped', reason: 'empty-history' });
         return;
       }
       const config = await resolveMemoryUpdateConfig();
       if (!config || !canInitClient(config)) {
         logger.warn('memory update config missing or invalid');
-        finishTrace({ status: 'skipped', reason: 'config-invalid' });
+        await finishTrace({ status: 'skipped', reason: 'config-invalid' });
         return;
       }
       if (signal?.aborted) {
-        finishTrace({ status: 'cancelled', reason: 'aborted' });
+        await finishTrace({ status: 'cancelled', reason: 'aborted' });
         return;
       }
       const request = buildMemoryUpdateRequest({
@@ -117,7 +200,7 @@ export const createMemoryUpdateRuntime = ({
       const client = createClient(config);
       const response = await client.chat(request.messages, { signal });
       if (signal?.aborted) {
-        finishTrace({ status: 'cancelled', reason: 'aborted' });
+        await finishTrace({ status: 'cancelled', reason: 'aborted' });
         return;
       }
       await handleMemoryEditsFromRaw(response, {
@@ -132,15 +215,15 @@ export const createMemoryUpdateRuntime = ({
           captureCurrentActiveState: true,
         });
       }
-      finishTrace({ status: 'success' });
+      await finishTrace({ status: 'success' });
     } catch (err) {
       if (err?.name === 'AbortError') {
         logger.info('memory update aborted', sessionId);
-        finishTrace({ status: 'cancelled', reason: 'aborted' });
+        await finishTrace({ status: 'cancelled', reason: 'aborted' });
         return;
       }
       logger.warn('memory update failed', err);
-      finishTrace({
+      await finishTrace({
         status: 'error',
         reason: 'exception',
         errorMessage: err?.message ? String(err.message) : String(err || ''),

@@ -117,6 +117,7 @@ export class ContactsStore {
         this._lsDisabled = false;
         this._lsQuotaWarned = false;
         this._hydrateRetryCount = 0;
+        this._hydrateSettled = false;
         this.ready = this._hydrateFromDisk();
     }
 
@@ -163,6 +164,7 @@ export class ContactsStore {
                 if (token !== this._scopeToken || storeKey !== this.storeKey || scopeId !== this.scopeId) return;
                 this.state = kv;
                 this._diskBacked = true;
+                this._hydrateSettled = true;
                 if (this.scopeId) markLegacyMigrated();
                 try { localStorage.removeItem(storeKey); } catch {}
                 logger.debug('contacts store hydrated from disk');
@@ -181,6 +183,8 @@ export class ContactsStore {
                 try {
                     window.dispatchEvent(new CustomEvent('store-hydrated', { detail: { store: 'contacts' } }));
                 } catch {}
+            } else {
+                this._hydrateSettled = true;
             }
         } catch (err) {
             logger.debug('contacts store disk load skipped (可能非 Tauri)', err);
@@ -192,6 +196,8 @@ export class ContactsStore {
                     const attempt = ++this._hydrateRetryCount;
                     logger.warn(`contacts store hydrate retry scheduled (${attempt}/3)`);
                     setTimeout(() => { this._hydrateFromDisk(); }, 800 * attempt);
+                } else if (token === this._scopeToken) {
+                    this._hydrateSettled = true;
                 }
             } catch {}
         }
@@ -235,6 +241,7 @@ export class ContactsStore {
         this._lsDisabled = false;
         this._lsQuotaWarned = false;
         this._hydrateRetryCount = 0;
+        this._hydrateSettled = false;
         this.state = this._load();
         this.ready = this._hydrateFromDisk();
         const ready = this.ready;
@@ -329,6 +336,12 @@ export class ContactsStore {
      * 確保所有現有 session 都在联系人里可见（不会覆盖已有资料）
      */
     ensureFromSessions(sessionIds = [], { defaultAvatar = '', includeGroups = false } = {}) {
+        if (this.scopeId && !this._hydrateSettled) {
+            logger.debug(
+                `[contacts-store] ensureFromSessions skipped before hydrate scope=${this.scopeId || 'default'}`
+            );
+            return;
+        }
         let changed = false;
         const added = [];
         const skippedGroups = [];

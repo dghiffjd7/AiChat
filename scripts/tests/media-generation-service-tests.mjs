@@ -130,3 +130,45 @@ import {
   assert.deepEqual(imageOptions.referenceImages, ['data:image/png;base64,ref']);
   console.log('ok - media generation service persists generated data urls as assets');
 }
+
+{
+  const calls = [];
+  const service = createMediaGenerationService({
+    createClient: () => ({
+      generateImage: async () => [{ dataUrl: 'data:image/png;base64,abc123', index: 0 }],
+    }),
+    saveDataUrl: async () => ({ path: '/tmp/generated-agent.png', bytes: 3 }),
+    now: () => 456,
+    logger: { warn: () => {} },
+    agentTaskRuntime: {
+      startRun: (run) => {
+        calls.push(['startRun', run.kind, run.sessionId, run.metadata.provider]);
+        return { id: 'run-1' };
+      },
+      startStep: (runId, step) => {
+        calls.push(['startStep', runId, step.type, step.input.prompt]);
+        return { id: 'step-1' };
+      },
+      finishStep: (runId, stepId, patch) => {
+        calls.push(['finishStep', runId, stepId, patch.status, patch.output.path]);
+      },
+      finishRun: (runId, patch) => {
+        calls.push(['finishRun', runId, patch.status]);
+      },
+    },
+  });
+
+  const asset = await service.generateImage({
+    prompt: 'agent image',
+    config: { provider: 'openai', model: 'gpt-image-1' },
+    sessionId: 'sid-agent',
+  });
+  assert.equal(asset.output.path, '/tmp/generated-agent.png');
+  assert.deepEqual(calls, [
+    ['startRun', 'image_generation', 'sid-agent', 'openai'],
+    ['startStep', 'run-1', 'image.generate', 'agent image'],
+    ['finishStep', 'run-1', 'step-1', 'succeeded', '/tmp/generated-agent.png'],
+    ['finishRun', 'run-1', 'succeeded'],
+  ]);
+  console.log('ok - media generation service records optional agent task lifecycle');
+}

@@ -4,6 +4,12 @@ import { normalizeAssistantStreamChunk } from '../api/native-reasoning.js';
 import { isDeepSeekApiRequest } from '../api/providers/deepseek-compat.js';
 import { extractTableEditBlocks, stripTableEditBlocks } from '../memory/memory-edit-parser.js';
 import { getMemoryContextType, resolveMemorySessionMode, tableMatchesMemoryContext } from '../memory/memory-context-utils.js';
+import { createAgentPermissionEvaluator } from '../agent/agent-permissions.js';
+import { createAgentTaskRuntime } from '../agent/agent-task-runtime.js';
+import { createAgentToolRegistry } from '../agent/agent-tool-registry.js';
+import { registerImageAgentTools } from '../agent/tools/image-tools.js';
+import { registerMemoryAgentTools } from '../agent/tools/memory-tools.js';
+import { AgentRunStore } from '../storage/agent-run-store.js';
 import { appSettings } from '../storage/app-settings.js';
 import { renderTemplateTextAsync, templateSettings } from '../plugins/template-engine.js';
 import { ScriptRuntime } from '../plugins/script-runtime.js';
@@ -1941,6 +1947,29 @@ const initApp = async () => {
       recordDebugTraceEvent(buildMomentLifecycleTraceEvent(event));
     } catch {}
   };
+  const agentRunStore = new AgentRunStore();
+  try {
+    await agentRunStore.load();
+  } catch (err) {
+    logger.debug('agent run store load skipped', err);
+  }
+  const agentPermissionEvaluator = createAgentPermissionEvaluator({
+    defaultDecision: 'ask',
+  });
+  const agentToolRegistry = createAgentToolRegistry({
+    permissionEvaluator: agentPermissionEvaluator,
+    logger,
+  });
+  const agentTaskRuntime = createAgentTaskRuntime({
+    store: agentRunStore,
+    toolRegistry: agentToolRegistry,
+    recordTraceEvent: recordDebugTraceEvent,
+    logger,
+  });
+  let currentMemoryUpdateRuntime = null;
+  registerMemoryAgentTools(agentToolRegistry, {
+    getMemoryUpdateRuntime: () => currentMemoryUpdateRuntime,
+  });
   try {
     registerDebugRuntimeContextCore(window.appBridge, {
       panels: {
@@ -1976,6 +2005,17 @@ const initApp = async () => {
         momentSummaryStore,
         pluginStore,
         scriptStore,
+        agentRunStore,
+        agentToolRegistry,
+      },
+      actions: {
+        getAgentTool: name => agentToolRegistry.get(name),
+        getAgentRun: runId => agentRunStore.getRun(runId),
+        listAgentPermissionRules: () => agentPermissionEvaluator.getRules(),
+        listAgentRuns: options => agentRunStore.listRuns(options),
+        listAgentRunEvents: options => agentRunStore.listEvents(options),
+        listAgentTools: () => agentToolRegistry.listTools(),
+        exportAgentRuns: options => agentRunStore.exportState(options || {}),
       },
       traceTimeline: ensureDebugTraceTimeline(window.appBridge),
     });
@@ -4711,8 +4751,10 @@ Phase G（Frame 36）：循环衔接
       );
       return { path };
     },
+    agentTaskRuntime,
     logger,
   });
+  registerImageAgentTools(agentToolRegistry, { mediaGenerationService });
   const DEFAULT_AUTO_IMAGE_PROMPTS_PER_SOURCE = 0;
   const normalizeAutoImagePromptMaxPerResponse = (value) => {
     const raw = Math.trunc(Number(value));
@@ -20218,7 +20260,7 @@ Phase G（Frame 36）：循环衔接
       generation: activeGeneration,
       reason,
       recordTraceEvent: recordSendFlowTraceEvent,
-      abortMemoryUpdate: sid => memoryUpdateRuntime.abortMemoryUpdate(sid),
+      abortMemoryUpdate: sid => currentMemoryUpdateRuntime?.abortMemoryUpdate?.(sid),
       cancelCurrentGeneration: nextReason => window.appBridge.cancelCurrentGeneration(nextReason),
       chatStore,
       logger,
@@ -21273,6 +21315,7 @@ Phase G（Frame 36）：循环衔接
       rollbackLastMemoryUpdate,
     });
     const memoryUpdateRuntime = createMemoryUpdateRuntime({
+      agentTaskRuntime,
       appBridge: window.appBridge,
       appSettings,
       buildMemoryUpdateHistoryText,
@@ -21286,6 +21329,7 @@ Phase G（Frame 36）：循环衔接
       recordTraceEvent: recordDebugTraceEvent,
       syncTurnCheckpointForMessage,
     });
+    currentMemoryUpdateRuntime = memoryUpdateRuntime;
     const applyChatModeAssistantRegex = (text, { depth } = {}) => applyChatModeAssistantRegexCore(text, {
       depth,
       promptUserName,

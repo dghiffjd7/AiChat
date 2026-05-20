@@ -827,13 +827,16 @@ export class PresetPanel {
         return {
             provider: String(profile?.provider || '').trim(),
             model: String(profile?.model || '').trim(),
+            baseUrl: String(profile?.baseUrl || '').trim(),
             capability: getReasoningCapability({
                 provider: profile?.provider,
                 model: profile?.model,
+                baseUrl: profile?.baseUrl,
             }),
             samplerPolicy: getReasoningSamplerPolicy({
                 provider: profile?.provider,
                 model: profile?.model,
+                baseUrl: profile?.baseUrl,
                 requestReasoning,
             }),
         };
@@ -2406,7 +2409,7 @@ export class PresetPanel {
             { label: 'frequency_penalty', el: frequency },
         ]));
 
-        const { provider, model, capability, samplerPolicy } = this.getReasoningCapabilityForPreset(p);
+        const { provider, model, baseUrl, capability, samplerPolicy } = this.getReasoningCapabilityForPreset(p);
         const normalizedReasoningEffort = normalizeReasoningEffort(p.reasoning_effort, 'high');
         const capabilityLabel = provider && model
             ? `${provider} / ${model}`
@@ -2500,6 +2503,7 @@ export class PresetPanel {
                 const activeSamplerPolicy = getReasoningSamplerPolicy({
                     provider,
                     model,
+                    baseUrl,
                     requestReasoning: requestReasoning.checked === true,
                 });
                 Object.entries(samplingControls).forEach(([field, el]) => {

@@ -179,6 +179,7 @@ const blobToDataUrl = async (blob) => new Promise((resolve, reject) => {
 export const createMediaGenerationService = ({
   createClient,
   saveDataUrl,
+  agentTaskRuntime = null,
   fetchFn = (...args) => fetch(...args),
   now = () => Date.now(),
   logger = console,
@@ -232,6 +233,95 @@ export const createMediaGenerationService = ({
     };
   };
 
+  const canRecordAgentTask = () => (
+    agentTaskRuntime
+    && typeof agentTaskRuntime.startRun === 'function'
+    && typeof agentTaskRuntime.startStep === 'function'
+    && typeof agentTaskRuntime.finishStep === 'function'
+    && typeof agentTaskRuntime.finishRun === 'function'
+  );
+
+  const buildImageAgentOutput = (result = {}) => ({
+    id: String(result?.id || '').trim(),
+    provider: String(result?.provider || '').trim(),
+    model: String(result?.model || '').trim(),
+    path: String(result?.output?.path || '').trim(),
+    url: String(result?.output?.url || '').trim(),
+    status: String(result?.status || '').trim(),
+  });
+
+  const recordImageAgentTask = async ({
+    prompt,
+    config,
+    sessionId,
+    scope,
+    task,
+  }) => {
+    if (!canRecordAgentTask()) return task();
+    const provider = String(config?.provider || '').trim();
+    const model = String(config?.model || '').trim();
+    const run = agentTaskRuntime.startRun({
+      kind: 'image_generation',
+      title: 'Image generation',
+      sessionId,
+      surface: 'chat',
+      trigger: 'image.generate',
+      source: 'media-generation-service',
+      summary: 'image generation started',
+      metadata: {
+        provider,
+        model,
+        scope: scope && typeof scope === 'object' ? scope : {},
+      },
+    });
+    const step = run?.id ? agentTaskRuntime.startStep(run.id, {
+      type: 'image.generate',
+      title: 'Generate image',
+      summary: 'generating image',
+      input: {
+        prompt,
+        provider,
+        model,
+      },
+    }) : null;
+    try {
+      const result = await task();
+      const output = buildImageAgentOutput(result);
+      if (run?.id && step?.id) {
+        agentTaskRuntime.finishStep(run.id, step.id, {
+          status: 'succeeded',
+          output,
+          summary: output.path || output.url ? 'image generated' : 'image generation succeeded',
+        });
+      }
+      if (run?.id) {
+        agentTaskRuntime.finishRun(run.id, {
+          status: 'succeeded',
+          summary: 'image generation succeeded',
+        });
+      }
+      return result;
+    } catch (err) {
+      const status = err?.name === 'AbortError' ? 'cancelled' : 'failed';
+      const message = err?.message ? String(err.message) : String(err || '');
+      if (run?.id && step?.id) {
+        agentTaskRuntime.finishStep(run.id, step.id, {
+          status,
+          errorMessage: message,
+          summary: status === 'cancelled' ? 'image generation cancelled' : 'image generation failed',
+        });
+      }
+      if (run?.id) {
+        agentTaskRuntime.finishRun(run.id, {
+          status,
+          errorMessage: message,
+          summary: status === 'cancelled' ? 'image generation cancelled' : 'image generation failed',
+        });
+      }
+      throw err;
+    }
+  };
+
   const generateImage = async ({
     prompt,
     config,
@@ -239,6 +329,7 @@ export const createMediaGenerationService = ({
     scope = {},
     options = {},
     signal,
+    agentTask = true,
   } = {}) => {
     const text = String(prompt || '').trim();
     if (!text) throw new Error('图片提示词为空');
@@ -246,41 +337,52 @@ export const createMediaGenerationService = ({
     if (typeof createClient !== 'function') throw new Error('图片生成客户端未配置');
     throwIfAborted(signal);
 
-    const client = createClient(config);
-    const images = await client.generateImage(text, {
-      ...options,
-      signal,
-    });
-    throwIfAborted(signal);
+    const execute = async () => {
+      const client = createClient(config);
+      const images = await client.generateImage(text, {
+        ...options,
+        signal,
+      });
+      throwIfAborted(signal);
 
-    const normalized = (Array.isArray(images) ? images : [])
-      .map(normalizeGeneratedImageResult)
-      .find(Boolean);
-    if (!normalized) throw new Error('图片模型未返回可用图片');
+      const normalized = (Array.isArray(images) ? images : [])
+        .map(normalizeGeneratedImageResult)
+        .find(Boolean);
+      if (!normalized) throw new Error('图片模型未返回可用图片');
 
-    const output = await persistImage({ normalized, prompt: text, config, sessionId, signal });
-    throwIfAborted(signal);
-    if (!output.path && !output.url && !output.dataUrl) {
-      throw new Error('图片生成成功，但保存结果失败');
-    }
+      const output = await persistImage({ normalized, prompt: text, config, sessionId, signal });
+      throwIfAborted(signal);
+      if (!output.path && !output.url && !output.dataUrl) {
+        throw new Error('图片生成成功，但保存结果失败');
+      }
 
-    return {
-      id: createId('image'),
-      kind: 'image',
-      provider: String(config.provider || '').trim(),
-      model: String(config.model || '').trim(),
-      prompt: text,
-      negativePrompt: String(options.negativePrompt || options.negative_prompt || '').trim(),
-      generationParams: normalizeGenerationMetadataOptions(options),
-      output,
-      status: 'succeeded',
-      scope: {
-        surface: 'chat',
-        targetId: String(sessionId || '').trim(),
-        ...(scope && typeof scope === 'object' ? scope : {}),
-      },
-      createdAt: now(),
+      return {
+        id: createId('image'),
+        kind: 'image',
+        provider: String(config.provider || '').trim(),
+        model: String(config.model || '').trim(),
+        prompt: text,
+        negativePrompt: String(options.negativePrompt || options.negative_prompt || '').trim(),
+        generationParams: normalizeGenerationMetadataOptions(options),
+        output,
+        status: 'succeeded',
+        scope: {
+          surface: 'chat',
+          targetId: String(sessionId || '').trim(),
+          ...(scope && typeof scope === 'object' ? scope : {}),
+        },
+        createdAt: now(),
+      };
     };
+
+    if (agentTask === false) return execute();
+    return recordImageAgentTask({
+      prompt: text,
+      config,
+      sessionId,
+      scope,
+      task: execute,
+    });
   };
 
   return {
