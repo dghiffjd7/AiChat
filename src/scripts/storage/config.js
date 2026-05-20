@@ -39,6 +39,13 @@ const TEXT_ONLY_PROVIDERS = new Set([
     'deepseek',
 ]);
 
+const PROMPT_POST_PROCESSING_MODES = new Set(['none', 'merge', 'semi', 'strict', 'single']);
+
+const normalizePromptPostProcessing = (mode) => {
+    const raw = String(mode || '').trim().toLowerCase();
+    return PROMPT_POST_PROCESSING_MODES.has(raw) ? raw : 'none';
+};
+
 const PROFILE_STORE_KEY = 'llm_profiles_v1';
 const KEYRING_STORE_KEY = 'llm_keyring_v1';
 const KEYRING_MASTER_KEY = 'llm_keyring_master_v1';
@@ -116,6 +123,7 @@ const normalizeProfile = (p = {}, { touchUpdatedAt = false } = {}) => {
         proxyAuthHeaderName: typeof p.proxyAuthHeaderName === 'string' ? p.proxyAuthHeaderName : '',
         proxyAuthToken: typeof p.proxyAuthToken === 'string' ? p.proxyAuthToken : '',
         forwardProviderAuth: p.forwardProviderAuth !== false,
+        promptPostProcessing: normalizePromptPostProcessing(p.promptPostProcessing),
         model: p.model || 'gpt-3.5-turbo',
         stream: p.stream !== false,
         timeout: typeof p.timeout === 'number' ? p.timeout : 60000,
@@ -344,6 +352,7 @@ export class ConfigManager {
             proxyAuthHeaderName: '',
             proxyAuthToken: '',
             forwardProviderAuth: true,
+            promptPostProcessing: 'none',
             model: isImage ? 'gpt-image-2' : 'gpt-3.5-turbo',
             stream: true,
             timeout: 60000,
@@ -786,6 +795,7 @@ export class ConfigManager {
             proxyAuthHeaderName: String(p.proxyAuthHeaderName || '').trim(),
             proxyAuthToken: String(p.proxyAuthToken || ''),
             forwardProviderAuth: p.forwardProviderAuth !== false,
+            promptPostProcessing: normalizePromptPostProcessing(p.promptPostProcessing),
             model: p.model,
             stream: p.stream,
             timeout: p.timeout,
@@ -866,6 +876,7 @@ export class ConfigManager {
                 throw new Error(`无效的 proxyBaseUrl: ${config.proxyBaseUrl}`);
             }
         }
+        config.promptPostProcessing = normalizePromptPostProcessing(config.promptPostProcessing);
 
         return true;
     }

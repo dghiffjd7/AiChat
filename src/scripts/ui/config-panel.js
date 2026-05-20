@@ -48,6 +48,11 @@ const ALL_PROVIDER_KEYS = Array.from(new Set([
 ]));
 
 const NO_API_KEY_PROVIDERS = new Set(['pollinations', 'automatic1111', 'a1111', 'comfyui', 'comfy']);
+const PROMPT_POST_PROCESSING_VALUES = new Set(['none', 'merge', 'semi', 'strict', 'single']);
+const normalizePromptPostProcessingForForm = (value) => {
+    const raw = String(value || '').trim().toLowerCase();
+    return PROMPT_POST_PROCESSING_VALUES.has(raw) ? raw : 'none';
+};
 
 export class ConfigPanel {
     constructor() {
@@ -223,6 +228,10 @@ export class ConfigPanel {
         if (imageParamsEntry) {
             imageParamsEntry.style.display = this.activeTab === 'image' ? 'block' : 'none';
         }
+        const promptPostProcessingSection = this.element.querySelector('#config-prompt-post-processing-section');
+        if (promptPostProcessingSection) {
+            promptPostProcessingSection.style.display = this.activeTab === 'chat' ? 'block' : 'none';
+        }
     }
 
     /**
@@ -380,6 +389,22 @@ export class ConfigPanel {
                         <span style="font-weight: bold;">启用流式响应</span>
                     </label>
                     <small style="color: var(--app-text-secondary); margin-left: 26px;">实时显示 AI 的回复过程</small>
+                </div>
+
+                <div id="config-prompt-post-processing-section" style="margin-bottom: 18px;">
+                    <label style="display:block; margin-bottom:5px; font-weight:bold;">提示词后处理</label>
+                    <select id="config-prompt-post-processing" style="display:none;">
+                        <option value="none">不处理（默认）</option>
+                        <option value="merge">合并连续同角色</option>
+                        <option value="semi">半严格（强制角色交替）</option>
+                        <option value="strict">严格（强制 user 最先、角色交替）</option>
+                        <option value="single">单一用户消息</option>
+                    </select>
+                    <button type="button" id="config-prompt-post-processing-btn" class="world-app-select-btn" data-select-id="config-prompt-post-processing" style="margin-top:2px;">
+                        <span class="config-custom-select-label">不处理（默认）</span>
+                        <span class="world-app-select-btn-chevron">▾</span>
+                    </button>
+                    <small style="color:var(--app-text-secondary);">仅聊天请求生效。越靠后的模式兼容性越强，但对原始提示词结构改动也越大。</small>
                 </div>
 
                 <div style="margin-bottom: 20px;">
@@ -547,6 +572,9 @@ export class ConfigPanel {
             this.updateTransportVisibility({ autoExpand: true });
             this.emitDraftChange();
         };
+        this.element.querySelector('#config-prompt-post-processing').onchange = async () => {
+            this.emitDraftChange();
+        };
         this.element.querySelector('#config-model')?.addEventListener('input', () => this.emitDraftChange());
         this.element.querySelector('#config-baseurl')?.addEventListener('input', () => this.emitDraftChange());
 
@@ -674,7 +702,7 @@ export class ConfigPanel {
     }
 
     refreshAllCustomSelects() {
-        ['config-profile', 'config-provider', 'config-region', 'config-transport-mode'].forEach((id) => this.refreshCustomSelect(id));
+        ['config-profile', 'config-provider', 'config-region', 'config-transport-mode', 'config-prompt-post-processing'].forEach((id) => this.refreshCustomSelect(id));
     }
 
     bindCustomSelect(selectId) {
@@ -709,7 +737,7 @@ export class ConfigPanel {
     }
 
     initCustomSelects() {
-        ['config-profile', 'config-provider', 'config-region', 'config-transport-mode'].forEach((id) => this.bindCustomSelect(id));
+        ['config-profile', 'config-provider', 'config-region', 'config-transport-mode', 'config-prompt-post-processing'].forEach((id) => this.bindCustomSelect(id));
         this.refreshAllCustomSelects();
     }
 
@@ -845,6 +873,7 @@ export class ConfigPanel {
         const modelEl = panel.querySelector('#config-model');
         const apiKeyEl = panel.querySelector('#config-apikey');
         const streamEl = panel.querySelector('#config-stream');
+        const promptPostProcessingEl = panel.querySelector('#config-prompt-post-processing');
         const regionEl = panel.querySelector('#config-region');
         const saEl = panel.querySelector('#config-serviceaccount');
         const datalist = panel.querySelector('#model-list');
@@ -866,6 +895,9 @@ export class ConfigPanel {
         }
         if (streamEl) {
             streamEl.checked = true;
+        }
+        if (promptPostProcessingEl) {
+            promptPostProcessingEl.value = 'none';
         }
         if (regionEl) {
             regionEl.value = 'us-central1';
@@ -982,11 +1014,13 @@ export class ConfigPanel {
             const baseEl = panel.querySelector('#config-baseurl');
             const modelEl = panel.querySelector('#config-model');
             const streamEl = panel.querySelector('#config-stream');
+            const promptPostProcessingEl = panel.querySelector('#config-prompt-post-processing');
             const apiKeyInput = panel.querySelector('#config-apikey');
 
             if (baseEl) baseEl.value = config.baseUrl || '';
             if (modelEl) modelEl.value = config.model || '';
             if (streamEl) streamEl.checked = config.stream !== false;
+            if (promptPostProcessingEl) promptPostProcessingEl.value = normalizePromptPostProcessingForForm(config.promptPostProcessing);
 
             // API Key 显示为 masked
             if (apiKeyInput) {
@@ -1044,6 +1078,7 @@ export class ConfigPanel {
         const baseEl = panel.querySelector('#config-baseurl');
         const modelEl = panel.querySelector('#config-model');
         const streamEl = panel.querySelector('#config-stream');
+        const promptPostProcessingEl = panel.querySelector('#config-prompt-post-processing');
         const transportModeEl = panel.querySelector('#config-transport-mode');
         const proxyBaseEl = panel.querySelector('#config-proxy-baseurl');
         const proxyHeaderEl = panel.querySelector('#config-proxy-auth-header');
@@ -1074,6 +1109,7 @@ export class ConfigPanel {
             : defaultBaseUrl;
         modelEl.value = config.model || '';
         streamEl.checked = config.stream !== false;
+        if (promptPostProcessingEl) promptPostProcessingEl.value = normalizePromptPostProcessingForForm(config.promptPostProcessing);
         if (transportModeEl) {
             transportModeEl.value = (config.connectionMode === 'reverse_proxy' || legacyProxyBaseUrl)
                 ? 'reverse_proxy'
@@ -1316,6 +1352,7 @@ export class ConfigPanel {
             proxyAuthHeaderName: (panel.querySelector('#config-proxy-auth-header')?.value || '').trim(),
             proxyAuthToken: panel.querySelector('#config-proxy-auth-token')?.value || '',
             forwardProviderAuth: Boolean(panel.querySelector('#config-forward-provider-auth')?.checked),
+            promptPostProcessing: normalizePromptPostProcessingForForm(panel.querySelector('#config-prompt-post-processing')?.value),
             apiKey: apiKey,
             model: (panel.querySelector('#config-model')?.value || '').trim(),
             stream: Boolean(panel.querySelector('#config-stream')?.checked),

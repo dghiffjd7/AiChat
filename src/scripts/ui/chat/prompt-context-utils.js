@@ -62,83 +62,134 @@ export const buildPendingUserTextWithScenarioReminder = ({
   return [baseText, scenarioText].filter(Boolean).join('\n\n');
 };
 
-export const moveTrailingSystemMessagesBeforeFinalUser = (messages = []) => {
-  const list = Array.isArray(messages) ? messages : [];
-  if (list.length < 2) return list;
+const PROMPT_POST_PROCESSING_MODES = new Set(['none', 'merge', 'semi', 'strict', 'single']);
 
-  const normalizeRole = (role) => String(role || '').trim().toLowerCase();
-  let trailingStart = list.length;
-  while (trailingStart > 0 && normalizeRole(list[trailingStart - 1]?.role) === 'system') {
-    trailingStart -= 1;
-  }
-
-  if (trailingStart === list.length || trailingStart <= 0) return list;
-  const finalNonSystemIndex = trailingStart - 1;
-  if (normalizeRole(list[finalNonSystemIndex]?.role) !== 'user') return list;
-
-  return [
-    ...list.slice(0, finalNonSystemIndex),
-    ...list.slice(trailingStart),
-    list[finalNonSystemIndex],
-  ];
+export const normalizePromptPostProcessingMode = (mode = '') => {
+  const raw = String(mode || '').trim().toLowerCase();
+  return PROMPT_POST_PROCESSING_MODES.has(raw) ? raw : 'none';
 };
 
-const stringifyPromptMessageContent = (content) => {
+const normalizePromptMessageRole = (role) => {
+  const raw = String(role || '').trim().toLowerCase();
+  return raw === 'user' || raw === 'assistant' || raw === 'system' ? raw : 'user';
+};
+
+const contentHasPromptText = (content) => {
   if (Array.isArray(content)) {
-    return content
-      .map(part => (part?.type === 'text' ? String(part.text || '') : ''))
-      .filter(Boolean)
-      .join('\n');
+    return content.some((part) => {
+      if (part?.type === 'text') return String(part.text || '').trim().length > 0;
+      return Boolean(part);
+    });
   }
-  return String(content ?? '');
+  return String(content ?? '').trim().length > 0;
 };
 
-export const mergeSystemMessagesBeforeFinalUser = (messages = []) => {
-  const list = Array.isArray(messages) ? messages : [];
-  if (list.length < 2) return list;
+const mergePromptMessageContent = (left, right) => {
+  const leftIsArray = Array.isArray(left);
+  const rightIsArray = Array.isArray(right);
+  if (!leftIsArray && !rightIsArray) {
+    return [String(left ?? ''), String(right ?? '')]
+      .filter(part => part.length > 0)
+      .join('\n\n');
+  }
 
-  const normalizeRole = (role) => String(role || '').trim().toLowerCase();
-  let finalUserIndex = -1;
-  for (let i = list.length - 1; i >= 0; i -= 1) {
-    if (normalizeRole(list[i]?.role) === 'user') {
-      finalUserIndex = i;
-      break;
+  const toParts = (content) => {
+    if (Array.isArray(content)) return content.filter(Boolean).map(part => ({ ...part }));
+    const text = String(content ?? '');
+    return text ? [{ type: 'text', text }] : [];
+  };
+  const parts = [...toParts(left)];
+  for (const part of toParts(right)) {
+    const last = parts[parts.length - 1];
+    if (last?.type === 'text' && part?.type === 'text') {
+      last.text = [last.text, part.text].filter(Boolean).join('\n\n');
+    } else {
+      parts.push(part);
     }
   }
-  if (finalUserIndex <= 0) return list;
+  return parts;
+};
 
-  let systemStart = finalUserIndex;
-  while (systemStart > 0 && normalizeRole(list[systemStart - 1]?.role) === 'system') {
-    systemStart -= 1;
+const mergeAdjacentPromptMessages = (messages = []) => {
+  const merged = [];
+  for (const item of Array.isArray(messages) ? messages : []) {
+    const { name, tool_calls, tool_call_id, ...rest } = item || {};
+    const message = {
+      ...rest,
+      role: normalizePromptMessageRole(item?.role),
+      content: item?.content ?? '',
+    };
+    const prev = merged[merged.length - 1];
+    if (prev && prev.role === message.role && message.role !== 'tool') {
+      prev.content = mergePromptMessageContent(prev.content, message.content);
+    } else {
+      merged.push(message);
+    }
   }
-  if (systemStart === finalUserIndex) return list;
+  return merged;
+};
 
-  const systemText = list
-    .slice(systemStart, finalUserIndex)
-    .map(msg => stringifyPromptMessageContent(msg?.content).trim())
-    .filter(Boolean)
-    .join('\n\n');
-  if (!systemText) return list;
+const ensurePromptMessagesNotEmpty = (messages = []) =>
+  messages.length ? messages : [{ role: 'user', content: ' ' }];
 
-  const finalUser = list[finalUserIndex] || {};
-  const userContent = Array.isArray(finalUser.content)
-    ? [
-        { type: 'text', text: systemText },
-        ...finalUser.content,
-      ]
-    : [systemText, stringifyPromptMessageContent(finalUser.content).trim()]
-        .filter(Boolean)
-        .join('\n\n');
+export const applyMergePromptPostProcessing = (messages = []) =>
+  ensurePromptMessagesNotEmpty(mergeAdjacentPromptMessages(messages));
 
-  return [
-    ...list.slice(0, systemStart),
-    {
-      ...finalUser,
+export const applySemiStrictPromptPostProcessing = (messages = []) => {
+  const list = applyMergePromptPostProcessing(messages);
+  for (let i = 0; i < list.length; i += 1) {
+    if (i > 0 && list[i]?.role === 'system') {
+      list[i] = { ...list[i], role: 'user' };
+    }
+  }
+  return applyMergePromptPostProcessing(list);
+};
+
+export const applyStrictPromptPostProcessing = (messages = []) => {
+  const list = applyMergePromptPostProcessing(messages);
+
+  for (let i = 0; i < list.length; i += 1) {
+    if (i > 0 && list[i]?.role === 'system') {
+      list[i] = { ...list[i], role: 'user' };
+    }
+  }
+
+  if (list[0]?.role === 'system') {
+    if (list.length === 1 || list[1]?.role !== 'user') {
+      list.splice(1, 0, { role: 'user', content: ' ' });
+    }
+  } else if (list[0]?.role !== 'user') {
+    list.unshift({ role: 'user', content: ' ' });
+  }
+
+  const merged = mergeAdjacentPromptMessages(list);
+  return merged.map(message => (
+    contentHasPromptText(message.content) ? message : { ...message, content: ' ' }
+  ));
+};
+
+export const applySingleUserPromptPostProcessing = (messages = []) =>
+  ensurePromptMessagesNotEmpty(mergeAdjacentPromptMessages(
+    (Array.isArray(messages) ? messages : []).map(item => ({
+      ...(item || {}),
       role: 'user',
-      content: userContent,
-    },
-    ...list.slice(finalUserIndex + 1),
-  ];
+    })),
+  ));
+
+export const applyPromptPostProcessing = (messages = [], mode = 'none') => {
+  switch (normalizePromptPostProcessingMode(mode)) {
+    case 'merge':
+      return applyMergePromptPostProcessing(messages);
+    case 'semi':
+      return applySemiStrictPromptPostProcessing(messages);
+    case 'strict':
+      return applyStrictPromptPostProcessing(messages);
+    case 'single':
+      return applySingleUserPromptPostProcessing(messages);
+    case 'none':
+    default:
+      return Array.isArray(messages) ? messages : [];
+  }
 };
 
 export const createPresetRuntime = ({

@@ -50,14 +50,18 @@ import {
   toPromptSegment,
 } from './chat/prompt-segment-plan-utils.js';
 import {
+  applyPromptPostProcessing,
   buildPendingUserTextWithScenarioReminder,
-  mergeSystemMessagesBeforeFinalUser,
-  moveTrailingSystemMessagesBeforeFinalUser,
+  normalizePromptPostProcessingMode,
   resolveOpenAIPresetFormatReminderState,
 } from './chat/prompt-context-utils.js';
 import {
   buildPromptTraceFromRequest,
 } from './chat/context-lineage-graph-utils.js';
+import {
+  normalizeRequestConfigUiMode,
+  resolveRequestConfigProfileId,
+} from './chat/request-config-profile-utils.js';
 import {
   isBridgeAbortError,
   resolveBridgeCancellationReason,
@@ -263,14 +267,7 @@ const resolvePresetReplyTarget = (preset, uiMode = 'chat', override = '') => {
 };
 
 const normalizeBridgePresetUiMode = (value = '', { sessionId = '', taskType = '' } = {}) => {
-  const token = String(value || '').trim().toLowerCase();
-  if (token === 'moments' || token === 'moment' || token === 'dynamic' || token === 'space') return 'moments';
-  if (token === 'rp' || token === 'creative') return 'rp';
-  if (token === 'chat' || token === 'social') return 'chat';
-  const task = String(taskType || '').trim().toLowerCase();
-  if (task === 'moment_comment') return 'moments';
-  const sid = String(sessionId || '').trim().toLowerCase();
-  return sid.startsWith('rp:') ? 'rp' : 'chat';
+  return normalizeRequestConfigUiMode(value, { sessionId, taskType });
 };
 
 const withSpeakerPrefix = (content, speaker) => {
@@ -2637,6 +2634,66 @@ class AppBridge {
     };
   }
 
+  async resolveRequestRuntimeConfig(presetContext = {}) {
+    const globalConfig = this.config?.get?.() || {};
+    const resolved = resolveRequestConfigProfileId({
+      presetStore: this.presets,
+      sessionId: presetContext?.sessionId || '',
+      uiMode: presetContext?.uiMode || '',
+      taskType: presetContext?.taskType || '',
+    });
+    const profileId = String(resolved?.profileId || '').trim();
+    if (!profileId) {
+      return {
+        config: globalConfig,
+        client: this.client,
+        profileId: String(this.config?.getActiveProfileId?.() || '').trim(),
+        bindingSource: 'global',
+        bound: false,
+        sessionId: resolved.sessionId,
+        uiMode: resolved.uiMode,
+      };
+    }
+
+    const activeProfileId = String(this.config?.getActiveProfileId?.() || '').trim();
+    if (activeProfileId && activeProfileId === profileId) {
+      return {
+        config: globalConfig,
+        client: this.client || (canInitClient(globalConfig) ? new LLMClient(globalConfig) : null),
+        profileId,
+        bindingSource: resolved.source,
+        bound: true,
+        sessionId: resolved.sessionId,
+        uiMode: resolved.uiMode,
+      };
+    }
+
+    const runtime = await this.config?.getRuntimeConfigByProfileId?.(profileId);
+    if (!runtime || typeof runtime !== 'object') {
+      const e = new Error(`绑定的 API 配置不存在：${profileId}`);
+      e.code = 'BOUND_CONFIG_NOT_FOUND';
+      e.profileId = profileId;
+      throw e;
+    }
+    const client = canInitClient(runtime) ? new LLMClient(runtime) : null;
+    if (!client) {
+      const label = String(this.config?.getProfileById?.(profileId)?.name || profileId).trim();
+      const e = new Error(`绑定的 API 配置「${label}」不完整，请检查密钥、模型和地址`);
+      e.code = 'BOUND_CONFIG_INVALID';
+      e.profileId = profileId;
+      throw e;
+    }
+    return {
+      config: runtime,
+      client,
+      profileId,
+      bindingSource: resolved.source,
+      bound: true,
+      sessionId: resolved.sessionId,
+      uiMode: resolved.uiMode,
+    };
+  }
+
   /**
    * 切换当前会话（影响世界书选中）
    */
@@ -2912,8 +2969,10 @@ class AppBridge {
     };
   }
 
-  buildProviderRequestDirectives(context = {}, presetContext = {}) {
-    const cfg = this.config?.get?.() || {};
+  buildProviderRequestDirectives(context = {}, presetContext = {}, runtimeConfigOverride = null) {
+    const cfg = runtimeConfigOverride && typeof runtimeConfigOverride === 'object'
+      ? runtimeConfigOverride
+      : (this.config?.get?.() || {});
     if (String(cfg?.provider || '').trim().toLowerCase() === 'custom') {
       return {};
     }
@@ -3277,18 +3336,23 @@ class AppBridge {
           logger.warn('template render (generate) failed', err);
         }
       }
-      const config = this.config.get();
-      messages = this.normalizeOutgoingProviderMessages(messages, config);
       const presetContext = this.getRequestPresetContext(nextContext);
-      const genOptions = this.getGenerationOptions(presetContext);
-      const providerDirectives = this.buildProviderRequestDirectives(nextContext, presetContext);
+      const requestRuntime = await this.resolveRequestRuntimeConfig(presetContext);
+      const config = requestRuntime?.config || this.config.get();
+      const requestClient = requestRuntime?.client || (canInitClient(config) ? new LLMClient(config) : null);
+      if (!requestClient) {
+        throw new Error('请先配置 API 信息');
+      }
+      messages = this.normalizeOutgoingProviderMessages(messages, config);
+      const genOptions = this.getGenerationOptions(presetContext, config);
+      const providerDirectives = this.buildProviderRequestDirectives(nextContext, presetContext, config);
       const requestOptions = {
         ...(genOptions || {}),
         ...(providerDirectives || {}),
         signal: abortController.signal,
         nativeRequestId,
       };
-      const preparedRequest = this.client?.prepareChatRequest?.(messages, requestOptions) || null;
+      const preparedRequest = requestClient?.prepareChatRequest?.(messages, requestOptions) || null;
       const responsePrefix = String(preparedRequest?.responsePrefix || '');
       const sessionId = String(nextContext?.session?.id || this.activeSessionId || 'default').trim() || 'default';
 
@@ -3302,6 +3366,11 @@ class AppBridge {
         baseUrl: preparedRequest?.url ? String(preparedRequest.url).replace(/\/chat\/completions$/, '') : config?.baseUrl,
         model: config?.model,
         stream: Boolean(config?.stream),
+        configProfile: {
+          id: requestRuntime?.profileId || '',
+          source: requestRuntime?.bindingSource || 'global',
+          bound: requestRuntime?.bound === true,
+        },
         session: {
           id: sessionId,
           name: String(nextContext?.session?.name || '').trim(),
@@ -3344,7 +3413,11 @@ class AppBridge {
 
       if (config.stream) {
         streaming = true;
-        const inner = this.generateStream(messages, requestOptions, originalInput, { responsePrefix });
+        const inner = this.generateStream(messages, requestOptions, originalInput, {
+          responsePrefix,
+          client: requestClient,
+          config,
+        });
         return (async function* () {
           try {
             yield* inner;
@@ -3353,7 +3426,7 @@ class AppBridge {
           }
         })();
       } else {
-        const response = await retryWithBackoff(() => this.client.chat(messages, requestOptions), {
+        const response = await retryWithBackoff(() => requestClient.chat(messages, requestOptions), {
           maxRetries: config.maxRetries || 3,
           shouldRetry: err => !abortController.signal.aborted && isRetryableError(err),
         });
@@ -3398,16 +3471,22 @@ class AppBridge {
 
     // Use the same generation options mapping as normal chat, but allow caller overrides.
     const { presetContext = null, ...requestOverrides } = options || {};
+    const resolvedPresetContext = presetContext || {
+      sessionId: String(this.activeSessionId || '').trim(),
+      uiMode: String(this.activeSessionId || '').trim().startsWith('rp:') ? 'rp' : 'chat',
+    };
+    const requestRuntime = await this.resolveRequestRuntimeConfig(resolvedPresetContext);
+    const config = requestRuntime?.config || this.config.get?.() || {};
+    const requestClient = requestRuntime?.client || (canInitClient(config) ? new LLMClient(config) : null);
+    if (!requestClient) {
+      throw new Error('请先配置 API 信息');
+    }
     const genOptions = {
-      ...this.getGenerationOptions(presetContext || {
-        sessionId: String(this.activeSessionId || '').trim(),
-        uiMode: String(this.activeSessionId || '').trim().startsWith('rp:') ? 'rp' : 'chat',
-      }),
+      ...this.getGenerationOptions(resolvedPresetContext, config),
       ...requestOverrides,
     };
-    const config = this.config.get?.() || {};
     const normalizedMsgs = this.normalizeOutgoingProviderMessages(msgs, config);
-    return this.client.chat(normalizedMsgs, genOptions);
+    return requestClient.chat(normalizedMsgs, genOptions);
   }
 
   /**
@@ -3416,9 +3495,16 @@ class AppBridge {
   async *generateStream(messages, genOptions = {}, originalUserMessage = '', streamMeta = {}) {
     let fullResponse = '';
     const responsePrefix = String(streamMeta?.responsePrefix || '');
+    const requestClient = streamMeta?.client || this.client;
+    const streamConfig = streamMeta?.config && typeof streamMeta.config === 'object'
+      ? streamMeta.config
+      : (this.config?.get?.() || {});
 
     try {
-      const stream = this.client.streamChat(messages, genOptions);
+      if (!requestClient?.streamChat) {
+        throw new Error('请先配置 API 信息');
+      }
+      const stream = requestClient.streamChat(messages, genOptions);
       for await (const chunk of this.applyAssistantPrefillToStream(stream, responsePrefix)) {
         if (!isReasoningStreamEvent(chunk)) {
           fullResponse += String(chunk ?? '');
@@ -3445,7 +3531,7 @@ class AppBridge {
           const name = String(error?.name || '');
           const msg = String(error?.message || '');
           if (isBridgeAbortError(error)) {
-            const ms = Number(this.config?.get?.()?.timeout);
+            const ms = Number(streamConfig?.timeout);
             const sec = Number.isFinite(ms) ? Math.round(ms / 1000) : 60;
             const e = new Error(`请求超时（${sec}秒），请稍后重试或在 API 设定中调低输出/切换网络`);
             e.cause = error;
@@ -3475,17 +3561,10 @@ class AppBridge {
 
     const cfg = config || this.config?.get?.() || {};
     const provider = String(cfg?.provider || '').trim().toLowerCase();
-    const model = String(cfg?.model || '').trim().toLowerCase();
-    const baseUrl = String(cfg?.baseUrl || '').trim().toLowerCase();
+    const promptPostProcessing = normalizePromptPostProcessingMode(cfg?.promptPostProcessing);
     const providerRejectsAssistantPrefill = provider === 'anthropic';
     const providerCompatLabel = provider === 'anthropic' ? 'Anthropic' : (provider || 'Provider');
     const syntheticAssistantDowngradeCount = Math.max(0, Math.trunc(Number(meta?.syntheticAssistantDowngradeCount) || 0));
-    const providerRejectsLateSystemMessages =
-      provider === 'custom' &&
-      (
-        model.includes('vercel') ||
-        baseUrl.includes('vercel')
-      );
 
     const normalizeRole = (role) => {
       const r = String(role || '').trim().toLowerCase();
@@ -3517,18 +3596,11 @@ class AppBridge {
         })
         .join(' | ');
 
-    if (providerRejectsLateSystemMessages) {
-      const normalizedTail = moveTrailingSystemMessagesBeforeFinalUser(list);
-      if (normalizedTail !== list) {
-        list = normalizedTail;
-        const compatMsg = `${providerCompatLabel} 兼容：已将尾部 system 提示移到最终 user 前，避免 Vercel 兼容端点拒绝 user 后的 system。tail=${summarizeTailRoles()}`;
-        logger.debug(compatMsg);
-        emitDebugLog({ source: 'prompt', type: 'info', message: compatMsg });
-      }
-      const mergedLateSystems = mergeSystemMessagesBeforeFinalUser(list);
-      if (mergedLateSystems !== list) {
-        list = mergedLateSystems;
-        const compatMsg = `${providerCompatLabel} 兼容：已将最终 user 前的后段 system 提示合并进 user，避免 Vercel 兼容端点拒绝对话中后段 system。tail=${summarizeTailRoles()}`;
+    if (promptPostProcessing !== 'none') {
+      const processedMessages = applyPromptPostProcessing(list, promptPostProcessing);
+      if (processedMessages !== list) {
+        list = processedMessages;
+        const compatMsg = `${providerCompatLabel} 提示词后处理：已应用 ${promptPostProcessing}。tail=${summarizeTailRoles()}`;
         logger.debug(compatMsg);
         emitDebugLog({ source: 'prompt', type: 'info', message: compatMsg });
       }
@@ -6409,7 +6481,7 @@ const stringifyMessageContent = (content) => {
    * SillyTavern-like generation parameters (from OpenAI preset)
    * We store the full OpenAI preset JSON, but only map common fields into provider options.
    */
-  getGenerationOptions(presetContext = {}) {
+  getGenerationOptions(presetContext = {}, runtimeConfigOverride = null) {
     try {
       const state = this.presets?.getState?.();
       if (!state?.enabled?.openai) return {};
@@ -6419,7 +6491,9 @@ const stringifyMessageContent = (content) => {
 
       const num = v => (typeof v === 'number' && Number.isFinite(v) ? v : undefined);
       const int = v => (typeof v === 'number' && Number.isFinite(v) ? Math.trunc(v) : undefined);
-      const runtimeConfig = this.config.get?.() || {};
+      const runtimeConfig = runtimeConfigOverride && typeof runtimeConfigOverride === 'object'
+          ? runtimeConfigOverride
+          : (this.config.get?.() || {});
 
       const sessionId = String(presetContext?.sessionId || '').trim();
       const sessionReasoning = sessionId

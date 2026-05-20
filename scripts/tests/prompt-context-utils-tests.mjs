@@ -1,12 +1,16 @@
 import assert from 'node:assert/strict';
 
 import {
+  applyMergePromptPostProcessing,
+  applyPromptPostProcessing,
+  applySemiStrictPromptPostProcessing,
+  applySingleUserPromptPostProcessing,
+  applyStrictPromptPostProcessing,
   buildPendingUserTextWithScenarioReminder,
   buildPresetContext,
   buildReplyPromptHint,
   createPresetRuntime,
-  mergeSystemMessagesBeforeFinalUser,
-  moveTrailingSystemMessagesBeforeFinalUser,
+  normalizePromptPostProcessingMode,
   resolveOpenAIPresetFormatReminderState,
   resolveEnabledPreset,
   resolveResolvedPreset,
@@ -111,58 +115,86 @@ import {
 }
 
 {
-  const user = { role: 'user', content: '你好' };
-  const format = { role: 'system', content: '请遵循格式' };
-  const style = { role: 'system', content: '保持简洁' };
-  assert.deepEqual(
-    moveTrailingSystemMessagesBeforeFinalUser([
-      { role: 'system', content: '设定' },
-      user,
-      format,
-      style,
-    ]),
-    [
-      { role: 'system', content: '设定' },
-      format,
-      style,
-      user,
-    ],
-  );
-
-  const alreadySafe = [
-    { role: 'system', content: '设定' },
-    { role: 'user', content: '你好' },
-    { role: 'assistant', content: '好' },
-    { role: 'system', content: '备注' },
-  ];
-  assert.equal(moveTrailingSystemMessagesBeforeFinalUser(alreadySafe), alreadySafe);
-  assert.equal(moveTrailingSystemMessagesBeforeFinalUser([{ role: 'user', content: '你好' }]).length, 1);
-  console.log('ok - moveTrailingSystemMessagesBeforeFinalUser keeps final user as the last turn');
+  assert.equal(normalizePromptPostProcessingMode('strict'), 'strict');
+  assert.equal(normalizePromptPostProcessingMode('merge'), 'merge');
+  assert.equal(normalizePromptPostProcessingMode('semi'), 'semi');
+  assert.equal(normalizePromptPostProcessingMode('single'), 'single');
+  assert.equal(normalizePromptPostProcessingMode('unknown'), 'none');
+  const messages = [{ role: 'assistant', content: '预填' }];
+  assert.equal(applyPromptPostProcessing(messages, 'none'), messages);
+  console.log('ok - normalizePromptPostProcessingMode defaults unknown modes to none');
 }
 
 {
   assert.deepEqual(
-    mergeSystemMessagesBeforeFinalUser([
+    applyMergePromptPostProcessing([
       { role: 'system', content: '基础设定' },
-      { role: 'assistant', content: '历史回复' },
-      { role: 'system', content: '时间提示' },
-      { role: 'system', content: '格式提示' },
+      { role: 'system', content: '格式设定' },
+      { role: 'assistant', content: '历史回复', tool_calls: [{ id: 'tool-1' }] },
+      { role: 'assistant', content: '继续回复' },
+      { role: 'tool', content: '工具结果', tool_call_id: 'tool-1' },
+    ]),
+    [
+      { role: 'system', content: '基础设定\n\n格式设定' },
+      { role: 'assistant', content: '历史回复\n\n继续回复' },
+      { role: 'user', content: '工具结果' },
+    ],
+  );
+  console.log('ok - applyMergePromptPostProcessing merges same-role turns and drops tool metadata');
+}
+
+{
+  assert.deepEqual(
+    applySemiStrictPromptPostProcessing([
+      { role: 'system', content: '开场系统' },
+      { role: 'assistant', content: '允许不以 user 开始' },
+      { role: 'system', content: '后段系统' },
       { role: 'user', content: '你好' },
     ]),
     [
-      { role: 'system', content: '基础设定' },
-      { role: 'assistant', content: '历史回复' },
-      { role: 'user', content: '时间提示\n\n格式提示\n\n你好' },
+      { role: 'system', content: '开场系统' },
+      { role: 'assistant', content: '允许不以 user 开始' },
+      { role: 'user', content: '后段系统\n\n你好' },
+    ],
+  );
+  console.log('ok - applySemiStrictPromptPostProcessing converts mid-prompt system messages without inserting placeholders');
+}
+
+{
+  assert.deepEqual(
+    applyStrictPromptPostProcessing([
+      { role: 'system', content: '开场系统' },
+      { role: 'assistant', content: '不应直接跟在 system 后' },
+      { role: 'system', content: '后段系统' },
+      { role: 'system', content: '格式提醒' },
+      { role: 'user', content: '你好' },
+    ]),
+    [
+      { role: 'system', content: '开场系统' },
+      { role: 'user', content: ' ' },
+      { role: 'assistant', content: '不应直接跟在 system 后' },
+      { role: 'user', content: '后段系统\n\n格式提醒\n\n你好' },
     ],
   );
 
   assert.deepEqual(
-    mergeSystemMessagesBeforeFinalUser([
+    applyStrictPromptPostProcessing([
+      { role: 'assistant', content: '继续写' },
+      { role: 'assistant', content: '第二段' },
+    ]),
+    [
+      { role: 'user', content: ' ' },
+      { role: 'assistant', content: '继续写\n\n第二段' },
+    ],
+  );
+  assert.deepEqual(
+    applyStrictPromptPostProcessing([
       { role: 'assistant', content: '历史回复' },
       { role: 'system', content: '图片提示' },
       { role: 'user', content: [{ type: 'image_url', image_url: { url: 'data:image/png;base64,abc' } }] },
     ]),
     [
+      { role: 'user', content: ' ' },
       { role: 'assistant', content: '历史回复' },
       {
         role: 'user',
@@ -173,7 +205,22 @@ import {
       },
     ],
   );
-  console.log('ok - mergeSystemMessagesBeforeFinalUser folds late dynamic system prompts into the final user turn');
+  console.log('ok - applyStrictPromptPostProcessing enforces first user turn and merges late system messages');
+}
+
+{
+  assert.deepEqual(
+    applySingleUserPromptPostProcessing([
+      { role: 'system', content: '基础设定' },
+      { role: 'assistant', content: '历史回复' },
+      { role: 'user', content: '最新消息' },
+    ]),
+    [
+      { role: 'user', content: '基础设定\n\n历史回复\n\n最新消息' },
+    ],
+  );
+  assert.deepEqual(applyPromptPostProcessing([], 'single'), [{ role: 'user', content: ' ' }]);
+  console.log('ok - applySingleUserPromptPostProcessing flattens all messages into one user turn');
 }
 
 {

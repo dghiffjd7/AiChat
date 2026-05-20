@@ -725,6 +725,7 @@ const initApp = async () => {
     setActiveConfigProfile: window.appBridge.setActiveConfigProfile?.bind(window.appBridge),
     createConfigProfile: window.appBridge.createConfigProfile?.bind(window.appBridge),
     setChatRuntimeConfig: window.appBridge.setChatRuntimeConfig?.bind(window.appBridge),
+    resolveRequestRuntimeConfig: window.appBridge.resolveRequestRuntimeConfig?.bind(window.appBridge),
     isConfigured: window.appBridge.isConfigured?.bind(window.appBridge),
   });
   const variableRuleEngine = new VariableRuleEngine({ chatStore, appBridge: window.appBridge });
@@ -21919,9 +21920,11 @@ Phase G（Frame 36）：循环衔接
     // 显示已送出状态（对 pending 消息在 flush 后也生效）
     ui.showDeliveryStatus();
 
-    const config = window.appBridge.getConfig();
+    const presetContext = getPresetContext();
+    const requestRuntimeConfig = await window.appBridge.resolveRequestRuntimeConfig?.(presetContext);
+    const config = requestRuntimeConfig?.config || window.appBridge.getConfig();
     const assistantAvatar = getAssistantAvatarForSession(sessionId);
-    const sysp = resolveEnabledPreset(window.appBridge, 'sysprompt', getPresetContext());
+    const sysp = resolveEnabledPreset(window.appBridge, 'sysprompt', presetContext);
     const protocolFlags = resolveSyspromptProtocolFlags({
       sysp,
       rpUiMode,
