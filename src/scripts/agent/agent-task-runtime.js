@@ -13,6 +13,35 @@ const isPlainObject = value => Boolean(value && typeof value === 'object' && !Ar
 
 const clone = value => cloneAgentValue(value, value && typeof value === 'object' ? {} : value);
 
+const normalizePositiveInteger = (value, fallback, min = 1, max = 10) => {
+  const raw = Math.trunc(Number(value));
+  if (!Number.isFinite(raw)) return fallback;
+  return Math.max(min, Math.min(max, raw));
+};
+
+const normalizeDelayMs = (value, fallback = 0) => {
+  const raw = Math.trunc(Number(value));
+  if (!Number.isFinite(raw)) return fallback;
+  return Math.max(0, Math.min(60_000, raw));
+};
+
+const normalizeRetryOptions = (retry = {}) => {
+  if (retry === true) return { maxAttempts: 2, delayMs: 0 };
+  const src = isPlainObject(retry) ? retry : {};
+  return {
+    maxAttempts: normalizePositiveInteger(src.maxAttempts ?? src.attempts, 1, 1, 5),
+    delayMs: normalizeDelayMs(src.delayMs ?? src.retryDelayMs, 0),
+  };
+};
+
+const normalizeCoalesceKey = value => String(value ?? '').trim();
+
+const waitForDelay = delayMs => (
+  delayMs > 0
+    ? new Promise(resolve => setTimeout(resolve, delayMs))
+    : Promise.resolve()
+);
+
 const toAgentFinishStatus = status => {
   const normalized = normalizeAgentStatus(status, '');
   if (normalized === 'running' || normalized === 'queued' || normalized === 'waiting_permission') {
@@ -31,6 +60,7 @@ export const createAgentTaskRuntime = ({
 } = {}) => {
   const listeners = new Set();
   const runningTasks = new Map();
+  const coalescedTasks = new Map();
   let api = null;
 
   const safeNow = () => {
@@ -247,19 +277,57 @@ export const createAgentTaskRuntime = ({
     summary: reason ? `cancelled: ${String(reason).trim()}` : 'cancelled',
   });
 
-  const enqueue = (run = {}, task = null) => {
+  const enqueue = (run = {}, task = null, options = {}) => {
+    const enqueueOptions = isPlainObject(options) ? options : {};
+    const retryOptions = normalizeRetryOptions(enqueueOptions.retry ?? run?.retry);
+    const coalesceKey = normalizeCoalesceKey(enqueueOptions.coalesceKey ?? run?.coalesceKey);
+    if (coalesceKey && coalescedTasks.has(coalesceKey)) {
+      return coalescedTasks.get(coalesceKey);
+    }
     const queued = queueRun(run);
     if (typeof task !== 'function') return Promise.resolve(queued);
     const runId = queued.id;
+    const runTask = async (attempt = 1) => {
+      const shouldRecordAttempt = retryOptions.maxAttempts > 1 || attempt > 1 || coalesceKey;
+      updateRun(runId, {
+        status: 'running',
+        ...(shouldRecordAttempt ? {
+          metadata: {
+            attempt,
+            maxAttempts: retryOptions.maxAttempts,
+            ...(coalesceKey ? { coalesceKey } : {}),
+          },
+        } : {}),
+      });
+      try {
+        return await task({
+          runId,
+          attempt,
+          maxAttempts: retryOptions.maxAttempts,
+          startStep: step => startStep(runId, step),
+          finishStep: (stepId, patch) => finishStep(runId, stepId, patch),
+          emit,
+          cancel: reason => cancel(runId, reason),
+        });
+      } catch (err) {
+        const isAbort = err?.name === 'AbortError';
+        if (isAbort || attempt >= retryOptions.maxAttempts) throw err;
+        updateRun(runId, {
+          summary: 'agent task retrying',
+          metadata: {
+            attempt,
+            maxAttempts: retryOptions.maxAttempts,
+            nextAttempt: attempt + 1,
+            lastErrorMessage: err?.message ? String(err.message) : String(err || ''),
+            ...(coalesceKey ? { coalesceKey } : {}),
+          },
+        });
+        await waitForDelay(retryOptions.delayMs);
+        return runTask(attempt + 1);
+      }
+    };
     const promise = Promise.resolve()
-      .then(() => updateRun(runId, { status: 'running' }))
-      .then(() => task({
-        runId,
-        startStep: step => startStep(runId, step),
-        finishStep: (stepId, patch) => finishStep(runId, stepId, patch),
-        emit,
-        cancel: reason => cancel(runId, reason),
-      }))
+      .then(() => runTask(1))
       .then((result) => {
         finishRun(runId, {
           status: 'succeeded',
@@ -274,8 +342,13 @@ export const createAgentTaskRuntime = ({
           summary: err?.name === 'AbortError' ? 'agent task cancelled' : 'agent task failed',
         });
         throw err;
+      })
+      .finally(() => {
+        runningTasks.delete(runId);
+        if (coalesceKey) coalescedTasks.delete(coalesceKey);
       });
     runningTasks.set(runId, promise);
+    if (coalesceKey) coalescedTasks.set(coalesceKey, promise);
     return promise;
   };
 

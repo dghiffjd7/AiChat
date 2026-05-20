@@ -133,3 +133,94 @@ import { AgentRunStore } from '../../src/scripts/storage/agent-run-store.js';
   }]);
   console.log('ok - createAgentTaskRuntime delegates tool execution through configured registry');
 }
+
+{
+  let currentTime = 3000;
+  let attempts = 0;
+  const store = new AgentRunStore({
+    now: () => currentTime,
+  });
+  const runtime = createAgentTaskRuntime({
+    store,
+    logger: { warn: () => {} },
+    now: () => currentTime,
+  });
+  const result = await runtime.enqueue({
+    kind: 'retry_task',
+    sessionId: 's3',
+    source: 'test-runtime',
+    summary: 'retry task',
+    retry: { maxAttempts: 2 },
+  }, async ({ attempt, maxAttempts, startStep, finishStep }) => {
+    attempts += 1;
+    const step = startStep({
+      type: 'retry.step',
+      summary: `attempt ${attempt}`,
+      metadata: { attempt, maxAttempts },
+    });
+    currentTime += 10;
+    if (attempt === 1) {
+      finishStep(step.id, {
+        status: 'failed',
+        errorMessage: 'temporary failure',
+      });
+      throw new Error('temporary failure');
+    }
+    finishStep(step.id, {
+      status: 'succeeded',
+      output: { attempt },
+    });
+    return { attempt };
+  });
+
+  const run = runtime.listRuns({ kind: 'retry_task' })[0];
+  assert.deepEqual(result, { attempt: 2 });
+  assert.equal(attempts, 2);
+  assert.equal(run.status, 'succeeded');
+  assert.equal(run.metadata.attempt, 2);
+  assert.equal(run.metadata.maxAttempts, 2);
+  assert.deepEqual(run.steps.map(step => step.status), ['failed', 'succeeded']);
+  console.log('ok - createAgentTaskRuntime retries failed queued tasks when configured');
+}
+
+{
+  let release;
+  let calls = 0;
+  const store = new AgentRunStore();
+  const runtime = createAgentTaskRuntime({
+    store,
+    logger: { warn: () => {} },
+  });
+  const first = runtime.enqueue({
+    kind: 'coalesce_task',
+    sessionId: 's4',
+    source: 'test-runtime',
+    summary: 'coalesced task',
+    coalesceKey: 'contact:s4',
+  }, async () => {
+    calls += 1;
+    return new Promise((resolve) => {
+      release = () => resolve({ ok: true });
+    });
+  });
+  const second = runtime.enqueue({
+    kind: 'coalesce_task',
+    sessionId: 's4',
+    source: 'test-runtime',
+    summary: 'coalesced duplicate',
+    coalesceKey: 'contact:s4',
+  }, async () => {
+    calls += 1;
+    return { ok: false };
+  });
+
+  assert.equal(first, second);
+  assert.equal(runtime.listRuns({ kind: 'coalesce_task' }).length, 1);
+  await Promise.resolve();
+  release();
+  const result = await second;
+  assert.deepEqual(result, { ok: true });
+  assert.equal(calls, 1);
+  assert.equal(runtime.listRuns({ kind: 'coalesce_task' })[0].status, 'succeeded');
+  console.log('ok - createAgentTaskRuntime coalesces duplicate in-flight tasks by key');
+}

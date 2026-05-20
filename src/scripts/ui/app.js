@@ -4,7 +4,10 @@ import { normalizeAssistantStreamChunk } from '../api/native-reasoning.js';
 import { isDeepSeekApiRequest } from '../api/providers/deepseek-compat.js';
 import { extractTableEditBlocks, stripTableEditBlocks } from '../memory/memory-edit-parser.js';
 import { getMemoryContextType, resolveMemorySessionMode, tableMatchesMemoryContext } from '../memory/memory-context-utils.js';
+import { createContactProfilerAgent } from '../agent/contact-profiler-agent.js';
+import { createImageDirectorAgent } from '../agent/image-director-agent.js';
 import { createLineageAgentRuntime } from '../agent/lineage-agent-runtime.js';
+import { createWorldbookAuditAgent } from '../agent/worldbook-audit-agent.js';
 import { createAgentPermissionEvaluator } from '../agent/agent-permissions.js';
 import { createAgentTaskRuntime } from '../agent/agent-task-runtime.js';
 import { createAgentToolRegistry } from '../agent/agent-tool-registry.js';
@@ -1975,6 +1978,24 @@ const initApp = async () => {
     summarizeGraph: summarizeLineageGraph,
     logger,
   });
+  const contactProfilerAgent = createContactProfilerAgent({
+    agentTaskRuntime,
+    contactProfileStore,
+    getContact: contactId => contactsStore.getContact(contactId),
+    getMessages: sessionId => chatStore.getMessages(sessionId),
+    getCurrentSessionId: () => chatStore.getCurrent(),
+    logger,
+  });
+  const worldbookAuditAgent = createWorldbookAuditAgent({
+    agentTaskRuntime,
+    loadWorld: async (worldId) => {
+      const id = String(worldId || '').trim();
+      if (!id) return null;
+      return await window.appBridge.loadStoredWorldInfo?.(id) ||
+        await window.appBridge.getWorldInfo?.(id) ||
+        null;
+    },
+  });
   let currentMemoryUpdateRuntime = null;
   registerContactProfileAgentTools(agentToolRegistry, { contactProfileStore });
   registerMemoryAgentTools(agentToolRegistry, {
@@ -2015,8 +2036,11 @@ const initApp = async () => {
         momentSummaryStore,
         pluginStore,
         scriptStore,
+        contactProfileStore,
         agentRunStore,
         agentToolRegistry,
+        contactProfilerAgent,
+        worldbookAuditAgent,
       },
       actions: {
         getAgentTool: name => agentToolRegistry.get(name),
@@ -2026,6 +2050,15 @@ const initApp = async () => {
         listAgentRunEvents: options => agentRunStore.listEvents(options),
         listAgentTools: () => agentToolRegistry.listTools(),
         exportAgentRuns: options => agentRunStore.exportState(options || {}),
+        runContactProfileUpdate: options => contactProfilerAgent.runProfileUpdate({
+          ...((options && typeof options === 'object') ? options : {}),
+          force: options?.force !== false,
+        }),
+        listContactProfilePendingUpdates: () => (
+          contactProfileStore.listPendingUpdates?.() || []
+        ),
+        getContactProfile: contactId => contactProfileStore.getProfile?.(contactId) || null,
+        auditWorldbook: options => worldbookAuditAgent.auditWorldbook(options || {}),
       },
       traceTimeline: ensureDebugTraceTimeline(window.appBridge),
     });
@@ -4764,6 +4797,18 @@ Phase G（Frame 36）：循环衔接
     agentTaskRuntime,
     logger,
   });
+  const imageDirectorAgent = createImageDirectorAgent({
+    agentTaskRuntime,
+    mediaGenerationService,
+    getCurrentSessionId: () => chatStore.getCurrent(),
+    logger,
+  });
+  try {
+    patchDebugUiRegistryCore(window.appBridge, (registry) => {
+      registry.stores.imageDirectorAgent = imageDirectorAgent;
+      registry.actions.runImageDirectorGeneration = options => imageDirectorAgent.runImageGeneration(options || {});
+    });
+  } catch {}
   registerImageAgentTools(agentToolRegistry, { mediaGenerationService });
   const DEFAULT_AUTO_IMAGE_PROMPTS_PER_SOURCE = 0;
   const normalizeAutoImagePromptMaxPerResponse = (value) => {
