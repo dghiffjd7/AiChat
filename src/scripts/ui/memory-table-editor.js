@@ -16,6 +16,7 @@ import { logger } from '../utils/logger.js';
 import { appConfirm } from './app-confirm.js';
 import { getLastMemoryUpdate } from './chat/memory-update-runtime-utils.js';
 import { bindCustomSelectButton, createCustomSelectWrapper, refreshCustomSelectButton } from './custom-select.js';
+import { emitMemoryRowsUpdated as emitSharedMemoryRowsUpdated } from './session-memory-event-utils.js';
 import { getCurrentWorldId, getGlobalWorldId, setCurrentWorld } from './world-session-runtime-utils.js';
 
 const scopeLabelMap = {
@@ -272,6 +273,7 @@ export class MemoryTableEditor {
     this.lastUpdateCopyBtn = null;
     this.__onSave = null;
     this.__lastContextKey = '';
+    this.__suppressNextMemoryRowsUpdated = false;
 
     this.onTemplatesUpdated = () => {
       if (!this.container) return;
@@ -283,7 +285,11 @@ export class MemoryTableEditor {
     this.onMemoriesUpdated = () => {
       if (!this.container) return;
       if (this.container.style.display === 'none') return;
-      this.render().catch(() => {});
+      if (this.__suppressNextMemoryRowsUpdated) {
+        this.__suppressNextMemoryRowsUpdated = false;
+        return;
+      }
+      this.renderPreservingScroll().catch(() => {});
     };
     window.addEventListener('memory-rows-updated', this.onMemoriesUpdated);
   }
@@ -293,7 +299,7 @@ export class MemoryTableEditor {
     window.removeEventListener('memory-rows-updated', this.onMemoriesUpdated);
   }
 
-  async render() {
+  async render({ showLoading = true } = {}) {
     if (!this.container) return;
     const ctx = this.getContext();
     if (!ctx) {
@@ -315,7 +321,7 @@ export class MemoryTableEditor {
     }
     this.ensureLayout();
     this.renderToolbar();
-    if (this.listWrap) {
+    if (showLoading && this.listWrap) {
       this.listWrap.innerHTML = '<div style="color:var(--app-text-muted); font-size:12px;">加载记忆表格…</div>';
     }
     try {
@@ -328,6 +334,62 @@ export class MemoryTableEditor {
         this.listWrap.innerHTML = '<div style="color:#ef4444; font-size:12px;">加载记忆表格失败</div>';
       }
     }
+  }
+
+  captureScrollState() {
+    if (!this.container) return null;
+    const lists = [...this.container.querySelectorAll?.('.memory-table-row-list[data-memory-table-id]') || []]
+      .map((el, index) => ({
+        tableId: String(el.dataset?.memoryTableId || ''),
+        index,
+        scrollTop: Number(el.scrollTop || 0),
+        scrollLeft: Number(el.scrollLeft || 0),
+      }));
+    const ancestors = [];
+    let node = this.container;
+    while (node) {
+      if (
+        Number(node.scrollTop || 0) > 0 ||
+        Number(node.scrollLeft || 0) > 0 ||
+        Number(node.scrollHeight || 0) > Number(node.clientHeight || 0) ||
+        Number(node.scrollWidth || 0) > Number(node.clientWidth || 0)
+      ) {
+        ancestors.push({
+          el: node,
+          scrollTop: Number(node.scrollTop || 0),
+          scrollLeft: Number(node.scrollLeft || 0),
+        });
+      }
+      node = node.parentElement || null;
+    }
+    return { lists, ancestors };
+  }
+
+  restoreScrollState(state = null) {
+    if (!state || !this.container) return false;
+    for (const item of Array.isArray(state.ancestors) ? state.ancestors : []) {
+      if (!item?.el) continue;
+      item.el.scrollTop = item.scrollTop;
+      item.el.scrollLeft = item.scrollLeft;
+    }
+    const currentLists = [...this.container.querySelectorAll?.('.memory-table-row-list[data-memory-table-id]') || []];
+    for (const item of Array.isArray(state.lists) ? state.lists : []) {
+      const target = currentLists.find(el => String(el.dataset?.memoryTableId || '') === item.tableId) || currentLists[item.index];
+      if (!target) continue;
+      target.scrollTop = item.scrollTop;
+      target.scrollLeft = item.scrollLeft;
+    }
+    return true;
+  }
+
+  async renderPreservingScroll() {
+    const scrollState = this.captureScrollState();
+    await this.render({ showLoading: false });
+    this.restoreScrollState(scrollState);
+    const raf = typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function'
+      ? window.requestAnimationFrame.bind(window)
+      : null;
+    if (raf) raf(() => this.restoreScrollState(scrollState));
   }
 
   async loadData(ctx) {
@@ -720,6 +782,30 @@ export class MemoryTableEditor {
     if (ctx.type === 'rp') return String(ctx.contactId || '').trim();
     if (ctx.type === 'contact') return String(ctx.contactId || '').trim();
     return String(window.appBridge?.getActiveSessionId?.() || '').trim();
+  }
+
+  async syncManualMemoryMutation(ctx, { source = 'manual_memory_edit', templateId = '' } = {}) {
+    const sessionId = this.resolveSessionId(ctx);
+    const resolvedTemplateId = String(templateId || this.template?.meta?.id || '').trim();
+    this.__suppressNextMemoryRowsUpdated = true;
+    emitSharedMemoryRowsUpdated({
+      target: window,
+      sessionId,
+      templateId: resolvedTemplateId,
+    });
+    if (this.__suppressNextMemoryRowsUpdated) this.__suppressNextMemoryRowsUpdated = false;
+    if (!sessionId) return false;
+    const syncFn = window.appBridge?.syncCurrentMemoryStateAfterTimelineRepair;
+    if (typeof syncFn !== 'function') return false;
+    try {
+      return Boolean(await syncFn(sessionId, {
+        source: String(source || 'manual_memory_edit').trim() || 'manual_memory_edit',
+      }));
+    } catch (err) {
+      logger.warn('sync manual memory mutation snapshot failed', err);
+      window.toastr?.warning?.('记忆已保存，但同步当前对话快照失败，重新进入后可能需要再次保存');
+      return false;
+    }
   }
 
   getScopedTimelineRows(ctx, tables = []) {
@@ -1271,6 +1357,8 @@ export class MemoryTableEditor {
     block.appendChild(header);
 
     const list = document.createElement('div');
+    list.className = 'memory-table-row-list';
+    list.dataset.memoryTableId = String(table.id || '');
     list.style.cssText = 'display:flex; flex-direction:column; gap:8px; max-height:220px; overflow-y:auto; padding-right:4px;';
     const rows = this.filterRows(scopedRows);
     const orderedRows = sortMemoryRows(rows, { tableId: table.id });
@@ -1349,10 +1437,11 @@ export class MemoryTableEditor {
     activeToggle.onchange = async () => {
       try {
         await this.memoryStore.updateMemory({ id: row.id, is_active: Boolean(activeToggle.checked) });
+        await this.syncManualMemoryMutation(ctx, { source: 'manual_memory_active_toggle' });
       } catch (err) {
         logger.warn('update memory active failed', err);
       }
-      this.render().catch(() => {});
+      this.renderPreservingScroll().catch(() => {});
     };
     const pinToggle = document.createElement('input');
     pinToggle.type = 'checkbox';
@@ -1361,10 +1450,11 @@ export class MemoryTableEditor {
     pinToggle.onchange = async () => {
       try {
         await this.memoryStore.updateMemory({ id: row.id, is_pinned: Boolean(pinToggle.checked) });
+        await this.syncManualMemoryMutation(ctx, { source: 'manual_memory_pin_toggle' });
       } catch (err) {
         logger.warn('update memory pinned failed', err);
       }
-      this.render().catch(() => {});
+      this.renderPreservingScroll().catch(() => {});
     };
     const editBtn = document.createElement('button');
     editBtn.className = 'memory-table-row-btn';
@@ -1380,10 +1470,11 @@ export class MemoryTableEditor {
       if (!ok) return;
       try {
         await this.memoryStore.deleteMemory(row.id);
+        await this.syncManualMemoryMutation(ctx, { source: 'manual_memory_delete' });
       } catch (err) {
         logger.warn('delete memory failed', err);
       }
-      this.render().catch(() => {});
+      this.renderPreservingScroll().catch(() => {});
     };
 
     if (this.batchMode) {
@@ -1420,8 +1511,9 @@ export class MemoryTableEditor {
       for (const id of ids) {
         await this.memoryStore.updateMemory({ id, ...patch });
       }
+      await this.syncManualMemoryMutation(this.currentContext, { source: 'manual_memory_batch_update' });
       this.selectedIds.clear();
-      this.render().catch(() => {});
+      this.renderPreservingScroll().catch(() => {});
     } catch (err) {
       logger.warn('batch update failed', err);
       window.toastr?.error?.('批量操作失败');
@@ -1442,8 +1534,9 @@ export class MemoryTableEditor {
     if (!ok) return;
     try {
       await this.memoryStore.batchDeleteMemories(ids);
+      await this.syncManualMemoryMutation(this.currentContext, { source: 'manual_memory_batch_delete' });
       this.selectedIds.clear();
-      this.render().catch(() => {});
+      this.renderPreservingScroll().catch(() => {});
     } catch (err) {
       logger.warn('batch delete failed', err);
       window.toastr?.error?.('批量删除失败');
@@ -1582,8 +1675,11 @@ export class MemoryTableEditor {
         } else {
           await this.memoryStore.createMemory(payload);
         }
+        await this.syncManualMemoryMutation(ctx, {
+          source: row ? 'manual_memory_update' : 'manual_memory_create',
+        });
         this.closeEditor();
-        this.render().catch(() => {});
+        this.renderPreservingScroll().catch(() => {});
       } catch (err) {
         logger.warn('save memory failed', err);
         window.toastr?.error?.('保存失败');

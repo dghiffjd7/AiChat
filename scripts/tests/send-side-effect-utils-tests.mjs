@@ -1939,7 +1939,7 @@ test('syncProtocolResponseTurnCheckpoints syncs enabled protocol session tails',
   const calls = [];
 
   const result = await syncProtocolResponseTurnCheckpoints({
-    protocolState: { summarySessionIds: new Set(['group:1', 'group:2']) },
+    protocolState: { didAnything: true, summarySessionIds: new Set(['group:1', 'group:2']) },
     sessionId: 'group:1',
     isTurnCheckpointSessionEnabled: sessionId => sessionId !== 'group:2',
     findTailTrackedAssistantMessage: sessionId => ({ id: `${sessionId}:tail`, role: 'assistant' }),
@@ -1954,6 +1954,27 @@ test('syncProtocolResponseTurnCheckpoints syncs enabled protocol session tails',
   assert.deepEqual(calls, [
     ['group:1', 'group:1:tail', { captureCurrentActiveState: true }],
   ]);
+});
+
+test('syncProtocolResponseTurnCheckpoints skips invalid protocol output without refreshing old tails', async () => {
+  const calls = [];
+
+  const result = await syncProtocolResponseTurnCheckpoints({
+    protocolState: { didAnything: false, mutatedMoments: false, summarySessionIds: new Set(['chat:1']) },
+    sessionId: 'chat:1',
+    isTurnCheckpointSessionEnabled: () => true,
+    findTailTrackedAssistantMessage: sessionId => ({ id: `${sessionId}:old-tail`, role: 'assistant' }),
+    syncTurnCheckpointForMessage: async (...args) => {
+      calls.push(args);
+    },
+  });
+
+  assert.deepEqual(result, {
+    checkpointTargetMessageId: '',
+    syncedSessionIds: [],
+    failedSessionIds: [],
+  });
+  assert.deepEqual(calls, []);
 });
 
 let failed = 0;

@@ -4,9 +4,11 @@ import { normalizeAssistantStreamChunk } from '../api/native-reasoning.js';
 import { isDeepSeekApiRequest } from '../api/providers/deepseek-compat.js';
 import { extractTableEditBlocks, stripTableEditBlocks } from '../memory/memory-edit-parser.js';
 import { getMemoryContextType, resolveMemorySessionMode, tableMatchesMemoryContext } from '../memory/memory-context-utils.js';
+import { createLineageAgentRuntime } from '../agent/lineage-agent-runtime.js';
 import { createAgentPermissionEvaluator } from '../agent/agent-permissions.js';
 import { createAgentTaskRuntime } from '../agent/agent-task-runtime.js';
 import { createAgentToolRegistry } from '../agent/agent-tool-registry.js';
+import { registerContactProfileAgentTools } from '../agent/tools/contact-profile-tools.js';
 import { registerImageAgentTools } from '../agent/tools/image-tools.js';
 import { registerMemoryAgentTools } from '../agent/tools/memory-tools.js';
 import { AgentRunStore } from '../storage/agent-run-store.js';
@@ -1967,7 +1969,14 @@ const initApp = async () => {
     recordTraceEvent: recordDebugTraceEvent,
     logger,
   });
+  const lineageAgentRuntime = createLineageAgentRuntime({
+    agentTaskRuntime,
+    renderMapSceneHtml: renderLineageMapSceneHtmlAsync,
+    summarizeGraph: summarizeLineageGraph,
+    logger,
+  });
   let currentMemoryUpdateRuntime = null;
+  registerContactProfileAgentTools(agentToolRegistry, { contactProfileStore });
   registerMemoryAgentTools(agentToolRegistry, {
     getMemoryUpdateRuntime: () => currentMemoryUpdateRuntime,
   });
@@ -12493,9 +12502,14 @@ Phase G（Frame 36）：循环衔接
       if (!lineageCanvasEl.querySelector('.lineage-map-scene')) {
         lineageCanvasEl.innerHTML = '<div class="lineage-graph-empty">排版中…</div>';
       }
-      const html = await renderLineageMapSceneHtmlAsync(graph, {
-        focusId: lineageSelection?.kind === 'node' ? lineageSelection.id : '',
-        expandedIds: Array.from(lineageExpandedIds),
+      const html = await lineageAgentRuntime.renderMapScene({
+        graph,
+        sessionId: previewRequest?.session?.id || chatStore.getCurrent() || '',
+        trigger: lineageOnlyMode ? 'lineage_overview' : 'prompt_preview',
+        options: {
+          focusId: lineageSelection?.kind === 'node' ? lineageSelection.id : '',
+          expandedIds: Array.from(lineageExpandedIds),
+        },
       });
       if (renderSeq !== lineageRenderSeq || !lineageCanvasEl) return;
       lineageCanvasEl.innerHTML = html;
