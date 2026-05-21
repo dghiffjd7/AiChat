@@ -198,3 +198,51 @@ import {
   assert.equal(timers.length, 1);
   console.log('ok - enqueueMessagesCore cancel resolves pending delay without appending queued messages');
 }
+
+{
+  const shown = [];
+  const added = [];
+  let hidden = 0;
+  let paused = 0;
+  let removedTyping = 0;
+  const randomValues = [0, 0.04, 0, 0];
+  const { promise } = enqueueMessagesCore({
+    items: [
+      { message: { id: 'm1', content: 'first' } },
+      { message: { id: 'm2', content: 'second' } },
+    ],
+    options: {
+      avatarUrl: 'avatar.png',
+      typingOptions: {
+        groupMembers: [{ name: 'A', avatar: 'a.png' }],
+      },
+    },
+    clearMessageQueueTimer() {},
+    hideTyping() { hidden += 1; },
+    showTyping: (...args) => shown.push(args),
+    getTypingThinkTimer: () => null,
+    setTypingThinkTimer() {},
+    getTypingThinkResumeTimer: () => null,
+    setTypingThinkResumeTimer() {},
+    isNearBottom: () => false,
+    applyThinkPause() { paused += 1; },
+    removeThinkPause() {},
+    removeTypingElement() { removedTyping += 1; },
+    scrollToBottom() {},
+    setMessageQueueTimer() {},
+    scheduleTimeout: (handler) => {
+      handler();
+      return 1;
+    },
+    scheduleFrame: handler => handler(),
+    addMessage: message => added.push(message.id),
+    random: () => randomValues.shift() ?? 0.99,
+  });
+  await promise;
+  assert.deepEqual(added, ['m1', 'm2']);
+  assert.equal(shown.length, 2);
+  assert.equal(removedTyping, 1);
+  assert.equal(hidden, 1);
+  assert.equal(paused, 0);
+  console.log('ok - enqueueMessagesCore tail typing hint uses 5 percent gate and hides without pause flicker');
+}

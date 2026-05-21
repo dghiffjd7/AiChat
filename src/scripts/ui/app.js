@@ -1237,11 +1237,14 @@ const initApp = async () => {
       variablePanel.show();
     },
     onSaved: async ({ forceRefresh } = {}) => {
+      clearGroupSpeakerCaches();
+      clearMessageDecorationCache();
       refreshChatAndContacts();
       const id = chatStore.getCurrent();
       const c = contactsStore.getContact(id);
       const titleEl = document.getElementById('current-chat-title');
       if (titleEl) titleEl.innerHTML = renderSessionNameHtml(id, c);
+      refreshRenderedMessageAvatars(id);
       if (forceRefresh) {
         const msgs = await chatStore.ensureRecentMessagesLoaded(id);
         ui.clearMessages();
@@ -1325,12 +1328,15 @@ const initApp = async () => {
     memoryTableStore,
     memoryTemplateStore,
     onSaved: async ({ id, forceRefresh } = {}) => {
+      clearGroupSpeakerCaches();
+      clearMessageDecorationCache();
       try {
         refreshChatAndContacts();
       } catch {}
       const c = contactsStore.getContact(id);
       const cur = chatStore.getCurrent();
       if (cur === id && currentChatTitle) currentChatTitle.innerHTML = renderSessionNameHtml(id, c);
+      if (cur === id) refreshRenderedMessageAvatars(id);
       if (forceRefresh && cur === id) {
         const msgs = await chatStore.ensureRecentMessagesLoaded(id);
         ui.clearMessages();
@@ -3005,13 +3011,22 @@ const initApp = async () => {
     const cacheKey = `${scopeKey}::${sid}`;
     const group = sid ? contactsStore.getContact(sid) : null;
     const members = Array.isArray(group?.members) ? group.members : [];
-    const memberSignature = members.join('|');
+    const memberRecords = members.map(memberId => ({
+      memberId: String(memberId || '').trim(),
+      contact: contactsStore.getContact(memberId),
+    }));
+    const memberSignature = memberRecords
+      .map(({ memberId, contact }) => [
+        memberId,
+        String(contact?.name || ''),
+        String(contact?.updatedAt || ''),
+      ].join(':'))
+      .join('|');
     const cached = groupMemberLookupCache.get(cacheKey);
     if (cached?.signature === memberSignature) return cached;
     const exact = new Map();
     const loose = new Map();
-    members.forEach((memberId) => {
-      const contact = contactsStore.getContact(memberId);
+    memberRecords.forEach(({ memberId, contact }) => {
       if (!contact || contact.isGroup === true) return;
       const exactKey = String(contact?.name || contact?.id || '').trim();
       const looseKey = normalizeLooseName(contact?.name || contact?.id);
@@ -3041,11 +3056,11 @@ const initApp = async () => {
       const sid = String(groupSessionId || '').trim();
       const hinted = contactHint && typeof contactHint === 'object' && contactHint.isGroup !== true ? contactHint : null;
       const hintedId = String(hinted?.id || '').trim();
-      const cacheKey = `${normalizeScopeId(contactsStore.scopeId || '')}::${sid}::${speakerKey}::${hintedId}`;
+      const memberLookup = getGroupMemberLookup(sid);
+      const cacheKey = `${normalizeScopeId(contactsStore.scopeId || '')}::${sid}::${memberLookup.signature}::${speakerKey}::${hintedId}`;
       if (groupSpeakerContactCache.has(cacheKey)) {
         return groupSpeakerContactCache.get(cacheKey) || null;
       }
-      const memberLookup = getGroupMemberLookup(sid);
       const contact =
         memberLookup.exact.get(speaker) ||
         memberLookup.loose.get(speakerKey) ||
@@ -3066,12 +3081,30 @@ const initApp = async () => {
     }
   };
 
+  const resolveLatestContact = (contact) => {
+    if (!contact || typeof contact !== 'object') return null;
+    const id = String(contact?.id || '').trim();
+    if (!id) return contact;
+    return contactsStore.getContact(id) || contact;
+  };
+
+  const buildContactAvatarCacheSignature = (contact) => {
+    const latest = resolveLatestContact(contact);
+    if (!latest) return '';
+    return [
+      String(latest?.id || ''),
+      String(latest?.updatedAt || ''),
+      String(latest?.avatar || '').trim().length,
+    ].join(':');
+  };
+
   const resolveGroupSpeakerAvatar = (speakerName, groupSessionId = '', contactHint = null) => {
     try {
       const speaker = String(speakerName || '').trim();
       if (!speaker || isActiveUserSpeakerName(speaker) || isSystemSpeakerLabel(speaker) || speaker === '助手') return '';
       const contact = resolveGroupSpeakerContact(speaker, groupSessionId, contactHint);
-      if (contact) return resolveAvatarForContact(contact.id, contact);
+      const latestContact = resolveLatestContact(contact);
+      if (latestContact) return resolveAvatarForContact(latestContact.id, latestContact);
       return resolveAvatarForContact(speaker, {
         id: speaker,
         name: speaker,
@@ -3088,20 +3121,30 @@ const initApp = async () => {
       const speaker = String(speakerName || '').trim();
       if (!speaker || isActiveUserSpeakerName(speaker) || isSystemSpeakerLabel(speaker) || speaker === '助手') return '';
       const hintedId = String(speakerContactId || '').trim();
-      const cacheKey = `${normalizeScopeId(contactsStore.scopeId || '')}::${String(groupSessionId || '').trim()}::${normalizeLooseName(speaker)}::${hintedId}`;
-      if (groupSpeakerAvatarCache.has(cacheKey)) {
-        return groupSpeakerAvatarCache.get(cacheKey) || '';
-      }
       const hinted =
         hintedId && !String(hintedId).startsWith('group:')
           ? contactsStore.getContact(hintedId)
           : null;
-      const avatar = resolveGroupSpeakerAvatar(speaker, groupSessionId, hinted);
+      const contact = resolveLatestContact(hinted || resolveGroupSpeakerContact(speaker, groupSessionId));
+      const cacheKey = [
+        normalizeScopeId(contactsStore.scopeId || ''),
+        String(groupSessionId || '').trim(),
+        normalizeLooseName(speaker),
+        hintedId,
+        getGroupMemberLookup(groupSessionId).signature,
+        buildContactAvatarCacheSignature(contact),
+      ].join('::');
+      if (groupSpeakerAvatarCache.has(cacheKey)) {
+        return groupSpeakerAvatarCache.get(cacheKey) || '';
+      }
+      const avatar = contact
+        ? resolveAvatarForContact(contact.id, contact)
+        : resolveGroupSpeakerAvatar(speaker, groupSessionId, hinted);
       if (avatar) {
         groupSpeakerAvatarCache.set(cacheKey, avatar);
         return avatar;
       }
-      const fallback = resolveAvatarForContact(hintedId || speaker, hinted || {
+      const fallback = resolveAvatarForContact(hintedId || speaker, contact || hinted || {
         id: speaker,
         name: speaker,
         isGroup: false,
@@ -3464,6 +3507,23 @@ const initApp = async () => {
         }
       }
       return setCachedDecoratedMessage(m, sid, decorationSignature, { ...m, avatar, status: m.status, sessionId: sid, meta }); // 保留 status 字段
+    });
+  };
+
+  const refreshRenderedMessageAvatars = (sessionId = '') => {
+    const sid = String(sessionId || chatStore.getCurrent() || '').trim();
+    if (!sid || typeof ui?.refreshAvatars !== 'function') return 0;
+    return ui.refreshAvatars((message) => {
+      if (!message || typeof message !== 'object') return '';
+      const [decorated] = decorateMessagesForDisplay([{ ...message, sessionId: sid }], { sessionId: sid });
+      const avatar = String(decorated?.avatar || '').trim();
+      if (avatar) {
+        message.avatar = avatar;
+        if (decorated?.meta && typeof decorated.meta === 'object') {
+          message.meta = decorated.meta;
+        }
+      }
+      return avatar;
     });
   };
 
@@ -6338,6 +6398,7 @@ Phase G（Frame 36）：循环衔接
     clearGroupSpeakerCaches();
     clearMessageDecorationCache();
     refreshChatAndContacts({ immediate: true });
+    refreshRenderedMessageAvatars(chatStore.getCurrent());
   });
 
   /* ---------------- 联系人搜索（参照手机流式.html） ---------------- */

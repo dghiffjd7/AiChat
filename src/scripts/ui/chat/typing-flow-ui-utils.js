@@ -220,14 +220,12 @@ export const enqueueMessagesCore = ({
       }
     }
 
-    if (!cancelled && items.length > 1 && random() < 0.2) {
+    if (!cancelled && items.length > 1 && random() < 0.05) {
       await sleep(800 + random() * 1500);
       if (!cancelled) {
         showTyping?.(options.avatarUrl || '', options.typingOptions || {});
         await sleep(1500 + random() * 2500);
         if (!cancelled) {
-          applyThinkPause?.();
-          await sleep(200);
           hideTyping?.();
         }
       }
