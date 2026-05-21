@@ -25,6 +25,7 @@ import {
 } from '../agent/provider-tool-permission-actions.js';
 import { createProviderToolPendingPermissionStore } from '../agent/provider-tool-pending-permissions.js';
 import { createProviderToolPendingContinuationPlanner } from '../agent/provider-tool-pending-continuation.js';
+import { resolveProviderToolCurrentRunnerClient } from '../agent/provider-tool-current-runner-client.js';
 import { createProviderToolPendingResumeExecutor } from '../agent/provider-tool-pending-resume.js';
 import { registerContactProfileAgentTools } from '../agent/tools/contact-profile-tools.js';
 import { registerImageAgentTools } from '../agent/tools/image-tools.js';
@@ -2015,6 +2016,8 @@ const initApp = async () => {
       chatStore,
       sessionId: opts.sessionId || chatStore.getCurrent(),
       enabled: opts.enabled === true,
+      networkAllowed: opts.networkAllowed === true,
+      realRunnerAllowed: opts.realRunnerAllowed === true,
       allowedTools: providerToolExperimentRuntime.getStatus().allowedTools,
       source: opts.source || 'debug_panel',
       reason: opts.reason || '',
@@ -2029,6 +2032,7 @@ const initApp = async () => {
   const providerToolPendingContinuationPlanner = createProviderToolPendingContinuationPlanner({
     pendingPermissionStore: providerToolPendingPermissionStore,
     allowedTools: providerToolExperimentRuntime.getStatus().allowedTools,
+    readSessionGate: sessionId => readCurrentProviderToolSessionGate(sessionId || chatStore.getCurrent()),
   });
   const requestProviderToolPermission = async (request = {}) => {
     const action = await appChoice({
@@ -2054,6 +2058,74 @@ const initApp = async () => {
   const planProviderToolPendingContinuation = (options = {}) => {
     const opts = options && typeof options === 'object' ? options : { id: options };
     return providerToolPendingContinuationPlanner.plan(opts.id || opts.pendingPermissionId || '', opts);
+  };
+  const resolveCurrentProviderToolRunnerClient = async (options = {}) => {
+    const opts = options && typeof options === 'object' ? options : {};
+    const sessionId = opts.sessionId || chatStore.getCurrent();
+    return await resolveProviderToolCurrentRunnerClient({
+      bridge: window.appBridge,
+      sessionId,
+      uiMode: opts.uiMode || (String(sessionId || '').startsWith('rp:') ? 'rp' : 'chat'),
+      taskType: opts.taskType || '',
+      sessionGate: readCurrentProviderToolSessionGate(sessionId),
+      enabled: opts.enabled === true || opts.enableCurrentProviderRunner === true,
+      allowCurrentProviderRunner: opts.allowCurrentProviderRunner === true,
+      allowRunnerNetwork: opts.allowRunnerNetwork === true,
+      createClient: config => new LLMClient(config),
+      useNativeRunnerShim: opts.useNativeRunnerShim !== false,
+      requestId: opts.requestId || '',
+    });
+  };
+  const planProviderToolPendingContinuationWithCurrentProvider = async (options = {}) => {
+    const opts = options && typeof options === 'object' ? options : { id: options };
+    const pendingId = opts.id || opts.pendingPermissionId || '';
+    const pending = providerToolPendingPermissionStore.get(pendingId);
+    const sessionId = opts.sessionId || pending?.sessionId || chatStore.getCurrent();
+    const currentRunner = await resolveCurrentProviderToolRunnerClient({
+      ...opts,
+      sessionId,
+      enabled: opts.enabled === true || opts.enableCurrentProviderRunner === true,
+      allowCurrentProviderRunner: opts.allowCurrentProviderRunner === true,
+      allowRunnerNetwork: opts.allowRunnerNetwork === true,
+    });
+    if (currentRunner.ok !== true) {
+      return {
+        ok: false,
+        status: currentRunner.status,
+        reason: currentRunner.reason,
+        pendingPermissionId: String(pendingId || '').trim(),
+        currentRunner: currentRunner.diagnostics,
+        network: false,
+        writesChat: false,
+        replayChat: false,
+        runsProvider: false,
+        realNetwork: false,
+      };
+    }
+    const result = await providerToolPendingContinuationPlanner.plan(pendingId, {
+      ...opts,
+      runnerMode: 'real_runner',
+      providerClient: currentRunner.providerClient,
+      runnerRequestOptions: currentRunner.runnerRequestOptions,
+      enableRealProviderRunnerAdapter: true,
+      allowRealRunner: true,
+      allowRunnerNetwork: true,
+    });
+    return {
+      ...result,
+      currentRunner: currentRunner.diagnostics,
+    };
+  };
+  const listProviderToolPendingContinuationParts = (options = {}) => {
+    const opts = options && typeof options === 'object' ? options : {};
+    const limit = Math.max(0, Math.trunc(Number(opts.limit || 0)) || 0);
+    return providerToolPendingPermissionStore
+      .list({
+        ...opts,
+        limit: limit ? Math.max(limit * 4, 12) : 100,
+      })
+      .flatMap(entry => (Array.isArray(entry?.continuationParts) ? entry.continuationParts : []))
+      .slice(0, limit || undefined);
   };
   const listProviderToolPendingResumeParts = (options = {}) => {
     const opts = options && typeof options === 'object' ? options : {};
@@ -2227,6 +2299,12 @@ const initApp = async () => {
         resolveProviderToolPendingPermission,
         resumeProviderToolPendingPermission,
         planProviderToolPendingContinuation,
+        resolveCurrentProviderToolRunnerClient: async (options = {}) => {
+          const result = await resolveCurrentProviderToolRunnerClient(options || {});
+          return result.diagnostics;
+        },
+        planProviderToolPendingContinuationWithCurrentProvider,
+        listProviderToolPendingContinuationParts,
         listProviderToolPendingResumeParts,
         clearProviderToolPendingPermissions: () => providerToolPendingPermissionStore.clear(),
         runProviderToolCallExperiment: (options = {}) => {

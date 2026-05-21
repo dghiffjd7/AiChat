@@ -155,3 +155,43 @@ const createFakeDocument = () => {
   assert.equal(actions[0].part.metadata.pendingPermissionId, 'pending-sidecar-1');
   console.log('ok - buildAgentMessageSidecarElement exposes deferred provider permission actions');
 }
+
+{
+  const documentLike = createFakeDocument();
+  const providerParts = buildProviderToolMessageParts({
+    toolCall: {
+      id: 'provider-call-3',
+      toolName: 'contact_profile.list',
+      arguments: { limit: 1 },
+      sessionId: 's-sidecar',
+    },
+    permission: {
+      permissions: ['storage'],
+      pendingPermissionId: 'pending-sidecar-continue-1',
+    },
+    now: () => 8000,
+  });
+  const actions = [];
+  const element = buildAgentMessageSidecarElement({
+    documentLike,
+    message: {
+      id: 'm-provider-continuation',
+      meta: { agentMessageParts: providerParts },
+    },
+    onProviderToolPermissionAction: () => {},
+    onProviderToolContinuationAction: request => actions.push(request),
+  });
+  const permissionBody = element.children[2].children[1];
+  const continuationRow = permissionBody.children[6];
+  assert.equal(continuationRow.children.length, 2);
+  assert.equal(continuationRow.children[0].textContent, 'Preview Continue');
+  assert.equal(continuationRow.children[0].dataset.providerToolContinuationAction, 'preview_continue');
+  assert.equal(continuationRow.children[1].textContent, 'Disable Gate');
+  continuationRow.children[0].click();
+  continuationRow.children[1].click();
+  assert.equal(actions.length, 2);
+  assert.equal(actions[0].action, 'preview_continue');
+  assert.equal(actions[0].part.metadata.pendingPermissionId, 'pending-sidecar-continue-1');
+  assert.equal(actions[1].action, 'disable_gate');
+  console.log('ok - buildAgentMessageSidecarElement exposes provider continuation preview and rollback actions');
+}

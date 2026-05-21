@@ -704,9 +704,12 @@ export class DebugPanel {
             const providerToolResumeParts = typeof actions.listProviderToolPendingResumeParts === 'function'
                 ? actions.listProviderToolPendingResumeParts({ limit: 6 })
                 : [];
+            const providerToolContinuationParts = typeof actions.listProviderToolPendingContinuationParts === 'function'
+                ? actions.listProviderToolPendingContinuationParts({ limit: 6 })
+                : [];
             refreshAgentMessagePartsView({
                 container: this.agentRunsParts,
-                parts: [...providerToolResumeParts, ...providerToolParts, ...agentRunParts],
+                parts: [...providerToolContinuationParts, ...providerToolResumeParts, ...providerToolParts, ...agentRunParts],
                 documentRef: document,
                 emptyText: 'No agent message parts',
             });

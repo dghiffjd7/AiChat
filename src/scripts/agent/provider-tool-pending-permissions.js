@@ -163,6 +163,7 @@ export const normalizeProviderToolPendingPermission = (entry = {}, {
     continuationAttempt: Math.max(0, Math.trunc(Number(src.continuationAttempt || 0)) || 0),
     continuationFinishedAt: toFiniteNumber(src.continuationFinishedAt, 0),
     continuationResult: clone(src.continuationResult ?? null),
+    continuationParts: clone(Array.isArray(src.continuationParts) ? src.continuationParts : []),
     continuationErrorMessage: trim(src.continuationErrorMessage),
     toolCall: clone(toolCall),
   };
@@ -322,6 +323,7 @@ export const createProviderToolPendingPermissionStore = ({
         : Number(current.continuationAttempt || 0),
       continuationFinishedAt: at,
       continuationResult: src.result !== undefined ? clone(src.result) : current.continuationResult,
+      continuationParts: Array.isArray(src.parts) ? clone(src.parts) : current.continuationParts,
       continuationErrorMessage: trim(src.errorMessage || src.reason, current.continuationErrorMessage),
       updatedAt: at,
     };

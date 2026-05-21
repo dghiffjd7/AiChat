@@ -91,7 +91,7 @@ export const buildProviderToolSafetyPreflightViewModel = ({
   const gate = isPlainObject(sessionGate) ? sessionGate : {};
   const latest = readLatestEntry(diagnostics);
   const mode = readRunnerMode(latest);
-  const networkAllowed = readNetworkAllowed(latest);
+  const networkAllowed = gate.networkAllowed === true || readNetworkAllowed(latest);
   const writesChat = readWritesChat(latest);
   const sessionGateEnabled = gate.enabled === true;
   const gateTools = list(gate.allowedTools);

@@ -175,11 +175,13 @@ import { PROVIDER_TOOL_PERMISSION_ACTIONS } from '../../src/scripts/agent/provid
       requestPreview: { toolResultCount: 1 },
       runnerFacade: { status: 'disabled' },
     },
+    parts: [{ id: 'continuation-part-1', type: 'provider_stream_events', status: 'succeeded' }],
   });
 
   assert.equal(ready.continuationStatus, PROVIDER_TOOL_PENDING_PERMISSION_CONTINUATION_STATUSES.ready);
   assert.equal(ready.continuationAttempt, 1);
   assert.equal(ready.continuationFinishedAt, 6100);
   assert.deepEqual(ready.continuationResult.runnerFacade, { status: 'disabled' });
+  assert.deepEqual(ready.continuationParts, [{ id: 'continuation-part-1', type: 'provider_stream_events', status: 'succeeded' }]);
   console.log('ok - provider tool pending permission store tracks continuation plan state');
 }

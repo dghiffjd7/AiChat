@@ -110,6 +110,24 @@ export const AGENT_MESSAGE_SIDECAR_STYLES = Object.freeze({
   `,
 });
 
+const buildActionButton = ({
+  documentLike,
+  text = '',
+  action = '',
+  datasetKey = '',
+  style = AGENT_MESSAGE_SIDECAR_STYLES.actionButton,
+  onClick = null,
+} = {}) => {
+  const button = createElement(documentLike, 'button', {
+    text,
+    style,
+  });
+  button.type = 'button';
+  if (datasetKey && action) button.dataset[datasetKey] = action;
+  if (typeof onClick === 'function') button.addEventListener?.('click', onClick);
+  return button;
+};
+
 export const getAgentMessagePartsForMessage = (message = {}) => {
   const meta = isPlainObject(message?.meta) ? message.meta : {};
   if (Array.isArray(meta.agentMessageParts)) return meta.agentMessageParts;
@@ -136,6 +154,7 @@ export const buildAgentMessageSidecarElement = ({
   message = {},
   maxParts = 6,
   onProviderToolPermissionAction = null,
+  onProviderToolContinuationAction = null,
 } = {}) => {
   if (!documentLike?.createElement) return null;
   const parts = buildAgentMessagePartViewModel(getAgentMessagePartsForMessage(message));
@@ -207,20 +226,43 @@ export const buildAgentMessageSidecarElement = ({
             const label = action === 'allow_once'
               ? 'Allow Once'
               : (action === 'remember_allow' ? 'Remember' : 'Deny');
-            const button = createElement(documentLike, 'button', {
+            const button = buildActionButton({
+              documentLike,
               text: label,
-              style: AGENT_MESSAGE_SIDECAR_STYLES.actionButton,
-            });
-            button.type = 'button';
-            button.dataset.providerToolPermissionAction = action;
-            button.addEventListener?.('click', () => onProviderToolPermissionAction({
               action,
-              part,
-              message,
-            }));
+              datasetKey: 'providerToolPermissionAction',
+              onClick: () => onProviderToolPermissionAction({
+                action,
+                part,
+                message,
+              }),
+            });
             actionRow.appendChild(button);
           });
         if (actionRow.children?.length) body.appendChild(actionRow);
+      }
+      if (typeof onProviderToolContinuationAction === 'function' && trim(part.metadata?.pendingPermissionId)) {
+        const continuationRow = createElement(documentLike, 'div', {
+          style: AGENT_MESSAGE_SIDECAR_STYLES.actionRow,
+        });
+        [
+          ['preview_continue', 'Preview Continue'],
+          ['disable_gate', 'Disable Gate'],
+        ].forEach(([action, label]) => {
+          const button = buildActionButton({
+            documentLike,
+            text: label,
+            action,
+            datasetKey: 'providerToolContinuationAction',
+            onClick: () => onProviderToolContinuationAction({
+              action,
+              part,
+              message,
+            }),
+          });
+          continuationRow.appendChild(button);
+        });
+        if (continuationRow.children?.length) body.appendChild(continuationRow);
       }
     }
     details.appendChild(body);

@@ -109,6 +109,45 @@ const createChatStore = () => {
 }
 
 {
+  const chatStore = createChatStore();
+  const armed = writeProviderToolSessionGate({
+    chatStore,
+    sessionId: 's1',
+    enabled: true,
+    allowedTools: ['contact_profile.list'],
+    networkAllowed: true,
+    realRunnerAllowed: true,
+    source: 'test',
+    reason: 'arm real runner gates',
+    now: () => 2600,
+  });
+
+  assert.equal(armed.enabled, true);
+  assert.equal(armed.networkAllowed, true);
+  assert.equal(armed.realRunnerAllowed, true);
+  assert.equal(armed.writesChat, false);
+
+  const disabled = writeProviderToolSessionGate({
+    chatStore,
+    sessionId: 's1',
+    enabled: false,
+    allowedTools: ['contact_profile.list'],
+    networkAllowed: true,
+    realRunnerAllowed: true,
+    source: 'test',
+    reason: 'disable after real runner smoke',
+    now: () => 2700,
+  });
+
+  assert.equal(disabled.enabled, false);
+  assert.equal(disabled.networkAllowed, false);
+  assert.equal(disabled.realRunnerAllowed, false);
+  assert.equal(chatStore.readRaw('s1')[PROVIDER_TOOL_SESSION_GATE_SETTINGS_KEY].networkAllowed, false);
+  assert.equal(chatStore.readRaw('s1')[PROVIDER_TOOL_SESSION_GATE_SETTINGS_KEY].realRunnerAllowed, false);
+  console.log('ok - writeProviderToolSessionGate only persists real runner gates while enabled');
+}
+
+{
   const gate = writeProviderToolSessionGate({
     chatStore: null,
     sessionId: 's1',

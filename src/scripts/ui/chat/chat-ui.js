@@ -1614,6 +1614,7 @@ export class ChatUI {
       buildMessageSidecarElement: payload => buildAgentMessageSidecarElement({
         ...payload,
         onProviderToolPermissionAction: request => this.handleProviderToolPermissionAction(request),
+        onProviderToolContinuationAction: request => this.handleProviderToolContinuationAction(request),
       }),
       buildReactionSummaryElement: nextMessage => this.buildReactionSummaryElement(nextMessage),
       createReactionTriggerButton,
@@ -1669,6 +1670,67 @@ export class ChatUI {
     } catch (err) {
       logger.warn('provider tool pending permission action failed', err);
       toastOnce('Agent 工具权限处理失败', 'error');
+      return null;
+    }
+  }
+
+  async handleProviderToolContinuationAction(request = {}) {
+    const pendingPermissionId = String(request?.part?.metadata?.pendingPermissionId || '').trim();
+    const sessionId = String(request?.part?.metadata?.sessionId || '').trim();
+    if (!pendingPermissionId) {
+      toastOnce('Provider 继续预览缺少 pending id', 'warning');
+      return null;
+    }
+    const actions = window.appBridge?.debugUiRegistry?.actions || {};
+    try {
+      if (request.action === 'disable_gate') {
+        const setter = actions.setProviderToolSessionGate;
+        if (typeof setter !== 'function') {
+          toastOnce('Provider gate 处理器未就绪', 'warning');
+          return null;
+        }
+        const result = setter({
+          sessionId,
+          enabled: false,
+          source: 'chat_sidecar_provider_continue',
+          reason: 'disabled from provider continuation sidecar',
+        });
+        toastOnce('Provider runner gate 已关闭', 'info', 3000);
+        return result;
+      }
+
+      const planner = actions.planProviderToolPendingContinuation;
+      const resolver = actions.resolveCurrentProviderToolRunnerClient;
+      if (typeof planner !== 'function' || typeof resolver !== 'function') {
+        toastOnce('Provider 继续预览处理器未就绪', 'warning');
+        return null;
+      }
+      const continuation = await planner({
+        id: pendingPermissionId,
+      });
+      const currentRunner = await resolver({
+        sessionId,
+        enabled: true,
+        allowCurrentProviderRunner: true,
+        allowRunnerNetwork: true,
+      });
+      if (continuation?.status === 'ready' && currentRunner?.status === 'ready') {
+        toastOnce('Provider 继续预览已就绪', 'success', 3000);
+      } else if (continuation?.status === 'ready') {
+        toastOnce('Provider 继续预览已生成，runner gate 未就绪', 'info', 3500);
+      } else {
+        toastOnce('需先允许并执行工具，才能预览 Provider 继续', 'warning', 3500);
+      }
+      return {
+        pendingPermissionId,
+        continuation,
+        currentRunner,
+        network: false,
+        writesChat: false,
+      };
+    } catch (err) {
+      logger.warn('provider tool continuation sidecar action failed', err);
+      toastOnce('Provider 继续预览失败', 'error');
       return null;
     }
   }
