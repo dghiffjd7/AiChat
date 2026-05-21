@@ -403,7 +403,7 @@ export class OpenAIProvider {
   }
 
   prepareChatRequest(messages, options = {}) {
-    const { signal, requestId, options: rawPayloadOptions } = splitRequestOptions(options);
+    const { signal, requestId, onProviderToolCallDelta, options: rawPayloadOptions } = splitRequestOptions(options);
     const payloadOptions = (rawPayloadOptions && typeof rawPayloadOptions === 'object') ? { ...rawPayloadOptions } : {};
     const deepseekPrefix = normalizeDeepSeekPrefixRequest(payloadOptions.deepseekPrefix);
     delete payloadOptions.deepseekPrefix;
@@ -442,6 +442,7 @@ export class OpenAIProvider {
     return {
       signal,
       requestId,
+      onProviderToolCallDelta,
       url: `${requestBaseUrl}/chat/completions`,
       payload,
       messages: payloadMessages,
@@ -633,6 +634,11 @@ export class OpenAIProvider {
   async *streamChat(messages, options = {}) {
     const prepared = this.prepareChatRequest(messages, options);
     const { signal, requestId } = prepared;
+    const notifyProviderToolCallDelta = data => {
+      try {
+        prepared.onProviderToolCallDelta?.(data, { provider: this.provider, model: this.model });
+      } catch {}
+    };
     messages = prepared.messages;
     const normalized = prepared.normalizedOptions;
     if (prepared.compat.reasoner.changed) {
@@ -681,6 +687,7 @@ export class OpenAIProvider {
       let reasoningChars = 0;
       let deltaCount = 0;
       const emitParsedDelta = function* (data) {
+        notifyProviderToolCallDelta(data);
         if (data?.usage && typeof data.usage === 'object') lastUsage = data;
         const finishReason = pickOpenAICompatibleFinishReason(data);
         if (finishReason) lastFinishReason = finishReason;
@@ -845,6 +852,7 @@ export class OpenAIProvider {
         responseHeaders[key] = value;
       });
       for await (const data of handleSSE(response)) {
+        notifyProviderToolCallDelta(data);
         if (data?.usage && typeof data.usage === 'object') lastUsage = data;
         const finishReason = pickOpenAICompatibleFinishReason(data);
         if (finishReason) lastFinishReason = finishReason;

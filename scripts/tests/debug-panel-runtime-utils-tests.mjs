@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 
 import {
+  handleAgentRunDiagnosticsLoadError,
   handleBridgeContractDiagnosticsLoadError,
   copyVisibleDebugLogsFlow,
   copyDebugTextFlow,
@@ -11,6 +12,7 @@ import {
   handleCustomBundleDiagnosticsLoadError,
   handleDebugTraceTimelineLoadError,
   handleStorageMigrationDiagnosticsLoadError,
+  refreshAgentRunDiagnosticsView,
   refreshBridgeContractDiagnosticsView,
   refreshCustomBundleDiagnosticsView,
   refreshDebugTraceTimelineView,
@@ -135,6 +137,78 @@ import {
   assert.equal(text, 'Bridge contract 诊断加载失败\n\nboom');
   assert.deepEqual(warnings, ['Bridge contract 诊断加载失败: boom']);
   console.log('ok - handleBridgeContractDiagnosticsLoadError writes fallback text and warning log');
+}
+
+{
+  let meta = '';
+  let text = '';
+  const store = {
+    listRuns: () => [
+      {
+        id: 'run-a',
+        kind: 'image_director_generation',
+        sessionId: 's1',
+        source: 'image-director-agent',
+        status: 'succeeded',
+        summary: 'image done',
+        createdAt: 1000,
+        updatedAt: 1100,
+        finishedAt: 1100,
+        steps: [{ id: 'step-a', type: 'image_director.generate', status: 'succeeded', updatedAt: 1100 }],
+      },
+    ],
+    listEvents: () => [{ id: 'event-a', runId: 'run-a' }],
+  };
+  const result = refreshAgentRunDiagnosticsView({
+    store,
+    providerToolExperimentDiagnostics: {
+      status: {
+        enabled: false,
+        allowedTools: ['contact_profile.list'],
+        provider: 'debug-provider',
+        model: 'debug-model',
+      },
+      history: [
+        {
+          id: 'diag-a',
+          kind: 'stream_delta',
+          status: 'succeeded',
+          ok: true,
+          deltas: [{ phase: 'complete', toolName: 'contact_profile.list' }],
+          completedToolCalls: [{ toolName: 'contact_profile.list', arguments: { limit: 1 } }],
+          results: [{ ok: true, status: 'succeeded', parts: [{ type: 'provider_tool_result' }] }],
+          parts: [{ type: 'provider_tool_result' }],
+        },
+      ],
+    },
+    options: { limit: 5 },
+    setMeta: (value) => { meta = value; },
+    setText: (value) => { text = value; },
+  });
+  assert.equal(meta.includes('runs=1/1 · total=1 · active=0 · failures=0'), true);
+  assert.equal(meta.includes('provider-tools=off · history=1'), true);
+  assert.equal(result.view.runs[0].id, 'run-a');
+  assert.equal(text.includes('[SUCCEEDED] image_director_generation'), true);
+  assert.equal(text.includes('Provider Tool Experiment'), true);
+  assert.equal(text.includes('completed tool calls:'), true);
+  console.log('ok - refreshAgentRunDiagnosticsView writes agent run diagnostics');
+}
+
+{
+  let meta = '';
+  let text = '';
+  const warnings = [];
+  const result = handleAgentRunDiagnosticsLoadError({
+    error: new Error('agent boom'),
+    setMeta: (value) => { meta = value; },
+    setText: (value) => { text = value; },
+    logWarn: (value) => warnings.push(value),
+  });
+  assert.equal(result, 'agent boom');
+  assert.equal(meta, '加载失败: agent boom');
+  assert.equal(text.includes('Agent run 诊断加载失败'), true);
+  assert.equal(warnings[0].includes('agent boom'), true);
+  console.log('ok - handleAgentRunDiagnosticsLoadError writes fallback text and warning log');
 }
 
 {

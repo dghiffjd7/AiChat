@@ -1,3 +1,9 @@
+import {
+  buildAgentRunDiagnosticsMeta,
+  buildAgentRunListView,
+  formatAgentRunDiagnostics,
+} from '../agent/agent-run-view-model.js';
+
 export const formatCustomBundleDiagnostics = (snapshot) => {
   if (!snapshot || typeof snapshot !== 'object') return '暂无自定义资料包导入诊断';
   try {
@@ -200,6 +206,167 @@ export const formatDebugTraceTimelineDiagnostics = (events = []) => {
       `details: ${formatTraceDetails(event?.details)}`,
     ].join('\n');
   }).join('\n\n');
+};
+
+export const buildAgentRunDiagnosticsView = ({
+  runs = [],
+  events = [],
+  options = {},
+} = {}) => buildAgentRunListView(runs, {
+  ...(options && typeof options === 'object' ? options : {}),
+  events,
+});
+
+export const buildAgentRunDiagnosticsText = ({
+  runs = [],
+  events = [],
+  options = {},
+} = {}) => formatAgentRunDiagnostics(buildAgentRunDiagnosticsView({ runs, events, options }));
+
+export const buildAgentRunDiagnosticsViewMeta = ({
+  runs = [],
+  events = [],
+  options = {},
+} = {}) => buildAgentRunDiagnosticsMeta(buildAgentRunDiagnosticsView({ runs, events, options }));
+
+const formatJsonInline = (value = null) => {
+  if (value === null || value === undefined) return '-';
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value || '');
+  }
+};
+
+export const buildProviderToolExperimentDiagnosticsMeta = (snapshot = {}) => {
+  const history = Array.isArray(snapshot?.history) ? snapshot.history : [];
+  const status = isPlainObject(snapshot?.status) ? snapshot.status : {};
+  const deltaCount = history.reduce((sum, entry) => sum + (Array.isArray(entry?.deltas) ? entry.deltas.length : 0), 0);
+  const completedCount = history.reduce((sum, entry) => sum + (Array.isArray(entry?.completedToolCalls) ? entry.completedToolCalls.length : 0), 0);
+  const resultCount = history.reduce((sum, entry) => sum + (Array.isArray(entry?.results) ? entry.results.length : 0), 0);
+  const failures = history.filter(entry => entry?.ok === false && String(entry?.status || '') !== 'disabled').length;
+  const enabled = status.enabled === true ? 'on' : 'off';
+  return `provider-tools=${enabled} · history=${history.length} · deltas=${deltaCount} · completed=${completedCount} · results=${resultCount} · failures=${failures}`;
+};
+
+const formatProviderToolExperimentMode = (entry = {}) => {
+  const kind = String(entry?.kind || '').trim();
+  if (kind === 'stream_delta_capture') return 'read-only capture · no tool execution';
+  if (kind === 'stream_delta') return 'debug execution · explicit only';
+  if (kind === 'tool_call') return 'debug tool call · explicit only';
+  return 'diagnostic';
+};
+
+export const formatProviderToolExperimentDiagnostics = (snapshot = {}) => {
+  const history = Array.isArray(snapshot?.history) ? snapshot.history : [];
+  const status = isPlainObject(snapshot?.status) ? snapshot.status : {};
+  const header = [
+    'Provider Tool Experiment',
+    `enabled: ${status.enabled === true ? 'true' : 'false'}`,
+    `allowedTools: ${formatList(status.allowedTools)}`,
+    `provider: ${String(status.provider || '-').trim() || '-'}`,
+    `model: ${String(status.model || '-').trim() || '-'}`,
+  ].join('\n');
+  if (!history.length) return `${header}\n\nNo provider tool experiment diagnostics`;
+
+  const blocks = history.map((entry, index) => {
+    const deltas = Array.isArray(entry?.deltas) ? entry.deltas : [];
+    const completed = Array.isArray(entry?.completedToolCalls) ? entry.completedToolCalls : [];
+    const results = Array.isArray(entry?.results) ? entry.results : [];
+    const parts = Array.isArray(entry?.parts) ? entry.parts : [];
+    const continuation = isPlainObject(entry?.continuation) ? entry.continuation : null;
+    const requestPreview = isPlainObject(entry?.requestPreview) ? entry.requestPreview : null;
+    const mockLoopPreview = isPlainObject(entry?.mockLoopPreview) ? entry.mockLoopPreview : null;
+    const mockProviderRun = isPlainObject(entry?.mockProviderRun) ? entry.mockProviderRun : null;
+    const runnerHandoff = isPlainObject(entry?.runnerHandoff) ? entry.runnerHandoff : null;
+    const runnerRequestDraft = isPlainObject(entry?.runnerRequestDraft) ? entry.runnerRequestDraft : null;
+    const runnerFacade = isPlainObject(entry?.runnerFacade) ? entry.runnerFacade : null;
+    const runnerDryRun = isPlainObject(entry?.runnerDryRun) ? entry.runnerDryRun : null;
+    const loopState = isPlainObject(entry?.loopState) ? entry.loopState : null;
+    const lines = [
+      `#${index + 1} [${String(entry?.status || 'unknown').toUpperCase()}] ${String(entry?.kind || 'tool_call')}`,
+      `id: ${String(entry?.id || '-').trim() || '-'}`,
+      `ok: ${entry?.ok === true ? 'true' : 'false'}`,
+      `provider/model: ${String(entry?.provider || '-').trim() || '-'} / ${String(entry?.model || '-').trim() || '-'}`,
+      `sessionId: ${String(entry?.sessionId || '-').trim() || '-'}`,
+      `mode: ${formatProviderToolExperimentMode(entry)}`,
+      `createdAt: ${formatTraceTimestamp(entry?.createdAt)}`,
+      `updatedAt: ${formatTraceTimestamp(entry?.updatedAt)}`,
+      `explicitEnabled: ${entry?.explicitEnabled === true ? 'true' : 'false'}`,
+      `reason: ${String(entry?.reason || '-').trim() || '-'}`,
+      `deltas: ${deltas.length} · completedToolCalls: ${completed.length} · results: ${results.length} · parts: ${parts.length}`,
+    ];
+    if (continuation) {
+      lines.push(`continuation: ${String(continuation.strategy || '-').trim() || '-'} · shouldContinue=${continuation.shouldContinue === true ? 'true' : 'false'}`);
+    }
+    if (requestPreview) {
+      lines.push(`requestPreview: ${String(requestPreview.format || '-').trim() || '-'} · network=${requestPreview.network === true ? 'true' : 'false'} · toolResults=${Number(requestPreview.toolResultCount || 0) || 0}`);
+    }
+    if (mockLoopPreview) {
+      lines.push(`mockLoopPreview: ${String(mockLoopPreview.status || '-').trim() || '-'} · network=${mockLoopPreview.network === true ? 'true' : 'false'}`);
+    }
+    if (mockProviderRun) {
+      const events = Array.isArray(mockProviderRun.events)
+        ? mockProviderRun.events.length
+        : (Number(mockProviderRun.eventCount || 0) || 0);
+      const chars = Array.from(String(mockProviderRun.finalText || '')).length;
+      lines.push(`mockProviderRun: ${String(mockProviderRun.status || '-').trim() || '-'} · network=${mockProviderRun.network === true ? 'true' : 'false'} · events=${events} · chars=${chars}`);
+    }
+    if (loopState) {
+      lines.push(`loopState: ${String(loopState.status || '-').trim() || '-'} · phase=${String(loopState.phase || '-').trim() || '-'} · phases=${Number(loopState.phaseCount || 0) || 0} · network=${loopState.network === true ? 'true' : 'false'}`);
+    }
+    if (runnerHandoff) {
+      lines.push(`runnerHandoff: ${String(runnerHandoff.status || '-').trim() || '-'} · output=${String(runnerHandoff.output || '-').trim() || '-'} · network=${runnerHandoff.network === true ? 'true' : 'false'} · writesChat=${runnerHandoff.writesChat === true ? 'true' : 'false'}`);
+    }
+    if (runnerRequestDraft) {
+      lines.push(`runnerRequestDraft: ${String(runnerRequestDraft.status || '-').trim() || '-'} · payload=${String(runnerRequestDraft.payloadKind || '-').trim() || '-'} · network=${runnerRequestDraft.network === true ? 'true' : 'false'} · writesChat=${runnerRequestDraft.writesChat === true ? 'true' : 'false'}`);
+    }
+    if (runnerFacade) {
+      const events = Array.isArray(runnerFacade.events)
+        ? runnerFacade.events.length
+        : (Number(runnerFacade.eventCount || 0) || 0);
+      lines.push(`runnerFacade: ${String(runnerFacade.status || '-').trim() || '-'} · events=${events} · network=${runnerFacade.network === true ? 'true' : 'false'} · writesChat=${runnerFacade.writesChat === true ? 'true' : 'false'}`);
+    }
+    if (runnerDryRun) {
+      const events = Array.isArray(runnerDryRun.events)
+        ? runnerDryRun.events.length
+        : (Number(runnerDryRun.eventCount || 0) || 0);
+      lines.push(`runnerDryRun: ${String(runnerDryRun.status || '-').trim() || '-'} · events=${events} · network=${runnerDryRun.network === true ? 'true' : 'false'} · writesChat=${runnerDryRun.writesChat === true ? 'true' : 'false'}`);
+    }
+    if (entry?.toolCall) {
+      lines.push(`toolCall: ${String(entry.toolCall.toolName || entry.toolCall.name || '-')} ${formatJsonInline(entry.toolCall.arguments)}`);
+    }
+    if (deltas.length) {
+      lines.push('delta chain:');
+      deltas.slice(0, 20).forEach((delta, deltaIndex) => {
+        const id = String(delta?.toolCallId || delta?.id || '').trim() || `index:${delta?.index ?? '-'}`;
+        const argsDelta = String(delta?.argumentsDelta || '').trim();
+        const argText = argsDelta ? ` · argsDelta=${argsDelta}` : '';
+        lines.push(`  ${deltaIndex + 1}. ${String(delta?.phase || '-')} · ${id} · ${String(delta?.toolName || '-')}${argText}`);
+      });
+      if (deltas.length > 20) lines.push(`  ... ${deltas.length - 20} more deltas`);
+    }
+    if (completed.length) {
+      lines.push('completed tool calls:');
+      completed.forEach((toolCall, toolIndex) => {
+        lines.push(`  ${toolIndex + 1}. ${String(toolCall?.toolName || '-')} · id=${String(toolCall?.toolCallId || toolCall?.id || '-')} · args=${formatJsonInline(toolCall?.arguments)}`);
+      });
+    }
+    if (results.length) {
+      lines.push('results:');
+      results.forEach((result, resultIndex) => {
+        const partTypes = Array.isArray(result?.parts)
+          ? result.parts.map(part => String(part?.type || '').trim()).filter(Boolean).join(', ')
+          : '-';
+        lines.push(`  ${resultIndex + 1}. [${String(result?.status || '-').toUpperCase()}] ok=${result?.ok === true ? 'true' : 'false'} · tool=${String(result?.toolCall?.toolName || '-')} · parts=${partTypes || '-'}`);
+        const message = String(result?.reason || result?.errorMessage || '').trim();
+        if (message) lines.push(`     message: ${message}`);
+      });
+    }
+    return lines.join('\n');
+  });
+
+  return [header, ...blocks].join('\n\n');
 };
 
 export const collectErrorLogs = (logs = []) => (

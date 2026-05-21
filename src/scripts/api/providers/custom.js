@@ -211,7 +211,7 @@ export class CustomProvider {
      * 准备聊天请求，供发送链路和调试面板复用同一份实际 payload。
      */
     prepareChatRequest(messages, options = {}) {
-        const { signal, requestId, options: rawPayloadOptions } = splitRequestOptions(options);
+        const { signal, requestId, onProviderToolCallDelta, options: rawPayloadOptions } = splitRequestOptions(options);
         const officialGeminiOpenAIEndpoint = isOfficialGeminiOpenAIEndpoint(this.baseUrl);
         const normalizedOptions = normalizeOpenAICompatiblePayloadOptions(rawPayloadOptions, {
             officialGeminiOpenAIEndpoint,
@@ -225,6 +225,7 @@ export class CustomProvider {
         return {
             signal,
             requestId,
+            onProviderToolCallDelta,
             url: officialGeminiOpenAIEndpoint
                 ? buildEndpointUrl(this.baseUrl, 'chat/completions')
                 : `${this.baseUrl}/chat/completions`,
@@ -268,6 +269,11 @@ export class CustomProvider {
      */
     async *streamChat(messages, options = {}) {
         const request = this.prepareChatRequest(messages, options);
+        const notifyProviderToolCallDelta = data => {
+            try {
+                request.onProviderToolCallDelta?.(data, { provider: this.provider || 'custom', model: this.model });
+            } catch {}
+        };
         const payload = JSON.stringify({
             ...request.payload,
             stream: true,
@@ -297,6 +303,7 @@ export class CustomProvider {
                 throw error;
             }
             for (const data of parseSSEText(res.body)) {
+                notifyProviderToolCallDelta(data);
                 const parts = extractOpenAICompatibleStreamParts(data);
                 if (parts.reasoning) {
                     yield createReasoningStreamEvent(parts.reasoning, { provider: this.provider || 'custom' });
@@ -335,6 +342,7 @@ export class CustomProvider {
             }
 
             for await (const data of handleSSE(response)) {
+                notifyProviderToolCallDelta(data);
                 const parts = extractOpenAICompatibleStreamParts(data);
                 if (parts.reasoning) {
                     yield createReasoningStreamEvent(parts.reasoning, { provider: this.provider || 'custom' });

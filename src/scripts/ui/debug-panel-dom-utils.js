@@ -25,6 +25,7 @@ export const createDebugPanelDom = ({
   onShowStorageMigration = () => {},
   onShowBridgeContracts = () => {},
   onShowTraceTimeline = () => {},
+  onShowAgentRuns = () => {},
   onShowErrorLogs = () => {},
   onClearLogs = () => {},
   onCopyLogs = () => {},
@@ -66,6 +67,13 @@ export const createDebugPanelDom = ({
     onClick: onShowTraceTimeline,
   });
   controls.appendChild(traceTimelineInspectBtn);
+
+  const agentRunsInspectBtn = createDebugButton({
+    documentRef,
+    text: 'Agent',
+    onClick: onShowAgentRuns,
+  });
+  controls.appendChild(agentRunsInspectBtn);
 
   const errorLogBtn = createDebugButton({
     documentRef,
@@ -137,6 +145,7 @@ export const createDebugPanelDom = ({
     storageMigrationInspectBtn,
     bridgeContractInspectBtn,
     traceTimelineInspectBtn,
+    agentRunsInspectBtn,
     errorLogBtn,
     filterWrap,
     clearLogBtn,

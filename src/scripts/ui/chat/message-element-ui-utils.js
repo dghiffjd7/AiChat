@@ -12,6 +12,7 @@ export const buildMessageElementCore = ({
   documentLike,
   createBubble,
   renderMessageBubbleContent,
+  buildMessageSidecarElement = null,
   buildReactionSummaryElement,
   createReactionTriggerButton,
   buildBubbleStack,
@@ -74,6 +75,12 @@ export const buildMessageElementCore = ({
     message: nextMessage,
     resolvedSessionId,
   });
+  const messageSidecarEl = buildMessageSidecarElement?.({
+    documentLike,
+    message: nextMessage,
+    isUser,
+    resolvedSessionId,
+  }) || null;
 
   const reactionSummaryEl = buildReactionSummaryElement?.(nextMessage);
   const reactionButton = createReactionTriggerButton?.(nextMessage, {
@@ -85,6 +92,7 @@ export const buildMessageElementCore = ({
     documentLike,
     bubble,
     isUser,
+    messageSidecarEl,
     reactionSummaryEl,
     reactionButton,
   });

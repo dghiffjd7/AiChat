@@ -6,8 +6,16 @@ export const splitRequestOptions = (options = {}) => {
       ? src.nativeRequestId
       : (typeof src.requestId === 'string' ? src.requestId : '');
   const requestId = String(nativeRequestIdRaw || '').trim();
-  const { signal: _signal, nativeRequestId: _nativeRequestId, requestId: _requestId, ...rest } = src;
-  return { signal, requestId, options: rest };
+  const onProviderToolCallDelta =
+    typeof src.onProviderToolCallDelta === 'function' ? src.onProviderToolCallDelta : null;
+  const {
+    signal: _signal,
+    nativeRequestId: _nativeRequestId,
+    requestId: _requestId,
+    onProviderToolCallDelta: _onProviderToolCallDelta,
+    ...rest
+  } = src;
+  return { signal, requestId, onProviderToolCallDelta, options: rest };
 };
 
 export const createLinkedAbortController = ({ timeoutMs, signal } = {}) => {

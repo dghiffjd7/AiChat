@@ -28,7 +28,7 @@ class Logger {
             try {
                 import('../ui/debug-panel.js').then(module => {
                     this.debugPanel = module.getDebugPanel();
-                });
+                }).catch(() => {});
             } catch {}
         }, 1000);
     }

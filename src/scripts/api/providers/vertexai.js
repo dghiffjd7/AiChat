@@ -503,9 +503,14 @@ export class VertexAIProvider {
    * Stream chat messages
    */
   async *streamChat(messages, options = {}) {
-    const { signal, requestId, options: payloadOptions } = splitRequestOptions(options);
+    const { signal, requestId, onProviderToolCallDelta, options: payloadOptions } = splitRequestOptions(options);
     const headers = await this.getHeaders();
     const body = this.buildRequestBody(messages, payloadOptions);
+    const notifyProviderToolCallDelta = data => {
+      try {
+        onProviderToolCallDelta?.(data, { provider: 'vertexai', model: this.model });
+      } catch {}
+    };
 
     const invoker = getTauriInvoker();
     const tryStreamOnce = async function* ({ region, baseHost }) {
@@ -531,6 +536,7 @@ export class VertexAIProvider {
           throw err;
         }
         for (const data of parseSSEText(res.body)) {
+          notifyProviderToolCallDelta(data);
           const candidates = data?.candidates;
           if (candidates && candidates.length > 0) {
             const parts = extractGeminiStreamParts(candidates[0].content);
@@ -565,6 +571,7 @@ export class VertexAIProvider {
           throw err;
         }
         for await (const data of handleSSE(response)) {
+          notifyProviderToolCallDelta(data);
           const candidates = data?.candidates;
           if (candidates && candidates.length > 0) {
             const parts = extractGeminiStreamParts(candidates[0].content);

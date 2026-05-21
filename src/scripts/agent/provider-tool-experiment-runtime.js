@@ -1,0 +1,363 @@
+import { createProviderToolCallDeltaAccumulator } from './provider-tool-call-delta-adapter.js';
+import {
+  buildProviderToolLoopContinuation,
+  runProviderToolLoopController,
+} from './provider-tool-loop-controller.js';
+
+const isPlainObject = value => Boolean(value && typeof value === 'object' && !Array.isArray(value));
+
+const trim = (value, fallback = '') => {
+  const text = String(value ?? '').trim();
+  return text || fallback;
+};
+
+const clone = (value) => {
+  if (value === null || value === undefined) return value;
+  if (typeof value !== 'object') return value;
+  try {
+    return JSON.parse(JSON.stringify(value));
+  } catch {
+    return Array.isArray(value) ? value.slice() : { ...value };
+  }
+};
+
+const normalizeAllowedTools = (tools = []) => (
+  (Array.isArray(tools) ? tools : [tools])
+    .map(tool => trim(tool))
+    .filter(Boolean)
+);
+
+export const createProviderToolExperimentRuntime = ({
+  providerToolCallRuntime = null,
+  enabledByDefault = false,
+  allowedTools = ['contact_profile.list'],
+  provider = 'debug-provider',
+  model = 'debug-tool-model',
+  sessionId = '',
+  requestPermission = null,
+  now = Date.now,
+} = {}) => {
+  let enabled = enabledByDefault === true;
+  const allowlist = normalizeAllowedTools(allowedTools);
+  const diagnostics = [];
+  const captureStates = new Map();
+  const readNow = () => Number(now?.() || Date.now()) || Date.now();
+
+  const recordDiagnostics = (entry = {}) => {
+    const normalized = {
+      id: trim(entry.id, `provider-tool-experiment:${readNow()}:${diagnostics.length + 1}`),
+      kind: trim(entry.kind, 'tool_call'),
+      status: trim(entry.status, 'unknown'),
+      ok: entry.ok === true,
+      reason: trim(entry.reason),
+      provider: trim(entry.provider, provider),
+      model: trim(entry.model, model),
+      sessionId: trim(entry.sessionId, sessionId),
+      explicitEnabled: entry.explicitEnabled === true,
+      createdAt: Number(entry.createdAt || readNow()) || readNow(),
+      updatedAt: Number(entry.updatedAt || entry.createdAt || readNow()) || readNow(),
+      deltas: Array.isArray(entry.deltas) ? clone(entry.deltas) : [],
+      completedToolCalls: Array.isArray(entry.completedToolCalls) ? clone(entry.completedToolCalls) : [],
+      results: Array.isArray(entry.results) ? clone(entry.results) : [],
+      parts: Array.isArray(entry.parts) ? clone(entry.parts) : [],
+      continuation: isPlainObject(entry.continuation) ? clone(entry.continuation) : null,
+      requestPreview: isPlainObject(entry.requestPreview) ? clone(entry.requestPreview) : null,
+      mockLoopPreview: isPlainObject(entry.mockLoopPreview) ? clone(entry.mockLoopPreview) : null,
+      mockProviderRun: isPlainObject(entry.mockProviderRun) ? clone(entry.mockProviderRun) : null,
+      runnerHandoff: isPlainObject(entry.runnerHandoff) ? clone(entry.runnerHandoff) : null,
+      runnerRequestDraft: isPlainObject(entry.runnerRequestDraft) ? clone(entry.runnerRequestDraft) : null,
+      runnerFacade: isPlainObject(entry.runnerFacade) ? clone(entry.runnerFacade) : null,
+      runnerDryRun: isPlainObject(entry.runnerDryRun) ? clone(entry.runnerDryRun) : null,
+      loopState: isPlainObject(entry.loopState) ? clone(entry.loopState) : null,
+      toolCall: entry.toolCall ? clone(entry.toolCall) : null,
+    };
+    diagnostics.unshift(normalized);
+    if (diagnostics.length > 20) diagnostics.length = 20;
+    return normalized;
+  };
+
+  const getStatus = () => ({
+    enabled,
+    allowedTools: allowlist.slice(),
+    provider: trim(provider, 'debug-provider'),
+    model: trim(model, 'debug-tool-model'),
+  });
+
+  const setEnabled = (nextEnabled = false) => {
+    enabled = nextEnabled === true;
+    return getStatus();
+  };
+
+  const buildPermissionRequester = (opts, normalizedToolCall) => async request => {
+    if (opts.allowOnce === true || opts.allowPermission === true) {
+      return { decision: 'allow', request };
+    }
+    if (opts.denyPermission === true) {
+      return { decision: 'deny', request };
+    }
+    if (typeof opts.requestPermission === 'function') {
+      return await opts.requestPermission(request, { toolCall: normalizedToolCall, experiment: getStatus() });
+    }
+    if (typeof requestPermission === 'function') {
+      return await requestPermission(request, { toolCall: normalizedToolCall, experiment: getStatus() });
+    }
+    return { decision: 'ask', request };
+  };
+
+  const run = async (options = {}) => {
+    const opts = isPlainObject(options) ? options : {};
+    const shouldRecord = opts.skipDiagnostics !== true;
+    const explicitEnabled = opts.enabled === true || opts.experimentEnabled === true;
+    if (!enabled && !explicitEnabled) {
+      const disabled = {
+        ok: false,
+        status: 'disabled',
+        reason: 'provider tool experiment is disabled',
+        parts: [],
+        experiment: getStatus(),
+      };
+      if (shouldRecord) {
+        recordDiagnostics({
+          kind: 'tool_call',
+          ...disabled,
+          explicitEnabled,
+          createdAt: readNow(),
+        });
+      }
+      return disabled;
+    }
+    if (!providerToolCallRuntime || typeof providerToolCallRuntime.executeToolCall !== 'function') {
+      const failed = {
+        ok: false,
+        status: 'failed',
+        reason: 'provider tool call runtime not configured',
+        parts: [],
+        experiment: getStatus(),
+      };
+      if (shouldRecord) {
+        recordDiagnostics({
+          kind: 'tool_call',
+          ...failed,
+          explicitEnabled,
+          createdAt: readNow(),
+        });
+      }
+      return failed;
+    }
+
+    const toolCall = isPlainObject(opts.toolCall) ? opts.toolCall : {};
+    const toolName = trim(opts.toolName || toolCall.toolName || toolCall.name, allowlist[0] || '');
+    if (!toolName || !allowlist.includes(toolName)) {
+      const blocked = {
+        ok: false,
+        status: 'blocked',
+        reason: `provider tool experiment only allows: ${allowlist.join(', ') || '-'}`,
+        parts: [],
+        experiment: getStatus(),
+      };
+      if (shouldRecord) {
+        recordDiagnostics({
+          kind: 'tool_call',
+          ...blocked,
+          explicitEnabled,
+          toolCall: {
+            ...toolCall,
+            toolName,
+          },
+          createdAt: readNow(),
+        });
+      }
+      return blocked;
+    }
+
+    const startedAt = readNow();
+    const args = isPlainObject(opts.arguments)
+      ? opts.arguments
+      : (isPlainObject(opts.args) ? opts.args : (isPlainObject(toolCall.arguments) ? toolCall.arguments : {}));
+    const normalizedToolCall = {
+      id: trim(opts.toolCallId || toolCall.id || toolCall.toolCallId, `experiment:${toolName}:${Number(now?.() || Date.now())}`),
+      ...toolCall,
+      toolName,
+      arguments: args,
+      provider: trim(opts.provider || toolCall.provider, provider),
+      model: trim(opts.model || toolCall.model, model),
+      sessionId: trim(opts.sessionId || toolCall.sessionId, sessionId),
+    };
+    const result = await providerToolCallRuntime.executeToolCall(normalizedToolCall, {
+      provider: normalizedToolCall.provider,
+      model: normalizedToolCall.model,
+      sessionId: normalizedToolCall.sessionId,
+      requestPermission: buildPermissionRequester(opts, normalizedToolCall),
+    });
+    const completed = {
+      ...result,
+      experiment: getStatus(),
+      explicitEnabled,
+    };
+    if (shouldRecord) {
+      recordDiagnostics({
+        kind: 'tool_call',
+        ...completed,
+        toolCall: normalizedToolCall,
+        provider: normalizedToolCall.provider,
+        model: normalizedToolCall.model,
+        sessionId: normalizedToolCall.sessionId,
+        createdAt: startedAt,
+        updatedAt: readNow(),
+      });
+    }
+    return completed;
+  };
+
+  const runStreamDeltas = async (events = [], options = {}) => {
+    const opts = isPlainObject(options) ? options : {};
+    const explicitEnabled = opts.enabled === true || opts.experimentEnabled === true;
+    if (!enabled && !explicitEnabled) {
+      const disabled = {
+        ok: false,
+        status: 'disabled',
+        reason: 'provider tool experiment is disabled',
+        deltas: [],
+        completedToolCalls: [],
+        results: [],
+        continuation: buildProviderToolLoopContinuation('disabled'),
+        experiment: getStatus(),
+      };
+      recordDiagnostics({
+        kind: 'stream_delta',
+        ...disabled,
+        explicitEnabled,
+        createdAt: readNow(),
+      });
+      return disabled;
+    }
+    const startedAt = readNow();
+    const completed = await runProviderToolLoopController({
+      events,
+      enabled: true,
+      provider: trim(opts.provider, provider),
+      model: trim(opts.model, model),
+      sessionId: trim(opts.sessionId, sessionId),
+      now,
+      runnerFacadeEnabled: opts.runnerFacadeEnabled === true || opts.enableProviderRunner === true,
+      providerRunner: opts.providerRunner || null,
+      allowRunnerNetwork: opts.allowRunnerNetwork === true,
+      executeToolCall: toolCall => run({
+        ...opts,
+        enabled: true,
+        toolCall,
+        toolName: toolCall.toolName,
+        arguments: toolCall.arguments,
+        skipDiagnostics: true,
+      }),
+    });
+    completed.experiment = getStatus();
+    completed.explicitEnabled = explicitEnabled;
+    recordDiagnostics({
+      kind: 'stream_delta',
+      ...completed,
+      provider: trim(opts.provider, provider),
+      model: trim(opts.model, model),
+      sessionId: trim(opts.sessionId, sessionId),
+      createdAt: startedAt,
+      updatedAt: readNow(),
+    });
+    return completed;
+  };
+
+  const resolveCaptureKey = (opts = {}) => trim(
+    opts.requestId || opts.streamId || opts.generationId,
+    [
+      trim(opts.provider, provider),
+      trim(opts.model, model),
+      trim(opts.sessionId, sessionId),
+      'default',
+    ].join(':'),
+  );
+
+  const captureStreamDeltas = (events = [], options = {}) => {
+    const opts = isPlainObject(options) ? options : {};
+    const key = resolveCaptureKey(opts);
+    const current = captureStates.get(key) || {
+      accumulator: createProviderToolCallDeltaAccumulator({
+        provider: trim(opts.provider, provider),
+        model: trim(opts.model, model),
+        now,
+      }),
+      deltas: [],
+      createdAt: readNow(),
+    };
+    captureStates.set(key, current);
+
+    const list = Array.isArray(events) ? events : [events];
+    const completedToolCalls = [];
+    list.forEach((event) => {
+      const next = current.accumulator.push(event, {
+        provider: trim(opts.provider, provider),
+        model: trim(opts.model, model),
+      });
+      current.deltas.push(...next.deltas);
+      completedToolCalls.push(...next.completed);
+    });
+
+    if (!current.deltas.length && !completedToolCalls.length) {
+      return {
+        ok: true,
+        status: 'no_tool_calls',
+        deltas: [],
+        completedToolCalls: [],
+        experiment: getStatus(),
+      };
+    }
+    if (!completedToolCalls.length) {
+      return {
+        ok: true,
+        status: 'capturing',
+        deltas: current.deltas.slice(),
+        completedToolCalls: [],
+        experiment: getStatus(),
+      };
+    }
+
+    const completed = {
+      ok: true,
+      status: 'captured',
+      deltas: current.deltas.slice(),
+      completedToolCalls,
+      results: [],
+      experiment: getStatus(),
+      explicitEnabled: false,
+    };
+    recordDiagnostics({
+      kind: 'stream_delta_capture',
+      ...completed,
+      provider: trim(opts.provider, provider),
+      model: trim(opts.model, model),
+      sessionId: trim(opts.sessionId, sessionId),
+      createdAt: current.createdAt,
+      updatedAt: readNow(),
+    });
+    captureStates.delete(key);
+    return completed;
+  };
+
+  return {
+    clearDiagnostics: () => {
+      diagnostics.length = 0;
+      captureStates.clear();
+      return [];
+    },
+    captureStreamDeltas,
+    getDiagnostics: (options = {}) => {
+      const limit = Math.max(0, Math.trunc(Number(options?.limit || diagnostics.length)) || diagnostics.length);
+      return {
+        status: getStatus(),
+        history: diagnostics.slice(0, limit).map(clone),
+      };
+    },
+    getStatus,
+    run,
+    runStreamDeltas,
+    setEnabled,
+  };
+};

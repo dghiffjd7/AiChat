@@ -4,6 +4,7 @@ import { normalizeAssistantStreamChunk } from '../api/native-reasoning.js';
 import { isDeepSeekApiRequest } from '../api/providers/deepseek-compat.js';
 import { extractTableEditBlocks, stripTableEditBlocks } from '../memory/memory-edit-parser.js';
 import { getMemoryContextType, resolveMemorySessionMode, tableMatchesMemoryContext } from '../memory/memory-context-utils.js';
+import { buildAgentMessagePartsFromRun } from '../agent/agent-message-parts.js';
 import { createContactProfilerAgent } from '../agent/contact-profiler-agent.js';
 import { createImageDirectorAgent } from '../agent/image-director-agent.js';
 import { createLineageAgentRuntime } from '../agent/lineage-agent-runtime.js';
@@ -11,6 +12,13 @@ import { createWorldbookAuditAgent } from '../agent/worldbook-audit-agent.js';
 import { createAgentPermissionEvaluator } from '../agent/agent-permissions.js';
 import { createAgentTaskRuntime } from '../agent/agent-task-runtime.js';
 import { createAgentToolRegistry } from '../agent/agent-tool-registry.js';
+import { createProviderToolCallRuntime } from '../agent/provider-tool-call-runtime.js';
+import { createProviderToolExperimentRuntime } from '../agent/provider-tool-experiment-runtime.js';
+import {
+  PROVIDER_TOOL_PERMISSION_ACTIONS,
+  applyProviderToolPermissionAction,
+  buildProviderToolPermissionPromptMessage,
+} from '../agent/provider-tool-permission-actions.js';
 import { registerContactProfileAgentTools } from '../agent/tools/contact-profile-tools.js';
 import { registerImageAgentTools } from '../agent/tools/image-tools.js';
 import { registerMemoryAgentTools } from '../agent/tools/memory-tools.js';
@@ -1972,6 +1980,32 @@ const initApp = async () => {
     recordTraceEvent: recordDebugTraceEvent,
     logger,
   });
+  const providerToolCallRuntime = createProviderToolCallRuntime({
+    toolRegistry: agentToolRegistry,
+    logger,
+  });
+  const providerToolExperimentRuntime = createProviderToolExperimentRuntime({
+    providerToolCallRuntime,
+    allowedTools: ['contact_profile.list'],
+    enabledByDefault: false,
+  });
+  const requestProviderToolPermission = async (request = {}) => {
+    const action = await appChoice({
+      title: 'Agent 工具权限',
+      message: buildProviderToolPermissionPromptMessage(request),
+      defaultActionId: PROVIDER_TOOL_PERMISSION_ACTIONS.deny,
+      actions: [
+        { id: PROVIDER_TOOL_PERMISSION_ACTIONS.allowOnce, label: '允许一次', primary: true },
+        { id: PROVIDER_TOOL_PERMISSION_ACTIONS.rememberAllow, label: '记住允许' },
+        { id: PROVIDER_TOOL_PERMISSION_ACTIONS.deny, label: '拒绝', variant: 'danger' },
+      ],
+    });
+    return applyProviderToolPermissionAction(action || PROVIDER_TOOL_PERMISSION_ACTIONS.deny, request, {
+      permissionEvaluator: agentPermissionEvaluator,
+      sessionId: chatStore.getCurrent(),
+      layer: 'session',
+    });
+  };
   const lineageAgentRuntime = createLineageAgentRuntime({
     agentTaskRuntime,
     renderMapSceneHtml: renderLineageMapSceneHtmlAsync,
@@ -2039,6 +2073,8 @@ const initApp = async () => {
         contactProfileStore,
         agentRunStore,
         agentToolRegistry,
+        providerToolCallRuntime,
+        providerToolExperimentRuntime,
         contactProfilerAgent,
         worldbookAuditAgent,
       },
@@ -2048,7 +2084,70 @@ const initApp = async () => {
         listAgentPermissionRules: () => agentPermissionEvaluator.getRules(),
         listAgentRuns: options => agentRunStore.listRuns(options),
         listAgentRunEvents: options => agentRunStore.listEvents(options),
+        listAgentRunView: options => agentRunStore.buildListView(options || {}),
+        getAgentRunParts: (runId, options = {}) => {
+          const run = agentRunStore.getRun(runId);
+          return run ? buildAgentMessagePartsFromRun(run, options || {}) : [];
+        },
+        listAgentRunParts: (options = {}) => (
+          agentRunStore.listRuns(options || {}).flatMap(run => buildAgentMessagePartsFromRun(run, options || {}))
+        ),
+        getAgentRunCacheStats: () => agentRunStore.getStats(),
+        compactAgentRuns: options => agentRunStore.compact(options || {}),
         listAgentTools: () => agentToolRegistry.listTools(),
+        getProviderToolCallLoopGuardSnapshot: () => providerToolCallRuntime.getLoopGuardSnapshot(),
+        clearProviderToolCallLoopGuard: () => {
+          providerToolCallRuntime.clearLoopGuard();
+          return providerToolCallRuntime.getLoopGuardSnapshot();
+        },
+        getProviderToolExperimentStatus: () => providerToolExperimentRuntime.getStatus(),
+        setProviderToolExperimentEnabled: enabled => providerToolExperimentRuntime.setEnabled(enabled === true),
+        getProviderToolExperimentDiagnostics: options => providerToolExperimentRuntime.getDiagnostics(options || {}),
+        clearProviderToolExperimentDiagnostics: () => providerToolExperimentRuntime.clearDiagnostics(),
+        listProviderToolExperimentParts: (options = {}) => (
+          providerToolExperimentRuntime
+            .getDiagnostics(options || {})
+            .history
+            .flatMap(entry => (Array.isArray(entry?.parts) ? entry.parts : []))
+        ),
+        requestProviderToolPermission,
+        runProviderToolCallExperiment: (options = {}) => {
+          const opts = options && typeof options === 'object' ? options : {};
+          const hasExplicitArgs = Object.prototype.hasOwnProperty.call(opts, 'arguments') ||
+            Object.prototype.hasOwnProperty.call(opts, 'args') ||
+            (opts.toolCall && typeof opts.toolCall === 'object' &&
+              Object.prototype.hasOwnProperty.call(opts.toolCall, 'arguments'));
+          return providerToolExperimentRuntime.run({
+            ...opts,
+            sessionId: opts.sessionId || chatStore.getCurrent(),
+            arguments: hasExplicitArgs ? opts.arguments : { limit: 5 },
+            requestPermission: opts.promptPermission === true ? requestProviderToolPermission : opts.requestPermission,
+          });
+        },
+        runProviderToolCallDeltaExperiment: (events = [], options = {}) => {
+          const opts = options && typeof options === 'object' ? options : {};
+          return providerToolExperimentRuntime.runStreamDeltas(events, {
+            ...opts,
+            sessionId: opts.sessionId || chatStore.getCurrent(),
+            requestPermission: opts.promptPermission === true ? requestProviderToolPermission : opts.requestPermission,
+          });
+        },
+        runProviderToolExecutionLoopFixture: (events = [], options = {}) => {
+          const opts = options && typeof options === 'object' ? options : {};
+          return providerToolExperimentRuntime.runStreamDeltas(events, {
+            ...opts,
+            continuationStrategy: 'stop_after_tool_result',
+            sessionId: opts.sessionId || chatStore.getCurrent(),
+            requestPermission: opts.promptPermission === true ? requestProviderToolPermission : opts.requestPermission,
+          });
+        },
+        captureProviderToolCallDeltas: (events = [], options = {}) => {
+          const opts = options && typeof options === 'object' ? options : {};
+          return providerToolExperimentRuntime.captureStreamDeltas(events, {
+            ...opts,
+            sessionId: opts.sessionId || chatStore.getCurrent(),
+          });
+        },
         exportAgentRuns: options => agentRunStore.exportState(options || {}),
         runContactProfileUpdate: options => contactProfilerAgent.runProfileUpdate({
           ...((options && typeof options === 'object') ? options : {}),

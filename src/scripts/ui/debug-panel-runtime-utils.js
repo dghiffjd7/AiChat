@@ -1,14 +1,19 @@
 import {
   buildBridgeContractDiagnosticsMeta,
+  buildAgentRunDiagnosticsText,
+  buildAgentRunDiagnosticsView,
+  buildAgentRunDiagnosticsViewMeta,
   buildCustomBundleDiagnosticsMeta,
   buildDebugTraceTimelineDiagnosticsMeta,
   buildDebugTextFilename,
+  buildProviderToolExperimentDiagnosticsMeta,
   buildStorageMigrationDiagnosticsMeta,
   collectErrorLogs,
   formatBridgeContractDiagnostics,
   formatCustomBundleDiagnostics,
   formatDebugTraceTimelineDiagnostics,
   formatErrorLogs,
+  formatProviderToolExperimentDiagnostics,
   formatStorageMigrationDiagnostics,
 } from './debug-panel-utils.js';
 import { buildStorageMigrationChecklist } from '../storage/storage-migration-contracts.js';
@@ -161,6 +166,64 @@ export const handleDebugTraceTimelineLoadError = ({
   setMeta?.(`加载失败: ${normalized}`);
   setText?.(`事件时间线加载失败\n\n${normalized}`);
   logWarn?.(`事件时间线加载失败: ${normalized}`);
+  return normalized;
+};
+
+export const refreshAgentRunDiagnosticsView = ({
+  store = null,
+  runs = null,
+  events = null,
+  providerToolExperimentDiagnostics = null,
+  options = { limit: 80 },
+  setMeta = () => {},
+  setText = () => {},
+} = {}) => {
+  const opts = options && typeof options === 'object' ? options : {};
+  const list = Array.isArray(runs)
+    ? runs
+    : (typeof store?.listRuns === 'function' ? store.listRuns({ limit: opts.limit || 80 }) : []);
+  const eventList = Array.isArray(events)
+    ? events
+    : (typeof store?.listEvents === 'function' ? store.listEvents({ limit: opts.eventLimit || 500 }) : []);
+  const view = buildAgentRunDiagnosticsView({
+    runs: list,
+    events: eventList,
+    options: opts,
+  });
+  const agentMeta = buildAgentRunDiagnosticsViewMeta({
+    runs: list,
+    events: eventList,
+    options: opts,
+  });
+  const agentText = buildAgentRunDiagnosticsText({
+    runs: list,
+    events: eventList,
+    options: opts,
+  });
+  const providerMeta = providerToolExperimentDiagnostics
+    ? buildProviderToolExperimentDiagnosticsMeta(providerToolExperimentDiagnostics)
+    : '';
+  const meta = providerMeta ? `${agentMeta} · ${providerMeta}` : agentMeta;
+  const providerText = providerToolExperimentDiagnostics
+    ? formatProviderToolExperimentDiagnostics(providerToolExperimentDiagnostics)
+    : '';
+  const text = providerText ? `${agentText}\n\n---\n\n${providerText}` : agentText;
+  setMeta?.(meta);
+  setText?.(text);
+  return { meta, text, view };
+};
+
+export const handleAgentRunDiagnosticsLoadError = ({
+  error = null,
+  setMeta = () => {},
+  setText = () => {},
+  logWarn = () => {},
+} = {}) => {
+  const message = error?.message ? String(error.message) : String(error || '');
+  const normalized = message || 'unknown error';
+  setMeta?.(`加载失败: ${normalized}`);
+  setText?.(`Agent run 诊断加载失败\n\n${normalized}`);
+  logWarn?.(`Agent run 诊断加载失败: ${normalized}`);
   return normalized;
 };
 

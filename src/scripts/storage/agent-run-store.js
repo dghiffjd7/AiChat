@@ -5,6 +5,10 @@ import {
   normalizeAgentStep,
   normalizeAgentToolCall,
 } from '../agent/agent-events.js';
+import {
+  buildAgentRunCacheStats,
+  buildAgentRunListView,
+} from '../agent/agent-run-view-model.js';
 import { makeScopedKey, normalizeScopeId } from './store-scope.js';
 import { safeInvoke } from '../utils/tauri.js';
 
@@ -357,6 +361,38 @@ export class AgentRunStore {
       return true;
     });
     return (count > 0 ? list.slice(-count) : list).map(clone);
+  }
+
+  getStats() {
+    return buildAgentRunCacheStats({
+      runs: this.state.runs || {},
+      events: this.state.events || [],
+      maxRuns: this.maxRuns,
+      maxEvents: this.maxEvents,
+    });
+  }
+
+  buildListView(options = {}) {
+    return buildAgentRunListView(Object.values(this.state.runs || {}), {
+      ...(isPlainObject(options) ? options : {}),
+      events: this.state.events || [],
+    });
+  }
+
+  compact({
+    maxRuns = this.maxRuns,
+    maxEvents = this.maxEvents,
+  } = {}) {
+    const nextMaxRuns = Math.max(1, Math.trunc(Number(maxRuns)) || this.maxRuns);
+    const nextMaxEvents = Math.max(1, Math.trunc(Number(maxEvents)) || this.maxEvents);
+    this.state = normalizeAgentRunStoreState(this.state, {
+      now: this.now,
+      maxRuns: nextMaxRuns,
+      maxEvents: nextMaxEvents,
+    });
+    this.state.updatedAt = this.now();
+    this._schedulePersist();
+    return this.getStats();
   }
 
   exportState({ includeNonExportable = false } = {}) {

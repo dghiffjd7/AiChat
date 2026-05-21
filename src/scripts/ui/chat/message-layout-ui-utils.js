@@ -2,6 +2,7 @@ export const buildBubbleStackCore = ({
   documentLike,
   bubble,
   isUser = false,
+  messageSidecarEl = null,
   reactionSummaryEl = null,
   reactionButton = null,
 } = {}) => {
@@ -9,6 +10,7 @@ export const buildBubbleStackCore = ({
   bubbleStack.className = 'chat-bubble-stack';
   if (isUser) bubbleStack.classList?.add?.('is-user');
   bubbleStack.appendChild?.(bubble);
+  if (messageSidecarEl) bubbleStack.appendChild?.(messageSidecarEl);
   if (reactionSummaryEl) bubbleStack.appendChild?.(reactionSummaryEl);
   if (reactionButton) bubbleStack.appendChild?.(reactionButton);
   return bubbleStack;

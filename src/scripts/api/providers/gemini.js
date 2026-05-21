@@ -248,8 +248,13 @@ export class GeminiProvider {
    * Stream chat messages
    */
   async *streamChat(messages, options = {}) {
-    const { signal, options: payloadOptions } = splitRequestOptions(options);
+    const { signal, onProviderToolCallDelta, options: payloadOptions } = splitRequestOptions(options);
     const { controller, cleanup } = createLinkedAbortController({ timeoutMs: this.timeout, signal });
+    const notifyProviderToolCallDelta = data => {
+      try {
+        onProviderToolCallDelta?.(data, { provider: 'gemini', model: this.model });
+      } catch {}
+    };
 
     try {
       const url = this.buildUrl(true);
@@ -275,6 +280,7 @@ export class GeminiProvider {
 
       // Handle SSE stream
       for await (const data of handleSSE(response)) {
+        notifyProviderToolCallDelta(data);
         const candidates = data?.candidates;
         if (candidates && candidates.length > 0) {
           const parts = extractGeminiStreamParts(candidates[0].content);

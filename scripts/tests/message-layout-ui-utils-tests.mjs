@@ -57,6 +57,21 @@ const createFakeDocument = () => {
 
 {
   const documentLike = createFakeDocument();
+  const bubble = documentLike.createElement('div');
+  const sidecar = documentLike.createElement('div');
+  const reactionSummary = documentLike.createElement('div');
+  const stack = buildBubbleStackCore({
+    documentLike,
+    bubble,
+    messageSidecarEl: sidecar,
+    reactionSummaryEl: reactionSummary,
+  });
+  assert.deepEqual(stack.children, [bubble, sidecar, reactionSummary]);
+  console.log('ok - buildBubbleStackCore places optional message sidecar outside bubble content before reactions');
+}
+
+{
+  const documentLike = createFakeDocument();
   const wrapper = documentLike.createElement('div');
   const avatar = documentLike.createElement('img');
   const bubbleStack = documentLike.createElement('div');

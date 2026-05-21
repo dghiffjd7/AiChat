@@ -1,0 +1,180 @@
+import { buildAgentMessagePartViewModel } from '../agent-message-parts-view.js';
+
+const isPlainObject = value => Boolean(value && typeof value === 'object' && !Array.isArray(value));
+
+const trim = (value, fallback = '') => {
+  const text = String(value ?? '').trim();
+  return text || fallback;
+};
+
+const createElement = (documentLike, tagName, {
+  className = '',
+  text = '',
+  style = '',
+} = {}) => {
+  const el = documentLike.createElement(tagName);
+  if (className) el.className = className;
+  if (text) el.textContent = text;
+  if (style && el.style) el.style.cssText = style;
+  return el;
+};
+
+export const AGENT_MESSAGE_SIDECAR_STYLES = Object.freeze({
+  root: `
+    width:min(100%, 520px);
+    max-height:min(30vh, 240px);
+    display:grid;
+    gap:6px;
+    overflow:auto;
+    box-sizing:border-box;
+    padding:2px 0;
+  `,
+  header: `
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:8px;
+    font-size:11px;
+    font-weight:800;
+    color:var(--app-text-muted);
+  `,
+  details: `
+    flex:0 0 auto;
+    min-height:36px;
+    border:1px solid var(--app-border-default);
+    border-radius:8px;
+    background:var(--app-surface-card);
+    overflow:hidden;
+  `,
+  summary: `
+    cursor:pointer;
+    display:grid;
+    grid-template-columns:10px minmax(0, 1fr) auto;
+    align-items:center;
+    gap:8px;
+    min-height:36px;
+    padding:6px 8px;
+    box-sizing:border-box;
+    list-style:none;
+    font-size:11px;
+    line-height:1.3;
+    color:var(--app-text-primary);
+    background:var(--app-surface-subtle);
+  `,
+  dot: `
+    width:8px;
+    height:8px;
+    border-radius:999px;
+  `,
+  title: `
+    min-width:0;
+    overflow:hidden;
+    text-overflow:ellipsis;
+    white-space:nowrap;
+    font-weight:800;
+  `,
+  badge: `
+    border:1px solid currentColor;
+    border-radius:999px;
+    padding:1px 6px;
+    font-size:10px;
+    font-weight:800;
+    line-height:1.2;
+  `,
+  body: `
+    display:grid;
+    gap:3px;
+    padding:6px 8px 8px 26px;
+    font-size:11px;
+    line-height:1.35;
+    color:var(--app-text-muted);
+    overflow-wrap:anywhere;
+  `,
+});
+
+export const getAgentMessagePartsForMessage = (message = {}) => {
+  const meta = isPlainObject(message?.meta) ? message.meta : {};
+  if (Array.isArray(meta.agentMessageParts)) return meta.agentMessageParts;
+  if (Array.isArray(message?.agentMessageParts)) return message.agentMessageParts;
+  return [];
+};
+
+export const buildAgentMessageSidecarSignature = (message = {}) => {
+  const parts = buildAgentMessagePartViewModel(getAgentMessagePartsForMessage(message));
+  if (!parts.length) return '';
+  return JSON.stringify(parts.map(part => ({
+    id: part.id,
+    type: part.type,
+    status: part.status,
+    title: part.titleLabel,
+    summary: part.summary,
+    updatedAt: part.updatedAt,
+    errorMessage: part.errorMessage,
+  })));
+};
+
+export const buildAgentMessageSidecarElement = ({
+  documentLike = globalThis.document,
+  message = {},
+  maxParts = 6,
+} = {}) => {
+  if (!documentLike?.createElement) return null;
+  const parts = buildAgentMessagePartViewModel(getAgentMessagePartsForMessage(message));
+  if (!parts.length) return null;
+  const visible = parts.slice(-Math.max(1, Math.trunc(Number(maxParts)) || 6));
+  const root = createElement(documentLike, 'div', {
+    className: 'chat-agent-sidecar',
+    style: AGENT_MESSAGE_SIDECAR_STYLES.root,
+  });
+  root.dataset.agentPartsCount = String(parts.length);
+
+  const header = createElement(documentLike, 'div', {
+    className: 'chat-agent-sidecar-header',
+    style: AGENT_MESSAGE_SIDECAR_STYLES.header,
+  });
+  const title = createElement(documentLike, 'span', { text: 'Agent' });
+  const count = createElement(documentLike, 'span', { text: `${visible.length}/${parts.length}` });
+  header.appendChild(title);
+  header.appendChild(count);
+  root.appendChild(header);
+
+  visible.forEach((part) => {
+    const details = createElement(documentLike, 'details', {
+      className: 'chat-agent-sidecar-item',
+      style: AGENT_MESSAGE_SIDECAR_STYLES.details,
+    });
+    details.open = part.open;
+    const summary = createElement(documentLike, 'summary', {
+      style: AGENT_MESSAGE_SIDECAR_STYLES.summary,
+    });
+    const dot = createElement(documentLike, 'span', {
+      style: `${AGENT_MESSAGE_SIDECAR_STYLES.dot}background:${part.accent};`,
+    });
+    const label = createElement(documentLike, 'span', {
+      text: part.titleLabel || part.summaryLabel,
+      style: AGENT_MESSAGE_SIDECAR_STYLES.title,
+    });
+    const badge = createElement(documentLike, 'span', {
+      text: part.statusLabel || trim(part.status, 'running'),
+      style: `${AGENT_MESSAGE_SIDECAR_STYLES.badge}color:${part.accent};`,
+    });
+    summary.appendChild(dot);
+    summary.appendChild(label);
+    summary.appendChild(badge);
+    details.appendChild(summary);
+
+    const body = createElement(documentLike, 'div', {
+      style: AGENT_MESSAGE_SIDECAR_STYLES.body,
+    });
+    part.rows.slice(0, 4).forEach(([rowLabel, value]) => {
+      const row = createElement(documentLike, 'div', {
+        text: `${rowLabel}: ${value}`,
+      });
+      body.appendChild(row);
+    });
+    details.appendChild(body);
+    root.appendChild(details);
+  });
+
+  return root;
+};

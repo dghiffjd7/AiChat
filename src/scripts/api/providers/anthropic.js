@@ -319,7 +319,7 @@ export class AnthropicProvider {
      * 流式聊天
      */
     async *streamChat(messages, options = {}) {
-        const { signal, requestId, options: payloadOptionsRaw } = splitRequestOptions(options);
+        const { signal, requestId, onProviderToolCallDelta, options: payloadOptionsRaw } = splitRequestOptions(options);
         const maxTokens = payloadOptionsRaw?.maxTokens ?? payloadOptionsRaw?.max_tokens;
         const payloadOptions = { ...(payloadOptionsRaw || {}) };
         delete payloadOptions.maxTokens;
@@ -345,8 +345,14 @@ export class AnthropicProvider {
         let totalChars = 0;
         let sawFirstDelta = false;
         const blockKinds = new Map();
+        const notifyProviderToolCallDelta = data => {
+            try {
+                onProviderToolCallDelta?.(data, { provider: 'anthropic', model: this.model });
+            } catch {}
+        };
 
         const emitDelta = function* (data, transportLabel) {
+            notifyProviderToolCallDelta(data);
             const parts = extractAnthropicStreamParts(data, blockKinds);
             if (parts.reasoning) {
                 yield createReasoningStreamEvent(parts.reasoning, { provider: 'anthropic' });

@@ -89,6 +89,10 @@ const createFakeDocument = () => ({
     renderMessageBubbleContent: payload => {
       calls.push(['bubble', payload.message.id, payload.resolvedSessionId, payload.bubble]);
     },
+    buildMessageSidecarElement: ({ message }) => {
+      calls.push(['sidecar', message.id]);
+      return 'agent-sidecar';
+    },
     buildReactionSummaryElement: () => 'summary',
     createReactionTriggerButton: (_message, options) => {
       calls.push(['reaction-btn', options.isThreadingEnabled]);
@@ -96,7 +100,7 @@ const createFakeDocument = () => ({
       return 'button';
     },
     buildBubbleStack: payload => {
-      calls.push(['stack', payload.isUser, payload.reactionSummaryEl, payload.reactionButton]);
+      calls.push(['stack', payload.isUser, payload.messageSidecarEl, payload.reactionSummaryEl, payload.reactionButton]);
       return bubbleStack;
     },
     appendStandardMessageLayout: payload => {
@@ -120,9 +124,10 @@ const createFakeDocument = () => ({
   assert.deepEqual(calls, [
     ['wrapper', 'm1', false],
     ['bubble', 'm1', 'chat:1', bubble],
+    ['sidecar', 'm1'],
     ['reaction-btn', true],
     ['show-picker', 'btn', 'm1'],
-    ['stack', false, 'summary', 'button'],
+    ['stack', false, 'agent-sidecar', 'summary', 'button'],
     ['layout', standardWrapper, avatar, bubbleStack, 'chat'],
     ['bind', standardWrapper, 'm1'],
     ['selection', true, 'm1'],

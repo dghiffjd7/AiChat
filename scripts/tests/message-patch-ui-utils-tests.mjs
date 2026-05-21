@@ -74,6 +74,33 @@ const createWrapper = (message = {}) => {
 }
 
 {
+  const runtime = createMessagePatchUiRuntime({
+    normalizeReplyTarget: value => value ?? null,
+    normalizeReactionEntries: value => value ?? [],
+    resolveActiveSwipeMessage: message => message,
+    applyCreativeBubbleState: () => {},
+  });
+  const running = runtime.getMessageRenderSignature({
+    role: 'assistant',
+    type: 'text',
+    content: 'same',
+    meta: {
+      agentMessageParts: [{ type: 'agent_status', runId: 'run-1', status: 'running', title: 'Memory' }],
+    },
+  });
+  const done = runtime.getMessageRenderSignature({
+    role: 'assistant',
+    type: 'text',
+    content: 'same',
+    meta: {
+      agentMessageParts: [{ type: 'agent_status', runId: 'run-1', status: 'succeeded', title: 'Memory' }],
+    },
+  });
+  assert.notEqual(running, done);
+  console.log('ok - getMessageRenderSignature tracks agent message sidecar status changes');
+}
+
+{
   const creativeCalls = [];
   const runtime = createMessagePatchUiRuntime({
     normalizeReplyTarget: value => value ?? null,

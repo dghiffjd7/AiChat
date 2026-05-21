@@ -17,6 +17,7 @@ import {
     setDebugViewerVisibility,
     showDebugViewer,
 } from './debug-panel-viewer-utils.js';
+import { refreshAgentMessagePartsView } from './agent-message-parts-view.js';
 import { exportDebugTextFile } from './debug-panel-export-utils.js';
 import {
     appendDebugLog,
@@ -38,10 +39,12 @@ import {
     createDetachedTextareaCopyFallback,
     createSelectedTextareaCopyFallback,
     exportDebugTextFlow,
+    handleAgentRunDiagnosticsLoadError,
     handleBridgeContractDiagnosticsLoadError,
     handleCustomBundleDiagnosticsLoadError,
     handleDebugTraceTimelineLoadError,
     handleStorageMigrationDiagnosticsLoadError,
+    refreshAgentRunDiagnosticsView,
     refreshBridgeContractDiagnosticsView,
     refreshCustomBundleDiagnosticsView,
     refreshDebugTraceTimelineView,
@@ -65,6 +68,7 @@ export class DebugPanel {
         this.storageMigrationInspectBtn = null;
         this.bridgeContractInspectBtn = null;
         this.traceTimelineInspectBtn = null;
+        this.agentRunsInspectBtn = null;
         this.errorLogBtn = null;
         this.filterInput = null;
         this.filterClearBtn = null;
@@ -94,6 +98,13 @@ export class DebugPanel {
         this.traceTimelineText = null;
         this.traceTimelineRefresh = null;
         this.traceTimelineExport = null;
+        this.agentRunsOverlay = null;
+        this.agentRunsPanel = null;
+        this.agentRunsMeta = null;
+        this.agentRunsText = null;
+        this.agentRunsParts = null;
+        this.agentRunsRefresh = null;
+        this.agentRunsExport = null;
         this.errorLogOverlay = null;
         this.errorLogPanel = null;
         this.errorLogMeta = null;
@@ -112,6 +123,7 @@ export class DebugPanel {
             onShowStorageMigration: () => this.showStorageMigrationInspector(),
             onShowBridgeContracts: () => this.showBridgeContractInspector(),
             onShowTraceTimeline: () => this.showTraceTimelineInspector(),
+            onShowAgentRuns: () => this.showAgentRunsInspector(),
             onShowErrorLogs: () => this.showErrorLogs(),
             onClearLogs: ({ filterInput }) => {
                 this.clear();
@@ -140,6 +152,7 @@ export class DebugPanel {
         this.storageMigrationInspectBtn = dom.storageMigrationInspectBtn;
         this.bridgeContractInspectBtn = dom.bridgeContractInspectBtn;
         this.traceTimelineInspectBtn = dom.traceTimelineInspectBtn;
+        this.agentRunsInspectBtn = dom.agentRunsInspectBtn;
         this.errorLogBtn = dom.errorLogBtn;
         this.copyLogBtn = dom.copyLogBtn;
         this.filterInput = dom.filterInput;
@@ -544,6 +557,119 @@ export class DebugPanel {
         await showDebugViewer({
             overlay: this.traceTimelineOverlay,
             onShow: () => this.refreshTraceTimelineInspector(),
+        });
+    }
+
+    ensureAgentRunsInspector() {
+        if (this.agentRunsOverlay) return;
+        const viewer = createDebugViewerModal({
+            overlayId: 'debug-agent-runs-overlay',
+            panelId: 'debug-agent-runs-panel',
+            title: 'Agent Runs',
+            onClose: () => this.hideAgentRunsInspector(),
+            onRefresh: () => this.refreshAgentRunsInspector(),
+            onExport: () => this.exportAgentRunDiagnostics(),
+        });
+        bindDebugViewerRefs({
+            target: this,
+            prefix: 'agentRuns',
+            viewer,
+        });
+        this.agentRunsParts = document.createElement('div');
+        const content = this.agentRunsText?.parentNode || null;
+        if (content?.style) {
+            content.style.display = 'flex';
+            content.style.flexDirection = 'column';
+            content.style.gap = '10px';
+            content.style.minHeight = '0';
+        }
+        if (this.agentRunsText?.style) {
+            this.agentRunsText.style.height = 'auto';
+            this.agentRunsText.style.minHeight = '180px';
+            this.agentRunsText.style.flex = '1 1 0';
+        }
+        if (content?.insertBefore) {
+            content.insertBefore(this.agentRunsParts, this.agentRunsText);
+        } else {
+            content?.appendChild?.(this.agentRunsParts);
+        }
+    }
+
+    hideAgentRunsInspector() {
+        setDebugViewerVisibility({ overlay: this.agentRunsOverlay, visible: false });
+    }
+
+    async exportAgentRunDiagnostics() {
+        await exportDebugTextFlow({
+            text: String(this.agentRunsText?.value || ''),
+            filenamePrefix: 'agent-runs',
+            successLabel: 'Agent run 诊断已导出',
+            emptyMessage: '暂无 Agent run 诊断可导出',
+            exportFailureToast: 'Agent run 诊断导出失败',
+            exportFailurePrefix: 'Agent run 诊断导出失败: ',
+            buildFilename: buildDebugTextFilename,
+            exportTextFile: (text, filename, successLabel) => exportDebugTextFile({
+                text,
+                filename,
+                successLabel,
+                onSuccess: (message) => window.toastr?.success?.(message),
+            }),
+            onWarning: (message) => window.toastr?.warning?.(message),
+            onLogWarn: (message) => this.log(message, 'warn'),
+            onError: (message) => window.toastr?.error?.(message),
+        });
+    }
+
+    async refreshAgentRunsInspector() {
+        const viewer = createDebugViewerTextBindings({
+            metaEl: this.agentRunsMeta,
+            textEl: this.agentRunsText,
+        });
+        if (!this.agentRunsOverlay || !viewer.hasViewer()) return;
+        try {
+            const actions = window.appBridge?.debugUiRegistry?.actions || {};
+            const providerToolExperimentDiagnostics = typeof actions.getProviderToolExperimentDiagnostics === 'function'
+                ? actions.getProviderToolExperimentDiagnostics({ limit: 8 })
+                : null;
+            refreshAgentRunDiagnosticsView({
+                store: window.appBridge?.debugUiRegistry?.stores?.agentRunStore || null,
+                providerToolExperimentDiagnostics,
+                options: { limit: 80, eventLimit: 500 },
+                setMeta: viewer.setMeta,
+                setText: viewer.setText,
+            });
+            const agentRunParts = typeof actions.listAgentRunParts === 'function'
+                ? actions.listAgentRunParts({
+                    limit: 12,
+                    includeSucceededSteps: false,
+                    maxSteps: 8,
+                    maxToolCalls: 8,
+                })
+                : [];
+            const providerToolParts = typeof actions.listProviderToolExperimentParts === 'function'
+                ? actions.listProviderToolExperimentParts({ limit: 6 })
+                : [];
+            refreshAgentMessagePartsView({
+                container: this.agentRunsParts,
+                parts: [...providerToolParts, ...agentRunParts],
+                documentRef: document,
+                emptyText: 'No agent message parts',
+            });
+        } catch (err) {
+            handleAgentRunDiagnosticsLoadError({
+                error: err,
+                setMeta: viewer.setMeta,
+                setText: viewer.setText,
+                logWarn: (message) => this.log(message, 'warn'),
+            });
+        }
+    }
+
+    async showAgentRunsInspector() {
+        this.ensureAgentRunsInspector();
+        await showDebugViewer({
+            overlay: this.agentRunsOverlay,
+            onShow: () => this.refreshAgentRunsInspector(),
         });
     }
 

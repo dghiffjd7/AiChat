@@ -3,6 +3,8 @@ import http from 'node:http';
 import { setTimeout as delay } from 'node:timers/promises';
 import { OpenAIProvider } from '../../src/scripts/api/providers/openai.js';
 import { AnthropicProvider } from '../../src/scripts/api/providers/anthropic.js';
+import { GeminiProvider } from '../../src/scripts/api/providers/gemini.js';
+import { VertexAIProvider } from '../../src/scripts/api/providers/vertexai.js';
 import { splitRequestOptions } from '../../src/scripts/api/abort.js';
 
 const tests = [];
@@ -30,13 +32,16 @@ const withServer = async (handler, run) => {
 };
 
 test('splitRequestOptions: nativeRequestId should map to requestId', () => {
+  const onProviderToolCallDelta = () => {};
   const options = splitRequestOptions({
     signal: 'sig',
     nativeRequestId: 'abc_123',
+    onProviderToolCallDelta,
     temperature: 0.7,
   });
   assert.equal(options.signal, 'sig');
   assert.equal(options.requestId, 'abc_123');
+  assert.equal(options.onProviderToolCallDelta, onProviderToolCallDelta);
   assert.deepEqual(options.options, { temperature: 0.7 });
 });
 
@@ -140,6 +145,28 @@ test('openai legacy chat request should keep max_tokens', () => {
   assert.equal(Object.hasOwn(prepared.payload, 'max_completion_tokens'), false);
 });
 
+test('openai prepareChatRequest should keep provider tool delta callback out of payload', () => {
+  const onProviderToolCallDelta = () => {};
+  const provider = new OpenAIProvider({
+    provider: 'openai',
+    apiKey: 'test-key',
+    baseUrl: 'https://api.openai.com/v1',
+    model: 'gpt-4o',
+    timeout: 5000,
+  });
+  const prepared = provider.prepareChatRequest([{ role: 'user', content: 'hello' }], {
+    onProviderToolCallDelta,
+    nativeRequestId: 'tool_probe_case',
+    temperature: 0.7,
+  });
+
+  assert.equal(prepared.onProviderToolCallDelta, onProviderToolCallDelta);
+  assert.equal(prepared.requestId, 'tool_probe_case');
+  assert.equal(Object.hasOwn(prepared.payload, 'onProviderToolCallDelta'), false);
+  assert.equal(Object.hasOwn(prepared.payload, 'nativeRequestId'), false);
+  assert.equal(prepared.payload.temperature, 0.7);
+});
+
 test('deepseek request should not use OpenAI max_completion_tokens mapping', () => {
   const provider = new OpenAIProvider({
     provider: 'deepseek',
@@ -233,6 +260,148 @@ test('openai stream: abort should stop further chunks', async () => {
   });
 });
 
+test('openai stream: should expose raw provider tool-call deltas without yielding tool text', async () => {
+  const requestBodies = [];
+  await withServer(async (req, res) => {
+    if (req.url !== '/chat/completions' || req.method !== 'POST') {
+      res.writeHead(404);
+      res.end();
+      return;
+    }
+    let body = '';
+    req.setEncoding('utf8');
+    for await (const chunk of req) body += chunk;
+    requestBodies.push(body);
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+    });
+    res.write('data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"contact_profile.list","arguments":"{\\"limit\\":"}}]}}]}\n\n');
+    res.write('data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"1}"}}]}}]}\n\n');
+    res.write('data: {"choices":[{"finish_reason":"tool_calls"}]}\n\n');
+    res.write('data: [DONE]\n\n');
+    res.end();
+  }, async (baseUrl) => {
+    const provider = new OpenAIProvider({
+      provider: 'openai',
+      apiKey: 'test-key',
+      baseUrl,
+      model: 'test-model',
+      timeout: 5000,
+    });
+    const callbackEvents = [];
+    const chunks = [];
+    for await (const chunk of provider.streamChat([{ role: 'user', content: 'go' }], {
+      nativeRequestId: 'stream_tool_probe_case',
+      onProviderToolCallDelta: data => callbackEvents.push(data),
+    })) {
+      chunks.push(chunk);
+    }
+
+    assert.deepEqual(chunks, []);
+    assert.equal(callbackEvents.length, 3);
+    assert.equal(callbackEvents[0].choices[0].delta.tool_calls[0].id, 'call_1');
+    assert.equal(callbackEvents[2].choices[0].finish_reason, 'tool_calls');
+    const payload = JSON.parse(requestBodies[0]);
+    assert.equal(Object.hasOwn(payload, 'onProviderToolCallDelta'), false);
+    assert.equal(Object.hasOwn(payload, 'nativeRequestId'), false);
+  });
+});
+
+test('gemini stream: should expose raw functionCall deltas without payload leakage', async () => {
+  const requestBodies = [];
+  await withServer(async (req, res) => {
+    if (!req.url.startsWith('/v1beta/models/test-model:streamGenerateContent') || req.method !== 'POST') {
+      res.writeHead(404);
+      res.end();
+      return;
+    }
+    let body = '';
+    req.setEncoding('utf8');
+    for await (const chunk of req) body += chunk;
+    requestBodies.push(body);
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+    });
+    res.write('data: {"candidates":[{"content":{"parts":[{"functionCall":{"name":"contact_profile.list","args":{"limit":1}}}]}}]}\n\n');
+    res.write('data: [DONE]\n\n');
+    res.end();
+  }, async (baseUrl) => {
+    const provider = new GeminiProvider({
+      apiKey: 'test-key',
+      baseUrl,
+      model: 'test-model',
+      timeout: 5000,
+    });
+    const callbackEvents = [];
+    const chunks = [];
+    for await (const chunk of provider.streamChat([{ role: 'user', content: 'go' }], {
+      nativeRequestId: 'gemini_tool_probe_case',
+      onProviderToolCallDelta: data => callbackEvents.push(data),
+    })) {
+      chunks.push(chunk);
+    }
+
+    assert.deepEqual(chunks, []);
+    assert.equal(callbackEvents.length, 1);
+    assert.equal(callbackEvents[0].candidates[0].content.parts[0].functionCall.name, 'contact_profile.list');
+    const payload = JSON.parse(requestBodies[0]);
+    assert.equal(Object.hasOwn(payload, 'onProviderToolCallDelta'), false);
+    assert.equal(Object.hasOwn(payload, 'nativeRequestId'), false);
+  });
+});
+
+test('vertexai stream: should expose raw functionCall deltas without payload leakage', async () => {
+  const requestBodies = [];
+  await withServer(async (req, res) => {
+    if (!req.url.startsWith('/v1/projects/proj/locations/us-central1/publishers/google/models/test-model:streamGenerateContent') || req.method !== 'POST') {
+      res.writeHead(404);
+      res.end();
+      return;
+    }
+    let body = '';
+    req.setEncoding('utf8');
+    for await (const chunk of req) body += chunk;
+    requestBodies.push(body);
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+    });
+    res.write('data: {"candidates":[{"content":{"parts":[{"functionCall":{"name":"contact_profile.list","args":{"limit":2}}}]}}]}\n\n');
+    res.write('data: [DONE]\n\n');
+    res.end();
+  }, async (baseUrl) => {
+    const provider = new VertexAIProvider({
+      vertexaiProjectId: 'proj',
+      vertexaiRegion: 'us-central1',
+      model: 'test-model',
+      timeout: 5000,
+    });
+    provider.baseHost = baseUrl;
+    provider.baseUrl = baseUrl;
+    provider.getHeaders = async () => ({ 'Content-Type': 'application/json', Authorization: 'Bearer test-token' });
+    const callbackEvents = [];
+    const chunks = [];
+    for await (const chunk of provider.streamChat([{ role: 'user', content: 'go' }], {
+      nativeRequestId: 'vertex_tool_probe_case',
+      onProviderToolCallDelta: data => callbackEvents.push(data),
+    })) {
+      chunks.push(chunk);
+    }
+
+    assert.deepEqual(chunks, []);
+    assert.equal(callbackEvents.length, 1);
+    assert.equal(callbackEvents[0].candidates[0].content.parts[0].functionCall.name, 'contact_profile.list');
+    const payload = JSON.parse(requestBodies[0]);
+    assert.equal(Object.hasOwn(payload, 'onProviderToolCallDelta'), false);
+    assert.equal(Object.hasOwn(payload, 'nativeRequestId'), false);
+  });
+});
+
 test('openai native http: should pass requestId and support external abort', async () => {
   const prevTauri = globalThis.__TAURI__;
   const pendingById = new Map();
@@ -284,6 +453,7 @@ test('openai native http: should pass requestId and support external abort', asy
 
 test('anthropic native stream: should yield incremental deltas from tauri stream commands', async () => {
   const prevTauri = globalThis.__TAURI__;
+  const callbackEvents = [];
   const readQueue = [
     {
       status: 200,
@@ -342,11 +512,14 @@ test('anthropic native stream: should yield incremental deltas from tauri stream
     const chunks = [];
     for await (const chunk of provider.streamChat([{ role: 'user', content: 'go' }], {
       nativeRequestId: 'anthropic_native_stream_case',
+      onProviderToolCallDelta: data => callbackEvents.push(data),
     })) {
       chunks.push(chunk);
     }
 
     assert.deepEqual(chunks, ['A', 'B']);
+    assert.equal(callbackEvents.length, 2);
+    assert.equal(callbackEvents[0].type, 'content_block_delta');
     assert.equal(startedRequestId, 'anthropic_native_stream_case');
     assert.equal(closedRequestId, 'anthropic_native_stream_case');
   } finally {

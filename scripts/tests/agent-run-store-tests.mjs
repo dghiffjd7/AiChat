@@ -108,10 +108,98 @@ const installLocalStorage = () => {
     assert.deepEqual(store.listRuns({ sessionId: 's1' }).map(item => item.id), ['run-1']);
     assert.deepEqual(store.listEvents({ runId: 'run-1' }).map(item => item.id), ['event-1']);
     assert.deepEqual(Object.keys(store.exportState().runs), ['run-1']);
+    const view = store.buildListView({ limit: 5 });
+    assert.equal(view.meta.total, 1);
+    assert.equal(view.runs[0].id, 'run-1');
+    const stats = store.getStats();
+    assert.equal(stats.runCount, 1);
+    assert.equal(stats.eventCount, 1);
     await store.writeChain;
     assert.ok(local.backing.get('agent_run_store_v1')?.includes('run-1'));
     console.log('ok - AgentRunStore records runs, steps, events, exports, and persists locally');
   } finally {
     local.restore();
   }
+}
+
+{
+  let currentTime = 5000;
+  const store = new AgentRunStore({
+    now: () => currentTime,
+    maxRuns: 5,
+    maxEvents: 10,
+  });
+  for (let index = 0; index < 4; index += 1) {
+    currentTime += 10;
+    const run = store.upsertRun({
+      id: `run-${index}`,
+      kind: 'task',
+      status: 'succeeded',
+      updatedAt: currentTime,
+    });
+    store.recordEvent({
+      id: `event-${index}`,
+      runId: run.id,
+      type: 'agent.run.finished',
+      status: 'succeeded',
+      createdAt: currentTime,
+    });
+  }
+  const compacted = store.compact({ maxRuns: 2, maxEvents: 2 });
+  assert.equal(compacted.runCount, 2);
+  assert.equal(compacted.eventCount, 2);
+  assert.deepEqual(store.listRuns().map(run => run.id), ['run-3', 'run-2']);
+  assert.deepEqual(store.listEvents().map(event => event.id), ['event-2', 'event-3']);
+  console.log('ok - AgentRunStore compact trims stale runs and events on demand');
+}
+
+{
+  let currentTime = 8000;
+  const store = new AgentRunStore({
+    now: () => currentTime,
+    maxRuns: 3,
+    maxEvents: 4,
+  });
+  for (let index = 0; index < 6; index += 1) {
+    currentTime += 10;
+    store.upsertRun({
+      id: `long-run-${index}`,
+      kind: 'long_session_task',
+      sessionId: 'long-session',
+      status: 'succeeded',
+      updatedAt: currentTime,
+      exportable: index !== 5,
+    });
+    store.recordEvent({
+      id: `long-event-start-${index}`,
+      runId: `long-run-${index}`,
+      sessionId: 'long-session',
+      type: 'agent.run.started',
+      status: 'running',
+      createdAt: currentTime,
+    });
+    currentTime += 1;
+    store.recordEvent({
+      id: `long-event-finish-${index}`,
+      runId: `long-run-${index}`,
+      sessionId: 'long-session',
+      type: 'agent.run.finished',
+      status: 'succeeded',
+      createdAt: currentTime,
+    });
+  }
+
+  const stats = store.getStats();
+  assert.equal(stats.runCount, 3);
+  assert.equal(stats.eventCount, 4);
+  assert.deepEqual(store.listRuns().map(run => run.id), ['long-run-5', 'long-run-4', 'long-run-3']);
+
+  const exported = store.exportState();
+  assert.deepEqual(Object.keys(exported.runs).sort(), ['long-run-3', 'long-run-4']);
+  assert.equal(exported.events.every(event => Object.hasOwn(exported.runs, event.runId)), true);
+
+  const fullExport = store.exportState({ includeNonExportable: true });
+  assert.deepEqual(Object.keys(fullExport.runs).sort(), ['long-run-3', 'long-run-4', 'long-run-5']);
+  assert.equal(fullExport.events.every(event => Object.hasOwn(fullExport.runs, event.runId)), true);
+  console.log('ok - AgentRunStore enforces long-session cache limits and filters export payloads');
 }

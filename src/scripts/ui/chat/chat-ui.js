@@ -129,6 +129,7 @@ import {
 import { createRpFloorUiRuntime } from './rp-floor-ui-utils.js';
 import { renderTextWithStickersCore } from './sticker-text-ui-utils.js';
 import { renderMessageBubbleContentCore } from './message-bubble-content-ui-utils.js';
+import { buildAgentMessageSidecarElement } from './agent-message-sidecar-ui-utils.js';
 import {
   appendStandardMessageLayoutCore,
   buildBubbleStackCore,
@@ -1610,6 +1611,7 @@ export class ChatUI {
           errorToast: text => window.toastr?.error?.(text),
         });
       },
+      buildMessageSidecarElement: payload => buildAgentMessageSidecarElement(payload),
       buildReactionSummaryElement: nextMessage => this.buildReactionSummaryElement(nextMessage),
       createReactionTriggerButton,
       buildBubbleStack: payload => buildBubbleStackCore(payload),

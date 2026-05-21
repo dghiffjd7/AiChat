@@ -3348,15 +3348,31 @@ class AppBridge {
       messages = this.normalizeOutgoingProviderMessages(messages, config);
       const genOptions = this.getGenerationOptions(presetContext, config);
       const providerDirectives = this.buildProviderRequestDirectives(nextContext, presetContext, config);
+      const sessionId = String(nextContext?.session?.id || this.activeSessionId || 'default').trim() || 'default';
+      const captureProviderToolCallDeltas = this.debugUiRegistry?.actions?.captureProviderToolCallDeltas;
       const requestOptions = {
         ...(genOptions || {}),
         ...(providerDirectives || {}),
         signal: abortController.signal,
         nativeRequestId,
+        ...(typeof captureProviderToolCallDeltas === 'function'
+          ? {
+              onProviderToolCallDelta: (data, meta = {}) => {
+                try {
+                  captureProviderToolCallDeltas([data], {
+                    provider: meta?.provider || config?.provider,
+                    model: meta?.model || config?.model,
+                    sessionId,
+                    requestId: nativeRequestId,
+                    source: 'bridge.generateStream',
+                  });
+                } catch {}
+              },
+            }
+          : {}),
       };
       const preparedRequest = requestClient?.prepareChatRequest?.(messages, requestOptions) || null;
       const responsePrefix = String(preparedRequest?.responsePrefix || '');
-      const sessionId = String(nextContext?.session?.id || this.activeSessionId || 'default').trim() || 'default';
 
       logger.debug('发送消息到 LLM:', { messageCount: messages.length, stream: config.stream });
       // Debug: keep the exact request payload used for the latest generation
