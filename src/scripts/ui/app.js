@@ -15,10 +15,17 @@ import { createAgentToolRegistry } from '../agent/agent-tool-registry.js';
 import { createProviderToolCallRuntime } from '../agent/provider-tool-call-runtime.js';
 import { createProviderToolExperimentRuntime } from '../agent/provider-tool-experiment-runtime.js';
 import {
+  readProviderToolSessionGate,
+  writeProviderToolSessionGate,
+} from '../agent/provider-tool-session-gate.js';
+import {
   PROVIDER_TOOL_PERMISSION_ACTIONS,
   applyProviderToolPermissionAction,
   buildProviderToolPermissionPromptMessage,
 } from '../agent/provider-tool-permission-actions.js';
+import { createProviderToolPendingPermissionStore } from '../agent/provider-tool-pending-permissions.js';
+import { createProviderToolPendingContinuationPlanner } from '../agent/provider-tool-pending-continuation.js';
+import { createProviderToolPendingResumeExecutor } from '../agent/provider-tool-pending-resume.js';
 import { registerContactProfileAgentTools } from '../agent/tools/contact-profile-tools.js';
 import { registerImageAgentTools } from '../agent/tools/image-tools.js';
 import { registerMemoryAgentTools } from '../agent/tools/memory-tools.js';
@@ -1986,14 +1993,42 @@ const initApp = async () => {
     recordTraceEvent: recordDebugTraceEvent,
     logger,
   });
+  const providerToolPendingPermissionStore = createProviderToolPendingPermissionStore();
   const providerToolCallRuntime = createProviderToolCallRuntime({
     toolRegistry: agentToolRegistry,
+    pendingPermissionStore: providerToolPendingPermissionStore,
     logger,
   });
   const providerToolExperimentRuntime = createProviderToolExperimentRuntime({
     providerToolCallRuntime,
     allowedTools: ['contact_profile.list'],
     enabledByDefault: false,
+  });
+  const readCurrentProviderToolSessionGate = (sessionId = chatStore.getCurrent()) => readProviderToolSessionGate({
+    chatStore,
+    sessionId,
+    allowedTools: providerToolExperimentRuntime.getStatus().allowedTools,
+  });
+  const writeCurrentProviderToolSessionGate = (options = {}) => {
+    const opts = options && typeof options === 'object' ? options : {};
+    return writeProviderToolSessionGate({
+      chatStore,
+      sessionId: opts.sessionId || chatStore.getCurrent(),
+      enabled: opts.enabled === true,
+      allowedTools: providerToolExperimentRuntime.getStatus().allowedTools,
+      source: opts.source || 'debug_panel',
+      reason: opts.reason || '',
+    });
+  };
+  const providerToolPendingResumeExecutor = createProviderToolPendingResumeExecutor({
+    toolRegistry: agentToolRegistry,
+    pendingPermissionStore: providerToolPendingPermissionStore,
+    readSessionGate: sessionId => readCurrentProviderToolSessionGate(sessionId || chatStore.getCurrent()),
+    logger,
+  });
+  const providerToolPendingContinuationPlanner = createProviderToolPendingContinuationPlanner({
+    pendingPermissionStore: providerToolPendingPermissionStore,
+    allowedTools: providerToolExperimentRuntime.getStatus().allowedTools,
   });
   const requestProviderToolPermission = async (request = {}) => {
     const action = await appChoice({
@@ -2011,6 +2046,67 @@ const initApp = async () => {
       sessionId: chatStore.getCurrent(),
       layer: 'session',
     });
+  };
+  const resumeProviderToolPendingPermission = (options = {}) => {
+    const opts = options && typeof options === 'object' ? options : { id: options };
+    return providerToolPendingResumeExecutor.resume(opts.id || opts.pendingPermissionId || '', opts);
+  };
+  const planProviderToolPendingContinuation = (options = {}) => {
+    const opts = options && typeof options === 'object' ? options : { id: options };
+    return providerToolPendingContinuationPlanner.plan(opts.id || opts.pendingPermissionId || '', opts);
+  };
+  const listProviderToolPendingResumeParts = (options = {}) => {
+    const opts = options && typeof options === 'object' ? options : {};
+    const limit = Math.max(0, Math.trunc(Number(opts.limit || 0)) || 0);
+    return providerToolPendingPermissionStore
+      .list({
+        ...opts,
+        limit: limit ? Math.max(limit * 4, 12) : 100,
+      })
+      .flatMap(entry => (Array.isArray(entry?.resumeParts) ? entry.resumeParts : []))
+      .slice(0, limit || undefined);
+  };
+  const resolveProviderToolPendingPermission = async (options = {}) => {
+    const opts = options && typeof options === 'object' ? options : {};
+    const pendingPermissionId = String(opts.id || opts.pendingPermissionId || '').trim();
+    const before = providerToolPendingPermissionStore.get(pendingPermissionId);
+    const pending = providerToolPendingPermissionStore.resolve(
+      pendingPermissionId,
+      opts.action || PROVIDER_TOOL_PERMISSION_ACTIONS.deny,
+      { reason: opts.reason || '' },
+    );
+    if (!pending) return null;
+    const resolvedNow = before?.status === 'pending' && pending.status !== 'pending';
+    const permission = resolvedNow
+      ? applyProviderToolPermissionAction(pending.action, pending.request || {}, {
+          permissionEvaluator: agentPermissionEvaluator,
+          sessionId: pending.sessionId || chatStore.getCurrent(),
+          layer: 'session',
+        })
+      : null;
+    const shouldResume = pending.decision === 'allow' && opts.resume !== false;
+    const resume = shouldResume
+      ? await providerToolPendingResumeExecutor.resume(pending.id, opts.resumeOptions || {})
+      : null;
+    const continuation = resume?.status === 'succeeded' && opts.planContinuation !== false
+      ? await providerToolPendingContinuationPlanner.plan(
+          pending.id,
+          opts.continuationOptions || {},
+        )
+      : null;
+    const finalPending = continuation?.pending || resume?.pending || pending;
+    return {
+      pending: finalPending,
+      permission,
+      resume,
+      continuation,
+      resumed: resume?.resumed === true,
+      continuationPlanned: continuation?.ok === true,
+      resumeContract: finalPending.resumeContract,
+      replayChat: false,
+      writesChat: false,
+      runsProvider: continuation?.runsProvider === true,
+    };
   };
   const lineageAgentRuntime = createLineageAgentRuntime({
     agentTaskRuntime,
@@ -2081,6 +2177,9 @@ const initApp = async () => {
         agentToolRegistry,
         providerToolCallRuntime,
         providerToolExperimentRuntime,
+        providerToolPendingPermissionStore,
+        providerToolPendingContinuationPlanner,
+        providerToolPendingResumeExecutor,
         contactProfilerAgent,
         worldbookAuditAgent,
       },
@@ -2106,6 +2205,11 @@ const initApp = async () => {
           providerToolCallRuntime.clearLoopGuard();
           return providerToolCallRuntime.getLoopGuardSnapshot();
         },
+        getProviderToolSessionGate: (options = {}) => {
+          const opts = options && typeof options === 'object' ? options : {};
+          return readCurrentProviderToolSessionGate(opts.sessionId || chatStore.getCurrent());
+        },
+        setProviderToolSessionGate: (options = {}) => writeCurrentProviderToolSessionGate(options || {}),
         getProviderToolExperimentStatus: () => providerToolExperimentRuntime.getStatus(),
         setProviderToolExperimentEnabled: enabled => providerToolExperimentRuntime.setEnabled(enabled === true),
         getProviderToolExperimentDiagnostics: options => providerToolExperimentRuntime.getDiagnostics(options || {}),
@@ -2117,6 +2221,14 @@ const initApp = async () => {
             .flatMap(entry => (Array.isArray(entry?.parts) ? entry.parts : []))
         ),
         requestProviderToolPermission,
+        listProviderToolPendingPermissions: options => providerToolPendingPermissionStore.list(options || {}),
+        getProviderToolPendingPermission: id => providerToolPendingPermissionStore.get(id),
+        getProviderToolPendingPermissionStats: () => providerToolPendingPermissionStore.getStats(),
+        resolveProviderToolPendingPermission,
+        resumeProviderToolPendingPermission,
+        planProviderToolPendingContinuation,
+        listProviderToolPendingResumeParts,
+        clearProviderToolPendingPermissions: () => providerToolPendingPermissionStore.clear(),
         runProviderToolCallExperiment: (options = {}) => {
           const opts = options && typeof options === 'object' ? options : {};
           const hasExplicitArgs = Object.prototype.hasOwnProperty.call(opts, 'arguments') ||

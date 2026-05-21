@@ -61,6 +61,8 @@ import {
     permissions: ['memory:write'],
     riskLevel: 'medium',
     checks: [{ decision: 'ask' }],
+    pendingPermissionId: 'pending-1',
+    requestId: 'stream-1',
     now: () => 3000,
   });
   assert.equal(part.type, PROVIDER_TOOL_CALL_PART_TYPES.permissionRequest);
@@ -68,6 +70,12 @@ import {
   assert.equal(part.summary, 'permission required for memory.write');
   assert.deepEqual(part.metadata.permissions, ['memory:write']);
   assert.deepEqual(part.metadata.argsPreview, { rowId: 'r1' });
+  assert.equal(part.metadata.interaction.mode, 'deferred_message_part');
+  assert.equal(part.metadata.interaction.presentation, 'message_part');
+  assert.equal(part.metadata.interaction.promptModal, false);
+  assert.deepEqual(part.metadata.interaction.allowedActions, ['allow_once', 'deny', 'remember_allow']);
+  assert.equal(part.metadata.pendingPermissionId, 'pending-1');
+  assert.equal(part.metadata.requestId, 'stream-1');
   console.log('ok - buildProviderToolPermissionRequestPart captures ask UI payload shape');
 }
 

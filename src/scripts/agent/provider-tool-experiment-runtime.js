@@ -1,6 +1,10 @@
 import { createProviderToolCallDeltaAccumulator } from './provider-tool-call-delta-adapter.js';
 import { createProviderToolLlmClientNativeRunner } from './provider-tool-llmclient-native-runner.js';
 import {
+  buildProviderToolPermissionInteraction,
+  buildProviderToolPermissionStrategySummary,
+} from './provider-tool-permission-interaction.js';
+import {
   buildProviderToolLoopContinuation,
   runProviderToolLoopController,
 } from './provider-tool-loop-controller.js';
@@ -137,6 +141,7 @@ export const createProviderToolExperimentRuntime = ({
       runnerFacade: isPlainObject(entry.runnerFacade) ? clone(entry.runnerFacade) : null,
       runnerDryRun: isPlainObject(entry.runnerDryRun) ? clone(entry.runnerDryRun) : null,
       realRunnerDebug: isPlainObject(entry.realRunnerDebug) ? clone(entry.realRunnerDebug) : null,
+      permissionStrategy: isPlainObject(entry.permissionStrategy) ? clone(entry.permissionStrategy) : null,
       loopState: isPlainObject(entry.loopState) ? clone(entry.loopState) : null,
       toolCall: entry.toolCall ? clone(entry.toolCall) : null,
     };
@@ -158,19 +163,38 @@ export const createProviderToolExperimentRuntime = ({
   };
 
   const buildPermissionRequester = (opts, normalizedToolCall) => async request => {
+    const interaction = buildProviderToolPermissionInteraction(request, {
+      sessionId: normalizedToolCall.sessionId,
+      sessionGate: opts.sessionGate,
+      promptPermission: opts.promptPermission === true,
+      source: opts.source || normalizedToolCall.source || 'provider-tool-experiment',
+      timeoutMs: opts.permissionTimeoutMs,
+    });
     if (opts.allowOnce === true || opts.allowPermission === true) {
-      return { decision: 'allow', request };
+      return { decision: 'allow', request, interaction };
     }
     if (opts.denyPermission === true) {
-      return { decision: 'deny', request };
+      return { decision: 'deny', request, interaction };
     }
     if (typeof opts.requestPermission === 'function') {
-      return await opts.requestPermission(request, { toolCall: normalizedToolCall, experiment: getStatus() });
+      const requested = await opts.requestPermission({
+        ...request,
+        interaction,
+      }, { toolCall: normalizedToolCall, experiment: getStatus() });
+      return isPlainObject(requested) && !isPlainObject(requested.interaction)
+        ? { ...requested, interaction }
+        : requested;
     }
     if (typeof requestPermission === 'function') {
-      return await requestPermission(request, { toolCall: normalizedToolCall, experiment: getStatus() });
+      const requested = await requestPermission({
+        ...request,
+        interaction,
+      }, { toolCall: normalizedToolCall, experiment: getStatus() });
+      return isPlainObject(requested) && !isPlainObject(requested.interaction)
+        ? { ...requested, interaction }
+        : requested;
     }
-    return { decision: 'ask', request };
+    return { decision: 'ask', action: 'deferred', request, interaction };
   };
 
   const run = async (options = {}) => {
@@ -252,28 +276,42 @@ export const createProviderToolExperimentRuntime = ({
       model: trim(opts.model || toolCall.model, model),
       sessionId: trim(opts.sessionId || toolCall.sessionId, sessionId),
     };
+    const permissionStrategy = buildProviderToolPermissionStrategySummary(buildProviderToolPermissionInteraction({}, {
+      sessionId: normalizedToolCall.sessionId,
+      sessionGate: opts.sessionGate,
+      promptPermission: opts.promptPermission === true,
+      source: opts.source || 'provider-tool-experiment',
+      timeoutMs: opts.permissionTimeoutMs,
+    }));
     const result = await providerToolCallRuntime.executeToolCall(normalizedToolCall, {
       provider: normalizedToolCall.provider,
       model: normalizedToolCall.model,
       sessionId: normalizedToolCall.sessionId,
+      source: opts.source || normalizedToolCall.source || 'provider-tool-experiment',
+      requestId: opts.requestId || opts.streamId || opts.generationId,
+      promptPermission: opts.promptPermission === true,
+      permissionTimeoutMs: opts.permissionTimeoutMs,
+      providerToolSessionGate: opts.sessionGate,
       requestPermission: buildPermissionRequester(opts, normalizedToolCall),
     });
     const completed = {
       ...result,
       experiment: getStatus(),
       explicitEnabled,
+      permissionStrategy,
     };
     if (shouldRecord) {
       recordDiagnostics({
         kind: 'tool_call',
         ...completed,
         toolCall: normalizedToolCall,
-        provider: normalizedToolCall.provider,
-        model: normalizedToolCall.model,
-        sessionId: normalizedToolCall.sessionId,
-        createdAt: startedAt,
-        updatedAt: readNow(),
-      });
+          provider: normalizedToolCall.provider,
+          model: normalizedToolCall.model,
+          sessionId: normalizedToolCall.sessionId,
+          permissionStrategy,
+          createdAt: startedAt,
+          updatedAt: readNow(),
+        });
     }
     return completed;
   };
@@ -317,6 +355,13 @@ export const createProviderToolExperimentRuntime = ({
       explicitEnabled,
       experimentEnabled: enabled,
     });
+    const permissionStrategy = buildProviderToolPermissionStrategySummary(buildProviderToolPermissionInteraction({}, {
+      sessionId: trim(opts.sessionId, sessionId),
+      sessionGate: opts.sessionGate,
+      promptPermission: opts.promptPermission === true,
+      source: opts.source || 'provider-tool-experiment',
+      timeoutMs: opts.permissionTimeoutMs,
+    }));
     const completed = await runProviderToolLoopController({
       events,
       enabled: true,
@@ -346,10 +391,12 @@ export const createProviderToolExperimentRuntime = ({
       model: trim(opts.model, model),
       sessionId: trim(opts.sessionId, sessionId),
       realRunnerDebug,
+      permissionStrategy,
       createdAt: startedAt,
       updatedAt: readNow(),
     });
     completed.realRunnerDebug = realRunnerDebug;
+    completed.permissionStrategy = permissionStrategy;
     return completed;
   };
 

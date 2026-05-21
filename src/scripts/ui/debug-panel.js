@@ -19,6 +19,7 @@ import {
 } from './debug-panel-viewer-utils.js';
 import { refreshAgentMessagePartsView } from './agent-message-parts-view.js';
 import { refreshProviderRealRunnerDebugView } from './provider-real-runner-debug-view.js';
+import { refreshProviderToolSafetyPreflightView } from './provider-tool-safety-preflight-view.js';
 import { exportDebugTextFile } from './debug-panel-export-utils.js';
 import {
     appendDebugLog,
@@ -103,6 +104,7 @@ export class DebugPanel {
         this.agentRunsPanel = null;
         this.agentRunsMeta = null;
         this.agentRunsText = null;
+        this.agentRunsSafetyPreflightState = null;
         this.agentRunsRealRunnerState = null;
         this.agentRunsParts = null;
         this.agentRunsRefresh = null;
@@ -577,6 +579,7 @@ export class DebugPanel {
             prefix: 'agentRuns',
             viewer,
         });
+        this.agentRunsSafetyPreflightState = document.createElement('div');
         this.agentRunsRealRunnerState = document.createElement('div');
         this.agentRunsParts = document.createElement('div');
         const content = this.agentRunsText?.parentNode || null;
@@ -592,9 +595,11 @@ export class DebugPanel {
             this.agentRunsText.style.flex = '1 1 0';
         }
         if (content?.insertBefore) {
+            content.insertBefore(this.agentRunsSafetyPreflightState, this.agentRunsText);
             content.insertBefore(this.agentRunsRealRunnerState, this.agentRunsText);
             content.insertBefore(this.agentRunsParts, this.agentRunsText);
         } else {
+            content?.appendChild?.(this.agentRunsSafetyPreflightState);
             content?.appendChild?.(this.agentRunsRealRunnerState);
             content?.appendChild?.(this.agentRunsParts);
         }
@@ -636,12 +641,49 @@ export class DebugPanel {
             const providerToolExperimentDiagnostics = typeof actions.getProviderToolExperimentDiagnostics === 'function'
                 ? actions.getProviderToolExperimentDiagnostics({ limit: 8 })
                 : null;
+            const providerToolExperimentStatus = typeof actions.getProviderToolExperimentStatus === 'function'
+                ? actions.getProviderToolExperimentStatus()
+                : providerToolExperimentDiagnostics?.status || null;
+            const permissionRules = typeof actions.listAgentPermissionRules === 'function'
+                ? actions.listAgentPermissionRules()
+                : [];
+            const loopGuard = typeof actions.getProviderToolCallLoopGuardSnapshot === 'function'
+                ? actions.getProviderToolCallLoopGuardSnapshot()
+                : [];
+            const sessionId = window.appBridge?.debugUiRegistry?.stores?.chatStore?.getCurrent?.() || '';
+            const sessionGate = typeof actions.getProviderToolSessionGate === 'function'
+                ? actions.getProviderToolSessionGate({ sessionId })
+                : null;
             refreshAgentRunDiagnosticsView({
                 store: window.appBridge?.debugUiRegistry?.stores?.agentRunStore || null,
                 providerToolExperimentDiagnostics,
                 options: { limit: 80, eventLimit: 500 },
                 setMeta: viewer.setMeta,
                 setText: viewer.setText,
+            });
+            refreshProviderToolSafetyPreflightView({
+                container: this.agentRunsSafetyPreflightState,
+                status: providerToolExperimentStatus,
+                diagnostics: providerToolExperimentDiagnostics,
+                permissionRules,
+                loopGuard,
+                sessionId,
+                sessionGate,
+                onSetSessionGate: typeof actions.setProviderToolSessionGate === 'function'
+                    ? async ({ enabled }) => {
+                        const next = actions.setProviderToolSessionGate({
+                            sessionId,
+                            enabled,
+                            source: 'agent_runs_debug_panel',
+                            reason: enabled
+                                ? 'enabled from Agent Runs safety preflight'
+                                : 'disabled from Agent Runs safety preflight',
+                        });
+                        await this.refreshAgentRunsInspector();
+                        return next;
+                    }
+                    : null,
+                documentRef: document,
             });
             refreshProviderRealRunnerDebugView({
                 container: this.agentRunsRealRunnerState,
@@ -659,9 +701,12 @@ export class DebugPanel {
             const providerToolParts = typeof actions.listProviderToolExperimentParts === 'function'
                 ? actions.listProviderToolExperimentParts({ limit: 6 })
                 : [];
+            const providerToolResumeParts = typeof actions.listProviderToolPendingResumeParts === 'function'
+                ? actions.listProviderToolPendingResumeParts({ limit: 6 })
+                : [];
             refreshAgentMessagePartsView({
                 container: this.agentRunsParts,
-                parts: [...providerToolParts, ...agentRunParts],
+                parts: [...providerToolResumeParts, ...providerToolParts, ...agentRunParts],
                 documentRef: document,
                 emptyText: 'No agent message parts',
             });

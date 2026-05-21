@@ -4,6 +4,7 @@ import { AGENT_PERMISSION_DECISIONS, createAgentPermissionEvaluator } from '../.
 import { createAgentToolRegistry } from '../../src/scripts/agent/agent-tool-registry.js';
 import { createProviderToolCallRuntime } from '../../src/scripts/agent/provider-tool-call-runtime.js';
 import { createProviderToolLoopGuard } from '../../src/scripts/agent/provider-tool-loop-guard.js';
+import { createProviderToolPendingPermissionStore } from '../../src/scripts/agent/provider-tool-pending-permissions.js';
 
 {
   const registry = createAgentToolRegistry({
@@ -60,8 +61,22 @@ import { createProviderToolLoopGuard } from '../../src/scripts/agent/provider-to
     schema: { type: 'object' },
     execute: async args => ({ changed: args.text ? 1 : 0 }),
   });
+  const pendingPermissionStore = {
+    entries: [],
+    resolved: [],
+    add(request) {
+      const entry = { id: 'pending-runtime-allow', request, status: 'pending' };
+      this.entries.push(entry);
+      return entry;
+    },
+    resolve(id, action, options) {
+      this.resolved.push({ id, action, options });
+      return { id, action, status: 'allowed' };
+    },
+  };
   const runtime = createProviderToolCallRuntime({
     toolRegistry: registry,
+    pendingPermissionStore,
     now: () => 2000,
     logger: { warn: () => {} },
   });
@@ -71,6 +86,7 @@ import { createProviderToolLoopGuard } from '../../src/scripts/agent/provider-to
     toolName: 'memory.write',
     arguments: { text: 'remember' },
   }, {
+    requestId: 'stream-allow',
     requestPermission: async (request) => {
       permissionRequests.push(request);
       return { decision: 'allow' };
@@ -83,9 +99,63 @@ import { createProviderToolLoopGuard } from '../../src/scripts/agent/provider-to
     'provider_tool_permission_request',
     'provider_tool_result',
   ]);
+  assert.equal(permissionRequests[0].interaction.mode, 'deferred_message_part');
   assert.equal(result.parts[1].status, 'waiting_permission');
+  assert.equal(result.parts[1].metadata.interaction.promptModal, false);
+  assert.equal(result.parts[1].metadata.pendingPermissionId, 'pending-runtime-allow');
+  assert.equal(result.parts[1].metadata.requestId, 'stream-allow');
+  assert.equal(pendingPermissionStore.entries.length, 1);
+  assert.deepEqual(pendingPermissionStore.resolved.map(item => item.action), ['allow_once']);
   assert.equal(result.parts[2].status, 'succeeded');
   console.log('ok - createProviderToolCallRuntime emits permission request part before allowed tool execution');
+}
+
+{
+  const registry = createAgentToolRegistry({
+    permissionEvaluator: createAgentPermissionEvaluator({
+      defaultDecision: AGENT_PERMISSION_DECISIONS.ask,
+    }),
+    logger: { warn: () => {} },
+  });
+  registry.register({
+    name: 'memory.write',
+    permissions: ['memory:write'],
+    schema: { type: 'object' },
+    execute: async () => ({ changed: 1 }),
+  });
+  const pendingPermissionStore = createProviderToolPendingPermissionStore({
+    now: () => 2500,
+  });
+  const runtime = createProviderToolCallRuntime({
+    toolRegistry: registry,
+    pendingPermissionStore,
+    now: () => 2500,
+    logger: { warn: () => {} },
+  });
+  const result = await runtime.executeToolCall({
+    id: 'call-2b',
+    toolName: 'memory.write',
+    arguments: { text: 'remember' },
+  }, {
+    requestId: 'stream-deferred',
+    sessionId: 's1',
+    providerToolSessionGate: { enabled: true, sessionId: 's1' },
+    promptPermission: false,
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.status, 'failed');
+  assert.deepEqual(result.parts.map(part => part.type), [
+    'provider_tool_call',
+    'provider_tool_permission_request',
+    'provider_tool_result',
+  ]);
+  assert.equal(result.parts[1].metadata.interaction.mode, 'deferred_message_part');
+  assert.equal(result.parts[1].metadata.interaction.sessionGateEnabled, true);
+  assert.equal(result.parts[1].metadata.interaction.promptModal, false);
+  assert.equal(result.parts[1].metadata.pendingPermissionId, 'provider-tool-permission:s1:stream-deferred:call-2b');
+  assert.equal(pendingPermissionStore.list({ status: 'pending' }).length, 1);
+  assert.equal(result.parts[2].errorMessage.includes('Agent tool permission ask'), true);
+  console.log('ok - createProviderToolCallRuntime defers provider permission without modal prompt by default');
 }
 
 {

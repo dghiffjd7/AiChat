@@ -1611,7 +1611,10 @@ export class ChatUI {
           errorToast: text => window.toastr?.error?.(text),
         });
       },
-      buildMessageSidecarElement: payload => buildAgentMessageSidecarElement(payload),
+      buildMessageSidecarElement: payload => buildAgentMessageSidecarElement({
+        ...payload,
+        onProviderToolPermissionAction: request => this.handleProviderToolPermissionAction(request),
+      }),
       buildReactionSummaryElement: nextMessage => this.buildReactionSummaryElement(nextMessage),
       createReactionTriggerButton,
       buildBubbleStack: payload => buildBubbleStackCore(payload),
@@ -1634,6 +1637,40 @@ export class ChatUI {
       markWrapperSelectable: (wrapper, msgId) => this.markWrapperSelectable(wrapper, msgId),
       setSelectionBarVisible: visible => this.setSelectionBarVisible(visible),
     });
+  }
+
+  async handleProviderToolPermissionAction(request = {}) {
+    const pendingPermissionId = String(request?.part?.metadata?.pendingPermissionId || '').trim();
+    if (!pendingPermissionId) {
+      toastOnce('Agent 工具权限缺少 pending id', 'warning');
+      return null;
+    }
+    const resolver = window.appBridge?.debugUiRegistry?.actions?.resolveProviderToolPendingPermission;
+    if (typeof resolver !== 'function') {
+      toastOnce('Agent 工具权限处理器未就绪', 'warning');
+      return null;
+    }
+    try {
+      const result = await resolver({
+        id: pendingPermissionId,
+        action: request.action,
+        reason: 'chat sidecar action',
+      });
+      const status = String(result?.pending?.status || '').trim();
+      if (status === 'allowed' && result?.resume?.status === 'succeeded') {
+        toastOnce('Agent 工具已允许并执行', 'success', 3000);
+      } else if (status === 'allowed' && result?.resume) {
+        toastOnce('Agent 工具权限已允许，但本次未执行', 'warning', 3000);
+      } else if (status === 'allowed') {
+        toastOnce('Agent 工具权限已允许', 'success', 3000);
+      }
+      if (status === 'denied') toastOnce('Agent 工具权限已拒绝', 'info', 3000);
+      return result;
+    } catch (err) {
+      logger.warn('provider tool pending permission action failed', err);
+      toastOnce('Agent 工具权限处理失败', 'error');
+      return null;
+    }
   }
 
   /**

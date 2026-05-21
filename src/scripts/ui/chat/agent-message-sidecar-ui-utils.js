@@ -90,6 +90,24 @@ export const AGENT_MESSAGE_SIDECAR_STYLES = Object.freeze({
     color:var(--app-text-muted);
     overflow-wrap:anywhere;
   `,
+  actionRow: `
+    display:flex;
+    flex-wrap:wrap;
+    gap:6px;
+    padding-top:4px;
+  `,
+  actionButton: `
+    border:1px solid var(--app-border-default);
+    border-radius:8px;
+    background:var(--app-surface-subtle);
+    color:var(--app-text-primary);
+    min-height:24px;
+    padding:3px 8px;
+    font-size:11px;
+    font-weight:800;
+    line-height:1.2;
+    cursor:pointer;
+  `,
 });
 
 export const getAgentMessagePartsForMessage = (message = {}) => {
@@ -117,6 +135,7 @@ export const buildAgentMessageSidecarElement = ({
   documentLike = globalThis.document,
   message = {},
   maxParts = 6,
+  onProviderToolPermissionAction = null,
 } = {}) => {
   if (!documentLike?.createElement) return null;
   const parts = buildAgentMessagePartViewModel(getAgentMessagePartsForMessage(message));
@@ -172,6 +191,38 @@ export const buildAgentMessageSidecarElement = ({
       });
       body.appendChild(row);
     });
+    const interaction = isPlainObject(part.metadata?.interaction) ? part.metadata.interaction : null;
+    if (part.type === 'provider_tool_permission_request' && part.status === 'waiting_permission' && interaction) {
+      const strategy = createElement(documentLike, 'div', {
+        text: `approval: ${trim(interaction.presentation, 'message_part')} · default=${trim(interaction.defaultAction, 'deny')}`,
+      });
+      body.appendChild(strategy);
+      if (typeof onProviderToolPermissionAction === 'function') {
+        const actionRow = createElement(documentLike, 'div', {
+          style: AGENT_MESSAGE_SIDECAR_STYLES.actionRow,
+        });
+        (Array.isArray(interaction.allowedActions) ? interaction.allowedActions : [])
+          .filter(action => action === 'allow_once' || action === 'deny' || action === 'remember_allow')
+          .forEach((action) => {
+            const label = action === 'allow_once'
+              ? 'Allow Once'
+              : (action === 'remember_allow' ? 'Remember' : 'Deny');
+            const button = createElement(documentLike, 'button', {
+              text: label,
+              style: AGENT_MESSAGE_SIDECAR_STYLES.actionButton,
+            });
+            button.type = 'button';
+            button.dataset.providerToolPermissionAction = action;
+            button.addEventListener?.('click', () => onProviderToolPermissionAction({
+              action,
+              part,
+              message,
+            }));
+            actionRow.appendChild(button);
+          });
+        if (actionRow.children?.length) body.appendChild(actionRow);
+      }
+    }
     details.appendChild(body);
     root.appendChild(details);
   });

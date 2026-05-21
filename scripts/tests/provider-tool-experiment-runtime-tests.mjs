@@ -96,6 +96,7 @@ const buildAnthropicToolDeltaEvents = (callId = 'toolu-stream-1', limit = 3) => 
     toolName: 'contact_profile.list',
     arguments: { limit: 2 },
     sessionId: 's1',
+    requestId: 'request-1',
     allowOnce: true,
   });
   assert.equal(result.ok, true);
@@ -105,14 +106,17 @@ const buildAnthropicToolDeltaEvents = (callId = 'toolu-stream-1', limit = 3) => 
   assert.equal(calls[0][0].provider, 'debug-provider');
   assert.equal(calls[0][0].model, 'debug-model');
   assert.equal(calls[0][1].sessionId, 's1');
-  assert.deepEqual(await calls[0][1].requestPermission({ toolName: 'contact_profile.list' }), {
-    decision: 'allow',
-    request: { toolName: 'contact_profile.list' },
-  });
+  assert.equal(calls[0][1].requestId, 'request-1');
+  const permissionDecision = await calls[0][1].requestPermission({ toolName: 'contact_profile.list' });
+  assert.equal(permissionDecision.decision, 'allow');
+  assert.deepEqual(permissionDecision.request, { toolName: 'contact_profile.list' });
+  assert.equal(permissionDecision.interaction.mode, 'deferred_message_part');
+  assert.equal(permissionDecision.interaction.promptModal, false);
   const diagnostics = runtime.getDiagnostics();
   assert.equal(diagnostics.history.length, 1);
   assert.equal(diagnostics.history[0].kind, 'tool_call');
   assert.equal(diagnostics.history[0].toolCall.toolName, 'contact_profile.list');
+  assert.equal(diagnostics.history[0].permissionStrategy.mode, 'deferred_message_part');
   assert.deepEqual(diagnostics.history[0].parts, [{ type: 'provider_tool_call' }]);
   console.log('ok - provider tool experiment runtime runs allowed tool with explicit enable');
 }

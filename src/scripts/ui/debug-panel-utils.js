@@ -284,6 +284,7 @@ export const formatProviderToolExperimentDiagnostics = (snapshot = {}) => {
     const runnerFacade = isPlainObject(entry?.runnerFacade) ? entry.runnerFacade : null;
     const runnerDryRun = isPlainObject(entry?.runnerDryRun) ? entry.runnerDryRun : null;
     const realRunnerDebug = isPlainObject(entry?.realRunnerDebug) ? entry.realRunnerDebug : null;
+    const permissionStrategy = isPlainObject(entry?.permissionStrategy) ? entry.permissionStrategy : null;
     const loopState = isPlainObject(entry?.loopState) ? entry.loopState : null;
     const lines = [
       `#${index + 1} [${String(entry?.status || 'unknown').toUpperCase()}] ${String(entry?.kind || 'tool_call')}`,
@@ -300,6 +301,9 @@ export const formatProviderToolExperimentDiagnostics = (snapshot = {}) => {
     ];
     if (continuation) {
       lines.push(`continuation: ${String(continuation.strategy || '-').trim() || '-'} · shouldContinue=${continuation.shouldContinue === true ? 'true' : 'false'}`);
+    }
+    if (permissionStrategy) {
+      lines.push(`permissionStrategy: ${String(permissionStrategy.mode || '-').trim() || '-'} · presentation=${String(permissionStrategy.presentation || '-').trim() || '-'} · promptModal=${permissionStrategy.promptModal === true ? 'true' : 'false'} · silent=${permissionStrategy.silentPrompt === true ? 'true' : 'false'}`);
     }
     if (requestPreview) {
       lines.push(`requestPreview: ${String(requestPreview.format || '-').trim() || '-'} · network=${requestPreview.network === true ? 'true' : 'false'} · toolResults=${Number(requestPreview.toolResultCount || 0) || 0}`);

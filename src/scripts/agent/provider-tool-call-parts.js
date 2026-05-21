@@ -1,4 +1,5 @@
 import { normalizeAgentMessagePart } from './agent-message-parts.js';
+import { buildProviderToolPermissionInteraction } from './provider-tool-permission-interaction.js';
 
 export const PROVIDER_TOOL_CALL_PART_TYPES = Object.freeze({
   call: 'provider_tool_call',
@@ -177,6 +178,9 @@ export const buildProviderToolPermissionRequestPart = ({
   riskLevel = 'low',
   checks = [],
   decision = 'ask',
+  interaction = null,
+  pendingPermissionId = '',
+  requestId = '',
   now = Date.now,
 } = {}) => {
   const normalized = normalizeProviderToolCall(toolCall, { now, source: 'provider-tool-permission' });
@@ -207,6 +211,12 @@ export const buildProviderToolPermissionRequestPart = ({
       argsPreview: normalized.arguments,
       checks: clone(checks),
       decision: trim(decision, 'ask'),
+      interaction: buildProviderToolPermissionInteraction({ interaction }, {
+        sessionId: normalized.sessionId,
+        source: normalized.source,
+      }),
+      ...(trim(pendingPermissionId) ? { pendingPermissionId: trim(pendingPermissionId) } : {}),
+      ...(trim(requestId) ? { requestId: trim(requestId) } : {}),
     },
   });
 };

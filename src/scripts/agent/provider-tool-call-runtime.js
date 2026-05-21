@@ -4,6 +4,10 @@ import {
   buildProviderToolResultMessagePart,
   normalizeProviderToolCall,
 } from './provider-tool-call-parts.js';
+import {
+  PROVIDER_TOOL_PERMISSION_INTERACTION_MODES,
+  buildProviderToolPermissionInteraction,
+} from './provider-tool-permission-interaction.js';
 import { createProviderToolLoopGuard } from './provider-tool-loop-guard.js';
 
 const isPlainObject = value => Boolean(value && typeof value === 'object' && !Array.isArray(value));
@@ -18,6 +22,7 @@ const normalizeErrorMessage = error => trim(error?.message || error, 'provider t
 export const createProviderToolCallRuntime = ({
   toolRegistry = null,
   loopGuard = createProviderToolLoopGuard(),
+  pendingPermissionStore = null,
   now = Date.now,
   logger = console,
 } = {}) => {
@@ -71,18 +76,56 @@ export const createProviderToolCallRuntime = ({
     }
 
     const requestPermission = async (request = {}) => {
+      const interaction = buildProviderToolPermissionInteraction(request, {
+        sessionId: normalized.sessionId,
+        sessionGate: context.providerToolSessionGate,
+        promptPermission: context.promptPermission === true,
+        source: context.source || normalized.source,
+        timeoutMs: context.permissionTimeoutMs,
+      });
+      const pending = interaction.mode === PROVIDER_TOOL_PERMISSION_INTERACTION_MODES.deferredMessagePart &&
+        typeof pendingPermissionStore?.add === 'function'
+        ? pendingPermissionStore.add({
+            ...request,
+            requestId: context.requestId,
+            sessionId: normalized.sessionId,
+            source: context.source || normalized.source,
+            toolCall: normalized,
+            interaction,
+          })
+        : null;
       parts.push(buildProviderToolPermissionRequestPart({
         toolCall: normalized,
         permissions: request.permissions,
         riskLevel: request.riskLevel,
         checks: request.checks,
         decision: 'ask',
+        interaction,
+        pendingPermissionId: pending?.id,
+        requestId: context.requestId,
         now,
       }));
       if (typeof context.requestPermission === 'function') {
-        return await context.requestPermission(request);
+        const requested = await context.requestPermission({
+          ...request,
+          interaction,
+        });
+        const completedRequest = isPlainObject(requested) && !isPlainObject(requested.interaction)
+          ? { ...requested, interaction }
+          : requested;
+        const decision = typeof completedRequest === 'string'
+          ? completedRequest
+          : trim(completedRequest?.decision);
+        if (pending?.id && (decision === 'allow' || decision === 'deny')) {
+          pendingPermissionStore.resolve(
+            pending.id,
+            decision === 'allow' ? trim(completedRequest?.action, 'allow_once') : 'deny',
+            { reason: 'permission callback resolved' },
+          );
+        }
+        return completedRequest;
       }
-      return { decision: 'ask' };
+      return { decision: 'ask', action: 'deferred', interaction };
     };
 
     try {

@@ -17,12 +17,22 @@ const createFakeDocument = () => {
       this.dataset = {};
       this.open = false;
       this.style = { cssText: '' };
+      this.listeners = {};
     }
 
     appendChild(child) {
       child.parentNode = this;
       this.children.push(child);
       return child;
+    }
+
+    addEventListener(type, handler) {
+      if (!this.listeners[type]) this.listeners[type] = [];
+      this.listeners[type].push(handler);
+    }
+
+    click() {
+      (this.listeners.click || []).forEach(handler => handler({ currentTarget: this }));
     }
   }
   return {
@@ -108,4 +118,40 @@ const createFakeDocument = () => {
   assert.equal(element.children[2].children[0].children[2].textContent, 'ask');
   assert.equal(element.children[3].children[0].children[2].textContent, 'done');
   console.log('ok - buildAgentMessageSidecarElement renders provider tool call permission and result parts');
+}
+
+{
+  const documentLike = createFakeDocument();
+  const providerParts = buildProviderToolMessageParts({
+    toolCall: {
+      id: 'provider-call-2',
+      toolName: 'memory.write',
+      arguments: { text: 'remember' },
+    },
+    permission: {
+      permissions: ['memory:write'],
+      pendingPermissionId: 'pending-sidecar-1',
+    },
+    now: () => 7000,
+  });
+  const actions = [];
+  const element = buildAgentMessageSidecarElement({
+    documentLike,
+    message: {
+      id: 'm-provider-permission',
+      meta: { agentMessageParts: providerParts },
+    },
+    onProviderToolPermissionAction: request => actions.push(request),
+  });
+  const permissionBody = element.children[2].children[1];
+  const actionRow = permissionBody.children[5];
+  assert.equal(permissionBody.children[4].textContent, 'approval: message_part · default=deny');
+  assert.equal(actionRow.children.length, 3);
+  assert.equal(actionRow.children[0].textContent, 'Allow Once');
+  actionRow.children[0].click();
+  assert.equal(actions.length, 1);
+  assert.equal(actions[0].action, 'allow_once');
+  assert.equal(actions[0].part.type, 'provider_tool_permission_request');
+  assert.equal(actions[0].part.metadata.pendingPermissionId, 'pending-sidecar-1');
+  console.log('ok - buildAgentMessageSidecarElement exposes deferred provider permission actions');
 }
