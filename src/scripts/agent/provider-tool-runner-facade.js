@@ -167,6 +167,20 @@ export const runProviderToolRunnerFacade = async ({
       now,
     });
     const result = normalizeRunnerResult(rawResult);
+    if (result.ok === false) {
+      return {
+        ...base,
+        ok: false,
+        status: trim(result.status, 'failed'),
+        reason: trim(result.reason, 'provider runner failed'),
+        provider: trim(draft.provider),
+        model: trim(draft.model),
+        sessionId: trim(draft.sessionId),
+        runner: trim(draft.runner),
+        runnerBoundary: isPlainObject(result.runnerBoundary) ? clone(result.runnerBoundary) : null,
+        updatedAt: readTimestamp(now),
+      };
+    }
     if (result.network === true && allowNetwork !== true) {
       return {
         ...base,
@@ -177,6 +191,7 @@ export const runProviderToolRunnerFacade = async ({
         model: trim(draft.model),
         sessionId: trim(draft.sessionId),
         runner: trim(draft.runner),
+        runnerBoundary: isPlainObject(result.runnerBoundary) ? clone(result.runnerBoundary) : null,
         updatedAt: readTimestamp(now),
       };
     }
@@ -190,6 +205,7 @@ export const runProviderToolRunnerFacade = async ({
         model: trim(draft.model),
         sessionId: trim(draft.sessionId),
         runner: trim(draft.runner),
+        runnerBoundary: isPlainObject(result.runnerBoundary) ? clone(result.runnerBoundary) : null,
         updatedAt: readTimestamp(now),
       };
     }
@@ -203,6 +219,7 @@ export const runProviderToolRunnerFacade = async ({
         model: trim(draft.model),
         sessionId: trim(draft.sessionId),
         runner: trim(draft.runner),
+        runnerBoundary: isPlainObject(result.runnerBoundary) ? clone(result.runnerBoundary) : null,
         updatedAt: readTimestamp(now),
       };
     }
@@ -226,6 +243,7 @@ export const runProviderToolRunnerFacade = async ({
         model: context.model,
         sessionId: context.sessionId,
         runner: trim(draft.runner),
+        runnerBoundary: isPlainObject(result.runnerBoundary) ? clone(result.runnerBoundary) : null,
         updatedAt: readTimestamp(now),
       };
     }
@@ -247,8 +265,9 @@ export const runProviderToolRunnerFacade = async ({
       events,
       eventCount: events.length,
       finalText,
-      network: false,
+      network: result.network === true,
       writesChat: false,
+      runnerBoundary: isPlainObject(result.runnerBoundary) ? clone(result.runnerBoundary) : null,
       updatedAt: readTimestamp(now),
     };
   } catch (error) {

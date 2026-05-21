@@ -18,6 +18,7 @@ import {
     showDebugViewer,
 } from './debug-panel-viewer-utils.js';
 import { refreshAgentMessagePartsView } from './agent-message-parts-view.js';
+import { refreshProviderRealRunnerDebugView } from './provider-real-runner-debug-view.js';
 import { exportDebugTextFile } from './debug-panel-export-utils.js';
 import {
     appendDebugLog,
@@ -102,6 +103,7 @@ export class DebugPanel {
         this.agentRunsPanel = null;
         this.agentRunsMeta = null;
         this.agentRunsText = null;
+        this.agentRunsRealRunnerState = null;
         this.agentRunsParts = null;
         this.agentRunsRefresh = null;
         this.agentRunsExport = null;
@@ -575,6 +577,7 @@ export class DebugPanel {
             prefix: 'agentRuns',
             viewer,
         });
+        this.agentRunsRealRunnerState = document.createElement('div');
         this.agentRunsParts = document.createElement('div');
         const content = this.agentRunsText?.parentNode || null;
         if (content?.style) {
@@ -589,8 +592,10 @@ export class DebugPanel {
             this.agentRunsText.style.flex = '1 1 0';
         }
         if (content?.insertBefore) {
+            content.insertBefore(this.agentRunsRealRunnerState, this.agentRunsText);
             content.insertBefore(this.agentRunsParts, this.agentRunsText);
         } else {
+            content?.appendChild?.(this.agentRunsRealRunnerState);
             content?.appendChild?.(this.agentRunsParts);
         }
     }
@@ -637,6 +642,11 @@ export class DebugPanel {
                 options: { limit: 80, eventLimit: 500 },
                 setMeta: viewer.setMeta,
                 setText: viewer.setText,
+            });
+            refreshProviderRealRunnerDebugView({
+                container: this.agentRunsRealRunnerState,
+                diagnostics: providerToolExperimentDiagnostics,
+                documentRef: document,
             });
             const agentRunParts = typeof actions.listAgentRunParts === 'function'
                 ? actions.listAgentRunParts({

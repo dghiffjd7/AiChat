@@ -32,6 +32,28 @@ const buildOpenAIToolDeltaEvents = (callId = 'call-stream-1', limit = 3) => [
   { choices: [{ finish_reason: 'tool_calls' }] },
 ];
 
+const buildAnthropicToolDeltaEvents = (callId = 'toolu-stream-1', limit = 3) => [
+  {
+    type: 'content_block_start',
+    index: 1,
+    content_block: {
+      type: 'tool_use',
+      id: callId,
+      name: 'contact_profile.list',
+      input: {},
+    },
+  },
+  {
+    type: 'content_block_delta',
+    index: 1,
+    delta: { type: 'input_json_delta', partial_json: `{"limit":${limit}}` },
+  },
+  {
+    type: 'content_block_stop',
+    index: 1,
+  },
+];
+
 {
   const runtime = createProviderToolExperimentRuntime({
     providerToolCallRuntime: {
@@ -199,12 +221,18 @@ const buildOpenAIToolDeltaEvents = (callId = 'call-stream-1', limit = 3) => [
   assert.equal(result.loopState.phase, 'completed');
   assert.equal(result.loopState.network, false);
   assert.equal(result.loopState.mockProviderStatus, 'succeeded');
+  assert.equal(result.loopState.runnerMode, 'read_only_capture');
+  assert.equal(result.loopState.runnerModeStatus, 'ready');
+  assert.equal(result.loopState.runnerModeFacadeEnabled, false);
   assert.equal(result.runnerHandoff.status, 'ready');
   assert.equal(result.runnerHandoff.output, 'provider_stream_events');
   assert.equal(result.runnerHandoff.writesChat, false);
   assert.equal(result.runnerRequestDraft.status, 'ready');
   assert.equal(result.runnerRequestDraft.payloadKind, 'messages');
   assert.equal(result.runnerRequestDraft.writesChat, false);
+  assert.equal(result.runnerModePlan.mode, 'read_only_capture');
+  assert.equal(result.runnerModePlan.status, 'ready');
+  assert.equal(result.runnerModePlan.runnerFacadeEnabled, false);
   assert.equal(result.runnerFacade.status, 'disabled');
   assert.equal(result.runnerFacade.eventCount, 0);
   assert.equal(result.runnerDryRun.status, 'succeeded');
@@ -232,6 +260,8 @@ const buildOpenAIToolDeltaEvents = (callId = 'call-stream-1', limit = 3) => [
   assert.equal(diagnostics.history[0].runnerRequestDraft.status, 'ready');
   assert.equal(diagnostics.history[0].runnerRequestDraft.payloadKind, 'messages');
   assert.equal(diagnostics.history[0].runnerRequestDraft.writesChat, false);
+  assert.equal(diagnostics.history[0].runnerModePlan.mode, 'read_only_capture');
+  assert.equal(diagnostics.history[0].runnerModePlan.runnerFacadeEnabled, false);
   assert.equal(diagnostics.history[0].runnerFacade.status, 'disabled');
   assert.equal(diagnostics.history[0].runnerFacade.eventCount, 0);
   assert.equal(diagnostics.history[0].runnerDryRun.status, 'succeeded');
@@ -277,15 +307,236 @@ const buildOpenAIToolDeltaEvents = (callId = 'call-stream-1', limit = 3) => [
   assert.equal(result.runnerFacade.status, 'succeeded');
   assert.equal(result.runnerFacade.eventCount, 3);
   assert.equal(result.runnerFacade.finalText, 'runner');
+  assert.equal(result.runnerModePlan.mode, 'real_runner');
+  assert.equal(result.runnerModePlan.status, 'ready');
+  assert.equal(result.runnerModePlan.realRunnerAllowed, true);
   assert.equal(result.loopState.runnerFacadeStatus, 'succeeded');
+  assert.equal(result.loopState.runnerMode, 'real_runner');
+  assert.equal(result.loopState.runnerModeFacadeEnabled, true);
   assert.equal(result.loopState.runnerFacadeEvents, 3);
   assert.equal(runnerCalls.length, 1);
   assert.equal(runnerCalls[0][0].payloadKind, 'messages');
   assert.equal(runnerCalls[0][1].allowNetwork, false);
   const diagnostics = runtime.getDiagnostics();
+  assert.equal(diagnostics.history[0].runnerModePlan.mode, 'real_runner');
+  assert.equal(diagnostics.history[0].runnerModePlan.realRunnerAllowed, true);
   assert.equal(diagnostics.history[0].runnerFacade.status, 'succeeded');
   assert.equal(diagnostics.history[0].runnerFacade.eventCount, 3);
   console.log('ok - provider tool experiment runtime can run debug-only provider runner facade');
+}
+
+{
+  const runtime = createProviderToolExperimentRuntime({
+    providerToolCallRuntime: {
+      executeToolCall: async (toolCall) => ({
+        ok: true,
+        status: 'succeeded',
+        toolCall,
+        parts: [{ type: 'provider_tool_call' }, { type: 'provider_tool_result' }],
+      }),
+    },
+    allowedTools: ['contact_profile.list'],
+  });
+  const result = await runtime.runStreamDeltas(buildOpenAIToolDeltaEvents('call-contract-fixture-1', 2), {
+    enabled: true,
+    runnerMode: 'contract_fixture',
+    allowOnce: true,
+    provider: 'openai',
+    model: 'gpt-x',
+    sessionId: 's1',
+  });
+  assert.equal(result.runnerModePlan.mode, 'contract_fixture');
+  assert.equal(result.runnerModePlan.status, 'ready');
+  assert.equal(result.runnerModePlan.runnerFacadeEnabled, true);
+  assert.equal(result.runnerFacade.status, 'succeeded');
+  assert.equal(result.runnerFacade.eventCount, 3);
+  assert.equal(result.runnerFacade.network, false);
+  assert.equal(result.runnerFacade.writesChat, false);
+  assert.equal(result.runnerFacade.finalText.includes('contract fixture openai_chat_completions'), true);
+  assert.equal(result.loopState.runnerMode, 'contract_fixture');
+  assert.equal(result.loopState.runnerFacadeStatus, 'succeeded');
+  assert.equal(runtime.getDiagnostics().history[0].runnerModePlan.mode, 'contract_fixture');
+  console.log('ok - provider tool experiment runtime can run the contract fixture runner mode');
+}
+
+{
+  let runnerCalled = false;
+  const runtime = createProviderToolExperimentRuntime({
+    providerToolCallRuntime: {
+      executeToolCall: async (toolCall) => ({
+        ok: true,
+        status: 'succeeded',
+        toolCall,
+        parts: [{ type: 'provider_tool_call' }, { type: 'provider_tool_result' }],
+      }),
+    },
+    allowedTools: ['contact_profile.list'],
+  });
+  const result = await runtime.runStreamDeltas(buildOpenAIToolDeltaEvents('call-real-blocked-1', 2), {
+    enabled: true,
+    runnerMode: 'real_runner',
+    allowOnce: true,
+    provider: 'openai',
+    model: 'gpt-x',
+    sessionId: 's1',
+    providerRunner: async () => {
+      runnerCalled = true;
+      return { events: [] };
+    },
+  });
+  assert.equal(result.runnerModePlan.mode, 'real_runner');
+  assert.equal(result.runnerModePlan.status, 'blocked');
+  assert.equal(result.runnerFacade.status, 'disabled');
+  assert.equal(result.realRunnerDebug.status, 'blocked');
+  assert.equal(result.realRunnerDebug.providerRunnerInjected, true);
+  assert.equal(result.realRunnerDebug.allowRunnerNetwork, false);
+  assert.equal(result.loopState.runnerMode, 'real_runner');
+  assert.equal(result.loopState.runnerModeStatus, 'blocked');
+  assert.equal(runnerCalled, false);
+  console.log('ok - provider tool experiment runtime keeps real runner blocked unless explicitly allowed');
+}
+
+{
+  let streamCalled = false;
+  const runtime = createProviderToolExperimentRuntime({
+    providerToolCallRuntime: {
+      executeToolCall: async (toolCall) => ({
+        ok: true,
+        status: 'succeeded',
+        toolCall,
+        parts: [{ type: 'provider_tool_call' }, { type: 'provider_tool_result' }],
+      }),
+    },
+    allowedTools: ['contact_profile.list'],
+  });
+  const result = await runtime.runStreamDeltas(buildOpenAIToolDeltaEvents('call-real-adapter-disabled-1', 2), {
+    enabled: true,
+    runnerMode: 'real_runner',
+    allowRealRunner: true,
+    allowRunnerNetwork: true,
+    allowOnce: true,
+    provider: 'openai',
+    model: 'gpt-x',
+    sessionId: 's1',
+    providerClient: {
+      streamChat: async function* () {
+        streamCalled = true;
+        yield 'unused';
+      },
+    },
+  });
+  assert.equal(result.runnerModePlan.mode, 'real_runner');
+  assert.equal(result.runnerModePlan.status, 'ready');
+  assert.equal(result.runnerFacade.status, 'disabled');
+  assert.equal(result.runnerFacade.reason, 'real provider runner adapter disabled');
+  assert.equal(result.runnerFacade.runnerBoundary.capability.runnerKind, 'llmclient_stream_chat');
+  assert.equal(result.realRunnerDebug.status, 'blocked');
+  assert.equal(result.realRunnerDebug.providerClientInjected, true);
+  assert.equal(result.realRunnerDebug.adapterEnabled, false);
+  assert.equal(result.realRunnerDebug.allowRunnerNetwork, true);
+  assert.equal(streamCalled, false);
+  console.log('ok - provider tool experiment runtime requires an explicit real runner adapter enable flag');
+}
+
+{
+  const streamCalls = [];
+  const runtime = createProviderToolExperimentRuntime({
+    providerToolCallRuntime: {
+      executeToolCall: async (toolCall) => ({
+        ok: true,
+        status: 'succeeded',
+        toolCall,
+        parts: [{ type: 'provider_tool_call' }, { type: 'provider_tool_result' }],
+      }),
+    },
+    allowedTools: ['contact_profile.list'],
+  });
+  const result = await runtime.runStreamDeltas(buildOpenAIToolDeltaEvents('call-real-adapter-enabled-1', 2), {
+    enabled: true,
+    runnerMode: 'real_runner',
+    allowRealRunner: true,
+    allowRunnerNetwork: true,
+    enableRealProviderRunnerAdapter: true,
+    allowOnce: true,
+    provider: 'openai',
+    model: 'gpt-x',
+    sessionId: 's1',
+    providerClient: {
+      streamChat: async function* (messages, options) {
+        streamCalls.push({ messages, options });
+        yield 'real ';
+        yield { content: 'runner' };
+      },
+    },
+    runnerRequestOptions: {
+      requestId: 'real-runner-runtime-test',
+      onProviderToolCallDelta: () => {},
+    },
+  });
+  assert.equal(result.runnerModePlan.mode, 'real_runner');
+  assert.equal(result.runnerModePlan.status, 'ready');
+  assert.equal(result.runnerFacade.status, 'succeeded');
+  assert.equal(result.runnerFacade.network, true);
+  assert.equal(result.runnerFacade.writesChat, false);
+  assert.equal(result.runnerFacade.eventCount, 4);
+  assert.equal(result.runnerFacade.finalText, 'real runner');
+  assert.equal(result.runnerFacade.runnerBoundary.input, 'runnerRequestDraft.request');
+  assert.equal(result.runnerFacade.runnerBoundary.capability.runnerKind, 'llmclient_stream_chat');
+  assert.equal(result.realRunnerDebug.status, 'armed');
+  assert.equal(result.realRunnerDebug.adapterEnabled, true);
+  assert.equal(result.realRunnerDebug.allowRunnerNetwork, true);
+  assert.equal(result.realRunnerDebug.allowedTools[0], 'contact_profile.list');
+  assert.equal(result.loopState.runnerFacadeStatus, 'succeeded');
+  assert.equal(streamCalls.length, 1);
+  assert.equal(streamCalls[0].options.onProviderToolCallDelta, undefined);
+  assert.equal(runtime.getDiagnostics().history[0].runnerFacade.runnerBoundary.capability.runnerKind, 'llmclient_stream_chat');
+  console.log('ok - provider tool experiment runtime can wire an explicitly injected real runner adapter');
+}
+
+{
+  const nativeRequests = [];
+  const runtime = createProviderToolExperimentRuntime({
+    providerToolCallRuntime: {
+      executeToolCall: async (toolCall) => ({
+        ok: true,
+        status: 'succeeded',
+        toolCall,
+        parts: [{ type: 'provider_tool_call' }, { type: 'provider_tool_result' }],
+      }),
+    },
+    allowedTools: ['contact_profile.list'],
+  });
+  const result = await runtime.runStreamDeltas(buildAnthropicToolDeltaEvents('toolu-native-runner-1', 1), {
+    enabled: true,
+    runnerMode: 'real_runner',
+    allowRealRunner: true,
+    allowRunnerNetwork: true,
+    enableRealProviderRunnerAdapter: true,
+    allowOnce: true,
+    provider: 'anthropic',
+    model: 'claude-x',
+    sessionId: 's1',
+    llmClient: {
+      provider: {
+        model: 'claude-x',
+        baseUrl: 'https://anthropic.test/v1',
+        getHeaders: () => ({ 'x-api-key': 'test-key' }),
+        requestJson: async (payload) => {
+          nativeRequests.push(payload);
+          return { content: [{ type: 'text', text: 'native anthropic runner' }] };
+        },
+      },
+    },
+  });
+  assert.equal(result.runnerFacade.status, 'succeeded');
+  assert.equal(result.runnerFacade.finalText, 'native anthropic runner');
+  assert.equal(result.runnerFacade.runnerBoundary.clientMethod, 'runProviderToolRequest');
+  assert.equal(result.runnerFacade.runnerBoundary.nativeRunnerContract.contractKind, 'anthropic_messages_tool_result');
+  assert.equal(result.realRunnerDebug.status, 'armed');
+  assert.equal(result.realRunnerDebug.llmClientInjected, true);
+  assert.equal(nativeRequests.length, 1);
+  assert.equal(JSON.parse(nativeRequests[0].body).messages[1].content[0].type, 'tool_result');
+  console.log('ok - provider tool experiment runtime can wire an injected LLMClient native runner shim');
 }
 
 {

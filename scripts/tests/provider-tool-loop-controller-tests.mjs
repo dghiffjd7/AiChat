@@ -59,6 +59,14 @@ const buildOpenAIToolDeltaEvents = (callId = 'call-controller-1', limit = 2) => 
     model: 'gpt-controller',
     sessionId: 's1',
     now: () => 1000,
+    runnerModePlan: {
+      mode: 'read_only_capture',
+      status: 'ready',
+      runner: 'none',
+      runnerFacadeEnabled: false,
+      network: false,
+      writesChat: false,
+    },
     executeToolCall: async (toolCall) => {
       executed.push(toolCall);
       return {
@@ -84,6 +92,9 @@ const buildOpenAIToolDeltaEvents = (callId = 'call-controller-1', limit = 2) => 
   assert.equal(result.runnerRequestDraft.status, 'ready');
   assert.equal(result.runnerRequestDraft.payloadKind, 'messages');
   assert.equal(result.runnerRequestDraft.writesChat, false);
+  assert.equal(result.runnerModePlan.mode, 'read_only_capture');
+  assert.equal(result.runnerModePlan.status, 'ready');
+  assert.equal(result.runnerModePlan.runnerFacadeEnabled, false);
   assert.equal(result.runnerFacade.status, 'disabled');
   assert.equal(result.runnerFacade.eventCount, 0);
   assert.equal(result.runnerFacade.writesChat, false);
@@ -122,6 +133,10 @@ const buildOpenAIToolDeltaEvents = (callId = 'call-controller-1', limit = 2) => 
   assert.equal(result.loopState.runnerRequestDraftStatus, 'ready');
   assert.equal(result.loopState.runnerRequestDraftPayloadKind, 'messages');
   assert.equal(result.loopState.runnerRequestDraftWritesChat, false);
+  assert.equal(result.loopState.runnerMode, 'read_only_capture');
+  assert.equal(result.loopState.runnerModeStatus, 'ready');
+  assert.equal(result.loopState.runnerModeFacadeEnabled, false);
+  assert.equal(result.loopState.runnerModeNetwork, false);
   assert.equal(result.loopState.runnerFacadeStatus, 'disabled');
   assert.equal(result.loopState.runnerFacadeEvents, 0);
   assert.equal(result.loopState.runnerFacadeWritesChat, false);

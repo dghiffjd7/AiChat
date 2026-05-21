@@ -67,6 +67,7 @@ import {
   resolveBridgeCancellationReason,
   shouldTreatBridgeStreamErrorAsCancellation,
 } from './bridge-cancel-utils.js';
+import { buildProviderToolBridgeLoopPlan } from '../agent/provider-tool-bridge-loop-plan.js';
 import {
   dispatchRuntimeHookLifecycleEvent,
   runRuntimeHookLifecycleEvent,
@@ -3349,27 +3350,20 @@ class AppBridge {
       const genOptions = this.getGenerationOptions(presetContext, config);
       const providerDirectives = this.buildProviderRequestDirectives(nextContext, presetContext, config);
       const sessionId = String(nextContext?.session?.id || this.activeSessionId || 'default').trim() || 'default';
-      const captureProviderToolCallDeltas = this.debugUiRegistry?.actions?.captureProviderToolCallDeltas;
+      const providerToolBridgeLoopPlan = buildProviderToolBridgeLoopPlan({
+        debugUiRegistry: this.debugUiRegistry,
+        provider: config?.provider,
+        model: config?.model,
+        sessionId,
+        requestId: nativeRequestId,
+        source: 'bridge.generateStream',
+      });
       const requestOptions = {
         ...(genOptions || {}),
         ...(providerDirectives || {}),
         signal: abortController.signal,
         nativeRequestId,
-        ...(typeof captureProviderToolCallDeltas === 'function'
-          ? {
-              onProviderToolCallDelta: (data, meta = {}) => {
-                try {
-                  captureProviderToolCallDeltas([data], {
-                    provider: meta?.provider || config?.provider,
-                    model: meta?.model || config?.model,
-                    sessionId,
-                    requestId: nativeRequestId,
-                    source: 'bridge.generateStream',
-                  });
-                } catch {}
-              },
-            }
-          : {}),
+        ...(providerToolBridgeLoopPlan.requestOptions || {}),
       };
       const preparedRequest = requestClient?.prepareChatRequest?.(messages, requestOptions) || null;
       const responsePrefix = String(preparedRequest?.responsePrefix || '');
@@ -3409,6 +3403,7 @@ class AppBridge {
           ...(genOptions || {}),
           ...(providerDirectives || {}),
         },
+        providerToolBridgeLoop: providerToolBridgeLoopPlan.diagnostics,
         messages: preparedRequest?.messages || messages,
         responsePrefix,
         worldDebug: this.lastWorldInjectionDebug || null,

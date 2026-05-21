@@ -280,8 +280,10 @@ export const formatProviderToolExperimentDiagnostics = (snapshot = {}) => {
     const mockProviderRun = isPlainObject(entry?.mockProviderRun) ? entry.mockProviderRun : null;
     const runnerHandoff = isPlainObject(entry?.runnerHandoff) ? entry.runnerHandoff : null;
     const runnerRequestDraft = isPlainObject(entry?.runnerRequestDraft) ? entry.runnerRequestDraft : null;
+    const runnerModePlan = isPlainObject(entry?.runnerModePlan) ? entry.runnerModePlan : null;
     const runnerFacade = isPlainObject(entry?.runnerFacade) ? entry.runnerFacade : null;
     const runnerDryRun = isPlainObject(entry?.runnerDryRun) ? entry.runnerDryRun : null;
+    const realRunnerDebug = isPlainObject(entry?.realRunnerDebug) ? entry.realRunnerDebug : null;
     const loopState = isPlainObject(entry?.loopState) ? entry.loopState : null;
     const lines = [
       `#${index + 1} [${String(entry?.status || 'unknown').toUpperCase()}] ${String(entry?.kind || 'tool_call')}`,
@@ -321,11 +323,30 @@ export const formatProviderToolExperimentDiagnostics = (snapshot = {}) => {
     if (runnerRequestDraft) {
       lines.push(`runnerRequestDraft: ${String(runnerRequestDraft.status || '-').trim() || '-'} · payload=${String(runnerRequestDraft.payloadKind || '-').trim() || '-'} · network=${runnerRequestDraft.network === true ? 'true' : 'false'} · writesChat=${runnerRequestDraft.writesChat === true ? 'true' : 'false'}`);
     }
+    if (runnerModePlan) {
+      lines.push(`runnerMode: ${String(runnerModePlan.mode || '-').trim() || '-'} · status=${String(runnerModePlan.status || '-').trim() || '-'} · facade=${runnerModePlan.runnerFacadeEnabled === true ? 'true' : 'false'} · network=${runnerModePlan.network === true ? 'true' : 'false'} · writesChat=${runnerModePlan.writesChat === true ? 'true' : 'false'}`);
+    }
+    if (realRunnerDebug) {
+      lines.push(`realRunnerDebug: ${String(realRunnerDebug.status || '-').trim() || '-'} · mode=${String(realRunnerDebug.mode || '-').trim() || '-'} · adapter=${realRunnerDebug.adapterEnabled === true ? 'true' : 'false'} · client=${realRunnerDebug.providerClientInjected === true ? 'true' : 'false'} · llm=${realRunnerDebug.llmClientInjected === true ? 'true' : 'false'} · network=${realRunnerDebug.allowRunnerNetwork === true ? 'true' : 'false'} · writesChat=${realRunnerDebug.writesChat === true ? 'true' : 'false'}`);
+      lines.push(`realRunnerPolicy: tools=${formatList(realRunnerDebug.allowedTools)} · modelContext=${String(realRunnerDebug.modelContextPolicy || '-').trim() || '-'} · rollback=${String(realRunnerDebug.rollback || '-').trim() || '-'}`);
+    }
     if (runnerFacade) {
       const events = Array.isArray(runnerFacade.events)
         ? runnerFacade.events.length
         : (Number(runnerFacade.eventCount || 0) || 0);
       lines.push(`runnerFacade: ${String(runnerFacade.status || '-').trim() || '-'} · events=${events} · network=${runnerFacade.network === true ? 'true' : 'false'} · writesChat=${runnerFacade.writesChat === true ? 'true' : 'false'}`);
+      if (isPlainObject(runnerFacade.runnerBoundary)) {
+        const boundary = runnerFacade.runnerBoundary;
+        lines.push(`runnerBoundary: ${String(boundary.status || '-').trim() || '-'} · input=${String(boundary.input || '-').trim() || '-'} · method=${String(boundary.clientMethod || '-').trim() || '-'} · payload=${String(boundary.payloadKind || '-').trim() || '-'}`);
+        if (isPlainObject(boundary.capability)) {
+          const capability = boundary.capability;
+          lines.push(`runnerCapability: ${String(capability.status || '-').trim() || '-'} · provider=${String(capability.providerFamily || '-').trim() || '-'} · runner=${String(capability.runnerKind || '-').trim() || '-'} · native=${capability.requiresProviderNativeRunner === true ? 'true' : 'false'}`);
+        }
+        if (isPlainObject(boundary.nativeRunnerContract)) {
+          const contract = boundary.nativeRunnerContract;
+          lines.push(`nativeRunnerContract: ${String(contract.status || '-').trim() || '-'} · kind=${String(contract.contractKind || '-').trim() || '-'} · entry=${String(contract.entrypoint || '-').trim() || '-'} · payload=${String(contract.payloadKind || '-').trim() || '-'}`);
+        }
+      }
     }
     if (runnerDryRun) {
       const events = Array.isArray(runnerDryRun.events)

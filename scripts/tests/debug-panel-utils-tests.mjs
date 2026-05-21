@@ -274,11 +274,48 @@ import {
           network: false,
           writesChat: false,
         },
+        runnerModePlan: {
+          mode: 'read_only_capture',
+          status: 'ready',
+          runnerFacadeEnabled: false,
+          network: false,
+          writesChat: false,
+        },
+        realRunnerDebug: {
+          status: 'blocked',
+          mode: 'read_only_capture',
+          adapterEnabled: false,
+          providerClientInjected: false,
+          llmClientInjected: false,
+          allowRunnerNetwork: false,
+          writesChat: false,
+          allowedTools: ['contact_profile.list'],
+          modelContextPolicy: 'allowlist_only',
+          rollback: 'set runnerMode=read_only_capture or remove providerRunner/providerClient',
+        },
         runnerFacade: {
           status: 'disabled',
           eventCount: 0,
           network: false,
           writesChat: false,
+          runnerBoundary: {
+            status: 'ready',
+            input: 'runnerRequestDraft.request',
+            clientMethod: 'streamChat',
+            payloadKind: 'messages',
+            capability: {
+              status: 'ready',
+              providerFamily: 'openai',
+              runnerKind: 'llmclient_stream_chat',
+              requiresProviderNativeRunner: false,
+            },
+            nativeRunnerContract: {
+              status: 'ready',
+              contractKind: 'openai_messages_tool_result',
+              entrypoint: 'providerClient.runProviderToolRequest',
+              payloadKind: 'messages',
+            },
+          },
         },
         runnerDryRun: {
           status: 'succeeded',
@@ -304,7 +341,13 @@ import {
   assert.equal(text.includes('loopState: succeeded · phase=completed · phases=5 · network=false'), true);
   assert.equal(text.includes('runnerHandoff: ready · output=provider_stream_events · network=false · writesChat=false'), true);
   assert.equal(text.includes('runnerRequestDraft: ready · payload=messages · network=false · writesChat=false'), true);
+  assert.equal(text.includes('runnerMode: read_only_capture · status=ready · facade=false · network=false · writesChat=false'), true);
+  assert.equal(text.includes('realRunnerDebug: blocked · mode=read_only_capture · adapter=false · client=false · llm=false · network=false · writesChat=false'), true);
+  assert.equal(text.includes('realRunnerPolicy: tools=contact_profile.list · modelContext=allowlist_only · rollback=set runnerMode=read_only_capture or remove providerRunner/providerClient'), true);
   assert.equal(text.includes('runnerFacade: disabled · events=0 · network=false · writesChat=false'), true);
+  assert.equal(text.includes('runnerBoundary: ready · input=runnerRequestDraft.request · method=streamChat · payload=messages'), true);
+  assert.equal(text.includes('runnerCapability: ready · provider=openai · runner=llmclient_stream_chat · native=false'), true);
+  assert.equal(text.includes('nativeRunnerContract: ready · kind=openai_messages_tool_result · entry=providerClient.runProviderToolRequest · payload=messages'), true);
   assert.equal(text.includes('runnerDryRun: succeeded · events=4 · network=false · writesChat=false'), true);
   assert.equal(text.includes('delta chain:'), true);
   assert.equal(text.includes('completed tool calls:'), true);

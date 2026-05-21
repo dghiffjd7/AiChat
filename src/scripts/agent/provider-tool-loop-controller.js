@@ -26,6 +26,22 @@ const trim = (value, fallback = '') => {
 
 const readTimestamp = (now = Date.now) => Number(now?.() || Date.now()) || Date.now();
 
+const normalizeRunnerModePlan = (runnerModePlan = null) => {
+  if (!isPlainObject(runnerModePlan)) return null;
+  return {
+    requestedMode: trim(runnerModePlan.requestedMode),
+    mode: trim(runnerModePlan.mode),
+    status: trim(runnerModePlan.status, 'unknown'),
+    reason: trim(runnerModePlan.reason),
+    runner: trim(runnerModePlan.runner),
+    runnerFacadeEnabled: runnerModePlan.runnerFacadeEnabled === true,
+    allowRunnerNetwork: runnerModePlan.allowRunnerNetwork === true,
+    network: runnerModePlan.network === true,
+    writesChat: runnerModePlan.writesChat === true,
+    realRunnerAllowed: runnerModePlan.realRunnerAllowed === true,
+  };
+};
+
 export const buildProviderToolLoopContinuation = (status = 'unknown') => ({
   strategy: 'stop_after_tool_result',
   shouldContinue: false,
@@ -69,6 +85,7 @@ const buildLoopState = ({
   mockProviderRun = null,
   runnerHandoff = null,
   runnerRequestDraft = null,
+  runnerModePlan = null,
   runnerFacade = null,
   runnerDryRun = null,
   startedAt = 0,
@@ -102,6 +119,12 @@ const buildLoopState = ({
   runnerRequestDraftStatus: trim(runnerRequestDraft?.status),
   runnerRequestDraftPayloadKind: trim(runnerRequestDraft?.payloadKind),
   runnerRequestDraftWritesChat: runnerRequestDraft?.writesChat === true,
+  runnerMode: trim(runnerModePlan?.mode),
+  runnerModeStatus: trim(runnerModePlan?.status),
+  runnerModeRunner: trim(runnerModePlan?.runner),
+  runnerModeFacadeEnabled: runnerModePlan?.runnerFacadeEnabled === true,
+  runnerModeNetwork: runnerModePlan?.network === true,
+  runnerModeWritesChat: runnerModePlan?.writesChat === true,
   runnerFacadeStatus: trim(runnerFacade?.status),
   runnerFacadeEvents: Array.isArray(runnerFacade?.events)
     ? runnerFacade.events.length
@@ -133,11 +156,13 @@ export const runProviderToolLoopController = async ({
   runnerFacadeEnabled = false,
   providerRunner = null,
   allowRunnerNetwork = false,
+  runnerModePlan = null,
 } = {}) => {
   const startedAt = readTimestamp(now);
   const providerName = trim(provider, 'debug-provider');
   const modelName = trim(model);
   const normalizedSessionId = trim(sessionId);
+  const normalizedRunnerModePlan = normalizeRunnerModePlan(runnerModePlan);
   const { phases, push } = createPhaseRecorder(now);
 
   if (enabled !== true) {
@@ -155,6 +180,7 @@ export const runProviderToolLoopController = async ({
       sessionId: normalizedSessionId,
       phases,
       continuation,
+      runnerModePlan: normalizedRunnerModePlan,
       startedAt,
       updatedAt,
     });
@@ -170,6 +196,7 @@ export const runProviderToolLoopController = async ({
       requestPreview: null,
       mockLoopPreview: null,
       mockProviderRun: null,
+      runnerModePlan: normalizedRunnerModePlan,
       loopState,
     };
   }
@@ -292,6 +319,7 @@ export const runProviderToolLoopController = async ({
     requestPreview,
     mockLoopPreview,
     mockProviderRun,
+    runnerModePlan: normalizedRunnerModePlan,
     startedAt,
     updatedAt,
   });
@@ -366,6 +394,7 @@ export const runProviderToolLoopController = async ({
     mockProviderRun,
     runnerHandoff,
     runnerRequestDraft,
+    runnerModePlan: normalizedRunnerModePlan,
     runnerFacade,
     runnerDryRun,
     loopState,

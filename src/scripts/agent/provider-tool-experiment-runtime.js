@@ -1,8 +1,11 @@
 import { createProviderToolCallDeltaAccumulator } from './provider-tool-call-delta-adapter.js';
+import { createProviderToolLlmClientNativeRunner } from './provider-tool-llmclient-native-runner.js';
 import {
   buildProviderToolLoopContinuation,
   runProviderToolLoopController,
 } from './provider-tool-loop-controller.js';
+import { createProviderToolRealRunnerAdapter } from './provider-tool-real-runner-adapter.js';
+import { resolveProviderToolRunnerModePlan } from './provider-tool-runner-mode-policy.js';
 
 const isPlainObject = value => Boolean(value && typeof value === 'object' && !Array.isArray(value));
 
@@ -26,6 +29,70 @@ const normalizeAllowedTools = (tools = []) => (
     .map(tool => trim(tool))
     .filter(Boolean)
 );
+
+const resolveInjectedProviderRunner = (opts = {}, now = Date.now) => {
+  if (opts.providerRunner) return opts.providerRunner;
+  const injectedProviderClient = opts.providerClient || (
+    opts.llmClient || opts.llmProvider
+      ? createProviderToolLlmClientNativeRunner({
+          llmClient: opts.llmClient,
+          provider: opts.llmProvider,
+          now,
+          fetchFn: opts.fetchFn,
+        })
+      : null
+  );
+  if (!injectedProviderClient) return null;
+  return createProviderToolRealRunnerAdapter({
+    providerClient: injectedProviderClient,
+    enabled: opts.realRunnerAdapterEnabled === true || opts.enableRealProviderRunnerAdapter === true,
+    requestOptions: isPlainObject(opts.runnerRequestOptions) ? opts.runnerRequestOptions : {},
+    now,
+  });
+};
+
+const buildRealRunnerDebugSafety = ({
+  opts = {},
+  runnerModePlan = null,
+  providerRunner = null,
+  allowedTools = [],
+  explicitEnabled = false,
+  experimentEnabled = false,
+} = {}) => {
+  const diagnostics = isPlainObject(runnerModePlan?.diagnostics) ? runnerModePlan.diagnostics : {};
+  const mode = trim(diagnostics.mode, 'read_only_capture');
+  const adapterEnabled = opts.realRunnerAdapterEnabled === true || opts.enableRealProviderRunnerAdapter === true;
+  const providerClientInjected = Boolean(opts.providerClient);
+  const llmClientInjected = Boolean(opts.llmClient || opts.llmProvider);
+  const providerRunnerInjected = Boolean(providerRunner);
+  const allowRunnerNetwork = opts.allowRunnerNetwork === true;
+  const allowRealRunner = opts.allowRealRunner === true || opts.runnerFacadeEnabled === true || opts.enableProviderRunner === true;
+  const armed = mode === 'real_runner' &&
+    diagnostics.status === 'ready' &&
+    diagnostics.runnerFacadeEnabled === true &&
+    allowRunnerNetwork &&
+    providerRunnerInjected &&
+    (adapterEnabled || Boolean(opts.providerRunner));
+  return {
+    status: armed ? 'armed' : 'blocked',
+    mode,
+    reason: armed ? '' : 'real runner requires explicit debug gates',
+    experimentEnabled: experimentEnabled === true || explicitEnabled === true,
+    explicitEnabled: explicitEnabled === true,
+    providerRunnerInjected,
+    providerClientInjected,
+    llmClientInjected,
+    adapterEnabled,
+    allowRealRunner,
+    allowRunnerNetwork,
+    runnerFacadeEnabled: diagnostics.runnerFacadeEnabled === true,
+    network: armed,
+    writesChat: false,
+    allowedTools: normalizeAllowedTools(allowedTools),
+    modelContextPolicy: 'allowlist_only',
+    rollback: 'set runnerMode=read_only_capture or remove providerRunner/providerClient',
+  };
+};
 
 export const createProviderToolExperimentRuntime = ({
   providerToolCallRuntime = null,
@@ -66,8 +133,10 @@ export const createProviderToolExperimentRuntime = ({
       mockProviderRun: isPlainObject(entry.mockProviderRun) ? clone(entry.mockProviderRun) : null,
       runnerHandoff: isPlainObject(entry.runnerHandoff) ? clone(entry.runnerHandoff) : null,
       runnerRequestDraft: isPlainObject(entry.runnerRequestDraft) ? clone(entry.runnerRequestDraft) : null,
+      runnerModePlan: isPlainObject(entry.runnerModePlan) ? clone(entry.runnerModePlan) : null,
       runnerFacade: isPlainObject(entry.runnerFacade) ? clone(entry.runnerFacade) : null,
       runnerDryRun: isPlainObject(entry.runnerDryRun) ? clone(entry.runnerDryRun) : null,
+      realRunnerDebug: isPlainObject(entry.realRunnerDebug) ? clone(entry.realRunnerDebug) : null,
       loopState: isPlainObject(entry.loopState) ? clone(entry.loopState) : null,
       toolCall: entry.toolCall ? clone(entry.toolCall) : null,
     };
@@ -232,6 +301,22 @@ export const createProviderToolExperimentRuntime = ({
       return disabled;
     }
     const startedAt = readNow();
+    const legacyRunnerRequested = opts.runnerFacadeEnabled === true || opts.enableProviderRunner === true;
+    const providerRunner = resolveInjectedProviderRunner(opts, now);
+    const runnerModePlan = resolveProviderToolRunnerModePlan({
+      runnerMode: opts.runnerMode || opts.providerRunnerMode || (legacyRunnerRequested ? 'real_runner' : ''),
+      providerRunner,
+      allowRealRunner: opts.allowRealRunner === true || legacyRunnerRequested,
+      allowRunnerNetwork: opts.allowRunnerNetwork === true,
+    });
+    const realRunnerDebug = buildRealRunnerDebugSafety({
+      opts,
+      runnerModePlan,
+      providerRunner,
+      allowedTools: allowlist,
+      explicitEnabled,
+      experimentEnabled: enabled,
+    });
     const completed = await runProviderToolLoopController({
       events,
       enabled: true,
@@ -239,9 +324,10 @@ export const createProviderToolExperimentRuntime = ({
       model: trim(opts.model, model),
       sessionId: trim(opts.sessionId, sessionId),
       now,
-      runnerFacadeEnabled: opts.runnerFacadeEnabled === true || opts.enableProviderRunner === true,
-      providerRunner: opts.providerRunner || null,
-      allowRunnerNetwork: opts.allowRunnerNetwork === true,
+      runnerFacadeEnabled: runnerModePlan.runnerFacadeEnabled === true,
+      providerRunner: runnerModePlan.providerRunner || null,
+      allowRunnerNetwork: runnerModePlan.allowRunnerNetwork === true,
+      runnerModePlan: runnerModePlan.diagnostics,
       executeToolCall: toolCall => run({
         ...opts,
         enabled: true,
@@ -259,9 +345,11 @@ export const createProviderToolExperimentRuntime = ({
       provider: trim(opts.provider, provider),
       model: trim(opts.model, model),
       sessionId: trim(opts.sessionId, sessionId),
+      realRunnerDebug,
       createdAt: startedAt,
       updatedAt: readNow(),
     });
+    completed.realRunnerDebug = realRunnerDebug;
     return completed;
   };
 
