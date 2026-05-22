@@ -108,6 +108,35 @@ const createElement = ({ tagName = 'div', type = '', id = '' } = {}) => ({
 }
 
 {
+  const snapshot = normalizeViewportSnapshot({
+    innerWidth: 360,
+    innerHeight: 797,
+    documentClientWidth: 360,
+    documentClientHeight: 797,
+    visualViewport: { width: 360, height: 797, offsetTop: 0, offsetLeft: 0 },
+    screenWidth: 360,
+    screenHeight: 798,
+    previousBaseHeight: 797,
+    previousBaseWidth: 360,
+    hasFocusedEditable: true,
+    nativeIme: {
+      visible: true,
+      insetBottom: 280,
+      rawInsetBottom: 280,
+      density: 3,
+      source: 'android-window-insets',
+    },
+  });
+  assert.equal(snapshot.keyboardVisible, true);
+  assert.equal(snapshot.keyboardInsetBottom, 280);
+  assert.equal(snapshot.visualHeight, 517);
+  assert.equal(snapshot.rawVisualHeight, 797);
+  assert.equal(snapshot.nativeImeVisible, true);
+  assert.equal(snapshot.nativeImeInsetBottom, 280);
+  console.log('ok - normalizeViewportSnapshot uses native Android IME inset when visual viewport is unchanged');
+}
+
+{
   const root = createElement({ tagName: 'html' });
   const body = { dataset: {} };
   const input = createElement({ tagName: 'input', type: 'text', id: 'composer-input' });
@@ -187,6 +216,86 @@ const createElement = ({ tagName = 'div', type = '', id = '' } = {}) => ({
   assert.equal(chatRoom.style.height, '');
   assert.equal(runtime.getDebugInfo().visualViewport.height, 800);
   console.log('ok - createViewportKeyboardRuntime applies CSS vars target layout and debug info');
+}
+
+{
+  const root = createElement({ tagName: 'html' });
+  const body = { dataset: {} };
+  const input = createElement({ tagName: 'textarea', id: 'composer-input' });
+  const chatRoom = createElement({ tagName: 'div', id: 'chat-room' });
+  const listeners = new Map();
+  const visualListeners = new Map();
+  const documentRef = {
+    documentElement: root,
+    body,
+    activeElement: input,
+    addEventListener(type, handler) {
+      listeners.set(type, handler);
+    },
+    removeEventListener(type) {
+      listeners.delete(type);
+    },
+  };
+  root.ownerDocument = {
+    defaultView: {
+      getComputedStyle: element => element.style,
+    },
+  };
+  const windowRef = {
+    innerWidth: 360,
+    innerHeight: 797,
+    devicePixelRatio: 3,
+    navigator: { userAgent: 'Mozilla/5.0 (Linux; Android 16; wv)', platform: 'Linux aarch64' },
+    screen: { width: 360, height: 798, availWidth: 360, availHeight: 798, orientation: { type: 'portrait-primary' } },
+    visualViewport: {
+      width: 360,
+      height: 797,
+      offsetTop: 0,
+      offsetLeft: 0,
+      scale: 1,
+      addEventListener(type, handler) {
+        visualListeners.set(type, handler);
+      },
+      removeEventListener(type) {
+        visualListeners.delete(type);
+      },
+    },
+    addEventListener(type, handler) {
+      listeners.set(type, handler);
+    },
+    removeEventListener(type) {
+      listeners.delete(type);
+    },
+  };
+
+  const runtime = createViewportKeyboardRuntime({
+    windowRef,
+    documentRef,
+    rootEl: root,
+    bodyEl: body,
+    targets: [{ element: chatRoom, activeClass: 'keyboard-visible', fixedToVisualViewport: true }],
+    getFocusedElement: () => documentRef.activeElement,
+    requestAnimationFrameFn: fn => fn(),
+  });
+  const closed = runtime.start();
+  assert.equal(closed.keyboardVisible, false);
+  windowRef.__chatappAndroidImeInsets({
+    visible: true,
+    insetBottom: 280,
+    rawInsetBottom: 280,
+    density: 3,
+    source: 'android-window-insets',
+    timestamp: 't1',
+  });
+  const opened = runtime.getSnapshot();
+  assert.equal(opened.keyboardVisible, true);
+  assert.equal(root.style.getPropertyValue('--app-visual-height'), '517px');
+  assert.equal(root.style.getPropertyValue('--app-keyboard-inset-bottom'), '280px');
+  assert.equal(chatRoom.style.height, '517px');
+  assert.equal(runtime.getDebugInfo().nativeIme.source, 'android-window-insets');
+  runtime.stop();
+  assert.equal(typeof windowRef.__chatappAndroidImeInsets, 'undefined');
+  console.log('ok - createViewportKeyboardRuntime bridges native Android IME inset into visible layout');
 }
 
 {

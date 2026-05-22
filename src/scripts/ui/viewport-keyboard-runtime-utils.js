@@ -10,6 +10,29 @@ const readViewportValue = (source, key) => {
   return roundPx(source[key]);
 };
 
+const normalizeNativeImeState = (payload = null) => {
+  if (!payload || typeof payload !== 'object') {
+    return {
+      visible: false,
+      insetBottom: 0,
+      rawInsetBottom: 0,
+      density: 0,
+      source: '',
+      timestamp: '',
+    };
+  }
+  const insetBottom = roundPx(payload.insetBottom);
+  const rawInsetBottom = roundPx(payload.rawInsetBottom ?? payload.insetBottom);
+  return {
+    visible: Boolean(payload.visible),
+    insetBottom,
+    rawInsetBottom: rawInsetBottom || insetBottom,
+    density: toFiniteNumber(payload.density, 0),
+    source: String(payload.source || ''),
+    timestamp: String(payload.timestamp || ''),
+  };
+};
+
 const isEditableElement = (element) => {
   if (!element || typeof element !== 'object') return false;
   const tag = String(element.tagName || '').toLowerCase();
@@ -42,7 +65,9 @@ export const normalizeViewportSnapshot = ({
   hasFocusedEditable = false,
   keyboardThreshold = 80,
   useScreenHeightBaseline = true,
+  nativeIme = null,
 } = {}) => {
+  const nativeImeState = normalizeNativeImeState(nativeIme);
   const vvWidth = readViewportValue(visualViewport, 'width');
   const vvHeight = readViewportValue(visualViewport, 'height');
   const visualOffsetTop = readViewportValue(visualViewport, 'offsetTop');
@@ -57,7 +82,9 @@ export const normalizeViewportSnapshot = ({
     ? Math.max(roundPx(screenHeight), roundPx(screenWidth))
     : 0;
   let baseHeight = Math.max(retainedBaseHeight, layoutHeight, visualHeight, screenHeightCandidate);
-  const keyboardInsetBottom = Math.max(0, roundPx(baseHeight - visualHeight - visualOffsetTop));
+  const viewportKeyboardInsetBottom = Math.max(0, roundPx(baseHeight - visualHeight - visualOffsetTop));
+  const nativeKeyboardInsetBottom = nativeImeState.visible ? nativeImeState.insetBottom : 0;
+  const keyboardInsetBottom = Math.max(viewportKeyboardInsetBottom, nativeKeyboardInsetBottom);
   const keyboardVisible = Boolean(
     hasFocusedEditable && (keyboardInsetBottom >= keyboardThreshold || visualOffsetTop >= 24),
   );
@@ -65,18 +92,29 @@ export const normalizeViewportSnapshot = ({
   if (!keyboardVisible) {
     baseHeight = Math.max(layoutHeight, visualHeight);
   }
+  const shouldApplyNativeVisibleHeight = keyboardVisible
+    && nativeKeyboardInsetBottom >= keyboardThreshold
+    && viewportKeyboardInsetBottom < keyboardThreshold;
+  const appliedVisualHeight = shouldApplyNativeVisibleHeight
+    ? Math.max(0, roundPx(layoutHeight - nativeKeyboardInsetBottom - visualOffsetTop))
+    : visualHeight;
 
   return {
     layoutWidth,
     layoutHeight,
     visualWidth,
-    visualHeight,
+    visualHeight: appliedVisualHeight,
+    rawVisualHeight: visualHeight,
     visualOffsetTop,
     visualOffsetLeft,
     baseHeight,
     baseWidth: layoutWidth,
     keyboardInsetBottom: keyboardVisible ? keyboardInsetBottom : 0,
-    rawKeyboardInsetBottom: keyboardInsetBottom,
+    rawKeyboardInsetBottom: Math.max(viewportKeyboardInsetBottom, nativeImeState.rawInsetBottom),
+    viewportKeyboardInsetBottom,
+    nativeImeVisible: nativeImeState.visible,
+    nativeImeInsetBottom: nativeImeState.insetBottom,
+    nativeImeRawInsetBottom: nativeImeState.rawInsetBottom,
     keyboardVisible,
     hasFocusedEditable: Boolean(hasFocusedEditable),
   };
@@ -169,6 +207,9 @@ export const createViewportKeyboardRuntime = ({
   let baseWidth = 0;
   let lastSnapshot = null;
   let pendingRefresh = false;
+  let nativeImeState = normalizeNativeImeState();
+  let previousNativeImeHandler = null;
+  let nativeImeBridgeInstalled = false;
 
   const readSnapshot = () => {
     const focusedElement = typeof getFocusedElement === 'function'
@@ -187,6 +228,7 @@ export const createViewportKeyboardRuntime = ({
       hasFocusedEditable: isEditableElement(focusedElement),
       keyboardThreshold,
       useScreenHeightBaseline: shouldUseScreenHeightBaseline(windowRef),
+      nativeIme: nativeImeState,
     });
     baseHeight = snapshot.baseHeight;
     baseWidth = snapshot.baseWidth;
@@ -241,9 +283,41 @@ export const createViewportKeyboardRuntime = ({
     }
   };
 
+  const handleNativeImeInsets = (payload = null) => {
+    nativeImeState = normalizeNativeImeState(payload);
+    if (typeof previousNativeImeHandler === 'function') {
+      try { previousNativeImeHandler(payload); } catch {}
+    }
+    scheduleRefresh();
+  };
+
+  const installNativeImeBridge = () => {
+    if (!windowRef || nativeImeBridgeInstalled) return;
+    nativeImeBridgeInstalled = true;
+    previousNativeImeHandler = typeof windowRef.__chatappAndroidImeInsets === 'function'
+      ? windowRef.__chatappAndroidImeInsets
+      : null;
+    try {
+      windowRef.__chatappAndroidImeInsets = handleNativeImeInsets;
+    } catch {}
+  };
+
+  const removeNativeImeBridge = () => {
+    if (!windowRef || !nativeImeBridgeInstalled) return;
+    nativeImeBridgeInstalled = false;
+    try {
+      if (windowRef.__chatappAndroidImeInsets === handleNativeImeInsets) {
+        if (previousNativeImeHandler) windowRef.__chatappAndroidImeInsets = previousNativeImeHandler;
+        else delete windowRef.__chatappAndroidImeInsets;
+      }
+    } catch {}
+    previousNativeImeHandler = null;
+  };
+
   const start = () => {
     if (started || !windowRef || !documentRef) return refresh();
     started = true;
+    installNativeImeBridge();
     windowRef.addEventListener?.('resize', scheduleRefresh, { passive: true });
     windowRef.addEventListener?.('orientationchange', scheduleRefresh, { passive: true });
     windowRef.visualViewport?.addEventListener?.('resize', scheduleRefresh, { passive: true });
@@ -262,6 +336,7 @@ export const createViewportKeyboardRuntime = ({
     windowRef.visualViewport?.removeEventListener?.('scroll', scheduleRefresh, { passive: true });
     documentRef.removeEventListener?.('focusin', scheduleRefresh, true);
     documentRef.removeEventListener?.('focusout', scheduleRefresh, true);
+    removeNativeImeBridge();
     if (docEl) {
       removeStyleVar(docEl, '--app-keyboard-inset-bottom');
       removeStyleVar(docEl, '--app-visual-offset-top');
@@ -323,6 +398,14 @@ export const createViewportKeyboardRuntime = ({
         insetBottom: snapshot.keyboardInsetBottom,
         rawInsetBottom: snapshot.rawKeyboardInsetBottom,
         hasFocusedEditable: snapshot.hasFocusedEditable,
+      },
+      nativeIme: {
+        visible: snapshot.nativeImeVisible,
+        insetBottom: snapshot.nativeImeInsetBottom,
+        rawInsetBottom: snapshot.nativeImeRawInsetBottom,
+        density: nativeImeState.density,
+        source: nativeImeState.source,
+        timestamp: nativeImeState.timestamp,
       },
       activeElement: buildActiveElementDebug(activeElement),
     };

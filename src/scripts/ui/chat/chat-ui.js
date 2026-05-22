@@ -130,6 +130,7 @@ import { createRpFloorUiRuntime } from './rp-floor-ui-utils.js';
 import { renderTextWithStickersCore } from './sticker-text-ui-utils.js';
 import { renderMessageBubbleContentCore } from './message-bubble-content-ui-utils.js';
 import { buildAgentMessageSidecarElement } from './agent-message-sidecar-ui-utils.js';
+import { showProviderContinuationConfirmDialog } from './provider-continuation-confirm-ui-utils.js';
 import {
   appendStandardMessageLayoutCore,
   buildBubbleStackCore,
@@ -1714,20 +1715,60 @@ export class ChatUI {
         allowCurrentProviderRunner: true,
         allowRunnerNetwork: true,
       });
-      if (continuation?.status === 'ready' && currentRunner?.status === 'ready') {
-        toastOnce('Provider 继续预览已就绪', 'success', 3000);
-      } else if (continuation?.status === 'ready') {
-        toastOnce('Provider 继续预览已生成，runner gate 未就绪', 'info', 3500);
-      } else {
-        toastOnce('需先允许并执行工具，才能预览 Provider 继续', 'warning', 3500);
-      }
-      return {
+      const previewResult = {
         pendingPermissionId,
         continuation,
         currentRunner,
         network: false,
         writesChat: false,
       };
+      if (continuation?.status !== 'ready') {
+        toastOnce('需先允许并执行工具，才能预览 Provider 继续', 'warning', 3500);
+        return previewResult;
+      }
+      const confirmResult = await showProviderContinuationConfirmDialog({
+        continuation,
+        currentRunner,
+        onConfirm: async () => {
+          const runner = actions.planProviderToolPendingContinuationWithCurrentProvider;
+          if (typeof runner !== 'function') {
+            throw new Error('provider continuation current runner handler unavailable');
+          }
+          return await runner({
+            id: pendingPermissionId,
+            sessionId,
+            enabled: true,
+            allowCurrentProviderRunner: true,
+            allowRunnerNetwork: true,
+          });
+        },
+      });
+      if (confirmResult?.action === 'unavailable') {
+        if (currentRunner?.status === 'ready') {
+          toastOnce('Provider 继续预览已就绪，确认面板未可用', 'warning', 3500);
+        } else {
+          toastOnce('Provider 继续预览已生成，runner gate 未就绪', 'info', 3500);
+        }
+        return { ...previewResult, confirmResult };
+      }
+      if (confirmResult?.action === 'confirm_failed') {
+        logger.warn('provider tool continuation current runner failed', confirmResult.error);
+        toastOnce('Provider 继续执行失败', 'error', 3500);
+        return { ...previewResult, confirmResult };
+      }
+      if (confirmResult?.confirmed) {
+        const runResult = confirmResult.result;
+        if (runResult?.status === 'succeeded' || runResult?.ok === true) {
+          toastOnce('Provider 继续已完成', 'success', 3000);
+        } else {
+          toastOnce(runResult?.reason || 'Provider 继续未执行', 'warning', 3500);
+        }
+        return { ...previewResult, confirmResult };
+      }
+      if (currentRunner?.status !== 'ready') {
+        toastOnce('Provider 继续预览已生成，runner gate 未就绪', 'info', 3500);
+      }
+      return { ...previewResult, confirmResult };
     } catch (err) {
       logger.warn('provider tool continuation sidecar action failed', err);
       toastOnce('Provider 继续预览失败', 'error');

@@ -46,12 +46,14 @@ import {
     handleCustomBundleDiagnosticsLoadError,
     handleDebugTraceTimelineLoadError,
     handleStorageMigrationDiagnosticsLoadError,
+    handleViewportKeyboardDiagnosticsLoadError,
     refreshAgentRunDiagnosticsView,
     refreshBridgeContractDiagnosticsView,
     refreshCustomBundleDiagnosticsView,
     refreshDebugTraceTimelineView,
     refreshErrorLogView,
     refreshStorageMigrationDiagnosticsView,
+    refreshViewportKeyboardDiagnosticsView,
 } from './debug-panel-runtime-utils.js';
 
 export class DebugPanel {
@@ -69,6 +71,7 @@ export class DebugPanel {
         this.customBundleInspectBtn = null;
         this.storageMigrationInspectBtn = null;
         this.bridgeContractInspectBtn = null;
+        this.viewportKeyboardInspectBtn = null;
         this.traceTimelineInspectBtn = null;
         this.agentRunsInspectBtn = null;
         this.errorLogBtn = null;
@@ -94,6 +97,13 @@ export class DebugPanel {
         this.bridgeContractText = null;
         this.bridgeContractRefresh = null;
         this.bridgeContractExport = null;
+        this.viewportKeyboardOverlay = null;
+        this.viewportKeyboardPanel = null;
+        this.viewportKeyboardMeta = null;
+        this.viewportKeyboardText = null;
+        this.viewportKeyboardRefresh = null;
+        this.viewportKeyboardExport = null;
+        this.viewportKeyboardCopy = null;
         this.traceTimelineOverlay = null;
         this.traceTimelinePanel = null;
         this.traceTimelineMeta = null;
@@ -126,6 +136,7 @@ export class DebugPanel {
             onShowCustomBundle: () => this.showCustomBundleInspector(),
             onShowStorageMigration: () => this.showStorageMigrationInspector(),
             onShowBridgeContracts: () => this.showBridgeContractInspector(),
+            onShowViewportKeyboard: () => this.showViewportKeyboardInspector(),
             onShowTraceTimeline: () => this.showTraceTimelineInspector(),
             onShowAgentRuns: () => this.showAgentRunsInspector(),
             onShowErrorLogs: () => this.showErrorLogs(),
@@ -155,6 +166,7 @@ export class DebugPanel {
         this.customBundleInspectBtn = dom.customBundleInspectBtn;
         this.storageMigrationInspectBtn = dom.storageMigrationInspectBtn;
         this.bridgeContractInspectBtn = dom.bridgeContractInspectBtn;
+        this.viewportKeyboardInspectBtn = dom.viewportKeyboardInspectBtn;
         this.traceTimelineInspectBtn = dom.traceTimelineInspectBtn;
         this.agentRunsInspectBtn = dom.agentRunsInspectBtn;
         this.errorLogBtn = dom.errorLogBtn;
@@ -489,6 +501,103 @@ export class DebugPanel {
         await showDebugViewer({
             overlay: this.bridgeContractOverlay,
             onShow: () => this.refreshBridgeContractInspector(),
+        });
+    }
+
+    ensureViewportKeyboardInspector() {
+        if (this.viewportKeyboardOverlay) return;
+        const viewer = createDebugViewerModal({
+            overlayId: 'debug-viewport-keyboard-overlay',
+            panelId: 'debug-viewport-keyboard-panel',
+            title: '键盘/视口诊断',
+            includeCopyButton: true,
+            onClose: () => this.hideViewportKeyboardInspector(),
+            onRefresh: () => this.refreshViewportKeyboardInspector(),
+            onExport: () => this.exportViewportKeyboardDiagnostics(),
+            onCopy: async () => {
+                const viewer = createDebugViewerTextBindings({
+                    textEl: this.viewportKeyboardText,
+                });
+                await copyDebugTextFlow({
+                    text: viewer.getText(),
+                    writeText: async (text) => navigator.clipboard.writeText(text),
+                    fallbackCopy: createSelectedTextareaCopyFallback({
+                        textEl: this.viewportKeyboardText,
+                        execCommand: (command) => document.execCommand?.(command),
+                    }),
+                    onWarning: (message) => window.toastr?.warning?.(message),
+                    onSuccess: (message) => window.toastr?.success?.(message),
+                    onError: (message) => window.toastr?.error?.(message),
+                    emptyMessage: '暂无键盘/视口诊断可复制',
+                });
+            },
+        });
+        bindDebugViewerRefs({
+            target: this,
+            prefix: 'viewportKeyboard',
+            viewer,
+        });
+    }
+
+    hideViewportKeyboardInspector() {
+        setDebugViewerVisibility({ overlay: this.viewportKeyboardOverlay, visible: false });
+    }
+
+    async exportViewportKeyboardDiagnostics() {
+        await exportDebugTextFlow({
+            text: String(this.viewportKeyboardText?.value || ''),
+            filenamePrefix: 'viewport-keyboard',
+            successLabel: '键盘/视口诊断已导出',
+            emptyMessage: '暂无键盘/视口诊断可导出',
+            exportFailureToast: '键盘/视口诊断导出失败',
+            exportFailurePrefix: '键盘/视口诊断导出失败: ',
+            buildFilename: buildDebugTextFilename,
+            exportTextFile: (text, filename, successLabel) => exportDebugTextFile({
+                text,
+                filename,
+                successLabel,
+                onSuccess: (message) => window.toastr?.success?.(message),
+            }),
+            onWarning: (message) => window.toastr?.warning?.(message),
+            onLogWarn: (message) => this.log(message, 'warn'),
+            onError: (message) => window.toastr?.error?.(message),
+        });
+    }
+
+    async refreshViewportKeyboardInspector() {
+        const viewer = createDebugViewerTextBindings({
+            metaEl: this.viewportKeyboardMeta,
+            textEl: this.viewportKeyboardText,
+        });
+        if (!this.viewportKeyboardOverlay || !viewer.hasViewer()) return;
+        try {
+            const actions = window.appBridge?.debugUiRegistry?.actions || {};
+            if (typeof actions.refreshViewportKeyboardRuntime === 'function') {
+                actions.refreshViewportKeyboardRuntime();
+            }
+            const snapshot = typeof actions.getViewportDebugInfo === 'function'
+                ? actions.getViewportDebugInfo()
+                : window.__chatappViewportDebugInfo?.();
+            refreshViewportKeyboardDiagnosticsView({
+                snapshot,
+                setMeta: viewer.setMeta,
+                setText: viewer.setText,
+            });
+        } catch (err) {
+            handleViewportKeyboardDiagnosticsLoadError({
+                error: err,
+                setMeta: viewer.setMeta,
+                setText: viewer.setText,
+                logWarn: (message) => this.log(message, 'warn'),
+            });
+        }
+    }
+
+    async showViewportKeyboardInspector() {
+        this.ensureViewportKeyboardInspector();
+        await showDebugViewer({
+            overlay: this.viewportKeyboardOverlay,
+            onShow: () => this.refreshViewportKeyboardInspector(),
         });
     }
 

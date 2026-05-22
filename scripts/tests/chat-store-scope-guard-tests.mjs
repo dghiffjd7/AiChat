@@ -75,6 +75,7 @@ const makeSession = (timestamp = 1) => ({
   assert.equal(contacts.isForeignRpContactForScope('rp:persona_1', 'persona_1'), false);
 
   const store = new ContactsStore({ scopeId: 'persona_1' });
+  await store.ready;
   store.state = {
     contacts: {
       'rp:persona_2': { id: 'rp:persona_2', name: 'Foreign', addedAt: 3 },

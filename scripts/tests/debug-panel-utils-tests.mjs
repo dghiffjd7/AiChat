@@ -10,6 +10,7 @@ import {
   buildDebugTextFilename,
   buildProviderToolExperimentDiagnosticsMeta,
   buildStorageMigrationDiagnosticsMeta,
+  buildViewportKeyboardDiagnosticsMeta,
   collectBridgeContractDiagnostics,
   collectErrorLogs,
   formatBridgeContractDiagnostics,
@@ -18,12 +19,28 @@ import {
   formatErrorLogs,
   formatProviderToolExperimentDiagnostics,
   formatStorageMigrationDiagnostics,
+  formatViewportKeyboardDiagnostics,
 } from '../../src/scripts/ui/debug-panel-utils.js';
 
 {
   assert.equal(formatCustomBundleDiagnostics(null), '暂无自定义资料包导入诊断');
   assert.equal(formatCustomBundleDiagnostics({ a: 1 }), '{\n  "a": 1\n}');
   console.log('ok - formatCustomBundleDiagnostics formats object snapshots and handles empty input');
+}
+
+{
+  const snapshot = {
+    visualViewport: { width: 393, height: 520 },
+    keyboard: { visible: true, insetBottom: 320 },
+    activeElement: { id: 'composer-input', tagName: 'textarea' },
+  };
+  assert.equal(
+    buildViewportKeyboardDiagnosticsMeta(snapshot),
+    'keyboard=visible · inset=320px · visual=393x520 · active=composer-input',
+  );
+  assert.equal(formatViewportKeyboardDiagnostics(null), '暂无键盘/视口诊断');
+  assert.equal(formatViewportKeyboardDiagnostics(snapshot).includes('"visualViewport"'), true);
+  console.log('ok - viewport keyboard diagnostics summarize and format snapshot payload');
 }
 
 {

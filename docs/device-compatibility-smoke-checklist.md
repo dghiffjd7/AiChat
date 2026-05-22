@@ -25,11 +25,15 @@ Current target regressions:
 3. Verify the top bar remains visible and the composer is above the keyboard.
 4. Type multiple lines; verify the latest message area is still reachable.
 5. Close keyboard; verify chat room height returns to full visual viewport.
-6. Open debug console and run:
+6. Open Settings -> UI/debug options, enable the diagnostic button, then open:
+
+   Diagnostic -> Keyboard
 
 ```js
 window.__chatappViewportDebugInfo?.()
 ```
+
+The console function is kept as a fallback for developer builds.
 
 Expected:
 
@@ -60,5 +64,5 @@ Expected:
 ## Release Notes
 
 - Capture screenshot/video on any failed matrix item.
-- Include `window.__chatappViewportDebugInfo?.()` output with bug reports for keyboard or visual-offset issues.
+- Include the Diagnostic -> Keyboard export, or `window.__chatappViewportDebugInfo?.()` output in developer builds, with bug reports for keyboard or visual-offset issues.
 - If an OEM device differs, record WebView version, Android version, display size, font size, and whether gesture navigation is enabled.

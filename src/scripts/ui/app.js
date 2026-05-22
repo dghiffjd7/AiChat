@@ -12483,6 +12483,46 @@ Phase G（Frame 36）：循环衔接
     scheduleModeSwitchSync();
   });
 
+  const readViewportDebugRect = (element) => {
+    const rect = element?.getBoundingClientRect?.();
+    if (!rect) return null;
+    const round = value => Math.round((Number(value) || 0) * 100) / 100;
+    return {
+      top: round(rect.top),
+      right: round(rect.right),
+      bottom: round(rect.bottom),
+      left: round(rect.left),
+      width: round(rect.width),
+      height: round(rect.height),
+    };
+  };
+  let lastKeyboardVisibleDebugInfo = null;
+  let captureKeyboardVisibleDebugInfo = () => {};
+  const buildViewportKeyboardDebugInfo = (base, { includeLast = true } = {}) => ({
+    ...base,
+    capturedAt: new Date().toISOString(),
+    appState: {
+      uiMode,
+      activePage,
+      chatRoomVisible: Boolean(chatRoom && !chatRoom.classList.contains('hidden')),
+      bodyKeyboardVisible: String(document.body?.dataset?.keyboardVisible || ''),
+      bodyClass: String(document.body?.className || ''),
+    },
+    elements: {
+      chatRoom: readViewportDebugRect(chatRoom),
+      chatScroll: readViewportDebugRect(chatScroll),
+      chatInputContainer: readViewportDebugRect(chatInputContainer),
+      composerInput: readViewportDebugRect(composerInput),
+      activeElement: readViewportDebugRect(document.activeElement),
+    },
+    scroll: {
+      chatScrollTop: Math.round(Number(chatScroll?.scrollTop || 0)),
+      chatScrollHeight: Math.round(Number(chatScroll?.scrollHeight || 0)),
+      chatScrollClientHeight: Math.round(Number(chatScroll?.clientHeight || 0)),
+    },
+    lastKeyboardVisible: includeLast ? lastKeyboardVisibleDebugInfo : null,
+  });
+
   const viewportKeyboardRuntime = createViewportKeyboardRuntime({
     windowRef: window,
     documentRef: document,
@@ -12502,17 +12542,39 @@ Phase G（Frame 36）：循环衔接
       },
     ],
     getFocusedElement: () => document.activeElement,
-    onSnapshot: () => scheduleModeSwitchSync?.(),
+    onSnapshot: (snapshot) => {
+      scheduleModeSwitchSync?.();
+      if (!snapshot?.keyboardVisible) return;
+      if (typeof requestAnimationFrame === 'function') {
+        requestAnimationFrame(() => captureKeyboardVisibleDebugInfo());
+      } else {
+        captureKeyboardVisibleDebugInfo();
+      }
+    },
     requestAnimationFrameFn: typeof requestAnimationFrame === 'function' ? requestAnimationFrame : null,
     setTimeoutFn: typeof setTimeout === 'function' ? setTimeout : null,
     logger,
   });
   viewportKeyboardRuntime.start();
+  captureKeyboardVisibleDebugInfo = () => {
+    const base = viewportKeyboardRuntime.getDebugInfo();
+    if (base?.keyboard?.visible) {
+      lastKeyboardVisibleDebugInfo = buildViewportKeyboardDebugInfo(base, { includeLast: false });
+    }
+  };
+  captureKeyboardVisibleDebugInfo();
+  const getViewportKeyboardDebugInfo = () => {
+    const base = viewportKeyboardRuntime.getDebugInfo();
+    if (base?.keyboard?.visible) {
+      lastKeyboardVisibleDebugInfo = buildViewportKeyboardDebugInfo(base, { includeLast: false });
+    }
+    return buildViewportKeyboardDebugInfo(base);
+  };
   try {
-    window.__chatappViewportDebugInfo = () => viewportKeyboardRuntime.getDebugInfo();
+    window.__chatappViewportDebugInfo = getViewportKeyboardDebugInfo;
   } catch {}
   patchDebugUiRegistry((registry) => {
-    registry.actions.getViewportDebugInfo = () => viewportKeyboardRuntime.getDebugInfo();
+    registry.actions.getViewportDebugInfo = getViewportKeyboardDebugInfo;
     registry.actions.refreshViewportKeyboardRuntime = () => viewportKeyboardRuntime.refresh();
   });
 

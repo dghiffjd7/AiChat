@@ -134,6 +134,30 @@ export const formatBridgeContractDiagnostics = (registry = null) => {
   ].join('\n');
 };
 
+export const formatViewportKeyboardDiagnostics = (snapshot = null) => {
+  if (!snapshot || typeof snapshot !== 'object') return '暂无键盘/视口诊断';
+  try {
+    return JSON.stringify(snapshot, null, 2);
+  } catch {
+    return String(snapshot || '');
+  }
+};
+
+export const buildViewportKeyboardDiagnosticsMeta = (snapshot = null) => {
+  if (!snapshot || typeof snapshot !== 'object') return '暂无数据';
+  const keyboard = isPlainObject(snapshot.keyboard) ? snapshot.keyboard : {};
+  const visualViewport = isPlainObject(snapshot.visualViewport) ? snapshot.visualViewport : {};
+  const activeElement = isPlainObject(snapshot.activeElement) ? snapshot.activeElement : {};
+  const visible = keyboard.visible === true ? 'visible' : 'hidden';
+  const inset = Number.isFinite(Number(keyboard.insetBottom)) ? `${Number(keyboard.insetBottom)}px` : '-';
+  const width = Number.isFinite(Number(visualViewport.width)) ? Number(visualViewport.width) : 0;
+  const height = Number.isFinite(Number(visualViewport.height)) ? Number(visualViewport.height) : 0;
+  const activeId = String(activeElement.id || '').trim();
+  const activeTag = String(activeElement.tagName || '').trim();
+  const active = activeId || activeTag || '-';
+  return `keyboard=${visible} · inset=${inset} · visual=${width}x${height} · active=${active}`;
+};
+
 const normalizeTraceEvents = (events = []) => (
   Array.isArray(events) ? events : []
 ).filter(Boolean);

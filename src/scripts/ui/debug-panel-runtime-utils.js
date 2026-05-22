@@ -8,6 +8,7 @@ import {
   buildDebugTextFilename,
   buildProviderToolExperimentDiagnosticsMeta,
   buildStorageMigrationDiagnosticsMeta,
+  buildViewportKeyboardDiagnosticsMeta,
   collectErrorLogs,
   formatBridgeContractDiagnostics,
   formatCustomBundleDiagnostics,
@@ -15,6 +16,7 @@ import {
   formatErrorLogs,
   formatProviderToolExperimentDiagnostics,
   formatStorageMigrationDiagnostics,
+  formatViewportKeyboardDiagnostics,
 } from './debug-panel-utils.js';
 import { buildStorageMigrationChecklist } from '../storage/storage-migration-contracts.js';
 import { formatVisibleDebugLogsText } from './debug-panel-log-utils.js';
@@ -135,6 +137,34 @@ export const handleBridgeContractDiagnosticsLoadError = ({
   setMeta?.(`加载失败: ${normalized}`);
   setText?.(`Bridge contract 诊断加载失败\n\n${normalized}`);
   logWarn?.(`Bridge contract 诊断加载失败: ${normalized}`);
+  return normalized;
+};
+
+export const refreshViewportKeyboardDiagnosticsView = ({
+  snapshot = null,
+  getSnapshot = null,
+  setMeta = () => {},
+  setText = () => {},
+} = {}) => {
+  const data = snapshot || (typeof getSnapshot === 'function' ? getSnapshot() : null);
+  const meta = buildViewportKeyboardDiagnosticsMeta(data);
+  const text = formatViewportKeyboardDiagnostics(data);
+  setMeta?.(meta);
+  setText?.(text);
+  return { meta, text, snapshot: data };
+};
+
+export const handleViewportKeyboardDiagnosticsLoadError = ({
+  error = null,
+  setMeta = () => {},
+  setText = () => {},
+  logWarn = () => {},
+} = {}) => {
+  const message = error?.message ? String(error.message) : String(error || '');
+  const normalized = message || 'unknown error';
+  setMeta?.(`加载失败: ${normalized}`);
+  setText?.(`键盘/视口诊断加载失败\n\n${normalized}`);
+  logWarn?.(`键盘/视口诊断加载失败: ${normalized}`);
   return normalized;
 };
 

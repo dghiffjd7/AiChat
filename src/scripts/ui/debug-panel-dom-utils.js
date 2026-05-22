@@ -24,6 +24,7 @@ export const createDebugPanelDom = ({
   onShowCustomBundle = () => {},
   onShowStorageMigration = () => {},
   onShowBridgeContracts = () => {},
+  onShowViewportKeyboard = () => {},
   onShowTraceTimeline = () => {},
   onShowAgentRuns = () => {},
   onShowErrorLogs = () => {},
@@ -60,6 +61,14 @@ export const createDebugPanelDom = ({
     onClick: onShowBridgeContracts,
   });
   controls.appendChild(bridgeContractInspectBtn);
+
+  const viewportKeyboardInspectBtn = createDebugButton({
+    documentRef,
+    text: '键盘',
+    title: '键盘/视口诊断',
+    onClick: onShowViewportKeyboard,
+  });
+  controls.appendChild(viewportKeyboardInspectBtn);
 
   const traceTimelineInspectBtn = createDebugButton({
     documentRef,
@@ -144,6 +153,7 @@ export const createDebugPanelDom = ({
     customBundleInspectBtn,
     storageMigrationInspectBtn,
     bridgeContractInspectBtn,
+    viewportKeyboardInspectBtn,
     traceTimelineInspectBtn,
     agentRunsInspectBtn,
     errorLogBtn,

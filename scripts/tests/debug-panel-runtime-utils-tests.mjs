@@ -12,12 +12,14 @@ import {
   handleCustomBundleDiagnosticsLoadError,
   handleDebugTraceTimelineLoadError,
   handleStorageMigrationDiagnosticsLoadError,
+  handleViewportKeyboardDiagnosticsLoadError,
   refreshAgentRunDiagnosticsView,
   refreshBridgeContractDiagnosticsView,
   refreshCustomBundleDiagnosticsView,
   refreshDebugTraceTimelineView,
   refreshErrorLogView,
   refreshStorageMigrationDiagnosticsView,
+  refreshViewportKeyboardDiagnosticsView,
 } from '../../src/scripts/ui/debug-panel-runtime-utils.js';
 
 {
@@ -137,6 +139,41 @@ import {
   assert.equal(text, 'Bridge contract 诊断加载失败\n\nboom');
   assert.deepEqual(warnings, ['Bridge contract 诊断加载失败: boom']);
   console.log('ok - handleBridgeContractDiagnosticsLoadError writes fallback text and warning log');
+}
+
+{
+  let meta = '';
+  let text = '';
+  const result = refreshViewportKeyboardDiagnosticsView({
+    getSnapshot: () => ({
+      visualViewport: { width: 393, height: 522 },
+      keyboard: { visible: true, insetBottom: 318 },
+      activeElement: { id: 'composer-input', tagName: 'textarea' },
+    }),
+    setMeta: (value) => { meta = value; },
+    setText: (value) => { text = value; },
+  });
+  assert.equal(result.meta, 'keyboard=visible · inset=318px · visual=393x522 · active=composer-input');
+  assert.equal(meta, result.meta);
+  assert.equal(text.includes('"keyboard"'), true);
+  console.log('ok - refreshViewportKeyboardDiagnosticsView writes keyboard viewport snapshot');
+}
+
+{
+  let meta = '';
+  let text = '';
+  const warnings = [];
+  const result = handleViewportKeyboardDiagnosticsLoadError({
+    error: new Error('viewport boom'),
+    setMeta: (value) => { meta = value; },
+    setText: (value) => { text = value; },
+    logWarn: (message) => warnings.push(message),
+  });
+  assert.equal(result, 'viewport boom');
+  assert.equal(meta, '加载失败: viewport boom');
+  assert.equal(text, '键盘/视口诊断加载失败\n\nviewport boom');
+  assert.deepEqual(warnings, ['键盘/视口诊断加载失败: viewport boom']);
+  console.log('ok - handleViewportKeyboardDiagnosticsLoadError writes fallback text and warning log');
 }
 
 {
