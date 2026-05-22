@@ -31,8 +31,8 @@ const createFakeDocument = () => {
     createElement(tagName) {
       return new FakeElement(tagName);
     },
-    addEventListener(type, handler) {
-      listeners.set(type, handler);
+    addEventListener(type, handler, options = {}) {
+      listeners.set(type, { handler, options });
     },
     listeners,
   };
@@ -43,12 +43,16 @@ const createFakeDocument = () => {
   const menu = createContextMenuShell({ documentLike });
   assert.equal(documentLike.body.children[0], menu);
   menu.style.display = 'block';
-  documentLike.listeners.get('pointerdown')({ target: documentLike.createElement('div') });
+  documentLike.listeners.get('pointerdown').handler({ target: documentLike.createElement('div') });
   assert.equal(menu.style.display, 'none');
   menu.style.display = 'block';
-  documentLike.listeners.get('pointerdown')({ target: menu });
+  documentLike.listeners.get('pointerdown').handler({ target: menu });
   assert.equal(menu.style.display, 'block');
-  console.log('ok - createContextMenuShell mounts menu and hides only on outside presses');
+  menu.style.display = 'block';
+  documentLike.listeners.get('touchstart').handler({ target: documentLike.createElement('div') });
+  assert.equal(menu.style.display, 'none');
+  assert.equal(documentLike.listeners.get('contextmenu').options.capture, true);
+  console.log('ok - createContextMenuShell mounts menu and hides only on outside presses across pointer touch and captured contextmenu');
 }
 
 {

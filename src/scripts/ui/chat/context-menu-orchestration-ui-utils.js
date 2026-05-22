@@ -1,3 +1,14 @@
+const waitForMenuDismissalPaint = (windowLike = null) => new Promise((resolve) => {
+  const raf = windowLike && typeof windowLike.requestAnimationFrame === 'function'
+    ? windowLike.requestAnimationFrame.bind(windowLike)
+    : null;
+  if (raf) {
+    raf(() => resolve());
+    return;
+  }
+  setTimeout(resolve, 0);
+});
+
 export const showContextMenuCore = ({
   event,
   message,
@@ -79,38 +90,47 @@ export const showContextMenuCore = ({
       documentLike,
       action,
       onClick: async (nextEvent) => {
+        nextEvent.preventDefault?.();
         nextEvent.stopPropagation?.();
-        await dispatchContextMenuAction?.({
-          actionKey: action.key,
-          message: resolvedMessage,
-          wrapper,
-          codeBlock,
-          hasCode,
-          inlineGeneratedImage,
-          tryAction: async (key, payload, options = {}) => {
-            if (typeof actionHandler !== 'function') return false;
-            try {
-              const handled = await actionHandler(key, resolvedMessage, payload);
-              if (options.skipFallback === true) return handled;
-              return handled;
-            } catch {
-              return false;
-            }
-          },
-          hideMenu: () => {
-            contextMenu.style.display = 'none';
-          },
-          clearLongPress,
-          openCodeViewer,
-          getBubbleCopyText,
-          copyToClipboard,
-          showCopyToast: (ok) => {
-            if (ok) successToast?.('已复制');
-            else warningToast?.('复制失败');
-          },
-          startInlineEdit,
-          enterSelectionMode,
-        });
+        const hideMenu = () => {
+          contextMenu.style.display = 'none';
+        };
+        hideMenu();
+        clearLongPress?.();
+        await waitForMenuDismissalPaint(windowLike);
+        try {
+          await dispatchContextMenuAction?.({
+            actionKey: action.key,
+            message: resolvedMessage,
+            wrapper,
+            codeBlock,
+            hasCode,
+            inlineGeneratedImage,
+            tryAction: async (key, payload, options = {}) => {
+              if (typeof actionHandler !== 'function') return false;
+              try {
+                const handled = await actionHandler(key, resolvedMessage, payload);
+                if (options.skipFallback === true) return handled;
+                return handled;
+              } catch {
+                return false;
+              }
+            },
+            hideMenu,
+            clearLongPress,
+            openCodeViewer,
+            getBubbleCopyText,
+            copyToClipboard,
+            showCopyToast: (ok) => {
+              if (ok) successToast?.('已复制');
+              else warningToast?.('复制失败');
+            },
+            startInlineEdit,
+            enterSelectionMode,
+          });
+        } finally {
+          hideMenu();
+        }
       },
     });
     if (button) contextMenu.appendChild(button);

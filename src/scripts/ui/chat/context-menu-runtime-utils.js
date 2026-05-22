@@ -10,15 +10,15 @@ export const createContextMenuShell = ({
             z-index: 20000;
         `;
   documentLike.body.appendChild(menu);
-  documentLike.addEventListener?.(
-    'pointerdown',
-    e => {
-      if (menu.style.display === 'none') return;
-      if (menu.contains?.(e.target)) return;
-      menu.style.display = 'none';
-    },
-    { passive: true },
-  );
+  const hideOnOutsidePress = e => {
+    if (menu.style.display === 'none') return;
+    if (menu.contains?.(e.target)) return;
+    menu.style.display = 'none';
+  };
+  ['pointerdown', 'mousedown', 'touchstart', 'click'].forEach((type) => {
+    documentLike.addEventListener?.(type, hideOnOutsidePress, { passive: true });
+  });
+  documentLike.addEventListener?.('contextmenu', hideOnOutsidePress, { passive: true, capture: true });
   return menu;
 };
 

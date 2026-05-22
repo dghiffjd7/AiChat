@@ -80,3 +80,60 @@ import { showContextMenuCore } from '../../src/scripts/ui/chat/context-menu-orch
   assert.equal(dispatched[0].actionKey, 'copy');
   console.log('ok - showContextMenuCore builds reaction row action buttons and forwards dispatches');
 }
+
+{
+  const actionButtons = [];
+  const dispatched = [];
+  const cleared = [];
+  let rafHandler = null;
+  const contextMenu = {
+    style: { display: 'block' },
+    innerHTML: '',
+    appendChild(node) {
+      actionButtons.push(node);
+    },
+  };
+  showContextMenuCore({
+    event: { target: {}, clientX: 0, clientY: 0 },
+    message: { id: 'm-download', type: 'image' },
+    contextMenu,
+    resolveContextMenuContext: () => ({
+      wrapper: { id: 'wrap' },
+      message: { id: 'm-download', type: 'image' },
+      codeBlock: null,
+      hasCode: false,
+    }),
+    buildContextMenuActions: () => ([
+      { key: 'download', label: '下载' },
+    ]),
+    createContextMenuActionButton: payload => ({ payload }),
+    dispatchContextMenuAction: async payload => {
+      dispatched.push(payload);
+    },
+    getPoint: () => ({ x: 0, y: 0 }),
+    positionContextMenu() {
+      contextMenu.style.display = 'block';
+    },
+    clearLongPress: () => cleared.push('clear'),
+    documentLike: {},
+    windowLike: {
+      requestAnimationFrame(handler) {
+        rafHandler = handler;
+      },
+    },
+  });
+  assert.equal(actionButtons.length, 1);
+  const clickPromise = actionButtons[0].payload.onClick({
+    preventDefault() {},
+    stopPropagation() {},
+  });
+  assert.equal(contextMenu.style.display, 'none');
+  assert.deepEqual(cleared, ['clear']);
+  assert.equal(dispatched.length, 0);
+  rafHandler();
+  await clickPromise;
+  assert.equal(dispatched.length, 1);
+  assert.equal(dispatched[0].actionKey, 'download');
+  assert.equal(contextMenu.style.display, 'none');
+  console.log('ok - showContextMenuCore hides menu and yields a frame before dispatching slow actions');
+}
