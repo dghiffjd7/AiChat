@@ -19,5 +19,9 @@ assert.match(sessionConfigSource, /renderModeCard\(wrap, 'moments', '动态任�
 assert.match(presetStoreSource, /PRESET_BINDING_MODES = \['chat', 'rp', 'moments'\]/);
 assert.doesNotMatch(source, /\.pp-pages\s*\{[\s\S]*width:\s*300%;/);
 assert.doesNotMatch(source, /translateX\(-33\.333333%\)/);
+assert.match(source, /@media \(max-width: 520px\), \(max-height: 720px\)/);
+assert.match(source, /--pp-footer-height:\s*50px;/);
+assert.match(source, /\.pp-header-title\s*\{[\s\S]*white-space:\s*nowrap;/);
+assert.match(source, /\.pp-manager-actions\s*\{[\s\S]*grid-template-columns:\s*repeat\(4, minmax\(0, 1fr\)\);/);
 
-console.log('ok - preset panel pages are stacked so scrollbars do not slide during view changes');
+console.log('ok - preset panel pages are stacked and compact on small viewports');
