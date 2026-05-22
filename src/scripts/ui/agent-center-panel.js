@@ -102,11 +102,44 @@ const PANEL_CSS = `
     flex-direction: column;
     gap: 8px;
 }
+.agent-center-filter-row {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 10px;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+}
+.agent-center-filter {
+    min-height: 30px;
+    border: 1px solid var(--app-border-default);
+    border-radius: 999px;
+    background: var(--app-surface-card);
+    color: var(--app-text-secondary);
+    padding: 5px 9px;
+    font-size: 12px;
+    font-weight: 800;
+    white-space: nowrap;
+    cursor: pointer;
+}
+.agent-center-filter.is-active {
+    border-color: rgba(59,130,246,0.26);
+    background: rgba(59,130,246,0.10);
+    color: #1d4ed8;
+}
+.agent-center-filter.is-danger.is-active {
+    border-color: rgba(244,63,94,0.26);
+    background: rgba(244,63,94,0.10);
+    color: #be123c;
+}
 .agent-center-card {
     border: 1px solid var(--app-border-default);
     border-radius: 8px;
     background: var(--app-surface-subtle);
     padding: 10px 12px;
+}
+.agent-center-card.is-failure {
+    border-color: rgba(244,63,94,0.24);
+    background: rgba(244,63,94,0.07);
 }
 .agent-center-card-head {
     display: flex;
@@ -126,6 +159,9 @@ const PANEL_CSS = `
     line-height: 1.45;
     color: var(--app-text-secondary);
     word-break: break-word;
+}
+.agent-center-card-error {
+    color: #be123c;
 }
 .agent-center-chip-row {
     display: flex;
@@ -215,6 +251,28 @@ const statusChipClass = value => `agent-center-chip is-status-${trim(value, 'unk
 
 const riskChipClass = value => `agent-center-chip is-risk-${trim(value, 'low').toLowerCase().replace(/[^a-z0-9_-]+/g, '-')}`;
 
+const normalizeActivityStatus = (value = '') => {
+    const status = trim(value).toLowerCase();
+    return ['active', 'failure', 'queued', 'running', 'waiting_permission', 'succeeded', 'failed', 'cancelled'].includes(status)
+        ? status
+        : '';
+};
+
+const activityStatusLabel = (status = '') => ({
+    active: '运行中',
+    failure: '失败',
+    queued: '排队',
+    running: '运行中',
+    waiting_permission: '待确认',
+    succeeded: '完成',
+    failed: '失败',
+    cancelled: '已取消',
+}[normalizeActivityStatus(status)] || '全部');
+
+const activityCardClass = status => (
+    ['failed', 'cancelled'].includes(trim(status).toLowerCase()) ? 'agent-center-card is-failure' : 'agent-center-card'
+);
+
 const renderChips = (chips = []) => {
     const html = chips.filter(Boolean).map((chip) => {
         const label = trim(chip.label);
@@ -237,6 +295,7 @@ export class AgentCenterPanel {
         this.metaElement = null;
         this.tabsElement = null;
         this.activeTab = 'pending';
+        this.activityStatus = '';
         this.view = buildAgentCenterView();
         this.lastError = '';
     }
@@ -298,7 +357,11 @@ export class AgentCenterPanel {
 
     async collectView() {
         this.lastError = '';
-        const agentRunView = await this.callAction('listAgentRunView', { limit: 50 }, null);
+        const activityStatus = normalizeActivityStatus(this.activityStatus);
+        const agentRunView = await this.callAction('listAgentRunView', {
+            limit: 50,
+            ...(activityStatus ? { status: activityStatus } : {}),
+        }, null);
         const [pendingPermissions, tools, permissionRules, sessionGate, experimentStatus] = await Promise.all([
             this.callAction('listProviderToolPendingPermissions', { limit: 100 }, []),
             this.callAction('listAgentTools', undefined, []),
@@ -316,9 +379,12 @@ export class AgentCenterPanel {
         });
     }
 
-    show({ tab = this.activeTab } = {}) {
+    show(options = {}) {
+        const opts = options && typeof options === 'object' ? options : {};
+        const tab = Object.prototype.hasOwnProperty.call(opts, 'tab') ? opts.tab : this.activeTab;
         this.ensureDom();
         this.activeTab = trim(tab, 'pending');
+        this.activityStatus = normalizeActivityStatus(opts.activityStatus || opts.status || '');
         if (this.overlayElement) this.overlayElement.style.display = 'flex';
         this.refresh();
     }
@@ -333,11 +399,18 @@ export class AgentCenterPanel {
         this.render();
     }
 
-    setActiveTab(tab = 'pending') {
+    setActiveTab(tab = 'pending', { resetActivityStatus = false } = {}) {
         const next = trim(tab, 'pending');
         if (!this.view.tabs.some(item => item.id === next)) return;
         this.activeTab = next;
+        if (resetActivityStatus) this.activityStatus = '';
         this.render();
+    }
+
+    setActivityStatus(status = '') {
+        this.activeTab = 'activity';
+        this.activityStatus = normalizeActivityStatus(status);
+        this.refresh();
     }
 
     renderTabs() {
@@ -350,7 +423,9 @@ export class AgentCenterPanel {
             >${escapeHtml(tab.label)}${tab.count ? ` ${Number(tab.count)}` : ''}</button>
         `).join('');
         this.tabsElement.querySelectorAll('[data-tab]').forEach((button) => {
-            button.addEventListener('click', () => this.setActiveTab(button.dataset.tab));
+            button.addEventListener('click', () => this.setActiveTab(button.dataset.tab, {
+                resetActivityStatus: button.dataset.tab === 'activity',
+            }));
         });
     }
 
@@ -390,9 +465,27 @@ export class AgentCenterPanel {
     renderActivity() {
         const activity = this.view.activity || {};
         const runs = activity.runs || [];
-        if (!runs.length) return renderEmpty('还没有 Agent 活动记录');
-        return `<div class="agent-center-list">${runs.map(run => `
-            <article class="agent-center-card">
+        const meta = activity.meta || {};
+        const statusCounts = meta.statusCounts || {};
+        const activeStatus = normalizeActivityStatus(this.activityStatus);
+        const filters = [
+            { status: '', label: `全部 ${Number(meta.total || 0)}` },
+            { status: 'active', label: `运行中 ${Number(meta.active || 0)}` },
+            { status: 'failure', label: `失败 ${Number(meta.failures || 0)}`, tone: 'danger' },
+            { status: 'succeeded', label: `完成 ${Number(statusCounts.succeeded || 0)}` },
+        ];
+        const filterHtml = `<div class="agent-center-filter-row" aria-label="Agent activity filters">${filters.map(filter => `
+            <button
+                type="button"
+                class="agent-center-filter${activeStatus === filter.status ? ' is-active' : ''}${filter.tone === 'danger' ? ' is-danger' : ''}"
+                data-activity-status="${escapeHtml(filter.status)}"
+            >${escapeHtml(filter.label)}</button>
+        `).join('')}</div>`;
+        if (!runs.length) return `${filterHtml}${renderEmpty(activeStatus ? `没有${activityStatusLabel(activeStatus)} Agent 活动` : '还没有 Agent 活动记录')}`;
+        return `${filterHtml}<div class="agent-center-list">${runs.map(run => {
+            const failureDetail = trim(run.errorMessage || run.cancelReason || run.lastStep?.errorMessage);
+            return `
+            <article class="${escapeHtml(activityCardClass(run.status))}">
                 <div class="agent-center-card-head">
                     <div>
                         <div class="agent-center-card-title">${escapeHtml(run.title || run.kind || run.id)}</div>
@@ -401,13 +494,14 @@ export class AgentCenterPanel {
                     <span class="${escapeHtml(statusChipClass(run.status))}">${escapeHtml(run.status)}</span>
                 </div>
                 <div class="agent-center-card-sub">${escapeHtml(run.summary || run.lastStep?.summary || run.errorMessage || '-')}</div>
+                ${failureDetail ? `<div class="agent-center-card-sub agent-center-card-error">错误：${escapeHtml(failureDetail)}</div>` : ''}
                 ${renderChips([
                     { label: `steps ${Number(run.stepCount || 0)}` },
                     { label: `tools ${Number(run.toolCallCount || 0)}` },
                     run.lastStep ? { label: `last: ${run.lastStep.type}` } : null,
                 ])}
             </article>
-        `).join('')}</div>`;
+        `; }).join('')}</div>`;
     }
 
     renderTools() {
@@ -471,5 +565,10 @@ export class AgentCenterPanel {
                     ? this.renderTools()
                     : this.renderSafety();
         this.contentElement.innerHTML = `${error}${body}`;
+        if (this.activeTab === 'activity') {
+            this.contentElement.querySelectorAll('[data-activity-status]').forEach((button) => {
+                button.addEventListener('click', () => this.setActivityStatus(button.dataset.activityStatus || ''));
+            });
+        }
     }
 }

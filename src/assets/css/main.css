@@ -5417,7 +5417,17 @@ body,
 .bottom-nav .nav-btn {
   border: none;
   background: transparent;
-  font-size: 14px;
+  min-width: 68px;
+  height: 44px;
+  border-radius: 14px;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 4px 8px;
+  font-size: 12px;
+  line-height: 1;
   color: var(--app-text-secondary);
   cursor: pointer;
 }
@@ -5425,6 +5435,51 @@ body,
 .bottom-nav .nav-btn.active {
   color: var(--app-text-primary);
   font-weight: 700;
+  background: rgba(47, 136, 255, 0.10);
+}
+
+.bottom-nav .nav-icon {
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.bottom-nav .nav-svg {
+  width: 22px;
+  height: 22px;
+  display: block;
+  overflow: visible;
+}
+
+.bottom-nav .nav-svg-fill {
+  fill: currentColor;
+  opacity: 0.13;
+}
+
+.bottom-nav .nav-svg-stroke {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.bottom-nav .nav-svg-soft {
+  opacity: 0.72;
+  stroke-width: 1.55;
+}
+
+.bottom-nav .nav-btn.active .nav-svg-fill {
+  opacity: 0.2;
+}
+
+.bottom-nav .nav-label {
+  max-width: 58px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* page 底部留白由高度计算处理，避免重复叠加 */

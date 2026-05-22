@@ -32,7 +32,10 @@ export const createPageSwitchRuntime = ({
 
     setActivePage?.(next);
     normalizeCollection(navButtons).forEach((button) => {
-      button?.classList?.toggle?.('active', button?.dataset?.page === next);
+      const isActive = button?.dataset?.page === next;
+      button?.classList?.toggle?.('active', isActive);
+      if (isActive) button?.setAttribute?.('aria-current', 'page');
+      else button?.removeAttribute?.('aria-current');
     });
 
     const oldEl = pages?.[prev];

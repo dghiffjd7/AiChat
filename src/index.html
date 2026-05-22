@@ -429,10 +429,38 @@
       </div>
 
       <!-- Bottom nav -->
-      <nav class="bottom-nav">
-        <button class="nav-btn active" data-page="chat">聊天</button>
-        <button class="nav-btn" data-page="contacts">联系人</button>
-        <button class="nav-btn" data-page="moments">动态</button>
+      <nav class="bottom-nav" aria-label="主导航">
+        <button type="button" class="nav-btn active" data-page="chat" aria-current="page">
+          <span class="nav-icon" aria-hidden="true">
+            <svg class="nav-svg" viewBox="0 0 24 24" focusable="false">
+              <path class="nav-svg-fill" d="M5.4 5.8A6.6 6.6 0 0 1 12 2.8h.4c4.1 0 7.2 2.7 7.2 6.2 0 3.6-3.1 6.3-7.2 6.3h-.8l-4.1 3.1c-.7.5-1.7 0-1.6-.9l.5-3A5.9 5.9 0 0 1 4 9c0-1.2.5-2.3 1.4-3.2Z"/>
+              <path class="nav-svg-stroke" d="M6.3 14.3 5.8 17l3.8-2.8h2.7c3.3 0 5.8-2.2 5.8-5.1S15.6 4 12.3 4H12C8.7 4 6.1 6.1 6.1 9c0 1.9 1.1 3.8 3 4.6"/>
+              <path class="nav-svg-stroke nav-svg-soft" d="M9.2 8.4h5.5M9.2 11h3.8"/>
+            </svg>
+          </span>
+          <span class="nav-label">聊天</span>
+        </button>
+        <button type="button" class="nav-btn" data-page="contacts">
+          <span class="nav-icon" aria-hidden="true">
+            <svg class="nav-svg" viewBox="0 0 24 24" focusable="false">
+              <path class="nav-svg-fill" d="M12 12.2a4.4 4.4 0 1 0 0-8.8 4.4 4.4 0 0 0 0 8.8Zm-7.2 6.1c.9-3.3 3.6-5.1 7.2-5.1s6.3 1.8 7.2 5.1c.3 1.1-.5 2.1-1.6 2.1H6.4c-1.1 0-1.9-1-1.6-2.1Z"/>
+              <path class="nav-svg-stroke" d="M12 11.2a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"/>
+              <path class="nav-svg-stroke" d="M5.8 19.2c.7-3.2 3-5 6.2-5s5.5 1.8 6.2 5"/>
+              <path class="nav-svg-stroke nav-svg-soft" d="M16.5 6.8c1.6.2 2.7 1.2 2.7 2.6 0 1-.6 1.8-1.5 2.3"/>
+            </svg>
+          </span>
+          <span class="nav-label">联系人</span>
+        </button>
+        <button type="button" class="nav-btn" data-page="moments">
+          <span class="nav-icon" aria-hidden="true">
+            <svg class="nav-svg" viewBox="0 0 24 24" focusable="false">
+              <path class="nav-svg-fill" d="M12 3.4c.4 2.9 1.8 4.3 4.7 4.7-2.9.4-4.3 1.8-4.7 4.7-.4-2.9-1.8-4.3-4.7-4.7 2.9-.4 4.3-1.8 4.7-4.7Z"/>
+              <path class="nav-svg-stroke" d="M12 3.4c.4 2.9 1.8 4.3 4.7 4.7-2.9.4-4.3 1.8-4.7 4.7-.4-2.9-1.8-4.3-4.7-4.7 2.9-.4 4.3-1.8 4.7-4.7Z"/>
+              <path class="nav-svg-stroke nav-svg-soft" d="M18 13.4c.2 1.4.9 2.1 2.3 2.3-1.4.2-2.1.9-2.3 2.3-.2-1.4-.9-2.1-2.3-2.3 1.4-.2 2.1-.9 2.3-2.3ZM6.5 12.4c.2 1.1.7 1.6 1.8 1.8-1.1.2-1.6.7-1.8 1.8-.2-1.1-.7-1.6-1.8-1.8 1.1-.2 1.6-.7 1.8-1.8Z"/>
+            </svg>
+          </span>
+          <span class="nav-label">动态</span>
+        </button>
       </nav>
     </div>
 

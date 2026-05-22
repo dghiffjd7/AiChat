@@ -34,9 +34,19 @@ const createClassList = (initial = []) => {
 
 const createElement = ({ classes = [], dataset = {} } = {}) => {
   const listeners = new Map();
+  const attributes = new Map();
   return {
     classList: createClassList(classes),
     dataset: { ...dataset },
+    setAttribute(name, value) {
+      attributes.set(name, String(value));
+    },
+    removeAttribute(name) {
+      attributes.delete(name);
+    },
+    getAttribute(name) {
+      return attributes.get(name) || null;
+    },
     addEventListener(type, handler) {
       listeners.set(type, handler);
     },
@@ -90,6 +100,8 @@ const createIterableCollection = (items) => ({
   assert.equal(activePage, 'moments');
   assert.equal(navChat.classList.contains('active'), false);
   assert.equal(navMoments.classList.contains('active'), true);
+  assert.equal(navChat.getAttribute('aria-current'), null);
+  assert.equal(navMoments.getAttribute('aria-current'), 'page');
   assert.equal(pages.chat.classList.contains('active'), false);
   assert.equal(pages.moments.classList.contains('active'), true);
   assert.equal(chatRoomEl.classList.contains('hidden'), true);

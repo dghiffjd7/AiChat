@@ -30,6 +30,54 @@ import { AgentCenterPanel } from '../../src/scripts/ui/agent-center-panel.js';
 }
 
 {
+  let listOptions = null;
+  const panel = new AgentCenterPanel({
+    getActions: () => ({
+      listAgentRunView: options => {
+        listOptions = options;
+        return {
+          meta: { total: 2, active: 0, failures: 1 },
+          filters: options,
+          runs: [{ id: 'run-failed', kind: 'image_generation', status: 'failed', errorMessage: 'provider unavailable' }],
+        };
+      },
+    }),
+  });
+  panel.activityStatus = 'failure';
+  const view = await panel.collectView();
+  assert.equal(listOptions.status, 'failure');
+  assert.equal(view.activity.runs[0].id, 'run-failed');
+  console.log('ok - agent center panel requests filtered failed activity when opened from failure chip');
+}
+
+{
+  const panel = new AgentCenterPanel();
+  panel.activityStatus = 'failure';
+  panel.view = {
+    activity: {
+      meta: { total: 2, active: 0, failures: 1, statusCounts: { succeeded: 1, failed: 1 } },
+      runs: [
+        {
+          id: 'run-failed',
+          kind: 'image_generation',
+          title: 'Image generation',
+          status: 'failed',
+          summary: 'generation failed',
+          errorMessage: 'provider unavailable',
+          lastStep: { type: 'image.generate', status: 'failed', errorMessage: 'provider unavailable' },
+        },
+      ],
+    },
+  };
+  const html = panel.renderActivity();
+  assert.match(html, /data-activity-status="failure"/);
+  assert.match(html, /is-danger/);
+  assert.match(html, /错误：provider unavailable/);
+  assert.match(html, /agent-center-card is-failure/);
+  console.log('ok - agent center panel renders failed activity filter and error detail');
+}
+
+{
   const panel = new AgentCenterPanel({
     getActions: () => ({
       listAgentRunView: () => {

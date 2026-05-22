@@ -482,6 +482,7 @@ import { ExtensionsPanel } from './extensions-panel.js';
 import { ExperiencePackTransfer } from './experience-pack-transfer.js';
 import { GeneralSettingsPanel } from './general-settings-panel.js';
 import { AgentCenterPanel } from './agent-center-panel.js';
+import { AgentCenterStatusChip } from './agent-center-status-chip.js';
 import {
   loadSessionMemoryActionContext,
   loadSessionMemoryRollbackSnapshotContext,
@@ -14004,6 +14005,13 @@ Phase G（Frame 36）：循环衔接
     settingsMenu,
     quickMenu,
   });
+  const agentStatusChip = new AgentCenterStatusChip({
+    rootElement: document.querySelector('.chat-room-topbar'),
+    beforeElement: chatMenuBtn,
+    collectView: () => agentCenterPanel.collectView(),
+    openAgentCenter: options => agentCenterPanel.show(options || {}),
+  });
+  agentStatusChip.mount();
   document.addEventListener('click', hideMenus);
 
   bindSettingsMenuActions({

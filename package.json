@@ -35,7 +35,7 @@
     "check:fast": "node --check src/scripts/ui/app.js && npm run test:chat && npm run test:memory && npm run test:variables && npm run test:cancel && npm run test:moments && npm run test:sessions && cargo check --manifest-path src-tauri/Cargo.toml",
     "audit:theme": "node scripts/theme-audit.mjs",
     "audit:ui": "node scripts/ui-entry-inventory.mjs",
-    "audit:ui:test": "node scripts/tests/ui-entry-inventory-tests.mjs && node scripts/tests/prompt-library-taxonomy-tests.mjs && node scripts/tests/preset-panel-prompt-library-tests.mjs && node scripts/tests/agent-center-view-model-tests.mjs && node scripts/tests/agent-center-panel-tests.mjs",
+    "audit:ui:test": "node scripts/tests/ui-entry-inventory-tests.mjs && node scripts/tests/prompt-library-taxonomy-tests.mjs && node scripts/tests/preset-panel-prompt-library-tests.mjs && node scripts/tests/agent-center-view-model-tests.mjs && node scripts/tests/agent-center-panel-tests.mjs && node scripts/tests/agent-center-status-chip-tests.mjs",
     "audit:theme:update": "node scripts/theme-audit.mjs --update-baseline",
     "android:init": "tauri android init",
     "android:dev": "tauri android dev",

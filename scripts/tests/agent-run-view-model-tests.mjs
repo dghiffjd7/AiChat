@@ -89,6 +89,29 @@ const runs = [
 }
 
 {
+  const withCancelled = [
+    ...runs,
+    {
+      id: 'run-4',
+      kind: 'lineage_layout',
+      sessionId: 's3',
+      source: 'lineage-agent',
+      status: 'cancelled',
+      summary: 'cancelled by user',
+      createdAt: 1500,
+      updatedAt: 1510,
+      finishedAt: 1510,
+    },
+  ];
+  const activeView = buildAgentRunListView(withCancelled, { status: 'active', limit: 10 });
+  assert.deepEqual(activeView.runs.map(run => run.id), ['run-3']);
+  const failureView = buildAgentRunListView(withCancelled, { status: 'failure', limit: 10 });
+  assert.deepEqual(failureView.runs.map(run => run.id), ['run-4', 'run-2']);
+  assert.equal(failureView.filters.status, 'failure');
+  console.log('ok - buildAgentRunListView supports user-facing active and failure status filters');
+}
+
+{
   const stats = buildAgentRunCacheStats({
     runs,
     events: [{}, {}, {}],

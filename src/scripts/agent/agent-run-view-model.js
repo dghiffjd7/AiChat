@@ -115,7 +115,9 @@ const matchesFilter = (summary = {}, {
   const sourceFilter = trim(source);
   const q = trim(query).toLowerCase();
   if (sid && summary.sessionId !== sid) return false;
-  if (statusFilter && summary.status !== statusFilter) return false;
+  if (statusFilter === 'active' && !summary.isActive) return false;
+  else if (statusFilter === 'failure' && !summary.isFailure) return false;
+  else if (statusFilter && statusFilter !== 'active' && statusFilter !== 'failure' && summary.status !== statusFilter) return false;
   if (kindFilter && summary.kind !== kindFilter) return false;
   if (sourceFilter && summary.source !== sourceFilter) return false;
   if (!q) return true;
