@@ -8,6 +8,9 @@ import { AgentCenterPanel } from '../../src/scripts/ui/agent-center-panel.js';
       listProviderToolPendingPermissions: () => [
         { id: 'pending-1', status: 'pending', toolName: 'contact_profile.list', createdAt: 2 },
       ],
+      listContactProfilePendingUpdates: () => [
+        { id: 'profile-pending-1', status: 'pending', contactId: 'chat:bob', createdAt: 3, profile: { contactId: 'chat:bob', displayName: 'Bob' } },
+      ],
       listAgentRunView: () => ({
         meta: { total: 1, active: 1, failures: 0 },
         filters: { limit: 50 },
@@ -22,11 +25,37 @@ import { AgentCenterPanel } from '../../src/scripts/ui/agent-center-panel.js';
     }),
   });
   const view = await panel.collectView();
-  assert.equal(view.meta.pending, 1);
+  assert.equal(view.meta.pending, 2);
   assert.equal(view.meta.activeRuns, 1);
   assert.equal(view.meta.tools, 1);
+  assert.equal(view.pending[0].kind, 'contact_profile_update');
   assert.equal(view.safety.permissionRules.length, 1);
   console.log('ok - agent center panel collects existing agent debug registry actions into a user view');
+}
+
+{
+  const panel = new AgentCenterPanel();
+  panel.view = {
+    pending: [
+      {
+        kind: 'contact_profile_update',
+        id: 'profile-pending-1',
+        status: 'pending',
+        toolName: '联系人画像更新',
+        sessionId: 'chat:bob',
+        source: 'contact-profiler-agent',
+        contactId: 'chat:bob',
+        riskLevel: 'medium',
+        permissions: ['storage:write'],
+        profileSummary: 'Bob · 特征 1',
+      },
+    ],
+  };
+  const html = panel.renderPending();
+  assert.match(html, /保存画像/);
+  assert.match(html, /data-profile-action="approve"/);
+  assert.match(html, /忽略只清除本次候选/);
+  console.log('ok - agent center panel renders contact profile pending update actions');
 }
 
 {
@@ -48,6 +77,29 @@ import { AgentCenterPanel } from '../../src/scripts/ui/agent-center-panel.js';
   assert.equal(listOptions.status, 'failure');
   assert.equal(view.activity.runs[0].id, 'run-failed');
   console.log('ok - agent center panel requests filtered failed activity when opened from failure chip');
+}
+
+{
+  let listOptions = null;
+  const panel = new AgentCenterPanel({
+    getActions: () => ({
+      listAgentRunView: options => {
+        listOptions = options;
+        return {
+          meta: { total: 3, active: 1, failures: 1, scoped: 1, scopedActive: 1, scopedFailures: 0 },
+          filters: options,
+          runs: [{ id: 'run-moment', kind: 'moment_summary', status: 'running', surface: 'moments' }],
+        };
+      },
+    }),
+  });
+  panel.surface = 'moments';
+  const view = await panel.collectView();
+  assert.equal(listOptions.surface, 'moments');
+  assert.equal(view.meta.activeRuns, 1);
+  assert.equal(view.meta.failedRuns, 0);
+  assert.equal(view.activity.runs[0].surface, 'moments');
+  console.log('ok - agent center panel can collect surface scoped activity');
 }
 
 {

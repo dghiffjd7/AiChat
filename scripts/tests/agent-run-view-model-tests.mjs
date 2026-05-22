@@ -112,6 +112,31 @@ const runs = [
 }
 
 {
+  const surfaceRuns = [
+    ...runs,
+    {
+      id: 'run-4',
+      kind: 'moment_summary',
+      sessionId: 'moments',
+      source: 'moments-agent',
+      surface: 'moments',
+      status: 'running',
+      summary: 'moments running',
+      createdAt: 1500,
+      updatedAt: 1510,
+    },
+  ];
+  const view = buildAgentRunListView(surfaceRuns, { surface: 'moments', limit: 10 });
+  assert.deepEqual(view.runs.map(run => run.id), ['run-4']);
+  assert.equal(view.runs[0].surface, 'moments');
+  assert.equal(view.filters.surface, 'moments');
+  assert.equal(view.meta.scoped, 1);
+  assert.equal(view.meta.scopedActive, 1);
+  assert.equal(view.meta.active, 2);
+  console.log('ok - buildAgentRunListView supports surface scoped activity');
+}
+
+{
   const stats = buildAgentRunCacheStats({
     runs,
     events: [{}, {}, {}],

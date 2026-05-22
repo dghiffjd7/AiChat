@@ -31,6 +31,21 @@ import {
         createdAt: 1,
       },
     ],
+    contactProfilePendingUpdates: [
+      {
+        id: 'profile-pending-1',
+        status: 'pending',
+        contactId: 'chat:bob',
+        reason: 'background',
+        createdAt: 3,
+        profile: {
+          contactId: 'chat:bob',
+          displayName: 'Bob',
+          stable_traits: [{ label: '喜欢咖啡' }],
+          interaction_focus: [{ topic: 'daily' }],
+        },
+      },
+    ],
     agentRuns: [
       {
         id: 'run-1',
@@ -56,13 +71,15 @@ import {
     sessionGate: { enabled: false, allowedTools: ['contact_profile.list'] },
     experimentStatus: { enabled: false, allowedTools: ['contact_profile.list'] },
   });
-  assert.equal(view.meta.pending, 1);
+  assert.equal(view.meta.pending, 2);
   assert.equal(view.meta.activeRuns, 1);
   assert.equal(view.meta.failedRuns, 1);
   assert.equal(view.meta.tools, 2);
-  assert.equal(view.pending[0].id, 'permission-1');
+  assert.equal(view.pending[0].id, 'profile-pending-1');
+  assert.equal(view.pending[0].kind, 'contact_profile_update');
+  assert.equal(view.pending[0].profileSummary, 'Bob · 特征 1 · 互动重点 1');
   assert.deepEqual(view.tools.map(tool => tool.name), ['contact_profile.list', 'memory.update_after_chat']);
-  assert.equal(view.tabs.find(tab => tab.id === 'pending').count, 1);
+  assert.equal(view.tabs.find(tab => tab.id === 'pending').count, 2);
   assert.equal(view.tabs.find(tab => tab.id === 'activity').count, 1);
   assert.equal(view.tabs.find(tab => tab.id === 'tools').count, 2);
   console.log('ok - agent center view summarizes pending activity tools and safety state');

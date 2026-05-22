@@ -1,4 +1,5 @@
 import { buildAgentCenterView } from './agent-center-view-model.js';
+import { appConfirm } from './app-confirm.js';
 
 const STYLE_ID = 'agent-center-panel-style';
 
@@ -169,6 +170,32 @@ const PANEL_CSS = `
     gap: 6px;
     margin-top: 8px;
 }
+.agent-center-card-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 10px;
+}
+.agent-center-card-action {
+    border: 1px solid var(--app-border-default);
+    border-radius: 9px;
+    background: var(--app-surface-card);
+    color: var(--app-text-primary);
+    padding: 6px 9px;
+    font-size: 12px;
+    font-weight: 800;
+    cursor: pointer;
+}
+.agent-center-card-action.is-primary {
+    border-color: rgba(14,165,233,0.34);
+    background: rgba(14,165,233,0.14);
+    color: #0369a1;
+}
+.agent-center-card-action.is-danger {
+    border-color: rgba(244,63,94,0.24);
+    background: rgba(244,63,94,0.08);
+    color: #be123c;
+}
 .agent-center-chip {
     display: inline-flex;
     align-items: center;
@@ -258,6 +285,8 @@ const normalizeActivityStatus = (value = '') => {
         : '';
 };
 
+const normalizeSurface = (value = '') => trim(value).toLowerCase().replace(/[^a-z0-9_-]+/g, '-');
+
 const activityStatusLabel = (status = '') => ({
     active: '运行中',
     failure: '失败',
@@ -296,6 +325,7 @@ export class AgentCenterPanel {
         this.tabsElement = null;
         this.activeTab = 'pending';
         this.activityStatus = '';
+        this.surface = '';
         this.view = buildAgentCenterView();
         this.lastError = '';
     }
@@ -355,15 +385,24 @@ export class AgentCenterPanel {
         }
     }
 
-    async collectView() {
+    async collectView(options = {}) {
         this.lastError = '';
-        const activityStatus = normalizeActivityStatus(this.activityStatus);
+        const opts = options && typeof options === 'object' ? options : {};
+        const hasSurface = Object.prototype.hasOwnProperty.call(opts, 'surface');
+        const hasActivityStatus = Object.prototype.hasOwnProperty.call(opts, 'activityStatus') ||
+            Object.prototype.hasOwnProperty.call(opts, 'status');
+        const activityStatus = normalizeActivityStatus(hasActivityStatus
+            ? (opts.activityStatus || opts.status || '')
+            : this.activityStatus);
+        const surface = normalizeSurface(hasSurface ? opts.surface : this.surface);
         const agentRunView = await this.callAction('listAgentRunView', {
             limit: 50,
             ...(activityStatus ? { status: activityStatus } : {}),
+            ...(surface ? { surface } : {}),
         }, null);
-        const [pendingPermissions, tools, permissionRules, sessionGate, experimentStatus] = await Promise.all([
+        const [pendingPermissions, contactProfilePendingUpdates, tools, permissionRules, sessionGate, experimentStatus] = await Promise.all([
             this.callAction('listProviderToolPendingPermissions', { limit: 100 }, []),
+            this.callAction('listContactProfilePendingUpdates', undefined, []),
             this.callAction('listAgentTools', undefined, []),
             this.callAction('listAgentPermissionRules', undefined, []),
             this.callAction('getProviderToolSessionGate', undefined, null),
@@ -371,6 +410,7 @@ export class AgentCenterPanel {
         ]);
         return buildAgentCenterView({
             pendingPermissions,
+            contactProfilePendingUpdates,
             agentRunView,
             tools,
             permissionRules,
@@ -385,6 +425,7 @@ export class AgentCenterPanel {
         this.ensureDom();
         this.activeTab = trim(tab, 'pending');
         this.activityStatus = normalizeActivityStatus(opts.activityStatus || opts.status || '');
+        this.surface = normalizeSurface(opts.surface || '');
         if (this.overlayElement) this.overlayElement.style.display = 'flex';
         this.refresh();
     }
@@ -437,6 +478,7 @@ export class AgentCenterPanel {
             `活动中 ${Number(meta.activeRuns || 0)}`,
             `失败 ${Number(meta.failedRuns || 0)}`,
             `工具 ${Number(meta.tools || 0)}`,
+            this.surface ? `范围 ${this.surface}` : '',
             meta.sessionGateEnabled ? '会话 Gate 开启' : '会话 Gate 关闭',
         ]);
     }
@@ -444,7 +486,12 @@ export class AgentCenterPanel {
     renderPending() {
         const items = this.view.pending || [];
         if (!items.length) return renderEmpty('没有待确认的 Agent/tool 请求');
-        return `<div class="agent-center-list">${items.map(item => `
+        return `<div class="agent-center-list">${items.map(item => {
+            const isProfileUpdate = item.kind === 'contact_profile_update';
+            const impactText = isProfileUpdate
+                ? `保存会写入联系人「${item.contactId || item.sessionId || '-'}」画像，并影响后续动态弱触发、提示词上下文和 Agent 画像读取；忽略只清除本次候选，不删除旧画像。`
+                : '';
+            return `
             <article class="agent-center-card">
                 <div class="agent-center-card-head">
                     <div>
@@ -458,20 +505,49 @@ export class AgentCenterPanel {
                     ...item.permissions.map(permission => ({ label: permission })),
                     item.expiresAt ? { label: `expires: ${new Date(item.expiresAt).toLocaleTimeString()}` } : null,
                 ])}
+                ${isProfileUpdate ? `
+                    <div class="agent-center-card-sub">${escapeHtml(formatMeta([item.reason ? `原因：${item.reason}` : '', item.profileSummary]))}</div>
+                    <div class="agent-center-card-sub">${escapeHtml(impactText)}</div>
+                    <div class="agent-center-card-actions">
+                        <button type="button" class="agent-center-card-action is-primary" data-profile-action="approve" data-pending-id="${escapeHtml(item.id)}">保存画像</button>
+                        <button type="button" class="agent-center-card-action is-danger" data-profile-action="deny" data-pending-id="${escapeHtml(item.id)}">忽略</button>
+                    </div>
+                ` : ''}
             </article>
-        `).join('')}</div>`;
+        `; }).join('')}</div>`;
+    }
+
+    async handleProfilePendingAction(action = '', pendingId = '') {
+        const normalizedAction = trim(action);
+        const id = trim(pendingId);
+        if (!id) return;
+        const item = (this.view.pending || []).find(entry => entry.id === id);
+        const contactId = item?.contactId || item?.sessionId || '';
+        const approving = normalizedAction === 'approve';
+        const ok = await appConfirm({
+            title: approving ? '保存联系人画像' : '忽略联系人画像',
+            message: approving
+                ? `确定保存联系人「${contactId || '-'}」的画像候选吗？\n\n保存后会影响后续动态弱触发、提示词上下文和 Agent 画像读取。`
+                : `确定忽略联系人「${contactId || '-'}」的画像候选吗？\n\n忽略只清除本次候选，不删除已有画像。`,
+            danger: !approving,
+            confirmText: approving ? '保存画像' : '忽略',
+        });
+        if (!ok) return;
+        const actionName = approving ? 'approveContactProfilePendingUpdate' : 'denyContactProfilePendingUpdate';
+        await this.callAction(actionName, { id }, null);
+        await this.refresh();
     }
 
     renderActivity() {
         const activity = this.view.activity || {};
         const runs = activity.runs || [];
         const meta = activity.meta || {};
-        const statusCounts = meta.statusCounts || {};
+        const statusCounts = this.surface ? (meta.scopedStatusCounts || meta.statusCounts || {}) : (meta.statusCounts || {});
         const activeStatus = normalizeActivityStatus(this.activityStatus);
         const filters = [
-            { status: '', label: `全部 ${Number(meta.total || 0)}` },
-            { status: 'active', label: `运行中 ${Number(meta.active || 0)}` },
-            { status: 'failure', label: `失败 ${Number(meta.failures || 0)}`, tone: 'danger' },
+            { status: '', label: `全部 ${Number(this.surface ? (meta.scoped ?? meta.filtered ?? 0) : (meta.total || 0))}` },
+            { status: 'active', label: `运行中 ${Number(this.surface ? (meta.scopedActive ?? meta.active ?? 0) : (meta.active || 0))}` },
+            { status: 'failure', label: `失败 ${Number(this.surface ? (meta.scopedFailures ?? meta.failures ?? 0) : (meta.failures || 0))}`, tone: 'danger' },
             { status: 'succeeded', label: `完成 ${Number(statusCounts.succeeded || 0)}` },
         ];
         const filterHtml = `<div class="agent-center-filter-row" aria-label="Agent activity filters">${filters.map(filter => `
@@ -565,6 +641,14 @@ export class AgentCenterPanel {
                     ? this.renderTools()
                     : this.renderSafety();
         this.contentElement.innerHTML = `${error}${body}`;
+        if (this.activeTab === 'pending') {
+            this.contentElement.querySelectorAll('[data-profile-action]').forEach((button) => {
+                button.addEventListener('click', () => this.handleProfilePendingAction(
+                    button.dataset.profileAction || '',
+                    button.dataset.pendingId || '',
+                ));
+            });
+        }
         if (this.activeTab === 'activity') {
             this.contentElement.querySelectorAll('[data-activity-status]').forEach((button) => {
                 button.addEventListener('click', () => this.setActivityStatus(button.dataset.activityStatus || ''));

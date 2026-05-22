@@ -38,6 +38,35 @@ import {
 }
 
 {
+  const scoped = buildAgentStatusChipView({
+    meta: { pending: 0, activeRuns: 0, failedRuns: 3, tools: 6 },
+    activity: {
+      runs: [{ id: 'run-1', status: 'running', isActive: true }],
+    },
+  }, {
+    activityScope: 'visible',
+    showToolsCount: false,
+  });
+  assert.equal(scoped.label, '运行中');
+  assert.equal(scoped.count, '1');
+  assert.equal(scoped.tone, 'active');
+
+  const idle = buildAgentStatusChipView({
+    meta: { pending: 0, activeRuns: 0, failedRuns: 3, tools: 6, sessionGateEnabled: true },
+    activity: { runs: [] },
+  }, {
+    activityScope: 'visible',
+    idleLabel: '动态',
+    showSessionGateState: false,
+    showToolsCount: false,
+  });
+  assert.equal(idle.label, '动态');
+  assert.equal(idle.count, '');
+  assert.equal(idle.tone, 'idle');
+  console.log('ok - agent status chip can scope activity to visible runs');
+}
+
+{
   const ready = buildAgentStatusChipView({
     meta: { pending: 0, activeRuns: 0, failedRuns: 0, tools: 6, sessionGateEnabled: true },
   });

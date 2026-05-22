@@ -83,6 +83,7 @@ export const buildAgentRunSummary = (run = {}, {
     title: trim(run.title),
     sessionId: trim(run.sessionId),
     source: trim(run.source, 'agent-task-runtime'),
+    surface: trim(run.surface || run.metadata?.surface),
     trigger: trim(run.trigger),
     status,
     summary: trim(run.summary),
@@ -102,24 +103,29 @@ export const buildAgentRunSummary = (run = {}, {
   };
 };
 
-const matchesFilter = (summary = {}, {
+const matchesStatusFilter = (summary = {}, status = '') => {
+  const statusFilter = trim(status);
+  if (statusFilter === 'active') return summary.isActive;
+  if (statusFilter === 'failure') return summary.isFailure;
+  return statusFilter ? summary.status === statusFilter : true;
+};
+
+const matchesScopeFilter = (summary = {}, {
   sessionId = '',
-  status = '',
   kind = '',
   source = '',
+  surface = '',
   query = '',
 } = {}) => {
   const sid = trim(sessionId);
-  const statusFilter = trim(status);
   const kindFilter = trim(kind);
   const sourceFilter = trim(source);
+  const surfaceFilter = trim(surface);
   const q = trim(query).toLowerCase();
   if (sid && summary.sessionId !== sid) return false;
-  if (statusFilter === 'active' && !summary.isActive) return false;
-  else if (statusFilter === 'failure' && !summary.isFailure) return false;
-  else if (statusFilter && statusFilter !== 'active' && statusFilter !== 'failure' && summary.status !== statusFilter) return false;
   if (kindFilter && summary.kind !== kindFilter) return false;
   if (sourceFilter && summary.source !== sourceFilter) return false;
+  if (surfaceFilter && summary.surface !== surfaceFilter) return false;
   if (!q) return true;
   return [
     summary.id,
@@ -127,6 +133,7 @@ const matchesFilter = (summary = {}, {
     summary.title,
     summary.sessionId,
     summary.source,
+    summary.surface,
     summary.trigger,
     summary.status,
     summary.summary,
@@ -143,11 +150,14 @@ export const buildAgentRunListView = (runs = [], {
   status = '',
   kind = '',
   source = '',
+  surface = '',
   query = '',
 } = {}) => {
   const allSummaries = normalizeRuns(runs).map(run => buildAgentRunSummary(run, { events }));
-  const filtered = allSummaries
-    .filter(summary => matchesFilter(summary, { sessionId, status, kind, source, query }))
+  const scoped = allSummaries
+    .filter(summary => matchesScopeFilter(summary, { sessionId, kind, source, surface, query }));
+  const filtered = scoped
+    .filter(summary => matchesStatusFilter(summary, status))
     .sort((a, b) => (
       toFiniteNumber(b.updatedAt || b.finishedAt || b.createdAt, 0) -
       toFiniteNumber(a.updatedAt || a.finishedAt || a.createdAt, 0)
@@ -161,7 +171,11 @@ export const buildAgentRunListView = (runs = [], {
       visible: visible.length,
       active: allSummaries.filter(summary => summary.isActive).length,
       failures: allSummaries.filter(summary => summary.isFailure).length,
+      scoped: scoped.length,
+      scopedActive: scoped.filter(summary => summary.isActive).length,
+      scopedFailures: scoped.filter(summary => summary.isFailure).length,
       statusCounts: countBy(allSummaries, summary => summary.status),
+      scopedStatusCounts: countBy(scoped, summary => summary.status),
       kindCounts: countBy(allSummaries, summary => summary.kind),
     },
     filters: {
@@ -169,6 +183,7 @@ export const buildAgentRunListView = (runs = [], {
       status: trim(status),
       kind: trim(kind),
       source: trim(source),
+      surface: trim(surface),
       query: trim(query),
       limit: count,
     },
@@ -211,7 +226,7 @@ export const formatAgentRunDiagnostics = (view = {}) => {
   const filters = view?.filters || {};
   const header = [
     buildAgentRunDiagnosticsMeta(view),
-    `filters: sessionId=${trim(filters.sessionId, '-')} · status=${trim(filters.status, '-')} · kind=${trim(filters.kind, '-')} · source=${trim(filters.source, '-')} · query=${trim(filters.query, '-')}`,
+    `filters: sessionId=${trim(filters.sessionId, '-')} · status=${trim(filters.status, '-')} · kind=${trim(filters.kind, '-')} · source=${trim(filters.source, '-')} · surface=${trim(filters.surface, '-')} · query=${trim(filters.query, '-')}`,
   ];
   const blocks = runs.map((run, index) => {
     const title = run.title ? ` · ${run.title}` : '';
@@ -225,6 +240,7 @@ export const formatAgentRunDiagnostics = (view = {}) => {
       `runId: ${run.id || '-'}`,
       `sessionId: ${run.sessionId || '-'}`,
       `source: ${run.source || '-'}`,
+      `surface: ${run.surface || '-'}`,
       `trigger: ${run.trigger || '-'}`,
       `createdAt: ${formatTime(run.createdAt)}`,
       `updatedAt: ${formatTime(run.updatedAt)}`,

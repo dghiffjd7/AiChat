@@ -16,6 +16,7 @@ import { logger } from '../utils/logger.js';
 import { appConfirm } from './app-confirm.js';
 import { getLastMemoryUpdate } from './chat/memory-update-runtime-utils.js';
 import { bindCustomSelectButton, createCustomSelectWrapper, refreshCustomSelectButton } from './custom-select.js';
+import { buildMemoryImpactText } from './memory-impact-utils.js';
 import { emitMemoryRowsUpdated as emitSharedMemoryRowsUpdated } from './session-memory-event-utils.js';
 import { getCurrentWorldId, getGlobalWorldId, setCurrentWorld } from './world-session-runtime-utils.js';
 
@@ -236,6 +237,7 @@ export class MemoryTableEditor {
     this.visibleIds = new Set();
     this.currentContext = null;
     this.toolbarWrap = null;
+    this.impactEl = null;
     this.timelineRepairWrap = null;
     this.listWrap = null;
     this.searchInput = null;
@@ -253,6 +255,7 @@ export class MemoryTableEditor {
     this.modalCancel = null;
     this.modalFields = [];
     this.modalMeta = null;
+    this.modalImpact = null;
     this.modalHeader = null;
     this.modalForm = null;
     this.promptWrap = null;
@@ -320,6 +323,7 @@ export class MemoryTableEditor {
       this.timelineRepairPendingKey = '';
     }
     this.ensureLayout();
+    this.setImpactText('manage', ctx);
     this.renderToolbar();
     if (showLoading && this.listWrap) {
       this.listWrap.innerHTML = '<div style="color:var(--app-text-muted); font-size:12px;">加载记忆表格…</div>';
@@ -627,6 +631,11 @@ export class MemoryTableEditor {
     row.appendChild(batchBtn);
     toolbarWrap.appendChild(row);
 
+    const impact = document.createElement('div');
+    impact.className = 'memory-impact-hint';
+    impact.style.cssText = 'padding:8px 10px; border:1px solid rgba(245,158,11,0.24); border-radius:8px; background:rgba(245,158,11,0.09); color:#92400e; font-size:11px; line-height:1.45;';
+    toolbarWrap.appendChild(impact);
+
     const bar = document.createElement('div');
     bar.style.cssText = 'display:none; align-items:center; gap:8px; flex-wrap:wrap; font-size:12px;';
     const count = document.createElement('div');
@@ -673,6 +682,7 @@ export class MemoryTableEditor {
     this.container.appendChild(timelineRepairWrap);
     this.container.appendChild(listWrap);
     this.toolbarWrap = toolbarWrap;
+    this.impactEl = impact;
     this.timelineRepairWrap = timelineRepairWrap;
     this.listWrap = listWrap;
     this.searchInput = search;
@@ -782,6 +792,23 @@ export class MemoryTableEditor {
     if (ctx.type === 'rp') return String(ctx.contactId || '').trim();
     if (ctx.type === 'contact') return String(ctx.contactId || '').trim();
     return String(window.appBridge?.getActiveSessionId?.() || '').trim();
+  }
+
+  buildImpactText(action = 'manage', ctx = this.currentContext, table = null) {
+    return buildMemoryImpactText({
+      contextType: ctx?.type || '',
+      uiMode: ctx?.uiMode || '',
+      sessionId: this.resolveSessionId(ctx),
+      contactId: ctx?.contactId || '',
+      groupId: ctx?.groupId || '',
+      scope: table?.scope || '',
+      action,
+    });
+  }
+
+  setImpactText(action = 'manage', ctx = this.currentContext, table = null, target = this.impactEl) {
+    if (!target) return;
+    target.textContent = this.buildImpactText(action, ctx, table);
   }
 
   async syncManualMemoryMutation(ctx, { source = 'manual_memory_edit', templateId = '' } = {}) {
@@ -1009,7 +1036,7 @@ export class MemoryTableEditor {
     const unrepairableCount = Array.isArray(plan?.unrepairable) ? plan.unrepairable.length : 0;
     const ok = await appConfirm({
       title: '修正记忆轮次',
-      message: `将按当前聊天记录修正 ${items.length} 条摘要/大纲轮次。${unrepairableCount ? `另有 ${unrepairableCount} 条无法可靠匹配，不会修改。` : ''}\n\n只修改 time 和排序，不修改记忆内容。`,
+      message: `将按当前聊天记录修正 ${items.length} 条摘要/大纲轮次。${unrepairableCount ? `另有 ${unrepairableCount} 条无法可靠匹配，不会修改。` : ''}\n\n只修改 time 和排序，不修改记忆内容。\n\n${this.buildImpactText('repair', ctx)}`,
     });
     if (!ok) return;
     let changed = 0;
@@ -1089,7 +1116,7 @@ export class MemoryTableEditor {
     if (exportConfig.enabled !== true) {
       const ok = await appConfirm({
         title: '导出确认',
-        message: '该表未开启世界书导出，仍要继续导出吗？',
+        message: `该表未开启世界书导出，仍要继续导出吗？\n\n${this.buildImpactText('export_worldbook', ctx, table)}`,
       });
       if (!ok) return;
     }
@@ -1125,7 +1152,7 @@ export class MemoryTableEditor {
       if (!worldId) {
         const ok = await appConfirm({
           title: '创建世界书',
-          message: '未设置全局世界书，是否创建并设为全局世界书？',
+          message: `未设置全局世界书，是否创建并设为全局世界书？\n\n${this.buildImpactText('export_worldbook', ctx, table)}`,
         });
         if (!ok) return '';
         worldId = 'memory-table-global';
@@ -1140,7 +1167,7 @@ export class MemoryTableEditor {
     if (!worldId) {
       const ok = await appConfirm({
         title: '创建世界书',
-        message: '未设置当前会话世界书，是否创建并设为当前世界书？',
+        message: `未设置当前会话世界书，是否创建并设为当前世界书？\n\n${this.buildImpactText('export_worldbook', ctx, table)}`,
       });
       if (!ok) return '';
       const rawId = sessionId || 'default';
@@ -1466,7 +1493,11 @@ export class MemoryTableEditor {
     deleteBtn.textContent = '删除';
     deleteBtn.style.cssText = 'padding:4px 8px; border:1px solid #fecaca; border-radius:8px; background:var(--app-surface-card); cursor:pointer; font-size:12px; color:#b91c1c;';
     deleteBtn.onclick = async () => {
-      const ok = await appConfirm({ title: '删除记忆', message: '确定要删除该记忆条目吗？', danger: true });
+      const ok = await appConfirm({
+        title: '删除记忆',
+        message: `确定要删除该记忆条目吗？\n\n${this.buildImpactText('delete', ctx, table)}`,
+        danger: true,
+      });
       if (!ok) return;
       try {
         await this.memoryStore.deleteMemory(row.id);
@@ -1507,6 +1538,15 @@ export class MemoryTableEditor {
       window.toastr?.info?.('未选择任何记忆');
       return;
     }
+    const isDisable = patch?.is_active === false;
+    const isEnable = patch?.is_active === true;
+    if (isDisable || isEnable) {
+      const ok = await appConfirm({
+        title: '批量修改记忆',
+        message: `确定要${isDisable ? '停用' : '启用'}所选记忆（${ids.length} 条）吗？\n\n${this.buildImpactText('batch_update', this.currentContext)}`,
+      });
+      if (!ok) return;
+    }
     try {
       for (const id of ids) {
         await this.memoryStore.updateMemory({ id, ...patch });
@@ -1528,7 +1568,7 @@ export class MemoryTableEditor {
     }
     const ok = await appConfirm({
       title: '删除记忆',
-      message: `确定要删除所选记忆（${ids.length}条）吗？`,
+      message: `确定要删除所选记忆（${ids.length} 条）吗？\n\n${this.buildImpactText('delete', this.currentContext)}`,
       danger: true,
     });
     if (!ok) return;
@@ -1568,6 +1608,7 @@ export class MemoryTableEditor {
         <div data-role="header" style="font-weight:900; color:var(--app-text-primary);">编辑记忆</div>
         <button data-role="close" style="border:none; background:transparent; font-size:22px; cursor:pointer; color:var(--app-text-primary);">×</button>
       </div>
+      <div data-role="impact" class="memory-impact-hint" style="margin:12px 14px 0; padding:8px 10px; border:1px solid rgba(245,158,11,0.24); border-radius:8px; background:rgba(245,158,11,0.09); color:#92400e; font-size:12px; line-height:1.45;"></div>
       <div data-role="form" style="padding:12px 14px; flex:1; min-height:0; overflow:auto;"></div>
       <div style="padding:12px 14px; border-top:1px solid rgba(0,0,0,0.06); background:rgba(248,250,252,0.92); display:flex; gap:10px;">
         <button data-role="cancel" style="flex:1; padding:10px 12px; border:1px solid var(--app-border-default); border-radius:12px; background:var(--app-surface-card); cursor:pointer;">取消</button>
@@ -1577,6 +1618,7 @@ export class MemoryTableEditor {
     document.body.appendChild(this.modalOverlay);
     document.body.appendChild(this.modalPanel);
     this.modalHeader = this.modalPanel.querySelector('[data-role="header"]');
+    this.modalImpact = this.modalPanel.querySelector('[data-role="impact"]');
     this.modalForm = this.modalPanel.querySelector('[data-role="form"]');
     this.modalSave = this.modalPanel.querySelector('[data-role="save"]');
     this.modalCancel = this.modalPanel.querySelector('[data-role="cancel"]');
@@ -1589,6 +1631,7 @@ export class MemoryTableEditor {
     if (!this.modalForm || !this.modalHeader) return;
     const isNew = !row;
     this.modalHeader.textContent = `${isNew ? '新增' : '编辑'} · ${table.name || table.id || ''}`;
+    this.setImpactText('edit', ctx, table, this.modalImpact);
     this.modalForm.innerHTML = '';
     this.modalFields = [];
 

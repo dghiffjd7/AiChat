@@ -98,6 +98,43 @@ const STATUS_CHIP_CSS = `
     background: rgba(99, 102, 241, 0.09);
     color: #4338ca;
 }
+body[data-theme-mode='dark'] .agent-status-chip {
+    border-color: rgba(148, 163, 184, 0.24);
+    background: rgba(15, 23, 42, 0.76);
+    color: #cbd5e1;
+    box-shadow: 0 1px 0 rgba(255, 255, 255, 0.04) inset;
+}
+body[data-theme-mode='dark'] .agent-status-chip:hover {
+    border-color: rgba(148, 163, 184, 0.34);
+    background: rgba(30, 41, 59, 0.88);
+    color: #f8fafc;
+}
+body[data-theme-mode='dark'] .agent-status-chip-count {
+    background: rgba(148, 163, 184, 0.18);
+}
+body[data-theme-mode='dark'] .agent-status-chip.is-pending {
+    border-color: rgba(96, 165, 250, 0.34);
+    background: rgba(37, 99, 235, 0.20);
+    color: #93c5fd;
+}
+body[data-theme-mode='dark'] .agent-status-chip.is-active {
+    border-color: rgba(52, 211, 153, 0.34);
+    background: rgba(16, 185, 129, 0.18);
+    color: #6ee7b7;
+}
+body[data-theme-mode='dark'] .agent-status-chip.is-failed {
+    border-color: rgba(251, 113, 133, 0.36);
+    background: rgba(244, 63, 94, 0.18);
+    color: #fda4af;
+}
+body[data-theme-mode='dark'] .agent-status-chip.is-ready {
+    border-color: rgba(129, 140, 248, 0.36);
+    background: rgba(99, 102, 241, 0.20);
+    color: #c4b5fd;
+}
+.moments-actions .agent-status-chip {
+    max-width: 96px;
+}
 @media (max-width: 420px) {
     .agent-status-chip {
         max-width: 92px;
@@ -117,13 +154,23 @@ const STATUS_CHIP_CSS = `
 
 const toCount = value => Math.max(0, Math.trunc(Number(value) || 0));
 
-export const buildAgentStatusChipView = (agentCenterView = {}) => {
+const isActiveRun = run => run?.isActive === true || ['queued', 'running', 'waiting_permission'].includes(String(run?.status || '').trim());
+const isFailedRun = run => run?.isFailure === true || ['failed', 'cancelled'].includes(String(run?.status || '').trim());
+
+export const buildAgentStatusChipView = (agentCenterView = {}, {
+    activityScope = 'meta',
+    idleLabel = 'Agent',
+    showSessionGateState = true,
+    showToolsCount = true,
+} = {}) => {
     const meta = agentCenterView?.meta || {};
+    const visibleRuns = Array.isArray(agentCenterView?.activity?.runs) ? agentCenterView.activity.runs : [];
+    const useVisibleActivity = activityScope === 'visible';
     const pending = toCount(meta.pending);
-    const activeRuns = toCount(meta.activeRuns);
-    const failedRuns = toCount(meta.failedRuns);
-    const tools = toCount(meta.tools);
-    const sessionGateEnabled = meta.sessionGateEnabled === true;
+    const activeRuns = useVisibleActivity ? visibleRuns.filter(isActiveRun).length : toCount(meta.activeRuns);
+    const failedRuns = useVisibleActivity ? visibleRuns.filter(isFailedRun).length : toCount(meta.failedRuns);
+    const tools = showToolsCount ? toCount(meta.tools) : 0;
+    const sessionGateEnabled = showSessionGateState && meta.sessionGateEnabled === true;
 
     if (pending > 0) {
         return {
@@ -165,7 +212,7 @@ export const buildAgentStatusChipView = (agentCenterView = {}) => {
         };
     }
     return {
-        label: 'Agent',
+        label: idleLabel,
         count: tools ? String(tools) : '',
         tone: 'idle',
         tab: 'activity',
@@ -182,6 +229,10 @@ export class AgentCenterStatusChip {
         collectView = async () => ({}),
         openAgentCenter = () => {},
         refreshIntervalMs = DEFAULT_REFRESH_INTERVAL_MS,
+        activityScope = 'meta',
+        idleLabel = 'Agent',
+        showSessionGateState = true,
+        showToolsCount = true,
     } = {}) {
         this.documentRef = documentRef;
         this.rootElement = rootElement;
@@ -189,10 +240,11 @@ export class AgentCenterStatusChip {
         this.collectView = collectView;
         this.openAgentCenter = openAgentCenter;
         this.refreshIntervalMs = Math.max(0, Number(refreshIntervalMs) || 0);
+        this.viewOptions = { activityScope, idleLabel, showSessionGateState, showToolsCount };
         this.element = null;
         this.labelElement = null;
         this.countElement = null;
-        this.state = buildAgentStatusChipView();
+        this.state = buildAgentStatusChipView({}, this.viewOptions);
         this.refreshTimer = null;
         this.refreshToken = 0;
     }
@@ -259,7 +311,7 @@ export class AgentCenterStatusChip {
         try {
             const view = await Promise.resolve(this.collectView());
             if (token !== this.refreshToken) return;
-            this.render(buildAgentStatusChipView(view));
+            this.render(buildAgentStatusChipView(view, this.viewOptions));
         } catch (err) {
             if (token !== this.refreshToken) return;
             this.render({
@@ -273,7 +325,7 @@ export class AgentCenterStatusChip {
         }
     }
 
-    render(state = buildAgentStatusChipView()) {
+    render(state = buildAgentStatusChipView({}, this.viewOptions)) {
         this.state = state;
         if (!this.element) return;
         const tone = String(state.tone || 'idle').replace(/[^a-z0-9_-]+/gi, '-').toLowerCase() || 'idle';

@@ -32,6 +32,7 @@ const normalizeLimit = (value, fallback = 50, max = 200) => {
 const normalizePendingPermission = (entry = {}) => {
   const src = isPlainObject(entry) ? entry : {};
   return {
+    kind: 'tool_permission',
     id: trim(src.id),
     status: trim(src.status, 'pending'),
     toolName: trim(src.toolName || src.request?.toolName || src.toolCall?.toolName, 'tool'),
@@ -44,6 +45,39 @@ const normalizePendingPermission = (entry = {}) => {
     reason: trim(src.reason),
     resumeStatus: trim(src.resumeStatus, 'idle'),
     continuationStatus: trim(src.continuationStatus, 'idle'),
+  };
+};
+
+const summarizeProfileCandidate = (profile = null) => {
+  const src = isPlainObject(profile) ? profile : {};
+  const parts = [];
+  if (src.displayName) parts.push(trim(src.displayName));
+  const traits = Array.isArray(src.stable_traits) ? src.stable_traits : [];
+  const focus = Array.isArray(src.interaction_focus) ? src.interaction_focus : [];
+  if (traits.length) parts.push(`特征 ${traits.length}`);
+  if (focus.length) parts.push(`互动重点 ${focus.length}`);
+  return parts.filter(Boolean).join(' · ');
+};
+
+const normalizeContactProfilePendingUpdate = (entry = {}) => {
+  const src = isPlainObject(entry) ? entry : {};
+  const contactId = trim(src.contactId || src.contact_id || src.profile?.contactId || src.profile?.id);
+  return {
+    kind: 'contact_profile_update',
+    id: trim(src.id),
+    status: trim(src.status, 'pending'),
+    toolName: '联系人画像更新',
+    sessionId: contactId,
+    source: 'contact-profiler-agent',
+    riskLevel: 'medium',
+    permissions: ['storage:write'],
+    createdAt: toFiniteNumber(src.createdAt || src.created_at, 0),
+    expiresAt: 0,
+    reason: trim(src.reason),
+    resumeStatus: 'idle',
+    continuationStatus: 'idle',
+    contactId,
+    profileSummary: summarizeProfileCandidate(src.profile),
   };
 };
 
@@ -90,7 +124,7 @@ const buildTabs = ({
 } = {}) => AGENT_CENTER_TABS.map((tab) => {
   let count = 0;
   if (tab.id === 'pending') count = pending.filter(item => item.status === 'pending').length;
-  if (tab.id === 'activity') count = Number(runView?.meta?.active || 0);
+  if (tab.id === 'activity') count = Number(runView?.meta?.scopedActive ?? runView?.meta?.active ?? 0);
   if (tab.id === 'tools') count = tools.length;
   if (tab.id === 'safety') count = 0;
   return { ...tab, count };
@@ -98,6 +132,7 @@ const buildTabs = ({
 
 export const buildAgentCenterView = ({
   pendingPermissions = [],
+  contactProfilePendingUpdates = [],
   agentRunView = null,
   agentRuns = [],
   agentRunEvents = [],
@@ -109,6 +144,8 @@ export const buildAgentCenterView = ({
 } = {}) => {
   const pending = (Array.isArray(pendingPermissions) ? pendingPermissions : [])
     .map(normalizePendingPermission)
+    .concat((Array.isArray(contactProfilePendingUpdates) ? contactProfilePendingUpdates : [])
+      .map(normalizeContactProfilePendingUpdate))
     .sort((a, b) => toFiniteNumber(b.createdAt, 0) - toFiniteNumber(a.createdAt, 0));
   const runView = isPlainObject(agentRunView)
     ? agentRunView
@@ -125,8 +162,8 @@ export const buildAgentCenterView = ({
     tabs,
     meta: {
       pending: pending.filter(item => item.status === 'pending').length,
-      activeRuns: Number(runView?.meta?.active || 0),
-      failedRuns: Number(runView?.meta?.failures || 0),
+      activeRuns: Number(runView?.meta?.scopedActive ?? runView?.meta?.active ?? 0),
+      failedRuns: Number(runView?.meta?.scopedFailures ?? runView?.meta?.failures ?? 0),
       tools: normalizedTools.length,
       providerToolsEnabled: safety.providerTools.enabled,
       sessionGateEnabled: safety.sessionGate.enabled,

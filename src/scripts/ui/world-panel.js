@@ -21,14 +21,67 @@ import {
 } from './regex-store-runtime-utils.js';
 import { emitWorldInfoChanged, getCurrentWorldId, getGlobalWorldId } from './world-session-runtime-utils.js';
 
+const normalizeWorldTarget = (value, fallbackScope = 'session') => {
+    const raw = String(value || '').trim();
+    if (raw === 'global') return 'global';
+    if (raw === 'role') return 'role';
+    if (raw === 'session_extra') return 'session_extra';
+    const fallback = String(fallbackScope || '').trim();
+    if (fallback === 'global') return 'global';
+    if (fallback === 'role') return 'role';
+    if (fallback === 'session_extra') return 'session_extra';
+    return 'session_manage';
+};
+
+export const formatWorldScopeLabel = ({
+    scope = 'session',
+    sessionId = '',
+    targetType = '',
+} = {}) => {
+    const sid = String(sessionId || '').trim();
+    const target = normalizeWorldTarget(targetType, scope);
+    if (target === 'global') return '全局世界书（所有会话共享）';
+    if (target === 'role') return sid ? `角色绑定（当前会话「${sid}」）` : '角色绑定';
+    if (target === 'session_extra') return sid ? `当前会话「${sid}」的附加世界书` : '当前会话的附加世界书';
+    return sid ? `当前会话「${sid}」的角色/附加世界书` : '当前会话的角色/附加世界书';
+};
+
+export const buildWorldbookImpactText = ({
+    scope = 'session',
+    sessionId = '',
+    targetType = '',
+    action = 'manage',
+} = {}) => {
+    const target = formatWorldScopeLabel({ scope, sessionId, targetType });
+    if (action === 'bind') {
+        return `影响范围：${target}。点击绑定、停用或切换会立即保存，并影响后续消息的世界书检索与提示词注入；不会改写已有聊天记录。`;
+    }
+    if (action === 'delete') {
+        return `影响范围：${target}。删除会从世界书库移除该世界书，相关全局、角色或会话绑定可能失效；取消确认不会删除，建议先导出备份。`;
+    }
+    if (action === 'import') {
+        return `影响范围：${target}。导入会保存为世界书，同名内容会被新文件覆盖；如包含绑定正则，需再次确认后才会一并导入。`;
+    }
+    if (action === 'regex_import') {
+        return `影响范围：${target}。一并导入会创建或更新正则集合，并绑定到该世界书；取消只保留世界书，不导入正则。`;
+    }
+    if (action === 'edit') {
+        return `影响范围：${target}。编辑器内保存后才会写入世界书；关闭或取消不会保存本次未提交修改。`;
+    }
+    return `影响范围：${target}。世界书会参与后续消息的关键词扫描、条目注入和变量联动；关闭面板不会撤销已保存的绑定或设置。`;
+};
+
 export class WorldPanel {
     constructor({ contactsStore = null, getSessionId = null } = {}) {
         this.overlay = null;
         this.panel = null;
         this.listEl = null;
+        this.impactEl = null;
+        this.importImpactEl = null;
         this.libraryOverlay = null;
         this.libraryModal = null;
         this.libraryListEl = null;
+        this.libraryImpactEl = null;
         this.libraryToggleBtn = null;
         this.librarySearchEl = null;
         this.librarySortEl = null;
@@ -105,6 +158,47 @@ export class WorldPanel {
             onClick?.();
         };
         return btn;
+    }
+
+    getActiveSessionKey(fallback = '') {
+        return String(
+            fallback
+            || this.getSessionId?.()
+            || window.appBridge?.getActiveSessionId?.()
+            || 'default',
+        ).trim() || 'default';
+    }
+
+    setImpactText(action = 'manage', { sessionId = '', targetType = '' } = {}) {
+        const sid = this.getActiveSessionKey(sessionId);
+        const base = {
+            scope: this.scope,
+            sessionId: sid,
+            targetType,
+        };
+        if (this.impactEl) {
+            this.impactEl.textContent = buildWorldbookImpactText({
+                ...base,
+                action,
+            });
+        }
+        if (this.importImpactEl) {
+            this.importImpactEl.textContent = buildWorldbookImpactText({
+                ...base,
+                action: 'import',
+            });
+        }
+    }
+
+    setLibraryImpactText(action = 'bind', target = this.libraryTarget) {
+        if (!this.libraryImpactEl) return;
+        const normalizedTarget = this.normalizeLibraryTarget(target);
+        this.libraryImpactEl.textContent = buildWorldbookImpactText({
+            scope: normalizedTarget.type,
+            sessionId: normalizedTarget.sessionId,
+            targetType: normalizedTarget.type,
+            action,
+        });
     }
 
     sanitizeExportName(name, fallback = 'worldbook') {
@@ -222,6 +316,10 @@ export class WorldPanel {
             const newBtn = this.panel?.querySelector('#world-new');
             const indicator = this.panel?.querySelector('#world-current');
             const buildToggle = (opts) => this.buildToggle(opts);
+            this.setImpactText('manage', {
+                sessionId: sessionKey,
+                targetType: this.scope === 'global' ? 'global' : 'session_manage',
+            });
             const visibleSessionIds = (window.appBridge?.getWorldIdsForSession?.(sessionKey) || []).filter((id) => id !== BUILTIN_PHONE_FORMAT_WORLDBOOK_ID);
             const globalId = getGlobalWorldId(window.appBridge);
             const normalizedGlobalId = globalId === BUILTIN_PHONE_FORMAT_WORLDBOOK_ID ? '' : globalId;
@@ -403,7 +501,12 @@ export class WorldPanel {
             const confirmDeleteWorld = async (worldId, displayName) => {
                 const ok = await appConfirm({
                     title: '删除世界书',
-                    message: `确定要删除世界书「${displayName || worldId}」吗？此操作不可恢复。`,
+                    message: `确定要删除世界书「${displayName || worldId}」吗？此操作不可恢复。\n\n${buildWorldbookImpactText({
+                        scope: this.scope,
+                        sessionId: sessionKey,
+                        targetType: this.scope === 'global' ? 'global' : 'session_manage',
+                        action: 'delete',
+                    })}`,
                     danger: true,
                 });
                 if (!ok) return false;
@@ -853,6 +956,7 @@ export class WorldPanel {
             : 'session_extra';
         const normalizedTarget = this.normalizeLibraryTarget({ type: scopeKey, sessionId, personaId });
         this.libraryTarget = normalizedTarget;
+        this.setLibraryImpactText('bind', normalizedTarget);
         const subtitleEl = this.libraryOverlay?.querySelector('.sticker-bind-subtitle');
         if (subtitleEl) {
             subtitleEl.textContent = scopeKey === 'global'
@@ -1036,7 +1140,12 @@ export class WorldPanel {
             deleteBtn.onclick = async () => {
                 const ok = await appConfirm({
                     title: '删除世界书',
-                    message: `确定要删除世界书「${item.name}」吗？此操作不可恢复。`,
+                    message: `确定要删除世界书「${item.name}」吗？此操作不可恢复。\n\n${buildWorldbookImpactText({
+                        scope: scopeKey,
+                        sessionId: normalizedTarget.sessionId,
+                        targetType: scopeKey,
+                        action: 'delete',
+                    })}`,
                     danger: true,
                 });
                 if (!ok) return;
@@ -1148,6 +1257,7 @@ export class WorldPanel {
         this.panel.innerHTML = `
             <h3 style="margin: 0 0 12px; color: var(--app-text-primary);">世界书管理</h3>
             <div id="world-current" style="margin: -4px 0 12px; color:var(--app-text-secondary); font-size:13px;">当前：未启用</div>
+            <div id="world-impact" class="world-panel-impact-hint" style="margin: -4px 0 12px; padding:8px 10px; border:1px solid rgba(245,158,11,0.24); border-radius:8px; background:rgba(245,158,11,0.09); color:#92400e; font-size:11px; line-height:1.45;"></div>
             <div id="world-global-settings" style="display:none; margin: 0 0 12px; padding:10px; border:1px dashed var(--app-border-default); border-radius:12px; background:var(--app-surface-subtle);">
                 <div id="world-global-settings-header" style="display:flex; align-items:center; justify-content:space-between; cursor:pointer;">
                     <div style="font-weight:700;">全局设置</div>
@@ -1251,6 +1361,7 @@ export class WorldPanel {
                     </div>
                     <input id="world-file" type="file" accept=".json,application/json" style="display:none;">
                     <div style="color:var(--app-text-muted); font-size:12px; margin:6px 0;">名称将取自 JSON 的 name 或文件名（无需手动填写）</div>
+                    <div id="world-import-impact" class="world-panel-impact-hint" style="margin:6px 0 0; padding:8px 10px; border:1px solid rgba(245,158,11,0.24); border-radius:8px; background:rgba(245,158,11,0.09); color:#92400e; font-size:11px; line-height:1.45;"></div>
                     <div style="display:flex; gap:8px; margin-top:8px; justify-content:flex-end;">
                         <button id="world-import" style="padding:8px 14px; border-radius:8px; border:1px solid var(--app-border-default); background:var(--app-surface-subtle);">导入</button>
                         <button id="world-close" style="padding:8px 14px; border-radius:8px; border:1px solid var(--app-border-default); background:var(--app-surface-subtle);">关闭</button>
@@ -1260,6 +1371,8 @@ export class WorldPanel {
         `;
 
         this.listEl = this.panel.querySelector('#world-list');
+        this.impactEl = this.panel.querySelector('#world-impact');
+        this.importImpactEl = this.panel.querySelector('#world-import-impact');
         this.libraryToggleBtn = this.panel.querySelector('#world-library-toggle');
         this.fileInput = this.panel.querySelector('#world-file');
         this.fileBtn = this.panel.querySelector('#world-file-btn');
@@ -1437,6 +1550,7 @@ export class WorldPanel {
                     </div>
                     <button type="button" class="sticker-bind-close" aria-label="关闭">×</button>
                 </div>
+                <div id="world-library-impact" class="world-panel-impact-hint" style="margin:0 12px 10px; padding:8px 10px; border:1px solid rgba(245,158,11,0.24); border-radius:8px; background:rgba(245,158,11,0.09); color:#92400e; font-size:12px; line-height:1.45;"></div>
                 <div class="sticker-bind-search">
                     <div style="display:flex; gap:8px; align-items:center;">
                         <input type="text" id="world-library-search" placeholder="搜索世界书" style="flex:1;">
@@ -1474,6 +1588,7 @@ export class WorldPanel {
             this.libraryModal.classList.add('app-themed-panel', 'world-library-shell');
         }
         this.libraryListEl = this.libraryOverlay.querySelector('#world-library-list');
+        this.libraryImpactEl = this.libraryOverlay.querySelector('#world-library-impact');
         this.librarySearchEl = this.libraryOverlay.querySelector('#world-library-search');
         this.librarySortEl = this.libraryOverlay.querySelector('#world-library-sort');
         this.librarySortButton = this.libraryOverlay.querySelector('#world-library-sort-btn');
@@ -1560,9 +1675,15 @@ export class WorldPanel {
             const boundSets = json?.boundRegexSets || json?.bound_regex_sets || json?.bound_regex_sets_v1 || null;
             if (Array.isArray(boundSets) && boundSets.length) {
                 try {
+                    const sessionId = this.getActiveSessionKey();
                     const ok = await appConfirm({
                         title: '导入正则',
-                        message: `检测到世界书包含绑定的正规表达式（${boundSets.length} 组）。是否一并导入并绑定？\n取消：仅导入世界书，不导入正则。`,
+                        message: `检测到世界书包含绑定的正规表达式（${boundSets.length} 组）。是否一并导入并绑定？\n\n${buildWorldbookImpactText({
+                            scope: this.scope,
+                            sessionId,
+                            targetType: this.scope === 'global' ? 'global' : 'session_manage',
+                            action: 'regex_import',
+                        })}`,
                         confirmText: '一并导入',
                         cancelText: '仅导入世界书',
                     });

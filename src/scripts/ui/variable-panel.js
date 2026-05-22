@@ -188,6 +188,48 @@ const renderTreeNode = (node, term, depth = 0) => {
     return row;
 };
 
+const normalizeScope = value => (String(value || '').trim() === 'global' ? 'global' : 'session');
+
+export const formatVariableScopeLabel = ({ scope = 'session', sessionId = '' } = {}) => {
+    const normalizedScope = normalizeScope(scope);
+    const sid = String(sessionId || '').trim();
+    if (normalizedScope === 'global') return '全局变量（所有会话共享）';
+    return sid ? `当前会话「${sid}」` : '当前会话';
+};
+
+export const buildVariableScopeImpactText = ({
+    scope = 'session',
+    sessionId = '',
+    action = 'manage',
+} = {}) => {
+    const normalizedScope = normalizeScope(scope);
+    const target = formatVariableScopeLabel({ scope: normalizedScope, sessionId });
+    const storesRules = normalizedScope !== 'global';
+    if (action === 'edit') {
+        return `影响范围：${target}。保存会立即写入变量值${storesRules ? '和配置' : ''}；取消或关闭不会保存本次编辑。已保存后可再次编辑、删除，或用导入备份回退。`;
+    }
+    if (action === 'rules') {
+        return `影响范围：${target}。启用的规则可能在后续消息中自动修改变量、切换角色或注入提示词；关闭窗口不会运行规则，停用或删除规则可停止后续影响。`;
+    }
+    if (action === 'templates') {
+        return `影响范围：${target}。应用模板会一次写入多项会话变量；取消覆盖确认不会写入，应用前可先导出备份。`;
+    }
+    if (action === 'import') {
+        const extra = storesRules ? '、Schema 与规则' : '';
+        return `影响范围：${target}。合并导入会写入同名变量${extra}；覆盖导入会先清空当前范围再写入。建议先导出备份，关闭窗口或取消确认不会写入。`;
+    }
+    if (action === 'export') {
+        return `影响范围：${target}。导出为只读复制，不会修改变量；可作为导入或覆盖前的回退备份。`;
+    }
+    if (action === 'delete') {
+        return `影响范围：${target}。删除后相关提示词、世界书条件和脚本读取会失去该变量；取消确认不会删除，可通过导入备份恢复。`;
+    }
+    if (action === 'clear') {
+        return `影响范围：${target}。清空会删除当前范围内的变量值；取消确认不会删除，建议先导出备份。`;
+    }
+    return `影响范围：${target}。变量会影响后续提示词、世界书条件和脚本读取；关闭面板不会撤销已保存内容，导出可作为回退备份。`;
+};
+
 export class VariablePanel {
     constructor({ chatStore, getSessionId, getVariableScope }) {
         this.chatStore = chatStore;
@@ -274,6 +316,7 @@ export class VariablePanel {
                 <div class="variable-panel-usage-hint" style="margin-top:10px; padding:8px 10px; background:var(--app-surface-panel); border-radius:8px; font-size:11px; color:var(--app-text-secondary);">
                     💡 提示词中使用 <code class="variable-panel-inline-code" style="padding:2px 6px; border-radius:4px;">{{getvar::name}}</code> 引用变量
                 </div>
+                <div id="var-impact" class="variable-panel-impact-hint" style="margin-top:8px; padding:8px 10px; border:1px solid rgba(245,158,11,0.24); border-radius:8px; background:rgba(245,158,11,0.09); color:#92400e; font-size:11px; line-height:1.45;"></div>
                 <div style="margin-top:10px; display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
                     <div style="font-size:12px; color:var(--app-text-muted);">视图</div>
                     <div id="var-view-toggle" style="display:flex; gap:6px; padding:2px; background:var(--app-surface-hover); border-radius:999px;">
@@ -370,6 +413,8 @@ export class VariablePanel {
             <div style="padding:12px; overflow:auto; display:flex; flex-direction:column; gap:10px;">
                 <label style="font-size:12px; color:var(--app-text-muted);">变量名</label>
                 <input id="schema-key" type="text" style="padding:8px 10px; border:1px solid var(--app-border-default); border-radius:10px;">
+
+                <div id="schema-impact" class="variable-panel-impact-hint" style="padding:8px 10px; border:1px solid rgba(245,158,11,0.24); border-radius:8px; background:rgba(245,158,11,0.09); color:#92400e; font-size:12px; line-height:1.45;"></div>
 
                 <label style="font-size:12px; color:var(--app-text-muted);">当前值</label>
                 <input id="schema-value" type="text" style="padding:8px 10px; border:1px solid var(--app-border-default); border-radius:10px;">
@@ -518,6 +563,7 @@ export class VariablePanel {
                 <button id="rule-json" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:8px 10px; font-size:13px;">JSON</button>
                 <button id="rule-run" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:8px 10px; font-size:13px;">运行规则</button>
             </div>
+            <div id="rule-impact" class="variable-panel-impact-hint" style="margin:12px 12px 0; padding:8px 10px; border:1px solid rgba(245,158,11,0.24); border-radius:8px; background:rgba(245,158,11,0.09); color:#92400e; font-size:12px; line-height:1.45;"></div>
             <div id="rule-list" style="padding:12px; overflow:auto; flex:1; display:flex; flex-direction:column; gap:10px;"></div>
         `;
 
@@ -568,6 +614,8 @@ export class VariablePanel {
                 <button id="rule-editor-close" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:6px 10px;">关闭</button>
             </div>
             <div style="padding:12px; overflow:auto; display:flex; flex-direction:column; gap:10px;">
+                <div id="rule-editor-impact" class="variable-panel-impact-hint" style="padding:8px 10px; border:1px solid rgba(245,158,11,0.24); border-radius:8px; background:rgba(245,158,11,0.09); color:#92400e; font-size:12px; line-height:1.45;"></div>
+
                 <label style="font-size:12px; color:var(--app-text-muted);">规则名</label>
                 <input id="rule-name" type="text" style="padding:8px 10px; border:1px solid var(--app-border-default); border-radius:10px;">
 
@@ -861,6 +909,7 @@ export class VariablePanel {
                 <button id="tpl-close" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:6px 10px;">关闭</button>
             </div>
             <div id="tpl-list" style="padding:12px; overflow:auto; display:flex; flex-direction:column; gap:10px;"></div>
+            <div id="tpl-impact" class="variable-panel-impact-hint" style="margin:0 12px 12px; padding:8px 10px; border:1px solid rgba(245,158,11,0.24); border-radius:8px; background:rgba(245,158,11,0.09); color:#92400e; font-size:12px; line-height:1.45;"></div>
         `;
         panel.querySelector('#tpl-close')?.addEventListener('click', () => this.hideTemplateModal());
 
@@ -905,6 +954,7 @@ export class VariablePanel {
                 <button id="data-close" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:6px 10px;">关闭</button>
             </div>
             <div style="padding:12px; flex:1; display:flex; flex-direction:column; gap:10px;">
+                <div id="data-impact" class="variable-panel-impact-hint" style="padding:8px 10px; border:1px solid rgba(245,158,11,0.24); border-radius:8px; background:rgba(245,158,11,0.09); color:#92400e; font-size:12px; line-height:1.45;"></div>
                 <textarea id="data-text" rows="12" style="flex:1; min-height:200px; padding:10px; border:1px solid var(--app-border-default); border-radius:12px; font-size:12px; line-height:1.5;"></textarea>
             </div>
             <div style="display:flex; gap:8px; padding:12px; border-top:1px solid #eef2f7;">
@@ -938,6 +988,7 @@ export class VariablePanel {
         const { sid, scope } = this.getVars();
         const meta = this.panel?.querySelector?.('#var-meta');
         if (meta) meta.textContent = scope === 'global' ? '全局变量（共享）' : (sid ? `会话：${sid}` : '未选择会话');
+        this.setImpactText('#var-impact', 'manage', this.panel);
         this.term = '';
         const searchEl = this.panel?.querySelector?.('#var-search');
         if (searchEl) searchEl.value = '';
@@ -949,6 +1000,13 @@ export class VariablePanel {
         closeCustomSelectMenu();
         if (this.overlay) this.overlay.style.display = 'none';
         this.closeMoreMenu();
+    }
+
+    setImpactText(selector, action = 'manage', root = this.panel) {
+        const el = root?.querySelector?.(selector);
+        if (!el) return;
+        const { sid, scope } = this.getVars();
+        el.textContent = buildVariableScopeImpactText({ scope, sessionId: sid, action });
     }
 
     closeMoreMenu() {
@@ -971,6 +1029,7 @@ export class VariablePanel {
             return;
         }
         this.ensureRuleUI();
+        this.setImpactText('#rule-impact', 'rules', this.rulePanel);
         this.renderRuleList();
         if (this.ruleOverlay) this.ruleOverlay.style.display = 'block';
     }
@@ -984,6 +1043,7 @@ export class VariablePanel {
         this.ensureRuleEditorUI();
         const fields = this.ruleFields;
         if (!fields) return;
+        this.setImpactText('#rule-editor-impact', 'rules', this.ruleEditorPanel);
         const normalized = this.normalizeRule(rule);
         this.editingRuleId = normalized.id;
         if (fields.title) fields.title.textContent = normalized.name || normalized.id || '新规则';
@@ -1179,6 +1239,7 @@ export class VariablePanel {
             return;
         }
         this.ensureTemplateUI();
+        this.setImpactText('#tpl-impact', 'templates', this.templatePanel);
         this.renderTemplateList();
         if (this.templateOverlay) this.templateOverlay.style.display = 'block';
     }
@@ -1203,6 +1264,7 @@ export class VariablePanel {
             rules: Array.isArray(rules) ? rules : [],
         };
         this.ensureDataUI();
+        this.setImpactText('#data-impact', 'export', this.dataPanel);
         if (this.dataPanel) {
             const title = this.dataPanel.querySelector('#data-title');
             if (title) title.textContent = '导出变量与规则';
@@ -1224,6 +1286,7 @@ export class VariablePanel {
             return;
         }
         this.ensureDataUI();
+        this.setImpactText('#data-impact', 'import', this.dataPanel);
         if (this.dataPanel) {
             const title = this.dataPanel.querySelector('#data-title');
             if (title) title.textContent = '导入变量与规则';
@@ -1275,7 +1338,11 @@ export class VariablePanel {
         const nextRules = Array.isArray(data.rules) ? data.rules : [];
 
         if (!merge) {
-            const ok = await appConfirm({ title: '覆盖导入', message: '将覆盖当前变量/规则，是否继续？', danger: true });
+            const ok = await appConfirm({
+                title: '覆盖导入',
+                message: `将覆盖当前变量/规则，是否继续？\n\n${buildVariableScopeImpactText({ scope, sessionId: sid, action: 'import' })}`,
+                danger: true,
+            });
             if (!ok) return;
             this.clearVars();
             if (scope !== 'global') {
@@ -1329,6 +1396,7 @@ export class VariablePanel {
         const name = String(key || '').trim();
         const schemaObj = schema || this.getSchema(name) || {};
         const isEdit = mode !== 'create' && name;
+        this.setImpactText('#schema-impact', 'edit', this.schemaPanel);
 
         if (fields.title) fields.title.textContent = name ? `变量：${name}` : '新建变量';
         if (fields.key) {
@@ -1475,13 +1543,19 @@ export class VariablePanel {
         this.hideSchemaModal();
     }
 
-    deleteSchemaModal() {
+    async deleteSchemaModal() {
         const fields = this.schemaFields;
         if (!fields) return;
-        const { sid } = this.getVars();
+        const { sid, scope } = this.getVars();
         if (!sid) return;
         const key = String(fields.key?.value || '').trim();
         if (!key) return;
+        const ok = await appConfirm({
+            title: '删除变量配置',
+            message: `删除变量 "${key}" 的显示/类型配置？变量值会保留。\n\n${buildVariableScopeImpactText({ scope, sessionId: sid, action: 'edit' })}`,
+            danger: true,
+        });
+        if (!ok) return;
         this.deleteSchema(key);
         this.renderList();
         this.hideSchemaModal();
@@ -1780,11 +1854,15 @@ export class VariablePanel {
     }
 
     async deleteRuleById(ruleId) {
-        const { sid, rules } = this.getRules();
+        const { sid, rules, scope } = this.getRules();
         if (!sid) return;
         const targetId = String(ruleId || '').trim();
         if (!targetId) return;
-        const ok = await appConfirm({ title: '删除规则', message: '确定删除该规则？', danger: true });
+        const ok = await appConfirm({
+            title: '删除规则',
+            message: `确定删除该规则？\n\n${buildVariableScopeImpactText({ scope, sessionId: sid, action: 'rules' })}`,
+            danger: true,
+        });
         if (!ok) return;
         const next = rules.filter(r => String(r?.id || '') !== targetId);
         this.setRules(next);
@@ -1823,12 +1901,12 @@ export class VariablePanel {
                 const keys = Array.isArray(tpl.variables) ? tpl.variables.map(v => String(v?.id || v?.name || '').trim()).filter(Boolean) : [];
                 const exists = keys.filter(k => Object.prototype.hasOwnProperty.call(vars || {}, k));
                 let overwrite = true;
-                if (exists.length) {
-                    const ok = await appConfirm({
-                        title: '覆盖变量',
-                        message: `已存在变量：${exists.join('、')}\n是否覆盖？`,
-                        danger: true,
-                    });
+            if (exists.length) {
+                const ok = await appConfirm({
+                    title: '覆盖变量',
+                    message: `已存在变量：${exists.join('、')}\n是否覆盖？\n\n${buildVariableScopeImpactText({ scope: 'session', sessionId: sid, action: 'templates' })}`,
+                    danger: true,
+                });
                     if (!ok) return;
                 } else {
                     overwrite = true;
@@ -2026,26 +2104,34 @@ export class VariablePanel {
     }
 
     async deleteKey(key) {
-        const ok = await appConfirm({ title: '删除变量', message: `删除变量 "${key}"？`, danger: true });
-        if (!ok) return;
-        const { sid } = this.getVars();
+        const { sid, scope } = this.getVars();
         if (!sid) {
             window.toastr?.warning?.('请先进入聊天室');
             return;
         }
+        const ok = await appConfirm({
+            title: '删除变量',
+            message: `删除变量 "${key}"？\n\n${buildVariableScopeImpactText({ scope, sessionId: sid, action: 'delete' })}`,
+            danger: true,
+        });
+        if (!ok) return;
         this.deleteVar(String(key).trim());
         this.deleteSchema(String(key).trim());
         this.renderList();
     }
 
     async clearAll() {
-        const ok = await appConfirm({ title: '清空变量', message: '清空当前会话的所有变量？', danger: true });
-        if (!ok) return;
-        const { sid } = this.getVars();
+        const { sid, scope } = this.getVars();
         if (!sid) {
             window.toastr?.warning?.('请先进入聊天室');
             return;
         }
+        const ok = await appConfirm({
+            title: '清空变量',
+            message: `清空当前范围的所有变量？\n\n${buildVariableScopeImpactText({ scope, sessionId: sid, action: 'clear' })}`,
+            danger: true,
+        });
+        if (!ok) return;
         this.clearVars();
         this.renderList();
     }
@@ -2078,12 +2164,18 @@ export class VariablePanel {
         }
     }
 
-    runRules() {
-        const { sid } = this.getVars();
+    async runRules() {
+        const { sid, scope } = this.getVars();
         if (!sid) {
             window.toastr?.warning?.('请先进入聊天室');
             return;
         }
+        const ok = await appConfirm({
+            title: '运行变量规则',
+            message: `立即运行当前启用的变量规则？\n\n${buildVariableScopeImpactText({ scope, sessionId: sid, action: 'rules' })}`,
+            danger: true,
+        });
+        if (!ok) return;
         if (window.appBridge?.runVariableRules) {
             window.appBridge.runVariableRules(sid);
             window.toastr?.info?.('已触发手动规则');

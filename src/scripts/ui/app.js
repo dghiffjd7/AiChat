@@ -2357,6 +2357,26 @@ const initApp = async () => {
         listContactProfilePendingUpdates: () => (
           contactProfileStore.listPendingUpdates?.() || []
         ),
+        approveContactProfilePendingUpdate: ({ id } = {}) => {
+          const pendingId = String(id || '').trim();
+          if (!pendingId) return { ok: false, reason: 'missing_id' };
+          const pending = (contactProfileStore.listPendingUpdates?.() || [])
+            .find(item => String(item?.id || '').trim() === pendingId);
+          if (!pending?.profile) return { ok: false, reason: 'missing_pending_update' };
+          const saved = contactProfileStore.upsertProfile?.(pending.profile) || null;
+          if (saved) contactProfileStore.clearPendingUpdate?.(pendingId);
+          return {
+            ok: Boolean(saved),
+            contactId: String(saved?.contactId || pending?.contactId || '').trim(),
+          };
+        },
+        denyContactProfilePendingUpdate: ({ id } = {}) => {
+          const pendingId = String(id || '').trim();
+          if (!pendingId) return { ok: false, reason: 'missing_id' };
+          return {
+            ok: Boolean(contactProfileStore.clearPendingUpdate?.(pendingId)),
+          };
+        },
         getContactProfile: contactId => contactProfileStore.getProfile?.(contactId) || null,
         auditWorldbook: options => worldbookAuditAgent.auditWorldbook(options || {}),
       },
@@ -14005,13 +14025,39 @@ Phase G（Frame 36）：循环衔接
     settingsMenu,
     quickMenu,
   });
-  const agentStatusChip = new AgentCenterStatusChip({
+  const mountAgentStatusChip = ({
+    rootElement,
+    beforeElement = null,
+    surface = '',
+    showSessionGateState = true,
+    showToolsCount = true,
+  } = {}) => {
+    const scopedSurface = String(surface || '').trim();
+    const chip = new AgentCenterStatusChip({
+      rootElement,
+      beforeElement,
+      showSessionGateState,
+      showToolsCount,
+      collectView: () => agentCenterPanel.collectView(scopedSurface ? { surface: scopedSurface } : {}),
+      openAgentCenter: options => agentCenterPanel.show({
+        ...(options || {}),
+        ...(scopedSurface ? { surface: scopedSurface } : {}),
+      }),
+    });
+    chip.mount();
+    return chip;
+  };
+  mountAgentStatusChip({
     rootElement: document.querySelector('.chat-room-topbar'),
     beforeElement: chatMenuBtn,
-    collectView: () => agentCenterPanel.collectView(),
-    openAgentCenter: options => agentCenterPanel.show(options || {}),
   });
-  agentStatusChip.mount();
+  mountAgentStatusChip({
+    rootElement: document.querySelector('.moments-actions'),
+    beforeElement: momentsSettingsBtn,
+    surface: 'moments',
+    showSessionGateState: false,
+    showToolsCount: false,
+  });
   document.addEventListener('click', hideMenus);
 
   bindSettingsMenuActions({
@@ -14381,6 +14427,7 @@ Phase G（Frame 36）：循环衔接
               </div>
               <div class="chat-image-gen-ref-list" aria-live="polite"></div>
             </div>
+            <div class="chat-image-gen-impact"></div>
             <div class="chat-image-gen-status"></div>
           </div>
           <div class="chat-image-gen-advanced" hidden>
@@ -14413,6 +14460,7 @@ Phase G（Frame 36）：循环衔接
       const negativeWrap = overlay.querySelector('.chat-image-gen-negative');
       const negativeTextarea = overlay.querySelector('.chat-image-gen-negative-textarea');
       const negativeHintEl = overlay.querySelector('.chat-image-gen-negative-hint');
+      const impactEl = overlay.querySelector('.chat-image-gen-impact');
       const statusEl = overlay.querySelector('.chat-image-gen-status');
       const closeBtn = overlay.querySelector('.chat-image-gen-close');
       const cancelBtn = overlay.querySelector('.chat-image-gen-cancel');
@@ -14715,6 +14763,7 @@ Phase G（Frame 36）：循环衔接
           initialNegativePrompt = '',
           title = '生成图片',
           subtitle = '使用当前图片模型生成并写入这个聊天室',
+          impactText = '',
           submitText = '生成图片',
           secondaryText = '',
           onSecondary = null,
@@ -14739,6 +14788,10 @@ Phase G（Frame 36）：循环衔接
           const subtitleEl = overlay.querySelector('.chat-image-gen-subtitle');
           if (titleEl) titleEl.textContent = title;
           if (subtitleEl) subtitleEl.textContent = subtitle;
+          if (impactEl) {
+            impactEl.textContent = String(impactText || '').trim();
+            impactEl.hidden = !impactEl.textContent;
+          }
           if (submitBtn) submitBtn.textContent = submitText;
           if (secondaryBtn) {
             secondaryBtn.textContent = secondaryText || '';
@@ -14794,6 +14847,7 @@ Phase G（Frame 36）：循环衔接
 	      return {
 	        title: '生成插图',
 	        subtitle: '使用当前图片模型生成，并作为创意写作素材保存到这个会话',
+	        impactText: '影响范围：当前创意写作会话素材。生成中可在消息卡片取消；完成后可从素材/相册删除。',
 	        submitText: '生成插图',
 	        pendingName: '创作插图',
 	        pendingText: '正在生成插图',
@@ -14806,6 +14860,7 @@ Phase G（Frame 36）：循环衔接
 	      return {
 	        title: '生成配图',
 	        subtitle: '使用当前图片模型生成，并加入动态发布草稿',
+	        impactText: '影响范围：当前动态草稿与动态相册。生成前可取消；生成中可在任务状态中查看。',
 	        submitText: '生成配图',
 	        pendingName: 'AI配图',
 	        pendingText: '正在生成配图',
@@ -14817,6 +14872,7 @@ Phase G（Frame 36）：循环衔接
 	    return {
 	      title: '生成图片',
 	      subtitle: '使用当前图片模型生成并写入这个聊天室',
+	      impactText: '影响范围：当前聊天室图片消息。生成中可在消息卡片取消；完成后可删除图片消息。',
 	      submitText: '生成图片',
 	      pendingName: 'AI绘图',
 	      pendingText: '正在生成图片',
@@ -15320,6 +15376,7 @@ Phase G（Frame 36）：循环衔接
 	      initialPrompt: seedPrompt,
 	      title: surfaceCopy.title,
 	      subtitle: surfaceCopy.subtitle,
+	      impactText: surfaceCopy.impactText,
 	      submitText: surfaceCopy.submitText,
 	      secondaryText: showWritingAssets ? '插图素材' : (mediaSurface === 'chat' ? '相册' : ''),
 	      onSecondary: showWritingAssets
@@ -16984,6 +17041,7 @@ Phase G（Frame 36）：循环衔接
 	    }
 	    const mediaSurface = resolveMediaSurfaceForSession(sessionId);
 	    const isWritingSurface = mediaSurface === 'writing';
+	    const surfaceCopy = getMediaSurfaceCopy(mediaSurface);
 	    const referenceCapability = await loadImageReferenceCapability();
 	    const generationParamContext = await loadImageGenerationParamContext();
 	    const modalResult = await getChatImagePromptModal().open({
@@ -16992,6 +17050,7 @@ Phase G（Frame 36）：循环衔接
 	      subtitle: isWritingSurface
 	        ? '使用这张插图的提示词重新生成，并替换当前图片'
 	        : '使用这张图片的提示词重新生成，并替换当前图片',
+	      impactText: surfaceCopy.impactText,
 	      submitText: '重新生成图片',
 	      secondaryText: isWritingSurface ? '插图素材' : (mediaSurface === 'chat' ? '相册' : ''),
 	      onSecondary: isWritingSurface

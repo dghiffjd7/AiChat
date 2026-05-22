@@ -2619,6 +2619,21 @@ body[data-ui-mode='rp'] .rp-continue-btn {
   min-height: 76px;
 }
 
+.chat-image-gen-impact {
+  margin-top: 10px;
+  padding: 8px 10px;
+  border: 1px solid rgba(245, 158, 11, 0.24);
+  border-radius: 8px;
+  background: rgba(245, 158, 11, 0.09);
+  color: #92400e;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.chat-image-gen-impact[hidden] {
+  display: none;
+}
+
 .chat-image-gen-status {
   min-height: 18px;
   margin-top: 8px;

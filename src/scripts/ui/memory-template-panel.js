@@ -7,6 +7,7 @@ import { hasTauriRuntime, pickSavePath } from '../utils/save-dialog.js';
 import { safeInvoke } from '../utils/tauri.js';
 import { appConfirm } from './app-confirm.js';
 import { bindCustomSelectButton, closeCustomSelectMenu, createCustomSelectWrapper, refreshCustomSelectButton } from './custom-select.js';
+import { buildMemoryImpactText } from './memory-impact-utils.js';
 
 const sanitizeFileName = (name) => {
   const raw = String(name || '').trim();
@@ -41,6 +42,7 @@ export class MemoryTemplatePanel {
     this.panel = null;
     this.fileInput = null;
     this.currentEl = null;
+    this.impactEl = null;
     this.listEl = null;
     this.importBtn = null;
     this.exportBtn = null;
@@ -48,6 +50,7 @@ export class MemoryTemplatePanel {
     this.dataExportBtn = null;
     this.dataImportBtn = null;
     this.dataStatusEl = null;
+    this.dataImpactEl = null;
     this.dataDialogOverlay = null;
     this.dataDialogPanel = null;
     this.dataDialogTitle = null;
@@ -128,6 +131,7 @@ export class MemoryTemplatePanel {
 
   show() {
     if (!this.panel) this.createUI();
+    this.setImpactText();
     this.refresh().catch(() => {});
     this.globalEditor?.render?.();
     if (this.overlay) this.overlay.style.display = 'block';
@@ -138,6 +142,16 @@ export class MemoryTemplatePanel {
     closeCustomSelectMenu();
     if (this.overlay) this.overlay.style.display = 'none';
     if (this.panel) this.panel.style.display = 'none';
+  }
+
+  setImpactText() {
+    const base = { scope: 'global', action: 'manage' };
+    if (this.impactEl) {
+      this.impactEl.textContent = buildMemoryImpactText(base);
+    }
+    if (this.dataImpactEl) {
+      this.dataImpactEl.textContent = buildMemoryImpactText({ scope: 'global', action: 'import' });
+    }
   }
 
   createUI() {
@@ -170,6 +184,7 @@ export class MemoryTemplatePanel {
         <button id="memory-template-close" style="border:none; background:transparent; font-size:22px; cursor:pointer; color:var(--app-text-primary);">×</button>
       </div>
       <div style="padding:14px 16px; overflow:auto; flex:1; min-height:0; -webkit-overflow-scrolling:touch;">
+        <div id="memory-template-impact" class="memory-impact-hint" style="margin-bottom:12px; padding:8px 10px; border:1px solid rgba(245,158,11,0.24); border-radius:8px; background:rgba(245,158,11,0.09); color:#92400e; font-size:12px; line-height:1.45;"></div>
         <div style="border:1px solid var(--app-border-default); border-radius:12px; padding:12px; background:var(--app-surface-card);">
           <div style="font-weight:700; color:var(--app-text-primary); margin-bottom:6px;">全局记忆</div>
           <div style="font-size:12px; color:var(--app-text-muted); margin-bottom:8px;">全局表格仅在此处编辑</div>
@@ -188,6 +203,7 @@ export class MemoryTemplatePanel {
         <div style="border:1px solid var(--app-border-default); border-radius:12px; padding:12px; background:var(--app-surface-card); margin-top:12px;">
           <div style="font-weight:700; color:var(--app-text-primary); margin-bottom:6px;">数据导入导出</div>
           <div id="memory-data-status" style="font-size:12px; color:var(--app-text-muted); margin-bottom:8px;">未开始操作</div>
+          <div id="memory-data-impact" class="memory-impact-hint" style="margin-bottom:8px; padding:8px 10px; border:1px solid rgba(245,158,11,0.24); border-radius:8px; background:rgba(245,158,11,0.09); color:#92400e; font-size:11px; line-height:1.45;"></div>
           <div style="display:flex; gap:8px; flex-wrap:wrap;">
             <button id="memory-data-export" style="padding:8px 12px; border:1px solid var(--app-border-default); border-radius:10px; background:var(--app-surface-card); cursor:pointer;">导出记忆数据</button>
             <button id="memory-data-import" style="padding:8px 12px; border:1px solid var(--app-border-default); border-radius:10px; background:var(--app-surface-card); cursor:pointer;">导入记忆数据</button>
@@ -204,6 +220,7 @@ export class MemoryTemplatePanel {
 
     this.globalEditorContainer = this.panel.querySelector('#memory-template-global-editor');
     this.currentEl = this.panel.querySelector('#memory-template-current');
+    this.impactEl = this.panel.querySelector('#memory-template-impact');
     this.listEl = this.panel.querySelector('#memory-template-list');
     this.importBtn = this.panel.querySelector('#memory-template-import');
     this.exportBtn = this.panel.querySelector('#memory-template-export');
@@ -212,6 +229,8 @@ export class MemoryTemplatePanel {
     this.dataExportBtn = this.panel.querySelector('#memory-data-export');
     this.dataImportBtn = this.panel.querySelector('#memory-data-import');
     this.dataStatusEl = this.panel.querySelector('#memory-data-status');
+    this.dataImpactEl = this.panel.querySelector('#memory-data-impact');
+    this.setImpactText();
     this.panel.querySelector('#memory-template-close').onclick = () => this.hide();
 
     if (this.globalEditorContainer && this.templateStore && this.memoryStore) {
@@ -464,7 +483,11 @@ export class MemoryTemplatePanel {
       deleteBtn.textContent = '删除';
       deleteBtn.style.cssText = 'padding:6px 10px; border:1px solid #fecaca; border-radius:10px; background:var(--app-surface-card); cursor:pointer; font-size:12px; color:#b91c1c;';
       deleteBtn.onclick = async () => {
-        const ok = await appConfirm({ title: '删除模板', message: '确定删除该模板吗？', danger: true });
+        const ok = await appConfirm({
+          title: '删除模板',
+          message: `确定删除该模板吗？\n\n${buildMemoryImpactText({ action: 'template_import' })}`,
+          danger: true,
+        });
         if (!ok) return;
         try {
           await this.templateStore.deleteTemplate(record.id);
@@ -549,7 +572,7 @@ export class MemoryTemplatePanel {
         const warn = existing.is_builtin ? '（当前为内置模板）' : '';
         const ok = await this.showDataDialog({
           title: '导入模板',
-          body: `已存在同 ID 模板${warn}，是否覆盖？\n\n${info}`,
+          body: `已存在同 ID 模板${warn}，是否覆盖？\n\n${info}\n\n${buildMemoryImpactText({ action: 'template_import' })}`,
           confirmText: '覆盖导入',
           cancelText: '取消',
         });
@@ -557,7 +580,7 @@ export class MemoryTemplatePanel {
       } else {
         const ok = await this.showDataDialog({
           title: '导入模板',
-          body: `确认导入该模板？\n\n${info}`,
+          body: `确认导入该模板？\n\n${info}\n\n${buildMemoryImpactText({ action: 'template_import' })}`,
           confirmText: '导入',
           cancelText: '取消',
         });
@@ -1132,7 +1155,7 @@ export class MemoryTemplatePanel {
         const warn = existingTemplate.is_builtin ? '（当前为内置模板）' : '';
         const ok = await this.showDataDialog({
           title: '模板覆盖',
-          body: `已存在同 ID 模板${warn}，是否覆盖模板定义？`,
+          body: `已存在同 ID 模板${warn}，是否覆盖模板定义？\n\n${buildMemoryImpactText({ action: 'template_import' })}`,
           confirmText: '覆盖',
           cancelText: '跳过',
         });
@@ -1233,7 +1256,7 @@ export class MemoryTemplatePanel {
       ].filter(Boolean);
       const proceed = await this.showDataDialog({
         title: '导入确认',
-        body: infoLines.join('\n'),
+        body: `${infoLines.join('\n')}\n\n${buildMemoryImpactText({ scope: 'global', action: 'import' })}`,
         confirmText: '开始导入',
         cancelText: '取消',
       });
@@ -1245,7 +1268,7 @@ export class MemoryTemplatePanel {
       if (conflicts.length) {
         const pick = await this.showDataDialog({
           title: 'ID 冲突处理',
-          body: `发现 ${conflicts.length} 条与现有 ID 冲突的记录，请选择处理方式：`,
+          body: `发现 ${conflicts.length} 条与现有 ID 冲突的记录，请选择处理方式：\n\n${buildMemoryImpactText({ scope: 'global', action: 'import' })}`,
           options: [
             { value: 'overwrite', label: '全部覆盖（删除旧记录后导入）' },
             { value: 'skip', label: '全部跳过' },
@@ -1842,7 +1865,11 @@ export class MemoryTemplatePanel {
       deleteBtn.textContent = '删除表';
       deleteBtn.style.cssText = 'padding:4px 8px; border:1px solid #fecaca; border-radius:8px; background:var(--app-surface-card); cursor:pointer; font-size:12px; color:#b91c1c;';
       deleteBtn.onclick = async () => {
-        const ok = await appConfirm({ title: '删除表格', message: '确定删除该表格吗？', danger: true });
+        const ok = await appConfirm({
+          title: '删除表格',
+          message: `确定删除该表格吗？\n\n${buildMemoryImpactText({ action: 'template_import' })}`,
+          danger: true,
+        });
         if (!ok) return;
         template.tables.splice(idx, 1);
         this.renderTemplateEditor();
