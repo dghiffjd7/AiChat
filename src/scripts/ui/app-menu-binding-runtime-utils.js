@@ -62,6 +62,7 @@ export const bindSettingsMenuActions = ({
   settingsMenu = null,
   openSettings = () => {},
   openPreset = () => {},
+  openAgentCenter = () => {},
   openWorldGlobal = () => {},
   openExtensions = () => {},
   openConfig = () => {},
@@ -74,6 +75,7 @@ export const bindSettingsMenuActions = ({
       const action = button.dataset?.action;
       if (action === 'settings') openSettings();
       if (action === 'preset') openPreset();
+      if (action === 'agent-center') openAgentCenter();
       if (action === 'world-global') openWorldGlobal();
       if (action === 'extensions') openExtensions();
       if (action === 'config') openConfig();

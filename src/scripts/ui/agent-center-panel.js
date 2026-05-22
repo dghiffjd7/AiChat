@@ -1,0 +1,475 @@
+import { buildAgentCenterView } from './agent-center-view-model.js';
+
+const STYLE_ID = 'agent-center-panel-style';
+
+const PANEL_CSS = `
+.agent-center-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 22000;
+    display: none;
+    align-items: stretch;
+    justify-content: flex-end;
+    box-sizing: border-box;
+    padding: max(8px, env(safe-area-inset-top, 0px)) max(8px, env(safe-area-inset-right, 0px)) max(8px, env(safe-area-inset-bottom, 0px)) max(8px, env(safe-area-inset-left, 0px));
+    background: rgba(15,23,42,0.28);
+}
+.agent-center-panel {
+    width: min(620px, 100vw);
+    height: calc(var(--app-visual-height, 100dvh) - max(8px, env(safe-area-inset-top, 0px)) - max(8px, env(safe-area-inset-bottom, 0px)));
+    max-height: calc(100vh - max(8px, env(safe-area-inset-top, 0px)) - max(8px, env(safe-area-inset-bottom, 0px)));
+    display: flex;
+    flex-direction: column;
+    background: var(--app-surface-card);
+    color: var(--app-text-primary);
+    border: 1px solid var(--app-border-default);
+    border-radius: 12px;
+    box-shadow: -12px 0 36px rgba(15,23,42,0.18);
+    overflow: hidden;
+}
+.agent-center-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--app-border-default);
+    flex-shrink: 0;
+}
+.agent-center-title {
+    min-width: 0;
+}
+.agent-center-title strong {
+    display: block;
+    font-size: 18px;
+    line-height: 1.2;
+}
+.agent-center-meta {
+    margin-top: 4px;
+    font-size: 12px;
+    color: var(--app-text-secondary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.agent-center-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+}
+.agent-center-button {
+    border: 1px solid var(--app-border-default);
+    border-radius: 10px;
+    background: var(--app-surface-subtle);
+    color: var(--app-text-primary);
+    padding: 7px 10px;
+    font-weight: 800;
+    cursor: pointer;
+}
+.agent-center-tabs {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 6px;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--app-border-default);
+    flex-shrink: 0;
+}
+.agent-center-tab {
+    border: 1px solid transparent;
+    border-radius: 10px;
+    background: transparent;
+    color: var(--app-text-secondary);
+    padding: 8px 6px;
+    font-size: 12px;
+    font-weight: 800;
+    cursor: pointer;
+}
+.agent-center-tab.is-active {
+    border-color: rgba(59,130,246,0.24);
+    background: rgba(59,130,246,0.10);
+    color: #1d4ed8;
+}
+.agent-center-content {
+    min-height: 0;
+    flex: 1;
+    overflow: auto;
+    -webkit-overflow-scrolling: touch;
+    padding: 12px;
+}
+.agent-center-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+.agent-center-card {
+    border: 1px solid var(--app-border-default);
+    border-radius: 8px;
+    background: var(--app-surface-subtle);
+    padding: 10px 12px;
+}
+.agent-center-card-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 10px;
+}
+.agent-center-card-title {
+    font-size: 13px;
+    font-weight: 900;
+    line-height: 1.35;
+    word-break: break-word;
+}
+.agent-center-card-sub {
+    margin-top: 3px;
+    font-size: 12px;
+    line-height: 1.45;
+    color: var(--app-text-secondary);
+    word-break: break-word;
+}
+.agent-center-chip-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 8px;
+}
+.agent-center-chip {
+    display: inline-flex;
+    align-items: center;
+    min-height: 22px;
+    padding: 4px 7px;
+    border-radius: 999px;
+    border: 1px solid rgba(148,163,184,0.22);
+    color: var(--app-text-secondary);
+    font-size: 11px;
+    font-weight: 800;
+    white-space: nowrap;
+}
+.agent-center-chip.is-risk-high,
+.agent-center-chip.is-risk-medium {
+    border-color: rgba(245,158,11,0.24);
+    background: rgba(245,158,11,0.10);
+    color: #b45309;
+}
+.agent-center-chip.is-status-failed,
+.agent-center-chip.is-status-denied,
+.agent-center-chip.is-status-expired {
+    border-color: rgba(244,63,94,0.22);
+    background: rgba(244,63,94,0.10);
+    color: #be123c;
+}
+.agent-center-chip.is-status-running,
+.agent-center-chip.is-status-pending {
+    border-color: rgba(59,130,246,0.22);
+    background: rgba(59,130,246,0.10);
+    color: #1d4ed8;
+}
+.agent-center-empty {
+    padding: 28px 12px;
+    color: var(--app-text-secondary);
+    text-align: center;
+    font-size: 13px;
+}
+.agent-center-error {
+    margin-bottom: 10px;
+    padding: 10px 12px;
+    border: 1px solid rgba(244,63,94,0.22);
+    border-radius: 8px;
+    background: rgba(244,63,94,0.08);
+    color: #be123c;
+    font-size: 12px;
+    line-height: 1.5;
+}
+@media (max-width: 680px) {
+    .agent-center-overlay {
+        justify-content: center;
+    }
+    .agent-center-panel {
+        width: 100%;
+    }
+    .agent-center-tabs {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+`;
+
+const trim = (value, fallback = '') => {
+    const text = String(value ?? '').trim();
+    return text || fallback;
+};
+
+const escapeHtml = (value) => String(value ?? '').replace(/[&<>"]/g, (ch) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+}[ch]));
+
+const list = value => (Array.isArray(value) ? value : [value])
+    .map(item => trim(item))
+    .filter(Boolean);
+
+const formatMeta = (items = []) => items.filter(Boolean).join(' · ');
+
+const statusChipClass = value => `agent-center-chip is-status-${trim(value, 'unknown').toLowerCase().replace(/[^a-z0-9_-]+/g, '-')}`;
+
+const riskChipClass = value => `agent-center-chip is-risk-${trim(value, 'low').toLowerCase().replace(/[^a-z0-9_-]+/g, '-')}`;
+
+const renderChips = (chips = []) => {
+    const html = chips.filter(Boolean).map((chip) => {
+        const label = trim(chip.label);
+        if (!label) return '';
+        return `<span class="${escapeHtml(chip.className || 'agent-center-chip')}">${escapeHtml(label)}</span>`;
+    }).filter(Boolean).join('');
+    return html ? `<div class="agent-center-chip-row">${html}</div>` : '';
+};
+
+const renderEmpty = message => `<div class="agent-center-empty">${escapeHtml(message)}</div>`;
+
+export class AgentCenterPanel {
+    constructor({
+        getActions = () => globalThis.window?.appBridge?.debugUiRegistry?.actions || {},
+    } = {}) {
+        this.getActions = getActions;
+        this.overlayElement = null;
+        this.panelElement = null;
+        this.contentElement = null;
+        this.metaElement = null;
+        this.tabsElement = null;
+        this.activeTab = 'pending';
+        this.view = buildAgentCenterView();
+        this.lastError = '';
+    }
+
+    ensureStyle() {
+        if (typeof document === 'undefined' || document.getElementById(STYLE_ID)) return;
+        const style = document.createElement('style');
+        style.id = STYLE_ID;
+        style.textContent = PANEL_CSS;
+        document.head.appendChild(style);
+    }
+
+    ensureDom() {
+        if (this.overlayElement || typeof document === 'undefined') return;
+        this.ensureStyle();
+        const overlay = document.createElement('div');
+        overlay.className = 'agent-center-overlay';
+        overlay.dataset.agentCenterOverlay = 'true';
+        overlay.innerHTML = `
+            <section class="agent-center-panel" role="dialog" aria-modal="true" aria-labelledby="agent-center-title">
+                <header class="agent-center-header">
+                    <div class="agent-center-title">
+                        <strong id="agent-center-title">Agent Center</strong>
+                        <div class="agent-center-meta"></div>
+                    </div>
+                    <div class="agent-center-actions">
+                        <button type="button" class="agent-center-button" data-action="refresh">刷新</button>
+                        <button type="button" class="agent-center-button" data-action="close">关闭</button>
+                    </div>
+                </header>
+                <nav class="agent-center-tabs" aria-label="Agent Center tabs"></nav>
+                <main class="agent-center-content"></main>
+            </section>
+        `;
+        overlay.addEventListener('click', (event) => {
+            if (event.target === overlay) this.hide();
+        });
+        overlay.querySelector('[data-action="close"]')?.addEventListener('click', () => this.hide());
+        overlay.querySelector('[data-action="refresh"]')?.addEventListener('click', () => this.refresh());
+        this.overlayElement = overlay;
+        this.panelElement = overlay.querySelector('.agent-center-panel');
+        this.contentElement = overlay.querySelector('.agent-center-content');
+        this.metaElement = overlay.querySelector('.agent-center-meta');
+        this.tabsElement = overlay.querySelector('.agent-center-tabs');
+        document.body.appendChild(overlay);
+    }
+
+    async callAction(name, args = undefined, fallback = null) {
+        const actions = this.getActions?.() || {};
+        const fn = actions?.[name];
+        if (typeof fn !== 'function') return fallback;
+        try {
+            return await Promise.resolve(args === undefined ? fn() : fn(args));
+        } catch (err) {
+            this.lastError = trim(err?.message || err, `${name} failed`);
+            return fallback;
+        }
+    }
+
+    async collectView() {
+        this.lastError = '';
+        const agentRunView = await this.callAction('listAgentRunView', { limit: 50 }, null);
+        const [pendingPermissions, tools, permissionRules, sessionGate, experimentStatus] = await Promise.all([
+            this.callAction('listProviderToolPendingPermissions', { limit: 100 }, []),
+            this.callAction('listAgentTools', undefined, []),
+            this.callAction('listAgentPermissionRules', undefined, []),
+            this.callAction('getProviderToolSessionGate', undefined, null),
+            this.callAction('getProviderToolExperimentStatus', undefined, null),
+        ]);
+        return buildAgentCenterView({
+            pendingPermissions,
+            agentRunView,
+            tools,
+            permissionRules,
+            sessionGate,
+            experimentStatus,
+        });
+    }
+
+    show({ tab = this.activeTab } = {}) {
+        this.ensureDom();
+        this.activeTab = trim(tab, 'pending');
+        if (this.overlayElement) this.overlayElement.style.display = 'flex';
+        this.refresh();
+    }
+
+    hide() {
+        if (this.overlayElement) this.overlayElement.style.display = 'none';
+    }
+
+    async refresh() {
+        this.ensureDom();
+        this.view = await this.collectView();
+        this.render();
+    }
+
+    setActiveTab(tab = 'pending') {
+        const next = trim(tab, 'pending');
+        if (!this.view.tabs.some(item => item.id === next)) return;
+        this.activeTab = next;
+        this.render();
+    }
+
+    renderTabs() {
+        if (!this.tabsElement) return;
+        this.tabsElement.innerHTML = this.view.tabs.map((tab) => `
+            <button
+                type="button"
+                class="agent-center-tab${tab.id === this.activeTab ? ' is-active' : ''}"
+                data-tab="${escapeHtml(tab.id)}"
+            >${escapeHtml(tab.label)}${tab.count ? ` ${Number(tab.count)}` : ''}</button>
+        `).join('');
+        this.tabsElement.querySelectorAll('[data-tab]').forEach((button) => {
+            button.addEventListener('click', () => this.setActiveTab(button.dataset.tab));
+        });
+    }
+
+    renderMeta() {
+        if (!this.metaElement) return;
+        const meta = this.view.meta || {};
+        this.metaElement.textContent = formatMeta([
+            `待确认 ${Number(meta.pending || 0)}`,
+            `活动中 ${Number(meta.activeRuns || 0)}`,
+            `失败 ${Number(meta.failedRuns || 0)}`,
+            `工具 ${Number(meta.tools || 0)}`,
+            meta.sessionGateEnabled ? '会话 Gate 开启' : '会话 Gate 关闭',
+        ]);
+    }
+
+    renderPending() {
+        const items = this.view.pending || [];
+        if (!items.length) return renderEmpty('没有待确认的 Agent/tool 请求');
+        return `<div class="agent-center-list">${items.map(item => `
+            <article class="agent-center-card">
+                <div class="agent-center-card-head">
+                    <div>
+                        <div class="agent-center-card-title">${escapeHtml(item.toolName)}</div>
+                        <div class="agent-center-card-sub">${escapeHtml(formatMeta([item.sessionId, item.source]))}</div>
+                    </div>
+                    <span class="${escapeHtml(statusChipClass(item.status))}">${escapeHtml(item.status)}</span>
+                </div>
+                ${renderChips([
+                    { label: `risk: ${item.riskLevel}`, className: riskChipClass(item.riskLevel) },
+                    ...item.permissions.map(permission => ({ label: permission })),
+                    item.expiresAt ? { label: `expires: ${new Date(item.expiresAt).toLocaleTimeString()}` } : null,
+                ])}
+            </article>
+        `).join('')}</div>`;
+    }
+
+    renderActivity() {
+        const activity = this.view.activity || {};
+        const runs = activity.runs || [];
+        if (!runs.length) return renderEmpty('还没有 Agent 活动记录');
+        return `<div class="agent-center-list">${runs.map(run => `
+            <article class="agent-center-card">
+                <div class="agent-center-card-head">
+                    <div>
+                        <div class="agent-center-card-title">${escapeHtml(run.title || run.kind || run.id)}</div>
+                        <div class="agent-center-card-sub">${escapeHtml(formatMeta([run.kind, run.source, run.sessionId]))}</div>
+                    </div>
+                    <span class="${escapeHtml(statusChipClass(run.status))}">${escapeHtml(run.status)}</span>
+                </div>
+                <div class="agent-center-card-sub">${escapeHtml(run.summary || run.lastStep?.summary || run.errorMessage || '-')}</div>
+                ${renderChips([
+                    { label: `steps ${Number(run.stepCount || 0)}` },
+                    { label: `tools ${Number(run.toolCallCount || 0)}` },
+                    run.lastStep ? { label: `last: ${run.lastStep.type}` } : null,
+                ])}
+            </article>
+        `).join('')}</div>`;
+    }
+
+    renderTools() {
+        const tools = this.view.tools || [];
+        if (!tools.length) return renderEmpty('还没有注册 Agent 工具');
+        return `<div class="agent-center-list">${tools.map(tool => `
+            <article class="agent-center-card">
+                <div class="agent-center-card-title">${escapeHtml(tool.title || tool.name)}</div>
+                <div class="agent-center-card-sub">${escapeHtml(formatMeta([tool.name, tool.source, tool.description]))}</div>
+                ${renderChips([
+                    { label: `risk: ${tool.riskLevel}`, className: riskChipClass(tool.riskLevel) },
+                    { label: tool.executionMode },
+                    ...tool.permissions.map(permission => ({ label: permission })),
+                ])}
+            </article>
+        `).join('')}</div>`;
+    }
+
+    renderSafety() {
+        const safety = this.view.safety || {};
+        const gate = safety.sessionGate || {};
+        const provider = safety.providerTools || {};
+        return `<div class="agent-center-list">
+            <article class="agent-center-card">
+                <div class="agent-center-card-title">Provider Tool Gate</div>
+                <div class="agent-center-card-sub">${escapeHtml(gate.enabled ? '当前会话允许已配置工具执行' : '当前会话未开启 provider tool 执行')}</div>
+                ${renderChips([
+                    { label: gate.enabled ? 'enabled' : 'disabled', className: statusChipClass(gate.enabled ? 'running' : 'denied') },
+                    { label: gate.networkAllowed ? 'network allowed' : 'network blocked' },
+                    { label: gate.realRunnerAllowed ? 'real runner allowed' : 'real runner blocked' },
+                    ...list(gate.allowedTools).map(tool => ({ label: tool })),
+                ])}
+            </article>
+            <article class="agent-center-card">
+                <div class="agent-center-card-title">Provider Tool Experiment</div>
+                <div class="agent-center-card-sub">${escapeHtml(provider.enabled ? '实验入口开启' : '实验入口关闭')}</div>
+                ${renderChips([
+                    { label: provider.enabled ? 'enabled' : 'disabled', className: statusChipClass(provider.enabled ? 'running' : 'denied') },
+                    ...list(provider.allowedTools).map(tool => ({ label: tool })),
+                ])}
+            </article>
+            <article class="agent-center-card">
+                <div class="agent-center-card-title">Permission Rules</div>
+                <div class="agent-center-card-sub">${Number((safety.permissionRules || []).length)} 条规则。当前壳只读展示，不在这里修改权限。</div>
+            </article>
+        </div>`;
+    }
+
+    render() {
+        this.renderMeta();
+        this.renderTabs();
+        if (!this.contentElement) return;
+        const error = this.lastError
+            ? `<div class="agent-center-error">${escapeHtml(this.lastError)}</div>`
+            : '';
+        const body = this.activeTab === 'pending'
+            ? this.renderPending()
+            : this.activeTab === 'activity'
+                ? this.renderActivity()
+                : this.activeTab === 'tools'
+                    ? this.renderTools()
+                    : this.renderSafety();
+        this.contentElement.innerHTML = `${error}${body}`;
+    }
+}

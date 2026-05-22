@@ -104,6 +104,7 @@ const createMenu = (buttons = []) => ({
   const settingsMenu = createMenu([
     createButton('settings'),
     createButton('preset'),
+    createButton('agent-center'),
     createButton('world-global'),
     createButton('extensions'),
     createButton('config'),
@@ -114,6 +115,7 @@ const createMenu = (buttons = []) => ({
     settingsMenu,
     openSettings: () => calls.push('settings'),
     openPreset: () => calls.push('preset'),
+    openAgentCenter: () => calls.push('agent-center'),
     openWorldGlobal: () => calls.push('world'),
     openExtensions: () => calls.push('extensions'),
     openConfig: () => calls.push('config'),
@@ -125,6 +127,7 @@ const createMenu = (buttons = []) => ({
   assert.deepEqual(calls, [
     'settings', 'hide',
     'preset', 'hide',
+    'agent-center', 'hide',
     'world', 'hide',
     'extensions', 'hide',
     'config', 'hide',

@@ -481,6 +481,7 @@ import { CustomBundleExporter } from './custom-bundle-exporter.js';
 import { ExtensionsPanel } from './extensions-panel.js';
 import { ExperiencePackTransfer } from './experience-pack-transfer.js';
 import { GeneralSettingsPanel } from './general-settings-panel.js';
+import { AgentCenterPanel } from './agent-center-panel.js';
 import {
   loadSessionMemoryActionContext,
   loadSessionMemoryRollbackSnapshotContext,
@@ -2209,11 +2210,13 @@ const initApp = async () => {
   registerMemoryAgentTools(agentToolRegistry, {
     getMemoryUpdateRuntime: () => currentMemoryUpdateRuntime,
   });
+  const agentCenterPanel = new AgentCenterPanel();
   try {
     registerDebugRuntimeContextCore(window.appBridge, {
       panels: {
         configPanel,
         generalSettingsPanel,
+        agentCenterPanel,
         presetPanel,
         regexPanel,
         pluginPanel,
@@ -2307,6 +2310,7 @@ const initApp = async () => {
         listProviderToolPendingContinuationParts,
         listProviderToolPendingResumeParts,
         clearProviderToolPendingPermissions: () => providerToolPendingPermissionStore.clear(),
+        openAgentCenter: options => agentCenterPanel.show(options || {}),
         runProviderToolCallExperiment: (options = {}) => {
           const opts = options && typeof options === 'object' ? options : {};
           const hasExplicitArgs = Object.prototype.hasOwnProperty.call(opts, 'arguments') ||
@@ -14006,6 +14010,7 @@ Phase G（Frame 36）：循环衔接
     settingsMenu,
     openSettings: () => generalSettingsPanel.show(),
     openPreset: () => presetPanel.show(),
+    openAgentCenter: () => agentCenterPanel.show(),
     openWorldGlobal: () => worldPanel.show({ scope: 'global' }),
     openExtensions: () => extensionsPanel.show(),
     openConfig: () => configPanel.show(),
@@ -24965,6 +24970,7 @@ Phase G（Frame 36）：循环衔接
     () => rawReplyModal.hide(),
     () => promptPreviewModal.hide(),
     () => worldDebugLocatorModal.hide(),
+    () => agentCenterPanel.hide(),
     () => presetPanel.hide(),
     () => configPanel.hide(),
     () => generalSettingsPanel.hide(),
@@ -24991,6 +24997,7 @@ Phase G（Frame 36）：循环衔接
     () => isBackLayerVisible(document.getElementById('raw-reply-overlay')),
     () => isBackLayerVisible(document.getElementById('prompt-preview-overlay')),
     () => isBackLayerVisible(document.getElementById('world-debug-locator-overlay')),
+    () => isBackLayerVisible(agentCenterPanel.overlayElement),
     () => isBackLayerVisible(presetPanel.overlayElement) || isBackLayerVisible(presetPanel.element),
     () => isBackLayerVisible(configPanel.overlayElement) || isBackLayerVisible(configPanel.element),
     () => isBackLayerVisible(generalSettingsPanel.overlay) || isBackLayerVisible(generalSettingsPanel.panel),
