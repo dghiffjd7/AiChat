@@ -28,6 +28,10 @@ const STATUS_CHIP_CSS = `
     -webkit-tap-highlight-color: transparent;
     transition: background 0.16s ease, border-color 0.16s ease, color 0.16s ease, transform 0.16s ease;
 }
+.chat-room-topbar .agent-status-chip {
+    position: relative;
+    z-index: 2;
+}
 .agent-status-chip:hover {
     background: var(--app-surface-subtle);
     color: var(--app-text-primary);
@@ -139,6 +143,12 @@ body[data-theme-mode='dark'] .agent-status-chip.is-ready {
     .agent-status-chip {
         max-width: 92px;
         padding: 0 7px;
+    }
+    .chat-room-topbar .agent-status-chip {
+        max-width: 48px;
+    }
+    .chat-room-topbar .agent-status-chip-label {
+        display: none;
     }
 }
 @media (prefers-reduced-motion: reduce) {

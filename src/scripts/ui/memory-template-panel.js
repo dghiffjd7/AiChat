@@ -7,7 +7,9 @@ import { hasTauriRuntime, pickSavePath } from '../utils/save-dialog.js';
 import { safeInvoke } from '../utils/tauri.js';
 import { appConfirm } from './app-confirm.js';
 import { bindCustomSelectButton, closeCustomSelectMenu, createCustomSelectWrapper, refreshCustomSelectButton } from './custom-select.js';
-import { buildMemoryImpactText } from './memory-impact-utils.js';
+import { buildMemoryImpactText, formatMemoryImpactScopeLabel } from './memory-impact-utils.js';
+
+const MEMORY_SCOPE_BADGE_STYLE = 'display:inline-flex; align-items:center; width:max-content; max-width:100%; padding:4px 8px; border:1px solid var(--app-border-default); border-radius:999px; background:var(--app-surface-subtle); color:var(--app-text-secondary); font-size:11px; line-height:1.3; cursor:help;';
 
 const sanitizeFileName = (name) => {
   const raw = String(name || '').trim();
@@ -147,10 +149,17 @@ export class MemoryTemplatePanel {
   setImpactText() {
     const base = { scope: 'global', action: 'manage' };
     if (this.impactEl) {
-      this.impactEl.textContent = buildMemoryImpactText(base);
+      const impactText = buildMemoryImpactText(base);
+      this.impactEl.textContent = `作用域：${formatMemoryImpactScopeLabel(base)}`;
+      this.impactEl.title = impactText;
+      this.impactEl.setAttribute('aria-label', impactText);
     }
     if (this.dataImpactEl) {
-      this.dataImpactEl.textContent = buildMemoryImpactText({ scope: 'global', action: 'import' });
+      const dataBase = { scope: 'global', action: 'import' };
+      const impactText = buildMemoryImpactText(dataBase);
+      this.dataImpactEl.textContent = `作用域：${formatMemoryImpactScopeLabel(dataBase)}`;
+      this.dataImpactEl.title = impactText;
+      this.dataImpactEl.setAttribute('aria-label', impactText);
     }
   }
 
@@ -184,7 +193,7 @@ export class MemoryTemplatePanel {
         <button id="memory-template-close" style="border:none; background:transparent; font-size:22px; cursor:pointer; color:var(--app-text-primary);">×</button>
       </div>
       <div style="padding:14px 16px; overflow:auto; flex:1; min-height:0; -webkit-overflow-scrolling:touch;">
-        <div id="memory-template-impact" class="memory-impact-hint" style="margin-bottom:12px; padding:8px 10px; border:1px solid rgba(245,158,11,0.24); border-radius:8px; background:rgba(245,158,11,0.09); color:#92400e; font-size:12px; line-height:1.45;"></div>
+        <div id="memory-template-impact" class="memory-scope-badge" style="margin-bottom:12px; ${MEMORY_SCOPE_BADGE_STYLE}"></div>
         <div style="border:1px solid var(--app-border-default); border-radius:12px; padding:12px; background:var(--app-surface-card);">
           <div style="font-weight:700; color:var(--app-text-primary); margin-bottom:6px;">全局记忆</div>
           <div style="font-size:12px; color:var(--app-text-muted); margin-bottom:8px;">全局表格仅在此处编辑</div>
@@ -203,7 +212,7 @@ export class MemoryTemplatePanel {
         <div style="border:1px solid var(--app-border-default); border-radius:12px; padding:12px; background:var(--app-surface-card); margin-top:12px;">
           <div style="font-weight:700; color:var(--app-text-primary); margin-bottom:6px;">数据导入导出</div>
           <div id="memory-data-status" style="font-size:12px; color:var(--app-text-muted); margin-bottom:8px;">未开始操作</div>
-          <div id="memory-data-impact" class="memory-impact-hint" style="margin-bottom:8px; padding:8px 10px; border:1px solid rgba(245,158,11,0.24); border-radius:8px; background:rgba(245,158,11,0.09); color:#92400e; font-size:11px; line-height:1.45;"></div>
+          <div id="memory-data-impact" class="memory-scope-badge" style="margin-bottom:8px; ${MEMORY_SCOPE_BADGE_STYLE}"></div>
           <div style="display:flex; gap:8px; flex-wrap:wrap;">
             <button id="memory-data-export" style="padding:8px 12px; border:1px solid var(--app-border-default); border-radius:10px; background:var(--app-surface-card); cursor:pointer;">导出记忆数据</button>
             <button id="memory-data-import" style="padding:8px 12px; border:1px solid var(--app-border-default); border-radius:10px; background:var(--app-surface-card); cursor:pointer;">导入记忆数据</button>

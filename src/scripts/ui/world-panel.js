@@ -21,6 +21,8 @@ import {
 } from './regex-store-runtime-utils.js';
 import { emitWorldInfoChanged, getCurrentWorldId, getGlobalWorldId } from './world-session-runtime-utils.js';
 
+const SCOPE_BADGE_STYLE = 'display:inline-flex; align-items:center; width:max-content; max-width:100%; padding:4px 8px; border:1px solid var(--app-border-default); border-radius:999px; background:var(--app-surface-subtle); color:var(--app-text-secondary); font-size:11px; line-height:1.3; cursor:help;';
+
 const normalizeWorldTarget = (value, fallbackScope = 'session') => {
     const raw = String(value || '').trim();
     if (raw === 'global') return 'global';
@@ -177,28 +179,37 @@ export class WorldPanel {
             targetType,
         };
         if (this.impactEl) {
-            this.impactEl.textContent = buildWorldbookImpactText({
+            const impactText = buildWorldbookImpactText({
                 ...base,
                 action,
             });
+            this.impactEl.textContent = `作用域：${formatWorldScopeLabel(base)}`;
+            this.impactEl.title = impactText;
+            this.impactEl.setAttribute('aria-label', impactText);
         }
         if (this.importImpactEl) {
-            this.importImpactEl.textContent = buildWorldbookImpactText({
+            const impactText = buildWorldbookImpactText({
                 ...base,
                 action: 'import',
             });
+            this.importImpactEl.textContent = `作用域：${formatWorldScopeLabel(base)}`;
+            this.importImpactEl.title = impactText;
+            this.importImpactEl.setAttribute('aria-label', impactText);
         }
     }
 
     setLibraryImpactText(action = 'bind', target = this.libraryTarget) {
         if (!this.libraryImpactEl) return;
         const normalizedTarget = this.normalizeLibraryTarget(target);
-        this.libraryImpactEl.textContent = buildWorldbookImpactText({
+        const base = {
             scope: normalizedTarget.type,
             sessionId: normalizedTarget.sessionId,
             targetType: normalizedTarget.type,
-            action,
-        });
+        };
+        const impactText = buildWorldbookImpactText({ ...base, action });
+        this.libraryImpactEl.textContent = `作用域：${formatWorldScopeLabel(base)}`;
+        this.libraryImpactEl.title = impactText;
+        this.libraryImpactEl.setAttribute('aria-label', impactText);
     }
 
     sanitizeExportName(name, fallback = 'worldbook') {
@@ -974,12 +985,12 @@ export class WorldPanel {
         }
         if (this.librarySortDirBtn) {
             const isAsc = this.librarySortDir === 'asc';
-            const upFill = isAsc ? 'rgba(15,23,42,0.85)' : 'rgba(15,23,42,0.35)';
-            const downFill = isAsc ? 'rgba(15,23,42,0.35)' : 'rgba(15,23,42,0.85)';
+            this.librarySortDirBtn.classList.toggle('is-asc', isAsc);
+            this.librarySortDirBtn.classList.toggle('is-desc', !isAsc);
             this.librarySortDirBtn.innerHTML = `
                 <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" style="display:block; transform: translateY(1px);">
-                    <path d="M8 2L11 5H9V7H7V5H5L8 2Z" fill="${upFill}"></path>
-                    <path d="M8 14L5 11H7V9H9V11H11L8 14Z" fill="${downFill}"></path>
+                    <path class="world-library-sort-arrow world-library-sort-arrow-up" d="M8 2L11 5H9V7H7V5H5L8 2Z"></path>
+                    <path class="world-library-sort-arrow world-library-sort-arrow-down" d="M8 14L5 11H7V9H9V11H11L8 14Z"></path>
                 </svg>
             `;
             this.librarySortDirBtn.title = isAsc ? '升序' : '降序';
@@ -1257,7 +1268,7 @@ export class WorldPanel {
         this.panel.innerHTML = `
             <h3 style="margin: 0 0 12px; color: var(--app-text-primary);">世界书管理</h3>
             <div id="world-current" style="margin: -4px 0 12px; color:var(--app-text-secondary); font-size:13px;">当前：未启用</div>
-            <div id="world-impact" class="world-panel-impact-hint" style="margin: -4px 0 12px; padding:8px 10px; border:1px solid rgba(245,158,11,0.24); border-radius:8px; background:rgba(245,158,11,0.09); color:#92400e; font-size:11px; line-height:1.45;"></div>
+            <div id="world-impact" class="world-panel-scope-badge" style="margin: -4px 0 12px; ${SCOPE_BADGE_STYLE}"></div>
             <div id="world-global-settings" style="display:none; margin: 0 0 12px; padding:10px; border:1px dashed var(--app-border-default); border-radius:12px; background:var(--app-surface-subtle);">
                 <div id="world-global-settings-header" style="display:flex; align-items:center; justify-content:space-between; cursor:pointer;">
                     <div style="font-weight:700;">全局设置</div>
@@ -1361,7 +1372,7 @@ export class WorldPanel {
                     </div>
                     <input id="world-file" type="file" accept=".json,application/json" style="display:none;">
                     <div style="color:var(--app-text-muted); font-size:12px; margin:6px 0;">名称将取自 JSON 的 name 或文件名（无需手动填写）</div>
-                    <div id="world-import-impact" class="world-panel-impact-hint" style="margin:6px 0 0; padding:8px 10px; border:1px solid rgba(245,158,11,0.24); border-radius:8px; background:rgba(245,158,11,0.09); color:#92400e; font-size:11px; line-height:1.45;"></div>
+                    <div id="world-import-impact" class="world-panel-scope-badge" style="margin:6px 0 0; ${SCOPE_BADGE_STYLE}"></div>
                     <div style="display:flex; gap:8px; margin-top:8px; justify-content:flex-end;">
                         <button id="world-import" style="padding:8px 14px; border-radius:8px; border:1px solid var(--app-border-default); background:var(--app-surface-subtle);">导入</button>
                         <button id="world-close" style="padding:8px 14px; border-radius:8px; border:1px solid var(--app-border-default); background:var(--app-surface-subtle);">关闭</button>
@@ -1550,7 +1561,7 @@ export class WorldPanel {
                     </div>
                     <button type="button" class="sticker-bind-close" aria-label="关闭">×</button>
                 </div>
-                <div id="world-library-impact" class="world-panel-impact-hint" style="margin:0 12px 10px; padding:8px 10px; border:1px solid rgba(245,158,11,0.24); border-radius:8px; background:rgba(245,158,11,0.09); color:#92400e; font-size:12px; line-height:1.45;"></div>
+                <div id="world-library-impact" class="world-panel-scope-badge" style="margin:0 12px 10px; ${SCOPE_BADGE_STYLE}"></div>
                 <div class="sticker-bind-search">
                     <div style="display:flex; gap:8px; align-items:center;">
                         <input type="text" id="world-library-search" placeholder="搜索世界书" style="flex:1;">
@@ -1558,20 +1569,20 @@ export class WorldPanel {
                     </div>
                 </div>
                 <div class="sticker-bind-toolbar" style="flex-wrap:wrap;">
-                    <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-                        <span style="font-size:12px; color:var(--app-text-secondary);">排序</span>
+                    <div class="world-library-sort-control" role="group" aria-label="世界书排序">
+                        <span class="world-library-sort-label">排序</span>
                         <select id="world-library-sort" style="display:none;">
                             <option value="time">时间</option>
                             <option value="name">字母</option>
                         </select>
-                        <button type="button" id="world-library-sort-btn" class="world-app-select-btn" style="min-width:120px;">
+                        <button type="button" id="world-library-sort-btn" class="world-app-select-btn world-library-sort-select">
                             <span class="pp-custom-select-label" data-custom-select-label>时间</span>
                             <span class="world-app-select-btn-chevron">▾</span>
                         </button>
-                        <button type="button" id="world-library-sort-dir" aria-label="切换排序方向" style="border:1px solid rgba(148,163,184,0.45); background:var(--app-surface-card); border-radius:999px; width:28px; height:28px; font-size:12px; cursor:pointer; display:flex; align-items:center; justify-content:center;">
+                        <button type="button" id="world-library-sort-dir" class="world-library-sort-dir is-desc" aria-label="切换排序方向">
                             <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" style="display:block; transform: translateY(1px);">
-                                <path d="M8 2L11 5H9V7H7V5H5L8 2Z" fill="rgba(15,23,42,0.35)"></path>
-                                <path d="M8 14L5 11H7V9H9V11H11L8 14Z" fill="rgba(15,23,42,0.75)"></path>
+                                <path class="world-library-sort-arrow world-library-sort-arrow-up" d="M8 2L11 5H9V7H7V5H5L8 2Z"></path>
+                                <path class="world-library-sort-arrow world-library-sort-arrow-down" d="M8 14L5 11H7V9H9V11H11L8 14Z"></path>
                             </svg>
                         </button>
                     </div>

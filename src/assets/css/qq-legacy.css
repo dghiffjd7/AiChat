@@ -187,7 +187,8 @@
 .chat-room-topbar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
+  gap: 8px;
   padding: 10px 12px;
   /* 避免部分 WebView 对 env()/clamp() 计算异常导致顶栏高度不稳定 */
   background: rgba(230, 230, 230, 0.92);
@@ -695,6 +696,8 @@ body[data-ui-mode='rp'] .bottom-nav {
 .chat-back-btn {
   width: 28px;
   height: 28px;
+  flex: 0 0 28px;
+  margin-right: auto;
   border: none;
   background: transparent;
   font-size: 28px;
@@ -704,20 +707,33 @@ body[data-ui-mode='rp'] .bottom-nav {
   align-items: center;
   justify-content: center;
   padding: 0;
+  position: relative;
+  z-index: 2;
 }
 
 .chat-room-title {
-  flex: 1;
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: max-content;
+  max-width: min(56vw, max(96px, calc(100% - 210px)));
+  min-width: 0;
+  transform: translate(-50%, -50%);
   text-align: center;
   font-size: 16px;
   font-weight: 600;
   color: var(--app-text-primary);
   line-height: 1.2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  z-index: 1;
 }
 
 .chat-menu-btn {
   width: 28px;
   height: 28px;
+  flex: 0 0 28px;
   border: none;
   background: transparent;
   font-size: 20px;
@@ -727,6 +743,8 @@ body[data-ui-mode='rp'] .bottom-nav {
   align-items: center;
   justify-content: center;
   padding: 0;
+  position: relative;
+  z-index: 2;
 }
 
 /* 隐藏时完全不可见 */

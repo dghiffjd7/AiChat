@@ -16,9 +16,11 @@ import { logger } from '../utils/logger.js';
 import { appConfirm } from './app-confirm.js';
 import { getLastMemoryUpdate } from './chat/memory-update-runtime-utils.js';
 import { bindCustomSelectButton, createCustomSelectWrapper, refreshCustomSelectButton } from './custom-select.js';
-import { buildMemoryImpactText } from './memory-impact-utils.js';
+import { buildMemoryImpactText, formatMemoryImpactScopeLabel } from './memory-impact-utils.js';
 import { emitMemoryRowsUpdated as emitSharedMemoryRowsUpdated } from './session-memory-event-utils.js';
 import { getCurrentWorldId, getGlobalWorldId, setCurrentWorld } from './world-session-runtime-utils.js';
+
+const MEMORY_SCOPE_BADGE_STYLE = 'display:inline-flex; align-items:center; width:max-content; max-width:100%; padding:4px 8px; border:1px solid var(--app-border-default); border-radius:999px; background:var(--app-surface-subtle); color:var(--app-text-secondary); font-size:11px; line-height:1.3; cursor:help;';
 
 const scopeLabelMap = {
   global: '全局',
@@ -632,8 +634,8 @@ export class MemoryTableEditor {
     toolbarWrap.appendChild(row);
 
     const impact = document.createElement('div');
-    impact.className = 'memory-impact-hint';
-    impact.style.cssText = 'padding:8px 10px; border:1px solid rgba(245,158,11,0.24); border-radius:8px; background:rgba(245,158,11,0.09); color:#92400e; font-size:11px; line-height:1.45;';
+    impact.className = 'memory-scope-badge';
+    impact.style.cssText = MEMORY_SCOPE_BADGE_STYLE;
     toolbarWrap.appendChild(impact);
 
     const bar = document.createElement('div');
@@ -806,9 +808,23 @@ export class MemoryTableEditor {
     });
   }
 
+  buildImpactScopeLabel(ctx = this.currentContext, table = null) {
+    return formatMemoryImpactScopeLabel({
+      contextType: ctx?.type || '',
+      uiMode: ctx?.uiMode || '',
+      sessionId: this.resolveSessionId(ctx),
+      contactId: ctx?.contactId || '',
+      groupId: ctx?.groupId || '',
+      scope: table?.scope || '',
+    });
+  }
+
   setImpactText(action = 'manage', ctx = this.currentContext, table = null, target = this.impactEl) {
     if (!target) return;
-    target.textContent = this.buildImpactText(action, ctx, table);
+    const impactText = this.buildImpactText(action, ctx, table);
+    target.textContent = `作用域：${this.buildImpactScopeLabel(ctx, table)}`;
+    target.title = impactText;
+    target.setAttribute('aria-label', impactText);
   }
 
   async syncManualMemoryMutation(ctx, { source = 'manual_memory_edit', templateId = '' } = {}) {
@@ -1608,7 +1624,7 @@ export class MemoryTableEditor {
         <div data-role="header" style="font-weight:900; color:var(--app-text-primary);">编辑记忆</div>
         <button data-role="close" style="border:none; background:transparent; font-size:22px; cursor:pointer; color:var(--app-text-primary);">×</button>
       </div>
-      <div data-role="impact" class="memory-impact-hint" style="margin:12px 14px 0; padding:8px 10px; border:1px solid rgba(245,158,11,0.24); border-radius:8px; background:rgba(245,158,11,0.09); color:#92400e; font-size:12px; line-height:1.45;"></div>
+      <div data-role="impact" class="memory-scope-badge" style="margin:12px 14px 0; ${MEMORY_SCOPE_BADGE_STYLE}"></div>
       <div data-role="form" style="padding:12px 14px; flex:1; min-height:0; overflow:auto;"></div>
       <div style="padding:12px 14px; border-top:1px solid rgba(0,0,0,0.06); background:rgba(248,250,252,0.92); display:flex; gap:10px;">
         <button data-role="cancel" style="flex:1; padding:10px 12px; border:1px solid var(--app-border-default); border-radius:12px; background:var(--app-surface-card); cursor:pointer;">取消</button>

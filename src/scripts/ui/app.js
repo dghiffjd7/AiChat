@@ -3100,6 +3100,10 @@ const initApp = async () => {
     }
   };
 
+  try {
+    document.body?.classList.toggle('is-android', isLikelyAndroidDevice());
+  } catch {}
+
   const clearGroupSpeakerCaches = () => {
     groupSpeakerContactCache.clear();
     groupSpeakerAvatarCache.clear();
@@ -14847,7 +14851,7 @@ Phase G（Frame 36）：循环衔接
 	      return {
 	        title: '生成插图',
 	        subtitle: '使用当前图片模型生成，并作为创意写作素材保存到这个会话',
-	        impactText: '影响范围：当前创意写作会话素材。生成中可在消息卡片取消；完成后可从素材/相册删除。',
+	        impactText: '',
 	        submitText: '生成插图',
 	        pendingName: '创作插图',
 	        pendingText: '正在生成插图',
@@ -14860,7 +14864,7 @@ Phase G（Frame 36）：循环衔接
 	      return {
 	        title: '生成配图',
 	        subtitle: '使用当前图片模型生成，并加入动态发布草稿',
-	        impactText: '影响范围：当前动态草稿与动态相册。生成前可取消；生成中可在任务状态中查看。',
+	        impactText: '',
 	        submitText: '生成配图',
 	        pendingName: 'AI配图',
 	        pendingText: '正在生成配图',
@@ -14872,7 +14876,7 @@ Phase G（Frame 36）：循环衔接
 	    return {
 	      title: '生成图片',
 	      subtitle: '使用当前图片模型生成并写入这个聊天室',
-	      impactText: '影响范围：当前聊天室图片消息。生成中可在消息卡片取消；完成后可删除图片消息。',
+	      impactText: '',
 	      submitText: '生成图片',
 	      pendingName: 'AI绘图',
 	      pendingText: '正在生成图片',

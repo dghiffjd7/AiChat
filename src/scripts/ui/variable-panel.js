@@ -189,6 +189,7 @@ const renderTreeNode = (node, term, depth = 0) => {
 };
 
 const normalizeScope = value => (String(value || '').trim() === 'global' ? 'global' : 'session');
+const SCOPE_BADGE_STYLE = 'display:inline-flex; align-items:center; width:max-content; max-width:100%; padding:4px 8px; border:1px solid var(--app-border-default); border-radius:999px; background:var(--app-surface-subtle); color:var(--app-text-secondary); font-size:11px; line-height:1.3; cursor:help;';
 
 export const formatVariableScopeLabel = ({ scope = 'session', sessionId = '' } = {}) => {
     const normalizedScope = normalizeScope(scope);
@@ -316,7 +317,7 @@ export class VariablePanel {
                 <div class="variable-panel-usage-hint" style="margin-top:10px; padding:8px 10px; background:var(--app-surface-panel); border-radius:8px; font-size:11px; color:var(--app-text-secondary);">
                     💡 提示词中使用 <code class="variable-panel-inline-code" style="padding:2px 6px; border-radius:4px;">{{getvar::name}}</code> 引用变量
                 </div>
-                <div id="var-impact" class="variable-panel-impact-hint" style="margin-top:8px; padding:8px 10px; border:1px solid rgba(245,158,11,0.24); border-radius:8px; background:rgba(245,158,11,0.09); color:#92400e; font-size:11px; line-height:1.45;"></div>
+                <div id="var-impact" class="variable-panel-scope-badge" style="margin-top:8px; ${SCOPE_BADGE_STYLE}"></div>
                 <div style="margin-top:10px; display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
                     <div style="font-size:12px; color:var(--app-text-muted);">视图</div>
                     <div id="var-view-toggle" style="display:flex; gap:6px; padding:2px; background:var(--app-surface-hover); border-radius:999px;">
@@ -414,7 +415,7 @@ export class VariablePanel {
                 <label style="font-size:12px; color:var(--app-text-muted);">变量名</label>
                 <input id="schema-key" type="text" style="padding:8px 10px; border:1px solid var(--app-border-default); border-radius:10px;">
 
-                <div id="schema-impact" class="variable-panel-impact-hint" style="padding:8px 10px; border:1px solid rgba(245,158,11,0.24); border-radius:8px; background:rgba(245,158,11,0.09); color:#92400e; font-size:12px; line-height:1.45;"></div>
+                <div id="schema-impact" class="variable-panel-scope-badge" style="${SCOPE_BADGE_STYLE}"></div>
 
                 <label style="font-size:12px; color:var(--app-text-muted);">当前值</label>
                 <input id="schema-value" type="text" style="padding:8px 10px; border:1px solid var(--app-border-default); border-radius:10px;">
@@ -563,7 +564,7 @@ export class VariablePanel {
                 <button id="rule-json" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:8px 10px; font-size:13px;">JSON</button>
                 <button id="rule-run" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:8px 10px; font-size:13px;">运行规则</button>
             </div>
-            <div id="rule-impact" class="variable-panel-impact-hint" style="margin:12px 12px 0; padding:8px 10px; border:1px solid rgba(245,158,11,0.24); border-radius:8px; background:rgba(245,158,11,0.09); color:#92400e; font-size:12px; line-height:1.45;"></div>
+            <div id="rule-impact" class="variable-panel-scope-badge" style="margin:12px 12px 0; ${SCOPE_BADGE_STYLE}"></div>
             <div id="rule-list" style="padding:12px; overflow:auto; flex:1; display:flex; flex-direction:column; gap:10px;"></div>
         `;
 
@@ -614,7 +615,7 @@ export class VariablePanel {
                 <button id="rule-editor-close" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:6px 10px;">关闭</button>
             </div>
             <div style="padding:12px; overflow:auto; display:flex; flex-direction:column; gap:10px;">
-                <div id="rule-editor-impact" class="variable-panel-impact-hint" style="padding:8px 10px; border:1px solid rgba(245,158,11,0.24); border-radius:8px; background:rgba(245,158,11,0.09); color:#92400e; font-size:12px; line-height:1.45;"></div>
+                <div id="rule-editor-impact" class="variable-panel-scope-badge" style="${SCOPE_BADGE_STYLE}"></div>
 
                 <label style="font-size:12px; color:var(--app-text-muted);">规则名</label>
                 <input id="rule-name" type="text" style="padding:8px 10px; border:1px solid var(--app-border-default); border-radius:10px;">
@@ -909,7 +910,7 @@ export class VariablePanel {
                 <button id="tpl-close" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:6px 10px;">关闭</button>
             </div>
             <div id="tpl-list" style="padding:12px; overflow:auto; display:flex; flex-direction:column; gap:10px;"></div>
-            <div id="tpl-impact" class="variable-panel-impact-hint" style="margin:0 12px 12px; padding:8px 10px; border:1px solid rgba(245,158,11,0.24); border-radius:8px; background:rgba(245,158,11,0.09); color:#92400e; font-size:12px; line-height:1.45;"></div>
+            <div id="tpl-impact" class="variable-panel-scope-badge" style="margin:0 12px 12px; ${SCOPE_BADGE_STYLE}"></div>
         `;
         panel.querySelector('#tpl-close')?.addEventListener('click', () => this.hideTemplateModal());
 
@@ -954,7 +955,7 @@ export class VariablePanel {
                 <button id="data-close" style="border:1px solid var(--app-border-default); background:var(--app-surface-card); border-radius:10px; padding:6px 10px;">关闭</button>
             </div>
             <div style="padding:12px; flex:1; display:flex; flex-direction:column; gap:10px;">
-                <div id="data-impact" class="variable-panel-impact-hint" style="padding:8px 10px; border:1px solid rgba(245,158,11,0.24); border-radius:8px; background:rgba(245,158,11,0.09); color:#92400e; font-size:12px; line-height:1.45;"></div>
+                <div id="data-impact" class="variable-panel-scope-badge" style="${SCOPE_BADGE_STYLE}"></div>
                 <textarea id="data-text" rows="12" style="flex:1; min-height:200px; padding:10px; border:1px solid var(--app-border-default); border-radius:12px; font-size:12px; line-height:1.5;"></textarea>
             </div>
             <div style="display:flex; gap:8px; padding:12px; border-top:1px solid #eef2f7;">
@@ -1006,7 +1007,10 @@ export class VariablePanel {
         const el = root?.querySelector?.(selector);
         if (!el) return;
         const { sid, scope } = this.getVars();
-        el.textContent = buildVariableScopeImpactText({ scope, sessionId: sid, action });
+        const impactText = buildVariableScopeImpactText({ scope, sessionId: sid, action });
+        el.textContent = `作用域：${formatVariableScopeLabel({ scope, sessionId: sid })}`;
+        el.title = impactText;
+        el.setAttribute('aria-label', impactText);
     }
 
     closeMoreMenu() {
