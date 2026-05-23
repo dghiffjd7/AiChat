@@ -17,7 +17,7 @@ const STATUS_CHIP_CSS = `
     padding: 0 8px;
     border: 1px solid rgba(15, 23, 42, 0.10);
     border-radius: 999px;
-    background: rgba(255, 255, 255, 0.84);
+    background: var(--app-surface-card);
     color: var(--app-text-secondary);
     font-size: 11px;
     font-weight: 800;
