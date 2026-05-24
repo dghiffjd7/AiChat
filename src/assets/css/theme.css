@@ -2754,6 +2754,24 @@ body[data-theme-mode='dark'] :is(#raw-reply-text, #prompt-preview-text, #prompt-
   text-overflow: ellipsis;
 }
 
+.lineage-scope-hint {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 4;
+  max-width: min(56%, 280px);
+  padding: 4px 8px;
+  border: 1px solid var(--app-border-default);
+  border-radius: 999px;
+  background: var(--app-surface-card);
+  color: var(--app-text-secondary);
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .lineage-graph-summary:empty {
   display: none;
 }

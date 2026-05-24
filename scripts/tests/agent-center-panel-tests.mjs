@@ -130,6 +130,52 @@ import { AgentCenterPanel } from '../../src/scripts/ui/agent-center-panel.js';
 }
 
 {
+  const panel = new AgentCenterPanel();
+  panel.view = {
+    safety: {
+      sessionGate: {
+        enabled: false,
+        allowedTools: ['contact_profile.list'],
+        networkAllowed: false,
+        realRunnerAllowed: false,
+        writesChat: false,
+      },
+      providerTools: { enabled: false, allowedTools: ['contact_profile.list'] },
+      permissionRules: [],
+    },
+  };
+  const html = panel.renderSafety();
+  assert.match(html, /启用当前会话 Gate/);
+  assert.match(html, /data-session-gate-action="enable"/);
+  assert.match(html, /不会自动续跑 provider/);
+  assert.match(html, /writes chat blocked/);
+  assert.match(html, /contact_profile\.list/);
+  console.log('ok - agent center safety renders session gate controls and execution boundaries');
+}
+
+{
+  const panel = new AgentCenterPanel();
+  panel.view = {
+    safety: {
+      sessionGate: {
+        enabled: true,
+        allowedTools: ['contact_profile.list'],
+        networkAllowed: false,
+        realRunnerAllowed: false,
+        writesChat: false,
+      },
+      providerTools: { enabled: false, allowedTools: ['contact_profile.list'] },
+      permissionRules: [],
+    },
+  };
+  const html = panel.renderSafety();
+  assert.match(html, /关闭当前会话 Gate/);
+  assert.match(html, /data-session-gate-action="disable"/);
+  assert.match(html, /当前会话允许白名单工具进入待确认执行链路/);
+  console.log('ok - agent center safety renders the enabled session gate state');
+}
+
+{
   const panel = new AgentCenterPanel({
     getActions: () => ({
       listAgentRunView: () => {

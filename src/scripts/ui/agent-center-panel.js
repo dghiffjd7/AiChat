@@ -538,6 +538,42 @@ export class AgentCenterPanel {
         await this.refresh();
     }
 
+    async handleSessionGateAction(action = '') {
+        const normalizedAction = trim(action);
+        if (!['enable', 'disable'].includes(normalizedAction)) return;
+        const enabling = normalizedAction === 'enable';
+        const ok = await appConfirm({
+            title: enabling ? '启用当前会话 Gate' : '关闭当前会话 Gate',
+            message: enabling
+                ? '影响范围：当前会话。启用后，模型输出白名单 tool call 时会进入待确认/允许一次流程；网络、真实 runner 和聊天写入仍默认关闭。'
+                : '影响范围：当前会话。关闭后，后续 provider tool call 只会保留捕获/诊断，不会执行工具；已有 Agent 活动记录不会删除。',
+            confirmText: enabling ? '启用 Gate' : '关闭 Gate',
+            danger: !enabling,
+        });
+        if (!ok) return;
+        const actions = this.getActions?.() || {};
+        if (typeof actions.setProviderToolSessionGate !== 'function') {
+            this.lastError = '当前环境没有会话 Gate 控制动作';
+            this.render();
+            return;
+        }
+        try {
+            await Promise.resolve(actions.setProviderToolSessionGate({
+                enabled: enabling,
+                networkAllowed: false,
+                realRunnerAllowed: false,
+                source: 'agent_center',
+                reason: enabling
+                    ? 'enabled from Agent Center safety tab'
+                    : 'disabled from Agent Center safety tab',
+            }));
+            await this.refresh();
+        } catch (err) {
+            this.lastError = trim(err?.message || err, 'setProviderToolSessionGate failed');
+            this.render();
+        }
+    }
+
     renderActivity() {
         const activity = this.view.activity || {};
         const runs = activity.runs || [];
@@ -600,16 +636,30 @@ export class AgentCenterPanel {
         const safety = this.view.safety || {};
         const gate = safety.sessionGate || {};
         const provider = safety.providerTools || {};
+        const gateEnabled = gate.enabled === true;
         return `<div class="agent-center-list">
             <article class="agent-center-card">
-                <div class="agent-center-card-title">Provider Tool Gate</div>
-                <div class="agent-center-card-sub">${escapeHtml(gate.enabled ? '当前会话允许已配置工具执行' : '当前会话未开启 provider tool 执行')}</div>
+                <div class="agent-center-card-head">
+                    <div>
+                        <div class="agent-center-card-title">Provider Tool Gate</div>
+                        <div class="agent-center-card-sub">${escapeHtml(gateEnabled ? '当前会话允许白名单工具进入待确认执行链路' : '当前会话未开启 provider tool 执行')}</div>
+                    </div>
+                    <span class="${escapeHtml(statusChipClass(gateEnabled ? 'running' : 'denied'))}">${escapeHtml(gateEnabled ? '开启' : '关闭')}</span>
+                </div>
+                <div class="agent-center-card-sub">首版只建议开放低风险读取工具。启用 Gate 不会自动续跑 provider，不会直接写聊天正文，网络和真实 runner 默认保持关闭。</div>
                 ${renderChips([
-                    { label: gate.enabled ? 'enabled' : 'disabled', className: statusChipClass(gate.enabled ? 'running' : 'denied') },
                     { label: gate.networkAllowed ? 'network allowed' : 'network blocked' },
                     { label: gate.realRunnerAllowed ? 'real runner allowed' : 'real runner blocked' },
+                    { label: gate.writesChat ? 'writes chat' : 'writes chat blocked' },
                     ...list(gate.allowedTools).map(tool => ({ label: tool })),
                 ])}
+                <div class="agent-center-card-actions">
+                    <button
+                        type="button"
+                        class="agent-center-card-action${gateEnabled ? '' : ' is-primary'}"
+                        data-session-gate-action="${escapeHtml(gateEnabled ? 'disable' : 'enable')}"
+                    >${escapeHtml(gateEnabled ? '关闭当前会话 Gate' : '启用当前会话 Gate')}</button>
+                </div>
             </article>
             <article class="agent-center-card">
                 <div class="agent-center-card-title">Provider Tool Experiment</div>
@@ -652,6 +702,11 @@ export class AgentCenterPanel {
         if (this.activeTab === 'activity') {
             this.contentElement.querySelectorAll('[data-activity-status]').forEach((button) => {
                 button.addEventListener('click', () => this.setActivityStatus(button.dataset.activityStatus || ''));
+            });
+        }
+        if (this.activeTab === 'safety') {
+            this.contentElement.querySelectorAll('[data-session-gate-action]').forEach((button) => {
+                button.addEventListener('click', () => this.handleSessionGateAction(button.dataset.sessionGateAction || ''));
             });
         }
     }

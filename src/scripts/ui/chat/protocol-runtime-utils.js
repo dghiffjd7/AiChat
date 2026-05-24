@@ -994,7 +994,7 @@ export const createSendProtocolResponseFlowHandlers = ({
   showWarning = null,
 } = {}) => {
   const isActive = () => Boolean(typeof isSessionActive === 'function' && isSessionActive(sessionId));
-  const warnNoValidTag = () => showWarning?.('未解析到有效对话标签，已丢弃（可在“三 > 原始回复”查看）');
+  const warnNoValidTag = () => showWarning?.('未解析到有效对话标签，已丢弃；原始回复已保留供调试查看');
   const createCommonHandlers = () => ({
     createDialogueParser,
     handleMemoryEditsFromRaw,

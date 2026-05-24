@@ -12751,6 +12751,7 @@ Phase G（Frame 36）：循环衔接
     let apiView = null;
     let lineageView = null;
     let lineageGraphEl = null;
+    let lineageScopeEl = null;
     let lineageCanvasWrap = null;
     let lineageCanvasEl = null;
     let lineageInspectorEl = null;
@@ -12887,6 +12888,17 @@ Phase G（Frame 36）：循环衔接
     const getPreviewLineageGraph = () => {
       const trace = previewLineageTrace || previewRequest?.lineageTrace || null;
       return trace?.graph && typeof trace.graph === 'object' ? trace.graph : null;
+    };
+
+    const updateLineageScopeHint = () => {
+      if (!lineageScopeEl) return;
+      const label = lineageOnlyMode ? '只读 · 关系图预览' : '只读 · 本次 Prompt';
+      const title = lineageOnlyMode
+        ? '仅排版当前角色关系图；不会修改聊天、记忆、世界书或联系人画像。失败只影响本次可视化，并会记录到 Agent 活动。'
+        : '仅解释本次请求的上下文来源；不会修改聊天、记忆、世界书或联系人画像。异步排版失败只影响本次可视化，并会记录到 Agent 活动。';
+      lineageScopeEl.textContent = label;
+      lineageScopeEl.title = title;
+      lineageScopeEl.setAttribute('aria-label', title);
     };
 
     const updateLineageTransform = () => {
@@ -13128,6 +13140,7 @@ Phase G（Frame 36）：循环衔接
                 <div id="prompt-view-lineage" class="lineage-preview-view" style="flex:1; min-height:0; overflow:auto; -webkit-overflow-scrolling:touch; padding:10px; display:none;">
                     <div id="prompt-lineage-graph" class="lineage-graph-panel">
                         <div id="prompt-lineage-summary" class="lineage-graph-summary"></div>
+                        <div id="prompt-lineage-scope" class="lineage-scope-hint"></div>
                         <div class="lineage-map-body">
                             <div id="prompt-lineage-canvas-wrap" class="lineage-graph-canvas-wrap">
                                 <div id="prompt-lineage-canvas" class="lineage-graph-canvas"></div>
@@ -13163,6 +13176,7 @@ Phase G（Frame 36）：循环衔接
 
       textarea = panel.querySelector('#prompt-preview-text');
       lineageGraphEl = panel.querySelector('#prompt-lineage-graph');
+      lineageScopeEl = panel.querySelector('#prompt-lineage-scope');
       lineageCanvasWrap = panel.querySelector('#prompt-lineage-canvas-wrap');
       lineageCanvasEl = panel.querySelector('#prompt-lineage-canvas');
       lineageInspectorEl = panel.querySelector('#prompt-lineage-inspector');
@@ -13326,6 +13340,7 @@ Phase G（Frame 36）：循环衔接
       if (tabsEl) tabsEl.style.display = lineageOnlyMode ? 'none' : 'flex';
       if (titleEl) titleEl.textContent = lineageOnlyMode ? '关系地图' : '本次请求';
       if (copyBtn) copyBtn.textContent = lineageOnlyMode ? '复制 Trace' : '复制';
+      updateLineageScopeHint();
       textarea.value = String(text || '');
       lineagePlainText = String(lineageText || '').trim() || '暂无上下文血缘图记录';
       renderLineageGraph();
@@ -13735,7 +13750,6 @@ Phase G（Frame 36）：循环衔接
 	      <button data-action="moment-album">🖼️ 相册</button>
 	      <button data-action="moment-summary">📘 动态摘要</button>
 	      <button data-action="prompt-preview">🧩 本次 Prompt</button>
-	      <button data-action="raw-reply">🧾 原始回复</button>
 	    `;
     menu.addEventListener('click', e => {
 	      const action = e?.target?.closest ? e.target.closest('button')?.dataset?.action : '';
@@ -13743,7 +13757,6 @@ Phase G（Frame 36）：循环衔接
 	      if (action === 'moment-album') openGeneratedImageAlbumPanel({ surface: 'moments' });
 	      if (action === 'moment-summary') momentSummaryPanel.show();
 	      if (action === 'prompt-preview') showMomentPromptPreview();
-	      if (action === 'raw-reply') showMomentRawReply();
 	      hideMenus();
     });
     document.body.appendChild(menu);
