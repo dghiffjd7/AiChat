@@ -1433,7 +1433,7 @@ import {
     ['refresh'],
     ['candidates', 'raw'],
     ['retry', 'retry', { renderMoments: true, refreshAfterAppend: true }],
-    ['warn', '未解析到有效对话标签，已丢弃；原始回复已保留供调试查看'],
+    ['warn', '未解析到有效对话标签，已丢弃；可在「本次 AI 回复」查看原始内容'],
   ]);
   console.log('ok - createSendProtocolResponseFlowHandlers preserves stream raw save retry and warning side effects');
 }
@@ -1472,7 +1472,7 @@ import {
     ['active', 'session-protocol'],
     ['render'],
     ['retry', 'retry', undefined],
-    ['warn', '未解析到有效对话标签，已丢弃；原始回复已保留供调试查看'],
+    ['warn', '未解析到有效对话标签，已丢弃；可在「本次 AI 回复」查看原始内容'],
   ]);
   console.log('ok - createSendProtocolResponseFlowHandlers keeps buffered render and inactive stream behavior');
 }

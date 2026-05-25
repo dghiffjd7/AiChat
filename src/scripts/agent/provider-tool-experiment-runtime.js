@@ -1,5 +1,6 @@
 import { createProviderToolCallDeltaAccumulator } from './provider-tool-call-delta-adapter.js';
 import { createProviderToolLlmClientNativeRunner } from './provider-tool-llmclient-native-runner.js';
+import { toInternalProviderToolName } from './provider-tool-name-map.js';
 import {
   buildProviderToolPermissionInteraction,
   buildProviderToolPermissionStrategySummary,
@@ -239,7 +240,7 @@ export const createProviderToolExperimentRuntime = ({
     }
 
     const toolCall = isPlainObject(opts.toolCall) ? opts.toolCall : {};
-    const toolName = trim(opts.toolName || toolCall.toolName || toolCall.name, allowlist[0] || '');
+    const toolName = toInternalProviderToolName(trim(opts.toolName || toolCall.toolName || toolCall.name, allowlist[0] || ''));
     if (!toolName || !allowlist.includes(toolName)) {
       const blocked = {
         ok: false,

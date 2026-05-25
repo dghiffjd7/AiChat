@@ -22,7 +22,7 @@ import { buildProviderToolResultRequestPreview } from '../../src/scripts/agent/p
   assert.equal(preview.network, false);
   assert.equal(preview.requestPreview, requestPreview);
   assert.equal(preview.assistantPreview.role, 'assistant');
-  assert.equal(preview.assistantPreview.content.includes('contact_profile.list: contact profiles listed: 2'), true);
+  assert.equal(preview.assistantPreview.content.includes('contact_profile_list: contact profiles listed: 2'), true);
   console.log('ok - provider tool mock loop preview builds OpenAI second-turn assistant preview without network');
 }
 

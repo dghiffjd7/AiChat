@@ -11,6 +11,7 @@ const SUPPORTED_PROVIDERS = [
     'vertexai',
     'anthropic',
     'deepseek',
+    'openrouter',
     'gemini',
     'custom',
     'novelai',
@@ -37,6 +38,7 @@ const IMAGE_ONLY_PROVIDERS = new Set([
 const TEXT_ONLY_PROVIDERS = new Set([
     'anthropic',
     'deepseek',
+    'openrouter',
 ]);
 
 const PROMPT_POST_PROCESSING_MODES = new Set(['none', 'merge', 'semi', 'strict', 'single']);
@@ -130,6 +132,8 @@ const normalizeProfile = (p = {}, { touchUpdatedAt = false } = {}) => {
         maxRetries: typeof p.maxRetries === 'number' ? p.maxRetries : 3,
         vertexaiRegion: p.vertexaiRegion,
         vertexaiServiceAccount: p.vertexaiServiceAccount,
+        openrouterReferer: typeof p.openrouterReferer === 'string' ? p.openrouterReferer : '',
+        openrouterTitle: typeof p.openrouterTitle === 'string' ? p.openrouterTitle : '',
         _saEncrypted: Boolean(p._saEncrypted),
         activeKeyId: p.activeKeyId || null,
         createdAt,
@@ -802,6 +806,8 @@ export class ConfigManager {
             maxRetries: p.maxRetries,
         };
         if (p.vertexaiRegion) runtime.vertexaiRegion = p.vertexaiRegion;
+        if (p.openrouterReferer) runtime.openrouterReferer = p.openrouterReferer;
+        if (p.openrouterTitle) runtime.openrouterTitle = p.openrouterTitle;
         if (p.vertexaiServiceAccount) {
             if (p._saEncrypted) {
                 try {

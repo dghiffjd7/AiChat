@@ -1,4 +1,5 @@
 import { normalizeAgentMessagePart } from './agent-message-parts.js';
+import { toInternalProviderToolName } from './provider-tool-name-map.js';
 import { buildProviderToolPermissionInteraction } from './provider-tool-permission-interaction.js';
 
 export const PROVIDER_TOOL_CALL_PART_TYPES = Object.freeze({
@@ -90,7 +91,7 @@ export const normalizeProviderToolCall = (call = {}, {
   now = Date.now,
 } = {}) => {
   const src = isPlainObject(call) ? call : {};
-  const toolName = getToolName(src);
+  const toolName = toInternalProviderToolName(getToolName(src));
   const toolCallId = getToolCallId(src) || `tool:${toolName || 'unknown'}:${toFiniteNumber(now?.(), Date.now())}`;
   const status = normalizeStatus(src.status || src.state, 'running');
   return {

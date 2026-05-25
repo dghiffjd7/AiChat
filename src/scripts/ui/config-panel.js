@@ -25,6 +25,7 @@ const CHAT_PROVIDER_OPTIONS = [
     { value: 'makersuite', label: 'Google AI Studio (Makersuite)' },
     { value: 'vertexai', label: 'Google Vertex AI' },
     { value: 'deepseek', label: 'Deepseek' },
+    { value: 'openrouter', label: 'OpenRouter' },
     { value: 'anthropic', label: 'Anthropic (Claude)' },
     { value: 'custom', label: '自定义 API' },
 ];
@@ -308,6 +309,7 @@ export class ConfigPanel {
                         <option value="makersuite">Google AI Studio (Makersuite)</option>
                         <option value="vertexai">Google Vertex AI</option>
                         <option value="deepseek">Deepseek</option>
+                        <option value="openrouter">OpenRouter</option>
                         <option value="anthropic">Anthropic (Claude)</option>
                         <option value="custom">自定义 API</option>
                     </select>
@@ -817,6 +819,11 @@ export class ConfigPanel {
                 baseUrl: 'https://api.deepseek.com/v1',
                 model: 'deepseek-chat',
                 urlHelp: 'Deepseek API URL'
+            },
+            openrouter: {
+                baseUrl: 'https://openrouter.ai/api/v1',
+                model: 'openrouter/auto',
+                urlHelp: 'OpenRouter API 基础 URL'
             },
             anthropic: {
                 baseUrl: 'https://api.anthropic.com/v1',

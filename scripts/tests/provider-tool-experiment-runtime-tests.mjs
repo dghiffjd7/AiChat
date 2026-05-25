@@ -220,7 +220,7 @@ const buildAnthropicToolDeltaEvents = (callId = 'toolu-stream-1', limit = 3) => 
   assert.equal(result.mockProviderRun.network, false);
   assert.equal(result.mockProviderRun.events[0].type, 'mock_provider_stream_start');
   assert.equal(result.mockProviderRun.events.at(-1).type, 'mock_provider_stream_end');
-  assert.equal(result.mockProviderRun.finalText.includes('contact_profile.list'), true);
+  assert.equal(result.mockProviderRun.finalText.includes('contact_profile_list'), true);
   assert.equal(result.loopState.status, 'succeeded');
   assert.equal(result.loopState.phase, 'completed');
   assert.equal(result.loopState.network, false);
@@ -581,7 +581,7 @@ const buildAnthropicToolDeltaEvents = (callId = 'toolu-stream-1', limit = 3) => 
   assert.equal(result.results[0].parts.at(-1).status, 'failed');
   assert.equal(result.continuation.shouldContinue, false);
   assert.deepEqual(JSON.parse(result.requestPreview.messages[1].content), {
-    toolName: 'contact_profile.list',
+    toolName: 'contact_profile_list',
     status: 'failed',
     summary: 'permission deny',
   });

@@ -177,6 +177,12 @@ export class GeminiProvider {
         parts: [{ text: systemInstruction }],
       };
     }
+    if (Array.isArray(options.tools) && options.tools.length) {
+      body.tools = options.tools;
+    }
+    if (options.toolConfig && typeof options.toolConfig === 'object') {
+      body.toolConfig = options.toolConfig;
+    }
 
     return body;
   }

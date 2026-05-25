@@ -1,4 +1,8 @@
 import { normalizeProviderToolCall } from './provider-tool-call-parts.js';
+import {
+  toInternalProviderToolName,
+  toProviderToolModelName,
+} from './provider-tool-name-map.js';
 
 export const PROVIDER_TOOL_RESULT_PREVIEW_FORMATS = Object.freeze({
   openai: 'openai_chat_completions_tool_result',
@@ -97,7 +101,7 @@ export const buildProviderToolResultForModel = (toolCall = {}, toolResult = {}, 
   const result = explicit
     ? src.resultForModel
     : {
-        toolName: normalizedToolCall.toolName,
+        toolName: toProviderToolModelName(normalizedToolCall.toolName),
         status,
         summary,
       };
@@ -123,7 +127,7 @@ const findResultForCall = (toolResults = [], toolCall = {}) => {
   const list = Array.isArray(toolResults) ? toolResults : [toolResults];
   return list.find((result) => {
     const resultId = trim(result?.toolCallId || result?.id || result?.toolCall?.toolCallId || result?.toolCall?.id);
-    const resultName = trim(result?.toolName || result?.toolCall?.toolName || result?.toolCall?.name);
+    const resultName = toInternalProviderToolName(trim(result?.toolName || result?.toolCall?.toolName || result?.toolCall?.name));
     return (resultId && resultId === toolCall.toolCallId) ||
       (!resultId && resultName && resultName === toolCall.toolName);
   }) || {};
@@ -147,6 +151,7 @@ const buildToolResultItems = (toolCalls = [], toolResults = [], options = {}) =>
     }
     items.push({
       toolCall,
+      providerToolName: toProviderToolModelName(toolCall.toolName),
       status,
       resultForModel: modelPayload.resultForModel,
       errorMessage: trim(result.errorMessage || result.reason),
@@ -165,7 +170,7 @@ const buildOpenAIPreview = (items = []) => ({
         id: item.toolCall.toolCallId,
         type: 'function',
         function: {
-          name: item.toolCall.toolName,
+          name: item.providerToolName,
           arguments: stringifyJson(item.toolCall.arguments || {}),
         },
       })),
@@ -186,7 +191,7 @@ const buildAnthropicPreview = (items = []) => ({
       content: items.map(item => ({
         type: 'tool_use',
         id: item.toolCall.toolCallId,
-        name: item.toolCall.toolName,
+        name: item.providerToolName,
         input: item.toolCall.arguments || {},
       })),
     },
@@ -209,7 +214,7 @@ const buildGeminiPreview = (items = []) => ({
       role: 'model',
       parts: items.map(item => ({
         functionCall: {
-          name: item.toolCall.toolName,
+          name: item.providerToolName,
           args: item.toolCall.arguments || {},
         },
       })),
@@ -218,7 +223,7 @@ const buildGeminiPreview = (items = []) => ({
       role: 'user',
       parts: items.map(item => ({
         functionResponse: {
-          name: item.toolCall.toolName,
+          name: item.providerToolName,
           response: item.resultForModel,
         },
       })),
@@ -230,7 +235,7 @@ const buildGenericPreview = (items = []) => ({
   format: PROVIDER_TOOL_RESULT_PREVIEW_FORMATS.generic,
   toolResults: items.map(item => ({
     toolCallId: item.toolCall.toolCallId,
-    toolName: item.toolCall.toolName,
+    toolName: item.providerToolName,
     status: item.status,
     result: item.resultForModel,
   })),

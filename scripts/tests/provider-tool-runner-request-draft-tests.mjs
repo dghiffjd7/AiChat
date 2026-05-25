@@ -65,8 +65,8 @@ const buildLoopState = (overrides = {}) => ({
     network: false,
     toolResultCount: 1,
     contents: [
-      { role: 'model', parts: [{ functionCall: { name: 'contact_profile.list', args: { limit: 1 } } }] },
-      { role: 'user', parts: [{ functionResponse: { name: 'contact_profile.list', response: { summary: 'listed' } } }] },
+      { role: 'model', parts: [{ functionCall: { name: 'contact_profile_list', args: { limit: 1 } } }] },
+      { role: 'user', parts: [{ functionResponse: { name: 'contact_profile_list', response: { summary: 'listed' } } }] },
     ],
   };
   const loopState = buildLoopState({
@@ -87,7 +87,7 @@ const buildLoopState = (overrides = {}) => ({
   assert.equal(draft.ok, true);
   assert.equal(draft.payloadKind, PROVIDER_TOOL_RUNNER_PAYLOAD_KINDS.contents);
   assert.equal(draft.payloadCount, 2);
-  assert.equal(draft.request.contents[1].parts[0].functionResponse.name, 'contact_profile.list');
+  assert.equal(draft.request.contents[1].parts[0].functionResponse.name, 'contact_profile_list');
   console.log('ok - provider tool runner request draft supports Gemini contents payload');
 }
 

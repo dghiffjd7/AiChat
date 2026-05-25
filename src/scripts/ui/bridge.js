@@ -68,6 +68,7 @@ import {
   shouldTreatBridgeStreamErrorAsCancellation,
 } from './bridge-cancel-utils.js';
 import { buildProviderToolBridgeLoopPlan } from '../agent/provider-tool-bridge-loop-plan.js';
+import { buildProviderToolRequestSchema } from '../agent/provider-tool-request-schema.js';
 import {
   dispatchRuntimeHookLifecycleEvent,
   runRuntimeHookLifecycleEvent,
@@ -3358,9 +3359,17 @@ class AppBridge {
         requestId: nativeRequestId,
         source: 'bridge.generateStream',
       });
+      const providerToolRequestSchema = buildProviderToolRequestSchema({
+        debugUiRegistry: this.debugUiRegistry,
+        provider: config?.provider,
+        model: config?.model,
+        sessionId,
+        existingOptions: [genOptions, providerDirectives],
+      });
       const requestOptions = {
         ...(genOptions || {}),
         ...(providerDirectives || {}),
+        ...(providerToolRequestSchema.requestOptions || {}),
         signal: abortController.signal,
         nativeRequestId,
         ...(providerToolBridgeLoopPlan.requestOptions || {}),
@@ -3402,7 +3411,9 @@ class AppBridge {
         requestOptions: {
           ...(genOptions || {}),
           ...(providerDirectives || {}),
+          ...(providerToolRequestSchema.requestOptions || {}),
         },
+        providerToolRequestSchema: providerToolRequestSchema.diagnostics,
         providerToolBridgeLoop: providerToolBridgeLoopPlan.diagnostics,
         messages: preparedRequest?.messages || messages,
         responsePrefix,

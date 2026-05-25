@@ -43,6 +43,11 @@ const KNOWN_REASONING_EFFORTS = new Set(
 );
 
 const normalizeText = (value) => String(value || '').trim().toLowerCase();
+const modelSlug = (model) => {
+  const raw = normalizeText(model);
+  const slash = raw.lastIndexOf('/');
+  return slash >= 0 ? raw.slice(slash + 1) : raw;
+};
 
 export const normalizeReasoningEffort = (value, fallback = 'high') => {
   const next = normalizeText(value);
@@ -52,12 +57,13 @@ export const normalizeReasoningEffort = (value, fallback = 'high') => {
 
 const isOpenAIReasoningModel = (model) => {
   const m = normalizeText(model);
+  const slug = modelSlug(model);
   if (!m) return false;
-  return (
-    m.startsWith('gpt-5') ||
-    m.startsWith('o1') ||
-    m.startsWith('o3') ||
-    m.startsWith('o4')
+  return [m, slug].some(item =>
+    item.startsWith('gpt-5') ||
+    item.startsWith('o1') ||
+    item.startsWith('o3') ||
+    item.startsWith('o4')
   );
 };
 
@@ -77,8 +83,20 @@ const isAnthropicThinkingModel = (model) => {
 const isGeminiBudgetModel = (model) => normalizeText(model).includes('gemini-2.5');
 const isGeminiLevelModel = (model) => normalizeText(model).includes('gemini-3');
 
-const isGpt51Family = (model) => normalizeText(model).startsWith('gpt-5.1');
-const isGpt5ProFamily = (model) => normalizeText(model).startsWith('gpt-5-pro');
+const isOpenRouterReasoningModel = (model) => {
+  const m = normalizeText(model);
+  return (
+    isOpenAIReasoningModel(m) ||
+    isAnthropicThinkingModel(m) ||
+    isGeminiBudgetModel(m) ||
+    isGeminiLevelModel(m) ||
+    m.includes('deepseek-r1') ||
+    m.includes('deepseek-reasoner')
+  );
+};
+
+const isGpt51Family = (model) => modelSlug(model).startsWith('gpt-5.1');
+const isGpt5ProFamily = (model) => modelSlug(model).startsWith('gpt-5-pro');
 
 const isOfficialGeminiOpenAIBaseUrl = (baseUrl) => {
   try {
@@ -117,6 +135,13 @@ const deepSeekEffortFromSetting = (effort) => {
   const normalized = normalizeReasoningEffort(effort, 'high');
   if (normalized === 'max') return 'max';
   return 'high';
+};
+
+const openRouterReasoningEffortFromSetting = (effort) => {
+  const normalized = normalizeReasoningEffort(effort, 'high');
+  if (normalized === 'auto') return null;
+  if (normalized === 'max') return 'xhigh';
+  return normalized;
 };
 
 const openAIReasoningEffortFromSetting = ({ model, effort }) => {
@@ -202,6 +227,17 @@ export const getReasoningCapability = ({ provider, model, baseUrl } = {}) => {
     };
   }
 
+  if (p === 'openrouter' && isOpenRouterReasoningModel(m)) {
+    return {
+      supported: true,
+      strategy: 'openrouter-reasoning',
+      requestControl: true,
+      effortControl: true,
+      effortOptions: REASONING_EFFORT_OPTIONS,
+      hint: 'OpenRouter 推理模型使用 reasoning.effort；OpenRouter 会按底层模型映射到对应 thinking/reasoning 参数。',
+    };
+  }
+
   if (p === 'custom') {
     if (isDeepSeekModel(m)) {
       return {
@@ -268,6 +304,10 @@ export const buildReasoningRequestOptions = ({
     case 'gemini-openai-effort': {
       const effort = geminiOpenAIReasoningEffortFromSetting(reasoningEffort);
       return effort ? { reasoning_effort: effort } : {};
+    }
+    case 'openrouter-reasoning': {
+      const effort = openRouterReasoningEffortFromSetting(reasoningEffort);
+      return effort ? { reasoning: { effort } } : {};
     }
     case 'anthropic-budget': {
       const budget = budgetFromEffort({ effort: reasoningEffort, maxOutputTokens });

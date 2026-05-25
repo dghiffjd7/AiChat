@@ -1,4 +1,5 @@
 import { buildAgentCenterView } from './agent-center-view-model.js';
+import { PROVIDER_TOOL_PERMISSION_ACTIONS } from '../agent/provider-tool-permission-actions.js';
 import { appConfirm } from './app-confirm.js';
 
 const STYLE_ID = 'agent-center-panel-style';
@@ -313,11 +314,19 @@ const renderChips = (chips = []) => {
 
 const renderEmpty = message => `<div class="agent-center-empty">${escapeHtml(message)}</div>`;
 
+const providerToolActionLabel = action => ({
+    [PROVIDER_TOOL_PERMISSION_ACTIONS.allowOnce]: '允许一次',
+    [PROVIDER_TOOL_PERMISSION_ACTIONS.deny]: '拒绝',
+    [PROVIDER_TOOL_PERMISSION_ACTIONS.rememberAllow]: '记住允许',
+}[action] || '处理');
+
 export class AgentCenterPanel {
     constructor({
         getActions = () => globalThis.window?.appBridge?.debugUiRegistry?.actions || {},
+        confirm = appConfirm,
     } = {}) {
         this.getActions = getActions;
+        this.confirm = confirm;
         this.overlayElement = null;
         this.panelElement = null;
         this.contentElement = null;
@@ -488,9 +497,14 @@ export class AgentCenterPanel {
         if (!items.length) return renderEmpty('没有待确认的 Agent/tool 请求');
         return `<div class="agent-center-list">${items.map(item => {
             const isProfileUpdate = item.kind === 'contact_profile_update';
+            const isToolPermission = item.kind === 'tool_permission';
             const impactText = isProfileUpdate
                 ? `保存会写入联系人「${item.contactId || item.sessionId || '-'}」画像，并影响后续动态弱触发、提示词上下文和 Agent 画像读取；忽略只清除本次候选，不删除旧画像。`
                 : '';
+            const toolImpactText = isToolPermission
+                ? '允许一次只执行这一个已保存的 tool call；不会重放聊天、不会自动续跑 provider、不会直接写聊天正文。'
+                : '';
+            const isPending = item.status === 'pending';
             return `
             <article class="agent-center-card">
                 <div class="agent-center-card-head">
@@ -513,6 +527,20 @@ export class AgentCenterPanel {
                         <button type="button" class="agent-center-card-action is-danger" data-profile-action="deny" data-pending-id="${escapeHtml(item.id)}">忽略</button>
                     </div>
                 ` : ''}
+                ${isToolPermission ? `
+                    <div class="agent-center-card-sub">${escapeHtml(toolImpactText)}</div>
+                    ${renderChips([
+                        { label: `resume: ${item.resumeStatus}` },
+                        { label: `continue: ${item.continuationStatus}` },
+                    ])}
+                    ${isPending ? `
+                        <div class="agent-center-card-actions">
+                            <button type="button" class="agent-center-card-action is-primary" data-provider-permission-action="${PROVIDER_TOOL_PERMISSION_ACTIONS.allowOnce}" data-pending-id="${escapeHtml(item.id)}">允许一次</button>
+                            <button type="button" class="agent-center-card-action is-danger" data-provider-permission-action="${PROVIDER_TOOL_PERMISSION_ACTIONS.deny}" data-pending-id="${escapeHtml(item.id)}">拒绝</button>
+                            <button type="button" class="agent-center-card-action" data-provider-permission-action="${PROVIDER_TOOL_PERMISSION_ACTIONS.rememberAllow}" data-pending-id="${escapeHtml(item.id)}">记住允许</button>
+                        </div>
+                    ` : ''}
+                ` : ''}
             </article>
         `; }).join('')}</div>`;
     }
@@ -524,7 +552,7 @@ export class AgentCenterPanel {
         const item = (this.view.pending || []).find(entry => entry.id === id);
         const contactId = item?.contactId || item?.sessionId || '';
         const approving = normalizedAction === 'approve';
-        const ok = await appConfirm({
+        const ok = await this.confirm({
             title: approving ? '保存联系人画像' : '忽略联系人画像',
             message: approving
                 ? `确定保存联系人「${contactId || '-'}」的画像候选吗？\n\n保存后会影响后续动态弱触发、提示词上下文和 Agent 画像读取。`
@@ -538,11 +566,51 @@ export class AgentCenterPanel {
         await this.refresh();
     }
 
+    async handleProviderPermissionAction(action = '', pendingId = '') {
+        const normalizedAction = trim(action);
+        const id = trim(pendingId);
+        if (!id) return;
+        const item = (this.view.pending || []).find(entry => entry.id === id);
+        const toolName = item?.toolName || 'tool';
+        const label = providerToolActionLabel(normalizedAction);
+        const remembering = normalizedAction === PROVIDER_TOOL_PERMISSION_ACTIONS.rememberAllow;
+        const denying = normalizedAction === PROVIDER_TOOL_PERMISSION_ACTIONS.deny;
+        const ok = await this.confirm({
+            title: `${label} Agent 工具`,
+            message: denying
+                ? `确定拒绝「${toolName}」这次工具请求吗？\n\n拒绝后不会执行工具，也不会续跑 provider。`
+                : remembering
+                    ? `确定记住允许「${toolName}」吗？\n\n影响范围：当前会话。后续同类白名单工具请求可复用这条权限；执行仍不重放聊天、不直接写聊天正文。`
+                    : `确定允许「${toolName}」执行一次吗？\n\n只会执行这一个已保存的 tool call；不会重放聊天、不会自动续跑 provider、不会直接写聊天正文。`,
+            confirmText: label,
+            danger: denying,
+        });
+        if (!ok) return;
+        const actions = this.getActions?.() || {};
+        const resolver = actions.resolveProviderToolPendingPermission;
+        if (typeof resolver !== 'function') {
+            this.lastError = '当前环境没有 Agent 工具权限处理动作';
+            this.render();
+            return;
+        }
+        try {
+            await Promise.resolve(resolver({
+                id,
+                action: normalizedAction,
+                reason: 'agent center pending action',
+            }));
+            await this.refresh();
+        } catch (err) {
+            this.lastError = trim(err?.message || err, 'resolveProviderToolPendingPermission failed');
+            this.render();
+        }
+    }
+
     async handleSessionGateAction(action = '') {
         const normalizedAction = trim(action);
         if (!['enable', 'disable'].includes(normalizedAction)) return;
         const enabling = normalizedAction === 'enable';
-        const ok = await appConfirm({
+        const ok = await this.confirm({
             title: enabling ? '启用当前会话 Gate' : '关闭当前会话 Gate',
             message: enabling
                 ? '影响范围：当前会话。启用后，模型输出白名单 tool call 时会进入待确认/允许一次流程；网络、真实 runner 和聊天写入仍默认关闭。'
@@ -695,6 +763,12 @@ export class AgentCenterPanel {
             this.contentElement.querySelectorAll('[data-profile-action]').forEach((button) => {
                 button.addEventListener('click', () => this.handleProfilePendingAction(
                     button.dataset.profileAction || '',
+                    button.dataset.pendingId || '',
+                ));
+            });
+            this.contentElement.querySelectorAll('[data-provider-permission-action]').forEach((button) => {
+                button.addEventListener('click', () => this.handleProviderPermissionAction(
+                    button.dataset.providerPermissionAction || '',
                     button.dataset.pendingId || '',
                 ));
             });

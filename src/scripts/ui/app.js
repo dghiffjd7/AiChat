@@ -12615,7 +12615,7 @@ Phase G（Frame 36）：循环衔接
     });
   } catch {}
 
-  /* ---------------- 原始回复面板（调试） ---------------- */
+  /* ---------------- 原始回复面板 ---------------- */
   const rawReplyModal = (() => {
     let overlay = null;
     let panel = null;

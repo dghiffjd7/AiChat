@@ -357,6 +357,9 @@ export class OpenAIProvider {
     if (typeof src.reasoning_effort === 'string' && src.reasoning_effort.trim()) {
       out.reasoning_effort = String(src.reasoning_effort).trim();
     }
+    if (src.reasoning && typeof src.reasoning === 'object' && !Array.isArray(src.reasoning)) {
+      out.reasoning = { ...src.reasoning };
+    }
 
     // Token limits. Newer OpenAI reasoning/chat models reject max_tokens and require max_completion_tokens.
     const tokenLimit = Number.isFinite(src.max_completion_tokens)
@@ -376,6 +379,8 @@ export class OpenAIProvider {
 
     // stop can be string or array
     if (typeof src.stop === 'string' || Array.isArray(src.stop)) out.stop = src.stop;
+    if (Array.isArray(src.tools) && src.tools.length) out.tools = src.tools;
+    if (Object.prototype.hasOwnProperty.call(src, 'tool_choice')) out.tool_choice = src.tool_choice;
 
     // Some servers reject unsupported fields (DeepSeek is stricter).
     if (isDeepSeek) {

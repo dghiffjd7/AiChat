@@ -59,6 +59,71 @@ import { AgentCenterPanel } from '../../src/scripts/ui/agent-center-panel.js';
 }
 
 {
+  const panel = new AgentCenterPanel();
+  panel.view = {
+    pending: [
+      {
+        kind: 'tool_permission',
+        id: 'provider-pending-1',
+        status: 'pending',
+        toolName: 'contact_profile.list',
+        sessionId: 'chat:bob',
+        source: 'provider-tool-permission',
+        riskLevel: 'low',
+        permissions: ['storage'],
+        resumeStatus: 'idle',
+        continuationStatus: 'idle',
+      },
+    ],
+  };
+  const html = panel.renderPending();
+  assert.match(html, /允许一次/);
+  assert.match(html, /data-provider-permission-action="allow_once"/);
+  assert.match(html, /data-provider-permission-action="deny"/);
+  assert.match(html, /data-provider-permission-action="remember_allow"/);
+  assert.match(html, /不会重放聊天、不会自动续跑 provider、不会直接写聊天正文/);
+  console.log('ok - agent center panel renders provider tool pending permission actions');
+}
+
+{
+  let confirmOptions = null;
+  let resolverOptions = null;
+  let refreshed = false;
+  const panel = new AgentCenterPanel({
+    confirm: async options => {
+      confirmOptions = options;
+      return true;
+    },
+    getActions: () => ({
+      resolveProviderToolPendingPermission: options => {
+        resolverOptions = options;
+        return { pending: { status: 'allowed' }, resume: { status: 'succeeded' } };
+      },
+    }),
+  });
+  panel.view = {
+    pending: [
+      {
+        kind: 'tool_permission',
+        id: 'provider-pending-1',
+        status: 'pending',
+        toolName: 'contact_profile.list',
+      },
+    ],
+  };
+  panel.refresh = async () => {
+    refreshed = true;
+  };
+  await panel.handleProviderPermissionAction('allow_once', 'provider-pending-1');
+  assert.equal(confirmOptions.confirmText, '允许一次');
+  assert.equal(resolverOptions.id, 'provider-pending-1');
+  assert.equal(resolverOptions.action, 'allow_once');
+  assert.equal(resolverOptions.reason, 'agent center pending action');
+  assert.equal(refreshed, true);
+  console.log('ok - agent center provider permission action resolves through debug registry contract');
+}
+
+{
   let listOptions = null;
   const panel = new AgentCenterPanel({
     getActions: () => ({

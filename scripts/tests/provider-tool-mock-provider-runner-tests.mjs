@@ -33,7 +33,7 @@ import { buildProviderToolResultRequestPreview } from '../../src/scripts/agent/p
   assert.equal(run.network, false);
   assert.equal(run.requestPreview, requestPreview);
   assert.equal(run.assistantPreview.role, 'assistant');
-  assert.equal(run.finalText.includes('contact_profile.list: contact profiles listed: 1'), true);
+  assert.equal(run.finalText.includes('contact_profile_list: contact profiles listed: 1'), true);
   assert.equal(run.eventCount, run.events.length);
   assert.equal(run.events[0].type, 'mock_provider_stream_start');
   assert.equal(run.events.at(-1).type, 'mock_provider_stream_end');

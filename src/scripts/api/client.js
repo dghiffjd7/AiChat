@@ -7,6 +7,7 @@ import { AnthropicProvider } from './providers/anthropic.js';
 import { CustomProvider } from './providers/custom.js';
 import { GeminiProvider } from './providers/gemini.js';
 import { DeepseekProvider } from './providers/deepseek.js';
+import { OpenRouterProvider } from './providers/openrouter.js';
 import { MakersuiteProvider } from './providers/makersuite.js';
 import { VertexAIProvider } from './providers/vertexai.js';
 import {
@@ -25,6 +26,7 @@ const PROVIDER_CLASSES = Object.freeze({
     makersuite: MakersuiteProvider,
     vertexai: VertexAIProvider,
     deepseek: DeepseekProvider,
+    openrouter: OpenRouterProvider,
     custom: CustomProvider,
     novelai: NovelAIImageProvider,
     stability: StabilityAIImageProvider,
