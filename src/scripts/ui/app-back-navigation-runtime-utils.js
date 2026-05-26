@@ -47,12 +47,15 @@ export const createAppBackNavigationRuntime = ({
   setTimeoutFn = (fn, ms) => setTimeout(fn, ms),
   clearTimeoutFn = timer => clearTimeout(timer),
   doublePressMs = 1400,
+  registerNativeBackButton = null,
+  exitNativeApp = null,
   logger = null,
 } = {}) => {
   const historyObj = historyRef || windowRef?.history || null;
   let started = false;
   let lastRootBackAt = 0;
   let rootExitHintTimer = null;
+  let nativeBackUnlisten = null;
 
   const ensureSentinel = () => {
     if (!historyObj || typeof historyObj.pushState !== 'function') return false;
@@ -150,6 +153,41 @@ export const createAppBackNavigationRuntime = ({
     }
   };
 
+  const normalizeNativeUnlisten = (listener) => {
+    if (typeof listener === 'function') return listener;
+    if (listener && typeof listener.unregister === 'function') {
+      return () => listener.unregister();
+    }
+    return null;
+  };
+
+  const requestNativeExit = () => {
+    if (typeof exitNativeApp !== 'function') return false;
+    try {
+      return exitNativeApp() !== false;
+    } catch (err) {
+      try {
+        logger?.warn?.('android native back exit failed', err);
+      } catch {}
+      return false;
+    }
+  };
+
+  const handleNativeBackButton = (event) => {
+    const result = handleBack('native-back-button');
+    if (result.handled) {
+      clearRootExitHintTimer();
+      ensureSentinel();
+      return result;
+    }
+    if (result.action === 'allow-native-exit') {
+      clearRootExitHintTimer();
+      const exitRequested = requestNativeExit();
+      return { ...result, nativeExitRequested: exitRequested, payload: event?.payload || null };
+    }
+    return result;
+  };
+
   const handlePopState = () => {
     const result = handleBack('popstate');
     if (result.handled) {
@@ -160,6 +198,39 @@ export const createAppBackNavigationRuntime = ({
       }
     }
     return result;
+  };
+
+  const installNativeBackButtonListener = () => {
+    if (typeof registerNativeBackButton !== 'function') return false;
+    try {
+      const registered = registerNativeBackButton(handleNativeBackButton);
+      if (registered && typeof registered.then === 'function') {
+        registered
+          .then((listener) => {
+            const unlisten = normalizeNativeUnlisten(listener);
+            if (!started) {
+              try {
+                unlisten?.();
+              } catch {}
+              return;
+            }
+            nativeBackUnlisten = unlisten;
+          })
+          .catch((err) => {
+            try {
+              logger?.warn?.('install android native back listener failed', err);
+            } catch {}
+          });
+      } else {
+        nativeBackUnlisten = normalizeNativeUnlisten(registered);
+      }
+      return true;
+    } catch (err) {
+      try {
+        logger?.warn?.('install android native back listener failed', err);
+      } catch {}
+      return false;
+    }
   };
 
   const handleCustomBackEvent = (event) => {
@@ -180,6 +251,7 @@ export const createAppBackNavigationRuntime = ({
     ensureSentinel();
     windowRef.addEventListener?.('popstate', handlePopState);
     windowRef.addEventListener?.('chatapp-android-back', handleCustomBackEvent);
+    installNativeBackButtonListener();
     return true;
   };
 
@@ -187,6 +259,10 @@ export const createAppBackNavigationRuntime = ({
     if (!started || !windowRef) return;
     started = false;
     clearRootExitHintTimer();
+    try {
+      nativeBackUnlisten?.();
+    } catch {}
+    nativeBackUnlisten = null;
     windowRef.removeEventListener?.('popstate', handlePopState);
     windowRef.removeEventListener?.('chatapp-android-back', handleCustomBackEvent);
   };
@@ -196,6 +272,7 @@ export const createAppBackNavigationRuntime = ({
     stop,
     ensureSentinel,
     handleBack,
+    handleNativeBackButton,
     getLastRootBackAt: () => lastRootBackAt,
   };
 };

@@ -144,6 +144,10 @@ import {
   createModeSwitchInteractionRuntime,
 } from './app-mode-switch-interaction-runtime-utils.js';
 import { createAppBackNavigationRuntime } from './app-back-navigation-runtime-utils.js';
+import {
+  requestTauriNativeExit,
+  resolveTauriNativeBackButtonRegistrar,
+} from './app-native-back-button-utils.js';
 import { createAppUiStateRuntime } from './app-ui-state-runtime-utils.js';
 import {
   buildPersonaScopedStorageKey,
@@ -25144,6 +25148,11 @@ Phase G（Frame 36）：循环衔接
     }
     return false;
   };
+  const nativeBackButtonRegistrar = resolveTauriNativeBackButtonRegistrar({
+    safeInvokeFn: safeInvoke,
+    isAndroid: isLikelyAndroidDevice(),
+    logger,
+  });
   const androidBackRuntime = createAppBackNavigationRuntime({
     windowRef: window,
     historyRef: window.history,
@@ -25160,6 +25169,8 @@ Phase G（Frame 36）：循环衔接
     getFocusedElement: () => document.activeElement,
     showExitHint: () => window.toastr?.info?.('再按一次返回退出应用'),
     nowFn: () => Date.now(),
+    registerNativeBackButton: nativeBackButtonRegistrar,
+    exitNativeApp: () => requestTauriNativeExit({ safeInvokeFn: safeInvoke, logger }),
     logger,
   });
   androidBackRuntime.start();

@@ -4,6 +4,10 @@ import {
   createAppBackNavigationRuntime,
   resolveAppBackNavigationAction,
 } from '../../src/scripts/ui/app-back-navigation-runtime-utils.js';
+import {
+  requestTauriNativeExit,
+  resolveTauriNativeBackButtonRegistrar,
+} from '../../src/scripts/ui/app-native-back-button-utils.js';
 
 const createInput = () => ({
   tagName: 'input',
@@ -28,6 +32,63 @@ const createInput = () => ({
   }), 'allow-native-exit');
   assert.equal(resolveAppBackNavigationAction({ activePage: 'chat', rootPage: 'chat' }), 'show-root-exit-hint');
   console.log('ok - resolveAppBackNavigationAction orders app back actions');
+}
+
+{
+  assert.equal(resolveTauriNativeBackButtonRegistrar({ isAndroid: false }), null);
+
+  let appBackHandler = null;
+  const appRegistrar = resolveTauriNativeBackButtonRegistrar({
+    isAndroid: true,
+    globalRef: {
+      __TAURI__: {
+        app: {
+          onBackButtonPress(handler) {
+            appBackHandler = handler;
+            return 'app-listener';
+          },
+        },
+      },
+    },
+  });
+  assert.equal(appRegistrar(() => {}), 'app-listener');
+  assert.equal(typeof appBackHandler, 'function');
+
+  let channelCallback = null;
+  let unregisteredCallback = null;
+  const invokeCalls = [];
+  const invokeRegistrar = resolveTauriNativeBackButtonRegistrar({
+    isAndroid: true,
+    globalRef: {
+      __TAURI_INTERNALS__: {
+        transformCallback(callback) {
+          channelCallback = callback;
+          return 42;
+        },
+        unregisterCallback(id) {
+          unregisteredCallback = id;
+        },
+      },
+    },
+    safeInvokeFn: async (cmd, args) => {
+      invokeCalls.push({ cmd, args });
+    },
+  });
+  const messages = [];
+  const unlisten = await invokeRegistrar(message => messages.push(message));
+  assert.equal(invokeCalls[0].cmd, 'plugin:app|register_listener');
+  assert.equal(invokeCalls[0].args.event, 'back-button');
+  assert.equal(invokeCalls[0].args.handler.toJSON(), '__CHANNEL__:42');
+  channelCallback({ index: 0, message: { payload: { canGoBack: false } } });
+  channelCallback({ index: 1, end: true });
+  assert.deepEqual(messages, [{ payload: { canGoBack: false } }]);
+  assert.equal(unregisteredCallback, 42);
+  await unlisten();
+  assert.equal(invokeCalls[1].cmd, 'plugin:app|remove_listener');
+
+  assert.equal(requestTauriNativeExit({ safeInvokeFn: async (cmd) => invokeCalls.push({ cmd }) }), true);
+  assert.equal(invokeCalls[2].cmd, 'plugin:app|exit');
+  console.log('ok - native Android back registrar resolves global and invoke fallback paths');
 }
 
 {
@@ -175,4 +236,60 @@ const createInput = () => ({
   timers[0].fn();
   assert.equal(pushedStates.length, 2);
   console.log('ok - popstate root exit hint delays sentinel rearm so the next native back can exit');
+}
+
+{
+  let nativeHandler = null;
+  let nativeUnregistered = false;
+  let exitRequests = 0;
+  let hints = 0;
+  let now = 10000;
+  const pushedStates = [];
+  const historyRef = {
+    state: null,
+    pushState(state) {
+      this.state = state;
+      pushedStates.push(state);
+    },
+  };
+  const runtime = createAppBackNavigationRuntime({
+    windowRef: {
+      history: historyRef,
+      addEventListener() {},
+      removeEventListener() {},
+    },
+    historyRef,
+    documentRef: { activeElement: { tagName: 'div' } },
+    getActivePage: () => 'chat',
+    isChatRoomVisible: () => false,
+    closeTopLayer: () => false,
+    showExitHint: () => { hints += 1; },
+    nowFn: () => now,
+    registerNativeBackButton: (handler) => {
+      nativeHandler = handler;
+      return { unregister: () => { nativeUnregistered = true; } };
+    },
+    exitNativeApp: () => { exitRequests += 1; },
+    doublePressMs: 1400,
+  });
+  runtime.start();
+  assert.equal(typeof nativeHandler, 'function');
+  assert.equal(pushedStates.length, 1);
+
+  const first = nativeHandler({ payload: { canGoBack: false } });
+  assert.equal(first.action, 'show-root-exit-hint');
+  assert.equal(first.handled, true);
+  assert.equal(hints, 1);
+  assert.equal(exitRequests, 0);
+
+  now += 300;
+  const second = nativeHandler({ payload: { canGoBack: false } });
+  assert.equal(second.action, 'allow-native-exit');
+  assert.equal(second.handled, false);
+  assert.equal(second.nativeExitRequested, true);
+  assert.equal(exitRequests, 1);
+
+  runtime.stop();
+  assert.equal(nativeUnregistered, true);
+  console.log('ok - native Android back listener uses app back runtime and exits only after root confirmation');
 }
