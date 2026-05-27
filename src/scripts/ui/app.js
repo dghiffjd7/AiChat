@@ -206,6 +206,7 @@ import {
   buildCreativeAssistantMessageParts as buildCreativeAssistantMessagePartsCore,
 } from './chat/assistant-message-builder-utils.js';
 import { commitContinuationMessageToStore } from './chat/continuation-message-utils.js';
+import { hideCreativeContentTagsForDisplay } from './chat/creative-content-display-utils.js';
 import { CreativeStreamProcessor } from './chat/creative-stream-processor.js';
 import { normalizeDialogueMessage as normalizeDialogueMessageCore } from './chat/dialogue-message-utils.js';
 import { DialogueStreamParser } from './chat/dialogue-stream-parser.js';
@@ -16627,6 +16628,11 @@ Phase G（Frame 36）：循环衔接
 	      }
 	      hide();
 	    };
+	    const dismissCurrent = () => {
+	      const sid = String(activeSessionId || '').trim();
+	      if (sid) pendingBySession.delete(sid);
+	      hide();
+	    };
 	    const removeAt = (index) => {
 	      const safeIndex = Math.trunc(Number(index));
 	      if (!Number.isFinite(safeIndex) || safeIndex < 0 || safeIndex >= assets.length) return;
@@ -16678,7 +16684,7 @@ Phase G（Frame 36）：循环衔接
 	      closeBtn = root.querySelector('.chat-generated-image-preview-close');
 	      closeBtn?.addEventListener('click', event => {
 	        event.stopPropagation();
-	        stashCurrent();
+	        dismissCurrent();
 	      });
 	      mainImg?.addEventListener('click', event => {
 	        event.stopPropagation();
@@ -19111,6 +19117,9 @@ Phase G（Frame 36）：循环衔接
       onError: err => logger.warn('[rp-greeting] regex-apply-failed', err),
     }));
     const parsed = parseSpecialMessage(display);
+    if (parsed?.type === 'text') {
+      parsed.content = hideCreativeContentTagsForDisplay(parsed.content);
+    }
     logRpGreetingDebug('build-parse', {
       session: sessionId,
       greetingId: greetingId || 'none',
@@ -19126,6 +19135,8 @@ Phase G（Frame 36）：循环衔接
       message: {
         role: 'assistant',
         ...parsed,
+        rawOriginal: macroContent,
+        rawSource: macroContent,
         raw: stored,
         sessionId,
         name: assistantName,
@@ -25158,6 +25169,7 @@ Phase G（Frame 36）：循环衔接
     historyRef: window.history,
     documentRef: document,
     getActivePage: () => activePage,
+    getUiMode: () => uiMode,
     rootPage: 'chat',
     switchPage,
     isChatRoomVisible,
@@ -25176,6 +25188,7 @@ Phase G（Frame 36）：循环衔接
   androidBackRuntime.start();
   patchDebugUiRegistry((registry) => {
     registry.actions.handleAndroidBack = () => androidBackRuntime.handleBack('debug');
+    registry.actions.getAndroidBackDiagnostics = () => androidBackRuntime.getDiagnostics();
     registry.actions.closeTopAppLayer = () => closeTopAppLayer({ dryRun: false });
   });
 

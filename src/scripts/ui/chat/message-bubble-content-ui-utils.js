@@ -1,4 +1,4 @@
-import { hideCreativeContentTagsForDisplay } from './creative-content-display-utils.js';
+import { resolveCreativeRichRenderSource } from './creative-content-display-utils.js';
 
 const appendChild = (parent, child) => {
   parent?.appendChild?.(child);
@@ -302,7 +302,7 @@ export const renderMessageBubbleContentCore = ({
         if (message?.meta?.isGreeting) {
           logGreetingRender?.(message, resolvedSessionId);
         }
-        renderRichText?.(target, hideCreativeContentTagsForDisplay(message?.content), {
+        renderRichText?.(target, resolveCreativeRichRenderSource(message), {
           messageId: message?.id,
           preserveHtmlNewlines: true,
           sessionId: resolvedSessionId,

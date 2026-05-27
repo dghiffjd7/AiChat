@@ -132,8 +132,32 @@ const createFakeDocument = () => {
     renderRichText: (...args) => renders.push(args),
   });
   assert.equal(renders.length, 1);
-  assert.equal(renders[0][1], '<b>x</b>');
-  console.log('ok - renderMessageBubbleContentCore hides creative content wrapper before rich rendering');
+  assert.equal(renders[0][1], '<content><b>x</b></content>');
+  console.log('ok - renderMessageBubbleContentCore preserves creative content wrapper for rich rendering');
+}
+
+{
+  const documentLike = createFakeDocument();
+  const bubble = documentLike.createElement('div');
+  const target = documentLike.createElement('div');
+  const renders = [];
+  renderMessageBubbleContentCore({
+    bubble,
+    message: {
+      id: 'm-content-raw',
+      type: 'text',
+      content: '<b>x</b>',
+      rawSource: '<content><b>x</b></content>',
+      meta: { renderRich: true, isGreeting: true },
+    },
+    resolvedSessionId: 'rp:test',
+    documentLike,
+    prepareTextContainer: () => target,
+    renderRichText: (...args) => renders.push(args),
+  });
+  assert.equal(renders.length, 1);
+  assert.equal(renders[0][1], '<content><b>x</b></content>');
+  console.log('ok - renderMessageBubbleContentCore restores raw content wrapper for rich greeting rendering');
 }
 
 {

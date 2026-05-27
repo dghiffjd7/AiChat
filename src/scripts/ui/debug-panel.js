@@ -42,12 +42,14 @@ import {
     createSelectedTextareaCopyFallback,
     exportDebugTextFlow,
     handleAgentRunDiagnosticsLoadError,
+    handleAndroidBackDiagnosticsLoadError,
     handleBridgeContractDiagnosticsLoadError,
     handleCustomBundleDiagnosticsLoadError,
     handleDebugTraceTimelineLoadError,
     handleStorageMigrationDiagnosticsLoadError,
     handleViewportKeyboardDiagnosticsLoadError,
     refreshAgentRunDiagnosticsView,
+    refreshAndroidBackDiagnosticsView,
     refreshBridgeContractDiagnosticsView,
     refreshCustomBundleDiagnosticsView,
     refreshDebugTraceTimelineView,
@@ -72,6 +74,7 @@ export class DebugPanel {
         this.storageMigrationInspectBtn = null;
         this.bridgeContractInspectBtn = null;
         this.viewportKeyboardInspectBtn = null;
+        this.androidBackInspectBtn = null;
         this.traceTimelineInspectBtn = null;
         this.agentRunsInspectBtn = null;
         this.errorLogBtn = null;
@@ -104,6 +107,13 @@ export class DebugPanel {
         this.viewportKeyboardRefresh = null;
         this.viewportKeyboardExport = null;
         this.viewportKeyboardCopy = null;
+        this.androidBackOverlay = null;
+        this.androidBackPanel = null;
+        this.androidBackMeta = null;
+        this.androidBackText = null;
+        this.androidBackRefresh = null;
+        this.androidBackExport = null;
+        this.androidBackCopy = null;
         this.traceTimelineOverlay = null;
         this.traceTimelinePanel = null;
         this.traceTimelineMeta = null;
@@ -137,6 +147,7 @@ export class DebugPanel {
             onShowStorageMigration: () => this.showStorageMigrationInspector(),
             onShowBridgeContracts: () => this.showBridgeContractInspector(),
             onShowViewportKeyboard: () => this.showViewportKeyboardInspector(),
+            onShowAndroidBack: () => this.showAndroidBackInspector(),
             onShowTraceTimeline: () => this.showTraceTimelineInspector(),
             onShowAgentRuns: () => this.showAgentRunsInspector(),
             onShowErrorLogs: () => this.showErrorLogs(),
@@ -167,6 +178,7 @@ export class DebugPanel {
         this.storageMigrationInspectBtn = dom.storageMigrationInspectBtn;
         this.bridgeContractInspectBtn = dom.bridgeContractInspectBtn;
         this.viewportKeyboardInspectBtn = dom.viewportKeyboardInspectBtn;
+        this.androidBackInspectBtn = dom.androidBackInspectBtn;
         this.traceTimelineInspectBtn = dom.traceTimelineInspectBtn;
         this.agentRunsInspectBtn = dom.agentRunsInspectBtn;
         this.errorLogBtn = dom.errorLogBtn;
@@ -598,6 +610,100 @@ export class DebugPanel {
         await showDebugViewer({
             overlay: this.viewportKeyboardOverlay,
             onShow: () => this.refreshViewportKeyboardInspector(),
+        });
+    }
+
+    ensureAndroidBackInspector() {
+        if (this.androidBackOverlay) return;
+        const viewer = createDebugViewerModal({
+            overlayId: 'debug-android-back-overlay',
+            panelId: 'debug-android-back-panel',
+            title: '安卓返回诊断',
+            includeCopyButton: true,
+            onClose: () => this.hideAndroidBackInspector(),
+            onRefresh: () => this.refreshAndroidBackInspector(),
+            onExport: () => this.exportAndroidBackDiagnostics(),
+            onCopy: async () => {
+                const viewer = createDebugViewerTextBindings({
+                    textEl: this.androidBackText,
+                });
+                await copyDebugTextFlow({
+                    text: viewer.getText(),
+                    writeText: async (text) => navigator.clipboard.writeText(text),
+                    fallbackCopy: createSelectedTextareaCopyFallback({
+                        textEl: this.androidBackText,
+                        execCommand: (command) => document.execCommand?.(command),
+                    }),
+                    onWarning: (message) => window.toastr?.warning?.(message),
+                    onSuccess: (message) => window.toastr?.success?.(message),
+                    onError: (message) => window.toastr?.error?.(message),
+                    emptyMessage: '暂无安卓返回诊断可复制',
+                });
+            },
+        });
+        bindDebugViewerRefs({
+            target: this,
+            prefix: 'androidBack',
+            viewer,
+        });
+    }
+
+    hideAndroidBackInspector() {
+        setDebugViewerVisibility({ overlay: this.androidBackOverlay, visible: false });
+    }
+
+    async exportAndroidBackDiagnostics() {
+        await exportDebugTextFlow({
+            text: String(this.androidBackText?.value || ''),
+            filenamePrefix: 'android-back',
+            successLabel: '安卓返回诊断已导出',
+            emptyMessage: '暂无安卓返回诊断可导出',
+            exportFailureToast: '安卓返回诊断导出失败',
+            exportFailurePrefix: '安卓返回诊断导出失败: ',
+            buildFilename: buildDebugTextFilename,
+            exportTextFile: (text, filename, successLabel) => exportDebugTextFile({
+                text,
+                filename,
+                successLabel,
+                onSuccess: (message) => window.toastr?.success?.(message),
+            }),
+            onWarning: (message) => window.toastr?.warning?.(message),
+            onLogWarn: (message) => this.log(message, 'warn'),
+            onError: (message) => window.toastr?.error?.(message),
+        });
+    }
+
+    async refreshAndroidBackInspector() {
+        const viewer = createDebugViewerTextBindings({
+            metaEl: this.androidBackMeta,
+            textEl: this.androidBackText,
+        });
+        if (!this.androidBackOverlay || !viewer.hasViewer()) return;
+        try {
+            const actions = window.appBridge?.debugUiRegistry?.actions || {};
+            const snapshot = typeof actions.getAndroidBackDiagnostics === 'function'
+                ? actions.getAndroidBackDiagnostics()
+                : window.__chatappBackNavigationDiagnostics?.();
+            refreshAndroidBackDiagnosticsView({
+                snapshot,
+                setMeta: viewer.setMeta,
+                setText: viewer.setText,
+            });
+        } catch (err) {
+            handleAndroidBackDiagnosticsLoadError({
+                error: err,
+                setMeta: viewer.setMeta,
+                setText: viewer.setText,
+                logWarn: (message) => this.log(message, 'warn'),
+            });
+        }
+    }
+
+    async showAndroidBackInspector() {
+        this.ensureAndroidBackInspector();
+        await showDebugViewer({
+            overlay: this.androidBackOverlay,
+            onShow: () => this.refreshAndroidBackInspector(),
         });
     }
 

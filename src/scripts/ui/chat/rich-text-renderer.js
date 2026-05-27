@@ -17,6 +17,7 @@ import {
     RICH_RENDER_EXECUTION,
     RICH_RENDER_LEVELS,
 } from './rich-render-routing.js';
+import { hideCreativeContentTagsForDisplay } from './creative-content-display-utils.js';
 import { mergeRichCompatInputText } from './rich-input-compat.js';
 import {
     buildMvuCompatWindowContext,
@@ -9145,7 +9146,8 @@ export const renderRichText = (
                 return;
             }
         }
-        const lines = chunk.split(/\n/);
+        const displayChunk = hideCreativeContentTagsForDisplay(chunk);
+        const lines = displayChunk.split(/\n/);
         lines.forEach((line, idx) => {
             const statusSegments = line.split(STATUS_TOKEN);
             statusSegments.forEach((statusSeg, statusIdx) => {

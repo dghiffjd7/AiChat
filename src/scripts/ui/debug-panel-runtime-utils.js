@@ -1,5 +1,6 @@
 import {
   buildBridgeContractDiagnosticsMeta,
+  buildAndroidBackDiagnosticsMeta,
   buildAgentRunDiagnosticsText,
   buildAgentRunDiagnosticsView,
   buildAgentRunDiagnosticsViewMeta,
@@ -11,6 +12,7 @@ import {
   buildViewportKeyboardDiagnosticsMeta,
   collectErrorLogs,
   formatBridgeContractDiagnostics,
+  formatAndroidBackDiagnostics,
   formatCustomBundleDiagnostics,
   formatDebugTraceTimelineDiagnostics,
   formatErrorLogs,
@@ -165,6 +167,34 @@ export const handleViewportKeyboardDiagnosticsLoadError = ({
   setMeta?.(`加载失败: ${normalized}`);
   setText?.(`键盘/视口诊断加载失败\n\n${normalized}`);
   logWarn?.(`键盘/视口诊断加载失败: ${normalized}`);
+  return normalized;
+};
+
+export const refreshAndroidBackDiagnosticsView = ({
+  snapshot = null,
+  getSnapshot = null,
+  setMeta = () => {},
+  setText = () => {},
+} = {}) => {
+  const data = snapshot || (typeof getSnapshot === 'function' ? getSnapshot() : null);
+  const meta = buildAndroidBackDiagnosticsMeta(data);
+  const text = formatAndroidBackDiagnostics(data);
+  setMeta?.(meta);
+  setText?.(text);
+  return { meta, text, snapshot: data };
+};
+
+export const handleAndroidBackDiagnosticsLoadError = ({
+  error = null,
+  setMeta = () => {},
+  setText = () => {},
+  logWarn = () => {},
+} = {}) => {
+  const message = error?.message ? String(error.message) : String(error || '');
+  const normalized = message || 'unknown error';
+  setMeta?.(`加载失败: ${normalized}`);
+  setText?.(`安卓返回诊断加载失败\n\n${normalized}`);
+  logWarn?.(`安卓返回诊断加载失败: ${normalized}`);
   return normalized;
 };
 

@@ -91,9 +91,39 @@ const createTarget = () => ({
   });
   assert.equal(next.content, '<content>正文</content>');
   assert.equal(renders.length, 1);
-  assert.equal(renders[0][1], '正文');
+  assert.equal(renders[0][1], '<content>正文</content>');
   assert.equal(wrapper.__chatappMessage.content, '<content>正文</content>');
-  console.log('ok - renderAssistantStreamStateCore hides content wrapper only for rich stream rendering');
+  console.log('ok - renderAssistantStreamStateCore preserves content wrapper for rich stream rendering');
+}
+
+{
+  const target = createTarget();
+  const wrapper = {
+    dataset: { typingPlaceholder: '1' },
+    __chatappMessage: { content: 'old' },
+  };
+  const renders = [];
+  const next = renderAssistantStreamStateCore({
+    messageEl: { nodeName: 'DIV' },
+    wrapperEl: wrapper,
+    msgId: 'm2-rich-raw',
+    meta: { renderRich: true },
+    placeholder: { id: 'm2-rich-raw' },
+    state: { content: '正文', rawSource: '<content>正文</content>' },
+    applyReasoningUiState() {},
+    cleanupRichTextMounts() {},
+    prepareTextContainer() { return target; },
+    normalizeAssistantLineBreaks: text => text,
+    renderTextWithStickers: () => false,
+    renderRichText: (...args) => renders.push(args),
+    applyCreativeBubbleState() {},
+  });
+  assert.equal(next.content, '正文');
+  assert.equal(next.rawSource, '<content>正文</content>');
+  assert.equal(renders.length, 1);
+  assert.equal(renders[0][1], '<content>正文</content>');
+  assert.equal(wrapper.__chatappMessage.content, '正文');
+  console.log('ok - renderAssistantStreamStateCore restores raw content wrapper for rich stream rendering');
 }
 
 {

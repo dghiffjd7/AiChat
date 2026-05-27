@@ -143,6 +143,15 @@ export const formatViewportKeyboardDiagnostics = (snapshot = null) => {
   }
 };
 
+export const formatAndroidBackDiagnostics = (snapshot = null) => {
+  if (!snapshot || typeof snapshot !== 'object') return '暂无安卓返回诊断';
+  try {
+    return JSON.stringify(snapshot, null, 2);
+  } catch {
+    return String(snapshot || '');
+  }
+};
+
 export const buildViewportKeyboardDiagnosticsMeta = (snapshot = null) => {
   if (!snapshot || typeof snapshot !== 'object') return '暂无数据';
   const keyboard = isPlainObject(snapshot.keyboard) ? snapshot.keyboard : {};
@@ -156,6 +165,20 @@ export const buildViewportKeyboardDiagnosticsMeta = (snapshot = null) => {
   const activeTag = String(activeElement.tagName || '').trim();
   const active = activeId || activeTag || '-';
   return `keyboard=${visible} · inset=${inset} · visual=${width}x${height} · active=${active}`;
+};
+
+export const buildAndroidBackDiagnosticsMeta = (snapshot = null) => {
+  if (!snapshot || typeof snapshot !== 'object') return '暂无数据';
+  const nativeBack = isPlainObject(snapshot.nativeBack) ? snapshot.nativeBack : {};
+  const current = isPlainObject(snapshot.current) ? snapshot.current : {};
+  const events = Array.isArray(snapshot.events) ? snapshot.events : [];
+  const last = events[events.length - 1] || null;
+  const status = String(nativeBack.status || current?.nativeBack?.status || '-').trim() || '-';
+  const phase = String(last?.phase || '-').trim() || '-';
+  const action = String(last?.action || '-').trim() || '-';
+  const page = String(current.activePage || '-').trim() || '-';
+  const room = current.isChatRoomVisible === true ? 'room' : 'root';
+  return `native=${status} · events=${events.length} · last=${phase}/${action} · ${page}/${room}`;
 };
 
 const normalizeTraceEvents = (events = []) => (

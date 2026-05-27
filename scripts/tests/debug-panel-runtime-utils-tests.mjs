@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 
 import {
   handleAgentRunDiagnosticsLoadError,
+  handleAndroidBackDiagnosticsLoadError,
   handleBridgeContractDiagnosticsLoadError,
   copyVisibleDebugLogsFlow,
   copyDebugTextFlow,
@@ -14,6 +15,7 @@ import {
   handleStorageMigrationDiagnosticsLoadError,
   handleViewportKeyboardDiagnosticsLoadError,
   refreshAgentRunDiagnosticsView,
+  refreshAndroidBackDiagnosticsView,
   refreshBridgeContractDiagnosticsView,
   refreshCustomBundleDiagnosticsView,
   refreshDebugTraceTimelineView,
@@ -174,6 +176,41 @@ import {
   assert.equal(text, '键盘/视口诊断加载失败\n\nviewport boom');
   assert.deepEqual(warnings, ['键盘/视口诊断加载失败: viewport boom']);
   console.log('ok - handleViewportKeyboardDiagnosticsLoadError writes fallback text and warning log');
+}
+
+{
+  let meta = '';
+  let text = '';
+  const result = refreshAndroidBackDiagnosticsView({
+    getSnapshot: () => ({
+      nativeBack: { status: 'installed' },
+      current: { activePage: 'chat', isChatRoomVisible: false },
+      events: [{ phase: 'handle-back', action: 'show-root-exit-hint' }],
+    }),
+    setMeta: (value) => { meta = value; },
+    setText: (value) => { text = value; },
+  });
+  assert.equal(result.meta, 'native=installed · events=1 · last=handle-back/show-root-exit-hint · chat/root');
+  assert.equal(meta, result.meta);
+  assert.equal(text.includes('"nativeBack"'), true);
+  console.log('ok - refreshAndroidBackDiagnosticsView writes Android back snapshot');
+}
+
+{
+  let meta = '';
+  let text = '';
+  const warnings = [];
+  const result = handleAndroidBackDiagnosticsLoadError({
+    error: new Error('back boom'),
+    setMeta: (value) => { meta = value; },
+    setText: (value) => { text = value; },
+    logWarn: (message) => warnings.push(message),
+  });
+  assert.equal(result, 'back boom');
+  assert.equal(meta, '加载失败: back boom');
+  assert.equal(text, '安卓返回诊断加载失败\n\nback boom');
+  assert.deepEqual(warnings, ['安卓返回诊断加载失败: back boom']);
+  console.log('ok - handleAndroidBackDiagnosticsLoadError writes fallback text and warning log');
 }
 
 {

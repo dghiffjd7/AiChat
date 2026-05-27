@@ -25,6 +25,7 @@ export const createDebugPanelDom = ({
   onShowStorageMigration = () => {},
   onShowBridgeContracts = () => {},
   onShowViewportKeyboard = () => {},
+  onShowAndroidBack = () => {},
   onShowTraceTimeline = () => {},
   onShowAgentRuns = () => {},
   onShowErrorLogs = () => {},
@@ -69,6 +70,14 @@ export const createDebugPanelDom = ({
     onClick: onShowViewportKeyboard,
   });
   controls.appendChild(viewportKeyboardInspectBtn);
+
+  const androidBackInspectBtn = createDebugButton({
+    documentRef,
+    text: '返回',
+    title: '安卓返回诊断',
+    onClick: onShowAndroidBack,
+  });
+  controls.appendChild(androidBackInspectBtn);
 
   const traceTimelineInspectBtn = createDebugButton({
     documentRef,
@@ -154,6 +163,7 @@ export const createDebugPanelDom = ({
     storageMigrationInspectBtn,
     bridgeContractInspectBtn,
     viewportKeyboardInspectBtn,
+    androidBackInspectBtn,
     traceTimelineInspectBtn,
     agentRunsInspectBtn,
     errorLogBtn,

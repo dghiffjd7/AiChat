@@ -4,6 +4,7 @@ import {
   buildAgentRunDiagnosticsText,
   buildAgentRunDiagnosticsView,
   buildAgentRunDiagnosticsViewMeta,
+  buildAndroidBackDiagnosticsMeta,
   buildBridgeContractDiagnosticsMeta,
   buildCustomBundleDiagnosticsMeta,
   buildDebugTraceTimelineDiagnosticsMeta,
@@ -14,6 +15,7 @@ import {
   collectBridgeContractDiagnostics,
   collectErrorLogs,
   formatBridgeContractDiagnostics,
+  formatAndroidBackDiagnostics,
   formatCustomBundleDiagnostics,
   formatDebugTraceTimelineDiagnostics,
   formatErrorLogs,
@@ -41,6 +43,24 @@ import {
   assert.equal(formatViewportKeyboardDiagnostics(null), '暂无键盘/视口诊断');
   assert.equal(formatViewportKeyboardDiagnostics(snapshot).includes('"visualViewport"'), true);
   console.log('ok - viewport keyboard diagnostics summarize and format snapshot payload');
+}
+
+{
+  const snapshot = {
+    nativeBack: { status: 'installed' },
+    current: { activePage: 'chat', isChatRoomVisible: true },
+    events: [
+      { phase: 'native-back-event' },
+      { phase: 'handle-back', action: 'exit-chat-room' },
+    ],
+  };
+  assert.equal(
+    buildAndroidBackDiagnosticsMeta(snapshot),
+    'native=installed · events=2 · last=handle-back/exit-chat-room · chat/room',
+  );
+  assert.equal(formatAndroidBackDiagnostics(null), '暂无安卓返回诊断');
+  assert.equal(formatAndroidBackDiagnostics(snapshot).includes('"nativeBack"'), true);
+  console.log('ok - android back diagnostics summarize and format snapshot payload');
 }
 
 {
