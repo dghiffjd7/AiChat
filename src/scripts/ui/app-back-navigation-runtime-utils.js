@@ -449,6 +449,19 @@ export const createAppBackNavigationRuntime = ({
       } catch {}
       clearRootExitHintTimer();
       ensureSentinel();
+      return result;
+    }
+    if (result.action === 'allow-native-exit') {
+      const exitRequested = requestNativeExit();
+      recordBackDiagnosticEvent({
+        phase: 'native-exit-request',
+        source: 'custom-event',
+        action: result.action,
+        handled: Boolean(result.handled),
+        nativeExitRequested: exitRequested,
+        payload: event?.detail || null,
+      });
+      return { ...result, nativeExitRequested: exitRequested, payload: event?.detail || null };
     }
     return result;
   };

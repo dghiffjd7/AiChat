@@ -122,13 +122,13 @@ export const resolveTauriNativeBackButtonRegistrar = ({
   logger = null,
 } = {}) => {
   if (!isAndroid) return null;
-  const onBackButtonPress = globalRef?.__TAURI__?.app?.onBackButtonPress;
-  if (typeof onBackButtonPress === 'function') {
-    return handler => onBackButtonPress(handler);
-  }
   const addPluginListener = globalRef?.__TAURI__?.core?.addPluginListener;
   if (typeof addPluginListener === 'function') {
     return handler => addPluginListener('app', 'back-button', handler);
+  }
+  const onBackButtonPress = globalRef?.__TAURI__?.app?.onBackButtonPress;
+  if (typeof onBackButtonPress === 'function') {
+    return handler => onBackButtonPress(handler);
   }
   if (
     typeof safeInvokeFn === 'function'

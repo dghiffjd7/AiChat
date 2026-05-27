@@ -54,6 +54,29 @@ const createInput = () => ({
   assert.equal(appRegistrar(() => {}), 'app-listener');
   assert.equal(typeof appBackHandler, 'function');
 
+  const registrarCalls = [];
+  const pluginRegistrar = resolveTauriNativeBackButtonRegistrar({
+    isAndroid: true,
+    globalRef: {
+      __TAURI__: {
+        app: {
+          onBackButtonPress() {
+            registrarCalls.push('app');
+            return 'app-listener';
+          },
+        },
+        core: {
+          addPluginListener(plugin, event, handler) {
+            registrarCalls.push(['core', plugin, event, typeof handler]);
+            return 'core-listener';
+          },
+        },
+      },
+    },
+  });
+  assert.equal(pluginRegistrar(() => {}), 'core-listener');
+  assert.deepEqual(registrarCalls, [['core', 'app', 'back-button', 'function']]);
+
   let channelCallback = null;
   let unregisteredCallback = null;
   const invokeCalls = [];
@@ -292,4 +315,63 @@ const createInput = () => ({
   runtime.stop();
   assert.equal(nativeUnregistered, true);
   console.log('ok - native Android back listener uses app back runtime and exits only after root confirmation');
+}
+
+{
+  const listeners = new Map();
+  let exitRequests = 0;
+  let hints = 0;
+  let now = 20000;
+  const historyRef = {
+    state: null,
+    pushState(state) {
+      this.state = state;
+    },
+  };
+  const runtime = createAppBackNavigationRuntime({
+    windowRef: {
+      history: historyRef,
+      addEventListener(type, handler) {
+        listeners.set(type, handler);
+      },
+      removeEventListener(type) {
+        listeners.delete(type);
+      },
+    },
+    historyRef,
+    documentRef: { activeElement: { tagName: 'div' } },
+    getActivePage: () => 'chat',
+    isChatRoomVisible: () => false,
+    closeTopLayer: () => false,
+    showExitHint: () => { hints += 1; },
+    nowFn: () => now,
+    exitNativeApp: () => { exitRequests += 1; },
+    doublePressMs: 1400,
+  });
+  runtime.start();
+  const customBack = listeners.get('chatapp-android-back');
+  assert.equal(typeof customBack, 'function');
+
+  let prevented = 0;
+  const first = customBack({
+    detail: { source: 'native-main-activity' },
+    preventDefault: () => { prevented += 1; },
+  });
+  assert.equal(first.action, 'show-root-exit-hint');
+  assert.equal(first.handled, true);
+  assert.equal(hints, 1);
+  assert.equal(prevented, 1);
+  assert.equal(exitRequests, 0);
+
+  now += 300;
+  const second = customBack({
+    detail: { source: 'native-main-activity' },
+    preventDefault: () => { prevented += 1; },
+  });
+  assert.equal(second.action, 'allow-native-exit');
+  assert.equal(second.handled, false);
+  assert.equal(second.nativeExitRequested, true);
+  assert.equal(exitRequests, 1);
+  assert.equal(prevented, 1);
+  console.log('ok - custom Android back bridge exits only after root confirmation');
 }
