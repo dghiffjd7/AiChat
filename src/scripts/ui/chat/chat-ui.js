@@ -5,7 +5,10 @@
 import { resolveMediaAsset } from '../../utils/media-assets.js';
 import { stickerPackStore } from '../../storage/sticker-pack-store.js';
 import { cleanupRichText, renderRichText, setupIframeResizeListener } from './rich-text-renderer.js';
-import { resolveCreativeRichRenderSource } from './creative-content-display-utils.js';
+import {
+  hideCreativeContentTagsForDisplay,
+  resolveCreativeRichRenderSource,
+} from './creative-content-display-utils.js';
 import { appSettings } from '../../storage/app-settings.js';
 import { logger } from '../../utils/logger.js';
 import { getDefaultAppIcon } from '../../utils/default-icon.js';
@@ -543,7 +546,7 @@ export class ChatUI {
       });
       return true;
     }
-    const normalized = this.normalizeAssistantLineBreaks(text);
+    const normalized = this.normalizeAssistantLineBreaks(hideCreativeContentTagsForDisplay(text));
     if (!this.renderTextWithStickers(target, normalized)) {
       target.textContent = normalized;
       target.style.whiteSpace = 'pre-wrap';

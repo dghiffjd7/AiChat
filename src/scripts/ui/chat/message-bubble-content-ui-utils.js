@@ -1,4 +1,7 @@
-import { resolveCreativeRichRenderSource } from './creative-content-display-utils.js';
+import {
+  hideCreativeContentTagsForDisplay,
+  resolveCreativeRichRenderSource,
+} from './creative-content-display-utils.js';
 
 const appendChild = (parent, child) => {
   parent?.appendChild?.(child);
@@ -348,8 +351,12 @@ export const renderMessageBubbleContentCore = ({
         break;
       }
       const baseText = typeof message?.raw === 'string' ? message.raw : message?.content;
-      const normalized =
-        message?.role === 'assistant' ? normalizeAssistantLineBreaks?.(baseText) : String(baseText ?? '');
+      const normalizedSource = message?.role === 'assistant'
+        ? (normalizeAssistantLineBreaks?.(baseText) ?? String(baseText ?? ''))
+        : String(baseText ?? '');
+      const normalized = message?.role === 'assistant'
+        ? hideCreativeContentTagsForDisplay(normalizedSource)
+        : normalizedSource;
       const target = prepareTextContainer?.(bubble, message);
       if (!renderTextWithStickers?.(target, normalized)) {
         target.textContent = normalized;

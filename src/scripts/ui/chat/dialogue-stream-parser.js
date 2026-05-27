@@ -522,11 +522,16 @@ export class DialogueStreamParser {
 
         // If content ended, only parse within it
         let endIdx = -1;
+        let afterEndIdx = -1;
         if (this.contentWrapper === 'content') {
             endIdx = this.contentBuffer.toLowerCase().indexOf('</content>');
+            if (endIdx !== -1) afterEndIdx = endIdx + '</content>'.length;
         } else if (this.contentWrapper === 'miphone') {
             const miEnd = findMiPhoneEnd(this.contentBuffer);
-            if (miEnd) endIdx = miEnd.index;
+            if (miEnd) {
+                endIdx = miEnd.index;
+                afterEndIdx = miEnd.index + miEnd.length;
+            }
         }
         let scanText = this.contentBuffer;
         if (endIdx !== -1) {
@@ -657,9 +662,18 @@ export class DialogueStreamParser {
 
         // Commit remaining unconsumed content
         if (endIdx !== -1) {
-            // content ended; keep tail after </content> for future (not used now)
-            this.ended = true;
-            this.contentBuffer = '';
+            const tail = afterEndIdx >= 0 ? this.contentBuffer.slice(afterEndIdx) : '';
+            if (this.contentWrapper === 'content') {
+                this.inContent = false;
+                this.contentWrapper = '';
+                this.contentBuffer = '';
+                if (String(tail || '').trim()) {
+                    events.push(...this.push(tail));
+                }
+            } else {
+                this.ended = true;
+                this.contentBuffer = '';
+            }
         } else {
             // keep leftover for future chunks
             this.contentBuffer = work;

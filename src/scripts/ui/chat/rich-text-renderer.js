@@ -4067,6 +4067,10 @@ export const prepareRichFragmentHtmlForParsing = (input) => (
     escapeUnbalancedRichRawTextTags(escapeUnsupportedRichFragmentTags(input))
 );
 
+export const prepareRichFragmentDisplayHtmlForParsing = (input) => (
+    prepareRichFragmentHtmlForParsing(hideCreativeContentTagsForDisplay(input))
+);
+
 const hasInteractiveHtmlHint = (input) => {
     const raw = String(input ?? '');
     return Boolean(raw) && (RICH_INTERACTIVE_HTML_RE.test(raw) || RICH_INTERACTIVE_ESCAPED_HTML_RE.test(raw));
@@ -4580,7 +4584,7 @@ const renderScopedRichFragment = (
     } = {},
 ) => {
     if (!containerEl) return false;
-    const normalized = prepareRichFragmentHtmlForParsing(maybeDecodeRichFragmentEntities(text));
+    const normalized = prepareRichFragmentDisplayHtmlForParsing(maybeDecodeRichFragmentEntities(text));
     if (!normalized.trim()) return false;
     if (typeof DOMParser === 'undefined') return false;
     try {

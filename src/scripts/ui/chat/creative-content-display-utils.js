@@ -1,4 +1,5 @@
 const CONTENT_TAG_RE = /<\s*\/?\s*content\b[^>]*(?:>|$)/gi;
+const ESCAPED_CONTENT_TAG_RE = /&lt;\s*\/?\s*content\b[\s\S]*?(?:&gt;|$)/gi;
 const TRAILING_PARTIAL_CONTENT_TAG_RE = /<\s*\/?\s*c(?:o(?:n(?:t(?:e(?:n(?:t\b[^>]*)?)?)?)?)?)?$/i;
 const CONTENT_TAG_TEST_RE = /<\s*\/?\s*content\b[^>]*(?:>|$)/i;
 
@@ -13,9 +14,10 @@ const normalizeComparableText = (value = '') => (
 
 export const hideCreativeContentTagsForDisplay = (value = '') => {
   const text = String(value ?? '');
-  if (!text.includes('<')) return text;
+  if (!text.includes('<') && !text.includes('&lt;')) return text;
   return text
     .replace(CONTENT_TAG_RE, '')
+    .replace(ESCAPED_CONTENT_TAG_RE, '')
     .replace(TRAILING_PARTIAL_CONTENT_TAG_RE, '');
 };
 

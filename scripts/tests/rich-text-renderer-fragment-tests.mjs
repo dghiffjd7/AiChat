@@ -8,7 +8,10 @@ globalThis.localStorage = {
   removeItem: () => {},
 };
 
-const { prepareRichFragmentHtmlForParsing } = await import('../../src/scripts/ui/chat/rich-text-renderer.js');
+const {
+  prepareRichFragmentDisplayHtmlForParsing,
+  prepareRichFragmentHtmlForParsing,
+} = await import('../../src/scripts/ui/chat/rich-text-renderer.js');
 
 const tests = [];
 const test = (name, fn) => tests.push({ name, fn });
@@ -44,6 +47,18 @@ test('escapes unsupported protocol tags as text in rich fragments', () => {
   const output = prepareRichFragmentHtmlForParsing(input);
   assert.match(output, /正文用&lt;content&gt;&lt;\/content&gt;包裹/);
   assert.match(output, /末尾有&lt;ztl&gt;状态&lt;\/ztl&gt;/);
+});
+
+test('hides creative content wrapper before rich fragment display parsing', () => {
+  const input = '<content><details><summary>cot</summary><div>正文</div></details></content>';
+  const output = prepareRichFragmentDisplayHtmlForParsing(input);
+  assert.equal(output, '<details><summary>cot</summary><div>正文</div></details>');
+});
+
+test('hides escaped creative content wrapper before display fallback', () => {
+  const input = '&lt;content type=&quot;story&quot;&gt;正文&lt;/content&gt;';
+  const output = prepareRichFragmentDisplayHtmlForParsing(input);
+  assert.equal(output, '正文');
 });
 
 test('does not let a stray raw-text tag claim a later valid block', () => {

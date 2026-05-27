@@ -1,4 +1,7 @@
-import { resolveCreativeRichRenderSource } from './creative-content-display-utils.js';
+import {
+  hideCreativeContentTagsForDisplay,
+  resolveCreativeRichRenderSource,
+} from './creative-content-display-utils.js';
 
 export const buildAssistantStreamMessageCore = (placeholder, meta, msgId, state = {}) => {
   const streamState = state && typeof state === 'object' ? state : { content: state };
@@ -75,12 +78,12 @@ export const renderAssistantStreamStateCore = ({
         streaming: true,
       });
     } catch {
-      const normalized = normalizeAssistantLineBreaks?.(text) ?? text;
+      const normalized = hideCreativeContentTagsForDisplay(normalizeAssistantLineBreaks?.(text) ?? text);
       target.textContent = normalized;
       target.style.whiteSpace = 'pre-wrap';
     }
   } else {
-    const normalized = normalizeAssistantLineBreaks?.(text) ?? text;
+    const normalized = hideCreativeContentTagsForDisplay(normalizeAssistantLineBreaks?.(text) ?? text);
     if (!renderTextWithStickers?.(target, normalized)) {
       target.textContent = normalized;
       target.style.whiteSpace = 'pre-wrap';
@@ -142,7 +145,7 @@ export const finishMessageDomCore = ({
         lazyMount: false,
       });
     } else {
-      const normalized = normalizeAssistantLineBreaks?.(text) ?? text;
+      const normalized = hideCreativeContentTagsForDisplay(normalizeAssistantLineBreaks?.(text) ?? text);
       if (!renderTextWithStickers?.(target, normalized)) {
         target.textContent = normalized;
         target.style.whiteSpace = 'pre-wrap';

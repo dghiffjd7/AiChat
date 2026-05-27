@@ -164,6 +164,42 @@ const createFakeDocument = () => {
   const documentLike = createFakeDocument();
   const bubble = documentLike.createElement('div');
   const target = documentLike.createElement('div');
+  const stickerInputs = [];
+  renderMessageBubbleContentCore({
+    bubble,
+    message: { id: 'm-plain-content', type: 'text', role: 'assistant', content: '<content>正文</content>' },
+    documentLike,
+    prepareTextContainer: () => target,
+    normalizeAssistantLineBreaks: text => text,
+    renderTextWithStickers: (_target, text) => {
+      stickerInputs.push(text);
+      return false;
+    },
+  });
+  assert.deepEqual(stickerInputs, ['正文']);
+  assert.equal(target.textContent, '正文');
+  console.log('ok - renderMessageBubbleContentCore hides content wrapper only in assistant plain display');
+}
+
+{
+  const documentLike = createFakeDocument();
+  const bubble = documentLike.createElement('div');
+  const target = documentLike.createElement('div');
+  renderMessageBubbleContentCore({
+    bubble,
+    message: { id: 'm-user-content', type: 'text', role: 'user', content: '<content>正文</content>' },
+    documentLike,
+    prepareTextContainer: () => target,
+    renderTextWithStickers: () => false,
+  });
+  assert.equal(target.textContent, '<content>正文</content>');
+  console.log('ok - renderMessageBubbleContentCore preserves user literal content tags in plain display');
+}
+
+{
+  const documentLike = createFakeDocument();
+  const bubble = documentLike.createElement('div');
+  const target = documentLike.createElement('div');
   const drafts = [];
   renderMessageBubbleContentCore({
     bubble,

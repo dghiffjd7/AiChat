@@ -73,6 +73,38 @@ const createTarget = () => ({
     dataset: { typingPlaceholder: '1' },
     __chatappMessage: { content: 'old' },
   };
+  const stickerInputs = [];
+  const next = renderAssistantStreamStateCore({
+    messageEl: { nodeName: 'DIV' },
+    wrapperEl: wrapper,
+    msgId: 'm2-content-plain',
+    meta: {},
+    placeholder: { id: 'm2-content-plain' },
+    state: { content: '<content>正文</content>' },
+    applyReasoningUiState() {},
+    cleanupRichTextMounts() {},
+    prepareTextContainer() { return target; },
+    normalizeAssistantLineBreaks: text => text,
+    renderTextWithStickers: (_target, text) => {
+      stickerInputs.push(text);
+      return false;
+    },
+    renderRichText() {},
+    applyCreativeBubbleState() {},
+  });
+  assert.equal(next.content, '<content>正文</content>');
+  assert.deepEqual(stickerInputs, ['正文']);
+  assert.equal(target.textContent, '正文');
+  assert.equal(wrapper.__chatappMessage.content, '<content>正文</content>');
+  console.log('ok - renderAssistantStreamStateCore hides content wrapper only in plain stream display');
+}
+
+{
+  const target = createTarget();
+  const wrapper = {
+    dataset: { typingPlaceholder: '1' },
+    __chatappMessage: { content: 'old' },
+  };
   const renders = [];
   const next = renderAssistantStreamStateCore({
     messageEl: { nodeName: 'DIV' },
@@ -153,6 +185,35 @@ const createTarget = () => ({
   assert.equal(wrapper.__chatappMessage.content, 'done');
   assert.equal(target.textContent, 'done');
   console.log('ok - finishMessageDomCore persists final plain text message into buffer wrapper and DOM');
+}
+
+{
+  const messageEl = { parentElement: { parentElement: { remove() {} } } };
+  const target = createTarget();
+  const wrapper = { __chatappMessage: { content: 'prev' } };
+  const messageBuffer = [{ content: 'old' }];
+  const finished = finishMessageDomCore({
+    messageEl,
+    wrapperEl: wrapper,
+    finalMessage: { id: 'm3-content-plain', type: 'text', content: '<content>done</content>', meta: {} },
+    bufferIndex: 0,
+    msgId: 'm3-content-plain',
+    meta: {},
+    placeholder: { id: 'm3-content-plain' },
+    messageBuffer,
+    addMessage() {},
+    applyReasoningUiState() {},
+    applyCreativeBubbleState() {},
+    prepareTextContainer() { return target; },
+    renderRichText() {},
+    normalizeAssistantLineBreaks: text => text,
+    renderTextWithStickers: () => false,
+  });
+  assert.equal(finished.content, '<content>done</content>');
+  assert.equal(messageBuffer[0].content, '<content>done</content>');
+  assert.equal(wrapper.__chatappMessage.content, '<content>done</content>');
+  assert.equal(target.textContent, 'done');
+  console.log('ok - finishMessageDomCore hides content wrapper only in final plain display');
 }
 
 {
