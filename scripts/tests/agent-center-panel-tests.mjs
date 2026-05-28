@@ -22,6 +22,7 @@ import { AgentCenterPanel } from '../../src/scripts/ui/agent-center-panel.js';
       listAgentPermissionRules: () => [{ toolName: 'contact_profile.list' }],
       getProviderToolSessionGate: () => ({ enabled: false, allowedTools: ['contact_profile.list'] }),
       getProviderToolExperimentStatus: () => ({ enabled: false, allowedTools: ['contact_profile.list'] }),
+      getProviderContinuationCommitPolicy: () => ({ defaultStrategy: 'preview_only', strategies: ['preview_only', 'append_to_previous_bubble'] }),
     }),
   });
   const view = await panel.collectView();
@@ -273,6 +274,7 @@ import { AgentCenterPanel } from '../../src/scripts/ui/agent-center-panel.js';
       },
       providerTools: { enabled: false, allowedTools: ['contact_profile.list'] },
       permissionRules: [],
+      continuationCommitPolicy: { defaultStrategy: 'preview_only' },
     },
   };
   const html = panel.renderSafety();
@@ -281,6 +283,8 @@ import { AgentCenterPanel } from '../../src/scripts/ui/agent-center-panel.js';
   assert.match(html, /不会自动续跑 provider/);
   assert.match(html, /writes chat blocked/);
   assert.match(html, /contact_profile\.list/);
+  assert.match(html, /Continuation 默认策略/);
+  assert.match(html, /data-continuation-policy-strategy="append_to_previous_bubble"/);
   console.log('ok - agent center safety renders session gate controls and execution boundaries');
 }
 
@@ -297,13 +301,35 @@ import { AgentCenterPanel } from '../../src/scripts/ui/agent-center-panel.js';
       },
       providerTools: { enabled: false, allowedTools: ['contact_profile.list'] },
       permissionRules: [],
+      continuationCommitPolicy: { defaultStrategy: 'append_to_previous_bubble' },
     },
   };
   const html = panel.renderSafety();
   assert.match(html, /关闭当前会话 Gate/);
   assert.match(html, /data-session-gate-action="disable"/);
   assert.match(html, /当前会话允许白名单工具进入待确认执行链路/);
+  assert.match(html, /接到上一气泡/);
   console.log('ok - agent center safety renders the enabled session gate state');
+}
+
+{
+  let saved = null;
+  let refreshed = false;
+  const panel = new AgentCenterPanel({
+    getActions: () => ({
+      setProviderContinuationCommitPolicy: options => {
+        saved = options;
+        return { defaultStrategy: options.defaultStrategy };
+      },
+    }),
+  });
+  panel.refresh = async () => {
+    refreshed = true;
+  };
+  await panel.handleContinuationPolicyAction('append_to_previous_bubble');
+  assert.equal(saved.defaultStrategy, 'append_to_previous_bubble');
+  assert.equal(refreshed, true);
+  console.log('ok - agent center safety updates provider continuation default strategy');
 }
 
 {

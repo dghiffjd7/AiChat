@@ -1001,6 +1001,22 @@ body[data-ui-mode='rp'] .QQ_chat_mymsg .QQ_chat_msgdiv {
   padding: 10px 14px;
 }
 
+body[data-ui-mode='rp'] .QQ_chat_msgdiv {
+  background-color: color-mix(
+    in srgb,
+    var(--chat-bubble-color, var(--qq-color-bubble-default)) 88%,
+    transparent
+  );
+}
+
+body[data-ui-mode='rp'] .QQ_chat_mymsg .QQ_chat_msgdiv {
+  background-color: color-mix(
+    in srgb,
+    var(--chat-user-bubble-color, var(--chat-bubble-color, var(--qq-color-bubble-default))) 88%,
+    transparent
+  );
+}
+
 body[data-ui-mode='rp'] .QQ_chat_head,
 body[data-ui-mode='rp'] .user_avatar,
 body[data-ui-mode='rp'] .qq-avatar {
@@ -1185,11 +1201,29 @@ body[data-ui-mode='rp'] .rp-swipe-indicator {
   word-wrap: break-word;
   word-break: break-word;
 
-  /* 长按以菜单为主，避免系统文字选取/调用菜单干扰 */
+  /* 允许正文走系统原生选中；菜单逻辑在 long-press runtime 中处理已有选区。 */
+  -webkit-user-select: text;
+  user-select: text;
+  -webkit-touch-callout: default;
+  touch-action: manipulation;
+}
+
+.QQ_chat_msgdiv :is(
+  button,
+  input,
+  textarea,
+  select,
+  summary,
+  audio,
+  video,
+  canvas,
+  .chat-reaction-trigger,
+  .card-button,
+  .previewable
+) {
   -webkit-user-select: none;
   user-select: none;
   -webkit-touch-callout: none;
-  touch-action: manipulation;
 }
 
 .QQ_chat_charmsg.is-inline-editing,

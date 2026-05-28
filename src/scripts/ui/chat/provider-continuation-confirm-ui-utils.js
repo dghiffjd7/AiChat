@@ -59,10 +59,21 @@ const buildRow = (label, value) => ({
   value: trim(value, '-'),
 });
 
+const normalizeCommitStrategy = (value = '', { allowAppendCommit = false } = {}) => {
+  const strategy = trim(value, 'preview_only');
+  if (strategy === 'append_to_previous_bubble' && allowAppendCommit === true) return strategy;
+  return 'preview_only';
+};
+
+const commitStrategyLabel = (strategy = '') => (
+  strategy === 'append_to_previous_bubble' ? 'Run + Append' : 'Run Preview'
+);
+
 export const buildProviderContinuationConfirmViewModel = ({
   continuation = {},
   currentRunner = {},
   allowAppendCommit = false,
+  defaultCommitStrategy = 'preview_only',
 } = {}) => {
   const draft = readRunnerDraft(continuation);
   const runner = readCurrentRunner(currentRunner);
@@ -84,19 +95,26 @@ export const buildProviderContinuationConfirmViewModel = ({
   const blockedReason = canRun
     ? ''
     : trim(continuation?.reason || runner?.reason || currentRunner?.reason, 'continuation or runner is not ready');
+  const primaryCommitStrategy = normalizeCommitStrategy(defaultCommitStrategy, { allowAppendCommit });
+  const secondaryCommitStrategy = primaryCommitStrategy === 'append_to_previous_bubble'
+    ? 'preview_only'
+    : 'append_to_previous_bubble';
 
   return {
     canRun,
     canAppend: canRun && allowAppendCommit === true,
+    primaryCommitStrategy,
+    secondaryCommitStrategy,
     title: 'Provider Continue Preview',
     blockedReason,
     previewText,
-    confirmLabel: 'Run Preview',
-    appendLabel: 'Run + Append',
+    confirmLabel: commitStrategyLabel(primaryCommitStrategy),
+    appendLabel: commitStrategyLabel(secondaryCommitStrategy),
     cancelLabel: 'Cancel',
     rows: [
       buildRow('continuation', continuation?.status),
       buildRow('runner', runner?.status || currentRunner?.status),
+      buildRow('default commit', primaryCommitStrategy),
       buildRow('provider', draft.provider || runner.provider || request.provider),
       buildRow('model', draft.model || runner.model || request.model),
       buildRow('session', draft.sessionId || request.sessionId || runner?.runtime?.sessionId),
@@ -126,12 +144,18 @@ export const showProviderContinuationConfirmDialog = ({
   continuation = {},
   currentRunner = {},
   allowAppendCommit = false,
+  defaultCommitStrategy = 'preview_only',
   onConfirm = null,
 } = {}) => {
   if (!documentRef?.createElement || !documentRef?.body?.appendChild) {
     return Promise.resolve({ action: 'unavailable', confirmed: false });
   }
-  const model = buildProviderContinuationConfirmViewModel({ continuation, currentRunner, allowAppendCommit });
+  const model = buildProviderContinuationConfirmViewModel({
+    continuation,
+    currentRunner,
+    allowAppendCommit,
+    defaultCommitStrategy,
+  });
   return new Promise((resolve) => {
     const overlay = createElement(documentRef, 'div', {
       className: 'provider-continuation-confirm-overlay',
@@ -274,7 +298,8 @@ export const showProviderContinuationConfirmDialog = ({
       confirmButton.style.opacity = '0.55';
       confirmButton.style.cursor = 'not-allowed';
     }
-    if (appendButton.disabled && appendButton.style) {
+    const secondaryRequiresAppend = model.secondaryCommitStrategy === 'append_to_previous_bubble';
+    if (secondaryRequiresAppend && appendButton.disabled && appendButton.style) {
       appendButton.style.opacity = '0.55';
       appendButton.style.cursor = 'not-allowed';
     }
@@ -313,8 +338,8 @@ export const showProviderContinuationConfirmDialog = ({
         if (!settled) button.disabled = false;
       }
     };
-    confirmButton.addEventListener?.('click', () => runConfirm('preview_only', confirmButton));
-    appendButton.addEventListener?.('click', () => runConfirm('append_to_previous_bubble', appendButton));
+    confirmButton.addEventListener?.('click', () => runConfirm(model.primaryCommitStrategy, confirmButton));
+    appendButton.addEventListener?.('click', () => runConfirm(model.secondaryCommitStrategy, appendButton));
 
     documentRef.body.appendChild(overlay);
     confirmButton.focus?.();

@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 
 import {
+  buildChatFormatGuardianMessagePart,
   dispatchAfterReceiveEffects,
   resolveAfterReceiveSkipScripts,
+  runChatFormatGuardianPreview,
 } from '../../src/scripts/ui/chat/after-receive-dispatch-utils.js';
 import {
   buildAfterReceiveHookFinishTraceEvent,
@@ -362,6 +364,108 @@ test('dispatchAfterReceiveEffects dispatches runtimes, update apply, and variabl
       ['plugin', 'after_receive.finish', 'queued', 'm1'],
     ],
   );
+});
+
+test('buildChatFormatGuardianMessagePart summarizes warnings without exposing full content', () => {
+  const part = buildChatFormatGuardianMessagePart({
+    now: 1000,
+    sessionId: 'group:case',
+    message: { id: 'm-format' },
+    result: {
+      status: 'needs_review',
+      sourceMessageId: 'm-format',
+      summary: '1 chat format event draft(s), 0 error(s), 1 warning(s)',
+      eventDrafts: [{
+        type: 'group_message',
+        surface: 'chat',
+        targetId: 'group:case',
+        targetName: '调查组',
+        speakerId: 'contact:snow',
+        speakerName: '雪',
+        content: '这是一段非常长的内容，用来确认 sidecar 只保存预览摘要，不把完整正文复制到元数据里。'.repeat(3),
+        warnings: ['time is missing'],
+      }],
+      errors: [],
+      warnings: ['time is missing'],
+    },
+  });
+
+  assert.equal(part.type, 'agent_status');
+  assert.equal(part.source, 'chat-format-guardian');
+  assert.equal(part.kind, 'chat_format.validate');
+  assert.equal(part.status, 'waiting_permission');
+  assert.equal(part.title, '聊天格式待确认');
+  assert.equal(part.metadata.eventCount, 1);
+  assert.deepEqual(part.metadata.countsByType, { group_message: 1 });
+  assert.equal(part.metadata.events[0].contentPreview.endsWith('...'), true);
+});
+
+test('runChatFormatGuardianPreview keeps ready results silent by default', () => {
+  const result = runChatFormatGuardianPreview({
+    message: {
+      id: 'm-ready',
+      role: 'assistant',
+      content: [
+        '<我和菲伦的私聊>',
+        '菲伦--今晚别一个人走。--22:10',
+        '</我和菲伦的私聊>',
+      ].join('\n'),
+    },
+    sessionId: 'contact:firen',
+    chatFormatGuardian: {
+      enabled: true,
+      userName: '我',
+      resolvePrivateTargetId: name => (name === '菲伦' ? 'contact:firen' : ''),
+      resolveSpeakerId: name => (name === '菲伦' ? 'contact:firen' : ''),
+    },
+    now: 1000,
+  });
+
+  assert.equal(result.result.status, 'ready');
+  assert.equal(result.part, null);
+  assert.equal(result.patchedMessage, null);
+});
+
+test('dispatchAfterReceiveEffects attaches chat format preview only through callback', () => {
+  const calls = [];
+  const message = {
+    id: 'm-needs-review',
+    role: 'assistant',
+    content: [
+      '<群聊:调查组>',
+      '<成员>我,菲伦,雪</成员>',
+      '<聊天内容>',
+      '雪--我看到了门口的鞋印。',
+      '</聊天内容>',
+      '</群聊:调查组>',
+    ].join('\n'),
+  };
+
+  const handled = dispatchAfterReceiveEffects({
+    message,
+    sessionId: 'group:case',
+    chatFormatGuardian: {
+      enabled: true,
+      userName: '我',
+      resolveGroupTargetId: name => (name === '调查组' ? 'group:case' : ''),
+      resolveSpeakerId: name => (name === '雪' ? 'contact:snow' : ''),
+    },
+    onChatFormatGuardianPreview({ patchedMessage, result, part, sessionId }) {
+      calls.push(['preview', sessionId, result.status, part.status, patchedMessage.meta.agentMessageParts.length]);
+      assert.equal(patchedMessage.id, message.id);
+    },
+    applyUpdateVariable(received) {
+      calls.push(['update', received.id]);
+    },
+    logger: { warn() {} },
+  });
+
+  assert.equal(handled, true);
+  assert.equal(message.meta, undefined);
+  assert.deepEqual(calls, [
+    ['preview', 'group:case', 'needs_review', 'waiting_permission', 1],
+    ['update', 'm-needs-review'],
+  ]);
 });
 
 test('dispatchAfterReceiveEffects respects skipScripts and logs async/sync failures', async () => {

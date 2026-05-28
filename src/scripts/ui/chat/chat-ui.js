@@ -1738,6 +1738,7 @@ export class ChatUI {
         continuation,
         currentRunner,
         allowAppendCommit: Boolean(request.message?.id),
+        defaultCommitStrategy: actions.getProviderContinuationCommitPolicy?.()?.defaultStrategy || 'preview_only',
         onConfirm: async ({ commitStrategy = 'preview_only' } = {}) => {
           const runner = actions.planProviderToolPendingContinuationWithCurrentProvider;
           if (typeof runner !== 'function') {

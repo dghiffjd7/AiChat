@@ -206,6 +206,7 @@ import {
   buildCreativeAssistantMessageParts as buildCreativeAssistantMessagePartsCore,
 } from './chat/assistant-message-builder-utils.js';
 import { commitContinuationMessageToStore } from './chat/continuation-message-utils.js';
+import { createProviderContinuationCommitPolicyStore } from './chat/provider-continuation-policy.js';
 import { hideCreativeContentTagsForDisplay } from './chat/creative-content-display-utils.js';
 import { CreativeStreamProcessor } from './chat/creative-stream-processor.js';
 import { normalizeDialogueMessage as normalizeDialogueMessageCore } from './chat/dialogue-message-utils.js';
@@ -2006,6 +2007,7 @@ const initApp = async () => {
     logger,
   });
   const providerToolPendingPermissionStore = createProviderToolPendingPermissionStore();
+  const providerContinuationCommitPolicyStore = createProviderContinuationCommitPolicyStore();
   const providerToolCallRuntime = createProviderToolCallRuntime({
     toolRegistry: agentToolRegistry,
     pendingPermissionStore: providerToolPendingPermissionStore,
@@ -2312,6 +2314,8 @@ const initApp = async () => {
         listProviderToolPendingPermissions: options => providerToolPendingPermissionStore.list(options || {}),
         getProviderToolPendingPermission: id => providerToolPendingPermissionStore.get(id),
         getProviderToolPendingPermissionStats: () => providerToolPendingPermissionStore.getStats(),
+        getProviderContinuationCommitPolicy: () => providerContinuationCommitPolicyStore.getPolicy(),
+        setProviderContinuationCommitPolicy: options => providerContinuationCommitPolicyStore.setPolicy(options || {}),
         resolveProviderToolPendingPermission,
         resumeProviderToolPendingPermission,
         planProviderToolPendingContinuation,
@@ -21056,6 +21060,96 @@ Phase G（Frame 36）：循环衔接
   const MEMORY_TIMELINE_AUTO_REPAIR_STORAGE_KEY = 'memory_timeline_auto_repair_state_v1';
   const memoryTimelineAutoRepairInFlight = new Set();
 
+  const getChatFormatGuardianContactByName = (name = '') => {
+    const raw = normalizeSpeakerName(name);
+    if (!raw || isActiveUserSpeakerName(raw) || isSystemSpeakerLabel(raw)) return null;
+    const direct = contactsStore.getContact(raw);
+    if (direct && direct.isGroup !== true) return direct;
+    const contact = resolveContactByDisplayName(raw);
+    return contact && contact.isGroup !== true ? contact : null;
+  };
+
+  const resolveChatFormatGuardianPrivateTargetId = (name = '', targetSessionId = '') => {
+    const raw = normalizeSpeakerName(name);
+    const sid = String(targetSessionId || '').trim();
+    if (!raw) return sid;
+    const currentContact = sid ? contactsStore.getContact(sid) : null;
+    const currentIsGroup = Boolean(currentContact?.isGroup) || sid.startsWith('group:');
+    if (!currentIsGroup) {
+      const currentName = normalizeSpeakerName(currentContact?.name || sid);
+      if (raw === currentName || normalizeLooseName(raw) === normalizeLooseName(currentName)) return sid;
+    }
+    const resolved = resolvePrivateChatTargetSessionIdByName(raw, {
+      contactsStore,
+      normalizeName: normalizeSpeakerName,
+      fallbackSessionId: '',
+    });
+    return resolved || getChatFormatGuardianContactByName(raw)?.id || '';
+  };
+
+  const resolveChatFormatGuardianGroupTargetId = (name = '', targetSessionId = '') => {
+    const raw = normalizeSpeakerName(name);
+    const sid = String(targetSessionId || '').trim();
+    if (!raw) return '';
+    const currentContact = sid ? contactsStore.getContact(sid) : null;
+    const currentIsGroup = Boolean(currentContact?.isGroup) || sid.startsWith('group:');
+    if (currentIsGroup) {
+      const currentName = normalizeSpeakerName(currentContact?.name || sid);
+      if (raw === currentName || normalizeLooseName(raw) === normalizeLooseName(currentName)) return sid;
+    }
+    const direct = contactsStore.findGroupIdByName?.(raw) || '';
+    if (direct) return direct;
+    const groups = contactsStore.listGroups?.() || [];
+    const key = normalizeLooseName(raw);
+    const hit = groups.find(group => {
+      const groupName = normalizeSpeakerName(group?.name || group?.id);
+      return groupName === raw || normalizeLooseName(groupName) === key;
+    });
+    return hit?.id || '';
+  };
+
+  const buildChatFormatGuardianOptions = (targetSessionId = '') => {
+    const sid = String(targetSessionId || '').trim();
+    const activeUser = getActiveUserProfile();
+    return {
+      enabled: true,
+      userName: activeUser?.name || '我',
+      maxEvents: 6,
+      maxIssues: 6,
+      isSystemSpeaker: speakerName => isSystemSpeakerLabel(speakerName),
+      resolvePrivateTargetId: name => resolveChatFormatGuardianPrivateTargetId(name, sid),
+      resolveGroupTargetId: name => resolveChatFormatGuardianGroupTargetId(name, sid),
+      resolveSpeakerId: (speakerName, targetId = '') => {
+        const raw = normalizeSpeakerName(speakerName);
+        if (!raw || isSystemSpeakerLabel(raw)) return '';
+        if (isActiveUserSpeakerName(raw)) return activeUser?.id || '';
+        const groupId = String(targetId || '').trim();
+        if (groupId && (contactsStore.getContact(groupId)?.isGroup || groupId.startsWith('group:'))) {
+          const groupSpeaker = resolveGroupSpeakerContact(raw, groupId);
+          if (groupSpeaker?.id) return groupSpeaker.id;
+        }
+        return getChatFormatGuardianContactByName(raw)?.id || '';
+      },
+      resolveLooseGroupTag: name => {
+        const groupId = resolveChatFormatGuardianGroupTargetId(name, sid);
+        const group = groupId ? contactsStore.getContact(groupId) : null;
+        return group?.name || group?.id || '';
+      },
+      resolveLoosePrivateTag: name => {
+        const contactId = resolveChatFormatGuardianPrivateTargetId(name, sid);
+        const contact = contactId ? contactsStore.getContact(contactId) : null;
+        return contact && contact.isGroup !== true ? (contact.name || contact.id || '') : '';
+      },
+    };
+  };
+
+  const handleChatFormatGuardianPreview = ({ patchedMessage, sessionId: previewSessionId } = {}) => {
+    const sid = String(previewSessionId || '').trim();
+    if (!patchedMessage?.id || !isSessionActive(sid)) return;
+    const decorated = decorateMessagesForDisplay([patchedMessage], { sessionId: sid })?.[0] || patchedMessage;
+    ui.updateMessage(patchedMessage.id, decorated);
+  };
+
   const emitPluginAfterReceiveEffects = (
     message,
     targetSessionId,
@@ -21077,6 +21171,8 @@ Phase G（Frame 36）：循环衔接
       handleVariableRules: payload => variableRuleEngine?.handleAfterReceive?.(payload),
       useGlobalVariables: isSharedVariableSession(targetSessionId),
       recordTraceEvent: recordDebugTraceEvent,
+      chatFormatGuardian: buildChatFormatGuardianOptions(targetSessionId),
+      onChatFormatGuardianPreview: handleChatFormatGuardianPreview,
     });
     scheduleAutoImagePromptGenerationForMessage(message, targetSessionId, {
       source: 'after_receive',

@@ -6,6 +6,7 @@ const createTimerHarness = () => {
   let nextId = 1;
   const timers = new Map();
   return {
+    timers,
     schedule(handler, delay) {
       const id = nextId += 1;
       timers.set(id, { handler, delay });
@@ -56,6 +57,43 @@ const createTimerHarness = () => {
   harness.run(timer);
   assert.deepEqual(triggered, [{ x: 1, y: 2 }, { id: 'm1' }]);
   console.log('ok - startLongPress stores point and triggers callback after delay');
+}
+
+{
+  const harness = createTimerHarness();
+  const runtime = createLongPressUiRuntime({
+    schedule: harness.schedule,
+    clearSchedule: harness.clear,
+    hasActiveTextSelection: () => true,
+  });
+  let timer = null;
+  let delay = 0;
+  let triggered = false;
+  const selectableTarget = {
+    closest(selector) {
+      return String(selector || '').includes('.QQ_chat_msgdiv') ? {} : null;
+    },
+  };
+  const started = runtime.startLongPress({
+    selectionMode: false,
+    event: { type: 'pointerdown', target: selectableTarget },
+    message: { id: 'm-select' },
+    getPoint: () => ({ x: 0, y: 0 }),
+    clearExisting() {},
+    setLongPressStart() {},
+    setLongPressTimer(value) {
+      timer = value;
+      delay = harness.timers?.get?.(value)?.delay || 0;
+    },
+    onTrigger() {
+      triggered = true;
+    },
+  });
+  assert.equal(started, true);
+  assert.equal(delay, 680);
+  harness.run(timer);
+  assert.equal(triggered, false);
+  console.log('ok - startLongPress lets native text selection win for selectable message text');
 }
 
 {
@@ -131,4 +169,46 @@ const createTimerHarness = () => {
   assert.deepEqual(cleared, ['clear', 'clear', 'clear']);
   assert.deepEqual(menus, [['contextmenu', 'm-bind']]);
   console.log('ok - bindMessageContextInteractions wires press move release and context menu flows');
+}
+
+{
+  const runtime = createLongPressUiRuntime({
+    hasActiveTextSelection: () => true,
+  });
+  const listeners = new Map();
+  const wrapper = {
+    addEventListener(type, handler) {
+      listeners.set(type, handler);
+    },
+  };
+  let prevented = false;
+  let cleared = false;
+  let menuShown = false;
+  const selectableTarget = {
+    closest(selector) {
+      return String(selector || '').includes('.QQ_chat_msgdiv') ? {} : null;
+    },
+  };
+  runtime.bindMessageContextInteractions({
+    wrapper,
+    message: { id: 'm-selected' },
+    clearLongPress: () => {
+      cleared = true;
+    },
+    startLongPress() {},
+    showContextMenu: () => {
+      menuShown = true;
+    },
+  });
+  listeners.get('contextmenu')({
+    type: 'contextmenu',
+    target: selectableTarget,
+    preventDefault() {
+      prevented = true;
+    },
+  });
+  assert.equal(cleared, true);
+  assert.equal(prevented, false);
+  assert.equal(menuShown, false);
+  console.log('ok - context menu yields to native selected text menu');
 }

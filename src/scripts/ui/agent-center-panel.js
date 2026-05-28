@@ -320,6 +320,15 @@ const providerToolActionLabel = action => ({
     [PROVIDER_TOOL_PERMISSION_ACTIONS.rememberAllow]: '记住允许',
 }[action] || '处理');
 
+const continuationCommitStrategyLabel = strategy => ({
+    preview_only: '只预览',
+    append_to_previous_bubble: '接到上一气泡',
+}[trim(strategy)] || '只预览');
+
+const normalizeContinuationCommitStrategy = strategy => (
+    trim(strategy) === 'append_to_previous_bubble' ? 'append_to_previous_bubble' : 'preview_only'
+);
+
 export class AgentCenterPanel {
     constructor({
         getActions = () => globalThis.window?.appBridge?.debugUiRegistry?.actions || {},
@@ -415,13 +424,14 @@ export class AgentCenterPanel {
             ...(activityStatus ? { status: activityStatus } : {}),
             ...(surface ? { surface } : {}),
         }, null);
-        const [pendingPermissions, contactProfilePendingUpdates, tools, permissionRules, sessionGate, experimentStatus] = await Promise.all([
+        const [pendingPermissions, contactProfilePendingUpdates, tools, permissionRules, sessionGate, experimentStatus, continuationCommitPolicy] = await Promise.all([
             this.callAction('listProviderToolPendingPermissions', { limit: 100 }, []),
             this.callAction('listContactProfilePendingUpdates', undefined, []),
             this.callAction('listAgentTools', undefined, []),
             this.callAction('listAgentPermissionRules', undefined, []),
             this.callAction('getProviderToolSessionGate', undefined, null),
             this.callAction('getProviderToolExperimentStatus', undefined, null),
+            this.callAction('getProviderContinuationCommitPolicy', undefined, null),
         ]);
         return buildAgentCenterView({
             pendingPermissions,
@@ -431,6 +441,7 @@ export class AgentCenterPanel {
             permissionRules,
             sessionGate,
             experimentStatus,
+            continuationCommitPolicy,
         });
     }
 
@@ -656,6 +667,25 @@ export class AgentCenterPanel {
         }
     }
 
+    async handleContinuationPolicyAction(strategy = '') {
+        const normalizedStrategy = normalizeContinuationCommitStrategy(strategy);
+        const actions = this.getActions?.() || {};
+        if (typeof actions.setProviderContinuationCommitPolicy !== 'function') {
+            this.lastError = '当前环境没有 Provider continuation 策略设置动作';
+            this.render();
+            return;
+        }
+        try {
+            await Promise.resolve(actions.setProviderContinuationCommitPolicy({
+                defaultStrategy: normalizedStrategy,
+            }));
+            await this.refresh();
+        } catch (err) {
+            this.lastError = trim(err?.message || err, 'setProviderContinuationCommitPolicy failed');
+            this.render();
+        }
+    }
+
     renderActivity() {
         const activity = this.view.activity || {};
         const runs = activity.runs || [];
@@ -727,7 +757,9 @@ export class AgentCenterPanel {
         const safety = this.view.safety || {};
         const gate = safety.sessionGate || {};
         const provider = safety.providerTools || {};
+        const policy = safety.continuationCommitPolicy || {};
         const gateEnabled = gate.enabled === true;
+        const defaultStrategy = normalizeContinuationCommitStrategy(policy.defaultStrategy);
         return `<div class="agent-center-list">
             <article class="agent-center-card">
                 <div class="agent-center-card-head">
@@ -759,6 +791,24 @@ export class AgentCenterPanel {
                     { label: provider.enabled ? 'enabled' : 'disabled', className: statusChipClass(provider.enabled ? 'running' : 'denied') },
                     ...list(provider.allowedTools).map(tool => ({ label: tool })),
                 ])}
+            </article>
+            <article class="agent-center-card">
+                <div class="agent-center-card-head">
+                    <div>
+                        <div class="agent-center-card-title">Continuation 默认策略</div>
+                        <div class="agent-center-card-sub">工具结果后的 provider 继续执行仍会弹出确认；这里只决定确认面板的默认提交方式。</div>
+                    </div>
+                    <span class="${escapeHtml(statusChipClass('pending'))}">${escapeHtml(continuationCommitStrategyLabel(defaultStrategy))}</span>
+                </div>
+                <div class="agent-center-card-actions">
+                    ${['preview_only', 'append_to_previous_bubble'].map(strategy => `
+                        <button
+                            type="button"
+                            class="agent-center-card-action${defaultStrategy === strategy ? ' is-primary' : ''}"
+                            data-continuation-policy-strategy="${escapeHtml(strategy)}"
+                        >${escapeHtml(continuationCommitStrategyLabel(strategy))}</button>
+                    `).join('')}
+                </div>
             </article>
             <article class="agent-center-card">
                 <div class="agent-center-card-title">Permission Rules</div>
@@ -804,6 +854,9 @@ export class AgentCenterPanel {
         if (this.activeTab === 'safety') {
             this.contentElement.querySelectorAll('[data-session-gate-action]').forEach((button) => {
                 button.addEventListener('click', () => this.handleSessionGateAction(button.dataset.sessionGateAction || ''));
+            });
+            this.contentElement.querySelectorAll('[data-continuation-policy-strategy]').forEach((button) => {
+                button.addEventListener('click', () => this.handleContinuationPolicyAction(button.dataset.continuationPolicyStrategy || ''));
             });
         }
     }

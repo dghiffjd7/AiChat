@@ -3075,6 +3075,13 @@ const buildIframeBridgeScript = () => `
       parent.postMessage({ type: 'chatapp:iframe-press', id, phase, x: p.x, y: p.y }, '*');
     } catch {}
   };
+  const hasSelection = () => {
+    try {
+      return Boolean(String(window.getSelection?.()?.toString?.() || '').trim());
+    } catch {
+      return false;
+    }
+  };
 
   const start = () => {
     const stripBodyWhitespace = () => {
@@ -3131,6 +3138,7 @@ const buildIframeBridgeScript = () => `
       pressTimer = setTimeout(() => {
         if (!pressActive || !pressStartedAt) return;
         if (Date.now() - pressStartedAt < 420) return;
+        if (hasSelection()) return;
         sendPress('longpress', ev);
       }, 520);
     }, { passive: true, capture: true });
@@ -3152,6 +3160,7 @@ const buildIframeBridgeScript = () => `
       pressTimer = setTimeout(() => {
         if (!pressActive || !pressStartedAt) return;
         if (Date.now() - pressStartedAt < 420) return;
+        if (hasSelection()) return;
         sendPress('longpress', ev);
       }, 520);
     }, { passive: true, capture: true });
@@ -3189,6 +3198,12 @@ const buildIframeBridgeScript = () => `
       setTimeout(() => { touchActive = false; }, 120);
     }, { passive: true, capture: true });
     document.addEventListener('contextmenu', (ev) => {
+      if (hasSelection()) {
+        if (pressTimer) { clearTimeout(pressTimer); pressTimer = null; }
+        pressActive = false;
+        pressStartedAt = 0;
+        return;
+      }
       try { ev.preventDefault(); } catch {}
       const elapsed = pressStartedAt ? (Date.now() - pressStartedAt) : 0;
       if (pressActive && elapsed >= 420) {
@@ -3196,9 +3211,12 @@ const buildIframeBridgeScript = () => `
         sendPress('longpress', ev);
       }
     }, { passive: false, capture: true });
-    document.addEventListener('selectstart', (ev) => {
-      try { ev.preventDefault(); } catch {}
-    }, { passive: false, capture: true });
+    document.addEventListener('selectstart', () => {
+      if (pressTimer) { clearTimeout(pressTimer); pressTimer = null; }
+      if (pressActive) { sendPress('cancel', { clientX: 0, clientY: 0 }); }
+      pressActive = false;
+      pressStartedAt = 0;
+    }, { passive: true, capture: true });
     document.addEventListener('toggle', (ev) => {
       if (ev && ev.target && ev.target.tagName === 'DETAILS') triggerBurstLayout('observer');
     }, true);
@@ -3718,11 +3736,19 @@ const bindIframeDocumentPressFallback = (iframe, iframeId) => {
                 detail: { id: String(iframeId || ''), phase, clientX, clientY, msgId }
             }));
         };
+        const hasSelection = () => {
+            try {
+                return Boolean(String(doc.getSelection?.()?.toString?.() || '').trim());
+            } catch {
+                return false;
+            }
+        };
         doc.addEventListener('pointerdown', (ev) => dispatch('down', ev), { passive: true, capture: true });
         ['pointerup', 'pointercancel', 'pointerleave', 'pointerout'].forEach((t) => {
             doc.addEventListener(t, (ev) => dispatch('up', ev), { passive: true, capture: true });
         });
         doc.addEventListener('contextmenu', (ev) => {
+            if (hasSelection()) return;
             try { ev.preventDefault(); } catch {}
             dispatch('longpress', ev);
         }, { passive: false, capture: true });
@@ -4738,9 +4764,10 @@ const buildIframeSrcDoc = (
     const baseStyle = `
 <style id="__chatapp_base">
   html { color-scheme: ${themeColorScheme}; }
-  html, body { margin:0; padding:0; max-width:100% !important; width:100% !important; min-height:0 !important; height:auto !important; overflow-x:hidden !important; box-sizing:border-box; -webkit-user-select:none; user-select:none; -webkit-touch-callout:none; }
-  body { padding: 12px; background: transparent; color: ${isDarkMode ? '#e2e8f0' : 'inherit'}; transform-origin: top left; overflow-x:hidden !important; -webkit-user-select:none; user-select:none; -webkit-touch-callout:none; display:block !important; align-items:flex-start !important; justify-content:flex-start !important; }
+  html, body { margin:0; padding:0; max-width:100% !important; width:100% !important; min-height:0 !important; height:auto !important; overflow-x:hidden !important; box-sizing:border-box; -webkit-user-select:text; user-select:text; -webkit-touch-callout:default; }
+  body { padding: 12px; background: transparent; color: ${isDarkMode ? '#e2e8f0' : 'inherit'}; transform-origin: top left; overflow-x:hidden !important; -webkit-user-select:text; user-select:text; -webkit-touch-callout:default; display:block !important; align-items:flex-start !important; justify-content:flex-start !important; }
   *, *::before, *::after { box-sizing: border-box; max-width: 100% !important; min-width: 0 !important; }
+  button, input, textarea, select, summary, audio, video, canvas, [role="button"] { -webkit-user-select:none; user-select:none; -webkit-touch-callout:none; }
   details, summary { max-width: 100% !important; }
   details[open] { max-height: none !important; overflow: visible !important; }
   img, video, canvas, svg { max-width: 100%; height: auto; }
@@ -5177,6 +5204,13 @@ const buildIframeSrcDoc = (
         parent.postMessage({ type: 'chatapp:iframe-press', id, phase, x: p.x, y: p.y }, '*');
       } catch {}
     };
+    const hasSelection = () => {
+      try {
+        return Boolean(String(window.getSelection?.()?.toString?.() || '').trim());
+      } catch {
+        return false;
+      }
+    };
     const clear = () => {
       if (pressTimer) { clearTimeout(pressTimer); pressTimer = null; }
       if (pressActive) { sendPress('cancel', { clientX: 0, clientY: 0 }); pressActive = false; }
@@ -5189,6 +5223,7 @@ const buildIframeSrcDoc = (
       pressActive = true;
       sendPress('down', ev);
       pressTimer = setTimeout(() => {
+        if (hasSelection()) return;
         sendPress('longpress', ev);
       }, 520);
     };
@@ -5259,12 +5294,16 @@ const buildIframeSrcDoc = (
     });
     // Some WebViews trigger text selection / native menu via contextmenu on long-press
     document.addEventListener('contextmenu', (ev) => {
+      if (hasSelection()) {
+        clear();
+        return;
+      }
       try { ev.preventDefault(); } catch {}
       sendPress('longpress', ev);
     }, { passive: false });
-    document.addEventListener('selectstart', (ev) => {
-      try { ev.preventDefault(); } catch {}
-    }, { passive: false });
+    document.addEventListener('selectstart', () => {
+      clear();
+    }, { passive: true });
 
     const requestLayout = (source = 'bridge', force = false) => {
       pendingSource = normalizeSource(source);

@@ -1,7 +1,20 @@
 export const createLongPressUiRuntime = ({
   schedule = (handler, delay = 0) => setTimeout(handler, delay),
   clearSchedule = (timerId) => clearTimeout(timerId),
+  hasActiveTextSelection = () => {
+    try {
+      return Boolean(String(globalThis.getSelection?.()?.toString?.() || '').trim());
+    } catch {
+      return false;
+    }
+  },
 } = {}) => ({
+  isSelectableTextTarget(target = null) {
+    if (!target || typeof target.closest !== 'function') return false;
+    const interactive = target.closest('button, input, textarea, select, audio, video, canvas, [contenteditable="true"]');
+    if (interactive) return false;
+    return Boolean(target.closest('.QQ_chat_msgdiv, .chat-message-content, .chat-rich-fragment'));
+  },
   startLongPress({
     selectionMode = false,
     event,
@@ -16,9 +29,11 @@ export const createLongPressUiRuntime = ({
     clearExisting?.();
     const point = getPoint?.(event) || null;
     setLongPressStart?.(point);
+    const delay = this.isSelectableTextTarget(event?.target) ? 680 : 500;
     const timerId = schedule(() => {
+      if (hasActiveTextSelection()) return;
       onTrigger?.(event, message);
-    }, 500);
+    }, delay);
     setLongPressTimer?.(timerId);
     return true;
   },
@@ -65,6 +80,10 @@ export const createLongPressUiRuntime = ({
     wrapper.addEventListener(
       'contextmenu',
       event => {
+        if (this.isSelectableTextTarget(event?.target) && hasActiveTextSelection()) {
+          clearLongPress?.();
+          return;
+        }
         try {
           event.preventDefault();
         } catch {}

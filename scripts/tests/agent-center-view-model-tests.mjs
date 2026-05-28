@@ -70,6 +70,7 @@ import {
     ],
     sessionGate: { enabled: false, allowedTools: ['contact_profile.list'] },
     experimentStatus: { enabled: false, allowedTools: ['contact_profile.list'] },
+    continuationCommitPolicy: { defaultStrategy: 'append_to_previous_bubble', strategies: ['preview_only', 'append_to_previous_bubble'] },
   });
   assert.equal(view.meta.pending, 2);
   assert.equal(view.meta.activeRuns, 1);
@@ -93,6 +94,7 @@ import {
   assert.equal(view.tabs.find(tab => tab.id === 'pending').count, 2);
   assert.equal(view.tabs.find(tab => tab.id === 'activity').count, 1);
   assert.equal(view.tabs.find(tab => tab.id === 'tools').count, 2);
+  assert.equal(view.safety.continuationCommitPolicy.defaultStrategy, 'append_to_previous_bubble');
   console.log('ok - agent center view summarizes pending activity tools and safety state');
 }
 

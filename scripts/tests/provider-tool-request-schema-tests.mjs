@@ -26,6 +26,22 @@ const contactListTool = {
   },
 };
 
+const contactGetTool = {
+  name: 'contact_profile.get',
+  title: 'Get contact profile',
+  description: 'Get a stored contact profile by contact id.',
+  permissions: ['storage'],
+  riskLevel: 'low',
+  schema: {
+    type: 'object',
+    required: ['contactId'],
+    additionalProperties: false,
+    properties: {
+      contactId: { type: 'string', minLength: 1 },
+    },
+  },
+};
+
 const createRegistry = ({
   gate = { enabled: true, allowedTools: ['contact_profile.list'], source: 'test' },
   tools = [contactListTool],
@@ -67,6 +83,26 @@ const createRegistry = ({
   assert.equal(schema.requestOptions.tools[0].function.name, 'contact_profile_list');
   assert.equal(schema.requestOptions.tools[0].function.parameters.properties.limit.type, 'integer');
   console.log('ok - provider tool request schema builds OpenAI-compatible function tools');
+}
+
+{
+  const schema = buildProviderToolRequestSchema({
+    debugUiRegistry: createRegistry({
+      gate: { enabled: true, allowedTools: ['contact_profile.list', 'contact_profile.get'] },
+      tools: [contactListTool, contactGetTool],
+    }),
+    provider: 'openai',
+    model: 'gpt-tool',
+    sessionId: 's1',
+  });
+
+  assert.equal(schema.enabled, true);
+  assert.deepEqual(schema.diagnostics.internalToolNames, ['contact_profile.list', 'contact_profile.get']);
+  assert.deepEqual(schema.diagnostics.providerToolNames, ['contact_profile_list', 'contact_profile_get']);
+  const getTool = schema.requestOptions.tools.find(tool => tool.function.name === 'contact_profile_get');
+  assert.equal(getTool.function.parameters.required[0], 'contactId');
+  assert.equal(getTool.function.parameters.properties.contactId.type, 'string');
+  console.log('ok - provider tool request schema exposes contact_profile_get with provider-safe name');
 }
 
 {
@@ -155,6 +191,34 @@ const createRegistry = ({
   assert.equal(done.completed[0].toolName, 'contact_profile.list');
   assert.deepEqual(done.completed[0].arguments, { limit: 1 });
   console.log('ok - provider-safe streaming tool names complete as internal agent tool calls');
+}
+
+{
+  const accumulator = createProviderToolCallDeltaAccumulator({
+    provider: 'openai',
+    model: 'gpt-tool',
+  });
+  accumulator.push({
+    choices: [{
+      delta: {
+        tool_calls: [{
+          index: 0,
+          id: 'call-get-1',
+          function: {
+            name: 'contact_profile_get',
+            arguments: '{"contactId":"c1"}',
+          },
+        }],
+      },
+    }],
+  });
+  const done = accumulator.push({
+    choices: [{ finish_reason: 'tool_calls' }],
+  });
+
+  assert.equal(done.completed[0].toolName, 'contact_profile.get');
+  assert.deepEqual(done.completed[0].arguments, { contactId: 'c1' });
+  console.log('ok - provider-safe contact_profile_get delta maps back to internal tool');
 }
 
 {

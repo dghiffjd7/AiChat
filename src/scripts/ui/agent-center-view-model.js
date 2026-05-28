@@ -108,9 +108,11 @@ const normalizeSafety = ({
   sessionGate = null,
   experimentStatus = null,
   permissionRules = [],
+  continuationCommitPolicy = null,
 } = {}) => {
   const gate = isPlainObject(sessionGate) ? sessionGate : {};
   const experiment = isPlainObject(experimentStatus) ? experimentStatus : {};
+  const policy = isPlainObject(continuationCommitPolicy) ? continuationCommitPolicy : {};
   return {
     sessionGate: {
       enabled: gate.enabled === true,
@@ -124,6 +126,10 @@ const normalizeSafety = ({
       allowedTools: list(experiment.allowedTools),
     },
     permissionRules: Array.isArray(permissionRules) ? permissionRules.slice() : [],
+    continuationCommitPolicy: {
+      defaultStrategy: trim(policy.defaultStrategy, 'preview_only'),
+      strategies: list(policy.strategies),
+    },
   };
 };
 
@@ -150,6 +156,7 @@ export const buildAgentCenterView = ({
   permissionRules = [],
   sessionGate = null,
   experimentStatus = null,
+  continuationCommitPolicy = null,
   limit = 50,
 } = {}) => {
   const pending = (Array.isArray(pendingPermissions) ? pendingPermissions : [])
@@ -166,7 +173,12 @@ export const buildAgentCenterView = ({
   const normalizedTools = (Array.isArray(tools) ? tools : [])
     .map(normalizeTool)
     .sort((a, b) => a.name.localeCompare(b.name));
-  const safety = normalizeSafety({ sessionGate, experimentStatus, permissionRules });
+  const safety = normalizeSafety({
+    sessionGate,
+    experimentStatus,
+    permissionRules,
+    continuationCommitPolicy,
+  });
   const tabs = buildTabs({ pending, runView, tools: normalizedTools });
   return {
     tabs,

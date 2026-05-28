@@ -4,6 +4,10 @@ import {
   buildProviderContinuationConfirmViewModel,
   showProviderContinuationConfirmDialog,
 } from '../../src/scripts/ui/chat/provider-continuation-confirm-ui-utils.js';
+import {
+  createProviderContinuationCommitPolicyStore,
+  readProviderContinuationCommitPolicy,
+} from '../../src/scripts/ui/chat/provider-continuation-policy.js';
 
 const createFakeDocument = () => {
   class FakeElement {
@@ -101,6 +105,16 @@ const createReadyContinuation = () => ({
   console.log('ok - provider continuation confirm model shows runnable preview without secrets');
 }
 
+const createStorage = () => {
+  const map = new Map();
+  return {
+    getItem: key => map.get(String(key)) ?? null,
+    setItem: (key, value) => {
+      map.set(String(key), String(value));
+    },
+  };
+};
+
 {
   const model = buildProviderContinuationConfirmViewModel({
     continuation: createReadyContinuation(),
@@ -122,6 +136,27 @@ const createReadyContinuation = () => ({
   const model = buildProviderContinuationConfirmViewModel({
     continuation: createReadyContinuation(),
     currentRunner: {
+      status: 'ready',
+      provider: 'openai',
+      model: 'gpt-test',
+      network: true,
+    },
+    allowAppendCommit: true,
+    defaultCommitStrategy: 'append_to_previous_bubble',
+  });
+
+  assert.equal(model.primaryCommitStrategy, 'append_to_previous_bubble');
+  assert.equal(model.secondaryCommitStrategy, 'preview_only');
+  assert.equal(model.confirmLabel, 'Run + Append');
+  assert.equal(model.appendLabel, 'Run Preview');
+  assert.equal(model.rows.some(row => row.label === 'default commit' && row.value === 'append_to_previous_bubble'), true);
+  console.log('ok - provider continuation confirm model honors append as default strategy');
+}
+
+{
+  const model = buildProviderContinuationConfirmViewModel({
+    continuation: createReadyContinuation(),
+    currentRunner: {
       status: 'blocked',
       reason: 'current provider runner blocked by session gate',
     },
@@ -130,6 +165,39 @@ const createReadyContinuation = () => ({
   assert.equal(model.canRun, false);
   assert.equal(model.blockedReason, 'current provider runner blocked by session gate');
   console.log('ok - provider continuation confirm model blocks when current runner is not ready');
+}
+
+{
+  const documentLike = createFakeDocument();
+  let commitStrategy = '';
+  const promise = showProviderContinuationConfirmDialog({
+    documentRef: documentLike,
+    continuation: createReadyContinuation(),
+    currentRunner: {
+      status: 'ready',
+      provider: 'openai',
+      model: 'gpt-test',
+      network: true,
+    },
+    allowAppendCommit: true,
+    defaultCommitStrategy: 'append_to_previous_bubble',
+    onConfirm: async payload => {
+      commitStrategy = payload.commitStrategy;
+      return { status: 'succeeded' };
+    },
+  });
+
+  const panel = documentLike.body.children[0].children[0];
+  const footer = panel.children[2];
+  const confirmButton = footer.children[1];
+  const previewButton = footer.children[2];
+  assert.equal(confirmButton.textContent, 'Run + Append');
+  assert.equal(previewButton.textContent, 'Run Preview');
+  confirmButton.click();
+  const result = await promise;
+  assert.equal(commitStrategy, 'append_to_previous_bubble');
+  assert.equal(result.commitStrategy, 'append_to_previous_bubble');
+  console.log('ok - provider continuation confirm dialog uses configured default strategy as primary action');
 }
 
 {
@@ -224,4 +292,16 @@ const createReadyContinuation = () => ({
   assert.equal(confirmed, 0);
   assert.equal(result.action, 'cancel');
   console.log('ok - provider continuation confirm dialog disables real runner when gates are not ready');
+}
+
+{
+  const storage = createStorage();
+  const store = createProviderContinuationCommitPolicyStore({ storage });
+  assert.equal(readProviderContinuationCommitPolicy({ storage }).defaultStrategy, 'preview_only');
+  const saved = store.setPolicy({ defaultStrategy: 'append_to_previous_bubble' });
+  assert.equal(saved.defaultStrategy, 'append_to_previous_bubble');
+  assert.equal(store.getPolicy().defaultStrategy, 'append_to_previous_bubble');
+  store.setPolicy({ defaultStrategy: 'unknown' });
+  assert.equal(store.getPolicy().defaultStrategy, 'preview_only');
+  console.log('ok - provider continuation policy store persists normalized default strategy');
 }
